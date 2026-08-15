@@ -127,8 +127,8 @@
     <!-- ── TAB: Cerraduras ── -->
     <div v-show="tab === 'locks'" class="space-y-6">
       <SectionCard title="Dispositivos" :subtitle="`${locks.length} cerradura(s) sincronizada(s)`" body-class="p-0">
-        <div v-if="loading" class="p-4 space-y-2">
-          <div v-for="i in 4" :key="i" class="h-12 animate-pulse rounded-lg bg-surface"></div>
+        <div v-if="loading" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-4 sm:p-5">
+          <div v-for="i in 4" :key="i" class="h-48 animate-pulse rounded-2xl bg-surface"></div>
         </div>
 
         <EmptyState
@@ -147,62 +147,79 @@
           </template>
         </EmptyState>
 
-        <div v-else class="overflow-x-auto">
-          <table class="w-full min-w-[880px] tbl-head">
-            <thead>
-              <tr>
-                <th class="text-left px-4 py-3 text-[10px]">Nombre</th>
-                <th class="text-left px-4 py-3 text-[10px]">Habitación</th>
-                <th class="text-left px-4 py-3 text-[10px] hidden lg:table-cell">MAC</th>
-                <th class="text-right px-4 py-3 text-[10px]">Batería</th>
-                <th class="text-center px-4 py-3 text-[10px]">Estado</th>
-                <th class="text-right px-4 py-3 text-[10px]">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="lock in locks" :key="lock.id" class="border-b border-border last:border-0 hover:bg-surface/60 transition-colors">
-                <td class="px-4 py-3">
-                  <div class="text-sm font-bold text-navy">{{ lock.name || 'Sin nombre' }}</div>
-                  <div v-if="lock.mac" class="text-[11px] font-mono text-text-muted lg:hidden">{{ lock.mac }}</div>
-                </td>
-                <td class="px-4 py-3">
-                  <select @change="mapLock(lock, ($event.target as HTMLSelectElement).value)" class="px-3 py-1.5 rounded-full border border-border text-xs cursor-pointer">
-                    <option value="">Sin asignar</option>
-                    <option v-for="r in rooms" :key="r.id" :value="r.id" :selected="lock.roomId===r.id">{{ r.number }} - {{ r.type }}</option>
-                  </select>
-                </td>
-                <td class="px-4 py-3 hidden lg:table-cell">
-                  <span v-if="lock.mac" class="text-xs font-mono text-text-secondary">{{ lock.mac }}</span>
-                  <span v-else class="text-xs text-text-muted">Sin MAC</span>
-                </td>
-                <td class="px-4 py-3 text-right">
-                  <span class="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-extrabold tabular-nums" :class="batteryClass(lock.batteryLevel)">
-                    {{ lock.batteryLevel || 0 }}%
-                  </span>
-                </td>
-                <td class="px-4 py-3 text-center">
-                  <span class="text-[10px] font-bold px-2 py-1 rounded-full" :class="lock.status==='online' ? 'bg-teal/10 text-teal' : 'bg-navy/5 text-text-muted'">{{ lock.status === 'online' ? 'En línea' : 'Sin conexión' }}</span>
-                </td>
-                <td class="px-4 py-3 text-right">
-                  <div class="flex items-center justify-end gap-1.5">
-                    <button v-if="lock.roomId" @click="manageLock(lock)" title="Gestionar cerradura"
-                      class="rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-navy hover:bg-navy/10 transition-colors cursor-pointer">
-                      Gestionar
-                    </button>
-                    <span v-else class="text-[11px] text-text-muted" title="Asigná una habitación para poder operarla">Asigná una habitación</span>
-                    <button v-if="lock.roomId" @click="viewCodes(lock)" title="Ver códigos guardados"
-                      class="grid h-8 w-8 place-items-center rounded-lg text-text-muted hover:bg-navy/10 hover:text-navy transition-colors cursor-pointer">
-                      <span class="h-4 w-4" v-html="ICON_KEY"></span>
-                    </button>
-                    <button @click="inspectLock(lock)" title="Verificar hardware"
-                      class="grid h-8 w-8 place-items-center rounded-lg text-text-muted hover:bg-navy/10 hover:text-navy transition-colors cursor-pointer">
-                      <span class="h-4 w-4" v-html="ICON_SEARCH"></span>
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <!-- Grid de cards por habitación: la habitación es la identidad de la card
+             y el candado el ícono grande (feedback del dueño). El nombre técnico de
+             la cerradura queda como detalle chico; la MAC vive en el tooltip. -->
+        <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-4 sm:p-5">
+          <div v-for="lock in locks" :key="lock.id"
+            class="rounded-2xl border border-border/70 bg-white p-4 transition-colors hover:border-navy/30">
+
+            <!-- Identidad: candado grande + habitación protagonista -->
+            <div class="flex items-center gap-3.5">
+              <svg
+                class="h-[38px] w-[38px] shrink-0 transition-colors"
+                :class="lock.roomId && lock.status === 'online' ? 'text-teal' : 'text-text-muted'"
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4.5" y="10.5" width="15" height="10.5" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/><path d="M12 14.5v2.5"/>
+              </svg>
+              <div class="min-w-0">
+                <div class="font-black leading-none tracking-tight truncate"
+                  :class="lock.roomId ? 'text-3xl text-navy' : 'text-2xl text-text-muted'"
+                  :title="lock.roomId ? `Habitación ${lock.roomNumber}` : 'Cerradura sin habitación asignada'">
+                  {{ lock.roomId ? (lock.roomNumber && lock.roomNumber !== '—' ? `HAB ${lock.roomNumber}` : 'HAB ?') : 'Sin habitación' }}
+                </div>
+                <div class="mt-1.5 truncate font-mono text-[11px] text-text-muted" :title="lock.mac || lock.name">{{ lock.name || 'Sin nombre' }}</div>
+              </div>
+            </div>
+
+            <!-- Estado del hardware: conexión + batería -->
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+              <span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold"
+                :class="lock.status === 'online' ? 'bg-teal/10 text-teal' : 'bg-navy/5 text-text-muted'">
+                <span class="h-1.5 w-1.5 rounded-full" :class="lock.status === 'online' ? 'bg-teal' : 'bg-text-muted/40'"></span>
+                {{ lock.status === 'online' ? 'En línea' : 'Sin conexión' }}
+              </span>
+              <span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-extrabold tabular-nums" :class="batteryClass(lock.batteryLevel)">
+                <svg class="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="17" height="10" rx="2"/><path d="M22 10.5v3"/></svg>
+                {{ lock.batteryLevel || 0 }}%
+              </span>
+            </div>
+
+            <!-- Asignada: operar. Cambiar/desasignar la habitación vive en Gestionar (RoomLockModal). -->
+            <div v-if="lock.roomId" class="mt-4 flex flex-wrap items-center gap-1.5 border-t border-border pt-3">
+              <button @click="manageLock(lock)" title="Gestionar cerradura"
+                class="inline-flex items-center gap-1.5 rounded-lg bg-navy/5 px-2.5 py-1.5 text-[11px] font-bold text-navy transition-colors hover:bg-navy/10 cursor-pointer">
+                <span class="h-4 w-4" v-html="ICON_SETTINGS"></span>
+                Gestionar
+              </button>
+              <button @click="viewCodes(lock)" title="Ver códigos guardados"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-bold text-text-secondary transition-colors hover:border-navy/30 hover:text-navy cursor-pointer">
+                <span class="h-4 w-4" v-html="ICON_KEY"></span>
+                Códigos
+              </button>
+              <button @click="inspectLock(lock)" title="Verificar hardware"
+                class="grid h-7 w-7 place-items-center rounded-lg border border-border text-text-muted transition-colors hover:border-navy/30 hover:text-navy cursor-pointer">
+                <span class="h-4 w-4" v-html="ICON_SEARCH"></span>
+              </button>
+            </div>
+
+            <!-- Sin habitación: no se puede operar (igual que antes, solo el aviso),
+                 pero acá mismo se le asigna una. Verificar hardware no requiere habitación. -->
+            <div v-else>
+              <p class="mt-4 text-[11px] font-semibold text-text-muted">Asignale una habitación para operarla</p>
+              <div class="mt-3 flex items-center gap-2 border-t border-border pt-3">
+                <select @change="mapLock(lock, ($event.target as HTMLSelectElement).value)"
+                  class="min-w-0 flex-1 cursor-pointer rounded-lg border border-border px-3 py-2 text-xs">
+                  <option value="">Elegir habitación…</option>
+                  <option v-for="r in rooms" :key="r.id" :value="r.id">{{ r.number }} - {{ r.type }}</option>
+                </select>
+                <button @click="inspectLock(lock)" title="Verificar hardware"
+                  class="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border text-text-muted transition-colors hover:border-navy/30 hover:text-navy cursor-pointer">
+                  <span class="h-4 w-4" v-html="ICON_SEARCH"></span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </SectionCard>
 
@@ -1030,6 +1047,10 @@ async function mapLock(lock: any, roomId: string) {
   try {
     await TTLockService.updateLock(lock.id, { roomId })
     lock.roomId = roomId
+    // La card muestra "HAB n": se actualiza el número mapeado para que el
+    // cambio se vea al instante, sin recargar todo el listado.
+    const room = rooms.value.find((r: any) => String(r.id) === String(roomId))
+    lock.roomNumber = room?.number != null ? String(room.number) : '—'
     toast.success(roomId ? 'Cerradura asignada' : 'Cerradura desasignada')
   } catch (e) {
     toast.error((e as Error).message || 'No se pudo asignar la cerradura')
@@ -1130,6 +1151,7 @@ async function checkRecords() {
 
 // Iconos inline (SVG como string + v-html sobre un span con tamaño)
 const ICON_KEY = '<svg viewBox="0 0 24 24" class="h-full w-full" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7a4 4 0 1 1-3.87 5H8v2H6v2H2v-3l6.13-6.13A4 4 0 0 1 15 7Z"/><path d="M16.5 7.5h.01"/></svg>'
+const ICON_SETTINGS = '<svg viewBox="0 0 24 24" class="h-full w-full" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/></svg>'
 const ICON_SEARCH = '<svg viewBox="0 0 24 24" class="h-full w-full" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'
 const ICON_BAN = '<svg viewBox="0 0 24 24" class="h-full w-full" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></svg>'
 const ICON_LOCK_EMPTY = '<svg viewBox="0 0 24 24" class="h-8 w-8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 15v2"/></svg>'
