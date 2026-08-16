@@ -168,6 +168,11 @@ const router = createRouter({
           component: () => import('@/pages/super-admin/email-templates.vue'),
         },
         {
+          path: 'sitio',
+          name: 'super-admin-sitio',
+          component: () => import('@/pages/super-admin/sitio.vue'),
+        },
+        {
           path: 'support',
           name: 'super-admin-support',
           component: () => import('@/pages/super-admin/support.vue'),
