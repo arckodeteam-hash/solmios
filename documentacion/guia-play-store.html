@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SolmiOS a Google Play</title>
+<style>
+  :root {
+    --ground: #F8FAFC;
+    --surface: #FFFFFF;
+    --surface-2: #EEF4F9;
+    --ink: #12283E;
+    --ink-soft: #44586E;
+    --ink-faint: #7488A0;
+    --line: #D5E0EB;
+    --navy: #0D2B4E;
+    --navy-soft: #1A3A5C;
+    --accent: #0092B8;
+    --accent-bright: #00B4D8;
+    --on-accent: #FFFFFF;
+    --good: #0C8A62;
+    --good-bg: #E3F6EF;
+    --warn: #A9680A;
+    --warn-bg: #FCF1DC;
+    --danger: #C2382E;
+    --danger-bg: #FBE8E6;
+    --code-bg: #E9F0F6;
+    --shadow: 0 1px 2px rgba(13, 43, 78, .06), 0 4px 16px rgba(13, 43, 78, .05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0A1F38;
+      --surface: #10294A;
+      --surface-2: #16345B;
+      --ink: #E8F0F8;
+      --ink-soft: #B6C7D9;
+      --ink-faint: #8299B3;
+      --line: #24466E;
+      --navy: #E8F0F8;
+      --navy-soft: #C7D7E8;
+      --accent: #3FC6E4;
+      --accent-bright: #00B4D8;
+      --on-accent: #06202F;
+      --good: #4ED0A3;
+      --good-bg: #10352C;
+      --warn: #F0B454;
+      --warn-bg: #39290F;
+      --danger: #F08B82;
+      --danger-bg: #421915;
+      --code-bg: #0C2543;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 20px rgba(0, 0, 0, .25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0A1F38;
+    --surface: #10294A;
+    --surface-2: #16345B;
+    --ink: #E8F0F8;
+    --ink-soft: #B6C7D9;
+    --ink-faint: #8299B3;
+    --line: #24466E;
+    --navy: #E8F0F8;
+    --navy-soft: #C7D7E8;
+    --accent: #3FC6E4;
+    --accent-bright: #00B4D8;
+    --on-accent: #06202F;
+    --good: #4ED0A3;
+    --good-bg: #10352C;
+    --warn: #F0B454;
+    --warn-bg: #39290F;
+    --danger: #F08B82;
+    --danger-bg: #421915;
+    --code-bg: #0C2543;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 20px rgba(0, 0, 0, .25);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 74ch; margin: 0 auto; padding: 0 20px 96px; }
+
+  code, .path, .crumb {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: .86em;
+  }
+  code {
+    background: var(--code-bg);
+    border-radius: 5px;
+    padding: .12em .38em;
+    white-space: nowrap;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ---------- hero ---------- */
+  header.hero {
+    background: linear-gradient(160deg, #0D2B4E 0%, #123B63 55%, #17507F 100%);
+    color: #EAF3FB;
+    padding: 44px 20px 40px;
+    border-bottom: 3px solid var(--accent-bright);
+  }
+  .hero-inner { max-width: 74ch; margin: 0 auto; }
+  .hero .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: .18em;
+    font-size: .72rem;
+    font-weight: 600;
+    color: #8FD5E8;
+    margin: 0 0 10px;
+  }
+  .hero h1 {
+    margin: 0 0 8px;
+    font-size: clamp(1.7rem, 4.5vw, 2.5rem);
+    line-height: 1.15;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+  }
+  .hero p.lede { margin: 0; max-width: 58ch; color: #C3D8E8; font-size: 1.02rem; }
+  .hero .meta {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px;
+  }
+  .chip {
+    background: rgba(0, 180, 216, .16);
+    border: 1px solid rgba(0, 180, 216, .45);
+    color: #BFE9F4;
+    border-radius: 999px;
+    padding: 3px 12px;
+    font-size: .78rem;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+
+  /* ---------- progress ---------- */
+  .progress-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 18px 20px;
+    margin: -26px auto 0;
+    max-width: 74ch;
+    position: relative;
+  }
+  .progress-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap;
+  }
+  .progress-head h2 { margin: 0; font-size: 1rem; }
+  .progress-head .count {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+    font-weight: 700;
+    font-size: .95rem;
+  }
+  .bar {
+    height: 7px; border-radius: 99px; background: var(--surface-2);
+    margin: 12px 0 14px; overflow: hidden;
+  }
+  .bar > div {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--accent-bright), var(--accent));
+    border-radius: 99px;
+    transition: width .35s ease;
+  }
+  .phase-check {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 4px 18px;
+  }
+  .phase-check label {
+    display: flex; align-items: center; gap: 9px;
+    padding: 5px 4px; border-radius: 7px; cursor: pointer;
+    font-size: .9rem; color: var(--ink-soft);
+    -webkit-user-select: none; user-select: none;
+  }
+  .phase-check label:hover { background: var(--surface-2); }
+  .phase-check input {
+    accent-color: var(--accent); width: 16px; height: 16px; margin: 0;
+    flex: none;
+  }
+  .phase-check input:checked + span {
+    text-decoration: line-through;
+    text-decoration-color: var(--accent);
+    color: var(--ink-faint);
+  }
+
+  /* ---------- phases ---------- */
+  section.phase { margin-top: 56px; }
+  .phase-header { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .phase-n {
+    flex: none; width: 40px; height: 40px; border-radius: 10px;
+    background: var(--navy); color: var(--ground);
+    display: grid; place-items: center;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-weight: 700; font-size: 1.05rem;
+  }
+  .phase-header h2 {
+    margin: 0; font-size: 1.3rem; letter-spacing: -.01em; text-wrap: balance;
+  }
+  .phase > p.why { color: var(--ink-soft); margin: 0 0 18px 54px; font-size: .95rem; }
+
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 18px 20px;
+    margin: 14px 0;
+  }
+  .step h3 { margin: 0 0 4px; font-size: 1.02rem; }
+  .step h3 .crumb {
+    display: block; margin-top: 6px;
+    color: var(--accent); font-weight: 500; font-size: .8rem;
+  }
+  .step p { margin: 10px 0 0; }
+  .step ul, .step ol { margin: 10px 0 0; padding-left: 22px; }
+  .step li { margin: 5px 0; }
+  .step li::marker { color: var(--accent); font-weight: 700; }
+
+  table.values {
+    width: 100%; border-collapse: collapse; margin: 14px 0 2px;
+    font-size: .9rem;
+    overflow-x: auto; display: block;
+  }
+  table.values th, table.values td {
+    text-align: left; padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  table.values th {
+    font-size: .72rem; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--ink-faint); font-weight: 600;
+  }
+  table.values td.k { color: var(--ink-soft); width: 38%; }
+  table.values td.v { font-weight: 500; }
+  table.values td.v code { font-size: .84rem; }
+
+  .callout {
+    border-radius: 10px; padding: 14px 16px; margin: 14px 0 2px;
+    font-size: .93rem;
+  }
+  .callout strong { display: block; margin-bottom: 3px; }
+  .callout.danger { background: var(--danger-bg); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
+  .callout.danger strong::before { content: "▲ "; font-size: .8em; }
+  .callout.warn { background: var(--warn-bg); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }
+  .callout.warn strong::before { content: "◆ "; font-size: .8em; }
+  .callout.good { background: var(--good-bg); color: var(--good); border: 1px solid color-mix(in srgb, var(--good) 30%, transparent); }
+  .callout.good strong::before { content: "✓ "; }
+  .callout p { margin: 4px 0 0; }
+
+  kbd {
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .82em;
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-bottom-width: 2px; border-radius: 5px; padding: .1em .45em;
+  }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, label:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 7px; }
+
+  footer {
+    margin-top: 72px; padding-top: 18px; border-top: 1px solid var(--line);
+    color: var(--ink-faint); font-size: .82rem;
+  }
+  footer p { margin: 4px 0; }
+
+  @media (max-width: 560px) {
+    .phase > p.why { margin-left: 0; }
+    .phase-header { gap: 10px; }
+  }
+  @media print {
+    .hero { padding: 24px 20px; }
+    .progress-card { box-shadow: none; }
+    .step { box-shadow: none; break-inside: avoid; }
+    body { background: #fff; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <p class="eyebrow">Guía de publicación · v1.0.48</p>
+    <h1>SolmiOS a Google Play</h1>
+    <p class="lede">Del bundle firmado que ya tenés en tu máquina a la app publicada. Cada fase usa los valores reales de esta app: nada de instrucciones genéricas.</p>
+    <div class="meta">
+      <span class="chip">com.solmios.manager_hotel</span>
+      <span class="chip">versionCode 48</span>
+      <span class="chip">targetSdk 36</span>
+      <span class="chip">app-release.aab · 60.3 MB</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="progress-card" id="progressCard">
+    <div class="progress-head">
+      <h2>Progreso de la publicación</h2>
+      <span class="count"><span id="done">0</span>/<span id="total">8</span> fases</span>
+    </div>
+    <div class="bar"><div id="barFill"></div></div>
+    <div class="phase-check" id="phaseCheck">
+      <label><input type="checkbox" data-k="p0"><span>0 · Keystore respaldada</span></label>
+      <label><input type="checkbox" data-k="p1"><span>1 · Cuenta de desarrollador</span></label>
+      <label><input type="checkbox" data-k="p2"><span>2 · Crear la app</span></label>
+      <label><input type="checkbox" data-k="p3"><span>3 · Play App Signing</span></label>
+      <label><input type="checkbox" data-k="p4"><span>4 · Ficha de la tienda</span></label>
+      <label><input type="checkbox" data-k="p5"><span>5 · Declaraciones y datos</span></label>
+      <label><input type="checkbox" data-k="p6"><span>6 · Subir el bundle</span></label>
+      <label><input type="checkbox" data-k="p7"><span>7 · Publicación</span></label>
+    </div>
+  </div>
+
+  <!-- ============ FASE 0 ============ -->
+  <section class="phase" id="fase0">
+    <div class="phase-header"><div class="phase-n">0</div><h2>Respalda la keystore antes de tocar Play</h2></div>
+    <p class="why">Esta fase no usa la consola, pero es la más importante de toda la guía: la llave de firma es para siempre.</p>
+
+    <div class="step">
+      <h3>Guardá los dos archivos y la contraseña</h3>
+      <p>Google identifica cada actualización de <strong>SolmiOS</strong> por su llave de firma. Si perdés la keystore, no vas a poder actualizar la app nunca más (recuperarla vía Google toma semanas y no está garantizado). Copiá estos archivos a un lugar fuera de esta máquina (nube personal, disco externo):</p>
+      <table class="values">
+        <tr><th>Qué</th><th>Dónde está</th></tr>
+        <tr><td class="k">Keystore (la llave)</td><td class="v"><code>solmios-mobile/android/app/upload-keystore.jks</code></td></tr>
+        <tr><td class="k">Configuración de firma</td><td class="v"><code>solmios-mobile/android/key.properties</code> (contiene la contraseña)</td></tr>
+        <tr><td class="k">Alias de la llave</td><td class="v"><code>upload</code></td></tr>
+      </table>
+      <p>La contraseña vive dentro de <code>key.properties</code>; pasala también a tu gestor de contraseñas. No la subas a ningún repo (git ya las ignora, eso está bien).</p>
+      <div class="callout good">
+        <strong>Verificación rápida</strong>
+        <p>Para confirmar que la keystore sirve, corré en <code>solmios-mobile/</code>: <code>keytool -list -v -keystore android/app/upload-keystore.jks -alias upload</code> — debe decir <code>CN=SolmiOS</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FASE 1 ============ -->
+  <section class="phase" id="fase1">
+    <div class="phase-header"><div class="phase-n">1</div><h2>Cuenta de desarrollador: personal u organización</h2></div>
+    <p class="why">La única decisión de toda la guía que no se puede deshacer fácil después. Elegí bien el tipo de cuenta.</p>
+
+    <div class="step">
+      <h3>Elegí el tipo de cuenta</h3>
+      <p class="crumb">play.google.com/console → Registrarse</p>
+      <table class="values">
+        <tr><th></th><th>Personal</th><th>Organización</th></tr>
+        <tr><td class="k">Costo</td><td>US$ 25, una sola vez</td><td>US$ 25, una sola vez</td></tr>
+        <tr><td class="k">Verificación</td><td>Documento de identidad personal</td><td>Número D-U-N-S de la empresa + documento</td></tr>
+        <tr><td class="k">Primer lanzamiento</td><td><strong>Testing cerrado: 12 testers por 14 días</strong> antes de poder publicar</td><td>Directo a producción</td></tr>
+        <tr><td class="k">Ideal si…</td><td>Querés lanzar ya para probar</td><td>SolmiOS es un producto comercial del negocio</td></tr>
+      </table>
+      <p>El registro pide los datos del titular tal como aparecen en el documento. La verificación de identidad toma de horas a unos días.</p>
+      <div class="callout warn">
+        <strong>Cuenta personal = 14 días de espera mínima</strong>
+        <p>Las cuentas personales creadas después de noviembre 2023 deben pasar un test cerrado con al menos 12 testers instalados durante 14 días corridos antes de que Google habilite la pista de producción. Si SolmiOS va en serio a producción, la cuenta de organización (con D-U-N-S) te ahorra esas dos semanas. El D-U-N-S se pide gratis en la web de Dun &amp; Bradstreet y tarda hasta 30 días en asignarse: si vas por ese camino, pedilo hoy.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FASE 2 ============ -->
+  <section class="phase" id="fase2">
+    <div class="phase-header"><div class="phase-n">2</div><h2>Crear la app en Play Console</h2></div>
+    <p class="why">Tres datos y Play crea el cascarón donde va a vivir todo lo demás.</p>
+
+    <div class="step">
+      <h3>Nueva aplicación</h3>
+      <p class="crumb">Play Console → «Crear aplicación»</p>
+      <table class="values">
+        <tr><th>Campo</th><th>Valor para SolmiOS</th></tr>
+        <tr><td class="k">Nombre de la app</td><td class="v">SolmiOS</td></tr>
+        <tr><td class="k">Idioma predeterminado</td><td class="v">Español (España) o Español (Latinoamérica) — el que sea, después podés agregar más</td></tr>
+        <tr><td class="k">¿App o juego?</td><td class="v">App</td></tr>
+        <tr><td class="k">¿Gratuita o de pago?</td><td class="v">Gratuita (el pago es por el PMS web, no por la app)</td></tr>
+      </table>
+      <p>El nombre acá es el interno de la consola; el nombre público se configura en la ficha (fase 4) y puede ser más largo, ej. «SolmiOS — Gestión hotelera».</p>
+    </div>
+  </section>
+
+  <!-- ============ FASE 3 ============ -->
+  <section class="phase" id="fase3">
+    <div class="phase-header"><div class="phase-n">3</div><h2>Subir el bundle por primera vez (Play App Signing)</h2></div>
+    <p class="why">En el primer upload Google configura su sistema de firma. Dejá las opciones por defecto y no vuelvas a esta pantalla.</p>
+
+    <div class="step">
+      <h3>Primer envío del AAB</h3>
+      <p class="crumb">Panel → Versiones → Producción (o Testing interno) → Crear versión</p>
+      <ol>
+        <li>Arrastrá <code>solmios-mobile/build/app/outputs/bundle/release/app-release.aab</code> (60.3 MB).</li>
+        <li>Si Play pregunta por <strong>Play App Signing</strong>, aceptá la opción por defecto («Google genera y guarda la llave de firma de la app»).<br><em>En simples: Google se queda con la llave maestra que llega a los teléfonos; vos seguís subiendo siempre firmado con tu <code>upload-keystore.jks</code>. Si mañana perdés tu llave, Google puede reiniciarla — por eso esta opción conviene.</em></li>
+        <li>No publiques todavía: guardá como borrador. La ficha de las fases 4 y 5 debe estar completa antes del envío real a revisión.</li>
+      </ol>
+      <div class="callout danger">
+        <strong>Este bundle ya está firmado con la llave correcta</strong>
+        <p>Firmado <code>CN=SolmiOS</code>, versionCode <span class="num">48</span>, targetSdk <span class="num">36</span> — verificado. No lo recompiles con otra máquina ni borres la keystore: cada futuro upload debe firmarse con la misma llave o Play lo rechazará.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FASE 4 ============ -->
+  <section class="phase" id="fase4">
+    <div class="phase-header"><div class="phase-n">4</div><h2>Ficha de la Play Store</h2></div>
+    <p class="why">Lo que ve el huésped… perdón, el recepcionista: tu futura usuaria busca «SolmiOS» y ve exactamente esto.</p>
+
+    <div class="step">
+      <h3>Datos principales</h3>
+      <p class="crumb">Panel → Presencia en Google Play Store → Ficha de la Play Store principal</p>
+      <table class="values">
+        <tr><th>Campo</th><th>Qué poner (límite)</th></tr>
+        <tr><td class="k">Nombre de la app</td><td class="v">«SolmiOS» o «SolmiOS — Hotel» (máx. 30 caracteres)</td></tr>
+        <tr><td class="k">Descripción breve</td><td class="v">Gestión hotelera para el equipo: limpieza, mantenimiento y habitaciones en tiempo real. (máx. 80)</td></tr>
+        <tr><td class="k">Descripción completa</td><td class="v">Máx. 4000 caracteres. Contá los 4 roles (admin, camarera, supervisor, mantenimiento), fotos/video de evidencia, notificaciones, y que requiere cuenta del hotel SolmiOS.</td></tr>
+      </table>
+      <p>En la descripción completa conviene aclarar temprano que la app requiere credenciales de un hotel registrado — reduce reseñas de 1★ de gente que no puede entrar.</p>
+    </div>
+
+    <div class="step">
+      <h3>Gráficos</h3>
+      <p class="crumb">Misma pantalla → Capturas de pantalla y gráficos</p>
+      <table class="values">
+        <tr><th>Asset</th><th>Estado en tu repo</th><th>Qué necesita Play</th></tr>
+        <tr><td class="k">Ícono (512×512)</td><td class="v">✅ listo — <code>assets/images/logo.png</code> es exactamente 512×512</td><td class="v">PNG/JPG de 512×512, sin transparencia</td></tr>
+        <tr><td class="k">Capturas de teléfono</td><td class="v">⚠️ hay 10 en <code>screenshots/</code> pero son de la vista web</td><td class="v">Mín. 2, formato 9:16 o 16:9. Sacalas de un teléfono real con la app instalada (login, dashboard, limpieza)</td></tr>
+        <tr><td class="k">Gráfico destacado</td><td class="v">❌ no existe — hay que crearlo</td><td class="v">1024×500, JPG/PNG. Es el banner de la ficha; texto grande «El hotel, en la mano de todo el equipo»</td></tr>
+      </table>
+      <div class="callout warn">
+        <strong>Las capturas de web no sirven</strong>
+        <p>Las de <code>screenshots/</code> muestran la versión browser (barras, resolución de desktop). Tomá capturas reales del teléfono: instalá el APK de prueba (<code>flutter build apk --release</code> + <code>adb install</code>), logueate con la cuenta demo y capturá 4–6 pantallas: login, dashboard con KPIs, tarea de limpieza con foto, tickets de mantenimiento.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FASE 5 ============ -->
+  <section class="phase" id="fase5">
+    <div class="phase-header"><div class="phase-n">5</div><h2>Declaraciones obligatorias</h2></div>
+    <p class="why">Acá Play pregunta qué hace tu app con los datos. Estas son las respuestas correctas para SolmiOS según lo que la app realmente recolecta.</p>
+
+    <div class="step">
+      <h3>Seguridad de los datos</h3>
+      <p class="crumb">Panel → Política → Seguridad de los datos</p>
+      <p>La app recolecta: nombre, email y teléfono (login/perfil), fotos y videos de limpieza, mensajes de chat entre personal, y el token de Firebase para notificaciones. Respondé así:</p>
+      <table class="values">
+        <tr><th>Pregunta de Play</th><th>Respuesta</th></tr>
+        <tr><td class="k">¿Recolecta datos?</td><td class="v">Sí</td></tr>
+        <tr><td class="k">¿Los datos están cifrados en tránsito?</td><td class="v">Sí (todo va por HTTPS a <code>hotel.zx89.site</code>)</td></tr>
+        <tr><td class="k">¿Se pueden solicitar la eliminación?</td><td class="v">Sí (el admin borra usuarios y sus datos desde el PMS)</td></tr>
+        <tr><td class="k">Tipos a declarar</td><td class="v">Información personal (nombre, email, teléfono) · Fotos y videos · Mensajes (chat) · ID de usuario/token</td></tr>
+        <tr><td class="k">¿Datos compartidos con terceros?</td><td class="v">No (Firebase/FCM es procesador, no se declara como intercambio)</td></tr>
+      </table>
+    </div>
+
+    <div class="step">
+      <h3>Las demás declaraciones</h3>
+      <p class="crumb">Panel → Política → (cada cuestionario)</p>
+      <table class="values">
+        <tr><th>Cuestionario</th><th>Respuesta para SolmiOS</th></tr>
+        <tr><td class="k">Clasificación de contenido</td><td class="v">Herramienta de negocio. Sin contenido generado visible públicamente (el chat es interno del staff), sin violencia, sin apuestas → resultado esperado: «Todos»</td></tr>
+        <tr><td class="k">Público objetivo</td><td class="v">18+ (personal de hotel). «No está dirigida a niños» en todas las edades menores</td></tr>
+        <tr><td class="k">Anuncios</td><td class="v">No contiene anuncios</td></tr>
+        <tr><td class="k">Acceso a la app (App access)</td><td class="v">«All or some functionality is restricted» → agregá las credenciales demo: <code>hotel@solmios.com</code> / <code>demo123</code> (rol admin). Sin esto, el revisor de Google no pasa del login y suele rechazar</td></tr>
+        <tr><td class="k">Gobierno de datos / contacto</td><td class="v">Nombre y email de contacto tuyos (obligatorio, será visible en la ficha)</td></tr>
+      </table>
+    </div>
+
+    <div class="step">
+      <h3>Política de privacidad — falta publicar</h3>
+      <div class="callout danger">
+        <strong>Play la exige — la página ya está escrita, falta publicarla</strong>
+        <p>La política está lista en <code>documentacion/paginas-solmios/privacidad.html</code> (10 pasadas de QA, español neutro, identidad de solmios.com) y también vive en el CMS del panel (<strong>Panel → admin → Sitio Público</strong>, módulo site-pages) para editarla sin deploys. Publicala en la raíz estática del sitio <strong>solmios.com</strong> (mismo lugar que el <code>index.html</code> de la landing — hoy <code>/privacidad</code> solo devuelve el fallback de la SPA) y declará esta URL en Play Console: <code>https://solmios.com/privacidad</code>. Faltan dos detalles de tu lado: crear el buzón <code>privacidad@solmios.com</code> (la página lo usa como contacto) y que la URL responda antes de enviar a revisión.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FASE 6 ============ -->
+  <section class="phase" id="fase6">
+    <div class="phase-header"><div class="phase-n">6</div><h2>Enviar a revisión</h2></div>
+    <p class="why">Todo declarado, ficha completa, bundle firme: ahora sí, el botón que no vuelve atrás.</p>
+
+    <div class="step">
+      <h3>Versión de producción</h3>
+      <p class="crumb">Panel → Versiones → Producción → Crear versión → (revisar notas de la versión) → Enviar para revisión</p>
+      <ol>
+        <li><strong>Países</strong>: empezá con República Dominicana; agregar LATAM después es un clic. App gratuita = sin fricción.</li>
+        <li><strong>Notas de la versión</strong>: «Primera versión pública de SolmiOS».</li>
+        <li>Antes de enviar, el panel de la izquierda marca en rojo lo que falta: tiene que quedar todo verde (las fases 4 y 5 de esta guía son exactamente eso).</li>
+        <li>La revisión de una app <em>nueva</em> tarda de <strong>1 a 7 días</strong> (a veces más en cuentas recientes). Play te avisa por email.</li>
+      </ol>
+      <div class="callout warn">
+        <strong>Si tu cuenta es personal nueva</strong>
+        <p>No vas a ver la pista de producción habilitada: Play te exige primero el test cerrado. Camino: Versiones → Testing → Testing interno → subís el mismo AAB → «Añadir testers» con una lista de emails → los 12 testers instalan desde el link de opt-in → esperás 14 días corridos con ellos instalada → Play habilita producción. Contá esas dos semanas en tu plan.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FASE 7 ============ -->
+  <section class="phase" id="fase7">
+    <div class="phase-header"><div class="phase-n">7</div><h2>Publicada — y cómo se actualiza después</h2></div>
+    <p class="why">Aprobada la revisión, la app aparece en Play. Todo lo que sigue es el ciclo normal de mantenimiento.</p>
+
+    <div class="step">
+      <h3>Actualizar la app en el futuro</h3>
+      <ol>
+        <li>En <code>solmios-mobile/pubspec.yaml</code> subís la versión: <code>version: 1.0.49+49</code> (el número después del <code>+</code> es el versionCode y <strong>siempre</strong> debe aumentar).</li>
+        <li>Recompilás: <code>flutter build appbundle --release</code> — firma solo con la keystore de la fase 0.</li>
+        <li>Play Console → Producción → Crear versión nueva → arrastrás el AAB → Enviar. La revisión de actualizaciones suele tardar horas, no días.</li>
+      </ol>
+      <div class="callout good">
+        <strong>Métricas</strong>
+        <p>Ya publicada, Play Console →statistics te muestra instalaciones por rol de usuario real, crashes (Android Vitals) y ANRs. Es tu primer tablero de calidad: revisalo la primera semana.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p><strong>Bundle listo en:</strong> <code>solmios-mobile/build/app/outputs/bundle/release/app-release.aab</code> · firmado <code>CN=SolmiOS</code> · <span class="num">60.3 MB</span></p>
+    <p>Requisito de testing cerrado (12 testers / 14 días, cuentas personales nuevas): <a href="https://support.google.com/googleplay/android-developer/answer/14151465">Política de Google Play</a> · <a href="https://primetestlab.com/blog/google-play-changed-20-to-12-testers">resumen del cambio 20→12</a></p>
+    <p>Guía generada para SolmiOS · Manager Hotel PMS · <span class="num">2026-08-16</span></p>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  var boxes = document.querySelectorAll('#phaseCheck input[type="checkbox"]');
+  var done = document.getElementById('done');
+  var total = document.getElementById('total');
+  var fill = document.getElementById('barFill');
+  var KEY = 'solmios-play-guide';
+  var saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { saved = {}; }
+  total.textContent = boxes.length;
+  function render() {
+    var n = 0;
+    boxes.forEach(function (b) { if (b.checked) n++; });
+    done.textContent = n;
+    fill.style.width = (n / boxes.length * 100) + '%';
+  }
+  boxes.forEach(function (b) {
+    var k = b.getAttribute('data-k');
+    if (saved[k]) b.checked = true;
+    b.addEventListener('change', function () {
+      saved[k] = b.checked;
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) {}
+      render();
+    });
+  });
+  render();
+})();
+</script>
+
+</body>
+</html>

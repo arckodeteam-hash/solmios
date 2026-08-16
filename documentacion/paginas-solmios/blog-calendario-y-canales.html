@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tu calendario y los OTAs, sin pelearse — SolmiOS</title>
+<meta name="description" content="La doble reserva no es mala suerte: es un problema de arquitectura. Cómo el calendario y el channel manager comparten una sola fuente de verdad.">
+<link rel="stylesheet" href="paginas.css">
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <a class="home" href="https://solmios.com/blog">← Blog</a>
+    <p class="eyebrow">Operación · Canales</p>
+    <h1>Tu calendario y los OTAs, sin pelearse</h1>
+    <span class="chip">4 min de lectura</span>
+  </div>
+</header>
+
+<main>
+  <section>
+    <p>Cuando un hotel vende en Booking, Airbnb y Expedia además de su recepción, el calendario se vuelve territorio en disputa. La clásica doble reserva —dos canales venden la misma habitación la misma noche— no es mala suerte: es lo que pasa cuando cada canal tiene su propia copia de la disponibilidad.</p>
+    <p>La solución no es revisar tres paneles cada mañana. Es que exista <strong>una sola fuente de verdad</strong> y que todos los canales lean y escriban en ella.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">01</span>El problema de las copias</h2>
+    <p>Cada OTA mantiene su propio inventario de tu hotel. Si actualizas precios a mano en cada panel, siempre hay una ventana donde dos copias discrepan — y en esa ventana ocurren las dobles reservas. Después llega el reembolso, la discusión con el canal y el huésped molesto.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">02</span>Una sola fuente de verdad</h2>
+    <p>En SolmiOS el calendario del planning <em>es</em> el inventario. No se sincroniza con él: lo es. Cuando el channel manager empuja disponibilidad y precios a los canales, empuja desde ese calendario; cuando un canal vende, la reserva entra al mismo calendario y la habitación desaparece de los demás canales en el mismo instante.</p>
+    <p>El resultado práctico: la recepción deja de cuidar paneles y se dedica a los huéspedes.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">03</span>Lo que cambia en el día a día</h2>
+    <ul>
+      <li>Precios y temporadas se definen una vez, en tu calendario — no tres veces, en tres paneles.</li>
+      <li>Una venta en cualquier canal cierra la habitación en todos, sola.</li>
+      <li>Las reservas de canales aparecen en el planning con su origen identificado, sin recarga manual.</li>
+      <li>El reporte de ingresos distingue venta directa de cada canal, para negociar comisiones con datos.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="n">04</span>En resumen</h2>
+    <p>La doble reserva se elimina con arquitectura, no con disciplina. Si tu sistema te pide vigilancia humana para que dos copias no discrepen, el sistema tiene el problema — no tu equipo.</p>
+  </section>
+</main>
+
+<footer class="site"><div class="foot-inner">
+  <p>© 2026 SolmiOS · <a href="https://solmios.com/">solmios.com</a></p>
+  <div class="foot-links">
+    <a href="/blog">← Todos los artículos</a> <a href="/privacidad">Privacidad</a> <a href="/contacto">Contacto</a>
+  </div>
+</div></footer>
+
+</body>
+</html>

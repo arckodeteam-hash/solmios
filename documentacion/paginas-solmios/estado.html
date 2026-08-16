@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estado del Sistema — SolmiOS</title>
+<meta name="description" content="Estado en vivo de la plataforma SolmiOS: API, base de datos y aplicación móvil, verificados desde tu navegador contra el endpoint público de salud.">
+<link rel="stylesheet" href="paginas.css">
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <a class="home" href="https://solmios.com/">← solmios.com</a>
+    <p class="eyebrow">Soporte</p>
+    <h1>Estado del Sistema</h1>
+    <p>Esta página no muestra un estado «pintado»: tu navegador consulta el endpoint público de salud de la plataforma y muestra lo que responde, ahora.</p>
+    <span class="chip">Verificación en vivo · se actualiza al recargar</span>
+  </div>
+</header>
+
+<main>
+
+<section id="ahora">
+  <h2><span class="n">01</span>Ahora mismo</h2>
+
+  <div class="status-row" id="row-api">
+    <span class="status-dot" id="dot-api"></span>
+    <span class="label">API de la plataforma</span>
+    <span class="detail" id="detail-api">verificando…</span>
+  </div>
+  <div class="status-row" id="row-db">
+    <span class="status-dot" id="dot-db"></span>
+    <span class="label">Base de datos</span>
+    <span class="detail" id="detail-db">verificando…</span>
+  </div>
+  <p class="mono" id="ultima" style="color: var(--ink-faint); font-size:.82rem;"></p>
+  <button class="refresh" id="btn-refresh" type="button">Volver a verificar</button>
+</section>
+
+<section id="componentes">
+  <h2><span class="n">02</span>Qué se está verificando</h2>
+  <table class="data">
+    <tr><th>Componente</th><th>Qué significa el check</th></tr>
+    <tr><td><strong>API</strong></td><td>El corazón de la plataforma responde: panel web, app móvil e integraciones hablan con ella. Si está en verde, el sistema operativo normal.</td></tr>
+    <tr><td><strong>Base de datos</strong></td><td>El propio API revisa su conexión a la base (<code>checks.db</code> en el endpoint de salud). En verde: reservas, facturas y sesiones se leen y escriben con normalidad.</td></tr>
+    <tr><td><strong>App móvil</strong></td><td>Usa la misma API que se verifica arriba; su tienda de distribución (Google Play) es gestionada por Google. No tiene servicio propio que pueda caerse independiente.</td></tr>
+    <tr><td><strong>Sitio web</strong></td><td>Estás viéndolo: si esta página carga, el sitio responde.</td></tr>
+  </table>
+</section>
+
+<section id="si-falla">
+  <h2><span class="n">03</span>Si algo está en rojo</h2>
+  <ul>
+    <li>Si solo tu hotel no entra y acá todo está verde, revisa tu conexión o escríbenos por el chat del panel — puede ser algo puntual de tu cuenta.</li>
+    <li>Si la API está en rojo o amarillo, ya lo sabemos: las alertas del sistema avisan al equipo técnico antes que a nadie. Puedes seguir el detalle por <a href="mailto:soporte@solmios.com">soporte@solmios.com</a>.</li>
+    <li>Si el check no se puede ejecutar (navegador sin red, bloqueador), verás «no verificable» — eso no significa caído.</li>
+  </ul>
+</section>
+
+</main>
+
+<footer class="site"><div class="foot-inner">
+  <p>© 2026 SolmiOS · <a href="https://solmios.com/">solmios.com</a></p>
+  <div class="foot-links">
+    <a href="/privacidad">Privacidad</a> <a href="/terminos">Términos</a> <a href="/cookies">Cookies</a> <a href="/ayuda">Ayuda</a> <a href="/contacto">Contacto</a> <a href="/api">API</a>
+  </div>
+</div></footer>
+
+<script>
+(function () {
+  // Endpoint público de salud de la plataforma (CORS abierto, sin autenticación).
+  // Si la plataforma cambia de dominio, este es el único valor a actualizar.
+  var HEALTH_URL = 'https://hotel.zx89.site/api/health';
+
+  function setState(id, state, text) {
+    var dot = document.getElementById('dot-' + id);
+    var detail = document.getElementById('detail-' + id);
+    dot.className = 'status-dot ' + state;
+    detail.textContent = text;
+  }
+
+  function uptime(s) {
+    if (s == null) return '';
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h > 0 ? ('activo ' + h + ' h ' + m + ' min') : ('activo ' + m + ' min');
+  }
+
+  function check() {
+    document.getElementById('ultima').textContent = '';
+    ['api', 'db'].forEach(function (k) { setState(k, 'unknown', 'verificando…'); });
+
+    fetch(HEALTH_URL, { cache: 'no-store' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (body) {
+        var data = (body && body.data) || {};
+        var ok = data.status === 'ok';
+        var up = uptime(data.uptimeSeconds);
+        setState('api', ok ? 'ok' : 'down', ok ? ('responde · ' + up) : ('estado: ' + data.status));
+        var db = data.checks && data.checks.db;
+        setState('db', db === 'up' ? 'ok' : 'down', db === 'up' ? 'conectada' : ('estado: ' + db));
+        document.getElementById('ultima').textContent =
+          'Última verificación: ' + new Date().toLocaleTimeString('es');
+      })
+      .catch(function () {
+        ['api', 'db'].forEach(function (k) { setState(k, 'unknown', 'no verificable'); });
+        document.getElementById('ultima').textContent =
+          'Sin respuesta del check (' + new Date().toLocaleTimeString('es') + '). No significa caído: prueba recargar o revisa tu conexión.';
+      });
+  }
+
+  document.getElementById('btn-refresh').addEventListener('click', check);
+  check();
+})();
+</script>
+
+</body>
+</html>
