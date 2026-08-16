@@ -166,6 +166,12 @@ async function createTablesBlock1(): Promise<void> {
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_season_assignments_hotel_date
     ON season_assignments (hotelId, date)`)
 
+  // CMS del sitio público del SaaS (módulo site-pages). La tabla la crea ormMigrate (modelo ORM,
+  // Paso 1); el UNIQUE(slug) se garantiza acá mismo estilo que configuration (el ORM no crea
+  // uniques). Dureza de datos para el check-then-create del service (ConflictError 409) — si dos
+  // admins crean el mismo slug a la vez, la carrera la frena el índice.
+  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_site_pages_slug ON site_pages (slug)`)
+
   await exec(`CREATE TABLE IF NOT EXISTS groups (
     id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, name TEXT NOT NULL, leadGuestId TEXT,
     totalRooms INTEGER DEFAULT 1, checkIn TEXT, checkOut TEXT, status TEXT DEFAULT 'pending',
