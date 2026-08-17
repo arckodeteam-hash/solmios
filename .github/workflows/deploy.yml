@@ -35,11 +35,12 @@ jobs:
           bun run analyze
           bun test --env-file .env.test
 
-      - name: Frontend typecheck
+      - name: Frontend typecheck + tests
         working-directory: frontend
         run: |
           bun install
           bun run typecheck
+          bun run test
 
   deploy:
     needs: verify

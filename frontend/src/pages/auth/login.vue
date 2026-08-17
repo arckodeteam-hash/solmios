@@ -168,16 +168,26 @@ const FIXED_DEMO_ACCOUNTS = [
   { name: 'Recepcionista Demo', email: 'recepcion@solmios.com', password: 'demo123', role: 'receptionist' },
 ]
 
+// Mismo criterio fail-closed que el backend (`getPublicUsers`, V6): las cuentas demo son
+// una conveniencia de DESARROLLO. En el build de producción `import.meta.env.DEV` es
+// false (constante build-time de Vite), el array queda vacío, el bloque `v-if` no se
+// renderiza y ni siquiera se consulta el endpoint — antes el panel público de internet
+// mostraba los botones de login demo a cualquiera que abriera la página.
+const isDev = import.meta.env.DEV
+
 const demoAccounts = ref<any[]>(
-  FIXED_DEMO_ACCOUNTS.map((u) => ({
-    name: u.name,
-    email: u.email,
-    password: u.password,
-    roleLabel: ROLE_LABELS[u.role] || u.role,
-  })),
+  isDev
+    ? FIXED_DEMO_ACCOUNTS.map((u) => ({
+        name: u.name,
+        email: u.email,
+        password: u.password,
+        roleLabel: ROLE_LABELS[u.role] || u.role,
+      }))
+    : [],
 )
 
 onMounted(async () => {
+  if (!isDev) return
   try {
     // Raw fetch justified: public endpoint, no auth required, AuthService has no method for this.
     // Matches http.ts behavior: check response.ok, parse JSON, handle errors.
