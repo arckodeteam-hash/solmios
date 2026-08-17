@@ -23,12 +23,17 @@ const PROVIDER_EDITABLE_FIELDS = [
 export class ProvidersUseCase {
   constructor(private readonly repo: RepositoryAdapter<MaintenanceProviderDTO>) {}
 
-  /** Los proveedores del hotel de quien pregunta. Los de baja no se listan. */
-  async list(user: User): Promise<MaintenanceProviderDTO[]> {
+  /**
+   * Los proveedores del hotel de quien pregunta. Los de baja no se listan, SALVO que se
+   * pida `includeInactive` (la vista de administración los gestiona: reactivar, ver el
+   * catálogo completo). Los consumers normales —el selector de tickets, la app— no lo
+   * pasan y siguen viendo solo activos.
+   */
+  async list(user: User, opts: { includeInactive?: boolean } = {}): Promise<MaintenanceProviderDTO[]> {
     const hotelId = user.hotelId
     if (!hotelId && user.role !== 'super_admin') return []
     const rows = await this.repo.findMany(hotelId ? { hotelId } : {})
-    return rows.filter((p) => p.active !== false)
+    return opts.includeInactive ? rows : rows.filter((p) => p.active !== false)
   }
 
   async create(dto: Partial<MaintenanceProviderDTO>, user: User): Promise<MaintenanceProviderDTO> {
@@ -49,7 +54,7 @@ export class ProvidersUseCase {
       workDays: dto.workDays ?? '',
       workStart: dto.workStart ?? '',
       workEnd: dto.workEnd ?? '',
-      active: true,
+      active: dto.active ?? true,
     } as any)
   }
 

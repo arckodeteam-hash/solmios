@@ -120,7 +120,7 @@ export class MantenimientoService {
   }
 
   // ─── Servicios externos (proveedores) ─────────────────
-  async listProviders(u: User) { return this.providers.list(u) }
+  async listProviders(u: User, includeInactive = false) { return this.providers.list(u, { includeInactive }) }
   async createProvider(dto: Partial<MaintenanceProviderDTO>, u: User) { return this.providers.create(dto, u) }
   async updateProvider(id: string, dto: Partial<MaintenanceProviderDTO>, u: User) { return this.providers.update(id, dto, u) }
   async removeProvider(id: string, u: User) { return this.providers.remove(id, u) }

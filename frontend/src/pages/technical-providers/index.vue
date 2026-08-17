@@ -158,6 +158,12 @@
           <div v-if="p.notes" class="text-[11px] text-text-muted italic mb-4 line-clamp-2">{{ p.notes }}</div>
 
           <div class="flex items-center justify-end gap-1 pt-3 mt-auto border-t border-border">
+            <button
+              v-if="p.active === false"
+              @click="reactivate(p)"
+              title="Reactivar proveedor dado de baja"
+              class="text-[10px] font-extrabold px-2.5 py-1 rounded-lg bg-teal/10 text-teal hover:bg-teal/20 cursor-pointer"
+            >Reactivar</button>
             <button @click="openEdit(p)" title="Editar" aria-label="Editar"
               class="w-8 h-8 grid place-items-center rounded-lg text-text-secondary hover:bg-navy/10 hover:text-navy transition-colors cursor-pointer">
               <span class="w-4 h-4" v-html="ICON_EDIT"></span>
@@ -207,7 +213,7 @@
 
         <div class="col-span-2">
           <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Tarifa</label>
-          <input v-model="form.rate" maxlength="120" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="Ej: RD$1500 por visita">
+          <input v-model="form.rate" maxlength="80" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="Ej: RD$1500 por visita">
         </div>
 
         <div class="col-span-2">
@@ -230,7 +236,8 @@
         </div>
         <div>
           <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Hasta</label>
-          <input v-model="form.workEnd" type="time" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+          <input v-model="form.workEnd" type="time" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" :class="scheduleError ? 'border-danger' : ''">
+          <p v-if="scheduleError" class="text-[10px] text-danger mt-1">{{ scheduleError }}</p>
         </div>
 
         <div class="col-span-2">
@@ -252,12 +259,12 @@
       </template>
     </AppModal>
 
-    <!-- Modal: confirmar eliminación -->
+    <!-- Modal: confirmar eliminación (baja lógica — se puede revertir con Reactivar) -->
     <ConfirmModal
       v-if="deleteTarget"
       title="Eliminar proveedor"
-      :message="`¿Seguro que querés eliminar a ${deleteTarget.name}? Esta acción no se puede deshacer.`"
-      confirm-label="Eliminar"
+      :message="`¿Dar de baja a ${deleteTarget.name}? Deja de aparecer en los tickets nuevos, y podés reactivarlo desde el filtro Inactivos.`"
+      confirm-label="Dar de baja"
       danger
       :loading="deleting"
       @close="deleteTarget = null"
@@ -321,6 +328,7 @@ const showModal = ref(false)
 const editing = ref<TechnicalProvider | null>(null)
 const saving = ref(false)
 const nameError = ref('')
+const scheduleError = ref('')
 const selectedDays = ref<Set<string>>(new Set())
 
 const deleteTarget = ref<TechnicalProvider | null>(null)
@@ -377,11 +385,24 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    providers.value = await TechnicalProvidersService.list()
+    // Vista de ADMINISTRACIÓN: trae también los de baja para poder reactivarlos
+    // y que KPIs/filtros no mientan. El selector de tickets sigue viendo solo activos.
+    providers.value = await TechnicalProvidersService.list(true)
   } catch {
     error.value = 'No se pudieron cargar los proveedores de servicios.'
   } finally {
     loading.value = false
+  }
+}
+
+/** Reactiva un proveedor dado de baja (la baja es lógica — el botón deshace el "Eliminar"). */
+async function reactivate(p: TechnicalProvider) {
+  try {
+    await TechnicalProvidersService.update(p.id, { active: true })
+    toast.success(`${p.name} reactivado`)
+    await load()
+  } catch {
+    toast.error('No se pudo reactivar el proveedor')
   }
 }
 
@@ -458,6 +479,7 @@ function toggleDay(key: string) {
 function openNew() {
   editing.value = null
   nameError.value = ''
+  scheduleError.value = ''
   form.value = emptyForm()
   selectedDays.value = new Set()
   showModal.value = true
@@ -466,6 +488,7 @@ function openNew() {
 function openEdit(p: TechnicalProvider) {
   editing.value = p
   nameError.value = ''
+  scheduleError.value = ''
   form.value = {
     name: p.name ?? '',
     specialty: p.specialty ?? '',
@@ -492,9 +515,21 @@ function serializeDays(): string {
 
 async function save() {
   nameError.value = ''
+  scheduleError.value = ''
   const name = form.value.name.trim()
   if (!name) {
     nameError.value = 'El nombre es obligatorio.'
+    return
+  }
+  // Mismo mínimo que el backend (MIN_TEXT_LENGTH): sin esto, 1-2 letras pasaban acá y
+  // morían en un 400 con toast genérico que no decía por qué.
+  if (name.length < 3) {
+    nameError.value = 'El nombre necesita al menos 3 caracteres.'
+    return
+  }
+  // Horario invertido: en disponibilidad "desde las 18 hasta las 8" no significa nada.
+  if (form.value.workStart && form.value.workEnd && form.value.workStart > form.value.workEnd) {
+    scheduleError.value = 'La hora "Hasta" debe ser posterior a "Desde".'
     return
   }
   saving.value = true
@@ -523,8 +558,11 @@ async function save() {
     showModal.value = false
     editing.value = null
     await load()
-  } catch {
-    toast.error(editing.value ? 'Error al actualizar el proveedor' : 'Error al crear el proveedor')
+  } catch (e) {
+    // ApiError ya viene enriquecido con el detalle de validación del backend
+    // (withFieldDetail en http.ts) — mostrarlo en vez de un genérico que oculta la causa.
+    const detail = e instanceof Error && e.message ? e.message : ''
+    toast.error(detail || (editing.value ? 'Error al actualizar el proveedor' : 'Error al crear el proveedor'))
   } finally {
     saving.value = false
   }
@@ -539,7 +577,7 @@ async function confirmDelete() {
   deleting.value = true
   try {
     await TechnicalProvidersService.remove(deleteTarget.value.id)
-    toast.success('Proveedor de servicios eliminado')
+    toast.success('Proveedor dado de baja (reactivalo desde Inactivos si lo necesitás)')
     deleteTarget.value = null
     await load()
   } catch {
