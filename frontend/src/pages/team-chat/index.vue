@@ -41,7 +41,7 @@
             <input
               v-model="search"
               type="text"
-              placeholder="Buscar persona o mensaje..."
+              placeholder="Buscar persona o último mensaje..."
               aria-label="Buscar conversación"
               class="w-full pl-8 pr-3 py-1.5 rounded-lg border border-border bg-surface text-xs text-navy placeholder:text-text-muted/60 focus:outline-none focus:border-navy"
             >
