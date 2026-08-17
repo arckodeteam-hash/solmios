@@ -380,6 +380,8 @@ SOLSSH "cd $REPO && GIT_SSH_COMMAND='ssh -i /root/.ssh/id_ed25519 -o IdentitiesO
 SOLSSH "cd $REPO/backend && bun install && systemctl restart solmios-backend"
 SOLSSH "cd $REPO/frontend && bun --bun vite build"   # SIEMPRE bun --bun (Node 18 + Vite 8 rompe)
 # Si cambiaron modelos ORM: cd $REPO/backend && set -a && source .env && set +a && RUN_MIGRATE=1 bun run src/composition-root.ts
+# Si cambiaron seeds/tablas extra (migrate-db.ts): cd $REPO/backend && set -a && source .env && set +a && bun run migrate
+# NOTA: el auto-deploy (deploy-solmios.sh) YA corre RUN_MIGRATE=1 y bun run migrate en cada deploy (desde 2026-08-17) — esto es solo para deploy manual.
 ```
 
 ## Ejecución (local)
