@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Explicación del Flujo de Trabajo - Kaptas ERP</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #fff; padding: 20px; }
+        .container { max-width: 1100px; margin: 0 auto; }
+        h1 { text-align: center; margin: 30px 0 10px; color: #00d4aa; font-size: 2.2rem; }
+        .subtitle { text-align: center; margin-bottom: 40px; opacity: 0.7; }
+
+        .card { background: #16213e; border-radius: 15px; padding: 30px; margin-bottom: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+        .card-title { font-size: 1.4rem; color: #00d4aa; border-bottom: 2px solid #00d4aa; padding-bottom: 10px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+
+        .two-col { display: flex; gap: 25px; flex-wrap: wrap; }
+        .two-col > * { flex: 1; min-width: 280px; }
+
+        .box-red { background: rgba(239,68,68,0.1); border-left: 5px solid #ef4444; padding: 20px; border-radius: 10px; }
+        .box-green { background: rgba(56,239,125,0.1); border-left: 5px solid #38ef7d; padding: 20px; border-radius: 10px; }
+        .box-yellow { background: rgba(245,158,11,0.1); border-left: 5px solid #f59e0b; padding: 20px; border-radius: 10px; }
+        .box-blue { background: rgba(79,172,254,0.1); border-left: 5px solid #4facfe; padding: 20px; border-radius: 10px; }
+        .box-title { font-weight: bold; font-size: 1.1rem; margin-bottom: 8px; }
+        .box-red .box-title { color: #ef4444; }
+        .box-green .box-title { color: #38ef7d; }
+        .box-yellow .box-title { color: #f59e0b; }
+        .box-blue .box-title { color: #4facfe; }
+
+        table { width: 100%; border-collapse: collapse; background: #0f3460; border-radius: 12px; overflow: hidden; margin: 15px 0; }
+        th { background: linear-gradient(90deg, #667eea, #764ba2); padding: 14px; text-align: left; }
+        td { padding: 12px 14px; border-bottom: 1px solid #1a1a2e; line-height: 1.5; }
+        tr:hover { background: rgba(255,255,255,0.03); }
+        code { background: #0f3460; padding: 3px 8px; border-radius: 5px; font-size: 0.9rem; color: #f59e0b; }
+
+        .flow { display: flex; flex-direction: column; align-items: center; gap: 8px; font-family: 'Courier New', monospace; padding: 20px; }
+        .flow-node { padding: 14px 30px; border-radius: 10px; text-align: center; min-width: 350px; font-weight: 600; }
+        .fn-main { background: linear-gradient(90deg,#1e3a5f,#16213e); border: 2px solid #00d4aa; }
+        .fn-dev { background: linear-gradient(90deg,#4a3d2a,#16213e); border: 2px solid #38ef7d; }
+        .fn-qa { background: linear-gradient(90deg,#4a2a3d,#16213e); border: 2px solid #f5576c; }
+        .fn-pre { background: linear-gradient(90deg,#3d2a4a,#16213e); border: 2px solid #a855f7; }
+        .fn-release { background: linear-gradient(90deg,#2d4a3e,#16213e); border: 2px solid #f59e0b; }
+        .fn-fix { background: linear-gradient(90deg,#4a2a2a,#16213e); border: 2px solid #ef4444; }
+        .fn-prod { background: linear-gradient(90deg,#1e3a5f,#16213e); border: 2px solid #38ef7d; }
+        .flow-arrow { font-size: 1.3rem; color: #00d4aa; }
+        .flow-label { font-size: 0.8rem; opacity: 0.7; margin-top: 3px; }
+
+        .highlight { color: #f59e0b; font-weight: bold; }
+        .green { color: #38ef7d; font-weight: bold; }
+
+        @media (max-width: 768px) {
+            h1 { font-size: 1.6rem; }
+            .flow-node { min-width: auto; width: 100%; padding: 12px 16px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧠 Flujo de Trabajo Kaptas ERP — Explicado</h1>
+        <p class="subtitle">Cómo trabajar sin pisarse, sin heredar bugs ajenos y entendiendo cuándo usar release</p>
+
+        <!-- ===================== SECCIÓN 1: LAS 3 ETAPAS DE PRUEBA ===================== -->
+        <div class="card">
+            <div class="card-title">🔍 Las 3 Etapas de Prueba (y quién revisa qué)</div>
+
+            <div class="two-col">
+                <div class="box-green">
+                    <div class="box-title">🧪 Etapa 1 — En tu rama (TÚ)</div>
+                    <p style="opacity:0.85;line-height:1.6;">
+                        Codeas y pruebas tu feature <strong>en tu propia rama</strong>.<br>
+                        Si encuentras bug, lo corriges ahí mismo.<br>
+                        <span style="color:#f59e0b;">➜ Verificas que TU código funciona SOLO.</span>
+                    </p>
+                </div>
+
+                <div class="box-yellow">
+                    <div class="box-title">🔬 Etapa 2 — QA-DEV (Joel/José)</div>
+                    <p style="opacity:0.85;line-height:1.6;">
+                        Revisan que tu código esté bien escrito: seguridad, arquitectura, buenas prácticas.<br>
+                        <span style="color:#f59e0b;">➜ NO prueban funcionalidad. Revisan el código.</span>
+                    </p>
+                </div>
+
+                <div class="box-blue">
+                    <div class="box-title">🧪 Etapa 3 — QA-UI (Equipo Kaptas)</div>
+                    <p style="opacity:0.85;line-height:1.6;">
+                        Prueban <strong>todo junto</strong> en pre-produccion: tu feature + las de otros.<br>
+                        Aquí aparecen los bugs de <strong>integración</strong>: "el botón de A se rompe cuando B está activo".<br>
+                        <span style="color:#f59e0b;">➜ Prueban funcionalidad, UI/UX, frontend + backend juntos.</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===================== SECCIÓN 2: EL PROBLEMA QUE RESUELVE RELEASE ===================== -->
+        <div class="card">
+            <div class="card-title">❓ ¿Por Qué Necesitamos <code>release/vX.X.X</code>?</div>
+
+            <div class="two-col">
+                <div class="box-red">
+                    <div class="box-title">😱 Escenario sin release</div>
+                    <p style="opacity:0.85;line-height:1.6;">
+                        DEV 01 termina Feature A → QA-DEV aprueba ✅<br>
+                        DEV 02 termina Feature B → QA-DEV aprueba ✅<br><br>
+                        QA-UI prueba ambas juntas en pre-produccion:<br>
+                        <strong>"Feature A rompe el frontend cuando Feature B está activa"</strong> ❌<br><br>
+                        <span class="highlight">¿Desde dónde creo el fix?</span><br>
+                        ❌ <strong>main</strong> → El bug NO existe, A y B no están en main<br>
+                        ❌ <strong>pre-produccion</strong> → Tiene WIP de otros, me llevo basura<br>
+                        ✅ <strong>release/vX.X.X</strong> → Tiene EXACTAMENTE A + B. El bug está aquí.
+                    </p>
+                </div>
+
+                <div class="box-green">
+                    <div class="box-title">✅ Solución: release branch</div>
+                    <p style="opacity:0.85;line-height:1.6;">
+                        <code>release/vX.X.X</code> se crea desde <strong>main</strong> y solo contiene features <strong>aprobadas por QA-DEV</strong>.<br><br>
+                        No es lo mismo que pre-produccion:<br>
+                        • <strong>pre-produccion</strong> = WIP de todos, código inestable<br>
+                        • <strong>release</strong> = solo features listas para producción<br><br>
+                        El fix se crea desde release, se mergea a release,<br>
+                        y release va a main cuando QA-UI aprueba.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===================== SECCIÓN 3: REGLA DE ORO ===================== -->
+        <div class="card">
+            <div class="card-title">📋 Tabla Decisoria: ¿Desde Dónde Creo Mi Rama?</div>
+
+            <table>
+                <tr>
+                    <th style="width:25%">Situación</th>
+                    <th style="width:20%">Crear desde</th>
+                    <th>Explicación</th>
+                </tr>
+                <tr>
+                    <td><strong>✨ Feature nueva</strong></td>
+                    <td><code style="color:#38ef7d;">main</code></td>
+                    <td>Arrancas limpio, sin código de nadie</td>
+                </tr>
+                <tr>
+                    <td><strong>♻️ Refactor</strong></td>
+                    <td><code style="color:#38ef7d;">main</code></td>
+                    <td>Mejoras código que ya está en producción</td>
+                </tr>
+                <tr>
+                    <td><strong>🔧 Bug en desarrollo (tu PC)</strong></td>
+                    <td><code style="color:#38ef7d;">Tu misma rama</code></td>
+                    <td>Corriges y push, sin crear rama nueva</td>
+                </tr>
+                <tr>
+                    <td><strong>🔧 Bug en QA-DEV (PR)</strong></td>
+                    <td><code style="color:#38ef7d;">Tu misma rama</code></td>
+                    <td>Corriges, push, el PR se actualiza solo</td>
+                </tr>
+                <tr style="background:rgba(245,158,11,0.1);">
+                    <td><strong>🔧 Bug en QA-UI (pruebas)</strong></td>
+                    <td><code style="color:#f59e0b;">release/vX.X.X</code></td>
+                    <td>El bug está en la release. Desde main no existe. Desde release sí puedes reproducirlo.</td>
+                </tr>
+                <tr style="background:rgba(239,68,68,0.1);">
+                    <td><strong>🚨 Hotfix (producción)</strong></td>
+                    <td><code style="color:#ef4444;">main</code></td>
+                    <td>Urgente, el bug está en vivo</td>
+                </tr>
+            </table>
+
+            <div class="box-yellow" style="margin-top:20px;">
+                <div class="box-title">🧠 Resumen fácil de recordar</div>
+                <p style="opacity:0.85;line-height:1.7;">
+                    <strong>¿Es trabajo nuevo?</strong> → <code>main</code><br>
+                    <strong>¿Es un bug en algo que ya está en pruebas?</strong> → <code>release/vX.X.X</code><br>
+                    <strong>¿Es un bug en tu propia rama?</strong> → Ahí mismo, sin crear rama nueva<br>
+                    <strong>¿Es un bug en producción?</strong> → <code>main</code> (hotfix)
+                </p>
+            </div>
+        </div>
+
+        <!-- ===================== SECCIÓN 4: FLUJO COMPLETO PASO A PASO ===================== -->
+        <div class="card">
+            <div class="card-title">⚡ Flujo Completo Paso a Paso</div>
+
+            <div class="flow">
+                <div class="flow-node fn-main">1. Arquitecto (Luis) define la tarea y la asigna</div>
+                <div class="flow-arrow">↓</div>
+
+                <div class="flow-node fn-dev">2. DEV crea rama desde <code>main</code><br><span class="flow-label">feature/xxx, fix/xxx, refactor/xxx</span></div>
+                <div class="flow-arrow">↓</div>
+
+                <div class="flow-node fn-dev">3. DEV codea y prueba <strong>en su propia rama</strong><br><span class="flow-label">Si encuentra bug → lo corrige ahí mismo</span></div>
+                <div class="flow-arrow">↓</div>
+
+                <div class="flow-node fn-qa">4. DEV push + crea PR → rama <code>qa</code></div>
+                <div class="flow-arrow">↓</div>
+
+                <div class="flow-node fn-qa">5. QA-DEV (Joel/José) revisa el código<br><span class="flow-label">¿Aprueba o Rechaza?</span></div>
+                <div class="flow-arrow">↓</div>
+
+                <div style="display:flex;gap:20px;flex-wrap:wrap;justify-content:center;">
+                    <div style="text-align:center;">
+                        <div style="background:linear-gradient(90deg,#11998e,#38ef7d);color:#000;padding:12px 25px;border-radius:10px;font-weight:bold;min-width:200px;">✅ APRUEBA</div>
+                        <div style="margin:8px 0;font-size:1.2rem;color:#00d4aa;">↓</div>
+                        <div class="flow-node fn-pre" style="min-width:280px;">
+                            6. Ricardo mergea a <code>pre-produccion</code><br>
+                            <span class="flow-label">Deploy automático a entorno de pruebas</span>
+                        </div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="background:linear-gradient(90deg,#ef4444,#dc2626);padding:12px 25px;border-radius:10px;font-weight:bold;min-width:200px;">❌ RECHAZA</div>
+                        <div style="margin:8px 0;font-size:1.2rem;color:#00d4aa;">↓</div>
+                        <div style="background:#2d1a3e;border:2px solid #ef4444;padding:14px 20px;border-radius:10px;min-width:280px;font-size:0.9rem;">
+                            <strong style="color:#f59e0b;">Menor:</strong> Corriges en tu misma rama<br>
+                            <strong style="color:#f59e0b;">Grave:</strong> Nueva rama desde <code>main</code>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flow-arrow">↓</div>
+
+                <div class="flow-node fn-pre">7. QA-UI (Equipo Kaptas) prueba <strong>todo junto</strong><br><span class="flow-label">Frontend + backend + features de todos los DEV</span></div>
+                <div class="flow-arrow">↓</div>
+
+                <div style="display:flex;gap:20px;flex-wrap:wrap;justify-content:center;">
+                    <div style="text-align:center;">
+                        <div style="background:linear-gradient(90deg,#11998e,#38ef7d);color:#000;padding:12px 25px;border-radius:10px;font-weight:bold;min-width:200px;">✅ TODO OK</div>
+                        <div style="margin:8px 0;font-size:1.2rem;color:#00d4aa;">↓</div>
+                        <div class="flow-node fn-release" style="min-width:280px;">
+                            8. Crear <code>release/vX.X.X</code> desde <code>main</code><br>
+                            <span class="flow-label">Solo features aprobadas y validadas</span>
+                        </div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="background:linear-gradient(90deg,#f59e0b,#dc2626);padding:12px 25px;border-radius:10px;font-weight:bold;min-width:200px;">🐛 BUG ENCONTRADO</div>
+                        <div style="margin:8px 0;font-size:1.2rem;color:#00d4aa;">↓</div>
+                        <div class="flow-node fn-fix" style="min-width:280px;">
+                            8b. Fix desde <code>release/vX.X.X</code><br>
+                            <span class="flow-label">PR → QA-DEV aprueba → merge a release</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flow-arrow">↓</div>
+
+                <div class="flow-node fn-prod">9. José/Ricardo deployan <code>release/vX.X.X</code> a producción<br><span class="flow-label">merge a main → listo 🎉</span></div>
+            </div>
+        </div>
+
+        <!-- ===================== SECCIÓN 5: REGLAS PARA EVITAR CONFLICTOS ===================== -->
+        <div class="card">
+            <div class="card-title">🛡️ Reglas para No Heredar Errores de Otros</div>
+
+            <div class="two-col">
+                <div class="box-green">
+                    <div class="box-title">✅ SÍ</div>
+                    <p style="opacity:0.85;line-height:1.7;">
+                        ✓ Crear ramas desde <code>main</code><br>
+                        ✓ Probar en tu propia rama antes del PR<br>
+                        ✓ PRs pequeños (menos de 400 líneas)<br>
+                        ✓ Hacer <code>git rebase main</code> antes del PR<br>
+                        ✓ Que otro revise tu código (nadie se auto-aprueba)<br>
+                        ✓ Bugs en QA-UI → fix desde <code>release/vX.X.X</code>
+                    </p>
+                </div>
+
+                <div class="box-red">
+                    <div class="box-title">❌ NO</div>
+                    <p style="opacity:0.85;line-height:1.7;">
+                        ✗ Crear ramas desde <code>pre-produccion</code><br>
+                        ✗ Crear ramas desde ramas de otros<br>
+                        ✗ Mergear tu propio PR<br>
+                        ✗ Crear fix de bug en pruebas desde <code>main</code><br>
+                        ✗ Resolver conflictos por la web de GitHub<br>
+                        ✗ Codear sin hacer <code>git pull</code> primero
+                    </p>
+                </div>
+            </div>
+
+            <div class="box-blue" style="margin-top:20px;">
+                <div class="box-title">⚠️ ¿Conflicto en el PR? Hacemos así</div>
+                <p style="opacity:0.85;line-height:1.7;">
+                    1. <code>git checkout main && git pull</code><br>
+                    2. <code>git checkout feature/mia</code><br>
+                    3. <code>git rebase main</code><br>
+                    4. Resuelves conflictos UNO POR UNO<br>
+                    5. <code>git push --force-with-lease</code><br><br>
+                    <span style="color:#f59e0b;">¿Muchos conflictos (10+ archivos)?</span><br>
+                    Mejor crea nueva rama desde <code>main</code> y re-aplica tus cambios manualmente.
+                </p>
+            </div>
+        </div>
+
+        <!-- ===================== SECCIÓN 6: MITOS ===================== -->
+        <div class="card">
+            <div class="card-title">🤔 Preguntas Frecuentes</div>
+
+            <div class="box-yellow" style="margin-bottom:15px;">
+                <div class="box-title">"Pero si release va a main igual, da lo mismo crear desde main"</div>
+                <p style="opacity:0.85;line-height:1.6;">
+                    <strong>No.</strong> <code>main</code> hoy NO tiene la feature bug-eada (no ha llegado a producción).
+                    Si creas desde main, codeas sobre código que no se parece al entorno de pruebas.
+                    El fix no funciona porque los archivos que necesitas tocar no existen en tu base.<br>
+                    <span class="green">Desde release sí existen. Por eso se usa release.</span>
+                </p>
+            </div>
+
+            <div class="box-yellow" style="margin-bottom:15px;">
+                <div class="box-title">"Si pruebo todo en mi rama, ¿para qué necesito pre-produccion?"</div>
+                <p style="opacity:0.85;line-height:1.6;">
+                    En tu rama pruebas <strong>tu código solo</strong>. Pero tu feature puede romper
+                    el frontend cuando se encuentra con la feature de otro. Eso solo se descubre
+                    cuando <strong>todo está junto</strong> en pre-produccion.
+                </p>
+            </div>
+
+            <div class="box-yellow">
+                <div class="box-title">"¿Por qué no creo el fix desde pre-produccion si ahí está el bug?"</div>
+                <p style="opacity:0.85;line-height:1.6;">
+                    Porque <code>pre-produccion</code> tiene WIP de todos los DEV: features a medio hacer,
+                    bugs sin corregir, experimentos. Si creas tu rama desde ahí, te llevas
+                    <strong>todo eso sin saberlo</strong> y tu PR tendrá errores que no son tuyos.<br>
+                    <span class="green">Desde release solo tienes features aprobadas.</span>
+                </p>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

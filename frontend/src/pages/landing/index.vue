@@ -1,53 +1,8 @@
 <template>
   <div class="bg-white min-h-screen">
 
-    <!-- ═══ NAVBAR — claro, fijo, frosted glass sutil ═══ -->
-    <nav
-      class="fixed top-0 inset-x-0 z-50 bg-white/90 backdrop-blur-xl border-b border-slate-100 transition-shadow duration-300"
-      :class="scrolled ? 'shadow-[0_1px_24px_rgba(13,43,78,0.07)]' : ''"
-    >
-      <div class="max-w-7xl mx-auto px-6 h-[4.5rem]">
-        <div class="flex items-center justify-between h-full">
-          <!-- Logo -->
-          <router-link to="/" class="flex items-center gap-2.5 group">
-            <div class="w-9 h-9 rounded-xl bg-navy text-white flex items-center justify-center font-black text-base shadow-sm group-hover:bg-blue transition-colors">S</div>
-            <span class="font-black text-lg tracking-tight text-navy">Solmi<span class="text-blue">OS</span></span>
-          </router-link>
-
-          <!-- Links -->
-          <div class="hidden xl:flex items-center gap-6">
-            <a
-              v-for="link in navLinks" :key="link.href" :href="link.href"
-              class="relative flex items-center gap-1 text-sm font-semibold text-slate-600 hover:text-navy transition-colors duration-200 py-1 nav-link whitespace-nowrap"
-              :class="activeSection === link.section ? 'is-active' : ''"
-            >{{ link.label }}
-              <svg v-if="link.hasDropdown" class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
-            </a>
-          </div>
-
-          <!-- Actions -->
-          <div class="flex items-center gap-2.5">
-            <router-link
-              to="/hotel-fundador"
-              class="hidden md:inline-flex items-center gap-1.5 text-xs font-extrabold px-3.5 py-2 rounded-full bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 transition-colors"
-            >
-              <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-              Programa Hotel Fundador
-            </router-link>
-            <router-link
-              to="/login"
-              class="text-sm font-semibold text-slate-600 hover:text-navy transition-colors duration-200 hidden sm:inline-block"
-            >Iniciar Sesión</router-link>
-            <router-link
-              to="/login"
-              class="inline-flex items-center gap-1.5 font-bold text-sm px-5 py-2.5 rounded-xl bg-blue text-white hover:bg-navy transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg"
-            >Prueba Gratis
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
-            </router-link>
-          </div>
-        </div>
-      </div>
-    </nav>
+    <!-- ═══ NAVBAR — componente compartido del sitio (mismo header en /p/:slug) ═══ -->
+    <SiteHeader :active-section="activeSection" />
 
     <!-- ═══ HERO — claro, moderno, mockup de producto a la derecha ═══ -->
     <section id="hero" class="relative w-full overflow-hidden pt-32 md:pt-40 pb-20 px-6 md:px-10 bg-gradient-to-b from-blue-50/60 via-white to-white">
@@ -393,88 +348,23 @@
     </section>
 
     <!-- ═══ FOOTER ═══ -->
-    <footer class="bg-navy-deep pt-16 pb-8 px-6 border-t border-white/5">
-      <div class="max-w-7xl mx-auto">
-        <div class="grid md:grid-cols-12 gap-10 mb-12">
-          <!-- Brand -->
-          <div class="md:col-span-4">
-            <div class="flex items-center gap-3 mb-4">
-              <div class="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center font-black text-white shadow-lg shadow-blue-900/40">S</div>
-              <span class="font-black text-lg text-white">Solmi<span class="text-blue-400">OS</span></span>
-            </div>
-            <p class="text-sm text-white/40 max-w-xs mb-5">Hospitality OS para hoteles LATAM. Gestión completa sin complejidad.</p>
-            <!-- Social icons -->
-            <div class="flex items-center gap-3">
-              <a href="https://facebook.com" target="_blank" rel="noopener" aria-label="Facebook" class="w-9 h-9 rounded-lg bg-white/5 hover:bg-blue-600 flex items-center justify-center transition-colors">
-                <svg class="w-4 h-4 text-white/70" fill="currentColor" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-              </a>
-              <a href="https://instagram.com" target="_blank" rel="noopener" aria-label="Instagram" class="w-9 h-9 rounded-lg bg-white/5 hover:bg-blue-600 flex items-center justify-center transition-colors">
-                <svg class="w-4 h-4 text-white/70" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>
-              </a>
-              <a href="https://linkedin.com" target="_blank" rel="noopener" aria-label="LinkedIn" class="w-9 h-9 rounded-lg bg-white/5 hover:bg-blue-600 flex items-center justify-center transition-colors">
-                <svg class="w-4 h-4 text-white/70" fill="currentColor" viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.063 2.063 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
-              </a>
-              <a href="https://x.com" target="_blank" rel="noopener" aria-label="X" class="w-9 h-9 rounded-lg bg-white/5 hover:bg-blue-600 flex items-center justify-center transition-colors">
-                <svg class="w-3.5 h-3.5 text-white/70" fill="currentColor" viewBox="0 0 24 24"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg>
-              </a>
-            </div>
-          </div>
-          <!-- Link columns -->
-          <div v-for="col in footerCols" :key="col.title" class="md:col-span-2">
-            <h4 class="text-sm font-bold text-white mb-4">{{ col.title }}</h4>
-            <div class="space-y-2.5">
-              <a v-for="link in col.links" :key="link.label" :href="link.href"
-                class="block text-sm text-white/40 hover:text-blue-400 hover:translate-x-1 transition-all duration-200">{{ link.label }}</a>
-            </div>
-          </div>
-          <!-- Newsletter / CTA mini -->
-          <div class="md:col-span-2">
-            <h4 class="text-sm font-bold text-white mb-4">Mantente al día</h4>
-            <p class="text-sm text-white/40 mb-4">Tips y novedades para tu hotel.</p>
-            <div class="flex gap-2">
-              <input type="email" placeholder="tu@email.com"
-                class="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-blue-400 transition-colors">
-              <button class="bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-3 py-2 transition-colors shrink-0" aria-label="Suscribirse">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
-              </button>
-            </div>
-          </div>
-        </div>
-        <div class="border-t border-white/8 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div class="text-sm text-white/30">© 2026 SolmiOS. Todos los derechos reservados.</div>
-          <div class="flex gap-6">
-            <span v-for="link in legalLinks" :key="link" class="text-sm text-white/30 transition-colors">{{ link }}</span>
-          </div>
-        </div>
-      </div>
-    </footer>
+    <!-- ═══ FOOTER — componente compartido del sitio (mismo footer en /p/:slug) ═══ -->
+    <SiteFooter />
+
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import heroImage from '@/assets/hero.png'
+import SiteHeader from '@/components/site/SiteHeader.vue'
+import SiteFooter from '@/components/site/SiteFooter.vue'
 
-const activeSection = ref('hero')
-const scrolled = ref(false)
+const activeSection = ref('hero') // scroll-spy: se le pasa al SiteHeader
 
 let observer: IntersectionObserver
-let ticking = false
-
-// Handler único (rAF-throttled): navbar con sombra al hacer scroll
-function handleScroll() {
-  if (ticking) return
-  ticking = true
-  requestAnimationFrame(() => {
-    scrolled.value = window.scrollY > 12
-    ticking = false
-  })
-}
 
 onMounted(() => {
-  window.addEventListener('scroll', handleScroll, { passive: true })
-  handleScroll()
-
   observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
@@ -490,17 +380,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   observer?.disconnect()
-  window.removeEventListener('scroll', handleScroll)
 })
 
-const navLinks = [
-  { href: '#features', label: 'Funciones', section: 'features' },
-  { href: '#how', label: 'Cómo Funciona', section: 'how' },
-  { href: '#integrations', label: 'Integraciones', section: 'integrations' },
-  { href: '#pricing', label: 'Precios', section: 'pricing' },
-  { href: '#testimonials', label: 'Testimonios', section: 'testimonials' },
-  { href: '#', label: 'Recursos', section: 'recursos', hasDropdown: true },
-]
 
 const heroFeatures = [
   { title: 'Ahorra tiempo', desc: 'Automatiza tareas y procesos', icon: '<svg class="w-5 h-5 text-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>' },
@@ -591,13 +472,6 @@ const testimonials = [
   { quote: 'Como recepcionista, todo es muy intuitivo. El check-in toma 30 segundos. Los huéspedes quedan impresionados.', name: 'María López', hotel: 'Hotel Caribe Paradise', initials: 'ML', avatarBg: '#6C3483' },
 ]
 
-const footerCols = [
-  { title: 'Producto', links: [{ label: 'Funciones', href: '#features' }, { label: 'Precios', href: '#pricing' }, { label: 'Integraciones', href: '#integrations' }, { label: 'API', href: '#' }] },
-  { title: 'Empresa', links: [{ label: 'Sobre Nosotros', href: '#' }, { label: 'Blog', href: '#' }, { label: 'Carreras', href: '#' }, { label: 'Contacto', href: '#' }] },
-  { title: 'Soporte', links: [{ label: 'Centro de Ayuda', href: '#' }, { label: 'Documentación', href: '#' }, { label: 'Estado del Sistema', href: '#' }, { label: 'Comunidad', href: '#' }] },
-]
-
-const legalLinks = ['Privacidad', 'Términos', 'Cookies']
 </script>
 
 <style scoped>
@@ -627,25 +501,7 @@ const legalLinks = ['Privacidad', 'Términos', 'Cookies']
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* ── NAV active underline ── */
-.nav-link::after {
-  content: '';
-  position: absolute;
-  left: 0; bottom: -2px;
-  width: 0; height: 2px;
-  background: currentColor;
-  transition: width 0.3s ease;
-}
-.nav-link:hover::after { width: 100%; }
-.nav-link.is-active::after { width: 100%; }
 
-.text-navy { color: #0D2B4E; }
-.bg-navy { background-color: #0D2B4E; }
-.bg-navy-deep { background-color: #061428; }
-.text-teal { color: #117A65; }
-.bg-teal { background-color: #117A65; }
-
-.bg-white\/8 { background: rgba(255,255,255,0.08); }
 
 @media (prefers-reduced-motion: reduce) {
   .hero-fade-up { animation: none; opacity: 1; transform: none; }

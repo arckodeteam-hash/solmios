@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kaptas — Estructura y ciclos, explicados simple</title>
+<style>
+  :root{--bg:#f8fafc;--panel:#fff;--ink:#0f172a;--muted:#475569;--line:#e2e8f0;
+    --legacy:#dc2626;--bridge:#f59e0b;--new:#3b82f6;--clean:#16a34a;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;scroll-padding-top:68px}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 20px}
+  nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.93);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;gap:4px;overflow-x:auto;padding:10px 20px}
+  nav a{text-decoration:none;color:var(--muted);font-size:14px;font-weight:700;white-space:nowrap;padding:8px 12px;border-radius:8px}
+  nav a:hover{background:#f1f5f9;color:var(--ink)}
+  nav a.active{background:var(--ink);color:#fff}
+  header.hero{background:linear-gradient(135deg,#0f172a,#1e293b);color:#fff;padding:46px 0 34px}
+  header.hero h1{font-size:clamp(23px,3.4vw,33px);line-height:1.2;margin-bottom:10px}
+  header.hero p{font-size:17px;color:#cbd5e1;max-width:720px}
+  section{padding:42px 0}
+  section h2{font-size:clamp(21px,3vw,28px);margin-bottom:6px}
+  section .lead{color:var(--muted);font-size:16.5px;margin-bottom:20px;max-width:760px}
+  .tag{display:inline-block;font-size:11.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:4px 10px;border-radius:6px;margin-bottom:8px}
+  .t-now{background:#fef2f2;color:var(--legacy)}.t-goal{background:#f0fdf4;color:var(--clean)}.t-loop{background:#eff6ff;color:#1d4ed8}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}
+  /* árbol */
+  pre.tree{background:#0f172a;color:#e2e8f0;border-radius:14px;padding:20px 22px;overflow-x:auto;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:13px;line-height:1.65;white-space:pre}
+  pre.tree .com{color:#64748b}
+  pre.tree .new{color:#4ade80;font-weight:700}
+  pre.tree .die{color:#fca5a5}
+  pre.tree .warn{color:#fbbf24}
+  pre.tree .keep{color:#93c5fd}
+  pre.tree .h{color:#fff;font-weight:700}
+  .tree-wrap{box-shadow:0 4px 14px rgba(0,0,0,.08)}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;font-size:12.5px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+  /* cambios */
+  .chg{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;font-size:14.5px}
+  .chg .ic{font-size:18px}
+  .chg .new{color:#16a34a;font-weight:700}.chg .die{color:#dc2626;font-weight:700}.chg .keep{color:#3b82f6;font-weight:700}
+  /* ciclos */
+  .loop{border:1px solid var(--line);border-radius:16px;background:var(--panel);overflow:hidden;margin-bottom:26px}
+  .loop>header{color:#fff;padding:16px 20px;display:flex;align-items:center;gap:14px}
+  .loop>header .ico{font-size:30px}
+  .loop>header h3{font-size:20px;margin-bottom:2px}
+  .loop>header .when{font-size:13.5px;opacity:.95}
+  .loop.r>header{background:linear-gradient(90deg,#7c3aed,#9333ea)}
+  .loop.v>header{background:linear-gradient(90deg,#16a34a,#22c55e)}
+  .loop.p>header{background:linear-gradient(90deg,#dc2626,#ef4444)}
+  .loop-body{padding:20px}
+  .example{background:#fffbeb;border-left:4px solid #f59e0b;border-radius:8px;padding:13px 16px;margin-bottom:18px;font-size:14.5px;color:#7c2d12}
+  .example b{color:#92400e}
+  ol.steps{list-style:none;counter-reset:s}
+  ol.steps>li{counter-increment:s;display:flex;gap:14px;padding:13px 0;border-bottom:1px dashed var(--line)}
+  ol.steps>li:last-child{border-bottom:0}
+  ol.steps>li::before{content:counter(s);min-width:30px;height:30px;border-radius:8px;color:#fff;font-weight:800;text-align:center;line-height:30px;font-size:14px;align-self:flex-start}
+  .loop.r ol.steps>li::before{background:#7c3aed}
+  .loop.v ol.steps>li::before{background:#16a34a}
+  .loop.p ol.steps>li::before{background:#dc2626}
+  .step-body h5{font-size:15.5px;margin-bottom:3px}
+  .step-body p{font-size:14px;color:var(--muted)}
+  .step-body .why{display:block;margin-top:3px;font-size:13px;font-style:italic}
+  .loop.r .why{color:#7c3aed}.loop.v .why{color:#15803d}.loop.p .why{color:#b91c1c}
+  .goldrule{margin-top:14px;background:#0f172a;color:#fff;border-radius:10px;padding:13px 16px;font-size:14px}
+  .goldrule b{color:#fde68a}
+  .conn{background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px 18px;margin-top:6px;font-size:14.5px;color:#1e3a8a}
+  .note{font-size:13px;color:var(--muted);margin-top:8px}
+  .gloss{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .gloss div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;font-size:13px}
+  .gloss .e{font-size:20px;display:block;margin-bottom:3px}
+  .map-title{font-size:15px;font-weight:800;margin:22px 0 0;color:var(--ink)}
+  .diagram{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;overflow-x:auto;margin-top:14px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .diagram svg{display:block;margin:0 auto}
+  .diagram h4{margin-bottom:8px;font-size:16px}
+  .caption{font-size:13px;color:var(--muted);margin-top:10px;text-align:center}
+  .legend-svg{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;font-size:12.5px;color:var(--muted);margin-top:8px}
+  .legend-svg span{display:flex;align-items:center;gap:5px}
+  .sw{display:inline-block;width:22px;height:0;border-top:3px solid}
+  .fn{text-align:center;color:var(--muted);font-size:12.5px;padding:26px 0 44px;border-top:1px solid var(--line);margin-top:16px}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <a href="#hoy">① Carpetas hoy</a>
+  <a href="#manana">② Carpetas final</a>
+  <a href="#ciclos">③ Los 3 ciclos</a>
+  <a href="#glosario">④ Glosario</a>
+</div></nav>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>Kaptas: cómo está hoy y cómo va a quedar</h1>
+    <p>Esto es el proyecto real. Primero te muestro la <b>estructura de carpetas</b> (simple, sin tecnicismos). Después te explico los <b>3 ciclos</b>: qué son, cuándo se usa cada uno, y un ejemplo paso a paso.</p>
+  </div>
+</header>
+
+<!-- ============ HOY ============ -->
+<section id="hoy">
+  <div class="wrap">
+    <span class="tag t-now">① Cómo está HOY — la estructura de carpetas</span>
+    <h2>El proyecto tiene 6 carpetas</h2>
+    <p class="lead">Cada carpeta es un proyecto de código. Lo importante: entendé qué hace cada una. Después entendés por qué una está mal (la de Servicios).</p>
+
+    <div class="tree-wrap">
+<pre class="tree"><span class="h">KaptasAPI.sln</span>
+│
+├── 📂 <span class="h">Kaptas.API/</span>            <span class="com">← la puerta de entrada (recibe los pedidos HTTP)</span>
+│   ├── Controllers/          <span class="com">84 controladores → reciben cada pedido</span>
+│   ├── Middlewares/          <span class="com">auth, permisos, captura de errores</span>
+│   ├── Filter/  Attributes/  <span class="com">reglas de seguridad</span>
+│   └── Program.cs            <span class="com">acá arranca todo</span>
+│
+├── 📂 <span class="warn">Kaptas.Services/</span>     <span class="com">← LA LÓGICA DEL NEGOCIO ( y el problema )</span>
+│   ├── Implementations/      <span class="com">87 servicios + el 👹 BaseService</span>
+│   │   ├── KaptasCore/       <span class="com">ventas, compras, NCF, ECF, empleados, bancos…</span>
+│   │   ├── Restaurant/       <span class="com">mesas, productos, impresión</span>
+│   │   ├── Invoices/  Kaptas/  Tickets/
+│   │   └── (raíz)            <span class="com">Auth, Contact, Subscription…</span>
+│   ├── Hubs/                 <span class="com">PrintHub, PonchadorHub (SignalR)</span>
+│   └── Interfaces/
+│
+├── 📂 <span class="h">Kaptas.Context/</span>       <span class="com">← LA BASE DE DATOS (la base de todo)</span>
+│   ├── 4 DbContexts          <span class="com">KaptaswebContext, KaptasCoreContext, + 2 de restaurante</span>
+│   ├── Models/               <span class="com">las entidades (tablas)</span>
+│   └── Services/DbService    <span class="com">decide a qué BD conectarse según el cliente (multi-tenant)</span>
+│
+├── 📂 <span class="h">Kaptas.DTO/</span>           <span class="com">← los contratos (qué datos viajan en cada pedido)</span>
+│   └── 21 carpetas por módulo <span class="com">(Auth, Contact, KaptasCore, Restaurant…)</span>
+│
+├── 📂 <span class="h">Kaptas.Helpers/</span>       <span class="com">← utilidades (encriptación, mapeos, configuración)</span>
+│
+└── 📂 <span class="die">Kaptas.Core/</span>         <span class="warn">⚠ HUÉRFANO: la carpeta existe, pero NO está en el .sln</span>
+</pre>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background:#fbbf24"></span> el problema está acá</span>
+      <span><span class="dot" style="background:#fca5a5"></span> huérfano / se va a borrar</span>
+      <span><span class="dot" style="background:#94a3b8"></span> comentario</span>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <p style="font-size:15.5px">👉 <b>El problema en una frase:</b> en <code>Kaptas.Services</code> hay un archivo gigante llamado <code>BaseService</code>, y <b>63 de los 87 servicios dependen de él</b>. Si cambiás una línea ahí, podés romper 63 cosas a la vez. Y <b>no hay ni un solo test</b> que te avise.</p>
+    </div>
+
+    <div class="map-title">🗺️ El mismo mapa, en grafo de dependencias</div>
+    <div class="diagram">
+      <svg viewBox="0 0 940 470" width="100%" style="max-width:920px;min-width:680px">
+        <defs>
+          <marker id="m" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+          <marker id="mb" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#3b82f6"/></marker>
+          <marker id="mg" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+        </defs>
+        <g stroke="#475569" stroke-width="2" fill="none">
+          <path d="M500,104 C 520,200 520,300 500,372" marker-end="url(#m)"/>
+          <line x1="170" y1="166" x2="360" y2="372" marker-end="url(#m)"/>
+          <line x1="470" y1="262" x2="470" y2="372" marker-end="url(#m)"/>
+          <line x1="780" y1="166" x2="600" y2="372" marker-end="url(#m)"/>
+        </g>
+        <g stroke="#3b82f6" stroke-width="2" fill="none">
+          <line x1="380" y1="100" x2="200" y2="116" marker-end="url(#mb)"/>
+          <line x1="430" y1="104" x2="450" y2="222" marker-end="url(#mb)"/>
+          <line x1="310" y1="142" x2="650" y2="142" marker-end="url(#mb)"/>
+          <line x1="690" y1="170" x2="540" y2="222" marker-end="url(#mb)"/>
+        </g>
+        <line x1="820" y1="300" x2="600" y2="386" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#mg)"/>
+        <rect x="320" y="40" width="320" height="64" rx="12" fill="#1e293b" stroke="#0f172a"/>
+        <text x="480" y="66" text-anchor="middle" font-size="16" font-weight="800" fill="#fff">Kaptas.API</text>
+        <text x="480" y="88" text-anchor="middle" font-size="11.5" fill="#cbd5e1">84 Controllers · Middlewares · Program.cs</text>
+        <rect x="40" y="116" width="270" height="64" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+        <text x="175" y="142" text-anchor="middle" font-size="15" font-weight="800" fill="#991b1b">Kaptas.Services</text>
+        <text x="175" y="162" text-anchor="middle" font-size="11" fill="#b91c1c">87 servicios · Hubs/ · 👹 BaseService</text>
+        <rect x="650" y="116" width="250" height="64" rx="12" fill="#fffbeb" stroke="#f59e0b"/>
+        <text x="775" y="142" text-anchor="middle" font-size="15" font-weight="800" fill="#b45309">Kaptas.Helpers</text>
+        <text x="775" y="162" text-anchor="middle" font-size="11" fill="#b45309">Settings · AutoMapper · Crypto</text>
+        <rect x="360" y="222" width="240" height="48" rx="12" fill="#eff6ff" stroke="#3b82f6"/>
+        <text x="480" y="245" text-anchor="middle" font-size="15" font-weight="800" fill="#1d4ed8">Kaptas.DTOs</text>
+        <text x="480" y="262" text-anchor="middle" font-size="11" fill="#1d4ed8">21 carpetas de contratos</text>
+        <rect x="300" y="372" width="380" height="64" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+        <text x="490" y="398" text-anchor="middle" font-size="16" font-weight="800" fill="#15803d">Kaptas.Context  (base — nadie depende de arriba)</text>
+        <text x="490" y="420" text-anchor="middle" font-size="11.5" fill="#15803d">4 DbContexts · DbService · entidades POCO</text>
+        <rect x="760" y="270" width="170" height="56" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="5 4"/>
+        <text x="845" y="293" text-anchor="middle" font-size="13" font-weight="800" fill="#64748b">Kaptas.Core</text>
+        <text x="845" y="312" text-anchor="middle" font-size="10.5" fill="#94a3b8">⚠ fuera del .sln</text>
+      </svg>
+      <div class="legend-svg">
+        <span><span class="sw" style="border-color:#475569"></span> referencia → Context</span>
+        <span><span class="sw" style="border-color:#3b82f6"></span> referencia entre capas</span>
+        <span><span class="sw" style="border-color:#94a3b8;border-style:dashed"></span> Kaptas.Core (huérfano)</span>
+      </div>
+      <p class="caption">Una flecha <b>A → B</b> = “A referencia a B”. Todo termina dependiendo de <code>Kaptas.Context</code>.</p>
+    </div>
+
+    <div class="diagram">
+      <h4 style="margin-bottom:6px">👹 El problema de cerca: <code>BaseService</code> y los 63 que dependen de él</h4>
+      <svg viewBox="0 0 460 250" width="100%" style="max-width:440px">
+        <rect x="160" y="100" width="140" height="56" rx="10" fill="#7c3aed"/>
+        <text x="230" y="124" text-anchor="middle" font-size="13" font-weight="800" fill="#fff">BaseService</text>
+        <text x="230" y="142" text-anchor="middle" font-size="10" fill="#ede9fe">IBaseService · 252 líneas</text>
+        <g stroke="#7c3aed" stroke-width="1.4" opacity=".6">
+          <line x1="60" y1="40" x2="180" y2="108"/><line x1="120" y1="40" x2="200" y2="108"/>
+          <line x1="180" y1="40" x2="220" y2="108"/><line x1="240" y1="40" x2="240" y2="108"/>
+          <line x1="300" y1="40" x2="260" y2="108"/><line x1="360" y1="40" x2="280" y2="108"/>
+          <line x1="60" y1="210" x2="180" y2="150"/><line x1="120" y1="210" x2="200" y2="150"/>
+          <line x1="180" y1="210" x2="220" y2="150"/><line x1="240" y1="210" x2="240" y2="150"/>
+          <line x1="300" y1="210" x2="260" y2="150"/><line x1="360" y1="210" x2="280" y2="150"/>
+        </g>
+        <g font-size="9.5" fill="#64748b">
+          <text x="60" y="32">AuthService</text><text x="120" y="32">ContactService</text>
+          <text x="180" y="32">NCFService</text><text x="240" y="32">EcfService</text>
+          <text x="300" y="32">PayrollService</text><text x="360" y="32">BanksService</text>
+          <text x="40" y="222">EmployeeService</text><text x="120" y="222">PurchaseService</text>
+          <text x="195" y="222">KSalesServices</text><text x="265" y="222">CreditNoteService</text>
+          <text x="340" y="222">CashAccounting…</text>
+        </g>
+      </svg>
+      <p class="caption"><b>63 de 87 servicios (72%)</b> inyectan <code>IBaseService</code>. Cambiar una línea de BaseService = riesgo en 63 servicios.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ MAÑANA ============ -->
+<section id="manana" style="background:#fff">
+  <div class="wrap">
+    <span class="tag t-goal">② Cómo va a QUEDAR — la misma base, código nuevo ordenado</span>
+    <h2>Se agrega Features/ y Tests; Services se vacía</h2>
+    <p class="lead">La base de datos (<code>Context</code>) no se toca. Lo nuevo vive adentro de <code>Kaptas.API</code>, en una carpeta <code>Features/</code> donde cada módulo está ordenado y se sostiene solo.</p>
+
+    <div class="tree-wrap">
+<pre class="tree"><span class="h">KaptasAPI.sln</span>
+│
+├── 📂 <span class="h">Kaptas.API/</span>
+│   ├── Controllers/          <span class="com">(se va vaciando conforme se migra)</span>
+│   ├── <span class="new">✨ Features/</span>           <span class="com">← NUEVO: cada módulo ordenado y completo</span>
+│   │   ├── Contactos/        <span class="com">Controller + Service + Repo + DTOs  (todo junto)</span>
+│   │   ├── Empleados/        <span class="com">Controller + Service + Repo + DTOs</span>
+│   │   ├── NCF/  ECF/  Bancos/  Caja…
+│   │   └── _Shared/          <span class="com">cosas comunes: usuario actual, lectura del viejo, patrones</span>
+│   └── Program.cs
+│
+├── 📂 <span class="die">Kaptas.Services/</span>     <span class="die">💀 se va vaciando → se marca [Obsolete] → se borra</span>
+│
+├── 📂 <span class="keep">Kaptas.Context/</span>      <span class="com">= SIN TOCAR (misma base de datos)</span>
+├── 📂 <span class="keep">Kaptas.DTO/</span>          <span class="com">= se conserva</span>
+├── 📂 <span class="keep">Kaptas.Helpers/</span>      <span class="com">= se conserva</span>
+│
+└── 📂 <span class="new">✨ Kaptas.Tests/</span>      <span class="com">← NUEVO: los tests (hoy no existe ninguno)</span>
+</pre>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <div class="chg">
+        <span class="ic new">✨</span><span class="new">SE AGREGA Features/ dentro de Kaptas.API (cada módulo ordenado y completo).</span>
+        <span class="ic new">✨</span><span class="new">SE AGREGA Kaptas.Tests (hoy no hay tests; nace con la primera migración).</span>
+        <span class="ic die">💀</span><span class="die">SE VACÍA Kaptas.Services: cada servicio se muda a Features/, y el viejo se borra.</span>
+        <span class="ic keep">=</span><span class="keep">SE CONSERVAN Context, DTO y Helpers (la base no cambia).</span>
+      </div>
+    </div>
+    <p class="note">🎯 <b>El destino:</b> que el monstruo <code>BaseService</code> deje de existir en lo nuevo. Cada módulo se arregle solo, con tests, sin depender de los otros.</p>
+
+    <div class="map-title">🗺️ El mismo mapa, en grafo de dependencias</div>
+    <div class="diagram">
+      <svg viewBox="0 0 940 470" width="100%" style="max-width:920px;min-width:680px">
+        <defs>
+          <marker id="m2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+          <marker id="m2g" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+        </defs>
+        <rect x="150" y="30" width="480" height="140" rx="14" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+        <text x="170" y="52" font-size="15" font-weight="800" fill="#15803d">Kaptas.API</text>
+        <rect x="172" y="64" width="436" height="58" rx="8" fill="#fff" stroke="#86efac"/>
+        <text x="190" y="82" font-size="11.5" font-weight="800" fill="#166534">Features/  (NUEVO — cada módulo autocontenido)</text>
+        <g font-size="9.5" fill="#166534">
+          <rect x="184" y="90" width="74" height="22" rx="5" fill="#dcfce7" stroke="#86efac"/><text x="221" y="104" text-anchor="middle">Contactos</text>
+          <rect x="264" y="90" width="74" height="22" rx="5" fill="#dcfce7" stroke="#86efac"/><text x="301" y="104" text-anchor="middle">Empleados</text>
+          <rect x="344" y="90" width="74" height="22" rx="5" fill="#dcfce7" stroke="#86efac"/><text x="381" y="104" text-anchor="middle">NCF</text>
+          <rect x="424" y="90" width="74" height="22" rx="5" fill="#dbeafe" stroke="#93c5fd"/><text x="461" y="104" text-anchor="middle" fill="#1e40af">Inventario</text>
+          <rect x="504" y="90" width="86" height="22" rx="5" fill="#dbeafe" stroke="#93c5fd"/><text x="547" y="104" text-anchor="middle" fill="#1e40af">…nuevos</text>
+        </g>
+        <rect x="184" y="128" width="410" height="30" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+        <text x="389" y="147" text-anchor="middle" font-size="10.5" fill="#475569">_Shared/ : ICurrentUserProvider · IReadModel · PATTERNS · ADR</text>
+        <line x1="300" y1="170" x2="220" y2="210" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="6 4"/>
+        <line x1="285" y1="183" x2="313" y2="197" stroke="#dc2626" stroke-width="2.5"/>
+        <line x1="313" y1="183" x2="285" y2="197" stroke="#dc2626" stroke-width="2.5"/>
+        <text x="232" y="200" font-size="9.5" font-weight="800" fill="#dc2626">✗ prohibido</text>
+        <rect x="680" y="60" width="200" height="64" rx="12" fill="#16a34a" stroke="#15803d"/>
+        <text x="780" y="86" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">✨ Kaptas.Tests</text>
+        <text x="780" y="106" text-anchor="middle" font-size="10.5" fill="#dcfce7">NUEVO · tests de Features</text>
+        <line x1="690" y1="92" x2="612" y2="92" stroke="#16a34a" stroke-width="2" marker-end="url(#m2g)"/>
+        <rect x="60" y="216" width="260" height="60" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-dasharray="6 4"/>
+        <text x="190" y="240" text-anchor="middle" font-size="14" font-weight="800" fill="#991b1b">💀 Kaptas.Services</text>
+        <text x="190" y="258" text-anchor="middle" font-size="10.5" fill="#b91c1c">se vacía → [Obsolete] → eliminar</text>
+        <rect x="470" y="216" width="200" height="48" rx="12" fill="#fffbeb" stroke="#f59e0b"/>
+        <text x="570" y="238" text-anchor="middle" font-size="13" font-weight="800" fill="#b45309">Kaptas.Helpers</text>
+        <text x="570" y="254" text-anchor="middle" font-size="10" fill="#b45309">(se conserva)</text>
+        <rect x="700" y="216" width="180" height="48" rx="12" fill="#eff6ff" stroke="#3b82f6"/>
+        <text x="790" y="238" text-anchor="middle" font-size="13" font-weight="800" fill="#1d4ed8">Kaptas.DTOs</text>
+        <text x="790" y="254" text-anchor="middle" font-size="10" fill="#1d4ed8">(se conserva)</text>
+        <rect x="280" y="320" width="380" height="64" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+        <text x="470" y="346" text-anchor="middle" font-size="15" font-weight="800" fill="#15803d">Kaptas.Context  (INTACTO)</text>
+        <text x="470" y="368" text-anchor="middle" font-size="11" fill="#15803d">Mismos 4 DbContexts · DbService · sin tocar</text>
+        <g stroke="#475569" stroke-width="2" fill="none">
+          <line x1="470" y1="170" x2="470" y2="320" marker-end="url(#m2)"/>
+          <line x1="780" y1="264" x2="600" y2="320" marker-end="url(#m2)"/>
+          <line x1="570" y1="264" x2="500" y2="320" marker-end="url(#m2)"/>
+        </g>
+      </svg>
+      <p class="caption"><b>Lo nuevo (verde/azul)</b> no toca <code>Kaptas.Services</code>. <b>La base no cambia.</b></p>
+    </div>
+
+    <div class="map-title">🗺️ El viaje de un módulo: de Services → Features</div>
+    <div class="diagram">
+      <svg viewBox="0 0 920 170" width="100%" style="max-width:900px;min-width:660px">
+        <defs><marker id="m3" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker></defs>
+        <rect x="20" y="40" width="230" height="90" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+        <text x="135" y="62" text-anchor="middle" font-size="22">💀</text>
+        <text x="135" y="84" text-anchor="middle" font-size="12" font-weight="800" fill="#991b1b">LEGADO</text>
+        <text x="135" y="102" text-anchor="middle" font-size="9.5" fill="#b91c1c" font-family="ui-monospace,monospace">Services/Implementations/</text>
+        <text x="135" y="116" text-anchor="middle" font-size="9.5" fill="#b91c1c" font-family="ui-monospace,monospace">ContactService.cs</text>
+        <line x1="252" y1="85" x2="332" y2="85" stroke="#64748b" stroke-width="3" marker-end="url(#m3)"/>
+        <text x="292" y="76" text-anchor="middle" font-size="9" fill="#64748b">se migra</text>
+        <rect x="335" y="40" width="230" height="90" rx="12" fill="#fffbeb" stroke="#f59e0b" stroke-width="2"/>
+        <text x="450" y="62" text-anchor="middle" font-size="22">🔗</text>
+        <text x="450" y="84" text-anchor="middle" font-size="12" font-weight="800" fill="#b45309">PUENTE</text>
+        <text x="450" y="102" text-anchor="middle" font-size="9.5" fill="#b45309" font-family="ui-monospace,monospace">Features/Contactos/</text>
+        <text x="450" y="116" text-anchor="middle" font-size="9.5" fill="#b45309" font-family="ui-monospace,monospace">+ viejo vivo</text>
+        <line x1="567" y1="85" x2="647" y2="85" stroke="#64748b" stroke-width="3" marker-end="url(#m3)"/>
+        <text x="607" y="76" text-anchor="middle" font-size="9" fill="#64748b">se borra viejo</text>
+        <rect x="650" y="40" width="250" height="90" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+        <text x="775" y="62" text-anchor="middle" font-size="22">✅</text>
+        <text x="775" y="84" text-anchor="middle" font-size="12" font-weight="800" fill="#15803d">LIMPIO</text>
+        <text x="775" y="102" text-anchor="middle" font-size="9.5" fill="#15803d" font-family="ui-monospace,monospace">Features/Contactos/</text>
+        <text x="775" y="116" text-anchor="middle" font-size="9.5" fill="#15803d" font-family="ui-monospace,monospace">viejo eliminado</text>
+      </svg>
+      <p class="caption">Un servicio real, <code>ContactService</code>, viajando de Services a Features. En PUENTE, <b>viejo y nuevo conviven</b>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CICLOS ============ -->
+<section id="ciclos">
+  <div class="wrap">
+    <span class="tag t-loop">③ Los 3 ciclos — qué son y cómo funcionan</span>
+    <h2>Cada vez que trabajás, hacés una de estas 3 cosas</h2>
+    <p class="lead">No hay más misterio. Cuando alguien toca el código, siempre está haciendo <b>una</b> de estas tres: <b>limpiar lo viejo</b>, <b>crear algo nuevo</b>, o <b>arreglar algo roto</b>. Esas son las tres. Cada una tiene sus pasos, para no romper lo que está funcionando.</p>
+
+    <!-- RECICLADO -->
+    <div class="loop r">
+      <header>
+        <span class="ico">♻️</span>
+        <div><h3>CICLO 1 — RECICLADO</h3><div class="when">cuando querés limpiar un módulo que ya existe pero está hecho un lío</div></div>
+      </header>
+      <div class="loop-body">
+        <div class="example">📦 <b>Ejemplo real:</b> <code>ContactService</code> (gestiona los contactos/clientes). Hoy depende de <code>BaseService</code>, no tiene tests, y querés dejarlo ordenado sin romper lo que los clientes usan hoy.</div>
+        <ol class="steps">
+          <li><div class="step-body"><h5>Escribí tests que capturen lo que HOY hace</h5><p>Antes de tocar nada, anotás cómo se comporta ahora (ej: "si pido los contactos, devuelve 5").</p><span class="why">Por qué: si no sabés qué hace hoy, cualquier cambio es a ciegas. Sin esto no seguís.</span></div></li>
+          <li><div class="step-body"><h5>Creás el módulo nuevo en Features/Contactos/</h5><p>Su propio Controller + Service + Repo + DTOs, sin <code>BaseService</code>.</p><span class="why">Por qué: acá vive la versión limpia. El viejo sigue existiendo, no lo borrás todavía.</span></div></li>
+          <li><div class="step-body"><h5>Activás el nuevo para UN solo cliente</h5><p>Con un "interruptor" (feature flag), mandás a 1 cliente al nuevo y los demás siguen en el viejo.</p><span class="why">Por qué: si algo falla, le fallás a 1 cliente, no a todos. Y podés volver atrás fácil.</span></div></li>
+          <li><div class="step-body"><h5>Si anduvo, migrás a los demás de a uno</h5><p>Cliente por cliente, hasta que nadie use el viejo.</p><span class="why">Por qué: migrar de a uno es lento pero seguro. Nunca migrés todo de golpe.</span></div></li>
+          <li><div class="step-body"><h5>Borrás el viejo</h5><p>Cuando confirmás que nadie lo usa, lo marcás <code>[Obsolete]</code> y después lo eliminás.</p><span class="why">Por qué: el módulo quedó LIMPIO, sin BaseService, con tests.</span></div></li>
+        </ol>
+        <div class="goldrule">🔒 <b>Regla de oro:</b> nunca toques el módulo viejo sin haber hecho el paso 1 (los tests). Y <code>BaseService</code> no se arregla "de paso" mientras estás en otra cosa.</div>
+      </div>
+    </div>
+
+    <!-- VERDE -->
+    <div class="loop v">
+      <header>
+        <span class="ico">✨</span>
+        <div><h3>CICLO 2 — VERDE</h3><div class="when">cuando llega un pedido nuevo de algo que no existe</div></div>
+      </header>
+      <div class="loop-body">
+        <div class="example">📦 <b>Ejemplo real:</b> un cliente pide gestionar el <b>inventario</b> (stock de productos). Eso no existe hoy. Lo creás desde cero, bien hecho.</div>
+        <ol class="steps">
+          <li><div class="step-body"><h5>Anotás qué hay que construir</h5><p>Qué pantallas/endpoints necesita, qué tablas toca, qué rol de usuario lo va a usar.</p><span class="why">Por qué: empezar a programar sin saber el alcance = retrabajo seguro.</span></div></li>
+          <li><div class="step-body"><h5>Creás la carpeta Features/Inventario/</h5><p>Con todo lo que necesita adentro (DTOs, repo, service, controller).</p><span class="why">Por qué: cada módulo vive junto y ordenado, no desparramado.</span></div></li>
+          <li><div class="step-body"><h5>Primero definís QUÉ hace, después CÓMO</h5><p>Escribís la interfaz (la lista de funciones) antes de programarlas.</p><span class="why">Por qué: te obliga a pensar la API antes de perderte en detalles.</span></div></li>
+          <li><div class="step-body"><h5>Programás de adentro hacia afuera</h5><p>DTOs → repositorio → servicio → controller. Y en cada lectura filtrás por empresa (tenant).</p><span class="why">Por qué: el filtro de empresa es lo que evita que un cliente vea los datos de otro.</span></div></li>
+          <li><div class="step-body"><h5>Le escribís tests</h5><p>Mínimo: que funcione bien, y que un cliente NO pueda ver los datos de otro.</p><span class="why">Por qué: es lo que te va a avisar si algún día lo rompés.</span></div></li>
+        </ol>
+        <div class="goldrule">🔒 <b>Regla de oro:</b> el controller tiene que ser flaco (~30 líneas): solo recibe el pedido y lo pasa al servicio. Nada de lógica ahí. Y no puede depender de <code>BaseService</code>.</div>
+      </div>
+    </div>
+
+    <!-- PARCHE -->
+    <div class="loop p">
+      <header>
+        <span class="ico">🐛</span>
+        <div><h3>CICLO 3 — PARCHE</h3><div class="when">cuando alguien reporta que algo no funciona</div></div>
+      </header>
+      <div class="loop-body">
+        <div class="example">📦 <b>Ejemplo real:</b> un cliente reporta que <b>ve facturas de otra empresa</b>. Eso es grave (es un problema de seguridad/tenant). Hay que arreglarlo YA, pero sin meter más desorden.</div>
+        <ol class="steps">
+          <li><div class="step-body"><h5>Detectás de dónde viene el aviso</h5><p>Del log, del reporte del cliente, o de un error 500 que explotó solo.</p><span class="why">Por qué: necesitás datos del problema, no suposiciones.</span></div></li>
+          <li><div class="step-body"><h5>Lo reproducís en un ambiente de prueba</h5><p>Con datos de prueba, sin tocar producción. Lográs que el bug pase cuando vos querás.</p><span class="why">Por qué: si no podés reproducirlo, no sabés si lo arreglaste. NO arreglés a ciegas.</span></div></li>
+          <li><div class="step-body"><h5>Averiguás dónde está el código</h5><p>¿Está en lo viejo (Services) o en lo nuevo (Features)? Eso cambia cómo lo arreglás.</p><span class="why">Por qué: no es lo mismo arreglar algo sin tests que algo con tests.</span></div></li>
+          <li><div class="step-body"><h5>Buscás la causa de verdad</h5><p>No el síntoma. "¿Por qué ve facturas ajenas? → falta el filtro de empresa en esa consulta."</p><span class="why">Por qué: parchear el síntoma hace que el bug vuelva. Hay que ir a la raíz.</span></div></li>
+          <li><div class="step-body"><h5>Lo arreglás según dónde esté</h5><p><b>Si está en lo VIEVO:</b> parche chiquito, y lo anotás para reciclarlo después (no lo arreglés todo ahora sin tests). <b>Si está en lo NUEVO:</b> lo arreglás y le escribís un test para que no vuelva.</p><span class="why">Por qué: arreglar a fondo el viejo sin tests = riesgo. Mejor anotarlo y reciclarlo con calma.</span></div></li>
+          <li><div class="step-body"><h5>El test del bug queda para siempre</h5><p>Ese caso que reproduciste se guarda como test, así no vuelve a romperse.</p><span class="why">Por qué: es tu red para el futuro.</span></div></li>
+        </ol>
+        <div class="goldrule">🔒 <b>Regla de oro:</b> nunca arreglés un bug sin poder reproducirlo primero. Y nunca borres un test "para que compile".</div>
+      </div>
+    </div>
+
+    <div class="conn">🔗 <b>Los ciclos se conectan:</b> si un módulo viejo recibe <b>muchos bugs</b> (ej: 3), ese módulo <b>sube al tope de la lista</b> para entrar al <b>CICLO 1 (RECICLADO)</b> y dejarlo limpio de una vez. El bug de hoy es la señal de qué hay que reciclar mañana.</div>
+  </div>
+</section>
+
+<!-- ============ GLOSARIO ============ -->
+<section id="glosario" style="background:#fff">
+  <div class="wrap">
+    <span class="tag">④ Glosario rápido</span>
+    <h2>Las señales que vas a ver</h2>
+    <p class="lead">Con estos símbolos sabés el estado de cualquier cosa a primera vista.</p>
+    <div class="gloss">
+      <div><span class="e">♻️</span>Refactor — existía, se recicló</div>
+      <div><span class="e">✨</span>Nuevo — nació de cero</div>
+      <div><span class="e">🐛</span>Bug — se reparó algo roto</div>
+      <div><span class="e">💀</span>Viejo — vivo en producción, sin tocar</div>
+      <div><span class="e">✅</span>Limpio — terminado, con tests</div>
+      <div><span class="e">🔒</span>Puerta — paso obligatorio</div>
+      <div><span class="e">👹</span>BaseService — el problema a eliminar</div>
+    </div>
+  </div>
+</section>
+
+<div class="fn">
+  Kaptas Web API · .NET 7 multi-tenant · datos verificados del repo el 2026-06-28<br>
+  Abrí este archivo en cualquier navegador (funciona sin internet)
+</div>
+
+<script>
+  const links=document.querySelectorAll('nav a'),secs=document.querySelectorAll('section');
+  const obs=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;links.forEach(l=>l.classList.toggle('active',l.getAttribute('href')==='#'+id));}}),{rootMargin:'-45% 0px -50% 0px'});
+  secs.forEach(s=>obs.observe(s));
+</script>
+</body>
+</html>

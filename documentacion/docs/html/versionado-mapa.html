@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kaptas — Versionado de la Base (Mapa)</title>
+<style>
+  :root{--bg:#f8fafc;--ink:#0f172a;--muted:#475569;--line:#e2e8f0;--violet:#7c3aed;--clean:#16a34a;--new:#3b82f6;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5}
+  .wrap{max-width:1000px;margin:0 auto;padding:26px 20px 60px}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:15.5px;margin:0 0 8px;max-width:760px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin:14px 0 6px}
+  .legend .k{display:flex;align-items:center;gap:7px}
+  .dot{width:13px;height:13px;border-radius:4px;display:inline-block}
+  .map{background:#fff;border:1px solid var(--line);border-radius:18px;padding:10px;overflow-x:auto;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+  svg{display:block;width:100%;min-width:720px;height:auto}
+  .nt{font-weight:800}
+  .ns{font-weight:500}
+  /* timeline */
+  .tl{margin-top:26px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 22px}
+  .tl h3{margin:0 0 14px;font-size:15px}
+  .chips{display:flex;align-items:center;gap:0;flex-wrap:wrap}
+  .chip{border-radius:10px;padding:8px 13px;font-weight:800;font-size:13px;color:#fff;white-space:nowrap}
+  .chip.v000{background:#94a3b8}.chip.base{background:#7c3aed}.chip.mig{background:#8b5cf6}.chip.next{background:#c4b5fd;color:#5b21b6}
+  .sep{color:#c4b5fd;font-weight:800;padding:0 8px}
+  .chip small{display:block;font-weight:500;opacity:.9;font-size:11px}
+  .help{margin-top:8px;font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🗺️ Versionar la base — mapa de un vistazo</h1>
+  <p class="sub">Seguí las flechas: arriba nace la idea, se divide en las dos cosas que se escriben, el ejecutor las lleva a cada cliente, y abajo está el resultado.</p>
+  <div class="legend">
+    <span class="k"><span class="dot" style="background:#7c3aed"></span> Estructura</span>
+    <span class="k"><span class="dot" style="background:#16a34a"></span> Datos / resultado</span>
+    <span class="k"><span class="dot" style="background:#cbd5e1"></span> Bases de clientes</span>
+  </div>
+
+  <div class="map">
+  <svg viewBox="0 0 960 690" role="img" aria-label="Mapa conceptual del versionado de base de datos">
+    <defs>
+      <marker id="arw" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+        <path d="M0,0 L8,4.5 L0,9 Z" fill="#a78bcf"/>
+      </marker>
+      <style>
+        .edge{stroke:#c4b5fd;stroke-width:2.2;fill:none;marker-end:url(#arw)}
+        text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif;text-anchor:middle}
+        .nt{font-size:15px;font-weight:800}
+        .ns{font-size:12px}
+      </style>
+    </defs>
+
+    <!-- EDGES (detrás de los nodos) -->
+    <!-- raíz -> ramas -->
+    <path class="edge" d="M480,96 C480,130 250,130 250,166"/>
+    <path class="edge" d="M480,96 C480,130 710,130 710,166"/>
+    <!-- ramas -> runner -->
+    <path class="edge" d="M250,262 C250,300 445,300 445,328"/>
+    <path class="edge" d="M710,262 C710,300 515,300 515,328"/>
+    <!-- runner -> clientes -->
+    <path class="edge" d="M480,404 C480,432 115,428 115,454"/>
+    <path class="edge" d="M480,404 C480,432 345,430 345,454"/>
+    <path class="edge" d="M480,404 C480,432 575,430 575,454"/>
+    <path class="edge" d="M480,404 C480,432 805,428 805,454"/>
+    <!-- clientes -> resultado -->
+    <path class="edge" d="M115,530 C115,556 480,560 480,566"/>
+    <path class="edge" d="M345,530 C345,556 480,560 480,566"/>
+    <path class="edge" d="M575,530 C575,556 480,560 480,566"/>
+    <path class="edge" d="M805,530 C805,556 480,560 480,566"/>
+
+    <!-- RAÍZ -->
+    <g>
+      <rect x="330" y="24" width="300" height="72" rx="14" fill="#1e1b4b"/>
+      <text class="nt" x="480" y="54" fill="#fff">VERSIONAR LA BASE</text>
+      <text class="ns" x="480" y="76" fill="#c4b5fd">es como git, pero para la estructura de la base</text>
+    </g>
+
+    <!-- RAMA: MIGRACIONES -->
+    <g>
+      <rect x="110" y="168" width="280" height="94" rx="14" fill="#faf5ff" stroke="#7c3aed" stroke-width="2"/>
+      <text class="nt" x="250" y="200" fill="#6d28d9">📜 MIGRACIONES</text>
+      <text class="ns" x="250" y="222" fill="#7c3aed">cambios de estructura</text>
+      <text class="ns" x="250" y="242" fill="#8b5cf6">tablas · columnas · índices</text>
+    </g>
+
+    <!-- RAMA: SEEDERS -->
+    <g>
+      <rect x="570" y="168" width="280" height="94" rx="14" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+      <text class="nt" x="710" y="200" fill="#166534">🌱 SEEDERS</text>
+      <text class="ns" x="710" y="222" fill="#16a34a">datos de fábrica</text>
+      <text class="ns" x="710" y="242" fill="#22a34a">monedas · catálogos · países</text>
+    </g>
+
+    <!-- RUNNER -->
+    <g>
+      <rect x="340" y="330" width="280" height="74" rx="14" fill="#7c3aed"/>
+      <text class="nt" x="480" y="362" fill="#fff">⚙️ RUNNER (DbUp)</text>
+      <text class="ns" x="480" y="384" fill="#ede9fe">lleva los scripts a cada base, en orden</text>
+    </g>
+
+    <!-- CLIENTES -->
+    <g>
+      <rect x="20"  y="456" width="190" height="74" rx="12" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+      <text class="nt" x="115" y="486" fill="#334155" style="font-size:14px">🏢 Central</text>
+      <text class="ns" x="115" y="508" fill="#64748b">en V007 · al día ✓</text>
+    </g>
+    <g>
+      <rect x="250" y="456" width="190" height="74" rx="12" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+      <text class="nt" x="345" y="486" fill="#334155" style="font-size:14px">🏨 Cliente A</text>
+      <text class="ns" x="345" y="508" fill="#64748b">en V006 · aplica V007</text>
+    </g>
+    <g>
+      <rect x="480" y="456" width="190" height="74" rx="12" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+      <text class="nt" x="575" y="486" fill="#334155" style="font-size:14px">🏪 Cliente B</text>
+      <text class="ns" x="575" y="508" fill="#64748b">en V004 · aplica V005→V007</text>
+    </g>
+    <g>
+      <rect x="710" y="456" width="190" height="74" rx="12" fill="#eff6ff" stroke="#3b82f6" stroke-width="2"/>
+      <text class="nt" x="805" y="486" fill="#1d4ed8" style="font-size:14px">🆕 Cliente nuevo</text>
+      <text class="ns" x="805" y="508" fill="#3b82f6">desde cero · aplica todo</text>
+    </g>
+
+    <!-- RESULTADO -->
+    <g>
+      <rect x="150" y="566" width="660" height="82" rx="16" fill="#16a34a"/>
+      <text class="nt" x="480" y="596" fill="#fff">✅ RESULTADO</text>
+      <text class="ns" x="480" y="618" fill="#dcfce7" style="font-size:13px">todas en la misma versión · sabés cuál tiene cada una</text>
+      <text class="ns" x="480" y="636" fill="#dcfce7" style="font-size:13px">un cliente nuevo nace al día, sin copiar nada a mano</text>
+    </g>
+  </svg>
+  </div>
+
+  <!-- LÍNEA DE TIEMPO -->
+  <div class="tl">
+    <h3>⏱️ La línea del tiempo de versiones</h3>
+    <div class="chips">
+      <span class="chip v000">V000<small>hoy · sin nada</small></span>
+      <span class="sep">→</span>
+      <span class="chip base">V001<small>baseline (la foto)</small></span>
+      <span class="sep">→</span>
+      <span class="chip mig">V002<small>1er cambio</small></span>
+      <span class="sep">→</span>
+      <span class="chip mig">V003<small>otro cambio</small></span>
+      <span class="sep">→</span>
+      <span class="chip next">V00…<small>y así siempre</small></span>
+    </div>
+    <p class="help">Cada versión es un script guardado en git. Nunca se edita uno viejo: siempre se suma el siguiente. Así la historia de la base queda completa, como la del código.</p>
+  </div>
+
+  <p class="help" style="margin-top:20px">Versión detallada con cada paso: <b>versionado-base-datos.html</b> · Panorama completo (código + base): <b>plan-refactorizacion.html</b></p>
+</div>
+</body>
+</html>

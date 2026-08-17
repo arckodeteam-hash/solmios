@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migrar Contactos a Features/ — Kaptas ERP</title>
+<style>
+  :root {
+    --bg: #f7f6f2; --panel: #ffffff; --panel-2: #fbfaf7;
+    --ink: #1b1e23; --ink-soft: #5a6069; --line: #e6e3db;
+    --mod: #2f6df0; --mod-bg: #2f6df014;
+    --share: #0f9c86; --share-bg: #0f9c8614;
+    --warn: #c9821f; --ok: #0f9c86;
+    --code-bg: #f2f0ea; --code-ink: #2a2d33;
+    --radius: 14px;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131519; --panel: #1a1d22; --panel-2: #1e2127;
+      --ink: #e6e8eb; --ink-soft: #99a0a9; --line: #2b2f36;
+      --mod: #6ea0ff; --mod-bg: #6ea0ff1c;
+      --share: #43c9b3; --share-bg: #43c9b31c;
+      --warn: #e0a44a; --ok: #43c9b3;
+      --code-bg: #23262c; --code-ink: #d6dade;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.62; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 46px 22px 90px; }
+  code, .mono { font-family: var(--mono); }
+
+  header { border-bottom: 1px solid var(--line); padding-bottom: 24px; margin-bottom: 30px; }
+  .eyebrow { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; }
+  h1 { font-size: clamp(25px, 4.2vw, 36px); line-height: 1.1; margin: 12px 0 8px; letter-spacing: -.02em; text-wrap: balance; }
+  .lede { color: var(--ink-soft); font-size: 15.5px; max-width: 64ch; margin: 0; }
+  .chips { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--ink-soft); }
+  .chip b { color: var(--ink); }
+
+  h2 { font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; margin: 42px 0 15px; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 480px; }
+  th, td { text-align: left; padding: 11px 15px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; background: var(--panel-2); }
+  tr:last-child td { border-bottom: none; }
+  td code, th code { font-size: 12.5px; background: var(--code-bg); color: var(--code-ink); padding: 2px 6px; border-radius: 6px; }
+  .hi { color: var(--warn); font-weight: 700; }
+
+  .phase { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 20px 18px; margin-bottom: 14px; position: relative; overflow: hidden; }
+  .phase::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--mod); }
+  .phase.share::before { background: var(--share); }
+  .phase.warnbar::before { background: var(--warn); }
+  .phase-head { display: flex; align-items: baseline; gap: 12px; margin: 16px 0 4px; flex-wrap: wrap; }
+  .phase-tag { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--mod); background: var(--mod-bg); padding: 3px 9px; border-radius: 7px; white-space: nowrap; }
+  .phase.share .phase-tag { color: var(--share); background: var(--share-bg); }
+  .phase-title { font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+  .phase-sub { font-size: 12.5px; color: var(--ink-soft); }
+  ol.steps { margin: 8px 0 4px; padding-left: 0; list-style: none; counter-reset: s; }
+  ol.steps li { position: relative; padding: 7px 0 7px 34px; font-size: 14.5px; border-top: 1px dashed var(--line); }
+  ol.steps li:first-child { border-top: none; }
+  ol.steps li::before { counter-increment: s; content: counter(s); position: absolute; left: 0; top: 7px; width: 22px; height: 22px; border-radius: 7px; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink-soft); font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+  ol.steps code { font-size: 12.5px; background: var(--code-bg); color: var(--code-ink); padding: 1px 6px; border-radius: 5px; }
+  ol.steps b { font-weight: 700; }
+
+  .tree { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; margin: 8px 0 2px; }
+  .tree pre { margin: 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.75; padding: 12px 14px; white-space: pre; }
+  .c-mod { color: var(--mod); font-weight: 700; }
+  .c-note { color: var(--ink-soft); font-style: italic; }
+
+  .callout { padding: 13px 16px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 12%, var(--panel)); border: 1px solid color-mix(in srgb, var(--warn) 34%, var(--line)); font-size: 14px; margin: 4px 0; }
+  .callout b { color: var(--warn); }
+
+  ul.rules { list-style: none; padding: 0; margin: 0; display: grid; gap: 9px; }
+  ul.rules li { background: var(--panel); border: 1px solid var(--line); border-radius: 11px; padding: 12px 15px 12px 40px; position: relative; font-size: 14.5px; }
+  ul.rules li::before { content: "→"; position: absolute; left: 15px; top: 12px; color: var(--share); font-weight: 800; }
+  ul.rules code { font-size: 12.5px; background: var(--code-bg); color: var(--code-ink); padding: 1px 6px; border-radius: 5px; }
+
+  ul.done { list-style: none; padding: 0; margin: 0; display: grid; gap: 7px; }
+  ul.done li { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px 11px 40px; position: relative; font-size: 14px; }
+  ul.done li::before { content: "☐"; position: absolute; left: 14px; top: 9px; color: var(--ok); font-size: 16px; font-weight: 700; }
+
+  footer { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 12.5px; }
+  footer code { font-family: var(--mono); background: var(--code-bg); padding: 1px 6px; border-radius: 5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Kaptas ERP · plan de migración · v2</div>
+    <h1>Migrar <span class="mono">Contactos</span> a un módulo Feature</h1>
+    <p class="lede">Ciclo RECICLADO (el módulo ya existe en el legado). Patrón de referencia: RepairShop v2, ya validado. <b>Esta es la v2 del plan: la v1 midió 1 stored procedure donde hay 14 y construyó todo el dimensionamiento sobre esa premisa.</b></p>
+    <div class="chips">
+      <span class="chip"><b>734</b> líneas legado</span>
+      <span class="chip"><b>21</b> endpoints</span>
+      <span class="chip"><b>19</b> métodos</span>
+      <span class="chip"><b>14</b> stored procedures</span>
+      <span class="chip"><b>3</b> DbContexts</span>
+      <span class="chip">ruta v2: <b>api/v2/Contacts</b></span>
+    </div>
+  </header>
+
+  <div class="callout"><b>Convención de este documento:</b> todo número lleva al lado el comando que lo re-mide. Un número sin comando no se escribe. Cada bloque marca <b>VERIFICADO</b> (comando corrido) o <b>HIPÓTESIS</b> (requiere acceso a la BD — nadie codea contra esto). El detalle completo vive en <code>pasos.md</code>; esto es el resumen navegable.</div>
+
+  <h2>Radiografía real del legado <span class="hi">VERIFICADO</span></h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Qué</th><th>Valor real</th><th>Comando que lo re-mide</th></tr></thead>
+      <tbody>
+        <tr><th>Controller</th><td><code>Controllers/ContactController.cs</code> — <b>21 endpoints</b></td><td><code>grep -c "\[Http" …/ContactController.cs</code> → <code>21</code></td></tr>
+        <tr><th>Service</th><td><code>ContactService.cs</code> — <b>734 líneas</b></td><td><code>wc -l</code> → <code>734</code></td></tr>
+        <tr><th>Métodos de interfaz</th><td><b>19</b></td><td><code>grep -c "Task…" IContactService.cs</code> → <code>19</code></td></tr>
+        <tr><th>Stored procedures</th><td><span class="hi">14 invocaciones</span></td><td><code>grep -c "P_Contactos\|p_Contactos"</code> → <code>14</code></td></tr>
+        <tr><th>DbContexts en uso</th><td><b>3</b>: <code>KaptasCore</code> 14 · <code>Restaurant</code> 6 · <code>Kaptasweb</code> 2</td><td><code>grep -c "$p\." </code> por cada campo del ctor</td></tr>
+        <tr><th>Entidades EF</th><td><code>Contacto</code>, <code>ContactoNumero</code>, <code>ContactosRelacionado</code>, <code>ContactoPrecioPermitido</code>, <code>ContactosTipo</code>, <code>ContactoBitacora</code></td><td><code>grep -n "Entity&lt;Contacto"</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout" style="margin-top:14px"><b>La premisa de la v1 era falsa.</b> No es «casi todo EF con 1 SP»: son <b>14 SPs</b>, y el de escritura principal usa 4 TVPs y toca 5 tablas. <b>Contactos no es más barato que Taller</b> — es comparable, con más superficie HTTP. La v1 buscó el SP por nombre conocido; los otros 13 están embebidos en cadenas <code>"exec …"</code> concatenadas y el grep no los veía.</div>
+
+  <h2>Los 14 stored procedures <span class="hi">VERIFICADO</span></h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>SP</th><th>Línea</th><th>Método</th><th>Tipo</th></tr></thead>
+      <tbody>
+        <tr><td><code>P_Contactos_Insert_Update_Grabar</code></td><td>484</td><td>Create</td><td><span class="hi">crítico: 4 TVPs, 5 tablas, numera <code>Secuencia</code></span></td></tr>
+        <tr><td><code>P_Contactos_Delete</code></td><td>292</td><td>Delete</td><td>escritura</td></tr>
+        <tr><td><code>P_Contactos_Read_Filter_Paging</code></td><td>182</td><td>GetContacts</td><td>lectura paginada</td></tr>
+        <tr><td><code>P_Contactos_Read_simple_Filter_Paging</code></td><td>157</td><td>GetLookups</td><td>lectura paginada</td></tr>
+        <tr><td><code>P_Contactos_simple_Paging</code></td><td>219</td><td>ContactsSimpleList</td><td>lectura paginada</td></tr>
+        <tr><td><code>P_Contactos_Read_By_Id</code></td><td>240</td><td>GetContactById</td><td>lectura</td></tr>
+        <tr><td><code>P_Contactos_Tipo_Read_By_ContactoId</code></td><td>265</td><td>GetContactType</td><td>lectura</td></tr>
+        <tr><td><code>P_Contactos_Relacionados_Read</code></td><td>276</td><td>GetRelatedContacts</td><td>lectura</td></tr>
+        <tr><td><code>P_Contactos_Relacionado_Insert</code></td><td>332</td><td>RelatedContactInsert</td><td>escritura TVP</td></tr>
+        <tr><td><code>P_Contactos_Relacionados_Delete</code></td><td>362</td><td>DeleteRelatedContact</td><td>escritura</td></tr>
+        <tr><td><code>P_Contactos_Relacionados_Tipo_Relacion_Update</code></td><td>392</td><td>UpdateRelatedContactRelationType</td><td>escritura</td></tr>
+        <tr><td><code>P_Contactos_Ubicacion_Insert_Upd_Grabar</code></td><td>609</td><td>UpdateContactLocation</td><td>escritura trivial</td></tr>
+        <tr><td><code>p_Contactos_Clientes_administrados</code></td><td>659</td><td>GetClientesAdministrados</td><td>lectura paginada</td></tr>
+        <tr><td><code>p_Contactos_Update_Administrado</code></td><td>688</td><td>UpdateClienteAdministrado</td><td>escritura</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout" style="margin-top:14px">La v1 eligió como «el único SP» a <code>P_Contactos_Ubicacion_Insert_Upd_Grabar</code> — <b>el más trivial de los 14</b> (escribe lat/long) — y dejó sin asignar la escritura principal.</div>
+
+  <h2>Los pasos</h2>
+
+  <div class="phase warnbar">
+    <div class="phase-head"><span class="phase-tag" style="color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent)">FASE −1</span><span class="phase-title">Precondiciones bloqueantes</span><span class="phase-sub">HIPÓTESIS · requieren acceso a la BD</span></div>
+    <ol class="steps">
+      <li><b>¿Quién escribe <code>ContactoBitacora</code>?</b> Cero escrituras desde C#: la produce un SP o un trigger. Si es el SP y v2 lo reemplaza por EF, <span class="hi">la auditoría desaparece en silencio</span> y ningún test lo detecta, porque el JSON de respuesta es idéntico.<br><code>SELECT o.name, o.type_desc FROM sys.sql_modules m JOIN sys.objects o ON o.object_id=m.object_id WHERE m.definition LIKE '%ContactoBitacora%';</code></li>
+      <li><b>¿Cómo numera <code>P_Contactos_Insert_Update_Grabar</code>?</b> <code>Contacto.Secuencia</code> es <code>int</code> no nullable generado adentro del SP, y en el repo hay <b>0</b> <code>IsolationLevel</code>. Si numera con <code>MAX+1</code>, v2 necesita <code>sp_getapplock</code> o <code>SEQUENCE</code> nativa más índice único <code>(IdCompany, Secuencia)</code>.</li>
+      <li><b>Forense de PII.</b> <code>SELECT TOP 100 RequestQueryString FROM dbo.Log WHERE RequestUrl LIKE '%Contact%'</code> — si devuelve filas, la fuga <b>ya ocurrió</b> y deja de ser un riesgo preventivo.</li>
+    </ol>
+  </div>
+
+  <div class="phase">
+    <div class="phase-head"><span class="phase-tag">FASE 0</span><span class="phase-title">Análisis y caracterización (R1)</span><span class="phase-sub">no se toca código productivo</span></div>
+    <ol class="steps">
+      <li>Clasificar los <b>19 métodos</b> y los <b>21 endpoints</b>: cuáles usa el frontend, cuáles otros módulos, cuáles están muertos.</li>
+      <li>Mapear los <b>8 usos</b> de <code>RestaurantContext</code> y <code>KaptaswebContext</code>. Decidir por escrito si entran al alcance o quedan en el legado. <span class="hi">Un módulo que descubre un tercer DbContext a mitad de la FASE 2 rehace el diseño.</span></li>
+      <li>Tests de caracterización del legado contra las BDs <code>_test</code>: lo que HOY hace, no lo que debería.</li>
+      <li><b>Clasificar cada caracterización en CONTRATO (se preserva) vs DEFECTO (se corrige).</b> Sin esta clasificación, los tests congelan los 4 IDOR como comportamiento correcto.</li>
+    </ol>
+  </div>
+
+  <div class="phase warnbar">
+    <div class="phase-head"><span class="phase-tag" style="color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent)">SEGURIDAD</span><span class="phase-title">Desviaciones intencionales declaradas</span><span class="phase-sub">el artefacto que desarma la trampa</span></div>
+    <p>El legado tiene <b>4 métodos que leen y escriben sin filtro de empresa</b> (<code>ContactService.cs:134, 534, 567, 621</code>). La v1 exigía equivalencia byte a byte contra el legado, y ahí está la trampa:</p>
+    <div class="callout">Si v2 <b>replica</b> fielmente, replica el IDOR y el test sale <b>verde</b> certificando la fuga. Si v2 <b>corrige</b>, el test sale <b>rojo</b> por hacer lo correcto. <span class="hi">El legado no es la referencia válida para control de acceso.</span></div>
+    <ol class="steps">
+      <li><b>Equivalencia por defecto, divergencia por excepción declarada.</b> Todo endpoint corre la comparación legacy-vs-v2 salvo los de la tabla de desviaciones. Cada exclusión lleva su test propio, escrito en el mismo commit. Un endpoint excluido sin test propio no pasa el gate: es un endpoint sin juez.</li>
+      <li>Si en FASE 2 aparece una divergencia no listada, <b>se para y se agrega la fila antes de escribir el código</b>. Una divergencia descubierta por un test rojo en FASE 3 es una divergencia no declarada.</li>
+      <li><b>8 desviaciones</b> registradas: SigaData · Update · Imagen · PreciosPermitidos (ajeno → lista vacía, no 404, para no enumerar) · flag de facturas pendientes · RNC pasa de query string a body · fallo del proveedor → error de negocio, no 500 · authz por rol con userId real.</li>
+    </ol>
+    <p><b>Además, en el legado:</b> 6 <code>[Authorize(Roles=…)]</code> <span class="hi">comentados</span> (<code>ContactController.cs:27,32,76,81,87,93</code>) y <code>Id_UserCreate = 1</code> literal en tres SPs (<code>:326, :356, :386</code>) — la auditoría de contactos relacionados dice «usuario 1» desde siempre.</p>
+  </div>
+
+  <div class="phase">
+    <div class="phase-head"><span class="phase-tag">FASE 1</span><span class="phase-title">Estructura del módulo</span><span class="phase-sub">CQRS no es opcional a esta escala</span></div>
+    <div class="tree"><pre>Features/<span class="c-mod">Contacts/</span>
+├── DTOs/                       <span class="c-note">contratos propios + ContactFieldLengths + ContactDictionaryTypes</span>
+├── Commands/                   <span class="c-note">10 — un caso de uso por archivo</span>
+├── Queries/                    <span class="c-note">7 — AsNoTracking() obligatorio</span>
+├── Internal/                   <span class="c-note">ContactTenantFilter · ContactOwnershipGuard · ContactNumbersMapper</span>
+├── IContactOwnershipGuard.cs   <span class="c-note">2º puerto público: resuelve la deuda #3 de Taller</span>
+├── 5 interfaces segmentadas    <span class="c-note">ISP — no una de 19 métodos</span>
+├── 5 controllers               <span class="c-note">por sub-recurso con identidad propia</span>
+└── ContactsServiceCollectionExtensions.cs</pre></div>
+    <p><b>Los 5 controllers:</b> <code>Contacts</code> (10) · <code>Contacts/{id}/Relations</code> (3) · <code>Contacts/Catalogs</code> (5, solo lectura) · <code>Contacts/{id}/Prices</code> (1, frontera con Facturación) · <code>ManagedClients</code> (2, otro agregado). El criterio no es el conteo: se parte por <b>sub-recurso con tabla, ciclo de vida e identificador propios</b>.</p>
+    <div class="callout"><b>Atributos obligatorios en los 5:</b><br><code>[ApiController] [Authorize] [ServiceFilter(typeof(ValidateModelFilter), Order = ValidateModelFilter.FilterOrder)] [ServiceFilter(typeof(ValidateTenantFilter))]</code><br><br>El <code>Order</code> explícito <span class="hi">no es opcional</span>: <code>ServiceFilterAttribute</code> implementa <code>IOrderedFilter</code> con su propio <code>Order = 0</code> e ignora el de la clase envuelta. Sin él, <code>ValidateModelFilter</code> corre después del <code>ModelStateInvalidFilter</code> de <code>[ApiController]</code> (<code>-2000</code>) y <b>nunca actúa</b> — ya pasó, con 7 tests unitarios en verde.</div>
+    <p><b>Test de tenant en esta fase, no en la 3:</b> <code>ValidateTenantFilter</code> tiene <b>0 tests</b> hoy y toda la defensa de <code>Features/</code> cuelga de él. Test de integración contra la app levantada, antes de la primera query del módulo. Unitario no cuenta.</p>
+  </div>
+
+  <div class="phase share">
+    <div class="phase-head"><span class="phase-tag">UBICACIÓN</span><span class="phase-title">Módulo vs share — la regla corregida</span></div>
+    <div class="callout">Se elimina: <s>«nada nuevo entra a share salvo que lo usen ≥2 módulos»</s>. Ese criterio ya causó un revert en este repo (<code>9aad5182</code> → <code>a3aca1ef</code>).<br><br><b>La pregunta no es cuántos módulos lo usan. Es: si Contactos cambia, ¿esto tiene que cambiar?</b><br>Sí → módulo. No → <code>_Shared/</code>, <b>aunque hoy lo use uno solo</b>.</div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Pieza</th><th>Dónde</th><th>Por qué</th></tr></thead>
+        <tbody>
+          <tr><td>Consulta RNC</td><td><span class="hi"><code>_Shared/Fiscal/IRncLookup</code></span><br><span class="c-note">la v1 lo mandaba al módulo: se invierte</span></td><td>Si Contactos cambia, la consulta de RNC no cambia. Es identificación fiscal DGII que Facturación y NCF también necesitan</td></tr>
+          <tr><td>Guard de pertenencia</td><td><code>Features/Contacts/IContactOwnershipGuard</code></td><td>Falla el <b>test del nombre</b>: no se puede nombrar sin la palabra «Contact». Y si Contactos cambia qué significa «es tuyo», el guard cambia con él</td></tr>
+          <tr><td>SP de ubicación</td><td><code>Features/Contacts/Commands/</code></td><td>Conclusión de la v1 correcta, <b>argumento equivocado</b>. El correcto: la ubicación es un atributo del contacto</td></tr>
+          <tr><td>Diccionarios</td><td><code>_Shared/Dictionaries/IDictionaryReader</code> (nuevo)</td><td><code>IDictionaryResolver</code> solo tiene escritura. Las <b>claves</b> («contacto_tipo», «tipo_relacion») son valores del dominio → módulo</td></tr>
+          <tr><td><code>HttpHelper.GenericGet</code></td><td>no se usa</td><td>Servicio disfrazado de helper: <code>static</code>, <code>new HttpClient()</code> por llamada, y <code>catch { return null; }</code> que revienta después como <code>NullReferenceException</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><b>Contención de share:</b> hoy 10 áreas y 1.942 LOC con <b>un solo módulo migrado</b>. Todo lo que entra a <code>_Shared/</code> entra <b>con su implementación</b>: un puerto cuya implementación vive en un módulo es una dependencia invertida disfrazada. Contactos aporta 2 áreas completas y <b>0 puertos huérfanos</b>.</p>
+  </div>
+
+  <div class="phase">
+    <div class="phase-head"><span class="phase-tag">FASE 2</span><span class="phase-title">Migrar por tandas</span><span class="phase-sub">lecturas primero, escrituras después</span></div>
+    <ol class="steps">
+      <li><b>Tanda 1 — lecturas.</b> <span class="hi">Ya no es «bajo riesgo»</span>: incluye replicar 3 SPs de paginación con filtros. EF + <code>AsNoTracking()</code> + filtro de empresa en todas las queries.</li>
+      <li><b>Búsqueda sargable.</b> El modelo ya trae <code>TelefonosCleaned</code> y <code>DocumentoCleaned</code>, columnas precalculadas que existen para eso. <code>StartsWith</code> → <code>LIKE 'x%'</code>. Nunca <code>Contains</code> sobre columnas concatenadas.</li>
+      <li><b>Tope de página.</b> <code>MaxPageSize = 100</code> con <code>Math.Min</code> <b>antes</b> de ir a la BD, y devolver el <code>PageSize</code> efectivo. El legado hace <code>.ToList().Take(100)</code>: trae todo del SQL y descarta en memoria.</li>
+      <li><b>GetById sin <code>Include</code> en cascada.</b> El legado tiene 5 <code>Include/ThenInclude</code> sobre 3 colecciones hermanas → producto cartesiano, hasta 120 filas para 1 contacto. Proyección <code>.Select()</code> + queries batch.</li>
+      <li><b>Tanda 2 — escrituras.</b> Guard IDOR antes de toda escritura, <b>y</b> repetir el filtro dentro del <code>Where</code>: el módulo tiene 5 tablas satélite y <code>Update</code> hace <code>RemoveRange</code>. No puede depender del orden de las sentencias.</li>
+      <li><b>Los satélites no tienen <code>IdCompany</code> propio</b> — se filtran siempre por el padre ya validado, nunca por su id suelto.</li>
+      <li><b><code>Update</code> con diff explícito</b>, no delete-all + reinsert como el legado: genera churn de PKs y, si la bitácora es por trigger, auditoría falsa.</li>
+      <li><b><code>Create</code> con 4 TVPs:</b> una transacción, <code>AddRange</code> por colección hija, <b>un solo</b> <code>SaveChangesAsync</code>. Medir round-trips con logging de EF antes de aprobar; el criterio es <i>round-trips constantes respecto al número de hijos</i>, no «los tests pasan».</li>
+      <li><code>CancellationToken</code> end-to-end (hoy 0 usos en <code>Features/</code>), <code>CommandTimeout</code> explícito e <code>IsolationLevel</code> declarado. <b>La llamada HTTP al RNC jamás dentro de la transacción.</b></li>
+    </ol>
+  </div>
+
+  <div class="phase warnbar">
+    <div class="phase-head"><span class="phase-tag" style="color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent)">PII</span><span class="phase-title">Antes del primer log del módulo</span></div>
+    <p><code>nlog.config:56</code> persiste <code>@RequestQueryString</code> en cada fila de <code>dbo.Log</code> — tabla <b>central, compartida entre todos los tenants, sin columna de empresa</b>. Y <code>GetRncData([FromQuery] string rnc)</code> manda la cédula por query string; el listado manda el nombre y el teléfono en <code>SearchValue</code>.</p>
+    <div class="callout">Hoy no filtra <b>por accidente</b>: <code>ContactService</code> tiene 0 llamadas a <code>_logger.Log</code>. <span class="hi">El primer <code>LogError</code> de v2 enciende la fuga.</span> No se agrega ni un log al módulo antes de resolverlo: o el RNC y la búsqueda pasan a <code>POST</code> con body, o se sanitiza el query string con un layout renderer.</div>
+    <p><b>Frontera:</b> <code>ContactoBitacora</code> es auditoría de negocio — transaccional, en la BD del tenant, en el mismo <code>SaveChanges</code> que el cambio. <code>dbo.Log</code> es diagnóstico técnico y su target es <code>async="true"</code>: bajo presión NLog <b>descarta</b> mensajes, así que no sirve como auditoría.</p>
+    <p><b>Y v2 no puede confiar en <code>ExceptionMiddleware</code>:</b> no tiene logger (su constructor recibe solo <code>RequestDelegate</code>). Cada Command loguea antes de relanzar.</p>
+  </div>
+
+  <div class="phase share">
+    <div class="phase-head"><span class="phase-tag">FASE 3</span><span class="phase-title">Validación (el juez)</span></div>
+    <ol class="steps">
+      <li>Equivalencia legacy-vs-v2 por endpoint, <b>salvo las 8 desviaciones declaradas</b>, cada una con su test propio.</li>
+      <li>Las escrituras comparan el <b>estado de las tablas</b>, no solo el JSON — incluida <code>ContactoBitacora</code>, con las columnas de fecha normalizadas.</li>
+      <li><code>GetRncData</code> excluido de la equivalencia: pega a la red real. Se prueba con <code>HttpMessageHandler</code> fake (timeout y 500).</li>
+      <li><b>Cada test de caracterización probó su rojo</b> (comentar el cuerpo del método legado → debe fallar). Cero <code>return</code> condicionales, cero asserts tautológicos, cero <code>Assert.NotNull</code> como único assert.</li>
+      <li>Test de concurrencia de <code>Secuencia</code>: 2 <code>Create</code> simultáneos, misma empresa → <code>COUNT(*) = COUNT(DISTINCT Secuencia)</code>.</li>
+      <li>Suite completa verde + build 0 errores, 0 warnings nuevos.</li>
+    </ol>
+  </div>
+
+  <div class="phase share">
+    <div class="phase-head"><span class="phase-tag">FASE 4</span><span class="phase-title">Convivencia y cierre (R3–R5)</span></div>
+    <ol class="steps">
+      <li>v2 sale por <code>api/v2/Contacts</code>; el legado sigue vivo en <code>api/Contact</code>. El frontend migra por feature flag / tenant. Primero lecturas, después escrituras.</li>
+      <li>La deuda #3 de Taller pasa a <b>«desbloqueada: contrato disponible»</b>. Los call sites de Taller <b>no se tocan acá</b> — es un diff de Taller, con sus tests.</li>
+      <li>Con 0 tráfico confirmado: <code>[Obsolete("Reemplazado por Features/Contacts")]</code> y desmontar. Recién ahí muere <code>ContactService</code>.</li>
+    </ol>
+  </div>
+
+  <h2>Reglas que no se negocian</h2>
+  <ul class="rules">
+    <li>El módulo trae <b>su propio DTO/enum</b> aunque el legado tenga uno igual. Ningún <code>Request</code> expone <code>IdCompany</code>, <code>IdBranch</code> ni <code>IdUserCreate</code>: el tenant sale de <code>scope</code>, nunca del request.</li>
+    <li><b>Ubicación por dominio, no por conteo de consumidores</b> (ver la regla corregida arriba). Un movimiento de ubicación es un cambio de arquitectura: va en su propio commit.</li>
+    <li>Flujo de errores: negocio esperado → <code>ResponseVM</code> · validación → <code>ValidateModelFilter</code> → 400 · fallo técnico → <code>rollback</code> + <code>LogError</code> + <code>throw;</code> → 500. <b>Nunca 200 con cuerpo de error</b> (el legado lo hace en <code>:697-700</code> y además filtra <code>ex.Message</code>).</li>
+    <li><b>No hay Scrutor</b> pese a lo que dice CLAUDE.md §2. <code>AddContacts()</code> registra a mano cada Command, Query y Service: olvidar una línea no rompe el build, rompe el request.</li>
+    <li>Controller de delegación pura: cada acción una sola expresión. Cero <code>if</code>, cero <code>foreach</code>, cero <code>_core.</code>. La métrica es líneas-por-endpoint ≈ 2, no el total del archivo.</li>
+    <li>El legado <b>no se toca</b> (ni «de paso») hasta la FASE 4.</li>
+  </ul>
+
+  <h2>Definición de Done</h2>
+  <ul class="done">
+    <li>Las 3 precondiciones de la FASE −1 respondidas contra la BD</li>
+    <li>Tests de caracterización escritos ANTES de tocar nada, cada uno con su rojo probado</li>
+    <li>La tabla de desviaciones completa: cada endpoint está en la suite de equivalencia <b>o</b> en la tabla, nunca en las dos ni en ninguna</li>
+    <li>Test de integración de <code>ValidateTenantFilter</code> en verde</li>
+    <li>1 test de tenant por cada endpoint de escritura, con assert sobre la BD de que no hubo efecto</li>
+    <li><code>grep</code> en verde: cero <code>Kaptas.Services</code> · cero <code>ISpRunner</code> · cero <code>HttpHelper</code> · cero PII por query string · cero rutas absolutas</li>
+    <li><code>bash ~/.claude/skills/kaptas-security-gate/assets/security-gate.sh Contacts</code> → exit 0</li>
+    <li>Build 0/0 + suite completa verde con el número explícito de tests ejecutados</li>
+    <li>Tracking actualizado en openspec y <code>REGISTRO-MODULOS.md</code></li>
+  </ul>
+
+  <footer>
+    v2 · 2026-07-19 · reescrito tras 6 revisiones (backend · datos · tests · observabilidad · seguridad · arquitectura) · Plan completo: <code>openspec/changes/migrar-contactos/pasos.md</code> · v1 archivada en <code>pasos-v1-obsoleto.md</code> · Kaptas ERP · .NET 7 · EF Core
+  </footer>
+</div>
+</body>
+</html>

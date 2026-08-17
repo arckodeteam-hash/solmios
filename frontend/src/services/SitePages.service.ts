@@ -8,7 +8,7 @@
 // La lectura pública (`/api/public/site-pages[/:slug]`) la consume el landing, no el panel.
 
 import { http } from './http'
-import type { SitePage, SitePageListResult, CreateSitePageInput, UpdateSitePageInput } from '@/types/site-pages'
+import type { SitePage, SitePageListResult, CreateSitePageInput, UpdateSitePageInput, PublicSitePage, PublicSitePageSummary } from '@/types/site-pages'
 
 export const SitePagesService = {
   list(): Promise<SitePageListResult> {
@@ -29,5 +29,17 @@ export const SitePagesService = {
 
   remove(id: string): Promise<void> {
     return http.delete<void>(`/site-pages/${id}`)
+  },
+}
+
+// ── Públicos (sin auth, rate-limited por IP) — los consume el landing/footer ──
+export const PublicSitePages = {
+  /** El controller envuelve el array en {data:[...]} — se desenvuelve acá. */
+  async index(): Promise<PublicSitePageSummary[]> {
+    const r = await http.get<{ data: PublicSitePageSummary[] }>('/public/site-pages')
+    return r?.data ?? []
+  },
+  bySlug(slug: string): Promise<PublicSitePage> {
+    return http.get<PublicSitePage>(`/public/site-pages/${slug}`)
   },
 }

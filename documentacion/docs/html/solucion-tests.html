@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Solución de Tests — Kaptas</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#1a2029; --panel2:#222b36; --txt:#e6e9ee;
+    --muted:#9aa5b1; --accent:#3b82f6; --green:#22c55e; --red:#ef4444;
+    --amber:#f59e0b; --line:#2d3744;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Roboto,system-ui,sans-serif;background:var(--bg);color:var(--txt);
+       line-height:1.6;padding:24px;max-width:1180px;margin:0 auto}
+  h1{font-size:2rem;margin-bottom:6px;background:linear-gradient(90deg,#3b82f6,#60a5fa);
+     -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  h2{font-size:1.3rem;margin:32px 0 14px;color:#cdd5e0;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h3{font-size:1.05rem;margin:18px 0 10px;color:#a9b4c2}
+  .sub{color:var(--muted);margin-bottom:24px;font-size:.95rem}
+  .veredicto{background:linear-gradient(135deg,#0f3d2e,#14532d);border:1px solid var(--green);
+     border-radius:12px;padding:18px 22px;margin:18px 0;display:flex;align-items:center;gap:14px}
+  .veredicto .big{font-size:1.6rem}
+  .veredicto b{color:#86efac}
+  code,kbd{background:var(--panel2);padding:2px 7px;border-radius:5px;font-family:'Consolas',monospace;
+     font-size:.88em;color:#7dd3fc;border:1px solid var(--line)}
+  pre{background:#0b0f14;border:1px solid var(--line);border-radius:8px;padding:14px;overflow:auto;
+     font-family:'Consolas',monospace;font-size:.85em;color:#cbd5e1;margin:10px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin:10px 0}
+  .grid{display:grid;gap:12px}
+  .grid.cols-3{grid-template-columns:repeat(3,1fr)}
+  .grid.cols-2{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:820px){.grid.cols-3,.grid.cols-2{grid-template-columns:1fr}}
+  .opt{border-radius:10px;padding:14px;border:2px solid var(--line);background:var(--panel)}
+  .opt.chosen{border-color:var(--green);box-shadow:0 0 0 3px rgba(34,197,94,.12)}
+  .opt .tag{display:inline-block;font-size:.72rem;padding:3px 9px;border-radius:20px;margin-bottom:8px;font-weight:600}
+  .tag.green{background:rgba(34,197,94,.18);color:#86efac}
+  .tag.gray{background:rgba(154,165,177,.18);color:var(--muted)}
+  .tag.red{background:rgba(239,68,68,.18);color:#fca5a5}
+  .tag.amber{background:rgba(245,158,11,.18);color:#fcd34d}
+  .opt h3{margin-top:0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:.9rem}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left}
+  th{background:var(--panel2);color:#cbd5e1}
+  tr:nth-child(even){background:rgba(255,255,255,.02)}
+  /* MAPA MENTAL */
+  .mindmap{display:flex;flex-direction:column;align-items:center;margin:20px 0;gap:10px}
+  .mm-root{background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;padding:14px 26px;
+     border-radius:50px;font-weight:700;font-size:1.1rem;box-shadow:0 4px 14px rgba(59,130,246,.4)}
+  .mm-branches{display:flex;gap:18px;justify-content:center;flex-wrap:wrap}
+  .mm-branch{background:var(--panel);border:2px solid var(--line);border-radius:10px;padding:12px 16px;
+     min-width:230px;max-width:260px;position:relative}
+  .mm-branch.win{border-color:var(--green);background:rgba(34,197,94,.06)}
+  .mm-branch h4{font-size:.95rem;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+  .mm-branch.win h4{color:#86efac}
+  .mm-branch ul{list-style:none;font-size:.82rem;color:var(--muted)}
+  .mm-branch ul li{padding:2px 0}
+  .mm-branch ul li::before{content:"• ";color:var(--accent)}
+  .mm-branch.win ul li::before{color:var(--green)}
+  /* DIAGRAMA ARQUITECTURA */
+  .arch{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin:14px 0}
+  .arch-row{display:flex;align-items:center;justify-content:center;gap:0;flex-wrap:wrap;margin:8px 0}
+  .node{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 14px;
+     text-align:center;font-size:.85rem;min-width:120px}
+  .node.dev{border-color:var(--accent);color:#93c5fd}
+  .node.ci{border-color:#a78bfa;color:#c4b5fd}
+  .node.srv{border-color:var(--green);color:#86efac;background:rgba(34,197,94,.08)}
+  .node small{display:block;color:var(--muted);font-size:.72rem;margin-top:3px}
+  .arrow{color:var(--muted);padding:0 10px;font-size:1.1rem}
+  .badge{display:inline-block;font-size:.72rem;padding:2px 8px;border-radius:5px;margin-right:5px;font-weight:600}
+  .badge.done{background:rgba(34,197,94,.2);color:#86efac}
+  .badge.todo{background:rgba(245,158,11,.2);color:#fcd34d}
+  .check{color:var(--green);font-weight:700}
+  .cross{color:var(--red);font-weight:700}
+  ul.clean{list-style:none;padding-left:0}
+  ul.clean li{padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+  .step{display:flex;gap:12px;align-items:flex-start;padding:10px;background:var(--panel);
+     border-radius:8px;margin:8px 0;border-left:3px solid var(--accent)}
+  .step .n{background:var(--accent);color:#fff;width:26px;height:26px;border-radius:50%;
+     display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;font-size:.85rem}
+  .footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:.82rem;text-align:center}
+</style>
+</head>
+<body>
+
+<h1>🧪 Solución de Tests — Kaptas Web API</h1>
+<p class="sub">Resumen visual de la solución elegida para que los tests corran aislados y cualquier compañero del equipo los pueda ejecutar.</p>
+
+<!-- ============ VEREDICTO ============ -->
+<div class="veredicto">
+  <span class="big">✅</span>
+  <div>
+    <div style="font-size:1.15rem"><b>Decisión final: Opción C</b> — Usar el <b>server online de prueba</b> (<code>173.249.31.75</code>) como destino de los tests.</div>
+    <div style="color:#a7f3d0;font-size:.9rem;margin-top:4px">Local con Docker + CI/compañeros apuntando al server online. Reutiliza todo lo que ya está armado.</div>
+  </div>
+</div>
+
+<!-- ============ MAPA MENTAL ============ -->
+<h2>🧠 Mapa mental — por qué esta opción</h2>
+<p class="sub">Del problema a la decisión. El nodo central es la meta; las ramas son las 3 alternativas que evaluamos.</p>
+
+<div class="mindmap">
+  <div class="mm-root">Tests reproducibles y aislados para todo el equipo</div>
+  <div class="arrow">▼</div>
+  <div class="mm-branches">
+
+    <div class="mm-branch">
+      <h4>🐳 A · Docker + <code>.bak</code> compartido</h4>
+      <ul>
+        <li>Cada uno levanta SQL Server local</li>
+        <li>Restaura un <code>.bak</code> desde storage</li>
+        <li><span class="cross">✗</span> El <code>.bak</code> pesa y hay que mantenerlo</li>
+        <li><span class="cross">✗</span> No es "como Laravel"</li>
+      </ul>
+    </div>
+
+    <div class="mm-branch">
+      <h4>📦 B · Schema versionado + Testcontainers</h4>
+      <ul>
+        <li>Extraer schema a <code>.sql</code> y versionarlo</li>
+        <li>Tests levantan su propio SQL Server</li>
+        <li><span class="cross">✗</span> Drift MANUAL: mantener los <code>.sql</code> al día</li>
+        <li><span class="cross">✗</span> Setup complejo, arranque lento</li>
+      </ul>
+    </div>
+
+    <div class="mm-branch win">
+      <h4>🌐 C · Server online de prueba <span class="tag green">ELEGIDA</span></h4>
+      <ul>
+        <li>Apuntar tests al server <code>173.249.31.75</code></li>
+        <li>Schema vive ahí (lo mantiene el DBA)</li>
+        <li><span class="check">✓</span> Reutiliza TODO lo armado</li>
+        <li><span class="check">✓</span> Cero drift manual</li>
+        <li><span class="check">✓</span> Compañeros: solo cambian 1 variable</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============ ARQUITECTURA ============ -->
+<h2>🏗️ Cómo queda armado (arquitectura)</h2>
+<div class="arch">
+
+  <div class="arch-row">
+    <div class="node dev">💻 Tu local<small>Docker kaptas-sql</small></div>
+    <div class="arrow">→</div>
+    <div class="node">⚙️ <code>dotnet test</code><small>239 tests</small></div>
+    <div class="arrow">→</div>
+    <div class="node srv">🗄️ BDs <code>_test</code><small>kaptaswebdev_test<br>kw21_test</small></div>
+  </div>
+
+  <div style="text-align:center;color:var(--muted);margin:14px 0;font-size:.85rem">— o contra el server online —</div>
+
+  <div class="arch-row">
+    <div class="node ci">🤖 CI / compañeros<small>GitLab runner</small></div>
+    <div class="arrow">→</div>
+    <div class="node">⚙️ <code>dotnet test</code><small>reset + tests</small></div>
+    <div class="arrow">→</div>
+    <div class="node srv">🌐 <code>173.249.31.75</code><small>server de prueba<br>BDs <code>_test</code> dedicadas</small></div>
+  </div>
+
+</div>
+<p class="sub"><b>Lo clave:</b> las BD reales (<code>kaptaswebdev</code> / <code>kw21</code>) <b>nunca se tocan</b>. Los tests trabajan sobre copias <code>_test</code> que se resetean solas antes de cada corrida.</p>
+
+<!-- ============ FLUJO ============ -->
+<h2>⚙️ Qué pasa cuando hacés <code>dotnet test</code></h2>
+
+<div class="step"><div class="n">1</div><div>MSBuild ejecuta <code>setup-test-db.sh --reset-only</code> <b>antes</b> de que arranquen los tests.</div></div>
+<div class="step"><div class="n">2</div><div>El script hace <code>RESTORE</code> de las BDs <code>_test</code> desde un snapshot limpio → quedan vírgenes (2 segundos).</div></div>
+<div class="step"><div class="n">3</div><div>xUnit corre los <b>239 tests</b> apuntando a las BDs <code>_test</code>.</div></div>
+<div class="step"><div class="n">4</div><div>Las BDs <code>dev</code> ni se enteraron. Cero contaminación.</div></div>
+
+<!-- ============ TIPOS DE TEST ============ -->
+<h2>🧩 Los 2 tipos de test</h2>
+<div class="grid cols-2">
+  <div class="card">
+    <span class="tag green">UNITARIOS</span>
+    <h3>Features/ — sin BD</h3>
+    <ul class="clean">
+      <li>⚡ ~1 segundo · 43 tests</li>
+      <li>Lógica pura con mocks (crypto, cálculos, validaciones)</li>
+      <li><span class="badge done">andan en cualquier CI sin nada</span></li>
+    </ul>
+  </div>
+  <div class="card">
+    <span class="tag amber">INTEGRATION</span>
+    <h3>Legacy/ — contra BD <code>_test</code></h3>
+    <ul class="clean">
+      <li>🐢 ~45 segundos · 196 tests</li>
+      <li>Queries, SPs y datos reales aislados</li>
+      <li><span class="badge todo">necesitan la BD <code>_test</code></span></li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ COMPARATIVA ============ -->
+<h2>📊 Comparativa de las 3 opciones</h2>
+<table>
+  <tr><th>Criterio</th><th>A · Docker + .bak</th><th>B · Schema versionado</th><th>C · Server online ⭐</th></tr>
+  <tr><td>Trabajo inicial</td><td>Medio</td><td class="cross">Alto</td><td class="check">Bajo</td></tr>
+  <tr><td>Drift del schema</td><td>Manual (el .bak)</td><td class="cross">Manual (los .sql)</td><td class="check">Lo mantiene el DBA</td></tr>
+  <tr><td>Fricción para compañeros</td><td>Media</td><td>Baja</td><td class="check">Mínima</td></tr>
+  <tr><td>Datos sensibles</td><td>⚠️ del .bak</td><td class="check">✓ fake (factories)</td><td>⚠️ del server</td></tr>
+  <tr><td>Depende de infra externa</td><td>No</td><td>No</td><td>⚠️ el server online</td></tr>
+  <tr><td>Reutiliza lo ya hecho</td><td>Parcial</td><td>Poco</td><td class="check">Todo</td></tr>
+</table>
+
+<!-- ============ CÓMO LO USA CADA UNO ============ -->
+<h2>👥 Cómo lo usa cada rol</h2>
+<div class="grid cols-3">
+  <div class="card">
+    <h3>💻 Vos (local)</h3>
+    <pre>bash setup-test-db.sh   # 1ª vez
+dotnet test</pre>
+    <p class="sub">Docker local, rápido (~1ms por query).</p>
+  </div>
+  <div class="card">
+    <h3>👤 Compañero nuevo</h3>
+    <pre>git clone ...
+# setea la credencial del server
+dotnet test</pre>
+    <p class="sub">Apunta al server online, sin instalar Docker SQL.</p>
+  </div>
+  <div class="card">
+    <h3>🤖 CI / GitLab</h3>
+    <pre>build
+setup-test-db.sh --reset-only
+dotnet test</pre>
+    <p class="sub">Autónomo, credenciales por secret.</p>
+  </div>
+</div>
+
+<!-- ============ SALVAVIDAS ============ -->
+<h2>🛟 Los 3 cuidados de la Opción C</h2>
+<div class="grid cols-3">
+  <div class="opt">
+    <span class="tag red">Credenciales</span>
+    <h3>Nunca en el repo</h3>
+    <p class="sub">Host y password van por <b>variables de entorno / secrets de GitLab</b>. El repo queda limpio.</p>
+  </div>
+  <div class="opt">
+    <span class="tag amber">Drift</span>
+    <h3>Sync con prod</h3>
+    <p class="sub">Job nocturno que restaura el server de prueba desde prod → nunca se queda "lejos de lo actual".</p>
+  </div>
+  <div class="opt">
+    <span class="tag amber">Contención</span>
+    <h3>BD por persona</h3>
+    <p class="sub">Cada dev/CI usa su BD <code>_test</code> (<code>kw21_test_joel</code>, etc.) para no pisarse.</p>
+  </div>
+</div>
+
+<!-- ============ ESTADO ============ -->
+<h2>📋 Estado actual</h2>
+<table>
+  <tr><th>Pieza</th><th>Estado</th><th>Detalle</th></tr>
+  <tr><td>BDs <code>_test</code> aisladas (BACKUP/RESTORE)</td><td><span class="badge done">VERIFICADO</span></td><td>Local: 239 tests pasan, dev intacto</td></tr>
+  <tr><td>Script <code>setup-test-db.sh</code> + reset auto</td><td><span class="badge done">VERIFICADO</span></td><td>Funciona en local (Docker)</td></tr>
+  <tr><td>43 tests unitarios (Features/)</td><td><span class="badge done">VERIFICADO</span></td><td>Sin BD, ~1s</td></tr>
+  <tr><td>196 tests integration (Legacy/)</td><td><span class="badge done">VERIFICADO</span></td><td>Contra <code>_test</code></td></tr>
+  <tr><td>Modo server-online (<code>KAPTAS_SQL_HOST</code>)</td><td><span class="badge todo">PARA ACTIVAR</span></td><td>Script listo, falta crear <code>_test</code> en el remoto</td></tr>
+  <tr><td><code>.gitlab-ci.yml</code></td><td><span class="badge todo">PARA CREAR</span></td><td>Job que apunta al server online</td></tr>
+  <tr><td>Sync server de prueba ← prod</td><td><span class="badge todo">OPCIONAL</span></td><td>Lo arma el DBA (job nocturno)</td></tr>
+</table>
+
+<!-- ============ VERIFICAR ANTES DE HACER ============ -->
+<h2>🔍 Antes de implementar — verificar</h2>
+<div class="card">
+<ul class="clean">
+  <li><b>1.</b> ¿El server <code>173.249.31.75</code> es de prueba? → <span class="check">SÍ (confirmado)</span></li>
+  <li><b>2.</b> ¿Tiene las BDs base? → <span class="check">SÍ: <code>kaptaswebdev</code> + <code>kw21</code> presentes</span></li>
+  <li><b>3.</b> ¿Es Linux con path <code>/var/opt/mssql/data</code>? → <span class="check">SÍ (SQL Server 2022)</span></li>
+  <li><b>4.</b> ¿Credenciales accesibles? → <span class="check">SÍ (<code>SA</code> funciona)</span></li>
+  <li><b>5.</b> ¿Quién lo sincroniza con prod? → <span class="amber" style="color:#fcd34d">PENDIENTE (DBA)</span></li>
+</ul>
+</div>
+
+<div class="footer">
+  Documento generado para el equipo de Kaptas · Solución de tests aislados · Opción C (server online de prueba)
+</div>
+
+</body>
+</html>

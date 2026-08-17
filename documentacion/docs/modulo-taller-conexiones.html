@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Módulo Taller (v2) — Mapa de conexiones</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --ink:#1c2230; --muted:#5b6472; --line:#e3e7ee;
+    --brand:#16636e; --brand2:#0f4a52; --accent:#2563eb;
+    --web:#7e6116; --web-bg:#f7efd6; --tenant:#16636e; --tenant-bg:#dcecee;
+    --sp:#8e2a1e; --sp-bg:#fbeae7; --ok:#1e8e5a; --ok-bg:#e9f7f0; --warn:#8a5a00; --warn-bg:#fbf1dd;
+    --code-bg:#0f172a; --code-ink:#e2e8f0;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1116; --card:#161b22; --ink:#e6edf3; --muted:#9aa4b2; --line:#2a313c;
+      --brand:#57bdcb; --brand2:#3fa9b8; --accent:#5b9bff;
+      --web:#d3b45e; --web-bg:#2a2412; --tenant:#57bdcb; --tenant-bg:#10292d;
+      --sp:#e08b5f; --sp-bg:#2c1b12; --ok:#3fb984; --ok-bg:#12241c; --warn:#d3b45e; --warn-bg:#2a2412;
+      --code-bg:#0a0e14; --code-ink:#cdd6e0;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1116; --card:#161b22; --ink:#e6edf3; --muted:#9aa4b2; --line:#2a313c;
+    --brand:#57bdcb; --tenant:#57bdcb; --tenant-bg:#10292d; --web:#d3b45e; --web-bg:#2a2412;
+    --sp:#e08b5f; --sp-bg:#2c1b12; --ok:#3fb984; --ok-bg:#12241c; --warn:#d3b45e; --warn-bg:#2a2412;
+    --code-bg:#0a0e14; --code-ink:#cdd6e0;
+  }
+  :root[data-theme="light"]{
+    --bg:#f6f7f9; --card:#fff; --ink:#1c2230; --muted:#5b6472; --line:#e3e7ee;
+    --brand:#16636e; --tenant:#16636e; --tenant-bg:#dcecee; --web:#7e6116; --web-bg:#f7efd6;
+    --sp:#8e2a1e; --sp-bg:#fbeae7; --ok:#1e8e5a; --ok-bg:#e9f7f0; --warn:#8a5a00; --warn-bg:#fbf1dd;
+    --code-bg:#0f172a; --code-ink:#e2e8f0;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 20px 80px}
+  header.hero{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;border-radius:16px;padding:32px 30px;margin-bottom:24px;box-shadow:0 10px 30px rgba(0,0,0,.15)}
+  header.hero h1{margin:0 0 6px;font-size:1.85rem;letter-spacing:-.02em}
+  header.hero p{margin:0;opacity:.92}
+  .hero .tag{display:inline-block;margin-top:12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;background:rgba(255,255,255,.16);padding:3px 9px;border-radius:6px}
+  section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin-bottom:18px}
+  h2{margin:0 0 14px;font-size:1.3rem;letter-spacing:-.01em;padding-bottom:9px;border-bottom:2px solid var(--line)}
+  h3{margin:20px 0 8px;font-size:1rem}
+  p{margin:0 0 12px}.muted{color:var(--muted)}
+  code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.86em;background:rgba(127,127,127,.14);padding:1px 6px;border-radius:5px}
+  .scroll{overflow-x:auto}
+  .diagram{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:18px;overflow-x:auto}
+  .diagram pre{margin:0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;line-height:1.5;white-space:pre;color:var(--code-ink)}
+  .diagram b{color:#fff}
+  .diagram .web{color:#e6c15c}.diagram .tenant{color:#5fc7d6}.diagram .sp{color:#e59a78}.diagram .ok{color:#6fdba7}
+  table{width:100%;border-collapse:collapse;font-size:.9rem;margin:8px 0}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;white-space:nowrap}
+  .pill{display:inline-block;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:20px;border:1px solid}
+  .p-web{color:var(--web);background:var(--web-bg);border-color:var(--web)}
+  .p-tenant{color:var(--tenant);background:var(--tenant-bg);border-color:var(--tenant)}
+  .p-sp{color:var(--sp);background:var(--sp-bg);border-color:var(--sp)}
+  .callout{border-left:4px solid var(--accent);background:rgba(37,99,235,.06);padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0;font-size:.93rem}
+  .callout.ok{border-left-color:var(--ok);background:var(--ok-bg)}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-bg)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:10px 0}
+  .stat{border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .stat .n{font-size:1.5rem;font-weight:700;font-family:ui-monospace,monospace}
+  .stat .l{font-size:.74rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .impr{counter-reset:step;list-style:none;padding:0;margin:0}
+  .impr li{position:relative;padding:12px 12px 12px 48px;border:1px solid var(--line);border-radius:10px;margin-bottom:10px}
+  .impr li::before{counter-increment:step;content:counter(step);position:absolute;left:12px;top:12px;width:26px;height:26px;border-radius:50%;background:var(--brand);color:#fff;display:grid;place-items:center;font-weight:700;font-size:.85rem}
+  .impr .risk{font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:20px;margin-left:6px}
+  .r-low{background:var(--ok-bg);color:var(--ok)}.r-mid{background:var(--warn-bg);color:var(--warn)}.r-high{background:var(--sp-bg);color:var(--sp)}
+  footer{text-align:center;color:var(--muted);font-size:.82rem;margin-top:24px}
+  @media(max-width:640px){.diagram pre{font-size:.72rem}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>Módulo Taller (v2) — Mapa de conexiones</h1>
+    <p>Con qué está conectado el módulo nuevo (<code>api/v2/RepairShop</code>), qué datos afecta, y cómo mejorarlo para que mejore el sistema.</p>
+    <span class="tag">Kaptas ERP · Features/RepairShop · verificado contra la base de pruebas</span>
+  </header>
+
+  <div class="callout ok">
+    <strong>Punto de partida:</strong> el código C# del módulo está aislado (DTOs y contratos propios). Lo que sigue conectado
+    es lo que el módulo <em>usa</em> desde afuera: dos bases de datos y la lógica que vive en stored procedures.
+  </div>
+
+  <!-- DIAGRAMA -->
+  <section>
+    <h2>1 · El flujo completo, de la petición al dato</h2>
+    <div class="diagram">
+<pre>  HTTP  <b>GET/POST api/v2/RepairShop/*</b>
+     │
+     ▼  pipeline (se ejecuta en orden, antes del controller)
+  ┌──────────────────────────────────────────────────────────┐
+  │ 1. Autenticación JWT        (token válido, si no → 401)   │
+  │ 2. PermissionMiddleware     (precarga roles)              │
+  │ 3. <b>ValidateTenantFilter</b>       (¿el usuario tiene esa empresa? │
+  │                              si no → 401)  ← corrige el IDOR │
+  └──────────────────────────────────────────────────────────┘
+     │
+     ▼
+  <b>RepairShopController</b>  (~30 líneas, solo delega)
+     │  IRepairShopService
+     ▼
+  <b>RepairShopService</b>  (la lógica de orquestación, en C#)
+     │
+     ├──▶ <span class="web">ICurrentUserProvider</span> ─┐  lee headers + claim del token, y consulta
+     │                            │  <span class="web">kaptaswebdev</span> (usuario) y <span class="tenant">kw21</span> (id interno, empresas)
+     ├──▶ <span class="tenant">ISpRunner</span> ──────────┤  abre conexión a la base del <span class="tenant">tenant (kw21)</span>
+     │                            │  y ejecuta los stored procedures
+     └──▶ <span class="web">IUserBranchesQuery</span> ────┘  consulta sucursales del usuario en <span class="tenant">kw21</span>
+                                  │
+                                  ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  <span class="sp">9 STORED PROCEDURES</span> (la lógica de negocio vive aquí)     │
+  │    P_Taller_Casos_Paging · P_Taller_Get_By_id · Print ... │
+  │    p_taller_product_insert_upd_grabar (crear)             │
+  │    P_Taller_Finalizar_Grabar (facturar) ──▶ <span class="sp">P_Ncf_Get_Set</span>   │
+  │         │  cada uno llama a SPs anidados y toca tablas    │
+  │         ▼                                                 │
+  │  TABLAS: Operacion · Operacion_taller · Operacion_det_taller │
+  │          Contactos · Monedas · Producto · CONTROL_NCF     │
+  └──────────────────────────────────────────────────────────┘</pre>
+    </div>
+  </section>
+
+  <!-- CON QUE SE CONECTA -->
+  <section>
+    <h2>2 · Con qué está conectado (y para qué)</h2>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Pieza del módulo</th><th>Se conecta a</th><th>Para qué</th></tr></thead>
+      <tbody>
+        <tr><td><code>ICurrentUserProvider</code></td><td><span class="pill p-web">kaptaswebdev</span> <span class="pill p-tenant">kw21</span> + headers/JWT</td><td>Saber quién es el usuario y en qué empresa opera; <strong>validar</strong> que la empresa sea suya</td></tr>
+        <tr><td><code>ITenantConnectionFactory</code></td><td><span class="pill p-web">kaptaswebdev</span> (suscripción → base) + caché</td><td>Resolver a qué base del tenant conectarse; se cachea 8 h</td></tr>
+        <tr><td><code>ISpRunner</code></td><td><span class="pill p-tenant">kw21</span> vía Dapper</td><td>Ejecutar los stored procedures del taller</td></tr>
+        <tr><td><code>IUserBranchesQuery</code></td><td><span class="pill p-tenant">kw21</span> (Users_Company, Branches, Stores)</td><td>Traer las sucursales del usuario para la pantalla inicial</td></tr>
+        <tr><td>Los <strong>9 SPs</strong></td><td><span class="pill p-sp">SPs anidados</span> + tablas</td><td>Toda la lógica: cálculos, validaciones, facturación fiscal</td></tr>
+        <tr><td>DTOs compartidos</td><td><code>Kaptas.DTO</code> (monedas, pagos, sucursales)</td><td>Tipos de otros dominios que se reusan (la guía lo permite)</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="callout"><strong>Dos bases, no una:</strong> <span class="pill p-web">kaptaswebdev</span> es la base "central" (usuarios, permisos, suscripciones, y a qué base va cada cliente). <span class="pill p-tenant">kw21</span> es la base del <em>tenant</em> (los datos reales del taller de ese cliente). El módulo toca las dos.</div>
+  </section>
+
+  <!-- QUE AFECTA -->
+  <section>
+    <h2>3 · Qué afecta este módulo</h2>
+    <div class="grid">
+      <div class="stat"><div class="n">2</div><div class="l">bases de datos</div></div>
+      <div class="stat"><div class="n">9</div><div class="l">stored procedures</div></div>
+      <div class="stat"><div class="n">7+</div><div class="l">tablas del tenant</div></div>
+      <div class="stat"><div class="n">1</div><div class="l">secuencia fiscal (NCF)</div></div>
+    </div>
+    <h3>Lee de</h3>
+    <p class="muted">Casos de taller, contactos, monedas, productos, técnicos, tipos de comprobante, sucursales, y la config de la empresa.</p>
+    <h3>Escribe en</h3>
+    <p class="muted"><code>Operacion</code>, <code>Operacion_taller</code>, <code>Operacion_det_taller</code> al crear/editar casos. Al <strong>facturar</strong> (<code>Complete</code>) además emite un comprobante fiscal y <strong>consume una secuencia NCF</strong> de <code>CONTROL_NCF</code> — eso es dinero y es fiscal.</p>
+    <div class="callout warn"><strong>Lo delicado:</strong> la facturación (<code>P_Taller_Finalizar_Grabar</code>) toca el flujo fiscal electrónico (NCF, DGII). Un error ahí no es un bug, es un problema con Hacienda. Por eso es el último candidato a tocar.</div>
+  </section>
+
+  <!-- COMO MEJORAR -->
+  <section>
+    <h2>4 · Cómo mejorar el módulo (para mejorar el sistema)</h2>
+    <p class="muted">Ordenado de menor a mayor riesgo. Cada paso se valida contra los tests de comparación byte a byte que ya existen.</p>
+    <ol class="impr">
+      <li><strong>Migrar los SPs de lectura a C#</strong> <span class="risk r-low">riesgo bajo</span><br>
+        <span class="muted"><code>Get_By_id</code>, <code>Casos_Paging</code>, <code>datos_iniciales</code>, <code>Print</code> son queries. Reescribirlas en LINQ hace al módulo independiente de esos SPs. El test confirma que dan idéntico. Esto es lo que de verdad "quita" SPs.</span></li>
+      <li><strong>Replicar el <code>ValidateTenantFilter</code> a los demás módulos</strong> <span class="risk r-low">riesgo bajo</span><br>
+        <span class="muted">El D2 (empresa sin validar) es un agujero de <em>todo el sistema</em>, no solo del taller. El patrón que ya funciona acá cierra el IDOR en cualquier módulo nuevo.</span></li>
+      <li><strong>Arreglar el log de errores (<code>'ADMIN'</code> fijo)</strong> <span class="risk r-low">riesgo bajo</span><br>
+        <span class="muted">Los SPs registran los errores como "ADMIN". Pasar el usuario real hace el log útil para rastrear qué pasó y quién.</span></li>
+      <li><strong>Versionar los SPs anidados</strong> <span class="risk r-mid">riesgo medio</span><br>
+        <span class="muted"><code>p_taller_product_insert_upd</code>, <code>p_Taller_Finalizar</code>, <code>P_Ncf_Get_Set</code>, <code>usp_log_error</code> son la cadena de lógica. Ponerlos en git (como ya hicimos con los 9) da la foto completa.</span></li>
+      <li><strong>Migrar las escrituras de edición a C#</strong> <span class="risk r-mid">riesgo medio</span><br>
+        <span class="muted"><code>ChangeStatus</code>, <code>UpdateHeading</code> son UPDATEs con validación. Migrables, con la red de tests.</span></li>
+      <li><strong>La facturación (<code>Finalizar</code>) — evaluar, no apurar</strong> <span class="risk r-high">riesgo alto</span><br>
+        <span class="muted">Emite NCF electrónico. Reescribir esto en C# es un proyecto en sí y de altísimo riesgo. Recomendación: dejarlo encapsulado (documentado, versionado) hasta que el negocio decida que vale la pena. No todo lo que se puede migrar conviene migrarlo.</span></li>
+    </ol>
+    <div class="callout ok"><strong>El principio que hace todo esto seguro:</strong> nunca se migra a ciegas. Cada SP que se pasa a C# se valida contra el test de comparación byte a byte (v2 = legado). Si el C# devuelve un centavo distinto, el test falla y te enterás antes de producción.</div>
+  </section>
+
+  <footer>
+    Mapa de conexiones · Módulo Taller v2 · Kaptas ERP · generado 2026-07-11 desde el análisis del código y la base de pruebas
+  </footer>
+
+</div>
+</body>
+</html>

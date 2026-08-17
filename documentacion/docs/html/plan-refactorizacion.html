@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kaptas — Plan de Refactorización</title>
+<style>
+  :root{--bg:#f8fafc;--panel:#fff;--ink:#0f172a;--muted:#475569;--line:#e2e8f0;
+    --legacy:#dc2626;--bridge:#f59e0b;--new:#3b82f6;--clean:#16a34a;
+    --t1:#16a34a;--t2:#f59e0b;--t3:#dc2626;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+  nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.94);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;gap:4px;overflow-x:auto;padding-top:10px;padding-bottom:10px}
+  nav a{text-decoration:none;color:var(--muted);font-size:13.5px;font-weight:700;white-space:nowrap;padding:7px 11px;border-radius:8px}
+  nav a:hover{background:#f1f5f9;color:var(--ink)}
+  header.hero{background:linear-gradient(135deg,#0f172a,#1e293b);color:#fff;padding:52px 0 40px}
+  header.hero h1{margin:0 0 12px;font-size:34px;letter-spacing:-.02em}
+  header.hero p{font-size:17px;color:#cbd5e1;max-width:760px;margin:0}
+  header .meta{margin-top:22px;display:flex;flex-wrap:wrap;gap:10px}
+  header .meta span{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);color:#e2e8f0;font-size:12.5px;font-weight:700;padding:6px 12px;border-radius:999px}
+  section{padding:44px 0;border-bottom:1px solid var(--line)}
+  h2{font-size:24px;margin:0 0 6px;letter-spacing:-.01em}
+  .lead{color:var(--muted);font-size:16px;margin:0 0 24px;max-width:800px}
+  .tag{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:4px 10px;border-radius:6px;margin-bottom:10px}
+  .t-now{background:#fef2f2;color:var(--legacy)}.t-goal{background:#f0fdf4;color:var(--clean)}.t-plan{background:#eff6ff;color:#1d4ed8}.t-db{background:#faf5ff;color:#7c3aed}
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:820px){.g2,.g3,.g4{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .card h3{margin:0 0 8px;font-size:16px}
+  .card p{margin:0;color:var(--muted);font-size:14px}
+  .stat{text-align:center;padding:22px 14px}
+  .stat .n{font-size:38px;font-weight:800;letter-spacing:-.03em;line-height:1}
+  .stat .l{margin-top:8px;font-size:13px;color:var(--muted);font-weight:600}
+  .bad{color:var(--legacy)}.good{color:var(--clean)}.warn{color:var(--bridge)}.blue{color:var(--new)}
+  .vs{display:grid;grid-template-columns:1fr 1fr;gap:0;border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+  @media(max-width:820px){.vs{grid-template-columns:1fr}}
+  .vs .col{padding:20px}
+  .vs .now{background:#fef2f2}.vs .now h3{color:var(--legacy)}
+  .vs .goal{background:#f0fdf4}.vs .goal h3{color:var(--clean)}
+  .vs ul{margin:10px 0 0;padding-left:18px;font-size:14px;color:#334155}
+  .vs li{margin-bottom:7px}
+  /* barras tiers */
+  .bars{display:flex;flex-direction:column;gap:14px;margin-top:6px}
+  .bar-row{display:flex;align-items:center;gap:14px}
+  .bar-lab{width:220px;font-size:13.5px;font-weight:700;flex-shrink:0}
+  .bar-lab small{display:block;font-weight:500;color:var(--muted);font-size:12px}
+  .bar-track{flex:1;background:#f1f5f9;border-radius:8px;height:34px;position:relative;overflow:hidden}
+  .bar-fill{height:100%;display:flex;align-items:center;padding-left:12px;color:#fff;font-weight:800;font-size:14px;border-radius:8px}
+  @media(max-width:820px){.bar-lab{width:130px}}
+  /* pipeline / fases */
+  .track{border:1px solid var(--line);border-radius:16px;overflow:hidden;margin-bottom:18px;background:#fff}
+  .track>header{padding:14px 18px;color:#fff;display:flex;align-items:center;gap:12px;font-weight:800}
+  .track.code>header{background:linear-gradient(90deg,#2563eb,#3b82f6)}
+  .track.db>header{background:linear-gradient(90deg,#7c3aed,#9333ea)}
+  .track .body{padding:16px 18px}
+  .phase{display:flex;gap:14px;padding:12px 0;border-bottom:1px dashed var(--line)}
+  .phase:last-child{border-bottom:0}
+  .phase .num{min-width:34px;height:34px;border-radius:9px;color:#fff;font-weight:800;text-align:center;line-height:34px;flex-shrink:0}
+  .code .num{background:#2563eb}.db .num{background:#7c3aed}
+  .phase h4{margin:0 0 3px;font-size:15px}
+  .phase p{margin:0;font-size:13.5px;color:var(--muted)}
+  .pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;margin-left:6px}
+  .pill.par{background:#ecfeff;color:#0e7490}.pill.dep{background:#fef2f2;color:#b91c1c}
+  /* diagramas de flujo */
+  .flow{display:flex;flex-direction:column;align-items:center;gap:0;margin:10px 0 4px}
+  .fbox{background:#fff;border:2px solid var(--line);border-radius:12px;padding:12px 18px;text-align:center;max-width:540px;width:100%;font-weight:700;font-size:14px}
+  .fbox small{display:block;font-weight:500;color:var(--muted);font-size:12.5px;margin-top:3px}
+  .fbox.ctrl{border-color:#94a3b8}
+  .fbox.seam{border-color:var(--new);background:#eff6ff;color:#1e40af}
+  .fbox.ask{border-color:#7c3aed;background:#faf5ff;color:#6d28d9}
+  .farr{color:#94a3b8;font-size:20px;line-height:1;padding:7px 0}
+  .fsplit{display:flex;gap:16px;width:100%;max-width:540px;justify-content:center}
+  .fsplit .leg{flex:1;display:flex;flex-direction:column;align-items:center}
+  .fbox.old{border-color:var(--legacy);background:#fef2f2;color:#991b1b}
+  .fbox.newf{border-color:var(--clean);background:#f0fdf4;color:#166534}
+  .branchlab{font-size:12px;font-weight:800;padding:3px 0}
+  .branchlab.no{color:var(--legacy)}.branchlab.yes{color:var(--clean)}
+  .stateline{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+  .stateline .s{flex:1;min-width:150px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:13px}
+  .stateline .s b{display:block;margin-bottom:3px}
+  .stateline .s.s1{border-left:3px solid var(--legacy)}.stateline .s.s2{border-left:3px solid var(--bridge)}.stateline .s.s3{border-left:3px solid var(--clean)}
+  /* tenants replicación */
+  .tenants{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:8px}
+  .tcard{border:2px solid var(--line);border-radius:12px;padding:14px 16px;text-align:center;min-width:150px;background:#fff}
+  .tcard .tname{font-weight:800;font-size:15px}
+  .tcard .tver{font-size:12px;color:var(--muted);margin:5px 0}
+  .tcard .tact{font-size:12px;font-weight:800;margin-top:4px;padding:4px 10px;border-radius:6px;display:inline-block}
+  .tact.ok{background:#f0fdf4;color:#166534}.tact.apply{background:#eff6ff;color:#1d4ed8}
+  .scriptlist{background:#0f172a;color:#e2e8f0;border-radius:12px;padding:16px 20px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:1.9;max-width:540px;margin:0 auto}
+  .scriptlist .done{color:#64748b}.scriptlist .new{color:#4ade80;font-weight:700}
+  /* ficha */
+  .ficha{border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .ficha .fh{background:#0f172a;color:#fff;padding:14px 18px;font-weight:800;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+  .ficha .fh .badge{background:var(--t1);color:#fff;font-size:12px;padding:4px 10px;border-radius:6px}
+  .frow{display:grid;grid-template-columns:150px 1fr;border-top:1px solid var(--line)}
+  @media(max-width:820px){.frow{grid-template-columns:1fr}}
+  .frow .k{background:#f8fafc;padding:11px 16px;font-weight:700;font-size:13px;border-right:1px solid var(--line)}
+  .frow .v{padding:11px 16px;font-size:13.5px;color:#334155}
+  .frow .v code{background:#f1f5f9;padding:1px 6px;border-radius:5px;font-size:12.5px}
+  .risk{background:#fef2f2;color:#991b1b}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line)}
+  th{background:#f8fafc;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  .sev-a{color:var(--legacy);font-weight:700}.sev-m{color:var(--bridge);font-weight:700}.sev-b{color:var(--muted);font-weight:700}
+  .note{background:#0f172a;color:#fff;border-radius:12px;padding:16px 20px;font-size:14.5px;margin-top:8px}
+  .note b{color:#fde68a}
+  .callout{background:#eff6ff;border-left:4px solid var(--new);border-radius:8px;padding:14px 18px;font-size:14.5px;color:#1e3a5f;margin-top:14px}
+  .callout.amber{background:#fffbeb;border-color:var(--bridge);color:#7c2d12}
+  .callout.green{background:#f0fdf4;border-color:var(--clean);color:#14532d}
+  footer{padding:34px 0;color:var(--muted);font-size:13px;text-align:center}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+  .start{background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;border-radius:16px;padding:26px 28px;margin-top:8px}
+  .start h3{margin:0 0 6px;font-size:20px}
+  .start p{margin:0;opacity:.95;font-size:15px}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <a href="#hoy">Hoy</a>
+  <a href="#inventario">Inventario</a>
+  <a href="#plan">Los 2 tracks</a>
+  <a href="#seam">Viejo + nuevo</a>
+  <a href="#ficha">Ficha por módulo</a>
+  <a href="#db">Base de datos</a>
+  <a href="#replica">Replicar a clientes</a>
+  <a href="#tests">Aislamiento de tests</a>
+  <a href="#inicio">Por dónde empezar</a>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <h1>Kaptas API — Plan de Refactorización</h1>
+  <p>Qué pasa hoy con el sistema y cómo lo llevamos, módulo por módulo, a una estructura limpia con tests y una base de datos versionada. Todos los números de esta página están medidos en el código, no estimados.</p>
+  <div class="meta">
+    <span>.NET 7 · EF Core 7.0.2</span>
+    <span>90 services</span>
+    <span>80 controllers</span>
+    <span>~220 tablas</span>
+    <span>Multi-tenant (1 BD por suscripción)</span>
+    <span>Verificado 2026-07-07</span>
+  </div>
+</div></header>
+
+<!-- HOY -->
+<section id="hoy"><div class="wrap">
+  <span class="tag t-now">El punto de partida</span>
+  <h2>Qué pasa hoy</h2>
+  <p class="lead">El sistema funciona en producción, pero no tiene red de seguridad ni forma de saber qué fue tocado. La documentación describe un futuro deseado como si ya existiera.</p>
+
+  <div class="grid g4" style="margin-bottom:18px">
+    <div class="card stat"><div class="n bad">9</div><div class="l">tests reales<br>(infraestructura/plantilla)</div></div>
+    <div class="card stat"><div class="n warn">239</div><div class="l">tests que dice<br>la documentación</div></div>
+    <div class="card stat"><div class="n bad">0</div><div class="l">módulos migrados<br>a Features/</div></div>
+    <div class="card stat"><div class="n bad">0</div><div class="l">migraciones de<br>base de datos</div></div>
+  </div>
+
+  <div class="vs">
+    <div class="col now">
+      <h3>◍ Lo que hay</h3>
+      <ul>
+        <li>Lógica repartida en 90 services que heredan de un <span class="mono">BaseService</span> monolítico.</li>
+        <li>21 procedimientos almacenados (SPs) con lógica de negocio fuera del ORM.</li>
+        <li>Schema de base de datos tocado a mano, sin control de versión.</li>
+        <li>Sin tests que atajen un bug antes de producción.</li>
+        <li>No hay forma de saber qué módulo ya se limpió y cuál no.</li>
+      </ul>
+    </div>
+    <div class="col goal">
+      <h3>◉ A dónde vamos</h3>
+      <ul>
+        <li>Módulos limpios y aislados en <span class="mono">Features/</span>, uno por uno, sin apagar el sistema.</li>
+        <li>Cada módulo con sus tests que congelan el comportamiento correcto.</li>
+        <li>Base de datos versionada: cada cambio auditado y aplicado a todos los clientes.</li>
+        <li>Un tablero (<span class="mono">REGISTRO-MODULOS.md</span>) que dice el estado real de cada módulo.</li>
+        <li>Acceso a datos consolidado en el ORM, con lo pesado optimizado.</li>
+      </ul>
+    </div>
+  </div>
+</div></section>
+
+<!-- INVENTARIO -->
+<section id="inventario"><div class="wrap">
+  <span class="tag t-plan">Medido en el código</span>
+  <h2>El inventario: 90 módulos en 3 grupos de dificultad</h2>
+  <p class="lead">Por cada service medimos 4 cosas — cuántas dependencias tiene, si usa el <span class="mono">BaseService</span>, si llama SPs, y si depende del contexto HTTP. Eso determina cuánto cuesta testearlo y define el orden: se empieza por lo más simple.</p>
+
+  <div class="bars">
+    <div class="bar-row">
+      <div class="bar-lab">TIER 1 — Simple<small>1 dependencia · sin ataduras</small></div>
+      <div class="bar-track"><div class="bar-fill" style="width:23%;background:var(--t1)">21 módulos</div></div>
+    </div>
+    <div class="bar-row">
+      <div class="bar-lab">TIER 2 — Medio<small>usa BaseService / SPs</small></div>
+      <div class="bar-track"><div class="bar-fill" style="width:71%;background:var(--t2)">64 módulos</div></div>
+    </div>
+    <div class="bar-row">
+      <div class="bar-lab">TIER 3 — Complejo<small>depende del contexto HTTP</small></div>
+      <div class="bar-track"><div class="bar-fill" style="width:6%;background:var(--t3);min-width:90px">5 módulos</div></div>
+    </div>
+  </div>
+
+  <div class="grid g3" style="margin-top:22px">
+    <div class="card" style="border-top:3px solid var(--t1)">
+      <h3 style="color:var(--t1)">TIER 1 · empezamos acá</h3>
+      <p>Se prueban solos: <span class="mono">new Service(contexto)</span>. Sin trucos. Ejemplos: ContactAddresses, Zonas, Paradas, Choferes, módulos contables.</p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--t2)">
+      <h3 style="color:var(--t2)">TIER 2 · el grueso</h3>
+      <p>Necesitan base de datos real para probarse. Aquí vive la mayoría del negocio: Ventas, Compras, Facturación, Inventario.</p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--t3)">
+      <h3 style="color:var(--t3)">TIER 3 · al final</h3>
+      <p>Piden levantar la API entera para testear. Son 5: <b>Auth</b>, KProducts, Payroll, Notifications, Language. Los más caros y riesgosos.</p>
+    </div>
+  </div>
+
+  <div class="callout amber"><b>Por eso Auth NO es el primero.</b> Es el módulo más atado del sistema (16 dependencias, 1.680 líneas). Empezar por él sería empezar por el escalón más alto. Va al final, cuando ya tengamos módulos limpios de ejemplo.</div>
+</div></section>
+
+<!-- PLAN / 2 TRACKS -->
+<section id="plan"><div class="wrap">
+  <span class="tag t-goal">La estrategia</span>
+  <h2>Dos frentes en paralelo, no uno detrás de otro</h2>
+  <p class="lead">La confusión habitual es creer que primero se hace TODA la estructura y después TODA la base de datos. En realidad son dos frentes que arrancan juntos, y solo la optimización de la DB espera a los dos.</p>
+
+  <div class="track code">
+    <header>🧱 Frente A — Estructura (código)</header>
+    <div class="body">
+      <div class="phase"><div class="num">1</div><div><h4>Análisis + Tests + Migración por módulo <span class="pill par">arranca ya</span></h4><p>Cada módulo pasa por su ficha, se le escriben los tests que congelan lo que hace hoy, y se migra a <span class="mono">Features/</span> limpio. Se avanza tier por tier: los 21 simples primero.</p></div></div>
+      <div class="phase"><div class="num">2</div><div><h4>El sistema no se apaga nunca</h4><p>El módulo viejo y el nuevo conviven. Se cambia cliente por cliente con un interruptor. Si algo falla, se vuelve atrás al instante.</p></div></div>
+    </div>
+  </div>
+
+  <div class="track db">
+    <header>🗄️ Frente B — Base de datos</header>
+    <div class="body">
+      <div class="phase"><div class="num">1</div><div><h4>Versionar la base <span class="pill par">arranca ya, en paralelo</span></h4><p>Ponerle control de versión al schema. No depende de tocar el código. Es el habilitador de todo lo que sigue.</p></div></div>
+      <div class="phase"><div class="num">2</div><div><h4>Optimizar la base <span class="pill dep">espera a A + B1</span></h4><p>Índices, consultas lentas, mover SPs al ORM. Solo se hace cuando ya hay tests (para no romper) y versionado (para poder propagar el cambio a todos los clientes).</p></div></div>
+    </div>
+  </div>
+
+  <div class="note">Regla que ordena todo: <b>estructura y versionado corren juntos desde el día uno</b> — ninguno depende del otro. <b>La optimización de la base espera</b> a tener tests y versionado. El ORM no es una fase: ya existe (EF Core), se consolida de a poco dentro de cada módulo.</div>
+</div></section>
+
+<!-- SEAM: viejo + nuevo -->
+<section id="seam"><div class="wrap">
+  <span class="tag t-plan">El mecanismo que no se veía</span>
+  <h2>¿Cómo refactorizamos sin tocar el código viejo?</h2>
+  <p class="lead">La clave: el código viejo <b>no se modifica ni se borra</b> durante la migración. El nuevo nace <b>al lado</b>. Entre el controlador y la lógica se pone una "costura" (un contrato) — y un interruptor por cliente decide cuál corre. Seguí el camino de un pedido:</p>
+
+  <div class="flow">
+    <div class="fbox">📨 Llega un pedido<small>POST /api/ContactAddresses/Create</small></div>
+    <div class="farr">▼</div>
+    <div class="fbox ctrl">Controlador<small>no cambia — solo recibe y delega</small></div>
+    <div class="farr">▼</div>
+    <div class="fbox seam">El contrato: IContactAddressesService<small>la "costura" — ni el viejo ni el nuevo saben del otro</small></div>
+    <div class="farr">▼</div>
+    <div class="fbox ask">🔀 ¿El cliente tiene el interruptor en "nuevo"?<small>configuración por cliente (tenant)</small></div>
+    <div class="farr">▼</div>
+    <div class="fsplit">
+      <div class="leg">
+        <div class="branchlab no">◀ NO (por defecto)</div>
+        <div class="fbox old">Código VIEJO<small>Kaptas.Services — intacto, sigue vivo</small></div>
+      </div>
+      <div class="leg">
+        <div class="branchlab yes">SÍ ▶</div>
+        <div class="fbox newf">Código NUEVO<small>Features/ — limpio, con tests</small></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stateline">
+    <div class="s s1"><b>1 · Al principio</b>Todos los clientes en el viejo. El nuevo existe pero nadie lo usa todavía. Riesgo cero.</div>
+    <div class="s s2"><b>2 · Durante</b>Se prende el interruptor cliente por cliente. Si algo falla → se apaga y vuelve al viejo al instante. Rollback gratis.</div>
+    <div class="s s3"><b>3 · Al final</b>Cuando TODOS están en el nuevo y pasan 2 semanas sin problemas → recién ahí se borra el viejo.</div>
+  </div>
+
+  <div class="note" style="margin-top:16px">Es como <b>cambiar el motor de un avión en vuelo</b>: no lo apagás. Conectás el motor nuevo al lado, pasás la carga de a poco, y cuando todo va por el nuevo, desconectás el viejo. El sistema <b>nunca se detiene</b> y siempre hay marcha atrás.</div>
+</div></section>
+
+<!-- FICHA -->
+<section id="ficha"><div class="wrap">
+  <span class="tag t-plan">Paso 0 de cada módulo</span>
+  <h2>Antes de tocar nada: la ficha de análisis</h2>
+  <p class="lead">Ningún módulo se toca sin esta ficha. Se llena leyendo el código — produce dos cosas a la vez: los tests que hay que escribir, y la lista de problemas a arreglar cuando se migre. Ejemplo real, ya ejecutado:</p>
+
+  <div class="ficha">
+    <div class="fh"><span>📇 ContactAddresses — Direcciones de Contacto</span><span class="badge">TIER 1</span></div>
+    <div class="frow"><div class="k">Superficie</div><div class="v">5 endpoints HTTP: listar, ver, crear, editar, borrar (borrado suave)</div></div>
+    <div class="frow"><div class="k">Dependencias</div><div class="v">1 sola: el contexto de base de datos del cliente. Sin ataduras al <code>BaseService</code>.</div></div>
+    <div class="frow"><div class="k">Datos</div><div class="v">Tabla <code>ContactAddresses</code> (BD del tenant) · relaciones con Contacto, Company, Zona</div></div>
+    <div class="frow"><div class="k">Comportamientos</div><div class="v">Paginación (tope 100), filtros, excluye borrados, valida que el contacto exista, bloquea duplicados → <b>16 tests</b></div></div>
+    <div class="frow"><div class="k risk">Hallazgos 🔴</div><div class="v">
+      <table style="margin-top:2px">
+        <tr><td>Endpoints sin control de acceso declarado</td><td class="sev-a">Alta</td></tr>
+        <tr><td>El cliente elige la empresa por parámetro (fuga entre empresas)</td><td class="sev-a">Alta</td></tr>
+        <tr><td>Ver por ID no valida a quién pertenece la dirección</td><td class="sev-a">Alta</td></tr>
+        <tr><td>Quién borra/crea viene del cliente (auditoría falsificable)</td><td class="sev-m">Media</td></tr>
+        <tr><td>Usa hora local en vez de UTC · traga el error real</td><td class="sev-b">Deuda</td></tr>
+      </table>
+    </div></div>
+    <div class="frow"><div class="k">Impacto</div><div class="v"><b class="good">Aislado.</b> Ningún otro módulo depende de este → migrarlo no rompe nada. Piloto ideal.</div></div>
+    <div class="frow"><div class="k">Plan</div><div class="v">TIER 1 · ~2-3 días · 16 tests · los 5 hallazgos van al backlog de la migración</div></div>
+  </div>
+
+  <div class="callout">Esta misma ficha se repite para los 90 módulos. Los <b>comportamientos</b> se vuelven tests (congelan el hoy); los <b>hallazgos</b> se vuelven el trabajo de la migración (arreglan el mañana). Por eso "analizar para testear" y "analizar para migrar" son la misma ficha.</div>
+</div></section>
+
+<!-- BASE DE DATOS -->
+<section id="db"><div class="wrap">
+  <span class="tag t-db">El punto delicado</span>
+  <h2>Versionar la base: qué tan fuerte es</h2>
+  <p class="lead">Es el cuello de botella más crítico de todo el plan. No por dificultad técnica, sino porque el sistema tiene una base de datos por cada cliente.</p>
+
+  <div class="grid g3" style="margin-bottom:20px">
+    <div class="card"><h3>⛓️ Multiplicación</h3><p>Hay <b>1 base por suscripción</b>. Cada cambio de schema hay que aplicarlo a la base central <b>y a cada cliente</b>. Con 50 clientes, un solo cambio son 51 aplicaciones. A mano es inviable.</p></div>
+    <div class="card"><h3>🌫️ Divergencia oculta</h3><p>Como hoy el schema se toca a mano, <b>no hay garantía de que todas las bases sean iguales</b>. Pueden haber divergido y nadie lo sabe hasta que un cambio rompe solo en un cliente.</p></div>
+    <div class="card"><h3>🧩 Los SPs cuentan</h3><p>Los 21 procedimientos con lógica de negocio también son parte del schema y también hay que versionarlos, no solo las tablas.</p></div>
+  </div>
+
+  <div class="vs">
+    <div class="col now">
+      <h3>✗ NO: usar migraciones del ORM como dueño del schema</h3>
+      <ul>
+        <li>El schema ya existe y no lo creó el ORM.</li>
+        <li>Son ~220 tablas + 21 SPs + vistas: forzar al ORM a "adoptarlos" es frágil.</li>
+        <li>Las migraciones del ORM manejan mal los procedimientos almacenados.</li>
+      </ul>
+    </div>
+    <div class="col goal">
+      <h3>✓ SÍ: scripts SQL numerados + un ejecutor (DbUp)</h3>
+      <ul>
+        <li>Cada cambio = un script versionado (<span class="mono">V007__agrega_indice.sql</span>).</li>
+        <li>El ejecutor lleva la cuenta en cada base y aplica solo lo que falta.</li>
+        <li>Multi-cliente: recorre todas las bases con un comando y sabés qué versión tiene cada una.</li>
+        <li>El ORM (EF Core) sigue como acceso a datos. Conviven.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout green"><b>Lo difícil no es la herramienta</b> (se monta en días). Es el arranque —crear la línea base y auditar la divergencia entre clientes— y sobre todo la <b>disciplina</b>: desde ese día, nadie vuelve a tocar el schema a mano. Todo pasa por un script versionado. Esa regla es el 80% del valor.</div>
+
+  <div class="note" style="margin-top:16px">⚠️ Dato que todavía falta y define el riesgo real: <b>cuántas bases de clientes hay hoy y si divergieron.</b> Eso no está en el repositorio, está en el servidor SQL. El primer paso concreto de este frente es un script que compare el schema de cada cliente contra el central y muestre dónde difieren.</div>
+</div></section>
+
+<!-- REPLICA -->
+<section id="replica"><div class="wrap">
+  <span class="tag t-db">El mecanismo que no se veía</span>
+  <h2>¿Cómo se replica un cambio a la base de cada cliente?</h2>
+  <p class="lead">Cada cliente tiene su propia base. La magia es que el schema deja de tocarse a mano: cada cambio se escribe una vez como un script numerado, y un ejecutor lo lleva a todas las bases, aplicando solo lo que a cada una le falta. Seguí el flujo:</p>
+
+  <div class="flow">
+    <div class="fbox newf">📝 El dev escribe UN script, versionado en el repo<small>V007__agrega_indice_direcciones.sql</small></div>
+    <div class="farr">▼</div>
+    <div class="fbox seam">▶ Corre el ejecutor (DbUp) — un solo comando<small>recorre la lista de todas las bases de clientes</small></div>
+    <div class="farr">▼</div>
+    <div class="fbox ask">En cada base pregunta: ¿hasta qué versión aplicaste?<small>lo lee de una tabla de control en cada base</small></div>
+  </div>
+
+  <div class="tenants">
+    <div class="tcard"><div class="tname">🏢 Central</div><div class="tver">está en V007</div><div class="tact ok">✓ ya al día</div></div>
+    <div class="tcard"><div class="tname">🏨 Cliente kw21</div><div class="tver">está en V006</div><div class="tact apply">aplica V007</div></div>
+    <div class="tcard"><div class="tname">🏪 Cliente kw58</div><div class="tver">está en V004</div><div class="tact apply">aplica V005→V007</div></div>
+    <div class="tcard"><div class="tname">🆕 Cliente nuevo</div><div class="tver">está en cero</div><div class="tact apply">aplica V001→V007</div></div>
+  </div>
+
+  <div class="farr" style="text-align:center">▼</div>
+  <div class="fbox newf" style="margin:0 auto">✅ Todas las bases quedan en V007 — y sabés exactamente qué versión tiene cada una</div>
+
+  <div class="grid g2" style="margin-top:22px">
+    <div class="card">
+      <h3>🆕 Un cliente nuevo nace al día</h3>
+      <p>Hoy se copia una base plantilla a mano (BACKUP/RESTORE). Con el ejecutor, un cliente nuevo corre todos los scripts desde el V001 → nace con el schema idéntico y completo, sin intervención manual.</p>
+    </div>
+    <div class="card">
+      <h3>🧱 El baseline (primer paso)</h3>
+      <p>Como las bases ya existen, el V001 es una "foto" del schema actual, marcada como ya-aplicada en las bases viejas. Así el versionado arranca sin recrear nada.</p>
+    </div>
+  </div>
+
+  <div class="scriptlist" style="margin-top:20px">
+    <div class="done">V001__baseline_schema.sql        ← foto del schema actual</div>
+    <div class="done">V002__agrega_tabla_zonas.sql</div>
+    <div class="done">V003__indice_contactos.sql</div>
+    <div class="done">...</div>
+    <div class="new">V007__agrega_indice_direcciones.sql   ← el cambio de hoy</div>
+  </div>
+  <p style="text-align:center;color:var(--muted);font-size:13px;margin-top:10px">Los scripts viven en git. El schema pasa a estar versionado como el código.</p>
+</div></section>
+
+<!-- TESTS / AISLAMIENTO -->
+<section id="tests"><div class="wrap">
+  <span class="tag t-plan">Cómo probamos con base de datos real</span>
+  <h2>Tests contra base dedicada: 3 niveles de aislamiento</h2>
+  <p class="lead">Los tests corren contra una copia aislada de la base (<span class="mono">_test</span>), no contra producción. El truco es que un test que escribe no ensucie al siguiente. Se resuelve según lo que hace cada test:</p>
+
+  <div class="grid g3">
+    <div class="card" style="border-top:3px solid var(--clean)">
+      <h3 class="good">Solo lee</h3>
+      <p>Listar, ver por ID, consultas. No cambia nada → no necesita aislamiento. Comparten la base, reset una vez. Costo: casi cero.</p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--new)">
+      <h3 class="blue">Escribe (1 conexión)</h3>
+      <p>Crear, editar, borrar con el ORM. Cada test abre una transacción y la deshace al terminar. La base vuelve sola. Costo: milisegundos.</p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--bridge)">
+      <h3 class="warn">Cruza conexiones / SP</h3>
+      <p>Cuando interviene un SP que confirma por su cuenta. Ahí se restaura desde una copia limpia. Costo: ~9 segundos.</p>
+    </div>
+  </div>
+
+  <div class="callout">El nivel del medio —transacción que se deshace— es el que falta construir, y <b>ContactAddresses es el caso ideal para estrenarlo</b> (escribe con una sola conexión, sin SPs). Una vez hecho, queda de molde para todos los módulos que escriben.</div>
+</div></section>
+
+<!-- INICIO -->
+<section id="inicio"><div class="wrap">
+  <span class="tag t-goal">El primer paso</span>
+  <h2>Por dónde arrancamos</h2>
+  <p class="lead">Con todo lo anterior, el arranque no es opinión: es el módulo más simple, medido, que además sirve para estrenar los dos patrones que faltan.</p>
+
+  <div class="start">
+    <h3>▶ Módulo piloto: ContactAddresses (TIER 1)</h3>
+    <p>1 dependencia · 5 métodos · 16 tests derivados del código · aislado (no rompe a nadie). Estrena el patrón de transacción-que-se-deshace y deja el molde para los otros 20 módulos simples.</p>
+  </div>
+
+  <div class="grid g2" style="margin-top:18px">
+    <div class="card">
+      <h3>Frente A — arranca con esto</h3>
+      <p>Ficha de ContactAddresses ✅ hecha → construir el fixture de escritura → 16 tests → registrar en el tablero. ~2-3 días. Luego el siguiente TIER 1.</p>
+    </div>
+    <div class="card">
+      <h3>Frente B — arranca con esto</h3>
+      <p>Script de auditoría de divergencia entre las bases de clientes. Es lo primero que hay que saber antes de montar el versionado.</p>
+    </div>
+  </div>
+
+  <div class="callout amber">Estos dos frentes pueden empezar <b>la misma semana</b>, en paralelo. No se estorban. La optimización de la base queda para cuando ambos tengan avance.</div>
+</div></section>
+
+<footer><div class="wrap">
+  Kaptas API · Plan de refactorización · Todos los números medidos en el código el 2026-07-07 · Documento vivo
+</div></footer>
+
+<script>
+  // scrollspy simple para el nav
+  const links=[...document.querySelectorAll('nav a')];
+  const secs=links.map(a=>document.querySelector(a.getAttribute('href')));
+  const spy=()=>{let i=secs.length-1;while(i>0&&secs[i].getBoundingClientRect().top>120)i--;
+    links.forEach(l=>l.style.color='');links[i].style.color='#0f172a';links[i].style.background='#f1f5f9';};
+  document.addEventListener('scroll',spy,{passive:true});spy();
+</script>
+</body>
+</html>

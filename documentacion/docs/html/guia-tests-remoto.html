@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tests de Kaptas sin Docker — cómo funciona y cómo reproducirlo</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#1a2029; --panel2:#222b36; --txt:#e6edf3; --mut:#8b98a5;
+    --blue:#58a6ff; --green:#3fb950; --red:#f85149; --yellow:#d29922; --purple:#bc8cff;
+    --line:#2d3640;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6;font-size:15px}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 20px 80px}
+  header{text-align:center;border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:32px}
+  h1{font-size:28px;margin:0 0 8px;background:linear-gradient(90deg,var(--blue),var(--purple));-webkit-background-clip:text;background-clip:text;color:transparent}
+  h2{font-size:21px;margin:36px 0 14px;color:var(--blue);border-left:3px solid var(--blue);padding-left:12px}
+  h3{font-size:16px;margin:18px 0 8px;color:var(--purple)}
+  .sub{color:var(--mut);font-size:14px;margin:0}
+  section{margin-bottom:8px}
+  code,kbd{font-family:'SF Mono',Consolas,Menlo,monospace;background:var(--panel2);padding:2px 6px;border-radius:4px;font-size:13px;color:var(--yellow)}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto}
+  pre code{background:none;padding:0;color:var(--green);font-size:13px}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+  th{background:var(--panel);color:var(--blue)}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:1fr 1fr 1fr}
+  @media(max-width:760px){.g2,.g3{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  .card h3{margin-top:0}
+  .card.blue{border-top:3px solid var(--blue)}
+  .card.green{border-top:3px solid var(--green)}
+  .card.yellow{border-top:3px solid var(--yellow)}
+  .card.red{border-top:3px solid var(--red)}
+  .card.purple{border-top:3px solid var(--purple)}
+  /* diagrama de flujo */
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;margin:16px 0}
+  .node{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;min-width:120px;text-align:center;font-size:13px}
+  .node b{display:block;color:var(--blue);font-size:14px}
+  .node.dev{border-color:var(--yellow)}
+  .node.test{border-color:var(--green)}
+  .arrow{display:flex;align-items:center;justify-content:center;padding:0 10px;color:var(--mut);font-size:20px;font-weight:bold}
+  .arrow small{display:block;font-size:10px;color:var(--mut);writing-mode:horizontal-tb}
+  /* pasos numerados */
+  .steps{counter-reset:st;list-style:none;padding:0;margin:16px 0}
+  .steps li{counter-increment:st;position:relative;padding:10px 10px 10px 48px;margin-bottom:8px;background:var(--panel);border:1px solid var(--line);border-radius:8px;font-size:14px}
+  .steps li::before{content:counter(st);position:absolute;left:10px;top:50%;transform:translateY(-50%);width:28px;height:28px;background:var(--blue);color:#000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:14px}
+  .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:bold;vertical-align:middle}
+  .b-ok{background:rgba(63,185,80,.15);color:var(--green)}
+  .b-no{background:rgba(248,81,73,.15);color:var(--red)}
+  .b-warn{background:rgba(210,153,34,.15);color:var(--yellow)}
+  .note{background:rgba(88,166,255,.08);border-left:3px solid var(--blue);padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:14px}
+  .warn{background:rgba(248,81,73,.08);border-left:3px solid var(--red);padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:14px}
+  .tlr{color:var(--mut)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Tests de Kaptas — sin Docker, contra el server online</h1>
+  <p class="sub">Cómo funciona el sistema de tests aislados y cómo lo reproduce cualquiera · verificado 2026-07-01</p>
+</header>
+
+<!-- 1. EL PROBLEMA -->
+<h2>1️⃣ El problema que esto resuelve</h2>
+<p>Kaptas <b>no puede testear como Laravel o Rails</b>. En esos frameworks la BD se crea desde código (migraciones): cada test run arma la BD limpia. En Kaptas eso es imposible:</p>
+<div class="grid g3">
+  <div class="card yellow"><h3>📦 Sin migraciones</h3><p>El schema (tablas, columnas) lo crea el <b>DBA a mano</b> en la BD física. No hay EF migrations.</p></div>
+  <div class="card yellow"><h3>⚙️ SPs en SQL Server</h3><p>La lógica de negocio (<code>usp_generar_menu</code>, <code>P_Operacion_...</code>) vive <b>dentro</b> de SQL Server, no en código.</p></div>
+  <div class="card yellow"><h3>🧪 Tests los necesitan</h3><p>Los tests de integración <b>requieren</b> ese schema + SPs + datos para correr.</p></div>
+</div>
+<div class="note">🔑 <b>Conclusión:</b> sin migraciones, la única fuente de verdad del schema es una <b>BD física que ya existe</b>. No se puede "crear desde cero" — hay que <b>partir de una BD real</b>.</div>
+
+<!-- 2. LA IDEA -->
+<h2>2️⃣ La idea central: AISLAR COPIANDO</h2>
+<p>Como no podés crear la BD desde scripts, <b>la copiás</b>. Tomás una BD buena (la <code>dev</code>) y la duplicás en una copia descartable (la <code>_test</code>). Los tests pegan contra la copia. La original <b>nunca se toca</b>.</p>
+<div class="flow">
+  <div class="node dev"><b>BD dev</b>real, intocable<br>kaptaswebdev / kw21</div>
+  <div class="arrow">→<br><small>BACKUP/RESTORE</small></div>
+  <div class="node test"><b>BD _test</b>descartable<br>kaptaswebdev_test / kw21_test</div>
+  <div class="arrow">→<br><small>tests pegan acá</small></div>
+  <div class="node"><b>dotnet test</b></div>
+</div>
+<div class="note">💡 El truco: <code>BACKUP/RESTORE</code> se lleva <b>todo de una vez</b> — schema + SPs + datos. No hay que reproducir nada.</div>
+
+<!-- 3. ACTORES -->
+<h2>3️⃣ Los actores: ¡sin Docker!</h2>
+<p>Todo corre con el cliente <code>sqlcmd</code> <b>nativo</b> (instalado en tu máquina, <span class="badge b-no">sin Docker</span>). El destino lo elegís con una sola variable:</p>
+<div class="flow">
+  <div class="node"><b>Tu máquina</b><br><code>sqlcmd</code> (go-sqlcmd)<br><span class="tlr">cliente nativo</span></div>
+  <div class="arrow">→<br><small>-S $KAPTAS_SQL_HOST</small></div>
+  <div class="node test"><b>Server online</b><br>173.249.31.75,1433<br><span class="tlr">ahí viven las _test</span></div>
+</div>
+<table>
+<tr><th>Variable</th><th>Default</th><th>Controla</th></tr>
+<tr><td><code>KAPTAS_SQL_HOST</code></td><td><code>localhost</code></td><td>A dónde se conecta <code>sqlcmd</code> → dónde viven las <code>_test</code></td></tr>
+<tr><td><code>KAPTAS_SA_PASSWORD</code></td><td><code>KaptasLocal2026!</code></td><td>Password del SA de ese destino</td></tr>
+<tr><td><code>KAPTAS_SQLCMD</code></td><td><code>sqlcmd</code></td><td>Path al binario (si no está en el PATH)</td></tr>
+</table>
+<div class="note">🔑 <b>Lo clave:</b> no hay "versión remota". <b>El mismo script</b>, solo cambia la variable de entorno. Eso es lo que lo hace reproducible.</div>
+
+<!-- 4. FLUJO SETUP -->
+<h2>4️⃣ Flujo de SETUP (1 vez, o cuando cambia el schema)</h2>
+<p>Cuando ejecutás <code>bash setup-test-db.sh</code>:</p>
+<ol class="steps">
+  <li><b>ensure_sqlcmd()</b> — verifica que <code>sqlcmd</code> esté en el PATH y que el destino (<code>$SQL_HOST</code>) responda.</li>
+  <li><b>resolve_backup_dir()</b> — ¿<code>/var/opt/mssql/backup</code> existe en el destino? <b>SÍ</b> → lo usa. <b>NO</b> → cae a <code>/var/opt/mssql/data</code> (fallback automático).</li>
+  <li><b>Validar proquia</b> — aborta si el usuario de prueba no existe en la <code>dev</code>.</li>
+  <li><b>create_test_db() ×2</b> — <code>BACKUP</code> dev → <code>RESTORE</code> _test (copia schema+SPs+datos).</li>
+  <li><b>apply_seed()</b> — sobre <code>kaptaswebdev_test</code>: asegura rol 300 con todos los permisos, password de proquia, tenant correcto.</li>
+  <li><b>make_clean_snapshot()</b> — <code>BACKUP</code> de cada _test (post-seed) → <code>*_clean.bak</code>. Este es el "punto de guardado" limpio.</li>
+</ol>
+
+<!-- 5. FLUJO RESET -->
+<h2>5️⃣ Flujo de RESET (antes de cada <code>dotnet test</code>)</h2>
+<p>El reset <b>no recrea desde la dev</b> (lento). <b>Restaura desde el snapshot limpio</b> guardado en el setup:</p>
+<ol class="steps">
+  <li><b>snapshot_exists()?</b> — confirma que <code>*_clean.bak</code> existe (sino aborta).</li>
+  <li><b>SET SINGLE_USER</b> — mata conexiones abiertas a la _test.</li>
+  <li><b>RESTORE ... WITH REPLACE</b> — pisa la _test con el snapshot limpio (~0.6s de SQL).</li>
+  <li><b>SET MULTI_USER</b> — vuelve a permitir conexiones.</li>
+</ol>
+<div class="note">⏱️ El reset es <b>barato</b> (~9s con latencia de red; el SQL puro son ~0.6s a ~900 MB/s). Por eso corre automáticamente antes de cada test run (un <i>target</i> de MSBuild lo dispara). <b>Garantiza estado reproducible</b>: si un test muta datos, el siguiente run los "olvida".</div>
+
+<!-- 6. LOCAL VS REMOTO -->
+<h2>6️⃣ Local vs Remoto: MISMA línea de comando</h2>
+<table>
+<tr><th></th><th>Local</th><th>Remoto (server online)</th></tr>
+<tr><td><code>KAPTAS_SQL_HOST</code></td><td><code>localhost</code> (default)</td><td><code>173.249.31.75,1433</code></td></tr>
+<tr><td>Requiere</td><td>SQL Server nativo en tu máquina</td><td>Acceso de red + SA del remoto</td></tr>
+<tr><td>Las <code>_test</code> viven</td><td>en tu SQL Server local</td><td>en el server online</td></tr>
+<tr><td>Docker</td><td colspan="2" style="text-align:center"><span class="badge b-no">NO hace falta en ningún caso</span> — solo <code>sqlcmd</code> nativo</td></tr>
+</table>
+
+<!-- 7. LOS 3 TRUCOS -->
+<h2>7️⃣ Los 3 trucos que lo hacen robusto</h2>
+<div class="grid g3">
+  <div class="card blue">
+    <h3>🔀 Fallback de BACKUP_DIR</h3>
+    <p><b>Problema:</b> el server online no tiene <code>/var/opt/mssql/backup</code>.</p>
+    <p><b>Solución:</b> <code>resolve_backup_dir()</code> usa <code>xp_fileexist</code>; si no existe, cae a <code>/var/opt/mssql/data</code>. <b>Automático</b>, sin SSH ni <code>xp_cmdshell</code>.</p>
+  </div>
+  <div class="card green">
+    <h3>🧬 Seed tolerante a IDENTITY</h3>
+    <p><b>Problema:</b> en el remoto las tablas son <code>IDENTITY</code>, en el local no (drift de schema).</p>
+    <p><b>Solución:</b> antes de cada <code>INSERT</code>, el seed chequea <code>sys.columns.is_identity</code> y hace <code>SET IDENTITY_INSERT ON</code> <b>solo si corresponde</b>. Funciona en ambos.</p>
+  </div>
+  <div class="card purple">
+    <h3>🔎 Reset vía SQL</h3>
+    <p><b>Problema:</b> el <code>.bak</code> vive en el server, no en tu máquina.</p>
+    <p><b>Solución:</b> <code>snapshot_exists</code> usa <code>RESTORE HEADERONLY</code> (consulta SQL) en vez de <code>test -f</code> del filesystem.</p>
+  </div>
+</div>
+<div class="warn">🐛 <b>Bug histórico que se arregló:</b> el reset pasaba un path de tu máquina a <code>sqlcmd</code> que corría en otro contexto → fallaba silenciosamente y un <code>|| true</code> ocultaba el error. El reset "funcionaba" <b>sin resetear nada</b>. Ahora captura el código de salida y <code>die</code> si falla.</div>
+
+<!-- 8. REPRODUCIR -->
+<h2>8️⃣ Cómo lo reproduce cualquiera</h2>
+
+<h3>Paso 1 — Instalar <code>sqlcmd</code> (1 vez, sin Docker ni sudo)</h3>
+<pre><code># go-sqlcmd (standalone, driver embebido, ~22 MB)
+curl -L https://github.com/microsoft/go-sqlcmd/releases/latest/download/sqlcmd-linux-amd64.tar.bz2 \
+  | tar xj -C ~/.local/bin sqlcmd && chmod +x ~/.local/bin/sqlcmd
+sqlcmd --version   # verificar</code></pre>
+<p class="tlr">Windows/Mac: usá <code>sqlcmd-windows-amd64.zip</code> / <code>sqlcmd-darwin-*</code> del mismo release.</p>
+
+<h3>Paso 2 — Setup + reset contra el server online</h3>
+<pre><code># Credenciales por ENV (una vez por sesión — NUNCA en git)
+export KAPTAS_SQL_HOST="173.249.31.75,1433"
+export KAPTAS_SA_PASSWORD="&lt;pedila al equipo&gt;"
+
+bash Kaptas.Tests/scripts/setup-test-db.sh              # setup 1 vez (~20 s)
+bash Kaptas.Tests/scripts/setup-test-db.sh --reset-only # reset cuando quieras (~9 s)
+dotnet test Kaptas.Tests/Kaptas.Tests.csproj            # correr los tests</code></pre>
+
+<h3>Comandos rápidos</h3>
+<table>
+<tr><th>Querés…</th><th>Comando</th></tr>
+<tr><td>Setup inicial</td><td><code>bash Kaptas.Tests/scripts/setup-test-db.sh</code></td></tr>
+<tr><td>Reset (antes de cada test run)</td><td><code>bash Kaptas.Tests/scripts/setup-test-db.sh --reset-only</code></td></tr>
+<tr><td>Recrear <code>_test</code> desde cero</td><td><code>bash Kaptas.Tests/scripts/setup-test-db.sh --force-recreate</code></td></tr>
+<tr><td>Regenerar snapshot</td><td><code>bash Kaptas.Tests/scripts/setup-test-db.sh --refresh-snapshot</code></td></tr>
+<tr><td>Volver al local</td><td><code>unset KAPTAS_SQL_HOST KAPTAS_SA_PASSWORD</code></td></tr>
+</table>
+
+<!-- 9. ADVERTENCIAS -->
+<h2>9️⃣ Advertencias</h2>
+<div class="grid g2">
+  <div class="card red">
+    <h3>🔐 Credenciales NUNCA en el repo</h3>
+    <p>La password del server online <b>no se commitea</b>. Se pasa por <code>export</code> temporal. En el repo <b>no hay ninguna credencial del remoto</b>.</p>
+  </div>
+  <div class="card yellow">
+    <h3>🔀 Drift de schema</h3>
+    <p>El remoto puede tener un schema <b>más nuevo</b> que el local (más SPs, columnas <code>IDENTITY</code>). El <b>setup+reset funcionan igual</b> (copian lo que haya), pero tests escritos para el schema local pueden comportarse distinto. Se ajusta por separado.</p>
+  </div>
+</div>
+
+<!-- RESUMEN -->
+<h2>🎬 Resumen en 3 frases</h2>
+<div class="grid g3">
+  <div class="card blue"><b>1.</b> Como no hay migraciones, <b>copiamos</b> una BD buena (<code>dev</code>) a una descartable (<code>_test</code>) con <code>BACKUP/RESTORE</code> — schema, SPs y datos viajan juntos.</div>
+  <div class="card green"><b>2.</b> Guardamos un <b>snapshot limpio</b> tras el seed, y cada test run lo <b>restaura</b> → estado reproducible, sin contaminación.</div>
+  <div class="card purple"><b>3.</b> El destino se elige con <b>una variable de entorno</b>, con <code>sqlcmd</code> nativo — <b>sin Docker</b>, mismo script, cero credenciales en el repo.</div>
+</div>
+
+<footer style="margin-top:48px;padding-top:20px;border-top:1px solid var(--line);color:var(--mut);font-size:13px;text-align:center">
+  Código: <code>Kaptas.Tests/scripts/setup-test-db.sh</code> · Seed: <code>Kaptas.Tests/seed-test-user.sql</code> · Doc operativa: <code>Kaptas.Tests/README.md</code>
+</footer>
+
+</div>
+</body>
+</html>

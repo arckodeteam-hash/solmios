@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kaptas — Versionado de la Base de Datos</title>
+<style>
+  :root{--bg:#f8fafc;--panel:#fff;--ink:#0f172a;--muted:#475569;--line:#e2e8f0;
+    --legacy:#dc2626;--bridge:#f59e0b;--new:#3b82f6;--clean:#16a34a;--violet:#7c3aed;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 22px}
+  nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.94);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;gap:4px;overflow-x:auto;padding:10px 22px}
+  nav a{text-decoration:none;color:var(--muted);font-size:13.5px;font-weight:700;white-space:nowrap;padding:7px 11px;border-radius:8px}
+  nav a:hover{background:#f1f5f9;color:var(--ink)}
+  header.hero{background:linear-gradient(135deg,#3b0764,#1e1b4b);color:#fff;padding:52px 0 40px}
+  header.hero h1{margin:0 0 12px;font-size:32px;letter-spacing:-.02em}
+  header.hero p{font-size:17px;color:#ddd6fe;max-width:760px;margin:0}
+  header .meta{margin-top:22px;display:flex;flex-wrap:wrap;gap:10px}
+  header .meta span{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);color:#ede9fe;font-size:12.5px;font-weight:700;padding:6px 12px;border-radius:999px}
+  section{padding:44px 0;border-bottom:1px solid var(--line)}
+  h2{font-size:24px;margin:0 0 6px;letter-spacing:-.01em}
+  .lead{color:var(--muted);font-size:16px;margin:0 0 24px;max-width:800px}
+  .tag{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:4px 10px;border-radius:6px;margin-bottom:10px;background:#faf5ff;color:var(--violet)}
+  .analogy{background:#faf5ff;border:1px solid #e9d5ff;border-radius:14px;padding:18px 22px;font-size:16px;color:#5b21b6;margin-bottom:8px}
+  .analogy b{color:#4c1d95}
+  .grid{display:grid;gap:16px}.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:820px){.g2,.g3{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .stat{text-align:center;padding:22px 14px}
+  .stat .n{font-size:38px;font-weight:800;letter-spacing:-.03em;line-height:1}
+  .stat .l{margin-top:8px;font-size:13px;color:var(--muted);font-weight:600}
+  .bad{color:var(--legacy)}.good{color:var(--clean)}.violet{color:var(--violet)}
+  /* pasos */
+  .step{display:flex;gap:18px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px 22px;margin-bottom:16px;position:relative}
+  .step .num{min-width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,var(--violet),#a855f7);color:#fff;font-weight:800;font-size:20px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .step.s0 .num{background:linear-gradient(135deg,#64748b,#94a3b8)}
+  .step .body{flex:1}
+  .step h3{margin:0 0 4px;font-size:18px}
+  .step .what{color:var(--muted);font-size:14.5px;margin:0 0 12px}
+  .helps{background:#f0fdf4;border-left:4px solid var(--clean);border-radius:8px;padding:11px 15px;font-size:14px;color:#14532d}
+  .helps b{color:#166534}
+  .code{font-family:ui-monospace,Menlo,Consolas,monospace;background:#f1f5f9;padding:1px 7px;border-radius:5px;font-size:12.5px}
+  .arrow{text-align:center;color:#c4b5fd;font-size:24px;margin:-6px 0 10px}
+  /* migraciones vs seeders */
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:6px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#faf5ff;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--violet)}
+  .flow{display:flex;flex-direction:column;align-items:center;margin:8px 0}
+  .fbox{background:#fff;border:2px solid var(--line);border-radius:12px;padding:11px 16px;text-align:center;max-width:520px;width:100%;font-weight:700;font-size:14px}
+  .fbox small{display:block;font-weight:500;color:var(--muted);font-size:12px;margin-top:2px}
+  .fbox.v{border-color:var(--violet);background:#faf5ff;color:#6d28d9}
+  .fbox.g{border-color:var(--clean);background:#f0fdf4;color:#166534}
+  .farr{color:#c4b5fd;font-size:18px;padding:6px 0}
+  .tenants{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:6px 0}
+  .tcard{border:2px solid var(--line);border-radius:10px;padding:12px;text-align:center;min-width:120px;font-size:12px}
+  .tcard b{font-size:13px}
+  .callout{background:#eff6ff;border-left:4px solid var(--new);border-radius:8px;padding:14px 18px;font-size:14.5px;color:#1e3a5f;margin-top:14px}
+  .callout.amber{background:#fffbeb;border-color:var(--bridge);color:#7c2d12}
+  .note{background:#1e1b4b;color:#fff;border-radius:12px;padding:16px 20px;font-size:14.5px;margin-top:8px}
+  .note b{color:#c4b5fd}
+  .bene{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  @media(max-width:820px){.bene{grid-template-columns:1fr}}
+  .bene .h{padding:12px 16px;font-weight:800;font-size:13px}
+  .bene .hp{background:#fef2f2;color:var(--legacy)}.bene .hs{background:#f0fdf4;color:var(--clean)}
+  .bene .r{padding:12px 16px;font-size:14px;border-top:1px solid var(--line)}
+  .bene .rp{background:#fff}.bene .rs{background:#fafffb}
+  footer{padding:34px 0;color:var(--muted);font-size:13px;text-align:center}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <a href="#estado">Dónde estamos</a>
+  <a href="#idea">La idea</a>
+  <a href="#pasos">Los pasos</a>
+  <a href="#migraciones">Migraciones</a>
+  <a href="#seeders">Seeders</a>
+  <a href="#replica">Llega a todos</a>
+  <a href="#legacy">No toca el viejo</a>
+  <a href="#ayuda">En qué ayuda</a>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <h1>Versionado de la Base de Datos</h1>
+  <p>Cómo pasamos de una base tocada a mano —sin control de nada— a un sistema con migraciones y datos de fábrica, que se replica solo a cada cliente, sin tocar el código viejo. Paso a paso, y qué gana el sistema en cada uno.</p>
+  <div class="meta">
+    <span>Estado hoy: V000</span>
+    <span>92 tablas · 42 SPs</span>
+    <span>Multi-cliente (1 BD c/u)</span>
+    <span>Verificado contra la BD real</span>
+  </div>
+</div></header>
+
+<!-- ESTADO -->
+<section id="estado"><div class="wrap">
+  <span class="tag">Punto de partida</span>
+  <h2>Dónde estamos hoy</h2>
+  <p class="lead">Preguntamos a la base central directamente. La respuesta es cruda: no hay ningún control de versión. El schema se cambió siempre a mano.</p>
+  <div class="grid g3">
+    <div class="card stat"><div class="n bad">V000</div><div class="l">versión actual<br>(sin versionar)</div></div>
+    <div class="card stat"><div class="n violet">92</div><div class="l">tablas mantenidas<br>a mano</div></div>
+    <div class="card stat"><div class="n violet">42</div><div class="l">procedimientos<br>sin control</div></div>
+  </div>
+  <div class="callout amber"><b>El problema de fondo:</b> como cada cambio se hace a mano y en cada base por separado, hoy <b>nadie puede garantizar que la base de un cliente sea igual a la de otro</b>. Pueden haber divergido sin que nadie lo sepa, hasta que algo rompe en un solo cliente.</div>
+</div></section>
+
+<!-- IDEA -->
+<section id="idea"><div class="wrap">
+  <span class="tag">La idea en una frase</span>
+  <h2>Qué significa "versionar" la base</h2>
+  <div class="analogy">Es ponerle a la base de datos <b>el mismo control de versiones que ya usás para el código</b> (git). Cada cambio de estructura queda escrito, numerado y guardado. La base deja de cambiarse a mano: cambia solo aplicando esos scripts, en orden, y siempre sabés en qué versión está cada cliente.</div>
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card"><h3 class="violet">📜 Migración</h3><p style="margin:0;color:var(--muted);font-size:14.5px">Un cambio de <b>estructura</b>: una tabla nueva, una columna, un índice. Es "un commit" de la base.</p></div>
+    <div class="card"><h3 class="good">🌱 Seeder</h3><p style="margin:0;color:var(--muted);font-size:14.5px">Los <b>datos de fábrica</b>: monedas, países, catálogos base que toda base necesita para arrancar.</p></div>
+  </div>
+</div></section>
+
+<!-- PASOS -->
+<section id="pasos"><div class="wrap">
+  <span class="tag">El camino, paso a paso</span>
+  <h2>Cómo llegamos ahí</h2>
+  <p class="lead">Cinco pasos, en orden. Cada uno se apoya en el anterior. Debajo de cada paso: en qué ayuda de verdad.</p>
+
+  <div class="step s0">
+    <div class="num">0</div>
+    <div class="body">
+      <h3>Hoy — V000, sin versionar</h3>
+      <p class="what">La base funciona, pero nadie controla su estructura. Cada cambio es manual y no queda registro.</p>
+      <div class="helps"><b>Por qué hay que salir de acá:</b> un cambio mal aplicado en un cliente no se detecta, y no hay forma de saber qué versión tiene cada base.</div>
+    </div>
+  </div>
+  <div class="arrow">▼</div>
+
+  <div class="step">
+    <div class="num">1</div>
+    <div class="body">
+      <h3>Baseline — la foto de partida <span class="code">V001</span></h3>
+      <p class="what">Se toma una "foto" del schema actual (las 92 tablas, los 42 SPs) y se guarda como el primer script versionado. Es el punto cero oficial.</p>
+      <div class="helps"><b>En qué ayuda:</b> a partir de acá, la estructura actual queda <b>escrita y guardada en git</b>. Es la referencia contra la cual se compara todo. Sin esto no se puede empezar.</div>
+    </div>
+  </div>
+  <div class="arrow">▼</div>
+
+  <div class="step">
+    <div class="num">2</div>
+    <div class="body">
+      <h3>Migraciones incrementales <span class="code">V002, V003…</span></h3>
+      <p class="what">De ahí en más, cada cambio de estructura se escribe como un script nuevo numerado. Nunca más se toca la base a mano.</p>
+      <div class="helps"><b>En qué ayuda:</b> cada cambio queda <b>auditado</b> (quién, cuándo, qué) y se puede aplicar a todos los clientes con un comando. Se acabó el "lo cambié en producción y no me acuerdo qué toqué".</div>
+    </div>
+  </div>
+  <div class="arrow">▼</div>
+
+  <div class="step">
+    <div class="num">3</div>
+    <div class="body">
+      <h3>Seeders — los datos de fábrica</h3>
+      <p class="what">Los datos base que toda instalación necesita (monedas, catálogos, países) se escriben como scripts que se pueden correr sin duplicar nada.</p>
+      <div class="helps"><b>En qué ayuda:</b> una base nueva no nace vacía ni hay que cargar datos a mano. Los datos de referencia llegan solos y son <b>iguales para todos los clientes</b>.</div>
+    </div>
+  </div>
+  <div class="arrow">▼</div>
+
+  <div class="step">
+    <div class="num">4</div>
+    <div class="body">
+      <h3>Base nueva desde cero — cliente nuevo al día</h3>
+      <p class="what">Con el baseline + las migraciones + los seeders, crear la base de un cliente nuevo es correr todo en orden, automático.</p>
+      <div class="helps"><b>En qué ayuda:</b> un cliente nuevo <b>nace con la estructura y los datos correctos y actualizados</b>, sin copiar bases a mano ni riesgo de olvidarse algo. Hoy eso se hace copiando una plantilla manualmente.</div>
+    </div>
+  </div>
+</div></section>
+
+<!-- MIGRACIONES -->
+<section id="migraciones"><div class="wrap">
+  <span class="tag">Detalle</span>
+  <h2>Migraciones: qué son y en qué ayudan</h2>
+  <p class="lead">Una migración es un script que describe un cambio de estructura. Hay dos formas de hacerlo; elegimos la que respeta el sistema actual.</p>
+  <table>
+    <tr><th>Enfoque</th><th>Cómo funciona</th><th>¿Lo usamos?</th></tr>
+    <tr><td><b>Scripts SQL versionados</b><br><small>(DbUp)</small></td><td>Cada cambio es un archivo <span class="code">V00X__...sql</span> en git. Un ejecutor lo aplica a las bases que le falten.</td><td class="good"><b>✓ Sí</b><br>respeta los SPs y el schema que ya existe</td></tr>
+    <tr><td><b>Migraciones automáticas del ORM</b><br><small>(EF Core)</small></td><td>El programa "posee" el schema y genera las migraciones solo.</td><td class="bad"><b>✗ No</b><br>el schema ya existe con 42 SPs; forzarlo es frágil</td></tr>
+  </table>
+  <div class="callout"><b>En qué ayuda tener migraciones:</b> nada de cambios a mano · todo queda en git como el código · un comando actualiza a todos los clientes · siempre sabés en qué versión está cada base · se puede volver atrás de forma controlada.</div>
+</div></section>
+
+<!-- SEEDERS -->
+<section id="seeders"><div class="wrap">
+  <span class="tag">Detalle</span>
+  <h2>Seeders: qué son y en qué ayudan</h2>
+  <p class="lead">Un seeder carga datos, no estructura. Hay dos tipos y no se mezclan.</p>
+  <div class="grid g2">
+    <div class="card" style="border-top:3px solid var(--clean)">
+      <h3 class="good">🌱 Datos de referencia</h3>
+      <p style="color:var(--muted);font-size:14px">Monedas, países, catálogos base. Van versionados y son idempotentes (si ya existen, no los duplica). Toda base los recibe.</p>
+      <div class="helps" style="margin-top:10px"><b>Ayuda:</b> un cliente nuevo arranca con los datos base correctos, sin carga manual.</div>
+    </div>
+    <div class="card" style="border-top:3px solid var(--new)">
+      <h3 class="violet">🧪 Datos de prueba</h3>
+      <p style="color:var(--muted);font-size:14px">El usuario y la empresa de test. Viven aparte, solo para el entorno de tests. <b>Ya existe uno</b> en el proyecto.</p>
+      <div class="helps" style="margin-top:10px"><b>Ayuda:</b> los tests corren siempre contra los mismos datos conocidos, sin tocar producción.</div>
+    </div>
+  </div>
+</div></section>
+
+<!-- REPLICA -->
+<section id="replica"><div class="wrap">
+  <span class="tag">El corazón multi-cliente</span>
+  <h2>Cómo un cambio llega a todos los clientes</h2>
+  <p class="lead">Cada cliente tiene su propia base. La clave: se escribe el cambio UNA vez, y el ejecutor lo lleva a cada base aplicando solo lo que le falta.</p>
+  <div class="flow">
+    <div class="fbox g">📝 Un script escrito una sola vez — en git<small>V007__agrega_indice.sql</small></div>
+    <div class="farr">▼</div>
+    <div class="fbox v">▶ El ejecutor recorre todas las bases<small>pregunta a cada una en qué versión está</small></div>
+  </div>
+  <div class="tenants">
+    <div class="tcard"><b>Central</b><br>en V007<br>✓ al día</div>
+    <div class="tcard"><b>Cliente A</b><br>en V006<br>aplica V007</div>
+    <div class="tcard"><b>Cliente B</b><br>en V004<br>aplica V005→V007</div>
+    <div class="tcard"><b>Cliente nuevo</b><br>en cero<br>aplica todo</div>
+  </div>
+  <div class="farr" style="text-align:center;color:#c4b5fd">▼</div>
+  <div class="fbox g" style="margin:0 auto">✅ Todas quedan en V007 — y sabés qué versión tiene cada una</div>
+  <div class="callout"><b>En qué ayuda:</b> se termina la divergencia entre clientes. Un cambio se aplica igual en todos, y en cualquier momento podés preguntar "¿en qué versión está esta base?" y tener la respuesta exacta.</div>
+</div></section>
+
+<!-- LEGACY -->
+<section id="legacy"><div class="wrap">
+  <span class="tag">La regla de oro</span>
+  <h2>Todo esto sin tocar el código viejo</h2>
+  <p class="lead">El versionado de la base es un frente <b>separado</b> del código. Vive en scripts SQL, no en el C# de siempre. Por eso avanza sin riesgo para lo que hoy está en producción.</p>
+  <div class="grid g2">
+    <div class="card" style="border-left:3px solid var(--clean)"><h3 class="good">✓ No toca nada</h3><p style="color:var(--muted);font-size:14px;margin:0">Escribir scripts, versionar, sembrar datos, consultar versiones. Son archivos nuevos y lecturas. El código viejo ni se entera.</p></div>
+    <div class="card" style="border-left:3px solid var(--bridge)"><h3 style="color:var(--bridge)">⚠ El único matiz (opcional)</h3><p style="color:var(--muted);font-size:14px;margin:0">Si se quiere que la app aplique las migraciones sola al arrancar → 1 línea al arranque. <b>Recomendado: que el ejecutor corra aparte</b> → cero toque.</p></div>
+  </div>
+  <div class="note"><b>Dónde se cruzan los dos frentes:</b> solo cuando un módulo nuevo necesita un cambio de estructura, ese cambio entra como una migración versionada. El frente de código "pide", el de base "provee" — cada uno en su carril, y el viejo sigue intacto.</div>
+</div></section>
+
+<!-- AYUDA / BENEFICIOS -->
+<section id="ayuda"><div class="wrap">
+  <span class="tag">Resumen</span>
+  <h2>En qué ayuda todo esto, en concreto</h2>
+  <p class="lead">Cada problema de hoy tiene su solución directa en este sistema.</p>
+  <div class="bene">
+    <div class="h hp">😰 Problema hoy</div><div class="h hs">✅ Cómo lo resuelve</div>
+    <div class="r rp">Cambios a mano, sin registro de qué se tocó</div><div class="r rs">Cada cambio es un script versionado en git, auditable</div>
+    <div class="r rp">Las bases de clientes pueden haber divergido</div><div class="r rs">Un comando las lleva a todas a la misma versión</div>
+    <div class="r rp">No se sabe qué versión tiene cada base</div><div class="r rs">Se consulta al instante, base por base</div>
+    <div class="r rp">Cliente nuevo = copiar una base a mano</div><div class="r rs">Nace solo, con estructura y datos al día</div>
+    <div class="r rp">Un cambio malo puede romper producción sin aviso</div><div class="r rs">Cambios controlados, reversibles y probados aparte</div>
+    <div class="r rp">Datos base cargados a mano cliente por cliente</div><div class="r rs">Seeders idempotentes, iguales para todos</div>
+  </div>
+</div></section>
+
+<footer><div class="wrap">
+  Kaptas · Versionado de base de datos · Estado y schema verificados contra la BD real · Documento vivo
+</div></footer>
+
+<script>
+  const links=[...document.querySelectorAll('nav a')];
+  const secs=links.map(a=>document.querySelector(a.getAttribute('href')));
+  const spy=()=>{let i=secs.length-1;while(i>0&&secs[i].getBoundingClientRect().top>120)i--;
+    links.forEach(l=>{l.style.color='';l.style.background=''});links[i].style.color='#0f172a';links[i].style.background='#f1f5f9';};
+  document.addEventListener('scroll',spy,{passive:true});spy();
+</script>
+</body>
+</html>

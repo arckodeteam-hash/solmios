@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kaptas — Taller: crear caso (SP → C#)</title>
+<style>
+  :root{
+    --bg:#f6f7fb;--ink:#0f172a;--muted:#5b6577;--line:#e4e8f0;--card:#ffffff;
+    --taller:#2563eb;--taller-bg:#eff5ff;
+    --oper:#d97706;--oper-bg:#fff7ec;
+    --dicc:#0d9488;--dicc-bg:#effcf9;
+    --fiscal:#dc2626;--fiscal-bg:#fef2f2;
+    --clean:#16a34a;--clean-bg:#f0fdf4;
+    --violet:#7c3aed;--violet-bg:#faf5ff;
+    --slate:#94a3b8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55}
+  .wrap{max-width:1080px;margin:0 auto;padding:30px 20px 70px}
+  h1{font-size:27px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:19px;margin:38px 0 4px;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:15.5px;margin:0 0 4px;max-width:820px}
+  .lead{color:var(--muted);font-size:14.5px;margin:2px 0 14px;max-width:820px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin:16px 0 4px}
+  .legend .k{display:flex;align-items:center;gap:7px}
+  .dot{width:12px;height:12px;border-radius:4px;display:inline-block}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;box-shadow:0 1px 3px rgba(15,23,42,.04);margin-top:14px}
+  .tag{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;padding:3px 9px;border-radius:999px;margin-bottom:10px}
+  .tag.before{background:#f1f5f9;color:#475569}
+  .tag.after{background:var(--clean-bg);color:#15803d}
+
+  /* iceberg / tree */
+  .tree{display:flex;flex-direction:column;gap:0}
+  .node{border-radius:12px;padding:11px 15px;border:1.5px solid;position:relative}
+  .node .t{font-weight:800;font-size:14px}
+  .node .d{font-size:12.5px;opacity:.9;margin-top:2px}
+  .node.taller{background:var(--taller-bg);border-color:var(--taller);color:#1e40af}
+  .node.oper{background:var(--oper-bg);border-color:var(--oper);color:#9a5b06}
+  .node.dicc{background:var(--dicc-bg);border-color:var(--dicc);color:#0f766e}
+  .node.fiscal{background:var(--fiscal-bg);border-color:var(--fiscal);color:#b91c1c}
+  .arm{margin-left:22px;padding-left:22px;border-left:2px dashed var(--line)}
+  .drop{height:12px}
+  .chip-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:7px}
+  .lbl{font-size:11px;font-weight:700;color:var(--muted)}
+  .pill{font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:8px;background:#f1f5f9;color:#334155;white-space:nowrap}
+  .pill.oper{background:var(--oper-bg);color:#9a5b06}
+  .pill.taller{background:var(--taller-bg);color:#1e40af}
+  .pill.dicc{background:var(--dicc-bg);color:#0f766e}
+  .pill.fiscal{background:var(--fiscal-bg);color:#b91c1c}
+
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:820px){.two{grid-template-columns:1fr}}
+
+  .usecase{border:2px solid var(--taller);background:var(--taller-bg);border-radius:14px;padding:14px 16px}
+  .usecase .t{font-weight:800;color:#1e40af;font-size:15px}
+  .port{display:flex;gap:10px;align-items:flex-start;margin-top:10px}
+  .port .icon{font-size:15px;line-height:1.4}
+  .port .body{font-size:13px}
+  .port .body b{font-weight:800}
+  .iface{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;font-weight:700}
+  .owner{font-size:11px;font-weight:800;padding:1px 7px;border-radius:6px;margin-left:6px;vertical-align:middle}
+  .owner.oper{background:var(--oper-bg);color:#9a5b06}
+  .owner.dicc{background:var(--dicc-bg);color:#0f766e}
+  .owner.self{background:var(--taller-bg);color:#1e40af}
+
+  .rule{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;margin:8px 0}
+  .rule .m{font-size:15px;line-height:1.35}
+  .ok{color:#15803d}.no{color:#b91c1c}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:800}
+  td .who{font-weight:800;font-size:11px;padding:1px 7px;border-radius:6px}
+  .who.oper{background:var(--oper-bg);color:#9a5b06}
+  .who.taller{background:var(--taller-bg);color:#1e40af}
+  .who.dicc{background:var(--dicc-bg);color:#0f766e}
+  .who.fiscal{background:var(--fiscal-bg);color:#b91c1c}
+
+  /* timeline db */
+  .chips{display:flex;align-items:center;gap:0;flex-wrap:wrap;margin-top:6px}
+  .chip{border-radius:10px;padding:9px 13px;font-weight:800;font-size:13px;color:#fff;white-space:nowrap}
+  .chip small{display:block;font-weight:500;opacity:.92;font-size:11px}
+  .chip.done{background:var(--violet)}.chip.now{background:#8b5cf6}.chip.drop{background:#cbd5e1;color:#475569}
+  .sep{color:#c4b5fd;font-weight:800;padding:0 8px}
+
+  /* phases */
+  ol.ph{list-style:none;counter-reset:p;padding:0;margin:8px 0 0}
+  ol.ph li{counter-increment:p;position:relative;padding:11px 0 11px 44px;border-bottom:1px solid var(--line)}
+  ol.ph li:last-child{border-bottom:0}
+  ol.ph li::before{content:counter(p);position:absolute;left:0;top:11px;width:28px;height:28px;border-radius:8px;background:var(--taller-bg);color:#1e40af;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:13px}
+  ol.ph li b{font-size:14px}
+  ol.ph li .risk{font-size:11px;font-weight:800;padding:1px 8px;border-radius:6px;margin-left:8px}
+  .risk.lo{background:var(--clean-bg);color:#15803d}
+  .risk.mid{background:#fff7ec;color:#9a5b06}
+  .risk.hi{background:var(--fiscal-bg);color:#b91c1c}
+  ol.ph li .dd{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .help{margin-top:10px;font-size:13px;color:var(--muted)}
+  .foot{margin-top:26px;font-size:13px;color:var(--muted)}
+  code{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:#f1f5f9;padding:1px 6px;border-radius:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>🔧 Taller · Crear caso — de un árbol de 9 procedimientos a C# aislado</h1>
+  <p class="sub">Crear un caso de taller <b>no es una escritura de taller</b>: es una operación de venta completa. Un solo SP dispara un árbol que numera la operación, le calcula ITBIS y cargos fiscales, toca el diccionario, y recién encima pega lo del taller. Este mapa muestra ese árbol real, y cómo queda al pasarlo a C# <b>sin que el módulo Taller termine dueño de cosas que no son suyas</b>.</p>
+
+  <div class="legend">
+    <span class="k"><span class="dot" style="background:var(--taller)"></span> Taller (lo propio)</span>
+    <span class="k"><span class="dot" style="background:var(--oper)"></span> Operaciones (otro dominio)</span>
+    <span class="k"><span class="dot" style="background:var(--fiscal)"></span> Fiscal / ITBIS (Norma 07-2007)</span>
+    <span class="k"><span class="dot" style="background:var(--dicc)"></span> Diccionarios</span>
+    <span class="k"><span class="dot" style="background:var(--clean)"></span> C# nuevo / resultado</span>
+  </div>
+
+  <!-- ================= ANTES ================= -->
+  <h2>1 · Hoy — el iceberg que dispara un solo <code>exec</code></h2>
+  <p class="lead">El Feature v2 llama a <b>un</b> procedimiento. Debajo hay <b>9 SP encadenados (~1.250 líneas)</b> repartidos en 3 dominios. Verificado en la BD dev, no de memoria.</p>
+  <div class="panel">
+    <span class="tag before">Estado actual · el módulo v2 depende de todo esto</span>
+    <div class="tree">
+      <div class="node taller"><div class="t">① p_taller_product_insert_upd_grabar <span style="font-weight:600;opacity:.75">· 238 líneas</span></div><div class="d">Wrapper: abre transacción, delega, y arma los 3 resultados que ve el frontend (equipo · línea · piezas).</div></div>
+      <div class="arm">
+        <div class="drop"></div>
+        <div class="node taller"><div class="t">② p_taller_product_insert_upd <span style="font-weight:600;opacity:.75">· 140 líneas</span></div><div class="d">Orquesta: si es caso nuevo crea la operación, inserta la cabecera de taller, y llama al detalle.</div></div>
+        <div class="arm">
+          <div class="drop"></div>
+          <div class="node oper"><div class="t">③ p_operacion_insert <span style="font-weight:600;opacity:.75">· 66 líneas</span></div><div class="d">Numera y crea la fila en <b>Operacion</b>. Corazón del dominio Operaciones — nada de taller.</div></div>
+          <div class="drop"></div>
+          <div class="node taller"><div class="t">④ p_taller_det_insert_upd <span style="font-weight:600;opacity:.75">· 261 líneas</span></div><div class="d">Inserta el renglón, guarda datos del equipo (falla, serial, password), inserta las piezas.</div></div>
+          <div class="arm">
+            <div class="drop"></div>
+            <div class="node dicc"><div class="t">⑤ p_Diccionario_Create_o_Select → ⑥ P_GenerateRandomString <span style="font-weight:600;opacity:.75">· 30 + 14</span></div><div class="d">Crea o busca la entrada de diccionario del tipo de artículo. Dominio Diccionarios.</div></div>
+            <div class="drop"></div>
+            <div class="node fiscal"><div class="t">⑦ p_Operacion_recalcular <span style="font-weight:600;opacity:.75">· 332 líneas</span></div><div class="d">El motor. Cursor por renglón: subtotal, descuento, <b>ITBIS por producto</b>, recargo, utilidad. Reescribe totales de <b>Operacion</b> y <b>Operacion_Det</b>.</div>
+              <div class="arm">
+                <div class="drop"></div>
+                <div class="node fiscal"><div class="t">⑧ p_Operacion_Calcular_Cargos_Norma072007 <span style="font-weight:600;opacity:.75">· 101 líneas</span></div><div class="d">Cargos fiscales DGII (Norma 07-2007). Lee un catálogo y escribe <b>Operacion_Cargos_Norma072007</b>.</div></div>
+                <div class="drop"></div>
+                <div class="node oper"><div class="t">⑨ p_Operacion_Det_Calcular_utilidad <span style="font-weight:600;opacity:.75">· 71 líneas</span></div><div class="d">Utilidad por renglón (costo vs precio).</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="chip-line" style="margin-top:14px">
+      <span class="lbl">8 tablas escritas:</span>
+      <span class="pill oper">Operacion</span>
+      <span class="pill oper">Operacion_Det</span>
+      <span class="pill fiscal">Operacion_Cargos_Norma072007</span>
+      <span class="pill taller">Operacion_taller</span>
+      <span class="pill taller">Operacion_det_taller</span>
+      <span class="pill taller">Operacion_Info_Adicional</span>
+      <span class="pill taller">Operacion_det_Info_Adicional</span>
+      <span class="pill dicc">Diccionario</span>
+    </div>
+  </div>
+
+  <!-- ================= DESPUÉS ================= -->
+  <h2>2 · Después — Taller manda, pero no reimplementa lo ajeno</h2>
+  <p class="lead">El caso de uso <b>CreateRepairShopCaseCommand</b> orquesta todo dentro de <b>una transacción EF</b> (el <code>DbContext</code> es el Unit of Work). Lo que es de Operaciones o Diccionarios se consume <b>por interfaz</b> (inversión de dependencias): Taller depende del contrato, no del código. La lógica fiscal vive en el slice de Operaciones, lista para cuando ese módulo se arme.</p>
+  <div class="panel">
+    <span class="tag after">Objetivo · réplica total en C#, módulo desacoplado</span>
+    <div class="two">
+      <div>
+        <div class="usecase">
+          <div class="t">🧩 CreateRepairShopCaseCommand <span class="owner self">Taller</span></div>
+          <div style="font-size:12.5px;color:#334155;margin-top:4px">Abre 1 transacción EF y coordina. Escribe <b>solo</b> lo del taller. Devuelve los 3 resultados idénticos al SP.</div>
+          <div class="port"><span class="icon">🔌</span><div class="body"><span class="iface">IOperationWriter</span><span class="owner oper">Operaciones</span><br>crea y numera <b>Operacion</b> · reemplaza ③</div></div>
+          <div class="port"><span class="icon">🔌</span><div class="body"><span class="iface">IOperationRecalculator</span><span class="owner oper">Operaciones</span><br>subtotales · ITBIS · cargos Norma072007 · utilidad · reemplaza ⑦⑧⑨</div></div>
+          <div class="port"><span class="icon">🔌</span><div class="body"><span class="iface">IDictionaryResolver</span><span class="owner dicc">Diccionarios</span><br>crea o busca entrada · reemplaza ⑤⑥</div></div>
+          <div class="port"><span class="icon">✍️</span><div class="body"><b>Escritura propia (EF):</b> Operacion_taller · Operacion_det_taller · claves de taller en las tablas *_Info_Adicional</div></div>
+        </div>
+      </div>
+      <div>
+        <div style="font-weight:800;font-size:13px;color:var(--muted);margin-bottom:6px">Las reglas que esto respeta</div>
+        <div class="rule"><span class="m ok">✅</span><div><b>Aislado.</b> La carpeta <code>Features/RepairShop</code> no contiene ni el numerador ni el motor de ITBIS. Solo ve interfaces.</div></div>
+        <div class="rule"><span class="m ok">✅</span><div><b>Desacoplado.</b> Inversión de dependencias: si mañana cambia el cálculo fiscal, Taller no se toca.</div></div>
+        <div class="rule"><span class="m ok">✅</span><div><b>Atómico.</b> Un solo <code>SaveChanges</code> + transacción EF = todo o nada, igual que el SP.</div></div>
+        <div class="rule"><span class="m ok">✅</span><div><b>Completo.</b> Cero <code>exec</code> en el camino de crear caso. La lógica fiscal queda en el slice de Operaciones, reutilizable.</div></div>
+        <div class="rule"><span class="m no">🚫</span><div><b>Lo que NO hace:</b> Taller no se vuelve dueño de <code>Operacion</code> ni del ITBIS. Los consume, no los posee.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MAPA SP -> C# ================= -->
+  <h2>3 · Qué reemplaza a qué</h2>
+  <div class="panel" style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Procedimiento (hoy)</th><th>Dueño</th><th>Dónde vive la lógica en C#</th></tr></thead>
+      <tbody>
+        <tr><td>①② p_taller_product_insert_upd(_grabar)</td><td><span class="who taller">Taller</span></td><td>CreateRepairShopCaseCommand</td></tr>
+        <tr><td>③ p_operacion_insert</td><td><span class="who oper">Operaciones</span></td><td>IOperationWriter → OperationWriter (slice Operaciones)</td></tr>
+        <tr><td>④ p_taller_det_insert_upd</td><td><span class="who taller">Taller</span></td><td>RepairShopCaseLineWriter (parte propia) + delega recálculo</td></tr>
+        <tr><td>⑤⑥ p_Diccionario_Create_o_Select / P_GenerateRandomString</td><td><span class="who dicc">Diccionarios</span></td><td>IDictionaryResolver → DictionaryResolver</td></tr>
+        <tr><td>⑦ p_Operacion_recalcular</td><td><span class="who oper">Operaciones</span></td><td rowspan="3">IOperationRecalculator → OperationRecalculator (motor de totales + ITBIS + cargos, slice Operaciones)</td></tr>
+        <tr><td>⑧ p_Operacion_Calcular_Cargos_Norma072007</td><td><span class="who fiscal">Fiscal</span></td></tr>
+        <tr><td>⑨ p_Operacion_Det_Calcular_utilidad</td><td><span class="who oper">Operaciones</span></td></tr>
+      </tbody>
+    </table>
+    <p class="help">Los SP <b>no se borran ahora</b>: el módulo viejo (<code>api/RepairShop</code>) los sigue llamando. El v2 deja de usarlos. El <code>DROP</code> es el último paso, cuando el viejo tenga cero tráfico.</p>
+  </div>
+
+  <!-- ================= VERSIONADO BD ================= -->
+  <h2>4 · Versionado de la base — una foto antes de dejar de usarlos</h2>
+  <p class="lead">Los 9 SP del árbol quedan retratados en git en un migration nuevo, para que cualquiera vea qué hacían antes de que C# los reemplazara. Se borran mucho después, en su propio migration.</p>
+  <div class="panel">
+    <div class="chips">
+      <span class="chip done">V001<small>baseline</small></span><span class="sep">→</span>
+      <span class="chip done">V002<small>foto 9 SP de lectura del taller</small></span><span class="sep">→</span>
+      <span class="chip now">V003<small>foto del árbol de crear-caso (los 9 internos)</small></span><span class="sep">→</span>
+      <span class="chip drop">V00X<small>drop cuando el viejo tenga 0 tráfico</small></span>
+    </div>
+    <p class="help">Regla de siempre: nunca se edita un migration aplicado; se suma el siguiente. La foto de V003 es solo referencia — no cambia la BD, la documenta.</p>
+  </div>
+
+  <!-- ================= PLAN POR FASES ================= -->
+  <h2>5 · Plan por fases — de la hoja segura al motor fiscal</h2>
+  <p class="lead">~1.250 líneas no se migran de un saque. Se sube por capas, y el juez de cada capa es un test golden-master que compara <b>fila por fila</b> lo que escribe el SP viejo contra lo que escribe el C# nuevo (mismo input, BD de prueba aislada).</p>
+  <div class="panel">
+    <ol class="ph">
+      <li><b>Foto + arnés de comparación</b> <span class="risk lo">riesgo bajo</span><div class="dd">V003 con los 9 SP. Harness que crea un caso con el SP y captura las 8 tablas + los 3 JSON de salida como “verdad” a replicar.</div></li>
+      <li><b>IDictionaryResolver</b> <span class="risk lo">riesgo bajo</span><div class="dd">La hoja más chica (⑤⑥). Crea/busca diccionario. Sin dinero de por medio.</div></li>
+      <li><b>IOperationWriter + escritura propia de taller</b> <span class="risk mid">riesgo medio</span><div class="dd">Crear <code>Operacion</code> (③) + <code>Operacion_taller</code> + info del técnico/equipo. Se valida el alta sin tocar aún los montos.</div></li>
+      <li><b>IOperationRecalculator — el motor</b> <span class="risk hi">riesgo alto · fiscal</span><div class="dd">Réplica del cursor de ⑦⑧⑨: subtotal, descuento, <b>ITBIS por producto</b>, recargo, cargos Norma 07-2007, utilidad. Aquí el golden-master compara cada monto al centavo.</div></li>
+      <li><b>Detalle + piezas + 3 resultados</b> <span class="risk mid">riesgo medio</span><div class="dd">Renglón (④), <code>Operacion_det_taller</code>, y los 3 SELECT de salida idénticos al wrapper.</div></li>
+      <li><b>Cablear el caso de uso y soltar el SP</b> <span class="risk mid">riesgo medio</span><div class="dd">CreateRepairShopCaseCommand reemplaza el <code>exec</code>. Golden-master en verde = listo. El SP queda vivo para el legado.</div></li>
+    </ol>
+  </div>
+
+  <p class="foot">Mapas relacionados: <b>modulo-taller-mapa.html</b> (visión del módulo) · <b>modulo-taller-fronteras.html</b> (qué toca y qué no) · <b>versionado-mapa.html</b> (cómo se versiona la base).</p>
+
+</div>
+</body>
+</html>

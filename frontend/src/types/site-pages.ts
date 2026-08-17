@@ -45,3 +45,20 @@ export interface SitePageListResult {
   data: SitePage[]
   total: number
 }
+
+// ── Públicos (landing, sin auth) — espejo de PublicSitePage/PublicSitePageSummary ──
+export interface PublicSitePageSummary {
+  slug: string
+  title: string
+  category: SitePageCategory
+  updatedAt: string
+}
+
+export interface PublicSitePage {
+  slug: string
+  title: string
+  metaDescription: string | null
+  contentHtml: string
+  category: SitePageCategory
+  updatedAt: string
+}
