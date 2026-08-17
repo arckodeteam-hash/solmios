@@ -46,6 +46,26 @@ export const CreateReservasSchema: Record<string, ValidationRule> = {
   cardLast4: { type: 'string' as const, max: 4 },
   cardExpMonth: { type: 'string' as const, max: 2 },
   cardExpYear: { type: 'string' as const, max: 4 },
+  // ── Precio por temporada (panel) ──
+  // `priceFrom:'rates'` = el alta viene del wizard SIN edición manual de precio → el backend
+  // recalcula el alojamiento con la cadena season_assignments → room_rates (fuente de verdad
+  // server-side, `crud.ts`). `manual`/ausente = comportamiento histórico: `totalAmount` tal cual
+  // (reservas OTA con monto pactado, móvil, connectors). `taxesAmount`/`promoDiscountAmount` son
+  // los aditamentos NO-lodging que el wizard muestra: el total server-side es
+  // `sumStayPrice(...) + taxesAmount - promoDiscountAmount` (el promoCode se re-valida igual).
+  priceFrom: { type: 'string' as const, enum: ['rates', 'manual'] },
+  taxesAmount: { type: 'number' as const, min: 0 },
+  promoDiscountAmount: { type: 'number' as const, min: 0 },
+}
+
+/** Body del quote del wizard (POST /api/reservas/quote). `guests` = ocupación tarifada (adultos).
+ *  `hotelId` lo inyecta el controller desde el token (solo super_admin puede pisarlo). */
+export const StayQuoteSchema: Record<string, ValidationRule> = {
+  hotelId: { type: 'string' as const },
+  roomId: { type: 'string' as const, required: true },
+  checkIn: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
+  checkOut: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
+  guests: { type: 'number' as const, min: 1, max: 20 },
 }
 
 export const UpdateReservasSchema: Record<string, ValidationRule> = {

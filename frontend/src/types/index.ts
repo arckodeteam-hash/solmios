@@ -262,6 +262,38 @@ export interface RescheduleResult {
   charge: RescheduleCharge | null
 }
 
+// === STAY QUOTE (wizard de nueva reserva: precio por temporada) ===
+// Espejo de `backend/src/modules/reservas/usecases/quote.ts`. El wizard antes cotizaba
+// `basePrice × noches` en el frontend e ignoraba la grilla de temporadas; este quote trae el
+// desglose noche a noche con la temporada de cada fecha.
+export interface StayQuoteNight {
+  date: string
+  /** Nombre de la temporada asignada a la fecha (null = sin temporada → precio base). */
+  season: string | null
+  seasonLabel: string | null
+  seasonColor: string | null
+  price: number
+  /** `true` si el precio salió de la grilla `room_rates` (no del fallback basePrice). */
+  fromRate: boolean
+}
+
+export interface StayQuote {
+  roomId: string
+  roomType: string
+  /** Precio por noche sin temporadas — lo que cotizaba el wizard antes de esto. */
+  basePrice: number
+  nights: StayQuoteNight[]
+  nightsCount: number
+  /** Suma noche a noche (no `precio × noches`). */
+  subtotal: number
+  /** Promedio, solo cuando TODAS las noches valen lo mismo (para "N noches × $X"). */
+  pricePerNight: number | null
+  /** `false` = ninguna noche salió de la grilla → aviso "tarifa base" (pattern repricedFromRates). */
+  fromRates: boolean
+  /** Noches cuya tarifa está cerrada en la grilla (aviso, no bloqueo). */
+  closedNights: number
+}
+
 // === CANCELACIÓN (planning / listado: cancelar una reserva aplicando la política) ===
 // Espejo de `backend/src/modules/reservas/usecases/cancel.ts` + `shared/usecases/cancellation-math.ts`.
 //

@@ -2,12 +2,13 @@ import type { HttpRequest, Logger, Auth, RepositoryAdapter } from 'arckode-frame
 import { validateSchema, OrmRepository } from 'arckode-framework'
 import type { FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasService } from './service'
-import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, CancelReservationSchema } from './validators/schema'
+import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, CancelReservationSchema, StayQuoteSchema } from './validators/schema'
 import { listCompanions, createCompanion, updateCompanion, deleteCompanion } from './usecases/companions'
 import { listAddons, createAddon, deleteAddon } from './usecases/addons'
 import { hashGuaranteePin, verifyGuaranteePin } from '../../services/guarantee-pin'
 import { sendCheckinEmail } from './usecases/checkin-email'
 import { dispatchLifecycleEmail } from './usecases/lifecycle-email'
+import { hotelIdOfUserLegacy } from '../../shared/usecases/hotel-of-legacy'
 
 // Decodifica un data URL base64 (data:<mime>;base64,<data>) → buffer + metadata.
 // Mismo patrón que housekeeping/controller.ts (el router no propaga req.files al handler).
@@ -58,6 +59,27 @@ export class ReservasController {
   async destroy(req: HttpRequest) {
     await this.service.delete(req.params.id, req.user as any)
     return { status: 204, body: null }
+  }
+  // ── STAY QUOTE (cotización del wizard: precio por temporada, noche a noche) ──
+  // POST (no GET) a propósito: `/api/reservas/:id` está registrado ANTES y capturaría
+  // `quote` como id. Igual que `reschedule/quote`, que también es POST en este módulo.
+  // Ownership: `hotelId` sale del usuario (super_admin puede pasar el suyo en el body);
+  // sin hotelId en el token se resuelve contra `users` (mismo fallback que crud.ts).
+  async quote(req: HttpRequest) {
+    const body = { ...(req.body ?? {}) } as Record<string, any>
+    const user = req.user as any
+    if (user?.role === 'super_admin' && body.hotelId) {
+      // super_admin cotiza el hotel que pide — hotelId del body tal cual
+    } else if (user?.hotelId) {
+      body.hotelId = user.hotelId
+    } else {
+      const hotelId = await hotelIdOfUserLegacy(this.userRepo, user?.id)
+      if (!hotelId) return { status: 400, body: { error: 'Usuario sin hotel asignado' } }
+      body.hotelId = hotelId
+    }
+    const data = validateSchema(StayQuoteSchema, body)
+    const quote = await this.service.quoteStay({ ...(data as any), guests: Number((data as any).guests) || 2 })
+    return { status: 200, body: quote }
   }
 
   // ── CANCEL (F2 plan #627): aplica política de cancelación ──

@@ -17,6 +17,7 @@ import { getPreCheckinData as getPreCheckinDataUsecase, submitPreCheckin as subm
 import { getExtendedDetail as getExtendedDetailUsecase, getAuditTrail as getAuditTrailUsecase } from './usecases/detail'
 import { getBookingEngineDashboard as getBookingEngineDashboardUsecase } from './usecases/booking-engine'
 import { quoteReschedule as quoteRescheduleUsecase, commitReschedule as commitRescheduleUsecase, type RescheduleInput, type RescheduleChargePort } from './usecases/reschedule'
+import { quoteStay as quoteStayUsecase, type QuoteParams } from './usecases/quote'
 import type { ReservasQueries } from './usecases/reservas-queries'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 
@@ -57,6 +58,7 @@ export class ReservasService {
     /** Pertenencia del `groupId` del update — ver validate-update.ts. */ private readonly groupRepo?: RepositoryAdapter<any>,
     /** Reprice del reagendado (temporadas → tarifas). OPCIONALES: sin ellos cae a `rooms.basePrice` — ver usecases/reprice.ts. */ private readonly seasonAssignmentRepo?: RepositoryAdapter<any>, private readonly roomRateRepo?: RepositoryAdapter<any>,
     /** Storage (foto de documento + firma del pre-checkin público). Sin él, `submitPreCheckin`/`uploadPreCheckinPhoto` fallan — ver composition-root.ts. */ private readonly storage?: StorageService,
+    /** Catálogo `Seasons` (label/color) para el quote del wizard — ver index.ts. */ private readonly seasonsRepo?: RepositoryAdapter<any>,
   ) {}
 
   // ACUMULA handlers (cadena secuencial). Para ejecución paralela independiente -> EventBus en composition-root.ts.
@@ -80,7 +82,7 @@ export class ReservasService {
   }
   async create(dto: CreateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> {
     this.logger.info('Creando reserva', { userId: currentUser.id, roomId: dto.roomId })
-    const item = await createReservation(this.repo, this.blockRepo, this.logger, this.cache, this.sockets, this.notifyDeps(), dto, currentUser, this.roomRepo, this.guestRepo, this.dateRestrictionRepo, this.orchestrationDeps.promoCodes)
+    const item = await createReservation(this.repo, this.blockRepo, this.logger, this.cache, this.sockets, this.notifyDeps(), dto, currentUser, this.roomRepo, this.guestRepo, this.dateRestrictionRepo, this.orchestrationDeps.promoCodes, { seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo })
     dispatchCreateEmail(this.notifyDeps(), dto, item)
     return item
   }
@@ -145,6 +147,7 @@ export class ReservasService {
 
   // ── RESCHEDULE (mover/extender desde planning) ──────────────────────────
   private rescheduleDeps = () => ({ repo: this.repo, roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo })
+  async quoteStay(params: QuoteParams): Promise<any> { return quoteStayUsecase({ roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, seasonsRepo: this.seasonsRepo }, params) }
 
   async quoteReschedule(id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<any> {
     return quoteRescheduleUsecase(this.rescheduleDeps(), id, input, user)

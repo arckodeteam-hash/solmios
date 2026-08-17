@@ -86,6 +86,13 @@ export interface CreateReservasDTO {
   marketingAccepted?: boolean
   termsAccepted?: boolean
   otherCharges?: number
+  // Precio por temporada (panel): `rates` → el backend recalcula el alojamiento server-side
+  // (season_assignments → room_rates → fallback rooms.basePrice) y arma
+  // totalAmount = sumStayPrice + taxesAmount - promoDiscountAmount. Ausente/`manual` →
+  // totalAmount tal cual llega (compat OTA/móvil/connectors). Ver usecases/quote.ts.
+  priceFrom?: 'rates' | 'manual'
+  taxesAmount?: number
+  promoDiscountAmount?: number
 }
 
 export interface UpdateReservasDTO {

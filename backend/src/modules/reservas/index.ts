@@ -59,8 +59,11 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // motor público para su precio por fecha. Sin ellos el reprice degrada a `rooms.basePrice`.
       const seasonAssignmentRepo = new OrmRepository<any>(orm, 'SeasonAssignments')
       const roomRateRepo = new OrmRepository<any>(orm, 'RoomRates')
+      // Catálogo de temporadas (label/color) para el desglose del quote del wizard. Modelo
+      // COMPARTIDO (shared/models.ts) — no es un import del módulo pricing.
+      const seasonsRepo = new OrmRepository<any>(orm, 'Seasons')
       const queries = new ReservasQueries(orm)
-      const service = new ReservasService(repo, log, cache, userRepo, auth, guestRepo, roomRepo, hotelRepo, queries, blockRepo, dateRestrictionRepo, policyRepo, groupRepo, seasonAssignmentRepo, roomRateRepo, opts.storage)
+      const service = new ReservasService(repo, log, cache, userRepo, auth, guestRepo, roomRepo, hotelRepo, queries, blockRepo, dateRestrictionRepo, policyRepo, groupRepo, seasonAssignmentRepo, roomRateRepo, opts.storage, seasonsRepo)
       const controller = new ReservasController(service, log, companionsRepo, addonsRepo, repo, userRepo, auth, orm, null, messageLogRepo, roomRepo, hotelRepo)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
@@ -125,6 +128,11 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
 
       // ── Booking engine dashboard ──
       router.get('/api/booking-engine', guard('reservations', 'view'), (req) => controller.getBookingEngineDashboard(req))
+
+      // ── Stay quote del wizard (precio por temporada, noche a noche). POST, no GET: la ruta
+      // `/api/reservas/:id` está registrada ANTES y capturaría `quote` como :id. Mismo patrón
+      // que `/api/reservas/:id/reschedule/quote`. Permiso view: solo cotiza, no persiste.
+      router.post('/api/reservas/quote', guard('reservations', 'view'), (req) => controller.quote(req))
 
       // ── Cancel preview (APPEND-ONLY): montos/penalidad SIN persistir. Mismo permiso que
       // cancel (`reservations:edit`): expone datos financieros de la reserva.
