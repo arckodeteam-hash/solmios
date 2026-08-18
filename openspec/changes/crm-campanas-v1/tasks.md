@@ -8,34 +8,34 @@
 
 ### T1: Modelo campaigns + campaign_sends (crm)
 Validaciones: ✓ email_queue existe con worker (módulo email-queue, status pending) ·
-⬜ `registerCrmModels` acepta 2 tablas más sin choque de nombres · ⬜ ormMigrate crea ambas
-en SQLite y PG (RUN_MIGRATE) · ⬜ índice por (hotelId, campaignId) en sends para el dedupe ·
-⬜ analyzer 0 con los modelos nuevos.
+✓ `registerCrmModels` acepta 2 tablas más sin choque de nombres · ✓ ormMigrate crea ambas
+en SQLite y PG (RUN_MIGRATE) · ✓ índice por (hotelId, campaignId) en sends para el dedupe ·
+✓ analyzer 0 con los modelos nuevos.
 
 ### T2: Usecase send-campaign (crm)
 Validaciones: ✓ `SegmentUseCase.guestsIn` resuelve miembros (misma fuente que la vista) ·
-✓ patrón usecase puro del crm (redeem-with-promo como referencia) · ⬜ miembros sin email se
-omiten sin abortar · ⬜ variables {{nombre}}/{{hotel}}/{{puntos}} resueltas al encolar ·
-⬜ tests: envío completo / sin email / reenvío 409 / dedupe de guest duplicado.
+✓ patrón usecase puro del crm (redeem-with-promo como referencia) · ✓ miembros sin email se
+omiten sin abortar · ✓ variables {{nombre}}/{{hotel}}/{{puntos}} resueltas al encolar ·
+✓ tests: envío completo / sin email / reenvío 409 / dedupe de guest duplicado.
 
 ### T3: ~~Connector~~ → setEmailDeps (puerto enqueue)
 > Corregido en implementación: EmailService es servicio compartido (no módulo) — el patrón
 > del proyecto es inyección post-init como wallet-pass. Sin connector.
 Validaciones: ✓ patrón connector = crm-promocodes (setPort + delegación plana) ·
-✓ email-queue es módulo registrado (resolveModule lo encuentra) · ⬜ el puerto no mete lógica
-(analyzer: connectors solo wirean) · ⬜ sin import directo crm→email-queue ·
-⬜ tests del connector con mock de resolveModule.
+✓ email-queue es módulo registrado (resolveModule lo encuentra) · ✓ el puerto no mete lógica
+(analyzer: connectors solo wirean) · ✓ sin import directo crm→email-queue ·
+✓ tests del connector con mock de resolveModule.
 
 ### T4: Endpoints campaigns (crm/index.ts + controller)
 Validaciones: ✓ guard compuesto existente `guard('guests', a)` + moduleGuard('crm') ·
-⬜ validateSchema en POST (regla del proyecto) · ⬜ send con `guests:edit` y 409 si ya sent ·
-⬜ ownership: campañas solo del hotel del token · ⬜ tests de rutas con permisos.
+✓ validateSchema en POST (regla del proyecto) · ✓ send con `guests:edit` y 409 si ya sent ·
+✓ ownership: campañas solo del hotel del token · ✓ tests de rutas con permisos.
 
 ### T5: Tab Campañas en la vista CRM
 Validaciones: ✓ patrón de tabs existente (value/label/icon + activeTab) ·
-✓ SectionCard/AppModal/ConfirmModal del design system · ⬜ select de segmentos reusa
-listSegments() ya cargado · ⬜ confirm muestra "se enviará a N huéspedes" antes de send ·
-⬜ typecheck + vitest del componente si aplica.
+✓ SectionCard/AppModal/ConfirmModal del design system · ✓ select de segmentos reusa
+listSegments() ya cargado · ✓ confirm muestra "se enviará a N huéspedes" antes de send ·
+✓ typecheck + vitest del componente si aplica.
 
 ## Fase B — Triggers de huésped
 
