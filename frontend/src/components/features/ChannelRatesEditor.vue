@@ -38,11 +38,18 @@
         No hay habitaciones con tipo definido para configurar tarifas.
       </div>
 
-      <!-- Una tarjeta por habitación (roomType × ocupación) -->
+      <!-- Una tarjeta POR TIPO DE HABITACIÓN, con una sub-sección por ocupación -->
       <div v-else class="space-y-4">
-        <div v-for="g in groups" :key="g.key" class="rounded-2xl border-2 border-navy overflow-hidden">
-          <div class="bg-surface border-b-2 border-navy px-4 py-2.5">
-            <h3 class="text-sm font-black text-navy capitalize">{{ g.roomType }} <span class="text-text-muted font-bold normal-case">· {{ g.occupancy }} pers.</span></h3>
+        <div v-for="tc in typeCards" :key="tc.roomType" class="rounded-2xl border-2 border-navy overflow-hidden">
+          <div class="bg-surface border-b-2 border-navy px-4 py-2.5 flex items-center justify-between gap-2">
+            <h3 class="text-sm font-black text-navy capitalize">{{ tc.roomType }}</h3>
+            <span class="text-[10px] font-black uppercase text-text-muted">
+              {{ tc.groups.length }} {{ tc.groups.length === 1 ? 'ocupación' : 'ocupaciones' }}
+            </span>
+          </div>
+          <div v-for="g in tc.groups" :key="g.key">
+          <div class="px-4 pt-2.5 pb-0.5 text-[11px] font-black text-text-muted uppercase">
+            {{ g.occupancy }} {{ g.occupancy === 1 ? 'persona' : 'personas' }}
           </div>
           <!-- Responsive: en móvil General arriba + temporadas 2×2; en desktop General a la izq + 4 temporadas en fila -->
           <div class="p-3 grid grid-cols-1 lg:grid-cols-[190px_1fr] gap-3">
@@ -86,6 +93,7 @@
                 </div>
               </div>
             </div>
+          </div>
           </div>
         </div>
       </div>
@@ -131,7 +139,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import { HotelService, type RoomRate } from '@/services/Hotel.service'
@@ -180,6 +188,23 @@ async function saveSeasons() {
 interface Cell { season: string; percentage: number; closed: number }
 interface Group { key: string; roomType: string; occupancy: number; basePrice: number; minStay: number; maxStay: number; cells: Cell[] }
 const groups = ref<Group[]>([])
+
+/**
+ * Tarjetas POR TIPO DE HABITACIÓN: agrupa las combinaciones tipo×ocupación bajo un
+ * encabezado por tipo ("Triple" con 1/2/3 pers. adentro) en vez de una card suelta por
+ * cada una — con varios tipos × varias ocupaciones la lista se hacía etérea y repetía el
+ * nombre del tipo en cada card. Solo presentación: `groups` sigue siendo la fuente que
+ * se edita y la que `toFlatRows()` expande para guardar.
+ */
+const typeCards = computed<Array<{ roomType: string; groups: Group[] }>>(() => {
+  const byType = new Map<string, Group[]>()
+  for (const g of groups.value) {
+    const list = byType.get(g.roomType)
+    if (list) list.push(g)
+    else byType.set(g.roomType, [g])
+  }
+  return [...byType.entries()].map(([roomType, gs]) => ({ roomType, groups: gs }))
+})
 
 const DEFAULT_COLORS: Record<string, string> = { baja: '#e2e8f0', media: '#38bdf8', alta: '#22c55e', especial: '#eab308' }
 function seasonColor(name: string): string {
