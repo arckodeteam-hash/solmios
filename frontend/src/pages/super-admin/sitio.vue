@@ -197,14 +197,17 @@
             <!-- Editor visual: para quien no sabe (ni quiere saber) HTML. Quill produce el
                  h2/h3/p/ul/strong que el CSS del sitio ya estila — no depende de <section>,
                  así que las páginas legadas se pueden editar sin romper el estilo. -->
-            <QuillEditor
-              v-if="!previewMode && !rawMode"
-              v-model:content="form.contentHtml"
-              content-type="html"
-              :toolbar="QUILL_TOOLBAR"
-              placeholder="Escribí el contenido de la página…"
-              class="site-editor bg-white rounded-lg border border-border overflow-hidden"
-            />
+            <!-- El wrapper es del template propio: lleva el data-v del scoped, cosa que el
+                 root de QuillEditor no recibe (maneja sus attrs internamente) y por eso el
+                 :deep() del CSS necesita un ancestro de ESTE componente para enganchar. -->
+            <div v-if="!previewMode && !rawMode" class="site-editor bg-white rounded-lg border border-border overflow-hidden">
+              <QuillEditor
+                v-model:content="form.contentHtml"
+                content-type="html"
+                :toolbar="QUILL_TOOLBAR"
+                placeholder="Escribí el contenido de la página…"
+              />
+            </div>
             <!-- HTML crudo: camino avanzado para tocar el markup a mano. -->
             <textarea
               v-else-if="!previewMode && rawMode"
