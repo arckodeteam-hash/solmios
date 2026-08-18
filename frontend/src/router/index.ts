@@ -123,23 +123,23 @@ const router = createRouter({
       component: () => import('@/pages/public/menu.vue'),
       meta: { layout: 'none' },
     },
+    // Las 3 páginas legales vivían como componentes Vue estáticos; ahora son páginas del
+    // CMS site-pages (editables desde Panel › Sitio público sin deploy), servidas por
+    // /p/:slug (arriba). Rutas viejas → redirect, no rompen links guardados (registro.vue, etc.).
     {
       path: '/legal/terminos',
       name: 'legal-terminos',
-      component: () => import('@/pages/legal/terminos.vue'),
-      meta: { layout: 'none' },
+      redirect: '/p/terminos',
     },
     {
       path: '/legal/privacidad',
       name: 'legal-privacidad',
-      component: () => import('@/pages/legal/privacidad.vue'),
-      meta: { layout: 'none' },
+      redirect: '/p/privacidad',
     },
     {
       path: '/legal/eliminacion-datos',
       name: 'legal-eliminacion-datos',
-      component: () => import('@/pages/legal/eliminacion-datos.vue'),
-      meta: { layout: 'none' },
+      redirect: '/p/eliminacion-datos',
     },
     {
       path: '/admin',

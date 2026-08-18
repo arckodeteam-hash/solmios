@@ -216,9 +216,9 @@
               class="mt-0.5 w-4 h-4 rounded border-border text-navy focus:ring-navy cursor-pointer shrink-0">
             <span class="text-[12px] leading-relaxed text-text-secondary">
               Acepto los
-              <a href="/legal/terminos" target="_blank" rel="noopener" class="text-cyan font-bold hover:underline">Términos y Condiciones</a>
+              <a href="/p/terminos" target="_blank" rel="noopener" class="text-cyan font-bold hover:underline">Términos y Condiciones</a>
               y la
-              <a href="/legal/privacidad" target="_blank" rel="noopener" class="text-cyan font-bold hover:underline">Política de Privacidad</a>
+              <a href="/p/privacidad" target="_blank" rel="noopener" class="text-cyan font-bold hover:underline">Política de Privacidad</a>
               de SolmiOS.
             </span>
           </label>
