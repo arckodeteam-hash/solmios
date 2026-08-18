@@ -168,26 +168,14 @@ const FIXED_DEMO_ACCOUNTS = [
   { name: 'Recepcionista Demo', email: 'recepcion@solmios.com', password: 'demo123', role: 'receptionist' },
 ]
 
-// Mismo criterio fail-closed que el backend (`getPublicUsers`, V6): las cuentas demo son
-// una conveniencia de DESARROLLO. En el build de producción `import.meta.env.DEV` es
-// false (constante build-time de Vite), el array queda vacío, el bloque `v-if` no se
-// renderiza y ni siquiera se consulta el endpoint — antes el panel público de internet
-// mostraba los botones de login demo a cualquiera que abriera la página.
-const isDev = import.meta.env.DEV
-
-const demoAccounts = ref<any[]>(
-  isDev
-    ? FIXED_DEMO_ACCOUNTS.map((u) => ({
-        name: u.name,
-        email: u.email,
-        password: u.password,
-        roleLabel: ROLE_LABELS[u.role] || u.role,
-      }))
-    : [],
-)
+// Los botones de auto-login se muestran SOLO si el backend tiene el demo habilitado:
+// `GET /api/public/users` es fail-closed (V6, `getPublicUsers`) — devuelve `[]` salvo en
+// dev o con `DEMO_LOGIN=1` en el .env del server. La señal es RUNTIME, no de build:
+// prender/apagar los botones en producción es setear la env y restartear, sin redeploy.
+// Sin la env, el array queda vacío y el bloque `v-if` no se renderiza.
+const demoAccounts = ref<any[]>([])
 
 onMounted(async () => {
-  if (!isDev) return
   try {
     // Raw fetch justified: public endpoint, no auth required, AuthService has no method for this.
     // Matches http.ts behavior: check response.ok, parse JSON, handle errors.
@@ -197,19 +185,28 @@ onMounted(async () => {
     }
     const json = await r.json()
     const list = Array.isArray(json) ? json : (json.data || [])
-    if (Array.isArray(list) && list.length) {
-      // Fusionar cuentas del endpoint con las fijas (evitar duplicados por email)
-      const knownEmails = new Set(FIXED_DEMO_ACCOUNTS.map((u) => u.email))
-      const extra = list
-        .filter((u: any) => u.email && !knownEmails.has(u.email))
-        .map((u: any) => ({
-          name: u.name,
-          email: u.email,
-          password: 'demo123',
-          roleLabel: ROLE_LABELS[u.role] || u.role,
-        }))
-      if (extra.length) demoAccounts.value = [...demoAccounts.value, ...extra]
-    }
+    // Lista vacía = demo deshabilitado en el server: sin botones, silencioso.
+    if (!Array.isArray(list) || list.length === 0) return
+
+    // Fusionar cuentas del endpoint con las fijas (evitar duplicados por email)
+    const knownEmails = new Set(FIXED_DEMO_ACCOUNTS.map((u) => u.email))
+    const extra = list
+      .filter((u: any) => u.email && !knownEmails.has(u.email))
+      .map((u: any) => ({
+        name: u.name,
+        email: u.email,
+        password: 'demo123',
+        roleLabel: ROLE_LABELS[u.role] || u.role,
+      }))
+    demoAccounts.value = [
+      ...FIXED_DEMO_ACCOUNTS.map((u) => ({
+        name: u.name,
+        email: u.email,
+        password: u.password,
+        roleLabel: ROLE_LABELS[u.role] || u.role,
+      })),
+      ...extra,
+    ]
   } catch (e) {
     // Silently degrade — demo accounts are a convenience, not critical. Log for debugging.
     console.warn('Failed to load demo accounts:', e)
