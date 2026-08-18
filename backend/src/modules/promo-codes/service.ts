@@ -44,6 +44,30 @@ export class PromoCodesService {
     return promo
   }
 
+  /**
+   * Creación por PARTE DEL SISTEMA (sin user del token): el canje de puntos del CRM genera
+   * un promo single-use de monto fijo. La lógica de vigencia/single-use vive acá — en el
+   * módulo dueño de los promos — y el connector `crm-promocodes` solo delega plano
+   * (regla: connectors wirean, no piensan).
+   */
+  async createForLoyalty(hotelId: string, code: string, value: number, validDays: number): Promise<PromoCodeDTO> {
+    this.logger.info('Promo de canje de puntos', { hotelId, code, value })
+    const dto: CreatePromoCodeDTO = {
+      code,
+      kind: 'fixed',
+      value,
+      minAmount: 0,
+      maxUses: 1, // un canje, un descuento
+      validFrom: new Date().toISOString(),
+      validTo: new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toISOString(),
+      active: true,
+    }
+    // Actor sistema del propio hotel: el CRM ya validó ownership de ese hotelId.
+    const promo = await promoCrud.create(this.crudDeps(), dto, { id: 'system-crm', hotelId, role: 'hotel_admin' } as CurrentUser)
+    await this.sockets.onPromoCodeCreated?.(promo)
+    return promo
+  }
+
   async update(id: string, dto: UpdatePromoCodeDTO, user: CurrentUser): Promise<PromoCodeDTO> {
     this.logger.info('Actualizando promo code', { id, hotelId: user.hotelId })
     const promo = await promoCrud.update(this.crudDeps(), id, dto, user)

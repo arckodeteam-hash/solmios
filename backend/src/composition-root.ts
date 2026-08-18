@@ -405,6 +405,7 @@ import { activosAuditlogConnector } from './connectors/activos-auditlog'
 import { anunciosAuditlogConnector } from './connectors/anuncios-auditlog'
 import { capacitacionAuditlogConnector } from './connectors/capacitacion-auditlog'
 import { crmAuditlogConnector } from './connectors/crm-auditlog'
+import { crmPromocodesConnector } from './connectors/crm-promocodes'
 import { feedbackAuditlogConnector } from './connectors/feedback-auditlog'
 import { marketingAuditlogConnector } from './connectors/marketing-auditlog'
 import { notificacionesAuditlogConnector } from './connectors/notificaciones-auditlog'
@@ -578,6 +579,7 @@ system.addConnector('activos-auditlog', activosAuditlogConnector)
 system.addConnector('anuncios-auditlog', anunciosAuditlogConnector)
 system.addConnector('capacitacion-auditlog', capacitacionAuditlogConnector)
 system.addConnector('crm-auditlog', crmAuditlogConnector)
+system.addConnector('crm-promocodes', crmPromocodesConnector)
 system.addConnector('feedback-auditlog', feedbackAuditlogConnector)
 system.addConnector('marketing-auditlog', marketingAuditlogConnector)
 system.addConnector('notificaciones-auditlog', notificacionesAuditlogConnector)

@@ -71,7 +71,17 @@
         </template>
       </EmptyState>
 
-      <div v-else class="overflow-x-auto">
+      <div v-else>
+        <!-- Segmento activo desde el CRM (spec crm-segments) -->
+        <div v-if="activeSegment" class="mb-3 flex items-center gap-2">
+          <span class="inline-flex items-center gap-2 rounded-full bg-navy/10 px-3 py-1.5 text-xs font-bold text-navy">
+            Segmento: {{ activeSegment.name }}
+            <button @click.stop="clearSegmentFilter" title="Quitar filtro"
+              class="text-coral hover:text-coral/70 cursor-pointer font-black">✕</button>
+          </span>
+          <span class="text-[11px] text-text-muted">{{ segmentedGuests.length }} huésped(es)</span>
+        </div>
+        <div class="overflow-x-auto">
         <table class="w-full min-w-[840px] tbl-head">
           <thead>
             <tr>
@@ -146,6 +156,7 @@
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
 
       <!-- Paginación del listado -->
@@ -294,10 +305,16 @@
                 </span>
                 <h4 class="text-[11px] font-black uppercase tracking-wide text-navy">Movimientos de puntos</h4>
               </div>
-              <button v-if="(viewGuest.points ?? 0) > 0" @click="openRedeemModal"
-                class="text-[11px] font-bold text-cyan hover:text-navy transition-colors cursor-pointer">
-                Canjear →
-              </button>
+              <div class="flex items-center gap-3">
+                <button @click="openAwardModal"
+                  class="text-[11px] font-bold text-cyan hover:text-navy transition-colors cursor-pointer">
+                  Otorgar →
+                </button>
+                <button v-if="(viewGuest.points ?? 0) > 0" @click="openRedeemModal"
+                  class="text-[11px] font-bold text-cyan hover:text-navy transition-colors cursor-pointer">
+                  Canjear →
+                </button>
+              </div>
             </header>
 
             <div v-if="viewGuest.loadingDetail" class="space-y-3 p-4">
@@ -347,11 +364,45 @@
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:outline-none focus:border-navy">
         </div>
       </div>
+      <!-- El canje genera un promo code REAL (spec crm-loyalty): queda a la vista para copiarlo. -->
+      <div v-if="redeemResult" class="rounded-2xl border-2 border-teal/40 bg-teal/5 p-4 space-y-2">
+        <div class="text-xs font-bold text-text-secondary">¡Listo! Dale este código al huésped — descuenta en la próxima reserva:</div>
+        <div class="flex items-center gap-2">
+          <code class="flex-1 rounded-lg bg-white px-3 py-2 text-center text-lg font-black tracking-wider text-navy border border-border">{{ redeemResult.promoCode }}</code>
+          <button @click="copyRedeemCode" class="rounded-full bg-navy px-4 py-2 text-xs font-bold text-white hover:bg-navy-light transition-colors cursor-pointer">Copiar</button>
+        </div>
+        <div class="text-xs text-text-secondary">Valor: <b class="text-navy">${{ redeemResult.discountValue }}</b></div>
+      </div>
+
       <template #footer>
-        <button @click="showRedeemModal = false" class="px-4 py-2.5 text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">Cancelar</button>
-        <button @click="redeemPoints" :disabled="redeeming"
+        <button @click="closeRedeemModal" class="px-4 py-2.5 text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">{{ redeemResult ? 'Cerrar' : 'Cancelar' }}</button>
+        <button v-if="!redeemResult" @click="redeemPoints" :disabled="redeeming"
           class="rounded-full bg-navy px-5 py-2.5 text-sm font-extrabold text-white hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50">
           {{ redeeming ? 'Canjeando…' : 'Canjear' }}
+        </button>
+      </template>
+    </AppModal>
+
+    <!-- Otorgar puntos (T5, spec crm-loyalty) -->
+    <AppModal v-if="showAwardModal" size="sm" title="Otorgar puntos"
+      :subtitle="`Saldo actual: ${(viewGuest?.points ?? 0).toLocaleString()} puntos`" @close="showAwardModal = false">
+      <div class="space-y-4">
+        <div>
+          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Puntos a otorgar</label>
+          <input v-model.number="awardForm.points" type="number" min="1"
+            class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy tabular-nums focus:border-navy focus:outline-none">
+        </div>
+        <div>
+          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Motivo</label>
+          <input v-model="awardForm.description" placeholder="Ej: compensación por demora"
+            class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
+        </div>
+      </div>
+      <template #footer>
+        <button @click="showAwardModal = false" class="px-4 py-2.5 text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">Cancelar</button>
+        <button @click="awardPoints" :disabled="awarding"
+          class="rounded-full bg-navy px-5 py-2.5 text-sm font-extrabold text-white hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50">
+          {{ awarding ? 'Otorgando…' : 'Otorgar' }}
         </button>
       </template>
     </AppModal>
@@ -561,6 +612,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { validateField, validateAll, type FieldRule } from '@/composables/useFieldValidation'
 import { GuestService } from '@/services/Guest.service'
 import { ReservationService } from '@/services/Reservation.service'
@@ -579,6 +631,8 @@ import { COUNTRIES, NATIONALITIES, LANGUAGES, DOC_TYPES, nationalityToCountryNam
 
 const auth = useAuthStore()
 const toast = useToast()
+const route = useRoute()
+const router = useRouter()
 const { handle } = useApiError()
 const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
 
@@ -905,7 +959,28 @@ async function loadGuests() {
   finally { loading.value = false }
 }
 
-onMounted(loadGuests)
+// Filtro por segmento desde el CRM (`/panel/guests?segment=<id>`, spec crm-segments).
+const activeSegment = ref<{ id: string; name: string } | null>(null)
+const segmentGuestIds = ref<Set<string> | null>(null)
+
+onMounted(async () => {
+  const segId = route.query.segment
+  if (typeof segId === 'string' && segId) {
+    try {
+      const members = await CrmService.getGuestsInSegment(segId)
+      segmentGuestIds.value = new Set(members.map((m) => m.id))
+      const segs = await CrmService.listSegments().catch(() => [])
+      activeSegment.value = { id: segId, name: segs.find((x) => x.id === segId)?.name ?? 'Segmento' }
+    } catch { /* sin datos del segmento: la lista queda sin filtro */ }
+  }
+  await loadGuests()
+})
+
+function clearSegmentFilter() {
+  activeSegment.value = null
+  segmentGuestIds.value = null
+  router.replace({ query: { ...route.query, segment: undefined } })
+}
 
 const activeToday = computed(() => guests.value.filter((g: any) => g.isActiveToday).length)
 const frequentGuests = computed(() => guests.value.filter((g: any) => g.stays >= FREQUENT_STAYS_THRESHOLD).length)
@@ -938,11 +1013,16 @@ const filteredGuests = computed(() => {
 })
 
 // Paginación de la vista (client-side) sobre el resultado filtrado.
-const totalFiltered = computed(() => filteredGuests.value.length)
+const totalFiltered = computed(() => segmentedGuests.value.length)
 const totalPages = computed(() => Math.max(1, Math.ceil(totalFiltered.value / PAGE_SIZE)))
+const segmentedGuests = computed(() => {
+  if (!segmentGuestIds.value) return filteredGuests.value
+  return filteredGuests.value.filter((g: any) => segmentGuestIds.value!.has(g.id))
+})
+
 const paginatedGuests = computed(() => {
   const start = (currentPage.value - 1) * PAGE_SIZE
-  return filteredGuests.value.slice(start, start + PAGE_SIZE)
+  return segmentedGuests.value.slice(start, start + PAGE_SIZE)
 })
 
 // Al buscar o cambiar de filtro, volver a la primera página; clampear si el universo se reduce (p.ej. tras borrar).
@@ -1133,6 +1213,46 @@ function closeViewModal() {
 const showRedeemModal = ref(false)
 const redeemForm = ref({ points: 0, description: '' })
 const redeeming = ref(false)
+const redeemResult = ref<{ promoCode?: string; discountValue?: number } | null>(null)
+const showAwardModal = ref(false)
+const awarding = ref(false)
+const awardForm = ref({ points: 0, description: '' })
+
+function openAwardModal() {
+  awardForm.value = { points: 0, description: '' }
+  showAwardModal.value = true
+}
+
+function closeRedeemModal() {
+  showRedeemModal.value = false
+  redeemResult.value = null
+}
+
+function copyRedeemCode() {
+  if (!redeemResult.value?.promoCode) return
+  navigator.clipboard?.writeText(redeemResult.value.promoCode)
+  toast.success('Código copiado')
+}
+
+/** Otorgamiento manual (T5): compensaciones y ajustes del recepcionista. */
+async function awardPoints() {
+  if (!viewGuest.value) return
+  const points = Number(awardForm.value.points) || 0
+  if (points <= 0) { toast.warning('Ingresá una cantidad de puntos válida'); return }
+  awarding.value = true
+  try {
+    await CrmService.awardPoints(viewGuest.value.id, points, awardForm.value.description || 'Ajuste manual')
+    toast.success('Puntos otorgados')
+    showAwardModal.value = false
+    const balance = await CrmService.getPointsBalance(viewGuest.value.id).catch(() => null)
+    viewGuest.value = { ...viewGuest.value, points: balance ? balance.balance : (viewGuest.value.points ?? 0) + points }
+    await loadGuests()
+  } catch (e) {
+    handle(e, 'No se pudieron otorgar los puntos')
+  } finally {
+    awarding.value = false
+  }
+}
 
 function openRedeemModal() {
   redeemForm.value = { points: 0, description: '' }
@@ -1145,9 +1265,10 @@ async function redeemPoints() {
   if (points <= 0) { toast.warning('Ingresá una cantidad de puntos válida'); return }
   redeeming.value = true
   try {
-    await CrmService.redeemPoints(viewGuest.value.id, points, redeemForm.value.description || 'Canje manual')
+    const res = await CrmService.redeemPoints(viewGuest.value.id, points, redeemForm.value.description || 'Canje manual')
     toast.success('Puntos canjeados')
-    showRedeemModal.value = false
+    if (res?.promoCode) redeemResult.value = { promoCode: res.promoCode, discountValue: res.discountValue }
+    else showRedeemModal.value = false
     const [pointsHistory, balance] = await Promise.all([
       CrmService.getPointsHistory(viewGuest.value.id).catch(() => viewGuest.value!.pointsHistory ?? []),
       CrmService.getPointsBalance(viewGuest.value.id).catch(() => null),

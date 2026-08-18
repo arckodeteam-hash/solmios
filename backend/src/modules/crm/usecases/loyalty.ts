@@ -15,7 +15,8 @@ export type LoyaltyTier = 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond'
 /** De menor a mayor. El orden importa: un nivel nunca baja. */
 const TIERS: readonly LoyaltyTier[] = ['bronze', 'silver', 'gold', 'platinum', 'diamond'] as const
 
-/** Se alcanza un nivel por estadías O por gasto: lo que ocurra primero. */
+/** Se alcanza un nivel por estadías O por gasto: lo que ocurra primero. Default histórico;
+ *  el service pasa los del hotel cuando los configuró (`loyalty-config.ts`). */
 const THRESHOLDS: ReadonlyArray<{ tier: LoyaltyTier; stays: number; spent: number }> = [
   { tier: 'diamond', stays: 20, spent: 50000 },
   { tier: 'platinum', stays: 10, spent: 20000 },
@@ -23,26 +24,28 @@ const THRESHOLDS: ReadonlyArray<{ tier: LoyaltyTier; stays: number; spent: numbe
   { tier: 'silver', stays: 2, spent: 3000 },
 ]
 
+export type TierThreshold = { tier: LoyaltyTier; stays: number; spent: number }
+
 export const tierOrder = (tier: string): number => {
   const index = TIERS.indexOf(tier as LoyaltyTier)
   return index === -1 ? 0 : index
 }
 
-export function calculateTier(stays: number, spent: number): LoyaltyTier {
-  const reached = THRESHOLDS.find((t) => stays >= t.stays || spent >= t.spent)
+export function calculateTier(stays: number, spent: number, thresholds: readonly TierThreshold[] = THRESHOLDS): LoyaltyTier {
+  const reached = thresholds.find((t) => stays >= t.stays || spent >= t.spent)
   return reached?.tier ?? 'bronze'
 }
 
 /** Un nivel nunca baja: un huésped que llegó a `gold` no vuelve a `silver` si le anulan una estadía. */
-export function nextTier(current: string | undefined, stays: number, spent: number): LoyaltyTier {
-  const candidate = calculateTier(stays, spent)
+export function nextTier(current: string | undefined, stays: number, spent: number, thresholds: readonly TierThreshold[] = THRESHOLDS): LoyaltyTier {
+  const candidate = calculateTier(stays, spent, thresholds)
   const now = (current ?? 'bronze') as LoyaltyTier
   return tierOrder(candidate) > tierOrder(now) ? candidate : (TIERS[tierOrder(now)] ?? 'bronze')
 }
 
 /** Puntos que otorga una estadía. Se redondea hacia abajo: no se regalan fracciones. */
-export const pointsForStay = (totalAmount: number): number =>
-  Math.max(0, Math.floor((Number(totalAmount) || 0) * POINTS_PER_CURRENCY_UNIT))
+export const pointsForStay = (totalAmount: number, pointsPerCurrencyUnit: number = POINTS_PER_CURRENCY_UNIT): number =>
+  Math.max(0, Math.floor((Number(totalAmount) || 0) * pointsPerCurrencyUnit))
 
 /** Saldo tras aplicar un movimiento. Nunca queda negativo. */
 export const applyPoints = (balance: number | undefined, delta: number): number =>

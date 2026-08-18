@@ -1,4 +1,6 @@
-// crm/service.ts — CRM engine: points, coupons, segments, LTV
+// crm/service.ts — CRM engine: points, coupons (deprecados), segments, LTV.
+// Fachada fina: la lógica vive en usecases/ (loyalty, loyalty-config, redeem-with-promo,
+// tiers-recompute, segment-export, coupons, segments, ltv) — regla del analyzer (<200 líneas).
 
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
 import { ValidationError, NotFoundError } from 'arckode-framework'
@@ -10,9 +12,23 @@ import type {
 import type { CrmSockets } from './sockets'
 import { LtvUseCase } from './usecases/ltv'
 import { CouponUseCase } from './usecases/coupons'
-import { applyPoints, nextTier, pointsForStay } from './usecases/loyalty'
+import { applyPoints, nextTier, pointsForStay, type TierThreshold } from './usecases/loyalty'
+import { readLoyaltyConfig } from './usecases/loyalty-config'
+import { redeemWithPromo } from './usecases/redeem-with-promo'
+import { recomputeTiers } from './usecases/tiers-recompute'
+import { segmentCsv, segmentFilename } from './usecases/segment-export'
+import { buildDashboard } from './usecases/dashboard'
+import { awardCheckoutStay } from './usecases/checkout-award'
 import { SegmentUseCase } from './usecases/segments'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
+
+/** Puerto hacia el módulo promo-codes: el canje genera un código de descuento REAL.
+ *  Lo cablea el connector `crm-promocodes` (el CRM no importa el módulo directo). */
+export interface LoyaltyPromoPort {
+  createForLoyalty(hotelId: string, code: string, value: number, validDays: number): Promise<{ id: string; code: string }>
+}
+
+const NO_CONFIG_REPO = { findMany: async () => [] as unknown[] }
 
 export class CrmService {
   private sockets: CrmSockets = {}
@@ -20,9 +36,22 @@ export class CrmService {
   private coupons: CouponUseCase
   private segments: SegmentUseCase
   private auditPort: AuditPort | null = null
+  private promoPort: LoyaltyPromoPort | null = null
+  private configRepo: Pick<RepositoryAdapter<any>, 'findMany'> = NO_CONFIG_REPO
 
   /** Conecta el audit log. Lo inyecta el connector `crm-auditlog`. */
   setAuditDeps(port: AuditPort): void { this.auditPort = port }
+
+  /** Conecta el generador de promos del canje. Lo inyecta el connector `crm-promocodes`. */
+  setPromoPort(port: LoyaltyPromoPort): void { this.promoPort = port }
+
+  /** Configuración KV (`configuration`): ratio/tiers/flag por hotel. */
+  setConfigRepo(repo: Pick<RepositoryAdapter<any>, 'findMany'>): void { this.configRepo = repo }
+
+  /** Config del hotel con defaults históricos (nunca null — fail-safe). */
+  private async loyaltyConfig(hotelId: string) {
+    return readLoyaltyConfig(this.configRepo, hotelId)
+  }
 
   constructor(
     private readonly loyaltyRepo: RepositoryAdapter<LoyaltyTransactionDTO>,
@@ -45,37 +74,17 @@ export class CrmService {
   }
 
   // ─── Auto-checkout from connector ─────────────────────
-  /**
-   * El conector `reservas-huespedes` ya es best-effort (`.catch()`), así que acá no hace falta
-   * tragarse los errores. El `try {} catch {}` que había escondía el bug de los `{ increment }`:
-   * el CRM fallaba en silencio en cada checkout.
-   */
+  /** Best-effort desde `reservas-huespedes`; idempotente y respetando el flag. */
   async onCheckoutComplete(reserva: any): Promise<void> {
-    // @ignore IDOR_RISK — `reserva` viene del conector reservas-huespedes, no de un request.
-    const guest = await this.guestRepo.findById(reserva.guestId)
-    if (!guest) {
-      this.logger.warn('Checkout sin huésped: no se acreditan puntos', { reservationId: reserva.id })
-      return
-    }
-
-    // Una estadía se acredita UNA vez. Al checkout se puede llegar por dos eventos distintos
-    // (`onReservationCheckedOut` y `onReservasUpdated`); sin esto, el reintento duplica puntos.
-    const yaAcreditada = await this.loyaltyRepo.findMany({ reservationId: reserva.id, type: 'earn' })
-    if (yaAcreditada.length > 0) {
-      this.logger.info('Checkout ya acreditado: se omite', { reservationId: reserva.id })
-      return
-    }
-
-    await this.guestRepo.update(guest.id, {
-      totalStays: Number(guest.totalStays ?? 0) + 1,
-      totalSpent: Number(guest.totalSpent ?? 0) + (Number(reserva.totalAmount) || 0),
-    } as any)
-
-    const puntos = pointsForStay(reserva.totalAmount)
-    // Una estadía de cortesía (importe 0) no da puntos, pero sí cuenta para el nivel:
-    // `awardPoints` rechaza `points <= 0`, así que el ascenso se recalcula aparte.
-    if (puntos > 0) await this.awardPoints(reserva.guestId, reserva.hotelId, puntos, `Estadía ${reserva.id}`, reserva.id)
-    else await this.checkTierUpgrade(reserva.guestId)
+    const config = await this.loyaltyConfig(reserva.hotelId)
+    await awardCheckoutStay(
+      {
+        loyaltyRepo: this.loyaltyRepo, guestRepo: this.guestRepo, logger: this.logger,
+        awardPoints: (gid, hid, pts, desc, rid) => this.awardPoints(gid, hid, pts, desc, rid),
+        checkTierUpgrade: (gid) => this.checkTierUpgrade(gid),
+      },
+      reserva, config,
+    )
   }
 
   // ─── Points ───────────────────────────────────────────
@@ -95,18 +104,13 @@ export class CrmService {
     return txn
   }
 
-  async redeemPoints(guestId: string, hotelId: string, points: number, description: string, role?: string): Promise<LoyaltyTransactionDTO> {
-    const guest = await this.guestRepo.findById(guestId)
-    if (!guest) throw new NotFoundError('Guest not found')
-    if (this.auth) this.auth.assertOwnership(guest.hotelId, hotelId, role, 'super_admin')
-    if (points <= 0) throw new ValidationError('Los puntos a canjear deben ser positivos')
-
-    const available = Number(guest.loyaltyPoints ?? 0)
-    if (available < points) throw new ValidationError(`Puntos insuficientes. Disponibles: ${available}`)
-
-    const txn = await this.loyaltyRepo.create({ guestId, hotelId, type: 'redeem', points: -points, description } as any)
-    await this.guestRepo.update(guestId, { loyaltyPoints: applyPoints(available, -points) } as any)
-    return txn
+  async redeemPoints(guestId: string, hotelId: string, points: number, description: string, role?: string): Promise<LoyaltyTransactionDTO & { promoCode?: string; discountValue?: number }> {
+    const config = await this.loyaltyConfig(hotelId)
+    if (!config.enabled) throw new ValidationError('El programa de puntos está desactivado')
+    return redeemWithPromo(
+      { loyaltyRepo: this.loyaltyRepo, guestRepo: this.guestRepo, auth: this.auth, promoPort: this.promoPort, config, logger: this.logger },
+      guestId, hotelId, points, description, role,
+    )
   }
 
   async getPointsHistory(guestId: string, hotelId: string, role?: string): Promise<LoyaltyTransactionDTO[]> {
@@ -132,8 +136,10 @@ export class CrmService {
     const guest = await this.guestRepo.findById(guestId)
     if (!guest) return 'bronze'
 
+    const config = await this.loyaltyConfig(guest.hotelId)
+    const thresholds: readonly TierThreshold[] = config.tiers
     const current = guest.tier ?? 'bronze'
-    const upgraded = nextTier(current, Number(guest.totalStays ?? 0), Number(guest.totalSpent ?? 0))
+    const upgraded = nextTier(current, Number(guest.totalStays ?? 0), Number(guest.totalSpent ?? 0), thresholds)
     if (upgraded !== current) {
       await this.guestRepo.update(guestId, { tier: upgraded } as any)
       await this.sockets.onTierUpgrade?.(guestId, current, upgraded)
@@ -141,8 +147,15 @@ export class CrmService {
     return upgraded
   }
 
+  /** Recompute masivo de tiers (backfill tras cambiar umbrales). Ratchet: nunca baja. */
+  async recomputeTiers(hotelId: string): Promise<{ recomputed: number; upgraded: number }> {
+    const config = await this.loyaltyConfig(hotelId)
+    return recomputeTiers(this.guestRepo, hotelId, config.tiers, {
+      onUpgrade: (guestId, from, to) => this.sockets.onTierUpgrade?.(guestId, from, to),
+    })
+  }
 
-  // ─── Coupons (delegan a usecases/coupons) ─────────────
+  // ─── Coupons (delegan a usecases/coupons; DEPRECADOS → 410 en las rutas) ──
   createCoupon(dto: CreateCouponDTO): Promise<CouponDTO> { return this.coupons.create(dto) }
   getCoupon(id: string, hotelId: string, role?: string): Promise<CouponDTO> { return this.coupons.getById(id, hotelId, role) }
   listCoupons(hotelId: string): Promise<CouponDTO[]> { return this.coupons.list(hotelId) }
@@ -160,37 +173,22 @@ export class CrmService {
   listSegments(hotelId: string): Promise<GuestSegmentDTO[]> { return this.segments.list(hotelId) }
   getGuestsInSegment(hotelId: string, segmentId: string, role?: string): Promise<any[]> { return this.segments.guestsIn(hotelId, segmentId, role) }
 
+  /** CSV del segmento (spec crm-segments): contacto + fidelización, nada más. */
+  async exportSegmentCsv(hotelId: string, segmentId: string, role?: string): Promise<{ filename: string; csv: string }> {
+    const segments = await this.segmentRepo.findMany({ hotelId, active: 1 })
+    const segment = segments.find((sg) => sg.id === segmentId)
+    if (!segment) throw new NotFoundError('Segment not found')
+    const members = await this.segments.guestsIn(hotelId, segmentId, role)
+    return { filename: segmentFilename(segment.name), csv: segmentCsv(members) }
+  }
+
   // ─── LTV ──────────────────────────────────────────────
   async calculateLTV(hotelId: string, limit = 50): Promise<GuestLTV[]> {
     return this.ltvCalculator.calculate(hotelId, limit)
   }
 
   // ─── Dashboard ────────────────────────────────────────
-  async getDashboard(hotelId: string): Promise<CrmDashboard> {
-    const guests = await this.guestRepo.findMany({ hotelId, active: 1 })
-    const pointsTxns = await this.loyaltyRepo.findMany({ hotelId })
-    const coupons = await this.couponRepo.findMany({ hotelId })
-
-    const now = new Date()
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
-    let activeThisMonth = 0
-    for (const g of guests) {
-      const ress = await this.reservaRepo.findMany({ guestId: g.id, hotelId })
-      const activeInMonth = ress.filter((r: any) => r.checkIn && r.checkIn >= monthStart).length
-      if (activeInMonth > 0) activeThisMonth++
-    }
-
-    const topTierCounts: Record<string, number> = {}
-    for (const g of guests) { const t = g.tier ?? 'bronze'; topTierCounts[t] = (topTierCounts[t] ?? 0) + 1 }
-
-    return {
-      totalGuests: guests.length,
-      activeThisMonth,
-      totalPointsIssued: pointsTxns.filter(t => t.type === 'earn').reduce((s, t) => s + t.points, 0),
-      totalPointsRedeemed: pointsTxns.filter(t => t.type === 'redeem').reduce((s, t) => s + Math.abs(t.points), 0),
-      topTierCounts,
-      avgLTV: guests.length > 0 ? Math.round(guests.reduce((s, g) => s + (g.totalSpent ?? 0), 0) / guests.length) : 0,
-      couponUsageRate: coupons.length > 0 ? Math.round(coupons.reduce((s, c) => s + c.useCount, 0) / coupons.length * 100) / 100 : 0,
-    }
+  getDashboard(hotelId: string): Promise<CrmDashboard> {
+    return buildDashboard({ guestRepo: this.guestRepo, reservaRepo: this.reservaRepo, loyaltyRepo: this.loyaltyRepo, couponRepo: this.couponRepo }, hotelId)
   }
 }

@@ -137,14 +137,8 @@ describe('CrmService.getGuestsInSegment', () => {
 
 describe('CrmController — el hotelId sale del token, no del body', () => {
   const req = (body: any, user: any) => ({ body, user, params: {}, query: {} }) as any
-  const service = { createCoupon: async (d: any) => d, createSegment: async (d: any) => d } as any
+  const service = { createSegment: async (d: any) => d } as any
   const controller = new CrmController(service, log)
-
-  it('crea un cupón con el body que manda la UI (sin hotelId)', async () => {
-    const res = await controller.createCoupon(req({ code: 'VERANO10', type: 'percentage', value: 10 }, { hotelId: 'h1' }))
-    expect(res.status).toBe(201)
-    expect((res.body as any).hotelId).toBe('h1')
-  })
 
   it('crea un segmento con el body que manda la UI (sin hotelId)', async () => {
     const res = await controller.createSegment(req({ name: 'Recurrentes', rules: '{"minStays":1}' }, { hotelId: 'h1' }))
@@ -153,7 +147,13 @@ describe('CrmController — el hotelId sale del token, no del body', () => {
   })
 
   it('el token pisa el hotelId del body: no se crea en un hotel ajeno', async () => {
-    const res = await controller.createCoupon(req({ hotelId: 'hotel-ajeno', code: 'X', type: 'fixed', value: 5 }, { hotelId: 'h1' }))
+    const res = await controller.createSegment(req({ hotelId: 'hotel-ajeno', name: 'Ajeno', rules: '{}' }, { hotelId: 'h1' }))
     expect((res.body as any).hotelId).toBe('h1')
+  })
+
+  it('cupones del CRM: 410 explícito con puntero a promo-codes (spec crm-coupons)', async () => {
+    const res = await controller.couponGone()
+    expect(res.status).toBe(410)
+    expect((res.body as any).error).toContain('/api/promo-codes')
   })
 })

@@ -2,7 +2,7 @@
 import type { HttpRequest, Logger } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import type { CrmService } from './service'
-import { AwardPointsSchema, RedeemPointsSchema, CreateCouponSchema, ValidateCouponSchema, CreateSegmentSchema } from './validators/schema'
+import { AwardPointsSchema, RedeemPointsSchema, CreateSegmentSchema } from './validators/schema'
 
 /**
  * El `hotelId` es obligatorio en el schema pero el cliente no lo manda: sale del token. Se inyectaba
@@ -31,16 +31,18 @@ export class CrmController {
   async getPointsHistory(req: HttpRequest) { return { status: 200, body: await this.service.getPointsHistory(req.params.guestId, (req as any).user?.hotelId, (req as any).user?.role) } }
   async getPointsBalance(req: HttpRequest) { return { status: 200, body: { balance: await this.service.getPointsBalance(req.params.guestId, (req as any).user?.hotelId, (req as any).user?.role) } } }
 
-  async createCoupon(req: HttpRequest) {
-    const d = validateSchema(CreateCouponSchema, withHotelId(req)) as any
-    return { status: 201, body: await this.service.createCoupon(d) }
+  /** Recompute masivo de tiers (backfill tras cambiar umbrales). Spec crm-loyalty. */
+  async recomputeTiers(req: HttpRequest) {
+    const hotelId = (req as any).user?.hotelId
+    if (!hotelId) return { status: 400, body: { error: 'hotelId requerido' } }
+    return { status: 200, body: await this.service.recomputeTiers(hotelId) }
   }
-  async listCoupons(req: HttpRequest) { return { status: 200, body: await this.service.listCoupons((req as any).user?.hotelId ?? (req.query as any).hotelId) } }
-  async validateCoupon(req: HttpRequest) {
-    const b = validateSchema(ValidateCouponSchema, req.body) as any
-    return { status: 200, body: await this.service.validateCoupon(b.code, (req as any).user?.hotelId, b.amount) }
+
+  /** DEPRECADO (spec crm-coupons): los cupones del CRM duplicaban promo_codes sin
+ *  conectar al motor. Rutas mantenidas con 410 explícito — append-only del index. */
+  async couponGone(): Promise<{ status: number; body: { error: string } }> {
+    return { status: 410, body: { error: 'Cupones del CRM deprecados: usá /api/promo-codes (se gestionan en Configuración → Promociones y aplican en el motor de reservas)' } }
   }
-  async deleteCoupon(req: HttpRequest) { const u = (req as any).user; await this.service.deleteCoupon(req.params.id, u?.hotelId, u?.role, u); return { status: 204, body: null } }
 
   async createSegment(req: HttpRequest) {
     const d = validateSchema(CreateSegmentSchema, withHotelId(req)) as any
@@ -48,6 +50,13 @@ export class CrmController {
   }
   async listSegments(req: HttpRequest) { return { status: 200, body: await this.service.listSegments((req as any).user?.hotelId ?? (req.query as any).hotelId) } }
   async getGuestsInSegment(req: HttpRequest) { return { status: 200, body: await this.service.getGuestsInSegment((req as any).user?.hotelId, req.params.id, (req as any).user?.role) } }
+
+  /** CSV del segmento (spec crm-segments). Viaja como JSON {filename, csv}: el wrapper http
+ *  del front siempre hace res.json() — text/csv crudo rompería el parseo; el caller arma
+ *  el blob de descarga con el string. */
+  async exportSegment(req: HttpRequest) {
+    return { status: 200, body: await this.service.exportSegmentCsv((req as any).user?.hotelId, req.params.id, (req as any).user?.role) }
+  }
 
   async getLTV(req: HttpRequest) { return { status: 200, body: await this.service.calculateLTV((req as any).user?.hotelId ?? (req.query as any).hotelId) } }
   async getDashboard(req: HttpRequest) { return { status: 200, body: await this.service.getDashboard((req as any).user?.hotelId ?? (req.query as any).hotelId) } }

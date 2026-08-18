@@ -173,17 +173,17 @@
             <tr v-for="c in coupons" :key="c.id" class="border-b border-border last:border-0 hover:bg-surface/60 transition-colors">
               <td class="px-4 py-3">
                 <div class="font-black text-navy whitespace-nowrap">{{ c.code }}</div>
-                <div class="text-[11px] text-text-muted lg:hidden">{{ c.expiresAt || 'Sin vencimiento' }}</div>
+                <div class="text-[11px] text-text-muted lg:hidden">{{ c.validTo || 'Sin vencimiento' }}</div>
               </td>
               <td class="px-4 py-3 text-right">
                 <span class="inline-flex items-center rounded-full bg-teal/10 px-2.5 py-1 text-[11px] font-extrabold tabular-nums text-teal">
-                  {{ c.type === 'percentage' ? c.value + '%' : '$' + c.value }}
+                  {{ c.kind === 'percent' ? c.value + '%' : '$' + c.value }}
                 </span>
               </td>
               <td class="px-4 py-3 text-right tabular-nums text-text-secondary">
-                {{ c.useCount }}<span v-if="c.maxUses" class="text-text-muted">/{{ c.maxUses }}</span>
+                {{ c.uses ?? 0 }}<span v-if="c.maxUses" class="text-text-muted">/{{ c.maxUses }}</span>
               </td>
-              <td class="px-4 py-3 text-text-secondary whitespace-nowrap hidden lg:table-cell">{{ c.expiresAt || 'Sin vencimiento' }}</td>
+              <td class="px-4 py-3 text-text-secondary whitespace-nowrap hidden lg:table-cell">{{ c.validTo || 'Sin vencimiento' }}</td>
               <td class="px-4 py-3 text-right">
                 <button @click="deleteCoupon(c)" title="Eliminar cupón"
                   class="grid h-8 w-8 place-items-center rounded-lg text-coral hover:bg-coral/10 transition-colors cursor-pointer ml-auto">
@@ -216,12 +216,14 @@
           </button>
         </div>
 
-        <div v-if="validatedCoupon" class="mt-5 rounded-2xl border-2 border-teal/40 bg-teal/5 px-4 py-3">
-          <div class="text-lg font-black text-teal">{{ validatedCoupon.code }}</div>
+        <div v-if="previewResult && previewResult.valid" class="mt-5 rounded-2xl border-2 border-teal/40 bg-teal/5 px-4 py-3">
+          <div class="text-lg font-black text-teal">{{ previewResult.code || validateCode }}</div>
           <div class="mt-0.5 text-sm text-text-secondary">
-            Descuento:
-            <b class="text-navy tabular-nums">{{ validatedCoupon.type === 'percentage' ? validatedCoupon.value + '%' : '$' + validatedCoupon.value }}</b>
+            Descuento sobre el monto:
+            <b class="text-navy tabular-nums">${{ previewResult.discount }}</b>
+            — final: <b class="text-navy tabular-nums">${{ Math.max(0, (Number(validateAmount) || 0) - previewResult.discount).toFixed(2) }}</b>
           </div>
+          <div class="mt-1 text-[11px] text-text-muted">Misma lógica que aplica el motor de reservas al huésped.</div>
         </div>
       </SectionCard>
     </div>
@@ -254,10 +256,20 @@
             <span class="shrink-0 rounded-full bg-navy/10 px-2.5 py-1 text-[11px] font-extrabold tabular-nums text-navy">{{ s.count }}</span>
           </div>
           <div v-if="s.description" class="mt-1 text-[11px] text-text-muted">{{ s.description }}</div>
-          <button @click="viewSegmentGuests(s)"
-            class="mt-3 text-[11px] font-bold text-cyan hover:text-navy transition-colors cursor-pointer">
-            Ver huéspedes →
-          </button>
+          <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <button @click="viewSegmentGuests(s)"
+              class="text-[11px] font-bold text-cyan hover:text-navy transition-colors cursor-pointer">
+              Ver huéspedes →
+            </button>
+            <button @click="goToGuests(s)"
+              class="text-[11px] font-bold text-cyan hover:text-navy transition-colors cursor-pointer">
+              Ver en Huéspedes →
+            </button>
+            <button @click="exportSegment(s)"
+              class="text-[11px] font-bold text-cyan hover:text-navy transition-colors cursor-pointer">
+              Exportar CSV ↓
+            </button>
+          </div>
         </div>
       </div>
     </SectionCard>
@@ -332,6 +344,45 @@
       </template>
     </AppModal>
 
+    <!-- Configuración de fidelización (T2, spec crm-loyalty) -->
+    <SectionCard v-if="activeTab === 'config' && !loading"
+      title="Programa de puntos" subtitle="Ratio, valor del canje y estados — aplica desde el próximo checkout">
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <label class="flex items-center justify-between gap-3 rounded-xl border border-border p-4 cursor-pointer">
+          <span class="text-sm font-bold text-navy">Programa activo</span>
+          <input v-model="loyaltyCfg.enabled" type="checkbox" class="h-5 w-5 accent-teal cursor-pointer">
+        </label>
+        <div>
+          <div class="mb-1 text-[11px] font-bold uppercase text-text-muted">Puntos por unidad de moneda</div>
+          <input v-model.number="loyaltyCfg.pointsPerCurrencyUnit" type="number" min="0" step="0.5"
+            class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy tabular-nums">
+          <div class="mt-1 text-[11px] text-text-muted">Ej: 10 → una estadía de $100 suma 1.000 puntos.</div>
+        </div>
+        <div>
+          <div class="mb-1 text-[11px] font-bold uppercase text-text-muted">Valor de 1 punto al canjear</div>
+          <input v-model.number="loyaltyCfg.pointValue" type="number" min="0" step="0.1"
+            class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy tabular-nums">
+          <div class="mt-1 text-[11px] text-text-muted">Ej: 1 → canjear 500 puntos = código de $500.</div>
+        </div>
+        <div>
+          <div class="mb-1 text-[11px] font-bold uppercase text-text-muted">Vigencia del código de canje (días)</div>
+          <input v-model.number="loyaltyCfg.promoValidDays" type="number" min="1"
+            class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy tabular-nums">
+        </div>
+      </div>
+      <div class="mt-5 flex flex-wrap items-center gap-3">
+        <button @click="saveLoyaltyConfig" :disabled="savingConfig"
+          class="rounded-full bg-navy px-5 py-2.5 text-sm font-extrabold text-white hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50">
+          {{ savingConfig ? 'Guardando…' : 'Guardar configuración' }}
+        </button>
+        <button @click="recomputeTiers" :disabled="recomputing"
+          class="rounded-full border border-border px-5 py-2.5 text-sm font-bold text-navy hover:border-navy/40 transition-colors cursor-pointer disabled:opacity-50">
+          {{ recomputing ? 'Recalculando…' : 'Recalcular niveles ahora' }}
+        </button>
+        <span class="text-[11px] text-text-muted">Sin configurar se usan los valores por defecto (10 · $1 · 90 días).</span>
+      </div>
+    </SectionCard>
+
     <!-- Modal: Huéspedes del segmento -->
     <AppModal v-if="openSegment" size="lg" :title="openSegment.name" subtitle="Huéspedes que caen en este segmento hoy" body-class="p-0" @close="openSegment = null">
       <div v-if="loadingGuests" class="space-y-2 p-4">
@@ -386,8 +437,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { PromoCodeService, type PromoCode, type PromoValidationResult } from '@/services/PromoCode.service'
+import { ConfigService } from '@/services/Platform.service'
 import { CrmService, type Coupon, type GuestSegment, type GuestLTV, type CrmDashboard, type SegmentGuest } from '@/services/Crm.service'
 import { useToast } from '@/composables/useToast'
+import { useAuthStore } from '@/stores/auth.store'
 import { useApiError } from '@/composables/useApiError'
 import { useConfirm } from '@/composables/useConfirm'
 import { useCountUp } from '@/composables/useCountUp'
@@ -418,6 +473,9 @@ const ICON_TAG_EMPTY = '<svg viewBox="0 0 24 24" class="h-8 w-8" fill="none" str
 const ICON_TARGET_EMPTY = '<svg viewBox="0 0 24 24" class="h-8 w-8" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-4.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Zm0-3a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/></svg>'
 
 const toast = useToast()
+const router = useRouter()
+const auth = useAuthStore()
+const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
 const { handle } = useApiError()
 const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm({
   onDone: () => loadData(),
@@ -431,11 +489,12 @@ const tabs = [
   { value: 'coupons', label: 'Cupones', icon: ICON_TAG },
   { value: 'validate', label: 'Validar', icon: ICON_CARD },
   { value: 'segments', label: 'Segmentos', icon: ICON_TARGET },
+  { value: 'config', label: 'Configuración', icon: ICON_TAG },
 ]
 
 const dashboard = ref<CrmDashboard | null>(null)
 const ltv = ref<GuestLTV[]>([])
-const coupons = ref<Coupon[]>([])
+const coupons = ref<PromoCode[]>([])
 const segments = ref<GuestSegment[]>([])
 
 const totalGuestsCount = computed(() => dashboard.value?.totalGuests ?? 0)
@@ -465,6 +524,31 @@ const segmentForm = ref({ name: '', tier: '', minStays: 0 })
 const validateCode = ref('')
 const validateAmount = ref(0)
 const validatedCoupon = ref<Coupon | null>(null)
+const previewResult = ref<PromoValidationResult | null>(null)
+const loyaltyCfg = ref({ enabled: true, pointsPerCurrencyUnit: 10, pointValue: 1, promoValidDays: 90 })
+const savingConfig = ref(false)
+const recomputing = ref(false)
+
+async function loadLoyaltyConfig() {
+  try {
+    const v = await ConfigService.get('crm_loyalty', hotelId.value)
+    if (v && typeof v === 'object') {
+      loyaltyCfg.value = { ...loyaltyCfg.value, ...v }
+    }
+  } catch { /* sin config: defaults */ }
+}
+
+async function saveLoyaltyConfig() {
+  savingConfig.value = true
+  try {
+    await ConfigService.set('crm_loyalty', { ...loyaltyCfg.value }, hotelId.value ?? undefined)
+    toast.success('Configuración guardada')
+  } catch {
+    toast.error('No se pudo guardar la configuración')
+  } finally {
+    savingConfig.value = false
+  }
+}
 const openSegment = ref<GuestSegment | null>(null)
 const segmentGuests = ref<SegmentGuest[]>([])
 const loadingGuests = ref(false)
@@ -478,34 +562,57 @@ function tierPercent(count: number) { const total = dashboard.value?.totalGuests
 async function loadData() {
   loading.value = true
   try {
-    const [d, l, c, s] = await Promise.all([CrmService.getDashboard(), CrmService.getLTV(), CrmService.listCoupons(), CrmService.listSegments()])
+    const [d, l, c, s] = await Promise.all([CrmService.getDashboard(), CrmService.getLTV(), PromoCodeService.list(), CrmService.listSegments()])
     dashboard.value = d; ltv.value = l; coupons.value = c; segments.value = s
   } catch { toast.error('Error al cargar') }
   finally { loading.value = false }
 }
-onMounted(loadData)
+onMounted(() => { loadData(); loadLoyaltyConfig() })
 
 async function createCoupon() {
   if (!couponForm.value.code) { toast.warning('Código requerido'); return }
-  try { await CrmService.createCoupon(couponForm.value); toast.success('Cupón creado'); showCouponForm.value = false; couponForm.value = { code: '', type: 'percentage', value: 10, minPurchase: 0, expiresAt: '' }; loadData() }
+  try {
+    // Spec crm-coupons: los "cupones" del CRM SON promo codes — una sola fuente de
+    // descuentos, aplicable en el motor de reservas público.
+    await PromoCodeService.create({
+      code: couponForm.value.code.trim().toUpperCase(),
+      kind: couponForm.value.type === 'percentage' ? 'percent' : 'fixed',
+      value: Number(couponForm.value.value),
+      minAmount: Number(couponForm.value.minPurchase) || null,
+      validTo: couponForm.value.expiresAt || null,
+      active: true,
+    })
+    toast.success('Cupón creado — aplicable en el motor de reservas')
+    showCouponForm.value = false
+    couponForm.value = { code: '', type: 'percentage', value: 10, minPurchase: 0, expiresAt: '' }
+    loadData()
+  }
   catch { toast.error('Error') }
 }
 // Borrar un cupón pasa por ConfirmModal: un código puede estar circulando ya.
-function deleteCoupon(c: Coupon) {
+function deleteCoupon(c: PromoCode) {
   askConfirm({
     title: 'Eliminar cupón',
     message: `El código ${c.code} deja de ser válido para quien todavía no lo usó.`,
     confirmLabel: 'Eliminar',
     danger: true,
     run: async () => {
-      await CrmService.deleteCoupon(c.id)
+      await PromoCodeService.remove(c.id)
       toast.success('Cupón eliminado')
     },
   })
 }
 async function doValidateCoupon() {
-  try { validatedCoupon.value = await CrmService.validateCoupon(validateCode.value, validateAmount.value); toast.success('¡Cupón válido!') }
-  catch { validatedCoupon.value = null; toast.error('Cupón inválido o expirado') }
+  try {
+    // Preview con la MISMA lógica del motor (spec crm-coupons) — no una segunda implementación.
+    previewResult.value = await PromoCodeService.preview(validateCode.value.trim().toUpperCase(), Number(validateAmount.value) || 0)
+    validatedCoupon.value = previewResult.value.valid ? { code: validateCode.value.trim().toUpperCase() } as Coupon : null
+    toast.success('¡Cupón válido!')
+  } catch {
+    previewResult.value = null
+    validatedCoupon.value = null
+    toast.error('Cupón inválido o expirado')
+  }
 }
 async function createSegment() {
   const rules: any = {}
@@ -514,6 +621,41 @@ async function createSegment() {
   try { await CrmService.createSegment({ name: segmentForm.value.name, rules: JSON.stringify(rules) }); toast.success('Segmento creado'); showSegmentForm.value = false; segmentForm.value = { name: '', tier: '', minStays: 0 }; loadData() }
   catch { toast.error('Error') }
 }
+/** El listado de Huéspedes filtra por segmento (spec crm-segments). */
+function goToGuests(s: GuestSegment) {
+  router.push({ path: '/panel/guests', query: { segment: s.id } })
+}
+
+/** Descarga el CSV server-side del segmento (spec crm-segments). */
+async function exportSegment(s: GuestSegment) {
+  try {
+    const csv = await CrmService.exportSegment(s.id)
+    const blob = new Blob([String(csv)], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `segmento-${s.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    toast.error('No se pudo exportar el segmento')
+  }
+}
+
+/** Backfill de tiers tras cambiar umbrales en la config (spec crm-loyalty). */
+async function recomputeTiers() {
+  recomputing.value = true
+  try {
+    const r = await CrmService.recomputeTiers()
+    toast.success(`Niveles recalculados: ${r.upgraded} de ${r.recomputed} huéspedes subieron`)
+    loadData()
+  } catch {
+    toast.error('No se pudo recalcular los niveles')
+  } finally {
+    recomputing.value = false
+  }
+}
+
 async function viewSegmentGuests(s: GuestSegment) {
   openSegment.value = s
   loadingGuests.value = true

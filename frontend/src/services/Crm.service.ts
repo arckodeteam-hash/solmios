@@ -4,6 +4,11 @@ import { http } from './http'
 export interface LoyaltyTransaction {
   id: string; guestId: string; hotelId: string; type: string; points: number; description: string; createdAt: string
 }
+/** Canje con propósito (spec crm-loyalty): los puntos se convierten en un promo code real. */
+export interface RedeemResult extends LoyaltyTransaction {
+  promoCode?: string
+  discountValue?: number
+}
 export interface Coupon {
   id: string; hotelId: string; code: string; type: string; value: number; minPurchase: number; maxUses: number | null
   useCount: number; startsAt: string | null; expiresAt: string | null; pointsCost: number; active: number
@@ -28,20 +33,20 @@ export interface CrmDashboard {
 export const CrmService = {
   // Points
   awardPoints: (guestId: string, points: number, description: string) => http.post('/api/crm/points/award', { guestId, points, description }) as Promise<LoyaltyTransaction>,
-  redeemPoints: (guestId: string, points: number, description: string) => http.post('/api/crm/points/redeem', { guestId, points, description }) as Promise<LoyaltyTransaction>,
+  redeemPoints: (guestId: string, points: number, description: string) => http.post('/api/crm/points/redeem', { guestId, points, description }) as Promise<RedeemResult>,
+  recomputeTiers: (): Promise<{ recomputed: number; upgraded: number }> => http.post('/api/crm/tiers/recompute', {}),
   getPointsHistory: (guestId: string): Promise<LoyaltyTransaction[]> => http.get(`/api/crm/points/history/${guestId}`),
   getPointsBalance: (guestId: string): Promise<{ balance: number }> => http.get(`/api/crm/points/balance/${guestId}`),
 
-  // Coupons
-  listCoupons: (): Promise<Coupon[]> => http.get('/api/crm/coupons'),
-  createCoupon: (data: Partial<Coupon>): Promise<Coupon> => http.post('/api/crm/coupons', data),
-  validateCoupon: (code: string, amount: number): Promise<Coupon> => http.post('/api/crm/coupons/validate', { code, amount }),
-  deleteCoupon: (id: string): Promise<void> => http.delete(`/api/crm/coupons/${id}`),
+/** DEPRECADO (spec crm-coupons): los cupones del CRM son promo-codes — ver
+ *  PromoCode.service.ts y /panel/config/promociones. Estos endpoints responden 410. */
 
   // Segments
   listSegments: (): Promise<GuestSegment[]> => http.get('/api/crm/segments'),
   createSegment: (data: Partial<GuestSegment>): Promise<GuestSegment> => http.post('/api/crm/segments', data),
   getGuestsInSegment: (id: string): Promise<SegmentGuest[]> => http.get(`/api/crm/segments/${id}/guests`),
+  /** CSV del segmento (text/csv). El caller arma la descarga con el string. */
+  exportSegment: (id: string): Promise<string> => http.get(`/api/crm/segments/${id}/export`),
 
   // LTV + Dashboard
   getLTV: (): Promise<GuestLTV[]> => http.get('/api/crm/ltv'),
