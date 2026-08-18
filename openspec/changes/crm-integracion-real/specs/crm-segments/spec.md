@@ -29,7 +29,9 @@ el chip del segmento activo y filtrar el listado con la MISMA evaluación de rul
 
 Cada segmento MUST tener "Exportar CSV" que descarga nombre, email, teléfono, tier,
 noches acumuladas y balance de puntos de sus miembros. Generación server-side
-(`GET /api/crm/segments/:id/export` → text/csv), permiso `guests:view`. Sin datos
+(`GET /api/crm/segments/:id/export` → JSON `{filename, csv}`; el front arma el blob:
+el wrapper http siempre hace `res.json()` y text/csv crudo rompería el parseo),
+permiso `guests:view`. Sin datos
 personales más allá de los listados (nada de IDs internos ni notas).
 
 #### Scenario: export con permiso
