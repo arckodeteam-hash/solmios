@@ -37,6 +37,9 @@ export const CreateSegmentSchema: Record<string, ValidationRule> = {
 }
 
 export const CreateCampaignSchema: Record<string, ValidationRule> = {
+  // Lo inyecta withHotelId del controller ANTES de validar (patrón segmentos): sin
+  // declararlo, el validador lo descarta y el insert viola NOT NULL (bug encontrado en prod).
+  hotelId: { type: 'string' as const, required: true },
   name: { type: 'string' as const, required: true, min: 3, max: 120 },
   segmentId: { type: 'string' as const, required: true },
   subject: { type: 'string' as const, required: true, min: 3, max: 200 },
