@@ -174,21 +174,44 @@
 
           <div>
             <div class="flex items-center justify-between mb-1">
-              <label class="block text-xs font-bold text-text-secondary">Contenido (HTML)</label>
-              <button
-                class="text-xs font-bold cursor-pointer hover:underline"
-                :class="previewMode ? 'text-coral' : 'text-cyan'"
-                @click="previewMode = !previewMode"
-              >
-                {{ previewMode ? '✕ Volver al HTML' : '👁 Previsualizar' }}
-              </button>
+              <label class="block text-xs font-bold text-text-secondary">Contenido</label>
+              <div class="flex items-center gap-3">
+                <button
+                  class="text-xs font-bold cursor-pointer hover:underline"
+                  :class="rawMode ? 'text-navy font-black' : 'text-text-muted'"
+                  :title="rawMode ? 'Estás en el editor de HTML crudo' : 'Cambiar al editor de HTML (avanzado)'"
+                  @click="rawMode = !rawMode; previewMode = false"
+                >
+                  &lt;/&gt; HTML
+                </button>
+                <button
+                  class="text-xs font-bold cursor-pointer hover:underline"
+                  :class="previewMode ? 'text-coral' : 'text-cyan'"
+                  @click="previewMode = !previewMode; if (previewMode) rawMode = false"
+                >
+                  {{ previewMode ? '✕ Volver al editor' : '👁 Previsualizar' }}
+                </button>
+              </div>
             </div>
+
+            <!-- Editor visual: para quien no sabe (ni quiere saber) HTML. Quill produce el
+                 h2/h3/p/ul/strong que el CSS del sitio ya estila — no depende de <section>,
+                 así que las páginas legadas se pueden editar sin romper el estilo. -->
+            <QuillEditor
+              v-if="!previewMode && !rawMode"
+              v-model:content="form.contentHtml"
+              content-type="html"
+              :toolbar="QUILL_TOOLBAR"
+              placeholder="Escribí el contenido de la página…"
+              class="site-editor bg-white rounded-lg border border-border overflow-hidden"
+            />
+            <!-- HTML crudo: camino avanzado para tocar el markup a mano. -->
             <textarea
-              v-if="!previewMode"
+              v-else-if="!previewMode && rawMode"
               v-model="form.contentHtml"
               rows="12"
               class="w-full px-3 py-2 rounded-lg border border-border text-xs font-mono bg-surface focus:outline-none focus:border-cyan leading-relaxed"
-              placeholder="<section><h2>Sección</h2><p>Contenido…</p></section>"
+              placeholder="<h2>Sección</h2><p>Contenido…</p>"
             />
             <div
               v-else
@@ -196,8 +219,8 @@
               v-html="form.contentHtml"
             />
             <p class="text-[11px] text-text-muted mt-1">
-              El contenido lo produce el equipo del SaaS (acceso super_admin). Usá secciones
-              &lt;section&gt; y encabezados &lt;h2&gt;/&lt;h3&gt;: el sitio les aplica su propio estilo.
+              Editá visualmente; el botón &lt;/&gt; HTML queda para el marcado a mano (avanzado).
+              Encabezados y listas toman el estilo del sitio solos.
             </p>
           </div>
 
@@ -225,7 +248,16 @@
 </template>
 
 <script setup lang="ts">
+const QUILL_TOOLBAR = [
+  [{ header: [2, 3, false] }],
+  ['bold', 'italic'],
+  [{ list: 'ordered' }, { list: 'bullet' }],
+  ['link'],
+  ['clean'],
+]
 import { onMounted, reactive, ref } from 'vue'
+import { QuillEditor } from '@vueup/vue-quill'
+import '@vueup/vue-quill/dist/vue-quill.snow.css'
 import { SitePagesService } from '@/services/SitePages.service'
 import { ApiError } from '@/services/http'
 import {
@@ -241,6 +273,8 @@ const loading = ref(true)
 const error = ref('')
 
 const editorOpen = ref(false)
+// Editor visual por defecto; el HTML crudo es el camino avanzado.
+const rawMode = ref(false)
 const previewMode = ref(false)
 const saving = ref(false)
 const editorError = ref('')
