@@ -41,13 +41,13 @@
       <!-- Una tarjeta POR TIPO DE HABITACIÓN, con una sub-sección por ocupación -->
       <div v-else class="space-y-4">
         <div v-for="tc in typeCards" :key="tc.roomType" class="rounded-2xl border-2 border-navy overflow-hidden">
-          <div class="bg-surface border-b-2 border-navy px-4 py-2.5 flex items-center justify-between gap-2">
-            <h3 class="text-sm font-black text-navy capitalize">{{ tc.roomType }}</h3>
-            <span class="text-[10px] font-black uppercase text-text-muted">
+          <div class="bg-navy px-4 py-2.5 flex items-center justify-between gap-2">
+            <h3 class="text-sm font-black text-white capitalize">{{ tc.roomType }}</h3>
+            <span class="text-[10px] font-black uppercase text-white/70">
               {{ tc.groups.length }} {{ tc.groups.length === 1 ? 'ocupación' : 'ocupaciones' }}
             </span>
           </div>
-          <div v-for="g in tc.groups" :key="g.key">
+          <div v-for="g in tc.groups" :key="g.key" :class="g !== tc.groups[0] ? 'border-t-2 border-navy/10' : ''">
           <div class="px-4 pt-2.5 pb-0.5 text-[11px] font-black text-text-muted uppercase">
             {{ g.occupancy }} {{ g.occupancy === 1 ? 'persona' : 'personas' }}
           </div>
