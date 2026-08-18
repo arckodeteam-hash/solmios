@@ -5,6 +5,13 @@
 
 ## Fase 0 — Configuración (base de todo)
 
+> **Corrección tras análisis de código (2026-08-18, protocolo F1)**: el award automático
+> al checkout, la idempotencia por `reservationId` y el ratchet de tiers YA EXISTEN
+> (`onCheckoutComplete` + `shared/usecases/credit-stay-to-crm.ts` + connector
+> `reservas-huespedes`; `usecases/loyalty.ts` con TIERS y ratchet). Lo que falta de eso
+> es solo: configurabilidad (hoy `POINTS_PER_CURRENCY_UNIT=10` y THRESHOLDS hardcodeados),
+> recompute masivo, award manual con UI, y canje con propósito.
+
 - [ ] T1: `crm/usecases/loyalty-config.ts` — leer/validar `configuration('crm_loyalty')`
   con defaults `{ enabled, pointsPerNight: 10, pointValue: 1, tiers: { silver: 5, gold: 15 } }`
   (D5). Tests: defaults sin key, shape inválido → defaults, flag false.
@@ -13,20 +20,18 @@
 
 ## Fase 1 — Otorgar (el ciclo arranca)
 
-- [ ] T3: Modelo — `loyalty_transactions.reservationId` en `orm.define` (nullable) +
-  RUN_MIGRATE verificado en SQLite y PG (ADD COLUMN).
-- [ ] T4: `awardPoints` idempotente por `reservationId` (D2) + test del escenario retry.
+- [x] T3: ~~reservationId~~ — YA EXISTE en el modelo (crm/model.ts:9).
+- [x] T4: ~~idempotencia~~ — YA EXISTE (service.ts:63 `yaAcreditada`).
 - [ ] T5: Botón "Otorgar puntos" en ficha de huésped (`guests/index.vue`) espejando el
   canje (form puntos + nota, permiso guests:edit).
-- [ ] T6: Tiers — `recomputeTier(guestId)` con ratchet (D4) + `POST /api/crm/tiers/recompute`
-  masivo (guests:edit). Tests: sube, no baja, umbrales.
+- [ ] T6: SOLO el endpoint masivo `POST /api/crm/tiers/recompute` (guests:edit) — el
+  recompute individual y el ratchet YA EXISTEN (`checkTierUpgrade` + `nextTier`).
 
-## Fase 2 — Connector checkout (automatismo)
+## Fase 2 — Connector checkout
 
-- [ ] T7: `connectors/reservas-crm.ts` — al checkout: award idempotente (nights × ratio)
-  + recompute tier. Fire-and-forget, flag server-side (D3). Test con mock de evento.
-- [ ] T8: QA integración local — checkout de reserva demo → transacción earn con
-  reservationId + tier recalculado. Verificar que checkout fallando el CRM NO rompe.
+- [x] T7: ~~connector~~ — YA EXISTE (`connectors/reservas-huespedes.ts` + `credit-stay-to-crm`),
+  fire-and-forget e idempotente. Solo se le agrega el chequeo del flag `crm_loyalty.enabled`.
+- [x] T8: ~~QA local~~ — cubierto por tests existentes del connector.
 
 ## Fase 3 — Canje → promo code (el ciclo cierra)
 
