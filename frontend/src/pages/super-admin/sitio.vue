@@ -437,4 +437,18 @@ onMounted(load)
 .prose p {
   margin: 0.5rem 0;
 }
+
+/* Cuerpo del editor visual: la altura default de Quill es de UNA línea — quedaba chato
+   contra la preview (16rem). Mismo mínimo que la preview, tope con scroll para que una
+   página larga no haga el modal infinito. La toolbar es hermana del editor en el DOM de
+   Quill, así que queda fija arriba mientras el cuerpo scrollea. */
+.site-editor :deep(.ql-editor) {
+  min-height: 16rem;
+  max-height: 28rem;
+  overflow-y: auto;
+  font-size: 0.9rem;
+}
+.site-editor :deep(.ql-toolbar) {
+  border-bottom: 1px solid var(--color-border, #E2E8F0);
+}
 </style>
