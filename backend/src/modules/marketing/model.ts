@@ -29,6 +29,8 @@ const MessageLogModel: ModelDefinition = {
   fields: {
     hotelId: { type: 'string', required: true, indexed: true },
     reservationId: { type: 'string' },
+    // Dedupe de triggers de HUÉSPED (birthday/win-back): sin reserva, la clave es el guest.
+    guestId: { type: 'string', indexed: true },
     messageId: { type: 'string' },
     messageType: { type: 'string', default: 'email' },
     status: { type: 'string', default: 'pending' },

@@ -1,4 +1,5 @@
 import { checkinHashFromId } from '../../../shared/utils/checkin-hash'
+import { isBirthdayToday, isInactiveSince, lastVisitVar } from './guest-triggers'
 
 const DAY_MS = 86_400_000
 
@@ -42,6 +43,44 @@ async function firePreCheckin(orm: any, hotelId: string, today: Date, marketingM
   }
 }
 
+/**
+ * Triggers de HUÉSPED (spec guest-triggers): birthday (birthDate mes/día == hoy) e
+ * inactive_guests (win-back: última estadía hace exactamente triggerOffset días, sin
+ * reserva futura). Solo actúan si el hotel creó auto-messages con esos triggers —
+ * inactivos por defecto. El dedupe mismo-día lo resuelve triggerAutoMessages (guestId).
+ */
+async function fireGuestTriggers(orm: any, hotelId: string, today: Date, marketingModule: { triggerAutoMessages: (params: any) => Promise<void> }): Promise<void> {
+  const birthdayMsgs = await orm.findMany('AutoMessages', { hotelId, triggerEvent: 'birthday', isActive: 1 }) as any[]
+  const inactiveMsgs = await orm.findMany('AutoMessages', { hotelId, triggerEvent: 'inactive_guests', isActive: 1 }) as any[]
+  if (birthdayMsgs.length === 0 && inactiveMsgs.length === 0) return
+
+  const guests = await orm.findMany('Guests', { hotelId, active: 1 }) as any[]
+  const allReservations = await orm.findMany('Reservations', { hotelId }) as any[]
+
+  if (birthdayMsgs.length > 0) {
+    for (const g of guests) {
+      if (!isBirthdayToday(g.birthDate, today)) continue
+      await marketingModule.triggerAutoMessages({
+        hotelId, event: 'birthday', guestId: g.id,
+        variables: { guest_name: g.name || 'Huésped' },
+      }).catch(() => {})
+    }
+  }
+
+  if (inactiveMsgs.length > 0) {
+    const offsets = [...new Set(inactiveMsgs.map((m) => Number(m.triggerOffset || 180)))]
+    for (const offset of offsets) {
+      for (const g of guests) {
+        if (!isInactiveSince(allReservations, g.id, offset, today)) continue
+        await marketingModule.triggerAutoMessages({
+          hotelId, event: 'inactive_guests', guestId: g.id,
+          variables: { last_visit: lastVisitVar(allReservations, g.id) },
+        }).catch(() => {})
+      }
+    }
+  }
+}
+
 export function createAutoMessagesCron(orm: any, marketingModule: { triggerAutoMessages: (params: any) => Promise<void> }): () => Promise<void> {
   return async () => {
     const today = new Date()
@@ -66,6 +105,7 @@ export function createAutoMessagesCron(orm: any, marketingModule: { triggerAutoM
       }
 
       await firePreCheckin(orm, hotel.id, today, marketingModule).catch(() => {})
+      await fireGuestTriggers(orm, hotel.id, today, marketingModule).catch(() => {})
     }
   }
 }

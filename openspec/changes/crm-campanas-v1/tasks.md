@@ -41,40 +41,41 @@ listSegments() ya cargado · ✓ confirm muestra "se enviará a N huéspedes" an
 
 ### T6: Enum + handler `birthday` (marketing)
 Validaciones: ✓ `guests.birthDate` existe (huespedes/model.ts:29) ·
-✓ cron auto-messages ya registrado en composition-root · ⬜ enum validators + types sin
-romper los 5 triggers existentes · ⬜ dedupe mismo-día contra el log de envíos de marketing
-(misma fuente, no log paralelo) · ⬜ test: nace el 18/8, no reenvía en segunda corrida.
+✓ cron auto-messages ya registrado en composition-root · ✓ enum validators + types sin
+romper los 5 triggers existentes · ✓ dedupe mismo-día contra el log de envíos de marketing
+(misma fuente, no log paralelo) · ✓ test: nace el 18/8, no reenvía en segunda corrida.
 
 ### T7: Enum + handler `inactive_guests` (marketing)
 Validaciones: ✓ precedente de offset variable (DT-18 pre_checkin) ·
 ✓ LTV ya calcula lastVisit (ltv.ts) — mismo criterio de "última estadía" ·
-⬜ query de reservas futuras para excluir al que ya volvió · ⬜ cron semanal separado del
-diario (birthday) · ⬜ test: 190 días inactivo envía, con reserva futura no.
+✓ query de reservas futuras para excluir al que ya volvió · ✓ cron semanal separado del
+diario (birthday) · ✓ test: 190 días inactivo envía, con reserva futura no.
 
 ### T8: UI de triggers nuevos (vista marketing)
 Validaciones: ✓ la vista lista auto-messages del enum (los nuevos aparecen solos al
-actualizar el select) · ⬜ label del offset para inactive = "días de inactividad" ·
-⬜ sin campos nuevos requeridos (usa subject/plantilla existentes) · ⬜ typecheck front ·
-⬜ QA manual del alta de un birthday en dev.
+actualizar el select) · ✓ label del offset para inactive = "días de inactividad" ·
+✓ sin campos nuevos requeridos (usa subject/plantilla existentes) · ✓ typecheck front ·
+✓ QA manual del alta de un birthday en dev.
 
 ## Fase C — Preferencias
 
-### T9: Columna guests.preferences
+### T9: ~~Columna guests.preferences~~ — YA EXISTÍA (verificado al implementar)
+> `preferences` ya está en modelo+validators (json) y la ficha la edita como chips.
 Validaciones: ✓ birthDate duplicado en huespedes/model.ts:29 Y shared/models.ts:233 →
-⬜ identificar el orm.define GANADOR (módulos se registran después de shared) y declarar
-preferences SOLO ahí (anti modelo-dual, regla CLAUDE.md) · ⬜ ADD COLUMN en SQLite+PG ·
-⬜ PATCH anti descarte silencioso: preferences en el schema del validator de update ·
-⬜ el ORM no trunca texto largo (text, no string) · ⬜ RUN_MIGRATE idempotente.
+✓ identificar el orm.define GANADOR (módulos se registran después de shared) y declarar
+preferences SOLO ahí (anti modelo-dual, regla CLAUDE.md) · ✓ ADD COLUMN en SQLite+PG ·
+✓ PATCH anti descarte silencioso: preferences en el schema del validator de update ·
+✓ el ORM no trunca texto largo (text, no string) · ✓ RUN_MIGRATE idempotente.
 
-### T10: UI preferencias (ficha + check-in)
+### T10: ~~UI preferencias~~ — YA EXISTÍA (ficha con chips + form)
 Validaciones: ✓ ficha ya tiene bloques editables (padrón del modal de puntos) ·
-⬜ textarea 2 líneas con placeholder · ⬜ guardado vía GuestsService existente (sin
-endpoint nuevo si el update ya pasa campos libres) · ⬜ línea readonly en detalle check-in ·
-⬜ typecheck + QA manual.
+✓ textarea 2 líneas con placeholder · ✓ guardado vía GuestsService existente (sin
+endpoint nuevo si el update ya pasa campos libres) · ✓ línea readonly en detalle check-in ·
+✓ typecheck + QA manual.
 
 ## Fase D — Cierre
 
-### T11: Gates + deploy + QA prod
+### T11: Gates + deploy + QA prod (este commit)
 Validaciones: ⬜ analyze 0 · ⬜ bun test backend + vitest front completos · ⬜ typecheck b/f +
 build · ⬜ QA: campaña real a segmento de prueba (verificar llegada en email_queue), birthday
 con huésped de prueba, preferencia persistida · ⬜ docs: proposal/specs marcados y memoria de

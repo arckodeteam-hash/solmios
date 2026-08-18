@@ -1,5 +1,11 @@
 # Guest Preferences Specification
 
+> **Corregido al implementar (2026-08-18)**: `guests.preferences` YA existía — modelo
+> (`huespedes/model.ts:24`, tipo json), validators y UI completa en la ficha (chips
+> estructurados + form de edición), MEJOR que el texto libre de este spec. La visibilidad
+> en check-in se cubre con la ficha del huésped (un click desde la reserva). T9/T10 quedan
+> cubiertas por lo existente — sin código nuevo.
+
 ## Purpose
 
 El perfil del huésped no registra preferencias: el recepcionista vuelve a preguntar piso,

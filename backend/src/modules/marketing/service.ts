@@ -1,5 +1,6 @@
 // marketing/service.ts
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
+import { logsForDedupe, alreadySentToday } from './usecases/auto-message-dedupe'
 import { NotFoundError } from 'arckode-framework'
 import type {
   AutoMessageDTO, CreateAutoMessageDTO,
@@ -112,7 +113,8 @@ export class MarketingService {
   async triggerAutoMessages(params: {
     hotelId: string
     event: string
-    reservationId: string
+    /** Triggers de huésped (birthday/win-back) no tienen reserva: deduplican por guestId. */
+    reservationId?: string
     guestId?: string
     roomId?: string
     variables?: Record<string, string | number>
@@ -149,20 +151,14 @@ export class MarketingService {
     // se mantiene hasta el check-in real, así que sin este corte cada tick duplicaría el email.
     // message_logs no guarda templateId/channel/metadata (solo response/sentAt/status), por eso
     // usamos `response` como clave de dedup estable: `auto:{event}:{autoMessageId}`.
-    const todayPrefix = new Date().toISOString().slice(0, 10)
-    const sentLogs = reservationId
-      ? await this.logRepo.findMany({ hotelId, reservationId } as any)
-      : []
-    const alreadySentToday = (msgId: string) =>
-      sentLogs.some(l =>
-        l.response === `auto:${event}:${msgId}`
-        && ['sent', 'queued'].includes(l.status)
-        && (l.sentAt || '').slice(0, 10) === todayPrefix,
-      )
+    // Dedupe mismo-día (usecases/auto-message-dedupe): por reserva o, sin reserva,
+    // por huésped (birthday/win-back). Clave: response = `auto:{event}:{msgId}` + sentAt hoy.
+    const sentLogs = await logsForDedupe(this.logRepo, { hotelId, reservationId, guestId })
+    const already = (msgId: string) => alreadySentToday(sentLogs as any[], event, msgId)
 
     for (const msg of matching) {
       try {
-        if (alreadySentToday(msg.id || '')) {
+        if (already(msg.id || '')) {
           this.logger.info('Auto-message dedup: ya enviado hoy', { hotelId, event, reservationId, autoMessageId: msg.id })
           continue
         }
@@ -183,6 +179,7 @@ export class MarketingService {
         await this.createMessageLog({
           hotelId,
           reservationId: reservationId || null,
+          guestId: guestId || null,
           messageType: 'email',
           status: queueId ? 'sent' : 'failed',
           recipient: guest?.email || null,

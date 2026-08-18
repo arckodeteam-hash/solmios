@@ -168,11 +168,11 @@
           <div>
             <label class="block text-[11px] font-bold text-navy uppercase mb-2">Evento Disparador</label>
             <select v-model="form.triggerEvent" class="w-full px-4 py-2.5 rounded-full border border-border text-sm cursor-pointer">
-              <option value="on_reservation">Al crear reserva</option><option value="pre_checkin">X días antes del check-in</option><option value="checkin_day">El día del check-in</option><option value="checkout_day">El día del check-out</option><option value="post_checkout">X días después del check-out</option>
+              <option value="on_reservation">Al crear reserva</option><option value="pre_checkin">X días antes del check-in</option><option value="checkin_day">El día del check-in</option><option value="checkout_day">El día del check-out</option><option value="post_checkout">X días después del check-out</option><option value="birthday">Cumpleaños del huésped</option><option value="inactive_guests">Huéspedes inactivos (win-back)</option>
             </select>
           </div>
-          <div v-if="form.triggerEvent==='pre_checkin'||form.triggerEvent==='post_checkout'">
-            <label class="block text-[11px] font-bold text-navy uppercase mb-2">Días (offset)</label>
+          <div v-if="form.triggerEvent==='pre_checkin'||form.triggerEvent==='post_checkout'||form.triggerEvent==='inactive_guests'">
+            <label class="block text-[11px] font-bold text-navy uppercase mb-2">{{ form.triggerEvent === 'inactive_guests' ? 'Días de inactividad' : 'Días (offset)' }}</label>
             <input v-model.number="form.triggerOffset" type="number" min="0" class="w-full px-4 py-2.5 rounded-full border border-border text-sm tabular-nums" />
           </div>
         </div>
@@ -254,7 +254,7 @@ const filtered = computed(() => {
 })
 
 function channelLabel(c: string) { const m: any = { email:'Email', whatsapp:'WhatsApp', both:'Email + WhatsApp' }; return m[c]||c }
-function triggerLabel(t: string) { const m: any = { on_reservation:'Al crear reserva', pre_checkin:'Antes del check-in', checkin_day:'Día del check-in', checkout_day:'Día del check-out', post_checkout:'Después del check-out' }; return m[t]||t }
+function triggerLabel(t: string) { const m: any = { on_reservation:'Al crear reserva', pre_checkin:'Antes del check-in', checkin_day:'Día del check-in', checkout_day:'Día del check-out', post_checkout:'Después del check-out', birthday:'Cumpleaños', inactive_guests:'Win-back inactivos' }; return m[t]||t }
 function eventLabel(e?: string) { const m: any = { checkin_welcome:'Bienvenida', reservation_confirmed:'Confirmación', reservation_presale:'Pre-venta', reminder:'Recordatorio' }; return e ? (m[e]||e) : '—' }
 function langLabel(l?: string) { const m: any = { es:'ES', en:'EN', pt:'PT' }; return l ? (m[l]||l) : '—' }
 
