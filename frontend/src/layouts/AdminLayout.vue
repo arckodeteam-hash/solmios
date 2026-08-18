@@ -394,9 +394,6 @@ const nonavItems = [
   {
     label: 'Mis Referidos', icon: ICONS.link, path: '/panel/referidos', roles: ['hotel_admin'],
   },
-  {
-    label: 'Aliados', icon: ICONS.link, path: '/panel/aliados', roles: ['hotel_admin'],
-  },
 ]
 
 const sectionLabels = nonavItems.filter(i => i.children).map(i => i.label)

@@ -651,9 +651,11 @@ const router = createRouter({
           component: () => import('@/pages/referidos/index.vue'),
         },
         {
+          // ELIMINADA por decisión del dueño (2026-08-18): el programa Aliados lo gestiona
+          // el admin de la PLATAFORMA (/admin/aliados) — no va en el panel del hotel.
+          // Redirect para bookmarks; la vista se borró.
           path: 'aliados',
-          name: 'aliados',
-          component: () => import('@/pages/aliados/index.vue'),
+          redirect: (to) => ({ path: '/panel', query: to.query }),
         },
         {
           path: 'config/cerraduras',
