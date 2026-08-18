@@ -76,9 +76,9 @@ endpoint nuevo si el update ya pasa campos libres) · ✓ línea readonly en det
 ## Fase D — Cierre
 
 ### T11: Gates + deploy + QA prod (este commit)
-Validaciones: ⬜ analyze 0 · ⬜ bun test backend + vitest front completos · ⬜ typecheck b/f +
-build · ⬜ QA: campaña real a segmento de prueba (verificar llegada en email_queue), birthday
-con huésped de prueba, preferencia persistida · ⬜ docs: proposal/specs marcados y memoria de
+Validaciones: ✓ analyze 0 · ✓ bun test backend + vitest front completos · ✓ typecheck b/f +
+build · ✓ QA: campaña real a segmento de prueba (verificar llegada en email_queue), birthday
+con huésped de prueba, preferencia persistida · ✓ docs: proposal/specs marcados y memoria de
 session si hay learnings.
 
 ## Dependencias
