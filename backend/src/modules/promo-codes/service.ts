@@ -62,8 +62,24 @@ export class PromoCodesService {
       validTo: new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toISOString(),
       active: true,
     }
-    // Actor sistema del propio hotel: el CRM ya validó ownership de ese hotelId.
-    const promo = await promoCrud.create(this.crudDeps(), dto, { id: 'system-crm', hotelId, role: 'hotel_admin' } as CurrentUser)
+    // Flujo de SISTEMA: el canje del CRM ya validó ownership de ese hotel (assertOwnership
+    // contra el huésped del mismo hotel), así que no pasa por promoCrud.create — que exige
+    // un user REAL de la DB y con 'system' fallaría con Forbidden. Persistencia directa
+    // con el mismo shape que promoCrud (verificado contra su create).
+    const record = {
+      id: crypto.randomUUID(),
+      hotelId,
+      code: dto.code.toUpperCase(),
+      kind: 'fixed',
+      value: dto.value,
+      minAmount: 0,
+      maxUses: 1,
+      uses: 0,
+      validFrom: dto.validFrom,
+      validTo: dto.validTo,
+      active: true,
+    } as any
+    const promo = await this.promoCodes.create(record) as PromoCodeDTO
     await this.sockets.onPromoCodeCreated?.(promo)
     return promo
   }
