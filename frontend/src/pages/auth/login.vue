@@ -89,7 +89,7 @@
 
           <!-- Demo Accounts (dev) -->
           <div v-if="demoAccounts.length" class="mt-6 pt-4 border-t border-border">
-            <div class="text-[10px] font-bold text-text-muted uppercase mb-2 text-center">Cuentas demo (development)</div>
+            <div class="text-[10px] font-bold text-text-muted uppercase mb-2 text-center">Cuentas demo</div>
             <div class="flex items-center justify-center flex-wrap gap-x-2 gap-y-1 text-xs">
               <template v-for="(account, idx) in demoAccounts" :key="account.email">
                 <button @click="loginAs(account)" class="text-cyan hover:text-navy hover:underline font-bold cursor-pointer" :title="account.email">{{ account.roleLabel }}</button>
