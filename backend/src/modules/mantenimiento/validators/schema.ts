@@ -68,7 +68,9 @@ export const AddPhotoMantenimientoSchema: Record<string, ValidationRule> = {
 const PROVIDER_PROFILE_FIELDS: Record<string, ValidationRule> = {
   specialty: { type: 'string' as const, max: 80 },
   phone: { type: 'string' as const, max: 40 },
-  email: { type: 'string' as const, max: 120 },
+  // El framework valida formato de email nativamente con este tipo — antes era 'string'
+  // y "foobar" se guardaba sin objeción.
+  email: { type: 'email' as const, max: 120 },
   notes: { type: 'text' as const, max: NOTES_MAX_LENGTH },
   address: { type: 'string' as const, max: 200 },
   rate: { type: 'string' as const, max: 80 },
@@ -82,6 +84,9 @@ const PROVIDER_PROFILE_FIELDS: Record<string, ValidationRule> = {
 export const CreateProviderSchema: Record<string, ValidationRule> = {
   name: { type: 'string' as const, required: true, min: MIN_TEXT_LENGTH, max: 120 },
   ...PROVIDER_PROFILE_FIELDS,
+  // El formulario de alta permite crear directo como inactivo — antes no estaba declarado,
+  // el validador lo descartaba y el usecase lo ignoraba (el checkbox era decorativo).
+  active: { type: 'boolean' as const },
 }
 
 /** Edición: todo opcional (merge parcial). */

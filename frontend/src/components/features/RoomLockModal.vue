@@ -568,7 +568,10 @@ async function unassignLock() {
   }
 }
 
+// immediate: el modal también se MONTA con el roomId ya seteado (v-if desde el gestor de la
+// página de cerraduras y el ⚙️ del detalle de reserva) — sin immediate el watch no dispara y
+// el modal abría mostrando "Sin cerradura asignada" aunque la tuviera.
 watch(() => props.roomId, (id) => {
   if (id) { tab.value = 'device'; fijoCode.value = ''; fijoName.value = ''; assignLockId.value = ''; showReassign.value = false; load() }
-})
+}, { immediate: true })
 </script>

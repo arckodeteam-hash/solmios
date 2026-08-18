@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cómo Usar los Templates de PR - Kaptas ERP</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #fff; padding: 20px; line-height: 1.6; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 10px; color: #00d4aa; font-size: 2.5rem; }
+        .subtitle { text-align: center; margin-bottom: 40px; opacity: 0.7; font-size: 1.1rem; }
+        
+        .section { background: #16213e; border-radius: 20px; padding: 35px; margin-bottom: 35px; border: 1px solid rgba(255,255,255,0.05); }
+        .section-title { font-size: 1.8rem; margin-bottom: 25px; color: #00d4aa; border-bottom: 3px solid #00d4aa; padding-bottom: 15px; display: flex; align-items: center; gap: 12px; }
+        .section-title span { font-size: 2rem; }
+        
+        .step-box { background: #0f3460; border-radius: 15px; padding: 25px; margin-bottom: 20px; border-left: 5px solid; }
+        .step-1 { border-color: #667eea; }
+        .step-2 { border-color: #38ef7d; }
+        .step-3 { border-color: #f59e0b; }
+        .step-4 { border-color: #ef4444; }
+        .step-5 { border-color: #a855f7; }
+        
+        .step-num { font-size: 2rem; font-weight: bold; margin-bottom: 10px; }
+        .step-1 .step-num { color: #667eea; }
+        .step-2 .step-num { color: #38ef7d; }
+        .step-3 .step-num { color: #f59e0b; }
+        .step-4 .step-num { color: #ef4444; }
+        .step-5 .step-num { color: #a855f7; }
+        
+        .step-title { font-size: 1.3rem; font-weight: bold; margin-bottom: 10px; }
+        .step-desc { opacity: 0.9; }
+        
+        .code-block { background: #1a1a2e; padding: 20px; border-radius: 10px; font-family: 'Courier New', monospace; font-size: 0.9rem; margin: 15px 0; overflow-x: auto; border-left: 4px solid #38ef7d; }
+        .code-comment { color: #6b7280; }
+        .code-command { color: #38ef7d; }
+        .code-branch { color: #f59e0b; }
+        .code-file { color: #a855f7; }
+        
+        .ai-box { background: linear-gradient(135deg, #2d1a3e 0%, #1a1a2e 100%); border: 2px solid #a855f7; border-radius: 15px; padding: 25px; margin: 20px 0; }
+        .ai-title { color: #a855f7; font-size: 1.3rem; font-weight: bold; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; }
+        .ai-prompt { background: #16213e; padding: 15px; border-radius: 10px; margin: 10px 0; font-style: italic; border-left: 3px solid #a855f7; }
+        
+        .example-box { background: #0f3460; border-radius: 15px; padding: 25px; margin: 20px 0; }
+        .example-title { font-size: 1.2rem; font-weight: bold; margin-bottom: 15px; color: #00d4aa; }
+        
+        .template-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }
+        .template-before, .template-after { background: #16213e; padding: 20px; border-radius: 10px; }
+        .template-before { border-top: 4px solid #ef4444; }
+        .template-after { border-top: 4px solid #38ef7d; }
+        .template-label { font-weight: bold; margin-bottom: 10px; }
+        .template-before .template-label { color: #ef4444; }
+        .template-after .template-label { color: #38ef7d; }
+        
+        .tip-box { background: rgba(0, 212, 170, 0.1); border: 1px solid #00d4aa; border-radius: 12px; padding: 20px; margin: 20px 0; }
+        .tip-title { color: #00d4aa; font-weight: bold; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        
+        .warning-box { background: rgba(245, 158, 11, 0.1); border: 1px solid #f59e0b; border-radius: 12px; padding: 20px; margin: 20px 0; }
+        .warning-title { color: #f59e0b; font-weight: bold; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        
+        .flow-diagram { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 30px; background: #0f3460; border-radius: 15px; margin: 20px 0; }
+        .flow-step { padding: 15px 30px; border-radius: 10px; text-align: center; min-width: 300px; font-weight: 600; }
+        .flow-arrow { font-size: 1.5rem; color: #00d4aa; }
+        
+        .checklist { list-style: none; }
+        .checklist li { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; gap: 10px; }
+        .checklist li::before { content: "✅"; }
+        
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        
+        @media (max-width: 768px) {
+            .template-compare, .two-col { grid-template-columns: 1fr; }
+            .flow-step { min-width: auto; width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📋 Cómo Usar los Templates de PR</h1>
+        <p class="subtitle">Guía paso a paso + Cómo usar IA para llenarlos</p>
+        
+        <!-- Sección 1: Flujo Básico -->
+        <div class="section">
+            <h2 class="section-title"><span>🔄</span> Flujo Básico de Uso</h2>
+            
+            <div class="flow-diagram">
+                <div class="flow-step" style="background: linear-gradient(90deg, #667eea, #764ba2);">
+                    1. Identificar el tipo de trabajo
+                </div>
+                <div class="flow-arrow">↓</div>
+                <div class="flow-step" style="background: linear-gradient(90deg, #38ef7d, #11998e); color: #000;">
+                    2. Seleccionar el template correcto
+                </div>
+                <div class="flow-arrow">↓</div>
+                <div class="flow-step" style="background: linear-gradient(90deg, #f59e0b, #f97316); color: #000;">
+                    3. Llenar el template (manual o con IA)
+                </div>
+                <div class="flow-arrow">↓</div>
+                <div class="flow-step" style="background: linear-gradient(90deg, #ef4444, #dc2626);">
+                    4. Crear PR en GitHub/GitLab
+                </div>
+                <div class="flow-arrow">↓</div>
+                <div class="flow-step" style="background: linear-gradient(90deg, #a855f7, #7c3aed);">
+                    5. Esperar revisión de QA-DEV
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 2: Paso a Paso -->
+        <div class="section">
+            <h2 class="section-title"><span>📝</span> Paso a Paso para Llenar el Template</h2>
+            
+            <div class="step-box step-1">
+                <div class="step-num">PASO 1</div>
+                <div class="step-title">Crear la rama correcta</div>
+                <div class="step-desc">Antes de empezar, crea la rama con el nombre correcto:</div>
+                <div class="code-block">
+                    <span class="code-comment"># Para Feature:</span><br>
+                    <span class="code-command">git checkout pre-produccion && git pull</span><br>
+                    <span class="code-command">git checkout -b feature/nombre-tarea</span><br><br>
+                    <span class="code-comment"># Para Fix:</span><br>
+                    <span class="code-command">git checkout pre-produccion && git pull</span><br>
+                    <span class="code-command">git checkout -b fix/nombre-fix</span><br><br>
+                    <span class="code-comment"># Para Refactor:</span><br>
+                    <span class="code-command">git checkout pre-produccion && git pull</span><br>
+                    <span class="code-command">git checkout -b refactor/nombre-modulo</span><br><br>
+                    <span class="code-comment"># Para Hotfix:</span><br>
+                    <span class="code-command">git checkout main && git pull</span><br>
+                    <span class="code-command">git checkout -b hotfix/nombre-hotfix</span>
+                </div>
+            </div>
+            
+            <div class="step-box step-2">
+                <div class="step-num">PASO 2</div>
+                <div class="step-title">Seleccionar el template</div>
+                <div class="step-desc">Elige el template según tu trabajo:</div>
+                <div class="two-col" style="margin-top: 15px;">
+                    <div style="background: #16213e; padding: 15px; border-radius: 10px;">
+                        <strong style="color: #38ef7d;">⭐ Versión Simple:</strong>
+                        <ul style="margin-top: 10px; opacity: 0.9;">
+                            <li>FEATURE_SIMPLE.md</li>
+                            <li>REFACTOR_SIMPLE.md</li>
+                            <li>BUG_FIX_SIMPLE.md</li>
+                        </ul>
+                        <p style="font-size: 0.85rem; margin-top: 10px; opacity: 0.7;">Para trabajos directos y sencillos</p>
+                    </div>
+                    <div style="background: #16213e; padding: 15px; border-radius: 10px;">
+                        <strong style="color: #f59e0b;">⭐⭐⭐ Versión Detallada:</strong>
+                        <ul style="margin-top: 10px; opacity: 0.9;">
+                            <li>FEATURE.md</li>
+                            <li>REFACTOR.md</li>
+                            <li>BUG_FIX.md</li>
+                        </ul>
+                        <p style="font-size: 0.85rem; margin-top: 10px; opacity: 0.7;">Para trabajos complejos con muchos cambios</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="step-box step-3">
+                <div class="step-num">PASO 3</div>
+                <div class="step-title">Llenar el template</div>
+                <div class="step-desc">Tienes 3 opciones:</div>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-top: 15px;">
+                    <div style="background: #16213e; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 1.5rem; margin-bottom: 8px;">✍️</div>
+                        <strong>Opción 1: Manual</strong>
+                        <p style="font-size: 0.85rem; opacity: 0.7; margin-top: 5px;">Escribir cada campo tú mismo</p>
+                    </div>
+                    <div style="background: #16213e; padding: 15px; border-radius: 10px; text-align: center; border: 2px solid #a855f7;">
+                        <div style="font-size: 1.5rem; margin-bottom: 8px;">🤖</div>
+                        <strong style="color: #a855f7;">Opción 2: Con IA (Recomendado)</strong>
+                        <p style="font-size: 0.85rem; opacity: 0.7; margin-top: 5px;">Usar ChatGPT/Claude para ayudarte</p>
+                    </div>
+                    <div style="background: #16213e; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 1.5rem; margin-bottom: 8px;">⚡</div>
+                        <strong>Opción 3: Script</strong>
+                        <p style="font-size: 0.85rem; opacity: 0.7; margin-top: 5px;">Script que genera el template</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="step-box step-4">
+                <div class="step-num">PASO 4</div>
+                <div class="step-title">Crear el Pull Request</div>
+                <div class="step-desc">Sube tu código y crea el PR en GitHub/GitLab:</div>
+                <div class="code-block">
+                    <span class="code-command">git add .</span><br>
+                    <span class="code-command">git commit -m "feat: descripción del cambio"</span><br>
+                    <span class="code-command">git push origin feature/nombre-tarea</span><br><br>
+                    <span class="code-comment"># Luego ir a GitHub/GitLab y crear PR</span><br>
+                    <span class="code-comment"># Seleccionar el template correspondiente</span><br>
+                    <span class="code-comment"># Llenar los campos</span>
+                </div>
+            </div>
+            
+            <div class="step-box step-5">
+                <div class="step-num">PASO 5</div>
+                <div class="step-title">Esperar revisión</div>
+                <div class="step-desc">Joel (QA-DEV) revisará tu PR y podrá:</div>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-top: 15px;">
+                    <div style="background: #38ef7d; color: #000; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold;">
+                        ✅ Aprobar<br>
+                        <span style="font-size: 0.85rem; font-weight: normal;">Merge a pre-produccion</span>
+                    </div>
+                    <div style="background: #f59e0b; color: #000; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold;">
+                        ⚠️ Aprobar con observaciones<br>
+                        <span style="font-size: 0.85rem; font-weight: normal;">Merge con notas</span>
+                    </div>
+                    <div style="background: #ef4444; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold;">
+                        ❌ Rechazar<br>
+                        <span style="font-size: 0.85rem; font-weight: normal;">Corregir y volver a enviar</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 3: Cómo usar IA -->
+        <div class="section">
+            <h2 class="section-title"><span>🤖</span> Cómo Usar IA para Llenar los Templates</h2>
+            
+            <div class="ai-box">
+                <div class="ai-title">💡 ¿Por qué usar IA?</div>
+                <ul style="line-height: 2;">
+                    <li>Ahorra tiempo escribiendo documentación</li>
+                    <li>Genera templates completos y profesionales</li>
+                    <li>Ayuda a documentar correctamente</li>
+                    <li>Reduce errores olvidados</li>
+                    <li>Mejora la calidad del PR</li>
+                </ul>
+            </div>
+            
+            <div class="example-box">
+                <div class="example-title">📝 Ejemplo 1: Feature con IA</div>
+                
+                <div class="ai-prompt">
+                    <strong>Prompt para la IA:</strong><br>
+                    "Estoy creando un PR para un feature nuevo. El feature es: Crear módulo de Nómina APTPRA. 
+                    Incluye: endpoint para calcular nómina, servicio de cálculo, componente UI para ingresar datos. 
+                    Ayúdame a llenar el template FEATURE_SIMPLE.md"
+                </div>
+                
+                <div class="template-compare">
+                    <div class="template-before">
+                        <div class="template-label">ANTES (Template vacío)</div>
+                        <div style="font-family: monospace; font-size: 0.8rem; opacity: 0.7;">
+                            ## Task<br>
+                            - ID: <br>
+                            - Title: <br>
+                            - Type: Feature<br><br>
+                            ## Objetivo<br>
+                            Describe qué funcionalidad nueva se implementa.<br><br>
+                            ## Cambios realizados<br>
+                            - <br>
+                            - <br>
+                            - 
+                        </div>
+                    </div>
+                    <div class="template-after">
+                        <div class="template-label">DESPUÉS (Template con IA)</div>
+                        <div style="font-family: monospace; font-size: 0.8rem;">
+                            ## Task<br>
+                            - ID: #123<br>
+                            - Title: Módulo de Nómina APTPRA<br>
+                            - Type: Feature<br><br>
+                            ## Objetivo<br>
+                            Implementar módulo completo de nómina para cálculo de salarios, deducciones y bonificaciones del personal APTPRA.<br><br>
+                            ## Cambios realizados<br>
+                            - Endpoint POST /api/nomina/calcular<br>
+                            - Servicio NominaService con lógica de cálculo<br>
+                            - Componente UI NominaComponent<br>
+                            - Modelo NominaDto para transferencia de datos
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="example-box">
+                <div class="example-title">📝 Ejemplo 2: Bug Fix con IA</div>
+                
+                <div class="ai-prompt">
+                    <strong>Prompt para la IA:</strong><br>
+                    "Tengo un bug: cuando un usuario intenta enviar facturas a México, el sistema falla con error 500. 
+                    El error está en el servicio de facturación, específicamente en el método SendToMexico(). 
+                    El problema es que no valida si el RFC es válido antes de enviar. 
+                    Ayúdame a llenar el template BUG_FIX_SIMPLE.md"
+                </div>
+                
+                <div class="template-after">
+                    <div class="template-label">Resultado con IA</div>
+                    <div style="font-family: monospace; font-size: 0.8rem;">
+                        ## Task<br>
+                        - ID: #456<br>
+                        - Title: Corregir envío de facturas a México<br>
+                        - Type: Bug Fix<br><br>
+                        ## Objetivo<br>
+                        Corregir error 500 al enviar facturas a México. El sistema fallaba porque no validaba el RFC antes de enviar.<br><br>
+                        ## Cambios realizados<br>
+                        - Agregué validación de RFC en SendToMexico()<br>
+                        - Agregué mensaje de error claro cuando RFC es inválido<br>
+                        - Agregué logs para debugging<br><br>
+                        ## Cómo probar<br>
+                        1. Ir a módulo de facturación<br>
+                        2. Seleccionar destino: México<br>
+                        3. Ingresar RFC inválido (ej: ABC123)<br>
+                        4. Verificar que muestra error "RFC inválido"<br>
+                        5. Ingresar RFC válido y verificar que envía correctamente
+                    </div>
+                </div>
+            </div>
+            
+            <div class="example-box">
+                <div class="example-title">📝 Ejemplo 3: Refactor con IA</div>
+                
+                <div class="ai-prompt">
+                    <strong>Prompt para la IA:</strong><br>
+                    "Estoy refactorizando el módulo de inventario. Estoy moviendo todos los servicios de una sola carpeta a subcarpetas por dominio (Products/, Stock/, Transfers/). 
+                    No cambié comportamiento, solo reestructuré. 
+                    Ayúdame a llenar el template REFACTOR_SIMPLE.md"
+                </div>
+                
+                <div class="template-after">
+                    <div class="template-label">Resultado con IA</div>
+                    <div style="font-family: monospace; font-size: 0.8rem;">
+                        ## Task<br>
+                        - ID: #789<br>
+                        - Title: Reestructurar módulo de inventario por dominio<br>
+                        - Type: Refactor<br><br>
+                        ## Objetivo<br>
+                        Reestructurar el módulo de inventario separando servicios por dominio para mejorar legibilidad y mantenibilidad.<br><br>
+                        ## Cambios realizados<br>
+                        - Moví ProductService.cs a Products/ProductService.cs<br>
+                        - Moví StockService.cs a Stock/StockService.cs<br>
+                        - Moví TransferService.cs a Transfers/TransferService.cs<br>
+                        - Actualicé imports en archivos dependientes<br><br>
+                        ## Cómo probar<br>
+                        1. Verificar que el código compila sin errores<br>
+                        2. Probar funcionalidad de productos (crear, editar, eliminar)<br>
+                        3. Probar funcionalidad de stock (consultar, ajustar)<br>
+                        4. Probar funcionalidad de transferencias (crear, aprobar)
+                    </div>
+                </div>
+            </div>
+            
+            <div class="tip-box">
+                <div class="tip-title">💡 Tips para mejores resultados con IA</div>
+                <ul style="line-height: 2;">
+                    <li><strong>Sé específico:</strong> "El error ocurre cuando hago X, el mensaje es Y"</li>
+                    <li><strong>Incluye contexto:</strong> "Estoy trabajando en el módulo de facturación"</li>
+                    <li><strong>Menciona archivos:</strong> "El cambio está en Services/FacturacionService.cs"</li>
+                    <li><strong>Pide formato:</strong> "Dame el resultado en formato markdown"</li>
+                    <li><strong>Revisa y ajusta:</strong> La IA puede equivocarse, siempre revisa</li>
+                </ul>
+            </div>
+        </div>
+        
+        <!-- Sección 4: Ejemplo Completo -->
+        <div class="section">
+            <h2 class="section-title"><span>📋</span> Ejemplo Completo: Feature con IA</h2>
+            
+            <div class="example-box">
+                <div class="example-title">Escenario: Crear endpoint para reportes de ventas</div>
+                
+                <div class="ai-prompt">
+                    <strong>Prompt completo para IA:</strong><br><br>
+                    "Necesito crear un PR para un endpoint nuevo. Aquí está la información:<br><br>
+                    
+                    <strong>Tipo:</strong> Feature<br>
+                    <strong>Descripción:</strong> Endpoint GET /api/reports/ventas que retorna reporte de ventas por rango de fechas<br>
+                    <strong>Archivos modificados:</strong><br>
+                    - Controllers/ReportsController.cs (nuevo método GetSalesReport)<br>
+                    - Services/ReportsService.cs (nuevo servicio)<br>
+                    - DTOs/SalesReportDto.cs (nuevo DTO)<br>
+                    <strong>Cambios en BD:</strong> Ninguno<br>
+                    <strong>Tests:</strong> Tests unitarios en ReportsServiceTests.cs<br>
+                    <strong>Script utilizado:</strong> Ninguno, solo código C#<br><br>
+                    
+                    Ayúdame a llenar el template FEATURE_SIMPLE.md completo"
+                </div>
+                
+                <div class="template-after" style="margin-top: 20px;">
+                    <div class="template-label">Template completo generado por IA</div>
+                    <div style="font-family: monospace; font-size: 0.85rem; background: #1a1a2e; padding: 20px; border-radius: 10px; white-space: pre-wrap;">
+# Pull Request - FEATURE
+
+## Task
+- ID: #101
+- Title: Endpoint de reportes de ventas
+- Type: Feature
+
+---
+
+## Objetivo
+Implementar endpoint GET /api/reports/ventas que retorna reporte de ventas por rango de fechas para el módulo de reportes del ERP.
+
+---
+
+## Cambios realizados
+- Nuevo método GetSalesReport en ReportsController.cs
+- Nuevo servicio ReportsService.cs con lógica de consulta
+- Nuevo DTO SalesReportDto para estructura de respuesta
+- Tests unitarios en ReportsServiceTests.cs
+
+---
+
+## Archivos impactados
+- Controllers/ReportsController.cs
+- Services/ReportsService.cs
+- DTOs/SalesReportDto.cs
+- Tests/ReportsServiceTests.cs
+
+---
+
+## Impacto arquitectónico
+Bajo impacto. Se agrega un nuevo endpoint sin modificar existentes. Sigue el patrón Controller → Service → DTO establecido.
+
+---
+
+## Riesgos
+- Ninguno identificado
+
+---
+
+## Cómo probar
+1. Iniciar la aplicación
+2. Abrir Swagger en /swagger
+3. Hacer GET a /api/reports/ventas?startDate=2024-01-01&endDate=2024-12-31
+4. Verificar que retorna JSON con estructura correcta
+5. Verificar que los datos son correctos
+
+---
+
+## Dependencias
+- Ninguna
+
+---
+
+## Checklist DEV
+- [x] Compila
+- [x] Tests OK
+- [x] Manejo de errores
+- [x] Logs agregados
+- [x] Seguridad validada
+- [x] Performance revisada
+
+---
+
+## Evidencia
+- Screenshot de Swagger funcionando
+- Payload de respuesta JSON
+- Tests pasando
+
+---
+
+## Script utilizado (si aplica)
+N/A - Solo código C#</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 5: Comandos Rápidos -->
+        <div class="section">
+            <h2 class="section-title"><span>⚡</span> Comandos Rápidos</h2>
+            
+            <div class="two-col">
+                <div class="step-box step-1">
+                    <div class="step-title">Crear rama y empezar</div>
+                    <div class="code-block">
+                        <span class="code-comment"># Feature</span><br>
+                        <span class="code-command">git checkout pre-produccion && git pull</span><br>
+                        <span class="code-command">git checkout -b feature/mi-feature</span><br><br>
+                        <span class="code-comment"># Fix</span><br>
+                        <span class="code-command">git checkout pre-produccion && git pull</span><br>
+                        <span class="code-command">git checkout -b fix/mi-fix</span><br><br>
+                        <span class="code-comment"># Refactor</span><br>
+                        <span class="code-command">git checkout pre-produccion && git pull</span><br>
+                        <span class="code-command">git checkout -b refactor/mi-refactor</span>
+                    </div>
+                </div>
+                
+                <div class="step-box step-2">
+                    <div class="step-title">Subir cambios</div>
+                    <div class="code-block">
+                        <span class="code-comment"># Guardar cambios</span><br>
+                        <span class="code-command">git add .</span><br>
+                        <span class="code-command">git commit -m "feat: descripción"</span><br><br>
+                        <span class="code-comment"># Subir a repositorio</span><br>
+                        <span class="code-command">git push origin feature/mi-feature</span><br><br>
+                        <span class="code-comment"># Crear PR en GitHub/GitLab</span><br>
+                        <span class="code-comment"># Seleccionar template</span><br>
+                        <span class="code-comment"># Llenar con IA o manualmente</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 6: Errores Comunes -->
+        <div class="section">
+            <h2 class="section-title"><span>🚨</span> Errores Comunes y Cómo Evitarlos</h2>
+            
+            <div class="two-col">
+                <div class="step-box step-4">
+                    <div class="step-title">❌ Errores Comunes</div>
+                    <ul style="line-height: 2; list-style: none;">
+                        <li>❌ Crear rama desde otra feature</li>
+                        <li>❌ Push directo a main</li>
+                        <li>❌ PR sin documentar</li>
+                        <li>❌ No hacer git pull antes</li>
+                        <li>❌ Usar template incorrecto</li>
+                        <li>❌ No incluir tests</li>
+                    </ul>
+                </div>
+                
+                <div class="step-box step-2">
+                    <div class="step-title">✅ Cómo Hacerlo Bien</div>
+                    <ul style="line-height: 2; list-style: none;">
+                        <li>✅ Siempre desde pre-produccion (o main para hotfix)</li>
+                        <li>✅ Siempre crear PR</li>
+                        <li>✅ Siempre documentar cambios</li>
+                        <li>✅ Siempre hacer git pull primero</li>
+                        <li>✅ Seleccionar template correcto</li>
+                        <li>✅ Incluir tests y evidencia</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+    </div>
+</body>
+</html>

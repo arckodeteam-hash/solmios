@@ -291,7 +291,20 @@
               <!-- Resumen precio -->
               <div v-if="selRoom && form.checkIn && form.checkOut" class="bg-surface rounded-2xl p-4 space-y-2">
                 <div class="text-[11px] font-bold text-text-muted uppercase mb-2">Habitación {{ selRoom.number }} — {{ selRoom.type }}</div>
-                <div class="flex justify-between text-sm"><span class="text-text-secondary">{{ nights }} noches × ${{ selRoom.basePrice }}</span><span class="font-bold text-navy">${{ selRoom.basePrice * nights }}</span></div>
+                <!-- Desglose por temporada (quote del backend). Sin quote → basePrice × noches como antes. -->
+                <template v-if="stayQuote && seasonRows.length">
+                  <div v-for="row in seasonRows" :key="row.key" class="flex justify-between text-sm">
+                    <span class="text-text-secondary inline-flex items-center gap-1.5">
+                      <span v-if="row.color" class="w-2 h-2 rounded-full inline-block shrink-0" :style="{ backgroundColor: row.color }"></span>
+                      {{ row.label }} · {{ row.nights }} {{ row.nights === 1 ? 'noche' : 'noches' }}
+                    </span>
+                    <span class="font-bold text-navy">${{ row.subtotal }}</span>
+                  </div>
+                </template>
+                <div v-else class="flex justify-between text-sm"><span class="text-text-secondary">{{ nights }} noches × ${{ selRoom.basePrice }}</span><span class="font-bold text-navy">${{ subtotal }}</span></div>
+                <div v-if="quoteLoading" class="text-[11px] text-text-muted">Cotizando tarifas…</div>
+                <div v-else-if="stayQuote && !stayQuote.fromRates" data-testid="no-rates-warning" class="text-[11px] font-bold text-gold">Sin tarifas cargadas para estas fechas: se usa el precio base de la habitación.</div>
+                <div v-else-if="stayQuote && stayQuote.closedNights > 0" data-testid="closed-nights-warning" class="text-[11px] font-bold text-gold">{{ stayQuote.closedNights }} {{ stayQuote.closedNights === 1 ? 'noche con tarifa cerrada' : 'noches con tarifa cerrada' }} en la grilla — revisá antes de confirmar.</div>
                 <div class="flex justify-between text-sm"><span class="text-text-secondary">Impuestos ({{ taxRatePct }}%)</span><span class="font-bold text-navy">${{ taxes }}</span></div>
                 <div v-if="promoApplied" class="flex justify-between text-sm"><span class="text-text-secondary">Descuento ({{ form.promoCode.trim().toUpperCase() }})</span><span class="font-bold text-teal">-${{ promoDiscount }}</span></div>
                 <div v-if="form.regime !== 'room_only'" class="flex justify-between text-sm"><span class="text-text-secondary">Régimen</span><span class="font-bold text-teal">{{ regimeLabel }}</span></div>
@@ -372,7 +385,26 @@
                     </div>
                 </div>
                 <div v-if="selRoom && form.checkIn && form.checkOut" class="bg-surface rounded-2xl border border-border p-4 space-y-1.5 text-sm">
-                  <div class="flex justify-between"><span class="text-text-secondary">{{ nights }} noches × ${{ selRoom.basePrice }}</span><span class="font-bold text-navy">${{ subtotal }}</span></div>
+                  <!-- Precio manual (pactado): reemplaza el alojamiento cotizado; impuestos y promo
+                       se siguen calculando encima. Sin checkbox → precio de temporada del backend. -->
+                  <label class="flex items-center gap-2 text-[11px] font-bold text-navy uppercase tracking-wide cursor-pointer select-none" data-testid="manual-price-toggle">
+                    <input type="checkbox" v-model="manualPrice" class="accent-teal w-3.5 h-3.5 cursor-pointer" />
+                    Precio pactado manual
+                  </label>
+                  <input v-if="manualPrice" data-testid="manual-price-input" v-model.number="manualSubtotal" type="number" min="0" step="0.01"
+                    class="w-full px-3 py-2 rounded-lg border border-border text-sm text-navy font-bold focus:border-teal focus:outline-none" placeholder="Alojamiento pactado para toda la estadía ($)" />
+                  <div v-if="manualPrice && stayQuote && !quoteLoading" data-testid="current-rate-hint" class="text-[11px] text-text-muted">Tarifa vigente para esas fechas: ${{ stayQuote.subtotal }} <span v-if="!stayQuote.fromRates">(precio base, sin tarifas cargadas)</span></div>
+                  <template v-if="!manualPrice && stayQuote && seasonRows.length">
+                    <div v-for="row in seasonRows" :key="row.key" class="flex justify-between">
+                      <span class="text-text-secondary inline-flex items-center gap-1.5">
+                        <span v-if="row.color" class="w-2 h-2 rounded-full inline-block shrink-0" :style="{ backgroundColor: row.color }"></span>
+                        {{ row.label }} · {{ row.nights }} {{ row.nights === 1 ? 'noche' : 'noches' }}
+                      </span>
+                      <span class="font-bold text-navy">${{ row.subtotal }}</span>
+                    </div>
+                  </template>
+                  <div v-else class="flex justify-between"><span class="text-text-secondary">{{ nights }} noches × ${{ manualPrice ? (subtotal / Math.max(nights, 1)).toFixed(0) : selRoom.basePrice }}</span><span class="font-bold text-navy">${{ subtotal }}</span></div>
+                  <div v-if="stayQuote && !stayQuote.fromRates && !quoteLoading" data-testid="no-rates-warning" class="text-[11px] font-bold text-gold">Sin tarifas cargadas para estas fechas: se usa el precio base de la habitación.</div>
                   <div class="flex justify-between"><span class="text-text-secondary">Impuestos ({{ taxRatePct }}%)</span><span class="font-bold text-navy">${{ taxes }}</span></div>
                   <div v-if="promoApplied" class="flex justify-between"><span class="text-text-secondary">Descuento ({{ form.promoCode.trim().toUpperCase() }})</span><span class="font-bold text-teal">-${{ promoDiscount }}</span></div>
                   <div class="border-t border-border pt-1.5 flex justify-between items-center">
@@ -453,7 +485,7 @@ import { PromoCodeService } from '@/services/PromoCode.service'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES, NATIONALITIES, LANGUAGES, DOC_TYPES, nationalityToCountryName, countryNameToNationality } from '@/data/locales'
-import type { Guest } from '@/types'
+import type { Guest, StayQuote } from '@/types'
 
 const props = defineProps<{
   editId?: string | null
@@ -614,8 +646,62 @@ const nights = computed(() => {
 })
 // Tasa real del hotel (GET /api/facturas/tax-rate — misma fuente que usa la factura final).
 const taxRatePct = ref(0)
-const subtotal = computed(() => selRoom.value ? selRoom.value.basePrice * nights.value : 0)
+
+// ── Precio por temporada ────────────────────────────────────────────────────────────────
+// Antes el wizard cotizaba `basePrice × noches` acá en el frontend e ignoraba la grilla de
+// temporadas: una reserva manual para fechas de temporada alta se creaba al precio base. Ahora
+// cotiza el backend (`POST /api/reservas/quote`) con la MISMA cadena que el motor público
+// (season_assignments → room_rates → fallback basePrice) y muestra el desglose por temporada.
+// Al guardar, el backend recalcula autoritativo (`priceFrom:'rates'`) — el quote de acá es UX,
+// nunca la fuente de verdad. Si el operador fija precio manual, se manda `priceFrom:'manual'`
+// y el total tal cual (comportamiento histórico: precio pactado).
+const stayQuote = ref<StayQuote | null>(null)
+const quoteLoading = ref(false)
+const manualPrice = ref(false)
+const manualSubtotal = ref<number | null>(null)
+
+async function refreshQuote() {
+  const { roomId, checkIn, checkOut, adults } = form.value
+  if (!roomId || !checkIn || !checkOut || checkOut <= checkIn) { stayQuote.value = null; return }
+  quoteLoading.value = true
+  try {
+    stayQuote.value = await ReservationService.stayQuote({ roomId: String(roomId), checkIn, checkOut, guests: Number(adults) || 2 })
+  } catch {
+    // Sin quote, se cotiza basePrice × noches como antes — no se rompe el alta.
+    stayQuote.value = null
+  } finally {
+    quoteLoading.value = false
+  }
+}
+let quoteDebounceId: ReturnType<typeof setTimeout> | null = null
+watch([() => form.value.checkIn, () => form.value.checkOut, () => form.value.roomId, () => form.value.adults], () => {
+  if (quoteDebounceId) clearTimeout(quoteDebounceId)
+  quoteDebounceId = setTimeout(refreshQuote, 300)
+}, { immediate: true })
+
+const subtotal = computed(() => {
+  if (manualPrice.value && manualSubtotal.value !== null) return Number(manualSubtotal.value) || 0
+  if (stayQuote.value) return stayQuote.value.subtotal
+  return selRoom.value ? selRoom.value.basePrice * nights.value : 0
+})
 const taxes = computed(() => Math.round(subtotal.value * (taxRatePct.value / 100)))
+
+/** Desglose por temporada para el resumen: [{label, color, nights, subtotal}] en orden de aparición. */
+const seasonRows = computed(() => {
+  const q = stayQuote.value
+  if (!q) return []
+  const rows: { key: string; label: string; color: string | null; nights: number; subtotal: number; fromRate: boolean }[] = []
+  for (const n of q.nights) {
+    const key = n.season ?? '__base__'
+    const label = n.season ? (n.seasonLabel ?? n.season) : 'Tarifa base'
+    const last = rows[rows.length - 1]
+    if (last && last.key === key) { last.nights++; last.subtotal += n.price }
+    else rows.push({ key, label, color: n.seasonColor, nights: 1, subtotal: n.price, fromRate: n.fromRate })
+  }
+  return rows
+})
+/** `true` cuando TODAS las noches son de la misma temporada (o todas base) — permite "N × $X". */
+const singleSeason = computed(() => seasonRows.value.length === 1)
 
 // FIX 2026-07-31 — el campo "Código promocional" no aplicaba ningún descuento (solo se
 // guardaba como texto). Preview vía POST /api/promo-codes/preview (sin permiso promo:view,
@@ -832,6 +918,9 @@ function resetForm() {
   selectedGuestId.value = null
   guestSearch.value = ''
   guestResults.value = []
+  manualPrice.value = false
+  manualSubtotal.value = null
+  stayQuote.value = null
   guestSearchOpen.value = false
   guestSearching.value = false
   promoDiscount.value = 0
@@ -979,6 +1068,14 @@ async function save() {
       // del código (validate/incrementUses en connectors/reservas-promocodes.ts) aunque el
       // wizard ya mostrara el descuento en el resumen. Solo se manda si quedó validado.
       promoCode: promoApplied.value ? form.value.promoCode.trim().toUpperCase() : undefined,
+      // Precio por temporada: sin edición manual el backend recalcula el alojamiento con la
+      // grilla (priceFrom:'rates', fuente de verdad server-side); con precio manual se manda el
+      // total pactado tal cual (priceFrom:'manual', comportamiento histórico). Manual tildado
+      // SIN valor cargado cuenta como 'rates' (coincide con el subtotal que se está mostrando).
+      // taxesAmount / promoDiscountAmount son los aditamentos NO-lodging que el total lleva arriba.
+      priceFrom: (manualPrice.value && manualSubtotal.value !== null) ? 'manual' : 'rates',
+      taxesAmount: taxes.value,
+      promoDiscountAmount: promoApplied.value ? promoDiscount.value : 0,
       totalAmount: total.value,
       status: form.value.status,
       notes: form.value.notes,
@@ -1087,6 +1184,12 @@ async function loadForEdit(id: string) {
     f.deposit = ext.deposit || 0
     f.depositPercentage = ext.depositPercentage ?? 100
     f.depositStatus = ext.depositStatus || 'unpaid'
+    // Precio PACTADO de la reserva: en edición se muestra el total existente (no la tarifa
+    // vigente) para no pisarlo al guardar — antes el wizard mandaba basePrice × noches y
+    // editar una reserva a $150 la dejaba en el precio base sin que nadie lo pidiera.
+    // El operador puede desmarcarlo para repreciar a tarifa vigente (temporadas incl.).
+    manualPrice.value = true
+    manualSubtotal.value = Number(ext.totalAmount) || 0
     f.commission = ext.commission || 0
     f.extLocator = ext.externalLocator || ''
     f.otaNotes = ext.otaNotes || ''

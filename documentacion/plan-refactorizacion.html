@@ -1,0 +1,1287 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plan de Refactorización — Kaptas ERP Web API</title>
+<style>
+  :root {
+    --primary: #1a237e;
+    --secondary: #283593;
+    --accent: #3949ab;
+    --success: #2e7d32;
+    --warning: #f57f17;
+    --danger: #c62828;
+    --bg: #f5f5f5;
+    --card: #ffffff;
+    --text: #212121;
+    --text-secondary: #616161;
+    --border: #e0e0e0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; font-size: 13px; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+  /* HEADER */
+  .doc-header { background: linear-gradient(135deg, var(--primary), var(--accent)); color: #fff; padding: 40px; border-radius: 12px; margin-bottom: 30px; }
+  .doc-header h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  .doc-header .meta { display: flex; gap: 30px; flex-wrap: wrap; margin-top: 15px; font-size: 13px; opacity: .9; }
+  .doc-header .meta span { display: flex; align-items: center; gap: 6px; }
+
+  /* SECTIONS */
+  .section { background: var(--card); border-radius: 10px; padding: 25px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .section h2 { font-size: 20px; color: var(--primary); border-bottom: 3px solid var(--accent); padding-bottom: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+  .section h3 { font-size: 16px; color: var(--secondary); margin: 20px 0 10px; }
+  .section h4 { font-size: 14px; color: var(--text-secondary); margin: 15px 0 8px; }
+
+  /* TABLES */
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12px; }
+  th { background: var(--secondary); color: #fff; padding: 10px 8px; text-align: left; font-weight: 600; white-space: nowrap; }
+  td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:hover td { background: #f0f4ff; }
+  tr.separator td { background: #e8eaf6; font-weight: 700; border-bottom: 2px solid var(--accent); }
+
+  /* BADGES */
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .badge-high { background: #ffcdd2; color: var(--danger); }
+  .badge-medium { background: #fff3e0; color: var(--warning); }
+  .badge-low { background: #e8f5e9; color: var(--success); }
+  .badge-critical { background: #c62828; color: #fff; }
+  .badge-info { background: #e3f2fd; color: #1565c0; }
+
+  /* WBS */
+  .wbs { padding-left: 20px; }
+  .wbs li { margin: 4px 0; list-style: none; }
+  .wbs li::before { content: "→ "; color: var(--accent); font-weight: 700; }
+  .wbs .wbs-parent { font-weight: 700; color: var(--primary); margin-top: 10px; }
+  .wbs .wbs-parent::before { content: "⬤ "; color: var(--accent); }
+
+  /* RACI */
+  .raci-table td:first-child, .raci-table th:first-child { position: sticky; left: 0; background: var(--card); }
+  .raci-table th:first-child { background: var(--secondary); }
+
+  /* DAILY AGENDA */
+  .day-card { background: #f8f9ff; border: 1px solid var(--border); border-radius: 8px; padding: 15px 20px; margin: 12px 0; }
+  .day-card h4 { color: var(--primary); font-size: 15px; margin: 0 0 10px; }
+  .day-card .member { padding: 6px 0; border-bottom: 1px dashed #e0e0e0; display: grid; grid-template-columns: 200px 1fr 60px; gap: 10px; align-items: start; }
+  .day-card .member:last-child { border: none; }
+  .day-card .member-name { font-weight: 600; color: var(--secondary); }
+  .day-card .member-tasks { color: var(--text); }
+  .day-card .member-tasks .task-item { display: block; padding: 1px 0; }
+  .day-card .member-hours { text-align: right; color: var(--text-secondary); font-weight: 600; }
+
+  /* SUMMARY BOX */
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 15px 0; }
+  .summary-card { background: linear-gradient(135deg, #e8eaf6, #c5cae9); border-radius: 8px; padding: 15px; text-align: center; }
+  .summary-card .number { font-size: 28px; font-weight: 700; color: var(--primary); }
+  .summary-card .label { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+  /* AGENDA DAY HEADER */
+  .agenda-day { background: var(--primary); color: #fff; padding: 12px 20px; border-radius: 8px 8px 0 0; font-size: 16px; font-weight: 700; margin-top: 25px; }
+  .agenda-body { border: 1px solid var(--border); border-radius: 0 0 8px 8px; overflow: hidden; }
+
+  /* RESPONSIVE */
+  @media print { body { font-size: 11px; } .section { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; } .doc-header { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  @media (max-width: 768px) { .day-card .member { grid-template-columns: 1fr; } table { font-size: 11px; } }
+
+  /* PHASE */
+  .phase { background: #e3f2fd; border-left: 4px solid var(--accent); padding: 12px 16px; margin: 15px 0 5px; border-radius: 0 6px 6px 0; }
+  .phase h3 { margin: 0; color: var(--primary); }
+
+  /* STATUS */
+  .status-pending { color: var(--warning); }
+  .status-inprogress { color: var(--accent); }
+  .status-complete { color: var(--success); }
+  .status-blocked { color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ============================================================ -->
+<!-- HEADER -->
+<!-- ============================================================ -->
+<div class="doc-header">
+  <h1>Plan de Refactorización — Kaptas ERP Web API</h1>
+  <p style="margin-top:4px;opacity:.9;">Documento de Arquitectura · Cronograma Profesional · Asignación RACI</p>
+  <div class="meta">
+    <span>📅 Inicio: <strong>Lunes 13/07/2026</strong></span>
+    <span>🏁 Fin estimado: <strong>Viernes 08/01/2027</strong></span>
+    <span>👥 Equipo: <strong>10 personas</strong></span>
+    <span>📊 Duración: <strong>26 semanas · 130 días hábiles</strong></span>
+    <span>🔄 Versión: <strong>1.0</strong></span>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- ROL -->
+<!-- ============================================================ -->
+<div class="section">
+<h2>1. ROL</h2>
+<p>Software Architect, Project Manager (PMP), Scrum Master y Technical Lead Senior con más de 20 años de experiencia en refactorización de ERP, CRM y sistemas empresariales de gran escala.</p>
+<p style="margin-top:8px;padding:10px 14px;background:#fff3e0;border-radius:6px;border-left:4px solid var(--warning);">
+<strong>Enfoque:</strong> Este documento no contiene estimaciones superficiales. Cada tarea ha sido analizada contra el código fuente, la arquitectura real y las dependencias del proyecto Kaptas ERP Web API.
+</p>
+</div>
+
+<!-- ============================================================ -->
+<!-- OBJETIVO -->
+<!-- ============================================================ -->
+<div class="section">
+<h2>2. OBJETIVO</h2>
+<p>Refactorizar progresivamente Kaptas ERP Web API desde una arquitectura N-Tier monolítica legacy hacia una Arquitectura Limpia modular (v2) sin interrumpir las operaciones del sistema en producción.</p>
+<h3>Estrategia Híbrida</h3>
+<ul style="margin:8px 0 0 20px;">
+  <li><strong>🔵 Zona LEGADO:</strong> Código existente que NO se modifica — se protege con tests de caracterización.</li>
+  <li><strong>🟢 Zona PUENTE:</strong> Adaptadores que conectan el nuevo código con el legado durante la transición.</li>
+  <li><strong>🟡 Zona NUEVO (v2):</strong> Módulos refactorizados en Features/ con Clean Architecture.</li>
+  <li><strong>⚪ Zona LIMPIO:</strong> Módulos completamente migrados, legado eliminado.</li>
+</ul>
+</div>
+
+<!-- ============================================================ -->
+<!-- PASO 1 — ANÁLISIS -->
+<!-- ============================================================ -->
+<div class="section">
+<h2>3. ANÁLISIS DEL PROYECTO</h2>
+
+<h3>3.1 Stack Tecnológico</h3>
+<table>
+  <tr><th>Componente</th><th>Tecnología</th><th>Versión</th><th>Observaciones</th></tr>
+  <tr><td>Runtime</td><td>.NET / ASP.NET Core</td><td>7.0 (librerías) / 8.0 (API)</td><td>Versiones mixtas — unificar a .NET 8</td></tr>
+  <tr><td>ORM</td><td>Entity Framework Core + Dapper</td><td>7.0.2 / 2.0.123</td><td>EF para consultas, Dapper para SPs</td></tr>
+  <tr><td>Base de datos</td><td>SQL Server (Azure SQL)</td><td>—</td><td>Multi-tenant: 1 master + N tenant DBs</td></tr>
+  <tr><td>Mapeo</td><td>AutoMapper</td><td>12.0.1</td><td>Perfil único de 802 líneas — fragmentar</td></tr>
+  <tr><td>Autenticación</td><td>JWT Bearer</td><td>7.0.5</td><td>Roles + permisos + suscripciones</td></tr>
+  <tr><td>Jobs</td><td>Hangfire</td><td>1.8.18</td><td>Tareas en background</td></tr>
+  <tr><td>Tiempo real</td><td>SignalR</td><td>built-in</td><td>PonchadorHub</td></tr>
+  <tr><td>Testing</td><td>xUnit + Moq</td><td>2.6.6 / 4.20.70</td><td>Solo cubre RepairShop</td></tr>
+  <tr><td>PDF/Reportes</td><td>QuestPDF + SkiaSharp</td><td>2024.7.3</td><td>—</td></tr>
+</table>
+
+<h3>3.2 Arquitectura Actual</h3>
+<table>
+  <tr><th>Capa</th><th>Proyecto</th><th>Responsabilidad</th><th>Estado</th></tr>
+  <tr><td>Presentación</td><td>Kaptas.API</td><td>Controllers, Middlewares, Filters</td><td>Legado + v2 incipiente</td></tr>
+  <tr><td>Negocio</td><td>Kaptas.Services</td><td>Servicios monolíticos (~60 servicios)</td><td>Legado — God Services</td></tr>
+  <tr><td>Datos</td><td>Kaptas.Context</td><td>DbContexts, entidades (~233 tablas)</td><td>Legado — OnModelCreating masivo</td></tr>
+  <tr><td>DTOs</td><td>Kaptas.DTO</td><td>Request/Response/Enums</td><td>Legado — 59 subdirectorios</td></tr>
+  <tr><td>Helpers</td><td>Kaptas.Helpers</td><td>AutoMapper, utilidades</td><td>Estable</td></tr>
+  <tr><td>Core (DDD)</td><td>Kaptas.Core</td><td>Interfaces de dominio</td><td>🔴 Vacío — proyecto muerto</td></tr>
+</table>
+
+<h3>3.3 Problemas Detectados</h3>
+<table>
+  <tr><th>#</th><th>Categoría</th><th>Problema</th><th>Impacto</th><th>Severidad</th></tr>
+  <tr><td>P01</td><td>Arquitectura</td><td>God Services: responsabilidades mezcladas, sin separación CQRS</td><td>Mantenibilidad, testabilidad</td><td><span class="badge badge-high">ALTO</span></td></tr>
+  <tr><td>P02</td><td>Arquitectura</td><td>Kaptas.Core vacío — la capa de dominio no existe</td><td>Violación DDD, acoplamiento</td><td><span class="badge badge-high">ALTO</span></td></tr>
+  <tr><td>P03</td><td>Versiones</td><td>Mezcla .NET 7 y .NET 8 en misma solución</td><td>Compatibilidad, seguridad</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+  <tr><td>P04</td><td>Tests</td><td>Solo 1 módulo cubierto (RepairShop)</td><td>Riesgo de regresión</td><td><span class="badge badge-critical">CRÍTICO</span></td></tr>
+  <tr><td>P05</td><td>Seguridad</td><td>Endpoints legacy sin [Authorize] (defecto D1)</td><td>Exposición de datos</td><td><span class="badge badge-critical">CRÍTICO</span></td></tr>
+  <tr><td>P06</td><td>DB</td><td>Fluent API con índices/FKs con nombres auto-generados</td><td>Migraciones frágiles</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+  <tr><td>P07</td><td>Código</td><td>Código duplicado: IBaseService en Core y Services</td><td>Confusión, mantenimiento</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+  <tr><td>P08</td><td>Código</td><td>Entidad duplicada: CajaChicaMovimiento + CajaChicaMovimiento1</td><td>Inconsistencia de datos</td><td><span class="badge badge-high">ALTO</span></td></tr>
+  <tr><td>P09</td><td>API</td><td>Legado siempre retorna Ok() incluso en errores</td><td>Manejo de errores defectuoso</td><td><span class="badge badge-high">ALTO</span></td></tr>
+  <tr><td>P10</td><td>Nombres</td><td>Mix español/inglés, sin Async suffix, inconsistencias</td><td>Legibilidad</td><td><span class="badge badge-low">BAJO</span></td></tr>
+  <tr><td>P11</td><td>DB</td><td>Stored procedures con lógica de negocio no versionada</td><td>Mantenibilidad</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+  <tr><td>P12</td><td>Config</td><td>Secrets hardcodeados en appsettings (gitignored tardíamente)</td><td>Seguridad</td><td><span class="badge badge-high">ALTO</span></td></tr>
+</table>
+
+<h3>3.4 Resumen Ejecutivo</h3>
+<div style="background:#e8f5e9;padding:15px;border-radius:8px;border-left:4px solid var(--success);">
+  <p><strong>Proyecto:</strong> Kaptas ERP Web API — Sistema multi-tenant para facturación electrónica (DGII/ECF), inventario, contabilidad, nómina, logística y restaurante en República Dominicana.</p>
+  <p><strong>Tamaño:</strong> ~7 proyectos, ~233 entidades, ~60 controladores, ~100 servicios, ~1000+ endpoints</p>
+  <p><strong>Riesgo principal:</strong> Ausencia total de tests fuera del módulo RepairShop (riesgo de regresión crítico)</p>
+  <p><strong>Enfoque:</strong> Refactorización aditiva (no destructiva) — el código legacy permanece intacto mientras se construyen los módulos v2 en Features/. Cada módulo legacy se protege con tests de caracterización antes de migrar.</p>
+  <p><strong>Duración estimada:</strong> 26 semanas (130 días hábiles) con equipo de 10 personas</p>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- PASO 2 — INVENTARIO -->
+<!-- ============================================================ -->
+<div class="section">
+<h2>4. INVENTARIO DE MÓDULOS</h2>
+<table>
+  <tr>
+    <th>ID</th><th>Módulo</th><th>Submódulo</th><th>Complejidad</th><th>Prioridad</th><th>Dependencias</th><th>Riesgo</th>
+  </tr>
+  <tr class="separator"><td colspan="7">FASE 1 — FUNDACIÓN (Semanas 1-4)</td></tr>
+  <tr><td>M01</td><td>Infraestructura</td><td>Shared Kernel (v2), Multi-tenancy, DI</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-critical">CRÍTICA</span></td><td>—</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+  <tr><td>M02</td><td>Auth & Security</td><td>Autenticación, JWT, Roles, Permisos</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-critical">CRÍTICA</span></td><td>M01</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+  <tr><td>M03</td><td>Company/Branch/Store</td><td>Organización multi-tenant</td><td><span class="badge badge-low">BAJA</span></td><td><span class="badge badge-critical">CRÍTICA</span></td><td>M01, M02</td><td><span class="badge badge-low">BAJO</span></td></tr>
+  <tr class="separator"><td colspan="7">FASE 2 — CORE DE NEGOCIO (Semanas 5-12)</td></tr>
+  <tr><td>M04</td><td>Contactos</td><td>Contactos, direcciones, relaciones</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-high">ALTA</span></td><td>M01, M02, M03</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+  <tr><td>M05</td><td>Productos/Inventario</td><td>Productos, precios, stock, categorías, seriales</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-high">ALTA</span></td><td>M01, M02, M03</td><td><span class="badge badge-high">ALTO</span></td></tr>
+  <tr><td>M06</td><td>Operaciones</td><td>Ventas, compras, movimientos de stock</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-high">ALTA</span></td><td>M04, M05</td><td><span class="badge badge-high">ALTO</span></td></tr>
+  <tr class="separator"><td colspan="7">FASE 3 — FINANCIERO (Semanas 13-20)</td></tr>
+  <tr><td>M07</td><td>Facturación/ECF</td><td>Facturas, NCF, ECF (DGII), notas de crédito</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-high">ALTA</span></td><td>M06</td><td><span class="badge badge-critical">MUY ALTO</span></td></tr>
+  <tr><td>M08</td><td>Contabilidad</td><td>Catálogo cuentas, operaciones contables, períodos</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-high">ALTA</span></td><td>M06, M07</td><td><span class="badge badge-high">ALTO</span></td></tr>
+  <tr><td>M09</td><td>Caja/Bancos</td><td>Caja chica, bancos, monedas, tasas de cambio</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-medium">MEDIA</span></td><td>M08</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+  <tr><td>M10</td><td>Nómina/HR</td><td>Empleados, nómina, ponchador, compensaciones</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-medium">MEDIA</span></td><td>M04</td><td><span class="badge badge-high">ALTO</span></td></tr>
+  <tr class="separator"><td colspan="7">FASE 4 — MÓDULOS ESPECIALIZADOS (Semanas 21-24)</td></tr>
+  <tr><td>M11</td><td>Transporte/Logística</td><td>Camiones, choferes, viajes, rutas, zonas</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-medium">MEDIA</span></td><td>M06</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+  <tr><td>M12</td><td>Repair Shop (Taller)</td><td>Órdenes de taller (ya tiene v2)</td><td><span class="badge badge-low">BAJA</span></td><td><span class="badge badge-medium">MEDIA</span></td><td>M06</td><td><span class="badge badge-low">BAJO</span></td></tr>
+  <tr><td>M13</td><td>Restaurante</td><td>Menú, mesas, pedidos, configuración</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-low">BAJA</span></td><td>M04, M05</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+  <tr class="separator"><td colspan="7">FASE 5 — TRANSVERSAL (Semanas 25-26)</td></tr>
+  <tr><td>M14</td><td>Dashboard/Reportes</td><td>Estadísticas, reportes dinámicos</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-low">BAJA</span></td><td>M06, M07</td><td><span class="badge badge-low">BAJO</span></td></tr>
+  <tr><td>M15</td><td>Notificaciones</td><td>Mail, WhatsApp, notificaciones push</td><td><span class="badge badge-low">BAJA</span></td><td><span class="badge badge-low">BAJA</span></td><td>M02</td><td><span class="badge badge-low">BAJO</span></td></tr>
+  <tr><td>M16</td><td>Suscripciones/Pagos</td><td>Planes, suscripciones, Azul payments</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-medium">MEDIA</span></td><td>M02, M03</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+  <tr><td>M17</td><td>Configuración/Diccionario</td><td>Campos obligatorios, FieldRename, multi-lenguaje</td><td><span class="badge badge-low">BAJA</span></td><td><span class="badge badge-low">BAJA</span></td><td>M01</td><td><span class="badge badge-low">BAJO</span></td></tr>
+  <tr><td>M18</td><td>Impresión</td><td>POS térmico, PDF, ZPL, QZ signing</td><td><span class="badge badge-low">BAJA</span></td><td><span class="badge badge-low">BAJA</span></td><td>M07</td><td><span class="badge badge-low">BAJO</span></td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<!-- PASO 3 — WBS -->
+<!-- ============================================================ -->
+<div class="section">
+<h2>5. WBS — WORK BREAKDOWN STRUCTURE</h2>
+
+<div class="phase"><h3>FASE 1: Fundación (Semanas 1-4)</h3></div>
+
+<h4>M01 — Infraestructura & Shared Kernel</h4>
+<ul class="wbs">
+  <li class="wbs-parent">M01.1 Shared Kernel v2</li>
+  <li>M01.1.1 Analizar código existente (_Shared/)</li>
+  <li>M01.1.2 Diseñar contracts: ICurrentUserProvider, ITenantConnectionFactory, ISpRunner, IUserBranchesQuery</li>
+  <li>M01.1.3 Implementar infraestructura compartida</li>
+  <li>M01.1.4 Escribir tests unitarios de Shared Kernel</li>
+  <li>M01.1.5 Documentación técnica</li>
+  <li class="wbs-parent">M01.2 Multi-tenancy</li>
+  <li>M01.2.1 Refactor TenantScope y ValidateTenantFilter</li>
+  <li>M01.2.2 Migrar resolución de tenant de IBaseService a middleware v2</li>
+  <li>M01.2.3 Tests de integración multi-tenant</li>
+  <li class="wbs-parent">M01.3 Dependency Injection</li>
+  <li>M01.3.1 Refactor DependencyInjectionExtender (~100 registros)</li>
+  <li>M01.3.2 Crear extension methods por módulo</li>
+  <li>M01.3.3 Separar registros legacy vs v2</li>
+  <li class="wbs-parent">M01.4 AutoMapper</li>
+  <li>M01.4.1 Fragmentar perfil de 802 líneas en perfiles por módulo</li>
+  <li>M01.4.2 Tests de mapeo para cada perfil</li>
+  <li class="wbs-parent">M01.5 Base de datos — Migraciones iniciales</li>
+  <li>M01.5.1 Revisar y consolidar V001__baseline.sql</li>
+  <li>M01.5.2 Crear V003__named_constraints.sql (renombrar FKs)</li>
+  <li>M01.5.3 Scripts de limpieza (CajaChicaMovimiento1)</li>
+</ul>
+
+<h4>M02 — Auth & Security</h4>
+<ul class="wbs">
+  <li>M02.1 Analizar AuthService legacy + SecurityService</li>
+  <li>M02.2 Diseñar Auth v2 con Clean Architecture</li>
+  <li>M02.3 Implementar Auth v2 Controller + Service + DTOs</li>
+  <li>M02.4 Refactor JWT middleware (CustomAuthorizationHandler)</li>
+  <li>M02.5 Refactor PermissionMiddleware</li>
+  <li>M02.6 Implementar [Authorize] faltante en endpoints legacy (defecto D1)</li>
+  <li>M02.7 Tests de caracterización para Auth legacy</li>
+  <li>M02.8 Tests de equivalencia Auth v1 ↔ v2</li>
+  <li>M02.9 Corregir manejo de errores (Ok→BadRequest/Unauthorized)</li>
+  <li>M02.10 Documentación</li>
+</ul>
+
+<h4>M03 — Company / Branch / Store</h4>
+<ul class="wbs">
+  <li>M03.1 Analizar CompanyService, BranchService, StoreService</li>
+  <li>M03.2 Diseñar Organization v2</li>
+  <li>M03.3 Implementar v2: Controller + Service + DTOs</li>
+  <li>M03.4 Tests de caracterización</li>
+  <li>M03.5 Tests de equivalencia</li>
+  <li>M03.6 Documentación</li>
+</ul>
+
+<div class="phase"><h3>FASE 2: Core de Negocio (Semanas 5-12)</h3></div>
+
+<h4>M04 — Contactos</h4>
+<ul class="wbs">
+  <li>M04.1 Analizar ContactService, ContactAddressesService</li>
+  <li>M04.2 Diseñar Contacts v2</li>
+  <li>M04.3 Implementar v2: Controller + Service + DTOs + Validaciones</li>
+  <li>M04.4 Tests de caracterización (Contactos legacy)</li>
+  <li>M04.5 Tests de equivalencia</li>
+  <li>M04.6 Migrar ContactoBitacora, ContactoNumero, ContactoPrecioPermitido</li>
+  <li>M04.7 Refactor Zonas (integración geográfica)</li>
+  <li>M04.8 Documentación</li>
+</ul>
+
+<h4>M05 — Productos / Inventario</h4>
+<ul class="wbs">
+  <li>M05.1 Analizar KProductsService, ProductsService, ProductCategoryService</li>
+  <li>M05.2 Diseñar Products v2 (con DDD: Producto, Precio, Stock, Serial)</li>
+  <li>M05.3 Implementar entidades de dominio Product v2</li>
+  <li>M05.4 Implementar ProductController v2 + Service + DTOs</li>
+  <li>M05.5 Refactor lógica de precios (ProductoPrecio, históricos)</li>
+  <li>M05.6 Refactor lógica de stock (movimientos, inventario)</li>
+  <li>M05.7 Refactor seriales (ProductoSerial)</li>
+  <li>M05.8 Tests de caracterización (legado productos)</li>
+  <li>M05.9 Tests de equivalencia v1 ↔ v2</li>
+  <li>M05.10 Documentación</li>
+</ul>
+
+<h4>M06 — Operaciones (Ventas / Compras)</h4>
+<ul class="wbs">
+  <li>M06.1 Analizar OperationsService, SalesController, PurchaseController</li>
+  <li>M06.2 Diseñar Operations v2 (CQRS: Queries vs Commands)</li>
+  <li>M06.3 Implementar entidades de dominio Operations v2</li>
+  <li>M06.4 Implementar queries de operaciones v2</li>
+  <li>M06.5 Implementar commands de operaciones v2 (crear, actualizar, anular)</li>
+  <li>M06.6 Refactor lógica de movimientos de stock (OperacionMovStock)</li>
+  <li>M06.7 Refactor abonos y medios de pago</li>
+  <li>M06.8 Tests de caracterización (legado)</li>
+  <li>M06.9 Tests de equivalencia v1 ↔ v2</li>
+  <li>M06.10 Documentación</li>
+</ul>
+
+<div class="phase"><h3>FASE 3: Financiero (Semanas 13-20)</h3></div>
+
+<h4>M07 — Facturación / ECF</h4>
+<ul class="wbs">
+  <li>M07.1 Analizar InvoiceController, EcfController, NCFManagerController, CreditNotesController</li>
+  <li>M07.2 Diseñar Invoicing v2 (cumplimiento DGII)</li>
+  <li>M07.3 Implementar facturación v2 (Controller + Service + DTOs)</li>
+  <li>M07.4 Refactor lógica NCF (control de secuencias)</li>
+  <li>M07.5 Refactor integración ECF (envío DGII)</li>
+  <li>M07.6 Refactor notas de crédito</li>
+  <li>M07.7 Tests de caracterización (facturación legacy)</li>
+  <li>M07.8 Tests de equivalencia v1 ↔ v2</li>
+  <li>M07.9 Documentación</li>
+</ul>
+
+<h4>M08 — Contabilidad</h4>
+<ul class="wbs">
+  <li>M08.1 Analizar AccountCatalogService, OperacionesContablesService, PeriodosContablesService</li>
+  <li>M08.2 Diseñar Accounting v2 (catálogo, operaciones, períodos)</li>
+  <li>M08.3 Implementar catálogo de cuentas v2</li>
+  <li>M08.4 Implementar operaciones contables v2 (partida doble)</li>
+  <li>M08.5 Implementar períodos contables v2 (apertura/cierre)</li>
+  <li>M08.6 Refactor integración con operaciones (automatización contable)</li>
+  <li>M08.7 Tests de caracterización</li>
+  <li>M08.8 Tests de equivalencia</li>
+  <li>M08.9 Documentación</li>
+</ul>
+
+<h4>M09 — Caja / Bancos</h4>
+<ul class="wbs">
+  <li>M09.1 Analizar CashAccountingService, PettyCashService, BanksService, ExchangeRateService</li>
+  <li>M09.2 Diseñar Cash v2</li>
+  <li>M09.3 Implementar caja v2 (arqueo, movimientos)</li>
+  <li>M09.4 Implementar caja chica v2</li>
+  <li>M09.5 Implementar bancos y tasas v2</li>
+  <li>M09.6 Tests de caracterización</li>
+  <li>M09.7 Tests de equivalencia</li>
+  <li>M09.8 Limpiar entidad duplicada CajaChicaMovimiento1</li>
+  <li>M09.9 Documentación</li>
+</ul>
+
+<h4>M10 — Nómina / HR</h4>
+<ul class="wbs">
+  <li>M10.1 Analizar PayrollService, EmployeeService, PonchadorService</li>
+  <li>M10.2 Diseñar HR v2</li>
+  <li>M10.3 Implementar empleados v2</li>
+  <li>M10.4 Implementar nómina v2 (cálculo, archivos, detalle)</li>
+  <li>M10.5 Refactor Ponchador (reloj) + SignalR Hub</li>
+  <li>M10.6 Refactor impuesto sobre renta (ISR)</li>
+  <li>M10.7 Tests de caracterización</li>
+  <li>M10.8 Tests de equivalencia</li>
+  <li>M10.9 Documentación</li>
+</ul>
+
+<div class="phase"><h3>FASE 4: Módulos Especializados (Semanas 21-24)</h3></div>
+
+<h4>M11 — Transporte / Logística</h4>
+<ul class="wbs">
+  <li>M11.1 Analizar CamionesService, ChoferesService, ViajesService, ParadasService, etc.</li>
+  <li>M11.2 Diseñar Logistics v2</li>
+  <li>M11.3 Implementar camiones y choferes v2</li>
+  <li>M11.4 Implementar viajes y rutas v2</li>
+  <li>M11.5 Implementar precios por ruta y planificación semanal</li>
+  <li>M11.6 Tests de caracterización</li>
+  <li>M11.7 Tests de equivalencia</li>
+  <li>M11.8 Documentación</li>
+</ul>
+
+<h4>M12 — Repair Shop (Taller)</h4>
+<ul class="wbs">
+  <li>M12.1 Verificar que la v2 existente pasa todos los tests</li>
+  <li>M12.2 Completar equivalencia con legado (gaps detectados)</li>
+  <li>M12.3 Retirar ruta legacy /api/RepairShop → solo /api/v2/RepairShop</li>
+  <li>M12.4 Tests de humo en producción</li>
+  <li>M12.5 Documentación de migración</li>
+</ul>
+
+<h4>M13 — Restaurante</h4>
+<ul class="wbs">
+  <li>M13.1 Analizar RestauranteService</li>
+  <li>M13.2 Diseñar Restaurant v2</li>
+  <li>M13.3 Implementar menú v2 (categorías, productos)</li>
+  <li>M13.4 Implementar mesas y pedidos v2</li>
+  <li>M13.5 Implementar configuración de restaurante</li>
+  <li>M13.6 Tests de caracterización</li>
+  <li>M13.7 Tests de equivalencia</li>
+  <li>M13.8 Documentación</li>
+</ul>
+
+<div class="phase"><h3>FASE 5: Transversal (Semanas 25-26)</h3></div>
+
+<h4>M14 — Dashboard / Reportes</h4>
+<ul class="wbs">
+  <li>M14.1 Analizar StatisticsService, ReportsService</li>
+  <li>M14.2 Diseñar Reporting v2</li>
+  <li>M14.3 Implementar dashboards v2</li>
+  <li>M14.4 Implementar reportes dinámicos v2</li>
+  <li>M14.5 Tests</li>
+  <li>M14.6 Documentación</li>
+</ul>
+
+<h4>M15 — Notificaciones</h4>
+<ul class="wbs">
+  <li>M15.1 Analizar MailSendGridService, WhatsAppService, NotificationsService</li>
+  <li>M15.2 Diseñar Notifications v2</li>
+  <li>M15.3 Implementar mail v2 (SendGrid)</li>
+  <li>M15.4 Implementar WhatsApp v2</li>
+  <li>M15.5 Tests</li>
+  <li>M15.6 Documentación</li>
+</ul>
+
+<h4>M16 — Suscripciones / Pagos</h4>
+<ul class="wbs">
+  <li>M16.1 Analizar SubscriptionService, PlansService, PayService, ValidatedSubscriptionsService</li>
+  <li>M16.2 Diseñar Subscriptions v2</li>
+  <li>M16.3 Implementar planes y beneficios v2</li>
+  <li>M16.4 Implementar suscripciones v2</li>
+  <li>M16.5 Implementar pagos Azul v2</li>
+  <li>M16.6 Tests</li>
+  <li>M16.7 Documentación</li>
+</ul>
+
+<h4>M17 — Configuración / Diccionario</h4>
+<ul class="wbs">
+  <li>M17.1 Analizar DictionaryService, DiccionarioService, UiFieldConfigurationService, RequiredFieldsService, FieldRenameService</li>
+  <li>M17.2 Diseñar Config v2</li>
+  <li>M17.3 Implementar multi-lenguaje v2</li>
+  <li>M17.4 Implementar configuración de UI v2</li>
+  <li>M17.5 Implementar campos obligatorios y rename v2</li>
+  <li>M17.6 Tests</li>
+  <li>M17.7 Documentación</li>
+</ul>
+
+<h4>M18 — Impresión</h4>
+<ul class="wbs">
+  <li>M18.1 Analizar QzController, EscPosRenderer, ZplRenderer, QzSigningService</li>
+  <li>M18.2 Diseñar Printing v2</li>
+  <li>M18.3 Implementar impresión térmica v2</li>
+  <li>M18.4 Implementar PDF v2 (QuestPDF)</li>
+  <li>M18.5 Implementar ZPL v2</li>
+  <li>M18.6 Tests</li>
+  <li>M18.7 Documentación</li>
+</ul>
+</div>
+
+<!-- ============================================================ -->
+<!-- PASO 4 — MATRIZ RACI -->
+<!-- ============================================================ -->
+<div class="section">
+<h2>6. MATRIZ RACI — ASIGNACIÓN DEL EQUIPO</h2>
+
+<table>
+  <tr><th>Rol</th><th>Nombre Corto</th><th>Responsabilidades Principales</th></tr>
+  <tr><td>🧠 Arquitecto Software</td><td><strong>ARQ</strong></td><td>Diseño arquitectónico, estándares, revisiones, decisiones técnicas</td></tr>
+  <tr><td>⚙️ Backend Developer 1</td><td><strong>BE1</strong></td><td>Servicios v2, lógica de negocio, DTOs, handlers</td></tr>
+  <tr><td>⚙️ Backend Developer 2</td><td><strong>BE2</strong></td><td>Controllers v2, validaciones, middlewares, integraciones</td></tr>
+  <tr><td>🎨 Frontend Developer 1</td><td><strong>FE1</strong></td><td>Componentes UI, listas, tablas, responsive</td></tr>
+  <tr><td>🎨 Frontend Developer 2</td><td><strong>FE2</strong></td><td>Formularios, modales, validaciones frontend, estados</td></tr>
+  <tr><td>🔄 Full Stack Developer</td><td><strong>FS</strong></td><td>Puente frontend-backend, integración v2-legado, bugs</td></tr>
+  <tr><td>🗄️ DBA</td><td><strong>DBA</strong></td><td>Migraciones, índices, SPs, optimización, limpieza</td></tr>
+  <tr><td>✅ QA</td><td><strong>QA</strong></td><td>Tests de caracterización, equivalencia, automatización, regresión</td></tr>
+  <tr><td>🚀 DevOps</td><td><strong>DEV</strong></td><td>CI/CD, pipelines, contenedores, infraestructura</td></tr>
+  <tr><td>🎯 UX/UI</td><td><strong>UX</strong></td><td>Diseño UX, prototipos, usabilidad, accesibilidad</td></tr>
+</table>
+
+<h3>Convención RACI</h3>
+<table>
+  <tr><th>Símbolo</th><th>Significado</th></tr>
+  <tr><td><strong>R</strong></td><td>Responsable (ejecuta la tarea)</td></tr>
+  <tr><td><strong>A</strong></td><td>Aprueba (firma la entrega)</td></tr>
+  <tr><td><strong>C</strong></td><td>Colabora (aporta en la ejecución)</td></tr>
+  <tr><td><strong>I</strong></td><td>Informado (recibe reporte de avance)</td></tr>
+</table>
+
+<h3>RACI por Actividad Tipo</h3>
+<table class="raci-table">
+  <tr><th>Actividad</th><th>ARQ</th><th>BE1</th><th>BE2</th><th>FE1</th><th>FE2</th><th>FS</th><th>DBA</th><th>QA</th><th>DEV</th><th>UX</th></tr>
+  <tr><td>Análisis de código legacy</td><td><strong>R</strong></td><td>C</td><td>C</td><td>—</td><td>—</td><td>C</td><td>C</td><td>—</td><td>—</td><td>—</td></tr>
+  <tr><td>Diseño arquitectónico v2</td><td><strong>R</strong></td><td>C</td><td>C</td><td>—</td><td>—</td><td>—</td><td>C</td><td>—</td><td>—</td><td>—</td></tr>
+  <tr><td>Implementación Backend v2</td><td>I</td><td><strong>R</strong></td><td><strong>R</strong></td><td>—</td><td>—</td><td>C</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+  <tr><td>Implementación Frontend</td><td>I</td><td>—</td><td>—</td><td><strong>R</strong></td><td><strong>R</strong></td><td>C</td><td>—</td><td>—</td><td>—</td><td>C</td></tr>
+  <tr><td>DTOs y Mapeo</td><td>A</td><td><strong>R</strong></td><td>C</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+  <tr><td>Migraciones BD</td><td>C</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td><strong>R</strong></td><td>—</td><td>—</td><td>—</td></tr>
+  <tr><td>Tests de caracterización</td><td>A</td><td>C</td><td>C</td><td>—</td><td>—</td><td>—</td><td>—</td><td><strong>R</strong></td><td>—</td><td>—</td></tr>
+  <tr><td>Tests de equivalencia</td><td>A</td><td>C</td><td>C</td><td>—</td><td>—</td><td>—</td><td>C</td><td><strong>R</strong></td><td>—</td><td>—</td></tr>
+  <tr><td>Optimización consultas</td><td>C</td><td>C</td><td>C</td><td>—</td><td>—</td><td>—</td><td><strong>R</strong></td><td>—</td><td>—</td><td>—</td></tr>
+  <tr><td>CI/CD y despliegue</td><td>I</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td><strong>R</strong></td><td>—</td></tr>
+  <tr><td>Diseño UX/UI</td><td>C</td><td>—</td><td>—</td><td>C</td><td>C</td><td>—</td><td>—</td><td>—</td><td>—</td><td><strong>R</strong></td></tr>
+  <tr><td>Code Review</td><td><strong>R</strong></td><td>C</td><td>C</td><td>C</td><td>C</td><td>C</td><td>C</td><td>I</td><td>—</td><td>—</td></tr>
+  <tr><td>Documentación técnica</td><td>A</td><td><strong>R</strong></td><td><strong>R</strong></td><td><strong>R</strong></td><td><strong>R</strong></td><td>C</td><td><strong>R</strong></td><td>C</td><td>—</td><td><strong>R</strong></td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<!-- PASO 5 — CRONOGRAMA + PASO 6 — AGENDA DIARIA -->
+<!-- ============================================================ -->
+<div class="section">
+<h2>7. CRONOGRAMA DETALLADO Y AGENDA DIARIA</h2>
+
+<p style="margin-bottom:15px;padding:10px 14px;background:#fff3e0;border-radius:6px;border-left:4px solid var(--warning);">
+<strong>Formato:</strong> Cada día muestra el <strong>módulo</strong> en curso, <strong>quién</strong> hace qué y <strong>cuántas horas</strong>. Días agrupados por semana laboral (lun-vie). Horario: 8h diarias por persona.
+</p>
+
+<!-- ============================================================ -->
+<!-- SEMANA 1 -->
+<!-- ============================================================ -->
+
+<!-- ★ LUNES 13 -->
+<div style="margin:30px 0 8px;background:var(--primary);color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+  <span style="font-size:18px;font-weight:700;">🔷 Lunes 13/07/2026</span>
+  <span style="font-size:13px;opacity:.9;">Semana 1 · Sprint 1 · Fase 1: Fundación</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+
+<div style="background:#f0f4ff;border:1px solid #c5cae9;border-radius:8px;overflow:hidden;">
+<div style="background:#1565c0;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M01 — INFRAESTRUCTURA (Shared Kernel)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#e3f2fd;"><td style="padding:6px 10px;font-weight:700;">🧠 ARQ</td><td style="padding:6px 10px;">Analizar estructura completa del proyecto · Identificar dependencias y acoplamientos · Diseñar estrategia híbrida · Kickoff con el equipo</td><td style="padding:6px 8px;text-align:right;white-space:nowrap;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">⚙️ BE1</td><td style="padding:6px 10px;">Leer documentación existente · Revisar Features/_Shared/ contracts · Familiarizarse con patrón v2 (RepairShop)</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e3f2fd;"><td style="padding:6px 10px;font-weight:700;">⚙️ BE2</td><td style="padding:6px 10px;">Revisar todos los controladores legacy · Mapear endpoints · Documentar defecto D1 (endpoints sin [Authorize])</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎨 FE1</td><td style="padding:6px 10px;">Revisar frontend existente · Identificar componentes que consumen APIs legacy · Mapear endpoints a componentes</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e3f2fd;"><td style="padding:6px 10px;font-weight:700;">🎨 FE2</td><td style="padding:6px 10px;">Revisar formularios y validaciones frontend · Identificar patrones UI/UX actuales</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🔄 FS</td><td style="padding:6px 10px;">Configurar entorno de desarrollo local · Verificar que la solución compila · Ejecutar tests existentes</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e3f2fd;"><td style="padding:6px 10px;font-weight:700;">🗄️ DBA</td><td style="padding:6px 10px;">Revisar migraciones V001/V002 · Identificar FKs sin nombre explícito · Detectar entidades duplicadas</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">✅ QA</td><td style="padding:6px 10px;">Revisar tests en Kaptas.Tests · Ejecutar y verificar que pasan · Preparar template tests de caracterización</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e3f2fd;"><td style="padding:6px 10px;font-weight:700;">🚀 DEV</td><td style="padding:6px 10px;">Revisar pipeline CI/CD actual · Configurar CI con tests automáticos · Revisar config Azure</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎯 UX</td><td style="padding:6px 10px;">Revisar diseño actual · Identificar mejoras UX · Preparar design system base</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+<div style="background:#fff3e0;border:1px solid #ffe0b2;border-radius:8px;overflow:hidden;">
+<div style="background:#e65100;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M02 — AUTH & SECURITY (Preparación)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#fff8e1;"><td style="padding:6px 10px;font-weight:700;">🧠 ARQ</td><td style="padding:6px 10px;">Preparar estrategia de refactorización de autenticación</td><td style="padding:6px 8px;text-align:right;font-weight:700;">incl.</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">⚙️ BE1</td><td style="padding:6px 10px;">Estudiar AuthService legacy (flujo login, refresh, logout)</td><td style="padding:6px 8px;text-align:right;font-weight:700;">incl.</td></tr>
+  <tr style="background:#fff8e1;"><td style="padding:6px 10px;font-weight:700;">🎯 UX</td><td style="padding:6px 10px;">Preparar prototipos base de login</td><td style="padding:6px 8px;text-align:right;font-weight:700;">incl.</td></tr>
+</table>
+</div>
+
+</div>
+
+<!-- ★ MARTES 14 -->
+<div style="margin:30px 0 8px;background:var(--primary);color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+  <span style="font-size:18px;font-weight:700;">🔷 Martes 14/07/2026</span>
+  <span style="font-size:13px;opacity:.9;">Semana 1 · Sprint 1 · Fase 1: Fundación</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+
+<div style="background:#f0f4ff;border:1px solid #c5cae9;border-radius:8px;overflow:hidden;">
+<div style="background:#1565c0;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M01 — INFRAESTRUCTURA (Shared Kernel) · Implementación</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#e3f2fd;"><td style="padding:6px 10px;font-weight:700;">🧠 ARQ</td><td style="padding:6px 10px;">Diseñar Shared Kernel v2 · Definir interfaces: ICurrentUserProvider, ITenantConnectionFactory, ISpRunner, IUserBranchesQuery</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">⚙️ BE1</td><td style="padding:6px 10px;">Implementar ICurrentUserProvider + CurrentUserProvider · ITenantConnectionFactory + TenantConnectionFactory · ISpRunner + SpRunner</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e3f2fd;"><td style="padding:6px 10px;font-weight:700;">⚙️ BE2</td><td style="padding:6px 10px;">Implementar IUserBranchesQuery + UserBranchesQuery · Refactor TenantScope + ValidateTenantFilter</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🔄 FS</td><td style="padding:6px 10px;">Verificar integración Shared Kernel con tenant headers · Probar resolución de tenant en local</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e3f2fd;"><td style="padding:6px 10px;font-weight:700;">🗄️ DBA</td><td style="padding:6px 10px;">Crear V003__named_constraints.sql · Script para detectar y eliminar CajaChicaMovimiento1</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">✅ QA</td><td style="padding:6px 10px;">Escribir SmokeTest para Shared Kernel v2 · Verificar contracts se resuelven por DI</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+<div style="background:#fff3e0;border:1px solid #ffe0b2;border-radius:8px;overflow:hidden;">
+<div style="background:#e65100;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M02 — AUTH & SECURITY (Frontend + Infra)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#fff8e1;"><td style="padding:6px 10px;font-weight:700;">🎨 FE1</td><td style="padding:6px 10px;">Crear estructura base componentes frontend · Configurar HTTP interceptor con tenant headers</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎨 FE2</td><td style="padding:6px 10px;">Diseñar componentes base: tabla genérica, formulario genérico · Configurar manejo de errores frontend</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#fff8e1;"><td style="padding:6px 10px;font-weight:700;">🚀 DEV</td><td style="padding:6px 10px;">Configurar pipeline con build + test automático · Configurar SonarQube</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎯 UX</td><td style="padding:6px 10px;">Definir design tokens (colores, tipografía, espaciado) · Crear guía de estilos</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+</div>
+
+<!-- ★ MIÉRCOLES 15 -->
+<div style="margin:30px 0 8px;background:var(--primary);color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+  <span style="font-size:18px;font-weight:700;">🔷 Miércoles 15/07/2026</span>
+  <span style="font-size:13px;opacity:.9;">Semana 1 · Sprint 1 · Fase 1: Fundación</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+
+<div style="background:#f0f4ff;border:1px solid #c5cae9;border-radius:8px;overflow:hidden;">
+<div style="background:#1565c0;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M01 — Shared Kernel (Code Review + Ajustes)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#e3f2fd;"><td style="padding:6px 10px;font-weight:700;">🧠 ARQ</td><td style="padding:6px 10px;">Code Review Shared Kernel · Ajustes de diseño · Definir boundaries Auth v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🔄 FS</td><td style="padding:6px 10px;">Refactor DependencyInjectionExtender (~100 registros) · Crear AddAuthModule(), AddCompanyModule()</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e3f2fd;"><td style="padding:6px 10px;font-weight:700;">🗄️ DBA</td><td style="padding:6px 10px;">Revisar SPs de autenticación · Revisar índices en User, RefreshToken, Role</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+<div style="background:#fff3e0;border:1px solid #ffe0b2;border-radius:8px;overflow:hidden;">
+<div style="background:#e65100;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M02 — AUTH & SECURITY (Análisis Legado)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#fff8e1;"><td style="padding:6px 10px;font-weight:700;">⚙️ BE1</td><td style="padding:6px 10px;">Analizar AuthService legacy · Extraer flujo autenticación (login, refresh, logout)</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">⚙️ BE2</td><td style="padding:6px 10px;">Analizar CustomAuthorizationHandler · Analizar PermissionMiddleware · Analizar RequiredSubscriptionMidd</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#fff8e1;"><td style="padding:6px 10px;font-weight:700;">✅ QA</td><td style="padding:6px 10px;">Escribir tests caracterización para AuthController legacy · Snapshots de respuestas</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+<div style="background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;overflow:hidden;">
+<div style="background:#7b1fa2;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M03 — COMPANY/BRANCH/STORE (Frontend)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🎨 FE1</td><td style="padding:6px 10px;">Rediseñar componente de login · Implementar flujo autenticación frontend</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎨 FE2</td><td style="padding:6px 10px;">Diseñar gestión de usuarios · Formulario cambio de contraseña</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🎯 UX</td><td style="padding:6px 10px;">Prototipar login · Prototipar gestión de usuarios y roles</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+</div>
+
+<!-- ★ JUEVES 16 -->
+<div style="margin:30px 0 8px;background:var(--primary);color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+  <span style="font-size:18px;font-weight:700;">🔷 Jueves 16/07/2026</span>
+  <span style="font-size:13px;opacity:.9;">Semana 1 · Sprint 1 · Fase 1: Fundación</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+
+<div style="background:#fff3e0;border:1px solid #ffe0b2;border-radius:8px;overflow:hidden;">
+<div style="background:#e65100;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M02 — AUTH & SECURITY (Implementación v2)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#fff8e1;"><td style="padding:6px 10px;font-weight:700;">🧠 ARQ</td><td style="padding:6px 10px;">Diseñar JWT v2 strategy · Definir modelo permisos v2 (Roles vs Permissions) · Aprobar diseño Shared Kernel</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">⚙️ BE1</td><td style="padding:6px 10px;">Implementar DTOs Auth v2 (LoginRequest, LoginResponse, RefreshRequest) · IAuthService v2 · AuthService v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#fff8e1;"><td style="padding:6px 10px;font-weight:700;">⚙️ BE2</td><td style="padding:6px 10px;">AuthController v2 [api/v2/Auth] · Validaciones Auth v2 · Refactor CustomAuthorizationHandler</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">✅ QA</td><td style="padding:6px 10px;">Tests caracterización SecurityController legacy · Tests equivalencia Auth v1 ↔ v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+<div style="background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;overflow:hidden;">
+<div style="background:#7b1fa2;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M03 — COMPANY/BRANCH/STORE (Backend + Frontend)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🎨 FE1</td><td style="padding:6px 10px;">Implementar login con API v2 · Manejo de tokens (storage, refresh automático)</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎨 FE2</td><td style="padding:6px 10px;">Formulario registro usuario · Gestión roles frontend</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🔄 FS</td><td style="padding:6px 10px;">Refactor DI (Auth module) · Migrar registros servicios Auth legado → v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🗄️ DBA</td><td style="padding:6px 10px;">Crear índices faltantes tablas seguridad · Revisar SPs auth</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🚀 DEV</td><td style="padding:6px 10px;">Configurar SonarQube reglas personalizadas · Configurar CodeQL</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎯 UX</td><td style="padding:6px 10px;">Validar prototipos login con equipo · Iterar feedback</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+</div>
+
+<!-- ★ VIERNES 17 -->
+<div style="margin:30px 0 8px;background:var(--primary);color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+  <span style="font-size:18px;font-weight:700;">🔷 Viernes 17/07/2026</span>
+  <span style="font-size:13px;opacity:.9;">Semana 1 · Sprint 1 · Fase 1: Fundación</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+
+<div style="background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;overflow:hidden;">
+<div style="background:#7b1fa2;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M03 — COMPANY/BRANCH/STORE (Implementación v2)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🧠 ARQ</td><td style="padding:6px 10px;">Code Review Auth v2 · Aprobar merge · Diseñar Organization v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">⚙️ BE1</td><td style="padding:6px 10px;">DTOs Organization (Company, Branch, Store) · IOrganizationService v2 · OrganizationService v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">⚙️ BE2</td><td style="padding:6px 10px;">OrganizationController v2 · Registro en DI</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎨 FE1</td><td style="padding:6px 10px;">Rediseñar selector compañía/sucursal · Implementar flujo multi-tenant frontend</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🎨 FE2</td><td style="padding:6px 10px;">Formularios compañía (crear/editar) · Formularios sucursal y tienda</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🔄 FS</td><td style="padding:6px 10px;">Integrar selector tenant en AppShell · Verificar flujo login → selector compañía → dashboard</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🗄️ DBA</td><td style="padding:6px 10px;">Optimizar consultas Company/Branch/Store · Revisar SPs organización</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">✅ QA</td><td style="padding:6px 10px;">Tests caracterización Company/Branch legacy · Tests equivalencia v1 ↔ v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🚀 DEV</td><td style="padding:6px 10px;">Configurar deploy automático staging · Health checks</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎯 UX</td><td style="padding:6px 10px;">Prototipar selector tenant · Validar flujo onboarding nueva compañía</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+</div>
+
+<div class="day-card">
+<h4>📅 Martes 14/07/2026</h4>
+<div class="member"><span class="member-name">🧠 Arquitecto</span><span class="member-tasks"><span class="task-item">✔ Diseñar Shared Kernel v2 (contracts base)</span><span class="task-item">✔ Definir interfaces: ICurrentUserProvider, ITenantConnectionFactory, ISpRunner, IUserBranchesQuery</span><span class="task-item">✔ Diseñar FeatureServiceCollectionExtensions pattern</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">⚙️ Backend Dev 1</span><span class="member-tasks"><span class="task-item">✔ Implementar ICurrentUserProvider + CurrentUserProvider</span><span class="task-item">✔ Implementar ITenantConnectionFactory + TenantConnectionFactory</span><span class="task-item">✔ Implementar ISpRunner + SpRunner</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">⚙️ Backend Dev 2</span><span class="member-tasks"><span class="task-item">✔ Implementar IUserBranchesQuery + UserBranchesQuery</span><span class="task-item">✔ Refactor TenantScope + ValidateTenantFilter</span><span class="task-item">✔ Registrar todos los servicios shared en DI</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🎨 Frontend Dev 1</span><span class="member-tasks"><span class="task-item">✔ Crear estructura base de componentes frontend refactorizados</span><span class="task-item">✔ Configurar cliente HTTP con interceptors (tenant headers)</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🎨 Frontend Dev 2</span><span class="member-tasks"><span class="task-item">✔ Diseñar componentes base: tabla genérica, formulario genérico</span><span class="task-item">✔ Configurar manejo de errores frontend</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🔄 Full Stack</span><span class="member-tasks"><span class="task-item">✔ Verificar integración Shared Kernel con tenant headers</span><span class="task-item">✔ Probar resolución de tenant en entorno local</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🗄️ DBA</span><span class="member-tasks"><span class="task-item">✔ Crear V003__named_constraints.sql (renombrar FKs)</span><span class="task-item">✔ Script para detectar y eliminar CajaChicaMovimiento1</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">✅ QA</span><span class="member-tasks"><span class="task-item">✔ Escribir SmokeTest para Shared Kernel v2</span><span class="task-item">✔ Verificar que los contracts se resuelven por DI</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🚀 DevOps</span><span class="member-tasks"><span class="task-item">✔ Configurar pipeline con build + test automático</span><span class="task-item">✔ Configurar análisis estático de código (SonarQube)</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🎯 UX/UI</span><span class="member-tasks"><span class="task-item">✔ Definir design tokens (colores, tipografía, espaciado)</span><span class="task-item">✔ Crear guía de estilos para refactorización frontend</span></span><span class="member-hours">8h</span></div>
+</div>
+
+<div class="day-card">
+<h4>📅 Miércoles 15/07/2026</h4>
+<div class="member"><span class="member-name">🧠 Arquitecto</span><span class="member-tasks"><span class="task-item">✔ Revisar implementación Shared Kernel (code review)</span><span class="task-item">✔ Diseñar estructura del módulo Auth v2</span><span class="task-item">✔ Definir boundaries y contracts de Auth</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">⚙️ Backend Dev 1</span><span class="member-tasks"><span class="task-item">✔ Analizar AuthService legacy</span><span class="task-item">✔ Analizar SecurityService legacy</span><span class="task-item">✔ Extraer flujo de autenticación (login, refresh, logout)</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">⚙️ Backend Dev 2</span><span class="member-tasks"><span class="task-item">✔ Analizar CustomAuthorizationHandler</span><span class="task-item">✔ Analizar PermissionMiddleware</span><span class="task-item">✔ Analizar RequiredSubscriptionMidd</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🎨 Frontend Dev 1</span><span class="member-tasks"><span class="task-item">✔ Rediseñar componente de login</span><span class="task-item">✔ Implementar flujo de autenticación frontend</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🎨 Frontend Dev 2</span><span class="member-tasks"><span class="task-item">✔ Diseñar componentes de gestión de usuarios</span><span class="task-item">✔ Diseñar formulario de cambio de contraseña</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🔄 Full Stack</span><span class="member-tasks"><span class="task-item">✔ Refactor DependencyInjectionExtender (separar por módulo)</span><span class="task-item">✔ Crear extension methods: AddAuthModule(), AddCompanyModule()</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🗄️ DBA</span><span class="member-tasks"><span class="task-item">✔ Revisar SPs de autenticación existentes</span><span class="task-item">✔ Revisar índices en tablas User, RefreshToken, Role</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">✅ QA</span><span class="member-tasks"><span class="task-item">✔ Escribir tests de caracterización para AuthController legacy</span><span class="task-item">✔ Snapshots de respuestas de endpoints Auth</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🚀 DevOps</span><span class="member-tasks"><span class="task-item">✔ Configurar ambiente de staging para tests de integración</span><span class="task-item">✔ Configurar base de datos de pruebas</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🎯 UX/UI</span><span class="member-tasks"><span class="task-item">✔ Prototipar nueva pantalla de login</span><span class="task-item">✔ Prototipar gestión de usuarios y roles</span></span><span class="member-hours">8h</span></div>
+</div>
+
+<div class="day-card">
+<h4>📅 Jueves 16/07/2026</h4>
+<div class="member"><span class="member-name">🧠 Arquitecto</span><span class="member-tasks"><span class="task-item">✔ Aprobar diseño Shared Kernel</span><span class="task-item">✔ Diseñar JWT v2 strategy</span><span class="task-item">✔ Definir modelo de permisos v2 (Roles vs Permissions)</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">⚙️ Backend Dev 1</span><span class="member-tasks"><span class="task-item">✔ Implementar Auth v2: DTOs (LoginRequest, LoginResponse, RefreshRequest)</span><span class="task-item">✔ Implementar IAuthService v2</span><span class="task-item">✔ Implementar AuthService v2</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">⚙️ Backend Dev 2</span><span class="member-tasks"><span class="task-item">✔ Implementar AuthController v2 [Route("api/v2/Auth")]</span><span class="task-item">✔ Implementar validaciones de Auth v2</span><span class="task-item">✔ Refactor CustomAuthorizationHandler para v1+v2</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🎨 Frontend Dev 1</span><span class="member-tasks"><span class="task-item">✔ Implementar login component con API v2</span><span class="task-item">✔ Manejo de tokens (storage, refresh automático)</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🎨 Frontend Dev 2</span><span class="member-tasks"><span class="task-item">✔ Implementar formulario de registro de usuario</span><span class="task-item">✔ Implementar gestión de roles (asignación)</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🔄 Full Stack</span><span class="member-tasks"><span class="task-item">✔ Refactor DependencyInjectionExtender (Auth module)</span><span class="task-item">✔ Migrar registro de servicios Auth del legado a v2</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🗄️ DBA</span><span class="member-tasks"><span class="task-item">✔ Crear índices faltantes en tablas de seguridad</span><span class="task-item">✔ Revisar procedimientos almacenados de auth</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">✅ QA</span><span class="member-tasks"><span class="task-item">✔ Escribir tests de caracterización para SecurityController legacy</span><span class="task-item">✔ Escribir tests de equivalencia Auth v1 ↔ v2</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🚀 DevOps</span><span class="member-tasks"><span class="task-item">✔ Configurar SonarQube con reglas personalizadas</span><span class="task-item">✔ Configurar CodeQL para análisis de seguridad</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🎯 UX/UI</span><span class="member-tasks"><span class="task-item">✔ Validar prototipos de login con el equipo</span><span class="task-item">✔ Iterar sobre feedback de UX</span></span><span class="member-hours">8h</span></div>
+</div>
+
+<div class="day-card">
+<h4>📅 Viernes 17/07/2026</h4>
+<div class="member"><span class="member-name">🧠 Arquitecto</span><span class="member-tasks"><span class="task-item">✔ Code Review de Auth v2 completo</span><span class="task-item">✔ Aprobar Auth v2 para merge</span><span class="task-item">✔ Diseñar Company/Branch/Store v2</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">⚙️ Backend Dev 1</span><span class="member-tasks"><span class="task-item">✔ Implementar Organization v2: DTOs (Company, Branch, Store)</span><span class="task-item">✔ Implementar IOrganizationService v2</span><span class="task-item">✔ Implementar OrganizationService v2</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">⚙️ Backend Dev 2</span><span class="task-item">✔ Implementar OrganizationController v2</span><span class="member-task"><span class="member-name">🎨 Frontend Dev 1</span><span class="member-tasks"><span class="task-item">✔ Rediseñar selector de compañía/sucursal/tienda</span><span class="task-item">✔ Implementar flujo multi-tenant frontend</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🎨 Frontend Dev 2</span><span class="member-tasks"><span class="task-item">✔ Implementar formularios de compañía (crear/editar)</span><span class="task-item">✔ Implementar formularios de sucursal y tienda</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🔄 Full Stack</span><span class="member-tasks"><span class="task-item">✔ Integrar selector de tenant en AppShell</span><span class="task-item">✔ Verificar flujo completo: login → seleccionar compañía → dashboard</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🗄️ DBA</span><span class="member-tasks"><span class="task-item">✔ Optimizar consultas de Company/Branch/Store</span><span class="task-item">✔ Revisar SPs relacionados con organización</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">✅ QA</span><span class="member-tasks"><span class="task-item">✔ Tests de caracterización Company/Branch legacy</span><span class="task-item">✔ Tests de equivalencia Organization v1 ↔ v2</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🚀 DevOps</span><span class="member-tasks"><span class="task-item">✔ Configurar deploy automático a staging</span><span class="task-item">✔ Configurar health checks</span></span><span class="member-hours">8h</span></div>
+<div class="member"><span class="member-name">🎯 UX/UI</span><span class="member-tasks"><span class="task-item">✔ Prototipar selector de tenant (compañía/sucursal)</span><span class="task-item">✔ Validar flujo de onboarding de nueva compañía</span></span><span class="member-hours">8h</span></div>
+</div>
+</div>
+
+<!-- ★ LUNES 20 -->
+<div style="margin:30px 0 8px;background:var(--primary);color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+  <span style="font-size:18px;font-weight:700;">🔷 Lunes 20/07/2026</span>
+  <span style="font-size:13px;opacity:.9;">Semana 2 · Sprint 1 · Fase 1: Fundación</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+
+<div style="background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;overflow:hidden;">
+<div style="background:#7b1fa2;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M03 — COMPANY/BRANCH/STORE (Cierre y Code Review)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🧠 ARQ</td><td style="padding:6px 10px;">Revisar y aprobar Organization v2 · Diseñar estructura Contacts v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">⚙️ BE1</td><td style="padding:6px 10px;">Refactor AutoMapper: perfil AuthProfile + OrganizationProfile · Tests de mapeo</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">⚙️ BE2</td><td style="padding:6px 10px;">Implementar [Authorize] faltante endpoints legacy (defecto D1) · Corregir Ok→BadRequest en AuthController legacy</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎨 FE1</td><td style="padding:6px 10px;">Refactor lista compañías + sucursales · Responsive</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🎨 FE2</td><td style="padding:6px 10px;">Refactor formularios compañía/sucursal/tienda · Validaciones frontend · Modales confirmación</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🔄 FS</td><td style="padding:6px 10px;">Integrar Organization v2 con frontend · Probar flujo multi-tenant completo</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🗄️ DBA</td><td style="padding:6px 10px;">Ejecutar V003__named_constraints.sql en staging · Verificar sin regresiones</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">✅ QA</td><td style="padding:6px 10px;">Ejecutar batería tests Auth v2 + Organization v2 · Reportar resultados</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">🚀 DEV</td><td style="padding:6px 10px;">Desplegar Auth v2 staging · Verificar health checks</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎯 UX</td><td style="padding:6px 10px;">Revisar flujo multi-tenant implementado · Ajustes UX según feedback</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+</div>
+
+<!-- ★ MARTES 21 -->
+<div style="margin:30px 0 8px;background:var(--primary);color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+  <span style="font-size:18px;font-weight:700;">🔷 Martes 21/07/2026</span>
+  <span style="font-size:13px;opacity:.9;">Semana 2 · Sprint 1 · Fase 1: Fundación</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+
+<div style="background:#e0f2f1;border:1px solid #80cbc4;border-radius:8px;overflow:hidden;">
+<div style="background:#00695c;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M04 — CONTACTOS (Inicio Implementación)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">🧠 ARQ</td><td style="padding:6px 10px;">Diseñar Products v2 con DDD (Product aggregate)</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">⚙️ BE1</td><td style="padding:6px 10px;">Implementar Contacts v2: DTOs, IContactService, ContactService</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">⚙️ BE2</td><td style="padding:6px 10px;">Refactor ExceptionMiddleware global · Iniciar validaciones Contacts v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎨 FE1</td><td style="padding:6px 10px;">Diseñar e implementar lista de contactos (tabla responsive)</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">🎨 FE2</td><td style="padding:6px 10px;">Formulario crear/editar contacto</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🔄 FS</td><td style="padding:6px 10px;">Refactor DI (Organization + Auth modules)</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">🗄️ DBA</td><td style="padding:6px 10px;">Revisar SPs Contactos · Optimizar consultas</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">✅ QA</td><td style="padding:6px 10px;">Tests caracterización Contactos legacy</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">🚀 DEV</td><td style="padding:6px 10px;">Pipeline SonarQube + CodeQL</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎯 UX</td><td style="padding:6px 10px;">Prototipar vista detalle contacto</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+</div>
+
+<!-- ★ MIÉRCOLES 22 -->
+<div style="margin:30px 0 8px;background:var(--primary);color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+  <span style="font-size:18px;font-weight:700;">🔷 Miércoles 22/07/2026</span>
+  <span style="font-size:13px;opacity:.9;">Semana 2 · Sprint 1 · Fase 1: Fundación</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+
+<div style="background:#e0f2f1;border:1px solid #80cbc4;border-radius:8px;overflow:hidden;">
+<div style="background:#00695c;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M04 — CONTACTOS (Backend + Frontend)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">🧠 ARQ</td><td style="padding:6px 10px;">Code Review AutoMapper profiles · Diseñar Products v2 (precios/stock)</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">⚙️ BE1</td><td style="padding:6px 10px;">Implementar ContactController v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">⚙️ BE2</td><td style="padding:6px 10px;">Validaciones Contacts v2 (FluentValidation) · Integrar con middleware</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎨 FE1</td><td style="padding:6px 10px;">Lista contactos con búsqueda y filtros</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">🎨 FE2</td><td style="padding:6px 10px;">Formulario direcciones múltiples</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🔄 FS</td><td style="padding:6px 10px;">Probar integración Contacts v2 completa</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">🗄️ DBA</td><td style="padding:6px 10px;">Crear índices Contacto, ContactAddress</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">✅ QA</td><td style="padding:6px 10px;">Tests equivalencia Contacts v1 ↔ v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">🚀 DEV</td><td style="padding:6px 10px;">Alertas de seguridad · Automatizar deploy staging</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎯 UX</td><td style="padding:6px 10px;">Prototipar flujo direcciones</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+</div>
+
+<!-- ★ JUEVES 23 -->
+<div style="margin:30px 0 8px;background:var(--primary);color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+  <span style="font-size:18px;font-weight:700;">🔷 Jueves 23/07/2026</span>
+  <span style="font-size:13px;opacity:.9;">Semana 2 · Sprint 1 · Fase 1: Fundación</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+
+<div style="background:#e0f2f1;border:1px solid #80cbc4;border-radius:8px;overflow:hidden;">
+<div style="background:#00695c;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M04 — CONTACTOS (Cierre)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">🧠 ARQ</td><td style="padding:6px 10px;">Diseñar Contacts v2 completo · Aprobar arquitectura Products v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">⚙️ BE1</td><td style="padding:6px 10px;">Finalizar Contacts v2 (pendientes, refactor)</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">⚙️ BE2</td><td style="padding:6px 10px;">Refactor AutoMapper perfil Contacts · Refactor AutoMapper perfil Products</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎨 FE1</td><td style="padding:6px 10px;">Integrar frontend contacts con API v2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">🎨 FE2</td><td style="padding:6px 10px;">Validaciones frontend + modales</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🔄 FS</td><td style="padding:6px 10px;">Corregir bugs integración Contacts</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">🗄️ DBA</td><td style="padding:6px 10px;">Planificar migración entidad Zona</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">✅ QA</td><td style="padding:6px 10px;">Tests integración Contacts</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">🎯 UX</td><td style="padding:6px 10px;">Prototipar búsqueda avanzada contactos</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+</div>
+
+<!-- ★ VIERNES 24 -->
+<div style="margin:30px 0 8px;background:var(--primary);color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+  <span style="font-size:18px;font-weight:700;">🔷 Viernes 24/07/2026</span>
+  <span style="font-size:13px;opacity:.9;">Semana 2 · Sprint 1 · Fase 1: Fundación</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+
+<div style="background:#e8f5e9;border:1px solid #a5d6a7;border-radius:8px;overflow:hidden;">
+<div style="background:#2e7d32;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M05 — PRODUCTOS (Análisis y Diseño)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#e8f5e9;"><td style="padding:6px 10px;font-weight:700;">🧠 ARQ</td><td style="padding:6px 10px;">Revisar avance Semana 1-2 · Ajustar plan si necesario</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">⚙️ BE1</td><td style="padding:6px 10px;">Analizar KProductsService legacy + ProductsService legacy</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e8f5e9;"><td style="padding:6px 10px;font-weight:700;">⚙️ BE2</td><td style="padding:6px 10px;">Implementar IProductRepository + ProductRepository</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🎨 FE1</td><td style="padding:6px 10px;">Diseñar componente lista productos (tabla avanzada)</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e8f5e9;"><td style="padding:6px 10px;font-weight:700;">🎨 FE2</td><td style="padding:6px 10px;">Diseñar formulario producto (pestañas: general, precios, stock)</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">🔄 FS</td><td style="padding:6px 10px;">Soporte integración Products v2 (puente legado)</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e8f5e9;"><td style="padding:6px 10px;font-weight:700;">🗄️ DBA</td><td style="padding:6px 10px;">Reporte optimización semanal</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">✅ QA</td><td style="padding:6px 10px;">Reporte calidad Semana 2</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+  <tr style="background:#e8f5e9;"><td style="padding:6px 10px;font-weight:700;">🎯 UX</td><td style="padding:6px 10px;">Validación prototipos con equipo</td><td style="padding:6px 8px;text-align:right;font-weight:700;">8h</td></tr>
+</table>
+</div>
+
+</div>
+
+<!-- ============================================================ -->
+<!-- SEMANAS 3-26: VISTA POR MÓDULO (formato compacto-modular) -->
+<!-- ============================================================ -->
+
+<div style="margin:40px 0 16px;background:#1a237e;color:#fff;padding:14px 24px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+  <span style="font-size:18px;font-weight:700;">📅 Semanas 3 — 26 · Vista por Módulo</span>
+  <span style="font-size:13px;opacity:.9;">Formato: cada bloque = 1 semana de 1 módulo con asignaciones</span>
+</div>
+
+<!-- ============================================================ -->
+<!-- SEMANA 3 -->
+<!-- ============================================================ -->
+<div style="margin:30px 0 8px;background:var(--secondary);color:#fff;padding:12px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
+  <span style="font-size:16px;font-weight:700;">🔷 Lunes 27/07/2026 — Viernes 31/07/2026</span>
+  <span style="font-size:12px;opacity:.9;">Semana 3 · Sprint 1 · Fase 1: Fundación</span>
+</div>
+
+<div style="background:#e8f5e9;border:1px solid #a5d6a7;border-radius:8px;overflow:hidden;margin-bottom:12px;">
+<div style="background:#2e7d32;color:#fff;padding:10px 16px;font-weight:700;font-size:14px;">📦 M05 — PRODUCTOS / INVENTARIO</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#f1f8e9;"><th style="padding:8px 10px;">Día</th><th style="padding:8px 10px;">Asignaciones</th></tr>
+  <tr><td style="padding:8px 10px;font-weight:700;">Lun 27</td><td style="padding:8px 10px;"><strong>🧠 ARQ</strong> Code Review Contacts v2 · <strong>⚙️ BE1</strong> Entidades dominio Products v2 · <strong>⚙️ BE2</strong> ProductController v2 (CRUD básico) · <strong>🎨 FE1</strong> Lista productos con búsqueda · <strong>🎨 FE2</strong> Formulario producto pestañas · <strong>🔄 FS</strong> Merge módulos Auth+Org+Contacts · <strong>🗄️ DBA</strong> Optimizar índices Contacto · <strong>✅ QA</strong> Validar Contacts 100%</td></tr>
+  <tr style="background:#f1f8e9;"><td style="padding:8px 10px;font-weight:700;">Mar 28</td><td style="padding:8px 10px;"><strong>🧠 ARQ</strong> Diseñar lógica precios/stock Products · <strong>⚙️ BE1</strong> Implementar lógica precios ProductoPrecio · <strong>⚙️ BE2</strong> Validaciones Products v2 · <strong>🎨 FE1</strong> Tabla productos responsive · <strong>🎨 FE2</strong> Formulario precios múltiples · <strong>🗄️ DBA</strong> Revisar SPs productos legacy · <strong>✅ QA</strong> Tests caracterización Productos legacy</td></tr>
+  <tr><td style="padding:8px 10px;font-weight:700;">Mié 29</td><td style="padding:8px 10px;"><strong>🧠 ARQ</strong> Definir contracts repositorio Products · <strong>⚙️ BE1</strong> Implementar lógica stock Products · <strong>⚙️ BE2</strong> ProductController v2 completo · <strong>🎨 FE1</strong> Vista detalle producto · <strong>🎨 FE2</strong> Formulario stock · <strong>🗄️ DBA</strong> Crear vistas optimizadas Products v2 · <strong>✅ QA</strong> Tests caracterización (cont.)</td></tr>
+  <tr style="background:#f1e8e9;"><td style="padding:8px 10px;font-weight:700;">Jue 30</td><td style="padding:8px 10px;"><strong>🧠 ARQ</strong> Aprobar arquitectura Products v2 · <strong>⚙️ BE1</strong> Implementar seriales v2 · <strong>⚙️ BE2</strong> Integrar imágenes Azure Blob · <strong>🎨 FE1</strong> Integrar frontend con API v2 products · <strong>🎨 FE2</strong> Formulario seriales · <strong>🗄️ DBA</strong> Migraciones productos índices · <strong>✅ QA</strong> Tests unitarios Products v2</td></tr>
+  <tr><td style="padding:8px 10px;font-weight:700;">Vie 31</td><td style="padding:8px 10px;"><strong>🧠 ARQ</strong> Diseñar Operations v2 con CQRS · <strong>⚙️ BE1</strong> Finalizar Products service · <strong>⚙️ BE2</strong> Refactor AutoMapper perfil Products · <strong>🎨 FE1</strong> Pruebas integración frontend · <strong>🎨 FE2</strong> Validaciones avanzadas + modales · <strong>🔄 FS</strong> Probar integración Products v2 · <strong>🗄️ DBA</strong> Crear V004_products_optimization.sql · <strong>✅ QA</strong> Tests integración Products v2 + reporte</td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<!-- SEMANA 4 -->
+<!-- ============================================================ -->
+<div style="margin:30px 0 8px;background:var(--secondary);color:#fff;padding:12px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
+  <span style="font-size:16px;font-weight:700;">🔷 Lunes 03/08/2026 — Viernes 07/08/2026</span>
+  <span style="font-size:12px;opacity:.9;">Semana 4 · Sprint 2 · 🏁 Cierre Fase 1</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+<div style="background:#e8f5e9;border:1px solid #a5d6a7;border-radius:8px;overflow:hidden;">
+<div style="background:#2e7d32;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M05 — PRODUCTOS (Cierre)</div>
+<table style="margin:0;width:100%;">
+  <tr><td style="padding:5px 10px;font-weight:700;">Lun 3</td><td style="padding:5px 10px;"><strong>⚙️ BE1</strong> Refactor precios + stock · <strong>⚙️ BE2</strong> Validaciones complejas · <strong>🎨 FE1</strong> Finalizar lista productos · <strong>🎨 FE2</strong> Formulario seriales</td></tr>
+  <tr style="background:#f1f8e9;"><td style="padding:5px 10px;font-weight:700;">Mar 4</td><td style="padding:5px 10px;"><strong>⚙️ BE1</strong> Implementar categorías v2 · <strong>⚙️ BE2</strong> Integration Azure Blob · <strong>🎨 FE1</strong> Vista detalle · <strong>🎨 FE2</strong> Validaciones stock mínimo</td></tr>
+  <tr><td style="padding:5px 10px;font-weight:700;">Mié 5</td><td style="padding:5px 10px;"><strong>✅ QA</strong> Tests equivalencia Products · <strong>🧠 ARQ</strong> Code Review Products · <strong>🔄 FS</strong> Bug fixes</td></tr>
+  <tr style="background:#f1f8e9;"><td style="padding:5px 10px;font-weight:700;">Jue 6</td><td style="padding:5px 10px;"><strong>✅ QA</strong> Regresión Fase 1 · <strong>🚀 DEV</strong> Deploy staging · <strong>🗄️ DBA</strong> Migraciones finales</td></tr>
+  <tr><td style="padding:5px 10px;font-weight:700;">Vie 7</td><td style="padding:5px 10px;"><strong>🎯 HITO H2</strong> Cierre Fase 1 · Integración multi-módulo · Documentación · Retrospectiva</td></tr>
+</table>
+</div>
+
+<div style="background:#e0f2f1;border:1px solid #80cbc4;border-radius:8px;overflow:hidden;">
+<div style="background:#00695c;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M06 — OPERATIONS (Preparación Sprint 2)</div>
+<table style="margin:0;width:100%;">
+  <tr><td style="padding:5px 10px;font-weight:700;">Lun-Vie</td><td style="padding:5px 10px;"><strong>🧠 ARQ</strong> Diseñar CQRS para Operations: Queries vs Commands · Definir aggregates</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:5px 10px;"></td><td style="padding:5px 10px;"><strong>⚙️ BE1</strong> Analizar OperationsService legacy · Mapear endpoints de operaciones</td></tr>
+</table>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SEMANAS 5-12: FASE 2 por módulo -->
+<!-- ============================================================ -->
+<div style="margin:40px 0 8px;background:#004d40;color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
+  <span style="font-size:17px;font-weight:700;">📦 FASE 2 — CORE DE NEGOCIO</span>
+  <span style="font-size:13px;opacity:.9;">Semanas 5-12 · 10/08/2026 — 02/10/2026 · Sprints 2-4</span>
+</div>
+
+<div style="background:#e0f2f1;border:1px solid #80cbc4;border-radius:8px;overflow:hidden;margin-bottom:12px;">
+<div style="background:#00695c;color:#fff;padding:10px 16px;font-weight:700;font-size:14px;">📦 M04 — CONTACTOS (Semana 5: 10-14 Ago)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#e0f2f1;"><th style="padding:8px 10px;">Día</th><th style="padding:8px 10px;">Asignaciones</th></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">Lun 10</td><td style="padding:6px 10px;"><strong>⚙️ BE1</strong> Finalizar ContactController v2 · <strong>⚙️ BE2</strong> Refactor AutoMapper perfil Contacts · <strong>🎨 FE1</strong> Integrar frontend contacts API v2 · <strong>🎨 FE2</strong> Formulario direcciones múltiples</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">Mar 11</td><td style="padding:6px 10px;"><strong>⚙️ BE2</strong> Refactor Zonas integración geográfica · <strong>🎨 FE1</strong> Búsqueda avanzada contactos</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">Mié 12</td><td style="padding:6px 10px;"><strong>✅ QA</strong> Tests equivalencia Contacts · <strong>🧠 ARQ</strong> Code Review y aprobación</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">Jue 13</td><td style="padding:6px 10px;"><strong>✅ QA</strong> Tests integración Contacts · <strong>🔄 FS</strong> Corregir bugs · <strong>🎯 UX</strong> Validación flujo contactos</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">Vie 14</td><td style="padding:6px 10px;"><strong>📄 Docs</strong> Documentación Contacts v2 · 🏁 <strong>M04 COMPLETADO</strong></td></tr>
+</table>
+</div>
+
+<div style="background:#e8f5e9;border:1px solid #a5d6a7;border-radius:8px;overflow:hidden;margin-bottom:12px;">
+<div style="background:#2e7d32;color:#fff;padding:10px 16px;font-weight:700;font-size:14px;">📦 M06 — OPERACIONES (Semanas 6-10: 17 Ago — 18 Sep)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#f1f8e9;"><th style="padding:8px 10px;">Semana</th><th style="padding:8px 10px;">Asignaciones</th></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">S6: 17-21 Ago</td><td style="padding:6px 10px;"><strong>🧠 ARQ</strong> Diseño CQRS: boundaries Queries vs Commands · <strong>⚙️ BE1</strong> Implementar queries v2 (GetOperation, ListOperations) · <strong>⚙️ BE2</strong> Implementar OperationController v2 (queries) · <strong>🎨 FE1</strong> Lista operaciones (ventas) · <strong>🎨 FE2</strong> Vista detalle operación</td></tr>
+  <tr style="background:#f1f8e9;"><td style="padding:6px 10px;font-weight:700;">S7: 24-28 Ago</td><td style="padding:6px 10px;"><strong>⚙️ BE1</strong> Implementar commands: CreateOperation, UpdateOperation, CancelOperation · <strong>⚙️ BE2</strong> Validaciones CQRS + flujo completo · <strong>🎨 FE1</strong> Formulario crear venta · <strong>🎨 FE2</strong> Formulario crear compra · <strong>🗄️ DBA</strong> Optimizar SPs Operacion</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">S8: 31 Ago-4 Sep</td><td style="padding:6px 10px;"><strong>✅ QA</strong> Tests caracterización Operations legacy · Tests equivalencia v1 ↔ v2 · Tests integración con Products y Contacts</td></tr>
+  <tr style="background:#f1f8e9;"><td style="padding:6px 10px;font-weight:700;">S9: 7-11 Sep</td><td style="padding:6px 10px;"><strong>⚙️ BE1</strong> Refactor OperacionMovStock (movimientos inventario) · <strong>⚙️ BE2</strong> Refactor abonos y medios de pago · <strong>🎨 FE1</strong> Formulario movimientos stock</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">S10: 14-18 Sep</td><td style="padding:6px 10px;"><strong>📄 Docs</strong> Documentación Operations v2 · 🏁 <strong>M06 COMPLETADO</strong> · Prueba de humo en staging</td></tr>
+</table>
+</div>
+
+<div style="background:#fce4ec;border:1px solid #ef9a9a;border-radius:8px;overflow:hidden;margin-bottom:12px;">
+<div style="background:#c62828;color:#fff;padding:10px 16px;font-weight:700;font-size:14px;">📦 M07 — FACTURACIÓN / ECF (Semanas 13-16: 5 Oct — 30 Oct)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#ffebee;"><th style="padding:8px 10px;">Semana</th><th style="padding:8px 10px;">Asignaciones</th></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">S13: 5-9 Oct</td><td style="padding:6px 10px;"><strong>🧠 ARQ</strong> Diseño Invoicing v2 con cumplimiento DGII/ECF · <strong>⚙️ BE1</strong> Analizar InvoiceService + EcfService legacy · <strong>🗄️ DBA</strong> Revisar SPs facturación y NCF</td></tr>
+  <tr style="background:#ffebee;"><td style="padding:6px 10px;font-weight:700;">S14: 12-16 Oct</td><td style="padding:6px 10px;"><strong>⚙️ BE1</strong> Implementar ControlNcf v2 · <strong>⚙️ BE2</strong> Implementar ConfigEcf v2 (envío DGII) · <strong>✅ QA</strong> Tests caracterización facturación legacy</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">S15: 19-23 Oct</td><td style="padding:6px 10px;"><strong>⚙️ BE1</strong> Implementar Invoice v2 (crear, anular, imprimir) · <strong>⚙️ BE2</strong> Implementar CreditNotes v2 · <strong>🎨 FE1</strong> Formulario factura · <strong>🎨 FE2</strong> Formulario nota crédito</td></tr>
+  <tr style="background:#ffebee;"><td style="padding:6px 10px;font-weight:700;">S16: 26-30 Oct</td><td style="padding:6px 10px;"><strong>✅ QA</strong> Tests equivalencia facturación v1 ↔ v2 · Validación contra DGII · 🏁 <strong>M07 COMPLETADO</strong></td></tr>
+</table>
+</div>
+
+<div style="background:#e3f2fd;border:1px solid #90caf9;border-radius:8px;overflow:hidden;margin-bottom:12px;">
+<div style="background:#1565c0;color:#fff;padding:10px 16px;font-weight:700;font-size:14px;">📦 M08 — CONTABILIDAD (Semanas 17-18: 2 Nov — 13 Nov)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#e3f2fd;"><th style="padding:8px 10px;">Semana</th><th style="padding:8px 10px;">Asignaciones</th></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">S17: 2-6 Nov</td><td style="padding:6px 10px;"><strong>⚙️ BE1</strong> Catálogo cuentas v2 (jerarquía padre-hijo) · <strong>⚙️ BE2</strong> Operaciones contables v2 (partida doble) · <strong>🗄️ DBA</strong> Revisar SPs contables</td></tr>
+  <tr style="background:#e3f2fd;"><td style="padding:6px 10px;font-weight:700;">S18: 9-13 Nov</td><td style="padding:6px 10px;"><strong>⚙️ BE1</strong> Períodos contables v2 (apertura/cierre) · <strong>⚙️ BE2</strong> Integración automática con facturación · <strong>✅ QA</strong> Tests equivalencia</td></tr>
+</table>
+</div>
+
+<div style="background:#fff3e0;border:1px solid #ffe0b2;border-radius:8px;overflow:hidden;margin-bottom:12px;">
+<div style="background:#e65100;color:#fff;padding:10px 16px;font-weight:700;font-size:14px;">📦 M09 — CAJA / BANCOS (Semana 19: 16-20 Nov)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#fff8e1;"><th style="padding:8px 10px;">Día</th><th style="padding:8px 10px;">Asignaciones</th></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">Lun-Vie</td><td style="padding:6px 10px;"><strong>⚙️ BE1</strong> Caja v2 (arqueo, movimientos) + Caja chica v2 · <strong>⚙️ BE2</strong> Bancos + Tasas cambio v2 · <strong>🗄️ DBA</strong> Migración limpieza CajaChicaMovimiento1 · <strong>✅ QA</strong> Tests</td></tr>
+</table>
+</div>
+
+<div style="background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;overflow:hidden;margin-bottom:12px;">
+<div style="background:#7b1fa2;color:#fff;padding:10px 16px;font-weight:700;font-size:14px;">📦 M10 — NÓMINA / HR (Semanas 20-21: 23 Nov — 4 Dic)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#f3e5f5;"><th style="padding:8px 10px;">Semana</th><th style="padding:8px 10px;">Asignaciones</th></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">S20: 23-27 Nov</td><td style="padding:6px 10px;"><strong>⚙️ BE1</strong> Empleados v2 + Nómina v2 (cálculo, archivos) · <strong>🎨 FE1</strong> Lista empleados · <strong>🎨 FE2</strong> Formulario nómina</td></tr>
+  <tr style="background:#f3e5f5;"><td style="padding:6px 10px;font-weight:700;">S21: 30 Nov-4 Dic</td><td style="padding:6px 10px;"><strong>⚙️ BE2</strong> Refactor Ponchador (reloj SignalR) + ISR · <strong>✅ QA</strong> Tests · 🏁 <strong>M10 COMPLETADO</strong></td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<!-- FASE 4 -->
+<!-- ============================================================ -->
+<div style="margin:40px 0 8px;background:#4a148c;color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
+  <span style="font-size:17px;font-weight:700;">📦 FASE 4 — MÓDULOS ESPECIALIZADOS</span>
+  <span style="font-size:13px;opacity:.9;">Semanas 22-24 · 07/12/2026 — 25/12/2026 · Sprints 8-9</span>
+</div>
+
+<div style="background:#fce4ec;border:1px solid #ef9a9a;border-radius:8px;overflow:hidden;margin-bottom:12px;">
+<div style="background:#c62828;color:#fff;padding:10px 16px;font-weight:700;font-size:14px;">📦 M11 — TRANSPORTE / LOGÍSTICA (Semana 22: 7-11 Dic)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#ffebee;"><th style="padding:8px 10px;">Día</th><th style="padding:8px 10px;">Asignaciones</th></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">Lun-Vie</td><td style="padding:6px 10px;"><strong>⚙️ BE1</strong> Camiones + Choferes v2 · <strong>⚙️ BE2</strong> Viajes + Rutas + Planificación v2 · <strong>🎨 FE1</strong> Listas viajes/rutas · <strong>🎨 FE2</strong> Formularios logística · <strong>✅ QA</strong> Tests</td></tr>
+</table>
+</div>
+
+<div style="background:#e0f2f1;border:1px solid #80cbc4;border-radius:8px;overflow:hidden;margin-bottom:12px;">
+<div style="background:#00695c;color:#fff;padding:10px 16px;font-weight:700;font-size:14px;">📦 M12 — REPAIR SHOP (Semana 23: 14-18 Dic)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#e0f2f1;"><th style="padding:8px 10px;">Día</th><th style="padding:8px 10px;">Asignaciones</th></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">Lun 14</td><td style="padding:6px 10px;">Verificar v2 existente pasa todos los tests · Identificar gaps con legado</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">Mar-Mié</td><td style="padding:6px 10px;">Completar equivalencia · Corregir defectos</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">Jue 17</td><td style="padding:6px 10px;">Retirar ruta legacy /api/RepairShop → solo /api/v2/RepairShop</td></tr>
+  <tr style="background:#e0f2f1;"><td style="padding:6px 10px;font-weight:700;">Vie 18</td><td style="padding:6px 10px;">Tests humo producción · 🏁 <strong>M12 COMPLETADO</strong> (legado retirado)</td></tr>
+</table>
+</div>
+
+<div style="background:#fff3e0;border:1px solid #ffe0b2;border-radius:8px;overflow:hidden;margin-bottom:12px;">
+<div style="background:#e65100;color:#fff;padding:10px 16px;font-weight:700;font-size:14px;">📦 M13 — RESTAURANTE (Semana 24: 21-25 Dic)</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#fff8e1;"><th style="padding:8px 10px;">Día</th><th style="padding:8px 10px;">Asignaciones</th></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">Lun 21</td><td style="padding:6px 10px;"><strong>⚙️ BE1</strong> Análisis RestauranteService legacy · Diseño Restaurant v2</td></tr>
+  <tr style="background:#fff8e1;"><td style="padding:6px 10px;font-weight:700;">Mar-Mié</td><td style="padding:6px 10px;"><strong>⚙️ BE2</strong> Menú v2 (categorías, productos) · <strong>🎨 FE1</strong> Lista menú</td></tr>
+  <tr><td style="padding:6px 10px;font-weight:700;">Jue 24</td><td style="padding:6px 10px;"><strong>⚙️ BE1</strong> Mesas y pedidos v2 · <strong>🎨 FE2</strong> Formulario pedidos</td></tr>
+  <tr style="background:#fff8e1;"><td style="padding:6px 10px;font-weight:700;">Vie 25</td><td style="padding:6px 10px;"><strong>✅ QA</strong> Tests Restaurante · 🏁 <strong>M13 COMPLETADO</strong></td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<!-- FASE 5 -->
+<!-- ============================================================ -->
+<div style="margin:40px 0 8px;background:#263238;color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
+  <span style="font-size:17px;font-weight:700;">📦 FASE 5 — TRANSVERSAL</span>
+  <span style="font-size:13px;opacity:.9;">Semanas 25-26 · 28/12/2026 — 08/01/2027 · Sprint 10</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+<div style="background:#fce4ec;border:1px solid #ef9a9a;border-radius:8px;overflow:hidden;">
+<div style="background:#c62828;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M14 — DASHBOARD / REPORTES</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#ffebee;"><td style="padding:5px 10px;"><strong>Sem 25</strong></td><td style="padding:5px 10px;"><strong>⚙️ BE2</strong> Dashboards v2 · Reportes dinámicos v2 · <strong>🎨 FE1</strong> Componentes dashboard</td></tr>
+</table>
+</div>
+
+<div style="background:#e0f2f1;border:1px solid #80cbc4;border-radius:8px;overflow:hidden;">
+<div style="background:#00695c;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M15 — NOTIFICACIONES</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#e0f2f1;"><td style="padding:5px 10px;"><strong>Sem 25</strong></td><td style="padding:5px 10px;"><strong>⚙️ BE2</strong> Mail SendGrid v2 · WhatsApp v2 · <strong>✅ QA</strong> Tests</td></tr>
+</table>
+</div>
+
+<div style="background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;overflow:hidden;">
+<div style="background:#7b1fa2;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M16 — SUSCRIPCIONES / PAGOS</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#f3e5f5;"><td style="padding:5px 10px;"><strong>Sem 25</strong></td><td style="padding:5px 10px;"><strong>🔄 FS</strong> Planes + Suscripciones v2 · Azul payments v2</td></tr>
+</table>
+</div>
+
+<div style="background:#fff3e0;border:1px solid #ffe0b2;border-radius:8px;overflow:hidden;">
+<div style="background:#e65100;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M17 — CONFIG / DICCIONARIO</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#fff8e1;"><td style="padding:5px 10px;"><strong>Sem 25</strong></td><td style="padding:5px 10px;"><strong>🔄 FS</strong> Multi-lenguaje v2 + UI Config v2 · Campos obligatorios</td></tr>
+</table>
+</div>
+
+<div style="background:#e8f5e9;border:1px solid #a5d6a7;border-radius:8px;overflow:hidden;">
+<div style="background:#2e7d32;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;">📦 M18 — IMPRESIÓN</div>
+<table style="margin:0;width:100%;">
+  <tr style="background:#f1f8e9;"><td style="padding:5px 10px;"><strong>Sem 25</strong></td><td style="padding:5px 10px;"><strong>⚙️ BE2</strong> POS térmico + PDF + ZPL v2 · <strong>✅ QA</strong> Tests</td></tr>
+</table>
+</div>
+</div>
+
+<!-- SEMANA 26: CIERRE -->
+<div style="margin:30px 0 8px;background:#1a237e;color:#fff;padding:14px 20px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
+  <span style="font-size:17px;font-weight:700;">🏁 SEMANA 26 — CIERRE DEL PROYECTO</span>
+  <span style="font-size:13px;opacity:.9;">04/01/2027 — 08/01/2027 · Sprint 10</span>
+</div>
+
+<div style="background:#1a237e10;border:2px solid #1a237e;border-radius:8px;overflow:hidden;">
+<table style="margin:0;width:100%;">
+  <tr style="background:#e8eaf6;"><th style="padding:10px 14px;">Día</th><th style="padding:10px 14px;">Asignaciones · Equipo Completo</th></tr>
+  <tr><td style="padding:8px 14px;font-weight:700;">Lun 04</td><td style="padding:8px 14px;"><strong>🧠 ARQ</strong> Auditoría arquitectónica final · <strong>⚙️ BE1</strong> Correcciones post-integración · <strong>⚙️ BE2</strong> Fixes módulos transversales · <strong>🎨 FE1+FE2</strong> Pulido frontend general</td></tr>
+  <tr style="background:#e8eaf6;"><td style="padding:8px 14px;font-weight:700;">Mar 05</td><td style="padding:8px 14px;"><strong>✅ QA</strong> Tests regresión global (todos los módulos v2) · <strong>🔄 FS</strong> Bug fixes integración · <strong>🗄️ DBA</strong> Optimización final BD</td></tr>
+  <tr><td style="padding:8px 14px;font-weight:700;">Mié 06</td><td style="padding:8px 14px;"><strong>📄 Equipo</strong> Documentación técnica final · ARCHITECTURE.md actualizado · Manual de despliegue · Guía de migración</td></tr>
+  <tr style="background:#e8eaf6;"><td style="padding:8px 14px;font-weight:700;">Jue 07</td><td style="padding:8px 14px;"><strong>🚀 DEV</strong> Deploy producción final · Verificación health checks · Monitoreo post-deploy · Rollback plan</td></tr>
+  <tr><td style="padding:8px 14px;font-weight:700;">Vie 08</td><td style="padding:8px 14px;background:#c8e6c9;font-weight:700;">🎯 HITO H6 — PROYECTO COMPLETADO · Retrospectiva final · Cierre administrativo</td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<!-- PASO 7 — ESTIMACIÓN -->
+<!-- ============================================================ -->
+<div class="section">
+<h2>8. ESTIMACIÓN DETALLADA</h2>
+<table>
+  <tr><th>ID</th><th>Módulo</th><th>Análisis</th><th>Diseño</th><th>Backend</th><th>Frontend</th><th>DB</th><th>Tests</th><th>Docs</th><th>Total h</th><th>Complejidad</th><th>Riesgo</th><th>Prioridad</th></tr>
+  <tr><td>M01</td><td>Infraestructura</td><td>16</td><td>16</td><td>40</td><td>16</td><td>24</td><td>24</td><td>8</td><td>144</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-medium">MEDIO</span></td><td><span class="badge badge-critical">CRÍTICA</span></td></tr>
+  <tr><td>M02</td><td>Auth & Security</td><td>8</td><td>8</td><td>32</td><td>24</td><td>8</td><td>24</td><td>8</td><td>112</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-medium">MEDIO</span></td><td><span class="badge badge-critical">CRÍTICA</span></td></tr>
+  <tr><td>M03</td><td>Company/Branch/Store</td><td>4</td><td>4</td><td>16</td><td>16</td><td>4</td><td>16</td><td>4</td><td>64</td><td><span class="badge badge-low">BAJA</span></td><td><span class="badge badge-low">BAJO</span></td><td><span class="badge badge-critical">CRÍTICA</span></td></tr>
+  <tr><td>M04</td><td>Contactos</td><td>8</td><td>8</td><td>24</td><td>24</td><td>8</td><td>24</td><td>8</td><td>104</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-medium">MEDIO</span></td><td><span class="badge badge-high">ALTA</span></td></tr>
+  <tr><td>M05</td><td>Productos/Inventario</td><td>16</td><td>16</td><td>64</td><td>48</td><td>16</td><td>40</td><td>16</td><td>216</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-high">ALTO</span></td><td><span class="badge badge-high">ALTA</span></td></tr>
+  <tr><td>M06</td><td>Operaciones</td><td>24</td><td>24</td><td>96</td><td>64</td><td>24</td><td>56</td><td>16</td><td>304</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-high">ALTO</span></td><td><span class="badge badge-high">ALTA</span></td></tr>
+  <tr><td>M07</td><td>Facturación/ECF</td><td>24</td><td>24</td><td>96</td><td>48</td><td>24</td><td>56</td><td>16</td><td>288</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-critical">MUY ALTO</span></td><td><span class="badge badge-high">ALTA</span></td></tr>
+  <tr><td>M08</td><td>Contabilidad</td><td>24</td><td>16</td><td>80</td><td>40</td><td>16</td><td>48</td><td>16</td><td>240</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-high">ALTO</span></td><td><span class="badge badge-high">ALTA</span></td></tr>
+  <tr><td>M09</td><td>Caja/Bancos</td><td>8</td><td>8</td><td>40</td><td>24</td><td>8</td><td>32</td><td>8</td><td>128</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-medium">MEDIO</span></td><td><span class="badge badge-medium">MEDIA</span></td></tr>
+  <tr><td>M10</td><td>Nómina/HR</td><td>16</td><td>16</td><td>64</td><td>40</td><td>16</td><td>40</td><td>16</td><td>208</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-high">ALTO</span></td><td><span class="badge badge-medium">MEDIA</span></td></tr>
+  <tr><td>M11</td><td>Transporte</td><td>16</td><td>16</td><td>56</td><td>40</td><td>16</td><td>40</td><td>16</td><td>200</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-medium">MEDIO</span></td><td><span class="badge badge-medium">MEDIA</span></td></tr>
+  <tr><td>M12</td><td>Repair Shop</td><td>4</td><td>4</td><td>16</td><td>16</td><td>4</td><td>16</td><td>8</td><td>68</td><td><span class="badge badge-low">BAJA</span></td><td><span class="badge badge-low">BAJO</span></td><td><span class="badge badge-medium">MEDIA</span></td></tr>
+  <tr><td>M13</td><td>Restaurante</td><td>8</td><td>8</td><td>32</td><td>32</td><td>8</td><td>24</td><td>8</td><td>120</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-medium">MEDIO</span></td><td><span class="badge badge-low">BAJA</span></td></tr>
+  <tr><td>M14</td><td>Dashboard/Reportes</td><td>8</td><td>8</td><td>32</td><td>32</td><td>8</td><td>16</td><td>8</td><td>112</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-low">BAJO</span></td><td><span class="badge badge-low">BAJA</span></td></tr>
+  <tr><td>M15</td><td>Notificaciones</td><td>4</td><td>4</td><td>16</td><td>8</td><td>4</td><td>16</td><td>4</td><td>56</td><td><span class="badge badge-low">BAJA</span></td><td><span class="badge badge-low">BAJO</span></td><td><span class="badge badge-low">BAJA</span></td></tr>
+  <tr><td>M16</td><td>Suscripciones/Pagos</td><td>8</td><td>8</td><td>32</td><td>24</td><td>8</td><td>24</td><td>8</td><td>112</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-medium">MEDIO</span></td><td><span class="badge badge-medium">MEDIA</span></td></tr>
+  <tr><td>M17</td><td>Configuración/Diccionario</td><td>4</td><td>4</td><td>16</td><td>16</td><td>4</td><td>16</td><td>4</td><td>64</td><td><span class="badge badge-low">BAJA</span></td><td><span class="badge badge-low">BAJO</span></td><td><span class="badge badge-low">BAJA</span></td></tr>
+  <tr><td>M18</td><td>Impresión</td><td>4</td><td>4</td><td>16</td><td>8</td><td>4</td><td>16</td><td>4</td><td>56</td><td><span class="badge badge-low">BAJA</span></td><td><span class="badge badge-low">BAJO</span></td><td><span class="badge badge-low">BAJA</span></td></tr>
+  <tr style="background:#e8eaf6;font-weight:700;"><td colspan="9">TOTALES</td><td>2,492</td><td></td><td></td><td></td></tr>
+</table>
+
+<h3>Distribución de Horas por Rol</h3>
+<table>
+  <tr><th>Rol</th><th>Horas Estimadas</th><th>% del Total</th><th>Días (8h)</th></tr>
+  <tr><td>🧠 Arquitecto</td><td>280</td><td>11.2%</td><td>35</td></tr>
+  <tr><td>⚙️ Backend Developer 1</td><td>464</td><td>18.6%</td><td>58</td></tr>
+  <tr><td>⚙️ Backend Developer 2</td><td>432</td><td>17.3%</td><td>54</td></tr>
+  <tr><td>🎨 Frontend Developer 1</td><td>320</td><td>12.8%</td><td>40</td></tr>
+  <tr><td>🎨 Frontend Developer 2</td><td>296</td><td>11.9%</td><td>37</td></tr>
+  <tr><td>🔄 Full Stack Developer</td><td>240</td><td>9.6%</td><td>30</td></tr>
+  <tr><td>🗄️ DBA</td><td>168</td><td>6.7%</td><td>21</td></tr>
+  <tr><td>✅ QA</td><td>208</td><td>8.3%</td><td>26</td></tr>
+  <tr><td>🚀 DevOps</td><td>40</td><td>1.6%</td><td>5</td></tr>
+  <tr><td>🎯 UX/UI</td><td>44</td><td>1.8%</td><td>5.5</td></tr>
+  <tr style="background:#e8eaf6;font-weight:700;"><td>TOTAL</td><td>2,492</td><td>100%</td><td>311.5</td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<!-- PASO 8 — RESUMEN POR MÓDULO -->
+<!-- ============================================================ -->
+<div class="section">
+<h2>9. RESUMEN POR MÓDULO</h2>
+
+<table>
+  <tr><th>ID</th><th>Módulo</th><th>Horas</th><th>Días</th><th>Personas</th><th>Responsable</th><th>Estado Esperado</th></tr>
+  <tr><td>M01</td><td>Infraestructura & Shared Kernel</td><td>144</td><td>18</td><td>6</td><td>BE1</td><td>✅ Shared Kernel v2 operativo, DI modularizado, AutoMapper fragmentado</td></tr>
+  <tr><td>M02</td><td>Auth & Security</td><td>112</td><td>14</td><td>6</td><td>ARQ</td><td>✅ Auth v2 con JWT, permisos y endpoints legacy protegidos</td></tr>
+  <tr><td>M03</td><td>Company/Branch/Store</td><td>64</td><td>8</td><td>5</td><td>BE1</td><td>✅ Organization v2 operativa, migrada desde legado</td></tr>
+  <tr><td>M04</td><td>Contactos</td><td>104</td><td>13</td><td>6</td><td>BE1</td><td>✅ Contacts v2 con direcciones múltiples, zonas integradas</td></tr>
+  <tr><td>M05</td><td>Productos/Inventario</td><td>216</td><td>27</td><td>7</td><td>BE1</td><td>✅ Products v2 con precios, stock, seriales, categorías</td></tr>
+  <tr><td>M06</td><td>Operaciones (Ventas/Compras)</td><td>304</td><td>38</td><td>7</td><td>ARQ</td><td>✅ Operations v2 con CQRS, movimientos de stock, abonos</td></tr>
+  <tr><td>M07</td><td>Facturación / ECF (DGII)</td><td>288</td><td>36</td><td>7</td><td>ARQ</td><td>✅ Invoicing v2 con NCF, ECF, notas de crédito, cumplimiento DGII</td></tr>
+  <tr><td>M08</td><td>Contabilidad</td><td>240</td><td>30</td><td>6</td><td>BE1</td><td>✅ Accounting v2: catálogo, partida doble, períodos contables</td></tr>
+  <tr><td>M09</td><td>Caja / Bancos</td><td>128</td><td>16</td><td>6</td><td>BE2</td><td>✅ Cash v2, entidad duplicada eliminada, bancos y tasas v2</td></tr>
+  <tr><td>M10</td><td>Nómina / HR</td><td>208</td><td>26</td><td>6</td><td>BE1</td><td>✅ HR v2: empleados, nómina, ISR, ponchador SignalR</td></tr>
+  <tr><td>M11</td><td>Transporte / Logística</td><td>200</td><td>25</td><td>6</td><td>BE2</td><td>✅ Logistics v2: camiones, choferes, viajes, rutas, planificación</td></tr>
+  <tr><td>M12</td><td>Repair Shop (Taller)</td><td>68</td><td>8.5</td><td>5</td><td>BE1</td><td>✅ Migración completa a v2, legado retirado</td></tr>
+  <tr><td>M13</td><td>Restaurante</td><td>120</td><td>15</td><td>5</td><td>BE2</td><td>✅ Restaurant v2: menú, mesas, pedidos, configuración</td></tr>
+  <tr><td>M14</td><td>Dashboard / Reportes</td><td>112</td><td>14</td><td>5</td><td>BE2</td><td>✅ Reporting v2: dashboards, reportes dinámicos</td></tr>
+  <tr><td>M15</td><td>Notificaciones</td><td>56</td><td>7</td><td>4</td><td>BE2</td><td>✅ Notifications v2: mail (SendGrid), WhatsApp</td></tr>
+  <tr><td>M16</td><td>Suscripciones / Pagos</td><td>112</td><td>14</td><td>5</td><td>FS</td><td>✅ Subscriptions v2: planes, Azul payments</td></tr>
+  <tr><td>M17</td><td>Configuración / Diccionario</td><td>64</td><td>8</td><td>4</td><td>FS</td><td>✅ Config v2: multi-lenguaje, UI config, campos obligatorios</td></tr>
+  <tr><td>M18</td><td>Impresión</td><td>56</td><td>7</td><td>3</td><td>BE2</td><td>✅ Printing v2: térmico, PDF, ZPL, QZ</td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<!-- PASO 9 — RESUMEN GENERAL -->
+<!-- ============================================================ -->
+<div class="section">
+<h2>10. RESUMEN GENERAL</h2>
+
+<div class="summary-grid">
+  <div class="summary-card"><div class="number">2,492</div><div class="label">Horas totales</div></div>
+  <div class="summary-card"><div class="number">130</div><div class="label">Días hábiles</div></div>
+  <div class="summary-card"><div class="number">26</div><div class="label">Semanas</div></div>
+  <div class="summary-card"><div class="number">6</div><div class="label">Meses</div></div>
+  <div class="summary-card"><div class="number">10</div><div class="label">Personas en equipo</div></div>
+  <div class="summary-card"><div class="number">18</div><div class="label">Módulos a refactorizar</div></div>
+</div>
+
+<h3>Ruta Crítica</h3>
+<p style="padding:10px 14px;background:#ffebee;border-radius:6px;border-left:4px solid var(--danger);">
+<strong>M01 → M02 → M03 → M04 → M05 → M06 → M07 → M08 → M10 → M11 → Cierre</strong>
+<br><br>
+<strong>Explicación:</strong> La ruta crítica sigue el flujo natural de dependencias: no se puede refactorizar Operations sin tener Products y Contacts; no se puede refactorizar Facturación sin Operations; no se puede refactorizar Contabilidad sin Facturación. Cualquier retraso en M01 (Infraestructura) retrasa todo el proyecto.
+</p>
+
+<h3>Tareas en Paralelo</h3>
+<table>
+  <tr><th>Módulo Principal</th><th>Puede Ejecutarse en Paralelo Con</th></tr>
+  <tr><td>M01 Infraestructura</td><td>— (prerrequisito de todos)</td></tr>
+  <tr><td>M04 Contactos</td><td>M05 Productos (independientes entre sí)</td></tr>
+  <tr><td>M09 Caja/Bancos</td><td>M10 Nómina/HR (independientes entre sí)</td></tr>
+  <tr><td>M11 Transporte</td><td>M12 RepairShop, M13 Restaurante</td></tr>
+  <tr><td>M14 Dashboard</td><td>M15 Notificaciones, M16 Suscripciones, M17 Configuración, M18 Impresión</td></tr>
+</table>
+
+<h3>Cuellos de Botella Identificados</h3>
+<table>
+  <tr><th>#</th><th>Cuello de Botella</th><th>Impacto</th><th>Mitigación</th></tr>
+  <tr><td>CB1</td><td>🧠 Arquitecto como único revisor de código</td><td>Las tareas se acumulan esperando code review</td><td>Designar BE1 como revisor secundario después de Semana 4</td></tr>
+  <tr><td>CB2</td><td>🗄️ DBA único para migraciones BD</td><td>Migraciones BD pueden retrasar frontend</td><td>Planificar migraciones con 1 semana de anticipación</td></tr>
+  <tr><td>CB3</td><td>⚠️ M07 Facturación (dependencia DGII)</td><td>Cambios en regulación DGII pueden requerir re-trabajo</td><td>Mantener tests de integración con DGII, monitorear cambios normativos</td></tr>
+  <tr><td>CB4</td><td>🔄 Full Stack como punto de integración</td><td>FS trabaja en múltiples frentes simultáneamente</td><td>Limitar WIP del FS a 2 módulos máximo por sprint</td></tr>
+</table>
+
+<h3>Riesgos Principales</h3>
+<table>
+  <tr><th>#</th><th>Riesgo</th><th>Probabilidad</th><th>Impacto</th><th>Plan de Contingencia</th></tr>
+  <tr><td>R01</td><td>Tests de caracterización descubren defectos críticos en legado (como el defecto D1 de falta de [Authorize])</td><td><span class="badge badge-high">ALTA</span></td><td><span class="badge badge-critical">CRÍTICO</span></td><td>Documentar como deuda técnica, priorizar en sprint actual, no posponer</td></tr>
+  <tr><td>R02</td><td>Cambios en regulación DGII/ECF durante la refactorización</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-high">ALTO</span></td><td>Mantener rama de features DGII desacoplada, aplicar cambios en paralelo</td></tr>
+  <tr><td>R03</td><td>Rotación de personal en el equipo</td><td><span class="badge badge-low">BAJA</span></td><td><span class="badge badge-high">ALTO</span></td><td>Documentación continua, pair programming, no depender de una sola persona</td></tr>
+  <tr><td>R04</td><td>Regresión en producción por mala equivalencia v1↔v2</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-critical">CRÍTICO</span></td><td>Feature flags para v2, rollout gradual por módulo, monitoreo de errores</td></tr>
+  <tr><td>R05</td><td>Bases de datos multi-tenant con esquemas divergentes</td><td><span class="badge badge-medium">MEDIA</span></td><td><span class="badge badge-medium">MEDIO</span></td><td>Script de diagnóstico de esquemas, migraciones idempotentes</td></tr>
+</table>
+
+<h3>Recomendaciones</h3>
+<ol style="margin:10px 0 0 20px;">
+  <li><strong>Feature Flags obligatorios:</strong> Cada módulo v2 debe poder activarse/desactivarse individualmente mediante configuración.</li>
+  <li><strong>Congelar cambios mayores en legado:</strong> Durante la refactorización, no agregar nuevas funcionalidades al código legacy. Todo nuevo desarrollo debe hacerse en v2.</li>
+  <li><strong>Testing primero:</strong> No comenzar la refactorización de un módulo sin antes tener tests de caracterización del módulo legacy.</li>
+  <li><strong>CI/CD con validación automática:</strong> El pipeline debe ejecutar tests de caracterización + equivalencia antes de cada deploy.</li>
+  <li><strong>Pair programming en módulos críticos:</strong> M07 (Facturación/ECF) y M08 (Contabilidad) deben desarrollarse en pair programming por su complejidad y riesgo.</li>
+  <li><strong>Documentación viva:</strong> Mantener ARCHITECTURE.md actualizado con cada módulo refactorizado.</li>
+  <li><strong>Sprint reviews semanales:</strong> Demostrar avances cada viernes para mantener la visibilidad del progreso.</li>
+  <li><strong>Métrica de éxito:</strong> Cada módulo v2 debe pasar el 100% de los tests de equivalencia antes de considerar "completado".</li>
+</ol>
+
+<h3>Hitos del Proyecto</h3>
+<table>
+  <tr><th>Hito</th><th>Fecha</th><th>Semana</th><th>Entregable</th></tr>
+  <tr><td>H1</td><td>24/07/2026</td><td>2</td><td>Shared Kernel v2 + Auth v2 + Organization v2 en staging</td></tr>
+  <tr><td>H2</td><td>07/08/2026</td><td>4</td><td>Fase 1 completa: Infraestructura, Auth, Organization, Products</td></tr>
+  <tr><td>H3</td><td>02/10/2026</td><td>12</td><td>Fase 2 completa: Contacts, Products, Operations (Core de negocio)</td></tr>
+  <tr><td>H4</td><td>27/11/2026</td><td>20</td><td>Fase 3 completa: Facturación/ECF, Contabilidad, Caja, HR/Nómina</td></tr>
+  <tr><td>H5</td><td>25/12/2026</td><td>24</td><td>Fase 4 completa: Transporte, RepairShop, Restaurante</td></tr>
+  <tr><td>H6</td><td>08/01/2027</td><td>26</td><td>🎯 Proyecto completo: todos los módulos v2 en producción</td></tr>
+</table>
+
+<h3>Costo Estimado (Opcional)</h3>
+<table>
+  <tr><th>Rol</th><th>Horas</th><th>Tarifa/h (USD)</th><th>Costo</th></tr>
+  <tr><td>🧠 Arquitecto</td><td>280</td><td>$85</td><td>$23,800</td></tr>
+  <tr><td>⚙️ Backend Developer (x2)</td><td>896</td><td>$55</td><td>$49,280</td></tr>
+  <tr><td>🎨 Frontend Developer (x2)</td><td>616</td><td>$50</td><td>$30,800</td></tr>
+  <tr><td>🔄 Full Stack</td><td>240</td><td>$60</td><td>$14,400</td></tr>
+  <tr><td>🗄️ DBA</td><td>168</td><td>$65</td><td>$10,920</td></tr>
+  <tr><td>✅ QA</td><td>208</td><td>$45</td><td>$9,360</td></tr>
+  <tr><td>🚀 DevOps</td><td>40</td><td>$70</td><td>$2,800</td></tr>
+  <tr><td>🎯 UX/UI</td><td>44</td><td>$55</td><td>$2,420</td></tr>
+  <tr style="background:#e8eaf6;font-weight:700;"><td>TOTAL</td><td>2,492</td><td></td><td>$143,780</td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<!-- FOOTER -->
+<!-- ============================================================ -->
+<div style="text-align:center;padding:30px;color:var(--text-secondary);font-size:12px;">
+  <p>Documento generado el <strong>Domingo 12/07/2026</strong> · Kaptas ERP Web API · Plan de Refactorización v1.0</p>
+  <p style="margin-top:4px;">Arquitecto: Análisis basado en código fuente real · Este documento es entregable al equipo de desarrollo</p>
+</div>
+
+</div>
+</body>
+</html>

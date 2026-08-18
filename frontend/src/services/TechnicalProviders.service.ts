@@ -39,8 +39,13 @@ function toList(res: unknown): TechnicalProvider[] {
 }
 
 export const TechnicalProvidersService = {
-  async list(): Promise<TechnicalProvider[]> {
-    const res = await http.get<unknown>(BASE)
+  /**
+   * Por defecto el backend oculta los de baja. La vista de administración
+   * (`/panel/operaciones/proveedores`) los gestiona — reactivar, catálogo
+   * completo — y por eso pasa `includeInactive`.
+   */
+  async list(includeInactive = false): Promise<TechnicalProvider[]> {
+    const res = await http.get<unknown>(includeInactive ? `${BASE}?includeInactive=1` : BASE)
     return toList(res)
   },
 

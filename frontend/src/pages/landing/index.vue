@@ -1,53 +1,8 @@
 <template>
   <div class="bg-white min-h-screen">
 
-    <!-- ═══ NAVBAR — claro, fijo, frosted glass sutil ═══ -->
-    <nav
-      class="fixed top-0 inset-x-0 z-50 bg-white/90 backdrop-blur-xl border-b border-slate-100 transition-shadow duration-300"
-      :class="scrolled ? 'shadow-[0_1px_24px_rgba(13,43,78,0.07)]' : ''"
-    >
-      <div class="max-w-7xl mx-auto px-6 h-[4.5rem]">
-        <div class="flex items-center justify-between h-full">
-          <!-- Logo -->
-          <router-link to="/" class="flex items-center gap-2.5 group">
-            <div class="w-9 h-9 rounded-xl bg-navy text-white flex items-center justify-center font-black text-base shadow-sm group-hover:bg-blue transition-colors">S</div>
-            <span class="font-black text-lg tracking-tight text-navy">Solmi<span class="text-blue">OS</span></span>
-          </router-link>
-
-          <!-- Links -->
-          <div class="hidden xl:flex items-center gap-6">
-            <a
-              v-for="link in navLinks" :key="link.href" :href="link.href"
-              class="relative flex items-center gap-1 text-sm font-semibold text-slate-600 hover:text-navy transition-colors duration-200 py-1 nav-link whitespace-nowrap"
-              :class="activeSection === link.section ? 'is-active' : ''"
-            >{{ link.label }}
-              <svg v-if="link.hasDropdown" class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
-            </a>
-          </div>
-
-          <!-- Actions -->
-          <div class="flex items-center gap-2.5">
-            <router-link
-              to="/hotel-fundador"
-              class="hidden md:inline-flex items-center gap-1.5 text-xs font-extrabold px-3.5 py-2 rounded-full bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 transition-colors"
-            >
-              <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-              Programa Hotel Fundador
-            </router-link>
-            <router-link
-              to="/login"
-              class="text-sm font-semibold text-slate-600 hover:text-navy transition-colors duration-200 hidden sm:inline-block"
-            >Iniciar Sesión</router-link>
-            <router-link
-              to="/login"
-              class="inline-flex items-center gap-1.5 font-bold text-sm px-5 py-2.5 rounded-xl bg-blue text-white hover:bg-navy transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg"
-            >Prueba Gratis
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
-            </router-link>
-          </div>
-        </div>
-      </div>
-    </nav>
+    <!-- ═══ NAVBAR — componente compartido del sitio (mismo header en /p/:slug) ═══ -->
+    <SiteHeader :active-section="activeSection" />
 
     <!-- ═══ HERO — claro, moderno, mockup de producto a la derecha ═══ -->
     <section id="hero" class="relative w-full overflow-hidden pt-32 md:pt-40 pb-20 px-6 md:px-10 bg-gradient-to-b from-blue-50/60 via-white to-white">
@@ -392,36 +347,22 @@
       </div>
     </section>
 
-    <!-- ═══ FOOTER ═══ -->
-    <PublicSiteFooter />
+    <!-- ═══ FOOTER — componente compartido del sitio (mismo footer en /p/:slug) ═══ -->
+    <SiteFooter />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import heroImage from '@/assets/hero.png'
-import PublicSiteFooter from '@/components/landing/PublicSiteFooter.vue'
+import SiteHeader from '@/components/site/SiteHeader.vue'
+import SiteFooter from '@/components/site/SiteFooter.vue'
 
-const activeSection = ref('hero')
-const scrolled = ref(false)
+const activeSection = ref('hero') // scroll-spy: se le pasa al SiteHeader
 
 let observer: IntersectionObserver
-let ticking = false
-
-// Handler único (rAF-throttled): navbar con sombra al hacer scroll
-function handleScroll() {
-  if (ticking) return
-  ticking = true
-  requestAnimationFrame(() => {
-    scrolled.value = window.scrollY > 12
-    ticking = false
-  })
-}
 
 onMounted(() => {
-  window.addEventListener('scroll', handleScroll, { passive: true })
-  handleScroll()
-
   observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
@@ -437,17 +378,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   observer?.disconnect()
-  window.removeEventListener('scroll', handleScroll)
 })
 
-const navLinks = [
-  { href: '#features', label: 'Funciones', section: 'features' },
-  { href: '#how', label: 'Cómo Funciona', section: 'how' },
-  { href: '#integrations', label: 'Integraciones', section: 'integrations' },
-  { href: '#pricing', label: 'Precios', section: 'pricing' },
-  { href: '#testimonials', label: 'Testimonios', section: 'testimonials' },
-  { href: '#', label: 'Recursos', section: 'recursos', hasDropdown: true },
-]
 
 const heroFeatures = [
   { title: 'Ahorra tiempo', desc: 'Automatiza tareas y procesos', icon: '<svg class="w-5 h-5 text-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>' },
@@ -537,8 +469,6 @@ const testimonials = [
   { quote: 'La facturación electrónica para DGII era un dolor de cabeza. Ahora se genera automáticamente. El soporte es excepcional.', name: 'Roberto Suárez', hotel: 'Gran Hotel Santo Domingo', initials: 'RS', avatarBg: '#117A65' },
   { quote: 'Como recepcionista, todo es muy intuitivo. El check-in toma 30 segundos. Los huéspedes quedan impresionados.', name: 'María López', hotel: 'Hotel Caribe Paradise', initials: 'ML', avatarBg: '#6C3483' },
 ]
-
-
 </script>
 
 <style scoped>
@@ -568,25 +498,7 @@ const testimonials = [
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* ── NAV active underline ── */
-.nav-link::after {
-  content: '';
-  position: absolute;
-  left: 0; bottom: -2px;
-  width: 0; height: 2px;
-  background: currentColor;
-  transition: width 0.3s ease;
-}
-.nav-link:hover::after { width: 100%; }
-.nav-link.is-active::after { width: 100%; }
 
-.text-navy { color: #0D2B4E; }
-.bg-navy { background-color: #0D2B4E; }
-.bg-navy-deep { background-color: #061428; }
-.text-teal { color: #117A65; }
-.bg-teal { background-color: #117A65; }
-
-.bg-white\/8 { background: rgba(255,255,255,0.08); }
 
 @media (prefers-reduced-motion: reduce) {
   .hero-fade-up { animation: none; opacity: 1; transform: none; }

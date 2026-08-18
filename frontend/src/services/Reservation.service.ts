@@ -3,7 +3,7 @@ import type {
   Reservation, ReservationStatus, ReservationSource, ReservationDetail, GuaranteeCardData, AuditLogEntry,
   ReservationApiRecord as RawReservation,
   RescheduleInput, RescheduleCommitInput, RescheduleQuote, RescheduleResult,
-  CancelPreview, CancelReservationInput,
+  CancelPreview, CancelReservationInput, StayQuote,
 } from '@/types'
 
 // Los tipos del reagendado viven en `@/types` (dominio), no acá. Se re-exportan para no romper
@@ -11,7 +11,7 @@ import type {
 export type {
   RescheduleInput, RescheduleCommitInput, RescheduleQuote, RescheduleResult,
   RescheduleCharge, RescheduleTarget, ReschedulePricingMode, RescheduleChargeMethod,
-  CancelPreview, CancelReservationInput, CancelPolicySource,
+  CancelPreview, CancelReservationInput, CancelPolicySource, StayQuote,
 } from '@/types'
 
 export const STATUS_MAP: Record<string, ReservationStatus> = {
@@ -155,6 +155,17 @@ export const ReservationService = {
    */
   async rescheduleQuote(id: string, input: RescheduleInput): Promise<RescheduleQuote> {
     return http.post<RescheduleQuote>(`/reservas/${id}/reschedule/quote`, input)
+  },
+
+  /**
+   * Cotiza una estadía NUEVA con la cadena de precio del hotel (temporadas incluidas):
+   * desglose noche a noche con la temporada y el precio de cada fecha. Lo usa el wizard de
+   * nueva reserva — antes cotizaba `basePrice × noches` en el frontend e ignoraba la grilla
+   * de temporadas. POST (no GET): la ruta `/reservas/:id` está registrada antes en el router
+   * del backend y capturaría `quote` como id.
+   */
+  async stayQuote(input: { roomId: string; checkIn: string; checkOut: string; guests: number }): Promise<StayQuote> {
+    return http.post<StayQuote>('/reservas/quote', input)
   },
 
   /**

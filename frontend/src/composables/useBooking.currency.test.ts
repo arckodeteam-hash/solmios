@@ -29,10 +29,28 @@ function ratesIn(currency: string): PublicRatesResponse {
     chargeCurrency: 'USD',
     nights: 3,
     taxes: [],
-    checkIn: '2026-08-10',
-    checkOut: '2026-08-13',
+    checkIn: tomorrow(),
+    checkOut: inDays(3),
   } as unknown as PublicRatesResponse
 }
+
+/**
+ * Fechas RELATIVAS en formato 'YYYY-MM-DD' LOCAL — el mismo que produce el calendario
+ * y con el que `searchValid` compara como strings (ver el fix de timezones ahí).
+ *
+ * El fixture tenía fechas fijas de agosto 2026: pasaron de largo, `searchValid` empezó a
+ * rechazarlas como "pasado" y `search()` retornaba temprano sin popular `ratesResponse` —
+ * los dos tests fallaban sin que el composable estuviera roto. Bomba de tiempo, no bug.
+ */
+function localDate(offsetDays: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + offsetDays)
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+}
+const tomorrow = () => localDate(1)
+const inDays = (n: number) => localDate(n)
 
 describe('useBooking — moneda de display', () => {
   beforeEach(() => {
@@ -44,7 +62,7 @@ describe('useBooking — moneda de display', () => {
     vi.mocked(BookingService.getRates).mockResolvedValue(ratesIn('USD'))
     const store = useBookingStore()
     store.currencyPreference = 'EUR'
-    store.init('demo', { checkIn: '2026-08-10', checkOut: '2026-08-13' })
+    store.init('demo', { checkIn: tomorrow(), checkOut: inDays(3) })
     await store.search()
 
     expect(store.displayCurrency).toBe('USD')
@@ -55,7 +73,7 @@ describe('useBooking — moneda de display', () => {
     vi.mocked(BookingService.getRates).mockResolvedValue(ratesIn('EUR'))
     const store = useBookingStore()
     store.currencyPreference = 'EUR'
-    store.init('demo', { checkIn: '2026-08-10', checkOut: '2026-08-13' })
+    store.init('demo', { checkIn: tomorrow(), checkOut: inDays(3) })
     await store.search()
 
     expect(store.displayCurrency).toBe('EUR')
@@ -65,7 +83,7 @@ describe('useBooking — moneda de display', () => {
   it('sin preferencia (auto) nunca avisa, aunque haya respuesta', async () => {
     vi.mocked(BookingService.getRates).mockResolvedValue(ratesIn('USD'))
     const store = useBookingStore()
-    store.init('demo', { checkIn: '2026-08-10', checkOut: '2026-08-13' })
+    store.init('demo', { checkIn: tomorrow(), checkOut: inDays(3) })
     await store.search()
 
     expect(store.displayCurrency).toBe('USD')

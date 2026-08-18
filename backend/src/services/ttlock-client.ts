@@ -110,7 +110,8 @@ export interface TTLockCreds {
 
 /**
  * Sciener exige el password como MD5 hex de 32 chars en minúsculas
- * (doc oficial /oauth2/token: "Password(32 chars, low case, md5 encrypted)").
+ * (según la doc oficial del endpoint /oauth2/token — campo password de
+ * 32 caracteres, minúsculas, encriptado MD5).
  * Si ya viene hasheado se respeta, para no re-hashear un valor migrado.
  */
 function md5Password(password: string): string {

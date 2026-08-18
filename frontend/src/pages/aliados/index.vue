@@ -5,6 +5,16 @@
       <p class="text-sm text-text-muted mt-0.5">Convertí tus referidos validados en comisión en dinero, en vez de meses gratis</p>
     </div>
 
+    <!-- Qué es esta vista: la participación del HOTEL en el programa. La configuración
+         global (tramos de comisión, pagos, todos los partners) vive en /admin/aliados,
+         del lado de la plataforma. -->
+    <div class="mb-6 p-4 bg-surface rounded-xl border border-border text-sm text-text-secondary">
+      <span class="font-bold text-navy">Tu lugar en el programa:</span>
+      acá ves si ya sos elegible, te convertís en Aliado y seguís tus comisiones y tu forma de cobro.
+      Para compartir tu link y ver tus referidos, andá a
+      <router-link to="/panel/referidos" class="text-cyan font-bold underline">Mis Referidos</router-link>.
+    </div>
+
     <div v-if="loading" class="h-40 animate-pulse rounded-2xl bg-surface"></div>
 
     <template v-else>

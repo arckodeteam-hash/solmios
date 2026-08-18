@@ -23,8 +23,28 @@ export class ApproveUseCase {
     return task
   }
 
+  /**
+   * Segregación de funciones: quien HIZO la limpieza no la aprueba, no la devuelve ni se
+   * marca la presencia del supervisor. Sin esto, un usuario con `housekeeping:edit` que
+   * además está asignado como staffId (el rol `housekeeper` lo tiene por default) podía
+   * auto-sellar su propia tarea: presence → approve, y quedaba "inspected" con su propio
+   * rating. La revisión exige una segunda persona por diseño (presencia física + calificación).
+   */
+  private assertNotPerformedBy(task: HousekeepingDTO, user: HkUser): void {
+    if ((task as any).staffId && (task as any).staffId === user.id) {
+      throw new AuthError('No podés aprobar ni marcar presencia en una limpieza que realizaste vos mismo')
+    }
+  }
+
   async approve(taskId: string, user: HkUser, note: string | undefined, rating: number): Promise<HousekeepingDTO> {
     const task = await this.ownedTask(taskId, user)
+
+    // Idempotencia: dos supervisores (o un doble-toque con mala señal) que aprueban a la
+    // vez no pisan el rating del primero ni duplican efectos — el segundo ve la tarea ya
+    // inspeccionada tal cual.
+    if (task.status === 'inspected') return task
+
+    this.assertNotPerformedBy(task, user)
 
     // No se aprueba una limpieza sin calificarla. Se refuerza acá el rango entero,
     // porque el validador del framework no garantiza min/max para números.
@@ -65,6 +85,8 @@ export class ApproveUseCase {
   async reject(taskId: string, user: HkUser, note?: string): Promise<HousekeepingDTO> {
     const task = await this.ownedTask(taskId, user)
 
+    this.assertNotPerformedBy(task, user)
+
     if (task.status !== 'completed') {
       throw new AuthError('Solo se pueden devolver tareas completadas')
     }
@@ -83,6 +105,9 @@ export class ApproveUseCase {
 
   async markPresence(taskId: string, user: HkUser): Promise<void> {
     const task = await this.ownedTask(taskId, user)
+
+    // La presencia del supervisor NO la marca quien limpió (ver assertNotPerformedBy).
+    this.assertNotPerformedBy(task, user)
 
     // Solo supervisor puede marcar presencia
     if (task.status !== 'completed') {

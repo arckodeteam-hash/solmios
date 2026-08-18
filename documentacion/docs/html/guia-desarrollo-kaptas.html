@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guía de Desarrollo — Kaptas Web API</title>
+<style>
+  :root{
+    --bg:#f8fafc; --panel:#fff; --ink:#0f172a; --muted:#475569;
+    --line:#e2e8f0; --red:#dc2626; --amber:#d97706; --green:#16a34a;
+    --blue:#2563eb; --purple:#7c3aed;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;scroll-padding-top:70px}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.6}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 24px}
+
+  /* NAV */
+  nav{position:sticky;top:0;z-index:100;background:rgba(255,255,255,.95);
+      backdrop-filter:blur(10px);border-bottom:1px solid var(--line);box-shadow:0 1px 4px rgba(0,0,0,.04)}
+  nav .wrap{display:flex;gap:2px;overflow-x:auto;padding:10px 24px}
+  nav a{text-decoration:none;color:var(--muted);font-size:13.5px;font-weight:700;
+        white-space:nowrap;padding:7px 13px;border-radius:8px;transition:all .15s}
+  nav a:hover{background:#f1f5f9;color:var(--ink)}
+  nav a.active{background:var(--ink);color:#fff}
+
+  /* HERO */
+  .hero{background:linear-gradient(135deg,#0f172a,#1e293b);color:#fff;padding:50px 0 38px}
+  .hero h1{font-size:clamp(24px,3.6vw,36px);line-height:1.15;margin-bottom:10px}
+  .hero p{font-size:17px;color:#cbd5e1;max-width:780px}
+
+  /* SECTIONS */
+  section{padding:46px 0}
+  section h2{font-size:clamp(21px,3vw,28px);margin-bottom:6px;display:flex;align-items:center;gap:10px}
+  section .lead{color:var(--muted);font-size:15.5px;margin-bottom:20px;max-width:760px}
+
+  /* GOLD RULES BOX */
+  .goldbox{background:linear-gradient(135deg,#fef3c7,#fffbeb);border:2px solid var(--amber);
+           border-radius:14px;padding:20px 24px;margin:20px 0}
+  .goldbox h3{color:#92400e;font-size:17px;margin-bottom:8px}
+  .goldbox ul{padding-left:22px;color:#78350f;font-size:14.5px}
+  .goldbox ul li{padding:4px 0}
+  .goldbox ul li b{color:#451a03}
+
+  /* FATAL BOX */
+  .fatalbox{background:linear-gradient(135deg,#fef2f2,#fff5f5);border:2px solid var(--red);
+            border-radius:14px;padding:20px 24px;margin:20px 0}
+  .fatalbox h3{color:#991b1b;font-size:17px;margin-bottom:8px}
+  .fatalbox ul{padding-left:22px;color:#7f1d1d;font-size:14.5px}
+  .fatalbox ul li{padding:4px 0}
+  .fatalbox ul li b{color:#450a0a}
+
+  /* SECTIONS — alternate bg */
+  section.alt{background:#fff}
+
+  /* CARDS */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  .card h4{font-size:15px;margin-bottom:6px}
+
+  /* ZONES DIAGRAM */
+  .zones{display:flex;gap:0;margin:20px 0;border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+  .zone{flex:1;padding:20px 16px;text-align:center;position:relative}
+  .zone.legacy{background:#fef2f2}
+  .zone.bridge{background:#fffbeb}
+  .zone.clean{background:#f0fdf4}
+  .zone .icon{font-size:28px;margin-bottom:6px}
+  .zone h4{font-size:15px;font-weight:800;margin-bottom:4px}
+  .zone.legacy h4{color:#991b1b}
+  .zone.bridge h4{color:#92400e}
+  .zone.clean h4{color:#15803d}
+  .zone p{font-size:12.5px;color:var(--muted);line-height:1.4}
+  .zone .arrow{position:absolute;right:-14px;top:50%;transform:translateY(-50%);
+              font-size:20px;color:var(--muted);z-index:2}
+  @media(max-width:680px){.zones{flex-direction:column}.zone .arrow{display:none}}
+
+  /* CYCLE CARD */
+  .cycle{border:1px solid var(--line);border-radius:16px;background:var(--panel);overflow:hidden;margin-bottom:28px}
+  .cycle>header{color:#fff;padding:16px 22px;display:flex;align-items:center;gap:14px}
+  .cycle>header .ico{font-size:32px}
+  .cycle>header h3{font-size:20px;margin-bottom:3px}
+  .cycle>header .when{font-size:13.5px;opacity:.92}
+  .cycle.verde>header{background:linear-gradient(90deg,#16a34a,#22c55e)}
+  .cycle.refactor>header{background:linear-gradient(90deg,#7c3aed,#9333ea)}
+  .cycle.parche>header{background:linear-gradient(90deg,#dc2626,#ef4444)}
+  .cycle-body{padding:22px}
+  .cycle-body h5{font-size:15px;margin:18px 0 6px;color:var(--ink)}
+  .cycle-body h5:first-child{margin-top:0}
+  .cycle-body p{font-size:14px;color:var(--muted);margin-bottom:8px}
+  .cycle-body .why{display:block;font-size:13px;font-style:italic;margin-top:2px}
+  .cycle.verde .why{color:#15803d}
+  .cycle.refactor .why{color:#7c3aed}
+  .cycle.parche .why{color:#b91c1c}
+
+  /* STEPS */
+  ol.steps{list-style:none;counter-reset:s;margin:14px 0}
+  ol.steps>li{counter-increment:s;display:flex;gap:14px;padding:14px 0;border-bottom:1px dashed var(--line)}
+  ol.steps>li:last-child{border-bottom:0}
+  ol.steps>li::before{content:counter(s);min-width:32px;height:32px;border-radius:8px;color:#fff;
+     font-weight:800;text-align:center;line-height:32px;font-size:14px;flex-shrink:0;align-self:flex-start}
+  .cycle.verde ol.steps>li::before{background:var(--green)}
+  .cycle.refactor ol.steps>li::before{background:var(--purple)}
+  .cycle.parche ol.steps>li::before{background:var(--red)}
+  .step-body h5{font-size:15px;margin:0 0 3px 0!important;color:var(--ink)}
+  .step-body p{font-size:13.5px!important;color:var(--muted);margin:0}
+  .step-body code{font-size:12.5px;background:#f1f5f9;padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+
+  /* TREE */
+  pre.tree{background:#0f172a;color:#e2e8f0;border-radius:12px;padding:18px 20px;
+           overflow-x:auto;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+           font-size:13px;line-height:1.7;white-space:pre;margin:14px 0}
+  pre.tree .com{color:#64748b}
+  pre.tree .new{color:#4ade80;font-weight:700}
+  pre.tree .die{color:#fca5a5}
+  pre.tree .keep{color:#93c5fd}
+  pre.tree .h{color:#fff;font-weight:700}
+  pre.tree .warn{color:#fbbf24}
+
+  /* TABLE */
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th{background:#f8fafc;border-bottom:2px solid var(--line);padding:9px 12px;text-align:left;
+     font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  td{border-bottom:1px solid var(--line);padding:9px 12px}
+
+  /* CHECKLIST */
+  .checklist{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin:12px 0}
+  .checklist h4{margin-bottom:8px;font-size:14.5px}
+  .checklist .item{display:flex;align-items:flex-start;gap:8px;padding:4px 0;font-size:13.5px;color:var(--muted)}
+  .checklist .item .box{width:18px;height:18px;border:2px solid #94a3b8;border-radius:4px;flex-shrink:0;margin-top:2px}
+
+  /* EXAMPLE BOX */
+  .example{background:#fffbeb;border-left:4px solid var(--amber);border-radius:8px;
+           padding:14px 18px;margin:14px 0;font-size:14px;color:#7c2d12}
+  .example b{color:#92400e}
+
+  /* CONNECTOR */
+  .conn{background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px 20px;margin:18px 0 6px;
+        font-size:14.5px;color:#1e3a8a}
+  .conn b{color:#1e40af}
+
+  /* CODE */
+  code{background:#f1f5f9;padding:1px 6px;border-radius:4px;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+       font-size:.9em;border:1px solid var(--line)}
+
+  /* RULE BADGE */
+  .rule{display:inline-block;background:#0f172a;color:#fde68a;padding:2px 8px;border-radius:4px;font-size:11.5px;font-weight:700}
+
+  /* TIP */
+  .tip{display:flex;gap:10px;align-items:flex-start;background:#f0fdf4;border:1px solid #bbf7d0;
+       border-radius:10px;padding:14px 16px;margin:12px 0;font-size:13.5px;color:#14532d}
+  .tip .icon{font-size:18px;flex-shrink:0}
+
+  /* FOOTER */
+  .footer{text-align:center;color:var(--muted);font-size:12.5px;padding:30px 0 50px;border-top:1px solid var(--line);margin-top:20px}
+
+  /* PRINT */
+  @media print{
+    nav{display:none}
+    .hero{padding:20px 0 14px}
+    body{font-size:12px}
+    section{padding:20px 0}
+    .cycle-body{padding:12px}
+  }
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <a href="#reglas">Reglas de Oro</a>
+  <a href="#zonas">Las 3 Zonas</a>
+  <a href="#verde">Ciclo VERDE</a>
+  <a href="#refactor">Ciclo RECICLADO</a>
+  <a href="#parche">Ciclo PARCHE</a>
+  <a href="#estructura">Estructura</a>
+  <a href="#tests">Tests</a>
+  <a href="#cierre">Cierre</a>
+</div></nav>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <div class="wrap">
+    <h1>Guía de Desarrollo — Kaptas Web API</h1>
+    <p>Documento canónico para todo el equipo. Explica <b>los 3 ciclos de trabajo</b> (feature nueva, refactor, bug fix), las <b>reglas obligatorias</b>, la <b>estructura de módulos</b> y <b>cómo escribir tests</b>. Si algo no está acá, no se hace.</p>
+  </div>
+</header>
+
+<!-- ===================== REGLAS DE ORO ===================== -->
+<section id="reglas">
+  <div class="wrap">
+    <h2>🔒 Reglas de Oro — aplican a los 3 ciclos</h2>
+    <p class="lead">Estas reglas <b>no son negociables</b>. Si las rompés, el código no pasa revisión. Están pensadas para que el sistema crezca sin romperse.</p>
+
+    <div class="goldbox">
+      <h3>🛡️ Lo que SIEMPRE se hace</h3>
+      <ul>
+        <li><b>Tests ANTES de tocar código.</b> Si no hay test que capture el comportamiento actual, no se modifica nada. Sin excepción.</li>
+        <li><b>Endpoints NO cambian.</b> La URL, el método HTTP, el request y el response se mantienen idénticos. El frontend no debe enterarse de que el backend cambió.</li>
+        <li><b>Controller flaco (~30 líneas).</b> Solo recibe HTTP, llama al service, retorna HTTP. Cero lógica de negocio en el controller.</li>
+        <li><b><code>IdCompany</code> en TODA query.</b> Cada consulta a la BD filtra por la empresa del usuario. Es lo que evita que un cliente vea datos de otro.</li>
+        <li><b><code>AsNoTracking()</code> en toda lectura.</b> Si no vas a modificar la entidad, no la trackees.</li>
+        <li><b><code>DateTime.UtcNow</code>, nunca <code>DateTime.Now</code>.</b> La zona horaria la maneja el frontend.</li>
+      </ul>
+    </div>
+
+    <div class="fatalbox">
+      <h3>☠️ Lo que NUNCA se hace</h3>
+      <ul>
+        <li><b>NO se toca <code>BaseService</code>.</b> Nunca. Ni para arreglar algo "de paso". Esa clase se eliminará cuando todos los módulos migren, no antes.</li>
+        <li><b>NO se importa <code>Kaptas.Services</code></b> desde un módulo nuevo de <code>Features/</code>. Lo nuevo no depende de lo viejo.</li>
+        <li><b>NO se hereda de <code>BaseService</code></b> en ningún módulo nuevo. Se usa <code>ICurrentUserProvider</code>.</li>
+        <li><b>NO se borra un test "para que compile".</b> Si un test falla, se investiga por qué. Borrarlo es esconder el problema.</li>
+        <li><b>NO se arregla un bug sin poder reproducirlo primero.</b> Sin reproducción no hay certeza de que se arregló.</li>
+        <li><b>NO se modifican las BDs <code>dev</code></b> (<code>kaptaswebdev</code> / <code>kw21</code>) desde tests. Los tests usan BDs <code>_test</code> aisladas.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== LAS 3 ZONAS ===================== -->
+<section id="zonas" class="alt">
+  <div class="wrap">
+    <h2>🗺️ Las 3 zonas del código</h2>
+    <p class="lead">Todo el código de Kaptas está en una de estas 3 zonas. El trabajo de cada ciclo es mover módulos hacia la derecha.</p>
+
+    <div class="zones">
+      <div class="zone legacy">
+        <div class="icon">💀</div>
+        <h4>LEGADO</h4>
+        <p><code>Kaptas.Services/</code><br>Sin tests, depende de <code>BaseService</code></p>
+      </div>
+      <div class="zone bridge">
+        <div class="icon">🔗</div>
+        <h4>PUENTE</h4>
+        <p><code>Features/</code> + viejo vivo<br>Ambos conviven, feature flag activa</p>
+      </div>
+      <div class="zone clean">
+        <div class="icon">✅</div>
+        <h4>LIMPIO</h4>
+        <p><code>Features/</code> únicamente<br>Viejo eliminado, con tests</p>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h4>¿Cómo se mueve un módulo de LEGADO → LIMPIO?</h4>
+      <p style="font-size:14px;color:var(--muted)">
+        Cada vez que hacés un <b>CICLO RECICLADO</b> a un módulo, lo movés una casilla a la derecha.
+        Primero queda en PUENTE (conviven viejo y nuevo). Cuando confirmás que el nuevo funciona,
+        eliminás el viejo y el módulo queda LIMPIO. <b>Nunca se salta la zona PUENTE.</b>
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== CICLO 1 — VERDE ===================== -->
+<section id="verde">
+  <div class="wrap">
+    <h2>✨ Ciclo 1 — VERDE (Feature nueva)</h2>
+    <p class="lead">Cuando llega un pedido de algo que <b>no existe hoy</b>. Se crea desde cero, bien hecho, en <code>Features/</code>.</p>
+
+    <div class="cycle verde">
+      <header>
+        <span class="ico">✨</span>
+        <div><h3>VERDE — Módulo nuevo desde cero</h3><div class="when">¿Cuándo? → Feature nueva que no existe en el sistema</div></div>
+      </header>
+      <div class="cycle-body">
+
+        <div class="example">📦 <b>Ejemplo real:</b> un cliente pide gestionar <b>inventario</b> (stock de productos). Eso no existe hoy. Se crea desde cero en <code>Features/Inventario/</code>.</div>
+
+        <h5>FASE A — Análisis (sin código)</h5>
+        <ol class="steps">
+          <li><div class="step-body">
+            <h5>Definí qué tablas ESCRIBE el módulo</h5>
+            <p>Tablas donde hace INSERT / UPDATE / DELETE. Son las tablas "propias" del módulo.</p>
+            <span class="why">Por qué: define el alcance de escritura. Nadie más debería escribir esas tablas directamente.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Definí qué tablas SOLO LEE</h5>
+            <p>Catálogos, referencias, datos de otros módulos que consulta pero nunca modifica.</p>
+            <span class="why">Por qué: identifica dependencias de lectura sin acoplamiento de escritura.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Identificá módulos DEPENDIENTES</h5>
+            <p>¿Qué otros módulos van a leer de tus tablas? (ej: Ventas lee Contactos para mostrar el nombre del cliente).</p>
+            <span class="why">Por qué: saber el impacto. Si tu módulo es central, 10+ módulos pueden leer de él.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Listá los permisos necesarios</h5>
+            <p>Claims JWT que controlan el acceso (ej: <code>INVENTARIO</code>, <code>VERPRECIOS</code>).</p>
+            <span class="why">Por qué: cada endpoint debe tener su <code>[Authorize(Roles="...")]</code>.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Definí los endpoints HTTP</h5>
+            <p>Método + ruta + qué recibe + qué devuelve. Documentalos antes de programar.</p>
+            <span class="why">Por qué: la API se define primero. Es el contrato con el frontend.</span>
+          </div></li>
+        </ol>
+
+        <h5>FASE B — Estructura</h5>
+        <ol class="steps" start="6">
+          <li><div class="step-body">
+            <h5>Creá la carpeta <code>Features/[Modulo]/</code></h5>
+            <p>Con subcarpetas: <code>DTOs/</code>. Todo lo del módulo vive junto.</p>
+            <span class="why">Por qué: cada módulo es autocontenido. No se desparrama en 4 proyectos.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Creá los DTOs primero</h5>
+            <p><code>[X]DetailDto</code>, <code>[X]ListDto</code>, <code>[X]CreateRequest</code>, <code>[X]UpdateRequest</code>, <code>[X]ListRequest</code>.</p>
+            <span class="why">Por qué: los DTOs definen la forma de los datos. El resto del módulo se construye alrededor de ellos.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Creá la interfaz <code>I[X]Service.cs</code></h5>
+            <p>El contrato: qué métodos expone el módulo. Solo firmas, sin implementación.</p>
+            <span class="why">Por qué: definir la API del módulo antes de implementarla obliga a pensar el diseño.</span>
+          </div></li>
+        </ol>
+
+        <h5>FASE C — Implementación (de adentro hacia afuera)</h5>
+        <ol class="steps" start="9">
+          <li><div class="step-body">
+            <h5>Implementá <code>[X]Service.cs</code></h5>
+            <p>La lógica de negocio. Validaciones, reglas, acceso a BD. Usa <code>ICurrentUserProvider</code> (no <code>BaseService</code>).</p>
+            <span class="why">Por qué: el service es el corazón. Todo lo demás es piel.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Implementá <code>[X]Controller.cs</code> (~30 líneas)</h5>
+            <p>Solo recibe HTTP, llama al service, retorna HTTP. Nada de lógica.</p>
+            <span class="why">Por qué: controller flaco = fácil de testear y mantener.</span>
+          </div></li>
+        </ol>
+
+        <h5>FASE D — Tests y cierre</h5>
+        <ol class="steps" start="11">
+          <li><div class="step-body">
+            <h5>Escribí los tests</h5>
+            <p>Mínimo: crear válido, crear inválido, listar paginado, detalle existente, detalle inexistente, eliminar, <b>aislamiento tenant</b>.</p>
+            <span class="why">Por qué: sin tests, cualquier cambio futuro puede romper el módulo sin aviso.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Build + tests verdes + commit</h5>
+            <p><code>dotnet build</code> sin errores, <code>dotnet test</code> todo verde, commit con prefijo <code>feat:</code>.</p>
+            <span class="why">Por qué: es el checkpoint de calidad. Si algo falla, no se mergea.</span>
+          </div></li>
+        </ol>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== CICLO 2 — RECICLADO ===================== -->
+<section id="refactor" class="alt">
+  <div class="wrap">
+    <h2>♻️ Ciclo 2 — RECICLADO (Refactorizar módulo existente)</h2>
+    <p class="lead">Cuando un módulo ya existe en <code>Kaptas.Services</code> pero está hecho un lío (depende de <code>BaseService</code>, sin tests, 700+ líneas en un archivo).</p>
+
+    <div class="cycle refactor">
+      <header>
+        <span class="ico">♻️</span>
+        <div><h3>RECICLADO — Migrar de Services → Features</h3><div class="when">¿Cuándo? → Módulo viejo que necesita orden, o acumuló 3+ bugs</div></div>
+      </header>
+      <div class="cycle-body">
+
+        <div class="example">📦 <b>Ejemplo real:</b> <code>ContactService</code> (735 líneas, 8 dependencias inyectadas, 0 tests). Se migra a <code>Features/Contactos/</code> sin cambiar ningún endpoint.</div>
+
+        <ol class="steps">
+          <li><div class="step-body">
+            <h5>Escribí tests de caracterización</h5>
+            <p>Tests que capturen <b>lo que el módulo HACE hoy</b>, no lo que debería hacer. Si hoy devuelve 5 contactos, el test verifica que devuelve 5. No importa si está bien o mal — solo documentar el comportamiento real.</p>
+            <span class="why"><span class="rule">OBLIGATORIO</span> Sin esto, cualquier cambio es a ciegas. Si no sabés qué hace hoy, no podés saber si lo rompiste. Este paso <b>no se salta nunca</b>.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Creá el módulo nuevo en <code>Features/[Modulo]/</code></h5>
+            <p>Con su propio Controller + Service + DTOs. Mismos endpoints, misma lógica, pero sin <code>BaseService</code>. El viejo <b>sigue vivo</b> — no se borra nada todavía.</p>
+            <span class="why">Por qué: el módulo entra en zona PUENTE. Viejo y nuevo conviven.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Activá el nuevo para <b>UN solo cliente</b> con feature flag</h5>
+            <p>Un interruptor que manda a 1 cliente al nuevo; los demás siguen en el viejo. Si algo falla, solo falla para ese cliente y se puede revertir en segundos.</p>
+            <span class="why">Por qué: migrar todo de golpe = riesgo de romperle el sistema a todos los clientes a la vez.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Migrá al resto de clientes <b>de a uno</b></h5>
+            <p>Cliente por cliente, verificando que todo funcione. Sin apuro.</p>
+            <span class="why">Por qué: lento pero seguro. Cada cliente migrado es un cliente verificado.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Eliminá el viejo</h5>
+            <p>Cuando nadie usa el módulo viejo: lo marcás <code>[Obsolete]</code> por una iteración, y después lo borrás. El módulo queda LIMPIO.</p>
+            <span class="why">Por qué: solo se borra cuando hay certeza absoluta de que el nuevo funciona para todos.</span>
+          </div></li>
+        </ol>
+
+        <div class="goldbox" style="margin-top:14px">
+          <h3>⚠️ Crítico: endpoints idénticos</h3>
+          <ul>
+            <li>Misma URL, mismo método HTTP, mismos parámetros.</li>
+            <li>Mismo formato de response. Mismos códigos de error.</li>
+            <li>El frontend <b>no debe notar la diferencia</b>. Si el frontend necesita cambios, algo se hizo mal.</li>
+            <li>Cada endpoint del viejo debe tener su equivalente exacto en el nuevo.</li>
+          </ul>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== CICLO 3 — PARCHE ===================== -->
+<section id="parche">
+  <div class="wrap">
+    <h2>🐛 Ciclo 3 — PARCHE (Arreglar bug)</h2>
+    <p class="lead">Cuando alguien reporta que algo no funciona. Puede estar en código viejo (<code>Services</code>) o nuevo (<code>Features</code>). El procedimiento cambia según dónde esté.</p>
+
+    <div class="cycle parche">
+      <header>
+        <span class="ico">🐛</span>
+        <div><h3>PARCHE — Reparar algo que no funciona</h3><div class="when">¿Cuándo? → Bug reportado por cliente, error 500 en logs, o comportamiento incorrecto</div></div>
+      </header>
+      <div class="cycle-body">
+
+        <div class="example">📦 <b>Ejemplo real:</b> un cliente reporta que <b>ve facturas de otra empresa</b>. Es un problema de tenant (falta el filtro <code>IdCompany</code> en una consulta). Hay que arreglarlo YA.</div>
+
+        <ol class="steps">
+          <li><div class="step-body">
+            <h5>Detectá el origen del aviso</h5>
+            <p>Del log (<code>dbo.Log</code> en la BD), del reporte del cliente, de un error 500, o del dashboard de Hangfire. Necesitás <b>datos concretos</b>: ¿qué usuario? ¿qué endpoint? ¿qué datos devolvió? ¿qué debería haber devuelto?</p>
+            <span class="why">Sin datos del problema, estás adivinando.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>ESCRIBÍ EL TEST QUE REPRODUCE EL BUG <span class="rule">OBLIGATORIO</span></h5>
+            <p>Antes de arreglar nada, creá un test que <b>falle</b> con el bug. Ejecutalo y confirmá que está ROJO. Este test es tu prueba de que el bug existe y tu garantía de que no vuelve.</p>
+            <span class="why"><span class="rule">OBLIGATORIO</span> Si no podés reproducirlo en un test, no sabés si lo arreglaste. No se arregla a ciegas.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Ubicá dónde está el código</h5>
+            <p>¿Está en <code>Kaptas.Services/</code> (viejo) o en <code>Features/</code> (nuevo)? Esto determina cómo se arregla.</p>
+            <span class="why">No es lo mismo operar en código sin tests que en código con tests.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Buscá la <b>causa raíz</b>, no el síntoma</h5>
+            <p>"¿Por qué ve facturas ajenas?" → falta el filtro <code>IdCompany</code> en esa consulta. "¿Por qué el login falla con mayúsculas?" → comparación case-sensitive sin <code>ToUpper()</code>. No parches el síntoma — arreglá la causa.</p>
+            <span class="why">Parchear el síntoma hace que el bug vuelva por otro camino. Hay que ir a la raíz.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>Arreglá según dónde esté</h5>
+            <p><b>Si está en lo VIEJO (Services):</b> hacé el parche mínimo para resolver el bug. No refactorices todo el módulo "de paso". Anotá el módulo para entrar al <b>CICLO RECICLADO</b>.</p>
+            <p style="margin-top:6px"><b>Si está en lo NUEVO (Features):</b> arreglalo y además escribí/mejorá los tests del módulo para cubrir ese caso.</p>
+            <span class="why">Arreglar a fondo el viejo sin tests = alto riesgo de romper otra cosa. Mejor anotarlo y reciclarlo con calma.</span>
+          </div></li>
+          <li><div class="step-body">
+            <h5>El test del bug queda para siempre</h5>
+            <p>El test que escribiste en el paso 2 ahora pasa a VERDE. Ese test <b>nunca se borra</b>. Es tu red de seguridad: si alguien reintroduce el bug, el test lo detecta.</p>
+            <span class="why">Un bug que ya pasó una vez no debería volver a pasar nunca más.</span>
+          </div></li>
+        </ol>
+
+        <div class="conn">
+          <b>🔗 Regla de conexión entre ciclos:</b> si un módulo viejo acumula <b>3+ bugs</b>, ese módulo <b>sube al tope de la lista</b> para entrar al <b>CICLO RECICLADO</b>. El bug de hoy es la señal de qué hay que limpiar mañana.
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ESTRUCTURA ===================== -->
+<section id="estructura" class="alt">
+  <div class="wrap">
+    <h2>📂 Estructura de un módulo en Features/</h2>
+    <p class="lead">Todo módulo nuevo o migrado vive acá. La estructura es fija y todos los módulos la siguen.</p>
+
+    <pre class="tree"><span class="h">Features/[Modulo]/</span>
+│
+├── <span class="new">DTOs/</span>                        <span class="com">← QUÉ datos entran y salen</span>
+│   ├── [X]DetailDto.cs         <span class="com">← Response: detalle completo</span>
+│   ├── [X]ListDto.cs           <span class="com">← Response: item en listado</span>
+│   ├── [X]CreateRequest.cs     <span class="com">← Request: datos para crear</span>
+│   ├── [X]UpdateRequest.cs     <span class="com">← Request: datos para actualizar</span>
+│   └── [X]ListRequest.cs       <span class="com">← Request: filtros de búsqueda</span>
+│
+├── <span class="new">I[X]Service.cs</span>          <span class="com">← CONTRATO: qué puede hacer el módulo</span>
+├── <span class="new">[X]Service.cs</span>           <span class="com">← IMPLEMENTACIÓN: lógica de negocio</span>
+│
+├── <span class="new">[X]Controller.cs</span>        <span class="com">← ENDPOINTS HTTP (~30 líneas máximo)</span>
+└── README.md                    <span class="com">← Documentación del módulo</span></pre>
+
+    <div class="card">
+      <h4>Qué va en CADA archivo</h4>
+      <table>
+        <tr><th>Archivo</th><th>Contenido</th><th>Ejemplo</th></tr>
+        <tr>
+          <td><code>DTOs/</code></td>
+          <td>Clases que definen la forma de los datos</td>
+          <td><code>ContactoDetailDto</code> tiene <code>Nombre</code>, <code>Apellido</code>, <code>Documento</code></td>
+        </tr>
+        <tr>
+          <td><code>I[X]Service.cs</code></td>
+          <td>Interface con métodos: Crear, Listar, Obtener, Actualizar, Eliminar</td>
+          <td><code>Task&lt;int&gt; CrearAsync(ContactoCreateRequest req)</code></td>
+        </tr>
+        <tr>
+          <td><code>[X]Service.cs</code></td>
+          <td>Implementación — toda la lógica de negocio, validaciones, acceso a BD</td>
+          <td>Validar que el nombre no esté vacío, filtrar por <code>IdCompany</code>, guardar en BD</td>
+        </tr>
+        <tr>
+          <td><code>[X]Controller.cs</code></td>
+          <td>Endpoints HTTP — ~30 líneas máximo</td>
+          <td>Recibe POST → llama a <code>_service.CrearAsync(req)</code> → retorna 201</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="tip">
+      <span class="icon">💡</span>
+      <div>
+        <b>¿Y si el módulo necesita queries complejas (Dapper / Stored Procedures)?</b><br>
+        Se agrega un <code>I[X]Repository.cs</code> + <code>[X]Repository.cs</code> en la misma carpeta.
+        El service lo inyecta. Pero <b>no es obligatorio</b> — solo si EF Core no alcanza.
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h4>Dependencias permitidas y prohibidas</h4>
+      <table>
+        <tr><th>✅ PERMITIDO</th><th>❌ PROHIBIDO</th></tr>
+        <tr>
+          <td><code>ICurrentUserProvider</code> (desde <code>Features/_Shared/</code>)</td>
+          <td><code>IBaseService</code> / <code>BaseService</code></td>
+        </tr>
+        <tr>
+          <td><code>KaptasCoreContext</code> / <code>KaptaswebContext</code></td>
+          <td><code>Kaptas.Services</code> (cualquier namespace)</td>
+        </tr>
+        <tr>
+          <td><code>Kaptas.DTO</code> (para DTOs compartidos)</td>
+          <td><code>ISpExecute</code> / <code>IDbService</code></td>
+        </tr>
+        <tr>
+          <td><code>Kaptas.Helpers</code> (crypto, settings)</td>
+          <td>Heredar de cualquier clase de <code>Services/</code></td>
+        </tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== TESTS ===================== -->
+<section id="tests">
+  <div class="wrap">
+    <h2>🧪 Tests — cómo y cuándo escribirlos</h2>
+    <p class="lead">Los tests son <b>obligatorios</b> en los 3 ciclos. Sin tests no hay merge. El proyecto <code>Kaptas.Tests</code> tiene 2 tipos de tests.</p>
+
+    <div class="card">
+      <h4>Los 2 tipos de test (y para qué sirve cada uno)</h4>
+      <table>
+        <tr><th>Tipo</th><th>Carpeta</th><th>Dónde corre</th><th>Tiempo</th><th>Cuándo se usa</th></tr>
+        <tr>
+          <td><b>Unitarios</b></td>
+          <td><code>Features/</code></td>
+          <td>Sin BD (mocks)</td>
+          <td>~1 segundo</td>
+          <td>Lógica pura: validaciones, crypto, cálculos, reglas de negocio</td>
+        </tr>
+        <tr>
+          <td><b>Integración</b></td>
+          <td><code>Legacy/</code></td>
+          <td>Contra BD <code>_test</code> aislada</td>
+          <td>~45 segundos</td>
+          <td>Queries reales, SPs, flujos completos, caracterización de módulos viejos</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h4>Matriz: qué tests escribir según el ciclo</h4>
+      <table>
+        <tr><th>Ciclo</th><th>Tipo de test</th><th>Qué probar</th><th>Cuándo se escribe</th></tr>
+        <tr>
+          <td>✨ VERDE</td>
+          <td>Unitarios + Integración</td>
+          <td>Crear válido/inválido, listar, detalle, eliminar, <b>aislamiento tenant</b></td>
+          <td>Después del service, antes del controller</td>
+        </tr>
+        <tr>
+          <td>♻️ RECICLADO</td>
+          <td>Caracterización (Integración)</td>
+          <td>Lo que HOY hace el módulo viejo (sin juzgar si está bien o mal)</td>
+          <td><span class="rule">ANTES de tocar una línea de código</span></td>
+        </tr>
+        <tr>
+          <td>🐛 PARCHE</td>
+          <td>Regresión (Unitario o Integración)</td>
+          <td>El caso exacto que reproduce el bug</td>
+          <td><span class="rule">ANTES de arreglar el bug (debe fallar en rojo)</span></td>
+        </tr>
+      </table>
+    </div>
+
+    <h3 style="margin-top:20px">Cómo correr los tests</h3>
+    <div class="card">
+      <pre style="background:#0f172a;color:#e2e8f0;padding:14px;border-radius:8px;font-size:13px">
+<span style="color:#64748b"># Setup inicial (solo la primera vez)</span>
+bash Kaptas.Tests/scripts/setup-test-db.sh
+
+<span style="color:#64748b"># Todos los tests</span>
+dotnet test
+
+<span style="color:#64748b"># Solo unitarios (sin BD, ~1s)</span>
+dotnet test --filter "Category=Unit"
+
+<span style="color:#64748b"># Solo integration (contra BD _test)</span>
+dotnet test --filter "Category=Integration"
+
+<span style="color:#64748b"># Un test específico</span>
+dotnet test --filter "FullyQualifiedName~LoginTests"
+
+<span style="color:#64748b"># Saltar reset de BD (para CI o corridas repetidas)</span>
+dotnet test /p:SkipDbReset=true</pre>
+    </div>
+
+    <div class="goldbox" style="margin-top:14px">
+      <h3>⚠️ Las BDs aisladas</h3>
+      <ul>
+        <li>Los tests <b>nunca</b> tocan <code>kaptaswebdev</code> ni <code>kw21</code>.</li>
+        <li>Trabajan sobre copias <code>kaptaswebdev_test</code> / <code>kw21_test</code>.</li>
+        <li>Antes de cada <code>dotnet test</code>, el sistema restaura las <code>_test</code> desde un snapshot limpio.</li>
+        <li>Si las <code>_test</code> no existen, corré <code>bash Kaptas.Tests/scripts/setup-test-db.sh</code> una vez.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== CIERRE ===================== -->
+<section id="cierre" class="alt">
+  <div class="wrap">
+    <h2>✅ Checklist universal de cierre</h2>
+    <p class="lead">Antes de decir "listo", recorré esta lista. Aplica a los 3 ciclos por igual.</p>
+
+    <div class="checklist">
+      <h4>Build y tests</h4>
+      <div class="item"><span class="box"></span> <code>dotnet build</code> = 0 errores, 0 warnings nuevos</div>
+      <div class="item"><span class="box"></span> <code>dotnet test</code> = todos verdes (unitarios + integración)</div>
+    </div>
+
+    <div class="checklist" style="margin-top:8px">
+      <h4>Calidad del código nuevo</h4>
+      <div class="item"><span class="box"></span> Controller tiene ~30 líneas (no más de 50)</div>
+      <div class="item"><span class="box"></span> No importa <code>Kaptas.Services</code></div>
+      <div class="item"><span class="box"></span> No hereda de <code>BaseService</code> ni usa <code>IBaseService</code></div>
+      <div class="item"><span class="box"></span> Toda query filtra por <code>IdCompany</code></div>
+      <div class="item"><span class="box"></span> Toda lectura usa <code>AsNoTracking()</code></div>
+      <div class="item"><span class="box"></span> Usa <code>DateTime.UtcNow</code> (no <code>DateTime.Now</code>)</div>
+      <div class="item"><span class="box"></span> Todos los <code>[Authorize]</code> están activos (no comentados)</div>
+    </div>
+
+    <div class="checklist" style="margin-top:8px">
+      <h4>Endpoints (para RECICLADO)</h4>
+      <div class="item"><span class="box"></span> Misma URL, mismo método HTTP que el viejo</div>
+      <div class="item"><span class="box"></span> Mismo request body y response shape</div>
+      <div class="item"><span class="box"></span> Mismos códigos de respuesta (200, 201, 400, 404, 500)</div>
+      <div class="item"><span class="box"></span> El frontend no necesita ningún cambio</div>
+    </div>
+
+    <div class="checklist" style="margin-top:8px">
+      <h4>Documentación y repo</h4>
+      <div class="item"><span class="box"></span> README.md en la carpeta del módulo (opcional pero recomendado)</div>
+      <div class="item"><span class="box"></span> Commit con prefijo: <code>feat:</code> / <code>refactor:</code> / <code>fix:</code></div>
+    </div>
+
+    <div class="fatalbox" style="margin-top:16px">
+      <h3>☠️ Si algo de esto no se cumple, el código NO se mergea</h3>
+      <ul>
+        <li>Build rojo o tests rojos → <b>no merge</b></li>
+        <li>Controller de 200 líneas con lógica adentro → <b>no merge</b></li>
+        <li>Importa <code>Kaptas.Services</code> desde <code>Features/</code> → <b>no merge</b></li>
+        <li>Consulta sin filtro <code>IdCompany</code> → <b>no merge</b></li>
+        <li>Bug arreglado sin test de regresión → <b>no merge</b></li>
+        <li>Módulo reciclado sin tests de caracterización → <b>no merge</b></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== RESUMEN RÁPIDO ===================== -->
+<section id="resumen">
+  <div class="wrap">
+    <h2>📋 Resumen rápido — los 3 ciclos en una tabla</h2>
+    <table>
+      <tr>
+        <th></th>
+        <th>✨ VERDE</th>
+        <th>♻️ RECICLADO</th>
+        <th>🐛 PARCHE</th>
+      </tr>
+      <tr>
+        <td><b>¿Cuándo?</b></td>
+        <td>Feature nueva que no existe</td>
+        <td>Módulo viejo que necesita orden</td>
+        <td>Algo no funciona</td>
+      </tr>
+      <tr>
+        <td><b>¿Dónde se crea?</b></td>
+        <td><code>Features/</code> desde cero</td>
+        <td><code>Features/</code> + viejo en PUENTE</td>
+        <td>En el código existente</td>
+      </tr>
+      <tr>
+        <td><b>¿Tests primero?</b></td>
+        <td>No (se crea desde cero)</td>
+        <td><span class="rule">SÍ — caracterización</span></td>
+        <td><span class="rule">SÍ — regresión del bug</span></td>
+      </tr>
+      <tr>
+        <td><b>¿Endpoints cambian?</b></td>
+        <td>Son nuevos</td>
+        <td><span class="rule">NO — idénticos</span></td>
+        <td>No (solo se arregla)</td>
+      </tr>
+      <tr>
+        <td><b>¿Feature flag?</b></td>
+        <td>No (se activa directo)</td>
+        <td><span class="rule">SÍ — 1 cliente primero</span></td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td><b>¿Se borra algo?</b></td>
+        <td>No</td>
+        <td>El viejo al final</td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td><b>¿Depende de BaseService?</b></td>
+        <td><span class="rule">PROHIBIDO</span></td>
+        <td><span class="rule">PROHIBIDO</span></td>
+        <td>El viejo sí (no se toca)</td>
+      </tr>
+      <tr>
+        <td><b>Commit prefix</b></td>
+        <td><code>feat:</code></td>
+        <td><code>refactor:</code></td>
+        <td><code>fix:</code></td>
+      </tr>
+    </table>
+  </div>
+</section>
+
+<div class="footer">
+  Kaptas Web API · Guía de desarrollo para el equipo · Basado en <code>estrategia-hibrida.html</code><br>
+  Verificado contra el código real el 2026-06-28 · Actualizado 2026-07-01<br>
+  Abrí este archivo en cualquier navegador (funciona sin internet)
+</div>
+
+<!-- ACTIVE SECTION HIGHLIGHT -->
+<script>
+  const links=document.querySelectorAll('nav a');
+  const secs=document.querySelectorAll('section');
+  const obs=new IntersectionObserver(entries=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting){
+        const id=e.target.id;
+        links.forEach(l=>l.classList.toggle('active',l.getAttribute('href')==='#'+id));
+      }
+    });
+  },{rootMargin:'-45% 0px -50% 0px'});
+  secs.forEach(s=>obs.observe(s));
+</script>
+
+</body>
+</html>

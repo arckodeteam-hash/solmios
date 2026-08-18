@@ -184,6 +184,7 @@ const navItems = computed(() => {
     { path: '/admin/channels', label: 'Canales', icon: ICONS.channels },
     { path: '/admin/api-keys', label: 'API & Webhooks', icon: ICONS.key },
     { path: '/admin/email-templates', label: 'Plantillas de Email', icon: ICONS.mail },
+    { path: '/admin/sitio', label: 'Sitio Público', icon: ICONS.document },
     { path: '/admin/roles', label: 'Roles & Permisos', icon: ICONS.shield },
     { path: '/admin/settings', label: 'Configuración', icon: ICONS.cog },
   ]
@@ -210,6 +211,7 @@ const pageTitle = computed(() => {
     'super-admin-announcements': 'Anuncios & Comunicados',
     'super-admin-api-keys': 'API Keys & Webhooks',
     'super-admin-email-templates': 'Plantillas de Email',
+    'super-admin-sitio': 'Sitio Público (solmios.com)',
     'super-admin-roles': 'Roles & Permisos',
     'super-admin-channels': 'Canales (Channel Manager)',
     'super-admin-settings': 'Configuración',

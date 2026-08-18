@@ -30,6 +30,10 @@ export class TimingsUseCase {
     private readonly onCompleted?: (item: HousekeepingDTO) => Promise<void>,
     /** Settings del hotel: de ahí sale si la evidencia de fin es foto o video. */
     private readonly settings?: { get(hotelId: string): Promise<{ completionEvidence: string }> },
+    /** Gate de fotos obligatorias: areas `required` del hotel para el tipo de la habitación. */
+    private readonly photoRequirements?: { listByRoomType(hotelId: string, roomType?: string): Promise<Array<{ areaId: string; required: number | boolean; roomType: string }>> },
+    /** Para saber el roomType de la tarea (las requirements aplican por tipo o 'all'). */
+    private readonly roomRepo?: RepositoryAdapter<any>,
   ) {}
 
   /**
@@ -39,16 +43,53 @@ export class TimingsUseCase {
    * la tarea es porque el archivo del bucket se verificó entero. Sin este gate,
    * una subida fallida terminaba igual con la habitación marcada como limpia y
    * sin ninguna evidencia detrás.
+   *
+   * En modo `photos` (el default) aplica el MISMO criterio con las áreas que el hotel
+   * marcó `required` (el seed trae cama, baño y vista general): sin las fotos, la
+   * habitación tampoco queda "limpia" sin evidencia. Las requirements del tipo de la
+   * habitación + las de roomType 'all' son las que cuentan; sin ninguna configurada
+   * (o sin repos cableado) no se exige nada — compat con hoteles que no las usan.
    */
   private async assertEvidence(task: HousekeepingDTO): Promise<void> {
     if (!this.settings) return
     const { completionEvidence } = await this.settings.get(task.hotelId)
-    if (completionEvidence !== 'video') return
-    if (!(task as any).video?.path) {
+    if (completionEvidence === 'video') {
+      if (!(task as any).video?.path) {
+        throw new ValidationError(
+          'Falta el video de la limpieza. Subilo antes de terminar la tarea.',
+        )
+      }
+      return
+    }
+    if (completionEvidence !== 'photos') return
+
+    const required = await this.requiredAreas(task)
+    if (required.length === 0) return
+    const photos = Array.isArray((task as any).photos) ? (task as any).photos : []
+    const have = new Set(photos.map((p: any) => String(p?.areaId ?? '')))
+    const missing = required.filter((area) => !have.has(area))
+    if (missing.length > 0) {
       throw new ValidationError(
-        'Falta el video de la limpieza. Subilo antes de terminar la tarea.',
+        `Faltan fotos obligatorias (${missing.join(', ')}). Subilas antes de terminar la tarea.`,
       )
     }
+  }
+
+  /** Áreas `required` que aplican a la tarea: las de su roomType + las globales ('all'). */
+  private async requiredAreas(task: HousekeepingDTO): Promise<string[]> {
+    if (!this.photoRequirements) return []
+    let roomType: string | undefined
+    if (this.roomRepo) {
+      const room = await this.roomRepo.findOne({ id: task.roomId }).catch(() => null)
+      roomType = room?.type ? String(room.type) : undefined
+    }
+    const rows = await this.photoRequirements
+      .listByRoomType(task.hotelId, roomType)
+      .catch(() => [] as Array<{ areaId: string; required: number | boolean; roomType: string }>)
+    return rows
+      .filter((r) => r && (r.required === true || r.required === 1))
+      .filter((r) => !roomType || r.roomType === 'all' || r.roomType === roomType)
+      .map((r) => String(r.areaId))
   }
 
   /**

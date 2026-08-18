@@ -1,0 +1,1418 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flujo de Desarrollo - Kaptas ERP</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #fff; padding: 20px; }
+        
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        h1 { text-align: center; margin-bottom: 10px; color: #00d4aa; font-size: 2.5rem; }
+        
+        .subtitle { text-align: center; margin-bottom: 40px; opacity: 0.7; font-size: 1.1rem; }
+        
+        .section { 
+            background: #16213e; 
+            border-radius: 15px; 
+            padding: 30px; 
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        
+        .section-title {
+            font-size: 1.5rem;
+            margin-bottom: 25px;
+            color: #00d4aa;
+            border-bottom: 2px solid #00d4aa;
+            padding-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .section-title span {
+            font-size: 1.8rem;
+        }
+        
+        /* Diagrama Organizacional */
+        .org-chart {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .level {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .role-box {
+            padding: 25px 35px;
+            border-radius: 15px;
+            text-align: center;
+            min-width: 220px;
+            position: relative;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .role-box:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.4);
+        }
+        
+        .role-architect { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-width: 350px;
+        }
+        .role-dev { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: #000; }
+        .role-qa-dev { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        .role-pre-impl { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: #000; }
+        .role-qa-ui { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: #000; }
+        .role-impl { background: linear-gradient(135deg, #ff0844 0%, #ffb199 100%); }
+        
+        .role-name { font-size: 1.3rem; font-weight: bold; margin-bottom: 8px; }
+        .role-person { font-size: 1rem; opacity: 0.95; font-weight: 500; }
+        .role-desc { font-size: 0.85rem; opacity: 0.85; margin-top: 12px; line-height: 1.4; }
+        
+        .arrow-down {
+            font-size: 2.5rem;
+            color: #00d4aa;
+            text-align: center;
+            animation: bounce 1.5s infinite;
+        }
+        
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(10px); }
+        }
+        
+        /* Flujo Git */
+        .git-flow {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            font-family: 'Courier New', monospace;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .branch {
+            padding: 18px 25px;
+            border-radius: 10px;
+            border-left: 5px solid;
+            transition: transform 0.2s;
+        }
+        
+        .branch:hover {
+            transform: translateX(10px);
+        }
+        
+        .branch-main { background: linear-gradient(90deg, #1e3a5f 0%, #16213e 100%); border-color: #00d4aa; }
+        .branch-release { background: linear-gradient(90deg, #2d4a3e 0%, #16213e 100%); border-color: #38ef7d; margin-left: 30px; }
+        .branch-pre { background: linear-gradient(90deg, #3d2a4a 0%, #16213e 100%); border-color: #a855f7; margin-left: 30px; }
+        .branch-feature { background: linear-gradient(90deg, #4a3d2a 0%, #16213e 100%); border-color: #f59e0b; margin-left: 60px; }
+        .branch-qa { background: linear-gradient(90deg, #4a2a3d 0%, #16213e 100%); border-color: #ec4899; margin-left: 30px; }
+        
+        .branch-name { font-weight: bold; font-size: 1.15rem; }
+        .branch-desc { opacity: 0.85; margin-top: 6px; font-size: 0.95rem; }
+        
+        /* Tablero Kanban */
+        .kanban {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 15px;
+            overflow-x: auto;
+        }
+        
+        .column {
+            background: #0f3460;
+            border-radius: 12px;
+            padding: 18px;
+            min-height: 250px;
+            min-width: 160px;
+        }
+        
+        .column-title {
+            font-weight: bold;
+            margin-bottom: 18px;
+            padding-bottom: 12px;
+            border-bottom: 3px solid;
+            font-size: 0.95rem;
+            text-align: center;
+        }
+        
+        .column-backlog { border-top: 4px solid #667eea; }
+        .column-backlog .column-title { color: #667eea; border-color: #667eea; }
+        
+        .column-dev { border-top: 4px solid #38ef7d; }
+        .column-dev .column-title { color: #38ef7d; border-color: #38ef7d; }
+        
+        .column-qa-dev { border-top: 4px solid #f5576c; }
+        .column-qa-dev .column-title { color: #f5576c; border-color: #f5576c; }
+        
+        .column-pre { border-top: 4px solid #4facfe; }
+        .column-pre .column-title { color: #4facfe; border-color: #4facfe; }
+        
+        .column-qa-ui { border-top: 4px solid #fee140; }
+        .column-qa-ui .column-title { color: #fee140; border-color: #fee140; }
+        
+        .column-impl { border-top: 4px solid #ff0844; }
+        .column-impl .column-title { color: #ff0844; border-color: #ff0844; }
+        
+        .column-done { border-top: 4px solid #00d4aa; }
+        .column-done .column-title { color: #00d4aa; border-color: #00d4aa; }
+        
+        .task-card {
+            background: #16213e;
+            padding: 14px;
+            border-radius: 10px;
+            margin-bottom: 12px;
+            border-left: 4px solid;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .task-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+        }
+        
+        .task-card.feature { border-color: #38ef7d; }
+        .task-card.fix { border-color: #f59e0b; }
+        .task-card.hotfix { border-color: #ef4444; }
+        
+        .task-title { font-weight: 600; margin-bottom: 6px; font-size: 0.95rem; }
+        .task-meta { font-size: 0.8rem; opacity: 0.7; }
+        .task-tag { 
+            display: inline-block; 
+            padding: 2px 8px; 
+            border-radius: 4px; 
+            font-size: 0.7rem; 
+            font-weight: bold;
+            margin-top: 6px;
+        }
+        .tag-feature { background: #38ef7d; color: #000; }
+        .tag-fix { background: #f59e0b; color: #000; }
+        .tag-hotfix { background: #ef4444; }
+        
+        /* Flujo del Proceso */
+        .process-flow {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            padding: 20px;
+        }
+        
+        .process-step {
+            padding: 18px 40px;
+            border-radius: 12px;
+            text-align: center;
+            min-width: 400px;
+            font-weight: 500;
+            transition: transform 0.2s;
+        }
+        
+        .process-step:hover {
+            transform: scale(1.02);
+        }
+        
+        .step-1 { background: linear-gradient(90deg, #667eea, #764ba2); }
+        .step-2 { background: linear-gradient(90deg, #11998e, #38ef7d); color: #000; }
+        .step-3 { background: linear-gradient(90deg, #11998e, #38ef7d); color: #000; }
+        .step-4 { background: linear-gradient(90deg, #f093fb, #f5576c); }
+        .step-5 { background: linear-gradient(90deg, #4facfe, #00f2fe); color: #000; }
+        .step-6 { background: linear-gradient(90deg, #fa709a, #fee140); color: #000; }
+        .step-7 { background: linear-gradient(90deg, #ff0844, #ffb199); }
+        .step-done { background: linear-gradient(90deg, #00d4aa, #00b894); color: #000; }
+        
+        .process-arrow {
+            font-size: 1.8rem;
+            color: #00d4aa;
+        }
+        
+        /* Responsables */
+        .responsables {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+        }
+        
+        .responsable-card {
+            background: linear-gradient(135deg, #1e3a5f 0%, #16213e 100%);
+            padding: 25px;
+            border-radius: 15px;
+            border-top: 4px solid;
+            transition: transform 0.3s;
+        }
+        
+        .responsable-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .resp-qa-dev { border-color: #f5576c; }
+        .resp-pre-impl { border-color: #4facfe; }
+        .resp-qa-ui { border-color: #fee140; }
+        .resp-impl { border-color: #ff0844; }
+        
+        .resp-role { font-size: 1.1rem; font-weight: bold; margin-bottom: 8px; }
+        .resp-name { font-size: 1.8rem; font-weight: bold; margin-bottom: 15px; }
+        .resp-qa-dev .resp-name { color: #f5576c; }
+        .resp-pre-impl .resp-name { color: #4facfe; }
+        .resp-qa-ui .resp-name { color: #fee140; }
+        .resp-impl .resp-name { color: #ff0844; }
+        
+        .resp-duties {
+            opacity: 0.85;
+            line-height: 1.6;
+            font-size: 0.95rem;
+        }
+        
+        .resp-duties li {
+            margin-bottom: 5px;
+            list-style: none;
+        }
+        
+        .resp-duties li::before {
+            content: "▸ ";
+            color: #00d4aa;
+        }
+        
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .kanban {
+                grid-template-columns: repeat(4, 1fr);
+            }
+        }
+        
+        @media (max-width: 768px) {
+            h1 { font-size: 1.8rem; }
+            
+            .level { flex-direction: column; align-items: center; }
+            
+            .role-box { 
+                width: 100%; 
+                max-width: 320px;
+            }
+            
+            .role-architect { min-width: auto; }
+            
+            .kanban { 
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .process-step { 
+                min-width: auto;
+                width: 100%;
+                padding: 15px 20px;
+            }
+            
+            .branch-feature { margin-left: 30px; }
+            .branch-qa { margin-left: 30px; }
+        }
+        
+        @media (max-width: 480px) {
+            .kanban {
+                grid-template-columns: 1fr;
+            }
+            
+            .responsables {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        /* Header con logo */
+        .header {
+            text-align: center;
+            padding: 30px 0;
+            background: linear-gradient(135deg, #16213e 0%, #1a1a2e 100%);
+            border-radius: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            margin-bottom: 10px;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 8px 20px;
+            background: rgba(0, 212, 170, 0.2);
+            border: 1px solid #00d4aa;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            margin-top: 10px;
+        }
+        
+        /* Leyenda */
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+        }
+        
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 5px;
+        }
+        
+        .legend-feature { background: #38ef7d; }
+        .legend-fix { background: #f59e0b; }
+        .legend-hotfix { background: #ef4444; }
+        .legend-refactor { background: #a855f7; }
+        
+        /* Flujo de Rechazo */
+        .rejection-flow {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .rejection-box {
+            background: linear-gradient(135deg, #2d1a3e 0%, #1a1a2e 100%);
+            border: 2px solid #ef4444;
+            border-radius: 15px;
+            padding: 25px;
+            position: relative;
+        }
+        
+        .rejection-box::before {
+            content: "❌";
+            position: absolute;
+            top: -15px;
+            left: 20px;
+            font-size: 1.5rem;
+            background: #1a1a2e;
+            padding: 0 10px;
+        }
+        
+        .rejection-title {
+            color: #ef4444;
+            font-size: 1.3rem;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+        
+        .rejection-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .rejection-step {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 12px 18px;
+            background: rgba(239, 68, 68, 0.1);
+            border-radius: 10px;
+            border-left: 4px solid #ef4444;
+        }
+        
+        .rejection-step-num {
+            background: #ef4444;
+            color: #fff;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+        }
+        
+        .rejection-step-text {
+            flex: 1;
+        }
+        
+        .rejection-step-text strong {
+            color: #f59e0b;
+        }
+        
+        /* Tipos de Ramas */
+        .branch-types {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 25px;
+        }
+        
+        .branch-type-card {
+            background: #16213e;
+            border-radius: 15px;
+            padding: 25px;
+            border-top: 5px solid;
+            transition: transform 0.3s;
+        }
+        
+        .branch-type-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .branch-type-feature { border-color: #38ef7d; }
+        .branch-type-fix { border-color: #f59e0b; }
+        .branch-type-hotfix { border-color: #ef4444; }
+        .branch-type-refactor { border-color: #a855f7; }
+        
+        .branch-type-name {
+            font-size: 1.3rem;
+            font-weight: bold;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .branch-type-feature .branch-type-name { color: #38ef7d; }
+        .branch-type-fix .branch-type-name { color: #f59e0b; }
+        .branch-type-hotfix .branch-type-name { color: #ef4444; }
+        .branch-type-refactor .branch-type-name { color: #a855f7; }
+        
+        .branch-type-command {
+            background: #0f3460;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            margin: 10px 0;
+            border-left: 3px solid;
+        }
+        
+        .branch-type-feature .branch-type-command { border-color: #38ef7d; }
+        .branch-type-fix .branch-type-command { border-color: #f59e0b; }
+        .branch-type-hotfix .branch-type-command { border-color: #ef4444; }
+        .branch-type-refactor .branch-type-command { border-color: #a855f7; }
+        
+        .branch-type-desc {
+            opacity: 0.85;
+            line-height: 1.5;
+            font-size: 0.95rem;
+        }
+        
+        .branch-type-from {
+            margin-top: 12px;
+            padding: 8px 12px;
+            background: rgba(0, 212, 170, 0.1);
+            border-radius: 8px;
+            font-size: 0.85rem;
+        }
+        
+        .branch-type-from strong {
+            color: #00d4aa;
+        }
+        
+        /* Flujo de Decisión */
+        .decision-flow {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+            padding: 30px;
+            background: #0f3460;
+            border-radius: 15px;
+            margin-top: 25px;
+        }
+        
+        .decision-node {
+            padding: 20px 40px;
+            border-radius: 12px;
+            text-align: center;
+            min-width: 350px;
+            font-weight: 600;
+        }
+        
+        .decision-question {
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            border: 2px solid #fff;
+        }
+        
+        .decision-yes {
+            background: linear-gradient(90deg, #11998e, #38ef7d);
+            color: #000;
+        }
+        
+        .decision-no {
+            background: linear-gradient(90deg, #ef4444, #dc2626);
+        }
+        
+        .decision-arrows {
+            display: flex;
+            gap: 80px;
+            align-items: center;
+        }
+        
+        .decision-arrow {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .decision-arrow-label {
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+        
+        .decision-arrow-label.yes { color: #38ef7d; }
+        .decision-arrow-label.no { color: #ef4444; }
+        
+        .decision-arrow-line {
+            font-size: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🚀 Flujo de Desarrollo - Kaptas ERP</h1>
+            <p class="subtitle">Diagrama Organizacional, Flujo de Ramas y Tablero Kanban</p>
+            <div class="badge">📋 Sistema de Desarrollo Completo</div>
+        </div>
+        
+        <!-- Sección 1: Diagrama Organizacional -->
+        <div class="section">
+            <h2 class="section-title"><span>📊</span> Diagrama Organizacional</h2>
+            <div class="org-chart">
+                <!-- Nivel 1: Arquitecto -->
+                <div class="level">
+                    <div class="role-box role-architect">
+                        <div class="role-name">Master Arquitecto del Software</div>
+                        <div class="role-person">Luis</div>
+                        <div class="role-desc">Define arquitectura global, estándares técnicos y guía al equipo de desarrollo</div>
+                    </div>
+                </div>
+                
+                <div class="arrow-down">↓</div>
+                
+                <!-- Nivel 2: Desarrolladores -->
+                <div class="level">
+                    <div class="role-box role-dev">
+                        <div class="role-name">DEV 01</div>
+                        <div class="role-person">Ricardo</div>
+                        <div class="role-desc">Bug fixes, implementación, integraciones, etc.</div>
+                    </div>
+                    <div class="role-box role-dev">
+                        <div class="role-name">DEV 02</div>
+                        <div class="role-person">José</div>
+                        <div class="role-desc">Bug fixes, implementación, integraciones, etc.</div>
+                    </div>
+                    <div class="role-box role-dev">
+                        <div class="role-name">DEV 03</div>
+                        <div class="role-person">Joel y Luis</div>
+                        <div class="role-desc">Nuevas funcionalidades y refactorización</div>
+                    </div>
+                </div>
+                
+                <div class="arrow-down">↓</div>
+                
+                <!-- Nivel 3: QA-DEV -->
+                <div class="level">
+                    <div class="role-box role-qa-dev">
+                        <div class="role-name">QA-DEV</div>
+                        <div class="role-person">Joel y José</div>
+                        <div class="role-desc">Revisión técnica, seguridad, arquitectura y calidad de código</div>
+                    </div>
+                </div>
+                
+                <div class="arrow-down">↓</div>
+                
+                <!-- Nivel 4: Pre-Implementación -->
+                <div class="level">
+                    <div class="role-box role-pre-impl">
+                        <div class="role-name">Pre-Implementación</div>
+                        <div class="role-person">Ricardo</div>
+                        <div class="role-desc">Deploy a entorno de pruebas, validación de configuración y migraciones</div>
+                    </div>
+                </div>
+                
+                <div class="arrow-down">↓</div>
+                
+                <!-- Nivel 5: QA-UI -->
+                <div class="level">
+                    <div class="role-box role-qa-ui">
+                        <div class="role-name">QA-UI</div>
+                        <div class="role-person">Equipo Kaptas</div>
+                        <div class="role-desc">Validación funcional, lógica de negocio, UI/UX y edge cases</div>
+                    </div>
+                </div>
+                
+                <div class="arrow-down">↓</div>
+                
+                <!-- Nivel 6: Implementación -->
+                <div class="level">
+                    <div class="role-box role-impl">
+                        <div class="role-name">Implementación</div>
+                        <div class="role-person">José y Ricardo</div>
+                        <div class="role-desc">Deploy a producción, liberación al usuario final y monitoreo</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Estrategia anti-conflictos en el Diagrama Organizacional -->
+            <div style="margin-top: 30px; background: linear-gradient(135deg, #0f3460 0%, #16213e 100%); border-radius: 15px; padding: 25px; border: 2px solid #00d4aa;">
+                <h3 style="color: #00d4aa; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 1.5rem;">🛡️</span> Estrategia Anti-Conflictos: Cómo NO heredar errores de otros
+                </h3>
+                
+                <div style="display: flex; gap: 30px; flex-wrap: wrap; justify-content: center; margin-bottom: 25px;">
+                    <div style="flex: 1; min-width: 300px; background: rgba(239, 68, 68, 0.1); padding: 20px; border-radius: 12px; border-left: 4px solid #ef4444;">
+                        <div style="color: #ef4444; font-weight: bold; margin-bottom: 12px; font-size: 1.1rem;">❌ Error común</div>
+                        <div style="font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.8;">
+                            <strong>pre-produccion</strong> (tiene Bug A + WIP B)<br>
+                            &nbsp;&nbsp;└── <strong>feature/mia</strong><br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ Me llevo Bug A sin saberlo<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ PR tiene errores que no son míos<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ QA-DEV rechaza por código ajeno
+                        </div>
+                    </div>
+                    <div style="flex: 1; min-width: 300px; background: rgba(56, 239, 125, 0.1); padding: 20px; border-radius: 12px; border-left: 4px solid #38ef7d;">
+                        <div style="color: #38ef7d; font-weight: bold; margin-bottom: 12px; font-size: 1.1rem;">✅ Solución: ramas desde main</div>
+                        <div style="font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.8;">
+                            <strong>main</strong> (código limpio, solo aprobado)<br>
+                            &nbsp;&nbsp;└── <strong>feature/mia</strong><br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ Solo mi código, cero ruido<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ PR contiene solo mis cambios<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ QA-DEV revisa solo mi lógica
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="background: rgba(0, 212, 170, 0.08); border-radius: 12px; padding: 20px; line-height: 1.8;">
+                    <div style="color: #38ef7d; font-weight: bold; margin-bottom: 12px; font-size: 1.05rem;">📋 Reglas para evitar conflictos</div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px;">
+                        <div style="padding: 12px 16px; background: #0f3460; border-radius: 8px; border-left: 3px solid #38ef7d;">
+                            <strong style="color: #38ef7d;">1. Rama siempre desde main</strong><br>
+                            <span style="font-size: 0.9rem; opacity: 0.85;">
+                                <code>git checkout main && git pull</code><br>
+                                → <code>git checkout -b feature/xxx</code>
+                            </span>
+                        </div>
+                        <div style="padding: 12px 16px; background: #0f3460; border-radius: 8px; border-left: 3px solid #38ef7d;">
+                            <strong style="color: #38ef7d;">2. PR pequeño y frecuente</strong><br>
+                            <span style="font-size: 0.9rem; opacity: 0.85;">
+                                Menos de 400 líneas por PR.<br>
+                                Si es más grande, dividir en 2+ PRs.
+                            </span>
+                        </div>
+                        <div style="padding: 12px 16px; background: #0f3460; border-radius: 8px; border-left: 3px solid #38ef7d;">
+                            <strong style="color: #38ef7d;">3. Merge a pre-produccion solo aprobado</strong><br>
+                            <span style="font-size: 0.9rem; opacity: 0.85;">
+                                Ricardo mergea SOLO después de<br>
+                                aprobación de QA-DEV.
+                            </span>
+                        </div>
+                        <div style="padding: 12px 16px; background: #0f3460; border-radius: 8px; border-left: 3px solid #38ef7d;">
+                            <strong style="color: #38ef7d;">4. Release desde main</strong><br>
+                            <span style="font-size: 0.9rem; opacity: 0.85;">
+                                <code>release/vX.X.X</code> se crea desde<br>
+                                <code>main</code>, no desde pre-produccion.
+                            </span>
+                        </div>
+                        <div style="padding: 12px 16px; background: #0f3460; border-radius: 8px; border-left: 3px solid #38ef7d;">
+                            <strong style="color: #38ef7d;">5. Rebase antes del PR</strong><br>
+                            <span style="font-size: 0.9rem; opacity: 0.85;">
+                                Antes de abrir PR: <code>git rebase main</code><br>
+                                para resolver conflictos localmente.
+                            </span>
+                        </div>
+                        <div style="padding: 12px 16px; background: #0f3460; border-radius: 8px; border-left: 3px solid #38ef7d;">
+                            <strong style="color: #38ef7d;">6. Nadie mergea su propio PR</strong><br>
+                            <span style="font-size: 0.9rem; opacity: 0.85;">
+                                El que codea no revisa. El que revisa<br>
+                                no codea. Siempre otro par de ojos.
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px; padding: 15px 20px; background: rgba(245, 158, 11, 0.1); border-radius: 10px; border: 1px solid #f59e0b;">
+                    <div style="color: #f59e0b; font-weight: bold; margin-bottom: 8px;">⚠️ ¿Qué hacer si hay conflictos en el PR?</div>
+                    <div style="font-size: 0.9rem; line-height: 1.7; opacity: 0.9;">
+                        <strong>1.</strong> No resolver conflictos por la web de GitHub — siempre localmente.<br>
+                        <strong>2.</strong> <code>git checkout main && git pull</code> → <code>git checkout feature/mia</code> → <code>git rebase main</code><br>
+                        <strong>3.</strong> Resolver conflictos uno por uno con <code>git mergetool</code> o manualmente.<br>
+                        <strong>4.</strong> <code>git push --force-with-lease</code> (solo si trabajas solo en tu rama).<br>
+                        <strong>5.</strong> Si el conflicto es muy grande (10+ archivos), crear nueva rama desde <code>main</code> y re-aplicar cambios manualmente.
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 2: Flujo de Ramas Git -->
+        <div class="section">
+            <h2 class="section-title"><span>🌿</span> Flujo de Ramas Git</h2>
+            <div class="git-flow">
+                <div class="branch branch-main">
+                    <div class="branch-name">main</div>
+                    <div class="branch-desc">← Producción (nunca push directo, siempre usar release)</div>
+                </div>
+                <div class="branch branch-release">
+                    <div class="branch-name">release/vX.X.X</div>
+                    <div class="branch-desc">← Temporal para cada deploy (merge a main cuando está listo)</div>
+                </div>
+                <div class="branch branch-pre">
+                    <div class="branch-name">pre-produccion</div>
+                    <div class="branch-desc">← Entorno de pruebas (deploy automático al hacer push)</div>
+                </div>
+                <div class="branch branch-feature">
+                    <div class="branch-name">feature/nombre-tarea</div>
+                    <div class="branch-desc">← DEV crea desde main (base limpia sin código de otros)</div>
+                </div>
+                <div class="branch branch-feature">
+                    <div class="branch-name">fix/nombre-fix</div>
+                    <div class="branch-desc">← DEV crea desde main (base limpia, sin WIP de otros)</div>
+                </div>
+                <div class="branch branch-feature">
+                    <div class="branch-name">refactor/nombre-modulo</div>
+                    <div class="branch-desc">← DEV crea desde main (mejora sin cambiar funcionalidad)</div>
+                </div>
+                <div class="branch branch-feature">
+                    <div class="branch-name">hotfix/nombre-hotfix</div>
+                    <div class="branch-desc">← Urgentes (rama desde main, merge a main y pre-produccion)</div>
+                </div>
+                <div class="branch branch-qa">
+                    <div class="branch-name">qa</div>
+                    <div class="branch-desc">← Validación técnica (PR aquí primero para revisión de Joel y José)</div>
+                </div>
+            </div>
+            
+            <div class="legend" style="margin-top: 30px;">
+                <div class="legend-item">
+                    <div class="legend-color legend-feature"></div>
+                    <span>Feature (nueva funcionalidad)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color legend-fix"></div>
+                    <span>Fix (corrección de bug)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color legend-hotfix"></div>
+                    <span>Hotfix (urgente en producción)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color legend-refactor"></div>
+                    <span>Refactor (reestructurar código)</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 3: Tablero Kanban -->
+        <div class="section">
+            <h2 class="section-title"><span>📋</span> Tablero Kanban</h2>
+            <div class="kanban">
+                <!-- Backlog -->
+                <div class="column column-backlog">
+                    <div class="column-title">📝 Backlog</div>
+                    <div class="task-card feature">
+                        <div class="task-title">Módulo Nómina APTPRA</div>
+                        <div class="task-meta">DEV 01 • Prioridad Alta</div>
+                        <div class="task-tag tag-feature">Feature</div>
+                    </div>
+                    <div class="task-card fix">
+                        <div class="task-title">Fix envíos APTPRA</div>
+                        <div class="task-meta">DEV 02 • Prioridad Media</div>
+                        <div class="task-tag tag-fix">Fix</div>
+                    </div>
+                    <div class="task-card feature">
+                        <div class="task-title">Configuración Restaurante</div>
+                        <div class="task-meta">DEV 03 • Prioridad Baja</div>
+                        <div class="task-tag tag-feature">Feature</div>
+                    </div>
+                </div>
+                
+                <!-- En Desarrollo -->
+                <div class="column column-dev">
+                    <div class="column-title">💻 En Desarrollo</div>
+                    <div class="task-card feature">
+                        <div class="task-title">Restaurante Croquis</div>
+                        <div class="task-meta">DEV 01 • En progreso</div>
+                        <div class="task-tag tag-feature">Feature</div>
+                    </div>
+                    <div class="task-card feature">
+                        <div class="task-title">Inventario Traslados</div>
+                        <div class="task-meta">DEV 02 • En progreso</div>
+                        <div class="task-tag tag-feature">Feature</div>
+                    </div>
+                    <div class="task-card fix">
+                        <div class="task-title">Impresiones Cuadre Caja</div>
+                        <div class="task-meta">DEV 03 • En progreso</div>
+                        <div class="task-tag tag-fix">Fix</div>
+                    </div>
+                </div>
+                
+                <!-- PR QA-DEV -->
+                <div class="column column-qa-dev">
+                    <div class="column-title">🔍 PR - QA-DEV</div>
+                    <div class="task-card feature">
+                        <div class="task-title">Retiro Envío</div>
+                        <div class="task-meta">Joel/José revisando código</div>
+                        <div class="task-tag tag-feature">Feature</div>
+                    </div>
+                    <div class="task-card fix">
+                        <div class="task-title">Fix Categoría México</div>
+                        <div class="task-meta">Joel/José revisando seguridad</div>
+                        <div class="task-tag tag-fix">Fix</div>
+                    </div>
+                </div>
+                
+                <!-- Pre-Implementación -->
+                <div class="column column-pre">
+                    <div class="column-title">🚀 Pre-Implementación</div>
+                    <div class="task-card feature">
+                        <div class="task-title">ECF Status Refactor</div>
+                        <div class="task-meta">Ricardo deployando a pruebas</div>
+                        <div class="task-tag tag-feature">Feature</div>
+                    </div>
+                    <div class="task-card feature">
+                        <div class="task-title">Carga Contactos Excel</div>
+                        <div class="task-meta">Ricardo verificando migraciones</div>
+                        <div class="task-tag tag-feature">Feature</div>
+                    </div>
+                </div>
+                
+                <!-- QA-UI -->
+                <div class="column column-qa-ui">
+                    <div class="column-title">✅ QA-UI</div>
+                    <div class="task-card feature">
+                        <div class="task-title">Búsqueda Avanzada</div>
+                        <div class="task-meta">Equipo Kaptas testeando</div>
+                        <div class="task-tag tag-feature">Feature</div>
+                    </div>
+                    <div class="task-card fix">
+                        <div class="task-title">Fix Password User</div>
+                        <div class="task-meta">Equipo Kaptas validando</div>
+                        <div class="task-tag tag-fix">Fix</div>
+                    </div>
+                </div>
+                
+                <!-- Implementación -->
+                <div class="column column-impl">
+                    <div class="column-title">🎯 Implementación</div>
+                    <div class="task-card hotfix">
+                        <div class="task-title">Hotfix ECF Status</div>
+                        <div class="task-meta">José deployando a producción</div>
+                        <div class="task-tag tag-hotfix">Hotfix</div>
+                    </div>
+                    <div class="task-card feature">
+                        <div class="task-title">Manifiestos APTPRA</div>
+                        <div class="task-meta">Ricardo deployando</div>
+                        <div class="task-tag tag-feature">Feature</div>
+                    </div>
+                </div>
+                
+                <!-- Completado -->
+                <div class="column column-done">
+                    <div class="column-title">✨ Completado</div>
+                    <div class="task-card feature">
+                        <div class="task-title">Clientes Excel</div>
+                        <div class="task-meta">Desplegado exitosamente ✓</div>
+                        <div class="task-tag tag-feature">Feature</div>
+                    </div>
+                    <div class="task-card fix">
+                        <div class="task-title">Fix México Precio</div>
+                        <div class="task-meta">En producción ✓</div>
+                        <div class="task-tag tag-fix">Fix</div>
+                    </div>
+                    <div class="task-card feature">
+                        <div class="task-title">Rentas Module</div>
+                        <div class="task-meta">Completado ✓</div>
+                        <div class="task-tag tag-feature">Feature</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 4: Flujo del Proceso Completo -->
+        <div class="section">
+            <h2 class="section-title"><span>⚡</span> Flujo del Proceso Completo (con Rechazo)</h2>
+            <div class="process-flow">
+                <div class="process-step step-1">
+                    <strong>1. Master Arquitecto</strong> define la tarea y la asigna
+                </div>
+                <div class="process-arrow">↓</div>
+                
+                <div class="process-step step-2">
+                    <strong>2. DEV 01/02/03</strong> crea rama desde <code>main</code> según tipo:
+                    <br><code>feature/*</code> | <code>fix/*</code> | <code>refactor/*</code> | <code>hotfix/*</code>
+                </div>
+                <div class="process-arrow">↓</div>
+                
+                <div class="process-step step-3">
+                    <strong>3. DEV</strong> hace Push y crea PR → rama <code>qa</code>
+                </div>
+                <div class="process-arrow">↓</div>
+                
+                <div class="process-step step-4">
+                    <strong>4. QA-DEV (Joel y José)</strong> revisan código
+                    <br>→ ¿Aprueban o Rechazan?
+                </div>
+                <div class="process-arrow">↓</div>
+                
+                <!-- Decision Box -->
+                <div style="display: flex; gap: 40px; flex-wrap: wrap; justify-content: center; margin: 20px 0;">
+                    <div style="text-align: center;">
+                        <div style="background: linear-gradient(90deg, #11998e, #38ef7d); color: #000; padding: 15px 25px; border-radius: 10px; font-weight: bold;">
+                            ✅ APRUEBAN
+                        </div>
+                        <div style="margin: 10px 0;">↓</div>
+                        <div class="process-step step-5" style="min-width: 300px;">
+                            <strong>5. Pre-Implementación (Ricardo)</strong><br>
+                            Merge a <code>pre-produccion</code> y deploy a pruebas
+                        </div>
+                    </div>
+                    
+                    <div style="text-align: center;">
+                        <div style="background: linear-gradient(90deg, #ef4444, #dc2626); padding: 15px 25px; border-radius: 10px; font-weight: bold;">
+                            ❌ RECHAZAN
+                        </div>
+                        <div style="margin: 10px 0;">↓</div>
+                        <div style="background: #2d1a3e; border: 2px solid #ef4444; padding: 15px 25px; border-radius: 10px; min-width: 300px;">
+                            <div style="color: #f59e0b; font-weight: bold; margin-bottom: 10px;">¿Problema menor o grave?</div>
+                            <div style="font-size: 0.9rem; text-align: left;">
+                                <strong>Menor:</strong> Corregir en misma rama<br>
+                                <strong>Grave:</strong> Nueva rama desde <code>main</code>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="process-arrow">↓</div>
+                
+                <div class="process-step step-6">
+                    <strong>6. QA-UI (Equipo Kaptas)</strong> valida funcionalidad, negocio y UI/UX
+                </div>
+                <div class="process-arrow">↓</div>
+                
+                <div class="process-step step-7">
+                    <strong>7. Crear Release</strong> desde <code>main</code> + merge features validadas
+                    <br><code>release/vX.X.X</code>
+                </div>
+                <div class="process-arrow">↓</div>
+                
+                <div class="process-step step-7" style="background: linear-gradient(90deg, #ff0844 0%, #ffb199 100%);">
+                    <strong>8. Implementación (José/Ricardo)</strong> deploy <code>release/vX.X.X</code> a producción
+                    <br>→ merge a <code>main</code>
+                </div>
+                <div class="process-arrow">↓</div>
+                
+                <div class="process-step step-done">
+                    <strong>✅ COMPLETADO</strong> - Feature en producción y verificada
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 5: Flujo de Rechazo QA-DEV -->
+        <div class="section">
+            <h2 class="section-title"><span>❌</span> Flujo cuando QA-DEV Rechaza</h2>
+            
+            <div class="rejection-flow">
+                <!-- Escenario 1: Rechazo menor -->
+                <div class="rejection-box">
+                    <div class="rejection-title">🔧 Rechazo con Correcciones Menores</div>
+                    <div class="rejection-steps">
+                        <div class="rejection-step">
+                            <div class="rejection-step-num">1</div>
+                            <div class="rejection-step-text">
+                                Joel o José rechazan el PR con comentarios específicos
+                            </div>
+                        </div>
+                        <div class="rejection-step">
+                            <div class="rejection-step-num">2</div>
+                            <div class="rejection-step-text">
+                                DEV corrige los issues en la <strong>misma rama feature</strong>
+                            </div>
+                        </div>
+                        <div class="rejection-step">
+                            <div class="rejection-step-num">3</div>
+                            <div class="rejection-step-text">
+                                DEV hace push a la misma rama → PR se actualiza automáticamente
+                            </div>
+                        </div>
+                        <div class="rejection-step">
+                            <div class="rejection-step-num">4</div>
+                            <div class="rejection-step-text">
+                                Joel o José revisan de nuevo → Aprueban o Rechazan nuevamente
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Escenario 2: Rechazo mayor -->
+                <div class="rejection-box">
+                    <div class="rejection-title">🚨 Rechazo con Problemas Graves de Arquitectura</div>
+                    <div class="rejection-steps">
+                        <div class="rejection-step">
+                            <div class="rejection-step-num">1</div>
+                            <div class="rejection-step-text">
+                                Joel o José rechazan indicando que el diseño es incorrecto
+                            </div>
+                        </div>
+                        <div class="rejection-step">
+                            <div class="rejection-step-num">2</div>
+                            <div class="rejection-step-text">
+                                Se cierra el PR sin merge
+                            </div>
+                        </div>
+                        <div class="rejection-step">
+                            <div class="rejection-step-num">3</div>
+                            <div class="rejection-step-text">
+                                DEV crea una <strong>nueva rama</strong> desde <code>main</code>
+                            </div>
+                        </div>
+                        <div class="rejection-step">
+                            <div class="rejection-step-num">4</div>
+                            <div class="rejection-step-text">
+                                Se re-implementa con el diseño corregido
+                            </div>
+                        </div>
+                        <div class="rejection-step">
+                            <div class="rejection-step-num">5</div>
+                            <div class="rejection-step-text">
+                                Nuevo PR → Joel o José revisan nuevamente
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Flujo de Decisión -->
+            <div class="decision-flow">
+                <div class="decision-node decision-question">
+                    ❓ ¿Joel o José Aprueban o Rechazan?
+                </div>
+                
+                <div class="decision-arrows">
+                    <div class="decision-arrow">
+                        <div class="decision-arrow-label yes">✅ APRUEBAN</div>
+                        <div class="decision-arrow-line">↓</div>
+                        <div class="decision-node decision-yes">
+                            Merge a <code>pre-produccion</code>
+                        </div>
+                    </div>
+                    
+                    <div class="decision-arrow">
+                        <div class="decision-arrow-label no">❌ RECHAZAN</div>
+                        <div class="decision-arrow-line">↓</div>
+                        <div class="decision-node decision-no">
+                            ¿Problema menor o grave?
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 6: Tipos de Ramas, Origen y Reglas -->
+        <div class="section">
+            <h2 class="section-title"><span>🌿</span> Tipos de Ramas, Origen y Reglas — Aislamiento Total</h2>
+            
+            <!-- Por qué main -->
+            <div style="background: linear-gradient(135deg, #1e3a5f 0%, #16213e 100%); border: 2px solid #00d4aa; border-radius: 15px; padding: 25px; margin-bottom: 30px;">
+                <h3 style="color: #00d4aa; margin-bottom: 15px;">🛡️ Estrategia: Ramas desde main = cero contaminación cruzada</h3>
+                <div style="display: flex; gap: 30px; flex-wrap: wrap; justify-content: center;">
+                    <div style="flex: 1; min-width: 280px; background: rgba(239, 68, 68, 0.1); padding: 20px; border-radius: 12px; border-left: 4px solid #ef4444;">
+                        <div style="color: #ef4444; font-weight: bold; margin-bottom: 12px; font-size: 1.1rem;">❌ ANTES (desde pre-produccion)</div>
+                        <div style="font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.8;">
+                            pre-produccion → [Bug A] [WIP B] [Fix C]<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;└── feature/mia → 😱 me llevo Bug A + WIP B<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ PR rechazado por errores que no son míos
+                        </div>
+                    </div>
+                    <div style="flex: 1; min-width: 280px; background: rgba(56, 239, 125, 0.1); padding: 20px; border-radius: 12px; border-left: 4px solid #38ef7d;">
+                        <div style="color: #38ef7d; font-weight: bold; margin-bottom: 12px; font-size: 1.1rem;">✅ AHORA (desde main)</div>
+                        <div style="font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.8;">
+                            main → [Código limpio y aprobado]<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;└── feature/mia → ✅ solo mi código<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ PR solo con mis cambios, sin ruido
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Tabla de Reglas -->
+            <div style="overflow-x: auto; margin-bottom: 30px;">
+                <table style="width: 100%; border-collapse: collapse; background: #0f3460; border-radius: 12px; overflow: hidden;">
+                    <thead>
+                        <tr style="background: linear-gradient(90deg, #667eea, #764ba2);">
+                            <th style="padding: 18px; text-align: left; font-size: 1.1rem;">Tipo</th>
+                            <th style="padding: 18px; text-align: left; font-size: 1.1rem;">Desde qué rama</th>
+                            <th style="padding: 18px; text-align: left; font-size: 1.1rem;">Cuándo crearla</th>
+                            <th style="padding: 18px; text-align: left; font-size: 1.1rem;">Comando</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="border-bottom: 1px solid #1a1a2e;">
+                            <td style="padding: 18px;">
+                                <span style="color: #38ef7d; font-weight: bold; font-size: 1.1rem;">✨ Feature</span>
+                            </td>
+                            <td style="padding: 18px;">
+                                <code style="background: #16213e; padding: 6px 12px; border-radius: 6px; color: #38ef7d; font-weight: bold;">main</code>
+                            </td>
+                            <td style="padding: 18px; line-height: 1.6;">
+                                • Nueva funcionalidad solicitada<br>
+                                • Nuevo módulo del ERP<br>
+                                • Cuando el Arquitecto asigna una tarea nueva del backlog
+                            </td>
+                            <td style="padding: 18px;">
+                                <code style="background: #16213e; padding: 8px 12px; border-radius: 6px; display: block; font-size: 0.85rem;">
+                                    git checkout main<br>
+                                    git pull<br>
+                                    git checkout -b feature/nombre-tarea
+                                </code>
+                            </td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #1a1a2e; background: rgba(255,255,255,0.02);">
+                            <td style="padding: 18px;">
+                                <span style="color: #f59e0b; font-weight: bold; font-size: 1.1rem;">🔧 Fix</span>
+                            </td>
+                            <td style="padding: 18px;">
+                                <code style="background: #16213e; padding: 6px 12px; border-radius: 6px; color: #f59e0b; font-weight: bold;">main</code>
+                            </td>
+                            <td style="padding: 18px; line-height: 1.6;">
+                                • Bug encontrado en desarrollo<br>
+                                • Bug encontrado en QA-UI<br>
+                                • Error que NO bloquea producción<br>
+                                • Cuando Joel o José rechazan y piden corrección menor
+                            </td>
+                            <td style="padding: 18px;">
+                                <code style="background: #16213e; padding: 8px 12px; border-radius: 6px; display: block; font-size: 0.85rem;">
+                                    git checkout main<br>
+                                    git pull<br>
+                                    git checkout -b fix/nombre-fix
+                                </code>
+                            </td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #1a1a2e;">
+                            <td style="padding: 18px;">
+                                <span style="color: #ef4444; font-weight: bold; font-size: 1.1rem;">🚨 Hotfix</span>
+                            </td>
+                            <td style="padding: 18px;">
+                                <code style="background: #16213e; padding: 6px 12px; border-radius: 6px; color: #ef4444; font-weight: bold;">main</code>
+                            </td>
+                            <td style="padding: 18px; line-height: 1.6;">
+                                • Bug CRÍTICO en producción<br>
+                                • Sistema caído o bloqueado<br>
+                                • Error que afecta a usuarios finales<br>
+                                • URGENTE - requiere deploy inmediato
+                            </td>
+                            <td style="padding: 18px;">
+                                <code style="background: #16213e; padding: 8px 12px; border-radius: 6px; display: block; font-size: 0.85rem;">
+                                    git checkout main<br>
+                                    git pull<br>
+                                    git checkout -b hotfix/nombre-hotfix
+                                </code>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 18px;">
+                                <span style="color: #a855f7; font-weight: bold; font-size: 1.1rem;">♻️ Refactor</span>
+                            </td>
+                            <td style="padding: 18px;">
+                                <code style="background: #16213e; padding: 6px 12px; border-radius: 6px; color: #a855f7; font-weight: bold;">main</code>
+                            </td>
+                            <td style="padding: 18px; line-height: 1.6;">
+                                • Mejorar código existente<br>
+                                • Optimizar performance<br>
+                                • Reestructurar módulo<br>
+                                • Sin cambiar funcionalidad
+                            </td>
+                            <td style="padding: 18px;">
+                                <code style="background: #16213e; padding: 8px 12px; border-radius: 6px; display: block; font-size: 0.85rem;">
+                                    git checkout main<br>
+                                    git pull<br>
+                                    git checkout -b refactor/nombre-modulo
+                                </code>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Nota Importante -->
+            <div style="background: linear-gradient(135deg, #2d1a3e 0%, #1a1a2e 100%); border: 2px solid #f59e0b; border-radius: 15px; padding: 25px; margin-bottom: 30px;">
+                <h3 style="color: #f59e0b; margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 1.5rem;">⚠️</span> REGLA DE ORO — Aislamiento de Ramas
+                </h3>
+                <div style="background: rgba(245, 158, 11, 0.1); padding: 20px; border-radius: 10px; line-height: 1.8;">
+                    <p style="margin-bottom: 15px;">
+                        <strong style="color: #f59e0b;">TODAS</strong> las ramas se crean desde <code style="background: #16213e; padding: 4px 8px; border-radius: 4px;">main</code> (incluyendo feature, fix y refactor).
+                    </p>
+                    <p style="margin-bottom: 15px;">
+                        <strong style="color: #f59e0b;">¿Por qué desde main y no desde pre-produccion?</strong><br>
+                        <code>pre-produccion</code> contiene código de TODOS los DEV en pruebas — bugs, WIP, features sin terminar.
+                        Si creas tu rama desde ahí, te llevas los errores de otros sin saberlo.
+                    </p>
+                    <p style="margin-bottom: 15px;">
+                        <strong style="color: #f59e0b;">main</strong> solo tiene código aprobado y en producción — base limpia garantizada.
+                    </p>
+                    <p style="margin-bottom: 15px;">
+                        <strong style="color: #f59e0b;">NUNCA</strong> crear ramas desde ramas de features anteriores.
+                    </p>
+                    <p>
+                        <strong style="color: #f59e0b;">SIEMPRE</strong> hacer <code style="background: #16213e; padding: 4px 8px; border-radius: 4px;">git checkout main && git pull</code> <strong>ANTES</strong> de crear una nueva rama.
+                    </p>
+                </div>
+            </div>
+            
+            <!-- Diagrama de Flujo de Creación -->
+            <div style="background: #0f3460; border-radius: 15px; padding: 30px;">
+                <h3 style="color: #00d4aa; margin-bottom: 25px; text-align: center;">📍 Flujo de Creación de Ramas</h3>
+                
+                <div style="display: flex; justify-content: center; gap: 40px; flex-wrap: wrap; margin-bottom: 30px;">
+                    <div style="text-align: center;">
+                        <div style="background: #1e3a5f; padding: 20px 40px; border-radius: 12px; border: 3px solid #00d4aa;">
+                            <strong style="font-size: 1.2rem;">main</strong>
+                            <div style="opacity: 0.7; margin-top: 5px;">Producción</div>
+                        </div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="background: #3d2a4a; padding: 20px 40px; border-radius: 12px; border: 3px solid #a855f7;">
+                            <strong style="font-size: 1.2rem;">pre-produccion</strong>
+                            <div style="opacity: 0.7; margin-top: 5px;">Desarrollo/Pruebas</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="display: flex; justify-content: center; gap: 25px; flex-wrap: wrap;">
+                    <div style="text-align: center; padding: 20px; background: rgba(56, 239, 125, 0.1); border-radius: 12px; border: 2px solid #38ef7d; min-width: 180px;">
+                        <div style="color: #38ef7d; font-weight: bold; font-size: 1.1rem; margin-bottom: 10px;">✨ Feature</div>
+                        <div style="font-size: 0.9rem; opacity: 0.8;">Desde <code>main</code></div>
+                        <div style="margin-top: 10px; font-size: 0.85rem; color: #f59e0b;">Nueva funcionalidad</div>
+                    </div>
+                    <div style="text-align: center; padding: 20px; background: rgba(245, 158, 11, 0.1); border-radius: 12px; border: 2px solid #f59e0b; min-width: 180px;">
+                        <div style="color: #f59e0b; font-weight: bold; font-size: 1.1rem; margin-bottom: 10px;">🔧 Fix</div>
+                        <div style="font-size: 0.9rem; opacity: 0.8;">Desde <code>main</code></div>
+                        <div style="margin-top: 10px; font-size: 0.85rem; color: #f59e0b;">Bug no urgente</div>
+                    </div>
+                    <div style="text-align: center; padding: 20px; background: rgba(239, 68, 68, 0.1); border-radius: 12px; border: 2px solid #ef4444; min-width: 180px;">
+                        <div style="color: #ef4444; font-weight: bold; font-size: 1.1rem; margin-bottom: 10px;">🚨 Hotfix</div>
+                        <div style="font-size: 0.9rem; opacity: 0.8;">Desde <code>main</code></div>
+                        <div style="margin-top: 10px; font-size: 0.85rem; color: #f59e0b;">Urgente producción</div>
+                    </div>
+                    <div style="text-align: center; padding: 20px; background: rgba(168, 85, 247, 0.1); border-radius: 12px; border: 2px solid #a855f7; min-width: 180px;">
+                        <div style="color: #a855f7; font-weight: bold; font-size: 1.1rem; margin-bottom: 10px;">♻️ Refactor</div>
+                        <div style="font-size: 0.9rem; opacity: 0.8;">Desde <code>main</code></div>
+                        <div style="margin-top: 10px; font-size: 0.85rem; color: #f59e0b;">Mejorar código</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Ejemplos Prácticos -->
+            <div style="margin-top: 30px; background: #16213e; border-radius: 15px; padding: 25px;">
+                <h3 style="color: #00d4aa; margin-bottom: 20px;">💡 Ejemplos Prácticos</h3>
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                    <div style="background: #0f3460; padding: 20px; border-radius: 10px; border-left: 4px solid #38ef7d;">
+                        <div style="color: #38ef7d; font-weight: bold; margin-bottom: 10px;">Ejemplo Feature</div>
+                        <div style="font-size: 0.9rem; line-height: 1.6;">
+                            <strong>Tarea:</strong> "Crear módulo de Nómina APTPRA"<br>
+                            <strong>Rama:</strong> <code>feature/modulo-nomina-aptpra</code><br>
+                            <strong>Desde:</strong> <code>main</code>
+                        </div>
+                    </div>
+                    <div style="background: #0f3460; padding: 20px; border-radius: 10px; border-left: 4px solid #f59e0b;">
+                        <div style="color: #f59e0b; font-weight: bold; margin-bottom: 10px;">Ejemplo Fix</div>
+                        <div style="font-size: 0.9rem; line-height: 1.6;">
+                            <strong>Tarea:</strong> "Corregir envíos APTPRA"<br>
+                            <strong>Rama:</strong> <code>fix/envios-aptpra</code><br>
+                            <strong>Desde:</strong> <code>main</code>
+                        </div>
+                    </div>
+                    <div style="background: #0f3460; padding: 20px; border-radius: 10px; border-left: 4px solid #ef4444;">
+                        <div style="color: #ef4444; font-weight: bold; margin-bottom: 10px;">Ejemplo Hotfix</div>
+                        <div style="font-size: 0.9rem; line-height: 1.6;">
+                            <strong>Tarea:</strong> "Sistema de facturación caído"<br>
+                            <strong>Rama:</strong> <code>hotfix/facturacion-caida</code><br>
+                            <strong>Desde:</strong> <code>main</code>
+                        </div>
+                    </div>
+                    <div style="background: #0f3460; padding: 20px; border-radius: 10px; border-left: 4px solid #a855f7;">
+                        <div style="color: #a855f7; font-weight: bold; margin-bottom: 10px;">Ejemplo Refactor</div>
+                        <div style="font-size: 0.9rem; line-height: 1.6;">
+                            <strong>Tarea:</strong> "Optimizar módulo de inventario"<br>
+                            <strong>Rama:</strong> <code>refactor/inventario-optimizacion</code><br>
+                            <strong>Desde:</strong> <code>main</code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 7: Responsables -->
+        <div class="section">
+            <h2 class="section-title"><span>👥</span> Responsables por Fase (Actualizado)</h2>
+            <div class="responsables">
+                <div class="responsable-card resp-qa-dev">
+                    <div class="resp-role">🔍 QA-DEV</div>
+                    <div class="resp-name">Joel y José</div>
+                    <ul class="resp-duties">
+                        <li>Revisión técnica de código</li>
+                        <li>Validación de seguridad</li>
+                        <li>Verificación de arquitectura</li>
+                        <li>Control de calidad de código</li>
+                        <li>Detección de vulnerabilidades</li>
+                        <li>Revisión de performance</li>
+                    </ul>
+                </div>
+                
+                <div class="responsable-card resp-pre-impl">
+                    <div class="resp-role">🚀 Pre-Implementación</div>
+                    <div class="resp-name">Ricardo</div>
+                    <ul class="resp-duties">
+                        <li>Deploy a entorno de pruebas</li>
+                        <li>Validación de configuración</li>
+                        <li>Verificación de migraciones</li>
+                        <li>Scripts de base de datos</li>
+                        <li>Confirmación de deployment</li>
+                        <li>Preparación para QA-UI</li>
+                    </ul>
+                </div>
+                
+                <div class="responsable-card resp-qa-ui">
+                    <div class="resp-role">✅ QA-UI</div>
+                    <div class="resp-name">Equipo Kaptas</div>
+                    <ul class="resp-duties">
+                        <li>Validación funcional completa</li>
+                        <li>Verificación de lógica de negocio</li>
+                        <li>Pruebas de UI/UX</li>
+                        <li>Detección de edge cases</li>
+                        <li>Errores funcionales</li>
+                        <li>Comportamiento esperado</li>
+                    </ul>
+                </div>
+                
+                <div class="responsable-card resp-impl">
+                    <div class="resp-role">🎯 Implementación</div>
+                    <div class="resp-name">José y Ricardo</div>
+                    <ul class="resp-duties">
+                        <li>Deploy a producción</li>
+                        <li>Liberación al usuario final</li>
+                        <li>Activación de cambios</li>
+                        <li>Monitoreo post-release</li>
+                        <li>Verificación en producción</li>
+                        <li>Comunicación de releases</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+    </div>
+</body>
+</html>

@@ -121,7 +121,12 @@ export class MantenimientoController {
   // al crear o editar un ticket, se le puede asignar uno en vez de un técnico.
 
   async listProviders(req: HttpRequest) {
-    return { status: 200, body: { data: await this.service.listProviders(req.user as any) } }
+    // La vista de administración gestiona también los de baja (reactivar, catálogo completo):
+    // `?includeInactive=1`. El resto de consumers (selector de tickets, app) no lo manda y
+    // sigue viendo solo activos.
+    const includeInactive = (req.query as Record<string, unknown>)['includeInactive'] === '1'
+      || (req.query as Record<string, unknown>)['includeInactive'] === 'true'
+    return { status: 200, body: { data: await this.service.listProviders(req.user as any, includeInactive) } }
   }
 
   async storeProvider(req: HttpRequest) {

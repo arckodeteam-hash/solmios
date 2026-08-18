@@ -3,7 +3,10 @@
 @theme {
   --color-navy: #0D2B4E;
   --color-navy-light: #1A3A5C;
-  --color-navy-deep: #081D38;
+  /* navy-deep: fondo del footer del sitio público. Antes solo existía como parche en el
+     <style scoped> de la landing — al extraer SiteFooter quedó sin definición y el footer
+     se veía blanco (texto white/40 sobre página blanca) en /p/:slug. */
+  --color-navy-deep: #061428;
   --color-blue: #1D67E3;
   --color-cyan: #00B4D8;
   --color-cyan-light: #48CAE4;

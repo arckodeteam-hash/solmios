@@ -70,6 +70,14 @@ const router = createRouter({
       meta: { layout: 'none' },
     },
     {
+      // Página pública del sitio (footer): /p/:slug — la sirve el módulo site-pages
+      // (solo status=published; draft e inexistente se ven igual, 404 genérico).
+      path: '/p/:slug',
+      name: 'site-page',
+      component: () => import('@/pages/site-page.vue'),
+      meta: { layout: 'none' },
+    },
+    {
       // Link de referido (PLAN-REFERIDOS.md). Redirige al registro con el código pre-cargado
       // en vez de una página propia — es solo un puente, la UI real vive en /registro.
       path: '/r/:code',
@@ -172,6 +180,11 @@ const router = createRouter({
           path: 'email-templates',
           name: 'super-admin-email-templates',
           component: () => import('@/pages/super-admin/email-templates.vue'),
+        },
+        {
+          path: 'sitio',
+          name: 'super-admin-sitio',
+          component: () => import('@/pages/super-admin/sitio.vue'),
         },
         {
           path: 'support',

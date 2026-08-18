@@ -1,0 +1,1477 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roles y Responsabilidades - Kaptas ERP</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            background: #1a1a2e; 
+            color: #fff; 
+            padding: 20px;
+            line-height: 1.6;
+        }
+        
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        h1 { 
+            text-align: center; 
+            margin-bottom: 10px; 
+            color: #00d4aa; 
+            font-size: 2.8rem;
+            text-shadow: 0 4px 20px rgba(0, 212, 170, 0.3);
+        }
+        
+        .subtitle { 
+            text-align: center; 
+            margin-bottom: 40px; 
+            opacity: 0.7; 
+            font-size: 1.2rem;
+        }
+        
+        /* Header */
+        .header {
+            text-align: center;
+            padding: 40px 30px;
+            background: linear-gradient(135deg, #16213e 0%, #1a1a2e 100%);
+            border-radius: 25px;
+            margin-bottom: 40px;
+            border: 1px solid rgba(0, 212, 170, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .header::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #667eea, #00d4aa, #f5576c, #a855f7);
+        }
+        
+        .header-badge {
+            display: inline-block;
+            padding: 10px 25px;
+            background: rgba(0, 212, 170, 0.15);
+            border: 1px solid #00d4aa;
+            border-radius: 25px;
+            font-size: 1rem;
+            margin-top: 15px;
+        }
+        
+        /* Section */
+        .section { 
+            background: #16213e; 
+            border-radius: 20px; 
+            padding: 35px; 
+            margin-bottom: 35px;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .section-title {
+            font-size: 1.8rem;
+            margin-bottom: 30px;
+            color: #00d4aa;
+            border-bottom: 3px solid #00d4aa;
+            padding-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .section-title span { font-size: 2rem; }
+        
+        /* Summary Table */
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #0f3460;
+            border-radius: 15px;
+            overflow: hidden;
+        }
+        
+        .summary-table thead {
+            background: linear-gradient(90deg, #667eea, #764ba2);
+        }
+        
+        .summary-table th {
+            padding: 20px;
+            text-align: left;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        
+        .summary-table td {
+            padding: 18px 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .summary-table tbody tr:hover {
+            background: rgba(255,255,255,0.03);
+        }
+        
+        .summary-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .role-badge {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        
+        .badge-estrategico { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .badge-tactico { background: linear-gradient(135deg, #11998e, #38ef7d); color: #000; }
+        .badge-tecnico { background: linear-gradient(135deg, #f093fb, #f5576c); }
+        .badge-operativo { background: linear-gradient(135deg, #4facfe, #00f2fe); color: #000; }
+        .badge-funcional { background: linear-gradient(135deg, #fa709a, #fee140); color: #000; }
+        
+        /* Role Cards */
+        .role-card {
+            background: #0f3460;
+            border-radius: 20px;
+            padding: 35px;
+            margin-bottom: 30px;
+            border-top: 5px solid;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .role-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+        }
+        
+        .role-card-architect { border-color: #667eea; }
+        .role-card-dev { border-color: #38ef7d; }
+        .role-card-qa-dev { border-color: #f5576c; }
+        .role-card-pre-impl { border-color: #4facfe; }
+        .role-card-qa-ui { border-color: #fee140; }
+        .role-card-impl { border-color: #ff0844; }
+        
+        .role-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        
+        .role-title {
+            font-size: 2rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .role-card-architect .role-title { color: #667eea; }
+        .role-card-dev .role-title { color: #38ef7d; }
+        .role-card-qa-dev .role-title { color: #f5576c; }
+        .role-card-pre-impl .role-title { color: #4facfe; }
+        .role-card-qa-ui .role-title { color: #fee140; }
+        .role-card-impl .role-title { color: #ff0844; }
+        
+        .role-responsible {
+            font-size: 1.3rem;
+            padding: 8px 20px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 10px;
+        }
+        
+        .role-definition {
+            background: rgba(0, 212, 170, 0.1);
+            padding: 20px 25px;
+            border-radius: 12px;
+            border-left: 4px solid #00d4aa;
+            margin-bottom: 25px;
+            font-size: 1.15rem;
+        }
+        
+        .role-sections {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+        }
+        
+        .role-section {
+            background: #16213e;
+            padding: 25px;
+            border-radius: 15px;
+        }
+        
+        .role-section-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .role-section-title.green { color: #38ef7d; }
+        .role-section-title.red { color: #f5576c; }
+        .role-section-title.yellow { color: #fee140; }
+        .role-section-title.blue { color: #4facfe; }
+        
+        .role-list {
+            list-style: none;
+        }
+        
+        .role-list li {
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+        
+        .role-list li:last-child {
+            border-bottom: none;
+        }
+        
+        .role-list li::before {
+            content: "▸";
+            color: #00d4aa;
+            font-weight: bold;
+        }
+        
+        .role-list.no li::before {
+            content: "✗";
+            color: #f5576c;
+        }
+        
+        /* Checklist */
+        .checklist {
+            background: #16213e;
+            padding: 25px;
+            border-radius: 15px;
+            margin-top: 25px;
+        }
+        
+        .checklist-title {
+            font-size: 1.3rem;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #00d4aa;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .checklist-items {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        
+        .checklist-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 18px;
+            background: #0f3460;
+            border-radius: 10px;
+            transition: transform 0.2s;
+        }
+        
+        .checklist-item:hover {
+            transform: translateX(5px);
+        }
+        
+        .checklist-checkbox {
+            width: 24px;
+            height: 24px;
+            border: 2px solid #00d4aa;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        
+        .checklist-checkbox.checked {
+            background: #00d4aa;
+        }
+        
+        .checklist-checkbox.checked::after {
+            content: "✓";
+            color: #000;
+            font-weight: bold;
+        }
+        
+        /* Flow Diagram */
+        .flow-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            padding: 30px;
+            background: #0f3460;
+            border-radius: 20px;
+            margin-top: 30px;
+        }
+        
+        .flow-step {
+            padding: 22px 45px;
+            border-radius: 15px;
+            text-align: center;
+            min-width: 450px;
+            font-weight: 600;
+            font-size: 1.05rem;
+            transition: transform 0.2s;
+        }
+        
+        .flow-step:hover {
+            transform: scale(1.02);
+        }
+        
+        .flow-step-architect { background: linear-gradient(90deg, #667eea, #764ba2); }
+        .flow-step-dev { background: linear-gradient(90deg, #11998e, #38ef7d); color: #000; }
+        .flow-step-qa-dev { background: linear-gradient(90deg, #f093fb, #f5576c); }
+        .flow-step-pre-impl { background: linear-gradient(90deg, #4facfe, #00f2fe); color: #000; }
+        .flow-step-qa-ui { background: linear-gradient(90deg, #fa709a, #fee140); color: #000; }
+        .flow-step-impl { background: linear-gradient(90deg, #ff0844, #ffb199); }
+        
+        .flow-arrow {
+            font-size: 2rem;
+            color: #00d4aa;
+        }
+        
+        .flow-label {
+            font-size: 0.85rem;
+            opacity: 0.8;
+            margin-top: 5px;
+        }
+        
+        /* RACI Matrix */
+        .raci-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #0f3460;
+            border-radius: 15px;
+            overflow: hidden;
+        }
+        
+        .raci-table thead {
+            background: linear-gradient(90deg, #667eea, #764ba2);
+        }
+        
+        .raci-table th {
+            padding: 18px 12px;
+            text-align: center;
+            font-size: 0.95rem;
+        }
+        
+        .raci-table td {
+            padding: 15px 12px;
+            text-align: center;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .raci-table td:first-child {
+            text-align: left;
+            font-weight: 500;
+        }
+        
+        .raci-r { background: #38ef7d; color: #000; padding: 6px 12px; border-radius: 6px; font-weight: bold; }
+        .raci-a { background: #667eea; color: #fff; padding: 6px 12px; border-radius: 6px; font-weight: bold; }
+        .raci-c { background: #f59e0b; color: #000; padding: 6px 12px; border-radius: 6px; font-weight: bold; }
+        .raci-i { background: #6b7280; color: #fff; padding: 6px 12px; border-radius: 6px; font-weight: bold; }
+        
+        .raci-legend {
+            display: flex;
+            gap: 25px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        
+        .raci-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+        }
+        
+        /* Git Commands */
+        .git-commands {
+            background: #0f3460;
+            padding: 25px;
+            border-radius: 15px;
+            margin-top: 20px;
+        }
+        
+        .git-command {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .git-command:last-child {
+            border-bottom: none;
+        }
+        
+        .git-command-num {
+            background: #00d4aa;
+            color: #000;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+        }
+        
+        .git-command-code {
+            background: #16213e;
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            flex: 1;
+            border-left: 3px solid #38ef7d;
+        }
+        
+        .git-command-desc {
+            opacity: 0.8;
+            font-size: 0.9rem;
+            min-width: 200px;
+        }
+        
+        /* Communication Rules */
+        .comm-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+        
+        .comm-card {
+            background: #0f3460;
+            padding: 25px;
+            border-radius: 15px;
+            border-left: 4px solid;
+        }
+        
+        .comm-card-1 { border-color: #667eea; }
+        .comm-card-2 { border-color: #38ef7d; }
+        .comm-card-3 { border-color: #f5576c; }
+        .comm-card-4 { border-color: #4facfe; }
+        .comm-card-5 { border-color: #fee140; }
+        .comm-card-6 { border-color: #ff0844; }
+        
+        .comm-from {
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin-bottom: 8px;
+        }
+        
+        .comm-card-1 .comm-from { color: #667eea; }
+        .comm-card-2 .comm-from { color: #38ef7d; }
+        .comm-card-3 .comm-from { color: #f5576c; }
+        .comm-card-4 .comm-from { color: #4facfe; }
+        .comm-card-5 .comm-from { color: #fee140; }
+        .comm-card-6 .comm-from { color: #ff0844; }
+        
+        .comm-arrow {
+            font-size: 1.2rem;
+            margin: 5px 0;
+            opacity: 0.7;
+        }
+        
+        .comm-to {
+            font-weight: 500;
+            opacity: 0.9;
+        }
+        
+        .comm-when {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            opacity: 0.7;
+            font-style: italic;
+        }
+        
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .flow-step { min-width: auto; width: 100%; }
+            .raci-table { font-size: 0.85rem; }
+        }
+        
+        @media (max-width: 768px) {
+            h1 { font-size: 2rem; }
+            .section-title { font-size: 1.4rem; }
+            .role-header { flex-direction: column; }
+            .role-title { font-size: 1.5rem; }
+            .summary-table { font-size: 0.9rem; }
+            .summary-table th, .summary-table td { padding: 12px; }
+        }
+        
+        @media (max-width: 480px) {
+            .role-sections { grid-template-columns: 1fr; }
+            .checklist-items { grid-template-columns: 1fr; }
+            .comm-grid { grid-template-columns: 1fr; }
+            .raci-table { font-size: 0.75rem; }
+        }
+        
+        /* Animations */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .section { animation: fadeInUp 0.5s ease-out; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>👥 Roles y Responsabilidades</h1>
+            <p class="subtitle">Definiciones claras para cada posición en el sistema de desarrollo</p>
+            <div class="header-badge">📋 Kaptas ERP - Documento de Referencia</div>
+        </div>
+        
+        <!-- Sección 1: Resumen Ejecutivo -->
+        <div class="section">
+            <h2 class="section-title"><span>📊</span> Resumen Ejecutivo</h2>
+            
+            <table class="summary-table">
+                <thead>
+                    <tr>
+                        <th>Rol</th>
+                        <th>Responsable</th>
+                        <th>Nivel</th>
+                        <th>Enfoque Principal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Master Arquitecto</strong></td>
+                        <td>Luis</td>
+                        <td><span class="role-badge badge-estrategico">Estratégico</span></td>
+                        <td>Visión global, estándares, dirección</td>
+                    </tr>
+                    <tr>
+                        <td><strong>DEV 01/02/03</strong></td>
+                        <td>Desarrolladores</td>
+                        <td><span class="role-badge badge-tactico">Táctico</span></td>
+                        <td>Implementar, crear, corregir</td>
+                    </tr>
+                    <tr>
+                        <td><strong>QA-DEV</strong></td>
+                        <td>Joel</td>
+                        <td><span class="role-badge badge-tecnico">Técnico</span></td>
+                        <td>Calidad técnica, seguridad, arquitectura</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Pre-Implementación</strong></td>
+                        <td>Ricardo</td>
+                        <td><span class="role-badge badge-operativo">Operativo</span></td>
+                        <td>Deploy, configuración, migraciones</td>
+                    </tr>
+                    <tr>
+                        <td><strong>QA-UI</strong></td>
+                        <td>Equipo Kaptas</td>
+                        <td><span class="role-badge badge-funcional">Funcional</span></td>
+                        <td>Negocio, UX/UI, validación real</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Implementación</strong></td>
+                        <td>José y Ricardo</td>
+                        <td><span class="role-badge badge-operativo">Operativo</span></td>
+                        <td>Producción, liberación, monitoreo</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Sección 2: Master Arquitecto -->
+        <div class="section">
+            <div class="role-card role-card-architect">
+                <div class="role-header">
+                    <div class="role-title">🏗️ Master Arquitecto del Software</div>
+                    <div class="role-responsible">Responsable: Luis</div>
+                </div>
+                
+                <div class="role-definition">
+                    <strong>Definición Corta:</strong> Define QUÉ se construye y CÓMO se construye a nivel estratégico.
+                </div>
+                
+                <div class="role-sections">
+                    <div class="role-section">
+                        <div class="role-section-title green">✅ Responsabilidades</div>
+                        <ul class="role-list">
+                            <li>Define la arquitectura global del sistema</li>
+                            <li>Establece estándares técnicos y patrones de diseño</li>
+                            <li>Toma decisiones de tecnología y framework</li>
+                            <li>Prioriza tareas del backlog</li>
+                            <li>Asigna trabajo a desarrolladores</li>
+                            <li>Resuelve dudas de arquitectura</li>
+                            <li>Revisa decisiones de alto nivel</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="role-section">
+                        <div class="role-section-title red">❌ Qué NO hace</div>
+                        <ul class="role-list no">
+                            <li>No escribe código diario</li>
+                            <li>No hace deploy</li>
+                            <li>No testea UI</li>
+                            <li>No revisa Pull Requests (eso es QA-DEV)</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="role-section">
+                        <div class="role-section-title yellow">❓ Preguntas clave que responde</div>
+                        <ul class="role-list">
+                            <li>¿Esta arquitectura escala?</li>
+                            <li>¿Esta tecnología es la correcta?</li>
+                            <li>¿Cómo afecta este cambio al resto del sistema?</li>
+                            <li>¿Es mejor construir o comprar?</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 3: Desarrollador -->
+        <div class="section">
+            <div class="role-card role-card-dev">
+                <div class="role-header">
+                    <div class="role-title">💻 Desarrollador (DEV 01/02/03)</div>
+                    <div class="role-responsible">Responsable: Desarrolladores</div>
+                </div>
+                
+                <div class="role-definition">
+                    <strong>Definición Corta:</strong> Implementa la funcionalidad según lo definido por el Arquitecto.
+                </div>
+                
+                <div class="role-sections">
+                    <div class="role-section">
+                        <div class="role-section-title green">✅ Responsabilidades</div>
+                        <ul class="role-list">
+                            <li>Crea código que funcione</li>
+                            <li>Implementa endpoints, lógica de negocio, UI</li>
+                            <li>Corrige bugs asignados</li>
+                            <li>Escribe tests básicos</li>
+                            <li>Documenta código complejo</li>
+                            <li>Hace PR para revisión de QA-DEV</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="role-section">
+                        <div class="role-section-title red">❌ Qué NO hace</div>
+                        <ul class="role-list no">
+                            <li>No define arquitectura</li>
+                            <li>No decide tecnología</li>
+                            <li>No hace deploy a producción</li>
+                            <li>No valida funcionalidad de negocio (eso es QA-UI)</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <!-- Git Commands -->
+                <div class="git-commands">
+                    <div class="checklist-title">🌿 Flujo de trabajo Git</div>
+                    <div class="git-command">
+                        <div class="git-command-num">1</div>
+                        <div class="git-command-code">git checkout pre-produccion && git pull</div>
+                        <div class="git-command-desc">Actualiza rama base</div>
+                    </div>
+                    <div class="git-command">
+                        <div class="git-command-num">2</div>
+                        <div class="git-command-code">git checkout -b feature/nombre-tarea</div>
+                        <div class="git-command-desc">Crea nueva rama</div>
+                    </div>
+                    <div class="git-command">
+                        <div class="git-command-num">3</div>
+                        <div class="git-command-code"># ... implementa funcionalidad ...</div>
+                        <div class="git-command-desc">Trabaja en la tarea</div>
+                    </div>
+                    <div class="git-command">
+                        <div class="git-command-num">4</div>
+                        <div class="git-command-code">git add . && git commit -m "feat: descripción"</div>
+                        <div class="git-command-desc">Guarda cambios</div>
+                    </div>
+                    <div class="git-command">
+                        <div class="git-command-num">5</div>
+                        <div class="git-command-code">git push origin feature/nombre-tarea</div>
+                        <div class="git-command-desc">Sube a repositorio</div>
+                    </div>
+                    <div class="git-command">
+                        <div class="git-command-num">6</div>
+                        <div class="git-command-code"># Crear PR → rama qa</div>
+                        <div class="git-command-desc">Solicita revisión</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 4: QA-DEV -->
+        <div class="section">
+            <div class="role-card role-card-qa-dev">
+                <div class="role-header">
+                    <div class="role-title">🔍 QA-DEV</div>
+                    <div class="role-responsible">Responsable: Joel</div>
+                </div>
+                
+                <div class="role-definition">
+                    <strong>Definición Corta:</strong> Valida que el CÓDIGO sea técnicamente correcto, seguro y escalable.
+                </div>
+                
+                <div class="role-sections">
+                    <div class="role-section">
+                        <div class="role-section-title green">📐 Arquitectura</div>
+                        <ul class="role-list">
+                            <li>¿Rompe principios SOLID?</li>
+                            <li>¿Siguen el patrón de diseño establecido?</li>
+                            <li>¿Las dependencias están bien inyectadas?</li>
+                            <li>¿La estructura de carpetas es correcta?</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="role-section">
+                        <div class="role-section-title green">✨ Code Quality</div>
+                        <ul class="role-list">
+                            <li>¿El código es legible y mantenible?</li>
+                            <li>¿Hay código duplicado?</li>
+                            <li>¿Los nombres son descriptivos?</li>
+                            <li>¿Está bien documentado?</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="role-section">
+                        <div class="role-section-title green">🔒 Seguridad</div>
+                        <ul class="role-list">
+                            <li>¿Hay inyección SQL?</li>
+                            <li>¿Están sanitizadas las entradas?</li>
+                            <li>¿Se exponen datos sensibles?</li>
+                            <li>¿Las autenticaciones son seguras?</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="role-section">
+                        <div class="role-section-title green">⚡ Performance</div>
+                        <ul class="role-list">
+                            <li>¿Hay queries N+1?</li>
+                            <li>¿Hay memory leaks?</li>
+                            <li>¿Las consultas son eficientes?</li>
+                            <li>¿Hay índices en la BD?</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="role-section">
+                        <div class="role-section-title green">🔗 Integración</div>
+                        <ul class="role-list">
+                            <li>¿Los endpoints son consistentes?</li>
+                            <li>¿Los DTOs están bien definidos?</li>
+                            <li>¿Los errores se manejan correctamente?</li>
+                            <li>¿Hay logs suficientes?</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="role-section">
+                        <div class="role-section-title red">❌ Qué NO revisa</div>
+                        <ul class="role-list no">
+                            <li>No valida funcionalidad de negocio</li>
+                            <li>No testea UI/UX</li>
+                            <li>No hace deploy</li>
+                            <li>No verifica edge cases de negocio (eso es QA-UI)</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <!-- Checklist QA-DEV -->
+                <div class="checklist">
+                    <div class="checklist-title">📋 Checklist de Revisión QA-DEV</div>
+                    <div class="checklist-items">
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Respeta patrón de diseño establecido</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Dependencias inyectadas correctamente</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Separación de concerns</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Principios SOLID</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Código legible y mantenible</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Sin código duplicado</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Nombres descriptivos</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Documentación completa</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Sin inyección SQL</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Entradas sanitizadas</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Sin exposición de datos sensibles</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Autenticación correcta</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Sin queries N+1</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Sin memory leaks</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Consultas eficientes</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Índices en BD</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Errores manejados</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Mensajes claros</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Logs suficientes</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>No se exponen errores internos</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Decisiones -->
+                <div style="margin-top: 25px; background: #16213e; padding: 25px; border-radius: 15px;">
+                    <div class="checklist-title">🎯 Decisiones que toma</div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px;">
+                        <div style="background: #38ef7d; color: #000; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold;">
+                            ✅ Aprueba<br>
+                            <span style="font-size: 0.85rem; font-weight: normal;">Merge a pre-produccion</span>
+                        </div>
+                        <div style="background: #f59e0b; color: #000; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold;">
+                            ⚠️ Aprueba con observaciones<br>
+                            <span style="font-size: 0.85rem; font-weight: normal;">Merge con notas</span>
+                        </div>
+                        <div style="background: #ef4444; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold;">
+                            ❌ Rechaza<br>
+                            <span style="font-size: 0.85rem; font-weight: normal;">DEV corrige y vuelve a enviar</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 5: Pre-Implementación -->
+        <div class="section">
+            <div class="role-card role-card-pre-impl">
+                <div class="role-header">
+                    <div class="role-title">🚀 Pre-Implementación</div>
+                    <div class="role-responsible">Responsable: Ricardo</div>
+                </div>
+                
+                <div class="role-definition">
+                    <strong>Definición Corta:</strong> Prepara el código para ser testeado funcionalmente.
+                </div>
+                
+                <div class="role-sections">
+                    <div class="role-section">
+                        <div class="role-section-title green">✅ Responsabilidades</div>
+                        <ul class="role-list">
+                            <li>Merge de feature a pre-produccion</li>
+                            <li>Deploy a entorno de pruebas</li>
+                            <li>Verificar migraciones de BD</li>
+                            <li>Validar configuración</li>
+                            <li>Confirmar que el sistema corre</li>
+                            <li>Preparar para QA-UI</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="role-section">
+                        <div class="role-section-title red">❌ Qué NO hace</div>
+                        <ul class="role-list no">
+                            <li>No escribe código</li>
+                            <li>No valida funcionalidad (eso es QA-UI)</li>
+                            <li>No deploya a producción (eso es Implementación)</li>
+                            <li>No revisa calidad técnica (eso es QA-DEV)</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <!-- Checklist Pre-Implementación -->
+                <div class="checklist">
+                    <div class="checklist-title">📋 Checklist de Pre-Implementación</div>
+                    <div class="checklist-items">
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Deploy exitoso a pruebas</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Sistema inicia sin errores</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Endpoints responden</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Migraciones ejecutadas</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Datos de prueba disponibles</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Sin errores de integridad</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Variables de entorno correctas</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Conexiones a BD activas</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Servicios externos configurados</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Swagger funcional</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Login funciona</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Módulos principales accesibles</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 6: QA-UI -->
+        <div class="section">
+            <div class="role-card role-card-qa-ui">
+                <div class="role-header">
+                    <div class="role-title">✅ QA-UI</div>
+                    <div class="role-responsible">Responsable: Equipo Kaptas</div>
+                </div>
+                
+                <div class="role-definition">
+                    <strong>Definición Corta:</strong> Valida que el SISTEMA haga lo que el negocio necesita.
+                </div>
+                
+                <div class="role-sections">
+                    <div class="role-section">
+                        <div class="role-section-title green">✅ Responsabilidades</div>
+                        <ul class="role-list">
+                            <li>Validar flujos completos del negocio</li>
+                            <li>Verificar reglas de negocio</li>
+                            <li>Probar UI/UX</li>
+                            <li>Encontrar edge cases</li>
+                            <li>Detectar errores funcionales</li>
+                            <li>Confirmar comportamiento esperado</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="role-section">
+                        <div class="role-section-title red">❌ Qué NO revisa</div>
+                        <ul class="role-list no">
+                            <li>No valida calidad técnica (eso es QA-DEV)</li>
+                            <li>No hace deploy (eso es Pre-Implementación)</li>
+                            <li>No escribe código (eso es DEV)</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="role-section">
+                        <div class="role-section-title yellow">❓ Preguntas clave que responde</div>
+                        <ul class="role-list">
+                            <li>¿La funcionalidad hace lo correcto?</li>
+                            <li>¿Cumple con lo esperado por negocio?</li>
+                            <li>¿La UI responde bien?</li>
+                            <li>¿Qué pasa si el usuario hace X?</li>
+                            <li>¿Los edge cases están manejados?</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <!-- Checklist QA-UI -->
+                <div class="checklist">
+                    <div class="checklist-title">📋 Checklist de QA-UI</div>
+                    <div class="checklist-items">
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Flujo principal funciona</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Reglas de negocio correctas</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Cálculos precisos</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Datos se guardan correctamente</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Formularios funcionan</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Botones responden</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Mensajes claros</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Loading states</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Campos vacíos</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Datos inválidos</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Permisos de usuario</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Conexión lenta</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Comunica con otros módulos</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Datos consistentes</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Real-time funciona</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Reportes correctos</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 7: Implementación -->
+        <div class="section">
+            <div class="role-card role-card-impl">
+                <div class="role-header">
+                    <div class="role-title">🎯 Implementación</div>
+                    <div class="role-responsible">Responsable: José y Ricardo</div>
+                </div>
+                
+                <div class="role-definition">
+                    <strong>Definición Corta:</strong> Lleva el código a producción de forma segura.
+                </div>
+                
+                <div class="role-sections">
+                    <div class="role-section">
+                        <div class="role-section-title green">✅ Responsabilidades</div>
+                        <ul class="role-list">
+                            <li>Deploy a producción</li>
+                            <li>Crear release vX.X.X</li>
+                            <li>Merge a main</li>
+                            <li>Monitoreo post-release</li>
+                            <li>Comunicar cambios</li>
+                            <li>Rollback si es necesario</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="role-section">
+                        <div class="role-section-title red">❌ Qué NO hace</div>
+                        <ul class="role-list no">
+                            <li>No escribe código</li>
+                            <li>No valida funcionalidad</li>
+                            <li>No revisa calidad técnica</li>
+                            <li>No testing</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <!-- Checklist Implementación -->
+                <div class="checklist">
+                    <div class="checklist-title">📋 Checklist de Implementación</div>
+                    <div class="checklist-items">
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>QA-UI aprobó</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Release notes preparadas</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Rollback plan listo</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Rama release creada</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Merge a main exitoso</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Deploy a producción</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Variables de entorno</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Sistema funciona</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Endpoints responden</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Sin errores críticos</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Monitoreo activo</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Equipo notificado</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Cambios documentados</span>
+                        </div>
+                        <div class="checklist-item">
+                            <div class="checklist-checkbox"></div>
+                            <span>Versión actualizada</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 8: Flujo Completo -->
+        <div class="section">
+            <h2 class="section-title"><span>⚡</span> Flujo Completo del Proceso</h2>
+            
+            <div class="flow-container">
+                <div class="flow-step flow-step-architect">
+                    🏗️ <strong>Master Arquitecto</strong> define la tarea y la asigna
+                    <div class="flow-label">Define QUÉ y CÓMO (estratégico)</div>
+                </div>
+                <div class="flow-arrow">↓</div>
+                
+                <div class="flow-step flow-step-dev">
+                    💻 <strong>DEV 01/02/03</strong> crea rama y implementa
+                    <div class="flow-label">feature/* | fix/* | refactor/* (táctico)</div>
+                </div>
+                <div class="flow-arrow">↓</div>
+                
+                <div class="flow-step flow-step-dev">
+                    📤 <strong>DEV</strong> hace Push y crea PR → rama qa
+                    <div class="flow-label">Solicita revisión técnica</div>
+                </div>
+                <div class="flow-arrow">↓</div>
+                
+                <div class="flow-step flow-step-qa-dev">
+                    🔍 <strong>QA-DEV (Joel)</strong> revisa código
+                    <div class="flow-label">Valida: arquitectura, seguridad, performance (técnico)</div>
+                </div>
+                <div class="flow-arrow">↓</div>
+                
+                <div class="flow-step flow-step-pre-impl">
+                    🚀 <strong>Pre-Implementación (Ricardo)</strong> deploy a pruebas
+                    <div class="flow-label">Verifica migraciones, configuración (operativo)</div>
+                </div>
+                <div class="flow-arrow">↓</div>
+                
+                <div class="flow-step flow-step-qa-ui">
+                    ✅ <strong>QA-UI (Equipo Kaptas)</strong> valida funcionalidad
+                    <div class="flow-label">Prueba: flujos, reglas, UI/UX (funcional)</div>
+                </div>
+                <div class="flow-arrow">↓</div>
+                
+                <div class="flow-step flow-step-impl">
+                    🎯 <strong>Implementación (José/Ricardo)</strong> deploy a producción
+                    <div class="flow-label">Crea release, merge a main (operativo)</div>
+                </div>
+                <div class="flow-arrow">↓</div>
+                
+                <div class="flow-step" style="background: linear-gradient(90deg, #00d4aa, #00b894); color: #000;">
+                    ✨ <strong>COMPLETADO</strong> - Feature en producción
+                    <div class="flow-label">Verificada por todos los roles</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 9: Matriz RACI -->
+        <div class="section">
+            <h2 class="section-title"><span>📊</span> Matriz de Responsabilidades (RACI)</h2>
+            
+            <div style="overflow-x: auto;">
+                <table class="raci-table">
+                    <thead>
+                        <tr>
+                            <th style="text-align: left;">Actividad</th>
+                            <th>Arquitecto</th>
+                            <th>DEV</th>
+                            <th>QA-DEV</th>
+                            <th>Pre-Impl</th>
+                            <th>QA-UI</th>
+                            <th>Implementación</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Definir arquitectura</td>
+                            <td><span class="raci-r">R</span></td>
+                            <td><span class="raci-c">C</span></td>
+                            <td><span class="raci-c">C</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                        </tr>
+                        <tr>
+                            <td>Escribir código</td>
+                            <td><span class="raci-a">A</span></td>
+                            <td><span class="raci-r">R</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                        </tr>
+                        <tr>
+                            <td>Crear PR</td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-r">R</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                        </tr>
+                        <tr>
+                            <td>Revisar calidad técnica</td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-c">C</span></td>
+                            <td><span class="raci-r">R</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                        </tr>
+                        <tr>
+                            <td>Aprobar/Rechazar PR</td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-r">R</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                        </tr>
+                        <tr>
+                            <td>Deploy a pruebas</td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-c">C</span></td>
+                            <td><span class="raci-r">R</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                        </tr>
+                        <tr>
+                            <td>Validar funcionalidad</td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-c">C</span></td>
+                            <td><span class="raci-r">R</span></td>
+                            <td><span class="raci-i">I</span></td>
+                        </tr>
+                        <tr>
+                            <td>Deploy a producción</td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-c">C</span></td>
+                            <td><span class="raci-r">R</span></td>
+                        </tr>
+                        <tr>
+                            <td>Monitoreo post-release</td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-i">I</span></td>
+                            <td><span class="raci-r">R</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="raci-legend">
+                <div class="raci-legend-item">
+                    <span class="raci-r">R</span>
+                    <span>Responsible (Responsable)</span>
+                </div>
+                <div class="raci-legend-item">
+                    <span class="raci-a">A</span>
+                    <span>Accountable (Aprueba)</span>
+                </div>
+                <div class="raci-legend-item">
+                    <span class="raci-c">C</span>
+                    <span>Consulted (Consultado)</span>
+                </div>
+                <div class="raci-legend-item">
+                    <span class="raci-i">I</span>
+                    <span>Informed (Informado)</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sección 10: Reglas de Comunicación -->
+        <div class="section">
+            <h2 class="section-title"><span>💬</span> Reglas de Comunicación</h2>
+            
+            <div class="comm-grid">
+                <div class="comm-card comm-card-1">
+                    <div class="comm-from">DEV → QA-DEV</div>
+                    <div class="comm-arrow">↓</div>
+                    <div class="comm-to">Cuando crea un Pull Request</div>
+                    <div class="comm-when">Siempre notificar por PR y chat</div>
+                </div>
+                
+                <div class="comm-card comm-card-2">
+                    <div class="comm-from">QA-DEV → DEV</div>
+                    <div class="comm-arrow">↓</div>
+                    <div class="comm-to">Cuando aprueba o rechaza</div>
+                    <div class="comm-when">Comentarios detallados en el PR</div>
+                </div>
+                
+                <div class="comm-card comm-card-3">
+                    <div class="comm-from">QA-DEV → Pre-Impl</div>
+                    <div class="comm-arrow">↓</div>
+                    <div class="comm-to">Cuando aprueba el PR</div>
+                    <div class="comm-when">Merge automático a pre-produccion</div>
+                </div>
+                
+                <div class="comm-card comm-card-4">
+                    <div class="comm-from">Pre-Impl → QA-UI</div>
+                    <div class="comm-arrow">↓</div>
+                    <div class="comm-to">Cuando deploya a pruebas</div>
+                    <div class="comm-when">Notificar URL y credenciales</div>
+                </div>
+                
+                <div class="comm-card comm-card-5">
+                    <div class="comm-from">QA-UI → Implementación</div>
+                    <div class="comm-arrow">↓</div>
+                    <div class="comm-to">Cuando aprueba funcionalidad</div>
+                    <div class="comm-when">Confirmar listo para producción</div>
+                </div>
+                
+                <div class="comm-card comm-card-6">
+                    <div class="comm-from">Implementación → Todos</div>
+                    <div class="comm-arrow">↓</div>
+                    <div class="comm-to">Cuando deploya a producción</div>
+                    <div class="comm-when">Release notes y versión</div>
+                </div>
+            </div>
+            
+            <!-- Herramientas -->
+            <div style="margin-top: 30px; background: #0f3460; padding: 25px; border-radius: 15px;">
+                <h3 style="color: #00d4aa; margin-bottom: 20px;">🛠️ Herramientas de Comunicación</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                    <div style="background: #16213e; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 1.5rem; margin-bottom: 8px;">📋</div>
+                        <div style="font-weight: bold;">Pull Requests</div>
+                        <div style="font-size: 0.85rem; opacity: 0.7;">GitHub/GitLab</div>
+                    </div>
+                    <div style="background: #16213e; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 1.5rem; margin-bottom: 8px;">🐛</div>
+                        <div style="font-weight: bold;">Issues</div>
+                        <div style="font-size: 0.85rem; opacity: 0.7;">Seguimiento de tareas</div>
+                    </div>
+                    <div style="background: #16213e; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 1.5rem; margin-bottom: 8px;">💬</div>
+                        <div style="font-weight: bold;">Chat</div>
+                        <div style="font-size: 0.85rem; opacity: 0.7;">Slack/Discord/Teams</div>
+                    </div>
+                    <div style="background: #16213e; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 1.5rem; margin-bottom: 8px;">📅</div>
+                        <div style="font-weight: bold;">Reuniones</div>
+                        <div style="font-size: 0.85rem; opacity: 0.7;">Sprint planning, daily</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div style="text-align: center; padding: 30px; opacity: 0.6; font-size: 0.9rem;">
+            <p>Documento actualizado: Junio 2026 | Proyecto: Kaptas ERP</p>
+        </div>
+        
+    </div>
+</body>
+</html>

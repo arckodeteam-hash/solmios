@@ -211,4 +211,54 @@ describe('RoomsStep — matriz de ocupaciones', () => {
     expect(store.roomsValid).toBe(true)
     w.unmount()
   })
+
+  // ─── Ocupaciones de IGUAL precio: el grupo (bug del dueño 2026-08-17) ─────────────────────
+  // El hotel cargó UNA tarifa por tipo: "para 1 $390 · para 2 $390 · para 3 $390" leía como
+  // bug. La corrida de iguales se colapsa: el número se pinta UNA vez y las opciones siguen
+  // siendo clickeables — la ELECCIÓN nunca se deduplica, solo el precio repetido.
+  function equalOccupancies(): RoomOccupancyRate[] {
+    const tax = (total: number) => [{ name: 'ITBIS', rate: 18, amount: Math.round(total * 0.18 * 100) / 100 }]
+    return [1, 2, 3].map((n) => ({
+      occupancy: n, price: 390, pricePerNight: 130, available: true, unavailableReason: null, taxBreakdown: tax(390),
+    }))
+  }
+
+  function renderEqual(): VueWrapper {
+    const store = useBookingStore()
+    store.init('hotel-demo')
+    const base = ratesResponse(true)
+    store.ratesResponse = {
+      ...base,
+      roomTypes: base.roomTypes.map((rt) => ({ ...rt, occupancies: equalOccupancies() })),
+    } as PublicRatesResponse
+    useBookingI18nStore().setLocale('es')
+    return mount(RoomsStep)
+  }
+
+  it('corrida de igual precio: el precio se pinta UNA vez pero las 3 opciones existen', () => {
+    const w = renderEqual()
+
+    // Las tres ocupaciones siguen siendo elegibles.
+    const pills = w.findAll('button[data-occupancy]')
+    expect(pills.map((p) => p.attributes('data-occupancy'))).toEqual(['1', '2', '3'])
+
+    // El total repetido era el bug: "390" debe aparecer UNA sola vez en el paso.
+    expect((w.text().match(/390/g) ?? []).length).toBe(1)
+    expect((w.text().match(/130(?!\d)/g) ?? []).length).toBe(1)
+    w.unmount()
+  })
+
+  it('elegir una opción del grupo propaga SU ocupación y el precio del grupo', async () => {
+    const w = renderEqual()
+    const store = useBookingStore()
+
+    await w.get('button[data-occupancy="2"]').trigger('click')
+
+    expect(store.selectedRoom?.id).toBe('familiar')
+    expect(store.selectedOccupancy).toBe(2)
+    expect(store.selectedRoomPrice).toBe(390)
+    expect(store.bookingAdults).toBe(2)
+    expect(store.roomsValid).toBe(true)
+    w.unmount()
+  })
 })

@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Release Branch Explicado Simple - Kaptas ERP</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #fff; padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        h1 { text-align: center; margin: 30px 0; color: #00d4aa; font-size: 2rem; }
+
+        .card { background: #16213e; border-radius: 15px; padding: 30px; margin-bottom: 25px; }
+        .card-title { font-size: 1.3rem; color: #00d4aa; border-bottom: 2px solid #00d4aa; padding-bottom: 10px; margin-bottom: 20px; }
+
+        .analogy { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; }
+        .analogy-text { flex: 1; min-width: 250px; }
+        .analogy-text p { line-height: 1.8; margin-bottom: 12px; opacity: 0.9; }
+        .analogy-icon { font-size: 4rem; text-align: center; min-width: 100px; }
+
+        .branch-list { display: flex; flex-direction: column; gap: 12px; }
+        .branch-item { display: flex; align-items: center; gap: 15px; padding: 14px 20px; border-radius: 10px; }
+        .branch-name { font-family: 'Courier New', monospace; font-weight: bold; font-size: 1.1rem; min-width: 170px; }
+        .branch-type { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; padding: 2px 10px; border-radius: 20px; min-width: 70px; text-align: center; }
+        .perm { background: rgba(0,212,170,0.2); color: #00d4aa; }
+        .temp { background: rgba(245,158,11,0.2); color: #f59e0b; }
+        .branch-from { opacity: 0.7; font-size: 0.9rem; margin-left: auto; }
+        .branch-desc { opacity: 0.8; flex: 1; }
+
+        .permanent { background: linear-gradient(90deg,rgba(0,212,170,0.08),transparent); border-left: 4px solid #00d4aa; }
+        .temporary { background: linear-gradient(90deg,rgba(245,158,11,0.08),transparent); border-left: 4px solid #f59e0b; }
+
+        .flow { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 0; }
+        .fnode { padding: 12px 25px; border-radius: 10px; text-align: center; font-weight: 600; min-width: 300px; }
+        .farrow { font-size: 1.2rem; color: #00d4aa; }
+        .fmain { background: #1e3a5f; border: 2px solid #00d4aa; }
+        .ffeature { background: #3a4a2a; border: 2px solid #38ef7d; }
+        .fqa { background: #3d2a3d; border: 2px solid #f5576c; }
+        .fpre { background: #2d2a4a; border: 2px solid #a855f7; }
+        .frelease { background: #2d4a3e; border: 2px solid #f59e0b; }
+        .fhotfix { background: #4a2a2a; border: 2px solid #ef4444; }
+        .fprod { background: #1e3a5f; border: 2px solid #38ef7d; }
+        .flabel { font-size: 0.75rem; opacity: 0.6; margin-top: 2px; }
+        .fgreen { color: #38ef7d; }
+        .fyellow { color: #f59e0b; }
+
+        table { width: 100%; border-collapse: collapse; background: #0f3460; border-radius: 12px; overflow: hidden; margin: 15px 0; }
+        th { background: linear-gradient(90deg, #667eea, #764ba2); padding: 12px; text-align: left; }
+        td { padding: 12px; border-bottom: 1px solid #1a1a2e; line-height: 1.6; }
+        tr:hover { background: rgba(255,255,255,0.03); }
+        code { background: #0f3460; padding: 2px 8px; border-radius: 5px; font-size: 0.9rem; color: #f59e0b; }
+
+        .box-green { background: rgba(56,239,125,0.08); border-left: 5px solid #38ef7d; padding: 20px; border-radius: 10px; margin: 15px 0; }
+        .box-red { background: rgba(239,68,68,0.08); border-left: 5px solid #ef4444; padding: 20px; border-radius: 10px; margin: 15px 0; }
+        .box-title { font-weight: bold; font-size: 1.05rem; margin-bottom: 8px; }
+        .box-green .box-title { color: #38ef7d; }
+        .box-red .box-title { color: #ef4444; }
+
+        .highlight { color: #f59e0b; font-weight: bold; }
+
+        .step { display: flex; gap: 15px; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .step-num { background: linear-gradient(135deg,#667eea,#764ba2); width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; }
+        .step-text { line-height: 1.6; opacity: 0.9; }
+
+        @media (max-width: 700px) {
+            h1 { font-size: 1.4rem; }
+            .branch-item { flex-wrap: wrap; }
+            .branch-name { min-width: auto; }
+            .branch-from { margin-left: 0; }
+            .fnode { min-width: auto; width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+
+        <h1>🍽️ Release Branch Explicado como Restaurante</h1>
+
+        <!-- === ANALOGIA === -->
+        <div class="card">
+            <div class="card-title">La Cocina de Kaptas ERP</div>
+            <div class="analogy">
+                <div class="analogy-icon">👨‍🍳</div>
+                <div class="analogy-text">
+                    <p><strong>main</strong> = El <span class="highlight">menú oficial</span> que ven los clientes. Solo platos probados y en producción.</p>
+                    <p><strong>feature/*</strong> = Cada chef (DEV) prueba una <span class="highlight">receta nueva</span> en su propia estación.</p>
+                    <p><strong>pre-produccion</strong> = La <span class="highlight">cocina central</span> donde se juntan todas las recetas. Hay platos a medio hacer, experimentos, desorden.</p>
+                    <p><strong>release/vX.X.X</strong> = La <span class="highlight">bandeja del día</span>. Se arma SOLO con platos que el chef ejecutivo ya aprobó. No se agregan ingredientes nuevos. Solo ajustar la presentación.</p>
+                    <p><strong>hotfix/*</strong> = Un cliente se quejó. El chef <span class="highlight">corrige sobre la marcha</span> en la receta oficial (main).</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- === CUANTAS RAMAS EXISTEN === -->
+        <div class="card">
+            <div class="card-title">📌 ¿Cuántas Ramas Existen en Total?</div>
+
+            <p style="opacity:0.8;margin-bottom:18px;">
+                En <strong>cualquier momento</strong> del día, estas son las ramas que existen en el repositorio:
+            </p>
+
+            <div class="branch-list">
+                <div class="branch-item permanent">
+                    <span class="branch-type perm">PERMANENTE</span>
+                    <span class="branch-name">main</span>
+                    <span class="branch-desc">Producción — lo que usan los clientes</span>
+                    <span class="branch-from">→ siempre existe</span>
+                </div>
+                <div class="branch-item permanent">
+                    <span class="branch-type perm">PERMANENTE</span>
+                    <span class="branch-name">pre-produccion</span>
+                    <span class="branch-desc">Entorno de pruebas — WIP de todos</span>
+                    <span class="branch-from">→ siempre existe</span>
+                </div>
+                <div class="branch-item temporary">
+                    <span class="branch-type temp">TEMPORAL</span>
+                    <span class="branch-name">feature/xxx</span>
+                    <span class="branch-desc">Una por cada tarea nueva</span>
+                    <span class="branch-from">← se crea desde <code>main</code></span>
+                </div>
+                <div class="branch-item temporary">
+                    <span class="branch-type temp">TEMPORAL</span>
+                    <span class="branch-name">fix/xxx</span>
+                    <span class="branch-desc">Una por cada bug no urgente</span>
+                    <span class="branch-from">← se crea desde <code>main</code></span>
+                </div>
+                <div class="branch-item temporary">
+                    <span class="branch-type temp">TEMPORAL</span>
+                    <span class="branch-name">refactor/xxx</span>
+                    <span class="branch-desc">Para reestructurar código</span>
+                    <span class="branch-from">← se crea desde <code>main</code></span>
+                </div>
+                <div class="branch-item temporary">
+                    <span class="branch-type temp">TEMPORAL</span>
+                    <span class="branch-name">release/vX.X.X</span>
+                    <span class="branch-desc">Solo se crea cuando hay que pasar a producción</span>
+                    <span class="branch-from">← se crea desde <code>main</code></span>
+                </div>
+                <div class="branch-item temporary">
+                    <span class="branch-type temp">TEMPORAL</span>
+                    <span class="branch-name">hotfix/xxx</span>
+                    <span class="branch-desc">Bug crítico en producción</span>
+                    <span class="branch-from">← se crea desde <code>main</code></span>
+                </div>
+            </div>
+
+            <div class="box-green" style="margin-top:18px;">
+                <div class="box-title">💡 Regla de oro: TODAS las ramas temporales se crean desde <code>main</code></div>
+                <p style="opacity:0.85;line-height:1.7;">
+                    La ÚNICA excepción: si QA-UI encuentra un bug durante las pruebas de la release,<br>
+                    el fix se crea desde <code>release/vX.X.X</code> (porque el bug está ahí, no en main).
+                </p>
+            </div>
+        </div>
+
+        <!-- === MAPA VISUAL: CUANDO EXISTE CADA RAMA === -->
+        <div class="card">
+            <div class="card-title">🗺️ Línea de Tiempo: ¿Cuándo Existe Cada Rama?</div>
+
+            <table>
+                <tr><th>Rama</th><th>Lunes</th><th>Martes</th><th>Miércoles</th><th>Jueves</th><th>Viernes</th></tr>
+                <tr>
+                    <td><code>main</code></td>
+                    <td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td>
+                </tr>
+                <tr>
+                    <td><code>pre-produccion</code></td>
+                    <td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td>
+                </tr>
+                <tr>
+                    <td><code>feature/login</code></td>
+                    <td>✅</td><td>✅</td><td>✅</td><td>—</td><td>—</td>
+                </tr>
+                <tr>
+                    <td><code>feature/reportes</code></td>
+                    <td>—</td><td>✅</td><td>✅</td><td>✅</td><td>—</td>
+                </tr>
+                <tr>
+                    <td><code>release/v2.1.0</code></td>
+                    <td>—</td><td>—</td><td>—</td><td>✅</td><td>✅</td>
+                </tr>
+            </table>
+
+            <p style="opacity:0.8;margin-top:12px;">
+                <strong>Release solo existe al final de la semana</strong>, cuando hay features listas para producción.
+                El resto del tiempo <strong>NO HAY release branch</strong>. Es temporal.
+            </p>
+        </div>
+
+        <!-- === QUE PASA CUANDO LLEGA RELEASE === -->
+        <div class="card">
+            <div class="card-title">🎯 ¿Qué Pasa Exactamente Cuando Se Crea <code>release/vX.X.X</code>?</div>
+
+            <div class="step">
+                <div class="step-num">1</div>
+                <div class="step-text">
+                    <strong>Se crea desde <code>main</code></strong> — Arranca con el código limpio de producción.
+                    No trae WIP de nadie, no trae basura.
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-num">2</div>
+                <div class="step-text">
+                    <strong>Se mergean SOLO las features aprobadas</strong> (las que pasaron QA-DEV y QA-UI).
+                    Nada más. No se aceptan features nuevas aquí.
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-num">3</div>
+                <div class="step-text">
+                    <strong>QA-UI prueba TODO junto</strong> — Feature A + Feature B + Feature C.
+                    Si algo se rompe, el bug está AQUÍ en la release.
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-num">4</div>
+                <div class="step-text">
+                    <strong>Bug en QA-UI → fix desde release</strong> — Creas <code>fix/boton-roto</code>
+                    desde <code>release/v2.1.0</code>, corriges, PR a release, QA-DEV aprueba, merge.
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-num">5</div>
+                <div class="step-text">
+                    <strong>Release → main</strong> — Cuando QA-UI dice "OK", José/Ricardo mergean
+                    release a main. Se taggea la versión. <span style="color:#38ef7d;">A producción.</span>
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-num">6</div>
+                <div class="step-text">
+                    <strong>Se borra release</strong> — Ya cumplió su propósito. La rama desaparece.
+                </div>
+            </div>
+        </div>
+
+        <!-- === PREGUNTA CLAVE === -->
+        <div class="card">
+            <div class="card-title">🤔 "¿Por qué no creo el fix desde <code>main</code> si release va a terminar ahí?"</div>
+
+            <div class="two-col" style="display:flex;gap:20px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:250px;">
+                    <div class="box-red">
+                        <div class="box-title">❌ Desde main NO funciona</div>
+                        <p style="opacity:0.85;line-height:1.6;">
+                            Hoy es jueves. Feature Login y Feature Reportes están en release,<br>
+                            pero <strong>NO están en main</strong> (main es producción, todavía no se actualizó).<br><br>
+                            Si creas <code>fix/boton-desde-main</code>:<br>
+                            <span style="color:#ef4444;">✗ No encuentras los archivos de Login</span><br>
+                            <span style="color:#ef4444;">✗ No encuentras los archivos de Reportes</span><br>
+                            <span style="color:#ef4444;">✗ El fix no sirve porque no puedes ver el bug</span>
+                        </p>
+                    </div>
+                </div>
+                <div style="flex:1;min-width:250px;">
+                    <div class="box-green">
+                        <div class="box-title">✅ Desde release SÍ funciona</div>
+                        <p style="opacity:0.85;line-height:1.6;">
+                            <code>release/v2.1.0</code> tiene Login + Reportes + main.<br>
+                            Ahí está el bug. Lo ves, lo tocas, lo corriges.<br><br>
+                            <span style="color:#38ef7d;">✓ Los archivos de Login existen</span><br>
+                            <span style="color:#38ef7d;">✓ Los archivos de Reportes existen</span><br>
+                            <span style="color:#38ef7d;">✓ El fix funciona porque estás donde está el bug</span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- === ANALOGIA DEL RESTAURANTE === -->
+        <div class="card">
+            <div class="card-title">🍝 El Mismo Problema en un Restaurante</div>
+
+            <div class="analogy">
+                <div class="analogy-icon">👨‍🍳</div>
+                <div class="analogy-text">
+                    <p>
+                        El menú oficial (<code>main</code>) tiene 5 platos. El chef crea 2 platos nuevos
+                        (Feature Login, Feature Reportes). El chef ejecutivo los prueba y dice "están buenos,
+                        salen la próxima semana".
+                    </p>
+                    <p>
+                        Jueves: arman la <strong>bandeja release</strong> con los 5 platos oficiales + los 2 nuevos.
+                    </p>
+                    <p>
+                        El mesero prueba la bandeja y dice: <strong>"El plato nuevo 1 mancha el plato nuevo 2"</strong> (bug de integración).
+                    </p>
+                    <p style="background:rgba(245,158,11,0.1);padding:12px;border-radius:8px;border-left:3px solid #f59e0b;">
+                        <strong>¿Dónde corriges?</strong><br>
+                        ❌ ¿En el menú oficial (<code>main</code>)? No, porque ahí los platos nuevos NO existen.<br>
+                        ✅ En la <strong>bandeja release</strong>, que es donde están los 2 platos nuevos juntos.<br>
+                        Corriges la presentación ahí, vuelves a probar, y cuando está bien → se sirve al cliente (main).
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- === REGLA DE ORO FINAL === -->
+        <div class="card">
+            <div class="card-title">✅ Resumen Final — Lo Único que Necesitas Recordar</div>
+
+            <table>
+                <tr><th>Para hacer esto...</th><th>Crear rama desde...</th></tr>
+                <tr><td><strong>Feature nueva</strong></td><td><code style="color:#38ef7d;">main</code></td></tr>
+                <tr><td><strong>Bug en desarrollo (tu rama)</strong></td><td><span style="color:#38ef7d;">Tu misma rama</span></td></tr>
+                <tr><td><strong>Bug en QA-DEV (revisión)</strong></td><td><span style="color:#38ef7d;">Tu misma rama</span></td></tr>
+                <tr><td><strong>Bug en QA-UI (pruebas de release)</strong></td><td><code style="color:#f59e0b;">release/vX.X.X</code></td></tr>
+                <tr><td><strong>Bug en producción (hotfix)</strong></td><td><code style="color:#ef4444;">main</code></td></tr>
+            </table>
+
+            <div class="box-green" style="margin-top:18px;">
+                <div class="box-title">🎯 La frase para recordar siempre</div>
+                <p style="font-size:1.1rem;line-height:1.6;">
+                    <strong>"Toda rama se crea desde <code>main</code>, excepto el fix de un bug que está en la release."</strong>
+                </p>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

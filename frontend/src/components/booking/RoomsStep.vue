@@ -118,41 +118,68 @@
           </div>
 
           <!--
-            Una fila por ocupación. Las no vendibles NO se filtran: van deshabilitadas con el
-            motivo traducido (regla del dueño, ver el comentario de cabecera).
+            Una fila por ocupación — SALVO corridas de igual precio, que se agrupan para
+            mostrar el número una sola vez (ver utils/occupancy-groups.ts: "para 1/2/3 $130"
+            repetido lee como bug; el precio distinto sí va fila por fila). Las no vendibles
+            NO se filtran: van deshabilitadas con el motivo traducido (regla del dueño).
           -->
           <ul v-if="occupancyRows(rt).length > 0" class="mt-3 divide-y divide-slate-100 border-t border-slate-100">
-            <li v-for="row in occupancyRows(rt)" :key="row.occupancy">
+            <li v-for="entry in groupedOccupancyRows(rt)" :key="entry.kind === 'group' ? `g-${entry.rows[0]!.occupancy}` : entry.row.occupancy">
+              <!-- Grupo de ocupaciones al mismo precio: opciones clickeables + precio ÚNICO -->
+              <div v-if="entry.kind === 'group'" class="flex w-full flex-wrap items-center gap-x-4 gap-y-2 py-2.5">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <button
+                    v-for="row in entry.rows"
+                    :key="row.occupancy"
+                    type="button"
+                    :aria-pressed="isChosen(rt, row)"
+                    :data-occupancy="row.occupancy"
+                    class="flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 transition"
+                    :class="isChosen(rt, row) ? 'border-cyan bg-cyan text-white' : 'border-navy/20 text-navy hover:border-navy/40'"
+                    @click="selectOccupancy(rt, row)"
+                  >
+                    <span class="text-sm leading-none" aria-hidden="true">{{ occupancyGlyph(row.occupancy) }}</span>
+                    <span class="text-xs font-bold">{{ t('rooms.occupancyFor', { count: row.occupancy }) }}</span>
+                  </button>
+                </div>
+                <div class="ml-auto min-w-0 text-right">
+                  <span class="block text-[11px] text-text-muted">{{ t('rooms.occupancyPrice', { count: store.nights || 1 }) }}</span>
+                  <span class="block text-sm font-black tabular-nums text-navy">{{ formatPrice(entry.rows[0]!.price, store.displayCurrency) }}</span>
+                  <span class="block text-[11px] tabular-nums text-text-muted">{{ formatPrice(entry.rows[0]!.pricePerNight, store.displayCurrency) }}/{{ t('rooms.perNight') }}</span>
+                </div>
+              </div>
+              <!-- Fila individual: igual que siempre -->
               <button
+                v-else
                 type="button"
-                :disabled="!row.available"
-                :aria-pressed="isChosen(rt, row)"
-                :data-occupancy="row.occupancy"
+                :disabled="!entry.row.available"
+                :aria-pressed="isChosen(rt, entry.row)"
+                :data-occupancy="entry.row.occupancy"
                 :class="[
                   'flex w-full items-center gap-3 py-2.5 text-left transition',
-                  row.available
+                  entry.row.available
                     ? 'cursor-pointer hover:bg-slate-50'
                     : 'cursor-not-allowed opacity-60',
                 ]"
-                @click="selectOccupancy(rt, row)"
+                @click="selectOccupancy(rt, entry.row)"
               >
-                <span class="w-12 shrink-0 text-sm leading-none" aria-hidden="true">{{ occupancyGlyph(row.occupancy) }}</span>
-                <span class="w-16 shrink-0 text-xs font-bold text-navy">{{ t('rooms.occupancyFor', { count: row.occupancy }) }}</span>
+                <span class="w-12 shrink-0 text-sm leading-none" aria-hidden="true">{{ occupancyGlyph(entry.row.occupancy) }}</span>
+                <span class="w-16 shrink-0 text-xs font-bold text-navy">{{ t('rooms.occupancyFor', { count: entry.row.occupancy }) }}</span>
                 <span class="min-w-0 flex-1">
-                  <template v-if="row.available">
+                  <template v-if="entry.row.available">
                     <span class="block text-[11px] text-text-muted">{{ t('rooms.occupancyPrice', { count: store.nights || 1 }) }}</span>
-                    <span class="block text-sm font-black tabular-nums text-navy">{{ formatPrice(row.price, store.displayCurrency) }}</span>
-                    <span class="block text-[11px] tabular-nums text-text-muted">{{ formatPrice(row.pricePerNight, store.displayCurrency) }}/{{ t('rooms.perNight') }}</span>
+                    <span class="block text-sm font-black tabular-nums text-navy">{{ formatPrice(entry.row.price, store.displayCurrency) }}</span>
+                    <span class="block text-[11px] tabular-nums text-text-muted">{{ formatPrice(entry.row.pricePerNight, store.displayCurrency) }}/{{ t('rooms.perNight') }}</span>
                   </template>
-                  <span v-else class="block text-[11px] font-bold text-slate-500">{{ unavailableLabel(row.unavailableReason) }}</span>
+                  <span v-else class="block text-[11px] font-bold text-slate-500">{{ unavailableLabel(entry.row.unavailableReason) }}</span>
                 </span>
                 <span
-                  v-if="row.available"
+                  v-if="entry.row.available"
                   :class="[
                     'shrink-0 rounded-full px-3 py-1 text-[11px] font-bold',
-                    isChosen(rt, row) ? 'bg-cyan text-white' : 'border border-navy/20 text-navy',
+                    isChosen(rt, entry.row) ? 'bg-cyan text-white' : 'border border-navy/20 text-navy',
                   ]"
-                >{{ isChosen(rt, row) ? t('rooms.occupancyChosen') : t('rooms.occupancyChoose') }}</span>
+                >{{ isChosen(rt, entry.row) ? t('rooms.occupancyChosen') : t('rooms.occupancyChoose') }}</span>
               </button>
             </li>
           </ul>
@@ -202,6 +229,7 @@ import { useBookingStore } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { BookingMessageKey } from '@/composables/useBookingI18n'
 import type { OccupancyUnavailableReason, RoomOccupancyRate, RoomTypeRate } from '@/types/booking'
+import { groupOccupancyRows, type OccupancyEntry } from '@/utils/occupancy-groups'
 import type { PublicReviewAggregate, PublicReviewsResponse } from '@/types'
 import MultiChannelBadges from '@/components/reviews/MultiChannelBadges.vue'
 import AggregateScore from '@/components/reviews/AggregateScore.vue'
@@ -302,6 +330,11 @@ function occupancyRows(rt: RoomTypeRate): RoomOccupancyRate[] {
   const rows = rt.occupancies
   if (!Array.isArray(rows) || rows.length === 0) return []
   return [...rows].sort((a, b) => a.occupancy - b.occupancy)
+}
+
+/** Filas (individual) o grupos (corrida de igual precio) para pintar sin repetir el número. */
+function groupedOccupancyRows(rt: RoomTypeRate): OccupancyEntry[] {
+  return groupOccupancyRows(occupancyRows(rt))
 }
 
 function unavailableLabel(reason: OccupancyUnavailableReason | null): string {

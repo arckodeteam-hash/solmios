@@ -1,93 +1,165 @@
-# solmiOS
+# ManagerHotel — SOLMI OS
 
+PMS (Property Management System) SaaS multi-tenant para hoteles boutique: reservas, planning, channel manager, housekeeping, mantenimiento, facturación, caja, reports, sitio público de reservas y app de limpieza para el personal. Todo el sistema opera en español; código, DB y API en inglés.
 
+> **Si sos una IA asistente de código**: leé `CLAUDE.md` antes de tocar nada — contiene las reglas del proyecto, anti-patrones conocidos y los gates de verificación. Este README es el resumen para humanos.
 
-## Getting started
+## Stack
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+| Capa | Tecnología | Versión |
+|---|---|---|
+| Runtime | Bun | ≥ 1.3 |
+| Backend | TypeScript + [arckode-framework](https://www.npmjs.com/package/arckode-framework) | 1.6.3 |
+| Frontend | Vue 3 (`<script setup>`) + Vue Router + Pinia | 3.5 / 5.1 / 3.0 |
+| Build | Vite | 8 |
+| Estilos | Tailwind CSS | 4.3 |
+| DB dev | SQLite (`bun:sqlite`, WAL) | — |
+| DB prod | PostgreSQL (`pg`) | 16 |
+| Tests | `bun test` (backend) · Vitest + Playwright (frontend) | — |
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+El motor de DB se elige por env: `DB_PATH` → SQLite (default en dev), `DATABASE_URL=postgres://…` → PostgreSQL. El framework remapea `camelCase`↔`lowercase` para PG en ambos sentidos.
 
-## Add your files
+## Requisitos
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+- [Bun](https://bun.sh) ≥ 1.3 (`curl -fsSL https://bun.sh/install | bash`)
+- (Opcional en dev) PostgreSQL 16 — sin él, todo corre sobre SQLite
+- Node **no** es necesario; en el server de prod incluso rompe el build de Vite (usar `bun --bun vite build`)
+
+## Setup local
+
+```bash
+git clone git@github.com:arckodeteam-hash/solmios.git && cd solmios
+
+# 1. Backend
+cd backend
+cp .env.example .env          # editar JWT_SECRET (openssl rand -hex 32)
+bun install
+
+# 2. Migraciones — 2 capas, ESTE ORDEN ES INSALTABLE sobre DB limpia:
+#    Paso 1: tablas base desde los modelos ORM
+DB_PATH=data/managerhotel.db RUN_MIGRATE=1 bun run src/composition-root.ts
+#    Paso 2: seeds demo + tablas extra no-modeladas (24 tablas)
+bun run migrate
+
+# 3. Levantar
+bun run dev                   # API en el puerto de PORT (.env — el del equipo usa 3001)
+
+# 4. Frontend (otra terminal)
+cd ../frontend
+bun install
+bun run dev                   # Vite en :5173, proxyea /api y /uploads al backend
+```
+
+> El proxy de Vite (`vite.config.ts`) apunta a `localhost:3001` — si tu `.env` usa otro `PORT`, alineá ambos.
+
+⚠️ `migrate-db.ts` corre `seedBase()` (INSERT en `hotels`/`users`/…) **antes** de crear las tablas extra y no crea las tablas base. Correrlo sin el paso 1 en una DB vacía falla con `no such table: hotels`. Ambos scripts son idempotentes.
+
+### Cuentas demo (tras el seed)
+
+| Cuenta | Rol | Acceso |
+|---|---|---|
+| `hotel@solmios.com` | hotel_admin | `/panel/*` |
+| `admin@solmios.com` | super_admin (admin plataforma) | `/admin/*` |
+| `recepcion@` · `rosa@` · `carlos@` · `luis@` | recepcionista / limpieza / mantenimiento | `/panel/*` |
+
+Password de todas: `demo123`. El login acepta **email o teléfono** en el mismo campo (`8095550000` ≡ `+1 809 555 0000`).
+
+## Scripts
+
+**Backend** (`cd backend`)
+
+| Comando | Qué hace |
+|---|---|
+| `bun run dev` | Servidor con hot-reload (carga `.env`) |
+| `bun run start` | Servidor sin watch |
+| `bun run migrate` | DDL tablas extra + seeds demo (idempotente) |
+| `bun run typecheck` | `tsc --noEmit` |
+| `bun test` | Tests (usa `.env.test`) |
+| `bun run analyze` | `arckode analyze` — **gate bloqueante**: 0 violaciones o no está terminado |
+| `bun run doctor` | Health-check de Channex |
+| `bun run sync-roles` | Sincroniza roles/permisos por defecto |
+
+**Frontend** (`cd frontend`)
+
+| Comando | Qué hace |
+|---|---|
+| `bun run dev` | Vite dev server :5173 |
+| `bun run build` | `vue-tsc -b` + build (verifica tipos **con** project references) |
+| `bun run typecheck` | `vue-tsc -b --noEmit` — sin `-b` no revisa nada |
+| `bun run test` | Vitest |
+| `bun run test:e2e` | Playwright |
+
+## Verificación (antes de declarar "listo")
+
+```bash
+cd backend  && bun run analyze && bun run typecheck && bun test
+cd frontend && bun run typecheck && bun run build
+```
+
+`arckode analyze` en el backend es **bloqueante**: si reporta violaciones (ownership faltante, SQL crudo, endpoint sin validación…), el trabajo no está terminado.
+
+## Estructura
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/underworf1/solmios.git
-git branch -M main
-git push -uf origin main
+├── backend/
+│   ├── src/composition-root.ts    # ENTRYPOINT único: System + ORM + ~40 módulos (wiring declarativo)
+│   ├── src/shared/                # modelos ORM compartidos, permisos, middlewares, utils
+│   ├── src/infrastructure/        # auth (guards, permission-guard), stripe-config, email-bootstrap
+│   ├── src/modules/               # ~40 módulos aislados: controller/service/types/validators/model/tests
+│   ├── src/connectors/            # integración ENTRE módulos (única vía permitida de cross-module)
+│   ├── src/services/              # 13 servicios compartidos
+│   ├── scripts/                   # migraciones puntuales, seeds, utils
+│   └── migrate-db.ts              # capa 2 de migraciones (tablas extra + seeds)
+├── frontend/src/
+│   ├── pages/                     # vistas (kebab-case) por sección del panel
+│   ├── services/                  # ÚNICO acceso a la API (nunca fetch() en componentes)
+│   ├── stores/ · composables/ · components/ · layouts/ · router/ · types/
+├── PRD.md · ARCHITECTURE.md · ANALISIS-MRPLAN.md · FRD/ · SPECS/
+└── openspec/                      # Spec-Driven Development (cambios activos, tasks, config)
 ```
 
-## Integrate with your tools
+La app móvil del personal es un repo aparte (`solmios-mobile`, Flutter) — **fuera del alcance de este repo**.
 
-* [Set up project integrations](https://gitlab.com/underworf1/solmios/-/settings/integrations)
+## Arquitectura en 60 segundos
 
-## Collaborate with your team
+- **Composition root**: no hay `server.ts` suelto. `composition-root.ts` registra modelos (`shared` primero, módulos después) y cablea todo.
+- **Módulos aislados**: cada módulo posee sus tablas y expone su API. Un módulo **nunca** importa otro directamente — se comunican por connectors en `src/connectors/`.
+- **Multi-tenancy**: una sola DB, columna `hotelId` en cada tabla, filtrada en cada query. Sin schema-per-tenant.
+- **Permisos** en dos capas: `userType` (`admin` de plataforma vs `merchant` dueño de hotel) + roles por hotel con permisos granulares `module:action` (`src/shared/permissions.ts`).
+- **Ownership obligatorio**: todo `findById` que deriva en escritura pasa por `auth.assertOwnership()` (anti-IDOR).
+- **`payments` es la única fuente de verdad del dinero** — facturas y folios asientan cobros ahí.
+- **SDD**: los features se diseñan en `openspec/` (specs Given/When/Then) antes de codearse, y se sincronizan como issues de GitLab.
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+### Reglas de código no negociables (resumen)
 
-## Test and Deploy
+- Sin SQL crudo en módulos → `OrmRepository<T>` inyectado; sin ORM en services.
+- Todo POST/PUT/PATCH valida con `validateSchema()`; todo campo persistido **debe** estar declarado en el `orm.define()` (los no declarados se descartan en silencio — anti-patrón histórico, ver CLAUDE.md).
+- Frontend: siempre `<script setup lang="ts">`, `XxxService.method()` para la API, `<router-link>` para navegación interna, sin `any` injustificado.
+- DDL y nombres de DB en inglés; UI en español.
+- Commits convencionales (`feat:`, `fix:`, `docs:`…).
 
-Use the built-in continuous integration in GitLab.
+## Migraciones y seeders
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+Dos capas, en orden: (1) `RUN_MIGRATE=1 bun run src/composition-root.ts` crea las tablas desde los modelos ORM (`CREATE TABLE IF NOT EXISTS` + `ADD COLUMN` para campos nuevos); (2) `bun run migrate` agrega tablas no-modeladas y seeds demo. Ambas idempotentes y multi-motor: sin sintaxis SQLite-only, placeholders `?`, booleanos como INTEGER. Detalle completo y scripts puntuales en `CLAUDE.md`.
 
-***
+## Integraciones
 
-# Editing this README
+| Integración | Estado |
+|---|---|
+| Channex (channel manager → OTAs) | ✅ Operativa |
+| Stripe (payment links, deposits, checkout) | ✅ Operativa (webhooks verificados en prod) |
+| TTLock (cerraduras, códigos automáticos) | ✅ Operativa |
+| Email (SMTP/Resend, auto-messages) | ✅ Operativa |
+| WhatsApp Business API | ⚠️ Requiere credenciales Meta |
+| Facturación electrónica fiscal | ⚠️ Stub sin conector real |
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+## Producción
 
-## Suggestions for a good README
+Deploy en `hotel.zx89.site` (backend como servicio de systemd + frontend estático detrás de nginx, PostgreSQL local). El deploy es automático por script y corre las dos capas de migración en cada push a `main`. El protocolo completo (SSH, gotchas del server, rollback) vive en el skill `ssh-solmios` y en `CLAUDE.md` — no se duplican credenciales acá.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+## Documentación
 
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+- `CLAUDE.md` — reglas del proyecto, anti-patrones, estado de deudas técnicas (leer primero)
+- `ARCHITECTURE.md` — arquitectura detallada
+- `PRD.md`, `FRD/`, `SPECS/` — producto y especificaciones
+- `openspec/` — cambios activos con Spec-Driven Development

@@ -3,6 +3,9 @@ import { assertRoomAvailable } from './availability'
 import { assertUpdateValidations } from './validate-update'
 import { safeEmit } from './safe-emit'
 import { reservasListCacheKey, invalidateReservasCaches } from './cache'
+import { eachDayExclusive } from '../../../shared/utils/daily-availability'
+import { baseRatesOnly, buildSeasonByDate, sumStayPrice, round2 } from '../../../shared/utils/rate-resolution'
+import { guestsOfReservation } from './reprice'
 import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from '../types'
 
 /**
@@ -68,7 +71,13 @@ export async function getReservationById(repo: any, id: string, currentUser: { i
   return item
 }
 
-export async function createReservation(repo: any, blockRepo: any | undefined, logger: any, cache: any, sockets: any, notifyDeps: any, dto: CreateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, dateRestrictionRepo?: any, promoCodes?: PromoCodePort): Promise<ReservasDTO> {
+export interface CreatePricingRepos {
+  /** Reprice del alta del panel (`priceFrom:'rates'`): temporada por fecha + grilla de tarifas. */
+  seasonAssignmentRepo?: any
+  roomRateRepo?: any
+}
+
+export async function createReservation(repo: any, blockRepo: any | undefined, logger: any, cache: any, sockets: any, notifyDeps: any, dto: CreateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, dateRestrictionRepo?: any, promoCodes?: PromoCodePort, pricing?: CreatePricingRepos): Promise<ReservasDTO> {
   if (currentUser.role !== 'super_admin' && dto.hotelId !== currentUser.hotelId) throw new AuthError('No autorizado para crear en otro hotel')
   // El estado inicial no puede ser checked_in/checked_out/etc: esos se logran vía /checkin y
   // /checkout (que crean folio y ocupan el cuarto). Una reserva nace confirmada o pendiente.
@@ -115,6 +124,28 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
     const result = await promoCodes.validate(dto.hotelId, dto.promoCode, dto.totalAmount)
     if (!result.valid) {
       throw new ConflictError(`Código promocional inválido (${result.reason}): ${dto.promoCode}`)
+    }
+  }
+  // Precio por temporada: cuando el alta viene del panel sin edición manual (`priceFrom:'rates'`),
+  // el alojamiento lo calcula el SERVIDOR con la misma cadena que el motor público —
+  // season_assignments → room_rates (BASE) → fallback rooms.basePrice — pisando el subtotal que
+  // mandó el cliente (que pudo quedar viejo si cambiaron tarifas con el form abierto mucho
+  // tiempo). totalAmount = alojamiento recalculado + impuestos − descuento promo (aditamentos
+  // NO-lodging que el wizard muestra y manda explícitos). Sin repos de tarifas cableados no se
+  // recalcula: el DTO se persiste tal cual (comportamiento histórico, degradación como reprice.ts).
+  if (dto.priceFrom === 'rates' && pricing?.seasonAssignmentRepo && pricing.roomRateRepo && roomRepo) {
+    const room = await roomRepo.findOne({ id: dto.roomId })
+    if (room) {
+      const [assignments, rates] = await Promise.all([
+        pricing.seasonAssignmentRepo.findMany({ hotelId: dto.hotelId }),
+        pricing.roomRateRepo.findMany({ hotelId: dto.hotelId }),
+      ])
+      const nightDates = eachDayExclusive(dto.checkIn, dto.checkOut)
+      const roomSubtotal = sumStayPrice(
+        nightDates, baseRatesOnly((rates ?? []) as any[]), String(room.type ?? ''),
+        buildSeasonByDate((assignments ?? []) as any[]), guestsOfReservation(dto), Number(room.basePrice) || 0,
+      )
+      dto.totalAmount = round2(roomSubtotal + (dto.taxesAmount || 0) - (dto.promoDiscountAmount || 0))
     }
   }
   const item = await repo.create(dto as any)

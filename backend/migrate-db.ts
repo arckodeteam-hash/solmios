@@ -166,6 +166,138 @@ async function createTablesBlock1(): Promise<void> {
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_season_assignments_hotel_date
     ON season_assignments (hotelId, date)`)
 
+  // CMS del sitio público del SaaS (módulo site-pages). La tabla la crea ormMigrate (modelo ORM,
+  // Paso 1); el UNIQUE(slug) se garantiza acá mismo estilo que configuration (el ORM no crea
+  // uniques). Dureza de datos para el check-then-create del service (ConflictError 409) — si dos
+  // admins crean el mismo slug a la vez, la carrera la frena el índice.
+  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_site_pages_slug ON site_pages (slug)`)
+
+  // Seed del contenido inicial del sitio público (footer). SOLO si la tabla está vacía:
+  // si el super_admin ya creó/editó páginas, no se tocan (el CMS manda).
+  // Scope plataforma (hotelId='platform'). El HTML es semántico simple (h2/p/ul): lo estiliza
+  // la vista pública (/p/:slug), no el contenido.
+  const sitePagesSeed = [
+    {
+      slug: 'que-es-solmios', title: 'Qué es SolmiOS', category: 'producto', sortOrder: 1,
+      metaDescription: 'SolmiOS es el sistema operativo hotelero para hoteles de LATAM: reservas, planning, canal de ventas, limpieza y facturación en una sola plataforma.',
+      contentHtml: `<h2>El sistema operativo de tu hotel</h2>
+<p>SolmiOS reúne en una sola plataforma todo lo que un hotel necesita para operar cada día: reservas, calendario de ocupación, ventas por canales, housekeeping, mantenimiento, facturación y reportes. Sin hojas de cálculos paralelas ni sistemas que no se hablan entre sí.</p>
+<h2>Pensado para hoteles de Latinoamérica</h2>
+<p>Nace de la operación real de hoteles de la región: temporadas de precio, walk-ins por WhatsApp, equipos de limpieza con evidencia fotográfica y control de presencia del supervisor. Todo en español y con los impuestos y monedas con los que trabajás a diario.</p>
+<h2>Un solo panel, todo el hotel</h2>
+<ul>
+<li><strong>Planning y reservas:</strong> calendario visual por habitación con arrastrar y soltar, reagendado con recotización automática.</li>
+<li><strong>Precios por temporada:</strong> grilla por tipo de habitación y ocupación, asignación de temporadas por fecha desde el planning.</li>
+<li><strong>Operación:</strong> limpieza con evidencia y aprobación del supervisor, mantenimiento con proveedores y chat del equipo.</li>
+<li><strong>Dinero:</strong> folios, facturas, caja, conciliación y reportes — una sola fuente de verdad para lo que entra y sale.</li>
+</ul>
+<h2>Empezá hoy</h2>
+<p>Creá tu hotel en minutos y probá el panel completo con datos de demostración. Cuando estés listo, conectás tus canales y empezás a vender.</p>`,
+    },
+    {
+      slug: 'integraciones', title: 'Integraciones', category: 'producto', sortOrder: 2,
+      metaDescription: 'SolmiOS se conecta con Channex, TTLock, Stripe, WhatsApp y más: tu hotel sincronizado con los canales donde vendés.',
+      contentHtml: `<h2>Conectado con tu ecosistema</h2>
+<p>SolmiOS no es una isla: se integra con los servicios que tu hotel ya usa, para que cada reserva, pago y puerta trabajen solos.</p>
+<h2>Canal de ventas</h2>
+<p><strong>Channex</strong> sincroniza disponibilidad, precios y restricciones con Booking.com, Airbnb, Expedia y más. Cuando cambia una tarifa en tu grilla, se publica; cuando entra una reserva OTA, baja el inventario automáticamente.</p>
+<h2>Cerraduras inteligentes</h2>
+<p><strong>TTLock</strong> genera y envía códigos de acceso por habitación y reserva. El huésped recibe su código al confirmar, y el código expira al hacer el check-out — sin llaves físicas ni recepción 24/7.</p>
+<h2>Pagos</h2>
+<p><strong>Stripe</strong> para links de pago, señas y checkout del motor de reservas propio, con conciliación automática contra folios y facturas.</p>
+<h2>Mensajería</h2>
+<p><strong>WhatsApp Business</strong> y email transaccional para confirmaciones, códigos de acceso y mensajes automáticos de bienvenida.</p>
+<p>¿Usás otro proveedor? La plataforma es API-first: hablamos con tu stack actual.</p>`,
+    },
+    {
+      slug: 'sobre-nosotros', title: 'Sobre nosotros', category: 'empresa', sortOrder: 1,
+      metaDescription: 'Conocé el equipo detrás de SolmiOS: construimos software hotelero simple y honesto para Latinoamérica.',
+      contentHtml: `<h2>Software hotelero sin vueltas</h2>
+<p>Construimos SolmiOS porque los hoteles de la región estaban atrapados entre sistemas corporativos caruísimos y planillas de cálculo frágiles. Creemos que la tecnología de un hotel debería ser tan simple de operar como su recepción.</p>
+<h2>Cómo trabajamos</h2>
+<ul>
+<li><strong>Cerca del usuario:</strong> cada funcionalidad nace de la operación diaria de hoteles reales, no de un paper.</li>
+<li><strong>Producto antes que proyecto:</strong> lanzamos, medimos y corregimos. El sistema que usás hoy mejora todas las semanas.</li>
+<li><strong>Datos de los dueños:</strong> tu información es tuya: exportable, respaldada y bajo tu control.</li>
+</ul>
+<h2>Nuestra promesa</h2>
+<p>Un sistema que el equipo del hotel entienda en una tarde, que le ahorre horas todos los días y que no esconda la plata detrás de reportes ilegibles.</p>`,
+    },
+    {
+      slug: 'contacto', title: 'Contacto', category: 'empresa', sortOrder: 2,
+      metaDescription: 'Cómo contactar al equipo de SolmiOS: soporte desde el panel, ventas y demostraciones.',
+      contentHtml: `<h2>Estamos a un mensaje de distancia</h2>
+<h3>Ya sos cliente</h3>
+<p>El camino más rápido es el soporte integrado: desde tu panel, sección <strong>Soporte</strong>, creás un ticket y lo sigue el mismo equipo que construye el producto. Respuesta prioritaria según tu plan.</p>
+<h3>Querés ver el sistema</h3>
+<p>Registrate desde la página principal y probá el panel completo con el hotel de demostración: reservas, planning, limpieza y facturación con datos de ejemplo. Si querés una recorrida guiada con alguien del equipo, pedila desde el formulario de contacto del panel.</p>
+<h3>Alianzas e integraciones</h3>
+<p>¿Operás un canal, un PMS legacy o un servicio para hoteles? Escribinos desde la sección <strong>Aliados</strong> del panel para conversar sobre integraciones.</p>`,
+    },
+    
+    {
+      slug: 'terminos', title: 'Términos del servicio', category: 'legal', sortOrder: 1,
+      metaDescription: 'Términos y condiciones del servicio SolmiOS: cuentas, suscripciones, uso aceptable y responsabilidades.',
+      contentHtml: `<h2>1. El servicio</h2>
+<p>SolmiOS es una plataforma de software como servicio para la gestión hotelera. El acceso se otorga mediante una cuenta por hotel, con usuarios y roles definidos por su administrador.</p>
+<h2>2. Cuentas y suscripciones</h2>
+<p>El uso del servicio está sujeto al plan contratado. Los planes definen límites de usuarios, funcionalidades y almacenamiento. Podés cambiar de plan o dar de baja el servicio desde el panel; la baja no elimina tus datos inmediatamente, los cuales podés exportar antes.</p>
+<h2>3. Uso aceptable</h2>
+<p>Te comprometés a usar la plataforma para gestionar tu operación hotelera y a no intentar acceder a datos de terceros, sobrecargar el servicio o revenderlo sin autorización.</p>
+<h2>4. Tus datos</h2>
+<p>Los datos de tu hotel son tuyos: se almacenan cifrados en tránsito, con respaldos periódicos. No los comercializamos ni los usamos para publicitar terceros.</p>
+<h2>5. Responsabilidad</h2>
+<p>El servicio se provee con actualizaciones y soporte continuos. La responsabilidad del proveedor se limita al valor de la suscripción del período en cuestión, salvo dolo.</p>
+<h2>6. Cambios</h2>
+<p>Estos términos pueden actualizarse; los cambios materiales se comunican con anticipación razonable dentro del panel y por email.</p>`,
+    },
+    {
+      slug: 'privacidad', title: 'Política de privacidad', category: 'legal', sortOrder: 2,
+      metaDescription: 'Cómo SolmiOS recopila, usa y protege los datos de hoteles, huéspedes y usuarios de la plataforma.',
+      contentHtml: `<h2>Qué datos manejamos</h2>
+<ul>
+<li><strong>Datos de la cuenta:</strong> nombre, email y rol de cada usuario del panel.</li>
+<li><strong>Datos operativos:</strong> reservas, huéspedes, folios y facturas que cargás para gestionar tu hotel.</li>
+<li><strong>Datos técnicos:</strong> registros de acceso y uso necesarios para operar y asegurar el servicio.</li>
+</ul>
+<h2>Para qué los usamos</h2>
+<p>Únicamente para prestar el servicio: operar tu panel, sincronizar tus canales de venta, procesar los pagos que configures y darte soporte. No vendemos datos ni los usamos para publicidad de terceros.</p>
+<h2>Derechos de los huéspedes</h2>
+<p>El hotel es responsable de la relación con sus huéspedes; SolmiOS la procesa por cuenta del hotel. Podés exportar o eliminar los datos de un huésped desde el panel en cualquier momento.</p>
+<h2>Seguridad y retención</h2>
+<p>Tráfico cifrado, acceso por roles y respaldos periódicos. Al dar de baja el servicio, tus datos se eliminan de los sistemas activos en un plazo máximo de 90 días, salvo obligación legal de conservarlos.</p>
+<h2>Contacto</h2>
+<p>Ejercé cualquier derecho de acceso, rectificación o eliminación desde el soporte del panel.</p>`,
+    },
+    {
+      slug: 'bienvenida', title: 'Bienvenida al blog', category: 'blog', sortOrder: 1,
+      metaDescription: 'Primer artículo del blog de SolmiOS: cómo pensamos el software hotelero y qué encontrarás por acá.',
+      contentHtml: `<h2>Empezamos</h2>
+<p>Este es el blog de SolmiOS. Por acá vamos a contar cómo pensamos el software hotelero: decisiones de producto, novedades de la plataforma y aprendizajes de la operación real de hoteles.</p>
+<h2>Qué vas a encontrar</h2>
+<ul>
+<li><strong>Novedades del producto:</strong> cada mejora del panel, explicada en criollo.</li>
+<li><strong>Operación:</strong> cómo sacarle jugo al planning, las temporadas y el equipo de limpieza.</li>
+<li><strong>El camino:</strong> lo que estamos construyendo y por qué.</li>
+</ul>
+<p>Bienvenido. Ponte cómodo y registrate para probar el panel cuando quieras.</p>`,
+    }
+  ]
+  // Insert-only por slug: agrega las que falten, JAMÁS pisa lo que el super_admin ya creó
+  // o editó (una página existente con el mismo slug queda tal cual la dejó el CMS).
+  let inserted = 0
+  for (const page of sitePagesSeed) {
+    const exists = await countRows("SELECT COUNT(*) as c FROM site_pages WHERE slug = ?", [page.slug])
+    if (exists > 0) continue
+    const now = new Date().toISOString()
+    await run(
+      `INSERT INTO site_pages (id, hotelId, slug, title, metaDescription, contentHtml, category, status, sortOrder, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [uuid(), 'platform', page.slug, page.title, page.metaDescription, page.contentHtml, page.category, 'published', page.sortOrder, now, now],
+    )
+    inserted++
+  }
+  console.log(`site_pages: ${inserted} insertadas, ${sitePagesSeed.length - inserted} ya existían`)
+
   await exec(`CREATE TABLE IF NOT EXISTS groups (
     id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, name TEXT NOT NULL, leadGuestId TEXT,
     totalRooms INTEGER DEFAULT 1, checkIn TEXT, checkOut TEXT, status TEXT DEFAULT 'pending',
@@ -1270,14 +1402,14 @@ async function createHousekeepingMobileTables(): Promise<void> {
   // Seed default photo requirements for first hotel
   const hotelRows = (await db.query("SELECT id FROM hotels LIMIT 1")) as Array<{ id: string }>
   const hid = hotelRows[0]?.id
+  const defaultAreas = [
+    { areaId: 'bed', areaName: 'Cama', icon: 'bed', required: 1, tipText: 'Foto completa de la cama tendida' },
+    { areaId: 'bathroom', areaName: 'Baño', icon: 'bathroom', required: 1, tipText: 'Incluir ducha, lavamanos y toilet' },
+    { areaId: 'general', areaName: 'Vista General', icon: 'photo_library', required: 1, tipText: 'Vista panorámica de la habitación' },
+    { areaId: 'kitchen', areaName: 'Cocina', icon: 'kitchen', required: 0, tipText: 'Solo si tiene cocina' },
+    { areaId: 'living', areaName: 'Sala', icon: 'weekend', required: 0, tipText: 'Solo si tiene sala' },
+  ]
   if (hid) {
-    const defaultAreas = [
-      { areaId: 'bed', areaName: 'Cama', icon: 'bed', required: 1, tipText: 'Foto completa de la cama tendida' },
-      { areaId: 'bathroom', areaName: 'Baño', icon: 'bathroom', required: 1, tipText: 'Incluir ducha, lavamanos y toilet' },
-      { areaId: 'general', areaName: 'Vista General', icon: 'photo_library', required: 1, tipText: 'Vista panorámica de la habitación' },
-      { areaId: 'kitchen', areaName: 'Cocina', icon: 'kitchen', required: 0, tipText: 'Solo si tiene cocina' },
-      { areaId: 'living', areaName: 'Sala', icon: 'weekend', required: 0, tipText: 'Solo si tiene sala' },
-    ]
     const photoReqCount = await countRows("SELECT COUNT(*) as c FROM photo_requirements WHERE hotelId = ?", [hid])
     if (photoReqCount > 0) {
       console.log("photo_requirements: ya tiene datos")
@@ -1290,6 +1422,23 @@ async function createHousekeepingMobileTables(): Promise<void> {
       }
       console.log(`photo_requirements: ${defaultAreas.length} insertados`)
     }
+
+    // Backfill: TODOS los hoteles sin requirements reciben el mismo default. Sin esto, el
+    // checklist fotográfico (y el gate de fotos al completar una limpieza) solo existía en
+    // el primer hotel del seed — el resto nacía sin evidencia exigible. Idempotente por
+    // COUNT por hotel: los que ya configuraron las suyas no se tocan.
+    const allHotels = (await db.query("SELECT id FROM hotels")) as Array<{ id: string }>
+    for (const hotel of allHotels) {
+      const count = await countRows("SELECT COUNT(*) as c FROM photo_requirements WHERE hotelId = ?", [hotel.id])
+      if (count > 0) continue
+      for (const area of defaultAreas) {
+        await run(
+          `INSERT INTO photo_requirements (id, hotelId, areaId, areaName, icon, required, tipText, roomType, active) VALUES (?,?,?,?,?,?,?,?,?)`,
+          [uuid(), hotel.id, area.areaId, area.areaName, area.icon, area.required, area.tipText, 'all', 1],
+        )
+      }
+    }
+    console.log(`photo_requirements: backfill aplicado (${allHotels.length} hoteles revisados)`)
 
     // Seed default supply lists
     const supplySets: Record<string, Array<{ name: string; quantity: number }>> = {

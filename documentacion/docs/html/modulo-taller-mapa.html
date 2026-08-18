@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kaptas — Módulo Taller (Mapa de conexiones)</title>
+<style>
+  :root{--bg:#f8fafc;--ink:#0f172a;--muted:#475569;--line:#e2e8f0;
+        --mod:#7c3aed;--central:#b45309;--tenant:#0e7490;--sp:#b91c1c;--ok:#16a34a;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5}
+  .wrap{max-width:1000px;margin:0 auto;padding:26px 20px 60px}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:15.5px;margin:0 0 8px;max-width:780px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin:14px 0 6px}
+  .legend .k{display:flex;align-items:center;gap:7px}
+  .dot{width:13px;height:13px;border-radius:4px;display:inline-block}
+  .map{background:#fff;border:1px solid var(--line);border-radius:18px;padding:10px;overflow-x:auto;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+  svg{display:block;width:100%;min-width:760px;height:auto}
+  .card{margin-top:24px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 22px}
+  .card h3{margin:0 0 12px;font-size:15px}
+  .rowlist{display:grid;gap:10px}
+  .row{display:flex;gap:12px;align-items:flex-start;font-size:14px}
+  .row .ic{font-size:20px;line-height:1.2}
+  .row b{font-weight:800}
+  .row .d{color:var(--muted)}
+  .steps{display:grid;gap:8px;counter-reset:s}
+  .step{position:relative;padding:10px 12px 10px 42px;border:1px solid var(--line);border-radius:10px;font-size:13.5px}
+  .step::before{counter-increment:s;content:counter(s);position:absolute;left:10px;top:10px;width:24px;height:24px;border-radius:50%;background:var(--mod);color:#fff;display:grid;place-items:center;font-weight:800;font-size:12px}
+  .tag{display:inline-block;font-size:11px;font-weight:800;padding:2px 8px;border-radius:20px;margin-left:4px}
+  .easy{background:#dcfce7;color:#166534}.mid{background:#fef3c7;color:#92600e}.hard{background:#fee2e2;color:#991b1b}
+  .help{margin-top:8px;font-size:13px;color:var(--muted)}
+  /* viejo vs nuevo */
+  .vs{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+  .col{border-radius:12px;padding:4px 14px 12px}
+  .col.old{background:#fef2f2;border:1px solid #fecaca}
+  .col.new{background:#f0fdf4;border:1px solid #bbf7d0}
+  .col-h{font-weight:800;font-size:14px;margin:12px 0 4px}
+  .col ul{margin:0;padding-left:18px;font-size:13px}
+  .col li{margin:6px 0}
+  /* anillos SP */
+  .rings{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+  .ring{border-radius:12px;padding:12px 14px;font-size:13px}
+  .ring.safe{background:#f0fdf4;border:1px solid #bbf7d0}
+  .ring.danger{background:#fef2f2;border:1px solid #fecaca}
+  .ring-h{font-weight:800;font-size:13.5px;margin-bottom:6px}
+  .ring p{margin:0;color:var(--muted)}
+  .rules{background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:12px;padding:12px 16px;font-size:13.5px}
+  .rules ol{margin:8px 0 0;padding-left:20px}.rules li{margin:6px 0}
+  code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:#eef2f7;padding:1px 6px;border-radius:5px}
+  @media(max-width:640px){.vs,.rings{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔧 Módulo Taller — con qué está conectado</h1>
+  <p class="sub">Seguí las flechas de arriba hacia abajo: llega la petición, un portero revisa que puedas pasar, el módulo usa tres cosas para trabajar, y te devuelve el resultado.</p>
+  <div class="legend">
+    <span class="k"><span class="dot" style="background:#7c3aed"></span> El módulo (código nuevo)</span>
+    <span class="k"><span class="dot" style="background:#b45309"></span> Base central</span>
+    <span class="k"><span class="dot" style="background:#0e7490"></span> Base del cliente</span>
+    <span class="k"><span class="dot" style="background:#b91c1c"></span> Procedimientos (SP)</span>
+  </div>
+
+  <div class="map">
+  <svg viewBox="0 0 960 620" role="img" aria-label="Mapa de conexiones del módulo Taller">
+    <defs>
+      <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+        <path d="M0,0 L8,4.5 L0,9 Z" fill="#94a3b8"/>
+      </marker>
+      <style>
+        .edge{stroke:#cbd5e1;stroke-width:2.2;fill:none;marker-end:url(#a)}
+        text{font-family:-apple-system,"Segoe UI",Roboto,sans-serif;text-anchor:middle}
+        .nt{font-size:15px;font-weight:800}
+        .ns{font-size:12px}
+      </style>
+    </defs>
+
+    <!-- EDGES -->
+    <path class="edge" d="M480,84 L480,110"/>
+    <path class="edge" d="M480,190 L480,216"/>
+    <!-- modulo -> 3 cosas -->
+    <path class="edge" d="M480,300 C480,330 165,326 165,352"/>
+    <path class="edge" d="M480,300 L480,352"/>
+    <path class="edge" d="M480,300 C480,330 795,326 795,352"/>
+    <!-- 3 cosas -> resultado -->
+    <path class="edge" d="M165,452 C165,486 480,486 480,500"/>
+    <path class="edge" d="M480,452 L480,500"/>
+    <path class="edge" d="M795,452 C795,486 480,486 480,500"/>
+
+    <!-- 1. PETICION -->
+    <g>
+      <rect x="320" y="20" width="320" height="64" rx="14" fill="#0f172a"/>
+      <text class="nt" x="480" y="48" fill="#fff">🌐 Llega una petición</text>
+      <text class="ns" x="480" y="70" fill="#94a3b8">api/v2/RepairShop  (ver un caso, facturar…)</text>
+    </g>
+
+    <!-- 2. PORTERO -->
+    <g>
+      <rect x="300" y="112" width="360" height="78" rx="14" fill="#fef2f2" stroke="#b91c1c" stroke-width="2"/>
+      <text class="nt" x="480" y="142" fill="#991b1b">🛡️ El portero (seguridad)</text>
+      <text class="ns" x="480" y="164" fill="#b91c1c">¿sos vos? (login)  ·  ¿es tu empresa? (validación)</text>
+      <text class="ns" x="480" y="182" fill="#dc2626">si no → 401, no pasás</text>
+    </g>
+
+    <!-- 3. MODULO -->
+    <g>
+      <rect x="340" y="218" width="280" height="82" rx="14" fill="#7c3aed"/>
+      <text class="nt" x="480" y="250" fill="#fff">🔧 Módulo Taller (v2)</text>
+      <text class="ns" x="480" y="272" fill="#ede9fe">el código nuevo y limpio</text>
+      <text class="ns" x="480" y="290" fill="#ddd6fe">recibe y organiza el trabajo</text>
+    </g>
+
+    <!-- 4a. BASE CENTRAL -->
+    <g>
+      <rect x="30" y="354" width="270" height="98" rx="14" fill="#fffbeb" stroke="#b45309" stroke-width="2"/>
+      <text class="nt" x="165" y="384" fill="#92400e">🏛️ Base central</text>
+      <text class="ns" x="165" y="406" fill="#b45309">quién sos, tu clave,</text>
+      <text class="ns" x="165" y="424" fill="#b45309">tu empresa y a qué</text>
+      <text class="ns" x="165" y="442" fill="#b45309">base del cliente vas</text>
+    </g>
+
+    <!-- 4b. BASE CLIENTE -->
+    <g>
+      <rect x="345" y="354" width="270" height="98" rx="14" fill="#ecfeff" stroke="#0e7490" stroke-width="2"/>
+      <text class="nt" x="480" y="384" fill="#155e75">🗄️ Base del cliente</text>
+      <text class="ns" x="480" y="406" fill="#0e7490">los datos del taller:</text>
+      <text class="ns" x="480" y="424" fill="#0e7490">casos, contactos,</text>
+      <text class="ns" x="480" y="442" fill="#0e7490">productos, facturas</text>
+    </g>
+
+    <!-- 4c. SPs -->
+    <g>
+      <rect x="660" y="354" width="270" height="98" rx="14" fill="#fef2f2" stroke="#b91c1c" stroke-width="2"/>
+      <text class="nt" x="795" y="384" fill="#991b1b">📜 Los procedimientos</text>
+      <text class="ns" x="795" y="406" fill="#b91c1c">la LÓGICA vive aquí:</text>
+      <text class="ns" x="795" y="424" fill="#b91c1c">cálculos, validaciones,</text>
+      <text class="ns" x="795" y="442" fill="#b91c1c">y la facturación fiscal</text>
+    </g>
+
+    <!-- 5. RESULTADO -->
+    <g>
+      <rect x="150" y="500" width="660" height="82" rx="16" fill="#16a34a"/>
+      <text class="nt" x="480" y="530" fill="#fff">✅ Te devuelve el resultado</text>
+      <text class="ns" x="480" y="552" fill="#dcfce7">el caso, la lista, la factura — igual que el sistema viejo</text>
+      <text class="ns" x="480" y="570" fill="#dcfce7">pero con código limpio y validando que sea tu empresa</text>
+    </g>
+  </svg>
+  </div>
+
+  <!-- VIEJO VS NUEVO -->
+  <div class="card">
+    <h3>🆚 Por qué el nuevo, si hace lo mismo que el viejo</h3>
+    <p class="help" style="margin-top:0">Los dos —el viejo <code>api/RepairShop</code> y el nuevo <code>api/v2/RepairShop</code>— usan la <b>misma base</b> y los <b>mismos procedimientos</b>. La lógica es idéntica; por eso los tests prueban que dan el mismo resultado. Lo que cambia es todo lo de alrededor:</p>
+    <div class="vs">
+      <div class="col old">
+        <div class="col-h">🏚️ El viejo</div>
+        <ul>
+          <li>❌ No revisa que la empresa sea tuya → podías pedir datos de <b>otra</b> empresa</li>
+          <li>❌ Tomaba la empresa de lo que mandaba el navegador → se podía falsear</li>
+          <li>❌ Con un caso que no existe, reventaba (error 500)</li>
+          <li>❌ Código enredado, sin pruebas, tipos mezclados con otros módulos</li>
+        </ul>
+      </div>
+      <div class="col new">
+        <div class="col-h">✨ El nuevo (v2)</div>
+        <ul>
+          <li>✅ El portero valida que la empresa sea tuya → cierra el agujero</li>
+          <li>✅ La empresa sale de tu sesión, no del navegador</li>
+          <li>✅ Caso que no existe → respuesta ordenada, no revienta</li>
+          <li>✅ Código limpio (~30 líneas), con pruebas, tipos propios</li>
+        </ul>
+      </div>
+    </div>
+    <p class="help">En una frase: <b>mismo resultado, pero seguro y ordenado.</b> Hoy la lógica sigue compartida en los procedimientos — el v2 todavía no te independiza de ellos, eso viene después.</p>
+  </div>
+
+  <!-- CORREGIR LOS SP -->
+  <div class="card">
+    <h3>🔧 ¿Y si corrijo los procedimientos desde ahora, sin tocar nada?</h3>
+    <p class="help" style="margin-top:0">Sí se puede, y algo clave: como el viejo y el nuevo llaman a los <b>mismos</b> procedimientos, si arreglás uno, el arreglo les llega a los <b>dos gratis</b>, sin tocar código. Pero hay dos anillos, y no son igual de seguros:</p>
+    <div class="rings">
+      <div class="ring safe">
+        <div class="ring-h">🟢 Anillo del taller — tuyo, seguro</div>
+        <p>Los <code>P_Taller_*</code> (ver caso, listar, cambiar estado…) los usa <b>solo el taller</b> — lo confirmé en la base. Si los corregís, no afectás a nadie más, y los tests te avisan si cambiaste el resultado.</p>
+      </div>
+      <div class="ring danger">
+        <div class="ring-h">🔴 Anillo fiscal — compartido, peligroso</div>
+        <p>La máquina de comprobantes <code>P_Ncf_Get_Set</code> la usan <b>8 procedimientos</b>: compras, gastos, ventas, notas de crédito y el taller. Tocarla afecta la facturación de <b>todo el sistema</b>, y esos módulos <b>no</b> tienen tests que te avisen.</p>
+      </div>
+    </div>
+    <div class="rules">
+      <b>Las 3 reglas para corregir un procedimiento sin romper nada:</b>
+      <ol>
+        <li>Solo tocá los del <b>anillo del taller</b>. El fiscal, ni de casualidad sin un plan aparte.</li>
+        <li>Después de corregir, <b>corré los tests</b>: si siguen verdes, no rompiste el comportamiento.</li>
+        <li>Guardá el cambio como una <b>versión nueva en git</b> (V003, V004…), nunca editando a mano en la base. Así queda registro y se revierte fácil.</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- QUE USA CADA COSA -->
+  <div class="card">
+    <h3>🔌 Las 3 cosas que usa (en simple)</h3>
+    <div class="rowlist">
+      <div class="row"><span class="ic">🏛️</span><div><b>Base central</b> — <span class="d">es como la recepción del edificio: sabe quién sos, tu clave, y en qué oficina (empresa) trabajás. También sabe a qué base de cliente mandarte.</span></div></div>
+      <div class="row"><span class="ic">🗄️</span><div><b>Base del cliente</b> — <span class="d">la oficina de tu cliente: ahí están sus casos de taller, sus contactos, sus productos y sus facturas. Cada cliente tiene la suya.</span></div></div>
+      <div class="row"><span class="ic">📜</span><div><b>Los procedimientos (SP)</b> — <span class="d">recetas guardadas dentro de la base que hacen el trabajo pesado: sumar montos, aplicar impuestos, y emitir la factura fiscal. Hoy la lógica vive AHÍ, no en el código.</span></div></div>
+    </div>
+  </div>
+
+  <!-- COMO MEJORAR -->
+  <div class="card">
+    <h3>🚀 Cómo mejorarlo (del más fácil al más delicado)</h3>
+    <div class="steps">
+      <div class="step">Traer las <b>lecturas</b> (ver un caso, listar) del SP al código <span class="tag easy">fácil</span></div>
+      <div class="step">Poner el <b>portero de empresa</b> en los demás módulos, no solo el taller <span class="tag easy">fácil</span></div>
+      <div class="step">Traer las <b>ediciones</b> (cambiar estado, editar) al código <span class="tag mid">medio</span></div>
+      <div class="step">La <b>facturación fiscal</b>: dejarla como está — tocarla es riesgo con Hacienda <span class="tag hard">no apurar</span></div>
+    </div>
+    <p class="help">Cada paso se prueba contra el sistema viejo: si el código nuevo devuelve algo distinto, el test avisa antes de producción. Por eso se puede mejorar sin miedo.</p>
+  </div>
+
+  <p class="help" style="margin-top:20px">Versión con todos los detalles técnicos: <b>modulo-taller-conexiones.html</b></p>
+</div>
+</body>
+</html>

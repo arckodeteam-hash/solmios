@@ -246,4 +246,70 @@ describe('MantenimientoService', () => {
       await expect(svc.delete('t1', hotelAdmin)).rejects.toThrow('No autorizado')
     })
   })
+
+  // ─── Servicios externos (proveedores) ─────────────────────────────────────
+  // Los tres tests reproducen bugs reales del monitor (2026-08-17): el checkbox
+  // "activo" del alta era decorativo (el usecase hardcodeaba true) y los dados de
+  // baja eran invisibles para siempre (list() los filtraba sin escape).
+  describe('providers', () => {
+    type ProviderRepo = RepositoryAdapter<import('../types').MaintenanceProviderDTO>
+
+    function makeProviderRepo(rows: Array<import('../types').MaintenanceProviderDTO> = []): ProviderRepo {
+      return {
+        findMany: async () => rows,
+        findById: async (id: string) => rows.find(r => r.id === id) ?? null,
+        findOne: async () => null,
+        create: async (data: any) => ({ id: 'prov-new', ...data }),
+        update: async (id: string, data: any) => ({ ...rows.find(r => r.id === id), ...data }),
+        delete: async () => true,
+        count: async () => rows.length,
+        paginate: async () => ({ data: rows, total: rows.length, limit: 20, offset: 0, pages: 1 }),
+      } as ProviderRepo
+    }
+
+    function makeSvc(providerRepo: ProviderRepo) {
+      return new MantenimientoService(
+        makeRepo(), log, silentCache, makeUserRepo(), fakeAuth, makeAuditRepo(), undefined, providerRepo,
+      )
+    }
+
+    it('create respeta active:false del alta (antes lo ignoraba y creaba activo)', async () => {
+      const created: any[] = []
+      const repo = makeProviderRepo()
+      repo.create = async (data: any) => { created.push(data); return { id: 'prov-new', ...data } }
+      const svc = makeSvc(repo)
+
+      const item = await svc.createProvider({ name: 'Plomero', active: false }, hotelAdmin)
+      expect(item.active).toBe(false)
+      expect(created[0].active).toBe(false)
+    })
+
+    it('create sin active defaultea a true (compatibilidad con app/selector de tickets)', async () => {
+      const svc = makeSvc(makeProviderRepo())
+      const item = await svc.createProvider({ name: 'Plomero' }, hotelAdmin)
+      expect(item.active).toBe(true)
+    })
+
+    it('list oculta los de baja por defecto y los incluye con includeInactive', async () => {
+      const rows = [
+        { id: 'p1', hotelId: 'h1', name: 'Activo', active: true },
+        { id: 'p2', hotelId: 'h1', name: 'De baja', active: false },
+      ] as Array<import('../types').MaintenanceProviderDTO>
+      const svc = makeSvc(makeProviderRepo(rows))
+
+      const visible = await svc.listProviders(hotelAdmin)
+      expect(visible.map(p => p.id)).toEqual(['p1'])
+
+      const all = await svc.listProviders(hotelAdmin, true)
+      expect(all.map(p => p.id)).toEqual(['p1', 'p2'])
+    })
+
+    it('reactivar es un update de active — el camino que usa la vista de administración', async () => {
+      const repo = makeProviderRepo([{ id: 'p2', hotelId: 'h1', name: 'De baja', active: false } as import('../types').MaintenanceProviderDTO])
+      const svc = makeSvc(repo)
+
+      const item = await svc.updateProvider('p2', { active: true }, hotelAdmin)
+      expect(item.active).toBe(true)
+    })
+  })
 })

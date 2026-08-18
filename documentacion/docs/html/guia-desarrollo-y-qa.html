@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guía de Desarrollo y QA — Kaptas ERP</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1c2230; --muted:#5b6472;
+    --line:#e3e7ee; --brand:#c0392b; --brand-ink:#8e2a1e;
+    --ok:#1e8e5a; --ok-bg:#e9f7f0; --no:#c0392b; --no-bg:#fcecea;
+    --code-bg:#0f172a; --code-ink:#e2e8f0; --accent:#2563eb;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0e1116; --card:#161b22; --ink:#e6edf3; --muted:#9aa4b2;
+      --line:#2a313c; --brand:#e05a49; --brand-ink:#f0a99f;
+      --ok:#3fb984; --ok-bg:#12241c; --no:#e05a49; --no-bg:#2a1512;
+      --code-bg:#0a0e14; --code-ink:#cdd6e0; --accent:#5b9bff;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:960px; margin:0 auto; padding:32px 20px 80px}
+  header.hero{
+    background:linear-gradient(135deg,var(--brand),var(--brand-ink));
+    color:#fff; border-radius:16px; padding:34px 30px; margin-bottom:26px;
+    box-shadow:0 10px 30px rgba(0,0,0,.15);
+  }
+  header.hero h1{margin:0 0 6px; font-size:1.9rem; letter-spacing:-.02em}
+  header.hero p{margin:0; opacity:.92; font-size:1.02rem}
+  .stack{margin-top:14px; font-size:.85rem; opacity:.9}
+  .stack code{background:rgba(255,255,255,.16); color:#fff; padding:2px 7px; border-radius:6px; font-size:.82rem}
+
+  nav.toc{
+    background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:16px 22px; margin-bottom:26px;
+  }
+  nav.toc strong{display:block; font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:8px}
+  nav.toc ol{margin:0; padding-left:20px; columns:2; column-gap:30px}
+  nav.toc a{color:var(--accent); text-decoration:none}
+  nav.toc a:hover{text-decoration:underline}
+
+  section{
+    background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:24px 26px; margin-bottom:20px;
+  }
+  section > h2{
+    margin:0 0 16px; font-size:1.35rem; letter-spacing:-.01em;
+    padding-bottom:10px; border-bottom:2px solid var(--line);
+  }
+  h3{margin:22px 0 10px; font-size:1.05rem}
+  p{margin:0 0 12px}
+  .lead{color:var(--muted)}
+
+  table{width:100%; border-collapse:collapse; margin:10px 0 16px; font-size:.92rem}
+  .scroll{overflow-x:auto}
+  th,td{text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{font-size:.76rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600}
+  td.num{width:34px; color:var(--muted); font-variant-numeric:tabular-nums}
+
+  .callout{border-left:4px solid var(--accent); background:rgba(37,99,235,.06); padding:12px 16px; border-radius:0 8px 8px 0; margin:14px 0; font-size:.94rem}
+  .siempre{border-left:4px solid var(--ok); background:var(--ok-bg)}
+  .nunca{border-left:4px solid var(--no); background:var(--no-bg)}
+
+  .badge{display:inline-block; font-size:.72rem; font-weight:700; padding:3px 9px; border-radius:20px; letter-spacing:.03em}
+  .b-ok{background:var(--ok-bg); color:var(--ok); border:1px solid var(--ok)}
+  .b-no{background:var(--no-bg); color:var(--no); border:1px solid var(--no)}
+
+  ul.check{list-style:none; padding:0; margin:8px 0}
+  ul.check li{padding:5px 0 5px 28px; position:relative}
+  ul.check li::before{content:"☐"; position:absolute; left:4px; color:var(--muted)}
+
+  pre{background:var(--code-bg); color:var(--code-ink); padding:16px 18px; border-radius:10px; overflow-x:auto; font-size:.85rem; line-height:1.5}
+  code{font-family:"SF Mono",Menlo,Consolas,monospace}
+  p code,td code,li code{background:rgba(127,127,127,.15); padding:1px 6px; border-radius:5px; font-size:.85em}
+
+  .zonas td:first-child{font-weight:700}
+  .verdict{display:flex; gap:14px; flex-wrap:wrap; margin-top:8px}
+  .verdict > div{flex:1; min-width:220px; border:1px solid var(--line); border-radius:10px; padding:14px 16px}
+  .verdict .yes{border-color:var(--ok)}
+  .verdict .no{border-color:var(--no)}
+
+  footer{text-align:center; color:var(--muted); font-size:.82rem; margin-top:30px}
+  @media print{
+    body{background:#fff} section,nav.toc{break-inside:avoid; box-shadow:none}
+    header.hero{background:var(--brand)!important; -webkit-print-color-adjust:exact; print-color-adjust:exact}
+  }
+  @media (max-width:640px){ nav.toc ol{columns:1} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>Guía de Desarrollo y QA</h1>
+    <p>Kaptas ERP — para que todos los programadores escriban el código en la misma línea.</p>
+    <div class="stack">
+      <code>.NET 7</code> <code>ASP.NET Core</code> <code>EF Core</code> <code>SQL Server (multi-tenant)</code> <code>xUnit + Moq</code> <code>BCrypt</code>
+    </div>
+  </header>
+
+  <div class="callout">
+    <strong>Objetivo:</strong> un módulo escrito por Luis y uno escrito por Joel deben verse y comportarse igual.
+    Este documento es la referencia única. Si hay duda, gana lo que dice acá.
+  </div>
+
+  <nav class="toc">
+    <strong>Contenido</strong>
+    <ol>
+      <li><a href="#reglas">Reglas para todos</a></li>
+      <li><a href="#estilo">Convenciones y estilo</a></li>
+      <li><a href="#estructura">Estructura de módulo</a></li>
+      <li><a href="#zonas">Estándares por zona</a></li>
+      <li><a href="#dev">Checklist del DEV</a></li>
+      <li><a href="#qa">Qué hace el QA-DEV</a></li>
+      <li><a href="#parche">Ciclo PARCHE (bug fix)</a></li>
+    </ol>
+  </nav>
+
+  <!-- 1 -->
+  <section id="reglas">
+    <h2>1 · Reglas de código para TODOS los programadores</h2>
+    <p class="lead">No se negocian. Aplican a cualquier código que se escriba.</p>
+
+    <h3><span class="badge b-ok">SIEMPRE</span></h3>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>#</th><th>Regla</th><th>Por qué</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td>Controller ~30 líneas — solo recibe y delega</td><td>La lógica va en el Service</td></tr>
+        <tr><td class="num">2</td><td>Interfaz <code>I[X]Service</code> antes que la implementación</td><td>Se programa contra el contrato</td></tr>
+        <tr><td class="num">3</td><td><strong>Filtro tenant en TODAS las queries</strong></td><td>Sin él, un cliente ve datos de otro (IDOR)</td></tr>
+        <tr><td class="num">4</td><td>Al menos <strong>1 test</strong> antes de terminar</td><td>Sin test, no está hecho</td></tr>
+        <tr><td class="num">5</td><td><code>AsNoTracking()</code> en toda lectura</td><td>No trackear entidades que solo se leen</td></tr>
+        <tr><td class="num">6</td><td><code>DateTime.UtcNow</code> en fechas</td><td>La zona horaria se maneja en presentación</td></tr>
+        <tr><td class="num">7</td><td>Cabecera de estado + <code>REGISTRO-MODULOS.md</code> actualizado</td><td>Trazabilidad de zona del módulo</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3><span class="badge b-no">NUNCA</span></h3>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>#</th><th>Prohibido</th><th>Por qué</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td>Importar <code>Kaptas.Services</code> desde <code>Features/</code></td><td>Acopla lo nuevo al legado</td></tr>
+        <tr><td class="num">2</td><td>Heredar de <code>BaseService</code> / usar <code>IBaseService</code></td><td>Arrastra dependencias del legado</td></tr>
+        <tr><td class="num">3</td><td>Lógica de negocio en el controller</td><td>El controller solo orquesta</td></tr>
+        <tr><td class="num">4</td><td><code>DateTime.UtcNow.AddHours(-4)</code></td><td>Offset de zona hardcodeado</td></tr>
+        <tr><td class="num">5</td><td>Código muerto comentado</td><td>Código anulado con <code>//</code>. Git ya lo recuerda → se borra</td></tr>
+        <tr><td class="num">6</td><td><code>SaveChanges</code> dentro de un loop</td><td>Un round-trip a BD por iteración</td></tr>
+        <tr><td class="num">7</td><td>Tragar excepciones: <code>catch(Exception){}</code></td><td>El error desaparece sin rastro</td></tr>
+        <tr><td class="num">8</td><td>Borrar o desactivar un test para avanzar</td><td>Un test que estorba se arregla, no se apaga</td></tr>
+        <tr><td class="num">9</td><td>Devolver <code>200</code> para ocultar un <code>500</code></td><td>Mentirle al cliente sobre un error</td></tr>
+        <tr><td class="num">10</td><td>"Ya que estoy, refactorizo" en hotfix a LEGADO</td><td>Un hotfix toca lo mínimo</td></tr>
+        <tr><td class="num">11</td><td>Arreglar un bug sin reproducirlo primero</td><td>Sin repro no sabés si lo arreglaste</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="callout">
+      <strong>Sobre comentarios:</strong> lo prohibido es el <em>código muerto comentado</em>.
+      Los comentarios que explican el <strong>por qué</strong> de una decisión son bienvenidos.
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section id="estilo">
+    <h2>2 · Convenciones de nombres y estilo (C# / .NET)</h2>
+    <p class="lead">Esto es lo que hace que el código de Luis se vea igual que el de Joel. <strong>No es opcional.</strong></p>
+
+    <h3>Idioma de los identificadores</h3>
+    <ul>
+      <li><strong>Todo identificador en inglés</strong>: clases, métodos, variables, propiedades, parámetros. <code>CustomerService</code>, no <code>ClienteServicio</code>. <code>totalAmount</code>, no <code>montoTotal</code>.</li>
+      <li><strong>Comentarios en español</strong> → está bien.</li>
+      <li>Excepción: términos de dominio del negocio ya establecidos (tablas/entidades heredadas). Ante la duda, consistencia con lo que ya existe.</li>
+    </ul>
+
+    <h3>Casing</h3>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Elemento</th><th>Convención</th><th>Ejemplo</th></tr></thead>
+      <tbody>
+        <tr><td>Clase / Enum</td><td>PascalCase</td><td><code>InvoiceService</code>, <code>PaymentStatus</code></td></tr>
+        <tr><td>Interfaz</td><td><code>I</code> + PascalCase</td><td><code>IInvoiceService</code></td></tr>
+        <tr><td>Método</td><td>PascalCase + verbo</td><td><code>GetById</code>, <code>CreateInvoice</code></td></tr>
+        <tr><td>Método asíncrono</td><td>sufijo <code>Async</code></td><td><code>GetByIdAsync</code></td></tr>
+        <tr><td>Propiedad pública</td><td>PascalCase</td><td><code>TotalAmount</code></td></tr>
+        <tr><td>Variable local / parámetro</td><td>camelCase</td><td><code>customerId</code>, <code>totalAmount</code></td></tr>
+        <tr><td>Campo privado</td><td><code>_camelCase</code></td><td><code>_dbContext</code>, <code>_logger</code></td></tr>
+        <tr><td>Constante</td><td>PascalCase</td><td><code>MaxRetries</code></td></tr>
+        <tr><td>DTO</td><td>sufijo <code>Dto</code> / <code>Request</code></td><td><code>InvoiceDetailDto</code>, <code>InvoiceCreateRequest</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Reglas de estilo</h3>
+    <ul>
+      <li><strong>Nombres descriptivos</strong>, no abreviaturas crípticas: <code>customerCount</code>, nunca <code>cc</code>.</li>
+      <li><strong>Un archivo = una clase pública.</strong> Nombre del archivo = nombre de la clase.</li>
+      <li><strong>Booleanos con prefijo</strong> <code>is</code> / <code>has</code> / <code>can</code>: <code>isActive</code>, <code>hasPermission</code>, <code>canDelete</code>.</li>
+      <li><strong>Colecciones en plural</strong>: <code>invoices</code>, no <code>invoiceList</code>.</li>
+      <li><code>var</code> cuando el tipo es obvio del lado derecho; tipo explícito cuando no lo es.</li>
+      <li><strong>4 espacios</strong> de indentación, no tabs.</li>
+      <li><strong>Llaves en línea nueva</strong> (estilo Allman — el estándar de C#).</li>
+    </ul>
+
+    <h3>Nombres de tests</h3>
+    <p>Patrón fijo: <strong><code>Metodo_Escenario_ResultadoEsperado</code></strong></p>
+<pre>GetById_WhenNotFound_ReturnsNull()
+Create_WithoutTenant_ThrowsException()
+CalculateTotal_WithDiscount_SubtractsAmount()</pre>
+    <p class="lead">Con solo leer el nombre del test se sabe qué prueba y qué espera.</p>
+  </section>
+
+  <!-- 3 -->
+  <section id="estructura">
+    <h2>3 · Estructura de un módulo (<code>Features/</code>)</h2>
+    <p class="lead">Todos los módulos nuevos siguen esta forma. Sin excepciones.</p>
+<pre>Features/[Modulo]/
+├── DTOs/
+│   ├── [X]DetailDto.cs
+│   ├── [X]ListDto.cs
+│   ├── [X]CreateRequest.cs
+│   ├── [X]UpdateRequest.cs
+│   └── [X]ListRequest.cs
+├── I[X]Service.cs        ← la interfaz primero
+├── [X]Service.cs         ← la lógica
+└── [X]Controller.cs      ← ~30 líneas máximo</pre>
+
+    <h3>Dependencias</h3>
+    <div class="scroll">
+    <table>
+      <thead><tr><th class="b-ok" style="color:var(--ok)">✅ PERMITIDO</th><th class="b-no" style="color:var(--no)">❌ PROHIBIDO</th></tr></thead>
+      <tbody>
+        <tr><td><code>ICurrentUserProvider</code> (Features/_Shared/)</td><td><code>IBaseService</code> / <code>BaseService</code></td></tr>
+        <tr><td><code>KaptasCoreContext</code> / <code>KaptaswebContext</code></td><td><code>Kaptas.Services</code> (cualquier namespace)</td></tr>
+        <tr><td><code>Kaptas.DTO</code> (DTOs compartidos)</td><td><code>ISpExecute</code> / <code>IDbService</code></td></tr>
+        <tr><td><code>Kaptas.Helpers</code> (crypto, settings)</td><td>Heredar de cualquier clase de <code>Services/</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section id="zonas">
+    <h2>4 · Estándares por zona</h2>
+    <p class="lead">El código vive en una de 4 zonas. Las reglas de qué se puede tocar cambian según la zona.</p>
+    <div class="scroll">
+    <table class="zonas">
+      <thead><tr><th>Zona</th><th>Dónde</th><th>¿Se puede tocar?</th></tr></thead>
+      <tbody>
+        <tr><td>LEGADO</td><td><code>Kaptas.Services/</code> + <code>Controllers/</code></td><td>NO, hasta tener tests. Solo hotfix mínimo</td></tr>
+        <tr><td>PUENTE</td><td><code>Features/[Modulo]/</code> + viejo vivo</td><td>Solo el Feature nuevo</td></tr>
+        <tr><td>NUEVO</td><td><code>Features/[Modulo]/</code></td><td>Es lo que estás creando</td></tr>
+        <tr><td>LIMPIO</td><td><code>Features/[Modulo]/</code> + viejo eliminado</td><td>Refactor libre con tests</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p><strong>Movimiento:</strong> LEGADO → PUENTE → LIMPIO. Nunca vuelve atrás.</p>
+    <div class="callout nunca">En <strong>LEGADO</strong>: hotfix mínimo, registrar la deuda, <strong>sin "ya que estoy, refactorizo"</strong>.</div>
+    <div class="callout siempre">En <strong>NUEVO/LIMPIO</strong>: TDD, refactor libre.</div>
+  </section>
+
+  <!-- 5 -->
+  <section id="dev">
+    <h2>5 · Antes de pedir revisión — checklist del DEV</h2>
+    <p class="lead">El DEV se auto-certifica esto <strong>antes</strong> de abrir el PR.</p>
+    <ul class="check">
+      <li>Build: <strong>0 errores + 0 warnings nuevos</strong></li>
+      <li>Tests <strong>verdes</strong> + al menos <strong>1 test nuevo</strong> (si hay lógica o bug)</li>
+      <li>Interfaz antes que implementación (si es Feature)</li>
+      <li>Controller ~30 líneas</li>
+      <li><strong>Filtro tenant</strong> en todas las queries</li>
+      <li><code>AsNoTracking()</code> en lecturas</li>
+      <li><code>UtcNow</code> en fechas</li>
+      <li>Sin código muerto comentado</li>
+      <li>No importa <code>Kaptas.Services</code>, no hereda de <code>BaseService</code></li>
+      <li><code>REGISTRO-MODULOS.md</code> actualizado</li>
+    </ul>
+    <h3>Lo que el DEV debe DECIRLE al QA-DEV</h3>
+    <p class="lead">Cinco líneas que ahorran media revisión:</p>
+    <table>
+      <tbody>
+        <tr><td class="num">1</td><td><strong>Qué zona</strong> toqué (LEGADO/PUENTE/NUEVO/LIMPIO)</td></tr>
+        <tr><td class="num">2</td><td><strong>Qué tests</strong> agregué y qué cubren</td></tr>
+        <tr><td class="num">3</td><td>Si toqué queries → <strong>confirmo filtro tenant</strong></td></tr>
+        <tr><td class="num">4</td><td>Si es fix → <strong>root cause</strong> + <strong>test de reproducción</strong></td></tr>
+        <tr><td class="num">5</td><td>Si es LEGADO → <strong>deuda técnica registrada</strong></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 6 -->
+  <section id="qa">
+    <h2>6 · Qué hace el QA-DEV</h2>
+    <div class="callout"><strong>El QA-DEV es la puerta técnica. No confía en el checklist del DEV — reproduce todo de cero.</strong></div>
+
+    <h3>6.1 · Qué NECESITA para trabajar</h3>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Necesita</th><th>Por qué</th></tr></thead>
+      <tbody>
+        <tr><td>PR con la plantilla completa</td><td>Tipo, zona, descripción, cómo probar</td></tr>
+        <tr><td>Diff <strong>acotado</strong> (no PR gigante)</td><td>Un PR enorme no se revisa, se sella</td></tr>
+        <tr><td>Ticket Azure DevOps vinculado</td><td>El qué y el por qué</td></tr>
+        <tr><td>Build corriendo local (0 err/warn)</td><td>Verifica él mismo</td></tr>
+        <tr><td>Tests corriendo (acceso a BDs <code>_test</code>)</td><td>Reproduce verde, no cree en capturas</td></tr>
+        <tr><td>Cómo probar (pasos concretos)</td><td>Para reproducir el comportamiento</td></tr>
+        <tr><td>Scripts SQL (si cambia schema)</td><td>No hay migraciones EF, viajan en el PR</td></tr>
+        <tr><td>Si es PARCHE: test que reproduce el bug</td><td>Sin repro no hay fix válido</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>6.2 · Qué VALIDA (en orden de gravedad)</h3>
+
+    <div class="callout nunca"><strong>🔒 A. Seguridad multi-tenant — lo #1 en Kaptas.</strong><br>
+    Filtro tenant en <strong>todas</strong> las queries → si falta, es IDOR. <strong>Rechazo inmediato.</strong></div>
+
+    <h4>✔️ B. Correctitud</h4>
+    <ul class="check">
+      <li>Build 0 errores + 0 warnings nuevos</li>
+      <li>Tests verdes reproducidos localmente</li>
+      <li>Al menos 1 test nuevo si hay lógica o bug</li>
+      <li>Root cause atacado, <strong>no el síntoma</strong></li>
+      <li>HTTP correctos (<strong>no 200 ocultando un 500</strong>)</li>
+    </ul>
+
+    <h4>🏛️ C. Arquitectura / acoplamiento</h4>
+    <ul class="check">
+      <li>No importa <code>Kaptas.Services</code></li>
+      <li>No hereda de <code>BaseService</code>, no usa <code>IBaseService</code> / <code>IDbService</code> / <code>ISpExecute</code></li>
+      <li>Controller ~30 líneas, sin lógica de negocio</li>
+      <li>Interfaz antes que implementación</li>
+    </ul>
+
+    <h4>🧹 D. Clean code</h4>
+    <ul class="check">
+      <li>Sin código muerto comentado</li>
+      <li>Sin <code>catch(Exception){}</code> vacío</li>
+      <li>Sin <code>SaveChanges</code> en loop</li>
+      <li><code>AsNoTracking()</code> en lecturas · <code>UtcNow</code> en fechas</li>
+      <li>No se borró ni desactivó ningún test</li>
+    </ul>
+
+    <h4>🗺️ E. Respeto de zona</h4>
+    <ul class="check">
+      <li>LEGADO: hotfix mínimo, deuda registrada, sin refactor "de paso"</li>
+      <li>NUEVO/LIMPIO: TDD</li>
+    </ul>
+
+    <h3>6.3 · Veredicto</h3>
+    <div class="verdict">
+      <div class="yes"><span class="badge b-ok">Aprueba ✅</span><p style="margin:8px 0 0">Pasa a Pre-implementación.</p></div>
+      <div class="no"><span class="badge b-no">Rechaza ❌</span>
+        <p style="margin:8px 0 0"><strong>Menor</strong> → el DEV corrige en la <strong>misma rama</strong>.<br>
+        <strong>Grave</strong> → <strong>nueva rama</strong> desde <code>pre-produccion</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section id="parche">
+    <h2>7 · Ciclo especial — PARCHE (bug fix)</h2>
+    <div class="callout nunca"><strong>Un bug no se arregla sin poder reproducirlo primero.</strong></div>
+<pre>B1  Detectar el bug (log, reporte, error 500)
+B2  Escribir el test que lo reproduce (ROJO) — OBLIGATORIO, antes del fix
+B3  Localizar la zona (LEGADO / PUENTE / NUEVO)
+B4  Root cause (la causa, no el síntoma)
+B5  Fix según la zona
+B6  Regression test (VERDE) — queda para siempre
+B7  Postmortem (por qué pasó, por qué no se detectó)</pre>
+    <div class="callout siempre"><strong>Regla de memoria:</strong> cada bug = 1 test nuevo. Reproduce (rojo) → fix → verde → queda para siempre.</div>
+  </section>
+
+  <footer>
+    Referencia única de estándares · Kaptas ERP · Última actualización: 2026-07-08<br>
+    Cualquier cambio se discute con el Arquitecto.
+  </footer>
+
+</div>
+</body>
+</html>

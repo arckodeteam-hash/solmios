@@ -13,6 +13,7 @@ import { PhotosUseCase } from './usecases/photos'
 import { StatsUseCase } from './usecases/stats'
 import { ApproveUseCase } from './usecases/approve'
 import { ConfigListsUseCase } from './usecases/config-lists'
+import { PhotoRequirementsUseCase } from './usecases/photo-requirements'
 import { HousekeepingSettingsUseCase, type HousekeepingSettings, DEFAULT_MAX_VIDEO_SECONDS, DEFAULT_EVIDENCE_RETENTION_DAYS } from './usecases/settings'
 import { getRoomLockCode } from './usecases/lock-code'
 import { VideoUseCase, type VideoUploadTicket } from './usecases/video'
@@ -57,8 +58,7 @@ export class HousekeepingService {
     private readonly roomRepo?: RepositoryAdapter<any>,
     checklistRepo?: RepositoryAdapter<any>,
     configRepo?: RepositoryAdapter<any>,
-    /** Adapter S3 (Backblaze). Sin él, el modo video no se puede usar: la app
-     *  sube el archivo directo al bucket con una URL prefirmada. */
+    /** Adapter S3 (Backblaze). Sin él no hay modo video: la app sube directo al bucket con URL prefirmada. */
     videoStorage?: S3StorageAdapter,
     private readonly lockDeviceRepo?: RepositoryAdapter<any>,
     private readonly lockCodeRepo?: RepositoryAdapter<any>,
@@ -76,6 +76,8 @@ export class HousekeepingService {
       this.employeeRepo,
       (item) => this.sockets.onTaskCompleted?.(item) ?? Promise.resolve(),
       this.settingsUc,
+      photoReqRepo ? { listByRoomType: (h) => new PhotoRequirementsUseCase(photoReqRepo, logger).list(h) } : undefined, // gate de fotos (ver timings.ts)
+      roomRepo,
     )
     this.crud = new CrudUseCase(
       repo,
@@ -105,7 +107,6 @@ export class HousekeepingService {
       this.configLists = new ConfigListsUseCase(photoReqRepo, supplyRepo, logger, checklistRepo)
     }
   }
-
   /** Conecta el audit log. Lo inyecta el connector `housekeeping-auditlog`. */
   setAuditDeps(port: AuditPort): void { this.auditPort = port }
 

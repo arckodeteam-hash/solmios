@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — SolmiOS</title>
+<meta name="description" content="API REST de SolmiOS para integraciones: autenticación por token Bearer, respuestas JSON uniformes y ejemplos reales de cada llamada.">
+<link rel="stylesheet" href="paginas.css">
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <a class="home" href="https://solmios.com/">← solmios.com</a>
+    <p class="eyebrow">Producto · Para desarrolladores</p>
+    <h1>API de SolmiOS</h1>
+    <p>Todo lo que ves en el panel y en la app móvil pasa por la misma API REST. Si tu hotel necesita conectar otra herramienta —un BI, un contador, un bot propio— estos son los cimientos.</p>
+    <span class="chip">REST · JSON · HTTPS</span>
+  </div>
+</header>
+
+<main>
+
+<nav class="index" aria-label="Contenido">
+  <strong>Contenido</strong>
+  <ol>
+    <li><a href="#base">URL base y formato</a></li>
+    <li><a href="#auth">Autenticación</a></li>
+    <li><a href="#ejemplos">Ejemplos reales</a></li>
+    <li><a href="#errores">Errores</a></li>
+    <li><a href="#limites">Límites y buenas prácticas</a></li>
+  </ol>
+</nav>
+
+<section id="base">
+  <h2><span class="n">01</span>URL base y formato</h2>
+  <p>Toda la API habla JSON sobre HTTPS:</p>
+  <pre class="code"><code>https://hotel.zx89.site/api</code></pre>
+  <p>Cada respuesta tiene la misma forma, pase bien o pase mal:</p>
+  <pre class="code"><code>{
+  "success": true,
+  "data":    { ... },        // lo pedido, si salió bien
+  "error":   null,           // { code, message } si falló
+  "meta":    null            // paginación, cuando aplica
+}</code></pre>
+</section>
+
+<section id="auth">
+  <h2><span class="n">02</span>Autenticación</h2>
+  <p>Se inicia sesión con las credenciales de tu cuenta de SolmiOS y la API devuelve un token. Ese token viaja en el header de todas las llamadas siguientes:</p>
+  <pre class="code"><code>Authorization: Bearer &lt;token&gt;</code></pre>
+  <p>El token tiene vencimiento; cuando expira, la API responde 401 y se repite el login. Los permisos son los mismos que tiene tu usuario en el panel: un rol de recepción no puede llamar a endpoints que no ve en su pantalla.</p>
+</section>
+
+<section id="ejemplos">
+  <h2><span class="n">03</span>Ejemplos reales</h2>
+  <p>Dos llamadas para probar en un minuto, con cualquier usuario del hotel:</p>
+
+  <h3>Login</h3>
+  <pre class="code"><code>POST /api/auth/login
+{ "email": "tu@hotel.com", "password": "••••••" }
+
+→ data: { token, user: { id, name, email, role, hotelId, hotelName } }</code></pre>
+
+  <h3>Indicadores del día</h3>
+  <pre class="code"><code>GET /api/dashboard        (con header Bearer)
+
+→ data: {
+    ocupacion, totalRooms, checkins, checkouts,
+    dirty, maintenance, huespedes, reservas,
+    revenue, roomsByStatus, roomsByType, trends
+  }</code></pre>
+</section>
+
+<section id="errores">
+  <h2><span class="n">04</span>Errores</h2>
+  <p>Los códigos HTTP cuentan la historia: <code>400</code> datos inválidos, <code>401</code> token ausente o vencido, <code>403</code> sin permiso para ese módulo, <code>404</code> recurso inexistente, <code>409</code> conflicto de negocio (p. ej. una factura cobrada no se borra, se anula). El cuerpo siempre explica el motivo en <code>error.message</code>.</p>
+</section>
+
+<section id="limites">
+  <h2><span class="n">05</span>Límites y buenas prácticas</h2>
+  <ul>
+    <li>La API tiene rate-limit por IP: haz lotes, no ráfagas. Si te pasas, recibes 429 con el tiempo de espera.</li>
+    <li>El estado del servicio, en vivo, está en la página de <a href="/estado">Estado del sistema</a> (el check público es <code>GET /api/health</code>).</li>
+    <li>Para integraciones de canal (OTAs), lo correcto no es la API directa sino el <a href="https://solmios.com/#integrations">channel manager integrado</a> — evita pelearse con disponibilidad a mano.</li>
+    <li>¿Necesitas un endpoint que no existe o un permiso específico para un integrador? Escríbenos desde <a href="/contacto">Contacto</a> con el caso de uso.</li>
+  </ul>
+  <div class="note">La API se versiona agregando, no rompiendo: los campos que existen hoy siguen existiendo. Si algún día un cambio es incompatible, se avisa con meses de anticipación a los integradores registrados.</div>
+</section>
+
+</main>
+
+<footer class="site"><div class="foot-inner">
+  <p>© 2026 SolmiOS · <a href="https://solmios.com/">solmios.com</a></p>
+  <div class="foot-links">
+    <a href="/privacidad">Privacidad</a> <a href="/terminos">Términos</a> <a href="/cookies">Cookies</a> <a href="/ayuda">Ayuda</a> <a href="/estado">Estado</a> <a href="/contacto">Contacto</a>
+  </div>
+</div></footer>
+
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentación — SolmiOS</title>
+<meta name="description" content="Cómo está organizada SolmiOS: módulos, roles, app móvil e integraciones — con la guía de la API para desarrolladores.">
+<link rel="stylesheet" href="paginas.css">
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <a class="home" href="https://solmios.com/">← solmios.com</a>
+    <p class="eyebrow">Soporte</p>
+    <h1>Documentación</h1>
+    <p>El mapa de la plataforma: qué existe, para quién es cada pieza, y por dónde entrar según lo que quieras hacer.</p>
+    <span class="chip">Panel · App móvil · API</span>
+  </div>
+</header>
+
+<main>
+
+<section id="mapa">
+  <h2><span class="n">01</span>Los módulos, de un vistazo</h2>
+  <table class="data">
+    <tr><th>Módulo</th><th>Qué resuelve</th><th>Quién lo usa</th></tr>
+    <tr><td><strong>Planning y reservas</strong></td><td>Calendario del hotel: entradas, salidas, estados, huéspedes</td><td>Recepción y gerencia</td></tr>
+    <tr><td><strong>Channel manager</strong></td><td>Disponibilidad y precios empujados a los OTAs; sus reservas vuelven solas</td><td>Gerencia / revenue</td></tr>
+    <tr><td><strong>Housekeeping</strong></td><td>Tareas de limpieza con timer, fotos y video de evidencia, revisión y aprobación del supervisor</td><td>Camaras y supervisor(a)</td></tr>
+    <tr><td><strong>Mantenimiento</strong></td><td>Tickets de averías, técnicos internos o proveedores externos, con historial</td><td>Mantenimiento y gerencia</td></tr>
+    <tr><td><strong>Facturación y folios</strong></td><td>Folio del huésped → factura con numeración fiscal → pago, en una operación</td><td>Recepción y administración</td></tr>
+    <tr><td><strong>Pagos</strong></td><td>Links y checkout con tarjeta, depósitos/señas, arqueo de caja</td><td>Administración</td></tr>
+    <tr><td><strong>Cerraduras</strong></td><td>Códigos de puerta por estadía, enviados por WhatsApp, caducan solos</td><td>Recepción</td></tr>
+    <tr><td><strong>Equipo y permisos</strong></td><td>Usuarios por hotel, roles, permisos por módulo, auditoría</td><td>Gerencia</td></tr>
+    <tr><td><strong>Reportes</strong></td><td>Ocupación, ingresos, desempeño del equipo; exportables</td><td>Gerencia</td></tr>
+  </table>
+</section>
+
+<section id="app">
+  <h2><span class="n">02</span>La app móvil en una frase</h2>
+  <p>Es la misma plataforma, vestida para el personal que trabaja de pie: por rol, la camarera ve sus tareas, el supervisor su cola de revisión, mantenimiento sus tickets. Las <a href="/ayuda">preguntas comunes de la app</a> están en el Centro de Ayuda.</p>
+</section>
+
+<section id="integraciones">
+  <h2><span class="n">03</span>Integraciones y extensión</h2>
+  <ul>
+    <li><strong>Canales (OTAs)</strong> vía el channel manager integrado.</li>
+    <li><strong>Cerraduras TTLock</strong> y <strong>mensajería WhatsApp</strong> para huéspedes y equipo.</li>
+    <li><strong>Pagos con tarjeta</strong> vía Stripe.</li>
+    <li><strong>Tu propio software</strong> vía la <a href="/api">API REST</a> — misma API que usa el panel, autenticación por token, respuestas JSON uniformes.</li>
+  </ul>
+</section>
+
+<section id="por-donde">
+  <h2><span class="n">04</span>Por dónde empezar</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Uso diario</h3>
+      <p><a href="/ayuda">Centro de Ayuda</a> — respuestas directas a lo operativo.</p>
+    </div>
+    <div class="card">
+      <h3>Desarrollo</h3>
+      <p><a href="/api">API</a> — ejemplos reales, autenticación y errores.</p>
+    </div>
+    <div class="card">
+      <h3>Incidencias</h3>
+      <p><a href="/estado">Estado del sistema</a> — verificación en vivo.</p>
+    </div>
+    <div class="card">
+      <h3>Guardado para después</h3>
+      <p><a href="/privacidad">Privacidad</a> y <a href="/terminos">Términos</a> — cómo tratamos los datos.</p>
+    </div>
+  </div>
+  <div class="note">Dentro del panel, cada pantalla tiene su propia ayuda contextual: si algo de una vista específica no cierra, el chat de soporte responde con la vista abierta de tu hotel.</div>
+</section>
+
+</main>
+
+<footer class="site"><div class="foot-inner">
+  <p>© 2026 SolmiOS · <a href="https://solmios.com/">solmios.com</a></p>
+  <div class="foot-links">
+    <a href="/privacidad">Privacidad</a> <a href="/terminos">Términos</a> <a href="/cookies">Cookies</a> <a href="/ayuda">Ayuda</a> <a href="/api">API</a> <a href="/estado">Estado</a>
+  </div>
+</div></footer>
+
+</body>
+</html>

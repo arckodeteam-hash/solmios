@@ -5,7 +5,7 @@
 // Los efectos (sockets, invalidación de caché, auditoría) entran por callbacks,
 // igual que en `TimingsUseCase`: el usecase no conoce el transporte.
 import type { RepositoryAdapter } from 'arckode-framework'
-import { NotFoundError, AuthError } from 'arckode-framework'
+import { NotFoundError, AuthError, ValidationError } from 'arckode-framework'
 import type {
   HousekeepingDTO,
   CreateHousekeepingDTO,
@@ -75,6 +75,12 @@ export class CrudUseCase {
     const existing = await this.repo.findById(id)
     if (!existing) throw new NotFoundError('Tarea de housekeeping no encontrada')
     this.assertSameHotel(existing.hotelId, user)
+    // `inspected` NO se setea por acá: es el único estado que requiere el workflow completo
+    // (presencia física del supervisor + calificación). Por el PUT genérico cualquiera con
+    // `housekeeping:edit` — incluida la camarera asignada — saltaba toda la revisión.
+    if (dto.status === 'inspected' && dto.status !== existing.status) {
+      throw new ValidationError('La inspección se hace vía POST /api/housekeeping/:id/approve (presencia + calificación)')
+    }
     if (dto.status && dto.status !== existing.status) assertTransition(existing.status, dto.status)
     await assertStaffExists(this.userRepo, dto.staffId, user)
     const item = await this.repo.update(id, dto as any)

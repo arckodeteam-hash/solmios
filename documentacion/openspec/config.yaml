@@ -1,0 +1,33 @@
+schema: spec-driven
+
+context: |
+  Tech stack: .NET 7 — ASP.NET Core Web API + EF Core + SQL Server multi-tenant
+  Architecture: Strategy Hibrida — 3 ciclos (RECICLADO/VERDE/PARCHE), 4 zonas (LEGADO/PUENTE/NUEVO/LIMPIO)
+  Testing: xUnit + Moq — 121 tests ejecutados (`dotnet test --nologo`, 2026-07-19), sqlcmd nativo sin Docker
+           NOTA: el numero de casos ejecutados (121) NO es el de atributos [Fact]/[Theory] (104):
+           cada [Theory] con N InlineData produce N casos. Re-medir antes de citarlo.
+  Style: Controllers ~30 lineas, AsNoTracking(), filtro tenant, ICurrentUserProvider, UtcNow
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected modules/packages
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Identify que zona afecta (LEGADO/PUENTE/NUEVO/LIMPIO)
+  design:
+    - Identify dependencies (BaseService?, Kaptas.Services?)
+    - Verify controller stays ~30 lines
+  tasks:
+    - Group tasks by ciclo (RECICLADO/VERDE/PARCHE)
+    - Use hierarchical numbering (R1, R2, R3, etc. / N1, N2, etc.)
+    - Include checklist items from C1-C4 closure
+  apply:
+    - Follow Features/[Modulo]/ structure with DTOs/ first
+    - NO import Kaptas.Services, NO inherit BaseService
+  verify:
+    - dotnet build = 0 errors + 0 new warnings
+    - dotnet test = all green
+    - Controller ~30 lines max
+  archive:
+    - Warn before merging destructive deltas

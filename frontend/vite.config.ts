@@ -67,8 +67,9 @@ export default defineConfig({
         ws: true,
       },
       // Evidencia fotográfica de housekeeping y otros archivos estáticos servidos por el backend.
+      // Mismo puerto que /api (PORT del .env del backend) — apuntaba a 3000 y las fotos no cargaban en dev.
       '/uploads': {
-        target: 'http://localhost:3000',
+        target: 'http://localhost:3001',
         changeOrigin: true,
         secure: false,
       },

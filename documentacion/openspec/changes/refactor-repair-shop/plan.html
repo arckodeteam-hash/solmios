@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Refactor RepairShop — mapa y plan de migración</title>
+<style>
+  :root {
+    --ground:      #EEF1F1;
+    --surface:     #FFFFFF;
+    --surface-2:   #E4E9E9;
+    --ink:         #0F1618;
+    --ink-2:       #47585C;
+    --ink-3:       #6F8186;
+    --hair:        #C6D0D1;
+    --hair-strong: #93A3A5;
+
+    --legado:      #A34A24;
+    --legado-bg:   #F6E7DF;
+    --puente:      #7E6116;
+    --puente-bg:   #F4EDD8;
+    --limpio:      #16636E;
+    --limpio-bg:   #DCEAEC;
+
+    --critical:    #9E2A2A;
+    --critical-bg: #F6E0E0;
+    --warn:        #7E6116;
+    --ok:          #2A6048;
+
+    --accent:      #16636E;
+
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+    --s1: .35rem; --s2: .7rem; --s3: 1.1rem; --s4: 1.8rem; --s5: 2.8rem; --s6: 4.4rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:      #0D1315;
+      --surface:     #131B1D;
+      --surface-2:   #1B2528;
+      --ink:         #E4EBEC;
+      --ink-2:       #A2B3B6;
+      --ink-3:       #75888C;
+      --hair:        #2A3739;
+      --hair-strong: #465759;
+
+      --legado:      #E08B5F;
+      --legado-bg:   #2C1B12;
+      --puente:      #D3B45E;
+      --puente-bg:   #2A2412;
+      --limpio:      #57BDCB;
+      --limpio-bg:   #10292D;
+
+      --critical:    #E57373;
+      --critical-bg: #2E1616;
+      --warn:        #D3B45E;
+      --ok:          #6FBF9B;
+
+      --accent:      #57BDCB;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0D1315; --surface: #131B1D; --surface-2: #1B2528;
+    --ink: #E4EBEC; --ink-2: #A2B3B6; --ink-3: #75888C;
+    --hair: #2A3739; --hair-strong: #465759;
+    --legado: #E08B5F; --legado-bg: #2C1B12;
+    --puente: #D3B45E; --puente-bg: #2A2412;
+    --limpio: #57BDCB; --limpio-bg: #10292D;
+    --critical: #E57373; --critical-bg: #2E1616;
+    --warn: #D3B45E; --ok: #6FBF9B; --accent: #57BDCB;
+  }
+  :root[data-theme="light"] {
+    --ground: #EEF1F1; --surface: #FFFFFF; --surface-2: #E4E9E9;
+    --ink: #0F1618; --ink-2: #47585C; --ink-3: #6F8186;
+    --hair: #C6D0D1; --hair-strong: #93A3A5;
+    --legado: #A34A24; --legado-bg: #F6E7DF;
+    --puente: #7E6116; --puente-bg: #F4EDD8;
+    --limpio: #16636E; --limpio-bg: #DCEAEC;
+    --critical: #9E2A2A; --critical-bg: #F6E0E0;
+    --warn: #7E6116; --ok: #2A6048; --accent: #16636E;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    margin: 0;
+    padding: var(--s5) var(--s3) var(--s6);
+  }
+
+  .wrap { max-width: 62rem; margin: 0 auto; display: flex; flex-direction: column; gap: var(--s5); }
+  .col  { display: flex; flex-direction: column; gap: var(--s3); }
+  .col-tight { display: flex; flex-direction: column; gap: var(--s2); }
+
+  /* ---- masthead ---- */
+  .masthead { display: flex; flex-direction: column; gap: var(--s3); border-bottom: 2px solid var(--ink); padding-bottom: var(--s3); }
+  .eyebrow {
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .18em;
+    text-transform: uppercase; color: var(--ink-3);
+    display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3);
+  }
+  h1 {
+    font-family: var(--mono); font-weight: 600; font-size: clamp(1.6rem, 4.2vw, 2.5rem);
+    line-height: 1.15; letter-spacing: -.02em; margin: 0; text-wrap: balance;
+  }
+  .standfirst { color: var(--ink-2); max-width: 60ch; margin: 0; font-size: 1.05rem; }
+
+  /* ---- verdict ---- */
+  .verdict {
+    background: var(--surface); border: 1px solid var(--hair);
+    border-left: 4px solid var(--limpio);
+    padding: var(--s3) var(--s4);
+    display: flex; flex-direction: column; gap: var(--s2);
+  }
+  .verdict h2 { margin: 0; font-family: var(--mono); font-size: 1.45rem; letter-spacing: -.01em; }
+  .verdict p { margin: 0; color: var(--ink-2); max-width: 62ch; }
+
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 1px; background: var(--hair); border: 1px solid var(--hair); margin-top: var(--s2); }
+  .fact { background: var(--surface); padding: var(--s2) var(--s3); display: flex; flex-direction: column; gap: 2px; }
+  .fact dt { font-family: var(--mono); font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+  .fact dd { margin: 0; font-family: var(--mono); font-size: 1.3rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .fact .unit { font-size: .8rem; font-weight: 400; color: var(--ink-3); }
+
+  /* ---- sections ---- */
+  section { display: flex; flex-direction: column; gap: var(--s3); }
+  h2.sec {
+    font-family: var(--mono); font-size: 1.25rem; font-weight: 600; margin: 0;
+    padding-bottom: var(--s1); border-bottom: 1px solid var(--hair-strong);
+    letter-spacing: -.01em;
+  }
+  h3 { font-family: var(--mono); font-size: 1rem; font-weight: 600; margin: 0; letter-spacing: .01em; }
+  p { margin: 0; max-width: 68ch; }
+  .muted { color: var(--ink-2); }
+  code { font-family: var(--mono); font-size: .88em; background: var(--surface-2); padding: .1em .35em; }
+  a { color: var(--accent); }
+  a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---- zone key ---- */
+  .zones { display: flex; flex-wrap: wrap; gap: var(--s2); }
+  .zone { font-family: var(--mono); font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; padding: .3em .7em; border: 1px solid; }
+  .z-legado { color: var(--legado); background: var(--legado-bg); border-color: var(--legado); }
+  .z-puente { color: var(--puente); background: var(--puente-bg); border-color: var(--puente); }
+  .z-limpio { color: var(--limpio); background: var(--limpio-bg); border-color: var(--limpio); }
+
+  /* ---- diagram ---- */
+  .diagram { background: var(--surface); border: 1px solid var(--hair); overflow-x: auto; }
+  .diagram pre {
+    font-family: var(--mono); font-size: .8rem; line-height: 1.5;
+    margin: 0; padding: var(--s3); white-space: pre; color: var(--ink-2);
+  }
+  .diagram pre b { color: var(--ink); font-weight: 600; }
+  .diagram pre .bad  { color: var(--critical); font-weight: 600; }
+  .diagram pre .good { color: var(--ok); }
+  .diagram pre .leg  { color: var(--legado); }
+  .diagram pre .lim  { color: var(--limpio); }
+  .caption { font-family: var(--mono); font-size: .72rem; color: var(--ink-3); letter-spacing: .04em; }
+
+  /* ---- tables ---- */
+  .scroll { overflow-x: auto; border: 1px solid var(--hair); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+  caption { text-align: left; font-family: var(--mono); font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--hair); }
+  th, td { text-align: left; padding: .55rem var(--s3); border-bottom: 1px solid var(--hair); vertical-align: top; }
+  thead th { font-family: var(--mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .mono { font-family: var(--mono); font-size: .84rem; }
+  tr.pick td { background: var(--limpio-bg); }
+  tr.pick td:first-child { box-shadow: inset 3px 0 0 var(--limpio); font-weight: 600; }
+
+  /* ---- difficulty meter ---- */
+  .meter { display: flex; align-items: center; gap: var(--s2); min-width: 9rem; }
+  .meter .bar { height: 7px; flex: 1; background: var(--surface-2); position: relative; }
+  .meter .bar span { position: absolute; inset: 0 auto 0 0; display: block; }
+  .m-lo  span { background: var(--ok); }
+  .m-mid span { background: var(--warn); }
+  .m-hi  span { background: var(--legado); }
+  .m-max span { background: var(--critical); }
+  .meter .v { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: .8rem; color: var(--ink-3); width: 2.4rem; text-align: right; }
+
+  /* ---- findings ---- */
+  .finding { background: var(--surface); border: 1px solid var(--hair); border-left: 4px solid var(--hair-strong); padding: var(--s3); display: flex; flex-direction: column; gap: var(--s2); }
+  .finding.crit { border-left-color: var(--critical); }
+  .finding.warn { border-left-color: var(--warn); }
+  .f-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s2); }
+  .f-id { font-family: var(--mono); font-weight: 600; font-size: .95rem; }
+  .f-sev { font-family: var(--mono); font-size: .66rem; letter-spacing: .12em; text-transform: uppercase; padding: .2em .55em; border: 1px solid; }
+  .sev-crit { color: var(--critical); border-color: var(--critical); background: var(--critical-bg); }
+  .sev-warn { color: var(--warn); border-color: var(--warn); background: var(--puente-bg); }
+  .f-loc { font-family: var(--mono); font-size: .74rem; color: var(--ink-3); margin-left: auto; }
+  .finding p { font-size: .93rem; }
+  .snippet { background: var(--ground); border: 1px solid var(--hair); overflow-x: auto; }
+  .snippet pre { font-family: var(--mono); font-size: .78rem; line-height: 1.6; margin: 0; padding: var(--s2) var(--s3); white-space: pre; }
+
+  /* ---- steps ---- */
+  .steps { display: flex; flex-direction: column; gap: 1px; background: var(--hair); border: 1px solid var(--hair); }
+  .step { background: var(--surface); padding: var(--s3); display: grid; grid-template-columns: 3.6rem 1fr; gap: var(--s3); align-items: start; }
+  .step-id { font-family: var(--mono); font-weight: 600; font-size: 1rem; color: var(--accent); padding-top: 1px; }
+  .step-body { display: flex; flex-direction: column; gap: var(--s1); min-width: 0; }
+  .step-body p { font-size: .93rem; color: var(--ink-2); }
+  .step h3 { font-size: .98rem; }
+  .gate { font-family: var(--mono); font-size: .74rem; color: var(--critical); border: 1px dashed var(--critical); padding: .35em .6em; align-self: flex-start; }
+
+  ul { margin: 0; padding-left: 1.1rem; }
+  li { margin-bottom: .25rem; }
+  li:last-child { margin-bottom: 0; }
+  li::marker { color: var(--ink-3); }
+
+  footer { border-top: 1px solid var(--hair-strong); padding-top: var(--s3); color: var(--ink-3); font-size: .85rem; display: flex; flex-direction: column; gap: var(--s2); }
+  footer code { background: transparent; padding: 0; }
+
+  @media (max-width: 34rem) {
+    .step { grid-template-columns: 1fr; gap: var(--s2); }
+    body { padding: var(--s4) var(--s2) var(--s5); }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">
+      <span>Kaptas ERP</span><span>·</span>
+      <span>Ciclo RECICLADO</span><span>·</span>
+      <span>openspec/changes/refactor-repair-shop</span>
+    </div>
+    <h1>Primer módulo a migrar:<br>Taller (RepairShop)</h1>
+    <p class="standfirst">Mapa del sistema, hallazgos de seguridad y plan R1–R5 para sacar el primer módulo de LEGADO. Todo lo que sigue salió de leer el código: cada afirmación tiene archivo y línea.</p>
+  </header>
+
+  <section class="verdict">
+    <h2>Por qué este y no otro</h2>
+    <p>De los 87 servicios del sistema, <code>RepairShopService</code> es el más chico que todavía tiene acoplamiento real al legado. Tiene <code>_baseService</code> 14 veces y <code>ISpExecute</code> 9: exactamente el nudo que hay que aprender a cortar. Los servicios más simples que él no tocan ninguno de los dos, así que no enseñarían nada del seam.</p>
+    <p>El dato que lo define: <strong>su último commit es de marzo de 2025</strong>. Nadie lo toca hace más de un año, así que migrarlo no genera un solo conflicto de merge. En cambio <code>KSalesServices</code> (158 commits) y <code>AuthService</code> (96) se tocan este mes.</p>
+    <dl class="facts">
+      <div class="fact"><dt>Líneas</dt><dd>346</dd></div>
+      <div class="fact"><dt>Métodos</dt><dd>9</dd></div>
+      <div class="fact"><dt>Consumidores</dt><dd>1</dd></div>
+      <div class="fact"><dt>Commits de bug</dt><dd>7</dd></div>
+      <div class="fact"><dt>Último toque</dt><dd>2025<span class="unit">-03</span></dd></div>
+      <div class="fact"><dt>Si se rompe</dt><dd style="font-size:.95rem;font-weight:400;line-height:1.4">nadie deja<br>de facturar</dd></div>
+    </dl>
+  </section>
+
+  <section>
+    <h2 class="sec">El hallazgo que cambia el refactor</h2>
+    <p>El servicio <strong>no tiene lógica de negocio</strong>. Es un envoltorio de Dapper sobre nueve stored procedures, y esos SPs no están versionados en el repositorio. Lo que se migra es el <em>borde</em> —resolución de tenant, mapeo, manejo de errores, HTTP—, no las reglas.</p>
+    <p class="muted">Consecuencia práctica: los tests unitarios con mocks van a probar poco. El valor real está en los tests de integración contra los SPs reales. El plan lo asume así en vez de pretender lo contrario.</p>
+  </section>
+
+  <section>
+    <h2 class="sec">Mapa actual — zona LEGADO</h2>
+    <div class="zones">
+      <span class="zone z-legado">Legado</span>
+      <span class="zone z-puente">Puente</span>
+      <span class="zone z-limpio">Nuevo / Limpio</span>
+    </div>
+    <div class="diagram">
+<pre>   HTTP  api/RepairShop/*        <span class="bad">⚠ ningún endpoint tiene [Authorize]</span>
+     │
+     ▼
+  <b>RepairShopController</b>  <span class="leg">55 LOC · 9 endpoints · delega 1:1</span>
+     │                     <span class="bad">⚠ campo muerto: private int numer</span>
+     │  IRepairShopService
+     ▼
+  <b>RepairShopService</b>    <span class="leg">346 LOC · 9 métodos</span>
+     │
+     ├─ KaptasCoreContext  <span class="good">✔ permitido</span>   → tabla TipoImpuestos <span class="bad">(sin AsNoTracking)</span>
+     ├─ IMapper            <span class="good">✔ permitido</span>
+     ├─ IBaseService       <span class="bad">✘ prohibido</span>   → company/branch/store <span class="bad">desde HEADERS HTTP</span>
+     ├─ IDbService         <span class="bad">✘ prohibido</span>   → connection string desde el claim NameId
+     ├─ ISpExecute         <span class="bad">✘ prohibido</span>   → ejecuta los 9 SPs
+     └─ IBranchService     <span class="bad">✘ prohibido</span>   → ListUserBranches()  (otro servicio legado)
+                              │
+                              ▼
+  ┌──────────────────────────────────────────────────────────────┐
+  │  SQL Server — base del tenant (kw21)                          │
+  │                                                               │
+  │  <b>9 STORED PROCEDURES</b>  ← acá vive toda la lógica             │
+  │    P_Taller_Casos_Paging              All                      │
+  │    P_Taller_Get_By_id                 GetById                  │
+  │    p_Taller_datos_iniciales           InitialData              │
+  │    p_taller_product_insert_upd_grabar AddRepairShopCase        │
+  │    p_Taller_Generar_grabar            GenerateRepairShopCase   │
+  │    P_Taller_Finalizar_Grabar          CompleteRepairShopCase   │
+  │    P_Taller_Actualiza_Estado_Grabar   ChangeRepairShopStatus   │
+  │    p_taller_upd_grabar                UpdateRepairShopHeading  │
+  │    P_Taller_Print                     Print                    │
+  │                                                               │
+  │  <b>2 TABLE-VALUED PARAMETERS</b>                                  │
+  │    dbo.Taller_Det_Type      dbo.DocumentosPago                 │
+  └──────────────────────────────────────────────────────────────┘</pre>
+    </div>
+    <p class="caption">Los SPs no están en el repo. R1 los caracteriza como caja negra y no los toca.</p>
+  </section>
+
+  <section>
+    <h2 class="sec">Contrato actual, método por método</h2>
+    <div class="scroll">
+      <table>
+        <caption>¿Le pasa el tenant al stored procedure?</caption>
+        <thead>
+          <tr><th>Método</th><th>HTTP</th><th>Stored procedure</th><th>TVP</th><th>Filtra tenant</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">All</td><td class="mono">GET</td><td class="mono">P_Taller_Casos_Paging</td><td>—</td><td style="color:var(--ok)">sí, del header</td></tr>
+          <tr><td class="mono">GetById</td><td class="mono">GET</td><td class="mono">P_Taller_Get_By_id</td><td>—</td><td style="color:var(--critical);font-weight:600">no</td></tr>
+          <tr><td class="mono">InitialData</td><td class="mono">GET</td><td class="mono">p_Taller_datos_iniciales</td><td>—</td><td style="color:var(--ok)">sí, del header</td></tr>
+          <tr><td class="mono">AddRepairShopCase</td><td class="mono">POST</td><td class="mono">p_taller_product_insert_upd_grabar</td><td class="mono">Taller_Det_Type</td><td style="color:var(--ok)">sí, del header</td></tr>
+          <tr><td class="mono">GenerateRepairShopCase</td><td class="mono">POST</td><td class="mono">p_Taller_Generar_grabar</td><td class="mono">DocumentosPago</td><td style="color:var(--critical);font-weight:600">del body</td></tr>
+          <tr><td class="mono">CompleteRepairShopCase</td><td class="mono">POST</td><td class="mono">P_Taller_Finalizar_Grabar</td><td class="mono">DocumentosPago</td><td style="color:var(--ok)">sí, del header</td></tr>
+          <tr><td class="mono">ChangeRepairShopStatus</td><td class="mono">PUT</td><td class="mono">P_Taller_Actualiza_Estado_Grabar</td><td>—</td><td style="color:var(--critical);font-weight:600">no</td></tr>
+          <tr><td class="mono">UpdateRepairShopHeading</td><td class="mono">PUT</td><td class="mono">p_taller_upd_grabar</td><td>—</td><td style="color:var(--ok)">sí, del header</td></tr>
+          <tr><td class="mono">Print</td><td class="mono">GET</td><td class="mono">P_Taller_Print</td><td>—</td><td style="color:var(--critical);font-weight:600">no</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">«No» significa que el método no le pasa IdCompany al SP. Si el SP filtra por dentro, no lo sé: hay que verificarlo contra la base antes de cerrar R1.</p>
+  </section>
+
+  <section>
+    <h2 class="sec">Hallazgos</h2>
+    <p class="muted">Ninguno se arregla en este cambio. Van por ciclo PARCHE, con test rojo primero. Mezclarlos con el RECICLADO es el «ya que estoy, refactorizo» que las reglas del proyecto prohíben.</p>
+
+    <div class="finding crit">
+      <div class="f-head">
+        <span class="f-id">D2 — El tenant se define con un header HTTP</span>
+        <span class="f-sev sev-crit">Crítico · todo el sistema</span>
+        <span class="f-loc">BaseService.cs:141-143</span>
+      </div>
+      <div class="snippet"><pre>Company = _httpContextAccessor.HttpContext.Request.Headers["company"].FirstOrDefault(),
+Branch  = _httpContextAccessor.HttpContext.Request.Headers["branch"].FirstOrDefault(),
+Store   = _httpContextAccessor.HttpContext.Request.Headers["store"].FirstOrDefault()</pre></div>
+      <p>La base de datos del tenant sí sale del claim <code>NameId</code>, y eso está bien. Pero la compañía, sucursal y almacén <em>dentro</em> de esa base son lo que diga un header que manda el cliente. Nadie valida que el usuario pertenezca a esa compañía. Escalada horizontal entre compañías de la misma suscripción, y afecta a cualquier servicio que llame <code>GetCurrentSpaceWork()</code>.</p>
+    </div>
+
+    <div class="finding crit">
+      <div class="f-head">
+        <span class="f-id">D3 — GenerateRepairShopCase acepta el IdCompany desde el body</span>
+        <span class="f-sev sev-crit">Crítico</span>
+        <span class="f-loc">RepairShopService.cs:223-225</span>
+      </div>
+      <div class="snippet"><pre>dynamicParameters.Add("IdCompany", generateRepairShopCaseReqDTO.IdCompany ?? int.Parse(currentWorkSpace.Company));
+dynamicParameters.Add("IdBranch",  generateRepairShopCaseReqDTO.IdBranch  ?? int.Parse(currentWorkSpace.Branch));
+dynamicParameters.Add("IdStore",   generateRepairShopCaseReqDTO.IdStore   ?? int.Parse(currentWorkSpace.Store));</pre></div>
+      <p>Es el único de los nueve métodos que hace esto; los otros ocho usan siempre <code>int.Parse(currentWorkSpace.Company)</code>, sin alternativa. Y <code>Generate</code> es justamente el que graba documentos de pago. Un cliente que mande <code>IdCompany</code> en el JSON escribe en la compañía que quiera.</p>
+    </div>
+
+    <div class="finding crit">
+      <div class="f-head">
+        <span class="f-id">D1 — El controller no tiene un solo [Authorize]</span>
+        <span class="f-sev sev-crit">Crítico · a confirmar</span>
+        <span class="f-loc">RepairShopController.cs</span>
+      </div>
+      <p>Cero ocurrencias, y <code>Program.cs:186-188</code> solo llama a <code>UseAuthentication()</code> y <code>UseAuthorization()</code>, sin <code>FallbackPolicy</code> ni filtro global. Sin atributo, el endpoint es anónimo. Para comparar: <code>SalesController</code> tiene 21 ocurrencias de <code>Authorize</code> y <code>KProductsController</code> 25. <code>ExpensesController</code> y <code>PurchaseController</code> tampoco tienen ninguna.</p>
+      <p><strong>Atenuante que hay que verificar, no asumir:</strong> sin token, <code>DbService.cs:30</code> encuentra los claims vacíos y deja <code>idUser = Guid.Empty</code>, así que probablemente termina en 500 y no en fuga de datos. Eso se confirma con una petición real.</p>
+    </div>
+
+    <div class="finding warn">
+      <div class="f-head">
+        <span class="f-id">D4 — GetById devuelve 500 en vez de 404</span>
+        <span class="f-sev sev-warn">Robustez</span>
+        <span class="f-loc">RepairShopService.cs:101-102</span>
+      </div>
+      <p><code>FirstOrDefault()</code> puede devolver <code>null</code> y la línea siguiente hace <code>caseDet.Details = …</code>. El mismo patrón está en <code>InitialData</code> (135-137) y <code>AddRepairShopCase</code> (203-204). Curiosamente <code>Print</code> sí maneja el null, en la línea 303.</p>
+    </div>
+
+    <div class="finding warn">
+      <div class="f-head">
+        <span class="f-id">D5, D6, D7 — Deuda menor</span>
+        <span class="f-sev sev-warn">Robustez</span>
+        <span class="f-loc">varios</span>
+      </div>
+      <ul>
+        <li><strong>D5</strong> — <code>GetById</code> es <code>async</code> y no tiene un solo <code>await</code>: usa Dapper síncrono dentro de <code>async Task</code>. Bloquea un hilo del pool.</li>
+        <li><strong>D6</strong> — línea 136: <code>results.Read&lt;BranchResponseDTO&gt;().ToList();</code> lee un resultset y lo tira. Parece intencional (avanzar el cursor), pero no hay ni un comentario. El próximo que lo lea lo borra y rompe <code>Technicians</code>.</li>
+        <li><strong>D7</strong> — <code>RepairShopController.cs:14</code>: <code>private int numer = 0;</code> nunca se usa. Es uno de los 652 warnings del build.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="sec">Destino — zona NUEVO, y el seam que lo hace reversible</h2>
+    <div class="diagram">
+<pre>  <span class="lim">Kaptas.API/Features/</span>
+  ├── <b>_Shared/</b>                        <span class="lim">nace con este cambio · lo usan los 23 módulos que siguen</span>
+  │   ├── ICurrentUserProvider        reemplaza  IBaseService
+  │   ├── ITenantConnectionFactory    reemplaza  IDbService
+  │   ├── ISpRunner                   reemplaza  ISpExecute
+  │   └── IUserBranchesQuery          reemplaza  IBranchService.ListUserBranches()
+  │
+  └── <b>RepairShop/</b>
+      ├── DTOs/                       14 DTOs movidos desde Kaptas.DTO/
+      ├── Persistence/
+      │   ├── IRepairShopRepository   puerto: un método por SP
+      │   └── RepairShopSpRepository  <span class="lim">único archivo que sabe que existe SQL</span>
+      ├── IRepairShopFeatureService
+      ├── RepairShopFeatureService    valida tenant · llama repo · mapea
+      └── RepairShopController        ~30 líneas · <span class="good">con [Authorize]</span>
+
+
+                    IRepairShopService          <span class="lim">el contrato no cambia</span>
+                            ▲
+              ┌─────────────┴─────────────┐
+              │  <b>RepairShopServiceRouter</b>  │      decide por tenant
+              └────┬─────────────────┬────┘
+     flag OFF      │                 │      flag ON
+                   ▼                 ▼
+        ┌────────────────┐   ┌──────────────────┐
+        │ <span class="leg">LegacyAdapter</span>  │   │ <span class="lim">FeatureAdapter</span>   │
+        │ → servicio     │   │ → servicio       │
+        │   viejo        │   │   nuevo          │
+        └────────────────┘   └──────────────────┘</pre>
+    </div>
+    <p>El <code>RepairShopController</code> viejo sigue inyectando <code>IRepairShopService</code> y no se entera de nada. Ese es el punto: <strong>R3 no toca el controller, migra tenants</strong>. Y como el flag es por tenant, cualquier problema se apaga sin deploy.</p>
+  </section>
+
+  <section>
+    <h2 class="sec">Los pasos</h2>
+    <div class="steps">
+
+      <div class="step">
+        <div class="step-id">R1</div>
+        <div class="step-body">
+          <h3>Caracterizar lo que el código hace hoy</h3>
+          <p>No lo que debería hacer. Si un test documenta un bug, se escribe <em>en verde contra el bug</em>. 21 tests de integración contra los SPs reales, más 4 de seguridad que nacen rojos y se quedan rojos.</p>
+          <ul>
+            <li><strong>R1.1</strong> — lectura: <code>All</code>, <code>GetById</code>, <code>InitialData</code>, <code>Print</code>. 10 tests. Uno de ellos, <code>GetById_CasoInexistente_HoyLanzaNullReferenceException</code>, deja por escrito el defecto D4.</li>
+            <li><strong>R1.2</strong> — escritura: <code>Add</code>, <code>Update</code>, <code>ChangeStatus</code>. 6 tests. Cubre el TVP y los parámetros OUTPUT.</li>
+            <li><strong>R1.3</strong> — dinero: <code>Generate</code> y <code>Complete</code>, los dos que graban documentos de pago. 5 tests. <code>GenerateRepairShopCase_ConIdCompanyEnBody_UsaElDelBody</code> es incómodo a propósito.</li>
+            <li><strong>R1.4</strong> — seguridad: 4 tests rojos para D1, D2 y D3. Nunca se borran.</li>
+          </ul>
+          <p class="gate">Antes de escribir nada: verificar contra la base si los SPs filtran por IdCompany.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-id">R2</div>
+        <div class="step-body">
+          <h3>Crear el Feature y el seam</h3>
+          <p>Orden obligatorio: DTOs, después interfaces, después implementación, después controller.</p>
+          <ul>
+            <li><strong>R2.1</strong> — nace <code>_Shared/</code> con los cuatro puertos, y Scrutor en <code>Program.cs</code> (hoy no existe). 4 tests unitarios.</li>
+            <li><strong>R2.2</strong> — nace <code>Features/RepairShop/</code>. 6 tests unitarios con el repositorio mockeado. Los 21 tests de R1 se corren contra la implementación nueva: los que cubren D3 y D4 ahora <em>fallan</em>, porque el código nuevo arregla esos bugs. Esa es la señal de que el refactor funcionó, y cada divergencia se documenta en el PR.</li>
+            <li><strong>R2.3</strong> — el router con el flag por tenant. 3 tests. Se despliega con el flag en <code>false</code> para todos: cero cambio de comportamiento.</li>
+          </ul>
+          <p class="gate">Dos decisiones bloqueantes para QA-DEV antes de escribir código. Ver abajo.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-id">R3</div>
+        <div class="step-body">
+          <h3>Migrar tenant por tenant</h3>
+          <p>El fan-in real es de <strong>un solo consumidor</strong>, así que no hay clientes de código que migrar. Se activa el flag en un tenant interno, se observa una semana, y se comparan errores 500, latencia p95 y casos creados por día. Ante cualquier anomalía, el flag vuelve a <code>false</code> sin deploy.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-id">R4</div>
+        <div class="step-body">
+          <h3>Marcar el viejo como obsoleto</h3>
+          <p>Atributo <code>[Obsolete]</code> en <code>RepairShopService</code> y un log de advertencia en el <code>LegacyAdapter</code>: si alguien todavía cae ahí, queda registro con el tenant.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-id">R5</div>
+        <div class="step-body">
+          <h3>Desmontar</h3>
+          <p>Se borran el servicio viejo, su interfaz, su controller, los tres adapters del seam y el flag. Los 21 tests de caracterización <strong>se quedan</strong>: ahora son los tests de regresión del Feature. La zona pasa a LIMPIO.</p>
+          <p class="gate">Punto de no retorno. El log de R4 tiene que mostrar cero entradas durante 30 días. Por métricas, no por intuición.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2 class="sec">Dos decisiones que no puedo tomar solo</h2>
+    <div class="col-tight">
+      <div class="finding warn">
+        <div class="f-head"><span class="f-id">¿Cómo resuelve InitialData las sucursales?</span></div>
+        <p><code>InitialData</code> llama a <code>IBranchService.ListUserBranches()</code>, que es un servicio legado y está prohibido en <code>Features/</code>. O duplicás la query detrás de un puerto —mi recomendación, con la duplicación anotada como deuda hasta que se recicle Branch— o hacés un adapter que delegue en el viejo, que es más barato pero viola la regla de acoplamiento y hay que borrarlo después.</p>
+      </div>
+      <div class="finding warn">
+        <div class="f-head"><span class="f-id">¿ICurrentUserProvider valida la compañía del header?</span></div>
+        <p>Si la valida, arreglás el defecto D2 de raíz, pero <strong>cambiás el comportamiento</strong> y rompés la caracterización de R1 a propósito. Si no la valida, arrastrás el defecto al código nuevo. Es la decisión de fondo de todo el cambio.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="sec">Deuda que este cambio registra sin pagar</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Deuda</th><th>Dónde</th></tr></thead>
+        <tbody>
+          <tr><td>La lógica de negocio de Taller vive en 9 stored procedures no versionados</td><td class="mono">base del tenant</td></tr>
+          <tr><td><code>IUserBranchesQuery</code> duplica la query de <code>BranchService</code></td><td class="mono">hasta reciclar Branch</td></tr>
+          <tr><td>D2 (tenant por header) afecta a todo el sistema, no solo a Taller</td><td class="mono">BaseService.cs:141-143</td></tr>
+          <tr><td><code>ExpensesController</code> y <code>PurchaseController</code> tampoco tienen <code>[Authorize]</code></td><td class="mono">fuera de scope</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p>Los defectos D1, D2 y D3 exceden este módulo. Conviene tratarlos por canal privado con QA-DEV, no en un work item público del board.</p>
+    <p><code>proposal.md</code> · <code>design.md</code> · <code>tasks.md</code> · <code>plan.html</code> — en <code>openspec/changes/refactor-repair-shop/</code></p>
+  </footer>
+
+</div>
+
+</body>
+</html>

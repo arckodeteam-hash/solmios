@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kaptas — Cronograma migración módulo Contactos</title>
+<style>
+  :root{--bg:#f8fafc;--ink:#0f172a;--muted:#475569;--line:#e2e8f0;--card:#fff;
+        --violet:#7c3aed;--green:#16a34a;--amber:#b45309;--red:#b91c1c;--blue:#1d4ed8;
+        --amber-bg:#fffbeb;--red-bg:#fef2f2;--green-bg:#f0fdf4;--blue-bg:#eff6ff;--violet-bg:#faf5ff;}
+  @media(prefers-color-scheme:dark){:root{--bg:#0e1116;--ink:#e6edf3;--muted:#9aa4b2;--line:#2a313c;--card:#161b22;
+        --amber-bg:#2a2412;--red-bg:#2c1512;--green-bg:#12241c;--blue-bg:#0f1e33;--violet-bg:#1e1633;}}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55}
+  .wrap{max-width:1080px;margin:0 auto;padding:26px 20px 70px}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:15px;margin:0 0 4px;max-width:820px}
+  h2{font-size:19px;margin:30px 0 12px;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 20px;margin-top:14px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-top:16px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .stat .n{font-size:22px;font-weight:800;font-family:ui-monospace,monospace}
+  .stat .l{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .scroll{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0;min-width:640px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:700;white-space:nowrap}
+  code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.86em;background:rgba(127,127,127,.14);padding:1px 5px;border-radius:5px}
+  .pill{display:inline-block;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:20px;white-space:nowrap}
+  .c-s{background:var(--green-bg);color:var(--green)}
+  .c-m{background:var(--amber-bg);color:var(--amber)}
+  .c-a{background:var(--red-bg);color:var(--red)}
+  .box{border-radius:12px;padding:12px 16px;margin-top:12px;font-size:14px}
+  .box.red{background:var(--red-bg);border:1px solid var(--red)}
+  .box.amber{background:var(--amber-bg);border:1px solid var(--amber)}
+  .box.green{background:var(--green-bg);border:1px solid var(--green)}
+  .box.blue{background:var(--blue-bg);border:1px solid var(--blue)}
+  .box b{font-weight:800}
+  ul{margin:6px 0;padding-left:20px}li{margin:4px 0}
+  .tot{font-weight:800}
+  .lead{font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📇 Migración módulo Contactos — Cronograma</h1>
+  <p class="sub">De controller legado a Feature v2, con el mismo método probado en Taller: caracterizar el viejo → construir el nuevo → probar que responde idéntico (byte a byte), sin tocar el legado.</p>
+
+  <div class="stats">
+    <div class="stat"><div class="n">21</div><div class="l">endpoints</div></div>
+    <div class="stat"><div class="n">9 / 8 / 4</div><div class="l">simple / media / alta</div></div>
+    <div class="stat"><div class="n">12</div><div class="l">stored procedures</div></div>
+    <div class="stat"><div class="n">~8-11</div><div class="l">días (DEV humano)</div></div>
+    <div class="stat"><div class="n">~10-14 h</div><div class="l">tiempo de máquina</div></div>
+  </div>
+
+  <div class="box amber"><b>Dificultad: Media-Alta.</b> Más ancho que Taller (21 vs 9 endpoints) y con tres cosas que Taller no tenía: una <b>llamada HTTP a un tercero</b> (validación RNC), un <b>reporte financiero</b> (cartera de clientes), y <b>agujeros de seguridad IDOR</b> en ~8 métodos que hay que cerrar. La parte buena: casi no depende de la facturación fiscal.</div>
+
+  <!-- CRONOGRAMA -->
+  <h2>🗓️ Cronograma por fases</h2>
+  <p class="lead">Ordenado de menor a mayor riesgo. Cada fase termina con sus endpoints probados (idénticos al viejo) y commiteados.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Fase</th><th>Qué incluye</th><th>Endpoints</th><th>Días DEV</th><th>Riesgo</th></tr></thead>
+    <tbody>
+      <tr><td><b>0 · Base</b></td><td>Estructura del Feature, contratos, caracterización base, DTOs propios</td><td>—</td><td>1</td><td><span class="pill c-s">bajo</span></td></tr>
+      <tr><td><b>1 · Catálogos</b></td><td>Lookups de diccionario y datos de carga</td><td><code>types</code> · <code>GeType</code> · <code>documents/types</code> · <code>LoadData</code></td><td>0.5–1</td><td><span class="pill c-s">bajo</span></td></tr>
+      <tr><td><b>2 · Lecturas</b></td><td>Listas paginadas, detalle, autocomplete, precios permitidos</td><td><code>Get</code> · <code>ContactsSimpleList</code> · <code>GetLookups</code> · <code>GetById</code> · <code>GetPreciosPermitidos</code></td><td>1.5–2</td><td><span class="pill c-m">medio</span></td></tr>
+      <tr><td><b>3 · CRUD escritura</b></td><td>Alta (SP con 4 listas TVP), edición, borrado, imagen, "siga"</td><td><code>Create</code> · <code>Update</code> · <code>Delete</code> · <code>UpdateContactoImagen</code> · <code>UpdateSigaData</code></td><td>2–3</td><td><span class="pill c-a">alto</span></td></tr>
+      <tr><td><b>4 · Relaciones y ubicación</b></td><td>Contactos relacionados (TVP) y geolocalización</td><td><code>RelatedContactInsert</code> · <code>DeleteRelatedContact</code> · <code>UpdateRelatedContactRelationType</code> · <code>ContactLocation</code></td><td>1–1.5</td><td><span class="pill c-m">medio</span></td></tr>
+      <tr><td><b>5 · Especiales</b></td><td>Consulta RNC externa + cartera de clientes administrados</td><td><code>GetRncData</code> · <code>GetClientesAdministrados</code> · <code>UpdateClienteAdministrado</code></td><td>2</td><td><span class="pill c-a">alto</span></td></tr>
+      <tr><td><b>6 · Seguridad</b></td><td>Cerrar los IDOR (validar empresa) + corregir <code>Id_UserCreate=1</code>, tests de seguridad</td><td>transversal</td><td>1</td><td><span class="pill c-a">alto</span></td></tr>
+      <tr><td><b>7 · Cierre</b></td><td>Verificación final, suite completa, PR</td><td>—</td><td>0.5</td><td><span class="pill c-s">bajo</span></td></tr>
+      <tr class="tot"><td colspan="3">TOTAL</td><td>~8–11 días</td><td>—</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="lead">Tiempo de máquina (lo que tarda el asistente, mayormente esperando corridas de tests contra la base): <b>~10–14 h</b> repartidas en varias sesiones.</p>
+
+  <!-- QUE PROBAR -->
+  <h2>🧪 Qué hay que probar (de verdad, no genérico)</h2>
+  <div class="card">
+    <b>1 · Caracterización (foto del viejo)</b> — capturar el JSON que el legado devuelve HOY para cada endpoint, y usarlo de referencia. Es el "golden master".
+    <br><br>
+    <b>2 · Comparación byte a byte (viejo vs v2)</b> — por cada endpoint, pegarle a los dos por HTTP con el mismo input y exigir el <b>mismo JSON exacto</b>. Es el juez, igual que en Taller.
+    <br><br>
+    <b>3 · Verificación input → output por endpoint</b> (lo concreto):
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Endpoint</th><th>Input a mandar</th><th>Qué verificar en el retorno</th></tr></thead>
+      <tbody>
+        <tr><td><code>Create</code></td><td>Contacto + 4 listas (tipos, números, relacionados, precios)</td><td>Devuelve el <code>Id</code> nuevo, y quedan filas en las <b>5 tablas</b> hijas</td></tr>
+        <tr><td><code>GetById</code></td><td><code>Id</code> de un contacto real</td><td>Trae números, tipos, relacionados, geografía y el flag <code>FacturasPendientes</code></td></tr>
+        <tr><td><code>Get</code> (paginado)</td><td>filtros + página</td><td>Metadata de paginación correcta (total, primer/último, páginas)</td></tr>
+        <tr><td><code>GetRncData</code></td><td>un RNC</td><td>Lista con razón social, actividad, etc. — <b>con el tercero simulado</b> (no pegar a la API real en test)</td></tr>
+        <tr><td><code>GetClientesAdministrados</code></td><td><code>TipoFiltro</code> (sin_precios / mayor_credito…)</td><td>Métricas: última venta, ventas 3 meses, total por cobrar, precio asignado</td></tr>
+        <tr><td><code>Delete</code></td><td><code>Id</code> + comentario</td><td>Baja lógica aplicada; contacto ajeno → rechazado</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <b>4 · Seguridad (IDOR)</b> — por cada método por-Id, pedir un contacto de <b>otra empresa</b> y exigir que el v2 <b>rechace (401)</b>, donde el viejo devolvía datos ajenos.
+    <br><br>
+    <b>5 · Escrituras con datos descartables</b> — Create/Update/Delete modifican la base: usar contactos throwaway y resetear la base entre corridas (ya lo tenemos montado).
+  </div>
+
+  <!-- RIESGOS QUE AFECTAN LOS TESTS -->
+  <h2>⚠️ Lo que puede complicar los tests (leer antes de estimar)</h2>
+
+  <div class="box red"><b>1 · <code>GetRncData</code> pega a un tercero (api.indexa.do).</b> No se puede comparar byte a byte contra una API externa que se puede caer, cambiar o pedir token. <b>Hay que simular (mock) esa llamada</b> en los tests. Además hoy la URL está fija en el código, sin credencial ni timeout, y falla en silencio — se corrige de paso.</div>
+
+  <div class="box red"><b>2 · <code>GetClientesAdministrados</code> devuelve métricas que dependen de la fecha.</b> "Ventas últimos 3 meses", "última venta", "total por cobrar" cambian con el tiempo. Un golden master byte a byte <b>se rompe mañana</b>. Hay que fijar una fecha de referencia o tolerar esos campos en la comparación.</div>
+
+  <div class="box amber"><b>3 · Al cerrar el IDOR, el v2 NO será idéntico al viejo en los casos cross-tenant</b> — y está bien. El viejo devuelve datos de otra empresa; el v2 devuelve 401. Es una <b>diferencia intencional</b> (mejora de seguridad), igual que en Taller. El test debe esperar esa diferencia, no marcarla como error.</div>
+
+  <div class="box amber"><b>4 · <code>Create</code> y <code>Update</code> hoy son asimétricos.</b> El alta usa un procedure con 4 listas; la edición (por EF) <b>no toca números ni precios</b> e itera una colección mal recargada. Decisión a tomar: replicar el bug tal cual primero (para que el test pase idéntico) y corregirlo después con su propio test. No "arreglar de paso".</div>
+
+  <div class="box red"><b>5 · NO mover el namespace <code>Kaptas.DTOs.Contact</code>.</b> Ahí vive <code>PaginationDTO</code>, del que <b>heredan 45 DTOs de todo el ERP</b> (bancos, facturas, nómina, productos…). Migrar los DTOs de contacto a propios es seguro, pero tocar esa carpeta/namespace rompe medio sistema.</div>
+
+  <!-- IMPACTO -->
+  <h2>🔗 Qué afecta (impacto)</h2>
+  <div class="box green"><b>Migrar el servicio es seguro.</b> Solo el <code>ContactController</code> usa <code>IContactService</code>; ningún otro módulo lo inyecta. Cambiar la clase no rompe a nadie más.</div>
+  <div class="box amber"><b>Lo que NO se puede tocar es la tabla <code>Contactos</code> ni sus procedures.</b> Media docena de módulos (Ventas, Compras, Gastos, Notas de Crédito, Caja, Restaurante, Empleados, el propio Taller) leen esa tabla directo por SQL. Se reescribe el acceso en C#, pero el <b>esquema y los SP se dejan intactos</b> — igual que con Taller.</div>
+
+  <p class="lead" style="margin-top:26px">Este cronograma sale del análisis real del código y la base de prueba (21 endpoints mapeados uno por uno). Las estimaciones son rangos, no promesas: el comodín es <code>GetRncData</code> (si el tercero pide token/tiene rate-limit, suma medio día).</p>
+</div>
+</body>
+</html>
