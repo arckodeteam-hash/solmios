@@ -65,7 +65,8 @@ ya figura para esa campaña, no se encola otra vez (defensa extra además del 40
 - `POST /api/crm/campaigns` — crear draft (`guests:create`).
 - `GET /api/crm/campaigns` — listar (`guests:view`).
 - `POST /api/crm/campaigns/:id/send` — enviar (`guests:edit`).
-- Encolado vía connector `crm-emailqueue` (puerto `enqueue(hotelId, to, subject, html)`).
+- Encolado vía `setEmailDeps` post-init (patrón wallet-pass/abandon-recovery del proyecto —
+  EmailService es servicio compartido, no módulo: connector no aplica).
 
 ## DB
 

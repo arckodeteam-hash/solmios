@@ -20,6 +20,40 @@ export interface CreateCouponDTO {
   segmentId?: string; pointsCost?: number
 }
 
+/** Campaña de email a un segmento (spec crm-campaigns). */
+export interface CampaignDTO {
+  hotelId: string
+  name: string
+  segmentId: string
+  subject: string
+  body: string
+  status: 'draft' | 'sent'
+  sentCount: number
+  sentAt: string | null
+}
+
+/** Log de envío por destinatario. */
+export interface CampaignSendDTO {
+  hotelId: string
+  campaignId: string
+  guestId: string
+  email: string
+  sentAt: string | null
+}
+
+export interface CreateCampaignDTO {
+  hotelId?: string
+  name: string
+  segmentId: string
+  subject: string
+  body: string
+}
+
+export interface SendCampaignResult {
+  queued: number
+  skipped: number
+}
+
 export interface GuestSegmentDTO {
   id: string; hotelId: string; name: string; description: string
   rules: string | null; count: number; active: number

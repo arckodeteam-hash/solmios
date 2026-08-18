@@ -684,6 +684,11 @@ const ttlockForWallet = system.resolveModule<{ generateCode(hotelId: string, res
 const walletPass = system.resolveModule<{ setTtlockPort(t: any): void }>('wallet-pass')
 if (walletPass && ttlockForWallet) walletPass.setTtlockPort(ttlockForWallet)
 
+// Campañas del CRM: el envío va por la MISMA cola persistente del resto del sistema
+// (patrón wallet-pass/abandon-recovery — EmailService inyectado post-init).
+const crmForEmail = system.resolveModule<{ setEmailDeps(es: unknown): void }>('crm')
+if (crmForEmail) crmForEmail.setEmailDeps(emailService)
+
 // Post-init: los avisos al teléfono. Sin credenciales de Firebase `fromEnv`
 // devuelve null y el módulo se queda solo guardando tokens: la app sigue
 // avisando mientras está abierta, que es lo que hacía antes de todo esto.

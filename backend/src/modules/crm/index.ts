@@ -3,12 +3,12 @@ import { createModule, OrmRepository } from 'arckode-framework'
 import { registerCrmModels } from './model'
 import { CrmService } from './service'
 import { CrmController } from './controller'
-import type { LoyaltyTransactionDTO, CouponDTO, GuestSegmentDTO } from './types'
+import type { LoyaltyTransactionDTO, CouponDTO, GuestSegmentDTO, CampaignDTO, CampaignSendDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { createModuleGuard } from '../../infrastructure/auth/require-module'
 
 export { CrmService }
-export type { LoyaltyTransactionDTO, CouponDTO, GuestSegmentDTO, GuestLTV, CrmDashboard, CreateCouponDTO, CreateSegmentDTO } from './types'
+export type { LoyaltyTransactionDTO, CouponDTO, GuestSegmentDTO, GuestLTV, CrmDashboard, CreateCouponDTO, CreateSegmentDTO, CampaignDTO, CampaignSendDTO, CreateCampaignDTO, SendCampaignResult } from './types'
 export type { CrmSockets } from './sockets'
 
 export function CrmModule() {
@@ -35,10 +35,13 @@ export function CrmModule() {
       const guestRepo = new OrmRepository<any>(orm, 'Guests')
       const reservaRepo = new OrmRepository<any>(orm, 'Reservations')
       const configRepo = new OrmRepository<any>(orm, 'Configuration')
+      const campaignsRepo = new OrmRepository<CampaignDTO>(orm, 'Campaign')
+      const campaignSendsRepo = new OrmRepository<CampaignSendDTO>(orm, 'CampaignSend')
 
       const log = logger.child('crm')
       const service = new CrmService(loyaltyRepo, couponRepo, segmentRepo, guestRepo, reservaRepo, log, cache, auth)
       service.setConfigRepo(configRepo)
+      service.setCampaignRepos(campaignsRepo, campaignSendsRepo)
       const controller = new CrmController(service, log)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
@@ -60,6 +63,10 @@ export function CrmModule() {
       router.post('/api/crm/segments', guard('guests', 'create'), (req) => controller.createSegment(req))
       router.get('/api/crm/segments', guard('guests', 'view'), (req) => controller.listSegments(req))
       router.get('/api/crm/segments/:id/guests', guard('guests', 'view'), (req) => controller.getGuestsInSegment(req))
+
+      router.post('/api/crm/campaigns', guard('guests', 'create'), (req) => controller.createCampaign(req))
+      router.get('/api/crm/campaigns', guard('guests', 'view'), (req) => controller.listCampaigns(req))
+      router.post('/api/crm/campaigns/:id/send', guard('guests', 'edit'), (req) => controller.sendCampaign(req))
 
       router.post('/api/crm/tiers/recompute', guard('guests', 'edit'), (req) => controller.recomputeTiers(req))
       router.get('/api/crm/segments/:id/export', guard('guests', 'view'), (req) => controller.exportSegment(req))

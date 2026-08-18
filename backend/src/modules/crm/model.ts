@@ -48,8 +48,42 @@ const SegmentModel: ModelDefinition = {
   timestamps: true,
 }
 
+/**
+ * Campaña de email a un segmento (spec crm-campaigns). El envío encola filas en
+ * `email_queue` (worker existente) y deja log en `campaign_sends`.
+ */
+const CampaignModel: ModelDefinition = {
+  table: 'campaigns',
+  fields: {
+    hotelId: { type: 'string', required: true, indexed: true },
+    name: { type: 'string', required: true },
+    segmentId: { type: 'string', required: true },
+    subject: { type: 'string', required: true },
+    body: { type: 'text' },
+    status: { type: 'string', default: 'draft' }, // draft | sent
+    sentCount: { type: 'number', default: 0 },
+    sentAt: { type: 'string' },
+  },
+  timestamps: true,
+}
+
+/** Log por destinatario — anti-reenvío: un huésped, una fila por campaña. */
+const CampaignSendModel: ModelDefinition = {
+  table: 'campaign_sends',
+  fields: {
+    hotelId: { type: 'string', required: true, indexed: true },
+    campaignId: { type: 'string', required: true, indexed: true },
+    guestId: { type: 'string', required: true, indexed: true },
+    email: { type: 'string', required: true },
+    sentAt: { type: 'string' },
+  },
+  timestamps: true,
+}
+
 export function registerCrmModels(orm: ORM): void {
   orm.define('LoyaltyTransaction', LoyaltyTransactionModel)
   orm.define('Coupon', CouponModel)
   orm.define('GuestSegment', SegmentModel)
+  orm.define('Campaign', CampaignModel)
+  orm.define('CampaignSend', CampaignSendModel)
 }

@@ -18,7 +18,9 @@ Validaciones: ✓ `SegmentUseCase.guestsIn` resuelve miembros (misma fuente que 
 omiten sin abortar · ⬜ variables {{nombre}}/{{hotel}}/{{puntos}} resueltas al encolar ·
 ⬜ tests: envío completo / sin email / reenvío 409 / dedupe de guest duplicado.
 
-### T3: Connector crm-emailqueue (puerto enqueue)
+### T3: ~~Connector~~ → setEmailDeps (puerto enqueue)
+> Corregido en implementación: EmailService es servicio compartido (no módulo) — el patrón
+> del proyecto es inyección post-init como wallet-pass. Sin connector.
 Validaciones: ✓ patrón connector = crm-promocodes (setPort + delegación plana) ·
 ✓ email-queue es módulo registrado (resolveModule lo encuentra) · ⬜ el puerto no mete lógica
 (analyzer: connectors solo wirean) · ⬜ sin import directo crm→email-queue ·

@@ -1,8 +1,8 @@
 // crm/controller.ts
 import type { HttpRequest, Logger } from 'arckode-framework'
-import { validateSchema } from 'arckode-framework'
+import { validateSchema } from '../../shared/validators/validate-body'
 import type { CrmService } from './service'
-import { AwardPointsSchema, RedeemPointsSchema, CreateSegmentSchema } from './validators/schema'
+import { AwardPointsSchema, RedeemPointsSchema, CreateSegmentSchema, CreateCampaignSchema } from './validators/schema'
 
 /**
  * El `hotelId` es obligatorio en el schema pero el cliente no lo manda: sale del token. Se inyectaba
@@ -30,6 +30,18 @@ export class CrmController {
   }
   async getPointsHistory(req: HttpRequest) { return { status: 200, body: await this.service.getPointsHistory(req.params.guestId, (req as any).user?.hotelId, (req as any).user?.role) } }
   async getPointsBalance(req: HttpRequest) { return { status: 200, body: { balance: await this.service.getPointsBalance(req.params.guestId, (req as any).user?.hotelId, (req as any).user?.role) } } }
+
+  // ─── Campañas a segmentos (spec crm-campaigns) ───────
+  async createCampaign(req: HttpRequest) {
+    const d = validateSchema(CreateCampaignSchema, withHotelId(req)) as any
+    return { status: 201, body: await this.service.createCampaign(d) }
+  }
+  async listCampaigns(req: HttpRequest) { return { status: 200, body: { data: await this.service.listCampaigns((req as any).user?.hotelId ?? (req.query as any).hotelId) } } }
+  async sendCampaign(req: HttpRequest) {
+    const u = (req as any).user
+    if (!u?.hotelId) return { status: 400, body: { error: 'hotelId requerido' } }
+    return { status: 200, body: await this.service.sendCampaign(u.hotelId, req.params.id) }
+  }
 
   /** Recompute masivo de tiers (backfill tras cambiar umbrales). Spec crm-loyalty. */
   async recomputeTiers(req: HttpRequest) {

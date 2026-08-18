@@ -344,6 +344,111 @@
       </template>
     </AppModal>
 
+    <!-- Campañas a segmentos (spec crm-campaigns) -->
+    <SectionCard v-if="activeTab === 'campaigns' && !loading"
+      title="Campañas de email" :subtitle="`${campaigns.length} campaña(s)`" body-class="p-0">
+      <template #actions>
+        <button @click="openCampaignForm"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/15 transition-colors cursor-pointer">
+          <span class="h-3.5 w-3.5" v-html="ICON_PLUS"></span> Nueva campaña
+        </button>
+      </template>
+
+      <EmptyState v-if="!campaigns.length" :icon="ICON_TAG_EMPTY"
+        title="Todavía no hay campañas"
+        message="Componé un email y envialo a un segmento de huéspedes.">
+        <template #action>
+          <button @click="openCampaignForm"
+            class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white hover:bg-navy-light transition-colors cursor-pointer">
+            Nueva campaña
+          </button>
+        </template>
+      </EmptyState>
+
+      <div v-else class="overflow-x-auto">
+        <table class="w-full min-w-[680px] text-sm tbl-head">
+          <thead>
+            <tr>
+              <th class="text-left px-4 py-3 text-[10px]">Campaña</th>
+              <th class="text-left px-4 py-3 text-[10px] hidden lg:table-cell">Asunto</th>
+              <th class="text-right px-4 py-3 text-[10px]">Enviados</th>
+              <th class="text-left px-4 py-3 text-[10px] hidden lg:table-cell">Estado</th>
+              <th class="text-right px-4 py-3 text-[10px]">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="c in campaigns" :key="c.id" class="border-b border-border last:border-0 hover:bg-surface/60 transition-colors">
+              <td class="px-4 py-3">
+                <div class="font-black text-navy">{{ c.name }}</div>
+                <div class="text-[11px] text-text-muted">{{ segmentName(c.segmentId) }}</div>
+              </td>
+              <td class="px-4 py-3 text-text-secondary hidden lg:table-cell">{{ c.subject }}</td>
+              <td class="px-4 py-3 text-right tabular-nums text-text-secondary">{{ c.sentCount }}</td>
+              <td class="px-4 py-3 hidden lg:table-cell">
+                <span class="rounded-full px-2.5 py-1 text-[11px] font-extrabold"
+                  :class="c.status === 'sent' ? 'bg-teal/10 text-teal' : 'bg-amber/10 text-amber'">
+                  {{ c.status === 'sent' ? `Enviada ${fmtCampaignDate(c.sentAt)}` : 'Borrador' }}
+                </span>
+              </td>
+              <td class="px-4 py-3 text-right">
+                <button v-if="c.status === 'draft'" @click="confirmSend(c)" :disabled="sendingCampaign === c.id"
+                  class="rounded-full bg-navy px-4 py-1.5 text-[11px] font-extrabold text-white hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50">
+                  {{ sendingCampaign === c.id ? 'Enviando…' : 'Enviar' }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
+
+    <!-- Modal: Nueva campaña -->
+    <AppModal v-if="showCampaignForm" size="md" title="Nueva campaña"
+      subtitle="Se enviará a los huéspedes del segmento elegido" @close="showCampaignForm = false">
+      <div class="space-y-4">
+        <div>
+          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nombre interno *</label>
+          <input v-model="campaignForm.name" placeholder="Ej: Promo temporada alta" maxlength="120"
+            class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
+        </div>
+        <div>
+          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Segmento *</label>
+          <select v-model="campaignForm.segmentId"
+            class="w-full rounded-xl border border-border px-4 py-2.5 text-sm bg-white focus:border-navy focus:outline-none cursor-pointer">
+            <option value="" disabled>Elegí un segmento…</option>
+            <option v-for="sg in segments" :key="sg.id" :value="sg.id">{{ sg.name }} ({{ sg.count }})</option>
+          </select>
+        </div>
+        <div>
+          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Asunto *</label>
+          <input v-model="campaignForm.subject" placeholder="Ej: Volvé con 20% de descuento" maxlength="200"
+            class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
+        </div>
+        <div>
+          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Mensaje (HTML)</label>
+          <textarea v-model="campaignForm.body" rows="7" maxlength="20000"
+            placeholder="<p>Hola {{nombre}}, tenés {{puntos}} puntos en {{hotel}}…</p>"
+            class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-mono focus:border-navy focus:outline-none"></textarea>
+          <p v-pre class="mt-1 text-[11px] text-text-muted">Variables: <code>{{ nombre }}</code>, <code>{{ hotel }}</code>, <code>{{ puntos }}</code> — se resuelven por huésped al enviar.</p>
+        </div>
+      </div>
+      <template #footer>
+        <button @click="showCampaignForm = false" class="px-4 py-2.5 text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">Cancelar</button>
+        <button @click="saveCampaign" :disabled="savingCampaign"
+          class="rounded-full bg-navy px-5 py-2.5 text-sm font-extrabold text-white hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50">
+          {{ savingCampaign ? 'Guardando…' : 'Crear borrador' }}
+        </button>
+      </template>
+    </AppModal>
+
+    <!-- Confirmación de envío -->
+    <ConfirmModal v-if="sendTarget" title="Enviar campaña"
+      :message="`¿Enviar la campaña ${sendTarget.name} a los huéspedes del segmento ${segmentName(sendTarget.segmentId)}? Los sin email se omiten y no se puede deshacer.`"
+      confirm-label="Enviar"
+      :loading="sendingCampaign === sendTarget.id"
+      @close="sendTarget = null"
+      @confirm="doSendCampaign" />
+
     <!-- Configuración de fidelización (T2, spec crm-loyalty) -->
     <SectionCard v-if="activeTab === 'config' && !loading"
       title="Programa de puntos" subtitle="Ratio, valor del canje y estados — aplica desde el próximo checkout">
@@ -440,7 +545,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { PromoCodeService, type PromoCode, type PromoValidationResult } from '@/services/PromoCode.service'
 import { ConfigService } from '@/services/Platform.service'
-import { CrmService, type Coupon, type GuestSegment, type GuestLTV, type CrmDashboard, type SegmentGuest } from '@/services/Crm.service'
+import { CrmService, type Coupon, type GuestSegment, type GuestLTV, type CrmDashboard, type SegmentGuest, type Campaign } from '@/services/Crm.service'
 import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth.store'
 import { useApiError } from '@/composables/useApiError'
@@ -489,6 +594,7 @@ const tabs = [
   { value: 'coupons', label: 'Cupones', icon: ICON_TAG },
   { value: 'validate', label: 'Validar', icon: ICON_CARD },
   { value: 'segments', label: 'Segmentos', icon: ICON_TARGET },
+  { value: 'campaigns', label: 'Campañas', icon: ICON_TAG },
   { value: 'config', label: 'Configuración', icon: ICON_TAG },
 ]
 
@@ -525,6 +631,66 @@ const validateCode = ref('')
 const validateAmount = ref(0)
 const validatedCoupon = ref<Coupon | null>(null)
 const previewResult = ref<PromoValidationResult | null>(null)
+// Campañas (spec crm-campaigns)
+const campaigns = ref<Campaign[]>([])
+const showCampaignForm = ref(false)
+const savingCampaign = ref(false)
+const sendingCampaign = ref<string | null>(null)
+const sendTarget = ref<Campaign | null>(null)
+const campaignForm = ref({ name: '', segmentId: '', subject: '', body: '' })
+
+function segmentName(segmentId: string): string {
+  return segments.value.find((sg) => sg.id === segmentId)?.name ?? '—'
+}
+
+function fmtCampaignDate(iso: string | null): string {
+  return iso ? new Date(iso).toLocaleDateString('es-DO') : ''
+}
+
+async function loadCampaigns() {
+  try { campaigns.value = await CrmService.listCampaigns() } catch { /* vacío silencioso */ }
+}
+
+function openCampaignForm() {
+  campaignForm.value = { name: '', segmentId: '', subject: '', body: '' }
+  showCampaignForm.value = true
+}
+
+async function saveCampaign() {
+  if (!campaignForm.value.name.trim() || !campaignForm.value.segmentId || !campaignForm.value.subject.trim()) {
+    toast.warning('Completá nombre, segmento y asunto')
+    return
+  }
+  savingCampaign.value = true
+  try {
+    await CrmService.createCampaign(campaignForm.value)
+    toast.success('Campaña creada como borrador')
+    showCampaignForm.value = false
+    await loadCampaigns()
+  } catch (e) {
+    handle(e, 'No se pudo crear la campaña')
+  } finally {
+    savingCampaign.value = false
+  }
+}
+
+function confirmSend(c: Campaign) { sendTarget.value = c }
+
+async function doSendCampaign() {
+  if (!sendTarget.value?.id) return
+  sendingCampaign.value = sendTarget.value.id
+  try {
+    const r = await CrmService.sendCampaign(sendTarget.value.id)
+    toast.success(`Campaña enviada: ${r.queued} email(s) en cola${r.skipped ? `, ${r.skipped} omitido(s)` : ''}`)
+    sendTarget.value = null
+    await loadCampaigns()
+  } catch (e) {
+    handle(e, 'No se pudo enviar la campaña')
+  } finally {
+    sendingCampaign.value = null
+  }
+}
+
 const loyaltyCfg = ref({ enabled: true, pointsPerCurrencyUnit: 10, pointValue: 1, promoValidDays: 90 })
 const savingConfig = ref(false)
 const recomputing = ref(false)
@@ -567,7 +733,7 @@ async function loadData() {
   } catch { toast.error('Error al cargar') }
   finally { loading.value = false }
 }
-onMounted(() => { loadData(); loadLoyaltyConfig() })
+onMounted(() => { loadData(); loadLoyaltyConfig(); loadCampaigns() })
 
 async function createCoupon() {
   if (!couponForm.value.code) { toast.warning('Código requerido'); return }

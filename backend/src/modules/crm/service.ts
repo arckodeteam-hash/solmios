@@ -1,12 +1,10 @@
-// crm/service.ts — CRM engine: points, coupons (deprecados), segments, LTV.
-// Fachada fina: la lógica vive en usecases/ (loyalty, loyalty-config, redeem-with-promo,
-// tiers-recompute, segment-export, coupons, segments, ltv) — regla del analyzer (<200 líneas).
+// crm/service.ts — Fachada fina del CRM: la lógica vive en usecases/ (regla analyzer <200 líneas).
 
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
 import { ValidationError, NotFoundError } from 'arckode-framework'
 import type {
   LoyaltyTransactionDTO, CouponDTO, CreateCouponDTO,
-  GuestSegmentDTO, CreateSegmentDTO,
+  GuestSegmentDTO, CreateSegmentDTO, CampaignDTO, CampaignSendDTO, CreateCampaignDTO, SendCampaignResult,
   GuestLTV, CrmDashboard,
 } from './types'
 import type { CrmSockets } from './sockets'
@@ -17,6 +15,11 @@ import { readLoyaltyConfig } from './usecases/loyalty-config'
 import { redeemWithPromo } from './usecases/redeem-with-promo'
 import { recomputeTiers } from './usecases/tiers-recompute'
 import { segmentCsv, segmentFilename } from './usecases/segment-export'
+import { sendCampaign, createCampaign, listCampaigns } from './usecases/send-campaign'
+import * as pointsOps from './usecases/points-ops'
+import { CampaignUseCase } from './usecases/campaigns'
+import type { CampaignEnqueuePort } from './usecases/send-campaign'
+type CampaignEnqueue = CampaignEnqueuePort['enqueue']
 import { buildDashboard } from './usecases/dashboard'
 import { awardCheckoutStay } from './usecases/checkout-award'
 import { SegmentUseCase } from './usecases/segments'
@@ -35,6 +38,7 @@ export class CrmService {
   private ltvCalculator: LtvUseCase
   private coupons: CouponUseCase
   private segments: SegmentUseCase
+  private campaigns: CampaignUseCase
   private auditPort: AuditPort | null = null
   private promoPort: LoyaltyPromoPort | null = null
   private configRepo: Pick<RepositoryAdapter<any>, 'findMany'> = NO_CONFIG_REPO
@@ -47,6 +51,13 @@ export class CrmService {
 
   /** Configuración KV (`configuration`): ratio/tiers/flag por hotel. */
   setConfigRepo(repo: Pick<RepositoryAdapter<any>, 'findMany'>): void { this.configRepo = repo }
+
+  /** Repos de campañas (index.ts) + email (composition-root, patrón wallet-pass). */
+  setCampaignRepos(c: RepositoryAdapter<CampaignDTO>, s2: RepositoryAdapter<CampaignSendDTO>): void { this.campaigns.setRepos(c, s2) }
+  setEmailDeps(enqueue: CampaignEnqueue): void { this.campaigns.setEnqueuePort(enqueue) }
+
+  /** Fuente de miembros para campañas: la MISMA que la vista de segmentos. */
+  private segmentSource() { return { guestsIn: (hid: string, segId: string) => this.segments.guestsIn(hid, segId) } }
 
   /** Config del hotel con defaults históricos (nunca null — fail-safe). */
   private async loyaltyConfig(hotelId: string) {
@@ -66,6 +77,7 @@ export class CrmService {
     this.ltvCalculator = new LtvUseCase(guestRepo, reservaRepo, logger)
     this.coupons = new CouponUseCase({ repo: couponRepo, auth, onUsed: (id) => this.sockets.onCouponUsed?.(id) ?? Promise.resolve() })
     this.segments = new SegmentUseCase({ repo: segmentRepo, guestRepo, auth })
+    this.campaigns = new CampaignUseCase()
   }
 
   setSockets(s: Partial<CrmSockets>): void {
@@ -88,20 +100,16 @@ export class CrmService {
   }
 
   // ─── Points ───────────────────────────────────────────
-  async awardPoints(guestId: string, hotelId: string, points: number, description: string, reservationId?: string, role?: string): Promise<LoyaltyTransactionDTO> {
-    const guest = await this.guestRepo.findById(guestId)
-    if (!guest) throw new NotFoundError('Guest not found')
-    if (this.auth) this.auth.assertOwnership(guest.hotelId, hotelId, role, 'super_admin')
-    if (points <= 0) throw new ValidationError('Los puntos a acreditar deben ser positivos')
+  private pointsDeps() {
+    return {
+      loyaltyRepo: this.loyaltyRepo, guestRepo: this.guestRepo, auth: this.auth,
+      onPointsAwarded: (gid: string, pts: number) => this.sockets.onPointsAwarded?.(gid, pts),
+      checkTierUpgrade: (gid: string) => this.checkTierUpgrade(gid),
+    }
+  }
 
-    const txn = await this.loyaltyRepo.create({ guestId, hotelId, reservationId: reservationId ?? null, type: 'earn', points, description } as any)
-    // Leer, sumar, escribir: el ORM no entiende `{ increment }` — ver usecases/loyalty.ts.
-    const balance = applyPoints(guest.loyaltyPoints, points)
-    await this.guestRepo.update(guestId, { loyaltyPoints: balance } as any)
-
-    await this.sockets.onPointsAwarded?.(guestId, points)
-    await this.checkTierUpgrade(guestId)
-    return txn
+  awardPoints(guestId: string, hotelId: string, points: number, description: string, reservationId?: string, role?: string): Promise<LoyaltyTransactionDTO> {
+    return pointsOps.awardPoints(this.pointsDeps(), guestId, hotelId, points, description, reservationId, role)
   }
 
   async redeemPoints(guestId: string, hotelId: string, points: number, description: string, role?: string): Promise<LoyaltyTransactionDTO & { promoCode?: string; discountValue?: number }> {
@@ -113,24 +121,15 @@ export class CrmService {
     )
   }
 
-  async getPointsHistory(guestId: string, hotelId: string, role?: string): Promise<LoyaltyTransactionDTO[]> {
-    const guest = await this.guestRepo.findById(guestId)
-    if (!guest) throw new NotFoundError('Guest not found')
-    if (this.auth) this.auth.assertOwnership(guest.hotelId, hotelId, role, 'super_admin')
-    return this.loyaltyRepo.findMany({ guestId })
+  getPointsHistory(guestId: string, hotelId: string, role?: string): Promise<LoyaltyTransactionDTO[]> {
+    return pointsOps.getPointsHistory(this.pointsDeps(), guestId, hotelId, role)
   }
 
-  async getPointsBalance(guestId: string, hotelId: string, role?: string): Promise<number> {
-    const guest = await this.guestRepo.findById(guestId)
-    if (!guest) throw new NotFoundError('Guest not found')
-    if (this.auth) this.auth.assertOwnership(guest.hotelId, hotelId, role, 'super_admin')
-    return guest.loyaltyPoints ?? 0
+  getPointsBalance(guestId: string, hotelId: string, role?: string): Promise<number> {
+    return pointsOps.getPointsBalance(this.pointsDeps(), guestId, hotelId, role)
   }
 
-  // ─── Tier Management ──────────────────────────────────
-  // Internal helper — only reached from awardPoints (ownership already asserted there)
-  // or onCheckoutComplete (trusted reserva.guestId from connector). Not routed directly.
-  /** Devuelve el nivel VIGENTE tras el cálculo. Antes devolvía el viejo, incluso si acababa de subir. */
+  // ─── Tier: interno (ownership ya validado por el caller). Devuelve el nivel VIGENTE. ──
   async checkTierUpgrade(guestId: string): Promise<string> {
     // @ignore IDOR_RISK — guestId already validated by caller (see comment above method)
     const guest = await this.guestRepo.findById(guestId)
@@ -154,6 +153,11 @@ export class CrmService {
       onUpgrade: (guestId, from, to) => this.sockets.onTierUpgrade?.(guestId, from, to),
     })
   }
+
+  // ─── Campañas a segmentos (spec crm-campaigns) ───────
+  createCampaign(dto: CreateCampaignDTO): Promise<CampaignDTO> { return this.campaigns.create(this.segmentSource(), dto) }
+  listCampaigns(hotelId: string): Promise<CampaignDTO[]> { return this.campaigns.list(this.segmentSource(), hotelId) }
+  sendCampaign(hotelId: string, campaignId: string): Promise<SendCampaignResult> { return this.campaigns.send(this.segmentSource(), hotelId, campaignId) }
 
   // ─── Coupons (delegan a usecases/coupons; DEPRECADOS → 410 en las rutas) ──
   createCoupon(dto: CreateCouponDTO): Promise<CouponDTO> { return this.coupons.create(dto) }

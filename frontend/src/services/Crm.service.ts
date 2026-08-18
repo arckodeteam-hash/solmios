@@ -16,6 +16,19 @@ export interface Coupon {
 export interface GuestSegment {
   id: string; hotelId: string; name: string; description: string; rules: string | null; count: number
 }
+/** Campaña de email a un segmento (spec crm-campaigns). */
+export interface Campaign {
+  id?: string
+  hotelId?: string
+  name: string
+  segmentId: string
+  subject: string
+  body: string
+  status: 'draft' | 'sent'
+  sentCount: number
+  sentAt: string | null
+}
+
 /** Huésped que cae dentro de un segmento. Subconjunto de Guest: lo que la tabla del modal muestra. */
 export interface SegmentGuest {
   id: string; name: string; email: string | null; tier: string
@@ -47,6 +60,11 @@ export const CrmService = {
   getGuestsInSegment: (id: string): Promise<SegmentGuest[]> => http.get(`/api/crm/segments/${id}/guests`),
   /** CSV del segmento (text/csv). El caller arma la descarga con el string. */
   exportSegment: (id: string): Promise<string> => http.get(`/api/crm/segments/${id}/export`),
+
+  // Campañas (spec crm-campaigns)
+  listCampaigns: (): Promise<Campaign[]> => http.get('/api/crm/campaigns').then((r: any) => r?.data ?? r),
+  createCampaign: (data: Partial<Campaign>): Promise<Campaign> => http.post('/api/crm/campaigns', data),
+  sendCampaign: (id: string): Promise<{ queued: number; skipped: number }> => http.post(`/api/crm/campaigns/${id}/send`, {}),
 
   // LTV + Dashboard
   getLTV: (): Promise<GuestLTV[]> => http.get('/api/crm/ltv'),
