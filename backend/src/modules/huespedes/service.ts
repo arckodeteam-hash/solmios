@@ -30,6 +30,10 @@ export class HuespedesService {
     private readonly logger: Logger,
     private readonly cache: CacheAdapter,
     private readonly auth: Auth,
+    /** H-1 (2026-08-19): guard de delete — el ORM no crea FKs físicos, así que la integridad
+     *  la garantiza la app. Repo de Reservations por nombre de modelo global (patrón
+     *  bookingengine, no import cross-module). Opcional: sin él el delete sigue como antes. */
+    private readonly reservasRepo?: RepositoryAdapter<any>,
   ) {}
 
   // ACUMULA handlers — nunca pisa el anterior.
@@ -140,8 +144,17 @@ export class HuespedesService {
     if (!existing) throw new NotFoundError('Huespedes no encontrado')
     const me = await this.userRepo.findById(user.id)
     this.auth.assertOwnership(existing.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
-    // Un huésped con reservas/folios no se borra: el FK lo frena, pero como 500 de motor. Se mapea
-    // a un 409 claro. (Guard de app completo — contar reservas vía connector — queda como mejora.)
+    // H-1 (auditoría 2026-08-19): el catch de FK de abajo era código MUERTO — el ORM crea las
+    // tablas sin REFERENCES y hace DELETE FROM crudo, así que borrar un huésped con historial
+    // EXITÍA y dejaba reservas/folios/companions con guestId huérfano. Guard de app: un
+    // huésped con reservas NO se borra (regla "con historial no se borra", análoga a
+    // facturas) — cualquier reserva, incluso pasada: el historial comercial es del hotel.
+    if (this.reservasRepo) {
+      const reservas = await this.reservasRepo.findMany({ guestId: id })
+      if (reservas.length > 0) {
+        throw new ConflictError(`No se puede eliminar: el huésped tiene ${reservas.length} reserva(s) en su historial. Los registros de huéspedes con historial se conservan.`)
+      }
+    }
     let deleted: boolean
     try {
       deleted = await this.repo.delete(id)

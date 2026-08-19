@@ -1,6 +1,10 @@
 import type { ValidationRule } from 'arckode-framework'
 
-const ROOM_TYPE_ENUM = ['single', 'double', 'twin', 'triple', 'quad', 'suite', 'deluxe', 'presidential']
+// A-2 (auditoría 2026-08-19): 'family' faltaba — el selector del panel ofrece "Familiar"
+// (rooms/index.vue) pero el enum lo rechazaba con 400, y el map del frontend colapsaba
+// triple/quad→family al leer (Room.service.ts), así que EDITAR una triple/quad y guardar
+// reenviaba 'family' → 400 (round-trip corrupto). 'family' es ahora un tipo de primera.
+const ROOM_TYPE_ENUM = ['single', 'double', 'twin', 'triple', 'quad', 'suite', 'deluxe', 'presidential', 'family']
 const ROOM_STATUS_ENUM = ['available', 'occupied', 'maintenance', 'cleaning', 'out_of_order', 'reserved']
 
 export const CreateHabitacionesSchema: Record<string, ValidationRule> = {

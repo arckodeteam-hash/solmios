@@ -22,6 +22,15 @@ export async function openFolio(
 ): Promise<FolioDTO> {
   deps.logger.info('Abriendo folio', { hotelId, reservationId: dto.reservationId })
 
+  // R-1 (auditoría 2026-08-19): unicidad de folio ABIERTO por reserva — sin esto, dos
+  // caminos concurrentes (settlement de checkout + apertura manual) creaban DOS folios open
+  // para la misma estadía y el pago/cierre se partía entre ambos. Si ya hay uno abierto,
+  // se devuelve ESE (idempotente) en vez de crear otro.
+  if (dto.reservationId) {
+    const existing = await deps.folioRepo.findOne({ hotelId, reservationId: dto.reservationId, status: 'open' })
+    if (existing) return existing
+  }
+
   let guestId = dto.guestId ?? null
   let roomId = dto.roomId ?? null
 

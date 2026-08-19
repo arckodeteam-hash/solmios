@@ -220,3 +220,46 @@ describe('HabitacionesService', () => {
     })
   })
 })
+
+// ─── A-1 (auditoría 2026-08-19): integridad referencial del delete ────────────────────────
+// Sin FKs físicos, borrar una habitación dejaba reservas activas/cerraduras/blocks apuntando
+// a nada. El guard bloquea por reservas activas o locks, y limpia blocks/amenities muertos.
+describe('delete — guard de integridad (A-1)', () => {
+  const room = { id: 'room-1', number: '101', hotelId: 'hotel-1' } as any
+
+  function makeSvcOrm(data: Record<string, any[]>, repoOver: any = {}) {
+    const deletedIds: string[] = []
+    const match = (rows: any[], f: any) => rows.filter((r) => Object.entries(f).every(([k, v]) => (r as any)[k] === v))
+    const deleted: Record<string, number[]> = {}
+    const orm = {
+      findMany: async (m: string, f: any = {}) => match(data[m] ?? [], f),
+      deleteMany: async (m: string, f: any) => { const n = match(data[m] ?? [], f).length; (deleted[m] ??= []).push(n); return n },
+    } as any
+    const repo = { ...makeRepo(), findById: async () => room, delete: async (id: string) => { deletedIds.push(id); return true }, ...repoOver } as any
+    const svc = new HabitacionesService(repo, log, silentCache, makeUserRepo(), fakeAuth, orm)
+    return { svc, deletedIds, deleted }
+  }
+
+  it('reserva ACTIVA en la habitación → 409, no borra', async () => {
+    const { svc, deletedIds } = makeSvcOrm({ Reservations: [{ id: 'r1', roomId: 'room-1', status: 'confirmed' }] })
+    await expect(svc.delete('room-1', mockUser)).rejects.toThrow(/reserva\(s\) activa\(s\)/)
+    expect(deletedIds).toEqual([])
+  })
+
+  it('solo reservas PASADAS (checked_out/cancelled/no_show) → borra y limpia blocks/amenities', async () => {
+    const { svc, deletedIds, deleted } = makeSvcOrm({
+      Reservations: [{ id: 'r1', roomId: 'room-1', status: 'checked_out' }, { id: 'r2', roomId: 'room-1', status: 'cancelled' }],
+      RoomBlocks: [{ id: 'b1', roomId: 'room-1' }],
+      RoomAmenities: [{ id: 'a1', roomId: 'room-1' }],
+    })
+    await svc.delete('room-1', mockUser)
+    expect(deletedIds).toEqual(['room-1'])
+    expect(deleted.RoomBlocks).toEqual([1])
+    expect(deleted.RoomAmenities).toEqual([1])
+  })
+
+  it('cerradura TTLock vinculada → 409 con indicación de desvincular', async () => {
+    const { svc } = makeSvcOrm({ LockDevices: [{ id: 'lock-1', roomId: 'room-1' }] })
+    await expect(svc.delete('room-1', mockUser)).rejects.toThrow(/cerraduras TTLock vinculadas/)
+  })
+})

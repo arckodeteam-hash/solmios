@@ -137,10 +137,26 @@ export class BookingengineService {
     const result = await this.stripe.handleWebhook(hotelId, payload, signature)
     if (!result) return null // firma inválida → el controller responde 400
     // F0 0.15 — El type del resultado cambió a 'reservation_confirmed' (era 'booking_confirmed').
-    // El socket del widget espera la reserva pagada para refrescar la UI. Pasamos el id que sea
-    // (reservationId en el flujo unificado) — el socket decide qué hacer con el payload.
+    // El socket del widget espera la reserva pagada para refrescar la UI.
+    //
+    // B-1 (auditoría 2026-08-19): el payload era SOLO {id} → postBookingPayment (connector
+    // bookingengine-payments) hacía early-return por amount 0 / sin sessionId y el cobro del
+    // widget JAMÁS llegaba a `payments` (arqueo de caja y conciliación ciegos al widget).
+    // Ahora viaja el shape que ese puerto consume: totalAmount (dinero REAL del evento
+    // amountMinor/100, con fallback al total de la reserva), currency, checkIn y
+    // paymentRef = session id de Stripe (dedup idempotente por stripeSessionId).
     if (result.type === 'reservation_confirmed' && result.reservationId) {
-      await this.sockets.onBookingPaid?.({ id: result.reservationId } as any)
+      const amount = result.amountMinor && result.amountMinor > 0
+        ? Math.round((result.amountMinor / 100) * 100) / 100
+        : Number(result.totalAmount) || 0
+      await this.sockets.onBookingPaid?.({
+        id: result.reservationId,
+        hotelId,
+        totalAmount: amount,
+        currency: result.currency ?? undefined,
+        checkIn: result.checkIn ?? undefined,
+        paymentRef: result.providerRef || '',
+      } as any)
     }
     return result
   }

@@ -340,7 +340,7 @@
               <div><label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Número *</label><input v-model="form.number" type="text" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
               <div><label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Tipo</label>
                 <select v-model="form.type" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer">
-                  <option value="single">Individual</option><option value="double">Doble</option><option value="twin">Twin</option><option value="suite">Suite</option><option value="deluxe">Deluxe</option><option value="presidential">Presidencial</option><option value="family">Familiar</option>
+                  <option value="single">Individual</option><option value="double">Doble</option><option value="twin">Twin</option><option value="triple">Triple</option><option value="quad">Cuádruple</option><option value="suite">Suite</option><option value="deluxe">Deluxe</option><option value="presidential">Presidencial</option><option value="family">Familiar</option>
                 </select>
               </div>
               <div><label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Estado</label>
@@ -487,6 +487,8 @@ const typeOptions = [
   { value: 'single', label: 'Individual', desc: '1 cama · 1 persona', icon: ICON_DOOR },
   { value: 'double', label: 'Doble', desc: '1 cama grande · 2 personas', icon: ICON_BED },
   { value: 'twin', label: 'Twin', desc: '2 camas · 2 personas', icon: ICON_BED },
+  { value: 'triple', label: 'Triple', desc: '3 personas', icon: ICON_BED },
+  { value: 'quad', label: 'Cuádruple', desc: '4 personas', icon: ICON_BED },
   { value: 'suite', label: 'Suite', desc: 'Sala + hab · 2-4 personas', icon: ICON_CROWN },
   { value: 'deluxe', label: 'Deluxe', desc: 'Vista premium · 2 personas', icon: ICON_CROWN },
   { value: 'presidential', label: 'Presidencial', desc: 'Máximo lujo · 4 personas', icon: ICON_CROWN },
@@ -513,7 +515,7 @@ const statusOptions = [
 ]
 
 const TYPE_LABEL: Record<string,string> = {
-  single:'Individual', double:'Doble', twin:'Twin', suite:'Suite', deluxe:'Deluxe', presidential:'Presidencial', family:'Familiar',
+  single:'Individual', double:'Doble', twin:'Twin', triple:'Triple', quad:'Cuádruple', suite:'Suite', deluxe:'Deluxe', presidential:'Presidencial', family:'Familiar',
 }
 
 function typeLabel(t: string): string { return TYPE_LABEL[t] || t.charAt(0).toUpperCase() + t.slice(1) }

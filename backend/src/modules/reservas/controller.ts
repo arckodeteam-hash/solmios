@@ -169,6 +169,14 @@ export class ReservasController {
     try {
       const { reservation, hotelId } = await this.service.checkout(req.params.id, req.user as any)
 
+      // R-1 (auditoría 2026-08-19): el CLAIM (executeCheckout con CAS) corre ANTES del
+      // settlement — en el orden viejo, dos checkouts concurrentes hacían el settlement
+      // ambos (doble folio/pago/factura) antes de que alguien moviera el estado. Con el
+      // claim primero, el perdedor recibe 409 sin tocar plata. Si el settlement falla tras
+      // un claim exitoso, la reserva queda checked_out con folio open (se factura desde el
+      // panel) — deuda visible, nunca doble cobro.
+      const result = await this.service.executeCheckout(reservation, req.user as any, { orm: this.orm, logger: this.logger })
+
       // Settlement: close folio → create invoice → record payment (if any)
       let settlementResult = null
       const body = req.body as Record<string, any> | undefined
@@ -177,7 +185,6 @@ export class ReservasController {
         settlementResult = await this.service.settleFolioForCheckout(reservation, settle, req.user as any)
       }
 
-      const result = await this.service.executeCheckout(reservation, req.user as any, { orm: this.orm, logger: this.logger })
       this.pushChannex(reservation.hotelId, reservation.roomId)
       dispatchLifecycleEmail({ emailSender: this.emailSender, guestRepo: this.userRepo, roomRepo: this.roomRepoForEmail, hotelRepo: this.hotelRepoForEmail, messageLogRepo: this.messageLogRepo, logger: this.logger }, { reservationId: reservation.id, hotelId: reservation.hotelId, guestId: reservation.guestId, roomId: reservation.roomId, checkIn: reservation.checkIn, checkOut: reservation.checkOut, event: 'checkout' }).catch((e: any) => this.logger.warn('checkout email', { error: e.message }))
       return { status: 200, body: { ...result, settlement: settlementResult } }

@@ -1,5 +1,5 @@
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth, ORM } from 'arckode-framework'
-import { NotFoundError, AuthError } from 'arckode-framework'
+import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
 import type { HabitacionesDTO, CreateHabitacionesDTO, UpdateHabitacionesDTO, HabitacionesQuery, HabitacionesPaginated } from './types'
 import type { HabitacionesSockets } from './sockets'
 import { batchCreateRooms, type BatchCreateInput } from './usecases/batch-create'
@@ -162,6 +162,26 @@ export class HabitacionesService {
     if (!existing) throw new NotFoundError('Habitación no encontrada')
     if (currentUser.role !== 'super_admin' && existing.hotelId !== currentUser.hotelId) {
       throw new AuthError('No autorizado')
+    }
+    // ─── A-1 (auditoría 2026-08-19): integridad referencial del delete ──────────────────
+    // El ORM crea las tablas SIN FKs físicos y borra con DELETE FROM crudo: sin este guard,
+    // borrar dejaba reservas activas, cerraduras TTLock, blocks y amenities apuntando a una
+    // habitación inexistente (planning/detalle/checkout rompían silenciosamente). Acceso por
+    // nombre de modelo global (patrón bookingengine — this.orm ya estaba cableado para la
+    // transacción de batch). Sin orm (tests mínimos) el delete sigue como antes.
+    if (this.orm) {
+      const reservas = (await this.orm.findMany('Reservations', { roomId: id })) as any[]
+      const activas = reservas.filter((r) => !['cancelled', 'no_show', 'checked_out'].includes(String(r.status)))
+      if (activas.length > 0) {
+        throw new ConflictError(`No se puede eliminar: la habitación tiene ${activas.length} reserva(s) activa(s). Cancelá o mové las reservas primero (el historial pasado no bloquea).`)
+      }
+      const locks = (await this.orm.findMany('LockDevices', { roomId: id })) as any[]
+      if (locks.length > 0) {
+        throw new ConflictError('No se puede eliminar: hay cerraduras TTLock vinculadas a esta habitación. Desvinculalas primero desde la vista de cerraduras.')
+      }
+      // Referencias muertas sin valor (bloqueos y amenities de un cuarto que ya no existe).
+      await this.orm.deleteMany('RoomBlocks', { roomId: id }).catch(() => 0)
+      await this.orm.deleteMany('RoomAmenities', { roomId: id }).catch(() => 0)
     }
     const deleted = await this.repo.delete(id)
     if (!deleted) throw new NotFoundError('Habitación no encontrada')

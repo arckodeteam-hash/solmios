@@ -177,7 +177,7 @@ export class StripeUseCase {
     hotelId: string,
     payload: Buffer | string,
     signature: string,
-  ): Promise<{ type: string; reservationId?: string } | null> {
+  ): Promise<{ type: string; reservationId?: string; providerRef?: string; amountMinor?: number | null; currency?: string | null; totalAmount?: number; checkIn?: string | null } | null> {
     const gw = await this.registry.resolve(hotelId)
     if (!gw) throw new ValidationError('El hotel no tiene una pasarela de pago configurada')
 
@@ -220,7 +220,21 @@ export class StripeUseCase {
         },
       )
       if (result.outcome === 'duplicate') return { type: 'already_processed', reservationId }
-      return { type: 'reservation_confirmed', reservationId }
+      // B-1 (auditoría 2026-08-19): el payload del socket onBookingPaid era SOLO {id} — el
+      // connector de payments necesitaba totalAmount/paymentRef/currency y su
+      // postBookingPayment salía por early-return → el cobro del widget NUNCA se asentaba en
+      // `payments` (fuera del arqueo de caja y de la conciliación). El result ahora arrastra
+      // los datos del evento (amountMinor = dinero REAL cobrado, providerRef = session id
+      // para el dedup por stripeSessionId) + los de la reserva ya cargada acá.
+      return {
+        type: 'reservation_confirmed',
+        reservationId,
+        providerRef: outcome.providerRef ?? '',
+        amountMinor: outcome.amountMinor ?? null,
+        currency: outcome.currency ?? null,
+        totalAmount: Number(reservation.totalAmount) || 0,
+        checkIn: reservation.checkIn ?? null,
+      }
     }
 
     return { type: outcome.status }

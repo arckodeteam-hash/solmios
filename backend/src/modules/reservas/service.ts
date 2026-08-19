@@ -5,6 +5,7 @@ import type { StorageService, FileUpload } from 'arckode-framework/modules/stora
 import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from './types'
 import type { ReservasSockets } from './sockets'
 import { checkinValidation, checkoutValidation, executeCheckin } from './usecases/checkin'
+import { executeCheckout as executeCheckoutUsecase } from './usecases/checkout'
 import { sendLockCodeEmail as sendLockCodeEmailUsecase } from './usecases/lock-code-email'
 import { NullEmailSender, type EmailSender } from '../../services/email-sender'
 import { dispatchCreateEmail } from './usecases/reservation-notifications'
@@ -121,16 +122,14 @@ export class ReservasService {
   }
 
   async executeCheckout(r: any, user: any, deps: { orm: any; invalidateHousekeepingCache?: () => Promise<void>; pushAvailabilityToChannex?: any; dispatchLifecycleEmail?: any; logger?: any }): Promise<any> {
-    const nowIso = new Date().toISOString()
-    try {
-      await this.queries.updateReservation(r.id, { status: 'checked_out', checkedOutAt: nowIso })
-    } catch (e: any) {
-      throw new Error(`Error interno al procesar check-out: ${e.message}`)
-    }
-    const log = deps.logger || this.logger
-    this.queries.createAuditLog({ id: crypto.randomUUID(), entity: 'Reservations', entityId: r.id, action: 'checkout', userId: user.id, hotelId: r.hotelId, detail: JSON.stringify({ roomId: r.roomId, guestId: r.guestId, checkIn: r.checkIn, checkOut: r.checkOut }), createdAt: nowIso })
-    await this.sockets.onReservationCheckedOut?.({ reservationId: r.id, roomId: r.roomId, hotelId: r.hotelId, guestId: r.guestId ?? null, totalAmount: Number(r.totalAmount) || 0 })
-    return { ok: true, reservationId: r.id, status: 'checked_out' }
+    // R-1 (2026-08-19): flujo con guard de carrera extraído a usecases/checkout.ts
+    // (mismo lugar que executeCheckin; el service delega y queda bajo las 200 líneas).
+    return executeCheckoutUsecase(r, user, {
+      orm: deps.orm,
+      queries: this.queries,
+      sockets: this.sockets,
+      logger: deps.logger || this.logger,
+    })
   }
 
   // ── SETTLEMENT (folio → invoice → payment) ─────────────────────────────
@@ -194,6 +193,6 @@ export class ReservasService {
   async cancelBySystem(id: string, input: SystemCancelInput): Promise<SystemCancelOutcome> { return cancelReservationBySystem({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets }, id, input) }
   async getBookingEngineDashboard(user: any): Promise<any> { return getBookingEngineDashboardUsecase(this.queries, user) }
   async sendLockCodeEmail(id: string, user: any, deps: { orm: any }): Promise<{ sentTo: string }> {
-    return sendLockCodeEmailUsecase({ orm: deps.orm, reservationRepo: this.repo, guestRepo: this.guestRepo, emailSender: this.emailSender, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, messageLogRepo: this.messageLogRepo, logger: this.logger }, id, user)
+    return sendLockCodeEmailUsecase({ orm: deps.orm, reservationRepo: this.repo, guestRepo: this.guestRepo, userRepo: this.userRepo, emailSender: this.emailSender, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, messageLogRepo: this.messageLogRepo, logger: this.logger }, id, user)
   }
 }

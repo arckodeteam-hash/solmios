@@ -142,6 +142,14 @@ export async function getPublicRates(
   if (!query.checkIn || !query.checkOut) {
     return { status: 400, body: { error: 'checkIn y checkOut son requeridos' } }
   }
+  // B-3 (auditoría 2026-08-19): el query del GET no pasa por validateSchema — una fecha no
+  // parseable hacía `nights` = NaN y el techo de MAX_STAY_NIGHTS se salteaba. Mismo criterio
+  // que validatePublicCalendarQuery: formato estricto + parse real ANTES de computar.
+  const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+  if (!ISO_DATE_RE.test(String(query.checkIn)) || !ISO_DATE_RE.test(String(query.checkOut))
+    || !Number.isFinite(Date.parse(String(query.checkIn))) || !Number.isFinite(Date.parse(String(query.checkOut)))) {
+    return { status: 400, body: { error: 'checkIn y checkOut deben tener formato YYYY-MM-DD' } }
+  }
   if (query.checkIn >= query.checkOut) {
     return { status: 400, body: { error: 'checkOut debe ser posterior a checkIn' } }
   }

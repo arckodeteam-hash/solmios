@@ -19,13 +19,21 @@ interface RawRoom {
   unavailableReason?: string
 }
 
+// A-2 (2026-08-19): mapa 1:1 con el enum del backend — antes colapsaba twin→double y
+// triple/quad→family al LEER, y al guardar ese tipo migrado el backend lo rechazaba
+// (round-trip corrupto: editar una triple sin tocar el tipo ya rompía el PUT).
 const ROOM_TYPE_MAP: Record<string, RoomType> = {
   single: 'single', sencilla: 'single', individual: 'single', simple: 'single',
-  double: 'double', doble: 'double', twin: 'double',
+  double: 'double', doble: 'double',
+  twin: 'twin',
+  triple: 'triple',
+  quad: 'quad', cuadruple: 'quad',
   suite: 'suite',
+  deluxe: 'deluxe',
+  presidential: 'presidential',
+  family: 'family', familiar: 'family',
   villa: 'villa',
   dorm: 'dorm', compartida: 'dorm',
-  family: 'family', familiar: 'family', triple: 'family', quad: 'family', cuadruple: 'family',
 }
 
 const ROOM_STATUS_MAP: Record<string, RoomStatus> = {

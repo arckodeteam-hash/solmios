@@ -71,3 +71,34 @@ describe('HuespedesService', () => {
     })
   })
 })
+
+// ─── H-1 (auditoría 2026-08-19): delete con historial NO se borra ─────────────────────────
+// El catch de FK era código muerto (el ORM no crea FKs físicos) — borrar un huésped con
+// reservas dejaba el historial huérfano. El guard de app lo bloquea con 409 claro.
+describe('delete — guard de integridad (H-1)', () => {
+  const guest = { id: 'g1', hotelId: 'h1', name: 'Ana', email: 'a@b.com' } as any
+
+  it('huésped CON reservas → 409, no borra', async () => {
+    const deleted: string[] = []
+    const svc = new HuespedesService(
+      { ...makeRepo(), findById: async () => guest, delete: async (id: string) => { deleted.push(id); return true } } as any,
+      { findById: async () => ({ hotelId: 'h1' }) } as any,
+      log, silentCache, mockAuth,
+      { findMany: async () => [{ id: 'r1' }] } as any, // reservasRepo: 1 reserva
+    )
+    await expect(svc.delete('g1', mockUser)).rejects.toThrow(/reserva\(s\) en su historial/)
+    expect(deleted).toEqual([])
+  })
+
+  it('huésped SIN reservas → borra normalmente', async () => {
+    const deleted: string[] = []
+    const svc = new HuespedesService(
+      { ...makeRepo(), findById: async () => guest, delete: async (id: string) => { deleted.push(id); return true } } as any,
+      { findById: async () => ({ hotelId: 'h1' }) } as any,
+      log, silentCache, mockAuth,
+      { findMany: async () => [] } as any,
+    )
+    await svc.delete('g1', mockUser)
+    expect(deleted).toEqual(['g1'])
+  })
+})

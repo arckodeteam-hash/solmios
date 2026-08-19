@@ -39,8 +39,11 @@ export function HuespedesModule() {
 
       const repo = new OrmRepository<HuespedesDTO>(orm, 'Guests')
       const userRepo = new OrmRepository<any>(orm, 'Users')
+      // H-1 (auditoría 2026-08-19): guard de delete — acceso por NOMBRE de modelo global,
+      // mismo patrón que bookingengine ("no import cross-module").
+      const reservasRepo = new OrmRepository<any>(orm, 'Reservations')
       const log = logger.child('huespedes')
-      const service = new HuespedesService(repo, userRepo, log, cache, auth)
+      const service = new HuespedesService(repo, userRepo, log, cache, auth, reservasRepo)
       const controller = new HuespedesController(service, log)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')

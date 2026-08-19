@@ -11,7 +11,9 @@ export interface Hotel {
 }
 
 // === ROOM ===
-export type RoomType = 'single' | 'double' | 'suite' | 'villa' | 'dorm' | 'family'
+// A-2 (2026-08-19): alineado al enum del backend (single..family) — antes colapsaba
+// twin→double y triple/quad→family al leer, y guardar "Familiar" daba 400 (enum sin family).
+export type RoomType = 'single' | 'double' | 'twin' | 'triple' | 'quad' | 'suite' | 'deluxe' | 'presidential' | 'family' | 'villa' | 'dorm'
 export type RoomStatus = 'available' | 'occupied' | 'pending' | 'cleaning' | 'dirty' | 'out_of_service'
 
 export interface Room {

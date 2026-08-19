@@ -29,23 +29,28 @@ export const UpdateBookingConfigSchema: Record<string, ValidationRule> = {
 
 export const CheckAvailabilitySchema: Record<string, ValidationRule> = {
   hotelId: { type: 'string' as const, required: true },
-  checkIn: { type: 'string' as const, required: true },
-  checkOut: { type: 'string' as const, required: true },
+  checkIn: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/, message: 'checkIn debe tener formato YYYY-MM-DD' },
+  checkOut: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/, message: 'checkOut debe tener formato YYYY-MM-DD' },
   adults: { type: 'number' as const, min: 1 },
   children: { type: 'number' as const, min: 0 },
   promoCode: { type: 'string' as const },
 }
 
 // ─── Reserva pública ────────────────────────────────────
-
+//
+// B-3 (auditoría 2026-08-19): checkIn/checkOut eran `type:'string'` planos — una fecha no
+// parseable ("2026-99-01", "aaa") pasaba el schema, `nights` computaba NaN, el techo de
+// MAX_STAY_NIGHTS se salteaba (NaN > 90 = false) y llegaba un `totalAmount: NaN` al
+// tx.create. El pattern YYYY-MM-DD (mismo que /api/reservas) corta la cadena en la puerta.
+// guestEmail usa el `type:'email'` nativo del framework y guestPhone tiene tope de largo.
 export const CreatePublicBookingSchema: Record<string, ValidationRule> = {
   hotelId: { type: 'string' as const, required: true },
   roomType: { type: 'string' as const, required: true },
   guestName: { type: 'string' as const, required: true, min: 2, max: 200 },
-  guestEmail: { type: 'string' as const, required: true },
-  guestPhone: { type: 'string' as const, required: true },
-  checkIn: { type: 'string' as const, required: true },
-  checkOut: { type: 'string' as const, required: true },
+  guestEmail: { type: 'email' as const, required: true },
+  guestPhone: { type: 'string' as const, required: true, max: 30 },
+  checkIn: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/, message: 'checkIn debe tener formato YYYY-MM-DD' },
+  checkOut: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/, message: 'checkOut debe tener formato YYYY-MM-DD' },
   adults: { type: 'number' as const, required: true, min: 1 },
   children: { type: 'number' as const, min: 0 },
   promoCode: { type: 'string' as const },

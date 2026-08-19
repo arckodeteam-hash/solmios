@@ -90,11 +90,30 @@ export async function getPublicReservation(
     guest = guestRows[0] || null
   }
 
+  // B-6/H-4 (auditoría 2026-08-19): allow-list ESTRICTA, campo por campo — NUNCA la fila
+  // cruda (patrón public-hotel-info.ts). La fila de Reservations arrastra ownerNotes,
+  // otaNotes, cardHolder/cardLast4 (el model dice "se revelan solo tras PIN"),
+  // preCheckinHash, accessToken y snapshot financiero; la de Guests, document,
+  // documentUrl, emergencyContact, notes internas y loyaltyPoints. El token HMAC del
+  // huésped autentica la LECTURA de lo suyo, no convierte la fila en pública. El contrato
+  // real del frontend (booking-confirmation.vue + types/booking.ts) queda cubierto:
+  // reservation.{id, checkIn, checkOut, status, totalAmount, paymentStatus} + guest.{name, email}.
   return {
     status: 200,
     body: {
-      reservation,
-      guest,
+      reservation: {
+        id: reservation.id,
+        checkIn: reservation.checkIn,
+        checkOut: reservation.checkOut,
+        status: reservation.status,
+        adults: reservation.adults,
+        children: reservation.children,
+        totalAmount: reservation.totalAmount,
+        currency: reservation.currency,
+        paymentStatus: reservation.paymentStatus ?? 'unpaid',
+        promoCode: reservation.promoCode ?? null,
+      },
+      guest: guest ? { id: guest.id, name: guest.name, email: guest.email, phone: guest.phone ?? '' } : null,
       paymentStatus: reservation.paymentStatus ?? 'unpaid',
     },
   }

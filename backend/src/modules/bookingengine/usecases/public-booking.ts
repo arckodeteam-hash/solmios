@@ -542,7 +542,27 @@ export async function createPublicBookingDirect(
   return {
     status: 201,
     body: {
-      reservation, guest,
+      // B-6/H-4 (auditoría 2026-08-19): allow-list estricta — las filas crudas arrastraban
+      // campos internos (ownerNotes, otaNotes, card*, snapshot financiero, document del
+      // guest). El contrato del widget consume reservation.{id, accessToken} y los tests
+      // del módulo verifican comportamiento vía los campos operativos del subset de abajo
+      // (roomId resuelto, promoCode persistido, etc.) — nada interno sale.
+      reservation: {
+        id: reservation.id,
+        accessToken: reservation.accessToken,
+        roomId: reservation.roomId,
+        guestId: reservation.guestId,
+        checkIn: reservation.checkIn,
+        checkOut: reservation.checkOut,
+        status: reservation.status,
+        adults: reservation.adults,
+        children: reservation.children,
+        totalAmount: reservation.totalAmount,
+        currency: reservation.currency,
+        promoCode: reservation.promoCode ?? null,
+        source: reservation.source ?? null,
+      },
+      guest: guest ? { id: guest.id, name: guest.name, email: guest.email, phone: guest.phone ?? '' } : null,
       // F0 0.16 — Contrato nuevo (spec booking-unification API). `checkoutUrl` SIEMPRE está:
       // null cuando no se intentó cobro (sin stripe deps / sin URLs) o cuando Stripe falló.
       // `paymentError` solo se incluye si realmente hubo un error de pasarela (para que el

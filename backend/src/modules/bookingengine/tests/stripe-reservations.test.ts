@@ -193,6 +193,13 @@ describe('StripeUseCase — handleWebhook sobre Reservations (F0 0.15)', () => {
     expect(updates[0].patch.depositStatus).toBe('paid')
     expect(updates[0].patch.paymentMethod).toBe('card')
     expect(updates[0].patch.pendingAmount).toBe(0)
+    // B-1 (2026-08-19): el result arrastra los datos que el socket onBookingPaid necesita
+    // para que el connector de payments asiente el cobro (antes solo {id} → early-return).
+    expect(result?.providerRef).toBe('cs_001')
+    expect(result?.amountMinor).toBe(20000)
+    expect(result?.currency).toBe('usd')
+    expect(result?.totalAmount).toBe(Number(PENDING_RESERVATION.totalAmount) || 0)
+    expect(result?.checkIn).toBe(PENDING_RESERVATION.checkIn)
   })
 
   it('webhook del Hotel A NO confirma reserva del Hotel B (multi-tenancy)', async () => {

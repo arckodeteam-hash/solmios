@@ -110,3 +110,69 @@ describe('bookingenginePromocodesConnector (PC-5 — cancelar desde el widget)',
       .resolves.toBeUndefined()
   })
 })
+
+// ─── C-1 (2026-08-19): TTLock expira al cancelar ─────────────────────────────────────────
+import { reservasTtlockConnector } from '../reservas-ttlock'
+import { bookingengineTtlockConnector } from '../bookingengine-ttlock'
+
+describe('reservasTtlockConnector — checkout Y cancelación (C-1)', () => {
+  it('onReservationCheckedOut → expireCodesByReservation', async () => {
+    const expired: string[] = []
+    const captured: any = {}
+    const ctx = {
+      resolveModule: (name: string) => {
+        if (name === 'reservas') return { setSockets: (s: any) => Object.assign(captured, s) }
+        if (name === 'ttlock') return { expireCodesByReservation: async (id: string) => { expired.push(id) } }
+        throw new Error(`módulo desconocido: ${name}`)
+      },
+    } as any
+    reservasTtlockConnector(ctx)
+    await captured.onReservationCheckedOut({ reservationId: 'r1' })
+    expect(expired).toEqual(['r1'])
+  })
+
+  it('onReservationCancelled → TAMBIÉN expira (antes: el PIN quedaba activo)', async () => {
+    const expired: string[] = []
+    const captured: any = {}
+    const ctx = {
+      resolveModule: (name: string) => {
+        if (name === 'reservas') return { setSockets: (s: any) => Object.assign(captured, s) }
+        if (name === 'ttlock') return { expireCodesByReservation: async (id: string) => { expired.push(id) } }
+        throw new Error(`módulo desconocido: ${name}`)
+      },
+    } as any
+    reservasTtlockConnector(ctx)
+    await captured.onReservationCancelled({ reservationId: 'r2', hotelId: 'h1' })
+    expect(expired).toEqual(['r2'])
+  })
+
+  it('ttlock caído → no rompe la cancelación', async () => {
+    const captured: any = {}
+    const ctx = {
+      resolveModule: (name: string) => {
+        if (name === 'reservas') return { setSockets: (s: any) => Object.assign(captured, s) }
+        if (name === 'ttlock') return { expireCodesByReservation: async () => { throw new Error('ttlock api down') } }
+        throw new Error(`módulo desconocido: ${name}`)
+      },
+    } as any
+    reservasTtlockConnector(ctx)
+    await expect(captured.onReservationCancelled({ reservationId: 'r3', hotelId: 'h1' })).resolves.toBeUndefined()
+  })
+})
+
+describe('bookingengineTtlockConnector — cancelación desde el widget (C-1)', () => {
+  it('onBookingCancelled → expireCodesByReservation', async () => {
+    const expired: string[] = []
+    const captured: any = {}
+    const ctx = {
+      resolveModule: (name: string) => {
+        if (name === 'bookingengine') return { setSockets: (s: any) => Object.assign(captured, s) }
+        if (name === 'ttlock') return { expireCodesByReservation: async (id: string) => { expired.push(id) } }
+        throw new Error(`módulo desconocido: ${name}`)
+      },
+    } as any
+    bookingengineTtlockConnector(ctx)
+    await captured.onBookingCancelled({ reservationId: 'r9', hotelId: 'h1' })
+    expect(expired).toEqual(['r9'])
+  })
+})

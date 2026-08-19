@@ -21,6 +21,8 @@ interface LockCodeEmailDeps {
   orm: any
   reservationRepo: RepositoryAdapter<any>
   guestRepo: RepositoryAdapter<any>
+  /** Resolución fail-closed del hotel del usuario cuando el token no lo trae (R-5). */
+  userRepo?: RepositoryAdapter<any>
   emailSender: any
   roomRepo: RepositoryAdapter<any>
   hotelRepo: RepositoryAdapter<any>
@@ -28,7 +30,7 @@ interface LockCodeEmailDeps {
   logger: Logger
 }
 
-interface CurrentUser { id: string; hotelId?: string }
+interface CurrentUser { id: string; hotelId?: string; role?: string }
 
 /**
  * Envía el código de cerradura al email del huésped. Delega el envío real en sendCheckinEmail
@@ -41,10 +43,21 @@ export async function sendLockCodeEmail(deps: LockCodeEmailDeps, reservationId: 
   const lockCodeRepo = new OrmRepository<LockCodeRow>(orm, 'LockCodes')
   const messageLogRepo = deps.messageLogRepo ?? new OrmRepository<any>(orm, 'MessageLogs')
 
-  // 1. Reserva + ownership (un usuario de hotel solo envía emails de sus propias reservas).
+  // 1. Reserva + ownership FAIL-CLOSED (R-5, auditoría 2026-08-19). Antes:
+  // `if (currentUser.hotelId && r.hotelId !== ...)` — un token SIN hotelId pasaba sin
+  // NINGÚN check y podía disparar el email de cualquier hotel. Mismo patrón que
+  // crud.listReservations: si el token no trae hotel, se resuelve vía userRepo; sin hotel
+  // resuelto → rechazar. super_admin (plataforma) sigue pasando.
   const r = await reservationRepo.findById(reservationId)
   if (!r) throw new NotFoundError('Reserva no encontrada')
-  if (currentUser.hotelId && r.hotelId !== currentUser.hotelId) throw new NotFoundError('Reserva no encontrada')
+  if (currentUser.role !== 'super_admin') {
+    let hotelId = currentUser.hotelId
+    if (!hotelId && deps.userRepo && currentUser.id) {
+      const me = await deps.userRepo.findById(currentUser.id) as any
+      hotelId = me?.hotelId
+    }
+    if (!hotelId || r.hotelId !== hotelId) throw new NotFoundError('Reserva no encontrada')
+  }
 
   // 2. Código de cerradura: al menos uno generado (validación temprana → 400 claro).
   const codes = await lockCodeRepo.findMany({ reservationId }).catch(() => [] as LockCodeRow[])
