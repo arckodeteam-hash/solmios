@@ -480,11 +480,22 @@ async function requirePayment() {
   if (pending.value <= 0) { toast.info('Sin monto pendiente'); return }
   saving.value = true
   try {
-    const created = await PaymentsService.create({ reservationId: d.value.id, amount: pending.value, sentTo: d.value.guest?.email || undefined, sentVia: 'email' })
+    const email = d.value.guest?.email
+    const created = await PaymentsService.create({ reservationId: d.value.id, amount: pending.value, sentTo: email || undefined, sentVia: email ? 'email' : 'link' })
     if (!created.id) { toast.error('No se pudo crear el requerimiento de pago'); return }
     const checkout = await PaymentsService.createStripeCheckout(created.id)
-    if (checkout?.url) window.open(checkout.url, '_blank')
-    toast.success('Requerimiento de pago enviado')
+    if (checkout?.url) {
+      // B2 (auditoría 2026-08-19): sin email del huésped el requerimiento era huérfano —
+      // se abría una ventana que nadie recibía. Ahora el link queda en el portapapeles
+      // para que el staff lo envíe por el canal que corresponda (WhatsApp, presencial).
+      if (email) {
+        window.open(checkout.url, '_blank')
+        toast.success('Requerimiento de pago enviado por email')
+      } else {
+        await navigator.clipboard?.writeText(checkout.url).catch(() => {})
+        toast.warning('El huésped no tiene email: link de pago copiado — envíaselo por WhatsApp o mostráselo')
+      }
+    }
   } catch (e) {
     toast.error((e as Error).message || 'No se pudo generar el link de pago')
   } finally {
