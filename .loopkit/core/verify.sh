@@ -117,8 +117,16 @@ fi
 # ---------- D10 alcance · D11 deuda · secretos (solo líneas AGREGADAS) ----------
 DIFF="$EV/diff.txt"
 if git rev-parse --git-dir >/dev/null 2>&1; then
-  { git diff --stat "$BASE"; echo; git diff "$BASE"; } >"$DIFF" 2>&1
-  FILES=$(git diff --name-only "$BASE" 2>/dev/null | grep -c . || true)
+  # Mismo criterio que el hash de gate.py: el andamiaje NO es código del proyecto.
+  # Sin esto, D10 contaba los archivos del kit y el detector de secretos encontraba
+  # sus propios patrones de ejemplo (sk-…, ghp_, AKIA) en el README y en los tests.
+  EXCL=(":(exclude,top).loopkit" ":(exclude,top)loopkit"
+        ":(exclude,top).claude/hooks/lk-*" ":(exclude,top).claude/agents/lk-*"
+        ":(exclude,top).claude/commands/tarea.md" ":(exclude,top).claude/commands/bug.md"
+        ":(exclude,top).claude/commands/verificar.md" ":(exclude,top).opencode")
+  { git diff --stat "$BASE" -- ":/" "${EXCL[@]}"; echo
+    git diff "$BASE" -- ":/" "${EXCL[@]}"; } >"$DIFF" 2>&1
+  FILES=$(git diff --name-only "$BASE" -- ":/" "${EXCL[@]}" 2>/dev/null | grep -c . || true)
   ADDED=$(grep -c '^+[^+]' "$DIFF" || true)
   DEBT=$(grep '^+[^+]' "$DIFF" | grep -Ec 'TODO|FIXME|HACK|XXX|console\.log|var_dump|\bdd\(|@ts-ignore|eslint-disable|: *any\b' || true)
   SECRET=$(grep '^+[^+]' "$DIFF" | grep -Eic '(api[_-]?key|access[_-]?key|private[_-]?key|secret|passwd|password|token)[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"']{8,}|sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY' || true)

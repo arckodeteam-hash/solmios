@@ -13,6 +13,7 @@ ACTOR="${LOOPKIT_ACTOR:-main}"
 # `lk status` y `lk brief` dicen en qué modo están.
 [ -f "$LK/commands.env" ] && . "$LK/commands.env" 2>/dev/null
 ENFORCE="${LOOPKIT_ENFORCE:-1}"
+PREV_ARG=""
 # Guard: si ROOT quedara vacío, "$ST/audit" sería "/state/audit" y un rm -rf
 # apuntaría fuera del proyecto. Preferible abortar que borrar algo ajeno.
 case "$ROOT" in
@@ -62,7 +63,9 @@ init)
   ;;
 
 start)
-  [ -z "${2:-}" ] && { echo "uso: lk start <id> [título]"; exit 2; }
+  [ -z "${2:-}" ] && { echo "uso: lk start <id> [título] [--base <ref>]"; exit 2; }
+  BASE_REF=""
+  for a in "$@"; do [ "$PREV_ARG" = "--base" ] && BASE_REF="$a"; PREV_ARG="$a"; done
   # El estado es de UNA tarea: .loopkit/state/ no está namespaceado por tarea.
   # Abrir otra encima descartaba la anterior en silencio.
   PREV_ID="$(j "$ST/task.json" id '')"; PREV_PH="$(j "$ST/task.json" phase '')"
@@ -83,12 +86,26 @@ start)
   # sucio, anclar a HEAD metía los cambios previos dentro del diff de esta tarea:
   # los auditores revisaban código ajeno y D10 (alcance) penalizaba de más.
   # `git stash create` produce un commit con el árbol actual SIN tocar el working tree.
-  BASE="$(git stash create 2>/dev/null || true)"
-  if [ -n "$BASE" ]; then
-    git update-ref "refs/loopkit/base-$2" "$BASE" 2>/dev/null || true   # que el GC no lo borre
-    echo "lk: el repo tenía cambios sin commitear; la tarea se ancla al estado actual" >&2
+  # De dónde sale la base del diff de la tarea, en un solo lugar:
+  #   --base <ref>  → ese commit o árbol (lo usa `lk audit` para puntuar el sistema)
+  #   árbol sucio   → snapshot del estado actual, para no arrastrar cambios previos
+  #   árbol limpio  → HEAD
+  if [ -n "$BASE_REF" ]; then
+    # -q --verify: sin eso rev-parse falla PERO imprime la cadena sin resolver a
+    # stdout, y el `||` nunca se activaba.
+    BASE="$(git rev-parse -q --verify "$BASE_REF^{commit}" 2>/dev/null \
+           || git rev-parse -q --verify "$BASE_REF^{tree}" 2>/dev/null || true)"
+    [ -z "$BASE" ] && { echo "lk: '$BASE_REF' no es un commit ni un árbol válido" >&2; exit 2; }
+    echo "lk: la tarea se ancla a $BASE_REF (${BASE:0:8})" >&2
   else
-    BASE="$(git rev-parse HEAD 2>/dev/null || echo '')"
+    # `git stash create` produce un commit con el árbol actual SIN tocar el working tree.
+    BASE="$(git stash create 2>/dev/null || true)"
+    if [ -n "$BASE" ]; then
+      git update-ref "refs/loopkit/base-$2" "$BASE" 2>/dev/null || true   # que el GC no lo borre
+      echo "lk: el repo tenía cambios sin commitear; la tarea se ancla al estado actual" >&2
+    else
+      BASE="$(git rev-parse -q --verify HEAD 2>/dev/null || true)"
+    fi
   fi
   printf '{\n  "id": "%s",\n  "title": "%s",\n  "phase": "PLAN",\n  "builder": "%s",\n  "base": "%s",\n  "started": "%s"\n}\n' \
     "$2" "${3:-}" "$ACTOR" "$BASE" "$(date -Iseconds)" > "$ST/task.json"
@@ -129,6 +146,23 @@ brief)   # lo único que el orquestador necesita leer. Nunca más de 5 líneas.
   printf 'fase=%s tarea=%s modo=%s\n' "$(j "$ST/task.json" phase -)" "$(j "$ST/task.json" id -)" \
     "$([ "$ENFORCE" = "0" ] && echo observacion || echo bloqueo)"
   LOOPKIT_STATE="$ST" python3 "$LK/core/gate.py" --brief
+  ;;
+
+audit)
+  # Score del SISTEMA, no de un cambio: ancla la auditoría a un punto del historial
+  # y deja que el diff sea todo lo acumulado desde ahí.
+  REF="${2:-}"
+  if [ -z "$REF" ]; then
+    # árbol vacío: el diff pasa a ser TODO el contenido del repo, no sólo lo que
+    # cambió desde el primer commit (ese commit quedaría fuera).
+    REF="$(git hash-object -t tree /dev/null 2>/dev/null)"
+    [ -z "$REF" ] && { echo "lk: no pude calcular el árbol vacío" >&2; exit 2; }
+    echo "lk: sin ref, se audita TODO el contenido del repo." >&2
+    echo "    Es caro: el diff es el proyecto entero. Para acotar: lk audit <ref>" >&2
+  fi
+  N="$(git diff --name-only "$REF" -- ":/" ":(exclude,top).loopkit" 2>/dev/null | grep -c . || echo 0)"
+  echo "lk: la auditoría cubrirá $N archivo(s)"
+  LOOPKIT_FORCE=1 "$0" start "AUDIT-$(date +%m%d-%H%M)" "auditoría del sistema desde $REF" --base "$REF"
   ;;
 
 selftest)
@@ -174,6 +208,8 @@ lk — LoopKit
   lk verify [base]            ejecutar gates y medir → measured.json
   lk gate                     ¿se puede cerrar? recomputa el score y valida
   lk brief                    veredicto en <=5 líneas (para el orquestador)
+  lk audit [ref]              score del SISTEMA: audita todo lo acumulado desde <ref>
+                              (sin ref: desde el primer commit — caro)
   lk selftest                 correr la suite del kit sobre esta instalación
   lk ship                     cerrar si el gate pasa
   lk status                   estado actual

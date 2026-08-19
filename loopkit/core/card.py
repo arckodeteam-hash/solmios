@@ -165,25 +165,26 @@ def cmd_verdict(v):
     print(f"veredicto: {v}")
 
 
-def cmd_merge(reviewer):
-    """Fusiona los carriles paralelos en el scorecard final.
-    Dimensión repetida → gana el score MENOR (conservador).
-    Hallazgo repetido → gana la severidad más alta."""
-    adir = os.path.join(ST, "audit")
-    if not os.path.isdir(adir):
-        die("no hay carriles en .loopkit/state/audit/ — los auditores no escribieron nada")
-    lanes = sorted(f for f in os.listdir(adir) if f.endswith(".json"))
-    if not lanes:
-        die("no hay carriles en .loopkit/state/audit/")
+def derivar(dims_, finds_):
+    """El veredicto se DERIVA de los hallazgos, no lo elige nadie. En modo orquestador
+    el principal no ve los hallazgos (sólo `lk brief`), así que pedirle que lo fije
+    sería pedirle un juicio a ciegas. Mismas reglas duras que el gate."""
+    abiertos = [f for f in finds_
+                if f["sev"] in ("BLOCKER", "HIGH") and f["state"] in OPEN_STATES]
+    pw = sum(w for d, w in WEIGHTS.items() if dims_[d]["score"] != "N/V")
+    gl = (sum(float(dims_[d]["score"]) * w for d, w in WEIGHTS.items()
+              if dims_[d]["score"] != "N/V") / pw) if pw else 0.0
+    bajas = [d for d in WEIGHTS if dims_[d]["score"] != "N/V" and float(dims_[d]["score"]) < 70]
+    if abiertos or gl < 75 or pw < 60:
+        return "NOT_READY", round(gl, 1), pw
+    if gl >= 90 and not bajas:
+        return "READY", round(gl, 1), pw
+    return "READY_WITH_RISKS", round(gl, 1), pw
 
-    h = subprocess.run([sys.executable, os.path.join(here(), "gate.py"), "--hash"],
-                       capture_output=True, text=True).stdout.strip()
-    task = {}
-    tp = os.path.join(ST, "task.json")
-    if os.path.exists(tp):
-        with open(tp) as f:
-            task = json.load(f)
 
+def _fold_lanes(adir, lanes, h):
+    """Lee cada carril y fusiona: dimensión repetida → gana el score MENOR (conservador);
+    hallazgo repetido → gana la severidad más alta. Devuelve (dims, findings, stale, bad)."""
     dims = {d: {"score": "N/V", "source": "JUDGED", "evidence": ""} for d in DIMS}
     findings, stale, bad = {}, [], []
     rank = {s: i for i, s in enumerate(SEVS)}   # 0 = BLOCKER = peor
@@ -211,26 +212,30 @@ def cmd_merge(reviewer):
             prev = findings.get(fd["id"])
             if prev is None or rank[sev] < rank[prev["sev"]]:
                 findings[fd["id"]] = fd
+    return dims, findings, stale, bad
 
+
+def cmd_merge(reviewer):
+    """Fusiona los carriles paralelos en el scorecard final (el fold vive en _fold_lanes)."""
+    adir = os.path.join(ST, "audit")
+    if not os.path.isdir(adir):
+        die("no hay carriles en .loopkit/state/audit/ — los auditores no escribieron nada")
+    lanes = sorted(f for f in os.listdir(adir) if f.endswith(".json"))
+    if not lanes:
+        die("no hay carriles en .loopkit/state/audit/")
+
+    h = subprocess.run([sys.executable, os.path.join(here(), "gate.py"), "--hash"],
+                       capture_output=True, text=True).stdout.strip()
+    task = {}
+    tp = os.path.join(ST, "task.json")
+    if os.path.exists(tp):
+        with open(tp) as f:
+            task = json.load(f)
+
+    dims, findings, stale, bad = _fold_lanes(adir, lanes, h)
     if bad:
         die("hallazgos con datos inválidos (no se fusiona nada):\n  " + "\n  ".join(bad) +
             f"\nseveridad debe ser {'/'.join(SEVS)}; estado {'/'.join(STATES)}; dim D1..D12")
-    # El veredicto se DERIVA de los hallazgos, no lo elige nadie. En modo orquestador
-    # el principal no ve los hallazgos (sólo `lk brief`), así que pedirle que lo fije
-    # sería pedirle un juicio a ciegas. Mismas reglas duras que el gate.
-    def derivar(dims_, finds_):
-        abiertos = [f for f in finds_
-                    if f["sev"] in ("BLOCKER", "HIGH") and f["state"] in OPEN_STATES]
-        pw = sum(w for d, w in WEIGHTS.items() if dims_[d]["score"] != "N/V")
-        gl = (sum(float(dims_[d]["score"]) * w for d, w in WEIGHTS.items()
-                  if dims_[d]["score"] != "N/V") / pw) if pw else 0.0
-        bajas = [d for d in WEIGHTS if dims_[d]["score"] != "N/V" and float(dims_[d]["score"]) < 70]
-        if abiertos or gl < 75 or pw < 60:
-            return "NOT_READY", round(gl, 1), pw
-        if gl >= 90 and not bajas:
-            return "READY", round(gl, 1), pw
-        return "READY_WITH_RISKS", round(gl, 1), pw
-
     if stale:
         die("carriles desactualizados: " + ", ".join(stale) +
             f" — el diff actual es {h}. Re-auditá: el código cambió durante la auditoría.")

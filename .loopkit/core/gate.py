@@ -65,7 +65,8 @@ def task_base():
     t = load("task.json") or {}
     base = t.get("base")
     if base:
-        ok = subprocess.run(["git", "cat-file", "-e", base + "^{commit}"],
+        # la base puede ser un commit o el árbol vacío (`lk audit` sin ref)
+        ok = subprocess.run(["git", "cat-file", "-e", base],
                             capture_output=True, cwd=repo_root())
         if ok.returncode == 0:
             return base

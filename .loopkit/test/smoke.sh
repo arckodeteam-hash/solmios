@@ -210,6 +210,33 @@ t "no pisa una tarea en curso" "$?" 2
 LOOPKIT_FORCE=1 bash $LK/lk start T-OTRA otra >/dev/null 2>&1
 t "LOOPKIT_FORCE=1 sí la descarta" "$?" 0
 
+# ---- score del sistema: lk audit ----
+AUD="$(mktemp -d)"; ( cd "$AUD" && git init -q . && git config user.email t@t && git config user.name t
+  echo '{"name":"a","scripts":{"test":"true"}}' > package.json && echo v1 > a.js
+  git add -A && git commit -qm c1 >/dev/null && echo v2 > b.js && git add -A && git commit -qm c2 >/dev/null
+  cp -r "$SRC" ./loopkit && bash loopkit/install.sh claude >/dev/null 2>&1
+  bash .loopkit/core/lk audit >/dev/null 2>&1
+  python3 -c "import json;print(json.load(open('.loopkit/state/task.json'))['base'])" > /tmp/lk_ab
+  bash .loopkit/core/verify.sh 2>/dev/null | grep 'D10 alcance' | sed 's/.*: \([0-9]*\) archivos.*/\1/' > /tmp/lk_an
+  bash .loopkit/core/lk audit HEAD~1 >/dev/null 2>&1
+  bash .loopkit/core/verify.sh 2>/dev/null | grep 'D10 alcance' | sed 's/.*: \([0-9]*\) archivos.*/\1/' > /tmp/lk_an1
+  bash .loopkit/core/lk start T-B x --base HEAD >/dev/null 2>&1
+  python3 -c "import json;print(json.load(open('.loopkit/state/task.json'))['base'])" > /tmp/lk_bh
+  bash .loopkit/core/lk start T-Z z --base no-existe >/dev/null 2>&1; echo $? > /tmp/lk_bad )
+t "lk audit sin ref usa el árbol vacío" "$(cut -c1-8 /tmp/lk_ab)" 4b825dc6
+t "lk audit sin ref cubre todo el repo" "$(cat /tmp/lk_an)" 3
+t "lk audit <ref> acota al rango pedido" "$(cat /tmp/lk_an1)" 1
+t "--base <ref> no se pisa con HEAD" "$(cut -c1-8 /tmp/lk_bh)" "$( cd "$AUD" && git rev-parse HEAD | cut -c1-8 )"
+t "--base con ref inválida falla claro" "$(cat /tmp/lk_bad)" 2
+rm -rf "$AUD" /tmp/lk_ab /tmp/lk_an /tmp/lk_an1 /tmp/lk_bh /tmp/lk_bad
+
+# ---- el kit no se cuenta a sí mismo en el diff ----
+bash $LK/verify.sh >/dev/null 2>&1
+t "el detector de secretos no se dispara con los patrones del propio kit" \
+  "$(python3 -c "import json;print(json.load(open('.loopkit/state/measured.json'))['secret_hits'])")" 0
+t "el andamiaje no cuenta como archivos de la tarea" \
+  "$(grep -c '^+++ b/\.loopkit/\|^+++ b/loopkit/' .loopkit/state/evidence/diff.txt || true)" 0
+
 # ---- el kit no rompe el lint del proyecto ----
 LINTED="$(mktemp -d)"; ( cd "$LINTED" && git init -q . && git config user.email t@t && git config user.name t
   echo '{}' > package.json && printf 'dist/\n' > .prettierignore && printf 'dist/**\n' > .eslintignore
