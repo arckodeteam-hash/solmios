@@ -34,7 +34,7 @@
             <!-- CTAs -->
             <div class="hero-fade-up flex flex-wrap gap-3.5 mb-12" style="animation-delay:.18s">
               <router-link
-                to="/login"
+                to="/registro"
                 class="group inline-flex items-center gap-2.5 bg-blue text-white font-bold text-sm px-7 py-3.5 rounded-xl hover:bg-navy transition-all duration-300 hover:-translate-y-0.5 shadow-lg shadow-blue-200"
               >
                 Comenzar Gratis
@@ -165,7 +165,7 @@
             </div>
           </div>
           <router-link
-            to="/login"
+            to="/registro"
             class="group inline-flex items-center gap-2.5 bg-blue text-white font-bold text-sm px-7 py-3.5 rounded-xl hover:bg-navy transition-all duration-300 hover:-translate-y-0.5 shadow-lg shadow-blue-200"
           >
             Comenzar Gratis
@@ -207,7 +207,7 @@
         </div>
         <div class="text-center mt-14">
           <router-link
-            to="/login"
+            to="/registro"
             class="group inline-flex items-center gap-2.5 bg-blue text-white font-bold text-sm px-7 py-3.5 rounded-xl hover:bg-navy transition-all duration-300 hover:-translate-y-0.5 shadow-lg shadow-blue-200"
           >
             Empezar ahora
@@ -270,7 +270,10 @@
                 :class="planColor(plan.color).cta">
                 {{ plan.cta }}
               </a>
-              <router-link v-else to="/login"
+              <!-- `?plan=` preselecciona el plan en el alta: elegir "Professional" acá y que el
+                   formulario abra en el primero de la lista pierde la intención del visitante.
+                   Un slug desconocido no rompe nada — el alta cae a su default. -->
+              <router-link v-else :to="{ path: '/registro', query: { plan: plan.slug } }"
                 class="block w-full py-2.5 rounded-xl text-center text-xs font-bold mb-6 border transition-colors"
                 :class="planColor(plan.color).cta">
                 {{ plan.cta }}
@@ -332,7 +335,7 @@
         <h2 class="text-3xl md:text-5xl font-black text-white mb-6 leading-tight">¿Listo para transformar<br>tu hotel?</h2>
         <p class="text-white/60 mb-10 max-w-xl mx-auto">Únete a 500+ hoteles que ya gestionan todo desde SolmiOS. Sin tarjeta de crédito, cancela cuando quieras.</p>
         <div class="flex flex-wrap gap-4 justify-center">
-          <router-link to="/login" class="group inline-flex items-center gap-2 bg-white text-blue font-bold text-sm px-8 py-4 rounded-xl hover:bg-blue-50 hover:-translate-y-0.5 transition-all duration-300 shadow-xl shadow-blue-900/30">
+          <router-link to="/registro" class="group inline-flex items-center gap-2 bg-white text-blue font-bold text-sm px-8 py-4 rounded-xl hover:bg-blue-50 hover:-translate-y-0.5 transition-all duration-300 shadow-xl shadow-blue-900/30">
             Comenzar Gratis
             <svg class="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
           </router-link>
@@ -436,24 +439,27 @@ function planColor(color: string) {
   return PLAN_COLORS[color] ?? PLAN_COLORS.navy
 }
 
+// `slug` referencia al plan real de la tabla `plans` del backend (ver
+// backend/scripts/create-plans-table.ts) — es lo que viaja en `/registro?plan=`.
+// El resto de los campos es copy de marketing y vive solo acá.
 const plans = [
   {
-    name: 'Essential', price: 'USD 99', priceSuffix: '/mes', rooms: 'Hasta 20 habitaciones', color: 'navy',
+    name: 'Essential', slug: 'essential', price: 'USD 99', priceSuffix: '/mes', rooms: 'Hasta 20 habitaciones', color: 'navy',
     desc: 'Para micro-hoteles, posadas y apartamentos turísticos.', cta: 'Prueba gratis 30 días',
     features: ['PMS Central completo', 'Channel Manager (6+ OTAs)', 'Motor de reservas sin comisión', 'Creador de sitio web', 'Dashboard operativo', 'Facturación electrónica LATAM', 'Soporte por email'],
   },
   {
-    name: 'Starter', price: 'USD 199', priceSuffix: '/mes', rooms: 'Hasta 50 habitaciones', color: 'teal',
+    name: 'Starter', slug: 'starter', price: 'USD 199', priceSuffix: '/mes', rooms: 'Hasta 50 habitaciones', color: 'teal',
     desc: 'Para hoteles boutique pequeños en crecimiento.', cta: 'Prueba gratis 30 días',
     features: ['Todo lo del plan Essential', 'Recepción Digital (Check-In/Out online)', 'App SOLMI Staff para empleados', 'Housekeeping Inteligente', 'CRM y Fidelización básico', 'SOLMI Academy completa', 'Soporte prioritario'],
   },
   {
-    name: 'Professional', price: 'USD 349', priceSuffix: '/mes', rooms: 'Hasta 100 habitaciones', color: 'purple',
+    name: 'Professional', slug: 'professional', price: 'USD 349', priceSuffix: '/mes', rooms: 'Hasta 100 habitaciones', color: 'purple',
     desc: 'La solución inteligente para hoteles y apartahoteles.', cta: 'Prueba gratis 30 días', badge: 'Más Popular', featured: true,
     features: ['Todo lo del plan Starter', 'Recepcionista Virtual con IA', 'Revenue Manager con IA', 'Nómina Automatizada', 'Marketing Automatizado', 'Business Intelligence avanzado', 'API Abierta e integraciones', 'Soporte dedicado con SLA'],
   },
   {
-    name: 'Enterprise', price: 'USD 549', priceSuffix: '/mes', rooms: 'Hasta 200 habitaciones', color: 'gold',
+    name: 'Enterprise', slug: 'enterprise', price: 'USD 549', priceSuffix: '/mes', rooms: 'Hasta 200 habitaciones', color: 'gold',
     desc: 'Para hoteles grandes y cadenas boutique.', cta: 'Prueba gratis 30 días',
     features: ['Todo lo del plan Professional', 'Gerente Virtual con IA (briefings diarios)', 'Multipropiedad (hasta 3 propiedades)', 'Comunidad SOLMI (eventos y red)', 'App SOLMI Guest para huéspedes', 'Reportes ejecutivos consolidados', 'Account Manager dedicado', 'Onboarding premium incluido'],
   },

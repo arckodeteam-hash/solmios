@@ -39,8 +39,12 @@
               to="/login"
               class="text-sm font-semibold text-slate-600 hover:text-navy transition-colors duration-200 hidden sm:inline-block"
             >Iniciar Sesión</router-link>
+            <!-- CTA de conversión: va al ALTA, no al login. Apuntaba a /login, así que un
+                 visitante sin cuenta terminaba en un formulario que le pedía credenciales que
+                 no tenía. "Iniciar Sesión" (arriba) sigue siendo la puerta de los que ya son
+                 clientes. -->
             <router-link
-              to="/login"
+              to="/registro"
               class="inline-flex items-center gap-1.5 font-bold text-sm px-5 py-2.5 rounded-xl bg-blue text-white hover:bg-navy transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg"
             >Prueba Gratis
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>

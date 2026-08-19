@@ -87,6 +87,14 @@
             </button>
           </form>
 
+          <!-- El alta pública vive en /registro y no la enlazaba NADIE: el único link a esa
+               página estaba dentro del aviso de suscripción vencida, que solo ve quien YA es
+               cliente. Un visitante nuevo no tenía forma de llegar. -->
+          <p class="mt-5 pt-4 border-t border-border text-center text-xs text-text-secondary">
+            ¿No tenés cuenta?
+            <router-link to="/registro" data-testid="login-register-link" class="text-cyan font-bold hover:underline">Registrate gratis</router-link>
+          </p>
+
           <!-- Demo Accounts (dev) -->
           <div v-if="demoAccounts.length" class="mt-6 pt-4 border-t border-border">
             <div class="text-[10px] font-bold text-text-muted uppercase mb-2 text-center">Cuentas demo</div>

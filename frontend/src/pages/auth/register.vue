@@ -306,6 +306,9 @@ const plans = ref<PublicPlan[]>([])
 // Link de referido (`/r/:code` → redirige acá con `?ref=`). Se muestra "Te invitó X" si el
 // código existe; si no, se manda igual en el alta (el backend lo ignora sin romper el registro).
 const referralCode = ref((route.query.ref as string) || '')
+/** Plan preseleccionado desde la tabla de precios (`/registro?plan=professional`). Es solo una
+ *  preferencia: se valida contra los planes de la API antes de usarse (ver onMounted). */
+const requestedPlanSlug = computed(() => String(route.query.plan ?? '').trim().toLowerCase())
 const referrerHotelName = ref('')
 
 const form = ref({
@@ -413,7 +416,14 @@ onMounted(async () => {
   try {
     const res = await SignupService.publicPlans()
     plans.value = res ?? []
-    if (plans.value.length && !form.value.planId) form.value.planId = plans.value[0]!.id
+    // El plan que el visitante eligió en la tabla de precios de la landing viaja como
+    // `?plan=<slug>`. Se resuelve contra los planes REALES que devolvió la API: un slug
+    // desconocido (plan dado de baja, link viejo, URL manipulada) se ignora y cae al default,
+    // así nunca se manda un planId inventado al alta.
+    const wanted = requestedPlanSlug.value
+    const matched = wanted ? plans.value.find(p => p.slug === wanted) : undefined
+    if (matched) form.value.planId = matched.id
+    else if (plans.value.length && !form.value.planId) form.value.planId = plans.value[0]!.id
   } catch { /* los planes son opcionales para registrarse */ }
 
   if (referralCode.value) {
