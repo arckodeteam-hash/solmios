@@ -116,6 +116,10 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth.store'
 import { AuthService } from '@/services/Auth.service'
+import { usePageMeta } from '@/composables/usePageMeta'
+import { AUTH_PAGE_META } from './auth-meta'
+
+usePageMeta(AUTH_PAGE_META.login)
 
 const ICON_BUILDING = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1m4 0h1m-6 4h1m4 0h1m-6 4h1m4 0h1"/></svg>'
 const ICON_GLOBE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0 0c2.25 0 4-4 4-9s-1.75-9-4-9-4 4-4 9 1.75 9 4 9ZM3.5 9h17M3.5 15h17"/></svg>'

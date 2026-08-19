@@ -254,6 +254,10 @@ import SearchSelect from '@/components/ui/SearchSelect.vue'
 import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES } from '@/data/locales'
 import { usePasswordStrength, PASSWORD_MAX } from '@/composables/usePasswordStrength'
+import { usePageMeta } from '@/composables/usePageMeta'
+import { AUTH_PAGE_META } from './auth-meta'
+
+usePageMeta(AUTH_PAGE_META.register)
 
 /** Debe coincidir con `TRIAL_DAYS` del backend. Se muestra en 4 lugares. */
 const trialDays = 7

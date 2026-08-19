@@ -69,6 +69,10 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AuthService } from '@/services/Auth.service'
+import { usePageMeta } from '@/composables/usePageMeta'
+import { AUTH_PAGE_META } from './auth-meta'
+
+usePageMeta(AUTH_PAGE_META.resetPassword)
 
 const route = useRoute()
 const router = useRouter()

@@ -65,6 +65,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { AuthService } from '@/services/Auth.service'
+import { usePageMeta } from '@/composables/usePageMeta'
+import { AUTH_PAGE_META } from './auth-meta'
+
+usePageMeta(AUTH_PAGE_META.forgotPassword)
 
 const email = ref('')
 const error = ref('')

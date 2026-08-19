@@ -1,8 +1,22 @@
+# Panel y administración: privado detrás de login, sin valor de búsqueda.
 User-agent: *
 Allow: /
 Disallow: /panel/
 Disallow: /admin/
-Disallow: /login
-Disallow: /register
 
-Sitemap: https://hotel.zx89.site/sitemap.xml
+# Utilidades de cuenta. Van bloqueadas ACÁ y además con `noindex` en su propio <head>
+# (composables/usePageMeta.ts) — defensa en dos capas, y la de robots.txt es la que manda:
+# esta app es una SPA sin SSR, así que el `noindex` se inyecta por JS y un crawler que no lo
+# ejecute (o que indexe antes de renderizar) no llega a verlo. Para /reset-password eso no es
+# negociable: la URL lleva el token de restablecimiento y no puede terminar en ningún índice.
+Disallow: /login
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /change-password
+
+# `/registro` SÍ se indexa: es la página de conversión del producto, y por eso es la única de
+# las de cuenta que declara description, canonical y Open Graph propios.
+# Antes había un `Disallow: /register` que no bloqueaba nada — esa ruta no existe en el router,
+# la real es `/registro`, en español.
+
+Sitemap: https://solmios.com/sitemap.xml
