@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# LoopKit pre-push — la red que funciona con CUALQUIER agente (y con vos a mano).
+# Instalar: cp .loopkit/adapters/git/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+ROOT="$(git rev-parse --show-toplevel)"
+[ -f "$ROOT/.loopkit/core/gate.py" ] || exit 0
+ENFORCE=1; [ -f "$ROOT/.loopkit/commands.env" ] && . "$ROOT/.loopkit/commands.env" 2>/dev/null
+if ! out="$(cd "$ROOT" && LOOPKIT_STATE="$ROOT/.loopkit/state" python3 "$ROOT/.loopkit/core/gate.py" 2>&1)"; then
+  if [ "${LOOPKIT_ENFORCE:-1}" = "0" ]; then
+    echo "[LoopKit · observación] este push no pasaría el gate:" >&2
+    echo "$out" >&2
+    exit 0
+  fi
+  echo "──────────────────────────────────────────────" >&2
+  echo "LOOPKIT bloqueó el push:" >&2
+  echo "$out" >&2
+  echo "──────────────────────────────────────────────" >&2
+  echo "Arreglá y reintentá. (git push --no-verify saltea esto: usalo y sos responsable vos.)" >&2
+  exit 1
+fi
+exit 0

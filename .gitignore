@@ -60,3 +60,8 @@ openspec/.gitlab-sync.json
 # Claude Code — loop runtime state y worktrees (por dev, no commitear)
 .claude/state/
 .claude/worktrees/
+.loopkit/state/
+.loopkit/**/__pycache__/
+# Copia del instalador (sin punto): mismo criterio que la instalada.
+loopkit/state/
+loopkit/**/__pycache__/

@@ -1,0 +1,40 @@
+{
+  "task": "T-XXX",
+  "diff_hash": "<pegá acá el valor de: lk status → diff hoy>",
+  "builder": "<quién escribió el código>",
+  "reviewer": "<quién audita — DEBE ser distinto del builder>",
+  "verdict": "READY | READY_WITH_RISKS | NOT_READY",
+  "dimensions": {
+    "D1":  {"score": 100,   "source": "JUDGED",  "evidence": "src/x/y.ts:1 — ubicado en la capa correcta"},
+    "D2":  {"score": 100,   "source": "JUDGED",  "evidence": ""},
+    "D3":  {"score": 100,   "source": "JUDGED",  "evidence": "comparado contra src/x/z.ts"},
+    "D4":  {"score": 100,   "source": "JUDGED",  "evidence": ""},
+    "D5":  {"score": 100,   "source": "JUDGED",  "evidence": ""},
+    "D6":  {"score": 100,   "source": "JUDGED",  "evidence": ""},
+    "D7":  {"score": 100,   "source": "MEASURED","evidence": ".loopkit/state/evidence/test.txt"},
+    "D8":  {"score": 100,   "source": "MEASURED","evidence": ".loopkit/state/evidence/"},
+    "D9":  {"score": 100,   "source": "JUDGED",  "evidence": ""},
+    "D10": {"score": 100,   "source": "MEASURED","evidence": ".loopkit/state/evidence/diff.txt"},
+    "D11": {"score": 100,   "source": "MEASURED","evidence": ".loopkit/state/evidence/diff.txt"},
+    "D12": {"score": "N/V", "source": "JUDGED",  "evidence": ""}
+  },
+  "findings": [
+    {
+      "id": "BUG-001",
+      "dim": "D5",
+      "sev": "HIGH",
+      "state": "FIXED",
+      "loc": "src/x/y.ts:42",
+      "evidence": ".loopkit/state/evidence/test.txt:88",
+      "summary": "qué falla, en una línea",
+      "fix": "qué se cambió"
+    }
+  ],
+  "hypotheses": [
+    {"summary": "sospecha sin evidencia — no puntúa", "how_to_verify": "comando o inspección concreta"}
+  ],
+  "not_verified": [
+    {"dim": "D12", "why": "no se pudo ejecutar X", "how": "cómo verificarlo"}
+  ],
+  "next_action": "acción exacta si el veredicto no es READY"
+}
