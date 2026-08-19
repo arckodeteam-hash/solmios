@@ -25,7 +25,12 @@
             <span class="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full" :class="TONE_BG[ins.tone]">
               <span class="block h-3 w-3" :class="TONE_TEXT[ins.tone]" v-html="TONE_ICON[ins.tone]"></span>
             </span>
-            <span class="pt-0.5 text-text-secondary">{{ ins.text }}</span>
+            <!-- v-html a propósito: los insights se COMPONEN en el dashboard con <b> para
+                 resaltar la cifra ("ocupación del <b>82%</b>"). Con interpolación normal el
+                 usuario leía los tags crudos en pantalla. Las cadenas se arman íntegramente
+                 en código (números y labels de catálogos constantes) — no entra texto de
+                 huésped, reserva ni de ningún otro input, así que no hay superficie de XSS. -->
+            <span class="pt-0.5 text-text-secondary" v-html="ins.text"></span>
           </li>
         </ul>
       </div>

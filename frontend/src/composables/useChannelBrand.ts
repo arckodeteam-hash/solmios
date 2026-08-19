@@ -51,3 +51,20 @@ export function getChannelBrand(key?: string | null): ChannelBrand | null {
   const normalized = ALIASES[k] || k
   return CHANNEL_BRANDS[normalized] || null
 }
+
+/**
+ * Clave canónica de un canal (resuelve alias). Sirve para AGRUPAR: sin esto, `booking` y
+ * `booking.com` cuentan como dos canales distintos en la distribución del dashboard.
+ * Lo no reconocido cae a `other`, que sí tiene entrada propia en CHANNEL_BRANDS.
+ */
+export function normalizeChannelKey(key?: string | null): string {
+  if (!key) return 'other'
+  const k = key.toLowerCase().trim()
+  const normalized = ALIASES[k] || k
+  return CHANNEL_BRANDS[normalized] ? normalized : 'other'
+}
+
+/** Marca del canal, siempre con valor (cae a `other`). Para UI que no tolera `null`. */
+export function channelBrandOrDefault(key?: string | null): ChannelBrand {
+  return CHANNEL_BRANDS[normalizeChannelKey(key)]
+}

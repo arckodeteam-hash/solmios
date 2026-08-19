@@ -20,10 +20,13 @@
           <button v-for="room in floor.rooms" :key="room.id" @click="$emit('select', room)"
             class="cc-cell group relative flex aspect-square flex-col items-center justify-center rounded-xl border transition-all duration-200 cursor-pointer"
             :style="cellStyle(room)"
-            :title="`Hab. ${room.number} · ${STATUS_LABEL[room.status] ?? room.status}`">
+            :title="`Hab. ${room.number} · ${roomStatusMeta(room.status).label}`">
             <span class="text-sm font-black tabular-nums text-navy">{{ room.number }}</span>
-            <span class="mt-0.5 text-[8px] font-bold uppercase tracking-wide text-navy/60">{{ STATUS_SHORT[room.status] ?? '' }}</span>
-            <span v-if="room.status === 'occupied'" class="absolute right-1.5 top-1.5 h-1.5 w-1.5 animate-pulse rounded-full bg-[#EF4444]"></span>
+            <span class="mt-0.5 text-[8px] font-bold uppercase tracking-wide text-navy/60">{{ roomStatusMeta(room.status).short }}</span>
+            <!-- El punto vive del color del PROPIO estado: con un rojo fijo volvía a haber
+                 dos significados para #EF4444 dentro del mismo mapa (ocupada vs F/S). -->
+            <span v-if="room.status === 'occupied'" class="absolute right-1.5 top-1.5 h-1.5 w-1.5 animate-pulse rounded-full"
+              :style="{ background: ROOM_STATUS_META.occupied.color }"></span>
           </button>
         </div>
       </div>
@@ -35,33 +38,18 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Room } from '@/types'
+import { ROOM_STATUS_META, ROOM_STATUS_ORDER, roomStatusMeta } from '@/data/room-status'
 
 const props = defineProps<{ rooms: Room[] }>()
 defineEmits<{ select: [room: Room] }>()
 
-const STATUS_COLOR: Record<string, string> = {
-  available: '#22C55E',
-  occupied: '#EF4444',
-  cleaning: '#F59E0B',
-  dirty: '#FB923C',
-  pending: '#06B6D4',
-  out_of_service: '#475569',
-}
-const STATUS_LABEL: Record<string, string> = {
-  available: 'Disponible', occupied: 'Ocupada', cleaning: 'En limpieza',
-  dirty: 'Sucia', pending: 'Check-in pendiente', out_of_service: 'Mantenimiento',
-}
-const STATUS_SHORT: Record<string, string> = {
-  available: 'Libre', occupied: 'Ocupada', cleaning: 'Limpieza',
-  dirty: 'Sucia', pending: 'Llegada', out_of_service: 'F/S',
-}
-const LEGEND = [
-  { label: 'Disponible', color: '#22C55E' },
-  { label: 'Ocupada', color: '#EF4444' },
-  { label: 'Limpieza', color: '#F59E0B' },
-  { label: 'Llegada', color: '#06B6D4' },
-  { label: 'F/S', color: '#475569' },
-]
+// Colores y nombres salen de `data/room-status`. La copia local que estaba acá pintaba
+// "ocupada" del mismo rojo #EF4444 que el donut de al lado usa para "fuera de servicio",
+// y la leyenda solo listaba 5 de los 6 estados posibles (faltaba "Sucia").
+const LEGEND = ROOM_STATUS_ORDER.map(status => ({
+  label: ROOM_STATUS_META[status].short,
+  color: ROOM_STATUS_META[status].color,
+}))
 
 const floors = computed(() => {
   const byFloor = new Map<number, Room[]>()
@@ -80,7 +68,7 @@ const floors = computed(() => {
 })
 
 function cellStyle(room: Room) {
-  const c = STATUS_COLOR[room.status] ?? '#475569'
+  const c = roomStatusMeta(room.status).color
   return {
     background: `linear-gradient(160deg, ${c}4D 0%, ${c}1F 100%)`,
     borderColor: `${c}66`,

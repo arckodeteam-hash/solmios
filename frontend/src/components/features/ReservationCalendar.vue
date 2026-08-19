@@ -207,7 +207,7 @@
                       <span class="text-[8px] text-white/70 ml-auto shrink-0 flex items-center gap-0.5">
                         <Icon v-if="gRes(room.id, day.dateStr)!.lockCode" name="lock" :size="10" :title="`Cerradura: ${gRes(room.id, day.dateStr)!.lockCode}`" />
                         <Icon :name="PAY_ICON[gRes(room.id, day.dateStr)!.paymentStatus]" :size="10" :title="`Pago: ${gRes(room.id, day.dateStr)!.paymentStatus}`" />
-                        <span>${{ gRes(room.id, day.dateStr)!.amt }}</span>
+                        <span>{{ money }}{{ gRes(room.id, day.dateStr)!.amt }}</span>
                       </span>
                       <!-- Handle para extender/acortar (arrastrar el borde derecho) — #204/#207.
                            w-2 (8px), NO w-4 (16px): con el handle ancho, arrastrar la reserva desde
@@ -378,7 +378,7 @@
               <thead><tr style="border-bottom:2px solid #1a2b4c"><th style="text-align:left;padding:8px 0;font-size:10px;text-transform:uppercase;color:#6b7280">Habitación</th><th style="text-align:center;padding:8px 0;font-size:10px;text-transform:uppercase;color:#6b7280">Cant.</th><th style="text-align:right;padding:8px 0;font-size:10px;text-transform:uppercase;color:#6b7280">Precio/n</th><th style="text-align:right;padding:8px 0;font-size:10px;text-transform:uppercase;color:#6b7280">Subtotal</th></tr></thead>
               <tbody>
                 <tr v-for="(item, i) in quote.rooms" :key="i" style="border-bottom:1px solid #e5e7eb">
-                  <td style="padding:8px 0;font-weight:700;color:#1a2b4c">{{ item.type }}</td><td style="padding:8px 0;text-align:center">{{ item.qty }}</td><td style="padding:8px 0;text-align:right">${{ item.price }}</td><td style="padding:8px 0;text-align:right;font-weight:700">${{ item.qty * item.price * quoteNights }}</td>
+                  <td style="padding:8px 0;font-weight:700;color:#1a2b4c">{{ item.type }}</td><td style="padding:8px 0;text-align:center">{{ item.qty }}</td><td style="padding:8px 0;text-align:right">{{ money }}{{ item.price }}</td><td style="padding:8px 0;text-align:right;font-weight:700">{{ money }}{{ item.qty * item.price * quoteNights }}</td>
                 </tr>
               </tbody>
             </table>
@@ -389,9 +389,9 @@
               <div><span style="color:#6b7280">Huéspedes:</span> <strong>{{ quote.adults }} adultos, {{ quote.kids }} niños</strong></div>
             </div>
             <div style="border-top:2px solid #1a2b4c;padding-top:12px;font-size:12px">
-              <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Subtotal</span><strong>${{ quoteSubtotal }}</strong></div>
-              <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>{{ quote.taxName }} ({{ quote.taxRate }}%)</span><strong>${{ Math.round(quoteSubtotal * quote.taxRate / 100) }}</strong></div>
-              <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:900;border-top:2px solid #1a2b4c;padding-top:8px;margin-top:8px"><span>TOTAL</span><span>${{ quoteSubtotal + Math.round(quoteSubtotal * quote.taxRate / 100) }}</span></div>
+              <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Subtotal</span><strong>{{ money }}{{ quoteSubtotal }}</strong></div>
+              <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>{{ quote.taxName }} ({{ quote.taxRate }}%)</span><strong>{{ money }}{{ Math.round(quoteSubtotal * quote.taxRate / 100) }}</strong></div>
+              <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:900;border-top:2px solid #1a2b4c;padding-top:8px;margin-top:8px"><span>TOTAL</span><span>{{ money }}{{ quoteSubtotal + Math.round(quoteSubtotal * quote.taxRate / 100) }}</span></div>
             </div>
             <div v-if="quote.notes" style="margin-top:16px;font-size:10px;color:#6b7280;border-top:1px solid #e5e7eb;padding-top:12px">
               <p style="font-weight:700;color:#1a2b4c;margin-bottom:4px">Notas:</p>
@@ -430,7 +430,7 @@
                   <input v-model.number="item.qty" type="number" min="1" max="20" class="w-12 px-2 py-2 rounded-lg border border-border text-xs font-bold text-navy text-center" />
                 </div>
                 <div class="flex items-center gap-1">
-                  <span class="text-xs text-text-muted">$</span>
+                  <span class="text-xs text-text-muted">{{ money }}</span>
                   <input v-model.number="item.price" type="number" min="0" class="w-20 px-2 py-2 rounded-lg border border-border text-xs font-bold text-navy text-right" />
                   <span class="text-[10px] text-text-muted">/n</span>
                 </div>
@@ -454,12 +454,12 @@
             <label class="block text-[11px] font-bold text-navy uppercase tracking-wide mb-2">Precios</label>
             <div class="bg-surface rounded-xl p-4 space-y-2 text-sm">
               <div v-for="(item, i) in quote.rooms" :key="'p'+i" class="flex justify-between">
-                <span class="text-text-secondary">{{ item.type }} ×{{ item.qty }} ({{ quoteNights }}n × ${{ item.price }})</span>
-                <span class="font-bold">${{ item.qty * item.price * quoteNights }}</span>
+                <span class="text-text-secondary">{{ item.type }} ×{{ item.qty }} ({{ quoteNights }}n × {{ money }}{{ item.price }})</span>
+                <span class="font-bold">{{ money }}{{ item.qty * item.price * quoteNights }}</span>
               </div>
               <div class="flex justify-between border-t border-border pt-2">
                 <span class="text-text-secondary">Subtotal</span>
-                <span class="font-bold">${{ quoteSubtotal }}</span>
+                <span class="font-bold">{{ money }}{{ quoteSubtotal }}</span>
               </div>
               <div class="flex justify-between items-center">
                 <span class="text-text-secondary">Impuesto</span>
@@ -469,10 +469,10 @@
                   <span class="text-xs">%</span>
                 </div>
               </div>
-              <div class="flex justify-between"><span class="text-text-secondary">Impuesto calculado</span><span class="font-bold">${{ Math.round(quoteSubtotal * quote.taxRate / 100) }}</span></div>
+              <div class="flex justify-between"><span class="text-text-secondary">Impuesto calculado</span><span class="font-bold">{{ money }}{{ Math.round(quoteSubtotal * quote.taxRate / 100) }}</span></div>
               <div class="border-t border-border pt-2 flex justify-between">
                 <span class="font-extrabold text-navy">Total</span>
-                <span class="font-extrabold text-navy text-lg">${{ quoteSubtotal + Math.round(quoteSubtotal * quote.taxRate / 100) }}</span>
+                <span class="font-extrabold text-navy text-lg">{{ money }}{{ quoteSubtotal + Math.round(quoteSubtotal * quote.taxRate / 100) }}</span>
               </div>
             </div>
           </div>
@@ -739,6 +739,8 @@ import { ChannelService } from '@/services/Channel.service'
 import { http } from '@/services/http'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
+import { currencySymbol } from '@/composables/useCurrency'
+import { CurrencyCode } from '@/types/currency'
 import ReservationModal from '@/components/features/ReservationModal.vue'
 import ReservationWizardModal from '@/components/features/ReservationWizardModal.vue'
 import RoomLockModal from '@/components/features/RoomLockModal.vue'
@@ -892,6 +894,11 @@ const quoteRoomTypes = computed(() => {
 // Usado por popupQuote() (cotización); la creación de reservas se hace ahora en /panel/reservas.
 const hotelTaxRate = ref(0)
 const hotelTaxName = ref('Impuesto')
+/** Moneda de facturación del hotel (`hotels.currency`). El calendario escribía '$' fijo en
+ *  la grilla de tarifas y en la COTIZACIÓN que se imprime y se le entrega al huésped: un
+ *  hotel que factura en RD$ o € cotizaba en dólares sin saberlo. */
+const hotelCurrency = ref<string>(CurrencyCode.USD)
+const money = computed(() => currencySymbol(hotelCurrency.value))
 
 // Channels
 const CH: Record<string, any> = {
@@ -1882,6 +1889,7 @@ onMounted(async () => {
     hotelInfo.value = { name: h.name || auth.user?.hotelName || '', address: h.address || '', phone: h.phone || '', email: h.email || '' }
     hotelTaxRate.value = Number(h.taxRate) || 0
     hotelTaxName.value = h.taxName || 'Impuesto'
+    hotelCurrency.value = h.currency || CurrencyCode.USD
   } catch {}
   try { const c = await ConfigService.get('channel_colors', hid.value); if (c && typeof c === 'object' && !Array.isArray(c)) channelColors.value = c } catch {}
 })

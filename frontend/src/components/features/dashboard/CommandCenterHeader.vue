@@ -11,16 +11,18 @@
       </div>
     </div>
 
-    <!-- Identidad — foto real de hotel, bordes difuminados en las 4 direcciones para fundirse con el fondo. Oculta en mobile. -->
-    <div class="relative hidden w-40 shrink-0 items-center overflow-hidden rounded-lg sm:w-48 md:flex lg:w-56 xl:w-64">
+    <!-- Identidad — logo real del hotel sobre el azul de marca. Oculta en mobile.
+         Antes acá había una foto de stock de Unsplash con el logo de nadie. -->
+    <div class="cc-identity relative hidden w-40 shrink-0 items-center gap-3 overflow-hidden rounded-lg px-4 py-2 sm:w-48 md:flex lg:w-56 xl:w-64">
       <img
-        src="https://images.unsplash.com/photo-1506813257165-8c4bffd3a57f?auto=format&fit=crop&w=800&q=80"
+        v-if="logo"
+        :src="logo"
         alt=""
-        class="cc-hotel-photo absolute inset-0 h-full w-full object-cover"
+        class="h-9 w-9 shrink-0 rounded-md bg-white/10 object-contain p-1"
+        @error="logoFailed = true"
       />
-      <div class="absolute inset-0" style="background: linear-gradient(90deg, #04070F 0%, rgba(4,7,15,0.88) 24%, rgba(4,7,15,0.35) 50%, rgba(4,7,15,0.2) 70%, rgba(4,7,15,0.12) 100%)"></div>
 
-      <div class="relative z-10 min-w-0 px-5 py-2">
+      <div class="min-w-0">
         <h1 class="text-sm md:text-base font-black tracking-tight text-white uppercase leading-none truncate">{{ pageTitle }}</h1>
         <div class="mt-1.5 flex items-center gap-1.5">
           <span class="text-[11px] font-bold text-white/70 uppercase tracking-tight truncate">{{ hotelName }}</span>
@@ -110,22 +112,34 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useNow } from '@/composables/useNow'
 import { relativeTime } from '@/composables/useRelativeTime'
 import { usePageTitle } from '@/composables/usePageTitle'
 import EmergencyButton from '@/components/features/core-pms/EmergencyButton.vue'
 import NotificationBell from '@/components/features/core-pms/NotificationBell.vue'
 import UserMenu from '@/components/features/core-pms/UserMenu.vue'
+import type { WeatherInfo } from '@/services/Weather.service'
 
 // #654: el <h1> real es el módulo actual (Reservas, Gastos…), no el hotel — con lector de
 // pantalla las 71 páginas se anunciaban todas igual, y document.title no cambiaba entre rutas.
 const pageTitle = usePageTitle()
 
-export interface WeatherInfo { temp: number; label: string; icon: string }
-
 const props = defineProps<{
   hotelName: string
+  /**
+   * Logo del hotel (`hotels.logo`, el mismo que sale en facturas y emails). Antes acá había
+   * una URL de Unsplash escrita en el template: todos los hoteles del SaaS veían la misma
+   * foto de stock de un lobby ajeno y cada carga pegaba a un CDN de terceros.
+   *
+   * Llega por GET /settings, que es lo que ya se pide para el nombre y las estrellas: así el
+   * bloque se ve igual para TODOS los roles del panel. Leerlo de `hotel-media` (la galería de
+   * la landing) parecía equivalente pero exige `media:view`, permiso que solo tiene
+   * `hotel_admin` — recepción se quedaba sin identidad y con un 403 en cada carga.
+   *
+   * Sin logo cargado no se dibuja imagen: queda el fondo de marca, sin pedirle nada a nadie.
+   */
+  logoUrl?: string | null
   starRating?: number | string | null
   apiOnline: boolean
   lastSync?: string | null
@@ -134,10 +148,17 @@ const props = defineProps<{
   alerts?: number
 }>()
 
+/** Un logo borrado del storage no debe dejar un recuadro roto: se trata como "sin logo". */
+const logoFailed = ref(false)
+const logo = computed(() => (logoFailed.value ? null : props.logoUrl || null))
+
 const { now } = useNow(1000)
 
 const stars = computed(() => Math.min(5, Math.max(0, Number(props.starRating) || 0)))
 const alerts = computed(() => props.alerts ?? 0)
+
+// Al switchear de hotel llega otra URL: hay que volver a darle una chance de cargar.
+watch(() => props.logoUrl, () => { logoFailed.value = false })
 
 const syncAgoLong = computed(() => relativeTime(props.lastSync, now.value))
 const syncAgoShort = computed(() => {
@@ -151,9 +172,8 @@ const syncAgoShort = computed(() => {
 </script>
 
 <style scoped>
-.cc-hotel-photo {
-  -webkit-mask-image: linear-gradient(90deg, black 0%, black 78%, transparent 100%);
-  mask-image: linear-gradient(90deg, black 0%, black 78%, transparent 100%);
+.cc-identity {
+  background: linear-gradient(135deg, #0C1830 0%, #0A1426 100%);
 }
 .cc-status-card {
   background:

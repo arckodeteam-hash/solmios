@@ -6,6 +6,7 @@
     <!-- 1. Centro de operaciones -->
     <CommandCenterHeader
       :hotel-name="hotelName"
+      :logo-url="hotelLogo"
       :star-rating="hotelStars"
       :api-online="apiOnline"
       :last-sync="channelLastSync"
@@ -49,7 +50,7 @@
         ]"
       />
       <KpiHeroCard
-        label="Ingresos Hoy" accent="amber" prefix="$" icon="money"
+        label="Ingresos Hoy" accent="amber" :prefix="currencyPrefix" icon="money"
         :value="dashboard.stats.revenueToday"
         :trend="revenueTrend"
         :spark="revenueSpark"
@@ -168,6 +169,7 @@
       <AiInsightsPanel :user-name="userFirstName" :insights="aiInsights" />
       <RevenueChart
         :daily="revenueDaily"
+        :currency="hotelCurrency"
         :revenue-today="dashboard.stats.revenueToday"
         :trend-pct="revenueTrend"
         :loading="revenueLoading"
@@ -202,7 +204,7 @@
             <div class="flex items-center justify-between rounded-xl bg-surface p-3">
               <span class="text-sm font-bold text-text-secondary">Estado</span>
               <span class="rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase" :style="{ background: `${roomAccent}1A`, color: roomAccent }">
-                {{ ROOM_STATUS_LABEL[selectedRoom.status] }}
+                {{ roomStatusLabel }}
               </span>
             </div>
 
@@ -219,7 +221,7 @@
 
             <div class="grid grid-cols-2 gap-3">
               <div class="rounded-xl bg-surface p-3 text-center">
-                <div class="text-lg font-black tabular-nums text-navy">${{ selectedRoom.basePrice }}</div>
+                <div class="text-lg font-black tabular-nums text-navy">{{ currencyPrefix }}{{ selectedRoom.basePrice }}</div>
                 <div class="text-[10px] text-text-muted">Tarifa/Noche</div>
               </div>
               <div class="rounded-xl bg-surface p-3 text-center">
@@ -231,10 +233,20 @@
 
           <div class="border-t border-border bg-surface p-5">
             <div class="flex gap-2">
-              <button v-if="selectedRoom.status === 'available'" @click="setRoomStatus('occupied')" class="cc-modal-btn flex-1 bg-[#22C55E] text-[#052E16]">Check-in</button>
-              <button v-if="selectedRoom.status === 'occupied'" @click="setRoomStatus('cleaning')" class="cc-modal-btn flex-1 bg-[#EF4444] text-white">Check-out</button>
+              <!-- Check-in / Check-out abren el flujo REAL de recepción. Antes estos dos botones
+                   solo cambiaban el estado de la habitación, sin tocar la reserva ni el folio. -->
+              <button v-if="frontDeskAction" @click="goToFrontDesk" class="cc-modal-btn flex-1"
+                :class="frontDeskAction === 'checkin' ? 'bg-[#22C55E] text-[#052E16]' : 'bg-[#2563EB] text-white'">
+                {{ FRONT_DESK_LABEL[frontDeskAction] }}
+              </button>
               <button v-if="selectedRoom.status === 'cleaning' || selectedRoom.status === 'dirty'" @click="setRoomStatus('available')" class="cc-modal-btn flex-1 bg-[#06B6D4] text-[#083344]">Marcar Limpia</button>
-              <button v-if="selectedRoom.status !== 'out_of_service'" @click="setRoomStatus('out_of_service')" class="cc-modal-btn border border-border bg-white text-text-secondary">F/S</button>
+              <!-- Una habitación con huésped adentro no se saca de servicio: dejaría la reserva
+                   viva sobre una habitación no vendible. Primero el check-out. -->
+              <button v-if="selectedRoom.status !== 'out_of_service'"
+                @click="setRoomStatus('out_of_service')"
+                :disabled="selectedRoom.status === 'occupied'"
+                :title="selectedRoom.status === 'occupied' ? 'Hacé el check-out antes de sacarla de servicio' : 'Marcar fuera de servicio'"
+                class="cc-modal-btn border border-border bg-white text-text-secondary disabled:cursor-not-allowed disabled:opacity-40">F/S</button>
               <button v-else @click="setRoomStatus('available')" class="cc-modal-btn border border-border bg-white text-text-secondary">Reactivar</button>
               <button @click="selectedRoom = null" class="cc-modal-btn border border-border bg-white text-text-secondary">Cerrar</button>
             </div>
@@ -258,7 +270,7 @@ import { NotificationsService, type AppNotification } from '@/services/Notificat
 import { ChannelService } from '@/services/Channel.service'
 import { HotelService, type HotelData } from '@/services/Hotel.service'
 import { ReportsService, type FacturacionReport } from '@/services/Reports.service'
-import CommandCenterHeader, { type WeatherInfo } from '@/components/features/dashboard/CommandCenterHeader.vue'
+import CommandCenterHeader from '@/components/features/dashboard/CommandCenterHeader.vue'
 import OnboardingGuide from '@/components/features/OnboardingGuide.vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import ReservationCalendar from '@/components/features/ReservationCalendar.vue'
@@ -272,6 +284,12 @@ import FloorHeatMap from '@/components/features/dashboard/FloorHeatMap.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { DashboardService } from '@/services/Dashboard.service'
+import { WeatherService, type WeatherInfo } from '@/services/Weather.service'
+import { currencySymbol } from '@/composables/useCurrency'
+import { CurrencyCode } from '@/types/currency'
+import { channelBrandOrDefault, normalizeChannelKey } from '@/composables/useChannelBrand'
+import { roomStatusMeta, frontDeskActionFor, FRONT_DESK_PERMISSION, FRONT_DESK_LABEL } from '@/data/room-status'
+import { usePermissions } from '@/composables/usePermissions'
 import type { CheckinListData, CheckinListItem } from '@/types'
 
 const router = useRouter()
@@ -280,12 +298,18 @@ const dashboard = useDashboardStore()
 const roomStore = useRoomStore()
 const reservationStore = useReservationStore()
 const auth = useAuthStore()
+const { can } = usePermissions()
 
 /** Refresco del feed/KPIs en vivo */
 const REFRESH_INTERVAL_MS = 60_000
 /** Ventana de la serie de ingresos que alimenta el gráfico */
 const REVENUE_WINDOW_DAYS = 365
 const MS_DAY = 86_400_000
+/** Notificaciones que se piden por refresco (el feed muestra ACTIVITY_LIMIT, se pide de más
+ *  porque se mezclan con reservas y se reordenan por fecha antes de recortar). */
+const NOTIFICATIONS_FETCH_LIMIT = 20
+/** Puntos de la sparkline del KPI de ingresos (últimos N días de la serie diaria). */
+const REVENUE_SPARK_DAYS = 14
 
 const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
 
@@ -328,7 +352,16 @@ function badgeStyle(badge: { color: string }): Record<string, string> {
 }
 
 const hotelName = computed(() => hotelData.value?.name || auth.currentHotel || 'Mi Hotel')
+/** Moneda de facturación del hotel (`hotels.currency`, default USD del modelo). */
+const hotelCurrency = computed(() => hotelData.value?.currency || CurrencyCode.USD)
+/** Símbolo a anteponer a los importes. NUNCA hardcodear '$': un hotel en RD factura en RD$
+ *  y uno en España en €, y el dashboard mostraba dólares para todos. */
+const currencyPrefix = computed(() => currencySymbol(hotelCurrency.value))
 const hotelStars = computed(() => hotelData.value?.starRating ?? null)
+/** Identidad visual del hotel para el header. Viene de GET /settings (`settings:view`), el
+ *  mismo request que ya trae nombre y estrellas — no de `hotel-media`, que exige `media:view`
+ *  y dejaría a recepción sin logo y con un 403 por carga. */
+const hotelLogo = computed(() => hotelData.value?.logo || null)
 const userFirstName = computed(() => (auth.user?.name ?? 'Admin').split(' ')[0])
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
@@ -360,7 +393,7 @@ const departuresPending = computed(() => todaysDepartures.value.length - departu
 const departuresProgress = computed(() =>
   todaysDepartures.value.length ? Math.round((departuresDone.value / todaysDepartures.value.length) * 100) : 0)
 
-const revenueSpark = computed(() => revenueDaily.value.slice(-14).map(p => p.value))
+const revenueSpark = computed(() => revenueDaily.value.slice(-REVENUE_SPARK_DAYS).map(p => p.value))
 
 // ── Actividad en tiempo real ─────────────────────────────────────────────
 const SVG = (path: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="${path}"/></svg>`
@@ -424,26 +457,21 @@ const activityItems = computed<FeedItem[]>(() => {
 })
 
 // ── Distribución por canal ───────────────────────────────────────────────
-// `icon` es la key que entiende <ChannelIcon> (frontend/src/components/ui/ChannelIcon.vue)
-// para mostrar el logo de marca real del canal en el dashboard general (feedback #615).
-const CHANNEL_META: Array<{ match: string[]; label: string; color: string; icon: string }> = [
-  { match: ['booking'], label: 'Booking.com', color: '#2563EB', icon: 'booking' },
-  { match: ['direct', 'phone', 'whatsapp'], label: 'Directo', color: '#22C55E', icon: 'direct' },
-  { match: ['airbnb'], label: 'Airbnb', color: '#EF4444', icon: 'airbnb' },
-  { match: ['expedia'], label: 'Expedia', color: '#F59E0B', icon: 'expedia' },
-  { match: ['agoda'], label: 'Agoda', color: '#8B5CF6', icon: 'agoda' },
-  { match: ['google'], label: 'Google', color: '#06B6D4', icon: 'google' },
-]
-
+// El catálogo de canales vive en `composables/useChannelBrand` (12 canales + alias), NO acá.
+// La copia local que había antes solo conocía 6 y usaba colores inventados: una reserva de
+// Trip.com, Despegar, Hostelworld, walk-in o email caía toda junta en un bucket "Otros" gris,
+// y Booking salía #2563EB en vez de su azul de marca #003580.
+// `icon` es la key cruda del canal — <ChannelIcon> normaliza los alias por su cuenta.
 const channelDistribution = computed<ChannelSlice[]>(() => {
   const active = reservationStore.reservations.filter(r => r.status !== 'cancelled')
   if (!active.length) return []
   const counts = new Map<string, { label: string; color: string; icon: string; count: number }>()
   for (const r of active) {
-    const meta = CHANNEL_META.find(m => m.match.includes(r.source)) ?? { label: 'Otros', color: '#64748B', icon: 'direct' }
-    const prev = counts.get(meta.label)
-    if (prev) prev.count++
-    else counts.set(meta.label, { label: meta.label, color: meta.color, icon: meta.icon, count: 1 })
+    const key = normalizeChannelKey(r.source)
+    const prev = counts.get(key)
+    if (prev) { prev.count++; continue }
+    const brand = channelBrandOrDefault(key)
+    counts.set(key, { label: brand.label, color: brand.color, icon: key, count: 1 })
   }
   return [...counts.values()]
     .sort((a, b) => b.count - a.count)
@@ -525,8 +553,7 @@ const aiInsights = computed<AiInsight[]>(() => {
     const created = new Date(r.createdAt).getTime()
     if (Number.isNaN(created)) continue
     const age = now - created
-    const meta = CHANNEL_META.find(m => m.match.includes(r.source))
-    const label = meta?.label ?? 'Otros'
+    const label = channelBrandOrDefault(r.source).label
     const g = growth.get(label) ?? { cur: 0, prev: 0 }
     if (age <= 7 * MS_DAY) g.cur++
     else if (age <= 14 * MS_DAY) g.prev++
@@ -550,32 +577,13 @@ const aiInsights = computed<AiInsight[]>(() => {
   return out.slice(0, AI_INSIGHTS_LIMIT)
 })
 
-// ── Clima (open-meteo, sin API key — solo si el hotel tiene coordenadas) ─
-const WEATHER_API = 'https://api.open-meteo.com/v1/forecast'
-const WMO_MAP: Array<{ codes: number[]; label: string; icon: string }> = [
-  { codes: [0], label: 'Despejado', icon: '☀️' },
-  { codes: [1, 2], label: 'Parcialmente nublado', icon: '⛅' },
-  { codes: [3], label: 'Nublado', icon: '☁️' },
-  { codes: [45, 48], label: 'Niebla', icon: '🌫️' },
-  { codes: [51, 53, 55, 56, 57, 61, 63, 65, 66, 67], label: 'Lluvia', icon: '🌧️' },
-  { codes: [71, 73, 75, 77, 85, 86], label: 'Nieve', icon: '❄️' },
-  { codes: [80, 81, 82], label: 'Chubascos', icon: '🌦️' },
-  { codes: [95, 96, 99], label: 'Tormenta', icon: '⛈️' },
-]
-
+// ── Clima ────────────────────────────────────────────────────────────────
+// El proveedor, los códigos WMO y el manejo de error viven en WeatherService: acá solo se
+// le pasan las coordenadas del hotel. Antes esto era un `fetch()` a una URL de open-meteo
+// escrita a mano dentro del componente (dos reglas rotas: fetch en componente + endpoint
+// de un tercero clavado en el bundle, sin forma de apuntarlo a otro lado ni de apagarlo).
 async function fetchWeather() {
-  const lat = Number(hotelData.value?.latitude)
-  const lon = Number(hotelData.value?.longitude)
-  if (!lat || !lon) { weather.value = null; return }
-  try {
-    const res = await fetch(`${WEATHER_API}?latitude=${lat}&longitude=${lon}&current_weather=true`)
-    if (!res.ok) return
-    const data = await res.json()
-    const cw = data?.current_weather
-    if (!cw) return
-    const meta = WMO_MAP.find(m => m.codes.includes(Number(cw.weathercode))) ?? { label: 'Clima', icon: '🌤️' }
-    weather.value = { temp: Number(cw.temperature), label: meta.label, icon: meta.icon }
-  } catch { weather.value = null }
+  weather.value = await WeatherService.current(hotelData.value?.latitude, hotelData.value?.longitude)
 }
 
 // ── Fetch / refresco ─────────────────────────────────────────────────────
@@ -601,7 +609,7 @@ async function fetchLiveData() {
   fetchCheckinList()
 
   NotificationsService.list({ hotelId: hotelId.value })
-    .then(r => { notifications.value = (r.data ?? []).slice(0, 20) })
+    .then(r => { notifications.value = (r.data ?? []).slice(0, NOTIFICATIONS_FETCH_LIMIT) })
     .catch(() => { /* módulo sin permiso o sin datos: el feed cae a reservas */ })
 
   ChannelService.status(hotelId.value)
@@ -668,15 +676,30 @@ watch(hotelId, async (id) => {
 // ── Modal de habitación (heat map) ────────────────────────────────────────
 const selectedRoom = ref<Room | null>(null)
 
-const ROOM_STATUS_LABEL: Record<RoomStatus, string> = {
-  available: 'Disponible', occupied: 'Ocupada', pending: 'Pendiente',
-  cleaning: 'En limpieza', dirty: 'Sucia', out_of_service: 'Fuera de servicio',
+// Label y color del estado salen de `data/room-status` — la copia local que vivía acá tenía
+// otro color y otro nombre que las del mapa de habitaciones y el donut de la MISMA pantalla.
+const roomStatusLabel = computed(() => (selectedRoom.value ? roomStatusMeta(selectedRoom.value.status).label : ''))
+const roomAccent = computed(() => roomStatusMeta(selectedRoom.value?.status ?? '').color)
+
+// ── Recepción desde el mapa de habitaciones ──────────────────────────────
+// El check-in real es una transacción del módulo de reservas (reclama la reserva, abre folio,
+// postea el cargo de habitación con impuesto) y el check-out cierra el folio, factura, cobra y
+// empuja la disponibilidad a Channex. Nada de eso se logra cambiando `rooms.status`, así que el
+// modal no lo intenta: manda al mostrador, que es donde vive ese flujo (con su settlement).
+const FRONT_DESK_ROUTE = '/panel/reservas/checkin'
+
+const frontDeskAction = computed(() => {
+  const action = frontDeskActionFor(selectedRoom.value?.status ?? '')
+  if (!action) return null
+  // El backend igual responde 403; esto evita ofrecer un camino que termina en error.
+  const perm = FRONT_DESK_PERMISSION[action]
+  return can(perm.module, perm.action) ? action : null
+})
+
+function goToFrontDesk() {
+  selectedRoom.value = null
+  router.push(FRONT_DESK_ROUTE)
 }
-const ROOM_STATUS_COLOR: Record<RoomStatus, string> = {
-  available: '#22C55E', occupied: '#EF4444', pending: '#06B6D4',
-  cleaning: '#F59E0B', dirty: '#FB923C', out_of_service: '#94A3B8',
-}
-const roomAccent = computed(() => (selectedRoom.value ? ROOM_STATUS_COLOR[selectedRoom.value.status] : '#94A3B8'))
 
 const roomGuest = computed(() => {
   if (!selectedRoom.value) return null

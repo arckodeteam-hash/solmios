@@ -1,3 +1,15 @@
+<!--
+  ReservationsGantt.vue — NO ESTÁ MONTADO EN NINGUNA PANTALLA.
+
+  Fue el calendario del dashboard hasta que lo reemplazó `components/features/ReservationCalendar.vue`.
+  Se conserva porque `DESIGN-SYSTEM.md` y `openspec/specs/menu-ordering/spec.md` lo citan como
+  referencia de patrones vigentes (colores de estado de reserva, drag-and-drop nativo).
+
+  Ojo si lo usás de modelo: su código NO está al día con las convenciones actuales —
+  escribe el símbolo '$' fijo en vez de resolver la moneda del hotel (`currencySymbol()` de
+  `composables/useCurrency`) y mantiene su propio `STATUS_COLOR` en vez del catálogo compartido.
+  Copiar de acá reintroduce defectos ya corregidos en el resto del dashboard.
+-->
 <template>
   <div class="cc-card flex flex-col overflow-hidden rounded-[20px] border border-border shadow-(--shadow-card)">
     <!-- Toolbar -->

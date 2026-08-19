@@ -18,6 +18,10 @@ export interface HotelData {
   requestReviews?: boolean; publishReviewScore?: boolean; publishReviewComments?: boolean
   taxName?: string; taxRate?: number
   wifiNetwork?: string; wifiPassword?: string; descriptionJson?: string
+  /** Identidad visual del hotel (`hotels.logo`). Lo sube Settings → "Logo del Hotel" y viaja
+   *  en GET /settings junto al resto del registro. Estaba en el modelo y en el endpoint, pero
+   *  no declarado acá: por eso las vistas no lo encontraban y caían a imágenes de stock. */
+  logo?: string
   freeCancellation?: boolean; depositRequired?: boolean; depositPercent?: number
   weekendSurcharge?: number
 }

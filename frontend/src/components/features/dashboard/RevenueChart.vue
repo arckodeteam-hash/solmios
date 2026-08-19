@@ -4,7 +4,7 @@
       <div>
         <h2 class="text-xs font-black uppercase tracking-wider text-navy">Ingresos</h2>
         <div class="mt-2 flex items-baseline gap-2">
-          <span class="text-4xl font-black tabular-nums tracking-tight text-navy">${{ animatedToday }}</span>
+          <span class="text-4xl font-black tabular-nums tracking-tight text-navy">{{ prefix }}{{ animatedToday }}</span>
           <span class="text-xs font-bold text-text-secondary">Hoy</span>
         </div>
         <div v-if="trendPct !== null" class="mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold"
@@ -41,7 +41,7 @@
       </div>
 
       <!-- Y max label -->
-      <span v-if="maxValue > 0" class="absolute right-0 top-0 text-[9px] font-bold tabular-nums text-text-muted">${{ compact(maxValue) }}</span>
+      <span v-if="maxValue > 0" class="absolute right-0 top-0 text-[9px] font-bold tabular-nums text-text-muted">{{ prefix }}{{ compact(maxValue) }}</span>
     </div>
 
     <!-- X labels -->
@@ -56,6 +56,8 @@
 <script setup lang="ts">
 import { ref, computed, toRef } from 'vue'
 import { useCountUp } from '@/composables/useCountUp'
+import { currencySymbol } from '@/composables/useCurrency'
+import { CurrencyCode } from '@/types/currency'
 
 export interface DailyPoint { date: string; value: number }
 type RangeKey = 'day' | 'week' | 'month' | 'year'
@@ -64,10 +66,17 @@ const props = defineProps<{
   /** serie diaria del último año (reports facturación) */
   daily: DailyPoint[]
   revenueToday: number
+  /**
+   * Moneda de facturación del hotel (`hotels.currency`). El componente escribía '$' fijo:
+   * un hotel que factura en RD$ o € veía sus ingresos rotulados en dólares.
+   */
+  currency?: string
   /** % vs ayer (trends del dashboard); null = sin dato */
   trendPct: number | null
   loading?: boolean
 }>()
+
+const prefix = computed(() => currencySymbol(props.currency || CurrencyCode.USD))
 
 const RANGES: Array<{ key: RangeKey; label: string }> = [
   { key: 'day', label: 'Día' },

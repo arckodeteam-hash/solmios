@@ -35,17 +35,19 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { ROOM_STATUS_META, ROOM_STATUS_ORDER } from '@/data/room-status'
 
 const props = defineProps<{ byStatus: Record<string, number> }>()
 
-const META: Array<{ key: string; label: string; color: string }> = [
-  { key: 'occupied', label: 'Ocupadas', color: '#2563EB' },
-  { key: 'available', label: 'Disponibles', color: '#22C55E' },
-  { key: 'cleaning', label: 'Limpieza', color: '#F59E0B' },
-  { key: 'dirty', label: 'Sucias', color: '#FB923C' },
-  { key: 'pending', label: 'Pendientes', color: '#06B6D4' },
-  { key: 'out_of_service', label: 'Mantenimiento', color: '#EF4444' },
-]
+// Mismo catálogo que el mapa de habitaciones y el modal (`data/room-status`): antes esta
+// copia llamaba "Mantenimiento" a lo que el modal llamaba "Fuera de servicio" y pintaba de
+// rojo un estado que el mapa de al lado pintaba de gris.
+const META = ROOM_STATUS_ORDER.map(key => ({
+  key,
+  // `plural`: la leyenda acompaña un conteo ("12 Ocupadas"), no describe una habitación.
+  label: ROOM_STATUS_META[key].plural,
+  color: ROOM_STATUS_META[key].color,
+}))
 
 const total = computed(() => Object.values(props.byStatus).reduce((a, b) => a + (b || 0), 0))
 
