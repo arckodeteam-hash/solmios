@@ -33,11 +33,27 @@ export interface PromoValidateDeps {
   promoCodes: RepositoryAdapter<PromoCodeDTO>
 }
 
-/** Tolera fechas ISO y devuelve el timestamp epoch; null si la fecha no parsea. */
-function toEpochMs(s: string | null | undefined): number | null {
-  if (!s) return null
-  const t = Date.parse(s)
-  return Number.isNaN(t) ? null : t
+/** date-only "YYYY-MM-DD" (viene así del `<input type="date">` del admin). */
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/
+const DAY_MS = 86_400_000
+
+/**
+ * Epoch de la ventana de validez. Semántica por borde (PC-4, auditoría 2026-08-19):
+ *  - `from`: un date-only cuenta desde el INICIO de ese día (00:00 UTC, ya lo hacía).
+ *  - `to`: un date-only cuenta hasta el FIN de ese día (23:59:59.999) — antes `Date.parse`
+ *    daba 00:00 y el día "Hasta" completo ya rechazaba (off-by-one visible en la UI).
+ *  - null → campo ausente/vacío (sin ventana para ese borde).
+ *  - NaN → presente pero inparseable. El caller lo trata como VENCIDO (fail-closed): antes
+ *    una fecha corrupta ("31/12/2026") se leía como "sin ventana" y el código era eterno.
+ *    La creación/edición ya rechaza fechas inválidas (promo-crud.assertDateField); esto
+ *    cubre filas legacy o escrituras externas.
+ */
+export function windowEpochMs(s: string | null | undefined, edge: 'from' | 'to'): number | null {
+  if (s == null || String(s).trim() === '') return null
+  const raw = String(s).trim()
+  const t = Date.parse(raw)
+  if (Number.isNaN(t)) return NaN
+  return DATE_ONLY_RE.test(raw) && edge === 'to' ? t + DAY_MS - 1 : t
 }
 
 /**
@@ -77,14 +93,14 @@ export async function validate(
     return { valid: false, discount: 0, reason: 'inactive', code: normalized }
   }
 
-  // Ventana de validez (validFrom/validTo, ambos opcionales).
+  // Ventana de validez (validFrom/validTo, ambos opcionales). NaN (fecha corrupta) = vencido.
   const now = Date.now()
-  const from = toEpochMs(found.validFrom)
-  const to = toEpochMs(found.validTo)
-  if (from !== null && now < from) {
+  const from = windowEpochMs(found.validFrom, 'from')
+  const to = windowEpochMs(found.validTo, 'to')
+  if (from !== null && (Number.isNaN(from) || now < from)) {
     return { valid: false, discount: 0, reason: 'expired', code: normalized }
   }
-  if (to !== null && now > to) {
+  if (to !== null && (Number.isNaN(to) || now > to)) {
     return { valid: false, discount: 0, reason: 'expired', code: normalized }
   }
 

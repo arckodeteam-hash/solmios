@@ -78,5 +78,4 @@ export interface CrmDashboard {
   totalPointsIssued: number; totalPointsRedeemed: number
   topTierCounts: Record<string, number>
   avgLTV: number
-  couponUsageRate: number
 }

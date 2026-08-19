@@ -13,6 +13,7 @@ import type {
 import type { PromoCodesSockets } from './sockets'
 import * as promoCrud from './usecases/promo-crud'
 import * as promoValidate from './usecases/promo-validate'
+import * as promoAtomic from './usecases/promo-atomic'
 
 export class PromoCodesService {
   private sockets: PromoCodesSockets = {}
@@ -109,17 +110,28 @@ export class PromoCodesService {
   }
 
   /**
-   * FIX 2026-07-31 — Incremento system-to-system para el connector `reservas-promocodes`
-   * (reservas creadas por el staff en el panel, no por el widget público). Mismo criterio
-   * que `createPublicBookingDirect`: solo se llama DESPUÉS de crear la reserva exitosamente.
-   * Sin `user`/ownership — el hotelId ya viene validado por el módulo `reservas` (que forzó
-   * `dto.hotelId === currentUser.hotelId` antes de siquiera llamar acá). No-op silencioso si
-   * el código no existe (raro: se borró entre validar y crear).
+   * PC-1 (auditoría 2026-08-19) — El viejo `incrementUsesByCode` era un read-modify-write
+   * incondicional POST-create: dos flujos concurrentes podían consumir un single-use dos veces
+   * (staff + widget). Reemplazado por consumo CAS en `usecases/promo-atomic.ts`, que se llama
+   * ANTES de persistir la reserva y lanza ConflictError si el código se agotó. El orm se
+   * cablea desde el index del módulo (OrmRepository no expone `updateMany`, necesario para el
+   * optimistic lock — ver comentario en promo-atomic.ts).
    */
-  async incrementUsesByCode(hotelId: string, code: string): Promise<void> {
-    const normalized = String(code ?? '').trim().toUpperCase()
-    const found = await this.promoCodes.findOne({ hotelId, code: normalized })
-    if (!found) return
-    await this.promoCodes.update(found.id, { uses: (found.uses ?? 0) + 1 })
+  private atomicOrm: any = null
+  setAtomicOrm(orm: any): void { this.atomicOrm = orm }
+
+  /** Consume un uso ANTES de persistir la reserva que aplica el código. ConflictError si agotado. */
+  async consumeUseByCode(hotelId: string, code: string): Promise<void> {
+    if (!this.atomicOrm) throw new Error('promo-codes: atomic ops no cableadas (falta setAtomicOrm)')
+    return promoAtomic.consumeUse(this.atomicOrm, hotelId, code)
+  }
+
+  /**
+   * Devuelve un uso (PC-5): cancelación de la reserva que lo consumió, o compensación cuando
+   * el create/update de la reserva falla tras el consumo. Best-effort, floor 0.
+   */
+  async releaseUseByCode(hotelId: string, code: string): Promise<void> {
+    if (!this.atomicOrm) throw new Error('promo-codes: atomic ops no cableadas (falta setAtomicOrm)')
+    return promoAtomic.releaseUse(this.atomicOrm, hotelId, code)
   }
 }

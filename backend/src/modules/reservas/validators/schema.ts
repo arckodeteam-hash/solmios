@@ -103,6 +103,10 @@ export const UpdateReservasSchema: Record<string, ValidationRule> = {
   cardLast4: { type: 'string' as const, max: 4 },
   cardExpMonth: { type: 'string' as const, max: 2 },
   cardExpYear: { type: 'string' as const, max: 4 },
+  // PC-8 (2026-08-19): el wizard manda promoCode también al EDITAR; sin esta declaración
+  // validateSchema lo descartaba en silencio (cambiar/quitar el código en edición no hacía
+  // nada). crud.updateReservation lo valida/consume/libera según cambie.
+  promoCode: { type: 'string' as const, max: 50 },
 }
 
 export const ReservasValidator = { create: CreateReservasSchema, update: UpdateReservasSchema }

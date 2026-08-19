@@ -15,7 +15,7 @@
 //  (7) happy fixed      — descuento = min(value, subtotal)
 //  (8) case-insensitive — "welcome10" ≡ "WELCOME10"
 //  (9) fixed > subtotal — descuento capado a subtotal (no negativos)
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect, spyOn } from 'bun:test'
 import { validate } from '../usecases/promo-validate'
 import type { PromoCodeDTO } from '../types'
 
@@ -131,5 +131,57 @@ describe('promo-validate (F2 2.2)', () => {
     const r = await validate(deps, 'h1', 'WELCOME10', -50)
     expect(r.valid).toBe(false)
     expect(r.reason).toBe('not_found')
+  })
+})
+
+// ─── PC-3/PC-4 (auditoría 2026-08-19): ventana de validez ──────────────────────────────
+// El admin carga validTo con `<input type="date">` → "YYYY-MM-DD". Antes Date.parse daba
+// 00:00 UTC y el día "Hasta" ENTERO ya rechazaba (off-by-one); y una fecha corrupta se leía
+// como "sin ventana" → código eterno. Fechas relativas a hoy para no vencer el test.
+describe('promo-validate — ventana date-only y fechas corruptas (PC-3/PC-4)', () => {
+  const today = new Date().toISOString().slice(0, 10)
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
+
+  it('validTo date-only de HOY cuenta el día completo → válido (antes: off-by-one)', async () => {
+    const deps = { promoCodes: makeRepo(basePromo({ validTo: today })) }
+    const r = await validate(deps, 'h1', 'WELCOME10', 100)
+    expect(r.valid).toBe(true)
+  })
+
+  it('validTo date-only de AYER (fin de ayer < ahora) → expired', async () => {
+    const deps = { promoCodes: makeRepo(basePromo({ validTo: yesterday })) }
+    const r = await validate(deps, 'h1', 'WELCOME10', 100)
+    expect(r.valid).toBe(false)
+    expect(r.reason).toBe('expired')
+  })
+
+  it('validFrom date-only de HOY (inicio del día) → válido ya', async () => {
+    const deps = { promoCodes: makeRepo(basePromo({ validFrom: today })) }
+    const r = await validate(deps, 'h1', 'WELCOME10', 100)
+    expect(r.valid).toBe(true)
+  })
+
+  it('validFrom date-only de MAÑANA → expired (todavía no arranca)', async () => {
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
+    const deps = { promoCodes: makeRepo(basePromo({ validFrom: tomorrow })) }
+    const r = await validate(deps, 'h1', 'WELCOME10', 100)
+    expect(r.valid).toBe(false)
+    expect(r.reason).toBe('expired')
+  })
+
+  it('fecha corrupta ("31/12/2026") → expired (fail-closed; antes: vigente PARA SIEMPRE)', async () => {
+    const deps = { promoCodes: makeRepo(basePromo({ validTo: '31/12/2026' as any })) }
+    const r = await validate(deps, 'h1', 'WELCOME10', 100)
+    expect(r.valid).toBe(false)
+    expect(r.reason).toBe('expired')
+  })
+
+  it('validTo ISO completa exactamente ahora → válido (borde now === to, reloj congelado)', async () => {
+    const to = '2026-08-19T12:00:00Z'
+    const deps = { promoCodes: makeRepo(basePromo({ validTo: to })) }
+    const spy = spyOn(Date, 'now').mockReturnValue(Date.parse(to))
+    const r = await validate(deps, 'h1', 'WELCOME10', 100)
+    spy.mockRestore()
+    expect(r.valid).toBe(true)
   })
 })

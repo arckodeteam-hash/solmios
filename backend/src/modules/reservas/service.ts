@@ -88,7 +88,7 @@ export class ReservasService {
   }
   async update(id: string, dto: UpdateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> {
     this.logger.info('Actualizando reserva', { id, userId: currentUser.id })
-    return updateReservation(this.repo, this.logger, this.cache, this.sockets, id, dto, currentUser, this.roomRepo, this.guestRepo, this.groupRepo)
+    return updateReservation(this.repo, this.logger, this.cache, this.sockets, id, dto, currentUser, this.roomRepo, this.guestRepo, this.groupRepo, this.orchestrationDeps.promoCodes)
   }
   async delete(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<void> {
     this.logger.info('Eliminando reserva', { id, userId: currentUser.id })

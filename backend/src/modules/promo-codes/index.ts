@@ -60,6 +60,10 @@ export function PromoCodesModule() {
       const hotelsRepo = new OrmRepository<any>(orm, 'Hotels')
       const log = logger.child('promo-codes')
       const service = new PromoCodesService(promoCodes, userRepo, auth, log)
+      // PC-1 (2026-08-19): consumo/liberación de usos con optimistic lock — OrmRepository no
+      // expone `updateMany`, así que el orm va al service solo para estas ops atómicas
+      // (ver promo-atomic.ts). Lo cablea el index, no composition-root: el módulo es dueño.
+      service.setAtomicOrm(orm)
       const controller = new PromoCodesController(service, log, hotelsRepo)
 
       // Guard admin: userType merchant + permiso promo:*. Mismo patrón que landing.

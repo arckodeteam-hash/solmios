@@ -165,14 +165,18 @@ export async function applyCancellation(
     policyApplied: penalty.policyApplied,
   })
 
-  // Socket hacia connectors: deposits (release/refund), CRM, channel manager (availability).
-  // safeEmit: si el handler falla, NO rompe la cancelación (side-effect resilient).
+  // Socket hacia connectors: deposits (release/refund), promo-codes (devuelve el uso del
+  // código, PC-5), CRM, channel manager (availability). safeEmit: si el handler falla, NO
+  // rompe la cancelación (side-effect resilient).
   await safeEmit(logger, 'onReservationCancelled', sockets.onReservationCancelled, {
     reservationId: item.id,
     hotelId: item.hotelId,
     refundAmount: penalty.refundAmount,
     cancellationFee: penalty.cancellationFee,
     policyApplied: penalty.policyApplied,
+    // PC-5: el connector promo-codes libera el uso consumido para que un canje de puntos no
+    // quede quemado al cancelar (dato de la propia reserva — no es cross-module).
+    promoCode: item.promoCode ?? null,
   })
   await invalidateReservasCaches(cache, item.hotelId)
 

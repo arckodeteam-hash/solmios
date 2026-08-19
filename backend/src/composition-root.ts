@@ -431,6 +431,7 @@ import { attendanceDashboardConnector } from './connectors/attendance-dashboard'
 import { attendancePayrollConnector } from './connectors/attendance-payroll'
 import { bookingenginePaymentsConnector } from './connectors/bookingengine-payments'
 import { bookingengineDepositsConnector } from './connectors/bookingengine-deposits'
+import { bookingenginePromocodesConnector } from './connectors/bookingengine-promocodes'
 import { messagesUsuariosConnector } from './connectors/messages-usuarios'
 import { messagesPushtokensConnector } from './connectors/messages-pushtokens'
 import { pushtokensUsuariosConnector } from './connectors/pushtokens-usuarios'
@@ -535,6 +536,8 @@ system.addConnector('reservas-reschedule-charge', reservasRescheduleChargeConnec
 // FIX 2026-07-31 — el código promocional del wizard de reserva manual (staff) se guardaba
 // como texto sin validar/aplicar descuento. Ver connectors/reservas-promocodes.ts.
 system.addConnector('reservas-promocodes', reservasPromocodesConnector)
+// PC-5 (2026-08-19) — cancelar desde el widget público también devuelve el uso del código.
+system.addConnector('bookingengine-promocodes', bookingenginePromocodesConnector)
 // Cablea el prefill de nómina: payroll lee horas de attendance y salarios de empleados.
 system.addConnector('attendance-payroll', attendancePayrollConnector)
 // El dashboard de RRHH muestra el fichaje real de hoy (presentes/ausentes/tarde) — #198.

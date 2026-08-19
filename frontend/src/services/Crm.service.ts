@@ -40,7 +40,7 @@ export interface GuestLTV {
 }
 export interface CrmDashboard {
   totalGuests: number; activeThisMonth: number; totalPointsIssued: number; totalPointsRedeemed: number
-  topTierCounts: Record<string, number>; avgLTV: number; couponUsageRate: number
+  topTierCounts: Record<string, number>; avgLTV: number
 }
 
 export const CrmService = {

@@ -23,6 +23,7 @@ import { NotFoundError, ValidationError } from 'arckode-framework'
 import type {
   PromoCodeDTO, CreatePromoCodeDTO, UpdatePromoCodeDTO, PromoCodeKind, CurrentUser,
 } from '../types'
+import { windowEpochMs } from './promo-validate'
 
 export interface PromoCrudDeps {
   promoCodes: RepositoryAdapter<PromoCodeDTO>
@@ -79,6 +80,59 @@ function normalizeCode(raw: string): string {
   return String(raw ?? '').trim().toUpperCase()
 }
 
+// ─── PC-3 (auditoría 2026-08-19): fechas y rangos ─────────────────────────────────────
+// Antes validFrom/validTo eran `type:'string'` sin formato ni coherencia, y maxUses/minAmount
+// sin rango. Consecuencias reales: fecha mal tipeada ("31/12/2026") → inparseable → runtime la
+// trataba como "sin ventana" → código vigente PARA SIEMPRE; maxUses:-5 → uses >= -5 siempre
+// true → agotado permanente; maxUses:0 → código inutilizable creado sin error.
+
+/** Acepta date-only "YYYY-MM-DD" o ISO completa con hora/zona. */
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/
+
+/** Valida el formato de una fecha de ventana; null si el campo viene ausente/vacío. */
+function assertDateField(label: string, v: unknown): string | null {
+  if (v == null || v === '') return null
+  const s = String(v).trim()
+  if (!ISO_DATE_RE.test(s) || Number.isNaN(Date.parse(s))) {
+    throw new ValidationError(`${label} debe ser fecha ISO válida (YYYY-MM-DD)`)
+  }
+  return s
+}
+
+/** maxUses: entero >= 1, o null (ausente) = ilimitado. */
+function assertMaxUses(v: unknown): number | null {
+  if (v == null || v === '') return null
+  const n = Number(v)
+  if (!Number.isInteger(n) || n < 1) {
+    throw new ValidationError('maxUses debe ser entero >= 1 (vacío = ilimitado)')
+  }
+  return n
+}
+
+/** minAmount: número >= 0, o null = sin mínimo. */
+function assertMinAmount(v: unknown): number | null {
+  if (v == null || v === '') return null
+  const n = Number(v)
+  if (!Number.isFinite(n) || n < 0) {
+    throw new ValidationError('minAmount debe ser un número >= 0')
+  }
+  return n
+}
+
+/**
+ * Coherencia de la ventana usando la MISMA semántica de runtime (windowEpochMs: date-only
+ * 'to' = fin de día) — así "from y to el mismo día date-only" es válido acá y en validate.
+ * Fechas legacy corruptas (NaN) no bloquean el update de OTROS campos (NaN vs NaN no compara).
+ */
+function assertWindowOrder(validFrom: string | null, validTo: string | null): void {
+  if (!validFrom || !validTo) return
+  const from = windowEpochMs(validFrom, 'from')
+  const to = windowEpochMs(validTo, 'to')
+  if (from !== null && to !== null && !Number.isNaN(from) && !Number.isNaN(to) && to <= from) {
+    throw new ValidationError('validTo debe ser posterior a validFrom')
+  }
+}
+
 /**
  * Resuelve el hotelId efectivo del usuario (vía userRepo, no del JWT directo) y lo
  * compara contra `resourceHotelId` con `auth.assertOwnership`. Patrón landing/blocks-crud.
@@ -120,17 +174,23 @@ export async function create(
   if (!dto.code || !String(dto.code).trim()) throw new ValidationError('code es requerido')
   const kind = assertKind(dto.kind)
   const value = assertValueForKind(kind, dto.value)
+  // PC-3: ventana y rangos — una fecha inválida ya no puede crear un código eterno.
+  const validFrom = assertDateField('validFrom', dto.validFrom)
+  const validTo = assertDateField('validTo', dto.validTo)
+  assertWindowOrder(validFrom, validTo)
+  const minAmount = assertMinAmount(dto.minAmount)
+  const maxUses = assertMaxUses(dto.maxUses)
 
   const record: Omit<PromoCodeDTO, 'id'> = {
     hotelId,
     code: normalizeCode(dto.code),
     kind,
     value,
-    minAmount: dto.minAmount ?? null,
-    maxUses: dto.maxUses ?? null,
+    minAmount,
+    maxUses,
     uses: 0,
-    validFrom: dto.validFrom ?? null,
-    validTo: dto.validTo ?? null,
+    validFrom,
+    validTo,
     active: typeof dto.active === 'boolean' ? dto.active : true,
   } as any
 
@@ -167,16 +227,22 @@ export async function update(
     const finalKind = (patch.kind as PromoCodeKind | undefined) ?? existing.kind
     patch.value = assertValueForKind(finalKind, dto.value)
   }
-  if (dto.minAmount !== undefined) patch.minAmount = dto.minAmount
-  if (dto.maxUses !== undefined) patch.maxUses = dto.maxUses
+  if (dto.minAmount !== undefined) patch.minAmount = assertMinAmount(dto.minAmount)
+  if (dto.maxUses !== undefined) patch.maxUses = assertMaxUses(dto.maxUses)
   if (dto.uses !== undefined) {
     const u = Number(dto.uses)
     if (!Number.isFinite(u) || u < 0) throw new ValidationError('uses debe ser >= 0')
     patch.uses = u
   }
-  if (dto.validFrom !== undefined) patch.validFrom = dto.validFrom
-  if (dto.validTo !== undefined) patch.validTo = dto.validTo
+  if (dto.validFrom !== undefined) patch.validFrom = assertDateField('validFrom', dto.validFrom)
+  if (dto.validTo !== undefined) patch.validTo = assertDateField('validTo', dto.validTo)
   if (dto.active !== undefined) patch.active = dto.active
+  // PC-3: la ventana FINAL (mezcla patch + existente) debe ser coherente. `??` no sirve acá:
+  // null es un valor legítimo del patch (limpiar la ventana), no "ausente".
+  assertWindowOrder(
+    (dto.validFrom !== undefined ? patch.validFrom : existing.validFrom) as string | null,
+    (dto.validTo !== undefined ? patch.validTo : existing.validTo) as string | null,
+  )
 
   try {
     const updated = await deps.promoCodes.update(id, patch as Partial<Omit<PromoCodeDTO, 'id'>>)

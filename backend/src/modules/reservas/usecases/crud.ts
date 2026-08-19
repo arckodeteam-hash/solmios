@@ -10,20 +10,32 @@ import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, 
 
 /**
  * Puerto hacia el módulo `promo-codes` — regla del framework: NUNCA importar de otro módulo
- * directo. `connectors/reservas-promocodes.ts` inyecta la implementación real (valida +
- * incrementa uses atómicamente). Sin cablear, el promoCode se persiste como texto sin validar
- * (comportamiento viejo, compat).
+ * directo. `connectors/reservas-promocodes.ts` inyecta la implementación real. Sin cablear,
+ * el promoCode se persiste como texto sin validar (comportamiento viejo, compat).
+ *
+ * PC-1/PC-2 (auditoría 2026-08-19): el viejo `incrementUses` (read-modify-write POST-create,
+ * sin re-chequeo de maxUses) se reemplazó por `consumeUse` — CAS con optimistic lock que se
+ * llama ANTES de persistir y lanza ConflictError si el código se agotó — más `releaseUse`
+ * para compensar (fallo del create) y para devolver el uso al cancelar la reserva (PC-5).
  */
 export interface PromoCodePort {
-  /** Valida el código para el hotel y subtotal dados. NO incrementa uses. */
+  /** Valida el código para el hotel y subtotal dados. NO consume uses. */
   validate(hotelId: string, code: string, subtotal: number): Promise<{ valid: boolean; discount: number; reason?: string; code?: string }>
-  /** Incrementa uses del código ya validado (post-creación exitosa de la reserva). */
-  incrementUses(hotelId: string, code: string): Promise<void>
+  /** Consume UN uso (CAS). Lanza ConflictError si agotado. ANTES de persistir la reserva. */
+  consumeUse(hotelId: string, code: string): Promise<void>
+  /** Devuelve UN uso (compensación por fallo post-consumo, o cancelación de la reserva). */
+  releaseUse(hotelId: string, code: string): Promise<void>
 }
 
 const CACHE_TTL = 300
 const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 100
+/**
+ * Tolerancia de redondeo al comparar el descuento que declara el cliente contra el que
+ * computa el server (ambos redondean a centavos → drift real ≤ 0.01). Diferencias mayores
+ * son tarifas viejas en pantalla o manipulación → 409 con el monto real.
+ */
+const DISCOUNT_EPSILON = 0.011
 
 export async function listReservations(repo: any, userRepo: any, cache: any, logger: any, query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> {
   const filters: Record<string, unknown> = {}
@@ -113,26 +125,15 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
       if (dto.checkIn <= block.endDate && dto.checkOut >= block.startDate) throw new ConflictError(`Habitación bloqueada del ${block.startDate} al ${block.endDate}: ${block.reason || 'Sin motivo'}`)
     }
   }
-  // FIX 2026-07-31 (hallazgo real: el staff podía tipear un código promocional en el wizard
-  // manual y quedaba guardado como texto SIN aplicar ningún descuento — cero validación, cero
-  // efecto en totalAmount). El frontend ya restó el descuento de `dto.totalAmount` antes de
-  // mandarlo (mismo cálculo que muestra en pantalla); acá se re-valida que el código SIGA
-  // siendo legítimo justo antes de crear (por si quedó aplicado en un form abierto mucho
-  // tiempo y venció/se agotó mientras tanto) y se incrementa `uses` — sin esto, un código con
-  // `maxUses` nunca se agotaba vía el panel del staff, solo vía el widget público.
-  if (dto.promoCode && promoCodes) {
-    const result = await promoCodes.validate(dto.hotelId, dto.promoCode, dto.totalAmount)
-    if (!result.valid) {
-      throw new ConflictError(`Código promocional inválido (${result.reason}): ${dto.promoCode}`)
-    }
-  }
-  // Precio por temporada: cuando el alta viene del panel sin edición manual (`priceFrom:'rates'`),
-  // el alojamiento lo calcula el SERVIDOR con la misma cadena que el motor público —
-  // season_assignments → room_rates (BASE) → fallback rooms.basePrice — pisando el subtotal que
-  // mandó el cliente (que pudo quedar viejo si cambiaron tarifas con el form abierto mucho
-  // tiempo). totalAmount = alojamiento recalculado + impuestos − descuento promo (aditamentos
-  // NO-lodging que el wizard muestra y manda explícitos). Sin repos de tarifas cableados no se
-  // recalcula: el DTO se persiste tal cual (comportamiento histórico, degradación como reprice.ts).
+  // ─── Precio por temporada (server-side) ───────────────────────────────────────────────
+  // Cuando el alta viene del panel sin edición manual (`priceFrom:'rates'`), el alojamiento lo
+  // calcula el SERVIDOR con la misma cadena que el motor público — season_assignments →
+  // room_rates (BASE) → fallback rooms.basePrice. PC-2 (2026-08-19): este bloque se movió
+  // ANTES del promo para que la validación del código y el descuento usen el subtotal
+  // autoritativo del server (antes validaba contra `dto.totalAmount`, que ya incluye
+  // impuestos y descuento — semántica de minAmount distinta a la del widget público).
+  // Sin repos de tarifas cableados no se recalcula (comportamiento histórico, como reprice.ts).
+  let roomSubtotal: number | null = null
   if (dto.priceFrom === 'rates' && pricing?.seasonAssignmentRepo && pricing.roomRateRepo && roomRepo) {
     const room = await roomRepo.findOne({ id: dto.roomId })
     if (room) {
@@ -141,29 +142,115 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
         pricing.roomRateRepo.findMany({ hotelId: dto.hotelId }),
       ])
       const nightDates = eachDayExclusive(dto.checkIn, dto.checkOut)
-      const roomSubtotal = sumStayPrice(
+      roomSubtotal = sumStayPrice(
         nightDates, baseRatesOnly((rates ?? []) as any[]), String(room.type ?? ''),
         buildSeasonByDate((assignments ?? []) as any[]), guestsOfReservation(dto), Number(room.basePrice) || 0,
       )
-      dto.totalAmount = round2(roomSubtotal + (dto.taxesAmount || 0) - (dto.promoDiscountAmount || 0))
     }
   }
-  const item = await repo.create(dto as any)
+
+  // ─── Promo: descuento AUTORITATIVO del server + consumo atómico (PC-1/PC-2) ──────────
+  // FIX 2026-07-31 (contexto): antes el staff tipeaba un código y quedaba como texto sin
+  // descuento. FIX 2026-08-19 (PC-2): el descuento REGISTRADO pasa a ser SIEMPRE el que el
+  // server computa para el subtotal base — nunca el `promoDiscountAmount` que declara el
+  // cliente; si difiere (form abierto con tarifas viejas, o manipulación), 409 con el monto
+  // real para que el operador reaplique. FIX (PC-1): el consumo de `uses` es CAS
+  // (promo-atomic.ts) y ocurre ANTES del create — un código agotado en la ventana → 409 y la
+  // reserva NO se crea (antes: read-modify-write post-create sin re-chequeo → doble canje).
+  const taxes = Number(dto.taxesAmount || 0)
+  const clientDiscount = Number(dto.promoDiscountAmount || 0)
+  let discount = clientDiscount // sin código/sin port: aditamento manual del staff (histórico)
   if (dto.promoCode && promoCodes) {
-    await promoCodes.incrementUses(dto.hotelId, dto.promoCode)
+    // Normalización al persistir (mismo criterio que el flujo público, public-booking.ts).
+    dto.promoCode = String(dto.promoCode).trim().toUpperCase()
+    // Base del descuento = subtotal pre-descuento/pre-impuestos (misma base que el preview
+    // del wizard y que el widget público). Con tarifas recalculadas manda el server; si no,
+    // se reconstruye de la identidad del wizard: total = subtotal + taxes − desc.
+    const subtotalBase = roomSubtotal != null
+      ? roomSubtotal
+      : Math.max(0, Number(dto.totalAmount || 0) + clientDiscount - taxes)
+    const result = await promoCodes.validate(dto.hotelId, dto.promoCode, subtotalBase)
+    if (!result.valid) {
+      throw new ConflictError(`Código promocional inválido (${result.reason}): ${dto.promoCode}`)
+    }
+    if (clientDiscount > 0 && Math.abs(clientDiscount - result.discount) > DISCOUNT_EPSILON) {
+      throw new ConflictError(
+        `El descuento real del código ${dto.promoCode} es ${result.discount.toFixed(2)}, no ${clientDiscount.toFixed(2)} — volvé a aplicarlo`,
+      )
+    }
+    discount = result.discount
+    dto.promoDiscountAmount = discount
+  }
+
+  // ─── Total ────────────────────────────────────────────────────────────────────────────
+  if (roomSubtotal != null) {
+    dto.totalAmount = round2(roomSubtotal + taxes - discount)
+  } else if (dto.promoCode && promoCodes) {
+    // Precio manual con promo: restaurar la identidad total = subtotal − descuento + impuestos
+    // (el total queda acotado por el descuento que el server computó, no por el declarado).
+    const subtotalBase = Math.max(0, Number(dto.totalAmount || 0) + clientDiscount - taxes)
+    dto.totalAmount = round2(subtotalBase - discount + taxes)
+  }
+
+  // Consumo atómico ANTES de persistir: 409 "agotado" sin crear nada.
+  if (dto.promoCode && promoCodes?.consumeUse) {
+    await promoCodes.consumeUse(dto.hotelId, dto.promoCode)
+  }
+  let item: ReservasDTO
+  try {
+    item = await repo.create(dto as any)
+  } catch (e) {
+    // Compensación: la reserva no existe, el uso no se consume.
+    if (dto.promoCode && promoCodes?.releaseUse) {
+      await promoCodes.releaseUse(dto.hotelId, dto.promoCode).catch(() => {})
+    }
+    throw e
   }
   await safeEmit(logger, 'onReservasCreated', sockets.onReservasCreated, item)
   await invalidateReservasCaches(cache, dto.hotelId)
   return item
 }
 
-export async function updateReservation(repo: any, logger: any, cache: any, sockets: any, id: string, dto: UpdateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, groupRepo?: any): Promise<ReservasDTO> {
+export async function updateReservation(repo: any, logger: any, cache: any, sockets: any, id: string, dto: UpdateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, groupRepo?: any, promoCodes?: PromoCodePort): Promise<ReservasDTO> {
   const existing = await repo.findById(id)
   if (!existing) throw new NotFoundError('Reserva no encontrada')
   if (currentUser.role !== 'super_admin' && existing.hotelId !== currentUser.hotelId) throw new AuthError('No autorizado')
   await assertUpdateValidations(repo, existing, dto, currentUser, id, roomRepo, guestRepo, groupRepo)
-  const item = await repo.update(id, dto as any)
-  if (!item) throw new NotFoundError('Reserva no encontrada')
+  // ─── PC-8 (2026-08-19): promoCode en edición ──────────────────────────────────────────
+  // Antes el UpdateReservasSchema ni declaraba `promoCode`: el wizard lo mandaba en edición y
+  // validateSchema lo descartaba en silencio (anti-patrón campo-no-declarado, lado validador).
+  // Ahora: si CAMBIA, se valida y se consume el NUEVO antes de persistir (409 si inválido o
+  // agotado, sin tocar la reserva) y se libera el VIEJO recién tras el update exitoso; si se
+  // QUITA, se libera el viejo. El precio en edición sigue siendo el total pactado que envía
+  // el wizard (semántica histórica del update: el staff puede ajustar el total manualmente).
+  const prevCode = String(existing.promoCode ?? '').trim().toUpperCase()
+  const nextCode = dto.promoCode !== undefined ? String(dto.promoCode ?? '').trim().toUpperCase() : prevCode
+  if (nextCode) dto.promoCode = nextCode // persistir normalizado (mismo criterio que create)
+  let consumedCode: string | null = null
+  if (promoCodes && nextCode && nextCode !== prevCode) {
+    const sub = Math.max(0, Number(dto.totalAmount ?? existing.totalAmount ?? 0) || 0)
+    const result = await promoCodes.validate(existing.hotelId, nextCode, sub)
+    if (!result.valid) {
+      throw new ConflictError(`Código promocional inválido (${result.reason}): ${nextCode}`)
+    }
+    await promoCodes.consumeUse(existing.hotelId, nextCode)
+    consumedCode = nextCode
+  }
+  let item: ReservasDTO | null
+  try {
+    item = await repo.update(id, dto as any)
+  } catch (e) {
+    if (consumedCode) await promoCodes!.releaseUse(existing.hotelId, consumedCode).catch(() => {})
+    throw e
+  }
+  if (!item) {
+    if (consumedCode) await promoCodes!.releaseUse(existing.hotelId, consumedCode).catch(() => {})
+    throw new NotFoundError('Reserva no encontrada')
+  }
+  // Post-éxito: devolver el uso del código reemplazado o quitado (best-effort, no rompe).
+  if (promoCodes?.releaseUse && prevCode && prevCode !== nextCode) {
+    await promoCodes.releaseUse(existing.hotelId, prevCode).catch(() => {})
+  }
   await safeEmit(logger, 'onReservasUpdated', sockets.onReservasUpdated, item)
   await invalidateReservasCaches(cache, existing.hotelId)
   return item

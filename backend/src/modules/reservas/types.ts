@@ -128,6 +128,9 @@ export interface UpdateReservasDTO {
   marketingAccepted?: boolean
   termsAccepted?: boolean
   otherCharges?: number
+  // PC-8 (2026-08-19): editar/cambiar/quitar el código promocional. crud.updateReservation
+  // valida + consume/libera usos según el cambio (schema Update ya lo declara).
+  promoCode?: string
 }
 
 export interface ReservasQuery {

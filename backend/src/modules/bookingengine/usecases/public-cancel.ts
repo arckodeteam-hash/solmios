@@ -51,7 +51,7 @@ export interface CancelPublicDeps {
   hotelsRepo?: RepositoryAdapter<any>
   logger: Logger
   /** Hook de sockets: onBookingCancelled. Opcional (resilient: no rompe si falla o no hay). */
-  onCancelled?: (data: { reservationId: string; hotelId: string; refundAmount: number; cancellationFee: number; policyApplied: any }) => Promise<void>
+  onCancelled?: (data: { reservationId: string; hotelId: string; refundAmount: number; cancellationFee: number; policyApplied: any; promoCode?: string | null }) => Promise<void>
 }
 
 /**
@@ -150,6 +150,9 @@ export async function cancelPublicBooking(
         refundAmount: penalty.refundAmount,
         cancellationFee: penalty.cancellationFee,
         policyApplied: penalty.policyApplied,
+        // PC-5: el connector promo-codes libera el uso consumido (canje de puntos no queda
+        // quemado al cancelar desde la web). Dato de la propia reserva.
+        promoCode: item.promoCode ?? null,
       })
     } catch (e) {
       logger.error('socket onBookingCancelled falló (no bloquea la cancelación)', {

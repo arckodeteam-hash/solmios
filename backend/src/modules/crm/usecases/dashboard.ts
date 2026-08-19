@@ -6,13 +6,11 @@ export interface DashboardDeps {
   guestRepo: RepositoryAdapter<any>
   reservaRepo: RepositoryAdapter<any>
   loyaltyRepo: RepositoryAdapter<any>
-  couponRepo: RepositoryAdapter<any>
 }
 
 export async function buildDashboard(deps: DashboardDeps, hotelId: string): Promise<CrmDashboard> {
   const guests = await deps.guestRepo.findMany({ hotelId, active: 1 })
   const pointsTxns = await deps.loyaltyRepo.findMany({ hotelId })
-  const coupons = await deps.couponRepo.findMany({ hotelId })
 
   const now = new Date()
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
@@ -25,6 +23,10 @@ export async function buildDashboard(deps: DashboardDeps, hotelId: string): Prom
   const topTierCounts: Record<string, number> = {}
   for (const g of guests) { const t = g.tier ?? 'bronze'; topTierCounts[t] = (topTierCounts[t] ?? 0) + 1 }
 
+  // PC-7 (2026-08-19): se eliminó `couponUsageRate` — leía la tabla `coupons` deprecada
+  // (rutas en 410 desde la migración a promo-codes), devolvía 0/stale y NADIE lo renderiza
+  // (el tab de cupones del CRM lista PromoCodeService). Si se quiere el KPI, computarlo
+  // sobre promo_codes (uses>0 / total).
   return {
     totalGuests: guests.length,
     activeThisMonth,
@@ -32,6 +34,5 @@ export async function buildDashboard(deps: DashboardDeps, hotelId: string): Prom
     totalPointsRedeemed: pointsTxns.filter(t => t.type === 'redeem').reduce((s, t) => s + Math.abs(t.points), 0),
     topTierCounts,
     avgLTV: guests.length > 0 ? Math.round(guests.reduce((s, g) => s + (g.totalSpent ?? 0), 0) / guests.length) : 0,
-    couponUsageRate: coupons.length > 0 ? Math.round(coupons.reduce((s, c) => s + c.useCount, 0) / coupons.length * 100) / 100 : 0,
   }
 }

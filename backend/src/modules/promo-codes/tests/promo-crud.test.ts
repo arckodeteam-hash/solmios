@@ -198,3 +198,65 @@ describe('list (F2 2.2)', () => {
     expect(r.data[1].id).toBe('p1')
   })
 })
+
+// ─── PC-3 (auditoría 2026-08-19): fechas y rangos de la ventana ─────────────────────────
+// Antes validFrom/validTo eran `type:'string'` sin formato: una fecha mal tipeada ("31/12/2026")
+// no parseaba en runtime y el código quedaba vigente PARA SIEMPRE; maxUses:-5 → agotado
+// permanente; maxUses:0 → código inutilizable creado sin error.
+describe('create/update — validación de ventana y rangos (PC-3)', () => {
+  const baseDto = (over: Partial<CreatePromoCodeDTO> = {}): CreatePromoCodeDTO => ({
+    code: 'VERANO', kind: 'percent', value: 10, ...over,
+  } as CreatePromoCodeDTO)
+
+  it('create con validTo inválido ("31/12/2026") → ValidationError', async () => {
+    const { deps } = makeDeps()
+    await expect(create(deps, baseDto({ validTo: '31/12/2026' as any }), adminUser)).rejects.toBeInstanceOf(ValidationError)
+  })
+
+  it('create con validFrom ISO completa → OK (formato largo aceptado)', async () => {
+    const { deps } = makeDeps()
+    const created = await create(deps, baseDto({ validFrom: '2026-08-01T09:30:00Z' }), adminUser)
+    expect(created.validFrom).toBe('2026-08-01T09:30:00Z')
+  })
+
+  it('create: date-only mismo día es válido (to = fin de día > from = inicio); ventana invertida → ValidationError', async () => {
+    const { deps } = makeDeps()
+    const ok = await create(deps, baseDto({ validFrom: '2026-08-10', validTo: '2026-08-10' }), adminUser)
+    expect(ok.validTo).toBe('2026-08-10')
+    const { deps: d2 } = makeDeps()
+    await expect(create(d2, baseDto({ validFrom: '2026-08-11T00:00:00Z', validTo: '2026-08-10' }), adminUser))
+      .rejects.toThrow(/posterior a validFrom/)
+  })
+
+  it('create con maxUses 0 / -5 / 2.5 → ValidationError; 1 → OK', async () => {
+    const { deps } = makeDeps()
+    await expect(create(deps, baseDto({ maxUses: 0 }), adminUser)).rejects.toBeInstanceOf(ValidationError)
+    await expect(create(deps, baseDto({ maxUses: -5 }), adminUser)).rejects.toBeInstanceOf(ValidationError)
+    await expect(create(deps, baseDto({ maxUses: 2.5 }), adminUser)).rejects.toBeInstanceOf(ValidationError)
+    const ok = await create(deps, baseDto({ code: 'UN-USO', maxUses: 1 }), adminUser)
+    expect(ok.maxUses).toBe(1)
+  })
+
+  it('create con minAmount negativo → ValidationError', async () => {
+    const { deps } = makeDeps()
+    await expect(create(deps, baseDto({ minAmount: -1 }), adminUser)).rejects.toBeInstanceOf(ValidationError)
+  })
+
+  it('update con validTo corrupto → ValidationError antes de persistir', async () => {
+    const { deps, promoCodes } = makeDeps({ rows: [row({ id: 'p1', code: 'X' })] })
+    await expect(update(deps, 'p1', { validTo: 'mañana' } as UpdatePromoCodeDTO, adminUser)).rejects.toBeInstanceOf(ValidationError)
+    expect(promoCodes.rows[0].validTo).toBe(null) // no se persistió nada
+  })
+
+  it('update que invierte la ventana (to existente < from nuevo) → ValidationError', async () => {
+    const { deps } = makeDeps({ rows: [row({ id: 'p1', code: 'X', validTo: '2026-08-05' })] })
+    await expect(update(deps, 'p1', { validFrom: '2026-09-01' } as UpdatePromoCodeDTO, adminUser))
+      .rejects.toThrow(/posterior a validFrom/)
+  })
+
+  it('update de OTRO campo con fechas legacy corruptas no se bloquea (NaN no compara)', async () => {
+    const { deps } = makeDeps({ rows: [row({ id: 'p1', code: 'X', validTo: '31/12/2026' })] })
+    const updated = await update(deps, 'p1', { active: false } as UpdatePromoCodeDTO, adminUser)
+    expect(updated.active).toBe(false)
+  })
+})

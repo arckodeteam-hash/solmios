@@ -193,6 +193,6 @@ export class CrmService {
 
   // ─── Dashboard ────────────────────────────────────────
   getDashboard(hotelId: string): Promise<CrmDashboard> {
-    return buildDashboard({ guestRepo: this.guestRepo, reservaRepo: this.reservaRepo, loyaltyRepo: this.loyaltyRepo, couponRepo: this.couponRepo }, hotelId)
+    return buildDashboard({ guestRepo: this.guestRepo, reservaRepo: this.reservaRepo, loyaltyRepo: this.loyaltyRepo }, hotelId)
   }
 }
