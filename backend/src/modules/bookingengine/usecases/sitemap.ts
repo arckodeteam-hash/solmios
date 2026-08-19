@@ -39,16 +39,36 @@ export async function listActiveHotelSlugs(deps: SitemapDeps): Promise<SitemapUr
 }
 
 /**
+ * Páginas propias del producto que tienen que estar en el índice.
+ *
+ * El sitemap listaba SOLO las landings de hotel (`/h/:slug`), así que las páginas con las que
+ * se busca y se contrata el producto —la home y el alta— quedaban afuera: Google las encontraba
+ * solo por enlaces, y el sitemap declaraba un sitio que era únicamente un directorio de hoteles.
+ *
+ * Tienen que coincidir con lo que el frontend marca como indexable (ver `usePageMeta`): acá van
+ * las que declaran `canonicalPath`, y NINGUNA de las que van `noindex` (login, contraseñas).
+ * Anunciar en el sitemap una URL que después dice `noindex` es una señal contradictoria.
+ */
+export const STATIC_SITEMAP_PATHS: readonly string[] = ['/', '/registro', '/hotel-fundador']
+
+/**
  * Construye el XML del sitemap. Puro: no toca req/resp/DB — recibe `baseUrl` ya resuelto.
  * `now` inyectable para tests deterministas.
  */
 export function buildSitemapXml(baseUrl: string, urls: SitemapUrl[], now: Date = new Date()): string {
   const base = baseUrl.replace(/\/+$/, '') // sin trailing slash
-  const entries = urls.map((u) => {
+  // Primero las páginas del producto, después el directorio de hoteles. Sin `<lastmod>`: son
+  // estáticas y una fecha inventada le miente al crawler sobre cuándo cambiaron.
+  const staticEntries = STATIC_SITEMAP_PATHS.map((path) => {
+    // La home se declara con la barra final (`https://sitio/`), no como `https://sitio`.
+    const loc = path === '/' ? `${base}/` : `${base}${escapeXml(path)}`
+    return `  <url>\n    <loc>${loc}</loc>\n  </url>`
+  })
+  const entries = staticEntries.concat(urls.map((u) => {
     const loc = `${base}/h/${escapeXml(u.slug)}`
     const lastmod = u.updatedAt ? `\n    <lastmod>${escapeXml(u.updatedAt)}</lastmod>` : ''
     return `  <url>\n    <loc>${loc}</loc>${lastmod}\n  </url>`
-  })
+  }))
   // Sin <lastmod> global: el sitemap queda válido aunque ningún hotel tenga updatedAt.
   return (
     `<?xml version="1.0" encoding="UTF-8"?>\n` +

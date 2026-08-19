@@ -552,6 +552,10 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import heroImage from '@/assets/hero.png'
 import stressedManagerImage from '@/assets/hotel-manager-stressed.png'
+import { usePageMeta } from '@/composables/usePageMeta'
+import { PUBLIC_PAGE_META } from '@/pages/public-meta'
+
+usePageMeta(PUBLIC_PAGE_META.hotelFundador)
 
 // Fotografía real de Unsplash (IDs verificados) — refuerza la identidad visual del hero en el resto de la página
 const solmiRoomsImage = 'https://images.unsplash.com/photo-1445019980597-93fa8acb246c?w=500&q=80&auto=format&fit=crop'

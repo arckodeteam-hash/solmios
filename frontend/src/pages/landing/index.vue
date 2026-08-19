@@ -360,6 +360,10 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import heroImage from '@/assets/hero.png'
 import SiteHeader from '@/components/site/SiteHeader.vue'
 import SiteFooter from '@/components/site/SiteFooter.vue'
+import { usePageMeta } from '@/composables/usePageMeta'
+import { PUBLIC_PAGE_META } from '@/pages/public-meta'
+
+usePageMeta(PUBLIC_PAGE_META.landing)
 
 const activeSection = ref('hero') // scroll-spy: se le pasa al SiteHeader
 
