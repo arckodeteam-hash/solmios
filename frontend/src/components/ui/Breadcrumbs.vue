@@ -8,7 +8,7 @@
 //  - Segmento desconocido → se capitaliza.
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ROUTE_LABELS as LABELS } from '@/composables/usePageTitle'
+import { ROUTE_LABELS as LABELS, capitalizeSegment } from '@/composables/usePageTitle'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,15 +22,10 @@ const HOME_PATH: Record<string, string> = {
 // Valores de los :params de la ruta → detectar segmentos que son ids.
 const paramValues = computed(() => new Set(Object.values(route.params).flat().filter(Boolean) as string[]))
 
-function capitalize(s: string): string {
-  const clean = s.replace(/-/g, ' ')
-  return clean.charAt(0).toUpperCase() + clean.slice(1)
-}
-
 function labelFor(segment: string, index: number): string {
   if (index === 0 && LABELS[segment]) return LABELS[segment]
   if (paramValues.value.has(segment)) return 'Detalle'
-  return LABELS[segment] ?? capitalize(segment)
+  return LABELS[segment] ?? capitalizeSegment(segment)
 }
 
 interface Crumb {

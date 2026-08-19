@@ -112,6 +112,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDocumentTitle } from '@/composables/usePageTitle'
 import { useAuthStore } from '@/stores/auth.store'
 import { http } from '@/services/http'
 import HotelSwitcher from '@/components/features/core-pms/HotelSwitcher.vue'
@@ -218,6 +219,11 @@ const pageTitle = computed(() => {
   }
   return titles[route.name as string] ?? 'Super Admin'
 })
+
+// El <h1> ya salía bien de acá, pero la PESTAÑA no: nunca se tocaba `document.title`, así que
+// navegando por /admin el navegador seguía mostrando el título de la pantalla anterior
+// (el del panel, o "Iniciar sesión" si venías del login).
+useDocumentTitle(pageTitle)
 
 function isActive(path: string) {
   if (path === '/admin') return route.path === '/admin'
