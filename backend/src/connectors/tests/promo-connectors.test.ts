@@ -5,7 +5,8 @@
 // incrementUses) y que la cancelación —panel (onReservationCancelled) y widget público
 // (onBookingCancelled)— devuelve el uso del código sin romper la cancelación si falla.
 import { describe, it, expect } from 'bun:test'
-import type { ConnectorContext } from 'arckode-framework'
+import type { ConnectorContext, Logger } from 'arckode-framework'
+import { silentLogger } from 'arckode-framework/testing'
 import { reservasPromocodesConnector } from '../reservas-promocodes'
 import { bookingenginePromocodesConnector } from '../bookingengine-promocodes'
 
@@ -171,8 +172,28 @@ describe('bookingengineTtlockConnector — cancelación desde el widget (C-1)', 
         throw new Error(`módulo desconocido: ${name}`)
       },
     } as any
-    bookingengineTtlockConnector(ctx)
+    bookingengineTtlockConnector(silentLogger())(ctx)
     await captured.onBookingCancelled({ reservationId: 'r9', hotelId: 'h1' })
     expect(expired).toEqual(['r9'])
+  })
+
+  it('ttlock caído → no rompe la cancelación y DEJA telemetría (SEC-1: PIN vivo logueado)', async () => {
+    const warnings: string[] = []
+    const log = { warn: (m: string) => { warnings.push(m) }, child: () => log } as unknown as Logger
+    const captured: { onBookingCancelled?: (d: { reservationId: string; hotelId: string }) => Promise<void> } = {}
+    const ctx = {
+      resolveModule: (name: string) => {
+        if (name === 'bookingengine') return { setSockets: (s: Record<string, unknown>) => Object.assign(captured, s) }
+        if (name === 'ttlock') return { expireCodesByReservation: async () => { throw new Error('ttlock api down') } }
+        throw new Error(`módulo desconocido: ${name}`)
+      },
+    } as unknown as ConnectorContext
+    bookingengineTtlockConnector(log)(ctx)
+    if (!captured.onBookingCancelled) throw new Error('el connector no cableó onBookingCancelled')
+    // La cancelación del huésped no se cae…
+    await expect(captured.onBookingCancelled({ reservationId: 'r10', hotelId: 'h1' })).resolves.toBeUndefined()
+    // …pero el PIN que quedó vivo no pasa en silencio: hay que poder rastrearlo y revocarlo a mano.
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toContain('r10')
   })
 })

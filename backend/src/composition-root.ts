@@ -540,7 +540,7 @@ system.addConnector('reservas-promocodes', reservasPromocodesConnector)
 // PC-5 (2026-08-19) — cancelar desde el widget público también devuelve el uso del código.
 system.addConnector('bookingengine-promocodes', bookingenginePromocodesConnector)
 // C-1 (2026-08-19) — cancelar desde el widget público también expira los códigos TTLock.
-system.addConnector('bookingengine-ttlock', bookingengineTtlockConnector)
+system.addConnector('bookingengine-ttlock', bookingengineTtlockConnector(logger))
 // Cablea el prefill de nómina: payroll lee horas de attendance y salarios de empleados.
 system.addConnector('attendance-payroll', attendancePayrollConnector)
 // El dashboard de RRHH muestra el fichaje real de hoy (presentes/ausentes/tarde) — #198.

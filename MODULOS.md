@@ -47,6 +47,7 @@ Reservas ── Folios ── Facturas ── Cash ── Reports        (dinero
    ├── Huespedes ── Crm (puntos/campañas) ── Marketing (auto-messages) ── EmailQueue
    ├── Habitaciones ── Pricing (temporadas) ── Canales (Channex → OTAs)
    └── Bookingengine (motor público) ── PromoCodes ── Cancellation
+        Bookingengine ── TTLock   (cancelar desde el widget expira el PIN — connectors/bookingengine-ttlock.ts)
 ```
 
 ## Cómo mantener este archivo

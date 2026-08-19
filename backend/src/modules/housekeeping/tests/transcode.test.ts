@@ -20,7 +20,10 @@ beforeAll(async () => {
 
 /** Genera un mp4 HEVC de prueba, como los que sube el teléfono. */
 async function makeHevc(seconds = 1): Promise<Uint8Array | null> {
-  const out = join(tmpdir(), `hk-test-hevc-${Date.now()}.mp4`)
+  // Nombre único por invocación: con Date.now() dos llamadas dentro del mismo
+  // milisegundo comparten archivo, y el patrón crear→leer→borrar de acá abajo hace
+  // que una borre el temporal de la otra (ENOENT intermitente al leerlo).
+  const out = join(tmpdir(), `hk-test-hevc-${crypto.randomUUID()}.mp4`)
   const ok = await Bun.spawn([
     'ffmpeg', '-y', '-loglevel', 'error',
     '-f', 'lavfi', '-i', `testsrc=size=1280x720:rate=10:duration=${seconds}`,
