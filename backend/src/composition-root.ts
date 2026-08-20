@@ -6,6 +6,7 @@ import {
 } from 'arckode-framework'
 import { cors, requestLogger, bodyLimit, timeout, compression } from 'arckode-framework/middlewares'
 import { securityHeaders } from './shared/middlewares/security-headers'
+import { corsWithErrorHeaders } from './shared/middlewares/cors-error-headers'
 import { getClientIp } from './shared/middlewares/rate-limit'
 import { scopedRateLimit } from './shared/middlewares/scoped-rate-limit'
 import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
@@ -64,7 +65,10 @@ const router = new Router()
 const FRONTEND_PORT = config.get<number>('FRONTEND_PORT')
 const CORS_ORIGINS = process.env.CORS_ORIGINS?.split(',') || [`http://localhost:${PORT}`, 'http://localhost:3000', `http://localhost:${FRONTEND_PORT}`]
 
-router.use(cors({ origins: CORS_ORIGINS }))
+// CORS con headers también en respuestas de error: un 401/403/409 lanzado como ErrorContract
+// escapaba sin Access-Control-Allow-Origin (el catch del Router arma la respuesta sin headers)
+// y el browser lo reportaba como error de CORS en vez del status real.
+router.use(corsWithErrorHeaders({ origins: CORS_ORIGINS }))
 router.use(securityHeaders())
 router.use(bodyLimit(5 * 1024 * 1024))
 router.use(requestLogger(logger))
