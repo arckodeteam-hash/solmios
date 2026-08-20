@@ -7,9 +7,8 @@
       :class="scrolled ? 'bg-[rgba(6,20,40,0.95)] backdrop-blur-xl shadow-[0_1px_24px_rgba(0,0,0,0.35)]' : 'bg-transparent'"
     >
       <div class="max-w-[1600px] pl-6 sm:pl-10 lg:pl-16 pr-6 h-[4.5rem] flex items-center justify-between">
-        <router-link to="/" class="flex items-center gap-2.5 group">
-          <div class="w-9 h-9 rounded-xl bg-white/10 border border-white/15 text-white flex items-center justify-center font-black text-base group-hover:border-cyan-light/50 transition-colors">S</div>
-          <span class="font-black text-lg tracking-tight text-white">Solmi<span class="text-cyan-light">OS</span></span>
+        <router-link to="/" class="flex items-center group">
+          <img :src="logoWhite" alt="SolmiOS" class="h-8 w-auto">
         </router-link>
         <div class="hidden lg:flex items-center gap-8">
           <button type="button" @click="scrollTo('solucion')" class="text-xs font-bold tracking-wide text-white/60 hover:text-white uppercase transition-colors">Módulos</button>
@@ -552,6 +551,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import heroImage from '@/assets/hero.png'
 import stressedManagerImage from '@/assets/hotel-manager-stressed.png'
+import logoWhite from '@/assets/logo/logo-horizontal-white.png'
 import { usePageMeta } from '@/composables/usePageMeta'
 import { PUBLIC_PAGE_META } from '@/pages/public-meta'
 

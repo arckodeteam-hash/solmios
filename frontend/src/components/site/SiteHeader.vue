@@ -10,9 +10,8 @@
       <div class="max-w-7xl mx-auto px-6 h-[4.5rem]">
         <div class="flex items-center justify-between h-full">
           <!-- Logo -->
-          <router-link to="/" class="flex items-center gap-2.5 group">
-            <div class="w-9 h-9 rounded-xl bg-navy text-white flex items-center justify-center font-black text-base shadow-sm group-hover:bg-blue transition-colors">S</div>
-            <span class="font-black text-lg tracking-tight text-navy">Solmi<span class="text-blue">OS</span></span>
+          <router-link to="/" class="flex items-center group">
+            <img :src="logoColor" alt="SolmiOS" class="h-8 w-auto">
           </router-link>
 
           <!-- Links -->
@@ -58,6 +57,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import logoColor from '@/assets/logo/logo-horizontal-color.png'
 
 /** Sección activa del scroll-spy — la pasa SOLO la landing (en el resto no aplica). */
 const props = defineProps<{ activeSection?: string }>()

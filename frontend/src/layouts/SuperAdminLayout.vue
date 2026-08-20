@@ -7,12 +7,9 @@
     <aside class="w-72 bg-navy text-white flex flex-col flex-shrink-0 fixed h-full z-30 transition-transform duration-300 lg:translate-x-0"
       :class="mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'">
       <!-- Logo -->
-      <div class="h-20 flex items-center gap-3 px-5 border-b border-white/10">
-        <div class="w-12 h-12 rounded-lg bg-gradient-to-br from-cyan to-blue flex items-center justify-center font-black text-2xl shadow-lg shrink-0">S</div>
-        <div>
-          <div class="font-black text-2xl leading-tight">Solmi<span class="text-cyan">OS</span></div>
-          <div class="text-[10px] font-bold tracking-[2px] text-gray-400 uppercase">Super Admin</div>
-        </div>
+      <div class="h-20 flex flex-col items-start justify-center gap-1 px-5 border-b border-white/10">
+        <img :src="logoWhite" alt="SolmiOS" class="h-9 w-auto shrink-0">
+        <div class="text-[10px] font-bold tracking-[2px] text-gray-400 uppercase">Super Admin</div>
       </div>
 
       <!-- Navigation -->
@@ -112,6 +109,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import logoWhite from '@/assets/logo/logo-horizontal-white.png'
 import { useDocumentTitle } from '@/composables/usePageTitle'
 import { useAuthStore } from '@/stores/auth.store'
 import { http } from '@/services/http'

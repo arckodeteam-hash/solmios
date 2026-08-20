@@ -3,9 +3,8 @@
     <div class="w-full max-w-md">
       <!-- Logo -->
       <div class="text-center mb-8">
-        <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-navy to-blue mx-auto flex items-center justify-center font-black text-white text-2xl mb-4 shadow-lg">S</div>
-        <h1 class="text-2xl font-black text-navy">Solmi<span class="text-cyan">OS</span></h1>
-        <p class="text-sm text-text-muted mt-1">Hospitality OS · LATAM</p>
+        <img :src="logoStackedColor" alt="SolmiOS" class="h-20 w-auto mx-auto mb-2">
+        <p class="text-sm text-text-muted">Hospitality OS · LATAM</p>
       </div>
 
       <!-- Result Card -->
@@ -32,6 +31,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import logoStackedColor from '@/assets/logo/logo-stacked-color.png'
 
 type Outcome = 'verified' | 'invalid' | 'expired' | 'already_verified'
 

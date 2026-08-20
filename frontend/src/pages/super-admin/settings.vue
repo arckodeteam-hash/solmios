@@ -33,7 +33,7 @@
       <SectionCard title="Logo y Apariencia">
         <div class="space-y-4">
           <div class="flex items-center gap-4 p-4 bg-surface rounded-xl">
-            <div class="w-20 h-20 rounded-xl bg-gradient-to-br from-navy to-cyan flex items-center justify-center text-white text-3xl font-black">S</div>
+            <img :src="logoIconColor" alt="SolmiOS" class="w-20 h-20 rounded-xl bg-white border border-border object-contain p-2">
             <div>
               <div class="text-sm font-bold text-navy mb-2">Logo Actual</div>
               <button class="px-3 py-1.5 bg-white border border-border rounded-lg text-[10px] font-bold hover:border-navy transition-colors cursor-pointer">Cambiar Logo</button>
@@ -174,6 +174,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import logoIconColor from '@/assets/logo/logo-icon-color.png'
 import { ConfigService, PlatformService } from '@/services/Platform.service'
 import { useToast } from '@/composables/useToast'
 import ChannexPlatformConfig from '@/components/features/ChannexPlatformConfig.vue'

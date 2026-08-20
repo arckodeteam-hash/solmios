@@ -19,12 +19,9 @@
     <aside class="cc-sidebar w-64 text-[#C4C8D0] flex flex-col shrink-0 fixed h-full z-30 border-r border-white/8 transition-transform duration-300 lg:translate-x-0"
       :class="[auth.impersonating ? 'top-10' : '', mobileMenuOpen ? 'translate-x-0' : '-translate-x-full']">
       <!-- Logo -->
-      <div class="h-16 flex items-center gap-3 px-5 border-b border-white/8 shrink-0">
-        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan to-blue flex items-center justify-center font-black text-lg shadow-[0_0_16px_rgba(37,99,235,0.45)]">S</div>
-        <div>
-          <div class="font-black text-lg leading-tight text-white">Solmi<span class="text-cyan">OS</span></div>
-          <div class="text-[9px] font-bold tracking-[2px] text-[#7C8AA5] uppercase">{{ roleLabel }}</div>
-        </div>
+      <div class="h-16 flex flex-col items-start justify-center gap-0.5 px-5 border-b border-white/8 shrink-0">
+        <img :src="logoWhite" alt="SolmiOS" class="h-8 w-auto shrink-0">
+        <div class="text-[9px] font-bold tracking-[2px] text-[#7C8AA5] uppercase">{{ roleLabel }}</div>
       </div>
 
       <!-- Navigation -->
@@ -187,6 +184,7 @@ import { usePermissions } from '@/composables/usePermissions'
 import { isSystemRole } from '@/config/permissions'
 import { AuthService } from '@/services/Auth.service'
 import { MESSAGING_PATH, MESSAGING_TABS } from '@/config/messaging-tabs'
+import logoWhite from '@/assets/logo/logo-horizontal-white.png'
 import { PAGINA_PUBLICA_PATH } from '@/config/pagina-publica-tabs'
 import AppHeader from '@/components/features/core-pms/AppHeader.vue'
 import TrialBanner from '@/components/features/TrialBanner.vue'

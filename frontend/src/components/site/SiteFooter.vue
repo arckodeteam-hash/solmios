@@ -4,10 +4,8 @@
         <div class="grid md:grid-cols-12 gap-10 mb-12">
           <!-- Brand -->
           <div class="md:col-span-4">
-            <div class="flex items-center gap-3 mb-4">
-              <div class="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center font-black text-white shadow-lg shadow-blue-900/40">S</div>
-              <span class="font-black text-lg text-white">Solmi<span class="text-blue-400">OS</span></span>
-            </div>
+            <img :src="logoWhite" alt="SolmiOS" class="h-8 w-auto mb-4">
+
             <p class="text-sm text-white/40 max-w-xs mb-5">Hospitality OS para hoteles LATAM. Gestión completa sin complejidad.</p>
             <!-- Social icons -->
             <div class="flex items-center gap-3">
@@ -63,6 +61,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import logoWhite from '@/assets/logo/logo-horizontal-white.png'
 import { PublicSitePages } from '@/services/SitePages.service'
 import type { PublicSitePageSummary } from '@/types/site-pages'
 

@@ -3,6 +3,7 @@
 // El token de la URL (/resena/:token) es la autorización; lo genera el invite post-checkout.
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
+import logoStackedColor from '@/assets/logo/logo-stacked-color.png'
 import { ReviewsService } from '@/services/Reviews.service'
 
 const route = useRoute()
@@ -50,8 +51,7 @@ async function submit() {
   <div class="min-h-screen bg-surface flex items-center justify-center p-4">
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
-        <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-navy to-blue mx-auto flex items-center justify-center font-black text-white text-2xl mb-4 shadow-lg">S</div>
-        <h1 class="text-2xl font-black text-navy">Solmi<span class="text-cyan">OS</span></h1>
+        <img :src="logoStackedColor" alt="SolmiOS" class="h-20 w-auto mx-auto">
       </div>
 
       <div class="bg-white rounded-2xl border border-border card-shadow p-8">

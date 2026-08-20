@@ -12,12 +12,9 @@
       <div class="absolute inset-0 bg-gradient-to-t from-navy/95 via-navy/70 to-navy/50"></div>
 
       <div class="relative z-10 flex flex-col justify-between w-full p-12 text-white">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center font-black text-lg">S</div>
-          <div>
-            <div class="font-black text-lg leading-none">Solmi<span class="text-cyan">OS</span></div>
-            <div class="text-[10px] text-white/60 uppercase tracking-wide mt-0.5">Panel Hotel</div>
-          </div>
+        <div>
+          <img :src="logoWhite" alt="SolmiOS" class="h-8 w-auto">
+          <div class="text-[10px] text-white/60 uppercase tracking-wide mt-1.5">Panel Hotel</div>
         </div>
 
         <div class="flex-1 flex items-center">
@@ -48,9 +45,8 @@
       <div class="w-full max-w-md">
         <!-- Logo (solo mobile, el carrusel ya lo muestra en desktop) -->
         <div class="text-center mb-8 lg:hidden">
-          <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-navy to-blue mx-auto flex items-center justify-center font-black text-white text-2xl mb-4 shadow-lg">S</div>
-          <h1 class="text-2xl font-black text-navy">Solmi<span class="text-cyan">OS</span></h1>
-          <p class="text-sm text-text-muted mt-1">Hospitality OS · LATAM</p>
+          <img :src="logoStackedColor" alt="SolmiOS" class="h-20 w-auto mx-auto mb-2">
+          <p class="text-sm text-text-muted">Hospitality OS · LATAM</p>
         </div>
 
         <!-- Login Form -->
@@ -114,6 +110,8 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
+import logoWhite from '@/assets/logo/logo-horizontal-white.png'
+import logoStackedColor from '@/assets/logo/logo-stacked-color.png'
 import { useAuthStore } from '@/stores/auth.store'
 import { AuthService } from '@/services/Auth.service'
 import { usePageMeta } from '@/composables/usePageMeta'

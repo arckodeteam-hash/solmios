@@ -4,12 +4,9 @@
     <div class="hidden lg:flex lg:w-2/5 relative overflow-hidden bg-navy">
       <div class="absolute inset-0 bg-gradient-to-br from-navy via-navy to-navy-light"></div>
       <div class="relative z-10 flex flex-col justify-between w-full p-12 text-white">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center font-black text-lg">S</div>
-          <div>
-            <div class="font-black text-lg leading-none">Solmi<span class="text-cyan">OS</span></div>
-            <div class="text-[10px] text-white/60 uppercase tracking-wide mt-0.5">Panel Hotel</div>
-          </div>
+        <div>
+          <img :src="logoWhite" alt="SolmiOS" class="h-8 w-auto">
+          <div class="text-[10px] text-white/60 uppercase tracking-wide mt-1.5">Panel Hotel</div>
         </div>
 
         <div class="max-w-sm">
@@ -256,6 +253,7 @@ import { COUNTRIES } from '@/data/locales'
 import { usePasswordStrength, PASSWORD_MAX } from '@/composables/usePasswordStrength'
 import { usePageMeta } from '@/composables/usePageMeta'
 import { AUTH_PAGE_META } from './auth-meta'
+import logoWhite from '@/assets/logo/logo-horizontal-white.png'
 
 usePageMeta(AUTH_PAGE_META.register)
 
