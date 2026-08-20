@@ -65,3 +65,20 @@ openspec/.gitlab-sync.json
 # Copia del instalador (sin punto): mismo criterio que la instalada.
 loopkit/state/
 loopkit/**/__pycache__/
+.loopkit/core
+.loopkit/adapters
+.loopkit/test
+.loopkit/kit-path
+
+# --- LoopKit (andamiaje local, no va al repo) ---
+.loopkit/
+loopkit/
+.claude/hooks/lk-*
+.claude/agents/lk-*
+.claude/commands/tarea.md
+.claude/commands/bug.md
+.claude/commands/verificar.md
+.claude/settings.local.json
+.opencode/
+CLAUDE.local.md
+AGENTS.local.md
