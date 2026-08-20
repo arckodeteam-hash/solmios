@@ -78,7 +78,7 @@
           <!-- PIN input -->
           <div v-if="!todayRecord?.clockIn && selectedMethod === 'pin'" class="mb-4">
             <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-2">Código PIN</label>
-            <input v-model="pinCode" type="password" maxlength="6" placeholder="••••••" class="w-32 mx-auto block text-center px-4 py-3 rounded-xl border-2 border-navy/20 text-xl font-bold tracking-widest focus:outline-none focus:border-navy text-navy">
+            <input v-model="pinCode" type="password" maxlength="6" placeholder="PIN" class="w-32 mx-auto block text-center px-4 py-3 rounded-xl border-2 border-navy/20 text-xl font-bold tracking-widest focus:outline-none focus:border-navy text-navy">
           </div>
 
           <!-- Resumen del día — solo los datos que existen (nada de "—") -->

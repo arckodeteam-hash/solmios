@@ -18,7 +18,7 @@
             <input
               v-model="currentPassword"
               type="password"
-              placeholder="••••••••"
+              placeholder="Contraseña actual"
               class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30"
               required
             />
@@ -30,7 +30,7 @@
             <input
               v-model="newPassword"
               type="password"
-              placeholder="••••••••"
+              placeholder="Nueva contraseña"
               class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30"
               required
             />
@@ -42,7 +42,7 @@
             <input
               v-model="confirmPassword"
               type="password"
-              placeholder="••••••••"
+              placeholder="Confirmar contraseña"
               class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30"
               required
             />

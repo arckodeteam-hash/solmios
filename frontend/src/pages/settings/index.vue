@@ -239,7 +239,7 @@
           <div class="flex flex-wrap items-end gap-3">
             <div>
               <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nuevo PIN (4-8 dígitos)</label>
-              <input v-model="guaranteePinDraft" type="password" inputmode="numeric" maxlength="8" placeholder="••••"
+              <input v-model="guaranteePinDraft" type="password" inputmode="numeric" maxlength="8" placeholder="Ingresar PIN"
                 class="w-40 rounded-xl border border-border px-4 py-2.5 font-mono text-sm tracking-widest focus:border-navy focus:outline-none" />
             </div>
             <button @click="saveGuaranteePin" :disabled="guaranteePinSaving || !guaranteePinDraft"

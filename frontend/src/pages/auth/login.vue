@@ -64,7 +64,7 @@
                 <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide">Contraseña</label>
                 <router-link to="/forgot-password" class="text-[11px] font-bold text-cyan hover:text-navy transition-colors">¿Olvidaste tu contraseña?</router-link>
               </div>
-              <input v-model="password" type="password" placeholder="••••••••" data-testid="login-password" class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
+              <input v-model="password" type="password" placeholder="Contraseña" data-testid="login-password" class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
             </div>
 
             <!-- Cuenta bloqueada por la suscripción: no alcanza con el error,
