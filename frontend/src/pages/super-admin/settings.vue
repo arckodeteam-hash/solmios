@@ -59,7 +59,7 @@
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Contraseña</label><input v-model="settings.smtpPassword" type="password" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Email Remitente</label><input v-model="settings.fromEmail" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Nombre Remitente</label><input v-model="settings.fromName" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
-          <button @click="testEmail" class="w-full py-2.5 bg-surface text-navy rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer">Enviar Email de Prueba</button>
+          <button @click="testEmail" :disabled="testingEmail" class="w-full py-2.5 bg-surface text-navy rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait">{{ testingEmail ? 'Enviando…' : 'Enviar Email de Prueba' }}</button>
         </div>
       </SectionCard>
       <SectionCard title="Plantillas de Email">
@@ -174,7 +174,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ConfigService } from '@/services/Platform.service'
+import { ConfigService, PlatformService } from '@/services/Platform.service'
 import { useToast } from '@/composables/useToast'
 import ChannexPlatformConfig from '@/components/features/ChannexPlatformConfig.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
@@ -222,16 +222,31 @@ const integrations = ref<any[]>([
 
 onMounted(async () => {
   try {
-    const [plataforma, smtp, tmpl, seg, integ, maps] = await Promise.all([
+    // SMTP-UI (2026-08-19): se lee el CANÓNICO ('email_config', host/pass) con fallback al
+    // legacy ('smtp', server/password) que guardaba esta misma página — antes el load ni
+    // siquiera matcheaba los nombres (server ≠ smtpServer), así el form arrancaba vacío.
+    const [plataforma, emailCfg, tmpl, seg, integ, maps] = await Promise.all([
       ConfigService.get('plataforma', 'platform'),
-      ConfigService.get('smtp', 'platform'),
+      ConfigService.get('email_config', 'platform').catch(() => null),
       ConfigService.get('email_templates', 'platform'),
       ConfigService.get('seguridad', 'platform'),
       ConfigService.get('integraciones', 'platform'),
       ConfigService.get('google_maps', 'platform'),
     ])
     if (plataforma) Object.assign(settings.value, plataforma)
-    if (smtp) Object.assign(settings.value, smtp)
+    const smtp = emailCfg?.host || emailCfg?.user
+      ? emailCfg
+      : await ConfigService.get('smtp', 'platform').catch(() => null)
+    if (smtp) {
+      // from puede venir compuesto ("Nombre <a@b>") — se separa para los dos inputs.
+      const fromMatch = /^"?([^"<]*)"?\s*<([^>]+)>$/.exec(String(smtp.from ?? ''))
+      settings.value.smtpServer = String(smtp.host ?? smtp.server ?? '')
+      settings.value.smtpPort = String(smtp.port ?? 587)
+      settings.value.smtpUser = String(smtp.user ?? '')
+      settings.value.smtpPassword = String(smtp.pass ?? smtp.password ?? '')
+      settings.value.fromEmail = String(smtp.fromEmail ?? fromMatch?.[2] ?? (typeof smtp.from === 'string' && !smtp.from.includes('<') ? smtp.from : ''))
+      settings.value.fromName = String(smtp.fromName ?? fromMatch?.[1] ?? '')
+    }
     if (Array.isArray(tmpl)) emailTemplates.value = tmpl
     if (Array.isArray(seg)) securityOptions.value = seg
     if (Array.isArray(integ)) integrations.value = integ
@@ -244,7 +259,13 @@ const saveSettings = async () => {
     const toSave = settings.value
     await Promise.all([
       ConfigService.set('plataforma', { platformName: toSave.platformName, supportEmail: toSave.supportEmail, supportPhone: toSave.supportPhone, currency: toSave.currency, timezone: toSave.timezone, customDomain: toSave.customDomain }, 'platform'),
-      ConfigService.set('smtp', { server: toSave.smtpServer, port: toSave.smtpPort, user: toSave.smtpUser, password: toSave.smtpPassword, fromEmail: toSave.fromEmail, fromName: toSave.fromName }, 'platform'),
+      // SMTP-UI (2026-08-19): key y shape CANÓNICOS que lee el motor de envío — antes
+      // guardaba 'smtp'/{server,password} y el EmailService nunca la encontraba.
+      ConfigService.set('email_config', {
+        host: toSave.smtpServer, port: Number(toSave.smtpPort) || 587,
+        user: toSave.smtpUser, pass: toSave.smtpPassword,
+        fromEmail: toSave.fromEmail, fromName: toSave.fromName,
+      }, 'platform'),
       ConfigService.set('integraciones', integrations.value, 'platform'),
       ConfigService.set('google_maps', { apiKey: mapsKey.value.trim() }, 'platform'),
     ])
@@ -253,7 +274,24 @@ const saveSettings = async () => {
   } catch { toast.error('Error al guardar') }
 }
 
-const testEmail = () => {
-  toast.success('Email de prueba enviado a ' + settings.value.smtpUser)
+// SMTP-UI (2026-08-19): test REAL — antes era un toast falso que "confirmaba" envíos que
+// nunca salieron (por eso la desconexión de config pasó inadvertida). Prueba contra el
+// destino que se quiera verificar; por default el usuario SMTP cargado si es un email.
+const testingEmail = ref(false)
+const testEmail = async () => {
+  const to = (settings.value.fromEmail || settings.value.supportEmail || '').trim()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    toast.error('Cargá un "Email Remitente" válido para probar (o el email de soporte)')
+    return
+  }
+  testingEmail.value = true
+  try {
+    const r = await PlatformService.testEmail(to)
+    toast.success(r.message || `Enviado vía ${r.provider} a ${to}`)
+  } catch (e: any) {
+    toast.error(`Falló el envío: ${e?.message || 'error de SMTP/Resend — revisá la config'}`)
+  } finally {
+    testingEmail.value = false
+  }
 }
 </script>

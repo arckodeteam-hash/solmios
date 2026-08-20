@@ -10,6 +10,9 @@ export const PlatformService = {
   apiKeys: (hotelId?: string) => http.get<List>(`/api-keys${hotelId ? `?hotelId=${hotelId}` : ''}`),
   anuncios: () => http.get<List>('/anuncios'),
   users: (hotelId?: string) => http.get<List>(`/users${hotelId ? `?hotelId=${hotelId}` : ''}`),
+  // SMTP-UI (2026-08-19): test REAL de la config de correo — envío directo, devuelve el
+  // provider usado o el error verdadero de SMTP/Resend.
+  testEmail: (to: string) => http.post<{ provider: string; message: string }>('/admin/email/test', { to }),
 }
 
 import { http as _http } from './http'

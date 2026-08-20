@@ -60,6 +60,26 @@ export function AdminModule() {
       })
 
       router.get('/api/admin/hoteles', sa, () => controller.listHotels())
+      // ── SMTP-UI (2026-08-19): test REAL de la config de correo de la plataforma ──
+      // El botón de settings.vue era un toast falso — ocultó meses de desconexión entre
+      // lo que la página guardaba ('smtp'/server/password) y lo que el motor leía
+      // ('email_config'/host/pass). Envío directo sin cola: devuelve el provider usado o
+      // el error verdadero de SMTP/Resend.
+      router.post('/api/admin/email/test', sa, async (req: any) => {
+        const to = String(req.body?.to ?? '').trim()
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+          return { status: 400, body: { error: 'Destinatario inválido' } }
+        }
+        if (!service.emailReady) {
+          return { status: 503, body: { error: 'EmailService no disponible' } }
+        }
+        try {
+          const provider = await service.sendTestEmail(to)
+          return { status: 200, body: { provider, message: `Enviado vía ${provider} a ${to}` } }
+        } catch (e: any) {
+          return { status: 500, body: { error: e?.message || 'Fallo el envío de prueba' } }
+        }
+      })
       router.put('/api/admin/hoteles/:id', sa, (req: any) => controller.updateHotel(req))
       router.get('/api/admin/users', sa, () => controller.listUsers())
       router.get('/api/admin/analytics', sa, () => controller.getAnalytics())

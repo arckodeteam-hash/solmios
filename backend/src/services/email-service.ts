@@ -63,6 +63,32 @@ interface SmtpConfig {
   secure: boolean
 }
 
+/**
+ * Normaliza un objeto de config SMTP en cualquiera de sus dos shapes (SMTP-UI 2026-08-19):
+ * canónico `{host,port,user,pass,from,secure}` o legacy de la UI `{server,port,user,password,
+ * fromEmail,fromName}`. Null si falta algo esencial. Exportada para testear directo.
+ */
+export function normalizeSmtpConfig(cfg: Record<string, unknown> | null): SmtpConfig | null {
+  if (!cfg) return null
+  const host = cfg.host ?? cfg.server
+  const user = cfg.user
+  const pass = cfg.pass ?? cfg.password
+  if (!host || !user || !pass) return null
+  const port = Number(cfg.port) || 587
+  const fromEmail = cfg.from ?? cfg.fromEmail
+  const from = fromEmail
+    ? (cfg.fromName ? `${String(cfg.fromName)} <${String(fromEmail)}>` : String(fromEmail))
+    : 'noreply@solmios.com'
+  return {
+    host: String(host),
+    port,
+    user: String(user),
+    pass: String(pass),
+    from,
+    secure: cfg.secure === true || port === 465,
+  }
+}
+
 // ─── Constantes ─────────────────────────────────────────────────────────────
 
 /** Backoff exponencial tras cada fallo: 1min, 5min, 15min (3 reintentos). */
@@ -236,30 +262,51 @@ export class EmailService implements EmailSender {
     throw new EmailNotConfiguredError()
   }
 
-  /** Lee SMTP de Configuration key 'email_config'. Null si no configurado/válido. */
+  /**
+   * Lee SMTP de Configuration. Null si no configurado/válido.
+   *
+   * SMTP-UI (auditoría 2026-08-19): tolerante a los DOS contratos que existen en la wild —
+   * la página de settings del super-admin guardaba key `'smtp'` con `{server,password,
+   * fromEmail,fromName}` mientras acá sólo se leía key `'email_config'` con `{host,pass,
+   * from,secure}` → la config era SIEMPRE null aunque el admin la hubiera completado, y el
+   * botón "Email de prueba" (un toast falso) lo tapó. Se prueban ambas keys (cada una
+   * hotel → platform) y se normaliza cualquier shape al canónico. El frontend nuevo ya
+   * guarda el canónico; el fallback rescata filas ya persistidas con el shape viejo.
+   */
   private async resolveSmtpConfig(hotelId: string): Promise<SmtpConfig | null> {
-    try {
-      let row = await this.configRepo.findOne({ hotelId, key: 'email_config' } as Record<string, unknown>)
-      // Fallback a config 'platform' (SaaS: SMTP compartido por todos los hoteles).
-      if (!row) row = await this.configRepo.findOne({ hotelId: 'platform', key: 'email_config' } as Record<string, unknown>)
-      const raw = (row as { value?: unknown } | null)?.value
-      let cfg = raw as Record<string, unknown> | null
-      if (typeof raw === 'string') {
-        try { cfg = JSON.parse(raw) as Record<string, unknown> } catch { cfg = null }
+    const readCfg = async (key: string, scope: string): Promise<Record<string, unknown> | null> => {
+      try {
+        const row = await this.configRepo.findOne({ hotelId: scope, key } as Record<string, unknown>)
+        const raw = (row as { value?: unknown } | null)?.value
+        if (typeof raw === 'string') {
+          try { return JSON.parse(raw) as Record<string, unknown> } catch { return null }
+        }
+        return (raw as Record<string, unknown>) ?? null
+      } catch {
+        return null
       }
-      if (!cfg || !cfg.host || !cfg.user || !cfg.pass) return null
-      const port = Number(cfg.port) || 587
-      return {
-        host: String(cfg.host),
-        port,
-        user: String(cfg.user),
-        pass: String(cfg.pass),
-        from: String(cfg.from ?? 'noreply@solmios.com'),
-        secure: cfg.secure === true || port === 465,
-      }
-    } catch {
-      return null
     }
+    for (const key of ['email_config', 'smtp']) {
+      for (const scope of [hotelId, 'platform']) {
+        const normalized = normalizeSmtpConfig(await readCfg(key, scope))
+        if (normalized) return normalized
+      }
+    }
+    return null
+  }
+
+  /**
+   * Envío DIRECTO (sin cola) para el botón "Email de prueba" del super-admin — reusa
+   * `sendNow`, así prueba el pipeline real (SMTP o Resend) y deja escapar el error
+   * verdadero en vez del toast falso que ocultaba la desconexión de config.
+   */
+  async sendTestEmail(to: string): Promise<'smtp' | 'resend'> {
+    return this.sendNow({
+      to,
+      subject: 'SolmiOS — email de prueba',
+      html: '<p>Si estás leyendo esto, la configuración de correo de la plataforma funciona. ✅</p>',
+      hotelId: 'platform',
+    })
   }
 
   /** Lee la API key de Resend de Configuration key 'resend_api_key'. Null si vacío. */

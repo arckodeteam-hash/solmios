@@ -58,6 +58,13 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
     subsForEmail.setEmailDeps(emailService, process.env.PUBLIC_URL)
   }
 
+  // SMTP-UI (2026-08-19): botón "Email de prueba" del super-admin — envío directo vía el
+  // mismo pipeline (SMTP o Resend), devuelve el error real en vez de un toast falso.
+  const adminForEmail = resolveModule<{ setEmailDeps(es: { sendTestEmail(to: string): Promise<'smtp' | 'resend'> }): void }>('admin')
+  if (adminForEmail && typeof adminForEmail.setEmailDeps === 'function') {
+    adminForEmail.setEmailDeps(emailService)
+  }
+
   // Plantillas editables de los 6 correos del ciclo de vida SaaS (welcome, trial_*, payment_*,
   // subscription_canceled). platform-emails solo encola; subscriptions dispara sendEvent() desde
   // el webhook de Stripe y el alta — sin connector porque no hay lógica de dominio cruzada.

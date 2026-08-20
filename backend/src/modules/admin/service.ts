@@ -31,6 +31,23 @@ export class AdminService {
     this.auditPort = port
   }
 
+  /**
+   * SMTP-UI (2026-08-19): EmailService para el botón "Email de prueba" de settings del
+   * super-admin. Lo cablea email-bootstrap (mismo patrón que reservas/subscriptions). Sin
+   * cablear, el endpoint responde 503 — nunca un falso éxito.
+   */
+  private emailPort: { sendTestEmail(to: string): Promise<'smtp' | 'resend'> } | null = null
+  setEmailDeps(es: { sendTestEmail(to: string): Promise<'smtp' | 'resend'> }): void {
+    this.emailPort = es
+  }
+
+  get emailReady(): boolean { return this.emailPort !== null }
+
+  async sendTestEmail(to: string): Promise<'smtp' | 'resend'> {
+    if (!this.emailPort) throw new Error('EmailService no cableado (email-bootstrap)')
+    return this.emailPort.sendTestEmail(to)
+  }
+
   constructor(
     private readonly plansRepo: RepositoryAdapter<PlanDTO>,
     private readonly amenitiesRepo: RepositoryAdapter<AmenityCatalogDTO>,
