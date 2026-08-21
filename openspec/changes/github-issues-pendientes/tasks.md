@@ -306,18 +306,6 @@ el censo previo de este archivo también: contaba con un `rg` sin `--multiline`,
       campos, cada uno espejando el `required: true` del schema del backend que ya lo exigía;
       quedan sin marcar, a propósito, los que el backend acepta vacíos."*
 
-- [ ] 17.3 **Fuera del alcance de este sprint — 507 campos sin identificar restantes.** No es deuda oculta:
-      queda acá con el número exacto. Los que más pesan:
-      `settings/index.vue` (36 inputs) · `super-admin/settings.vue` (18) · `crm/index.vue` (14) ·
-      `restaurante/carta.vue` (12) · `attendance/index.vue` (12) · `super-admin/hotels.vue` (10) ·
-      `pagina-publica/landing.vue` (10) · `groups/index.vue` (10) ·
-      `technical-providers/index.vue` (9) · `super-admin/referrals.vue` (9) · `payroll/index.vue` (9) ·
-      `compras/ordenes.vue` (9) · `hotel-fundador/index.vue` (8) · `super-admin/roles.vue` (7) ·
-      `pagina-publica/reputation.vue` (7). No se tocaron `suscripcion/`, `settings/`, `landing/` ni
-      `hotel-fundador/` porque había otros agentes trabajando ahí en la misma corrida.
-      Tampoco se tocó `components/` (fuera del alcance asignado): `ReservationModal.vue` y el
-      wizard de reservas tienen sus propios campos sin `name`/`id`.
-
 - [x] 17.4 **Verificación.** Guardián de regresión nuevo:
       `frontend/src/pages/form-fields-a11y.test.ts` (56 casos). Lee el fuente de las 9 páginas del
       flujo operativo con `import.meta.glob(..., { query: '?raw' })` — montarlas exigiría router,
@@ -329,6 +317,186 @@ el censo previo de este archivo también: contaba con un `rg` sin `--multiline`,
       con el cambio, `56 passed`.
       Gates frontend: `bun run typecheck` (vue-tsc -b) exit 0 · `bun run build` ✓ built ·
       `bunx vitest run` **51 archivos / 478 tests en verde** (antes del sprint: 50 / 422).
+
+- [x] 17.5 **2ª pasada (2026-08-21) — toda la operación del hotel.** 40 páginas, **250 campos
+      anónimos → 0**. Criterio del sprint: primero lo que un operador usa seguido, después las
+      pantallas de configuración de una sola vez.
+
+      | `pages/attendance/index.vue` | 13 | 12 | 0 |
+      | `pages/auth/forgot-password.vue` | 1 | 1 | 0 |
+      | `pages/auth/login.vue` | 2 | 1 | 0 |
+      | `pages/auth/register.vue` | 7 | 7 | 0 |
+      | `pages/booking-engine/index.vue` | 10 | 10 | 0 |
+      | `pages/cerraduras/index.vue` | 12 | 10 | 0 |
+      | `pages/channel-manager/index.vue` | 3 | 3 | 0 |
+      | `pages/compras/ordenes.vue` | 12 | 12 | 0 |
+      | `pages/compras/requisiciones.vue` | 5 | 5 | 0 |
+      | `pages/contabilidad/libro-diario.vue` | 6 | 6 | 0 |
+      | `pages/contabilidad/plan-cuentas.vue` | 4 | 4 | 0 |
+      | `pages/contabilidad/reportes.vue` | 1 | 1 | 0 |
+      | `pages/crm/index.vue` | 18 | 18 | 0 |
+      | `pages/empleados/index.vue` | 1 | 1 | 0 |
+      | `pages/gastos/index.vue` | 8 | 6 | 0 |
+      | `pages/groups/index.vue` | 12 | 12 | 0 |
+      | `pages/housekeeping/index.vue` | 11 | 11 | 0 |
+      | `pages/maintenance/index.vue` | 11 | 11 | 0 |
+      | `pages/message-logs/index.vue` | 3 | 3 | 0 |
+      | `pages/notifications/index.vue` | 3 | 3 | 0 |
+      | `pages/opiniones/index.vue` | 5 | 5 | 0 |
+      | `pages/packages/index.vue` | 6 | 6 | 0 |
+      | `pages/payroll/index.vue` | 10 | 10 | 0 |
+      | `pages/promo-codes/index.vue` | 8 | 7 | 0 |
+      | `pages/push-tokens/index.vue` | 4 | 4 | 0 |
+      | `pages/reembolsos/index.vue` | 2 | 2 | 0 |
+      | `pages/referidos/index.vue` | 1 | 1 | 0 |
+      | `pages/reports/index.vue` | 2 | 2 | 0 |
+      | `pages/restaurante/carta.vue` | 19 | 19 | 0 |
+      | `pages/restaurante/cobrar.vue` | 2 | 2 | 0 |
+      | `pages/restaurante/comanda.vue` | 2 | 1 | 0 |
+      | `pages/rrhh-evaluacion/index.vue` | 5 | 5 | 0 |
+      | `pages/support/index.vue` | 7 | 7 | 0 |
+      | `pages/tarifas/index.vue` | 4 | 4 | 0 |
+      | `pages/team/index.vue` | 6 | 6 | 0 |
+      | `pages/technical-providers/index.vue` | 12 | 11 | 0 |
+      | `pages/tesoreria/bancos.vue` | 6 | 6 | 0 |
+      | `pages/tesoreria/caja-chica.vue` | 6 | 6 | 0 |
+      | `pages/tesoreria/presupuesto.vue` | 3 | 3 | 0 |
+      | `pages/tesoreria/proveedores.vue` | 6 | 6 | 0 |
+      | **Total 2ª pasada** | **259** | **250** | **0** |
+
+      Nota de método: esta tabla se mide sobre el bloque `<template>` con un parser de tags
+      (`<input|select|textarea>`, "anónimo" = sin `id`, `name`, `aria-label` ni `aria-labelledby`,
+      contando también las formas dinámicas `:id`/`:name`). El censo de 17.1 usaba `rg` sobre el
+      archivo entero, que además cuenta el marcado que vive dentro de `<script>` (strings de
+      plantillas de email, por ejemplo): de ahí que los totales globales de 17.6 den 620/496 y no
+      616/492. Las dos cifras son correctas; miden cosas ligeramente distintas.
+
+      Cómo se resolvió cada caso:
+      - **Etiqueta visible ya presente** → `id` en el campo + `for` en su `<label>` (la mayoría:
+        `maintenance-titulo`, `groups-*`, `tesoreria-*`, `contabilidad-plan-cuentas-*`…).
+      - **`<label>` que envuelve al campo** (checkboxes de "Ver inactivos", "Ya está pagado") → solo
+        `id`; la asociación implícita ya existe, el `id` agrega el gancho de test.
+      - **Sin etiqueta posible** (buscadores con lupa, filtros de cabecera, rangos de fecha) →
+        `aria-label` explícito. 26 campos: `housekeeping-page-size`, `maintenance-filter`,
+        `cerraduras-active-lock`, `reports-from`/`reports-to`, `attendance-report-from`/`-to`, etc.
+
+      Las dos trampas del repo, atendidas:
+      - **28 campos vivían dentro de un `v-for`** (líneas de orden de compra, líneas de asiento
+        contable, modificadores de la carta, temporadas de tarifas, pesos de evaluación). Ninguno
+        lleva `id` fijo: todos usan `:id` con la clave del bucle
+        (`` :id="`orden-linea-${idx}-descripcion`" ``, `` :id="`combo-item-${i.id}`" ``). Donde la
+        clave del bucle es **texto libre** (tipo de habitación, nombre de temporada) NO se puso `id`
+        —un id con espacios es inválido— y se resolvió con `:aria-label` solo.
+      - **Ningún `for` cuelga**: el test lo verifica ahora sobre **todas** las páginas del panel, no
+        solo las migradas, y los `:for` dinámicos deben tener su `:id` gemelo con el mismo template
+        literal (`channel-manager`, `open-channel-${field.key}`).
+
+      Verificado además que el cambio es **puramente aditivo**: mismo árbol de tags, mismo texto
+      visible y ningún atributo preexistente perdido ni alterado en los 40 archivos.
+
+- [x] 17.6 **Conteo global real después de la 2ª pasada** (mismo método `rg`/archivo entero que 17.1,
+      para que las filas sean comparables):
+
+      | Métrica (todo `frontend/src/pages/`) | Censo 17.1 | Tras 1ª pasada | Tras 2ª pasada |
+      |---|---|---|---|
+      | Campos totales (`input`+`select`+`textarea`) | 620 | 620 | 620 |
+      | `<input>` sin identificar | 415 | 347 | **168** |
+      | `<select>` sin identificar | 132 | 115 | **61** |
+      | `<textarea>` sin identificar | 40 | 34 | **17** |
+      | **Campos sin identificar (total)** | **587** | **496** | **246** |
+      | Campos con `required` | 18 | 35 | **74** |
+
+      (La fila "tras 1ª pasada" se recalculó con este método sobre `HEAD`; el `507` que figuraba
+      antes en 18.2 salía de una variante del grep que contaba distinto. El número bueno es 496.)
+
+- [ ] 17.7 **Fuera del alcance de esta pasada — 246 campos sin identificar restantes.** No es deuda
+      oculta: queda acá con el número exacto y el motivo. Todo lo que resta es **configuración de
+      una sola vez o consola de plataforma**, no operación diaria:
+
+      | Página | Campos anónimos | Por qué quedó afuera |
+      |---|---|---|
+      | `settings/index.vue` | 45 | Configuración del hotel; otro agente trabajando en el frontend en la misma corrida |
+      | `super-admin/*` (17 archivos) | 103 | Consola del dueño de la plataforma, no del hotelero |
+      | `pagina-publica/*` (6 archivos) | 37 | Editor del sitio público; se usa al montar el hotel |
+      | `auto-messages/index.vue` | 12 | Plantillas de mensajes automáticos |
+      | `hotel-fundador/index.vue` | 9 | Alta de hotel fundador |
+      | `ai-receptionist/{config,chat}.vue` | 7 | Configuración del bot |
+      | `whatsapp-templates/index.vue` | 4 | Bloqueado por credenciales Meta (ver CLAUDE.md) |
+      | `devices`, `activos`, `ai-gerente`, `contabilidad/mayor`, `resena`, `public/booking-widget`, `empleados` | 8 | Sueltos de 1–2 campos |
+
+      **`settings/index.vue` y `super-admin/*` se dejaron a propósito**: en esta corrida había otra
+      sesión tocando menús y vistas del frontend (feature-gating por plan) y son los archivos con
+      más chance de colisión.
+
+      Tampoco se tocó `components/` (fuera del alcance asignado): `ReservationModal.vue` y el wizard
+      de reservas tienen sus propios campos sin `name`/`id`.
+
+- [x] 18.3 **2ª tanda de `required` (2026-08-21) — 47 campos, cada uno citando su schema.**
+      Misma regla que 18.1, sin excepciones: la fuente de verdad es el `validators/schema.ts` del
+      módulo y el atributo HTML lo espeja. Todos llevan también `aria-required="true"`.
+
+      | Campo (frontend) | Schema que lo obliga |
+      |---|---|
+      | `#gasto-concept`, `#gasto-amount` | `gastos CreateGastosSchema.{concept,amount}` |
+      | `#groups-nombre-del-grupo` | `grupos CreateGruposSchema.name` |
+      | `#maintenance-titulo` | `mantenimiento CreateMantenimientoSchema.title` |
+      | `#technical-providers-nombre` | `mantenimiento CreateProviderSchema.name` |
+      | `#promo-codes-{codigo,tipo-de-descuento,valor}` | `promo-codes CreatePromoCodeSchema.{code,kind,value}` |
+      | `#packages-{nombre,precio}` | `paquetes CreatePaquetesSchema.{name,price}` |
+      | `#team-{nombre,email}` | `usuarios CreateUsuarioSchema.{name,email}` |
+      | `#support-asunto` | `tickets CreateTicketsSchema.subject` |
+      | `#cerraduras-persona` | `ttlock CreateMasterKeySchema.userId` |
+      | `#crm-{codigo,monto-de-la-compra}` | `crm ValidateCouponSchema.{code,amount}` |
+      | `#crm-{codigo-2,tipo,valor}` | `crm CreateCouponSchema.{code,type,value}` |
+      | `#crm-nombre` | `crm CreateSegmentSchema.name` |
+      | `#crm-{nombre-interno,segmento,asunto}` | `crm CreateCampaignSchema.{name,segmentId,subject}` |
+      | `#attendance-{empleado,hora-de-entrada}` | `attendance ManualRecordSchema.{employeeId,clockIn}` |
+      | `#attendance-{nombre-del-turno,hora-inicio,hora-fin}` | `attendance CreateScheduleSchema.{name,startTime,endTime}` |
+      | `#tesoreria-bancos-nombre` | `treasury CreateBankAccountSchema.name` |
+      | `#tesoreria-proveedores-nombre` | `treasury CreateSupplierSchema.name` |
+      | `#tesoreria-presupuesto-{periodo,categoria}` | `treasury CreateBudgetSchema.{period,category}` |
+      | `#tesoreria-caja-chica-{nombre,custodio,tope-del-fondo}` | `caja-chica CreateFundSchema.{name,custodianId,targetAmount}` |
+      | `#tesoreria-caja-chica-monto-a-reponer` | `caja-chica CreateReplenishmentSchema.amount` |
+      | `#contabilidad-plan-cuentas-{codigo,nombre,tipo}` | `accounting CreateAccountSchema.{code,name,type}` |
+      | `#auth-login-{email,password}` | `usuarios LoginSchema.{email,password}` |
+      | `#auth-forgot-password-email` | `usuarios ForgotPasswordSchema.email` |
+      | `#auth-register-{email,contrasena,nombre-del-hotel}` | `subscriptions SignupSchema.{email,password,hotelName}` |
+      | `` :id="`orden-linea-${idx}-descripcion`" `` | `compras OrderLineSchema.description` |
+      | `` :id="`requisicion-linea-${idx}-descripcion`" `` | `compras RequisitionLineSchema.description` |
+
+      **Divergencias encontradas — la pantalla dice `*` pero el backend acepta vacío.** NO se les
+      puso `required` (rompería un envío que el servidor aceptaría) y hay tests que fijan que
+      siguen opcionales. Se resuelven endureciendo el schema **o** sacando el asterisco, nunca
+      agregando el atributo en el HTML:
+
+      | Campo con `*` visible | Schema que lo acepta vacío |
+      |---|---|
+      | Grupos: Contacto, Fecha Check-in, Check-out, Habitaciones | `grupos CreateGruposSchema.{leadGuestId,checkIn,checkOut,totalRooms}` |
+      | Mantenimiento: Habitación, Categoría, Prioridad, Descripción | `mantenimiento CreateMantenimientoSchema.{roomId,category,priority,description}` |
+      | Soporte: Categoría, Prioridad, Descripción detallada | `tickets CreateTicketsSchema.{category,priority,description}` |
+      | Limpieza: Tipo de tarea | `housekeeping CreateHousekeepingSchema.type` |
+
+      Otras dos notas, sin cambio de código:
+      - `#team-contrasena-temporal` **no** lleva `required` aunque `usuarios CreateUsuarioSchema.password`
+        sea `required: true`: el formulario manda `password || undefined` y el placeholder promete
+        "auto-generada si vacío". El frontend y el schema están en desacuerdo — **hay que decidir de
+        qué lado**, pero marcar el input habría contradicho lo que la pantalla le promete al usuario.
+      - `#auth-register-nombre-y-apellido` **sí** lleva `required` (ya venía) aunque
+        `subscriptions SignupSchema.ownerName` no lo exija, y `auth/register.vue` lo confirma en
+        `canSubmit` (`form.ownerName.trim().length > 0`). Es el frontend siendo más estricto que el
+        backend, que es la dirección segura; se deja como está.
+
+- [x] 18.4 **Guardián extendido** — `frontend/src/pages/form-fields-a11y.test.ts`, **326 casos**
+      (antes 62). Contra el estado previo a esta pasada **fallan 101**; con los cambios, 0.
+      Bloques nuevos:
+      - El `import.meta.glob` pasó de `./**/index.vue` a `./**/*.vue`: antes las páginas que no se
+        llaman `index.vue` (`auth/*`, `tesoreria/*`, `restaurante/*`, `compras/*`, `contabilidad/*`)
+        eran invisibles para el test.
+      - `id` duplicado y `<label for>` colgado se verifican sobre **todas** las páginas, incluidas
+        las que todavía no se migraron.
+      - Chequeo de `id` fijo dentro de un `v-for` **con ancestros**: el de la 1ª pasada solo miraba
+        el tag que lleva el `v-for`, y el caso real es `<div v-for>` con el `<input>` adentro.
+      - Espejos `required` ↔ schema de la 2ª tanda, y su contrapeso (lo que debe seguir opcional).
 
 ## GH-30 / GH-19 — Datos de producción, no código 🔵
 

@@ -9,31 +9,95 @@ Orden: RTC-0 primero (dejar de sangrar), después el rediseño, después el back
 
 ## RTC-0 — Contención inmediata 🔴
 
-Mientras el rediseño no esté, estas cuatro puertas están abiertas en el código actual.
+Mientras el rediseño no esté, estas puertas estaban abiertas en el código actual.
 
-- [ ] 0.1 **P3** — `backend/src/modules/payment-requests/service.ts:169`: el único guard de
+**Re-verificado ejecutando el 2026-08-21** con `tests/ceiling-property.test.ts` + `ceiling-world.ts`
+(SQLite in-memory, ORM y repos reales). Tres de las cinco ya estaban cerradas por el trabajo previo
+de esta rama: el enunciado de abajo describe el estado del 2026-08-20, no el de hoy.
+
+**Auditoría de cierre (2026-08-21, corrida posterior)**: las cinco se volvieron a comprobar UNA POR
+UNA con el test de propiedad como juez, y cada cierre se validó **por mutación** — neutralizar el
+guard tiene que resucitar la violación, si no el test no está probando nada:
+
+| Puerta | Mutación aplicada | Secuencias que caen |
+|---|---|---|
+| 0.1 | `checkoutBlockedReason` deja de mirar el estado | 12 |
+| 0.2 | `clampRequestsToCeiling` devuelve 0 sin hacer nada | 42 |
+| 0.3 | `releaseSession(…, {allowPaid: nextStatus === 'paid'})` | 1 |
+| 0.4 | hook con `orm.create` directo **+** sin la revalidación del techo en la emisión | 11 |
+| 0.5 | `assertNoSettledCharge` sin el corte por dinero | 1 |
+
+Sin mutar: **0 violaciones** en profundidad 1-3 (7.239 secuencias) y en profundidad 4.
+
+- [x] 0.1 **P3** — `backend/src/modules/payment-requests/service.ts:169`: el único guard de
       `createCheckout` es `if (pr.status === 'paid')`. `cancelled` y `expired` pasan y emiten una
       sesión viva que `charge-ceiling.ts:58` no cuenta (filtra `r.status === 'pending'`) y que
       `stripe-webhook.ts:106` liquida igual (sólo saltea `paid`).
       Medido: `checkout` sobre fila cancelada + `checkout` del segundo cobro = dos sesiones vivas,
       **$600 sobre un saldo de $300**.
-- [ ] 0.2 **P4** — `reservas/usecases/crud.ts:230` + `reservas/validators/schema.ts:75`:
+      **CERRADA.** `usecases/create-checkout.ts:checkoutBlockedReason` concentra las precondiciones
+      de la emisión y devuelve 409 para todo estado que no sea `pending` (503 sin Stripe, 400 si ya
+      está pagado). Reproducida antes del fix por la propiedad del techo en 12 secuencias, entre
+      ellas `requerir-pago → cancelar-cobro → emitir-link → requerir-pago` = **$800 sobre $400**.
+      Control negativo: revivir el cobro (`PUT {status:'pending'}`) vuelve a emitir link.
+      Mutación verificada: neutralizar el guard resucita las 12 secuencias.
+- [x] 0.2 **P4** — `reservas/usecases/crud.ts:230` + `reservas/validators/schema.ts:75`:
       `totalAmount` y `otherCharges` escribibles por `PUT /api/reservas/:id`. Inflar 500→5000,
       emitir dos links de $300 con sesión viva, volver a 500 → **$600 open sobre $300**. Mismo
       camino por `addons.ts:88` (`deleteAddon` baja el cobrable sin tocar Stripe).
-- [ ] 0.3 **P5** — `update-request.ts:74`: `releaseSession(previous, {allowPaid: nextStatus === 'paid'})`.
+      **YA ESTABA CERRADA** por `usecases/clamp-to-ceiling.ts` + connector `reservas-payment-requests`.
+      Verificado ejecutando: las secuencias `… → desinflar-total`, `… → bajar-otros-cargos` y
+      `… → borrar-extra` de la prueba de propiedad no dejan exposición por encima del saldo.
+- [x] 0.3 **P5** — `update-request.ts:74`: `releaseSession(previous, {allowPaid: nextStatus === 'paid'})`.
       Un `PUT {status:'paid'}` manual sobre un `pending` cuya sesión ya fue abonada no corta con 409,
       y el webhook posterior descarta la liquidación entera (`if (pr.status === 'paid') return null`):
       sin fila en `payments`, sin cargo de folio, sin bump de `deposit`, sin audit. `paidForReservation`
       queda en 0 y el techo autoriza un segundo link por el mismo saldo.
-- [ ] 0.4 **P6** — `shared/usecases/auto-payment-request.ts:22`: crea filas `pending` con `orm.create`
+      **YA ESTABA CERRADA** (`update-request.ts`, COR-C: `allowPaid` siempre `false`). Verificado
+      ejecutando contra el service real: `PUT {status:'paid'}` sobre un `pending` con la sesión ya
+      abonada corta con `ConflictError` y la fila queda en `pending`.
+- [x] 0.4 **P6** — `shared/usecases/auto-payment-request.ts:22`: crea filas `pending` con `orm.create`
       directo, sin `assertChargeableAmount`, sin `withLock(chargeLockKey)` y sin
       `assertCeilingAfterCommit` — las tres capas que `service.ts:114-128` declara obligatorias. Su
       guard de duplicados (`:20`) consulta `findMany('PaymentRequests', {reservationId})` **sin
       `hotelId`**.
-- [ ] 0.5 `reservas/usecases/crud.ts:305` — `deleteReservation` no expira las sesiones de sus
+      **YA ESTABA CERRADA**: `handleReservationCreated` recibe el `PaymentRequestsCreator` del
+      connector y llama a `PaymentRequestsService.create` (techo + lock + `assertCeilingAfterCommit`);
+      el dedup lo hace el propio techo. Verificado ejecutando: dos disparos seguidos del hook dejan
+      **una** sola fila `pending`.
+      **Ahora también bajo el juez**: el hook entró al alfabeto como `auto-cobro-alta`
+      (`tests/ceiling-property.test.ts`), sobre el service REAL. La mutación de una sola capa NO la
+      tumba, y eso es un resultado, no una omisión: está cerrada DOS veces. La fila creada por la
+      ventana no es exposición mientras no tenga sesión, y `service.createCheckout:177`
+      (`assertChargeableAmount` con `excludeRequestId`) niega la emisión. Hacen falta las dos
+      mutaciones juntas para que aparezcan las 11 secuencias
+      (`requerir-pago → auto-cobro-alta → emitir-link` = $700 sobre $400).
+      Para que el juez pudiera llegar hasta ahí hubo que tapar un punto ciego suyo: las operaciones
+      del panel sólo alcanzaban las filas creadas por el propio test, así que una fila entrada por
+      la ventana era intocable. `adoptarFilasNuevas()` barre `payment_requests` después de cada
+      paso — el panel lista la tabla, no un array del test.
+- [x] 0.5 `reservas/usecases/crud.ts:305` — `deleteReservation` no expira las sesiones de sus
       `payment_requests` pendientes. Al cobrarse, `stripe-webhook.ts:368` no encuentra la reserva y
       sale sin aplicar, pero `recordStripePayment` (`:141`) ya asentó la plata → cobro huérfano.
+      El enunciado quedó **parcialmente obsoleto** —`releaseRequestsOfReservation` ya expiraba los
+      `pending`— pero el cobro huérfano seguía saliendo por **dos ventanas** que la prueba de
+      conservación encontró sola, y las dos están cerradas ahora en `clamp-to-ceiling.ts`:
+      · el huésped ya abonó y el webhook no llegó: la fila sigue `pending`, `expireSessionQuietly`
+        devuelve `'paid'` y el borrado seguía derecho → ahora `releaseRequestsOfReservation` corta
+        con 409 (`abortIfPaid`) y la reserva NO se borra;
+      · el webhook YA aterrizó: la fila quedó `paid`, `pendingRowsOf` no la ve y el borrado seguía
+        derecho → ahora `assertNoSettledCharge` corta con 409 ("anular ≠ borrar").
+      Medido antes del fix: $400 asentados en `payments` sin folio, sin factura y sin reserva.
+      Control negativo: una reserva sin cobros abonados se sigue borrando.
+      **Faltaba la mitad del cierre y el test la denunció**: `assertNoSettledCharge` pregunta por
+      `payments{hotelId, reservationId}`, y ese vínculo lo escribe
+      `connectors/payment-requests-payments.ts` — pero el banco de pruebas tenía una COPIA A MANO de
+      ese mapeo que no se actualizó, así que en el mundo del test el asiento nacía sin
+      `reservationId` y el guard no lo encontraba. La secuencia
+      `requerir-pago → huesped-paga → webhook-cobro → borrar-reserva` seguía en rojo.
+      Arreglado en la raíz, no en el doble: el mapeo cobro → fila de `payments` vive ahora en UN
+      solo lugar (`usecases/payment-port.ts:stripeChargeDto`) y lo usan el connector y el test. Un
+      campo nuevo entra por las dos rutas a la vez o por ninguna.
 
 ## RTC-1 — La verdad de qué está abierto 🔴
 
@@ -66,16 +130,57 @@ Mientras el rediseño no esté, estas cuatro puertas están abiertas en el códi
 
 Esto es lo que faltó las cuatro veces: había test por puerta, y aparecía la puerta siguiente.
 
-- [ ] 4.1 Test que recorra secuencias de operaciones (crear cobro · cancelar · cambiar importe ·
+- [x] 4.1 Test que recorra secuencias de operaciones (crear cobro · cancelar · cambiar importe ·
       editar la reserva · borrar addon · marcar `paid` a mano · borrar la reserva · disparar webhook)
       y afirme tras cada secuencia que **la suma de lo cobrable por sesiones vivas nunca supera el
       saldo**. Property-based o tabla exhaustiva de secuencias cortas. El criterio: que el test
       **encuentre** puertas nuevas, no que enumere las conocidas.
-- [ ] 4.2 Que la prueba corra contra el service real con repos de verdad, no contra dobles. Hoy todo
+      **HECHO** — `backend/src/modules/payment-requests/tests/ceiling-property.test.ts`. Alfabeto de
+      18 operaciones sobre el prefijo "Requerir pago" (crear + emitir), tabla exhaustiva de
+      longitudes 1, 2 y 3 = 6.174 secuencias, con la propiedad evaluada **después de cada paso**.
+      Dos propiedades, no una:
+      · **techo** — Σ(sesiones que Stripe todavía deja pagar) ≤ saldo cobrable;
+      · **conservación** — la plata que el huésped ya puso nunca queda sin reserva a la que
+        aplicarse, y lo liquidado aparece reconocido por `paidForReservation`.
+      La segunda hizo falta porque la primera sólo mira sesiones ABIERTAS: un cobro que ya entró
+      sale de esa cuenta, y todo lo que le pase después es invisible para ella.
+      Cumplió el criterio: **falló al escribirse** (13 secuencias) y encontró **dos puertas que no
+      estaban en esta lista** — ver 0.1 y 0.5. Después encontró una tercera cosa que tampoco estaba
+      en la lista: el doble del asiento en `payments` había derivado del connector real (ver 0.5).
+      Alfabeto final: **19** operaciones (entró `auto-cobro-alta`, la puerta 0.4) =
+      19 + 361 + 6.859 = **7.239** secuencias, ~14 s.
+      **La profundidad es un parámetro, no una constante editada a mano.** La exploración profunda
+      se corre sin tocar el archivo:
+
+      ```bash
+      CEILING_DEPTH_ONLY=4 bun test src/modules/payment-requests/tests/ceiling-property.test.ts
+      ```
+
+      `CEILING_DEPTH=n` corre 1..n; `CEILING_DEPTH_ONLY=n` corre sólo ese nivel. Por defecto 1..3,
+      que es lo que entra en la suite del gate: la combinatoria es 19^n y el nivel 4 son 130.321
+      secuencias (~4-5 min) — de hecho una copia byte-a-byte del test fijada en `[4]`
+      (`tests/zz-deep.test.ts`) colgaba la suite y **fue eliminada**; la herramienta no se perdió,
+      quedó detrás de la variable de entorno. El nivel 4 se corrió a mano: **0 violaciones**, y es
+      el que tumbó la primera versión del guard de 0.5 (miraba `payment_requests.status`, y
+      `cancelar-cobro`/`expirar-cobro`/`borrar-cobro` borraban la evidencia antes del borrado).
+- [x] 4.2 Que la prueba corra contra el service real con repos de verdad, no contra dobles. Hoy todo
       el flujo de Stripe está detrás de stubs y `paidForReservation` nunca se ejerció contra una DB:
       los nombres de modelo y campos se cotejaron a mano contra los `orm.define`, pero nadie los
       corrió. Patrón disponible: `bookingengine/tests/migrate-public-bookings.test.ts:22` monta
       `SqliteAdapter(':memory:')`.
+      **HECHO** — `tests/ceiling-world.ts`: `SqliteAdapter(':memory:')` + `ORM` + `orm.migrate()`
+      sobre los `ModelDefinition` REALES (`registerSharedModels` + los `model.ts` de reservas,
+      folios, facturas, payments, payment-gateways, usuarios — no copias) + `OrmRepository` +
+      `PaymentRequestsService`, `PaymentEventStore` y los usecases de `reservas` de verdad,
+      cableados como lo hacen los connectors. `paidForReservation` corre contra las tres tablas
+      (`folios`/`invoices`/`payments`) por primera vez, con un control que lo comprueba.
+      Lo único fingido es Stripe, y con un LIBRO de sesiones con estado (`open`/`complete`/
+      `expired`), no un stub: es lo que hace medible "lo que el proveedor todavía deja pagar".
+      El otro doble —el asiento en `payments`— dejó de ser una copia y pasó a compartir el mapeo
+      con el connector de producción (`stripeChargeDto`): un doble que no espeja al connector no es
+      evidencia de nada, y ya había derivado una vez (ver 0.5).
+      También se sumaron al mundo `Auditlog` y la fila `configuration('automation_config')`, que son
+      la precondición del hook del alta (puerta 0.4).
 
 ## RTC-5 — Deuda de datos 🟡
 
@@ -85,12 +190,21 @@ Esto es lo que faltó las cuatro veces: había test por puerta, y aparecía la p
       source:'reschedule'}` en esas mismas filas, y esa línea no cambió en el diff.
       `payments.metadata` es TEXT (`migrate-db.ts:904`). En prod PG los cobros de reprogramación
       anteriores siguen invisibles para `paidForReservation` y el techo los autoriza a recobrar.
-- [ ] 5.2 `reservas/usecases/sync-pending-after-payment.ts:65` — el guard
+- [x] 5.2 `reservas/usecases/sync-pending-after-payment.ts:65` — el guard
       `if (!row?.folioId && !row?.invoiceId) return null` corta **antes** de mirar `reservationId`.
       Toda la plomería del vínculo directo (`MoneyRowRef.reservationId`, `connectors/payments-reservas.ts:38`,
       `money-port.ts` que dice "gana el vínculo DIRECTO") es código muerto en esa ruta. Ejecutado:
       fila `{hotelId, reservationId}` → `null`, cero UPDATE. `reservations.pendingAmount` queda
       inflada tras un cobro de reprogramación en efectivo o tarjeta.
+      **YA ESTABA CERRADA** (`sync-pending-after-payment.ts:74`, COR-A: el guard es
+      `!folioId && !invoiceId && !reservationId`). Re-verificado ejecutando contra la base real:
+      una fila `{hotelId, reservationId}` de $100 sobre la reserva de $400 devuelve `300` y
+      **persiste** `reservations.pendingAmount = 300`.
+      Cubierta además por `connectors/tests/payments-reservas.test.ts:151` (COR-A), contra dobles.
+      **NO la juzga la prueba de propiedad**: sus dos invariantes miran sesiones vivas y plata
+      liquidada, no la columna `reservations.pendingAmount`. Meter esa columna como tercera
+      propiedad no es gratis —el clamp del techo no la toca a propósito— así que queda anotado como
+      lo que es: verificado por código y por su test, no por el juez de secuencias.
 - [ ] 5.3 Test de la migración del esquema: `migrate-db.ts:1206` (`addColumnIfMissing`) y `:1207`
       (índice) no tienen ninguno, y ningún test importa `PaymentModel` — el anti-patrón ORM
       `allowedFields` del `CLAUDE.md` (6 casos históricos) queda descubierto porque los dobles
@@ -98,18 +212,72 @@ Esto es lo que faltó las cuatro veces: había test por puerta, y aparecía la p
 
 ## RTC-6 — Que el gate pueda ver este tipo de bug 🟡
 
-- [ ] 6.1 `commands.env:7` tiene `LOOPKIT_ENFORCE=0`: el gate **reporta pero no bloquea**.
-- [ ] 6.2 `state/task.json` tomó como base un commit de **stash** (`core/lk:117`,
-      `BASE=$(git stash create)`) por segunda vez en la sesión. Con base `fea4bd99` el diff medido
-      cubrió **63 de 128 rutas**: 68 archivos / 2398 líneas / 61 marcas de deuda fuera de la
-      medición, incluidos `payments/model.ts` (la columna nueva) y `charge-reschedule-diff.ts` (su
-      único escritor). D10, D11 y `secret_hits=0` describieron el 49% del cambio.
-- [ ] 6.3 `RUBRICA.md:31` dice "D8 binaria 100 o 0" y `verify.sh:194` publica 80 proporcional: el
-      documento y la herramienta dan números distintos para la misma corrida.
-- [ ] 6.4 El kit de LoopKit vive **fuera del repo, sin VCS ni backups**: las ediciones a
-      `gate.py`/`verify.sh`/`commands.env` no entran al diff, ni al hash, ni a la auditoría. El
-      builder lo editó cuatro veces en esta sesión y no hay forma de auditar qué cambió en cada una.
-      Versionarlo.
+> El kit NO vive en este repo: `~/.loopkit-home` → `/home/phantom/Documents/proyectos/universal/real/.loopkit`.
+> Desde 6.4 tiene git propio: línea base `0b48b6a`, arreglos de RTC-6 en `3680684`.
+
+- [x] 6.1 `LOOPKIT_ENFORCE=0` **no era** el motivo de que nada bloqueara. `lk ship` corre el gate y
+      sale 1 pase lo que pase — nunca consultó el flag (`core/lk`, rama `ship)`). Los dos
+      bloqueadores que sí lo leen estaban **rotos por ruta** en toda instalación compartida (kit
+      fuera del repo) y no evaluaban nada ni con el flag en 1:
+      · `adapters/claude/hooks/lk-gate-stop.sh:26` fijaba `LK="$ROOT/.loopkit"` → no encontraba
+        `task.json` → `phase` vacía → salía por el `case` ANTES de correr el gate.
+      · `adapters/git/pre-push:5` exigía `$ROOT/.loopkit/core/gate.py` → `exit 0` siempre.
+      · `adapters/claude/hooks/lk-subagent.sh:41` calculaba el hash con `cwd=$KIT/repos` (no es un
+        repo git) y sin `LOOPKIT_STATE`: quedaba `e3b0c44298fc1c14` = sha256(""). **1686 de 1690**
+        registros del estado de solmios tenían ese valor → la única prueba de que un auditor corrió
+        sobre el diff era basura.
+      Los tres arreglados y re-sincronizados a `~/.claude/hooks/`; el pre-push viejo de este repo se
+      refrescó solo (`LOOPKIT-HOOK-V2` + `ensure_git_hook`).
+      **El flag sigue en 0**, y el motivo está escrito en su `commands.env`: hay otra corrida en
+      vuelo sobre este mismo repo y estado, y subirlo a 1 la trabaría en el medio. Costo de
+      activarlo, medido: (a) todo turno en BUILD/VERIFY sin `measured.json` + `scorecard.json` +
+      registro de subagente sobre el diff actual queda bloqueado; (b) este repo no tiene linter de
+      backend (`LINT=""`) → D8=80 → el techo de veredicto pasa a `READY_WITH_RISKS`; (c) la tarea
+      abierta hoy tiene base de stash y no cerraría hasta reabrirse con una base válida.
+- [x] 6.2 La base era `git stash create` (`core/lk:117`): un commit que YA CONTIENE el árbol y **no
+      es ancestro de HEAD**, así que `git diff base` lo cancela. Verificado sobre el estado real:
+      `a2ed80ec` y `fea4bd99` son ambos `WIP on main:` y `git merge-base --is-ancestor <b> HEAD`
+      falla para los dos. Ahora:
+      · sin `--base` la base es **HEAD siempre**; si el árbol venía sucio se avisa que esos cambios
+        cuentan como alcance (medir de más, nunca de menos en silencio);
+      · `--base` **rechaza con exit 2** todo commit no alcanzable desde HEAD (el árbol vacío sigue
+        aceptado: `lk audit` lo usa a propósito);
+      · `core/gate.py` (GAT-3) denuncia una base inalcanzable ya escrita en `task.json`, y lo hace
+        **antes** de exigir `measured/scorecard` — si la base miente, el resto no importa;
+      · `core/verify.sh` ya no se traga el aviso de `gate.py --base` cuando la resolución "funciona".
+      Regresión en `test/smoke.sh`: base cancelando el trabajo → diff de 0 líneas vs 7 reales.
+- [x] 6.3 Manda la **herramienta**: la proporción es la semántica estricta (un gate que no se puede
+      ejecutar no aprueba nada) y fue un fix deliberado; el "binaria 100 o 0" del documento quedó
+      viejo. `core/RUBRICA.md` reescrito (fila D8, anti-inflación #3, tabla de veredicto) con la
+      fórmula exacta de `verify.sh`. Además `core/gate.py` **ahora exige D8=100 para `READY`** —
+      la rúbrica lo pedía desde siempre y nadie lo verificaba. Con un gate en N/V el techo real es
+      `READY_WITH_RISKS`. Esto endurece: corridas anteriores con `lint` en N/V y veredicto `READY`
+      habrían sido rechazadas.
+- [x] 6.4 Kit bajo git propio en su directorio. `0b48b6a` = estado actual tal cual estaba (para que
+      los arreglos sean diffeables), `3680684` = RTC-6. `.gitignore` deja fuera `state/` y
+      `repos/*/state/` (se reescriben en cada corrida, megas de evidencia) y versiona a propósito
+      `repos/*/commands.env`, que es config a mano. Escaneado antes de commitear: sin secretos —
+      lo único que matchea es la clave falsa de prueba (`sk-` + relleno) del fixture de
+      `test/smoke.sh`, que existe justamente para probar el detector de secretos.
+
+**Verificación del `diff_hash`** (lo pedido: `lk verify` vs `gate.py --hash` con `LOOPKIT_STATE`).
+Las dos rutas de cálculo dan lo MISMO cuando se las mide en el mismo instante — en solmios
+`52f8b0cb1760e7ea` por las dos vías, y en un repo controlado sin editores concurrentes
+`lk verify`, `gate.py --hash` y `lk status` coinciden en `a2cd843f3fb11fe3`. Lo que NO coincide es
+el `65dc1b3a458b82de` que dejó escrito el `lk verify` de esta corrida: los otros dos agentes
+modificaron 44 archivos de `frontend/` a las 11:52:02 y 3 de `backend/` a las 11:53, con los gates
+ya corriendo (arrancaron 11:51:50). El hash caducó **durante** la medición. Eso es el gate
+funcionando, no un defecto de herramienta — pero significa que en este repo, con tres agentes
+escribiendo a la vez, **ninguna corrida de `lk verify` puede producir evidencia válida**: el código
+cambia antes de que termine. Es un problema de coordinación, no de tooling, y sigue abierto.
+
+**Lo que la corrida SÍ mostró**, y antes no se veía: el aviso de base inalcanzable ahora encabeza
+la salida de `lk verify` (antes iba a `evidence/base-resolve.txt`, que sólo se imprimía si la
+resolución fallaba), y D8 salió 80 con `lint` en N/V — el número que ahora también dice la rúbrica.
+
+**Suite del kit** (`lk selftest`): de 91 ok / 5 fallos a **99 ok / 2 fallos**. Los 2 que quedan son
+previos y ajenos a RTC-6: el fixture de `lk audit` espera 3 y 1 archivos, pero el instalador deja
+`.gitignore` y `.claude/settings.json` en el repo de prueba y el conteo honesto es 5 y 3.
 
 ---
 
