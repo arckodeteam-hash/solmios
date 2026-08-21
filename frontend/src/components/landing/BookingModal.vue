@@ -309,6 +309,34 @@
               </article>
             </li>
           </ul>
+
+          <!--
+            Tipos SIN disponibilidad continua para estas fechas (catálogo, no `/rates`) — se
+            muestran deshabilitados con el motivo en vez de ocultarse. Sin precio (no hay tarifa
+            vigente que cotizar) ni CTA (no se puede elegir algo no reservable).
+          -->
+          <ul v-if="unavailableCatalogRooms.length > 0" class="space-y-3">
+            <li v-for="rt in unavailableCatalogRooms" :key="rt.id">
+              <article class="rounded-2xl border-2 border-dashed border-border bg-surface p-3 opacity-70">
+                <div class="flex gap-4">
+                  <img
+                    v-if="rt.photoUrl"
+                    :src="rt.photoUrl"
+                    :alt="prettify(rt.name)"
+                    class="hidden h-24 w-32 shrink-0 rounded-xl object-cover grayscale sm:block"
+                    loading="lazy"
+                  />
+                  <div class="flex min-w-0 flex-1 flex-col justify-center gap-1">
+                    <span class="font-black text-navy">{{ prettify(rt.name) }}</span>
+                    <span v-if="roomSpecs(rt)" class="text-xs font-bold text-text-muted">{{ roomSpecs(rt) }}</span>
+                    <span class="mt-1 inline-flex w-fit items-center rounded-full bg-border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-text-secondary">
+                      No disponible para estas fechas
+                    </span>
+                  </div>
+                </div>
+              </article>
+            </li>
+          </ul>
         </section>
 
         <!-- ─── Paso 3: extras ─────────────────────────────────────────────── -->
@@ -661,6 +689,7 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import RateCalendar from './RateCalendar.vue'
 
 import { useBookingStore } from '@/composables/useBooking'
+import { PublicHotelService } from '@/services/PublicHotel.service'
 import { formatMoney, formatOccupancy, formatShortDate, nightsBetween } from '@/utils/rate-calendar'
 import { groupOccupancyRows } from '@/utils/occupancy-groups'
 import type {
@@ -669,6 +698,7 @@ import type {
   PromoValidationReason,
   PublicHotelInfo,
   RoomOccupancyRate,
+  RoomTypeCatalogEntry,
   RoomTypeRate,
   UpsellKind,
 } from '@/types'
@@ -791,6 +821,30 @@ const availableRooms = computed(() =>
   (store.ratesResponse?.roomTypes ?? []).filter((rt) => rt.availableCount > 0),
 )
 
+/**
+ * Tipos que el hotel vende (catálogo, `GET /room-types` — mismo endpoint que la vitrina de la
+ * landing, ver `solmi-direct-booking-qa-fixes`) pero que `/rates` NO devolvió para el rango
+ * buscado: ningún unidad de ese tipo tiene disponibilidad continua esas fechas.
+ *
+ * Decisión de producto (2026-08-20): acá el huésped YA está buscando fechas concretas, así que
+ * "no disponible" es información real y útil — se muestran DESHABILITADOS con el motivo en vez
+ * de ocultarse (a diferencia de la búsqueda en sí, que sigue sin ofrecer algo no reservable).
+ * Tolerante a fallos: si el catálogo no carga, esta lista queda vacía y el paso se comporta
+ * exactamente como antes (solo `availableRooms`).
+ */
+const unavailableCatalogRooms = ref<RoomTypeCatalogEntry[]>([])
+
+async function loadUnavailableCatalogRooms(): Promise<void> {
+  if (!store.ratesResponse) { unavailableCatalogRooms.value = []; return }
+  try {
+    const catalog = await PublicHotelService.getRoomTypes(store.slug)
+    const availableIds = new Set(availableRooms.value.map((r) => r.id))
+    unavailableCatalogRooms.value = catalog.roomTypes.filter((t) => !availableIds.has(t.id))
+  } catch {
+    unavailableCatalogRooms.value = []
+  }
+}
+
 /** roomType que la card de la landing pidió preseleccionar. Se aplica cuando llegan las tarifas. */
 const pendingRoomTypeId = ref('')
 
@@ -807,7 +861,7 @@ function applyPendingRoom(): void {
   void store.selectRoom(match, row?.occupancy)
 }
 
-watch(() => store.ratesResponse, () => { applyPendingRoom() })
+watch(() => store.ratesResponse, () => { applyPendingRoom(); void loadUnavailableCatalogRooms() })
 
 function prettify(name: string): string {
   if (!name) return 'Habitación'
@@ -819,7 +873,9 @@ function perNight(rt: RoomTypeRate): number {
   return rt.fromPrice / n
 }
 
-function roomSpecs(rt: RoomTypeRate): string {
+/** Compartido entre `RoomTypeRate` (disponibles) y `RoomTypeCatalogEntry` (deshabilitadas) —
+ *  ambos exponen los mismos 2 campos. */
+function roomSpecs(rt: { capacity: number; surfaceArea: number }): string {
   const parts: string[] = []
   if (rt.capacity > 0) parts.push(`${rt.capacity} ${rt.capacity === 1 ? 'huésped' : 'huéspedes'}`)
   if (rt.surfaceArea > 0) parts.push(`${rt.surfaceArea} m²`)
