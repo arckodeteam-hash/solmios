@@ -47,6 +47,22 @@ function parseModules(raw: unknown, logger?: GateLogger, hotelId?: string): stri
   return Array.isArray(value) ? value.map(String) : null
 }
 
+/**
+ * CS-7/R3-4c — orden determinista de las filas de `subscriptions` de un hotel. Con varias
+ * filas (doble alta, migración) un `find` sin orden resolvía OTRA fila distinta de la que
+ * parchea el webhook de Stripe. Prioridad: la fila con `stripeSubscriptionId` (la que el
+ * pago tocó) → `createdAt` descendente (la más reciente) → `id` ascendente (desempate
+ * final: sin él, mismo hotel y distinta matriz según el motor/índice de la base).
+ * Exportado para que handle-stripe-event parchee exactamente la fila que acá gana.
+ */
+export function compareSubscriptions(a: any, b: any): number {
+  return (
+    Number(!!b.stripeSubscriptionId) - Number(!!a.stripeSubscriptionId) ||
+    String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')) ||
+    String(a.id ?? '').localeCompare(String(b.id ?? ''))
+  )
+}
+
 export async function resolveHotelPlan(
   subscriptionsRepo: RepositoryAdapter<any>,
   plansRepo: RepositoryAdapter<any>,
@@ -56,16 +72,10 @@ export async function resolveHotelPlan(
   logger?: GateLogger,
 ): Promise<ResolvedHotelPlan> {
   const subs = ((await subscriptionsRepo.findMany({ hotelId })) as any[]) ?? []
-  // CS-7: orden determinista. Con varias filas para el hotel (doble alta, migración) un
-  // `find` sin orden podía resolver OTRA fila distinta de la que parchea el webhook de
-  // Stripe. Prioridad: la fila con `stripeSubscriptionId` (la que el pago tocó); desempate
-  // por `createdAt` descendente (la más reciente primero).
+  // CS-7: orden determinista (ver compareSubscriptions).
   const active = subs
     .filter((s) => WORKING_STATUSES.has(s?.status))
-    .sort((a, b) =>
-      Number(!!b.stripeSubscriptionId) - Number(!!a.stripeSubscriptionId) ||
-      String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')),
-    )[0]
+    .sort(compareSubscriptions)[0]
 
   if (active) {
     // CS-3: sub ACTIVA sin planId → matriz VACÍA (cero módulos), NUNCA `null` (= sin
@@ -81,13 +91,15 @@ export async function resolveHotelPlan(
     }
     const plan = ((await plansRepo.findMany({ id: active.planId })) as any[])?.[0]
     if (!plan) {
-      // LEGACY EXPLÍCITO (no silencioso): un hotel CON suscripción viva cuyo plan fue borrado
-      // de `plans` NO se encierra (fail-open, mismo criterio que require-module) — pero se
-      // deja registrado, porque "todo incluido" para un plan de 4 módulos es un bug de datos.
-      logger?.warn('Suscripción activa apunta a un plan inexistente — gate sin matriz de módulos', {
+      // R3-1b: sub ACTIVA apuntando a un plan que NO existe en `plans` → matriz VACÍA +
+      // ERROR, consistente con el caso sin planId (CS-3). Antes era fail-open (`null` =
+      // TODO el panel prendido): un planId inventado que pasaba el schema del alta le
+      // abría el producto entero a un trial — el bypass de R3-1. El fail-open queda solo
+      // para el hotel SIN fila de suscripción (legacy, más abajo).
+      logger?.error('Suscripción activa apunta a un plan inexistente — gate con matriz VACÍA (cero módulos)', {
         hotelId, planId: active.planId, status: active.status,
       })
-      return { modules: null, planId: active.planId, source: 'subscription' }
+      return { modules: [], planId: active.planId, source: 'subscription' }
     }
     return { modules: parseModules(plan.modules, logger, hotelId), slug: plan.slug, planId: active.planId, source: 'subscription' }
   }

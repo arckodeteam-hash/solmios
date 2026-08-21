@@ -6,7 +6,9 @@
 //
 // Las matrices son las reales del seeder (scripts/create-plans-table.ts):
 //   host        = ['planning','reservations','reservations.checkin','guests']
-//   essential   = host + ['finance','finance.billing','finance.payments','channel','operations','operations.maintenance']
+//   essential   = host + ['channel','finance.billing','finance.payments','operations.maintenance']
+//     R3-2: SIN los padres 'finance'/'operations' — bajo "padre = módulo completo" un padre
+//     hereda TODOS sus sub-módulos y essential regalaba 8 que el plan no promete.
 //   starter/professional/enterprise/ultra = [] (todos — retrocompat planes top).
 import { describe, it, expect } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
@@ -18,8 +20,7 @@ import { getModuleStateForHotel } from '../../admin/usecases/modules'
 
 const HOST_MODULES = ['planning', 'reservations', 'reservations.checkin', 'guests']
 const ESSENTIAL_MODULES = [
-  ...HOST_MODULES, 'finance', 'finance.billing', 'finance.payments',
-  'channel', 'operations', 'operations.maintenance',
+  ...HOST_MODULES, 'channel', 'finance.billing', 'finance.payments', 'operations.maintenance',
 ]
 
 /** Repo fake en memoria — mismo criterio que handle-stripe-event.test.ts:makeRepo. */
@@ -44,17 +45,25 @@ function repo(rows: any[], updates?: Array<{ id: string; patch: any }>): Reposit
 /** Catálogo de planes como el seeder: id 'plan-X', slug 'X'. */
 function plansTable() {
   return [
-    { id: 'plan-host', slug: 'host', modules: HOST_MODULES },
-    { id: 'plan-essential', slug: 'essential', modules: ESSENTIAL_MODULES },
-    { id: 'plan-professional', slug: 'professional', modules: [] },
+    { id: 'plan-host', slug: 'host', modules: HOST_MODULES, isActive: 1 },
+    { id: 'plan-essential', slug: 'essential', modules: ESSENTIAL_MODULES, isActive: 1 },
+    { id: 'plan-professional', slug: 'professional', modules: [], isActive: 1 },
   ]
 }
 
-/** Logger que guarda los warn: el fail-open del resolver NO puede ser silencioso. */
-function recordingLogger(): { logger: Logger; warns: string[] } {
+/** Logger que guarda warn y error: ni el fail-open ni el fail-closed pueden ser silenciosos. */
+function recordingLogger(): { logger: Logger; warns: string[]; errors: string[] } {
   const warns: string[] = []
+  const errors: string[] = []
   const base = silentLogger()
-  return { warns, logger: { ...base, warn: (msg: string) => { warns.push(msg) } } as unknown as Logger }
+  return {
+    warns, errors,
+    logger: {
+      ...base,
+      warn: (msg: string) => { warns.push(msg) },
+      error: (msg: string) => { errors.push(msg) },
+    } as unknown as Logger,
+  }
 }
 
 describe('signup — el trial aplica el plan elegido al hotel', () => {
@@ -82,13 +91,36 @@ describe('signup — el trial aplica el plan elegido al hotel', () => {
     expect(hotels[0].plan).toBe('host')
   })
 
-  // E4: el nombre viejo ("no inventa espejo / queda sin escribir") certificaba el mock, no el
-  // ORM. Real: `create({ plan: undefined })` INCLUYE la clave en el INSERT (kernel/orm.ts la
-  // retiene, orm-utils `coerceToDbValue` pasa undefined tal cual) → la columna se escribe NULL
-  // y el DEFAULT físico del modelo ('professional') NO aplica. El fake de acá retiene
-  // `undefined` de la misma forma, así que la assertion documenta ese comportamiento.
-  // (Vía HTTP esta rama ya no existe: SignupSchema exige planId no vacío — queda para filas
-  // legacy y para llamadas directas al usecase.)
+  // R3-1a: el bypass. Un planId inexistente pasaba el schema (no-vacío) y el usecase solo
+  // WARNEABA; después el resolver le daba matriz null = TODO el panel. El alta tiene que
+  // cortar ANTES de crear nada: 400 "Plan no disponible" y cero filas.
+  it('signup con planId INEXISTENTE → 400 "Plan no disponible", sin crear nada (R3-1a)', async () => {
+    const { uc, hotels, subs } = setup()
+    await expect(uc.signup({ ...VALID, planId: 'plan-x' }, new Date('2026-08-18T12:00:00Z')))
+      .rejects.toThrow('Plan no disponible')
+    expect(hotels).toHaveLength(0)
+    expect(subs).toHaveLength(0)
+  })
+
+  it('signup con plan DESACTIVADO → 400 "Plan no disponible" igual (R3-1a)', async () => {
+    const hotels: any[] = []
+    const subs: any[] = []
+    const uc = new SignupUseCase({
+      hotelsRepo: repo(hotels),
+      usersRepo: repo([]),
+      rolesRepo: repo([]),
+      subscriptionsRepo: repo(subs),
+      plansRepo: repo([{ id: 'plan-baja', slug: 'baja', modules: [], isActive: 0 }]),
+      hashPassword: async (p: string) => `hashed:${p}`,
+      logger: silentLogger(),
+    })
+    await expect(uc.signup({ ...VALID, planId: 'plan-baja' }, new Date('2026-08-18T12:00:00Z')))
+      .rejects.toThrow('Plan no disponible')
+    expect(hotels).toHaveLength(0)
+  })
+
+  // E4: el ORM retiene `plan: undefined` en el INSERT → la columna viaja NULL y el default
+  // físico ('professional') NO aplica; el fake replica ese comportamiento.
   it('signup sin plan NO elige slug: el ORM persiste la columna en NULL (el default físico no aplica)', async () => {
     const { uc, hotels } = setup()
     await uc.signup(VALID, new Date('2026-08-18T12:00:00Z'))
@@ -171,18 +203,44 @@ describe('resolveHotelPlan — la suscripción activa manda', () => {
     expect(resolved.planId).toBe('plan-essential')
   })
 
+  // R3-4c: empate total (sin stripe, mismo createdAt) → desempate final por id. Sin esto el
+  // ganador dependía del orden de devolución de la base: mismo hotel, distinta matriz según
+  // el motor/índice.
+  it('empate total (sin stripe, mismo createdAt): gana la de id menor — determinista (R3-4c)', async () => {
+    const subs = repo([
+      { id: 's-b', hotelId: 'h1', planId: 'plan-host', status: 'active', createdAt: '2026-08-01T00:00:00Z' },
+      { id: 's-a', hotelId: 'h1', planId: 'plan-essential', status: 'active', createdAt: '2026-08-01T00:00:00Z' },
+    ])
+    const resolved = await resolveHotelPlan(subs, repo(plansTable()), 'h1', 'professional')
+    expect(resolved.planId).toBe('plan-essential') // s-a < s-b
+  })
+
   it('suscripción activa paga lo mismo manda (no solo el trial)', async () => {
     const subs = repo([{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'active' }])
     const resolved = await resolveHotelPlan(subs, repo(plansTable()), 'h1', 'professional')
     expect(resolved.modules).toEqual(HOST_MODULES)
   })
 
-  it('suscripción con el plan BORRADO de plans: fail-open documentado y WARN (nunca silencioso)', async () => {
-    const { logger, warns } = recordingLogger()
+  // R3-1b: el otro extremo del bypass. La suscripción apunta a un plan que NO existe en
+  // `plans` (borrado / id inventado que pasó el schema) → matriz VACÍA + ERROR, igual que
+  // la sub sin planId (CS-3). Antes: matriz null = fail-open = TODO el panel prendido para
+  // un plan de 4 módulos.
+  it('suscripción con plan INEXISTENTE → matriz VACÍA + ERROR, nunca fail-open (R3-1b)', async () => {
+    const { logger, errors } = recordingLogger()
     const subs = repo([{ id: 's1', hotelId: 'h1', planId: 'plan-fantasma', status: 'active' }])
     const resolved = await resolveHotelPlan(subs, repo(plansTable()), 'h1', 'professional', logger)
-    expect(resolved.modules).toBeNull()
-    expect(warns.length).toBeGreaterThan(0)
+    expect(resolved.source).toBe('subscription')
+    expect(resolved.modules).toEqual([])
+    expect(errors.length).toBeGreaterThan(0)
+  })
+
+  it('sub activa con plan INEXISTENTE en el gate: cero módulos (fail-closed de punta a punta, R3-1b)', async () => {
+    const subs = repo([{ id: 's1', hotelId: 'h1', planId: 'plan-fantasma', status: 'trialing' }])
+    const state = await getModuleStateForHotel(repo([]), repo(plansTable()), subs, 'h1', undefined, 'professional')
+    expect(state.planning).toBe(false)
+    expect(state.reservations).toBe(false)
+    expect(state.guests).toBe(false)
+    expect(state.settings).toBe(false)
   })
 
   it('sin fila de suscripción (hotel legacy): cae al espejo hotels.plan', async () => {
@@ -232,20 +290,24 @@ describe('getModuleStateForHotel — el gate aplica plans.modules tal cual', () 
     expect(state['reservations.list']).toBe(true)   // implícito por el padre
   })
 
-  // CS-1, dirección única: una sub-clave SIN su padre no habilita al padre ni a sus hermanos.
-  it('sub-clave listada sin su padre NO prende al padre (la expansión es padre→hijos)', async () => {
+  // CS-1, dirección única: una sub-clave SIN su padre no habilita al padre NI a sus hermanos
+  // — pero desde R3-2 el sub-módulo listado SÍ queda habilitado por sí mismo (sin esto, la
+  // matriz de essential con hijos sin padre no concedería nada de finance/operations).
+  it('sub-clave listada sin su padre: prende SOLO esa sub-clave (ni el padre ni sus hermanos)', async () => {
     const plans = repo([{ id: 'plan-solo-checkin', slug: 'solo-checkin', modules: ['planning', 'reservations.checkin'] }])
     const subs = repo([{ id: 's1', hotelId: 'h1', planId: 'plan-solo-checkin', status: 'trialing' }])
     const state = await getModuleStateForHotel(config, plans, subs, 'h1', undefined, 'professional')
     expect(state.planning).toBe(true)
-    expect(state.reservations).toBe(false)
-    expect(state['reservations.checkin']).toBe(false)
+    expect(state['reservations.checkin']).toBe(true) // la sub-clave listada, habilitada
+    expect(state.reservations).toBe(false)           // el padre NO (nunca hijos→padre)
+    expect(state['reservations.list']).toBe(false)   // ni sus hermanos
   })
 
   it('hotel legacy sin suscripción: mantiene el acceso de hoy vía hotels.plan', async () => {
     const state = await getModuleStateForHotel(config, repo(plansTable()), repo([]), 'h1', undefined, 'essential')
-    expect(state.finance).toBe(true)
     expect(state.channel).toBe(true)
+    expect(state['finance.billing']).toBe(true) // R3-2: los hijos explícitos de essential se mantienen
+    expect(state.finance).toBe(false)           // pero el padre ya no entra (módulo completo no prometido)
     expect(state.crm).toBe(false)
     expect(state.restaurant).toBe(false)
   })
@@ -260,6 +322,72 @@ describe('getModuleStateForHotel — el gate aplica plans.modules tal cual', () 
     const subs = repo([{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'trialing' }])
     const state = await getModuleStateForHotel(config, repo(plansTable()), subs, 'h1', undefined, 'plan-roto')
     expect(state.planning).toBe(true)
+    expect(state.finance).toBe(false)
+  })
+})
+
+// R3-2 — congelado de la matriz EFECTIVA de los planes del SEEDER bajo la semántica
+// "padre = módulo completo". El test lee la matriz de scripts/create-plans-table.ts (no una
+// copia acá): si alguien vuelve a listar un padre en essential, o el script y el catálogo
+// divergen — que fue la causa raíz del over-grant — este es el test que rompe.
+describe('R3-2 — matriz EFECTIVA de los planes del seeder', () => {
+  const config = repo([]) // sin configuration(platform,'modules'): todo global-ON
+
+  /** Matriz `modules` del seeder para un plan: de su línea, el único JSON.stringify([...])
+   *  cuyos items incluyen 'planning' (features/limits de los planes no lo listan). Los
+   *  literales son JS con comillas simples — se extraen por regex, sin JSON.parse. */
+  async function seederModules(planId: string): Promise<string[]> {
+    const src = await Bun.file(new URL('../../../../scripts/create-plans-table.ts', import.meta.url)).text()
+    const line = src.split('\n').find((l) => l.includes(`'${planId}'`))
+    if (!line) throw new Error(`${planId} no está en el seeder`)
+    const arrays = [...line.matchAll(/JSON\.stringify\(\[([^\]]*)\]\)/g)]
+      .map((m) => [...(m[1] ?? '').matchAll(/'([^']*)'/g)].map((i) => i[1] as string))
+    const modules = arrays.find((items) => items.includes('planning'))
+    if (!modules) throw new Error(`${planId}: matriz modules no encontrada en el seeder`)
+    return modules
+  }
+
+  async function stateFor(planId: string) {
+    const plans = repo([{ id: planId, slug: planId.replace('plan-', ''), modules: await seederModules(planId), isActive: 1 }])
+    const subs = repo([{ id: 's1', hotelId: 'h1', planId, status: 'trialing' }])
+    return getModuleStateForHotel(config, plans, subs, 'h1', undefined, 'professional')
+  }
+
+  it('essential: NO hereda folios/caja/gastos/reports/night-audit ni limpieza/proveedores/chats', async () => {
+    const state = await stateFor('plan-essential')
+    // Los 8 sub-módulos heredados por listar los padres 'finance' y 'operations':
+    expect(state['finance.folios']).toBe(false)
+    expect(state['finance.caja']).toBe(false)
+    expect(state['finance.gastos']).toBe(false)
+    expect(state['finance.reports']).toBe(false)
+    expect(state['finance.night-audit']).toBe(false)
+    expect(state['operations.housekeeping']).toBe(false)
+    expect(state['operations.providers']).toBe(false)
+    expect(state['operations.team-chat']).toBe(false)
+    // Los padres tampoco (módulo completo NO prometido por el plan):
+    expect(state.finance).toBe(false)
+    expect(state.operations).toBe(false)
+  })
+
+  it('essential: lo que SÍ promete queda ON (PMS + Channel + Reservas + Pagos + Mantenimiento)', async () => {
+    const state = await stateFor('plan-essential')
+    expect(state.planning).toBe(true)
+    expect(state.reservations).toBe(true)
+    expect(state['reservations.list']).toBe(true)
+    expect(state['reservations.checkin']).toBe(true)
+    expect(state.guests).toBe(true)
+    expect(state.channel).toBe(true)
+    expect(state['finance.billing']).toBe(true)
+    expect(state['finance.payments']).toBe(true)
+    expect(state['operations.maintenance']).toBe(true)
+    expect(state.crm).toBe(false)
+  })
+
+  it('host: reservations (padre) implica reservations.list y reservations.checkin (CS-1)', async () => {
+    const state = await stateFor('plan-host')
+    expect(state.reservations).toBe(true)
+    expect(state['reservations.list']).toBe(true)   // implícito por el padre
+    expect(state['reservations.checkin']).toBe(true)
     expect(state.finance).toBe(false)
   })
 })
@@ -351,5 +479,54 @@ describe('webhooks de suscripción — pagar/cambiar sincroniza la fuente de ver
     )
 
     expect(updates).toHaveLength(0)
+  })
+
+  // R3-4a: checkout.session.completed tomaba `findMany({hotelId})[0]` sin orden — con varias
+  // filas (doble alta / migración) parcheaba una distinta de la que resuelve el gate. Mismo
+  // orden determinista que resolve-plan: primero la fila con stripeSubscriptionId.
+  it('checkout.session.completed con varias filas: parchea la MISMA fila que resuelve el gate (R3-4a)', async () => {
+    const hotels = [{ id: 'h1', name: 'Hotel Sol', email: 'd@h.com', plan: 'host' }]
+    // Orden de inserción ADVERSO al determinista: la primera fila del findMany NO es la que gana.
+    const subsRows = [
+      { id: 's-trial-nueva', hotelId: 'h1', planId: 'plan-host', status: 'trialing', createdAt: '2026-09-01T00:00:00Z' },
+      { id: 's-legacy-stripe', hotelId: 'h1', planId: 'plan-host', status: 'active', stripeSubscriptionId: 'sub_stripe_1', createdAt: '2026-08-01T00:00:00Z' },
+    ]
+
+    await handleStripeEvent(
+      {
+        subscriptionsRepo: repo(subsRows),
+        hotelsRepo: repo(hotels),
+        plansRepo: repo(plansTable()),
+        logger: silentLogger(),
+        stripe,
+      },
+      checkoutEvent('h1', 'plan-essential'),
+    )
+
+    expect(subsRows[1]).toMatchObject({ status: 'active', planId: 'plan-essential' }) // la que el gate resuelve
+    expect(subsRows[0]).toMatchObject({ status: 'trialing', planId: 'plan-host' })    // la otra queda intacta
+  })
+
+  // R3-4b: un `updated` cuyo ítem no trae price cortaba en silencio — nadie se enteraba de
+  // que el plan local dejaba de sincronizarse. WARN antes de cortar.
+  it('customer.subscription.updated con price NO-string: WARN y no toca nada (R3-4b)', async () => {
+    const warns: Array<{ msg: string; meta: any }> = []
+    const base = silentLogger()
+    const logger = { ...base, warn: (msg: string, meta?: any) => { warns.push({ msg, meta }) } } as unknown as Logger
+    const updates: Array<{ id: string; patch: any }> = []
+    const subsRows = [{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'active', stripeSubscriptionId: 'sub_stripe_1' }]
+    const subsRepo = { ...repo(subsRows), update: async (id: string, patch: any) => { updates.push({ id, patch }) } } as unknown as RepositoryAdapter<any>
+
+    await handleStripeEvent(
+      { subscriptionsRepo: subsRepo, hotelsRepo: repo([]), plansRepo: repo(plansTable()), logger, stripe },
+      {
+        type: 'customer.subscription.updated',
+        data: { object: { id: 'sub_stripe_1', items: { data: [{ price: {} }] } } }, // price sin id
+      } as any,
+    )
+
+    expect(updates).toHaveLength(0)
+    expect(warns.length).toBeGreaterThan(0)
+    expect(warns[0]!.meta).toMatchObject({ stripeSubscriptionId: 'sub_stripe_1' })
   })
 })

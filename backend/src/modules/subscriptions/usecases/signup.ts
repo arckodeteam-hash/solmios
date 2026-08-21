@@ -95,6 +95,12 @@ export class SignupUseCase {
     const taken = await this.deps.usersRepo.findMany({ email })
     if (taken.length) throw new ValidationError('Ya existe una cuenta con ese email')
 
+    // R3-1: el plan elegido tiene que EXISTIR y estar ACTIVO. El schema solo valida
+    // no-vacío: un planId inventado creaba una suscripción apuntando a nada y el gate le
+    // abría TODO el panel (fail-open del resolver, ya cerrado en resolve-plan.ts). Cortar
+    // acá es el mensaje honesto para el usuario: "ese plan no te lo podemos dar".
+    if (input.planId) await this.assertPlanAvailable(input.planId)
+
     const hotelId = crypto.randomUUID()
     const trialEnds = new Date(now.getTime() + TRIAL_DAYS * MS_PER_DAY)
 
@@ -195,6 +201,19 @@ export class SignupUseCase {
       userId,
       trialEndsAt: trialEnds.toISOString(),
       trialDays: TRIAL_DAYS,
+    }
+  }
+
+  /**
+   * R3-1: el planId del alta tiene que existir en `plans` y estar activo. `isActive === 0`
+   * (o `false`) = dado de baja del catálogo → 400 "Plan no disponible". `isActive` ausente
+   * se trata como activo: el default físico del modelo es 1 y el resolutor de plan igual
+   * es fail-closed si el plan no estuviera.
+   */
+  private async assertPlanAvailable(planId: string): Promise<void> {
+    const plan = ((await this.deps.plansRepo.findMany({ id: planId })) as any[])?.[0]
+    if (!plan || plan.isActive === 0 || plan.isActive === false) {
+      throw new ValidationError('Plan no disponible')
     }
   }
 

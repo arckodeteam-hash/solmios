@@ -15,6 +15,14 @@ function configRepo(initial: Record<string, boolean> | null = null) {
   } as any
 }
 
+/** Fila de configuration con el value TAL CUAL llega del motor (string JSON o corrupto). */
+function configRepoRaw(value: unknown) {
+  const row = { id: 'c1', hotelId: 'platform', key: 'modules', value }
+  return {
+    findMany: async (f: any) => [row].filter((r: any) => Object.entries(f).every(([k, v]) => r[k] === v)),
+  } as any
+}
+
 describe('modules — estado', () => {
   it('sin config, todos los módulos vienen activados por default', async () => {
     const state = await getModuleState(configRepo(null))
@@ -48,6 +56,17 @@ describe('modules — estado', () => {
     const repo = configRepo(null)
     const next = await setModuleState(repo, { hackerModule: false } as any)
     expect((next as any).hackerModule).toBeUndefined()
+  })
+
+  // R3-3: `JSON.parse` del configuration(platform,'modules') sin guard → un valor corrupto
+  // (escritura a mano, migración trunca) reventaba con 500 en CADA ruta gateada. Ahora:
+  // defaults ON (la clave corrupta se ignora) + ERROR logueado, nunca silencioso.
+  it('configuration(platform,modules) con JSON corrupto: defaults ON + ERROR, sin throw (R3-3)', async () => {
+    const errors: string[] = []
+    const logger = { warn: () => {}, error: (msg: string) => { errors.push(msg) } }
+    const state = await getModuleState(configRepoRaw('{"crm": no-cierra'), logger as any)
+    for (const m of MODULE_CATALOG) expect(state[m.key]).toBe(true) // default ON: la toggle global se pierde, no el hotel
+    expect(errors.length).toBeGreaterThan(0)
   })
 })
 

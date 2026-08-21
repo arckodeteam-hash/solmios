@@ -10,6 +10,7 @@
 import type Stripe from 'stripe'
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { StripeService } from '../../../services/stripe-service'
+import { compareSubscriptions } from './resolve-plan'
 
 /** Stripe expresa los epochs en SEGUNDOS; `Date` los quiere en milisegundos. */
 const MS_PER_SECOND = 1000
@@ -143,7 +144,12 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
         logger.warn('checkout.session.completed sin hotelId en metadata', { sessionId: session.id })
         break
       }
-      const sub = (await subscriptionsRepo.findMany({ hotelId }))[0] as any
+      // R3-4a: MISMO orden determinista que resolve-plan (compareSubscriptions). Antes
+      // `findMany({hotelId})[0]` tomaba la primera que devolvía la base: con varias filas
+      // (doble alta / migración) el pago parcheaba una fila distinta de la que el gate
+      // resuelve — el hotel pagaba y seguía gateado con la matriz de la otra.
+      const rows = ((await subscriptionsRepo.findMany({ hotelId })) as any[]) ?? []
+      const sub = [...rows].sort(compareSubscriptions)[0]
       if (!sub) {
         logger.warn(`checkout.session.completed: no hay Subscription local para el hotel ${hotelId}`)
         break
@@ -262,7 +268,15 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
       // sincronizan acá: trialing/active/past_due/canceled llegan por invoice.paid /
       // invoice.payment_failed / customer.subscription.deleted, que además mandan los mails.
       const priceId = stripeSub.items?.data?.[0]?.price?.id
-      if (typeof priceId !== 'string' || !deps.plansRepo) break
+      // R3-4b: ítem sin price (o price sin id) no se puede mapear a plan — antes cortaba en
+      // silencio y el plan local dejaba de sincronizarse sin que quede rastro. WARN antes de cortar.
+      if (typeof priceId !== 'string') {
+        logger.warn('customer.subscription.updated: el ítem no trae price — no se puede sincronizar el plan local', {
+          stripeSubscriptionId: stripeSub.id, priceId: priceId ?? null,
+        })
+        break
+      }
+      if (!deps.plansRepo) break
       const plan = ((await deps.plansRepo.findMany({ stripePriceId: priceId })) as any[])?.[0]
       if (!plan) {
         logger.warn('customer.subscription.updated: el price de Stripe no matchea ningún plan local', {

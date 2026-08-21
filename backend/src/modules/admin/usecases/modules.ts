@@ -127,16 +127,34 @@ export function allKeys(): string[] {
   return keys
 }
 
-async function readRaw(configRepo: RepositoryAdapter<any>): Promise<{ row: any; value: Record<string, boolean> }> {
+async function readRaw(
+  configRepo: RepositoryAdapter<any>,
+  logger?: GateLogger,
+): Promise<{ row: any; value: Record<string, boolean> }> {
   const rows = await configRepo.findMany({ hotelId: PLATFORM, key: CONFIG_KEY })
   const row = (rows as any[])?.[0]
-  const value = row ? (typeof row.value === 'string' ? JSON.parse(row.value) : row.value) : {}
-  return { row, value: value && typeof value === 'object' ? value : {} }
+  let value: unknown = {}
+  if (row) {
+    if (typeof row.value === 'string') {
+      // R3-3: un valor corrupto (escritura a mano, migración truncada) reventaba con 500 en
+      // CADA ruta gateada del hotel. La clave corrupta se IGNORA (defaults ON) + ERROR: no
+      // se pierde el hotel por una toggle global ilegible, pero el problema queda visible.
+      try {
+        value = JSON.parse(row.value)
+      } catch {
+        logger?.error("configuration(platform,'modules') con JSON corrupto — se ignoran los overrides globales (defaults ON)")
+        value = {}
+      }
+    } else {
+      value = row.value
+    }
+  }
+  return { row, value: value && typeof value === 'object' ? value as Record<string, boolean> : {} }
 }
 
 /** Estado completo: cada módulo/submódulo del catálogo con su on/off (default ON si no está seteado). */
-export async function getModuleState(configRepo: RepositoryAdapter<any>): Promise<ModuleState> {
-  const { value } = await readRaw(configRepo)
+export async function getModuleState(configRepo: RepositoryAdapter<any>, logger?: GateLogger): Promise<ModuleState> {
+  const { value } = await readRaw(configRepo, logger)
   const state: ModuleState = {}
   for (const k of allKeys()) state[k] = value[k] !== false
   return state
@@ -149,8 +167,8 @@ export async function getModuleState(configRepo: RepositoryAdapter<any>): Promis
  * Retrocompat:
  *  - Plan sin módulos definidos (array vacío) → incluye TODO (los planes viejos no pierden nada).
  *  - Plan que lista un módulo top-level → él y TODOS sus sub-módulos (expansión padre→hijos, CS-1).
- *  - Sub-clave punteada listada sin su padre → NO habilita al padre ni a sus hermanos: la
- *    expansión es padre→hijos, nunca hijos→padre.
+ *  - Sub-clave punteada listada sin su padre → habilita SOLO esa sub-clave: ni el padre ni
+ *    sus hermanos (la expansión es padre→hijos, nunca hijos→padre — R3-2).
  * El toggle global siempre manda: si un módulo/submódulo está apagado global, se cae para todos.
  *
  * 3ra capa — overrides por hotel (overridesRepo + hotelId opcionales, retrocompatible):
@@ -166,8 +184,9 @@ export async function getModuleStateForPlan(
   planSlug?: string,
   overridesRepo?: RepositoryAdapter<any>,
   hotelId?: string,
+  logger?: GateLogger,
 ): Promise<ModuleState> {
-  const global = await getModuleState(configRepo)
+  const global = await getModuleState(configRepo, logger)
   let planModules: string[] | null = null
   if (planSlug) {
     const plan = ((await plansRepo.findMany({ slug: planSlug })) as any[])?.[0]
@@ -197,10 +216,10 @@ export async function getModuleStateForHotel(
 ): Promise<ModuleState> {
   if (!hotelId || hotelId === 'platform') {
     // Plataforma/super_admin: sin plan de hotel, solo el toggle global (como hoy).
-    return getModuleStateForPlan(configRepo, plansRepo, undefined, overridesRepo, hotelId)
+    return getModuleStateForPlan(configRepo, plansRepo, undefined, overridesRepo, hotelId, logger)
   }
   const resolved = await resolveHotelPlan(subscriptionsRepo, plansRepo, hotelId, hotelPlanSlug, logger)
-  return applyPlanState(configRepo, resolved.modules, overridesRepo, hotelId)
+  return applyPlanState(configRepo, resolved.modules, overridesRepo, hotelId, logger)
 }
 
 /**
@@ -209,7 +228,8 @@ export async function getModuleStateForHotel(
  * que un plan que lista `reservations` sin `reservations.list` dejaba TODO el módulo en 403:
  * la jerarquía del catálogo es implícita y el que arma la matriz (seeder/admin) no tiene que
  * saber qué sub-claves exige cada ruta. La expansión es padre→hijos, NUNCA al revés: listar
- * `finance.billing` sin `finance` no prende al padre (y por ende tampoco al sub-módulo).
+ * `finance.billing` sin `finance` no prende al padre ni a sus hermanos — pero desde R3-2 la
+ * sub-clave listada SÍ habilita su sub-módulo por sí misma (ver applyPlanState).
  */
 function expandPlanModules(planModules: string[]): Set<string> {
   const set = new Set(planModules)
@@ -225,16 +245,23 @@ async function applyPlanState(
   planModules: string[] | null,
   overridesRepo?: RepositoryAdapter<any>,
   hotelId?: string,
+  logger?: GateLogger,
 ): Promise<ModuleState> {
-  const global = await getModuleState(configRepo)
+  const global = await getModuleState(configRepo, logger)
   const effective = planModules ? expandPlanModules(planModules) : null
   const has = (k: string) => !effective || effective.has(k)
   const state: ModuleState = {}
   for (const m of MODULE_CATALOG) {
     const moduleOn = global[m.key] !== false && has(m.key)
     state[m.key] = moduleOn
+    const fatherGlobalOn = global[m.key] !== false
     for (const s of m.submodules ?? []) {
-      state[s.key] = moduleOn && global[s.key] !== false && has(s.key)
+      // R3-2: la sub-clave listada habilita el sub-módulo por sí misma, sin exigir el
+      // padre en la matriz (essential promete finance.billing/payments SIN 'finance':
+      // bajo "padre = módulo completo", listar el padre regalaría los 8 sub-módulos que
+      // el plan no incluye). El padre NO queda implicado por sus hijos, y el toggle
+      // global del padre sigue apagando la sección entera (fatherGlobalOn).
+      state[s.key] = fatherGlobalOn && global[s.key] !== false && has(s.key)
     }
   }
 
