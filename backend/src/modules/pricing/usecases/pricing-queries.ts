@@ -34,10 +34,26 @@ export class PricingQueries {
    */
   async roomTypesFor(hotelId: string, mode: PricingMode = 'per_room'): Promise<{ type: string; occupancy: number; basePrice: number }[]> {
     const rooms = await this.orm.findMany('Rooms', { hotelId }) as any[]
+    // Un tipo agrupa VARIAS habitaciones físicas, que pueden tener capacidad y basePrice
+    // distintos entre sí. FIX (revisión Tarea 2, 2026-08-20): antes se quedaba con los valores
+    // de la PRIMERA habitación de ese tipo que apareciera en la query (orden no garantizado),
+    // ignorando al resto — con capacidad, esto directamente SUBGENERABA filas de ocupación (una
+    // suite de 2 y otra de 4 del mismo tipo derivaban solo occupancy 1-2, aunque exista una
+    // unidad real que aloja 4). Mismo criterio que ya usa el motor público para publicar "desde
+    // $X" y la capacidad del tipo (`bookingengine/usecases/availability.ts:aggregate` — capacidad
+    // MÁXIMA entre las unidades, precio MÍNIMO positivo) — consistente con lo que el huésped ya ve.
     const byType = new Map<string, { type: string; capacity: number; basePrice: number }>()
     for (const r of rooms) {
       const type = r.type || 'standard'
-      if (!byType.has(type)) byType.set(type, { type, capacity: Math.max(1, Number(r.capacity) || 2), basePrice: Number(r.basePrice) || 0 })
+      const capacity = Math.max(1, Number(r.capacity) || 2)
+      const price = Number(r.basePrice) || 0
+      const existing = byType.get(type)
+      if (!existing) {
+        byType.set(type, { type, capacity, basePrice: price })
+      } else {
+        existing.capacity = Math.max(existing.capacity, capacity)
+        if (price > 0 && (existing.basePrice === 0 || price < existing.basePrice)) existing.basePrice = price
+      }
     }
     const out: { type: string; occupancy: number; basePrice: number }[] = []
     for (const t of byType.values()) {
@@ -45,6 +61,42 @@ export class PricingQueries {
         for (let occ = 1; occ <= t.capacity; occ++) out.push({ type: t.type, occupancy: occ, basePrice: t.basePrice })
       } else {
         out.push({ type: t.type, occupancy: t.capacity, basePrice: t.basePrice })
+      }
+    }
+    return out
+  }
+
+  /**
+   * Grilla de tarifas BASE (channel=''): las reales si existen, o derivadas de los tipos de
+   * habitación × temporadas si el hotel todavía no guardó ninguna — mismo criterio "nunca vacío"
+   * que ya usa `listChannelRates` para las vistas por canal, pero escrito aparte (no reusando esa
+   * función con channel='') porque su merge con `overrides` compara `r.channel === channel` contra
+   * `!r.channel`: una fila real con `channel: undefined` matchea el segundo pero no el primero, y
+   * reusarla ahí devolvería la celda GENERADA en vez de la real (perdiendo su `id`/percentage/
+   * closed ya guardados) para cualquier fila cuyo `channel` no sea el string `''` exacto.
+   *
+   * Bug real que esto cierra (Tarea 2, QA 2026-08-20): sin esto, un hotel que nunca guardó una
+   * tarifa base veía "Temporadas y Tarifas" vacío y no tenía forma de configurar precio por
+   * ocupación salvo entrando a Channel Manager → un canal OTA ya conectado (donde
+   * `listChannelRates` sí generaba el esqueleto) — inalcanzable para un hotel sin canales.
+   */
+  async listBaseRates(hotelId: string, allRates?: any[]): Promise<any[]> {
+    const all = allRates ?? (await this.orm.findMany('RoomRates', { hotelId }) as any[])
+    const base = all.filter((r) => !r.channel)
+    if (base.length) return base
+
+    const mode = await this.getPricingMode(hotelId)
+    const seasons = await this.orm.findMany('Seasons', { hotelId }) as any[]
+    const seasonNames = seasons.length ? seasons.map((s: any) => s.name) : ['baja', 'media', 'alta', 'especial']
+    const roomTypes = await this.roomTypesFor(hotelId, mode)
+    const out: any[] = []
+    for (const rt of roomTypes) {
+      for (const season of seasonNames) {
+        out.push({
+          hotelId, roomType: rt.type, occupancy: rt.occupancy, season, channel: '',
+          basePrice: rt.basePrice, percentage: 0, price: rt.basePrice, closed: 0, minStay: 0, maxStay: 0,
+          _inherited: true,
+        })
       }
     }
     return out

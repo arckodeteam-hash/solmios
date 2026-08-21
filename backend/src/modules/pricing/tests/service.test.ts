@@ -61,6 +61,106 @@ describe('PricingService', () => {
       const result = await svc.listRates('h1')
       expect(result).toHaveLength(1)
     })
+
+    // Tarea 2 QA (2026-08-20): un hotel sin tarifas base guardadas todavía tiene que ver una
+    // grilla derivada de sus room types (no una pantalla vacía) — mismo criterio "nunca vacío"
+    // que ya usaba `listChannelRates` para las vistas por canal, ahora también para la base.
+    it('sin tarifas base guardadas, deriva la grilla de los room types (nunca vacío)', async () => {
+      const orm = makeOrm({
+        findMany: async (table: string, _filter: any) => {
+          if (table === 'RoomRates') return []
+          if (table === 'Seasons') return [{ id: 's1', hotelId: 'h1', name: 'baja', sortOrder: 0 }]
+          if (table === 'Rooms') return [
+            { id: 'rm1', hotelId: 'h1', type: 'double', capacity: 2, basePrice: 100 },
+            { id: 'rm2', hotelId: 'h1', type: 'suite', capacity: 4, basePrice: 200 },
+          ]
+          return []
+        },
+      })
+      const svc = makeService(orm)
+      const result = await svc.listRates('h1')
+      expect(result.length).toBeGreaterThan(0)
+      expect(result.every((r: any) => r._inherited)).toBe(true)
+      // per_room (default): una fila por tipo, en la ocupación = capacidad.
+      const double = result.find((r: any) => r.roomType === 'double')
+      expect(double).toMatchObject({ occupancy: 2, basePrice: 100, price: 100, channel: '' })
+    })
+
+    // Revisión post-implementación (2026-08-20): un tipo puede agrupar varias habitaciones
+    // físicas con capacidad/basePrice distintos. Antes se quedaba con los valores de la
+    // PRIMERA que apareciera en la query — con capacidad, esto subgeneraba filas de ocupación
+    // (perdía la unidad más grande entera). Mismo criterio que el motor público
+    // (`AvailabilityUseCase.aggregate`): capacidad MÁXIMA, precio MÍNIMO positivo.
+    it('2 habitaciones del mismo tipo con capacidad/precio distintos: usa capacidad MÁXIMA y precio MÍNIMO', async () => {
+      const orm = makeOrm({
+        findMany: async (table: string, _filter: any) => {
+          if (table === 'RoomRates') return []
+          if (table === 'Seasons') return [{ id: 's1', hotelId: 'h1', name: 'baja', sortOrder: 0 }]
+          if (table === 'Rooms') return [
+            { id: 'rm1', hotelId: 'h1', type: 'familiar', capacity: 2, basePrice: 150 },
+            { id: 'rm2', hotelId: 'h1', type: 'familiar', capacity: 4, basePrice: 120 },
+          ]
+          if (table === 'Configuration') return [{ id: 'c1', hotelId: 'h1', key: 'pricing_mode', value: { mode: 'per_person' } }]
+          return []
+        },
+      })
+      const svc = makeService(orm)
+      const result = await svc.listRates('h1')
+      const occupancies = [...new Set(result.map((r: any) => r.occupancy))].sort()
+      // Capacidad máxima (4): genera las 4 filas, no solo las 2 de la primera habitación.
+      expect(occupancies).toEqual([1, 2, 3, 4])
+      // Precio mínimo positivo (120) entre las 2 unidades, no el de la primera que apareció (150).
+      expect(result.every((r: any) => r.basePrice === 120)).toBe(true)
+    })
+
+    // Mismo caso que arriba con el ORDEN de las habitaciones invertido: la fila de mayor
+    // capacidad/menor precio llega PRIMERO acá. El resultado tiene que ser idéntico — si no,
+    // "capacidad máxima / precio mínimo" en realidad seguiría siendo "gana la última que
+    // aparece", solo que ahora en la posición opuesta.
+    it('mismo resultado sin importar el ORDEN en que la query devuelva las habitaciones', async () => {
+      const orm = makeOrm({
+        findMany: async (table: string, _filter: any) => {
+          if (table === 'RoomRates') return []
+          if (table === 'Seasons') return [{ id: 's1', hotelId: 'h1', name: 'baja', sortOrder: 0 }]
+          if (table === 'Rooms') return [
+            { id: 'rm2', hotelId: 'h1', type: 'familiar', capacity: 4, basePrice: 120 },
+            { id: 'rm1', hotelId: 'h1', type: 'familiar', capacity: 2, basePrice: 150 },
+          ]
+          if (table === 'Configuration') return [{ id: 'c1', hotelId: 'h1', key: 'pricing_mode', value: { mode: 'per_person' } }]
+          return []
+        },
+      })
+      const svc = makeService(orm)
+      const result = await svc.listRates('h1')
+      const occupancies = [...new Set(result.map((r: any) => r.occupancy))].sort()
+      expect(occupancies).toEqual([1, 2, 3, 4])
+      expect(result.every((r: any) => r.basePrice === 120)).toBe(true)
+    })
+
+    it('en modo per_person, deriva UNA fila por ocupación 1..capacidad', async () => {
+      const orm = makeOrm({
+        findMany: async (table: string, _filter: any) => {
+          if (table === 'RoomRates') return []
+          if (table === 'Seasons') return [{ id: 's1', hotelId: 'h1', name: 'baja', sortOrder: 0 }]
+          if (table === 'Rooms') return [{ id: 'rm1', hotelId: 'h1', type: 'suite', capacity: 3, basePrice: 200 }]
+          if (table === 'Configuration') return [{ id: 'c1', hotelId: 'h1', key: 'pricing_mode', value: { mode: 'per_person' } }]
+          return []
+        },
+      })
+      const svc = makeService(orm)
+      const result = await svc.listRates('h1')
+      const occupancies = [...new Set(result.map((r: any) => r.occupancy))].sort()
+      expect(occupancies).toEqual([1, 2, 3])
+    })
+
+    it('con tarifas base ya guardadas, NO las pisa con la grilla derivada', async () => {
+      // makeOrm() default ya trae 1 fila real de RoomRates — debe devolverse tal cual (id, price
+      // ya calculado), no la celda genérica derivada.
+      const svc = makeService()
+      const result = await svc.listRates('h1')
+      expect(result[0]).not.toHaveProperty('_inherited')
+      expect(result[0].id).toBe('r1')
+    })
   })
 
   describe('getChannelMetrics', () => {

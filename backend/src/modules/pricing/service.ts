@@ -94,13 +94,13 @@ export class PricingService {
     return this.queries ? this.queries.setPricingMode(hotelId, m) : m
   }
 
+  /** Base y por-canal delegan a `queries` (ver `listBaseRates`/`listChannelRates` ahí — nunca
+   *  vacío, derivan de los room types + pricing_mode si no hay filas guardadas). Fallback
+   *  defensivo a filtrar `all` si no hay queries inyectadas. */
   async listRates(hotelId: string, channel?: string): Promise<any[]> {
     const all = await this.ratesRepo.findMany({ hotelId }) as any[]
-    if (!channel) return all.filter((r) => !r.channel)
-    // Vista por canal: delegada a queries, que arma la grilla (base o derivada de los room types) y
-    // aplica overrides del canal. Fallback defensivo a solo-base si no hay queries inyectadas.
-    if (this.queries) return this.queries.listChannelRates(hotelId, channel, all)
-    return all.filter((r) => r.channel === channel)
+    if (!channel) return this.queries ? this.queries.listBaseRates(hotelId, all) : all.filter((r) => !r.channel)
+    return this.queries ? this.queries.listChannelRates(hotelId, channel, all) : all.filter((r) => r.channel === channel)
   }
 
   async updateRates(hotelId: string, rates: any[], actor?: Actor): Promise<number> {

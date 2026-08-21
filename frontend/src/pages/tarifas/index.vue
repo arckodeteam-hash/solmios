@@ -52,6 +52,17 @@
       <!-- Matriz de Tarifas: filas roomType × occupancy, columnas seasons -->
       <SectionCard title="Matriz de Tarifas" :subtitle="`${roomTypes.length} tipo(s) de habitación`" body-class="p-0">
         <template #actions>
+          <button
+            @click="togglePricingMode"
+            :disabled="togglingMode"
+            :title="pricingMode === 'per_person'
+              ? 'El precio sube o baja según cuántos huéspedes se busquen. Cambiar a un precio fijo por habitación.'
+              : 'Un solo precio por habitación, sin importar cuántos huéspedes se busquen. Cambiar a precio por cantidad de huéspedes.'"
+            class="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-bold text-white hover:bg-white/20 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z"/></svg>
+            {{ pricingMode === 'per_person' ? 'Por huésped' : 'Por habitación' }}
+          </button>
           <button @click="copyRatesNextYear" :disabled="copying"
             class="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-bold text-white hover:bg-white/20 transition-colors cursor-pointer disabled:opacity-50">
             {{ copying ? 'Copiando...' : 'Copiar al próximo año' }}
@@ -148,6 +159,38 @@ const loading = ref(true)
 const seasonsList = ref<any[]>([])
 const ratesMatrix = ref<any[]>([])
 
+// Modo de tarificación (Tarea 2, QA 2026-08-20): 'per_room' = un precio fijo por habitación sin
+// importar ocupación; 'per_person' = precio distinto por cantidad de huéspedes (la Configuración A
+// del hallazgo). Antes esto solo se podía activar entrando a Channel Manager → un canal OTA ya
+// conectado (`ChannelRatesEditor.vue`) — inalcanzable para un hotel sin canales conectados. El
+// switch vive acá ahora, en la pantalla donde un hotelero realmente va a configurar tarifas.
+const pricingMode = ref<'per_room' | 'per_person'>('per_room')
+const togglingMode = ref(false)
+
+async function loadRates() {
+  const rt = await HotelService.rates().catch(() => ({ data: [] }))
+  rebuildMatrix(rt.data || [])
+}
+
+async function togglePricingMode() {
+  if (togglingMode.value) return
+  togglingMode.value = true
+  const next = pricingMode.value === 'per_person' ? 'per_room' : 'per_person'
+  try {
+    pricingMode.value = (await HotelService.setPricingMode(next)).mode
+    // Solo tiene efecto visible si todavía no hay tarifas base guardadas (la grilla derivada
+    // se re-arma con la nueva cantidad de filas por ocupación) — si ya hay filas reales,
+    // `listRates` las devuelve tal cual y cambiar el modo no las reparte de nuevo (evita perder
+    // precios/cierres ya configurados sin que el hotelero lo pida explícitamente).
+    await loadRates()
+    toast.success(pricingMode.value === 'per_person' ? 'Precio por huésped' : 'Precio por habitación')
+  } catch {
+    toast.error('No se pudo cambiar el modo de tarificación')
+  } finally {
+    togglingMode.value = false
+  }
+}
+
 onMounted(async () => {
   try {
     const seas = await HotelService.seasons().catch(() => ({ data: [] }))
@@ -162,8 +205,8 @@ onMounted(async () => {
       seasonsList.value = seas.data
     }
 
-    const rt = await HotelService.rates().catch(() => ({ data: [] }))
-    rebuildMatrix(rt.data || [])
+    pricingMode.value = (await HotelService.pricingMode().catch(() => ({ mode: 'per_room' as const }))).mode
+    await loadRates()
   } catch {
     toast.error('Error al cargar tarifas')
   } finally {
@@ -204,9 +247,17 @@ function rebuildMatrix(ratesData: any[]) {
 const savingRates = ref(false)
 const roomTypes = computed(() => [...new Set(ratesMatrix.value.map(r => r.roomType))])
 
+// FIX (revisión Tarea 2, 2026-08-20): buscaba SIEMPRE la fila de occupancy===1. En modo
+// 'per_room' (Configuración B, la que activa listBaseRates() cuando el hotel todavía no
+// guardó tarifas) se genera UNA sola fila por tipo en occupancy=capacity, no en 1 — con
+// capacidad > 1 (el caso común) esto devolvía 0 y el input "Precio Base $" mostraba $0
+// aunque la fila de abajo mostrara el precio real. Usar la ocupación MÍNIMA generada para
+// ese tipo funciona igual en per_person (min = 1, mismo resultado de antes) y en per_room.
 function getBasePrice(roomType: string): number {
-  const row = ratesMatrix.value.find(r => r.roomType === roomType && r.occupancy === 1)
-  return row?.basePrices?.[seasonsList.value[0]?.name] ?? 0
+  const rows = ratesMatrix.value.filter(r => r.roomType === roomType)
+  if (rows.length === 0) return 0
+  const row = rows.reduce((min, r) => (r.occupancy < min.occupancy ? r : min))
+  return row.basePrices?.[seasonsList.value[0]?.name] ?? 0
 }
 
 function setBasePrice(roomType: string, event: Event) {

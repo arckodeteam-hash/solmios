@@ -118,6 +118,27 @@ MAY configurar tarifa creciente por huésped adicional, o MAY configurar tarifa 
 hasta la capacidad máxima; el motor MUST respetar cualquiera de las dos sin lógica
 hardcodeada.
 
+**Auditado 2026-08-20 — el motor YA cumple, el gap real estaba en la configurabilidad**:
+`shared/utils/rate-resolution.ts` (`pickRate`/`sumStayPrice`) ya resuelve el precio por
+`room_rates.occupancy` correctamente — el motor no decide nada por su cuenta. El gap
+real es que **no había forma accesible de configurar la Configuración A** (tarifa
+creciente por ocupación) desde el panel: la única pantalla con el switch
+"por habitación / por huésped" y la grilla por ocupación era
+`ChannelRatesEditor.vue`, montado únicamente dentro de Channel Manager → el detalle de
+un canal OTA ya conectado (`channel-detail/index.vue`). Un hotel sin canal conectado
+(caso común, sobre todo reserva-directa-only) no tenía forma descubrible de activarla
+y quedaba siempre en `Rooms.basePrice` plano.
+
+**RESUELTO 2026-08-20**: el switch "Por habitación / Por huésped" y la grilla por
+ocupación se agregaron a `/panel/tarifas` ("Temporadas y Tarifas"), la pantalla natural
+donde un hotelero configura precios — sin depender de tener un canal conectado.
+Backend: `PricingQueries.listBaseRates()` (nueva) devuelve las tarifas base reales si
+existen, o las deriva de `Rooms` × `pricing_mode` (mismo criterio "nunca vacío" que ya
+usaba `listChannelRates` para canales, ahora también para la base). Alcance acotado:
+cambiar el modo con tarifas YA guardadas no las reparte de nuevo automáticamente (evita
+pisar precios/cierres ya configurados sin pedido explícito) — mismo comportamiento
+preexistente en `listChannelRates`, no una limitación nueva.
+
 #### Scenario: Tarifa creciente por huésped
 
 - GIVEN una habitación configurada con 1 huésped=RD$4,000, 2=RD$5,000, 3=RD$6,000
@@ -129,6 +150,13 @@ hardcodeada.
 - GIVEN una habitación configurada con RD$5,000 fijo para 1 a 4 huéspedes
 - WHEN el huésped cambia la ocupación de 1 a 4
 - THEN el precio mostrado permanece en RD$5,000 en todos los casos
+
+#### Scenario: Hotel sin canales conectados puede activar precio por huésped igual
+
+- GIVEN un hotel de reserva directa, sin ningún canal OTA conectado en Channel Manager
+- WHEN el hotelero entra a `/panel/tarifas` y togglea "Por huésped"
+- THEN la matriz se re-arma con una fila por ocupación (1..capacidad) por tipo,
+  sin necesitar pasar por Channel Manager
 
 ### Requirement: Ocupación validada contra capacidad de la habitación
 
@@ -210,8 +238,14 @@ necesidad).
 
 - Auditado `GET /api/public/hotels/:slug/rates` (F2 2.4): confirmado que ya filtra por
   disponibilidad real, capacidad y tarifa por ocupación combinadas — sin cambios
-  pendientes para Tarea 1 (búsqueda) ni Tarea 12 (capacidad). Ver Tarea 2 (precio por
-  ocupación) para su propia auditoría, todavía no hecha.
+  pendientes para Tarea 1 (búsqueda) ni Tarea 12 (capacidad).
+- **NUEVO — implementado 2026-08-20 (Tarea 2)**: `PricingQueries.listBaseRates()`
+  (backend, `modules/pricing/usecases/pricing-queries.ts`) — devuelve `GET /api/rates`
+  (sin `?channel=`) real o derivada de `Rooms` × `pricing_mode` si el hotel no guardó
+  tarifas base todavía, mismo criterio "nunca vacío" que `listChannelRates`.
+  `PricingService.listRates` delega ahí en vez de devolver `[]`. Sin endpoint nuevo —
+  `GET /api/rates`, `GET/PUT /api/pricing-mode` ya existían (usados hasta ahora solo
+  por `ChannelRatesEditor.vue`).
 - **NUEVO — implementado 2026-08-20**: `GET /api/public/hotels/:slug/room-types`
   (catálogo de tipos SIN filtrar por disponibilidad; `{roomTypes: [{id, name,
   capacity, surfaceArea, basePrice, photoUrl}]}`). Sin auth, rate-limit 60/60s (mismo
@@ -238,3 +272,9 @@ necesidad).
 - `PayStep.vue` (existente) MUST disparar la revalidación antes de habilitar el botón
   "Reservar y Pagar", y MUST mostrar un mensaje claro si algo cambió (no un error
   genérico).
+- **NUEVO — implementado 2026-08-20 (Tarea 2)**: `frontend/src/pages/tarifas/index.vue`
+  ("Temporadas y Tarifas") MUST exponer el switch "Por habitación / Por huésped" (antes
+  solo en `ChannelRatesEditor.vue`, inalcanzable sin un canal OTA conectado) — mismo
+  patrón visual, llama a los mismos `HotelService.pricingMode()`/`setPricingMode()`.
+  Al togglear, re-pide `GET /api/rates` para que la matriz se re-arme con la cantidad
+  de filas por ocupación que corresponda.

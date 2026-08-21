@@ -83,10 +83,87 @@ Specs: `specs/booking-availability-pricing/spec.md`, `specs/booking-content-poli
       167/167 (1 falla preexistente no relacionada, `FooterBlock.test.ts`, confirmada
       con `git stash` antes de este cambio).
 
-- [ ] 1.2 Corregir cálculo de tarifa para que derive de la configuración de precio por
+- [x] 1.2 Corregir cálculo de tarifa para que derive de la configuración de precio por
       ocupación del hotel (no de una regla fija del motor) (Tarea 2). **Acceptance**:
       cambiar cantidad de huéspedes en el buscador actualiza el precio SOLO si el hotel
       configuró tarifa creciente; permanece igual si configuró tarifa plana.
+      **AUDITADO 2026-08-20 — el motor ya cumplía; el gap real era de configurabilidad,
+      no de cálculo**: `rate-resolution.ts` ya resuelve el precio por
+      `room_rates.occupancy` correctamente. El problema era que la ÚNICA pantalla para
+      activar/editar precio por ocupación (`ChannelRatesEditor.vue`, switch "por
+      habitación/por persona" + grilla) vivía enterrada en Channel Manager → detalle de
+      un canal OTA ya conectado — un hotel sin canales conectados no tenía forma
+      descubrible de configurar la Configuración A del hallazgo.
+      **RESUELTO 2026-08-20**: el switch y la grilla por ocupación se agregaron a
+      `/panel/tarifas` (pantalla natural de configuración de precios, sin depender de
+      Channel Manager). Backend: `PricingQueries.listBaseRates()` nueva (deriva la
+      grilla de `Rooms` × `pricing_mode` cuando no hay tarifas base guardadas, mismo
+      criterio "nunca vacío" que ya usaba `listChannelRates` para canales) +
+      `PricingService.listRates` delega ahí. Frontend: `tarifas/index.vue` — botón
+      toggle + re-fetch de la matriz al cambiar de modo. Ver spec
+      `booking-availability-pricing`, requirement "Precio derivado de la configuración
+      de ocupación del hotel". **Acceptance real verificado**: hotel sin tarifas base
+      ni canales conectados → togglear "Por huésped" en `/tarifas` genera la grilla
+      1..capacidad sin pasar por Channel Manager. Tests backend nuevos en
+      `pricing/tests/service.test.ts` (3 casos: deriva sin tarifas guardadas, deriva
+      por ocupación en modo per_person, NO pisa tarifas ya guardadas) — 51/51 verdes en
+      el módulo pricing, 3199/3200 en la suite completa del backend (1 falla
+      preexistente no relacionada, timeout de hook en
+      `rate-limit-distributed.test.ts`, dependiente de Redis). `arckode analyze`: tuve
+      que recortar un comentario en `service.ts` que lo llevó a 205 líneas (gate
+      >200 = God Object) — trimeado a 197, 0 violaciones nuevas (queda la 1
+      preexistente no relacionada en `admin/service.ts`). Frontend `vue-tsc -b` y
+      `vite build` limpios. Sin test de frontend nuevo para `tarifas/index.vue` (no
+      hay precedente de tests de componente en esta área — `ChannelRatesEditor.vue`
+      tampoco tiene — la lógica de negocio real está cubierta del lado backend).
+      **Bug real encontrado y corregido en la revisión posterior (2026-08-20)**:
+      `getBasePrice(roomType)` buscaba SIEMPRE la fila de `occupancy === 1` para el
+      input "Precio Base $" del header de cada tipo. En modo `per_room` (default),
+      `roomTypesFor()` genera UNA fila por tipo en `occupancy = capacity`, no en 1 —
+      con capacidad > 1 (el caso normal) el header mostraba $0 aunque la fila de
+      abajo mostrara el precio real correcto; guardar sin tocar ese campo seguía
+      persistiendo bien, pero un hotelero que "corrigiera" el $0 a mano hubiera
+      pisado el precio real. Corregido: usa la fila de ocupación MÍNIMA del tipo en
+      vez de asumir 1 — sin cambio de resultado en `per_person` (min=1 de por sí),
+      arregla `per_room`. Verificado a mano con trace numérico (capacity=2/
+      basePrice=100 → antes 0, ahora 100). `ChannelRatesEditor.vue` no tiene este
+      bug (cada ocupación es su propio grupo con su propio input, no un header
+      separado que asuma occupancy=1).
+      **2ª ronda de revisión (2026-08-20)** — `roomTypesFor()` (backend, compartida
+      con `listChannelRates`/`ChannelRatesEditor.vue`, código preexistente) se
+      quedaba con la capacidad y el basePrice de la PRIMERA habitación de cada tipo
+      que apareciera en la query (orden no garantizado), ignorando el resto — con
+      capacidad, esto SUBGENERABA filas de ocupación (una suite de 2 y otra de 4 del
+      mismo tipo derivaban solo occupancy 1-2, perdiendo la unidad de 4 entera).
+      Corregido para usar capacidad MÁXIMA y precio MÍNIMO positivo entre las
+      unidades del tipo — mismo criterio que ya usa el motor público
+      (`bookingengine/usecases/availability.ts:aggregate`) para publicar "desde $X"
+      y la capacidad del tipo, así que ahora la matriz de tarifas es consistente con
+      lo que el huésped ve. Al ser función compartida, este fix también beneficia a
+      `ChannelRatesEditor.vue` (no se tocó ese componente, solo la función que
+      ambos usan). Test nuevo en `service.test.ts` (2 habitaciones mismo tipo,
+      capacidad 2 y 4, basePrice 150 y 120 → genera occupancy 1-4, basePrice=120 en
+      todas). 52/52 tests módulo pricing, 3200/3201 suite completa backend (misma 1
+      falla preexistente de Redis, no relacionada), `arckode analyze` sin
+      violaciones nuevas, `tsc --noEmit` limpio.
+      **3ª ronda — test de independencia de orden** (mismas 2 habitaciones, orden
+      invertido en la respuesta de la query) confirma que el resultado no depende
+      de cuál habitación llega primero. 53/53 módulo pricing.
+      **4ª ronda — E2E real cruzando `pricing` ↔ `bookingengine`** (nuevo archivo
+      `bookingengine/tests/pricing-to-public-rates.e2e.test.ts`, con un ORM en
+      memoria REAL compartido entre los 2 módulos, no fixtures estáticos por
+      módulo): simula el flujo completo — hotelero abre "Tarifas" sin nada guardado
+      → `PricingQueries.listBaseRates` genera el esqueleto (capacidad 4/precio 120)
+      → guarda sin tocar nada (`PricingService.updateRates`, filas REALES en
+      `room_rates`) → un huésped busca el motor público para el grupo completo (4
+      personas) → `getPublicRates` + `AvailabilityUseCase` (que leen la MISMA tabla)
+      resuelven `available:true, price:120`, no degradado. **Verificado que el test
+      realmente detecta la regresión**: revertí temporalmente solo el cuerpo de
+      `roomTypesFor` a la lógica vieja ("primer room gana") y el test FALLÓ como se
+      esperaba (`skeleton.every(occupancy===4...)` → `false`); restauré el fix y
+      volvió a pasar. 54/54 tests entre pricing+bookingengine juntos, 3202/3203
+      suite completa backend (misma 1 falla preexistente de Redis), `arckode
+      analyze` y `tsc --noEmit` limpios.
 
 - [ ] 1.3 Agregar validación de ocupación vs. capacidad configurada por tipo de
       habitación en la búsqueda (Tarea 12). **Acceptance**: habitación con capacidad
