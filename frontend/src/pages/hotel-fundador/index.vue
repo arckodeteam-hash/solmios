@@ -249,35 +249,41 @@
           <p class="text-slate-500 max-w-xl mb-12">No es un descuento de campaña. Es reconocimiento por confiar en SOLMI OS desde el primer día.</p>
         </div>
 
+        <p v-if="plansFailed" class="reveal text-center text-xs text-slate-400 mb-6" data-testid="plans-fallback-notice">
+          No pudimos cargar los precios actualizados. Dejanos tus datos y te los pasamos al instante.
+        </p>
         <!-- Mismos 5 planes de la landing principal, con precio fundador -->
         <div class="stagger-grid grid sm:grid-cols-2 lg:grid-cols-5 gap-5 items-start mb-10">
-          <div v-for="plan in founderPlans" :key="plan.name"
+          <div v-for="plan in founderPlans" :key="plan.id"
             class="reveal rounded-2xl border border-slate-200 bg-white overflow-hidden flex flex-col h-full"
             :class="plan.featured ? 'shadow-xl lg:-translate-y-2 ring-1 ring-purple/15' : 'hover:shadow-md transition-shadow'">
             <div class="p-6" :class="planColor(plan.color).header">
               <div v-if="plan.badge" class="inline-flex mb-3 text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider" :class="planColor(plan.color).badge">{{ plan.badge }}</div>
               <div class="text-lg font-black text-white mb-2">{{ plan.name }}</div>
-              <template v-if="plan.quote">
-                <div class="text-2xl font-black text-white">{{ plan.publicPrice }}</div>
+              <!-- Precio público = el de la tabla `plans`; el fundador se deriva de ese número
+                   con FOUNDER_DISCOUNT_PCT. Nunca un literal en el template (GH-31). -->
+              <div v-if="plansLoading && !plan.priceKnown" class="h-9 w-28 rounded bg-white/20 animate-pulse" data-testid="plan-price-loading"></div>
+              <template v-else-if="plan.quote || !plan.priceKnown">
+                <div class="text-2xl font-black text-white" data-testid="plan-public-price">{{ plan.publicPrice }}</div>
               </template>
               <template v-else>
-                <div class="text-xs text-white/50 line-through">Precio público {{ plan.publicPrice }}</div>
+                <div class="text-xs text-white/50 line-through" data-testid="plan-public-price">Precio público {{ plan.publicPrice }}</div>
                 <div class="flex items-end gap-1.5 flex-wrap">
-                  <span class="text-2xl font-black text-white">{{ plan.founderPrice }}</span>
+                  <span class="text-2xl font-black text-white" data-testid="plan-founder-price">{{ plan.founderPrice }}</span>
                   <span class="text-xs text-white/60 mb-1">/mes</span>
                 </div>
-                <div class="text-[11px] font-bold mt-1 text-white/90">{{ plan.discount }} de descuento</div>
+                <div class="text-[11px] font-bold mt-1 text-white/90">{{ FOUNDER_DISCOUNT_PCT }}% de descuento</div>
               </template>
-              <div class="text-[11px] text-white/70 mt-1">{{ plan.rooms }}</div>
+              <div v-if="plan.rooms" class="text-[11px] text-white/70 mt-1">{{ plan.rooms }}</div>
             </div>
             <div class="p-6 flex flex-col flex-1">
               <div class="space-y-2.5 flex-1 mb-6">
-                <div v-for="b in plan.benefits" :key="b" class="flex items-start gap-2 text-xs text-slate-600">
+                <div v-for="b in plan.features" :key="b" class="flex items-start gap-2 text-xs text-slate-600">
                   <svg class="w-3.5 h-3.5 shrink-0 mt-0.5" :class="planColor(plan.color).check" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
                   {{ b }}
                 </div>
               </div>
-              <a :href="plan.quote ? 'mailto:ventas@solmios.com' : '#formulario'"
+              <a :href="plan.quote ? SALES_MAILTO : '#formulario'"
                 class="block w-full py-2.5 rounded-xl text-center text-xs font-bold border transition-colors"
                 :class="planColor(plan.color).cta">
                 {{ plan.quote ? 'Contactar ventas' : 'Reservar mi cupo' }}
@@ -529,7 +535,7 @@
         <div class="reveal flex flex-col sm:flex-row items-center justify-between gap-6 mb-6">
           <span class="font-black text-lg text-navy">Solmi<span class="text-blue">OS</span></span>
           <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-slate-500">
-            <a href="mailto:ventas@solmios.com" class="hover:text-blue transition-colors">ventas@solmios.com</a>
+            <a :href="SALES_MAILTO" class="hover:text-blue transition-colors">{{ SALES_EMAIL }}</a>
             <a href="https://wa.me/18095550000" target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 hover:text-blue transition-colors">
               <svg class="w-3.5 h-3.5 text-teal" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347M12.05 22h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26C2.157 6.658 6.593 2.223 12.05 2.223c2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884"/></svg>
               WhatsApp
@@ -554,6 +560,8 @@ import stressedManagerImage from '@/assets/hotel-manager-stressed.png'
 import logoWhite from '@/assets/logo/logo-horizontal-white.png'
 import { usePageMeta } from '@/composables/usePageMeta'
 import { PUBLIC_PAGE_META } from '@/pages/public-meta'
+import { PlanCatalogService, SALES_EMAIL, SALES_MAILTO, type DisplayPlan } from '@/services/PlanCatalog.service'
+import { SignupService } from '@/services/Signup.service'
 
 usePageMeta(PUBLIC_PAGE_META.hotelFundador)
 
@@ -686,8 +694,9 @@ const solutionCards = [
   },
 ]
 
-// ── Oferta — mismos 5 planes, nombres y features que la landing principal (frontend/src/pages/landing/index.vue),
-// con precio público (igual al de la landing) + precio fundador (30% off) ──
+// ── Oferta — los mismos planes que la landing principal, servidos por el catálogo compartido
+// (services/PlanCatalog.service.ts). El precio público sale de la tabla `plans`; el precio
+// fundador se deriva de ese número con FOUNDER_DISCOUNT_PCT ──
 const PLAN_COLORS: Record<string, { header: string; badge: string; cta: string; check: string }> = {
   navy: { header: 'bg-navy', badge: 'bg-white/20 text-white', cta: 'bg-navy/5 text-navy border-navy/15 hover:bg-navy/10', check: 'text-navy' },
   teal: { header: 'bg-teal', badge: 'bg-white/20 text-white', cta: 'bg-teal/5 text-teal border-teal/15 hover:bg-teal/10', check: 'text-teal' },
@@ -699,28 +708,54 @@ function planColor(color: string) {
   return PLAN_COLORS[color] ?? PLAN_COLORS.navy
 }
 
-const founderPlans = [
-  {
-    name: 'Essential', publicPrice: 'USD 99', founderPrice: 'USD 69', discount: '30%', rooms: 'Hasta 20 habitaciones', color: 'navy',
-    benefits: ['PMS Central completo', 'Channel Manager (6+ OTAs)', 'Motor de reservas sin comisión', 'Creador de sitio web', 'Dashboard operativo', 'Facturación electrónica LATAM', 'Soporte por email'],
-  },
-  {
-    name: 'Starter', publicPrice: 'USD 199', founderPrice: 'USD 139', discount: '30%', rooms: 'Hasta 50 habitaciones', color: 'teal',
-    benefits: ['Todo lo del plan Essential', 'Recepción Digital (Check-In/Out online)', 'App SOLMI Staff para empleados', 'Housekeeping Inteligente', 'CRM y Fidelización básico', 'SOLMI Academy completa', 'Soporte prioritario'],
-  },
-  {
-    name: 'Professional', publicPrice: 'USD 349', founderPrice: 'USD 244', discount: '30%', rooms: 'Hasta 100 habitaciones', color: 'purple', badge: 'Más Popular', featured: true,
-    benefits: ['Todo lo del plan Starter', 'Recepcionista Virtual con IA', 'Revenue Manager con IA', 'Nómina Automatizada', 'Marketing Automatizado', 'Business Intelligence avanzado', 'API Abierta e integraciones', 'Soporte dedicado con SLA'],
-  },
-  {
-    name: 'Enterprise', publicPrice: 'USD 549', founderPrice: 'USD 384', discount: '30%', rooms: 'Hasta 200 habitaciones', color: 'gold',
-    benefits: ['Todo lo del plan Professional', 'Gerente Virtual con IA (briefings diarios)', 'Multipropiedad (hasta 3 propiedades)', 'Comunidad SOLMI (eventos y red)', 'App SOLMI Guest para huéspedes', 'Reportes ejecutivos consolidados', 'Account Manager dedicado', 'Onboarding premium incluido'],
-  },
-  {
-    name: 'Ultra', publicPrice: 'A cotización', founderPrice: '', discount: '', rooms: '200+ hab. · Ilimitado', color: 'coral', badge: 'Premium', quote: true,
-    benefits: ['Todos los 26 módulos sin límite', 'Multipropiedad ilimitada', 'Gerente Virtual IA personalizado', 'Integraciones a medida', 'Capacitación presencial', 'SLA < 1 hora de respuesta', 'Gerente de cuenta ejecutivo dedicado', 'Precio según volumen de propiedades'],
-  },
-]
+/**
+ * Descuento del programa Hotel Fundador sobre el precio público. El número base sale siempre de la
+ * tabla `plans`; esto es la regla comercial que se le aplica encima.
+ *
+ * CFG-1: la VERDAD es `special_category_config.discountPct` (editable desde /admin), que es el %
+ * con el que `applySpecialConditions` cobra de verdad. Mientras esto salía sólo del build
+ * (`VITE_FOUNDER_DISCOUNT_PCT`), bajar el descuento desde /admin dejaba la página prometiendo el
+ * viejo: la misma divergencia precio-mostrado vs precio-cobrado que GH-31 cerró para el precio base.
+ * El build queda como respaldo para cuando la API no contesta, y el literal 30 sólo como último
+ * recurso — nunca como fuente.
+ */
+const FOUNDER_DISCOUNT_DEFAULT = 30
+function readFounderDiscountFallback(): number {
+  const raw = Number(import.meta.env.VITE_FOUNDER_DISCOUNT_PCT)
+  return Number.isFinite(raw) && raw > 0 && raw < 100 ? raw : FOUNDER_DISCOUNT_DEFAULT
+}
+const FOUNDER_DISCOUNT_PCT = ref(readFounderDiscountFallback())
+
+/** Plan de la landing + su precio fundador ya derivado. */
+interface FounderPlan extends DisplayPlan {
+  publicPrice: string
+  founderPrice: string
+}
+
+function withFounderPrice(p: DisplayPlan): FounderPlan {
+  if (!p.priceKnown || p.quote || p.price === null) {
+    return { ...p, publicPrice: p.priceLabel, founderPrice: p.priceLabel }
+  }
+  const founder = Math.round(p.price * (1 - FOUNDER_DISCOUNT_PCT.value / 100))
+  return { ...p, publicPrice: PlanCatalogService.formatPrice(p.price, p.currency), founderPrice: PlanCatalogService.formatPrice(founder, p.currency) }
+}
+
+const founderPlans = ref<FounderPlan[]>(PlanCatalogService.fallback().map(withFounderPrice))
+const plansLoading = ref(true)
+/** La API no contestó: se muestra el copy con "Consultar" en vez de un precio inventado. */
+const plansFailed = ref(false)
+
+onMounted(async () => {
+  // El % del servidor se resuelve ANTES de derivar los precios: si llegara después, la tarjeta
+  // mostraría un instante el descuento del build y otro el real. Un fallo acá no rompe la página:
+  // se sigue con el respaldo del build (CFG-1).
+  const pct = await SignupService.founderDiscountPct().catch(() => null)
+  if (pct !== null) FOUNDER_DISCOUNT_PCT.value = pct
+  const res = await PlanCatalogService.load()
+  founderPlans.value = res.plans.map(withFounderPrice)
+  plansFailed.value = !res.fromApi
+  plansLoading.value = false
+})
 
 const founderBenefits = [
   'Precio congelado mientras sea cliente activo',

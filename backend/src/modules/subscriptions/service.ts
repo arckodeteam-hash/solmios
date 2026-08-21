@@ -7,6 +7,8 @@ import { createCheckoutSession, type CreateCheckoutResult } from './usecases/cre
 import { createPortalSession, type CreatePortalResult } from './usecases/create-portal-session'
 import { processSubscriptionWebhook } from './usecases/handle-stripe-event'
 import { applyStripeDiscount, type ApplyStripeDiscountResult, type ApplyStripeDiscountMeta } from './usecases/apply-stripe-discount'
+import { listPublicPlans, type PublicPlan } from './usecases/public-plans'
+import { publicFounderDiscount } from './usecases/public-founder-discount'
 import type { SubscriptionSockets } from './sockets'
 
 export class SubscriptionsService {
@@ -34,9 +36,12 @@ export class SubscriptionsService {
      *  de Fundador/Pionero en `customer.subscription.deleted` (handle-stripe-event.ts). Mismo
      *  motivo que admin/usecases/special-conditions.ts: RepositoryAdapter no expone updateMany. */
     private readonly orm?: any,
+    /** `special_category_config` — la verdad del % del programa Fundador (CFG-1). Opcional: sin
+     *  cablear, el endpoint público devuelve `null` y la landing muestra su copy de reserva. */
+    private readonly specialCategoriesRepo?: RepositoryAdapter<any>,
   ) {
     this.signupUc = new SignupUseCase({
-      hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, hashPassword,
+      hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, hashPassword, logger,
     })
     this.accessUc = new SubscriptionAccess(subscriptionsRepo, hotelsRepo)
     this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, ratesRepo, hotelsRepo, channelsRepo })
@@ -87,17 +92,21 @@ export class SubscriptionsService {
   }
 
   /**
-   * Planes para la landing y el registro. Solo lo público: sin `limits` ni
-   * `modules`, que son detalle interno de cómo se aplica el plan.
+   * Planes para la landing y el registro. Solo lo público: precio, descripción, features y los
+   * `limits` recortados a `rooms`/`users` (`usecases/public-plans.ts` → `publicLimits`), que es lo
+   * que la landing necesita para no escribir "Hasta 30 habitaciones" a mano. `modules` y el resto
+   * de `limits` NO salen: son detalle interno de cómo se aplica el plan.
+   *
+   * El orden lo fija el backend y el frontend lo respeta tal cual (no re-ordena):
+   * ver `usecases/public-plans.ts` → `comparePublicPlans`.
    */
-  async publicPlans(): Promise<any[]> {
-    const plans = await this.plansRepo.findMany({ isActive: 1 })
-    return plans
-      .sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-      .map((p: any) => ({
-        id: p.id, name: p.name, slug: p.slug, price: p.price,
-        currency: p.currency, description: p.description, features: p.features ?? [],
-      }))
+  publicPlans(): Promise<PublicPlan[]> {
+    return listPublicPlans(this.plansRepo)
+  }
+
+  /** % del programa Hotel Fundador para la landing (CFG-1). `null` = sin config usable. */
+  publicFounderDiscount(): Promise<number | null> {
+    return publicFounderDiscount(this.specialCategoriesRepo)
   }
 
   /** Qué le falta configurar al hotel para poder trabajar. */

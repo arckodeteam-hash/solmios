@@ -11,18 +11,25 @@ export { SubscriptionsService }
 export function SubscriptionsModule() {
   return createModule({
     name: 'subscriptions',
-    version: '1.0.0',
+    // STR-F: `GET /api/public/plans` cambió su contrato observable — cada plan trae ahora `limits`
+    // (`usecases/public-plans.ts`) y la lista sale ordenada por `comparePublicPlans` en vez del
+    // orden del repo. Misma regla que se aplicó en `admin/index.ts` (1.1.0), `reservas` (2.2.0) y
+    // `payment-requests` (1.3.0): un cambio observable del contrato bumpea la versión.
+    version: '1.1.0',
     description: 'Suscripción del hotel a la plataforma: alta pública, prueba gratis y corte de servicio',
     contract: {
-      name: 'subscriptions', version: '1.0.0',
+      name: 'subscriptions', version: '1.1.0',
       description: 'SaaS subscription lifecycle',
-      actions: ['signup', 'publicPlans', 'myStatus', 'onboarding', 'checkout', 'portal', 'webhookPlatform', 'applyStripeDiscount'],
+      actions: ['signup', 'publicPlans', 'publicFounderDiscount', 'myStatus', 'onboarding', 'checkout', 'portal', 'webhookPlatform', 'applyStripeDiscount'],
       events: [],
       tables: ['subscriptions', 'subscription_discounts', 'special_category_config', 'founder_history'],
       dependencies: [],
       rules: [
         'checkout/portal: hotelId forzado del JWT, cobro SIEMPRE contra la cuenta de PLATAFORMA (StripeService.getClient() sin hotelId)',
         'webhookPlatform: sin auth, la autoridad es la firma de Stripe verificada con STRIPE_WEBHOOK_SECRET_PLATFORM',
+        'publicPlans: los límites (`rooms`/`users`) salen de `plans.limits`, nunca de un literal en el template del frontend (GH-31)',
+        'publicFounderDiscount: el % del programa Fundador sale de `special_category_config`, no de una variable de build del frontend (CFG-1)',
+        'Toda ruta pública (sin auth) va rate-limitada por IP a 30 req/min antes del controller, como landing y opiniones',
       ],
     },
     create({ logger, orm, router, auth }) {
@@ -48,6 +55,8 @@ export function SubscriptionsModule() {
         new OrmRepository<any>(orm, 'SubscriptionDiscounts'),
         // orm crudo — solo lo usa handle-stripe-event.ts para el CAS de cupos al cancelar.
         orm,
+        // Config de Fundador/Pionero: el % que publica la landing sale de acá (CFG-1).
+        new OrmRepository<any>(orm, 'SpecialCategoryConfig'),
       )
       const controller = new SubscriptionsController(service, log)
 
@@ -77,7 +86,22 @@ export function SubscriptionsModule() {
         }
         return controller.signup(req)
       })
-      router.get('/api/public/plans', (req: any) => controller.publicPlans(req))
+      // ─── Lecturas públicas ────────────────────────────────────────────────
+      // Sin auth ⇒ rate-limit por IP ANTES del controller, 30 req/min: el patrón del repo para
+      // lecturas públicas (`landing/index.ts:94`, `opiniones/index.ts:60`). Las dos rutas leen la
+      // DB en cada request y no tienen caché; sin tope, un scraper las usa de bomba de consultas.
+      const publicRead = (name: string, handler: (req: any) => any) => async (req: any) => {
+        const { allowed, retryAfter } = await rateLimit(`${name}:${getClientIp(req)}`, {
+          maxAttempts: 30,
+          windowMs: 60_000,
+        })
+        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
+        return handler(req)
+      }
+      router.get('/api/public/plans', publicRead('public-plans', (req) => controller.publicPlans(req)))
+      // CFG-1: el % del programa Fundador. Público porque la página ya lo publica; no expone
+      // cupos ni ocupación, sólo el número que el hotel ve.
+      router.get('/api/public/founder-discount', publicRead('public-founder-discount', (req) => controller.publicFounderDiscount(req)))
 
       // Del hotel logueado: cuánto le queda de prueba / si tiene que pagar.
       router.get('/api/subscription/me', [auth.authenticate()], (req: any) => controller.myStatus(req))

@@ -2,8 +2,18 @@
 // alta del super-admin crea la fila del hotel y nada más, así que nadie puede
 // entrar (sin usuario) ni configurar permisos (sin roles).
 import { describe, it, expect } from 'bun:test'
+import { silentLogger } from 'arckode-framework/testing'
 import { SignupUseCase, TRIAL_DAYS } from '../usecases/signup'
-import type { RepositoryAdapter } from 'arckode-framework'
+import type { Logger, RepositoryAdapter } from 'arckode-framework'
+
+/** Logger que además guarda los `warn`: los envíos del alta son best-effort y lo único
+ *  que queda de un fallo es esa línea de log (issue #27). */
+function recordingLogger(): { logger: Logger; warns: Array<{ msg: string; meta: any }> } {
+  const warns: Array<{ msg: string; meta: any }> = []
+  const base = silentLogger()
+  const logger = { ...base, warn: (msg: string, meta?: any) => { warns.push({ msg, meta }) } } as unknown as Logger
+  return { logger, warns }
+}
 
 const NOW = new Date('2026-07-19T12:00:00Z')
 
@@ -24,6 +34,7 @@ function setup(existingUsers: any[] = []) {
     rolesRepo: repo(roles),
     subscriptionsRepo: repo(subs),
     hashPassword: async (p: string) => `hashed:${p}`,
+    logger: silentLogger(),
   })
   return { uc, hotels, users, roles, subs }
 }
@@ -136,6 +147,7 @@ describe('SignupUseCase — el alta no puede quedar a medias', () => {
       rolesRepo: repo(roles),
       subscriptionsRepo: repo([], true), // falla justo en el último paso
       hashPassword: async (p: string) => `hashed:${p}`,
+      logger: silentLogger(),
     })
 
     await expect(uc.signup(VALID, NOW)).rejects.toThrow('la base se cayó')
@@ -145,5 +157,74 @@ describe('SignupUseCase — el alta no puede quedar a medias', () => {
     expect(hotels).toHaveLength(0)
     expect(users).toHaveLength(0)
     expect(roles).toHaveLength(0)
+  })
+})
+
+// Issue #27 — el alta devolvía 201 y el correo nunca salía, sin dejar rastro: los dos envíos
+// best-effort tenían `catch {}` con el cuerpo vacío. Best-effort sigue siendo best-effort (el
+// alta NO se cae), pero el fallo tiene que quedar logueado con el hotelId para poder rastrearlo.
+describe('SignupUseCase — un envío caído se loguea, no se silencia', () => {
+  function repos() {
+    const hotels: any[] = []; const users: any[] = []; const roles: any[] = []; const subs: any[] = []
+    const repo = (store: any[]): RepositoryAdapter<any> => ({
+      create: async (row: any) => { store.push(row); return row },
+      findMany: async (f: any = {}) => store.filter(r => Object.entries(f).every(([k, v]) => r[k] === v)),
+    } as unknown as RepositoryAdapter<any>)
+    return { hotels, users, roles, subs, repo }
+  }
+
+  it('SMTP caído: el alta devuelve 201 igual y el fallo queda logueado con el hotelId', async () => {
+    const { hotels, users, roles, subs, repo } = repos()
+    const { logger, warns } = recordingLogger()
+    const uc = new SignupUseCase({
+      hotelsRepo: repo(hotels), usersRepo: repo(users), rolesRepo: repo(roles), subscriptionsRepo: repo(subs),
+      hashPassword: async (p: string) => `hashed:${p}`,
+      logger,
+      appUrl: 'https://hotel.example.com',
+      emailSender: { enqueue: async () => { throw new Error('SMTP timeout') } },
+    })
+
+    const res = await uc.signup(VALID, NOW)
+
+    expect(hotels).toHaveLength(1)          // el hotel NO se pierde por un SMTP caído
+    expect(warns).toHaveLength(1)
+    expect(warns[0]!.msg).toContain('verificación')
+    expect(warns[0]!.meta).toMatchObject({ hotelId: res.hotelId, error: 'SMTP timeout' })
+  })
+
+  it('bienvenida caída: se loguea aparte y tampoco tumba el alta', async () => {
+    const { hotels, users, roles, subs, repo } = repos()
+    const { logger, warns } = recordingLogger()
+    const uc = new SignupUseCase({
+      hotelsRepo: repo(hotels), usersRepo: repo(users), rolesRepo: repo(roles), subscriptionsRepo: repo(subs),
+      hashPassword: async (p: string) => `hashed:${p}`,
+      logger,
+      appUrl: 'https://hotel.example.com',
+      emailSender: { enqueue: async () => 'queued-1' },
+      platformEmailSender: async () => { throw new Error('plantilla welcome rota') },
+    })
+
+    const res = await uc.signup(VALID, NOW)
+
+    expect(hotels).toHaveLength(1)
+    expect(warns).toHaveLength(1)
+    expect(warns[0]!.msg).toContain('bienvenida')
+    expect(warns[0]!.meta).toMatchObject({ hotelId: res.hotelId, error: 'plantilla welcome rota' })
+  })
+
+  it('con los dos envíos OK no ensucia el log', async () => {
+    const { hotels, users, roles, subs, repo } = repos()
+    const { logger, warns } = recordingLogger()
+    const uc = new SignupUseCase({
+      hotelsRepo: repo(hotels), usersRepo: repo(users), rolesRepo: repo(roles), subscriptionsRepo: repo(subs),
+      hashPassword: async (p: string) => `hashed:${p}`,
+      logger,
+      appUrl: 'https://hotel.example.com',
+      emailSender: { enqueue: async () => 'queued-1' },
+      platformEmailSender: async () => ({ sent: true }),
+    })
+
+    await uc.signup(VALID, NOW)
+    expect(warns).toHaveLength(0)
   })
 })

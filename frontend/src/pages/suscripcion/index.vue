@@ -63,11 +63,11 @@
         <div
           v-for="p in plans" :key="p.id"
           class="rounded-2xl border-2 bg-white p-5 flex flex-col transition-colors"
-          :class="p.id === sub?.planId ? 'border-navy' : 'border-border hover:border-navy/30'"
+          :class="isCurrentPlan(p) ? 'border-navy' : 'border-border hover:border-navy/30'"
         >
           <div class="flex items-start justify-between gap-2">
             <div class="text-sm font-black text-navy">{{ p.name }}</div>
-            <span v-if="p.id === sub?.planId" class="text-[9px] font-bold text-navy bg-navy/10 px-2 py-0.5 rounded-full shrink-0">Tu plan</span>
+            <span v-if="isCurrentPlan(p)" class="text-[9px] font-bold text-navy bg-navy/10 px-2 py-0.5 rounded-full shrink-0">Tu plan</span>
           </div>
           <div class="mt-2 mb-1">
             <span class="text-3xl font-black text-navy tabular-nums">${{ p.price }}</span>
@@ -84,9 +84,12 @@
           </ul>
           <button
             @click="choose(p)"
-            :disabled="checkoutLoading !== null"
-            class="mt-auto w-full py-2.5 rounded-xl text-sm font-bold transition-colors cursor-pointer bg-navy text-white hover:bg-navy-light disabled:opacity-60 disabled:cursor-wait"
-          >{{ checkoutLoading === p.id ? 'Redirigiendo…' : (p.id === sub?.planId && sub?.status === 'active' ? 'Tu plan actual' : `Suscribirse a ${p.name}`) }}</button>
+            :disabled="checkoutLoading !== null || isPlanLocked(p)"
+            class="mt-auto w-full py-2.5 rounded-xl text-sm font-bold transition-colors disabled:opacity-60"
+            :class="isPlanLocked(p)
+              ? 'bg-surface text-navy cursor-default'
+              : 'bg-navy text-white hover:bg-navy-light cursor-pointer disabled:cursor-wait'"
+          >{{ ctaLabel(p) }}</button>
         </div>
       </div>
     </div>
@@ -130,10 +133,33 @@ const stateSubtitle = computed(() =>
   sub.value?.trialEndsAt ? `Prueba hasta el ${new Date(sub.value.trialEndsAt).toLocaleDateString('es-DO')}` : '',
 )
 
+/**
+ * Estados en los que YA existe una suscripción viva en Stripe para el plan actual. Volver a
+ * lanzar el Checkout ahí crea una SEGUNDA suscripción (y un segundo cobro mensual): el camino
+ * correcto es el Billing Portal ("Gestionar método de pago" / "Regularizar pago").
+ * `trialing` NO entra: la prueba no tiene suscripción en Stripe todavía, y el Checkout es la
+ * única vía para convertirla en plan pago (ver `subscriptions/usecases/create-checkout-session.ts`).
+ */
+const LIVE_STRIPE_STATUSES = ['active', 'past_due']
+
+/** El badge "Tu plan" y el CTA miran lo MISMO: el plan, no el estado (issue #29). */
+const isCurrentPlan = (p: PublicPlan) => !!sub.value?.planId && p.id === sub.value.planId
+const isPlanLocked = (p: PublicPlan) =>
+  isCurrentPlan(p) && LIVE_STRIPE_STATUSES.includes(sub.value?.status ?? '')
+
+function ctaLabel(p: PublicPlan): string {
+  if (checkoutLoading.value === p.id) return 'Redirigiendo…'
+  if (!isCurrentPlan(p)) return `Suscribirse a ${p.name}`
+  if (sub.value?.status === 'trialing') return 'Activar tu plan actual'
+  if (sub.value?.status === 'past_due') return 'Tu plan actual · pago pendiente'
+  if (isPlanLocked(p)) return 'Tu plan actual'
+  return `Reactivar ${p.name}` // expired / canceled: el plan sigue siendo el suyo, pero sin acceso
+}
+
 /** Elige un plan: crea la Checkout Session de Stripe y redirige el navegador ahí mismo
  * (no una pestaña nueva — el hotel tiene que volver a `/panel/suscripcion` al terminar). */
 async function choose(p: PublicPlan) {
-  if (checkoutLoading.value) return
+  if (checkoutLoading.value || isPlanLocked(p)) return
   checkoutLoading.value = p.id
   try {
     const { url } = await SubscriptionsService.checkout(p.id)

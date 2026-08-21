@@ -1,6 +1,18 @@
 import { http } from './http'
 
 /** Plan tal como lo ve alguien que todavía no es cliente. */
+/** Topes públicos del plan (`plans.limits`). Los recorta el backend en `public-plans.ts`. */
+export interface PublicPlanLimits {
+  rooms?: number
+  users?: number
+  /**
+   * CFG-2: "sin tope" ya viene RESUELTO del servidor (`public-plans.ts` →
+   * `UNLIMITED_LIMIT_SENTINEL`). El frontend no repite el centinela numérico: sólo lo usa como
+   * respaldo si el campo no viene (respuesta de una versión anterior del backend).
+   */
+  roomsUnlimited?: boolean
+}
+
 export interface PublicPlan {
   id: string
   name: string
@@ -9,6 +21,8 @@ export interface PublicPlan {
   currency: string
   description: string
   features: string[]
+  /** CFG-1: el tope de habitaciones sale de la tabla `plans`, no de un literal en el frontend. */
+  limits?: PublicPlanLimits
 }
 
 export interface SignupPayload {
@@ -63,6 +77,17 @@ export const SignupService = {
     const res = await http.get<any>('/public/plans')
     const list = unwrap<any>(res)
     return Array.isArray(list) ? list : []
+  },
+
+  /**
+   * % del programa Hotel Fundador. Sale de `special_category_config` (editable desde /admin), NO
+   * de una variable de build: es el mismo número con el que se cobra (CFG-1). `null` = el servidor
+   * no tiene una config usable y la vista decide su copy de reserva.
+   */
+  async founderDiscountPct(): Promise<number | null> {
+    const res = await http.get<any>('/public/founder-discount')
+    const pct = Number((res?.data ?? res)?.discountPct)
+    return Number.isFinite(pct) && pct > 0 && pct < 100 ? pct : null
   },
 
   async signup(payload: SignupPayload): Promise<SignupResult> {
