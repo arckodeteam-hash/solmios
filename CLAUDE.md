@@ -317,6 +317,18 @@ POST /api/reservas/:id/checkout → body: { settle?: { method, amount, reference
 | Reports | `/api/reports` | /advanced, /export | reports:view/export |
 | Night Audit | `/api/night-audit` | mark-no-shows | reports:view/edit |
 
+### Redondeo de dinero — `shared/utils/money.ts` (STR-7)
+`round2` y `BALANCE_EPSILON` viven **solo** en `backend/src/shared/utils/money.ts`. Código nuevo que
+maneje plata lo **importa de ahí**: nada de `const round2 = ...` local ni de re-exports intermedios
+(se quitaron los de `reservation-balance.ts`, `rate-resolution.ts` y el shim de `bookingengine`, que
+daban tres rutas de import para el mismo símbolo y escondían consumidores de un `rg`).
+
+**Deuda conocida**: quedan ~20 definiciones locales de `round2` en módulos viejos
+(`rg 'function round2|const round2' backend/src`), y no todas son equivalentes —
+`Math.round(n*100)/100` vs `Math.round((n+Number.EPSILON)*100)/100` difieren en el centavo de borde.
+Migrarlas es un cambio de comportamiento en dinero: se hace por módulo y con tests, no de un barrido.
+La regla aplica **desde ahora** a todo código nuevo o tocado.
+
 ### Facturación — reglas
 - Impuestos de `configuration(key='taxes')` — NO hardcodear
 - Hotel name de tabla `hotels` — NO hardcodear

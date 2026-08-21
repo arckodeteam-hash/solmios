@@ -239,7 +239,11 @@
           <div class="flex flex-wrap items-end gap-3">
             <div>
               <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nuevo PIN (4-8 dígitos)</label>
-              <input v-model="guaranteePinDraft" type="password" inputmode="numeric" maxlength="8" placeholder="••••"
+              <!-- autocomplete="new-password": sin esto Chrome trata el campo como login y lo
+                   rellena con una credencial guardada — el PIN aparecía escrito sin haberlo
+                   tipeado (GH-32). `guaranteePinDraft` arranca vacío, no viene de la app. -->
+              <input v-model="guaranteePinDraft" type="password" inputmode="numeric" maxlength="8" placeholder="Ingresar PIN"
+                autocomplete="new-password" name="guarantee-pin" data-testid="guarantee-pin"
                 class="w-40 rounded-xl border border-border px-4 py-2.5 font-mono text-sm tracking-widest focus:border-navy focus:outline-none" />
             </div>
             <button @click="saveGuaranteePin" :disabled="guaranteePinSaving || !guaranteePinDraft"
@@ -275,11 +279,22 @@
 
       <!-- Columna lateral: identidad y plan -->
       <div class="space-y-6">
-        <SectionCard title="Plan" subtitle="Suscripción activa de la plataforma">
+        <!-- Nombre y precio salen de la suscripción real cruzada con la tabla `plans`
+             (GET /api/subscription/me + GET /api/public/plans) — GH-31. Antes decía
+             'Professional' y un precio de una tabla hardcodeada acá abajo, sin mirar el plan
+             contratado: tres pantallas mostraban tres números distintos. -->
+        <SectionCard title="Plan" subtitle="Suscripción de la plataforma">
           <div class="rounded-xl bg-purple/10 p-4 text-center">
-            <div class="mb-1 text-[10px] font-bold uppercase text-teal">Activo</div>
-            <div class="text-lg font-black text-purple">{{ form.plan || 'Professional' }}</div>
-            <div class="mt-1 text-2xl font-black text-navy tabular-nums">{{ planPrice }}<span class="text-sm font-bold text-text-muted">/mes</span></div>
+            <div v-if="planLoading" class="mx-auto h-14 w-36 animate-pulse rounded-lg bg-white/60"></div>
+            <template v-else-if="planCard">
+              <div class="mb-1 text-[10px] font-bold uppercase text-teal" data-testid="settings-plan-status">{{ planStatusLabel }}</div>
+              <div class="text-lg font-black text-purple" data-testid="settings-plan-name">{{ planCard.name }}</div>
+              <div class="mt-1 text-2xl font-black text-navy tabular-nums" data-testid="settings-plan-price">{{ planCard.priceLabel }}<span
+                v-if="planCard.priceKnown && !planCard.quote" class="text-sm font-bold text-text-muted">/mes</span></div>
+            </template>
+            <div v-else class="text-sm font-bold text-text-muted" data-testid="settings-plan-empty">
+              No pudimos leer tu plan. Miralo en Suscripción.
+            </div>
           </div>
         </SectionCard>
         <div class="rounded-2xl border border-border bg-white p-6 text-center shadow-(--shadow-card)">
@@ -536,7 +551,7 @@
           </div>
           <div>
             <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Contraseña</label>
-            <input v-model="form.wifiPassword" type="password" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('wifiPassword')" data-field="wifiPassword" @blur="touchField('wifiPassword')">
+            <input v-model="form.wifiPassword" type="password" autocomplete="new-password" name="hotel-wifi-password" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('wifiPassword')" data-field="wifiPassword" @blur="touchField('wifiPassword')">
               <p v-if="errorOf('wifiPassword')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('wifiPassword') }}</p>
           </div>
         </div>
@@ -768,6 +783,8 @@ import { HotelService } from '@/services/Hotel.service'
 import { SettingsService, type HotelFull } from '@/services/Settings.service'
 import { ConfigService, EmergencyContactsService } from '@/services/Platform.service'
 import { GuaranteeService } from '@/services/Guarantee.service'
+import { SignupService, type PublicPlan } from '@/services/Signup.service'
+import { PlanCatalogService, type DisplayPlan } from '@/services/PlanCatalog.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
 import type { AmenityCatalog } from '@/services/Hotel.service'
@@ -1184,7 +1201,7 @@ type HotelForm = Partial<HotelFull> & { cancellationType?: string; freeCancellat
 const form = ref<HotelForm>({
   name: '', country: '', address: '', phone: '', email: '',
   timezone: 'America/Santo_Domingo', currency: CurrencyCode.USD,
-  checkIn: '15:00', checkOut: '12:00', plan: 'Professional',
+  checkIn: '15:00', checkOut: '12:00', plan: '',
   freeCancellation: true, depositRequired: true, depositPercent: 30,
   weekendSurcharge: 0, accommodationType: '', starRating: '',
   ownerName: '', ownerTaxId: '', phone2: '', website: '',
@@ -1201,10 +1218,34 @@ const form = ref<HotelForm>({
   id: '',
 })
 
-const planPrice = computed(() => {
-  const p = form.value.plan
-  return p === 'enterprise' ? '$199' : p === 'professional' ? '$99' : '$49'
-})
+// Plan contratado: la suscripción manda (`planId`), y el precio/nombre salen de la tabla `plans`.
+// `hotels.plan` sólo se usa como último recurso para resolver el slug cuando todavía no hay
+// suscripción — nunca para el precio.
+const planLoading = ref(true)
+const planCard = ref<DisplayPlan | null>(null)
+const planStatus = ref<string>('none')
+const PLAN_STATUS_LABELS: Record<string, string> = {
+  trialing: 'En prueba', active: 'Activo', past_due: 'Pago pendiente',
+  expired: 'Vencida', canceled: 'Cancelada', suspended: 'Suspendida', none: 'Sin suscripción',
+}
+const planStatusLabel = computed(() => PLAN_STATUS_LABELS[planStatus.value] ?? planStatus.value)
+
+async function loadPlan() {
+  planLoading.value = true
+  try {
+    const [sub, plans] = await Promise.all([
+      SignupService.mySubscription().catch(() => null),
+      SignupService.publicPlans().catch(() => [] as PublicPlan[]),
+    ])
+    planStatus.value = sub?.status ?? 'none'
+    const hotelPlan = String(form.value.plan ?? '').toLowerCase()
+    const match = plans.find((p) => p.id === sub?.planId)
+      ?? (hotelPlan ? plans.find((p) => p.slug === hotelPlan || p.name.toLowerCase() === hotelPlan) : undefined)
+    planCard.value = match ? PlanCatalogService.toDisplay(match) : null
+  } finally {
+    planLoading.value = false
+  }
+}
 
 const cancelPolicies = [
   { value: 'flexible', name: 'Flexible' },
@@ -1292,7 +1333,7 @@ onMounted(async () => {
       phone: h.phone ?? '', email: h.email ?? '',
       timezone: h.timezone ?? 'America/Santo_Domingo', currency: h.currency ?? 'USD',
       checkIn: h.checkIn || '15:00', checkOut: h.checkOut || '12:00',
-      plan: h.plan || 'Professional',
+      plan: h.plan ?? '',
       freeCancellation: h.freeCancellation !== false,
       depositRequired: h.depositRequired !== false,
       depositPercent: h.depositPercent ?? 30,
@@ -1346,6 +1387,13 @@ onMounted(async () => {
   } catch (e) {
     toast.error('Error al cargar datos')
   } finally {
+    // COR-4: la tarjeta "Plan" NO puede depender de que los siete loaders de arriba hayan salido
+    // bien. Cuando `loadPlan()` era el último `await` del `try`, cualquier fallo previo (amenities,
+    // moneda, PIN, automatización, fiscal, política de facturas, días hábiles) lo salteaba,
+    // `planLoading` se quedaba en `true` para siempre y la tarjeta mostraba el skeleton eterno: el
+    // fallback "No pudimos leer tu plan" era inalcanzable. Va en el `finally` y trae su propio
+    // try/finally, así el indicador siempre se apaga.
+    await loadPlan()
     loading.value = false
     // Foto inicial DESPUÉS de poblar el formulario: sin esto todo se vería como "cambios sin guardar"
     // apenas se abre la pantalla.

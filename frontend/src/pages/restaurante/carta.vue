@@ -135,16 +135,20 @@ function stationOptions(includeNone = true) {
 }
 
 // ─── Estaciones ───
+// F8 — igual que categorías/ítems: el admin ya no escribe `sortOrder` a mano; se calcula al final
+// de la lista y el reorder es exclusivamente por arrastre (sección "Drag-and-drop" más abajo).
+function nextStationSortOrder(): number {
+  return stations.value.length ? Math.max(...stations.value.map((s) => s.sortOrder ?? 0)) + 1 : 0
+}
 function newStation() {
   modal.value = {
     title: 'Nueva estación', submitLabel: 'Crear',
     fields: [
       { key: 'name', label: 'Nombre (ej: Cocina, Bar)', required: true, minLength: 2, maxLength: 60 },
-      { key: 'sortOrder', label: 'Orden', type: 'number', min: 0, hint: 'Orden de aparición en el KDS' },
       { key: 'active', label: 'Activa', type: 'select', default: '1', options: [{ value: '1', label: 'Sí' }, { value: '0', label: 'No' }] },
     ],
     onSubmit: async (v) => {
-      await save(() => RestaurantService.createStation({ name: String(v.name).trim(), sortOrder: Number(v.sortOrder) || 0, active: Number(v.active) }))
+      await save(() => RestaurantService.createStation({ name: String(v.name).trim(), sortOrder: nextStationSortOrder(), active: Number(v.active) }))
     },
   }
 }
@@ -153,11 +157,12 @@ function editStation(s: Station) {
     title: 'Editar estación', submitLabel: 'Guardar',
     fields: [
       { key: 'name', label: 'Nombre', required: true, minLength: 2, maxLength: 60, default: s.name },
-      { key: 'sortOrder', label: 'Orden', type: 'number', min: 0, default: s.sortOrder ?? 0 },
       { key: 'active', label: 'Activa', type: 'select', default: String(s.active ?? 1), options: [{ value: '1', label: 'Sí' }, { value: '0', label: 'No' }] },
     ],
     onSubmit: async (v) => {
-      await save(() => RestaurantService.updateStation(s.id, { name: String(v.name).trim(), sortOrder: Number(v.sortOrder) || 0, active: Number(v.active) }))
+      // sortOrder NO viaja acá: el PUT de estaciones es un merge parcial (stations-crud.ts:50) y el
+      // orden se gestiona solo por drag-and-drop — reenviarlo pisaría el resultado de un reorder previo.
+      await save(() => RestaurantService.updateStation(s.id, { name: String(v.name).trim(), active: Number(v.active) }))
     },
   }
 }
@@ -318,10 +323,57 @@ function delItem(i: MenuItem) {
 // @dragover.prevent/@drop.prevent, opacity-50 en la fila arrastrada) — sin vuedraggable/sortablejs
 // (D14, specs/menu-ordering/spec.md). El handle "⋮⋮" es el ÚNICO elemento con draggable="true": la fila
 // entera solo escucha dragover/drop/dragend, así un click en "Editar"/"Eliminar" nunca dispara un drag.
+const draggedStation = ref<Station | null>(null)
 const draggedCategory = ref<MenuCategory | null>(null)
 const draggedItem = ref<MenuItem | null>(null)
+let stationsSnapshot: Station[] = []
 let categoriesSnapshot: MenuCategory[] = []
 let itemsSnapshot: MenuItem[] = []
+
+// Estaciones: F8 aplica el MISMO reorden por arrastre que categorías e ítems (la auditoría del
+// módulo lo tenía como deuda: orden manual por número). Las estaciones no se anidan ni se
+// agrupan: el drag mueve dentro de la lista plana, igual que categorías.
+function onStationDragStart(e: DragEvent, s: Station) {
+  stationsSnapshot = stations.value.map((x) => ({ ...x }))
+  draggedStation.value = s
+  e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('text/plain', s.id)
+}
+function onStationDragOver(target: Station) {
+  const dragged = draggedStation.value
+  if (!dragged || dragged.id === target.id) return
+  const list = stations.value
+  const from = list.findIndex((s) => s.id === dragged.id)
+  const to = list.findIndex((s) => s.id === target.id)
+  if (from === -1 || to === -1 || from === to) return
+  list.splice(to, 0, list.splice(from, 1)[0])
+}
+function onStationDragEnd() {
+  if (draggedStation.value) {
+    stations.value = stationsSnapshot
+    draggedStation.value = null
+  }
+}
+async function onStationDrop() {
+  const dragged = draggedStation.value
+  draggedStation.value = null
+  if (!dragged) return
+  const beforeIndex = new Map(stationsSnapshot.map((s, idx) => [s.id, idx]))
+  const beforeSortOrder = new Map(stationsSnapshot.map((s) => [s.id, s.sortOrder ?? 0]))
+  const changed = stations.value
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s, idx }) => beforeIndex.get(s.id) !== idx)
+    .map(({ s, idx }) => ({ entity: s, newSortOrder: idx, oldSortOrder: beforeSortOrder.get(s.id) ?? idx }))
+  if (!changed.length) return
+  const ok = await persistOrder(changed, (id, sortOrder) => RestaurantService.updateStation(id, { sortOrder }))
+  if (ok) {
+    for (const s of changed) s.entity.sortOrder = s.newSortOrder
+    toast.success('Orden actualizado')
+  } else {
+    stations.value = stationsSnapshot
+    toast.error('No se pudo guardar el nuevo orden')
+  }
+}
 
 /**
  * Manda PUT solo a las entidades cuyo sortOrder efectivamente cambió (8.4). Si CUALQUIERA de los PUT
@@ -738,12 +790,20 @@ async function saveTranslations() {
         </template>
         <EmptyState v-if="!stations.length" title="Sin estaciones" message="Creá al menos una (ej: Cocina, Bar) para rutear la carta." />
         <div v-else class="divide-y divide-border">
-          <div v-for="s in stations" :key="s.id" class="flex items-center justify-between py-2.5">
-            <div class="flex items-center gap-2">
+          <!-- F8: reorden por arrastre — mismo patrón que categorías/ítems; el handle "⋮⋮" es el
+               único elemento draggable de la fila, así "Editar"/"Eliminar" nunca disparan un drag. -->
+          <div v-for="s in stations" :key="s.id"
+            class="flex items-center justify-between py-2.5 gap-2 transition-opacity"
+            :class="draggedStation?.id === s.id ? 'opacity-50' : ''"
+            @dragover.prevent="onStationDragOver(s)"
+            @drop.prevent="onStationDrop">
+            <div class="flex items-center gap-2 min-w-0">
+              <span v-if="editPerm" draggable="true" @dragstart="onStationDragStart($event, s)" @dragend="onStationDragEnd"
+                class="shrink-0 cursor-grab active:cursor-grabbing text-text-muted select-none" title="Arrastrar para reordenar">⋮⋮</span>
               <span class="font-bold text-navy">{{ s.name }}</span>
               <span v-if="!s.active" class="text-[10px] px-1.5 py-0.5 rounded bg-surface text-text-muted font-bold">Inactiva</span>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 shrink-0">
               <button v-if="editPerm" @click="editStation(s)" class="text-xs font-bold text-navy hover:underline">Editar</button>
               <button v-if="deletePerm" @click="delStation(s)" class="text-xs font-bold text-coral hover:underline">Eliminar</button>
             </div>
@@ -893,9 +953,9 @@ async function saveTranslations() {
            no llega ni a pedir el reporte (ver load()), esta condición es defensiva por si editPerm cambia. -->
       <SectionCard v-if="editPerm" title="Food cost" subtitle="Precio de venta menos costo de receta, ordenado de menor a mayor margen.">
         <div class="flex flex-wrap gap-2 mb-3">
-          <input v-model="foodCostSearch" type="text" placeholder="Buscar por nombre…"
+          <input id="restaurante-carta-food-cost-search" name="foodCostSearch" aria-label="Buscar por nombre" v-model="foodCostSearch" type="text" placeholder="Buscar por nombre…"
             class="flex-1 min-w-[160px] px-3 py-1.5 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
-          <select v-model="foodCostCategoryFilter" class="px-3 py-1.5 rounded-lg border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
+          <select id="restaurante-carta-food-cost-category" name="foodCostCategoryFilter" aria-label="Filtrar food cost por categoría" v-model="foodCostCategoryFilter" class="px-3 py-1.5 rounded-lg border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
             <option value="all">Todas las categorías</option>
             <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
           </select>
@@ -950,15 +1010,17 @@ async function saveTranslations() {
 
         <div v-if="editPerm" class="flex items-end gap-2 border-t border-border pt-3">
           <div class="flex-1 min-w-0">
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Insumo</label>
-            <select v-model="newRecipe.inventoryItemId" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
+            <label for="restaurante-carta-insumo" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Insumo</label>
+            <select id="restaurante-carta-insumo" name="inventoryItemId" v-model="newRecipe.inventoryItemId" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
               <option value="">Seleccionar…</option>
               <option v-for="i in availableInventory" :key="i.id" :value="i.id">{{ i.name }} ({{ i.unit }})</option>
             </select>
           </div>
           <div class="w-24 shrink-0">
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Cantidad</label>
-            <input v-model.number="newRecipe.quantity" type="number" min="0" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+            <label for="restaurante-carta-cantidad" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Cantidad</label>
+            <!-- min 0.01, no 0: el negocio exige qty>0 por línea de receta (0 = "Quitar", que es otro
+                 botón) y el handler la rechaza — el input no puede anunciar 0 como válido. -->
+            <input id="restaurante-carta-cantidad" name="quantity" v-model.number="newRecipe.quantity" type="number" min="0.01" step="0.01" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
           <button @click="addRecipeLine" class="shrink-0 px-4 py-2 rounded-lg bg-navy text-white text-sm font-bold">Agregar</button>
         </div>
@@ -995,17 +1057,17 @@ async function saveTranslations() {
             <div v-if="newModifierByGroup[g.id]" class="flex items-end gap-2 border-t border-border pt-2.5 mt-2.5">
               <div class="flex-1 min-w-0">
                 <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Opción</label>
-                <input v-model="newModifierByGroup[g.id].name" type="text" placeholder="ej. Grande"
+                <input :id="`modificador-${g.id}-nombre`" :aria-label="`Nombre de la nueva opción de ${g.name}`" v-model="newModifierByGroup[g.id].name" type="text" placeholder="ej. Grande"
                   class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
               </div>
               <div class="w-24 shrink-0">
                 <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Ajuste</label>
-                <input v-model.number="newModifierByGroup[g.id].priceDelta" type="number" step="0.01"
+                <input :id="`modificador-${g.id}-precio`" :aria-label="`Diferencia de precio de la nueva opción de ${g.name}`" v-model.number="newModifierByGroup[g.id].priceDelta" type="number" step="0.01"
                   class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
               </div>
               <div class="w-36 shrink-0">
                 <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Insumo (opcional)</label>
-                <select v-model="newModifierByGroup[g.id].inventoryItemId" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
+                <select :id="`modificador-${g.id}-insumo`" :aria-label="`Insumo de la nueva opción de ${g.name}`" v-model="newModifierByGroup[g.id].inventoryItemId" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
                   <option value="">Ninguno</option>
                   <option v-for="inv in inventory" :key="inv.id" :value="inv.id">{{ inv.name }}</option>
                 </select>
@@ -1017,18 +1079,18 @@ async function saveTranslations() {
 
         <div class="flex items-end gap-2 border-t-2 border-navy/10 pt-3">
           <div class="flex-1 min-w-0">
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nuevo grupo</label>
-            <input v-model="newGroup.name" type="text" placeholder="ej. Tamaño" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+            <label for="restaurante-carta-nuevo-grupo" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nuevo grupo</label>
+            <input id="restaurante-carta-nuevo-grupo" name="name" v-model="newGroup.name" type="text" placeholder="ej. Tamaño" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
           <div class="w-32 shrink-0">
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Selección</label>
-            <select v-model="newGroup.selectionType" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
+            <label for="restaurante-carta-seleccion" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Selección</label>
+            <select id="restaurante-carta-seleccion" name="selectionType" v-model="newGroup.selectionType" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
               <option value="single">Única</option>
               <option value="multiple">Múltiple</option>
             </select>
           </div>
           <label class="shrink-0 flex items-center gap-1.5 text-xs font-bold text-navy pb-2">
-            <input v-model="newGroup.required" type="checkbox" /> Obligatorio
+            <input id="restaurante-carta-obligatorio" name="required" v-model="newGroup.required" type="checkbox" /> Obligatorio
           </label>
           <button @click="addGroup" class="shrink-0 px-4 py-2 rounded-lg bg-navy text-white text-sm font-bold">Crear grupo</button>
         </div>
@@ -1040,27 +1102,27 @@ async function saveTranslations() {
       <div class="space-y-4">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nombre<span class="text-coral"> *</span></label>
-            <input v-model="comboModal.name" type="text" placeholder="ej. Combo Familiar" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+            <label for="restaurante-carta-nombre" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nombre<span class="text-coral"> *</span></label>
+            <input id="restaurante-carta-nombre" name="name" v-model="comboModal.name" type="text" placeholder="ej. Combo Familiar" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Precio del combo<span class="text-coral"> *</span></label>
-            <input v-model="comboModal.price" type="number" min="0" step="0.01" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+            <label for="restaurante-carta-precio-del-combo" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Precio del combo<span class="text-coral"> *</span></label>
+            <input id="restaurante-carta-precio-del-combo" name="price" v-model="comboModal.price" type="number" min="0" step="0.01" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Impuesto (%)</label>
-            <input v-model="comboModal.taxRate" type="number" min="0" step="0.01" :placeholder="`Vacío = ${defaultTaxRate}% del hotel`" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+            <label for="restaurante-carta-impuesto" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Impuesto (%)</label>
+            <input id="restaurante-carta-impuesto" name="taxRate" v-model="comboModal.taxRate" type="number" min="0" step="0.01" :placeholder="`Vacío = ${defaultTaxRate}% del hotel`" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Disponible</label>
-            <select v-model="comboModal.available" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
+            <label for="restaurante-carta-disponible" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Disponible</label>
+            <select id="restaurante-carta-disponible" name="available" v-model="comboModal.available" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
               <option value="1">Sí</option>
               <option value="0">No</option>
             </select>
           </div>
           <div class="sm:col-span-2">
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Descripción</label>
-            <textarea v-model="comboModal.description" rows="2" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy"></textarea>
+            <label for="restaurante-carta-descripcion" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Descripción</label>
+            <textarea id="restaurante-carta-descripcion" name="description" v-model="comboModal.description" rows="2" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy"></textarea>
           </div>
         </div>
 
@@ -1070,11 +1132,11 @@ async function saveTranslations() {
           <div v-else class="max-h-64 overflow-y-auto divide-y divide-border border border-border rounded-xl">
             <div v-for="i in items" :key="i.id" class="flex items-center justify-between gap-3 px-3 py-2">
               <label class="flex items-center gap-2 min-w-0 cursor-pointer">
-                <input type="checkbox" :checked="comboModal.selected[i.id] != null" @change="toggleComboItem(i.id)" />
+                <input :id="`combo-item-${i.id}`" :aria-label="`Incluir ${i.name} en el combo`" type="checkbox" :checked="comboModal.selected[i.id] != null" @change="toggleComboItem(i.id)" />
                 <span class="text-sm text-navy truncate">{{ i.name }}</span>
                 <span class="text-[11px] text-text-muted shrink-0">{{ money(i.price) }}</span>
               </label>
-              <input
+              <input :id="`combo-item-${i.id}-cantidad`" :aria-label="`Cantidad de ${i.name} en el combo`"
                 v-if="comboModal.selected[i.id] != null"
                 type="number" min="1" :value="comboModal.selected[i.id]"
                 @input="setComboItemQty(i.id, Number(($event.target as HTMLInputElement).value))"
@@ -1110,13 +1172,13 @@ async function saveTranslations() {
 
         <div v-if="translationsModal.translations[translationsModal.activeLang]">
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nombre ({{ translationsModal.activeLang.toUpperCase() }})</label>
-            <input v-model="translationsModal.translations[translationsModal.activeLang].name" type="text"
+            <label for="restaurante-carta-nombre-2" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nombre ({{ translationsModal.activeLang.toUpperCase() }})</label>
+            <input id="restaurante-carta-nombre-2" name="name" v-model="translationsModal.translations[translationsModal.activeLang].name" type="text"
               class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
           <div v-if="translationsModal.hasDescription" class="mt-3">
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Descripción ({{ translationsModal.activeLang.toUpperCase() }})</label>
-            <textarea v-model="translationsModal.translations[translationsModal.activeLang].description" rows="3"
+            <label for="restaurante-carta-descripcion-2" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Descripción ({{ translationsModal.activeLang.toUpperCase() }})</label>
+            <textarea id="restaurante-carta-descripcion-2" name="description" v-model="translationsModal.translations[translationsModal.activeLang].description" rows="3"
               class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy"></textarea>
           </div>
         </div>

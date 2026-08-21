@@ -404,6 +404,8 @@ export interface ReservationDetailLockCode {
 }
 
 export interface ReservationDetailPayment {
+  /** `payment_requests.id` — necesario para reusar un link ya creado en vez de generar otro. */
+  id?: string
   amount?: number
   currency?: string
   status?: string
@@ -412,12 +414,20 @@ export interface ReservationDetailPayment {
   paidAt?: string | null
 }
 
+/** Proyección segura de `message_logs` que devuelve el detalle de la reserva.
+ *  `response` NO viaja: guarda el error crudo del transporte de email (dato de infraestructura,
+ *  ver backend `reservas/usecases/message-log.ts` → `toMessageLogView`). */
 export interface ReservationDetailMessageLog {
+  id?: string
   messageType?: string
-  status?: string
+  status?: string | null
   recipient?: string | null
-  response?: string | null
   sentAt?: string | null
+  /** Plantilla/motivo. Sólo en los envíos manuales hechos desde el panel. */
+  reference?: string | null
+  /** `users.id` de quien lo mandó. Sólo en los envíos manuales. */
+  sentByUserId?: string | null
+  manual?: boolean
 }
 
 export interface ReservationDetailAddon {
@@ -463,7 +473,16 @@ export interface ReservationDetail {
   externalLocator?: string | null
   totalAmount: number
   deposit?: number
+  /** Saldo REAL a cobrar = chargeableTotal − paidAmount. Lo calcula el backend
+   *  (`shared/utils/reservation-balance.ts`): incluye addons y otherCharges. */
   pendingAmount?: number
+  /** Lo ya cobrado según `payments` (backend `shared/usecases/reservation-paid.ts`). NO es
+   *  `deposit`: incluye lo pagado por folio y por factura, que no tocan esa columna. */
+  paidAmount?: number
+  /** Total cobrable de la reserva: alojamiento + otros cobros + extras. Fuente única del backend. */
+  chargeableTotal?: number
+  /** Suma con signo de los addons (los `discount` restan). */
+  addonsTotal?: number
   currency?: string
   commission?: number
   commissionAmount?: number
@@ -582,6 +601,10 @@ export interface CheckinListItem {
   roomNumber?: string
   depositStatus?: string
   deposit?: number
+  /** Saldo pendiente PERSISTIDO (`reservations.pendingAmount`). Misma fórmula que
+   *  `ReservationDetail.pendingAmount`: el backend la recalcula en cada escritura que mueve el
+   *  total cobrable (alta/baja de extras y `otherCharges`) — ver
+   *  `shared/usecases/sync-reservation-pending.ts`. */
   pendingAmount?: number
 }
 

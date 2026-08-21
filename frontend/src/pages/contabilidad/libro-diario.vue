@@ -85,7 +85,7 @@ onMounted(load)
         <p class="text-sm text-text-muted mt-0.5">Los asientos contables. El operativo del hotel los genera solo; acá cargás ajustes.</p>
       </div>
       <div class="flex gap-2 items-center">
-        <input v-model="period" type="month" @change="load" class="px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+        <input id="contabilidad-libro-diario-periodo" name="period" aria-label="Período del libro diario" v-model="period" type="month" @change="load" class="px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
         <button @click="openNew" class="bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-full hover:shadow-lg cursor-pointer">Nuevo asiento</button>
       </div>
     </div>
@@ -123,12 +123,12 @@ onMounted(load)
       <div class="space-y-4">
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Fecha</label>
-            <input v-model="form.entryDate" type="date" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
+            <label for="contabilidad-libro-diario-fecha" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Fecha</label>
+            <input id="contabilidad-libro-diario-fecha" name="entryDate" v-model="form.entryDate" type="date" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
           <div>
-            <label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Descripción</label>
-            <input v-model="form.description" placeholder="Ajuste…" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
+            <label for="contabilidad-libro-diario-descripcion" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Descripción</label>
+            <input id="contabilidad-libro-diario-descripcion" name="description" v-model="form.description" placeholder="Ajuste…" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
         </div>
         <div>
@@ -138,12 +138,12 @@ onMounted(load)
           </div>
           <div class="space-y-2">
             <div v-for="(l, i) in form.lines" :key="i" class="flex gap-2 items-center">
-              <select v-model="l.accountId" class="flex-1 px-3 py-2 rounded-lg border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
+              <select :id="`asiento-linea-${i}-cuenta`" :aria-label="`Cuenta de la línea ${i + 1}`" v-model="l.accountId" class="flex-1 px-3 py-2 rounded-lg border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
                 <option value="">Cuenta…</option>
                 <option v-for="a in postable" :key="a.id" :value="a.id">{{ a.code }} — {{ a.name }}</option>
               </select>
-              <input v-model.number="l.debit" type="number" min="0" placeholder="Debe" class="w-24 px-2 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:border-navy" />
-              <input v-model.number="l.credit" type="number" min="0" placeholder="Haber" class="w-24 px-2 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:border-navy" />
+              <input :id="`asiento-linea-${i}-debe`" :aria-label="`Debe de la línea ${i + 1}`" v-model.number="l.debit" type="number" min="0" placeholder="Debe" class="w-24 px-2 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:border-navy" />
+              <input :id="`asiento-linea-${i}-haber`" :aria-label="`Haber de la línea ${i + 1}`" v-model.number="l.credit" type="number" min="0" placeholder="Haber" class="w-24 px-2 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:border-navy" />
               <button @click="removeLine(i)" class="text-text-muted hover:text-danger cursor-pointer px-1">×</button>
             </div>
           </div>

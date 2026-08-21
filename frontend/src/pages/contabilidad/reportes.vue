@@ -43,7 +43,7 @@ onMounted(load)
         <h2 class="text-xl font-black text-navy">Reportes Contables</h2>
         <p class="text-sm text-text-muted mt-0.5">Estados financieros del hotel. Solo cuentan los asientos posteados.</p>
       </div>
-      <input v-model="period" type="month" @change="load" class="px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+      <input id="contabilidad-reportes-periodo" name="period" aria-label="Período del reporte contable" v-model="period" type="month" @change="load" class="px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
     </div>
 
     <div class="flex gap-2 mb-4 flex-wrap">

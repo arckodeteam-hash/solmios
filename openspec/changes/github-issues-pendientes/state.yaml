@@ -1,0 +1,189 @@
+# SDD State: github-issues-pendientes
+
+change_name: github-issues-pendientes
+created: 2026-08-20
+status: in-review
+current_phase: verify
+
+source: github arckodeteam-hash/solmios (30 issues abiertos al 2026-08-20) + gate LoopKit CHK-20260819
+
+sprints:
+  gh-0-gate-highs:
+    title: Hallazgos HIGH del gate CHK-20260819 (sin issue en GitHub)
+    status: implemented-gate-not-passed
+    tasks_total: 4
+    tasks_done: 4
+    priority: critical
+    note: "dinero y multi-tenancy. Vivos en el working tree sin commitear — si se pierde el árbol, se pierde el hallazgo. Cada fix exige test rojo-antes/verde-después"
+
+  gh-29-plan-actual:
+    title: El plan actual ofrece Suscribirse durante el trial
+    status: implemented-gate-not-passed
+    tasks_total: 3
+    tasks_done: 3
+    priority: medium
+    note: "fix de una condición — suscripcion/index.vue:89 mira sub.status en vez del plan"
+
+  gh-32-pin-autocomplete:
+    title: El PIN de garantía aparece lleno sin haberlo escrito
+    status: partial
+    tasks_total: 2
+    tasks_done: 1
+    priority: medium
+    note: "falta autocomplete=new-password en settings/index.vue:242 — un atributo"
+
+  gh-31-precios-hardcodeados:
+    title: El precio de un plan no coincide entre pantallas
+    status: implemented-gate-not-passed
+    tasks_total: 3
+    tasks_done: 3
+    priority: medium
+    note: "tres fuentes de verdad: landing, hotel-fundador y settings hardcodean; solo suscripcion lee la API"
+
+  gh-27-email-observabilidad:
+    title: El alta no avisa cuando el correo no sale
+    status: partial
+    tasks_total: 3
+    tasks_done: 2
+    priority: medium
+    note: "el envío existe (signup.ts:161,170) pero con catch vacío. Requiere revisar email_queue en prod para cerrar"
+
+  gh-17-18-formularios:
+    title: Formularios sin nombre, sin etiqueta y sin required
+    status: partial
+    tasks_total: 6
+    tasks_done: 5
+    priority: high
+    note: "296 de 317 inputs sin name ni id (el issue #17 dice 32 — desactualizado). 9 de 317 con required"
+
+  gh-30-19-data-prod:
+    title: Orden de planes y módulos sin configurar — data de producción
+    status: partial
+    tasks_total: 3
+    tasks_done: 1
+    priority: low
+    note: "NO es código: el backend ya ordena por sortOrder. Es un UPDATE en la tabla plans de prod"
+
+  gh-close-administrativos:
+    title: Cierres administrativos de issues
+    status: partial
+    tasks_total: 4
+    tasks_done: 2
+    priority: low
+    note: "#20 resuelto en código (ReservationCalendar.vue:214-217) · #25 #26 ruido · #23 #24 pedir reconfirmación"
+
+total_tasks: 28
+tasks_done: 21
+
+execution_order:
+  - gh-0-gate-highs
+  - gh-32-pin-autocomplete
+  - gh-29-plan-actual
+  - gh-31-precios-hardcodeados
+  - gh-27-email-observabilidad
+  - gh-17-18-formularios
+  - gh-30-19-data-prod
+  - gh-close-administrativos
+
+artifacts:
+  proposal: true
+  tasks: true
+  state: true
+  specs: false
+
+out_of_scope:
+  bloqueados_por_terceros: [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12]
+  ya_trackeados_en_otro_change: [15, 16]   # DT-07 y DT-09 en deudas-tecnicas-pendientes
+  feature_sin_decision: [28]
+  en_proceso: [4]
+  no_verificados: [13, 14]
+
+notes:
+  - "2026-08-20: los 30 issues abiertos se verificaron contra el código antes de escribir ninguna
+     tarea. Dos títulos resultaron desactualizados: #17 reporta 32 campos sin name/id (el conteo
+     real es 296 de 317) y #30 se lee como bug de frontend cuando el backend ya ordena por
+     sortOrder — es data mal cargada en prod."
+  - "GH-0 no viene de GitHub: son los 3 HIGH que el gate de LoopKit dejó abiertos en CHK-20260819
+     (score final 82.3, NOT_READY tras 3 rondas). No existe issue para ellos."
+  - "#13 y #14 (Ventas y Web) NO se verificaron. No se crearon tareas sobre lo que no se leyó."
+  - "2026-08-20: GH-0 cerrado. 0.1 link de pago desfasado (se actualiza el monto del link vivo y el
+     modal lo muestra) · 0.2 lo cobrado sale de `payments` vía shared/usecases/reservation-paid.ts,
+     cableado en charge-ceiling, detail, el bridge del webhook y sync-reservation-pending ·
+     0.3 el webhook filtra el folio por hotelId y coteja el tenant en `checkout.session.expired`.
+     Deuda anotada: `max(deposit, payments)` — ver tasks.md GH-0.4."
+
+gate:
+  last_run: 2026-08-20
+  diff_hash: 6e3bf5c788d9ba8c
+  verdict: NOT_READY
+  score: 73.4
+  findings: 47
+  blockers: 2
+  por_carril: {seguridad: "6 BLOCKER (D6=37)", correccion: "7 HIGH", estructura: "11 HIGH", medidas: "12 BLOCKER"}
+  historial_score: [80.3, 82.3, 79.5, 73.4]
+  blocker_1_dinero: |
+    CUARTA puerta consecutiva al mismo agujero. Las cuatro rondas midieron el MISMO resultado:
+    600 USD cobrables sobre un saldo de 300.
+      P1 (cerrada) stripeSessionId escribible por el PUT -> se borraba el puntero sin expirar.
+      P2 (cerrada) la baja de sesion solo se disparaba por dto.status, no por importe.
+      P3 (ABIERTA) service.ts:169 — el unico guard de create-checkout es `if (pr.status === 'paid')`.
+                   Sobre una fila CANCELADA emite una sesion viva que committedPending no cuenta
+                   (charge-ceiling.ts:58 filtra por 'pending') y que el webhook liquida igual
+                   (stripe-webhook.ts:106 solo saltea 'paid').
+      P4 (ABIERTA) crud.ts:230 + reservas/validators/schema.ts:75 — totalAmount y otherCharges son
+                   escribibles por PUT /api/reservas/:id. Se inflan, se emiten los links, se bajan:
+                   nada expira. releaseSession tiene 0 hits fuera de update-request.ts y
+                   delete-request.ts. Idem deleteAddon (addons.ts:88).
+      P5 (ABIERTA) update-request.ts:74 — PUT {status:'paid'} manual sobre un pending cuya sesion ya
+                   fue abonada: el webhook posterior descarta la liquidacion entera, no queda fila en
+                   payments, y paidForReservation sigue en 0 -> el techo autoriza otro link.
+      P6 (ABIERTA) auto-payment-request.ts:22 crea filas pending con orm.create directo: sin techo,
+                   sin lock, sin assertCeilingAfterCommit, y su guard de duplicados consulta sin hotelId.
+  blocker_2_medicion: |
+    state/task.json fija base=fea4bd99, un commit de STASH que no es ancestro de HEAD y cuyo arbol ya
+    contiene el trabajo previo, asi que `git diff base` lo cancela: el diff medido cubre 63 de 128
+    rutas. Quedan fuera 68 archivos / 2398 lineas / 61 marcas — incluidos payments/model.ts (la columna
+    nueva) y charge-reschedule-diff.ts (su unico escritor). D10, D11 y secret_hits=0 describen el 49%
+    del cambio. Origen: core/lk:117 `BASE=$(git stash create)`. Es la segunda vez que la base sale de
+    un stash en esta sesion.
+  columna_nueva_incompleta: |
+    payments.reservationId esta BIEN hecha (declarada en payments/model.ts:20, sin definicion dual,
+    migracion idempotente y multi-motor con addColumnIfMissing, sin SQL SQLite-only). Pero:
+    - sync-pending-after-payment.ts:65 corta con `if (!row?.folioId && !row?.invoiceId) return null`
+      ANTES de mirar reservationId: toda la plomeria del vinculo directo (MoneyRowRef.reservationId,
+      el connector que lo pasa, el money-port que dice "gana el vinculo DIRECTO") es codigo muerto
+      en esa ruta. Ejecutado: fila con {hotelId, reservationId} -> null, cero UPDATE.
+    - SIN BACKFILL. migrate-db.ts:1203 afirma que de las filas viejas "no se puede reconstruir a que
+      reserva pertenecian" y es FALSO: charge-reschedule-diff.ts:44 ya escribia
+      metadata:{reservationId, source:'reschedule'} y esa linea no cambio en el diff. En prod los
+      cobros de reprogramacion existentes siguen invisibles al techo, que los autoriza a recobrar.
+    - Sin test de la migracion pese a que el repo ya tiene el patron
+      (bookingengine/tests/migrate-public-bookings.test.ts:22 monta SqliteAdapter(':memory:')).
+  confirmado_cerrado_por_mutacion: |
+    assertCeilingAfterCommit ya NO se puede descablear en silencio: borrar service.ts:128 mata
+    tests/ceiling-bypass.test.ts:229, y borrar la gemela de update-request.ts:88-92 mata :236.
+    (En la ronda anterior se borraba y 74/74 seguian verdes.) Tambien reales: baja de sesion por
+    cambio de importe, campos de estado interno fuera del PATCH (sin ruta alternativa), lock
+    unificado contra shared/utils/async-lock, PlanCatalogService con sus 3 consumidores.
+  infraestructura_cerrada: |
+    - commands.env:24 usa `bun run test` -> la suite gateada ya NO corre con LLM_API_KEY,
+      GITHUB_TOKEN, CHANNEX_API_KEY ni el SQLite de dev (verificado empiricamente).
+    - ai-gerente/tests/service.test.ts:21-29 borra las claves e instala centinela de fetch: el test
+      "fallback sin LLM" ya no sale a internet, y el verde del gate no depende de un tercero.
+    - verify.sh:30-37 conserva stderr y avisa fuerte si cae al fallback de base.
+  infraestructura_abierta: |
+    - commands.env:7 LOOPKIT_ENFORCE=0: el gate REPORTA pero NO BLOQUEA.
+    - RUBRICA.md:31 dice "D8 binaria 100 o 0" y verify.sh:194 publica 80 proporcional: el documento y
+      la herramienta dan numeros distintos para la misma corrida.
+    - El kit vive fuera del repo SIN VCS ni backups: no se puede auditar que cambio en cada edicion.
+      El builder lo edito cuatro veces en esta sesion.
+  colision_de_sesiones: |
+    Otra sesion (solmios-c0) trabaja el MISMO repo y el MISMO estado de LoopKit, que es compartido y
+    sin aislamiento: su `lk start T-spec-reservas` piso la tarea BUG-ceiling-bypass en fase VERIFY.
+    No se le pudo enviar aviso (SendMessage fallo). El usuario decidio cerrarla.
+  decision_del_usuario: |
+    2026-08-20 — parar los parches y REDISENAR el invariante del techo de cobro. Ver el change nuevo
+    `openspec/changes/rediseno-techo-cobro/`.
+  note: |
+    3891 tests en verde con el invariante roto. Los gates de build/typecheck/test/arckode pasan; lo
+    que falla es la propiedad de negocio que ninguno de ellos mide.

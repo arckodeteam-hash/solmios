@@ -1,22 +1,55 @@
 import { NotFoundError, AuthError } from 'arckode-framework'
 import type { ReservasQueries } from './reservas-queries'
+import { addonsTotal, chargeableTotal, pendingBalance } from '../../../shared/utils/reservation-balance'
+import { paidForReservation } from '../../../shared/usecases/reservation-paid'
+import { toMessageLogViews, type MessageLogSource } from './message-log'
 
-export async function getExtendedDetail(repo: any, guestRepo: any, roomRepo: any, queries: ReservasQueries, id: string, currentUser: any): Promise<any> {
+export async function getExtendedDetail(
+  repo: any, guestRepo: any, roomRepo: any, queries: ReservasQueries, id: string, currentUser: any,
+  /** Puerto al módulo marketing (dueño de `message_logs`). OBLIGATORIO: sin él el historial mentiría. */
+  listMessageLogs: MessageLogSource,
+): Promise<any> {
   const r = await repo.findById(id) as any
   if (!r) throw new NotFoundError('Reserva no encontrada')
   const hid = currentUser?.hotelId
   if (currentUser?.role !== 'super_admin' && r.hotelId !== hid) throw new AuthError('No autorizado')
-  const [guest, room, companions, lockCodes, payments, addons] = await Promise.all([
+  const [guest, room, companions, lockCodes, payments, addons, messageLogs] = await Promise.all([
     r.guestId ? guestRepo.findById(r.guestId) : Promise.resolve(null),
     r.roomId ? roomRepo.findById(r.roomId) : Promise.resolve(null),
     queries.getCompanions(r.id),
     queries.getLockCodes(r.id),
-    queries.getPaymentRequests(r.id),
-    queries.getReservationAddons(r.id),
+    // SEC3-6: con el hotel de la reserva, nunca sólo por `reservationId` (multi-tenancy).
+    queries.getPaymentRequests(r.id, r.hotelId),
+    // SEC-4: los extras se leen SIEMPRE con el hotel de la reserva, nunca sólo por `reservationId`.
+    queries.getReservationAddons(r.id, r.hotelId),
+    // La tarjeta "Envíos registrados" del modal leía `messageLogs` y el detalle NUNCA lo devolvía:
+    // salía siempre vacía aunque los auto-messages sí escribieran en `message_logs`. Se pide por el
+    // PUERTO del conector, no leyendo la tabla de otro módulo (STR-3).
+    listMessageLogs(r.hotelId, r.id),
   ])
+  // Lo COBRADO sale de `payments` (GH-0.2), no de `reservations.deposit`: un pago en efectivo por
+  // folio o factura no toca `deposit`, y este mismo número es el techo que autoriza el cobro por
+  // Stripe (`payment-requests/usecases/charge-ceiling.ts`). Si el modal y el techo no midieran lo
+  // mismo, el operador vería "Pendiente $500" sobre una reserva con $300 ya cobrados.
+  const paid = await paidForReservation(queries.paidRepos, r.hotelId, r.id, r)
   const CARD_FIELDS = ['cardHolder', 'cardBrand', 'cardLast4', 'cardExpMonth', 'cardExpYear']
   const safeReservation = Object.fromEntries(Object.entries(r).filter(([k]) => !CARD_FIELDS.includes(k)))
-  return { ...safeReservation, hasGuaranteeCard: !!(r.hasGuaranteeCard || r.cardLast4), guest: guest || null, room: room || null, companions, lockCodes, payments, addons, checkinCode: String(r.id).replace(/-/g, '').slice(0, 12), pendingAmount: Math.max(0, (r.totalAmount || 0) - (r.deposit || 0)) }
+  // El total cobrable es UNO solo: alojamiento + otros cobros + extras (shared/utils/reservation-balance).
+  // Antes acá se calculaba `totalAmount - deposit` a mano y se ignoraban addons/otherCharges, así que
+  // el renglón "Pendiente de cobro" del modal y el monto de la Checkout Session de Stripe cobraban de menos.
+  return {
+    ...safeReservation,
+    hasGuaranteeCard: !!(r.hasGuaranteeCard || r.cardLast4),
+    guest: guest || null, room: room || null, companions, lockCodes, payments, addons,
+    // `response` NO sale del módulo marketing: se proyecta (ver message-log.ts).
+    messageLogs: toMessageLogViews(messageLogs as Record<string, any>[]),
+    checkinCode: String(r.id).replace(/-/g, '').slice(0, 12),
+    addonsTotal: addonsTotal(addons),
+    chargeableTotal: chargeableTotal(r, addons),
+    pendingAmount: pendingBalance(r, addons, paid),
+    /** Lo ya cobrado según `payments` (GH-0.2). El modal lo muestra junto al pendiente. */
+    paidAmount: paid,
+  }
 }
 
 export async function getAuditTrail(repo: any, queries: ReservasQueries, id: string, currentUser: any): Promise<any[]> {

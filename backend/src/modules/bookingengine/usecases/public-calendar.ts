@@ -31,7 +31,8 @@ import {
   eachDayInclusive,
 } from '../../../shared/utils/daily-availability'
 import { readCurrencyRates } from './public-rates'
-import { baseRatesOnly, buildSeasonByDate, pickRate, ratePrice, round2 } from './rate-resolution'
+import { baseRatesOnly, buildSeasonByDate, pickRate, ratePrice } from './rate-resolution'
+import { round2 } from '../../../shared/utils/money'
 import { isRateClosed } from './stay-restrictions'
 import { validatePublicCalendarQuery, MAX_CALENDAR_DAYS } from '../validators/schema'
 

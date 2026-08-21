@@ -6,6 +6,7 @@ import {
 } from 'arckode-framework'
 import { cors, requestLogger, bodyLimit, timeout, compression } from 'arckode-framework/middlewares'
 import { securityHeaders } from './shared/middlewares/security-headers'
+import { corsWithErrorHeaders } from './shared/middlewares/cors-error-headers'
 import { getClientIp } from './shared/middlewares/rate-limit'
 import { scopedRateLimit } from './shared/middlewares/scoped-rate-limit'
 import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
@@ -64,7 +65,10 @@ const router = new Router()
 const FRONTEND_PORT = config.get<number>('FRONTEND_PORT')
 const CORS_ORIGINS = process.env.CORS_ORIGINS?.split(',') || [`http://localhost:${PORT}`, 'http://localhost:3000', `http://localhost:${FRONTEND_PORT}`]
 
-router.use(cors({ origins: CORS_ORIGINS }))
+// CORS con headers también en respuestas de error: un 401/403/409 lanzado como ErrorContract
+// escapaba sin Access-Control-Allow-Origin (el catch del Router arma la respuesta sin headers)
+// y el browser lo reportaba como error de CORS en vez del status real.
+router.use(corsWithErrorHeaders({ origins: CORS_ORIGINS }))
 router.use(securityHeaders())
 router.use(bodyLimit(5 * 1024 * 1024))
 router.use(requestLogger(logger))
@@ -366,6 +370,9 @@ import { capacitacionEmpleadosConnector } from './connectors/capacitacion-emplea
 import { amenitiesHabitacionesConnector } from './connectors/amenities-habitaciones'
 import { paymentsCajaConnector } from './connectors/payments-caja'
 import { paymentsAccountingConnector } from './connectors/payments-accounting'
+// COR-1 — todo movimiento de `payments` resincroniza `reservations.pendingAmount`: el listado y el
+// detalle tienen que devolver el MISMO saldo. Ver connectors/payments-reservas.ts.
+import { paymentsReservasConnector } from './connectors/payments-reservas'
 import { foliosAccountingConnector } from './connectors/folios-accounting'
 import { facturasAccountingConnector } from './connectors/facturas-accounting'
 import { gastosAccountingConnector } from './connectors/gastos-accounting'
@@ -421,6 +428,12 @@ import { facturasPaymentsConnector } from './connectors/facturas-payments'
 import { foliosFacturasConnector } from './connectors/folios-facturas'
 import { foliosPaymentsConnector } from './connectors/folios-payments'
 import { reservasFoliosSettlementConnector } from './connectors/reservas-folios-settlement'
+// `reservas` leía `Folios`/`Invoices`/`Payment` con el ORM crudo para calcular "lo cobrado".
+// Ahora la lectura la hacen los módulos dueños y llega por puerto. Ver connectors/reservas-money.ts.
+import { reservasMoneyConnector } from './connectors/reservas-money'
+// STR-A: `payment-requests` (techo del cobro + bridge del webhook) lee el MISMO camino
+// reserva→dinero por los módulos dueños, no con repos crudos de `invoices`/`payments`.
+import { paymentRequestsMoneyConnector } from './connectors/payment-requests-money'
 import { gastosCajaConnector } from './connectors/gastos-caja'
 import { cajaChicaGastosConnector } from './connectors/caja-chica-gastos'
 import { payrollGastosConnector } from './connectors/payroll-gastos'
@@ -501,6 +514,7 @@ system.addConnector('capacitacion-empleados', capacitacionEmpleadosConnector)
 // CSV vestigial Rooms.amenities que leen ai-recepcionista y bookingengine/availability. No destructivo.
 system.addConnector('amenities-habitaciones', amenitiesHabitacionesConnector(orm))
 system.addConnector('payments-caja', paymentsCajaConnector)
+system.addConnector('payments-reservas', paymentsReservasConnector)
 // Un gasto en efectivo saca plata del cajón: sin esto el arqueo del turno no lo ve.
 system.addConnector('gastos-caja', gastosCajaConnector)
 // Un gasto con pettyCashFundId descuenta el saldo del fondo fijo (caja chica). Best-effort e
@@ -608,6 +622,13 @@ system.addConnector('reservas-payment-requests', reservasPaymentRequestsConnecto
 // el settlement del checkout usa folios.closeAndCreateInvoice(), que necesita el puerto inyectado.
 system.addConnector('folios-facturas', foliosFacturasConnector)
 system.addConnector('reservas-folios-settlement', reservasFoliosSettlementConnector)
+// El camino reserva → dinero (folios + facturas + payments) lo sirven los módulos dueños.
+// Va después de que los tres estén registrados; sin este connector `reservas` falla fuerte al
+// calcular el saldo en vez de devolver 0 (GH-0.2: un 0 en silencio autoriza recobrar plata).
+system.addConnector('reservas-money', reservasMoneyConnector)
+// Idem para el techo del cobro: sin este connector, create/update/createCheckout fallan fuerte
+// en vez de medir contra `reservations.deposit` (GH-0.2: un 0 en silencio autoriza recobrar).
+system.addConnector('payment-requests-money', paymentRequestsMoneyConnector)
 // El chat resuelve nombres de compañeros sin pasar por `users:view`.
 system.addConnector('messages-usuarios', messagesUsuariosConnector)
 // Un mensaje nuevo le llega al teléfono aunque la app esté cerrada.

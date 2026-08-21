@@ -28,6 +28,9 @@ export async function chargeCard(
     currency: dto.currency,
     description: dto.description,
     folioId: dto.folioId,
+    // Sin esto el cobro con tarjeta de una reprogramación queda sin vínculo con la reserva y es
+    // invisible para el techo de `payment-requests` (BUG-ceiling-bypass).
+    reservationId: dto.reservationId,
     guestId: dto.guestId,
     // fix-refund-pos-card: `reference`/`metadata` viajaban perdidos — sin ellos, el POS no podía
     // reclamar la idempotencia de idempotencia-settlement-pos ('pos:'+orderId) ni el conector

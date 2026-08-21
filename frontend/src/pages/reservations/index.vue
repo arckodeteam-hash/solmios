@@ -55,9 +55,9 @@
           <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
           </svg>
-          <input v-model="search" type="text" placeholder="Buscar huésped, reserva, correo..." data-testid="reservations-search" class="pl-9 pr-4 py-2 text-sm rounded-full border border-border bg-surface focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue/10 w-64 transition-all" />
+          <input id="reservations-search" name="search" v-model="search" type="text" aria-label="Buscar reservas por huésped, número o correo" placeholder="Buscar huésped, reserva, correo..." data-testid="reservations-search" class="pl-9 pr-4 py-2 text-sm rounded-full border border-border bg-surface focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue/10 w-64 transition-all" />
         </div>
-        <select v-model="filterStatus" class="px-3 py-2 rounded-full border border-border text-xs font-semibold text-text-secondary bg-white cursor-pointer focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue/10 transition-all">
+        <select id="reservations-filter-status" name="filterStatus" aria-label="Filtrar reservas por estado" v-model="filterStatus" class="px-3 py-2 rounded-full border border-border text-xs font-semibold text-text-secondary bg-white cursor-pointer focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue/10 transition-all">
           <option value="">Todos los estados</option>
           <option value="confirmed">Confirmadas</option>
           <option value="pending">Pendientes</option>
@@ -65,7 +65,7 @@
           <option value="checked_out">Check-out</option>
           <option value="cancelled">Canceladas</option>
         </select>
-        <select v-model="filterChannel" class="px-3 py-2 rounded-full border border-border text-xs font-semibold text-text-secondary bg-white cursor-pointer focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue/10 transition-all">
+        <select id="reservations-filter-channel" name="filterChannel" aria-label="Filtrar reservas por canal" v-model="filterChannel" class="px-3 py-2 rounded-full border border-border text-xs font-semibold text-text-secondary bg-white cursor-pointer focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue/10 transition-all">
           <option value="">Todos los canales</option>
           <option value="direct">Directa</option>
           <option value="booking">Booking</option>

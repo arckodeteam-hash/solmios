@@ -20,9 +20,9 @@
               <div class="text-2xl font-black text-navy">{{ data.code }}</div>
             </div>
             <div>
-              <label class="block text-[10px] font-bold text-text-muted uppercase mb-1">Link</label>
+              <label for="referidos-link" class="block text-[10px] font-bold text-text-muted uppercase mb-1">Link</label>
               <div class="flex items-center gap-2">
-                <input readonly :value="data.shareLink" class="flex-1 px-4 py-2.5 bg-surface border border-border rounded-xl text-sm text-text-secondary" />
+                <input id="referidos-link" readonly :value="data.shareLink" class="flex-1 px-4 py-2.5 bg-surface border border-border rounded-xl text-sm text-text-secondary" />
                 <button type="button" @click="copyLink" class="px-4 py-2.5 bg-navy text-white rounded-xl text-sm font-bold cursor-pointer hover:bg-navy-light transition-colors">Copiar</button>
               </div>
             </div>

@@ -34,6 +34,11 @@ export class SubscriptionsController {
     return { status: 200, body: { data: await this.service.publicPlans() } }
   }
 
+  /** CFG-1: el % del programa Fundador sale de la base, no del build del frontend. */
+  async publicFounderDiscount(_req: HttpRequest) {
+    return { status: 200, body: { discountPct: await this.service.publicFounderDiscount() } }
+  }
+
   /** Guía de primeros pasos: qué le falta configurar al hotel. */
   async onboarding(req: HttpRequest) {
     const hotelId = (req.user as any)?.hotelId

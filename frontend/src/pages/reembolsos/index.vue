@@ -27,14 +27,14 @@
       <template #actions>
         <div class="relative">
           <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/50" v-html="ICON_SEARCH"></span>
-          <input
+          <input id="reembolsos-search-query" name="searchQuery" aria-label="Buscar empleado, descripción o categoría"
             v-model="searchQuery"
             type="text"
             placeholder="Buscar empleado, descripción o categoría..."
             class="w-full sm:w-72 pl-9 pr-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm text-white placeholder:text-white/45 focus:outline-none focus:border-cyan focus:bg-white/15 transition-colors"
           />
         </div>
-        <select v-model="filterStatus" class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
+        <select id="reembolsos-filter-status" name="filterStatus" aria-label="Filtrar reembolsos por estado" v-model="filterStatus" class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
           <option class="text-navy" value="all">Todos los estados</option>
           <option class="text-navy" value="draft">Borrador</option>
           <option class="text-navy" value="submitted">Enviado</option>

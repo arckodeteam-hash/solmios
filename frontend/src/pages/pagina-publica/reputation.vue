@@ -104,7 +104,7 @@
               API Key
               <span v-if="status.tripadvisorApiKey" class="ml-1 text-teal">· ya configurada</span>
             </label>
-            <input v-model="form.tripadvisorApiKey" type="password" spellcheck="false" autocomplete="off"
+            <input v-model="form.tripadvisorApiKey" type="password" spellcheck="false" autocomplete="new-password"
               :placeholder="status.tripadvisorApiKey ? '•••••••• (vacío = mantener actual)' : 'ta-key-xxxxxxx'"
               class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
           </div>
@@ -141,7 +141,7 @@
             API Key
             <span v-if="status.stayapiApiKey" class="ml-1 text-teal">· ya configurada</span>
           </label>
-          <input v-model="form.stayapiApiKey" type="password" spellcheck="false" autocomplete="off"
+          <input v-model="form.stayapiApiKey" type="password" spellcheck="false" autocomplete="new-password"
             :placeholder="status.stayapiApiKey ? '•••••••• (vacío = mantener actual)' : 'stay-xxxxxxx'"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
         </div>

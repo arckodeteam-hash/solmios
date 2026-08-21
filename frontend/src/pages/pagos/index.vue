@@ -56,23 +56,24 @@
 
           <div class="grid gap-4 md:grid-cols-2">
             <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Modo</label>
-              <select v-model="form.mode" class="w-full cursor-pointer rounded-xl border border-border bg-white px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
+              <label :for="`pagos-${p.provider}-mode`" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Modo</label>
+              <select :id="`pagos-${p.provider}-mode`" name="mode" v-model="form.mode" class="w-full cursor-pointer rounded-xl border border-border bg-white px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
                 <option value="test">Prueba (no cobra dinero real)</option>
                 <option value="live">Producción (cobra dinero real)</option>
               </select>
             </div>
             <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Moneda</label>
-              <select v-model="form.currency" class="w-full cursor-pointer rounded-xl border border-border bg-white px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
+              <label :for="`pagos-${p.provider}-currency`" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Moneda</label>
+              <select :id="`pagos-${p.provider}-currency`" name="currency" v-model="form.currency" class="w-full cursor-pointer rounded-xl border border-border bg-white px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
                 <option value="usd">USD — Dólar</option>
                 <option value="dop">DOP — Peso dominicano</option>
                 <option value="eur">EUR — Euro</option>
               </select>
             </div>
             <div v-if="needsMerchantId(p.provider)">
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">{{ merchantIdLabel(p.provider) }}</label>
+              <label :for="`pagos-${p.provider}-merchant-id`" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">{{ merchantIdLabel(p.provider) }}</label>
               <input
+                :id="`pagos-${p.provider}-merchant-id`" name="merchantId" autocomplete="off"
                 v-model="form.merchantId" type="text"
                 :placeholder="current?.hasMerchantId ? '•••••••• (guardado)' : 'Asignado por el procesador'"
                 class="w-full rounded-xl border border-border bg-white px-4 py-2.5 font-mono text-sm focus:border-navy focus:outline-none"
@@ -80,13 +81,14 @@
               <p v-if="current?.hasMerchantId" class="mt-1.5 text-[11px] text-text-muted">Guardado. Dejalo vacío para conservarlo.</p>
             </div>
             <div v-if="p.provider === 'cardnet'">
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Terminal (CardNet)</label>
-              <input v-model="form.terminalId" type="text" placeholder="Terminal asignada por CardNet"
+              <label :for="`pagos-${p.provider}-terminal-id`" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Terminal (CardNet)</label>
+              <input :id="`pagos-${p.provider}-terminal-id`" name="terminalId" autocomplete="off" v-model="form.terminalId" type="text" placeholder="Terminal asignada por CardNet"
                 class="w-full rounded-xl border border-border bg-white px-4 py-2.5 font-mono text-sm focus:border-navy focus:outline-none" />
             </div>
             <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">{{ secretLabel(p.provider) }}</label>
+              <label :for="`pagos-${p.provider}-secret-key`" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">{{ secretLabel(p.provider) }}</label>
               <input
+                :id="`pagos-${p.provider}-secret-key`" name="secretKey" autocomplete="new-password"
                 v-model="form.secretKey" type="password"
                 :placeholder="current?.hasSecret ? `${current.secretMask} (guardada)` : secretPlaceholder(p.provider)"
                 class="w-full rounded-xl border border-border bg-white px-4 py-2.5 font-mono text-sm focus:border-navy focus:outline-none"
@@ -94,21 +96,23 @@
               <p v-if="current?.hasSecret" class="mt-1.5 text-[11px] text-text-muted">Guardada. Dejala vacía para conservarla.</p>
             </div>
             <div v-if="p.provider === 'stripe' || p.provider === 'paypal'">
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Llave pública</label>
-              <input v-model="form.publishableKey" type="text" placeholder="pk_test_… o pk_live_…"
+              <label :for="`pagos-${p.provider}-publishable-key`" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Llave pública</label>
+              <input :id="`pagos-${p.provider}-publishable-key`" name="publishableKey" autocomplete="off" v-model="form.publishableKey" type="text" placeholder="pk_test_… o pk_live_…"
                 class="w-full rounded-xl border border-border bg-white px-4 py-2.5 font-mono text-sm focus:border-navy focus:outline-none" />
             </div>
             <div v-if="p.provider === 'azul'">
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Certificado cliente (PEM)</label>
+              <label :for="`pagos-${p.provider}-cert-pem`" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Certificado cliente (PEM)</label>
               <textarea
+                :id="`pagos-${p.provider}-cert-pem`" name="certPem"
                 v-model="form.certPem" rows="3"
                 :placeholder="current?.hasCert ? '•••••••• (guardado)' : '-----BEGIN CERTIFICATE-----…'"
                 class="w-full rounded-xl border border-border bg-white px-4 py-2.5 font-mono text-xs focus:border-navy focus:outline-none"
               ></textarea>
             </div>
             <div v-if="p.provider === 'azul'">
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Llave del certificado (PEM)</label>
+              <label :for="`pagos-${p.provider}-cert-key-pem`" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Llave del certificado (PEM)</label>
               <textarea
+                :id="`pagos-${p.provider}-cert-key-pem`" name="certKeyPem"
                 v-model="form.certKeyPem" rows="3"
                 :placeholder="current?.hasCert ? '•••••••• (guardada)' : '-----BEGIN PRIVATE KEY-----…'"
                 class="w-full rounded-xl border border-border bg-white px-4 py-2.5 font-mono text-xs focus:border-navy focus:outline-none"
@@ -116,8 +120,9 @@
               <p v-if="current?.hasCert" class="mt-1.5 text-[11px] text-text-muted">Guardados. Dejalos vacíos para conservarlos.</p>
             </div>
             <div v-if="p.provider === 'stripe' || p.provider === 'paypal'" class="md:col-span-2">
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Secreto del webhook</label>
+              <label :for="`pagos-${p.provider}-webhook-secret`" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Secreto del webhook</label>
               <input
+                :id="`pagos-${p.provider}-webhook-secret`" name="webhookSecret" autocomplete="new-password"
                 v-model="form.webhookSecret" type="password"
                 :placeholder="current?.hasWebhookSecret ? '•••••••• (guardado)' : 'whsec_…'"
                 class="w-full rounded-xl border border-border bg-white px-4 py-2.5 font-mono text-sm focus:border-navy focus:outline-none"

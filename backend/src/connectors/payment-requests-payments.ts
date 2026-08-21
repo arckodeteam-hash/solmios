@@ -8,7 +8,7 @@
 // No impacta caja: `payments-caja` solo asienta el efectivo, y un cobro Stripe ya está bancarizado.
 
 import type { ConnectorContext } from 'arckode-framework'
-import type { RecordStripePaymentInput } from '../modules/payment-requests'
+import { stripeChargeDto, type RecordStripePaymentInput, type StripeChargeDto } from '../modules/payment-requests'
 
 interface PaymentDoc {
   id: string
@@ -16,7 +16,7 @@ interface PaymentDoc {
 }
 
 interface PaymentsModule {
-  createPayment: (dto: Record<string, unknown>) => Promise<PaymentDoc>
+  createPayment: (dto: StripeChargeDto) => Promise<PaymentDoc>
   findByStripeSession: (hotelId: string, stripeSessionId: string) => Promise<PaymentDoc | null>
 }
 
@@ -32,21 +32,9 @@ export function paymentRequestsPaymentsConnector(ctx: ConnectorContext): void {
       },
 
       recordPayment: async (input: RecordStripePaymentInput) => {
-        const payment = await payments.createPayment({
-          hotelId: input.hotelId,
-          folioId: input.folioId ?? undefined,
-          type: 'charge',
-          // El cobro entra por un Link de Pago, no por una tarjeta pasada en el mostrador.
-          method: 'link',
-          // Stripe ya confirmó el cobro: es dinero recibido, no una intención de pago.
-          status: 'completed',
-          amount: input.amount,
-          currency: input.currency,
-          description: input.description,
-          reference: input.reference,
-          stripeSessionId: input.stripeSessionId,
-          stripePaymentId: input.stripePaymentId,
-        })
+        // El mapeo vive en `usecases/payment-port.ts` (`stripeChargeDto`): el banco de pruebas del
+        // techo usa el MISMO, así no vuelve a haber un doble que asiente distinto que producción.
+        const payment = await payments.createPayment(stripeChargeDto(input))
         return { id: payment.id, status: payment.status }
       },
     },

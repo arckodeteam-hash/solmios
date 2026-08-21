@@ -73,7 +73,7 @@
       <div class="space-y-4">
         <div>
           <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Pixel ID</label>
-          <input v-model="form.metaPixelId" type="text" spellcheck="false" autocomplete="off"
+          <input v-model="form.metaPixelId" type="text" spellcheck="false" autocomplete="new-password"
             placeholder="123456789012345"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
           <p class="mt-1 text-[10px] text-text-muted">Lo sacás de Meta Business Manager → Events Manager → Data Sources → tu Pixel.</p>
@@ -83,7 +83,7 @@
             Conversions API Token
             <span v-if="status.metaToken" class="ml-1 text-teal">· ya configurado</span>
           </label>
-          <input v-model="form.metaCapiToken" type="password" spellcheck="false" autocomplete="off"
+          <input v-model="form.metaCapiToken" type="password" spellcheck="false" autocomplete="new-password"
             :placeholder="status.metaToken ? '•••••••• (vacío = mantener actual)' : 'EAAG... (long-lived access token)'"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-mono focus:border-navy focus:outline-none">
           <p class="mt-1 text-[10px] text-text-muted">Generá un token en Events Manager → Settings → Conversions API → "Generate Access Token".</p>
@@ -125,7 +125,7 @@
             API Secret
             <span v-if="status.ga4Secret" class="ml-1 text-teal">· ya configurada</span>
           </label>
-          <input v-model="form.ga4ApiSecret" type="password" spellcheck="false" autocomplete="off"
+          <input v-model="form.ga4ApiSecret" type="password" spellcheck="false" autocomplete="new-password"
             :placeholder="status.ga4Secret ? '•••••••• (vacío = mantener actual)' : 'abc123DEF456...'"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-mono focus:border-navy focus:outline-none">
           <p class="mt-1 text-[10px] text-text-muted">Admin → Data Streams → "Measurement Protocol API secrets" → create. Requiere GA4 property.</p>

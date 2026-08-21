@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto'
 import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
 import { PostgresAdapter } from 'arckode-framework/adapters/postgres'
 import type { DbAdapter } from 'arckode-framework'
+import { backfillPaymentsReservationId } from './scripts/backfill-payments-reservation'
 
 // ─── Adapter condicional (mismo criterio que composition-root.ts) ──────────
 const DATABASE_URL = process.env.DATABASE_URL
@@ -893,8 +894,11 @@ async function createTablesBlock2(): Promise<void> {
     active INTEGER DEFAULT 1, createdAt TEXT, updatedAt TEXT)`)
 
   // ─── Payments (módulo payments: transacciones, links de pago, depósitos) ──
+  // `reservationId` es el TERCER vínculo reserva → dinero (BUG-ceiling-bypass): el cobro de una
+  // reprogramación en efectivo/tarjeta no cuelga de folio ni de factura, y sin la columna esa plata
+  // era invisible para `shared/usecases/reservation-paid.ts` y para el techo de `payment-requests`.
   await exec(`CREATE TABLE IF NOT EXISTS payments (
-    id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, folioId TEXT, invoiceId TEXT, guestId TEXT,
+    id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, folioId TEXT, invoiceId TEXT, reservationId TEXT, guestId TEXT,
     type TEXT NOT NULL, method TEXT NOT NULL, status TEXT DEFAULT 'pending',
     amount REAL NOT NULL, currency TEXT DEFAULT 'USD', description TEXT DEFAULT '',
     reference TEXT DEFAULT '', stripePaymentId TEXT DEFAULT '', stripeSessionId TEXT DEFAULT '',
@@ -1196,6 +1200,19 @@ async function createTablesBlock3(): Promise<void> {
   // NULLs (auto_messages viejos sin event) no chocan — SQL UNIQUE trata NULL != NULL.
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_messages_override
     ON auto_messages(hotelId, event, language, channel)`)
+
+  // ALTER idempotente: payments += reservationId (BUG-ceiling-bypass). Para las bases que ya
+  // existían: `CREATE TABLE IF NOT EXISTS` de arriba es no-op sobre una tabla vieja, y las filas
+  // previas SÍ se reconstruyen — `charge-reschedule-diff.ts` escribía
+  // `metadata:{reservationId, source:'reschedule'}` desde antes de que existiera la columna
+  // (COR-B: sin backfill, los cobros de reprogramación históricos seguían invisibles para el techo
+  // de `payment-requests` en cualquier base ya desplegada).
+  await addColumnIfMissing("payments", "reservationId", "TEXT")
+  await exec(`CREATE INDEX IF NOT EXISTS idx_payments_reservation ON payments(hotelId, reservationId)`)
+  const backfilledReservations = await backfillPaymentsReservationId(db)
+  if (backfilledReservations > 0) {
+    console.log(`payments.reservationId: ${backfilledReservations} fila(s) reconstruida(s) desde metadata`)
+  }
 
   // ALTER idempotente: guests += language (spec 11.1.6 — idioma del huésped para resolver plantilla i18n).
   await addColumnIfMissing("guests", "language", "TEXT")

@@ -58,12 +58,12 @@
           <h3 class="text-sm font-black text-navy uppercase mb-3">¿Quién viaja?</h3>
           <div class="space-y-4">
             <div>
-              <label class="block text-[11px] font-bold text-navy uppercase mb-2">Nombre completo *</label>
-              <input v-model="mainGuest.name" type="text" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" />
+              <label for="prechk-name" class="block text-[11px] font-bold text-navy uppercase mb-2">Nombre completo *</label>
+              <input id="prechk-name" name="name" required aria-required="true" v-model="mainGuest.name" type="text" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" />
             </div>
             <div>
-              <label class="block text-[11px] font-bold text-navy uppercase mb-2">Email</label>
-              <input v-model="mainGuest.email" type="email" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" />
+              <label for="prechk-email" class="block text-[11px] font-bold text-navy uppercase mb-2">Email</label>
+              <input id="prechk-email" name="email" autocomplete="email" v-model="mainGuest.email" type="email" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" />
             </div>
 
             <div class="flex rounded-xl border border-border overflow-hidden">
@@ -84,7 +84,7 @@
             <div v-if="!travelingAlone" class="space-y-2">
               <label class="block text-[11px] font-bold text-navy uppercase">Acompañantes</label>
               <div v-for="(c, i) in companions" :key="i" class="flex items-center gap-2 bg-surface rounded-lg p-2">
-                <input v-model="c.name" placeholder="Nombre del acompañante" class="flex-1 px-3 py-1.5 rounded-lg border border-border text-xs" />
+                <input :id="`prechk-companion-${i}-name`" :name="`companionName${i}`" :aria-label="`Nombre del acompañante ${i + 1}`" v-model="c.name" type="text" placeholder="Nombre del acompañante" class="flex-1 px-3 py-1.5 rounded-lg border border-border text-xs" />
                 <button type="button" class="text-coral text-xs font-bold cursor-pointer px-2" @click="companions.splice(i, 1)">✕</button>
               </div>
               <button
@@ -124,7 +124,7 @@
 
           <div v-else class="space-y-4">
             <div v-if="documentMode === 'scan'" class="bg-surface rounded-xl p-4">
-              <input ref="fileInputRef" type="file" accept="image/*" class="hidden" @change="onFileSelected" />
+              <input id="prechk-document-file" name="documentPhoto" ref="fileInputRef" type="file" accept="image/*" class="hidden" @change="onFileSelected" />
 
               <!-- Fase 1: elegir/tomar foto -->
               <div v-if="scanPhase === 'capture'" class="text-center">
@@ -176,32 +176,32 @@
             <div class="grid grid-cols-2 gap-4">
               <div>
                 <label class="block text-[11px] font-bold text-navy uppercase mb-2">Tipo documento</label>
-                <select v-model="mainGuest.documentType" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer">
+                <select id="prechk-document-type" name="documentType" v-model="mainGuest.documentType" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer">
                   <option value="passport">Pasaporte</option>
                   <option value="dni">Cédula / DNI</option>
                   <option value="other">Licencia / Otro</option>
                 </select>
               </div>
               <div>
-                <label class="block text-[11px] font-bold text-navy uppercase mb-2">Nº Documento</label>
-                <input v-model="mainGuest.document" type="text" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" />
+                <label for="prechk-document" class="block text-[11px] font-bold text-navy uppercase mb-2">Nº Documento</label>
+                <input id="prechk-document" name="document" v-model="mainGuest.document" type="text" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" />
               </div>
             </div>
             <div class="grid grid-cols-2 gap-4">
-              <div><label class="block text-[11px] font-bold text-navy uppercase mb-2">Nacionalidad</label><input v-model="mainGuest.nationality" type="text" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
-              <div><label class="block text-[11px] font-bold text-navy uppercase mb-2">Teléfono</label><input v-model="mainGuest.phone" type="tel" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <div><label for="prechk-nationality" class="block text-[11px] font-bold text-navy uppercase mb-2">Nacionalidad</label><input id="prechk-nationality" name="nationality" v-model="mainGuest.nationality" type="text" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <div><label for="prechk-phone" class="block text-[11px] font-bold text-navy uppercase mb-2">Teléfono</label><input id="prechk-phone" name="phone" autocomplete="tel" v-model="mainGuest.phone" type="tel" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
             </div>
             <div class="grid grid-cols-3 gap-3">
-              <div><label class="block text-[11px] font-bold text-navy uppercase mb-2">Dirección</label><input v-model="mainGuest.address" type="text" class="w-full px-3 py-2.5 rounded-xl border border-border text-sm" /></div>
-              <div><label class="block text-[11px] font-bold text-navy uppercase mb-2">Ciudad</label><input v-model="mainGuest.city" type="text" class="w-full px-3 py-2.5 rounded-xl border border-border text-sm" /></div>
-              <div><label class="block text-[11px] font-bold text-navy uppercase mb-2">País</label><input v-model="mainGuest.country" type="text" class="w-full px-3 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <div><label for="prechk-address" class="block text-[11px] font-bold text-navy uppercase mb-2">Dirección</label><input id="prechk-address" name="address" v-model="mainGuest.address" type="text" class="w-full px-3 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <div><label for="prechk-city" class="block text-[11px] font-bold text-navy uppercase mb-2">Ciudad</label><input id="prechk-city" name="city" v-model="mainGuest.city" type="text" class="w-full px-3 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <div><label for="prechk-country" class="block text-[11px] font-bold text-navy uppercase mb-2">País</label><input id="prechk-country" name="country" v-model="mainGuest.country" type="text" class="w-full px-3 py-2.5 rounded-xl border border-border text-sm" /></div>
             </div>
 
             <div v-if="!travelingAlone && companions.length" class="space-y-2">
               <label class="block text-[11px] font-bold text-navy uppercase">Documento de tus acompañantes</label>
               <div v-for="(c, i) in companions" :key="i" class="flex items-center gap-2 bg-surface rounded-lg p-2">
                 <span class="flex-1 text-xs text-navy font-bold truncate">{{ c.name || `Acompañante ${i + 1}` }}</span>
-                <input v-model="c.documentNumber" placeholder="Nº documento" class="w-32 px-3 py-1.5 rounded-lg border border-border text-xs" />
+                <input :id="`prechk-companion-${i}-document`" :name="`companionDocument${i}`" :aria-label="`Número de documento del acompañante ${i + 1}`" v-model="c.documentNumber" type="text" placeholder="Nº documento" class="w-32 px-3 py-1.5 rounded-lg border border-border text-xs" />
               </div>
             </div>
           </div>
@@ -236,8 +236,8 @@
           <button type="button" class="text-xs font-bold text-coral hover:underline cursor-pointer mt-2" @click="clearSignature">Borrar firma</button>
 
           <div class="flex items-start gap-3 bg-surface rounded-xl p-4 mt-4">
-            <input v-model="contractAccepted" type="checkbox" class="mt-1 w-4 h-4 rounded text-cyan cursor-pointer" />
-            <div class="text-xs text-text-secondary">Leí y acepto las normas del establecimiento descritas arriba.</div>
+            <input id="prechk-contract-accepted" name="contractAccepted" required aria-required="true" v-model="contractAccepted" type="checkbox" class="mt-1 w-4 h-4 rounded text-cyan cursor-pointer" />
+            <label for="prechk-contract-accepted" class="text-xs text-text-secondary cursor-pointer">Leí y acepto las normas del establecimiento descritas arriba.</label>
           </div>
 
           <div class="flex gap-3 mt-6">
@@ -251,11 +251,11 @@
           <h3 class="text-sm font-black text-navy uppercase mb-3">Tratamiento de tus datos</h3>
           <div class="space-y-3">
             <label class="flex items-start gap-3 bg-surface rounded-xl p-4 cursor-pointer">
-              <input v-model="gdprAccepted" type="checkbox" class="mt-1 w-4 h-4 rounded text-cyan cursor-pointer" />
+              <input id="prechk-gdpr-accepted" name="gdprAccepted" required aria-required="true" v-model="gdprAccepted" type="checkbox" class="mt-1 w-4 h-4 rounded text-cyan cursor-pointer" />
               <span class="text-xs text-text-secondary">Autorizo el tratamiento de mis datos personales para el registro de hospedaje, conforme a la política de privacidad del hotel. *</span>
             </label>
             <label class="flex items-start gap-3 bg-surface rounded-xl p-4 cursor-pointer">
-              <input v-model="marketingAccepted" type="checkbox" class="mt-1 w-4 h-4 rounded text-cyan cursor-pointer" />
+              <input id="prechk-marketing-accepted" name="marketingAccepted" v-model="marketingAccepted" type="checkbox" class="mt-1 w-4 h-4 rounded text-cyan cursor-pointer" />
               <span class="text-xs text-text-secondary">Quiero recibir promociones y novedades del hotel por email (opcional).</span>
             </label>
           </div>

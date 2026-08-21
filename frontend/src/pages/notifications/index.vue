@@ -18,13 +18,13 @@
 
     <!-- Filtros -->
     <div class="flex items-center gap-2 mb-4 flex-wrap">
-      <input v-model="search" type="text" placeholder="Buscar..." class="px-4 py-2 rounded-xl border border-border text-sm w-56 focus:outline-none focus:border-navy" />
-      <select v-model="filterType" class="px-3 py-2 rounded-xl border border-border text-xs font-bold cursor-pointer">
+      <input id="notifications-search" name="search" aria-label="Buscar" v-model="search" type="text" placeholder="Buscar..." class="px-4 py-2 rounded-xl border border-border text-sm w-56 focus:outline-none focus:border-navy" />
+      <select id="notifications-filter-type" name="filterType" aria-label="Filtrar notificaciones por tipo" v-model="filterType" class="px-3 py-2 rounded-xl border border-border text-xs font-bold cursor-pointer">
         <option value="">Todos los tipos</option>
         <option v-for="t in availableTypes" :key="t" :value="t">{{ notifMeta(t).label }}</option>
       </select>
       <label class="flex items-center gap-2 px-3 py-2 rounded-xl border border-border text-xs font-bold cursor-pointer">
-        <input v-model="unreadOnly" type="checkbox" class="w-4 h-4 rounded text-cyan" />
+        <input id="notifications-solo-no-leidas" name="unreadOnly" v-model="unreadOnly" type="checkbox" class="w-4 h-4 rounded text-cyan" />
         Solo no leídas
       </label>
       <span class="text-xs text-text-muted ml-auto">{{ filtered.length }} resultados</span>

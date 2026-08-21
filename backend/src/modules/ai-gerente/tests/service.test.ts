@@ -1,8 +1,37 @@
 // ai-gerente/tests/service.test.ts — Tests de M17 Gerente IA (ask/list/feedback).
-import { describe, it, expect } from 'bun:test'
+//
+// "fallback sin LLM" tiene que ser CIERTO. `service.ts:45` lee `DEEPSEEK_API_KEY`/`LLM_API_KEY` de
+// `process.env` y `usecases/ask.ts:45` hace `fetch` con `AbortSignal.timeout(25_000)`, hasta 4
+// vueltas. Bun autocarga `backend/.env`, donde esas claves son REALES: corrido como `bun test` a
+// secas, este archivo salía a internet — el verde dependía de un tercero y, con el endpoint
+// inalcanzable, tumbaba el gate a los 25s. El script del repo (`bun run test`) usa
+// `--env-file .env.test` y no las carga, pero un test no puede depender de CÓMO lo lanzaron:
+// acá se apagan explícitamente y se vigila que nadie salga a la red.
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import type { CacheAdapter } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { AiGerenteService } from '../service'
+
+const LLM_ENV = ['DEEPSEEK_API_KEY', 'LLM_API_KEY'] as const
+const savedEnv: Record<string, string | undefined> = {}
+const realFetch = globalThis.fetch
+let salidasDeRed: string[] = []
+
+beforeEach(() => {
+  for (const k of LLM_ENV) { savedEnv[k] = process.env[k]; delete process.env[k] }
+  salidasDeRed = []
+  // Centinela: si alguna vez vuelve a salir a internet, el test lo dice en vez de tardar 25s.
+  const centinela = (input: any) => {
+    salidasDeRed.push(String(input))
+    throw new Error(`El test salió a la red: ${String(input)}`)
+  }
+  centinela.preconnect = realFetch.preconnect
+  globalThis.fetch = centinela as unknown as typeof fetch
+})
+afterEach(() => {
+  for (const k of LLM_ENV) { if (savedEnv[k] === undefined) delete process.env[k]; else process.env[k] = savedEnv[k]! }
+  globalThis.fetch = realFetch
+})
 
 const log = silentLogger()
 const silentCache: CacheAdapter = { get: async () => null, set: async () => {}, delete: async () => {}, flush: async () => {} }
@@ -37,6 +66,9 @@ describe('AiGerenteService', () => {
     expect(interaction.response).toBeTruthy()
     expect(interaction.hotelId).toBe('h1')
     expect(interaction.queryType).toBe('question')
+    // Sin LLM, la respuesta la arma el fallback con los KPIs reales — y NO se llamó a ningún LLM.
+    expect(salidasDeRed).toHaveLength(0)
+    expect(interaction.response).toContain('LLM no configurado')
   })
 
   it('ask: lanza si el user no tiene hotel asignado', async () => {

@@ -311,27 +311,27 @@ const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
       <div class="space-y-4">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Proveedor <span class="text-coral">*</span></label>
-            <select v-model="form.supplierId" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
+            <label for="compras-ordenes-proveedor" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Proveedor <span class="text-coral">*</span></label>
+            <select id="compras-ordenes-proveedor" name="supplierId" v-model="form.supplierId" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
               <option value="">Seleccionar…</option>
               <option v-for="s in suppliers" :key="s.id" :value="s.id">{{ s.name }}</option>
             </select>
             <p v-if="!suppliers.length" class="text-[10px] text-coral mt-1">No hay proveedores. Cargalos en Tesorería → Proveedores.</p>
           </div>
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Desde requisición (opcional)</label>
-            <select v-model="form.requisitionId" @change="onPickRequisition" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
+            <label for="compras-ordenes-desde-requisicion-opcional" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Desde requisición (opcional)</label>
+            <select id="compras-ordenes-desde-requisicion-opcional" name="requisitionId" v-model="form.requisitionId" @change="onPickRequisition" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
               <option value="">— Ninguna —</option>
               <option v-for="r in availableReqs" :key="r.id" :value="r.id">{{ r.number }}</option>
             </select>
           </div>
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Fecha esperada</label>
-            <input v-model="form.expectedDate" type="date" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+            <label for="compras-ordenes-fecha-esperada" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Fecha esperada</label>
+            <input id="compras-ordenes-fecha-esperada" name="expectedDate" v-model="form.expectedDate" type="date" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nota</label>
-            <input v-model="form.notes" maxlength="200" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+            <label for="compras-ordenes-nota" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nota</label>
+            <input id="compras-ordenes-nota" name="notes" v-model="form.notes" maxlength="200" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
         </div>
 
@@ -342,14 +342,14 @@ const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
           </div>
           <div class="space-y-2">
             <div v-for="(l, idx) in form.lines" :key="idx" class="flex items-start gap-2">
-              <select v-model="l.inventoryItemId" @change="onPickItem(l)" class="w-36 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
+              <select :id="`orden-linea-${idx}-insumo`" :aria-label="`Insumo de la línea ${idx + 1}`" v-model="l.inventoryItemId" @change="onPickItem(l)" class="w-36 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
                 <option value="">Libre</option>
                 <option v-for="i in activeInventory" :key="i.id" :value="i.id">{{ i.name }}</option>
               </select>
-              <input v-model="l.description" placeholder="Descripción" maxlength="120" class="flex-1 min-w-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
-              <input v-model.number="l.quantity" type="number" min="0" placeholder="Cant." class="w-16 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" title="Cantidad" />
-              <input v-model.number="l.unitPrice" type="number" min="0" placeholder="Precio" class="w-20 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" title="Precio unitario" />
-              <input v-model.number="l.taxRate" type="number" min="0" placeholder="Imp.%" class="w-16 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" title="Impuesto %" />
+              <input :id="`orden-linea-${idx}-descripcion`" :aria-label="`Descripción de la línea ${idx + 1}`" required aria-required="true" v-model="l.description" placeholder="Descripción" maxlength="120" class="flex-1 min-w-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+              <input :id="`orden-linea-${idx}-cantidad`" :aria-label="`Cantidad de la línea ${idx + 1}`" v-model.number="l.quantity" type="number" min="0" placeholder="Cant." class="w-16 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" title="Cantidad" />
+              <input :id="`orden-linea-${idx}-precio`" :aria-label="`Precio unitario de la línea ${idx + 1}`" v-model.number="l.unitPrice" type="number" min="0" placeholder="Precio" class="w-20 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" title="Precio unitario" />
+              <input :id="`orden-linea-${idx}-impuesto`" :aria-label="`Impuesto (%) de la línea ${idx + 1}`" v-model.number="l.taxRate" type="number" min="0" placeholder="Imp.%" class="w-16 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" title="Impuesto %" />
               <button @click="removeLine(idx)" :disabled="form.lines.length === 1" class="shrink-0 w-9 h-9 grid place-items-center rounded-lg text-coral hover:bg-coral/10 disabled:opacity-30" aria-label="Quitar">✕</button>
             </div>
           </div>
@@ -432,12 +432,12 @@ const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
               <div class="font-bold text-navy truncate">{{ l.description }}</div>
               <div class="text-[11px] text-text-muted">Pendiente: {{ l.pending }}</div>
             </div>
-            <input v-model.number="l.qty" type="number" min="0" :max="l.pending" class="w-24 px-2 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:border-navy" />
+            <input :id="`orden-recepcion-${l.orderItemId}`" :aria-label="`Cantidad recibida de ${l.description}`" v-model.number="l.qty" type="number" min="0" :max="l.pending" class="w-24 px-2 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:border-navy" />
           </div>
         </div>
         <div>
-          <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nota (opcional)</label>
-          <input v-model="receiveNotes" maxlength="200" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+          <label for="compras-ordenes-nota-opcional" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nota (opcional)</label>
+          <input id="compras-ordenes-nota-opcional" name="receiveNotes" v-model="receiveNotes" maxlength="200" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
         </div>
       </div>
       <template #footer>
@@ -451,8 +451,8 @@ const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
       <div class="space-y-3">
         <p class="text-sm text-text-muted">Registra la factura del proveedor y genera el gasto (pega en caja y contabilidad). No se duplica si ya está facturada.</p>
         <div>
-          <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Número de factura del proveedor</label>
-          <input v-model="invoiceNumber" maxlength="60" placeholder="Ej: F-001234" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+          <label for="compras-ordenes-numero-de-factura-del" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Número de factura del proveedor</label>
+          <input id="compras-ordenes-numero-de-factura-del" name="invoiceNumber" v-model="invoiceNumber" maxlength="60" placeholder="Ej: F-001234" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
         </div>
       </div>
       <template #footer>

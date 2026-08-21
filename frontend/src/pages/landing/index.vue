@@ -250,25 +250,34 @@
           <h2 class="text-3xl md:text-4xl font-black text-navy mb-4">Planes para cada hotel</h2>
           <p class="text-slate-500 max-w-xl mx-auto">Sin contratos largos. Cancela cuando quieras. Soporte incluido en todos los planes.</p>
         </div>
+        <!-- Los precios son los de la tabla `plans` (GET /api/public/plans), no literales del
+             template: ver services/PlanCatalog.service.ts. Mientras la API responde se muestra
+             el copy con el precio en gris; si falla, queda "Consultar" + aviso, nunca en blanco. -->
+        <p v-if="plansFailed" class="text-center text-xs text-slate-400 mb-6" data-testid="plans-fallback-notice">
+          No pudimos cargar los precios actualizados. Escribinos y te los pasamos al instante.
+        </p>
         <div class="grid sm:grid-cols-2 lg:grid-cols-5 gap-5 items-start">
-          <div v-for="plan in plans" :key="plan.name"
+          <div v-for="plan in plans" :key="plan.id"
             class="rounded-2xl border border-slate-200 bg-white overflow-hidden transition-all flex flex-col h-full"
             :class="plan.featured ? 'shadow-xl lg:-translate-y-2 ring-1 ring-purple/15' : 'hover:shadow-md'">
             <div class="p-6" :class="planColor(plan.color).header">
               <div v-if="plan.badge" class="inline-flex mb-3 text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider" :class="planColor(plan.color).badge">{{ plan.badge }}</div>
               <div class="text-lg font-black text-white mb-1">{{ plan.name }}</div>
               <div class="flex items-end gap-1.5 flex-wrap">
-                <span class="text-2xl font-black text-white">{{ plan.price }}</span>
-                <span v-if="plan.priceSuffix" class="text-xs text-white/60 mb-1">{{ plan.priceSuffix }}</span>
+                <span v-if="plansLoading && !plan.priceKnown" class="h-7 w-24 rounded bg-white/20 animate-pulse" data-testid="plan-price-loading"></span>
+                <template v-else>
+                  <span class="text-2xl font-black text-white" data-testid="plan-price">{{ plan.priceLabel }}</span>
+                  <span v-if="plan.priceKnown && !plan.quote" class="text-xs text-white/60 mb-1">/mes</span>
+                </template>
               </div>
-              <div class="text-[11px] text-white/70 mt-1">{{ plan.rooms }}</div>
+              <div v-if="plan.rooms" class="text-[11px] text-white/70 mt-1">{{ plan.rooms }}</div>
             </div>
             <div class="p-6 flex flex-col flex-1">
               <p class="text-xs text-slate-500 mb-5 min-h-10">{{ plan.desc }}</p>
-              <a v-if="plan.href" :href="plan.href"
+              <a v-if="plan.quote" :href="SALES_MAILTO"
                 class="block w-full py-2.5 rounded-xl text-center text-xs font-bold mb-6 border transition-colors"
                 :class="planColor(plan.color).cta">
-                {{ plan.cta }}
+                Contactar ventas
               </a>
               <!-- `?plan=` preselecciona el plan en el alta: elegir "Professional" acá y que el
                    formulario abra en el primero de la lista pierde la intención del visitante.
@@ -276,7 +285,7 @@
               <router-link v-else :to="{ path: '/registro', query: { plan: plan.slug } }"
                 class="block w-full py-2.5 rounded-xl text-center text-xs font-bold mb-6 border transition-colors"
                 :class="planColor(plan.color).cta">
-                {{ plan.cta }}
+                Prueba gratis 30 días
               </router-link>
               <div class="space-y-2.5 flex-1">
                 <div v-for="feat in plan.features" :key="feat" class="flex items-start gap-2 text-xs text-slate-600">
@@ -339,7 +348,7 @@
             Comenzar Gratis
             <svg class="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
           </router-link>
-          <a href="mailto:ventas@solmios.com" class="inline-flex items-center gap-2 border border-white/20 text-white font-semibold text-sm px-8 py-4 rounded-xl hover:bg-white/10 transition-colors">Hablar con Ventas</a>
+          <a :href="SALES_MAILTO" class="inline-flex items-center gap-2 border border-white/20 text-white font-semibold text-sm px-8 py-4 rounded-xl hover:bg-white/10 transition-colors">Hablar con Ventas</a>
         </div>
         <!-- Trust mini-badges -->
         <div class="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 mt-12 text-white/40">
@@ -362,6 +371,7 @@ import SiteHeader from '@/components/site/SiteHeader.vue'
 import SiteFooter from '@/components/site/SiteFooter.vue'
 import { usePageMeta } from '@/composables/usePageMeta'
 import { PUBLIC_PAGE_META } from '@/pages/public-meta'
+import { PlanCatalogService, SALES_MAILTO, type DisplayPlan } from '@/services/PlanCatalog.service'
 
 usePageMeta(PUBLIC_PAGE_META.landing)
 
@@ -443,36 +453,23 @@ function planColor(color: string) {
   return PLAN_COLORS[color] ?? PLAN_COLORS.navy
 }
 
-// `slug` referencia al plan real de la tabla `plans` del backend (ver
-// backend/scripts/create-plans-table.ts) — es lo que viaja en `/registro?plan=`.
-// El resto de los campos es copy de marketing y vive solo acá.
-const plans = [
-  {
-    name: 'Essential', slug: 'essential', price: 'USD 99', priceSuffix: '/mes', rooms: 'Hasta 20 habitaciones', color: 'navy',
-    desc: 'Para micro-hoteles, posadas y apartamentos turísticos.', cta: 'Prueba gratis 30 días',
-    features: ['PMS Central completo', 'Channel Manager (6+ OTAs)', 'Motor de reservas sin comisión', 'Creador de sitio web', 'Dashboard operativo', 'Facturación electrónica LATAM', 'Soporte por email'],
-  },
-  {
-    name: 'Starter', slug: 'starter', price: 'USD 199', priceSuffix: '/mes', rooms: 'Hasta 50 habitaciones', color: 'teal',
-    desc: 'Para hoteles boutique pequeños en crecimiento.', cta: 'Prueba gratis 30 días',
-    features: ['Todo lo del plan Essential', 'Recepción Digital (Check-In/Out online)', 'App SOLMI Staff para empleados', 'Housekeeping Inteligente', 'CRM y Fidelización básico', 'SOLMI Academy completa', 'Soporte prioritario'],
-  },
-  {
-    name: 'Professional', slug: 'professional', price: 'USD 349', priceSuffix: '/mes', rooms: 'Hasta 100 habitaciones', color: 'purple',
-    desc: 'La solución inteligente para hoteles y apartahoteles.', cta: 'Prueba gratis 30 días', badge: 'Más Popular', featured: true,
-    features: ['Todo lo del plan Starter', 'Recepcionista Virtual con IA', 'Revenue Manager con IA', 'Nómina Automatizada', 'Marketing Automatizado', 'Business Intelligence avanzado', 'API Abierta e integraciones', 'Soporte dedicado con SLA'],
-  },
-  {
-    name: 'Enterprise', slug: 'enterprise', price: 'USD 549', priceSuffix: '/mes', rooms: 'Hasta 200 habitaciones', color: 'gold',
-    desc: 'Para hoteles grandes y cadenas boutique.', cta: 'Prueba gratis 30 días',
-    features: ['Todo lo del plan Professional', 'Gerente Virtual con IA (briefings diarios)', 'Multipropiedad (hasta 3 propiedades)', 'Comunidad SOLMI (eventos y red)', 'App SOLMI Guest para huéspedes', 'Reportes ejecutivos consolidados', 'Account Manager dedicado', 'Onboarding premium incluido'],
-  },
-  {
-    name: 'Ultra', price: 'A cotización', priceSuffix: '', rooms: '200+ hab. · Ilimitado', color: 'coral',
-    desc: 'Para cadenas regionales, grupos hoteleros y franquicias.', cta: 'Contactar ventas', badge: 'Premium', href: 'mailto:ventas@solmios.com',
-    features: ['Todos los 26 módulos sin límite', 'Multipropiedad ilimitada', 'Gerente Virtual IA personalizado', 'Integraciones a medida', 'Capacitación presencial', 'SLA < 1 hora de respuesta', 'Gerente de cuenta ejecutivo dedicado', 'Precio según volumen de propiedades'],
-  },
-]
+// Precios y nombres salen de la tabla `plans` (GET /api/public/plans) — GH-31. Antes esta lista
+// tenía su propio juego de precios ("USD 99"/"USD 349") que no coincidía ni con /panel/suscripcion
+// ni con lo que Stripe termina cobrando. El copy de marketing (color, features, tope de
+// habitaciones) sí vive en el catálogo del front: no es un dato de negocio.
+// El `slug` es lo que viaja en `/registro?plan=`; un slug desconocido no rompe nada — el alta
+// cae a su default.
+const plans = ref<DisplayPlan[]>(PlanCatalogService.fallback())
+const plansLoading = ref(true)
+/** La API no contestó (o no hay planes publicados): se muestra el fallback y se avisa. */
+const plansFailed = ref(false)
+
+onMounted(async () => {
+  const res = await PlanCatalogService.load()
+  plans.value = res.plans
+  plansFailed.value = !res.fromApi
+  plansLoading.value = false
+})
 
 const testimonials = [
   { quote: 'Pasamos de usar 4 herramientas diferentes a solo SolmiOS. El Channel Manager nos ahorró 3 horas diarias de trabajo manual.', name: 'Juan García', hotel: 'Hotel Caribe Paradise', initials: 'JG', avatarBg: '#1D6FA4' },

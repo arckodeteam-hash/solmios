@@ -1,0 +1,83 @@
+# SDD State: rediseno-techo-cobro
+
+change_name: rediseno-techo-cobro
+created: 2026-08-20
+status: draft
+current_phase: proposal
+
+origen: |
+  Decision del usuario tras cuatro rondas de parches fallidas sobre el mismo agujero
+  (change `github-issues-pendientes`, sprint GH-0). Las cuatro rondas midieron el MISMO resultado
+  contra el service real: 600 USD cobrables sobre un saldo de 300. Se cerraron dos puertas y
+  aparecieron cuatro mas.
+
+sprints:
+  rtc-0-contencion:
+    title: Contencion inmediata de las puertas abiertas
+    status: pending
+    tasks_total: 5
+    tasks_done: 0
+    priority: critical
+    note: "P3 create-checkout sobre fila cancelada · P4 totalAmount escribible · P5 status:paid manual · P6 auto-payment-request fuera del porton · deleteReservation deja cobros huerfanos"
+
+  rtc-1-fuente-de-verdad:
+    title: La verdad de que esta abierto vive donde esta el dinero
+    status: pending
+    tasks_total: 3
+    tasks_done: 0
+    priority: critical
+    note: "REQUIERE decision en 1.1 antes de codear: consultar a Stripe vs tabla propia de sesiones vivas"
+
+  rtc-2-porton-unico:
+    title: Un solo camino de creacion de cobro
+    status: pending
+    tasks_total: 2
+    tasks_done: 0
+    priority: high
+
+  rtc-3-balance:
+    title: El balance deja de moverse libremente con links vivos
+    status: pending
+    tasks_total: 2
+    tasks_done: 0
+    priority: high
+
+  rtc-4-propiedad:
+    title: Verificacion de la propiedad, no de los casos
+    status: pending
+    tasks_total: 2
+    tasks_done: 0
+    priority: critical
+    note: "Es lo que falto las 4 veces: habia test por puerta y aparecia la siguiente. El test tiene que ENCONTRAR puertas, no enumerarlas."
+
+  rtc-5-deuda-datos:
+    title: Backfill y vinculo directo que no se usa
+    status: pending
+    tasks_total: 3
+    tasks_done: 0
+    priority: high
+    note: "El backfill SI es posible: charge-reschedule-diff.ts:44 ya escribia metadata.reservationId. El comentario que dice lo contrario es falso."
+
+  rtc-6-gate:
+    title: Que el gate pueda ver este tipo de bug
+    status: pending
+    tasks_total: 4
+    tasks_done: 0
+    priority: medium
+    note: "LOOPKIT_ENFORCE=0 · base tomada de un stash (2a vez) midio 63 de 128 rutas · RUBRICA vs verify.sh en desacuerdo · kit sin versionar"
+
+total_tasks: 21
+tasks_done: 0
+
+execution_order: [rtc-0-contencion, rtc-4-propiedad, rtc-1-fuente-de-verdad, rtc-2-porton-unico, rtc-3-balance, rtc-5-deuda-datos, rtc-6-gate]
+
+artifacts: {proposal: true, tasks: true, state: true, specs: false}
+
+notes:
+  - "2026-08-20: RTC-4 va SEGUNDO, antes del redisenio. Sin una prueba que encuentre puertas por su
+     cuenta no hay forma de saber si el redisenio cerro la clase de bug o solo las instancias que ya
+     conocemos."
+  - "3891 tests en verde con el invariante roto: build, typecheck, arckode analyze y la suite entera
+     pasan. Ninguno mide la propiedad de negocio 'no se le puede cobrar al huesped mas de lo que debe'."
+  - "Todas las puertas fueron reproducidas ejecutando contra PaymentRequestsService real. Los probes
+     quedaron en el scratchpad de la sesion, no en el repo."

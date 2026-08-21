@@ -63,7 +63,7 @@
     <SectionCard v-if="activeTab === 'invoices' && !loading"
       title="Facturas" :subtitle="`${totalItems} documento(s)`" body-class="p-0">
       <template #actions>
-        <select v-model="invoiceFilter" @change="applyInvoiceFilter"
+        <select id="billing-invoice-filter" name="invoiceFilter" aria-label="Filtrar facturas por estado" v-model="invoiceFilter" @change="applyInvoiceFilter"
           class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
           <option class="text-navy" value="all">Todas</option>
           <option class="text-navy" value="paid">Pagadas</option>
@@ -386,8 +386,8 @@
       :subtitle="paymentForm.guest || undefined" @close="closePaymentModal">
       <div class="space-y-4">
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Monto ($)</label>
-          <input v-model.number="paymentForm.amount" data-testid="pay-amount-input" type="number" min="0"
+          <label for="billing-pay-amount" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Monto ($) <span class="text-coral">*</span></label>
+          <input id="billing-pay-amount" name="payAmount" required aria-required="true" v-model.number="paymentForm.amount" data-testid="pay-amount-input" type="number" min="0"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-lg font-black text-navy tabular-nums focus:border-navy focus:outline-none" />
         </div>
 
@@ -409,14 +409,14 @@
         </div>
 
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Referencia</label>
-          <input v-model="paymentForm.reference" type="text" placeholder="N° transacción, comprobante, etc."
+          <label for="billing-pay-reference" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Referencia</label>
+          <input id="billing-pay-reference" name="payReference" v-model="paymentForm.reference" type="text" placeholder="N° transacción, comprobante, etc."
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
         </div>
 
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Notas</label>
-          <textarea v-model="paymentForm.notes" rows="2" placeholder="Opcional..."
+          <label for="billing-pay-notes" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Notas</label>
+          <textarea id="billing-pay-notes" name="payNotes" v-model="paymentForm.notes" rows="2" placeholder="Opcional..."
             class="w-full resize-none rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none"></textarea>
         </div>
       </div>
@@ -436,8 +436,8 @@
       :subtitle="`Habitación ${chargeRoom}`" @close="closeChargeModal">
       <div class="space-y-4">
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Concepto</label>
-          <select v-model="chargeForm.description" class="w-full cursor-pointer rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
+          <label for="billing-charge-description" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Concepto</label>
+          <select id="billing-charge-description" name="chargeDescription" v-model="chargeForm.description" class="w-full cursor-pointer rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
             <option value="">Seleccionar…</option>
             <option value="Minibar">Minibar</option>
             <option value="Servicio de habitación">Servicio de habitación</option>
@@ -450,14 +450,14 @@
         </div>
 
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Monto ($)</label>
-          <input v-model.number="chargeForm.amount" type="number" min="0"
+          <label for="billing-charge-amount" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Monto ($) <span class="text-coral">*</span></label>
+          <input id="billing-charge-amount" name="chargeAmount" required aria-required="true" v-model.number="chargeForm.amount" type="number" min="0"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-lg font-black text-navy tabular-nums focus:border-navy focus:outline-none" />
         </div>
 
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Notas</label>
-          <textarea v-model="chargeForm.notes" rows="2" placeholder="Detalle del cargo…"
+          <label for="billing-charge-notes" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Notas</label>
+          <textarea id="billing-charge-notes" name="chargeNotes" v-model="chargeForm.notes" rows="2" placeholder="Detalle del cargo…"
             class="w-full resize-none rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none"></textarea>
         </div>
       </div>
@@ -477,12 +477,12 @@
       <div class="space-y-4">
               <!-- Room Search -->
               <div>
-                <label class="flex items-center gap-1.5 text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">
+                <label for="invoice-room-search" class="flex items-center gap-1.5 text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">
                   <span class="w-3.5 h-3.5 shrink-0" v-html="ICON_SEARCH"></span>
                   Buscar Habitación
                 </label>
                 <div class="relative">
-                  <input v-model="newInvoice.roomSearch" @input="filterRooms" @focus="showRoomDropdown = true" @blur="closeRoomDropdown" type="text" placeholder="Escribí número de hab, nombre del huésped..." class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
+                  <input id="invoice-room-search" name="roomSearch" v-model="newInvoice.roomSearch" @input="filterRooms" @focus="showRoomDropdown = true" @blur="closeRoomDropdown" type="text" placeholder="Escribí número de hab, nombre del huésped..." class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
                   <div v-if="showRoomDropdown && filteredRooms.length" class="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-border rounded-xl shadow-lg max-h-56 overflow-y-auto">
                     <div v-for="room in filteredRooms" :key="room.id" @mousedown.prevent="selectRoom(room)" class="px-4 py-3 hover:bg-surface cursor-pointer border-b border-border last:border-0">
                       <div class="flex justify-between items-center">
@@ -518,7 +518,7 @@
                 </div>
                 <div class="space-y-2">
                   <div v-for="(item, idx) in newInvoice.items" :key="idx" class="flex gap-2 items-start">
-                    <select v-model="item.description" class="flex-1 px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
+                    <select :id="`invoice-item-${idx}-description`" :name="`itemDescription${idx}`" :aria-label="`Concepto del ítem ${idx + 1}`" v-model="item.description" class="flex-1 px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
                       <option value="">Concepto...</option>
                       <option value="Hospedaje">Hospedaje</option>
                       <option value="Minibar">Minibar</option>
@@ -529,7 +529,7 @@
                       <option value="Telefonía">Telefonía</option>
                       <option value="Otros">Otros</option>
                     </select>
-                    <input v-model.number="item.amount" type="number" min="0" step="0.01" placeholder="Monto" class="w-24 px-3 py-2 rounded-xl border border-border text-sm text-right focus:outline-none focus:border-navy" />
+                    <input :id="`invoice-item-${idx}-amount`" :name="`itemAmount${idx}`" :aria-label="`Monto del ítem ${idx + 1}`" v-model.number="item.amount" type="number" min="0" step="0.01" placeholder="Monto" class="w-24 px-3 py-2 rounded-xl border border-border text-sm text-right focus:outline-none focus:border-navy" />
                     <button v-if="newInvoice.items.length > 1" @click="removeInvoiceItem(idx)" class="w-8 h-8 rounded-full bg-coral/10 text-coral flex items-center justify-center hover:bg-coral/20 transition-colors cursor-pointer">
                       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
@@ -539,8 +539,8 @@
 
               <!-- Notes -->
               <div>
-                <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Notas</label>
-                <textarea v-model="newInvoice.notes" rows="2" placeholder="Detalle adicional..." class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy resize-none"></textarea>
+                <label for="invoice-notes" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Notas</label>
+                <textarea id="invoice-notes" name="notes" v-model="newInvoice.notes" rows="2" placeholder="Detalle adicional..." class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy resize-none"></textarea>
               </div>
 
         <!-- Total en vivo: lo que se va a emitir -->
@@ -630,8 +630,8 @@
           </p>
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Motivo de la anulación</label>
-          <textarea v-model="creditNoteReason" data-testid="credit-note-reason-input" rows="3" placeholder="Ej: error en el monto facturado, servicio no prestado…"
+          <label for="credit-note-reason" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Motivo de la anulación <span class="text-coral">*</span></label>
+          <textarea id="credit-note-reason" name="creditNoteReason" required aria-required="true" v-model="creditNoteReason" data-testid="credit-note-reason-input" rows="3" placeholder="Ej: error en el monto facturado, servicio no prestado…"
             class="w-full resize-none rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none"></textarea>
         </div>
       </div>

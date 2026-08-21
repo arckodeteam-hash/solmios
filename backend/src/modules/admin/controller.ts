@@ -6,6 +6,36 @@ import {
   ApplySpecialConditionsSchema, UpdateSpecialCategorySchema, UpdateSubscriptionSettingsSchema, ModuleOverrideSchema,
 } from './validators/schema'
 
+/**
+ * Mapeo de error → HTTP del catálogo de amenities.
+ *
+ * COR-3/SEC-5: los tres handlers tenían un `catch` con un status FIJO — el alta devolvía 409
+ * "Amenity ya existe" para CUALQUIER excepción, incluido el `ForbiddenError` que tira
+ * `assertOwnership` (un merchant recibía "ya existe" en vez de 403) y los errores de validación
+ * ("key y label requeridos" salía como conflicto). Ahora el status sale del TIPO de error.
+ *
+ * STR-4: el mapeo es por TIPO, no por texto. Antes `msg.includes('ya existe')` decidía el 409, así
+ * que cambiar un mensaje de UI cambiaba el código de respuesta; el usecase ahora tira
+ * `ValidationError`/`ConflictError`/`NotFoundError` del framework (mismo criterio que
+ * `usecases/subscription-categories.ts`). El único match por texto que queda es el `Forbidden` que
+ * `Auth.assertOwnership` tira como `Error` pelado desde el kernel: ese string no es de UI.
+ */
+const AMENITY_ERROR_STATUS: Record<string, number> = {
+  AuthError: 403, ForbiddenError: 403,
+  NotFoundError: 404,
+  ConflictError: 409,
+  ValidationError: 400,
+}
+
+function amenityErrorStatus(e: unknown): number {
+  const err = e as { name?: string; message?: string }
+  const byType = AMENITY_ERROR_STATUS[String(err?.name ?? '')]
+  if (byType) return byType
+  // `kernel/auth.ts` tira un Error sin subclase para el fallo de ownership.
+  if (String(err?.message ?? '').startsWith('Forbidden')) return 403
+  return 400
+}
+
 export class AdminController {
   constructor(
     private readonly service: AdminService,
@@ -100,9 +130,9 @@ export class AdminController {
   async createAmenityCatalog(req: HttpRequest) {
     try {
       const data = validateSchema(CreateAmenityCatalogSchema, req.body) as any
-      return { status: 201, body: await this.service.createAmenityCatalog(data) }
+      return { status: 201, body: await this.service.createAmenityCatalog(data, req.user as any) }
     } catch (e: any) {
-      return { status: 409, body: { error: e.message } }
+      return { status: amenityErrorStatus(e), body: { error: e.message } }
     }
   }
 
@@ -111,7 +141,7 @@ export class AdminController {
       const data = validateSchema(UpdateAmenityCatalogSchema, req.body) as any
       return { status: 200, body: await this.service.updateAmenityCatalog(req.params.id, data, req.user as any) }
     } catch (e: any) {
-      return { status: 404, body: { error: e.message } }
+      return { status: amenityErrorStatus(e), body: { error: e.message } }
     }
   }
 
@@ -120,7 +150,7 @@ export class AdminController {
       await this.service.deleteAmenityCatalog(req.params.id, req.user as any)
       return { status: 200, body: { success: true } }
     } catch (e: any) {
-      return { status: 404, body: { error: e.message } }
+      return { status: amenityErrorStatus(e), body: { error: e.message } }
     }
   }
 

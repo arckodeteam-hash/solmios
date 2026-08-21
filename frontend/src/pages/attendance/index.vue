@@ -78,7 +78,10 @@
           <!-- PIN input -->
           <div v-if="!todayRecord?.clockIn && selectedMethod === 'pin'" class="mb-4">
             <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-2">Código PIN</label>
-            <input v-model="pinCode" type="password" maxlength="6" placeholder="••••••" class="w-32 mx-auto block text-center px-4 py-3 rounded-xl border-2 border-navy/20 text-xl font-bold tracking-widest focus:outline-none focus:border-navy text-navy">
+            <!-- autocomplete="new-password": el PIN de fichaje es del empleado que está frente al
+                 lector, no una credencial del navegador. Sin esto aparecía prellenado con la
+                 contraseña guardada del sitio y se fichaba con un PIN que nadie tipeó (GH-32). -->
+            <input v-model="pinCode" type="password" maxlength="6" placeholder="PIN" autocomplete="new-password" name="attendance-pin" class="w-32 mx-auto block text-center px-4 py-3 rounded-xl border-2 border-navy/20 text-xl font-bold tracking-widest focus:outline-none focus:border-navy text-navy">
           </div>
 
           <!-- Resumen del día — solo los datos que existen (nada de "—") -->
@@ -178,9 +181,9 @@
         :subtitle="report.length ? `${report.length} empleado(s) en el rango` : 'Elegí un rango de fechas'"
         body-class="p-0">
         <template #actions>
-          <input v-model="reportFrom" type="date"
+          <input id="attendance-report-from" name="reportFrom" aria-label="Reporte desde la fecha" v-model="reportFrom" type="date"
             class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
-          <input v-model="reportTo" type="date"
+          <input id="attendance-report-to" name="reportTo" aria-label="Reporte hasta la fecha" v-model="reportTo" type="date"
             class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
           <button @click="loadReport"
             class="flex items-center gap-1.5 rounded-lg bg-cyan px-3 py-2 text-[11px] font-extrabold text-navy hover:shadow-lg transition-all cursor-pointer">
@@ -243,7 +246,7 @@
           <button @click="shiftWeek(7)" title="Semana siguiente"
             class="grid h-8 w-8 place-items-center rounded-lg border border-white/15 bg-white/10 text-white hover:bg-white/20 transition-colors cursor-pointer">›</button>
         </div>
-        <select v-model="paintScheduleId"
+        <select id="attendance-paint-schedule" name="paintScheduleId" aria-label="Turno a asignar en el calendario" v-model="paintScheduleId"
           class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
           <option class="text-navy" value="" disabled>Turno a pintar</option>
           <option class="text-navy" v-for="s in schedules" :key="s.id" :value="s.id">{{ s.name }} ({{ s.startTime }}-{{ s.endTime }})</option>
@@ -300,22 +303,22 @@
       subtitle="Herramienta de supervisor" @close="showSupervisorTools = false">
       <div class="space-y-4">
         <div>
-          <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Empleado</label>
-          <input v-model="manualForm.employeeId" placeholder="ID del empleado" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+          <label for="attendance-empleado" class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Empleado</label>
+          <input id="attendance-empleado" name="employeeId" required aria-required="true" v-model="manualForm.employeeId" placeholder="ID del empleado" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
         </div>
         <div class="grid sm:grid-cols-2 gap-3">
           <div>
-            <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Hora de entrada</label>
-            <input v-model="manualForm.clockIn" type="datetime-local" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+            <label for="attendance-hora-de-entrada" class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Hora de entrada</label>
+            <input id="attendance-hora-de-entrada" name="clockIn" required aria-required="true" v-model="manualForm.clockIn" type="datetime-local" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
           </div>
           <div>
-            <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Hora de salida <span class="normal-case font-normal text-text-muted/70">(opcional)</span></label>
-            <input v-model="manualForm.clockOut" type="datetime-local" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+            <label for="attendance-hora-de-salida-opcional" class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Hora de salida <span class="normal-case font-normal text-text-muted/70">(opcional)</span></label>
+            <input id="attendance-hora-de-salida-opcional" name="clockOut" v-model="manualForm.clockOut" type="datetime-local" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
           </div>
         </div>
         <div>
-          <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Motivo</label>
-          <input v-model="manualForm.notes" placeholder="Ej: Olvidó marcar entrada, dispositivo sin conexión..." class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+          <label for="attendance-motivo" class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Motivo</label>
+          <input id="attendance-motivo" name="notes" v-model="manualForm.notes" placeholder="Ej: Olvidó marcar entrada, dispositivo sin conexión..." class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
         </div>
       </div>
       <template #footer>
@@ -333,25 +336,25 @@
       subtitle="Horario, descanso y tolerancia" @close="scheduleModal = false">
       <div class="space-y-4">
         <div>
-          <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Nombre del turno</label>
-          <input v-model="scheduleForm.name" placeholder="Mañana" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+          <label for="attendance-nombre-del-turno" class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Nombre del turno</label>
+          <input id="attendance-nombre-del-turno" name="name" required aria-required="true" v-model="scheduleForm.name" placeholder="Mañana" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
         </div>
         <div class="grid sm:grid-cols-2 gap-3">
           <div>
-            <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Hora inicio</label>
-            <input v-model="scheduleForm.startTime" placeholder="HH:MM" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy">
+            <label for="attendance-hora-inicio" class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Hora inicio</label>
+            <input id="attendance-hora-inicio" name="startTime" required aria-required="true" v-model="scheduleForm.startTime" placeholder="HH:MM" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy">
           </div>
           <div>
-            <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Hora fin</label>
-            <input v-model="scheduleForm.endTime" placeholder="HH:MM" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy">
+            <label for="attendance-hora-fin" class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Hora fin</label>
+            <input id="attendance-hora-fin" name="endTime" required aria-required="true" v-model="scheduleForm.endTime" placeholder="HH:MM" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy">
           </div>
           <div>
-            <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Descanso (min)</label>
-            <input v-model.number="scheduleForm.breakMinutes" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy">
+            <label for="attendance-descanso-min" class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Descanso (min)</label>
+            <input id="attendance-descanso-min" name="breakMinutes" v-model.number="scheduleForm.breakMinutes" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy">
           </div>
           <div>
-            <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Tolerancia (min)</label>
-            <input v-model.number="scheduleForm.graceMinutes" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy">
+            <label for="attendance-tolerancia-min" class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1.5">Tolerancia (min)</label>
+            <input id="attendance-tolerancia-min" name="graceMinutes" v-model.number="scheduleForm.graceMinutes" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy">
           </div>
         </div>
       </div>

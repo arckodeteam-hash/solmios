@@ -302,18 +302,18 @@ function goNext() { if (page.value < pages.value) loadData(page.value + 1) }
       <div class="space-y-4">
         <div>
           <label for="gasto-concept" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Concepto <span class="text-coral">*</span></label>
-          <input id="gasto-concept" name="concept" v-model="form.concept" required :aria-invalid="!!conceptError" placeholder="Ej: Compra de detergentes" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:outline-none" :class="conceptError ? 'border-coral ring-2 ring-coral/20' : 'border-border focus:border-navy'" />
+          <input id="gasto-concept" name="concept" aria-required="true" v-model="form.concept" required :aria-invalid="!!conceptError" placeholder="Ej: Compra de detergentes" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:outline-none" :class="conceptError ? 'border-coral ring-2 ring-coral/20' : 'border-border focus:border-navy'" />
           <p v-if="conceptError" role="alert" class="mt-1 text-[11px] font-semibold text-coral">{{ conceptError }}</p>
         </div>
         <div class="grid grid-cols-3 gap-3">
           <div>
             <label for="gasto-amount" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Importe <span class="text-coral">*</span></label>
-            <input id="gasto-amount" name="amount" v-model.number="form.amount" type="number" min="0.01" step="0.01" required :aria-invalid="!!amountError" placeholder="0.00" class="w-full rounded-xl border px-4 py-2.5 text-right text-sm font-bold text-navy tabular-nums focus:outline-none" :class="amountError ? 'border-coral ring-2 ring-coral/20' : 'border-border focus:border-navy'" />
+            <input id="gasto-amount" name="amount" aria-required="true" v-model.number="form.amount" type="number" min="0.01" step="0.01" required :aria-invalid="!!amountError" placeholder="0.00" class="w-full rounded-xl border px-4 py-2.5 text-right text-sm font-bold text-navy tabular-nums focus:outline-none" :class="amountError ? 'border-coral ring-2 ring-coral/20' : 'border-border focus:border-navy'" />
             <p v-if="amountError" role="alert" class="mt-1 text-[11px] font-semibold text-coral">{{ amountError }}</p>
           </div>
           <div class="col-span-2">
-            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Categoría</label>
-            <select v-model="form.category" class="w-full cursor-pointer rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
+            <label for="gastos-categoria" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Categoría</label>
+            <select id="gastos-categoria" name="category" v-model="form.category" class="w-full cursor-pointer rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
               <option value="general">General</option><option value="supplies">Suministros</option>
               <option value="maintenance">Mantenimiento</option><option value="cleaning">Limpieza</option>
               <option value="staff">Personal</option><option value="marketing">Marketing</option>
@@ -322,17 +322,17 @@ function goNext() { if (page.value < pages.value) loadData(page.value + 1) }
           </div>
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Proveedor</label>
-          <input v-model="form.provider" placeholder="Opcional" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
+          <label for="gastos-proveedor" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Proveedor</label>
+          <input id="gastos-proveedor" name="provider" v-model="form.provider" placeholder="Opcional" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Fecha</label>
-            <input v-model="form.date" type="date" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
+            <label for="gastos-fecha" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Fecha</label>
+            <input id="gastos-fecha" name="date" v-model="form.date" type="date" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
           </div>
           <div>
-            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Método de pago</label>
-            <select v-model="form.paymentMethod" class="w-full cursor-pointer rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
+            <label for="gastos-metodo-de-pago" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Método de pago</label>
+            <select id="gastos-metodo-de-pago" name="paymentMethod" v-model="form.paymentMethod" class="w-full cursor-pointer rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
               <option value="cash">Efectivo</option><option value="card">Tarjeta</option>
               <option value="transfer">Transferencia</option><option value="other">Otro</option>
             </select>
@@ -340,7 +340,7 @@ function goNext() { if (page.value < pages.value) loadData(page.value + 1) }
         </div>
         <div>
           <label class="flex items-center gap-2 cursor-pointer">
-            <input v-model.number="form.paid" type="checkbox" :true-value="1" :false-value="0" class="h-4 w-4 accent-navy cursor-pointer" />
+            <input id="gastos-ya-esta-pagado" name="paid" v-model.number="form.paid" type="checkbox" :true-value="1" :false-value="0" class="h-4 w-4 accent-navy cursor-pointer" />
             <span class="text-sm font-bold text-navy">Ya está pagado</span>
           </label>
           <p v-if="movesCash" class="mt-1.5 pl-6 text-[11px] text-text-muted">
@@ -348,8 +348,8 @@ function goNext() { if (page.value < pages.value) loadData(page.value + 1) }
           </p>
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Notas</label>
-          <textarea v-model="form.notes" placeholder="Opcional" rows="2" class="w-full resize-none rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none"></textarea>
+          <label for="gastos-notas" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Notas</label>
+          <textarea id="gastos-notas" name="notes" v-model="form.notes" placeholder="Opcional" rows="2" class="w-full resize-none rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none"></textarea>
         </div>
       </div>
 

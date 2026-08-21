@@ -34,11 +34,11 @@
             <div class="space-y-2">
               <div>
                 <label class="text-[10px] font-bold text-text-muted uppercase">Inicio</label>
-                <input v-model="s.startDate" type="date" class="w-full mt-1 px-3 py-2 rounded-full border border-border text-xs focus:outline-none focus:border-navy" />
+                <input :id="`temporada-${i}-inicio`" :aria-label="`Inicio de la temporada ${s.name}`" v-model="s.startDate" type="date" class="w-full mt-1 px-3 py-2 rounded-full border border-border text-xs focus:outline-none focus:border-navy" />
               </div>
               <div>
                 <label class="text-[10px] font-bold text-text-muted uppercase">Fin</label>
-                <input v-model="s.endDate" type="date" class="w-full mt-1 px-3 py-2 rounded-full border border-border text-xs focus:outline-none focus:border-navy" />
+                <input :id="`temporada-${i}-fin`" :aria-label="`Fin de la temporada ${s.name}`" v-model="s.endDate" type="date" class="w-full mt-1 px-3 py-2 rounded-full border border-border text-xs focus:outline-none focus:border-navy" />
               </div>
               <button v-if="!s.active" @click="activateSeason(s.name)" :disabled="activatingSeason"
                 class="w-full mt-1 px-3 py-2 rounded-full bg-navy/5 hover:bg-navy text-navy hover:text-white text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-50">
@@ -99,7 +99,7 @@
                       <span class="font-extrabold text-navy capitalize">{{ roomType }}</span>
                       <label class="flex items-center gap-2 ml-auto text-[10px] font-bold text-text-muted uppercase">
                         Precio Base $
-                        <input :value="getBasePrice(roomType)" @input="setBasePrice(roomType, $event)" type="number" min="0"
+                        <input :aria-label="`Precio base de ${roomType}`" :value="getBasePrice(roomType)" @input="setBasePrice(roomType, $event)" type="number" min="0"
                           class="w-24 px-3 py-1.5 rounded-full border border-border text-sm font-bold text-navy focus:outline-none focus:border-cyan" />
                       </label>
                     </div>
@@ -116,7 +116,7 @@
                     <div class="flex flex-col items-center gap-1">
                       <div class="flex items-center gap-1">
                         <span class="text-xs font-black" :style="{ color: s.color }">+</span>
-                        <input :value="getPercentage(roomType, occ, s.name)" @input="setPercentage(roomType, occ, s.name, $event)"
+                        <input :aria-label="`Recargo % de ${roomType}, ${occ} huésped(es), temporada ${s.name}`" :value="getPercentage(roomType, occ, s.name)" @input="setPercentage(roomType, occ, s.name, $event)"
                           type="number" min="0" max="500" step="0.5"
                           class="w-14 px-2 py-1 rounded-full border border-border text-sm font-bold text-navy text-right focus:outline-none focus:border-cyan" />
                         <span class="text-xs font-bold text-text-muted">%</span>

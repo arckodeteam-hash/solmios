@@ -150,11 +150,27 @@ describe('reservasRescheduleChargeConnector', () => {
 })
 
 describe('reservasPaymentRequestsConnector', () => {
+  const prModule = { create: async () => ({}), clampRequestsToCeiling: async () => 0, releaseRequestsOfReservation: async () => 0 }
   it('cablea los tres sockets (created/updated/deleted)', () => {
-    const { ctx, captured } = makeCtx({})
+    const { ctx, captured } = makeCtx({ 'payment-requests': prModule })
     reservasPaymentRequestsConnector({} as any)(ctx)
     expect(typeof captured.sockets.onReservasCreated).toBe('function')
     expect(typeof captured.sockets.onReservasUpdated).toBe('function')
     expect(typeof captured.sockets.onReservasDeleted).toBe('function')
+  })
+
+  it('SEC3-2/SEC3-3: inyecta el clamp/liberación de links vivos en las orchestration deps', async () => {
+    const calls: string[] = []
+    const { ctx, captured } = makeCtx({
+      'payment-requests': {
+        ...prModule,
+        clampRequestsToCeiling: async (h: string, r: string) => { calls.push(`clamp:${h}:${r}`); return 1 },
+        releaseRequestsOfReservation: async (h: string, r: string) => { calls.push(`release:${h}:${r}`); return 2 },
+      },
+    })
+    reservasPaymentRequestsConnector({} as any)(ctx)
+    await captured.orchestration.paymentRequestsCeiling.clamp('h1', 'r9')
+    await captured.orchestration.paymentRequestsCeiling.releaseAll('h1', 'r9')
+    expect(calls).toEqual(['clamp:h1:r9', 'release:h1:r9'])
   })
 })

@@ -190,8 +190,8 @@
       :subtitle="folioSubtitle(chargeModal.folio)" @close="chargeModal.show = false">
       <div class="space-y-4">
         <div>
-          <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Categoría</label>
-          <select v-model="chargeForm.category" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
+          <label for="folio-charge-category" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Categoría</label>
+          <select id="folio-charge-category" name="chargeCategory" v-model="chargeForm.category" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
             <option value="room">Habitación</option>
             <option value="minibar">Minibar</option>
             <option value="restaurant">Restaurante</option>
@@ -202,17 +202,17 @@
           </select>
         </div>
         <div>
-          <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Descripción</label>
-          <input v-model="chargeForm.description" type="text" placeholder="Ej: Cena - menú del día" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
+          <label for="folio-charge-description" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Descripción <span class="text-coral">*</span></label>
+          <input id="folio-charge-description" name="chargeDescription" required aria-required="true" v-model="chargeForm.description" type="text" placeholder="Ej: Cena - menú del día" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Monto unitario</label>
-            <input v-model.number="chargeForm.amount" type="number" min="0" step="0.01" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-bold tabular-nums text-navy text-right focus:outline-none focus:border-navy" />
+            <label for="folio-charge-amount" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Monto unitario <span class="text-coral">*</span></label>
+            <input id="folio-charge-amount" name="chargeAmount" required aria-required="true" v-model.number="chargeForm.amount" type="number" min="0" step="0.01" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-bold tabular-nums text-navy text-right focus:outline-none focus:border-navy" />
           </div>
           <div>
-            <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Cantidad</label>
-            <input v-model.number="chargeForm.quantity" type="number" min="1" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-bold tabular-nums text-navy text-right focus:outline-none focus:border-navy" />
+            <label for="folio-charge-quantity" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Cantidad</label>
+            <input id="folio-charge-quantity" name="chargeQuantity" v-model.number="chargeForm.quantity" type="number" min="1" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-bold tabular-nums text-navy text-right focus:outline-none focus:border-navy" />
           </div>
         </div>
       </div>
@@ -251,15 +251,15 @@
           </div>
         </div>
         <div>
-          <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Monto</label>
+          <label for="folio-pay-amount" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Monto <span class="text-coral">*</span></label>
           <div class="flex gap-2">
-            <input v-model.number="payForm.amount" type="number" min="0" step="0.01" :placeholder="String(payModal.folio?.balance || 0)" class="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm font-bold tabular-nums text-navy text-right focus:outline-none focus:border-navy" />
+            <input id="folio-pay-amount" name="payAmount" required aria-required="true" v-model.number="payForm.amount" type="number" min="0" step="0.01" :placeholder="String(payModal.folio?.balance || 0)" class="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm font-bold tabular-nums text-navy text-right focus:outline-none focus:border-navy" />
             <button @click="payForm.amount = payModal.folio?.balance || 0" type="button" class="px-3.5 py-2 rounded-full border border-border text-text-secondary text-xs font-bold hover:border-navy/30 transition-colors cursor-pointer">Total</button>
           </div>
         </div>
         <div>
-          <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Referencia (opcional)</label>
-          <input v-model="payForm.reference" type="text" placeholder="Ej: TXN-12345" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
+          <label for="folio-pay-reference" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Referencia (opcional)</label>
+          <input id="folio-pay-reference" name="payReference" v-model="payForm.reference" type="text" placeholder="Ej: TXN-12345" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
         </div>
       </div>
       <template #footer>

@@ -18,7 +18,8 @@
 
 import { ConflictError, NotFoundError } from 'arckode-framework'
 import { eachDayExclusive } from '../../../shared/utils/daily-availability'
-import { baseRatesOnly, buildSeasonByDate, pickRate, ratePrice, round2 } from '../../../shared/utils/rate-resolution'
+import { baseRatesOnly, buildSeasonByDate, pickRate, ratePrice } from '../../../shared/utils/rate-resolution'
+import { round2 } from '../../../shared/utils/money'
 
 export interface QuoteRepos {
   roomRepo: any

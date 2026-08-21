@@ -55,16 +55,21 @@
 
           <form @submit.prevent="handleLogin" class="space-y-4">
             <div>
-              <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5 block">Email</label>
-              <input v-model="email" type="email" placeholder="admin@hotel.com" data-testid="login-email" class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
+              <label for="auth-login-email" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5 block">Email</label>
+              <input id="auth-login-email" name="email" aria-required="true" v-model="email" type="email" placeholder="admin@hotel.com" data-testid="login-email" class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
             </div>
 
             <div>
               <div class="flex items-center justify-between mb-1.5">
-                <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide">Contraseña</label>
+                <label for="auth-login-password" class="text-[11px] font-bold text-text-muted uppercase tracking-wide">Contraseña</label>
                 <router-link to="/forgot-password" class="text-[11px] font-bold text-cyan hover:text-navy transition-colors">¿Olvidaste tu contraseña?</router-link>
               </div>
-              <input v-model="password" type="password" placeholder="••••••••" data-testid="login-password" class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
+              <!-- autocomplete="current-password": es el login real, el gestor de contraseñas
+                   TIENE que poder ofrecer la credencial guardada. Acá "new-password" rompería
+                   el acceso de todos los usuarios (GH-32). -->
+              <input id="auth-login-password" aria-required="true" v-model="password" type="password" placeholder="Contraseña" data-testid="login-password"
+                autocomplete="current-password" name="password"
+                class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
             </div>
 
             <!-- Cuenta bloqueada por la suscripción: no alcanza con el error,

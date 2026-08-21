@@ -136,4 +136,42 @@ export const StripeService = {
     if (!stripe) return null
     return stripe.checkout.sessions.retrieve(sessionId)
   },
+
+  /**
+   * Da de baja una Checkout Session en Stripe.
+   *
+   * Hasta GH-0.3 el repo NUNCA expiraba una sesión (0 hits de `sessions.expire`): sacar un
+   * PaymentRequest de `pending` liberaba el techo agregado del lado del servidor mientras el link
+   * seguía vivo y pagable del lado del huésped, y regenerar el checkout pisaba `stripeSessionId`
+   * dejando la anterior también viva. N clicks = N sesiones cobrables sobre el mismo saldo.
+   *
+   * Devuelve QUÉ pasó, no un boolean, porque el caller decide distinto en cada caso:
+   *  - `expired`    → la sesión estaba abierta y quedó muerta: el techo se puede liberar.
+   *  - `paid`       → ya se completó (el huésped pagó): NO se puede cancelar el cobro.
+   *  - `gone`       → ya no estaba abierta o no existe en esta cuenta: no hay nada que liberar.
+   * Un fallo de red o de credenciales SE PROPAGA: tragarlo volvería a dejar la sesión viva.
+   */
+  async expireCheckoutSession(sessionId: string, hotelId?: string): Promise<'expired' | 'paid' | 'gone'> {
+    const stripe = await this.getClient(hotelId)
+    if (!stripe) throw new Error('Stripe no configurado')
+    try {
+      const s = await stripe.checkout.sessions.expire(sessionId)
+      return s.status === 'expired' ? 'expired' : classifySession(s)
+    } catch (e: any) {
+      // Stripe rechaza expirar una sesión que ya no está `open`. Distinguir "pagada" de "muerta"
+      // exige releerla: sólo así el caller sabe si puede liberar el techo.
+      if (e?.type !== 'StripeInvalidRequestError') throw e
+      const s = await stripe.checkout.sessions.retrieve(sessionId).catch(() => null)
+      if (!s) return 'gone'
+      if (s.status === 'open') throw e // seguía abierta y aun así falló: no mentir con 'gone'
+      return classifySession(s)
+    }
+  },
+}
+
+/** Traduce el estado de una sesión al vocabulario de `expireCheckoutSession`. */
+function classifySession(s: Stripe.Checkout.Session): 'expired' | 'paid' | 'gone' {
+  if (s.status === 'complete' || s.payment_status === 'paid') return 'paid'
+  if (s.status === 'expired') return 'expired'
+  return 'gone'
 }

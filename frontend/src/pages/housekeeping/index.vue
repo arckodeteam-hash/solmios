@@ -47,7 +47,7 @@
         {{ filter.label }}
       </button>
       <label class="flex items-center gap-1.5 text-[11px] font-bold text-text-secondary cursor-pointer ml-auto select-none">
-        <input type="checkbox" v-model="hideCompleted" class="accent-navy w-3.5 h-3.5 cursor-pointer" />
+        <input id="housekeeping-ocultar-terminadas" name="hideCompleted" type="checkbox" v-model="hideCompleted" class="accent-navy w-3.5 h-3.5 cursor-pointer" />
         Ocultar terminadas
       </label>
     </div>
@@ -170,10 +170,10 @@
     <SectionCard v-else title="Tareas de limpieza" body-class="p-0">
       <template #actions>
         <div class="relative">
-          <input v-model="listSearch" type="text" placeholder="Buscar habitación, tipo, empleado..." class="pl-9 pr-4 py-2 rounded-full border border-border text-sm w-64 bg-white focus:outline-none focus:border-navy" />
+          <input id="housekeeping-list-search" name="listSearch" aria-label="Buscar habitación, tipo, empleado" v-model="listSearch" type="text" placeholder="Buscar habitación, tipo, empleado..." class="pl-9 pr-4 py-2 rounded-full border border-border text-sm w-64 bg-white focus:outline-none focus:border-navy" />
           <span class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" v-html="ICON_SEARCH"></span>
         </div>
-        <select v-model="listPageSize" class="px-3 py-2 rounded-full border border-border text-sm bg-white focus:outline-none focus:border-navy cursor-pointer">
+        <select id="housekeeping-page-size" name="listPageSize" aria-label="Tareas por página" v-model="listPageSize" class="px-3 py-2 rounded-full border border-border text-sm bg-white focus:outline-none focus:border-navy cursor-pointer">
           <option :value="10">10 por página</option>
           <option :value="20">20 por página</option>
           <option :value="50">50 por página</option>
@@ -319,7 +319,7 @@
               >★</button>
               <span v-if="ratingInput != null" class="ml-2 text-sm font-black text-navy tabular-nums">{{ ratingInput }} / 10</span>
             </div>
-            <textarea
+            <textarea id="housekeeping-rating-note" name="ratingNote" aria-label="Nota para la camarera (opcional)"
               v-model="ratingNote" rows="2" maxlength="500"
               placeholder="Nota para la camarera (opcional)…"
               class="w-full px-3 py-2 bg-white border border-border rounded-lg text-sm focus:outline-none focus:border-cyan resize-none mb-3"
@@ -359,7 +359,7 @@
               <div class="text-[10px] font-bold text-text-muted uppercase tracking-wide">Evidencia</div>
               <label class="text-[11px] font-bold text-cyan cursor-pointer hover:underline">
                 + Subir foto
-                <input type="file" accept="image/*" class="hidden" @change="onPhotoSelect" />
+                <input id="housekeeping-subir-foto" type="file" accept="image/*" class="hidden" @change="onPhotoSelect" />
               </label>
             </div>
             <!-- Cada foto se muestra con el área que se le pidió a la camarera:
@@ -483,8 +483,8 @@
               <SearchSelect v-model="newTask.roomNumber" :options="roomOptions" placeholder="Buscar habitación..." />
             </div>
             <div>
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Tipo de tarea *</label>
-              <select v-model="newTask.type" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
+              <label for="housekeeping-tipo-de-tarea" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Tipo de tarea *</label>
+              <select id="housekeeping-tipo-de-tarea" name="type" v-model="newTask.type" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
                 <option value="">Seleccionar...</option>
                 <option value="full_cleaning">Limpieza completa</option>
                 <option value="quick_cleaning">Limpieza rápida</option>
@@ -494,23 +494,23 @@
               </select>
             </div>
             <div>
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Prioridad</label>
-              <select v-model="newTask.priority" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
+              <label for="housekeeping-prioridad" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Prioridad</label>
+              <select id="housekeeping-prioridad" name="priority" v-model="newTask.priority" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
                 <option value="medium">Normal</option>
                 <option value="high">Alta</option>
                 <option value="urgent">Urgente</option>
               </select>
             </div>
             <div>
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Asignar a</label>
-              <select v-model="newTask.staffId" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
+              <label for="housekeeping-asignar-a" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Asignar a</label>
+              <select id="housekeeping-asignar-a" name="staffId" v-model="newTask.staffId" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
                 <option value="">Seleccionar...</option>
                 <option v-for="emp in assignableStaff" :key="emp.id" :value="emp.id">{{ emp.name }}</option>
               </select>
             </div>
             <div class="col-span-2">
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Notas</label>
-              <textarea v-model="newTask.notes" rows="3" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy resize-none" placeholder="Instrucciones especiales..."></textarea>
+              <label for="housekeeping-notas" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Notas</label>
+              <textarea id="housekeeping-notas" name="notes" v-model="newTask.notes" rows="3" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy resize-none" placeholder="Instrucciones especiales..."></textarea>
             </div>
           </div>
       <template #footer>
@@ -524,8 +524,8 @@
     <!-- Modal: Asignar Tareas Rápidas -->
     <AppModal v-if="showAssignModal" size="lg" title="Asignar tareas rápidas" @close="showAssignModal = false">
           <div class="mb-5">
-            <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Seleccionar personal</label>
-            <select v-model="assignStaff" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
+            <label for="housekeeping-seleccionar-personal" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Seleccionar personal</label>
+            <select id="housekeeping-seleccionar-personal" name="assignStaff" v-model="assignStaff" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
               <option value="">Seleccionar camarera...</option>
               <option v-for="emp in assignableStaff" :key="emp.id" :value="emp.id">{{ emp.name }}</option>
             </select>
@@ -536,7 +536,7 @@
             <div v-if="assignableTasks.length === 0" class="text-xs text-text-muted py-2">No hay tareas pendientes para asignar.</div>
             <div v-else class="space-y-2">
               <label v-for="task in assignableTasks" :key="task.id" class="flex items-center gap-3 rounded-xl p-3 border border-border cursor-pointer transition-colors hover:border-navy/30">
-                <input type="checkbox" :value="task.id" v-model="assignSelection" class="w-4 h-4 accent-navy" />
+                <input :id="`housekeeping-asignar-${task.id}`" :aria-label="`Seleccionar la tarea de la habitación ${task.roomNumber}`" type="checkbox" :value="task.id" v-model="assignSelection" class="w-4 h-4 accent-navy" />
                 <span class="text-sm font-black text-navy">{{ task.roomNumber }}</span>
                 <span class="text-xs text-text-muted">{{ task.type }}</span>
               </label>

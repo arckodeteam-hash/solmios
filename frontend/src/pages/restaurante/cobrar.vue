@@ -301,7 +301,7 @@ async function confirmRefund() {
             </button>
             <div class="flex items-center gap-1.5">
               <span class="text-xs text-text-muted">Monto</span>
-              <input v-model.number="tip" type="number" min="0" step="0.01"
+              <input id="restaurante-cobrar-propina" name="tip" aria-label="Monto de la propina" v-model.number="tip" type="number" min="0" step="0.01"
                 class="w-24 px-2 py-1.5 rounded-lg border-2 border-border text-sm text-navy focus:border-navy focus:outline-none tabular-nums" />
             </div>
           </div>
@@ -323,8 +323,8 @@ async function confirmRefund() {
 
         <!-- Cargo a habitación -->
         <SectionCard title="Cargar a habitación" subtitle="Suma el consumo neto al folio de una reserva. Sin propina; el impuesto lo aplica el folio.">
-          <label class="block text-xs font-bold text-text-muted mb-1">ID de reserva</label>
-          <input v-model="reservationId" type="text" placeholder="Reserva asociada (si la comanda ya la tiene, se usa esa)"
+          <label for="restaurante-cobrar-id-de-reserva" class="block text-xs font-bold text-text-muted mb-1">ID de reserva</label>
+          <input id="restaurante-cobrar-id-de-reserva" name="reservationId" v-model="reservationId" type="text" placeholder="Reserva asociada (si la comanda ya la tiene, se usa esa)"
             class="w-full px-3 py-2 rounded-lg border-2 border-border text-sm text-navy focus:border-navy focus:outline-none mb-3" />
           <button @click="chargeRoom" :disabled="!canPay || busy || unknownState || !canChargeRoom"
             class="w-full py-3 rounded-xl bg-navy text-white font-black hover:bg-navy-light disabled:opacity-50">

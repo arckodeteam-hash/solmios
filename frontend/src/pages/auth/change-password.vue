@@ -15,10 +15,14 @@
           <!-- Current Password -->
           <div>
             <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5 block">Contraseña Actual</label>
+            <!-- autocomplete="current-password": pide la credencial VIGENTE para autorizar el
+                 cambio, así que el gestor de contraseñas debe poder completarla (GH-32). -->
             <input
               v-model="currentPassword"
               type="password"
-              placeholder="••••••••"
+              placeholder="Contraseña actual"
+              autocomplete="current-password"
+              name="current-password"
               class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30"
               required
             />
@@ -27,10 +31,14 @@
           <!-- New Password -->
           <div>
             <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5 block">Nueva Contraseña</label>
+            <!-- autocomplete="new-password": define un secreto nuevo. Sin esto Chrome lo
+                 rellenaba con la credencial guardada del sitio (GH-32). -->
             <input
               v-model="newPassword"
               type="password"
-              placeholder="••••••••"
+              placeholder="Nueva contraseña"
+              autocomplete="new-password"
+              name="new-password"
               class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30"
               required
             />
@@ -39,10 +47,13 @@
           <!-- Confirm Password -->
           <div>
             <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5 block">Confirmar Nueva Contraseña</label>
+            <!-- Confirmación de la contraseña nueva: mismo criterio que el campo de arriba. -->
             <input
               v-model="confirmPassword"
               type="password"
-              placeholder="••••••••"
+              placeholder="Confirmar contraseña"
+              autocomplete="new-password"
+              name="confirm-password"
               class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30"
               required
             />

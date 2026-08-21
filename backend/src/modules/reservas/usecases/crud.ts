@@ -4,8 +4,11 @@ import { assertUpdateValidations } from './validate-update'
 import { safeEmit } from './safe-emit'
 import { reservasListCacheKey, invalidateReservasCaches } from './cache'
 import { eachDayExclusive } from '../../../shared/utils/daily-availability'
-import { baseRatesOnly, buildSeasonByDate, sumStayPrice, round2 } from '../../../shared/utils/rate-resolution'
+import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from '../../../shared/utils/rate-resolution'
+import { round2 } from '../../../shared/utils/money'
 import { guestsOfReservation } from './reprice'
+import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
+import type { PaidSource } from '../../../shared/usecases/reservation-paid'
 import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from '../types'
 
 /**
@@ -211,7 +214,28 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
   return item
 }
 
-export async function updateReservation(repo: any, logger: any, cache: any, sockets: any, id: string, dto: UpdateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, groupRepo?: any, promoCodes?: PromoCodePort): Promise<ReservasDTO> {
+/**
+ * Efectos colaterales que tienen que correr DENTRO de la ventana de escritura del update.
+ *
+ * ARCH-7 / COR-2: recalcular `pendingAmount` DESPUÉS de `updateReservation` dejaba dos agujeros —
+ * el socket `onReservasUpdated` viajaba con el saldo VIEJO, y una lectura que entrara entre la
+ * invalidación de caché y el recálculo volvía a cachear el número pre-sync durante 300s. Todo lo
+ * que mueva el saldo se ejecuta acá: después de persistir, antes de emitir e invalidar.
+ */
+export interface UpdateReservationHooks {
+  /** Corre tras el `repo.update` exitoso. Lo que devuelva se mergea en el item que se emite/devuelve. */
+  afterPersist?: (item: ReservasDTO) => Promise<Partial<ReservasDTO> | void>
+  /**
+   * Corre DESPUÉS de persistir un update que mueve el total cobrable. SEC3-2: `totalAmount` y
+   * `otherCharges` son el lado "balance" del techo de `payment-requests` — bajarlos sin más deja
+   * vivas Checkout Sessions por importes que el nuevo saldo ya no respalda. Lo implementa el
+   * módulo dueño del cobro (connector `reservas-payment-requests`); sin él no hay links que
+   * recortar y es no-op.
+   */
+  afterCeilingDrop?: (item: ReservasDTO) => Promise<void>
+}
+
+export async function updateReservation(repo: any, logger: any, cache: any, sockets: any, id: string, dto: UpdateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, groupRepo?: any, promoCodes?: PromoCodePort, hooks?: UpdateReservationHooks): Promise<ReservasDTO> {
   const existing = await repo.findById(id)
   if (!existing) throw new NotFoundError('Reserva no encontrada')
   if (currentUser.role !== 'super_admin' && existing.hotelId !== currentUser.hotelId) throw new AuthError('No autorizado')
@@ -251,16 +275,66 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
   if (promoCodes?.releaseUse && prevCode && prevCode !== nextCode) {
     await promoCodes.releaseUse(existing.hotelId, prevCode).catch(() => {})
   }
-  await safeEmit(logger, 'onReservasUpdated', sockets.onReservasUpdated, item)
+  // Orden NO negociable: persistir → hooks (recálculo del saldo) → socket → invalidar caché.
+  // Emitir o invalidar antes del hook publica/recachea el saldo viejo (COR-2).
+  const patched = (await hooks?.afterPersist?.(item)) || {}
+  const result = { ...item, ...patched } as ReservasDTO
+  // SEC3-2: si este update movió el total cobrable, los links de pago vivos se recortan al saldo
+  // NUEVO. Corre después de persistir a propósito: el clamp relee la reserva y necesita ver el
+  // total definitivo. Si Stripe falla, el PUT ya quedó aplicado y el clamp se reintenta en el
+  // próximo cambio de la reserva — la ventana residual es la misma que la de un webhook lento.
+  if (dto.totalAmount !== undefined || dto.otherCharges !== undefined) {
+    await hooks?.afterCeilingDrop?.(result)
+  }
+  await safeEmit(logger, 'onReservasUpdated', sockets.onReservasUpdated, result)
   await invalidateReservasCaches(cache, existing.hotelId)
-  return item
+  return result
+}
+
+/**
+ * `updateReservation` + recálculo de la columna PERSISTIDA `reservations.pendingAmount`.
+ *
+ * `otherCharges`/`totalAmount`/`deposit` mueven el total cobrable, y esa columna es la que lee el
+ * listado y el planning mientras el detalle lo recalcula al vuelo. Sin este paso el mismo campo
+ * público devuelve dos números distintos según el endpoint (hallazgo ARCH-7).
+ *
+ * `addonsOf` es OBLIGATORIO a propósito: si fuera opcional, un llamador que lo omita reintroduce
+ * la divergencia en silencio.
+ */
+export async function updateReservationWithBalance(
+  addonsOf: AddonSource,
+  /** OBLIGATORIO por el mismo motivo que `addonsOf`: sin él el saldo persistido se calcula contra
+   *  `reservations.deposit` y contradice al detalle y al techo del cobro (GH-0.2). */
+  paidOf: PaidSource,
+  repo: any, logger: any, cache: any, sockets: any, id: string, dto: UpdateReservasDTO,
+  currentUser: { id: string; role: string; hotelId?: string },
+  roomRepo?: any, guestRepo?: any, groupRepo?: any, promoCodes?: PromoCodePort,
+  /** SEC3-2 — recorte de links de pago vivos cuando el total cobrable baja. Lo cablea el service
+   *  desde `orchestrationDeps` (connector `reservas-payment-requests`). Opcional: sin cobros
+   *  `pending` es no-op. */
+  ceilingGuard?: (item: ReservasDTO) => Promise<void>,
+): Promise<ReservasDTO> {
+  return updateReservation(repo, logger, cache, sockets, id, dto, currentUser, roomRepo, guestRepo, groupRepo, promoCodes, {
+    // Dentro de la ventana: el socket sale con el saldo nuevo y la caché se invalida DESPUÉS.
+    afterPersist: async (item) => ({ pendingAmount: await syncReservationPending(repo, addonsOf, id, paidOf, item) }),
+    afterCeilingDrop: ceilingGuard,
+  })
 }
 
 /** Devuelve la reserva borrada (SC-05: el service la necesita para el audit log). */
-export async function deleteReservation(repo: any, logger: any, cache: any, sockets: any, id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<any> {
+export async function deleteReservation(
+  repo: any, logger: any, cache: any, sockets: any, id: string,
+  currentUser: { id: string; role: string; hotelId?: string },
+  /** SEC3-3 — libera los links de pago vivos de la reserva ANTES de borrarla. Sin esto, el link
+   *  quedaba pagable sobre una reserva inexistente y el cobro entraba huérfano a `payments`.
+   *  Fail-loud a propósito: si Stripe no responde, la reserva NO se borra (mismo invariante que
+   *  `payment-requests/usecases/live-session.ts`: la sesión se mata antes de mutar la fila). */
+  releaseRequests?: (hotelId: string, reservationId: string) => Promise<void>,
+): Promise<any> {
   const existing = await repo.findById(id)
   if (!existing) throw new NotFoundError('Reserva no encontrada')
   if (currentUser.role !== 'super_admin' && existing.hotelId !== currentUser.hotelId) throw new AuthError('No autorizado')
+  if (releaseRequests) await releaseRequests(String(existing.hotelId), String(existing.id))
   // Una reserva con folio/check-in no se borra: el FK lo frena, pero como 500 de motor. Se mapea a
   // un 409 claro (regla "anular ≠ borrar": cancelar la reserva, no eliminar el registro).
   let deleted: boolean

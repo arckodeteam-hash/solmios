@@ -34,6 +34,11 @@ export class PaymentCrudUseCase {
     private readonly folioRepo?: RepositoryAdapter<any>,
     private readonly invoiceRepo?: RepositoryAdapter<any>,
     private readonly guestRepo?: RepositoryAdapter<any>,
+    /** SEC3-5: mismo check para `reservationId` — la columna nueva (BUG-ceiling-bypass) es el
+     *  vínculo directo del techo de `payment-requests`; un id cross-tenant acá infla o pincha el
+     *  saldo cobrable de una reserva ajena. Hoy no llega por HTTP (el schema no la declara), es
+     *  defensa en profundidad para los callers internos (charge-reschedule-diff). */
+    private readonly reservationRepo?: RepositoryAdapter<any>,
   ) {}
 
   /**
@@ -64,6 +69,8 @@ export class PaymentCrudUseCase {
     await this.assertBelongs(this.folioRepo, dto.folioId, dto.hotelId, 'El folio')
     await this.assertBelongs(this.invoiceRepo, dto.invoiceId, dto.hotelId, 'La factura')
     await this.assertBelongs(this.guestRepo, dto.guestId, dto.hotelId, 'El huésped')
+    // SEC3-5: la reserva referenciada también tiene que ser del hotel del pago.
+    await this.assertBelongs(this.reservationRepo, dto.reservationId, dto.hotelId, 'La reserva')
 
     // El efectivo se cobra en el acto; la tarjeta espera confirmación de Stripe. Un `status`
     // explícito gana: un cobro manual ya recibido (transferencia, POS) entra `completed`.
@@ -73,6 +80,7 @@ export class PaymentCrudUseCase {
       hotelId: dto.hotelId,
       folioId: dto.folioId ?? null,
       invoiceId: dto.invoiceId ?? null,
+      reservationId: dto.reservationId ?? null,
       guestId: dto.guestId ?? null,
       type: dto.type,
       method: dto.method,

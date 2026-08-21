@@ -45,12 +45,19 @@ const roomRepo = { findById: async () => null, findOne: async () => ({ id: 'room
 const hotelRepo = { findById: async () => null } as unknown as RepositoryAdapter<any>
 
 function makeQueries() {
-  return new ReservasQueries({
+  const q = new ReservasQueries({
     findMany: async () => [],
     findById: async () => null,
     create: async (data: any) => data,
     update: async () => {},
   })
+  // El camino reserva → dinero ya NO sale del ORM: lo sirve el puerto que cablea
+  // `connectors/reservas-money` (folios + facturas + payments). Un hotel sin plata cobrada.
+  q.setMoneyPort({
+    folios: async () => [], invoices: async () => [], payments: async () => [],
+    reservationIdOf: async () => null,
+  })
+  return q
 }
 
 describe('ReservasService', () => {

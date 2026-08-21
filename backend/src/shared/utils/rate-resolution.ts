@@ -28,6 +28,8 @@
 //   - `price` de la fila es el precio efectivo (`pricing/service.ts` lo persiste como
 //     `basePrice × (1 + percentage/100)`). Si viniera en 0 se recompone de base+percentage.
 
+import { round2 } from './money'
+
 /** `date (YYYY-MM-DD) → season`. Última fila gana si hubiera duplicados (no debería haberlos). */
 export function buildSeasonByDate(assignments: any[]): Map<string, string> {
   const out = new Map<string, string>()
@@ -216,6 +218,5 @@ export function sumStayPrice(
   return round2(total)
 }
 
-export function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100
-}
+// STR-1: `round2` NO se re-exporta desde acá — se importa de `shared/utils/money.ts`, su único
+// origen. Ver la nota equivalente en `reservation-balance.ts`.

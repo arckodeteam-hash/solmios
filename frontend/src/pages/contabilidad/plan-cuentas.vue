@@ -106,21 +106,21 @@ onMounted(load)
     <AppModal v-if="showModal" size="md" title="Nueva cuenta" @close="showModal = false">
       <div class="space-y-4">
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Código</label>
-          <input v-model="form.code" placeholder="1.1.01" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-mono focus:outline-none focus:border-navy" />
+          <label for="contabilidad-plan-cuentas-codigo" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Código</label>
+          <input id="contabilidad-plan-cuentas-codigo" name="code" required aria-required="true" v-model="form.code" placeholder="1.1.01" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-mono focus:outline-none focus:border-navy" />
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Nombre</label>
-          <input v-model="form.name" placeholder="Caja" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
+          <label for="contabilidad-plan-cuentas-nombre" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Nombre</label>
+          <input id="contabilidad-plan-cuentas-nombre" name="name" required aria-required="true" v-model="form.name" placeholder="Caja" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Tipo</label>
-          <select v-model="form.type" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
+          <label for="contabilidad-plan-cuentas-tipo" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Tipo</label>
+          <select id="contabilidad-plan-cuentas-tipo" name="type" required aria-required="true" v-model="form.type" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
             <option v-for="t in TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
           </select>
         </div>
         <label class="flex items-center gap-2 text-sm text-navy cursor-pointer">
-          <input type="checkbox" v-model="form.isPostable" /> Acepta asientos (cuenta imputable)
+          <input id="contabilidad-plan-cuentas-acepta-asientos-cuenta-imputable" name="isPostable" type="checkbox" v-model="form.isPostable" /> Acepta asientos (cuenta imputable)
         </label>
       </div>
       <template #footer>

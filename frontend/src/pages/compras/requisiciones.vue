@@ -219,8 +219,8 @@ const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
     <AppModal v-if="createOpen" title="Nueva requisición" size="xl" @close="createOpen = false">
       <div class="space-y-4">
         <div>
-          <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nota (opcional)</label>
-          <input v-model="form.notes" maxlength="200" placeholder="Ej: reposición semanal de bar"
+          <label for="compras-requisiciones-nota-opcional" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nota (opcional)</label>
+          <input id="compras-requisiciones-nota-opcional" name="notes" v-model="form.notes" maxlength="200" placeholder="Ej: reposición semanal de bar"
             class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
         </div>
 
@@ -231,13 +231,13 @@ const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
           </div>
           <div class="space-y-2">
             <div v-for="(l, idx) in form.lines" :key="idx" class="flex items-start gap-2">
-              <select v-model="l.inventoryItemId" @change="onPickItem(l)" class="w-40 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
+              <select :id="`requisicion-linea-${idx}-insumo`" :aria-label="`Insumo de la línea ${idx + 1}`" v-model="l.inventoryItemId" @change="onPickItem(l)" class="w-40 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
                 <option value="">Libre / sin insumo</option>
                 <option v-for="i in activeInventory" :key="i.id" :value="i.id">{{ i.name }}</option>
               </select>
-              <input v-model="l.description" placeholder="Descripción" maxlength="120" class="flex-1 min-w-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
-              <input v-model.number="l.quantity" type="number" min="0" placeholder="Cant." class="w-20 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
-              <input v-model="l.unit" placeholder="Unidad" maxlength="20" class="w-24 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+              <input :id="`requisicion-linea-${idx}-descripcion`" :aria-label="`Descripción de la línea ${idx + 1}`" required aria-required="true" v-model="l.description" placeholder="Descripción" maxlength="120" class="flex-1 min-w-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+              <input :id="`requisicion-linea-${idx}-cantidad`" :aria-label="`Cantidad de la línea ${idx + 1}`" v-model.number="l.quantity" type="number" min="0" placeholder="Cant." class="w-20 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+              <input :id="`requisicion-linea-${idx}-unidad`" :aria-label="`Unidad de la línea ${idx + 1}`" v-model="l.unit" placeholder="Unidad" maxlength="20" class="w-24 shrink-0 px-2 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
               <button @click="removeLine(idx)" :disabled="form.lines.length === 1" class="shrink-0 w-9 h-9 grid place-items-center rounded-lg text-coral hover:bg-coral/10 disabled:opacity-30" aria-label="Quitar">✕</button>
             </div>
           </div>

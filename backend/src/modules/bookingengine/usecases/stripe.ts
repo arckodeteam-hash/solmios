@@ -20,7 +20,8 @@
 //   - `handleWebhook` actualiza `repo('Reservations')` (NO `repo('BookingEngine')`). Como la
 //     tabla `reservations` no expone `paymentStatus` (la operacional es `depositStatus` +
 //     `pendingAmount`), seteamos los campos equivalentes: `status='confirmed'`,
-//     `depositStatus='paid'`, `paymentMethod='card'`, `pendingAmount=0`.
+//     `depositStatus='paid'`, `paymentMethod='card'`, `deposit` += lo cobrado y `pendingAmount`
+//     calculado con la fórmula única del saldo (antes: 0 hardcodeado, ver STR-2).
 //
 // Compat con dashboard Stripe: el path del webhook NO cambia (`POST /api/public/webhook/stripe/:hotelId`).
 // Internamente cambia la tabla sobre la que opera — rollback segura (R1 spec booking-unification).
@@ -29,6 +30,8 @@ import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { ValidationError } from 'arckode-framework'
 import type { PaymentGatewayRegistry } from '../../../services/payment-gateway/registry'
 import type { PaymentEventStore } from '../../../services/payment-gateway/payment-events'
+import { pendingBalance } from '../../../shared/utils/reservation-balance'
+import { round2 } from '../../../shared/utils/money'
 
 interface StripeSession {
   id: string
@@ -49,6 +52,9 @@ interface ReservationRow {
   roomId: string
   currency?: string
   totalAmount?: number
+  /** Lo ya cobrado. Participa del saldo (shared/utils/reservation-balance). */
+  deposit?: number
+  otherCharges?: number
   status?: string
   depositStatus?: string
   paymentMethod?: string
@@ -212,13 +218,26 @@ export class StripeUseCase {
         async () => {
           // F0 0.15 — Update sobre `Reservations`. La tabla no expone `paymentStatus`; los
           // campos operacionales equivalentes son: status (reserva confirmada), depositStatus
-          // (depósito pagado), paymentMethod (tarjeta vía Stripe), pendingAmount (saldo 0).
+          // (depósito pagado), paymentMethod (tarjeta vía Stripe), deposit + pendingAmount (saldo).
           // `paymentMethod='card'` es lo que el panel de reservas lee para mostrar "pagada online".
+          //
+          // STR-2: `pendingAmount: 0` estaba HARDCODEADO y `deposit` no se tocaba. El detalle
+          // recalcula el pendiente con `shared/utils/reservation-balance` (total − deposit), así
+          // que la fila quedaba diciendo "saldo 0" en el listado y "debe todo" en el modal — la
+          // misma divergencia que este cambio cierra en el resto de los caminos de escritura. Se
+          // asienta lo REALMENTE cobrado en `deposit` y el saldo sale de la fórmula única.
+          const paid = outcome.amountMinor != null
+            ? round2(Math.abs(Number(outcome.amountMinor)) / 100)
+            : (Number(reservation.totalAmount) || 0)
+          const deposit = round2((Number(reservation.deposit) || 0) + paid)
           await this.reservationsRepo.update(reservationId, {
             status: 'confirmed',
             depositStatus: 'paid',
             paymentMethod: 'card',
-            pendingAmount: 0,
+            deposit,
+            // Sin `reservation_addons` a la vista: el widget público cobra la estadía al confirmar,
+            // los extras se cargan después en recepción y ese camino ya sincroniza la columna.
+            pendingAmount: pendingBalance({ ...reservation, deposit }),
           } as any)
           this.logger.info(`Reserva ${reservationId} confirmada por pago (hotel ${hotelId})`)
 

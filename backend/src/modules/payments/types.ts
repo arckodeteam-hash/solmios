@@ -15,6 +15,8 @@ export interface PaymentDTO {
   hotelId: string
   folioId?: string
   invoiceId?: string
+  /** Vínculo directo con la reserva cuando el cobro no cuelga de un folio ni de una factura. */
+  reservationId?: string
   guestId?: string
   type: PaymentType
   method: PaymentMethod
@@ -35,6 +37,11 @@ export interface CreatePaymentDTO {
   hotelId: string
   folioId?: string
   invoiceId?: string
+  /**
+   * Reserva a la que pertenece el cobro cuando NO hay folio ni factura de por medio (BUG-ceiling-bypass).
+   * Es de uso INTERNO: no está en `CreatePaymentSchema`, así que no llega por el body de la API.
+   */
+  reservationId?: string
   guestId?: string
   type: PaymentType
   method: PaymentMethod
@@ -61,6 +68,8 @@ export interface ChargeCardDTO {
   currency?: string
   description: string
   folioId?: string
+  /** Ver `CreatePaymentDTO.reservationId` — se propaga al payment que abre el checkout. */
+  reservationId?: string
   guestId?: string
   successUrl: string
   cancelUrl: string

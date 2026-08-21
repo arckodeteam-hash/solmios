@@ -12,6 +12,12 @@
 
 import { describe, it, expect } from 'bun:test'
 import { quoteReschedule, commitReschedule, type RescheduleDeps } from '../usecases/reschedule'
+import { paidSourceFrom } from '../../../shared/usecases/reservation-paid'
+
+// Lo cobrado real (GH-0.2). Repos vacíos ⇒ la implementación REAL cae al `deposit` de la reserva,
+// que es lo que estos tests modelan (sin folio ni factura de por medio).
+const noMoneyRows = { findMany: async () => [] as any[] }
+const paidOf = paidSourceFrom({ folioRepo: noMoneyRows, invoiceRepo: noMoneyRows, paymentRepo: noMoneyRows })
 
 const noopLogger = { info() {}, warn() {}, error() {}, debug() {} } as any
 const silentCache = { get: async () => null, set: async () => {}, delete: async () => {}, flush: async () => {} } as any
@@ -73,7 +79,10 @@ function makeDeps(reserva: any, withRates = true): RescheduleDeps {
     roomRepo: makeRoomRepo(),
     logger: noopLogger,
     cache: silentCache,
+    paidOf,
     sockets: {},
+    // STR-2: el commit reprecia y el saldo persistido tiene que moverse con el total nuevo.
+    addonsOf: async () => [],
     ...(withRates
       ? { seasonAssignmentRepo: listRepo(SEASON_ASSIGNMENTS), roomRateRepo: listRepo(ROOM_RATES) }
       : {}),
@@ -193,6 +202,32 @@ describe('commitReschedule — aplica el modo pedido', () => {
     const result = await commitReschedule(makeDeps(makeReservation()), 'r1', { roomId: 'room-2', pricingMode: 'reprice', charge: { method: 'cash', amount: 50 } }, hotelAdmin)
     expect(result.quote.chargeAmount).toBe(50)
     expect(result.reservation.totalAmount).toBe(250) // 200 pactado + 50 cobrado, no los 400 de rack
+  })
+
+  // ── STR-2: el reprice cambia `totalAmount` → el saldo PERSISTIDO tiene que moverse con él ──
+  // El commit llamaba al `updateReservation` crudo, así que `reservations.pendingAmount` (lo que
+  // lee el listado y el planning) se quedaba con el saldo del precio viejo mientras el detalle,
+  // que lo recalcula al vuelo, mostraba otro número.
+  it('persiste el pendiente del total NUEVO, extras incluidos', async () => {
+    const reserva = makeReservation({ deposit: 50, otherCharges: 0, pendingAmount: 150 })
+    const writes: any[] = []
+    const repo = {
+      findById: async () => reserva,
+      findMany: async () => [],
+      update: async (id: string, data: any) => { writes.push(data); Object.assign(reserva, data); return { ...reserva, id } },
+    }
+    const deps: RescheduleDeps = {
+      ...makeDeps(reserva),
+      repo,
+      addonsOf: async () => [{ amount: 30, quantity: 1, kind: 'service' }],
+    }
+
+    const result = await commitReschedule(deps, 'r1', { roomId: 'room-2', pricingMode: 'reprice' }, hotelAdmin)
+
+    // 400 (repreciado) + 30 (extra) − 50 (pagado) = 380. Antes quedaba 150 en la columna.
+    expect(result.reservation.totalAmount).toBe(400)
+    expect(result.reservation.pendingAmount).toBe(380)
+    expect(writes.at(-1)).toEqual({ pendingAmount: 380 })
   })
 })
 

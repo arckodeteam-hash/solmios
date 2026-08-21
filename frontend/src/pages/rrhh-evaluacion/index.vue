@@ -46,8 +46,8 @@
 
         <div class="space-y-4">
         <div>
-          <label class="text-[10px] font-bold text-text-muted uppercase tracking-wider">Período</label>
-          <select v-model="form.period" class="input mt-1">
+          <label for="rrhh-evaluacion-periodo" class="text-[10px] font-bold text-text-muted uppercase tracking-wider">Período</label>
+          <select id="rrhh-evaluacion-periodo" name="period" v-model="form.period" class="input mt-1">
             <option value="monthly">Mensual</option>
             <option value="quarterly">Trimestral</option>
           </select>
@@ -61,7 +61,7 @@
           <div class="grid grid-cols-2 gap-2 mt-1">
             <div v-for="w in WEIGHT_KEYS" :key="w.key">
               <span class="text-[10px] text-text-muted">{{ w.label }}</span>
-              <input type="number" min="0" max="100" v-model.number="form.weights[w.key]" class="input" />
+              <input :id="`peso-${w.key}`" :aria-label="`Peso: ${w.label}`" type="number" min="0" max="100" v-model.number="form.weights[w.key]" class="input" />
             </div>
           </div>
         </div>
@@ -71,18 +71,18 @@
           <div class="grid grid-cols-3 gap-2 mt-1">
             <div v-for="t in THRESHOLD_KEYS" :key="t.key">
               <span class="text-[10px] text-text-muted">{{ t.label }}</span>
-              <input type="number" min="0" max="100" v-model.number="form.thresholds[t.key]" class="input" />
+              <input :id="`umbral-${t.key}`" :aria-label="`Umbral: ${t.label}`" type="number" min="0" max="100" v-model.number="form.thresholds[t.key]" class="input" />
             </div>
           </div>
         </div>
 
         <div>
-          <label class="text-[10px] font-bold text-text-muted uppercase tracking-wider">Minutos estándar por tarea</label>
-          <input type="number" min="1" v-model.number="form.standardTaskMinutes" class="input mt-1" />
+          <label for="rrhh-evaluacion-minutos-estandar-por-tarea" class="text-[10px] font-bold text-text-muted uppercase tracking-wider">Minutos estándar por tarea</label>
+          <input id="rrhh-evaluacion-minutos-estandar-por-tarea" name="standardTaskMinutes" type="number" min="1" v-model.number="form.standardTaskMinutes" class="input mt-1" />
         </div>
 
         <label class="flex items-center gap-2 cursor-pointer text-sm font-bold text-text-secondary select-none rounded-xl bg-surface px-3 py-2.5">
-          <input type="checkbox" v-model="form.enabled" class="accent-cyan cursor-pointer" />
+          <input id="rrhh-evaluacion-motor-habilitado" name="enabled" type="checkbox" v-model="form.enabled" class="accent-cyan cursor-pointer" />
           Motor habilitado
         </label>
 

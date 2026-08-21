@@ -10,7 +10,8 @@ import { sendLockCodeEmail as sendLockCodeEmailUsecase } from './usecases/lock-c
 import { NullEmailSender, type EmailSender } from '../../services/email-sender'
 import { dispatchCreateEmail } from './usecases/reservation-notifications'
 import { setGuaranteePin as setGuaranteePinUsecase, getGuaranteeHasPin as getGuaranteeHasPinUsecase, unlockGuaranteeCard as unlockGuaranteeCardUsecase } from './usecases/guarantee'
-import { listReservations, getReservationById, createReservation, updateReservation, deleteReservation, type PromoCodePort } from './usecases/crud'
+import { listReservations, getReservationById, createReservation, updateReservationWithBalance, deleteReservation, type PromoCodePort } from './usecases/crud'
+import { paidSourceFrom, type PaidSource } from '../../shared/usecases/reservation-paid'
 import { cancelReservation as cancelReservationUsecase } from './usecases/cancel'
 import { cancelReservationBySystem, type SystemCancelInput, type SystemCancelOutcome } from './usecases/cancel-system'
 import { previewCancellation, type CancelPreview } from './usecases/cancel-preview'
@@ -21,6 +22,12 @@ import { quoteReschedule as quoteRescheduleUsecase, commitReschedule as commitRe
 import { quoteStay as quoteStayUsecase, type QuoteParams } from './usecases/quote'
 import type { ReservasQueries } from './usecases/reservas-queries'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
+import { reservationChangedNotifier, type ReservationChangedNotifier } from './usecases/reservation-changed'
+import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
+import { requireMessageLogSource } from './usecases/message-log'
+import { syncPendingAfterPayment, pendingAfterPaymentDeps, type MoneyRowRef } from './usecases/sync-pending-after-payment'
+import type { ReservationMoneyPort } from './usecases/money-port'
+import { settleFolioForCheckout as settleFolioForCheckoutUsecase, type SettleInput, type SettleActor, type SettleFolioPort, type SettleReservation, type SettleResult } from './usecases/settle-port'
 
 export class ReservasService {
   private sockets: ReservasSockets = {}
@@ -35,12 +42,19 @@ export class ReservasService {
     pushAvailabilityToChannex?: (hotelId: string, roomId: string) => void
     sendCheckinEmail?: (deps: any, data: any) => Promise<void>
     dispatchLifecycleEmail?: (deps: any, data: any) => Promise<void>
-    settleFolio?: (params: { reservationId: string; hotelId: string; guestId: string | null; roomId: string | null; settle?: { amount: number; method: string; reference?: string } | null }, user: any) => Promise<{ folioId: string; invoiceId: string | null; balance: number; amountPaid: number; invoiceNumber: string | null }>
+    /** Ver `usecases/settle-port.ts` — el actor va TIPADO: `any` acá reabre el agujero de DEBT-1. */
+    settleFolio?: SettleFolioPort
     chargeReschedule?: RescheduleChargePort
     promoCodes?: PromoCodePort // FIX 2026-07-31 — connectors/reservas-promocodes.ts
+    /** STR-3 — connectors/reservas-marketing.ts: `message_logs` es del módulo marketing. */
+    listMessageLogs?: (hotelId: string, reservationId: string) => Promise<Record<string, any>[]>
+    moneyPort?: ReservationMoneyPort // connectors/reservas-money.ts (tablas de otros módulos)
+    /** SEC3-2/SEC3-3 (connectors/reservas-payment-requests.ts): clamp/liberación de links vivos. */
+    paymentRequestsCeiling?: { clamp: (h: string, r: string) => Promise<void>; releaseAll: (h: string, r: string) => Promise<void> }
   } = {}
   setOrchestrationDeps(deps: typeof ReservasService.prototype.orchestrationDeps): void {
     Object.assign(this.orchestrationDeps, deps)
+    if (deps.moneyPort) this.queries.setMoneyPort(deps.moneyPort) // lo consume ReservasQueries
   }
 
   constructor(
@@ -62,17 +76,8 @@ export class ReservasService {
     /** Catálogo `Seasons` (label/color) para el quote del wizard — ver index.ts. */ private readonly seasonsRepo?: RepositoryAdapter<any>,
   ) {}
 
-  // ACUMULA handlers (cadena secuencial). Para ejecución paralela independiente -> EventBus en composition-root.ts.
-  setSockets(s: Partial<ReservasSockets>): void {
-    const next = s as Record<string, any>
-    const cur = this.sockets as Record<string, any>
-    for (const key of Object.keys(next)) {
-      const h = next[key]
-      if (!h) continue
-      const prev = cur[key]
-      cur[key] = prev ? async (...a: any[]) => { await prev(...a); await h(...a) } : h
-    }
-  }
+  // ACUMULA handlers (cadena secuencial; implementación única en shared/utils/accumulate-sockets.ts).
+  setSockets(s: Partial<ReservasSockets>): void { accumulateSockets(this.sockets as any, s as any) }
 
   async list(query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> {
     return listReservations(this.repo, this.userRepo, this.cache, this.logger, query, currentUser)
@@ -89,31 +94,25 @@ export class ReservasService {
   }
   async update(id: string, dto: UpdateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> {
     this.logger.info('Actualizando reserva', { id, userId: currentUser.id })
-    return updateReservation(this.repo, this.logger, this.cache, this.sockets, id, dto, currentUser, this.roomRepo, this.guestRepo, this.groupRepo, this.orchestrationDeps.promoCodes)
+    // SEC3-2: el clamp de links vivos, si el connector lo cableó (ver orchestrationDeps).
+    const c = this.orchestrationDeps.paymentRequestsCeiling
+    return updateReservationWithBalance((rid, hid) => this.queries.getReservationAddons(rid, hid), this.paidSource(), this.repo, this.logger, this.cache, this.sockets, id, dto, currentUser, this.roomRepo, this.guestRepo, this.groupRepo, this.orchestrationDeps.promoCodes,
+      c ? (item) => c.clamp(String(item.hotelId), String(item.id)) : undefined)
   }
   async delete(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<void> {
-    this.logger.info('Eliminando reserva', { id, userId: currentUser.id })
-    const existing = await deleteReservation(this.repo, this.logger, this.cache, this.sockets, id, currentUser)
+    this.logger.info('Eliminando reserva', { id, userId: currentUser.id }) // SEC3-3: release antes del delete
+    const c = this.orchestrationDeps.paymentRequestsCeiling
+    const existing = await deleteReservation(this.repo, this.logger, this.cache, this.sockets, id, currentUser,
+      c ? (h, r) => c.releaseAll(h, r) : undefined)
     const locator = existing?.externalLocator ? ` (${existing.externalLocator})` : ''
-    await auditSafely(this.auditPort, this.logger, {
-      hotelId: existing?.hotelId, userId: currentUser.id, action: 'reservation.delete',
-      entity: 'reservation', entityId: id,
-      detail: `Reserva${locator} ${existing?.checkIn} → ${existing?.checkOut}, habitación ${existing?.roomId}, monto ${existing?.totalAmount} — eliminada`,
-    })
+    await auditSafely(this.auditPort, this.logger, { hotelId: existing?.hotelId, userId: currentUser.id, action: 'reservation.delete', entity: 'reservation', entityId: id,
+      detail: `Reserva${locator} ${existing?.checkIn} → ${existing?.checkOut}, habitación ${existing?.roomId}, monto ${existing?.totalAmount} — eliminada` })
   }
 
   // ── CHECK-IN ─────────────────────────────────────────────────────────────
-  async checkin(id: string, user: any): Promise<any> {
-    return checkinValidation(this.repo, id, user, this.auth)
-  }
+  async checkin(id: string, user: any): Promise<any> { return checkinValidation(this.repo, id, user, this.auth) }
   async executeCheckin(r: any, user: any, deps: { orm: any; pushAvailabilityToChannex?: any; sendCheckinEmail?: any; logger?: any }): Promise<any> {
-    const result = await executeCheckin(r, user, {
-      orm: deps.orm,
-      logger: deps.logger || this.logger,
-      repo: this.repo,
-      queries: this.queries,
-    })
-    return result
+    return executeCheckin(r, user, { orm: deps.orm, logger: deps.logger || this.logger, repo: this.repo, queries: this.queries })
   }
 
   // ── CHECK-OUT ──────────────────────────────────────────────────────────
@@ -132,20 +131,25 @@ export class ReservasService {
     })
   }
 
-  // ── SETTLEMENT (folio → invoice → payment) ─────────────────────────────
-  async settleFolioForCheckout(reservation: any, settle: { amount: number; method: string; reference?: string } | null | undefined, user: any): Promise<any> {
-    if (!this.orchestrationDeps.settleFolio) return null
-    return this.orchestrationDeps.settleFolio({
-      reservationId: reservation.id,
-      hotelId: reservation.hotelId,
-      guestId: reservation.guestId || null,
-      roomId: reservation.roomId,
-      settle: settle || null,
-    }, user)
+  // ── SETTLEMENT (folio → invoice → payment) — ver usecases/settle-port.ts ────────────────
+  settleFolioForCheckout(reservation: SettleReservation, settle: SettleInput | null | undefined, user: SettleActor): Promise<SettleResult | null> {
+    return settleFolioForCheckoutUsecase(this.orchestrationDeps.settleFolio, reservation, settle, user)
+  }
+
+  /** Lo COBRADO, derivado de `payments` (GH-0.2) — ver shared/usecases/reservation-paid.ts. */
+  paidSource(): PaidSource { return paidSourceFrom(this.queries.paidRepos) }
+
+  /** SEC3-2 — clamp para el controller de addons (baja de un extra). */
+  addonsCeilingGuard() { const c = this.orchestrationDeps.paymentRequestsCeiling; return c ? (rid: string, hid: string) => c.clamp(hid, rid) : undefined }
+
+  /** COR-1 — un movimiento de dinero mueve el saldo persistido. Lo llama `connectors/payments-reservas`. */
+  syncPendingAfterPayment(row: MoneyRowRef): Promise<number | null> {
+    return syncPendingAfterPayment(pendingAfterPaymentDeps(this.repo, this.queries, this.paidSource(), this.reservationChanged(), this.logger), row)
   }
 
   // ── RESCHEDULE (mover/extender desde planning) ──────────────────────────
-  private rescheduleDeps = () => ({ repo: this.repo, roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo })
+  // `addonsOf` (STR-2): el reprice cambia `totalAmount` → el saldo persistido se mueve con él. `ceilingGuard` (SEC3-2): un reprice que BAJA el total recorta los links de pago vivos — mismo connector que `update()` (reservas-payment-requests).
+  private rescheduleDeps = () => ({ repo: this.repo, roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource(), ceilingGuard: this.orchestrationDeps.paymentRequestsCeiling?.clamp })
   async quoteStay(params: QuoteParams): Promise<any> { return quoteStayUsecase({ roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, seasonsRepo: this.seasonsRepo }, params) }
 
   async quoteReschedule(id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<any> {
@@ -157,35 +161,31 @@ export class ReservasService {
   }
 
   // ── PRE-CHECKIN (público) ──────────────────────────────────────────────
-  async getPreCheckinData(hash: string): Promise<any> {
-    return getPreCheckinDataUsecase(hash, this.hotelRepo, this.roomRepo, this.guestRepo, this.queries)
-  }
+  async getPreCheckinData(hash: string): Promise<any> { return getPreCheckinDataUsecase(hash, this.hotelRepo, this.roomRepo, this.guestRepo, this.queries) }
 
-  async submitPreCheckin(hash: string, body: any, signatureFile: FileUpload): Promise<void> {
-    return submitPreCheckinUsecase(hash, body, this.queries, this.guestRepo, signatureFile, this.storage)
-  }
+  async submitPreCheckin(hash: string, body: any, signatureFile: FileUpload): Promise<void> { return submitPreCheckinUsecase(hash, body, this.queries, this.guestRepo, signatureFile, this.storage) }
   async uploadPreCheckinPhoto(hash: string, file: FileUpload): Promise<{ url: string }> {
     return uploadPreCheckinPhotoUsecase(hash, file, this.queries, this.storage)
   }
 
   // ── EXTENDED RESERVATION DETAIL ─────────────────────────────────────────
+  /** Efectos de un cambio de saldo hecho fuera del CRUD (extras): socket + invalidación del listado. */
+  reservationChanged(): ReservationChangedNotifier { return reservationChangedNotifier({ logger: this.logger, cache: this.cache, sockets: this.sockets }) }
+
   async getExtendedDetail(id: string, currentUser: any): Promise<any> {
-    return getExtendedDetailUsecase(this.repo, this.guestRepo, this.roomRepo, this.queries, id, currentUser)
+    const messageLogs = requireMessageLogSource(this.orchestrationDeps.listMessageLogs)
+    return getExtendedDetailUsecase(this.repo, this.guestRepo, this.roomRepo, this.queries, id, currentUser, messageLogs)
   }
 
   // ── AUDIT TRAIL ────────────────────────────────────────────────────────
   async getAuditTrail(id: string, currentUser: any): Promise<any[]> { return getAuditTrailUsecase(this.repo, this.queries, id, currentUser) }
 
   // ── GUARANTEE CARD ──────────────────────────────────────────────────────
-  async setGuaranteePin(user: any, body: any): Promise<{ success: boolean }> {
-    return setGuaranteePinUsecase(this.queries, this.userRepo, user, body)
-  }
+  async setGuaranteePin(user: any, body: any): Promise<{ success: boolean }> { return setGuaranteePinUsecase(this.queries, this.userRepo, user, body) }
 
   async getGuaranteeHasPin(user: any): Promise<{ hasPin: boolean }> { return getGuaranteeHasPinUsecase(this.queries, this.userRepo, user) }
 
-  async unlockGuaranteeCard(reservationId: string, user: any, body: any): Promise<any> {
-    return unlockGuaranteeCardUsecase(this.queries, this.repo, this.userRepo, reservationId, user, body, this.auth)
-  }
+  async unlockGuaranteeCard(reservationId: string, user: any, body: any): Promise<any> { return unlockGuaranteeCardUsecase(this.queries, this.repo, this.userRepo, reservationId, user, body, this.auth) }
   // ── CANCEL (F2 plan #627) — `cancel` aplica la política del hotel; `cancelPreview` hace el MISMO cálculo sin persistir ni emitir ──
   async cancel(id: string, dto: { reason?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> { return cancelReservationUsecase({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets }, id, dto, currentUser, this.auth) }
   async cancelPreview(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<CancelPreview> { return previewCancellation({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, guestRepo: this.guestRepo }, id, currentUser, this.auth) }
