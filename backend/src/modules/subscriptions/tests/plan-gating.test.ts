@@ -5,10 +5,12 @@
 // de módulos — que solo leía `hotels.plan` — le mostró al hotel TODOS los módulos del panel.
 //
 // Las matrices son las reales del seeder (scripts/create-plans-table.ts):
-//   host        = ['planning','reservations','reservations.checkin','guests']
+//   host        = ['planning','reservations','reservations.checkin','guests','settings.rooms']
 //   essential   = host + ['channel','finance.billing','finance.payments','operations.maintenance']
 //     R3-2: SIN los padres 'finance'/'operations' — bajo "padre = módulo completo" un padre
 //     hereda TODOS sus sub-módulos y essential regalaba 8 que el plan no promete.
+//     settings.rooms (auditoría 2026-08-21): sin el catálogo de habitaciones el paso REQUIRED
+//     del onboarding queda 403 y el plan que vende 'reservations' es inoperable.
 //   starter/professional/enterprise/ultra = [] (todos — retrocompat planes top).
 import { describe, it, expect } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
@@ -18,7 +20,7 @@ import { handleStripeEvent } from '../usecases/handle-stripe-event'
 import { resolveHotelPlan } from '../usecases/resolve-plan'
 import { getModuleStateForHotel } from '../../admin/usecases/modules'
 
-const HOST_MODULES = ['planning', 'reservations', 'reservations.checkin', 'guests']
+const HOST_MODULES = ['planning', 'reservations', 'reservations.checkin', 'guests', 'settings.rooms']
 const ESSENTIAL_MODULES = [
   ...HOST_MODULES, 'channel', 'finance.billing', 'finance.payments', 'operations.maintenance',
 ]
@@ -260,7 +262,7 @@ describe('resolveHotelPlan — la suscripción activa manda', () => {
 describe('getModuleStateForHotel — el gate aplica plans.modules tal cual', () => {
   const config = repo([]) // sin configuration(platform,'modules'): todo global-ON
 
-  it('trial de plan-host: SOLO los 4 módulos del plan; el resto OFF', async () => {
+  it('trial de plan-host: SOLO los módulos del plan; el resto OFF', async () => {
     const subs = repo([{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'trialing' }])
     const state = await getModuleStateForHotel(config, repo(plansTable()), subs, 'h1', undefined, 'professional')
     expect(state.planning).toBe(true)
@@ -389,6 +391,27 @@ describe('R3-2 — matriz EFECTIVA de los planes del seeder', () => {
     expect(state['reservations.list']).toBe(true)   // implícito por el padre
     expect(state['reservations.checkin']).toBe(true)
     expect(state.finance).toBe(false)
+  })
+
+  // Auditoría de superficies 2026-08-21: host/essential venden 'reservations' pero NO listaban
+  // el catálogo de habitaciones → el paso REQUIRED del onboarding ('Cargá tus habitaciones' →
+  // /panel/config/habitaciones → /api/habitaciones con moduleGuard('settings.rooms')) quedaba
+  // 403. Sin habitaciones no entra ninguna reserva y el motor público no tiene inventario
+  // (prod: Hotel Ortiz, trial plan-host, 0 habitaciones). La SUB-clave sola prende el catálogo
+  // SIN regalar el padre 'settings' (R3-2: ni locks, ni gateways, ni auto-messages).
+  it('host puede gestionar habitaciones (settings.rooms ON) sin heredar el resto de settings', async () => {
+    const state = await stateFor('plan-host')
+    expect(state['settings.rooms']).toBe(true)  // el catálogo, explícito en la matriz
+    expect(state.settings).toBe(false)          // el padre NO: módulo completo no prometido
+    expect(state['settings.locks']).toBe(false)
+    expect(state['settings.gateways']).toBe(false)
+    expect(state['settings.auto-messages']).toBe(false)
+  })
+
+  it('essential también puede gestionar habitaciones (mismo bug de clase)', async () => {
+    const state = await stateFor('plan-essential')
+    expect(state['settings.rooms']).toBe(true)
+    expect(state.settings).toBe(false) // sin over-grant del padre
   })
 })
 
