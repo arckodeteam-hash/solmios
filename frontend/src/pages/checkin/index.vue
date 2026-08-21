@@ -481,10 +481,11 @@
             <div v-if="checkoutFolio" class="py-4 border-b border-border">
               <button v-if="!showChargeForm" @click="showChargeForm = true" class="text-[11px] font-bold text-teal hover:underline cursor-pointer">+ Agregar consumo</button>
               <div v-else class="space-y-2">
-                <div class="text-[10px] text-text-muted uppercase tracking-wide">Nuevo consumo</div>
-                <input v-model="chargeForm.description" type="text" placeholder="Descripción (ej: Minibar)" class="w-full px-3 py-2 rounded-xl border border-border text-xs" />
+                <label for="checkin-charge-description" class="block text-[10px] text-text-muted uppercase tracking-wide">Nuevo consumo — descripción <span class="text-coral">*</span></label>
+                <input id="checkin-charge-description" name="chargeDescription" v-model="chargeForm.description" type="text" required aria-required="true" placeholder="Descripción (ej: Minibar)" class="w-full px-3 py-2 rounded-xl border border-border text-xs" />
                 <div class="flex gap-2">
-                  <select v-model="chargeForm.category" class="px-3 py-2 rounded-xl border border-border text-xs cursor-pointer">
+                  <label for="checkin-charge-category" class="sr-only">Categoría del consumo</label>
+                  <select id="checkin-charge-category" name="chargeCategory" v-model="chargeForm.category" class="px-3 py-2 rounded-xl border border-border text-xs cursor-pointer">
                     <option value="minibar">Minibar</option>
                     <option value="restaurant">Restaurante</option>
                     <option value="laundry">Lavandería</option>
@@ -492,7 +493,8 @@
                     <option value="service">Servicio</option>
                     <option value="other">Otro</option>
                   </select>
-                  <input v-model.number="chargeForm.amount" type="number" min="0" step="0.01" placeholder="Monto" class="flex-1 px-3 py-2 rounded-xl border border-border text-xs" />
+                  <label for="checkin-charge-amount" class="sr-only">Monto del consumo</label>
+                  <input id="checkin-charge-amount" name="chargeAmount" v-model.number="chargeForm.amount" type="number" min="0" step="0.01" required aria-required="true" placeholder="Monto" class="flex-1 px-3 py-2 rounded-xl border border-border text-xs" />
                 </div>
                 <div class="flex gap-2">
                   <button @click="addCharge" :disabled="addingCharge" class="flex-1 py-2 bg-navy text-white text-xs font-bold rounded-xl hover:bg-navy-light disabled:opacity-50 cursor-pointer">{{ addingCharge ? 'Agregando...' : 'Agregar' }}</button>
@@ -519,7 +521,7 @@
             <!-- #5 Guarda de deuda: confirmación explícita si se va con saldo pendiente sin pago -->
             <div v-if="checkoutFolio && (checkoutFolio.balance || 0) > 0 && !settleMethod" class="py-4 border-b border-border">
               <label class="flex items-start gap-2 cursor-pointer">
-                <input type="checkbox" v-model="debtAck" data-testid="checkout-debt-ack" class="mt-0.5 accent-coral" />
+                <input id="checkout-debt-ack" name="debtAck" type="checkbox" v-model="debtAck" data-testid="checkout-debt-ack" class="mt-0.5 accent-coral" />
                 <span class="text-[11px] font-bold text-coral">El huésped se irá con saldo pendiente de ${{ (checkoutFolio.balance || 0).toFixed(2) }}. Confirmo el check-out con deuda.</span>
               </label>
             </div>

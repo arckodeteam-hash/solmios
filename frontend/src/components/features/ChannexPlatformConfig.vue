@@ -8,7 +8,7 @@
     <div class="grid md:grid-cols-2 gap-4">
       <div>
         <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">API Key de Channex</label>
-        <input v-model="apiKey" type="password" autocomplete="off"
+        <input v-model="apiKey" type="password" autocomplete="new-password"
           :placeholder="channex.hasKey ? `Guardada (${channex.keyMasked}) — escribí para reemplazar` : 'Pegá tu user-api-key de Channex'"
           class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" />
       </div>

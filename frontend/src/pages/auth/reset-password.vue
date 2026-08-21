@@ -40,12 +40,19 @@
           <form @submit.prevent="handleReset" class="space-y-4">
             <div>
               <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5 block">Nueva Contraseña</label>
-              <input v-model="password" type="password" placeholder="Nueva contraseña" class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
+              <!-- autocomplete="new-password": el restablecimiento define un secreto nuevo; acá no
+                   existe una "contraseña actual" que el gestor pueda ofrecer (GH-32). -->
+              <input v-model="password" type="password" placeholder="Nueva contraseña"
+                autocomplete="new-password" name="new-password"
+                class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
             </div>
 
             <div>
               <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5 block">Confirmar Contraseña</label>
-              <input v-model="confirmPassword" type="password" placeholder="Confirmar contraseña" class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
+              <!-- Confirmación de la contraseña nueva: mismo criterio que el campo de arriba. -->
+              <input v-model="confirmPassword" type="password" placeholder="Confirmar contraseña"
+                autocomplete="new-password" name="confirm-password"
+                class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
             </div>
 
             <div v-if="error" class="bg-red/10 text-red text-xs font-bold p-3 rounded-xl">{{ error }}</div>

@@ -45,10 +45,10 @@
       <template #actions>
         <div class="relative">
           <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/50" v-html="ICON_SEARCH"></span>
-          <input v-model="searchQuery" type="text" placeholder="Buscar habitación, tipo, piso..."
+          <input id="rooms-search" name="search" v-model="searchQuery" type="text" aria-label="Buscar habitaciones por número, tipo o piso" placeholder="Buscar habitación, tipo, piso..."
             class="w-full sm:w-64 pl-9 pr-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm text-white placeholder:text-white/45 focus:outline-none focus:border-cyan focus:bg-white/15 transition-colors" />
         </div>
-        <select v-model="activeFilter"
+        <select id="rooms-filter" name="activeFilter" aria-label="Filtrar habitaciones por estado" v-model="activeFilter"
           class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
           <option class="text-navy" value="all">Todas</option>
           <option class="text-navy" value="available">Disponibles</option>
@@ -283,12 +283,12 @@
               <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-3">Rango de números</label>
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="block text-[11px] text-text-muted font-bold mb-1">Desde N°</label>
-                  <input v-model.number="batchForm.from" type="number" min="1" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-bold" placeholder="101" />
+                  <label for="batch-from" class="block text-[11px] text-text-muted font-bold mb-1">Desde N° <span class="text-coral">*</span></label>
+                  <input id="batch-from" name="batchFrom" required aria-required="true" v-model.number="batchForm.from" type="number" min="1" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-bold" placeholder="101" />
                 </div>
                 <div>
-                  <label class="block text-[11px] text-text-muted font-bold mb-1">Hasta N°</label>
-                  <input v-model.number="batchForm.to" type="number" min="1" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-bold" placeholder="110" />
+                  <label for="batch-to" class="block text-[11px] text-text-muted font-bold mb-1">Hasta N° <span class="text-coral">*</span></label>
+                  <input id="batch-to" name="batchTo" required aria-required="true" v-model.number="batchForm.to" type="number" min="1" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-bold" placeholder="110" />
                 </div>
               </div>
               <div v-if="batchCount > 0 && batchCount <= 100" class="mt-2.5 flex items-center gap-1.5 text-xs">
@@ -302,12 +302,12 @@
             <div>
               <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-3">Configuración</label>
               <div class="grid grid-cols-3 gap-3">
-                <div><label class="block text-[11px] text-text-muted font-bold mb-1">Precio Base $</label><input v-model.number="batchForm.basePrice" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm font-bold text-navy" /></div>
-                <div><label class="block text-[11px] text-text-muted font-bold mb-1">Capacidad</label><input v-model.number="batchForm.capacity" type="number" min="1" max="20" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
-                <div><label class="block text-[11px] text-text-muted font-bold mb-1">Piso</label><input v-model.number="batchForm.floor" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
-                <div><label class="block text-[11px] text-text-muted font-bold mb-1">Baños</label><input v-model.number="batchForm.bathrooms" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
-                <div><label class="block text-[11px] text-text-muted font-bold mb-1">Superficie m²</label><input v-model.number="batchForm.surfaceArea" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
-                <label class="flex items-center gap-2 cursor-pointer self-end pb-2"><input v-model="batchForm.onlineBooking" type="checkbox" class="w-4 h-4 rounded text-cyan" /><span class="text-[11px] font-bold text-navy">Venta Online</span></label>
+                <div><label for="batch-base-price" class="block text-[11px] text-text-muted font-bold mb-1">Precio Base $ <span class="text-coral">*</span></label><input id="batch-base-price" name="batchBasePrice" required aria-required="true" v-model.number="batchForm.basePrice" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm font-bold text-navy" /></div>
+                <div><label for="batch-capacity" class="block text-[11px] text-text-muted font-bold mb-1">Capacidad</label><input id="batch-capacity" name="batchCapacity" v-model.number="batchForm.capacity" type="number" min="1" max="20" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
+                <div><label for="batch-floor" class="block text-[11px] text-text-muted font-bold mb-1">Piso</label><input id="batch-floor" name="batchFloor" v-model.number="batchForm.floor" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
+                <div><label for="batch-bathrooms" class="block text-[11px] text-text-muted font-bold mb-1">Baños</label><input id="batch-bathrooms" name="batchBathrooms" v-model.number="batchForm.bathrooms" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
+                <div><label for="batch-surface-area" class="block text-[11px] text-text-muted font-bold mb-1">Superficie m²</label><input id="batch-surface-area" name="batchSurfaceArea" v-model.number="batchForm.surfaceArea" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
+                <label class="flex items-center gap-2 cursor-pointer self-end pb-2"><input id="batch-online-booking" name="batchOnlineBooking" v-model="batchForm.onlineBooking" type="checkbox" class="w-4 h-4 rounded text-cyan" /><span class="text-[11px] font-bold text-navy">Venta Online</span></label>
               </div>
             </div>
 
@@ -337,23 +337,23 @@
     <AppModal v-if="modal.show" size="lg" :title="`${modal.edit ? 'Editar' : 'Nueva'} habitación`" @close="modal.show=false">
       <div class="space-y-5">
             <div class="grid grid-cols-3 gap-4">
-              <div><label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Número *</label><input v-model="form.number" type="text" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
-              <div><label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Tipo</label>
-                <select v-model="form.type" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer">
+              <div><label for="room-number" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Número *</label><input id="room-number" name="number" required aria-required="true" v-model="form.number" type="text" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <div><label for="room-type" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Tipo</label>
+                <select id="room-type" name="type" v-model="form.type" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer">
                   <option value="single">Individual</option><option value="double">Doble</option><option value="twin">Twin</option><option value="triple">Triple</option><option value="quad">Cuádruple</option><option value="suite">Suite</option><option value="deluxe">Deluxe</option><option value="presidential">Presidencial</option><option value="family">Familiar</option>
                 </select>
               </div>
-              <div><label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Estado</label>
-                <select v-model="form.status" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer">
+              <div><label for="room-status" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Estado</label>
+                <select id="room-status" name="status" v-model="form.status" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer">
                   <option value="available">Disponible</option><option value="occupied">Ocupada</option><option value="cleaning">Limpieza</option><option value="dirty">Sucia</option><option value="out_of_service">F/S</option>
                 </select>
               </div>
-              <div><label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Piso</label><input v-model.number="form.floor" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
-              <div><label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Capacidad</label><input v-model.number="form.maxGuests" type="number" min="1" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
-              <div><label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Precio Base $</label><input v-model.number="form.basePrice" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-bold text-navy" /></div>
-              <div><label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Superficie m²</label><input v-model.number="form.surfaceArea" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
-              <div><label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Baños</label><input v-model.number="form.bathrooms" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
-              <label class="flex items-center gap-2 cursor-pointer self-end pb-2"><input v-model="form.onlineBooking" type="checkbox" class="w-4 h-4 rounded text-cyan" /><span class="text-[11px] font-bold text-navy">Venta Online</span></label>
+              <div><label for="room-floor" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Piso</label><input id="room-floor" name="floor" v-model.number="form.floor" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <div><label for="room-capacity" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Capacidad</label><input id="room-capacity" name="capacity" v-model.number="form.maxGuests" type="number" min="1" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <div><label for="room-base-price" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Precio Base $ <span class="text-coral">*</span></label><input id="room-base-price" name="basePrice" required aria-required="true" v-model.number="form.basePrice" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-bold text-navy" /></div>
+              <div><label for="room-surface-area" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Superficie m²</label><input id="room-surface-area" name="surfaceArea" v-model.number="form.surfaceArea" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <div><label for="room-bathrooms" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Baños</label><input id="room-bathrooms" name="bathrooms" v-model.number="form.bathrooms" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <label class="flex items-center gap-2 cursor-pointer self-end pb-2"><input id="room-online-booking" name="onlineBooking" v-model="form.onlineBooking" type="checkbox" class="w-4 h-4 rounded text-cyan" /><span class="text-[11px] font-bold text-navy">Venta Online</span></label>
             </div>
             <div>
               <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2.5">Amenities</label>

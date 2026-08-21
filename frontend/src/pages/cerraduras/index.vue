@@ -81,7 +81,11 @@
           </div>
           <div>
             <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Client Secret</label>
-            <input v-model="ttlockConfig.clientSecret" type="password" :placeholder="ttlockConfig.hasSecret ? '•••••••• (guardado)' : 'Pegá el Client Secret'" class="w-full px-4 py-2.5 rounded-full border border-border text-sm" />
+            <!-- autocomplete="new-password": credencial de la integración, NO la del usuario. Sin
+                 esto Chrome pegaba acá la contraseña guardada de SolmiOS (GH-32). -->
+            <input v-model="ttlockConfig.clientSecret" type="password" :placeholder="ttlockConfig.hasSecret ? '•••••••• (guardado)' : 'Pegá el Client Secret'"
+              autocomplete="new-password" name="ttlock-client-secret"
+              class="w-full px-4 py-2.5 rounded-full border border-border text-sm" />
             <p v-if="ttlockConfig.hasSecret" class="text-[10px] text-text-muted mt-1 ml-4">Guardado. Dejalo vacío para conservarlo.</p>
           </div>
           <div>
@@ -90,7 +94,11 @@
           </div>
           <div>
             <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Contraseña TTLock</label>
-            <input v-model="ttlockConfig.password" type="password" :placeholder="ttlockConfig.hasPassword ? '•••••••• (guardada)' : 'Contraseña de la cuenta TTLock'" class="w-full px-4 py-2.5 rounded-full border border-border text-sm" />
+            <!-- Contraseña de la cuenta TTLock del hotel, no la del usuario logueado: new-password
+                 para que el gestor no la pise (GH-32). -->
+            <input v-model="ttlockConfig.password" type="password" :placeholder="ttlockConfig.hasPassword ? '•••••••• (guardada)' : 'Contraseña de la cuenta TTLock'"
+              autocomplete="new-password" name="ttlock-password"
+              class="w-full px-4 py-2.5 rounded-full border border-border text-sm" />
             <p v-if="ttlockConfig.hasPassword" class="text-[10px] text-text-muted mt-1 ml-4">Guardada. Dejala vacía para conservarla.</p>
           </div>
           <div>

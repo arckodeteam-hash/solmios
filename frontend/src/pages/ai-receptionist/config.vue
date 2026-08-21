@@ -308,7 +308,11 @@ onBeforeUnmount(() => { stopPolling() })
             </div>
             <div class="sm:col-span-2">
               <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">API Key</label>
+              <!-- autocomplete="new-password": es la API key del proveedor LLM, un secreto que
+                   define el operador. Sin esto Chrome la rellenaba con una credencial guardada
+                   y se guardaba cifrada una clave que nadie tipeó (GH-32). -->
               <input v-model="llmApiKey" type="password" placeholder="sk-..."
+                autocomplete="new-password" name="llm-api-key"
                 class="w-full rounded-xl border border-border px-4 py-2.5 text-sm text-navy focus:border-navy focus:outline-none" />
               <p class="mt-1.5 text-[11px] text-text-muted">Se guarda cifrada y solo se usa para hablar con el proveedor elegido.</p>
             </div>

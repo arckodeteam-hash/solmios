@@ -39,13 +39,16 @@
         <div class="relative">
           <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" v-html="ICON_SEARCH"></span>
           <input
+            id="guests-search"
+            name="search"
             v-model="searchQuery"
             type="text"
+            aria-label="Buscar huéspedes por nombre, email o teléfono"
             placeholder="Buscar nombre, email o teléfono..."
             class="w-full sm:w-72 pl-9 pr-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm text-white placeholder:text-white/45 focus:outline-none focus:border-cyan focus:bg-white/15 transition-colors"
           />
         </div>
-        <select v-model="filterType" class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
+        <select id="guests-filter-type" name="filterType" aria-label="Filtrar huéspedes" v-model="filterType" class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
           <option class="text-navy" value="all">Todos</option>
           <option class="text-navy" value="frequent">Frecuentes ({{ FREQUENT_STAYS_THRESHOLD }}+ estadías)</option>
           <option class="text-navy" value="new">Nuevos (1 estadía)</option>
@@ -354,13 +357,13 @@
       :subtitle="`Saldo disponible: ${(viewGuest?.points ?? 0).toLocaleString()} puntos`" @close="showRedeemModal = false">
       <div class="space-y-4">
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Puntos a canjear</label>
-          <input v-model.number="redeemForm.points" type="number" min="1" :max="viewGuest?.points ?? 0"
+          <label for="redeem-points" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Puntos a canjear</label>
+          <input id="redeem-points" name="redeemPoints" v-model.number="redeemForm.points" type="number" min="1" :max="viewGuest?.points ?? 0"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy tabular-nums focus:border-navy focus:outline-none">
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Motivo</label>
-          <input v-model="redeemForm.description" placeholder="Ej: Descuento en factura #1024"
+          <label for="redeem-description" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Motivo</label>
+          <input id="redeem-description" name="redeemDescription" v-model="redeemForm.description" type="text" placeholder="Ej: Descuento en factura #1024"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:outline-none focus:border-navy">
         </div>
       </div>
@@ -388,13 +391,13 @@
       :subtitle="`Saldo actual: ${(viewGuest?.points ?? 0).toLocaleString()} puntos`" @close="showAwardModal = false">
       <div class="space-y-4">
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Puntos a otorgar</label>
-          <input v-model.number="awardForm.points" type="number" min="1"
+          <label for="award-points" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Puntos a otorgar</label>
+          <input id="award-points" name="awardPoints" v-model.number="awardForm.points" type="number" min="1"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy tabular-nums focus:border-navy focus:outline-none">
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Motivo</label>
-          <input v-model="awardForm.description" placeholder="Ej: compensación por demora"
+          <label for="award-description" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Motivo</label>
+          <input id="award-description" name="awardDescription" v-model="awardForm.description" type="text" placeholder="Ej: compensación por demora"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
         </div>
       </div>
