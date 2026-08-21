@@ -24,9 +24,13 @@ vi.mock('@/services/Booking.service', () => ({
     createBooking: vi.fn(),
   },
 }))
+vi.mock('@/services/PublicHotel.service', () => ({
+  PublicHotelService: { getRoomTypes: vi.fn() },
+}))
 
 import BookingModal from './BookingModal.vue'
 import { BookingService } from '@/services/Booking.service'
+import { PublicHotelService } from '@/services/PublicHotel.service'
 import { useBookingStore } from '@/composables/useBooking'
 import type { PublicHotelInfo, PublicRatesResponse, OpenBookingOptions } from '@/types'
 
@@ -105,6 +109,7 @@ describe('BookingModal', () => {
     })
     vi.mocked(BookingService.getUpsells).mockReset().mockResolvedValue([])
     vi.mocked(BookingService.createBooking).mockReset()
+    vi.mocked(PublicHotelService.getRoomTypes).mockReset().mockResolvedValue({ roomTypes: [] })
   })
   afterEach(() => {
     wrapper?.unmount()
@@ -241,5 +246,48 @@ describe('BookingModal', () => {
     const text = modalText()
     expect(text).toContain('Sin habitaciones para esas fechas')
     expect(text).toContain('Cambiar fechas')
+  })
+
+  // Decisión de producto 2026-08-20: un tipo sin disponibilidad continua para las fechas
+  // buscadas (excluido de /rates) NO se oculta — aparece deshabilitado con el motivo. La fuente
+  // es el catálogo (`GET /room-types`, mismo endpoint de la vitrina de la landing).
+  it('un tipo sin disponibilidad para las fechas aparece DESHABILITADO con el motivo, no oculto', async () => {
+    vi.mocked(PublicHotelService.getRoomTypes).mockResolvedValue({
+      roomTypes: [
+        // "double" y "suite" ya están en /rates (disponibles) — no deben duplicarse acá.
+        { id: 'double', name: 'double', capacity: 2, surfaceArea: 24, basePrice: 100, photoUrl: null },
+        { id: 'suite', name: 'suite', capacity: 4, surfaceArea: 48, basePrice: 200, photoUrl: null },
+        // "family" NO está en /rates (0 unidades libres esas fechas) — es el caso del hallazgo.
+        { id: 'family', name: 'family', capacity: 6, surfaceArea: 60, basePrice: 300, photoUrl: null },
+      ],
+    })
+
+    await open(FROM_HERO)
+    await flushPromises()
+
+    const text = modalText()
+    // Sigue eligiéndose con normalidad (nombre prettificado por el componente: 'double' → 'Double').
+    expect(text).toContain('Double')
+    expect(text).toContain('Suite')
+    // Y el tipo sin disponibilidad aparece, con el motivo — NO desaparece de la pantalla.
+    expect(text).toContain('Family')
+    expect(text).toContain('No disponible para estas fechas')
+
+    // No es clickeable como reserva: sin botón "Elegir"/"Elegida" para ese tipo.
+    const familyCard = Array.from(document.querySelectorAll<HTMLElement>('article'))
+      .find((el) => el.textContent?.includes('Family'))!
+    expect(familyCard.querySelector('button')).toBeNull()
+  })
+
+  it('si el catálogo falla, el paso de habitaciones sigue funcionando (solo con lo que /rates trajo)', async () => {
+    vi.mocked(PublicHotelService.getRoomTypes).mockRejectedValue(new Error('caído'))
+
+    await open(FROM_HERO)
+    await flushPromises()
+
+    const text = modalText()
+    expect(text).toContain('Double')
+    expect(text).toContain('Suite')
+    expect(text).not.toContain('No disponible para estas fechas')
   })
 })

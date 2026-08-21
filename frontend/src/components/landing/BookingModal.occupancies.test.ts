@@ -23,6 +23,12 @@ vi.mock('@/services/Booking.service', () => ({
     createBooking: vi.fn(),
   },
 }))
+// El paso de habitaciones también pide el catálogo (`GET /room-types`) para mostrar deshabilitados
+// los tipos sin disponibilidad — mockeado vacío acá para no pegarle a la red real ni interferir
+// con estos tests, que son sobre la matriz de ocupaciones de los tipos QUE SÍ trae /rates.
+vi.mock('@/services/PublicHotel.service', () => ({
+  PublicHotelService: { getRoomTypes: vi.fn().mockResolvedValue({ roomTypes: [] }) },
+}))
 
 import BookingModal from './BookingModal.vue'
 import { BookingService } from '@/services/Booking.service'

@@ -168,9 +168,19 @@ export const useBookingStore = defineStore('booking-widget', () => {
   const slug = ref('')
   const checkIn = ref('')
   const checkOut = ref('')
-  /** ADULTOS. Se llama `guests` por historia (el widget nació sin niños) y se mapea a `adults`
-   *  al crear la reserva — NO meter niños acá o se graban como adultos. */
-  const guests = ref(2)
+  /**
+   * ADULTOS. Se llama `guests` por historia (el widget nació sin niños) y se mapea a `adults`
+   * al crear la reserva — NO meter niños acá o se graban como adultos.
+   *
+   * Default 1 (2026-08-20, antes 2): el buscador YA NO pide huéspedes por adelantado — cada
+   * tipo de habitación tiene su propio límite, y se elige la ocupación exacta ("para 1"/"para
+   * 2"/"para 4") recién al elegir el tipo (matriz de `selectRoom`/`bookingAdults`). Default 1
+   * es el único valor que no excluye NINGÚN tipo por capacidad en la búsqueda inicial
+   * (`AvailabilityUseCase` filtra `capacity >= guests`) — 2 excluiría, por ejemplo, una
+   * habitación individual real. Sigue siendo overridable por `?guests=` en la URL (deep-link
+   * de integradores externos, `init()` abajo), solo se quitó el control de UI que lo escribía.
+   */
+  const guests = ref(1)
   /** Niños (contador, sin edades — el schema público solo acepta contadores). Viaja aparte al
    *  backend (`children`) y suma a la ocupación FÍSICA para consultar tarifas. */
   const children = ref(0)

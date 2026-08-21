@@ -88,16 +88,13 @@
                 cell.soldOut ? 'line-through decoration-2' : '',
               ]"
             >{{ cell.day }}</span>
-            <!-- Un día sin lugar NO muestra precio: una tarifa en una celda que no se puede
-                 clickear se lee como "hay algo a ese precio y la web está rota". -->
+            <!-- Sin precio por día: distintos tipos de habitación cotizan distinto, y un "desde"
+                 agregado bajo el día se leía como EL precio de la habitación que el huésped
+                 termina eligiendo. El precio real por tipo se muestra recién en RoomsStep,
+                 donde cada tarjeta cotiza su propio tipo. -->
             <span v-if="cell.soldOut" class="mt-0.5 text-[8px] font-bold uppercase leading-none">
               {{ i18n.t('calendar.soldOut') }}
             </span>
-            <span
-              v-else-if="cell.price !== null"
-              class="mt-0.5 text-[9px] font-extrabold leading-none tabular-nums"
-              :class="isNight(cell) ? '' : 'text-teal'"
-            >{{ money(cell.price) }}</span>
           </button>
         </template>
 

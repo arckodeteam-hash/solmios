@@ -408,7 +408,7 @@ function round2(n: number): number {
  * asc si una room tiene más de una foto). Sin foto asignada a ninguna room del type → no
  * está en el Map, el caller cae a `null` (no se inventa un placeholder acá).
  */
-async function resolvePhotoByType(
+export async function resolvePhotoByType(
   deps: Pick<PublicRatesDeps, 'rooms' | 'hotelMedia'>,
   hotelId: string,
 ): Promise<Map<string, string>> {

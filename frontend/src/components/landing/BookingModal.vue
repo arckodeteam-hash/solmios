@@ -17,16 +17,18 @@
         landing: modal ancho, cards con foto, tipografía del tema del hotel.
 
     ENTRADA CON CONTEXTO (`props.options`, ver composables/useLandingBooking.ts):
-      - desde el buscador del hero → fechas + ocupación ya cargadas y `skipToRooms` dispara la
-        búsqueda al abrir: se entra DIRECTO al paso de habitaciones.
+      - desde el buscador del hero → fechas ya cargadas y `skipToRooms` dispara la búsqueda al
+        abrir: se entra DIRECTO al paso de habitaciones.
       - desde una card de habitación → `roomTypeId` queda pendiente y se aplica apenas hay
         tarifas (`applyPendingRoom`), así el huésped ve elegida la habitación que clickeó.
 
-    OCUPACIÓN (bug cerrado acá): `store.guests` son ADULTOS y `store.children` los niños. Las
-    tarifas se consultan con la ocupación FÍSICA (`store.physicalGuests`, adultos + niños) porque
-    el backend filtra por `rooms.capacity`; los niños viajan aparte al crear la reserva. Antes el
-    calendario del hero consultaba con adultos+niños y el motor con adultos solos → el precio se
-    movía entre una pantalla y la otra.
+    OCUPACIÓN — YA NO SE PIDE POR ADELANTADO (2026-08-20, decisión de producto): cada tipo de
+    habitación tiene su propio límite de capacidad, editable en el panel al reservar; pedirle al
+    huésped "cuántos son" antes de ver los tipos era redundante y podía excluir de la búsqueda
+    tipos válidos. `store.guests` queda en su default (1, `useBooking.ts`) y las tarifas se
+    consultan con esa ocupación mínima para no filtrar nada por capacidad. La ocupación REAL
+    (adultos que se graban en la reserva) sale de la fila "para N" que el huésped elige en la
+    matriz de abajo — ver `store.bookingAdults`/`store.selectedOccupancy`.
 
     MATRIZ DE OCUPACIONES (paso de habitaciones): cada tipo despliega UNA FILA POR OCUPACIÓN
     ("para 1", "para 2", "para 4"…) con su precio total y por noche, igual que el motor de la
@@ -80,12 +82,13 @@
       </ol>
 
       <div class="p-5">
-        <!-- ─── Paso 1: fechas + ocupación ─────────────────────────────────── -->
+        <!-- ─── Paso 1: fechas ──────────────────────────────────────────────── -->
         <section v-if="step === 'dates'" class="space-y-4">
           <header>
             <h4 class="text-lg font-black text-navy">¿Cuándo venís?</h4>
             <p class="mt-0.5 text-sm text-text-secondary">
-              Elegí las fechas y cuántos son. Te mostramos las habitaciones con el precio real.
+              Elegí las fechas. Te mostramos las habitaciones con el precio real para cada
+              ocupación.
             </p>
           </header>
 
@@ -98,7 +101,6 @@
               :currency="store.displayCurrency || undefined"
               @validity="onCalendarValidity"
             />
-            <OccupancySelector v-model="occupancy" />
           </div>
 
           <p v-if="datesError" class="text-xs font-bold text-danger" role="alert">{{ datesError }}</p>
@@ -137,10 +139,19 @@
             <div v-for="i in 2" :key="i" class="h-28 animate-pulse rounded-2xl bg-surface" />
           </div>
 
+          <!--
+            El calendario (RateCalendar.vue) valida noche por noche si ALGÚN tipo de habitación
+            tiene lugar (día agregado entre todos los tipos), no si un MISMO tipo cubre TODO el
+            rango elegido seguido — por eso se puede llegar acá vacío con fechas que el calendario
+            permitió elegir sin avisar nada. El mensaje explica esa causa probable en vez de un
+            "sin disponibilidad" genérico que ya dice el título de arriba (spec
+            booking-availability-pricing, requirement "El calendario no puede prometer un rango
+            que la búsqueda no puede cumplir").
+          -->
           <EmptyState
             v-else-if="availableRooms.length === 0"
             title="Sin habitaciones para esas fechas"
-            message="No nos queda nada disponible para el rango elegido. Probá con otras fechas o con menos huéspedes."
+            message="Es posible que ninguna habitación tenga lugar para TODAS esas noches seguidas. Probá un rango más corto, otras fechas o menos huéspedes."
           >
             <template #action>
               <button
@@ -295,6 +306,34 @@
                   :aria-pressed="store.selectedRoom?.id === rt.id"
                   @click="chooseRoom(rt)"
                 >{{ store.selectedRoom?.id === rt.id ? 'Elegida' : 'Elegir' }}</button>
+              </article>
+            </li>
+          </ul>
+
+          <!--
+            Tipos SIN disponibilidad continua para estas fechas (catálogo, no `/rates`) — se
+            muestran deshabilitados con el motivo en vez de ocultarse. Sin precio (no hay tarifa
+            vigente que cotizar) ni CTA (no se puede elegir algo no reservable).
+          -->
+          <ul v-if="unavailableCatalogRooms.length > 0" class="space-y-3">
+            <li v-for="rt in unavailableCatalogRooms" :key="rt.id">
+              <article class="rounded-2xl border-2 border-dashed border-border bg-surface p-3 opacity-70">
+                <div class="flex gap-4">
+                  <img
+                    v-if="rt.photoUrl"
+                    :src="rt.photoUrl"
+                    :alt="prettify(rt.name)"
+                    class="hidden h-24 w-32 shrink-0 rounded-xl object-cover grayscale sm:block"
+                    loading="lazy"
+                  />
+                  <div class="flex min-w-0 flex-1 flex-col justify-center gap-1">
+                    <span class="font-black text-navy">{{ prettify(rt.name) }}</span>
+                    <span v-if="roomSpecs(rt)" class="text-xs font-bold text-text-muted">{{ roomSpecs(rt) }}</span>
+                    <span class="mt-1 inline-flex w-fit items-center rounded-full bg-border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-text-secondary">
+                      No disponible para estas fechas
+                    </span>
+                  </div>
+                </div>
               </article>
             </li>
           </ul>
@@ -648,18 +687,18 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import RateCalendar from './RateCalendar.vue'
-import OccupancySelector from './OccupancySelector.vue'
 
 import { useBookingStore } from '@/composables/useBooking'
+import { PublicHotelService } from '@/services/PublicHotel.service'
 import { formatMoney, formatOccupancy, formatShortDate, nightsBetween } from '@/utils/rate-calendar'
 import { groupOccupancyRows } from '@/utils/occupancy-groups'
 import type {
-  Occupancy,
   OccupancyUnavailableReason,
   OpenBookingOptions,
   PromoValidationReason,
   PublicHotelInfo,
   RoomOccupancyRate,
+  RoomTypeCatalogEntry,
   RoomTypeRate,
   UpsellKind,
 } from '@/types'
@@ -731,15 +770,6 @@ const checkOut = computed<string>({
   get: () => store.checkOut,
   set: (v) => { store.checkOut = v },
 })
-const occupancy = computed<Occupancy>({
-  get: () => ({ adults: store.guests, children: store.children, rooms: store.rooms }),
-  set: (v) => {
-    store.guests = Math.max(1, v.adults)
-    store.children = Math.max(0, v.children)
-    store.rooms = Math.max(1, v.rooms)
-  },
-})
-
 const currency = computed(() => store.displayCurrency || props.hotel.currency || 'USD')
 function money(value: number): string {
   return formatMoney(value, currency.value)
@@ -751,7 +781,14 @@ const staySummary = computed(() => {
   return `${formatShortDate(store.checkIn)} → ${formatShortDate(store.checkOut)} · ${n} ${n === 1 ? 'noche' : 'noches'}`
 })
 
-const occupancySummary = computed(() => formatOccupancy(occupancy.value))
+// Huéspedes YA NO se piden por adelantado (2026-08-20): se muestra la ocupación que
+// EFECTIVAMENTE va a la reserva (`store.bookingAdults`, elegida al seleccionar la fila "para
+// N" del tipo de habitación), no un valor fijo del buscador que ya no existe.
+const occupancySummary = computed(() => formatOccupancy({
+  adults: store.bookingAdults,
+  children: store.children,
+  rooms: store.rooms,
+}))
 
 // ─── Paso fechas ──────────────────────────────────────────────────────────────
 const datesError = ref('')
@@ -784,6 +821,30 @@ const availableRooms = computed(() =>
   (store.ratesResponse?.roomTypes ?? []).filter((rt) => rt.availableCount > 0),
 )
 
+/**
+ * Tipos que el hotel vende (catálogo, `GET /room-types` — mismo endpoint que la vitrina de la
+ * landing, ver `solmi-direct-booking-qa-fixes`) pero que `/rates` NO devolvió para el rango
+ * buscado: ningún unidad de ese tipo tiene disponibilidad continua esas fechas.
+ *
+ * Decisión de producto (2026-08-20): acá el huésped YA está buscando fechas concretas, así que
+ * "no disponible" es información real y útil — se muestran DESHABILITADOS con el motivo en vez
+ * de ocultarse (a diferencia de la búsqueda en sí, que sigue sin ofrecer algo no reservable).
+ * Tolerante a fallos: si el catálogo no carga, esta lista queda vacía y el paso se comporta
+ * exactamente como antes (solo `availableRooms`).
+ */
+const unavailableCatalogRooms = ref<RoomTypeCatalogEntry[]>([])
+
+async function loadUnavailableCatalogRooms(): Promise<void> {
+  if (!store.ratesResponse) { unavailableCatalogRooms.value = []; return }
+  try {
+    const catalog = await PublicHotelService.getRoomTypes(store.slug)
+    const availableIds = new Set(availableRooms.value.map((r) => r.id))
+    unavailableCatalogRooms.value = catalog.roomTypes.filter((t) => !availableIds.has(t.id))
+  } catch {
+    unavailableCatalogRooms.value = []
+  }
+}
+
 /** roomType que la card de la landing pidió preseleccionar. Se aplica cuando llegan las tarifas. */
 const pendingRoomTypeId = ref('')
 
@@ -792,14 +853,15 @@ function applyPendingRoom(): void {
   const match = availableRooms.value.find((rt) => rt.id === pendingRoomTypeId.value)
   if (!match) return
   pendingRoomTypeId.value = ''
-  // Si la matriz trae la fila de la ocupación que el huésped ya declaró en el hero, se
-  // preselecciona ESA (y su precio). Si no existe o no es vendible, queda la tarjeta con
-  // `fromPrice` y el huésped elige fila a mano — nunca se preselecciona algo no vendible.
+  // Sin ocupación declarada de antemano (2026-08-20, ya no se pide en el buscador), se intenta
+  // preseleccionar la fila "para 1" (el default de `store.physicalGuests`) si es vendible — el
+  // huésped elige la fila real a mano en la matriz de abajo. Si no existe o no es vendible,
+  // queda la tarjeta con `fromPrice` sin fila — nunca se preselecciona algo no vendible.
   const row = match.occupancies?.find((o) => o.occupancy === store.physicalGuests && o.available)
   void store.selectRoom(match, row?.occupancy)
 }
 
-watch(() => store.ratesResponse, () => { applyPendingRoom() })
+watch(() => store.ratesResponse, () => { applyPendingRoom(); void loadUnavailableCatalogRooms() })
 
 function prettify(name: string): string {
   if (!name) return 'Habitación'
@@ -811,7 +873,9 @@ function perNight(rt: RoomTypeRate): number {
   return rt.fromPrice / n
 }
 
-function roomSpecs(rt: RoomTypeRate): string {
+/** Compartido entre `RoomTypeRate` (disponibles) y `RoomTypeCatalogEntry` (deshabilitadas) —
+ *  ambos exponen los mismos 2 campos. */
+function roomSpecs(rt: { capacity: number; surfaceArea: number }): string {
   const parts: string[] = []
   if (rt.capacity > 0) parts.push(`${rt.capacity} ${rt.capacity === 1 ? 'huésped' : 'huéspedes'}`)
   if (rt.surfaceArea > 0) parts.push(`${rt.surfaceArea} m²`)
@@ -912,11 +976,15 @@ function toggleUpsell(id: string, checked: boolean): void {
   }
   const up = store.upsells.find((u) => u.id === id)
   // Cantidad por defecto según cómo se cobra: por habitación → habitaciones; por persona →
-  // ocupación física (los niños también desayunan); por estadía → 1.
+  // ocupación REAL de la reserva (los niños también desayunan). `bookingAdults + children`, no
+  // `physicalGuests`: desde que la ocupación ya no se pide por adelantado (2026-08-20),
+  // `physicalGuests` queda fijo en 1 y la ocupación real sale de la fila "para N" elegida en la
+  // matriz (`selectedOccupancy`/`bookingAdults`) — usar el default viejo subcotizaría el
+  // desayuno de una reserva "para 4" a 1 persona.
   const qty = up?.kind === 'per_room'
     ? store.rooms
     : up?.kind === 'per_person'
-      ? store.physicalGuests
+      ? store.bookingAdults + store.children
       : 1
   store.setSelectedUpsells([...rest, { id, quantity: Math.max(1, qty) }])
 }

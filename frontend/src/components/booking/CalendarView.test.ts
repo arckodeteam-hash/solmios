@@ -1,8 +1,9 @@
 // CalendarView.test.ts — El calendario del widget embebible (`/book/:slug`).
 //
 // Qué se protege acá (lo que NO cubre `utils/rate-calendar.test.ts`, que es lógica pura):
-//   1. Cada día muestra su precio — el widget venía mostrando solo el número, así que el huésped
-//      elegía fechas a ciegas mientras la landing ya le mostraba la tarifa noche a noche.
+//   1. NINGÚN día muestra precio — se mostraba antes un "desde" agregado (el más barato entre
+//      TODOS los tipos), y el huésped lo leía como el precio del tipo que terminaba eligiendo en
+//      RoomsStep, que cotiza distinto por tipo. El precio real se ve recién ahí, por tipo.
 //   2. Un día sin lugar no se puede elegir y se lee como "no hay lugar", no como "se rompió".
 //   3. El switcher de MONEDA del widget (que la landing no tiene) re-pide los precios: mostrar
 //      tarifas en EUR con números convertidos a USD sería peor que no mostrarlas.
@@ -92,15 +93,15 @@ describe('CalendarView (widget)', () => {
     })
   })
 
-  it('muestra el precio de cada noche en su celda', async () => {
+  it('NO muestra precio por día: distintos tipos de habitación cotizan distinto', async () => {
     vi.mocked(BookingService.getCalendar).mockResolvedValue(
       response(agosto({ '2026-08-20': { fromPrice: 175 } })),
     )
     await render()
 
     expect(cell(20).textContent).toContain('20')
-    expect(cell(20).textContent).toMatch(/175/)
-    expect(cell(21).textContent).toMatch(/100/)
+    expect(cell(20).textContent).not.toMatch(/175/)
+    expect(cell(21).textContent).not.toMatch(/100/)
   })
 
   it('un día closed / available 0 NO es seleccionable y se lee como "sin lugar"', async () => {
@@ -140,8 +141,6 @@ describe('CalendarView (widget)', () => {
 
     expect(BookingService.getCalendar).toHaveBeenCalledTimes(2)
     expect(vi.mocked(BookingService.getCalendar).mock.calls[1]![1]).toMatchObject({ currency: 'EUR' })
-    // Y la celda muestra el precio nuevo (no el cacheado de la moneda anterior).
-    expect(cell(20).textContent).toMatch(/92/)
   })
 
   it('cambiar la ocupación invalida lo cacheado y vuelve a pedir', async () => {

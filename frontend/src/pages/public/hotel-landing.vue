@@ -281,14 +281,55 @@ function mapRoomTypeRate(rt: RoomTypeRate): PublicLandingRoom {
  * Pide las tarifas indicativas para un rango de N noches y publica el resultado en
  * `rooms`/`roomsNights`. Lanza si la request falla (el caller decide si reintenta).
  */
+/**
+ * Completa lo que `/rates` trajo con los tipos del catálogo (`GET /room-types`, SIN filtro de
+ * disponibilidad) que `/rates` excluyó por no tener stock continuo justo en la ventana de fechas
+ * indicativa — bug real 2026-08-20: un tipo reservado esos días desaparecía ENTERO de la vitrina
+ * "Habitaciones", aunque sea un producto real y vendible en cualquier otra fecha.
+ *
+ * El catálogo es un COMPLEMENTO, no una dependencia dura: si falla, la vitrina sigue mostrando
+ * exactamente lo que `/rates` trajo (comportamiento previo a este fix, sin romper nada). Un tipo
+ * ya presente en `rated` (por id) nunca se pisa — esos ya tienen precio/disponibilidad EN VIVO.
+ *
+ * `basePrice` del catálogo es POR NOCHE (a diferencia de `fromPrice`, que es el TOTAL de la
+ * estadía) — se multiplica por `nights` para que quede en el mismo contrato que `mapRoomTypeRate`
+ * y `RoomsBlock.pricePerNight()` (que divide por `nights`) siga funcionando sin tocar el
+ * componente. Un tipo sin `basePrice` cargado (0) se omite: mejor no mostrar la card que publicar
+ * "Desde 0 US$/noche".
+ */
+async function mergeWithCatalog(
+  slug: string, rated: PublicLandingRoom[], nights: number,
+): Promise<PublicLandingRoom[]> {
+  try {
+    const catalog = await PublicHotelService.getRoomTypes(slug)
+    const ratedIds = new Set(rated.map((r) => r.id))
+    const fallback: PublicLandingRoom[] = catalog.roomTypes
+      .filter((t) => !ratedIds.has(t.id) && t.basePrice > 0)
+      .map((t) => ({
+        id: t.id,
+        name: prettifyRoomType(t.name),
+        fromPrice: t.basePrice * nights,
+        availableCount: 0,
+        capacity: t.capacity,
+        surfaceArea: t.surfaceArea,
+        photoUrl: t.photoUrl,
+      }))
+    return [...rated, ...fallback]
+  } catch {
+    return rated
+  }
+}
+
 async function requestIndicativeRates(slug: string, nights: number): Promise<void> {
   const { checkIn, checkOut } = indicativeDateRange(nights)
   const ratesRes = await BookingService.getRates(slug, { checkIn, checkOut, guests: 2 })
   // La API devuelve las noches que efectivamente cotizó; es la fuente de verdad sobre el
   // rango local (que solo describe lo que PEDIMOS). Si no viene, caemos al rango pedido.
   const apiNights = Number(ratesRes.nights)
-  roomsNights.value = Number.isFinite(apiNights) && apiNights > 0 ? apiNights : nights
-  rooms.value = (ratesRes.roomTypes ?? []).map(mapRoomTypeRate)
+  const effectiveNights = Number.isFinite(apiNights) && apiNights > 0 ? apiNights : nights
+  roomsNights.value = effectiveNights
+  const rated = (ratesRes.roomTypes ?? []).map(mapRoomTypeRate)
+  rooms.value = await mergeWithCatalog(slug, rated, effectiveNights)
   roomsError.value = false
   cancellation.value = ratesRes.cancellationSummary ?? null
 }

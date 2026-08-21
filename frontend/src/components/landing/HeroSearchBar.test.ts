@@ -1,7 +1,11 @@
 // HeroSearchBar.test.ts — El contrato de URL del buscador.
-// `booking-widget.vue:286-289` lee `?checkIn&checkOut&guests&rooms` para inicializar el wizard:
-// si esta query cambia de forma, el deep-link desde la landing se rompe en silencio. Por eso se
-// testea el submit end-to-end (calendario real + selector real), no los refs internos.
+// `booking-widget.vue` lee `?checkIn&checkOut` para inicializar el wizard: si esta query cambia
+// de forma, el deep-link desde la landing se rompe en silencio. Por eso se testea el submit
+// end-to-end (calendario real), no los refs internos.
+//
+// Decisión de producto (2026-08-20): el buscador YA NO pide huéspedes (`OccupancySelector` se
+// quitó de este componente) — cada tipo de habitación tiene su propio límite de capacidad, y la
+// ocupación exacta se elige recién al ver los tipos disponibles. El submit solo manda fechas.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 
@@ -73,62 +77,33 @@ describe('HeroSearchBar', () => {
   })
   afterEach(() => { wrapper?.unmount(); wrapper = null; vi.useRealTimers() })
 
-  it('preserva el contrato ?checkIn&checkOut&guests&rooms que lee el widget', async () => {
+  it('preserva el contrato ?checkIn&checkOut que lee el widget (sin huéspedes)', async () => {
     const w = await render()
     await pickDates(w, 18, 21)
 
     await w.get('form').trigger('submit')
-    expect(push).toHaveBeenCalledWith(
-      '/book/hotel-demo?checkIn=2026-08-18&checkOut=2026-08-21&guests=2&rooms=1',
-    )
+    expect(push).toHaveBeenCalledWith('/book/hotel-demo?checkIn=2026-08-18&checkOut=2026-08-21')
   })
 
-  it('guests son los ADULTOS (los niños viajan aparte: el widget mapea guests→adults)', async () => {
+  it('no renderiza ningún selector de huéspedes', async () => {
     const w = await render()
-    await pickDates(w, 18, 20)
-
-    await w.findAllComponents({ name: 'OccupancySelector' })[0]!.get('button').trigger('click')
-    await flushPromises()
-    const occ = dialog('Seleccionar huéspedes y habitaciones')
-    // Un flush por click: el stepper es un v-model puro (emite a partir de la prop actual), así
-    // que hay que dejar que el padre propague el valor nuevo — igual que entre dos clicks reales.
-    occ.querySelector<HTMLButtonElement>('button[aria-label="Agregar un niño"]')!.click()
-    await flushPromises()
-    occ.querySelector<HTMLButtonElement>('button[aria-label="Agregar una habitación"]')!.click()
-    await flushPromises()
-
-    await w.get('form').trigger('submit')
-    const url = push.mock.calls[0]![0] as string
-    const qs = new URLSearchParams(url.split('?')[1])
-    expect(qs.get('guests')).toBe('2')   // adultos, NO adultos+niños
-    expect(qs.get('children')).toBe('1')
-    expect(qs.get('rooms')).toBe('2')
+    expect(w.findAllComponents({ name: 'OccupancySelector' }).length).toBe(0)
+    expect(w.text()).not.toContain('Huéspedes')
   })
 
-  it('el calendario recibe la ocupación FÍSICA (adultos + niños) para filtrar por capacidad', async () => {
-    const w = await render()
-    await w.findAllComponents({ name: 'OccupancySelector' })[0]!.get('button').trigger('click')
-    await flushPromises()
-    dialog('Seleccionar huéspedes y habitaciones')
-      .querySelector<HTMLButtonElement>('button[aria-label="Agregar un niño"]')!.click()
-    await flushPromises()
-
+  it('el calendario consulta con la ocupación mínima (1), no filtra tipos por capacidad', async () => {
+    await render()
     const last = vi.mocked(BookingService.getCalendar).mock.calls.at(-1)!
-    expect(last[1]).toMatchObject({ guests: 3 })
+    expect(last[1]).toMatchObject({ guests: 1 })
   })
 
   it('dentro de la landing abre el modal con el contexto ya cargado, sin navegar', async () => {
     // El huésped NO debe abandonar `/h/:slug` para reservar: el submit abre BookingModal encima
     // de la landing y `skipToRooms` evita que el motor le vuelva a pedir "Ver disponibilidad".
+    // Sin adults/children/rooms: el store abre con su propio default (2026-08-20).
     const openBooking = vi.fn()
     const w = await render(openBooking)
     await pickDates(w, 18, 21)
-
-    await w.findAllComponents({ name: 'OccupancySelector' })[0]!.get('button').trigger('click')
-    await flushPromises()
-    dialog('Seleccionar huéspedes y habitaciones')
-      .querySelector<HTMLButtonElement>('button[aria-label="Agregar un niño"]')!.click()
-    await flushPromises()
 
     await w.get('form').trigger('submit')
 
@@ -136,9 +111,6 @@ describe('HeroSearchBar', () => {
     expect(openBooking).toHaveBeenCalledWith({
       checkIn: '2026-08-18',
       checkOut: '2026-08-21',
-      adults: 2,     // los niños NO se suman acá: el motor los manda aparte al backend
-      children: 1,
-      rooms: 1,
       skipToRooms: true,
     })
   })

@@ -1,7 +1,8 @@
-// RateCalendar.test.ts — Comportamiento del calendario de rango con precios.
+// RateCalendar.test.ts — Comportamiento del calendario de rango.
 // Lo que se cubre acá (lo que no se ve en `utils/rate-calendar.test.ts`): que el componente
-// pida el mes visible, pinte el precio, bloquee el día sin lugar, cuente bien las noches al
-// seleccionar, y — sobre todo — que SIGA sirviendo para elegir fechas si el endpoint falla.
+// pida el mes visible, NO pinte precio por día (distintos tipos de habitación cotizan
+// distinto), bloquee el día sin lugar, cuente bien las noches al seleccionar, y — sobre todo —
+// que SIGA sirviendo para elegir fechas si el endpoint falla.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 
@@ -83,14 +84,14 @@ describe('RateCalendar', () => {
     })
   })
 
-  it('muestra el precio de cada noche en su celda', async () => {
+  it('NO muestra precio por día: distintos tipos de habitación cotizan distinto', async () => {
     vi.mocked(BookingService.getCalendar).mockResolvedValue(
       response(agosto({ '2026-08-20': { fromPrice: 175 } })),
     )
     await render()
 
     expect(cell(20).textContent).toContain('20')
-    expect(cell(20).textContent).toMatch(/175/)
+    expect(cell(20).textContent).not.toMatch(/175/)
   })
 
   it('un día closed / available 0 NO es seleccionable y se lee como "sin lugar"', async () => {

@@ -31,6 +31,10 @@ import { listActiveHotelSlugs, buildSitemapXml, resolveBaseUrl } from './usecase
 // conversion; upsells lista los activos del hotel para el step de extras del widget).
 import { getPublicRates } from './usecases/public-rates'
 import { getPublicUpsells } from './usecases/public-upsells'
+// Catálogo de tipos de habitación (sin filtrar por disponibilidad): consumido por la vitrina
+// "Habitaciones" de la landing, que necesita mostrar TODOS los tipos que el hotel vende, no solo
+// los libres en una ventana de fechas indicativa (ver el header del usecase para el bug real).
+import { getPublicRoomTypes } from './usecases/public-room-types'
 // Calendario público de tarifas: precio desde + disponibilidad real por día.
 import { getPublicCalendar } from './usecases/public-calendar'
 // F3 3.15 — Handler público para /ota-prices (comparativo directo vs Booking/Airbnb).
@@ -346,6 +350,26 @@ export class BookingengineController {
         guests: query.guests !== undefined ? Number(query.guests) : undefined,
         currency: query.currency,
       },
+    )
+  }
+
+  /**
+   * GET /api/public/hotels/:slug/room-types — catálogo de tipos de habitación SIN filtrar por
+   * disponibilidad (ver usecase para el bug real que arregla). Consumido por la vitrina
+   * "Habitaciones" de la landing; `/rates` sigue siendo la fuente para precio/disponibilidad
+   * en vivo de una búsqueda real.
+   */
+  async getPublicRoomTypes(req: HttpRequest) {
+    this.logger.info('GET /api/public/hotels/:slug/room-types', { slug: req.params.slug })
+    if (!this.hotelsRepo || !this.roomsRepo) {
+      return { status: 500, body: { error: 'room-types deps no cableados' } }
+    }
+    return getPublicRoomTypes(
+      {
+        hotels: this.hotelsRepo, rooms: this.roomsRepo,
+        hotelMedia: this.hotelMediaRepo, bookingConfig: this.bookingConfigRepo,
+      },
+      String(req.params?.slug || ''),
     )
   }
 

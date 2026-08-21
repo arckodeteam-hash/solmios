@@ -97,16 +97,10 @@
             @focus="onCellHover(cell)"
           >
             <span class="text-sm font-black leading-none" :class="cell.soldOut ? 'line-through decoration-2' : ''">{{ cell.day }}</span>
-            <!-- Un día sin lugar NO muestra precio: una tarifa en una celda que no se puede
-                 clickear se lee como "hay algo a ese precio y la web está rota". -->
+            <!-- Sin precio por día: distintos tipos de habitación cotizan distinto, y un "desde"
+                 agregado bajo el día se leía como EL precio de la habitación que el huésped
+                 termina eligiendo. El precio real por tipo se muestra recién al elegir habitación. -->
             <span v-if="cell.soldOut" class="mt-1 text-[9px] font-bold uppercase leading-none">Lleno</span>
-            <!-- El precio es el dato dominante después del día. Va en teal (dinero) salvo dentro
-                 del rango elegido, donde hereda el color del fondo cyan para no vibrar. -->
-            <span
-              v-else-if="cell.price !== null"
-              class="mt-1 text-[10px] font-extrabold leading-none tabular-nums"
-              :class="isNight(cell) ? '' : 'text-teal'"
-            >{{ money(cell.price) }}</span>
           </button>
         </template>
 

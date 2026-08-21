@@ -1,14 +1,12 @@
-// SearchStep.test.ts — Selector de ocupación del widget embebible.
+// SearchStep.test.ts — Buscador del widget embebible SIN selector de huéspedes.
 //
-// Bug que se protege: el paso 0 tenía dos steppers apretados (huéspedes + habitaciones) y NINGÚN
-// campo para niños, mientras la landing sí los pedía. El huésped que viajaba con chicos no tenía
-// dónde declararlos, y las tarifas se consultaban con una ocupación física menor a la real.
-//
-// Contrato: `store.guests` son ADULTOS (se mapea a `adults` al crear la reserva) y `store.children`
-// los niños; la consulta de tarifas usa `store.physicalGuests` (adultos + niños). Meter niños
-// dentro de `guests` los grabaría como adultos.
+// Decisión de producto (2026-08-20): la ocupación ya no se pide en el buscador — cada tipo de
+// habitación tiene su propio límite de capacidad, y se elige la ocupación exacta ("para N") recién
+// al ver los tipos disponibles (matriz de ocupaciones de RoomsStep.vue), no de antemano acá. Este
+// archivo reemplaza los tests viejos (que afirmaban lo contrario: 3 steppers de adultos/niños/
+// habitaciones) por su contraparte — guarda de regresión de que la sección NO reaparece.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('@/services/Booking.service', () => ({
@@ -19,74 +17,41 @@ import SearchStep from './SearchStep.vue'
 import { useBookingStore } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 
-/** Devuelve los botones ± de la fila cuyo label coincide. */
-function stepperOf(w: VueWrapper, label: string): { minus: HTMLButtonElement; plus: HTMLButtonElement } {
-  const minus = w.element.querySelector(`button[aria-label="− ${label}"]`)
-  const plus = w.element.querySelector(`button[aria-label="+ ${label}"]`)
-  if (!minus || !plus) throw new Error(`No existe el stepper de "${label}"`)
-  return { minus: minus as HTMLButtonElement, plus: plus as HTMLButtonElement }
-}
-
-describe('SearchStep — ocupación', () => {
+describe('SearchStep — sin selector de huéspedes', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     useBookingI18nStore().setLocale('es')
   })
 
-  it('tiene adultos, NIÑOS y habitaciones (paridad con la landing)', async () => {
+  it('no renderiza ningún stepper de ocupación (adultos/niños/habitaciones)', async () => {
     const store = useBookingStore()
     store.init('hotel-demo')
     const w = mount(SearchStep)
     await flushPromises()
 
-    expect(w.text()).toContain('Adultos')
-    expect(w.text()).toContain('Niños')
-    expect(w.text()).toContain('Habitaciones')
-    // Tres steppers, uno por fila.
-    expect(w.element.querySelectorAll('button[aria-label^="+ "]').length).toBe(3)
+    expect(w.text()).not.toContain('Adultos')
+    expect(w.text()).not.toContain('Niños')
+    expect(w.text()).not.toContain('Habitaciones')
+    expect(w.element.querySelectorAll('button[aria-label^="+ "]').length).toBe(0)
     w.unmount()
   })
 
-  it('los niños suman a la ocupación FÍSICA sin ensuciar los adultos', async () => {
-    const store = useBookingStore()
-    store.init('hotel-demo', { guests: 2, children: 0 })
-    const w = mount(SearchStep)
-    await flushPromises()
-
-    // Un click por render: el stepper recibe el valor por prop, así que hay que dejar que Vue
-    // lo propague antes del segundo toque (igual que un usuario real).
-    stepperOf(w, 'Niños').plus.click()
-    await flushPromises()
-    stepperOf(w, 'Niños').plus.click()
-    await flushPromises()
-
-    expect(store.children).toBe(2)
-    expect(store.guests).toBe(2) // los adultos NO se tocaron
-    expect(store.physicalGuests).toBe(4)
-    w.unmount()
-  })
-
-  it('no deja bajar de 1 adulto ni de 0 niños', async () => {
-    const store = useBookingStore()
-    store.init('hotel-demo', { guests: 1, children: 0 })
-    const w = mount(SearchStep)
-    await flushPromises()
-
-    expect(stepperOf(w, 'Adultos').minus.disabled).toBe(true)
-    expect(stepperOf(w, 'Niños').minus.disabled).toBe(true)
-    expect(stepperOf(w, 'Habitaciones').minus.disabled).toBe(true)
-    w.unmount()
-  })
-
-  it('los ± son objetivos táctiles reales (36px), no botones diminutos', async () => {
+  it('el store abre con la ocupación mínima por default (1 adulto, 0 niños, 1 habitación)', () => {
     const store = useBookingStore()
     store.init('hotel-demo')
-    const w = mount(SearchStep)
-    await flushPromises()
 
-    const { plus } = stepperOf(w, 'Adultos')
-    expect(plus.className).toContain('h-9')
-    expect(plus.className).toContain('w-9')
-    w.unmount()
+    expect(store.guests).toBe(1)
+    expect(store.children).toBe(0)
+    expect(store.rooms).toBe(1)
+    expect(store.physicalGuests).toBe(1)
+  })
+
+  it('un deep-link ?guests= sigue pudiendo overridear el default (compat integradores externos)', () => {
+    const store = useBookingStore()
+    store.init('hotel-demo', { guests: 4, children: 1 })
+
+    expect(store.guests).toBe(4)
+    expect(store.children).toBe(1)
+    expect(store.physicalGuests).toBe(5)
   })
 })
