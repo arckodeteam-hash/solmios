@@ -20,6 +20,7 @@ import type {
   PublicReviewsQuery,
   PublicReviewsResponse,
 } from '@/types/public-hotel'
+import type { PublicRoomTypesResponse } from '@/types/booking'
 
 function build(qs: Record<string, string | number | undefined>): string {
   const params = new URLSearchParams()
@@ -56,6 +57,17 @@ export const PublicHotelService = {
    */
   getMedia(slug: string): Promise<PublicHotelMedia> {
     return http.get<PublicHotelMedia>(`/public/hotels/${encodeURIComponent(slug)}/media`)
+  },
+
+  /**
+   * Catálogo de tipos de habitación SIN filtrar por disponibilidad (a diferencia de
+   * `BookingService.getRates`, que excluye un tipo sin stock continuo para el rango de fechas
+   * pedido). Usado por `hotel-landing.vue` para completar la vitrina "Habitaciones" con los
+   * tipos que `/rates` excluyó por estar ocupados justo en la ventana de fechas indicativa —
+   * bug real 2026-08-20: un tipo reservado esos días desaparecía ENTERO de la web pública.
+   */
+  getRoomTypes(slug: string): Promise<PublicRoomTypesResponse> {
+    return http.get<PublicRoomTypesResponse>(`/public/hotels/${encodeURIComponent(slug)}/room-types`)
   },
 
   /**

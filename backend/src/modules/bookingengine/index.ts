@@ -21,6 +21,8 @@ export { BookingengineValidator, UpdateBookingConfigSchema, CheckAvailabilitySch
 // Calendario público de tarifas (`GET /api/public/hotels/:slug/calendar`).
 export { validatePublicCalendarQuery, MAX_CALENDAR_DAYS } from './validators/schema'
 export type { CalendarDay, PublicCalendarBody, PublicCalendarQuery } from './usecases/public-calendar'
+// Catálogo de tipos de habitación (`GET /api/public/hotels/:slug/room-types`).
+export type { PublicRoomTypeCatalogEntry } from './usecases/public-room-types'
 
 export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string, roomId: string) => void }) {
   return createModule({
@@ -165,6 +167,15 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         const { allowed, retryAfter } = await rateLimit(`public-rates:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
         if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
         return controller.getPublicRates(req)
+      })
+      // Catálogo de tipos de habitación (sin disponibilidad): la vitrina "Habitaciones" de la
+      // landing lo usa para decidir QUÉ tarjetas mostrar, sin que un tipo ocupado en la ventana
+      // indicativa de /rates desaparezca de la web pública (ver usecase). Rate-limit 60/60s,
+      // mismo techo que /rates y /hotel/:slug (read-only). Sin auth.
+      router.get('/api/public/hotels/:slug/room-types', async (req: any) => {
+        const { allowed, retryAfter } = await rateLimit(`public-room-types:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
+        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
+        return controller.getPublicRoomTypes(req)
       })
       // Calendario público de tarifas: por día, `fromPrice` de esa noche + disponibilidad real
       // (considera `room_blocks`) + stop-sell + minStay. Rate-limit 60/60s, mismo techo que

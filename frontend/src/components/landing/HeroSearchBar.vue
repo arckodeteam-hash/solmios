@@ -9,10 +9,13 @@
       memoria qué días hay lugar y cuánto sale cada noche. Ahora es UN campo que abre
       `RateCalendar`: vista de rango conectada, precio por noche en cada celda y días sin
       disponibilidad marcados (Baymard/NN-g: el buscador es el contenido primario del hero).
-    - Huéspedes: antes eran steppers de 16px (h-4 w-4) para Adultos y Habitaciones, y los niños
-      no se podían elegir en ninguna pantalla (`children` existía en el tipo, sin UI que lo
-      alimentara). Ahora es `OccupancySelector`: resumen explícito ("2 adultos, 1 niño") con
-      steppers de 36px adentro.
+    - Huéspedes: QUITADO del buscador (2026-08-20, decisión de producto). Cada tipo de
+      habitación tiene su propio límite de capacidad, y la ocupación exacta ("para 1"/"para
+      2"/"para 4") se elige recién al ver los tipos disponibles (matriz de ocupaciones en
+      `RoomsStep.vue`/`BookingModal.vue`), no de antemano en la barra de búsqueda — pedirla acá
+      era un paso redundante que además podía excluir tipos válidos de la búsqueda inicial. El
+      buscador consulta con la ocupación mínima (`store.guests` default 1, ver `useBooking.ts`)
+      para no filtrar ningún tipo por capacidad.
 
     LAYOUT (fix v3 que se conserva): breakpoints de VIEWPORT (`sm:`/`lg:`) no saben que este
     componente vive dentro de un contenedor `max-w-3xl/4xl` — a un viewport ancho el breakpoint
@@ -27,11 +30,14 @@
 
     DESTINO DEL SUBMIT (2 caminos, a propósito):
     1. Dentro de la landing (`/h/:slug`) hay un `provideLandingBooking` → se abre `BookingModal`
-       ENCIMA de la landing con las fechas y la ocupación ya cargadas y saltando directo al paso
-       de habitaciones. El huésped nunca abandona la página del hotel.
+       ENCIMA de la landing con las fechas ya cargadas y saltando directo al paso de
+       habitaciones. El huésped nunca abandona la página del hotel.
     2. Fuera de la landing (sin provider) → se conserva la navegación a `/book/:slug` con el
-       contrato de URL `?checkIn&checkOut&guests&rooms&children` que lee `booking-widget.vue`.
-       El widget embebible es otro producto y no se toca.
+       contrato de URL `?checkIn&checkOut` que lee `booking-widget.vue`. Sin `guests`/`rooms`/
+       `children`: el widget tampoco los pide (mismo cambio de producto), y sin el param el
+       store usa su propio default (`guests=1`, `useBooking.ts`). El param `?guests=` sigue
+       existiendo por si un integrador externo lo manda a mano — solo se quitó el control que
+       lo escribía DESDE la propia app.
   -->
   <form
     @submit.prevent="onSubmit"
@@ -41,11 +47,9 @@
       v-model:check-in="checkIn"
       v-model:check-out="checkOut"
       :hotel-slug="hotelSlug"
-      :guests="totalOccupancy"
+      :guests="1"
       @validity="onCalendarValidity"
     />
-
-    <OccupancySelector v-model="occupancy" />
 
     <button
       type="submit"
@@ -60,13 +64,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import RateCalendar from './RateCalendar.vue'
-import OccupancySelector from './OccupancySelector.vue'
 import { useLandingBooking } from '@/composables/useLandingBooking'
-import { nightsBetween, totalGuests } from '@/utils/rate-calendar'
-import type { Occupancy } from '@/types/booking'
+import { nightsBetween } from '@/utils/rate-calendar'
 
 const props = defineProps<{
   hotelSlug: string
@@ -79,13 +81,7 @@ const openBooking = useLandingBooking()
 
 const checkIn = ref('')
 const checkOut = ref('')
-const occupancy = ref<Occupancy>({ adults: 2, children: 0, rooms: 1 })
 const error = ref('')
-
-/** Ocupación FÍSICA por habitación para el calendario: el backend filtra `rooms.capacity >=
- *  guests`, y un niño también ocupa una plaza. No es lo mismo que el `guests` de la URL (ver
- *  `onSubmit`). */
-const totalOccupancy = computed(() => totalGuests(occupancy.value))
 
 /** Restricciones que solo conoce el calendario (estadía mínima del día de entrada). Se guardan
  *  acá para frenar el submit con el mismo mensaje que ya se ve dentro del panel. */
@@ -112,32 +108,24 @@ function onSubmit(): void {
   }
 
   // Camino 1 — la landing: el modal abre con TODO el contexto y arranca en habitaciones
-  // (`skipToRooms`). `adults` y `children` viajan separados: el motor manda `adults` como tal y
-  // consulta las tarifas con la ocupación física (adultos + niños), el mismo criterio con el que
-  // este buscador ya alimenta el calendario. Sin esa separación el precio del hero y el del paso
-  // de habitaciones podían no coincidir cuando había niños.
+  // (`skipToRooms`). Sin `adults`/`children`/`rooms`: ya no se piden acá (2026-08-20) — el
+  // store abre con su propio default (`guests=1`) y la ocupación real se elige recién al ver
+  // los tipos de habitación (matriz de ocupaciones).
   if (openBooking) {
     openBooking({
       checkIn: checkIn.value,
       checkOut: checkOut.value,
-      adults: Math.max(1, occupancy.value.adults),
-      children: Math.max(0, occupancy.value.children),
-      rooms: Math.max(1, occupancy.value.rooms),
       skipToRooms: true,
     })
     return
   }
 
-  // Camino 2 — fuera de la landing: contrato de URL intacto. `guests` sigue siendo la cantidad de
-  // ADULTOS; el widget lo mapea a `adults` de la reserva — meter ahí adultos+niños haría que los
-  // niños se graben como adultos. `children` viaja aparte y solo si es > 0.
+  // Camino 2 — fuera de la landing: contrato de URL intacto, solo fechas. Sin `guests`/`rooms`/
+  // `children`: el widget usa su propio default (`guests=1`, `useBooking.ts`) igual que acá.
   const qs = new URLSearchParams({
     checkIn: checkIn.value,
     checkOut: checkOut.value,
-    guests: String(Math.max(1, occupancy.value.adults)),
-    rooms: String(Math.max(1, occupancy.value.rooms)),
   })
-  if (occupancy.value.children > 0) qs.set('children', String(occupancy.value.children))
 
   router.push(`/book/${encodeURIComponent(props.hotelSlug)}?${qs.toString()}`)
 }

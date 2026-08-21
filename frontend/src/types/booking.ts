@@ -189,6 +189,29 @@ export interface PublicRatesResponse {
   cancellationSummary: CancellationSummary | null
 }
 
+/**
+ * Tipo de habitación devuelto por `GET /api/public/hotels/:slug/room-types` — catálogo SIN
+ * filtrar por disponibilidad (a diferencia de `RoomTypeRate`/`/rates`, que excluye un tipo sin
+ * stock continuo para el rango de fechas pedido). Usado como fallback cuando la landing necesita
+ * mostrar TODOS los tipos que el hotel vende, no solo los libres en una ventana indicativa
+ * puntual (bug real 2026-08-20: un tipo reservado esos días desaparecía de la vitrina entera).
+ */
+export interface RoomTypeCatalogEntry {
+  id: string
+  name: string
+  capacity: number
+  surfaceArea: number
+  /** `min(rooms.basePrice)` del tipo, POR NOCHE (no total de estadía, a diferencia de
+   *  `RoomTypeRate.fromPrice`). 0 si ninguna unidad del tipo tiene precio cargado. */
+  basePrice: number
+  photoUrl: string | null
+}
+
+/** Respuesta de `GET /api/public/hotels/:slug/room-types`. */
+export interface PublicRoomTypesResponse {
+  roomTypes: RoomTypeCatalogEntry[]
+}
+
 /** F5 #627 — Resumen estructurado de la política de cancelación. */
 export interface CancellationSummary {
   tiers: CancellationTier[]
