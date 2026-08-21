@@ -2,13 +2,15 @@ import type { HttpRequest, Logger, Auth, RepositoryAdapter } from 'arckode-frame
 import { validateSchema, OrmRepository } from 'arckode-framework'
 import type { FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasService } from './service'
-import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, CancelReservationSchema, StayQuoteSchema } from './validators/schema'
+import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, CancelReservationSchema, StayQuoteSchema, ManualMessageLogSchema } from './validators/schema'
 import { listCompanions, createCompanion, updateCompanion, deleteCompanion } from './usecases/companions'
 import { listAddons, createAddon, deleteAddon } from './usecases/addons'
+import { logManualMessage } from './usecases/message-log'
 import { hashGuaranteePin, verifyGuaranteePin } from '../../services/guarantee-pin'
 import { sendCheckinEmail } from './usecases/checkin-email'
 import { dispatchLifecycleEmail } from './usecases/lifecycle-email'
 import { hotelIdOfUserLegacy } from '../../shared/usecases/hotel-of-legacy'
+import { toSettleActor } from './usecases/settle-port'
 
 // Decodifica un data URL base64 (data:<mime>;base64,<data>) → buffer + metadata.
 // Mismo patrón que housekeeping/controller.ts (el router no propaga req.files al handler).
@@ -139,11 +141,14 @@ export class ReservasController {
   }
   async createAddon(req: HttpRequest) {
     const dto = validateSchema(AddonSchema, req.body) as any
-    const a = await createAddon(this.addonsRepo, this.reservationRepo, this.userRepo, this.auth, req.params.id, dto, req.user as any)
+    // El notificador (socket + invalidación del listado) lo arma el service, que es quien tiene
+    // caché y sockets. Sin él, el saldo nuevo no llega a `GET /api/reservas` por 300s (COR-1).
+    const a = await createAddon(this.addonsRepo, this.reservationRepo, this.userRepo, this.auth, req.params.id, dto, req.user as any, this.service.reservationChanged(), this.service.paidSource())
     return { status: 201, body: a }
   }
   async deleteAddon(req: HttpRequest) {
-    await deleteAddon(this.addonsRepo, this.reservationRepo, this.userRepo, this.auth, req.params.id, req.user as any)
+    // SEC3-2: un extra menos es techo menos — los links vivos se recortan al saldo nuevo.
+    await deleteAddon(this.addonsRepo, this.reservationRepo, this.userRepo, this.auth, req.params.id, req.user as any, this.service.reservationChanged(), this.service.paidSource(), this.service.addonsCeilingGuard())
     return { status: 200, body: { success: true } }
   }
 
@@ -182,7 +187,7 @@ export class ReservasController {
       const body = req.body as Record<string, any> | undefined
       if (body?.settle !== undefined) {
         const settle = validateSchema(SettleSchema, body.settle) as { method: string; amount: number; reference?: string }
-        settlementResult = await this.service.settleFolioForCheckout(reservation, settle, req.user as any)
+        settlementResult = await this.service.settleFolioForCheckout(reservation, settle, toSettleActor(req.user))
       }
 
       this.pushChannex(reservation.hotelId, reservation.roomId)
@@ -361,6 +366,27 @@ export class ReservasController {
   }
 
   // ── SEND LOCK CODE EMAIL (botón "Enviar código por email" del planning) ──
+  /** Traza de un envío manual (WhatsApp/SMS/email) hecho desde el panel — ver usecases/message-log.ts. */
+  async logManualMessage(req: HttpRequest) {
+    // Sin repo NO se puede registrar nada: antes esto devolvía 201 con `{logged:false}` y el
+    // cliente mostraba el envío como registrado. Un fallo de cableado tiene que verse como fallo.
+    const repo = this.messageLogRepo ?? (this.orm ? new OrmRepository<any>(this.orm, 'MessageLogs') : null)
+    if (!repo) return { status: 503, body: { error: 'El registro de envíos no está disponible' } }
+    try {
+      const dto = validateSchema(ManualMessageLogSchema, req.body) as any
+      const out = await logManualMessage(
+        { messageLogRepo: repo, reservationRepo: this.reservationRepo, userRepo: this.userRepo, auth: this.auth },
+        req.params.id, dto, req.user as any,
+      )
+      return { status: 201, body: out }
+    } catch (e: any) {
+      if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
+      if (e.name === 'ValidationError') return { status: 400, body: { error: e.message } }
+      if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
+      return { status: 500, body: { error: e.message } }
+    }
+  }
+
   async sendLockCodeEmail(req: HttpRequest) {
     try {
       const result = await this.service.sendLockCodeEmail(req.params.id, req.user as any, { orm: this.orm })

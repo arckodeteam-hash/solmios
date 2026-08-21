@@ -10,6 +10,12 @@
 
 import { describe, it, expect } from 'bun:test'
 import { quoteReschedule, commitReschedule, type RescheduleDeps } from '../usecases/reschedule'
+import { paidSourceFrom } from '../../../shared/usecases/reservation-paid'
+
+// Lo cobrado real (GH-0.2). Repos vacíos ⇒ la implementación REAL cae al `deposit` de la reserva,
+// que es lo que estos tests modelan (sin folio ni factura de por medio).
+const noMoneyRows = { findMany: async () => [] as any[] }
+const paidOf = paidSourceFrom({ folioRepo: noMoneyRows, invoiceRepo: noMoneyRows, paymentRepo: noMoneyRows })
 
 const noopLogger = { info() {}, warn() {}, error() {}, debug() {} } as any
 const silentCache = { get: async () => null, set: async () => {}, delete: async () => {}, flush: async () => {} } as any
@@ -51,7 +57,10 @@ function makeDeps(reserva: any, rooms: Record<string, any>, repoOverrides: Recor
     roomRepo: makeRoomRepo(rooms),
     logger: noopLogger,
     cache: silentCache,
+    paidOf,
     sockets: {},
+    // STR-2: el commit reprecia y el saldo persistido tiene que moverse con el total nuevo.
+    addonsOf: async () => [],
   }
 }
 
@@ -105,5 +114,20 @@ describe('commitReschedule — IDOR #668 (aplica el cambio real)', () => {
     const result = await commitReschedule(deps, 'r1', { roomId: 'room-2' }, hotelAdmin)
     expect(result.reservation.roomId).toBe('room-2')
     expect(result.quote.roomId).toBe('room-2')
+  })
+
+  it('SEC3-2: el commit dispara ceilingGuard al escribir totalAmount (un reprice que BAJA deja links vivos si no)', async () => {
+    // El commit escribe `totalAmount:newTotal` vía updateReservation → crud dispara `afterCeilingDrop`
+    // (crud.ts:286). Si el hook no se cablea, el callback es undefined y una reprogramación que
+    // abarata deja Checkout Sessions abiertas por el saldo VIEJO.
+    const reserva = makeReservation()
+    const clamped: Array<{ hotelId: string; reservationId: string }> = []
+    const deps: RescheduleDeps = {
+      ...makeDeps(reserva, { 'room-2': { id: 'room-2', hotelId: HOTEL, basePrice: 120 } }),
+      ceilingGuard: async (hotelId, reservationId) => { clamped.push({ hotelId, reservationId }) },
+    }
+    // reprice a una room más barata y menos noches: baja el total → creditAmount > 0.
+    await commitReschedule(deps, 'r1', { roomId: 'room-2', checkIn: '2030-01-10', checkOut: '2030-01-11', pricingMode: 'reprice' }, hotelAdmin)
+    expect(clamped).toEqual([{ hotelId: HOTEL, reservationId: 'r1' }])
   })
 })

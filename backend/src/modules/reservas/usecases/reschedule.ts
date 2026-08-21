@@ -18,9 +18,11 @@ import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
 import { assertRoomAvailable } from './availability'
 import { updateReservation } from './crud'
 import { repriceStay, guestsOfReservation, type RepriceRepos } from './reprice'
+import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
+import type { PaidSource } from '../../../shared/usecases/reservation-paid'
+import { round2 } from '../../../shared/utils/money'
 
 const MS_PER_DAY = 86_400_000
-const round2 = (n: number) => Math.round(n * 100) / 100
 const nightsBetween = (a: string, b: string) => Math.max(0, Math.round((new Date(b).getTime() - new Date(a).getTime()) / MS_PER_DAY))
 
 export type RescheduleChargeMethod = 'folio' | 'cash' | 'card'
@@ -103,6 +105,24 @@ export interface RescheduleQuote {
 export interface RescheduleDeps extends RepriceRepos {
   repo: any
   roomRepo: any
+  /**
+   * Extras de la reserva. OBLIGATORIO (STR-2): el commit escribe un `totalAmount` nuevo, y
+   * `reservations.pendingAmount` —la columna PERSISTIDA que lee el listado y el planning— quedaba
+   * con el saldo del precio viejo tras un reagendado con reprice. Si fuera opcional, un caller que
+   * lo omita reintroduce la divergencia en silencio.
+   */
+  addonsOf: AddonSource
+  /** Lo cobrado real (`payments`) para el saldo persistido — ver `crud.updateReservationWithBalance`. */
+  paidOf: PaidSource
+  /**
+   * SEC3-2 — recorte de links de pago vivos cuando el reagendado BAJA el total cobrable. El commit
+   * escribe `totalAmount:newTotal` vía `updateReservation`, así que dispara `afterCeilingDrop`
+   * (crud.ts:286); sin este guard el callback queda `undefined` y una reprogramación que abarata
+   * (modo `reprice`, `creditAmount>0`) deja Checkout Sessions abiertas por el saldo VIEJO. Lo
+   * inyecta el service desde `orchestrationDeps.paymentRequestsCeiling` (connector
+   * `reservas-payment-requests`). Opcional: sin `payment_requests` configurados es no-op.
+   */
+  ceilingGuard?: (hotelId: string, reservationId: string) => Promise<void>
   logger?: any
   cache?: any
   sockets?: any
@@ -209,11 +229,22 @@ export async function commitReschedule(deps: RescheduleDeps, id: string, input: 
   const creditAmount = Math.max(0, round2(quote.previousTotal - newTotal))
 
   // Reusa updateReservation: revalida solape (assertRoomAvailable) y emite el socket + invalida caché.
+  // El `afterPersist` recalcula el saldo persistido DENTRO de esa ventana: el socket sale con el
+  // pendiente del precio NUEVO y la caché del listado se invalida después de escribirlo (STR-2).
+  // SEC3-2: el dto lleva `totalAmount`, así que crud dispara `afterCeilingDrop` — hay que pasarle el
+  // clamp. Sin él, un reagendado que BAJA el total (reprice con `creditAmount>0`) deja links pending
+  // vivos por el saldo viejo: el huésped puede pagar un importe mayor que el nuevo.
   const reservation = await updateReservation(
     deps.repo, deps.logger, deps.cache, deps.sockets, id,
     { roomId: quote.roomId, checkIn: quote.checkIn, checkOut: quote.checkOut, totalAmount: newTotal } as any,
     user,
-    deps.roomRepo,
+    deps.roomRepo, undefined, undefined, undefined,
+    {
+      afterPersist: async (item) => ({ pendingAmount: await syncReservationPending(deps.repo, deps.addonsOf, id, deps.paidOf, item) }),
+      afterCeilingDrop: deps.ceilingGuard
+        ? async (item) => { await deps.ceilingGuard!(String(item.hotelId), String(item.id)) }
+        : undefined,
+    },
   )
 
   deps.audit?.({

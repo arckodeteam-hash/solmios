@@ -1,4 +1,6 @@
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
+import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
+import { foliosOfReservation, reservationIdOfFolio } from './usecases/reservation-money'
 import { NotFoundError, ValidationError } from 'arckode-framework'
 import type { FolioDTO, FolioChargeDTO, OpenFolioDTO, PostChargeDTO, ApplyPaymentDTO, FolioQuery, FolioListResult, CurrentUser } from './types'
 import type { FoliosSockets } from './sockets'
@@ -34,16 +36,8 @@ export class FoliosService {
     private readonly auth: Auth,
   ) {}
 
-  setSockets(s: Partial<FoliosSockets>): void {
-    const next = s as Record<string, any>
-    const cur = this.sockets as Record<string, any>
-    for (const key of Object.keys(next)) {
-      const h = next[key]
-      if (!h) continue
-      const prev = cur[key]
-      cur[key] = prev ? async (...a: any[]) => { await prev(...a); await h(...a) } : h
-    }
-  }
+  // ACUMULA (no pisa): implementación única en shared/utils/accumulate-sockets.ts.
+  setSockets(s: Partial<FoliosSockets>): void { accumulateSockets(this.sockets as any, s as any) }
 
   /** Conecta la creación de facturas. Lo inyecta el connector `folios-facturas`. */
   setInvoicingDeps(port: FolioInvoicingPort): void {
@@ -59,6 +53,10 @@ export class FoliosService {
     const u = await this.deps.user.findById(user.id)
     return u?.hotelId ?? ''
   }
+
+  // Puerto de lectura para `connectors/reservas-money` — la lógica vive en el usecase.
+  foliosOfReservation(hotelId: string, reservationId: string): Promise<FolioDTO[]> { return foliosOfReservation(this.folioRepo, hotelId, reservationId) }
+  reservationIdOfFolio(hotelId: string, folioId: string): Promise<string | null> { return reservationIdOfFolio(this.folioRepo, hotelId, folioId) }
 
   async list(query?: FolioQuery, user?: CurrentUser): Promise<FolioListResult> {
     this.logger.info('Listando folios', { query })

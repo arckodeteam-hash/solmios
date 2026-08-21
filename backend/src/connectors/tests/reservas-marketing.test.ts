@@ -6,8 +6,11 @@ import type { ConnectorContext } from 'arckode-framework'
 import { reservasMarketingConnector } from '../reservas-marketing'
 
 function makeCtx(modules: Record<string, any>) {
-  const captured: any = { sockets: {} }
-  const reservasStub = { setSockets: (s: any) => Object.assign(captured.sockets, s) }
+  const captured: any = { sockets: {}, deps: {} }
+  const reservasStub = {
+    setSockets: (s: any) => Object.assign(captured.sockets, s),
+    setOrchestrationDeps: (d: any) => Object.assign(captured.deps, d),
+  }
   const ctx = {
     resolveModule: (name: string) => {
       if (name === 'reservas') return reservasStub
@@ -52,6 +55,35 @@ describe('reservasMarketingConnector (DT-18)', () => {
 
     expect(calls).toHaveLength(1)
     expect(calls[0]).toMatchObject({ hotelId: 'h1', event: 'post_checkout', reservationId: 'r2', guestId: 'g2' })
+  })
+
+  // STR-3 — el historial de envíos del detalle sale por el puerto de ESTE connector, no de un
+  // `orm.findMany('MessageLogs')` dentro de reservas.
+  it('cablea listMessageLogs contra MarketingService.listMessageLogs', async () => {
+    const calls: any[] = []
+    const rows = [{ id: 'ml1', messageType: 'email' }]
+    const { ctx, captured } = makeCtx({
+      marketing: {
+        triggerAutoMessages: async () => {},
+        listMessageLogs: async (hotelId: string, reservationId: string) => { calls.push([hotelId, reservationId]); return rows },
+      },
+    })
+    reservasMarketingConnector(ctx)
+
+    expect(typeof captured.deps.listMessageLogs).toBe('function')
+    await expect(captured.deps.listMessageLogs('h1', 'r1')).resolves.toEqual(rows)
+    expect(calls).toEqual([['h1', 'r1']])
+  })
+
+  it('el historial NO es best-effort: si marketing falla, el error se propaga (no un historial vacío que miente)', async () => {
+    const { ctx, captured } = makeCtx({
+      marketing: {
+        triggerAutoMessages: async () => {},
+        listMessageLogs: async () => { throw new Error('marketing caído') },
+      },
+    })
+    reservasMarketingConnector(ctx)
+    await expect(captured.deps.listMessageLogs('h1', 'r1')).rejects.toThrow('marketing caído')
   })
 
   it('best-effort: si marketing falla, no propaga el error', async () => {

@@ -19,14 +19,16 @@ export { PaymentsValidator, CreatePaymentSchema, ChargeCardSchema, CreatePayment
 export function PaymentsModule() {
   return createModule({
     name: 'payments',
-    version: '1.0.0',
+    // 1.1.0 — STR-D: `paymentsLinkedTo` entra al contract (lo consume connectors/reservas-money
+    // y connectors/payment-requests-money para el camino reserva→dinero, GH-0.2).
+    version: '1.1.0',
     description: 'Payments: card charging, payment links, deposits, reconciliation',
 
     contract: {
       name: 'payments',
-      version: '1.0.0',
+      version: '1.1.0',
       description: 'Payments: card charging, payment links, deposits, reconciliation',
-      actions: ['createPayment', 'chargeCard', 'refund', 'listPayments', 'createLink', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile'],
+      actions: ['createPayment', 'chargeCard', 'refund', 'listPayments', 'createLink', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo'],
       events: ['onPaymentCreated', 'onPaymentCompleted', 'onPaymentExpired', 'onPaymentFailed', 'onRefundProcessed', 'onDepositCreated', 'onDepositReleased'],
       tables: ['payments', 'payment_links', 'deposits'],
       dependencies: ['folios', 'facturas'],
@@ -57,7 +59,9 @@ export function PaymentsModule() {
       const folioRefRepo = new OrmRepository<any>(orm, 'Folios')
       const invoiceRefRepo = new OrmRepository<any>(orm, 'Invoices')
       const guestRefRepo = new OrmRepository<any>(orm, 'Guests')
-      const service = new PaymentsService(paymentRepo, linkRepo, depositRepo, log, cache, auth, userRepo, registry, events, folioRefRepo, invoiceRefRepo, guestRefRepo)
+      // SEC3-5: la reserva referenciada por `payments.reservationId` se verifica igual que folio/factura/huésped.
+      const reservationRefRepo = new OrmRepository<any>(orm, 'Reservations')
+      const service = new PaymentsService(paymentRepo, linkRepo, depositRepo, log, cache, auth, userRepo, registry, events, folioRefRepo, invoiceRefRepo, guestRefRepo, reservationRefRepo)
       const controller = new PaymentsController(service, log)
 
       // Admin routes (protegidas con auth)

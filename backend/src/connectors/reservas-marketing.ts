@@ -17,11 +17,24 @@ interface MarketingModule {
     hotelId: string; event: string; reservationId: string
     guestId?: string; roomId?: string; variables?: Record<string, string | number>
   }): Promise<void>
+  /** STR-3: `message_logs` es del módulo marketing. El detalle de la reserva lo lee por acá. */
+  listMessageLogs(hotelId: string, reservationId?: string): Promise<Record<string, any>[]>
 }
 
 export function reservasMarketingConnector(ctx: ConnectorContext): void {
-  const reservas = ctx.resolveModule<{ setSockets: (s: any) => void }>('reservas')
+  const reservas = ctx.resolveModule<{
+    setSockets: (s: any) => void
+    setOrchestrationDeps: (d: Record<string, unknown>) => void
+  }>('reservas')
   const marketing = () => ctx.resolveModule<MarketingModule>('marketing')
+
+  // STR-3 — Historial de envíos del detalle de la reserva. Antes reservas hacía
+  // `orm.findMany('MessageLogs', ...)` directo sobre el modelo de marketing, reimplementando
+  // `MarketingService.listMessageLogs` y salteando este conector, que ya existía. NO es
+  // best-effort: si esto falla, el historial tiene que romper, no mostrarse vacío.
+  reservas.setOrchestrationDeps({
+    listMessageLogs: (hotelId: string, reservationId: string) => marketing().listMessageLogs(hotelId, reservationId),
+  })
 
   reservas.setSockets({
     onReservasCreated: async (r: any) => {

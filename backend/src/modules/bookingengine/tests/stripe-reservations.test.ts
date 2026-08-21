@@ -193,6 +193,9 @@ describe('StripeUseCase — handleWebhook sobre Reservations (F0 0.15)', () => {
     expect(updates[0].patch.depositStatus).toBe('paid')
     expect(updates[0].patch.paymentMethod).toBe('card')
     expect(updates[0].patch.pendingAmount).toBe(0)
+    // STR-2: `deposit` asienta lo realmente cobrado. Antes quedaba en 0 y sólo se escribía
+    // `pendingAmount: 0` hardcodeado → el detalle (que recalcula total − deposit) decía "debe 200".
+    expect(updates[0].patch.deposit).toBe(200)
     // B-1 (2026-08-19): el result arrastra los datos que el socket onBookingPaid necesita
     // para que el connector de payments asiente el cobro (antes solo {id} → early-return).
     expect(result?.providerRef).toBe('cs_001')
@@ -200,6 +203,24 @@ describe('StripeUseCase — handleWebhook sobre Reservations (F0 0.15)', () => {
     expect(result?.currency).toBe('usd')
     expect(result?.totalAmount).toBe(Number(PENDING_RESERVATION.totalAmount) || 0)
     expect(result?.checkIn).toBe(PENDING_RESERVATION.checkIn)
+  })
+
+  // STR-2: `pendingAmount: 0` estaba hardcodeado. Un cobro parcial (seña) dejaba la fila diciendo
+  // "no debe nada" mientras el detalle de la reserva mostraba el saldo real.
+  it('un pago PARCIAL deja el saldo real, no 0 (pendingAmount ya no es hardcodeado)', async () => {
+    const { repo: reservationsRepo, updates } = makeReservationsRepo([{ ...PENDING_RESERVATION }])
+    const { repo: eventRepo } = makeEventStoreRepo()
+    const eventStore = new PaymentEventStore(eventRepo, log)
+    const gw = makeMockGw({ outcome: {
+      eventId: 'evt_partial', providerRef: 'cs_partial', status: 'paid',
+      amountMinor: 5000, currency: 'usd', reference: 'res-1', // $50 de $200
+    } })
+    const stripe = new StripeUseCase(reservationsRepo, log, makeMockRegistry(gw), eventStore)
+
+    await stripe.handleWebhook('hotel-A', 'raw-body-bytes', 'sig-header')
+
+    expect(updates[0].patch.deposit).toBe(50)
+    expect(updates[0].patch.pendingAmount).toBe(150)
   })
 
   it('webhook del Hotel A NO confirma reserva del Hotel B (multi-tenancy)', async () => {

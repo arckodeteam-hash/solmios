@@ -9,9 +9,8 @@ import { NotFoundError, ValidationError } from 'arckode-framework'
 import type { FolioDTO, FolioChargeDTO, PostChargeDTO, ApplyPaymentDTO, CurrentUser } from '../types'
 import { taxRateFor, applyTax, computeTotals } from './folio-math'
 import { recordFolioPayment, normalizeFolioPaymentMethod, type FolioPaymentPort } from './payment-port'
-
-/** Tolerancia de centavos al comparar un pago contra el saldo (errores de redondeo float). */
-const BALANCE_EPSILON = 0.01
+// Tolerancia de centavos: UNA sola en todo el dominio de dinero (shared/utils/money.ts).
+import { BALANCE_EPSILON } from '../../../shared/utils/money'
 
 const now = () => new Date().toISOString()
 

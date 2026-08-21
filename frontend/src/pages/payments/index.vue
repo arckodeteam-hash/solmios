@@ -38,13 +38,16 @@
         <div class="relative">
           <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/50" v-html="ICON_SEARCH"></span>
           <input
+            id="payment-links-search"
+            name="search"
             v-model="search"
             type="text"
+            aria-label="Buscar links de pago por reserva o destinatario"
             placeholder="Buscar por reserva o destinatario..."
             class="w-full sm:w-72 pl-9 pr-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm text-white placeholder:text-white/45 focus:outline-none focus:border-cyan focus:bg-white/15 transition-colors"
           />
         </div>
-        <select v-model="filterStatus" class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
+        <select id="payment-links-filter-status" name="filterStatus" aria-label="Filtrar links de pago por estado" v-model="filterStatus" class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
           <option class="text-navy" value="">Todos los estados</option>
           <option class="text-navy" value="pending">Pendientes</option>
           <option class="text-navy" value="paid">Pagados</option>
@@ -168,8 +171,8 @@
       subtitle="Cobro remoto a un huésped" @close="newModal.show = false">
       <div class="space-y-4">
         <div>
-          <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Reserva *</label>
-          <select v-model="newForm.reservationId" class="w-full px-4 py-2.5 rounded-xl border text-sm cursor-pointer focus:outline-none"
+          <label for="payment-link-reservation" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Reserva *</label>
+          <select id="payment-link-reservation" name="reservationId" required aria-required="true" v-model="newForm.reservationId" class="w-full px-4 py-2.5 rounded-xl border text-sm cursor-pointer focus:outline-none"
             :class="attemptedSubmit && reservationError ? 'border-coral focus:border-coral' : 'border-border focus:border-navy'">
             <option value="">Seleccionar...</option>
             <option v-for="r in reservations" :key="r.id" :value="r.id">
@@ -179,10 +182,10 @@
           <p v-if="attemptedSubmit && reservationError" class="text-[10px] text-coral font-bold mt-1">{{ reservationError }}</p>
         </div>
         <div>
-          <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Monto *</label>
+          <label for="payment-link-amount" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Monto *</label>
           <div class="relative">
             <span class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-text-muted pointer-events-none">$</span>
-            <input v-model="amountDisplay" type="text" inputmode="decimal" placeholder="0.00"
+            <input id="payment-link-amount" name="amount" required aria-required="true" v-model="amountDisplay" type="text" inputmode="decimal" placeholder="0.00"
               @focus="amountFocused = true" @blur="amountFocused = false; roundAmount()"
               class="w-full pl-7 pr-4 py-2.5 rounded-xl border text-sm font-bold text-navy text-right tabular-nums focus:outline-none"
               :class="attemptedSubmit && amountError ? 'border-coral focus:border-coral' : 'border-border focus:border-navy'" />
@@ -195,15 +198,15 @@
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Enviar a</label>
-            <input v-model="newForm.sentTo" :type="sentToInputType" :placeholder="sentToPlaceholder" autocomplete="off"
+            <label for="payment-link-sent-to" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Enviar a</label>
+            <input id="payment-link-sent-to" name="sentTo" v-model="newForm.sentTo" :type="sentToInputType" :placeholder="sentToPlaceholder" autocomplete="off"
               class="w-full px-4 py-2.5 rounded-xl border text-sm focus:outline-none"
               :class="attemptedSubmit && sentToError ? 'border-coral focus:border-coral' : 'border-border focus:border-navy'" />
             <p v-if="attemptedSubmit && sentToError" class="text-[10px] text-coral font-bold mt-1">{{ sentToError }}</p>
           </div>
           <div>
-            <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Vía</label>
-            <select v-model="newForm.sentVia" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
+            <label for="payment-link-sent-via" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Vía</label>
+            <select id="payment-link-sent-via" name="sentVia" v-model="newForm.sentVia" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
               <option value="email">Email</option>
               <option value="whatsapp">WhatsApp</option>
               <option value="sms">SMS</option>
@@ -461,9 +464,11 @@ async function create() {
 
 async function markAsPaid(p: PaymentRequest) {
   try {
-    await PaymentsService.update(p.id!, { status: 'paid', paidAt: new Date().toISOString() })
-    p.status = 'paid'
-    p.paidAt = new Date().toISOString()
+    // `paidAt` lo pone el SERVIDOR (payment-requests/usecases/update-request.ts): es el sello de
+    // cuándo entró la plata, no un dato del navegador. Se toma el que devuelve la respuesta.
+    const updated = await PaymentsService.update(p.id!, { status: 'paid' })
+    p.status = updated.status
+    p.paidAt = updated.paidAt
     toast.success('Marcado como pagado')
   } catch (e: any) {
     toast.error(e.message || 'Error')

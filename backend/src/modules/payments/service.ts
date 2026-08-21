@@ -1,5 +1,7 @@
 // payments/service.ts — Facade pública del módulo Payments. Orquestador delgado que delega a usecases/
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
+import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
+import { paymentsLinkedTo, type PaymentReservationRef } from './usecases/reservation-money'
 import type {
   PaymentDTO, CreatePaymentDTO, ChargeCardDTO, PaymentLinkDTO, CreatePaymentLinkDTO,
   DepositDTO, CreateDepositDTO, RefundDepositDTO, PaymentsQuery, PaymentsPaginated,
@@ -32,7 +34,7 @@ export class PaymentsService {
   private auditPort: AuditPort | null = null
 
   constructor(
-    paymentRepo: RepositoryAdapter<PaymentDTO>,
+    private readonly paymentRepo: RepositoryAdapter<PaymentDTO>,
     linkRepo: RepositoryAdapter<PaymentLinkDTO>,
     depositRepo: RepositoryAdapter<DepositDTO>,
     private readonly logger: Logger,
@@ -45,25 +47,19 @@ export class PaymentsService {
     folioRepo?: RepositoryAdapter<any>,
     invoiceRepo?: RepositoryAdapter<any>,
     guestRepo?: RepositoryAdapter<any>,
+    /** SEC3-5: idem para `reservationId` (columna nueva del vínculo directo, BUG-ceiling-bypass). */
+    reservationRepo?: RepositoryAdapter<any>,
   ) {
     if (!registry) throw new Error('payments: PaymentGatewayRegistry es requerido (pasarela por hotel)')
     this.stripe = new StripeUseCase(registry, logger)
-    this.crud = new PaymentCrudUseCase(paymentRepo, logger, auth, userRepo, folioRepo, invoiceRepo, guestRepo)
+    this.crud = new PaymentCrudUseCase(paymentRepo, logger, auth, userRepo, folioRepo, invoiceRepo, guestRepo, reservationRepo)
     this.links = new PaymentLinksUseCase(linkRepo, auth, userRepo)
     this.deposits = new DepositsUseCase(depositRepo, logger, auth, userRepo)
     this.reconciliation = new ReconciliationUseCase(paymentRepo)
   }
 
-  setSockets(s: Partial<PaymentsSockets>): void {
-    const next = s as Record<string, any>
-    const cur = this.sockets as Record<string, any>
-    for (const key of Object.keys(next)) {
-      const h = next[key]
-      if (!h) continue
-      const prev = cur[key]
-      cur[key] = prev ? async (...a: any[]) => { await prev(...a); await h(...a) } : h
-    }
-  }
+  // ACUMULA (no pisa): implementación única en shared/utils/accumulate-sockets.ts.
+  setSockets(s: Partial<PaymentsSockets>): void { accumulateSockets(this.sockets as any, s as any) }
 
   /** Conecta el audit log. Lo inyecta el connector `payments-auditlog`. */
   setAuditDeps(port: AuditPort): void {
@@ -122,6 +118,9 @@ export class PaymentsService {
   async getPayment(id: string, user?: { id?: string; role?: string }): Promise<PaymentDTO> {
     return this.crud.getById(id, user?.id, user?.role)
   }
+
+  // Puerto de lectura para `connectors/reservas-money` — la lógica vive en el usecase.
+  paymentsLinkedTo(hotelId: string, ref: PaymentReservationRef): Promise<PaymentDTO[]> { return paymentsLinkedTo(this.paymentRepo, hotelId, ref) }
 
   async listPayments(query: PaymentsQuery): Promise<PaymentsPaginated> {
     return this.crud.list(query)

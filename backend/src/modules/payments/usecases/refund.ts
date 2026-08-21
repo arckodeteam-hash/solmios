@@ -63,7 +63,17 @@ export async function refundPayment(
     currency: payment.currency,
     description: `Refund for payment ${paymentId}`,
     reference: refund.id,
+    // COR-2: la devolución hereda LOS TRES vínculos del cobro original, no sólo `folioId`.
+    // `shared/usecases/reservation-paid` llega a `payments` por `folioId`, por `invoiceId` Y por
+    // `reservationId` (el tercer vínculo, BUG-ceiling-bypass). Los cobros de factura nacen con
+    // `invoiceId` y sin `folioId` (connectors/facturas-payments.ts:24); los de reprogramación
+    // (shared/usecases/charge-reschedule-diff.ts) nacen SOLO con `reservationId`. Copiar sólo
+    // `folioId` dejaba el refund huérfano: el cargo original seguía sumando (`refunded` está en
+    // COUNTED_STATUSES) y la devolución no restaba → `paid` inflado y el hotel cobrándole de
+    // menos al huésped.
     folioId: payment.folioId,
+    invoiceId: payment.invoiceId,
+    reservationId: payment.reservationId,
     guestId: payment.guestId,
   })
 

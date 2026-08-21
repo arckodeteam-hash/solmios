@@ -15,9 +15,8 @@ import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { NotFoundError, ValidationError } from 'arckode-framework'
 import type { FacturasDTO, PayFacturasDTO } from '../types'
 import { recordInvoicePayment, normalizePaymentMethod, type PaymentPort } from './payment-port'
-
-/** Tolerancia de centavos al comparar el cobro contra el saldo (errores de redondeo float). */
-const BALANCE_EPSILON = 0.01
+// Tolerancia de centavos: UNA sola en todo el dominio de dinero (shared/utils/money.ts).
+import { BALANCE_EPSILON } from '../../../shared/utils/money'
 
 export interface PayInvoiceResult {
   updated: FacturasDTO

@@ -129,6 +129,24 @@ export const AddonSchema: Record<string, ValidationRule> = {
   quantity: { type: 'number' as const, min: 1, max: 100 },
 }
 
+// ── Traza de envío MANUAL al huésped (WhatsApp/SMS/email desde el modal de reserva) ──
+// `reference` guarda QUÉ plantilla se usó, no el cuerpo del mensaje (el body puede traer datos
+// personales del huésped y `message_logs` no es el lugar para almacenarlos).
+//
+// Los enums viven acá y SOLO acá: `usecases/message-log.ts` los importa en vez de repetirlos, así
+// no puede pasar que el validador acepte un valor que el usecase reescribe por su cuenta.
+/** Canales que puede registrar un envío manual desde el panel. */
+export const MANUAL_MESSAGE_TYPES = ['whatsapp', 'sms', 'email'] as const
+/** El panel sólo puede declarar "abierto/encolado" o "falló al abrir" — nunca `sent`. */
+export const MANUAL_MESSAGE_STATUS = ['queued', 'failed'] as const
+
+export const ManualMessageLogSchema: Record<string, ValidationRule> = {
+  messageType: { type: 'string' as const, enum: [...MANUAL_MESSAGE_TYPES] },
+  recipient: { type: 'string' as const, max: 200 },
+  reference: { type: 'string' as const, max: 200 },
+  status: { type: 'string' as const, enum: [...MANUAL_MESSAGE_STATUS] },
+}
+
 // ── Cancel (F2 plan #627): aplica política de cancelación. reason opcional ──
 export const CancelReservationSchema: Record<string, ValidationRule> = {
   reason: { type: 'string' as const, max: 500 },

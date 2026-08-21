@@ -47,7 +47,8 @@
 // esa reserva. La fila gris era una venta que el motor sí podía servir.
 // Ahora `covered` sale de `isOccupancyQuotable`, que recorre las noches REALES con la misma
 // cadena de precio que `sumStayPrice`: solo es `no_rate` lo que de verdad no se puede cotizar.
-import { occupanciesForStay, isOccupancyQuotable, sumStayPrice, round2 } from './rate-resolution'
+import { occupanciesForStay, isOccupancyQuotable, sumStayPrice } from './rate-resolution'
+import { round2 } from '../../../shared/utils/money'
 import { isClosedForOccupancy } from './stay-restrictions'
 import type { OccupancyUnavailableReason } from '../types'
 

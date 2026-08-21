@@ -52,8 +52,14 @@ const newAddon = ref({ description: '', amount: 0, kind: 'service' as 'service' 
 const folioCharges = ref<{ description?: string; amount?: number; kind?: string }[] | null>(null)
 // Emisor de la factura (nombre, dirección, RNC, impuesto). Se carga del hotel de la reserva.
 const hotelInfo = ref<HotelData | null>(null)
-type PrintMode = 'detail' | 'voucherLodging' | 'voucherClient' | 'invoice' | 'quote'
+// 'charges' = comprobante de cargos de la reserva. NO es una factura: no lleva numeración fiscal
+// ni NCF y no entra al libro de ventas. La factura real se emite desde el módulo Facturación
+// (`/panel/finanzas/facturacion`, POST /api/facturas), que es quien controla el numerador.
+type PrintMode = 'detail' | 'voucherLodging' | 'voucherClient' | 'charges' | 'quote'
 const printMode = ref<PrintMode>('detail')
+/** Cuántos envíos muestra la tarjeta "Historial de Envíos" (el detalle los devuelve ordenados
+ *  por fecha, más reciente primero). El historial completo vive en Marketing → Mensajes. */
+const MESSAGE_LOG_PREVIEW = 5
 
 // Tarjeta de garantía (MisterPlan): se revela solo tras ingresar el PIN del hotel.
 const guaranteeUnlocked = ref(false)
@@ -224,19 +230,32 @@ function cardBrandLabel(b?: string): string {
 }
 
 // ── Carga ──
-async function load() {
-  loading.value = true
-  guaranteeUnlocked.value = false
-  guaranteeCard.value = null
-  guaranteePin.value = ''
-  guaranteeError.value = ''
+async function load(opts?: { silent?: boolean }) {
+  // `silent`: refresco en caliente tras tocar extras/otros cobros o registrar un envío. NO toca
+  // `loading` (con `loading=true` el AppModal se cierra un instante — `:open="!loading && !!d"` —
+  // y el modal parpadea; y ponerlo en `false` al terminar destaparía una carga real en vuelo)
+  // NI resetea la tarjeta de garantía: el staff acaba de destrabarla con el PIN y volver a
+  // bloquearla en medio del flujo por haber cargado un extra es perder el trabajo hecho.
+  const silent = !!opts?.silent
+  if (!silent) {
+    loading.value = true
+    guaranteeUnlocked.value = false
+    guaranteeCard.value = null
+    guaranteePin.value = ''
+    guaranteeError.value = ''
+  }
   try {
     const d = await ReservationService.getById(props.reservationId)
     detail.value = d
     autoSend.value = d?.autoSendEnabled ?? true
     conditions.value = { gdpr: !!d?.gdprAccepted, marketing: !!d?.marketingAccepted, terms: !!d?.termsAccepted }
-    otherCharges.value = d?.otherCharges ?? 0
-    otherChargesDraft.value = String(d?.otherCharges ?? 0)
+    // COR-7 — En un refresco SILENCIOSO el operador puede estar tipeando en "Otros cobros":
+    // pisarle el input le borra lo que estaba por guardar. El borrador sólo se reescribe si
+    // sigue en sincronía con el último valor conocido del servidor (o sea: no lo tocó).
+    const serverOtherCharges = Number(d?.otherCharges ?? 0)
+    const draftIsDirty = silent && Number(otherChargesDraft.value) !== Number(otherCharges.value)
+    otherCharges.value = serverOtherCharges
+    if (!draftIsDirty) otherChargesDraft.value = String(serverOtherCharges)
     addons.value = d?.addons ?? []
     // Config + plantillas WA en paralelo (no bloquean el detalle)
     Promise.all([
@@ -250,9 +269,9 @@ async function load() {
     ]).catch(() => {})
   } catch (e) {
     toast.error((e as Error).message || 'No se pudo cargar la reserva')
-    emit('close')
+    if (!silent) emit('close')
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -285,14 +304,23 @@ const nights = computed(() => {
   if (!d.value?.checkIn || !d.value?.checkOut) return 0
   return Math.max(1, Math.round((new Date(d.value.checkOut).getTime() - new Date(d.value.checkIn).getTime()) / MS_PER_DAY))
 })
-const pending = computed(() => d.value?.pendingAmount ?? Math.max(0, (d.value?.totalAmount ?? 0) - (d.value?.deposit ?? 0)))
+// Total cobrable y pendiente: los calcula el BACKEND (shared/utils/reservation-balance.ts) para que
+// el renglón "Pendiente de cobro", el monto que se le manda a Stripe y el documento impreso digan
+// todos lo mismo. Acá NO se re-deriva la fórmula: una copia local es una segunda fuente de verdad
+// que nada obliga a moverse junto con la del servidor. El modal no se muestra hasta tener el
+// detalle cargado (`:open="!loading && !!d"`), así que siempre hay número del backend.
+const grandTotal = computed(() => d.value?.chargeableTotal ?? 0)
+const pending = computed(() => d.value?.pendingAmount ?? 0)
+// Lo COBRADO según `payments` (backend `shared/usecases/reservation-paid.ts`). Los documentos
+// impresos decían "Pagado" mostrando `deposit`, que no incluye lo cobrado por folio ni por
+// factura: con "Pendiente" ya calculado sobre `payments`, TOTAL − Pagado no cerraba (GH-0.2).
+const paidTotal = computed(() => d.value?.paidAmount ?? d.value?.deposit ?? 0)
 const pricePerNight = computed(() => {
   const n = nights.value
   return n > 0 ? Math.round(((d.value?.totalAmount ?? 0) / n) * 100) / 100 : d.value?.room?.basePrice ?? 0
 })
 const locator = computed(() => d.value?.externalLocator || `#${(d.value?.id || '').slice(-6)}`)
-const addonsTotal = computed(() => addons.value.reduce((s, a) => s + (a.kind === 'discount' ? -1 : 1) * (a.amount ?? 0) * (a.quantity ?? 1), 0))
-const grandTotal = computed(() => (d.value?.totalAmount ?? 0) + (otherCharges.value || 0) + addonsTotal.value)
+const addonsTotal = computed(() => d.value?.addonsTotal ?? 0)
 const secondaryTotal = computed(() => {
   const rate = currency.value?.exchangeRate
   return rate && rate > 0 ? Math.round(grandTotal.value * rate * 100) / 100 : null
@@ -300,20 +328,70 @@ const secondaryTotal = computed(() => {
 const secondaryCurrency = computed(() => currency.value?.secondaryCurrency || 'DOP')
 const checkinUrl = computed(() => d.value?.checkinCode ? `${window.location.origin}/checkin/${d.value.checkinCode}` : null)
 
-// ── Factura ─────────────────────────────────────────────────────────────
+// ── Comprobante de cargos ───────────────────────────────────────────────
+// NO es una factura: no lleva numeración fiscal ni NCF (eso vive en el módulo Facturación).
+// El nombre de estos computeds acompaña al de `PrintMode`/`rm-charges` — que se llamaran
+// `invoice*` sugería un documento fiscal que este modal no emite (STR-4).
 // Impuesto: tasa/nombre del hotel (config real, NO hardcode). En hotelería el precio va
 // con impuesto INCLUIDO: se desglosa la base y el impuesto contenido en el total, sin
 // alterar lo que paga el huésped. Si el hotel no tiene tasa, no se desglosa.
-const invoiceTaxRate = computed(() => Number(hotelInfo.value?.taxRate ?? 0))
-const invoiceTaxName = computed(() => hotelInfo.value?.taxName || 'Impuesto')
-const invoiceTax = computed(() => {
-  const r = invoiceTaxRate.value
+const chargesTaxRate = computed(() => Number(hotelInfo.value?.taxRate ?? 0))
+const chargesTaxName = computed(() => hotelInfo.value?.taxName || 'Impuesto')
+const chargesTax = computed(() => {
+  const r = chargesTaxRate.value
   return r > 0 ? Math.round((grandTotal.value - grandTotal.value / (1 + r / 100)) * 100) / 100 : 0
 })
-const invoiceSubtotal = computed(() => Math.round((grandTotal.value - invoiceTax.value) * 100) / 100)
-const invoiceDate = computed(() => new Date().toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }))
+const chargesSubtotal = computed(() => Math.round((grandTotal.value - chargesTax.value) * 100) / 100)
+const chargesDate = computed(() => new Date().toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }))
+
+/**
+ * CLN-1: los dos documentos imprimibles (comprobante de cargos y cotización/proforma) comparten el
+ * 90% del markup. En vez de dos bloques gemelos de ~50 líneas —donde un arreglo entra en uno y se
+ * olvida en el otro, y los dos muestran importes— hay UN bloque y acá lo que los distingue.
+ */
+interface PrintDoc {
+  kind: 'charges' | 'quote'
+  /** Clase que la media query de impresión usa para mostrar sólo el documento pedido. */
+  cls: string
+  title: string
+  /** Aviso "SIN VALOR FISCAL" bajo el título. */
+  fiscalWarning: boolean
+  numberLabel: string
+  showStatus: boolean
+  /** RNC del hotel: sólo en el comprobante de cargos, que sí describe cobros hechos. */
+  showTaxId: boolean
+  showGuestDocument: boolean
+  totalLabel: string
+  /** Filas "Pagado"/"Pendiente". Una cotización no describe cobros: no las lleva. */
+  showPayments: boolean
+  notes: string[]
+  showNoTaxNote: boolean
+}
+
+const printDocs = computed<PrintDoc[]>(() => [
+  {
+    kind: 'charges', cls: 'rm-charges', title: 'COMPROBANTE DE CARGOS',
+    fiscalWarning: true, numberLabel: 'Reserva Nº', showStatus: true,
+    showTaxId: true, showGuestDocument: true,
+    totalLabel: 'TOTAL', showPayments: true,
+    notes: [
+      'Este documento detalla los cargos de la reserva. <b>No es una factura</b>: no tiene numeración '
+      + 'fiscal ni NCF y no constituye comprobante ante la autoridad tributaria. '
+      + 'La factura se emite desde Facturación.',
+    ],
+    showNoTaxNote: true,
+  },
+  {
+    kind: 'quote', cls: 'rm-quote', title: 'COTIZACIÓN / PROFORMA',
+    fiscalWarning: false, numberLabel: 'Nº', showStatus: false,
+    showTaxId: false, showGuestDocument: false,
+    totalLabel: 'TOTAL ESTIMADO', showPayments: false,
+    notes: ['Documento informativo · No válido como factura fiscal'],
+    showNoTaxNote: false,
+  },
+])
 // Conceptos: alojamiento + extras (addons, descuentos en negativo) + otros cargos.
-const invoiceItems = computed(() => {
+const chargesItems = computed(() => {
   const items: { desc: string; amount: number }[] = []
   const roomLabel = d.value?.room ? `Alojamiento — Hab. ${d.value.room.number || ''} ${d.value.room.type || ''}`.trim() : 'Alojamiento'
   items.push({ desc: `${roomLabel} · ${nights.value} noche${nights.value === 1 ? '' : 's'}`, amount: d.value?.totalAmount ?? 0 })
@@ -453,6 +531,8 @@ async function saveOtherCharges() {
   try {
     await ReservationService.update(d.value.id, { otherCharges: val })
     otherCharges.value = val
+    // Refresco: "Pendiente de cobro" y el monto del link de pago los recalcula el backend.
+    await load({ silent: true })
     toast.success('Otros cobros actualizados')
   } catch (e) {
     otherChargesDraft.value = String(otherCharges.value)
@@ -475,13 +555,48 @@ async function sendLockCodeEmail() {
   }
 }
 
+/** Link de pago ya emitido y sin cobrar para esta reserva (si lo hay). */
+const openPaymentRequest = computed(() => (d.value?.payments ?? []).find((p) => p.status === 'pending' && !!p.id))
+/** Monto por el que se emitió ese link. Es lo que cobraría el Checkout si se reusa tal cual. */
+const openPaymentAmount = computed(() => Number(openPaymentRequest.value?.amount) || 0)
+/**
+ * GH-0.1 — El link vigente quedó por un monto distinto del saldo actual.
+ *
+ * Reusar el link sin mirar su monto es un undercharge silencioso: reserva de $300 → link →
+ * se carga un extra de $200 → el saldo pasa a $500 y el Checkout salía igual por $300. El
+ * `CENTAVO` de tolerancia evita reemitir por diferencias de redondeo.
+ */
+const CENTAVO = 0.01
+const paymentLinkOutdated = computed(() =>
+  !!openPaymentRequest.value && Math.abs(openPaymentAmount.value - pending.value) > CENTAVO)
+
 async function requirePayment() {
   if (!d.value) return
   if (pending.value <= 0) { toast.info('Sin monto pendiente'); return }
   saving.value = true
   try {
     const email = d.value.guest?.email
-    const created = await PaymentsService.create({ reservationId: d.value.id, amount: pending.value, sentTo: email || undefined, sentVia: email ? 'email' : 'link' })
+    // COR-4/SEC-2 — Un click = un PaymentRequest nuevo por el pendiente COMPLETO. Con tres clicks
+    // quedaban tres links de $500 vivos sobre un saldo de $500. El backend ahora lo rechaza
+    // (el techo del monto descuenta los links `pending`), así que acá se REUSA el que ya existe en
+    // vez de chocar contra un 400: mismo cobro, misma sesión de Stripe.
+    // GH-0.1 — pero SOLO si su monto sigue siendo el saldo. Si quedó desfasado (se cargó un extra,
+    // se cobró algo por folio) se le actualiza el importe al saldo de hoy antes de abrir el
+    // Checkout: `create-checkout` emite una sesión de Stripe NUEVA con `pr.amount`, así que el
+    // huésped paga lo que debe. El backend revalida el techo excluyendo este mismo request.
+    const existing = openPaymentRequest.value
+    // Actualizar el monto de un link es `PUT /payment-requests/:id` → `billing:edit`, que el rol
+    // `receptionist` NO tiene (`shared/permissions.ts`: view + create). Sin permiso se avisa y se
+    // corta: abrir el Checkout por el monto viejo sería el undercharge silencioso que este fix cierra.
+    if (existing?.id && paymentLinkOutdated.value && !can('billing', 'edit')) {
+      toast.error(`El link vigente es por ${money(openPaymentAmount.value)} y el saldo es ${money(pending.value)}: actualizarlo necesita permiso de edición de facturación.`)
+      return
+    }
+    const created = existing?.id
+      ? (paymentLinkOutdated.value
+        ? await PaymentsService.update(existing.id, { amount: pending.value })
+        : { id: existing.id })
+      : await PaymentsService.create({ reservationId: d.value.id, amount: pending.value, sentTo: email || undefined, sentVia: email ? 'email' : 'link' })
     if (!created.id) { toast.error('No se pudo crear el requerimiento de pago'); return }
     const checkout = await PaymentsService.createStripeCheckout(created.id)
     if (checkout?.url) {
@@ -489,12 +604,16 @@ async function requirePayment() {
       // se abría una ventana que nadie recibía. Ahora el link queda en el portapapeles
       // para que el staff lo envíe por el canal que corresponda (WhatsApp, presencial).
       if (email) {
-        window.open(checkout.url, '_blank')
+        // SEC-5: mismo criterio que `waSend` — la pestaña del Checkout de Stripe no puede
+        // quedarse con `window.opener` del panel.
+        window.open(checkout.url, '_blank', 'noopener,noreferrer')
         toast.success('Requerimiento de pago enviado por email')
       } else {
         await navigator.clipboard?.writeText(checkout.url).catch(() => {})
         toast.warning('El huésped no tiene email: link de pago copiado — envíaselo por WhatsApp o mostráselo')
       }
+      // El renglón "Link de pago vigente" tiene que mostrar el monto REAL del link recién emitido.
+      await load({ silent: true })
     }
   } catch (e) {
     toast.error((e as Error).message || 'No se pudo generar el link de pago')
@@ -522,6 +641,7 @@ async function addAddon() {
     const created = await AddonsService.create(d.value.id, { description: newAddon.value.description.trim(), kind: newAddon.value.kind, amount: newAddon.value.amount, quantity: 1 })
     addons.value.push(created)
     newAddon.value = { description: '', amount: 0, kind: 'service' }
+    await load({ silent: true })
     toast.success('Servicio agregado')
   } catch (e) {
     toast.error((e as Error).message || 'No se pudo agregar')
@@ -532,15 +652,39 @@ async function removeAddon(id: string) {
   try {
     await AddonsService.remove(id)
     addons.value = addons.value.filter((a) => a.id !== id)
+    await load({ silent: true })
   } catch (e) {
     toast.error((e as Error).message || 'No se pudo eliminar')
   }
 }
 
-function waSend(body?: string | null) {
-  const link = waLink(d.value?.guest?.phone, body)
-  if (link) window.open(link, '_blank')
-  else toast.error('Sin teléfono del huésped')
+/**
+ * Abre WhatsApp con la plantilla y DEJA RASTRO en `message_logs`.
+ *
+ * El envío es manual (lo despacha el staff desde su propio WhatsApp), así que el log se asienta
+ * como `queued` — "preparado y abierto", no `sent`: el sistema no puede confirmar la entrega y
+ * marcarlo como enviado sería mentirle al historial. Si el log falla, el envío NO se cancela
+ * (abrir WhatsApp es lo que el usuario pidió), pero se avisa para que no crea que quedó registrado.
+ */
+async function waSend(body?: string | null, templateTitle?: string) {
+  const phone = d.value?.guest?.phone
+  const link = waLink(phone, body)
+  if (!link) { toast.error('Sin teléfono del huésped'); return }
+  // SEC-5: `noopener` — sin él la pestaña de WhatsApp recibe `window.opener` y puede redirigir
+  // la del panel (tabnabbing). `noreferrer` va de la mano y evita filtrar la URL de la reserva.
+  window.open(link, '_blank', 'noopener,noreferrer')
+  if (!d.value) return
+  try {
+    await ReservationService.logManualMessage(d.value.id, {
+      messageType: 'whatsapp',
+      recipient: phone || undefined,
+      reference: templateTitle || 'mensaje libre',
+      status: 'queued',
+    })
+    await load({ silent: true })
+  } catch {
+    toast.warning('WhatsApp abierto, pero no se pudo registrar el envío en el historial')
+  }
 }
 
 function printAs(mode: PrintMode) {
@@ -552,6 +696,17 @@ function printAs(mode: PrintMode) {
 }
 
 function editar() { if (d.value) emit('edit', d.value) }
+
+/**
+ * Camino a la emisión REAL de la factura. Este modal NO emite facturas a propósito: la numeración
+ * (invoice number + NCF) es política contable y vive en el módulo Facturación — fabricarla acá
+ * abriría un hueco en el numerador y dejaría el libro de ventas sin respaldo.
+ * Desde el folio de la reserva: cerrar folio → emitir factura (POST /api/folios/:id/invoice).
+ */
+function irAFacturacion() {
+  emit('close')
+  router.push('/panel/finanzas/facturacion')
+}
 </script>
 
 <template>
@@ -570,19 +725,23 @@ function editar() { if (d.value) emit('edit', d.value) }
           <ChannelIcon :channel="d?.source || d?.channel || 'direct'" :size="14" class="ring-1 ring-white/40 rounded-[4px]" />
           {{ srcLabel(d?.source || d?.channel) }}
         </span>
-        <button v-if="d?.status === 'pending'" @click="setStatus('confirmed')" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 bg-teal text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50">
+        <button v-if="d?.status === 'pending' && can('reservations','edit')" @click="setStatus('confirmed')" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 bg-teal text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
           Confirmar
         </button>
-        <button v-if="d?.status !== 'cancelled' && d?.status !== 'checked_out'" @click="showCancel = true" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 bg-coral/90 text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50">
+        <button v-if="d?.status !== 'cancelled' && d?.status !== 'checked_out' && can('reservations','edit')" @click="showCancel = true" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 bg-coral/90 text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           Anular
         </button>
-        <button @click="printAs('invoice')" class="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20" title="Imprimir factura de la reserva">
+        <button @click="printAs('charges')" class="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20" title="Imprime el detalle de cargos de la reserva. NO es una factura: no lleva numeración fiscal ni NCF.">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.83a42.5 42.5 0 0110.56 0M6.34 18l-.34 3.72a1.12 1.12 0 001.12 1.23h9.4a1.12 1.12 0 001.12-1.23L17.66 18M17.66 18h1.09c1.06 0 1.98-.72 2-1.78a72 72 0 000-3.45c-.02-1.06-.94-1.77-2-1.77H5.25c-1.06 0-1.98.71-2 1.77a72 72 0 000 3.45c.02 1.06.94 1.78 2 1.78h1.09M17.66 18H6.34M17.66 18v-4.5a2.25 2.25 0 00-2.25-2.25h-6.5a2.25 2.25 0 00-2.25 2.25V18"/></svg>
-          Factura
+          Cargos
         </button>
-        <button @click="editar" class="flex items-center gap-1.5 px-3 py-1.5 bg-cyan text-navy rounded-lg text-xs font-black cursor-pointer hover:opacity-90">
+        <button v-if="can('billing','view')" @click="irAFacturacion" class="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20" title="Emitir la factura con numeración fiscal desde el módulo Facturación">
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M9 8h2M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg>
+          Facturar
+        </button>
+        <button v-if="can('reservations','edit')" @click="editar" class="flex items-center gap-1.5 px-3 py-1.5 bg-cyan text-navy rounded-lg text-xs font-black cursor-pointer hover:opacity-90">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.932zM19.5 21H4.5a1.5 1.5 0 01-1.5-1.5V6a1.5 1.5 0 011.5-1.5h9"/></svg>
           Editar
         </button>
@@ -672,23 +831,33 @@ function editar() { if (d.value) emit('edit', d.value) }
                 <h4 class="text-sm font-black text-navy">Importe y Pago</h4>
               </div>
               <div class="space-y-1.5 text-sm">
-                <button @click="viewMovements" class="flex justify-between w-full hover:text-teal cursor-pointer"><span class="text-text-muted">Caja</span><span class="text-teal font-bold">Ver movimientos →</span></button>
+                <button v-if="can('billing','view')" @click="viewMovements" class="flex justify-between w-full hover:text-teal cursor-pointer"><span class="text-text-muted">Caja</span><span class="text-teal font-bold">Ver movimientos →</span></button>
                 <div class="flex justify-between"><span class="text-text-muted">Forma de pago</span><span class="text-right">{{ payMethodLabel(d.paymentMethod) }}</span></div>
                 <div class="flex justify-between bg-teal/5 rounded px-2 py-1"><span class="text-text-muted">Importe de la reserva</span><span class="font-bold text-navy">{{ money(d.totalAmount) }}</span></div>
                 <div class="flex justify-between"><span class="text-text-muted">Anticipo</span><span class="font-bold" :class="payStatusBadge(d.deposit, d.totalAmount).cls">{{ d.deposit && d.deposit > 0 ? money(d.deposit) : 'Sin anticipo' }}</span></div>
                 <!-- Otros cobros editable -->
                 <div class="flex justify-between items-center gap-2">
                   <span class="text-text-muted">Otros cobros</span>
-                  <span class="flex items-center gap-1">
+                  <span v-if="can('reservations','edit')" class="flex items-center gap-1">
                     <input v-model="otherChargesDraft" type="number" min="0" step="0.01" class="w-20 px-2 py-0.5 text-right rounded border border-border text-xs" @keyup.enter="saveOtherCharges" />
                     <button @click="saveOtherCharges" :disabled="saving" class="text-teal hover:underline cursor-pointer disabled:opacity-50">
                       <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
                     </button>
                   </span>
+                  <span v-else class="font-bold text-navy">{{ money(otherCharges) }}</span>
                 </div>
                 <div class="flex justify-between border-t border-border/50 pt-1.5"><span class="font-bold text-text-secondary">Pendiente de cobro</span><span class="font-black" :class="pending > 0 ? 'text-coral' : 'text-teal'">{{ money(pending) }}</span></div>
                 <div v-if="secondaryTotal !== null" class="flex justify-between"><span class="text-text-muted">Total ({{ secondaryCurrency }})</span><span class="font-bold text-purple">{{ moneySecondary(secondaryTotal) }}</span></div>
-                <button @click="requirePayment" :disabled="saving || pending <= 0" class="w-full mt-2 flex items-center justify-center gap-1.5 py-2 bg-cyan text-navy rounded-lg text-xs font-black cursor-pointer hover:opacity-90 disabled:opacity-50">
+                <!-- GH-0.1: el monto del link vivo NO se veía en ninguna pantalla, así que un link
+                     emitido por menos que el saldo pasaba desapercibido. -->
+                <div v-if="openPaymentRequest" class="flex justify-between items-center gap-2">
+                  <span class="text-text-muted">Link de pago vigente</span>
+                  <span class="font-bold" :class="paymentLinkOutdated ? 'text-coral' : 'text-teal'">{{ money(openPaymentAmount) }}</span>
+                </div>
+                <p v-if="paymentLinkOutdated" class="text-[11px] leading-tight text-coral">
+                  El link vigente es por {{ money(openPaymentAmount) }} y el saldo es {{ money(pending) }}: al generarlo de nuevo se actualiza a {{ money(pending) }}.
+                </p>
+                <button v-if="can('billing','create')" @click="requirePayment" :disabled="saving || pending <= 0" class="w-full mt-2 flex items-center justify-center gap-1.5 py-2 bg-cyan text-navy rounded-lg text-xs font-black cursor-pointer hover:opacity-90 disabled:opacity-50">
                   <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 6.75h19.5A1.5 1.5 0 0123.25 8.25v9a1.5 1.5 0 01-1.5 1.5H2.25a1.5 1.5 0 01-1.5-1.5v-9a1.5 1.5 0 011.5-1.5zM6 15h3"/></svg>
                   Crear link de pago Stripe
                 </button>
@@ -711,10 +880,18 @@ function editar() { if (d.value) emit('edit', d.value) }
                 <h4 class="text-sm font-black text-navy">Tarjeta de garantía</h4>
               </div>
               <!-- Bloqueada: pedir PIN -->
-              <div v-if="!guaranteeUnlocked">
+              <div v-if="!guaranteeUnlocked && !can('reservations','edit')" class="text-xs text-text-muted italic">
+                Tarjeta cargada y protegida. Tu rol no puede revelarla.
+              </div>
+              <div v-else-if="!guaranteeUnlocked">
                 <p class="text-xs text-text-secondary mb-2">Tarjeta cargada y protegida. Ingresá el PIN del hotel para ver los datos.</p>
                 <div class="flex gap-2">
-                  <input v-model="guaranteePin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN" @keyup.enter="unlockGuarantee" class="flex-1 px-3 py-2 rounded-lg border border-border text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-coral/20 focus:border-coral transition" />
+                  <!-- autocomplete="new-password": es el PIN del hotel, no la credencial del
+                       usuario — el gestor no tiene nada válido que ofrecer acá, y sin esto Chrome
+                       lo rellenaba solo. Mismo criterio que donde se define, en settings (GH-32). -->
+                  <input v-model="guaranteePin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN" @keyup.enter="unlockGuarantee"
+                    autocomplete="new-password" name="guarantee-pin"
+                    class="flex-1 px-3 py-2 rounded-lg border border-border text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-coral/20 focus:border-coral transition" />
                   <button @click="unlockGuarantee" :disabled="unlocking || !guaranteePin" class="px-4 py-2 rounded-lg bg-navy text-white text-sm font-bold disabled:opacity-50 hover:bg-navy/90 transition">{{ unlocking ? '...' : 'Ver' }}</button>
                 </div>
                 <p v-if="guaranteeError" class="text-xs text-coral mt-2 font-semibold">{{ guaranteeError }}</p>
@@ -744,14 +921,14 @@ function editar() { if (d.value) emit('edit', d.value) }
                   </span>
                   <span class="flex items-center gap-2 shrink-0">
                     <span class="font-bold" :class="a.kind === 'discount' ? 'text-coral' : 'text-navy'">{{ money((a.kind === 'discount' ? -1 : 1) * (a.amount ?? 0) * (a.quantity ?? 1)) }}</span>
-                    <button @click="removeAddon(a.id)" class="text-coral hover:underline cursor-pointer">
+                    <button v-if="can('reservations','delete')" @click="removeAddon(a.id)" class="text-coral hover:underline cursor-pointer">
                       <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                     </button>
                   </span>
                 </div>
                 <div v-if="!addons.length" class="text-xs text-text-muted italic">Sin servicios adicionales</div>
               </div>
-              <div class="flex gap-2">
+              <div v-if="can('reservations','edit')" class="flex gap-2">
                 <input v-model="newAddon.description" type="text" placeholder="Descripción" class="flex-1 px-2 py-1.5 rounded-lg border border-border text-xs" @keyup.enter="addAddon" />
                 <input v-model.number="newAddon.amount" type="number" min="0" step="0.01" placeholder="Monto" class="w-20 px-2 py-1.5 rounded-lg border border-border text-xs" />
                 <select v-model="newAddon.kind" class="px-2 py-1.5 rounded-lg border border-border text-xs cursor-pointer">
@@ -822,7 +999,7 @@ function editar() { if (d.value) emit('edit', d.value) }
                   <p v-if="currentLockCode.status === 'pending'" class="text-[10px] text-gold mt-1">La cerradura estaba offline: el PIN queda registrado y se aplicará al volver la conexión.</p>
                 </div>
                 <p v-else class="text-xs text-text-muted">Sin código vigente — el anterior fue desactivado. Generá uno nuevo cuando lo necesites.</p>
-                <button v-if="currentLockCode" @click="sendLockCodeEmail" :disabled="sendingLockCode" class="flex w-full items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-teal text-white text-sm font-bold hover:bg-teal/90 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer transition-colors">
+                <button v-if="currentLockCode && can('reservations','edit')" @click="sendLockCodeEmail" :disabled="sendingLockCode" class="flex w-full items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-teal text-white text-sm font-bold hover:bg-teal/90 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer transition-colors">
                   <svg v-if="!sendingLockCode" class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/></svg>
                   <svg v-else class="h-4 w-4 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                   {{ sendingLockCode ? 'Enviando…' : 'Enviar código por email' }}
@@ -951,14 +1128,14 @@ function editar() { if (d.value) emit('edit', d.value) }
               <div class="px-4 pb-4 pt-1">
                 <label class="flex items-center justify-between gap-3 text-sm py-2 cursor-pointer">
                   <span class="text-text-secondary">Los envíos de esta reserva se enviarán automáticamente</span>
-                  <button type="button" @click="toggleAutoSend" :disabled="saving" class="relative w-11 h-6 rounded-full transition-colors shrink-0 cursor-pointer disabled:opacity-50" :class="autoSend ? 'bg-teal' : 'bg-gray-300'">
+                  <button type="button" @click="toggleAutoSend" :disabled="saving || !can('reservations','edit')" class="relative w-11 h-6 rounded-full transition-colors shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" :class="autoSend ? 'bg-teal' : 'bg-gray-300'">
                     <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow" :class="autoSend ? 'translate-x-5' : ''"></span>
                   </button>
                 </label>
                 <div v-if="d.messageLogs && d.messageLogs.length" class="mt-2 pt-2 border-t border-border/50">
                   <div class="text-text-muted text-xs mb-1">Envíos registrados</div>
-                  <div v-for="(log, i) in d.messageLogs.slice(0, 5)" :key="i" class="text-xs flex justify-between gap-2 py-0.5">
-                    <span class="truncate">{{ log.messageType || 'Mensaje' }}</span>
+                  <div v-for="(log, i) in d.messageLogs.slice(0, MESSAGE_LOG_PREVIEW)" :key="log.id || i" class="text-xs flex justify-between gap-2 py-0.5">
+                    <span class="truncate">{{ log.messageType || 'Mensaje' }}<span v-if="log.reference" class="text-text-muted"> · {{ log.reference }}</span></span>
                     <span class="font-bold shrink-0" :class="log.status === 'sent' ? 'text-teal' : 'text-gold'">{{ log.status }}</span>
                   </div>
                 </div>
@@ -966,13 +1143,13 @@ function editar() { if (d.value) emit('edit', d.value) }
             </details>
 
             <!-- Plantillas WhatsApp -->
-            <details v-if="waTemplates.length" class="rm-card bg-white border border-border/70 border-l-[3px] border-l-emerald-400 rounded-2xl overflow-hidden shadow-card">
+            <details v-if="waTemplates.length && can('reservations','edit')" class="rm-card bg-white border border-border/70 border-l-[3px] border-l-emerald-400 rounded-2xl overflow-hidden shadow-card">
               <summary class="flex items-center gap-2 p-4 cursor-pointer list-none font-black text-sm text-emerald-700 select-none">
                 <span class="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-600"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/></svg></span> Plantillas de WhatsApp Web
                 <span class="ml-auto text-text-muted transition-transform duration-200"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg></span>
               </summary>
               <div class="px-4 pb-4 pt-1 space-y-2 text-sm">
-                <button v-for="t in waTemplates" :key="t.id" @click="waSend(t.whatsappBody)" class="w-full flex items-center justify-between px-3 py-2 bg-surface rounded-lg border border-emerald-200 hover:border-emerald-400 cursor-pointer">
+                <button v-for="t in waTemplates" :key="t.id" @click="waSend(t.whatsappBody, t.title)" class="w-full flex items-center justify-between px-3 py-2 bg-surface rounded-lg border border-emerald-200 hover:border-emerald-400 cursor-pointer">
                   <span>{{ t.title }}</span><span class="text-emerald-600 text-xs">Enviar →</span>
                 </button>
               </div>
@@ -1001,9 +1178,9 @@ function editar() { if (d.value) emit('edit', d.value) }
                 <span class="ml-auto text-text-muted transition-transform duration-200"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg></span>
               </summary>
               <div class="px-4 pb-4 pt-1 space-y-2 text-sm">
-                <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" :checked="conditions.gdpr" @change="toggleCondition('gdpr')" class="w-4 h-4 accent-navy" /> Protección de datos (LOPD)</label>
-                <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" :checked="conditions.marketing" @change="toggleCondition('marketing')" class="w-4 h-4 accent-navy" /> Deseo recibir información adicional</label>
-                <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" :checked="conditions.terms" @change="toggleCondition('terms')" class="w-4 h-4 accent-navy" /> Normas de Uso y Seguridad</label>
+                <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" :checked="conditions.gdpr" :disabled="!can('reservations','edit')" @change="toggleCondition('gdpr')" class="w-4 h-4 accent-navy disabled:opacity-50" /> Protección de datos (LOPD)</label>
+                <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" :checked="conditions.marketing" :disabled="!can('reservations','edit')" @change="toggleCondition('marketing')" class="w-4 h-4 accent-navy disabled:opacity-50" /> Deseo recibir información adicional</label>
+                <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" :checked="conditions.terms" :disabled="!can('reservations','edit')" @change="toggleCondition('terms')" class="w-4 h-4 accent-navy disabled:opacity-50" /> Normas de Uso y Seguridad</label>
               </div>
             </details>
       </div>
@@ -1029,27 +1206,34 @@ function editar() { if (d.value) emit('edit', d.value) }
             <tr><td style="padding:4px 0;color:#666">Habitación</td><td style="font-weight:bold">{{ d.room?.number }}</td></tr>
             <tr><td style="padding:4px 0;color:#666">Check-in / Check-out</td><td>{{ fmtDate(d.checkIn) }} / {{ fmtDate(d.checkOut) }}</td></tr>
             <tr v-if="d.checkinCode"><td style="padding:4px 0;color:#666">Código de check-in</td><td style="font-weight:bold;font-family:monospace">{{ d.checkinCode }}</td></tr>
-            <tr><td style="padding:8px 0 4px;color:#666;border-top:1px solid #ddd">Total abonado</td><td style="font-weight:900;font-size:16px;border-top:1px solid #ddd">{{ money(d.deposit) }}</td></tr>
+            <tr><td style="padding:8px 0 4px;color:#666;border-top:1px solid #ddd">Total abonado</td><td style="font-weight:900;font-size:16px;border-top:1px solid #ddd">{{ money(paidTotal) }}</td></tr>
             <tr><td style="padding:4px 0;color:#666">Pendiente</td><td>{{ money(pending) }}</td></tr>
           </table>
           <p style="text-align:center;font-size:11px;color:#999;margin-top:24px">{{ d.ownerNotes }}</p>
         </div>
 
-        <!-- ═══ FACTURA (oculta en pantalla, visible solo al imprimir) ═══ -->
-        <div v-if="d" class="rm-voucher rm-invoice">
+        <!-- ═══ DOCUMENTOS IMPRIMIBLES (ocultos en pantalla, visibles solo al imprimir) ═══
+             CLN-1: el comprobante de cargos y la cotización/proforma eran DOS bloques con ~50
+             líneas idénticas (encabezado del hotel, cliente + estadía, tabla de conceptos, marco
+             de totales y pie). Dos copias del mismo markup significan que un arreglo entra en una
+             y se olvida en la otra — y las dos muestran importes. Ahora es UN bloque y lo que
+             cambia entre documentos está declarado en `printDocs`, no repetido. -->
+        <template v-if="d">
+        <div v-for="doc in printDocs" :key="doc.kind" class="rm-voucher" :class="doc.cls">
           <!-- Emisor -->
           <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1a2b4c;padding-bottom:16px;margin-bottom:20px">
             <div>
               <h1 style="font-size:22px;font-weight:900;color:#1a2b4c;margin:0">{{ hotelInfo?.name || 'Hotel' }}</h1>
               <p v-if="hotelInfo?.address" style="font-size:12px;color:#555;margin:4px 0 0">{{ hotelInfo.address }}<span v-if="hotelInfo?.municipality || hotelInfo?.province">, {{ [hotelInfo.municipality, hotelInfo.province].filter(Boolean).join(', ') }}</span></p>
               <p style="font-size:12px;color:#555;margin:2px 0 0"><span v-if="hotelInfo?.phone">Tel: {{ hotelInfo.phone }}</span><span v-if="hotelInfo?.email"> · {{ hotelInfo.email }}</span></p>
-              <p v-if="hotelInfo?.ownerTaxId" style="font-size:12px;color:#555;margin:2px 0 0">RNC: {{ hotelInfo.ownerTaxId }}</p>
+              <p v-if="doc.showTaxId && hotelInfo?.ownerTaxId" style="font-size:12px;color:#555;margin:2px 0 0">RNC: {{ hotelInfo.ownerTaxId }}</p>
             </div>
             <div style="text-align:right">
-              <div style="font-size:20px;font-weight:900;color:#1a2b4c;letter-spacing:1px">FACTURA</div>
-              <div style="font-size:12px;color:#555;margin-top:4px">Nº {{ locator }}</div>
-              <div style="font-size:12px;color:#555">Fecha: {{ invoiceDate }}</div>
-              <div style="font-size:11px;color:#888;margin-top:2px">Estado: {{ stLabel(d.status) }}</div>
+              <div style="font-size:20px;font-weight:900;color:#1a2b4c;letter-spacing:1px">{{ doc.title }}</div>
+              <div v-if="doc.fiscalWarning" style="font-size:10px;font-weight:bold;color:#d97706;letter-spacing:.5px;margin-top:2px">DOCUMENTO SIN VALOR FISCAL</div>
+              <div style="font-size:12px;color:#555;margin-top:4px">{{ doc.numberLabel }} {{ locator }}</div>
+              <div style="font-size:12px;color:#555">Fecha: {{ chargesDate }}</div>
+              <div v-if="doc.showStatus" style="font-size:11px;color:#888;margin-top:2px">Estado: {{ stLabel(d.status) }}</div>
             </div>
           </div>
           <!-- Cliente + estadía -->
@@ -1057,7 +1241,7 @@ function editar() { if (d.value) emit('edit', d.value) }
             <div style="flex:1">
               <div style="font-size:10px;font-weight:bold;color:#999;text-transform:uppercase;margin-bottom:4px">Cliente</div>
               <div style="font-size:14px;font-weight:bold;color:#1a2b4c">{{ d.guest?.name || 'Consumidor final' }}</div>
-              <div v-if="d.guest?.document" style="font-size:12px;color:#555">{{ d.guest.documentType || 'Doc' }}: {{ d.guest.document }}</div>
+              <div v-if="doc.showGuestDocument && d.guest?.document" style="font-size:12px;color:#555">{{ d.guest.documentType || 'Doc' }}: {{ d.guest.document }}</div>
               <div v-if="d.guest?.email" style="font-size:12px;color:#555">{{ d.guest.email }}</div>
               <div v-if="d.guest?.phone" style="font-size:12px;color:#555">{{ d.guest.phone }}</div>
             </div>
@@ -1077,7 +1261,7 @@ function editar() { if (d.value) emit('edit', d.value) }
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(it, i) in invoiceItems" :key="i" style="border-bottom:1px solid #eee">
+              <tr v-for="(it, i) in chargesItems" :key="i" style="border-bottom:1px solid #eee">
                 <td style="padding:8px 0;color:#333">{{ it.desc }}</td>
                 <td style="padding:8px 0;text-align:right;font-weight:bold;color:#1a2b4c">{{ money(it.amount) }}</td>
               </tr>
@@ -1086,74 +1270,23 @@ function editar() { if (d.value) emit('edit', d.value) }
           <!-- Totales -->
           <div style="display:flex;justify-content:flex-end;margin-bottom:24px">
             <table style="font-size:13px;min-width:260px">
-              <tr v-if="invoiceTax > 0"><td style="padding:4px 16px 4px 0;color:#555">Subtotal</td><td style="padding:4px 0;text-align:right;font-weight:bold">{{ money(invoiceSubtotal) }}</td></tr>
-              <tr v-if="invoiceTax > 0"><td style="padding:4px 16px 4px 0;color:#555">{{ invoiceTaxName }} ({{ invoiceTaxRate }}%)</td><td style="padding:4px 0;text-align:right;font-weight:bold">{{ money(invoiceTax) }}</td></tr>
-              <tr style="border-top:2px solid #1a2b4c"><td style="padding:8px 16px 4px 0;font-weight:900;color:#1a2b4c;font-size:15px">TOTAL</td><td style="padding:8px 0 4px;text-align:right;font-weight:900;color:#1a2b4c;font-size:15px">{{ money(grandTotal) }}</td></tr>
-              <tr><td style="padding:4px 16px 4px 0;color:#555">Pagado</td><td style="padding:4px 0;text-align:right;color:#16a34a;font-weight:bold">{{ money(d.deposit) }}</td></tr>
-              <tr v-if="pending > 0"><td style="padding:4px 16px 4px 0;color:#555">Pendiente</td><td style="padding:4px 0;text-align:right;color:#d97706;font-weight:bold">{{ money(pending) }}</td></tr>
+              <tbody>
+              <tr v-if="chargesTax > 0"><td style="padding:4px 16px 4px 0;color:#555">Subtotal</td><td style="padding:4px 0;text-align:right;font-weight:bold">{{ money(chargesSubtotal) }}</td></tr>
+              <tr v-if="chargesTax > 0"><td style="padding:4px 16px 4px 0;color:#555">{{ chargesTaxName }} ({{ chargesTaxRate }}%)</td><td style="padding:4px 0;text-align:right;font-weight:bold">{{ money(chargesTax) }}</td></tr>
+              <tr style="border-top:2px solid #1a2b4c"><td style="padding:8px 16px 4px 0;font-weight:900;color:#1a2b4c;font-size:15px">{{ doc.totalLabel }}</td><td style="padding:8px 0 4px;text-align:right;font-weight:900;color:#1a2b4c;font-size:15px">{{ money(grandTotal) }}</td></tr>
+              <tr v-if="doc.showPayments"><td style="padding:4px 16px 4px 0;color:#555">Pagado</td><td style="padding:4px 0;text-align:right;color:#16a34a;font-weight:bold">{{ money(paidTotal) }}</td></tr>
+              <tr v-if="doc.showPayments && pending > 0"><td style="padding:4px 16px 4px 0;color:#555">Pendiente</td><td style="padding:4px 0;text-align:right;color:#d97706;font-weight:bold">{{ money(pending) }}</td></tr>
+              </tbody>
             </table>
           </div>
           <!-- Pie -->
           <div style="border-top:1px solid #ddd;padding-top:12px;text-align:center">
             <p style="font-size:11px;color:#999;margin:0">Gracias por su preferencia · {{ hotelInfo?.name }}</p>
-            <p v-if="invoiceTax === 0" style="font-size:10px;color:#bbb;margin:4px 0 0">Documento sin desglose fiscal</p>
+            <p v-for="(nota, i) in doc.notes" :key="i" style="font-size:10px;color:#888;margin:6px 0 0" v-html="nota"></p>
+            <p v-if="doc.showNoTaxNote && chargesTax === 0" style="font-size:10px;color:#bbb;margin:4px 0 0">Sin desglose de impuesto (el hotel no tiene tasa configurada)</p>
           </div>
         </div>
-
-        <!-- ═══ COTIZACIÓN / PROFORMA (oculta en pantalla, visible solo al imprimir) ═══ -->
-        <div v-if="d" class="rm-voucher rm-quote">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1a2b4c;padding-bottom:16px;margin-bottom:20px">
-            <div>
-              <h1 style="font-size:22px;font-weight:900;color:#1a2b4c;margin:0">{{ hotelInfo?.name || 'Hotel' }}</h1>
-              <p v-if="hotelInfo?.address" style="font-size:12px;color:#555;margin:4px 0 0">{{ hotelInfo.address }}<span v-if="hotelInfo?.municipality || hotelInfo?.province">, {{ [hotelInfo.municipality, hotelInfo.province].filter(Boolean).join(', ') }}</span></p>
-              <p style="font-size:12px;color:#555;margin:2px 0 0"><span v-if="hotelInfo?.phone">Tel: {{ hotelInfo.phone }}</span><span v-if="hotelInfo?.email"> · {{ hotelInfo.email }}</span></p>
-            </div>
-            <div style="text-align:right">
-              <div style="font-size:20px;font-weight:900;color:#1a2b4c;letter-spacing:1px">COTIZACIÓN / PROFORMA</div>
-              <div style="font-size:12px;color:#555;margin-top:4px">Nº {{ locator }}</div>
-              <div style="font-size:12px;color:#555">Fecha: {{ invoiceDate }}</div>
-            </div>
-          </div>
-          <div style="display:flex;justify-content:space-between;gap:24px;margin-bottom:20px">
-            <div style="flex:1">
-              <div style="font-size:10px;font-weight:bold;color:#999;text-transform:uppercase;margin-bottom:4px">Cliente</div>
-              <div style="font-size:14px;font-weight:bold;color:#1a2b4c">{{ d.guest?.name || 'Consumidor final' }}</div>
-              <div v-if="d.guest?.email" style="font-size:12px;color:#555">{{ d.guest.email }}</div>
-              <div v-if="d.guest?.phone" style="font-size:12px;color:#555">{{ d.guest.phone }}</div>
-            </div>
-            <div style="flex:1;text-align:right">
-              <div style="font-size:10px;font-weight:bold;color:#999;text-transform:uppercase;margin-bottom:4px">Estadía</div>
-              <div style="font-size:12px;color:#555">Entrada: <b style="color:#1a2b4c">{{ fmtDate(d.checkIn) }}</b></div>
-              <div style="font-size:12px;color:#555">Salida: <b style="color:#1a2b4c">{{ fmtDate(d.checkOut) }}</b></div>
-              <div style="font-size:12px;color:#555">{{ nights }} noche(s) · {{ d.adults }} adulto(s){{ d.children ? ', ' + d.children + ' niño(s)' : '' }}</div>
-            </div>
-          </div>
-          <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px">
-            <thead>
-              <tr style="border-bottom:2px solid #1a2b4c">
-                <th style="text-align:left;padding:8px 0;font-size:11px;text-transform:uppercase;color:#555">Concepto</th>
-                <th style="text-align:right;padding:8px 0;font-size:11px;text-transform:uppercase;color:#555">Importe</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(it, i) in invoiceItems" :key="i" style="border-bottom:1px solid #eee">
-                <td style="padding:8px 0;color:#333">{{ it.desc }}</td>
-                <td style="padding:8px 0;text-align:right;font-weight:bold;color:#1a2b4c">{{ money(it.amount) }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <div style="display:flex;justify-content:flex-end;margin-bottom:24px">
-            <table style="font-size:13px;min-width:260px">
-              <tr v-if="invoiceTax > 0"><td style="padding:4px 16px 4px 0;color:#555">Subtotal</td><td style="padding:4px 0;text-align:right;font-weight:bold">{{ money(invoiceSubtotal) }}</td></tr>
-              <tr v-if="invoiceTax > 0"><td style="padding:4px 16px 4px 0;color:#555">{{ invoiceTaxName }} ({{ invoiceTaxRate }}%)</td><td style="padding:4px 0;text-align:right;font-weight:bold">{{ money(invoiceTax) }}</td></tr>
-              <tr style="border-top:2px solid #1a2b4c"><td style="padding:8px 16px 4px 0;font-weight:900;color:#1a2b4c;font-size:15px">TOTAL ESTIMADO</td><td style="padding:8px 0 4px;text-align:right;font-weight:900;color:#1a2b4c;font-size:15px">{{ money(grandTotal) }}</td></tr>
-            </table>
-          </div>
-          <div style="border-top:1px solid #ddd;padding-top:12px;text-align:center">
-            <p style="font-size:11px;color:#999;margin:0">Gracias por su preferencia · {{ hotelInfo?.name }}</p>
-            <p style="font-size:10px;color:#bbb;margin:4px 0 0">Documento informativo · No válido como factura fiscal</p>
-          </div>
-        </div>
+        </template>
     </div>
 
     <template #footer>
@@ -1227,11 +1360,11 @@ details[open] > summary .ml-auto { transform: rotate(180deg); }
   .print-voucherClient .rm-voucher-client { display: block !important; position: fixed; left: 0; top: 0; width: 100%; padding: 24px; visibility: visible; }
   .print-voucherClient .rm-voucher-client, .print-voucherClient .rm-voucher-client * { visibility: visible; }
   /* Modo factura */
-  .print-invoice .rm-print-area { display: none !important; }
+  .print-charges .rm-print-area { display: none !important; }
   /* position: fixed (NO absolute): ancla el documento a la PÁGINA. Con absolute se anclaba al
      .modal-panel centrado (con overflow:hidden) y el contenido caía fuera del A4 → hoja en blanco. */
-  .print-invoice .rm-invoice { display: block !important; position: fixed; left: 0; top: 0; width: 100%; padding: 32px 40px; visibility: visible; }
-  .print-invoice .rm-invoice, .print-invoice .rm-invoice * { visibility: visible; }
+  .print-charges .rm-charges { display: block !important; position: fixed; left: 0; top: 0; width: 100%; padding: 32px 40px; visibility: visible; }
+  .print-charges .rm-charges, .print-charges .rm-charges * { visibility: visible; }
   /* Modo cotización */
   .print-quote .rm-print-area { display: none !important; }
   .print-quote .rm-quote { display: block !important; position: fixed; left: 0; top: 0; width: 100%; padding: 32px 40px; visibility: visible; }

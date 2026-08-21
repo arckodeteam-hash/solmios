@@ -11,6 +11,13 @@ export const PaymentModel: ModelDefinition = {
     hotelId: { type: 'string', required: true, indexed: true },
     folioId: { type: 'string', indexed: true },
     invoiceId: { type: 'string', indexed: true },
+    // BUG-ceiling-bypass: TERCER vínculo reserva → dinero. `payments` sólo se alcanzaba por folio o
+    // factura (`shared/usecases/reservation-paid.ts`), y `shared/usecases/charge-reschedule-diff.ts`
+    // asienta el cobro de una reprogramación SIN ninguno de los dos (efectivo/tarjeta sueltos, la
+    // reserva viajaba únicamente en `metadata`, que es JSON y no se puede filtrar por WHERE). Esa
+    // plata era invisible para el techo de `payment-requests`, que autorizaba recobrarla por Stripe.
+    // NO está en `validators/schema.ts`: lo escribe el servidor, no llega por el body.
+    reservationId: { type: 'string', indexed: true },
     guestId: { type: 'string', indexed: true },
     type: { type: 'string', required: true }, // charge | refund | deposit | withdrawal
     method: { type: 'string', required: true }, // card | cash | transfer | link | deposit | other

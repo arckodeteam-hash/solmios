@@ -24,17 +24,58 @@ const PHOTO_UPLOAD_LIMIT = 10 * BYTES_PER_MB
 export function ReservasModule(opts: { storage?: StorageService } = {}) {
   return createModule({
     name: 'reservas',
-    version: '2.1.0',
+    // 2.4.0 — SEC3-2/SEC3-3: el update/borrado de una reserva (y la baja de un extra) recortan los
+    // links de pago vivos por el puerto `paymentRequestsCeiling` (connector
+    // reservas-payment-requests); el contrato gana las tablas que `reservas-queries` toca por ORM
+    // crudo y las acciones de garantía con ruta HTTP viva (STR-E/STR-F).
+    // 2.3.0 — el camino reserva → dinero dejó de leer `Folios`/`Invoices`/`Payment` con el ORM y
+    // pasa por el puerto `usecases/money-port.ts` (connectors/reservas-money): cambia la superficie
+    // declarada del módulo, y el contrato de un módulo describe lo que el módulo HACE. 2.2.0 fue el
+    // endpoint `logManualMessage` + el detalle con `chargeableTotal`/`addonsTotal`/`pendingAmount`.
+    version: '2.4.0',
     description: 'Módulo de reservas — bookings, checkin/checkout, pre-checkin, guarantee cards, detail, audit',
     contract: {
       name: 'reservas',
-      version: '2.1.0',
+      version: '2.4.0',
       description: 'Reservations with ownership, availability, validation, checkin/checkout, pre-checkin, guarantee',
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'cancelPreview', 'cancelBySystem'],
+      // Incluye las acciones que SÓLO consumen connectors: el contrato describe la superficie del
+      // módulo, no la de sus rutas HTTP. `cancelBySystem` ya estaba; faltaban
+      // `syncPendingAfterPayment` (connectors/payments-reservas), `settleFolioForCheckout`
+      // (connectors/reservas-folios-settlement) y `paidSource` (el número de "lo cobrado").
+      // STR-F: `setGuaranteePin`/`getGuaranteeHasPin`/`unlockGuaranteeCard` tienen rutas HTTP
+      // vivas en este archivo y métodos públicos en el service — estaban fuera de la lista que se
+      // declaraba como la superficie completa.
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard'],
       events: ['onReservasCreated', 'onReservasUpdated', 'onReservasDeleted', 'onReservationCancelled'],
-      tables: ['reservations'],
+      // `message_logs` es del módulo marketing: reservas ESCRIBE la traza de los envíos manuales
+      // con el repo que le inyecta email-bootstrap (mismo camino que checkin-email/lifecycle-email).
+      // La LECTURA va por el puerto `listMessageLogs` del connector reservas-marketing (STR-3).
+      //
+      // `folios`/`invoices`/`payments` NO están acá a propósito: reservas necesita ese dinero para
+      // el saldo, pero no las lee. Las leen sus dueños y el resultado llega por el puerto
+      // `usecases/money-port.ts` (connectors/reservas-money). Antes sí las leía —
+      // `usecases/reservas-queries.ts` hacía `orm.findMany('Folios'|'Invoices'|'Payment')`— y el
+      // contrato no lo declaraba: superficie real mayor que la declarada, en el camino del dinero.
+      // STR-E: además de las propias, `usecases/reservas-queries.ts` toca por ORM crudo las
+      // tablas del detalle y del auto-checkin (lock codes del módulo ttlock, cobros del módulo
+      // payment-requests, audit log, catálogos de rooms/guests/hotels/configuration). Lectura
+      // declarada como DEUDA: el camino del dinero ya salió por puerto (money-port) y éstas son
+      // lecturas de enriquecimiento del detalle, no de dinero.
+      tables: ['reservations', 'reservation_addons', 'companions', 'message_logs', 'lock_codes', 'payment_requests', 'audit_log', 'rooms', 'guests', 'hotels', 'configuration'],
+      // Vacío A PROPÓSITO: `contract.dependencies` exige que el módulo ya esté REGISTRADO al
+      // agregar éste (kernel/modules/system.ts) y `marketing` se registra después. El acoplamiento
+      // con marketing es tardío y opcional en el arranque — vive en el connector reservas-marketing.
       dependencies: [],
-      rules: ['Ownership check required', 'hotelId not updatable', 'Availability check on create/update'],
+      rules: [
+        'Ownership check required',
+        'hotelId not updatable',
+        'Availability check on create/update',
+        'El saldo cobrable sale de shared/utils/reservation-balance (fórmula única); `reservations.pendingAmount` se persiste en TODO camino que lo mueva',
+        'Lo COBRADO no se lee de tablas ajenas: folios/facturas/payments lo sirven por el puerto money-port (connectors/reservas-money)',
+        'La traza de un envío manual se asienta con status queued: el sistema no puede confirmar una entrega que hizo el operador',
+        'SEC3-2: si un update baja el total cobrable (totalAmount/otherCharges) o se da de baja un extra, los links de pago vivos se recortan por paymentRequestsCeiling (connector reservas-payment-requests) — el techo no baja solo',
+        'SEC3-3: borrar una reserva libera antes sus links de pago vivos (fail-loud si Stripe no responde): sin reserva, un cobro posterior queda huérfano en payments',
+      ],
     },
     create({ logger, orm, cache, router, auth }) {
       if (!auth) throw new Error('reservas: auth dependency required')
@@ -103,6 +144,12 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
 
       // ── Enviar código de cerradura por email (botón del planning) ──
       router.post('/api/reservas/:id/send-lock-code-email', guard('reservations', 'edit'), (req) => controller.sendLockCodeEmail(req))
+
+      // Traza de envíos MANUALES al huésped (plantillas de WhatsApp del modal). Mismo permiso y
+      // MISMO prefijo que `send-lock-code-email`, su hermano exacto: una acción sobre la reserva va
+      // bajo `/api/reservas/:id/...` (el prefijo `/api/reservations/:id/...` es el de las
+      // sub-colecciones: companions y addons). QA10-2.
+      router.post('/api/reservas/:id/message-log', guard('reservations', 'edit'), (req) => controller.logManualMessage(req))
 
       // ── Pre-checkin (público) ──
       router.get('/api/public/pre-checkin/:hash', (req) => controller.getPreCheckinData(req))

@@ -21,7 +21,13 @@ export const PaymentsService = {
     http.get<{ data: PaymentRequest[] }>(`/payment-requests${reservationId ? `?reservationId=${reservationId}` : ''}`),
   create: (data: { reservationId: string; amount: number; currency?: string; sentTo?: string; sentVia?: string }) =>
     http.post<PaymentRequest>('/payment-requests', data),
-  update: (id: string, data: Partial<PaymentRequest>) =>
+  /**
+   * Sólo estos cuatro campos. `stripeSessionId`, `stripePaymentUrl` y `paidAt` son estado interno
+   * del servidor: el backend los descarta (payment-requests/validators/schema.ts, BUG-ceiling-bypass)
+   * porque escribirlos desde el cliente permitía soltar el puntero de la Checkout Session y liberar
+   * el techo de cobro con el link todavía pagable.
+   */
+  update: (id: string, data: Partial<Pick<PaymentRequest, 'amount' | 'status' | 'sentTo' | 'sentVia'>>) =>
     http.put<PaymentRequest>(`/payment-requests/${id}`, data),
   remove: (id: string) => http.delete<{ success: boolean }>(`/payment-requests/${id}`),
   /** Crea una Checkout Session de Stripe y actualiza el PaymentRequest con la URL */

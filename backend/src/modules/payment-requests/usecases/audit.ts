@@ -16,11 +16,18 @@ export { auditSafely } from '../../../shared/usecases/audit'
 
 export type Actor = { id?: string; role?: string } | undefined
 
-/** Estados que cambian el saldo debido de la reserva: marcarlos a mano necesita rastro. */
-const SENSITIVE_STATUS = new Set(['paid', 'cancelled', 'expired', 'refunded'])
-
-export function isSensitiveStatus(status?: string): boolean {
-  return !!status && SENSITIVE_STATUS.has(status)
+/**
+ * TODO cambio de estado hecho a mano deja rastro (SEC-1).
+ *
+ * Antes esto era una whitelist (`paid/cancelled/expired/refunded`). Como el schema no tenía `enum`,
+ * un `PUT {status:'x'}` sacaba el link de `pending` — burlando el techo agregado de
+ * `charge-ceiling.ts:49`, con la sesión de Stripe ya emitida todavía viva — y NO caía en la
+ * whitelist, así que no dejaba una sola línea en el audit log. Ahora el enum del schema corta el
+ * estado arbitrario y esto audita cualquier transición real, `pending` incluido (revivir un link
+ * cancelado también mueve el saldo comprometido).
+ */
+export function isAuditableStatusChange(next?: string, previous?: string): boolean {
+  return typeof next === 'string' && next !== previous
 }
 
 const money = (pr: PaymentRequestDTO): string => `${Number(pr.amount || 0).toFixed(2)} ${pr.currency || CurrencyCode.USD}`
@@ -62,8 +69,13 @@ export function webhookPaidEntry(pr: PaymentRequestDTO, amountPaid: number): Aud
 
 /**
  * Cobro fallido reportado por Stripe (`payment_intent.payment_failed`). Sin userId: lo dispara
- * Stripe, no un usuario. hotelId sale del metadata del intent con fallback al hotel de la ruta
- * (que es quien autentica el webhook), así el rastro nunca queda sin tenant.
+ * Stripe, no un usuario.
+ *
+ * SEC-1: `hotelId` es SIEMPRE el de la RUTA del webhook — el hotel cuyo secreto verificó la firma.
+ * Antes se prefería `intent.metadata.hotelId` (payload): un webhook firmado por el hotel A dejaba
+ * el rastro en el audit log del hotel B. Las ramas completed/expired ya descartaban la metadata y
+ * cotejaban contra la ruta (`stripe-webhook.ts`); la ruta no puede venir vacía porque
+ * `processStripeWebhook` corta con 400 antes de rutear el evento.
  */
 export function webhookFailedEntry(hotelId: string, intent: any): AuditEntry {
   const amount = Math.abs(Number(intent?.amount ?? 0)) / 100
@@ -71,7 +83,7 @@ export function webhookFailedEntry(hotelId: string, intent: any): AuditEntry {
   const reason = intent?.last_payment_error?.message || intent?.cancellation_reason || 'motivo desconocido'
   const paymentRequestId = intent?.metadata?.paymentRequestId
   return {
-    hotelId: intent?.metadata?.hotelId || hotelId,
+    hotelId,
     action: 'payment_request.payment_failed',
     entity: 'payment_request',
     entityId: paymentRequestId || intent?.id,

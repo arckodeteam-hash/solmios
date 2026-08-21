@@ -20,5 +20,8 @@ export {
   ratePrice,
   resolveNightlyPrice,
   sumStayPrice,
-  round2,
 } from '../../../shared/utils/rate-resolution'
+
+// STR-1: `round2` NO pasa por acá. Su único origen es `shared/utils/money.ts`; encadenarlo por dos
+// re-exports más dejaba tres rutas de import para el mismo símbolo y un `rg 'utils/money'` no
+// encontraba a todos los consumidores.

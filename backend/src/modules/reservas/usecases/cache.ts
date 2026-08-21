@@ -35,10 +35,21 @@ export async function reservasListCacheKey(
   return `reservas:list:${hotelId || 'all'}:v${ver}:${f}:p${page}:l${limit}:s${search ?? ''}`
 }
 
+/**
+ * Bump ESTRICTAMENTE monótono. `Date.now()` a secas no alcanza: dos invalidaciones dentro del mismo
+ * milisegundo (o la primera invalidación tras el seed, que también usa `Date.now()`) producían la
+ * MISMA versión → la clave de listado no cambiaba y la entrada vieja seguía sirviéndose hasta el TTL.
+ * Con `max(now, actual + 1)` la versión siempre avanza.
+ */
+async function bumpVersion(cache: CacheAdapter, hotelId: HotelKey): Promise<void> {
+  const current = Number(await cache.get<number>(versionKey(hotelId))) || 0
+  await cache.set(versionKey(hotelId), Math.max(Date.now(), current + 1), VERSION_TTL_SECONDS)
+}
+
 export async function invalidateReservasCaches(cache: CacheAdapter, hotelId?: HotelKey): Promise<void> {
   const s = hotelId || 'all'
   // Bump de versión → invalida TODAS las páginas/filtros cacheados de este hotel.
-  await cache.set(versionKey(s), Date.now(), VERSION_TTL_SECONDS)
+  await bumpVersion(cache, s)
   // El super_admin lee con hotelId 'all'; sus entradas también quedan obsoletas.
-  if (s !== 'all') await cache.set(versionKey('all'), Date.now(), VERSION_TTL_SECONDS)
+  if (s !== 'all') await bumpVersion(cache, 'all')
 }

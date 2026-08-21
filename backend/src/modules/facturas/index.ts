@@ -21,14 +21,14 @@ export { normalizePaymentMethod } from './usecases/payment-port'
 export function FacturasModule() {
   return createModule({
     name: 'facturas',
-    version: '2.0.0',
+    version: '2.1.0', // STR-D: invoicesOfReservation/reservationIdOfInvoice entran al contract (GH-0.2)
     description: 'Facturas con ownership, paginacion y validacion',
 
     contract: {
       name: 'facturas',
-      version: '2.0.0',
+      version: '2.1.0',
       description: 'Facturas con ownership, paginacion y validacion',
-      actions: ["list","getById","create","pay","update","delete","email"],
+      actions: ["list","getById","create","pay","update","delete","email","invoicesOfReservation","reservationIdOfInvoice"],
       events: ["onFacturasCreated","onFacturasUpdated","onFacturasDeleted"],
       tables: ['invoices', 'invoice_items'],
       dependencies: [],

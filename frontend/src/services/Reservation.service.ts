@@ -3,7 +3,7 @@ import type {
   Reservation, ReservationStatus, ReservationSource, ReservationDetail, GuaranteeCardData, AuditLogEntry,
   ReservationApiRecord as RawReservation,
   RescheduleInput, RescheduleCommitInput, RescheduleQuote, RescheduleResult,
-  CancelPreview, CancelReservationInput, StayQuote,
+  CancelPreview, CancelReservationInput, StayQuote, ReservationDetailMessageLog,
 } from '@/types'
 
 // Los tipos del reagendado viven en `@/types` (dominio), no acá. Se re-exportan para no romper
@@ -206,6 +206,19 @@ export const ReservationService = {
   async sendLockCodeEmail(id: string): Promise<{ sentTo: string }> {
     const data = await http.post<{ success: boolean; sentTo: string }>(`/reservas/${id}/send-lock-code-email`, {})
     return { sentTo: data.sentTo }
+  },
+
+  /**
+   * Deja constancia en `message_logs` de un envío MANUAL al huésped (plantillas de WhatsApp
+   * del modal). El envío lo hace el staff en su propio WhatsApp: por eso el estado es
+   * `queued` ("abierto/preparado") y no `sent` — el sistema no puede confirmar la entrega.
+   * Permiso backend: `reservations:edit`.
+   */
+  async logManualMessage(
+    id: string,
+    payload: { messageType?: 'whatsapp' | 'sms' | 'email'; recipient?: string; reference?: string; status?: 'queued' | 'failed' },
+  ): Promise<ReservationDetailMessageLog> {
+    return http.post<ReservationDetailMessageLog>(`/reservas/${id}/message-log`, payload)
   },
 }
 
