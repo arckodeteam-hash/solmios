@@ -249,6 +249,40 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
       break
     }
 
+    case 'customer.subscription.updated': {
+      const stripeSub = event.data.object as Stripe.Subscription
+      const sub = (await subscriptionsRepo.findMany({ stripeSubscriptionId: stripeSub.id }))[0] as any
+      if (!sub) {
+        logger.warn(`customer.subscription.updated: no hay Subscription local para ${stripeSub.id}`)
+        break
+      }
+      // Upgrade/downgrade desde el portal de Stripe cambia el price del ítem: la fila local
+      // y el espejo tienen que seguir al plan PAGADO o el hotel queda gateado con el plan
+      // viejo para siempre (nadie más vuelve a tocar planId). Los cambios de ESTADO no se
+      // sincronizan acá: trialing/active/past_due/canceled llegan por invoice.paid /
+      // invoice.payment_failed / customer.subscription.deleted, que además mandan los mails.
+      const priceId = stripeSub.items?.data?.[0]?.price?.id
+      if (typeof priceId !== 'string' || !deps.plansRepo) break
+      const plan = ((await deps.plansRepo.findMany({ stripePriceId: priceId })) as any[])?.[0]
+      if (!plan) {
+        logger.warn('customer.subscription.updated: el price de Stripe no matchea ningún plan local', {
+          stripeSubscriptionId: stripeSub.id, priceId,
+        })
+        break
+      }
+      if (String(plan.id) === sub.planId) break // ya apunta al plan pagado: nada que sincronizar
+      await subscriptionsRepo.update(sub.id, { planId: String(plan.id) })
+      logger.info('Plan de la suscripción actualizado desde Stripe', { hotelId: sub.hotelId, planId: plan.id })
+      // Espejo legacy, mismo best-effort que checkout.session.completed: la fuente de verdad
+      // (la suscripción) ya quedó bien; si esto falla solo el espejo queda viejo.
+      try {
+        if (plan.slug) await deps.hotelsRepo.update(sub.hotelId, { plan: String(plan.slug) })
+      } catch (e) {
+        logger.warn('No se pudo sincronizar hotels.plan tras customer.subscription.updated', { hotelId: sub.hotelId, error: (e as Error).message })
+      }
+      break
+    }
+
     case 'customer.subscription.deleted': {
       const stripeSub = event.data.object as Stripe.Subscription
       const sub = (await subscriptionsRepo.findMany({ stripeSubscriptionId: stripeSub.id }))[0] as any

@@ -63,7 +63,8 @@ export function AdminModule() {
         }
         // El estado sale de global ∩ la SUSCRIPCIÓN ACTIVA del hotel ∩ overrides.
         // planSlug (hotels.plan) solo aplica si no hay suscripción activa (legacy).
-        return { status: 200, body: { state: await getModuleStateForHotel(configRepo, plansRepo, subscriptionsRepo, hotelId, moduleOverridesRepo, planSlug) } }
+        // `log` (E2): el WARN del resolver tiene que llegar a los logs, no morir en `undefined`.
+        return { status: 200, body: { state: await getModuleStateForHotel(configRepo, plansRepo, subscriptionsRepo, hotelId, moduleOverridesRepo, planSlug, log) } }
       })
 
       router.get('/api/admin/hoteles', sa, () => controller.listHotels())

@@ -195,5 +195,5 @@ export class RestaurantService {
   foodCostReport(user: CurrentUser) { return foodCost.foodCostReport(this.foodCostDeps(), user) }
 
   // ─── Carta pública sin sesión (F7): hotelId del PATH, sin req.user ni createModuleGuard ───
-  publicMenu(hotelId: string, lang: string | undefined) { return publicMenuUsecase.publicMenu({ categories: this.categories, items: this.items, stations: this.stations, combos: this.combos!, comboItems: this.comboItems!, userRepo: this.userRepo, hotels: this.hotels!, config: this.config!, plans: this.plans!, subscriptions: this.subscriptions! }, hotelId, lang) }
+  publicMenu(hotelId: string, lang: string | undefined) { return publicMenuUsecase.publicMenu({ categories: this.categories, items: this.items, stations: this.stations, combos: this.combos!, comboItems: this.comboItems!, userRepo: this.userRepo, hotels: this.hotels!, config: this.config!, plans: this.plans!, subscriptions: this.subscriptions!, logger: this.logger }, hotelId, lang) }
 }

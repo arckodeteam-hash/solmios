@@ -10,7 +10,7 @@
 // cost, margin, marginPercent, hasRecipe, complete, avgCost, currentStock, stationId, stationName,
 // sortOrder, taxRate, hotelId (por fila).
 import { NotFoundError } from 'arckode-framework'
-import type { RepositoryAdapter } from 'arckode-framework'
+import type { Logger, RepositoryAdapter } from 'arckode-framework'
 import type { CategoryDTO, MenuItemDTO, StationDTO, ComboDTO, ComboItemDTO, CurrentUser, AllergenTag } from '../types'
 import * as categoriesCrud from './categories-crud'
 import * as itemsCrud from './items-crud'
@@ -29,6 +29,8 @@ export interface PublicMenuDeps {
   plans: RepositoryAdapter<any>
   /** Suscripción SaaS del hotel — FUENTE DE VERDAD del plan para el gate (resolve-plan.ts). */
   subscriptions: RepositoryAdapter<any>
+  /** E2: el WARN del fail-open del resolver se emite — lo cablea el service del módulo. */
+  logger?: Pick<Logger, 'warn' | 'error'>
 }
 
 export interface PublicMenuItemDTO {
@@ -109,7 +111,7 @@ export async function publicMenu(deps: PublicMenuDeps, hotelId: string, lang: st
 
   // F7 + fix plan-truth: el módulo `restaurant` se decide por la SUSCRIPCIÓN ACTIVA del hotel,
   // no por el espejo `hotels.plan` (que quedaba en el default 'professional' tras el trial).
-  const state = await getModuleStateForHotel(deps.config, deps.plans, deps.subscriptions, hotelId, undefined, hotel.plan)
+  const state = await getModuleStateForHotel(deps.config, deps.plans, deps.subscriptions, hotelId, undefined, hotel.plan, deps.logger)
   if (state.restaurant === false) throw new NotFoundError(NOT_FOUND_MSG)
 
   const fakeUser: CurrentUser = { id: '', hotelId }

@@ -3,11 +3,12 @@
 // listan: siempre activos. Un módulo puede tener SUBMÓDULOS (las entradas hijas del menú) que también
 // se activan/desactivan de forma granular. Estado global en configuration(hotelId='platform', key='modules').
 // Default: todo activado (una clave sin entrada se considera ON). Submódulos: clave punteada `modulo.sub`.
-// INDEPENDIENTE del sistema de planes: los planes solo eligen módulos top-level; los submódulos son
-// un toggle global de plataforma. Un submódulo se ve si su módulo padre entra en el plan Y está ON global.
+// INDEPENDIENTE del sistema de planes: los planes eligen claves top-level (que implican sus
+// sub-módulos, CS-1) y los submódulos son un toggle global de plataforma. Un submódulo se ve
+// si su módulo padre entra en el plan Y está ON global.
 
 import type { RepositoryAdapter } from 'arckode-framework'
-import { resolveHotelPlan } from '../../subscriptions/usecases/resolve-plan'
+import { resolveHotelPlan, type GateLogger } from '../../subscriptions/usecases/resolve-plan'
 
 export interface SubModuleMeta { key: string; label: string; description: string }
 export interface ModuleMeta { key: string; label: string; description: string; submodules?: SubModuleMeta[] }
@@ -147,9 +148,9 @@ export async function getModuleState(configRepo: RepositoryAdapter<any>): Promis
  * super_admin / sin plan → solo global.
  * Retrocompat:
  *  - Plan sin módulos definidos (array vacío) → incluye TODO (los planes viejos no pierden nada).
- *  - Plan que lista un módulo top-level pero NINGÚN submódulo suyo → todos sus submódulos incluidos
- *    (los planes viejos guardaban solo claves top-level: no deben quedar sin submódulos).
- *  - Plan que lista al menos un `modulo.sub` → dentro de ese módulo, solo los submódulos listados.
+ *  - Plan que lista un módulo top-level → él y TODOS sus sub-módulos (expansión padre→hijos, CS-1).
+ *  - Sub-clave punteada listada sin su padre → NO habilita al padre ni a sus hermanos: la
+ *    expansión es padre→hijos, nunca hijos→padre.
  * El toggle global siempre manda: si un módulo/submódulo está apagado global, se cae para todos.
  *
  * 3ra capa — overrides por hotel (overridesRepo + hotelId opcionales, retrocompatible):
@@ -192,7 +193,7 @@ export async function getModuleStateForHotel(
   overridesRepo?: RepositoryAdapter<any>,
   /** Espejo legacy `hotels.plan` — solo se consulta si el hotel no tiene suscripción activa. */
   hotelPlanSlug?: string,
-  logger?: { warn: (msg: string, meta?: any) => void },
+  logger?: GateLogger,
 ): Promise<ModuleState> {
   if (!hotelId || hotelId === 'platform') {
     // Plataforma/super_admin: sin plan de hotel, solo el toggle global (como hoy).
@@ -200,6 +201,22 @@ export async function getModuleStateForHotel(
   }
   const resolved = await resolveHotelPlan(subscriptionsRepo, plansRepo, hotelId, hotelPlanSlug, logger)
   return applyPlanState(configRepo, resolved.modules, overridesRepo, hotelId)
+}
+
+/**
+ * CS-1: un módulo padre IMPLICA sus sub-módulos (`padre` → todos los `padre.*`). El guard de
+ * la API exige la SUB-clave (`moduleGuard('reservations.list')` protege /api/reservas*), así
+ * que un plan que lista `reservations` sin `reservations.list` dejaba TODO el módulo en 403:
+ * la jerarquía del catálogo es implícita y el que arma la matriz (seeder/admin) no tiene que
+ * saber qué sub-claves exige cada ruta. La expansión es padre→hijos, NUNCA al revés: listar
+ * `finance.billing` sin `finance` no prende al padre (y por ende tampoco al sub-módulo).
+ */
+function expandPlanModules(planModules: string[]): Set<string> {
+  const set = new Set(planModules)
+  for (const m of MODULE_CATALOG) {
+    if (set.has(m.key)) for (const s of m.submodules ?? []) set.add(s.key)
+  }
+  return set
 }
 
 /** Núcleo compartido: aplica global ∩ matriz del plan ∩ overrides sobre el catálogo. */
@@ -210,17 +227,14 @@ async function applyPlanState(
   hotelId?: string,
 ): Promise<ModuleState> {
   const global = await getModuleState(configRepo)
-  const has = (k: string) => !planModules || planModules.includes(k)
+  const effective = planModules ? expandPlanModules(planModules) : null
+  const has = (k: string) => !effective || effective.has(k)
   const state: ModuleState = {}
   for (const m of MODULE_CATALOG) {
     const moduleOn = global[m.key] !== false && has(m.key)
     state[m.key] = moduleOn
-    const subs = m.submodules ?? []
-    // ¿El plan seleccionó submódulos concretos de este módulo? Si no, todos heredan al padre (retrocompat).
-    const subSelected = !!planModules && subs.some((s) => planModules!.includes(s.key))
-    for (const s of subs) {
-      const inPlan = !subSelected || planModules!.includes(s.key)
-      state[s.key] = moduleOn && global[s.key] !== false && inPlan
+    for (const s of m.submodules ?? []) {
+      state[s.key] = moduleOn && global[s.key] !== false && has(s.key)
     }
   }
 

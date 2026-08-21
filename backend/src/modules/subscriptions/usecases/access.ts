@@ -26,8 +26,13 @@ export interface AccessResult {
   trialEndsAt?: string
 }
 
-/** Estados de suscripción que dejan trabajar. */
-const WORKING_STATUSES = new Set(['trialing', 'active', 'past_due'])
+/**
+ * Estados de suscripción que dejan trabajar. ÚNICA fuente (antes `resolve-plan.ts` duplicaba
+ * la lista en `ACTIVE_SUBSCRIPTION_STATUSES`): el gate de módulos la importa para elegir la
+ * fila activa del hotel — si los dos conjuntos discreparan, un hotel podría estar cortado
+ * del login y a la vez gateado con la matriz de una suscripción muerta (o al revés).
+ */
+export const WORKING_STATUSES = new Set(['trialing', 'active', 'past_due'])
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 
