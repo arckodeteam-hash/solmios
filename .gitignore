@@ -82,3 +82,6 @@ loopkit/
 .opencode/
 CLAUDE.local.md
 AGENTS.local.md
+
+# Reportes de sesión generados en la raíz (no son artefactos del producto)
+reporte-*.md
