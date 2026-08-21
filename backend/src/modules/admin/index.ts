@@ -14,10 +14,12 @@ export { AdminService }
 export function AdminModule() {
   return createModule({
     name: 'admin',
-    version: '1.0.0',
+    // STR-6: los tres endpoints de amenities cambiaron su contrato de error (409-para-todo →
+    // 400/403/404/409, por TIPO de error). Un cambio observable del contrato bumpea la versión.
+    version: '1.1.0',
     description: 'Super admin platform management',
     contract: {
-      name: 'admin', version: '1.0.0',
+      name: 'admin', version: '1.1.0',
       description: 'Platform-level management: hotels, users, plans, analytics',
       actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride'],
       events: [],

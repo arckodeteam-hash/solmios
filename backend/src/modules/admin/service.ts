@@ -2,7 +2,7 @@ import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import type { AdminAnalyticsDTO, MonitoringDTO, PlanDTO, AmenityCatalogDTO, ModuleOverrideDTO } from './types'
 import type { DashboardQueries } from './usecases/dashboard-queries'
 import {
-  auditSafely, planDeleteEntry, amenityCatalogDeleteEntry, type AuditPort,
+  auditSafely, planDeleteEntry, type AuditPort,
 } from './usecases/audit'
 import type { ApplySpecialConditionsInput, SpecialConditionsUseCase } from './usecases/special-conditions'
 import type { SubscriptionCategoriesUseCase } from './usecases/subscription-categories'
@@ -11,6 +11,10 @@ import {
   type SubscriptionSettings,
 } from './usecases/subscription-settings'
 import type { ModuleOverridesUseCase } from './usecases/module-overrides'
+import {
+  listAmenitiesCatalog, createAmenityCatalog, updateAmenityCatalog, deleteAmenityCatalog,
+  type AmenitiesCatalogDeps,
+} from './usecases/amenities-catalog'
 
 /**
  * Planes y catálogo de amenities son recursos de la plataforma: no pertenecen a ningún hotel ni
@@ -133,40 +137,19 @@ export class AdminService {
     return await this.hotelsRepo.update(id, patch)
   }
 
-  async listAmenitiesCatalog(): Promise<{ data: any[]; total: number }> {
-    const data = await this.amenitiesRepo.findMany({})
-    return { data: data as any[], total: data.length }
-  }
-
-  async createAmenityCatalog(body: any): Promise<any> {
-    if (!body.key || !body.label) throw new Error('key y label requeridos')
-    const existing = (await this.amenitiesRepo.findMany({ key: body.key }))[0]
-    if (existing) throw new Error('Amenity ya existe')
-    return await this.amenitiesRepo.create({
-      key: body.key, label: body.label,
-      category: body.category || 'interior', icon: body.icon || '',
-      isActive: body.isActive !== false ? 1 : 0, sortOrder: body.sortOrder || 0,
-    })
-  }
-
-  async updateAmenityCatalog(id: string, body: any, user?: any): Promise<any> {
-    const existing = await this.amenitiesRepo.findById(id) as any
-    if (!existing) throw new Error('Amenity no encontrado')
-    if (this.auth) this.auth.assertOwnership(PLATFORM_RESOURCE, user?.id ?? '', user?.role, 'super_admin')
-    const patch: Record<string, any> = {}
-    for (const k of ['key', 'label', 'category', 'icon', 'isActive', 'sortOrder']) {
-      if (body[k] !== undefined) patch[k] = k === 'isActive' ? (body[k] ? 1 : 0) : body[k]
+  /** Deps del CRUD de amenities. `auth` OBLIGATORIO: es un recurso de plataforma (QA7-3). */
+  private get amenitiesDeps(): AmenitiesCatalogDeps {
+    if (!this.auth) throw new Error('admin: auth requerido para operar el catálogo de amenities')
+    return {
+      repo: this.amenitiesRepo, logger: this.logger, auth: this.auth,
+      platformResource: PLATFORM_RESOURCE, auditPort: () => this.auditPort,
     }
-    return await this.amenitiesRepo.update(id, patch)
   }
 
-  async deleteAmenityCatalog(id: string, user?: any): Promise<void> {
-    const existing = await this.amenitiesRepo.findById(id) as any
-    if (!existing) throw new Error('Amenity no encontrado')
-    if (this.auth) this.auth.assertOwnership(PLATFORM_RESOURCE, user?.id ?? '', user?.role, 'super_admin')
-    await this.amenitiesRepo.delete(id)
-    await auditSafely(this.auditPort, this.logger, amenityCatalogDeleteEntry(existing, user))
-  }
+  listAmenitiesCatalog(): Promise<{ data: any[]; total: number }> { return listAmenitiesCatalog(this.amenitiesDeps) }
+  createAmenityCatalog(body: any, user?: any): Promise<any> { return createAmenityCatalog(this.amenitiesDeps, body, user) }
+  updateAmenityCatalog(id: string, body: any, user?: any): Promise<any> { return updateAmenityCatalog(this.amenitiesDeps, id, body, user) }
+  deleteAmenityCatalog(id: string, user?: any): Promise<void> { return deleteAmenityCatalog(this.amenitiesDeps, id, user) }
 
   // ── Condiciones especiales / Fundador-Pionero (PLAN-SUSCRIPCIONES.md) ──────────────────
 
