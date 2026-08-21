@@ -7,10 +7,14 @@
 //
 // Lo que se protege acá:
 //   1. El CTA mira el PLAN, no el estado: la tarjeta del plan actual jamás dice "Suscribirse a X".
-//   2. Con una suscripción viva en Stripe (`active` / `past_due`) el botón del plan actual está
-//      deshabilitado y NO llama a checkout.
+//   2. Con una suscripción viva en Stripe (`active` / `past_due`) TODOS los botones están
+//      deshabilitados y NO llaman a checkout — el plan actual y también cualquier OTRO plan:
+//      relanzar el Checkout crea una SEGUNDA suscripción (doble cobro) y huérfana la vieja
+//      (BUG-9; el backend espeja la regla en create-checkout-session.ts con 409).
 //   3. En `trialing` NO hay suscripción de Stripe todavía: el Checkout es la ÚNICA vía de
 //      conversión, así que el botón sigue vivo — con texto propio, no con el de un plan ajeno.
+//   4. Con `canceled`/`expired` (o sin suscripción) cambiar de plan SÍ se puede: la vieja ya
+//      no cobra, un Checkout nuevo no duplica nada.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
@@ -111,11 +115,50 @@ describe('/panel/suscripcion — CTA del plan actual', () => {
     expect(checkout).toHaveBeenCalledWith('plan-pro')
   })
 
-  it('un plan distinto al actual se sigue ofreciendo y contratando', async () => {
+  // BUG-9 — con status vivo, un plan DISTINTO tampoco puede relanzar el Checkout: antes este
+  // era exactamente el camino del doble cobro ("Suscribirse a Essential" clickable con la
+  // suscripción Professional activa).
+  it('con suscripción activa un plan DISTINTO también queda bloqueado (no crea una segunda suscripción)', async () => {
     const { ctas } = await mountWith(subscription({ status: 'active' }))
     const other = ctas.get('plan-ess')!
 
+    expect(other.text()).not.toMatch(/Suscribirse/i)
+    expect(other.text()).toMatch(/suscripción activa/i)
+    expect(other.attributes('disabled')).toBeDefined()
+
+    await other.trigger('click')
+    await flushPromises()
+    expect(checkout).not.toHaveBeenCalled()
+  })
+
+  it('con el pago pendiente un plan distinto también queda bloqueado', async () => {
+    const { ctas } = await mountWith(subscription({ status: 'past_due' }))
+    const other = ctas.get('plan-ess')!
+
+    expect(other.attributes('disabled')).toBeDefined()
+    expect(other.text()).not.toMatch(/Suscribirse/i)
+
+    await other.trigger('click')
+    await flushPromises()
+    expect(checkout).not.toHaveBeenCalled()
+  })
+
+  it('con la suscripción cancelada cambiar de plan vuelve a poderse (la vieja ya no cobra)', async () => {
+    const { ctas } = await mountWith(subscription({ status: 'canceled' }))
+    const other = ctas.get('plan-ess')!
+
     expect(other.text()).toBe('Suscribirse a Essential')
+    expect(other.attributes('disabled')).toBeUndefined()
+
+    await other.trigger('click')
+    await flushPromises()
+    expect(checkout).toHaveBeenCalledWith('plan-ess')
+  })
+
+  it('con la suscripción vencida cambiar de plan también se puede', async () => {
+    const { ctas } = await mountWith(subscription({ status: 'expired' }))
+    const other = ctas.get('plan-ess')!
+
     expect(other.attributes('disabled')).toBeUndefined()
 
     await other.trigger('click')

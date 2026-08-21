@@ -134,9 +134,12 @@ const stateSubtitle = computed(() =>
 )
 
 /**
- * Estados en los que YA existe una suscripción viva en Stripe para el plan actual. Volver a
- * lanzar el Checkout ahí crea una SEGUNDA suscripción (y un segundo cobro mensual): el camino
- * correcto es el Billing Portal ("Gestionar método de pago" / "Regularizar pago").
+ * Estados en los que YA existe una suscripción viva en Stripe. Ahí se bloquean TODOS los
+ * planes, no solo el actual: lanzar el Checkout con CUALQUIER plan crea una SEGUNDA
+ * suscripción (y un segundo cobro mensual) y huérfana la vieja — el webhook pisa
+ * `stripeSubscriptionId` y la anterior sigue activa en Stripe sin rastro local. El camino
+ * correcto es cancelar la actual o esperar el fin del ciclo desde el Billing Portal
+ * ("Gestionar método de pago"); la migración de plan con proration es otro feature.
  * `trialing` NO entra: la prueba no tiene suscripción en Stripe todavía, y el Checkout es la
  * única vía para convertirla en plan pago (ver `subscriptions/usecases/create-checkout-session.ts`).
  */
@@ -144,15 +147,18 @@ const LIVE_STRIPE_STATUSES = ['active', 'past_due']
 
 /** El badge "Tu plan" y el CTA miran lo MISMO: el plan, no el estado (issue #29). */
 const isCurrentPlan = (p: PublicPlan) => !!sub.value?.planId && p.id === sub.value.planId
-const isPlanLocked = (p: PublicPlan) =>
-  isCurrentPlan(p) && LIVE_STRIPE_STATUSES.includes(sub.value?.status ?? '')
+/** Con una suscripción viva no se contrata NADA nuevo — el plan da igual (BUG-9, doble cobro). */
+const isPlanLocked = (_p: PublicPlan) => LIVE_STRIPE_STATUSES.includes(sub.value?.status ?? '')
 
 function ctaLabel(p: PublicPlan): string {
   if (checkoutLoading.value === p.id) return 'Redirigiendo…'
+  if (isPlanLocked(p)) {
+    return isCurrentPlan(p)
+      ? (sub.value?.status === 'past_due' ? 'Tu plan actual · pago pendiente' : 'Tu plan actual')
+      : 'Ya tenés una suscripción activa'
+  }
   if (!isCurrentPlan(p)) return `Suscribirse a ${p.name}`
   if (sub.value?.status === 'trialing') return 'Activar tu plan actual'
-  if (sub.value?.status === 'past_due') return 'Tu plan actual · pago pendiente'
-  if (isPlanLocked(p)) return 'Tu plan actual'
   return `Reactivar ${p.name}` // expired / canceled: el plan sigue siendo el suyo, pero sin acceso
 }
 

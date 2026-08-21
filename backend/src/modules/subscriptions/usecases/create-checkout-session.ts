@@ -5,7 +5,7 @@
 // a propósito: el cobro de la suscripción SaaS siempre corre contra la cuenta de la
 // PLATAFORMA (env STRIPE_SECRET_KEY), nunca contra la cuenta del hotel.
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
-import { ValidationError, NotFoundError } from 'arckode-framework'
+import { ValidationError, NotFoundError, ConflictError } from 'arckode-framework'
 import { StripeService } from '../../../services/stripe-service'
 
 export interface CreateCheckoutDeps {
@@ -48,6 +48,23 @@ export async function createCheckoutSession(
   if (!stripe) throw new ValidationError('Stripe no está configurado en la plataforma')
 
   let sub = (await subscriptionsRepo.findMany({ hotelId }))[0] as any
+
+  // Estados con una suscripción VIVA en Stripe. `trialing` NO entra: la prueba todavía no
+  // tiene suscripción en Stripe y el Checkout es la única vía de conversión a plan pago.
+  const LIVE_STRIPE_STATUSES = ['active', 'past_due']
+
+  // BUG-9 (doble cobro): lanzar otro Checkout `mode:'subscription'` con una suscripción viva
+  // crea una SEGUNDA suscripción en Stripe que cobra en paralelo y huérfana la vieja — el
+  // webhook (`handle-stripe-event.ts` checkout.session.completed) pisa `stripeSubscriptionId`
+  // con la nueva y la anterior queda activa en Stripe sin rastro local. Aplica a CUALQUIER
+  // plan (el mismo o uno distinto): todo Checkout nuevo mientras el status esté vivo genera
+  // una segunda suscripción. El camino correcto es cancelar la actual o esperar el fin del
+  // ciclo desde el Billing Portal; la migración de plan con proration es otro feature.
+  if (sub && LIVE_STRIPE_STATUSES.includes(sub.status)) {
+    throw new ConflictError(
+      'Ya tenés una suscripción activa. Para cambiar de plan, cancelá la actual o esperá a que termine el ciclo desde el portal de facturación.',
+    )
+  }
 
   let stripeCustomerId: string | undefined = sub?.stripeCustomerId
   if (!stripeCustomerId) {
