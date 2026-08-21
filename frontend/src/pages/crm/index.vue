@@ -201,13 +201,13 @@
       <SectionCard title="Validar cupón" subtitle="Comprobá un código antes de aplicarlo">
         <div class="space-y-3">
           <div>
-            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Código</label>
-            <input v-model="validateCode" placeholder="Código del cupón"
+            <label for="crm-codigo" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Código</label>
+            <input id="crm-codigo" name="validateCode" required aria-required="true" v-model="validateCode" placeholder="Código del cupón"
               class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy focus:border-navy focus:outline-none">
           </div>
           <div>
-            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Monto de la compra</label>
-            <input v-model.number="validateAmount" type="number" placeholder="0"
+            <label for="crm-monto-de-la-compra" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Monto de la compra</label>
+            <input id="crm-monto-de-la-compra" name="validateAmount" required aria-required="true" v-model.number="validateAmount" type="number" placeholder="0"
               class="w-full rounded-xl border border-border px-4 py-2.5 text-sm tabular-nums focus:border-navy focus:outline-none">
           </div>
           <button @click="doValidateCoupon"
@@ -279,30 +279,30 @@
       subtitle="Código de descuento aplicable en reservas" @close="showCouponForm = false">
       <div class="space-y-4">
               <div>
-                <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Código</label>
-                <input v-model="couponForm.code" placeholder="Ej: VERANO2026" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+                <label for="crm-codigo-2" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Código</label>
+                <input id="crm-codigo-2" name="code" required aria-required="true" v-model="couponForm.code" placeholder="Ej: VERANO2026" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
               </div>
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Tipo</label>
-                  <select v-model="couponForm.type" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
+                  <label for="crm-tipo" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Tipo</label>
+                  <select id="crm-tipo" name="type" required aria-required="true" v-model="couponForm.type" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
                     <option value="percentage">% Descuento</option>
                     <option value="fixed">$ Fijo</option>
                   </select>
                 </div>
                 <div>
-                  <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Valor</label>
-                  <input v-model.number="couponForm.value" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+                  <label for="crm-valor" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Valor</label>
+                  <input id="crm-valor" name="value" required aria-required="true" v-model.number="couponForm.value" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
                 </div>
               </div>
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Compra Mín.</label>
-                  <input v-model.number="couponForm.minPurchase" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+                  <label for="crm-compra-min" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Compra Mín.</label>
+                  <input id="crm-compra-min" name="minPurchase" v-model.number="couponForm.minPurchase" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
                 </div>
                 <div>
-                  <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Vence</label>
-                  <input v-model="couponForm.expiresAt" type="date" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+                  <label for="crm-vence" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Vence</label>
+                  <input id="crm-vence" name="expiresAt" v-model="couponForm.expiresAt" type="date" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
                 </div>
               </div>
       </div>
@@ -318,12 +318,12 @@
       subtitle="Agrupa huéspedes por tier y cantidad de estadías" @close="showSegmentForm = false">
       <div class="space-y-4">
               <div>
-                <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Nombre</label>
-                <input v-model="segmentForm.name" placeholder="Ej: Huéspedes frecuentes" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+                <label for="crm-nombre" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Nombre</label>
+                <input id="crm-nombre" name="name" required aria-required="true" v-model="segmentForm.name" placeholder="Ej: Huéspedes frecuentes" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
               </div>
               <div>
-                <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Tier</label>
-                <select v-model="segmentForm.tier" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
+                <label for="crm-tier" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Tier</label>
+                <select id="crm-tier" name="tier" v-model="segmentForm.tier" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
                   <option value="">Cualquier tier</option>
                   <option value="bronze">Bronze</option>
                   <option value="silver">Silver</option>
@@ -333,8 +333,8 @@
                 </select>
               </div>
               <div>
-                <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Mín. Estancias</label>
-                <input v-model.number="segmentForm.minStays" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+                <label for="crm-min-estancias" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Mín. Estancias</label>
+                <input id="crm-min-estancias" name="minStays" v-model.number="segmentForm.minStays" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
               </div>
       </div>
 
@@ -407,26 +407,26 @@
       subtitle="Se enviará a los huéspedes del segmento elegido" @close="showCampaignForm = false">
       <div class="space-y-4">
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nombre interno *</label>
-          <input v-model="campaignForm.name" placeholder="Ej: Promo temporada alta" maxlength="120"
+          <label for="crm-nombre-interno" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nombre interno *</label>
+          <input id="crm-nombre-interno" name="name" required aria-required="true" v-model="campaignForm.name" placeholder="Ej: Promo temporada alta" maxlength="120"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Segmento *</label>
-          <select v-model="campaignForm.segmentId"
+          <label for="crm-segmento" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Segmento *</label>
+          <select id="crm-segmento" name="segmentId" required aria-required="true" v-model="campaignForm.segmentId"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm bg-white focus:border-navy focus:outline-none cursor-pointer">
             <option value="" disabled>Elegí un segmento…</option>
             <option v-for="sg in segments" :key="sg.id" :value="sg.id">{{ sg.name }} ({{ sg.count }})</option>
           </select>
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Asunto *</label>
-          <input v-model="campaignForm.subject" placeholder="Ej: Volvé con 20% de descuento" maxlength="200"
+          <label for="crm-asunto" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Asunto *</label>
+          <input id="crm-asunto" name="subject" required aria-required="true" v-model="campaignForm.subject" placeholder="Ej: Volvé con 20% de descuento" maxlength="200"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Mensaje (HTML)</label>
-          <textarea v-model="campaignForm.body" rows="7" maxlength="20000"
+          <label for="crm-mensaje-html" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Mensaje (HTML)</label>
+          <textarea id="crm-mensaje-html" name="body" v-model="campaignForm.body" rows="7" maxlength="20000"
             placeholder="<p>Hola {{nombre}}, tenés {{puntos}} puntos en {{hotel}}…</p>"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-mono focus:border-navy focus:outline-none"></textarea>
           <p v-pre class="mt-1 text-[11px] text-text-muted">Variables: <code>{{ nombre }}</code>, <code>{{ hotel }}</code>, <code>{{ puntos }}</code> — se resuelven por huésped al enviar.</p>
@@ -455,23 +455,23 @@
       <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
         <label class="flex items-center justify-between gap-3 rounded-xl border border-border p-4 cursor-pointer">
           <span class="text-sm font-bold text-navy">Programa activo</span>
-          <input v-model="loyaltyCfg.enabled" type="checkbox" class="h-5 w-5 accent-teal cursor-pointer">
+          <input id="crm-programa-activo" name="enabled" v-model="loyaltyCfg.enabled" type="checkbox" class="h-5 w-5 accent-teal cursor-pointer">
         </label>
         <div>
           <div class="mb-1 text-[11px] font-bold uppercase text-text-muted">Puntos por unidad de moneda</div>
-          <input v-model.number="loyaltyCfg.pointsPerCurrencyUnit" type="number" min="0" step="0.5"
+          <input id="crm-points-per-currency-unit" name="pointsPerCurrencyUnit" aria-label="Puntos por unidad de moneda" v-model.number="loyaltyCfg.pointsPerCurrencyUnit" type="number" min="0" step="0.5"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy tabular-nums">
           <div class="mt-1 text-[11px] text-text-muted">Ej: 10 → una estadía de $100 suma 1.000 puntos.</div>
         </div>
         <div>
           <div class="mb-1 text-[11px] font-bold uppercase text-text-muted">Valor de 1 punto al canjear</div>
-          <input v-model.number="loyaltyCfg.pointValue" type="number" min="0" step="0.1"
+          <input id="crm-point-value" name="pointValue" aria-label="Valor de 1 punto al canjear" v-model.number="loyaltyCfg.pointValue" type="number" min="0" step="0.1"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy tabular-nums">
           <div class="mt-1 text-[11px] text-text-muted">Ej: 1 → canjear 500 puntos = código de $500.</div>
         </div>
         <div>
           <div class="mb-1 text-[11px] font-bold uppercase text-text-muted">Vigencia del código de canje (días)</div>
-          <input v-model.number="loyaltyCfg.promoValidDays" type="number" min="1"
+          <input id="crm-promo-valid-days" name="promoValidDays" aria-label="Vigencia del código de canje en días" v-model.number="loyaltyCfg.promoValidDays" type="number" min="1"
             class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy tabular-nums">
         </div>
       </div>

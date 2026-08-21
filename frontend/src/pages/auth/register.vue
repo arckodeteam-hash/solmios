@@ -74,25 +74,25 @@
         <!-- Paso 1: la persona -->
         <form v-if="step === 1" @submit.prevent="goToStep2" class="space-y-4">
           <div>
-            <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">
+            <label for="auth-register-nombre-y-apellido" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">
               Nombre y apellido <span class="text-danger">*</span>
             </label>
             <div class="relative">
               <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" v-html="ICON_USER"></span>
-              <input v-model="form.ownerName" type="text" required autocomplete="name" :maxlength="LIMITS.ownerName"
+              <input id="auth-register-nombre-y-apellido" name="ownerName" v-model="form.ownerName" type="text" required autocomplete="name" :maxlength="LIMITS.ownerName"
               data-testid="register-owner-name"
               class="w-full pl-10 pr-4 py-2.5 bg-white border border-border rounded-xl text-sm focus:outline-none focus:border-navy"
               placeholder="Ana Pérez García">
             </div>
           </div>
           <div>
-            <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">
+            <label for="auth-register-email" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">
               Email <span class="text-danger">*</span>
             </label>
             <div class="relative">
               <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4"
                 :class="emailTouched && !emailValid ? 'text-danger' : 'text-text-muted'" v-html="ICON_MAIL"></span>
-              <input v-model="form.email" type="email" required autocomplete="email" :maxlength="LIMITS.email"
+              <input id="auth-register-email" name="email" aria-required="true" v-model="form.email" type="email" required autocomplete="email" :maxlength="LIMITS.email"
                 data-testid="register-email"
                 class="w-full pl-10 pr-4 py-2.5 bg-white border rounded-xl text-sm focus:outline-none focus:border-navy"
                 :class="emailTouched && !emailValid ? 'border-danger' : 'border-border'"
@@ -105,12 +105,12 @@
             <p v-else class="text-[11px] text-text-muted mt-1">Con este email vas a iniciar sesión.</p>
           </div>
           <div>
-            <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">
+            <label for="auth-register-contrasena" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">
               Contraseña <span class="text-danger">*</span>
             </label>
             <div class="relative">
               <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" v-html="ICON_LOCK"></span>
-              <input v-model="form.password" :type="showPassword ? 'text' : 'password'" required
+              <input id="auth-register-contrasena" name="password" aria-required="true" v-model="form.password" :type="showPassword ? 'text' : 'password'" required
                 autocomplete="new-password" :maxlength="PASSWORD_MAX"
                 data-testid="register-password"
                 class="w-full pl-10 pr-11 py-2.5 bg-white border border-border rounded-xl text-sm focus:outline-none focus:border-navy"
@@ -155,12 +155,12 @@
         <!-- Paso 2: el hotel -->
         <form v-else @submit.prevent="submit" class="space-y-4">
           <div>
-            <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">
+            <label for="auth-register-nombre-del-hotel" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">
               Nombre del hotel <span class="text-danger">*</span>
             </label>
             <div class="relative">
               <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" v-html="ICON_BUILDING"></span>
-              <input v-model="form.hotelName" type="text" required :minlength="2" :maxlength="LIMITS.hotelName"
+              <input id="auth-register-nombre-del-hotel" name="hotelName" aria-required="true" v-model="form.hotelName" type="text" required :minlength="2" :maxlength="LIMITS.hotelName"
               data-testid="register-hotel-name"
               class="w-full pl-10 pr-4 py-2.5 bg-white border border-border rounded-xl text-sm focus:outline-none focus:border-navy"
               placeholder="Hotel Boutique Palma">
@@ -172,10 +172,10 @@
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Ciudad</label>
+              <label for="auth-register-ciudad" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Ciudad</label>
               <div class="relative">
               <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" v-html="ICON_PIN"></span>
-              <input v-model="form.address" type="text" :maxlength="LIMITS.address"
+              <input id="auth-register-ciudad" name="address" v-model="form.address" type="text" :maxlength="LIMITS.address"
                 class="w-full pl-10 pr-4 py-2.5 bg-white border border-border rounded-xl text-sm focus:outline-none focus:border-navy"
                 placeholder="Ciudad donde está el hotel">
             </div>
@@ -186,8 +186,8 @@
             </div>
           </div>
           <div v-if="plans.length">
-            <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Plan a probar</label>
-            <select v-model="form.planId"
+            <label for="auth-register-plan-a-probar" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Plan a probar</label>
+            <select id="auth-register-plan-a-probar" name="planId" v-model="form.planId"
               class="w-full px-4 py-2.5 bg-white border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
               <option v-for="p in plans" :key="p.id" :value="p.id">
                 {{ p.name }} — ${{ p.price }}/mes (después de la prueba)
@@ -209,7 +209,7 @@
                progreso del formulario (2 pasos ya completados) si el usuario quiere
                leerlos antes de aceptar. -->
           <label class="flex items-start gap-2.5 cursor-pointer select-none">
-            <input v-model="acceptedTerms" type="checkbox" data-testid="register-terms-checkbox"
+            <input id="auth-register-acepto-los-terminos-y" name="acceptedTerms" v-model="acceptedTerms" type="checkbox" data-testid="register-terms-checkbox"
               class="mt-0.5 w-4 h-4 rounded border-border text-navy focus:ring-navy cursor-pointer shrink-0">
             <span class="text-[12px] leading-relaxed text-text-secondary">
               Acepto los

@@ -72,14 +72,14 @@
       <template #actions>
         <div class="relative">
           <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/50" v-html="ICON_SEARCH"></span>
-          <input
+          <input id="team-search-query" name="searchQuery" aria-label="Buscar nombre o email"
             v-model="searchQuery"
             type="text"
             placeholder="Buscar nombre o email..."
             class="w-full sm:w-64 pl-9 pr-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm text-white placeholder:text-white/45 focus:outline-none focus:border-cyan focus:bg-white/15 transition-colors"
           />
         </div>
-        <select v-model="filterRole" class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
+        <select id="team-filter-role" name="filterRole" aria-label="Filtrar equipo por rol" v-model="filterRole" class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
           <option class="text-navy" value="all">Todos los roles</option>
           <option class="text-navy" v-for="r in presentRoles" :key="r" :value="r">{{ roleMeta(r).label }}</option>
         </select>
@@ -216,26 +216,26 @@
       @close="inviteModal = false">
       <div class="space-y-4">
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Nombre <span class="text-red-500">*</span></label>
-          <input v-model="inviteForm.name" type="text" placeholder="Nombre y apellido" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
+          <label for="team-nombre" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Nombre <span class="text-red-500">*</span></label>
+          <input id="team-nombre" name="name" required aria-required="true" v-model="inviteForm.name" type="text" placeholder="Nombre y apellido" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Email <span class="text-red-500">*</span></label>
-          <input v-model="inviteForm.email" type="email" placeholder="email@ejemplo.com" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
+          <label for="team-email" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Email <span class="text-red-500">*</span></label>
+          <input id="team-email" name="email" required aria-required="true" v-model="inviteForm.email" type="email" placeholder="email@ejemplo.com" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Rol inicial</label>
+          <label for="team-rol-inicial" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Rol inicial</label>
           <!-- Mismo availableRoles que "Cambiar rol" más abajo: este select tenía
                solo 2 opciones hardcodeadas y era el único punto donde se podía
                asignar housekeeper/maintenance/supervisor AL INVITAR (quedaba el
                rodeo de invitar como recepcionista y cambiar el rol después). -->
-          <select v-model="inviteForm.role" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
+          <select id="team-rol-inicial" name="role" v-model="inviteForm.role" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
             <option v-for="role in availableRoles" :key="role.key" :value="role.key">{{ role.label }}</option>
           </select>
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Contraseña temporal</label>
-          <input v-model="inviteForm.password" type="text" placeholder="auto-generada si vacío" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-mono focus:outline-none focus:border-navy" />
+          <label for="team-contrasena-temporal" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Contraseña temporal</label>
+          <input id="team-contrasena-temporal" name="password" v-model="inviteForm.password" type="text" placeholder="auto-generada si vacío" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-mono focus:outline-none focus:border-navy" />
         </div>
       </div>
 

@@ -194,8 +194,8 @@
               </div>
 
               <div>
-                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Posición en la Web</label>
-                <select v-model="form.position" class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan cursor-pointer">
+                <label for="booking-engine-posicion-en-la-web" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Posición en la Web</label>
+                <select id="booking-engine-posicion-en-la-web" name="position" v-model="form.position" class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan cursor-pointer">
                   <option value="corner">Esquina inferior derecha</option>
                   <option value="center">Centro de pantalla</option>
                   <option value="inline">Integrado en página</option>
@@ -204,8 +204,8 @@
               </div>
 
               <div>
-                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Moneda</label>
-                <select v-model="form.currency" class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan cursor-pointer">
+                <label for="booking-engine-moneda" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Moneda</label>
+                <select id="booking-engine-moneda" name="currency" v-model="form.currency" class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan cursor-pointer">
                   <option value="USD">USD - Dólar</option>
                   <option value="DOP">DOP - Peso Dominicano</option>
                   <option value="MXN">MXN - Peso Mexicano</option>
@@ -215,8 +215,8 @@
               </div>
 
               <div>
-                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Idioma</label>
-                <select v-model="form.language" class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan cursor-pointer">
+                <label for="booking-engine-idioma" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Idioma</label>
+                <select id="booking-engine-idioma" name="language" v-model="form.language" class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan cursor-pointer">
                   <option value="es">Español</option>
                   <option value="en">English</option>
                   <option value="pt">Português</option>
@@ -233,8 +233,8 @@
               <label class="text-[10px] font-bold text-text-muted uppercase mb-3 block">Reglas de estadía</label>
               <div class="grid md:grid-cols-2 gap-6">
                 <div>
-                  <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Mínimo de noches</label>
-                  <input
+                  <label for="booking-engine-minimo-de-noches" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Mínimo de noches</label>
+                  <input id="booking-engine-minimo-de-noches" name="minNights"
                     v-model.number="form.minNights"
                     type="number"
                     min="1"
@@ -242,8 +242,8 @@
                   />
                 </div>
                 <div>
-                  <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Máximo de noches</label>
-                  <input
+                  <label for="booking-engine-maximo-de-noches" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Máximo de noches</label>
+                  <input id="booking-engine-maximo-de-noches" name="maxNights"
                     v-model.number="form.maxNights"
                     type="number"
                     min="1"
@@ -275,7 +275,7 @@
                   <span v-if="form.cancellationPolicy" class="text-[9px] text-teal font-bold">(definido)</span>
                 </button>
                 <div v-if="showPolicyText" class="mt-2">
-                  <textarea
+                  <textarea id="booking-engine-cancellation-policy" name="cancellationPolicy" aria-label="Ej: Cancelación gratis hasta 48h antes del check-in"
                     v-model="form.cancellationPolicy"
                     rows="2"
                     placeholder="Ej: Cancelación gratis hasta 48h antes del check-in."
@@ -292,7 +292,7 @@
               <label class="text-[10px] font-bold text-text-muted uppercase mb-3 block">Opciones de Reserva</label>
               <div class="grid md:grid-cols-2 gap-3">
                 <label class="flex items-center gap-3 p-3 bg-surface rounded-xl cursor-pointer">
-                  <input type="checkbox" v-model="form.instantConfirmation" class="w-4 h-4 text-cyan rounded" />
+                  <input id="booking-engine-confirmacion-instantanea-sin-intervencion" name="instantConfirmation" type="checkbox" v-model="form.instantConfirmation" class="w-4 h-4 text-cyan rounded" />
                   <div>
                     <div class="text-sm font-bold text-navy">Confirmación Instantánea</div>
                     <div class="text-[10px] text-text-muted">Sin intervención manual</div>
@@ -303,21 +303,21 @@
                      WhatsApp Business API conectado — deuda documentada en CLAUDE.md). Prenderlos
                      no hacía nada; mejor avisar "Próximamente" que mentirle al merchant. -->
                 <label class="flex items-center gap-3 p-3 bg-surface rounded-xl opacity-60 cursor-not-allowed" title="Todavía no hay integración real detrás de esta opción">
-                  <input type="checkbox" disabled class="w-4 h-4 rounded" />
+                  <input id="booking-engine-google-hotel-ads-sincronizar" type="checkbox" disabled class="w-4 h-4 rounded" />
                   <div>
                     <div class="text-sm font-bold text-navy">Google Hotel Ads</div>
                     <div class="text-[10px] text-text-muted">Sincronizar tarifas — Próximamente</div>
                   </div>
                 </label>
                 <label class="flex items-center gap-3 p-3 bg-surface rounded-xl opacity-60 cursor-not-allowed" title="Requiere conectar WhatsApp Business API">
-                  <input type="checkbox" disabled class="w-4 h-4 rounded" />
+                  <input id="booking-engine-confirmacion-whats-app-envio" type="checkbox" disabled class="w-4 h-4 rounded" />
                   <div>
                     <div class="text-sm font-bold text-navy">Confirmación WhatsApp</div>
                     <div class="text-[10px] text-text-muted">Envío automático — Próximamente</div>
                   </div>
                 </label>
                 <label class="flex items-center gap-3 p-3 bg-surface rounded-xl cursor-pointer">
-                  <input type="checkbox" v-model="form.showComparison" class="w-4 h-4 text-cyan rounded" />
+                  <input id="booking-engine-comparar-con-otas-mostrar" name="showComparison" type="checkbox" v-model="form.showComparison" class="w-4 h-4 text-cyan rounded" />
                   <div>
                     <div class="text-sm font-bold text-navy">Comparar con OTAs</div>
                     <div class="text-[10px] text-text-muted">Mostrar ahorro vs Booking/Expedia</div>

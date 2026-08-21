@@ -37,7 +37,7 @@
         <button v-for="f in statusFilters" :key="f.value" @click="activeFilter = f.value" class="px-4 py-2 rounded-full text-sm font-bold transition-all cursor-pointer" :class="activeFilter === f.value ? 'bg-navy text-white' : 'bg-white text-text-secondary border border-border hover:border-navy/30'">{{ f.label }}</button>
       </div>
       <div class="relative w-full sm:w-64">
-        <input v-model="searchQuery" type="text" placeholder="Buscar tickets..." class="w-full h-9 pl-9 pr-4 rounded-full border border-border text-sm bg-white focus:outline-none focus:border-cyan">
+        <input id="support-search-query" name="searchQuery" aria-label="Buscar tickets" v-model="searchQuery" type="text" placeholder="Buscar tickets..." class="w-full h-9 pl-9 pr-4 rounded-full border border-border text-sm bg-white focus:outline-none focus:border-cyan">
         <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
       </div>
     </div>
@@ -143,7 +143,7 @@
             </div>
             <div class="overflow-y-auto flex-1 p-6">
               <div class="py-4 border-b border-border mb-4"><div class="text-sm font-bold text-navy">{{ selectedTicket.subject }}</div></div>
-              <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Tu Respuesta *</label><textarea v-model="replyMessage" rows="4" class="w-full px-4 py-2.5 rounded-2xl border border-border text-sm focus:outline-none focus:border-navy resize-none" placeholder="Escriba su respuesta..."></textarea></div>
+              <div><label for="support-tu-respuesta" class="block text-[10px] font-bold text-text-muted uppercase mb-2">Tu Respuesta *</label><textarea id="support-tu-respuesta" name="replyMessage" v-model="replyMessage" rows="4" class="w-full px-4 py-2.5 rounded-2xl border border-border text-sm focus:outline-none focus:border-navy resize-none" placeholder="Escriba su respuesta..."></textarea></div>
             </div>
             <div class="shrink-0 flex items-center gap-4 justify-end p-6 border-t border-border">
               <button @click="showReplyModal = false" class="text-[11px] font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">Cancelar</button>
@@ -165,8 +165,8 @@
               <button @click="showNewTicketModal = false" class="w-4 h-4 text-text-muted hover:text-navy transition-colors cursor-pointer" v-html="ICON_X"></button>
             </div>
             <div class="overflow-y-auto flex-1 p-6 space-y-4">
-              <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Categoría *</label>
-                <select v-model="newTicket.category" class="w-full px-4 py-2.5 rounded-full border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
+              <div><label for="support-categoria" class="block text-[10px] font-bold text-text-muted uppercase mb-2">Categoría *</label>
+                <select id="support-categoria" name="category" v-model="newTicket.category" class="w-full px-4 py-2.5 rounded-full border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
                   <option value="">Seleccionar categoría</option>
                   <option value="Técnico">Técnico</option>
                   <option value="Integraciones">Integraciones (Canales, OTAs)</option>
@@ -177,23 +177,23 @@
                   <option value="Otro">Otro</option>
                 </select>
               </div>
-              <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Prioridad *</label>
-                <select v-model="newTicket.priority" class="w-full px-4 py-2.5 rounded-full border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
+              <div><label for="support-prioridad" class="block text-[10px] font-bold text-text-muted uppercase mb-2">Prioridad *</label>
+                <select id="support-prioridad" name="priority" v-model="newTicket.priority" class="w-full px-4 py-2.5 rounded-full border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
                   <option value="Baja">Baja — Sugerencia o mejora</option>
                   <option value="Normal">Normal — Duda o configuración</option>
                   <option value="Alta">Alta — Funcionalidad bloqueada</option>
                   <option value="Urgente">Urgente — Sistema caído o overbooking</option>
                 </select>
               </div>
-              <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Asunto *</label><input v-model="newTicket.subject" type="text" class="w-full px-4 py-2.5 rounded-full border border-border text-sm focus:outline-none focus:border-navy" placeholder="Descripción corta del problema"></div>
-              <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Descripción Detallada *</label><textarea v-model="newTicket.description" rows="5" class="w-full px-4 py-2.5 rounded-2xl border border-border text-sm focus:outline-none focus:border-navy resize-none" placeholder="Explique con detalle el problema o solicitud..."></textarea></div>
+              <div><label for="support-asunto" class="block text-[10px] font-bold text-text-muted uppercase mb-2">Asunto *</label><input id="support-asunto" name="subject" required aria-required="true" v-model="newTicket.subject" type="text" class="w-full px-4 py-2.5 rounded-full border border-border text-sm focus:outline-none focus:border-navy" placeholder="Descripción corta del problema"></div>
+              <div><label for="support-descripcion-detallada" class="block text-[10px] font-bold text-text-muted uppercase mb-2">Descripción Detallada *</label><textarea id="support-descripcion-detallada" name="description" v-model="newTicket.description" rows="5" class="w-full px-4 py-2.5 rounded-2xl border border-border text-sm focus:outline-none focus:border-navy resize-none" placeholder="Explique con detalle el problema o solicitud..."></textarea></div>
               <div class="py-4 border-t border-border">
                 <div class="text-[10px] font-bold text-text-muted uppercase mb-2">Archivos Adjuntos (opcional)</div>
                 <div class="flex items-center gap-3">
                   <label class="flex items-center gap-1.5 px-4 py-2 border border-border rounded-full text-sm font-bold hover:border-navy/30 transition-colors cursor-pointer">
                     <span class="w-3.5 h-3.5" v-html="ICON_PAPERCLIP"></span>
                     Adjuntar archivo
-                    <input type="file" class="hidden" @change="handleFileUpload" multiple>
+                    <input id="support-adjuntar-archivo" type="file" class="hidden" @change="handleFileUpload" multiple>
                   </label>
                   <span class="text-[10px] text-text-muted">PNG, JPG, PDF, LOG (máx 5MB)</span>
                 </div>

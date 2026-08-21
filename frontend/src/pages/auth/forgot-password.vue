@@ -15,8 +15,8 @@
 
           <form @submit.prevent="handleSubmit" class="space-y-4">
             <div>
-              <label class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5 block">Email</label>
-              <input
+              <label for="auth-forgot-password-email" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5 block">Email</label>
+              <input id="auth-forgot-password-email" name="email" aria-required="true"
                 v-model="email"
                 type="email"
                 placeholder="admin@hotel.com"

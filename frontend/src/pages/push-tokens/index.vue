@@ -37,7 +37,7 @@
       <template #actions>
         <div class="relative">
           <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/50" v-html="ICON_SEARCH"></span>
-          <input
+          <input id="push-tokens-search-query" name="searchQuery" aria-label="Buscar token, plataforma o usuario"
             v-model="searchQuery"
             type="text"
             placeholder="Buscar token, plataforma o usuario..."
@@ -140,12 +140,12 @@
       subtitle="Alta manual de un token de Firebase (ej. reportado por soporte)" @close="closeRegisterModal">
       <div class="space-y-3">
         <div>
-          <label class="block text-[11px] font-bold text-navy uppercase mb-2">Token FCM *</label>
-          <input v-model="registerForm.token" type="text" placeholder="Token del dispositivo" class="w-full px-4 py-2.5 rounded-full border border-border text-sm font-mono" />
+          <label for="push-tokens-token-fcm" class="block text-[11px] font-bold text-navy uppercase mb-2">Token FCM *</label>
+          <input id="push-tokens-token-fcm" name="token" v-model="registerForm.token" type="text" placeholder="Token del dispositivo" class="w-full px-4 py-2.5 rounded-full border border-border text-sm font-mono" />
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-navy uppercase mb-2">Plataforma</label>
-          <select v-model="registerForm.platform" class="w-full px-4 py-2.5 rounded-full border border-border text-sm cursor-pointer">
+          <label for="push-tokens-plataforma" class="block text-[11px] font-bold text-navy uppercase mb-2">Plataforma</label>
+          <select id="push-tokens-plataforma" name="platform" v-model="registerForm.platform" class="w-full px-4 py-2.5 rounded-full border border-border text-sm cursor-pointer">
             <option value="">Sin especificar</option>
             <option value="android">Android</option>
             <option value="ios">iOS</option>
@@ -165,8 +165,8 @@
     <AppModal v-if="showUnregisterModal" size="md" title="Dar de baja dispositivo"
       subtitle="El backend solo borra el token si pertenece a tu usuario" @close="closeUnregisterModal">
       <div>
-        <label class="block text-[11px] font-bold text-navy uppercase mb-2">Token FCM *</label>
-        <input v-model="unregisterForm.token" type="text" placeholder="Token del dispositivo" class="w-full px-4 py-2.5 rounded-full border border-border text-sm font-mono" />
+        <label for="push-tokens-token-fcm-2" class="block text-[11px] font-bold text-navy uppercase mb-2">Token FCM *</label>
+        <input id="push-tokens-token-fcm-2" name="token" v-model="unregisterForm.token" type="text" placeholder="Token del dispositivo" class="w-full px-4 py-2.5 rounded-full border border-border text-sm font-mono" />
       </div>
       <template #footer>
         <button @click="closeUnregisterModal" class="px-5 py-2.5 text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">Cancelar</button>

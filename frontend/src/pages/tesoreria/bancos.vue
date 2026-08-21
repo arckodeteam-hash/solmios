@@ -112,21 +112,21 @@ onMounted(load)
     <!-- Nueva cuenta -->
     <AppModal v-if="showNew" size="md" title="Nueva cuenta bancaria" @close="showNew = false">
       <div class="space-y-4">
-        <div><label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Nombre</label>
-          <input v-model="form.name" placeholder="Cuenta operativa" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
+        <div><label for="tesoreria-bancos-nombre" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Nombre</label>
+          <input id="tesoreria-bancos-nombre" name="name" required aria-required="true" v-model="form.name" placeholder="Cuenta operativa" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
         <div class="grid grid-cols-2 gap-3">
-          <div><label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Banco</label>
-            <input v-model="form.bank" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
-          <div><label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Nº de cuenta</label>
-            <input v-model="form.accountNumber" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
+          <div><label for="tesoreria-bancos-banco" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Banco</label>
+            <input id="tesoreria-bancos-banco" name="bank" v-model="form.bank" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
+          <div><label for="tesoreria-bancos-n-de-cuenta" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Nº de cuenta</label>
+            <input id="tesoreria-bancos-n-de-cuenta" name="accountNumber" v-model="form.accountNumber" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
         </div>
         <div class="grid grid-cols-2 gap-3">
-          <div><label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Tipo</label>
-            <select v-model="form.type" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
+          <div><label for="tesoreria-bancos-tipo" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Tipo</label>
+            <select id="tesoreria-bancos-tipo" name="type" v-model="form.type" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-navy">
               <option value="checking">Corriente</option><option value="savings">Ahorro</option><option value="cash">Efectivo</option>
             </select></div>
-          <div><label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Saldo inicial</label>
-            <input v-model.number="form.openingBalance" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm text-right focus:outline-none focus:border-navy" /></div>
+          <div><label for="tesoreria-bancos-saldo-inicial" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Saldo inicial</label>
+            <input id="tesoreria-bancos-saldo-inicial" name="openingBalance" v-model.number="form.openingBalance" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm text-right focus:outline-none focus:border-navy" /></div>
         </div>
       </div>
       <template #footer>
@@ -138,7 +138,7 @@ onMounted(load)
     <!-- Import -->
     <AppModal v-if="showImport" size="md" title="Importar movimientos" :subtitle="importTarget?.name" @close="showImport = false">
       <p class="text-[12px] text-text-muted mb-2">Pegá los movimientos, uno por línea: <code class="text-navy">fecha,monto,descripción,referencia</code>. Monto positivo = entrada, negativo = salida.</p>
-      <textarea v-model="csv" rows="8" placeholder="2026-07-10,200,Cobro reserva,REF123&#10;2026-07-12,-80,Comisión,REF124"
+      <textarea id="tesoreria-bancos-csv" name="csv" aria-label="Movimientos en CSV: fecha, monto, descripción, referencia" v-model="csv" rows="8" placeholder="2026-07-10,200,Cobro reserva,REF123&#10;2026-07-12,-80,Comisión,REF124"
         class="w-full border border-border rounded-xl p-3 text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-cyan"></textarea>
       <template #footer>
         <button @click="showImport = false" class="px-4 py-2.5 text-sm font-bold text-text-secondary hover:text-navy cursor-pointer">Cancelar</button>

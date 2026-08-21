@@ -35,16 +35,16 @@
     <!-- Listado -->
     <SectionCard title="Envíos" :subtitle="`${filtered.length} de ${logs.length} registro(s)`" body-class="p-0">
       <template #actions>
-        <input v-model="search" type="text" placeholder="Buscar destinatario..."
+        <input id="message-logs-search" name="search" aria-label="Buscar destinatario" v-model="search" type="text" placeholder="Buscar destinatario..."
           class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm text-white placeholder:text-white/45 w-48 focus:outline-none focus:border-cyan" />
-        <select v-model="filterType"
+        <select id="message-logs-filter-type" name="filterType" aria-label="Filtrar por canal del mensaje" v-model="filterType"
           class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
           <option class="text-navy" value="">Todos los canales</option>
           <option class="text-navy" value="email">Email</option>
           <option class="text-navy" value="whatsapp">WhatsApp</option>
           <option class="text-navy" value="sms">SMS</option>
         </select>
-        <select v-model="filterStatus"
+        <select id="message-logs-filter-status" name="filterStatus" aria-label="Filtrar por estado de envío" v-model="filterStatus"
           class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
           <option class="text-navy" value="">Todos los estados</option>
           <option class="text-navy" value="sent">Enviados</option>

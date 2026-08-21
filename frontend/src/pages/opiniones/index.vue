@@ -40,21 +40,21 @@
       <div class="flex items-center flex-wrap gap-x-8 gap-y-3">
         <label class="flex items-center gap-2 cursor-pointer">
           <span class="relative inline-flex items-center cursor-pointer">
-            <input v-model="config.requestReviews" type="checkbox" class="sr-only peer" @change="saveConfig" />
+            <input id="opiniones-solicitar-resenas" name="requestReviews" v-model="config.requestReviews" type="checkbox" class="sr-only peer" @change="saveConfig" />
             <span class="w-9 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-teal"></span>
           </span>
           <span class="text-xs text-navy font-bold">Solicitar reseñas</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
           <span class="relative inline-flex items-center cursor-pointer">
-            <input v-model="config.publishScore" type="checkbox" class="sr-only peer" @change="saveConfig" />
+            <input id="opiniones-publicar-puntuacion" name="publishScore" v-model="config.publishScore" type="checkbox" class="sr-only peer" @change="saveConfig" />
             <span class="w-9 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-teal"></span>
           </span>
           <span class="text-xs text-navy font-bold">Publicar puntuación</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
           <span class="relative inline-flex items-center cursor-pointer">
-            <input v-model="config.publishComments" type="checkbox" class="sr-only peer" @change="saveConfig" />
+            <input id="opiniones-publicar-comentarios" name="publishComments" v-model="config.publishComments" type="checkbox" class="sr-only peer" @change="saveConfig" />
             <span class="w-9 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-teal"></span>
           </span>
           <span class="text-xs text-navy font-bold">Publicar comentarios</span>
@@ -69,7 +69,7 @@
       body-class="p-0"
     >
       <template #actions>
-        <select
+        <select id="opiniones-filter-status" name="statusFilter" aria-label="Filtrar opiniones por estado"
           v-model="statusFilter"
           class="rounded-full border border-white/15 bg-white/10 px-3 py-2 text-xs font-bold text-white focus:outline-none"
         >
@@ -176,8 +176,8 @@
       <div class="space-y-4">
         <p v-if="respondModal.comment" class="border-b border-border pb-4 text-sm italic text-text-secondary">"{{ respondModal.comment }}"</p>
         <div>
-          <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Tu respuesta</label>
-          <textarea v-model="respondModal.text" rows="4" placeholder="Escribe tu respuesta..." class="w-full resize-none rounded-xl border border-border px-4 py-2.5 text-sm focus:outline-none focus:border-navy"></textarea>
+          <label for="opiniones-tu-respuesta" class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Tu respuesta</label>
+          <textarea id="opiniones-tu-respuesta" name="text" v-model="respondModal.text" rows="4" placeholder="Escribe tu respuesta..." class="w-full resize-none rounded-xl border border-border px-4 py-2.5 text-sm focus:outline-none focus:border-navy"></textarea>
         </div>
       </div>
       <template #footer>

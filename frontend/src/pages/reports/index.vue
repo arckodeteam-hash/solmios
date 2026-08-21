@@ -14,9 +14,9 @@
           </button>
         </div>
         <template v-if="range === 'custom'">
-          <input v-model="from" type="date" class="px-3 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-navy" @change="load" />
+          <input id="reports-from" name="from" aria-label="Reporte desde la fecha" v-model="from" type="date" class="px-3 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-navy" @change="load" />
           <span class="text-text-muted text-xs">→</span>
-          <input v-model="to" type="date" class="px-3 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-navy" @change="load" />
+          <input id="reports-to" name="to" aria-label="Reporte hasta la fecha" v-model="to" type="date" class="px-3 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-navy" @change="load" />
         </template>
         <button @click="exportCsv" :disabled="!data" class="flex items-center gap-1.5 px-4 py-2 border border-border rounded-full text-xs font-bold text-text-secondary hover:border-navy/30 transition-colors cursor-pointer disabled:opacity-50">
           <span class="w-3.5 h-3.5 shrink-0" v-html="ICON_DOWNLOAD"></span>

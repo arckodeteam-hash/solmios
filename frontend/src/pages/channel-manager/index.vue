@@ -31,12 +31,12 @@
     <AppModal v-if="connectDialog" size="md" :title="`Conectar ${connectDialog.channelName}`" @close="cancelConnect">
       <div class="space-y-4">
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Código OTA</label>
-          <input :value="connectDialog.channelCode" readonly class="w-full px-4 py-2.5 bg-surface rounded-xl text-sm text-navy font-mono" />
+          <label for="channel-manager-codigo-ota" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Código OTA</label>
+          <input id="channel-manager-codigo-ota" :value="connectDialog.channelCode" readonly class="w-full px-4 py-2.5 bg-surface rounded-xl text-sm text-navy font-mono" />
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Título del canal</label>
-          <input v-model="connectDialog.title" class="w-full px-4 py-2.5 border border-border rounded-xl text-sm text-navy focus:border-cyan focus:ring-1 focus:ring-cyan outline-none" />
+          <label for="channel-manager-titulo-del-canal" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Título del canal</label>
+          <input id="channel-manager-titulo-del-canal" name="title" v-model="connectDialog.title" class="w-full px-4 py-2.5 border border-border rounded-xl text-sm text-navy focus:border-cyan focus:ring-1 focus:ring-cyan outline-none" />
         </div>
 
         <div v-if="connectError" class="text-xs font-bold text-coral">{{ connectError }}</div>
@@ -184,9 +184,9 @@
       <div v-if="openChannelLoading" class="text-center py-6 text-sm text-text-muted">Generando credenciales…</div>
       <div v-else-if="openChannelCreds" class="space-y-4">
         <div v-for="field in openChannelFields" :key="field.key">
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">{{ field.label }}</label>
+          <label :for="`open-channel-${field.key}`" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">{{ field.label }}</label>
           <div class="flex items-center gap-2">
-            <input :value="field.value" readonly class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm font-mono text-navy" />
+            <input :id="`open-channel-${field.key}`" :value="field.value" readonly class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm font-mono text-navy" />
             <button @click="copyField(field.key, field.value)"
               class="shrink-0 px-3 py-2.5 rounded-xl border border-border text-xs font-bold text-text-secondary hover:border-navy/30 hover:text-navy transition-colors cursor-pointer">
               {{ copiedField === field.key ? '✓' : 'Copiar' }}

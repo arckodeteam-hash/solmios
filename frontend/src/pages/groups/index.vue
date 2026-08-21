@@ -290,48 +290,48 @@
     <AppModal v-if="showNewModal" size="lg" title="Nuevo Grupo / Block" subtitle="Reservas colectivas, bodas y eventos corporativos" @close="showNewModal = false">
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="sm:col-span-2">
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Nombre del Grupo *</label>
-          <input v-model="newGroup.name" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" placeholder="Ej: Conferencia Tech Summit 2026">
+          <label for="groups-nombre-del-grupo" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Nombre del Grupo *</label>
+          <input id="groups-nombre-del-grupo" name="name" required aria-required="true" v-model="newGroup.name" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" placeholder="Ej: Conferencia Tech Summit 2026">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Contacto *</label>
-          <input v-model="newGroup.contact" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" placeholder="Nombre del contacto">
+          <label for="groups-contacto" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Contacto *</label>
+          <input id="groups-contacto" name="contact" v-model="newGroup.contact" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" placeholder="Nombre del contacto">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Empresa</label>
-          <input v-model="newGroup.company" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" placeholder="Nombre de la empresa">
+          <label for="groups-empresa" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Empresa</label>
+          <input id="groups-empresa" name="company" v-model="newGroup.company" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" placeholder="Nombre de la empresa">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Teléfono</label>
-          <input v-model="newGroup.phone" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" placeholder="+1 234 567 890">
+          <label for="groups-telefono" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Teléfono</label>
+          <input id="groups-telefono" name="phone" v-model="newGroup.phone" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" placeholder="+1 234 567 890">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Email</label>
-          <input v-model="newGroup.email" type="email" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" placeholder="email@empresa.com">
+          <label for="groups-email" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Email</label>
+          <input id="groups-email" name="email" v-model="newGroup.email" type="email" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" placeholder="email@empresa.com">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Fecha Check-in *</label>
-          <input v-model="newGroup.checkIn" type="date" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+          <label for="groups-fecha-check-in" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Fecha Check-in *</label>
+          <input id="groups-fecha-check-in" name="checkIn" v-model="newGroup.checkIn" type="date" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Fecha Check-out *</label>
-          <input v-model="newGroup.checkOut" type="date" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
+          <label for="groups-fecha-check-out" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Fecha Check-out *</label>
+          <input id="groups-fecha-check-out" name="checkOut" v-model="newGroup.checkOut" type="date" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Habitaciones *</label>
-          <input v-model.number="newGroup.rooms" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy" placeholder="10">
+          <label for="groups-habitaciones" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Habitaciones *</label>
+          <input id="groups-habitaciones" name="rooms" v-model.number="newGroup.rooms" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy" placeholder="10">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Tarifa por Noche *</label>
-          <input v-model.number="newGroup.rate" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy" placeholder="150">
+          <label for="groups-tarifa-por-noche" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Tarifa por Noche *</label>
+          <input id="groups-tarifa-por-noche" name="rate" v-model.number="newGroup.rate" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy" placeholder="150">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Depósito</label>
-          <input v-model.number="newGroup.deposit" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy" placeholder="0">
+          <label for="groups-deposito" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Depósito</label>
+          <input id="groups-deposito" name="deposit" v-model.number="newGroup.deposit" type="number" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm tabular-nums focus:outline-none focus:border-navy" placeholder="0">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Tipo de Evento</label>
-          <select v-model="newGroup.eventType" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
+          <label for="groups-tipo-de-evento" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Tipo de Evento</label>
+          <select id="groups-tipo-de-evento" name="eventType" v-model="newGroup.eventType" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
             <option value="">Seleccionar...</option>
             <option value="Conferencia">Conferencia</option>
             <option value="Boda">Boda</option>
@@ -341,8 +341,8 @@
           </select>
         </div>
         <div class="sm:col-span-2">
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Notas</label>
-          <textarea v-model="newGroup.notes" rows="3" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy resize-none" placeholder="Instrucciones especiales, requerimientos..."></textarea>
+          <label for="groups-notas" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Notas</label>
+          <textarea id="groups-notas" name="notes" v-model="newGroup.notes" rows="3" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy resize-none" placeholder="Instrucciones especiales, requerimientos..."></textarea>
         </div>
       </div>
 

@@ -123,7 +123,7 @@
     <SectionCard v-else title="Órdenes de trabajo"
       :subtitle="`${filteredOrders.length} orden(es)${activeFilter !== 'all' ? ' · filtrado' : ''}`" body-class="p-0">
       <template #actions>
-        <select v-model="activeFilter"
+        <select id="maintenance-filter" name="activeFilter" aria-label="Filtrar órdenes por estado" v-model="activeFilter"
           class="rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white focus:border-cyan focus:outline-none cursor-pointer">
           <option v-for="filter in statusFilters" :key="filter.value" class="text-navy" :value="filter.value">{{ filter.label }}</option>
         </select>
@@ -317,7 +317,7 @@
           <!-- Notas -->
           <div class="py-4 border-b border-border">
             <div class="text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Notas</div>
-            <textarea v-if="selectedOrder.status !== 'closed'" v-model="editingNotes" rows="2" class="w-full px-3 py-2 bg-surface border border-border rounded-lg text-xs focus:outline-none focus:border-navy resize-none" placeholder="Notas del técnico..."></textarea>
+            <textarea id="maintenance-editing-notes" name="editingNotes" aria-label="Notas del técnico" v-if="selectedOrder.status !== 'closed'" v-model="editingNotes" rows="2" class="w-full px-3 py-2 bg-surface border border-border rounded-lg text-xs focus:outline-none focus:border-navy resize-none" placeholder="Notas del técnico..."></textarea>
             <div v-else class="text-xs text-text-secondary">{{ selectedOrder.notes || '—' }}</div>
             <button v-if="selectedOrder.status !== 'closed' && editingNotes !== (selectedOrder.notes || '')" @click="saveNotes()" class="mt-1.5 text-[10px] font-bold text-cyan hover:underline cursor-pointer">Guardar notas</button>
           </div>
@@ -334,9 +334,9 @@
             <div v-if="selectedOrder.status !== 'closed'" class="mt-2 flex gap-1.5 items-center flex-wrap">
               <label class="px-2.5 py-1 border border-border rounded-lg text-[10px] font-bold text-text-secondary cursor-pointer hover:border-navy/30 transition-colors">
                 + Elegir foto
-                <input type="file" accept="image/*" class="hidden" @change="onPhotoSelected($event)">
+                <input id="maintenance-elegir-foto" type="file" accept="image/*" class="hidden" @change="onPhotoSelected($event)">
               </label>
-              <select v-model="newPhotoType" class="px-2 py-1 border border-border rounded-lg text-[10px] cursor-pointer">
+              <select id="maintenance-photo-type" name="newPhotoType" aria-label="Momento de la foto" v-model="newPhotoType" class="px-2 py-1 border border-border rounded-lg text-[10px] cursor-pointer">
                 <option value="before">Antes</option>
                 <option value="during">Durante</option>
                 <option value="after">Después</option>
@@ -375,14 +375,14 @@
       <div>
           <div class="grid grid-cols-2 gap-4">
             <div class="col-span-2">
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Título *</label>
-              <input v-model="newOrder.title" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" :class="formErrors.title ? 'border-coral' : ''" placeholder="Ej: Aire acondicionado no funciona">
+              <label for="maintenance-titulo" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Título *</label>
+              <input id="maintenance-titulo" name="title" required aria-required="true" v-model="newOrder.title" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" :class="formErrors.title ? 'border-coral' : ''" placeholder="Ej: Aire acondicionado no funciona">
               <p v-if="formErrors.title" class="text-[10px] text-coral mt-1">{{ formErrors.title }}</p>
             </div>
             <div class="relative">
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Habitación *</label>
+              <label for="maintenance-habitacion" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Habitación *</label>
               <div class="relative">
-                <input
+                <input id="maintenance-habitacion" name="roomSearch"
                   v-model="roomSearch"
                   @focus="roomDropdownOpen = true"
                   @input="roomDropdownOpen = true"
@@ -408,8 +408,8 @@
               <p v-if="formErrors.roomNumber" class="text-[10px] text-coral mt-1">{{ formErrors.roomNumber }}</p>
             </div>
             <div>
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Categoría *</label>
-              <select v-model="newOrder.category" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer" :class="formErrors.category ? 'border-coral' : ''">
+              <label for="maintenance-categoria" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Categoría *</label>
+              <select id="maintenance-categoria" name="category" v-model="newOrder.category" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer" :class="formErrors.category ? 'border-coral' : ''">
                 <option value="">Seleccionar...</option>
                 <option value="electrical">Eléctrico</option>
                 <option value="plumbing">Plomería</option>
@@ -426,8 +426,8 @@
               <p v-if="formErrors.category" class="text-[10px] text-coral mt-1">{{ formErrors.category }}</p>
             </div>
             <div>
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Prioridad *</label>
-              <select v-model="newOrder.priority" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
+              <label for="maintenance-prioridad" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Prioridad *</label>
+              <select id="maintenance-prioridad" name="priority" v-model="newOrder.priority" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
                 <option value="low">Baja</option>
                 <option value="medium">Normal</option>
                 <option value="high">Alta</option>
@@ -435,9 +435,9 @@
               </select>
             </div>
             <div class="relative">
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Asignar a</label>
+              <label for="maintenance-asignar-a" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Asignar a</label>
               <div class="relative">
-                <input
+                <input id="maintenance-asignar-a" name="staffSearch"
                   v-model="staffSearch"
                   @focus="staffDropdownOpen = true"
                   @input="staffDropdownOpen = true"
@@ -468,12 +468,12 @@
               </div>
             </div>
             <div class="col-span-2">
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Descripción *</label>
-              <textarea v-model="newOrder.description" rows="3" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy resize-none" placeholder="Describa el problema detalladamente..."></textarea>
+              <label for="maintenance-descripcion" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Descripción *</label>
+              <textarea id="maintenance-descripcion" name="description" v-model="newOrder.description" rows="3" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy resize-none" placeholder="Describa el problema detalladamente..."></textarea>
             </div>
             <div>
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Costo Estimado</label>
-              <input v-model="newOrder.estimatedCost" type="number" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="0.00">
+              <label for="maintenance-costo-estimado" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Costo Estimado</label>
+              <input id="maintenance-costo-estimado" name="estimatedCost" v-model="newOrder.estimatedCost" type="number" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="0.00">
             </div>
           </div>
       </div>

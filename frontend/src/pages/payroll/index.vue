@@ -131,8 +131,8 @@
 
       <div v-if="config" class="grid md:grid-cols-2 gap-4">
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Frecuencia de pago</label>
-          <select v-model="config.paymentFrequency" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none cursor-pointer">
+          <label for="payroll-frecuencia-de-pago" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Frecuencia de pago</label>
+          <select id="payroll-frecuencia-de-pago" name="paymentFrequency" v-model="config.paymentFrequency" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none cursor-pointer">
             <option value="weekly">Semanal</option>
             <option value="biweekly">Quincenal</option>
             <option value="monthly">Mensual</option>
@@ -140,24 +140,24 @@
           <p class="mt-1 text-[10px] text-text-muted">Define cuánto del sueldo mensual se paga por liquidación (semanal ≈ ¼, quincenal ½, mensual completo).</p>
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Día de Pago</label>
-          <input v-model.number="config.paymentDay" type="number" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm tabular-nums focus:border-navy focus:outline-none">
+          <label for="payroll-dia-de-pago" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Día de Pago</label>
+          <input id="payroll-dia-de-pago" name="paymentDay" v-model.number="config.paymentDay" type="number" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm tabular-nums focus:border-navy focus:outline-none">
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Horas Extra (x)</label>
-          <input v-model.number="config.overtimeMultiplier" type="number" step="0.1" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm tabular-nums focus:border-navy focus:outline-none">
+          <label for="payroll-horas-extra-x" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Horas Extra (x)</label>
+          <input id="payroll-horas-extra-x" name="overtimeMultiplier" v-model.number="config.overtimeMultiplier" type="number" step="0.1" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm tabular-nums focus:border-navy focus:outline-none">
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Seguridad Social (%)</label>
-          <input v-model.number="config.socialSecurityRate" type="number" step="0.01" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm tabular-nums focus:border-navy focus:outline-none">
+          <label for="payroll-seguridad-social" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Seguridad Social (%)</label>
+          <input id="payroll-seguridad-social" name="socialSecurityRate" v-model.number="config.socialSecurityRate" type="number" step="0.01" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm tabular-nums focus:border-navy focus:outline-none">
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Seguro Salud (%)</label>
-          <input v-model.number="config.healthInsuranceRate" type="number" step="0.01" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm tabular-nums focus:border-navy focus:outline-none">
+          <label for="payroll-seguro-salud" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Seguro Salud (%)</label>
+          <input id="payroll-seguro-salud" name="healthInsuranceRate" v-model.number="config.healthInsuranceRate" type="number" step="0.01" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm tabular-nums focus:border-navy focus:outline-none">
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Moneda</label>
-          <input v-model="config.currency" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
+          <label for="payroll-moneda" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Moneda</label>
+          <input id="payroll-moneda" name="currency" v-model="config.currency" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
         </div>
       </div>
     </SectionCard>
@@ -228,22 +228,22 @@
       subtitle="Definí el período y la fecha de pago" @close="showNewRunModal = false">
       <div class="space-y-4">
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Período</label>
-          <input v-model="newRunForm.period" type="month" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
+          <label for="payroll-periodo" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Período</label>
+          <input id="payroll-periodo" name="period" v-model="newRunForm.period" type="month" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Fecha inicio</label>
-            <input v-model="newRunForm.startDate" type="date" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
+            <label for="payroll-fecha-inicio" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Fecha inicio</label>
+            <input id="payroll-fecha-inicio" name="startDate" v-model="newRunForm.startDate" type="date" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
           </div>
           <div>
-            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Fecha fin</label>
-            <input v-model="newRunForm.endDate" type="date" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
+            <label for="payroll-fecha-fin" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Fecha fin</label>
+            <input id="payroll-fecha-fin" name="endDate" v-model="newRunForm.endDate" type="date" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
           </div>
         </div>
         <div>
-          <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Fecha de pago</label>
-          <input v-model="newRunForm.paymentDate" type="date" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
+          <label for="payroll-fecha-de-pago" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Fecha de pago</label>
+          <input id="payroll-fecha-de-pago" name="paymentDate" v-model="newRunForm.paymentDate" type="date" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
         </div>
         <p v-if="newRunError" class="text-xs font-bold text-coral">{{ newRunError }}</p>
       </div>

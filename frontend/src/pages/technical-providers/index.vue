@@ -35,14 +35,14 @@
       <template #actions>
         <div class="relative">
           <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/50" v-html="ICON_SEARCH"></span>
-          <input
+          <input id="technical-providers-search" name="search" aria-label="Buscar nombre, especialidad, zona"
             v-model="search"
             type="text"
             placeholder="Buscar nombre, especialidad, zona..."
             class="pl-9 pr-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm text-white placeholder:text-white/45 w-56 focus:outline-none focus:border-cyan"
           />
         </div>
-        <select v-model="statusFilter"
+        <select id="technical-providers-filter-status" name="statusFilter" aria-label="Filtrar proveedores por estado" v-model="statusFilter"
           class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
           <option class="text-navy" value="all">Todos</option>
           <option class="text-navy" value="active">Activos</option>
@@ -187,33 +187,33 @@
     >
       <div class="grid grid-cols-2 gap-4">
         <div class="col-span-2">
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Nombre *</label>
-          <input v-model="form.name" maxlength="120" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" :class="nameError ? 'border-danger' : ''" placeholder="Ej: Juan el plomero">
+          <label for="technical-providers-nombre" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Nombre *</label>
+          <input id="technical-providers-nombre" name="name" required aria-required="true" v-model="form.name" maxlength="120" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" :class="nameError ? 'border-danger' : ''" placeholder="Ej: Juan el plomero">
           <p v-if="nameError" class="text-[10px] text-danger mt-1">{{ nameError }}</p>
         </div>
 
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Especialidad</label>
-          <input v-model="form.specialty" maxlength="80" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="Plomería, Electricidad...">
+          <label for="technical-providers-especialidad" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Especialidad</label>
+          <input id="technical-providers-especialidad" name="specialty" v-model="form.specialty" maxlength="80" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="Plomería, Electricidad...">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Teléfono</label>
-          <input v-model="form.phone" maxlength="40" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="+1 809 555 0000">
+          <label for="technical-providers-telefono" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Teléfono</label>
+          <input id="technical-providers-telefono" name="phone" v-model="form.phone" maxlength="40" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="+1 809 555 0000">
           <p class="text-[10px] text-text-muted mt-1">Con código de país (+1, +34…) para poder abrir WhatsApp.</p>
         </div>
 
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Email</label>
-          <input v-model="form.email" type="email" maxlength="120" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="correo@ejemplo.com">
+          <label for="technical-providers-email" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Email</label>
+          <input id="technical-providers-email" name="email" v-model="form.email" type="email" maxlength="120" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="correo@ejemplo.com">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Dirección / zona</label>
-          <input v-model="form.address" maxlength="160" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="Zona / barrio">
+          <label for="technical-providers-direccion-zona" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Dirección / zona</label>
+          <input id="technical-providers-direccion-zona" name="address" v-model="form.address" maxlength="160" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="Zona / barrio">
         </div>
 
         <div class="col-span-2">
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Tarifa</label>
-          <input v-model="form.rate" maxlength="80" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="Ej: RD$1500 por visita">
+          <label for="technical-providers-tarifa" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Tarifa</label>
+          <input id="technical-providers-tarifa" name="rate" v-model="form.rate" maxlength="80" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="Ej: RD$1500 por visita">
         </div>
 
         <div class="col-span-2">
@@ -231,18 +231,18 @@
         </div>
 
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Desde</label>
-          <input v-model="form.workStart" type="time" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+          <label for="technical-providers-desde" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Desde</label>
+          <input id="technical-providers-desde" name="workStart" v-model="form.workStart" type="time" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Hasta</label>
-          <input v-model="form.workEnd" type="time" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" :class="scheduleError ? 'border-danger' : ''">
+          <label for="technical-providers-hasta" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Hasta</label>
+          <input id="technical-providers-hasta" name="workEnd" v-model="form.workEnd" type="time" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" :class="scheduleError ? 'border-danger' : ''">
           <p v-if="scheduleError" class="text-[10px] text-danger mt-1">{{ scheduleError }}</p>
         </div>
 
         <div class="col-span-2">
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Notas</label>
-          <textarea v-model="form.notes" rows="3" maxlength="500" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy resize-none" placeholder="Detalles, referencias, disponibilidad..."></textarea>
+          <label for="technical-providers-notas" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Notas</label>
+          <textarea id="technical-providers-notas" name="notes" v-model="form.notes" rows="3" maxlength="500" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy resize-none" placeholder="Detalles, referencias, disponibilidad..."></textarea>
         </div>
 
         <div class="col-span-2 flex items-center gap-2">

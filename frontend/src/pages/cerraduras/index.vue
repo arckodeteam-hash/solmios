@@ -76,8 +76,8 @@
       <SectionCard title="Configuración TTLock" subtitle="Credenciales de la cuenta del hotel en open.ttlock.com">
         <div class="grid md:grid-cols-2 gap-4">
           <div>
-            <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Client ID</label>
-            <input v-model="ttlockConfig.clientId" type="text" placeholder="De open.ttlock.com" class="w-full px-4 py-2.5 rounded-full border border-border text-sm" />
+            <label for="cerraduras-client-id" class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Client ID</label>
+            <input id="cerraduras-client-id" name="clientId" v-model="ttlockConfig.clientId" type="text" placeholder="De open.ttlock.com" class="w-full px-4 py-2.5 rounded-full border border-border text-sm" />
           </div>
           <div>
             <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Client Secret</label>
@@ -89,8 +89,8 @@
             <p v-if="ttlockConfig.hasSecret" class="text-[10px] text-text-muted mt-1 ml-4">Guardado. Dejalo vacío para conservarlo.</p>
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Usuario TTLock</label>
-            <input v-model="ttlockConfig.username" type="text" placeholder="Usuario de la cuenta TTLock del hotel" class="w-full px-4 py-2.5 rounded-full border border-border text-sm" />
+            <label for="cerraduras-usuario-ttlock" class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Usuario TTLock</label>
+            <input id="cerraduras-usuario-ttlock" name="username" v-model="ttlockConfig.username" type="text" placeholder="Usuario de la cuenta TTLock del hotel" class="w-full px-4 py-2.5 rounded-full border border-border text-sm" />
           </div>
           <div>
             <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Contraseña TTLock</label>
@@ -102,20 +102,20 @@
             <p v-if="ttlockConfig.hasPassword" class="text-[10px] text-text-muted mt-1 ml-4">Guardada. Dejala vacía para conservarla.</p>
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Región</label>
-            <select v-model="ttlockConfig.region" class="w-full px-4 py-2.5 rounded-full border border-border text-sm cursor-pointer">
+            <label for="cerraduras-region" class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Región</label>
+            <select id="cerraduras-region" name="region" v-model="ttlockConfig.region" class="w-full px-4 py-2.5 rounded-full border border-border text-sm cursor-pointer">
               <option value="eu">Europa (eu)</option>
               <option value="us">EE.UU. (us)</option>
               <option value="cn">China (cn)</option>
             </select>
           </div>
           <div>
-            <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Account ID / Email</label>
-            <input v-model="ttlockConfig.accountId" type="text" placeholder="email@ejemplo.com" class="w-full px-4 py-2.5 rounded-full border border-border text-sm" />
+            <label for="cerraduras-account-id-email" class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Account ID / Email</label>
+            <input id="cerraduras-account-id-email" name="accountId" v-model="ttlockConfig.accountId" type="text" placeholder="email@ejemplo.com" class="w-full px-4 py-2.5 rounded-full border border-border text-sm" />
           </div>
           <div class="md:col-span-2">
-            <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Entrega del código</label>
-            <select v-model.number="ttlockConfig.addType" class="w-full px-4 py-2.5 rounded-full border border-border text-sm cursor-pointer">
+            <label for="cerraduras-entrega-del-codigo" class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Entrega del código</label>
+            <select id="cerraduras-entrega-del-codigo" name="addType" v-model.number="ttlockConfig.addType" class="w-full px-4 py-2.5 rounded-full border border-border text-sm cursor-pointer">
               <option :value="2">Gateway (remoto)</option>
               <option :value="1">Bluetooth (app en la puerta)</option>
               <option :value="3">NB-IoT</option>
@@ -216,7 +216,7 @@
             <div v-else>
               <p class="mt-4 text-[11px] font-semibold text-text-muted">Asignale una habitación para operarla</p>
               <div class="mt-3 flex items-center gap-2 border-t border-border pt-3">
-                <select @change="mapLock(lock, ($event.target as HTMLSelectElement).value)"
+                <select :id="`cerradura-${lock.id}-habitacion`" :aria-label="`Asignar habitación a la cerradura ${lock.name || lock.id}`" @change="mapLock(lock, ($event.target as HTMLSelectElement).value)"
                   class="min-w-0 flex-1 cursor-pointer rounded-lg border border-border px-3 py-2 text-xs">
                   <option value="">Elegir habitación…</option>
                   <option v-for="r in rooms" :key="r.id" :value="r.id">{{ r.number }} - {{ r.type }}</option>
@@ -327,7 +327,7 @@
     <div v-show="tab === 'active'">
       <SectionCard title="Comprobar códigos activos" subtitle="Lee los PIN que realmente tiene la cerradura en el hardware" body-class="p-0">
         <template #actions>
-          <select v-model="activeLockId" class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
+          <select id="cerraduras-active-lock" name="activeLockId" aria-label="Cerradura para códigos activos" v-model="activeLockId" class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
             <option class="text-navy" value="">Elegí una cerradura</option>
             <option class="text-navy" v-for="l in locks" :key="l.id" :value="l.id">{{ l.name || l.id }}{{ l.roomNumber && l.roomNumber !== '—' ? ` · Hab ${l.roomNumber}` : '' }}</option>
           </select>
@@ -395,7 +395,7 @@
     <div v-show="tab === 'records'">
       <SectionCard title="Registros de la cerradura" subtitle="Aperturas e intentos de los últimos 30 días, leídos del hardware" body-class="p-0">
         <template #actions>
-          <select v-model="recordsLockId" class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
+          <select id="cerraduras-records-lock" name="recordsLockId" aria-label="Cerradura para historial de aperturas" v-model="recordsLockId" class="px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-semibold text-white focus:outline-none focus:border-cyan cursor-pointer">
             <option class="text-navy" value="">Elegí una cerradura</option>
             <option class="text-navy" v-for="l in locks" :key="l.id" :value="l.id">{{ l.name || l.id }}{{ l.roomNumber && l.roomNumber !== '—' ? ` · Hab ${l.roomNumber}` : '' }}</option>
           </select>
@@ -544,15 +544,15 @@
     >
       <div class="space-y-4">
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Persona *</label>
-          <select v-model="newMasterKey.userId" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
+          <label for="cerraduras-persona" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Persona *</label>
+          <select id="cerraduras-persona" name="userId" required aria-required="true" v-model="newMasterKey.userId" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
             <option value="">Seleccionar...</option>
             <option v-for="p in staff" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select>
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">PIN (opcional)</label>
-          <input
+          <label for="cerraduras-pin-opcional" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">PIN (opcional)</label>
+          <input id="cerraduras-pin-opcional" name="code"
             v-model="newMasterKey.code" inputmode="numeric" maxlength="9"
             class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm font-mono tabular-nums focus:outline-none focus:border-navy"
             placeholder="Se genera solo si lo dejás vacío"

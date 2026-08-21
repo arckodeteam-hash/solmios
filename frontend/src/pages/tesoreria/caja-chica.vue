@@ -228,32 +228,32 @@ const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
     <AppModal v-if="fundModal" :title="fundModal.mode === 'create' ? 'Nuevo fondo' : 'Editar fondo'" size="md" @close="fundModal = null">
       <div class="space-y-4">
         <div>
-          <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nombre</label>
-          <input v-model="fundForm.name" type="text" placeholder="ej: Caja chica recepción"
+          <label for="tesoreria-caja-chica-nombre" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nombre</label>
+          <input id="tesoreria-caja-chica-nombre" name="name" required aria-required="true" v-model="fundForm.name" type="text" placeholder="ej: Caja chica recepción"
             class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
         </div>
         <div>
-          <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Custodio</label>
-          <select v-model="fundForm.custodianId" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
+          <label for="tesoreria-caja-chica-custodio" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Custodio</label>
+          <select id="tesoreria-caja-chica-custodio" name="custodianId" required aria-required="true" v-model="fundForm.custodianId" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
             <option value="">Seleccionar…</option>
             <option v-for="m in team" :key="m.id" :value="m.id">{{ m.name }}</option>
           </select>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Tope del fondo</label>
-            <input v-model.number="fundForm.targetAmount" type="number" min="0" step="0.01"
+            <label for="tesoreria-caja-chica-tope-del-fondo" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Tope del fondo</label>
+            <input id="tesoreria-caja-chica-tope-del-fondo" name="targetAmount" required aria-required="true" v-model.number="fundForm.targetAmount" type="number" min="0" step="0.01"
               class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Moneda</label>
-            <input v-model="fundForm.currency" type="text" maxlength="3"
+            <label for="tesoreria-caja-chica-moneda" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Moneda</label>
+            <input id="tesoreria-caja-chica-moneda" name="currency" v-model="fundForm.currency" type="text" maxlength="3"
               class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
         </div>
         <div>
-          <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Notas</label>
-          <textarea v-model="fundForm.notes" rows="2"
+          <label for="tesoreria-caja-chica-notas" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Notas</label>
+          <textarea id="tesoreria-caja-chica-notas" name="notes" v-model="fundForm.notes" rows="2"
             class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy resize-none" />
         </div>
       </div>
@@ -270,8 +270,8 @@ const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
       <p class="text-xs text-text-muted mb-3">
         v1 no mueve dinero real: registrá la reposición cuando ya hayas repuesto el efectivo a mano.
       </p>
-      <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Monto a reponer</label>
-      <input v-model.number="replenishAmount" type="number" min="0" step="0.01"
+      <label for="tesoreria-caja-chica-monto-a-reponer" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Monto a reponer</label>
+      <input id="tesoreria-caja-chica-monto-a-reponer" name="replenishAmount" required aria-required="true" v-model.number="replenishAmount" type="number" min="0" step="0.01"
         class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
       <p class="text-[11px] text-text-muted mt-1.5">
         Saldo actual {{ money(replenishModal.currentBalance, replenishModal.currency) }} → quedará en

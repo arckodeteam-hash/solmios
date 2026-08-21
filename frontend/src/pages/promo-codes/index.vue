@@ -113,8 +113,8 @@
     >
       <div class="grid grid-cols-2 gap-4">
         <div class="col-span-2">
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Código *</label>
-          <input
+          <label for="promo-codes-codigo" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Código *</label>
+          <input id="promo-codes-codigo" name="code" required aria-required="true"
             v-model="form.code"
             maxlength="40"
             class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm font-mono uppercase focus:outline-none focus:border-navy"
@@ -127,17 +127,17 @@
         </div>
 
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Tipo de descuento</label>
-          <select v-model="form.kind" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
+          <label for="promo-codes-tipo-de-descuento" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Tipo de descuento</label>
+          <select id="promo-codes-tipo-de-descuento" name="kind" required aria-required="true" v-model="form.kind" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
             <option value="percent">Porcentaje (%)</option>
             <option value="fixed">Monto fijo</option>
           </select>
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">
+          <label for="promo-codes-valor" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">
             Valor {{ form.kind === 'percent' ? '(0-100)' : '(en la moneda del hotel)' }} *
           </label>
-          <input
+          <input id="promo-codes-valor" name="value" required aria-required="true"
             v-model.number="form.value"
             type="number"
             min="0"
@@ -151,23 +151,23 @@
         </div>
 
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Subtotal mínimo</label>
-          <input v-model.number="form.minAmount" type="number" min="0" step="0.01"
+          <label for="promo-codes-subtotal-minimo" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Subtotal mínimo</label>
+          <input id="promo-codes-subtotal-minimo" name="minAmount" v-model.number="form.minAmount" type="number" min="0" step="0.01"
             class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="Sin mínimo">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Máximo de usos</label>
-          <input v-model.number="form.maxUses" type="number" min="1" step="1"
+          <label for="promo-codes-maximo-de-usos" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Máximo de usos</label>
+          <input id="promo-codes-maximo-de-usos" name="maxUses" v-model.number="form.maxUses" type="number" min="1" step="1"
             class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="Sin límite">
         </div>
 
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Válido desde</label>
-          <input v-model="form.validFrom" type="date" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+          <label for="promo-codes-valido-desde" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Válido desde</label>
+          <input id="promo-codes-valido-desde" name="validFrom" v-model="form.validFrom" type="date" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Válido hasta</label>
-          <input v-model="form.validTo" type="date" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+          <label for="promo-codes-valido-hasta" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Válido hasta</label>
+          <input id="promo-codes-valido-hasta" name="validTo" v-model="form.validTo" type="date" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
         </div>
 
         <div class="col-span-2 flex items-center gap-2">

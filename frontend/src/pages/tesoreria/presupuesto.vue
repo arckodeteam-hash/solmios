@@ -46,7 +46,7 @@ onMounted(load)
         <p class="text-sm text-text-muted mt-0.5">Lo presupuestado por categoría contra el gasto real del mes.</p>
       </div>
       <div class="flex gap-2 items-center">
-        <input v-model="period" type="month" @change="load" class="px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+        <input id="tesoreria-presupuesto-periodo" name="period" required aria-required="true" aria-label="Período del presupuesto" v-model="period" type="month" @change="load" class="px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
         <button @click="openNew" class="bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-full hover:shadow-lg cursor-pointer">Nuevo presupuesto</button>
       </div>
     </div>
@@ -87,12 +87,12 @@ onMounted(load)
     <AppModal v-if="showModal" size="md" title="Nuevo presupuesto" :subtitle="`Período ${period}`" @close="showModal = false">
       <div class="space-y-4">
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Categoría</label>
-          <input v-model="form.category" placeholder="Limpieza, Servicios…" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
+          <label for="tesoreria-presupuesto-categoria" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Categoría</label>
+          <input id="tesoreria-presupuesto-categoria" name="category" required aria-required="true" v-model="form.category" placeholder="Limpieza, Servicios…" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
         </div>
         <div>
-          <label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Monto presupuestado</label>
-          <input v-model.number="form.budgetedAmount" type="number" min="0" placeholder="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm text-right focus:outline-none focus:border-navy" />
+          <label for="tesoreria-presupuesto-monto-presupuestado" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Monto presupuestado</label>
+          <input id="tesoreria-presupuesto-monto-presupuestado" name="budgetedAmount" v-model.number="form.budgetedAmount" type="number" min="0" placeholder="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm text-right focus:outline-none focus:border-navy" />
         </div>
       </div>
       <template #footer>

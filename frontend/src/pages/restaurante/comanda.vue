@@ -374,7 +374,7 @@ function cancel() {
               <span class="flex items-center gap-2 text-sm text-navy">
                 <input v-if="g.selectionType === 'single'" type="radio" :name="`g-${g.id}`"
                   :checked="(modifierSelection[g.id] ?? []).includes(m.id)" @change="pickSingle(g.id, m.id)" />
-                <input v-else type="checkbox"
+                <input :id="`modificador-${g.id}-${m.id}`" :aria-label="m.name" v-else type="checkbox"
                   :checked="(modifierSelection[g.id] ?? []).includes(m.id)" @change="toggleMultiple(g.id, m.id)" />
                 {{ m.name }}
               </span>

@@ -200,21 +200,21 @@
       @close="showDialog = false">
       <div class="space-y-4">
         <div>
-          <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nombre</label>
-          <input v-model="form.name" type="text" placeholder="Ej: Fin de semana romántico" class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan" />
+          <label for="packages-nombre" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nombre</label>
+          <input id="packages-nombre" name="name" required aria-required="true" v-model="form.name" type="text" placeholder="Ej: Fin de semana romántico" class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan" />
         </div>
         <div>
-          <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Descripción</label>
-          <textarea v-model="form.description" rows="2" class="w-full px-4 py-3 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan resize-none"></textarea>
+          <label for="packages-descripcion" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Descripción</label>
+          <textarea id="packages-descripcion" name="description" v-model="form.description" rows="2" class="w-full px-4 py-3 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan resize-none"></textarea>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Precio</label>
-            <input v-model.number="form.price" type="number" min="0" step="0.01" placeholder="0.00" class="w-full h-10 px-4 rounded-xl border border-border text-sm text-right font-bold focus:outline-none focus:border-cyan" />
+            <label for="packages-precio" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Precio</label>
+            <input id="packages-precio" name="price" required aria-required="true" v-model.number="form.price" type="number" min="0" step="0.01" placeholder="0.00" class="w-full h-10 px-4 rounded-xl border border-border text-sm text-right font-bold focus:outline-none focus:border-cyan" />
           </div>
           <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Tipo</label>
-            <select v-model="form.type" class="w-full h-10 px-4 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-cyan">
+            <label for="packages-tipo" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Tipo</label>
+            <select id="packages-tipo" name="type" v-model="form.type" class="w-full h-10 px-4 rounded-xl border border-border text-sm cursor-pointer focus:outline-none focus:border-cyan">
               <option value="combo">Paquete</option>
               <option value="servicio">Servicio adicional</option>
             </select>
@@ -222,9 +222,9 @@
         </div>
 
         <div>
-          <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Incluye</label>
+          <label for="packages-incluye" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Incluye</label>
           <div class="flex gap-2 mb-2">
-            <input
+            <input id="packages-incluye" name="newItem"
               v-model="newItem"
               @keyup.enter="addItem"
               type="text"
@@ -245,7 +245,7 @@
         </div>
 
         <label class="flex items-center gap-2 cursor-pointer">
-          <input v-model.number="form.active" type="checkbox" :true-value="1" :false-value="0" class="w-4 h-4 accent-navy cursor-pointer" />
+          <input id="packages-activa" name="active" v-model.number="form.active" type="checkbox" :true-value="1" :false-value="0" class="w-4 h-4 accent-navy cursor-pointer" />
           <span class="text-sm font-bold text-navy">Activa</span>
         </label>
       </div>

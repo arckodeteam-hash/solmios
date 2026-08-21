@@ -95,22 +95,22 @@ onMounted(load)
     <!-- Alta / Edición -->
     <AppModal v-if="showModal" size="md" :title="editingId ? 'Editar proveedor' : 'Nuevo proveedor'" @close="showModal = false">
       <div class="space-y-4">
-        <div><label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Nombre *</label>
-          <input v-model="form.name" placeholder="Proveedor SA" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
+        <div><label for="tesoreria-proveedores-nombre" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Nombre *</label>
+          <input id="tesoreria-proveedores-nombre" name="name" required aria-required="true" v-model="form.name" placeholder="Proveedor SA" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
         <div class="grid grid-cols-2 gap-3">
-          <div><label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">TAX / ID</label>
-            <input v-model="form.taxId" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
-          <div><label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Teléfono</label>
-            <input v-model="form.phone" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
+          <div><label for="tesoreria-proveedores-tax-id" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">TAX / ID</label>
+            <input id="tesoreria-proveedores-tax-id" name="taxId" v-model="form.taxId" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
+          <div><label for="tesoreria-proveedores-telefono" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Teléfono</label>
+            <input id="tesoreria-proveedores-telefono" name="phone" v-model="form.phone" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
         </div>
         <div class="grid grid-cols-2 gap-3">
-          <div><label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Contacto</label>
-            <input v-model="form.contact" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
-          <div><label class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Email</label>
-            <input v-model="form.email" type="email" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
+          <div><label for="tesoreria-proveedores-contacto" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Contacto</label>
+            <input id="tesoreria-proveedores-contacto" name="contact" v-model="form.contact" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
+          <div><label for="tesoreria-proveedores-email" class="block text-[11px] font-bold text-text-muted uppercase mb-1.5">Email</label>
+            <input id="tesoreria-proveedores-email" name="email" v-model="form.email" type="email" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" /></div>
         </div>
         <label class="flex items-center gap-2 cursor-pointer select-none">
-          <input type="checkbox" :checked="form.active === 1" @change="form.active = form.active === 1 ? 0 : 1" class="accent-navy" />
+          <input id="tesoreria-proveedores-activo" type="checkbox" :checked="form.active === 1" @change="form.active = form.active === 1 ? 0 : 1" class="accent-navy" />
           <span class="text-sm text-navy font-bold">Activo</span>
         </label>
       </div>
