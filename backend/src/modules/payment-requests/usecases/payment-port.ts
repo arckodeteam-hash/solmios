@@ -23,6 +23,17 @@ export interface RecordStripePaymentInput {
   stripeSessionId: string
   stripePaymentId?: string
   folioId?: string
+  /**
+   * RTC-0.5. Vínculo DIRECTO del asiento con la reserva. Hasta acá el cobro de un Link de Pago
+   * entraba a `payments` con `folioId` y nada más — y sin folio abierto (lo normal antes del
+   * check-in) quedaba SIN ninguno de los tres vínculos que `shared/usecases/reservation-paid.ts`
+   * sabe recorrer. Esa fila era invisible para `paidForReservation`, para
+   * `syncPendingAfterPayment` y para cualquier reporte que pregunte "¿qué cobré de esta reserva?":
+   * el único rastro era `reservations.deposit`, que se va con la reserva si alguien la borra.
+   * Es exactamente la misma clase de bug que el cobro de reprogramación por el que se agregó la
+   * columna `payments.reservationId` (BUG-ceiling-bypass), por otra ruta.
+   */
+  reservationId?: string
   description?: string
   reference?: string
 }
@@ -30,6 +41,52 @@ export interface RecordStripePaymentInput {
 export interface RecordedPayment {
   id: string
   status: string
+}
+
+/** La fila de `payments` que asienta un cobro por Stripe Checkout. */
+export interface StripeChargeDto {
+  hotelId: string
+  folioId?: string
+  reservationId?: string
+  type: 'charge'
+  method: 'link'
+  status: 'completed'
+  amount: number
+  currency: string
+  description?: string
+  reference?: string
+  stripeSessionId: string
+  stripePaymentId?: string
+}
+
+/**
+ * Traduce el cobro a la fila de `payments`, en UN solo lugar.
+ *
+ * Vivía escrito a mano dentro de `connectors/payment-requests-payments.ts` y copiado a mano en el
+ * doble de `tests/ceiling-world.ts`, y las dos copias se desincronizaron: al agregar
+ * `reservationId` (RTC-0.5) sólo se actualizó el connector, así que en el banco de pruebas el
+ * asiento seguía naciendo sin vínculo con la reserva y `assertNoSettledCharge` no lo encontraba.
+ * Eso no es un detalle del test: un doble que no espeja al connector deja de ser evidencia de
+ * nada. Un campo nuevo se agrega acá y las dos rutas lo toman juntas.
+ */
+export function stripeChargeDto(input: RecordStripePaymentInput): StripeChargeDto {
+  return {
+    hotelId: input.hotelId,
+    folioId: input.folioId ?? undefined,
+    // RTC-0.5: sin esto el asiento no cuelga de nada cuando no hay folio abierto.
+    reservationId: input.reservationId ?? undefined,
+    type: 'charge',
+    // El cobro entra por un Link de Pago, no por una tarjeta pasada en el mostrador.
+    method: 'link',
+    // Stripe ya confirmó el cobro: es dinero recibido, no una intención de pago.
+    status: 'completed',
+    amount: input.amount,
+    currency: input.currency,
+    description: input.description,
+    reference: input.reference,
+    stripeSessionId: input.stripeSessionId,
+    stripePaymentId: input.stripePaymentId,
+  }
 }
 
 export interface StripePaymentPort {

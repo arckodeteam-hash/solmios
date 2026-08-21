@@ -173,6 +173,9 @@ async function settleCompletedSession(
         stripeSessionId: sessionIdOf(session),
         stripePaymentId: session.payment_intent || '',
         folioId: openFolio?.id,
+        // RTC-0.5: la reserva sale del registro del SERVIDOR (`pr`), no de la metadata del payload
+        // — mismo criterio que el resto de este archivo (SEC-2).
+        reservationId: pr.reservationId || undefined,
         description: `Pago Stripe · Reserva ${String(pr.reservationId || '').slice(0, 8)}`,
         reference: session.payment_intent || sessionIdOf(session),
       })

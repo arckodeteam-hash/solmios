@@ -23,6 +23,8 @@ export type {
 export type { PaymentRequestsSockets } from './sockets'
 export { CreatePaymentRequestSchema, UpdatePaymentRequestSchema, PaymentRequestsValidator } from './validators/schema'
 export type { StripePaymentPort, RecordStripePaymentInput, RecordedPayment } from './usecases/payment-port'
+// El mapeo cobro → fila de `payments`, para que el connector y el banco de pruebas asienten igual.
+export { stripeChargeDto, type StripeChargeDto } from './usecases/payment-port'
 
 export function PaymentRequestsModule() {
   return createModule({

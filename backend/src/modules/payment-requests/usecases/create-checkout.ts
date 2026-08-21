@@ -10,14 +10,56 @@
 // la nueva. Ver `usecases/live-session.ts`.
 
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
+import { ConflictError } from 'arckode-framework'
 import { StripeService } from '../../../services/stripe-service'
 import type { EmailSender } from '../../../services/email-sender'
 import { sendPaymentLinkEmail } from './payment-link-email'
-import { reusableSession } from './live-session'
+import { reusableSession, LIVE_STATUS } from './live-session'
 import { checkoutSessionCreatedEntry, type AuditEntry } from './audit'
 import type { PaymentRequestDTO, CheckoutResult, CurrentUser } from '../types'
 
 const DEFAULT_PORT = 3000
+
+/**
+ * ¿Por qué este cobro NO puede emitir una Checkout Session? `null` = puede.
+ *
+ * Es la ÚNICA lista de precondiciones de la emisión: sin Stripe configurado (503), ya pagado (400)
+ * y —RTC-0.1— cualquier estado que no sea `pending` (409). Estaban repartidas entre el service y
+ * ninguna parte, y la que faltaba es justamente la que dejó la puerta abierta.
+ *
+ * RTC-0.1 (P3). El único guard de `service.createCheckout` era `if (pr.status === 'paid')`, así que
+ * `cancelled` y `expired` ATRAVESABAN y emitían una sesión VIVA sobre una fila que ya no compromete
+ * saldo: `charge-ceiling.ts:committedPending` filtra `status === 'pending'` y no la cuenta, y
+ * `clamp-to-ceiling.ts:pendingRowsOf` filtra igual y no la recorta ni cuando el total de la reserva
+ * baja ni cuando la reserva se borra — pero `stripe-webhook.ts` la liquida igual (sólo saltea
+ * `paid`). Medido por `tests/ceiling-property.test.ts`: cancelar, re-emitir y volver a requerir el
+ * pago deja $800 cobrables sobre un saldo de $400; cancelar, re-emitir y borrar la reserva deja
+ * $400 cobrables sobre $0.
+ *
+ * El invariante que declara `charge-ceiling.ts:18-24` —"una fila `pending` tiene a lo sumo una
+ * sesión abierta"— sólo se sostiene si NINGUNA fila fuera de `pending` puede llegar a tener una.
+ * Revivir el cobro (`PUT {status:'pending'}`) es el camino legítimo, y revalida el techo contra el
+ * saldo de HOY antes de dejarlo volver al agregado (`update-request.ts`).
+ */
+export function checkoutBlockedReason(
+  pr: Pick<PaymentRequestDTO, 'status'>,
+  stripeConfigured: boolean,
+): { status: number; body: { error: string; hint?: string } } | null {
+  if (!stripeConfigured) {
+    return { status: 503, body: { error: 'Stripe no configurado', hint: 'Configurá las keys en Settings > Conectar Stripe o en .env' } }
+  }
+  if (pr.status === 'paid') return { status: 400, body: { error: 'Ya está pagado' } }
+  if (pr.status !== LIVE_STATUS) {
+    return {
+      status: 409,
+      body: {
+        error: `El cobro está "${pr.status}": no se puede generar un link de pago`,
+        hint: 'Volvé a activarlo (estado "pendiente") o creá un cobro nuevo — un link vivo sobre un cobro dado de baja no lo cuenta el techo de la reserva.',
+      },
+    }
+  }
+  return null
+}
 
 export interface CreateCheckoutDeps {
   repo: RepositoryAdapter<PaymentRequestDTO>
@@ -30,7 +72,7 @@ export interface CreateCheckoutDeps {
 }
 
 /**
- * El caller ya validó Stripe configurado, ownership y que no esté pagado.
+ * El caller ya validó Stripe configurado, la ownership y el estado de la fila (`checkoutBlockedReason`).
  *
  * GH-0.4: el tenant es UNO y sale de la fila — `pr.hotelId`. Antes `service.createCheckout`
  * mezclaba dos: `hotelOfUser(user)` (el hotel del JWT) para `isConfigured` y para la cuenta Stripe
@@ -69,6 +111,11 @@ export async function createCheckoutForRequest(
     }
     return { url: result.sessionUrl, sessionId: result.sessionId }
   } catch (e: any) {
+    // RTC-0.1: `reusableSession` corta con 409 cuando la sesión anterior YA fue abonada y su
+    // webhook todavía no llegó. Ese 409 es una DECISIÓN de negocio, no un fallo de Stripe:
+    // envolverlo en el 500 genérico de abajo lo disfrazaba de "error al crear sesión de pago" y
+    // el operador reintentaba hasta que le saliera un segundo link vivo por plata ya cobrada.
+    if (e instanceof ConflictError) throw e
     deps.logger.error('Stripe create checkout failed', e)
     return { status: 500, body: { error: 'Error al crear sesión de pago', detail: e.message } }
   }

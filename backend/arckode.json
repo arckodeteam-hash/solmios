@@ -1,6 +1,6 @@
 {
   "_arckode": "1.0.0",
-  "_generated": "2026-08-21T14:55:53.178Z",
+  "_generated": "2026-08-21T21:57:29.776Z",
   "_instructions": "Lee este archivo ANTES de escribir código. Contiene el estado completo del sistema: módulos, conectores, violaciones. Si está desactualizado, corré: bun run analyze --json",
   "system": {
     "healthy": true,

@@ -65,6 +65,15 @@ function isStripeBadRequest(e: unknown): boolean {
 }
 
 /**
+ * ¿El huésped ya pagó esta sesión? Mismo criterio que `stripe-service.ts:classifySession` — hay
+ * que mirar los DOS campos: `status:'complete'` marca la sesión terminada y `payment_status:'paid'`
+ * cubre el cobro confirmado sobre una sesión que Stripe todavía no cerró.
+ */
+function isSessionPaid(session: { status?: string | null; payment_status?: string | null }): boolean {
+  return session.status === 'complete' || session.payment_status === 'paid'
+}
+
+/**
  * Da de baja la sesión del cobro para que deje de ser pagable.
  *
  * `allowPaid` distingue los dos motivos por los que un cobro sale de `pending`:
@@ -111,7 +120,25 @@ export async function reusableSession(
     if (isStripeBadRequest(e)) return null
     throw e
   }
-  if (!session || session.status !== 'open') return null
+  if (!session) return null
+  // RTC-0.1 (puerta hallada por `tests/ceiling-property.test.ts`, secuencia
+  // `requerir-pago → huesped-paga → emitir-link → webhook-cobro`). La sesión anterior YA fue
+  // abonada pero su `checkout.session.completed` todavía no llegó, así que la fila sigue
+  // `pending` y el guard `status === 'paid'` de `service.createCheckout` no la ve. Con el filtro
+  // viejo (`status !== 'open' → null`) una sesión `complete` caía en el mismo cajón que una
+  // vencida y se emitía OTRA sesión viva por el mismo importe: cuando el webhook aterriza, la
+  // reserva queda saldada y el segundo link sigue pagable — $400 cobrables sobre un saldo de $0.
+  //
+  // La plata ya entró; lo que falta es que la asiente el webhook. Se corta con 409 en vez de
+  // emitir un segundo link, por el mismo criterio que `releaseSession` con `allowPaid:false`.
+  if (isSessionPaid(session)) {
+    throw new ConflictError(
+      'El huésped ya abonó este link de pago y la confirmación de Stripe todavía no llegó: ' +
+      'no se emite otro. Esperá a que el webhook lo asiente; si hace falta cobrar más, creá un ' +
+      'cobro nuevo sobre el saldo que quede.',
+    )
+  }
+  if (session.status !== 'open') return null
   const sameAmount = session.amount_total === Math.round(Number(pr.amount) * 100)
   if (sameAmount && session.url) return { url: session.url, sessionId: session.id }
   // Sigue abierta pero por otro importe: se mata antes de emitir la nueva.

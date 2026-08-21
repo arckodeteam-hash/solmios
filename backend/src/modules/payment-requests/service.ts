@@ -20,7 +20,7 @@ import { processStripeWebhook } from './usecases/stripe-webhook'
 import type { StripePaymentPort } from './usecases/payment-port'
 import type { PaymentEventStore } from '../../services/payment-gateway/payment-events'
 import type { EmailSender } from '../../services/email-sender'
-import { createCheckoutForRequest } from './usecases/create-checkout'
+import { createCheckoutForRequest, checkoutBlockedReason } from './usecases/create-checkout'
 import { assertChargeableAmount, assertCeilingAfterCommit, chargeLockKey } from './usecases/charge-ceiling'
 // El MISMO lock in-memory que `payments/usecases/deposits.ts` (DT-11): un solo registry de dinero.
 import { withLock } from '../../shared/utils/async-lock'
@@ -170,10 +170,9 @@ export class PaymentRequestsService {
   async createCheckout(id: string, user: CurrentUser, origin: string): Promise<CheckoutResult | { status: number; body: any }> {
     const pr = await this.assertOwned(id, user)
     const hotelId = pr.hotelId
-    if (!(await StripeService.isConfigured(hotelId))) {
-      return { status: 503, body: { error: 'Stripe no configurado', hint: 'Configurá las keys en Settings > Conectar Stripe o en .env' } }
-    }
-    if (pr.status === 'paid') return { status: 400, body: { error: 'Ya está pagado' } }
+    // Precondiciones de la emisión, todas en un solo lugar (RTC-0.1) — ver create-checkout.ts.
+    const blocked = checkoutBlockedReason(pr, await StripeService.isConfigured(hotelId))
+    if (blocked) return blocked
     // QA7-4: última revalidación del techo antes de cobrar (el propio request se excluye del agregado).
     await assertChargeableAmount(this.ceilingDeps, { hotelId, reservationId: pr.reservationId, amount: pr.amount, excludeRequestId: pr.id })
     return createCheckoutForRequest(
