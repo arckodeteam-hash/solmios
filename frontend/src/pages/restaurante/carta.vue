@@ -135,16 +135,20 @@ function stationOptions(includeNone = true) {
 }
 
 // ─── Estaciones ───
+// F8 — igual que categorías/ítems: el admin ya no escribe `sortOrder` a mano; se calcula al final
+// de la lista y el reorder es exclusivamente por arrastre (sección "Drag-and-drop" más abajo).
+function nextStationSortOrder(): number {
+  return stations.value.length ? Math.max(...stations.value.map((s) => s.sortOrder ?? 0)) + 1 : 0
+}
 function newStation() {
   modal.value = {
     title: 'Nueva estación', submitLabel: 'Crear',
     fields: [
       { key: 'name', label: 'Nombre (ej: Cocina, Bar)', required: true, minLength: 2, maxLength: 60 },
-      { key: 'sortOrder', label: 'Orden', type: 'number', min: 0, hint: 'Orden de aparición en el KDS' },
       { key: 'active', label: 'Activa', type: 'select', default: '1', options: [{ value: '1', label: 'Sí' }, { value: '0', label: 'No' }] },
     ],
     onSubmit: async (v) => {
-      await save(() => RestaurantService.createStation({ name: String(v.name).trim(), sortOrder: Number(v.sortOrder) || 0, active: Number(v.active) }))
+      await save(() => RestaurantService.createStation({ name: String(v.name).trim(), sortOrder: nextStationSortOrder(), active: Number(v.active) }))
     },
   }
 }
@@ -153,11 +157,12 @@ function editStation(s: Station) {
     title: 'Editar estación', submitLabel: 'Guardar',
     fields: [
       { key: 'name', label: 'Nombre', required: true, minLength: 2, maxLength: 60, default: s.name },
-      { key: 'sortOrder', label: 'Orden', type: 'number', min: 0, default: s.sortOrder ?? 0 },
       { key: 'active', label: 'Activa', type: 'select', default: String(s.active ?? 1), options: [{ value: '1', label: 'Sí' }, { value: '0', label: 'No' }] },
     ],
     onSubmit: async (v) => {
-      await save(() => RestaurantService.updateStation(s.id, { name: String(v.name).trim(), sortOrder: Number(v.sortOrder) || 0, active: Number(v.active) }))
+      // sortOrder NO viaja acá: el PUT de estaciones es un merge parcial (stations-crud.ts:50) y el
+      // orden se gestiona solo por drag-and-drop — reenviarlo pisaría el resultado de un reorder previo.
+      await save(() => RestaurantService.updateStation(s.id, { name: String(v.name).trim(), active: Number(v.active) }))
     },
   }
 }
@@ -318,10 +323,57 @@ function delItem(i: MenuItem) {
 // @dragover.prevent/@drop.prevent, opacity-50 en la fila arrastrada) — sin vuedraggable/sortablejs
 // (D14, specs/menu-ordering/spec.md). El handle "⋮⋮" es el ÚNICO elemento con draggable="true": la fila
 // entera solo escucha dragover/drop/dragend, así un click en "Editar"/"Eliminar" nunca dispara un drag.
+const draggedStation = ref<Station | null>(null)
 const draggedCategory = ref<MenuCategory | null>(null)
 const draggedItem = ref<MenuItem | null>(null)
+let stationsSnapshot: Station[] = []
 let categoriesSnapshot: MenuCategory[] = []
 let itemsSnapshot: MenuItem[] = []
+
+// Estaciones: F8 aplica el MISMO reorden por arrastre que categorías e ítems (la auditoría del
+// módulo lo tenía como deuda: orden manual por número). Las estaciones no se anidan ni se
+// agrupan: el drag mueve dentro de la lista plana, igual que categorías.
+function onStationDragStart(e: DragEvent, s: Station) {
+  stationsSnapshot = stations.value.map((x) => ({ ...x }))
+  draggedStation.value = s
+  e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('text/plain', s.id)
+}
+function onStationDragOver(target: Station) {
+  const dragged = draggedStation.value
+  if (!dragged || dragged.id === target.id) return
+  const list = stations.value
+  const from = list.findIndex((s) => s.id === dragged.id)
+  const to = list.findIndex((s) => s.id === target.id)
+  if (from === -1 || to === -1 || from === to) return
+  list.splice(to, 0, list.splice(from, 1)[0])
+}
+function onStationDragEnd() {
+  if (draggedStation.value) {
+    stations.value = stationsSnapshot
+    draggedStation.value = null
+  }
+}
+async function onStationDrop() {
+  const dragged = draggedStation.value
+  draggedStation.value = null
+  if (!dragged) return
+  const beforeIndex = new Map(stationsSnapshot.map((s, idx) => [s.id, idx]))
+  const beforeSortOrder = new Map(stationsSnapshot.map((s) => [s.id, s.sortOrder ?? 0]))
+  const changed = stations.value
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s, idx }) => beforeIndex.get(s.id) !== idx)
+    .map(({ s, idx }) => ({ entity: s, newSortOrder: idx, oldSortOrder: beforeSortOrder.get(s.id) ?? idx }))
+  if (!changed.length) return
+  const ok = await persistOrder(changed, (id, sortOrder) => RestaurantService.updateStation(id, { sortOrder }))
+  if (ok) {
+    for (const s of changed) s.entity.sortOrder = s.newSortOrder
+    toast.success('Orden actualizado')
+  } else {
+    stations.value = stationsSnapshot
+    toast.error('No se pudo guardar el nuevo orden')
+  }
+}
 
 /**
  * Manda PUT solo a las entidades cuyo sortOrder efectivamente cambió (8.4). Si CUALQUIERA de los PUT
@@ -738,12 +790,20 @@ async function saveTranslations() {
         </template>
         <EmptyState v-if="!stations.length" title="Sin estaciones" message="Creá al menos una (ej: Cocina, Bar) para rutear la carta." />
         <div v-else class="divide-y divide-border">
-          <div v-for="s in stations" :key="s.id" class="flex items-center justify-between py-2.5">
-            <div class="flex items-center gap-2">
+          <!-- F8: reorden por arrastre — mismo patrón que categorías/ítems; el handle "⋮⋮" es el
+               único elemento draggable de la fila, así "Editar"/"Eliminar" nunca disparan un drag. -->
+          <div v-for="s in stations" :key="s.id"
+            class="flex items-center justify-between py-2.5 gap-2 transition-opacity"
+            :class="draggedStation?.id === s.id ? 'opacity-50' : ''"
+            @dragover.prevent="onStationDragOver(s)"
+            @drop.prevent="onStationDrop">
+            <div class="flex items-center gap-2 min-w-0">
+              <span v-if="editPerm" draggable="true" @dragstart="onStationDragStart($event, s)" @dragend="onStationDragEnd"
+                class="shrink-0 cursor-grab active:cursor-grabbing text-text-muted select-none" title="Arrastrar para reordenar">⋮⋮</span>
               <span class="font-bold text-navy">{{ s.name }}</span>
               <span v-if="!s.active" class="text-[10px] px-1.5 py-0.5 rounded bg-surface text-text-muted font-bold">Inactiva</span>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 shrink-0">
               <button v-if="editPerm" @click="editStation(s)" class="text-xs font-bold text-navy hover:underline">Editar</button>
               <button v-if="deletePerm" @click="delStation(s)" class="text-xs font-bold text-coral hover:underline">Eliminar</button>
             </div>
@@ -958,7 +1018,9 @@ async function saveTranslations() {
           </div>
           <div class="w-24 shrink-0">
             <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Cantidad</label>
-            <input v-model.number="newRecipe.quantity" type="number" min="0" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+            <!-- min 0.01, no 0: el negocio exige qty>0 por línea de receta (0 = "Quitar", que es otro
+                 botón) y el handler la rechaza — el input no puede anunciar 0 como válido. -->
+            <input v-model.number="newRecipe.quantity" type="number" min="0.01" step="0.01" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
           </div>
           <button @click="addRecipeLine" class="shrink-0 px-4 py-2 rounded-lg bg-navy text-white text-sm font-bold">Agregar</button>
         </div>
