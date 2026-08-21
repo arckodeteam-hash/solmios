@@ -1,6 +1,6 @@
 import type { MiddlewareHandler, ORM } from 'arckode-framework'
 import { ForbiddenError, OrmRepository } from 'arckode-framework'
-import { getModuleStateForPlan } from '../../modules/admin/usecases/modules'
+import { getModuleStateForHotel } from '../../modules/admin/usecases/modules'
 
 /**
  * Entitlement de módulo a nivel API: rechaza (403) si el hotel del usuario NO tiene el módulo habilitado
@@ -16,6 +16,7 @@ export function createModuleGuard(orm: ORM) {
   const configRepo = new OrmRepository<any>(orm, 'Configuration')
   const plansRepo = new OrmRepository<any>(orm, 'Plans')
   const hotelsRepo = new OrmRepository<any>(orm, 'Hotels')
+  const subscriptionsRepo = new OrmRepository<any>(orm, 'Subscriptions')
   const overridesRepo = new OrmRepository<any>(orm, 'HotelModuleOverrides')
 
   return (moduleKey: string): MiddlewareHandler => async (req, next) => {
@@ -25,8 +26,10 @@ export function createModuleGuard(orm: ORM) {
     const hotelId = user.hotelId
     if (!hotelId || hotelId === 'platform') return next()
 
+    // El plan sale de la SUSCRIPCIÓN ACTIVA (fuente de verdad); `hotel.plan` es solo el
+    // espejo legacy para hoteles sin suscripción (resolveHotelPlan).
     const hotel = ((await hotelsRepo.findMany({ id: hotelId })) as any[])?.[0]
-    const state = await getModuleStateForPlan(configRepo, plansRepo, hotel?.plan, overridesRepo, hotelId)
+    const state = await getModuleStateForHotel(configRepo, plansRepo, subscriptionsRepo, hotelId, overridesRepo, hotel?.plan)
     // Solo bloquea si está explícitamente apagado. Fail-open ante datos faltantes (no romper la operación).
     if (state[moduleKey] === false) {
       throw new ForbiddenError(`Módulo no disponible en tu plan: ${moduleKey}`)

@@ -1,7 +1,9 @@
 import type { BodyRule as ValidationRule } from '../../../shared/validators/validate-body'
 
 const HOTEL_STATUS_ENUM = ['active', 'inactive', 'suspended']
-const HOTEL_PLAN_ENUM = ['essential', 'starter', 'professional', 'enterprise', 'ultra']
+// Incluye 'host' (plan de entrada, scripts/create-plans-table.ts): sin él, el super-admin
+// no puede editar un hotel cuyo espejo `hotels.plan` sea 'host' — el enum estaba viejo.
+const HOTEL_PLAN_ENUM = ['host', 'essential', 'starter', 'professional', 'enterprise', 'ultra']
 const ACCOMMODATION_TYPE_ENUM = ['hotel', 'apartment', 'hostel', 'villa', 'bnb']
 const CLEANING_TYPE_ENUM = ['checkout', 'daily', 'weekly']
 const DEPOSIT_TYPE_ENUM = ['none', 'fixed', 'percentage']

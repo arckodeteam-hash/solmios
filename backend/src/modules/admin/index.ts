@@ -3,7 +3,7 @@ import type { PlanDTO, AmenityCatalogDTO } from './types'
 import { AdminService } from './service'
 import { AdminController } from './controller'
 import { DashboardQueries } from './usecases/dashboard-queries'
-import { MODULE_CATALOG, getModuleState, setModuleState, getModuleStateForPlan } from './usecases/modules'
+import { MODULE_CATALOG, getModuleState, setModuleState, getModuleStateForHotel } from './usecases/modules'
 import { SpecialConditionsUseCase } from './usecases/special-conditions'
 import { SubscriptionCategoriesUseCase } from './usecases/subscription-categories'
 import { ModuleOverridesUseCase } from './usecases/module-overrides'
@@ -36,6 +36,9 @@ export function AdminModule() {
       const configRepo = new OrmRepository<any>(orm, 'Configuration')
       const hotelsRepo = new OrmRepository<any>(orm, 'Hotels')
       const moduleOverridesRepo = new OrmRepository<any>(orm, 'HotelModuleOverrides')
+      // Suscripción SaaS del hotel: FUENTE DE VERDAD del plan para el gate de módulos
+      // (resolve-plan.ts). `hotels.plan` es el espejo legacy que solo aplica sin suscripción.
+      const subscriptionsRepo = new OrmRepository<any>(orm, 'Subscriptions')
       // `orm` crudo (no repos): el cupo de Fundador/Pionero necesita CAS (orm.updateMany), que
       // RepositoryAdapter/OrmRepository no exponen. Mismo criterio que DashboardQueries.
       const specialConditions = new SpecialConditionsUseCase(orm)
@@ -58,7 +61,9 @@ export function AdminModule() {
           const hotel = ((await hotelsRepo.findMany({ id: hotelId })) as any[])?.[0]
           planSlug = hotel?.plan
         }
-        return { status: 200, body: { state: await getModuleStateForPlan(configRepo, plansRepo, planSlug, moduleOverridesRepo, hotelId) } }
+        // El estado sale de global ∩ la SUSCRIPCIÓN ACTIVA del hotel ∩ overrides.
+        // planSlug (hotels.plan) solo aplica si no hay suscripción activa (legacy).
+        return { status: 200, body: { state: await getModuleStateForHotel(configRepo, plansRepo, subscriptionsRepo, hotelId, moduleOverridesRepo, planSlug) } }
       })
 
       router.get('/api/admin/hoteles', sa, () => controller.listHotels())

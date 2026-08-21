@@ -41,7 +41,7 @@ export class SubscriptionsService {
     private readonly specialCategoriesRepo?: RepositoryAdapter<any>,
   ) {
     this.signupUc = new SignupUseCase({
-      hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, hashPassword, logger,
+      hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger,
     })
     this.accessUc = new SubscriptionAccess(subscriptionsRepo, hotelsRepo)
     this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, ratesRepo, hotelsRepo, channelsRepo })
@@ -173,7 +173,8 @@ export class SubscriptionsService {
   handlePlatformWebhook(rawBody: string | Buffer, signature: string) {
     return processSubscriptionWebhook(
       {
-        subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, logger: this.logger,
+        subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo,
+        plansRepo: this.plansRepo, logger: this.logger,
         sendPlatformEmail: this.sendPlatformEmail, orm: this.orm,
       },
       rawBody, signature,

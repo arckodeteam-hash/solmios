@@ -47,6 +47,8 @@ export interface SignupDeps {
   usersRepo: RepositoryAdapter<any>
   rolesRepo: RepositoryAdapter<any>
   subscriptionsRepo: RepositoryAdapter<any>
+  /** `plans` — para sincronizar el espejo `hotels.plan` con el plan elegido en el trial. */
+  plansRepo: RepositoryAdapter<any>
   hashPassword: (plain: string) => Promise<string>
   /** Envío del correo de verificación (#421). Opcional y best-effort: si falta o falla, el alta
    *  igual funciona — no se pierde el hotel porque el SMTP esté caído. */
@@ -124,6 +126,10 @@ export class SignupUseCase {
       // que el ORM descarta sin avisar, y la dirección se pierde.
       address: input.address ?? '',
       country: input.country ?? '',
+      // Espejo legacy del plan del trial. La FUENTE DE VERDAD es la fila de `subscriptions`
+      // (resolve-plan.ts); sin esto el ORM dejaba el default 'professional' y el panel le
+      // mostraba al hotel todos los módulos aunque hubiera elegido 'host' (bug de prod).
+      plan: await this.trialPlanSlug(input.planId),
       status: 'active',
       active: 1,
     })
@@ -190,6 +196,21 @@ export class SignupUseCase {
       trialEndsAt: trialEnds.toISOString(),
       trialDays: TRIAL_DAYS,
     }
+  }
+
+  /**
+   * Slug del plan elegido para el espejo `hotels.plan`. `undefined` si no hay plan o no se
+   * resuelve (el trial sigue siendo válido: la suscripción es la fuente de verdad y el gate
+   * avisa por warn cuando su planId no existe — no inventamos un espejo mentiroso).
+   */
+  private async trialPlanSlug(planId?: string): Promise<string | undefined> {
+    if (!planId) return undefined
+    const plan = ((await this.deps.plansRepo.findMany({ id: planId })) as any[])?.[0]
+    if (!plan?.slug) {
+      this.deps.logger.warn('Alta con plan inexistente — hotels.plan queda sin espejo', { planId })
+      return undefined
+    }
+    return String(plan.slug)
   }
 
   /**

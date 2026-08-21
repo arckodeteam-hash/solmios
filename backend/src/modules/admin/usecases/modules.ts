@@ -7,6 +7,7 @@
 // un toggle global de plataforma. Un submódulo se ve si su módulo padre entra en el plan Y está ON global.
 
 import type { RepositoryAdapter } from 'arckode-framework'
+import { resolveHotelPlan } from '../../subscriptions/usecases/resolve-plan'
 
 export interface SubModuleMeta { key: string; label: string; description: string }
 export interface ModuleMeta { key: string; label: string; description: string; submodules?: SubModuleMeta[] }
@@ -171,7 +172,44 @@ export async function getModuleStateForPlan(
     const plan = ((await plansRepo.findMany({ slug: planSlug })) as any[])?.[0]
     const raw = plan?.modules ? (typeof plan.modules === 'string' ? JSON.parse(plan.modules) : plan.modules) : []
     if (Array.isArray(raw) && raw.length) planModules = raw.map(String)
+    // Slug desconocido → sin matriz → todo incluido. LEGACY explícito: los hoteles creados
+    // antes de `plans` tienen `hotels.plan` con valores que ya no existen en la tabla.
   }
+  return applyPlanState(configRepo, planModules, overridesRepo, hotelId)
+}
+
+/**
+ * Estado EFECTIVO para un HOTEL: global ∩ plan ∩ override. A diferencia de getModuleStateForPlan,
+ * el plan NO sale del espejo `hotels.plan` — lo resuelve `resolveHotelPlan` (suscripción activa
+ * primero, legacy después). Esta es la función que usan el gate de API (require-module.ts), el
+ * menú del panel (`GET /api/modules`) y los públicos que dependen del módulo (public-menu.ts).
+ */
+export async function getModuleStateForHotel(
+  configRepo: RepositoryAdapter<any>,
+  plansRepo: RepositoryAdapter<any>,
+  subscriptionsRepo: RepositoryAdapter<any>,
+  hotelId: string | undefined,
+  overridesRepo?: RepositoryAdapter<any>,
+  /** Espejo legacy `hotels.plan` — solo se consulta si el hotel no tiene suscripción activa. */
+  hotelPlanSlug?: string,
+  logger?: { warn: (msg: string, meta?: any) => void },
+): Promise<ModuleState> {
+  if (!hotelId || hotelId === 'platform') {
+    // Plataforma/super_admin: sin plan de hotel, solo el toggle global (como hoy).
+    return getModuleStateForPlan(configRepo, plansRepo, undefined, overridesRepo, hotelId)
+  }
+  const resolved = await resolveHotelPlan(subscriptionsRepo, plansRepo, hotelId, hotelPlanSlug, logger)
+  return applyPlanState(configRepo, resolved.modules, overridesRepo, hotelId)
+}
+
+/** Núcleo compartido: aplica global ∩ matriz del plan ∩ overrides sobre el catálogo. */
+async function applyPlanState(
+  configRepo: RepositoryAdapter<any>,
+  planModules: string[] | null,
+  overridesRepo?: RepositoryAdapter<any>,
+  hotelId?: string,
+): Promise<ModuleState> {
+  const global = await getModuleState(configRepo)
   const has = (k: string) => !planModules || planModules.includes(k)
   const state: ModuleState = {}
   for (const m of MODULE_CATALOG) {

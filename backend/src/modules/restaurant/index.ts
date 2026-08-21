@@ -60,13 +60,16 @@ export function RestaurantModule() {
       // F2: catálogo de combos/paquetes.
       const combosRepo = new OrmRepository<ComboDTO>(orm, 'MenuCombos')
       const comboItemsRepo = new OrmRepository<ComboItemDTO>(orm, 'MenuComboItems')
-      // F7: carta pública sin sesión — getModuleStateForPlan necesita el plan del hotel.
+      // F7: carta pública sin sesión — el gate del módulo restaurant necesita el plan del hotel.
       const plansRepo = new OrmRepository<any>(orm, 'Plans')
+      // Suscripción SaaS: fuente de verdad del plan (resolve-plan.ts), el espejo hotels.plan
+      // solo aplica para hoteles legacy sin fila de suscripción.
+      const subscriptionsRepo = new OrmRepository<any>(orm, 'Subscriptions')
       const log = logger.child('restaurant')
       const service = new RestaurantService(
         stations, categories, items, tables, userRepo, log, auth,
         ordersRepo, linesRepo, configRepo, hotelsRepo, modifierGroupsRepo, modifiersRepo,
-        combosRepo, comboItemsRepo, plansRepo,
+        combosRepo, comboItemsRepo, plansRepo, subscriptionsRepo,
       )
       const controller = new RestaurantController(service, log)
 
