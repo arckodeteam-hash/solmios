@@ -25,8 +25,23 @@ describe('OnboardingUseCase', () => {
     const st = await setup().status('h1')
     expect(st.completed).toBe(false)
     expect(st.doneCount).toBe(0)
-    expect(st.steps[0]!.key).toBe('rooms') // sin habitaciones no hay reservas
+    expect(st.steps[0]!.key).toBe('hotel') // #35: los datos del hotel van primeros
     expect(st.steps[0]!.required).toBe(true)
+  })
+
+  it('#35: datos del hotel primeros, habitaciones segundo', async () => {
+    // El dueño lo pidió así: el paso 1 es "Completá los datos del hotel" y el 2
+    // "Cargá tus habitaciones". El orden es del array; la completitud de cada
+    // paso se detecta por condición propia, no por posición.
+    const st = await setup().status('h1')
+    expect(st.steps.map(s => s.key)).toEqual(['hotel', 'rooms', 'rates', 'channels', 'team'])
+    expect(st.totalCount).toBe(5)
+
+    // La completitud no depende del orden: hotel con datos y sin habitaciones.
+    const conDatos = await setup({ hotel: { phone: '809' } }).status('h1')
+    expect(conDatos.steps[0]!.done).toBe(true)  // hotel: teléfono alcanzó
+    expect(conDatos.steps[1]!.done).toBe(false) // rooms: sin cargar
+    expect(conDatos.doneCount).toBe(1)
   })
 
   it('cuenta lo que ya cargó', async () => {

@@ -5,8 +5,9 @@
 // un checklist que se marca solo porque alguien apretó "listo" miente en cuanto
 // el hotel borra lo que había cargado.
 //
-// El orden importa: sin habitaciones no se puede cargar una reserva, así que esa
-// va primera. Lo demás es lo que se necesita para cobrar y operar el día a día.
+// El orden importa: los datos del hotel van primeros (#35 — el dueño los pide
+// así: son lo que el huésped ve y lo que sale impreso, y no dependen de nada).
+// Después las habitaciones: sin ellas no se puede cargar una reserva.
 import type { RepositoryAdapter } from 'arckode-framework'
 
 export interface OnboardingStep {
@@ -74,6 +75,17 @@ export class OnboardingUseCase {
 
     const steps: OnboardingStep[] = [
       {
+        key: 'hotel',
+        title: 'Completá los datos del hotel',
+        description: 'Dirección, teléfono y moneda: es lo que ve tu huésped y lo que sale impreso.',
+        how: 'Andá a Configuración → Datos del hotel. Completá dirección, teléfono, moneda e impuestos. Los impuestos se aplican solos en cada factura, así que conviene cargarlos antes de cobrar.',
+        impact: 'Sin esto las facturas salen sin tus datos y los mensajes al huésped quedan incompletos.',
+        route: '/panel/config',
+        cta: 'Completar datos',
+        done: hotelReady,
+        required: true,
+      },
+      {
         key: 'rooms',
         title: 'Cargá tus habitaciones',
         description: 'El inventario que vas a vender: cada habitación con su número, tipo y capacidad.',
@@ -84,17 +96,6 @@ export class OnboardingUseCase {
         done: (rooms as any[]).length > 0,
         required: true,
         count: (rooms as any[]).length,
-      },
-      {
-        key: 'hotel',
-        title: 'Completá los datos del hotel',
-        description: 'Dirección, teléfono y moneda: es lo que ve tu huésped y lo que sale impreso.',
-        how: 'Andá a Configuración → Datos del hotel. Completá dirección, teléfono, moneda e impuestos. Los impuestos se aplican solos en cada factura, así que conviene cargarlos antes de cobrar.',
-        impact: 'Sin esto las facturas salen sin tus datos y los mensajes al huésped quedan incompletos.',
-        route: '/panel/config',
-        cta: 'Completar datos',
-        done: hotelReady,
-        required: true,
       },
       {
         key: 'rates',
