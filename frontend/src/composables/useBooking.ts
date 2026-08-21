@@ -8,7 +8,7 @@
 //
 // El store ES la fuente de verdad: los step components son vistas que leen/escriben refs de
 // acá. Navegar back/forward entre steps restaura el estado correcto porque TODO vive acá
-// (selectedRoom, selectedUpsells, guest, promoCode…) — el componente solo se re-renderiza con
+// (cart, selectedUpsells, guest, promoCode…) — el componente solo se re-renderiza con
 // lo que ya está persistido en el store (acceptance 2.8).
 //
 // IDEMPOTENCIA DEL BOTÓN PAGAR (acceptance 2.8): `pay()` está guardado por `isSubmitting`.
@@ -174,7 +174,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
    *
    * Default 1 (2026-08-20, antes 2): el buscador YA NO pide huéspedes por adelantado — cada
    * tipo de habitación tiene su propio límite, y se elige la ocupación exacta ("para 1"/"para
-   * 2"/"para 4") recién al elegir el tipo (matriz de `selectRoom`/`bookingAdults`). Default 1
+   * 2"/"para 4") recién al elegir el tipo (matriz de `addToCart`/`cartTotalGuests`). Default 1
    * es el único valor que no excluye NINGÚN tipo por capacidad en la búsqueda inicial
    * (`AvailabilityUseCase` filtra `capacity >= guests`) — 2 excluiría, por ejemplo, una
    * habitación individual real. Sigue siendo overridable por `?guests=` en la URL (deep-link
@@ -191,17 +191,37 @@ export const useBookingStore = defineStore('booking-widget', () => {
   const ratesLoading = ref(false)
   const ratesError = ref<string | null>(null)
 
-  // ─── Selección (step 1) ───────────────────────────────────────────────────────
-  const selectedRoom = ref<RoomTypeRate | null>(null)
-  /**
-   * Ocupación elegida DENTRO del room type ("para 1", "para 2"…), o `null` si se eligió la
-   * tarjeta entera sin fila (fallback cuando el backend no manda `occupancies`).
-   *
-   * Manda sobre el precio: con una fila elegida, `selectedRoomPrice` es el `price` de ESA fila,
-   * no el `fromPrice` del tipo (que es el más barato de todas las ocupaciones). Sin esto, elegir
-   * "para 4" cobraría la tarifa de 1 persona — el clásico "el precio cambió en el paso de pago".
-   */
-  const selectedOccupancy = ref<number | null>(null)
+  // ─── Carrito de habitaciones (step 1) — Tarea 10, QA 2026-08-20/21 ─────────────────────────
+  // Reemplaza el modelo viejo de "una sola habitación seleccionada" (`selectedRoom`/
+  // `selectedOccupancy`). El huésped puede agregar VARIAS líneas — mismo tipo ×N y/o tipos
+  // distintos combinados (decisión de producto 2026-08-21, Opción A, ver spec
+  // booking-availability-pricing) — antes de avanzar al paso de extras.
+  //
+  // Una línea = un tipo de habitación + una ocupación ("para N") + cuántas unidades de ESA
+  // combinación. `key` es la identidad estable de la línea (mismo tipo + misma ocupación =
+  // MISMA línea, se suma cantidad; distinta ocupación del mismo tipo = línea aparte, porque
+  // cotiza distinto — ver `rate-resolution.ts:sumStayPrice`).
+  interface CartLine {
+    key: string
+    roomType: string
+    roomName: string
+    occupancy: number
+    quantity: number
+    /** Precio de UNA unidad a esta ocupación, la estadía completa (no por noche). */
+    unitPrice: number
+    unitTaxBreakdown: RoomTypeTaxItem[]
+    /** Tope de cantidad al agregar — `rt.availableCount` en el momento de agregar. Es una cota
+     *  de UX, no la autoridad: el backend revalida disponibilidad real al crear la reserva
+     *  (`createPublicBookingGroup`, 409 con el máximo real si la cotización quedó vieja). */
+    maxAvailable: number
+    photoUrl: string | null
+  }
+
+  const cart = ref<CartLine[]>([])
+
+  function cartLineKey(roomType: string, occupancy: number): string {
+    return `${roomType}|${occupancy}`
+  }
 
   // ─── Upsells (step 2) ─────────────────────────────────────────────────────────
   const upsells = ref<Upsell[]>([])
@@ -281,50 +301,29 @@ export const useBookingStore = defineStore('booking-widget', () => {
     () => ratesResponse.value?.cancellationSummary ?? null,
   )
 
-  /** Fila de ocupación efectivamente elegida dentro del room type seleccionado. `null` cuando
-   *  no se eligió fila o el backend no mandó la matriz (fallback al precio único del tipo). */
-  const selectedOccupancyRate = computed<RoomOccupancyRate | null>(() => {
-    const occ = selectedOccupancy.value
-    if (occ === null) return null
-    return selectedRoom.value?.occupancies?.find((o) => o.occupancy === occ) ?? null
-  })
+  /** Cantidad total de habitaciones en el carrito (Σ quantity de todas las líneas). Es lo que
+   *  el paso de resumen muestra como "habitaciones a reservar". */
+  const cartTotalRooms = computed(() => cart.value.reduce((s, l) => s + l.quantity, 0))
 
-  /**
-   * Precio del alojamiento que se usa en TODO el resto del flujo (subtotal, promo, impuestos,
-   * total y resumen del paso de pago). Es el de la fila de ocupación elegida; si no hay fila
-   * (backend viejo/caché, o selección de la tarjeta entera) cae a `fromPrice`, que es
-   * exactamente lo que se cobraba antes de existir la matriz.
-   */
-  const selectedRoomPrice = computed(() =>
-    selectedOccupancyRate.value?.price ?? selectedRoom.value?.fromPrice ?? 0,
-  )
+  /** Huéspedes totales que el carrito aloja (Σ occupancy × quantity de cada línea) — lo que el
+   *  paso de resumen muestra como "huéspedes totales". Los niños (`children`, trip-level, sin
+   *  asignar a una habitación específica) NO están incluidos acá — ver nota en `pay()`. */
+  const cartTotalGuests = computed(() => cart.value.reduce((s, l) => s + l.occupancy * l.quantity, 0))
 
-  /** Impuestos del alojamiento elegido. La fila de ocupación trae los suyos calculados sobre
-   *  SU precio; sin fila, los del room type (sobre `fromPrice`). */
-  const selectedRoomTaxes = computed<RoomTypeTaxItem[]>(() =>
-    selectedOccupancyRate.value?.taxBreakdown ?? selectedRoom.value?.taxBreakdown ?? [],
-  )
+  /** Subtotal de TODAS las habitaciones del carrito (antes de upsells/promo/impuestos). */
+  const roomsSubtotal = computed(() => round2(
+    cart.value.reduce((s, l) => s + l.unitPrice * l.quantity, 0),
+  ))
 
-  /**
-   * Huéspedes que se graban como ADULTOS en la reserva.
-   *
-   * Elegir "para 4" es elegir una tarifa para 4 personas: la reserva tiene que salir con esa
-   * ocupación o el hotel recibe 4 huéspedes con una reserva que dice 2. Los niños siguen
-   * viajando aparte (`children`), así que los adultos son la ocupación elegida menos los niños
-   * ya declarados. Sin fila elegida, manda lo que el huésped puso en el buscador.
-   */
-  const bookingAdults = computed(() => {
-    const occ = selectedOccupancy.value
-    if (occ === null) return guests.value
-    return Math.max(1, occ - Math.max(0, children.value))
-  })
+  /** Impuestos "de etiqueta" del carrito (suma de cada línea × su cantidad), ANTES de escalar
+   *  proporcionalmente por promo — ver `estimatedTaxes`, mismo criterio que tenía la versión de
+   *  1 sola habitación, ahora agregado línea por línea. */
+  const roomsTaxesRaw = computed(() => round2(
+    cart.value.reduce((s, l) => s + l.unitTaxBreakdown.reduce((ts, t) => ts + t.amount, 0) * l.quantity, 0),
+  ))
 
-  /** Subtotal room+upsells ANTES de promo e impuestos. Promo se aplica sobre este monto. */
-  const subtotal = computed(() => {
-    const room = selectedRoomPrice.value
-    const ups = upsellsTotal.value
-    return round2(room + ups)
-  })
+  /** Subtotal room(s)+upsells ANTES de promo e impuestos. Promo se aplica sobre este monto. */
+  const subtotal = computed(() => round2(roomsSubtotal.value + upsellsTotal.value))
 
   /** Suma de upsells seleccionados (precio × qty). En `hotels.currency` (chargeCurrency). */
   const upsellsTotal = computed(() => {
@@ -345,15 +344,13 @@ export const useBookingStore = defineStore('booking-widget', () => {
   /** Base imponible (subtotal - promo). Sobre esto caen los impuestos. */
   const taxableBase = computed(() => round2(Math.max(0, subtotal.value - promoDiscount.value)))
 
-  /** Impuestos estimados pre-create: aplicamos la tasa del roomType sobre la base imponible.
-   *  El total DEFINITIVO lo calcula el backend y lo devuelve en `totalBreakdown` tras crear.
-   *  Si hay promo, el backend recalcula impuestos sobre la base ya descontada — coincide. */
+  /** Impuestos estimados pre-create: escala el impuesto "de etiqueta" de las habitaciones del
+   *  carrito a la base imponible real (tras promo). El total DEFINITIVO lo calcula el backend y
+   *  lo devuelve en `totalBreakdown` tras crear. Si hay promo, el backend recalcula impuestos
+   *  sobre la base ya descontada — coincide. */
   const estimatedTaxes = computed(() => {
-    if (!selectedRoom.value) return 0
-    const base = selectedRoomPrice.value
-    return round2(
-      selectedRoomTaxes.value.reduce((sum, t) => sum + taxOnBase(t.amount, base, taxableBase.value), 0),
-    )
+    if (cart.value.length === 0) return 0
+    return round2(taxOnBase(roomsTaxesRaw.value, roomsSubtotal.value, taxableBase.value))
   })
 
   /** Total estimado pre-create. El step Pay muestra esto; el botón confía en `totalBreakdown.total`. */
@@ -387,14 +384,10 @@ export const useBookingStore = defineStore('booking-widget', () => {
     return checkIn.value >= todayLocal
   })
 
-  const roomsValid = computed(() => {
-    if (!selectedRoom.value || selectedRoom.value.availableCount <= 0) return false
-    // Defensa: la UI deshabilita las filas no vendibles, pero si una llegara a seleccionarse
-    // (deep-link, estado viejo tras cambiar fechas) no se puede avanzar a pagar algo que el
-    // hotel no puede entregar.
-    const row = selectedOccupancyRate.value
-    return row === null ? true : row.available
-  })
+  /** Al menos 1 línea en el carrito. La disponibilidad real de cada línea ya se filtra al
+   *  agregarla (`addToCart` solo agrega filas `available`) y se revalida server-side al crear
+   *  la reserva — acá solo hace falta saber si hay algo que reservar. */
+  const roomsValid = computed(() => cart.value.length > 0)
 
   /** Upsells step siempre es válido (selección opcional). */
   const upsellsValid = computed(() => upsellsLoading.value === false)
@@ -461,8 +454,9 @@ export const useBookingStore = defineStore('booking-widget', () => {
       // Llenamos el switcher de monedas: la del cobro (base del hotel) + la última display
       // elegada + un puñado de monedas comunes para turistas. Dedupe + orden estable.
       availableCurrencies.value = buildCurrencyOptions(res.chargeCurrency, res.currency, currencyPreference.value)
-      selectedRoom.value = null
-      selectedOccupancy.value = null
+      // Fechas nuevas invalidan el carrito anterior: precios/disponibilidad de la búsqueda vieja
+      // ya no aplican (mismo criterio que antes con selectedRoom/selectedOccupancy).
+      cart.value = []
       status.value = 'selecting'
     } catch (e) {
       ratesError.value = errMessage(e, 'No pudimos cargar la disponibilidad. Probá de nuevo.')
@@ -497,10 +491,20 @@ export const useBookingStore = defineStore('booking-widget', () => {
         })
         ratesResponse.value = res
         availableCurrencies.value = buildCurrencyOptions(res.chargeCurrency, res.currency, normalized)
-        // Si había un room seleccionado, actualizamos la referencia con la nueva tarifa (mismo id).
-        if (selectedRoom.value) {
-          const updated = res.roomTypes.find((rt) => rt.id === selectedRoom.value!.id)
-          if (updated) selectedRoom.value = updated
+        // Re-sincroniza el precio de CADA línea del carrito con la respuesta en la nueva moneda
+        // (mismo tipo+ocupación, precio convertido). Una línea que ya no aparezca en la nueva
+        // respuesta (caso raro: se vendió justo entre medio) queda con su último precio conocido
+        // — la revalidación real es server-side al pagar, esto es solo display.
+        for (const line of cart.value) {
+          const updated = res.roomTypes.find((rt) => rt.id === line.roomType)
+          const row = updated?.occupancies?.find((o) => o.occupancy === line.occupancy)
+          if (row) {
+            line.unitPrice = row.price
+            line.unitTaxBreakdown = row.taxBreakdown
+          } else if (updated) {
+            line.unitPrice = updated.fromPrice
+            line.unitTaxBreakdown = updated.taxBreakdown
+          }
         }
         status.value = prevStatus
       } catch {
@@ -512,18 +516,46 @@ export const useBookingStore = defineStore('booking-widget', () => {
   }
 
   /**
-   * Step 1: selecciona el room type (opcionalmente con una ocupación concreta de la matriz) y
-   * carga upsells. No avanza — el componente llama a next().
+   * Step 1: agrega una línea al carrito — un tipo de habitación + una ocupación ("para N") + 1
+   * unidad más. Reemplaza al viejo `selectRoom` (Tarea 10, QA 2026-08-20/21): el huésped puede
+   * agregar VARIAS líneas (mismo tipo ×N y/o tipos distintos) antes de continuar — no avanza de
+   * step automáticamente, el componente llama a `next()` cuando el huésped ya armó su selección.
    *
-   * `occupancy` omitido = selección de la tarjeta entera: se cobra `fromPrice` y la reserva sale
-   * con la ocupación que el huésped puso en el buscador (comportamiento previo a la matriz).
+   * Si la MISMA combinación tipo+ocupación ya está en el carrito, suma 1 a su cantidad (tope
+   * `rt.availableCount` — cota de UX; la autoridad real es el backend al crear la reserva,
+   * `createPublicBookingGroup` revalida y devuelve 409 con el máximo real si quedó desactualizado).
+   *
+   * `occupancy` omitido = la tarjeta entera sin fila (fallback cuando el backend no manda
+   * `occupancies`, comportamiento previo a la matriz): se agrega 1 unidad al precio publicado
+   * (`fromPrice`), ocupación efectiva = 1 (no se puede saber cuánta gente sin la fila elegida).
    */
-  async function selectRoom(room: RoomTypeRate, occupancy?: number): Promise<void> {
-    selectedRoom.value = room
-    selectedOccupancy.value =
-      typeof occupancy === 'number' && Number.isFinite(occupancy) && occupancy > 0
-        ? Math.floor(occupancy)
-        : null
+  async function addToCart(room: RoomTypeRate, occupancy?: number): Promise<void> {
+    const occ = typeof occupancy === 'number' && Number.isFinite(occupancy) && occupancy > 0
+      ? Math.floor(occupancy)
+      : null
+    const row = occ !== null ? room.occupancies?.find((o) => o.occupancy === occ) : null
+    // Defensa: no agregar una fila que el backend marcó no vendible (la UI ya la deshabilita —
+    // esto cubre un estado viejo: deep-link, fechas cambiadas sin refrescar la matriz).
+    if (row && !row.available) return
+
+    const unitPrice = row?.price ?? room.fromPrice
+    const unitTaxBreakdown = row?.taxBreakdown ?? room.taxBreakdown
+    // Sin fila de ocupación explícita (fallback sin matriz): la ocupación real sigue siendo la
+    // buscada (`physicalGuests` = adultos + niños), no un default fijo — si no, una búsqueda
+    // "2 adultos, 2 niños" terminaría grabando la reserva para 1 sola persona.
+    const effectiveOccupancy = occ ?? physicalGuests.value
+    const key = cartLineKey(room.id, effectiveOccupancy)
+    const cap = Math.max(1, room.availableCount)
+    const existing = cart.value.find((l) => l.key === key)
+    if (existing) {
+      if (existing.quantity < cap) existing.quantity += 1
+    } else {
+      cart.value.push({
+        key, roomType: room.id, roomName: room.name, occupancy: effectiveOccupancy, quantity: 1,
+        unitPrice, unitTaxBreakdown, maxAvailable: cap, photoUrl: room.photoUrl ?? null,
+      })
+    }
+
     if (upsells.value.length === 0) {
       upsellsLoading.value = true
       try {
@@ -534,6 +566,26 @@ export const useBookingStore = defineStore('booking-widget', () => {
         upsellsLoading.value = false
       }
     }
+  }
+
+  /** Quita una línea entera del carrito (todas sus unidades). */
+  function removeCartLine(key: string): void {
+    cart.value = cart.value.filter((l) => l.key !== key)
+  }
+
+  /** Cambia la cantidad de una línea existente (acotada a 1..maxAvailable). 0 o negativo la
+   *  elimina — mismo resultado que `removeCartLine`, más cómodo desde un stepper "−". */
+  function setCartLineQuantity(key: string, quantity: number): void {
+    const q = Math.floor(quantity)
+    if (q <= 0) { removeCartLine(key); return }
+    const line = cart.value.find((l) => l.key === key)
+    if (!line) return
+    line.quantity = Math.min(line.maxAvailable, q)
+  }
+
+  /** Vacía el carrito (cambio de fechas, o el huésped quiere empezar de nuevo). */
+  function clearCart(): void {
+    cart.value = []
   }
 
   /** Step 2: actualiza la selección de upsells. */
@@ -582,7 +634,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
         void search()
         return
       case 'selecting':
-        if (!selectedRoom.value) return
+        if (cart.value.length === 0) return
         status.value = 'upselling'
         return
       case 'upselling':
@@ -654,8 +706,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
    *  reconstruir la reserva si los placeholders llegan literales a la URL de vuelta. */
   async function pay(): Promise<void> {
     if (isSubmitting.value) return
-    if (!selectedRoom.value) {
-      error.value = 'Seleccioná una habitación primero.'
+    if (cart.value.length === 0) {
+      error.value = 'Agregá al menos una habitación primero.'
       status.value = 'failed'
       return
     }
@@ -675,38 +727,67 @@ export const useBookingStore = defineStore('booking-widget', () => {
       // (backup que dejamos abajo en `storeReservation` ANTES del redirect off-site a Stripe).
       const successUrl = `${base}/h/${slug.value}/confirm?booking=:id&token=:token`
       const cancelUrl = `${base}/book/${slug.value}`
-      const res = await BookingService.createBooking({
-        slug: slug.value,
-        // FIX 2026-07-30 (bug 404 "Habitación no encontrada" en el 100% de los intentos):
-        // `selectedRoom.value.id` NUNCA fue un UUID real de `Rooms` — `public-rates.ts` no
-        // tiene entidad RoomType propia y devuelve `id = roomType` (string libre, ej. "double").
-        // Mandarlo como `roomId` hacía que el backend intentara `findById('Rooms', 'double')`
-        // y siempre fallara. Ahora se manda como `roomType`: el backend elige la unidad física
-        // libre al crear la reserva (ver `createPublicBookingDirect`). NO se manda `roomId`
-        // (quedó opcional en el backend para compat con integradores que sí mandan un id real).
-        roomType: selectedRoom.value.id,
-        checkIn: checkIn.value,
-        checkOut: checkOut.value,
-        // Con una fila de ocupación elegida ("para 4") manda ESA ocupación, no la del buscador:
-        // se cotizó una tarifa para 4 personas, la reserva tiene que decir 4. Ver `bookingAdults`.
-        adults: bookingAdults.value,
-        // `children` viaja APARTE de `adults` (ExtendedPublicBookingSchema lo acepta). Solo se
-        // manda si hay: mantiene el body del widget idéntico al de antes cuando no hay niños.
-        ...(children.value > 0 ? { children: children.value } : {}),
-        guest: {
-          name: guest.value.name.trim(),
-          email: guest.value.email.trim(),
-          phone: guest.value.phone.trim(),
-          notes: guest.value.notes.trim() || undefined,
-        },
-        ...(promoResult.value?.valid && promoCode.value
-          ? { promoCode: promoResult.value.code ?? promoCode.value.trim().toUpperCase() }
-          : {}),
-        ...(selectedUpsells.value.length > 0 ? { upsells: selectedUpsells.value } : {}),
-        successUrl,
-        cancelUrl,
-        idempotencyKey: idempotencyKey.value,
-      })
+      const guestPayload = {
+        name: guest.value.name.trim(),
+        email: guest.value.email.trim(),
+        phone: guest.value.phone.trim(),
+        notes: guest.value.notes.trim() || undefined,
+      }
+      const promoPayload = promoResult.value?.valid && promoCode.value
+        ? { promoCode: promoResult.value.code ?? promoCode.value.trim().toUpperCase() }
+        : {}
+      const upsellsPayload = selectedUpsells.value.length > 0 ? { upsells: selectedUpsells.value } : {}
+
+      // Tarea 10 (QA 2026-08-20/21) — 1 sola línea × 1 unidad usa el endpoint de SIEMPRE
+      // (`POST /api/public/booking`, sin crear una fila de Grupo innecesaria para el caso común).
+      // Carrito con más de 1 unidad (mismo tipo ×N y/o tipos combinados) usa el endpoint de grupo.
+      let res: CreateBookingResponse
+      if (cart.value.length === 1 && cart.value[0]!.quantity === 1) {
+        const line = cart.value[0]!
+        res = await BookingService.createBooking({
+          slug: slug.value,
+          // FIX 2026-07-30 (bug 404 "Habitación no encontrada" en el 100% de los intentos):
+          // `roomType` (no `roomId`) porque `public-rates.ts` no tiene entidad RoomType propia
+          // — el backend elige la unidad física libre al crear la reserva.
+          roomType: line.roomType,
+          checkIn: checkIn.value,
+          checkOut: checkOut.value,
+          // Ocupación elegida ("para 4") menos los niños ya declarados aparte — se cotizó una
+          // tarifa para 4 personas, la reserva tiene que decir eso.
+          adults: Math.max(1, line.occupancy - Math.max(0, children.value)),
+          ...(children.value > 0 ? { children: children.value } : {}),
+          guest: guestPayload,
+          ...promoPayload,
+          ...upsellsPayload,
+          successUrl,
+          cancelUrl,
+          idempotencyKey: idempotencyKey.value,
+        })
+      } else {
+        // NOTA — niños en reservas de grupo: `children` es un contador de TODO el viaje, sin
+        // asignar a una habitación específica (el widget nunca lo hizo, ni en el flujo de 1 sola
+        // habitación se "reparte" — ahí se restaba de la ÚNICA ocupación elegida). Con varias
+        // habitaciones no hay forma de saber en cuál duermen, así que NO se restan de ninguna
+        // línea ni se mandan al backend: cada línea manda `adults: line.occupancy` tal cual. Es
+        // una limitación conocida (no un bug) — asignar niños a una habitación puntual del grupo
+        // es una decisión de producto aparte, no resuelta acá.
+        res = await BookingService.createBookingGroup({
+          slug: slug.value,
+          checkIn: checkIn.value,
+          checkOut: checkOut.value,
+          rooms: cart.value.map((l) => ({
+            roomType: l.roomType,
+            adults: l.occupancy,
+            quantity: l.quantity,
+          })),
+          guest: guestPayload,
+          ...promoPayload,
+          ...upsellsPayload,
+          successUrl,
+          cancelUrl,
+          idempotencyKey: idempotencyKey.value,
+        })
+      }
       reservation.value = res
       storeReservation(slug.value, {
         reservationId: res.reservationId,
@@ -748,14 +829,15 @@ export const useBookingStore = defineStore('booking-widget', () => {
   function reset(): void {
     checkIn.value = ''
     checkOut.value = ''
-    guests.value = 2
+    // Default 1 (2026-08-20, ver comentario en la declaración de `guests` arriba) — reset()
+    // tiene que volver al MISMO default que el store arranca, no al viejo valor de 2.
+    guests.value = 1
     children.value = 0
     rooms.value = 1
     ratesResponse.value = null
     ratesLoading.value = false
     ratesError.value = null
-    selectedRoom.value = null
-    selectedOccupancy.value = null
+    cart.value = []
     upsells.value = []
     upsellsLoading.value = false
     selectedUpsells.value = []
@@ -783,8 +865,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     ratesResponse,
     ratesLoading,
     ratesError,
-    selectedRoom,
-    selectedOccupancy,
+    cart,
     upsells,
     upsellsLoading,
     selectedUpsells,
@@ -808,10 +889,9 @@ export const useBookingStore = defineStore('booking-widget', () => {
     nights,
     cancellationPolicy,
     cancellationSummary,
-    selectedOccupancyRate,
-    selectedRoomPrice,
-    selectedRoomTaxes,
-    bookingAdults,
+    cartTotalRooms,
+    cartTotalGuests,
+    roomsSubtotal,
     subtotal,
     upsellsTotal,
     promoDiscount,
@@ -827,7 +907,10 @@ export const useBookingStore = defineStore('booking-widget', () => {
     // actions
     init,
     search,
-    selectRoom,
+    addToCart,
+    removeCartLine,
+    setCartLineQuantity,
+    clearCart,
     setSelectedUpsells,
     setGuest,
     applyPromo,

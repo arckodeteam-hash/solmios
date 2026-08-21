@@ -21,6 +21,9 @@ const ICONS: Record<string, Node[]> = {
   bell: [['path', { d: 'M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9' }], ['path', { d: 'M13.7 21a2 2 0 01-3.4 0' }]],
   trash: [['path', { d: 'M4 7h16M10 11v6M14 11v6M6 7l1 13a2 2 0 002 2h6a2 2 0 002-2l1-13M9 7V4h6v3' }]],
   user: [['circle', { cx: 12, cy: 8, r: 4 }], ['path', { d: 'M4 21a8 8 0 0116 0' }]],
+  // Dos personas — ocupación de más de 1 huésped (selector de "para N", carrito de reserva).
+  users: [['circle', { cx: 9, cy: 8, r: 3.5 }], ['path', { d: 'M2.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5' }], ['path', { d: 'M16.5 5.2a3.5 3.5 0 010 6.6M18 13.9c2.1.8 3.5 2.8 3.5 5.1' }]],
+  bolt: [['path', { d: 'M13 2L4 14h6l-1 8 9-12h-6l1-8z' }]],
   alert: [['path', { d: 'M10.3 3.9L2 18a2 2 0 001.7 3h16.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z' }], ['path', { d: 'M12 9v4M12 17h.01' }]],
   globe: [['circle', { cx: 12, cy: 12, r: 9 }], ['path', { d: 'M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18' }]],
   card: [['rect', { x: 3, y: 5, width: 18, height: 14, rx: 2 }], ['path', { d: 'M3 10h18' }]],

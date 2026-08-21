@@ -159,4 +159,45 @@ describe('createPublicBookingDirect — resolución de habitación por roomType 
     expect(res.status).toBe(400)
     expect(res.body.error).toContain('roomId o roomType')
   })
+
+  // ─── Capacidad física (defensa en profundidad — la matriz de /rates ya deshabilita esto en
+  // la UI, pero un POST directo no pasa por ahí, ver comentario del fix en public-booking.ts) ──
+  it('(f) roomType con TODAS las unidades sin capacidad para adults+children → 409, no crea nada', async () => {
+    const { orm, created } = makeOrm({
+      rooms: [{ id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, capacity: 2, status: 'available' }],
+    })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double', adults: 3, children: 1 })
+    expect(res.status).toBe(409)
+    expect(created.find((c) => c.model === 'Reservations')).toBeUndefined()
+  })
+
+  it('(f2) roomType con capacidad MIXTA → salta la más barata que no entra y elige la que sí', async () => {
+    const { orm } = makeOrm({
+      rooms: [
+        { id: 'r-cheap-chica', hotelId: 'h1', type: 'familiar', basePrice: 80, capacity: 2, status: 'available' },
+        { id: 'r-grande', hotelId: 'h1', type: 'familiar', basePrice: 120, capacity: 4, status: 'available' },
+      ],
+    })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'familiar', adults: 4, children: 0 })
+    expect(res.status).toBe(201)
+    expect(res.body.reservation.roomId).toBe('r-grande')
+  })
+
+  it('(f3) roomId explícito (path de compat) también respeta la capacidad — 409, no crea nada', async () => {
+    const { orm, created } = makeOrm({
+      rooms: [{ id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, capacity: 2, status: 'available' }],
+    })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomId: 'r1', adults: 5, children: 0 })
+    expect(res.status).toBe(409)
+    expect(res.body.error).toContain('admite hasta 2')
+    expect(created.find((c) => c.model === 'Reservations')).toBeUndefined()
+  })
+
+  it('(f4) sin `capacity` en la fila (dato viejo/incompleto) no bloquea — mismo criterio que availability.ts', async () => {
+    const { orm } = makeOrm({
+      rooms: [{ id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' }],
+    })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double', adults: 6, children: 0 })
+    expect(res.status).toBe(201)
+  })
 })

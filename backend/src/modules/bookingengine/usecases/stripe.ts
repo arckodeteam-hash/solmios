@@ -59,6 +59,10 @@ interface ReservationRow {
    * `booking-confirmation.vue` pueda leer la reserva sin depender de sessionStorage.
    */
   accessToken?: string
+  /** Tarea 10 (QA 2026-08-20/21) — reservas de grupo (`createPublicBookingGroup`): todas las
+   *  habitaciones del mismo pedido comparten este id, apuntando a `Groups`. `undefined` en una
+   *  reserva de 1 habitación (flujo normal, sin grupo). */
+  groupId?: string
 }
 
 interface HotelRow {
@@ -217,6 +221,26 @@ export class StripeUseCase {
             pendingAmount: 0,
           } as any)
           this.logger.info(`Reserva ${reservationId} confirmada por pago (hotel ${hotelId})`)
+
+          // Tarea 10 (QA 2026-08-20/21) — reserva de GRUPO (varias habitaciones, 1 solo cobro):
+          // la Checkout Session se abre sobre la reserva LÍDER por el total combinado
+          // (`createPublicBookingGroup`), pero el grupo entero tiene que confirmarse junto, no
+          // solo la líder — si no, el huésped paga por 3 habitaciones y solo 1 queda `confirmed`,
+          // las otras 2 se quedan `pending` para siempre. Cascada a las hermanas del mismo
+          // `groupId` (filtrado también por `hotelId`, mismo criterio de ownership que arriba).
+          if (reservation.groupId) {
+            const siblings = (await this.reservationsRepo.findMany({ hotelId, groupId: reservation.groupId })) as any[]
+            for (const sib of siblings) {
+              if (sib.id === reservationId) continue
+              await this.reservationsRepo.update(sib.id, {
+                status: 'confirmed',
+                depositStatus: 'paid',
+                paymentMethod: 'card',
+                pendingAmount: 0,
+              } as any)
+            }
+            this.logger.info(`Grupo ${reservation.groupId}: ${siblings.length} reserva(s) confirmada(s) por el mismo pago (hotel ${hotelId})`)
+          }
         },
       )
       if (result.outcome === 'duplicate') return { type: 'already_processed', reservationId }

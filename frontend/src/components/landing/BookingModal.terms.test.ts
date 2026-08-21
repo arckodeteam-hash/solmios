@@ -116,7 +116,7 @@ async function openAtRoomsStep(summary: CancellationSummary | null) {
   await flushPromises()
 
   const store = useBookingStore()
-  await store.selectRoom(store.ratesResponse!.roomTypes[0]!)
+  await store.addToCart(store.ratesResponse!.roomTypes[0]!)
   await flushPromises()
   return store
 }

@@ -249,6 +249,13 @@ export async function createPublicBookingDirect(
   const blockedIds = blockedRoomIds(rawBlocks ?? [], stayNightDates)
   const closedTypes = closedRoomTypes(rawRates ?? [], rawAssignments ?? [], stayNightDates, Number(adults) || 2)
 
+  // Ocupación FÍSICA total (adultos + niños): la matriz de `/rates` deshabilita `over_capacity`
+  // contra este mismo número (`occupancy-matrix.ts`). La UI ya no deja elegir una fila que no
+  // entra, pero un POST directo (integrador, replay, o `roomId` explícito que se salta la
+  // resolución por tipo) nunca pasaba por esa matriz — sin este número acá se podía crear una
+  // reserva de 6 huéspedes en una habitación para 2.
+  const totalGuests = Math.max(1, (Number(adults) || 1) + Math.max(0, Number(kids) || 0))
+
   // ─── Resolución de la habitación (FIX 2026-07-30, ver cabecera del archivo) ────────
   // 1) `roomId` real (compat callers viejos): si resuelve a una fila de `Rooms`, se usa tal
   //    cual — comportamiento intacto.
@@ -272,19 +279,30 @@ export async function createPublicBookingDirect(
     )
     // Criterio de selección entre las libres: menor `basePrice` primero (determinístico y
     // favorece al huésped — misma tarifa que se le cotizó en `public-rates.ts`, que también
-    // usa el precio más bajo del type).
+    // usa el precio más bajo del type). Capacidad ANTES que precio: dentro del mismo tipo puede
+    // haber unidades de capacidad distinta (`public-rates-occupancy-integrity.test.ts` cubre un
+    // tipo "familiar" con unidades de capacidad 2 y 4 a la vez).
     const freeOfType = availableOfType
       // `room_blocks` descuenta unidades igual que una reserva: la habitación puede no tener
       // reservas y aun así estar cerrada por mantenimiento para ese rango.
       .filter((r: any) => !busyRoomIds.has(r.id) && !blockedIds.has(r.id))
+      .filter((r: any) => Number(r.capacity ?? totalGuests) >= totalGuests)
       .sort((a: any, b: any) => (Number(a.basePrice) || 0) - (Number(b.basePrice) || 0))
     if (freeOfType.length === 0) {
-      // El tipo existe pero no hay unidades libres para esas fechas — 409, no 404.
+      // El tipo existe pero no hay unidades libres (o con capacidad suficiente) para esas
+      // fechas — 409, no 404.
       return { status: 409, body: { error: 'No hay habitaciones de este tipo disponibles para esas fechas' } }
     }
     room = freeOfType[0]
   }
   const resolvedRoomId: string = room.id
+
+  // Red de seguridad final: cubre el path de `roomId` explícito (arriba nunca filtró por
+  // capacidad porque no pasa por la resolución de `roomType`) y actúa como defensa en
+  // profundidad del filtro de arriba.
+  if (Number(room.capacity ?? totalGuests) < totalGuests) {
+    return { status: 409, body: { error: `Esta habitación admite hasta ${room.capacity ?? totalGuests} huésped(es); pediste ${totalGuests}` } }
+  }
 
   // No hay usuario: el motor es público. La habitación tiene que ser del hotel del formulario.
   // Iba `assertOwnership(room, { hotelId })` — dos objetos, `===` siempre false: toda reserva daba 403.

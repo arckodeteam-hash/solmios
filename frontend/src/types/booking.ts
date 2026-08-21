@@ -80,6 +80,37 @@ export interface CreateBookingResponse {
   paymentError?: string
 }
 
+// ─── POST /api/public/booking/group (Tarea 10, QA 2026-08-20/21) ──────────────────────────
+// Varias habitaciones (mismo tipo ×N y/o tipos distintos combinados) en una sola reserva.
+// Espejo de `bookingengine/usecases/public-booking-group.ts` (backend). La respuesta usa el
+// MISMO shape que `CreateBookingResponse` — el backend devuelve `reservationId`/`accessToken`
+// de la reserva LÍDER (sobre la que se abrió la única Checkout Session por el total combinado).
+
+/** Una línea del carrito: un tipo de habitación, una ocupación, N unidades. */
+export interface CreateBookingRoomLine {
+  roomType: string
+  /** Ocupación de ESTA línea (el "para N" elegido en la matriz de ese tipo). */
+  adults: number
+  /** Niños: NO se asignan a una línea específica (el widget no sabe en qué habitación duermen)
+   *  — queda como límite conocido, no como bug. Ver `useBooking.ts:pay()`. */
+  children?: number
+  /** Unidades de este tipo+ocupación a reservar (ej. "Deluxe × 2" → quantity: 2). */
+  quantity: number
+}
+
+export interface CreateBookingGroupDTO {
+  slug: string
+  checkIn: string
+  checkOut: string
+  rooms: CreateBookingRoomLine[]
+  guest: CreateBookingGuest
+  promoCode?: string
+  upsells?: CreateBookingUpsell[]
+  successUrl?: string
+  cancelUrl?: string
+  idempotencyKey?: string
+}
+
 // ─── F2 2.8-2.10 Widget SPA — tipos de soporte ─────────────────────────────
 // Espejos de los usecases `public-rates.ts`, `public-upsells.ts`, `promo-validate.ts` y del
 // `totalBreakdown` que devuelve `createPublicBookingDirect`. El widget los consume vía

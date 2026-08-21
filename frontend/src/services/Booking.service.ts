@@ -23,6 +23,7 @@ import { PublicHotelService } from './PublicHotel.service'
 import { clampSpan, MAX_CALENDAR_DAYS } from '@/utils/rate-calendar'
 import type {
   CreateBookingDTO,
+  CreateBookingGroupDTO,
   CreateBookingResponse,
   CancelReservationResponse,
   PublicCalendarQuery,
@@ -51,6 +52,16 @@ function build(qs: Record<string, string | number | undefined>): string {
 interface RawCreateBookingResponse {
   reservation: { id: string; accessToken: string; [k: string]: unknown }
   guest: unknown
+  checkoutUrl: string | null
+  totalBreakdown: TotalBreakdown
+  paymentError?: string
+}
+
+/** Respuesta cruda de `POST /api/public/booking/group` (`createPublicBookingGroup`) — YA plana
+ *  (a diferencia de la de arriba), más `group`/`reservations`/`guest` que este service ignora. */
+interface RawCreateBookingGroupResponse {
+  reservationId: string
+  accessToken: string
   checkoutUrl: string | null
   totalBreakdown: TotalBreakdown
   paymentError?: string
@@ -99,6 +110,46 @@ export const BookingService = {
     const response: CreateBookingResponse = {
       reservationId: raw.reservation.id,
       accessToken: raw.reservation.accessToken,
+      checkoutUrl: raw.checkoutUrl,
+      totalBreakdown: raw.totalBreakdown,
+    }
+    if (raw.paymentError) response.paymentError = raw.paymentError
+    return response
+  },
+
+  /**
+   * Tarea 10 (QA 2026-08-20/21) — reserva de VARIAS habitaciones (mismo tipo ×N y/o tipos
+   * distintos combinados) en una sola operación. Mismo criterio que `createBooking`: resuelve
+   * slug→hotelId, aplana `guest`, postea a `POST /api/public/booking/group`.
+   *
+   * A diferencia de `createBooking`, el backend YA devuelve la respuesta plana
+   * (`{reservationId, accessToken, checkoutUrl, totalBreakdown, paymentError?}`, más `group`/
+   * `reservations`/`guest` que este service no necesita) — no hay que desanidar `reservation.id`.
+   * `reservationId`/`accessToken` son los de la reserva LÍDER: la única sobre la que se abrió
+   * la Checkout Session, por el total combinado del grupo.
+   */
+  async createBookingGroup(dto: CreateBookingGroupDTO): Promise<CreateBookingResponse> {
+    const hotel = await PublicHotelService.getBySlug(dto.slug)
+    const body: Record<string, unknown> = {
+      hotelId: hotel.id,
+      checkIn: dto.checkIn,
+      checkOut: dto.checkOut,
+      rooms: dto.rooms,
+      guestName: dto.guest.name,
+      guestEmail: dto.guest.email,
+      guestPhone: dto.guest.phone,
+    }
+    if (dto.guest.notes) body.notes = dto.guest.notes
+    if (dto.promoCode) body.promoCode = dto.promoCode
+    if (dto.upsells && dto.upsells.length > 0) body.upsells = dto.upsells
+    if (dto.successUrl) body.successUrl = dto.successUrl
+    if (dto.cancelUrl) body.cancelUrl = dto.cancelUrl
+    if (dto.idempotencyKey) body.idempotencyKey = dto.idempotencyKey
+
+    const raw = await http.post<RawCreateBookingGroupResponse>('/public/booking/group', body)
+    const response: CreateBookingResponse = {
+      reservationId: raw.reservationId,
+      accessToken: raw.accessToken,
       checkoutUrl: raw.checkoutUrl,
       totalBreakdown: raw.totalBreakdown,
     }

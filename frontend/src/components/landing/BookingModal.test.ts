@@ -148,7 +148,7 @@ describe('BookingModal', () => {
     await open({ ...FROM_HERO, roomTypeId: 'suite' })
 
     const store = useBookingStore()
-    expect(store.selectedRoom?.id).toBe('suite')
+    expect(store.cart[0]?.roomType).toBe('suite')
     // Y el botón de continuar queda habilitado: no hay que re-elegir lo que ya se clickeó.
     expect(store.roomsValid).toBe(true)
   })
@@ -157,7 +157,7 @@ describe('BookingModal', () => {
     await open({ ...FROM_HERO, roomTypeId: 'villa-inexistente' })
 
     const store = useBookingStore()
-    expect(store.selectedRoom).toBeNull()
+    expect(store.cart).toHaveLength(0)
     expect(store.status).toBe('selecting')
     expect(modalText()).toContain('Elegí tu habitación')
   })
@@ -178,7 +178,7 @@ describe('BookingModal', () => {
       totalBreakdown: { subtotal: 300, promoDiscount: 0, upsellsTotal: 0, taxes: 54, total: 354 },
       paymentError: 'stripe no configurado',
     })
-    await store.selectRoom(ratesResponse().roomTypes[0]!)
+    await store.addToCart(ratesResponse().roomTypes[0]!)
     store.setGuest({ name: 'Ana Pérez', email: 'ana@example.com', phone: '8095550000' })
     await store.pay()
 
@@ -196,7 +196,7 @@ describe('BookingModal', () => {
       reservationId: 'r1', accessToken: 't1', checkoutUrl: null,
       totalBreakdown: { subtotal: 300, promoDiscount: 0, upsellsTotal: 0, taxes: 54, total: 354 },
     })
-    await store.selectRoom(ratesResponse().roomTypes[0]!)
+    await store.addToCart(ratesResponse().roomTypes[0]!)
     store.setGuest({ name: 'Ana Pérez', email: 'ana@example.com', phone: '8095550000' })
     await store.pay()
 

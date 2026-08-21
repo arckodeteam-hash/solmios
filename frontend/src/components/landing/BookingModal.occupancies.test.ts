@@ -94,12 +94,19 @@ function ratesResponse(withMatrix: boolean): PublicRatesResponse {
 }
 
 /** El panel vive teletransportado en <body> (AppModal), no dentro del wrapper. */
-function row(occupancy: number): HTMLButtonElement | null {
-  return document.body.querySelector<HTMLButtonElement>(`button[data-occupancy="${occupancy}"]`)
+function row(occupancy: number): HTMLElement | null {
+  return document.body.querySelector<HTMLElement>(`[data-occupancy="${occupancy}"]`)
 }
 
-function rows(): HTMLButtonElement[] {
-  return Array.from(document.body.querySelectorAll<HTMLButtonElement>('button[data-occupancy]'))
+function rows(): HTMLElement[] {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('[data-occupancy]'))
+}
+
+/** Click en el "+" (Stepper) de una fila de ocupación disponible. El Stepper (Stepper.vue)
+ *  renderiza exactamente 2 botones por fila (−, +): el "+" es siempre el último. */
+function addRow(occupancy: number): void {
+  const buttons = row(occupancy)!.querySelectorAll<HTMLButtonElement>('button')
+  buttons[buttons.length - 1]!.click()
 }
 
 let wrapper: VueWrapper | null = null
@@ -175,14 +182,11 @@ describe('BookingModal — matriz de ocupaciones', () => {
 
       const el = row(r.occupancy)
       expect(el).toBeTruthy()                       // aparece, no se oculta
-      expect(el!.disabled).toBe(true)               // pero no se puede elegir
+      expect(el!.querySelector('button')).toBeNull() // sin control: no se puede agregar al carrito
       expect(el!.textContent).toContain(r.texto)    // y dice POR QUÉ, en español
       expect(el!.textContent).not.toMatch(/no_rate|no_availability|stop_sell|over_capacity/)
 
-      el!.click()
-      await flushPromises()
-      expect(store.selectedRoom).toBeNull()
-      expect(store.selectedOccupancy).toBeNull()
+      expect(store.cart).toHaveLength(0)
     })
   }
 
@@ -197,7 +201,7 @@ describe('BookingModal — matriz de ocupaciones', () => {
 
     await open()
 
-    expect(row(4)!.disabled).toBe(true)
+    expect(row(4)!.querySelector('button')).toBeNull()
     expect(row(4)!.textContent).toContain('Sin disponibilidad en estas fechas')
   })
 
@@ -205,12 +209,13 @@ describe('BookingModal — matriz de ocupaciones', () => {
     await open({ ...FROM_HERO, adults: 2, children: 0 })
     const store = useBookingStore()
 
-    row(4)!.click()
+    addRow(4)
     await flushPromises()
 
-    expect(store.selectedOccupancy).toBe(4)
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.occupancy).toBe(4)
     // El precio del flujo es el de la fila (480), NO el `fromPrice` del tipo (210).
-    expect(store.selectedRoomPrice).toBe(480)
+    expect(store.roomsSubtotal).toBe(480)
     expect(store.subtotal).toBe(480)
     expect(store.estimatedTaxes).toBe(86.4)
     expect(store.estimatedTotal).toBe(566.4)
@@ -242,7 +247,7 @@ describe('BookingModal — matriz de ocupaciones', () => {
     await open({ ...FROM_HERO, adults: 2, children: 2 })
     const store = useBookingStore()
 
-    row(4)!.click()
+    addRow(4)
     await flushPromises()
 
     vi.mocked(BookingService.createBooking).mockResolvedValue({
@@ -281,16 +286,23 @@ describe('BookingModal — matriz de ocupaciones', () => {
     const store = useBookingStore()
 
     expect(rows()).toHaveLength(0)
-    const choose = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-      .find((b) => b.textContent?.trim() === 'Elegir')
+    // Sin matriz, la fila fallback es un stepper rotulado "Cantidad" (sin texto "Agregar").
+    const label = Array.from(document.body.querySelectorAll('span'))
+      .find((s) => s.textContent?.trim() === 'Cantidad')
+    expect(label).toBeTruthy()
+    const buttons = label!.parentElement!.querySelectorAll<HTMLButtonElement>('button')
+    const choose = buttons[buttons.length - 1]
     expect(choose).toBeTruthy()
 
     choose!.click()
     await flushPromises()
 
-    expect(store.selectedRoom?.id).toBe('familiar')
-    expect(store.selectedOccupancy).toBeNull()
-    expect(store.selectedRoomPrice).toBe(210) // fromPrice, exactamente como antes
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.roomType).toBe('familiar')
+    // Sin fila de ocupación (fallback), la ocupación real sigue siendo la buscada (FROM_HERO:
+    // 2 adultos), no un default fijo — ver el fix de `addToCart` en useBooking.ts.
+    expect(store.cart[0]!.occupancy).toBe(2)
+    expect(store.roomsSubtotal).toBe(210) // fromPrice, exactamente como antes
     expect(store.roomsValid).toBe(true)
   })
 })

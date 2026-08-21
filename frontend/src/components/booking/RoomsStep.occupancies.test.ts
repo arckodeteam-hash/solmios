@@ -7,8 +7,9 @@
 //   2. La ocupación que el hotel NO puede vender aparece DESHABILITADA Y CON EL MOTIVO, nunca
 //      oculta. Regla explícita del dueño: "la que no esté, entonces debe aparecer pero
 //      desactivada". Ocultarla es indistinguible de "este hotel no ofrece habitaciones para 4".
-//   3. Elegir una fila propaga ESA ocupación y ESE precio al resto del flujo. Sin esto, elegir
-//      "para 4" cobraría la tarifa de 1 persona.
+//   3. Agregar una fila al carrito propaga ESA ocupación y ESE precio al resto del flujo (Tarea
+//      10: el carrito reemplazó la selección única para poder combinar filas/tipos distintos).
+//      Sin esto, agregar "para 4" cobraría la tarifa de 1 persona.
 //   4. Sin `occupancies` (backend viejo o respuesta cacheada en CDN) el paso sigue funcionando
 //      con el precio único de antes. El campo es opcional a propósito.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -71,6 +72,13 @@ function render(withMatrix = true, locale: BookingLocale = 'es'): VueWrapper {
   return mount(RoomsStep)
 }
 
+/** Click en el "+" (Stepper) de una fila de ocupación disponible. El Stepper (Stepper.vue)
+ *  renderiza exactamente 2 botones por fila (−, +): el "+" es siempre el último. */
+async function addRow(w: VueWrapper, occupancy: number): Promise<void> {
+  const buttons = w.get(`[data-occupancy="${occupancy}"]`).findAll('button')
+  await buttons[buttons.length - 1]!.trigger('click')
+}
+
 describe('RoomsStep — matriz de ocupaciones', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -79,13 +87,13 @@ describe('RoomsStep — matriz de ocupaciones', () => {
   it('despliega una fila por ocupación, incluidas las NO vendibles', () => {
     const w = render()
 
-    const rows = w.findAll('button[data-occupancy]')
+    const rows = w.findAll('[data-occupancy]')
     expect(rows).toHaveLength(6)
     expect(rows.map((r) => r.attributes('data-occupancy'))).toEqual(['1', '2', '3', '4', '5', '6'])
 
     // Y cada una rotulada "para N", como la competencia.
     for (const n of [1, 2, 3, 4, 5, 6]) {
-      expect(w.get(`button[data-occupancy="${n}"]`).text()).toContain(`para ${n}`)
+      expect(w.get(`[data-occupancy="${n}"]`).text()).toContain(`para ${n}`)
     }
     w.unmount()
   })
@@ -93,7 +101,7 @@ describe('RoomsStep — matriz de ocupaciones', () => {
   it('la fila vendible muestra su precio total y el precio por noche', () => {
     const w = render()
 
-    const row = w.get('button[data-occupancy="2"]')
+    const row = w.get('[data-occupancy="2"]')
     expect(row.text()).toContain('300')
     expect(row.text()).toContain('100')
     expect(row.text()).toContain('noche')
@@ -115,35 +123,32 @@ describe('RoomsStep — matriz de ocupaciones', () => {
       const store = useBookingStore()
 
       // Aparece (no se oculta): `find` devuelve el wrapper vacío si la fila no se renderizó.
-      const row = w.find(`button[data-occupancy="${r.occupancy}"]`)
+      const row = w.find(`[data-occupancy="${r.occupancy}"]`)
       expect(row.exists()).toBe(true)
-      // … deshabilitada …
-      expect(row.attributes('disabled')).toBeDefined()
+      // … sin control de agregar (no se puede sumar al carrito lo que no se vende) …
+      expect(row.find('button').exists()).toBe(false)
       // … y con el motivo traducido, no un código crudo.
       expect(row.text()).toContain(r.texto)
       expect(row.text()).not.toMatch(/no_rate|no_availability|stop_sell|over_capacity/)
 
-      // Clickearla no selecciona nada ni avanza de paso.
-      await row.trigger('click')
-      expect(store.selectedRoom).toBeNull()
-      expect(store.selectedOccupancy).toBeNull()
       w.unmount()
     })
   }
 
-  it('elegir una fila propaga ESA ocupación y ESE precio al resto del flujo', async () => {
+  it('agregar una fila propaga ESA ocupación y ESE precio al resto del flujo', async () => {
     const w = render()
     const store = useBookingStore()
 
-    await w.get('button[data-occupancy="2"]').trigger('click')
+    await addRow(w, 2)
 
-    expect(store.selectedRoom?.id).toBe('familiar')
-    expect(store.selectedOccupancy).toBe(2)
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.roomType).toBe('familiar')
+    expect(store.cart[0]!.occupancy).toBe(2)
     // El precio del flujo es el de la fila, NO el `fromPrice` (210) del tipo.
-    expect(store.selectedRoomPrice).toBe(300)
+    expect(store.roomsSubtotal).toBe(300)
     expect(store.subtotal).toBe(300)
     // Y la reserva se grabaría con la ocupación elegida, no con la del buscador.
-    expect(store.bookingAdults).toBe(2)
+    expect(store.cartTotalGuests).toBe(2)
     // Impuestos de la fila elegida (18% de 300), no los del tipo (37.8 sobre fromPrice).
     expect(store.estimatedTaxes).toBe(54)
     expect(store.estimatedTotal).toBe(354)
@@ -151,15 +156,17 @@ describe('RoomsStep — matriz de ocupaciones', () => {
     w.unmount()
   })
 
-  it('elegir "para 4" cuesta distinto que "para 1" (el precio sigue a la fila)', async () => {
+  it('cada ocupación agregada mantiene SU propio precio (no se mezcla con otras filas)', async () => {
     const w = render()
     const store = useBookingStore()
 
-    await w.get('button[data-occupancy="1"]').trigger('click')
-    expect(store.selectedRoomPrice).toBe(210)
+    await addRow(w, 1)
+    expect(store.cart.find((l) => l.occupancy === 1)?.unitPrice).toBe(210)
 
-    await w.get('button[data-occupancy="2"]').trigger('click')
-    expect(store.selectedRoomPrice).toBe(300)
+    await addRow(w, 2)
+    expect(store.cart.find((l) => l.occupancy === 2)?.unitPrice).toBe(300)
+    // Combinar ambas filas en la misma reserva (Tarea 10) suma los dos subtotales.
+    expect(store.roomsSubtotal).toBe(510)
     w.unmount()
   })
 
@@ -181,15 +188,15 @@ describe('RoomsStep — matriz de ocupaciones', () => {
 
   it('[en] traduce los motivos de no-disponibilidad', () => {
     const w = render(true, 'en')
-    expect(w.get('button[data-occupancy="3"]').text()).toContain('No rate for this occupancy')
-    expect(w.get('button[data-occupancy="5"]').text()).toContain('Closed for sale')
+    expect(w.get('[data-occupancy="3"]').text()).toContain('No rate for this occupancy')
+    expect(w.get('[data-occupancy="5"]').text()).toContain('Closed for sale')
     w.unmount()
   })
 
   it('[pt] traduce los motivos de no-disponibilidad', () => {
     const w = render(true, 'pt')
-    expect(w.get('button[data-occupancy="3"]').text()).toContain('Sem tarifa para esta ocupação')
-    expect(w.get('button[data-occupancy="5"]').text()).toContain('Fechada para venda')
+    expect(w.get('[data-occupancy="3"]').text()).toContain('Sem tarifa para esta ocupação')
+    expect(w.get('[data-occupancy="5"]').text()).toContain('Fechada para venda')
     w.unmount()
   })
 
@@ -197,17 +204,19 @@ describe('RoomsStep — matriz de ocupaciones', () => {
     const w = render(false)
     const store = useBookingStore()
 
-    // Sin matriz no hay filas, pero la habitación se sigue pudiendo elegir.
-    expect(w.findAll('button[data-occupancy]')).toHaveLength(0)
+    // Sin matriz no hay filas, pero la habitación se sigue pudiendo agregar (stepper "Cantidad").
+    expect(w.findAll('[data-occupancy]')).toHaveLength(0)
     expect(w.text()).toContain('Familiar')
 
-    const choose = w.findAll('button').find((b) => b.text().trim() === 'Elegir')
-    expect(choose).toBeTruthy()
-    await choose!.trigger('click')
+    const buttons = w.findAll('button')
+    const add = buttons[buttons.length - 1]
+    expect(add).toBeTruthy()
+    await add!.trigger('click')
 
-    expect(store.selectedRoom?.id).toBe('familiar')
-    expect(store.selectedOccupancy).toBeNull()
-    expect(store.selectedRoomPrice).toBe(210) // fromPrice, exactamente como antes
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.roomType).toBe('familiar')
+    expect(store.cart[0]!.occupancy).toBe(1)
+    expect(store.roomsSubtotal).toBe(210) // fromPrice, exactamente como antes
     expect(store.roomsValid).toBe(true)
     w.unmount()
   })
@@ -215,7 +224,7 @@ describe('RoomsStep — matriz de ocupaciones', () => {
   // ─── Ocupaciones de IGUAL precio: el grupo (bug del dueño 2026-08-17) ─────────────────────
   // El hotel cargó UNA tarifa por tipo: "para 1 $390 · para 2 $390 · para 3 $390" leía como
   // bug. La corrida de iguales se colapsa: el número se pinta UNA vez y las opciones siguen
-  // siendo clickeables — la ELECCIÓN nunca se deduplica, solo el precio repetido.
+  // siendo agregables — el carrito nunca deduplica LA ELECCIÓN, solo el precio repetido.
   function equalOccupancies(): RoomOccupancyRate[] {
     const tax = (total: number) => [{ name: 'ITBIS', rate: 18, amount: Math.round(total * 0.18 * 100) / 100 }]
     return [1, 2, 3].map((n) => ({
@@ -238,8 +247,8 @@ describe('RoomsStep — matriz de ocupaciones', () => {
   it('corrida de igual precio: el precio se pinta UNA vez pero las 3 opciones existen', () => {
     const w = renderEqual()
 
-    // Las tres ocupaciones siguen siendo elegibles.
-    const pills = w.findAll('button[data-occupancy]')
+    // Las tres ocupaciones siguen siendo agregables.
+    const pills = w.findAll('[data-occupancy]')
     expect(pills.map((p) => p.attributes('data-occupancy'))).toEqual(['1', '2', '3'])
 
     // El total repetido era el bug: "390" debe aparecer UNA sola vez en el paso.
@@ -248,16 +257,17 @@ describe('RoomsStep — matriz de ocupaciones', () => {
     w.unmount()
   })
 
-  it('elegir una opción del grupo propaga SU ocupación y el precio del grupo', async () => {
+  it('agregar una opción del grupo propaga SU ocupación y el precio del grupo', async () => {
     const w = renderEqual()
     const store = useBookingStore()
 
-    await w.get('button[data-occupancy="2"]').trigger('click')
+    await addRow(w, 2)
 
-    expect(store.selectedRoom?.id).toBe('familiar')
-    expect(store.selectedOccupancy).toBe(2)
-    expect(store.selectedRoomPrice).toBe(390)
-    expect(store.bookingAdults).toBe(2)
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.roomType).toBe('familiar')
+    expect(store.cart[0]!.occupancy).toBe(2)
+    expect(store.cart[0]!.unitPrice).toBe(390)
+    expect(store.cartTotalGuests).toBe(2)
     expect(store.roomsValid).toBe(true)
     w.unmount()
   })

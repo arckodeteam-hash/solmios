@@ -218,6 +218,13 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
         return controller.createPublicBookingDirect(req)
       })
+      // Tarea 10 (QA 2026-08-20/21) — varias habitaciones (mismo tipo ×N y/o tipos distintos) en
+      // 1 sola reserva. Mismo rate-limit que el endpoint de 1 habitación (misma escritura pública).
+      router.post('/api/public/booking/group', async (req: any) => {
+        const { allowed, retryAfter } = await rateLimit(`public-booking-group-create:${getClientIp(req)}`, { maxAttempts: 20, windowMs: 60_000 })
+        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
+        return controller.createPublicBookingGroup(req)
+      })
       router.post('/api/public/bookings', async () => {
         // DT-13 — flujo plural viejo borrado (F0 0.12 rollback path, ya no tiene sentido: el
         // flag BOOKING_USE_UNIFIED_FLOW nunca vuelve a false en la práctica). 410 permanente

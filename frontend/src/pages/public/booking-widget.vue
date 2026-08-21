@@ -358,14 +358,15 @@ watch(() => store.status, (next) => {
       tracking.track('search', { hotelId: hotelIdForTracking.value })
     }
     if (next === 'upselling' && !trackedSelect) {
-      // Pasar a 'upselling' significa que seleccionó room (store.selectRoom avanza a ese step).
+      // Pasar a 'upselling' significa que confirmó el carrito (store.next() avanza a ese step).
+      // Carrito puede tener varias líneas (Tarea 10): reportamos la primera como roomId
+      // representativo y el subtotal COMBINADO como value — es lo que el huésped realmente
+      // va a pagar por alojamiento, no solo una línea.
       trackedSelect = true
       tracking.track('select', {
         hotelId: hotelIdForTracking.value,
-        roomId: store.selectedRoom?.id,
-        // Precio de la ocupación elegida (cae a `fromPrice` si se eligió la tarjeta entera):
-        // el analytics tiene que reportar lo que el huésped realmente va a pagar.
-        value: store.selectedRoomPrice,
+        roomId: store.cart[0]?.roomType,
+        value: store.roomsSubtotal,
         currency: store.displayCurrency || undefined,
       })
     }

@@ -13,6 +13,7 @@ import {
   UpdateBookingConfigSchema,
   CheckAvailabilitySchema,
   ExtendedPublicBookingSchema,
+  CreatePublicBookingGroupSchema,
   TrackEventSchema,
   CreateUpsellSchema,
   UpdateUpsellSchema,
@@ -23,6 +24,9 @@ import {
 // cuando un sub-dominio no amerita agrandar el facade principal.
 import * as upsellsCrud from './usecases/upsells-crud'
 import { getPublicBookingBySlug, createPublicBookingDirect } from './usecases/public-booking'
+// Tarea 10 (QA 2026-08-20/21) — varias habitaciones (mismo tipo ×N y/o tipos distintos) en 1 sola
+// reserva. Handler aparte, reusa los mismos deps (auth/service/logger) que el de 1 habitación.
+import { createPublicBookingGroup } from './usecases/public-booking-group'
 import { getPublicHotelInfo } from './usecases/public-hotel-info'
 import { getPublicReservation } from './usecases/public-reservation'
 import { cancelPublicBooking } from './usecases/public-cancel'
@@ -278,6 +282,38 @@ export class BookingengineController {
       ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo }
       : undefined
     return createPublicBookingDirect(
+      this.orm, body,
+      this.pushAvailability, this.auth,
+      this.service, this.logger,
+      stripeUrls,
+      extraDeps,
+    )
+  }
+
+  /**
+   * POST /api/public/booking/group — Tarea 10 (QA 2026-08-20/21): varias habitaciones (mismo
+   * tipo ×N y/o tipos distintos) en una sola reserva. Mismo criterio de wiring que el handler de
+   * 1 habitación de arriba; `rooms` (array) se reincorpora crudo, igual que `upsells` ahí — el
+   * framework no valida arrays de objetos.
+   */
+  async createPublicBookingGroup(req: HttpRequest) {
+    const rawBody = (req.body || {}) as Record<string, unknown>
+    const validated = validateSchema(CreatePublicBookingGroupSchema, rawBody) as Record<string, unknown>
+    const body = {
+      ...validated,
+      ...(Array.isArray(rawBody.rooms) ? { rooms: rawBody.rooms } : {}),
+      ...(Array.isArray(rawBody.upsells) ? { upsells: rawBody.upsells } : {}),
+      ...(typeof rawBody.idempotencyKey === 'string' ? { idempotencyKey: rawBody.idempotencyKey } : {}),
+    } as { successUrl?: string; cancelUrl?: string; [k: string]: unknown }
+
+    const baseUrl = process.env.PUBLIC_BASE_URL || publicBaseFromRequest(req)
+    const successUrl = body.successUrl || (baseUrl ? `${baseUrl}/booking/success` : '')
+    const cancelUrl = body.cancelUrl || (baseUrl ? `${baseUrl}/booking/cancel` : '')
+    const stripeUrls = successUrl && cancelUrl ? { successUrl, cancelUrl } : undefined
+    const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo }
+      : undefined
+    return createPublicBookingGroup(
       this.orm, body,
       this.pushAvailability, this.auth,
       this.service, this.logger,

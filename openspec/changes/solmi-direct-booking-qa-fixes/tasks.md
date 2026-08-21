@@ -165,15 +165,107 @@ Specs: `specs/booking-availability-pricing/spec.md`, `specs/booking-content-poli
       suite completa backend (misma 1 falla preexistente de Redis), `arckode
       analyze` y `tsc --noEmit` limpios.
 
-- [ ] 1.3 Agregar validación de ocupación vs. capacidad configurada por tipo de
+- [x] 1.3 Agregar validación de ocupación vs. capacidad configurada por tipo de
       habitación en la búsqueda (Tarea 12). **Acceptance**: habitación con capacidad
       máxima 2 NO aparece como resultado válido para una búsqueda de 4 adultos en 1
       habitación, aunque tenga inventario libre.
+      **CERRADO 2026-08-21 — doble motivo, sin cambios de código**:
+      1. El filtro YA existía antes de esta revisión: `AvailabilityUseCase.aggregate()`
+         (`bookingengine/usecases/availability.ts:215`, `d.capacity >= adults`, donde
+         `capacity` es la MÁXIMA entre las unidades físicas del tipo) descarta el tipo
+         entero de `/rates` cuando la capacidad no alcanza — con test dedicado ya
+         existente (`public-rates-occupancy-integrity.test.ts:441`, "un tipo donde el
+         grupo NO ENTRA se sigue descartando").
+      2. Además, el escenario literal del hallazgo ("búsqueda de 4 adultos") ya no
+         puede construirse en el flujo principal: el buscador público YA NO PIDE
+         huéspedes por adelantado (ver la tarea de quitar el selector de ocupación,
+         2026-08-20) — `store.guests` default 1 en los 3 puntos de entrada
+         (`HeroSearchBar.vue`/`BookingModal.vue`/`SearchStep.vue`). La ocupación real
+         se elige recién por tipo, vía la matriz "para N" (`occupancy-matrix.ts`),
+         que naturalmente nunca ofrece una fila más allá de la capacidad de ESE tipo
+         (salvo `?guests=` por deep-link externo o una tarifa mal cargada — casos
+         cubiertos aparte por `over_capacity`, comportamiento intencional documentado
+         en el propio `occupancy-matrix.ts`, no un bug). Observación del usuario,
+         confirmada antes de cerrar.
 
-- [ ] 1.4 Soportar reserva de múltiples unidades del mismo tipo de habitación en una
-      sola operación, validando contra inventario disponible (Tarea 10). **Acceptance**:
-      con 3 Deluxe disponibles, seleccionar "Deluxe × 2" crea una única reserva con 2
-      unidades; seleccionar "× 4" es rechazado y se informa el máximo real (3).
+- [x] 1.4 Soportar reserva de múltiples unidades del mismo tipo de habitación (y, por
+      decisión ampliada 2026-08-21, también tipos DISTINTOS combinados) en una sola
+      operación, validando contra inventario disponible (Tarea 10, resuelve también
+      2.1). **Acceptance**: con 3 Deluxe disponibles, seleccionar "Deluxe × 2" crea una
+      única reserva con 2 unidades; seleccionar "× 4" es rechazado y se informa el
+      máximo real (3).
+      **BACKEND RESUELTO 2026-08-21**: nuevo endpoint `POST /api/public/booking/group`
+      (`bookingengine/usecases/public-booking-group.ts`) — acepta `rooms:
+      [{roomType, adults, children?, quantity}]`, cualquier combinación de tipos y
+      cantidades, atómico (todo o nada). Reusa `Groups` (módulo `grupos`, ya existía)
+      + `Reservations.groupId` (columna ya existía) — sin migración nueva, sin tocar
+      folios/check-in/housekeeping/planning. 1 sola Checkout Session de Stripe sobre
+      la reserva líder; `stripe.ts handleWebhook` cascada la confirmación a las
+      hermanas del mismo grupo (fix necesario, ver abajo). Endpoint de 1 habitación
+      (`POST /api/public/booking`) intacto, sin tocar. Ver spec
+      `booking-availability-pricing`, requirement "Combinar tipos de habitación
+      distintos en una reserva" para el detalle de arquitectura.
+      **Verificado**: `public-booking-group.test.ts` (8 tests: tipos combinados,
+      mismo tipo ×N, rechazo con máximo real informado, techo `MAX_GROUP_UNITS`,
+      anti-doble-claim de la misma unidad física entre 2 líneas, promo aplicado una
+      sola vez sobre el total combinado) + 3 tests nuevos en
+      `stripe-reservations.test.ts` (cascada del webhook a hermanas del grupo,
+      reserva sin grupo no cascadea, webhook duplicado no re-cascadea) — confirmado
+      que 2 de los 3 detectan la regresión de verdad (revertí el cascade a mano,
+      fallaron como se esperaba, restauré). 351/351 tests bookingengine, 3213/3214
+      suite completa backend (1 falla preexistente de Redis, no relacionada),
+      `arckode analyze` sin violaciones nuevas, `tsc --noEmit` limpio.
+      **FRONTEND RESUELTO 2026-08-21**: `useBooking.ts` reemplazó el modelo de 1 sola
+      habitación (`selectedRoom`/`selectedOccupancy`/`selectRoom()`) por un carrito
+      (`cart: CartLine[]` + `addToCart()`/`removeCartLine()`/`setCartLineQuantity()`),
+      con computeds `cartTotalRooms`/`cartTotalGuests`/`roomsSubtotal`. `pay()` sigue
+      llamando `POST /api/public/booking` (endpoint de 1 habitación, sin tocar) cuando
+      el carrito tiene exactamente 1 línea × cantidad 1 — la reserva de 1 habitación
+      (caso dominante) no crea fila en `Groups` ni cambia de endpoint; con más de una
+      línea/unidad llama al nuevo `POST /api/public/booking/group`
+      (`BookingService.createBookingGroup`). `RoomsStep.vue` (widget embebible) y
+      `BookingModal.vue` (landing) pasaron de "elegir y avanzar" a "agregar al
+      carrito": cada fila de ocupación tiene un stepper +/− y hay un resumen de
+      carrito visible (líneas, cantidades, quitar) antes de continuar. `PayStep.vue`
+      y el resumen pre-pago de `BookingModal.vue` listan TODAS las líneas del
+      carrito con el detalle pedido por el usuario (huéspedes totales, habitaciones a
+      reservar, noches), no una sola habitación.
+      Fix real encontrado en el camino: `addToCart()` sin fila de ocupación explícita
+      (fallback sin matriz de ocupaciones) usaba un default fijo de 1 huésped en vez
+      de la ocupación FÍSICA buscada (`physicalGuests` = adultos + niños) — una
+      búsqueda "2 adultos, 2 niños" grababa la reserva para 1 sola persona. Detectado
+      por un test existente que dejó de pasar (`BookingModal.test.ts`), no agregado
+      ad-hoc.
+      **Verificado**: `bun run typecheck` (vue-tsc -b) limpio, `bun run build` OK,
+      suite completa de tests (`vitest run`) 358/358 tests pasan (2 archivos fallan
+      en collection por un error de resolución de `favicon.svg` bajo Windows, no
+      relacionado — confirmado que no referencian `useBooking`/`selectedRoom`).
+      Tests actualizados a la API nueva: `RoomsStep.occupancies.test.ts`,
+      `BookingModal.occupancies.test.ts`, `BookingModal.terms.test.ts`,
+      `BookingModal.test.ts`.
+
+      **HALLAZGO Y FIX 2026-08-21 — capacidad física no se revalidaba al crear la
+      reserva**: el usuario preguntó explícitamente si el motor evita reservar una
+      habitación cuya capacidad no alcanza para los huéspedes pedidos. Auditado el
+      código de escritura (`public-booking.ts` de 1 habitación Y
+      `public-booking-group.ts`): ninguno de los dos volvía a chequear
+      `room.capacity >= huéspedes` al elegir la unidad física — la única barrera era
+      la matriz de `/rates` (`occupancy-matrix.ts`, `over_capacity`), que la UI
+      respeta pero que un POST directo a la API pública (sin auth) podía saltearse
+      por completo, incluyendo el path de compat `roomId` explícito. Fix: ambos
+      usecases ahora filtran las unidades candidatas por capacidad ANTES de elegir
+      la más barata (prioriza capacidad sobre precio — un tipo puede tener unidades
+      de capacidad distinta, cubierto por test) y `public-booking.ts` agrega una
+      red de seguridad final que también cubre el path `roomId` directo. Mensajes
+      409 informan la capacidad real cuando corresponde.
+      **Verificado**: 8 tests nuevos (4 en `public-booking-room-resolution.test.ts`,
+      4 en `public-booking-group.test.ts`) — confirmados con revert manual que 6 de
+      los 8 detectan la regresión de verdad (fallan sin el fix, pasan con él; los
+      otros 2 cubren el caso "sin `capacity` en la fila no bloquea", que no podían
+      fallar antes). 3221/3222 suite completa backend (1 falla preexistente de
+      Redis, no relacionada), `arckode analyze` sin violaciones nuevas (la única
+      violación reportada es preexistente en `admin/service.ts`, ajena a este
+      cambio), `tsc --noEmit` limpio.
 
 - [ ] 1.5 Cargar la política de cancelación/reembolso del widget desde la
       configuración del hotel en el PMS, eliminando cualquier texto fijo compartido
@@ -200,12 +292,14 @@ Specs: `specs/booking-availability-pricing/spec.md`, `specs/booking-content-poli
 Specs: `specs/booking-availability-pricing/spec.md` (2.1),
 `specs/booking-content-policies/spec.md` (2.2, 2.3, 2.4).
 
-- [ ] 2.1 **Decisión de producto — bloqueante**: ¿se permite combinar tipos de
-      habitación distintos en una misma reserva (Opción A) o cada reserva contiene un
-      solo tipo (Opción B)? (Tarea 11). **Acceptance**: decisión documentada con fecha
-      en `specs/booking-availability-pricing/spec.md`, sección "Combinar tipos de
+- [x] 2.1 **Decisión de producto**: ¿se permite combinar tipos de habitación distintos
+      en una misma reserva (Opción A) o cada reserva contiene un solo tipo (Opción B)?
+      (Tarea 11). **Acceptance**: decisión documentada con fecha en
+      `specs/booking-availability-pricing/spec.md`, sección "Combinar tipos de
       habitación distintos" — reemplaza el estado "DECISIÓN PENDIENTE". Sin esta
       decisión, no se implementa la variante multi-tipo de 1.4.
+      **RESUELTO 2026-08-21 — Opción A** (combinar tipos distintos SÍ se permite).
+      Ver 1.4 para la implementación backend ya hecha.
 
 - [ ] 2.2 **Decisión de producto**: nomenclatura definitiva del catálogo de regímenes
       de alimentación (Tarea 3). Validar con el mercado objetivo entre "Solo

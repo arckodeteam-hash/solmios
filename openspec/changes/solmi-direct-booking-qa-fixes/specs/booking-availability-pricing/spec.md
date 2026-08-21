@@ -170,6 +170,22 @@ búsqueda.
 - WHEN se busca 1 habitación para 4 adultos
 - THEN esa habitación NO aparece como resultado válido, aunque tenga inventario libre
 
+**HALLAZGO Y FIX 2026-08-21 — la capacidad se validaba en la BÚSQUEDA pero no al
+ESCRIBIR la reserva**: este requirement ya cumplía para `/rates` (matriz de
+ocupación, `over_capacity`) y `AvailabilityUseCase` (búsqueda/agregado). Pero
+`createPublicBookingDirect` (`public-booking.ts`, 1 habitación) y
+`createPublicBookingGroup` (`public-booking-group.ts`, grupo) — los dos endpoints
+que efectivamente CREAN la reserva — no volvían a chequear `room.capacity` contra
+la ocupación pedida al elegir la unidad física. La UI ya bloquea esto (fila
+deshabilitada), pero un POST directo a la API pública (sin auth, incluyendo el path
+de compat con `roomId` explícito) podía crear una reserva con más huéspedes de los
+que la habitación admite. RESUELTO: ambos usecases ahora filtran las unidades
+candidatas por capacidad antes de asignar (priorizando capacidad sobre precio,
+cubre tipos con unidades de capacidad mixta), y `public-booking.ts` agrega además
+una red de seguridad final que cubre el path `roomId` directo. Ver Tarea 10 en
+`tasks.md` para el detalle de verificación (8 tests nuevos, confirmados con revert
+manual).
+
 ### Requirement: Búsqueda combinada — fechas + inventario + habitaciones + ocupación + capacidad + tarifa
 
 El motor MUST evaluar simultáneamente disponibilidad, cantidad de habitaciones
@@ -195,19 +211,41 @@ MUST NOT forzar al huésped a completar reservas separadas para unidades del mis
 - WHEN el huésped intenta seleccionar "Deluxe × 2"
 - THEN el motor rechaza la selección y muestra el máximo real disponible (1)
 
-### Requirement: Combinar tipos de habitación distintos en una reserva — DECISIÓN PENDIENTE
+### Requirement: Combinar tipos de habitación distintos en una reserva
 
-Esta funcionalidad NO MUST implementarse hasta que el dueño de producto elija entre:
+**DECISIÓN TOMADA 2026-08-21 — Opción A**: una misma reserva SÍ permite combinar
+unidades de tipos de habitación distintos (ej. 1 Estándar + 1 Deluxe), además de
+múltiples unidades del mismo tipo (Tarea 10 original). Confirmado explícitamente por
+el dueño de producto al ampliar el alcance de Tarea 10.
 
-- **Opción A**: una misma reserva permite combinar unidades de tipos de habitación
-  distintos (ej. 1 Estándar + 1 Deluxe).
-- **Opción B**: cada reserva contiene únicamente unidades de un mismo tipo; combinar
-  tipos requiere dos reservas independientes del mismo huésped.
+**Modelo de datos elegido (frente a la alternativa de una entidad "Booking" nueva)**:
+reusar `Groups` (módulo `grupos`, YA EXISTÍA — hoy usado por el panel para reservas de
+agencia armadas a mano) + `Reservations.groupId` (columna YA EXISTENTE, apuntaba a
+`Groups` desde antes de esta tarea). Una reserva de grupo del motor público crea 1 fila
+en `Groups` + 1 fila en `Reservations` POR CADA unidad física reservada, todas
+compartiendo `groupId`. Cero migración nueva. Cero cambios en folios, check-in,
+housekeeping o planning — todos siguen operando sobre `Reservations` individuales,
+exactamente como ya sabían hacerlo. Alternativa descartada: una entidad "Booking"
+nueva que envuelva N `Reservations` — más "correcta" en el papel pero exige adaptar
+esos 4 módulos operativos para un beneficio que `groupId` ya cubre.
 
-La decisión afecta estructura de la reserva, cálculo de precio total, inventario,
-pagos, modificaciones y cancelaciones — por eso es bloqueante y debe registrarse en
-este spec (actualizar esta sección con la decisión y la fecha) antes de tocar código
-relacionado a Tarea 10 en su forma extendida (multi-tipo).
+**RESUELTO 2026-08-21 (backend)**: `POST /api/public/booking/group` (nuevo endpoint,
+`bookingengine/usecases/public-booking-group.ts`) acepta `rooms: [{roomType, adults,
+children?, quantity}]` — cualquier combinación de tipos y cantidades en una sola
+operación atómica (todo o nada: si una sola unidad se vende concurrentemente, se
+aborta el grupo entero). Un solo cobro de Stripe (Checkout Session sobre la reserva
+LÍDER, por el total combinado); el webhook (`stripe.ts handleWebhook`) cascada la
+confirmación de pago a las hermanas del mismo `groupId`. El endpoint de 1 habitación
+(`POST /api/public/booking`) NO se tocó — sigue existiendo para compat.
+**RESUELTO 2026-08-21 (frontend)**: `useBooking.ts` reemplazó la selección única por
+un carrito (`cart: CartLine[]`, `addToCart`/`removeCartLine`/`setCartLineQuantity`).
+`RoomsStep.vue` (widget) y `BookingModal.vue` (landing) agregan/quitan líneas con un
+stepper +/− por fila de ocupación en vez de "elegir y avanzar". El resumen pre-pago
+(`PayStep.vue` y el bloque de resumen de `BookingModal.vue`) lista todas las líneas
+del carrito con huéspedes totales, habitaciones a reservar y noches. `pay()` sigue
+usando `POST /api/public/booking` (sin crear `Groups`) cuando el carrito es 1 línea ×
+1 unidad — el caso dominante no cambia de endpoint ni de comportamiento. Ver Tarea 10
+en `tasks.md` para el detalle de verificación (typecheck/build/tests).
 
 ### Requirement: Revalidación completa antes de confirmar pago
 

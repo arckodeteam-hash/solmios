@@ -8,7 +8,10 @@
           ≤1 → "Última disponible" (rojo)
           ≤3 → "Pocas habitaciones a este precio" (ámbar)
           >3 → sin badge (NEVER falsificar urgencia — destruye confianza)
-    Click en una tarjeta la selecciona y avanza al step Upsells (store.selectRoom + store.next).
+    Cada ocupación es un carrito (Tarea 10, solmi-direct-booking-qa-fixes): "+"/"-" agregan/quitan
+    unidades de esa (tipo, ocupación) vía store.addToCart/removeCartLine/setCartLineQuantity, sin
+    avanzar de step. Permite combinar tipos distintos y/o varias unidades del mismo tipo en una
+    sola reserva. El resumen al pie del step (carrito) tiene el botón "Continuar" (store.next()).
 
     ─── Matriz de ocupaciones (una fila por "para N") ────────────────────────────────────────
     Cada tipo despliega UNA FILA POR OCUPACIÓN ("para 1", "para 2", "para 4"…) con su precio
@@ -62,7 +65,7 @@
     </header>
 
     <div v-if="availableRooms.length === 0" class="text-center py-10 px-4">
-      <div class="text-4xl mb-2">🗓️</div>
+      <div class="mb-2 flex justify-center text-navy/30"><Icon name="calendar" :size="40" /></div>
       <p class="font-bold text-navy">{{ t('rooms.empty') }}</p>
       <p class="text-sm text-text-muted mt-1">{{ t('rooms.emptyHint') }}</p>
     </div>
@@ -72,7 +75,7 @@
         <article
           :class="[
             'rounded-2xl border-2 bg-white p-4 shadow-card transition',
-            store.selectedRoom?.id === rt.id ? 'border-cyan ring-2 ring-cyan/20' : 'border-slate-200',
+            cartHasType(rt.id) ? 'border-cyan ring-2 ring-cyan/20' : 'border-slate-200',
           ]"
         >
           <div class="flex items-start justify-between gap-3">
@@ -124,73 +127,68 @@
             NO se filtran: van deshabilitadas con el motivo traducido (regla del dueño).
           -->
           <ul v-if="occupancyRows(rt).length > 0" class="mt-3 divide-y divide-slate-100 border-t border-slate-100">
-            <li v-for="entry in groupedOccupancyRows(rt)" :key="entry.kind === 'group' ? `g-${entry.rows[0]!.occupancy}` : entry.row.occupancy">
-              <!-- Grupo de ocupaciones al mismo precio: opciones clickeables + precio ÚNICO -->
-              <div v-if="entry.kind === 'group'" class="flex w-full flex-wrap items-center gap-x-4 gap-y-2 py-2.5">
-                <div class="flex flex-wrap items-center gap-1.5">
-                  <button
-                    v-for="row in entry.rows"
-                    :key="row.occupancy"
-                    type="button"
-                    :aria-pressed="isChosen(rt, row)"
-                    :data-occupancy="row.occupancy"
-                    class="flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 transition"
-                    :class="isChosen(rt, row) ? 'border-cyan bg-cyan text-white' : 'border-navy/20 text-navy hover:border-navy/40'"
-                    @click="selectOccupancy(rt, row)"
-                  >
-                    <span class="text-sm leading-none" aria-hidden="true">{{ occupancyGlyph(row.occupancy) }}</span>
-                    <span class="text-xs font-bold">{{ t('rooms.occupancyFor', { count: row.occupancy }) }}</span>
-                  </button>
+            <li v-for="entry in groupedOccupancyRows(rt)" :key="entry.kind === 'group' ? `g-${entry.rows[0]!.occupancy}` : entry.row.occupancy" class="py-3">
+              <!-- Grupo de ocupaciones al mismo precio: el precio se pinta UNA vez, cada
+                   ocupación es su propia fila con stepper propio (líneas de carrito distintas). -->
+              <div v-if="entry.kind === 'group'">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="text-[11px] text-text-muted">{{ t('rooms.occupancyPrice', { count: store.nights || 1 }) }}</span>
+                  <span class="text-right">
+                    <span class="block text-sm font-black tabular-nums text-navy">{{ formatPrice(entry.rows[0]!.price, store.displayCurrency) }}</span>
+                    <span class="block text-[11px] tabular-nums text-text-muted">{{ formatPrice(entry.rows[0]!.pricePerNight, store.displayCurrency) }}/{{ t('rooms.perNight') }}</span>
+                  </span>
                 </div>
-                <div class="ml-auto min-w-0 text-right">
-                  <span class="block text-[11px] text-text-muted">{{ t('rooms.occupancyPrice', { count: store.nights || 1 }) }}</span>
-                  <span class="block text-sm font-black tabular-nums text-navy">{{ formatPrice(entry.rows[0]!.price, store.displayCurrency) }}</span>
-                  <span class="block text-[11px] tabular-nums text-text-muted">{{ formatPrice(entry.rows[0]!.pricePerNight, store.displayCurrency) }}/{{ t('rooms.perNight') }}</span>
+                <div class="mt-2 space-y-2">
+                  <div v-for="row in entry.rows" :key="row.occupancy" :data-occupancy="row.occupancy" class="flex items-center gap-3">
+                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-50 text-navy/50">
+                      <Icon :name="row.occupancy > 1 ? 'users' : 'user'" :size="16" />
+                    </span>
+                    <span class="flex-1 text-sm font-bold text-navy">{{ t('rooms.occupancyFor', { count: row.occupancy }) }}</span>
+                    <Stepper
+                      :model-value="cartQuantity(rt, row.occupancy)"
+                      :min="0"
+                      :max="rt.availableCount"
+                      :label="`${prettify(rt.name)} · ${t('rooms.occupancyFor', { count: row.occupancy })}`"
+                      @update:model-value="onQtyChange(rt, row, $event)"
+                    />
+                  </div>
                 </div>
               </div>
-              <!-- Fila individual: igual que siempre -->
-              <button
-                v-else
-                type="button"
-                :disabled="!entry.row.available"
-                :aria-pressed="isChosen(rt, entry.row)"
-                :data-occupancy="entry.row.occupancy"
-                :class="[
-                  'flex w-full items-center gap-3 py-2.5 text-left transition',
-                  entry.row.available
-                    ? 'cursor-pointer hover:bg-slate-50'
-                    : 'cursor-not-allowed opacity-60',
-                ]"
-                @click="selectOccupancy(rt, entry.row)"
-              >
-                <span class="w-12 shrink-0 text-sm leading-none" aria-hidden="true">{{ occupancyGlyph(entry.row.occupancy) }}</span>
-                <span class="w-16 shrink-0 text-xs font-bold text-navy">{{ t('rooms.occupancyFor', { count: entry.row.occupancy }) }}</span>
+              <!-- Fila individual: stepper de cantidad (soporta combinar varias ocupaciones/tipos en la misma reserva) -->
+              <div v-else :data-occupancy="entry.row.occupancy" class="flex w-full items-center gap-3" :class="!entry.row.available && 'opacity-60'">
+                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-50 text-navy/50">
+                  <Icon :name="entry.row.occupancy > 1 ? 'users' : 'user'" :size="16" />
+                </span>
                 <span class="min-w-0 flex-1">
+                  <span class="block text-sm font-bold text-navy">{{ t('rooms.occupancyFor', { count: entry.row.occupancy }) }}</span>
                   <template v-if="entry.row.available">
-                    <span class="block text-[11px] text-text-muted">{{ t('rooms.occupancyPrice', { count: store.nights || 1 }) }}</span>
-                    <span class="block text-sm font-black tabular-nums text-navy">{{ formatPrice(entry.row.price, store.displayCurrency) }}</span>
-                    <span class="block text-[11px] tabular-nums text-text-muted">{{ formatPrice(entry.row.pricePerNight, store.displayCurrency) }}/{{ t('rooms.perNight') }}</span>
+                    <span class="block text-[11px] tabular-nums text-text-muted">{{ formatPrice(entry.row.price, store.displayCurrency) }} · {{ formatPrice(entry.row.pricePerNight, store.displayCurrency) }}/{{ t('rooms.perNight') }}</span>
                   </template>
                   <span v-else class="block text-[11px] font-bold text-slate-500">{{ unavailableLabel(entry.row.unavailableReason) }}</span>
                 </span>
-                <span
+                <Stepper
                   v-if="entry.row.available"
-                  :class="[
-                    'shrink-0 rounded-full px-3 py-1 text-[11px] font-bold',
-                    isChosen(rt, entry.row) ? 'bg-cyan text-white' : 'border border-navy/20 text-navy',
-                  ]"
-                >{{ isChosen(rt, entry.row) ? t('rooms.occupancyChosen') : t('rooms.occupancyChoose') }}</span>
-              </button>
+                  :model-value="cartQuantity(rt, entry.row.occupancy)"
+                  :min="0"
+                  :max="rt.availableCount"
+                  :label="`${prettify(rt.name)} · ${t('rooms.occupancyFor', { count: entry.row.occupancy })}`"
+                  @update:model-value="onQtyChange(rt, entry.row, $event)"
+                />
+              </div>
             </li>
           </ul>
 
-          <!-- Fallback sin matriz: la tarjeta entera se elige con el precio único de siempre. -->
-          <button
-            v-else
-            type="button"
-            class="mt-3 w-full cursor-pointer rounded-full bg-navy px-4 py-2 text-xs font-bold text-white transition hover:bg-navy-light"
-            @click="select(rt)"
-          >{{ store.selectedRoom?.id === rt.id ? t('rooms.occupancyChosen') : t('rooms.occupancyChoose') }}</button>
+          <!-- Fallback sin matriz: stepper de cantidad con el precio único de siempre. -->
+          <div v-else class="mt-3 flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
+            <span class="text-xs font-bold text-text-muted">{{ t('rooms.quantity') }}</span>
+            <Stepper
+              :model-value="cartQuantity(rt, 1)"
+              :min="0"
+              :max="rt.availableCount"
+              :label="prettify(rt.name)"
+              @update:model-value="onFallbackQtyChange(rt, $event)"
+            />
+          </div>
 
           <!--
             `fromPrice` viene PRE-impuestos y el `taxBreakdown` llega aparte (public-rates.ts).
@@ -214,12 +212,48 @@
                   : 'bg-amber-100 text-amber-700',
               ]"
             >
-              ⚡ {{ urgency(rt.availableCount) }}
+              <Icon name="bolt" :size="12" />
+              {{ urgency(rt.availableCount) }}
             </span>
           </div>
         </article>
       </li>
     </ul>
+
+    <!--
+      Carrito — resumen visible de las líneas ya agregadas (Tarea 10: combinar distintos tipos/
+      ocupaciones en una misma reserva). Muestra habitaciones totales, huéspedes totales y noches
+      antes de avanzar, tal como se pidió: un paso con el detalle antes de pagar.
+    -->
+    <div v-if="store.cart.length > 0" class="rounded-2xl border-2 border-cyan/30 bg-cyan/5 p-4 space-y-3">
+      <h3 class="text-sm font-black text-navy">{{ t('rooms.cartTitle') }}</h3>
+      <ul class="space-y-2">
+        <li v-for="line in store.cart" :key="line.key" class="flex items-center justify-between gap-2 text-sm">
+          <div class="min-w-0">
+            <p class="truncate font-bold text-navy">{{ prettify(line.roomName) }} · {{ t('rooms.occupancyFor', { count: line.occupancy }) }}</p>
+            <p class="text-xs text-text-muted">{{ line.quantity }} × {{ formatPrice(line.unitPrice, store.displayCurrency) }}</p>
+          </div>
+          <div class="flex shrink-0 items-center gap-2">
+            <span class="font-black tabular-nums text-navy">{{ formatPrice(line.unitPrice * line.quantity, store.displayCurrency) }}</span>
+            <button
+              type="button"
+              class="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-text-muted hover:bg-red-50 hover:text-red-600"
+              :aria-label="t('rooms.cartRemove')"
+              @click="store.removeCartLine(line.key)"
+            ><Icon name="x" :size="14" /></button>
+          </div>
+        </li>
+      </ul>
+      <div class="flex items-center justify-between border-t border-cyan/20 pt-2 text-xs font-bold text-text-muted">
+        <span>{{ t('rooms.cartSummary', { rooms: store.cartTotalRooms, guests: store.cartTotalGuests, nights: store.nights || 1 }) }}</span>
+        <span class="text-sm text-navy">{{ formatPrice(store.roomsSubtotal, store.displayCurrency) }}</span>
+      </div>
+      <button
+        type="button"
+        class="w-full cursor-pointer rounded-full bg-cyan px-4 py-2.5 text-sm font-black text-white transition hover:bg-cyan/90"
+        @click="store.next()"
+      >{{ t('rooms.cartContinue') }}</button>
+    </div>
   </section>
 </template>
 
@@ -233,6 +267,8 @@ import { groupOccupancyRows, type OccupancyEntry } from '@/utils/occupancy-group
 import type { PublicReviewAggregate, PublicReviewsResponse } from '@/types'
 import MultiChannelBadges from '@/components/reviews/MultiChannelBadges.vue'
 import AggregateScore from '@/components/reviews/AggregateScore.vue'
+import Icon from '@/components/ui/Icon.vue'
+import Stepper from './Stepper.vue'
 
 const store = useBookingStore()
 const i18n = useBookingI18nStore()
@@ -299,9 +335,26 @@ function prettify(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1)
 }
 
-async function select(rt: RoomTypeRate) {
-  await store.selectRoom(rt)
-  store.next()
+/** Misma fórmula de key que `cartLineKey` en el store (no exportada) — mantenida en paralelo. */
+function cartKey(rt: RoomTypeRate, occupancy: number): string {
+  return `${rt.id}|${occupancy}`
+}
+
+/** Cantidad ya agregada al carrito para (tipo, ocupación). 0 si no está. */
+function cartQuantity(rt: RoomTypeRate, occupancy: number): number {
+  return store.cart.find((l) => l.key === cartKey(rt, occupancy))?.quantity ?? 0
+}
+
+/** El tipo tiene AL MENOS una línea en el carrito (cualquier ocupación) — resalta la tarjeta. */
+function cartHasType(roomTypeId: string): boolean {
+  return store.cart.some((l) => l.roomType === roomTypeId)
+}
+
+/** Stepper del fallback (sin matriz): cada tarjeta representa ocupación=1 fija. */
+async function onFallbackQtyChange(rt: RoomTypeRate, qty: number): Promise<void> {
+  const current = cartQuantity(rt, 1)
+  if (qty > current) await store.addToCart(rt)
+  else if (qty < current) store.setCartLineQuantity(cartKey(rt, 1), qty)
 }
 
 // ─── Matriz de ocupaciones ────────────────────────────────────────────────────
@@ -343,20 +396,12 @@ function unavailableLabel(reason: OccupancyUnavailableReason | null): string {
   return t(reason ? UNAVAILABLE_KEY[reason] : 'rooms.unavailable.default')
 }
 
-function isChosen(rt: RoomTypeRate, row: RoomOccupancyRate): boolean {
-  return store.selectedRoom?.id === rt.id && store.selectedOccupancy === row.occupancy
-}
-
-/** Personitas de la fila, como la competencia (👤 / 👥 / 👥👥). Tope de 4 para no reventar el
- *  ancho en un dormi de 12 plazas: a partir de ahí se rotula con el número. */
-function occupancyGlyph(occupancy: number): string {
-  if (occupancy > 4) return `👤×${occupancy}`
-  return '👤'.repeat(Math.max(1, occupancy))
-}
-
-async function selectOccupancy(rt: RoomTypeRate, row: RoomOccupancyRate) {
+/** Stepper de una fila de ocupación: sube con `addToCart` (crea la línea si no existía),
+ *  baja con `setCartLineQuantity` (existe porque solo baja desde una cantidad > 0). */
+async function onQtyChange(rt: RoomTypeRate, row: RoomOccupancyRate, qty: number): Promise<void> {
   if (!row.available) return
-  await store.selectRoom(rt, row.occupancy)
-  store.next()
+  const current = cartQuantity(rt, row.occupancy)
+  if (qty > current) await store.addToCart(rt, row.occupancy)
+  else if (qty < current) store.setCartLineQuantity(cartKey(rt, row.occupancy), qty)
 }
 </script>

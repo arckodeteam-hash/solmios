@@ -115,6 +115,27 @@ export const ExtendedPublicBookingSchema: Record<string, ValidationRule> = {
   cancelUrl: { type: 'string' as const },
 }
 
+/**
+ * Tarea 10 (QA 2026-08-20, ampliada 2026-08-21) — `POST /api/public/booking/group`: varias
+ * habitaciones (mismo tipo ×N y/o tipos distintos) en una sola reserva. A diferencia del schema
+ * de 1 habitación, NO hay `roomType`/`adults` a nivel raíz — viven DENTRO de cada línea de
+ * `rooms`. El framework no soporta `type:'array'` de objetos en `ValidationRule`
+ * (`ValidationType` es solo string|number|boolean|email|url|date, mismo motivo que `upsells` en
+ * el schema base) — `rooms` se valida a mano en el usecase (`normalizeRoomLines`), el controller
+ * solo lo reincorpora crudo, igual que ya hace con `upsells`.
+ */
+export const CreatePublicBookingGroupSchema: Record<string, ValidationRule> = {
+  hotelId: { type: 'string' as const, required: true },
+  guestName: { type: 'string' as const, required: true, min: 2, max: 200 },
+  guestEmail: { type: 'email' as const, required: true },
+  guestPhone: { type: 'string' as const, required: true, max: 30 },
+  checkIn: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/, message: 'checkIn debe tener formato YYYY-MM-DD' },
+  checkOut: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/, message: 'checkOut debe tener formato YYYY-MM-DD' },
+  promoCode: { type: 'string' as const },
+  successUrl: { type: 'string' as const },
+  cancelUrl: { type: 'string' as const },
+}
+
 // ─── Upsells (F2 2.3) ──────────────────────────────────────────────────────
 // `description` usa `text` (BodyRule structured) para no aplastar saltos de línea: el
 // admin podría escribir "Incluye jugo, frutas y café.\nServicio de 6 a 10 am.".

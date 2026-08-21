@@ -34,12 +34,17 @@
           {{ store.checkIn }} → {{ store.checkOut }} ({{ t('search.nights', { count: store.nights }) }})
         </span>
       </button>
-      <button type="button" class="w-full flex items-center justify-between text-left" @click="store.goToStep(1)">
-        <span class="text-text-muted">{{ t('pay.room') }}</span>
-        <span class="font-bold text-navy underline decoration-dotted capitalize">
-          {{ prettify(store.selectedRoom?.name || '') }}
+      <button type="button" class="w-full flex items-start justify-between gap-3 text-left" @click="store.goToStep(1)">
+        <span class="text-text-muted shrink-0">{{ store.cart.length === 1 ? t('pay.room') : t('rooms.title') }}</span>
+        <span class="font-bold text-navy underline decoration-dotted text-right">
+          <span v-for="line in store.cart" :key="line.key" class="block capitalize">
+            {{ prettify(line.roomName) }} · {{ t('rooms.occupancyFor', { count: line.occupancy }) }}{{ line.quantity > 1 ? ` × ${line.quantity}` : '' }}
+          </span>
         </span>
       </button>
+      <div class="flex items-center justify-between text-xs text-text-muted">
+        <span>{{ t('rooms.cartSummary', { rooms: store.cartTotalRooms, guests: store.cartTotalGuests, nights: store.nights || 1 }) }}</span>
+      </div>
       <div v-if="store.selectedUpsells.length > 0" class="flex items-center justify-between">
         <span class="text-text-muted">{{ t('pay.extras') }}</span>
         <button type="button" class="font-bold text-navy underline decoration-dotted" @click="store.goToStep(2)">
@@ -91,7 +96,7 @@
     <div class="rounded-2xl bg-slate-50 p-4 space-y-2 text-sm">
       <div class="flex justify-between">
         <span class="text-text-muted">{{ t('pay.roomLine', { count: store.nights }) }}</span>
-        <span class="font-semibold text-navy">{{ formatPrice(store.selectedRoomPrice, displayOrCharge) }}</span>
+        <span class="font-semibold text-navy">{{ formatPrice(store.roomsSubtotal, displayOrCharge) }}</span>
       </div>
       <div v-if="store.upsellsTotal > 0" class="flex justify-between">
         <span class="text-text-muted">{{ t('pay.extras') }}</span>

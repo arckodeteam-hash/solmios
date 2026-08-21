@@ -251,6 +251,72 @@ describe('StripeUseCase — handleWebhook sobre Reservations (F0 0.15)', () => {
   })
 })
 
+// Tarea 10 (QA 2026-08-20/21) — reserva de GRUPO: la Checkout Session se abre sobre la reserva
+// LÍDER (`createPublicBookingGroup`), pero el pago cubre TODAS las habitaciones del grupo. El
+// webhook tiene que confirmar el grupo entero, no solo la fila sobre la que se armó la sesión.
+describe('StripeUseCase — handleWebhook cascada a reservas de GRUPO (Tarea 10)', () => {
+  const GROUP_ID = 'grp-1'
+  const SIBLING_A = { ...PENDING_RESERVATION, id: 'res-2', roomId: 'room-2', groupId: GROUP_ID, totalAmount: 100 }
+  const SIBLING_B = { ...PENDING_RESERVATION, id: 'res-3', roomId: 'room-3', groupId: GROUP_ID, totalAmount: 100 }
+  const LEADER = { ...PENDING_RESERVATION, id: 'res-1', groupId: GROUP_ID, totalAmount: 200 }
+
+  it('confirma la líder Y a las hermanas del mismo groupId (un solo cobro, 3 reservas)', async () => {
+    const { repo: reservationsRepo, store, updates } = makeReservationsRepo([LEADER, SIBLING_A, SIBLING_B])
+    const { repo: eventRepo } = makeEventStoreRepo()
+    const eventStore = new PaymentEventStore(eventRepo, log)
+    const gw = makeMockGw({ outcome: {
+      eventId: 'evt_group', providerRef: 'cs_group', status: 'paid',
+      amountMinor: 40000, currency: 'usd', reference: 'res-1', // Stripe confirma sobre la LÍDER
+    } })
+    const stripe = new StripeUseCase(reservationsRepo, log, makeMockRegistry(gw), eventStore)
+
+    const result = await stripe.handleWebhook('hotel-A', 'raw', 'sig')
+
+    expect(result?.type).toBe('reservation_confirmed')
+    expect(result?.reservationId).toBe('res-1')
+    // Las 3 quedan `confirmed` — no solo la líder sobre la que se abrió la sesión.
+    expect(store.find((r) => r.id === 'res-1')!.status).toBe('confirmed')
+    expect(store.find((r) => r.id === 'res-2')!.status).toBe('confirmed')
+    expect(store.find((r) => r.id === 'res-3')!.status).toBe('confirmed')
+    expect(store.every((r) => r.depositStatus === 'paid' && r.paymentMethod === 'card' && r.pendingAmount === 0)).toBe(true)
+    // 1 update por la líder + 1 por cada hermana = 3 (no se re-actualiza la líder dos veces).
+    expect(updates).toHaveLength(3)
+    expect(updates.map((u) => u.id).sort()).toEqual(['res-1', 'res-2', 'res-3'])
+  })
+
+  it('reserva SIN groupId (flujo normal de 1 habitación) no dispara ninguna cascada', async () => {
+    const { repo: reservationsRepo, updates } = makeReservationsRepo([{ ...PENDING_RESERVATION }]) // sin groupId
+    const { repo: eventRepo } = makeEventStoreRepo()
+    const eventStore = new PaymentEventStore(eventRepo, log)
+    const gw = makeMockGw({ outcome: {
+      eventId: 'evt_solo', providerRef: 'cs_solo', status: 'paid',
+      amountMinor: 20000, currency: 'usd', reference: 'res-1',
+    } })
+    const stripe = new StripeUseCase(reservationsRepo, log, makeMockRegistry(gw), eventStore)
+
+    await stripe.handleWebhook('hotel-A', 'raw', 'sig')
+
+    expect(updates).toHaveLength(1) // solo la propia reserva, sin cascada
+  })
+
+  it('webhook duplicado de un grupo → cascada NO se repite (idempotencia también para las hermanas)', async () => {
+    const { repo: reservationsRepo, updates } = makeReservationsRepo([LEADER, SIBLING_A, SIBLING_B])
+    const { repo: eventRepo } = makeEventStoreRepo()
+    const eventStore = new PaymentEventStore(eventRepo, log)
+    const gw = makeMockGw({ outcome: {
+      eventId: 'evt_group_dup', providerRef: 'cs_group_dup', status: 'paid',
+      amountMinor: 40000, currency: 'usd', reference: 'res-1',
+    } })
+    const stripe = new StripeUseCase(reservationsRepo, log, makeMockRegistry(gw), eventStore)
+
+    await stripe.handleWebhook('hotel-A', 'raw', 'sig')
+    const second = await stripe.handleWebhook('hotel-A', 'raw', 'sig') // reintento Stripe
+
+    expect(second?.type).toBe('already_processed')
+    expect(updates).toHaveLength(3) // sigue en 3 — el reintento no vuelve a cascadear
+  })
+})
+
 describe('StripeUseCase — flujo completo createSession → webhook (F0 0.15)', () => {
   it('crea sesión y luego el webhook confirma la reserva', async () => {
     // Estado inicial: reserva pending pre-pago (acaba de crearse por createPublicBookingDirect).
