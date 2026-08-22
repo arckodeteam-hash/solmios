@@ -42,6 +42,14 @@ export function paymentsReservasConnector(ctx: ConnectorContext): void {
 
   payments.setSockets({
     onPaymentCreated: resync,
+    // RTC-8.5: el webhook de Stripe confirma un cobro de charge-card/POS con
+    // `crud.updateStatus(paymentId,'completed')` — SIN pasar por `createPayment` — así que el
+    // `onPaymentCreated` del alta nunca corría para esa plata y `pendingAmount` quedaba viejo
+    // hasta el próximo recálculo. Los tres estados terminales (completed/expired/failed) mueven
+    // el saldo: el primero lo baja, los otros dos lo devuelven (la sesión murió sin cobrar).
+    onPaymentCompleted: resync,
+    onPaymentExpired: resync,
+    onPaymentFailed: resync,
     onRefundProcessed: resync,
   })
 }

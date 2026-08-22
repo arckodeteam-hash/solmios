@@ -30,6 +30,11 @@ import { paidForReservation, type ReservationPaidRepos } from '../../../shared/u
 import { round2, BALANCE_EPSILON } from '../../../shared/utils/money'
 import type { PaymentRequestDTO } from '../types'
 
+/** RTC-8.2: importe comprometido en sesiones de checkout vivas de la vía `payments`
+ *  (charge-card/POS) — lo contesta el dueño de la tabla (`connectors/payment-requests-money` →
+ *  `payments.liveChargesOfReservation`), igual que `settledNet` (RTC-7.4). */
+export type LiveChargesSource = (hotelId: string, reservationId: string, excludePaymentId?: string) => Promise<number>
+
 export interface ChargeCeilingDeps {
   reservationRepo: RepositoryAdapter<any>
   addonRepo: RepositoryAdapter<any>
@@ -41,21 +46,30 @@ export interface ChargeCeilingDeps {
    *  sin ella el techo volvería a medirse contra `reservations.deposit` y autorizaría cobrar por
    *  Stripe plata ya cobrada por folio/factura. */
   paidRepos: ReservationPaidRepos
+  /** RTC-8.2 — sesiones vivas de la vía `payments`. OBLIGATORIA y fail-closed por la misma razón:
+   *  contestar 0 sin connector dejaría a `chargeCard` fuera del techo otra vez (era el bypass de
+   *  RTC-8: N sesiones por el saldo completo). */
+  liveCharges: LiveChargesSource
 }
 
-/** Suma de los cobros `pending` de la reserva, sin contar el que se está editando. */
+/** Suma de lo comprometido en la reserva: links `pending` (sin contar el que se edita) MÁS las
+ * sesiones de checkout vivas de la vía `payments` (RTC-8.2 — antes éstas eran invisibles por los
+ * dos lados: no contaban como comprometidas ni bajaban el saldo mientras vivían en `processing`). */
 async function committedPending(
   deps: ChargeCeilingDeps,
   hotelId: string,
   reservationId: string,
   excludeRequestId?: string,
+  excludePaymentId?: string,
 ): Promise<number> {
   const rows = await deps.requestRepo.findMany({ hotelId, reservationId } as any)
-  return round2(
+  const links = round2(
     (rows as PaymentRequestDTO[])
       .filter((r) => r.status === 'pending' && r.id !== excludeRequestId)
       .reduce((sum, r) => sum + (Number(r.amount) || 0), 0),
   )
+  const live = await deps.liveCharges(hotelId, reservationId, excludePaymentId)
+  return round2(links + live)
 }
 
 /**
@@ -73,7 +87,7 @@ async function committedPending(
  */
 export async function assertChargeableAmount(
   deps: ChargeCeilingDeps,
-  params: { hotelId: string; reservationId?: string | null; amount: unknown; excludeRequestId?: string },
+  params: { hotelId: string; reservationId?: string | null; amount: unknown; excludeRequestId?: string; excludePaymentId?: string },
 ): Promise<number> {
   const amount = Number(params.amount)
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -93,11 +107,11 @@ export async function assertChargeableAmount(
   const balance = pendingBalance(reservation, addons as any[], paid)
   if (balance <= 0) throw new ValidationError('La reserva no tiene saldo pendiente de cobro')
 
-  const committed = await committedPending(deps, params.hotelId, params.reservationId, params.excludeRequestId)
+  const committed = await committedPending(deps, params.hotelId, params.reservationId, params.excludeRequestId, params.excludePaymentId)
   const ceiling = round2(balance - committed)
   if (ceiling <= 0) {
     throw new ValidationError(
-      `La reserva ya tiene links de pago pendientes por $${committed} sobre un saldo de $${balance}: cobrá o cancelá esos antes de crear otro`,
+      `La reserva ya tiene cobros pendientes por $${committed} sobre un saldo de $${balance}: cobrá o cancelá esos antes de crear otro`,
     )
   }
   if (amount > ceiling + BALANCE_EPSILON) {

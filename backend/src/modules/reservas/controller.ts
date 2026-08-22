@@ -145,12 +145,21 @@ export class ReservasController {
     // caché y sockets. Sin él, el saldo nuevo no llega a `GET /api/reservas` por 300s (COR-1).
     // RTC-7.2: el clamp del techo va TAMBIÉN acá — un extra `kind:'discount'` baja el total cobrable
     // igual que borrar uno `service`, y sólo el `deleteAddon` de abajo lo tenía.
-    const a = await createAddon(this.addonsRepo, this.reservationRepo, this.userRepo, this.auth, req.params.id, dto, req.user as any, this.service.reservationChanged(), this.service.paidSource(), this.service.addonsCeilingGuard())
+    // RTC-8.10: deps por objeto (10 posicionales eran una línea de 240 caracteres).
+    const a = await createAddon(
+      { repo: this.addonsRepo, reservationRepo: this.reservationRepo, userRepo: this.userRepo, auth: this.auth,
+        notifyChanged: this.service.reservationChanged(), paidOf: this.service.paidSource(), ceilingGuard: this.service.addonsCeilingGuard() },
+      { reservationId: req.params.id, dto, user: req.user as any },
+    )
     return { status: 201, body: a }
   }
   async deleteAddon(req: HttpRequest) {
     // SEC3-2: un extra menos es techo menos — los links vivos se recortan al saldo nuevo.
-    await deleteAddon(this.addonsRepo, this.reservationRepo, this.userRepo, this.auth, req.params.id, req.user as any, this.service.reservationChanged(), this.service.paidSource(), this.service.addonsCeilingGuard())
+    await deleteAddon(
+      { repo: this.addonsRepo, reservationRepo: this.reservationRepo, userRepo: this.userRepo, auth: this.auth,
+        notifyChanged: this.service.reservationChanged(), paidOf: this.service.paidSource(), ceilingGuard: this.service.addonsCeilingGuard() },
+      { id: req.params.id, user: req.user as any },
+    )
     return { status: 200, body: { success: true } }
   }
 

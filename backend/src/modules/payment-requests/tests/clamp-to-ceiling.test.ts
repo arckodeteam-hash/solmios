@@ -53,6 +53,11 @@ function makeDeps(opts: {
     logger: log,
     // Puerto de `payments` (connectors/payment-requests-money). Por defecto: sin plata asentada.
     settledNet: async () => opts.settledNet ?? 0,
+    // RTC-8.2/8.3 — sesiones de la vía charge-card: ninguna en este world (esa vía se
+    // ejercita contra el banco real en ceiling-payments-via.test.ts).
+    liveCharges: async () => 0,
+    liveChargeRows: async () => [],
+    cancelLiveCharge: async () => 'cancelled' as const,
   }
   return { deps, updates, audited }
 }

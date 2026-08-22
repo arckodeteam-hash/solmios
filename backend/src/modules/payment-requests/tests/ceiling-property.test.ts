@@ -235,11 +235,9 @@ async function subirAnticipo(): Promise<void> {
  */
 async function crearDescuento(): Promise<void> {
   await createAddon(
-    world.addonRepo, world.reservationRepo, world.userRepo, world.auth,
-    RESERVATION, { description: 'Descuento comercial', kind: 'discount', amount: 300, quantity: 1 } as any,
-    { ...USER, role: 'super_admin' },
-    async () => {}, world.paidOf,
-    ADDON_CEILING_GUARD,
+    { repo: world.addonRepo, reservationRepo: world.reservationRepo, userRepo: world.userRepo, auth: world.auth,
+      notifyChanged: async () => {}, paidOf: world.paidOf, ceilingGuard: ADDON_CEILING_GUARD },
+    { reservationId: RESERVATION, dto: { description: 'Descuento comercial', kind: 'discount', amount: 300, quantity: 1 } as any, user: { ...USER, role: 'super_admin' } },
   )
 }
 
@@ -280,10 +278,9 @@ function alphabet(): Op[] {
     {
       name: 'borrar-extra',
       run: () => deleteAddon(
-        world.addonRepo, world.reservationRepo, world.userRepo,
-        world.auth, ADDON, { ...USER, role: 'super_admin' },
-        async () => {}, world.paidOf,
-        ADDON_CEILING_GUARD,
+        { repo: world.addonRepo, reservationRepo: world.reservationRepo, userRepo: world.userRepo, auth: world.auth,
+          notifyChanged: async () => {}, paidOf: world.paidOf, ceilingGuard: ADDON_CEILING_GUARD },
+        { id: ADDON, user: { ...USER, role: 'super_admin' } },
       ),
     },
     {

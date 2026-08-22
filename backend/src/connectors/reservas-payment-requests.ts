@@ -14,6 +14,8 @@ interface PaymentRequestsLike {
   create(dto: { hotelId?: string; reservationId: string; amount: number; currency?: string }, user: { id: string; role: string; hotelId?: string }): Promise<unknown>
   clampRequestsToCeiling(hotelId: string, reservationId: string, user: { id: string; role: string; hotelId?: string }): Promise<number>
   releaseRequestsOfReservation(hotelId: string, reservationId: string, user: { id: string; role: string; hotelId?: string }): Promise<number>
+  /** RTC-8.7 — expiración de sesiones abiertas para la CANCELACIÓN (sin el 409 del borrado). */
+  releaseRequestsForCancellation(hotelId: string, reservationId: string, user: { id: string; role: string; hotelId?: string }): Promise<number>
 }
 
 interface ReservasLike {
@@ -22,6 +24,7 @@ interface ReservasLike {
     paymentRequestsCeiling?: {
       clamp: (hotelId: string, reservationId: string) => Promise<void>
       releaseAll: (hotelId: string, reservationId: string) => Promise<void>
+      releaseForCancel: (hotelId: string, reservationId: string) => Promise<void>
     },
   }) => void
 }
@@ -44,6 +47,7 @@ export function reservasPaymentRequestsConnector(orm: any): (ctx: ConnectorConte
       paymentRequestsCeiling: {
         clamp: async (hotelId, reservationId) => { await paymentRequests.clampRequestsToCeiling(hotelId, reservationId, { ...SYSTEM_USER, hotelId }) },
         releaseAll: async (hotelId, reservationId) => { await paymentRequests.releaseRequestsOfReservation(hotelId, reservationId, { ...SYSTEM_USER, hotelId }) },
+        releaseForCancel: async (hotelId, reservationId) => { await paymentRequests.releaseRequestsForCancellation(hotelId, reservationId, { ...SYSTEM_USER, hotelId }) },
       },
     })
   }

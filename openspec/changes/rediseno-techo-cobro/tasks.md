@@ -408,32 +408,32 @@ requerir-pago($400)  → exposición $400 / saldo $400   ok
 payments: [{ status: "processing", amount: 400, reservationId: "r1" }]
 ```
 
-- [ ] 8.1 `backend/src/modules/payments/usecases/charge-card.ts:47` — `POST /api/payments/charge`
+- [x] 8.1 `backend/src/modules/payments/usecases/charge-card.ts:47` — `POST /api/payments/charge`
       (`payments/index.ts:81`, permiso `billing:create`, que tiene `receptionist` según
       `shared/permissions.ts:189`) abre una Checkout Session real. **`assertChargeableAmount` no
       tiene un solo caller en todo `modules/payments/`**: sus únicos llamadores son
       `payment-requests/service.ts:124,178`, `update-request.ts` y `auto-payment-request.ts`.
       Cero techo. N llamadas = N sesiones vivas por el saldo completo.
-- [ ] 8.2 La sesión es invisible **por los dos lados** de la desigualdad:
+- [x] 8.2 La sesión es invisible **por los dos lados** de la desigualdad:
       `committedPending` (`charge-ceiling.ts:53`) sólo suma filas de `payment_requests`, así que no
       la cuenta como comprometida; y `paidForReservation` sólo cuenta `completed|refunded`
       (`shared/usecases/reservation-paid.ts:82`) mientras ese pago nace `pending` y pasa a
       `processing` (`payment-crud.ts:76`, `charge-card.ts:62`), así que tampoco baja el saldo.
-- [ ] 8.3 **Nadie la expira jamás.** `clampUnlocked` (`clamp-to-ceiling.ts:121`) y `releaseUnlocked`
+- [x] 8.3 **Nadie la expira jamás.** `clampUnlocked` (`clamp-to-ceiling.ts:121`) y `releaseUnlocked`
       (`:226`) iteran `pendingRowsOf` (`:57`), que es el repo de `payment_requests`; esa sesión vive
       en `payments.stripeSessionId`. Bajar el total o borrar la reserva la deja viva y pagable.
-- [ ] 8.4 `charge-card.ts:56` — la metadata de la sesión lleva `paymentId`/`hotelId` y **no**
+- [x] 8.4 `charge-card.ts:56` — la metadata de la sesión lleva `paymentId`/`hotelId` y **no**
       `reservationId` (`payment-requests/usecases/create-checkout.ts:100` sí lo manda). Sin eso, ni
       desde el objeto de Stripe se puede atribuir la sesión a la reserva.
-- [ ] 8.5 **El choke point de RTC-0 no es único.** `payments/usecases/settle-webhook.ts:51` hace
+- [x] 8.5 **El choke point de RTC-0 no es único.** `payments/usecases/settle-webhook.ts:51` hace
       `crud.updateStatus(paymentId,'completed')` — mueve plata al único estado que el techo cuenta —
       **sin pasar por `createPayment`**, y `connectors/payments-reservas.ts:43-46` suscribe
       `onPaymentCreated` y `onRefundProcessed` pero **no `onPaymentCompleted`**. Cuando el webhook
       confirma un cobro de charge-card o POS, `syncPendingAfterPayment` no corre y el clamp tampoco.
-- [ ] 8.6 `clamp-to-ceiling.ts:197` — `assertNoSettledCharge` mide `settledNetOfReservation`, que
+- [x] 8.6 `clamp-to-ceiling.ts:197` — `assertNoSettledCharge` mide `settledNetOfReservation`, que
       suma sólo `completed|refunded`. Una sesión de charge-card en `processing` **no bloquea el
       borrado de la reserva**: es el cobro huérfano de RTC-0.5 otra vez, por esta puerta.
-- [ ] 8.7 `reservas/usecases/cancel-core.ts:159` — confirmado: `service.ts:191` arma
+- [x] 8.7 `reservas/usecases/cancel-core.ts:159` — confirmado: `service.ts:191` arma
       `cancelReservation` **sin** el puerto `paymentRequestsCeiling` (lo tienen sólo update, delete y
       addons), y `pendingBalance` (`reservation-balance.ts:68`) no mira `status`. Reserva cancelada =
       saldo intacto = link `pending` y pagable. `cancelBySystem` (`service.ts:194`) igual.
@@ -461,14 +461,14 @@ queda verde es el control negativo.
 
 ### Deuda menor, del mismo diff
 
-- [ ] 8.8 `reservas/usecases/addons.ts:43` y `:97` — el clamp entra como parámetro **opcional** y
+- [x] 8.8 `reservas/usecases/addons.ts:43` y `:97` — el clamp entra como parámetro **opcional** y
       `reservas/service.ts:143` devuelve `undefined` si el connector no está cableado: fail-open. El
       mismo cambio eligió fail-closed para el puerto hermano (`payment-requests/service.ts:43`), y
       `crud.ts:307` argumenta que un parámetro opcional "reintroduce la divergencia en silencio".
-- [ ] 8.9 `sync-pending-after-payment.ts:104` — el `ceilingGuard` corre dentro del `try`; si el
+- [x] 8.9 `sync-pending-after-payment.ts:104` — el `ceilingGuard` corre dentro del `try`; si el
       clamp tira (Stripe caído), el catch loguea "No se pudo resincronizar el saldo" —que sí se
       resincronizó— y devuelve `null`. El link queda vivo sobre un saldo ya bajado.
-- [ ] 8.10 `addons.ts:44` — `createAddon` pasó de 9 a 10 parámetros posicionales; el call site
+- [x] 8.10 `addons.ts:44` — `createAddon` pasó de 9 a 10 parámetros posicionales; el call site
       (`controller.ts:148`) es una línea de 240 caracteres donde el orden de 10 argumentos es lo
       único que separa lo correcto de lo roto.
 

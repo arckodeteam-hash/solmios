@@ -50,7 +50,7 @@ describe('cancelReservation — ownership (con Auth real)', () => {
   it('deja cancelar al usuario del mismo hotel', async () => {
     const sockets = { onReservationCancelled: async () => {} }
     const out = await cancelReservation(
-      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     expect(out.status).toBe('cancelled')
@@ -59,7 +59,7 @@ describe('cancelReservation — ownership (con Auth real)', () => {
   it('bloquea al usuario de otro hotel (no super_admin)', async () => {
     const sockets = { onReservationCancelled: async () => {} }
     const call = cancelReservation(
-      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, { id: 'u2', role: 'hotel_admin', hotelId: OTRO_HOTEL }, realAuth,
     )
     await expect(call).rejects.toThrow()
@@ -68,7 +68,7 @@ describe('cancelReservation — ownership (con Auth real)', () => {
   it('deja pasar al super_admin de otro hotel', async () => {
     const sockets = { onReservationCancelled: async () => {} }
     const out = await cancelReservation(
-      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, { id: 'u3', role: 'super_admin', hotelId: OTRO_HOTEL }, realAuth,
     )
     expect(out.status).toBe('cancelled')
@@ -79,7 +79,7 @@ describe('cancelReservation — state machine (assertValidTransition)', () => {
   it('lanza 409 al cancelar una reserva checked_in', async () => {
     const sockets = { onReservationCancelled: async () => {} }
     const call = cancelReservation(
-      { repo: repoWith(baseItem({ status: 'checked_in' })), policyRepo: policyRepoWith([]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem({ status: 'checked_in' })), policyRepo: policyRepoWith([]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     await expect(call).rejects.toThrow(/no permitida/i)
@@ -88,7 +88,7 @@ describe('cancelReservation — state machine (assertValidTransition)', () => {
   it('lanza 409 al cancelar una reserva checked_out', async () => {
     const sockets = { onReservationCancelled: async () => {} }
     const call = cancelReservation(
-      { repo: repoWith(baseItem({ status: 'checked_out' })), policyRepo: policyRepoWith([]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem({ status: 'checked_out' })), policyRepo: policyRepoWith([]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     await expect(call).rejects.toThrow(/no permitida/i)
@@ -98,7 +98,7 @@ describe('cancelReservation — state machine (assertValidTransition)', () => {
     const sockets = { onReservationCancelled: async () => {} }
     for (const status of ['pending', 'confirmed']) {
       const out = await cancelReservation(
-        { repo: repoWith(baseItem({ status })), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets },
+        { repo: repoWith(baseItem({ status })), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
         'r1', {}, userSameHotel, realAuth,
       )
       expect(out.status).toBe('cancelled')
@@ -112,7 +112,7 @@ describe('cancelReservation — cálculo de montos (computePenalty F1)', () => {
     const updated: any[] = []
     const sockets = { onReservationCancelled: async () => {} }
     const out = await cancelReservation(
-      { repo: repoWith(baseItem(), { updated }), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem(), { updated }), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     expect(out.refundAmount).toBe(100)
@@ -123,7 +123,7 @@ describe('cancelReservation — cálculo de montos (computePenalty F1)', () => {
     const updated: any[] = []
     const sockets = { onReservationCancelled: async () => {} }
     const out = await cancelReservation(
-      { repo: repoWith(baseItem(), { updated }), policyRepo: policyRepoWith([{ deadlineHours: 72, penaltyPercent: 0, refundable: true }, { deadlineHours: 0, penaltyPercent: 50, refundable: true }]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem(), { updated }), policyRepo: policyRepoWith([{ deadlineHours: 72, penaltyPercent: 0, refundable: true }, { deadlineHours: 0, penaltyPercent: 50, refundable: true }]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     expect(out.refundAmount).toBe(50)
@@ -133,7 +133,7 @@ describe('cancelReservation — cálculo de montos (computePenalty F1)', () => {
   it('non_refundable → refundAmount=0, cancellationFee=100', async () => {
     const sockets = { onReservationCancelled: async () => {} }
     const out = await cancelReservation(
-      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 0, penaltyPercent: 100, refundable: false }]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 0, penaltyPercent: 100, refundable: false }]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     expect(out.refundAmount).toBe(0)
@@ -144,7 +144,7 @@ describe('cancelReservation — cálculo de montos (computePenalty F1)', () => {
     const updated: any[] = []
     const sockets = { onReservationCancelled: async () => {} }
     const out = await cancelReservation(
-      { repo: repoWith(baseItem(), { updated }), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem(), { updated }), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', { reason: 'Cambio de planes' }, userSameHotel, realAuth,
     )
     expect(out.cancelledAt).toBeTruthy()
@@ -156,7 +156,7 @@ describe('cancelReservation — cálculo de montos (computePenalty F1)', () => {
   it('reason opcional → cadena vacía si no se provee', async () => {
     const sockets = { onReservationCancelled: async () => {} }
     const out = await cancelReservation(
-      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     expect(out.cancellationReason).toBe('')
@@ -175,7 +175,7 @@ describe('cancelReservation — preset del hotel (hotels.cancellationType)', () 
   it("hotel 'strict' sin políticas custom → aplica el preset (fee=100, refund=0)", async () => {
     const sockets = { onReservationCancelled: async () => {} }
     const out = await cancelReservation(
-      { repo: repoWith(baseItem()), policyRepo: noPolicies, hotelRepo: hotelRepoWith('strict'), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem()), policyRepo: noPolicies, hotelRepo: hotelRepoWith('strict'), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     // strict: 0% si >168h; 100% si <=168h. checkIn ~48h → 100% de penalidad.
@@ -187,7 +187,7 @@ describe('cancelReservation — preset del hotel (hotels.cancellationType)', () 
   it("hotel 'moderate' sin políticas custom → 50% a ~48h", async () => {
     const sockets = { onReservationCancelled: async () => {} }
     const out = await cancelReservation(
-      { repo: repoWith(baseItem()), policyRepo: noPolicies, hotelRepo: hotelRepoWith('moderate'), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem()), policyRepo: noPolicies, hotelRepo: hotelRepoWith('moderate'), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     expect(out.cancellationFee).toBe(50)
@@ -197,7 +197,7 @@ describe('cancelReservation — preset del hotel (hotels.cancellationType)', () 
   it('política custom del hotel GANA sobre el preset (precedencia base > preset)', async () => {
     const sockets = { onReservationCancelled: async () => {} }
     const out = await cancelReservation(
-      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), hotelRepo: hotelRepoWith('strict'), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), hotelRepo: hotelRepoWith('strict'), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     expect(out.refundAmount).toBe(100)
@@ -208,7 +208,7 @@ describe('cancelReservation — preset del hotel (hotels.cancellationType)', () 
     const sockets = { onReservationCancelled: async () => {} }
     const boom = { findMany: async () => { throw new Error('db down') } } as any
     const out = await cancelReservation(
-      { repo: repoWith(baseItem()), policyRepo: noPolicies, hotelRepo: boom, logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem()), policyRepo: noPolicies, hotelRepo: boom, logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     expect(out.status).toBe('cancelled')
@@ -218,7 +218,7 @@ describe('cancelReservation — preset del hotel (hotels.cancellationType)', () 
   it('sin hotelRepo cableado → default flexible (no rompe)', async () => {
     const sockets = { onReservationCancelled: async () => {} }
     const out = await cancelReservation(
-      { repo: repoWith(baseItem()), policyRepo: noPolicies, logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem()), policyRepo: noPolicies, logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     expect(out.status).toBe('cancelled')
@@ -232,7 +232,7 @@ describe('cancelReservation — idempotencia', () => {
     const sockets = { onReservationCancelled: async () => { socketCalls++ } }
     const item = baseItem({ status: 'cancelled', cancelledAt: '2026-01-01T00:00:00Z', refundAmount: 30 })
     const out = await cancelReservation(
-      { repo: repoWith(item), policyRepo: policyRepoWith([{ deadlineHours: 0, penaltyPercent: 100, refundable: false }]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(item), policyRepo: policyRepoWith([{ deadlineHours: 0, penaltyPercent: 100, refundable: false }]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', { reason: 're-cancel' }, userSameHotel, realAuth,
     )
     // Devuelve la reserva sin re-procesar.
@@ -247,7 +247,7 @@ describe('cancelReservation — socket onReservationCancelled', () => {
     const events: any[] = []
     const sockets = { onReservationCancelled: async (data: any) => { events.push(data) } }
     await cancelReservation(
-      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 0, penaltyPercent: 100, refundable: false }]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 0, penaltyPercent: 100, refundable: false }]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     expect(events.length).toBe(1)
@@ -261,7 +261,7 @@ describe('cancelReservation — socket onReservationCancelled', () => {
   it('si el socket falla, NO rompe la cancelación (safeEmit)', async () => {
     const sockets = { onReservationCancelled: async () => { throw new Error('connector down') } }
     const out = await cancelReservation(
-      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets },
+      { repo: repoWith(baseItem()), policyRepo: policyRepoWith([{ deadlineHours: 99999, penaltyPercent: 0, refundable: true }]), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} },
       'r1', {}, userSameHotel, realAuth,
     )
     expect(out.status).toBe('cancelled')

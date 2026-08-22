@@ -179,4 +179,16 @@ export class PaymentCrudUseCase {
     if (!updated) throw new ValidationError('Payment not found')
     return updated
   }
+
+  /**
+   * RTC-8.3: la sesión de checkout de ESTE cobro. `charge-card` la abre después del asiento, así
+   * que el id no existe al crear la fila — y sin persistirlo, el clamp del techo no tenía forma
+   * de expirar la sesión al recortar (marcaba la fila `cancelled` y el link del proveedor quedaba
+   * pagable: exactamente el "nadie la expira jamás" de RTC-8.3).
+   */
+  async attachSession(id: string, stripeSessionId: string): Promise<PaymentDTO> {
+    const updated = await this.paymentRepo.update(id, { stripeSessionId } as any)
+    if (!updated) throw new ValidationError('Payment not found')
+    return updated
+  }
 }

@@ -28,6 +28,7 @@ import { requireMessageLogSource } from './usecases/message-log'
 import { syncPendingAfterPayment, pendingAfterPaymentDeps, type MoneyRowRef } from './usecases/sync-pending-after-payment'
 import type { ReservationMoneyPort } from './usecases/money-port'
 import { settleFolioForCheckout as settleFolioForCheckoutUsecase, type SettleInput, type SettleActor, type SettleFolioPort, type SettleReservation, type SettleResult } from './usecases/settle-port'
+import { ceilingGuardOf, type PaymentRequestsCeilingPort } from './usecases/ceiling-guard'
 
 export class ReservasService {
   private sockets: ReservasSockets = {}
@@ -49,8 +50,8 @@ export class ReservasService {
     /** STR-3 — connectors/reservas-marketing.ts: `message_logs` es del módulo marketing. */
     listMessageLogs?: (hotelId: string, reservationId: string) => Promise<Record<string, any>[]>
     moneyPort?: ReservationMoneyPort // connectors/reservas-money.ts (tablas de otros módulos)
-    /** SEC3-2/SEC3-3 (connectors/reservas-payment-requests.ts): clamp/liberación de links vivos. */
-    paymentRequestsCeiling?: { clamp: (h: string, r: string) => Promise<void>; releaseAll: (h: string, r: string) => Promise<void> }
+    /** SEC3-2/SEC3-3/RTC-8.7 (connectors/reservas-payment-requests.ts): clamp/liberación de links vivos. */
+    paymentRequestsCeiling?: PaymentRequestsCeilingPort
   } = {}
   setOrchestrationDeps(deps: typeof ReservasService.prototype.orchestrationDeps): void {
     Object.assign(this.orchestrationDeps, deps)
@@ -139,11 +140,9 @@ export class ReservasService {
   /** Lo COBRADO, derivado de `payments` (GH-0.2) — ver shared/usecases/reservation-paid.ts. */
   paidSource(): PaidSource { return paidSourceFrom(this.queries.paidRepos) }
 
-  /** SEC3-2 — clamp para el controller de addons (baja de un extra). */
-  addonsCeilingGuard() { const c = this.orchestrationDeps.paymentRequestsCeiling; return c ? (rid: string, hid: string) => c.clamp(hid, rid) : undefined }
+  addonsCeilingGuard() { return (rid: string, hid: string) => ceilingGuardOf(this.orchestrationDeps.paymentRequestsCeiling, 'clamp')(hid, rid) } // SEC3-2/RTC-8.8, fail-closed — ver usecases/ceiling-guard.ts
 
-  /** COR-1 — un movimiento de dinero mueve el saldo persistido. Lo llama `connectors/payments-reservas`. */
-  // RTC-7.3: el movimiento de dinero también BAJA el techo → se recortan los links vivos (mismo connector que `update()`).
+  /** COR-1/RTC-7.3 — un movimiento de dinero mueve el saldo Y baja el techo (connector payments-reservas). */
   syncPendingAfterPayment(row: MoneyRowRef): Promise<number | null> {
     return syncPendingAfterPayment(pendingAfterPaymentDeps(this.repo, this.queries, this.paidSource(), this.reservationChanged(), this.logger, this.orchestrationDeps.paymentRequestsCeiling?.clamp), row)
   }
@@ -188,10 +187,11 @@ export class ReservasService {
 
   async unlockGuaranteeCard(reservationId: string, user: any, body: any): Promise<any> { return unlockGuaranteeCardUsecase(this.queries, this.repo, this.userRepo, reservationId, user, body, this.auth) }
   // ── CANCEL (F2 plan #627) — `cancel` aplica la política del hotel; `cancelPreview` hace el MISMO cálculo sin persistir ni emitir ──
-  async cancel(id: string, dto: { reason?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> { return cancelReservationUsecase({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets }, id, dto, currentUser, this.auth) }
+  async cancel(id: string, dto: { reason?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> { return cancelReservationUsecase({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets, releaseChargeSessions: (rid: string, hid: string) => ceilingGuardOf(this.orchestrationDeps.paymentRequestsCeiling, 'releaseForCancel')(hid, rid) }, id, dto, currentUser, this.auth) }
   async cancelPreview(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<CancelPreview> { return previewCancellation({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, guestRepo: this.guestRepo }, id, currentUser, this.auth) }
   /** Cancelación de SISTEMA (OTA/IA): sin usuario logueado, scoping por `hotelId`. Ver usecases/cancel-system.ts. Lo consumen los connectors canales-reservas / ai-recepcionista-reservas / ai-gerente-reservas. */
-  async cancelBySystem(id: string, input: SystemCancelInput): Promise<SystemCancelOutcome> { return cancelReservationBySystem({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets }, id, input) }
+  async cancelBySystem(id: string, input: SystemCancelInput): Promise<SystemCancelOutcome> { return cancelReservationBySystem({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets, releaseChargeSessions: (rid: string, hid: string) => ceilingGuardOf(this.orchestrationDeps.paymentRequestsCeiling, 'releaseForCancel')(hid, rid) }, id, input) }
+
   async getBookingEngineDashboard(user: any): Promise<any> { return getBookingEngineDashboardUsecase(this.queries, user) }
   async sendLockCodeEmail(id: string, user: any, deps: { orm: any }): Promise<{ sentTo: string }> {
     return sendLockCodeEmailUsecase({ orm: deps.orm, reservationRepo: this.repo, guestRepo: this.guestRepo, userRepo: this.userRepo, emailSender: this.emailSender, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, messageLogRepo: this.messageLogRepo, logger: this.logger }, id, user)

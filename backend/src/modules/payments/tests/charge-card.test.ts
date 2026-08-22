@@ -15,7 +15,7 @@ describe('payments — chargeCard (fix-refund-pos-card)', () => {
         isConfigured: async () => true,
         createCheckoutSession: async () => ({ id: 'cs_1', url: 'https://stripe/cs_1' }),
       } as any,
-      crud: { updateStatus: async () => ({}) as PaymentDTO } as any,
+      crud: { updateStatus: async () => ({}) as PaymentDTO, attachSession: async () => ({}) as PaymentDTO } as any,
       createPayment: async (dto: CreatePaymentDTO) => { createdDto = dto; return { id: 'pay_1', ...dto } as PaymentDTO },
     }
     const dto: ChargeCardDTO = {
@@ -38,7 +38,7 @@ describe('payments — chargeCard (fix-refund-pos-card)', () => {
         isConfigured: async () => true,
         createCheckoutSession: async (p: any) => { sessionParams = p; return { id: 'cs_1', url: 'https://stripe/cs_1' } },
       } as any,
-      crud: { updateStatus: async () => ({}) as PaymentDTO } as any,
+      crud: { updateStatus: async () => ({}) as PaymentDTO, attachSession: async () => ({}) as PaymentDTO } as any,
       createPayment: async (dto: CreatePaymentDTO) => ({ id: 'pay_1', ...dto } as PaymentDTO),
     }
     const dto: ChargeCardDTO = {

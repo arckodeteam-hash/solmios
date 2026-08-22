@@ -53,7 +53,8 @@ const FREE_CANCEL = [{ deadlineHours: 99_999, penaltyPercent: 0, refundable: tru
 const HALF_PENALTY = [{ deadlineHours: 0, penaltyPercent: 50, refundable: true }]
 
 function depsFor(repo: any, sockets: any, tiers: any[] = FREE_CANCEL) {
-  return { repo, policyRepo: policyRepoWith(tiers), logger: noopLogger, cache: noopCache, sockets }
+  // RTC-8.7: el release de sesiones de cobro es no-op acá (sin Stripe en este world).
+  return { repo, policyRepo: policyRepoWith(tiers), logger: noopLogger, cache: noopCache, sockets, releaseChargeSessions: async () => {} }
 }
 
 describe('cancelReservationBySystem — política + snapshot + evento', () => {

@@ -35,6 +35,7 @@ import { FacturasModel } from '../../facturas/model'
 import { registerPaymentsModels } from '../../payments/model'
 import { PaymentsService } from '../../payments/service'
 import { paymentsLinkedTo, settledNetOfReservation } from '../../payments/usecases/reservation-money'
+import { liveChargesOf, liveChargeRowsOf } from '../../payments/usecases/live-charges'
 import { foliosOfReservation, reservationIdOfFolio } from '../../folios/usecases/reservation-money'
 import { invoicesOfReservation, reservationIdOfInvoice } from '../../facturas/usecases/reservation-money'
 import {
@@ -246,6 +247,12 @@ export async function makeWorld(): Promise<World> {
     // RTC-7.4: "dinero YA asentado de esta reserva" es una pregunta del puerto, no una lectura
     // cruda de `payments` con `as any` (ver `usecases/clamp-to-ceiling.ts`).
     settledNet: (hotelId, reservationId) => settledNetOfReservation(paymentRepo, hotelId, reservationId),
+    // RTC-8.2/8.3 — sesiones de checkout vivas de la vía charge-card: las funciones REALES del
+    // dueño, cableadas como `connectors/payment-requests-money`. La cancelación pasa por el
+    // service de `payments` (expira sesión + marca `cancelled` + emite `onPaymentExpired`).
+    liveCharges: (hotelId, reservationId, excludePaymentId) => liveChargesOf(paymentRepo, hotelId, reservationId, excludePaymentId),
+    liveChargeRows: (hotelId, reservationId) => liveChargeRowsOf(paymentRepo, hotelId, reservationId),
+    cancelLiveCharge: (hotelId, chargeId) => payments.liveChargePort.cancelLiveChargeOf(hotelId, chargeId),
   })
   service.setEventStore(new PaymentEventStore(eventRepo, logger))
   // El asiento del cobro lo arma `stripeChargeDto` — el MISMO que usa
@@ -301,7 +308,12 @@ export async function makeWorld(): Promise<World> {
       service.clampRequestsToCeiling(hotelId, reservationId, { ...USER, role: 'super_admin' }).then(() => undefined),
   )
   const resync = (p: any) => syncPendingAfterPayment(pendingDeps, p).then(() => {}).catch(() => {})
-  payments.setSockets({ onPaymentCreated: resync, onRefundProcessed: resync })
+  // RTC-8.5: los TRES estados terminales del webhook mueven el saldo (completed lo baja;
+  // expired/failed lo devuelven) — mismo socket set que `connectors/payments-reservas`.
+  payments.setSockets({ onPaymentCreated: resync, onPaymentCompleted: resync, onPaymentExpired: resync, onPaymentFailed: resync, onRefundProcessed: resync })
+  // RTC-8.1: el guard entre módulos, como `connectors/payments-ceiling` — la vía charge-card
+  // valida contra el MISMO techo antes de abrir sesión.
+  payments.setCeilingGuard({ assertChargeable: (p) => service.assertChargeableFor(p) })
 
   async function reset(): Promise<void> {
     for (const t of TABLES) await db.run(`DELETE FROM ${t}`)

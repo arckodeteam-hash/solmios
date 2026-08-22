@@ -90,6 +90,7 @@ export async function syncPendingAfterPayment(
   // era código muerto en esta ruta.
   if (!row?.folioId && !row?.invoiceId && !row?.reservationId) return null
 
+  let done: { reservationId: string; pendingAmount: number } | null = null
   try {
     const reservationId = await deps.reservationOf(hotelId, row)
     if (!reservationId) return null
@@ -101,11 +102,7 @@ export async function syncPendingAfterPayment(
     const before = Number(reservation.pendingAmount ?? NaN)
     const pendingAmount = await syncReservationPending(deps.repo, deps.addonsOf, reservationId, deps.paidOf, reservation)
     if (pendingAmount !== before) await deps.notifyChanged({ ...reservation, pendingAmount })
-    // RTC-7.3: la plata que acaba de entrar baja el techo del cobro → los links vivos lo siguen.
-    // Va DESPUÉS de persistir el saldo (el clamp relee la reserva) y SIEMPRE, no sólo si el número
-    // cambió: `pendingAmount` es la columna espejo, el techo se recalcula contra `payments`.
-    if (deps.ceilingGuard) await deps.ceilingGuard(hotelId, reservationId)
-    return pendingAmount
+    done = { reservationId, pendingAmount }
   } catch (e) {
     deps.logger.error('No se pudo resincronizar el saldo de la reserva tras un pago', {
       hotelId, folioId: row?.folioId ?? null, invoiceId: row?.invoiceId ?? null,
@@ -113,6 +110,27 @@ export async function syncPendingAfterPayment(
     })
     return null
   }
+
+  // RTC-7.3: la plata que acaba de entrar baja el techo del cobro → los links vivos lo siguen.
+  // Va DESPUÉS de persistir el saldo (el clamp relee la reserva) y SIEMPRE, no sólo si el número
+  // cambió: `pendingAmount` es la columna espejo, el techo se recalcula contra `payments`.
+  //
+  // RTC-8.9: FUERA del try de arriba. Antes, si el clamp tiraba (Stripe caído), el catch logueaba
+  // "No se pudo resincronizar el saldo" — falso: el saldo SÍ se había resincronizado — y devolvía
+  // `null`, escondiendo el número real que el caller pidió. El fallo del clamp se relata como lo
+  // que es (techo sin recortar = links vivos sobre un saldo ya bajado) y se devuelve el saldo:
+  // el clamp es una compensación que el próximo movimiento de dinero vuelve a intentar; fallar
+  // acá no puede deshacer la resincronización que ya se persistió.
+  if (deps.ceilingGuard && done) {
+    try {
+      await deps.ceilingGuard(hotelId, done.reservationId)
+    } catch (e) {
+      deps.logger.error('El saldo se resincronizó pero el techo del cobro quedó sin recortar: hay links vivos que pueden superar el saldo', {
+        hotelId, reservationId: done.reservationId, error: String(e),
+      })
+    }
+  }
+  return done?.pendingAmount ?? null
 }
 
 /**

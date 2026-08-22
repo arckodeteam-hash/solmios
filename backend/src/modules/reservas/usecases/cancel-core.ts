@@ -59,6 +59,15 @@ export interface CancelCoreDeps {
   logger: Logger
   cache: CacheAdapter
   sockets: any
+  /**
+   * RTC-8.7 — expira las sesiones de cobro ABIERTAS de la reserva (links `pending` de
+   * `payment-requests` + sesiones de checkout de `payments`) ANTES de marcarla `cancelled`.
+   * `pendingBalance` no mira `status`, así que sin esto la reserva cancelada seguía con saldo
+   * > 0 y el link quedaba vivo y pagable. Fail-loud: si Stripe no responde, la reserva NO se
+   * cancela (sesiones pagables que nadie controla ya) — mismo criterio que el borrado (SEC3-3).
+   * Lo arma el service desde `orchestrationDeps.paymentRequestsCeiling` (fail-closed).
+   */
+  releaseChargeSessions: (reservationId: string, hotelId: string) => Promise<void>
 }
 
 export interface CancelCoreResult {
@@ -135,6 +144,11 @@ export async function applyCancellation(
   // State machine: checked_in → sólo checked_out; checked_out → nada. Cancelar desde esos
   // estados es un 409 (la reserva ya consumió recursos: folio, habitación ocupada).
   assertValidTransition(item.status, 'cancelled')
+
+  // RTC-8.7: sesiones de cobro muertas ANTES del update a `cancelled`. Si esto tira (Stripe
+  // caído), la cancelación no ocurre: preferible reintentar que dejar links pagables sobre una
+  // reserva que el staff ya dio por cancelada.
+  await deps.releaseChargeSessions(String(item.id), String(item.hotelId))
 
   const nowIso = new Date().toISOString()
   const depositAmount = Number(item.deposit ?? 0)

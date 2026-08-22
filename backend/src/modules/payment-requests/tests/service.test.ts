@@ -90,6 +90,10 @@ function wireMoney(s: PaymentRequestsService, opts: { folios?: any[]; invoices?:
     // RTC-7.4: lo contesta `payments` (settledNetOfReservation). Se deriva de las MISMAS filas del
     // doble para que el mundo del test no diga dos cosas distintas sobre la misma plata.
     settledNet: async () => sumPayments((opts.payments ?? []) as any[]),
+    // RTC-8.2/8.3 — sin sesiones de la vía charge-card en este doble.
+    liveCharges: async () => 0,
+    liveChargeRows: async () => [],
+    cancelLiveCharge: async () => 'cancelled' as const,
   })
   return s
 }
@@ -189,7 +193,7 @@ describe('PaymentRequestsService', () => {
     it('descuenta del techo los links de pago pendientes de la misma reserva', async () => {
       const { s, created } = serviceWith({ existing: [{ id: 'prA', status: 'pending', amount: 300 }] })
       await expect(s.create({ reservationId: 'r1', amount: 300 } as any, currentUser))
-        .rejects.toThrow('links de pago pendientes')
+        .rejects.toThrow('cobros pendientes')
       expect(created).toHaveLength(0)
     })
 

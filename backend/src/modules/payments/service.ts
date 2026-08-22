@@ -7,7 +7,7 @@ import type {
   DepositDTO, CreateDepositDTO, RefundDepositDTO, PaymentsQuery, PaymentsPaginated,
   ReconciliationEntry, ReconciliationResult,
 } from './types'
-import type { PaymentsSockets } from './sockets'
+import { settleHooks, type PaymentsSockets } from './sockets'
 import { StripeUseCase } from './usecases/stripe'
 import type { PaymentGatewayRegistry } from '../../services/payment-gateway/registry'
 import type { PaymentEventStore } from '../../services/payment-gateway/payment-events'
@@ -16,7 +16,8 @@ import { PaymentLinksUseCase } from './usecases/payment-links'
 import { DepositsUseCase } from './usecases/deposits'
 import { ReconciliationUseCase } from './usecases/reconciliation'
 import { refundPayment } from './usecases/refund'
-import { chargeCard } from './usecases/charge-card'
+import { chargeCard, type ChargeCeilingPort } from './usecases/charge-card'
+import { liveChargesPort, type LiveChargesPort } from './usecases/live-charges'
 import { settleStripeWebhook } from './usecases/settle-webhook'
 import { cancelHeldDeposits } from './usecases/cancel-deposits'
 import {
@@ -32,6 +33,10 @@ export class PaymentsService {
   private deposits: DepositsUseCase
   private reconciliation: ReconciliationUseCase
   private auditPort: AuditPort | null = null
+  /** RTC-8.1: techo del cobro para la vía charge-card (connector `payments-ceiling`) — fail-closed en el usecase. */
+  private ceiling: ChargeCeilingPort | null = null
+  /** RTC-8.2/8.3 — sesiones de checkout vivas de esta vía, para `connectors/payment-requests-money`. */
+  readonly liveChargePort: LiveChargesPort
 
   constructor(
     private readonly paymentRepo: RepositoryAdapter<PaymentDTO>,
@@ -43,16 +48,13 @@ export class PaymentsService {
     userRepo?: RepositoryAdapter<any>,
     registry?: PaymentGatewayRegistry,
     private readonly events?: PaymentEventStore,
-    /** Verifican que folioId/invoiceId/guestId del body sean del mismo hotel — ver payment-crud. */
-    folioRepo?: RepositoryAdapter<any>,
-    invoiceRepo?: RepositoryAdapter<any>,
-    guestRepo?: RepositoryAdapter<any>,
-    /** SEC3-5: idem para `reservationId` (columna nueva del vínculo directo, BUG-ceiling-bypass). */
-    reservationRepo?: RepositoryAdapter<any>,
+    /** Verifican folioId/invoiceId/guestId/reservationId del body contra el hotel — ver payment-crud (SEC3-5). */
+    folioRepo?: RepositoryAdapter<any>, invoiceRepo?: RepositoryAdapter<any>, guestRepo?: RepositoryAdapter<any>, reservationRepo?: RepositoryAdapter<any>,
   ) {
     if (!registry) throw new Error('payments: PaymentGatewayRegistry es requerido (pasarela por hotel)')
     this.stripe = new StripeUseCase(registry, logger)
     this.crud = new PaymentCrudUseCase(paymentRepo, logger, auth, userRepo, folioRepo, invoiceRepo, guestRepo, reservationRepo)
+    this.liveChargePort = liveChargesPort(paymentRepo, this.crud)
     this.links = new PaymentLinksUseCase(linkRepo, auth, userRepo)
     this.deposits = new DepositsUseCase(depositRepo, logger, auth, userRepo)
     this.reconciliation = new ReconciliationUseCase(paymentRepo)
@@ -80,10 +82,7 @@ export class PaymentsService {
   }
 
   async chargeCard(dto: ChargeCardDTO, actor?: Actor): Promise<{ payment: PaymentDTO; checkoutUrl: string }> {
-    const result = await chargeCard(
-      { stripe: this.stripe, crud: this.crud, createPayment: (d) => this.createPayment(d) },
-      dto,
-    )
+    const result = await chargeCard({ stripe: this.stripe, crud: this.crud, createPayment: (d) => this.createPayment(d), ceiling: this.ceiling ?? undefined }, dto)
     await this.audit(chargeEntry(result.payment, actor))
     return result
   }
@@ -107,10 +106,7 @@ export class PaymentsService {
   ): Promise<{ type: string; paymentId?: string } | null> {
     if (!this.events) throw new Error('payments: PaymentEventStore es requerido para procesar webhooks')
     return settleStripeWebhook(
-      { stripe: this.stripe, crud: this.crud, events: this.events, audit: (e) => this.audit(e),
-        onCompleted: (p) => this.sockets.onPaymentCompleted?.(p) ?? Promise.resolve(),
-        onExpired: (p) => this.sockets.onPaymentExpired?.(p) ?? Promise.resolve(),
-        onFailed: (p) => this.sockets.onPaymentFailed?.(p) ?? Promise.resolve() },
+      { stripe: this.stripe, crud: this.crud, events: this.events, audit: (e) => this.audit(e), ...settleHooks(this.sockets) },
       hotelId, payload, signature,
     )
   }
@@ -123,6 +119,9 @@ export class PaymentsService {
   paymentsLinkedTo(hotelId: string, ref: PaymentReservationRef): Promise<PaymentDTO[]> { return paymentsLinkedTo(this.paymentRepo, hotelId, ref) }
   // RTC-7.4 — dinero neto asentado a nombre de una reserva (`connectors/payment-requests-money`).
   settledNetOfReservation(hotelId: string, reservationId: string): Promise<number> { return settledNetOfReservation(this.paymentRepo, hotelId, reservationId) }
+
+  /** RTC-8.1 — lo inyecta el connector `payments-ceiling`; ver `usecases/charge-card.ts`. */
+  setCeilingGuard(port: ChargeCeilingPort): void { this.ceiling = port }
   async listPayments(query: PaymentsQuery): Promise<PaymentsPaginated> {
     return this.crud.list(query)
   }
