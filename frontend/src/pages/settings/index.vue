@@ -566,19 +566,9 @@
 
     <!-- ========== INTEGRACIONES ========== -->
     <div v-if="(activeTab as string) === 'integrations'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <h3 class="font-extrabold text-navy mb-4">Channel Manager</h3>
-        <div class="p-4 bg-surface rounded-xl">
-          <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-3">
-              <span class="w-5 h-5 text-navy/50" v-html="ICON_GLOBE"></span>
-              <div><div class="text-sm font-bold text-navy">Channel Manager</div><div class="text-[10px] text-text-muted">Sincronización con OTAs</div></div>
-            </div>
-            <span class="text-[10px] font-bold px-2 py-1 rounded-full bg-teal/10 text-teal">Conectado</span>
-          </div>
-          <router-link to="/panel/channel-manager" class="block w-full text-center px-4 py-2 bg-navy/10 text-navy rounded-full text-sm font-bold hover:bg-navy/20 transition-colors cursor-pointer">Gestionar Canales</router-link>
-        </div>
-      </div>
+      <!-- Channel Manager NO va acá: lo configura y gestiona el admin de la PLATAFORMA (/admin),
+           no el hotel. Esta card mostraba un "Conectado" hardcodeado (mentía el estado real) y
+           linkeaba a /panel/channel-manager, que al merchant le da 403. -->
 
       <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
         <h3 class="font-extrabold text-navy mb-4">Pasarela de Pagos</h3>
@@ -814,7 +804,6 @@ import type { HotelEmergencyContact } from '@/types'
 
 const ICON_X = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>'
 const ICON_BUILDING = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>'
-const ICON_GLOBE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>'
 const ICON_CARD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>'
 const ICON_MESSAGE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>'
 const ICON_RECEIPT = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M8 7h8"/><path d="M8 11h8"/><path d="M8 15h5"/></svg>'
