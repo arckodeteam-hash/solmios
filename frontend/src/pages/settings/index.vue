@@ -93,10 +93,6 @@
               </select>
             </div>
             <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">País *</label>
-              <SearchSelect v-model="form.country" :options="COUNTRIES" placeholder="Buscar país..." />
-            </div>
-            <div>
               <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Clasificación</label>
               <select v-model="form.starRating" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none cursor-pointer">
                 <option value="">N/A</option>
@@ -106,11 +102,6 @@
                 <option value="4">4 Estrellas</option>
                 <option value="5">5 Estrellas</option>
               </select>
-            </div>
-            <div class="sm:col-span-2">
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Dirección</label>
-              <input v-model="form.address" type="text" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" :class="fieldClass('address')" data-field="address" @blur="touchField('address')">
-              <p v-if="errorOf('address')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('address') }}</p>
             </div>
           </div>
         </SectionCard>
@@ -307,7 +298,30 @@
 
     <!-- ========== LOCATION (mapa de Google) ========== -->
     <div v-if="activeTab === 'location'" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div class="lg:col-span-2 rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
+      <div class="lg:col-span-2 space-y-6">
+        <!-- País y Dirección viven en Ubicación (unificación UX): todo lo geográfico en esta
+             pestaña, "Datos del hotel" queda solo identidad. Mismos v-model/validaciones que
+             cuando vivían en la pestaña Hotel — solo cambió el lugar del template. -->
+        <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
+          <h3 class="font-extrabold text-navy mb-1">País y dirección</h3>
+          <p class="text-[11px] text-text-muted mb-4">
+            La dirección, junto a provincia, municipio y código postal, forma la dirección completa
+            del hotel en facturas, emails, OTAs y la página pública. No mueve el pin: para eso usá
+            el mapa o las coordenadas de abajo.
+          </p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">País *</label>
+              <SearchSelect v-model="form.country" :options="COUNTRIES" placeholder="Buscar país..." />
+            </div>
+            <div>
+              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Dirección</label>
+              <input v-model="form.address" type="text" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" :class="fieldClass('address')" data-field="address" @blur="touchField('address')">
+              <p v-if="errorOf('address')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('address') }}</p>
+            </div>
+          </div>
+        </div>
+        <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
         <h3 class="font-extrabold text-navy mb-4">Mapa Interactivo</h3>
         <!-- Con API key: mapa interactivo (clic y arrastre). Sin key: iframe embed. -->
         <div v-show="mapsInteractive" ref="mapEl" class="w-full h-96 rounded-xl border border-border overflow-hidden"></div>
@@ -321,6 +335,7 @@
           </p>
           <a :href="googleMapsLinkUrl" target="_blank" rel="noopener"
             class="shrink-0 text-[11px] font-bold text-teal hover:underline">Abrir en Google Maps</a>
+        </div>
         </div>
       </div>
       <div class="space-y-4">
@@ -1140,9 +1155,12 @@ const touchedFields = ref<Set<string>>(new Set())
 
 /** En qué pestaña vive cada campo — para poder llevar al usuario hasta el error. */
 const FIELD_TAB: Record<string, string> = {
-  name: 'hotel', country: 'hotel', address: 'hotel', phone: 'hotel', phone2: 'hotel',
+  name: 'hotel', phone: 'hotel', phone2: 'hotel',
   email: 'hotel', website: 'hotel', timezone: 'hotel', currency: 'hotel',
   checkIn: 'hotel', checkOut: 'hotel', ownerName: 'hotel', ownerTaxId: 'hotel', logo: 'hotel',
+  // País y Dirección se mudaron a Ubicación: si el guardado falla por ellos, el salto
+  // automático al error tiene que aterrizar en la pestaña donde ahora viven.
+  country: 'location', address: 'location',
   province: 'location', municipality: 'location', locality: 'location',
   postalCode: 'location', latitude: 'location', longitude: 'location',
   wifiNetwork: 'description', wifiPassword: 'description',
