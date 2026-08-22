@@ -156,6 +156,24 @@
             </div>
           </div>
         </SectionCard>
+      <!-- WiFi del establecimiento: dato OPERATIVO (pre-checkin, emails, WhatsApp), no parte de
+           ninguna "descripción" pública — la página pública sólo lista el badge amenity. Vivía en
+           un tab "Descripción" que había quedado con este único contenido tras sacar la
+           descripción multilingüe; acá va con los demás datos del hotel (feedback panel/config). -->
+      <SectionCard title="WiFi" subtitle="Se comparte con el huésped en el pre-checkin">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Red</label>
+            <input v-model="form.wifiNetwork" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('wifiNetwork')" data-field="wifiNetwork" @blur="touchField('wifiNetwork')">
+              <p v-if="errorOf('wifiNetwork')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('wifiNetwork') }}</p>
+          </div>
+          <div>
+            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Contraseña</label>
+            <input v-model="form.wifiPassword" type="password" autocomplete="new-password" name="hotel-wifi-password" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('wifiPassword')" data-field="wifiPassword" @blur="touchField('wifiPassword')">
+              <p v-if="errorOf('wifiPassword')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('wifiPassword') }}</p>
+          </div>
+        </div>
+      </SectionCard>
 
         <SectionCard title="Propietario" subtitle="Titular fiscal que figura en las facturas emitidas">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -555,30 +573,6 @@
                en la landing pública, no configuración operativa de reseñas. -->
         </div>
       </div>
-    </div>
-
-    <!-- ========== DESCRIPTION ========== -->
-    <!-- La "Descripción Multilingüe" (12 idiomas) que vivía acá se quitó: escribía la
-         MISMA columna `descriptionJson` que ahora es {title, description} — el título+
-         descripción base en español del landing público (spec public-hotel-info D7,
-         ver pagina-publica/general.vue). Los dos usos chocaban en la misma columna y esta
-         tab no estaba conectada a ningún consumidor real (ni Channex, ni OTAs pese al
-         subtítulo) — deuda técnica resuelta priorizando la spec documentada. -->
-    <div v-if="(activeTab as string) === 'description'" class="space-y-6">
-      <SectionCard title="WiFi" subtitle="Se comparte con el huésped en el pre-checkin">
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Red</label>
-            <input v-model="form.wifiNetwork" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('wifiNetwork')" data-field="wifiNetwork" @blur="touchField('wifiNetwork')">
-              <p v-if="errorOf('wifiNetwork')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('wifiNetwork') }}</p>
-          </div>
-          <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Contraseña</label>
-            <input v-model="form.wifiPassword" type="password" autocomplete="new-password" name="hotel-wifi-password" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('wifiPassword')" data-field="wifiPassword" @blur="touchField('wifiPassword')">
-              <p v-if="errorOf('wifiPassword')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('wifiPassword') }}</p>
-          </div>
-        </div>
-      </SectionCard>
     </div>
 
     <!-- ========== INTEGRACIONES ========== -->
@@ -1130,7 +1124,6 @@ const tabGroups: SettingsTabGroup[] = [
     tabs: [
       { value: 'hotel', label: 'Hotel' },
       { value: 'location', label: 'Ubicación' },
-      { value: 'description', label: 'Descripción' },
       { value: 'conditions', label: 'Condiciones' },
       { value: 'emergency', label: 'Emergencias' },
       { value: 'hr', label: 'RRHH' },
@@ -1163,7 +1156,7 @@ const FIELD_TAB: Record<string, string> = {
   country: 'location', address: 'location',
   province: 'location', municipality: 'location', locality: 'location',
   postalCode: 'location', latitude: 'location', longitude: 'location',
-  wifiNetwork: 'description', wifiPassword: 'description',
+  wifiNetwork: 'hotel', wifiPassword: 'hotel',
   depositPercent: 'conditions', weekendSurcharge: 'conditions', depositFixed: 'conditions',
   advanceAmount: 'conditions', releaseHours: 'conditions', taxName: 'conditions', taxRate: 'conditions',
 }
