@@ -264,6 +264,17 @@ bloquear el pago y notificar al huésped qué cambió, sin crear un cobro.
 - THEN el motor bloquea el avance al pago y muestra que la disponibilidad cambió, sin
   procesar ningún cobro
 
+**RESUELTO 2026-08-22 — VERIFICADO, YA CUMPLÍA en el backend**: las 5 dimensiones
+(inventario, tarifa, cantidad, ocupación, extras/total) ya se revalidan frescas al
+crear la reserva, en una transacción con lock + re-lectura, todo-o-nada — nunca se
+confía en lo que el cliente mandó. El escenario literal de este requirement
+(disponibilidad se agota entre la búsqueda y el pago) tiene un test dedicado que lo
+reproduce con dos llamadas concurrentes sincronizadas (`public-booking-race.test.ts`).
+El gap real era que el FRONTEND (`useBooking.ts` `pay()`) nunca tuvo cobertura de que
+el mensaje específico del backend (no uno genérico) efectivamente llega al huésped
+cuando el pago se bloquea — cerrado con `useBooking.pay.test.ts` (7 tests, 2 branches
+confirmados con revert manual). Ver Tarea 15/1.6 en `tasks.md` para el detalle.
+
 ## Database
 
 Sin cambios de schema nuevos identificados para G1 más allá de lo ya existente en

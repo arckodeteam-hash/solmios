@@ -88,6 +88,11 @@ real aplicada al cancelar era estricta). Portado el mismo sistema de tono de rie
 (danger/neutral) de la landing al widget. Ver Tarea 6/1.5 en `tasks.md` para el
 detalle completo y los 3 branches verificados con revert manual.
 
+**FIX adicional 2026-08-22 (decisión del usuario)**: `PayStep.vue` tampoco exigía
+aceptación explícita (checkbox) antes de pagar, a diferencia de `BookingModal.vue`
+(`termsAccepted`, guard en el handler). Portado el mismo patrón — ver Tarea 6/1.5 en
+`tasks.md`, "Cuarta pasada".
+
 ### Requirement: Comportamiento de reembolso auditado antes de prometerse — AUDITORÍA PENDIENTE
 
 El motor MUST NOT mostrar al cliente la promesa de "reembolso completo" hasta que se

@@ -19,11 +19,12 @@ import { createPinia, setActivePinia } from 'pinia'
 import { vi } from 'vitest'
 
 vi.mock('@/services/Booking.service', () => ({
-  BookingService: { getRates: vi.fn(), getCalendar: vi.fn(), getUpsells: vi.fn() },
+  BookingService: { getRates: vi.fn(), getCalendar: vi.fn(), getUpsells: vi.fn(), createBooking: vi.fn() },
 }))
 
 import PayStep from './PayStep.vue'
 import { useBookingStore } from '@/composables/useBooking'
+import { BookingService } from '@/services/Booking.service'
 import { useBookingI18nStore, type BookingLocale } from '@/composables/useBookingI18n'
 import type { CancellationSummary, PublicRatesResponse } from '@/types/booking'
 
@@ -198,4 +199,62 @@ describe('PayStep — política de cancelación por hotel (Tarea 6 / tasks.md 1.
       w.unmount()
     })
   }
+})
+
+// ─── Aceptación explícita de condiciones (FIX 2026-08-22 — paridad con BookingModal.vue) ────
+// El widget dejaba pagar sin ningún tilde de aceptación explícita, a diferencia de la landing
+// (`termsAccepted`, testeado extensivamente en `BookingModal.terms.test.ts`). Mismo criterio acá.
+describe('PayStep — aceptación de condiciones antes de pagar', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(BookingService.createBooking).mockReset()
+  })
+
+  function renderReadyToPay(): VueWrapper {
+    const store = useBookingStore()
+    store.init('hotel-demo')
+    store.ratesResponse = baseRates({ cancellationSummary: null, cancellationPolicy: null })
+    store.cart = [{
+      key: 'double|2', roomType: 'double', roomName: 'double', occupancy: 2, quantity: 1,
+      unitPrice: 200, unitTaxBreakdown: [], maxAvailable: 5, photoUrl: null,
+    }]
+    store.setGuest({ name: 'Ana Pérez', email: 'ana@example.com', phone: '8095550000' })
+    useBookingI18nStore().setLocale('es')
+    return mount(PayStep)
+  }
+
+  it('no deja pagar sin aceptar: el botón está bloqueado y el click no dispara el cobro', async () => {
+    const w = renderReadyToPay()
+    const buttons = w.findAll('button')
+    const btn = buttons[buttons.length - 1]!
+
+    expect(w.text()).toContain('Aceptá las condiciones para poder pagar.')
+
+    await btn.trigger('click')
+    expect(BookingService.createBooking).not.toHaveBeenCalled()
+
+    // Guard adicional dentro del handler (`onPay()`), no solo el atributo `disabled`: un doble
+    // evento o un atajo de teclado que se salte el `:disabled` tampoco puede cobrarle a alguien
+    // que nunca tildó la casilla.
+    await (w.vm as unknown as { onPay: () => Promise<void> }).onPay()
+    expect(BookingService.createBooking).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('con la casilla tildada, el botón se habilita y el click SÍ dispara el cobro', async () => {
+    vi.mocked(BookingService.createBooking).mockResolvedValue({
+      reservationId: 'r1', accessToken: 't1', checkoutUrl: null,
+      totalBreakdown: { subtotal: 200, promoDiscount: 0, upsellsTotal: 0, taxes: 0, total: 200 },
+    })
+    const w = renderReadyToPay()
+
+    const checkbox = w.get('input[data-testid="accept-terms"]')
+    await checkbox.setValue(true)
+    expect(w.text()).not.toContain('Aceptá las condiciones para poder pagar.')
+
+    const buttons = w.findAll('button')
+    await buttons[buttons.length - 1]!.trigger('click')
+    expect(BookingService.createBooking).toHaveBeenCalledTimes(1)
+    w.unmount()
+  })
 })

@@ -218,6 +218,8 @@ const messages = {
     'pay.cta': 'Reservar y pagar · {amount}',
     'pay.chargeNote': 'Te cobraremos en {charge}. Mostramos precios en {display}.',
     'pay.secureNote': 'Pago seguro procesado por Stripe.',
+    'pay.acceptTerms': 'Acepto las condiciones de reserva y la política de cancelación',
+    'pay.termsRequired': 'Aceptá las condiciones para poder pagar.',
 
     // ConfirmStep
     'confirm.loading': 'Confirmando tu reserva…',
@@ -401,6 +403,8 @@ const messages = {
     'pay.cta': 'Book and pay · {amount}',
     'pay.chargeNote': 'You will be charged in {charge}. Prices shown in {display}.',
     'pay.secureNote': 'Secure payment processed by Stripe.',
+    'pay.acceptTerms': 'I accept the booking terms and the cancellation policy',
+    'pay.termsRequired': 'Accept the terms to continue with payment.',
 
     'confirm.loading': 'Confirming your booking…',
     'confirm.doNotClose': 'Do not close this window.',
@@ -582,6 +586,8 @@ const messages = {
     'pay.cta': 'Reservar e pagar · {amount}',
     'pay.chargeNote': 'Cobraremos em {charge}. Mostramos preços em {display}.',
     'pay.secureNote': 'Pagamento seguro processado pela Stripe.',
+    'pay.acceptTerms': 'Aceito as condições de reserva e a política de cancelamento',
+    'pay.termsRequired': 'Aceite as condições para poder pagar.',
 
     'confirm.loading': 'Confirmando sua reserva…',
     'confirm.doNotClose': 'Não feche esta janela.',

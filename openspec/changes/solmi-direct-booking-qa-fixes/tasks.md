@@ -333,26 +333,80 @@ Specs: `specs/booking-availability-pricing/spec.md`, `specs/booking-content-poli
       archivo (2 nuevos: fallback ignorado con texto libre presente,
       `source:'default'` avisa aunque los tiers digan "gratis"). 783/783 tests
       reales frontend, `tsc --noEmit` limpio, `bun run build` OK.
-      **Pendiente, fuera de alcance de esta pasada — a decidir con el usuario**:
-      `PayStep.vue` (widget) no exige aceptación explícita (checkbox) de las
-      condiciones de cancelación antes de pagar; `BookingModal.vue` (landing) SÍ
-      la exige (`termsAccepted`, resetea al volver atrás, guard en `onPrimary()`
-      además del `:disabled` del botón — ver `BookingModal.terms.test.ts`). Es
-      una decisión de producto/legal (agrega un paso de interacción al checkout
-      del widget embebido), no un bug de datos como los tres de arriba — no se
-      tocó sin confirmar alcance.
+      **Cuarta pasada (iteración, 2026-08-22) — decisión del usuario: SÍ agregar
+      el checkbox**: `PayStep.vue` (widget) dejaba pagar sin exigir aceptación
+      explícita de las condiciones, a diferencia de `BookingModal.vue` (landing).
+      Confirmado con el usuario que el widget debe exigir el mismo tilde.
+      Portado el patrón de `termsAccepted` de la landing: checkbox
+      `data-testid="accept-terms"`, botón de pago `:disabled` sin tildar + guard
+      adicional en `onPay()` (defensa en profundidad — un doble evento o un
+      atajo de teclado no pueden cobrarle a alguien que nunca aceptó), hint
+      "Aceptá las condiciones para poder pagar." mientras está sin tildar.
+      Sin `watch` de reset (a diferencia del modal): `booking-widget.vue` monta
+      cada step con `<component :is>` SIN `KeepAlive`, así que el ref local
+      `termsAccepted` ya vuelve a `false` solo con re-entrar al step. Nuevas
+      keys i18n es/en/pt: `pay.acceptTerms`, `pay.termsRequired`.
+      **Verificado**: 2 tests nuevos en `PayStep.test.ts` (bloqueado sin
+      aceptar + guard de `onPay()` probado con revert manual — sin el guard,
+      llamar `onPay()` directo SÍ dispara el cobro; habilitado y dispara al
+      tildar). 11/11 tests del archivo, 792/792 tests reales frontend (+2),
+      `tsc --noEmit` limpio, `bun run build` OK. Verificado además visualmente
+      en navegador real (Playwright contra el dev server, flujo completo
+      fechas→habitación→huésped→pago): botón deshabilitado por default, se
+      habilita al tildar, sin errores de consola.
 
-- [ ] 1.6 Implementar revalidación completa (inventario, tarifa, cantidad, ocupación,
+- [x] 1.6 Implementar revalidación completa (inventario, tarifa, cantidad, ocupación,
       extras, total) inmediatamente antes de habilitar el pago, bloqueando el cobro si
       algo cambió desde la búsqueda inicial (Tarea 15). **Acceptance**: si la última
       unidad disponible se vende a otro huésped mientras el primero completa el flujo,
       el segundo NO puede pagar y ve un mensaje explicando qué cambió.
+      **CERRADO 2026-08-22 — ya cumplía en el backend (mismo patrón que 1.5), sin
+      cambios de código ahí; el gap real era cobertura del FRONTEND**: auditado el
+      código de escritura de las 2 vías de creación de reserva
+      (`public-booking.ts`/`public-booking-group.ts`) y confirmado que las 5
+      dimensiones YA se revalidan frescas al crear la reserva, nunca confiando en
+      lo que mandó el cliente:
+      - **Inventario/cantidad**: lock + re-lectura DENTRO de la transacción,
+        todo-o-nada. `public-booking-race.test.ts` reproduce LITERALMENTE el
+        acceptance ("el comprador que chequeó primero pero insertó último recibe
+        409, no una segunda reserva") con dos llamadas concurrentes sincronizadas
+        por gate.
+      - **Tarifa/total**: `sumStayPrice` se recalcula con `RoomRates`/
+        `SeasonAssignments` ACTUALES en el momento de crear, nunca con el precio
+        que el cliente mandó — no hay forma de que llegue stale.
+      - **Ocupación/capacidad**: filtro de capacidad al asignar la unidad física
+        (fix de esta misma sesión, Tarea 10).
+      - **Extras/promo**: `public-booking-promo-upsells.test.ts` ya cubre upsell
+        inactivo/inexistente (se ignora, no rompe), promo con `maxUses` agotado
+        (upfront Y en race condition con optimistic lock — "B2 race condition:
+        updateMany devuelve 0 → 409 max_uses_reached").
+      **Gap real**: la otra mitad del acceptance ("el segundo NO puede pagar y VE
+      UN MENSAJE explicando qué cambió") es comportamiento del FRONTEND
+      (`useBooking.ts` `pay()`) y no tenía NINGÚN test — ni para el flujo de 1
+      habitación ni el de grupo, compartido por las 2 superficies (widget y
+      landing llaman al mismo `store.pay()`). Cerrado con 7 tests nuevos en
+      `useBooking.pay.test.ts` (archivo nuevo): mensaje específico del backend
+      llega intacto (no uno genérico) para 409 de disponibilidad/capacidad/promo,
+      mismo comportamiento en el endpoint de grupo, `isSubmitting` se libera para
+      poder reintentar, `idempotencyKey` se regenera tras un fallo (no reusa un
+      intento que pudo haber llegado parcial al backend), y un error de red o un
+      throw no-`Error` no dejan al huésped sin ningún mensaje.
+      **Verificado**: 2 branches críticos confirmados con revert manual (mensaje
+      genérico en vez del específico → 5 de 7 tests fallan; sin regenerar
+      idempotencyKey → 1 test falla), ambos reproducidos EXACTO y luego
+      restaurados. 790/790 tests reales frontend (+7), `tsc --noEmit` limpio,
+      `bun run build` OK. Sin cambios en el backend (ya estaba correcto y
+      probado).
 
 ### Gate G1
 
-- [ ] 1.7 Gate de verificación (typecheck + analyze + test + build, backend y
+- [x] 1.7 Gate de verificación (typecheck + analyze + test + build, backend y
       frontend) en verde antes de continuar a G3. **Acceptance**: los 5 comandos
       devuelven éxito.
+      **VERIFICADO 2026-08-22**: backend `tsc --noEmit` ✅, `arckode analyze` ✅
+      (0 violaciones), backend `bun test` ✅ (3474/3475 — 1 falla preexistente de
+      Redis, ajena a todo lo tocado en G1), frontend `vue-tsc -b` ✅, frontend
+      `bun run build` ✅ ("✓ built"). G1 cerrado.
 
 ---
 

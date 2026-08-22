@@ -138,13 +138,31 @@
       </p>
     </div>
 
+    <!--
+      FIX 2026-08-22 — paridad con BookingModal.vue (landing): ahí el pago exige un tilde
+      explícito de "acepto las condiciones" (`termsAccepted`, con guard en el handler además
+      del `:disabled`, ver BookingModal.terms.test.ts). El widget embebible dejaba pagar sin
+      esa aceptación explícita — mismo compromiso legal/de confianza, misma exigencia acá.
+      Sin `watch` de reset: `booking-widget.vue` monta este componente con `<component :is>`
+      SIN KeepAlive, así que `termsAccepted` ya vuelve a `false` solo con volver a este step.
+    -->
+    <label class="flex cursor-pointer items-start gap-3 rounded-xl bg-slate-50 p-3">
+      <input
+        v-model="termsAccepted"
+        data-testid="accept-terms"
+        type="checkbox"
+        class="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-300 text-cyan focus:ring-cyan/30"
+      />
+      <span class="text-sm font-bold text-navy">{{ t('pay.acceptTerms') }}</span>
+    </label>
+
     <p v-if="store.error" class="text-sm font-semibold text-red-600">{{ store.error }}</p>
 
     <button
       type="button"
-      :disabled="store.isSubmitting"
+      :disabled="store.isSubmitting || !termsAccepted"
       class="w-full rounded-xl bg-cyan px-6 py-4 text-base font-black text-white shadow-card transition hover:bg-cyan-light disabled:cursor-not-allowed disabled:opacity-60"
-      @click="store.pay()"
+      @click="onPay"
     >
       <span v-if="store.isSubmitting" class="inline-flex items-center justify-center gap-2">
         <span class="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
@@ -152,6 +170,8 @@
       </span>
       <span v-else>{{ t('pay.cta', { amount: formatPrice(currentTotal, displayOrCharge) }) }}</span>
     </button>
+
+    <p v-if="!termsAccepted" class="text-xs font-bold text-text-muted text-center">{{ t('pay.termsRequired') }}</p>
 
     <p v-if="hasDifferentChargeCurrency" class="text-[11px] text-center text-text-muted">
       {{ t('pay.chargeNote', { charge: store.chargeCurrency, display: store.displayCurrency }) }}
@@ -163,13 +183,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useBookingStore } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { PromoValidationReason } from '@/types/booking'
 
 const store = useBookingStore()
 const { t, formatPrice } = useBookingI18nStore()
+
+// FIX 2026-08-22 — paridad con BookingModal.vue (`termsAccepted`): arranca en `false` siempre.
+// Sin `watch` de reset acá: a diferencia del modal (que queda montado con TODOS los steps
+// vivos), `booking-widget.vue` renderiza cada step con `<component :is>` sin KeepAlive — este
+// componente se destruye y recrea al navegar, así que un nuevo mount ya arranca en `false`.
+const termsAccepted = ref(false)
 
 // Si el backend ya devolvió `totalBreakdown` (post-create), confiamos en ese total. Pre-create
 // usamos la estimación (que coincide porque aplica la misma promo y taxRate).
@@ -255,6 +281,19 @@ async function onApplyPromo() {
   if (!store.promoCode.trim()) return
   await store.applyPromo()
 }
+
+// El botón ya está `:disabled` sin el tilde, pero el guard va IGUAL: un doble evento, un atajo
+// de teclado o un refactor que pierda el `:disabled` no pueden cobrarle a alguien que nunca
+// aceptó las condiciones. Mismo criterio que `BookingModal.vue` `onPrimary()`.
+async function onPay() {
+  if (!termsAccepted.value) return
+  await store.pay()
+}
+
+// Expuesto para que el guard se pueda ejercer sin el botón (el test lo llama directo, que es
+// lo que haría un doble evento o un atajo que se saltee el `:disabled`) — mismo patrón que
+// `BookingModal.vue` `defineExpose({ onPrimary })`.
+defineExpose({ onPay })
 
 function promoReasonLabel(reason?: PromoValidationReason): string {
   switch (reason) {
