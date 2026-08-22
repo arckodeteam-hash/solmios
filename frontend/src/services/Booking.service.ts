@@ -4,6 +4,7 @@
 // Cinco endpoints públicos (sin auth, rate-limited por IP en el backend):
 //   - GET  /api/public/hotels/:slug/rates          → tarifa derivada + availableCount (D11)
 //   - GET  /api/public/hotels/:slug/upsells         → upsells activos
+//   - GET  /api/public/hotels/:slug/meal-plans      → regímenes activos (tasks.md 2.2/2.4)
 //   - POST /api/public/hotels/:slug/promo/validate  → {valid, discount, reason?}
 //   - POST /api/public/booking                      → crea reserva pending + redirige a Stripe
 //   - GET  /api/public/reservations/:id             → polling post-redirect (valida token HMAC)
@@ -28,6 +29,7 @@ import type {
   CancelReservationResponse,
   PublicCalendarQuery,
   PublicCalendarResponse,
+  PublicMealPlan,
   PublicRatesQuery,
   PublicRatesResponse,
   PublicReservationResponse,
@@ -240,6 +242,12 @@ export const BookingService = {
   getUpsells(slug: string, kind?: string): Promise<Upsell[]> {
     const path = `/public/hotels/${encodeURIComponent(slug)}/upsells${build({ kind })}`
     return http.get<Upsell[]>(path)
+  },
+
+  /** Regímenes de alimentación activos del hotel (tasks.md 2.2/2.4). Solo los `active` — "Solo
+   *  alojamiento" NO viene, es la base implícita que arma el widget. */
+  getMealPlans(slug: string): Promise<PublicMealPlan[]> {
+    return http.get<PublicMealPlan[]>(`/public/hotels/${encodeURIComponent(slug)}/meal-plans`)
   },
 
   /**

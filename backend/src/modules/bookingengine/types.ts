@@ -309,3 +309,35 @@ export interface UpsellCurrentUser {
   role?: string
   userType?: string
 }
+
+// ─── Regímenes de alimentación (tasks.md 2.2/2.4, solmi-direct-booking-qa-fixes) ────────────
+// Catálogo FIJO de 3 códigos (no abierto como upsells) — "Solo alojamiento" es la base
+// implícita, sin fila propia. Ver el comentario de `MealPlanModel` en model.ts.
+export type MealPlanCode = 'breakfast' | 'half_board' | 'all_inclusive'
+export type MealPlanPriceMode = 'included' | 'per_person_per_night'
+
+/** DTO de lectura. Espeja los campos persistidos en `meal_plans` (model.ts). */
+export interface MealPlanDTO {
+  id: string
+  hotelId: string
+  code: MealPlanCode
+  active: boolean
+  priceMode: MealPlanPriceMode
+  price: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** Body del PUT /api/meal-plans/:code. */
+export interface UpsertMealPlanDTO {
+  active?: boolean
+  priceMode?: MealPlanPriceMode
+  price?: number
+}
+
+/** Fila pública (lo que el widget necesita) — sin hotelId/timestamps. */
+export interface PublicMealPlan {
+  code: MealPlanCode
+  priceMode: MealPlanPriceMode
+  price: number
+}

@@ -8,7 +8,7 @@ import { validateSchema } from 'arckode-framework'
 // para los schemas legacy que solo tienen tipos primitivos.
 import { validateSchema as validateBodySchema } from '../../shared/validators/validate-body'
 import type { BookingengineService } from './service'
-import type { AvailabilityQuery, CreateConversionEventDTO, UpdateBookingConfigDTO, UpsellDTO, UpsellCurrentUser } from './types'
+import type { AvailabilityQuery, CreateConversionEventDTO, UpdateBookingConfigDTO, UpsellDTO, UpsellCurrentUser, MealPlanDTO } from './types'
 import {
   UpdateBookingConfigSchema,
   CheckAvailabilitySchema,
@@ -17,12 +17,17 @@ import {
   TrackEventSchema,
   CreateUpsellSchema,
   UpdateUpsellSchema,
+  UpsertMealPlanSchema,
 } from './validators/schema'
 // F2 2.3 — Upsells: el controller invoca los usecases directamente (sin pasar por service)
 // porque no hay lógica de orquestación entre el HTTP y el usecase. Mantener el service <
 // 200 líneas deja fuera los métodos passthrough. Mismo patrón que hotel-media/controller.ts
 // cuando un sub-dominio no amerita agrandar el facade principal.
 import * as upsellsCrud from './usecases/upsells-crud'
+// tasks.md 2.2/2.4 (solmi-direct-booking-qa-fixes) — Regímenes de alimentación, mismo patrón
+// que upsells arriba (sub-dominio, sin service, catálogo fijo de 3 códigos).
+import * as mealPlansCrud from './usecases/meal-plans-crud'
+import { getPublicMealPlans } from './usecases/public-meal-plans'
 import { getPublicBookingBySlug, createPublicBookingDirect } from './usecases/public-booking'
 // Tarea 10 (QA 2026-08-20/21) — varias habitaciones (mismo tipo ×N y/o tipos distintos) en 1 sola
 // reserva. Handler aparte, reusa los mismos deps (auth/service/logger) que el de 1 habitación.
@@ -97,6 +102,11 @@ export class BookingengineController {
     private readonly roomRatesRepo?: RepositoryAdapter<any>,
     /** Cache del framework — TTL corto para el calendario (mismo criterio que availability). */
     private readonly cache?: any,
+    // tasks.md 2.2/2.4 (solmi-direct-booking-qa-fixes) — Repo de regímenes de alimentación.
+    // Al final, mismo motivo que el resto: no correr las posiciones de deps existentes (varios
+    // tests construyen el controller posicionalmente). Opcional — defense-in-depth igual que
+    // upsellRepo (los handlers tiran 500 explícito si no está cableado).
+    private readonly mealPlanRepo?: RepositoryAdapter<MealPlanDTO>,
   ) {}
 
   /** Deps para los usecases de upsells. Tirar si no están cableadas (claramente un bug de wiring). */
@@ -105,6 +115,14 @@ export class BookingengineController {
       throw new Error('bookingengine: upsells deps no cableadas en el controller')
     }
     return { upsells: this.upsellRepo, userRepo: this.userRepoForUpsells, auth: this.authImpl }
+  }
+
+  /** Deps para los usecases de regímenes de alimentación. Mismo criterio que upsells arriba. */
+  private assertMealPlansDeps(): mealPlansCrud.MealPlansCrudDeps {
+    if (!this.mealPlanRepo || !this.userRepoForUpsells || !this.authImpl) {
+      throw new Error('bookingengine: meal-plans deps no cableadas en el controller')
+    }
+    return { mealPlans: this.mealPlanRepo, userRepo: this.userRepoForUpsells, auth: this.authImpl }
   }
 
   // ─── Admin (protegido con auth) ──────────────────────
@@ -423,6 +441,18 @@ export class BookingengineController {
     )
   }
 
+  /** GET /api/public/hotels/:slug/meal-plans — regímenes activos (tasks.md 2.2/2.4). */
+  async getPublicMealPlans(req: HttpRequest) {
+    this.logger.info('GET /api/public/hotels/:slug/meal-plans', { slug: req.params.slug })
+    if (!this.hotelsRepo || !this.mealPlanRepo) {
+      return { status: 500, body: { error: 'meal-plans deps no cableados' } }
+    }
+    return getPublicMealPlans(
+      { hotels: this.hotelsRepo, mealPlans: this.mealPlanRepo },
+      String(req.params?.slug || ''),
+    )
+  }
+
   /**
    * F3 3.15 — GET /api/public/hotels/:slug/ota-prices
    * Compara tarifa directa vs Booking/Airbnb (StayAPI). Devuelve `{showComparison:true, savings}`
@@ -505,6 +535,24 @@ export class BookingengineController {
     this.logger.info('DELETE /api/upsells/:id', { id: req.params.id })
     const result = await upsellsCrud.remove(this.assertUpsellsDeps(), req.params.id, req.user as UpsellCurrentUser)
     return { status: 200, body: result }
+  }
+
+  // ─── Regímenes de alimentación admin (tasks.md 2.2/2.4) ─────────────────────
+  // Catálogo FIJO de 3 códigos — sin create/delete, solo list + upsert por código.
+
+  /** GET /api/meal-plans — los 3 regímenes del hotel del admin (con defaults). */
+  async listMealPlans(req: HttpRequest) {
+    this.logger.info('GET /api/meal-plans', { hotelId: (req as any).hotelId })
+    const result = await mealPlansCrud.list(this.assertMealPlansDeps(), req.user as UpsellCurrentUser)
+    return { status: 200, body: result }
+  }
+
+  /** PUT /api/meal-plans/:code — activar/desactivar + precio de un régimen. */
+  async upsertMealPlan(req: HttpRequest) {
+    this.logger.info('PUT /api/meal-plans/:code', { code: req.params.code })
+    const data = validateBodySchema(UpsertMealPlanSchema, req.body)
+    const updated = await mealPlansCrud.upsert(this.assertMealPlansDeps(), req.params.code, data as any, req.user as UpsellCurrentUser)
+    return { status: 200, body: updated }
   }
 }
 

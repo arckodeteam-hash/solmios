@@ -44,6 +44,7 @@ import type {
   CancellationSummary,
   PromoValidationResult,
   PromoValidationReason,
+  PublicMealPlan,
   PublicRatesResponse,
   RoomOccupancyRate,
   RoomTypeRate,
@@ -227,6 +228,15 @@ export const useBookingStore = defineStore('booking-widget', () => {
   const upsells = ref<Upsell[]>([])
   const upsellsLoading = ref(false)
   const selectedUpsells = ref<SelectedUpsell[]>([])
+
+  // ─── Regímenes de alimentación (step 1, tasks.md 2.2/2.4) ──────────────────────
+  // A diferencia de `upsells` (se cargan recién al agregar la primera línea al carrito),
+  // los regímenes se muestran DESDE que aparece la lista de habitaciones (RoomsStep) —
+  // se cargan junto con `search()`. Solo informativo esta fase: "Solo alojamiento" es la
+  // base implícita (no viene del backend); `priceMode:'per_person_per_night'` se muestra
+  // con precio pero NO es seleccionable todavía (ver alcance en el plan aprobado).
+  const mealPlans = ref<PublicMealPlan[]>([])
+  const mealPlansLoading = ref(false)
 
   // ─── Guest (step 3) ───────────────────────────────────────────────────────────
   const guest = ref<BookingGuest>({ name: '', email: '', phone: '', notes: '' })
@@ -464,6 +474,20 @@ export const useBookingStore = defineStore('booking-widget', () => {
       status.value = 'idle'
     } finally {
       ratesLoading.value = false
+    }
+
+    // Regímenes: se muestran junto a la lista de habitaciones, así que se cargan en la misma
+    // búsqueda (no gated detrás del carrito como upsells). Fallo silencioso — degradar a "sin
+    // regímenes configurados" no bloquea poder reservar el alojamiento.
+    if (status.value === 'selecting' && mealPlans.value.length === 0) {
+      mealPlansLoading.value = true
+      try {
+        mealPlans.value = await BookingService.getMealPlans(slug.value)
+      } catch {
+        mealPlans.value = []
+      } finally {
+        mealPlansLoading.value = false
+      }
     }
   }
 
@@ -841,6 +865,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
     upsells.value = []
     upsellsLoading.value = false
     selectedUpsells.value = []
+    mealPlans.value = []
+    mealPlansLoading.value = false
     guest.value = { name: '', email: '', phone: '', notes: '' }
     promoCode.value = ''
     promoResult.value = null
@@ -869,6 +895,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
     upsells,
     upsellsLoading,
     selectedUpsells,
+    mealPlans,
+    mealPlansLoading,
     guest,
     promoCode,
     promoResult,

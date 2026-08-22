@@ -6,18 +6,18 @@ import { createModule, OrmRepository } from 'arckode-framework'
 import { registerBookingengineModels } from './model'
 import { BookingengineService } from './service'
 import { BookingengineController } from './controller'
-import type { BookingConfigDTO, PublicBookingDTO, ConversionEventDTO, UpsellDTO } from './types'
+import type { BookingConfigDTO, PublicBookingDTO, ConversionEventDTO, UpsellDTO, MealPlanDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
 import { PaymentGatewayRegistry } from '../../services/payment-gateway/registry'
 import { PaymentEventStore } from '../../services/payment-gateway/payment-events'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
 
-export { registerBookingengineModels, UpsellModel, BookingConfigModel, ConversionEventsModel, PublicBookingModel } from './model'
+export { registerBookingengineModels, UpsellModel, MealPlanModel, BookingConfigModel, ConversionEventsModel, PublicBookingModel } from './model'
 export { BookingengineService } from './service'
-export type { BookingConfigDTO, UpdateBookingConfigDTO, AvailabilityQuery, AvailabilityResult, PublicBookingDTO, CreatePublicBookingDTO, ConversionEventDTO, CreateConversionEventDTO, BookingAnalytics, UpsellDTO, CreateUpsellDTO, UpdateUpsellDTO, UpsellKind } from './types'
+export type { BookingConfigDTO, UpdateBookingConfigDTO, AvailabilityQuery, AvailabilityResult, PublicBookingDTO, CreatePublicBookingDTO, ConversionEventDTO, CreateConversionEventDTO, BookingAnalytics, UpsellDTO, CreateUpsellDTO, UpdateUpsellDTO, UpsellKind, MealPlanDTO, MealPlanCode, MealPlanPriceMode, UpsertMealPlanDTO, PublicMealPlan } from './types'
 export type { BookingengineSockets } from './sockets'
-export { BookingengineValidator, UpdateBookingConfigSchema, CheckAvailabilitySchema, CreatePublicBookingSchema, TrackEventSchema, CreateUpsellSchema, UpdateUpsellSchema } from './validators/schema'
+export { BookingengineValidator, UpdateBookingConfigSchema, CheckAvailabilitySchema, CreatePublicBookingSchema, TrackEventSchema, CreateUpsellSchema, UpdateUpsellSchema, UpsertMealPlanSchema } from './validators/schema'
 // Calendario público de tarifas (`GET /api/public/hotels/:slug/calendar`).
 export { validatePublicCalendarQuery, MAX_CALENDAR_DAYS } from './validators/schema'
 export type { CalendarDay, PublicCalendarBody, PublicCalendarQuery } from './usecases/public-calendar'
@@ -68,6 +68,9 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       // (admin no puede tocar upsells de hotel ajeno).
       const upsellRepo = new OrmRepository<UpsellDTO>(orm, 'Upsells')
       const userRepoForUpsells = new OrmRepository<any>(orm, 'Users')
+      // tasks.md 2.2/2.4 (solmi-direct-booking-qa-fixes) — Regímenes de alimentación, mismo
+      // criterio que upsellRepo arriba (sub-dominio, deps del controller, no del service).
+      const mealPlanRepo = new OrmRepository<MealPlanDTO>(orm, 'MealPlans')
       // F2 2.4 / 2.5 — Deps nuevos: configuration (taxes + currency_rates) y promo_codes
       // (valida + incrementa uses en el flujo unificado). Sin estos, los endpoints públicos
       // /rates y /booking procesan todo vacío (degradación graceful, no rompe el flujo).
@@ -114,6 +117,8 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         reservationsRepo, cancellationPolicyRepo,
         // Calendario público — deps nuevas al final (no corren las posiciones existentes).
         roomBlocksRepo, seasonAssignmentsRepo, roomRatesRepo, cache,
+        // tasks.md 2.2/2.4 — Regímenes de alimentación, al final por el mismo motivo.
+        mealPlanRepo,
       )
 
       // Admin routes (protegidas con auth)
@@ -143,6 +148,15 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         router.put('/api/upsells/:id', upsellGuard('edit'), (req: any) => controller.updateUpsell(req))
         router.delete('/api/upsells/:id', upsellGuard('delete'), (req: any) => controller.destroyUpsell(req))
         // GET /api/booking-engine lo sirve el módulo `reservas`, que se registra antes y gana por orden de ruta.
+
+        // tasks.md 2.2/2.4 — Regímenes de alimentación admin. Catálogo fijo: solo view/edit
+        // (sin create/delete, mismo motivo que ACTIONS['mealplans'] en shared/permissions.ts).
+        const mealPlanGuard = (action: 'view' | 'edit') => [
+          ...guard('mealplans', action),
+          requireUserType('merchant'),
+        ]
+        router.get('/api/meal-plans', mealPlanGuard('view'), (req: any) => controller.listMealPlans(req))
+        router.put('/api/meal-plans/:code', mealPlanGuard('edit'), (req: any) => controller.upsertMealPlan(req))
       }
 
       // Público (sin auth) — TODOS con rate-limit por IP (F0 0.5). Límites y claves por
@@ -191,6 +205,13 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         const { allowed, retryAfter } = await rateLimit(`public-upsells:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
         if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
         return controller.getPublicUpsells(req)
+      })
+      // tasks.md 2.2/2.4 — Regímenes activos del hotel para el paso de habitaciones del widget.
+      // Rate-limit 60/60s (read-only), mismo techo que /upsells. Sin auth.
+      router.get('/api/public/hotels/:slug/meal-plans', async (req: any) => {
+        const { allowed, retryAfter } = await rateLimit(`public-meal-plans:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
+        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
+        return controller.getPublicMealPlans(req)
       })
       // F3 3.15 — Comparativo de tarifas directo vs OTA (StayAPI). Devuelve el badge "ahorrás
       // $X reservando directo" SOLO si directo es más barato. Si no, `{showComparison:false}`

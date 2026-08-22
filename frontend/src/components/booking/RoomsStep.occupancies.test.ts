@@ -17,7 +17,7 @@ import { mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('@/services/Booking.service', () => ({
-  BookingService: { getRates: vi.fn(), getCalendar: vi.fn(), getUpsells: vi.fn().mockResolvedValue([]) },
+  BookingService: { getRates: vi.fn(), getCalendar: vi.fn(), getUpsells: vi.fn().mockResolvedValue([]), getMealPlans: vi.fn().mockResolvedValue([]) },
 }))
 
 import RoomsStep from './RoomsStep.vue'
@@ -170,18 +170,48 @@ describe('RoomsStep — matriz de ocupaciones', () => {
     w.unmount()
   })
 
-  it('muestra el régimen con "Sólo alojamiento" activo y las pensiones deshabilitadas', () => {
-    // Placeholder consciente: el backend no modela pensiones. Las opciones se ven para que el
-    // huésped sepa que el eje existe; ninguna es clickeable.
+  it('sin regímenes configurados: "Sólo alojamiento" activo y los 3 códigos deshabilitados', () => {
+    // store.mealPlans queda [] (render() no pasa por search()) — mismo estado que un hotel sin
+    // ningún régimen activo: se ve el eje completo, nada más es seleccionable.
     const w = render()
     const text = w.text()
 
     expect(text).toContain('Sólo alojamiento')
-    expect(text).toContain('Desayuno')
-    expect(text).toContain('Media pensión')
-    expect(text).toContain('Pensión completa')
-    // Ninguna pensión es un control interactivo: no hay forma de seleccionarlas por accidente.
-    const boardButtons = w.findAll('button').filter((b) => /Desayuno|Media pensión|Pensión completa/.test(b.text()))
+    expect(text).toContain('Desayuno incluido')
+    expect(text).toContain('Desayuno y cena')
+    expect(text).toContain('Todo incluido')
+    // Ningún régimen es un control interactivo: no hay forma de seleccionarlos por accidente.
+    const boardButtons = w.findAll('button').filter((b) => /Desayuno incluido|Desayuno y cena|Todo incluido/.test(b.text()))
+    expect(boardButtons).toHaveLength(0)
+    w.unmount()
+  })
+
+  it('régimen incluido en la tarifa: se muestra activo (mismo estilo que "Sólo alojamiento")', () => {
+    const store = useBookingStore()
+    store.init('hotel-demo')
+    store.ratesResponse = ratesResponse(true)
+    store.mealPlans = [{ code: 'breakfast', priceMode: 'included', price: 0 }]
+    const w = mount(RoomsStep)
+
+    const pill = w.findAll('span').find((s) => s.text().includes('Desayuno incluido'))
+    expect(pill).toBeTruthy()
+    expect(pill!.classes().join(' ')).toContain('bg-navy')
+    w.unmount()
+  })
+
+  it('régimen con costo aparte: se muestra informativo con el precio, marcado "Próximamente"', () => {
+    const store = useBookingStore()
+    store.init('hotel-demo')
+    store.ratesResponse = ratesResponse(true)
+    store.mealPlans = [{ code: 'all_inclusive', priceMode: 'per_person_per_night', price: 45 }]
+    const w = mount(RoomsStep)
+
+    const pill = w.findAll('span').find((s) => s.text().includes('Todo incluido'))
+    expect(pill).toBeTruthy()
+    expect(pill!.text()).toContain('Próximamente')
+    expect(pill!.attributes('title')).toContain('45')
+    // Sigue sin ser un control interactivo — informativo esta fase.
+    const boardButtons = w.findAll('button').filter((b) => b.text().includes('Todo incluido'))
     expect(boardButtons).toHaveLength(0)
     w.unmount()
   })

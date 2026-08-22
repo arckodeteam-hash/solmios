@@ -160,6 +160,14 @@ export const UpdateUpsellSchema: Record<string, BodyRule> = {
   sortOrder: { type: 'number' as const },
 }
 
+/** PUT /api/meal-plans/:code — config de un régimen (tasks.md 2.2/2.4). Todo opcional
+ *  (partial): `code` es un enum cerrado de 3 elementos, validado en el usecase, no acá. */
+export const UpsertMealPlanSchema: Record<string, BodyRule> = {
+  active: { type: 'boolean' as const },
+  priceMode: { type: 'string' as const },
+  price: { type: 'number' as const },
+}
+
 // ─── Calendario público de tarifas ─────────────────────────────────────────
 // `GET /api/public/hotels/:slug/calendar?from&to&guests&currency`.
 //

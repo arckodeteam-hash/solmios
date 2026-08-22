@@ -262,6 +262,18 @@
                 </div>
               </div>
 
+              <!-- tasks.md 2.2/2.4 (solmi-direct-booking-qa-fixes) — Regímenes de alimentación:
+                   catálogo fijo de 3 códigos (antes era un placeholder decorativo en el widget,
+                   ver RoomsStep.vue/BookingModal.vue). Mismo lugar de embed que la política de
+                   cancelación de arriba: ambas son "condiciones de la reserva" que configura el
+                   dueño del motor de reservas. -->
+              <div class="mt-4">
+                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Regímenes de alimentación</label>
+                <div class="rounded-xl border border-border p-4">
+                  <MealPlansEditor />
+                </div>
+              </div>
+
               <!-- Texto display opcional (fallback). Colapsado por defecto; si ya tenía contenido
                    se muestra expandido para no esconder data existente del merchant. -->
               <div class="mt-3">
@@ -382,6 +394,7 @@ import { useToast } from '@/composables/useToast'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
+import MealPlansEditor from '@/components/booking/MealPlansEditor.vue'
 import { ICON_CHECK, ICON_CHECK_CIRCLE, ICON_CHART, ICON_WARNING, ICON_WIDGET } from '@/components/landing/landing-icons'
 
 const auth = useAuthStore()

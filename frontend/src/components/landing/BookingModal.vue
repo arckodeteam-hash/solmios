@@ -206,13 +206,12 @@
                 </div>
 
                 <!--
-                  ⚠️ RÉGIMEN — PLACEHOLDER, NO IMPLEMENTADO.
-                  El modelo no tiene el concepto de pensión: no existe `mealPlan`/`board` en
-                  `room_rates` ni en `Reservations`, y `/rates` no devuelve nada parecido. Lo
-                  único vendible hoy es el alojamiento, así que "Sólo alojamiento" es la única
-                  opción activa y las otras tres se muestran deshabilitadas para que se vea que
-                  el eje existe. No cambia el precio ni viaja en el payload de la reserva: cuando
-                  el backend modele el régimen, esto pasa a ser una selección real.
+                  RÉGIMEN — catálogo real configurable por hotel (tasks.md 2.2/2.4, `meal_plans`).
+                  "Sólo alojamiento" es la base implícita. Los otros 3 códigos vienen de
+                  `store.mealPlans` (solo los `active` llegan del backend); sin fila = el hotel
+                  no lo ofrece, se pinta deshabilitado con el motivo (nunca se oculta). Un
+                  régimen con costo aparte se muestra informativo con su precio ("Próximamente")
+                  — todavía no es seleccionable ni afecta el cobro (ver alcance del plan aprobado).
                 -->
                 <div class="mt-3">
                   <p class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Régimen</p>
@@ -221,13 +220,21 @@
                       <span aria-hidden="true">●</span>Sólo alojamiento
                     </span>
                     <span
-                      v-for="plan in DISABLED_BOARD_PLANS"
-                      :key="plan"
-                      class="inline-flex cursor-not-allowed items-center gap-1 rounded-full border border-border bg-surface px-2.5 py-1 text-[11px] font-bold text-text-muted"
-                      title="Este hotel no vende este régimen por ahora"
-                      aria-disabled="true"
+                      v-for="plan in boardPlanRows"
+                      :key="plan.code"
+                      :class="[
+                        'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold',
+                        plan.state === 'included'
+                          ? 'bg-navy text-white'
+                          : plan.state === 'upcoming'
+                            ? 'border border-cyan/40 bg-cyan/10 text-navy'
+                            : 'cursor-not-allowed border border-border bg-surface text-text-muted',
+                      ]"
+                      :title="plan.title"
+                      :aria-disabled="plan.state === 'unavailable' ? 'true' : undefined"
                     >
-                      <span aria-hidden="true">○</span>{{ plan }}
+                      <span aria-hidden="true">{{ plan.state === 'included' ? '●' : '○' }}</span>{{ plan.label }}
+                      <span v-if="plan.state === 'upcoming'" class="ml-0.5 text-[9px] font-black uppercase text-cyan">Próximamente</span>
                     </span>
                   </div>
                 </div>
@@ -725,6 +732,7 @@ import { PublicHotelService } from '@/services/PublicHotel.service'
 import { formatMoney, formatShortDate, nightsBetween } from '@/utils/rate-calendar'
 import { groupOccupancyRows } from '@/utils/occupancy-groups'
 import type {
+  MealPlanCode,
   OccupancyUnavailableReason,
   OpenBookingOptions,
   PromoValidationReason,
@@ -939,13 +947,34 @@ async function onFallbackQtyChange(rt: RoomTypeRate, qty: number): Promise<void>
   else if (qty < current) store.setCartLineQuantity(cartKey(rt, 1), qty)
 }
 
-// ─── Matriz de ocupaciones ────────────────────────────────────────────────────
-/**
- * Régimen NO disponible — placeholder visual (ver el comentario del template). El backend no
- * modela pensiones; estas tres opciones se muestran deshabilitadas para que el huésped vea que
- * el eje existe, y NO son seleccionables ni afectan el precio.
- */
-const DISABLED_BOARD_PLANS = ['Desayuno', 'Media pensión', 'Pensión completa'] as const
+// ─── Régimen de alimentación (tasks.md 2.2/2.4) ───────────────────────────────
+type BoardPlanState = 'included' | 'upcoming' | 'unavailable'
+interface BoardPlanRow { code: MealPlanCode; label: string; state: BoardPlanState; title: string }
+
+/** Orden fijo — mismo criterio que el backend (`public-meal-plans.ts` CODE_ORDER). No usa el
+ *  store de i18n (la landing no soporta locale) — mismas strings hardcodeadas que el resto del
+ *  modal. */
+const BOARD_PLAN_LABELS: Record<MealPlanCode, string> = {
+  breakfast: 'Desayuno incluido',
+  half_board: 'Desayuno y cena',
+  all_inclusive: 'Todo incluido',
+}
+const BOARD_PLAN_ORDER: MealPlanCode[] = ['breakfast', 'half_board', 'all_inclusive']
+
+/** Mapea el catálogo fijo contra `store.mealPlans` (solo trae los `active`): sin fila → el
+ *  hotel no lo ofrece, se pinta deshabilitado con el motivo (nunca se oculta). */
+const boardPlanRows = computed<BoardPlanRow[]>(() =>
+  BOARD_PLAN_ORDER.map((code) => {
+    const label = BOARD_PLAN_LABELS[code]
+    const found = store.mealPlans.find((m) => m.code === code)
+    if (!found) return { code, label, state: 'unavailable', title: 'Este hotel no ofrece este régimen' }
+    if (found.priceMode === 'included') return { code, label, state: 'included', title: '' }
+    return {
+      code, label, state: 'upcoming',
+      title: `Disponible como upgrade por ${money(found.price)} — todavía no se puede agregar al carrito`,
+    }
+  }),
+)
 
 /** Motivo → texto. Mapa explícito: un motivo nuevo en el backend rompe el typecheck acá en vez
  *  de mostrarle al huésped una fila muda o un código en inglés. */

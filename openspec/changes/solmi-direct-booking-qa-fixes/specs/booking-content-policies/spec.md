@@ -10,27 +10,47 @@ hallazgos de QA (2026-08-20).
 
 ## Requirements
 
-### Requirement: Regímenes de alimentación configurables por hotel — NOMENCLATURA PENDIENTE
+### Requirement: Regímenes de alimentación configurables por hotel — RESUELTO 2026-08-21/22
 
 El catálogo de regímenes de alimentación (qué incluye la tarifa en materia de comidas)
 MUST provenir de una configuración por hotel, NOT estar escrito de forma rígida en el
-frontend. La nomenclatura definitiva MUST validarse con producto antes de implementar
-el catálogo final; alternativas propuestas a evaluar:
+frontend.
 
-- "Solo alojamiento"
-- "Desayuno incluido"
-- "Desayuno y cena"
-- "Todo incluido"
+**Nomenclatura definitiva** (confirmada por el dueño, reemplaza "Media pensión"/"Pensión
+completa" — poco natural para el mercado objetivo): "Solo alojamiento" / "Desayuno
+incluido" / "Desayuno y cena" / "Todo incluido".
 
-vs. la terminología actual ("Media pensión" / "Pensión completa"), señalada como poco
-natural para el mercado objetivo.
+**Decisión de catálogo — enum FIJO, no abierto**: a diferencia del planteo original
+("un hotel define 2 regímenes propios con nombre y descripción configurables"), el
+catálogo implementado es de **3 códigos fijos** (`breakfast|half_board|all_inclusive`,
+más "Solo alojamiento" como base implícita sin fila propia) — el hotel activa/desactiva
+cada uno y define si viene incluido en la tarifa o tiene costo aparte, pero NO inventa
+nombres nuevos. Motivo: la industria (GuestCentric, Bookassist) usa un catálogo estándar
+acotado, y un enum fijo es más simple de mantener consistente en 3 idiomas (es/en/pt)
+que texto libre por hotel.
 
-#### Scenario: Hotel configura su propio catálogo de regímenes
+#### Scenario: Hotel activa un régimen y define si tiene costo — RESUELTO
 
-- GIVEN un hotel define 2 regímenes propios con nombre y descripción configurables
+- GIVEN un hotel activa "Desayuno incluido" con `priceMode: 'included'`
 - WHEN el widget muestra las opciones de una habitación
-- THEN se listan exactamente los regímenes configurados por ese hotel, no un enum fijo
-  del código
+- THEN aparece junto a "Solo alojamiento" como pill activo/informativo, sin afectar el
+  precio de la habitación
+
+#### Scenario: Régimen con costo aparte se muestra informativo, no seleccionable — RESUELTO
+
+- GIVEN un hotel activa "Todo incluido" con `priceMode: 'per_person_per_night'` y un precio
+- WHEN el widget muestra las opciones de una habitación
+- THEN aparece con el precio y la etiqueta "Próximamente", pero NO es clickeable ni suma
+  al carrito — integrarlo al cobro real es una fase aparte (mismo rigor que la
+  revalidación server-side de 1.6, evita prometer un cobro que el sistema no ejecuta)
+
+#### Scenario: Régimen no activado se muestra deshabilitado con motivo — RESUELTO
+
+- GIVEN un hotel no activó "Desayuno y cena"
+- WHEN el widget muestra las opciones de una habitación
+- THEN "Desayuno y cena" sigue apareciendo (nunca se oculta), deshabilitado, con el
+  motivo "Este hotel no ofrece este régimen" — mismo criterio ya aplicado a la matriz de
+  ocupación
 
 ### Requirement: Servicios y extras clasificados correctamente
 
@@ -38,6 +58,14 @@ El motor MUST distinguir y renderizar de forma diferenciada, según la configura
 hotel, extras que son: incluidos en la tarifa, meramente informativos, adicionales con
 costo, o seleccionables durante la reserva. La fuente de esta clasificación MUST ser la
 configuración del hotel (tabla `upsells` u homóloga), no una suposición del frontend.
+
+**Análisis arquitectónico resuelto 2026-08-21**: el régimen de alimentación NO se
+modela dentro de `upsells` — queda en tabla separada `meal_plans` (ver requirement
+anterior), mismo patrón de sub-dominio de `bookingengine` pero catálogo fijo en vez de
+abierto, porque el régimen es una elección ÚNICA por habitación mientras los extras son
+selección MÚLTIPLE. `upsells` en sí sigue sin panel de admin y sin campo `visibility`
+explícito — la clasificación extra-por-extra del catálogo demo sigue pendiente (el
+dueño la revisa junto con el equipo, no es una decisión unilateral de este spec).
 
 #### Scenario: Extra con costo seleccionable
 
@@ -142,9 +170,12 @@ tipo de habitación específico (ver `hotel_media` de `solmi-direct-booking` F0)
 
 ## Database
 
-- Regímenes de alimentación: probable tabla nueva `meal_plans` (`id, hotelId, name,
-  description, sortOrder, active`) o extensión de `RoomRates`/`Seasons` existente con
-  referencia a régimen — decidir junto con la nomenclatura antes de migrar.
+- Regímenes de alimentación — RESUELTO: tabla `meal_plans` (`id, hotelId, code
+  ('breakfast'|'half_board'|'all_inclusive'), active, priceMode
+  ('included'|'per_person_per_night'), price, createdAt, updatedAt`), catálogo fijo de
+  3 códigos por hotel (find-or-create por `hotelId+code`, no altas/bajas libres).
+  "Solo alojamiento" es la base implícita, sin fila propia. Ver
+  `backend/src/modules/bookingengine/model.ts`.
 - Extras/servicios: reusar `upsells` (ya existe desde F2 de `solmi-direct-booking`);
   auditar si necesita un campo de clasificación explícito (`visibility:
   'included'|'informational'|'paid_selectable'`) si hoy se infiere solo de `price`.
@@ -156,8 +187,12 @@ tipo de habitación específico (ver `hotel_media` de `solmi-direct-booking` F0)
 
 ## API
 
-- Nuevo o extendido: endpoint público que devuelva el catálogo de regímenes de
-  alimentación por hotel, consumido por `RoomsStep.vue`.
+- Regímenes de alimentación — RESUELTO: `GET /api/public/hotels/:slug/meal-plans`
+  (público, rate-limited 60/60s, solo devuelve los `active` en orden fijo
+  breakfast→half_board→all_inclusive) + admin `GET/PUT /api/meal-plans` (`mealplans:
+  view/edit`). Consumido por `RoomsStep.vue` y `BookingModal.vue` vía
+  `BookingService.getMealPlans()` / `useBooking.ts` (`store.mealPlans`, cargado en
+  `search()`).
 - Auditar `GET /api/public/hotels/:slug/upsells` (F2 2.6) para exponer la
   clasificación de extras si se agrega el campo `visibility`.
 - Confirmar que el DTO público de `GET /api/public/hotels/:slug` (F0 0.4) ya expone
@@ -166,8 +201,9 @@ tipo de habitación específico (ver `hotel_media` de `solmi-direct-booking` F0)
 
 ## UI
 
-- `RoomsStep.vue` MUST listar regímenes configurados por hotel y extras clasificados
-  correctamente.
+- `RoomsStep.vue` y `BookingModal.vue` MUST listar regímenes configurados por hotel
+  (RESUELTO: ambas superficies leen `store.mealPlans`) y extras clasificados
+  correctamente (PENDIENTE — ver requirement de extras arriba).
 - Resumen pre-pago MUST renderizar la política de cancelación específica del hotel
   (texto dinámico, no estático).
 - Builder de settings (landing) MUST exponer toggles de mensajes comerciales y gestión

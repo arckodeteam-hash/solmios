@@ -54,6 +54,10 @@ export const MODULES = {
    *  transfer, late checkout). Vive como sub-dominio del motor de reservas. Solo
    *  hotel_admin los gestiona; el huésped los lee por endpoint público. */
   upsells: 'Upsells del booking',
+  /** Regímenes de alimentación (tasks.md 2.2/2.4, solmi-direct-booking-qa-fixes): catálogo
+   *  FIJO de 3 códigos (desayuno/media pensión/todo incluido) que el hotel activa y
+   *  opcionalmente pone precio. Solo hotel_admin lo gestiona; el huésped lo lee sin auth. */
+  mealplans: 'Regímenes de alimentación',
 } as const
 
 // Available actions per module
@@ -110,6 +114,8 @@ export const MODULE_ACTIONS: Record<string, (keyof typeof ACTIONS)[]> = {
   promo: ['view', 'create', 'edit', 'delete'],
   // Upsells (F2): CRUD completo. El endpoint público los lista sin permisos.
   upsells: ['view', 'create', 'edit', 'delete'],
+  // Regímenes de alimentación: catálogo fijo, sin create/delete (solo activar + poner precio).
+  mealplans: ['view', 'edit'],
 }
 
 /** Acciones válidas para un módulo. Fallback a ['view'] si el módulo no está mapeado (fail-cerrado). */
@@ -168,6 +174,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     'promo:view', 'promo:create', 'promo:edit', 'promo:delete',
     // Upsells (F2): el dueño gestiona los extras del widget (desayuno, transfer, late checkout).
     'upsells:view', 'upsells:create', 'upsells:edit', 'upsells:delete',
+    // Regímenes de alimentación (tasks.md 2.2/2.4): el dueño activa/desactiva y pone precio.
+    'mealplans:view', 'mealplans:edit',
   ],
 
   // Receptionist — la operación del mostrador. Los permisos siguen a lo que el menú del panel le

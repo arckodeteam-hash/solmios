@@ -372,6 +372,21 @@ export interface SelectedUpsell {
   quantity: number
 }
 
+export type MealPlanCode = 'breakfast' | 'half_board' | 'all_inclusive'
+export type MealPlanPriceMode = 'included' | 'per_person_per_night'
+
+/**
+ * Régimen de alimentación activo del hotel (`GET /api/public/hotels/:slug/meal-plans`).
+ * Público, sin auth. "Solo alojamiento" NO viene acá — es la base implícita que arma el
+ * widget (ver RoomsStep.vue). `priceMode:'per_person_per_night'` es informativo esta fase
+ * (no seleccionable/cobrable todavía — tasks.md 2.2/2.4).
+ */
+export interface PublicMealPlan {
+  code: MealPlanCode
+  priceMode: MealPlanPriceMode
+  price: number
+}
+
 export type PromoValidationReason =
   | 'not_found'
   | 'inactive'

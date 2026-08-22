@@ -19,6 +19,7 @@ vi.mock('@/services/Booking.service', () => ({
     getRates: vi.fn(),
     getCalendar: vi.fn(),
     getUpsells: vi.fn(),
+    getMealPlans: vi.fn(),
     validatePromo: vi.fn(),
     createBooking: vi.fn(),
   },
@@ -141,6 +142,7 @@ describe('BookingModal — matriz de ocupaciones', () => {
       currency: 'USD', chargeCurrency: 'USD', from: '2026-08-15', to: '2026-08-31', guests: 2, days: [],
     })
     vi.mocked(BookingService.getUpsells).mockReset().mockResolvedValue([])
+    vi.mocked(BookingService.getMealPlans).mockReset().mockResolvedValue([])
     vi.mocked(BookingService.createBooking).mockReset()
   })
   afterEach(() => {
@@ -263,19 +265,47 @@ describe('BookingModal — matriz de ocupaciones', () => {
     })
   })
 
-  it('muestra el régimen con "Sólo alojamiento" activo y las pensiones deshabilitadas', async () => {
-    // Placeholder consciente: el backend no modela pensiones. Se ven para que el huésped sepa
-    // que el eje existe; ninguna es clickeable.
+  it('sin regímenes configurados: "Sólo alojamiento" activo y los 3 códigos deshabilitados', async () => {
+    // getMealPlans devuelve [] (ningún régimen activo en este hotel) — se ve el eje completo,
+    // nada más es seleccionable.
     await open()
 
     const text = document.body.textContent ?? ''
     expect(text).toContain('Sólo alojamiento')
-    expect(text).toContain('Desayuno')
-    expect(text).toContain('Media pensión')
-    expect(text).toContain('Pensión completa')
+    expect(text).toContain('Desayuno incluido')
+    expect(text).toContain('Desayuno y cena')
+    expect(text).toContain('Todo incluido')
 
     const boardButtons = Array.from(document.body.querySelectorAll('button'))
-      .filter((b) => /Desayuno|Media pensión|Pensión completa/.test(b.textContent ?? ''))
+      .filter((b) => /Desayuno incluido|Desayuno y cena|Todo incluido/.test(b.textContent ?? ''))
+    expect(boardButtons).toHaveLength(0)
+  })
+
+  it('régimen incluido en la tarifa: se muestra activo (mismo estilo que "Sólo alojamiento")', async () => {
+    vi.mocked(BookingService.getMealPlans).mockResolvedValue([
+      { code: 'breakfast', priceMode: 'included', price: 0 },
+    ])
+    await open()
+
+    const pill = Array.from(document.body.querySelectorAll('span'))
+      .find((s) => s.textContent?.includes('Desayuno incluido'))
+    expect(pill).toBeTruthy()
+    expect(pill!.className).toContain('bg-navy')
+  })
+
+  it('régimen con costo aparte: se muestra informativo con el precio, marcado "Próximamente"', async () => {
+    vi.mocked(BookingService.getMealPlans).mockResolvedValue([
+      { code: 'all_inclusive', priceMode: 'per_person_per_night', price: 45 },
+    ])
+    await open()
+
+    const pill = Array.from(document.body.querySelectorAll('span'))
+      .find((s) => s.textContent?.includes('Todo incluido'))
+    expect(pill).toBeTruthy()
+    expect(pill!.textContent).toContain('Próximamente')
+    expect(pill!.getAttribute('title')).toContain('45')
+    const boardButtons = Array.from(document.body.querySelectorAll('button'))
+      .filter((b) => (b.textContent ?? '').includes('Todo incluido'))
     expect(boardButtons).toHaveLength(0)
   })
 

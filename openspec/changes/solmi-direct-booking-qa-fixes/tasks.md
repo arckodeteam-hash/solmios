@@ -424,12 +424,55 @@ Specs: `specs/booking-availability-pricing/spec.md` (2.1),
       **RESUELTO 2026-08-21 — Opción A** (combinar tipos distintos SÍ se permite).
       Ver 1.4 para la implementación backend ya hecha.
 
-- [ ] 2.2 **Decisión de producto**: nomenclatura definitiva del catálogo de regímenes
+- [x] 2.2 **Decisión de producto**: nomenclatura definitiva del catálogo de regímenes
       de alimentación (Tarea 3). Validar con el mercado objetivo entre "Solo
       alojamiento / Desayuno incluido / Desayuno y cena / Todo incluido" vs. términos
       actuales ("Media pensión" / "Pensión completa"). **Acceptance**: catálogo
       definitivo documentado en `specs/booking-content-policies/spec.md`; diseño de
       tabla `meal_plans` (o equivalente) confirmado antes de migrar.
+      **RESUELTO 2026-08-21/22 — nomenclatura confirmada por el dueño: "Solo
+      alojamiento / Desayuno incluido / Desayuno y cena / Todo incluido"**. Implementado
+      end-to-end (no solo la decisión, el catálogo completo):
+      - Backend: tabla `meal_plans` (`hotelId, code, active, priceMode, price`) en
+        `bookingengine/model.ts` — catálogo FIJO de 3 códigos (`breakfast|half_board|
+        all_inclusive`, "Solo alojamiento" es la base implícita sin fila propia), no un
+        catálogo abierto como `upsells`. Usecases `meal-plans-crud.ts` (admin,
+        `list`/`upsert`, siempre devuelve los 3 códigos con defaults) y
+        `public-meal-plans.ts` (`GET /api/public/hotels/:slug/meal-plans`, solo
+        `active`, orden fijo). Rutas admin `GET/PUT /api/meal-plans` con permiso nuevo
+        `mealplans:view/edit` (`shared/permissions.ts`, agregado a `hotel_admin`).
+        Tests `meal-plans-crud.test.ts` + `public-meal-plans.test.ts` (16/16 ✅).
+      - Admin: `MealPlansEditor.vue` (mirror de `CancellationPolicyEditor.vue`, mismo
+        embed en `booking-engine/index.vue` junto a política de cancelación) — toggle
+        activo + radio incluido/con-costo + precio por cada uno de los 3 códigos.
+      - Widget público: `RoomsStep.vue` y `BookingModal.vue` reemplazan el placeholder
+        `DISABLED_BOARD_PLANS` (siempre igual, decorativo) por render dinámico desde
+        `store.mealPlans` (`useBooking.ts` lo carga en `search()`, mismo momento que
+        `ratesResponse`). 3 estados: `active+included` → pill activo informativo (no
+        cambia precio); `active+per_person_per_night` → pill con precio marcado
+        "Próximamente" (informativo, **todavía NO seleccionable ni cobrable** — ver
+        alcance abajo); sin fila / `!active` → deshabilitado con motivo (mismo criterio
+        que la matriz de ocupación: nunca ocultar). i18n actualizado en
+        `useBookingI18n.ts` (es/en/pt) + strings hardcodeadas equivalentes en
+        `BookingModal.vue` (no usa el store de i18n).
+      - **Alcance explícito — decisión de producto tomada junto con el dueño**: un
+        régimen "con costo aparte" se muestra informativo con su precio pero NO suma al
+        carrito/checkout todavía. Integrarlo al cobro real es una tarea aparte que exige
+        el mismo rigor que 1.6 (revalidación server-side, todo-o-nada) — evita repetir
+        el bug de "prometer algo que el sistema no cumple" que ya se cerró en la política
+        de cancelación esta sesión.
+      - Verificado E2E en navegador (Playwright, dev local): configurado desde el panel
+        admin (`hotel-boutique-palma`) → `GET /api/public/hotels/hotel-boutique-palma/
+        meal-plans` refleja el guardado → **ambas** superficies (`/book/:slug` widget y
+        `/h/:slug` landing modal) muestran los 3 estados correctamente en una búsqueda
+        real con habitaciones disponibles.
+      - Verificación completa: backend `bun test` (16/16 nuevos + 379/379 suite
+        `bookingengine`), `arckode analyze` (0 violaciones), `tsc --noEmit` limpio;
+        frontend `vue-tsc -b` limpio, `vitest run` (796/796 — 2 suites fallan por un
+        error de entorno preexistente y no relacionado, `file:///favicon.svg`), `vite
+        build` ✓ built. Revert-test aplicado sobre el branch `included` de
+        `boardPlanRows` en `RoomsStep.vue`: revertido → el test nuevo falla con el
+        síntoma esperado (`bg-navy` ausente) → restaurado → vuelve a pasar.
 
 - [ ] 2.3 **Auditoría financiera — bloqueante para el texto al cliente**: confirmar
       comportamiento real de reembolsos (comisiones Stripe, comisiones de plataforma,
@@ -444,6 +487,20 @@ Specs: `specs/booking-availability-pricing/spec.md` (2.1),
       `upsells` necesita un campo `visibility` explícito o si ya alcanza con los
       campos existentes (Tarea 4). **Acceptance**: clasificación de cada extra actual
       del catálogo demo revisada y correcta en el widget.
+      **Análisis arquitectónico resuelto 2026-08-21 (implementación de 2.2 lo confirma)**:
+      régimen de alimentación **NO** se modela como parte de `upsells` — queda en tabla
+      separada `meal_plans`, mismo patrón de sub-dominio de `bookingengine` pero
+      catálogo FIJO en vez de abierto. Motivo: el régimen es una elección ÚNICA por
+      habitación (reemplaza "solo alojamiento"), los extras son selección MÚLTIPLE —
+      mezclarlos complicaría el widget sin necesidad. Investigación externa (GuestCentric,
+      Bookassist) confirma que la industria separa board type de extras/upsells de la
+      misma forma. `upsells` hoy NO tiene panel de admin (el backend existe, nadie lo
+      llama desde el frontend) — sigue sin campo `visibility` explícito, sigue pendiente.
+      **Pendiente real de 2.4** (no resuelto, es responsabilidad del dueño según lo
+      acordado): revisar el catálogo demo de `upsells` extra por extra (desayuno,
+      traslados, etc.) y decidir la categoría de cada uno — esta parte es la
+      clasificación final que el dueño dijo que hace él mirando el catálogo junto con el
+      asistente, no algo para resolver unilateralmente acá.
 
 ### Gate G2
 

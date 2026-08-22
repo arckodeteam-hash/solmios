@@ -104,6 +104,33 @@ export const UpsellModel: ModelDefinition = {
   },
 }
 
+// tasks.md 2.2/2.4 (solmi-direct-booking-qa-fixes) — Regímenes de alimentación: catálogo FIJO
+// de 3 códigos configurables por hotel (no es un catálogo abierto como `upsells` — el hotel no
+// inventa nombres, solo activa/desactiva y fija precio de cada uno de los 3). "Solo alojamiento"
+// es la base implícita (siempre disponible, sin costo) — no tiene fila acá.
+//
+// Separado de `Upsells` a propósito (decisión de producto 2026-08-22, ver
+// specs/booking-content-policies/spec.md): el régimen es una elección ÚNICA por habitación
+// (reemplaza la base), los extras son selección MÚLTIPLE — mezclarlos en la misma tabla
+// obligaría a que el widget distinga "de elegir uno" vs. "de sumar varios" desde un solo campo.
+// Mismo criterio arquitectónico que `Upsells` sí: sub-dominio de bookingengine, no módulo aparte.
+export const MealPlanModel: ModelDefinition = {
+  table: 'meal_plans',
+  timestamps: true,
+  fields: {
+    id: { type: 'string', required: true },
+    hotelId: { type: 'string', required: true, indexed: true },
+    // 'breakfast' | 'half_board' | 'all_inclusive' — enum cerrado, validado en el usecase.
+    code: { type: 'string', required: true },
+    // Toggle: ¿el hotel ofrece este régimen? Default false (el hotel lo activa a propósito).
+    active: { type: 'boolean', default: false },
+    // 'included' (ya está en la tarifa, sin cargo aparte) | 'per_person_per_night' (con costo).
+    priceMode: { type: 'string', default: 'included' },
+    // Precio por persona por noche, en la moneda del hotel. Solo aplica si priceMode='per_person_per_night'.
+    price: { type: 'number', default: 0 },
+  },
+}
+
 export function registerBookingengineModels(orm: ORM): void {
   orm.define('BookingConfig', BookingConfigModel)
   orm.define('ConversionEvents', ConversionEventsModel)
@@ -112,4 +139,5 @@ export function registerBookingengineModels(orm: ORM): void {
   // late checkout). Sub-dominio de bookingengine: comparte hotelId, NO amerita módulo
   // aparte. Dueño: este modelo (NO definir en shared/models.ts — regla anti-modelo-dual).
   orm.define('Upsells', UpsellModel)
+  orm.define('MealPlans', MealPlanModel)
 }
