@@ -56,8 +56,14 @@ export const EmergencyContactsService = {
 export interface SubModuleMeta { key: string; label: string; description: string }
 export interface ModuleMeta { key: string; label: string; description: string; submodules?: SubModuleMeta[] }
 export type ModuleState = Record<string, boolean>
+// Catálogo módulo→sub-módulos para el EDITOR DE PLANES (claves + labels en español, sin
+// description). Fuente única: el backend lo proyecta del mismo MODULE_CATALOG que lee el
+// gate — la lista NO se duplica en el frontend.
+export interface CatalogChildDTO { key: string; label: string }
+export interface CatalogModuleDTO { key: string; label: string; children: CatalogChildDTO[] }
 export const ModulesService = {
   adminGet: () => _http.get<{ catalog: ModuleMeta[]; state: ModuleState }>('/admin/modules'),
+  catalog: () => _http.get<CatalogModuleDTO[]>('/admin/modules/catalog'),
   adminSave: (state: ModuleState) => _http.put<{ state: ModuleState }>('/admin/modules', { state }),
   enabled: () => _http.get<{ state: ModuleState }>('/modules'),
 }

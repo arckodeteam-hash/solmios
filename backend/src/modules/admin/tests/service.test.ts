@@ -157,6 +157,65 @@ describe('AdminService', () => {
       const svc = new AdminService(repos.plansRepo, repos.amenitiesRepo, log, undefined, new DashboardQueries(makeOrm()))
       await expect(svc.createPlan({ price: 99 })).rejects.toThrow('name y price requeridos')
     })
+
+    // CS-9: `plans.modules` aceptaba cualquier string — un typo quedaba persistido y el gate lo
+    // ignoraba en silencio (el hotel perdía el módulo "sin razón"). Se valida contra el MISMO
+    // catálogo que lee el gate; el controller mapea ValidationError → 400.
+    it('CS-9: rechaza claves de módulo fuera del catálogo con ValidationError (→ 400)', async () => {
+      const repos = makeRepos()
+      const svc = new AdminService(repos.plansRepo, repos.amenitiesRepo, log, undefined, new DashboardQueries(makeOrm()))
+      await expect(svc.createPlan({ name: 'X', price: 10, modules: ['finance', 'finanze', 'finanze'] }))
+        .rejects.toThrow('Claves de módulo inválidas en el plan: finanze')
+    })
+
+    it('CS-9: acepta módulos (padre) y submódulos (sub-clave) del catálogo', async () => {
+      const repos = makeRepos()
+      const svc = new AdminService(repos.plansRepo, repos.amenitiesRepo, log, undefined, new DashboardQueries(makeOrm()))
+      const result = await svc.createPlan({ name: 'X', price: 10, modules: ['planning', 'finance.billing'] })
+      expect(result.modules).toEqual(['planning', 'finance.billing'])
+    })
+
+    it('CS-9: sin modules en el body no valida (retrocompat: default [])', async () => {
+      const repos = makeRepos()
+      const svc = new AdminService(repos.plansRepo, repos.amenitiesRepo, log, undefined, new DashboardQueries(makeOrm()))
+      const result = await svc.createPlan({ name: 'X', price: 10 })
+      expect(result.modules).toEqual([])
+    })
+  })
+
+  describe('updatePlan', () => {
+    const makeSvc = () => {
+      const repos = makeRepos()
+      const created: any[] = []
+      repos.plansRepo.update = async (id: string, patch: any) => { created.push({ id, patch }); return { id, ...patch } }
+      return { svc: new AdminService(repos.plansRepo, repos.amenitiesRepo, log), updates: created }
+    }
+
+    it('actualiza la matriz modules con claves válidas del catálogo', async () => {
+      const { svc, updates } = makeSvc()
+      const result = await svc.updatePlan('p1', { modules: ['planning', 'reservations.checkin'] })
+      expect(result.modules).toEqual(['planning', 'reservations.checkin'])
+      expect(updates).toHaveLength(1)
+    })
+
+    it('CS-9: clave inválida → ValidationError y NO toca el repo', async () => {
+      const { svc, updates } = makeSvc()
+      await expect(svc.updatePlan('p1', { modules: ['planning', 'no-existe'] }))
+        .rejects.toThrow('Claves de módulo inválidas en el plan: no-existe')
+      expect(updates).toHaveLength(0)
+    })
+
+    it('patch sin modules no valida ni rompe (CS-9 solo aplica a la matriz)', async () => {
+      const { svc, updates } = makeSvc()
+      const result = await svc.updatePlan('p1', { price: 59 })
+      expect(result.price).toBe(59)
+      expect(updates[0].patch.modules).toBeUndefined()
+    })
+
+    it('404 si el plan no existe', async () => {
+      const { svc } = makeSvc()
+      await expect(svc.updatePlan('nope', { modules: [] })).rejects.toThrow('no encontrado')
+    })
   })
 
   describe('deletePlan', () => {

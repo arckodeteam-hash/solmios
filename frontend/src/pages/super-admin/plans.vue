@@ -80,29 +80,43 @@
               </div>
             </div>
             <div>
-              <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Módulos incluidos</label>
-              <p class="text-[11px] text-text-muted mb-2">Los hoteles con este plan solo ven estos módulos y submódulos. Sin ninguno marcado = todos (compatibilidad).</p>
-              <div class="space-y-2">
-                <div v-for="m in moduleCatalog" :key="m.key" class="rounded-xl border" :class="hasModule(m.key) ? 'border-teal bg-teal/5' : 'border-border bg-surface'">
-                  <!-- Módulo -->
-                  <button type="button" @click="toggleModule(m)"
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-[10px] font-bold text-text-muted uppercase">Módulos incluidos</label>
+                <span v-if="totalKeys" class="text-[11px] font-bold text-teal">{{ effectiveIncluded }} de {{ totalKeys }} claves</span>
+              </div>
+              <p class="text-[11px] text-text-muted mb-2">
+                Módulo tildado = módulo <strong>completo</strong> (incluye todos sus submódulos). Destildalo para elegir submódulos sueltos.
+                Sin nada marcado = <strong>todos</strong> (compatibilidad).
+              </p>
+              <div class="flex items-center gap-2 mb-2">
+                <input v-model="search" placeholder="Buscar módulo o submódulo..." class="flex-1 px-3 py-1.5 bg-surface border border-border rounded-xl text-xs" />
+                <button type="button" @click="selectAll" class="px-3 py-1.5 bg-surface border border-border rounded-xl text-[11px] font-bold cursor-pointer hover:bg-surface-dark transition-colors">Todo</button>
+                <button type="button" @click="selectNone" class="px-3 py-1.5 bg-surface border border-border rounded-xl text-[11px] font-bold cursor-pointer hover:bg-surface-dark transition-colors">Ninguno</button>
+              </div>
+              <div class="space-y-2 max-h-72 overflow-y-auto pr-1">
+                <div v-for="m in visibleCatalog" :key="m.key" class="rounded-xl border" :class="isFullModule(form.modules, m) ? 'border-teal bg-teal/5' : 'border-border bg-surface'">
+                  <!-- Módulo: tildado = COMPLETO. Destildar el completo deja los hijos sueltos (parcial). -->
+                  <button type="button" @click="toggleFull(m)"
                     class="w-full flex items-center gap-2 px-3 py-2 text-sm font-bold text-left cursor-pointer"
-                    :class="hasModule(m.key) ? 'text-teal' : 'text-text-muted'">
-                    <span class="w-4 h-4 rounded flex items-center justify-center shrink-0 border" :class="hasModule(m.key) ? 'bg-teal border-teal text-white' : 'border-border'">
-                      <span v-if="hasModule(m.key)" class="text-[10px] leading-none">✓</span>
+                    :class="isFullModule(form.modules, m) ? 'text-teal' : 'text-text-secondary'">
+                    <span class="w-4 h-4 rounded flex items-center justify-center shrink-0 border" :class="isFullModule(form.modules, m) ? 'bg-teal border-teal text-white' : 'border-border'">
+                      <span v-if="isFullModule(form.modules, m)" class="text-[10px] leading-none">✓</span>
                     </span>
                     {{ m.label }}
-                    <span v-if="m.submodules?.length && hasModule(m.key)" class="ml-auto text-[10px] font-semibold text-text-muted">{{ subCount(m) }}</span>
+                    <span v-if="m.children.length" class="ml-auto text-[10px] font-semibold" :class="isFullModule(form.modules, m) ? 'text-teal' : 'text-text-muted'">{{ moduleBadge(m) }}</span>
                   </button>
-                  <!-- Submódulos (solo si el módulo está incluido) -->
-                  <div v-if="m.submodules?.length && hasModule(m.key)" class="px-3 pb-2 pl-9 grid grid-cols-2 gap-1.5">
-                    <button v-for="s in m.submodules" :key="s.key" type="button" @click="toggleSubmodule(m, s)"
-                      class="flex items-center gap-2 px-2 py-1.5 rounded-lg text-[12px] font-semibold text-left cursor-pointer transition-colors"
-                      :class="hasModule(s.key) ? 'text-navy' : 'text-text-muted'">
-                      <span class="w-3.5 h-3.5 rounded flex items-center justify-center shrink-0 border" :class="hasModule(s.key) ? 'bg-teal border-teal text-white' : 'border-border'">
-                        <span v-if="hasModule(s.key)" class="text-[9px] leading-none">✓</span>
+                  <!-- Submódulos: con el padre tildado van "por el módulo" (bloqueados); sueltos = parcial -->
+                  <div v-if="m.children.length" class="px-3 pb-2 pl-9 grid grid-cols-2 gap-1.5">
+                    <button v-for="c in m.children" :key="c.key" type="button" @click="toggleSub(m, c.key)"
+                      :disabled="isFullModule(form.modules, m)"
+                      class="flex items-center gap-2 px-2 py-1.5 rounded-lg text-[12px] font-semibold text-left transition-colors"
+                      :class="[childIncluded(m, c) ? 'text-navy' : 'text-text-muted', isFullModule(form.modules, m) ? 'cursor-not-allowed opacity-70' : 'cursor-pointer']"
+                      :title="isFullModule(form.modules, m) ? 'Incluido por el módulo completo — destildá el módulo para elegir partes' : c.key">
+                      <span class="w-3.5 h-3.5 rounded flex items-center justify-center shrink-0 border" :class="childIncluded(m, c) ? 'bg-teal border-teal text-white' : 'border-border'">
+                        <span v-if="childIncluded(m, c)" class="text-[9px] leading-none">✓</span>
                       </span>
-                      {{ s.label }}
+                      {{ c.label }}
+                      <span v-if="isFullModule(form.modules, m)" class="ml-auto text-[9px] italic text-text-muted">por el módulo</span>
                     </button>
                   </div>
                 </div>
@@ -127,7 +141,11 @@ import AppModal from '@/components/ui/AppModal.vue'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import { PlansService } from '@/services/Plans.service'
-import { ModulesService, type ModuleMeta, type SubModuleMeta } from '@/services/Platform.service'
+import { ModulesService, type CatalogModuleDTO, type CatalogChildDTO } from '@/services/Platform.service'
+import {
+  isFullModule, looseChildren, toggleModule, toggleChild,
+  selectAllModules, selectNoModules, totalCatalogKeys, effectiveCount,
+} from './plan-modules'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
@@ -143,7 +161,10 @@ const loading = ref(true)
 const showModal = ref(false)
 const editing = ref<any>(null)
 const saving = ref(false)
-const moduleCatalog = ref<ModuleMeta[]>([])
+// Árbol módulo→submódulos del endpoint (/admin/modules/catalog): la MISMA fuente que lee el
+// gate en el backend. La lista no se duplica en el frontend.
+const moduleCatalog = ref<CatalogModuleDTO[]>([])
+const search = ref('')
 
 const emptyForm = () => ({ name: '', price: 0, currency: CurrencyCode.USD, description: '', features: [] as string[], modules: [] as string[], limits: { rooms: 30, users: 2, properties: 1 } })
 const form = ref(emptyForm())
@@ -151,57 +172,56 @@ const featuresText = ref('')
 
 const features = computed(() => featuresText.value.split('\n').filter(f => f.trim()))
 
-function hasModule(key: string): boolean {
-  return form.value.modules.includes(key)
+// Catálogo filtrado por búsqueda (matchea módulo O cualquiera de sus submódulos).
+const visibleCatalog = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return moduleCatalog.value
+  return moduleCatalog.value.filter(m =>
+    m.label.toLowerCase().includes(q) || m.key.toLowerCase().includes(q)
+    || m.children.some(c => c.label.toLowerCase().includes(q) || c.key.toLowerCase().includes(q)))
+})
+const effectiveIncluded = computed(() => effectiveCount(form.value.modules, moduleCatalog.value))
+const totalKeys = computed(() => totalCatalogKeys(moduleCatalog.value))
+
+// Semántica del editor (espeja el gate): padre tildado = módulo COMPLETO (los hijos van por el
+// padre y se muestran bloqueados); destildar el padre deja los hijos sueltos = selección parcial.
+// El builder (./plan-modules) arma el array: solo claves padre para completo, sub-claves sueltas
+// para parcial — nunca ambas.
+function toggleFull(m: CatalogModuleDTO) {
+  form.value.modules = toggleModule(form.value.modules, m)
 }
-function subCount(m: ModuleMeta): string {
-  const subs = m.submodules ?? []
-  const on = subs.filter(s => form.value.modules.includes(s.key)).length
-  return `${on}/${subs.length}`
+function toggleSub(m: CatalogModuleDTO, childKey: string) {
+  form.value.modules = toggleChild(form.value.modules, m, childKey)
 }
-// Marcar módulo → agrega el módulo + TODOS sus submódulos (por defecto, todo incluido). Desmarcar → saca ambos.
-function toggleModule(m: ModuleMeta) {
-  const set = new Set(form.value.modules)
-  const subs = m.submodules ?? []
-  if (set.has(m.key)) {
-    set.delete(m.key)
-    subs.forEach(s => set.delete(s.key))
-  } else {
-    set.add(m.key)
-    subs.forEach(s => set.add(s.key))
-  }
-  form.value.modules = [...set]
+function childIncluded(m: CatalogModuleDTO, c: CatalogChildDTO): boolean {
+  return isFullModule(form.value.modules, m) || looseChildren(form.value.modules, m).has(c.key)
 }
-function toggleSubmodule(m: ModuleMeta, s: SubModuleMeta) {
-  if (!form.value.modules.includes(m.key)) return   // módulo no incluido: no-op
-  const set = new Set(form.value.modules)
-  set.has(s.key) ? set.delete(s.key) : set.add(s.key)
-  form.value.modules = [...set]
+function moduleBadge(m: CatalogModuleDTO): string {
+  if (isFullModule(form.value.modules, m)) return 'Completo'
+  return `${looseChildren(form.value.modules, m).size}/${m.children.length}`
 }
-// Retrocompat: un plan viejo guardaba solo claves top-level. Al abrirlo, si un módulo está incluido pero
-// no lista ninguno de sus submódulos, se consideran TODOS incluidos → los marcamos para reflejar el estado real.
-function normalizeModules(mods: string[]): string[] {
-  const set = new Set(mods)
-  for (const m of moduleCatalog.value) {
-    const subs = m.submodules ?? []
-    if (set.has(m.key) && subs.length && !subs.some(s => set.has(s.key))) {
-      subs.forEach(s => set.add(s.key))
-    }
-  }
-  return [...set]
+function selectAll() {
+  form.value.modules = selectAllModules(moduleCatalog.value)
+}
+function selectNone() {
+  form.value.modules = selectNoModules()
 }
 
 function openNew() {
   editing.value = null
   form.value = emptyForm()
   featuresText.value = ''
+  search.value = ''
   showModal.value = true
 }
 
 function openEdit(plan: any) {
   editing.value = plan
-  form.value = { name: plan.name, price: plan.price, currency: plan.currency || 'USD', description: plan.description || '', features: plan.features || [], modules: normalizeModules(plan.modules || []), limits: plan.limits || { rooms: 30, users: 2, properties: 1 } }
+  // La matriz se carga TAL CUAL está persistida: un plan con el padre listado se muestra como
+  // módulo completo (los hijos van por el padre) — no se expande ni se re-escribe al abrir.
+  form.value = { name: plan.name, price: plan.price, currency: plan.currency || 'USD', description: plan.description || '', features: plan.features || [], modules: [...(plan.modules || [])], limits: plan.limits || { rooms: 30, users: 2, properties: 1 } }
   featuresText.value = (plan.features || []).join('\n')
+  search.value = ''
   showModal.value = true
 }
 
@@ -213,7 +233,7 @@ async function loadPlans() {
   } finally { loading.value = false }
 }
 async function loadModuleCatalog() {
-  try { moduleCatalog.value = (await ModulesService.adminGet()).catalog || [] } catch { /* opcional */ }
+  try { moduleCatalog.value = await ModulesService.catalog() } catch { /* opcional: el editor queda vacío, no bloquea el alta */ }
 }
 
 async function save() {

@@ -127,6 +127,41 @@ export function allKeys(): string[] {
   return keys
 }
 
+// ── Catálogo para DISPLAY (editor de planes del super_admin) ─────────────────────────
+// Fuente única: el mismo MODULE_CATALOG que lee el gate. El frontend NO duplica la lista —
+// la pide a GET /api/admin/modules/catalog, así una clave nueva o retirada del catálogo
+// aparece/desaparece del editor sin tocar código de UI.
+export interface CatalogChild { key: string; label: string }
+export interface CatalogModule { key: string; label: string; children: CatalogChild[] }
+
+/** Árbol módulo→sub-módulos con labels en español para display. */
+export function moduleCatalogTree(): CatalogModule[] {
+  return MODULE_CATALOG.map((m) => ({
+    key: m.key,
+    label: m.label,
+    children: (m.submodules ?? []).map((s) => ({ key: s.key, label: s.label })),
+  }))
+}
+
+/**
+ * CS-9: `plans.modules` aceptaba cualquier string — un typo o una clave retirada del catálogo
+ * quedaba persistida y el gate la ignoraba en silencio (el hotel "perdía" el módulo sin razón
+ * visible). Devuelve las claves de la matriz que NO existen en el catálogo (deduplicadas).
+ */
+export function invalidPlanModuleKeys(keys: readonly unknown[]): string[] {
+  const valid = new Set(allKeys())
+  const seen = new Set<string>()
+  const invalid: string[] = []
+  for (const k of keys) {
+    const key = String(k)
+    if (!valid.has(key) && !seen.has(key)) {
+      seen.add(key)
+      invalid.push(key)
+    }
+  }
+  return invalid
+}
+
 async function readRaw(
   configRepo: RepositoryAdapter<any>,
   logger?: GateLogger,

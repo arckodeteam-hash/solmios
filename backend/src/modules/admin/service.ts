@@ -1,9 +1,7 @@
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import type { AdminAnalyticsDTO, MonitoringDTO, PlanDTO, AmenityCatalogDTO, ModuleOverrideDTO } from './types'
 import type { DashboardQueries } from './usecases/dashboard-queries'
-import {
-  auditSafely, planDeleteEntry, type AuditPort,
-} from './usecases/audit'
+import { type AuditPort } from './usecases/audit'
 import type { ApplySpecialConditionsInput, SpecialConditionsUseCase } from './usecases/special-conditions'
 import type { SubscriptionCategoriesUseCase } from './usecases/subscription-categories'
 import {
@@ -11,6 +9,7 @@ import {
   type SubscriptionSettings,
 } from './usecases/subscription-settings'
 import type { ModuleOverridesUseCase } from './usecases/module-overrides'
+import * as plans from './usecases/plans'
 import {
   listAmenitiesCatalog, createAmenityCatalog, updateAmenityCatalog, deleteAmenityCatalog,
   type AmenitiesCatalogDeps,
@@ -79,38 +78,22 @@ export class AdminService {
     return { data: data as any[], total: data.length }
   }
 
-  async createPlan(body: any): Promise<any> {
-    if (!body.name || !body.price) throw new Error('name y price requeridos')
-    return await this.plansRepo.create({
-      name: body.name,
-      slug: body.name.toLowerCase().replace(/\s+/g, '-'),
-      price: Number(body.price), currency: body.currency || 'USD',
-      description: body.description || '', features: body.features || [],
-      modules: Array.isArray(body.modules) ? body.modules : [],
-      limits: body.limits || { rooms: 30, users: 2, properties: 1 },
-      isActive: body.isActive !== false ? 1 : 0, sortOrder: body.sortOrder || 0,
-    })
-  }
-
-  async updatePlan(id: string, body: any, user?: any): Promise<any> {
-    const existing = await this.plansRepo.findById(id) as any
-    if (!existing) throw new Error('Plan no encontrado')
-    if (this.auth) this.auth.assertOwnership(PLATFORM_RESOURCE, user?.id ?? '', user?.role, 'super_admin')
-    const patch: Record<string, any> = {}
-    for (const k of ['name', 'price', 'currency', 'description', 'features', 'modules', 'limits', 'isActive', 'sortOrder']) {
-      if (body[k] !== undefined) patch[k] = k === 'isActive' ? (body[k] ? 1 : 0) : body[k]
+  /**
+   * CRUD de planes — delega a usecases/plans.ts (mismo patrón que amenities-catalog):
+   * la matriz `modules` se valida contra el catálogo del gate (CS-9, clave inválida → 400).
+   */
+  private get plansDeps() {
+    return {
+      plansRepo: this.plansRepo, logger: this.logger, auth: this.auth,
+      platformResource: PLATFORM_RESOURCE, auditPort: () => this.auditPort,
     }
-    if (body.name) patch.slug = body.name.toLowerCase().replace(/\s+/g, '-')
-    return await this.plansRepo.update(id, patch)
   }
 
-  async deletePlan(id: string, user?: any): Promise<void> {
-    const existing = await this.plansRepo.findById(id) as any
-    if (!existing) throw new Error('Plan no encontrado')
-    if (this.auth) this.auth.assertOwnership(PLATFORM_RESOURCE, user?.id ?? '', user?.role, 'super_admin')
-    await this.plansRepo.delete(id)
-    await auditSafely(this.auditPort, this.logger, planDeleteEntry(existing, user))
-  }
+  async createPlan(body: any): Promise<any> { return plans.createPlan(this.plansDeps, body) }
+
+  async updatePlan(id: string, body: any, user?: any): Promise<any> { return plans.updatePlan(this.plansDeps, id, body, user) }
+
+  async deletePlan(id: string, user?: any): Promise<void> { return plans.deletePlan(this.plansDeps, id, user) }
 
   /**
    * Actualiza plan/estado/datos de CUALQUIER hotel (operación de plataforma, solo super_admin).

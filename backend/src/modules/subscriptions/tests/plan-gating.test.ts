@@ -328,6 +328,54 @@ describe('getModuleStateForHotel — el gate aplica plans.modules tal cual', () 
   })
 })
 
+// Editor de módulos por plan (/admin → planes): al guardar un PUT la matriz persiste en
+// `plans.modules`. El gate NO cachea — la lee en cada request — así que el hotel tiene que ver
+// el cambio en la llamada siguiente, sin restart del backend.
+describe('edición del plan → el gate la ve en el request siguiente (sin restart)', () => {
+  const config = repo([]) // sin configuration(platform,'modules'): todo global-ON
+
+  it('agregar un módulo al plan: el estado del hotel cambia en la llamada siguiente', async () => {
+    const plansRows = [{ id: 'plan-host', slug: 'host', modules: [...HOST_MODULES], isActive: 1 }]
+    const plans = repo(plansRows) // repo() muta in-place: el update es visible para el findMany siguiente
+    const subs = repo([{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'trialing' }])
+
+    const before = await getModuleStateForHotel(config, plans, subs, 'h1', undefined, 'professional')
+    expect(before.crm).toBe(false)
+
+    await plans.update('plan-host', { modules: [...HOST_MODULES, 'crm'] }) // lo que persiste el PUT /api/admin/plans/:id
+
+    const after = await getModuleStateForHotel(config, plans, subs, 'h1', undefined, 'professional')
+    expect(after.crm).toBe(true) // sin restart ni invalidación: la matriz se lee por request
+  })
+
+  it('quitar el padre finance: el módulo y sus submódulos caen en el request siguiente', async () => {
+    const plans = repo([{ id: 'plan-full', slug: 'full', modules: ['planning', 'finance'], isActive: 1 }])
+    const subs = repo([{ id: 's1', hotelId: 'h1', planId: 'plan-full', status: 'active' }])
+
+    const before = await getModuleStateForHotel(config, plans, subs, 'h1', undefined, 'professional')
+    expect(before.finance).toBe(true)
+    expect(before['finance.billing']).toBe(true) // implícito por el padre (CS-1)
+
+    await plans.update('plan-full', { modules: ['planning'] })
+
+    const after = await getModuleStateForHotel(config, plans, subs, 'h1', undefined, 'professional')
+    expect(after.finance).toBe(false)
+    expect(after['finance.billing']).toBe(false)
+  })
+
+  it('de padre completo a sub-claves sueltas (activación parcial): solo esa parte queda ON', async () => {
+    const plans = repo([{ id: 'plan-parcial', slug: 'parcial', modules: ['finance'], isActive: 1 }])
+    const subs = repo([{ id: 's1', hotelId: 'h1', planId: 'plan-parcial', status: 'trialing' }])
+
+    await plans.update('plan-parcial', { modules: ['finance.billing'] }) // el editor guarda SOLO la sub-clave
+
+    const state = await getModuleStateForHotel(config, plans, subs, 'h1', undefined, 'professional')
+    expect(state['finance.billing']).toBe(true)  // la parte elegida
+    expect(state.finance).toBe(false)            // el módulo completo ya no
+    expect(state['finance.folios']).toBe(false)  // ni los hermanos
+  })
+})
+
 // R3-2 — congelado de la matriz EFECTIVA de los planes del SEEDER bajo la semántica
 // "padre = módulo completo". El test lee la matriz de scripts/create-plans-table.ts (no una
 // copia acá): si alguien vuelve a listar un padre en essential, o el script y el catálogo
