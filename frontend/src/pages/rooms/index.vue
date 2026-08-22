@@ -184,7 +184,7 @@
 
       <div class="space-y-6">
             <!-- Room info: lista tipográfica, sin cajas -->
-            <div class="grid grid-cols-3 gap-x-4 gap-y-5 pb-6 border-b border-border">
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-5 pb-6 border-b border-border">
               <div>
                 <div class="text-[11px] text-text-muted uppercase tracking-wide">Tipo</div>
                 <div class="text-sm font-bold text-navy mt-1">{{ typeLabel(detailRoom?.type||'') }}</div>
@@ -307,7 +307,7 @@
 
             <div>
               <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-3">Configuración</label>
-              <div class="grid grid-cols-3 gap-3">
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div><label for="batch-base-price" class="block text-[11px] text-text-muted font-bold mb-1">Precio Base $ <span class="text-coral">*</span></label><input id="batch-base-price" name="batchBasePrice" required aria-required="true" v-model.number="batchForm.basePrice" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm font-bold text-navy" /></div>
                 <div><label for="batch-capacity" class="block text-[11px] text-text-muted font-bold mb-1">Capacidad</label><input id="batch-capacity" name="batchCapacity" v-model.number="batchForm.capacity" type="number" min="1" max="20" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
                 <div><label for="batch-floor" class="block text-[11px] text-text-muted font-bold mb-1">Piso</label><input id="batch-floor" name="batchFloor" v-model.number="batchForm.floor" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
@@ -348,7 +348,7 @@
     <!-- ====================== EDIT MODAL ====================== -->
     <AppModal v-if="modal.show" size="lg" :title="`${modal.edit ? 'Editar' : 'Nueva'} habitación`" @close="modal.show=false">
       <div class="space-y-5">
-            <div class="grid grid-cols-3 gap-4">
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
               <div>
                 <label for="room-number" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Número <span class="text-coral">*</span></label>
                 <input id="room-number" name="number" required aria-required="true" v-model="form.number" @blur="touched.number = true" type="text" placeholder="101"

@@ -506,7 +506,7 @@
                 <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">País</label>
                 <SearchSelect v-model="form.country" :options="COUNTRIES" placeholder="Buscar país..." />
               </div>
-              <div class="grid grid-cols-3 gap-4">
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 <div class="col-span-2">
                   <label for="guest-address" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Dirección</label>
                   <input id="guest-address" v-model="form.address" type="text" name="address" placeholder="Calle, número..." class="w-full px-4 py-2.5 rounded-xl border text-sm focus:outline-none focus:border-navy" :class="fieldClass('address')" data-field="address" :aria-invalid="!!errorOf('address')" @blur="touchField('address')" />

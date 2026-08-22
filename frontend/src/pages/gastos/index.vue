@@ -305,7 +305,7 @@ function goNext() { if (page.value < pages.value) loadData(page.value + 1) }
           <input id="gasto-concept" name="concept" aria-required="true" v-model="form.concept" required :aria-invalid="!!conceptError" placeholder="Ej: Compra de detergentes" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:outline-none" :class="conceptError ? 'border-coral ring-2 ring-coral/20' : 'border-border focus:border-navy'" />
           <p v-if="conceptError" role="alert" class="mt-1 text-[11px] font-semibold text-coral">{{ conceptError }}</p>
         </div>
-        <div class="grid grid-cols-3 gap-3">
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <div>
             <label for="gasto-amount" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Importe <span class="text-coral">*</span></label>
             <input id="gasto-amount" name="amount" aria-required="true" v-model.number="form.amount" type="number" min="0.01" step="0.01" required :aria-invalid="!!amountError" placeholder="0.00" class="w-full rounded-xl border px-4 py-2.5 text-right text-sm font-bold text-navy tabular-nums focus:outline-none" :class="amountError ? 'border-coral ring-2 ring-coral/20' : 'border-border focus:border-navy'" />
