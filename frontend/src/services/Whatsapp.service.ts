@@ -6,12 +6,13 @@ export interface WhatsappTemplate {
   name: string
   body: string
   category?: string
-  isActive: boolean
+  // INTEGER 0/1 en el API (UpdateTemplateSchema `type: 'number'`, ORM boolean↔INTEGER).
+  isActive: boolean | number
 }
 
 export const WhatsappService = {
   list: () => http.get<{ data: WhatsappTemplate[] }>('/whatsapp-templates'),
-  create: (data: { name: string; body: string; category?: string; isActive?: boolean }) =>
+  create: (data: { name: string; body: string; category?: string; isActive?: boolean | number }) =>
     http.post<WhatsappTemplate>('/whatsapp-templates', data),
   update: (id: string, data: Partial<WhatsappTemplate>) =>
     http.put<WhatsappTemplate>(`/whatsapp-templates/${id}`, data),

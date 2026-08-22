@@ -125,7 +125,12 @@
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div class="sm:col-span-2">
             <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-2">Nombre *</label>
-            <input v-model="form.name" type="text" placeholder="Bienvenida, Confirmación, etc." class="w-full px-4 py-2.5 rounded-full border border-border text-sm focus:outline-none focus:border-cyan transition-colors" />
+            <!-- Error de validación anclado al campo (mismo fix que auto-messages): un toast
+                 efímero con el modal abierto se lee como "Guardar no hace nada". -->
+            <input v-model="form.name" @input="nameError = ''" type="text" data-testid="whatsapp-template-name"
+              placeholder="Bienvenida, Confirmación, etc."
+              class="w-full px-4 py-2.5 rounded-full border text-sm focus:outline-none focus:border-cyan transition-colors" :class="nameError ? 'border-coral' : 'border-border'" />
+            <p v-if="nameError" data-testid="whatsapp-template-name-error" class="mt-1 text-[11px] font-bold text-coral">{{ nameError }}</p>
           </div>
           <div>
             <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-2">Categoría</label>
@@ -153,7 +158,11 @@
               {{ (form.body || '').length }} / 1024
             </span>
           </div>
-          <textarea v-model="form.body" rows="6" placeholder="Hola {guest_name}! Gracias por reservar en {hotel_name}. Te esperamos el {checkin_date} en {room_number}." class="w-full px-4 py-3 rounded-2xl border border-border text-sm resize-none focus:outline-none focus:border-cyan transition-colors"></textarea>
+          <textarea v-model="form.body" @input="bodyError = ''" rows="6" data-testid="whatsapp-template-body"
+            :class="bodyError ? 'border-coral' : 'border-border'"
+            placeholder="Hola {guest_name}! Gracias por reservar en {hotel_name}. Te esperamos el {checkin_date} en {room_number}."
+            class="w-full px-4 py-3 rounded-2xl border text-sm resize-none focus:outline-none focus:border-cyan transition-colors"></textarea>
+          <p v-if="bodyError" data-testid="whatsapp-template-body-error" class="mt-1 text-[11px] font-bold text-coral">{{ bodyError }}</p>
           <p class="text-[10px] text-text-muted mt-1">Longitud máxima de WhatsApp: 1024 caracteres.</p>
         </div>
 
@@ -227,6 +236,8 @@ const modal = ref({ show: false, edit: false })
 const form = ref<{ name: string; body: string; category: string; isActive: boolean }>({
   name: '', body: '', category: 'general', isActive: true,
 })
+const nameError = ref('')
+const bodyError = ref('')
 
 const variables = ['{guest_name}', '{hotel_name}', '{checkin_date}', '{checkout_date}', '{room_number}', '{nights}', '{total_amount}', '{pending_amount}', '{locator}', '{wifi_network}', '{wifi_password}', '{lock_codes}']
 
@@ -291,12 +302,14 @@ async function load() {
 
 function openNew() {
   editId.value = ''
+  nameError.value = ''; bodyError.value = ''
   modal.value = { show: true, edit: false }
   form.value = { name: '', body: '', category: 'general', isActive: true }
 }
 
 function openEdit(t: WhatsappTemplate) {
   editId.value = t.id || ''
+  nameError.value = ''; bodyError.value = ''
   modal.value = { show: true, edit: true }
   form.value = {
     name: t.name,
@@ -307,23 +320,35 @@ function openEdit(t: WhatsappTemplate) {
 }
 
 async function save() {
-  if (!form.value.name || !form.value.body) {
-    toast.error('Nombre y cuerpo son obligatorios')
+  // Validación anclada a cada campo (antes: solo toast efímero → el click parecía muerto).
+  if (!form.value.name.trim()) {
+    nameError.value = 'El nombre es obligatorio'
+    toast.error('Falta nombre', 'Completá el campo Nombre del modal')
     return
   }
+  if (!form.value.body.trim()) {
+    bodyError.value = 'El cuerpo del mensaje es obligatorio'
+    toast.error('Falta cuerpo', 'Escribí el texto que se le enviará al huésped')
+    return
+  }
+  nameError.value = ''; bodyError.value = ''
   saving.value = true
   try {
+    // isActive como 1/0: el schema del backend (UpdateTemplateSchema) lo declara `number`
+    // y un boolean revienta el PUT con 400. SIN hotelId: lo inyecta el controller del token.
+    const data = { name: form.value.name.trim(), body: form.value.body, category: form.value.category, isActive: form.value.isActive ? 1 : 0 }
     if (editId.value) {
-      await WhatsappService.update(editId.value, form.value)
+      await WhatsappService.update(editId.value, data)
       toast.success('Plantilla actualizada')
     } else {
-      await WhatsappService.create(form.value)
+      await WhatsappService.create(data)
       toast.success('Plantilla creada')
     }
     modal.value.show = false
     await load()
   } catch (e: any) {
-    toast.error(e.message || 'Error al guardar')
+    // El modal queda abierto: no se pierde lo escrito.
+    toast.error('No se pudo guardar', e?.message || 'Revisá los datos e intentá de nuevo')
   } finally {
     saving.value = false
   }

@@ -12,7 +12,9 @@ export interface AutoMessage {
   triggerEvent: 'reservation_created' | 'pre_checkin' | 'checkin_day' | 'checkout_day' | 'post_stay' | string
   triggerOffset: number
   variables?: string[]
-  isActive: boolean
+  // El API guarda/valida isActive como INTEGER 0/1 (schemas `type: 'number'`, ORM
+  // boolean↔INTEGER). Llega `1`/`0` del server y se manda `1`/`0` en el PUT.
+  isActive: boolean | number
   event?: string
   language?: string
   triggerType?: string
@@ -28,7 +30,7 @@ export interface AutoMessageInput {
   triggerEvent?: string
   triggerOffset?: number
   variables?: string[]
-  isActive?: boolean
+  isActive?: boolean | number
   event?: string
   language?: string
   triggerType?: string
