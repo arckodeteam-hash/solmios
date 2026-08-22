@@ -448,11 +448,12 @@
                 </div>
               </label>
             </div>
-            <!-- #34: si el watcher ya resolvió el conflicto este aviso no aparece; queda para
-                 usuarios que llegan con datos viejos contradictorios cargados de la DB. -->
+            <!-- #34 (REG-3): aviso ALCANZABLE para datos legacy contradictorios — los watchers
+                 ya no auto-resuelven durante la carga, así que este estado sí se renderiza.
+                 Si el usuario no lo resuelve, el guardado lo rechaza el backend con este motivo. -->
             <p v-if="form.freeCancellation && form.cancellationType === 'non_refundable'"
               class="mt-2 text-[10px] font-bold text-danger">
-              "No Reembolsable" anula la cancelación gratuita: al guardar, el toggle se apaga solo.
+              "No Reembolsable" es incompatible con la cancelación gratuita: desactivá una de las dos antes de guardar.
             </p>
           </div>
 
@@ -1284,10 +1285,21 @@ const cancelPolicies = PRESET_OPTIONS
 // elegir No Reembolsable apaga el toggle; reactivar el toggle con No Reembolsable activa
 // vuelve a Flexible. Los dos watchers no pueden loopear entre sí (cada uno solo escribe
 // el campo que el otro NO observa).
+//
+// COR-3/REG-3: los watchers NO corren durante la hidratación. Antes, un hotel legacy con
+// datos contradictorios (freeCancellation=true + non_refundable) se auto-flippeaba al
+// ABRIR Configuración — mutación silenciosa de un dato persistido, sin que el usuario
+// tocara nada, y el aviso de conflicto del template quedaba inalcanzable (los watchers
+// resolvían el estado antes del primer render). Con el flag, el dato legacy llega intacto,
+// el aviso se muestra, y la auto-resolución sólo ocurre si el usuario INTERACTÚA. Si
+// guarda sin tocar, el backend rechaza (hoteles-queries.assertCancellationCompatible).
+const conditionsHydrated = ref(false)
 watch(() => form.value.cancellationType, (type) => {
+  if (!conditionsHydrated.value) return
   if (type === 'non_refundable' && form.value.freeCancellation) form.value.freeCancellation = false
 })
 watch(() => form.value.freeCancellation, (on) => {
+  if (!conditionsHydrated.value) return
   if (on && form.value.cancellationType === 'non_refundable') form.value.cancellationType = 'flexible'
 })
 
@@ -1401,6 +1413,9 @@ onMounted(async () => {
         : {},
       id: h.id || (h as any)._id,
     }
+    // Recién ahora los watchers de #34 pueden auto-resolver: la asignación de arriba
+    // dispara los watchers con el dato tal como vino de la DB (aunque sea contradictorio).
+    conditionsHydrated.value = true
 
     // Amenities catalog + selected
     const [cat, sel] = await Promise.all([
