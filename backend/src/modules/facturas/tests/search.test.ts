@@ -90,9 +90,16 @@ describe('FacturasService.list — ?search= (DT-07)', () => {
       expect(typeof d.subtotal).toBe('number')
       expect(typeof d.balance).toBe('number')
     }
+    // REG-2: con limit=2 la página es [i1, i3] — la aserción vieja miraba i5, que NUNCA
+    // está en la página, así que el `if` la volvía muerta. Se aserta sobre filas reales.
     const byId = (id: string) => (result.data as any[]).find((d) => d.id === id)
-    // La fila i5 matchea por huésped y el enrich resuelve el nombre sobre la página final.
-    if (byId('i5')) expect(byId('i5').guest).toBe('Carlos Caro')
+    expect(byId('i1')?.guest).toBe('Ana Pérez')
+
+    // La fila i5 matchea por NOMBRE del huésped (columna de otra tabla): sin limit cae en
+    // la página y el enrich resuelve el nombre sobre la página final.
+    const full = await buildService().list({ search: 'caro' }, user)
+    const i5 = (full.data as any[]).find((d) => d.id === 'i5')
+    expect(i5?.guest).toBe('Carlos Caro')
   })
 
   it('sin search NO trae todo el conjunto: usa paginate del repo', async () => {

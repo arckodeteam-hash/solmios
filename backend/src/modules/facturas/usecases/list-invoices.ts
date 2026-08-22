@@ -68,8 +68,16 @@ export async function listInvoices(
     const matchingGuestIds = new Set<string>()
     await Promise.all(
       hotelIds.map(async (hid) => {
-        const guests = await enrichDeps.guest.findMany({ hotelId: hid }).catch(() => [] as any[])
-        for (const g of guests as any[]) {
+        const guests = await enrichDeps.guest.findMany({ hotelId: hid }).catch((err: unknown) => {
+          // Degradación VISIBLE (COR-4/REG-4): si esta query falla, la búsqueda por nombre
+          // de huésped baja a 0 matches y ese total/páginas equivocado se cachea 300s —
+          // sin log era un fallo mudo imposible de diagnosticar desde el panel.
+          logger.warn('DT-07 search: falló la carga de huéspedes — búsqueda por nombre degradada a 0 matches', {
+            hotelId: hid, error: (err as Error)?.message ?? String(err),
+          })
+          return [] as any[]
+        })
+        for (const g of guests) {
           if (g?.id && (g.name || '').toLowerCase().includes(q)) matchingGuestIds.add(g.id)
         }
       }),
