@@ -7,6 +7,7 @@ import { silentLogger } from 'arckode-framework/testing'
 import { PaymentRequestsService } from '../service'
 import { StripeService } from '../../../services/stripe-service'
 import type { PaymentRequestDTO, CurrentUser } from '../types'
+import { sumPayments } from '../../../shared/usecases/reservation-paid'
 
 const log = silentLogger()
 const currentUser: CurrentUser = { id: 'u1', hotelId: 'h1', role: 'hotel_admin' }
@@ -86,6 +87,9 @@ function wireMoney(s: PaymentRequestsService, opts: { folios?: any[]; invoices?:
       invoiceRepo: makeInvoiceRepo(opts.invoices ?? []),
       paymentRepo: makePaymentRepo(opts.payments ?? []),
     },
+    // RTC-7.4: lo contesta `payments` (settledNetOfReservation). Se deriva de las MISMAS filas del
+    // doble para que el mundo del test no diga dos cosas distintas sobre la misma plata.
+    settledNet: async () => sumPayments((opts.payments ?? []) as any[]),
   })
   return s
 }

@@ -1,7 +1,7 @@
 // payments/service.ts — Facade pública del módulo Payments. Orquestador delgado que delega a usecases/
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
-import { paymentsLinkedTo, type PaymentReservationRef } from './usecases/reservation-money'
+import { paymentsLinkedTo, settledNetOfReservation, type PaymentReservationRef } from './usecases/reservation-money'
 import type {
   PaymentDTO, CreatePaymentDTO, ChargeCardDTO, PaymentLinkDTO, CreatePaymentLinkDTO,
   DepositDTO, CreateDepositDTO, RefundDepositDTO, PaymentsQuery, PaymentsPaginated,
@@ -121,7 +121,8 @@ export class PaymentsService {
 
   // Puerto de lectura para `connectors/reservas-money` — la lógica vive en el usecase.
   paymentsLinkedTo(hotelId: string, ref: PaymentReservationRef): Promise<PaymentDTO[]> { return paymentsLinkedTo(this.paymentRepo, hotelId, ref) }
-
+  // RTC-7.4 — dinero neto asentado a nombre de una reserva (`connectors/payment-requests-money`).
+  settledNetOfReservation(hotelId: string, reservationId: string): Promise<number> { return settledNetOfReservation(this.paymentRepo, hotelId, reservationId) }
   async listPayments(query: PaymentsQuery): Promise<PaymentsPaginated> {
     return this.crud.list(query)
   }

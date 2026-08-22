@@ -32,8 +32,17 @@ import { registerSharedModels } from '../../../shared/models'
 import { ReservasModel } from '../../reservas/model'
 import { FoliosModel, FolioChargesModel } from '../../folios/model'
 import { FacturasModel } from '../../facturas/model'
-import { PaymentModel } from '../../payments/model'
-import { PaymentEventsModel } from '../../payment-gateways/model'
+import { registerPaymentsModels } from '../../payments/model'
+import { PaymentsService } from '../../payments/service'
+import { paymentsLinkedTo, settledNetOfReservation } from '../../payments/usecases/reservation-money'
+import { foliosOfReservation, reservationIdOfFolio } from '../../folios/usecases/reservation-money'
+import { invoicesOfReservation, reservationIdOfInvoice } from '../../facturas/usecases/reservation-money'
+import {
+  buildReservationMoneyPort, paidReposFrom, type ReservationMoneyPort,
+} from '../../reservas/usecases/money-port'
+import { syncPendingAfterPayment, pendingAfterPaymentDeps } from '../../reservas/usecases/sync-pending-after-payment'
+import { PaymentGatewaysModel, PaymentEventsModel } from '../../payment-gateways/model'
+import { PaymentGatewayRegistry } from '../../../services/payment-gateway/registry'
 import { UsuariosModel } from '../../usuarios/model'
 import { AuditlogModel } from '../../auditlog/model'
 import { paidForReservation, paidSourceFrom, type ReservationPaidRepos } from '../../../shared/usecases/reservation-paid'
@@ -138,6 +147,10 @@ export interface World {
   db: DbAdapter & { connect(): Promise<void> }
   orm: ORM
   service: PaymentRequestsService
+  /** El módulo `payments` REAL: es el único escritor del libro del dinero (RTC-7.3). */
+  payments: PaymentsService
+  /** Camino reserva ↔ dinero por los módulos dueños, igual que `connectors/reservas-money`. */
+  moneyPort: ReservationMoneyPort
   reservationRepo: RepositoryAdapter<any>
   addonRepo: RepositoryAdapter<any>
   requestRepo: RepositoryAdapter<PaymentRequestDTO>
@@ -161,8 +174,10 @@ const MODELS: Array<[string, any]> = [
   ['Folios', FoliosModel],
   ['FolioCharges', FolioChargesModel],
   ['Invoices', FacturasModel],
-  ['Payment', PaymentModel],
   ['PaymentEvents', PaymentEventsModel],
+  // RTC-7: el módulo `payments` entra ENTERO (su service real emite `onPaymentCreated`, que es el
+  // choke point por el que se enteran `reservas` y el techo de un cobro asentado — puerta RTC-7.3).
+  ['PaymentGateways', PaymentGatewaysModel],
   ['Users', UsuariosModel],
   // El hook del alta (`shared/usecases/auto-payment-request.ts`, puerta RTC-0.4) escribe su rastro
   // en `Auditlog` FUERA del try/catch: sin el modelo, la operación reventaría por el andamiaje y
@@ -172,6 +187,7 @@ const MODELS: Array<[string, any]> = [
 
 const TABLES = [
   'reservations', 'reservation_addons', 'payment_requests', 'payments',
+  'payment_links', 'deposits', 'payment_gateways',
   'folios', 'folio_charges', 'invoices', 'payment_events', 'users',
   'configuration', 'audit_log',
 ]
@@ -185,6 +201,8 @@ export async function makeWorld(): Promise<World> {
   // frente al anti-patrón ORM del CLAUDE.md — un campo renombrado en el modelo real seguiría
   // persistiendo contra la copia del test.
   registerSharedModels(orm)
+  // `payments` registra sus TRES tablas desde su propio módulo (misma razón que `registerSharedModels`).
+  registerPaymentsModels(orm)
   for (const [name, def] of MODELS) orm.define(name, def)
   await orm.migrate()
 
@@ -202,12 +220,33 @@ export async function makeWorld(): Promise<World> {
   const userRepo = new OrmRepository<any>(orm, 'Users')
   const eventRepo = new OrmRepository<any>(orm, 'PaymentEvents')
 
-  const paidRepos: ReservationPaidRepos = { folioRepo, invoiceRepo, paymentRepo }
+  // El camino reserva → dinero se arma como en producción (`connectors/reservas-money` y
+  // `connectors/payment-requests-money`): lo leen los módulos DUEÑOS y sale por el puerto. Antes
+  // acá había un `{ folioRepo, invoiceRepo, paymentRepo }` a mano, que es justo el atajo
+  // (`paidRepos` como repo genérico) que este change saca del código de producción — con él, el
+  // test no podía ver si el puerto real cubre lo que el clamp necesita.
+  const moneyPort = buildReservationMoneyPort({
+    folios: {
+      foliosOfReservation: (h, r) => foliosOfReservation(folioRepo, h, r) as any,
+      reservationIdOfFolio: (h, f) => reservationIdOfFolio(folioRepo, h, f),
+    },
+    facturas: {
+      invoicesOfReservation: (h, r) => invoicesOfReservation(invoiceRepo, h, r) as any,
+      reservationIdOfInvoice: (h, i) => reservationIdOfInvoice(invoiceRepo, h, i),
+    },
+    payments: { paymentsLinkedTo: (h, ref) => paymentsLinkedTo(paymentRepo, h, ref) as any },
+  })
+  const paidRepos: ReservationPaidRepos = paidReposFrom(moneyPort)
 
   const service = new PaymentRequestsService(
     requestRepo, reservationRepo, folioRepo, folioChargeRepo, userRepo, logger, auth, addonRepo,
   )
-  service.setMoneyDeps({ paidRepos })
+  service.setMoneyDeps({
+    paidRepos,
+    // RTC-7.4: "dinero YA asentado de esta reserva" es una pregunta del puerto, no una lectura
+    // cruda de `payments` con `as any` (ver `usecases/clamp-to-ceiling.ts`).
+    settledNet: (hotelId, reservationId) => settledNetOfReservation(paymentRepo, hotelId, reservationId),
+  })
   service.setEventStore(new PaymentEventStore(eventRepo, logger))
   // El asiento del cobro lo arma `stripeChargeDto` — el MISMO que usa
   // `connectors/payment-requests-payments.ts`. Antes acá había una copia a mano de ese mapeo y se
@@ -229,6 +268,40 @@ export async function makeWorld(): Promise<World> {
 
   const ledger = new StripeLedger()
   const paidOf = paidSourceFrom(paidRepos)
+
+  // ── El módulo `payments` de verdad + su connector con `reservas` ──────────────────────────────
+  //
+  // RTC-7.3: TODA plata que entra al sistema nace de `payments.createPayment` (folios-payments,
+  // facturas-payments, payment-requests-payments, restaurante-payments, charge-reschedule-diff) y
+  // ése es el evento que `connectors/payments-reservas` escucha para resincronizar el saldo. El
+  // mundo lo monta ENTERO —service real + sockets reales— porque el saldo cobrable baja por acá
+  // sin que nadie toque la reserva: cobrar en caja, por folio o por factura era la puerta que
+  // ninguna operación del alfabeto podía ejercitar.
+  const payments = new PaymentsService(
+    paymentRepo, new OrmRepository<any>(orm, 'PaymentLink'), new OrmRepository<any>(orm, 'Deposit'),
+    logger, cache, auth, userRepo,
+    new PaymentGatewayRegistry(new OrmRepository<any>(orm, 'PaymentGateways') as any, logger),
+    new PaymentEventStore(eventRepo, logger),
+    // Sin `guestRepo`: el modelo `Guests` es de otro módulo y ninguna operación del alfabeto manda
+    // `guestId` (si alguna lo mandara, `payment-crud` es fail-closed y la rechaza — no la deja pasar).
+    folioRepo, invoiceRepo, undefined, reservationRepo,
+  )
+  // Espeja `connectors/payments-reservas.ts` + `reservas.service.syncPendingAfterPayment`: el
+  // movimiento de dinero resincroniza el saldo persistido Y recorta los links vivos al techo nuevo.
+  const pendingDeps = pendingAfterPaymentDeps(
+    reservationRepo,
+    {
+      getReservationAddons: (rid: string, hid: string) => addonRepo.findMany({ reservationId: rid, hotelId: hid }) as any,
+      reservationIdOfMoneyRow: (hid: string, ref: any) => moneyPort.reservationIdOf(hid, ref),
+    },
+    paidOf,
+    async () => {},
+    logger,
+    (hotelId: string, reservationId: string) =>
+      service.clampRequestsToCeiling(hotelId, reservationId, { ...USER, role: 'super_admin' }).then(() => undefined),
+  )
+  const resync = (p: any) => syncPendingAfterPayment(pendingDeps, p).then(() => {}).catch(() => {})
+  payments.setSockets({ onPaymentCreated: resync, onRefundProcessed: resync })
 
   async function reset(): Promise<void> {
     for (const t of TABLES) await db.run(`DELETE FROM ${t}`)
@@ -260,7 +333,8 @@ export async function makeWorld(): Promise<World> {
   }
 
   return {
-    db, orm, service, reservationRepo, addonRepo, requestRepo, paymentRepo, folioRepo, userRepo,
+    db, orm, service, payments, moneyPort,
+    reservationRepo, addonRepo, requestRepo, paymentRepo, folioRepo, userRepo,
     paidRepos, paidOf, auth, cache, logger, ledger, reset, balance,
   }
 }

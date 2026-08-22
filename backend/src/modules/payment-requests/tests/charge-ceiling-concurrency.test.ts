@@ -62,7 +62,7 @@ function makeService(repo: RepositoryAdapter<PaymentRequestDTO>) {
     log, permissiveAuth, makeRepo<any>(),
   )
   // STR-A: puerto de dinero del connector payment-requests-money (sin folios/facturas/pagos: paid=deposit).
-  s.setMoneyDeps({ paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() } })
+  s.setMoneyDeps({ paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() }, settledNet: async () => 0 })
   return s
 }
 
@@ -109,7 +109,7 @@ describe('techo agregado bajo concurrencia (COR-3)', () => {
       log, permissiveAuth, makeRepo<any>(),
     )
     // STR-A: idem makeService — puerto de dinero cableado.
-    s.setMoneyDeps({ paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() } })
+    s.setMoneyDeps({ paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() }, settledNet: async () => 0 })
 
     const results = await Promise.allSettled([
       s.create({ reservationId: 'r1', amount: 300 } as any, currentUser),

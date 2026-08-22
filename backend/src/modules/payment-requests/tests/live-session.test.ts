@@ -89,7 +89,7 @@ function serviceWith(pr: PaymentRequestDTO, reservationHotelId = 'h1') {
     log, permissiveAuth, makeRepo<any>(),
   )
   // STR-A: puerto de dinero del connector payment-requests-money (sin folios/facturas/pagos: paid=deposit).
-  s.setMoneyDeps({ paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() } })
+  s.setMoneyDeps({ paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() }, settledNet: async () => 0 })
   return { s, patches, deleted }
 }
 

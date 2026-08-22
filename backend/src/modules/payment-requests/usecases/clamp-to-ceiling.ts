@@ -22,7 +22,7 @@
 import { ConflictError } from 'arckode-framework'
 import type { Logger, RepositoryAdapter } from 'arckode-framework' // RepositoryAdapter: ClampDeps lo hereda
 import { pendingBalance } from '../../../shared/utils/reservation-balance'
-import { paidForReservation, splitPayments, type PaymentRowLike } from '../../../shared/usecases/reservation-paid'
+import { paidForReservation } from '../../../shared/usecases/reservation-paid'
 import type { ChargeCeilingDeps } from './charge-ceiling'
 import { round2, BALANCE_EPSILON } from '../../../shared/utils/money'
 import { StripeService } from '../../../services/stripe-service'
@@ -32,11 +32,23 @@ import { statusChangeEntry, type AuditEntry } from './audit'
 import { chargeLockKey } from './charge-ceiling'
 import { withLock } from '../../../shared/utils/async-lock'
 
+/** Dinero NETO ya asentado a nombre de una reserva — lo contesta el módulo dueño de `payments`
+ *  (`connectors/payment-requests-money` → `payments.settledNetOfReservation`), RTC-7.4. */
+export type SettledNetSource = (hotelId: string, reservationId: string) => Promise<number>
+
 /** El techo + lo que hace falta para retirar un cobro. `paidRepos`: STR-A, ver `WebhookDeps`. */
 export interface ClampDeps extends ChargeCeilingDeps {
   sockets: PaymentRequestsSockets
   audit: (entry: AuditEntry) => Promise<void>
   logger: Logger
+  /**
+   * RTC-7.4: antes esto se resolvía acá con
+   * `deps.paidRepos.paymentRepo.findMany({ hotelId, reservationId } as any)`. `paidRepos` está
+   * documentado en `reservas/usecases/money-port.ts` como shim de compatibilidad SÓLO para
+   * `reservation-paid`; usarlo como repo genérico desde otro módulo reabre la lectura cruda
+   * cross-módulo que se cerró por puerto, y el `as any` era la prueba de que faltaba la pregunta.
+   */
+  settledNet: SettledNetSource
 }
 
 /** Cobros `pending` de la reserva, el más antiguo primero: si hay que recortar, recorta el último
@@ -182,9 +194,7 @@ export async function releaseRequestsOfReservation(
  * se devuelve desde Pagos, no se elimina.
  */
 async function assertNoSettledCharge(deps: ClampDeps, hotelId: string, reservationId: string): Promise<void> {
-  const rows = (await deps.paidRepos.paymentRepo.findMany({ hotelId, reservationId } as any)) as PaymentRowLike[]
-  const b = splitPayments(rows)
-  const net = round2(b.depositMirror + b.independent - b.refunds)
+  const net = round2(await deps.settledNet(hotelId, reservationId))
   if (net <= BALANCE_EPSILON) return
   throw new ConflictError(
     `La reserva tiene $${net.toFixed(2)} ya cobrados y asentados en Pagos: no se elimina. ` +

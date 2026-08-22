@@ -51,6 +51,23 @@ export interface SyncPendingAfterPaymentDeps {
   /** Socket + invalidación de la caché del listado: sin esto el saldo nuevo tarda hasta 300s. */
   notifyChanged: ReservationChangedNotifier
   logger: Logger
+  /**
+   * RTC-7.3 — recorta los links de pago vivos al saldo NUEVO. Lo implementa el módulo dueño del
+   * cobro (`payment-requests`, connector `reservas-payment-requests`); sin cobros `pending` es no-op.
+   *
+   * Por qué acá: hasta este change `clampRequestsToCeiling` NO tenía un solo caller fuera de
+   * `reservas` — se disparaba cuando alguien EDITABA la reserva, nunca cuando entraba plata. Cobrar
+   * el saldo en caja, por folio o por factura asienta en `payments`, deja el saldo cobrable en 0 y
+   * dejaba el link de Stripe pagable: es el flujo normal de cobro del hotel, no un caso de borde.
+   * Medido por `payment-requests/tests/ceiling-property.test.ts` (`requerir-pago → cobro-en-caja`,
+   * $400 cobrables sobre un saldo de $0).
+   *
+   * Es el mismo choke point que ya usa esta resincronización (`payments.createPayment` →
+   * `onPaymentCreated`), así que cubre a TODOS los escritores del libro del dinero de una sola vez:
+   * folios-payments, facturas-payments, restaurante-payments, payment-requests-payments,
+   * charge-reschedule-diff y el settlement del checkout.
+   */
+  ceilingGuard?: (hotelId: string, reservationId: string) => Promise<void>
 }
 
 /**
@@ -84,6 +101,10 @@ export async function syncPendingAfterPayment(
     const before = Number(reservation.pendingAmount ?? NaN)
     const pendingAmount = await syncReservationPending(deps.repo, deps.addonsOf, reservationId, deps.paidOf, reservation)
     if (pendingAmount !== before) await deps.notifyChanged({ ...reservation, pendingAmount })
+    // RTC-7.3: la plata que acaba de entrar baja el techo del cobro → los links vivos lo siguen.
+    // Va DESPUÉS de persistir el saldo (el clamp relee la reserva) y SIEMPRE, no sólo si el número
+    // cambió: `pendingAmount` es la columna espejo, el techo se recalcula contra `payments`.
+    if (deps.ceilingGuard) await deps.ceilingGuard(hotelId, reservationId)
     return pendingAmount
   } catch (e) {
     deps.logger.error('No se pudo resincronizar el saldo de la reserva tras un pago', {
@@ -107,6 +128,8 @@ export function pendingAfterPaymentDeps(
   paidOf: PaidSource,
   notifyChanged: ReservationChangedNotifier,
   logger: Logger,
+  /** RTC-7.3 — ver `SyncPendingAfterPaymentDeps.ceilingGuard`. */
+  ceilingGuard?: (hotelId: string, reservationId: string) => Promise<void>,
 ): SyncPendingAfterPaymentDeps {
   return {
     repo,
@@ -115,5 +138,6 @@ export function pendingAfterPaymentDeps(
     reservationOf: (hotelId, ref) => queries.reservationIdOfMoneyRow(hotelId, ref),
     notifyChanged,
     logger,
+    ceilingGuard,
   }
 }

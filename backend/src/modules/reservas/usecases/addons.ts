@@ -35,6 +35,12 @@ export async function createAddon(
   notifyChanged: ReservationChangedNotifier,
   /** Lo cobrado real (`payments`). OBLIGATORIO — ver `shared/usecases/reservation-paid` (GH-0.2). */
   paidOf: PaidSource,
+  /** RTC-7.2 — recorta los links de pago vivos al total cobrable NUEVO, igual que `deleteAddon`.
+   *  Un extra `kind:'discount'` entra al total con signo NEGATIVO (`shared/utils/reservation-balance`):
+   *  darlo de ALTA baja el techo exactamente igual que dar de BAJA un extra `service`, y sólo la baja
+   *  tenía el clamp. Medido por `payment-requests/tests/ceiling-property.test.ts`
+   *  (`requerir-pago → crear-descuento`). Lo cablea el service desde `orchestrationDeps`. */
+  ceilingGuard?: (reservationId: string, hotelId: string) => Promise<void>,
 ): Promise<AddonDTO> {
   const res = await assertReservationOwned(reservationRepo, userRepo, auth, reservationId, user) // IDOR CR-31
   const created = await repo.create({
@@ -51,6 +57,9 @@ export async function createAddon(
   const pendingAmount = await syncReservationPending(reservationRepo, (rid) => repo.findMany({ reservationId: rid, hotelId: res.hotelId }), reservationId, paidOf, res)
   // ...y la caché del listado queda vieja si no se invalida DESPUÉS de persistirlo.
   await notifyChanged({ ...res, pendingAmount })
+  // RTC-7.2: mismo orden que en la baja — persistir, resincronizar, y recién ahí recortar los links
+  // (el clamp relee la reserva y sus extras, así que necesita ver el alta ya escrita).
+  if (ceilingGuard && res.hotelId) await ceilingGuard(reservationId, String(res.hotelId))
   return created
 }
 

@@ -28,7 +28,7 @@ import { getStripeStatus } from './usecases/stripe-status'
 import { auditSafely, type AuditEntry, type AuditPort } from './usecases/audit'
 import { deletePaymentRequest } from './usecases/delete-request'
 import { updatePaymentRequest } from './usecases/update-request'
-import { clampRequestsToCeiling, releaseRequestsOfReservation, type ClampDeps } from './usecases/clamp-to-ceiling'
+import { clampRequestsToCeiling, releaseRequestsOfReservation, type ClampDeps, type SettledNetSource } from './usecases/clamp-to-ceiling'
 
 export class PaymentRequestsService {
   private sockets: PaymentRequestsSockets = {}
@@ -38,13 +38,16 @@ export class PaymentRequestsService {
   private hotelRepoForEmail: RepositoryAdapter<any> | null = null
   /** STR-A: lectura reserva→dinero por los dueños (payment-requests-money); sin puerto no hay número honesto (GH-0.2). */
   private paidRepos: ReservationPaidRepos | null = null
+  /** RTC-7.4: "dinero ya asentado de esta reserva", contestado por el dueño de `payments`. Fail-closed
+   *  por construcción — contestar 0 sin connector dejaría borrar una reserva con cobros rendidos (RTC-0.5). */
+  private settledNet: SettledNetSource = () => { throw new Error('payment-requests: falta el puerto de dinero (connectors/payment-requests-money no cableado)') }
   private events: PaymentEventStore | null = null
 
   /** Cablea el envío del link de pago por email (connector email-bootstrap). */
   setEmailDeps(es: EmailSender, hotelRepo: RepositoryAdapter<any>): void { this.emailSender = es; this.hotelRepoForEmail = hotelRepo }
 
   /** Lo inyecta el connector `payment-requests-money`. Sin él, el techo falla fuerte (STR-A/GH-0.2). */
-  setMoneyDeps(deps: { paidRepos: ReservationPaidRepos }): void { this.paidRepos = deps.paidRepos }
+  setMoneyDeps(deps: { paidRepos: ReservationPaidRepos; settledNet: SettledNetSource }): void { this.paidRepos = deps.paidRepos; this.settledNet = deps.settledNet }
   /** Barrera atómica del settle del webhook (BUG-1): la MISMA tabla que `payments` y `bookingengine`. */
   setEventStore(events: PaymentEventStore): void { this.events = events }
 
@@ -87,10 +90,8 @@ export class PaymentRequestsService {
   // `paidRepos` (connector payment-requests-money): el techo mide contra lo cobrado de verdad (GH-0.2).
   private get ceilingDeps() { return { reservationRepo: this.reservationRepo, addonRepo: this.addonRepo, requestRepo: this.repo, paidRepos: this.requirePaidRepos() } }
 
-  /** Deps del clamp (SEC3-2/SEC3-3): el techo + sockets/audit/log. */
-  private get clampDeps(): ClampDeps {
-    return { ...this.ceilingDeps, sockets: this.sockets, audit: (e) => this.audit(e), logger: this.logger }
-  }
+  /** Deps del clamp (SEC3-2/SEC3-3): el techo + sockets/audit/log + el dinero asentado (RTC-7.4). */
+  private get clampDeps(): ClampDeps { return { ...this.ceilingDeps, sockets: this.sockets, audit: (e) => this.audit(e), logger: this.logger, settledNet: this.settledNet } }
 
   private async assertOwned(id: string, user: CurrentUser): Promise<PaymentRequestDTO> {
     const item = await this.repo.findById(id)

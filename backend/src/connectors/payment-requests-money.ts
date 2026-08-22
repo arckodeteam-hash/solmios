@@ -14,7 +14,16 @@ import type { ConnectorContext } from 'arckode-framework'
 import { buildReservationMoneyPort, paidReposFrom, type MoneyOwners } from '../modules/reservas/usecases/money-port'
 
 interface PaymentRequestsModule {
-  setMoneyDeps(deps: { paidRepos: ReturnType<typeof paidReposFrom> }): void
+  setMoneyDeps(deps: {
+    paidRepos: ReturnType<typeof paidReposFrom>
+    /** RTC-7.4: "dinero neto asentado a nombre de esta reserva", contestado por `payments`. */
+    settledNet: (hotelId: string, reservationId: string) => Promise<number>
+  }): void
+}
+
+/** Lo que este connector necesita de `payments` además de lo que ya pide `MoneyOwners`. */
+interface PaymentsSettled {
+  settledNetOfReservation(hotelId: string, reservationId: string): Promise<number>
 }
 
 export function paymentRequestsMoneyConnector(ctx: ConnectorContext): void {
@@ -23,6 +32,11 @@ export function paymentRequestsMoneyConnector(ctx: ConnectorContext): void {
     facturas: ctx.resolveModule<MoneyOwners['facturas']>('facturas'),
     payments: ctx.resolveModule<MoneyOwners['payments']>('payments'),
   }
-  ctx.resolveModule<PaymentRequestsModule>('payment-requests')
-    .setMoneyDeps({ paidRepos: paidReposFrom(buildReservationMoneyPort(owners)) })
+  const payments = ctx.resolveModule<PaymentsSettled>('payments')
+  ctx.resolveModule<PaymentRequestsModule>('payment-requests').setMoneyDeps({
+    paidRepos: paidReposFrom(buildReservationMoneyPort(owners)),
+    // RTC-7.4: el borrado de una reserva pregunta por el dinero al dueño de la tabla, no lee
+    // `payments` con el shim `paidRepos` (ver `usecases/clamp-to-ceiling.ts`).
+    settledNet: (hotelId, reservationId) => payments.settledNetOfReservation(hotelId, reservationId),
+  })
 }

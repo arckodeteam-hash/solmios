@@ -143,8 +143,9 @@ export class ReservasService {
   addonsCeilingGuard() { const c = this.orchestrationDeps.paymentRequestsCeiling; return c ? (rid: string, hid: string) => c.clamp(hid, rid) : undefined }
 
   /** COR-1 — un movimiento de dinero mueve el saldo persistido. Lo llama `connectors/payments-reservas`. */
+  // RTC-7.3: el movimiento de dinero también BAJA el techo → se recortan los links vivos (mismo connector que `update()`).
   syncPendingAfterPayment(row: MoneyRowRef): Promise<number | null> {
-    return syncPendingAfterPayment(pendingAfterPaymentDeps(this.repo, this.queries, this.paidSource(), this.reservationChanged(), this.logger), row)
+    return syncPendingAfterPayment(pendingAfterPaymentDeps(this.repo, this.queries, this.paidSource(), this.reservationChanged(), this.logger, this.orchestrationDeps.paymentRequestsCeiling?.clamp), row)
   }
 
   // ── RESCHEDULE (mover/extender desde planning) ──────────────────────────

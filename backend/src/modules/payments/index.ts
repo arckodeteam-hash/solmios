@@ -21,14 +21,17 @@ export function PaymentsModule() {
     name: 'payments',
     // 1.1.0 — STR-D: `paymentsLinkedTo` entra al contract (lo consume connectors/reservas-money
     // y connectors/payment-requests-money para el camino reserva→dinero, GH-0.2).
-    version: '1.1.0',
+    // 1.2.0 — RTC-7.4: `settledNetOfReservation` (dinero neto asentado a nombre de una reserva).
+    //         Lo consume `payment-requests` para decidir si una reserva se puede borrar; antes lo
+    //         resolvía leyendo `payments` con el shim `paidRepos` y un `as any`.
+    version: '1.2.0',
     description: 'Payments: card charging, payment links, deposits, reconciliation',
 
     contract: {
       name: 'payments',
-      version: '1.1.0',
+      version: '1.2.0',
       description: 'Payments: card charging, payment links, deposits, reconciliation',
-      actions: ['createPayment', 'chargeCard', 'refund', 'listPayments', 'createLink', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo'],
+      actions: ['createPayment', 'chargeCard', 'refund', 'listPayments', 'createLink', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo', 'settledNetOfReservation'],
       events: ['onPaymentCreated', 'onPaymentCompleted', 'onPaymentExpired', 'onPaymentFailed', 'onRefundProcessed', 'onDepositCreated', 'onDepositReleased'],
       tables: ['payments', 'payment_links', 'deposits'],
       dependencies: ['folios', 'facturas'],

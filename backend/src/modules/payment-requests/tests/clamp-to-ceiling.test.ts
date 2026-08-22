@@ -24,6 +24,9 @@ const link = (over: Partial<PaymentRequestDTO> = {}): PaymentRequestDTO => ({
 function makeDeps(opts: {
   rows?: PaymentRequestDTO[]; reservation?: any | null
   expireOutcome?: 'expired' | 'paid' | 'gone'
+  /** RTC-7.4: plata NETA ya asentada a nombre de la reserva, que hoy contesta el módulo `payments`
+   *  (`settledNetOfReservation`) en vez de una lectura cruda de `payments` desde este módulo. */
+  settledNet?: number
 } = {}) {
   const updates: any[] = []
   const audited: any[] = []
@@ -48,6 +51,8 @@ function makeDeps(opts: {
     sockets: { onPaymentRequestUpdated: async (p: any) => { updates.push({ socket: p.id }) } },
     audit: async (e: any) => { audited.push(e) },
     logger: log,
+    // Puerto de `payments` (connectors/payment-requests-money). Por defecto: sin plata asentada.
+    settledNet: async () => opts.settledNet ?? 0,
   }
   return { deps, updates, audited }
 }
@@ -139,6 +144,28 @@ describe('releaseRequestsOfReservation (SEC3-3)', () => {
         reservation: { id: 'r1', hotelId: 'h-otro', totalAmount: 500, deposit: 0 },
         rows: [link({ stripeSessionId: 's1' })],
       })
+      expect(await clampRequestsToCeiling(deps, 'h1', 'r1', user)).toBe(1)
+    } finally { stub.restore() }
+  })
+})
+
+describe('RTC-0.5 · una reserva con plata asentada no se libera para borrarla', () => {
+  it('409 cuando `payments` reporta cobros netos de la reserva, sin tocar Stripe ni las filas', async () => {
+    const stub = stubStripe('expired')
+    try {
+      const { deps, updates } = makeDeps({ settledNet: 250, rows: [link({ stripeSessionId: 's1' })] })
+      await expect(releaseRequestsOfReservation(deps, 'h1', 'r1', user)).rejects.toThrow(/250\.00 ya cobrados/)
+      // El guard corre ANTES de matar sesiones: nada se expira ni se marca.
+      expect(stub.asked).toHaveLength(0)
+      expect(updates).toHaveLength(0)
+    } finally { stub.restore() }
+  })
+
+  it('el clamp normal NO pregunta por lo asentado: recorta igual con plata cobrada (sólo el borrado lo mira)', async () => {
+    const stub = stubStripe('expired')
+    try {
+      const { deps } = makeDeps({ settledNet: 250, rows: [link({ stripeSessionId: 's1' })] })
+      deps.reservationRepo = { findById: async () => ({ id: 'r1', hotelId: 'h1', totalAmount: 400, deposit: 200, otherCharges: 0 }) } as any
       expect(await clampRequestsToCeiling(deps, 'h1', 'r1', user)).toBe(1)
     } finally { stub.restore() }
   })

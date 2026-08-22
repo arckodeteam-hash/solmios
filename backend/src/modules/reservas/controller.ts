@@ -143,7 +143,9 @@ export class ReservasController {
     const dto = validateSchema(AddonSchema, req.body) as any
     // El notificador (socket + invalidación del listado) lo arma el service, que es quien tiene
     // caché y sockets. Sin él, el saldo nuevo no llega a `GET /api/reservas` por 300s (COR-1).
-    const a = await createAddon(this.addonsRepo, this.reservationRepo, this.userRepo, this.auth, req.params.id, dto, req.user as any, this.service.reservationChanged(), this.service.paidSource())
+    // RTC-7.2: el clamp del techo va TAMBIÉN acá — un extra `kind:'discount'` baja el total cobrable
+    // igual que borrar uno `service`, y sólo el `deleteAddon` de abajo lo tenía.
+    const a = await createAddon(this.addonsRepo, this.reservationRepo, this.userRepo, this.auth, req.params.id, dto, req.user as any, this.service.reservationChanged(), this.service.paidSource(), this.service.addonsCeilingGuard())
     return { status: 201, body: a }
   }
   async deleteAddon(req: HttpRequest) {
