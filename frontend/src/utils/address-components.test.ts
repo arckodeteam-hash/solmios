@@ -1,9 +1,11 @@
-// address-components.test.ts — GH-33. El mapeo viejo leía Municipio SOLO de
+// address-components.test.ts — GH-33 + MAPGEO. El mapeo viejo leía Municipio SOLO de
 // `administrative_area_level_2`; Google no devuelve ese componente en buena parte de RD, así que
 // el campo quedaba vacío aun con un geocoding perfecto. Acá se fija la cadena de fallbacks.
-import { describe, it, expect } from 'vitest'
+// MAPGEO: Nominatim (OpenStreetMap) se usa como fallback cuando no hay key de Google.
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   mapAddressComponents, unresolvedFields, geocodeErrorMessage,
+  reverseGeocodeNominatim,
   ADDRESS_FIELD_LABELS, type AddressComponent,
 } from './address-components'
 
@@ -119,5 +121,105 @@ describe('ADDRESS_FIELD_LABELS', () => {
       province: 'Provincia', municipality: 'Municipio',
       locality: 'Localidad', postalCode: 'Código Postal',
     })
+  })
+})
+
+// ── MAPGEO — Nominatim (OpenStreetMap) fallback ───────────────────────────────────────────────
+
+describe('reverseGeocodeNominatim', () => {
+  const fetchSpy = vi.fn()
+
+  beforeEach(() => {
+    fetchSpy.mockReset()
+    vi.stubGlobal('fetch', fetchSpy)
+  })
+
+  const nominatimResponse = (address: Record<string, string>) => ({
+    ok: true,
+    json: async () => ({ address }),
+  })
+
+  it('mapea state→province, city→municipality, suburb→locality, postcode→postalCode', async () => {
+    fetchSpy.mockResolvedValueOnce(nominatimResponse({
+      state: 'La Altagracia',
+      city: 'Higüey',
+      suburb: 'Villa Piantini',
+      postcode: '23000',
+    }))
+    const result = await reverseGeocodeNominatim(18.6, -68.7)
+
+    expect(result).toEqual({
+      province: 'La Altagracia',
+      municipality: 'Higüey',
+      locality: 'Villa Piantini',
+      postalCode: '23000',
+    })
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('nominatim.openstreetmap.org/reverse'),
+      expect.objectContaining({ headers: expect.objectContaining({ 'User-Agent': expect.any(String) }) }),
+    )
+  })
+
+  it('usa town como fallback para municipio cuando no hay city', async () => {
+    fetchSpy.mockResolvedValueOnce(nominatimResponse({
+      state: 'Duarte',
+      town: 'San Francisco de Macorís',
+      postcode: '31000',
+    }))
+    const result = await reverseGeocodeNominatim(19.3, -70.25)
+
+    expect(result.municipality).toBe('San Francisco de Macorís')
+    expect(result.locality).toBe('San Francisco de Macorís')
+  })
+
+  it('usa village como último recurso para municipio', async () => {
+    fetchSpy.mockResolvedValueOnce(nominatimResponse({
+      state: 'Pedernales',
+      village: 'Las Galeras',
+    }))
+    const result = await reverseGeocodeNominatim(19.0, -69.5)
+
+    expect(result.municipality).toBe('Las Galeras')
+    expect(result.locality).toBe('Las Galeras')
+  })
+
+  it('resuelve locality desde neighbourhood si no hay suburb ni city', async () => {
+    fetchSpy.mockResolvedValueOnce(nominatimResponse({
+      state: 'Santiago',
+      neighbourhood: 'Ciudad Nueva',
+    }))
+    const result = await reverseGeocodeNominatim(19.45, -70.7)
+
+    expect(result.province).toBe('Santiago')
+    expect(result.locality).toBe('Ciudad Nueva')
+    expect(result.municipality).toBe('')  // sin city/town/village/county/state_district
+  })
+
+  it('devuelve todo vacío cuando Nominatim no trae address', async () => {
+    fetchSpy.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+    const result = await reverseGeocodeNominatim(19.0, -70.0)
+
+    expect(result).toEqual({ province: '', municipality: '', locality: '', postalCode: '' })
+  })
+
+  it('lanza error cuando fetch falla', async () => {
+    fetchSpy.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await expect(reverseGeocodeNominatim(19.0, -70.0)).rejects.toThrow()
+  })
+
+  it('lanza error cuando Nominatim responde con HTTP error', async () => {
+    fetchSpy.mockResolvedValueOnce({ ok: false, status: 429 })
+    await expect(reverseGeocodeNominatim(19.0, -70.0)).rejects.toThrow('429')
+  })
+
+  it('usa county como fallback para municipio', async () => {
+    fetchSpy.mockResolvedValueOnce(nominatimResponse({
+      state: 'Santiago',
+      county: 'Santiago',
+      postcode: '51000',
+    }))
+    const result = await reverseGeocodeNominatim(19.45, -70.7)
+
+    expect(result.municipality).toBe('Santiago')
   })
 })

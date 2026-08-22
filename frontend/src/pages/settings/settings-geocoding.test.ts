@@ -50,6 +50,19 @@ vi.mock('@/composables/useGoogleMaps', () => ({
   resetGoogleMapsLoader: () => {},
 }))
 
+// ── Mock de Nominatim fallback ────────────────────────────────────────────────────────────────
+// El mock reemplaza `reverseGeocodeNominatim` (que internamente mapea a MappedAddress),
+// así que nominatimImpl tiene que devolver el formato YA MAPEADO: { province, municipality, locality, postalCode }.
+type MappedAddr = { province: string; municipality: string; locality: string; postalCode: string }
+let nominatimImpl: (lat: number, lng: number) => Promise<MappedAddr>
+vi.mock('@/utils/address-components', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/address-components')>()
+  return {
+    ...actual,
+    reverseGeocodeNominatim: (lat: number, lng: number) => nominatimImpl(lat, lng),
+  }
+})
+
 const toastCalls: Array<{ kind: string; msg: string }> = []
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({
@@ -115,6 +128,12 @@ beforeEach(() => {
   geocoderCtorThrows = false
   loadGoogleMapsImpl = async () => makeMapsStub()
   geocodeImpl = async () => ({ results: [{ address_components: DR_COMPONENTS }] })
+  nominatimImpl = async () => ({
+    province: 'Distrito Nacional',
+    municipality: 'Santo Domingo',
+    locality: 'Zona Colonial',
+    postalCode: '10201',
+  })
 })
 
 /** Monta la pantalla, entra a la pestaña Ubicación y espera a que el mapa se inicialice. */
@@ -156,18 +175,37 @@ describe('GH-33 — autocompletado de dirección al mover el pin', () => {
     expect(valueOf(wrapper, 'municipality')).toBe('Santo Domingo')
   })
 
-  it('avisa al usuario cuando la Geocoding API rechaza la request', async () => {
+  // Fix GH-33 (2a ronda): el escenario reportado en producción es un mapa interactivo que
+  // funciona (Maps JavaScript API habilitada) con una key que NO tiene la Geocoding API —
+  // un producto SEPARADO de Google Cloud. El drag llega, Google rechaza, y los cuatro campos
+  // quedaban vacíos. Ahora cualquier falla de Google cae a Nominatim antes de rendirse.
+  it('REQUEST_DENIED de Google cae a Nominatim y completa los campos igual', async () => {
     geocodeImpl = async () => { throw new Error('REQUEST_DENIED') }
     const wrapper = await mountOnLocationTab()
     await dragPinTo(18.4861, -69.9312)
 
     expect(valueOf(wrapper, 'latitude')).toBe('18.4861')
+    expect(valueOf(wrapper, 'province')).toBe('Distrito Nacional')
+    expect(valueOf(wrapper, 'municipality')).toBe('Santo Domingo')
+    expect(valueOf(wrapper, 'locality')).toBe('Zona Colonial')
+    expect(valueOf(wrapper, 'postalCode')).toBe('10201')
+  })
+
+  it('Google y Nominatim caídos: aviso visible, sin throw, campos editables', async () => {
+    geocodeImpl = async () => { throw new Error('REQUEST_DENIED') }
+    nominatimImpl = async () => { throw new TypeError('Failed to fetch') }
+    const wrapper = await mountOnLocationTab()
+    await dragPinTo(18.4861, -69.9312)
+
+    expect(valueOf(wrapper, 'latitude')).toBe('18.4861')
+    expect(valueOf(wrapper, 'province')).toBe('')
     const avisos = toastCalls.filter((t) => t.kind === 'error' || t.kind === 'warning')
     expect(avisos.length, 'el usuario tiene que enterarse de que el autocompletado falló').toBeGreaterThan(0)
   })
 
-  it('avisa cuando el SDK no expone Geocoder (librería de geocoding no cargada)', async () => {
+  it('avisa cuando el SDK no expone Geocoder y el fallback también falla', async () => {
     geocoderCtorThrows = true
+    nominatimImpl = async () => { throw new TypeError('Failed to fetch') }
     const wrapper = await mountOnLocationTab()
     await dragPinTo(18.4861, -69.9312)
 
@@ -210,6 +248,9 @@ describe('GH-33 — caminos de fallo del autocompletado', () => {
 
   it('avisa cuando Google responde sin ningún componente aprovechable', async () => {
     geocodeImpl = async () => ({ results: [{ address_components: [comp('República Dominicana', 'country')] }] })
+    // Con el fallback, un Google vacío prueba Nominatim: para ver el aviso de "sin datos"
+    // los DOS proveedores tienen que venir vacíos.
+    nominatimImpl = async () => ({ province: '', municipality: '', locality: '', postalCode: '' })
     const wrapper = await mountOnLocationTab()
     await dragPinTo(19.0, -70.0)
 
@@ -236,6 +277,7 @@ describe('GH-33 — caminos de fallo del autocompletado', () => {
 
   it('sin red: el error de la promesa no queda mudo', async () => {
     geocodeImpl = async () => { throw new TypeError('Failed to fetch') }
+    nominatimImpl = async () => { throw new TypeError('Failed to fetch') }   // sin red no hay fallback
     const wrapper = await mountOnLocationTab()
     await dragPinTo(18.4861, -69.9312)
 
@@ -265,5 +307,98 @@ describe('GH-33 — caminos de fallo del autocompletado', () => {
     await flushPromises()
 
     expect(valueOf(wrapper, 'province')).toBe('Provincia Nueva')
+  })
+})
+
+// ── MAPGEO — Nominatim fallback ──────────────────────────────────────────────────────────────
+
+describe('MAPGEO — Nominatim fallback cuando no hay Google Maps key', () => {
+  beforeEach(() => {
+    loadGoogleMapsImpl = async () => null    // sin API key de Google
+  })
+
+  /**
+   * Cuando no hay Google Maps SDK, el mapa interactivo no se crea (no hay pin que arrastrar).
+   * El geocoding se dispara pegando coordenadas en el input "Pegar enlace de Google Maps",
+   * que llama a applyMapsPaste → reverseGeocode → Nominatim.
+   */
+  async function pasteCoordinates(wrapper: VueWrapper, lat: number, lng: number) {
+    // Buscar el input de pegado por su placeholder dentro del wrapper montado
+    const pasteInput = wrapper.find('input[placeholder*="maps.google.com"]')
+    expect(pasteInput.exists(), 'el input de pegado tiene que existir en la pestaña Ubicación').toBeTruthy()
+    await pasteInput.setValue(`${lat}, ${lng}`)
+    await flushPromises()
+  }
+
+  it('completa dirección via Nominatim cuando no hay SDK de Google', async () => {
+    nominatimImpl = async () => ({
+      province: 'La Altagracia',
+      municipality: 'Higüey',
+      locality: 'Villa Piantini',
+      postalCode: '23000',
+    })
+    const wrapper = await mountOnLocationTab()
+    await pasteCoordinates(wrapper, 18.6, -68.7)
+
+    expect(valueOf(wrapper, 'latitude')).toBe('18.6')
+    expect(valueOf(wrapper, 'longitude')).toBe('-68.7')
+    expect(valueOf(wrapper, 'province')).toBe('La Altagracia')
+    expect(valueOf(wrapper, 'municipality')).toBe('Higüey')
+    expect(valueOf(wrapper, 'locality')).toBe('Villa Piantini')
+    expect(valueOf(wrapper, 'postalCode')).toBe('23000')
+    expect(toastCalls.some((t) => t.kind === 'success')).toBe(true)
+  })
+
+  it('usa town/village como fallback para municipio y localidad', async () => {
+    nominatimImpl = async () => ({
+      province: 'Duarte',
+      municipality: 'San Francisco de Macoris',
+      locality: 'San Francisco de Macoris',
+      postalCode: '31000',
+    })
+    const wrapper = await mountOnLocationTab()
+    await pasteCoordinates(wrapper, 19.3, -70.25)
+
+    expect(valueOf(wrapper, 'province')).toBe('Duarte')
+    expect(valueOf(wrapper, 'municipality')).toBe('San Francisco de Macoris')
+    expect(valueOf(wrapper, 'locality')).toBe('San Francisco de Macoris')
+    expect(valueOf(wrapper, 'postalCode')).toBe('31000')
+  })
+
+  it('avisa cuando Nominatim no devuelve direccion', async () => {
+    nominatimImpl = async () => ({ province: '', municipality: '', locality: '', postalCode: '' })
+    const wrapper = await mountOnLocationTab()
+    await pasteCoordinates(wrapper, 19.0, -70.0)
+
+    expect(valueOf(wrapper, 'province')).toBe('')
+    const avisos = toastCalls.filter((t) => t.kind === 'warning')
+    expect(avisos.length, 'tiene que avisar que no hay datos').toBeGreaterThan(0)
+  })
+
+  it('avisa cuando Nominatim falla (sin red)', async () => {
+    nominatimImpl = async () => { throw new TypeError('Failed to fetch') }
+    const wrapper = await mountOnLocationTab()
+    await pasteCoordinates(wrapper, 18.4861, -69.9312)
+
+    expect(valueOf(wrapper, 'latitude')).toBe('18.4861')
+    const avisos = toastCalls.filter((t) => t.kind === 'warning' || t.kind === 'error')
+    expect(avisos.length, 'el usuario tiene que enterarse del fallo').toBeGreaterThan(0)
+  })
+
+  it('no pisa lo que el usuario escribio a mano (mismo comportamiento que Google)', async () => {
+    nominatimImpl = async () => ({
+      province: 'La Altagracia',
+      municipality: 'Higüey',
+      locality: 'Centro',
+      postalCode: '23000',
+    })
+    const wrapper = await mountOnLocationTab()
+    const municipio = wrapper.find('[data-field="municipality"]')
+    await municipio.setValue('Boca Chica')
+
+    await pasteCoordinates(wrapper, 18.6, -68.7)
+
+    expect(valueOf(wrapper, 'municipality')).toBe('Boca Chica')
+    expect(valueOf(wrapper, 'province')).toBe('La Altagracia')
   })
 })

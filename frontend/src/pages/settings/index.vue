@@ -795,6 +795,7 @@ import { parseLatLng } from '@/composables/useLatLngParse'
 import { loadGoogleMaps } from '@/composables/useGoogleMaps'
 import {
   mapAddressComponents, unresolvedFields, geocodeErrorMessage,
+  reverseGeocodeNominatim,
   ADDRESS_FIELD_LABELS, type AddressField,
 } from '@/utils/address-components'
 import { validateField, validateAll, warnOnUnsavedChanges, HOTEL_RULES } from '@/composables/useFieldValidation'
@@ -1593,79 +1594,107 @@ const geocodedValues = ref<Partial<Record<AddressField, string>>>({})
 let geocodeSeq = 0
 
 /**
- * Reverse geocoding: dado un punto, le pregunta a Google qué dirección hay ahí y completa
+ * Reverse geocoding: dado un punto, pregunta qué dirección hay ahí y completa
  * Provincia/Municipio/Localidad/Código Postal.
  *
- * GH-33 — dos fallas que dejaban los campos vacíos SIN que el usuario se enterara:
+ * GH-33 — cadena de proveedores Google → Nominatim (OpenStreetMap):
  *
- *  1. Todo el bloque terminaba en un `catch {}` mudo. La "Geocoding API" es un producto SEPARADO
- *     de la "Maps JavaScript API" en Google Cloud: la key que dibuja el mapa no habilita el
- *     geocoding, y la request vuelve `REQUEST_DENIED`. Se veía el pin moverse, lat/long
- *     actualizarse y los cuatro campos quedar en blanco, sin ningún mensaje. Ahora cada modo de
- *     falla tiene un aviso accionable (`geocodeErrorMessage`).
- *  2. `new maps.Geocoder()` estaba FUERA del try: si el SDK no expone Geocoder, reventaba como
- *     unhandled rejection. Por eso además el loader ahora pide la librería `geocoding`.
+ *  1. La "Geocoding API" es un producto SEPARADO de la "Maps JavaScript API" en Google Cloud:
+ *     la key que dibuja el mapa NO habilita el geocoding, y la request vuelve `REQUEST_DENIED`.
+ *     Ese es el escenario reportado: el mapa interactivo funciona, el pin se mueve, lat/lng se
+ *     actualizan… y los cuatro campos quedaban vacíos (en `main` además con un catch mudo, sin
+ *     ningún mensaje). Por eso NINGUNA falla de Google termina el flujo: cae a Nominatim
+ *     (gratis, sin key) antes de rendirse.
+ *  2. Sin key de Google directamente no hay SDK ni Geocoder: mismo fallback de Nominatim para
+ *     las otras vías de coordenadas (pegar enlace de Maps, "usar mi ubicación").
+ *  3. Si los DOS proveedores fallan, recién ahí el aviso visible (`geocodeErrorMessage`) —
+ *     nunca silencio, nunca bloquea: los campos siguen editables a mano.
  *
  * El mapeo de componentes vive en `utils/address-components.ts` (con sus cadenas de fallback,
  * porque el esquema de Google no calza 1:1 con ninguna división administrativa nacional).
  * Es MEJOR ESFUERZO y los campos siguen siendo editables.
  */
 async function reverseGeocode(lat: number, lng: number) {
-  const maps = await loadGoogleMaps()
-  // Sin key no hay SDK ni Geocoder. No es una falla oculta: la propia pantalla dice
-  // "Sin mapa interactivo (falta la key de Google) se completan a mano".
-  if (!maps) return
-
   const seq = ++geocodeSeq
-  try {
-    geocoder ??= new maps.Geocoder()
-    const { results } = await geocoder.geocode({ location: { lat, lng } })
-    if (seq !== geocodeSeq) return       // llegó tarde: el pin ya está en otro lado
-    const result = results?.[0]
-    if (!result) throw new Error('ZERO_RESULTS')
+  const maps = await loadGoogleMaps()
 
-    const mapped = mapAddressComponents(result.address_components)
-    const pending = unresolvedFields(mapped)
+  // 1) Google Geocoding (si hay SDK cargado).
+  if (maps) {
+    try {
+      geocoder ??= new maps.Geocoder()
+      const { results } = await geocoder.geocode({ location: { lat, lng } })
+      if (seq !== geocodeSeq) return       // llegó tarde: el pin ya está en otro lado
+      const result = results?.[0]
+      if (!result) throw new Error('ZERO_RESULTS')
 
-    const kept: string[] = []
-    for (const field of Object.keys(ADDRESS_FIELD_LABELS) as AddressField[]) {
-      const value = mapped[field]
-      if (!value) continue
-      const current = String(form.value[field] ?? '').trim()
-      // Solo se pisa lo vacío o lo que puso el propio autocompletado.
-      if (current && current !== (geocodedValues.value[field] ?? '')) {
-        kept.push(ADDRESS_FIELD_LABELS[field])
-        continue
+      const mapped = mapAddressComponents(result.address_components)
+      if (unresolvedFields(mapped).length === Object.keys(ADDRESS_FIELD_LABELS).length) {
+        // Google respondió, pero sin NINGÚN componente aprovechable para estos cuatro campos.
+        // Antes de rendirse, probar el fallback: a veces OSM tiene lo que Google no trae.
+        throw new Error('ZERO_RESULTS')
       }
-      form.value[field] = value
-      geocodedValues.value[field] = value
-    }
-
-    if (pending.length === Object.keys(ADDRESS_FIELD_LABELS).length) {
-      // Google respondió, pero sin ningún componente que sirva para estos cuatro campos.
-      toast.warning(
-        'Google no devolvió datos de dirección para ese punto',
-        'Completá Provincia, Municipio, Localidad y Código Postal a mano.',
-      )
+      applyGeocodedValues(mapped, 'Google')
       return
+    } catch {
+      if (seq !== geocodeSeq) return       // respuesta vieja: ni fallback ni aviso
+      // Google caído (REQUEST_DENIED, librería sin cargar, red): sigue al fallback.
     }
+  }
 
-    const notas = [
-      pending.length ? `Google no devolvió: ${pending.map((f) => ADDRESS_FIELD_LABELS[f]).join(', ')}.` : '',
-      kept.length ? `Se respetó lo que escribiste en: ${kept.join(', ')}.` : '',
-    ].filter(Boolean).join(' ')
-
-    if (pending.length) {
-      toast.warning('Dirección completada parcialmente', `${notas} Revisá y completá a mano.`)
-    } else {
-      toast.success('Dirección completada automáticamente', notas || 'Revisá los campos antes de guardar.')
-    }
+  // 2) Nominatim (OpenStreetMap): gratis, sin API key. Se llama UNA vez por dragend/click/
+  //    pegado (no por frame), así el rate limit del proveedor (1 req/s) no se satura arrastrando.
+  try {
+    const mapped = await reverseGeocodeNominatim(lat, lng)
+    if (seq !== geocodeSeq) return
+    applyGeocodedValues(mapped, 'OpenStreetMap')
   } catch (err) {
     if (seq !== geocodeSeq) return
     // Nada de silencio: el usuario tiene que saber por qué los campos siguen vacíos y qué hacer.
     const { variant, title, detail } = geocodeErrorMessage(err)
     if (variant === 'warning') toast.warning(title, detail)
     else toast.error(title, detail)
+  }
+}
+
+/**
+ * Aplica los valores geocodificados (de Google o Nominatim) a los campos del formulario.
+ * Respeta lo que el usuario escribió a mano: solo pisa campos vacíos o los que puso
+ * el propio autocompletado previo.
+ */
+function applyGeocodedValues(mapped: { province: string; municipality: string; locality: string; postalCode: string }, source: string) {
+  const pending = unresolvedFields(mapped)
+  const kept: string[] = []
+
+  for (const field of Object.keys(ADDRESS_FIELD_LABELS) as AddressField[]) {
+    const value = mapped[field]
+    if (!value) continue
+    const current = String(form.value[field] ?? '').trim()
+    // Solo se pisa lo vacío o lo que puso el propio autocompletado.
+    if (current && current !== (geocodedValues.value[field] ?? '')) {
+      kept.push(ADDRESS_FIELD_LABELS[field])
+      continue
+    }
+    form.value[field] = value
+    geocodedValues.value[field] = value
+  }
+
+  if (pending.length === Object.keys(ADDRESS_FIELD_LABELS).length) {
+    toast.warning(
+      `${source} no devolvió datos de dirección para ese punto`,
+      'Completá Provincia, Municipio, Localidad y Código Postal a mano.',
+    )
+    return
+  }
+
+  const notas = [
+    pending.length ? `${source} no devolvió: ${pending.map((f) => ADDRESS_FIELD_LABELS[f]).join(', ')}.` : '',
+    kept.length ? `Se respetó lo que escribiste en: ${kept.join(', ')}.` : '',
+  ].filter(Boolean).join(' ')
+
+  if (pending.length) {
+    toast.warning('Dirección completada parcialmente', `${notas} Revisá y completá a mano.`)
+  } else {
+    toast.success('Dirección completada automáticamente', notas || 'Revisá los campos antes de guardar.')
   }
 }
 

@@ -1,6 +1,6 @@
-// address-components.ts — traduce los `address_components` de la Geocoding API de Google a los
-// cuatro campos que muestra la pantalla de Configuración: Provincia, Municipio, Localidad y
-// Código Postal.
+// address-components.ts — traduce los `address_components` de la Geocoding API de Google (o la
+// respuesta de Nominatim/OpenStreetMap) a los cuatro campos que muestra la pantalla de
+// Configuración: Provincia, Municipio, Localidad y Código Postal.
 //
 // GH-33 — por qué esto es un módulo aparte y no cuatro líneas dentro del .vue:
 //
@@ -13,6 +13,10 @@
 // La regla es una CADENA DE FALLBACKS del componente más específico al más general, sin nombrar
 // ningún país: cada campo se resuelve con el primer componente disponible de su cadena. Es mejor
 // esfuerzo — los campos siguen siendo editables y el llamador avisa qué quedó sin resolver.
+//
+// Nominatim fallback (MAPGEO): cuando no hay API key de Google, se usa la reverse geocoding
+// de OpenStreetMap (gratis, sin key). La respuesta tiene un esquema distinto (`address.state`,
+// `address.city`, etc.) que se normaliza al mismo `MappedAddress`.
 
 /** Subconjunto de `google.maps.GeocoderAddressComponent` que realmente usamos. */
 export interface AddressComponent {
@@ -126,4 +130,68 @@ export function geocodeErrorMessage(err: unknown): { variant: 'error' | 'warning
     title: 'No se pudo completar la dirección automáticamente',
     detail: 'Revisá tu conexión a internet y volvé a mover el pin, o completá los campos a mano.',
   }
+}
+
+// ─── Nominatim (OpenStreetMap) fallback ──────────────────────────────────────────────────────
+
+/** Respuesta del `address` de Nominatim. Subset de lo que realmente usamos. */
+interface NominatimAddress {
+  state?: string          // provincia / estado (RD: "Santo Domingo", "La Altagracia", ...)
+  state_district?: string // distrito / municipio a veces (si `city` no viene)
+  city?: string           // ciudad / municipio
+  town?: string           // fallback si city no existe (pueblos)
+  village?: string        // fallback para localidades rurales
+  county?: string         // a veces mapea a municipio (varía por país)
+  suburb?: string         // sector / barrio
+  neighbourhood?: string  // vecindario
+  postcode?: string       // código postal
+}
+
+interface NominatimResponse {
+  address?: NominatimAddress
+}
+
+/**
+ * Normaliza la respuesta de Nominatim a `MappedAddress`.
+ *
+ * La semántica de los campos de Nominatim varía fuertemente por país:
+ * - `state` ≈ provincia (primer nivel administrativo bajo el país).
+ * - `city` / `town` / `village` ≈ municipio (segundo nivel).
+ * - `suburb` / `neighbourhood` ≈ localidad/sector.
+ * - `county` ≈ alternativa a municipio cuando no hay `city`.
+ */
+function mapNominatimAddress(addr: NominatimAddress | undefined): MappedAddress {
+  if (!addr) return { province: '', municipality: '', locality: '', postalCode: '' }
+  return {
+    province: addr.state?.trim() ?? '',
+    municipality: addr.city?.trim() || addr.town?.trim() || addr.village?.trim()
+      || addr.county?.trim() || addr.state_district?.trim() || '',
+    locality: addr.suburb?.trim() || addr.neighbourhood?.trim() || addr.city?.trim()
+      || addr.town?.trim() || addr.village?.trim() || '',
+    postalCode: addr.postcode?.trim() ?? '',
+  }
+}
+
+/**
+ * Reverse geocoding via Nominatim (OpenStreetMap): gratis, sin API key.
+ * Se usa como fallback cuando Google no puede: sin key configurada, o con la Geocoding API
+ * deshabilitada para la key (producto SEPARADO de la Maps JavaScript que dibuja el mapa).
+ *
+ * Nominatim tiene un rate limit de 1 req/s (política de uso). No se aplica debouncing
+ * acá porque el llamador ya secuencia con `geocodeSeq` y se llama UNA vez por
+ * dragend/click/pegado — no por frame de arrastre.
+ */
+export async function reverseGeocodeNominatim(lat: number, lng: number): Promise<MappedAddress> {
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&format=json&addressdetails=1&accept-language=es`
+  const res = await fetch(url, {
+    headers: {
+      // Nominatim pide un User-Agent identificable (no un genérico). Desde el navegador
+      // fetch NO puede setear User-Agent (header prohibido: viaja el del browser); este
+      // header solo aplica si algún día la llamada se corre al backend.
+      'User-Agent': 'SOLMIOS-ConfigPanel/1.0 (https://solmios.com)',
+    },
+  })
+  if (!res.ok) throw new Error(`Nominatim respondió ${res.status}`)
+  const data = await res.json() as NominatimResponse
+  return mapNominatimAddress(data.address)
 }
