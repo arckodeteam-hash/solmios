@@ -100,6 +100,12 @@ export class HotelesService {
   }
 
   async create(dto: CreateHotelesDTO): Promise<HotelesDTO> {
+    // #34 (COR-6): las dos vías de update ya rechazan el estado contradictorio; sin esto,
+    // POST /api/hoteles lo persistía igual. Se evalúa el estado EFECTIVO con los defaults
+    // del modelo (freeCancellation=true, cancellationType='flexible'): un create que omita
+    // freeCancellation pero mande non_refundable persistiría el conflicto vía el default.
+    assertCancellationCompatible(dto.freeCancellation ?? true, dto.cancellationType ?? 'flexible')
+
     this.logger.info('Creando hotel', { name: dto.name })
     const item = await this.repo.create(dto as any)
     const { wifiPassword, ownerTaxId, ...safe } = item as any

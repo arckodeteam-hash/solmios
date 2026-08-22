@@ -431,7 +431,7 @@
               <div class="text-[10px] text-text-muted">Hasta 24h antes del check-in · incompatible con No Reembolsable</div>
             </div>
             <label class="relative inline-flex items-center cursor-pointer">
-              <input v-model="form.freeCancellation" type="checkbox" class="sr-only peer">
+              <input v-model="form.freeCancellation" type="checkbox" class="sr-only peer" data-field="freeCancellation">
               <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal"></div>
             </label>
           </div>
@@ -441,7 +441,7 @@
               <label v-for="policy in cancelPolicies" :key="policy.key"
                 class="flex items-start gap-2 p-3 rounded-xl cursor-pointer transition-colors"
                 :class="form.cancellationType === policy.key ? 'bg-navy/5 border border-navy/20' : 'bg-surface border border-transparent'">
-                <input v-model="form.cancellationType" type="radio" :value="policy.key" class="mt-0.5 w-4 h-4 text-cyan" />
+                <input v-model="form.cancellationType" type="radio" :value="policy.key" class="mt-0.5 w-4 h-4 text-cyan" data-field="cancellationType" />
                 <div>
                   <div class="text-xs font-bold text-navy">{{ policy.label }}</div>
                   <div class="text-[10px] text-text-muted">{{ policy.desc }}</div>
@@ -1414,8 +1414,15 @@ onMounted(async () => {
         : {},
       id: h.id || (h as any)._id,
     }
-    // Recién ahora los watchers de #34 pueden auto-resolver: la asignación de arriba
-    // dispara los watchers con el dato tal como vino de la DB (aunque sea contradictorio).
+    // INT-3: los watchers de #34 son flush 'pre' (diferidos al scheduler), NO corren
+    // sincrónico con la asignación de arriba. Si el flag se setea acá mismo, cuando los
+    // callbacks corren (microtask posterior) ya ven true y el guard es INERTE: el dato
+    // legacy contradictorio se auto-flippea igual que antes. El flag se enciende en el
+    // nextTick DESPUÉS de la hidratación: para entonces los watchers diferidos ya corrieron
+    // (y fueron bloqueados por el flag en false), así que el dato contradictorio llega
+    // intacto al render y el aviso del template es alcanzable. La auto-resolución sólo
+    // ocurre si el usuario INTERACTÚA después de la carga.
+    await nextTick()
     conditionsHydrated.value = true
 
     // Amenities catalog + selected

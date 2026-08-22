@@ -18,6 +18,11 @@ function makeRepo(overrides: Partial<RepositoryAdapter<any>> = {}): RepositoryAd
   }
 }
 
+/** Repo que captura lo que el service PERSISTE en create (frontera repo: 0|1, COR-7). */
+function spyRepo(persisted: { value: unknown }): RepositoryAdapter<any> {
+  return makeRepo({ create: async (data: any) => { persisted.value = data; return { id: 'test-id', ...data } } })
+}
+
 describe('MarketingService', () => {
   describe('createAutoMessage', () => {
     it('crea un auto-mensaje', async () => {
@@ -30,22 +35,28 @@ describe('MarketingService', () => {
     // Con `dto.isActive !== false ? 1 : 0`, un 0 (tipos distintos, sin coerción) caía en el
     // branch ACTIVO: crear un mensaje PAUSADO lo storea activo y el cron le escribe a
     // huéspedes. El ORM persiste INTEGER; el flag normalizado debe ser 0.
+    // COR-7: se aserte sobre lo que llega a repo.create (la PERSISTENCIA), no sobre el eco
+    // del DTO de respuesta — el modelo es `type:'boolean'`, así que el wire responde boolean
+    // y el 0|1 sólo es visible en la frontera del repo.
     it('crear PAUSADO (isActive: 0) persiste 0, no 1', async () => {
-      const svc = new MarketingService(makeRepo(), makeRepo(), makeRepo(), log, silentCache)
-      const msg = await svc.createAutoMessage({ hotelId: 'h1', title: 'Pausado', triggerEvent: 'checkin_day', isActive: 0 })
-      expect(msg.isActive).toBe(0)
+      const persisted = { value: undefined as unknown }
+      const svc = new MarketingService(spyRepo(persisted), makeRepo(), makeRepo(), log, silentCache)
+      await svc.createAutoMessage({ hotelId: 'h1', title: 'Pausado', triggerEvent: 'checkin_day', isActive: 0 })
+      expect((persisted.value as any).isActive).toBe(0)
     })
 
     it('crear sin isActive sigue siendo ACTIVO por default (compatibilidad)', async () => {
-      const svc = new MarketingService(makeRepo(), makeRepo(), makeRepo(), log, silentCache)
-      const msg = await svc.createAutoMessage({ hotelId: 'h1', title: 'Default', triggerEvent: 'checkin_day' })
-      expect(msg.isActive).toBe(1)
+      const persisted = { value: undefined as unknown }
+      const svc = new MarketingService(spyRepo(persisted), makeRepo(), makeRepo(), log, silentCache)
+      await svc.createAutoMessage({ hotelId: 'h1', title: 'Default', triggerEvent: 'checkin_day' })
+      expect((persisted.value as any).isActive).toBe(1)
     })
 
     it('crear con isActive: false (boolean legacy) persiste 0', async () => {
-      const svc = new MarketingService(makeRepo(), makeRepo(), makeRepo(), log, silentCache)
-      const msg = await svc.createAutoMessage({ hotelId: 'h1', title: 'Bool', triggerEvent: 'checkin_day', isActive: false })
-      expect(msg.isActive).toBe(0)
+      const persisted = { value: undefined as unknown }
+      const svc = new MarketingService(spyRepo(persisted), makeRepo(), makeRepo(), log, silentCache)
+      await svc.createAutoMessage({ hotelId: 'h1', title: 'Bool', triggerEvent: 'checkin_day', isActive: false })
+      expect((persisted.value as any).isActive).toBe(0)
     })
   })
 
@@ -65,10 +76,12 @@ describe('MarketingService', () => {
     })
 
     // Instancia gemela de INT-1: createTemplate tenía la misma coerción invertida.
+    // COR-7: idem arriba — se aserte la persistencia (0|1 en la frontera del repo).
     it('crear plantilla PAUSADA (isActive: 0) persiste 0', async () => {
-      const svc = new MarketingService(makeRepo(), makeRepo(), makeRepo(), log, silentCache)
-      const t = await svc.createTemplate({ hotelId: 'h1', name: 'Pausada', body: 'Hola', isActive: 0 })
-      expect(t.isActive).toBe(0)
+      const persisted = { value: undefined as unknown }
+      const svc = new MarketingService(makeRepo(), makeRepo(), spyRepo(persisted), log, silentCache)
+      await svc.createTemplate({ hotelId: 'h1', name: 'Pausada', body: 'Hola', isActive: 0 })
+      expect((persisted.value as any).isActive).toBe(0)
     })
   })
 

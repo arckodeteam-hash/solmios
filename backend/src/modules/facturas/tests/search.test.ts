@@ -45,8 +45,8 @@ const buildEnrichDeps = () => ({
   reservation: { ...emptyRepo(), findMany: async () => [] },
   room: { ...emptyRepo(), findMany: async () => [] },
 })
-const buildService = (repo = buildRepo(), enrichDeps = buildEnrichDeps()) =>
-  new FacturasService(repo, emptyRepo(), enrichDeps, emptyRepo(), log, silentCache, mockAuth, emptyRepo())
+const buildService = (repo = buildRepo(), enrichDeps = buildEnrichDeps(), cache: CacheAdapter = silentCache) =>
+  new FacturasService(repo, emptyRepo(), enrichDeps, emptyRepo(), log, cache, mockAuth, emptyRepo())
 
 describe('FacturasService.list — ?search= (DT-07)', () => {
   it('matchea por invoiceNumber, notes y nombre del huésped; total refleja solo los matches', async () => {
@@ -108,5 +108,67 @@ describe('FacturasService.list — ?search= (DT-07)', () => {
     const result = await buildService(repo).list({}, user)
     expect(findManyCalls).toBe(0)
     expect(result.total).toBe(0)
+  })
+
+  // COR-8: la búsqueda degradada (falla la carga de huéspedes → matches por nombre = 0)
+  // no puede quedar cacheada 300s con 200 OK: el panel mostraría el total equivocado
+  // aunque la query ya haya sanado. Sólo el resultado sano entra a la caché.
+  const recordingCache = () => {
+    const sets: Array<{ key: string; value: unknown; ttl?: number }> = []
+    const cache: CacheAdapter = {
+      get: async () => null,
+      set: async (key, value, ttl) => { sets.push({ key, value, ttl }) },
+      delete: async () => {},
+      flush: async () => {},
+    }
+    // Sólo las entradas de LISTADO importan: la primera set es el seed del token de
+    // versión (`facturas:ver:*`, TTL 3600) que hace facturasListCacheKey.
+    const listSets = () => sets.filter((s) => s.key.startsWith('facturas:list:'))
+    return { cache, sets, listSets }
+  }
+
+  it('search sano SÍ se cachea (control: TTL 300)', async () => {
+    const { cache, listSets } = recordingCache()
+    const result = await buildService(buildRepo(), buildEnrichDeps(), cache).list({ search: 'caro' }, user)
+    expect(result.total).toBe(4)
+    expect(listSets()).toHaveLength(1)
+    expect(listSets()[0]!.ttl).toBe(300)
+    expect((listSets()[0]!.value as any).total).toBe(4)
+  })
+
+  it('search DEGRADADO (falla la carga de huéspedes) NO se cachea', async () => {
+    const { cache, listSets } = recordingCache()
+    const brokenGuests = {
+      ...buildEnrichDeps(),
+      guest: { ...emptyRepo(), findMany: async () => { throw new Error('guests down') } },
+    }
+    // Degradado: i5 ("Carlos Caro") desaparece de los matches, total 3 en vez de 4.
+    const result = await buildService(buildRepo(), brokenGuests, cache).list({ search: 'caro' }, user)
+    expect(result.total).toBe(3)
+    expect(listSets()).toHaveLength(0) // el total degradado no entra a la caché
+  })
+
+  it('la request degradada reintenta: al sanar la query el resultado correcto vuelve', async () => {
+    const { cache, listSets } = recordingCache()
+    let guestsDown = true
+    const flakyGuests = {
+      ...buildEnrichDeps(),
+      guest: {
+        ...emptyRepo(),
+        findMany: async () => {
+          if (guestsDown) throw new Error('guests down')
+          return guests
+        },
+      },
+    }
+    const svc = buildService(buildRepo(), flakyGuests, cache)
+    const degraded = await svc.list({ search: 'caro' }, user)
+    expect(degraded.total).toBe(3)
+    expect(listSets()).toHaveLength(0)
+
+    guestsDown = false
+    const healed = await svc.list({ search: 'caro' }, user) // sin caché de por medio
+    expect(healed.total).toBe(4)
+    expect(listSets()).toHaveLength(1) // el resultado sano recién ahora se cachea
   })
 })

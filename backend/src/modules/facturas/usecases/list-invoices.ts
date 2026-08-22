@@ -66,12 +66,16 @@ export async function listInvoices(
     const allRows = await repo.findMany(filters)
     const hotelIds = [...new Set(allRows.map((r) => r.hotelId).filter(Boolean))] as string[]
     const matchingGuestIds = new Set<string>()
+    // COR-8: si la carga de huéspedes falla, el resultado es una página DEGRADADA (la
+    // búsqueda por nombre baja a 0 matches). Ese total/páginas equivocado NO se cachea:
+    // cada request degradada reintenta, y el panel se recupera solo cuando la query sana.
+    let degraded = false
     await Promise.all(
       hotelIds.map(async (hid) => {
         const guests = await enrichDeps.guest.findMany({ hotelId: hid }).catch((err: unknown) => {
-          // Degradación VISIBLE (COR-4/REG-4): si esta query falla, la búsqueda por nombre
-          // de huésped baja a 0 matches y ese total/páginas equivocado se cachea 300s —
-          // sin log era un fallo mudo imposible de diagnosticar desde el panel.
+          // Degradación VISIBLE (COR-4/REG-4): sin log era un fallo mudo imposible de
+          // diagnosticar desde el panel.
+          degraded = true
           logger.warn('DT-07 search: falló la carga de huéspedes — búsqueda por nombre degradada a 0 matches', {
             hotelId: hid, error: (err as Error)?.message ?? String(err),
           })
@@ -95,7 +99,7 @@ export async function listInvoices(
       total: matched.length, limit, offset, pages,
       hasNext: page < pages, hasPrev: page > 1,
     }
-    await cache.set(cacheKey, finalResult, LIST_TTL_SECONDS)
+    if (!degraded) await cache.set(cacheKey, finalResult, LIST_TTL_SECONDS)
     return finalResult
   }
 
