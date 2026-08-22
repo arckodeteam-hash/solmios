@@ -100,9 +100,30 @@ describe('whatsapp-templates — handler de Guardar', () => {
     expect(w.find('[data-testid="whatsapp-template-name"]').exists()).toBe(false)
   })
 
+  it('crear con el toggle desactivado manda isActive: 0 (INT-1: crear pausado ya no se guarda activo)', async () => {
+    createMock.mockResolvedValue({ id: 't2' })
+    const w = await openModal()
+    await w.find<HTMLInputElement>('[data-testid="whatsapp-template-name"]').setValue('Pausada al nacer')
+    await w.find('[data-testid="whatsapp-template-body"]').setValue('Hola {guest_name}!')
+    // El único checkbox de la página es el toggle de activación del modal.
+    const toggle = w.find('[data-testid="modal-stub"] input[type="checkbox"]')
+    expect(toggle.exists()).toBe(true)
+    await toggle.setValue(false)
+
+    await guardarBtn(w).trigger('click')
+    await flushPromises()
+
+    expect(createMock).toHaveBeenCalledTimes(1)
+    const payload = createMock.mock.calls[0][0] as Record<string, unknown>
+    // toBe estricto: el número 0 del schema — ni false (boolean, 400) ni 1 (el bug).
+    expect(payload.isActive).toBe(0)
+  })
+
   it('editar manda isActive numérico al PUT (el boolean reventaba con 400)', async () => {
     updateMock.mockResolvedValue({ id: 't1' })
-    listMock.mockResolvedValue({ data: [{ id: 't1', name: 'Bienvenida', body: 'Hola', category: 'general', isActive: 1 }] })
+    // COR-2: el listado real llega con isActive BOOLEAN (el ORM deserializa al leer) —
+    // el fixture viejo con `1` fijaba el formato equivocado del wire.
+    listMock.mockResolvedValue({ data: [{ id: 't1', name: 'Bienvenida', body: 'Hola', category: 'general', isActive: true }] })
     const w = mount(WhatsappTemplates as never, MOUNT_OPTS)
     await flushPromises()
     // Click en la fila de la plantilla abre el modal de edición.
@@ -117,6 +138,23 @@ describe('whatsapp-templates — handler de Guardar', () => {
     const payload = updateMock.mock.calls[0][1] as Record<string, unknown>
     expect(payload.isActive).toBe(1)
     expect('hotelId' in payload).toBe(false)
+  })
+
+  it('editar una plantilla PAUSADA (isActive false del server) manda 0 y no la reactiva', async () => {
+    updateMock.mockResolvedValue({ id: 't1' })
+    listMock.mockResolvedValue({ data: [{ id: 't1', name: 'Pausada', body: 'Hola', category: 'general', isActive: false }] })
+    const w = mount(WhatsappTemplates as never, MOUNT_OPTS)
+    await flushPromises()
+    const row = w.findAll('tr').find(r => r.text().includes('Pausada'))
+    if (!row) throw new Error('fila de la plantilla no encontrada')
+    await row.trigger('click')
+    await flushPromises()
+    await guardarBtn(w).trigger('click')
+    await flushPromises()
+
+    expect(updateMock).toHaveBeenCalledTimes(1)
+    const payload = updateMock.mock.calls[0][1] as Record<string, unknown>
+    expect(payload.isActive).toBe(0)
   })
 
   it('si el API falla, muestra el mensaje real y el modal queda abierto', async () => {

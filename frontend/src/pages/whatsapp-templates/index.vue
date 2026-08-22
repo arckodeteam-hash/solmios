@@ -336,7 +336,8 @@ async function save() {
   try {
     // isActive como 1/0: el schema del backend (UpdateTemplateSchema) lo declara `number`
     // y un boolean revienta el PUT con 400. SIN hotelId: lo inyecta el controller del token.
-    const data = { name: form.value.name.trim(), body: form.value.body, category: form.value.category, isActive: form.value.isActive ? 1 : 0 }
+    const active: 0 | 1 = form.value.isActive ? 1 : 0
+    const data = { name: form.value.name.trim(), body: form.value.body, category: form.value.category, isActive: active }
     if (editId.value) {
       await WhatsappService.update(editId.value, data)
       toast.success('Plantilla actualizada')

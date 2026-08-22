@@ -6,15 +6,25 @@ export interface WhatsappTemplate {
   name: string
   body: string
   category?: string
-  // INTEGER 0/1 en el API (UpdateTemplateSchema `type: 'number'`, ORM boolean↔INTEGER).
-  isActive: boolean | number
+  // Contrato REAL del wire (COR-2/REG-1): la RESPUESTA llega boolean — el ORM
+  // deserializa boolean↔INTEGER al leer. El 0/1 es sólo el formato de ESCRITURA
+  // (schemas backend `type:'number'`) → WhatsappTemplateInput.isActive es `0 | 1`.
+  isActive: boolean
+}
+
+export interface WhatsappTemplateInput {
+  name: string
+  body: string
+  category?: string
+  /** Escritura: 0/1 (UpdateTemplateSchema `type: 'number'`); la lectura llega boolean. */
+  isActive?: 0 | 1
 }
 
 export const WhatsappService = {
   list: () => http.get<{ data: WhatsappTemplate[] }>('/whatsapp-templates'),
-  create: (data: { name: string; body: string; category?: string; isActive?: boolean | number }) =>
+  create: (data: WhatsappTemplateInput) =>
     http.post<WhatsappTemplate>('/whatsapp-templates', data),
-  update: (id: string, data: Partial<WhatsappTemplate>) =>
+  update: (id: string, data: Partial<WhatsappTemplateInput>) =>
     http.put<WhatsappTemplate>(`/whatsapp-templates/${id}`, data),
   remove: (id: string) => http.delete<{ success: boolean }>(`/whatsapp-templates/${id}`),
   /** Genera un link wa.me con texto pre-rellenado */

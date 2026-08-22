@@ -124,6 +124,60 @@ describe('auto-messages — handler de Guardar (regresión qa-ui 2026-08-22)', (
     expect(w.find('[data-testid="auto-message-title"]').exists()).toBe(false)
   })
 
+  it('crear con el toggle "Envío activo" desactivado manda isActive: 0 (INT-1: ese 0 ya no se guarda activo)', async () => {
+    createMock.mockResolvedValue({ id: 'am2' })
+    const w = await openModal()
+    await w.find<HTMLInputElement>('[data-testid="auto-message-title"]').setValue('Pausado al nacer')
+    // El único checkbox de la página es el toggle "Envío activo" del modal.
+    const toggle = w.find('[data-testid="modal-stub"] input[type="checkbox"]')
+    expect(toggle.exists()).toBe(true)
+    await toggle.setValue(false)
+
+    await guardarBtn(w).trigger('click')
+    await flushPromises()
+
+    expect(createMock).toHaveBeenCalledTimes(1)
+    const payload = createMock.mock.calls[0][0] as Record<string, unknown>
+    // toBe estricto: tiene que ser el número 0 que el schema del backend espera —
+    // ni false (boolean, 400) ni 1 (el bug: crear pausado se guardaba activo).
+    expect(payload.isActive).toBe(0)
+  })
+
+  it('editar manda isActive numérico al PUT (REG-5: el 400 del boolean podía volver por esta vía)', async () => {
+    updateMock.mockResolvedValue({ id: 'am1' })
+    listMock.mockResolvedValue({ data: [{ id: 'am1', title: 'Bienvenida', channel: 'email', triggerEvent: 'checkin_day', isActive: true }] })
+    const w = mount(AutoMessages as never, MOUNT_OPTS)
+    await flushPromises()
+    const editBtn = w.findAll('button').find(b => b.attributes('title') === 'Editar mensaje')
+    if (!editBtn) throw new Error('botón Editar mensaje no encontrado')
+    await editBtn.trigger('click')
+    await flushPromises()
+    await guardarBtn(w).trigger('click')
+    await flushPromises()
+
+    expect(updateMock).toHaveBeenCalledTimes(1)
+    const payload = updateMock.mock.calls[0][1] as Record<string, unknown>
+    expect(payload.isActive).toBe(1)
+    expect('hotelId' in payload).toBe(false)
+  })
+
+  it('editar un mensaje PAUSADO (isActive false del server) manda 0 y no lo reactiva', async () => {
+    updateMock.mockResolvedValue({ id: 'am1' })
+    listMock.mockResolvedValue({ data: [{ id: 'am1', title: 'Pausada', channel: 'email', triggerEvent: 'checkin_day', isActive: false }] })
+    const w = mount(AutoMessages as never, MOUNT_OPTS)
+    await flushPromises()
+    const editBtn = w.findAll('button').find(b => b.attributes('title') === 'Editar mensaje')
+    if (!editBtn) throw new Error('botón Editar mensaje no encontrado')
+    await editBtn.trigger('click')
+    await flushPromises()
+    await guardarBtn(w).trigger('click')
+    await flushPromises()
+
+    expect(updateMock).toHaveBeenCalledTimes(1)
+    const payload = updateMock.mock.calls[0][1] as Record<string, unknown>
+    expect(payload.isActive).toBe(0)
+  })
+
   it('si el API falla, muestra el mensaje real y el modal queda abierto (no se pierde lo escrito)', async () => {
     createMock.mockRejectedValue(new Error('isActive must be a number'))
     const w = await openModal()

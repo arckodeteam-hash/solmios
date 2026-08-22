@@ -319,7 +319,8 @@ async function save() {
     // el PUT con 400 "isActive must be a number" (verificado por curl). `variables` no está
     // en ningún schema del backend: mandarlo es peso muerto.
     const { title, color, emailSubject, emailBody, whatsappBody, channel, triggerEvent, triggerOffset, event, language, triggerType, isActive } = form.value
-    const data = { title: title.trim(), color, emailSubject, emailBody, whatsappBody, channel, triggerEvent, triggerOffset: Number(triggerOffset) || 0, event, language, triggerType, isActive: isActive ? 1 : 0 }
+    const active: 0 | 1 = isActive ? 1 : 0
+    const data = { title: title.trim(), color, emailSubject, emailBody, whatsappBody, channel, triggerEvent, triggerOffset: Number(triggerOffset) || 0, event, language, triggerType, isActive: active }
     if(editId.value) { await AutoMessagesService.update(editId.value, data) }
     else { await AutoMessagesService.create(data) }
     toast.success(editId.value?'Actualizado':'Creado')
