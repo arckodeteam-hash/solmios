@@ -77,12 +77,13 @@ export const PLAN_PRESENTATION: Record<string, PlanPresentation> = {
 }
 
 /**
- * Orden de los planes cuando la API no contestó y hay que mostrar algo igual.
- * Sigue el `sortOrder` del seed (`backend/scripts/create-plans-table.ts`): host −1, starter 0,
- * professional 1, enterprise 2, essential 3, ultra 4. COR-5: `host` faltaba y la landing caída
- * escondía justamente el plan de entrada.
+ * Orden de los planes cuando la API no contestó y hay que mostrar algo igual: el MISMO que
+ * decide el backend (#30), del más barato al más caro según el seed
+ * (`backend/scripts/create-plans-table.ts`): ultra 0, host 29, starter 49, essential 99,
+ * professional 99, enterprise 199. El gratuito (ultra, a cotización) sale primero — es lo
+ * esperado con precio ASC. COR-5: `host` faltaba y la landing caída escondía el plan de entrada.
  */
-const FALLBACK_ORDER = ['host', 'starter', 'professional', 'enterprise', 'essential', 'ultra']
+const FALLBACK_ORDER = ['ultra', 'host', 'starter', 'essential', 'professional', 'enterprise']
 
 /** Lo que la API pudo no haber contestado se muestra así — nunca un número inventado. */
 export const PRICE_UNKNOWN_LABEL = 'Consultar'

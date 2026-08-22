@@ -1,7 +1,10 @@
 import { describe, it, expect, afterEach } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
+import { ORM, OrmRepository } from 'arckode-framework'
+import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
 import { AdminService } from '../service'
 import { DashboardQueries } from '../usecases/dashboard-queries'
+import { registerSharedModels } from '../../../shared/models'
 
 const log = silentLogger()
 
@@ -140,6 +143,40 @@ describe('AdminService', () => {
       const svc = new AdminService(repos.plansRepo, repos.amenitiesRepo, log, undefined, new DashboardQueries(makeOrm()))
       const result = await svc.listPlans()
       expect(result.data).toHaveLength(1)
+    })
+
+    // #30: mismo orden que el catálogo público (price ASC, slug ASC) — el admin ve los planes
+    // como los ve el cliente. Contra el ORM REAL (SQLite in-memory), filas insertadas al revés:
+    // sólo un ORDER BY en la query puede devolver la progresión de menor a mayor.
+    it('#30: lista los planes del más barato al más caro (igual que el catálogo público)', async () => {
+      const db = new SqliteAdapter({ path: ':memory:', wal: false, foreignKeys: false }) as any
+      await db.connect()
+      const orm = new ORM(db)
+      registerSharedModels(orm)
+      await orm.migrate()
+      const plansRepo = new OrmRepository<any>(orm, 'Plans')
+      const amenitiesRepo = makeRepos().amenitiesRepo
+      const seed = [
+        { id: 'plan-enterprise', name: 'Enterprise', slug: 'enterprise', price: 199, currency: 'USD', isActive: 1, sortOrder: 2 },
+        { id: 'plan-professional', name: 'Professional', slug: 'professional', price: 99, currency: 'USD', isActive: 1, sortOrder: 1 },
+        { id: 'plan-essential', name: 'Essential', slug: 'essential', price: 99, currency: 'USD', isActive: 1, sortOrder: 3 },
+        { id: 'plan-starter', name: 'Starter', slug: 'starter', price: 49, currency: 'USD', isActive: 1, sortOrder: 0 },
+        { id: 'plan-host', name: 'Host', slug: 'host', price: 29, currency: 'USD', isActive: 1, sortOrder: -1 },
+        { id: 'plan-ultra', name: 'Ultra', slug: 'ultra', price: 0, currency: 'USD', isActive: 1, sortOrder: 4 },
+        // El admin ve TODOS: el inactivo también, en su lugar por precio.
+        { id: 'plan-oculto', name: 'Oculto', slug: 'oculto', price: 9, currency: 'USD', isActive: 0, sortOrder: -5 },
+      ]
+      for (const p of seed) await plansRepo.create({ ...p } as any)
+      try {
+        const svc = new AdminService(plansRepo, amenitiesRepo, log, undefined, new DashboardQueries(makeOrm()))
+        const result = await svc.listPlans()
+        expect(result.total).toBe(7)
+        expect(result.data.map((p: any) => p.slug)).toEqual(
+          ['ultra', 'oculto', 'host', 'starter', 'essential', 'professional', 'enterprise'],
+        )
+      } finally {
+        await db.close?.()
+      }
     })
   })
 

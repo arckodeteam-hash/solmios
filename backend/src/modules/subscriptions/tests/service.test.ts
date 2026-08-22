@@ -8,7 +8,21 @@ const log = { info() {}, error() {}, warn() {}, child: () => log } as unknown as
 
 function repoOf(rows: any[]): RepositoryAdapter<any> {
   return {
-    findMany: async (f: any = {}) => rows.filter(r => Object.entries(f).every(([k, v]) => r[k] === v)),
+    // Honra el CONTRATO del repo: `options.orderBy` se aplica como lo hace el ORM real en SQL
+    // (ver tests/public-plans.test.ts, que lo prueba contra SQLite de verdad).
+    findMany: async (f: any = {}, options?: any) => {
+      const out = rows.filter(r => Object.entries(f).every(([k, v]) => r[k] === v))
+      const clauses: any[] = options?.orderBy ? (Array.isArray(options.orderBy) ? options.orderBy : [options.orderBy]) : []
+      for (const { field, dir = 'ASC' } of [...clauses].reverse()) {
+        out.sort((x: any, y: any) => {
+          const a = x[field], b = y[field]
+          const numeric = Number.isFinite(Number(a)) && Number.isFinite(Number(b))
+          const cmp = numeric ? Number(a) - Number(b) : String(a ?? '').localeCompare(String(b ?? ''))
+          return dir === 'DESC' ? -cmp : cmp
+        })
+      }
+      return out
+    },
     findById: async (id: string) => rows.find(r => r.id === id) ?? null,
     create: async (r: any) => { rows.push(r); return r },
     update: async (id: string, patch: any) => {
@@ -98,29 +112,28 @@ describe('SubscriptionsService.signup', () => {
   })
 })
 
-// GH-30.2 — El orden de los planes es lo primero que ve alguien que todavía no es cliente.
-// `sortOrder` es un campo cargado a mano: cuando se repite, o cuando nadie lo cargó y todos
-// caen a 0, el orden pasaba a ser el que devolviera la base (arbitrario). Eso produjo en
-// producción: Host $29 → Starter $49 → Enterprise $199 → Professional $123 → Essential $99 →
-// Ultra $0. El desempate por precio hace que un `sortOrder` mal cargado degrade a algo
-// comprensible en vez de a ruido.
-describe('SubscriptionsService.publicPlans — orden estable', () => {
+// #30 — El orden de los planes es lo primero que ve alguien que todavía no es cliente.
+// Decisión del dueño: precio ASC en TODAS las superficies; el orden lo impone el backend en
+// la query (`shared/utils/plans-order.ts`: price ASC, slug ASC) y ninguna UI re-ordena.
+// Antes mandaba `sortOrder`, un campo cargado a mano, y en producción la lista salía
+// Host $29 → Starter $49 → Enterprise $199 → Professional $123 → Essential $99 → Ultra $0.
+describe('SubscriptionsService.publicPlans — orden por precio (#30)', () => {
   const active = (over: any) => ({ currency: 'USD', description: '', features: [], isActive: 1, ...over })
   const slugs = (plans: any[]) => plans.map((p: any) => p.slug)
   const serviceWith = (plans: any[]) => new SubscriptionsService(
     repoOf([]), repoOf([{ id: 'h1' }]), repoOf([]), repoOf([]), repoOf(plans), repoOf([]), undefined, log,
   )
 
-  it('(a) con sortOrder distintos manda sortOrder, aunque el precio diga otra cosa', async () => {
+  it('(a) `sortOrder` ya NO manda: manda el precio, aunque el sortOrder diga otra cosa', async () => {
     const plans = await serviceWith([
       active({ id: 'a', name: 'Enterprise', slug: 'enterprise', price: 199, sortOrder: 1 }),
       active({ id: 'b', name: 'Host', slug: 'host', price: 29, sortOrder: 2 }),
     ]).publicPlans()
-    expect(slugs(plans)).toEqual(['enterprise', 'host'])
+    expect(slugs(plans)).toEqual(['host', 'enterprise'])
   })
 
-  it('(b) con sortOrder iguales desempata el precio ascendente', async () => {
-    // Cargados a propósito de mayor a menor: un sort estable sin desempate los dejaría así.
+  it('(b) del más barato al más caro, sin importar el sortOrder', async () => {
+    // Cargados a propósito de mayor a menor: un orden por sortOrder los dejaría al revés.
     const plans = await serviceWith([
       active({ id: 'a', name: 'Enterprise', slug: 'enterprise', price: 199, sortOrder: 0 }),
       active({ id: 'b', name: 'Professional', slug: 'professional', price: 99, sortOrder: 0 }),
@@ -129,7 +142,7 @@ describe('SubscriptionsService.publicPlans — orden estable', () => {
     expect(slugs(plans)).toEqual(['host', 'professional', 'enterprise'])
   })
 
-  it('(c) sin sortOrder (ausente o null) manda el precio', async () => {
+  it('(c) sin sortOrder (ausente o null) manda el precio igual', async () => {
     const plans = await serviceWith([
       active({ id: 'a', name: 'Enterprise', slug: 'enterprise', price: 199, sortOrder: null }),
       active({ id: 'b', name: 'Starter', slug: 'starter', price: 49 }),
@@ -163,7 +176,7 @@ describe('SubscriptionsService.publicPlans — orden estable', () => {
     expect(slugs(plans)).toEqual(['host', 'enterprise'])
   })
 
-  it('con sortOrder y precio empatados el orden sigue siendo estable, no el de la base', async () => {
+  it('con precio empatado el orden es determinista por slug ASC, no el de la base', async () => {
     const rows = [
       active({ id: 'a', name: 'Zafiro', slug: 'zafiro', price: 99, sortOrder: 0 }),
       active({ id: 'b', name: 'Ambar', slug: 'ambar', price: 99, sortOrder: 0 }),

@@ -1,5 +1,6 @@
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import type { AdminAnalyticsDTO, MonitoringDTO, PlanDTO, AmenityCatalogDTO, ModuleOverrideDTO } from './types'
+import { PLANS_PRICE_ORDER } from '../../shared/utils/plans-order'
 import type { DashboardQueries } from './usecases/dashboard-queries'
 import { type AuditPort } from './usecases/audit'
 import type { ApplySpecialConditionsInput, SpecialConditionsUseCase } from './usecases/special-conditions'
@@ -73,8 +74,13 @@ export class AdminService {
   async getMonitoring(): Promise<MonitoringDTO> { return this.queries!.getMonitoring() }
   async getPublicUsers(): Promise<any[]> { return this.queries!.getPublicUsers() }
 
+  /**
+   * #30: mismo orden que el catálogo público (`PLANS_PRICE_ORDER` — price ASC, slug ASC), para
+   * que el admin vea los planes como los ve el cliente. Antes salía en el orden que devolvía
+   * la base (arbitrario).
+   */
   async listPlans(): Promise<{ data: any[]; total: number }> {
-    const data = await this.plansRepo.findMany({})
+    const data = await this.plansRepo.findMany({}, { orderBy: PLANS_PRICE_ORDER })
     return { data: data as any[], total: data.length }
   }
 

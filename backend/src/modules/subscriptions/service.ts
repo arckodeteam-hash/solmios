@@ -98,7 +98,7 @@ export class SubscriptionsService {
    * de `limits` NO salen: son detalle interno de cómo se aplica el plan.
    *
    * El orden lo fija el backend y el frontend lo respeta tal cual (no re-ordena):
-   * ver `usecases/public-plans.ts` → `comparePublicPlans`.
+   * del más barato al más caro (#30), ver `shared/utils/plans-order.ts`.
    */
   publicPlans(): Promise<PublicPlan[]> {
     return listPublicPlans(this.plansRepo)
