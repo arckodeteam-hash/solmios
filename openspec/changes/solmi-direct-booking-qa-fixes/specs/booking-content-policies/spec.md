@@ -71,6 +71,23 @@ hoteles cuando el PMS permite configurarla.
 - WHEN un huésped busca en cada uno
 - THEN cada widget muestra la política correspondiente a ESE hotel
 
+**RESUELTO 2026-08-21 — VERIFICADO, YA CUMPLÍA**: auditado `public-rates.ts` +
+`shared/usecases/cancellation-math.ts` (`resolvePolicy`, precedencia canal > política
+base propia del hotel > preset de `hotels.cancellationType` > default flexible) — el
+motor YA resuelve `cancellationSummary` 100% por `hotelId`, sin ningún default
+compartido. El gap real era de COBERTURA (nada probaba el escenario "dos hoteles"), no
+de implementación — cerrado con 3 tests en `public-rates.test.ts` + el primer archivo
+de tests de `PayStep.vue` (`PayStep.test.ts`, no existía ninguno).
+
+**FIX adicional 2026-08-21 (misma auditoría, iteración posterior)**: `PayStep.vue`
+(widget) consumía `cancellationSummary` pero, a diferencia de `BookingModal.vue`
+(landing), todavía caía al texto libre `cancellationPolicy` (que el admin escribe a
+mano) cuando no había política estructurada — el mismo patrón que causó un incidente
+real documentado en `BookingModal.vue` (texto libre "flexible" mientras la política
+real aplicada al cancelar era estricta). Portado el mismo sistema de tono de riesgo
+(danger/neutral) de la landing al widget. Ver Tarea 6/1.5 en `tasks.md` para el
+detalle completo y los 3 branches verificados con revert manual.
+
 ### Requirement: Comportamiento de reembolso auditado antes de prometerse — AUDITORÍA PENDIENTE
 
 El motor MUST NOT mostrar al cliente la promesa de "reembolso completo" hasta que se

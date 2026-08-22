@@ -376,4 +376,81 @@ describe('getPublicRates — F2 2.4', () => {
       expect(res.body.roomTypes[0].photoUrl).toBe('https://example.com/double.jpg')
     })
   })
+
+  // ─── cancellationSummary — Tarea 6 / tasks.md 1.5 ───────────────────────────────
+  // "Cargar la política de cancelación/reembolso del widget desde la configuración del
+  // hotel en el PMS, eliminando cualquier texto fijo compartido entre hoteles."
+  // La plomería (buildCancellationSummary → resolvePolicy) ya existía (F5 #627) y ya la
+  // consume PayStep.vue/BookingModal.vue, pero nada probaba el criterio de aceptación
+  // literal: dos hoteles con ventanas de cancelación gratuita distintas (3 días vs 7
+  // días) tienen que devolver `freeUntilHours` distinto en /rates — no un texto genérico
+  // compartido. Estos tests cierran ese hueco de cobertura (sin cambios de código: la
+  // auditoría de arquitectura confirmó que el gap era de test, no de implementación).
+  describe('cancellationSummary (Tarea 6 / tasks.md 1.5) — por hotel, no compartida', () => {
+    const makePolicies = (rows: any[]) => ({
+      findMany: async (f: any) => rows.filter((r) => r.hotelId === f?.hotelId),
+    })
+
+    it('Hotel A (moderate, 3 días) y Hotel B (strict, 7 días) devuelven freeUntilHours DISTINTO', async () => {
+      const depsFor = (hotel: any) => ({
+        hotels: makeHotels(hotel),
+        availability: makeAvailability([{ roomType: 'standard', available: 5, price: 100, currency: 'USD', capacity: 2, amenities: [] }]),
+        config: { findMany: async () => [] } as any,
+        // Sin filas custom de CancellationPolicy: resuelve por el preset de `cancellationType`.
+        policies: makePolicies([]),
+      })
+
+      const resA = await getPublicRates(
+        depsFor(baseHotel({ id: 'hA', slug: 'hotel-a', cancellationType: 'moderate' })) as any,
+        'hotel-a', { checkIn: '2026-08-10', checkOut: '2026-08-12' },
+      )
+      const resB = await getPublicRates(
+        depsFor(baseHotel({ id: 'hB', slug: 'hotel-b', cancellationType: 'strict' })) as any,
+        'hotel-b', { checkIn: '2026-08-10', checkOut: '2026-08-12' },
+      )
+
+      // moderate → gratis hasta 72h (3 días); strict → gratis hasta 168h (7 días).
+      expect(resA.body.cancellationSummary.freeUntilHours).toBe(72)
+      expect(resB.body.cancellationSummary.freeUntilHours).toBe(168)
+      expect(resA.body.cancellationSummary.freeUntilHours).not.toBe(resB.body.cancellationSummary.freeUntilHours)
+    })
+
+    it('un hotel con política CUSTOM (fila propia en CancellationPolicies) pisa el preset del otro', async () => {
+      // Hotel A tiene una fila `base` propia (10 días = 240h) — tiene que ganarle al preset
+      // de `cancellationType`, y Hotel B (sin fila propia) sigue leyendo su preset normal.
+      const customRows = [
+        { id: 'p1', hotelId: 'hA', scope: 'base', active: true, tiers: [{ deadlineHours: 240, penaltyPercent: 0, refundable: true }] },
+      ]
+      const depsFor = (hotel: any) => ({
+        hotels: makeHotels(hotel),
+        availability: makeAvailability([{ roomType: 'standard', available: 5, price: 100, currency: 'USD', capacity: 2, amenities: [] }]),
+        config: { findMany: async () => [] } as any,
+        policies: makePolicies(customRows),
+      })
+
+      const resA = await getPublicRates(
+        depsFor(baseHotel({ id: 'hA', slug: 'hotel-a', cancellationType: 'flexible' })) as any,
+        'hotel-a', { checkIn: '2026-08-10', checkOut: '2026-08-12' },
+      )
+      const resB = await getPublicRates(
+        depsFor(baseHotel({ id: 'hB', slug: 'hotel-b', cancellationType: 'moderate' })) as any,
+        'hotel-b', { checkIn: '2026-08-10', checkOut: '2026-08-12' },
+      )
+
+      expect(resA.body.cancellationSummary.source).toBe('custom')
+      expect(resA.body.cancellationSummary.freeUntilHours).toBe(240)
+      expect(resB.body.cancellationSummary.source).toBe('preset')
+      expect(resB.body.cancellationSummary.freeUntilHours).toBe(72)
+    })
+
+    it('sin `policies` cableado → cancellationSummary null (el widget cae al texto libre, no revienta)', async () => {
+      const deps = {
+        hotels: makeHotels(baseHotel({ cancellationType: 'strict' })),
+        availability: makeAvailability([{ roomType: 'standard', available: 5, price: 100, currency: 'USD', capacity: 2, amenities: [] }]),
+        config: { findMany: async () => [] } as any,
+      }
+      const res = await getPublicRates(deps as any, 'caribe-paradise', { checkIn: '2026-08-10', checkOut: '2026-08-12' })
+      expect(res.body.cancellationSummary).toBeNull()
+    })
+  })
 })

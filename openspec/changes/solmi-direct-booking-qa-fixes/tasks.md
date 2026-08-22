@@ -267,11 +267,80 @@ Specs: `specs/booking-availability-pricing/spec.md`, `specs/booking-content-poli
       violación reportada es preexistente en `admin/service.ts`, ajena a este
       cambio), `tsc --noEmit` limpio.
 
-- [ ] 1.5 Cargar la política de cancelación/reembolso del widget desde la
+- [x] 1.5 Cargar la política de cancelación/reembolso del widget desde la
       configuración del hotel en el PMS, eliminando cualquier texto fijo compartido
       entre hoteles (Tarea 6). **Acceptance**: dos hoteles con plazos de cancelación
       gratuita distintos (3 días vs. 7 días) muestran cada uno su propio texto en el
       resumen pre-pago.
+      **CERRADO 2026-08-21 — ya cumplía (plomería F5 #627), sin cambios de código,
+      solo cobertura**: auditado `public-rates.ts` (`buildCancellationSummary` →
+      `shared/usecases/cancellation-math.ts` `resolvePolicy`, precedencia channel >
+      base propia del hotel > preset de `hotels.cancellationType` > default
+      flexible) y confirmado que YA es 100% por hotel — `cancellationSummary` se
+      resuelve con `hotel.id`/`hotel.cancellationType`, sin ningún default
+      compartido entre hoteles. `PayStep.vue` (widget) y `BookingModal.vue`
+      (landing) ya consumen ese campo dinámicamente (la landing incluso evita
+      caer al texto libre a propósito, "para que el widget nunca invente una
+      promesa de reembolso"). El hotel edita su propia política en
+      `/panel/booking-engine` (`CancellationPolicyEditor.vue`).
+      **Gap real encontrado**: nada probaba el criterio de aceptación literal — 0
+      tests de `cancellationSummary` en `public-rates.test.ts` (solo se testeaba
+      el texto libre legacy) y 0 tests de `PayStep.vue` en todo el repo.
+      **Cerrado con**: 3 tests nuevos en `public-rates.test.ts` (2 hoteles con
+      preset distinto → `freeUntilHours` 72 vs 168; política custom pisa el
+      preset; sin `policies` cableado → null, no revienta) + 4 tests nuevos en
+      `PayStep.test.ts` (nuevo archivo — no existía ninguno para este componente):
+      2 hoteles con texto distinto en el resumen, no-reembolsable no dice ningún
+      plazo, fallback a texto libre, sin nada no inventa política.
+      **Verificado**: los 3 tests de `/rates` y el test de "texto distinto" de
+      `PayStep` confirmados con revert manual (fallan si se hardcodea el
+      `cancellationType`/la ventana en horas, pasan con el código real). 3474/3475
+      suite completa backend (1 falla preexistente de Redis, ajena), 778/778 tests
+      reales frontend (2 archivos fallan en collection por `favicon.svg`, ajeno —
+      confirmado sin relación a booking), `tsc --noEmit` limpio en los dos,
+      `arckode analyze` ✅ 0 violaciones, `bun run build` frontend OK.
+      **Segunda pasada (iteración, mismo día)**: `PayStep.vue` comparte el umbral
+      `FLEXIBLE_ANYTIME_THRESHOLD` con `BookingModal.vue`, cuyo bug real ya
+      documentado ("cancelación sin cargo hasta 4167 días antes" con el preset
+      flexible de 99999h) nunca se probó en el widget — arreglarlo en una sola
+      superficie deja vivo el mismo bug en la otra. Agregados 4 tests más a
+      `PayStep.test.ts`: guard de regresión de los "4167 días" (confirmado con
+      revert manual — reproduce el texto exacto del bug si se rompe el umbral),
+      ventana <24h en horas no en "0 días", y 2 tests de locale (en/pt) — el
+      widget tiene switcher de idioma y el resto de sus tests (`RoomsStep.test.ts`)
+      ya cubre es/en/pt, `PayStep.test.ts` nuevo solo cubría español. 8/8 tests en
+      el archivo, `tsc --noEmit` limpio.
+      **Tercera pasada (iteración, mismo día) — FIX real, no solo cobertura**:
+      `PayStep.vue` todavía caía al texto libre `store.cancellationPolicy` (lo
+      que el admin escribe a mano en `/panel/booking-engine`) cuando no había
+      `cancellationSummary` estructurado. `BookingModal.vue` (landing) YA había
+      sacado ese fallback a propósito — su comentario documenta un incidente real
+      de producción: el texto libre decía "flexible" mientras la política real
+      que el backend aplica al cancelar era estricta, y mostrarlo prometía un
+      reembolso que no existía. El widget tenía exactamente ese mismo patrón
+      peligroso, sin corregir. Portado el mismo sistema de tono de riesgo
+      (`bookingTerms` → `cancellationTerms`, 5 casos: sin política/`source:
+      'default'` → danger "no publicó su política"; sin ventana gratuita →
+      danger "Tarifa NO reembolsable"; estricta (100% penalización aunque
+      `refundable:true`) → danger "Política estricta"; sin ninguna penalidad →
+      neutral "cancelación gratuita siempre"; caso general → neutral con el
+      plazo). Nuevas keys i18n en useBookingI18n.ts (es/en/pt): `pay.cancelNoPolicyHeadline/Detail`,
+      `pay.cancelNonRefundableHeadline`, `pay.cancelStrictHeadline/Detail`.
+      **Verificado**: 3 branches críticos (fallback a texto libre, detección de
+      "estricta", `source:'default'`) confirmados con revert manual — cada uno
+      reproduce el comportamiento incorrecto exacto si se deshace el fix, y las
+      3 fallas correspondientes en `PayStep.test.ts` lo detectan. 9/9 tests en el
+      archivo (2 nuevos: fallback ignorado con texto libre presente,
+      `source:'default'` avisa aunque los tiers digan "gratis"). 783/783 tests
+      reales frontend, `tsc --noEmit` limpio, `bun run build` OK.
+      **Pendiente, fuera de alcance de esta pasada — a decidir con el usuario**:
+      `PayStep.vue` (widget) no exige aceptación explícita (checkbox) de las
+      condiciones de cancelación antes de pagar; `BookingModal.vue` (landing) SÍ
+      la exige (`termsAccepted`, resetea al volver atrás, guard en `onPrimary()`
+      además del `:disabled` del botón — ver `BookingModal.terms.test.ts`). Es
+      una decisión de producto/legal (agrega un paso de interacción al checkout
+      del widget embebido), no un bug de datos como los tres de arriba — no se
+      tocó sin confirmar alcance.
 
 - [ ] 1.6 Implementar revalidación completa (inventario, tarifa, cantidad, ocupación,
       extras, total) inmediatamente antes de habilitar el pago, bloqueando el cobro si

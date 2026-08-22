@@ -116,26 +116,27 @@
       </div>
     </div>
 
-    <!-- F5 #627 — Política estructurada (tiers) si el backend la envió; si no, texto libre. -->
-    <div v-if="store.cancellationSummary" class="rounded-xl border border-slate-200 bg-white p-3 space-y-1 text-xs">
-      <p class="font-bold text-navy">{{ t('pay.cancellationPolicy') }}</p>
-      <p class="text-text-muted leading-relaxed">
-        <span v-if="store.cancellationSummary.freeUntilHours === null" class="font-semibold text-red-600">
-          {{ store.cancellationSummary.penaltyDescription }}
-        </span>
-        <template v-else>
-          {{ freeWindowLabel }}
-          <span v-if="store.cancellationSummary.penaltyDescription" class="block text-text-muted">
-            {{ store.cancellationSummary.penaltyDescription }}
-          </span>
-        </template>
+    <!--
+      F5 #627 + FIX 2026-08-21 (paridad con BookingModal.vue, "Condiciones de la reserva") —
+      Política de cancelación con tono de riesgo: SOLO se deriva de `cancellationSummary` (lo
+      que el backend calcula desde los tiers reales del hotel). Ya NO cae al texto libre
+      `cancellationPolicy` que el admin escribe a mano en /panel/booking-engine — ese texto
+      llegó a decir "flexible" en producción mientras la política real que el backend aplica
+      al cancelar era estricta, y anunciarlo prometía un reembolso que no existía. Mismo
+      criterio (y mismo bug ya cerrado una vez) que la landing: ver el comentario de
+      `bookingTerms` en BookingModal.vue.
+    -->
+    <div
+      v-if="cancellationTerms"
+      class="rounded-xl border p-3 space-y-1 text-xs"
+      :class="cancellationTerms.tone === 'danger' ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-white'"
+    >
+      <p class="font-bold" :class="cancellationTerms.tone === 'danger' ? 'text-red-600' : 'text-navy'">{{ t('pay.cancellationPolicy') }}</p>
+      <p class="leading-relaxed" :class="cancellationTerms.tone === 'danger' ? 'text-red-700' : 'text-text-muted'">
+        {{ cancellationTerms.headline }}
+        <span v-if="cancellationTerms.detail" class="block">{{ cancellationTerms.detail }}</span>
       </p>
     </div>
-    <!-- FIX 2026-07-31 — fallback: texto libre del merchant si no hay summary estructurado. -->
-    <p v-else-if="store.cancellationPolicy" class="text-xs text-text-muted leading-relaxed">
-      <span class="font-bold text-navy">{{ t('pay.cancellationPolicy') }}:</span>
-      {{ store.cancellationPolicy }}
-    </p>
 
     <p v-if="store.error" class="text-sm font-semibold text-red-600">{{ store.error }}</p>
 
@@ -191,18 +192,63 @@ const extrasLabel = computed(() => {
 const FLEXIBLE_ANYTIME_THRESHOLD = 99_000
 const HOURS_PER_DAY = 24
 
-const freeWindowLabel = computed(() => {
-  const hours = store.cancellationSummary?.freeUntilHours
-  if (hours == null) return ''
-  if (hours >= FLEXIBLE_ANYTIME_THRESHOLD) return t('pay.cancelFreeAnytime')
-  let deadline: string
-  if (hours >= HOURS_PER_DAY) {
-    const days = Math.round(hours / HOURS_PER_DAY)
-    deadline = t('pay.cancelDays', { count: days })
-  } else {
-    deadline = t('pay.cancelHours', { count: hours })
+/** "7 días" / "6 horas" — el fragmento de tiempo puro, sin la oración alrededor (se embebe
+ *  dentro de headlines distintos según el tono: neutral vs. estricto). */
+function deadlineFragment(hours: number): string {
+  if (hours >= HOURS_PER_DAY) return t('pay.cancelDays', { count: Math.round(hours / HOURS_PER_DAY) })
+  return t('pay.cancelHours', { count: Math.max(0, Math.round(hours)) })
+}
+
+interface CancellationTerms {
+  /** 'danger' = la plata se pierde (no reembolsable / estricta / política desconocida) —
+   *  mismo criterio y mismos 5 casos que `bookingTerms` en BookingModal.vue (landing). */
+  tone: 'danger' | 'neutral'
+  headline: string
+  detail: string
+}
+
+/**
+ * Condiciones de cancelación con tono de riesgo — paridad con `bookingTerms` de
+ * BookingModal.vue (ver el comentario ahí para el detalle de CADA caso). Se deriva SOLO de
+ * `store.cancellationSummary`; nunca cae al texto libre `store.cancellationPolicy`.
+ */
+const cancellationTerms = computed<CancellationTerms | null>(() => {
+  const summary = store.cancellationSummary
+  if (!summary) {
+    // Todavía no llegó /rates (nada que mostrar) vs. llegó y no hay política: solo en el
+    // segundo caso corresponde el aviso — evita un rojo fantasma en el primer render.
+    if (!store.ratesResponse) return null
+    return { tone: 'danger', headline: t('pay.cancelNoPolicyHeadline'), detail: t('pay.cancelNoPolicyDetail') }
   }
-  return t('pay.cancelFreeUntil', { deadline })
+
+  const penalty = (summary.penaltyDescription || '').trim()
+
+  if (summary.freeUntilHours === null) {
+    return { tone: 'danger', headline: t('pay.cancelNonRefundableHeadline'), detail: penalty }
+  }
+
+  // `source: 'default'` es el fallback defensivo del backend cuando el hotel NO configuró
+  // nada (para no bloquear una cancelación legítima) — no es una política que el hotel eligió.
+  // Anunciarla como "gratis" prometería en su nombre algo que nunca configuró.
+  if (summary.source === 'default') {
+    return { tone: 'danger', headline: t('pay.cancelNoPolicyHeadline'), detail: t('pay.cancelNoPolicyDetail') }
+  }
+
+  if (!summary.tiers.some((tier) => tier.penaltyPercent > 0)) {
+    return { tone: 'neutral', headline: t('pay.cancelFreeAnytime'), detail: '' }
+  }
+
+  // Estricta = pasada la ventana se pierde el importe entero. Se detecta SOLO por el
+  // porcentaje: el preset `strict` manda `{penaltyPercent: 100, refundable: true}` (ver
+  // cancellation-math.ts) — exigir `!refundable` dejaría afuera justo al caso más común.
+  const strict = summary.tiers.some((tier) => tier.penaltyPercent >= 100)
+  const deadline = deadlineFragment(summary.freeUntilHours)
+
+  if (strict) {
+    return { tone: 'danger', headline: t('pay.cancelStrictHeadline', { deadline }), detail: t('pay.cancelStrictDetail') }
+  }
+
+  return { tone: 'neutral', headline: t('pay.cancelFreeUntil', { deadline }), detail: penalty }
 })
 
 async function onApplyPromo() {
