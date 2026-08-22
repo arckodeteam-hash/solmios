@@ -121,6 +121,11 @@ describe('RTC-8.3 — el clamp recorta también las sesiones de la vía charge-c
     // Link de $200 (más viejo) + sesión de $200 (más nueva) = $400 = saldo justo.
     const item = await world.service.create({ reservationId: RESERVATION, amount: 200 } as any, USER)
     await world.service.createCheckout(item.id, USER, 'https://panel.test')
+    // El clamp ordena el FIFO por createdAt (ms) y desempata por id (UUID random): si ambas filas
+    // nacen en el mismo milisegundo, quién sobrevive es una moneda. La premisa del test es "link
+    // más viejo, sesión más nueva" — se garantiza con >1ms de separación en vez de esperarlo del
+    // reloj (el ORM estampa `new Date().toISOString()`, kernel/db/orm.ts).
+    await new Promise((r) => setTimeout(r, 2))
     await chargeCard(200)
 
     await world.reservationRepo.update(RESERVATION, { totalAmount: 350 } as any) // saldo → $250
