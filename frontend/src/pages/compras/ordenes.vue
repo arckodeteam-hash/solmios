@@ -126,6 +126,18 @@ async function onPickRequisition() {
     if (!form.value.lines.length) form.value.lines = [blankLine()]
   } catch { /* silent */ }
 }
+// Tres estados vacíos distintos: filtro sin resultados · sin proveedores (bloquea el alta) ·
+// módulo sin usar todavía.
+const emptyTitle = computed(() => {
+  if (orders.value.length) return 'Ninguna orden con ese estado'
+  return suppliers.value.length ? 'Todavía no hay órdenes de compra' : 'Primero cargá tus proveedores'
+})
+const emptyMessage = computed(() => {
+  if (orders.value.length) return 'Probá con otro estado para ver el resto de las órdenes.'
+  if (!suppliers.value.length) return 'Una orden de compra se emite a nombre de un proveedor, y todavía no tenés ninguno registrado. Cargalos en Tesorería → Proveedores y volvé acá.'
+  return 'Una orden de compra le pide mercadería a un proveedor: al recibirla suma stock al inventario y al facturarla genera el gasto. Creá la primera eligiendo proveedor y líneas, o partí de una requisición aprobada.'
+})
+
 const draftSubtotal = computed(() => form.value.lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unitPrice || 0), 0))
 
 async function submitCreate() {
@@ -266,10 +278,11 @@ const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
           :class="['px-2.5 py-1 rounded-full text-xs font-bold', statusFilter === t.value ? 'bg-navy text-white' : 'bg-surface text-text-muted']">{{ t.label }}</button>
       </div>
 
-      <EmptyState v-if="!filtered.length" title="Sin órdenes de compra"
-        :message="orders.length ? 'Ninguna orden con ese estado.' : 'Creá tu primera orden de compra a un proveedor.'">
+      <EmptyState v-if="!filtered.length" :title="emptyTitle" :message="emptyMessage">
         <template v-if="createPerm && !orders.length" #action>
-          <button @click="openCreate" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-navy text-white text-sm font-bold">Nueva orden</button>
+          <router-link v-if="!suppliers.length" to="/panel/tesoreria/proveedores"
+            class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-navy text-white text-sm font-bold">Cargar proveedores</router-link>
+          <button v-else @click="openCreate" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-navy text-white text-sm font-bold">Nueva orden</button>
         </template>
       </EmptyState>
 

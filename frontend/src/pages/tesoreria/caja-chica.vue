@@ -178,8 +178,8 @@ const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
     <div v-if="loading" class="py-20 text-center text-text-muted">Cargando…</div>
 
     <SectionCard v-else title="Fondos" subtitle="Saldo persistido: baja al registrar un gasto, sube al reponer.">
-      <EmptyState v-if="!funds.length" title="Sin fondos de caja chica"
-        message="Creá un fondo con su custodio y tope para empezar a registrar gastos menores.">
+      <EmptyState v-if="!funds.length" title="Todavía no hay fondos de caja chica"
+        message="Un fondo de caja chica es un monto fijo que queda en manos de un custodio para gastos menores del día a día. Creá el primero con su responsable y su tope: después vas registrando los gastos contra el fondo y lo reponés cuando baja.">
         <template v-if="createPerm" #action>
           <button @click="newFund" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-navy text-white text-sm font-bold">Nuevo fondo</button>
         </template>

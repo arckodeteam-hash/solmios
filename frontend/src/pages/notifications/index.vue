@@ -32,13 +32,36 @@
 
     <!-- Lista -->
     <div v-if="loading" class="card p-12 text-center text-sm text-text-muted">Cargando...</div>
-    <div v-else-if="filtered.length === 0" class="card p-12 text-center">
-      <div class="w-12 h-12 mx-auto mb-3 text-text-muted/60">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8.25a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 8.25v8.25a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 16.5V8.25z"/><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 7.5l7.28 5.098a1.5 1.5 0 001.94 0L20.25 7.5"/></svg>
-      </div>
-      <h3 class="font-bold text-navy mb-1">Sin notificaciones</h3>
-      <p class="text-xs text-text-muted">Cuando ocurran eventos (reservas, pagos, etc.) aparecerán aquí.</p>
-    </div>
+    <!-- Sin resultados por filtro: el problema es el filtro, no la falta de datos. -->
+    <EmptyState
+      v-else-if="!filtered.length && hasFilters"
+      :icon="ICON_INBOX_EMPTY"
+      title="Ninguna notificación con esos filtros"
+      message="Probá con otro tipo de aviso, limpiá la búsqueda o destildá «Solo no leídas»."
+    >
+      <template #action>
+        <button @click="clearFilters" class="px-5 py-2.5 rounded-full border border-border text-sm font-bold text-navy hover:bg-surface transition-colors cursor-pointer">
+          Limpiar filtros
+        </button>
+      </template>
+    </EmptyState>
+
+    <!-- Bandeja vacía de verdad. No afirmamos la causa (puede ser falta de actividad
+         o un canal de avisos mal configurado): describimos qué genera notificaciones
+         y ofrecemos el único lugar del panel donde eso se configura. -->
+    <EmptyState
+      v-else-if="!filtered.length"
+      :icon="ICON_INBOX_EMPTY"
+      title="Bandeja de avisos vacía"
+      message="Acá se acumulan los avisos que el sistema genera solo con la operación: reservas nuevas, pagos, tareas de limpieza y mantenimiento. Todavía no hay ninguno registrado."
+    >
+      <template v-if="canSeeMessagingSettings" #action>
+        <router-link to="/panel/config/mensajeria" class="inline-flex items-center rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white hover:bg-navy-light transition-colors">
+          Revisar la configuración de avisos
+        </router-link>
+      </template>
+    </EmptyState>
+
     <div v-else class="bg-white rounded-2xl border border-border overflow-hidden">
       <button v-for="n in filtered" :key="n.id" @click="handleRow(n)"
         class="w-full text-left flex items-start gap-4 px-5 py-4 border-b border-border/50 last:border-0 hover:bg-surface/50 cursor-pointer transition-colors"
@@ -79,10 +102,21 @@ import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
+import { usePermissions } from '@/composables/usePermissions'
+
+// Icono del estado vacío (bandeja). Inline como el resto del panel: v-html sobre el <span>
+// dimensionado que pinta EmptyState.
+const ICON_INBOX_EMPTY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-full w-full"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>'
 
 const router = useRouter()
 const auth = useAuthStore()
 const toast = useToast()
+const { can } = usePermissions()
+// El CTA del estado vacío lleva a Configuración → Mensajería, que está gateada por `settings:view`.
+// Sin ese permiso el link daría 403: no se ofrece.
+const canSeeMessagingSettings = computed(() => can('settings', 'view'))
+
 const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm({
   onDone: () => toast.success('Eliminada'),
   onError: () => toast.error('Error'),
@@ -108,6 +142,16 @@ const availableTypes = computed(() => {
   for (const n of allNotifications.value) s.add(n.type)
   return [...s]
 })
+
+// ¿Hay algún filtro activo? Distingue "no hay nada" de "el filtro no matchea nada":
+// son dos estados vacíos con mensajes y acciones distintas.
+const hasFilters = computed(() => Boolean(search.value.trim()) || Boolean(filterType.value) || unreadOnly.value)
+
+function clearFilters() {
+  search.value = ''
+  filterType.value = ''
+  unreadOnly.value = false
+}
 
 const filtered = computed(() => {
   let list = [...allNotifications.value]

@@ -778,6 +778,10 @@ import { TIMEZONES, CURRENCIES } from '@/data/intl-catalogs'
 import { CurrencyCode } from '@/types/currency'
 import { parseLatLng } from '@/composables/useLatLngParse'
 import { loadGoogleMaps } from '@/composables/useGoogleMaps'
+import {
+  mapAddressComponents, unresolvedFields, geocodeErrorMessage,
+  ADDRESS_FIELD_LABELS, type AddressField,
+} from '@/utils/address-components'
 import { validateField, validateAll, warnOnUnsavedChanges, HOTEL_RULES } from '@/composables/useFieldValidation'
 import { HotelService } from '@/services/Hotel.service'
 import { SettingsService, type HotelFull } from '@/services/Settings.service'
@@ -1523,39 +1527,90 @@ function setCoords(lat: number, lng: number) {
 }
 
 /**
+ * Último valor que el autocompletado escribió en cada campo. Sirve para NO pisar lo que el usuario
+ * tipeó a mano: solo se sobrescribe un campo vacío o uno cuyo contenido lo puso el geocoding
+ * anterior. Si el usuario corrigió "Municipio" y después mueve el pin, su corrección se respeta.
+ */
+const geocodedValues = ref<Partial<Record<AddressField, string>>>({})
+
+/** Descarta respuestas viejas: si el usuario arrastra el pin dos veces seguidas, la primera
+ *  respuesta puede llegar después de la segunda y dejaría una dirección que no corresponde. */
+let geocodeSeq = 0
+
+/**
  * Reverse geocoding: dado un punto, le pregunta a Google qué dirección hay ahí y completa
- * Provincia/Municipio/Localidad/Código Postal. Requiere la API "Geocoding API" habilitada en el
- * mismo proyecto de Google Cloud que la key de Maps JavaScript (Admin → Integraciones).
+ * Provincia/Municipio/Localidad/Código Postal.
  *
- * Los tipos de `address_components` de Google no calzan 1:1 con la división administrativa
- * dominicana en todos los casos — se completa como MEJOR ESFUERZO y el campo queda editable:
- * si el hotel conoce el nombre correcto, lo corrige a mano después.
+ * GH-33 — dos fallas que dejaban los campos vacíos SIN que el usuario se enterara:
+ *
+ *  1. Todo el bloque terminaba en un `catch {}` mudo. La "Geocoding API" es un producto SEPARADO
+ *     de la "Maps JavaScript API" en Google Cloud: la key que dibuja el mapa no habilita el
+ *     geocoding, y la request vuelve `REQUEST_DENIED`. Se veía el pin moverse, lat/long
+ *     actualizarse y los cuatro campos quedar en blanco, sin ningún mensaje. Ahora cada modo de
+ *     falla tiene un aviso accionable (`geocodeErrorMessage`).
+ *  2. `new maps.Geocoder()` estaba FUERA del try: si el SDK no expone Geocoder, reventaba como
+ *     unhandled rejection. Por eso además el loader ahora pide la librería `geocoding`.
+ *
+ * El mapeo de componentes vive en `utils/address-components.ts` (con sus cadenas de fallback,
+ * porque el esquema de Google no calza 1:1 con ninguna división administrativa nacional).
+ * Es MEJOR ESFUERZO y los campos siguen siendo editables.
  */
 async function reverseGeocode(lat: number, lng: number) {
   const maps = await loadGoogleMaps()
-  if (!maps) return                      // sin key → no hay Geocoder, se completa a mano
-  geocoder ??= new maps.Geocoder()
+  // Sin key no hay SDK ni Geocoder. No es una falla oculta: la propia pantalla dice
+  // "Sin mapa interactivo (falta la key de Google) se completan a mano".
+  if (!maps) return
+
+  const seq = ++geocodeSeq
   try {
+    geocoder ??= new maps.Geocoder()
     const { results } = await geocoder.geocode({ location: { lat, lng } })
+    if (seq !== geocodeSeq) return       // llegó tarde: el pin ya está en otro lado
     const result = results?.[0]
-    if (!result) return
-    const componentOf = (type: string) =>
-      result.address_components.find((c) => c.types.includes(type))?.long_name || ''
+    if (!result) throw new Error('ZERO_RESULTS')
 
-    const locality = componentOf('locality') || componentOf('sublocality') || componentOf('administrative_area_level_2')
-    const postalCode = componentOf('postal_code')
-    const province = componentOf('administrative_area_level_1')
-    const municipality = componentOf('administrative_area_level_2')
+    const mapped = mapAddressComponents(result.address_components)
+    const pending = unresolvedFields(mapped)
 
-    let filled = 0
-    if (locality) { form.value.locality = locality; filled++ }
-    if (postalCode) { form.value.postalCode = postalCode; filled++ }
-    if (province) { form.value.province = province; filled++ }
-    if (municipality) { form.value.municipality = municipality; filled++ }
-    if (filled > 0) toast.success('Dirección completada automáticamente — revisá los campos')
-  } catch {
-    // Sin resultados para ese punto (agua, zona sin datos) o "Geocoding API" no habilitada
-    // todavía en Cloud Console: se deja como estaba, no rompe el flujo de fijar coordenadas.
+    const kept: string[] = []
+    for (const field of Object.keys(ADDRESS_FIELD_LABELS) as AddressField[]) {
+      const value = mapped[field]
+      if (!value) continue
+      const current = String(form.value[field] ?? '').trim()
+      // Solo se pisa lo vacío o lo que puso el propio autocompletado.
+      if (current && current !== (geocodedValues.value[field] ?? '')) {
+        kept.push(ADDRESS_FIELD_LABELS[field])
+        continue
+      }
+      form.value[field] = value
+      geocodedValues.value[field] = value
+    }
+
+    if (pending.length === Object.keys(ADDRESS_FIELD_LABELS).length) {
+      // Google respondió, pero sin ningún componente que sirva para estos cuatro campos.
+      toast.warning(
+        'Google no devolvió datos de dirección para ese punto',
+        'Completá Provincia, Municipio, Localidad y Código Postal a mano.',
+      )
+      return
+    }
+
+    const notas = [
+      pending.length ? `Google no devolvió: ${pending.map((f) => ADDRESS_FIELD_LABELS[f]).join(', ')}.` : '',
+      kept.length ? `Se respetó lo que escribiste en: ${kept.join(', ')}.` : '',
+    ].filter(Boolean).join(' ')
+
+    if (pending.length) {
+      toast.warning('Dirección completada parcialmente', `${notas} Revisá y completá a mano.`)
+    } else {
+      toast.success('Dirección completada automáticamente', notas || 'Revisá los campos antes de guardar.')
+    }
+  } catch (err) {
+    if (seq !== geocodeSeq) return
+    // Nada de silencio: el usuario tiene que saber por qué los campos siguen vacíos y qué hacer.
+    const { variant, title, detail } = geocodeErrorMessage(err)
+    if (variant === 'warning') toast.warning(title, detail)
+    else toast.error(title, detail)
   }
 }
 

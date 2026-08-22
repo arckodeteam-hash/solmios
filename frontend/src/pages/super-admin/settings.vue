@@ -121,6 +121,16 @@
           (HTTP referrers → <code>hotel.zx89.site/*</code>) en Google Cloud: al vivir en el navegador,
           una key sin restringir la puede usar cualquiera y el consumo te lo facturan a vos.
         </p>
+        <!-- GH-33: los campos Provincia/Municipio/Localidad/CP se autocompletan al mover el pin,
+             pero eso lo resuelve la Geocoding API, que en Google Cloud es un producto SEPARADO de
+             la Maps JavaScript API. Con la key habilitada solo para Maps, el mapa se ve bien y el
+             autocompletado devuelve REQUEST_DENIED. Se avisa acá porque es donde se pega la key. -->
+        <p class="mt-2 text-[11px] text-text-muted">
+          <strong class="text-navy">Habilitá también "Geocoding API"</strong> en el mismo proyecto de
+          Google Cloud: es un producto aparte de Maps JavaScript API y es la que completa sola
+          Provincia, Municipio, Localidad y Código Postal al mover el pin. Si además restringís la
+          key por API, incluí las dos o el autocompletado va a fallar con el mapa funcionando.
+        </p>
       </SectionCard>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
