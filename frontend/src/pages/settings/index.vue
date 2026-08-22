@@ -764,6 +764,12 @@
     </div>
 
     </div>
+
+    <!-- L6 (qa-ui config-2026-08-22): confirmación para quitar un contacto de emergencia,
+         como el resto de acciones destructivas del panel. -->
+    <ConfirmModal v-if="confirmModal" :title="confirmModal.title" :message="confirmModal.message"
+      :confirm-label="confirmModal.confirmLabel" :danger="confirmModal.danger" :loading="confirmBusy"
+      @confirm="runConfirm" @close="confirmModal = null" />
   </div>
 </template>
 
@@ -791,6 +797,8 @@ import { SignupService, type PublicPlan } from '@/services/Signup.service'
 import { PlanCatalogService, type DisplayPlan } from '@/services/PlanCatalog.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
+import ConfirmModal from '@/components/features/ConfirmModal.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import type { AmenityCatalog } from '@/services/Hotel.service'
 import type { HotelEmergencyContact } from '@/types'
 
@@ -804,6 +812,7 @@ const ICON_UPLOAD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" 
 
 const auth = useAuthStore()
 const toast = useToast()
+const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm()
 const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
 
 // Stripe se configura en /panel/config/pasarelas (tabla payment_gateways, cifrada y por hotel).
@@ -879,7 +888,14 @@ function addEmergencyContact() {
   emergencyContacts.value.push({ id: crypto.randomUUID(), label: '', phone: '', kind: 'external' })
 }
 function removeEmergencyContact(id: string) {
-  emergencyContacts.value = emergencyContacts.value.filter(c => c.id !== id)
+  const contact = emergencyContacts.value.find(c => c.id === id)
+  askConfirm({
+    title: 'Eliminar contacto',
+    message: `¿Eliminar el contacto${contact?.label ? ` "${contact.label}"` : ''}? Se quita al Guardar.`,
+    confirmLabel: 'Eliminar',
+    danger: true,
+    run: async () => { emergencyContacts.value = emergencyContacts.value.filter(c => c.id !== id) },
+  })
 }
 async function saveEmergencyContacts() {
   const clean = emergencyContacts.value.map(c => ({ ...c, label: c.label.trim(), phone: c.phone.trim() }))

@@ -50,12 +50,34 @@ export class AuditlogService {
     if (query?.status !== undefined) filters.status = query.status
     if (query?.type !== undefined) filters.type = query.type
     if (query?.category !== undefined) filters.category = query.category
+    // M3 (qa-ui config-2026-08-22): igualdad soportada por buildWhere → van al WHERE.
+    if (query?.userId) filters.userId = query.userId
+    if (query?.action) filters.action = query.action
 
     // El listado NO se cachea: es un log forense y la frescura es un requisito, no un lujo — un
     // admin revisando un incidente tiene que ver las entradas al instante, no con delay. (Antes se
     // cacheaba con TTL 60_000: ese arg son SEGUNDOS → 16,6 h, y la invalidación por clave fija
     // `auditlog:list` nunca matcheaba las claves reales `auditlog:list:${page}:...`.)
-    const result = await this.repo.paginate(filters, { limit, offset })
+    //
+    // Orden explícito createdAt DESC: sin ORDER BY la paginación es orden no definido (en PG
+    // cambia entre queries) — página 1 = lo más reciente, como todo listado del panel.
+    const orderBy = [{ field: 'createdAt', dir: 'DESC' as const }]
+
+    // Rango de fechas: buildWhere solo hace igualdad (RepositoryAdapter no soporta >=/<=, mismo
+    // límite que DT-07 de facturas) → traer las filas del hotel, filtrar en memoria y paginar acá.
+    // Es O(n) sobre el log del hotel, correcto y aceptable para el volumen actual (2k filas dev).
+    if (query?.from || query?.to) {
+      const from = query.from ? `${query.from}T00:00:00.000Z` : ''
+      const to = query.to ? `${query.to}T23:59:59.999Z` : ''
+      const all = await this.repo.findMany(filters, { orderBy })
+      const rows = all.filter((r) => {
+        const ts = String(r.createdAt || '')
+        return (!from || ts >= from) && (!to || ts <= to)
+      })
+      return { data: rows.slice(offset, offset + limit), total: rows.length }
+    }
+
+    const result = await this.repo.paginate(filters, { limit, offset, orderBy })
     return { data: result.data, total: result.total }
   }
 

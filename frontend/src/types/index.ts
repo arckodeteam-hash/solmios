@@ -802,6 +802,12 @@ export interface AuditLogQuery {
   type?: string
   category?: string
   search?: string
+  /** Filtros del panel (/panel/config/auditoria, M3 qa-ui config-2026-08-22). */
+  userId?: string
+  action?: string
+  /** Rango de fechas ISO (YYYY-MM-DD), límites inclusive. */
+  from?: string
+  to?: string
   page?: number
   limit?: number
 }
