@@ -428,7 +428,7 @@
           <div class="flex items-center justify-between p-3 bg-surface rounded-xl">
             <div>
               <div class="text-sm font-bold text-navy">Cancelación gratuita</div>
-              <div class="text-[10px] text-text-muted">Hasta 24h antes del check-in</div>
+              <div class="text-[10px] text-text-muted">Hasta 24h antes del check-in · incompatible con No Reembolsable</div>
             </div>
             <label class="relative inline-flex items-center cursor-pointer">
               <input v-model="form.freeCancellation" type="checkbox" class="sr-only peer">
@@ -438,15 +438,22 @@
           <div>
             <label class="block text-[11px] font-bold text-navy uppercase tracking-wide mb-2">Política de Cancelación</label>
             <div class="grid grid-cols-2 gap-2">
-              <label v-for="policy in cancelPolicies" :key="policy.value"
+              <label v-for="policy in cancelPolicies" :key="policy.key"
                 class="flex items-start gap-2 p-3 rounded-xl cursor-pointer transition-colors"
-                :class="form.cancellationType === policy.value ? 'bg-navy/5 border border-navy/20' : 'bg-surface border border-transparent'">
-                <input v-model="form.cancellationType" type="radio" :value="policy.value" class="mt-0.5 w-4 h-4 text-cyan" />
+                :class="form.cancellationType === policy.key ? 'bg-navy/5 border border-navy/20' : 'bg-surface border border-transparent'">
+                <input v-model="form.cancellationType" type="radio" :value="policy.key" class="mt-0.5 w-4 h-4 text-cyan" />
                 <div>
-                  <div class="text-xs font-bold text-navy">{{ policy.name }}</div>
+                  <div class="text-xs font-bold text-navy">{{ policy.label }}</div>
+                  <div class="text-[10px] text-text-muted">{{ policy.desc }}</div>
                 </div>
               </label>
             </div>
+            <!-- #34: si el watcher ya resolvió el conflicto este aviso no aparece; queda para
+                 usuarios que llegan con datos viejos contradictorios cargados de la DB. -->
+            <p v-if="form.freeCancellation && form.cancellationType === 'non_refundable'"
+              class="mt-2 text-[10px] font-bold text-danger">
+              "No Reembolsable" anula la cancelación gratuita: al guardar, el toggle se apaga solo.
+            </p>
           </div>
 
           <div class="flex items-center justify-between p-3 bg-surface rounded-xl">
@@ -782,6 +789,7 @@ import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES, countryName } from '@/data/locales'
 import { TIMEZONES, CURRENCIES } from '@/data/intl-catalogs'
 import { CurrencyCode } from '@/types/currency'
+import { PRESET_OPTIONS } from '@/types/cancellation'
 import { parseLatLng } from '@/composables/useLatLngParse'
 import { loadGoogleMaps } from '@/composables/useGoogleMaps'
 import {
@@ -1267,12 +1275,21 @@ async function loadPlan() {
   }
 }
 
-const cancelPolicies = [
-  { value: 'flexible', name: 'Flexible' },
-  { value: 'moderate', name: 'Moderada' },
-  { value: 'strict', name: 'Estricta' },
-  { value: 'non_refundable', name: 'No Reembolsable' },
-]
+// Presets canónicos (mismos tiers que el backend, cancellation-math.ts).
+const cancelPolicies = PRESET_OPTIONS
+
+// #34: "Cancelación gratuita" y la política "No Reembolsable" son mutuamente excluyentes.
+// Antes la UI permitía dejar ambas activas y el guardado reventaba con un toast genérico
+// ("Error guardando: hotel") que no decía qué corregir. Ahora la selección se auto-resuelve:
+// elegir No Reembolsable apaga el toggle; reactivar el toggle con No Reembolsable activa
+// vuelve a Flexible. Los dos watchers no pueden loopear entre sí (cada uno solo escribe
+// el campo que el otro NO observa).
+watch(() => form.value.cancellationType, (type) => {
+  if (type === 'non_refundable' && form.value.freeCancellation) form.value.freeCancellation = false
+})
+watch(() => form.value.freeCancellation, (on) => {
+  if (on && form.value.cancellationType === 'non_refundable') form.value.cancellationType = 'flexible'
+})
 
 // Amenities
 const amenityCatalog = ref<AmenityCatalog>({ interior: [], exterior: [], services: [] })
@@ -1475,11 +1492,18 @@ async function saveAll() {
 
   try {
     await SettingsService.patchHotel(patch)
-  } catch { errors.push('hotel') }
+  } catch (e) {
+    // #34: antes el catch era bare y el toast decía solo "Error guardando: hotel" — el usuario
+    // no sabía QUÉ campo corregir. El ApiError del http ya trae el detalle del backend
+    // (campo rechazado por el schema, 403 de permisos, etc.).
+    errors.push(`hotel — ${e instanceof Error ? e.message : 'error desconocido'}`)
+  }
 
   try {
     await HotelService.saveAmenitiesHotel(selectedAmenities.value)
-  } catch { errors.push('amenities') }
+  } catch (e) {
+    errors.push(`amenities — ${e instanceof Error ? e.message : 'error desconocido'}`)
+  }
 
   saving.value = false
   if (errors.length) {
