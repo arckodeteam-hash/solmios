@@ -1,6 +1,6 @@
 // admin/usecases/modules.ts — Módulos del producto que el super_admin puede activar/desactivar.
-// Son los grupos top-level del panel del hotel. Los core (Dashboard, Configuración, Soporte) NO se
-// listan: siempre activos. Un módulo puede tener SUBMÓDULOS (las entradas hijas del menú) que también
+// Son los grupos top-level del panel del hotel. Los core (Dashboard, Configuración, Soporte,
+// Mis Referidos —growth, siempre ON) NO se listan: siempre activos. Un módulo puede tener SUBMÓDULOS (las entradas hijas del menú) que también
 // se activan/desactivan de forma granular. Estado global en configuration(hotelId='platform', key='modules').
 // Default: todo activado (una clave sin entrada se considera ON). Submódulos: clave punteada `modulo.sub`.
 // INDEPENDIENTE del sistema de planes: los planes eligen claves top-level (que implican sus
@@ -90,6 +90,20 @@ export const MODULE_CATALOG: ModuleMeta[] = [
       { key: 'settings.gateways', label: 'Pasarelas de Pago', description: 'Pasarelas de cobro (Stripe)' },
       { key: 'settings.devices', label: 'Dispositivos', description: 'Dispositivos vinculados' },
       { key: 'settings.push', label: 'Notificaciones Push', description: 'Tokens de notificaciones push' },
+      { key: 'settings.rates', label: 'Temporadas y Tarifas', description: 'Temporadas y matriz de tarifas' },
+      { key: 'settings.audit', label: 'Auditoría', description: 'Log de acciones sensibles del hotel' },
+    ],
+  },
+  {
+    // Página pública (/panel/pagina-publica): general/apariencia/reputacion/tracking viven en la
+    // clave padre (todas colapsan a la MISMA ruta con ?tab=); las 4 tabs que respaldan módulos
+    // de API propios tienen sub-clave. La granularidad fina gatea la API de cada módulo.
+    key: 'site-pages', label: 'Página pública', description: 'Sitio público: landing, media, motor de reservas y códigos',
+    submodules: [
+      { key: 'site-pages.landing', label: 'Landing', description: 'Bloques de la landing pública' },
+      { key: 'site-pages.media', label: 'Media', description: 'Galería de fotos del hotel' },
+      { key: 'site-pages.booking', label: 'Motor de reservas', description: 'Configuración del booking engine' },
+      { key: 'site-pages.promos', label: 'Códigos de descuento', description: 'Códigos promocionales del checkout' },
     ],
   },
   {
@@ -98,6 +112,8 @@ export const MODULE_CATALOG: ModuleMeta[] = [
   {
     key: 'treasury', label: 'Tesorería', description: 'Bancos, conciliación, flujo de caja, cuentas por cobrar/pagar y presupuesto',
     submodules: [
+      // CLAVE MUERTA (inalcanzable): /panel/tesoreria/caja-chica gana por prefijo largo en
+      // module-map ('/panel/tesoreria' → 'treasury'), así que esta sub-clave nunca gatea nada.
       { key: 'treasury.petty-cash', label: 'Caja chica', description: 'Fondos fijos para gastos menores' },
     ],
   },

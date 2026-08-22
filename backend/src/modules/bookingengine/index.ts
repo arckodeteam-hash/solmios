@@ -9,6 +9,7 @@ import { BookingengineController } from './controller'
 import type { BookingConfigDTO, PublicBookingDTO, ConversionEventDTO, UpsellDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
+import { createModuleGuard } from '../../infrastructure/auth/require-module'
 import { PaymentGatewayRegistry } from '../../services/payment-gateway/registry'
 import { PaymentEventStore } from '../../services/payment-gateway/payment-events'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
@@ -120,6 +121,11 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       if (auth) {
         const roleRepo = new OrmRepository<any>(orm, 'Roles')
         const guard = createPermissionGuard(auth, roleRepo)
+        // Feature-gating por plan: la config admin del motor = sub-clave 'site-pages.booking'
+        // (tab Motor de reservas de /panel/pagina-publica). Los endpoints PÚBLICOS no se gatean
+        // (sin req.user el guard pasa; el sitio del hotel sigue vendiendo aunque el plan no
+        // incluya la gestión del motor).
+        const beGuard = (m: string, a: string) => [...guard(m, a), createModuleGuard(orm)('site-pages.booking')]
 
         // FIX 2026-07-31 (QA solmi-direct-booking) — faltaba el prefijo /api: el resto del
         // proyecto registra rutas admin como '/api/...' (ver /api/upsells abajo) y el router del
@@ -127,9 +133,9 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         // frontend (que siempre pega a '/api/booking-engine/config') recibía 404 NOT_FOUND desde
         // que el módulo existe — la pantalla /panel/booking-engine nunca pudo cargar ni guardar
         // config (Promise.all en loadAll() rechazaba entero, form nunca se hidrataba).
-        router.get('/api/booking-engine/config', guard('settings', 'view'), (req: any) => controller.getConfig(req))
-        router.put('/api/booking-engine/config', guard('settings', 'edit'), (req: any) => controller.updateConfig(req))
-        router.get('/api/booking-engine/analytics', guard('reports', 'view'), (req: any) => controller.getAnalytics(req))
+        router.get('/api/booking-engine/config', beGuard('settings', 'view'), (req: any) => controller.getConfig(req))
+        router.put('/api/booking-engine/config', beGuard('settings', 'edit'), (req: any) => controller.updateConfig(req))
+        router.get('/api/booking-engine/analytics', beGuard('reports', 'view'), (req: any) => controller.getAnalytics(req))
 
         // F2 2.3 — Upsells admin. Permiso propio `upsells:*` (decisión: no reusar settings:* ni
         // booking-engine:edit porque no existe; cada recurso con su permiso, mismo criterio que

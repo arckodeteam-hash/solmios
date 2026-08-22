@@ -19,6 +19,7 @@ import { PromoCodesController } from './controller'
 import type { PromoCodeDTO, CreatePromoCodeDTO, UpdatePromoCodeDTO, ValidatePromoCodeDTO, PromoValidationResult } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
+import { createModuleGuard } from '../../infrastructure/auth/require-module'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
 
 export { PromoCodesService, registerPromoCodesModels }
@@ -69,9 +70,12 @@ export function PromoCodesModule() {
       // Guard admin: userType merchant + permiso promo:*. Mismo patrón que landing.
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
       const permGuard = createPermissionGuard(auth, roleRepo)
+      // Feature-gating por plan: códigos = sub-clave 'site-pages.promos' (tab Códigos de
+      // descuento de /panel/pagina-publica).
       const adminGuard = (action: 'view' | 'create' | 'edit' | 'delete') => [
         ...permGuard('promo', action),
         requireUserType('merchant'),
+        createModuleGuard(orm)('site-pages.promos'),
       ]
 
       // ─── Rutas admin ──────────────────────────────────────────────────────
@@ -82,8 +86,9 @@ export function PromoCodesModule() {
 
       // FIX 2026-07-31 — preview autenticado (staff crea reserva manual): solo userType merchant,
       // SIN permiso `promo:*` (receptionist no administra códigos pero sí puede aplicar uno al
-      // cargar una reserva). hotelId sale del token, nunca del body.
-      router.post('/api/promo-codes/preview', [auth.authenticate(), requireUserType('merchant')], (req: any) => controller.previewForUser(req))
+      // cargar una reserva). hotelId sale del token, nunca del body. Mismo gate de plan que el
+      // CRUD: sin 'site-pages.promos' no hay códigos que aplicar.
+      router.post('/api/promo-codes/preview', [auth.authenticate(), requireUserType('merchant'), createModuleGuard(orm)('site-pages.promos')], (req: any) => controller.previewForUser(req))
 
       // ─── Ruta pública ─────────────────────────────────────────────────────
       // Sin auth, rate-limited por IP (spec: 30 req/min/IP, mismo criterio que

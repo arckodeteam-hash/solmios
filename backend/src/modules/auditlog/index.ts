@@ -8,6 +8,7 @@ import { AuditlogService } from './service'
 import { AuditlogController } from './controller'
 import type { AuditlogDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
+import { createModuleGuard } from '../../infrastructure/auth/require-module'
 
 export { AuditlogService }
 export type { AuditlogDTO, CreateAuditlogDTO, UpdateAuditlogDTO, AuditlogQuery, AuditlogPaginated } from './types'
@@ -43,10 +44,12 @@ export function AuditlogModule() {
       const controller = new AuditlogController(service, log)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
-      const guard = createPermissionGuard(auth, roleRepo)
+      // Feature-gating por plan: el log de auditoría = sub-clave 'settings.audit'
+      // (/panel/config/auditoria, DT-17 solo hotel_admin).
+      const guard = (a: 'view') => [...createPermissionGuard(auth, roleRepo)('reports', a), createModuleGuard(orm)('settings.audit')]
 
-      router.get('/api/auditlog', guard('reports', 'view'), (req) => controller.index(req))
-      router.get('/api/auditlog/:id', guard('reports', 'view'), (req) => controller.show(req))
+      router.get('/api/auditlog', guard('view'), (req) => controller.index(req))
+      router.get('/api/auditlog/:id', guard('view'), (req) => controller.show(req))
       // NO hay POST HTTP: el audit log lo escribe SOLO el sistema, vía el puerto directo
       // (`service.create`, inyectado por los connectors `*-auditlog`). El endpoint POST tomaba
       // hotelId/userId/ip del body → un merchant forjaba entradas en el log de otro hotel

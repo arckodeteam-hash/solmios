@@ -4,6 +4,7 @@ import { PricingCalendarService } from './service-calendar'
 import { PricingController } from './controller'
 import { PricingQueries } from './usecases/pricing-queries'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
+import { createModuleGuard } from '../../infrastructure/auth/require-module'
 
 export { PricingService }
 
@@ -38,13 +39,17 @@ export function PricingModule() {
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
       const guard = createPermissionGuard(auth, roleRepo)
+      // Feature-gating por plan: temporadas + matriz de tarifas = sub-clave 'settings.rates'
+      // (/panel/config/tarifas "Temporadas y Tarifas"). El RESTO del módulo (blocks,
+      // restrictions, assignments) lo consume el planning y NO se gatea por acá.
+      const ratesGuard = (a: 'view' | 'edit') => [...guard('settings', a), createModuleGuard(orm)('settings.rates')]
 
-      router.get('/api/seasons', guard('settings', 'view'), (req: any) => controller.listSeasons(req))
-      router.put('/api/seasons', guard('settings', 'edit'), (req: any) => controller.updateSeasons(req))
-      router.post('/api/seasons/activate', guard('settings', 'edit'), (req: any) => controller.activateSeason(req))
-      router.get('/api/rates', guard('settings', 'view'), (req: any) => controller.listRates(req))
-      router.put('/api/rates', guard('settings', 'edit'), (req: any) => controller.updateRates(req))
-      router.post('/api/rates/copy-next-year', guard('settings', 'edit'), (req: any) => controller.copyRatesNextYear(req))
+      router.get('/api/seasons', ratesGuard('view'), (req: any) => controller.listSeasons(req))
+      router.put('/api/seasons', ratesGuard('edit'), (req: any) => controller.updateSeasons(req))
+      router.post('/api/seasons/activate', ratesGuard('edit'), (req: any) => controller.activateSeason(req))
+      router.get('/api/rates', ratesGuard('view'), (req: any) => controller.listRates(req))
+      router.put('/api/rates', ratesGuard('edit'), (req: any) => controller.updateRates(req))
+      router.post('/api/rates/copy-next-year', ratesGuard('edit'), (req: any) => controller.copyRatesNextYear(req))
       router.get('/api/pricing-mode', guard('settings', 'view'), (req: any) => controller.getPricingMode(req))
       router.put('/api/pricing-mode', guard('settings', 'edit'), (req: any) => controller.setPricingMode(req))
       router.get('/api/blocks', guard('settings', 'view'), (req: any) => controller.listBlocks(req))

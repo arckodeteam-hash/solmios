@@ -60,4 +60,22 @@ describe('GET /api/admin/modules/catalog — forma del árbol', () => {
     const crm = tree.find((m) => m.key === 'crm')!
     expect(crm.children).toEqual([]) // forma estable para el editor: iterar sin guard de undefined
   })
+
+  // Claves nuevas del feature-gating (2026-08-21): tienen que llegar al editor para que el
+  // dueño las agregue/saque de los planes (CS-9 marca inválida cualquier clave fuera del catálogo).
+  it('site-pages (+4 tabs de API), settings.rates y settings.audit están en el árbol del editor', async () => {
+    const res = await router.resolve('GET', '/api/admin/modules/catalog', { headers: headersFor('super_admin', 'admin') })
+    const tree = res.body as any[]
+    const sitePages = tree.find((m) => m.key === 'site-pages')!
+    expect(sitePages.label).toBe('Página pública')
+    expect(sitePages.children).toEqual([
+      { key: 'site-pages.landing', label: 'Landing' },
+      { key: 'site-pages.media', label: 'Media' },
+      { key: 'site-pages.booking', label: 'Motor de reservas' },
+      { key: 'site-pages.promos', label: 'Códigos de descuento' },
+    ])
+    const settings = tree.find((m) => m.key === 'settings')!
+    expect(settings.children).toContainEqual({ key: 'settings.rates', label: 'Temporadas y Tarifas' })
+    expect(settings.children).toContainEqual({ key: 'settings.audit', label: 'Auditoría' })
+  })
 })

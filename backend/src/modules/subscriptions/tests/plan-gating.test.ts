@@ -5,12 +5,16 @@
 // de módulos — que solo leía `hotels.plan` — le mostró al hotel TODOS los módulos del panel.
 //
 // Las matrices son las reales del seeder (scripts/create-plans-table.ts):
-//   host        = ['planning','reservations','reservations.checkin','guests','settings.rooms']
+//   host        = ['planning','reservations','reservations.checkin','guests','settings.rooms',
+//                  'site-pages','settings.rates','settings.audit']
 //   essential   = host + ['channel','finance.billing','finance.payments','operations.maintenance']
 //     R3-2: SIN los padres 'finance'/'operations' — bajo "padre = módulo completo" un padre
 //     hereda TODOS sus sub-módulos y essential regalaba 8 que el plan no promete.
 //     settings.rooms (auditoría 2026-08-21): sin el catálogo de habitaciones el paso REQUIRED
 //     del onboarding queda 403 y el plan que vende 'reservations' es inoperable.
+//     site-pages/settings.rates/settings.audit (feature-gating 2026-08-21): claves NUEVAS de
+//     superficies que antes no tenían gate — se listan explícitas para que el deploy no les
+//     quite nada a los planes con matriz (status quo); el dueño las saca con el editor.
 //   starter/professional/enterprise/ultra = [] (todos — retrocompat planes top).
 import { describe, it, expect } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
@@ -20,7 +24,7 @@ import { handleStripeEvent } from '../usecases/handle-stripe-event'
 import { resolveHotelPlan } from '../usecases/resolve-plan'
 import { getModuleStateForHotel } from '../../admin/usecases/modules'
 
-const HOST_MODULES = ['planning', 'reservations', 'reservations.checkin', 'guests', 'settings.rooms']
+const HOST_MODULES = ['planning', 'reservations', 'reservations.checkin', 'guests', 'settings.rooms', 'site-pages', 'settings.rates', 'settings.audit']
 const ESSENTIAL_MODULES = [
   ...HOST_MODULES, 'channel', 'finance.billing', 'finance.payments', 'operations.maintenance',
 ]
@@ -460,6 +464,25 @@ describe('R3-2 — matriz EFECTIVA de los planes del seeder', () => {
     const state = await stateFor('plan-essential')
     expect(state['settings.rooms']).toBe(true)
     expect(state.settings).toBe(false) // sin over-grant del padre
+  })
+
+  // Status quo deploy: site-pages/settings.rates/settings.audit son claves NUEVAS de superficies
+  // que hoy TODOS los planes ven (Página pública, Temporadas y Tarifas, Auditoría — estaban sin
+  // gate). host/essential las listan explícitas para que nadie pierda nada; el dueño las saca
+  // después con el editor. El padre 'site-pages' habilita las 4 tabs de API (CS-1); las
+  // sub-claves de settings entran solas SIN regalar el padre (R3-2).
+  it('status quo: host/essential conservan Página pública (+tabs), Tarifas y Auditoría', async () => {
+    for (const planId of ['plan-host', 'plan-essential']) {
+      const state = await stateFor(planId)
+      expect(state['site-pages']).toBe(true)      // el padre: entrada del menú + ruta contenedora
+      expect(state['site-pages.landing']).toBe(true)  // implícito por el padre (CS-1)
+      expect(state['site-pages.media']).toBe(true)
+      expect(state['site-pages.booking']).toBe(true)
+      expect(state['site-pages.promos']).toBe(true)
+      expect(state['settings.rates']).toBe(true)
+      expect(state['settings.audit']).toBe(true)
+      expect(state.settings).toBe(false)          // el padre settings NO se regala (R3-2)
+    }
   })
 })
 

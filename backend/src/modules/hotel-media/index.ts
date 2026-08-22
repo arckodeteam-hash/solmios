@@ -17,6 +17,7 @@ import { HotelMediaController } from './controller'
 import type { HotelMediaDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
+import { createModuleGuard } from '../../infrastructure/auth/require-module'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
 
 export { HotelMediaService, HotelMediaController }
@@ -77,9 +78,12 @@ export function HotelMediaModule(opts: { storage?: StorageService } = {}) {
       // landing/index.ts (createPermissionGuard + capa extra de userType).
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
       const permGuard = createPermissionGuard(auth, roleRepo)
+      // Feature-gating por plan: media del hotel = sub-clave 'site-pages.media' (tab Media
+      // de /panel/pagina-publica).
       const adminGuard = (action: 'view' | 'create' | 'edit' | 'delete') => [
         ...permGuard('media', action),
         requireUserType('merchant'),
+        createModuleGuard(orm)('site-pages.media'),
       ]
 
       // ─── Rutas admin ──────────────────────────────────────────────────────

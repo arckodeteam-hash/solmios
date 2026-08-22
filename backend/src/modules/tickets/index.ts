@@ -4,6 +4,7 @@ import { TicketsService } from './service'
 import { TicketsController } from './controller'
 import type { TicketsDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
+import { createModuleGuard } from '../../infrastructure/auth/require-module'
 
 export { TicketsService }
 export type { TicketsDTO, CreateTicketsDTO, UpdateTicketsDTO, TicketsQuery, TicketsPaginated } from './types'
@@ -35,7 +36,13 @@ export function TicketsModule() {
       const controller = new TicketsController(service, log)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
-      const guard = createPermissionGuard(auth, roleRepo)
+      // Feature-gating por plan: los tickets son incidencias de mantenimiento → misma clave
+      // que /api/mantenimiento y el menú ('operations.maintenance'). Antes solo reports:view:
+      // 200 para cualquier plan. Corta a host (sin módulo mantenimiento) — correcto.
+      const guard = (m: 'reports', a: 'view' | 'create' | 'edit' | 'delete') => [
+        ...createPermissionGuard(auth, roleRepo)(m, a),
+        createModuleGuard(orm)('operations.maintenance'),
+      ]
 
       router.get('/api/tickets', guard('reports', 'view'), (req) => controller.index(req))
       router.get('/api/tickets/:id', guard('reports', 'view'), (req) => controller.show(req))
