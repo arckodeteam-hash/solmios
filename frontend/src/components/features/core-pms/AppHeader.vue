@@ -18,10 +18,12 @@ import { ChannelService } from '@/services/Channel.service'
 import { WeatherService, type WeatherInfo } from '@/services/Weather.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useDashboardStore } from '@/stores/dashboard.store'
+import { useModulesStore } from '@/stores/modules.store'
 
 // Header global del panel: la misma barra "command center" del dashboard, en todas las páginas.
 const auth = useAuthStore()
 const dashboard = useDashboardStore()
+const modules = useModulesStore()
 
 const hotelData = ref<HotelData | null>(null)
 const apiOnline = ref(true)
@@ -45,7 +47,14 @@ const alerts = computed(() => dashboard.stats?.openIncidents ?? 0)
 // El logo NO necesita request propio: ya viene en el `hotelData` que se pide abajo.
 onMounted(async () => {
   try { hotelData.value = ((await HotelService.settings(hotelId.value)) as any)?.hotel ?? null } catch { /* sin datos */ }
-  try { lastSync.value = (await ChannelService.status(hotelId.value)).lastSync ?? null; apiOnline.value = true } catch { apiOnline.value = false }
+  // A9: el estado de canales SOLO existe si el plan del hotel incluye el módulo `channel`.
+  // Antes se fetcheaba igual en cada vista: para planes sin canal era un 403 en consola que
+  // además marcaba el indicador como "Sin conexión" (apiOnline=false) sin estar desconectado.
+  // ensure() es idempotente y comparte el fetch en curso con el menú/guard de rutas.
+  await modules.ensure(hotelId.value)
+  if (modules.enabled('channel')) {
+    try { lastSync.value = (await ChannelService.status(hotelId.value)).lastSync ?? null; apiOnline.value = true } catch { apiOnline.value = false }
+  }
   weather.value = await WeatherService.current(hotelData.value?.latitude, hotelData.value?.longitude)
 })
 </script>

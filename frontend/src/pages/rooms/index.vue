@@ -1,9 +1,9 @@
 <template>
   <div>
-    <!-- Header -->
-    <div class="flex items-center justify-between flex-wrap gap-3 mb-5">
+    <!-- Header — A8: título+badge alineados al centro óptico de la fila de acciones -->
+    <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
       <div class="flex items-center gap-2.5">
-        <h2 class="text-xl font-black text-navy">Habitaciones</h2>
+        <h2 class="text-xl font-black leading-none text-navy">Habitaciones</h2>
         <span class="inline-flex items-center gap-1.5 rounded-full bg-[#DCFCE7] px-2.5 py-1 text-[10px] font-extrabold uppercase text-[#16A34A]">
           <span class="relative flex h-1.5 w-1.5">
             <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#22C55E] opacity-60"></span>
@@ -57,6 +57,12 @@
           <option class="text-navy" value="dirty">Sucias</option>
           <option class="text-navy" value="out_of_service">Fuera de servicio</option>
         </select>
+        <!-- A1: export del listado (misma promesa que reports; los datos ya están en memoria) -->
+        <button @click="exportCsv" :disabled="!filteredRooms.length" title="Exportar listado a CSV"
+          class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-white/15 bg-white/10 text-sm font-bold text-white hover:border-cyan transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+          Exportar CSV
+        </button>
       </template>
 
       <!-- Carga inicial -->
@@ -101,8 +107,8 @@
         </div>
 
         <!-- Habitaciones agrupadas por tipo -->
-        <div v-for="rt in paginatedRoomTypes" :key="rt.type" class="mb-8 last:mb-0">
-          <div class="flex items-baseline gap-2 mb-3 flex-wrap">
+        <div v-for="rt in paginatedRoomTypes" :key="rt.type" class="mb-6 last:mb-0">
+          <div class="flex items-baseline gap-2 mb-2.5 flex-wrap">
             <h3 class="text-sm font-black text-navy">{{ rt.type }}</h3>
             <span class="text-xs text-text-muted">
               {{ rt.rooms.length }} habitaciones · {{ rt.available }} disponibles<template v-if="rt.occupied"> · {{ rt.occupied }} ocupadas</template><template v-if="rt.cleaning"> · {{ rt.cleaning }} limpieza</template>
@@ -306,20 +312,26 @@
                 <div><label for="batch-capacity" class="block text-[11px] text-text-muted font-bold mb-1">Capacidad</label><input id="batch-capacity" name="batchCapacity" v-model.number="batchForm.capacity" type="number" min="1" max="20" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
                 <div><label for="batch-floor" class="block text-[11px] text-text-muted font-bold mb-1">Piso</label><input id="batch-floor" name="batchFloor" v-model.number="batchForm.floor" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
                 <div><label for="batch-bathrooms" class="block text-[11px] text-text-muted font-bold mb-1">Baños</label><input id="batch-bathrooms" name="batchBathrooms" v-model.number="batchForm.bathrooms" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
-                <div><label for="batch-surface-area" class="block text-[11px] text-text-muted font-bold mb-1">Superficie m²</label><input id="batch-surface-area" name="batchSurfaceArea" v-model.number="batchForm.surfaceArea" type="number" min="0" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
+                <div><label for="batch-surface-area" class="block text-[11px] text-text-muted font-bold mb-1">Superficie m²</label><input id="batch-surface-area" name="batchSurfaceArea" v-model.number="batchForm.surfaceArea" type="number" min="0" placeholder="opcional" class="w-full px-3 py-2 rounded-xl border border-border text-sm" /></div>
                 <label class="flex items-center gap-2 cursor-pointer self-end pb-2"><input id="batch-online-booking" name="batchOnlineBooking" v-model="batchForm.onlineBooking" type="checkbox" class="w-4 h-4 rounded text-cyan" /><span class="text-[11px] font-bold text-navy">Venta Online</span></label>
               </div>
             </div>
 
             <div>
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-3">¿Qué incluye?</label>
-              <div class="flex flex-wrap gap-2">
-                <button v-for="a in batchAmenities" :key="a.key" type="button"
-                  @click="toggleAmenity(batchForm.amenities, a.key)"
-                  class="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors cursor-pointer"
-                  :class="batchForm.amenities.includes(a.key) ? 'bg-navy border-navy text-white' : 'border-border text-text-secondary hover:border-navy/30'">
-                  {{ a.label }}
-                </button>
+              <div class="flex items-baseline justify-between mb-3">
+                <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide">¿Qué incluye?</label>
+                <span class="text-[11px] font-bold text-text-muted tabular-nums">{{ amenityCountLabel(batchForm.amenities.length) }}</span>
+              </div>
+              <div v-for="g in amenityGroups" :key="g.label" class="mb-3 last:mb-0">
+                <div class="text-[10px] font-extrabold uppercase tracking-wide text-navy/60 mb-1.5">{{ g.label }}</div>
+                <div class="flex flex-wrap gap-2">
+                  <button v-for="a in g.items" :key="a.key" type="button"
+                    @click="toggleAmenity(batchForm.amenities, a.key)"
+                    class="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors cursor-pointer"
+                    :class="batchForm.amenities.includes(a.key) ? 'bg-navy border-navy text-white' : 'border-border text-text-secondary hover:border-navy/30'">
+                    {{ a.label }}
+                  </button>
+                </div>
               </div>
             </div>
       </div>
@@ -337,7 +349,12 @@
     <AppModal v-if="modal.show" size="lg" :title="`${modal.edit ? 'Editar' : 'Nueva'} habitación`" @close="modal.show=false">
       <div class="space-y-5">
             <div class="grid grid-cols-3 gap-4">
-              <div><label for="room-number" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Número *</label><input id="room-number" name="number" required aria-required="true" v-model="form.number" type="text" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <div>
+                <label for="room-number" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Número <span class="text-coral">*</span></label>
+                <input id="room-number" name="number" required aria-required="true" v-model="form.number" @blur="touched.number = true" type="text" placeholder="101"
+                  :aria-invalid="showNumberError" class="w-full px-4 py-2.5 rounded-xl border text-sm" :class="showNumberError ? 'border-coral' : 'border-border'" />
+                <p v-if="showNumberError" class="mt-1 text-[11px] font-bold text-coral">{{ numberError }}</p>
+              </div>
               <div><label for="room-type" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Tipo</label>
                 <select id="room-type" name="type" v-model="form.type" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm cursor-pointer">
                   <option value="single">Individual</option><option value="double">Doble</option><option value="twin">Twin</option><option value="triple">Triple</option><option value="quad">Cuádruple</option><option value="suite">Suite</option><option value="deluxe">Deluxe</option><option value="presidential">Presidencial</option><option value="family">Familiar</option>
@@ -350,30 +367,45 @@
               </div>
               <div><label for="room-floor" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Piso</label><input id="room-floor" name="floor" v-model.number="form.floor" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
               <div><label for="room-capacity" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Capacidad</label><input id="room-capacity" name="capacity" v-model.number="form.maxGuests" type="number" min="1" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
-              <div><label for="room-base-price" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Precio Base $ <span class="text-coral">*</span></label><input id="room-base-price" name="basePrice" required aria-required="true" v-model.number="form.basePrice" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-bold text-navy" /></div>
-              <div><label for="room-surface-area" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Superficie m²</label><input id="room-surface-area" name="surfaceArea" v-model.number="form.surfaceArea" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <div>
+                <label for="room-base-price" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Precio Base $ <span class="text-coral">*</span></label>
+                <input id="room-base-price" name="basePrice" required aria-required="true" v-model.number="form.basePrice" @blur="touched.basePrice = true" type="number" min="0"
+                  :aria-invalid="showPriceError" class="w-full px-4 py-2.5 rounded-xl border text-sm font-bold text-navy" :class="showPriceError ? 'border-coral' : 'border-border'" />
+                <p v-if="showPriceError" class="mt-1 text-[11px] font-bold text-coral">{{ priceError }}</p>
+              </div>
+              <div><label for="room-surface-area" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Superficie m²</label><input id="room-surface-area" name="surfaceArea" v-model.number="form.surfaceArea" type="number" min="0" placeholder="opcional" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
               <div><label for="room-bathrooms" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Baños</label><input id="room-bathrooms" name="bathrooms" v-model.number="form.bathrooms" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
               <label class="flex items-center gap-2 cursor-pointer self-end pb-2"><input id="room-online-booking" name="onlineBooking" v-model="form.onlineBooking" type="checkbox" class="w-4 h-4 rounded text-cyan" /><span class="text-[11px] font-bold text-navy">Venta Online</span></label>
             </div>
             <div>
-              <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2.5">Amenities</label>
-              <div class="flex flex-wrap gap-2">
-                <button v-for="a in amenityOptions" :key="a.key" type="button"
-                  @click="toggleAmenity(form.amenities, a.key)"
-                  class="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors cursor-pointer"
-                  :class="form.amenities.includes(a.key) ? 'bg-navy border-navy text-white' : 'border-border text-text-secondary hover:border-navy/30'">
-                  {{ a.label }}
-                </button>
+              <div class="flex items-baseline justify-between mb-2.5">
+                <label class="block text-[11px] font-bold text-text-muted uppercase tracking-wide">Amenities</label>
+                <span class="text-[11px] font-bold text-text-muted tabular-nums">{{ amenityCountLabel(form.amenities.length) }}</span>
+              </div>
+              <div v-for="g in amenityGroups" :key="g.label" class="mb-3 last:mb-0">
+                <div class="text-[10px] font-extrabold uppercase tracking-wide text-navy/60 mb-1.5">{{ g.label }}</div>
+                <div class="flex flex-wrap gap-2">
+                  <button v-for="a in g.items" :key="a.key" type="button"
+                    @click="toggleAmenity(form.amenities, a.key)"
+                    class="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors cursor-pointer"
+                    :class="form.amenities.includes(a.key) ? 'bg-navy border-navy text-white' : 'border-border text-text-secondary hover:border-navy/30'">
+                    {{ a.label }}
+                  </button>
+                </div>
               </div>
             </div>
       </div>
 
       <template #footer>
         <button @click="modal.show=false" class="px-4 py-2.5 text-sm font-bold text-text-secondary hover:text-navy cursor-pointer transition-colors">Cancelar</button>
-        <button @click="save" :disabled="saving"
-          class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-40">
-          {{ saving ? 'Guardando…' : 'Guardar' }}
-        </button>
+        <!-- Deshabilitado si el form es inválido; el click "atravesado" (pointer-events-none del
+             disabled) revela los errores en rojo, para que el gris no sea un misterio. -->
+        <span @click="!formValid && (touched = { number: true, basePrice: true })">
+          <button @click="save" :disabled="saving || !formValid"
+            class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none">
+            {{ saving ? 'Guardando…' : 'Guardar' }}
+          </button>
+        </span>
       </template>
     </AppModal>
 
@@ -421,7 +453,8 @@ interface BatchForm {
   capacity: number
   floor: number
   bathrooms: number
-  surfaceArea: number
+  /** A4: null = sin dato (antes default 0, que se leía como superficie cargada). */
+  surfaceArea: number | null
   onlineBooking: boolean
   amenities: string[]
 }
@@ -434,7 +467,8 @@ interface EditForm {
   basePrice: number
   status: string
   amenities: string[]
-  surfaceArea: number
+  /** A4: null = sin dato (antes default 0, que se leía como superficie cargada). */
+  surfaceArea: number | null
   bathrooms: number
   onlineBooking: boolean
 }
@@ -442,7 +476,6 @@ interface EditForm {
 const auth = useAuthStore()
 const toast = useToast()
 const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm({
-  onDone: () => toast.success('Eliminada'),
   onError: () => toast.error('Error al eliminar'),
 })
 const hid = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
@@ -463,7 +496,10 @@ const detailModal = ref({ show: false })
 const batchModal = ref({ show: false })
 const detailRoom = ref<MappedRoom | null>(null)
 
-const form = ref<EditForm>({ number:'', type:'double', floor:1, maxGuests:2, basePrice:80, status:'available', amenities:[], surfaceArea:0, bathrooms:1, onlineBooking:true })
+const form = ref<EditForm>({ number:'', type:'double', floor:1, maxGuests:2, basePrice:80, status:'available', amenities:[], surfaceArea:null, bathrooms:1, onlineBooking:true })
+/** Campos "tocados" (blur o intento de submit): el error inline se muestra recién al tocar,
+ *  para no pintar de rojo un form recién abierto (A4). */
+const touched = ref({ number: false, basePrice: false })
 
 const batchForm = ref<BatchForm>({
   type: 'double',
@@ -473,10 +509,29 @@ const batchForm = ref<BatchForm>({
   capacity: 2,
   floor: 1,
   bathrooms: 1,
-  surfaceArea: 0,
+  surfaceArea: null,
   onlineBooking: true,
   amenities: [],
 })
+
+// ── Validación inline del modal (A4): error bajo el campo ANTES del submit ────────────
+const numberError = computed<string | null>(() => {
+  const n = (form.value.number || '').trim()
+  if (!n) return 'El número es obligatorio'
+  const dup = rooms.value.find(r => r.id !== editId.value && r.number.trim().toLowerCase() === n.toLowerCase())
+  return dup ? `Ya existe la habitación ${dup.number}` : null
+})
+
+const priceError = computed<string | null>(() => {
+  const raw: unknown = form.value.basePrice
+  if (raw === '' || raw === null || typeof raw !== 'number' || Number.isNaN(raw)) return 'Ingresá un precio válido'
+  if (raw < 0) return 'El precio no puede ser negativo'
+  return null
+})
+
+const formValid = computed(() => !numberError.value && !priceError.value)
+const showNumberError = computed(() => touched.value.number && !!numberError.value)
+const showPriceError = computed(() => touched.value.basePrice && !!priceError.value)
 
 const ICON_CROWN = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="m3 8 4 3 5-6 5 6 4-3-2 10H5L3 8Z"/></svg>'
 const ICON_BED = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M3 18v-7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v7M3 18v2M3 18h18M21 18v2M5 13V9a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v4"/></svg>'
@@ -504,7 +559,21 @@ const amenityOptions = [
   { key:'bathtub', label:'Bañera' },{ key:'work_desk', label:'Escritorio' },
 ]
 
-const batchAmenities = amenityOptions
+// Amenities agrupadas por tipo (17 actuales): menos abrumador que una lista plana de 17 pills.
+const AMENITY_GROUP_DEFS: { label: string; keys: string[] }[] = [
+  { label: 'Confort', keys: ['wifi','tv','ac','heating','safe','minibar','hair_dryer','iron','balcony','bathtub'] },
+  { label: 'Cocina', keys: ['kitchen','fridge','microwave','coffee_maker','washer','dishwasher'] },
+  { label: 'Trabajo', keys: ['work_desk'] },
+]
+const amenityGroups = AMENITY_GROUP_DEFS.map(g => ({
+  label: g.label,
+  items: g.keys.map(k => amenityOptions.find(a => a.key === k)).filter((a): a is { key: string; label: string } => !!a),
+}))
+if (amenityGroups.reduce((n, g) => n + g.items.length, 0) !== amenityOptions.length) {
+  throw new Error('rooms: AMENITY_GROUP_DEFS no cubre exactamente amenityOptions — clave nueva sin grupo')
+}
+
+function amenityCountLabel(n: number): string { return `${n} seleccionada${n === 1 ? '' : 's'}` }
 
 const statusOptions = [
   { value: 'available', label: 'Disponible', desc: 'Lista para recibir huésped' },
@@ -709,12 +778,14 @@ function openEditFromDetail() {
   detailModal.value.show = false
   editId.value = room.id; modal.value = { show: true, edit: true }
   const amenities = [...(room.amenities || [])]
-  form.value = { number: room.number, type: room.type, floor: room.floor || 1, maxGuests: room.maxGuests || 2, basePrice: room.basePrice || 0, status: room.status || 'available', amenities, surfaceArea: room.surfaceArea || 0, bathrooms: room.bathrooms || 1, onlineBooking: room.onlineBooking !== false }
+  form.value = { number: room.number, type: room.type, floor: room.floor || 1, maxGuests: room.maxGuests || 2, basePrice: room.basePrice || 0, status: room.status || 'available', amenities, surfaceArea: room.surfaceArea || null, bathrooms: room.bathrooms || 1, onlineBooking: room.onlineBooking !== false }
+  touched.value = { number: false, basePrice: false }
 }
 
 function openNew() {
   editId.value = ''; modal.value = { show: true, edit: false }
-  form.value = { number: '', type: 'double', floor: 1, maxGuests: 2, basePrice: 80, status: 'available', amenities: [], surfaceArea: 0, bathrooms: 1, onlineBooking: true }
+  form.value = { number: '', type: 'double', floor: 1, maxGuests: 2, basePrice: 80, status: 'available', amenities: [], surfaceArea: null, bathrooms: 1, onlineBooking: true }
+  touched.value = { number: false, basePrice: false }
 }
 
 async function changeStatus(newStatus: string) {
@@ -736,22 +807,47 @@ async function changeStatus(newStatus: string) {
 }
 
 async function save() {
-  if (!form.value.number) { toast.error('Falta número'); return }
+  // El botón ya está deshabilitado si el form es inválido; esto es defensa si se llama por otra vía.
+  if (!formValid.value) { touched.value = { number: true, basePrice: true }; return }
   saving.value = true
   try {
     const { RoomService } = await import('@/services/Room.service')
     const { AmenitiesService } = await import('@/services/Amenities.service')
-    const patch: Record<string, unknown> = { number: form.value.number, type: form.value.type, floor: form.value.floor, maxGuests: form.value.maxGuests, basePrice: form.value.basePrice, status: form.value.status, surfaceArea: form.value.surfaceArea, bathrooms: form.value.bathrooms, onlineBookingEnabled: form.value.onlineBooking }
+    // Superficie vacía → 0 en la API ("sin dato"; el modelo no acepta null).
+    const patch: Record<string, unknown> = { number: form.value.number, type: form.value.type, floor: form.value.floor, maxGuests: form.value.maxGuests, basePrice: form.value.basePrice, status: form.value.status, surfaceArea: Number(form.value.surfaceArea || 0), bathrooms: form.value.bathrooms, onlineBookingEnabled: form.value.onlineBooking }
     let roomId = editId.value
     if (roomId) { await RoomService.update(roomId, patch) }
     else { const created = await RoomService.create({ ...patch, hotelId: hid.value! }); roomId = created.id }
     await AmenitiesService.saveRoom(roomId, form.value.amenities)
-    toast.success(editId.value ? 'Actualizada' : 'Creada')
+    toast.success(editId.value ? `Habitación ${form.value.number} actualizada` : `Habitación ${form.value.number} creada`)
   } catch (e) {
     const msg = e instanceof ApiError ? `Error (${e.status})` : 'Sin conexión'
     toast.error(msg)
   }
   saving.value = false; modal.value.show = false; await load()
+}
+
+// A1: export del listado visible (respeta búsqueda y filtro activos). CSV con BOM para que
+// Excel respete los acentos; separador de amenities ';' para no pelear con la coma decimal.
+function exportCsv() {
+  const rows = filteredRooms.value
+  if (!rows.length) return
+  const esc = (v: string) => /[",\n;]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
+  const lines = [['Número','Tipo','Estado','Piso','Capacidad','Precio','Amenities'].join(',')]
+  for (const r of rows) {
+    const cells = [r.number, typeLabel(r.type), statusLabel(r.status), String(r.floor), String(r.maxGuests), String(r.basePrice), (r.amenities || []).map(amenityLabel).join('; ')]
+    lines.push(cells.map(esc).join(','))
+  }
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `habitaciones-${new Date().toISOString().slice(0, 10)}.csv`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+  toast.success(`CSV exportado (${rows.length} habitaciones)`)
 }
 
 function deleteRoomFromDetail() {
@@ -766,12 +862,14 @@ function deleteRoomFromDetail() {
       await RoomService.delete(room.id)
       detailModal.value.show = false
       await load()
+      // A10: el éxito dice QUÉ habitación se borró (el listado ya se recargó sin ella).
+      toast.success(`Habitación ${room.number} eliminada`)
     },
   })
 }
 
 function openBatch() {
-  batchForm.value = { type: 'double', from: null, to: null, basePrice: 80, capacity: 2, floor: 1, bathrooms: 1, surfaceArea: 0, onlineBooking: true, amenities: [] }
+  batchForm.value = { type: 'double', from: null, to: null, basePrice: 80, capacity: 2, floor: 1, bathrooms: 1, surfaceArea: null, onlineBooking: true, amenities: [] }
   batchModal.value.show = true
 }
 
@@ -796,7 +894,7 @@ async function executeBatch() {
       floor: batchForm.value.floor,
       capacity: batchForm.value.capacity,
       bathrooms: batchForm.value.bathrooms,
-      surfaceArea: batchForm.value.surfaceArea,
+      surfaceArea: Number(batchForm.value.surfaceArea || 0),
       onlineBookingEnabled: batchForm.value.onlineBooking,
     })
 

@@ -3,7 +3,7 @@
     <!-- Barra de operaciones rápidas (arriba del todo, imponente — solo vista completa) -->
     <div v-if="!embedded" class="bg-gradient-to-r from-navy to-navy/90 px-6 py-2.5 flex items-center gap-2 flex-wrap shadow-md">
       <span class="text-[10px] font-black text-white/45 uppercase tracking-widest mr-1">Operaciones</span>
-      <button v-for="t in QUICK_TOOLBAR" :key="t.key" @click="openQuick(t.key)" :title="t.label"
+      <button v-for="t in quickToolbar" :key="t.key" @click="openQuick(t.key)" :title="t.label"
         class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-extrabold transition-all cursor-pointer ring-1 ring-white/10 hover:ring-white/30">
         <Icon :name="t.icon" :size="16" />
         <span>{{ t.label }}</span>
@@ -738,6 +738,7 @@ import { ConfigService } from '@/services/Platform.service'
 import { ChannelService } from '@/services/Channel.service'
 import { http } from '@/services/http'
 import { useAuthStore } from '@/stores/auth.store'
+import { useModulesStore } from '@/stores/modules.store'
 import { useToast } from '@/composables/useToast'
 import { currencySymbol } from '@/composables/useCurrency'
 import { CurrencyCode } from '@/types/currency'
@@ -762,6 +763,7 @@ const emit = defineEmits<{ changed: [] }>()
 
 const router = useRouter()
 const auth = useAuthStore()
+const modules = useModulesStore()
 const toast = useToast()
 
 // Acceso a la cerradura por habitación (🔒 en la fila). Pasa la reserva activa HOY (si la hay)
@@ -946,6 +948,10 @@ const QUICK_TOOLBAR = [
   { key: 'sync', icon: 'sync', label: 'Sincronizar' },
 ] as const
 type QuickKey = typeof QUICK_TOOLBAR[number]['key']
+// A9: "Sincronizar" llama a /api/channels — para planes sin el módulo `channel` es un 403
+// garantizado. Se oculta del toolbar y doSync se re-guardea (por si llega por teclado/old render).
+const quickToolbar = computed(() =>
+  modules.enabled('channel') ? QUICK_TOOLBAR : QUICK_TOOLBAR.filter(t => t.key !== 'sync'))
 const quickAction = ref<QuickKey | null>(null)
 const QUICK_ACTION_TITLES: Record<QuickKey, string> = {
   arrivals: 'Llegadas y Salidas de hoy',
@@ -1011,6 +1017,7 @@ async function quickCheckin(res: any) {
 function quickOpenRes(res: any) { quickAction.value = null; viewResDetail(res) }
 
 async function doSync() {
+  if (!modules.enabled('channel')) { syncMsg.value = 'Tu plan no incluye Channel Manager'; return }
   syncing.value = true; syncMsg.value = ''
   try {
     const r = await ChannelService.sync(hid.value)
@@ -1877,6 +1884,9 @@ onMounted(() => { window.addEventListener('keydown', onKeydownDuplicate) })
 onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydownDuplicate) })
 
 onMounted(async () => {
+  // Estado de módulos del plan (para el gating de "Sincronizar"). ensure() comparte el fetch
+  // con el menú y el guard de rutas: no agrega un request extra.
+  modules.ensure(hid.value)
   try { const d = await OperationsService.planning(hid.value); planRooms.value = d.rooms ?? []; planReservas.value = d.reservas ?? [] } catch {}
   loadLocks()
   loadDateRestrictions()
