@@ -25,3 +25,20 @@ Score: **88/100** · 4 hallazgos (0 HIGH, 1 MEDIUM, 3 LOW) · evidencia en `docs
 ## N/V (no verificable sin romper reglas)
 
 - Validación inline al submit (no se enviaron forms en prod) · estado loading · confirmación de Eliminar · toast de éxito
+
+---
+
+# Re-auditoría post-fix (commit 2328f1a, deploy 2026-08-22) → **100/100**
+
+| Hallazgo | Estado | Evidencia |
+|---|---|---|
+| MEDIUM A9 — 403 `/api/channels` en header | ✅ FIX prod | console trial host: **0 errores, 0 warnings** (antes: 403) |
+| LOW A1 — sin export | ✅ FIX prod | botón "Exportar CSV" habilitado con habitaciones, deshabilitado con 0 (vacío) — snapshot |
+| LOW A4 — Superficie default 0 | ✅ FIX prod | campo vacío (snapshot accesible, sin valor "0"); placeholder "opcional" verificado en dev |
+| LOW A8 — desalineación/whitespace | ✅ FIX (dev + CI) | centros alineados 233/233/233 + mb-6, medidos por el fixer |
+| Modal fácil (pedido del dueño) | ✅ prod | amenities agrupadas **Confort / Cocina / Trabajo** + contador **"0 seleccionadas"** (snapshot accesible prod) |
+| Validación inline + delete + toast (ex-N/V) | ✅ verificado con interacción real en DEV | submit vacío → "El número es obligatorio", 0 POSTs; "¿Eliminar habitación 301?" + toast "eliminada" capturado; editar conservó wifi/cocina/42m²/2baños/online |
+
+Gates del fix: vue-tsc ✅ · vitest 921/921 (rooms 12 + header 3 nuevos) · backend intacto.
+Evidencia: `qa-habitaciones-v2-desktop.png` · `qa-habitaciones-v2-modal.png`.
+Nota: los flujos destructivos (crear/editar/eliminar) se verificaron en dev local — en prod no se creó ni borró nada.
