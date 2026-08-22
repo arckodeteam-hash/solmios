@@ -25,37 +25,6 @@ export class CancellationController {
     return undefined
   }
 
-  async index(req: HttpRequest) {
-    this.logger.info('GET /cancellation-policies')
-    const result = await this.service.list(req.query as any)
-    return { status: 200, body: result }
-  }
-
-  async show(req: HttpRequest) {
-    this.logger.info('GET /cancellation-policies/:id', { id: req.params.id })
-    const item = await this.service.getById(req.params.id)
-    return { status: 200, body: item }
-  }
-
-  async store(req: HttpRequest) {
-    this.logger.info('POST /cancellation-policies')
-    const data = validateSchema(CreateCancellationPolicySchema, req.body)
-    const item = await this.service.create(data as any)
-    return { status: 201, body: item }
-  }
-
-  async update(req: HttpRequest) {
-    this.logger.info('PUT /cancellation-policies/:id', { id: req.params.id })
-    const data = validateSchema(UpdateCancellationPolicySchema, req.body)
-    const item = await this.service.update(req.params.id, data as any)
-    return { status: 200, body: item }
-  }
-
-  async destroy(req: HttpRequest) {
-    this.logger.info('DELETE /cancellation-policies/:id', { id: req.params.id })
-    await this.service.delete(req.params.id)
-    return { status: 204, body: null }
-  }
 
   // ── CRUD admin (F3) — rutas con guard('settings', ...) registradas en index.ts ──────
 

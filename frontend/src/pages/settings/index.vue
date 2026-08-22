@@ -455,39 +455,28 @@
 
     <!-- ========== CONDICIONES ========== -->
     <div v-if="(activeTab as string) === 'conditions'" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- Política de cancelación REAL: tiers con horas/penalidad/refundo y excepciones por
+           canal. Unifica la doble fuente de verdad — antes este tab sólo escribía el preset
+           (`hotels.cancellationType`, nivel 3 de resolvePolicy) y si el hotel tenía política
+           base guardada, editar acá no cambiaba nada. El editor trae los 4 presets como
+           plantillas rápidas y guarda por su cuenta (PUT /api/cancellation-policies/base);
+           la base guardada es la que aplican cancelaciones, motor y landing. -->
+      <div class="lg:col-span-2">
+        <CancellationPolicyEditor :hotel-id="hotelId" />
+      </div>
+
       <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <h3 class="font-extrabold text-navy mb-4">Políticas de Reserva</h3>
+        <h3 class="font-extrabold text-navy mb-4">Condiciones de la reserva</h3>
         <div class="space-y-4">
           <div class="flex items-center justify-between p-3 bg-surface rounded-xl">
             <div>
               <div class="text-sm font-bold text-navy">Cancelación gratuita</div>
-              <div class="text-[10px] text-text-muted">Hasta 24h antes del check-in · incompatible con No Reembolsable</div>
+              <div class="text-[10px] text-text-muted">La muestra el motor de reservas y el pre-checkin · la política con detalle va en el editor de abajo</div>
             </div>
             <label class="relative inline-flex items-center cursor-pointer">
               <input v-model="form.freeCancellation" type="checkbox" class="sr-only peer" data-field="freeCancellation">
               <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal"></div>
             </label>
-          </div>
-          <div>
-            <label class="block text-[11px] font-bold text-navy uppercase tracking-wide mb-2">Política de Cancelación</label>
-            <div class="grid grid-cols-2 gap-2">
-              <label v-for="policy in cancelPolicies" :key="policy.key"
-                class="flex items-start gap-2 p-3 rounded-xl cursor-pointer transition-colors"
-                :class="form.cancellationType === policy.key ? 'bg-navy/5 border border-navy/20' : 'bg-surface border border-transparent'">
-                <input v-model="form.cancellationType" type="radio" :value="policy.key" class="mt-0.5 w-4 h-4 text-cyan" data-field="cancellationType" />
-                <div>
-                  <div class="text-xs font-bold text-navy">{{ policy.label }}</div>
-                  <div class="text-[10px] text-text-muted">{{ policy.desc }}</div>
-                </div>
-              </label>
-            </div>
-            <!-- #34 (REG-3): aviso ALCANZABLE para datos legacy contradictorios — los watchers
-                 ya no auto-resuelven durante la carga, así que este estado sí se renderiza.
-                 Si el usuario no lo resuelve, el guardado lo rechaza el backend con este motivo. -->
-            <p v-if="form.freeCancellation && form.cancellationType === 'non_refundable'"
-              class="mt-2 text-[10px] font-bold text-danger">
-              "No Reembolsable" es incompatible con la cancelación gratuita: desactivá una de las dos antes de guardar.
-            </p>
           </div>
 
           <div class="flex items-center justify-between p-3 bg-surface rounded-xl">
@@ -794,12 +783,14 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, reactive } from 'vue'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import SectionCard from '@/components/ui/SectionCard.vue'
+// Política de cancelación con tiers: el editor canónico (mismo componente que usa el Motor de
+// reservas). Vive acá desde la unificación de Condiciones — antes sólo en Página pública.
+import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES, countryName } from '@/data/locales'
 import { TIMEZONES, CURRENCIES } from '@/data/intl-catalogs'
 import { CurrencyCode } from '@/types/currency'
-import { PRESET_OPTIONS } from '@/types/cancellation'
 import { parseLatLng } from '@/composables/useLatLngParse'
 import { loadGoogleMaps } from '@/composables/useGoogleMaps'
 import {
@@ -1289,31 +1280,7 @@ async function loadPlan() {
 }
 
 // Presets canónicos (mismos tiers que el backend, cancellation-math.ts).
-const cancelPolicies = PRESET_OPTIONS
 
-// #34: "Cancelación gratuita" y la política "No Reembolsable" son mutuamente excluyentes.
-// Antes la UI permitía dejar ambas activas y el guardado reventaba con un toast genérico
-// ("Error guardando: hotel") que no decía qué corregir. Ahora la selección se auto-resuelve:
-// elegir No Reembolsable apaga el toggle; reactivar el toggle con No Reembolsable activa
-// vuelve a Flexible. Los dos watchers no pueden loopear entre sí (cada uno solo escribe
-// el campo que el otro NO observa).
-//
-// COR-3/REG-3: los watchers NO corren durante la hidratación. Antes, un hotel legacy con
-// datos contradictorios (freeCancellation=true + non_refundable) se auto-flippeaba al
-// ABRIR Configuración — mutación silenciosa de un dato persistido, sin que el usuario
-// tocara nada, y el aviso de conflicto del template quedaba inalcanzable (los watchers
-// resolvían el estado antes del primer render). Con el flag, el dato legacy llega intacto,
-// el aviso se muestra, y la auto-resolución sólo ocurre si el usuario INTERACTÚA. Si
-// guarda sin tocar, el backend rechaza (hoteles-queries.assertCancellationCompatible).
-const conditionsHydrated = ref(false)
-watch(() => form.value.cancellationType, (type) => {
-  if (!conditionsHydrated.value) return
-  if (type === 'non_refundable' && form.value.freeCancellation) form.value.freeCancellation = false
-})
-watch(() => form.value.freeCancellation, (on) => {
-  if (!conditionsHydrated.value) return
-  if (on && form.value.cancellationType === 'non_refundable') form.value.cancellationType = 'flexible'
-})
 
 // Amenities
 const amenityCatalog = ref<AmenityCatalog>({ interior: [], exterior: [], services: [] })
@@ -1434,7 +1401,6 @@ onMounted(async () => {
     // intacto al render y el aviso del template es alcanzable. La auto-resolución sólo
     // ocurre si el usuario INTERACTÚA después de la carga.
     await nextTick()
-    conditionsHydrated.value = true
 
     // Amenities catalog + selected
     const [cat, sel] = await Promise.all([
@@ -1503,7 +1469,7 @@ async function saveAll() {
     'freeCancellation','depositRequired','depositPercent','weekendSurcharge',
     'accommodationType','starRating','ownerName','ownerTaxId','phone2','website',
     'province','municipality','locality','postalCode','latitude','longitude',
-    'cancellationType','cleaningType',
+    'cleaningType',
     'depositType','depositFixed','advanceType','advanceAmount','releaseHours','defaultPaymentMethod',
     'requestReviews','taxName','taxRate',
     'wifiNetwork','wifiPassword','logo']
