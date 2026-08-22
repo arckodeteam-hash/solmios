@@ -123,6 +123,50 @@ describe('createPublicBookingGroup — tipos distintos combinados', () => {
   })
 })
 
+describe('Tarea 3.1 — estimatedArrival llega a Reservations.notes (grupo)', () => {
+  it('estimatedArrival aparece en el notes de TODAS las reservas del grupo', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [
+        { id: 'r-deluxe', hotelId: HOTEL_ID, type: 'deluxe', capacity: 2, basePrice: 150, status: 'available' },
+        { id: 'r-standard', hotelId: HOTEL_ID, type: 'standard', capacity: 2, basePrice: 80, status: 'available' },
+      ],
+    })
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      estimatedArrival: '15:00',
+      rooms: [
+        { roomType: 'deluxe', adults: 2, quantity: 1 },
+        { roomType: 'standard', adults: 2, quantity: 1 },
+      ],
+    }, undefined, undefined, fakeStripe as any, undefined, stripeUrls)
+
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(2)
+    expect(tables.Reservations.every((r: any) => String(r.notes).includes('Llegada estimada: 15:00'))).toBe(true)
+  })
+
+  it('Corrección 2026-08-22 — specialRequests aparece en el notes de TODAS las reservas del grupo', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [
+        { id: 'r-deluxe', hotelId: HOTEL_ID, type: 'deluxe', capacity: 2, basePrice: 150, status: 'available' },
+        { id: 'r-standard', hotelId: HOTEL_ID, type: 'standard', capacity: 2, basePrice: 80, status: 'available' },
+      ],
+    })
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      specialRequests: 'Necesitamos 2 cunas',
+      rooms: [
+        { roomType: 'deluxe', adults: 2, quantity: 1 },
+        { roomType: 'standard', adults: 2, quantity: 1 },
+      ],
+    }, undefined, undefined, fakeStripe as any, undefined, stripeUrls)
+
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(2)
+    expect(tables.Reservations.every((r: any) => String(r.notes).includes('Pedido especial: Necesitamos 2 cunas'))).toBe(true)
+  })
+})
+
 describe('createPublicBookingGroup — mismo tipo ×N (caso literal original)', () => {
   it('3 Deluxe disponibles, pide ×2 → crea 1 reserva por unidad, 2 en total', async () => {
     const { orm, tables } = makeDb({

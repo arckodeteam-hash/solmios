@@ -550,10 +550,147 @@ Specs: `specs/booking-availability-pricing/spec.md` (2.1),
 
 Specs: `specs/booking-checkout-ux/spec.md`, `specs/booking-content-policies/spec.md`.
 
-- [ ] 3.1 Reducir el formulario de datos del huésped a nombre, apellido, email,
+- [x] 3.1 Reducir el formulario de datos del huésped a nombre, apellido, email,
       teléfono y hora estimada de llegada; mover cualquier campo adicional existente
       al flujo de pre-check-in/checklist (Tarea 5). **Acceptance**:
       `GuestCheckoutStep.vue` no solicita ningún dato fuera de esos 5 campos.
+
+      **Hecho 2026-08-22.** El formulario YA pedía solo nombre+apellido (un campo
+      combinado, "Nombre y apellido"), email y teléfono — no había campos de
+      pre-check-in que mover. El campo que faltaba (hora estimada de llegada) SÍ
+      existía, pero disfrazado de un textarea "Notas (opcional)" genérico
+      ("pedidos especiales, hora de llegada…") en ambas superficies
+      (`GuestCheckoutStep.vue` del widget, `BookingModal.vue` de la landing).
+
+      **Bug real encontrado en la auditoría, no solo falta de campo**: ese textarea
+      mandaba `notes` en el body de `POST /api/public/booking` (y `/booking/group`),
+      pero ningún schema del backend lo declaraba (`CreatePublicBookingSchema`,
+      `ExtendedPublicBookingSchema`, `CreatePublicBookingGroupSchema`) —
+      `validateSchema` lo descartaba en el controller ANTES de que el usecase lo
+      viera. El `Reservations.notes` que sí se guarda es 100% generado por el
+      servidor (resumen de promo/upsells/total, ver `public-booking.ts:432-436`).
+      Conclusión: todo lo que un huésped escribía en "Notas" — incluida la hora de
+      llegada que el placeholder sugería — se perdía en silencio, sin error visible
+      ni para el huésped ni para el hotel. Confirmado leyendo el controller
+      (`createPublicBookingDirect`/`createPublicBookingGroup`): solo `upsells`,
+      `rooms` e `idempotencyKey` se reincorporan crudos tras `validateSchema`;
+      `notes` no estaba en esa lista.
+
+      **Fix**: reemplazado el textarea genérico por un campo único y estructurado
+      `estimatedArrival` (texto libre corto, ej. "15:00" o "después de las 8pm"),
+      declarado en `CreatePublicBookingSchema`/`CreatePublicBookingGroupSchema`
+      (`estimatedArrival: string, max 100, opcional`) y escrito por ambos usecases
+      en `notesParts` → `Reservations.notes`, donde el recepcionista SÍ lo ve.
+      Cambios: `bookingengine/validators/schema.ts`, `usecases/public-booking.ts`,
+      `usecases/public-booking-group.ts` (backend); `useBooking.ts` (`BookingGuest.
+      notes` → `estimatedArrival`), `Booking.service.ts`, `types/booking.ts`
+      (`CreateBookingGuest`), `GuestCheckoutStep.vue`, `BookingModal.vue`,
+      `useBookingI18n.ts` (es/en/pt) (frontend). Ningún otro campo de pre-check-in
+      existía en este formulario para mover — el spec ya estaba satisfecho en
+      nombre/email/teléfono, solo faltaba (y estaba roto) el quinto campo.
+
+      Verificado: backend `bun test src/modules/bookingengine` 379/379,
+      `arckode analyze` ✅ 0 violaciones (typecheck backend tiene 11 errores
+      preexistentes en `admin/plans.ts`/`subscriptions/plan-gating.test.ts`/
+      `subscriptions/resolve-plan.ts` — trabajo sin commitear de otra sesión en
+      paralelo, no relacionado a este módulo, confirmado con `git status` al
+      inicio). Frontend: `vitest run` sobre `components/booking`,
+      `components/landing/BookingModal.test.ts`, `composables/useBooking*`,
+      `services/Booking.service.test.ts` → 76/76 verde; `vite build` ✓ built
+      (typecheck frontend también tiene errores preexistentes ajenos en
+      `pages/super-admin/plan-modules.ts` — misma sesión paralela).
+      Documentado en `specs/booking-checkout-ux/spec.md` (sección API, con el
+      hallazgo completo).
+
+      **Segunda pasada (2026-08-22, cierre del gap de tests)**: la primera pasada
+      dejó anotado que no había ningún test de regresión que fijara el
+      comportamiento. Cerrado con 7 tests nuevos, todos revert-testeados a mano
+      (comentado el fix, confirmado rojo con el mensaje exacto, restaurado,
+      confirmado verde de nuevo):
+      - `public-booking-schema.test.ts` (4 casos): `estimatedArrival` sobrevive
+        `validateSchema` en `ExtendedPublicBookingSchema` y en
+        `CreatePublicBookingGroupSchema`; sin el campo no revienta (opcional); y
+        el caso que documenta el bug cerrado — un `notes` suelto en el body se
+        sigue descartando en silencio (si algún día alguien "arregla" el textarea
+        agregando `notes` de vuelta al schema sin tocar este test, el test avisa).
+      - `public-booking-checkout.test.ts` (2 casos): `estimatedArrival` en el body
+        → `Reservations.notes` contiene `"Llegada estimada: 15:00"`; sin el campo,
+        `notes` no menciona "Llegada estimada".
+      - `public-booking-group.test.ts` (1 caso): mismo comportamiento para
+        `createPublicBookingGroup`, verificado en las `notes` de TODAS las
+        reservas del grupo (comparten `notesParts`).
+      Suite completa `bookingengine` tras el cierre: 386/386 (379 + 7). Verificado
+      además que ningún consumidor frontend lee `PublicReservation.notes` (tipo
+      declarado en `types/booking.ts:450` pero sin ningún `.notes` leído sobre una
+      reserva pública en todo `src/`) — no hay UI que dependiera del campo viejo.
+      Confirmado con `git stash`/`stash pop` que las 5 suites que fallan en
+      `vitest run` completo (`rooms.test.ts`, `modules.store.test.ts`,
+      `AppHeader.channel-gate.test.ts`, `FooterBlock.test.ts`,
+      `hotel-landing.test.ts`) fallan IGUAL sobre `HEAD` limpio, sin este cambio
+      — deuda ajena (3 de otra sesión en paralelo sobre feature-gating por plan,
+      2 ya documentadas en memoria como "favicon.svg" preexistente), no algo que
+      esta tarea haya introducido.
+
+      **Tercera pasada (2026-08-22, corrección de producto)**: el usuario (dueño del
+      producto) pidió explícitamente asegurar que el textarea de pedidos especiales
+      siguiera existiendo y funcionando — recibir peticiones del huésped es un
+      requisito duro, no un nice-to-have que se pueda perder al reemplazarlo por
+      `estimatedArrival`. La segunda pasada había cerrado el bug de persistencia
+      pero angostó el alcance a un solo campo estructurado, sin restaurar el texto
+      libre.
+      **Fix**: agregado `specialRequests` (string, opcional, max 500) como campo
+      HERMANO de `estimatedArrival` — no lo reemplaza, ninguno de los dos se sacó.
+      Declarado en `CreatePublicBookingSchema`/`CreatePublicBookingGroupSchema`,
+      escrito por ambos usecases en `notesParts` con su propia etiqueta ("Pedido
+      especial: …", justo después de "Llegada estimada"). Textarea restaurado en
+      `GuestCheckoutStep.vue` y `BookingModal.vue` (label "Pedidos especiales
+      (opcional)", placeholder "Cuna, piso alto, alergias…"). `BookingGuest`/
+      `CreateBookingGuest`/`Booking.service.ts` extendidos con el nuevo campo. i18n
+      es/en/pt.
+      Tests nuevos (mismo patrón, revert-testeados a mano): 2 en
+      `public-booking-schema.test.ts` (sobrevive validateSchema / opcional no
+      revienta), 2 en `public-booking-checkout.test.ts` (llega a `Reservations.notes`
+      etiquetado; ambos campos juntos no se pisan), 1 en `public-booking-group.test.ts`
+      (llega a las `notes` de todas las reservas del grupo). Suite `bookingengine`
+      final: 391/391 (386 + 5). `arckode analyze` 0 violaciones.
+      **Verificación extremo a extremo contra el servidor real** (no solo tests, ya
+      que el pedido explícito era "asegurate de que esto funcione" para el negocio):
+      levantado `bun run dev` (backend :3001) + `vite` (frontend :5173) sobre la
+      SQLite de dev, `POST /api/public/booking` real contra `hotel-boutique-palma`
+      con `estimatedArrival` y `specialRequests`, reserva creada (201). Logueado como
+      `admin@caribeparadise.com` (dueño de ese hotel en la DB local) y consultado
+      `GET /api/reservas/:id` — el MISMO endpoint que usa el panel — devolvió
+      `notes: "Reserva desde widget público | Llegada estimada: 15:00 | Pedido
+      especial: Cuna y piso alto, por favor (verificacion end-to-end) | Total:
+      153.40 (subtotal 130.00 + tax 23.40)"`. Confirmado además (lectura de código)
+      que `ReservationModal.vue:774-777` ya renderiza `d.notes` bajo el label
+      "Notas", dentro de `<details open>` (expandido por defecto) — el anfitrión lo
+      ve sin acción adicional, no hizo falta tocar el panel. Reserva y guest de
+      prueba borrados de la DB de dev tras verificar. Servers de dev detenidos al
+      terminar.
+      Documentado en `specs/booking-checkout-ux/spec.md` (requirement ampliado a 6
+      campos + 2 scenarios nuevos, sección API y UI actualizadas).
+
+      **Cuarta pasada (2026-08-22, iteración de cierre)**: gap real encontrado —
+      `estimatedArrival`/`specialRequests` tenían tope en el backend
+      (`max: 100`/`max: 500`, confirmado leyendo `arckode-framework/kernel/
+      validator.ts:55`: para `type:'string'` `max` es longitud, no valor) pero
+      ningún `maxlength` en el HTML. No es pérdida de datos ni bug de persistencia
+      (`validateSchema` responde 400 con mensaje claro y `http.ts:withFieldDetail`
+      ya lo traduce a texto legible para el huésped) — es fricción evitable: sin el
+      atributo, el huésped podía escribir de más y recién se enteraba al enviar. Fix:
+      `maxlength="100"`/`maxlength="500"` en los 4 inputs (`GuestCheckoutStep.vue` +
+      `BookingModal.vue`), espejando los límites del schema — el navegador corta
+      antes de que se pueda mandar un valor inválido. Verificado: `vitest run`
+      scoped 76/76 sin cambios, `vite build` ✓ built.
+
+      **Hallazgo NO implementado, reportado para decisión del usuario**: el pedido
+      especial solo se ve hoy en `ReservationModal.vue` (detalle de la reserva). La
+      página de check-in (`pages/checkin/index.vue`, 1080 líneas) no muestra
+      `notes` en ningún lado — un recepcionista que hace check-in sin abrir el
+      detalle de la reserva primero no ve "cuna y piso alto" en el momento en que
+      más importa (justo al asignar/preparar la habitación). Es una pantalla
+      distinta y un cambio de tamaño no trivial — no se tocó sin confirmación.
 
 - [ ] 3.2 Mejorar legibilidad del resumen de reserva (fecha, habitación, huéspedes,
       total): revisar peso de fuente, tamaño, contraste, jerarquía y espaciado de los

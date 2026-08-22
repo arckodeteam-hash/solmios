@@ -12,16 +12,33 @@ hallazgos de QA (2026-08-20).
 ### Requirement: Datos mínimos solicitados al huésped
 
 El formulario de datos del huésped durante la reserva MUST limitarse a: nombre,
-apellido, correo electrónico, teléfono, hora estimada de llegada. El motor MUST NOT
-solicitar datos adicionales del huésped en esta etapa si existe un proceso posterior
-(pre-check-in / checklist) donde esos datos se completan.
+apellido, correo electrónico, teléfono, hora estimada de llegada, pedidos especiales
+en texto libre. El motor MUST NOT solicitar datos adicionales del huésped en esta etapa
+si existe un proceso posterior (pre-check-in / checklist) donde esos datos se completan.
 
-#### Scenario: Formulario de checkout solo pide lo esencial
+**Corrección 2026-08-22**: la primera versión de este requirement (cerrada el mismo día)
+listaba 5 campos sin "pedidos especiales", reemplazando el textarea de notas original por
+solo `estimatedArrival`. El dueño del producto pidió explícitamente recibir peticiones del
+huésped (cuna, piso alto, alergias…) — no es opcional para el negocio. El requirement queda
+en 6 campos: los 5 originales + un textarea de texto libre. Los pedidos especiales MUST
+llegar al recepcionista en la información de la reserva (no alcanza con que el campo exista
+en el formulario si no se persiste — ver la sección API, el bug real que motivó todo esto).
+
+#### Scenario: Formulario de checkout pide lo esencial + espacio para pedidos del huésped
 
 - GIVEN un huésped llega al paso de datos personales (`GuestCheckoutStep.vue`)
 - WHEN completa el formulario
-- THEN los únicos campos requeridos son nombre, apellido, email, teléfono y hora
-  estimada de llegada — ningún campo de pre-check-in aparece ahí
+- THEN los únicos campos son nombre, apellido, email, teléfono, hora estimada de
+  llegada y pedidos especiales (texto libre) — ningún campo de pre-check-in aparece ahí
+
+#### Scenario: Un pedido especial escrito por el huésped llega al anfitrión
+
+- GIVEN un huésped escribe "cuna y piso alto" en el campo de pedidos especiales y
+  completa la reserva
+- WHEN el anfitrión del hotel abre el detalle de esa reserva en el panel
+  (`ReservationModal.vue`, sección "Datos de la Reserva")
+- THEN ve el texto "Pedido especial: cuna y piso alto" dentro de "Notas", visible sin
+  tener que expandir nada adicional (`<details open>`)
 
 ### Requirement: Legibilidad de información crítica de la reserva
 
@@ -57,15 +74,39 @@ Sin cambios — este spec es puramente de UI/formulario.
 
 ## API
 
-Sin cambios de API — depende de que `booking-availability-pricing` y
-`booking-content-policies` ya entreguen los datos correctos; este spec cubre cómo se
-presentan y qué campos se piden.
+`POST /api/public/booking` y `POST /api/public/booking/group` agregan `estimatedArrival`
+(string, opcional, max 100) y `specialRequests` (string, opcional, max 500) a
+`CreatePublicBookingSchema`/`CreatePublicBookingGroupSchema`
+(`bookingengine/validators/schema.ts`). Ambos usecases los escriben en
+`Reservations.notes` para el recepcionista (mismo campo donde ya viajan promo/upsells/
+total), cada uno con su propia etiqueta ("Llegada estimada: …" / "Pedido especial: …").
+
+**Hallazgo de la auditoría (2026-08-22)**: el textarea de "notas" que este formulario tenía
+antes (pedidos especiales, hora de llegada, todo junto en texto libre) mandaba `notes` en
+el body, pero ni `CreatePublicBookingSchema` ni `ExtendedPublicBookingSchema` lo declaraban
+— `validateSchema` lo descartaba en el controller (`createPublicBookingDirect`/
+`createPublicBookingGroup`) antes de que el usecase lo viera. El `notes` que sí queda en la
+reserva es 100% generado por el servidor (resumen de promo/upsells/total); cualquier pedido
+que el huésped escribiera en ese campo se perdía sin error ni aviso, para ambas superficies
+(`GuestCheckoutStep.vue` del widget y `BookingModal.vue` de la landing). Mismo patrón que el
+anti-patrón ORM documentado en CLAUDE.md, un nivel más arriba (validator, no ORM).
+
+**Corrección 2026-08-22**: la primera pasada cerró el bug reemplazando el textarea por
+`estimatedArrival` únicamente — perdía la capacidad de recibir pedidos libres, que el dueño
+del producto marcó como requisito duro. Se agregó `specialRequests` como campo hermano,
+declarado en el schema con el mismo criterio (así no vuelve a pasar lo de `notes`), sin tocar
+`estimatedArrival`. Verificado extremo a extremo contra el server real + SQLite de dev (no
+solo tests): `POST /api/public/booking` con ambos campos → `GET /api/reservas/:id`
+(autenticado, mismo endpoint que consume el panel) devuelve `notes` con las dos etiquetas.
 
 ## UI
 
-- `GuestCheckoutStep.vue`: eliminar cualquier campo fuera de nombre, apellido, email,
-  teléfono, hora estimada de llegada. Si existen campos adicionales hoy, moverlos al
-  flujo de pre-check-in/checklist post-reserva (fuera de este widget).
+- `GuestCheckoutStep.vue` / `BookingModal.vue`: nombre, apellido (un campo combinado
+  "Nombre y apellido"), email, teléfono, hora estimada de llegada (input corto) y pedidos
+  especiales (textarea). Ningún campo de pre-check-in en este paso.
+- `ReservationModal.vue` (panel del hotel): sin cambios — ya renderizaba `d.notes` con
+  label "Notas" en la sección "Datos de la Reserva" (`<details open>` por defecto), así
+  que el pedido especial se ve sin acción adicional del anfitrión.
 - `PayStep.vue` / resumen de reserva: revisar peso de fuente, tamaño, contraste,
   jerarquía visual y espaciado de fecha/habitación/huéspedes/total. Aumentar tamaño de
   fuente de políticas y condiciones sin promoverlas a elemento dominante.

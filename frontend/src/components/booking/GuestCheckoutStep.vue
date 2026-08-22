@@ -2,16 +2,26 @@
   <!--
     GuestCheckoutStep.vue — Step 3 del widget (F2 2.9, solmi-direct-booking).
     Form de datos del huésped SIN requerir cuenta (spec: guest checkout anónimo REQUIRED).
-    Solo email + nombre + teléfono + notas opcionales. La cuenta es una fricción que el spec
-    explicitamente prohíbe forzar.
+    Nombre + email + teléfono + hora estimada de llegada + pedidos especiales (opcionales).
+    La cuenta es una fricción que el spec explicitamente prohíbe forzar.
+
+    Tarea 3.1 (solmi-direct-booking-qa-fixes) — el textarea de "notas" genérico original NO
+    llegaba al backend: `notes` no estaba declarado en el schema, `validateSchema` lo
+    descartaba en el controller antes de llegar al usecase, así que cualquier pedido que el
+    huésped escribiera ahí se perdía en silencio. Corrección 2026-08-22 (feedback directo del
+    dueño del producto: recibir pedidos del huésped es un requisito duro, no un nice-to-have):
+    el textarea de pedidos especiales vuelve a existir, pero ahora como `specialRequests`,
+    declarado en el schema — SÍ llega a `Reservations.notes`, etiquetado "Pedido especial",
+    donde el recepcionista lo ve. `estimatedArrival` (agregado en la misma tarea, campo
+    estructurado corto) se mantiene aparte porque no es lo mismo que un pedido en texto libre.
 
     Validación (acceptance 2.9):
       - name: ≥ 2 chars (trim)
       - email: regex estándar EMAIL_RE
       - phone: ≥ 5 chars (trim) — formatos internacionales (+1 809…)
-      - notes: opcional
+      - estimatedArrival / specialRequests: opcionales
     `store.guestValid` habilita el botón "Continuar al pago". El store mapea estos campos al
-    body del POST /public/booking (guestName/guestEmail/guestPhone/notes).
+    body del POST /public/booking (guestName/guestEmail/guestPhone/estimatedArrival/specialRequests).
     Todos los textos via i18n (es/en/pt, task 2.14).
   -->
   <section class="space-y-4">
@@ -66,12 +76,25 @@
       </label>
 
       <label class="block">
-        <span class="block text-xs font-bold text-text-muted uppercase tracking-wide mb-1">{{ t('guest.notes') }}</span>
-        <textarea
-          v-model="store.guest.notes"
-          rows="2"
+        <span class="block text-xs font-bold text-text-muted uppercase tracking-wide mb-1">{{ t('guest.arrivalTime') }}</span>
+        <input
+          v-model="store.guest.estimatedArrival"
+          type="text"
+          autocomplete="off"
+          maxlength="100"
           class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base text-navy focus:border-cyan focus:ring-2 focus:ring-cyan/30 focus:outline-none"
-          :placeholder="t('guest.notesPlaceholder')"
+          :placeholder="t('guest.arrivalTimePlaceholder')"
+        />
+      </label>
+
+      <label class="block">
+        <span class="block text-xs font-bold text-text-muted uppercase tracking-wide mb-1">{{ t('guest.specialRequests') }}</span>
+        <textarea
+          v-model="store.guest.specialRequests"
+          rows="2"
+          maxlength="500"
+          class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base text-navy focus:border-cyan focus:ring-2 focus:ring-cyan/30 focus:outline-none"
+          :placeholder="t('guest.specialRequestsPlaceholder')"
         />
       </label>
 

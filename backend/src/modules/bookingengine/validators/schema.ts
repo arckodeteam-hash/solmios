@@ -54,6 +54,14 @@ export const CreatePublicBookingSchema: Record<string, ValidationRule> = {
   adults: { type: 'number' as const, required: true, min: 1 },
   children: { type: 'number' as const, min: 0 },
   promoCode: { type: 'string' as const },
+  // Tarea 3.1 (solmi-direct-booking-qa-fixes) — hora de llegada estructurada +
+  // pedidos especiales en texto libre (dueño del producto: recibir pedidos del huésped
+  // es un requisito duro, no se puede perder el textarea de notas — ver corrección
+  // 2026-08-22 en tasks.md). Ambos se declaran acá para que `validateSchema` los deje
+  // pasar (antes `notes` no estaba declarado y se descartaba en silencio, ver
+  // ExtendedPublicBookingSchema).
+  estimatedArrival: { type: 'string' as const, max: 100 },
+  specialRequests: { type: 'string' as const, max: 500 },
 }
 
 // ─── Eventos ────────────────────────────────────────────
@@ -134,6 +142,9 @@ export const CreatePublicBookingGroupSchema: Record<string, ValidationRule> = {
   promoCode: { type: 'string' as const },
   successUrl: { type: 'string' as const },
   cancelUrl: { type: 'string' as const },
+  // Tarea 3.1 — mismos campos que el schema de 1 habitación (ver CreatePublicBookingSchema).
+  estimatedArrival: { type: 'string' as const, max: 100 },
+  specialRequests: { type: 'string' as const, max: 500 },
 }
 
 // ─── Upsells (F2 2.3) ──────────────────────────────────────────────────────

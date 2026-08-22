@@ -126,6 +126,70 @@ describe('createPublicBookingDirect — cableo Stripe (F0 0.16)', () => {
     expect(res.body.reservation.totalAmount).toBe(200)
   })
 
+  it('Tarea 3.1 — estimatedArrival llega a Reservations.notes (el textarea viejo "notes" ' +
+    'nunca llegaba: no estaba en el schema, validateSchema lo descartaba en el controller ' +
+    'antes de que el usecase lo viera)', async () => {
+    const { orm, created } = makeOrm()
+    const { deps } = makeStripeDeps()
+    const { logger } = makeLogger()
+
+    const body = { ...baseBody, estimatedArrival: '15:00' }
+    const res = await createPublicBookingDirect(orm, body, undefined, undefined, deps, logger, {
+      successUrl: 'https://s', cancelUrl: 'https://c',
+    })
+
+    expect(res.status).toBe(201)
+    const reservationCreate = created.find((c) => c.model === 'Reservations')
+    expect(reservationCreate.row.notes).toContain('Llegada estimada: 15:00')
+  })
+
+  it('sin estimatedArrival, Reservations.notes no menciona "Llegada estimada" (opcional real)', async () => {
+    const { orm, created } = makeOrm()
+    const { deps } = makeStripeDeps()
+    const { logger } = makeLogger()
+
+    const res = await createPublicBookingDirect(orm, baseBody, undefined, undefined, deps, logger, {
+      successUrl: 'https://s', cancelUrl: 'https://c',
+    })
+
+    expect(res.status).toBe(201)
+    const reservationCreate = created.find((c) => c.model === 'Reservations')
+    expect(reservationCreate.row.notes).not.toContain('Llegada estimada')
+  })
+
+  it('Corrección 2026-08-22 — specialRequests llega a Reservations.notes, etiquetado ' +
+    '"Pedido especial" (feedback directo del dueño del producto: recibir pedidos del ' +
+    'huésped es un requisito duro)', async () => {
+    const { orm, created } = makeOrm()
+    const { deps } = makeStripeDeps()
+    const { logger } = makeLogger()
+
+    const body = { ...baseBody, specialRequests: 'Cuna y piso alto, por favor' }
+    const res = await createPublicBookingDirect(orm, body, undefined, undefined, deps, logger, {
+      successUrl: 'https://s', cancelUrl: 'https://c',
+    })
+
+    expect(res.status).toBe(201)
+    const reservationCreate = created.find((c) => c.model === 'Reservations')
+    expect(reservationCreate.row.notes).toContain('Pedido especial: Cuna y piso alto, por favor')
+  })
+
+  it('estimatedArrival + specialRequests juntos: ambos aparecen, cada uno con su etiqueta', async () => {
+    const { orm, created } = makeOrm()
+    const { deps } = makeStripeDeps()
+    const { logger } = makeLogger()
+
+    const body = { ...baseBody, estimatedArrival: '15:00', specialRequests: 'Alergia al maní' }
+    const res = await createPublicBookingDirect(orm, body, undefined, undefined, deps, logger, {
+      successUrl: 'https://s', cancelUrl: 'https://c',
+    })
+
+    expect(res.status).toBe(201)
+    const reservationCreate = created.find((c) => c.model === 'Reservations')
+    expect(reservationCreate.row.notes).toContain('Llegada estimada: 15:00')
+    expect(reservationCreate.row.notes).toContain('Pedido especial: Alergia al maní')
+  })
+
   it('Stripe falla → reserva se crea igual (201) + checkoutUrl=null + paymentError + warn', async () => {
     const { orm, created } = makeOrm()
     const { deps } = makeStripeDeps({ fail: true })

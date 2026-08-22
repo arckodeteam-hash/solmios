@@ -207,6 +207,11 @@ export async function createPublicBookingDirect(
     // F2 2.5 — promoCode + upsells ahora se PROCESAN (F0 0.16 solo los persistía).
     promoCode,
     upsells,
+    // Tarea 3.1 — hora de llegada estructurada + pedidos especiales en texto libre. Antes
+    // de este cambio ninguno de los dos llegaba acá: el schema no los declaraba y
+    // validateSchema los descartaba en el controller en silencio.
+    estimatedArrival,
+    specialRequests,
   } = body
 
   if (!hotelId || (!roomId && !roomType) || !guestName || !guestEmail || !checkIn || !checkOut) {
@@ -430,6 +435,16 @@ export async function createPublicBookingDirect(
 
   // Notas enriquecidas con el detalle de promo/upsells para el recepcionista (F0 0.16 + F2 2.5).
   const notesParts: string[] = ['Reserva desde widget público']
+  if (typeof estimatedArrival === 'string' && estimatedArrival.trim()) {
+    notesParts.push(`Llegada estimada: ${estimatedArrival.trim()}`)
+  }
+  // Tarea 3.1 (corrección 2026-08-22) — pedido especial del huésped, en texto libre.
+  // Va PRIMERO entre los detalles (después de la llegada) a propósito: es lo único que el
+  // recepcionista tiene que leer con atención antes de preparar la habitación; el resto de
+  // `notesParts` (promo/upsells/total) es contabilidad, no una petición humana.
+  if (typeof specialRequests === 'string' && specialRequests.trim()) {
+    notesParts.push(`Pedido especial: ${specialRequests.trim()}`)
+  }
   if (promoCode) notesParts.push(`Promo: ${promoCode}${promoReason ? ` (${promoReason})` : ''}`)
   if (upsellSummary.length > 0) notesParts.push(`Upsells: ${upsellSummary.join(', ')}`)
   notesParts.push(`Total: ${totalAmount.toFixed(2)} (subtotal ${subtotalBeforeDiscount.toFixed(2)}` +

@@ -76,8 +76,8 @@ export const BookingService = {
    * Pasos:
    *   1. Resuelve `dto.slug` → `hotelId` vía `PublicHotelService.getBySlug` (una request
    *      extra; deja el DTO del widget limpio: el widget sabe el slug, no el id interno).
-   *   2. Mapea `guest:{name,email,phone,notes}` → `guestName/guestEmail/guestPhone/notes`
-   *      (schema backend).
+   *   2. Mapea `guest:{name,email,phone,estimatedArrival,specialRequests}` →
+   *      `guestName/guestEmail/guestPhone/estimatedArrival/specialRequests` (schema backend).
    *   3. POST /api/public/booking con el body plano + upsells/promoCode/successUrl/cancelUrl
    *      + idempotencyKey client-side.
    *   4. Aplana la respuesta a `{reservationId, accessToken, checkoutUrl, totalBreakdown, paymentError?}`.
@@ -101,7 +101,8 @@ export const BookingService = {
     // la unidad física a partir de `roomType`. Solo se manda si un caller lo pasó explícito.
     if (dto.roomId) body.roomId = dto.roomId
     if (dto.children !== undefined) body.children = dto.children
-    if (dto.guest.notes) body.notes = dto.guest.notes
+    if (dto.guest.estimatedArrival) body.estimatedArrival = dto.guest.estimatedArrival
+    if (dto.guest.specialRequests) body.specialRequests = dto.guest.specialRequests
     if (dto.promoCode) body.promoCode = dto.promoCode
     if (dto.upsells && dto.upsells.length > 0) body.upsells = dto.upsells
     if (dto.successUrl) body.successUrl = dto.successUrl
@@ -141,7 +142,8 @@ export const BookingService = {
       guestEmail: dto.guest.email,
       guestPhone: dto.guest.phone,
     }
-    if (dto.guest.notes) body.notes = dto.guest.notes
+    if (dto.guest.estimatedArrival) body.estimatedArrival = dto.guest.estimatedArrival
+    if (dto.guest.specialRequests) body.specialRequests = dto.guest.specialRequests
     if (dto.promoCode) body.promoCode = dto.promoCode
     if (dto.upsells && dto.upsells.length > 0) body.upsells = dto.upsells
     if (dto.successUrl) body.successUrl = dto.successUrl

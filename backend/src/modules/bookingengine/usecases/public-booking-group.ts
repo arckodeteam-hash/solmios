@@ -107,6 +107,9 @@ export async function createPublicBookingGroup(
   const {
     hotelId, guestName, guestEmail, guestPhone, checkIn, checkOut,
     promoCode, upsells,
+    // Tarea 3.1 (solmi-direct-booking-qa-fixes) — mismos campos que public-booking.ts.
+    estimatedArrival,
+    specialRequests,
   } = body
 
   if (!hotelId || !guestName || !guestEmail || !checkIn || !checkOut) {
@@ -260,6 +263,12 @@ export async function createPublicBookingGroup(
 
   const roomsSummary = resolvedLines.map((l) => `${l.roomType}×${l.roomIds.length} (para ${l.adults})`).join(', ')
   const notesParts: string[] = ['Reserva de grupo desde widget público', `Habitaciones: ${roomsSummary}`]
+  if (typeof estimatedArrival === 'string' && estimatedArrival.trim()) {
+    notesParts.push(`Llegada estimada: ${estimatedArrival.trim()}`)
+  }
+  if (typeof specialRequests === 'string' && specialRequests.trim()) {
+    notesParts.push(`Pedido especial: ${specialRequests.trim()}`)
+  }
   if (promoCode) notesParts.push(`Promo: ${promoCode}${promoReason ? ` (${promoReason})` : ''}`)
   if (upsellSummary.length > 0) notesParts.push(`Upsells: ${upsellSummary.join(', ')}`)
   notesParts.push(`Total grupo: ${totalAmount.toFixed(2)} (subtotal ${subtotalBeforeDiscount.toFixed(2)}` +

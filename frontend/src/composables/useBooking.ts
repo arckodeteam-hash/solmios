@@ -70,7 +70,12 @@ export interface BookingGuest {
   name: string
   email: string
   phone: string
-  notes: string
+  /** Hora estimada de llegada (Tarea 3.1). */
+  estimatedArrival: string
+  /** Pedidos especiales en texto libre (cuna, piso alto, alergias…). Corrección 2026-08-22:
+   *  el dueño del producto confirmó que recibir pedidos del huésped es un requisito duro —
+   *  no alcanza con reemplazarlo por el campo estructurado de arriba. */
+  specialRequests: string
 }
 
 /** Índice del step (0-5) para el stepper indicator del wrapper. ConfirmStep = índice 5. */
@@ -239,7 +244,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
   const mealPlansLoading = ref(false)
 
   // ─── Guest (step 3) ───────────────────────────────────────────────────────────
-  const guest = ref<BookingGuest>({ name: '', email: '', phone: '', notes: '' })
+  const guest = ref<BookingGuest>({ name: '', email: '', phone: '', estimatedArrival: '', specialRequests: '' })
 
   // ─── Promo (step 4) ───────────────────────────────────────────────────────────
   const promoCode = ref('')
@@ -765,7 +770,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
         name: guest.value.name.trim(),
         email: guest.value.email.trim(),
         phone: guest.value.phone.trim(),
-        notes: guest.value.notes.trim() || undefined,
+        estimatedArrival: guest.value.estimatedArrival.trim() || undefined,
+        specialRequests: guest.value.specialRequests.trim() || undefined,
       }
       const promoPayload = promoResult.value?.valid && promoCode.value
         ? { promoCode: promoResult.value.code ?? promoCode.value.trim().toUpperCase() }
@@ -877,7 +883,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     selectedUpsells.value = []
     mealPlans.value = []
     mealPlansLoading.value = false
-    guest.value = { name: '', email: '', phone: '', notes: '' }
+    guest.value = { name: '', email: '', phone: '', estimatedArrival: '', specialRequests: '' }
     promoCode.value = ''
     promoResult.value = null
     promoLoading.value = false

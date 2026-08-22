@@ -15,9 +15,15 @@ export interface CreateBookingGuest {
   name: string
   email: string
   phone: string
-  /** Notas opcionales del huésped (pedidos especiales, hora de llegada, etc.). El service lo
-   *  mapea a `notes` del body del backend (campo libre en Reservations). */
-  notes?: string
+  /** Hora estimada de llegada (Tarea 3.1, solmi-direct-booking-qa-fixes). Campo
+   *  estructurado — el service lo mapea a `estimatedArrival` del body del backend. */
+  estimatedArrival?: string
+  /** Pedidos especiales en texto libre (cuna, piso alto, alergias…). Corrección 2026-08-22:
+   *  el dueño del producto confirmó que recibir pedidos del huésped es un requisito duro.
+   *  Reemplaza el `notes` original, que el backend nunca persistía
+   *  (`ExtendedPublicBookingSchema` no lo declaraba, `validateSchema` lo descartaba en
+   *  silencio) — este SÍ está declarado en el schema y llega a `Reservations.notes`. */
+  specialRequests?: string
 }
 
 /** Hook F2 (task 2.5): el backend aún no valida contra modelo Upsell, solo lo persiste en

@@ -486,11 +486,24 @@
             </label>
 
             <label class="block sm:col-span-2">
+              <span class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Hora estimada de llegada (opcional)</span>
+              <input
+                v-model="store.guest.estimatedArrival"
+                type="text"
+                autocomplete="off"
+                maxlength="100"
+                placeholder="Ej: 15:00, o &quot;después de las 8pm&quot;"
+                class="w-full rounded-xl border border-border bg-white px-4 py-3 text-sm text-navy focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
+              />
+            </label>
+
+            <label class="block sm:col-span-2">
               <span class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Pedidos especiales (opcional)</span>
               <textarea
-                v-model="store.guest.notes"
+                v-model="store.guest.specialRequests"
                 rows="2"
-                placeholder="Hora estimada de llegada, cuna, piso alto…"
+                maxlength="500"
+                placeholder="Cuna, piso alto, alergias…"
                 class="w-full rounded-xl border border-border bg-white px-4 py-3 text-sm text-navy focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
               />
             </label>
