@@ -764,13 +764,13 @@ export const useBookingStore = defineStore('booking-widget', () => {
           idempotencyKey: idempotencyKey.value,
         })
       } else {
-        // NOTA — niños en reservas de grupo: `children` es un contador de TODO el viaje, sin
-        // asignar a una habitación específica (el widget nunca lo hizo, ni en el flujo de 1 sola
-        // habitación se "reparte" — ahí se restaba de la ÚNICA ocupación elegida). Con varias
-        // habitaciones no hay forma de saber en cuál duermen, así que NO se restan de ninguna
-        // línea ni se mandan al backend: cada línea manda `adults: line.occupancy` tal cual. Es
-        // una limitación conocida (no un bug) — asignar niños a una habitación puntual del grupo
-        // es una decisión de producto aparte, no resuelta acá.
+        // NOTA — "children" en reservas de grupo: el campo solo suma al conteo total de
+        // ocupación (capacidad de la habitación); no tiene precio ni lógica propia por edad
+        // (mismo criterio que el flujo de 1 habitación: `adults` + `children` combinados son
+        // "personas", el motor no distingue). Cada línea del carrito ya lleva su ocupación
+        // TOTAL (`line.occupancy`, la fila "para N" elegida) y eso es lo que se manda como
+        // `adults` — correcto para capacidad y precio, no hace falta "repartir" niños entre
+        // habitaciones porque el producto no trata a los niños distinto de un adulto más.
         res = await BookingService.createBookingGroup({
           slug: slug.value,
           checkIn: checkIn.value,
