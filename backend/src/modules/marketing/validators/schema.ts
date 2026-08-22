@@ -15,6 +15,10 @@ export const CreateAutoMessageSchema: Record<string, ValidationRule> = {
   event: { type: 'string' as const, enum: ['reservation_confirmed','reservation_presale','checkin_welcome','no_show','checkout','invoice','reminder'] },
   language: { type: 'string' as const, enum: ['es','en','pt'] },
   triggerType: { type: 'string' as const, enum: ['immediate','cron'] },
+  // INT-1/EST-2: sin esta declaración validateSchema DROPEA isActive del POST → el service
+  // nunca ve el 0 del toggle "Pausado" y crea TODO activo (el default). Mismo formato que
+  // el update: `number` 0/1; el service normaliza a flag INTEGER.
+  isActive: { type: 'number' as const },
 }
 
 export const CreateTemplateSchema: Record<string, ValidationRule> = {
@@ -22,6 +26,9 @@ export const CreateTemplateSchema: Record<string, ValidationRule> = {
   name: { type: 'string' as const, required: true, min: 2 },
   body: { type: 'string' as const },
   category: { type: 'string' as const, enum: ['general','reservation','checkin','checkout','payment','marketing'] },
+  // INT-1/EST-2: ídem CreateAutoMessageSchema — sin declaración, el toggle "Pausado"
+  // del alta de plantillas se descartaba en la validación.
+  isActive: { type: 'number' as const },
 }
 
 export const UpdateAutoMessageSchema: Record<string, ValidationRule> = {

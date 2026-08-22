@@ -20,7 +20,9 @@ export interface CreateAutoMessageDTO {
   hotelId: string; title: string; color?: string
   emailSubject?: string; emailBody?: string; whatsappBody?: string
   channel?: string; triggerEvent?: string; triggerOffset?: number
-  variables?: string; isActive?: boolean
+  variables?: string
+  /** Wire: 0/1 (CreateAutoMessageSchema `type:'number'`); boolean legacy tolerado. El service normaliza. */
+  isActive?: boolean | number
   event?: string; language?: string; triggerType?: string
 }
 
@@ -43,5 +45,7 @@ export interface WhatsappTemplateDTO {
 }
 
 export interface CreateWhatsappTemplateDTO {
-  hotelId: string; name: string; body?: string; category?: string; isActive?: boolean
+  hotelId: string; name: string; body?: string; category?: string
+  /** Wire: 0/1 (CreateTemplateSchema `type:'number'`); boolean legacy tolerado. El service normaliza. */
+  isActive?: boolean | number
 }
