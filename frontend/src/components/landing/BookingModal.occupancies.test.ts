@@ -309,6 +309,25 @@ describe('BookingModal — matriz de ocupaciones', () => {
     expect(boardButtons).toHaveLength(0)
   })
 
+  it('el precio del régimen con costo usa chargeCurrency, NUNCA displayCurrency (D10)', async () => {
+    // Mismo criterio que en el widget embebible: el precio del régimen no se convierte
+    // server-side, viaja siempre en la moneda de cobro del hotel — mostrarlo en la moneda de
+    // display inventaría una conversión que Stripe nunca hace.
+    const res = ratesResponse(true)
+    res.currency = 'EUR'
+    res.chargeCurrency = 'USD'
+    vi.mocked(BookingService.getRates).mockResolvedValue(res)
+    vi.mocked(BookingService.getMealPlans).mockResolvedValue([
+      { code: 'all_inclusive', priceMode: 'per_person_per_night', price: 45 },
+    ])
+    await open()
+
+    const pill = Array.from(document.body.querySelectorAll('span'))
+      .find((s) => s.textContent?.includes('Todo incluido'))
+    expect(pill!.getAttribute('title')).toContain('US$')
+    expect(pill!.getAttribute('title')).not.toContain('€')
+  })
+
   it('sin `occupancies` degrada al precio único de siempre (backend viejo / caché)', async () => {
     vi.mocked(BookingService.getRates).mockResolvedValue(ratesResponse(false))
 

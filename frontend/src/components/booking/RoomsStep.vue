@@ -384,9 +384,12 @@ const boardPlanRows = computed<BoardPlanRow[]>(() =>
     const found = store.mealPlans.find((m) => m.code === code)
     if (!found) return { code, label, state: 'unavailable', title: t('rooms.board.unavailable') }
     if (found.priceMode === 'included') return { code, label, state: 'included', title: '' }
+    // El precio del régimen, igual que el de upsells, NUNCA se convierte server-side — viaja
+    // siempre en `hotels.currency` (chargeCurrency). Etiquetarlo con displayCurrency mostraría
+    // "€25.00" cuando el cobro real es $25.00 (mismo bug de D10 ya resuelto en UpsellsStep.vue).
     return {
       code, label, state: 'upcoming',
-      title: t('rooms.board.upcomingHint', { price: formatPrice(found.price, store.displayCurrency) }),
+      title: t('rooms.board.upcomingHint', { price: formatPrice(found.price, store.chargeCurrency) }),
     }
   }),
 )

@@ -468,11 +468,46 @@ Specs: `specs/booking-availability-pricing/spec.md` (2.1),
         real con habitaciones disponibles.
       - Verificación completa: backend `bun test` (16/16 nuevos + 379/379 suite
         `bookingengine`), `arckode analyze` (0 violaciones), `tsc --noEmit` limpio;
-        frontend `vue-tsc -b` limpio, `vitest run` (796/796 — 2 suites fallan por un
+        frontend `vue-tsc -b` limpio, `vitest run` (800/800 — 2 suites fallan por un
         error de entorno preexistente y no relacionado, `file:///favicon.svg`), `vite
         build` ✓ built. Revert-test aplicado sobre el branch `included` de
         `boardPlanRows` en `RoomsStep.vue`: revertido → el test nuevo falla con el
         síntoma esperado (`bg-navy` ausente) → restaurado → vuelve a pasar.
+
+      **Segunda pasada (iteración post-implementación, 2026-08-22)** — 2 bugs reales
+      encontrados y corregidos antes de dar la tarea por cerrada:
+      1. **Precio del régimen etiquetado con la moneda equivocada (D10)**: el precio de
+         "con costo aparte" se formateaba con `store.displayCurrency` (la moneda que ve
+         el huésped tras la conversión) en vez de `store.chargeCurrency` (la moneda real
+         de cobro del hotel — igual que `upsells`, el precio del régimen NUNCA se
+         convierte server-side). Si un huésped veía precios en EUR pero el hotel cobra en
+         USD, el régimen mostraba "€25.00" cuando el cobro real sería $25.00 — mismo
+         patrón de bug ya cerrado una vez este mismo día en el switcher de monedas.
+         Corregido en `RoomsStep.vue` (usa `store.chargeCurrency`) y `BookingModal.vue`
+         (nuevo helper `moneyCharge()`, separado de `money()` que sí usa displayCurrency
+         para precios de habitación). Cubierto con 2 tests nuevos que fuerzan
+         `currency:'EUR'` + `chargeCurrency:'USD'` y verifican "US$"/no "€" en el título
+         — revert-testeado: revertido → ambos tests fallan con el símbolo de moneda
+         incorrecto → restaurado → pasan.
+      2. **Race condition — el eje de régimen parpadeaba como "no disponible"**:
+         `getMealPlans` se pedía DESPUÉS de que `status` ya pasaba a `'selecting'` en
+         `search()`, así que `RoomsStep` podía montar con `store.mealPlans` todavía vacío
+         (los 3 códigos se ven un instante como "no ofrecido" antes de asentarse en su
+         estado real). Corregido: `getMealPlans` ahora se pide en `Promise.all` junto con
+         `getRates` — `search()` no resuelve (ni cambia `status`) hasta que ambas
+         respuestas están listas. Al mover la llamada fuera de un `try/catch` directo,
+         apareció un bug de robustez nuevo: un throw SÍNCRONO de `getMealPlans` (mock de
+         test incompleto, o cualquier error antes del primer await) escapaba sin capturar
+         porque `.catch()` nunca llegaba a adjuntarse — se resolvió envolviendo la
+         llamada en una función `async` (que convierte cualquier throw síncrono en
+         rechazo de promesa) antes de sumarla al `Promise.all`. Cubierto con
+         `useBooking.mealplans.test.ts` (2 tests nuevos) — revert-testeado: revertido a
+         secuencial → el test de la carrera falla (`status` ya es `'selecting'` con
+         `mealPlans` todavía vacío) → restaurado → pasa.
+      - Verificación final tras ambos fixes: frontend `vue-tsc -b` limpio, `vitest run`
+        800/800 (mismas 2 suites preexistentes sin relación), `vite build` ✓ built.
+        Verificado visualmente en navegador (Playwright) contra el backend local tras
+        los fixes — el widget sigue mostrando los 3 estados correctamente.
 
 - [ ] 2.3 **Auditoría financiera — bloqueante para el texto al cliente**: confirmar
       comportamiento real de reembolsos (comisiones Stripe, comisiones de plataforma,

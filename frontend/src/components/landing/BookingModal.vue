@@ -814,6 +814,12 @@ const currency = computed(() => store.displayCurrency || props.hotel.currency ||
 function money(value: number): string {
   return formatMoney(value, currency.value)
 }
+/** Para montos que el backend NUNCA convierte (regímenes, igual que upsells) — viajan siempre
+ *  en `hotels.currency` (chargeCurrency). Usar `money()` acá etiquetaría "€25.00" cuando el
+ *  cobro real es $25.00 (mismo bug de D10 ya resuelto en el widget embebible). */
+function moneyCharge(value: number): string {
+  return formatMoney(value, store.chargeCurrency || currency.value)
+}
 
 const staySummary = computed(() => {
   if (!store.checkIn || !store.checkOut) return 'Elegí tus fechas'
@@ -971,7 +977,7 @@ const boardPlanRows = computed<BoardPlanRow[]>(() =>
     if (found.priceMode === 'included') return { code, label, state: 'included', title: '' }
     return {
       code, label, state: 'upcoming',
-      title: `Disponible como upgrade por ${money(found.price)} — todavía no se puede agregar al carrito`,
+      title: `Disponible como upgrade por ${moneyCharge(found.price)} — todavía no se puede agregar al carrito`,
     }
   }),
 )

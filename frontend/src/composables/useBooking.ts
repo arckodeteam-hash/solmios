@@ -451,16 +451,39 @@ export const useBookingStore = defineStore('booking-widget', () => {
     status.value = 'searching'
     ratesLoading.value = true
     ratesError.value = null
+    // Regímenes: se muestran junto a la lista de habitaciones (RoomsStep), así que se piden EN
+    // PARALELO con las tarifas — no secuencial después. Si se pidieran después de que `status`
+    // ya pasa a 'selecting', RoomsStep monta con `store.mealPlans` todavía vacío y el eje entero
+    // parpadea como "no disponible" un instante antes de asentarse en el estado real. Fallo
+    // silencioso (degrada a array vacío) — nunca bloquea poder reservar el alojamiento.
+    const needsMealPlans = mealPlans.value.length === 0
+    if (needsMealPlans) mealPlansLoading.value = true
+    // Envuelta en una función async: si `getMealPlans` explota de forma SÍNCRONA (mock de test
+    // incompleto, o cualquier otro fallo antes del primer await), una función async lo convierte
+    // en promesa rechazada en vez de tirar en el call site — Promise.all necesita que las DOS
+    // ramas sean siempre promesas, nunca un throw directo.
+    const fetchMealPlansSafe = async (): Promise<PublicMealPlan[]> => {
+      try {
+        return await BookingService.getMealPlans(slug.value)
+      } catch {
+        return []
+      }
+    }
+    const mealPlansPromise = needsMealPlans ? fetchMealPlansSafe() : Promise.resolve(mealPlans.value)
     try {
-      const res = await BookingService.getRates(slug.value, {
-        checkIn: checkIn.value,
-        checkOut: checkOut.value,
-        rooms: rooms.value,
-        // Ocupación FÍSICA (adultos + niños) — mismo criterio que el calendario de la landing.
-        guests: physicalGuests.value,
-        ...(currencyPreference.value ? { currency: currencyPreference.value } : {}),
-      })
+      const [res, mp] = await Promise.all([
+        BookingService.getRates(slug.value, {
+          checkIn: checkIn.value,
+          checkOut: checkOut.value,
+          rooms: rooms.value,
+          // Ocupación FÍSICA (adultos + niños) — mismo criterio que el calendario de la landing.
+          guests: physicalGuests.value,
+          ...(currencyPreference.value ? { currency: currencyPreference.value } : {}),
+        }),
+        mealPlansPromise,
+      ])
       ratesResponse.value = res
+      if (needsMealPlans) mealPlans.value = mp
       // Llenamos el switcher de monedas: la del cobro (base del hotel) + la última display
       // elegada + un puñado de monedas comunes para turistas. Dedupe + orden estable.
       availableCurrencies.value = buildCurrencyOptions(res.chargeCurrency, res.currency, currencyPreference.value)
@@ -474,20 +497,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
       status.value = 'idle'
     } finally {
       ratesLoading.value = false
-    }
-
-    // Regímenes: se muestran junto a la lista de habitaciones, así que se cargan en la misma
-    // búsqueda (no gated detrás del carrito como upsells). Fallo silencioso — degradar a "sin
-    // regímenes configurados" no bloquea poder reservar el alojamiento.
-    if (status.value === 'selecting' && mealPlans.value.length === 0) {
-      mealPlansLoading.value = true
-      try {
-        mealPlans.value = await BookingService.getMealPlans(slug.value)
-      } catch {
-        mealPlans.value = []
-      } finally {
-        mealPlansLoading.value = false
-      }
+      mealPlansLoading.value = false
     }
   }
 

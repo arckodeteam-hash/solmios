@@ -216,6 +216,26 @@ describe('RoomsStep — matriz de ocupaciones', () => {
     w.unmount()
   })
 
+  it('el precio del régimen con costo usa chargeCurrency, NUNCA displayCurrency (D10)', () => {
+    // El precio de un régimen, igual que el de un upsell, NO se convierte server-side — viaja
+    // siempre en la moneda de cobro del hotel. Si el huésped ve precios en EUR (conversión display)
+    // pero el hotel cobra en USD, el precio del régimen debe seguir etiquetado en USD: mostrarlo
+    // en EUR sería inventar una conversión que Stripe nunca hace.
+    const store = useBookingStore()
+    store.init('hotel-demo')
+    const res = ratesResponse(true)
+    res.currency = 'EUR' // display convertido
+    res.chargeCurrency = 'USD' // cobro real, sin convertir
+    store.ratesResponse = res
+    store.mealPlans = [{ code: 'all_inclusive', priceMode: 'per_person_per_night', price: 45 }]
+    const w = mount(RoomsStep)
+
+    const pill = w.findAll('span').find((s) => s.text().includes('Todo incluido'))
+    expect(pill!.attributes('title')).toContain('US$')
+    expect(pill!.attributes('title')).not.toContain('€')
+    w.unmount()
+  })
+
   it('[en] traduce los motivos de no-disponibilidad', () => {
     const w = render(true, 'en')
     expect(w.get('[data-occupancy="3"]').text()).toContain('No rate for this occupancy')
