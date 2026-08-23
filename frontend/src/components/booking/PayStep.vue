@@ -26,24 +26,33 @@
       <p class="text-sm text-text-muted">{{ t('pay.subtitle') }}</p>
     </header>
 
-    <!-- Resumen de la reserva (editable: click → goToStep) -->
-    <div class="rounded-2xl border border-slate-200 bg-white p-4 space-y-2 text-sm">
+    <!--
+      Resumen de la reserva (editable: click → goToStep). Tarea 3.2 (solmi-direct-booking-
+      qa-fixes) — fecha/habitación/huéspedes/total son los 4 datos que el huésped tiene que
+      poder confirmar de un vistazo antes de pagar. Jerarquía de 3 niveles: label chico en
+      mayúscula (text-xs) < valor principal (text-base font-black, este bloque) < total
+      (text-xl font-black, el desglose de abajo) — así el total sigue siendo el elemento más
+      grande de la pantalla, pero fecha/habitación/huéspedes ya no compiten en igualdad de
+      peso con la info secundaria (desglose de precio, código promo).
+    -->
+    <div class="rounded-2xl border border-slate-200 bg-white p-4 space-y-3 text-sm">
       <button type="button" class="w-full flex items-center justify-between text-left" @click="store.goToStep(0)">
-        <span class="text-text-muted">{{ t('pay.dates') }}</span>
-        <span class="font-bold text-navy underline decoration-dotted">
+        <span class="text-xs font-bold uppercase tracking-wide text-text-muted">{{ t('pay.dates') }}</span>
+        <span class="text-base font-black text-navy underline decoration-dotted">
           {{ store.checkIn }} → {{ store.checkOut }} ({{ t('search.nights', { count: store.nights }) }})
         </span>
       </button>
       <button type="button" class="w-full flex items-start justify-between gap-3 text-left" @click="store.goToStep(1)">
-        <span class="text-text-muted shrink-0">{{ store.cart.length === 1 ? t('pay.room') : t('rooms.title') }}</span>
-        <span class="font-bold text-navy underline decoration-dotted text-right">
+        <span class="text-xs font-bold uppercase tracking-wide text-text-muted shrink-0">{{ store.cart.length === 1 ? t('pay.room') : t('rooms.title') }}</span>
+        <span class="text-base font-black text-navy underline decoration-dotted text-right">
           <span v-for="line in store.cart" :key="line.key" class="block capitalize">
             {{ prettify(line.roomName) }} · {{ t('rooms.occupancyFor', { count: line.occupancy }) }}{{ line.quantity > 1 ? ` × ${line.quantity}` : '' }}
           </span>
         </span>
       </button>
-      <div class="flex items-center justify-between text-xs text-text-muted">
-        <span>{{ t('rooms.cartSummary', { rooms: store.cartTotalRooms, guests: store.cartTotalGuests, nights: store.nights || 1 }) }}</span>
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-bold uppercase tracking-wide text-text-muted">{{ t('pay.guestsCount') }}</span>
+        <span class="text-base font-black text-navy">{{ store.cartTotalGuests }}</span>
       </div>
       <div v-if="store.selectedUpsells.length > 0" class="flex items-center justify-between">
         <span class="text-text-muted">{{ t('pay.extras') }}</span>

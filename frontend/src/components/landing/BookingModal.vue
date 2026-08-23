@@ -592,24 +592,31 @@
             </label>
           </section>
 
-          <dl class="space-y-2 rounded-2xl border border-border bg-white p-4 text-sm">
+          <!--
+            Tarea 3.2 (solmi-direct-booking-qa-fixes) — mismo criterio de jerarquía que
+            PayStep.vue (widget): label chico en mayúscula (text-xs) < valor principal
+            (text-base font-black) < total (text-xl font-black, más abajo). Antes labels y
+            valores estaban en el mismo text-sm que el desglose de precio de más abajo —
+            fecha/habitación/huéspedes no se distinguían de la info secundaria.
+          -->
+          <dl class="space-y-3 rounded-2xl border border-border bg-white p-4 text-sm">
             <div class="flex items-center justify-between gap-3">
-              <dt class="text-text-muted">Fechas</dt>
-              <dd class="font-bold text-navy">{{ staySummary }}</dd>
+              <dt class="text-xs font-bold uppercase tracking-wide text-text-muted">Fechas</dt>
+              <dd class="text-base font-black text-navy">{{ staySummary }}</dd>
             </div>
             <div class="flex items-start justify-between gap-3">
-              <dt class="text-text-muted">{{ store.cart.length === 1 ? 'Habitación' : 'Habitaciones' }}</dt>
-              <dd class="text-right font-bold text-navy">
+              <dt class="text-xs font-bold uppercase tracking-wide text-text-muted shrink-0">{{ store.cart.length === 1 ? 'Habitación' : 'Habitaciones' }}</dt>
+              <dd class="text-right text-base font-black text-navy">
                 <div v-for="line in store.cart" :key="line.key">{{ prettify(line.roomName) }} · para {{ line.occupancy }}{{ line.quantity > 1 ? ` × ${line.quantity}` : '' }}</div>
               </dd>
             </div>
             <div class="flex items-center justify-between gap-3">
-              <dt class="text-text-muted">Huéspedes</dt>
-              <dd class="font-bold text-navy">{{ occupancySummary }}</dd>
+              <dt class="text-xs font-bold uppercase tracking-wide text-text-muted">Huéspedes</dt>
+              <dd class="text-base font-black text-navy">{{ occupancySummary }}</dd>
             </div>
             <div v-if="store.guest.name" class="flex items-center justify-between gap-3">
-              <dt class="text-text-muted">A nombre de</dt>
-              <dd class="truncate font-bold text-navy">{{ store.guest.name }}</dd>
+              <dt class="text-xs font-bold uppercase tracking-wide text-text-muted">A nombre de</dt>
+              <dd class="truncate text-base font-black text-navy">{{ store.guest.name }}</dd>
             </div>
           </dl>
 

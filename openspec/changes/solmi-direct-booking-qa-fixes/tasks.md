@@ -735,6 +735,38 @@ Specs: `specs/booking-checkout-ux/spec.md`, `specs/booking-content-policies/spec
       habitación/huéspedes/total tienen mayor peso o contraste que la información
       secundaria.
 
+      **Implementado 2026-08-22, acceptance (revisión visual) sin confirmar — ver nota
+      al final.** Antes, dentro del resumen previo al pago, labels y valores de
+      fecha/habitación/huéspedes usaban el MISMO `text-sm` que el desglose de precio de
+      abajo (Alojamiento/Impuestos/Descuento) — nada los distinguía salvo el Total
+      (`text-xl font-black`, sin tocar). Jerarquía de 3 niveles aplicada en ambas
+      superficies (`PayStep.vue` del widget, `BookingModal.vue` de la landing):
+      label `text-xs font-bold uppercase tracking-wide` (más chico y en mayúscula, se
+      lee como etiqueta, no como contenido) < valor `text-base font-black text-navy`
+      (un escalón arriba del `text-sm` anterior) < Total `text-xl font-black` (sin
+      cambios, sigue siendo lo más grande de la pantalla).
+      **Gap real cerrado de paso**: `PayStep.vue` (widget) no tenía una fila propia de
+      "Huéspedes" — el conteo vivía escondido en una línea `text-xs` de resumen del
+      carrito ("2 habitaciones · 4 huéspedes · 3 noches"), mientras que
+      `BookingModal.vue` (landing) sí lo mostraba como fila dedicada. Agregada la fila
+      "Huéspedes" al widget (nueva key i18n `pay.guestsCount`, es/en/pt) y **quitada**
+      la línea de resumen del carrito redundante (todo lo que decía — habitaciones,
+      huéspedes, noches — ya está en las filas de arriba una vez agregada la fila de
+      huéspedes; mantenerla las duplicaba, en contra del objetivo de legibilidad de
+      esta misma tarea). `rooms.cartSummary` sigue existiendo y se sigue usando en
+      `RoomsStep.vue` (paso de selección, contexto distinto) — no se tocó ahí.
+      Verificado: `vue-tsc -b` limpio, `vitest run` sobre `components/booking` +
+      `components/landing` → 127/127 (1 suite falla, `FooterBlock.test.ts`, error
+      preexistente y ajeno de `favicon.svg` — no relacionado, ya documentado en
+      sesiones anteriores), `vite build` ✓ built.
+      **Nota de alcance — acceptance NO verificado visualmente**: esta sesión no tiene
+      acceso a un navegador/Playwright para tomar capturas o inspeccionar el render
+      real; el cambio se armó y verificó por código (clases Tailwind aplicadas,
+      escala tipográfica deliberada 12px/16px/20px) y por los gates automáticos
+      arriba, pero la aceptación tal como está escrita pide una revisión visual
+      humana. Queda el checkbox sin marcar a propósito hasta que alguien lo confirme
+      mirando el widget real (`/book/:slug`) y la landing (`/h/:slug`).
+
 - [ ] 3.3 Aumentar legibilidad de políticas y condiciones sin convertirlas en el
       elemento dominante de la pantalla (Tarea 9). **Acceptance**: el texto de
       políticas es legible sin zoom, manteniéndose visualmente secundario al resumen

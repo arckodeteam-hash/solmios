@@ -54,6 +54,15 @@ que la información secundaria.
 - THEN los datos principales son distinguibles a simple vista, sin requerir zoom o
   esfuerzo de lectura
 
+**Implementado 2026-08-22 (Tarea 8)**: jerarquía de 3 niveles en `PayStep.vue` (widget) y
+`BookingModal.vue` (landing) — label `text-xs uppercase` < valor principal `text-base
+font-black` < Total `text-xl font-black` (sin cambios, ya era el elemento más grande).
+Antes, fecha/habitación/huéspedes compartían el mismo `text-sm` que el desglose de precio
+de abajo (Alojamiento/Impuestos/Descuento) — nada los distinguía salvo el Total. Detalle en
+`tasks.md` 3.2. **Acceptance pendiente de confirmar**: esta sesión no tuvo navegador/
+Playwright disponible para la revisión visual que este scenario pide — el cambio está
+verificado por código y build, no por inspección visual real.
+
 ### Requirement: Legibilidad de políticas y condiciones
 
 Las políticas de cancelación y condiciones de reserva MUST tener un tamaño de fuente
@@ -107,6 +116,15 @@ solo tests): `POST /api/public/booking` con ambos campos → `GET /api/reservas/
 - `ReservationModal.vue` (panel del hotel): sin cambios — ya renderizaba `d.notes` con
   label "Notas" en la sección "Datos de la Reserva" (`<details open>` por defecto), así
   que el pedido especial se ve sin acción adicional del anfitrión.
-- `PayStep.vue` / resumen de reserva: revisar peso de fuente, tamaño, contraste,
-  jerarquía visual y espaciado de fecha/habitación/huéspedes/total. Aumentar tamaño de
-  fuente de políticas y condiciones sin promoverlas a elemento dominante.
+- `pages/checkin/index.vue` (2026-08-22, a pedido explícito del usuario): `Reservations.
+  notes` agregado en 3 lugares — fila "Llegadas Hoy" (ícono + tooltip), modal de Check-in
+  (bloque destacado antes de confirmar), popover de detalle de habitación. Backend sin
+  cambios — `GET /api/planning` ya lo exponía, el gap era 100% frontend
+  (`CheckinGuest.notes` no existía). Detalle en `tasks.md` 3.1, "5ª pasada".
+- `PayStep.vue` / `BookingModal.vue` — resumen de reserva (2026-08-22, Tarea 8): jerarquía
+  de 3 niveles aplicada (ver requirement de arriba). Fila "Huéspedes" agregada a
+  `PayStep.vue` (no existía como fila propia, a diferencia de `BookingModal.vue`) y quitada
+  la línea `rooms.cartSummary` redundante del mismo resumen.
+  **Pendiente**: aumentar tamaño de fuente de políticas y condiciones (Tarea 9, requirement
+  "Legibilidad de políticas y condiciones" de arriba) — no tocado en esta pasada, es la
+  tarea 3.3 del change, todavía sin empezar.
