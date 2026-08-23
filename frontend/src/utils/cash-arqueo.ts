@@ -35,6 +35,17 @@ export function denominationsFor(currency: string | undefined | null): number[] 
   return CASH_DENOMINATIONS[(currency || '').toUpperCase()] || []
 }
 
+/** Esperado en cajón (efectivo): fondo + ingresos efectivo − egresos efectivo. DERIVACIÓN ÚNICA.
+ *
+ * El número protagonista de la caja y la cuenta visible que lo arma salen de ACÁ, nunca del
+ * `expected` que traiga el payload del reconcile: si ese campo difiere de la suma de SUS PROPIOS
+ * movimientos (saldo legacy guardado en el turno, backend viejo que no exponía los getters),
+ * gana la suma de movimientos — es la auditable. Derivar el hero de los mismos términos que la
+ * cuenta imprime hace que los dos números no PUEDAN discrepar. */
+export function expectedCashInDrawer(opening: number, cashIncome: number, cashExpense: number): number {
+  return round2(round2(opening) + round2(cashIncome) - round2(cashExpense))
+}
+
 /** Σ cantidad × valor de cada denominación. Las cantidades vacías ('' del v-model) no suman. */
 export function sumDenominations(counts: Record<string, number | string | null>, denoms: number[]): number {
   let total = 0

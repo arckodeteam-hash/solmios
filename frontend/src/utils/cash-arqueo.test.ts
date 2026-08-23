@@ -1,7 +1,7 @@
 // cash-arqueo.test.ts — La matemática del arqueo de cierre (números del flujo real de la
 // auditoría docs/qa-ui/caja-2026-08-22: fondo $500 + ingreso $1000 − egreso $200 = esperado $1300).
 import { describe, it, expect } from 'vitest'
-import { round2, BALANCE_EPSILON, denominationsFor, sumDenominations, buildArqueo } from './cash-arqueo'
+import { round2, BALANCE_EPSILON, denominationsFor, sumDenominations, buildArqueo, expectedCashInDrawer } from './cash-arqueo'
 
 describe('round2 / BALANCE_EPSILON — espejo del backend', () => {
   it('round2 corrige la cola binaria (1.005 → 1.01, no 1.00)', () => {
@@ -33,6 +33,23 @@ describe('denominationsFor / sumDenominations', () => {
   it('las denominaciones sin cantidad (null o vacía) no suman nada', () => {
     const denoms = denominationsFor('USD')
     expect(sumDenominations({ '100': 2, '50': null, '20': '' }, denoms)).toBe(200)
+  })
+})
+
+describe('expectedCashInDrawer — derivación única del esperado en cajón', () => {
+  it('fondo + ingresos efectivo − egresos efectivo (500 + 1000 − 200 = 1300)', () => {
+    expect(expectedCashInDrawer(500, 1000, 200)).toBe(1300)
+  })
+
+  it('un saldo almacenado NO participa en la cuenta (el caso prod: 1122 guardado ≠ 1300 de movimientos)', () => {
+    // La función no RECIBE saldo: lo que muestre el hero sale de los movimientos, auditables.
+    expect(expectedCashInDrawer(500, 1000, 200)).not.toBe(1122)
+  })
+
+  it('redondea cada término y el total (cola binaria no filtra en el centavo)', () => {
+    expect(expectedCashInDrawer(0.1, 0.2, 0)).toBe(0.3)
+    expect(expectedCashInDrawer(1.005, 0, 0)).toBe(1.01)
+    expect(expectedCashInDrawer(500, 999.995, 0)).toBe(1500)
   })
 })
 

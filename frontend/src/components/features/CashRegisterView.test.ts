@@ -326,6 +326,48 @@ describe('claridad — el número protagonista muestra la cuenta que lo arma', (
   })
 })
 
+describe('una sola fuente — el hero ES el resultado de la cuenta visible', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  // Caso prod-like: el payload del reconcile trae un `expected` que NO cierra contra SUS PROPIOS
+  // movimientos (saldo legacy acumulado del turno de meses). La vista muestra la suma de
+  // movimientos — la auditable — y el hero se DERIVA de los mismos términos que la cuenta imprime.
+  const LEGACY = {
+    ...RECONCILE,
+    expected: 1122, counted: 1122, difference: 0, // el saldo almacenado miente
+  }
+
+  it('saldo almacenado ≠ suma de movimientos → el hero muestra la SUMA ($1,300), no el saldo ($1,122)', async () => {
+    const { w } = await render(makeService({
+      reconcile: vi.fn(async () => LEGACY),
+      currentShift: vi.fn(async () => ({ id: 's1', status: 'open', openingAmount: 500, expectedAmount: 1122, openedAt: '2026-08-22T08:00:00' })),
+    }))
+    const hero = w.find('[data-testid="hero-expected"]').text()
+    expect(hero).toContain('$1,300')       // 500 + 1000 − 200, la cuenta de movimientos
+    expect(hero).not.toContain('1,122')    // el saldo almacenado JAMÁS llega al hero
+  })
+
+  it('el hero y la línea de cuenta dan EL MISMO número: el resultado de la ecuación es el protagonista', async () => {
+    const { w } = await render(makeService({ reconcile: vi.fn(async () => LEGACY) }))
+    const hero = w.find('[data-testid="hero-expected"]').text().trim()
+    const math = norm(w.find('[data-testid="hero-math"]').text())
+    expect(math).toBe('$500 fondo + $1,000 ingresos en efectivo - $200 egresos en efectivo = $1,300')
+    expect(math.split('=')[1].trim()).toBe(hero) // hero === resultado de la cuenta, al centavo
+  })
+
+  it('la cuenta es del turno COMPLETO: usa el desglose del reconcile, no la lista paginada visible', async () => {
+    // Movimientos cargados ANTES de esta sesión (la lista de abajo viene vacía/otra página): el
+    // desglose del turno ya los incluye — si la cuenta leyera la lista, el hero mentiría.
+    const { w } = await render(makeService({
+      reconcile: vi.fn(async () => LEGACY),
+      movements: vi.fn(async () => ({ data: [], pages: 1 })),
+    }))
+    const math = norm(w.find('[data-testid="hero-math"]').text())
+    expect(math).toContain('+ $1,000 ingresos en efectivo')
+    expect(math).toContain('- $200 egresos en efectivo')
+  })
+})
+
 describe('claridad — alerta de turno abierto demasiado tiempo', () => {
   beforeEach(() => { vi.clearAllMocks() })
 

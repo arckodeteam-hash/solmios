@@ -24,7 +24,7 @@ import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
-import { BALANCE_EPSILON, buildArqueo, denominationsFor, round2, sumDenominations } from '@/utils/cash-arqueo'
+import { BALANCE_EPSILON, buildArqueo, denominationsFor, expectedCashInDrawer, round2, sumDenominations } from '@/utils/cash-arqueo'
 
 interface CashServiceLike {
   movements: (params?: Record<string, string | number>) => Promise<{ data: CashMovement[]; pages?: number }>
@@ -288,15 +288,24 @@ const movCount = computed(() => stats.value?.count ?? 0)
 
 const fmtMoney = (n: number) => n.toLocaleString()
 
-/** La cuenta que arma el protagonista: fondo + ingresos efectivo − egresos efectivo = esperado. */
+/** La cuenta que arma el protagonista: fondo + ingresos efectivo − egresos efectivo = esperado.
+ *
+ * `expected` se DERIVA de los mismos términos que la cuenta imprime (expectedCashInDrawer), NO se
+ * toma del payload: si el `expected` almacenado del turno difiere de la suma de sus movimientos
+ * (legacy), el hero y la cuenta dejarían de cerrar entre sí — dos números que dicen ser lo mismo.
+ * Los términos son los del reconcile del turno COMPLETO (incluye movimientos cargados antes de
+ * esta sesión: es el turno, no la sesión). */
 const heroMath = computed(() => {
   const rec = currentReconcile.value
   if (!rec) return null
+  const opening = round2(rec.opening)
+  const cashIncome = round2(rec.cashIncome ?? 0)
+  const cashExpense = round2(rec.cashExpense ?? 0)
   return {
-    opening: round2(rec.opening),
-    cashIncome: round2(rec.cashIncome ?? 0),
-    cashExpense: round2(rec.cashExpense ?? 0),
-    expected: round2(rec.expected),
+    opening,
+    cashIncome,
+    cashExpense,
+    expected: expectedCashInDrawer(opening, cashIncome, cashExpense),
   }
 })
 
@@ -876,7 +885,7 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
         <div class="flex justify-between"><span class="text-text-muted">Fondo inicial</span><span class="font-bold text-navy tabular-nums">${{ reconcile.opening.toLocaleString() }}</span></div>
         <div class="flex justify-between"><span class="text-text-muted">Ingresos (todos los métodos)</span><span class="font-bold text-teal tabular-nums">+${{ reconcile.income.toLocaleString() }}</span></div>
         <div class="flex justify-between"><span class="text-text-muted">Egresos (todos los métodos)</span><span class="font-bold text-coral tabular-nums">-${{ reconcile.expense.toLocaleString() }}</span></div>
-        <div class="flex justify-between pt-2.5 border-t border-border"><span class="font-extrabold text-navy">Esperado en cajón (efectivo)</span><span class="font-extrabold text-navy text-base tabular-nums">${{ reconcile.expected.toLocaleString() }}</span></div>
+        <div class="flex justify-between pt-2.5 border-t border-border"><span class="font-extrabold text-navy">Esperado en cajón (efectivo)</span><span class="font-extrabold text-navy text-base tabular-nums">${{ (arqueo.methods.find(m => m.method === 'cash')?.expected ?? 0).toLocaleString() }}</span></div>
         <p class="text-[11px] text-text-muted leading-relaxed">
           Solo el efectivo está en el cajón: los cobros con tarjeta/transferencia se cuentan aparte (cupones o cierre de terminal) y no suman al esperado en efectivo.
         </p>
