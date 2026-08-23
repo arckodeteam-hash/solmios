@@ -5,7 +5,7 @@
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
 import type {
   CashMovementDTO, CashShiftDTO, CashRegister, CreateMovementDTO, UpdateMovementDTO,
-  MovementQuery, CashPaginated, CurrentUser,
+  MovementQuery, CashPaginated, ShiftHistoryPage, ShiftHistoryQuery, CurrentUser,
 } from './types'
 import type { CashSockets } from './sockets'
 import { computeStats } from './usecases/stats'
@@ -120,6 +120,10 @@ export class CashService {
 
   // ─── Turnos (delegan a usecases/shifts) ────────────────
   listShifts(hotelId: string | undefined, user: CurrentUser, register?: CashRegister) { return shiftsUc.listShifts(this.shiftDeps(), hotelId, user, register) }
+  /** Histórico para auditoría: filtro por fecha de apertura + paginación + neto por método. */
+  listShiftHistory(query: ShiftHistoryQuery, hotelId: string | undefined, user: CurrentUser, register?: CashRegister): Promise<ShiftHistoryPage> {
+    return shiftsUc.listShiftHistory(this.shiftDeps(), hotelId, query, user, register)
+  }
   getCurrentShift(user: CurrentUser, register: CashRegister = 'reception') { return shiftsUc.getCurrentShift(this.shiftDeps(), user, register) }
 
   async openShift(dto: OpenShiftLike, user: CurrentUser, register: CashRegister = 'reception') {

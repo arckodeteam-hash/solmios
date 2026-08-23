@@ -42,8 +42,16 @@ export class CashController {
 
   // ─── Turnos ───
   async listShifts(req: HttpRequest, register?: CashRegister) {
-    const items = await this.service.listShifts((req.query as any).hotelId, req.user as any, register)
-    return { status: 200, body: { data: items } }
+    const q = req.query as any
+    // Histórico paginado/filtrado (QA-UI caja-2026-08-22 H1): from/to sobre fecha de apertura.
+    const query = {
+      from: q.from ? String(q.from) : undefined,
+      to: q.to ? String(q.to) : undefined,
+      page: q.page !== undefined && q.page !== '' ? Number(q.page) : undefined,
+      limit: q.limit !== undefined && q.limit !== '' ? Number(q.limit) : undefined,
+    }
+    const result = await this.service.listShiftHistory(query, q.hotelId, req.user as any, register)
+    return { status: 200, body: result }
   }
   async currentShift(req: HttpRequest, register?: CashRegister) {
     const shift = await this.service.getCurrentShift(req.user as any, register)

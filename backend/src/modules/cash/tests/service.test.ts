@@ -74,7 +74,9 @@ describe('CashService', () => {
       ] as any),
     })
     const s = new CashService(repo, shiftRepo, makeUserRepo(), log, silentCache, passAuth)
-    const closed = await s.closeShift('s1', { countedAmount: 150 }, currentUser)
+    // QA-UI caja-2026-08-22: cerrar con diferencia (20 de sobrante) ahora exige motivo — sin
+    // notes el usecase rechaza. La matemática que este test protege (expected/difference) no cambia.
+    const closed = await s.closeShift('s1', { countedAmount: 150, notes: 'Sobrante de vuelto' }, currentUser)
     expect(closed.status).toBe('closed')
     expect(closed.expectedAmount).toBe(130)
     expect(closed.difference).toBe(20) // 150 contado − 130 esperado = sobrante +20
