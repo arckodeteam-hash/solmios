@@ -151,7 +151,13 @@
             @click="!a.checkedIn && openCheckinModal(a)">
             <div class="w-9 h-9 rounded-full flex items-center justify-center text-xs font-black shrink-0" :class="a.channelColor">{{ a.initials }}</div>
             <div class="flex-1 min-w-0">
-              <div class="text-sm font-bold text-navy truncate">{{ a.guestName }}</div>
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span class="text-sm font-bold text-navy truncate">{{ a.guestName }}</span>
+                <span v-if="a.notes" data-testid="arrival-notes-flag" :title="a.notes"
+                  class="shrink-0 w-4 h-4 rounded-full bg-gold/15 text-gold flex items-center justify-center">
+                  <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
+                </span>
+              </div>
               <div class="text-[10px] text-text-muted">Hab {{ a.roomNumber }} · {{ a.channelLabel }}</div>
               <div class="text-[10px] text-text-muted">{{ a.checkIn }} → {{ a.checkOut }} · {{ a.nights }}n · ${{ a.totalAmount }}</div>
             </div>
@@ -295,6 +301,10 @@
                     <div class="text-sm font-bold tabular-nums text-navy">{{ String(selectedRoomGuest?.checkOut || selectedRoom.checkOut || '').slice(0, 10) || '—' }}</div>
                   </div>
                 </div>
+                <div v-if="selectedRoomNotes" data-testid="room-detail-notes" class="mt-3 bg-gold/8 rounded-xl p-3 border border-gold/20">
+                  <div class="text-[11px] font-bold text-gold uppercase tracking-wide mb-1">Notas</div>
+                  <div class="text-xs text-navy whitespace-pre-wrap">{{ selectedRoomNotes }}</div>
+                </div>
                 <div class="flex gap-2 mt-auto pt-4 border-t border-border/60">
                   <button @click="checkoutFromRoom(selectedRoom)" :disabled="processing" class="flex-1 py-2.5 bg-coral text-white text-xs font-bold rounded-xl hover:bg-coral/80 disabled:opacity-50 cursor-pointer">
                     Check-out
@@ -410,6 +420,13 @@
                 <div class="text-[10px] text-text-muted uppercase tracking-wide">Total</div>
                 <div class="text-sm font-bold tabular-nums text-teal mt-0.5">${{ checkinGuest.totalAmount }}</div>
               </div>
+            </div>
+            <div v-if="checkinGuest.notes" data-testid="checkin-modal-notes" class="py-4 border-b border-border">
+              <div class="flex items-center gap-1.5 text-[10px] font-bold text-gold uppercase tracking-wide mb-1.5">
+                <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a1 1 0 0 0 .86 1.5h18.64a1 1 0 0 0 .86-1.5L13.71 3.86a1 1 0 0 0-1.72 0Z"/></svg>
+                Notas de la reserva
+              </div>
+              <div class="text-xs bg-gold/8 rounded-lg p-2.5 border border-gold/20 whitespace-pre-wrap text-navy">{{ checkinGuest.notes }}</div>
             </div>
             <div v-if="processing" class="flex items-center justify-center gap-2 text-xs text-teal font-bold pt-4">
               <span class="inline-block w-3 h-3 border-2 border-teal border-t-transparent rounded-full animate-spin"></span>
@@ -608,6 +625,7 @@ const selectedRoomGuest = computed(() => {
   if (!selectedRoom.value?.resId) return null
   return allReservations.value.find(r => r.id === selectedRoom.value!.resId) || null
 })
+const selectedRoomNotes = computed(() => (selectedRoomGuest.value?.notes as string) || null)
 const checkedIn = ref(new Set<string>())
 const checkedOut = ref(new Set<string>())
 const processing = ref(false)
@@ -827,6 +845,7 @@ function mapGuest(r: Record<string, unknown>): CheckinGuest {
     children: (r.children as number) || 0,
     checkedIn: r.status === 'checked_in',
     checkedOut: r.status === 'checked_out',
+    notes: (r.notes as string) || null,
   }
 }
 

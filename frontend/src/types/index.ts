@@ -672,6 +672,9 @@ export interface CheckinGuest {
   children: number
   checkedIn: boolean
   checkedOut: boolean
+  /** `Reservations.notes` crudo (pedido especial, llegada estimada, etc. — mismo campo que
+   *  `ReservationModal.vue` muestra como "Notas"). Null si la reserva no tiene nada cargado. */
+  notes: string | null
 }
 
 // === FEEDBACK ===

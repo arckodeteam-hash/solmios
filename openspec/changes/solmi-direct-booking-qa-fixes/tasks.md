@@ -684,13 +684,50 @@ Specs: `specs/booking-checkout-ux/spec.md`, `specs/booking-content-policies/spec
       antes de que se pueda mandar un valor inválido. Verificado: `vitest run`
       scoped 76/76 sin cambios, `vite build` ✓ built.
 
-      **Hallazgo NO implementado, reportado para decisión del usuario**: el pedido
-      especial solo se ve hoy en `ReservationModal.vue` (detalle de la reserva). La
-      página de check-in (`pages/checkin/index.vue`, 1080 líneas) no muestra
-      `notes` en ningún lado — un recepcionista que hace check-in sin abrir el
-      detalle de la reserva primero no ve "cuna y piso alto" en el momento en que
-      más importa (justo al asignar/preparar la habitación). Es una pantalla
-      distinta y un cambio de tamaño no trivial — no se tocó sin confirmación.
+      **Hallazgo reportado en la pasada anterior — CERRADO en esta (2026-08-22,
+      5ª pasada)**: el usuario confirmó "agregalo a la pantalla de check-in
+      también, y si hay otro lugar donde debía estar, agregalo igualmente".
+      `pages/checkin/index.vue` no mostraba `Reservations.notes` en ningún lado.
+      Backend: **sin cambios** — `GET /api/planning`
+      (`dashboard/usecases/dashboard-queries.ts:getPlanning` /
+      `dashboard-data.ts:getPlanningData`) ya hace `{ ...r, guestName, ... }`
+      sobre la fila cruda de `Reservations`, así que `notes` YA viajaba en la
+      respuesta; el gap era 100% frontend (el campo nunca se leía ni se
+      declaraba en el tipo).
+      Cambios: `types/index.ts` (`CheckinGuest.notes: string | null` nuevo) +
+      `mapGuest()` en `checkin/index.vue` ahora lo popula. Mostrado en 3 lugares:
+      (1) fila de "Llegadas Hoy" — ícono con `title` (tooltip nativo) junto al
+      nombre si `a.notes` tiene contenido, para que el recepcionista lo note sin
+      abrir nada; (2) **modal de Check-in** (el pedido explícito del usuario) —
+      bloque "Notas de la reserva" destacado en dorado, entre los datos de la
+      reserva y el botón "Confirmar Check-in", visible sin acción extra; (3)
+      **popover de detalle de habitación** (otro lugar donde correspondía,
+      encontrado en esta pasada) — mismo bloque "Notas" bajo las fechas de
+      check-in/check-out, para cuando el staff hace click en una habitación
+      ocupada desde la grilla en vez de desde "Llegadas Hoy". Los tres reusan
+      texto crudo (`whitespace-pre-wrap`, sin parsear) — mismo criterio que
+      `ReservationModal.vue`, para no duplicar lógica de formato en 2 archivos.
+      **Verificación extremo a extremo contra el servidor real** (mismo método
+      que la 3ª pasada): reserva creada con `checkIn` = HOY vía
+      `POST /api/public/booking` con `specialRequests`/`estimatedArrival`, y
+      `GET /api/planning` (el endpoint EXACTO que consume esta pantalla,
+      logueado como `admin@caribeparadise.com`) devolvió la fila con
+      `notes: "... | Llegada estimada: 16:30 | Pedido especial: Pedido de
+      verificacion: piso alto y cuna | ..."` — confirma que el dato llega
+      completo hasta la puerta del componente. Datos de prueba borrados,
+      servidor detenido al terminar.
+      Verificado: `bun run typecheck` (backend y frontend, sin errores nuevos —
+      los preexistentes son de `plan-modules`/`plan-gating`, sesión paralela
+      ajena), `vite build` ✓ built, `vitest run` scoped 76/76 sin cambios (no se
+      tocó ningún archivo con test dedicado — `checkin/index.vue` no tiene
+      suite propia, igual que antes de este cambio; montarla exigiría mockear
+      ~7 services + router + Pinia, desproporcionado para un bloque
+      condicional sin lógica que revert-testear).
+      No tocado (evaluado y descartado, fuera del alcance de "recibir y ver el
+      pedido del huésped"): "En Casa" y "Salidas Hoy" — el pedido especial ya
+      se atendió o quedó registrado al check-in, mostrarlo de nuevo en salida
+      no aporta; housekeeping — su tarea nace recién al CHECK-OUT (limpieza
+      post-estadía), no en la preparación pre-llegada.
 
 - [ ] 3.2 Mejorar legibilidad del resumen de reserva (fecha, habitación, huéspedes,
       total): revisar peso de fuente, tamaño, contraste, jerarquía y espaciado de los
