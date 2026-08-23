@@ -1,4 +1,5 @@
-// CashRegisterView.test.ts — Regresiones de la auditoría docs/qa-ui/caja-2026-08-22 (H1/H2/H3/M6).
+// CashRegisterView.test.ts — Regresiones de la auditoría docs/qa-ui/caja-2026-08-22 (H1/H2/H3/M6)
+// + 2ª pasada de claridad (la vista se explica sola).
 //
 // Lo que se protege acá (números del flujo real de la auditoría):
 //   1. H2: el conteo del arqueo NO viene prellenado con el esperado — los campos arrancan vacíos.
@@ -8,6 +9,9 @@
 //   5. Cierre cuadrado cierra SIN motivo.
 //   6. H1: el histórico de turnos muestra la diferencia persistida y resuelve nombres por
 //      /api/usuarios (TeamService), nunca IDs crudos.
+//   7. Claridad: el protagonista muestra la CUENTA que lo arma; la tarjeta va aparte y aclarada.
+//   8. Claridad: turno abierto >24h avisa en ámbar, >7 días en rojo (fecha inyectada, sin fake timers).
+//   9. Claridad: sin turno, guía de 3 pasos con "Abrir turno" como único primario.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
@@ -42,10 +46,15 @@ const toast = useToast()
 // Turno abierto fondo $500, con ingreso efectivo $1000, egreso efectivo $200 e ingreso tarjeta
 // $300 → esperado en cajón $1300; tarjeta $300 aparte (no se cuenta en el cajón).
 const RECONCILE = {
-  shift: {}, opening: 500, income: 1300, expense: 200,
+  shift: {}, opening: 500, income: 1300, expense: 200, cashIncome: 1000, cashExpense: 200,
   expected: 1300, counted: 0, difference: -1300,
   byMethod: { cash: 1200, card: 300 }, byMethodNet: { cash: 800, card: 300 },
 }
+
+// Reloj fijo por defecto: los fixtures abren el turno el 2026-08-22 08:00 — con el reloj real del
+// runner la "edad del turno" cambiaría cada día que se corre la suite. Los tests de alerta
+// inyectan el suyo.
+const NOW = () => new Date('2026-08-22T12:00:00Z')
 
 function makeService(over: Record<string, unknown> = {}) {
   return {
@@ -78,8 +87,8 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-async function render(service = makeService()) {
-  wrapper = mount(CashRegisterView, { props: { service: service as any } })
+async function render(service = makeService(), nowFn: () => Date = NOW) {
+  wrapper = mount(CashRegisterView, { props: { service: service as any, nowFn } })
   await flushPromises()
   await flushPromises()
   return { w: wrapper, service }
@@ -280,5 +289,112 @@ describe('histórico de turnos (H1) — la diferencia deja de ser invisible', ()
     await flushPromises()
 
     expect(service.shifts).toHaveBeenLastCalledWith(expect.objectContaining({ from: '2026-08-01' }))
+  })
+})
+
+// ─── Claridad: la vista se explica sola ───
+
+const norm = (s: string) => s.replace(/\s+/g, ' ')
+
+describe('claridad — el número protagonista muestra la cuenta que lo arma', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('escribió la conciliación completa: fondo + ingresos efectivo − egresos efectivo = esperado', async () => {
+    const { w } = await render()
+    expect(w.find('[data-testid="hero-expected"]').text()).toContain('$1,300')
+    const math = norm(w.find('[data-testid="hero-math"]').text())
+    // La cuenta QUE DA el número, no solo el número (el "no se entiende nada" del dueño).
+    expect(math).toBe('$500 fondo + $1,000 ingresos en efectivo - $200 egresos en efectivo = $1,300')
+  })
+
+  it('la tarjeta del turno se muestra APARTE, con su aclaración de que no está en el cajón', async () => {
+    const { w } = await render()
+    const nonCash = norm(w.find('[data-testid="hero-noncash"]').text())
+    expect(nonCash).toContain('Cobros con tarjeta del turno: $300')
+    expect(nonCash).toContain('se cuentan aparte')
+    expect(norm(w.find('[data-testid="hero-math"]').text())).not.toContain('$300') // la tarjeta JAMÁS entra a la cuenta del cajón
+  })
+
+  it('cada número del turno lleva SU micro-texto (qué significa, en la misma tarjeta)', async () => {
+    const { w } = await render()
+    const text = w.text()
+    expect(text).toContain('lo que debería haber en el cajón, según los movimientos del turno')
+    expect(text).toContain('efectivo con el que arrancó el turno')
+    expect(text).toContain('cobros del turno que entraron al cajón')
+    expect(text).toContain('pagos y gastos salidos del cajón')
+    expect(text).toContain('cobros sin efectivo: se cuentan aparte, con cupones')
+  })
+})
+
+describe('claridad — alerta de turno abierto demasiado tiempo', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('abierto hace meses → banner ROJO con los días y el pedido de cierre', async () => {
+    const { w } = await render(makeService({
+      currentShift: vi.fn(async () => ({ id: 's1', status: 'open', openingAmount: 100, openedAt: '2026-04-01T08:00:00Z' })),
+    }))
+    const alert = w.find('[data-testid="shift-age-alert"]')
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toContain('abierto hace 143 días')
+    expect(alert.text()).toContain('cerralo con arqueo')
+    expect(alert.attributes('class')).toContain('FEF2F2') // rojo, no ámbar
+  })
+
+  it('abierto hace >24h (pero <7 días) → banner ÁMBAR', async () => {
+    const { w } = await render(makeService({
+      currentShift: vi.fn(async () => ({ id: 's1', status: 'open', openingAmount: 100, openedAt: '2026-08-20T08:00:00Z' })),
+    }))
+    const alert = w.find('[data-testid="shift-age-alert"]')
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toContain('abierto hace 2 días')
+    expect(alert.attributes('class')).toContain('FFFBEB') // ámbar, no rojo
+  })
+
+  it('abierto hace horas → sin banner, la edad va discreta al lado del estado', async () => {
+    const { w } = await render() // fixture: abierto 2026-08-22 08:00, reloj 12:00Z
+    expect(w.find('[data-testid="shift-age-alert"]').exists()).toBe(false)
+    expect(w.text()).toContain('hace')
+  })
+})
+
+describe('claridad — sin turno abierto: guía de 3 pasos, un solo botón primario', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  function noShiftService() {
+    return makeService({ currentShift: vi.fn(async () => null) })
+  }
+
+  it('muestra los 3 pasos numerados de cómo funciona la caja', async () => {
+    const { w } = await render(noShiftService())
+    const guide = w.find('[data-testid="shift-guide"]')
+    expect(guide.exists()).toBe(true)
+    const steps = guide.findAll('li')
+    expect(steps).toHaveLength(3)
+    expect(steps.map(s => s.text())).toEqual([
+      expect.stringContaining('Abrí un turno'),
+      expect.stringContaining('Registrá ingresos y egresos'),
+      expect.stringContaining('Contá la caja y cerrá con arqueo'),
+    ] as any[])
+    expect(w.text()).toContain('La caja se maneja por turnos')
+  })
+
+  it('"Abrir turno" es el ÚNICO primario: sin botones de movimiento en el header ni CTA huérfano', async () => {
+    const { w } = await render(noShiftService())
+    const buttons = w.findAll('button').map(b => b.text().trim())
+    expect(buttons).toContain('Abrir turno')
+    expect(buttons).not.toContain('Ingreso')   // registrar sin turno = movimiento huérfano de arqueo
+    expect(buttons).not.toContain('Egreso')
+    expect(buttons).not.toContain('Registrar ingreso')
+  })
+
+  it('abrir turno desde la guía manda el fondo cargado', async () => {
+    const { w, service } = await render(noShiftService())
+    const input = w.find('#open-amount').element as HTMLInputElement
+    input.value = '500'
+    input.dispatchEvent(new Event('input'))
+    await flushPromises()
+    await w.findAll('button').find(b => b.text().includes('Abrir turno'))!.trigger('click')
+    await flushPromises()
+    expect(service.openShift).toHaveBeenCalledWith(500)
   })
 })

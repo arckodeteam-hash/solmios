@@ -40,5 +40,7 @@ export function reconcileShift(shift: CashShiftDTO, movs: CashMovementDTO[]): Re
   // Solo el efectivo está en el cajón físico → solo el efectivo forma el esperado.
   const expected = opening + cashIncome - cashExpense
   const counted = shift.countedAmount ?? 0
-  return { shift, opening, income, expense, expected, counted, difference: counted - expected, byMethod, byMethodNet }
+  // cashIncome/cashExpense van explícitos para que la UI muestre la cuenta que arma el esperado
+  // ("fondo + ingresos efectivo − egresos efectivo") sin derivarla de byMethod/byMethodNet.
+  return { shift, opening, income, expense, cashIncome, cashExpense, expected, counted, difference: counted - expected, byMethod, byMethodNet }
 }

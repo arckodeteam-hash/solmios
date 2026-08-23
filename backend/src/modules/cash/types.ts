@@ -117,6 +117,10 @@ export interface ReconcileResult {
   opening: number
   income: number
   expense: number
+  /** Ingresos SOLO en efectivo del turno — lo que entra al cajón físico (alimenta `expected`). */
+  cashIncome: number
+  /** Egresos SOLO en efectivo del turno — lo que sale del cajón físico (baja `expected`). */
+  cashExpense: number
   expected: number
   counted: number
   difference: number

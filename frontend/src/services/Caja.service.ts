@@ -37,6 +37,8 @@ export interface CashStats { today: number; week: number; month: number; count: 
 export interface MovementList { data: CashMovement[]; total: number; pages: number; hasNext: boolean; hasPrev: boolean }
 export interface Reconcile {
   opening: number; income: number; expense: number
+  /** Ingresos/egresos SOLO en efectivo del turno — la cuenta visible que arma el esperado del cajón. */
+  cashIncome?: number; cashExpense?: number
   expected: number; counted: number; difference: number; byMethod: Record<string, number>
   /** Neto firmado por método (ingreso +, egreso −) — esperado por método para el arqueo de cierre. */
   byMethodNet: Record<string, number>
