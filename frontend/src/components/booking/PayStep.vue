@@ -134,16 +134,27 @@
       al cancelar era estricta, y anunciarlo prometía un reembolso que no existía. Mismo
       criterio (y mismo bug ya cerrado una vez) que la landing: ver el comentario de
       `bookingTerms` en BookingModal.vue.
+
+      Tarea 3.3 (2026-08-22) — legibilidad sin volverlo dominante: el título ("Política de
+      cancelación") es un LABEL, se queda chico/uppercase. Lo que antes estaba mal era que el
+      HEADLINE (la frase que de verdad importa — "cancelá gratis hasta X" / "no reembolsable")
+      compartía el mismo `text-xs` que el label y el detalle, los 3 al mismo nivel. Ahora el
+      headline sube a `text-sm font-bold` (mismo tratamiento que ya tenía
+      `bookingTerms.cancellationHeadline` en BookingModal.vue — acá quedaba atrás) y el detalle
+      se separa en su propio párrafo, chico pero con `leading-relaxed`. Sigue por debajo del
+      resumen de arriba (`text-base`/`text-xl`) — no compite con fecha/habitación/total.
     -->
     <div
       v-if="cancellationTerms"
-      class="rounded-xl border p-3 space-y-1 text-xs"
+      class="rounded-xl border p-3 space-y-1.5"
       :class="cancellationTerms.tone === 'danger' ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-white'"
     >
-      <p class="font-bold" :class="cancellationTerms.tone === 'danger' ? 'text-red-600' : 'text-navy'">{{ t('pay.cancellationPolicy') }}</p>
-      <p class="leading-relaxed" :class="cancellationTerms.tone === 'danger' ? 'text-red-700' : 'text-text-muted'">
+      <p class="text-[11px] font-black uppercase tracking-wide" :class="cancellationTerms.tone === 'danger' ? 'text-red-600' : 'text-navy'">{{ t('pay.cancellationPolicy') }}</p>
+      <p class="text-sm font-bold leading-snug" :class="cancellationTerms.tone === 'danger' ? 'text-red-600' : 'text-navy'">
         {{ cancellationTerms.headline }}
-        <span v-if="cancellationTerms.detail" class="block">{{ cancellationTerms.detail }}</span>
+      </p>
+      <p v-if="cancellationTerms.detail" class="text-xs leading-relaxed" :class="cancellationTerms.tone === 'danger' ? 'text-red-700' : 'text-text-muted'">
+        {{ cancellationTerms.detail }}
       </p>
     </div>
 

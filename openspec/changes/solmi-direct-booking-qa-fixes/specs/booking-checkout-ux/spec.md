@@ -77,6 +77,14 @@ MUST ser claramente visibles antes de confirmar o pagar.
 - THEN el texto es legible sin necesitar zoom, aunque visualmente no compita con el
   precio total como elemento dominante
 
+**Implementado 2026-08-22 (Tarea 9)**: `BookingModal.vue` ya tenía la jerarquía correcta
+(headline `text-sm font-bold`, detalle `text-xs leading-relaxed`) desde F5 #627 — solo
+`PayStep.vue` (widget) se había quedado en `text-xs` para título/headline/detalle por
+igual. Alineado: título = label (`text-[11px] uppercase`), headline sube a `text-sm
+font-bold`, detalle en párrafo propio (`text-xs leading-relaxed`). Detalle en `tasks.md`
+3.3. **Acceptance pendiente de confirmar visualmente** — mismo motivo que 3.2 (sin
+navegador disponible en esta sesión).
+
 ## Database
 
 Sin cambios — este spec es puramente de UI/formulario.

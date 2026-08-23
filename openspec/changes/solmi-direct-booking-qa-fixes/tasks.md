@@ -772,6 +772,30 @@ Specs: `specs/booking-checkout-ux/spec.md`, `specs/booking-content-policies/spec
       políticas es legible sin zoom, manteniéndose visualmente secundario al resumen
       de compra.
 
+      **Implementado 2026-08-22, acceptance (revisión visual) sin confirmar — misma
+      salvedad que 3.2.** `BookingModal.vue` (landing) ya tenía el bloque "Condiciones
+      de la reserva" bien jerarquizado desde F5 #627 (headline `text-sm font-bold`,
+      detalle `text-xs leading-relaxed`) — `PayStep.vue` (widget) se había quedado
+      atrás: título, headline y detalle compartían el mismo `text-xs`, los 3 al mismo
+      nivel. Alineado a la misma jerarquía de 3 capas que ya tenía la landing: título
+      "Política de cancelación" queda como label (`text-[11px] font-black uppercase`,
+      es un rótulo, no contenido) < headline (la frase que importa — "cancelá gratis
+      hasta X" / "no reembolsable") sube a `text-sm font-bold` < detalle en párrafo
+      propio, `text-xs leading-relaxed` (secundario, pero con mejor interlineado que
+      antes). Todo sigue por debajo del resumen de 3.2 (`text-base`/`text-xl`) — no se
+      vuelve el elemento dominante, cumple la mitad negativa del acceptance.
+      Solo `PayStep.vue` tocado — `BookingModal.vue` ya estaba bien, no se dupicó
+      trabajo ahí. Checkbox de "acepto las condiciones" (`pay.acceptTerms`, ya
+      `text-sm font-bold`) y el aviso `pay.termsRequired` no tocados — no son texto de
+      política, son controles/validación de formulario.
+      Verificado: `vue-tsc -b` limpio, `vitest run` booking+landing 127/127 (misma 1
+      falla preexistente ajena de siempre, `FooterBlock.test.ts`), `vite build` ✓
+      built. Los tests de `PayStep.test.ts` (10 casos sobre el contenido exacto de
+      headline/detail por escenario) siguen pasando sin cambios — usan `.text()` sobre
+      el componente completo, no dependen de qué tag/clase envuelve cada frase.
+      **Nota de alcance — acceptance NO verificado visualmente**: mismo motivo que
+      3.2, sin navegador/Playwright disponible en esta sesión.
+
 - [ ] 3.4 Completar y confirmar la configuración visual del motor por hotel (colores,
       contenido, mensajes comerciales, beneficios, bloques visibles/ocultos) sin
       requerir cambios de código (Tarea 13). **Acceptance**: activar/desactivar un
