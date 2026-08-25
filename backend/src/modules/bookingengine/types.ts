@@ -261,6 +261,18 @@ export interface PublicHotelInfoDTO {
    *  tenía que deducir el número parseando el texto del mensaje de error. `null` = sin límite. */
   minNights: number | null
   maxNights: number | null
+  /** Tarea 3.4 (corrección 2026-08-25) — preferencias de `booking_config` que el widget usa
+   *  como DEFAULT inicial (el switcher del huésped, si lo toca, manda por encima). Distinto de
+   *  `currency` de arriba, que es la moneda de COBRO del hotel (`hotels.currency`, fija, no una
+   *  preferencia de display). `null` = sin config cargada, el widget cae a su propio default
+   *  (`navigator.language` / `chargeCurrency`). */
+  widgetDefaultLanguage: string | null
+  widgetDefaultCurrency: string | null
+  /** "Tema del Widget" — string libre (`booking_config.theme`), null si no hay config. El
+   *  frontend decide qué valores conoce (`ACCENT_PRESETS` en `booking-widget.vue`) y cae a
+   *  "sin override" ante cualquier otro — no se valida acá para no tener que migrar filas
+   *  viejas si el set de presets cambia. */
+  widgetAccentPreset: string | null
 }
 
 // ─── Upsells (F2 2.3 — sub-dominio de bookingengine) ────────────

@@ -22,20 +22,25 @@ const baseBody = {
 
 function makeOrm() {
   const room = { id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' }
+  const created: Array<{ model: string; row: any }> = []
   const orm: any = {
     findById: async (model: string, id: string) => (model === 'Rooms' && id === 'r1' ? room : null),
     findMany: async (model: string) => (model === 'Reservations' ? [] : []),
-    create: async (_model: string, payload: any) => ({ id: payload.id || crypto.randomUUID(), ...payload }),
+    create: async (model: string, payload: any) => {
+      const row = { id: payload.id || crypto.randomUUID(), ...payload }
+      created.push({ model, row })
+      return row
+    },
     transaction: async (cb: (tx: any) => Promise<any>) => cb(orm),
     update: async () => null,
     findOne: async () => null,
   }
-  return orm
+  return { orm, created }
 }
 
 describe('createPublicBookingDirect — bookingConfig.enabled (defensa en profundidad)', () => {
   it('enabled=false → 404 "Hotel no encontrado" (mismo criterio anti-enumeración que /rates)', async () => {
-    const orm = makeOrm()
+    const { orm } = makeOrm()
     const bookingConfig = { findOne: async () => ({ hotelId: 'h1', enabled: false }) }
     const res = await createPublicBookingDirect(
       orm, baseBody, undefined, undefined, undefined, undefined, undefined,
@@ -46,7 +51,7 @@ describe('createPublicBookingDirect — bookingConfig.enabled (defensa en profun
   })
 
   it('enabled=true → sigue el flujo normal (201)', async () => {
-    const orm = makeOrm()
+    const { orm } = makeOrm()
     const bookingConfig = { findOne: async () => ({ hotelId: 'h1', enabled: true }) }
     const res = await createPublicBookingDirect(
       orm, baseBody, undefined, undefined, undefined, undefined, undefined,
@@ -56,7 +61,7 @@ describe('createPublicBookingDirect — bookingConfig.enabled (defensa en profun
   })
 
   it('sin fila de bookingConfig (nunca tocó la pantalla) → NO bloquea', async () => {
-    const orm = makeOrm()
+    const { orm } = makeOrm()
     const bookingConfig = { findOne: async () => null }
     const res = await createPublicBookingDirect(
       orm, baseBody, undefined, undefined, undefined, undefined, undefined,
@@ -66,8 +71,42 @@ describe('createPublicBookingDirect — bookingConfig.enabled (defensa en profun
   })
 
   it('sin bookingConfig cableado (compat callers/tests viejos) → NO bloquea', async () => {
-    const orm = makeOrm()
+    const { orm } = makeOrm()
     const res = await createPublicBookingDirect(orm, baseBody)
     expect(res.status).toBe(201)
+  })
+})
+
+describe('createPublicBookingDirect — bookingConfig.instantConfirmation (Tarea 3.4, corrección 2026-08-25)', () => {
+  it('instantConfirmation=false → la reserva nace approvalStatus:"pending"', async () => {
+    const { orm, created } = makeOrm()
+    const bookingConfig = { findOne: async () => ({ hotelId: 'h1', enabled: true, instantConfirmation: false }) }
+    const res = await createPublicBookingDirect(
+      orm, baseBody, undefined, undefined, undefined, undefined, undefined,
+      { bookingConfig: bookingConfig as any },
+    )
+    expect(res.status).toBe(201)
+    const reservationRow = created.find((c) => c.model === 'Reservations')
+    expect(reservationRow?.row.approvalStatus).toBe('pending')
+  })
+
+  it('instantConfirmation=true (o sin fila) → approvalStatus queda undefined (no aplica)', async () => {
+    const { orm, created } = makeOrm()
+    const bookingConfig = { findOne: async () => ({ hotelId: 'h1', enabled: true, instantConfirmation: true }) }
+    const res = await createPublicBookingDirect(
+      orm, baseBody, undefined, undefined, undefined, undefined, undefined,
+      { bookingConfig: bookingConfig as any },
+    )
+    expect(res.status).toBe(201)
+    const reservationRow = created.find((c) => c.model === 'Reservations')
+    expect(reservationRow?.row.approvalStatus).toBeUndefined()
+  })
+
+  it('sin bookingConfig cableado (compat callers viejos) → approvalStatus queda undefined', async () => {
+    const { orm, created } = makeOrm()
+    const res = await createPublicBookingDirect(orm, baseBody)
+    expect(res.status).toBe(201)
+    const reservationRow = created.find((c) => c.model === 'Reservations')
+    expect(reservationRow?.row.approvalStatus).toBeUndefined()
   })
 })

@@ -133,6 +133,9 @@ export interface Reservation {
   refundAmount?: number
   emergencyContact?: EmergencyContact
   creditCard?: CreditCardInfo
+  /** Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status`: 'pending' = el hotel
+   *  apagó "confirmación instantánea" y todavía no revisó esta reserva pagada. */
+  approvalStatus?: 'pending' | 'approved' | null
 }
 
 // Registro CRUDO de `/api/reservas` (el JSON tal cual lo devuelve el módulo `reservas`), ANTES
@@ -168,6 +171,8 @@ export interface ReservationApiRecord {
   refundAmount?: number
   cancellationReason?: string
   cancelledAt?: string
+  /** Tarea 3.4 (corrección 2026-08-25) — ver `Reservation.approvalStatus`. */
+  approvalStatus?: 'pending' | 'approved' | null
 }
 
 // === RESCHEDULE (planning: mover / extender una reserva) ===

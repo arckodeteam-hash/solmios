@@ -25,7 +25,7 @@
       - `/book/:slug` (Pieza 3 reemplaza el widget viejo por este)
       - `/h/:slug?booking=:id&token=:token` (post-redirect Stripe, F3 3.17 confirma)
   -->
-  <div class="min-h-screen bg-surface">
+  <div class="min-h-screen bg-surface" :style="accentCssVars">
     <!-- Header mobile-first: nombre del hotel + stepper + switchers.
          F2 2.13: cuando ?embed=1 (iframe en sitio externo), no se renderiza. El sitio host
          ya aporta branding propio; mostrar el header acá sería redundante y robaría espacio
@@ -192,7 +192,7 @@ import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useBookingStore } from '@/composables/useBooking'
-import { useBookingI18nStore, type BookingLocale } from '@/composables/useBookingI18n'
+import { useBookingI18nStore, hasStoredLocaleChoice, type BookingLocale } from '@/composables/useBookingI18n'
 import { useTracking, initTracking } from '@/composables/useTracking'
 import { PublicHotelService } from '@/services/PublicHotel.service'
 import SearchStep from '@/components/booking/SearchStep.vue'
@@ -218,6 +218,49 @@ const { t, locales, setLocale } = i18n
 const hotelName = ref('')
 const hotelLogo = ref<string | null>(null)
 const hotelLoading = ref(true)
+
+// ─── Tema del Widget (Tarea 3.4, corrección 2026-08-25) ────────────────────────────────────
+// Alcance decidido con el usuario: 3+ presets de solo ACENTO (el color de los botones/CTA),
+// no un reskin de fondo claro/oscuro. Motivo: el widget mezcla los tokens propios del
+// proyecto (navy/cyan, sí themeables vía CSS var) con paleta cruda de Tailwind
+// (border-slate-200, bg-slate-50, rojos/verdes de error-éxito) que NO son tokens y no
+// responden a ningún override — un "Oscuro" de fondo real dejaría cards/inputs en blanco
+// sobre fondo oscuro, un reskin roto. Los colores semánticos (error/éxito) y estructurales
+// (fondos, bordes) quedan IGUALES en todos los presets a propósito: lo único que cambia es
+// la marca del hotel en su CTA principal — mismo criterio de diseño real, no una limitación
+// disimulada.
+//
+// Mecanismo: mismo patrón que `hotel-landing.vue:themeCssVars` — CSS custom properties sobre
+// los tokens de `main.css` @theme, que las utilities `bg-cyan`/`text-cyan`/`border-cyan` de
+// Tailwind v4 heredan automáticamente. Solo se pisan `--color-cyan`/`--color-cyan-light`
+// (los tokens que efectivamente pintan botones/links/foco en el widget) — `--color-navy`
+// (headers/texto) queda fijo en todos los presets, por legibilidad y consistencia.
+const ACCENT_PRESETS: Record<string, { cyan: string; cyanLight: string }> = {
+  // 'navy' pisa el accent cyan por el navy de marca — es el default de `booking_config.theme`
+  // (schema), así que un hotel que nunca tocó el selector pasa a verse así apenas se guarda
+  // la fila (antes esto no tenía ningún efecto).
+  navy: { cyan: '#0D2B4E', cyanLight: '#1A3A5C' },
+  // 'cyan' = los colores de siempre del widget (sin cambios) — queda declarado para que
+  // elegirlo en el panel tenga un resultado visible y predecible, no un no-op silencioso.
+  cyan: { cyan: '#00B4D8', cyanLight: '#48CAE4' },
+  teal: { cyan: '#117A65', cyanLight: '#1ABC9C' },
+  // 'gold'/'coral' (antes 'white'/'dark' — renombrados en el panel el 2026-08-25: prometían
+  // fondo claro/oscuro, lo que este alcance no hace). Una fila vieja con 'white'/'dark' cae al
+  // default de abajo (sin override) — no rompe, simplemente no matchea ningún preset conocido.
+  gold: { cyan: '#B7950B', cyanLight: '#D4AC0D' },
+  coral: { cyan: '#E74C3C', cyanLight: '#EC7063' },
+}
+
+const accentPreset = ref<string | null>(null)
+const accentCssVars = computed<Record<string, string>>(() => {
+  const preset = accentPreset.value ? ACCENT_PRESETS[accentPreset.value] : undefined
+  const vars: Record<string, string> = {}
+  if (preset) {
+    vars['--color-cyan'] = preset.cyan
+    vars['--color-cyan-light'] = preset.cyanLight
+  }
+  return vars
+})
 // F4 4.1 (D13) — hotelId (UUID) resuelto desde el slug al montar. Se pasa a track() para
 // que el backend persista el evento del funnel en tracking_events con target='internal'.
 // Vacío hasta que cargue el hotel (los track()早期的 devuelven sin persistir — acceptable,
@@ -424,6 +467,23 @@ onMounted(async () => {
     try {
       tracking.track('view', { hotelId: hotel.id })
     } catch { /* noop */ }
+
+    // Tarea 3.4 (corrección 2026-08-25) — defaults de `booking_config` (Idioma/Moneda del
+    // panel "Configuración del Widget"). Ambos SOLO pisan el fallback automático, nunca una
+    // elección real del huésped — mismo criterio que ya usa `probeGeoCurrency` de abajo
+    // (`!store.currencyPreference`) para no pisarse con lo que el huésped ya tocó.
+    if (hotel.widgetDefaultLanguage && !hasStoredLocaleChoice()) {
+      i18n.setLocale(hotel.widgetDefaultLanguage as BookingLocale)
+    }
+    if (hotel.widgetDefaultCurrency && !store.currencyPreference) {
+      void store.setCurrency(hotel.widgetDefaultCurrency)
+    }
+    accentPreset.value = hotel.widgetAccentPreset ?? null
+
+    // Tarea 3.4 (corrección 2026-08-25) — defaults de `booking_config` (Idioma/Moneda del
+    // panel "Configuración del Widget"). Ambos SOLO pisan el fallback automático, nunca una
+    // elección real del huésped — mismo criterio que ya usa `probeGeoCurrency` de abajo
+    // (`!store.currencyPreference`) para no pisarse con lo que el huésped ya tocó.
   } catch {
     // Si el hotel no carga, no bloqueamos el widget — el usuario igual puede buscar. El
     // header queda con el fallback "Reservá tu estadía".

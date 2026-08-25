@@ -167,6 +167,43 @@ describe('Tarea 3.1 — estimatedArrival llega a Reservations.notes (grupo)', ()
   })
 })
 
+describe('Tarea 3.4 (corrección 2026-08-25) — instantConfirmation apagada → approvalStatus:"pending" (grupo)', () => {
+  it('TODAS las reservas del grupo nacen approvalStatus:"pending" si el hotel apagó confirmación instantánea', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [
+        { id: 'r-deluxe', hotelId: HOTEL_ID, type: 'deluxe', capacity: 2, basePrice: 150, status: 'available' },
+        { id: 'r-standard', hotelId: HOTEL_ID, type: 'standard', capacity: 2, basePrice: 80, status: 'available' },
+      ],
+    })
+    const bookingConfig = { findOne: async () => ({ hotelId: HOTEL_ID, enabled: true, instantConfirmation: false }) }
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [
+        { roomType: 'deluxe', adults: 2, quantity: 1 },
+        { roomType: 'standard', adults: 2, quantity: 1 },
+      ],
+    }, undefined, undefined, fakeStripe as any, undefined, stripeUrls, { bookingConfig: bookingConfig as any })
+
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(2)
+    expect(tables.Reservations.every((r: any) => r.approvalStatus === 'pending')).toBe(true)
+  })
+
+  it('instantConfirmation=true → approvalStatus queda undefined', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [{ id: 'r-deluxe', hotelId: HOTEL_ID, type: 'deluxe', capacity: 2, basePrice: 150, status: 'available' }],
+    })
+    const bookingConfig = { findOne: async () => ({ hotelId: HOTEL_ID, enabled: true, instantConfirmation: true }) }
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'deluxe', adults: 2, quantity: 1 }],
+    }, undefined, undefined, fakeStripe as any, undefined, stripeUrls, { bookingConfig: bookingConfig as any })
+
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].approvalStatus).toBeUndefined()
+  })
+})
+
 describe('createPublicBookingGroup — mismo tipo ×N (caso literal original)', () => {
   it('3 Deluxe disponibles, pide ×2 → crea 1 reserva por unidad, 2 en total', async () => {
     const { orm, tables } = makeDb({

@@ -230,7 +230,9 @@ const messages = {
     'confirm.loading': 'Confirmando tu reserva…',
     'confirm.doNotClose': 'No cierres esta ventana.',
     'confirm.success': '¡Reserva confirmada!',
+    'confirm.successPendingApproval': '¡Reserva recibida!',
     'confirm.sentTo': 'Te enviamos los detalles a {email}.',
+    'confirm.pendingApprovalNotice': 'Tu pago se procesó correctamente. El hotel todavía tiene que confirmar tu reserva — te avisamos por email en cuanto lo haga.',
     'confirm.checkIn': 'Check-in',
     'confirm.checkOut': 'Check-out',
     'confirm.guest': 'Huésped',
@@ -419,7 +421,9 @@ const messages = {
     'confirm.loading': 'Confirming your booking…',
     'confirm.doNotClose': 'Do not close this window.',
     'confirm.success': 'Booking confirmed!',
+    'confirm.successPendingApproval': 'Booking received!',
     'confirm.sentTo': 'We sent the details to {email}.',
+    'confirm.pendingApprovalNotice': 'Your payment went through. The hotel still needs to confirm your booking — we’ll email you as soon as they do.',
     'confirm.checkIn': 'Check-in',
     'confirm.checkOut': 'Check-out',
     'confirm.guest': 'Guest',
@@ -607,7 +611,9 @@ const messages = {
     'confirm.loading': 'Confirmando sua reserva…',
     'confirm.doNotClose': 'Não feche esta janela.',
     'confirm.success': 'Reserva confirmada!',
+    'confirm.successPendingApproval': 'Reserva recebida!',
     'confirm.sentTo': 'Enviamos os detalhes para {email}.',
+    'confirm.pendingApprovalNotice': 'Seu pagamento foi processado. O hotel ainda precisa confirmar sua reserva — avisaremos por email assim que isso acontecer.',
     'confirm.checkIn': 'Check-in',
     'confirm.checkOut': 'Check-out',
     'confirm.guest': 'Hóspede',
@@ -655,6 +661,22 @@ export function detectBookingLocale(): BookingLocale {
     if ((SUPPORTED as string[]).includes(prefix)) return prefix as BookingLocale
   }
   return 'es'
+}
+
+/**
+ * Tarea 3.4 (corrección 2026-08-25) — `true` si el huésped YA eligió idioma explícitamente en
+ * esta sesión (tier 1 de `detectBookingLocale`). El default de `booking_config.language` del
+ * hotel (aplicado por `booking-widget.vue` tras cargar el hotel, async — llega DESPUÉS de que
+ * el store ya se creó con `detectBookingLocale()`) solo debe pisar el fallback de
+ * `navigator.language`/ES, nunca una elección real del huésped.
+ */
+export function hasStoredLocaleChoice(): boolean {
+  try {
+    const stored = sessionStorage.getItem('booking-widget:locale')
+    return !!stored && (SUPPORTED as string[]).includes(stored)
+  } catch {
+    return false
+  }
 }
 
 /** Pluralization helper para `{count, plural, one {…} other {…}}` (formato ICU simplificado).

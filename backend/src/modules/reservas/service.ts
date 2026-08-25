@@ -13,6 +13,7 @@ import { setGuaranteePin as setGuaranteePinUsecase, getGuaranteeHasPin as getGua
 import { listReservations, getReservationById, createReservation, updateReservationWithBalance, deleteReservation, type PromoCodePort } from './usecases/crud'
 import { paidSourceFrom, type PaidSource } from '../../shared/usecases/reservation-paid'
 import { cancelReservation as cancelReservationUsecase } from './usecases/cancel'
+import { approveReservation as approveReservationUsecase } from './usecases/approve'
 import { cancelReservationBySystem, type SystemCancelInput, type SystemCancelOutcome } from './usecases/cancel-system'
 import { previewCancellation, type CancelPreview } from './usecases/cancel-preview'
 import { getPreCheckinData as getPreCheckinDataUsecase, submitPreCheckin as submitPreCheckinUsecase, uploadPreCheckinPhoto as uploadPreCheckinPhotoUsecase } from './usecases/pre-checkin'
@@ -78,7 +79,6 @@ export class ReservasService {
 
   // ACUMULA handlers (cadena secuencial; implementación única en shared/utils/accumulate-sockets.ts).
   setSockets(s: Partial<ReservasSockets>): void { accumulateSockets(this.sockets as any, s as any) }
-
   async list(query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> {
     return listReservations(this.repo, this.userRepo, this.cache, this.logger, query, currentUser)
   }
@@ -188,6 +188,7 @@ export class ReservasService {
   async unlockGuaranteeCard(reservationId: string, user: any, body: any): Promise<any> { return unlockGuaranteeCardUsecase(this.queries, this.repo, this.userRepo, reservationId, user, body, this.auth) }
   // ── CANCEL (F2 plan #627) — `cancel` aplica la política del hotel; `cancelPreview` hace el MISMO cálculo sin persistir ni emitir ──
   async cancel(id: string, dto: { reason?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> { return cancelReservationUsecase({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets }, id, dto, currentUser, this.auth) }
+  async approve(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> { return approveReservationUsecase({ repo: this.repo, cache: this.cache }, id, currentUser, this.auth) }
   async cancelPreview(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<CancelPreview> { return previewCancellation({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, guestRepo: this.guestRepo }, id, currentUser, this.auth) }
   /** Cancelación de SISTEMA (OTA/IA): sin usuario logueado, scoping por `hotelId`. Ver usecases/cancel-system.ts. Lo consumen los connectors canales-reservas / ai-recepcionista-reservas / ai-gerente-reservas. */
   async cancelBySystem(id: string, input: SystemCancelInput): Promise<SystemCancelOutcome> { return cancelReservationBySystem({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets }, id, input) }

@@ -128,9 +128,18 @@
               <span class="text-xs font-bold text-text-secondary">{{ r.nights }}n</span>
             </td>
             <td class="px-4 py-5">
-              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="stClass(r.status)">
-                <span class="h-1.5 w-1.5 rounded-full shrink-0" :class="stDotClass(r.status)"></span>{{ stLabel(r.status) }}
-              </span>
+              <div class="flex flex-col items-start gap-1">
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="stClass(r.status)">
+                  <span class="h-1.5 w-1.5 rounded-full shrink-0" :class="stDotClass(r.status)"></span>{{ stLabel(r.status) }}
+                </span>
+                <!-- Tarea 3.4 (corrección 2026-08-25) — badge aparte, eje independiente de
+                     `status`: la reserva puede estar "Confirmada" (pagada) Y "Por aprobar"
+                     (el hotel todavía no la revisó) al mismo tiempo. -->
+                <span v-if="r.approvalStatus === 'pending'" data-testid="reservation-approval-badge"
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-gold/15 text-gold">
+                  <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-gold"></span>Por aprobar
+                </span>
+              </div>
             </td>
             <td class="px-4 py-5">
               <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="srcClass(r.source)">
@@ -150,6 +159,12 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                   </svg>
                   Ver
+                </button>
+                <button v-if="r.approvalStatus==='pending'" data-testid="reservation-row-approve" :disabled="approving===r.id" @click="approveReservation(r)" class="flex items-center gap-1 px-2.5 py-1.5 bg-gold/15 text-gold rounded-lg text-[10px] font-bold cursor-pointer hover:bg-gold/25 transition-colors disabled:opacity-50">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/>
+                  </svg>
+                  {{ approving===r.id ? 'Aprobando…' : 'Aprobar' }}
                 </button>
                 <button v-if="r.status==='confirmed'" @click="confirmAction('checkin',r)" class="flex items-center gap-1 px-2.5 py-1.5 bg-teal/10 text-teal rounded-lg text-[10px] font-bold cursor-pointer hover:bg-teal/20 transition-colors">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
@@ -261,6 +276,8 @@ const hid = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platfor
 const search = ref('')
 const filterStatus = ref('')
 const filterChannel = ref('')
+// Tarea 3.4 (corrección 2026-08-25) — '' | 'pending'. Eje independiente de filterStatus.
+const filterApproval = ref('')
 const list = ref<any[]>([])
 const rooms = ref<any[]>([])
 // Detalle (F3): clic en fila abre ReservationModal (vista lectura), no el form directo.
@@ -289,6 +306,8 @@ const revenueTodayAmount = computed(() => list.value.filter((r: any) => r.checkI
 const totalBilledAmount = computed(() => list.value.filter((r: any) => r.status !== 'cancelled').reduce((s: number, r: any) => s + (r.total || 0), 0))
 const pendingCount = computed(() => list.value.filter((r: any) => r.status === 'pending').length)
 const confirmedCount = computed(() => list.value.filter((r: any) => r.status === 'confirmed').length)
+// Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status` (ver comentario en `load()`).
+const approvalPendingCount = computed(() => list.value.filter((r: any) => r.approvalStatus === 'pending').length)
 
 // "vs ayer": mismas métricas de check-in/out/ingresos pero con fecha de ayer — ya tenemos
 // todas las reservas cargadas en `list`, no hace falta pedir un histórico aparte.
@@ -310,8 +329,12 @@ const revenueAnim = useCountUp(revenueTodayAmount)
 const totalBilledAnim = useCountUp(totalBilledAmount)
 const pendingAnim = useCountUp(pendingCount)
 const confirmedAnim = useCountUp(confirmedCount)
+const approvalPendingAnim = useCountUp(approvalPendingCount)
 
 function setStatusFilter(status: string) { filterStatus.value = status }
+// Tarea 3.4 (corrección 2026-08-25) — toggle: un segundo click sobre la misma vista la
+// apaga (mismo criterio que un filtro de chip, no un radio permanente).
+function toggleApprovalFilter() { filterApproval.value = filterApproval.value === 'pending' ? '' : 'pending' }
 
 const statsCards = computed(() => [
   { label: 'Check-ins Hoy', value: checkinsAnim.value, icon: 'checkin' as const, accent: 'blue' as const, trend: checkinsTrend.value, caption: undefined as string | undefined, link: undefined as (() => void) | undefined },
@@ -320,6 +343,9 @@ const statsCards = computed(() => [
   { label: 'Total Facturado', value: totalBilledAnim.value, prefix: '$', icon: 'money' as const, accent: 'purple' as const, trend: null as number | null, caption: 'Acumulado' as string | undefined, link: undefined as (() => void) | undefined },
   { label: 'Pendientes', value: pendingAnim.value, icon: 'bookings' as const, accent: 'amber' as const, trend: null as number | null, caption: undefined as string | undefined, link: (() => setStatusFilter('pending')) as (() => void) | undefined },
   { label: 'Confirmadas', value: confirmedAnim.value, icon: 'bookings' as const, accent: 'teal' as const, trend: null as number | null, caption: undefined as string | undefined, link: (() => setStatusFilter('confirmed')) as (() => void) | undefined },
+  // Tarea 3.4 — vista dedicada para reservas pagadas que el hotel todavía no revisó
+  // ("confirmación instantánea" apagada). Eje independiente del filtro de Estado de arriba.
+  { label: 'Por aprobar', value: approvalPendingAnim.value, icon: 'bookings' as const, accent: 'amber' as const, trend: null as number | null, caption: 'Confirmación manual' as string | undefined, link: toggleApprovalFilter as (() => void) | undefined },
 ])
 
 const filtered = computed(() => {
@@ -327,6 +353,7 @@ const filtered = computed(() => {
   if (search.value) { const q = search.value.toLowerCase(); l = l.filter((r: any) => (r.guestName || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q)) }
   if (filterStatus.value) l = l.filter((r: any) => r.status === filterStatus.value)
   if (filterChannel.value) l = l.filter((r: any) => r.source === filterChannel.value)
+  if (filterApproval.value) l = l.filter((r: any) => r.approvalStatus === filterApproval.value)
   return l
 })
 
@@ -401,6 +428,9 @@ async function load() {
         checkIn: String(r.checkIn || '').slice(0, 10), checkOut: String(r.checkOut || '').slice(0, 10),
         nights: nBetween(r.checkIn, r.checkOut), status: r.status, source: r.source,
         total: r.totalAmount, adults: r.adults, children: r.children, notes: r.notes || '',
+        // Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status`: la reserva ya
+        // está pagada/ocupando la habitación, pero el hotel todavía no la revisó.
+        approvalStatus: r.approvalStatus || null,
       }
     })
   } catch (e: any) { console.error('[reservations/load]', e); toast.error('No se pudieron cargar las reservas') }
@@ -470,6 +500,23 @@ async function doCheckin(r: any) {
 async function doDelete(r: any) {
   try { await ReservationService.remove(r.id); await load(); toast.success('Reserva eliminada') }
   catch (e: any) { toast.error(e.message || 'Error al eliminar') }
+}
+
+// Tarea 3.4 (corrección 2026-08-25) — aprobar una reserva pendiente de revisión ("confirmación
+// instantánea" apagada). `approving` deshabilita el botón de ESA fila mientras la request está
+// en vuelo (anti doble-click), no toda la tabla.
+const approving = ref('')
+async function approveReservation(r: any) {
+  approving.value = r.id
+  try {
+    await ReservationService.approve(r.id)
+    await load()
+    toast.success(`Reserva de ${r.guestName} aprobada`)
+  } catch (e: any) {
+    toast.error(e.message || 'Error al aprobar la reserva')
+  } finally {
+    approving.value = ''
+  }
 }
 
 // Export CSV de las reservas filtradas (BOM UTF-8 → Excel respeta tildes).

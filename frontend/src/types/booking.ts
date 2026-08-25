@@ -453,6 +453,9 @@ export interface PublicReservation {
   totalAmount?: number
   notes?: string | null
   promoCode?: string | null
+  /** Tarea 3.4 (corrección 2026-08-25). 'pending' = el hotel apagó "confirmación
+   *  instantánea" y todavía no revisó esta reserva. null = no aplica. */
+  approvalStatus?: 'pending' | 'approved' | null
 }
 
 export interface PublicReservationResponse {

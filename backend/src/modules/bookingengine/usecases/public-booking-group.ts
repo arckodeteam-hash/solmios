@@ -131,8 +131,11 @@ export async function createPublicBookingGroup(
     return { status: 400, body: { error: `La estadía no puede superar ${MAX_STAY_NIGHTS} noches` } }
   }
 
+  // Hoisted (no scoped al if): Tarea 3.4 (corrección 2026-08-25) reusa este fetch más abajo
+  // para decidir `approvalStatus` — mismo criterio que public-booking.ts.
+  let bookingConfig: any = null
   if (extraDeps?.bookingConfig) {
-    const bookingConfig = await extraDeps.bookingConfig.findOne({ hotelId })
+    bookingConfig = await extraDeps.bookingConfig.findOne({ hotelId })
     if (bookingConfig && bookingConfig.enabled === false) {
       return { status: 404, body: { error: 'Hotel no encontrado' } }
     }
@@ -323,6 +326,10 @@ export async function createPublicBookingGroup(
             notes: notesParts.join(' | '),
             accessToken: sharedAccessToken,
             promoCode: promoCode ? String(promoCode).trim().toUpperCase() : undefined,
+            // Tarea 3.4 (corrección 2026-08-25) — mismo criterio que public-booking.ts:
+            // eje independiente de `status`, todas las reservas del grupo quedan pendientes
+            // de aprobación por igual si el hotel apagó "Confirmación instantánea".
+            approvalStatus: bookingConfig?.instantConfirmation === false ? 'pending' : undefined,
           })
           reservations.push(reservation)
         }

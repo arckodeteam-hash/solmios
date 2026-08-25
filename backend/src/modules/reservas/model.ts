@@ -82,6 +82,14 @@ export const ReservasModel: ModelDefinition = {
     // Anti-patrón ORM: declarados acá case-sensitive o se descartan al persistir. RUN_MIGRATE ADD COLUMN.
     signatureUrl: { type: 'string' },
     contractAcceptedAt: { type: 'string' },
+    // Tarea 3.4 (corrección 2026-08-25) — "Confirmación instantánea" apagada en
+    // booking_config: la reserva pública queda 'pending' (o null si no aplica) hasta que el
+    // hotel la apruebe manualmente (`POST /api/reservas/:id/approve`). Eje INDEPENDIENTE de
+    // `status` a propósito — la reserva ya ocupa la habitación y ya cobró, esto es solo una
+    // revisión humana antes de darla por buena, no un segundo estado de disponibilidad. Solo
+    // lo setean los usecases públicos de bookingengine; una reserva cargada a mano desde el
+    // panel no pasa por acá. Anti-patrón ORM: declarado acá o se descarta al persistir.
+    approvalStatus: { type: 'string' },
   },
   timestamps: true,
 }

@@ -178,11 +178,19 @@
 
             <div class="grid md:grid-cols-2 gap-6">
               <div>
-                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Tema del Widget</label>
+                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Color de acento del widget</label>
+                <!-- Tarea 3.4 (corrección 2026-08-25) — antes decía "Tema del Widget" con
+                     opciones "Claro"/"Oscuro" que no hacían nada, y ni siquiera hubieran
+                     podido: el widget mezcla clases de color propias del proyecto con paleta
+                     cruda de Tailwind, invertir fondo/texto de verdad exige migrar ~8
+                     archivos (ver tasks.md 3.4). Alcance real, decidido con el dueño del
+                     producto: el color del botón principal/CTA cambia, el resto del widget
+                     (fondos, bordes, textos) se mantiene igual siempre. -->
                 <div class="grid grid-cols-3 gap-2">
                   <button
                     v-for="theme in themes"
                     :key="theme.id"
+                    type="button"
                     @click="form.theme = theme.id"
                     class="p-3 rounded-xl border-2 text-center transition-all cursor-pointer"
                     :class="form.theme === theme.id ? 'border-cyan bg-cyan/5' : 'border-border hover:border-gray-300'"
@@ -191,6 +199,7 @@
                     <div class="text-[10px] font-bold">{{ theme.name }}</div>
                   </button>
                 </div>
+                <p class="mt-1 text-[10px] text-text-muted">Solo cambia el color del botón principal del widget — el resto queda igual.</p>
               </div>
 
               <div>
@@ -201,10 +210,19 @@
                   <option value="inline">Integrado en página</option>
                   <option value="popup">Popup al cargar</option>
                 </select>
+                <!-- Tarea 3.4 (corrección 2026-08-25) — este dato va HORNEADO en el snippet
+                     (`data-position`, ver embedCode), no se lee en vivo del backend: cambiar
+                     la posición acá requiere volver a copiar/pegar el código de abajo en el
+                     sitio del hotel para que tome efecto — mismo criterio que ya aplica si
+                     cambia el slug. -->
+                <p class="mt-1 text-[10px] text-text-muted">Guardá y volvé a copiar el código de abajo para que el cambio se vea en tu sitio.</p>
               </div>
 
               <div>
-                <label for="booking-engine-moneda" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Moneda</label>
+                <label for="booking-engine-moneda" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Moneda por defecto del widget</label>
+                <!-- Tarea 3.4 (corrección 2026-08-25) — el huésped puede cambiarla desde el
+                     switcher del widget; esto solo decide con QUÉ arranca. NO es la moneda de
+                     cobro del hotel (esa es `hotels.currency`, se configura en Ajustes). -->
                 <select id="booking-engine-moneda" name="currency" v-model="form.currency" class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan cursor-pointer">
                   <option value="USD">USD - Dólar</option>
                   <option value="DOP">DOP - Peso Dominicano</option>
@@ -215,12 +233,15 @@
               </div>
 
               <div>
-                <label for="booking-engine-idioma" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Idioma</label>
+                <label for="booking-engine-idioma" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Idioma por defecto del widget</label>
+                <!-- Tarea 3.4 (corrección 2026-08-25) — 'fr' se sacó a propósito: el widget
+                     (useBookingI18n.ts) solo traduce es/en/pt. Ofrecerlo acá era el mismo bug
+                     que se está cerrando en esta tarea (una opción que no hace nada), solo que
+                     para francés en vez de para los 4 controles originales. -->
                 <select id="booking-engine-idioma" name="language" v-model="form.language" class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan cursor-pointer">
                   <option value="es">Español</option>
                   <option value="en">English</option>
                   <option value="pt">Português</option>
-                  <option value="fr">Français</option>
                 </select>
               </div>
             </div>
@@ -469,17 +490,31 @@ function dropOffColor(pct: number): string {
   return 'text-rose'
 }
 
+// Tarea 3.4 (corrección 2026-08-25) — 'white'/'dark' se renombraron a 'gold'/'coral': con el
+// alcance real (solo el color del botón cambia, ver ACCENT_PRESETS en booking-widget.vue),
+// "Claro"/"Oscuro" prometían una inversión de fondo que este alcance no hace. Una fila vieja
+// con 'white'/'dark' guardada antes de este cambio no rompe — el widget simplemente no
+// encuentra el preset y se ve con sus colores de siempre (mismo criterio "sin match = sin
+// override" que ya usa `resolveStayLimits` del lado del backend).
 const themes = [
   { id: 'navy', name: 'Navy', color: 'bg-navy' },
   { id: 'cyan', name: 'Cyan', color: 'bg-cyan' },
   { id: 'teal', name: 'Teal', color: 'bg-teal' },
-  { id: 'white', name: 'Claro', color: 'bg-white border border-gray-200' },
-  { id: 'dark', name: 'Oscuro', color: 'bg-gray-800' },
+  { id: 'gold', name: 'Dorado', color: 'bg-gold' },
+  { id: 'coral', name: 'Coral', color: 'bg-coral' },
 ]
 
+// Tarea 3.4 (corrección 2026-08-25) — `data-position` viaja HORNEADO en el snippet, no vía
+// fetch en runtime: `widget/loader.js` es un script standalone sin dependencias que corre en
+// sitios de TERCEROS, así que un round-trip extra al backend solo para saber "dónde pintarme"
+// sería un costo de carga en la web del hotel por un dato que casi nunca cambia. Mismo patrón
+// que usan snippets de Analytics/Stripe: si el hotelero cambia "Posición en la Web" en este
+// panel, tiene que volver a copiar/pegar el snippet actualizado — igual que ya pasaba con
+// `data-hotel` si cambiara el slug. Ver `loader.js` para el detalle de qué hace cada valor.
 const embedCode = computed(() =>
   `<script src="${window.location.origin}/widget/loader.js"\n` +
-  `  data-hotel="${hotelSlug.value || 'SLUG-DEL-HOTEL'}">\n` +
+  `  data-hotel="${hotelSlug.value || 'SLUG-DEL-HOTEL'}"\n` +
+  `  data-position="${form.position || 'inline'}">\n` +
   `<\/script>`
 )
 

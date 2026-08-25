@@ -58,6 +58,11 @@ export function mapReservation(r: RawReservation): Reservation {
     // realmente aplicó (el del preview es una cotización anterior).
     cancellationFee: r.cancellationFee,
     refundAmount: r.refundAmount,
+    // Tarea 3.4 (corrección 2026-08-25) — bug real de QA: este allow-list no lo declaraba y
+    // `pages/reservations/index.vue:load()` lee `r.approvalStatus` del objeto YA mapeado acá,
+    // así que la KPI "Por aprobar", el badge de la fila y el botón "Aprobar" quedaban muertos
+    // (siempre `null`) aunque el backend devolviera el campo correcto.
+    approvalStatus: r.approvalStatus ?? null,
   } as Reservation
 }
 
@@ -195,6 +200,17 @@ export const ReservationService = {
    */
   async cancelPreview(id: string): Promise<CancelPreview> {
     return http.get<CancelPreview>(`/reservas/${id}/cancel-preview`)
+  },
+
+  /**
+   * Tarea 3.4 (corrección 2026-08-25) — aprueba una reserva pública que quedó pendiente de
+   * revisión porque el hotel apagó "Confirmación instantánea". Solo mueve `approvalStatus`
+   * ('pending' → 'approved'); NO toca `status`, folio ni disponibilidad — la reserva ya
+   * estaba pagada y ocupando la habitación desde que se creó.
+   */
+  async approve(id: string): Promise<Reservation> {
+    const data = await http.post<RawReservation>(`/reservas/${id}/approve`, {})
+    return mapReservation(data)
   },
 
   /** Elimina una reserva (la UI lo limita a pendientes/canceladas). */

@@ -46,6 +46,9 @@ export interface ReservasDTO {
   cancellationFee?: number
   refundAmount?: number
   policyApplied?: any
+  // Tarea 3.4 (corrección 2026-08-25) — 'pending' | 'approved' | undefined (undefined = no
+  // aplica, el hotel tiene "confirmación instantánea" prendida). Ver reservas/model.ts.
+  approvalStatus?: 'pending' | 'approved'
   createdAt: string
   updatedAt: string
 }

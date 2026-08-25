@@ -100,6 +100,20 @@ export class ReservasController {
     }
   }
 
+  // ── APPROVE (Tarea 3.4, corrección 2026-08-25): reserva pública pendiente de revisión
+  //    del hotel ("confirmación instantánea" apagada) → el hotel la da por buena ──
+  async approve(req: HttpRequest) {
+    try {
+      const item = await this.service.approve(req.params.id, req.user as any)
+      return { status: 200, body: item }
+    } catch (e: any) {
+      if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
+      if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
+      if (e.name === 'ConflictError') return { status: 409, body: { error: e.message } }
+      return { status: 500, body: { error: e.message } }
+    }
+  }
+
   // ── CANCEL PREVIEW: qué pasaría si cancelo ahora (no persiste, no emite) ──
   // Siempre 200 cuando la reserva existe y es del hotel: el "no se puede cancelar" viaja
   // en el body (canCancel/blockedReason), NO como 409 — es un preview, no una acción.

@@ -25,10 +25,19 @@
 
     <div v-else-if="pollingState === 'success'" class="py-6">
       <div class="text-5xl mb-3">✅</div>
-      <h2 class="text-xl font-black text-navy">{{ t('confirm.success') }}</h2>
+      <h2 class="text-xl font-black text-navy">
+        {{ isPendingApproval ? t('confirm.successPendingApproval') : t('confirm.success') }}
+      </h2>
       <p class="text-sm text-text-muted mt-2"
          v-html="successBody">
       </p>
+
+      <!-- Tarea 3.4 (corrección 2026-08-25) — mismo aviso que booking-confirmation.vue
+           (página standalone): "confirmación instantánea" apagada, el pago se procesó pero
+           el hotel todavía tiene que revisar la reserva. -->
+      <div v-if="isPendingApproval" class="mt-4 rounded-2xl border-2 border-gold/40 bg-gold/5 p-4 text-left">
+        <p class="text-sm font-bold text-navy">{{ t('confirm.pendingApprovalNotice') }}</p>
+      </div>
 
       <div v-if="reservation" class="mt-5 rounded-2xl border border-slate-200 bg-white p-4 text-left text-sm space-y-1">
         <div class="flex justify-between">
@@ -102,6 +111,9 @@ const MAX_ATTEMPTS = 10
 const POLL_INTERVAL_MS = 3000
 let timer: ReturnType<typeof setTimeout> | null = null
 let attempts = 0
+
+/** Tarea 3.4 (corrección 2026-08-25) — mismo criterio que booking-confirmation.vue. */
+const isPendingApproval = computed(() => reservation.value?.reservation?.approvalStatus === 'pending')
 
 /** Cuerpo del mensaje de éxito con el email embebido. Como el email viene del backend y
  *  ya pasó validación de formato ahí, no sanitizamos más acá (es textotrusted dentro de un

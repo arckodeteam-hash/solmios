@@ -32,6 +32,8 @@ vi.mock('@/services/Booking.service', () => ({
 
 import BookingWidget from './booking-widget.vue'
 import { useBookingStore } from '@/composables/useBooking'
+import { useBookingI18nStore } from '@/composables/useBookingI18n'
+import { PublicHotelService } from '@/services/PublicHotel.service'
 
 let wrapper: VueWrapper | null = null
 
@@ -77,5 +79,95 @@ describe('booking-widget — parámetros del deep-link', () => {
 
     expect(store.children).toBe(0)
     expect(store.physicalGuests).toBe(2)
+  })
+})
+
+// Tarea 3.4 (corrección 2026-08-25) — defaults de `booking_config` (Idioma/Moneda de
+// "Configuración del Widget"). El hallazgo real que motivó esta tarea: estos 2 campos se
+// guardaban en el panel pero nada los leía. Acá se prueba que SÍ se aplican, y que NUNCA
+// pisan una elección que el huésped ya hizo (sessionStorage / currencyPreference).
+describe('booking-widget — defaults de booking_config (Tarea 3.4)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('sin cloudflare')))
+    try { sessionStorage.clear() } catch { /* jsdom siempre lo tiene */ }
+    wrapper?.unmount()
+    wrapper = null
+  })
+
+  it('aplica widgetDefaultLanguage/widgetDefaultCurrency cuando el huésped no eligió nada', async () => {
+    // jsdom trae `navigator.language` = 'en-US' por default — si no lo pisamos, `i18n.locale`
+    // daría 'en' IGUAL por la tier 2 de detectBookingLocale (navigator.language), sin que el
+    // fix de esta tarea tenga nada que ver. Se fuerza a 'de' (no soportado, cae a 'es') para
+    // que 'en' acá SOLO pueda venir de widgetDefaultLanguage.
+    vi.stubGlobal('navigator', { language: 'de-DE' })
+    vi.mocked(PublicHotelService.getBySlug).mockResolvedValueOnce({
+      id: 'h1', name: 'Hotel Demo', logo: null,
+      widgetDefaultLanguage: 'en', widgetDefaultCurrency: 'EUR',
+    } as any)
+    const store = await render({})
+    const i18n = useBookingI18nStore()
+
+    expect(i18n.locale).toBe('en')
+    expect(store.currencyPreference).toBe('EUR')
+  })
+
+  it('NO pisa un idioma que el huésped ya eligió esta sesión (sessionStorage)', async () => {
+    sessionStorage.setItem('booking-widget:locale', 'pt')
+    vi.mocked(PublicHotelService.getBySlug).mockResolvedValueOnce({
+      id: 'h1', name: 'Hotel Demo', logo: null,
+      widgetDefaultLanguage: 'en', widgetDefaultCurrency: null,
+    } as any)
+    await render({})
+    const i18n = useBookingI18nStore()
+
+    expect(i18n.locale).toBe('pt')
+  })
+
+  it('sin defaults cargados (hotel viejo / sin booking_config) no rompe y no cambia nada', async () => {
+    vi.mocked(PublicHotelService.getBySlug).mockResolvedValueOnce({ id: 'h1', name: 'Hotel Demo', logo: null } as any)
+    const store = await render({})
+
+    expect(store.currencyPreference).toBe('')
+  })
+})
+
+// Tarea 3.4 (corrección 2026-08-25) — "Tema del Widget", alcance real: solo el color de acento
+// (botones/CTA vía --color-cyan), nunca fondo/texto. Ver ACCENT_PRESETS en booking-widget.vue.
+describe('booking-widget — color de acento (widgetAccentPreset, Tarea 3.4)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('sin cloudflare')))
+    wrapper?.unmount()
+    wrapper = null
+  })
+
+  it('preset conocido (gold) pisa --color-cyan/--color-cyan-light en el root', async () => {
+    vi.mocked(PublicHotelService.getBySlug).mockResolvedValueOnce({
+      id: 'h1', name: 'Hotel Demo', logo: null, widgetAccentPreset: 'gold',
+    } as any)
+    await render({})
+
+    const style = wrapper!.find('div.min-h-screen').attributes('style') || ''
+    expect(style).toContain('--color-cyan: #B7950B')
+    expect(style).toContain('--color-cyan-light: #D4AC0D')
+  })
+
+  it('preset desconocido (fila vieja "white"/"dark") no rompe y no aplica ningún override', async () => {
+    vi.mocked(PublicHotelService.getBySlug).mockResolvedValueOnce({
+      id: 'h1', name: 'Hotel Demo', logo: null, widgetAccentPreset: 'white',
+    } as any)
+    await render({})
+
+    const style = wrapper!.find('div.min-h-screen').attributes('style') || ''
+    expect(style).not.toContain('--color-cyan')
+  })
+
+  it('sin widgetAccentPreset (hotel sin config) no aplica override', async () => {
+    vi.mocked(PublicHotelService.getBySlug).mockResolvedValueOnce({ id: 'h1', name: 'Hotel Demo', logo: null } as any)
+    await render({})
+
+    const style = wrapper!.find('div.min-h-screen').attributes('style') || ''
+    expect(style).not.toContain('--color-cyan')
   })
 })

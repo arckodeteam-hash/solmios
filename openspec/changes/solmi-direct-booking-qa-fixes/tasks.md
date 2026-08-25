@@ -796,10 +796,266 @@ Specs: `specs/booking-checkout-ux/spec.md`, `specs/booking-content-policies/spec
       **Nota de alcance — acceptance NO verificado visualmente**: mismo motivo que
       3.2, sin navegador/Playwright disponible en esta sesión.
 
-- [ ] 3.4 Completar y confirmar la configuración visual del motor por hotel (colores,
+- [x] 3.4 Completar y confirmar la configuración visual del motor por hotel (colores,
       contenido, mensajes comerciales, beneficios, bloques visibles/ocultos) sin
       requerir cambios de código (Tarea 13). **Acceptance**: activar/desactivar un
       bloque o mensaje desde settings se refleja en la landing/widget sin deploy.
+
+      **Auditoría 2026-08-25** — reconocimiento de las 7 páginas de `pagina-publica/`
+      + `booking-engine/index.vue` antes de tocar nada (a pedido del usuario). La
+      mayor parte YA funciona: colores/tema de landing (`apariencia.vue` +
+      `theme-crud.ts`, con invalidación de caché correcta), los 12 tipos de bloque
+      tienen editor propio + toggle activo/oculto + reorder (`landing.vue`) —
+      incluido lo que la tarea nombra literal: "mensajes comerciales" = bloque CTA,
+      "beneficios" = bloque de sellos de confianza —, y contenido general del hotel
+      con soporte multi-idioma (`general.vue`).
+      **Hallazgos reales, confirmados por código**:
+      - 🔴 4 controles de "Configuración del Widget" (`/panel/booking-engine`) sin
+        ningún consumidor: Tema, Posición en la Web, Moneda, Idioma. Se guardan en
+        `booking_config` pero ni `booking-widget.vue`, ni `useBooking.ts`, ni el
+        embed (`widget/loader.js`, que solo usa `data-hotel`) los leen. Mismo patrón
+        que el fix de 2026-07-31 para `googleAdsEnabled`/`whatsappConfirmation`
+        (deshabilitados con "Próximamente" ahí) — estos 4 quedaron afuera de esa
+        pasada.
+      - 🟡 `instantConfirmation` — checkbox activo ("Confirmación Instantánea"), sin
+        consumidor, que el fix de 2026-07-31 no revisó (solo miró los 2 de al lado).
+      - 🟢 `stripeAccountId` — campo fantasma en el schema, sin input en la UI, sin
+        consumidor. No molesta a nadie porque nadie lo toca.
+      - ❓ Bloques de landing (hero/CTA/sellos) son de un solo idioma, a diferencia de
+        `general.vue` que sí soporta es/en/pt — reportado, no confirmado como bug (la
+        tarea no menciona i18n explícitamente).
+      El usuario pidió implementar de verdad 🔴 y 🟡 (no sacarlos de la UI). Ver el
+      resto de esta tarea para el detalle de cada uno.
+
+      ---
+
+      **🟡 `instantConfirmation` — CERRADO (2026-08-25).** Regla de negocio confirmada
+      con el usuario: "debe quedar pendiente de aprobación y debe irse a una tab o
+      otra vista donde el anfitrión pueda aprobar la reserva".
+
+      Diseño elegido (evaluado contra la alternativa obvia — un nuevo valor de
+      `status` tipo `'awaiting_approval'` — y descartada): **eje INDEPENDIENTE**,
+      campo nuevo `Reservations.approvalStatus` (`'pending' | 'approved' | null`),
+      que NO reemplaza ni condiciona `status`. Motivo: `status` alimenta overlap de
+      solape, ocupación, reportes, sync a canales, folios — un valor nuevo ahí
+      exigiría auditar y actualizar CADA uno de esos lugares (blast radius enorme,
+      alto riesgo de reabrir un doble-booking) para un requisito que en realidad es
+      "un humano tiene que mirar esto", no "esta reserva no ocupa la habitación
+      todavía". La reserva sigue bloqueando fechas y cobrando exactamente igual que
+      hoy; `approvalStatus` es una revisión aparte, aditiva, cero blast radius sobre
+      lo que ya funciona.
+
+      Backend:
+      - `reservas/model.ts` — campo nuevo `approvalStatus` (string, sin default =
+        null). Anti-patrón ORM: declarado ahí, case-sensitive.
+      - `bookingengine/usecases/public-booking.ts` / `public-booking-group.ts` — al
+        crear la reserva PÚBLICA, si `booking_config.instantConfirmation === false` →
+        `approvalStatus: 'pending'`. Reusa el `bookingConfig` que ya se pedía para el
+        gate de `enabled` (hoisted, sin pedirlo 2 veces). **Solo rutas públicas** —
+        una reserva cargada a mano desde el panel (`reservas/usecases/create.ts`) NO
+        pasa por acá: el hotel no necesita aprobarse a sí mismo.
+      - `reservas/usecases/approve.ts` (nuevo) — `approveReservation()`: findById →
+        `assertOwnership` → 409 si `approvalStatus !== 'pending'` (no hay nada que
+        aprobar dos veces, y tampoco tiene sentido "aprobar" una reserva que nunca
+        lo pidió) → `update({approvalStatus:'approved'})`. NO toca `status`.
+      - `POST /api/reservas/:id/approve` (`guard('reservations','edit')`, mismo
+        permiso que `cancel`) — `service.ts`/`controller.ts`/`index.ts`, mismo
+        patrón que `cancel`.
+      - `bookingengine/usecases/public-reservation.ts` — `approvalStatus` agregado al
+        allow-list estricto de `GET /api/public/reservations/:id` (deliberado: es
+        justo lo que el huésped necesita ver, "tu reserva está pagada pero el hotel
+        todavía no la confirmó").
+      - `reservas/service.ts` pasó a 201 líneas con el método nuevo → gate de
+        `arckode analyze` (>200 líneas, God Object). Recortado quitando una línea en
+        blanco no esencial — mismo tipo de ajuste documentado en sesiones previas
+        para este mismo archivo.
+
+      Frontend:
+      - `GuestCheckoutStep`/`PayStep` no se tocan (esto no es un campo del checkout,
+        es resultado de la config del hotel).
+      - `ConfirmStep.vue` (widget) y `booking-confirmation.vue` (página standalone) —
+        computed `isPendingApproval`; si `approvalStatus==='pending'`, el título pasa
+        de "¡Reserva confirmada!" a "¡Reserva recibida!" (no miente sobre un estado
+        que no es cierto) + aviso dorado explicando que el pago se procesó pero el
+        hotel todavía tiene que revisar. i18n nuevo es/en/pt (`confirm.
+        successPendingApproval`, `confirm.pendingApprovalNotice`).
+      - `types/booking.ts` — `PublicReservation.approvalStatus` nuevo.
+      - `pages/reservations/index.vue` (panel) — la "tab u otra vista" pedida: KPI
+        card nueva "Por aprobar" (toggle, filtro independiente del de Estado — una
+        reserva puede ser "Confirmada" Y "Por aprobar" al mismo tiempo, son ejes
+        distintos), badge dorado en la fila junto al pill de Estado, botón "Aprobar"
+        en las acciones (solo si `approvalStatus==='pending'`), `ReservationService.
+        approve()` nuevo.
+
+      **Verificación extremo a extremo contra el servidor real** (RUN_MIGRATE
+      corrido en dev para agregar la columna nueva a SQLite): reserva creada vía
+      `POST /api/public/booking` con `hotel-boutique-palma` (`instantConfirmation`
+      apagado a mano en la DB para la prueba) → `approvalStatus:'pending'`
+      confirmado en la fila real Y en `GET /api/public/reservations/:id` (mismo
+      endpoint que consume `ConfirmStep`/`booking-confirmation.vue`). Logueado como
+      `admin@caribeparadise.com`: `GET /api/reservas` (el que consume el panel) trae
+      `approvalStatus` en cada fila; `POST /api/reservas/:id/approve` lo movió a
+      `'approved'` sin tocar `status` (siguió en `'pending'` de pago, como
+      corresponde — Stripe no está configurado en dev); un segundo `approve` sobre
+      la misma reserva dio 409 (confirma el guard anti-doble-aprobación). Datos de
+      prueba borrados, `instantConfirmation` restaurado a `true`, servidor detenido.
+
+      Tests nuevos (revert-testeados a mano, mismo criterio que el resto de la
+      sesión): `bookingengine/tests/public-booking-enabled-gate.test.ts` (+3, single),
+      `bookingengine/tests/public-booking-group.test.ts` (+2, grupo),
+      `reservas/tests/approve.test.ts` (nuevo, 7 casos: ownership con Auth real,
+      state machine 404/409, y que el update NO toca `status`). Suite completa:
+      backend `bun test src/modules/reservas src/modules/bookingengine` → 619/619.
+      `arckode analyze` ✅ 0 violaciones. Frontend `vue-tsc -b` limpio, `vitest run`
+      sobre booking+landing+reservations+public → 137/137 reales (2 suites con la
+      misma falla preexistente ajena de siempre, favicon.svg), `vite build` ✓ built.
+
+      ---
+
+      **🔴 Idioma/Moneda — CERRADOS (2026-08-25).** Se usan como DEFAULT inicial del
+      widget — el switcher propio del huésped, si lo toca, manda por encima siempre.
+      - Backend: `public-hotel-info.ts` — mismo `bookingConfig.findOne` que ya se
+        pedía para `minNights`/`maxNights` (sin fetch nuevo), agrega
+        `widgetDefaultLanguage`/`widgetDefaultCurrency` al DTO público (trim +
+        `''`→`null`). Tests nuevos revert-testeados: `public-hotel-info.test.ts` (+3).
+      - Frontend: `booking-widget.vue` (`onMounted`, después de `getBySlug`) — aplica
+        `i18n.setLocale(...)` solo si el huésped NO eligió idioma esta sesión (nueva
+        `hasStoredLocaleChoice()` en `useBookingI18n.ts`, mira el mismo
+        `sessionStorage['booking-widget:locale']` que ya usa `detectBookingLocale`);
+        aplica `store.setCurrency(...)` solo si `!store.currencyPreference` — mismo
+        criterio que ya usa el probe de geo-IP de la línea de al lado, para no
+        pisarse entre sí (ninguno de los 2 tiene prioridad fija sobre el otro; gana
+        el que resuelva primero, mismo comportamiento de carrera que el código ya
+        aceptaba antes de este cambio).
+      - **Corregido de paso**: la opción "Français" del selector de Idioma se sacó
+        del admin — el widget (`useBookingI18n.ts`) solo traduce es/en/pt.
+        Ofrecerla habría sido el MISMO bug que se está cerrando acá, solo que para
+        francés en particular.
+      - Alcance: solo el widget (`/book/:slug`). La landing (`/h/:slug`,
+        `BookingModal.vue`) no tiene switcher de idioma ni de moneda propio —
+        siempre en español, siempre `hotels.currency` — es un diseño ya existente y
+        separado, no se tocó.
+      - Tests nuevos en `booking-widget.test.ts` (+3, revert-testeados — la primera
+        pasada del test de idioma daba falso-positivo por el default `en-US` de
+        `navigator.language` en happy-dom; corregido forzando `navigator.language`
+        a un idioma no soportado para que el test dependa REALMENTE del fix).
+      - Gates: backend `bun test bookingengine+reservas` 622/622, `arckode analyze`
+        0 violaciones. Frontend `vue-tsc -b` limpio, `vitest run` 140/140 reales
+        (2 suites con la misma falla preexistente ajena, favicon.svg), `vite build`
+        ✓ built.
+
+      **🔴 Posición — CERRADO (2026-08-25).** `widget/loader.js` (script standalone
+      sin dependencias, embebido en sitios de TERCEROS) reescrito para soportar los
+      4 valores: `inline` (default, comportamiento original sin cambios) | `corner`
+      (botón flotante abajo-derecha, abre un panel anclado a esa esquina, sin
+      backdrop — estilo chat widget) | `center` (mismo botón, abre modal centrado
+      con backdrop) | `popup` (igual que `center`, se auto-abre UNA vez al cargar la
+      página vía sessionStorage por hotel, para no ser spammy en cada navegación).
+      **Decisión de diseño**: el valor viaja HORNEADO en el snippet
+      (`data-position`, `booking-engine/index.vue:embedCode`), NO se lee del
+      backend en runtime — un fetch extra en un script que corre en la web de un
+      TERCERO, por un dato que casi nunca cambia, es costo de carga sin beneficio;
+      mismo criterio que `data-hotel` (cambiar el slug también exige recopiar el
+      snippet). Nota agregada en la UI del selector avisando esto. Verificado:
+      `node --check` (sintaxis), `vite build` copia `dist/widget/loader.js`
+      idéntico al source. **Sin test automatizado** — este archivo no tiene
+      precedente de test en todo el repo (es un `<script>` standalone, fuera del
+      bundle Vue; `document.currentScript` no se puede simular de forma confiable
+      en `happy-dom` sin ejecutar el script vía red, que no es viable en el sandbox
+      de tests). Verificado por revisión manual del código + `node --check`, no por
+      test automatizado ni navegador real — hueco de verificación anotado a
+      propósito, no escondido.
+
+      **🔴 Tema — CERRADO (2026-08-25), alcance de solo ACENTO confirmado con el
+      usuario.** El censo real (84 `text-navy` + ~58 `bg/border/text-cyan`, tokens
+      custom SÍ themeables, contra ~50 usos de paleta CRUDA de Tailwind —
+      `border-slate-200`, `bg-slate-50`, `red-*`/`green-*` — que un override de
+      `--color-*` no toca) descartó el reskin completo (fondo claro/oscuro real):
+      hubiera exigido migrar ~8 archivos y, sin migrar, un tema "Oscuro" real
+      dejaba cards/inputs en blanco sobre fondo oscuro — un reskin roto. Se
+      preguntó al usuario y confirmó el alcance de solo acento.
+
+      **Implementado**: mismo mecanismo que ya usa `hotel-landing.vue:themeCssVars`
+      (CSS custom properties sobre los tokens de `main.css` @theme, heredadas
+      automáticamente por las utilities `bg-cyan`/`text-cyan`/`border-cyan` de
+      Tailwind v4), acotado a pisar SOLO `--color-cyan`/`--color-cyan-light` — el
+      color del botón principal/CTA/links/foco. `--color-navy` (headers, texto)
+      queda fijo en los 5 presets por legibilidad; los colores semánticos
+      (error rojo, éxito verde) y estructurales (fondos, bordes) no se tocan en
+      ningún preset — diseño correcto para un tema de "marca", no una limitación
+      disimulada.
+      - Backend: `public-hotel-info.ts` — mismo `bookingConfig.findOne` de
+        siempre, agrega `widgetAccentPreset` (string libre, SIN validar contra un
+        enum a propósito: el frontend decide qué presets conoce, así una fila
+        vieja con un preset renombrado no exige migración — cae a "sin match, sin
+        override"). Tests nuevos revert-testeados: `public-hotel-info.test.ts` (+3).
+      - Frontend: `booking-widget.vue` — `ACCENT_PRESETS` (5 presets: navy, cyan
+        —los colores de siempre, sin cambio—, teal, gold, coral, cada uno con su
+        par `{cyan, cyanLight}` en hex) + computed `accentCssVars` aplicado vía
+        `:style` en el `<div>` raíz. `booking-engine/index.vue` — label
+        "Tema del Widget" → "Color de acento del widget" + nota explícita
+        ("Solo cambia el color del botón principal..."); presets 'white'/'dark'
+        (implicaban fondo claro/oscuro) renombrados a 'gold'/'coral' — una fila
+        vieja con esos IDs no rompe, simplemente no matchea ningún preset y el
+        widget se ve con sus colores de siempre.
+      - Tests nuevos en `booking-widget.test.ts` (+3, revert-testeados). Nota de
+        implementación: `wrapper.element` no sirve para inspeccionar el root en
+        este componente (el template arranca con un comentario HTML largo ANTES
+        del `<div>`, así que el componente es multi-root y `.element` agarra el
+        primer nodo — el comentario, no el div); se usa
+        `wrapper.find('div.min-h-screen')` en su lugar.
+      - **Verificado extremo a extremo contra el servidor real**: `booking_config`
+        actualizado a mano (`theme:'gold', language:'en', currency:'EUR'`) para
+        `hotel-boutique-palma`, `GET /api/public/hotel/:slug` devolvió
+        `widgetAccentPreset:'gold'` (+ los defaults de idioma/moneda de la sección
+        anterior) — confirma que el mismo fetch sirve a los 3 hallazgos 🔴 sin
+        pedir `booking_config` tres veces. Config restaurada al valor demo
+        original, servidor detenido.
+      - Gates finales de 3.4 completa: backend `bun test bookingengine+reservas`
+        625/625, `arckode analyze` 0 violaciones. Frontend `vue-tsc -b` limpio,
+        `vitest run` 143/143 reales (2 fallas preexistentes ajenas de siempre,
+        favicon.svg), `vite build` ✓ built.
+
+      **Tarea 3.4 completa** salvo dos hallazgos de baja prioridad reportados y NO
+      accionados (a propósito, fuera del alcance que pidió el usuario): 🟢
+      `stripeAccountId` fantasma (declarado en el schema, sin input en la UI, sin
+      consumidor — no molesta a nadie porque nadie lo toca) y ❓ los bloques de la
+      landing (hero/CTA/sellos) son de un solo idioma, a diferencia de
+      `general.vue` que sí soporta es/en/pt (no confirmado como bug, la tarea no
+      menciona i18n de la landing explícitamente).
+
+      **Verificación visual en navegador (2026-08-25, Playwright contra dev local,
+      `hotel-boutique-palma`)** — confirmados sin hallazgos: idioma/moneda por
+      defecto del widget (EN/EUR desde `booking_config`, override manual del
+      switcher manda por encima), los 5 presets de tema (navy/cyan/teal/gold/coral,
+      CTA cambia de color, resto del layout intacto), y los 4 modos de
+      `widget/loader.js` (inline/corner/center/popup, botón flotante + panel/modal
+      en cada uno, popup auto-abre una vez).
+
+      **2 bugs reales encontrados y arreglados al verificar el flujo de
+      aprobación** (el único de los 4 puntos que no funcionaba a la primera):
+      1. `mapReservation()` (`frontend/src/services/Reservation.service.ts`)
+         descartaba `approvalStatus` de su allow-list — la KPI "Por aprobar", el
+         badge de la fila y el botón "Aprobar" quedaban siempre en 0/ninguno pese a
+         que el backend devolvía el campo correcto (confirmado con `curl` directo:
+         `approvalStatus:"pending"` en la API, `0` en la UI). Fix: campo agregado a
+         `ReservationApiRecord`/`Reservation` (`types/index.ts`) y al objeto que
+         arma `mapReservation()`.
+      2. `POST /reservas/:id/approve` no invalidaba el cache del listado
+         (`approveReservationUsecase` solo recibía `{repo}`, nunca `cache`) —
+         aprobar funcionaba en la DB (200 OK) pero el panel seguía sirviendo la
+         lista cacheada (TTL 300s) con `approvalStatus:'pending'`, el badge no
+         desaparecía hasta que el cache expirara solo. Fix: `invalidateReservasCaches`
+         wireado en `approve.ts`/`service.ts`, mismo patrón ya usado en
+         `crud.ts`/`cancel-core.ts`.
+      Verificado extremo a extremo tras ambos fixes: click real en "Aprobar" desde
+      el navegador, badge desaparece sin reload, KPI baja a 0 al instante. Backend
+      `bun test src/modules/reservas` 223/223, `arckode analyze` 0 violaciones,
+      `tsc --noEmit` limpio en los módulos tocados (typecheck backend/frontend
+      tiene errores preexistentes ajenos en `admin/plans.ts`/`super-admin/
+      plan-modules.ts`, de otra sesión en paralelo, sin relación). Datos de prueba
+      y `booking_config` restaurados a sus valores originales al terminar. Detalle
+      completo en memoria `manager-hotel/openspec/solmi-direct-booking-qa-fixes`.
 
 - [ ] 3.5 Confirmar/completar la gestión de galería por hotel: agregar, eliminar,
       reordenar, ocultar, y asociar imágenes al hotel o a un tipo de habitación

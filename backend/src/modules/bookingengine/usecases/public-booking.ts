@@ -232,8 +232,11 @@ export async function createPublicBookingDirect(
   // FIX 2026-07-31 — defensa en profundidad del toggle "Activo/Inactivo": `/rates` ya bloquea
   // antes de esto para un guest normal, pero un POST directo (integrador, replay) podía
   // saltearlo. Mismo criterio: el hotel/tipo "no existe" en vez de revelar que está pausado.
+  // Hoisted (no scoped al if): Tarea 3.4 (corrección 2026-08-25) reusa este mismo fetch más
+  // abajo para decidir `approvalStatus` sin pedir booking_config dos veces.
+  let bookingConfig: any = null
   if (extraDeps?.bookingConfig) {
-    const bookingConfig = await extraDeps.bookingConfig.findOne({ hotelId })
+    bookingConfig = await extraDeps.bookingConfig.findOne({ hotelId })
     if (bookingConfig && bookingConfig.enabled === false) {
       return { status: 404, body: { error: 'Hotel no encontrado' } }
     }
@@ -505,6 +508,14 @@ export async function createPublicBookingDirect(
         // F2 2.5 — persistimos el promoCode validado (upper-case). Upsells van en `notes`
         // (no hay tabla puente reservation_upsells en este cambio).
         promoCode: promoCode ? String(promoCode).trim().toUpperCase() : undefined,
+        // Tarea 3.4 (corrección 2026-08-25) — "Confirmación instantánea" apagada: la reserva
+        // pública igual se paga y ocupa la habitación (status/overlap sin cambios — el cuarto
+        // está bloqueado), pero queda pendiente de que el hotel la revise antes de darla por
+        // buena. Eje INDEPENDIENTE de `status`: a propósito, para no tocar ningún chequeo de
+        // solape/ocupación/reportes que ya filtra por `status`. Solo aplica a reservas
+        // públicas — una reserva cargada a mano por el hotel no necesita que el hotel se
+        // apruebe a sí mismo (ver `reservas/usecases/create.ts`, sin tocar).
+        approvalStatus: bookingConfig?.instantConfirmation === false ? 'pending' : undefined,
       })
 
       // F2 2.5 — Incremento atómico de promo.uses DENTRO de la tx. Re-lectura para detectar

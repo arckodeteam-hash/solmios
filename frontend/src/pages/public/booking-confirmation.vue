@@ -101,8 +101,20 @@
       <!-- SUCCESS -->
       <section v-else-if="pollingState === 'success'" class="text-center py-6">
         <div class="text-5xl mb-3">✅</div>
-        <h2 class="text-xl font-black text-navy">{{ t('confirm.success') }}</h2>
+        <h2 class="text-xl font-black text-navy">
+          {{ isPendingApproval ? t('confirm.successPendingApproval') : t('confirm.success') }}
+        </h2>
         <p class="text-sm text-text-muted mt-2" v-html="successBody" />
+
+        <!--
+          Tarea 3.4 (corrección 2026-08-25) — "Confirmación instantánea" apagada: el pago se
+          procesó igual (por eso seguimos en la rama SUCCESS, no en un estado de error/espera
+          de pago), pero el hotel todavía tiene que revisar la reserva. El título de arriba ya
+          evita decir "confirmada" cuando no lo está; este aviso explica el porqué.
+        -->
+        <div v-if="isPendingApproval" class="mt-4 rounded-2xl border-2 border-gold/40 bg-gold/5 p-4 text-left">
+          <p class="text-sm font-bold text-navy">{{ t('confirm.pendingApprovalNotice') }}</p>
+        </div>
 
         <!-- Wallet pass — CONDICIONAL. Hoy `pass` siempre es null (no hay endpoint público).
              Si el backend agrega `walletPass` al response del endpoint público, los botones
@@ -291,6 +303,10 @@ const canCancel = computed(() => {
   const rs = reservation.value?.reservation?.status?.toLowerCase() || ''
   return rs === 'confirmed' || rs === 'pending'
 })
+
+/** Tarea 3.4 (corrección 2026-08-25) — el pago se completó (por eso llegamos a SUCCESS) pero
+ *  el hotel todavía no aprobó la reserva ("confirmación instantánea" apagada). */
+const isPendingApproval = computed(() => reservation.value?.reservation?.approvalStatus === 'pending')
 
 async function confirmCancellation(): Promise<void> {
   const ids = resolveIds()

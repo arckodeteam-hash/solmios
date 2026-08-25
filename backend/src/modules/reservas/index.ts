@@ -123,6 +123,10 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // ── Cancel (F2 plan #627): aplica política de cancelación al cancelar ──
       router.post('/api/reservas/:id/cancel', guard('reservations', 'edit'), (req) => controller.cancel(req))
 
+      // ── Approve (Tarea 3.4, corrección 2026-08-25): reserva pública pendiente de
+      //    revisión ("confirmación instantánea" apagada) → el hotel la aprueba ──
+      router.post('/api/reservas/:id/approve', guard('reservations', 'edit'), (req) => controller.approve(req))
+
       // ── Companions ──
       router.get('/api/reservations/:id/companions', guard('reservations', 'view'), (req) => controller.listCompanions(req))
       router.post('/api/reservations/:id/companions', guard('reservations', 'edit'), (req) => controller.createCompanion(req))

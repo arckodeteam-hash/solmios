@@ -56,6 +56,14 @@ export interface PublicHotelInfo {
    *  queda sin datos. Opcionales en el tipo porque un backend anterior al cambio no las manda. */
   minNights?: number | null
   maxNights?: number | null
+  /** Tarea 3.4 (corrección 2026-08-25) — preferencias de `booking_config` que el widget usa
+   *  como DEFAULT inicial (el switcher del huésped, si lo toca, manda por encima). Distinto de
+   *  `currency` de arriba (moneda de COBRO, fija). `null`/`undefined` = sin config cargada. */
+  widgetDefaultLanguage?: string | null
+  widgetDefaultCurrency?: string | null
+  /** "Tema del Widget" — string libre, el frontend decide qué valores conoce (`ACCENT_PRESETS`
+   *  en `booking-widget.vue`) y cae a "sin override" ante cualquiera que no reconozca. */
+  widgetAccentPreset?: string | null
 }
 
 // ─── Media (GET /api/public/hotels/:slug/media) ────────

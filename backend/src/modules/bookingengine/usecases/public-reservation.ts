@@ -112,6 +112,11 @@ export async function getPublicReservation(
         currency: reservation.currency,
         paymentStatus: reservation.paymentStatus ?? 'unpaid',
         promoCode: reservation.promoCode ?? null,
+        // Tarea 3.4 (corrección 2026-08-25) — 'pending' cuando el hotel apagó "confirmación
+        // instantánea" y todavía no revisó esta reserva. null = no aplica (caso normal).
+        // Deliberadamente en el allow-list: es justo lo que el huésped necesita saber
+        // ("tu reserva está pagada pero el hotel todavía no la confirmó").
+        approvalStatus: reservation.approvalStatus ?? null,
       },
       guest: guest ? { id: guest.id, name: guest.name, email: guest.email, phone: guest.phone ?? '' } : null,
       paymentStatus: reservation.paymentStatus ?? 'unpaid',

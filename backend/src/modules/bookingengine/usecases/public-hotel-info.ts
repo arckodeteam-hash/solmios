@@ -81,6 +81,9 @@ export async function getPublicHotelInfo(
     googleMapsApiKey,
     minNights: stayLimits.minNights,
     maxNights: stayLimits.maxNights,
+    widgetDefaultLanguage: stayLimits.widgetDefaultLanguage,
+    widgetDefaultCurrency: stayLimits.widgetDefaultCurrency,
+    widgetAccentPreset: stayLimits.widgetAccentPreset,
   }
 }
 
@@ -97,15 +100,37 @@ export async function getPublicHotelInfo(
 async function resolveStayLimits(
   bookingConfig: RepositoryAdapter<any> | undefined,
   hotelId: string,
-): Promise<{ minNights: number | null; maxNights: number | null }> {
-  if (!bookingConfig) return { minNights: null, maxNights: null }
+): Promise<{
+  minNights: number | null; maxNights: number | null
+  widgetDefaultLanguage: string | null; widgetDefaultCurrency: string | null
+  widgetAccentPreset: string | null
+}> {
+  const empty = { minNights: null, maxNights: null, widgetDefaultLanguage: null, widgetDefaultCurrency: null, widgetAccentPreset: null }
+  if (!bookingConfig) return empty
   try {
     const cfg = await bookingConfig.findOne({ hotelId })
-    return { minNights: positiveOrNull(cfg?.minNights), maxNights: positiveOrNull(cfg?.maxNights) }
+    return {
+      minNights: positiveOrNull(cfg?.minNights),
+      maxNights: positiveOrNull(cfg?.maxNights),
+      // Tarea 3.4 (corrección 2026-08-25) — mismo fetch, sin pedir booking_config 2 veces.
+      widgetDefaultLanguage: nonEmptyOrNull(cfg?.language),
+      widgetDefaultCurrency: nonEmptyOrNull(cfg?.currency),
+      // "Tema del Widget" — string libre a propósito, sin validar contra un enum acá: el
+      // frontend (ACCENT_PRESETS en booking-widget.vue) es quien decide qué valores conoce y
+      // cae a "sin override" ante cualquier otro. Evita tener que migrar filas viejas si el
+      // set de presets cambia (ver corrección 2026-08-25: 'white'/'dark' se renombraron a
+      // 'gold'/'coral' — una fila vieja con 'white' simplemente no matchea ningún preset hoy
+      // y el widget se ve con sus colores de siempre, no rompe nada).
+      widgetAccentPreset: nonEmptyOrNull(cfg?.theme),
+    }
   } catch {
     // La info del hotel no puede caerse porque falle una config secundaria.
-    return { minNights: null, maxNights: null }
+    return empty
   }
+}
+
+function nonEmptyOrNull(v: unknown): string | null {
+  return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null
 }
 
 function positiveOrNull(raw: unknown): number | null {

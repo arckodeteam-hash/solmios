@@ -236,6 +236,60 @@ describe('minNights/maxNights — límites de estadía en el DTO público', () =
   })
 })
 
+// Tarea 3.4 (corrección 2026-08-25) — defaults del widget (Idioma/Moneda de "Configuración
+// del Widget"). Mismo criterio y mismo fetch de `bookingConfig` que minNights/maxNights de
+// arriba (ver resolveStayLimits) — cubierto acá para que quede junto a su regresión hermana.
+describe('widgetDefaultLanguage/widgetDefaultCurrency — defaults del widget en el DTO público', () => {
+  it('sin dep `bookingConfig` → null, no revienta', async () => {
+    const hotels = backed<any>([hotelSeed()])
+    const dto = await getPublicHotelInfo({ hotels }, 'hotel-paraiso', undefined)
+    expect(dto.widgetDefaultLanguage).toBeNull()
+    expect(dto.widgetDefaultCurrency).toBeNull()
+  })
+
+  it('con fila de booking_config devuelve el idioma/moneda configurados', async () => {
+    const hotels = backed<any>([hotelSeed()])
+    const bookingConfig = backed<any>([{ hotelId: 'h1', language: 'en', currency: 'EUR' }])
+    const dto = await getPublicHotelInfo({ hotels, bookingConfig }, 'hotel-paraiso', undefined)
+    expect(dto.widgetDefaultLanguage).toBe('en')
+    expect(dto.widgetDefaultCurrency).toBe('EUR')
+  })
+
+  it('string vacío/whitespace = sin default (no se manda "" al frontend)', async () => {
+    const hotels = backed<any>([hotelSeed()])
+    const bookingConfig = backed<any>([{ hotelId: 'h1', language: '  ', currency: '' }])
+    const dto = await getPublicHotelInfo({ hotels, bookingConfig }, 'hotel-paraiso', undefined)
+    expect(dto.widgetDefaultLanguage).toBeNull()
+    expect(dto.widgetDefaultCurrency).toBeNull()
+  })
+})
+
+// Tarea 3.4 (corrección 2026-08-25) — "Tema del Widget". El backend NO valida contra un enum
+// de presets a propósito (ver comentario en resolveStayLimits): eso lo decide el frontend
+// (ACCENT_PRESETS en booking-widget.vue), así una fila vieja con un preset renombrado/borrado
+// no exige migración — el widget simplemente no encuentra match y no aplica override.
+describe('widgetAccentPreset — "Tema del Widget" en el DTO público', () => {
+  it('sin dep `bookingConfig` → null, no revienta', async () => {
+    const hotels = backed<any>([hotelSeed()])
+    const dto = await getPublicHotelInfo({ hotels }, 'hotel-paraiso', undefined)
+    expect(dto.widgetAccentPreset).toBeNull()
+  })
+
+  it('con fila de booking_config devuelve el string tal cual (sin validar contra un enum)', async () => {
+    const hotels = backed<any>([hotelSeed()])
+    const bookingConfig = backed<any>([{ hotelId: 'h1', theme: 'gold' }])
+    const dto = await getPublicHotelInfo({ hotels, bookingConfig }, 'hotel-paraiso', undefined)
+    expect(dto.widgetAccentPreset).toBe('gold')
+  })
+
+  it('string vacío/whitespace = sin default', async () => {
+    const hotels = backed<any>([hotelSeed()])
+    const bookingConfig = backed<any>([{ hotelId: 'h1', theme: '  ' }])
+    const dto = await getPublicHotelInfo({ hotels, bookingConfig }, 'hotel-paraiso', undefined)
+    expect(dto.widgetAccentPreset).toBeNull()
+  })
+})
+
 describe('googleMapsApiKey — resuelto vía configuration KV con fallback a platform (2026-08-01)', () => {
   it('sin dep `config` (caller viejo) → null, no revienta', async () => {
     const hotels = backed<any>([hotelSeed()])
