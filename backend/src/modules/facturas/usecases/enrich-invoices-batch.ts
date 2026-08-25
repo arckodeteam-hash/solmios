@@ -13,10 +13,9 @@
 //   balance/guest/room) y `items` solo se adjunta si la factura tiene líneas persistidas.
 
 import type { RepositoryAdapter } from 'arckode-framework'
+import { round2 } from '../../../shared/utils/money'
 import type { FacturasDTO } from '../types'
 import type { EnrichDeps } from './billing'
-
-const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
 
 export async function enrichInvoicesBatch(
   rows: FacturasDTO[],

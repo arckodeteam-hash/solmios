@@ -13,6 +13,8 @@ export interface Plan {
   currency: string
   description?: string
   features: string[]
+  /** Matriz de módulos: claves padre (módulo completo) + sub-claves sueltas (parte del módulo). */
+  modules?: string[]
   limits: PlanLimits
 }
 
@@ -22,6 +24,8 @@ export interface PlanPayload {
   currency: string
   description?: string
   features: string[]
+  /** Matriz de módulos: claves padre (módulo completo) + sub-claves sueltas (parte del módulo). */
+  modules?: string[]
   limits: PlanLimits
 }
 

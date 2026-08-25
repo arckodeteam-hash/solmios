@@ -93,13 +93,13 @@
         v-else-if="!reviews.length"
         :icon="ICON_CHAT_EMPTY"
         title="Sin opiniones aún"
-        message="Las reseñas de tus huéspedes van a aparecer acá apenas empiecen a llegar."
+        message="Las reseñas llegan por el pedido que se le envía al huésped después del check-out, y desde el enlace público de opinión. Si esperabas ver alguna, revisá que ese envío automático esté activo."
       >
-        <template #action>
-          <button @click="requestReviews" class="inline-flex items-center gap-1.5 rounded-full bg-navy px-5 py-2.5 text-sm font-extrabold text-white hover:bg-navy-light transition-colors cursor-pointer">
+        <template v-if="canSeeMessagingSettings" #action>
+          <router-link to="/panel/config/mensajeria?tab=auto-messages" class="inline-flex items-center gap-1.5 rounded-full bg-navy px-5 py-2.5 text-sm font-extrabold text-white hover:bg-navy-light transition-colors">
             <span class="h-4 w-4 shrink-0" v-html="ICON_MAIL"></span>
-            Solicitar Reseñas
-          </button>
+            Revisar el envío automático
+          </router-link>
         </template>
       </EmptyState>
 
@@ -197,6 +197,7 @@ import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import { usePermissions } from '@/composables/usePermissions'
 
 const ICON_MAIL = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75c0-.828.672-1.5 1.5-1.5h16.5c.828 0 1.5.672 1.5 1.5v10.5a1.5 1.5 0 0 1-1.5 1.5H3.75a1.5 1.5 0 0 1-1.5-1.5V6.75Zm0 0 9.75 6.75 9.75-6.75"/></svg>'
 const ICON_STAR = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="currentColor"><path d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.563.563 0 0 0-.586 0L6.982 21.44a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.563.563 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z"/></svg>'
@@ -205,6 +206,10 @@ const ICON_CHAT_EMPTY = '<svg viewBox="0 0 24 24" class="h-8 w-8" fill="none" st
 const ICON_REPLY = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17 4 12m0 0 5-5m-5 5h11a4 4 0 0 1 4 4v1"/></svg>'
 
 const toast = useToast()
+// El CTA del estado vacío lleva a Configuración → Mensajería, gateada por `settings:view`
+// (config/module-map.ts). Sin ese permiso el link daría 403: no se ofrece.
+const { can } = usePermissions()
+const canSeeMessagingSettings = computed(() => can('settings', 'view'))
 const reviews = ref<any[]>([])
 const loading = ref(true)
 const statusFilter = ref<'all' | 'pending' | 'answered'>('all')

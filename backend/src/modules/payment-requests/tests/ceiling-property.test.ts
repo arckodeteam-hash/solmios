@@ -17,11 +17,19 @@
 //
 // Alfabeto: requerir pago · crear cobro · emitir el link · cancelar · expirar · revivir · marcar
 // `paid` a mano · bajar el importe · borrar el cobro · inflar/desinflar `totalAmount` · subir/bajar
-// `otherCharges` · borrar el extra · borrar la reserva · que el huésped pague un link vivo · que
-// llegue el `checkout.session.completed` · que llegue el `checkout.session.expired` · que el hook
-// del alta dispare el cobro automático.
+// `otherCharges` · SUBIR EL ANTICIPO · CREAR UN DESCUENTO · borrar el extra · COBRAR EN CAJA ·
+// borrar la reserva · que el huésped pague un link vivo · que llegue el
+// `checkout.session.completed` · que llegue el `checkout.session.expired` · que el hook del alta
+// dispare el cobro automático.
+//
+// RTC-7: las tres en mayúsculas entraron después, y las tres estaban abiertas. Este encabezado
+// prometía "las operaciones que mueven cualquiera de los dos lados de la desigualdad" y le
+// faltaban: `deposit` (que sube lo pagado por el MISMO `PUT` que el total), el alta de un extra con
+// signo negativo (sólo estaba la baja) y —la más ancha— el cobro asentado en `payments`, que es el
+// flujo normal del hotel y no una edición de la reserva. El alfabeto es la superficie que el juez
+// puede ver: lo que no está acá no está probado, por más secuencias que se corran.
 // Longitud 1, 2 y 3 sobre un prefijo fijo (el click de "Requerir pago": crear + emitir), que es el
-// estado desde el que se abren TODAS las puertas conocidas: 19 + 361 + 6859 = 7239 secuencias.
+// estado desde el que se abren TODAS las puertas conocidas: 22 + 484 + 10.648 = 11.154 secuencias.
 // La profundidad es un parámetro, no una constante editada a mano — ver `DEPTHS` más abajo para
 // correr la exploración profunda (`CEILING_DEPTH=4 …`) sin colgar la suite del gate.
 //
@@ -35,17 +43,17 @@ import { BALANCE_EPSILON, round2 } from '../../../shared/utils/money'
 import { paidForReservation } from '../../../shared/usecases/reservation-paid'
 import { updateReservationWithBalance, deleteReservation } from '../../reservas/usecases/crud'
 import { handleReservationCreated } from '../../../shared/usecases/auto-payment-request'
-import { deleteAddon } from '../../reservas/usecases/addons'
+import { createAddon, deleteAddon } from '../../reservas/usecases/addons'
 import type { PaymentRequestDTO } from '../types'
 import {
-  makeWorld, installStripe, HOTEL, RESERVATION, ADDON, USER, BASE_DEPOSIT,
+  makeWorld, installStripe, HOTEL, RESERVATION, ADDON, USER, BASE_DEPOSIT, BASE_TOTAL, BASE_ADDON,
   type World,
 } from './ceiling-world'
 
 /**
- * Longitudes de secuencia que se exploran. Por defecto 1..3 = 18 + 324 + 5.832 = 6.174 secuencias,
- * ~10 s: cabe en la suite del gate. La combinatoria es 18^n, así que cada nivel cuesta 18 veces
- * más — la profundidad 4 son 104.976 secuencias más (varios minutos) y NO entra en la suite.
+ * Longitudes de secuencia que se exploran. Por defecto 1..3 = 22 + 484 + 10.648 = 11.154 secuencias,
+ * ~26 s: cabe en la suite del gate. La combinatoria es 22^n, así que cada nivel cuesta 22 veces
+ * más — la profundidad 4 son 234.256 secuencias (~11 min) y NO entra en la suite.
  *
  * Para la exploración profunda a mano, sin tocar el archivo:
  *
@@ -63,6 +71,16 @@ const DEPTHS: number[] = (() => {
   const max = Number(process.env.CEILING_DEPTH)
   return Array.from({ length: Number.isFinite(max) && max > 0 ? max : 3 }, (_, i) => i + 1)
 })()
+
+/**
+ * Techo de tiempo por nivel. 600 s alcanzan de sobra para 1..3 (~26 s); la exploración profunda a
+ * mano no entra —la profundidad 4 son 234.256 secuencias, ~11 min— y `bun test` la cortaba a los
+ * 600 s dejando un resultado que no dice nada. Es un parámetro y no una constante editada a mano,
+ * por el mismo motivo que `DEPTHS`:
+ *
+ *     CEILING_DEPTH_ONLY=4 CEILING_TIMEOUT_MS=2400000 bun test …/ceiling-property.test.ts
+ */
+const TIMEOUT_MS = Number(process.env.CEILING_TIMEOUT_MS) || 600_000
 
 let world: World
 let restoreStripe: () => void
@@ -110,6 +128,14 @@ function ceilingGuard() {
     await world.service.clampRequestsToCeiling(String(item.hotelId), String(item.id), { ...USER, role: 'super_admin' })
   }
 }
+
+/**
+ * El clamp como lo recibe el CRUD de extras (`reservas/controller.ts`): `(reservationId, hotelId)`.
+ * Se declara una sola vez para que el alta y la baja de un extra usen EXACTAMENTE el mismo cableado
+ * — si sólo uno lo tuviera, el test estaría midiendo dos mundos distintos (puerta RTC-7.2).
+ */
+const ADDON_CEILING_GUARD = (reservationId: string, hotelId: string): Promise<void> =>
+  world.service.clampRequestsToCeiling(hotelId, reservationId, { ...USER, role: 'super_admin' }).then(() => undefined)
 
 async function updateReserva(dto: Record<string, unknown>): Promise<void> {
   await updateReservationWithBalance(
@@ -188,6 +214,51 @@ async function emitirLink(): Promise<void> {
   await world.service.createCheckout(lastRequestId(), USER, 'https://panel.test')
 }
 
+/**
+ * El staff carga un anticipo a mano — `PUT /api/reservas/:id { deposit }` (RTC-7.1).
+ *
+ * `deposit` es escribible por el mismo endpoint que `totalAmount`/`otherCharges`
+ * (`reservas/validators/schema.ts`) y entra a lo pagado por `combinePaid`
+ * (`shared/usecases/reservation-paid.ts`), así que BAJA el saldo cobrable exactamente igual que
+ * desinflar el total. Es el lado del techo que el alfabeto no medía.
+ */
+async function subirAnticipo(): Promise<void> {
+  await updateReserva({ deposit: BASE_TOTAL + BASE_ADDON })
+}
+
+/**
+ * `POST /api/reservations/:id/addons { kind: 'discount' }` — un extra con signo NEGATIVO (RTC-7.2).
+ *
+ * `addonsTotal` (`shared/utils/reservation-balance.ts`) resta los `discount`: dar de alta uno baja
+ * el total cobrable igual que dar de BAJA un extra `service`, que el alfabeto sí medía
+ * (`borrar-extra`). El alta y la baja son la misma palanca con distinto signo.
+ */
+async function crearDescuento(): Promise<void> {
+  await createAddon(
+    { repo: world.addonRepo, reservationRepo: world.reservationRepo, userRepo: world.userRepo, auth: world.auth,
+      notifyChanged: async () => {}, paidOf: world.paidOf, ceilingGuard: ADDON_CEILING_GUARD },
+    { reservationId: RESERVATION, dto: { description: 'Descuento comercial', kind: 'discount', amount: 300, quantity: 1 } as any, user: { ...USER, role: 'super_admin' } },
+  )
+}
+
+/**
+ * El huésped paga el saldo EN EL MOSTRADOR (RTC-7.3).
+ *
+ * Es el flujo normal de cobro del hotel y el más ancho de los tres: no es un campo que alguien
+ * edita, es plata que entra por caja / folio / factura. Todos esos caminos terminan en
+ * `payments.createPayment` (folios-payments, facturas-payments, restaurante-payments,
+ * charge-reschedule-diff), que es el choke point que el mundo monta de verdad — ver `ceiling-world`.
+ * Baja el saldo cobrable a 0 y el link de Stripe seguía vivo.
+ */
+async function cobroEnCaja(): Promise<void> {
+  const amount = await world.balance()
+  if (amount <= 0) return
+  await world.payments.createPayment({
+    hotelId: HOTEL, reservationId: RESERVATION, type: 'charge', method: 'cash',
+    amount, currency: 'USD', description: 'Cobro en recepción',
+  } as any)
+}
+
 function alphabet(): Op[] {
   return [
     // El click real del modal: crear el cobro Y generar el link, en un solo acto.
@@ -207,10 +278,9 @@ function alphabet(): Op[] {
     {
       name: 'borrar-extra',
       run: () => deleteAddon(
-        world.addonRepo, world.reservationRepo, world.userRepo,
-        world.auth, ADDON, { ...USER, role: 'super_admin' },
-        async () => {}, world.paidOf,
-        (rid: string, hid: string) => world.service.clampRequestsToCeiling(hid, rid, { ...USER, role: 'super_admin' }).then(() => undefined),
+        { repo: world.addonRepo, reservationRepo: world.reservationRepo, userRepo: world.userRepo, auth: world.auth,
+          notifyChanged: async () => {}, paidOf: world.paidOf, ceilingGuard: ADDON_CEILING_GUARD },
+        { id: ADDON, user: { ...USER, role: 'super_admin' } },
       ),
     },
     {
@@ -221,6 +291,10 @@ function alphabet(): Op[] {
       ),
     },
     { name: 'auto-cobro-alta', run: autoCobroDelAlta },
+    // RTC-7: las tres palancas que movían el saldo cobrable sin que el alfabeto las viera.
+    { name: 'subir-anticipo', run: subirAnticipo },
+    { name: 'crear-descuento', run: crearDescuento },
+    { name: 'cobro-en-caja', run: cobroEnCaja },
     { name: 'huesped-paga', run: guestPays },
     { name: 'webhook-cobro', run: deliverPaid },
     {
@@ -409,6 +483,6 @@ describe('RTC-4 · propiedad: nunca hay más cobrable vivo que saldo', () => {
         if (v) violations.push(v)
       }
       expect(violations.length === 0 ? '' : describeViolations(violations)).toBe('')
-    }, 600_000)
+    }, TIMEOUT_MS)
   }
 })

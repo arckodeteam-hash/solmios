@@ -16,3 +16,15 @@ export interface PaymentsSockets {
   onDepositReleased?: (data: DepositDTO) => Promise<void>
   onLinkUsed?: (data: PaymentLinkDTO) => Promise<void>
 }
+
+/**
+ * Bindings de `settle-webhook`: cada estado terminal del proveedor a su socket. El service
+ * arma sus deps con esto (GOD_SERVICE: el wiring repetido crecía el facade).
+ */
+export function settleHooks(sockets: PaymentsSockets) {
+  return {
+    onCompleted: (p: PaymentDTO) => sockets.onPaymentCompleted?.(p) ?? Promise.resolve(),
+    onExpired: (p: PaymentDTO) => sockets.onPaymentExpired?.(p) ?? Promise.resolve(),
+    onFailed: (p: PaymentDTO) => sockets.onPaymentFailed?.(p) ?? Promise.resolve(),
+  }
+}

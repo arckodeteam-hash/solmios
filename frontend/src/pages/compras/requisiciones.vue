@@ -175,8 +175,11 @@ const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
           :class="['px-2.5 py-1 rounded-full text-xs font-bold', statusFilter === t.value ? 'bg-navy text-white' : 'bg-surface text-text-muted']">{{ t.label }}</button>
       </div>
 
-      <EmptyState v-if="!filtered.length" title="Sin requisiciones"
-        :message="requisitions.length ? 'Ninguna requisición con ese estado.' : 'Creá el primer pedido interno de insumos.'">
+      <EmptyState v-if="!filtered.length"
+        :title="requisitions.length ? 'Ninguna requisición con ese estado' : 'Todavía no hay requisiciones'"
+        :message="requisitions.length
+          ? 'Probá con otro estado para ver el resto de las requisiciones.'
+          : 'Una requisición es el pedido interno de insumos que hace un área (limpieza, cocina, mantenimiento) para que Compras lo apruebe. Una vez aprobada, se convierte en orden de compra sin recargar las líneas.'">
         <template v-if="createPerm && !requisitions.length" #action>
           <button @click="openCreate" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-navy text-white text-sm font-bold">Nueva requisición</button>
         </template>

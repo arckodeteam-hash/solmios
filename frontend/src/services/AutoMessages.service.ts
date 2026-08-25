@@ -12,6 +12,11 @@ export interface AutoMessage {
   triggerEvent: 'reservation_created' | 'pre_checkin' | 'checkin_day' | 'checkout_day' | 'post_stay' | string
   triggerOffset: number
   variables?: string[]
+  // Contrato REAL del wire (COR-2/REG-1): las RESPUESTAS llegan con isActive BOOLEAN —
+  // el ORM deserializa boolean↔INTEGER al leer (kernel/db/orm-utils.ts). El 0/1 sólo
+  // existe en la ESCRITURA: los schemas del backend lo declaran `type:'number'` y por
+  // eso AutoMessageInput lo tipa `0 | 1`. Documentar "llega 1/0" fijó el formato
+  // equivocado y con un 0 los `!== false` de la UI marcaban pausados como activos.
   isActive: boolean
   event?: string
   language?: string
@@ -28,7 +33,8 @@ export interface AutoMessageInput {
   triggerEvent?: string
   triggerOffset?: number
   variables?: string[]
-  isActive?: boolean
+  /** Escritura: 0/1 (schemas backend `type:'number'`); la lectura llega boolean. */
+  isActive?: 0 | 1
   event?: string
   language?: string
   triggerType?: string

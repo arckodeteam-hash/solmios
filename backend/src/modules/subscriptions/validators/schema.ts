@@ -37,7 +37,16 @@ export const SignupSchema: Record<string, ValidationRule> = {
   // no declara se pierde antes de llegar al usecase, sin error.
   country: { type: 'string' as const, max: 80 },
   address: { type: 'string' as const, max: 200 },
-  planId: { type: 'string' as const, max: 60 },
+  // CS-3: obligatorio y NO vacío. Un alta sin plan creaba una suscripción trialing con
+  // planId vacío y el gate la resolvía como "sin matriz" → el hotel entraba con TODO el
+  // panel. `required` solo cubre undefined/null; el pattern /\S/ ataja el string vacío
+  // (se evalúa sobre el valor saneado/trimmeado). Mensaje legible: si /registro no cargó
+  // los planes, el usuario tiene que saber QUÉ falta, no "planId is required".
+  planId: {
+    type: 'string' as const, required: true, max: 60,
+    pattern: /\S/,
+    message: 'Elegí un plan para empezar tu prueba',
+  },
   // Código de referido (`/r/:code`). Mismo motivo que el comentario de `country` arriba:
   // si no está declarado acá, validateSchema lo descarta antes de llegar al usecase.
   referralCode: { type: 'string' as const, max: 40 },

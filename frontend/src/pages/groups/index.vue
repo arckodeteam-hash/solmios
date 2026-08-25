@@ -12,7 +12,7 @@
           En vivo
         </span>
       </div>
-      <button @click="openNewGroup" class="flex items-center gap-1.5 bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">
+      <button v-if="canCreate" @click="openNewGroup" class="flex items-center gap-1.5 bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">
         <span class="w-4 h-4 shrink-0" v-html="ICON_PLUS"></span>
         Nuevo Grupo
       </button>
@@ -60,9 +60,9 @@
         v-else-if="!groups.length"
         :icon="ICON_USERS_GROUP"
         title="Todavía no hay grupos"
-        message="Creá un grupo o block para gestionar reservas colectivas, bodas y eventos corporativos."
+        message="Un grupo agrupa varias habitaciones bajo un mismo contacto y una misma cuenta: bodas, contingentes y eventos corporativos. Creá el primero con las fechas y la cantidad de habitaciones a bloquear."
       >
-        <template #action>
+        <template v-if="canCreate" #action>
           <button @click="openNewGroup" class="px-5 py-2.5 bg-navy text-white rounded-full text-sm font-bold hover:bg-navy-light transition-colors cursor-pointer">
             Nuevo Grupo
           </button>
@@ -182,7 +182,7 @@
         title="Sin blocks en el calendario"
         message="Cuando registres un grupo vas a ver acá las noches que ocupa."
       >
-        <template #action>
+        <template v-if="canCreate" #action>
           <button @click="openNewGroup" class="px-5 py-2.5 bg-navy text-white rounded-full text-sm font-bold hover:bg-navy-light transition-colors cursor-pointer">
             Nuevo Grupo
           </button>
@@ -363,6 +363,7 @@ import SectionCard from '@/components/ui/SectionCard.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
+import { usePermissions } from '@/composables/usePermissions'
 
 const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>'
 const ICON_DOCUMENT = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m1 5H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l4.414 4.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2Z"/></svg>'
@@ -374,6 +375,10 @@ const ICON_CHEVRON_RIGHT = '<svg viewBox="0 0 24 24" class="w-full h-full" fill=
 
 const auth = useAuthStore()
 const toast = useToast()
+// /panel/reservas/* → módulo de permiso `reservations` (config/module-map.ts). Sin
+// `reservations:create` el alta del grupo termina en 403: el botón no se muestra.
+const { can } = usePermissions()
+const canCreate = computed(() => can('reservations', 'create'))
 const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
 
 const activeView = ref('list')

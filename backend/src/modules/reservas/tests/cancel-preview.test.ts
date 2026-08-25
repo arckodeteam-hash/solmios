@@ -90,7 +90,7 @@ describe('previewCancellation — refleja la penalidad REAL (mismos montos que c
       'r1', user, realAuth,
     )
     const real = await cancelReservation(
-      { repo: repoWith(item), policyRepo: policyRepoWith(tiers), hotelRepo: hotelRepoWith(), logger: noopLogger, cache: noopCache, sockets: { onReservationCancelled: async () => {} } },
+      { repo: repoWith(item), policyRepo: policyRepoWith(tiers), hotelRepo: hotelRepoWith(), logger: noopLogger, cache: noopCache, sockets: { onReservationCancelled: async () => {} }, releaseChargeSessions: async () => {} },
       'r1', {}, user, realAuth,
     )
     expect(preview.cancellationFee).toBe(real.cancellationFee)

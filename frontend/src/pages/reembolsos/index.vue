@@ -6,7 +6,7 @@
         <h2 class="text-xl font-black text-navy">Reembolsos</h2>
         <p class="text-sm text-text-muted mt-0.5">Gastos del personal — enviar, aprobar y reintegrar</p>
       </div>
-      <button @click="openNew" class="flex items-center gap-1.5 bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">
+      <button v-if="canCreate" @click="openNew" class="flex items-center gap-1.5 bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">
         <span class="w-4 h-4 shrink-0" v-html="ICON_PLUS"></span>
         Nuevo reembolso
       </button>
@@ -65,7 +65,7 @@
           ? 'Probá con otro término de búsqueda o quitá el filtro de estado.'
           : 'Registrá el primer gasto del personal para empezar a llevar el control de reintegros.'"
       >
-        <template #action>
+        <template v-if="hasFilters || canCreate" #action>
           <button v-if="hasFilters" @click="clearFilters" class="px-5 py-2.5 rounded-full border border-border text-sm font-bold text-navy hover:bg-surface transition-colors cursor-pointer">
             Limpiar filtros
           </button>
@@ -165,10 +165,15 @@ import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { CurrencyCode } from '@/types/currency'
+import { usePermissions } from '@/composables/usePermissions'
 
 type FormValues = Record<string, string | number>
 
 const toast = useToast()
+// /panel/rrhh/* → módulo de permiso `users` (config/module-map.ts). Sin `users:create` el alta
+// termina en 403: el botón no se muestra.
+const { can } = usePermissions()
+const canCreate = computed(() => can('users', 'create'))
 const loading = ref(true)
 const saving = ref(false)
 const claims = ref<ExpenseClaim[]>([])

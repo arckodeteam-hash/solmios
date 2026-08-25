@@ -45,7 +45,7 @@ export class RestaurantService {
     // F2: catálogo de combos. Opcionales al final (retrocompat con callers/tests existentes).
     private readonly combos?: RepositoryAdapter<ComboDTO>,
     private readonly comboItems?: RepositoryAdapter<ComboItemDTO>,
-    private readonly plans?: RepositoryAdapter<any>, // F7: resuelve módulo habilitado (getModuleStateForPlan)
+    private readonly plans?: RepositoryAdapter<any>, private readonly subscriptions?: RepositoryAdapter<any>, // F7: gate del módulo restaurant — plan desde la suscripción activa (resolve-plan.ts)
   ) {}
 
   // Acumula handlers, nunca pisa el anterior (composición de sockets).
@@ -195,5 +195,5 @@ export class RestaurantService {
   foodCostReport(user: CurrentUser) { return foodCost.foodCostReport(this.foodCostDeps(), user) }
 
   // ─── Carta pública sin sesión (F7): hotelId del PATH, sin req.user ni createModuleGuard ───
-  publicMenu(hotelId: string, lang: string | undefined) { return publicMenuUsecase.publicMenu({ categories: this.categories, items: this.items, stations: this.stations, combos: this.combos!, comboItems: this.comboItems!, userRepo: this.userRepo, hotels: this.hotels!, config: this.config!, plans: this.plans! }, hotelId, lang) }
+  publicMenu(hotelId: string, lang: string | undefined) { return publicMenuUsecase.publicMenu({ categories: this.categories, items: this.items, stations: this.stations, combos: this.combos!, comboItems: this.comboItems!, userRepo: this.userRepo, hotels: this.hotels!, config: this.config!, plans: this.plans!, subscriptions: this.subscriptions!, logger: this.logger }, hotelId, lang) }
 }

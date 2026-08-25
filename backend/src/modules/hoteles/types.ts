@@ -26,6 +26,8 @@ export interface HotelesDTO {
   checkOut?: string
   // Politicas
   freeCancellation?: boolean
+  /** #34: 'flexible' | 'moderate' | 'strict' | 'non_refundable' — excluyente con freeCancellation (assertCancellationCompatible). */
+  cancellationType?: string
   depositRequired?: boolean
   depositPercent?: number
   weekendSurcharge?: number
@@ -92,6 +94,7 @@ export interface CreateHotelesDTO {
   checkIn?: string
   checkOut?: string
   freeCancellation?: boolean
+  cancellationType?: string
   depositRequired?: boolean
   depositPercent?: number
   weekendSurcharge?: number

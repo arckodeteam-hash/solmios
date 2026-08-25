@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import router from './router'
 import App from './App.vue'
+import { registerServiceWorker } from './pwa/register-service-worker'
 import './styles/main.css'
 
 // Chunk lazy obsoleto tras un deploy pero fuera del router (componente lazy dentro de una vista):
@@ -23,24 +24,8 @@ app.mount('#app')
 
 // Service Worker (PWA offline). #370. Se registra en producción; en dev estorba (HMR).
 // El SW (public/sw.js) hace bypass total de /api/* y navegación network-first: el logout y los
-// datos nunca se cachean. Si aparece una versión nueva del SW tras un deploy, se recarga UNA vez
-// (flag en sessionStorage) para tomar los assets nuevos sin loop.
+// datos nunca se cachean. La lógica de registro —y la regla de cuándo recargar por una versión
+// nueva sin recargar al visitante que entra por primera vez— vive en pwa/register-service-worker.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then((reg) => {
-      reg.addEventListener('updatefound', () => {
-        const sw = reg.installing
-        if (!sw) return
-        sw.addEventListener('statechange', () => {
-          // Hay un SW nuevo activo y ya había uno controlando → llegó una versión nueva.
-          if (sw.state === 'activated' && navigator.serviceWorker.controller) {
-            const FLAG = 'sw:reloaded'
-            if (sessionStorage.getItem(FLAG) === '1') return
-            sessionStorage.setItem(FLAG, '1')
-            window.location.reload()
-          }
-        })
-      })
-    }).catch(() => { /* sin SW la app funciona igual, solo sin offline */ })
-  })
+  window.addEventListener('load', () => { void registerServiceWorker() })
 }

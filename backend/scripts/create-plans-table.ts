@@ -48,17 +48,40 @@ async function migrate() {
     // El mapeo de essential es una interpretación pragmática del PRD §5
     // (Essential = M01 PMS + M02 Channel + M03 Reservas + M13 Pagos). Ajustable vía /admin/plans.
     //
+    // R3-2: essential NO lista los padres 'finance'/'operations' — bajo la semántica
+    // "padre = módulo completo" un padre habilita TODOS sus sub-módulos y essential heredaba
+    // 8 que el plan no promete (folios/caja/gastos/reports/night-audit/housekeeping/providers/
+    // team-chat). Lista SOLO los sub-módulos explícitos; las demás matrices están OK bajo esa
+    // semántica (host lista padre+hijo = mismo resultado; starter/professional/enterprise/ultra
+    // son [] = todo, que es lo que venden). Congelado en tests/plan-gating.test.ts (R3-2).
+    //
+    // settings.rooms en host/essential (auditoría de superficies 2026-08-21): un plan que vende
+    // 'reservations' SIN el catálogo de habitaciones es inoperable — el paso REQUIRED del
+    // onboarding ('Cargá tus habitaciones' → /panel/config/habitaciones → /api/habitaciones)
+    // queda 403, sin habitaciones no entra ninguna reserva y el motor público no tiene
+    // inventario (prod: Hotel Ortiz, trial plan-host, 0 habitaciones). Se lista la SUB-clave
+    // sola (R3-2): prende el catálogo SIN regalar el padre 'settings' (auto-messages, locks,
+    // gateways, devices... siguen OFF). Mismo bug de clase que reservations.list (CS-1).
+    //
     // Host (#567): plan de entrada, por debajo de Starter — el dueño no proveyó la doc con el
     // precio/módulos oficiales (issue quedó bloqueado en workflow:pendiente), así que estos son
     // valores de arranque razonables, no datos confirmados. Todo se edita desde /panel/plans
     // (mismo criterio que essential/ultra) — no hace falta reseedear para corregirlos.
+    //
+    // Status quo 2026-08-21 (claves nuevas site-pages/settings.rates/settings.audit): TODOS los
+    // planes ven hoy Página pública, Temporadas y Tarifas y Auditoría (estaban sin gate), así que
+    // host/essential las listan EXPLÍCITAMENTE para que el deploy no le quite nada a nadie — el
+    // dueño saca lo que quiera con el editor (/admin → planes). starter/professional/enterprise/
+    // ultra NO las necesitan: su matriz es [] = TODOS los módulos, y enumerar claves en un []
+    // lo RESTRINGIRÍA a solo esas (semántica de getModuleStateForPlan). Por lo mismo, en prod NO
+    // hay que correrles UPDATE a los planes [].
     const plans = [
       // id, name, slug, price, currency, desc, features, limits, modules, isactive, sortorder
-      ['plan-host', 'Host', 'host', 29, 'USD', 'Plan de entrada — motor de reservas básico', JSON.stringify(['10 habitaciones', '1 usuario']), JSON.stringify({rooms:10,users:1}), JSON.stringify(['planning','reservations','reservations.checkin','guests']), 1, -1],
+      ['plan-host', 'Host', 'host', 29, 'USD', 'Plan de entrada — motor de reservas básico', JSON.stringify(['10 habitaciones', '1 usuario']), JSON.stringify({rooms:10,users:1}), JSON.stringify(['planning','reservations','reservations.checkin','guests','settings.rooms','site-pages','settings.rates','settings.audit']), 1, -1],
       ['plan-starter', 'Starter', 'starter', 49, 'USD', 'Para hoteles pequeños', JSON.stringify(['30 habitaciones', '2 usuarios']), JSON.stringify({rooms:30,users:2}), JSON.stringify([]), 1, 0],
       ['plan-professional', 'Professional', 'professional', 99, 'USD', 'Para hoteles en crecimiento', JSON.stringify(['100 habitaciones', '6 usuarios']), JSON.stringify({rooms:100,users:6}), JSON.stringify([]), 1, 1],
       ['plan-enterprise', 'Enterprise', 'enterprise', 199, 'USD', 'Para hoteles grandes', JSON.stringify(['Habitaciones ilimitadas', 'Usuarios ilimitados']), JSON.stringify({rooms:9999,users:9999}), JSON.stringify([]), 1, 2],
-      ['plan-essential', 'Essential', 'essential', 99, 'USD', 'PMS + Channel + Reservas + Pagos', JSON.stringify(['20 habitaciones', '2 usuarios']), JSON.stringify({rooms:20,users:2}), JSON.stringify(['planning','reservations','reservations.checkin','guests','finance','finance.billing','finance.payments','channel','operations','operations.maintenance']), 1, 3],
+      ['plan-essential', 'Essential', 'essential', 99, 'USD', 'PMS + Channel + Reservas + Pagos', JSON.stringify(['20 habitaciones', '2 usuarios']), JSON.stringify({rooms:20,users:2}), JSON.stringify(['planning','reservations','reservations.checkin','guests','settings.rooms','channel','finance.billing','finance.payments','operations.maintenance','site-pages','settings.rates','settings.audit']), 1, 3],
       ['plan-ultra', 'Ultra', 'ultra', 0, 'USD', 'Plan custom — todos los módulos', JSON.stringify(['Habitaciones ilimitadas', 'Usuarios ilimitados']), JSON.stringify({rooms:9999,users:9999}), JSON.stringify([]), 1, 4],
     ]
 

@@ -1,7 +1,7 @@
 // Fuente ÚNICA ruta del panel → clave de módulo/submódulo del catálogo (backend admin/usecases/modules.ts).
 // La usan el menú del hotel (AdminLayout) y el guard de rutas (router) para decidir qué se ve y a qué se
 // puede entrar. Lo NO mapeado es CORE: siempre accesible (Dashboard, Configuración Base, Soporte,
-// Notificaciones, Booking Engine). Así el hotel nunca queda sin acceso mínimo.
+// Notificaciones, Mis Referidos —growth). Así el hotel nunca queda sin acceso mínimo.
 
 export const ROUTE_TO_KEY: Record<string, string> = {
   '/panel/planning': 'planning',
@@ -50,6 +50,13 @@ export const ROUTE_TO_KEY: Record<string, string> = {
   '/panel/config/pasarelas': 'settings.gateways',
   '/panel/config/dispositivos': 'settings.devices',
   '/panel/push-tokens': 'settings.push',
+  '/panel/config/tarifas': 'settings.rates',
+  '/panel/config/auditoria': 'settings.audit',
+  // Página pública: las 8 tabs colapsan en UNA ruta (/panel/pagina-publica?tab=X — landing/media/
+  // apariencia/booking-engine/promo-codes/reputacion/tracking son redirects), así que el gate de
+  // RUTA es uno solo: la clave padre. La granularidad fina (site-pages.landing/media/booking/
+  // promos) gatea la API de cada módulo backend, no la ruta.
+  '/panel/pagina-publica': 'site-pages',
   // Contabilidad y tesorería (entitlement de plan: claves top-level accounting/treasury).
   '/panel/contabilidad': 'accounting',
   '/panel/tesoreria': 'treasury',

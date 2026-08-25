@@ -434,6 +434,7 @@ import { reservasMoneyConnector } from './connectors/reservas-money'
 // STR-A: `payment-requests` (techo del cobro + bridge del webhook) lee el MISMO camino
 // reserva→dinero por los módulos dueños, no con repos crudos de `invoices`/`payments`.
 import { paymentRequestsMoneyConnector } from './connectors/payment-requests-money'
+import { paymentsCeilingConnector } from './connectors/payments-ceiling'
 import { gastosCajaConnector } from './connectors/gastos-caja'
 import { cajaChicaGastosConnector } from './connectors/caja-chica-gastos'
 import { payrollGastosConnector } from './connectors/payroll-gastos'
@@ -629,6 +630,8 @@ system.addConnector('reservas-money', reservasMoneyConnector)
 // Idem para el techo del cobro: sin este connector, create/update/createCheckout fallan fuerte
 // en vez de medir contra `reservations.deposit` (GH-0.2: un 0 en silencio autoriza recobrar).
 system.addConnector('payment-requests-money', paymentRequestsMoneyConnector)
+// RTC-8.1: la vía charge-card valida contra el techo de `payment-requests` antes de abrir sesión.
+system.addConnector('payments-ceiling', paymentsCeilingConnector)
 // El chat resuelve nombres de compañeros sin pasar por `users:view`.
 system.addConnector('messages-usuarios', messagesUsuariosConnector)
 // Un mensaje nuevo le llega al teléfono aunque la app esté cerrada.

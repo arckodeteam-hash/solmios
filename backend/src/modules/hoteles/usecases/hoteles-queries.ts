@@ -1,6 +1,20 @@
-import { NotFoundError } from 'arckode-framework'
+import { NotFoundError, ValidationError } from 'arckode-framework'
 
 function safeParse(v: any) { if (typeof v !== 'string') return v; try { return JSON.parse(v) } catch { return v } }
+
+/**
+ * #34 (SEC-2): "Cancelación gratuita" y la política "No Reembolsable" son mutuamente
+ * excluyentes. La UI lo auto-resuelve al interactuar, pero eso NO es validación: un
+ * cliente directo (curl, móvil, datos legacy) podía persistir ambas y el motor de
+ * cancelación quedaba con dos reglas contradictorias. Se evalúa el estado EFECTIVO
+ * (patch mergeado sobre el hotel actual) porque un PUT parcial puede activar el
+ * conflicto con el valor que ya estaba en la DB.
+ */
+export function assertCancellationCompatible(freeCancellation: unknown, cancellationType: unknown): void {
+  if (freeCancellation === true && cancellationType === 'non_refundable') {
+    throw new ValidationError('Cancelación gratuita y política "No Reembolsable" son incompatibles: desactivá una de las dos')
+  }
+}
 
 export class HotelesQueries {
   constructor(private readonly orm: any) {}
@@ -21,7 +35,10 @@ export class HotelesQueries {
     const safePatch: Record<string, any> = {}
     const allowed = ['name', 'country', 'address', 'phone', 'email', 'timezone', 'currency', 'checkIn', 'checkOut', 'plan', 'cancellationType', 'freeCancellation', 'depositRequired', 'depositPercent', 'weekendSurcharge', 'ownerName', 'ownerTaxId', 'deviceEmail', 'accommodationType', 'registrationNumber', 'website', 'bookingEngineUrl', 'phone2', 'warningPhone', 'secondaryCurrency', 'youtubeUrl', 'starRating', 'onlineBookingStatus', 'motorVersion', 'latitude', 'longitude', 'province', 'municipality', 'locality', 'postalCode', 'cleaningType', 'depositType', 'depositFixed', 'advanceType', 'advanceAmount', 'releaseHours', 'defaultPaymentMethod', 'requestReviews', 'publishReviewScore', 'publishReviewComments', 'taxName', 'taxRate', 'descriptionJson', 'wifiNetwork', 'wifiPassword', 'logo', 'slug', 'amenities', 'descriptionTranslations']
     for (const k of allowed) { if (body[k] !== undefined) safePatch[k] = body[k] }
+    // #34: exclusividad evaluada sobre el estado efectivo (patch + DB), no sólo el patch.
+    assertCancellationCompatible(safePatch.freeCancellation ?? existing.freeCancellation, safePatch.cancellationType ?? existing.cancellationType)
     await this.orm.update('Hotels', id, safePatch)
+    // @ignore IDOR_RISK — reload post-write, ownership ya validada arriba (mismo id)
     return await this.orm.findById('Hotels', id)
   }
 

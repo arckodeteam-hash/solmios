@@ -72,8 +72,8 @@ describe('toDisplayPlan — el número que se pinta es el de la fila `plans`', (
 describe('fallback — la landing nunca queda en blanco ni inventa un precio', () => {
   it('devuelve los planes con el precio marcado como desconocido', () => {
     const plans = fallbackPlans()
-    // COR-5: `host` incluido — está sembrado en `plans` con `sortOrder -1`.
-    expect(plans.map(p => p.slug)).toEqual(['host', 'starter', 'professional', 'enterprise', 'essential', 'ultra'])
+    // #30: mismo orden que decide el backend (precio ASC según el seed) — ultra $0 primero.
+    expect(plans.map(p => p.slug)).toEqual(['ultra', 'host', 'starter', 'essential', 'professional', 'enterprise'])
     for (const p of plans) {
       expect(p.priceKnown).toBe(false)
       expect(p.price).toBeNull()
@@ -173,8 +173,8 @@ describe('roomsLabel — el tope sale de `plans.limits`', () => {
     expect(toDisplayPlan(dbPlan({ slug: 'host', name: 'Host', limits: { rooms: 10 } })).rooms).toBe('Hasta 10 habitaciones')
   })
 
-  it('el fallback incluye TODOS los slugs sembrados y en el orden del seed', () => {
-    const seeded = ['host', 'starter', 'professional', 'enterprise', 'essential', 'ultra']
+  it('el fallback incluye TODOS los slugs sembrados y en orden de precio ASC (#30)', () => {
+    const seeded = ['ultra', 'host', 'starter', 'essential', 'professional', 'enterprise']
     expect(fallbackPlans().map((p) => p.slug)).toEqual(seeded)
     // Y ninguno queda sin copy: `PLAN_PRESENTATION[slug]!` reventaría en runtime.
     for (const slug of seeded) expect(PLAN_PRESENTATION[slug]).toBeDefined()

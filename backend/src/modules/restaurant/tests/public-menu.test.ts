@@ -47,6 +47,8 @@ function baseDeps(overrides: Partial<{
     hotels: backed<any>(overrides.hotelsSeed ?? [{ id: 'h1', name: 'Hotel Test', plan: 'basico' }]),
     config: backed<any>(overrides.configSeed ?? []),
     plans: backed<any>(overrides.plansSeed ?? []),
+    // Sin suscripción (hoteles legacy): el gate cae al espejo `hotel.plan`, como siempre.
+    subscriptions: backed<any>([]),
   }
 }
 

@@ -41,7 +41,7 @@ export class SubscriptionsService {
     private readonly specialCategoriesRepo?: RepositoryAdapter<any>,
   ) {
     this.signupUc = new SignupUseCase({
-      hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, hashPassword, logger,
+      hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger,
     })
     this.accessUc = new SubscriptionAccess(subscriptionsRepo, hotelsRepo)
     this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, ratesRepo, hotelsRepo, channelsRepo })
@@ -98,7 +98,7 @@ export class SubscriptionsService {
    * de `limits` NO salen: son detalle interno de cómo se aplica el plan.
    *
    * El orden lo fija el backend y el frontend lo respeta tal cual (no re-ordena):
-   * ver `usecases/public-plans.ts` → `comparePublicPlans`.
+   * del más barato al más caro (#30), ver `shared/utils/plans-order.ts`.
    */
   publicPlans(): Promise<PublicPlan[]> {
     return listPublicPlans(this.plansRepo)
@@ -173,7 +173,8 @@ export class SubscriptionsService {
   handlePlatformWebhook(rawBody: string | Buffer, signature: string) {
     return processSubscriptionWebhook(
       {
-        subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, logger: this.logger,
+        subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo,
+        plansRepo: this.plansRepo, logger: this.logger,
         sendPlatformEmail: this.sendPlatformEmail, orm: this.orm,
       },
       rawBody, signature,

@@ -82,9 +82,14 @@ function orderLinesDeps(overrides: Partial<{ itemsSeed: any[] }> = {}): { deps: 
 // ─── Reloj fijo — isWithinAvailabilityWindow/addLine/listItems usan `new Date()` internamente (D10:
 // hora del SERVIDOR, sin conversión a timezone). Se sobreescribe el reloj global SOLO durante el test
 // para simular una hora exacta, y se restaura siempre en afterEach (aunque el test falle). ───
+// `RealDate` se captura UNA vez al cargar el módulo, no dentro de mockClock: el test de "snapshot"
+// llama mockClock DOS veces en el mismo test (10:55 → 20:00), y en la segunda el `const RealDate =
+// Date` capturaba el Date YA parcheado — el afterEach restauraba a ese FixedDate y el reloj quedaba
+// congelado para el resto de la suite (bun corre los archivos en un solo proceso): todo createdAt
+// idéntico y desempates FIFO al azar en tests ajenos (flake de payment-requests RTC-8.3 en CI).
+const RealDate = Date
 let restoreClock: (() => void) | null = null
 function mockClock(hour: number, minute: number): void {
-  const RealDate = Date
   class FixedDate extends RealDate {
     constructor(...args: any[]) {
       if (args.length === 0) {

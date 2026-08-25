@@ -21,7 +21,28 @@
 
     <SkeletonLoader v-if="loading" variant="card" :rows="3" />
 
-    <div v-else class="space-y-4">
+    <!-- Sin pasarela activa no hay cobro online: ni el motor de reservas ni los links de pago
+         pueden capturar plata. El catálogo de abajo nunca está vacío, así que el vacío real
+         (cero pasarelas conectadas) se avisa acá arriba con el primer paso. -->
+    <SetupAlert
+      v-if="!loading && !activeGateway"
+      class="mb-6"
+      :title="gateways.length === 0 ? 'Todavía no podés cobrar online' : 'Ninguna pasarela está activa'"
+      :message="gateways.length === 0
+        ? 'No hay ninguna pasarela conectada. Hasta que conectes una, las reservas del motor y los links de pago no pueden cobrarse.'
+        : 'Cargaste las credenciales pero la pasarela está desactivada, así que los cobros online no se procesan. Activala para empezar a cobrar.'"
+    >
+      <template v-if="canEditGateways" #action>
+        <button
+          @click="openSetupForm"
+          class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white hover:bg-navy-light transition-colors cursor-pointer"
+        >
+          {{ gateways.length === 0 ? 'Conectar una pasarela' : 'Activar pasarela' }}
+        </button>
+      </template>
+    </SetupAlert>
+
+    <div v-if="!loading" class="space-y-4">
       <SectionCard v-for="p in providers" :key="p.provider"
         :title="p.name" :subtitle="p.description" body-class="p-0">
         <template #actions>
@@ -177,6 +198,8 @@ import { useConfirm } from '@/composables/useConfirm'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
+import SetupAlert from '@/components/ui/SetupAlert.vue'
+import { usePermissions } from '@/composables/usePermissions'
 
 const ICON_LOCK = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="11" width="16" height="10" rx="2"/><path stroke-linecap="round" d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'
 const ICON_ALERT = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a1 1 0 0 0 .86 1.5h18.64a1 1 0 0 0 .86-1.5L13.71 3.86a1 1 0 0 0-1.72 0Z"/></svg>'
@@ -298,6 +321,22 @@ const webhookUrl = computed(() => {
 
 function gatewayOf(provider: PaymentProvider): PaymentGateway | undefined {
   return gateways.value.find(g => g.provider === provider)
+}
+
+// Todas las rutas de /api/payment-gateways piden `billing:edit` (backend: modules/payment-gateways/
+// index.ts:61-65). Sin el permiso el CTA no se muestra: apretarlo terminaría en 403.
+const { can } = usePermissions()
+const canEditGateways = computed(() => can('billing', 'edit'))
+
+/** ¿Hay alguna pasarela que efectivamente cobre? Cargada pero apagada NO cuenta. */
+const activeGateway = computed(() => gateways.value.find(g => g.enabled))
+
+/** Primer paso: abrir el formulario que ya existe — el de la pasarela cargada, o Stripe si no hay ninguna. */
+function openSetupForm() {
+  const firstConfigured = gateways.value.find(g => CATALOG.some(c => c.provider === g.provider && c.implemented))
+  const target = firstConfigured?.provider ?? 'stripe'
+  // toggleForm cierra si ya está abierto; acá el CTA siempre tiene que ABRIR.
+  if (openForm.value !== target) toggleForm(target)
 }
 
 // Estado de la pasarela en una sola lectura: no implementada / activa / cargada pero apagada / vacía.

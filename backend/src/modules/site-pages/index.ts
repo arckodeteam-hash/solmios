@@ -20,6 +20,7 @@ import { SitePagesService } from './service'
 import { SitePagesController } from './controller'
 import type { SitePageDTO, PublicSitePage, PublicSitePageSummary } from './types'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
+import { createModuleGuard } from '../../infrastructure/auth/require-module'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
 
 export { SitePagesService }
@@ -63,7 +64,9 @@ export function SitePagesModule() {
       const controller = new SitePagesController(service, log)
 
       // Guard de plataforma (patrón admin module): solo el dueño del SaaS toca el sitio.
-      const sa = [auth.authenticate('super_admin'), requireUserType('admin')]
+      // El moduleGuard('site-pages') es no-op HOY (super_admin se saltea el gate de plan),
+      // pero deja el invariant cableado si el scope del módulo algún día abre a hoteles.
+      const sa = [auth.authenticate('super_admin'), requireUserType('admin'), createModuleGuard(orm)('site-pages')]
 
       // ─── Rutas admin ──────────────────────────────────────────────────────
       router.get('/api/site-pages', sa, () => controller.index())

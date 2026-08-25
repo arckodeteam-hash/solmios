@@ -47,4 +47,22 @@ describe('SignupSchema', () => {
     expect(() => validateSchema(SignupSchema, { ...FROM_FORM, country: 'x'.repeat(81) }))
       .toThrow()
   })
+
+  // CS-3: un alta sin plan creaba una suscripción trialing con planId vacío y el gate la
+  // resolvía como "sin matriz" → el hotel entraba con TODO el panel. Ahora rebota acá,
+  // con un mensaje que dice qué falta (registro que no cargó los planes por red/API).
+  it('planId obligatorio: sin él el alta rebota con "Elegí un plan..." (CS-3)', () => {
+    const { planId, ...sinPlan } = FROM_FORM
+    let thrown: any
+    try { validateSchema(SignupSchema, sinPlan) } catch (e) { thrown = e }
+    expect(thrown?.fields?.planId).toContain('Elegí un plan para empezar tu prueba')
+  })
+
+  it('planId vacío o de espacios también rebota (required solo cubre undefined/null)', () => {
+    for (const vacio of ['', '   ']) {
+      let thrown: any
+      try { validateSchema(SignupSchema, { ...FROM_FORM, planId: vacio }) } catch (e) { thrown = e }
+      expect(thrown?.fields?.planId).toContain('Elegí un plan para empezar tu prueba')
+    }
+  })
 })

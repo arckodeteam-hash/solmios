@@ -22,6 +22,23 @@
         <p class="text-sm text-text-muted mt-0.5">Precio base por tipo de habitación y ajuste porcentual por temporada</p>
       </div>
 
+      <!-- Sin un rango de fechas guardado el motor no sabe qué temporada aplicarle a una reserva:
+           no es una lista vacía, es el tarifado parado. Por eso va como alerta y no como cartel. -->
+      <SetupAlert
+        v-if="!hasDatedSeason"
+        title="El motor de tarifas todavía no puede calcular precios"
+        message="Ninguna temporada tiene fechas de inicio y fin. Sin ese rango el sistema no sabe qué tarifa corresponde a cada reserva. Completá al menos una temporada y guardá."
+      >
+        <template v-if="canEditRates" #action>
+          <button
+            @click="focusFirstSeasonDate"
+            class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white hover:bg-navy-light transition-colors cursor-pointer"
+          >
+            Definir fechas de temporada
+          </button>
+        </template>
+      </SetupAlert>
+
       <SectionCard title="Temporadas" subtitle="Definí el rango de fechas de cada una y cuál está activa">
         <div class="grid md:grid-cols-4 gap-4">
           <div v-for="(s, i) in seasonsList" :key="i" class="bg-surface rounded-xl p-4"
@@ -134,7 +151,16 @@
             </tbody>
           </table>
           <EmptyState v-if="roomTypes.length === 0" title="No hay tarifas configuradas"
-            message="Creá habitaciones con tipo definido para generar la matriz." />
+            message="La matriz se arma con los tipos de habitación del hotel. Creá al menos una habitación con su tipo para poder cargar precios.">
+            <template v-if="canCreateRooms" #action>
+              <router-link
+                to="/panel/config/habitaciones"
+                class="inline-flex rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white hover:bg-navy-light transition-colors"
+              >
+                Crear habitaciones
+              </router-link>
+            </template>
+          </EmptyState>
         </div>
 
         <p class="px-5 pb-4 text-[11px] text-text-muted">
@@ -149,10 +175,17 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import SetupAlert from '@/components/ui/SetupAlert.vue'
 import { HotelService } from '@/services/Hotel.service'
 import { useToast } from '@/composables/useToast'
+import { usePermissions } from '@/composables/usePermissions'
 
 const toast = useToast()
+const { can } = usePermissions()
+// Guardar temporadas/tarifas es `settings:edit` (backend: modules/pricing/index.ts, ratesGuard).
+// Crear habitaciones es `rooms:create`. Sin el permiso el CTA no se muestra: ofrecerlo termina en 403.
+const canEditRates = computed(() => can('settings', 'edit'))
+const canCreateRooms = computed(() => can('rooms', 'create'))
 const loading = ref(true)
 
 // Seasons & Rates
@@ -189,6 +222,19 @@ async function togglePricingMode() {
   } finally {
     togglingMode.value = false
   }
+}
+
+// Cuando el backend no devuelve temporadas, la vista precarga 4 plantillas SIN fechas (ver
+// onMounted). Se ven como si estuvieran configuradas, pero no lo están: la condición real de
+// "puedo tarifar" es que alguna temporada tenga inicio Y fin.
+const hasDatedSeason = computed(() => seasonsList.value.some((s) => !!s.startDate && !!s.endDate))
+
+/** Primer paso concreto: llevar al usuario al campo de fecha que falta (ya existe en esta vista). */
+function focusFirstSeasonDate() {
+  const el = document.getElementById('temporada-0-inicio') as HTMLInputElement | null
+  if (!el) return
+  el.scrollIntoView({ block: 'center' })
+  el.focus()
 }
 
 onMounted(async () => {

@@ -117,10 +117,40 @@ export interface ReconcileResult {
   opening: number
   income: number
   expense: number
+  /** Ingresos SOLO en efectivo del turno — lo que entra al cajón físico (alimenta `expected`). */
+  cashIncome: number
+  /** Egresos SOLO en efectivo del turno — lo que sale del cajón físico (baja `expected`). */
+  cashExpense: number
   expected: number
   counted: number
   difference: number
   byMethod: Record<string, number>
+  /** Neto firmado por método (ingreso +, egreso −). Esperado por método para el arqueo de cierre. */
+  byMethodNet: Record<string, number>
+}
+
+// ─── Histórico de turnos (auditoría: quién cerró, diferencias, totales por método) ───
+
+/** Turno del histórico enriquecido con el desglose neto por método de sus movimientos. */
+export interface ShiftHistoryRow extends CashShiftDTO {
+  byMethodNet: Record<string, number>
+}
+
+export interface ShiftHistoryQuery {
+  from?: string
+  to?: string
+  page?: number
+  limit?: number
+}
+
+export interface ShiftHistoryPage {
+  data: ShiftHistoryRow[]
+  total: number
+  page: number
+  limit: number
+  pages: number
+  hasNext: boolean
+  hasPrev: boolean
 }
 
 export interface CashStats {

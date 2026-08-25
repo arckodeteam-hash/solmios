@@ -5,10 +5,11 @@ import type { RepositoryAdapter, Logger, Auth } from 'arckode-framework'
 import { NotFoundError, ValidationError } from 'arckode-framework'
 import type {
   CashMovementDTO, CashShiftDTO, CashRegister, OpenShiftDTO, CloseShiftDTO,
-  ReconcileResult, CurrentUser,
+  ReconcileResult, ShiftHistoryPage, ShiftHistoryQuery, CurrentUser,
 } from '../types'
 import type { CashSockets } from '../sockets'
-import { reconcileShift } from './reconcile'
+import { round2, BALANCE_EPSILON } from '../../../shared/utils/money'
+import { reconcileShift, summarizeMovements } from './reconcile'
 
 export interface ShiftDeps {
   shiftRepo: RepositoryAdapter<CashShiftDTO>
@@ -86,16 +87,68 @@ export async function closeShift(deps: ShiftDeps, id: string, dto: CloseShiftDTO
   if (shift.status === 'closed') throw new Error('El turno ya está cerrado')
   const movs = shift.id ? await deps.repo.findMany({ shiftId: shift.id } as any) : []
   const rec = reconcileShift(shift, movs)
+  // QA-UI caja-2026-08-22 (H2/M6): cerrar con diferencia era un click más — el arqueo venía
+  // prellenado con el esperado y cuadraba solo. Una diferencia física contra el cajón es un
+  // hecho contable: si no cuadra dentro del centavo de tolerancia, exige motivo (convención del
+  // repo: validación de negocio en el usecase, como facturas/usecases/pay-invoice).
+  const difference = round2(dto.countedAmount - rec.expected)
+  const reason = (dto.notes || '').trim()
+  if (Math.abs(difference) > BALANCE_EPSILON && !reason) {
+    const sign = difference < 0 ? '-' : '+'
+    throw new ValidationError(
+      `El arqueo no cuadra: hay una diferencia de $${sign}${round2(Math.abs(difference))} ` +
+      `contra el efectivo esperado ($${round2(rec.expected)}). ` +
+      'Contá el cajón de nuevo o escribí el motivo de la diferencia para cerrar el turno.',
+    )
+  }
   const now = new Date().toISOString()
   const updated = await deps.shiftRepo.update(id, {
     status: 'closed', countedAmount: dto.countedAmount, expectedAmount: rec.expected,
-    difference: dto.countedAmount - rec.expected, denominations: dto.denominations || '{}',
+    difference, denominations: dto.denominations || '{}',
     closedBy: user.id, closedAt: now, notes: dto.notes,
   } as Partial<Omit<CashShiftDTO, 'id'>>)
   if (!updated) throw new NotFoundError('Turno no encontrado')
   await deps.sockets.onShiftClosed?.(updated)
   deps.bumpVersion()
   return updated
+}
+
+/** Histórico de turnos del register para auditoría: quién abrió/cerró, fondo, arqueo
+ * (esperado/contado/diferencia) y neto por método de cada turno. Filtra por fecha de apertura
+ * (`from`/`to`) y pagina — igual semántica que usecases/list.ts. El desglose sale de UNA pasada
+ * sobre los movimientos del register agrupados por shiftId (mismo patrón in-memory que stats()). */
+export async function listShiftHistory(
+  deps: ShiftDeps, hotelId: string | undefined, query: ShiftHistoryQuery, user: CurrentUser, register: CashRegister = DEFAULT_REGISTER,
+): Promise<ShiftHistoryPage> {
+  const hid = deps.hotelOfUser(user, hotelId)
+  let shifts = await deps.shiftRepo.findMany({ hotelId: hid || '__none__', register } as any)
+  shifts = [...shifts].sort((a, b) => (b.openedAt || '').localeCompare(a.openedAt || ''))
+  if (query.from) shifts = shifts.filter(s => (s.openedAt || '') >= query.from!)
+  if (query.to) shifts = shifts.filter(s => (s.openedAt || '') <= query.to! + 'T23:59:59')
+  const total = shifts.length
+  const page = Math.max(Number(query.page) || 1, 1)
+  const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100)
+  const offset = (page - 1) * limit
+
+  // Neto por método por turno (los movimientos sin shiftId son huérfanos de turnos cerrados).
+  const movs = await deps.repo.findMany({ hotelId: hid || '__none__', register } as any)
+  const movsByShift = new Map<string, CashMovementDTO[]>()
+  for (const m of movs) {
+    if (!m.shiftId) continue
+    const arr = movsByShift.get(m.shiftId) || []
+    arr.push(m)
+    movsByShift.set(m.shiftId, arr)
+  }
+
+  const data = shifts.slice(offset, offset + limit).map(s => ({
+    ...s,
+    byMethodNet: summarizeMovements(movsByShift.get(s.id || '') || []).byMethodNet,
+  }))
+  return {
+    data, total, page, limit,
+    pages: Math.ceil(total / limit) || 1,
+    hasNext: offset + limit < total, hasPrev: page > 1,
+  }
 }
 
 export async function reconcile(deps: ShiftDeps, id: string, user: CurrentUser, expectedRegister?: CashRegister): Promise<ReconcileResult> {

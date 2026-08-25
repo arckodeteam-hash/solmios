@@ -3,7 +3,7 @@ import type { PlanDTO, AmenityCatalogDTO } from './types'
 import { AdminService } from './service'
 import { AdminController } from './controller'
 import { DashboardQueries } from './usecases/dashboard-queries'
-import { MODULE_CATALOG, getModuleState, setModuleState, getModuleStateForPlan } from './usecases/modules'
+import { MODULE_CATALOG, getModuleState, setModuleState, getModuleStateForHotel, moduleCatalogTree } from './usecases/modules'
 import { SpecialConditionsUseCase } from './usecases/special-conditions'
 import { SubscriptionCategoriesUseCase } from './usecases/subscription-categories'
 import { ModuleOverridesUseCase } from './usecases/module-overrides'
@@ -16,12 +16,14 @@ export function AdminModule() {
     name: 'admin',
     // STR-6: los tres endpoints de amenities cambiaron su contrato de error (409-para-todo →
     // 400/403/404/409, por TIPO de error). Un cambio observable del contrato bumpea la versión.
-    version: '1.1.0',
+    // 1.2.0: + GET /api/admin/modules/catalog (árbol módulo→sub-módulos para el editor de planes)
+    // y `plans.modules` se valida contra el catálogo (400 con las claves inválidas).
+    version: '1.2.0',
     description: 'Super admin platform management',
     contract: {
-      name: 'admin', version: '1.1.0',
+      name: 'admin', version: '1.2.0',
       description: 'Platform-level management: hotels, users, plans, analytics',
-      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride'],
+      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride'],
       events: [],
       tables: [],
       dependencies: [],
@@ -36,6 +38,9 @@ export function AdminModule() {
       const configRepo = new OrmRepository<any>(orm, 'Configuration')
       const hotelsRepo = new OrmRepository<any>(orm, 'Hotels')
       const moduleOverridesRepo = new OrmRepository<any>(orm, 'HotelModuleOverrides')
+      // Suscripción SaaS del hotel: FUENTE DE VERDAD del plan para el gate de módulos
+      // (resolve-plan.ts). `hotels.plan` es el espejo legacy que solo aplica sin suscripción.
+      const subscriptionsRepo = new OrmRepository<any>(orm, 'Subscriptions')
       // `orm` crudo (no repos): el cupo de Fundador/Pionero necesita CAS (orm.updateMany), que
       // RepositoryAdapter/OrmRepository no exponen. Mismo criterio que DashboardQueries.
       const specialConditions = new SpecialConditionsUseCase(orm)
@@ -50,6 +55,9 @@ export function AdminModule() {
       // ── Módulos del producto (activar/desactivar) — global en configuration(platform,'modules') + por plan ──
       // Editar: solo super_admin. Leer: cualquier logueado; el estado sale de global ∩ el plan de SU hotel.
       router.get('/api/admin/modules', sa, async () => ({ status: 200, body: { catalog: MODULE_CATALOG, state: await getModuleState(configRepo) } }))
+      // Árbol módulo→sub-módulos (claves + labels en español) para el editor de planes.
+      // Fuente única: el mismo catálogo que lee el gate — el frontend no duplica la lista.
+      router.get('/api/admin/modules/catalog', sa, () => ({ status: 200, body: moduleCatalogTree() }))
       router.put('/api/admin/modules', sa, async (req: any) => ({ status: 200, body: { state: await setModuleState(configRepo, (req.body?.state ?? req.body) || {}) } }))
       router.get('/api/modules', [auth.authenticate()], async (req: any) => {
         const hotelId = req.user?.hotelId
@@ -58,7 +66,10 @@ export function AdminModule() {
           const hotel = ((await hotelsRepo.findMany({ id: hotelId })) as any[])?.[0]
           planSlug = hotel?.plan
         }
-        return { status: 200, body: { state: await getModuleStateForPlan(configRepo, plansRepo, planSlug, moduleOverridesRepo, hotelId) } }
+        // El estado sale de global ∩ la SUSCRIPCIÓN ACTIVA del hotel ∩ overrides.
+        // planSlug (hotels.plan) solo aplica si no hay suscripción activa (legacy).
+        // `log` (E2): el WARN del resolver tiene que llegar a los logs, no morir en `undefined`.
+        return { status: 200, body: { state: await getModuleStateForHotel(configRepo, plansRepo, subscriptionsRepo, hotelId, moduleOverridesRepo, planSlug, log) } }
       })
 
       router.get('/api/admin/hoteles', sa, () => controller.listHotels())
@@ -115,7 +126,7 @@ export function AdminModule() {
       router.post('/api/admin/hotels/:hotelId/module-overrides', sa, (req: any) => controller.upsertModuleOverride(req))
       router.delete('/api/admin/hotels/:hotelId/module-overrides/:id', sa, (req: any) => controller.deleteModuleOverride(req))
 
-      log.info('Módulo admin listo (31 endpoints)')
+      log.info('Módulo admin listo (32 endpoints)')
       return service
     },
   })

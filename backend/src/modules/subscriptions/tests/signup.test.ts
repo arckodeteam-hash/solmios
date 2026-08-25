@@ -33,6 +33,7 @@ function setup(existingUsers: any[] = []) {
     usersRepo: repo(users),
     rolesRepo: repo(roles),
     subscriptionsRepo: repo(subs),
+    plansRepo: repo([]), // sin planes cargados: signup sin planId no resuelve nada (OK)
     hashPassword: async (p: string) => `hashed:${p}`,
     logger: silentLogger(),
   })
@@ -146,6 +147,7 @@ describe('SignupUseCase — el alta no puede quedar a medias', () => {
       usersRepo: repo(users),
       rolesRepo: repo(roles),
       subscriptionsRepo: repo([], true), // falla justo en el último paso
+      plansRepo: repo([]),
       hashPassword: async (p: string) => `hashed:${p}`,
       logger: silentLogger(),
     })
@@ -178,6 +180,7 @@ describe('SignupUseCase — un envío caído se loguea, no se silencia', () => {
     const { logger, warns } = recordingLogger()
     const uc = new SignupUseCase({
       hotelsRepo: repo(hotels), usersRepo: repo(users), rolesRepo: repo(roles), subscriptionsRepo: repo(subs),
+      plansRepo: repo([]),
       hashPassword: async (p: string) => `hashed:${p}`,
       logger,
       appUrl: 'https://hotel.example.com',
@@ -197,6 +200,7 @@ describe('SignupUseCase — un envío caído se loguea, no se silencia', () => {
     const { logger, warns } = recordingLogger()
     const uc = new SignupUseCase({
       hotelsRepo: repo(hotels), usersRepo: repo(users), rolesRepo: repo(roles), subscriptionsRepo: repo(subs),
+      plansRepo: repo([]),
       hashPassword: async (p: string) => `hashed:${p}`,
       logger,
       appUrl: 'https://hotel.example.com',
@@ -217,6 +221,7 @@ describe('SignupUseCase — un envío caído se loguea, no se silencia', () => {
     const { logger, warns } = recordingLogger()
     const uc = new SignupUseCase({
       hotelsRepo: repo(hotels), usersRepo: repo(users), rolesRepo: repo(roles), subscriptionsRepo: repo(subs),
+      plansRepo: repo([]),
       hashPassword: async (p: string) => `hashed:${p}`,
       logger,
       appUrl: 'https://hotel.example.com',

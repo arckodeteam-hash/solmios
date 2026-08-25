@@ -119,6 +119,10 @@ NO cargar todo. Solo lo que aplique:
 
 | Contexto | Cargar |
 |----------|--------|
+| QA UI de una vista del panel (botones faltantes, usabilidad, a11y, responsive) | `qa-ui` (`/qa-ui <ruta>`) |
+
+| Contexto | Cargar |
+|----------|--------|
 | Backend (cualquier `backend/`) | `backend/node_modules/arckode-framework/skills/{services,orm,auth}/SKILL.md` |
 | Módulo nuevo backend | `helpers/SKILL.md` + `make:module` |
 | Frontend (`frontend/`) | `ui-analyst`, `ui-designer` |

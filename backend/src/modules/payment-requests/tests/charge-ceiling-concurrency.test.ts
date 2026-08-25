@@ -62,7 +62,7 @@ function makeService(repo: RepositoryAdapter<PaymentRequestDTO>) {
     log, permissiveAuth, makeRepo<any>(),
   )
   // STR-A: puerto de dinero del connector payment-requests-money (sin folios/facturas/pagos: paid=deposit).
-  s.setMoneyDeps({ paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() } })
+  s.setMoneyDeps({ paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() }, settledNet: async () => 0, liveCharges: async () => 0, liveChargeRows: async () => [], cancelLiveCharge: async () => 'cancelled' as const })
   return s
 }
 
@@ -83,7 +83,7 @@ describe('techo agregado bajo concurrencia (COR-3)', () => {
     expect(rows[0].amount).toBe(300)
     // El rechazo explica el motivo, no revienta con un 500.
     const failed = results.find((r) => r.status === 'rejected') as PromiseRejectedResult
-    expect(String(failed.reason?.message ?? failed.reason)).toMatch(/links de pago pendientes|supera el saldo cobrable|al mismo tiempo/)
+    expect(String(failed.reason?.message ?? failed.reason)).toMatch(/cobros pendientes|links de pago pendientes|supera el saldo cobrable|al mismo tiempo/)
   })
 
   it('dos altas que JUNTAS entran en el saldo pasan las dos', async () => {
@@ -109,7 +109,7 @@ describe('techo agregado bajo concurrencia (COR-3)', () => {
       log, permissiveAuth, makeRepo<any>(),
     )
     // STR-A: idem makeService — puerto de dinero cableado.
-    s.setMoneyDeps({ paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() } })
+    s.setMoneyDeps({ paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() }, settledNet: async () => 0, liveCharges: async () => 0, liveChargeRows: async () => [], cancelLiveCharge: async () => 'cancelled' as const })
 
     const results = await Promise.allSettled([
       s.create({ reservationId: 'r1', amount: 300 } as any, currentUser),
@@ -142,6 +142,8 @@ describe('techo agregado SIN lock compartido (dos procesos)', () => {
       addonRepo: makeRepo<any>(), requestRepo: repo,
       // STR-A: mismo puerto que cablea el connector payment-requests-money.
       paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() },
+      // RTC-8.2 — sin sesiones de charge-card en este mundo de carrera.
+      liveCharges: async () => 0,
     }
     const proceso = async () => {
       await assertChargeableAmount(deps, { hotelId: 'h1', reservationId: 'r1', amount: 300 })

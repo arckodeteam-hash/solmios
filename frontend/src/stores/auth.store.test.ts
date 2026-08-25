@@ -10,7 +10,15 @@ vi.mock('@/services/Auth.service', () => ({
   },
 }))
 
+// auth.store importa modules.store (logout lo resetea) → mockear su service también.
+vi.mock('@/services/Platform.service', () => ({
+  ModulesService: {
+    enabled: vi.fn(),
+  },
+}))
+
 import { useAuthStore } from './auth.store'
+import { useModulesStore } from './modules.store'
 import { AuthService } from '@/services/Auth.service'
 import type { User } from '@/types'
 
@@ -101,5 +109,18 @@ describe('auth.store', () => {
     expect(store.user).toBeNull()
     expect(localStorage.getItem('token')).toBeNull()
     expect(localStorage.getItem('user')).toBeNull()
+  })
+
+  it('logout resetea el store de módulos (el menú del hotel viejo no sobrevive al login siguiente)', async () => {
+    const store = useAuthStore()
+    const modules = useModulesStore()
+    // Estado stale del hotel anterior: CRM apagado para ese hotel/plan.
+    modules.state = { crm: false }
+    expect(modules.enabled('crm')).toBe(false)
+
+    await store.logout()
+
+    // Sin reset, un login en otro hotel (o con otro plan) heredaba este estado hasta recargar.
+    expect(modules.enabled('crm')).toBe(true)
   })
 })

@@ -1,6 +1,7 @@
 // marketing/service.ts
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
 import { logsForDedupe, alreadySentToday } from './usecases/auto-message-dedupe'
+import { activeFlag } from './usecases/active-flag'
 import { NotFoundError } from 'arckode-framework'
 import type {
   AutoMessageDTO, CreateAutoMessageDTO,
@@ -49,7 +50,7 @@ export class MarketingService {
   // ─── Auto Messages ────────────────────────────────────
   async listAutoMessages(hotelId: string): Promise<AutoMessageDTO[]> { return this.autoMsgRepo.findMany({ hotelId }) }
   async createAutoMessage(dto: CreateAutoMessageDTO): Promise<AutoMessageDTO> {
-    return this.autoMsgRepo.create({ ...dto, isActive: dto.isActive !== false ? 1 : 0 } as any)
+    return this.autoMsgRepo.create({ ...dto, isActive: activeFlag(dto.isActive) } as any)
   }
   async updateAutoMessage(id: string, data: Partial<CreateAutoMessageDTO>, user?: MarketingUser): Promise<AutoMessageDTO> {
     const existing = await this.autoMsgRepo.findById(id)
@@ -58,6 +59,8 @@ export class MarketingService {
     const patch: Record<string, any> = {}
     const fields = ['title','color','emailSubject','emailBody','whatsappBody','channel','triggerEvent','triggerOffset','variables','isActive','event','language','triggerType']
     for (const k of fields) if ((data as any)[k] !== undefined) patch[k] = (data as any)[k]
+    // Misma normalización que create: el PUT llega con 0/1 (schema number) o boolean legacy.
+    if (patch.isActive !== undefined) patch.isActive = activeFlag(patch.isActive)
     await this.autoMsgRepo.update(id, patch as any)
     // @ignore IDOR_RISK — reload post-write, ownership ya validado arriba (mismo id)
     return this.autoMsgRepo.findById(id) as Promise<AutoMessageDTO>
@@ -83,7 +86,7 @@ export class MarketingService {
   // ─── WhatsApp Templates ────────────────────────────────
   async listTemplates(hotelId: string): Promise<WhatsappTemplateDTO[]> { return this.templateRepo.findMany({ hotelId }) }
   async createTemplate(dto: CreateWhatsappTemplateDTO): Promise<WhatsappTemplateDTO> {
-    return this.templateRepo.create({ ...dto, isActive: dto.isActive !== false ? 1 : 0 } as any)
+    return this.templateRepo.create({ ...dto, isActive: activeFlag(dto.isActive) } as any)
   }
   async updateTemplate(id: string, data: Partial<CreateWhatsappTemplateDTO>, user?: MarketingUser): Promise<WhatsappTemplateDTO> {
     const existing = await this.templateRepo.findById(id)
@@ -91,7 +94,7 @@ export class MarketingService {
     if (this.auth) this.auth.assertOwnership(existing.hotelId, user?.hotelId ?? '', user?.role, 'super_admin')
     const patch: Record<string, any> = {}
     for (const k of ['name','body','category']) if ((data as any)[k] !== undefined) patch[k] = (data as any)[k]
-    if (data.isActive !== undefined) patch.isActive = data.isActive ? 1 : 0
+    if (data.isActive !== undefined) patch.isActive = activeFlag(data.isActive)
     await this.templateRepo.update(id, patch as any)
     // @ignore IDOR_RISK — reload post-write, ownership ya validado arriba (mismo id)
     return this.templateRepo.findById(id) as Promise<WhatsappTemplateDTO>

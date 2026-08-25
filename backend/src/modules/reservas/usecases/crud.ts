@@ -279,13 +279,26 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
   // Emitir o invalidar antes del hook publica/recachea el saldo viejo (COR-2).
   const patched = (await hooks?.afterPersist?.(item)) || {}
   const result = { ...item, ...patched } as ReservasDTO
-  // SEC3-2: si este update movió el total cobrable, los links de pago vivos se recortan al saldo
-  // NUEVO. Corre después de persistir a propósito: el clamp relee la reserva y necesita ver el
-  // total definitivo. Si Stripe falla, el PUT ya quedó aplicado y el clamp se reintenta en el
-  // próximo cambio de la reserva — la ventana residual es la misma que la de un webhook lento.
-  if (dto.totalAmount !== undefined || dto.otherCharges !== undefined) {
-    await hooks?.afterCeilingDrop?.(result)
-  }
+  // SEC3-2: los links de pago vivos se recortan al saldo NUEVO. Corre después de persistir a
+  // propósito: el clamp relee la reserva y necesita ver el total definitivo. Si Stripe falla, el PUT
+  // ya quedó aplicado y el clamp se reintenta en el próximo cambio de la reserva — la ventana
+  // residual es la misma que la de un webhook lento.
+  //
+  // RTC-7.1: SIN condición sobre qué campos vinieron en el `dto`. Antes era
+  // `if (dto.totalAmount !== undefined || dto.otherCharges !== undefined)`, y esa lista se olvidaba
+  // de `deposit` —escribible por el MISMO `PUT /api/reservas/:id` (`validators/schema.ts`) y parte
+  // de lo pagado vía `combinePaid` (`shared/usecases/reservation-paid.ts`)—, así que subir el
+  // anticipo bajaba el saldo cobrable a 0 con el link de Stripe todavía pagable: medido por
+  // `payment-requests/tests/ceiling-property.test.ts` (`requerir-pago → subir-anticipo`, $400
+  // cobrables sobre un saldo de $0). El comentario de `updateReservationWithBalance`, once líneas
+  // más abajo, ya decía que los TRES campos mueven el total cobrable: el código contradecía al
+  // comentario.
+  //
+  // Enumerar campos es la forma del bug, no un detalle: cada campo nuevo que toque el dinero
+  // reabre la puerta en silencio. El clamp es idempotente y sale en la primera query si la reserva
+  // no tiene cobros `pending` (`clamp-to-ceiling.ts:clampUnlocked`), así que correrlo siempre
+  // cuesta una lectura y cierra la CLASE de bug en vez de una instancia.
+  await hooks?.afterCeilingDrop?.(result)
   await safeEmit(logger, 'onReservasUpdated', sockets.onReservasUpdated, result)
   await invalidateReservasCaches(cache, existing.hotelId)
   return result

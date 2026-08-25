@@ -4,6 +4,7 @@ import { useModulesStore } from '@/stores/modules.store'
 import { permissionModuleForPath } from '@/config/module-map'
 import { hasPermission, isSystemRole } from '@/config/permissions'
 import { useToast } from '@/composables/useToast'
+import { installMangledPathRecovery, cleanSegment } from './recover-path'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -81,7 +82,9 @@ const router = createRouter({
       // Link de referido (PLAN-REFERIDOS.md). Redirige al registro con el código pre-cargado
       // en vez de una página propia — es solo un puente, la UI real vive en /registro.
       path: '/r/:code',
-      redirect: (to) => ({ path: '/registro', query: { ref: to.params.code } }),
+      // `cleanSegment`: un link pegado en un chat llega como `/r/<código>.` o `/r/<código>)` y ese
+      // punto viaja al `?ref=`, que el backend ya no resuelve → alta sin atribución. Ver recover-path.ts.
+      redirect: (to) => ({ path: '/registro', query: { ref: cleanSegment(String(to.params.code)) } }),
     },
     {
       path: '/forgot-password',
@@ -741,6 +744,14 @@ const router = createRouter({
     },
   ],
 })
+
+// Rescate de URLs sucias ANTES de que el catch-all las mande a la landing. Ver recover-path.ts
+// para el detalle y la evidencia contra producción: un link de referido `/registro?ref=<código>`
+// con una barra duplicada, un espacio o un punto pegado al final (lo que hacen WhatsApp, el mail
+// y cualquier cliente que autolinkea) no matchea `/registro`, cae en `/:pathMatch(.*)*` y el
+// visitante termina en el home con la atribución perdida. Va PRIMERO: los guards de permisos de
+// abajo deben ver ya la ruta buena.
+installMangledPathRecovery(router)
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore()

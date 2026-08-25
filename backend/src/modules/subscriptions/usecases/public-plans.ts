@@ -2,8 +2,10 @@
 //
 // Son los dos únicos criterios de esta pantalla: qué se muestra hacia afuera (sin `limits`
 // ni `modules`, que son detalle interno de cómo se aplica el plan) y en qué orden. El orden
-// se decide acá y el frontend lo respeta tal cual — no re-ordena.
+// (#30) lo decide acá — del más barato al más caro, `shared/utils/plans-order.ts` — y el
+// frontend lo respeta tal cual — no re-ordena.
 import type { RepositoryAdapter } from 'arckode-framework'
+import { PLANS_PRICE_ORDER } from '../../../shared/utils/plans-order'
 
 /** Topes del plan que SÍ son públicos: es lo que el visitante compara al elegir. */
 export interface PublicPlanLimits {
@@ -66,57 +68,19 @@ export function publicLimits(raw: unknown): PublicPlanLimits {
 }
 
 /**
- * Número usable para ordenar, venga como venga de la base.
+ * Planes activos para la landing y el registro, ya ordenados y recortados a lo público.
  *
- * El modelo declara `price`/`sortOrder` como `number` y el ORM los coerce al leer
- * (`orm-utils.ts` → `Number(v)`), pero esa coerción solo cubre el camino feliz: deja pasar
- * `null`/`undefined` intactos y convierte a `NaN` cualquier texto no numérico. Un `NaN` en el
- * comparador es peor que un valor faltante — hace que el resultado del `sort` dependa del orden
- * de entrada. Acá todo lo que no sea un número finito colapsa a `fallback`.
+ * #30: el orden sale de la QUERY (`orderBy` price ASC, slug ASC — `PLANS_PRICE_ORDER`), no de
+ * un `sort` en JS. Antes mandaba `sortOrder`, que se carga a mano desde /admin y en producción
+ * dejó la landing como Host $29 → Starter $49 → Enterprise $199 → Professional $123 →
+ * Essential $99 → Ultra $0; con precio como clave natural (decisión del dueño) el gratuito
+ * sale primero y la progresión es siempre de menor a mayor. `sortOrder` ya no ordena nada.
  */
-export function orderableNumber(v: unknown, fallback: number): number {
-  const n = typeof v === 'number' ? v : Number(v)
-  return Number.isFinite(n) ? n : fallback
-}
-
-/**
- * Orden de los planes en la landing y en la pantalla de suscripción: `sortOrder`, y a igualdad
- * el precio de menor a mayor.
- *
- * `sortOrder` se carga a mano desde /admin, así que se repite o queda vacío con facilidad. Sin
- * desempate, esos empates dejaban el orden en manos de la base (arbitrario), y eso fue lo que se
- * vio en producción: Host $29 → Starter $49 → Enterprise $199 → Professional $123 → Essential $99
- * → Ultra $0. El precio como segunda clave hace que un `sortOrder` mal cargado degrade a una
- * progresión comprensible en vez de a ruido; el nombre como tercera cierra el orden total, para
- * que dos planes idénticos en ambas claves no se intercambien entre requests.
- *
- * `sortOrder` faltante cae a 0 (el mismo default del modelo, así convive con los ya cargados);
- * un precio faltante cae a 0 y el plan queda primero, que es donde se nota y se corrige.
- */
-/** Lo mínimo que el comparador necesita de una fila de `plans`. */
-export interface SortablePlan {
-  sortOrder?: unknown
-  price?: unknown
-  name?: unknown
-}
-
-export function comparePublicPlans(a: SortablePlan | null | undefined, b: SortablePlan | null | undefined): number {
-  const bySort = orderableNumber(a?.sortOrder, 0) - orderableNumber(b?.sortOrder, 0)
-  if (bySort !== 0) return bySort
-  const byPrice = orderableNumber(a?.price, 0) - orderableNumber(b?.price, 0)
-  if (byPrice !== 0) return byPrice
-  return String(a?.name ?? '').localeCompare(String(b?.name ?? ''))
-}
-
-/** Planes activos para la landing y el registro, ya ordenados y recortados a lo público. */
 export async function listPublicPlans(plansRepo: RepositoryAdapter<any>): Promise<PublicPlan[]> {
-  const plans = await plansRepo.findMany({ isActive: 1 })
-  // Copia antes de ordenar: `sort` muta, y el array puede venir de una caché del repo.
-  return [...plans]
-    .sort(comparePublicPlans)
-    .map((p: Record<string, any>) => ({
-      id: p.id, name: p.name, slug: p.slug, price: p.price,
-      currency: p.currency, description: p.description, features: p.features ?? [],
-      limits: publicLimits(p.limits),
-    }))
+  const plans = await plansRepo.findMany({ isActive: 1 }, { orderBy: PLANS_PRICE_ORDER })
+  return plans.map((p: Record<string, any>) => ({
+    id: p.id, name: p.name, slug: p.slug, price: p.price,
+    currency: p.currency, description: p.description, features: p.features ?? [],
+    limits: publicLimits(p.limits),
+  }))
 }

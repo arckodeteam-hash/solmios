@@ -5,7 +5,7 @@
         <h2 class="text-xl font-black text-navy">Evaluación de Desempeño</h2>
         <p class="text-sm text-text-muted mt-0.5">Motor automático: puntúa al personal con datos reales de limpieza y asistencia</p>
       </div>
-      <button @click="runEvaluation" :disabled="running || !config"
+      <button v-if="canRun" @click="runEvaluation" :disabled="running || !config"
         class="flex items-center gap-1.5 bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
         <span class="w-4 h-4 shrink-0" v-html="ICON_PLAY"></span>
         {{ running ? 'Ejecutando…' : 'Ejecutar evaluación del período' }}
@@ -99,9 +99,9 @@
           v-if="!results.length"
           :icon="ICON_CHART_EMPTY"
           title="Todavía no hay evaluaciones"
-          message="Ejecutá el motor para puntuar al personal con los datos de limpieza y asistencia del período."
+          message="El motor puntúa a cada empleado combinando lo que ya registra el sistema: tareas de limpieza, calidad, puntualidad y asistencia del período. Ajustá los pesos a la izquierda y ejecutalo para generar la primera tanda."
         >
-          <template #action>
+          <template v-if="canRun" #action>
             <button @click="runEvaluation" :disabled="running || !config"
               class="px-5 py-2.5 bg-navy text-white rounded-full text-sm font-bold hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
               {{ running ? 'Ejecutando…' : 'Ejecutar evaluación' }}
@@ -171,11 +171,16 @@ import { useToast } from '@/composables/useToast'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import { usePermissions } from '@/composables/usePermissions'
 
 const ICON_PLAY = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 0 1 0 1.971l-11.54 6.347a1.125 1.125 0 0 1-1.667-.985V5.653Z"/></svg>'
 const ICON_CHART_EMPTY = '<svg viewBox="0 0 24 24" class="h-8 w-8" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/></svg>'
 
 const toast = useToast()
+// /panel/rrhh/* → módulo de permiso `users` (config/module-map.ts). Correr el motor escribe
+// evaluaciones, así que exige `users:edit`; sin eso el backend responde 403.
+const { can } = usePermissions()
+const canRun = computed(() => can('users', 'edit'))
 
 const WEIGHT_KEYS: { key: keyof EvalWeights; label: string }[] = [
   { key: 'productivity', label: 'Productividad' },

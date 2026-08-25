@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { User, UserRole } from '@/types'
 import { AuthService } from '@/services/Auth.service'
+import { useModulesStore } from './modules.store'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
@@ -85,6 +86,9 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
     originalUser.value = null
     impersonating.value = false
+    // El menú/rutas gateadas del hotel ANTERIOR no sobrevive al logout: sin esto, un login
+    // en otro hotel (o plan distinto) heredaba el estado stale de módulos hasta recargar.
+    useModulesStore().reset()
     localStorage.removeItem('token')
     localStorage.removeItem('refreshToken')
     localStorage.removeItem('user')

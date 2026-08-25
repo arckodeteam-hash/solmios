@@ -12,13 +12,15 @@ export function SubscriptionsModule() {
   return createModule({
     name: 'subscriptions',
     // STR-F: `GET /api/public/plans` cambió su contrato observable — cada plan trae ahora `limits`
-    // (`usecases/public-plans.ts`) y la lista sale ordenada por `comparePublicPlans` en vez del
+    // (`usecases/public-plans.ts`) y la lista sale ordenada por precio ASC (#30,
+    // `shared/utils/plans-order.ts`) en vez del
     // orden del repo. Misma regla que se aplicó en `admin/index.ts` (1.1.0), `reservas` (2.2.0) y
     // `payment-requests` (1.3.0): un cambio observable del contrato bumpea la versión.
-    version: '1.1.0',
+    // #30: el orden de la lista pasó de `sortOrder` a precio ASC — observable, 1.2.0.
+    version: '1.2.0',
     description: 'Suscripción del hotel a la plataforma: alta pública, prueba gratis y corte de servicio',
     contract: {
-      name: 'subscriptions', version: '1.1.0',
+      name: 'subscriptions', version: '1.2.0',
       description: 'SaaS subscription lifecycle',
       actions: ['signup', 'publicPlans', 'publicFounderDiscount', 'myStatus', 'onboarding', 'checkout', 'portal', 'webhookPlatform', 'applyStripeDiscount'],
       events: [],
@@ -28,6 +30,7 @@ export function SubscriptionsModule() {
         'checkout/portal: hotelId forzado del JWT, cobro SIEMPRE contra la cuenta de PLATAFORMA (StripeService.getClient() sin hotelId)',
         'webhookPlatform: sin auth, la autoridad es la firma de Stripe verificada con STRIPE_WEBHOOK_SECRET_PLATFORM',
         'publicPlans: los límites (`rooms`/`users`) salen de `plans.limits`, nunca de un literal en el template del frontend (GH-31)',
+        'publicPlans: la lista sale del más barato al más caro (price ASC, slug ASC — #30); el orden lo fija el backend, ninguna vista re-ordena',
         'publicFounderDiscount: el % del programa Fundador sale de `special_category_config`, no de una variable de build del frontend (CFG-1)',
         'Toda ruta pública (sin auth) va rate-limitada por IP a 30 req/min antes del controller, como landing y opiniones',
       ],

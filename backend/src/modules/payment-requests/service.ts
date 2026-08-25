@@ -21,14 +21,15 @@ import type { StripePaymentPort } from './usecases/payment-port'
 import type { PaymentEventStore } from '../../services/payment-gateway/payment-events'
 import type { EmailSender } from '../../services/email-sender'
 import { createCheckoutForRequest, checkoutBlockedReason } from './usecases/create-checkout'
-import { assertChargeableAmount, assertCeilingAfterCommit, chargeLockKey } from './usecases/charge-ceiling'
+import { assertChargeableAmount, assertCeilingAfterCommit, chargeLockKey, type LiveChargesSource } from './usecases/charge-ceiling'
 // El MISMO lock in-memory que `payments/usecases/deposits.ts` (DT-11): un solo registry de dinero.
 import { withLock } from '../../shared/utils/async-lock'
 import { getStripeStatus } from './usecases/stripe-status'
 import { auditSafely, type AuditEntry, type AuditPort } from './usecases/audit'
 import { deletePaymentRequest } from './usecases/delete-request'
 import { updatePaymentRequest } from './usecases/update-request'
-import { clampRequestsToCeiling, releaseRequestsOfReservation, type ClampDeps } from './usecases/clamp-to-ceiling'
+import { clampRequestsToCeiling, releaseRequestsOfReservation, releaseRequestsForCancellation, type ClampDeps } from './usecases/clamp-to-ceiling'
+import { MoneyPortsHolder, type MoneyPorts } from './usecases/money-ports'
 
 export class PaymentRequestsService {
   private sockets: PaymentRequestsSockets = {}
@@ -36,22 +37,18 @@ export class PaymentRequestsService {
   private auditPort: AuditPort | null = null
   private emailSender: EmailSender | null = null
   private hotelRepoForEmail: RepositoryAdapter<any> | null = null
-  /** STR-A: lectura reserva→dinero por los dueños (payment-requests-money); sin puerto no hay número honesto (GH-0.2). */
-  private paidRepos: ReservationPaidRepos | null = null
+  /** Lectura reserva→dinero por los dueños (payment-requests-money) — fail-closed, ver usecases/money-ports.ts. */
+  private readonly money = new MoneyPortsHolder()
   private events: PaymentEventStore | null = null
 
   /** Cablea el envío del link de pago por email (connector email-bootstrap). */
   setEmailDeps(es: EmailSender, hotelRepo: RepositoryAdapter<any>): void { this.emailSender = es; this.hotelRepoForEmail = hotelRepo }
 
-  /** Lo inyecta el connector `payment-requests-money`. Sin él, el techo falla fuerte (STR-A/GH-0.2). */
-  setMoneyDeps(deps: { paidRepos: ReservationPaidRepos }): void { this.paidRepos = deps.paidRepos }
+  setMoneyDeps(deps: MoneyPorts): void { this.money.set(deps) } // connector payment-requests-money — sin él, el techo falla fuerte (STR-A/GH-0.2)
   /** Barrera atómica del settle del webhook (BUG-1): la MISMA tabla que `payments` y `bookingengine`. */
   setEventStore(events: PaymentEventStore): void { this.events = events }
 
-  private requirePaidRepos(): ReservationPaidRepos {
-    if (!this.paidRepos) throw new Error('payment-requests: falta el puerto de dinero (connectors/payment-requests-money no cableado)')
-    return this.paidRepos
-  }
+  private requirePaidRepos(): ReservationPaidRepos { return this.money.get().paidRepos }
 
   constructor(
     private readonly repo: RepositoryAdapter<PaymentRequestDTO>,
@@ -85,11 +82,14 @@ export class PaymentRequestsService {
   }
 
   // `paidRepos` (connector payment-requests-money): el techo mide contra lo cobrado de verdad (GH-0.2).
-  private get ceilingDeps() { return { reservationRepo: this.reservationRepo, addonRepo: this.addonRepo, requestRepo: this.repo, paidRepos: this.requirePaidRepos() } }
+  private get ceilingDeps() { return { reservationRepo: this.reservationRepo, addonRepo: this.addonRepo, requestRepo: this.repo, paidRepos: this.requirePaidRepos(), liveCharges: this.money.get().liveCharges } }
 
-  /** Deps del clamp (SEC3-2/SEC3-3): el techo + sockets/audit/log. */
-  private get clampDeps(): ClampDeps {
-    return { ...this.ceilingDeps, sockets: this.sockets, audit: (e) => this.audit(e), logger: this.logger }
+  /** Deps del clamp (SEC3-2/SEC3-3): el techo + sockets/audit/log + el dinero por los dueños (RTC-7.4/8.3). */
+  private get clampDeps(): ClampDeps { return { ...this.ceilingDeps, sockets: this.sockets, audit: (e) => this.audit(e), logger: this.logger, ...this.money.get() } }
+
+  /** RTC-8.1: el techo agregado para la vía charge-card (connector `payments-ceiling`). */
+  assertChargeableFor(params: { hotelId: string; reservationId: string; amount: number; excludePaymentId?: string }): Promise<void> {
+    return assertChargeableAmount(this.ceilingDeps, params).then(() => undefined)
   }
 
   private async assertOwned(id: string, user: CurrentUser): Promise<PaymentRequestDTO> {
@@ -152,13 +152,12 @@ export class PaymentRequestsService {
 
   // ─── SEC3-2/SEC3-3: el techo BAJA desde el lado de la reserva ── ver usecases/clamp-to-ceiling.ts
   /** Recorta los cobros `pending` al saldo cobrable ACTUAL (PUT totalAmount/otherCharges, baja de extra). */
-  async clampRequestsToCeiling(hotelId: string, reservationId: string, user: CurrentUser): Promise<number> {
-    return clampRequestsToCeiling(this.clampDeps, hotelId, reservationId, user)
-  }
+  clampRequestsToCeiling(hotelId: string, reservationId: string, user: CurrentUser): Promise<number> { return clampRequestsToCeiling(this.clampDeps, hotelId, reservationId, user) }
   /** Libera TODOS los cobros `pending` antes de borrar la reserva: sin ella, un cobro queda huérfano. */
-  async releaseRequestsOfReservation(hotelId: string, reservationId: string, user: CurrentUser): Promise<number> {
-    return releaseRequestsOfReservation(this.clampDeps, hotelId, reservationId, user)
-  }
+  releaseRequestsOfReservation(hotelId: string, reservationId: string, user: CurrentUser): Promise<number> { return releaseRequestsOfReservation(this.clampDeps, hotelId, reservationId, user) }
+
+  /** RTC-8.7 — expira sesiones abiertas al CANCELAR (sin el 409 del borrado). */
+  releaseRequestsForCancellation(hotelId: string, reservationId: string, user: CurrentUser): Promise<number> { return releaseRequestsForCancellation(this.clampDeps, hotelId, reservationId, user) }
 
   // ─── Stripe ────────────────────────────────────────────
 

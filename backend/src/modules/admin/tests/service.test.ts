@@ -1,7 +1,10 @@
 import { describe, it, expect, afterEach } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
+import { ORM, OrmRepository } from 'arckode-framework'
+import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
 import { AdminService } from '../service'
 import { DashboardQueries } from '../usecases/dashboard-queries'
+import { registerSharedModels } from '../../../shared/models'
 
 const log = silentLogger()
 
@@ -141,6 +144,40 @@ describe('AdminService', () => {
       const result = await svc.listPlans()
       expect(result.data).toHaveLength(1)
     })
+
+    // #30: mismo orden que el catálogo público (price ASC, slug ASC) — el admin ve los planes
+    // como los ve el cliente. Contra el ORM REAL (SQLite in-memory), filas insertadas al revés:
+    // sólo un ORDER BY en la query puede devolver la progresión de menor a mayor.
+    it('#30: lista los planes del más barato al más caro (igual que el catálogo público)', async () => {
+      const db = new SqliteAdapter({ path: ':memory:', wal: false, foreignKeys: false }) as any
+      await db.connect()
+      const orm = new ORM(db)
+      registerSharedModels(orm)
+      await orm.migrate()
+      const plansRepo = new OrmRepository<any>(orm, 'Plans')
+      const amenitiesRepo = makeRepos().amenitiesRepo
+      const seed = [
+        { id: 'plan-enterprise', name: 'Enterprise', slug: 'enterprise', price: 199, currency: 'USD', isActive: 1, sortOrder: 2 },
+        { id: 'plan-professional', name: 'Professional', slug: 'professional', price: 99, currency: 'USD', isActive: 1, sortOrder: 1 },
+        { id: 'plan-essential', name: 'Essential', slug: 'essential', price: 99, currency: 'USD', isActive: 1, sortOrder: 3 },
+        { id: 'plan-starter', name: 'Starter', slug: 'starter', price: 49, currency: 'USD', isActive: 1, sortOrder: 0 },
+        { id: 'plan-host', name: 'Host', slug: 'host', price: 29, currency: 'USD', isActive: 1, sortOrder: -1 },
+        { id: 'plan-ultra', name: 'Ultra', slug: 'ultra', price: 0, currency: 'USD', isActive: 1, sortOrder: 4 },
+        // El admin ve TODOS: el inactivo también, en su lugar por precio.
+        { id: 'plan-oculto', name: 'Oculto', slug: 'oculto', price: 9, currency: 'USD', isActive: 0, sortOrder: -5 },
+      ]
+      for (const p of seed) await plansRepo.create({ ...p } as any)
+      try {
+        const svc = new AdminService(plansRepo, amenitiesRepo, log, undefined, new DashboardQueries(makeOrm()))
+        const result = await svc.listPlans()
+        expect(result.total).toBe(7)
+        expect(result.data.map((p: any) => p.slug)).toEqual(
+          ['ultra', 'oculto', 'host', 'starter', 'essential', 'professional', 'enterprise'],
+        )
+      } finally {
+        await db.close?.()
+      }
+    })
   })
 
   describe('createPlan', () => {
@@ -156,6 +193,65 @@ describe('AdminService', () => {
       const repos = makeRepos()
       const svc = new AdminService(repos.plansRepo, repos.amenitiesRepo, log, undefined, new DashboardQueries(makeOrm()))
       await expect(svc.createPlan({ price: 99 })).rejects.toThrow('name y price requeridos')
+    })
+
+    // CS-9: `plans.modules` aceptaba cualquier string — un typo quedaba persistido y el gate lo
+    // ignoraba en silencio (el hotel perdía el módulo "sin razón"). Se valida contra el MISMO
+    // catálogo que lee el gate; el controller mapea ValidationError → 400.
+    it('CS-9: rechaza claves de módulo fuera del catálogo con ValidationError (→ 400)', async () => {
+      const repos = makeRepos()
+      const svc = new AdminService(repos.plansRepo, repos.amenitiesRepo, log, undefined, new DashboardQueries(makeOrm()))
+      await expect(svc.createPlan({ name: 'X', price: 10, modules: ['finance', 'finanze', 'finanze'] }))
+        .rejects.toThrow('Claves de módulo inválidas en el plan: finanze')
+    })
+
+    it('CS-9: acepta módulos (padre) y submódulos (sub-clave) del catálogo', async () => {
+      const repos = makeRepos()
+      const svc = new AdminService(repos.plansRepo, repos.amenitiesRepo, log, undefined, new DashboardQueries(makeOrm()))
+      const result = await svc.createPlan({ name: 'X', price: 10, modules: ['planning', 'finance.billing'] })
+      expect(result.modules).toEqual(['planning', 'finance.billing'])
+    })
+
+    it('CS-9: sin modules en el body no valida (retrocompat: default [])', async () => {
+      const repos = makeRepos()
+      const svc = new AdminService(repos.plansRepo, repos.amenitiesRepo, log, undefined, new DashboardQueries(makeOrm()))
+      const result = await svc.createPlan({ name: 'X', price: 10 })
+      expect(result.modules).toEqual([])
+    })
+  })
+
+  describe('updatePlan', () => {
+    const makeSvc = () => {
+      const repos = makeRepos()
+      const created: any[] = []
+      repos.plansRepo.update = async (id: string, patch: any) => { created.push({ id, patch }); return { id, ...patch } }
+      return { svc: new AdminService(repos.plansRepo, repos.amenitiesRepo, log), updates: created }
+    }
+
+    it('actualiza la matriz modules con claves válidas del catálogo', async () => {
+      const { svc, updates } = makeSvc()
+      const result = await svc.updatePlan('p1', { modules: ['planning', 'reservations.checkin'] })
+      expect(result.modules).toEqual(['planning', 'reservations.checkin'])
+      expect(updates).toHaveLength(1)
+    })
+
+    it('CS-9: clave inválida → ValidationError y NO toca el repo', async () => {
+      const { svc, updates } = makeSvc()
+      await expect(svc.updatePlan('p1', { modules: ['planning', 'no-existe'] }))
+        .rejects.toThrow('Claves de módulo inválidas en el plan: no-existe')
+      expect(updates).toHaveLength(0)
+    })
+
+    it('patch sin modules no valida ni rompe (CS-9 solo aplica a la matriz)', async () => {
+      const { svc, updates } = makeSvc()
+      const result = await svc.updatePlan('p1', { price: 59 })
+      expect(result.price).toBe(59)
+      expect(updates[0].patch.modules).toBeUndefined()
+    })
+
+    it('404 si el plan no existe', async () => {
+      const { svc } = makeSvc()
+      await expect(svc.updatePlan('nope', { modules: [] })).rejects.toThrow('no encontrado')
     })
   })
 

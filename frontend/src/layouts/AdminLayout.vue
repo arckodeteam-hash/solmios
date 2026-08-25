@@ -257,7 +257,9 @@ const nonavItems = [
     // Las 8 vistas (General/Landing/Media/Apariencia/Motor de reservas/Códigos de
     // descuento/Reputación/Tracking) que vivían acá como submenú se colapsaron en
     // una sola entrada con tabs (pages/pagina-publica/index.vue), mismo patrón que
-    // Mensajería. `anyOf` no aplica (ninguna tab es module-gated, todas hotel_admin).
+    // Mensajería. Gate: clave 'site-pages' del catálogo (todas las tabs comparten
+    // ESTA ruta — las sub-claves site-pages.landing/media/booking/promos gatean la
+    // API de cada módulo, no la ruta). `anyOf` no aplica: una sola ruta gateable.
     label: 'Página pública', icon: ICONS.globe, path: PAGINA_PUBLICA_PATH, roles: ['hotel_admin'],
   },
   {
@@ -390,6 +392,8 @@ const nonavItems = [
     label: 'Soporte', icon: ICONS.support, path: '/panel/support', roles: ['hotel_admin', 'receptionist'],
   },
   {
+    // CORE como Dashboard/Soporte (growth): NO tiene clave en el catálogo de módulos —
+    // se muestra para cualquier plan, no se gatea.
     label: 'Mis Referidos', icon: ICONS.link, path: '/panel/referidos', roles: ['hotel_admin'],
   },
 ]

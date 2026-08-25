@@ -10,6 +10,28 @@ import { syncReservationPending } from '../../../shared/usecases/sync-reservatio
 import type { PaidSource } from '../../../shared/usecases/reservation-paid'
 import type { ReservationChangedNotifier } from './reservation-changed'
 
+/**
+ * RTC-8.10: deps por OBJETO, no posicionales. `createAddon` había llegado a 10 parámetros
+ * posicionales y el call site era una línea de 240 caracteres donde el orden era lo único que
+ * separaba lo correcto de lo roto (pasar `paidOf` donde va `notifyChanged` compila igual).
+ */
+export interface AddonUsecaseDeps {
+  repo: RepositoryAdapter<AddonDTO>
+  reservationRepo: RepositoryAdapter<any>
+  userRepo: RepositoryAdapter<any>
+  auth: Auth
+  /** OBLIGATORIO (COR-1): persistir el saldo sin invalidar la caché del listado deja `GET /api/reservas`
+   *  devolviendo el número viejo hasta 300s. */
+  notifyChanged: ReservationChangedNotifier
+  /** Lo cobrado real (`payments`). OBLIGATORIO — ver `shared/usecases/reservation-paid` (GH-0.2). */
+  paidOf: PaidSource
+  /** RTC-7.2/RTC-8.8 — recorta los links de pago vivos al total cobrable NUEVO (un extra
+   *  `kind:'discount'` al alta y la baja de un `service` bajan el techo igual). OBLIGATORIO y
+   *  fail-closed: opcional + `undefined` del service reintroducía la divergencia en silencio
+   *  (`crud.ts:307` argumenta lo mismo); el puerto hermano de payment-requests es fail-closed. */
+  ceilingGuard: (reservationId: string, hotelId: string) => Promise<void>
+}
+
 export async function listAddons(
   repo: RepositoryAdapter<AddonDTO>,
   reservationRepo: RepositoryAdapter<any>,
@@ -23,34 +45,28 @@ export async function listAddons(
 }
 
 export async function createAddon(
-  repo: RepositoryAdapter<AddonDTO>,
-  reservationRepo: RepositoryAdapter<any>,
-  userRepo: RepositoryAdapter<any>,
-  auth: Auth,
-  reservationId: string,
-  dto: CreateAddonDTO,
-  user: SimpleUser,
-  /** OBLIGATORIO (COR-1): persistir el saldo sin invalidar la caché del listado deja `GET /api/reservas`
-   *  devolviendo el número viejo hasta 300s. Opcional = el bug vuelve en silencio. */
-  notifyChanged: ReservationChangedNotifier,
-  /** Lo cobrado real (`payments`). OBLIGATORIO — ver `shared/usecases/reservation-paid` (GH-0.2). */
-  paidOf: PaidSource,
+  deps: AddonUsecaseDeps,
+  params: { reservationId: string; dto: CreateAddonDTO; user: SimpleUser },
 ): Promise<AddonDTO> {
-  const res = await assertReservationOwned(reservationRepo, userRepo, auth, reservationId, user) // IDOR CR-31
+  const { repo, reservationRepo, userRepo, auth } = deps
+  const res = await assertReservationOwned(reservationRepo, userRepo, auth, params.reservationId, params.user) // IDOR CR-31
   const created = await repo.create({
-    reservationId,
+    reservationId: params.reservationId,
     hotelId: res.hotelId,
-    description: dto.description,
-    kind: dto.kind === 'discount' ? 'discount' : 'service',
-    amount: Number(dto.amount) || 0,
-    quantity: Number(dto.quantity) || 1,
+    description: params.dto.description,
+    kind: params.dto.kind === 'discount' ? 'discount' : 'service',
+    amount: Number(params.dto.amount) || 0,
+    quantity: Number(params.dto.quantity) || 1,
   } as Omit<AddonDTO, 'id'>)
   // Un extra cambia el total cobrable: la columna persistida `pendingAmount` (la que lee el
   // listado/planning) queda vieja si no se recalcula acá.
   // SEC-4: la query de extras lleva `hotelId` — `reservationId` puede venir de un payload.
-  const pendingAmount = await syncReservationPending(reservationRepo, (rid) => repo.findMany({ reservationId: rid, hotelId: res.hotelId }), reservationId, paidOf, res)
+  const pendingAmount = await syncReservationPending(reservationRepo, (rid) => repo.findMany({ reservationId: rid, hotelId: res.hotelId }), params.reservationId, deps.paidOf, res)
   // ...y la caché del listado queda vieja si no se invalida DESPUÉS de persistirlo.
-  await notifyChanged({ ...res, pendingAmount })
+  await deps.notifyChanged({ ...res, pendingAmount })
+  // RTC-7.2: mismo orden que en la baja — persistir, resincronizar, y recién ahí recortar los links
+  // (el clamp relee la reserva y sus extras, así que necesita ver el alta ya escrita).
+  if (res.hotelId) await deps.ceilingGuard(params.reservationId, String(res.hotelId))
   return created
 }
 
@@ -73,30 +89,20 @@ async function assertAddonOwned(
 }
 
 export async function deleteAddon(
-  repo: RepositoryAdapter<AddonDTO>,
-  reservationRepo: RepositoryAdapter<any>,
-  userRepo: RepositoryAdapter<any>,
-  auth: Auth,
-  id: string,
-  user: SimpleUser,
-  /** OBLIGATORIO — ver `createAddon`. */
-  notifyChanged: ReservationChangedNotifier,
-  /** OBLIGATORIO — ver `createAddon`. */
-  paidOf: PaidSource,
-  /** SEC3-2 — recorta los links de pago vivos al total cobrable NUEVO (un extra menos es techo
-   *  menos). Lo cablea el service desde `orchestrationDeps` (connector `reservas-payment-requests`). */
-  ceilingGuard?: (reservationId: string, hotelId: string) => Promise<void>,
+  deps: AddonUsecaseDeps,
+  params: { id: string; user: SimpleUser },
 ): Promise<void> {
-  const { addon, reservation } = await assertAddonOwned(repo, reservationRepo, userRepo, auth, id, user)
-  await repo.delete(id)
+  const { repo, reservationRepo, userRepo, auth } = deps
+  const { addon, reservation } = await assertAddonOwned(repo, reservationRepo, userRepo, auth, params.id, params.user)
+  await repo.delete(params.id)
   // Mismo motivo que en el alta: dar de baja un extra baja el total cobrable.
   if (addon.reservationId) {
     // SEC-4: `hotelId` en la query de extras (ver el alta). Sale de la fila ya validada por ownership.
     const scopeHotelId = (reservation as any)?.hotelId ?? addon.hotelId
     const pendingAmount = await syncReservationPending(
-      reservationRepo, (rid) => repo.findMany({ reservationId: rid, hotelId: scopeHotelId }), addon.reservationId, paidOf, reservation,
+      reservationRepo, (rid) => repo.findMany({ reservationId: rid, hotelId: scopeHotelId }), addon.reservationId, deps.paidOf, reservation,
     )
-    await notifyChanged({ ...(reservation ?? { id: addon.reservationId, hotelId: addon.hotelId }), pendingAmount })
-    if (ceilingGuard && scopeHotelId) await ceilingGuard(addon.reservationId, String(scopeHotelId))
+    await deps.notifyChanged({ ...(reservation ?? { id: addon.reservationId, hotelId: addon.hotelId }), pendingAmount })
+    if (scopeHotelId) await deps.ceilingGuard(addon.reservationId, String(scopeHotelId))
   }
 }

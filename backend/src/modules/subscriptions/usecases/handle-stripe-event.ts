@@ -10,6 +10,7 @@
 import type Stripe from 'stripe'
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { StripeService } from '../../../services/stripe-service'
+import { compareSubscriptions } from './resolve-plan'
 
 /** Stripe expresa los epochs en SEGUNDOS; `Date` los quiere en milisegundos. */
 const MS_PER_SECOND = 1000
@@ -18,6 +19,12 @@ export interface HandleStripeEventDeps {
   subscriptionsRepo: RepositoryAdapter<any>
   /** Para resolver el email del hotel al mandar los correos de pago/cancelación (#platform-emails). */
   hotelsRepo: RepositoryAdapter<any>
+  /**
+   * `plans` — para sincronizar el espejo `hotels.plan` al plan PAGADO en checkout.session.completed.
+   * Opcional/best-effort: la FUENTE DE VERDAD es la fila de `subscriptions` (que sí se parchea
+   * SIEMPRE con el planId pagado); sin esto solo queda desactualizado el espejo legacy.
+   */
+  plansRepo?: RepositoryAdapter<any>
   logger: Logger
   /** Cliente Stripe ya resuelto (cuenta de plataforma) — usado para retrieve() de la subscription. */
   stripe: Stripe
@@ -137,13 +144,24 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
         logger.warn('checkout.session.completed sin hotelId en metadata', { sessionId: session.id })
         break
       }
-      const sub = (await subscriptionsRepo.findMany({ hotelId }))[0] as any
+      // R3-4a: MISMO orden determinista que resolve-plan (compareSubscriptions). Antes
+      // `findMany({hotelId})[0]` tomaba la primera que devolvía la base: con varias filas
+      // (doble alta / migración) el pago parcheaba una fila distinta de la que el gate
+      // resuelve — el hotel pagaba y seguía gateado con la matriz de la otra.
+      const rows = ((await subscriptionsRepo.findMany({ hotelId })) as any[]) ?? []
+      const sub = [...rows].sort(compareSubscriptions)[0]
       if (!sub) {
         logger.warn(`checkout.session.completed: no hay Subscription local para el hotel ${hotelId}`)
         break
       }
 
       const patch: Record<string, any> = { status: 'active' }
+      // El plan PAGADO manda. El trial pudo arrancar con un plan y pagar OTRO (el Checkout
+      // se arma contra el plan elegido al pagar): recién acá, con el pago confirmado, la
+      // suscripción queda apuntando al plan real. create-checkout-session no lo toca antes
+      // a propósito — hasta el cobro el trial sigue probando lo que probaba.
+      const paidPlanId = String(session.metadata?.planId ?? '') || sub.planId
+      if (paidPlanId && paidPlanId !== sub.planId) patch.planId = paidPlanId
       if (session.customer) {
         patch.stripeCustomerId = typeof session.customer === 'string' ? session.customer : session.customer.id
       }
@@ -169,6 +187,19 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
 
       await subscriptionsRepo.update(sub.id, patch)
       logger.info('Suscripción activada por checkout', { hotelId, stripeSubscriptionId })
+
+      // Espejo legacy: `hotels.plan` se sincroniza al plan pagado. El gate de módulos ya lee
+      // la suscripción (resolve-plan.ts), pero dashboards y lectores viejos siguen mirando el
+      // espejo — dos lectores no pueden discrepar sobre el plan del hotel. Best-effort: si
+      // falla, la suscripción (fuente de verdad) ya quedó bien y solo el espejo queda viejo.
+      if (deps.plansRepo && paidPlanId) {
+        try {
+          const plan = ((await deps.plansRepo.findMany({ id: paidPlanId })) as any[])?.[0]
+          if (plan?.slug) await deps.hotelsRepo.update(hotelId, { plan: String(plan.slug) })
+        } catch (e) {
+          logger.warn('No se pudo sincronizar hotels.plan tras el checkout', { hotelId, error: (e as Error).message })
+        }
+      }
       break
     }
 
@@ -221,6 +252,48 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
       await subscriptionsRepo.update(sub.id, { status: 'past_due' })
       logger.warn('Cobro de suscripción falló', { stripeSubscriptionId })
       await notifyPlatformEmail(deps, 'payment_failed', sub.hotelId, { plan_name: '', amount: '', link: subscriptionLink() })
+      break
+    }
+
+    case 'customer.subscription.updated': {
+      const stripeSub = event.data.object as Stripe.Subscription
+      const sub = (await subscriptionsRepo.findMany({ stripeSubscriptionId: stripeSub.id }))[0] as any
+      if (!sub) {
+        logger.warn(`customer.subscription.updated: no hay Subscription local para ${stripeSub.id}`)
+        break
+      }
+      // Upgrade/downgrade desde el portal de Stripe cambia el price del ítem: la fila local
+      // y el espejo tienen que seguir al plan PAGADO o el hotel queda gateado con el plan
+      // viejo para siempre (nadie más vuelve a tocar planId). Los cambios de ESTADO no se
+      // sincronizan acá: trialing/active/past_due/canceled llegan por invoice.paid /
+      // invoice.payment_failed / customer.subscription.deleted, que además mandan los mails.
+      const priceId = stripeSub.items?.data?.[0]?.price?.id
+      // R3-4b: ítem sin price (o price sin id) no se puede mapear a plan — antes cortaba en
+      // silencio y el plan local dejaba de sincronizarse sin que quede rastro. WARN antes de cortar.
+      if (typeof priceId !== 'string') {
+        logger.warn('customer.subscription.updated: el ítem no trae price — no se puede sincronizar el plan local', {
+          stripeSubscriptionId: stripeSub.id, priceId: priceId ?? null,
+        })
+        break
+      }
+      if (!deps.plansRepo) break
+      const plan = ((await deps.plansRepo.findMany({ stripePriceId: priceId })) as any[])?.[0]
+      if (!plan) {
+        logger.warn('customer.subscription.updated: el price de Stripe no matchea ningún plan local', {
+          stripeSubscriptionId: stripeSub.id, priceId,
+        })
+        break
+      }
+      if (String(plan.id) === sub.planId) break // ya apunta al plan pagado: nada que sincronizar
+      await subscriptionsRepo.update(sub.id, { planId: String(plan.id) })
+      logger.info('Plan de la suscripción actualizado desde Stripe', { hotelId: sub.hotelId, planId: plan.id })
+      // Espejo legacy, mismo best-effort que checkout.session.completed: la fuente de verdad
+      // (la suscripción) ya quedó bien; si esto falla solo el espejo queda viejo.
+      try {
+        if (plan.slug) await deps.hotelsRepo.update(sub.hotelId, { plan: String(plan.slug) })
+      } catch (e) {
+        logger.warn('No se pudo sincronizar hotels.plan tras customer.subscription.updated', { hotelId: sub.hotelId, error: (e as Error).message })
+      }
       break
     }
 

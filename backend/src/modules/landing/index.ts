@@ -14,6 +14,7 @@ import { LandingController } from './controller'
 import type { LandingBlockDTO, UpsertLandingBlockInput, PublicLandingBlock, LandingBlockType } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
+import { createModuleGuard } from '../../infrastructure/auth/require-module'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
 
 export { LandingService }
@@ -74,9 +75,21 @@ export function LandingModule() {
       // opiniones/index.ts (createPermissionGuard + capa extra de userType).
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
       const permGuard = createPermissionGuard(auth, roleRepo)
+      const moduleGuard = createModuleGuard(orm)
+      // Feature-gating por plan (catálogo 'site-pages'): el CONTENIDO de la landing es la
+      // sub-clave 'site-pages.landing' (tab Landing); el theme es apariencia del sitio →
+      // clave padre 'site-pages' (tab Apariencia).
       const adminGuard = (action: 'view' | 'edit') => [
         ...permGuard('landing', action),
         requireUserType('merchant'),
+        moduleGuard('site-pages.landing'),
+      ]
+      // El theme NO exige la sub-clave 'site-pages.landing': es apariencia del sitio
+      // (tab Apariencia, gateada por la clave padre 'site-pages' en el menú/ruta).
+      const themeGuard = (action: 'view' | 'edit') => [
+        ...permGuard('landing', action),
+        requireUserType('merchant'),
+        moduleGuard('site-pages'),
       ]
 
       // ─── Rutas admin ──────────────────────────────────────────────────────
@@ -85,8 +98,8 @@ export function LandingModule() {
       router.patch('/api/landing/:id/toggle', adminGuard('edit'), (req) => controller.toggle(req))
       // Theme de la landing (solmi-direct-booking): un GET + un PUT, separados del
       // bulk upsert de bloques (contenido ≠ apariencia).
-      router.get('/api/landing/theme', adminGuard('view'), (req) => controller.getTheme(req))
-      router.put('/api/landing/theme', adminGuard('edit'), (req) => controller.setTheme(req))
+      router.get('/api/landing/theme', themeGuard('view'), (req) => controller.getTheme(req))
+      router.put('/api/landing/theme', themeGuard('edit'), (req) => controller.setTheme(req))
 
       // ─── Ruta pública ─────────────────────────────────────────────────────
       // Sin auth, rate-limited por IP (spec: 30 req/min/IP). El rate-limit va ANTES del

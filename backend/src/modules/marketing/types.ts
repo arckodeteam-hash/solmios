@@ -11,7 +11,8 @@ export interface AutoMessageDTO {
   id: string; hotelId: string; title: string; color: string
   emailSubject: string; emailBody: string; whatsappBody: string
   channel: string; triggerEvent: string; triggerOffset: number
-  variables: string | null; isActive: number
+  /** COR-7: el modelo declara `type:'boolean'` → el ORM deserializa y el wire RESPONDE boolean (0|1 sólo entra por los schemas de escritura). */
+  variables: string | null; isActive: boolean
   event: string; language: string; triggerType: string
   createdAt: string; updatedAt: string
 }
@@ -20,7 +21,9 @@ export interface CreateAutoMessageDTO {
   hotelId: string; title: string; color?: string
   emailSubject?: string; emailBody?: string; whatsappBody?: string
   channel?: string; triggerEvent?: string; triggerOffset?: number
-  variables?: string; isActive?: boolean
+  variables?: string
+  /** Wire: 0/1 (CreateAutoMessageSchema `type:'number'`); boolean legacy tolerado. El service normaliza. */
+  isActive?: boolean | number
   event?: string; language?: string; triggerType?: string
 }
 
@@ -38,10 +41,13 @@ export interface CreateMessageLogDTO {
 
 export interface WhatsappTemplateDTO {
   id: string; hotelId: string; name: string; body: string
-  category: string; isActive: number
+  /** COR-7: idem AutoMessageDTO — respuesta boolean; 0|1 es sólo el formato de escritura. */
+  category: string; isActive: boolean
   createdAt: string; updatedAt: string
 }
 
 export interface CreateWhatsappTemplateDTO {
-  hotelId: string; name: string; body?: string; category?: string; isActive?: boolean
+  hotelId: string; name: string; body?: string; category?: string
+  /** Wire: 0/1 (CreateTemplateSchema `type:'number'`); boolean legacy tolerado. El service normaliza. */
+  isActive?: boolean | number
 }

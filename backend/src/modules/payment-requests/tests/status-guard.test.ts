@@ -57,7 +57,7 @@ function makeService(prStatus: string) {
     log, permissiveAuth, makeRepo<any>(),
   )
   // STR-A: puerto de dinero del connector payment-requests-money (sin folios/facturas/pagos: paid=deposit).
-  s.setMoneyDeps({ paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() } })
+  s.setMoneyDeps({ paidRepos: { folioRepo: makeRepo<any>(), invoiceRepo: makeRepo<any>(), paymentRepo: makeRepo<any>() }, settledNet: async () => 0, liveCharges: async () => 0, liveChargeRows: async () => [], cancelLiveCharge: async () => 'cancelled' as const })
   s.setAuditDeps({ record: async (e) => { audited.push(e) } })
   return { s, audited }
 }

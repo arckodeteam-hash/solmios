@@ -15,6 +15,7 @@ import type { HotelesDTO, CreateHotelesDTO, UpdateHotelesDTO, HotelesQuery, Hote
 import type { HotelesSockets } from './sockets'
 import type { SettingsFullUseCase } from './usecases/settings-full'
 import type { HotelesQueries } from './usecases/hoteles-queries'
+import { assertCancellationCompatible } from './usecases/hoteles-queries'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 
 function safeParse(v: any) { if (typeof v !== 'string') return v; try { return JSON.parse(v) } catch { return v } }
@@ -99,6 +100,12 @@ export class HotelesService {
   }
 
   async create(dto: CreateHotelesDTO): Promise<HotelesDTO> {
+    // #34 (COR-6): las dos vías de update ya rechazan el estado contradictorio; sin esto,
+    // POST /api/hoteles lo persistía igual. Se evalúa el estado EFECTIVO con los defaults
+    // del modelo (freeCancellation=true, cancellationType='flexible'): un create que omita
+    // freeCancellation pero mande non_refundable persistiría el conflicto vía el default.
+    assertCancellationCompatible(dto.freeCancellation ?? true, dto.cancellationType ?? 'flexible')
+
     this.logger.info('Creando hotel', { name: dto.name })
     const item = await this.repo.create(dto as any)
     const { wifiPassword, ownerTaxId, ...safe } = item as any
@@ -108,12 +115,18 @@ export class HotelesService {
   }
 
   async update(id: string, dto: UpdateHotelesDTO, currentUser: { id: string; role: string; hotelId?: string }): Promise<HotelesDTO> {
-    // Ownership check
-    if (currentUser.role !== 'super_admin') {
-      const existing = await this.repo.findById(id)
-      if (!existing) throw new NotFoundError('Hotel no encontrado')
-      if (existing.id !== currentUser.hotelId) throw new AuthError('No autorizado')
+    // Ownership + estado actual: se carga SIEMPRE (antes sólo para no-super_admin) porque
+    // la exclusividad #34 necesita el valor ya persistido para evaluar el estado efectivo.
+    const existing = await this.repo.findById(id)
+    if (!existing) throw new NotFoundError('Hotel no encontrado')
+    if (currentUser.role !== 'super_admin' && existing.id !== currentUser.hotelId) {
+      throw new AuthError('No autorizado')
     }
+
+    // #34 (SEC-2): la exclusividad de condiciones no puede vivir sólo en la UI. Se evalúa
+    // el estado EFECTIVO (patch mergeado sobre la DB) porque un PUT parcial — sólo
+    // cancellationType, por ejemplo — puede crear el conflicto con lo ya persistido.
+    assertCancellationCompatible(dto.freeCancellation ?? existing.freeCancellation, dto.cancellationType ?? existing.cancellationType)
 
     const item = await this.repo.update(id, dto as any)
     if (!item) throw new NotFoundError('Hotel no encontrado')

@@ -45,11 +45,35 @@
     <!-- Mis Tickets -->
     <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) overflow-hidden">
       <div class="p-4 border-b border-border"><div class="text-sm font-extrabold text-navy">Mis Tickets ({{ filteredTickets.length }})</div></div>
-      <div v-if="filteredTickets.length === 0" class="p-12 text-center">
-        <span class="w-10 h-10 mx-auto mb-3 block text-navy/30" v-html="ICON_TICKET"></span>
-        <div class="text-sm font-bold text-text-muted">No hay tickets</div>
-        <div class="text-[10px] text-text-muted">Crea un ticket si necesitas ayuda</div>
-      </div>
+      <!-- Filtro sin resultados: hay tickets, pero ninguno matchea. -->
+      <EmptyState
+        v-if="!filteredTickets.length && hasFilters"
+        :icon="ICON_TICKET"
+        title="Ningún ticket con esos filtros"
+        message="Probá con otro estado o limpiá la búsqueda para ver el resto de tus tickets."
+      >
+        <template #action>
+          <button @click="clearFilters" class="px-5 py-2.5 rounded-full border border-border text-sm font-bold text-navy hover:bg-surface transition-colors cursor-pointer">
+            Limpiar filtros
+          </button>
+        </template>
+      </EmptyState>
+
+      <!-- Sin tickets propios. Soporte no es un módulo gateado por permisos (ver
+           ROUTE_TO_PERMISSION en config/module-map.ts): cualquier sesión de hotel puede abrir uno,
+           así que el CTA se ofrece siempre, igual que el botón del header. -->
+      <EmptyState
+        v-else-if="!filteredTickets.length"
+        :icon="ICON_TICKET"
+        title="Todavía no abriste ningún ticket"
+        message="Desde acá le pedís ayuda al equipo de soporte y seguís la conversación: contá qué pasó, elegí la categoría y la prioridad, y te respondemos en el mismo hilo."
+      >
+        <template #action>
+          <button @click="showNewTicketModal = true" class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white hover:bg-navy-light transition-colors cursor-pointer">
+            Abrir mi primer ticket
+          </button>
+        </template>
+      </EmptyState>
       <div v-else class="divide-y divide-border">
         <div v-for="ticket in filteredTickets" :key="ticket.id" @click="openTicket(ticket)" class="p-4 hover:bg-surface/50 transition-colors cursor-pointer">
           <div class="flex items-start justify-between">
@@ -221,6 +245,7 @@ import { ref, computed, onMounted } from 'vue'
 import { OperationsService } from '@/services/Operations.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
+import EmptyState from '@/components/ui/EmptyState.vue'
 
 const SVG_OPEN = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
 const ICON_X = `${SVG_OPEN}<path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`
@@ -310,6 +335,15 @@ async function loadData() {
     })
   } catch { toast.error('Error al cargar tickets') }
   loading.value = false
+}
+
+// ¿Hay algún filtro activo? Separa "todavía no abriste tickets" de "el filtro no matchea":
+// el primero necesita explicar el módulo, el segundo solo limpiar el filtro.
+const hasFilters = computed(() => activeFilter.value !== 'all' || Boolean(searchQuery.value.trim()))
+
+function clearFilters() {
+  activeFilter.value = 'all'
+  searchQuery.value = ''
 }
 
 const filteredTickets = computed(() => {

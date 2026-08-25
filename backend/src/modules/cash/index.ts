@@ -15,6 +15,7 @@ export type {
   CashMovementDTO, CashShiftDTO, CreateMovementDTO, UpdateMovementDTO,
   MovementQuery, CashPaginated, OpenShiftDTO, CloseShiftDTO,
   ReconcileResult, CashStats, MovementType,
+  ShiftHistoryRow, ShiftHistoryQuery, ShiftHistoryPage,
 } from './types'
 export type { CashSockets } from './sockets'
 export { CashValidator, CreateMovementSchema, UpdateMovementSchema, OpenShiftSchema, CloseShiftSchema } from './validators/schema'

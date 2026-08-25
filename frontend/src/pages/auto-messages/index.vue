@@ -141,7 +141,13 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="sm:col-span-2">
             <label class="block text-[11px] font-bold text-navy uppercase mb-2">Título</label>
-            <input v-model="form.title" type="text" class="w-full px-4 py-2.5 rounded-full border border-border text-sm" />
+            <!-- El error de validación se muestra EN el campo: un toast de 5s arriba a la
+                 derecha con el modal abierto se percibe como "Guardar no hace nada" (repro
+                 qa-ui 2026-08-22: sin título → click → cero POST, modal abierto, "nada"). -->
+            <input v-model="form.title" @input="titleError = ''" ref="titleInput" type="text"
+              data-testid="auto-message-title"
+              class="w-full px-4 py-2.5 rounded-full border text-sm" :class="titleError ? 'border-coral' : 'border-border'" />
+            <p v-if="titleError" data-testid="auto-message-title-error" class="mt-1 text-[11px] font-bold text-coral">{{ titleError }}</p>
           </div>
           <div>
             <label class="block text-[11px] font-bold text-navy uppercase mb-2">Color</label>
@@ -240,6 +246,8 @@ const saving = ref(false)
 const editId = ref('')
 const statusFilter = ref<'all' | 'active' | 'inactive'>('all')
 const modal = ref({ show: false, edit: false })
+const titleError = ref('')
+const titleInput = ref<HTMLInputElement>()
 
 const form = ref({ title:'', color:'#3b82f6', emailSubject:'', emailBody:'', whatsappBody:'', channel:'email', triggerEvent:'checkin_day', triggerOffset:0, variables:[] as string[], isActive:true, event:'checkin_welcome', language:'es', triggerType:'cron' })
 
@@ -287,23 +295,44 @@ async function load() {
   loading.value = false
 }
 function openNew() {
-  editId.value=''; modal.value={ show:true, edit:false }
+  editId.value=''; titleError.value=''; modal.value={ show:true, edit:false }
   form.value={ title:'', color:'#3b82f6', emailSubject:'', emailBody:'', whatsappBody:'', channel:'email', triggerEvent:'checkin_day', triggerOffset:0, variables:[], isActive:true, event:'checkin_welcome', language:'es', triggerType:'cron' }
 }
 function openEdit(m: any) {
-  editId.value=m.id; modal.value={ show:true, edit:true }
+  editId.value=m.id; titleError.value=''; modal.value={ show:true, edit:true }
   form.value={ title:m.title, color:m.color||'#3b82f6', emailSubject:m.emailSubject||'', emailBody:m.emailBody||'', whatsappBody:m.whatsappBody||'', channel:m.channel||'email', triggerEvent:m.triggerEvent||'checkin_day', triggerOffset:m.triggerOffset||0, variables:m.variables||[], isActive:m.isActive!==false, event:m.event||'checkin_welcome', language:m.language||'es', triggerType:m.triggerType||'cron' }
 }
 async function save() {
-  if(!form.value.title){ toast.error('Falta título'); return }
+  // Validación con feedback EN el campo + foco: antes este return sólo tiraba un toast
+  // efímero arriba a la derecha, sin POST y con el modal abierto — el click parecía muerto.
+  if(!form.value.title.trim()){
+    titleError.value='El título es obligatorio'
+    toast.error('Falta título', 'Completá el campo Título del modal')
+    titleInput.value?.focus()
+    return
+  }
+  titleError.value=''
   saving.value=true
   try {
-    const data = { ...form.value }
+    // Payload: SIN hotelId (lo inyecta el controller desde el token, commit b6dc424) y con
+    // isActive como 1/0 — el schema del backend lo declara `number` y un boolean revienta
+    // el PUT con 400 "isActive must be a number" (verificado por curl). `variables` no está
+    // en ningún schema del backend: mandarlo es peso muerto.
+    const { title, color, emailSubject, emailBody, whatsappBody, channel, triggerEvent, triggerOffset, event, language, triggerType, isActive } = form.value
+    const active: 0 | 1 = isActive ? 1 : 0
+    const data = { title: title.trim(), color, emailSubject, emailBody, whatsappBody, channel, triggerEvent, triggerOffset: Number(triggerOffset) || 0, event, language, triggerType, isActive: active }
     if(editId.value) { await AutoMessagesService.update(editId.value, data) }
     else { await AutoMessagesService.create(data) }
     toast.success(editId.value?'Actualizado':'Creado')
-  } catch { toast.error('Error') }
-  saving.value=false; modal.value.show=false; await load()
+    modal.value.show=false
+    await load()
+  } catch (e: any) {
+    // El modal queda abierto para no perder lo escrito, y el error se muestra con su
+    // mensaje real (ApiError ya trae el detalle de campos del VALIDATION_ERROR).
+    toast.error('No se pudo guardar', e?.message || 'Revisá los datos e intentá de nuevo')
+  } finally {
+    saving.value=false
+  }
 }
 function deleteMsg() {
   askConfirm({

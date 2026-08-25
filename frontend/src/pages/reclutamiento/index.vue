@@ -6,7 +6,7 @@
         <h2 class="text-xl font-black text-navy">Reclutamiento</h2>
         <p class="text-sm text-text-muted mt-0.5">Pipeline de selección — postulantes por etapa</p>
       </div>
-      <button @click="openNewApplicant"
+      <button v-if="canCreate" @click="openNewApplicant"
         class="flex items-center gap-1.5 bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">
         <span class="w-4 h-4 shrink-0" v-html="ICON_PLUS"></span>
         Nuevo postulante
@@ -38,6 +38,20 @@
           </div>
         </div>
       </div>
+
+      <!-- Pipeline vacío: explicar el módulo una vez, no seis columnas con "Sin postulantes". -->
+      <EmptyState
+        v-else-if="!applicants.length"
+        :icon="ICON_USERS_EMPTY"
+        title="Todavía no hay postulantes"
+        message="Este tablero sigue a cada candidato por el proceso de selección: nuevo, preselección, entrevista, oferta y contratación. Cargá el primer postulante y movelo de etapa desde su tarjeta."
+      >
+        <template v-if="canCreate" #action>
+          <button @click="openNewApplicant" class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white hover:bg-navy-light transition-colors cursor-pointer">
+            Nuevo postulante
+          </button>
+        </template>
+      </EmptyState>
 
       <div v-else class="overflow-x-auto pb-1">
         <div class="flex gap-4 min-w-max">
@@ -118,11 +132,16 @@ import { useConfirm } from '@/composables/useConfirm'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import { usePermissions } from '@/composables/usePermissions'
 
 type FormValues = Record<string, string | number>
 
 const toast = useToast()
 const router = useRouter()
+// /panel/rrhh/* está mapeada al módulo de permiso `users` (config/module-map.ts).
+// Sin `users:create` el backend rechaza el alta: no se ofrece el botón.
+const { can } = usePermissions()
+const canCreate = computed(() => can('users', 'create'))
 const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm({ onDone: () => load(), onError: (e) => toast.error(e instanceof Error ? e.message : 'La acción falló') })
 const loading = ref(true)
 const applicants = ref<Applicant[]>([])
@@ -132,6 +151,7 @@ const formModal = ref<{ title: string; submitLabel: string; fields: FormField[];
 const ICON_PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="h-full w-full"><path d="M12 5v14M5 12h14"/></svg>'
 const ICON_ARROW_RIGHT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="h-full w-full"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'
 const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="h-full w-full"><path d="M20 6L9 17l-5-5"/></svg>'
+const ICON_USERS_EMPTY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-full w-full"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z"/></svg>'
 const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="h-full w-full"><path d="M18 6L6 18M6 6l12 12"/></svg>'
 
 const STAGES = ['new', 'screening', 'interview', 'offer', 'hired', 'rejected'] as const

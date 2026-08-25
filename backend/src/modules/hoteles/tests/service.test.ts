@@ -188,6 +188,32 @@ describe('HotelesService', () => {
       const result = await svc.create({ name: 'New Hotel', email: 'info@hotel.com' })
       expect(result.id).toBe('test-id')
     })
+
+    // #34 (COR-6): POST /api/hoteles persistía el estado contradictorio que las dos vías
+    // de update ya rechazan (assertCancellationCompatible). El create valida igual.
+    it('rechaza create con freeCancellation=true y cancellationType non_refundable', async () => {
+      let created = 0
+      const repo = makeRepo({ create: async (data) => { created++; return { id: 'x', ...data } as HotelesDTO } })
+      const svc = new HotelesService(repo, log, silentCache, fakeAuth)
+      await expect(svc.create({ name: 'Bad', freeCancellation: true, cancellationType: 'non_refundable' }))
+        .rejects.toThrow('incompatibles')
+      expect(created).toBe(0) // sin efectos: nada se persiste
+    })
+
+    it('rechaza el create que crea el conflicto vía defaults del modelo (non_refundable sin freeCancellation)', async () => {
+      const repo = makeRepo({ create: async (data) => ({ id: 'x', ...data } as HotelesDTO) })
+      const svc = new HotelesService(repo, log, silentCache, fakeAuth)
+      // freeCancellation omitido → default del modelo true → estado efectivo contradictorio.
+      await expect(svc.create({ name: 'Bad', cancellationType: 'non_refundable' }))
+        .rejects.toThrow('incompatibles')
+    })
+
+    it('acepta create non_refundable cuando la cancelación gratuita viene desactivada', async () => {
+      const repo = makeRepo({ create: async (data) => ({ id: 'x', ...data } as HotelesDTO) })
+      const svc = new HotelesService(repo, log, silentCache, fakeAuth)
+      const result = await svc.create({ name: 'OK', freeCancellation: false, cancellationType: 'non_refundable' })
+      expect(result.cancellationType).toBe('non_refundable')
+    })
   })
 
   // ─── update ────────────────────────────────────────────
@@ -226,6 +252,34 @@ describe('HotelesService', () => {
       const repo = makeRepo({ findById: async () => hotel })
       const svc = new HotelesService(repo, log, silentCache, fakeAuth)
       await expect(svc.update('h2', { name: 'X' }, receptionistUser)).rejects.toThrow('No autorizado')
+    })
+
+    // #34 (SEC-2): la exclusividad "cancelación gratuita × No Reembolsable" no puede vivir
+    // sólo en la UI — un cliente directo podía persistir condiciones contradictorias.
+    it('rechaza freeCancellation=true junto a cancellationType non_refundable', async () => {
+      const hotel = { id: 'h1', name: 'Hotel', freeCancellation: false } as HotelesDTO
+      let updated = 0
+      const repo = makeRepo({ findById: async () => hotel, update: async (id, data) => { updated++; return { id, ...data } as HotelesDTO } })
+      const svc = new HotelesService(repo, log, silentCache, fakeAuth)
+      await expect(svc.update('h1', { freeCancellation: true, cancellationType: 'non_refundable' }, hotelAdminUser))
+        .rejects.toThrow('incompatibles')
+      expect(updated).toBe(0) // sin efectos: nada se persiste
+    })
+
+    it('rechaza el PUT parcial que crea el conflicto con lo ya persistido (merge con DB)', async () => {
+      const hotel = { id: 'h1', name: 'Hotel', freeCancellation: true, cancellationType: 'flexible' } as HotelesDTO
+      const repo = makeRepo({ findById: async () => hotel })
+      const svc = new HotelesService(repo, log, silentCache, fakeAuth)
+      await expect(svc.update('h1', { cancellationType: 'non_refundable' }, hotelAdminUser))
+        .rejects.toThrow('incompatibles')
+    })
+
+    it('acepta non_refundable cuando la cancelación gratuita está desactivada', async () => {
+      const hotel = { id: 'h1', name: 'Hotel', freeCancellation: false, cancellationType: 'flexible' } as HotelesDTO
+      const repo = makeRepo({ findById: async () => hotel, update: async (id, data) => ({ id, ...data } as HotelesDTO) })
+      const svc = new HotelesService(repo, log, silentCache, fakeAuth)
+      const result = await svc.update('h1', { cancellationType: 'non_refundable' }, hotelAdminUser)
+      expect(result.cancellationType).toBe('non_refundable')
     })
   })
 

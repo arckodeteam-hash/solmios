@@ -26,6 +26,9 @@ describe('reconcileShift — C2: solo efectivo entra al arqueo', () => {
     expect(rec.income).toBe(700)
     expect(rec.byMethod.card).toBe(500)
     expect(rec.byMethod.cash).toBe(200)
+    // Desglose efectivo explícito (getter de la UI: la cuenta visible del cajón cierra sola).
+    expect(rec.cashIncome).toBe(200)
+    expect(rec.cashExpense).toBe(0)
   })
 
   it('un movimiento sin method se asume efectivo (compat datos viejos)', () => {
@@ -44,6 +47,8 @@ describe('reconcileShift — C2: solo efectivo entra al arqueo', () => {
     const rec = reconcileShift(shift(0, 200), movs)
     expect(rec.expected).toBe(200)      // 300 - 100 efectivo; la transferencia de 999 no toca el cajón
     expect(rec.difference).toBe(0)
+    expect(rec.cashIncome).toBe(300)    // ingreso efectivo
+    expect(rec.cashExpense).toBe(100)   // egreso efectivo (la transferencia de 999 no cuenta)
   })
 
   it('summarizeMovements separa cash del total', () => {

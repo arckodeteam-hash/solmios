@@ -37,6 +37,12 @@ function memoryCache() {
 /** Notificador REAL (socket + invalidación versionada), el mismo que arma el service. */
 const notifierOn = (cache: any, sockets: any = {}) => reservationChangedNotifier({ logger: noopLogger, cache, sockets })
 
+/** RTC-8.10: deps por objeto. El clamp de techo es no-op acá — este world no tiene links vivos. */
+const depsOf = (h: ReturnType<typeof harness>, notifyChanged: any) => ({
+  repo: h.addonRepo, reservationRepo: h.reservationRepo, userRepo: h.userRepo, auth: realAuth,
+  notifyChanged, paidOf, ceilingGuard: async () => {},
+})
+
 function harness(initialAddons: any[] = []) {
   const addons = [...initialAddons]
   const reservation = { id: 'r1', hotelId: HOTEL, totalAmount: 500, otherCharges: 40, deposit: 100, pendingAmount: 440 }
@@ -65,7 +71,7 @@ function harness(initialAddons: any[] = []) {
 describe('addons → pendingAmount persistido', () => {
   it('agregar un extra sube el saldo persistido', async () => {
     const h = harness()
-    await createAddon(h.addonRepo, h.reservationRepo, h.userRepo, realAuth, 'r1', { description: 'Cena', amount: 30, quantity: 2, kind: 'service' } as any, USER, notifierOn(memoryCache()), paidOf)
+    await createAddon(depsOf(h, notifierOn(memoryCache())), { reservationId: 'r1', dto: { description: 'Cena', amount: 30, quantity: 2, kind: 'service' } as any, user: USER })
     // 500 + 40 + 60 − 100 = 500
     expect(h.reservationUpdates).toEqual([{ id: 'r1', pendingAmount: 500 }])
   })
@@ -73,14 +79,14 @@ describe('addons → pendingAmount persistido', () => {
   it('quitar el extra vuelve a bajar el saldo persistido', async () => {
     const h = harness([{ id: 'a1', reservationId: 'r1', hotelId: HOTEL, amount: 30, quantity: 2, kind: 'service' }])
     h.reservation.pendingAmount = 500
-    await deleteAddon(h.addonRepo, h.reservationRepo, h.userRepo, realAuth, 'a1', USER, notifierOn(memoryCache()), paidOf)
+    await deleteAddon(depsOf(h, notifierOn(memoryCache())), { id: 'a1', user: USER })
     expect(h.reservationUpdates).toEqual([{ id: 'r1', pendingAmount: 440 }])
     expect(h.addons).toHaveLength(0)
   })
 
   it('un descuento baja el saldo persistido', async () => {
     const h = harness()
-    await createAddon(h.addonRepo, h.reservationRepo, h.userRepo, realAuth, 'r1', { description: 'Promo', amount: 40, quantity: 1, kind: 'discount' } as any, USER, notifierOn(memoryCache()), paidOf)
+    await createAddon(depsOf(h, notifierOn(memoryCache())), { reservationId: 'r1', dto: { description: 'Promo', amount: 40, quantity: 1, kind: 'discount' } as any, user: USER })
     expect(h.reservationUpdates).toEqual([{ id: 'r1', pendingAmount: 400 }])
   })
 
@@ -88,7 +94,7 @@ describe('addons → pendingAmount persistido', () => {
     const h = harness()
     h.userRepo.findById = async (id: string) => ({ id, hotelId: 'h2' })
     await expect(
-      createAddon(h.addonRepo, h.reservationRepo, h.userRepo, realAuth, 'r1', { description: 'x', amount: 10 } as any, USER, notifierOn(memoryCache()), paidOf),
+      createAddon(depsOf(h, notifierOn(memoryCache())), { reservationId: 'r1', dto: { description: 'x', amount: 10 } as any, user: USER }),
     ).rejects.toThrow()
     expect(h.reservationUpdates).toHaveLength(0)
   })
@@ -109,7 +115,7 @@ describe('addons → caché del listado', () => {
     const before = await listReservations(h.listRepo, h.userRepo, cache, noopLogger, listQuery, USER)
     expect(before.data[0].pendingAmount).toBe(440)
 
-    await createAddon(h.addonRepo, h.reservationRepo, h.userRepo, realAuth, 'r1', { description: 'Cena', amount: 30, quantity: 2, kind: 'service' } as any, USER, notifierOn(cache), paidOf)
+    await createAddon(depsOf(h, notifierOn(cache)), { reservationId: 'r1', dto: { description: 'Cena', amount: 30, quantity: 2, kind: 'service' } as any, user: USER })
 
     const after = await listReservations(h.listRepo, h.userRepo, cache, noopLogger, listQuery, USER)
     expect(after.data[0].pendingAmount).toBe(500)
@@ -121,7 +127,7 @@ describe('addons → caché del listado', () => {
     const cache = memoryCache()
     expect((await listReservations(h.listRepo, h.userRepo, cache, noopLogger, listQuery, USER)).data[0].pendingAmount).toBe(500)
 
-    await deleteAddon(h.addonRepo, h.reservationRepo, h.userRepo, realAuth, 'a1', USER, notifierOn(cache), paidOf)
+    await deleteAddon(depsOf(h, notifierOn(cache)), { id: 'a1', user: USER })
 
     expect((await listReservations(h.listRepo, h.userRepo, cache, noopLogger, listQuery, USER)).data[0].pendingAmount).toBe(440)
   })
@@ -130,9 +136,8 @@ describe('addons → caché del listado', () => {
     const h = harness()
     const emitted: any[] = []
     await createAddon(
-      h.addonRepo, h.reservationRepo, h.userRepo, realAuth, 'r1',
-      { description: 'Cena', amount: 30, quantity: 2, kind: 'service' } as any, USER,
-      notifierOn(memoryCache(), { onReservasUpdated: async (r: any) => { emitted.push(r) } }), paidOf,
+      depsOf(h, notifierOn(memoryCache(), { onReservasUpdated: async (r: any) => { emitted.push(r) } })),
+      { reservationId: 'r1', dto: { description: 'Cena', amount: 30, quantity: 2, kind: 'service' } as any, user: USER },
     )
     expect(emitted).toHaveLength(1)
     expect(emitted[0].pendingAmount).toBe(500)

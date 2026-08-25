@@ -93,10 +93,6 @@
               </select>
             </div>
             <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">País *</label>
-              <SearchSelect v-model="form.country" :options="COUNTRIES" placeholder="Buscar país..." />
-            </div>
-            <div>
               <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Clasificación</label>
               <select v-model="form.starRating" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none cursor-pointer">
                 <option value="">N/A</option>
@@ -106,11 +102,6 @@
                 <option value="4">4 Estrellas</option>
                 <option value="5">5 Estrellas</option>
               </select>
-            </div>
-            <div class="sm:col-span-2">
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Dirección</label>
-              <input v-model="form.address" type="text" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" :class="fieldClass('address')" data-field="address" @blur="touchField('address')">
-              <p v-if="errorOf('address')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('address') }}</p>
             </div>
           </div>
         </SectionCard>
@@ -165,6 +156,24 @@
             </div>
           </div>
         </SectionCard>
+      <!-- WiFi del establecimiento: dato OPERATIVO (pre-checkin, emails, WhatsApp), no parte de
+           ninguna "descripción" pública — la página pública sólo lista el badge amenity. Vivía en
+           un tab "Descripción" que había quedado con este único contenido tras sacar la
+           descripción multilingüe; acá va con los demás datos del hotel (feedback panel/config). -->
+      <SectionCard title="WiFi" subtitle="Se comparte con el huésped en el pre-checkin">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Red</label>
+            <input v-model="form.wifiNetwork" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('wifiNetwork')" data-field="wifiNetwork" @blur="touchField('wifiNetwork')">
+              <p v-if="errorOf('wifiNetwork')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('wifiNetwork') }}</p>
+          </div>
+          <div>
+            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Contraseña</label>
+            <input v-model="form.wifiPassword" type="password" autocomplete="new-password" name="hotel-wifi-password" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('wifiPassword')" data-field="wifiPassword" @blur="touchField('wifiPassword')">
+              <p v-if="errorOf('wifiPassword')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('wifiPassword') }}</p>
+          </div>
+        </div>
+      </SectionCard>
 
         <SectionCard title="Propietario" subtitle="Titular fiscal que figura en las facturas emitidas">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -307,7 +316,30 @@
 
     <!-- ========== LOCATION (mapa de Google) ========== -->
     <div v-if="activeTab === 'location'" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div class="lg:col-span-2 rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
+      <div class="lg:col-span-2 space-y-6">
+        <!-- País y Dirección viven en Ubicación (unificación UX): todo lo geográfico en esta
+             pestaña, "Datos del hotel" queda solo identidad. Mismos v-model/validaciones que
+             cuando vivían en la pestaña Hotel — solo cambió el lugar del template. -->
+        <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
+          <h3 class="font-extrabold text-navy mb-1">País y dirección</h3>
+          <p class="text-[11px] text-text-muted mb-4">
+            La dirección, junto a provincia, municipio y código postal, forma la dirección completa
+            del hotel en facturas, emails, OTAs y la página pública. No mueve el pin: para eso usá
+            el mapa o las coordenadas de abajo.
+          </p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">País *</label>
+              <SearchSelect v-model="form.country" :options="COUNTRIES" placeholder="Buscar país..." />
+            </div>
+            <div>
+              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Dirección</label>
+              <input v-model="form.address" type="text" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" :class="fieldClass('address')" data-field="address" @blur="touchField('address')">
+              <p v-if="errorOf('address')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('address') }}</p>
+            </div>
+          </div>
+        </div>
+        <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
         <h3 class="font-extrabold text-navy mb-4">Mapa Interactivo</h3>
         <!-- Con API key: mapa interactivo (clic y arrastre). Sin key: iframe embed. -->
         <div v-show="mapsInteractive" ref="mapEl" class="w-full h-96 rounded-xl border border-border overflow-hidden"></div>
@@ -321,6 +353,7 @@
           </p>
           <a :href="googleMapsLinkUrl" target="_blank" rel="noopener"
             class="shrink-0 text-[11px] font-bold text-teal hover:underline">Abrir en Google Maps</a>
+        </div>
         </div>
       </div>
       <div class="space-y-4">
@@ -422,31 +455,28 @@
 
     <!-- ========== CONDICIONES ========== -->
     <div v-if="(activeTab as string) === 'conditions'" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- Política de cancelación REAL: tiers con horas/penalidad/refundo y excepciones por
+           canal. Unifica la doble fuente de verdad — antes este tab sólo escribía el preset
+           (`hotels.cancellationType`, nivel 3 de resolvePolicy) y si el hotel tenía política
+           base guardada, editar acá no cambiaba nada. El editor trae los 4 presets como
+           plantillas rápidas y guarda por su cuenta (PUT /api/cancellation-policies/base);
+           la base guardada es la que aplican cancelaciones, motor y landing. -->
+      <div class="lg:col-span-2">
+        <CancellationPolicyEditor :hotel-id="hotelId" />
+      </div>
+
       <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <h3 class="font-extrabold text-navy mb-4">Políticas de Reserva</h3>
+        <h3 class="font-extrabold text-navy mb-4">Condiciones de la reserva</h3>
         <div class="space-y-4">
           <div class="flex items-center justify-between p-3 bg-surface rounded-xl">
             <div>
               <div class="text-sm font-bold text-navy">Cancelación gratuita</div>
-              <div class="text-[10px] text-text-muted">Hasta 24h antes del check-in</div>
+              <div class="text-[10px] text-text-muted">La muestra el motor de reservas y el pre-checkin · la política con detalle va en el editor de abajo</div>
             </div>
             <label class="relative inline-flex items-center cursor-pointer">
-              <input v-model="form.freeCancellation" type="checkbox" class="sr-only peer">
+              <input v-model="form.freeCancellation" type="checkbox" class="sr-only peer" data-field="freeCancellation">
               <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal"></div>
             </label>
-          </div>
-          <div>
-            <label class="block text-[11px] font-bold text-navy uppercase tracking-wide mb-2">Política de Cancelación</label>
-            <div class="grid grid-cols-2 gap-2">
-              <label v-for="policy in cancelPolicies" :key="policy.value"
-                class="flex items-start gap-2 p-3 rounded-xl cursor-pointer transition-colors"
-                :class="form.cancellationType === policy.value ? 'bg-navy/5 border border-navy/20' : 'bg-surface border border-transparent'">
-                <input v-model="form.cancellationType" type="radio" :value="policy.value" class="mt-0.5 w-4 h-4 text-cyan" />
-                <div>
-                  <div class="text-xs font-bold text-navy">{{ policy.name }}</div>
-                </div>
-              </label>
-            </div>
           </div>
 
           <div class="flex items-center justify-between p-3 bg-surface rounded-xl">
@@ -534,45 +564,11 @@
       </div>
     </div>
 
-    <!-- ========== DESCRIPTION ========== -->
-    <!-- La "Descripción Multilingüe" (12 idiomas) que vivía acá se quitó: escribía la
-         MISMA columna `descriptionJson` que ahora es {title, description} — el título+
-         descripción base en español del landing público (spec public-hotel-info D7,
-         ver pagina-publica/general.vue). Los dos usos chocaban en la misma columna y esta
-         tab no estaba conectada a ningún consumidor real (ni Channex, ni OTAs pese al
-         subtítulo) — deuda técnica resuelta priorizando la spec documentada. -->
-    <div v-if="(activeTab as string) === 'description'" class="space-y-6">
-      <SectionCard title="WiFi" subtitle="Se comparte con el huésped en el pre-checkin">
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Red</label>
-            <input v-model="form.wifiNetwork" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('wifiNetwork')" data-field="wifiNetwork" @blur="touchField('wifiNetwork')">
-              <p v-if="errorOf('wifiNetwork')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('wifiNetwork') }}</p>
-          </div>
-          <div>
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Contraseña</label>
-            <input v-model="form.wifiPassword" type="password" autocomplete="new-password" name="hotel-wifi-password" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('wifiPassword')" data-field="wifiPassword" @blur="touchField('wifiPassword')">
-              <p v-if="errorOf('wifiPassword')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('wifiPassword') }}</p>
-          </div>
-        </div>
-      </SectionCard>
-    </div>
-
     <!-- ========== INTEGRACIONES ========== -->
     <div v-if="(activeTab as string) === 'integrations'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <h3 class="font-extrabold text-navy mb-4">Channel Manager</h3>
-        <div class="p-4 bg-surface rounded-xl">
-          <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-3">
-              <span class="w-5 h-5 text-navy/50" v-html="ICON_GLOBE"></span>
-              <div><div class="text-sm font-bold text-navy">Channel Manager</div><div class="text-[10px] text-text-muted">Sincronización con OTAs</div></div>
-            </div>
-            <span class="text-[10px] font-bold px-2 py-1 rounded-full bg-teal/10 text-teal">Conectado</span>
-          </div>
-          <router-link to="/panel/channel-manager" class="block w-full text-center px-4 py-2 bg-navy/10 text-navy rounded-full text-sm font-bold hover:bg-navy/20 transition-colors cursor-pointer">Gestionar Canales</router-link>
-        </div>
-      </div>
+      <!-- Channel Manager NO va acá: lo configura y gestiona el admin de la PLATAFORMA (/admin),
+           no el hotel. Esta card mostraba un "Conectado" hardcodeado (mentía el estado real) y
+           linkeaba a /panel/channel-manager, que al merchant le da 403. -->
 
       <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
         <h3 class="font-extrabold text-navy mb-4">Pasarela de Pagos</h3>
@@ -764,6 +760,12 @@
     </div>
 
     </div>
+
+    <!-- L6 (qa-ui config-2026-08-22): confirmación para quitar un contacto de emergencia,
+         como el resto de acciones destructivas del panel. -->
+    <ConfirmModal v-if="confirmModal" :title="confirmModal.title" :message="confirmModal.message"
+      :confirm-label="confirmModal.confirmLabel" :danger="confirmModal.danger" :loading="confirmBusy"
+      @confirm="runConfirm" @close="confirmModal = null" />
   </div>
 </template>
 
@@ -771,6 +773,9 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, reactive } from 'vue'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import SectionCard from '@/components/ui/SectionCard.vue'
+// Política de cancelación con tiers: el editor canónico (mismo componente que usa el Motor de
+// reservas). Vive acá desde la unificación de Condiciones — antes sólo en Página pública.
+import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES, countryName } from '@/data/locales'
@@ -778,6 +783,11 @@ import { TIMEZONES, CURRENCIES } from '@/data/intl-catalogs'
 import { CurrencyCode } from '@/types/currency'
 import { parseLatLng } from '@/composables/useLatLngParse'
 import { loadGoogleMaps } from '@/composables/useGoogleMaps'
+import {
+  mapAddressComponents, unresolvedFields, geocodeErrorMessage,
+  reverseGeocodeNominatim,
+  ADDRESS_FIELD_LABELS, type AddressField,
+} from '@/utils/address-components'
 import { validateField, validateAll, warnOnUnsavedChanges, HOTEL_RULES } from '@/composables/useFieldValidation'
 import { HotelService } from '@/services/Hotel.service'
 import { SettingsService, type HotelFull } from '@/services/Settings.service'
@@ -787,12 +797,13 @@ import { SignupService, type PublicPlan } from '@/services/Signup.service'
 import { PlanCatalogService, type DisplayPlan } from '@/services/PlanCatalog.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
+import ConfirmModal from '@/components/features/ConfirmModal.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import type { AmenityCatalog } from '@/services/Hotel.service'
 import type { HotelEmergencyContact } from '@/types'
 
 const ICON_X = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>'
 const ICON_BUILDING = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>'
-const ICON_GLOBE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>'
 const ICON_CARD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>'
 const ICON_MESSAGE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>'
 const ICON_RECEIPT = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M8 7h8"/><path d="M8 11h8"/><path d="M8 15h5"/></svg>'
@@ -800,6 +811,7 @@ const ICON_UPLOAD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" 
 
 const auth = useAuthStore()
 const toast = useToast()
+const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm()
 const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
 
 // Stripe se configura en /panel/config/pasarelas (tabla payment_gateways, cifrada y por hotel).
@@ -875,7 +887,14 @@ function addEmergencyContact() {
   emergencyContacts.value.push({ id: crypto.randomUUID(), label: '', phone: '', kind: 'external' })
 }
 function removeEmergencyContact(id: string) {
-  emergencyContacts.value = emergencyContacts.value.filter(c => c.id !== id)
+  const contact = emergencyContacts.value.find(c => c.id === id)
+  askConfirm({
+    title: 'Eliminar contacto',
+    message: `¿Eliminar el contacto${contact?.label ? ` "${contact.label}"` : ''}? Se quita al Guardar.`,
+    confirmLabel: 'Eliminar',
+    danger: true,
+    run: async () => { emergencyContacts.value = emergencyContacts.value.filter(c => c.id !== id) },
+  })
 }
 async function saveEmergencyContacts() {
   const clean = emergencyContacts.value.map(c => ({ ...c, label: c.label.trim(), phone: c.phone.trim() }))
@@ -1085,7 +1104,6 @@ const tabGroups: SettingsTabGroup[] = [
     tabs: [
       { value: 'hotel', label: 'Hotel' },
       { value: 'location', label: 'Ubicación' },
-      { value: 'description', label: 'Descripción' },
       { value: 'conditions', label: 'Condiciones' },
       { value: 'emergency', label: 'Emergencias' },
       { value: 'hr', label: 'RRHH' },
@@ -1110,12 +1128,15 @@ const touchedFields = ref<Set<string>>(new Set())
 
 /** En qué pestaña vive cada campo — para poder llevar al usuario hasta el error. */
 const FIELD_TAB: Record<string, string> = {
-  name: 'hotel', country: 'hotel', address: 'hotel', phone: 'hotel', phone2: 'hotel',
+  name: 'hotel', phone: 'hotel', phone2: 'hotel',
   email: 'hotel', website: 'hotel', timezone: 'hotel', currency: 'hotel',
   checkIn: 'hotel', checkOut: 'hotel', ownerName: 'hotel', ownerTaxId: 'hotel', logo: 'hotel',
+  // País y Dirección se mudaron a Ubicación: si el guardado falla por ellos, el salto
+  // automático al error tiene que aterrizar en la pestaña donde ahora viven.
+  country: 'location', address: 'location',
   province: 'location', municipality: 'location', locality: 'location',
   postalCode: 'location', latitude: 'location', longitude: 'location',
-  wifiNetwork: 'description', wifiPassword: 'description',
+  wifiNetwork: 'hotel', wifiPassword: 'hotel',
   depositPercent: 'conditions', weekendSurcharge: 'conditions', depositFixed: 'conditions',
   advanceAmount: 'conditions', releaseHours: 'conditions', taxName: 'conditions', taxRate: 'conditions',
 }
@@ -1247,12 +1268,8 @@ async function loadPlan() {
   }
 }
 
-const cancelPolicies = [
-  { value: 'flexible', name: 'Flexible' },
-  { value: 'moderate', name: 'Moderada' },
-  { value: 'strict', name: 'Estricta' },
-  { value: 'non_refundable', name: 'No Reembolsable' },
-]
+// Presets canónicos (mismos tiers que el backend, cancellation-math.ts).
+
 
 // Amenities
 const amenityCatalog = ref<AmenityCatalog>({ interior: [], exterior: [], services: [] })
@@ -1364,6 +1381,15 @@ onMounted(async () => {
         : {},
       id: h.id || (h as any)._id,
     }
+    // INT-3: los watchers de #34 son flush 'pre' (diferidos al scheduler), NO corren
+    // sincrónico con la asignación de arriba. Si el flag se setea acá mismo, cuando los
+    // callbacks corren (microtask posterior) ya ven true y el guard es INERTE: el dato
+    // legacy contradictorio se auto-flippea igual que antes. El flag se enciende en el
+    // nextTick DESPUÉS de la hidratación: para entonces los watchers diferidos ya corrieron
+    // (y fueron bloqueados por el flag en false), así que el dato contradictorio llega
+    // intacto al render y el aviso del template es alcanzable. La auto-resolución sólo
+    // ocurre si el usuario INTERACTÚA después de la carga.
+    await nextTick()
 
     // Amenities catalog + selected
     const [cat, sel] = await Promise.all([
@@ -1432,7 +1458,7 @@ async function saveAll() {
     'freeCancellation','depositRequired','depositPercent','weekendSurcharge',
     'accommodationType','starRating','ownerName','ownerTaxId','phone2','website',
     'province','municipality','locality','postalCode','latitude','longitude',
-    'cancellationType','cleaningType',
+    'cleaningType',
     'depositType','depositFixed','advanceType','advanceAmount','releaseHours','defaultPaymentMethod',
     'requestReviews','taxName','taxRate',
     'wifiNetwork','wifiPassword','logo']
@@ -1455,11 +1481,18 @@ async function saveAll() {
 
   try {
     await SettingsService.patchHotel(patch)
-  } catch { errors.push('hotel') }
+  } catch (e) {
+    // #34: antes el catch era bare y el toast decía solo "Error guardando: hotel" — el usuario
+    // no sabía QUÉ campo corregir. El ApiError del http ya trae el detalle del backend
+    // (campo rechazado por el schema, 403 de permisos, etc.).
+    errors.push(`hotel — ${e instanceof Error ? e.message : 'error desconocido'}`)
+  }
 
   try {
     await HotelService.saveAmenitiesHotel(selectedAmenities.value)
-  } catch { errors.push('amenities') }
+  } catch (e) {
+    errors.push(`amenities — ${e instanceof Error ? e.message : 'error desconocido'}`)
+  }
 
   saving.value = false
   if (errors.length) {
@@ -1523,39 +1556,118 @@ function setCoords(lat: number, lng: number) {
 }
 
 /**
- * Reverse geocoding: dado un punto, le pregunta a Google qué dirección hay ahí y completa
- * Provincia/Municipio/Localidad/Código Postal. Requiere la API "Geocoding API" habilitada en el
- * mismo proyecto de Google Cloud que la key de Maps JavaScript (Admin → Integraciones).
+ * Último valor que el autocompletado escribió en cada campo. Sirve para NO pisar lo que el usuario
+ * tipeó a mano: solo se sobrescribe un campo vacío o uno cuyo contenido lo puso el geocoding
+ * anterior. Si el usuario corrigió "Municipio" y después mueve el pin, su corrección se respeta.
+ */
+const geocodedValues = ref<Partial<Record<AddressField, string>>>({})
+
+/** Descarta respuestas viejas: si el usuario arrastra el pin dos veces seguidas, la primera
+ *  respuesta puede llegar después de la segunda y dejaría una dirección que no corresponde. */
+let geocodeSeq = 0
+
+/**
+ * Reverse geocoding: dado un punto, pregunta qué dirección hay ahí y completa
+ * Provincia/Municipio/Localidad/Código Postal.
  *
- * Los tipos de `address_components` de Google no calzan 1:1 con la división administrativa
- * dominicana en todos los casos — se completa como MEJOR ESFUERZO y el campo queda editable:
- * si el hotel conoce el nombre correcto, lo corrige a mano después.
+ * GH-33 — cadena de proveedores Google → Nominatim (OpenStreetMap):
+ *
+ *  1. La "Geocoding API" es un producto SEPARADO de la "Maps JavaScript API" en Google Cloud:
+ *     la key que dibuja el mapa NO habilita el geocoding, y la request vuelve `REQUEST_DENIED`.
+ *     Ese es el escenario reportado: el mapa interactivo funciona, el pin se mueve, lat/lng se
+ *     actualizan… y los cuatro campos quedaban vacíos (en `main` además con un catch mudo, sin
+ *     ningún mensaje). Por eso NINGUNA falla de Google termina el flujo: cae a Nominatim
+ *     (gratis, sin key) antes de rendirse.
+ *  2. Sin key de Google directamente no hay SDK ni Geocoder: mismo fallback de Nominatim para
+ *     las otras vías de coordenadas (pegar enlace de Maps, "usar mi ubicación").
+ *  3. Si los DOS proveedores fallan, recién ahí el aviso visible (`geocodeErrorMessage`) —
+ *     nunca silencio, nunca bloquea: los campos siguen editables a mano.
+ *
+ * El mapeo de componentes vive en `utils/address-components.ts` (con sus cadenas de fallback,
+ * porque el esquema de Google no calza 1:1 con ninguna división administrativa nacional).
+ * Es MEJOR ESFUERZO y los campos siguen siendo editables.
  */
 async function reverseGeocode(lat: number, lng: number) {
+  const seq = ++geocodeSeq
   const maps = await loadGoogleMaps()
-  if (!maps) return                      // sin key → no hay Geocoder, se completa a mano
-  geocoder ??= new maps.Geocoder()
+
+  // 1) Google Geocoding (si hay SDK cargado).
+  if (maps) {
+    try {
+      geocoder ??= new maps.Geocoder()
+      const { results } = await geocoder.geocode({ location: { lat, lng } })
+      if (seq !== geocodeSeq) return       // llegó tarde: el pin ya está en otro lado
+      const result = results?.[0]
+      if (!result) throw new Error('ZERO_RESULTS')
+
+      const mapped = mapAddressComponents(result.address_components)
+      if (unresolvedFields(mapped).length === Object.keys(ADDRESS_FIELD_LABELS).length) {
+        // Google respondió, pero sin NINGÚN componente aprovechable para estos cuatro campos.
+        // Antes de rendirse, probar el fallback: a veces OSM tiene lo que Google no trae.
+        throw new Error('ZERO_RESULTS')
+      }
+      applyGeocodedValues(mapped, 'Google')
+      return
+    } catch {
+      if (seq !== geocodeSeq) return       // respuesta vieja: ni fallback ni aviso
+      // Google caído (REQUEST_DENIED, librería sin cargar, red): sigue al fallback.
+    }
+  }
+
+  // 2) Nominatim (OpenStreetMap): gratis, sin API key. Se llama UNA vez por dragend/click/
+  //    pegado (no por frame), así el rate limit del proveedor (1 req/s) no se satura arrastrando.
   try {
-    const { results } = await geocoder.geocode({ location: { lat, lng } })
-    const result = results?.[0]
-    if (!result) return
-    const componentOf = (type: string) =>
-      result.address_components.find((c) => c.types.includes(type))?.long_name || ''
+    const mapped = await reverseGeocodeNominatim(lat, lng)
+    if (seq !== geocodeSeq) return
+    applyGeocodedValues(mapped, 'OpenStreetMap')
+  } catch (err) {
+    if (seq !== geocodeSeq) return
+    // Nada de silencio: el usuario tiene que saber por qué los campos siguen vacíos y qué hacer.
+    const { variant, title, detail } = geocodeErrorMessage(err)
+    if (variant === 'warning') toast.warning(title, detail)
+    else toast.error(title, detail)
+  }
+}
 
-    const locality = componentOf('locality') || componentOf('sublocality') || componentOf('administrative_area_level_2')
-    const postalCode = componentOf('postal_code')
-    const province = componentOf('administrative_area_level_1')
-    const municipality = componentOf('administrative_area_level_2')
+/**
+ * Aplica los valores geocodificados (de Google o Nominatim) a los campos del formulario.
+ * Respeta lo que el usuario escribió a mano: solo pisa campos vacíos o los que puso
+ * el propio autocompletado previo.
+ */
+function applyGeocodedValues(mapped: { province: string; municipality: string; locality: string; postalCode: string }, source: string) {
+  const pending = unresolvedFields(mapped)
+  const kept: string[] = []
 
-    let filled = 0
-    if (locality) { form.value.locality = locality; filled++ }
-    if (postalCode) { form.value.postalCode = postalCode; filled++ }
-    if (province) { form.value.province = province; filled++ }
-    if (municipality) { form.value.municipality = municipality; filled++ }
-    if (filled > 0) toast.success('Dirección completada automáticamente — revisá los campos')
-  } catch {
-    // Sin resultados para ese punto (agua, zona sin datos) o "Geocoding API" no habilitada
-    // todavía en Cloud Console: se deja como estaba, no rompe el flujo de fijar coordenadas.
+  for (const field of Object.keys(ADDRESS_FIELD_LABELS) as AddressField[]) {
+    const value = mapped[field]
+    if (!value) continue
+    const current = String(form.value[field] ?? '').trim()
+    // Solo se pisa lo vacío o lo que puso el propio autocompletado.
+    if (current && current !== (geocodedValues.value[field] ?? '')) {
+      kept.push(ADDRESS_FIELD_LABELS[field])
+      continue
+    }
+    form.value[field] = value
+    geocodedValues.value[field] = value
+  }
+
+  if (pending.length === Object.keys(ADDRESS_FIELD_LABELS).length) {
+    toast.warning(
+      `${source} no devolvió datos de dirección para ese punto`,
+      'Completá Provincia, Municipio, Localidad y Código Postal a mano.',
+    )
+    return
+  }
+
+  const notas = [
+    pending.length ? `${source} no devolvió: ${pending.map((f) => ADDRESS_FIELD_LABELS[f]).join(', ')}.` : '',
+    kept.length ? `Se respetó lo que escribiste en: ${kept.join(', ')}.` : '',
+  ].filter(Boolean).join(' ')
+
+  if (pending.length) {
+    toast.warning('Dirección completada parcialmente', `${notas} Revisá y completá a mano.`)
+  } else {
+    toast.success('Dirección completada automáticamente', notas || 'Revisá los campos antes de guardar.')
   }
 }
 

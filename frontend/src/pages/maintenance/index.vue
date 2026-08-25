@@ -247,7 +247,7 @@
 
       <div>
           <!-- Info grid tipográfico -->
-          <div class="grid grid-cols-3 gap-x-3 gap-y-3 pb-5 border-b border-border">
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-3 pb-5 border-b border-border">
             <div>
               <div class="text-[10px] text-text-muted uppercase tracking-wide">Ubicación</div>
               <div class="text-xs font-bold text-navy mt-0.5">{{ selectedOrder.location || '—' }}</div>

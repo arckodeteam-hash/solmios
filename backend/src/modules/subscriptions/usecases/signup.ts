@@ -47,6 +47,8 @@ export interface SignupDeps {
   usersRepo: RepositoryAdapter<any>
   rolesRepo: RepositoryAdapter<any>
   subscriptionsRepo: RepositoryAdapter<any>
+  /** `plans` — para sincronizar el espejo `hotels.plan` con el plan elegido en el trial. */
+  plansRepo: RepositoryAdapter<any>
   hashPassword: (plain: string) => Promise<string>
   /** Envío del correo de verificación (#421). Opcional y best-effort: si falta o falla, el alta
    *  igual funciona — no se pierde el hotel porque el SMTP esté caído. */
@@ -93,6 +95,12 @@ export class SignupUseCase {
     const taken = await this.deps.usersRepo.findMany({ email })
     if (taken.length) throw new ValidationError('Ya existe una cuenta con ese email')
 
+    // R3-1: el plan elegido tiene que EXISTIR y estar ACTIVO. El schema solo valida
+    // no-vacío: un planId inventado creaba una suscripción apuntando a nada y el gate le
+    // abría TODO el panel (fail-open del resolver, ya cerrado en resolve-plan.ts). Cortar
+    // acá es el mensaje honesto para el usuario: "ese plan no te lo podemos dar".
+    if (input.planId) await this.assertPlanAvailable(input.planId)
+
     const hotelId = crypto.randomUUID()
     const trialEnds = new Date(now.getTime() + TRIAL_DAYS * MS_PER_DAY)
 
@@ -124,6 +132,10 @@ export class SignupUseCase {
       // que el ORM descarta sin avisar, y la dirección se pierde.
       address: input.address ?? '',
       country: input.country ?? '',
+      // Espejo legacy del plan del trial. La FUENTE DE VERDAD es la fila de `subscriptions`
+      // (resolve-plan.ts); sin esto el ORM dejaba el default 'professional' y el panel le
+      // mostraba al hotel todos los módulos aunque hubiera elegido 'host' (bug de prod).
+      plan: await this.trialPlanSlug(input.planId),
       status: 'active',
       active: 1,
     })
@@ -190,6 +202,34 @@ export class SignupUseCase {
       trialEndsAt: trialEnds.toISOString(),
       trialDays: TRIAL_DAYS,
     }
+  }
+
+  /**
+   * R3-1: el planId del alta tiene que existir en `plans` y estar activo. `isActive === 0`
+   * (o `false`) = dado de baja del catálogo → 400 "Plan no disponible". `isActive` ausente
+   * se trata como activo: el default físico del modelo es 1 y el resolutor de plan igual
+   * es fail-closed si el plan no estuviera.
+   */
+  private async assertPlanAvailable(planId: string): Promise<void> {
+    const plan = ((await this.deps.plansRepo.findMany({ id: planId })) as any[])?.[0]
+    if (!plan || plan.isActive === 0 || plan.isActive === false) {
+      throw new ValidationError('Plan no disponible')
+    }
+  }
+
+  /**
+   * Slug del plan elegido para el espejo `hotels.plan`. `undefined` si no hay plan o no se
+   * resuelve (el trial sigue siendo válido: la suscripción es la fuente de verdad y el gate
+   * avisa por warn cuando su planId no existe — no inventamos un espejo mentiroso).
+   */
+  private async trialPlanSlug(planId?: string): Promise<string | undefined> {
+    if (!planId) return undefined
+    const plan = ((await this.deps.plansRepo.findMany({ id: planId })) as any[])?.[0]
+    if (!plan?.slug) {
+      this.deps.logger.warn('Alta con plan inexistente — hotels.plan queda sin espejo', { planId })
+      return undefined
+    }
+    return String(plan.slug)
   }
 
   /**
