@@ -205,7 +205,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <p>Si alguna vez nos escribiste por WhatsApp, Instagram o Facebook, o hiciste una reserva a través de SOLMI OS, puedes pedirnos que eliminemos tu información personal. Es tu derecho bajo la Ley No. 172-13 de la República Dominicana y no tienes que dar explicaciones.</p>
 <h2>Cómo pedirlo — tres formas</h2>
 <h3>1. Por el formulario web (la más rápida)</h3>
-<p>Llena el formulario en <em>[pendiente: https://tudominio.com/eliminar-datos]</em> con:</p>
+<p>Llena el formulario que está al final de esta misma página (<a href="https://www.solmios.com/p/eliminacion-datos">https://www.solmios.com/p/eliminacion-datos</a>) con:</p>
 <ul>
 <li>Tu nombre completo</li>
 <li>El número de teléfono o usuario con el que nos escribiste</li>

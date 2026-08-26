@@ -51,6 +51,10 @@
             <!-- v-html: contenido autorizado exclusivamente por el super_admin de la plataforma
                  (endpoint /api/public/site-pages/:slug solo sirve published). -->
             <div class="site-page-content" data-testid="site-page-content" v-html="page.contentHtml" />
+
+            <!-- El texto de esta página promete el formulario "al final de esta misma página" —
+                 vive acá, dentro de la misma card, en vez de en una página CMS aparte. -->
+            <DataDeletionRequestForm v-if="page.slug === 'eliminacion-datos'" />
           </article>
 
           <!-- CTA de cierre: la landing siempre empuja el trial — la página también. -->
@@ -77,6 +81,7 @@ import { ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import SiteHeader from '@/components/site/SiteHeader.vue'
 import SiteFooter from '@/components/site/SiteFooter.vue'
+import DataDeletionRequestForm from '@/components/site/DataDeletionRequestForm.vue'
 import { PublicSitePages } from '@/services/SitePages.service'
 import type { PublicSitePage } from '@/types/site-pages'
 import { CATEGORY_LABELS } from '@/types/site-pages'

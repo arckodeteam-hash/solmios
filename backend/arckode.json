@@ -1,6 +1,6 @@
 {
   "_arckode": "1.0.0",
-  "_generated": "2026-08-26T06:31:42.727Z",
+  "_generated": "2026-08-26T07:36:58.022Z",
   "_instructions": "Lee este archivo ANTES de escribir código. Contiene el estado completo del sistema: módulos, conectores, violaciones. Si está desactualizado, corré: bun run analyze --json",
   "system": {
     "healthy": true,
@@ -270,6 +270,19 @@
     },
     {
       "name": "dashboard",
+      "structure": {
+        "index": true,
+        "types": true,
+        "sockets": true,
+        "service": true,
+        "controller": true,
+        "validators": true,
+        "tests": true
+      },
+      "complete": true
+    },
+    {
+      "name": "deletion-requests",
       "structure": {
         "index": true,
         "types": true,

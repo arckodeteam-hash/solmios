@@ -190,6 +190,11 @@ const router = createRouter({
           component: () => import('@/pages/super-admin/sitio.vue'),
         },
         {
+          path: 'eliminacion-datos',
+          name: 'super-admin-eliminacion-datos',
+          component: () => import('@/pages/super-admin/eliminacion-datos.vue'),
+        },
+        {
           path: 'support',
           name: 'super-admin-support',
           component: () => import('@/pages/super-admin/support.vue'),

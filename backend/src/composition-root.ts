@@ -182,6 +182,7 @@ import { HotelMediaModule } from './modules/hotel-media'
 // seeder + service + rutas admin/pública). El admin la edita desde /settings/landing.
 import { LandingModule } from './modules/landing'
 import { SitePagesModule } from './modules/site-pages'
+import { DeletionRequestsModule } from './modules/deletion-requests'
 // F2 2.1–2.3 (solmi-direct-booking): códigos promocionales del widget de reservas.
 // Modelo promo_codes (con UNIQUE index creado en migrate-db.ts) + CRUD admin + validación
 // pública (sin auth, rate-limited). Upsells NO va acá: es sub-dominio de bookingengine.
@@ -313,6 +314,10 @@ const mods = [
   // Scope plataforma (hotelId='platform'), CRUD solo super_admin, lectura pública rate-limited
   // de las published (`/api/public/site-pages[/:slug]`) — la consume el landing para renderizar.
   SitePagesModule(),
+  // Solicitudes de eliminación de datos personales (Ley 172-13): formulario público al
+  // final de /p/eliminacion-datos (sin auth, rate-limited) + gestión del flujo
+  // received→verifying→completed/rejected desde /admin/eliminacion-datos (solo super_admin).
+  DeletionRequestsModule(),
   // F2 2.1–2.3 (solmi-direct-booking) — Códigos promocionales del widget de reservas.
   // Modelo promo_codes (UNIQUE (hotelId, code) creado en migrate-db.ts) + CRUD admin
   // (`/api/promo-codes` auth + permiso `promo:*`) + ruta pública de validación
