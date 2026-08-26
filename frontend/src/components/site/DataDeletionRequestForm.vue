@@ -2,7 +2,7 @@
   <!-- Formulario del punto "1. Por el formulario web" de /p/eliminacion-datos. Vive dentro
        de la misma card del contenido legal, al final — coincide con lo que dice el texto
        ("el formulario que está al final de esta misma página"). -->
-  <div class="mt-10 pt-8 border-t border-slate-100">
+  <div id="formulario-eliminacion-datos" class="mt-10 pt-8 border-t border-slate-100 scroll-mt-24">
     <h2 class="text-[1.3rem] font-black text-navy leading-tight mb-1 pl-[0.9rem] border-l-4 border-blue">
       Formulario de eliminación de datos
     </h2>
