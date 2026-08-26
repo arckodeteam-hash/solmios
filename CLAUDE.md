@@ -38,6 +38,7 @@ bun run migrate-db.ts
 | `scripts/create-plans-table.ts` | Tabla `plans` (SaaS subscriptions) | ✅ |
 | `scripts/add-user-type-{pg,}.ts` | ALTER `users.userType` | ✅ `addColumnIfMissing` |
 | `scripts/drop-users-role-check.ts` | Elimina el CHECK vestigial de `users.role` (bloqueaba roles custom y 'housekeeper'/'supervisor' → 500). SQLite recrea la tabla sin el CHECK; PG imprime el `ALTER DROP CONSTRAINT`. **Correr en prod PG.** | ✅ (no-op si no hay CHECK) |
+| `scripts/seed-legal-pages.ts` | Crea o **reemplaza** (UPSERT por slug) las 3 páginas legales (`terminos`, `privacidad`, `eliminacion-datos`) en `site_pages` con el contenido de `scripts/legal-pages-content.ts` (transcripto de los .docx fuente). A diferencia de `migrate-db.ts` (insert-only, nunca pisa CMS), este script siempre sincroniza estas 3 con el texto legal vigente — correr tras editar `legal-pages-content.ts` o para empujar el texto actualizado a un entorno (prod) donde ya existían con contenido viejo. | ✅ (UPSERT) |
 | ~~`scripts/patch-orm-postgres.sh`~~ | **ELIMINADO** — el remap camelCase↔lowercase se upstreameó al framework 1.6.2 (nativo en `kernel/db/orm-utils.ts`, "Remap lowercase → camelCase"). Sin postinstall. | — |
 
 ### Portabilidad Postgres
