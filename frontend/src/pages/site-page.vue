@@ -180,4 +180,40 @@ watch(() => route.params.slug as string, (slug) => { if (slug) load(slug) }, { i
   transform: rotate(-45deg);
 }
 .site-page-content :deep(strong) { color: #0D2B4E; font-weight: 700; }
+
+/* Listas numeradas (pasos secuenciales, ej. eliminación de datos) — mismo círculo
+   que las <ul>, con el número adentro en vez del check. */
+.site-page-content :deep(ol) {
+  margin: 0 0 1.5rem;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+  max-width: 70ch;
+}
+.site-page-content :deep(ol li) {
+  counter-increment: step;
+  position: relative;
+  color: #475569;
+  line-height: 1.65;
+  padding-left: 1.9rem;
+  margin-bottom: 0.65rem;
+}
+.site-page-content :deep(ol li)::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0.075rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 9999px;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  color: #1D67E3;
+  font-size: 0.65rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
 </style>

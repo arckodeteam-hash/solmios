@@ -18,7 +18,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
   {
     slug: 'terminos', title: 'Términos y Condiciones de Uso', category: 'legal', sortOrder: 1,
     metaDescription: 'Términos y condiciones de SOLMI OS: qué es el servicio, el asistente automatizado, reservas y pagos, uso aceptable y responsabilidad.',
-    contentHtml: `<p><em>SOLMI OS — Última actualización: 10 de agosto de 2026</em></p>
+    contentHtml: `<p><em>SOLMI OS, S.R.L. · RNC 133-78277-4 · Santo Domingo Este, República Dominicana<br>Última actualización: 25 de agosto de 2026</em></p>
 <h2>1. Aceptación</h2>
 <p>Al usar SOLMI OS —ya sea escribiéndonos por WhatsApp, Instagram o Facebook, navegando nuestro sitio, o accediendo al panel de gestión— aceptas estos términos. Si no estás de acuerdo, por favor no uses el servicio.</p>
 <h2>2. Quién presta el servicio</h2>
@@ -68,7 +68,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <h2>8. Reglas de las plataformas de Meta</h2>
 <p>El uso de los canales de WhatsApp, Instagram y Facebook está sujeto además a las políticas de Meta Platforms, Inc., incluidas la Política Comercial de WhatsApp y las Condiciones de las Herramientas Empresariales de Meta. SOLMI OS puede suspender el servicio de mensajería si Meta restringe la cuenta.</p>
 <h2>9. Propiedad intelectual</h2>
-<p>El software, la marca SOLMI OS, su logotipo, diseño e identidad visual son propiedad de SOLMI OS, S.R.L. y están protegidos por la Ley 20-00 sobre Propiedad Industrial. El registro del nombre comercial ante ONAPI (No. 941808) confiere protección por diez años desde el 13 de julio de 2026.</p>
+<p>El software, la marca SOLMI OS, su logotipo, diseño e identidad visual están protegidos por la Ley 20-00 sobre Propiedad Industrial. El nombre comercial figura registrado a nombre de Leonardo Batista Soliman y su uso corresponde a SOLMI OS, S.R.L. El registro del nombre comercial ante ONAPI (No. 941808) confiere protección por diez años desde el 13 de julio de 2026.</p>
 <p>Los datos y contenidos que cada establecimiento carga en la plataforma siguen siendo propiedad del establecimiento.</p>
 <h2>10. Disponibilidad del servicio</h2>
 <p>Procuramos mantener el servicio disponible de forma continua, pero no garantizamos que esté libre de interrupciones. Pueden ocurrir cortes por mantenimiento programado, fallas de proveedores externos (incluidos Meta y las pasarelas de pago) o causas de fuerza mayor.</p>
@@ -82,7 +82,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 </ul>
 <p>Nada en esta cláusula limita la responsabilidad que por ley no puede excluirse, incluidos los derechos que otorga la Ley 358-05 de Protección de los Derechos del Consumidor.</p>
 <h2>12. Privacidad</h2>
-<p>El tratamiento de datos personales se rige por nuestra Política de Privacidad, que forma parte integrante de estos términos.</p>
+<p>El tratamiento de datos personales se rige por nuestra <a href="/p/privacidad">Política de Privacidad</a>, que forma parte integrante de estos términos.</p>
 <h2>13. Modificaciones</h2>
 <p>Podemos actualizar estos términos. La versión vigente será siempre la publicada en esta página, con su fecha de actualización. Los cambios sustanciales se notificarán con treinta (30) días de anticipación a los establecimientos clientes.</p>
 <h2>14. Terminación</h2>
@@ -90,14 +90,14 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <h2>15. Ley aplicable y jurisdicción</h2>
 <p>Estos términos se rigen por las leyes de la República Dominicana. Cualquier controversia se someterá a los tribunales competentes del Distrito Nacional, con renuncia expresa a cualquier otro fuero.</p>
 <h2>16. Contacto</h2>
-<p>SOLMI OS, S.R.L. — RNC 133-78277-4<br>Calle Carmelitas No. 9, Ensanche Ozama, Santo Domingo Este, Provincia Santo Domingo, República Dominicana<br>privacidad@solmios.com · +1 809-448-1444</p>`,
+<p>SOLMI OS, S.R.L. — RNC 133-78277-4<br>Calle Carmelitas No. 9, Ensanche Ozama, Santo Domingo Este, Provincia Santo Domingo, República Dominicana<br>soporte@solmios.com · +1 809-448-1444<br>https://www.solmios.com</p>`,
   },
   {
     slug: 'privacidad', title: 'Política de Privacidad', category: 'legal', sortOrder: 2,
     metaDescription: 'Política de privacidad de SOLMI OS: qué datos recogemos por WhatsApp/Instagram/Facebook y reservas, para qué los usamos y tus derechos bajo la Ley 172-13.',
-    contentHtml: `<p><em>SOLMI OS — Última actualización: 10 de agosto de 2026</em></p>
+    contentHtml: `<p><em>SOLMI OS, S.R.L. · RNC 133-78277-4 · Santo Domingo Este, República Dominicana<br>Última actualización: 25 de agosto de 2026</em></p>
 <h2>1. Quiénes somos</h2>
-<p>SOLMI OS es el nombre comercial de SOLMI OS, S.R.L., sociedad de responsabilidad limitada dominicana, inscrita en el Registro Mercantil de la Cámara de Comercio y Producción de Provincia Santo Domingo. El nombre comercial SOLMI OS está registrado ante la Oficina Nacional de la Propiedad Industrial (ONAPI) de la República Dominicana bajo el número de registro 941808.</p>
+<p>SOLMI OS, S.R.L. es una sociedad de responsabilidad limitada constituida conforme a las leyes de la República Dominicana, que opera bajo el nombre comercial SOLMI OS, registrado ante la Oficina Nacional de la Propiedad Industrial (ONAPI) con el número 941808.</p>
 <ul>
 <li><strong>Responsable del tratamiento:</strong> SOLMI OS, S.R.L.</li>
 <li><strong>RNC:</strong> 133-78277-4</li>
@@ -181,7 +181,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <li>Presentar una reclamación ante la autoridad competente</li>
 </ul>
 <p>Para ejercerlos, escríbenos a privacidad@solmios.com. Responderemos en un plazo máximo de quince (15) días hábiles.</p>
-<p>Para eliminar tus datos, consulta también nuestra página de Eliminación de Datos.</p>
+<p>Para eliminar tus datos, consulta también nuestra página de <a href="/p/eliminacion-datos">Eliminación de Datos</a>.</p>
 <h2>10. Cómo protegemos tus datos</h2>
 <ul>
 <li>Cifrado en tránsito (HTTPS/TLS) y en reposo</li>
@@ -195,14 +195,15 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <h2>12. Cambios a esta política</h2>
 <p>Publicaremos cualquier modificación en esta misma página con su fecha de actualización. Si el cambio es sustancial, te lo notificaremos por los medios de contacto que tengamos registrados.</p>
 <h2>13. Contacto</h2>
-<p>SOLMI OS, S.R.L. — RNC 133-78277-4<br>Calle Carmelitas No. 9, Ensanche Ozama, Santo Domingo Este, Provincia Santo Domingo, República Dominicana<br>privacidad@solmios.com · +1 809-448-1444</p>`,
+<p>SOLMI OS, S.R.L. — RNC 133-78277-4<br>Calle Carmelitas No. 9, Ensanche Ozama, Santo Domingo Este, Provincia Santo Domingo, República Dominicana<br>privacidad@solmios.com · +1 809-448-1444<br>https://www.solmios.com</p>`,
   },
   {
     slug: 'eliminacion-datos', title: 'Eliminación de Datos', category: 'legal', sortOrder: 3,
     metaDescription: 'Cómo pedir la eliminación de tus datos personales de SOLMI OS: tres formas de solicitarlo, plazos y qué información estamos obligados a conservar.',
-    contentHtml: `<p><em>SOLMI OS — Última actualización: 10 de agosto de 2026</em></p>
+    contentHtml: `<p><em>SOLMI OS, S.R.L. · RNC 133-78277-4 · Santo Domingo Este, República Dominicana<br>Última actualización: 25 de agosto de 2026</em></p>
 <h2>Tienes derecho a que borremos tus datos</h2>
 <p>Si alguna vez nos escribiste por WhatsApp, Instagram o Facebook, o hiciste una reserva a través de SOLMI OS, puedes pedirnos que eliminemos tu información personal. Es tu derecho bajo la Ley No. 172-13 de la República Dominicana y no tienes que dar explicaciones.</p>
+<p>Para saber qué datos recogemos y para qué los usamos antes de pedir la eliminación, consulta nuestra <a href="/p/privacidad">Política de Privacidad</a> y nuestros <a href="/p/terminos">Términos y Condiciones</a>.</p>
 <h2>Cómo pedirlo — tres formas</h2>
 <h3>1. Por el formulario web (la más rápida)</h3>
 <p>Llena el formulario que está al final de esta misma página (<a href="#formulario-eliminacion-datos">https://www.solmios.com/p/eliminacion-datos</a>) con:</p>
@@ -241,12 +242,12 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <p>Los mensajes que enviaste también pasaron por los servidores de Meta Platforms, Inc. (WhatsApp, Instagram, Facebook). Nosotros eliminamos nuestra copia, pero la copia que guarda Meta se rige por sus propias políticas. Para pedirle a Meta que elimine tus datos, debes hacerlo directamente en la configuración de tu cuenta de Facebook, Instagram o WhatsApp.</p>
 <h2>Si eres un establecimiento cliente</h2>
 <p>Si tu hotel o negocio deja de usar SOLMI OS y quieres que eliminemos toda la información de tu operación:</p>
-<ul>
+<ol>
 <li>Escribe a soporte@solmios.com desde el correo del administrador registrado.</li>
 <li>Te entregamos una exportación completa de tus datos en formato legible antes de borrar nada.</li>
 <li>Conservamos la información 90 días después de la baja, por si necesitas recuperarla o cambias de opinión.</li>
 <li>Pasados esos 90 días, se elimina de forma irreversible, salvo lo que la ley obligue a conservar.</li>
-</ul>
+</ol>
 <h2>¿Problemas?</h2>
 <p>Si no recibes respuesta en los plazos indicados, o no estás conforme con lo que hicimos, puedes presentar una reclamación ante la autoridad competente en materia de protección de datos de la República Dominicana.</p>
 <h2>Contacto</h2>
