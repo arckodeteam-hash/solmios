@@ -65,6 +65,7 @@ function request(partial: Partial<DeletionRequestDTO> & { id: string }): Deletio
     requestNumber: 'DEL-AAAAAAAA',
     fullName: 'Juan Pérez',
     contactHandle: '+1 809-000-0000',
+    email: null,
     hotelName: null,
     status: 'received',
     notes: null,
@@ -96,6 +97,43 @@ describe('deletion-requests — formulario público', () => {
     await svc.create({ fullName: 'Juan', contactHandle: '809' })
     const [row] = [...rows.values()]
     expect(row.hotelName).toBeNull()
+  })
+
+  it('sin emailSender configurado, igual crea la solicitud (no rompe el formulario)', async () => {
+    const svc = new DeletionRequestsService(makeRepo().repo, log)
+    const ack = await svc.create({ fullName: 'Juan', contactHandle: '809', email: 'juan@test.com' })
+    expect(ack.requestNumber).toMatch(/^DEL-/)
+  })
+})
+
+describe('deletion-requests — emails (acuse + aviso al admin)', () => {
+  function makeEmailSender() {
+    const sent: Array<{ to: string; subject: string }> = []
+    const emailSender = { enqueue: async (input: { to: string; subject: string }) => { sent.push({ to: input.to, subject: input.subject }); return 'queued-id' } }
+    return { emailSender, sent }
+  }
+
+  it('con email del solicitante: manda acuse a él Y aviso al admin', async () => {
+    const svc = new DeletionRequestsService(makeRepo().repo, log)
+    const { emailSender, sent } = makeEmailSender()
+    svc.setEmailDeps(emailSender)
+    await svc.create({ fullName: 'Juan', contactHandle: '809', email: 'juan@test.com' })
+    expect(sent.map((s) => s.to)).toEqual(['juan@test.com', 'soporte@solmios.com'])
+  })
+
+  it('sin email del solicitante: solo avisa al admin, no intenta mandarle nada a nadie más', async () => {
+    const svc = new DeletionRequestsService(makeRepo().repo, log)
+    const { emailSender, sent } = makeEmailSender()
+    svc.setEmailDeps(emailSender)
+    await svc.create({ fullName: 'Juan', contactHandle: '809' })
+    expect(sent.map((s) => s.to)).toEqual(['soporte@solmios.com'])
+  })
+
+  it('si el envío falla, la solicitud igual queda creada (best-effort, no revienta el submit)', async () => {
+    const svc = new DeletionRequestsService(makeRepo().repo, log)
+    svc.setEmailDeps({ enqueue: async () => { throw new Error('SMTP caído') } })
+    const ack = await svc.create({ fullName: 'Juan', contactHandle: '809', email: 'juan@test.com' })
+    expect(ack.requestNumber).toMatch(/^DEL-/)
   })
 })
 

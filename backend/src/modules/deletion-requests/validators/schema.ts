@@ -6,6 +6,8 @@ export const CreateDeletionRequestSchema: Record<string, ValidationRule> = {
   fullName: { type: 'string' as const, required: true, min: 2, max: 200 },
   contactHandle: { type: 'string' as const, required: true, min: 3, max: 100 },
   hotelName: { type: 'string' as const, max: 200 },
+  // Opcional — sin esto no hay a quién mandarle el acuse de recibo por correo.
+  email: { type: 'email' as const },
 }
 
 export const UpdateDeletionRequestSchema: Record<string, ValidationRule> = {

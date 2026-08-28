@@ -15,6 +15,17 @@ import type {
 } from './types'
 import { DELETION_REQUEST_STATUSES } from './types'
 import type { DeletionRequestsSockets } from './sockets'
+import { buildAckEmail, buildAdminAlertEmail } from './usecases/emails'
+
+/** Puerto de email mínimo (lo cablea email-bootstrap con setEmailDeps) — mismo patrón que capacitacion. */
+export interface EmailPort {
+  enqueue(input: { to: string; subject: string; html: string; hotelId: string; relatedType?: string; relatedId?: string }): Promise<string>
+}
+
+// Sin hotel dueño de este email (scope plataforma): 'platform' resuelve la config SMTP/Resend
+// de plataforma en EmailService.resolveSmtpConfig, igual que site-pages usa hotelId='platform'.
+const PLATFORM_HOTEL_ID = 'platform'
+const ADMIN_EMAIL = process.env.DELETION_REQUESTS_ADMIN_EMAIL || 'soporte@solmios.com'
 
 function assertStatus(status: string): asserts status is DeletionRequestStatus {
   if (!(DELETION_REQUEST_STATUSES as readonly string[]).includes(status)) {
@@ -29,11 +40,16 @@ function generateRequestNumber(): string {
 
 export class DeletionRequestsService {
   private sockets: DeletionRequestsSockets = {}
+  private emailSender?: EmailPort
 
   constructor(
     private readonly repo: RepositoryAdapter<DeletionRequestDTO>,
     private readonly logger: Logger,
   ) {}
+
+  setEmailDeps(emailSender: EmailPort): void {
+    this.emailSender = emailSender
+  }
 
   setSockets(s: Partial<DeletionRequestsSockets>): void {
     const next = s as Record<string, unknown>
@@ -65,13 +81,47 @@ export class DeletionRequestsService {
       requestNumber,
       fullName: input.fullName,
       contactHandle: input.contactHandle,
+      email: input.email ?? null,
       hotelName: input.hotelName ?? null,
       status: 'received',
       notes: null,
     } as Omit<DeletionRequestDTO, 'id'>)
     this.logger.info('deletion-requests: solicitud recibida', { requestNumber })
     await this.sockets.onDeletionRequestCreated?.(item)
+    await this.notifyRequest(item)
     return { requestNumber: item.requestNumber }
+  }
+
+  /**
+   * Best-effort: acuse de recibo al solicitante (si dejó correo) + aviso al admin (siempre).
+   * Un fallo de email NUNCA debe romper el envío del formulario — el número de solicitud ya
+   * quedó guardado en DB, que es la fuente de verdad del plazo de 15 días.
+   */
+  private async notifyRequest(item: DeletionRequestDTO): Promise<void> {
+    if (!this.emailSender) return
+    if (item.email) {
+      try {
+        const ack = buildAckEmail({ fullName: item.fullName, requestNumber: item.requestNumber })
+        await this.emailSender.enqueue({
+          to: item.email, subject: ack.subject, html: ack.html,
+          hotelId: PLATFORM_HOTEL_ID, relatedType: 'deletion-request', relatedId: item.id,
+        })
+      } catch (e) {
+        this.logger.error('deletion-requests: falló el acuse de recibo por email', { error: (e as Error).message, requestNumber: item.requestNumber })
+      }
+    }
+    try {
+      const alert = buildAdminAlertEmail({
+        requestNumber: item.requestNumber, fullName: item.fullName,
+        contactHandle: item.contactHandle, hotelName: item.hotelName,
+      })
+      await this.emailSender.enqueue({
+        to: ADMIN_EMAIL, subject: alert.subject, html: alert.html,
+        hotelId: PLATFORM_HOTEL_ID, relatedType: 'deletion-request', relatedId: item.id,
+      })
+    } catch (e) {
+      this.logger.error('deletion-requests: falló el aviso al admin por email', { error: (e as Error).message, requestNumber: item.requestNumber })
+    }
   }
 
   /** Admin: avanza el flujo (status) y/o deja notas internas. Nunca toca los datos del solicitante. */

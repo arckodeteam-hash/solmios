@@ -16,6 +16,7 @@ export interface DeletionRequest {
   requestNumber: string
   fullName: string
   contactHandle: string
+  email: string | null
   hotelName: string | null
   status: DeletionRequestStatus
   notes: string | null
@@ -38,6 +39,8 @@ export interface CreateDeletionRequestInput {
   fullName: string
   contactHandle: string
   hotelName?: string
+  /** Opcional — sin esto no hay a quién mandarle el acuse de recibo por correo. */
+  email?: string
 }
 
 export interface DeletionRequestAck {

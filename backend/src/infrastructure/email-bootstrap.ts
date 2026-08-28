@@ -111,6 +111,14 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
     abandonRecoveryForEmail.setEmail(emailService)
   }
 
+  // Eliminación de datos (Ley 172-13): acuse de recibo al solicitante (si dejó correo) + aviso
+  // al admin, best-effort desde el service — sin esto la solicitud igual queda guardada, solo
+  // no avisa por correo (degrada a "hay que mirar Panel › Eliminación de Datos a mano").
+  const deletionRequestsForEmail = resolveModule<{ setEmailDeps(es: EmailSender): void }>('deletion-requests')
+  if (deletionRequestsForEmail && typeof deletionRequestsForEmail.setEmailDeps === 'function') {
+    deletionRequestsForEmail.setEmailDeps(emailService)
+  }
+
   const EMAIL_WORKER_TICK_MS = 30_000
   const startWorker = () => {
     emailService.reclaimStale().catch(() => {})

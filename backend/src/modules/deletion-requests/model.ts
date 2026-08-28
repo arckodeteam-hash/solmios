@@ -14,6 +14,9 @@ export const DeletionRequestsModel: ModelDefinition = {
     fullName: { type: 'string', required: true },
     // Teléfono o usuario de WhatsApp/Instagram/Facebook con el que escribió.
     contactHandle: { type: 'string', required: true },
+    // Opcional: el formulario público solo exige nombre/contacto/hotel (lo que pide Meta), pero
+    // sin correo no hay forma de mandar el acuse de recibo por email — si lo deja, se lo mandamos.
+    email: { type: 'string' },
     // Hotel/establecimiento con el que interactuó — opcional, texto libre (el huésped
     // puede no recordarlo, per la política de privacidad).
     hotelName: { type: 'string' },

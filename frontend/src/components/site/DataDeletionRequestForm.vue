@@ -17,8 +17,9 @@
         <p class="font-black text-navy mb-1">Solicitud recibida</p>
         <p class="text-sm text-slate-600 mb-2">
           Tu número de solicitud es <strong class="font-mono text-navy">{{ ack.requestNumber }}</strong>.
-          Guardalo para hacer seguimiento. Verificaremos tu identidad y te confirmamos por escrito
-          en los plazos indicados arriba.
+          Guardalo para hacer seguimiento.
+          <template v-if="ackHadEmail">Te mandamos un correo con este número.</template>
+          Verificaremos tu identidad y te confirmamos por escrito en los plazos indicados arriba.
         </p>
         <button class="text-xs font-bold text-blue hover:underline cursor-pointer" @click="ack = null">
           Enviar otra solicitud
@@ -55,6 +56,19 @@
         />
       </div>
       <div>
+        <label class="block text-xs font-bold text-slate-500 mb-1" for="del-email">
+          Correo electrónico (opcional, para mandarte el acuse de recibo)
+        </label>
+        <input
+          id="del-email"
+          v-model="form.email"
+          type="email"
+          maxlength="200"
+          class="w-full h-11 px-3 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue-100"
+          placeholder="Opcional"
+        />
+      </div>
+      <div>
         <label class="block text-xs font-bold text-slate-500 mb-1" for="del-hotel">
           Hotel o establecimiento con el que interactuaste (si lo recordás)
         </label>
@@ -87,22 +101,26 @@ import { PublicDeletionRequests } from '@/services/DeletionRequests.service'
 import { ApiError } from '@/services/http'
 import type { DeletionRequestAck } from '@/types/deletion-requests'
 
-const form = reactive({ fullName: '', contactHandle: '', hotelName: '' })
+const form = reactive({ fullName: '', contactHandle: '', email: '', hotelName: '' })
 const submitting = ref(false)
 const error = ref('')
 const ack = ref<DeletionRequestAck | null>(null)
+const ackHadEmail = ref(false)
 
 async function submit() {
   error.value = ''
   submitting.value = true
   try {
+    ackHadEmail.value = form.email.trim().length > 0
     ack.value = await PublicDeletionRequests.create({
       fullName: form.fullName.trim(),
       contactHandle: form.contactHandle.trim(),
+      email: form.email.trim() || undefined,
       hotelName: form.hotelName.trim() || undefined,
     })
     form.fullName = ''
     form.contactHandle = ''
+    form.email = ''
     form.hotelName = ''
   } catch (e) {
     if (e instanceof ApiError && e.status === 429) {

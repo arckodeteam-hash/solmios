@@ -49,7 +49,10 @@
             <tr v-for="r in requests" :key="r.id" class="hover:bg-surface/60 transition-colors">
               <td class="px-4 py-3 font-mono text-xs text-navy font-bold">{{ r.requestNumber }}</td>
               <td class="px-4 py-3 font-bold text-navy">{{ r.fullName }}</td>
-              <td class="px-4 py-3 text-text-secondary">{{ r.contactHandle }}</td>
+              <td class="px-4 py-3 text-text-secondary">
+                {{ r.contactHandle }}
+                <div v-if="r.email" class="text-xs text-text-muted">{{ r.email }}</div>
+              </td>
               <td class="px-4 py-3 text-text-secondary">{{ r.hotelName || '—' }}</td>
               <td class="px-4 py-3">
                 <select

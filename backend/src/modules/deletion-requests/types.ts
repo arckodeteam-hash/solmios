@@ -16,6 +16,7 @@ export interface DeletionRequestDTO {
   requestNumber: string
   fullName: string
   contactHandle: string
+  email: string | null
   hotelName: string | null
   status: DeletionRequestStatus
   notes: string | null
@@ -28,6 +29,7 @@ export interface CreateDeletionRequestDTO {
   fullName: string
   contactHandle: string
   hotelName?: string
+  email?: string
 }
 
 /** Lo que puede tocar el admin: solo status/notes (nunca los datos del solicitante). */
