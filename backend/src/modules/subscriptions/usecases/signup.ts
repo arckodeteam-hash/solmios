@@ -196,6 +196,12 @@ export class SignupUseCase {
         // SMTP caído no puede perder el hotel, pero tiene que quedar registrado.
         this.deps.logger.warn('Alta: no se pudo encolar el correo de verificación', { hotelId, email, error: (e as Error).message })
       }
+    } else {
+      // El `catch` de arriba sólo cubre un `enqueue` que TIRA. Sin este else, un `emailSender`
+      // ausente (bootstrap de email que no corrió, `resolveModule` fallido) devolvía 201 y no
+      // dejaba ni una línea: el correo nunca se encolaba y nadie se enteraba. Es literalmente el
+      // síntoma del issue #27 — "no envía el correo de confirmación", sin rastro para diagnosticar.
+      this.deps.logger.warn('Alta: sin emailSender configurado — el correo de verificación NO se encoló', { hotelId, email })
     }
 
     // Correo de bienvenida (platform-emails, plantilla `welcome`). BEST-EFFORT: el alta ya terminó
