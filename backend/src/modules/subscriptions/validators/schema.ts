@@ -60,3 +60,13 @@ export const SignupSchema: Record<string, ValidationRule> = {
 export const CheckoutSchema: Record<string, ValidationRule> = {
   planId: { type: 'string' as const, required: true, max: 60 },
 }
+
+/**
+ * #28 — retomar el Checkout del alta. Son credenciales, así que el schema solo mide forma y tope:
+ * quién es y si puede se decide en el service (`resumeCheckout`), que responde el mismo error
+ * genérico para todos los fallos.
+ */
+export const ResumeCheckoutSchema: Record<string, ValidationRule> = {
+  email: { type: 'email' as const, required: true, max: EMAIL_MAX },
+  password: { type: 'string' as const, required: true, max: PASSWORD_MAX },
+}

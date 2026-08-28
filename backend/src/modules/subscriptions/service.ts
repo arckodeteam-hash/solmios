@@ -1,6 +1,13 @@
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
-import { SignupUseCase, type SignupInput, type SignupResult } from './usecases/signup'
+import { SignupUseCase, TRIAL_DAYS, type SignupInput, type SignupResult } from './usecases/signup'
 import { SubscriptionAccess, type AccessResult } from './usecases/access'
+import { statusOf, type SubscriptionStatus } from './usecases/status-of'
+import { composeSockets } from '../../shared/utils/compose-sockets'
+import { completeSignup } from './usecases/complete-signup'
+import {
+  readSignupPolicy, pendingTrialDays, checkoutUrlForSignup, resumeAbandonedCheckout,
+  type SignupPolicy,
+} from './usecases/signup-policy'
 import { OnboardingUseCase, type OnboardingStatus } from './usecases/onboarding'
 import { hashPassword } from '../usuarios/usecases/password'
 import { createCheckoutSession, type CreateCheckoutResult } from './usecases/create-checkout-session'
@@ -19,6 +26,8 @@ export class SubscriptionsService {
    *  (webhook de Stripe). Opcional: sin cablear, el correo simplemente no sale (best-effort). */
   private sendPlatformEmail?: (event: string, to: string, hotelId: string, vars: Record<string, string>) => Promise<{ sent: boolean }>
   private sockets: SubscriptionSockets = {}
+  private readSignupPolicy?: () => Promise<{ requireCardOnTrial: boolean }>
+  private verifyOwner?: (email: string, password: string) => Promise<{ hotelId?: string } | null>
 
   constructor(
     private readonly subscriptionsRepo: RepositoryAdapter<any>,
@@ -43,8 +52,24 @@ export class SubscriptionsService {
     this.signupUc = new SignupUseCase({
       hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger,
     })
-    this.accessUc = new SubscriptionAccess(subscriptionsRepo, hotelsRepo)
+    // El lector se resuelve en cada llamada, no en el constructor: el connector inyecta el
+    // puerto DESPUÉS de que el módulo se registró (mismo momento que setEmailDeps).
+    this.accessUc = new SubscriptionAccess(
+      subscriptionsRepo,
+      hotelsRepo,
+      async () => (this.readSignupPolicy ? this.readSignupPolicy() : { requireCardOnTrial: false }),
+    )
     this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, ratesRepo, hotelsRepo, channelsRepo })
+  }
+
+  /** Puerto #28: la política de alta vive en `admin` y la inyecta `subscriptions-admin-policy`. */
+  setSignupPolicyDeps(read: () => Promise<{ requireCardOnTrial: boolean }>): void {
+    this.readSignupPolicy = read
+  }
+
+  /** Política de alta vigente. La usa el alta para decidir si manda al Checkout antes del trial. */
+  signupPolicy(): Promise<SignupPolicy> {
+    return readSignupPolicy(this.readSignupPolicy)
   }
 
   /** Cablea el correo de verificación del alta (#421). Lo llama el bootstrap de email. */
@@ -59,31 +84,33 @@ export class SubscriptionsService {
     this.signupUc.setPlatformEmailSender(fn)
   }
 
-  // ACUMULA handlers — nunca pisa el anterior (mismo patrón que reservas/service.ts).
-  // Si dos conectores registran el mismo evento, ambos corren en cadena.
+  /** ACUMULA handlers — nunca pisa el anterior. Ver `shared/utils/compose-sockets.ts`. */
   setSockets(s: Partial<SubscriptionSockets>): void {
-    const next = s as Record<string, any>
-    const cur = this.sockets as Record<string, any>
-    for (const key of Object.keys(next)) {
-      const h = next[key]
-      if (!h) continue
-      const prev = cur[key]
-      cur[key] = prev ? async (...a: any[]) => { await prev(...a); await h(...a) } : h
-    }
+    composeSockets(this.sockets, s)
   }
 
-  async signup(input: SignupInput): Promise<SignupResult> {
-    const result = await this.signupUc.signup(input)
-    // Best-effort: el alta ya terminó (201 con la cuenta creada) — un connector caído
-    // (ej. referrals sin cargar) no puede deshacer nada de lo anterior.
-    try {
-      await this.sockets.onTrialStarted?.({
-        hotelId: result.hotelId, trialEndsAt: result.trialEndsAt, referralCode: input.referralCode,
-      })
-    } catch (e: any) {
-      this.logger.warn('onTrialStarted socket falló', { hotelId: result.hotelId, error: e.message })
-    }
-    return result
+  async signup(input: SignupInput, origin?: string): Promise<SignupResult> {
+    const created = await this.signupUc.signup(input)
+    return completeSignup(
+      { ...this.cardFlowDeps(), notifyTrialStarted: this.sockets.onTrialStarted },
+      await this.signupPolicy(), created, input, origin,
+    )
+  }
+
+  /** #28 — de acá derivan su copy la landing y el registro, en vez de prometer "sin tarjeta" en duro. */
+  async publicSignupPolicy(): Promise<{ requireCardOnTrial: boolean; trialDays: number }> {
+    const { requireCardOnTrial } = await this.signupPolicy()
+    return { requireCardOnTrial, trialDays: TRIAL_DAYS }
+  }
+
+  /** #28 — retomar el pago del alta sin poder loguearse. Ver `usecases/signup-policy.ts`. */
+  async resumeCheckout(email: string, password: string, origin: string): Promise<CreateCheckoutResult> {
+    return resumeAbandonedCheckout(this.cardFlowDeps(), await this.signupPolicy(), email, password, origin)
+  }
+
+  /** Puerto #28: identidad sin sesión. Lo inyecta `subscriptions-usuarios-owner`. */
+  setOwnerVerifier(fn: (email: string, password: string) => Promise<{ hotelId?: string } | null>): void {
+    this.verifyOwner = fn
   }
 
   /** ¿Este hotel puede trabajar hoy? Lo usan el login y el guard de las rutas. */
@@ -114,33 +141,10 @@ export class SubscriptionsService {
     return this.onboardingUc.status(hotelId)
   }
 
-  /** Estado para mostrarle al hotel cuánto le queda o qué tiene que pagar. */
-  async statusOf(hotelId: string): Promise<any> {
+  /** Estado para mostrarle al hotel cuánto le queda o qué tiene que pagar. Ver `usecases/status-of.ts`. */
+  async statusOf(hotelId: string): Promise<SubscriptionStatus> {
     const access = await this.accessUc.check(hotelId)
-    const sub = (await this.subscriptionsRepo.findMany({ hotelId }))[0]
-    // El mayor % vigente entre los descuentos activos (una fila 'active' sin vencer) — puede
-    // venir de una categoría (category_bonus) o de un descuento manual (percentage/free_month).
-    let activeDiscountPct: number | null = null
-    if (sub && this.discountsRepo) {
-      const now = new Date()
-      const discounts = await this.discountsRepo.findMany({ hotelId, status: 'active' })
-      const vigentes = (discounts as any[]).filter((d) => !d.endsAt || new Date(d.endsAt) > now)
-      if (vigentes.length > 0) activeDiscountPct = Math.max(...vigentes.map((d) => Number(d.discountPct) || 0))
-    }
-    return {
-      status: sub?.status ?? 'none',
-      trialEndsAt: sub?.trialEndsAt ?? null,
-      currentPeriodEnd: sub?.currentPeriodEnd ?? null,
-      planId: sub?.planId ?? '',
-      allowed: access.allowed,
-      reason: access.reason ?? null,
-      daysLeft: access.daysLeft ?? null,
-      // Sin esto el frontend no puede decidir si mostrar "Gestionar método de pago"
-      // (requiere un Customer de Stripe ya creado, es decir: pagó al menos una vez).
-      hasStripeCustomer: !!sub?.stripeCustomerId,
-      specialCategory: sub?.specialCategory ?? null,
-      activeDiscountPct,
-    }
+    return statusOf(this.subscriptionsRepo, this.discountsRepo, access, hotelId)
   }
 
   /** Cupón real de Stripe sobre la suscripción activa del hotel (F6 de PLAN-SUSCRIPCIONES.md,
@@ -152,16 +156,30 @@ export class SubscriptionsService {
   ): Promise<ApplyStripeDiscountResult> {
     return applyStripeDiscount(
       { subscriptionsRepo: this.subscriptionsRepo, discountsRepo: this.discountsRepo, logger: this.logger },
-      hotelId, discountPct, durationMonths, meta,
+      hotelId, discountPct, durationMonths, meta)
+  }
+
+  /**
+   * Suscribirse a un plan: Checkout Session de Stripe (cuenta de PLATAFORMA). Si el hotel viene de
+   * un alta que exige tarjeta y no la dio, el Checkout arranca la PRUEBA en Stripe en vez de
+   * cobrar de una (#28) — quién decide eso y con cuántos días: `usecases/signup-policy.ts`.
+   */
+  async createCheckout(hotelId: string, planId: string, origin: string): Promise<CreateCheckoutResult> {
+    const trialDays = await pendingTrialDays(this.subscriptionsRepo, await this.signupPolicy(), hotelId)
+    return createCheckoutSession(
+      { subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo, logger: this.logger },
+      hotelId, planId, origin, trialDays,
     )
   }
 
-  /** Suscribirse a un plan: Checkout Session de Stripe (cuenta de PLATAFORMA). */
-  createCheckout(hotelId: string, planId: string, origin: string): Promise<CreateCheckoutResult> {
-    return createCheckoutSession(
-      { subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo, logger: this.logger },
-      hotelId, planId, origin,
-    )
+  /** Lo que el flujo de alta con tarjeta necesita del módulo (`usecases/signup-policy.ts`). */
+  private cardFlowDeps() {
+    return {
+      subscriptionsRepo: this.subscriptionsRepo,
+      createCheckout: (h: string, p: string, o: string) => this.createCheckout(h, p, o),
+      verifyOwner: this.verifyOwner,
+      logger: this.logger,
+    }
   }
 
   /** Gestionar método de pago / ver facturas: Billing Portal de Stripe. */
@@ -171,13 +189,9 @@ export class SubscriptionsService {
 
   /** Webhook de la cuenta de PLATAFORMA (checkout/renovación/cancelación de la suscripción SaaS). */
   handlePlatformWebhook(rawBody: string | Buffer, signature: string) {
-    return processSubscriptionWebhook(
-      {
-        subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo,
-        plansRepo: this.plansRepo, logger: this.logger,
-        sendPlatformEmail: this.sendPlatformEmail, orm: this.orm,
-      },
-      rawBody, signature,
-    )
+    return processSubscriptionWebhook({
+      subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo,
+      logger: this.logger, sendPlatformEmail: this.sendPlatformEmail, orm: this.orm,
+    }, rawBody, signature)
   }
 }

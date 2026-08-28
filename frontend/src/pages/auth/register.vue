@@ -16,7 +16,7 @@
           </div>
           <h2 class="text-3xl font-black leading-tight mb-3">Empezá a gestionar tu hotel hoy</h2>
           <p class="text-white/70 text-sm leading-relaxed mb-8">
-            Sin tarjeta de crédito. Configurás tu hotel y arrancás en minutos.
+            {{ cardPromise }}
           </p>
           <ul class="space-y-3">
             <li v-for="item in perks" :key="item" class="flex items-start gap-2.5 text-sm text-white/85">
@@ -68,7 +68,7 @@
           {{ step === 1 ? 'Creá tu cuenta' : 'Contanos de tu hotel' }}
         </h1>
         <p class="text-sm text-text-muted mb-6">
-          {{ step === 1 ? `Empezás con ${trialDays} días gratis, sin tarjeta.` : 'Estos datos se pueden cambiar después.' }}
+          {{ step === 1 ? subtitleStep1 : 'Estos datos se pueden cambiar después.' }}
         </p>
 
         <!-- Paso 1: la persona -->
@@ -257,8 +257,21 @@ import logoWhite from '@/assets/logo/logo-horizontal-white.png'
 
 usePageMeta(AUTH_PAGE_META.register)
 
-/** Debe coincidir con `TRIAL_DAYS` del backend. Se muestra en 4 lugares. */
-const trialDays = 7
+/**
+ * #28: la política del alta la fija el super-admin, no el build. `trialDays` y "¿pide tarjeta?"
+ * vienen de `GET /api/public/signup-policy`; los valores de acá son solo el estado inicial hasta
+ * que responde (antes `trialDays` era un 7 escrito a mano en paralelo a `TRIAL_DAYS` del backend,
+ * y el "sin tarjeta" del copy contradecía lo que el servidor realmente hacía).
+ */
+const trialDays = ref(7)
+const requireCard = ref(false)
+
+/** Lo que la pantalla promete sobre la tarjeta. Un solo lugar: se usa en el hero y en el subtítulo. */
+const cardPromise = computed(() =>
+  requireCard.value
+    ? 'Pedimos tu tarjeta para empezar, no se cobra nada durante la prueba.'
+    : 'Sin tarjeta de crédito. Configurás tu hotel y arrancás en minutos.',
+)
 
 /**
  * Topes de cada campo. Espejan los `max` de SignupSchema en el backend: acá
@@ -289,12 +302,19 @@ const ICON_DOT = '<svg viewBox="0 0 24 24" fill="currentColor" class="w-full h-f
  */
 const captchaSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY ?? ''
 
-const perks = [
+const subtitleStep1 = computed(() =>
+  requireCard.value
+    ? `Empezás con ${trialDays.value} días gratis. Te pedimos la tarjeta ahora y recién cobramos al vencer.`
+    : `Empezás con ${trialDays.value} días gratis, sin tarjeta.`,
+)
+
+const perks = computed(() => [
   'Reservas, habitaciones y huéspedes',
   'Limpieza y mantenimiento del día',
   'Cobros, caja y facturación',
-  'Sin tarjeta de crédito',
-]
+  // El último bullet dice la verdad de la política vigente, no una promesa fija.
+  requireCard.value ? `${trialDays.value} días sin cargo, cancelás cuando quieras` : 'Sin tarjeta de crédito',
+])
 
 const route = useRoute()
 const router = useRouter()
@@ -415,6 +435,16 @@ onUnmounted(() => {
 })
 
 onMounted(async () => {
+  // #28: la política decide el copy de la pantalla, pero no puede impedir registrarse ni demorar
+  // la carga de los planes — arranca en paralelo y aislada. Si no responde queda el texto
+  // conservador; el backend es igual el que decide de verdad si pide tarjeta.
+  const policyPromise = SignupService.signupPolicy()
+    .then((policy) => {
+      requireCard.value = policy.requireCardOnTrial
+      trialDays.value = policy.trialDays
+    })
+    .catch(() => { /* default conservador */ })
+
   try {
     const res = await SignupService.publicPlans()
     plans.value = res ?? []
@@ -427,6 +457,7 @@ onMounted(async () => {
     if (matched) form.value.planId = matched.id
     else if (plans.value.length && !form.value.planId) form.value.planId = plans.value[0]!.id
   } catch { /* los planes son opcionales para registrarse */ }
+  await policyPromise
 
   if (referralCode.value) {
     try {
@@ -470,7 +501,7 @@ async function submit() {
   }
   saving.value = true
   try {
-    await SignupService.signup({
+    const created = await SignupService.signup({
       hotelName: form.value.hotelName.trim(),
       email: form.value.email.trim(),
       password: form.value.password,
@@ -482,6 +513,20 @@ async function submit() {
       referralCode: referralCode.value || undefined,
       captchaToken: captchaToken.value || undefined,
     })
+    // #28: con la política que exige tarjeta, la prueba todavía NO arrancó. Se va derecho a
+    // Stripe con la URL que armó el alta — no se intenta loguear primero, porque el login corre
+    // el gate de suscripción y cortaría a este hotel con `payment_method_required`.
+    if (created?.requiresPaymentMethod) {
+      if (created.checkoutUrl) {
+        window.location.href = created.checkoutUrl
+        return
+      }
+      // Stripe no respondió: la cuenta existe pero no hay a dónde mandarlo. Se lo dice en vez de
+      // dejarlo girando, y desde el login puede retomar el pago.
+      error.value = 'Tu cuenta quedó creada, pero no pudimos abrir el pago. Iniciá sesión para completarlo.'
+      return
+    }
+
     await auth.login(form.value.email.trim(), form.value.password)
     router.push('/panel/dashboard')
   } catch (e: any) {

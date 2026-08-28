@@ -14,6 +14,9 @@ export interface AccessCheck {
 
 /** Qué se le dice al que no puede entrar. Tiene que quedar claro el siguiente paso. */
 const MESSAGES: Record<string, string> = {
+  // #28: la prueba NO arrancó — falta la tarjeta. Decirle "tu prueba terminó" sería mentira y
+  // manda al lugar equivocado: lo que tiene que hacer es completar el pago que dejó a medias.
+  payment_method_required: 'Te falta cargar el método de pago para empezar tu prueba. Completá ese paso y entrás.',
   trial_expired: 'Tu prueba gratis terminó. Elegí un plan para seguir usando el sistema.',
   subscription_expired: 'Tu suscripción venció. Renovala para volver a entrar.',
   hotel_suspended: 'La cuenta del hotel está suspendida. Escribinos para reactivarla.',

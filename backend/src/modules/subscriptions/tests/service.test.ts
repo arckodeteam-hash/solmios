@@ -185,3 +185,57 @@ describe('SubscriptionsService.publicPlans — orden por precio (#30)', () => {
     expect(slugs(await serviceWith([...rows].reverse()).publicPlans())).toEqual(['ambar', 'zafiro'])
   })
 })
+
+// #28 — la política de la plataforma decide qué promete el alta y a quién deja entrar. Lo que se
+// prueba acá es el cableado del service: que el flag llegue al resultado del alta y que retomar
+// el pago no sea una puerta de atrás.
+describe('SubscriptionsService — política de tarjeta en la prueba (#28)', () => {
+  it('sin el puerto cableado, el alta no exige tarjeta y la política pública lo dice', async () => {
+    const svc = setup()
+    expect(await svc.signupPolicy()).toEqual({ requireCardOnTrial: false })
+    expect(await svc.publicSignupPolicy()).toEqual({ requireCardOnTrial: false, trialDays: 7 })
+  })
+
+  it('con la política prendida, la política pública la refleja junto con los días de prueba', async () => {
+    const svc = setup()
+    svc.setSignupPolicyDeps(async () => ({ requireCardOnTrial: true }))
+    expect(await svc.publicSignupPolicy()).toEqual({ requireCardOnTrial: true, trialDays: 7 })
+  })
+
+  it('si la config explota, la política pública cae al camino conservador (no exige tarjeta)', async () => {
+    const svc = setup()
+    svc.setSignupPolicyDeps(async () => { throw new Error('configuration caída') })
+    expect(await svc.signupPolicy()).toEqual({ requireCardOnTrial: false })
+  })
+
+  it('retomar el pago sin verificador cableado no procede', async () => {
+    const svc = setup()
+    expect(svc.resumeCheckout('a@b.com', 'x', 'https://app.test')).rejects.toThrow()
+  })
+
+  it('credenciales que no validan no devuelven checkout (ni dicen si la cuenta existe)', async () => {
+    const svc = setup()
+    svc.setSignupPolicyDeps(async () => ({ requireCardOnTrial: true }))
+    svc.setOwnerVerifier(async () => null)
+    expect(svc.resumeCheckout('a@b.com', 'mala', 'https://app.test')).rejects.toThrow()
+  })
+
+  it('credenciales válidas pero SIN pago pendiente tampoco abren un checkout', async () => {
+    // Trial con la tarjeta ya cargada: no hay nada que retomar.
+    const svc = setup([
+      { id: 's1', hotelId: 'h1', planId: 'p1', status: 'trialing', trialEndsAt: new Date(Date.now() + 3 * 86_400_000).toISOString(), paymentMethodAddedAt: '2026-08-01T00:00:00Z' },
+    ])
+    svc.setSignupPolicyDeps(async () => ({ requireCardOnTrial: true }))
+    svc.setOwnerVerifier(async () => ({ hotelId: 'h1' }))
+    expect(svc.resumeCheckout('a@b.com', 'ok', 'https://app.test')).rejects.toThrow(/pago pendiente/i)
+  })
+
+  it('con la prueba vencida tampoco se retoma: ya no es un alta a medias', async () => {
+    const svc = setup([
+      { id: 's1', hotelId: 'h1', planId: 'p1', status: 'trialing', trialEndsAt: new Date(Date.now() - 86_400_000).toISOString() },
+    ])
+    svc.setSignupPolicyDeps(async () => ({ requireCardOnTrial: true }))
+    svc.setOwnerVerifier(async () => ({ hotelId: 'h1' }))
+    expect(svc.resumeCheckout('a@b.com', 'ok', 'https://app.test')).rejects.toThrow(/pago pendiente/i)
+  })
+})

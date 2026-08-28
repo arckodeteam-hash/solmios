@@ -55,6 +55,26 @@
             Un Fundador que se va no puede volver
           </label>
         </div>
+        <!-- #28: define qué promete el registro. El copy de la landing y del alta se deriva de
+             este switch, así que prenderlo/apagarlo cambia las dos pantallas sin tocar código. -->
+        <div class="md:col-span-4 rounded-xl border border-border bg-surface p-4">
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input v-model="settingsForm.requireCardOnTrial" type="checkbox" class="accent-cyan mt-0.5" />
+            <span>
+              <span class="block text-sm font-bold text-text-secondary">Pedir tarjeta para empezar la prueba</span>
+              <span class="block text-xs text-text-muted mt-1">
+                <template v-if="settingsForm.requireCardOnTrial">
+                  El alta manda al checkout de Stripe: la tarjeta queda guardada sin cobrar, y al vencer
+                  la prueba se cobra el plan automáticamente. Quien no la cargue no entra al panel.
+                </template>
+                <template v-else>
+                  La prueba arranca sin tarjeta. Al vencer se corta el acceso y el hotel tiene que
+                  contratar un plan a mano — no hay cobro automático.
+                </template>
+              </span>
+            </span>
+          </label>
+        </div>
         <div class="md:col-span-4">
           <button type="submit" :disabled="savingSettings" class="px-5 py-2.5 bg-navy text-white rounded-xl text-sm font-bold cursor-pointer disabled:opacity-50">
             {{ savingSettings ? 'Guardando...' : 'Guardar reglas' }}
@@ -81,6 +101,7 @@ const savingSettings = ref(false)
 const categories = ref<SpecialCategoryConfig[]>([])
 const settingsForm = ref<SubscriptionSettings>({
   reminderDaysBefore: 5, gracePeriodDays: 5, founderChurnBlocksReturn: true, maxManualDiscountPct: 100,
+  requireCardOnTrial: true,
 })
 
 const CATEGORY_LABELS: Record<string, string> = { founder_one: 'Fundador Uno', founder_two: 'Fundador Dos', pioneer: 'Pionero' }

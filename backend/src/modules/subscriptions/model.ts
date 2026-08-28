@@ -34,6 +34,26 @@ export const SubscriptionsModel: ModelDefinition = {
     /** Identificadores de la cuenta Stripe de la PLATAFORMA (no la del hotel). */
     stripeCustomerId: { type: 'string' },
     stripeSubscriptionId: { type: 'string' },
+    /**
+     * Cuándo quedó guardada la tarjeta del alta (ISO). Null = todavía no hay método de pago (#28).
+     *
+     * Es el dato que mira `access.ts` cuando la plataforma exige tarjeta para arrancar la prueba
+     * (`subscription_settings.requireCardOnTrial`): sin esta marca el trial NO corre y el hotel
+     * solo ve la pantalla de completar el pago. Se sella en el webhook, cuando Stripe confirma
+     * el `checkout.session.completed` — nunca en el alta, que todavía no vio ninguna tarjeta.
+     */
+    paymentMethodAddedAt: { type: 'string' },
+    /**
+     * Cuándo el alta mandó a este hotel al Checkout a cargar la tarjeta (ISO). Null = nunca se lo
+     * mandó, así que NO se le puede exigir (#28).
+     *
+     * Existe para que la exigencia sea consecuencia de un hecho y no de una config: si el plan no
+     * tiene `stripePriceId`, la Checkout Session no se crea y esta marca no se sella — el hotel
+     * entra con la prueba normal en vez de quedar encerrado por una tarjeta que el sistema nunca
+     * pudo pedirle. En producción los 6 planes tenían `stripePriceId` vacío: con el corte atado
+     * sólo al switch, prender la política dejaba el alta pública inutilizable.
+     */
+    awaitingPaymentMethodSince: { type: 'string' },
     /** Dedup del cron de aviso de trial (trial-reminder-cron): sin esto se reenviaría cada tick. */
     trialReminderSentAt: { type: 'string' },
     trialExpiredEmailSentAt: { type: 'string' },

@@ -10,6 +10,18 @@ export interface SubscriptionSettings {
   gracePeriodDays: number
   founderChurnBlocksReturn: boolean
   maxManualDiscountPct: number
+  /**
+   * ¿El alta exige tarjeta ANTES de que empiecen los días de prueba? (#28)
+   *
+   * true  — el alta crea el hotel y lo manda al Checkout de Stripe: la tarjeta queda guardada
+   *         sin cobrar, el trial corre, y al vencer Stripe cobra solo. Sin tarjeta no se entra
+   *         (`access.ts` deniega con `payment_method_required`).
+   * false — trial sin tarjeta: al vencer se corta el acceso y hay que contratar a mano.
+   *
+   * El copy del registro y de la landing se DERIVA de este flag (`GET /api/public/signup-policy`),
+   * no es un literal: prometer "sin tarjeta" con el flag en true es la contradicción del #28.
+   */
+  requireCardOnTrial: boolean
 }
 
 export const DEFAULT_SUBSCRIPTION_SETTINGS: SubscriptionSettings = {
@@ -17,6 +29,8 @@ export const DEFAULT_SUBSCRIPTION_SETTINGS: SubscriptionSettings = {
   gracePeriodDays: 5,
   founderChurnBlocksReturn: true,
   maxManualDiscountPct: 100,
+  // Decisión del dueño (#28): la política por defecto es pedir la tarjeta al iniciar la prueba.
+  requireCardOnTrial: true,
 }
 
 const SETTINGS_KEY = 'subscription_settings'

@@ -40,6 +40,20 @@ export interface SignupResult {
   userId: string
   trialEndsAt: string
   trialDays: number
+  /**
+   * #28: la plataforma exige tarjeta antes de que corra la prueba
+   * (`subscription_settings.requireCardOnTrial`). El alta creó la cuenta igual —hace falta para
+   * el Customer de Stripe— pero el frontend NO debe mandar al panel: tiene que ir al Checkout.
+   * Si el usuario lo abandona, `access.ts` lo corta con `payment_method_required`.
+   */
+  requiresPaymentMethod: boolean
+  /**
+   * URL del Checkout de Stripe a la que hay que mandar al usuario cuando `requiresPaymentMethod`.
+   * La arma el service en el mismo request del alta (el usuario todavía no tiene sesión, y el
+   * login lo cortaría por falta de método de pago). Ausente si Stripe no respondió: la cuenta
+   * quedó creada igual y el pago se completa desde el login.
+   */
+  checkoutUrl?: string
 }
 
 export interface SignupDeps {
@@ -201,6 +215,8 @@ export class SignupUseCase {
       userId,
       trialEndsAt: trialEnds.toISOString(),
       trialDays: TRIAL_DAYS,
+      // Lo resuelve el service, que es quien tiene el puerto de la política de plataforma.
+      requiresPaymentMethod: false,
     }
   }
 
