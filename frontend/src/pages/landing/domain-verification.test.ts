@@ -18,6 +18,14 @@ describe('index.html — verificación de dominio de Meta', () => {
     expect(html).toContain('name="facebook-domain-verification"')
   })
 
+  // Pasó de verdad: dos sesiones agregaron el mismo meta en posiciones distintas del <head> y el
+  // rebase no lo marcó como conflicto. Repetirlo no verifica dos veces — sólo ensucia el <head> y
+  // esconde cuál es el token vigente el día que haya que rotarlo.
+  it('aparece UNA sola vez', () => {
+    const veces = html.match(/name="facebook-domain-verification"/g)?.length ?? 0
+    expect(veces).toBe(1)
+  })
+
   it('conserva el token exacto que emitió Business Manager', () => {
     const match = html.match(/<meta\s+name="facebook-domain-verification"\s+content="([^"]+)"/)
     expect(match?.[1]).toBe('jsbyldr610laxecqusawj9gauexmaz')
