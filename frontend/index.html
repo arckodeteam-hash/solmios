@@ -7,6 +7,11 @@
     <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0F1E3D" />
+    <!-- Verificación de dominio de Meta (Business Manager). Va en el HTML servido, no por JS: el
+         crawler de Meta lee el fuente y no ejecuta la SPA. Vive acá y no en `usePageMeta` porque
+         es del DOMINIO, no de una página — nada que dependa del router puede garantizarlo.
+         Distinto de `meta_pixel_id` (módulo `server-tracking`), que es por hotel. -->
+    <meta name="facebook-domain-verification" content="jsbyldr610laxecqusawj9gauexmaz" />
     <meta name="description" content="SolmiOS — Hospitality OS. Sistema integral de gestión hotelera con planning, reservas, channel manager y pagos." />
     <!-- Verificación de dominio para Meta Business (portfolio SOLMI OS, id 1737426427492058).
          Tiene que estar en el HTML estático servido — Meta no ve tags inyectados por Vue en runtime. -->
