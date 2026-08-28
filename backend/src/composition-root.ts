@@ -472,6 +472,8 @@ import { publicapiReservasConnector } from './connectors/publicapi-reservas'
 import { reservasWebhooksConnector } from './connectors/reservas-webhooks'
 import { paymentsWebhooksConnector } from './connectors/payments-webhooks'
 import { subscriptionsReferralsConnector } from './connectors/subscriptions-referrals'
+import { subscriptionsAdminPolicyConnector } from './connectors/subscriptions-admin-policy'
+import { subscriptionsUsuariosOwnerConnector } from './connectors/subscriptions-usuarios-owner'
 // F3 3.2 (solmi-direct-booking) — Adaptadores HTTP externos de reviews. NO son conectores
 // inter-módulo (los que wirean sockets): son clientes de APIs externas. Imports y factory
 // `externalReviewsFetchers` viven arriba (cerca de ExternalReviewsModule) para que el módulo
@@ -683,6 +685,10 @@ system.addConnector('payments-webhooks', paymentsWebhooksConnector)
 // Programa de referidos: subscriptions emite onTrialStarted con el referralCode del alta pública →
 // referrals.linkSignup() vincula al referido con el referidor. Best-effort (un fallo nunca volta el alta).
 system.addConnector('subscriptions-referrals', subscriptionsReferralsConnector)
+// #28 — la política de alta (¿tarjeta antes de la prueba?) la fija el super-admin, no el código.
+system.addConnector('subscriptions-admin-policy', subscriptionsAdminPolicyConnector)
+// #28 — quien abandonó el Checkout del alta no puede loguearse: prueba quién es con su clave.
+system.addConnector('subscriptions-usuarios-owner', subscriptionsUsuariosOwnerConnector)
 
 // ─── Infraestructura transversal ────────────────────────────────────────────
 configureStripe(orm, logger)

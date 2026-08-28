@@ -74,7 +74,17 @@
 
             <!-- Cuenta bloqueada por la suscripción: no alcanza con el error,
                  hay que decirle a dónde ir a resolverlo. -->
-            <div v-if="error && needsPlan" class="bg-warning/10 border border-warning/30 p-3 rounded-xl">
+            <!-- #28: el alta quedó a medias (falta la tarjeta). No es "elegí un plan": el plan ya
+                 lo eligió — le falta terminar el pago que abandonó. Se lo lleva de vuelta a Stripe. -->
+            <div v-if="error && needsPayment" class="bg-warning/10 border border-warning/30 p-3 rounded-xl">
+              <div class="text-xs font-bold text-navy mb-2">{{ error }}</div>
+              <button type="button" :disabled="resuming" @click="resumeCheckout"
+                class="inline-flex px-3 py-1.5 rounded-lg bg-navy text-white text-[11px] font-bold hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50">
+                {{ resuming ? 'Abriendo el pago…' : 'Completar mi pago' }}
+              </button>
+              <div v-if="resumeError" class="mt-2 text-[11px] font-bold text-coral">{{ resumeError }}</div>
+            </div>
+            <div v-else-if="error && needsPlan" class="bg-warning/10 border border-warning/30 p-3 rounded-xl">
               <div class="text-xs font-bold text-navy mb-2">{{ error }}</div>
               <router-link
                 to="/registro"
@@ -118,6 +128,7 @@ import { useRouter } from 'vue-router'
 import logoWhite from '@/assets/logo/logo-horizontal-white.png'
 import logoStackedColor from '@/assets/logo/logo-stacked-color.png'
 import { useAuthStore } from '@/stores/auth.store'
+import { SignupService } from '@/services/Signup.service'
 import { AuthService } from '@/services/Auth.service'
 import { usePageMeta } from '@/composables/usePageMeta'
 import { AUTH_PAGE_META } from './auth-meta'
@@ -165,6 +176,10 @@ const password = ref('')
 const error = ref('')
 /** El corte por suscripción se resuelve contratando, no reintentando la clave. */
 const needsPlan = ref(false)
+// #28 — distinto de `needsPlan`: acá el plan ya está elegido y lo que falta es la tarjeta.
+const needsPayment = ref(false)
+const resuming = ref(false)
+const resumeError = ref('')
 const loading = ref(false)
 
 const ROLE_LABELS: Record<string, string> = {
@@ -232,6 +247,8 @@ async function handleLogin() {
   loading.value = true
   error.value = ''
   needsPlan.value = false
+  needsPayment.value = false
+  resumeError.value = ''
   try {
     await auth.login(email.value, password.value)
     const role = auth.userRole
@@ -242,9 +259,31 @@ async function handleLogin() {
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Error al iniciar sesión'
-    needsPlan.value = /prueba|suscripci|plan|suspendida|desactivada/i.test(error.value)
+    // El motivo estructurado manda; el regex sobre el texto queda solo como respaldo para los
+    // cortes viejos, que no viajan con `reason`.
+    needsPayment.value = (e as any)?.reason === 'payment_method_required'
+      || /método de pago/i.test(error.value)
+    needsPlan.value = !needsPayment.value
+      && /prueba|suscripci|plan|suspendida|desactivada/i.test(error.value)
   } finally {
     loading.value = false
+  }
+}
+
+/**
+ * #28 — reabre el Checkout que quedó a medias. Manda las mismas credenciales que acaban de
+ * fallar el login: el servidor las valida y devuelve la URL de Stripe, sin emitir sesión.
+ */
+async function resumeCheckout() {
+  resuming.value = true
+  resumeError.value = ''
+  try {
+    const { url } = await SignupService.resumeCheckout(email.value.trim(), password.value)
+    window.location.href = url
+  } catch (e) {
+    resumeError.value = e instanceof Error ? e.message : 'No pudimos abrir el pago. Probá de nuevo.'
+  } finally {
+    resuming.value = false
   }
 }
 

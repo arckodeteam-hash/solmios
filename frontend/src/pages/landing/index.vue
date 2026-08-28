@@ -342,7 +342,7 @@
           <span class="text-[11px] font-extrabold tracking-wide text-white/90 uppercase">Prueba gratis 14 días</span>
         </div>
         <h2 class="text-3xl md:text-5xl font-black text-white mb-6 leading-tight">¿Listo para transformar<br>tu hotel?</h2>
-        <p class="text-white/60 mb-10 max-w-xl mx-auto">Únete a 500+ hoteles que ya gestionan todo desde SolmiOS. Sin tarjeta de crédito, cancela cuando quieras.</p>
+        <p class="text-white/60 mb-10 max-w-xl mx-auto">Únete a 500+ hoteles que ya gestionan todo desde SolmiOS. {{ trialPromise }}</p>
         <div class="flex flex-wrap gap-4 justify-center">
           <router-link to="/registro" class="group inline-flex items-center gap-2 bg-white text-blue font-bold text-sm px-8 py-4 rounded-xl hover:bg-blue-50 hover:-translate-y-0.5 transition-all duration-300 shadow-xl shadow-blue-900/30">
             Comenzar Gratis
@@ -352,7 +352,7 @@
         </div>
         <!-- Trust mini-badges -->
         <div class="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 mt-12 text-white/40">
-          <span class="inline-flex items-center gap-2 text-xs font-semibold"><svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Sin tarjeta de crédito</span>
+          <span class="inline-flex items-center gap-2 text-xs font-semibold"><svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>{{ trialBadge }}</span>
           <span class="inline-flex items-center gap-2 text-xs font-semibold"><svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Configuración en 24h</span>
           <span class="inline-flex items-center gap-2 text-xs font-semibold"><svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Cancela cuando quieras</span>
         </div>
@@ -365,7 +365,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { SignupService } from '@/services/Signup.service'
 import heroImage from '@/assets/hero.png'
 import SiteHeader from '@/components/site/SiteHeader.vue'
 import SiteFooter from '@/components/site/SiteFooter.vue'
@@ -464,11 +465,38 @@ const plansLoading = ref(true)
 /** La API no contestó (o no hay planes publicados): se muestra el fallback y se avisa. */
 const plansFailed = ref(false)
 
+/**
+ * #28 — la landing prometía "Sin tarjeta de crédito" en duro mientras el super-admin podía
+ * exigirla. El texto ahora lo decide `GET /api/public/signup-policy`, la misma fuente que usa el
+ * registro; el valor inicial es el conservador por si el endpoint no responde.
+ */
+const requireCard = ref(false)
+const trialDays = ref(7)
+const trialPromise = computed(() =>
+  requireCard.value
+    ? `Empezás con ${trialDays.value} días sin cargo, cancela cuando quieras.`
+    : 'Sin tarjeta de crédito, cancela cuando quieras.',
+)
+const trialBadge = computed(() =>
+  requireCard.value ? `${trialDays.value} días sin cargo` : 'Sin tarjeta de crédito',
+)
+
 onMounted(async () => {
+  // Las dos lecturas son independientes y arrancan JUNTAS: encadenarlas retrasaba la carga de los
+  // planes —el contenido de la página— por un texto. La política además va aislada: decide UN
+  // copy y no puede tumbar el resto; sin ella queda el conservador ("Sin tarjeta de crédito").
+  const policyPromise = SignupService.signupPolicy()
+    .then((policy) => {
+      requireCard.value = policy.requireCardOnTrial
+      trialDays.value = policy.trialDays
+    })
+    .catch(() => { /* queda el default */ })
+
   const res = await PlanCatalogService.load()
   plans.value = res.plans
   plansFailed.value = !res.fromApi
   plansLoading.value = false
+  await policyPromise
 })
 
 const testimonials = [

@@ -155,6 +155,11 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
         break
       }
 
+      // #28: con el alta que exige tarjeta, el Checkout arranca la prueba EN Stripe
+      // (`trial_period_days`), así que la suscripción vuelve en `trialing`, no en `active`.
+      // Forzar 'active' acá le daba al hotel un período pago que nadie cobró todavía y borraba
+      // el trial local. El status real lo dice Stripe más abajo, cuando se lee la Subscription;
+      // 'active' queda solo como valor por defecto para el Checkout sin prueba de siempre.
       const patch: Record<string, any> = { status: 'active' }
       // El plan PAGADO manda. El trial pudo arrancar con un plan y pagar OTRO (el Checkout
       // se arma contra el plan elegido al pagar): recién acá, con el pago confirmado, la
@@ -176,10 +181,20 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
         // (default del modelo) y subscription-suspension-cron.ts mandaba SIEMPRE el mensaje de
         // "pagá vos" (#540) en vez de "se cobrará solo" (#539) aunque la tarjeta estuviera cargada.
         patch.isRecurring = true
+        // La tarjeta quedó guardada: es lo que `access.ts` mira para dejar correr la prueba
+        // cuando la plataforma la exige (#28). Se sella acá y no en el alta porque el alta
+        // todavía no vio ninguna tarjeta — recién Stripe confirma que existe.
+        patch.paymentMethodAddedAt = new Date().toISOString()
         try {
           const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId)
           const periodEnd = currentPeriodEndOf(stripeSub)
           if (periodEnd) patch.currentPeriodEnd = periodEnd
+          // Checkout con prueba: Stripe devuelve `trialing` y la fecha real de fin. Se copian
+          // los dos, para que el corte local (access.ts) y el de Stripe digan lo mismo.
+          if (stripeSub.status === 'trialing') {
+            patch.status = 'trialing'
+            if (stripeSub.trial_end) patch.trialEndsAt = new Date(stripeSub.trial_end * 1000).toISOString()
+          }
         } catch (e) {
           logger.warn('No se pudo leer current_period_end de la Subscription de Stripe', { error: (e as Error).message })
         }

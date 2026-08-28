@@ -45,6 +45,24 @@ export interface SignupResult {
   userId: string
   trialEndsAt: string
   trialDays: number
+  /**
+   * #28: la plataforma pide tarjeta ANTES de que corra la prueba. La cuenta ya existe, pero el
+   * registro no debe mandar al panel: tiene que llevar al checkout de Stripe. Quien lo abandone
+   * queda con el acceso cortado (`reason: 'payment_method_required'`).
+   */
+  requiresPaymentMethod?: boolean
+  /** URL del Checkout de Stripe a la que mandar al usuario. La arma el alta, no el frontend. */
+  checkoutUrl?: string
+}
+
+/**
+ * Qué promete el alta hoy. Sale del servidor (`subscription_settings.requireCardOnTrial` +
+ * `TRIAL_DAYS`) y NO de literales en el template: el "sin tarjeta" escrito a mano en la landing
+ * y en el registro era justamente la contradicción del #28.
+ */
+export interface SignupPolicy {
+  requireCardOnTrial: boolean
+  trialDays: number
 }
 
 /** Estado de la suscripción del hotel logueado. */
@@ -90,9 +108,37 @@ export const SignupService = {
     return Number.isFinite(pct) && pct > 0 && pct < 100 ? pct : null
   },
 
+  /**
+   * Política del alta. Ante cualquier fallo devuelve el camino conservador —sin tarjeta, 7 días—
+   * para que la pantalla de registro se pueda dibujar aunque el endpoint no responda; el backend
+   * es igual el que decide de verdad, esto solo elige el texto.
+   */
+  async signupPolicy(): Promise<SignupPolicy> {
+    try {
+      const res = await http.get<any>('/public/signup-policy')
+      const p = unwrap<any>(res)
+      const days = Number(p?.trialDays)
+      return {
+        requireCardOnTrial: p?.requireCardOnTrial === true,
+        trialDays: Number.isFinite(days) && days > 0 ? days : 7,
+      }
+    } catch {
+      return { requireCardOnTrial: false, trialDays: 7 }
+    }
+  },
+
   async signup(payload: SignupPayload): Promise<SignupResult> {
     const res = await http.post<any>('/public/signup', payload)
     return unwrap<SignupResult>(res)
+  },
+
+  /**
+   * #28 — reabre el Checkout del alta para quien no puede loguearse por no haberlo completado.
+   * Manda credenciales y recibe SOLO la URL de Stripe: no crea sesión ni devuelve datos del usuario.
+   */
+  async resumeCheckout(email: string, password: string): Promise<{ url: string }> {
+    const res = await http.post<any>('/public/resume-checkout', { email, password })
+    return unwrap<{ url: string }>(res)
   },
 
   async mySubscription(): Promise<MySubscription> {
