@@ -82,7 +82,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 </ul>
 <p>Nada en esta cláusula limita la responsabilidad que por ley no puede excluirse, incluidos los derechos que otorga la Ley 358-05 de Protección de los Derechos del Consumidor.</p>
 <h2>12. Privacidad</h2>
-<p>El tratamiento de datos personales se rige por nuestra <a href="/p/privacidad">Política de Privacidad</a>, que forma parte integrante de estos términos.</p>
+<p>El tratamiento de datos personales se rige por nuestra <a href="/p/privacidad">Política de Privacidad</a>, que forma parte integrante de estos términos. Si querés pedir la eliminación de tus datos, consulta nuestra página de <a href="/p/eliminacion-datos">Eliminación de Datos</a>.</p>
 <h2>13. Modificaciones</h2>
 <p>Podemos actualizar estos términos. La versión vigente será siempre la publicada en esta página, con su fecha de actualización. Los cambios sustanciales se notificarán con treinta (30) días de anticipación a los establecimientos clientes.</p>
 <h2>14. Terminación</h2>
@@ -110,7 +110,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <p>SOLMI OS es una plataforma de gestión hotelera (PMS) que incluye un asistente de atención automatizada por WhatsApp, Instagram y Facebook Messenger.</p>
 <h2>2. Qué es esta política</h2>
 <p>Este documento explica qué datos personales recogemos, para qué los usamos, con quién los compartimos, cuánto tiempo los conservamos y qué derechos tienes sobre ellos. Aplica a todas las personas que interactúan con SOLMI OS: huéspedes de los hoteles que usan nuestra plataforma, personal de esos hoteles, y visitantes de nuestro sitio web.</p>
-<p>Se rige por la Ley No. 172-13 sobre Protección de Datos Personales de la República Dominicana.</p>
+<p>Se rige por la Ley No. 172-13 sobre Protección de Datos Personales de la República Dominicana. Forma parte integrante de nuestros <a href="/p/terminos">Términos y Condiciones</a>.</p>
 <h2>3. Qué datos recogemos</h2>
 <h3>3.1 Cuando nos escribes por WhatsApp, Instagram o Facebook</h3>
 <ul>

@@ -77,7 +77,7 @@
 
     <!-- ═══ TRUST STRIP — carrusel infinito full-width ═══ -->
     <section class="w-full bg-white border-y border-slate-100 py-10 overflow-hidden">
-      <p class="text-center text-xs text-slate-400 mb-7 px-6">Más de 500 hoteles y alojamientos confían en SolmiOS</p>
+      <p class="text-center text-xs text-slate-400 mb-7 px-6">Conectado con las plataformas que tu hotel ya usa</p>
       <div class="relative overflow-hidden">
         <!-- Degradados laterales para efecto fade -->
         <div class="absolute left-0 top-0 bottom-0 w-20 md:w-32 bg-gradient-to-r from-white to-transparent z-10 pointer-events-none"></div>
@@ -299,33 +299,6 @@
       </div>
     </section>
 
-    <!-- ═══ TESTIMONIALS ═══ -->
-    <section id="testimonials" class="py-24 px-6 bg-slate-50">
-      <div class="max-w-7xl mx-auto">
-        <div class="text-center mb-16">
-          <div class="inline-flex items-center gap-2 mb-5 px-3.5 py-1.5 rounded-full bg-blue-50 border border-blue-100">
-            <span class="text-[11px] font-extrabold tracking-wide text-blue uppercase">Testimonios</span>
-          </div>
-          <h2 class="text-3xl md:text-4xl font-black text-navy">Hoteles que están creciendo con nosotros</h2>
-        </div>
-        <div class="grid md:grid-cols-3 gap-6">
-          <div v-for="t in testimonials" :key="t.name" class="bg-white border border-slate-100 rounded-2xl p-8 hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
-            <div class="flex gap-0.5 mb-5">
-              <svg v-for="i in 5" :key="i" class="w-4 h-4" fill="#D4AC0D" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            </div>
-            <p class="text-sm text-slate-600 leading-relaxed mb-6">"{{ t.quote }}"</p>
-            <div class="flex items-center gap-3">
-              <div class="w-10 h-10 rounded-full flex items-center justify-center text-sm font-black text-white" :style="`background:${t.avatarBg}`">{{ t.initials }}</div>
-              <div>
-                <div class="text-sm font-bold text-navy">{{ t.name }}</div>
-                <div class="text-[10px] text-slate-400">{{ t.hotel }}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <!-- ═══ CTA ═══ -->
     <section class="relative py-28 px-6 overflow-hidden bg-navy-deep">
       <!-- Glows decorativos -->
@@ -342,7 +315,7 @@
           <span class="text-[11px] font-extrabold tracking-wide text-white/90 uppercase">Prueba gratis 14 días</span>
         </div>
         <h2 class="text-3xl md:text-5xl font-black text-white mb-6 leading-tight">¿Listo para transformar<br>tu hotel?</h2>
-        <p class="text-white/60 mb-10 max-w-xl mx-auto">Únete a 500+ hoteles que ya gestionan todo desde SolmiOS. {{ trialPromise }}</p>
+        <p class="text-white/60 mb-10 max-w-xl mx-auto">Gestioná reservas, canales, limpieza y facturación desde un solo panel. {{ trialPromise }}</p>
         <div class="flex flex-wrap gap-4 justify-center">
           <router-link to="/registro" class="group inline-flex items-center gap-2 bg-white text-blue font-bold text-sm px-8 py-4 rounded-xl hover:bg-blue-50 hover:-translate-y-0.5 transition-all duration-300 shadow-xl shadow-blue-900/30">
             Comenzar Gratis
@@ -405,7 +378,9 @@ const heroFeatures = [
   { title: 'Todo seguro', desc: 'Datos protegidos 24/7', icon: '<svg class="w-5 h-5 text-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m6-3v8.25a9 9 0 01-9 9 9 9 0 01-9-9V6.75L12 3l9 3.75z"/></svg>' },
 ]
 
-const socialBrands = ['Hotel Caribe', 'Gran Hotel SD', 'Resort Playa', 'Boutique Colonial', 'Eco Lodge', 'Casa Azul', 'Villa del Mar', 'Posada Real', 'Hotel Mirador', 'Sunset Suites']
+// Integraciones reales (Channex/CLAUDE.md "Integraciones") — no nombres de hoteles inventados:
+// el sitio no afirma tener clientes que no existen, solo lista con qué se conecta de verdad.
+const socialBrands = ['Booking.com', 'Airbnb', 'Expedia', 'Stripe', 'TTLock', 'Channex']
 const carouselBrands = [...socialBrands, ...socialBrands]
 
 const quickFeatures = [
@@ -499,11 +474,6 @@ onMounted(async () => {
   await policyPromise
 })
 
-const testimonials = [
-  { quote: 'Pasamos de usar 4 herramientas diferentes a solo SolmiOS. El Channel Manager nos ahorró 3 horas diarias de trabajo manual.', name: 'Juan García', hotel: 'Hotel Caribe Paradise', initials: 'JG', avatarBg: '#1D6FA4' },
-  { quote: 'La facturación electrónica para DGII era un dolor de cabeza. Ahora se genera automáticamente. El soporte es excepcional.', name: 'Roberto Suárez', hotel: 'Gran Hotel Santo Domingo', initials: 'RS', avatarBg: '#117A65' },
-  { quote: 'Como recepcionista, todo es muy intuitivo. El check-in toma 30 segundos. Los huéspedes quedan impresionados.', name: 'María López', hotel: 'Hotel Caribe Paradise', initials: 'ML', avatarBg: '#6C3483' },
-]
 </script>
 
 <style scoped>
