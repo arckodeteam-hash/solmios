@@ -8,6 +8,17 @@ import {
 export class ReportQueries {
   constructor(private readonly orm: any) {}
 
+  /**
+   * Expira los códigos TTLock de una reserva. Lo inyecta el módulo (connector-free: reports no
+   * puede importar ttlock). Sin esto, marcar no-show a mano dejaba vivo el PIN de la puerta de
+   * alguien que no se presentó, sobre una habitación que este mismo método libera para revender.
+   */
+  private expireLockCodes?: (reservationId: string) => Promise<void>
+
+  setLockCodeExpirer(fn: (reservationId: string) => Promise<void>): void {
+    this.expireLockCodes = fn
+  }
+
   async resolveHotelId(req: any): Promise<string | undefined> {
     const q = req?.query || {}
     if (q.hotelId) {
@@ -199,6 +210,11 @@ export class ReportQueries {
       // BUG FIX: liberar la habitación asociada — antes quedaba occupied/reserved y Channex la
       // seguía mostrando fuera de inventario → overbooking real.
       r.roomId ? this.orm.update('Rooms', r.roomId, { status: 'available' }) : Promise.resolve(),
+      // Y sin acceso físico: la habitación se revende, el PIN del ausente no puede seguir vivo.
+      // Best-effort — si TTLock está caído, el no-show igual se registra.
+      this.expireLockCodes
+        ? this.expireLockCodes(r.id).catch(() => {})
+        : Promise.resolve(),
     ])))
     return vencidas.length
   }

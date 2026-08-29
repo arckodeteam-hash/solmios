@@ -352,6 +352,7 @@ for (const m of mods) system.addModule(m as any)
 // ─── Conectores ────────────────────────────────────────────────────────────
 import { reservasHousekeepingConnector } from './connectors/reservas-housekeeping'
 import { reservasTtlockConnector } from './connectors/reservas-ttlock'
+import { reportsTtlockConnector } from './connectors/reports-ttlock'
 import { habitacionesCanalesConnector } from './connectors/habitaciones-canales'
 import { habitacionesReservasConnector } from './connectors/habitaciones-reservas'
 import { reservasCanalesConnector } from './connectors/reservas-canales'
@@ -485,6 +486,9 @@ import { createExternalReviewsCron } from './shared/usecases/external-reviews-cr
 
 system.addConnector('reservas-housekeeping', reservasHousekeepingConnector)
 system.addConnector('reservas-ttlock', reservasTtlockConnector)
+// El no-show lo marca `reports` (endpoint + cron), no `reservas`: sin este connector el PIN
+// del que no se presentó seguía vivo sobre una habitación ya liberada para revender.
+system.addConnector('reports-ttlock', reportsTtlockConnector)
 system.addConnector('habitaciones-canales', habitacionesCanalesConnector)
 // #648 — disponibilidad por rango de fechas en GET /api/habitaciones?checkIn&checkOut, mismo
 // criterio de solapamiento que reservas/usecases/availability.ts (shared/usecases/room-overlap.ts).
@@ -752,7 +756,13 @@ startWorker()
 
 // ─── Cron jobs ──────────────────────────────────────────────────────────────
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
-const noShowCron = createNoShowCron(orm, emailService, logger)
+// El 4º argumento expira el PIN de la puerta al marcar no-show: sin esto, quien no se
+// presentó conservaba acceso a una habitación que ya se liberó y se puede revender.
+// `reservas-ttlock` cubre checkout y cancelación; el no-show lo marca este cron.
+const noShowCron = createNoShowCron(orm, emailService, logger, async (reservationId: string) => {
+  const ttlock = system.resolveModule<{ expireCodesByReservation(id: string): Promise<void> }>('ttlock')
+  if (ttlock?.expireCodesByReservation) await ttlock.expireCodesByReservation(reservationId)
+})
 // FIX G1 (fix-noshow-cron-init): corrida inicial a los 10s de arrancar (igual que night-audit). Antes
 // solo setInterval(24h): si el backend restarteaba antes de 24h (deploy/crash/OOM) el contador se
 // reiniciaba y el cron podía no llegar a ejecutarse nunca → reservas confirmed vencidas quedaban
