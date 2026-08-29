@@ -18,6 +18,8 @@ export interface WalletPassDTO {
   /** Timestamp ISO de generación. */
   generatedAt: string
   /** Seteado si se regenera por reasignación de habitación (spec.md:130). */
+  /** Cuándo se le mandó al huésped la habitación + el código (cron de pre-llegada). */
+  emailSentAt?: string | null
   obsoleteAt?: string | null
   createdAt: string
   updatedAt: string

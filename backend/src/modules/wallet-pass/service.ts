@@ -18,6 +18,7 @@ import type { EmailService } from '../../services/email-service'
 import type { WalletPassDTO, WalletPassQuery, WalletPassPaginated, CurrentUser } from './types'
 import type { WalletPassSockets } from './sockets'
 import { generatePass as generatePassUsecase, type TtlockPort, type GeneratePassDeps } from './usecases/generate-pass'
+import { sendPassEmailNow as sendPassEmailNowUsecase } from './usecases/send-pass-now'
 
 export interface WalletPassServiceDeps {
   auth: Auth
@@ -78,8 +79,22 @@ export class WalletPassService {
    * Punto de entrada del trigger (onBookingPaid). DELEGA al usecase.
    * Best-effort total: NUNCA lanza. Si algo falla, loguea y devuelve null.
    */
-  async generatePass(reservationId: string): Promise<{ pass: WalletPassDTO; alreadyExisted: boolean; emailQueued: boolean } | null> {
-    const usecaseDeps: GeneratePassDeps = {
+  async generatePass(reservationId: string, sendEmail = true): Promise<{ pass: WalletPassDTO; alreadyExisted: boolean; emailQueued: boolean } | null> {
+    return generatePassUsecase(this.passDeps(), reservationId, sendEmail)
+  }
+
+  /**
+   * Manda el correo "pase + código" de un pase ya generado. Lo llama
+   * `prearrival-pass-cron.ts` 24 h antes de la llegada, cuando la habitación ya está firme.
+   * Best-effort: false si no se pudo (el cron reintenta en el tick siguiente).
+   */
+  async sendPassEmailNow(reservationId: string): Promise<boolean> {
+    return sendPassEmailNowUsecase(this.passDeps(), reservationId)
+  }
+
+  /** Deps compartidas por los usecases del módulo. */
+  private passDeps(): GeneratePassDeps {
+    return {
       walletPassRepo: this.repo,
       configRepo: this.deps.configRepo,
       lockCodeRepo: this.deps.lockCodeRepo,
@@ -92,7 +107,6 @@ export class WalletPassService {
       emailService: this.deps.emailService,
       logger: this.logger,
     }
-    return generatePassUsecase(usecaseDeps, reservationId)
   }
 
   /** Lectura admin: pass por reservationId, validando ownership del hotel. */

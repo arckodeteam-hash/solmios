@@ -4,6 +4,7 @@ import type { EmailQueueDTO } from '../services/email-service'
 import { NotificationRenderer, type AutoMessageTemplateRow } from '../services/notification-renderer'
 import type { EmailSender } from '../services/email-sender'
 import type { Logger } from 'arckode-framework'
+import { sendBookingPaidEmail } from '../shared/usecases/booking-paid-email'
 
 export interface EmailBootstrapResult {
   emailService: EmailService
@@ -117,6 +118,30 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
   const deletionRequestsForEmail = resolveModule<{ setEmailDeps(es: EmailSender): void }>('deletion-requests')
   if (deletionRequestsForEmail && typeof deletionRequestsForEmail.setEmailDeps === 'function') {
     deletionRequestsForEmail.setEmailDeps(emailService)
+  }
+
+  // Correo de confirmación de PAGO del motor público (pedido del cliente 2026-08-29). Va acá y
+  // no en un connector porque el EmailService se construye DESPUÉS de `system.start()`: un
+  // connector que lo referenciara reventaría por TDZ al arrancar. `setSockets` compone, así que
+  // convive con los otros suscriptos a `onBookingPaid` (payments y wallet).
+  //
+  // Lleva plata, fechas CON hora, política y datos del hotel — SIN habitación ni código: la
+  // habitación puede reasignarse hasta la víspera, y el pase lo manda `prearrival-pass-cron`.
+  const bookingengineForEmail = resolveModule<{ setSockets(s: any): void }>('bookingengine')
+  if (bookingengineForEmail && typeof bookingengineForEmail.setSockets === 'function') {
+    bookingengineForEmail.setSockets({
+      onBookingPaid: async (data: { id?: string }) => {
+        const reservationId = data?.id
+        if (!reservationId) return
+        await sendBookingPaidEmail({
+          emailSender: emailService,
+          reservationsRepo: new OrmRepository<any>(orm, 'Reservations'),
+          hotelRepo: new OrmRepository<any>(orm, 'Hotels'),
+          guestRepo: new OrmRepository<any>(orm, 'Guests'),
+          logger,
+        }, reservationId)
+      },
+    })
   }
 
   const EMAIL_WORKER_TICK_MS = 30_000

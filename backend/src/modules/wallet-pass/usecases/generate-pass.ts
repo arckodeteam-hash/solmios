@@ -74,7 +74,7 @@ export interface GeneratePassDeps {
 }
 
 /** Resuelve los datos del hotel + reserva + guest necesarios para el pass + email. */
-async function resolveReservationInfo(
+export async function resolveReservationInfo(
   deps: GeneratePassDeps,
   reservationId: string,
 ): Promise<ReservationInfo | null> {
@@ -133,7 +133,17 @@ async function resolveLockCode(
  * Punto de entrada. Best-effort total — NUNCA lanza (el connector best-effort lo llamaría
  * con try/catch igual, pero las fallas parciales ya se manejan acá).
  */
-export async function generatePass(deps: GeneratePassDeps, reservationId: string): Promise<GeneratePassResult | null> {
+export async function generatePass(
+  deps: GeneratePassDeps,
+  reservationId: string,
+  /**
+   * `false` genera el pase y el código de la cerradura pero NO le avisa al huésped todavía
+   * (pedido del cliente 2026-08-29): la habitación puede reasignarse hasta el día antes, así
+   * que el correo con habitación + código lo manda `prearrival-pass-cron.ts` 24 h antes de la
+   * llegada. Default `true` para no cambiar los llamadores manuales (reenvío desde el panel).
+   */
+  sendEmail = true,
+): Promise<GeneratePassResult | null> {
   const log = deps.logger
 
   // 0) Idempotencia previa a trabajo costoso: si ya existe pass para esta reserva, devolverlo.
@@ -217,9 +227,10 @@ export async function generatePass(deps: GeneratePassDeps, reservationId: string
     return { pass: refetch, alreadyExisted: true, emailQueued: false }
   }
 
-  // 5) Encolar email. Si no hay EmailService o no hay guest email, no rompe.
+  // 5) Encolar email. Si no hay EmailService, no hay guest email, o el envío se difirió
+  // al cron de pre-llegada (`sendEmail === false`), no rompe.
   let emailQueued = false
-  if (deps.emailService) {
+  if (deps.emailService && sendEmail) {
     const result = await sendWalletPassEmail(
       { emailService: deps.emailService, logger: log },
       {

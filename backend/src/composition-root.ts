@@ -22,6 +22,7 @@ import { createAutoMessagesCron } from './modules/marketing/usecases/auto-messag
 import { createNightAuditCron } from './shared/usecases/night-audit-cron'
 import { createEvidenceRetentionCron } from './shared/usecases/evidence-retention-cron'
 import { createTrialReminderCron } from './shared/usecases/trial-reminder-cron'
+import { createPrearrivalPassCron } from './shared/usecases/prearrival-pass-cron'
 import { createSubscriptionSuspensionCron } from './shared/usecases/subscription-suspension-cron'
 import { createReferralCreditsCron } from './shared/usecases/referral-credits-cron'
 import { createCurrencyRatesCron, CURRENCY_RATES_TICK_MS } from './shared/usecases/currency-rates-cron'
@@ -624,6 +625,10 @@ system.addConnector('payment-requests-payments', paymentRequestsPaymentsConnecto
 system.addConnector('payment-requests-ttlock', paymentRequestsTtlockConnector(logger))
 // El widget público cobra con Stripe: ese dinero vivía solo en la tabla `bookings`.
 system.addConnector('bookingengine-payments', bookingenginePaymentsConnector)
+// El correo de confirmación de PAGO del motor NO va acá: necesita el EmailService, que se
+// construye recién en `bootstrapEmail()` DESPUÉS de `system.start()`. Referenciarlo desde un
+// connector daba ReferenceError por TDZ al arrancar. Se suscribe en `email-bootstrap.ts`,
+// junto al resto de las inyecciones de correo.
 // F5 #627 — Cuando el huésped auto-cancela desde la página pública, marca/libera depósitos held.
 system.addConnector('bookingengine-deposits', bookingengineDepositsConnector)
 system.addConnector('reservas-payment-requests', reservasPaymentRequestsConnector(orm))
@@ -799,6 +804,20 @@ setInterval(() => {
   bookingSyncCron().catch((e) => logger.warn('booking-sync cron failed', { error: (e as Error).message }))
 }, BOOKING_SYNC_TICK_MS)
 logger.info('Booking-sync cron listo', { tickMs: BOOKING_SYNC_TICK_MS })
+
+// Pase + código de acceso 24 h antes de la llegada (pedido del cliente 2026-08-29). El pase y
+// el PIN se crean al pagar, pero el correo con la HABITACIÓN y el código sale recién ahora: la
+// habitación puede reasignarse hasta la víspera. Al pagar va la confirmación de pago
+// (`booking-paid-email.ts`), sin habitación ni código. Dedup con `wallet_passes.emailSentAt`.
+const PREARRIVAL_TICK_MS = 60_000 * 60 // cada hora: la ventana es de 24 h, no hace falta más fino
+const prearrivalPassCron = createPrearrivalPassCron(orm, (name) => system.resolveModule(name), logger)
+setTimeout(() => {
+  prearrivalPassCron().catch((e) => logger.warn('prearrival-pass initial run failed', { error: (e as Error).message }))
+}, 10_000)
+setInterval(() => {
+  prearrivalPassCron().catch((e) => logger.warn('prearrival-pass cron failed', { error: (e as Error).message }))
+}, PREARRIVAL_TICK_MS)
+logger.info('Prearrival-pass cron listo', { tickMs: PREARRIVAL_TICK_MS })
 
 // Crones del ciclo SaaS (PLAN-SUSCRIPCIONES.md). Mismo molde que night-audit: factory, corrida
 // inicial a los 10s (anti-restart), setInterval con catch que no tira. Los tres son idempotentes

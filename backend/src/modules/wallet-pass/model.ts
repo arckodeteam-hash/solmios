@@ -45,6 +45,10 @@ export const WalletPassModel: ModelDefinition = {
     lockCode: { type: 'string', required: true },
     // Timestamp de generación (spec.md:129). cuándo se generaron los URLs.
     generatedAt: { type: 'date', required: true },
+    // Cuándo se le avisó al huésped (habitación + código). Lo setea `prearrival-pass-cron.ts`
+    // 24 h antes de la llegada; vacío = todavía no se mandó. Es el flag de idempotencia del
+    // cron: sin esto reenviaría el correo en cada tick. Anti-patrón ORM D5: declarado acá.
+    emailSentAt: { type: 'date' },
     // Seteo futuro (spec.md:130 — onRoomReassigned): marca la fila como obsoleta tras
     // regenerar el pass por cambio de habitación. Hasta cablear ese socket, queda null.
     obsoleteAt: { type: 'date' },

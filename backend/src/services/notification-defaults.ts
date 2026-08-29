@@ -29,10 +29,9 @@ const CONFIRMED_ES = `<!DOCTYPE html>
     <p>Tu reserva ha sido confirmada. Aquí tienes los detalles:</p>
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
       <table style="width:100%;font-size:14px;">
-        <tr><td style="padding:6px 0;color:#6b7280;">Habitación</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room_number} ({room_type}, {room_capacity} pax)</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Precio por noche</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room_base_price}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
         <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Gestión del pago</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Forma de pago</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{payment_method}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Anticipo</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{deposit_amount}</td></tr>
@@ -41,7 +40,16 @@ const CONFIRMED_ES = `<!DOCTYPE html>
       </table>
     </div>
     <p style="font-size:13px;color:#6b7280;">Localizador: <strong>{locator}</strong></p>
-    <p style="font-size:13px;color:#6b7280;">Si tenés alguna consulta, llamá al <strong>{hotel_phone}</strong>.</p>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Política de cancelación</p>
+      <p style="margin:0;font-size:13px;color:#4b5563;">{cancellation_policy}</p>
+    </div>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cómo llegar</p>
+      <p style="margin:0;font-size:13px;color:#4b5563;">{hotel_address}</p>
+      <p style="margin:6px 0 0;font-size:13px;color:#4b5563;">Tel: <strong>{hotel_phone}</strong> · {hotel_email}</p>
+    </div>
+    <p style="font-size:13px;color:#6b7280;">Te mandamos tu habitación y el código de acceso el día antes de llegar.</p>
     <p style="font-size:13px;color:#6b7280;">¡Te esperamos!</p>
   </div>
 </body>
@@ -60,10 +68,9 @@ const CONFIRMED_EN = `<!DOCTYPE html>
     <p>Your booking has been confirmed. Here are the details:</p>
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
       <table style="width:100%;font-size:14px;">
-        <tr><td style="padding:6px 0;color:#6b7280;">Room</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room_number} ({room_type}, {room_capacity} guests)</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Price per night</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room_base_price}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
         <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Payment</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Payment method</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{payment_method}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Deposit</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{deposit_amount}</td></tr>
@@ -72,7 +79,16 @@ const CONFIRMED_EN = `<!DOCTYPE html>
       </table>
     </div>
     <p style="font-size:13px;color:#6b7280;">Booking ref: <strong>{locator}</strong></p>
-    <p style="font-size:13px;color:#6b7280;">For any questions, call <strong>{hotel_phone}</strong>.</p>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cancellation policy</p>
+      <p style="margin:0;font-size:13px;color:#4b5563;">{cancellation_policy}</p>
+    </div>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Getting there</p>
+      <p style="margin:0;font-size:13px;color:#4b5563;">{hotel_address}</p>
+      <p style="margin:6px 0 0;font-size:13px;color:#4b5563;">Phone: <strong>{hotel_phone}</strong> · {hotel_email}</p>
+    </div>
+    <p style="font-size:13px;color:#6b7280;">We'll send your room number and access code the day before you arrive.</p>
     <p style="font-size:13px;color:#6b7280;">We look forward to welcoming you!</p>
   </div>
 </body>
@@ -91,10 +107,9 @@ const CONFIRMED_PT = `<!DOCTYPE html>
     <p>A sua reserva foi confirmada. Aqui estão os detalhes:</p>
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
       <table style="width:100%;font-size:14px;">
-        <tr><td style="padding:6px 0;color:#6b7280;">Quarto</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room_number} ({room_type}, {room_capacity} pax)</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Preço por noite</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room_base_price}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
         <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Gestão do pagamento</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Forma de pagamento</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{payment_method}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Sinal</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{deposit_amount}</td></tr>
@@ -103,7 +118,16 @@ const CONFIRMED_PT = `<!DOCTYPE html>
       </table>
     </div>
     <p style="font-size:13px;color:#6b7280;">Localizador: <strong>{locator}</strong></p>
-    <p style="font-size:13px;color:#6b7280;">Para qualquer dúvida, ligue para <strong>{hotel_phone}</strong>.</p>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Política de cancelamento</p>
+      <p style="margin:0;font-size:13px;color:#4b5563;">{cancellation_policy}</p>
+    </div>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Como chegar</p>
+      <p style="margin:0;font-size:13px;color:#4b5563;">{hotel_address}</p>
+      <p style="margin:6px 0 0;font-size:13px;color:#4b5563;">Tel: <strong>{hotel_phone}</strong> · {hotel_email}</p>
+    </div>
+    <p style="font-size:13px;color:#6b7280;">Enviamos o seu quarto e o código de acesso no dia anterior à chegada.</p>
     <p style="font-size:13px;color:#6b7280;">Esperamos por si!</p>
   </div>
 </body>
