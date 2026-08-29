@@ -73,7 +73,9 @@ describe('fallback — la landing nunca queda en blanco ni inventa un precio', (
   it('devuelve los planes con el precio marcado como desconocido', () => {
     const plans = fallbackPlans()
     // #30: mismo orden que decide el backend (precio ASC según el seed) — ultra $0 primero.
-    expect(plans.map(p => p.slug)).toEqual(['ultra', 'host', 'starter', 'essential', 'professional', 'enterprise'])
+    // essential va antes que starter (auditoría Meta 2026-08-26): Starter dice "Todo lo del plan
+    // Essential" en su copy, así que Essential tiene que ser el más barato de los dos.
+    expect(plans.map(p => p.slug)).toEqual(['ultra', 'host', 'essential', 'starter', 'professional', 'enterprise'])
     for (const p of plans) {
       expect(p.priceKnown).toBe(false)
       expect(p.price).toBeNull()
@@ -174,7 +176,7 @@ describe('roomsLabel — el tope sale de `plans.limits`', () => {
   })
 
   it('el fallback incluye TODOS los slugs sembrados y en orden de precio ASC (#30)', () => {
-    const seeded = ['ultra', 'host', 'starter', 'essential', 'professional', 'enterprise']
+    const seeded = ['ultra', 'host', 'essential', 'starter', 'professional', 'enterprise']
     expect(fallbackPlans().map((p) => p.slug)).toEqual(seeded)
     // Y ninguno queda sin copy: `PLAN_PRESENTATION[slug]!` reventaría en runtime.
     for (const slug of seeded) expect(PLAN_PRESENTATION[slug]).toBeDefined()

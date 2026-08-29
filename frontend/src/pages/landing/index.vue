@@ -285,7 +285,7 @@
               <router-link v-else :to="{ path: '/registro', query: { plan: plan.slug } }"
                 class="block w-full py-2.5 rounded-xl text-center text-xs font-bold mb-6 border transition-colors"
                 :class="planColor(plan.color).cta">
-                Prueba gratis 30 días
+                Prueba gratis {{ trialDays }} días
               </router-link>
               <div class="space-y-2.5 flex-1">
                 <div v-for="feat in plan.features" :key="feat" class="flex items-start gap-2 text-xs text-slate-600">
@@ -312,10 +312,10 @@
       <div class="max-w-3xl mx-auto text-center relative z-10">
         <div class="inline-flex items-center gap-2 mb-6 px-3.5 py-1.5 rounded-full bg-white/10 border border-white/15 backdrop-blur">
           <span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
-          <span class="text-[11px] font-extrabold tracking-wide text-white/90 uppercase">Prueba gratis 14 días</span>
+          <span class="text-[11px] font-extrabold tracking-wide text-white/90 uppercase">Prueba gratis {{ trialDays }} días</span>
         </div>
         <h2 class="text-3xl md:text-5xl font-black text-white mb-6 leading-tight">¿Listo para transformar<br>tu hotel?</h2>
-        <p class="text-white/60 mb-10 max-w-xl mx-auto">Gestioná reservas, canales, limpieza y facturación desde un solo panel. {{ trialPromise }}</p>
+        <p class="text-white/60 mb-10 max-w-xl mx-auto">Gestiona reservas, canales, limpieza y facturación desde un solo panel. {{ trialPromise }}</p>
         <div class="flex flex-wrap gap-4 justify-center">
           <router-link to="/registro" class="group inline-flex items-center gap-2 bg-white text-blue font-bold text-sm px-8 py-4 rounded-xl hover:bg-blue-50 hover:-translate-y-0.5 transition-all duration-300 shadow-xl shadow-blue-900/30">
             Comenzar Gratis
@@ -394,11 +394,11 @@ const quickFeatures = [
 
 const benefits = [
   'Implementación en menos de 24 horas, sin curva de aprendizaje',
-  'Soporte en español, 24/7, por chat y WhatsApp',
+  'Soporte en español, por chat y WhatsApp',
   'Sin contratos largos: cancela cuando quieras',
   'Migración de datos gratuita desde tu sistema actual',
   'Actualizaciones y nuevas funciones sin costo adicional',
-  'Cumple normativa fiscal de 6 países LATAM automáticamente',
+  'Facturación configurable con los impuestos y la moneda de tu país',
 ]
 
 const steps = [
@@ -449,7 +449,7 @@ const requireCard = ref(false)
 const trialDays = ref(7)
 const trialPromise = computed(() =>
   requireCard.value
-    ? `Empezás con ${trialDays.value} días sin cargo, cancela cuando quieras.`
+    ? `Empiezas con ${trialDays.value} días sin cargo, cancela cuando quieras.`
     : 'Sin tarjeta de crédito, cancela cuando quieras.',
 )
 const trialBadge = computed(() =>
