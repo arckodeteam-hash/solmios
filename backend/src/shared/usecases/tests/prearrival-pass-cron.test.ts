@@ -73,6 +73,22 @@ describe('cron de pase 24 h antes', () => {
     expect((await h.cron(hoursBefore(10))).sent).toBe(0)
   })
 
+  it('una reserva SIN PAGAR (pending) no recibe el código de la puerta', async () => {
+    const h = harness({ reserva: { ...RESERVA, status: 'pending' } })
+    expect((await h.cron(hoursBefore(10))).sent).toBe(0)
+    expect(h.sends).toHaveLength(0)
+  })
+
+  it('el huésped que ya hizo check-in sí puede recibirlo (reenvío)', async () => {
+    const h = harness({ reserva: { ...RESERVA, status: 'checked_in' } })
+    expect((await h.cron(hoursBefore(10))).sent).toBe(1)
+  })
+
+  it('un estado desconocido queda FUERA por default (lista blanca)', async () => {
+    const h = harness({ reserva: { ...RESERVA, status: 'estado_nuevo_del_futuro' } })
+    expect((await h.cron(hoursBefore(10))).sent).toBe(0)
+  })
+
   it('si el envío falla NO marca emailSentAt: se reintenta al tick siguiente', async () => {
     const h = harness({ sendOk: false })
     const r = await h.cron(hoursBefore(10))

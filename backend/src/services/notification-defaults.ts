@@ -29,7 +29,6 @@ const CONFIRMED_ES = `<!DOCTYPE html>
     <p>Tu reserva ha sido confirmada. Aquí tienes los detalles:</p>
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
       <table style="width:100%;font-size:14px;">
-        <tr><td style="padding:6px 0;color:#6b7280;">Precio por noche</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room_base_price}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
         <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Gestión del pago</td></tr>
@@ -68,7 +67,6 @@ const CONFIRMED_EN = `<!DOCTYPE html>
     <p>Your booking has been confirmed. Here are the details:</p>
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
       <table style="width:100%;font-size:14px;">
-        <tr><td style="padding:6px 0;color:#6b7280;">Price per night</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room_base_price}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
         <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Payment</td></tr>
@@ -107,7 +105,6 @@ const CONFIRMED_PT = `<!DOCTYPE html>
     <p>A sua reserva foi confirmada. Aqui estão os detalhes:</p>
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
       <table style="width:100%;font-size:14px;">
-        <tr><td style="padding:6px 0;color:#6b7280;">Preço por noite</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room_base_price}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
         <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Gestão do pagamento</td></tr>

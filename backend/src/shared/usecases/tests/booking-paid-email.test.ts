@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
 import { sendBookingPaidEmail } from '../booking-paid-email'
 import { cancellationPolicyText } from '../cancellation-text'
+import { NOTIFICATION_DEFAULTS } from '../../../services/notification-defaults'
 
 const HOTEL = {
   id: 'h1', name: 'Hotel Boutique Palma', phone: '+1 809 555 0100', email: 'info@palma.com',
@@ -112,5 +113,46 @@ describe('texto de la política de cancelación', () => {
   it('traduce', () => {
     expect(cancellationPolicyText('strict', 'en')).toContain('7 days')
     expect(cancellationPolicyText('strict', 'pt')).toContain('7 dias')
+  })
+})
+
+// La plantilla es la otra mitad del contrato: aunque el usecase no mande el número de
+// habitación, si la plantilla lo pide igual renderiza la fila (vacía o con basura).
+describe('plantilla reservation_confirmed', () => {
+  const langs: string[] = ['es', 'en', 'pt']
+  const bodyOf = (lang: unknown): string =>
+    (NOTIFICATION_DEFAULTS as any).reservation_confirmed[String(lang)].body as string
+
+  it.each(langs)('%s: no pide datos de la habitación', (lang) => {
+    const body = bodyOf(lang)
+    expect(body).not.toContain('{room_number}')
+    expect(body).not.toContain('{room_type}')
+    expect(body).not.toContain('{room_capacity}')
+    expect(body).not.toContain('{room_base_price}')
+    expect(body).not.toContain('{lock_code}')
+  })
+
+  it.each(langs)('%s: muestra las horas de entrada y salida', (lang) => {
+    const body = bodyOf(lang)
+    expect(body).toContain('{checkin_time}')
+    expect(body).toContain('{checkout_time}')
+  })
+
+  it.each(langs)('%s: lleva política de cancelación y datos del hotel', (lang) => {
+    const body = bodyOf(lang)
+    expect(body).toContain('{cancellation_policy}')
+    expect(body).toContain('{hotel_address}')
+    expect(body).toContain('{hotel_email}')
+  })
+
+  it('toda variable de la plantilla la provee el usecase (los 3 idiomas)', async () => {
+    const h = harness(); await h.run()
+    const provided = new Set(Object.keys(h.sent[0].variables))
+    for (const lang of langs) {
+      const body = bodyOf(lang)
+      const used = [...body.matchAll(/\{(\w+)\}/g)].map(m => m[1])
+      const missing = used.filter(v => !provided.has(v))
+      expect({ lang, missing }).toEqual({ lang, missing: [] })
+    }
   })
 })

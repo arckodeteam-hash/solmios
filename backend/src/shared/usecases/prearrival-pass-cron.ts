@@ -18,6 +18,13 @@ const MS_PER_HOUR = 60 * 60 * 1000
 /** Ventana de disparo: la llegada está a <= 24 h. */
 export const PREARRIVAL_WINDOW_HOURS = 24
 
+/**
+ * Estados a los que SÍ se les manda el código. Lista blanca a propósito: cualquier estado
+ * nuevo queda fuera por default, en vez de colarse por no estar en una lista negra.
+ * `pending` (sin pagar) está excluida — el código de la puerta no se entrega sin cobro.
+ */
+const DELIVERABLE_STATUS: ReadonlySet<string> = new Set(['confirmed', 'checked_in'])
+
 export interface PrearrivalCronResult {
   sent: number
   skipped: number
@@ -49,8 +56,10 @@ export function createPrearrivalPassCron(
         const reservation = await orm.findById('Reservations', pass.reservationId)
         if (!reservation || !reservation.checkIn) { result.skipped++; continue }
 
-        // Una reserva cancelada o que ya pasó no necesita el código.
-        if (reservation.status === 'cancelled' || reservation.status === 'checked_out') {
+        // Solo reservas VIGENTES y ya comprometidas. Lista blanca, no negra: una `pending`
+        // (reservada pero sin pagar) NO puede recibir el código de la puerta — sería dar acceso
+        // a la habitación a alguien que todavía no pagó. Cancelada o ya salida tampoco.
+        if (!DELIVERABLE_STATUS.has(String(reservation.status ?? ''))) {
           result.skipped++
           continue
         }
