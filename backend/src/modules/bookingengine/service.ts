@@ -2,6 +2,7 @@
 // Orquestador delgado que delega a usecases/
 
 import type { RepositoryAdapter, Logger, CacheAdapter } from 'arckode-framework'
+import { flowOfRawEvent, type WebhookForwarder } from '../../shared/usecases/webhook-routing'
 import type {
   BookingConfigDTO, UpdateBookingConfigDTO,
   AvailabilityQuery, AvailabilityResult,
@@ -24,6 +25,7 @@ import type { PaymentEventStore } from '../../services/payment-gateway/payment-e
 
 export class BookingengineService {
   private sockets: BookingengineSockets = {}
+  private paymentRequestWebhook?: WebhookForwarder
   private config: ConfigUseCase
   private availability: AvailabilityUseCase
   private analytics: AnalyticsUseCase
@@ -127,6 +129,23 @@ export class BookingengineService {
     return this.stripe.createCheckoutSession(reservationId, amount, successUrl, cancelUrl)
   }
 
+  /** Puerto a los LINKS DE PAGO. Lo inyecta `payment-requests-bookingengine-webhook`. */
+  setPaymentRequestWebhookPort(fn: WebhookForwarder): void { this.paymentRequestWebhook = fn }
+
+  /** Ver `shared/usecases/webhook-routing.ts`. Devuelve no-null sólo si el evento era ajeno. */
+  private async dispatchPaymentRequestEvent(
+    hotelId: string, payload: Buffer | string, signature: string,
+  ): Promise<{ type: string } | null> {
+    if (flowOfRawEvent(payload) !== 'payment-request') return null
+    if (!this.paymentRequestWebhook) {
+      this.logger.warn('Webhook de un link de pago recibido en el endpoint del motor, y sin puerto: el cobro NO se aplica', { hotelId })
+      return null
+    }
+    await this.paymentRequestWebhook(hotelId, payload, signature)
+    this.logger.info('Webhook de link de pago reenviado a su dueño', { hotelId })
+    return { type: 'forwarded_to_payment_requests' }
+  }
+
   /**
    * El cobro del widget es plata real que entra por Stripe. Sin emitir el evento, quedaba solo en la
    * fila de `bookings`: fuera de `payments`, de la conciliación bancaria y del balance.
@@ -134,6 +153,13 @@ export class BookingengineService {
    * El hotel viene en la RUTA: su secreto de firma es lo que autentica el webhook.
    */
   async handleStripeWebhook(hotelId: string, payload: Buffer | string, signature: string) {
+    // Despacho multi-flujo: el hotel configura UNA URL en Stripe y por ahí entran los eventos de
+    // los DOS caminos de cobro. Un evento de un LINK DE PAGO que aterriza acá se reenvía a su
+    // dueño (`payment-requests`) en vez de morir como "reserva que no es suya" — devolver 200 sin
+    // aplicarlo deja el cobro hecho y el link sin marcar, y Stripe no reintenta.
+    const foreign = await this.dispatchPaymentRequestEvent(hotelId, payload, signature)
+    if (foreign) return foreign
+
     const result = await this.stripe.handleWebhook(hotelId, payload, signature)
     if (!result) return null // firma inválida → el controller responde 400
     // F0 0.15 — El type del resultado cambió a 'reservation_confirmed' (era 'booking_confirmed').

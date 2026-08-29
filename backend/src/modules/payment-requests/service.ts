@@ -11,6 +11,7 @@ import { NotFoundError } from 'arckode-framework'
 import { StripeService } from '../../services/stripe-service'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
 import type { ReservationPaidRepos } from '../../shared/usecases/reservation-paid'
+import type { WebhookForwarder } from '../../shared/usecases/webhook-routing'
 import type {
   PaymentRequestDTO, CreatePaymentRequestDTO, UpdatePaymentRequestDTO,
   PaymentRequestQuery, CurrentUser, StripeStatusResult, CheckoutResult, WebhookResult,
@@ -33,6 +34,7 @@ import { MoneyPortsHolder, type MoneyPorts } from './usecases/money-ports'
 
 export class PaymentRequestsService {
   private sockets: PaymentRequestsSockets = {}
+  private bookingWebhook?: WebhookForwarder
   private paymentPort: StripePaymentPort | null = null
   private auditPort: AuditPort | null = null
   private emailSender: EmailSender | null = null
@@ -181,17 +183,17 @@ export class PaymentRequestsService {
   }
 
   /** Webhook público: el hotel viene en la RUTA y su secreto de firma es lo que autentica el mensaje. */
+  /** Puerto al webhook del MOTOR. Lo inyecta `payment-requests-bookingengine-webhook`. */
+  setBookingWebhookPort(fn: WebhookForwarder): void { this.bookingWebhook = fn }
+
   async handleWebhook(hotelId: string, rawBody: string | Buffer, signature: string): Promise<WebhookResult> {
-    return processStripeWebhook(
-      {
-        repo: this.repo, reservationRepo: this.reservationRepo,
-        folioRepo: this.folioRepo, folioChargeRepo: this.folioChargeRepo,
-        // `paidRepos`: lo cobrado real (GH-0.2), no `reservations.deposit`.
-        addonRepo: this.addonRepo, paidRepos: this.requirePaidRepos(),
-        logger: this.logger, sockets: this.sockets, paymentPort: this.paymentPort, events: this.events,
-        audit: (entry) => this.audit(entry),
-      },
-      hotelId, rawBody, signature,
-    )
+    // `paidRepos`: lo cobrado real (GH-0.2), no `reservations.deposit`.
+    return processStripeWebhook({
+      bookingWebhook: this.bookingWebhook, repo: this.repo, reservationRepo: this.reservationRepo,
+      folioRepo: this.folioRepo, folioChargeRepo: this.folioChargeRepo,
+      addonRepo: this.addonRepo, paidRepos: this.requirePaidRepos(),
+      logger: this.logger, sockets: this.sockets, paymentPort: this.paymentPort, events: this.events,
+      audit: (entry) => this.audit(entry),
+    }, hotelId, rawBody, signature)
   }
 }

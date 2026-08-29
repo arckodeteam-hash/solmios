@@ -474,6 +474,7 @@ import { paymentsWebhooksConnector } from './connectors/payments-webhooks'
 import { subscriptionsReferralsConnector } from './connectors/subscriptions-referrals'
 import { subscriptionsAdminPolicyConnector } from './connectors/subscriptions-admin-policy'
 import { subscriptionsUsuariosOwnerConnector } from './connectors/subscriptions-usuarios-owner'
+import { paymentRequestsBookingengineWebhookConnector } from './connectors/payment-requests-bookingengine-webhook'
 // F3 3.2 (solmi-direct-booking) — Adaptadores HTTP externos de reviews. NO son conectores
 // inter-módulo (los que wirean sockets): son clientes de APIs externas. Imports y factory
 // `externalReviewsFetchers` viven arriba (cerca de ExternalReviewsModule) para que el módulo
@@ -689,6 +690,9 @@ system.addConnector('subscriptions-referrals', subscriptionsReferralsConnector)
 system.addConnector('subscriptions-admin-policy', subscriptionsAdminPolicyConnector)
 // #28 — quien abandonó el Checkout del alta no puede loguearse: prueba quién es con su clave.
 system.addConnector('subscriptions-usuarios-owner', subscriptionsUsuariosOwnerConnector)
+// Una sola URL de webhook para el hotel: cada handler reenvía al otro el evento que no es suyo.
+// Sin esto, todo cobro del motor de reservas moría en el handler de los links de pago (200 mudo).
+system.addConnector('payment-requests-bookingengine-webhook', paymentRequestsBookingengineWebhookConnector)
 
 // ─── Infraestructura transversal ────────────────────────────────────────────
 configureStripe(orm, logger)

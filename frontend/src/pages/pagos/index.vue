@@ -150,6 +150,7 @@
               />
               <p class="mt-1.5 text-[11px] text-text-muted">
                 En Stripe, apuntá el webhook a: <code class="font-mono text-navy">{{ webhookUrl }}</code>
+                <span class="mt-1 block text-text-muted">Con esta única URL alcanza: cubre tanto los links de pago como las reservas del motor web.</span>
               </p>
             </div>
           </div>
@@ -314,6 +315,12 @@ const current = computed(() => (openForm.value ? gatewayOf(openForm.value) : und
 // La ruta real del backend es /api/stripe/webhook/:hotelId (payment-requests/index.ts). Antes acá
 // figuraba /api/webhooks/stripe/{tuHotelId} — path invertido y el placeholder sin reemplazar: quien
 // registraba ESA URL en Stripe recibía 404 y el pago de la seña nunca se confirmaba.
+//
+// Esta URL alcanza para TODOS los cobros del hotel. El sistema tiene dos handlers —links de pago y
+// motor de reservas público— y el connector `payment-requests-bookingengine-webhook` los cruza: el
+// que recibe un evento del otro flujo se lo reenvía. Antes acá se publicaba sólo la de links de
+// pago, así que todo cobro del motor moría en el handler equivocado con un 200 mudo: el huésped
+// pagaba y su reserva quedaba `pending` para siempre (verificado en producción, 2026-08-28).
 const webhookUrl = computed(() => {
   const hid = auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : '{tuHotelId}'
   return `${window.location.origin}/api/stripe/webhook/${hid}`
