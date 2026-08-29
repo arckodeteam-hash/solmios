@@ -89,7 +89,6 @@ const navLinks = [
   { href: '#how', label: 'Cómo Funciona', section: 'how' },
   { href: '#integrations', label: 'Integraciones', section: 'integrations' },
   { href: '#pricing', label: 'Precios', section: 'pricing' },
-  { href: '#testimonials', label: 'Testimonios', section: 'testimonials' },
   { href: '#', label: 'Recursos', section: 'recursos', hasDropdown: true },
 ]
 </script>
