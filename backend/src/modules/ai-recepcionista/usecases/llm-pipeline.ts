@@ -3,6 +3,7 @@ import { detectIntent } from './nlp-engine'
 import { buildResponse } from './response-builder'
 import type { LlmConfig, LlmMessage } from './llm-provider'
 import { llmChat, buildSystemPrompt, RECEPTIONIST_TOOLS } from './llm-provider'
+import { hotelCheckInTime, hotelCheckOutTime } from '../../../shared/utils/hotel-schedule'
 
 /**
  * Puerto de cancelación hacia `reservas` (lo cablea `connectors/ai-recepcionista-reservas.ts`).
@@ -456,8 +457,11 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
       const hotel = await repos.hotelRepo.findById(hotelId)
       return {
         name: hotel?.name || 'Hotel',
-        checkInTime: hotel?.checkInTime || '14:00',
-        checkOutTime: hotel?.checkOutTime || '12:00',
+        // Claves de plantilla del AI ({checkInTime}/{checkOutTime} en seed-intents), pero el
+        // VALOR sale del modelo real (`hotel.checkIn`). Antes leía un campo inexistente y el
+        // recepcionista respondía siempre 14:00 (fix 2026-08-29).
+        checkInTime: hotelCheckInTime(hotel as any),
+        checkOutTime: hotelCheckOutTime(hotel as any),
         wifi: hotel?.wifiNetwork || 'hotel_guest',
         wifiPassword: hotel?.wifiPassword || 'welcome2024',
         parking: hotel?.parking || 'Gratuito',

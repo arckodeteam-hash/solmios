@@ -67,4 +67,9 @@ export class TtlockQueries {
   async findReservationById(reservationId: string): Promise<any> {
     return (await this.orm.findMany('Reservations', { id: reservationId }))[0] || null
   }
+
+  /** Registro del hotel: aporta `checkIn`/`checkOut`/`timezone` a la ventana del código (2026-08-29). */
+  async findHotelById(hotelId: string): Promise<any> {
+    return (await this.orm.findMany('Hotels', { id: hotelId }))[0] || null
+  }
 }

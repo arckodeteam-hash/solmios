@@ -149,6 +149,9 @@ export interface ReservationApiRecord {
   roomId: string | null
   checkIn: string
   checkOut: string
+  /** Horario acordado con este huésped ('HH:MM'); '' vuelve al horario del hotel. */
+  checkInTime?: string | null
+  checkOutTime?: string | null
   channel: string
   totalAmount: number
   status: string
@@ -507,6 +510,10 @@ export interface ReservationDetail {
   createdAt?: string
   checkedInAt?: string | null
   checkedOutAt?: string | null
+  /** Horario acordado con este huésped ('HH:MM'). Vacío = manda el horario del hotel.
+   *  Define la ventana del código de la cerradura (ver `utils/hotel-schedule.ts`). */
+  checkInTime?: string | null
+  checkOutTime?: string | null
   // F3 MisterPlan: condiciones + otros cobros + código de check-in digital
   gdprAccepted?: boolean
   marketingAccepted?: boolean

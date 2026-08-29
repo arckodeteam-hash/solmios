@@ -753,6 +753,7 @@ import AppModal from '@/components/ui/AppModal.vue'
 import { TTLockService } from '@/services/TTLock.service'
 import { useRouter } from 'vue-router'
 import type { ReschedulableReservation, RescheduleTarget, RescheduleResult, CancellableReservation, Reservation } from '@/types'
+import { effectiveCheckInTime, effectiveCheckOutTime } from '@/utils/hotel-schedule'
 
 // `embedded`: cuando el calendario se monta dentro del dashboard (home) en vez de la
 // página Planning — oculta el título de página y ajusta el marco al card del widget.
@@ -1413,8 +1414,10 @@ function popupWaLink(): string | null {
     room ? `- Habitación ${room} — Código: ${c.code}` : `- Código de acceso: ${c.code}`,
   ]
   if (c.startDate && c.endDate) {
-    lines.push(`- Check-in: ${waDate(c.startDate)} a partir de las ${h?.checkInTime || '14:00'}`)
-    lines.push(`- Check-out: ${waDate(c.endDate)} hasta las ${h?.checkOutTime || '12:00'}`)
+    // Mismo fix que ReservationModal (2026-08-29): el campo del modelo es `checkIn`, no
+    // `checkInTime`; leerlo mal hacía que el WhatsApp anunciara 14:00 a todos los hoteles.
+    lines.push(`- Check-in: ${waDate(c.startDate)} a partir de las ${effectiveCheckInTime(popup.value?.res, h)}`)
+    lines.push(`- Check-out: ${waDate(c.endDate)} hasta las ${effectiveCheckOutTime(popup.value?.res, h)}`)
   }
   if (h?.wifiNetwork) lines.push(`- WiFi: ${h.wifiNetwork}${h.wifiPassword ? ' — Contraseña: ' + h.wifiPassword : ''}`)
   lines.push('', '¡Que disfrutes tu estancia!' + (h?.phone ? ` Cualquier cosa, llamá al ${h.phone}.` : ''))

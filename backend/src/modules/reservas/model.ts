@@ -54,6 +54,12 @@ export const ReservasModel: ModelDefinition = {
     // Check-in / check-out real (folio + auditoría)
     checkedInAt: { type: 'string' },
     checkedOutAt: { type: 'string' },
+    // Horario acordado con ESTE huésped (early check-in / late checkout), formato 'HH:MM'.
+    // Vacío = manda el horario del hotel (`hotels.checkIn`/`checkOut`). Es lo que define la
+    // ventana del código de la cerradura — ver `shared/utils/hotel-schedule.ts`.
+    // Anti-patrón ORM D5: declarado acá y case-sensitive; sin esto se descarta al persistir.
+    checkInTime: { type: 'string' },
+    checkOutTime: { type: 'string' },
     folioId: { type: 'string' },
     // F0 0.13 — AccessToken público (UUID) para consulta sin login (spec booking-unification).
     // Lo setea `createPublicBookingDirect` al crear por flujo público (`/api/public/booking`).

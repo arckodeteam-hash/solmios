@@ -15,6 +15,7 @@ import { AddonsService } from '@/services/Addons.service'
 import { ConfigService } from '@/services/Platform.service'
 import { HotelService, type HotelData } from '@/services/Hotel.service'
 import { TTLockService, type LockDevice } from '@/services/TTLock.service'
+import { effectiveCheckInTime, effectiveCheckOutTime, hasCustomSchedule, hotelCheckInTime, hotelCheckOutTime } from '@/utils/hotel-schedule'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
@@ -177,8 +178,10 @@ function lockCodeWaLink(code: string, startDate?: string | null, endDate?: strin
     room ? `- Habitación ${room} — Código: ${code}` : `- Código de acceso: ${code}`,
   ]
   if (startDate && endDate) {
-    lines.push(`- Check-in: ${waDate(startDate)} a partir de las ${h?.checkInTime || '14:00'}`)
-    lines.push(`- Check-out: ${waDate(endDate)} hasta las ${h?.checkOutTime || '12:00'}`)
+    // Horario EFECTIVO de ESTA reserva (early check-in / late checkout) con el del hotel de
+    // respaldo. Antes leía `h.checkInTime`, campo inexistente → siempre decía 14:00 (fix 2026-08-29).
+    lines.push(`- Check-in: ${waDate(startDate)} a partir de las ${effectiveCheckInTime(d.value, h)}`)
+    lines.push(`- Check-out: ${waDate(endDate)} hasta las ${effectiveCheckOutTime(d.value, h)}`)
   }
   if (h?.wifiNetwork) lines.push(`- WiFi: ${h.wifiNetwork}${h.wifiPassword ? ' — Contraseña: ' + h.wifiPassword : ''}`)
   lines.push('', '¡Que disfrutes tu estancia!' + (h?.phone ? ` Cualquier cosa, llamá al ${h.phone}.` : ''))
@@ -304,6 +307,15 @@ const nights = computed(() => {
   if (!d.value?.checkIn || !d.value?.checkOut) return 0
   return Math.max(1, Math.round((new Date(d.value.checkOut).getTime() - new Date(d.value.checkIn).getTime()) / MS_PER_DAY))
 })
+// Horario de acceso de ESTA reserva: lo acordado con el huésped pisa el general del hotel.
+// Es el MISMO cálculo que usa el backend para la ventana del código de la cerradura
+// (`shared/utils/hotel-schedule.ts`), así lo que se ve acá es lo que abre la puerta.
+const scheduleCheckIn = computed(() => effectiveCheckInTime(d.value, hotelInfo.value))
+const scheduleCheckOut = computed(() => effectiveCheckOutTime(d.value, hotelInfo.value))
+const scheduleIsCustom = computed(() => hasCustomSchedule(d.value))
+const hotelCheckIn = computed(() => hotelCheckInTime(hotelInfo.value))
+const hotelCheckOut = computed(() => hotelCheckOutTime(hotelInfo.value))
+
 // Total cobrable y pendiente: los calcula el BACKEND (shared/utils/reservation-balance.ts) para que
 // el renglón "Pendiente de cobro", el monto que se le manda a Stripe y el documento impreso digan
 // todos lo mismo. Acá NO se re-deriva la fórmula: una copia local es una segunda fuente de verdad
@@ -494,6 +506,42 @@ async function onCancelled() {
   showCancel.value = false
   await load()
   emit('changed')
+}
+
+// ── Horario de acceso de la reserva (2026-08-29, pedido de cliente) ──
+// El hotel define un horario general (Configuración → Hotel), pero con un huésped puntual se
+// acuerda otra cosa: entra a las 10 en vez de a las 15, o se va a las 18. Eso se pacta EN LA
+// RESERVA, y es lo que define desde/hasta cuándo abre el código de la cerradura.
+const scheduleOpen = ref(false)
+const savingSchedule = ref(false)
+const scheduleDraft = ref({ checkInTime: '', checkOutTime: '' })
+
+function openScheduleEditor() {
+  scheduleDraft.value = {
+    checkInTime: d.value?.checkInTime || '',
+    checkOutTime: d.value?.checkOutTime || '',
+  }
+  scheduleOpen.value = true
+}
+
+async function saveSchedule() {
+  if (!d.value) return
+  savingSchedule.value = true
+  try {
+    // '' es intencional: limpia el acuerdo y devuelve la reserva al horario del hotel.
+    await ReservationService.update(d.value.id, {
+      checkInTime: scheduleDraft.value.checkInTime || '',
+      checkOutTime: scheduleDraft.value.checkOutTime || '',
+    })
+    scheduleOpen.value = false
+    await load()
+    emit('changed')
+    toast.success('Horario actualizado')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo guardar el horario')
+  } finally {
+    savingSchedule.value = false
+  }
 }
 
 async function toggleAutoSend() {
@@ -766,6 +814,31 @@ function irAFacturacion() {
                 <div v-if="d.externalLocator" class="flex justify-between gap-3"><span class="text-text-muted">Localizador OTA</span><span class="font-mono text-right text-xs">{{ d.externalLocator }}</span></div>
                 <div class="flex justify-between gap-3"><span class="text-text-muted">Creada</span><span class="text-right flex items-center gap-1"><svg class="h-3 w-3 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2"/></svg>{{ fmtDateTime(d.createdAt) }}</span></div>
                 <div class="flex justify-between gap-3 items-center bg-cyan/8 rounded-xl px-3 py-2 -mx-1"><span class="text-text-muted flex items-center gap-1.5"><svg class="h-3.5 w-3.5 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5"/></svg>Entrada – Salida</span><span class="font-bold text-right text-navy">{{ fmtDate(d.checkIn) }} – {{ fmtDate(d.checkOut) }} <span class="text-text-muted font-normal">({{ nights }}n)</span></span></div>
+                <!-- Horario de acceso (2026-08-29): lo que realmente abre la puerta. Sale del
+                     acuerdo con este huésped o, en su defecto, del horario del hotel. -->
+                <div class="flex justify-between gap-3 items-center" data-testid="reservation-schedule">
+                  <span class="text-text-muted">Horario</span>
+                  <span class="font-bold text-right text-navy">
+                    {{ scheduleCheckIn }} – {{ scheduleCheckOut }}
+                    <span v-if="scheduleIsCustom" class="ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gold/15 text-gold align-middle">Acordado</span>
+                    <span v-else class="ml-1 text-[10px] text-text-muted font-normal">(del hotel)</span>
+                  </span>
+                </div>
+                <!-- Check-in / check-out REALIZADOS. El backend siempre guardó `checkedInAt`
+                     (reservas/usecases/checkin.ts), pero ninguna vista lo mostraba: el recepcionista
+                     hacía el check-in y no veía en ningún lado que hubiera quedado registrado. -->
+                <div v-if="d.checkedInAt" class="flex justify-between gap-3 items-center bg-teal/8 rounded-xl px-3 py-2 -mx-1" data-testid="reservation-checked-in">
+                  <span class="text-text-muted flex items-center gap-1.5">
+                    <svg class="h-3.5 w-3.5 text-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>Check-in realizado
+                  </span>
+                  <span class="font-bold text-right text-teal">{{ fmtDateTime(d.checkedInAt) }}</span>
+                </div>
+                <div v-if="d.checkedOutAt" class="flex justify-between gap-3 items-center" data-testid="reservation-checked-out">
+                  <span class="text-text-muted flex items-center gap-1.5">
+                    <svg class="h-3.5 w-3.5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>Check-out realizado
+                  </span>
+                  <span class="font-bold text-right">{{ fmtDateTime(d.checkedOutAt) }}</span>
+                </div>
                 <div v-if="d.promoCode" class="flex justify-between gap-3"><span class="text-text-muted">Código promo</span><span class="font-bold text-right">{{ d.promoCode }}</span></div>
                 <div v-if="d.otaNotes" class="pt-2 border-t border-border/50">
                   <div class="text-text-muted text-xs mb-1">Comentario del canal (OTA)</div>
@@ -978,6 +1051,47 @@ function irAFacturacion() {
                   <span class="h-2 w-2 rounded-full" :class="roomLockDevice.status === 'online' ? 'bg-teal' : 'bg-gray-300'"></span>
                   {{ roomLockDevice.status === 'online' ? 'En línea' : (roomLockDevice.status || 'Desconocido') }}
                   <span v-if="roomLockDevice.batteryLevel != null"> · 🔋 {{ roomLockDevice.batteryLevel }}%</span>
+                </div>
+                <!-- Horario de acceso: lo que define desde/hasta cuándo abre el PIN. Antes no
+                     existía en ningún lado y el código se generaba a medianoche UTC (2026-08-29). -->
+                <div class="bg-surface rounded-lg p-3 border border-border/70" data-testid="lock-schedule">
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                      <div class="text-[10px] uppercase font-bold text-text-muted">Horario de acceso</div>
+                      <div class="text-sm font-black text-navy" data-testid="lock-schedule-value">
+                        {{ scheduleCheckIn }} → {{ scheduleCheckOut }}
+                        <span v-if="scheduleIsCustom" class="ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gold/15 text-gold align-middle">Acordado con el huésped</span>
+                        <span v-else class="ml-1 text-[10px] text-text-muted font-normal">horario del hotel</span>
+                      </div>
+                    </div>
+                    <button v-if="can('reservations','edit') && !scheduleOpen" @click="openScheduleEditor" data-testid="lock-schedule-edit"
+                      title="Acordar otro horario con este huésped (entrada anticipada o salida tardía)"
+                      class="shrink-0 text-[10px] font-bold px-2 py-1 rounded-lg border border-border text-text-secondary hover:text-navy hover:border-navy/40 cursor-pointer transition-colors">Cambiar</button>
+                  </div>
+                  <div v-if="scheduleOpen" class="mt-3 space-y-2" data-testid="lock-schedule-form">
+                    <div class="flex gap-2">
+                      <label class="flex-1 text-[10px] uppercase font-bold text-text-muted">Entrada
+                        <input v-model="scheduleDraft.checkInTime" type="time" data-testid="lock-schedule-in"
+                          class="mt-1 w-full px-2 py-1.5 rounded-lg border border-border text-sm font-bold text-navy focus:border-navy focus:outline-none" />
+                      </label>
+                      <label class="flex-1 text-[10px] uppercase font-bold text-text-muted">Salida
+                        <input v-model="scheduleDraft.checkOutTime" type="time" data-testid="lock-schedule-out"
+                          class="mt-1 w-full px-2 py-1.5 rounded-lg border border-border text-sm font-bold text-navy focus:border-navy focus:outline-none" />
+                      </label>
+                    </div>
+                    <p class="text-[10px] text-text-muted">Vacío = usa el horario general del hotel ({{ hotelCheckIn }} → {{ hotelCheckOut }}).</p>
+                    <div class="flex gap-2">
+                      <button @click="saveSchedule" :disabled="savingSchedule" data-testid="lock-schedule-save"
+                        class="flex-1 px-3 py-2 rounded-lg bg-navy text-white text-xs font-bold hover:bg-navy-light disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer transition-colors">{{ savingSchedule ? 'Guardando…' : 'Guardar horario' }}</button>
+                      <button @click="scheduleOpen = false" class="px-3 py-2 text-xs font-bold text-text-secondary hover:text-navy cursor-pointer">Cancelar</button>
+                    </div>
+                  </div>
+                  <!-- Honestidad sobre el hardware: el PIN ya cargado en la cerradura conserva la
+                       ventana con la que se creó. Cambiar el horario NO lo reescribe: hay que
+                       regenerarlo. Decirlo evita que alguien crea que el cambio ya viajó. -->
+                  <p v-if="currentLockCode && scheduleIsCustom" class="text-[10px] text-gold mt-2" data-testid="lock-schedule-warning">
+                    El código vigente conserva el horario con el que se generó. Regeneralo para aplicar este.
+                  </p>
                 </div>
                 <!-- SOLO el código VIGENTE (una reserva = un código). Los anteriores van al
                      historial colapsado de abajo, sin botones — nunca más "dos códigos" listados. -->
