@@ -6,8 +6,8 @@
       • toggle active por bloque,
       • editor de `config` específico por `type` (en un AppModal),
       • bulk save (PUT /api/landing) atómico con re-fetch (el backend regenera IDs).
-    El preview link abre la landing pública /h/:slug en tab nuevo.
-    El slug lo pasa el contenedor (settings/index.vue) que ya lo carga vía SettingsService.
+    El link "Ver en la web pública" NO vive acá: está en el contenedor de tabs
+    (pagina-publica/index.vue), para que esté disponible desde las 8 vistas del grupo.
   -->
   <div class="space-y-5">
     <!-- Header del builder (propio: el "Guardar" del header general no aplica acá) -->
@@ -20,16 +20,6 @@
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <span v-if="isDirty" class="text-[11px] font-bold text-warning">Cambios sin guardar</span>
-        <a
-          v-if="slug"
-          :href="publicLandingUrl"
-          target="_blank"
-          rel="noopener"
-          class="inline-flex items-center gap-1.5 rounded-full border border-border bg-white px-4 py-2 text-sm font-bold text-navy transition-colors hover:border-navy/40"
-        >
-          Ver en la web pública
-          <span aria-hidden="true" class="text-cyan">↗</span>
-        </a>
         <button
           @click="save"
           :disabled="saving || !isDirty"
@@ -547,7 +537,6 @@ const saving = ref(false)
 const loadError = ref('')
 const blocks = ref<AdminLandingBlock[]>([])
 
-const publicLandingUrl = computed(() => `/h/${encodeURIComponent(slug.value)}`)
 
 // ─── Carga inicial ───────────────────────────────────────────────────────────────────────
 async function load() {
