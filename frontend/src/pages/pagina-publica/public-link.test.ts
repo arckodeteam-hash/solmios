@@ -24,17 +24,24 @@ const replace = vi.fn()
 vi.mock('vue-router', () => ({
   useRoute: () => ({ path: '/panel/pagina-publica', query: { tab: currentTab } }),
   useRouter: () => ({ replace }),
+  // Las vistas hijas lo usan; sin esto el mock las rompe al resolverse el async component.
+  onBeforeRouteLeave: () => {},
 }))
+
+// Las 8 vistas se cargan con `defineAsyncComponent(() => import(...))`. Sin neutralizarlas, el test
+// arrastra sus servicios y componentes reales, y las cargas siguen resolviéndose DESPUÉS del
+// teardown de vitest ("Cannot load ... after the environment was torn down") — verde en local, rojo
+// en CI. Se neutraliza el MECANISMO y no cada archivo: mockear los 8 módulos uno por uno rompe la
+// inspección que Vue hace del módulo (`__isTeleport`). Acá se prueba el CONTENEDOR; qué renderiza
+// cada vista es cosa de sus propios tests.
+vi.mock('vue', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue')>()
+  return { ...actual, defineAsyncComponent: () => ({ template: '<div data-testid="tab-view" />' }) }
+})
 
 import Index from './index.vue'
 
-const MOUNT_OPTS = {
-  global: {
-    stubs: { EmptyState: true },
-    // Cada tab es un componente async propio; acá sólo interesa el contenedor.
-    config: { warnHandler: () => {} },
-  },
-}
+const MOUNT_OPTS = { global: { stubs: { EmptyState: true } } }
 
 beforeEach(() => {
   slugImpl = async () => ({ hotel: { slug: 'hotel-boutique-palma' } })
