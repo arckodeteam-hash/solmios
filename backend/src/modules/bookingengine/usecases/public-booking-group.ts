@@ -35,6 +35,7 @@
 // LA MISMA transacción: si una sola habitación se vende concurrentemente, se aborta el grupo
 // ENTERO (todo o nada) — no puede quedar una reserva de grupo a medias.
 import type { RepositoryAdapter } from 'arckode-framework'
+import { isRoomSellable } from '../../../shared/usecases/room-status'
 import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-validate'
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from './rate-resolution'
@@ -180,7 +181,7 @@ export async function createPublicBookingGroup(
     // unidades de capacidad distinta).
     const totalGuestsForLine = Math.max(1, line.adults + Math.max(0, line.children ?? 0))
     const freeOfType = roomsOfType
-      .filter((r: any) => r.status === 'disponible' || r.status === 'available')
+      .filter((r: any) => isRoomSellable(r.status))
       .filter((r: any) => !busyRoomIds.has(r.id) && !blockedIds.has(r.id) && !claimedIds.has(r.id))
       .filter((r: any) => Number(r.capacity ?? totalGuestsForLine) >= totalGuestsForLine)
       .sort((a: any, b: any) => (Number(a.basePrice) || 0) - (Number(b.basePrice) || 0))

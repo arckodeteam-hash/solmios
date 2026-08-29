@@ -42,6 +42,7 @@
 //       404: el tipo SÍ existe, solo no hay disponibilidad para esas fechas).
 
 import { safeParse } from '../../../shared/utils/safe-parse'
+import { isRoomSellable } from '../../../shared/usecases/room-status'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-validate'
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
@@ -140,7 +141,7 @@ export async function getPublicBookingBySlug(orm: any, slug: string, query: any)
   const effectiveSlug: string = hotel.slug || String(slug)
 
   const rooms = await orm.findMany('Rooms', { hotelId: hotel.id }) as any[]
-  let available = rooms.filter((r: any) => r.status === 'disponible' || r.status === 'available')
+  let available = rooms.filter((r: any) => isRoomSellable(r.status))
 
   if (query.checkIn && query.checkOut) {
     const hotelRes = await orm.findMany('Reservations', { hotelId: hotel.id }) as any[]
@@ -278,7 +279,7 @@ export async function createPublicBookingDirect(
       return { status: 404, body: { error: 'Tipo de habitación no encontrado' } }
     }
 
-    const availableOfType = roomsOfType.filter((r: any) => r.status === 'disponible' || r.status === 'available')
+    const availableOfType = roomsOfType.filter((r: any) => isRoomSellable(r.status))
     const hotelReservations = (await orm.findMany('Reservations', { hotelId })) as any[]
     const busyRoomIds = new Set(
       hotelReservations
