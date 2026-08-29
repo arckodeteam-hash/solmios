@@ -13,6 +13,7 @@ import { PostgresAdapter } from 'arckode-framework/adapters/postgres'
 import type { DbAdapter } from 'arckode-framework'
 import { backfillPaymentsReservationId } from './scripts/backfill-payments-reservation'
 import { LEGAL_PAGES_SEED } from './scripts/legal-pages-content'
+import { MARKETING_PAGES_SEED } from './scripts/marketing-pages-content'
 
 // ─── Adapter condicional (mismo criterio que composition-root.ts) ──────────
 const DATABASE_URL = process.env.DATABASE_URL
@@ -179,63 +180,7 @@ async function createTablesBlock1(): Promise<void> {
   // Scope plataforma (hotelId='platform'). El HTML es semántico simple (h2/p/ul): lo estiliza
   // la vista pública (/p/:slug), no el contenido.
   const sitePagesSeed = [
-    {
-      slug: 'que-es-solmios', title: 'Qué es SolmiOS', category: 'producto', sortOrder: 1,
-      metaDescription: 'SolmiOS es el sistema operativo hotelero para hoteles de LATAM: reservas, planning, canal de ventas, limpieza y facturación en una sola plataforma.',
-      contentHtml: `<h2>El sistema operativo de tu hotel</h2>
-<p>SolmiOS reúne en una sola plataforma todo lo que un hotel necesita para operar cada día: reservas, calendario de ocupación, ventas por canales, housekeeping, mantenimiento, facturación y reportes. Sin hojas de cálculos paralelas ni sistemas que no se hablan entre sí.</p>
-<h2>Pensado para hoteles de Latinoamérica</h2>
-<p>Nace de la operación real de hoteles de la región: temporadas de precio, walk-ins por WhatsApp, equipos de limpieza con evidencia fotográfica y control de presencia del supervisor. Todo en español y con los impuestos y monedas con los que trabajás a diario.</p>
-<h2>Un solo panel, todo el hotel</h2>
-<ul>
-<li><strong>Planning y reservas:</strong> calendario visual por habitación con arrastrar y soltar, reagendado con recotización automática.</li>
-<li><strong>Precios por temporada:</strong> grilla por tipo de habitación y ocupación, asignación de temporadas por fecha desde el planning.</li>
-<li><strong>Operación:</strong> limpieza con evidencia y aprobación del supervisor, mantenimiento con proveedores y chat del equipo.</li>
-<li><strong>Dinero:</strong> folios, facturas, caja, conciliación y reportes — una sola fuente de verdad para lo que entra y sale.</li>
-</ul>
-<h2>Empezá hoy</h2>
-<p>Creá tu hotel en minutos y probá el panel completo con datos de demostración. Cuando estés listo, conectás tus canales y empezás a vender.</p>`,
-    },
-    {
-      slug: 'integraciones', title: 'Integraciones', category: 'producto', sortOrder: 2,
-      metaDescription: 'SolmiOS se conecta con Channex, TTLock, Stripe, WhatsApp y más: tu hotel sincronizado con los canales donde vendés.',
-      contentHtml: `<h2>Conectado con tu ecosistema</h2>
-<p>SolmiOS no es una isla: se integra con los servicios que tu hotel ya usa, para que cada reserva, pago y puerta trabajen solos.</p>
-<h2>Canal de ventas</h2>
-<p><strong>Channex</strong> sincroniza disponibilidad, precios y restricciones con Booking.com, Airbnb, Expedia y más. Cuando cambia una tarifa en tu grilla, se publica; cuando entra una reserva OTA, baja el inventario automáticamente.</p>
-<h2>Cerraduras inteligentes</h2>
-<p><strong>TTLock</strong> genera y envía códigos de acceso por habitación y reserva. El huésped recibe su código al confirmar, y el código expira al hacer el check-out — sin llaves físicas ni recepción 24/7.</p>
-<h2>Pagos</h2>
-<p><strong>Stripe</strong> para links de pago, señas y checkout del motor de reservas propio, con conciliación automática contra folios y facturas.</p>
-<h2>Mensajería</h2>
-<p><strong>WhatsApp Business</strong> y email transaccional para confirmaciones, códigos de acceso y mensajes automáticos de bienvenida.</p>
-<p>¿Usás otro proveedor? La plataforma es API-first: hablamos con tu stack actual.</p>`,
-    },
-    {
-      slug: 'sobre-nosotros', title: 'Sobre nosotros', category: 'empresa', sortOrder: 1,
-      metaDescription: 'Conocé el equipo detrás de SolmiOS: construimos software hotelero simple y honesto para Latinoamérica.',
-      contentHtml: `<h2>Software hotelero sin vueltas</h2>
-<p>Construimos SolmiOS porque los hoteles de la región estaban atrapados entre sistemas corporativos caruísimos y planillas de cálculo frágiles. Creemos que la tecnología de un hotel debería ser tan simple de operar como su recepción.</p>
-<h2>Cómo trabajamos</h2>
-<ul>
-<li><strong>Cerca del usuario:</strong> cada funcionalidad nace de la operación diaria de hoteles reales, no de un paper.</li>
-<li><strong>Producto antes que proyecto:</strong> lanzamos, medimos y corregimos. El sistema que usás hoy mejora todas las semanas.</li>
-<li><strong>Datos de los dueños:</strong> tu información es tuya: exportable, respaldada y bajo tu control.</li>
-</ul>
-<h2>Nuestra promesa</h2>
-<p>Un sistema que el equipo del hotel entienda en una tarde, que le ahorre horas todos los días y que no esconda la plata detrás de reportes ilegibles.</p>`,
-    },
-    {
-      slug: 'contacto', title: 'Contacto', category: 'empresa', sortOrder: 2,
-      metaDescription: 'Cómo contactar al equipo de SolmiOS: soporte desde el panel, ventas y demostraciones.',
-      contentHtml: `<h2>Estamos a un mensaje de distancia</h2>
-<h3>Ya sos cliente</h3>
-<p>El camino más rápido es el soporte integrado: desde tu panel, sección <strong>Soporte</strong>, creás un ticket y lo sigue el mismo equipo que construye el producto. Respuesta prioritaria según tu plan.</p>
-<h3>Querés ver el sistema</h3>
-<p>Registrate desde la página principal y probá el panel completo con el hotel de demostración: reservas, planning, limpieza y facturación con datos de ejemplo. Si querés una recorrida guiada con alguien del equipo, pedila desde el formulario de contacto del panel.</p>
-<h3>Alianzas e integraciones</h3>
-<p>¿Operás un canal, un PMS legacy o un servicio para hoteles? Escribinos desde la sección <strong>Aliados</strong> del panel para conversar sobre integraciones.</p>`,
-    },
+    ...MARKETING_PAGES_SEED,
     
     ...LEGAL_PAGES_SEED,
     {

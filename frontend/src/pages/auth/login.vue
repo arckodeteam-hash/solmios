@@ -102,8 +102,8 @@
                página estaba dentro del aviso de suscripción vencida, que solo ve quien YA es
                cliente. Un visitante nuevo no tenía forma de llegar. -->
           <p class="mt-5 pt-4 border-t border-border text-center text-xs text-text-secondary">
-            ¿No tenés cuenta?
-            <router-link to="/registro" data-testid="login-register-link" class="text-cyan font-bold hover:underline">Registrate gratis</router-link>
+            ¿No tienes cuenta?
+            <router-link to="/registro" data-testid="login-register-link" class="text-cyan font-bold hover:underline">Regístrate gratis</router-link>
           </p>
 
           <!-- Demo Accounts (dev) -->

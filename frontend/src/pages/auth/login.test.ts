@@ -33,7 +33,7 @@ describe('login — acceso al alta pública', () => {
     const w = render()
     const link = w.get('[data-testid="login-register-link"]')
     expect(link.attributes('href')).toBe('/registro')
-    expect(w.text()).toContain('¿No tenés cuenta?')
+    expect(w.text()).toContain('¿No tienes cuenta?')
   })
 
   it('el link al alta es visible en el estado inicial, sin errores en pantalla', () => {

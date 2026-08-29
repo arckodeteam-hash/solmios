@@ -14,7 +14,7 @@
             <span class="w-1.5 h-1.5 rounded-full bg-cyan"></span>
             <span class="text-[11px] font-bold text-cyan">{{ trialDays }} días gratis</span>
           </div>
-          <h2 class="text-3xl font-black leading-tight mb-3">Empezá a gestionar tu hotel hoy</h2>
+          <h2 class="text-3xl font-black leading-tight mb-3">Empieza a gestionar tu hotel hoy</h2>
           <p class="text-white/70 text-sm leading-relaxed mb-8">
             {{ cardPromise }}
           </p>
@@ -29,7 +29,7 @@
         </div>
 
         <p class="text-[11px] text-white/40">
-          ¿Ya tenés cuenta?
+          ¿Ya tienes cuenta?
           <router-link to="/login" class="text-cyan font-bold hover:underline">Iniciá sesión</router-link>
         </p>
       </div>
@@ -65,7 +65,7 @@
         </div>
 
         <h1 class="text-2xl font-black text-navy mb-1">
-          {{ step === 1 ? 'Creá tu cuenta' : 'Contanos de tu hotel' }}
+          {{ step === 1 ? 'Crea tu cuenta' : 'Cuéntanos de tu hotel' }}
         </h1>
         <p class="text-sm text-text-muted mb-6">
           {{ step === 1 ? subtitleStep1 : 'Estos datos se pueden cambiar después.' }}
@@ -233,7 +233,7 @@
         </form>
 
         <p class="text-[11px] text-text-muted text-center mt-6 lg:hidden">
-          ¿Ya tenés cuenta?
+          ¿Ya tienes cuenta?
           <router-link to="/login" class="text-cyan font-bold hover:underline">Iniciá sesión</router-link>
         </p>
       </div>
@@ -270,7 +270,7 @@ const requireCard = ref(false)
 const cardPromise = computed(() =>
   requireCard.value
     ? 'Pedimos tu tarjeta para empezar, no se cobra nada durante la prueba.'
-    : 'Sin tarjeta de crédito. Configurás tu hotel y arrancás en minutos.',
+    : 'Sin tarjeta de crédito. Configuras tu hotel y arrancas en minutos.',
 )
 
 /**
@@ -304,8 +304,8 @@ const captchaSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY ?? ''
 
 const subtitleStep1 = computed(() =>
   requireCard.value
-    ? `Empezás con ${trialDays.value} días gratis. Te pedimos la tarjeta ahora y recién cobramos al vencer.`
-    : `Empezás con ${trialDays.value} días gratis, sin tarjeta.`,
+    ? `Empiezas con ${trialDays.value} días gratis. Te pedimos la tarjeta ahora y recién cobramos al vencer.`
+    : `Empiezas con ${trialDays.value} días gratis, sin tarjeta.`,
 )
 
 const perks = computed(() => [
@@ -313,7 +313,7 @@ const perks = computed(() => [
   'Limpieza y mantenimiento del día',
   'Cobros, caja y facturación',
   // El último bullet dice la verdad de la política vigente, no una promesa fija.
-  requireCard.value ? `${trialDays.value} días sin cargo, cancelás cuando quieras` : 'Sin tarjeta de crédito',
+  requireCard.value ? `${trialDays.value} días sin cargo, cancelas cuando quieras` : 'Sin tarjeta de crédito',
 ])
 
 const route = useRoute()
@@ -490,7 +490,7 @@ async function submit() {
   // El botón ya queda deshabilitado sin aceptar, pero se valida de nuevo acá
   // por si se dispara el submit del form por otro medio (Enter, etc.).
   if (!acceptedTerms.value) {
-    error.value = 'Tenés que aceptar los Términos y la Política de Privacidad para continuar.'
+    error.value = 'Tienes que aceptar los Términos y la Política de Privacidad para continuar.'
     return
   }
   // Sin token no se manda: el backend lo rechazaría igual, pero el token se

@@ -90,7 +90,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <h2>15. Ley aplicable y jurisdicción</h2>
 <p>Estos términos se rigen por las leyes de la República Dominicana. Cualquier controversia se someterá a los tribunales competentes del Distrito Nacional, con renuncia expresa a cualquier otro fuero.</p>
 <h2>16. Contacto</h2>
-<p>SOLMI OS, S.R.L. — RNC 133-78277-4<br>Calle Carmelitas No. 9, Ensanche Ozama, Santo Domingo Este, Provincia Santo Domingo, República Dominicana<br>soporte@solmios.com · +1 809-448-1444<br>https://www.solmios.com</p>`,
+<p>SOLMI OS, S.R.L. — RNC 133-78277-4<br>Calle Carmelitas No. 9, Ensanche Ozama, Santo Domingo Este, Provincia Santo Domingo, República Dominicana<br><a href="mailto:soporte@solmios.com">soporte@solmios.com</a> · <a href="tel:+18094481444">+1 809-448-1444</a><br><a href="https://www.solmios.com">https://www.solmios.com</a></p>`,
   },
   {
     slug: 'privacidad', title: 'Política de Privacidad', category: 'legal', sortOrder: 2,
@@ -103,9 +103,9 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <li><strong>RNC:</strong> 133-78277-4</li>
 <li><strong>Registro Mercantil:</strong> 207146PSD — Cámara de Comercio y Producción de Provincia Santo Domingo</li>
 <li><strong>Domicilio:</strong> Calle Carmelitas No. 9, Ensanche Ozama, Santo Domingo Este, Provincia Santo Domingo, República Dominicana</li>
-<li><strong>Correo de contacto:</strong> privacidad@solmios.com</li>
-<li><strong>Teléfono:</strong> +1 809-448-1444</li>
-<li><strong>Sitio web:</strong> https://www.solmios.com</li>
+<li><strong>Correo de contacto:</strong> <a href="mailto:privacidad@solmios.com">privacidad@solmios.com</a></li>
+<li><strong>Teléfono:</strong> <a href="tel:+18094481444">+1 809-448-1444</a></li>
+<li><strong>Sitio web:</strong> <a href="https://www.solmios.com">https://www.solmios.com</a></li>
 </ul>
 <p>SOLMI OS es una plataforma de gestión hotelera (PMS) que incluye un asistente de atención automatizada por WhatsApp, Instagram y Facebook Messenger.</p>
 <h2>2. Qué es esta política</h2>
@@ -180,7 +180,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <li>Portabilidad: recibir tus datos en un formato legible</li>
 <li>Presentar una reclamación ante la autoridad competente</li>
 </ul>
-<p>Para ejercerlos, escríbenos a privacidad@solmios.com. Responderemos en un plazo máximo de quince (15) días hábiles.</p>
+<p>Para ejercerlos, escríbenos a <a href="mailto:privacidad@solmios.com">privacidad@solmios.com</a>. Responderemos en un plazo máximo de quince (15) días hábiles.</p>
 <p>Para eliminar tus datos, consulta también nuestra página de <a href="/p/eliminacion-datos">Eliminación de Datos</a>.</p>
 <h2>10. Cómo protegemos tus datos</h2>
 <ul>
@@ -195,7 +195,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <h2>12. Cambios a esta política</h2>
 <p>Publicaremos cualquier modificación en esta misma página con su fecha de actualización. Si el cambio es sustancial, te lo notificaremos por los medios de contacto que tengamos registrados.</p>
 <h2>13. Contacto</h2>
-<p>SOLMI OS, S.R.L. — RNC 133-78277-4<br>Calle Carmelitas No. 9, Ensanche Ozama, Santo Domingo Este, Provincia Santo Domingo, República Dominicana<br>privacidad@solmios.com · +1 809-448-1444<br>https://www.solmios.com</p>`,
+<p>SOLMI OS, S.R.L. — RNC 133-78277-4<br>Calle Carmelitas No. 9, Ensanche Ozama, Santo Domingo Este, Provincia Santo Domingo, República Dominicana<br><a href="mailto:privacidad@solmios.com">privacidad@solmios.com</a> · <a href="tel:+18094481444">+1 809-448-1444</a><br><a href="https://www.solmios.com">https://www.solmios.com</a></p>`,
   },
   {
     slug: 'eliminacion-datos', title: 'Eliminación de Datos', category: 'legal', sortOrder: 3,
@@ -213,7 +213,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <li>El hotel o establecimiento con el que interactuaste, si lo recuerdas</li>
 </ul>
 <h3>2. Por correo electrónico</h3>
-<p>Escribe a privacidad@solmios.com con el asunto "Eliminación de datos" e incluye los mismos datos de arriba.</p>
+<p>Escribe a <a href="mailto:privacidad@solmios.com">privacidad@solmios.com</a> con el asunto "Eliminación de datos" e incluye los mismos datos de arriba.</p>
 <h3>3. Por WhatsApp</h3>
 <p>Escribe la palabra <strong>ELIMINAR MIS DATOS</strong> al mismo número por el que nos contactaste. El sistema abrirá tu solicitud automáticamente.</p>
 <h2>Qué pasa después</h2>
@@ -243,7 +243,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <h2>Si eres un establecimiento cliente</h2>
 <p>Si tu hotel o negocio deja de usar SOLMI OS y quieres que eliminemos toda la información de tu operación:</p>
 <ol>
-<li>Escribe a soporte@solmios.com desde el correo del administrador registrado.</li>
+<li>Escribe a <a href="mailto:soporte@solmios.com">soporte@solmios.com</a> desde el correo del administrador registrado.</li>
 <li>Te entregamos una exportación completa de tus datos en formato legible antes de borrar nada.</li>
 <li>Conservamos la información 90 días después de la baja, por si necesitas recuperarla o cambias de opinión.</li>
 <li>Pasados esos 90 días, se elimina de forma irreversible, salvo lo que la ley obligue a conservar.</li>
@@ -251,6 +251,6 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <h2>¿Problemas?</h2>
 <p>Si no recibes respuesta en los plazos indicados, o no estás conforme con lo que hicimos, puedes presentar una reclamación ante la autoridad competente en materia de protección de datos de la República Dominicana.</p>
 <h2>Contacto</h2>
-<p>SOLMI OS, S.R.L. — RNC 133-78277-4<br>Calle Carmelitas No. 9, Ensanche Ozama, Santo Domingo Este, Provincia Santo Domingo, República Dominicana<br>privacidad@solmios.com · +1 809-448-1444</p>`,
+<p>SOLMI OS, S.R.L. — RNC 133-78277-4<br>Calle Carmelitas No. 9, Ensanche Ozama, Santo Domingo Este, Provincia Santo Domingo, República Dominicana<br><a href="mailto:privacidad@solmios.com">privacidad@solmios.com</a> · <a href="tel:+18094481444">+1 809-448-1444</a><br><a href="https://www.solmios.com">https://www.solmios.com</a></p>`,
   },
 ]

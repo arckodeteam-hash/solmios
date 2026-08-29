@@ -35,10 +35,12 @@ bun run migrate-db.ts
 | `RUN_MIGRATE=1 composition-root.ts` | Tablas desde modelos ORM | ✅ `CREATE TABLE IF NOT EXISTS` |
 | `scripts/orm-migrate.ts` | `ormMigrate(db, models)` — copia del kernel | ✅ |
 | `scripts/seed-default-roles.ts` | Roles por defecto (permisos) | ✅ |
-| `scripts/create-plans-table.ts` | Tabla `plans` (SaaS subscriptions) | ✅ |
+| `scripts/create-plans-table.ts` | Tabla `plans` (SaaS subscriptions). Multi-motor desde la auditoría Meta 2026-08-26 (antes Postgres-only, sin forma de probar el catálogo en dev local). | ✅ |
+| `scripts/fix-essential-plan-hierarchy.ts` | Corrige `plan-essential` (auditoría Meta 2026-08-26): tenía 20 habitaciones a $99, menos que Starter (30 hab. a $49) y el mismo precio que Professional (100 hab.) — jerarquía que no cierra. Sube a 35 habitaciones y reordena al lado de Professional. `create-plans-table.ts` es insert-only, así que un entorno donde `plan-essential` ya existía con los valores viejos necesita este UPDATE explícito. **Correr en prod tras el deploy si el plan ya existía.** | ✅ (UPDATE por id, no-op si no existe) |
 | `scripts/add-user-type-{pg,}.ts` | ALTER `users.userType` | ✅ `addColumnIfMissing` |
 | `scripts/drop-users-role-check.ts` | Elimina el CHECK vestigial de `users.role` (bloqueaba roles custom y 'housekeeper'/'supervisor' → 500). SQLite recrea la tabla sin el CHECK; PG imprime el `ALTER DROP CONSTRAINT`. **Correr en prod PG.** | ✅ (no-op si no hay CHECK) |
 | `scripts/seed-legal-pages.ts` | Crea o **reemplaza** (UPSERT por slug) las 3 páginas legales (`terminos`, `privacidad`, `eliminacion-datos`) en `site_pages` con el contenido de `scripts/legal-pages-content.ts` (transcripto de los .docx fuente). A diferencia de `migrate-db.ts` (insert-only, nunca pisa CMS), este script siempre sincroniza estas 3 con el texto legal vigente — correr tras editar `legal-pages-content.ts` o para empujar el texto actualizado a un entorno (prod) donde ya existían con contenido viejo. | ✅ (UPSERT) |
+| `scripts/seed-marketing-pages.ts` | Mismo patrón que `seed-legal-pages.ts` pero para las páginas "producto"/"empresa" (`que-es-solmios`, `integraciones`, `sobre-nosotros`, `contacto`) — contenido en `scripts/marketing-pages-content.ts`. Correr tras editarlo o para empujar correcciones (auditoría Meta 2026-08-26: voseo, correo/teléfono de contacto ausentes) a un entorno donde ya existían. | ✅ (UPSERT) |
 | ~~`scripts/patch-orm-postgres.sh`~~ | **ELIMINADO** — el remap camelCase↔lowercase se upstreameó al framework 1.6.2 (nativo en `kernel/db/orm-utils.ts`, "Remap lowercase → camelCase"). Sin postinstall. | — |
 
 ### Portabilidad Postgres

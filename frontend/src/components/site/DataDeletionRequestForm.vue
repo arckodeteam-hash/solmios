@@ -7,7 +7,7 @@
       Formulario de eliminación de datos
     </h2>
     <p class="text-sm text-slate-500 mb-6">
-      Completalo y te confirmamos el número de tu solicitud al instante.
+      Complétalo y te confirmamos el número de tu solicitud al instante.
     </p>
 
     <!-- Confirmación -->
@@ -17,7 +17,7 @@
         <p class="font-black text-navy mb-1">Solicitud recibida</p>
         <p class="text-sm text-slate-600 mb-2">
           Tu número de solicitud es <strong class="font-mono text-navy">{{ ack.requestNumber }}</strong>.
-          Guardalo para hacer seguimiento.
+          Guárdalo para hacer seguimiento.
           <template v-if="ackHadEmail">Te mandamos un correo con este número.</template>
           Verificaremos tu identidad y te confirmamos por escrito en los plazos indicados arriba.
         </p>
@@ -70,7 +70,7 @@
       </div>
       <div>
         <label class="block text-xs font-bold text-slate-500 mb-1" for="del-hotel">
-          Hotel o establecimiento con el que interactuaste (si lo recordás)
+          Hotel o establecimiento con el que interactuaste (si lo recuerdas)
         </label>
         <input
           id="del-hotel"
