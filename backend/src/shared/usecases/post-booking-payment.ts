@@ -35,6 +35,11 @@ export async function postBookingPayment(
 
   return payments.createPayment({
     hotelId: booking.hotelId,
+    // `booking.id` ES el reservationId (`bookingengine/service.ts:179` lo arma así). Sin esto el
+    // cobro entraba a `payments` HUÉRFANO: el dinero aparecía en el arqueo pero no se podía cruzar
+    // con su reserva, así que ningún reporte que una pago↔reserva veía las ventas del motor web.
+    // Verificado en producción el 2026-08-29: fila de 76,70 con `reservationid` vacío.
+    reservationId: booking.id,
     type: 'charge',
     // Entra por un checkout web, no por una tarjeta pasada en el mostrador.
     method: 'link',
