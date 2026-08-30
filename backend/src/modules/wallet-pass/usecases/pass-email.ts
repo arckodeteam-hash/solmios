@@ -32,6 +32,11 @@ export interface PassEmailInput {
   guestName: string
   checkIn: string
   checkOut: string
+  /** Horario en que el código ABRE y deja de abrir ('HH:MM'). Es la ventana REAL cargada en la
+   *  cerradura: sin esto el huésped recibe el PIN sin saber desde qué hora le sirve, y prueba
+   *  la puerta antes de tiempo creyendo que el código no anda. */
+  checkInTime?: string
+  checkOutTime?: string
   roomNumber?: string
   lockCode: string
   appleUrl?: string | null
@@ -61,6 +66,9 @@ export function renderWalletPassEmail(input: PassEmailInput): string {
   const guestName = esc(input.guestName)
   const checkIn = esc(input.checkIn)
   const checkOut = esc(input.checkOut)
+  // Vacío si el caller no las pasó: se degrada a solo fecha en vez de romper el correo.
+  const checkInTime = input.checkInTime ? ` · ${esc(input.checkInTime)}` : ''
+  const checkOutTime = input.checkOutTime ? ` · ${esc(input.checkOutTime)}` : ''
   const roomNumber = input.roomNumber ? esc(input.roomNumber) : '—'
   const lockCode = esc(input.lockCode)
 
@@ -98,10 +106,11 @@ export function renderWalletPassEmail(input: PassEmailInput): string {
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
       <table style="width:100%;font-size:14px;">
         <tr><td style="padding:6px 0;color:#6b7280;">Habitación</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${roomNumber}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${checkIn}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${checkOut}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${checkIn}${checkInTime}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${checkOut}${checkOutTime}</td></tr>
       </table>
     </div>
+    <p style="font-size:13px;color:#6b7280;margin:0 0 16px;">El código abre la puerta desde el <strong>${checkIn}${checkInTime || ''}</strong> y deja de funcionar el <strong>${checkOut}${checkOutTime || ''}</strong>. Si necesitás entrar antes o salir más tarde, avisale al hotel y te ajustamos el horario.</p>
     <p style="font-size:13px;color:#6b7280;">Localizador: <strong>${esc(input.reservationId)}</strong></p>
     <p style="font-size:13px;color:#6b7280;">¡Te esperamos!</p>
   </div>

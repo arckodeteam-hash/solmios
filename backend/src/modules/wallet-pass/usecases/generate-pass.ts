@@ -29,6 +29,7 @@ import { generateApplePass } from './apple-pass'
 import { generateGooglePass } from './google-pass'
 import { sendWalletPassEmail } from './pass-email'
 import { isDuplicateError } from './duplicate-detector'
+import { effectiveCheckInTime, effectiveCheckOutTime } from '../../../shared/utils/hotel-schedule'
 
 /** Puerto para generar lockCodes de TTLock (lo implementa el módulo ttlock vía resolveModule). */
 export interface TtlockPort {
@@ -44,6 +45,9 @@ export interface ReservationInfo {
   guestEmail: string
   checkIn: string
   checkOut: string
+  /** Horario EFECTIVO ('HH:MM'): desde/hasta cuándo abre el código en la cerradura. */
+  checkInTime: string
+  checkOutTime: string
   roomNumber?: string
 }
 
@@ -93,6 +97,10 @@ export async function resolveReservationInfo(
     guestEmail: String(guest?.email ?? ''),
     checkIn: String(r.checkIn ?? ''),
     checkOut: String(r.checkOut ?? ''),
+    // MISMO cálculo con el que se abre el PIN (`shared/utils/hotel-schedule`): el correo tiene
+    // que decir la hora real desde la que el código funciona, no una distinta.
+    checkInTime: effectiveCheckInTime(r, hotel),
+    checkOutTime: effectiveCheckOutTime(r, hotel),
     roomNumber: room?.number ? String(room.number) : undefined,
   }
 }
@@ -241,6 +249,9 @@ export async function generatePass(
         guestName: info.guestName,
         checkIn: info.checkIn,
         checkOut: info.checkOut,
+        // Ventana REAL del PIN: la misma que se cargó en la cerradura.
+        checkInTime: info.checkInTime,
+        checkOutTime: info.checkOutTime,
         roomNumber: info.roomNumber,
         lockCode,
         appleUrl: pass.appleUrl,

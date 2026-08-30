@@ -38,6 +38,9 @@ export async function sendPassEmailNow(
         guestName: info.guestName,
         checkIn: info.checkIn,
         checkOut: info.checkOut,
+        // Ventana REAL del PIN: la misma que se cargó en la cerradura.
+        checkInTime: info.checkInTime,
+        checkOutTime: info.checkOutTime,
         // Número FRESCO: si la habitación se reasignó después del pago, va la nueva.
         roomNumber: info.roomNumber,
         lockCode: String((pass as { lockCode?: unknown }).lockCode ?? ''),
