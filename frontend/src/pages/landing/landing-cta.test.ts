@@ -39,7 +39,7 @@ describe('landing — el embudo termina en el alta, no en el login', () => {
   it('cada plan de precios lleva al alta con SU plan preseleccionado', () => {
     const w = mount(Landing, MOUNT_OPTS)
     const planLinks = hrefsOf(w).filter(h => h.startsWith('/registro?plan='))
-    // Los 4 planes contratables; "Ultra" es a cotización y va a ventas por mailto.
+    // Los 4 planes contratables; "Ultra" es a cotización y abre el formulario de ventas.
     expect(planLinks).toEqual(expect.arrayContaining([
       '/registro?plan=essential',
       '/registro?plan=starter',
@@ -50,7 +50,10 @@ describe('landing — el embudo termina en el alta, no en el login', () => {
 
   it('el plan a cotización sigue yendo a ventas, no al alta', () => {
     const w = mount(Landing, MOUNT_OPTS)
-    expect(hrefsOf(w).some(h => h.startsWith('mailto:'))).toBe(true)
+    // Va al formulario de ventas (Panel › Leads de Ventas), no al alta y no a un `mailto:`
+    // que dejaría el lead fuera del sistema.
+    expect(w.findAll('button').some(b => /contactar ventas/i.test(b.text()))).toBe(true)
+    expect(hrefsOf(w).some(h => h.includes('plan=ultra'))).toBe(false)
   })
 })
 
