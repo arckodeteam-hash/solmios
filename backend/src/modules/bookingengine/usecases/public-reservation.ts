@@ -34,6 +34,8 @@
 // Forma funcional (sin clase) — mismo estilo que `public-booking.ts` y `public-hotel-info.ts`.
 
 import crypto from 'node:crypto'
+import { paymentAmountsOf } from '../../../shared/utils/payment-status'
+import { paidForReservation } from '../../../shared/usecases/reservation-paid'
 
 const NOT_FOUND = { status: 404, body: { error: 'Reservation not found' } } as const
 
@@ -90,6 +92,26 @@ export async function getPublicReservation(
     guest = guestRows[0] || null
   }
 
+  // Lo REALMENTE cobrado sale de `payments` (fuente de verdad del dinero, CLAUDE.md): un pago
+  // en efectivo por folio no toca `reservations.deposit`. Best-effort — si la consulta falla,
+  // se cae a `deposit`, que para el flujo del motor web sí espeja el cobro de Stripe.
+  let paid = Number(reservation.deposit) || 0
+  try {
+    paid = await paidForReservation(
+      {
+        folioRepo: { findMany: (f: any) => orm.findMany('Folios', f) },
+        invoiceRepo: { findMany: (f: any) => orm.findMany('Invoices', f) },
+        paymentRepo: { findMany: (f: any) => orm.findMany('Payments', f) },
+      },
+      String(reservation.hotelId),
+      String(reservation.id),
+      reservation,
+    )
+  } catch {
+    // Se queda con `deposit`: mostrar el pago del motor web es mejor que no mostrar nada.
+  }
+  const amounts = paymentAmountsOf(reservation.totalAmount, paid)
+
   // B-6/H-4 (auditoría 2026-08-19): allow-list ESTRICTA, campo por campo — NUNCA la fila
   // cruda (patrón public-hotel-info.ts). La fila de Reservations arrastra ownerNotes,
   // otaNotes, cardHolder/cardLast4 (el model dice "se revelan solo tras PIN"),
@@ -110,7 +132,15 @@ export async function getPublicReservation(
         children: reservation.children,
         totalAmount: reservation.totalAmount,
         currency: reservation.currency,
-        paymentStatus: reservation.paymentStatus ?? 'unpaid',
+        // `reservations` NO tiene columna `paymentStatus`: leerla devolvía SIEMPRE 'unpaid',
+        // incluso con la reserva cobrada al 100%, y por eso la pantalla de confirmación no le
+        // mostraba al huésped que su pago entró (reporte de cliente 2026-08-30). Se deriva de
+        // `payments`, la fuente de verdad del dinero, con `deposit` de respaldo.
+        paymentStatus: amounts.status,
+        // Su propio pago: cuánto entró y cuánto queda. No es dato interno del hotel —
+        // es la información que el huésped necesita para saber si le queda algo por pagar.
+        amountPaid: amounts.paid,
+        pendingAmount: amounts.pending,
         promoCode: reservation.promoCode ?? null,
         // Tarea 3.4 (corrección 2026-08-25) — 'pending' cuando el hotel apagó "confirmación
         // instantánea" y todavía no revisó esta reserva. null = no aplica (caso normal).
@@ -119,7 +149,7 @@ export async function getPublicReservation(
         approvalStatus: reservation.approvalStatus ?? null,
       },
       guest: guest ? { id: guest.id, name: guest.name, email: guest.email, phone: guest.phone ?? '' } : null,
-      paymentStatus: reservation.paymentStatus ?? 'unpaid',
+      paymentStatus: amounts.status,
     },
   }
 }

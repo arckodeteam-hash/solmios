@@ -451,6 +451,12 @@ export interface PublicReservation {
   adults?: number
   children?: number
   totalAmount?: number
+  /** Moneda del cobro. Sin esto la confirmación mostraba el importe pelado ("613.6"). */
+  currency?: string
+  /** Lo REALMENTE cobrado, derivado de `payments` por el backend. */
+  amountPaid?: number
+  /** Saldo que le queda por pagar al huésped. 0 = pagó todo. */
+  pendingAmount?: number
   notes?: string | null
   promoCode?: string | null
   /** Tarea 3.4 (corrección 2026-08-25). 'pending' = el hotel apagó "confirmación

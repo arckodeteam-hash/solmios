@@ -1,4 +1,5 @@
 import { isCleaning, isUnderMaintenance } from '../../../shared/usecases/room-status'
+import { dashboardPaymentStatus } from './payment-status-label'
 // Ms por día. reports/helpers.ts expone la misma constante como MS_PER_DAY; se duplica acá
 // para no importar cross-module (prohibido por convención: iría por connector).
 const MS_PER_DAY = 86_400_000
@@ -90,7 +91,7 @@ export class DashboardQueries {
     const enriched = (reservas as any[]).map((r: any) => {
       const guest = guestMap.get(r.guestId); const room = roomMap.get(r.roomId)
       const deposit = Number(r.deposit) || 0; const total = Number(r.totalAmount) || 0
-      return { ...r, guestName: guest?.name || 'Guest', guestEmail: guest?.email || '', roomNumber: room?.number || '', paymentStatus: deposit >= total && total > 0 ? 'paid' : deposit > 0 ? 'partial' : 'pending' }
+      return { ...r, guestName: guest?.name || 'Guest', guestEmail: guest?.email || '', roomNumber: room?.number || '', paymentStatus: dashboardPaymentStatus(total, deposit) }
     })
     return { rooms, reservas: enriched }
   }

@@ -1,4 +1,5 @@
 import { isCleaning, isUnderMaintenance } from '../../../shared/usecases/room-status'
+import { dashboardPaymentStatus } from './payment-status-label'
 export async function getDashboardData(orm: any, hotelId: string): Promise<any> {
   const [rooms, res, guests] = await Promise.all([
     orm.findMany('Rooms', { hotelId }),
@@ -43,7 +44,7 @@ export async function getPlanningData(orm: any, hotelId: string): Promise<any> {
   const enriched = (reservas as any[]).map((r: any) => {
     const guest = guestMap.get(r.guestId); const room = roomMap.get(r.roomId)
     const deposit = Number(r.deposit) || 0; const total = Number(r.totalAmount) || 0
-    return { ...r, guestName: guest?.name || 'Guest', guestEmail: guest?.email || '', roomNumber: room?.number || '', paymentStatus: deposit >= total && total > 0 ? 'paid' : deposit > 0 ? 'partial' : 'pending' }
+    return { ...r, guestName: guest?.name || 'Guest', guestEmail: guest?.email || '', roomNumber: room?.number || '', paymentStatus: dashboardPaymentStatus(total, deposit) }
   })
   return { rooms, reservas: enriched }
 }
