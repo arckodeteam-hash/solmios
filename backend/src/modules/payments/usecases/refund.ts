@@ -75,6 +75,9 @@ export async function refundPayment(
     invoiceId: payment.invoiceId,
     reservationId: payment.reservationId,
     guestId: payment.guestId,
+    // Quién ordenó la devolución. En el historial de la reserva importa más que en el cobro:
+    // un reembolso siempre lo decide una persona.
+    createdBy: user?.id ?? '',
   })
 
   // Una devolución parcial deja el cobro original `completed`: todavía queda dinero retenido.

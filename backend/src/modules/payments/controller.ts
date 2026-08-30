@@ -37,6 +37,9 @@ export class PaymentsController {
     this.logger.info('POST /api/payments')
     const data = validateSchema(CreatePaymentSchema, req.body) as unknown as CreatePaymentDTO
     data.hotelId = this.forceHotelId(data, req.user as any) // V1 IDOR: forzar del JWT
+    // Quién lo registró: sale del JWT, NO del body (un cliente no elige a nombre de quién queda
+    // asentado un cobro). Vacío si el token no trae id — la fila se guarda igual.
+    data.createdBy = String((req.user as { id?: string } | undefined)?.id ?? '')
     const payment = await this.service.createPayment(data)
     return { status: 201, body: payment }
   }

@@ -144,13 +144,32 @@ export async function paidForReservation(
   if (!reservationId) throw new Error('reservation-paid: falta reservationId')
   if (!hotelId) throw new Error(`reservation-paid: falta hotelId de la reserva ${reservationId} (multi-tenancy)`)
 
+  return combinePaid(deposit, splitPayments(await collectReservationPayments(repos, hotelId, reservationId)))
+}
+
+/**
+ * TODAS las filas de `payments` de una reserva, por sus TRES vínculos, deduplicadas por id.
+ *
+ * Extraída de `paidForReservation` (2026-08-30) para que el historial que ve el hotel salga de
+ * la MISMA recolección que el total cobrado: si fueran dos recorridos distintos, el desglose
+ * podría no sumar el número que muestra la reserva.
+ *
+ * Un mismo pago puede colgar del folio Y de la factura que ese folio generó: sin el `Map` por id
+ * el cobro del checkout aparecería (y se contaría) dos veces.
+ */
+export async function collectReservationPayments(
+  repos: ReservationPaidRepos,
+  hotelId: string,
+  reservationId: string,
+): Promise<PaymentRowLike[]> {
+  if (!reservationId) throw new Error('reservation-paid: falta reservationId')
+  if (!hotelId) throw new Error(`reservation-paid: falta hotelId de la reserva ${reservationId} (multi-tenancy)`)
+
   const [folios, invoices] = await Promise.all([
     repos.folioRepo.findMany({ hotelId, reservationId } as any),
     repos.invoiceRepo.findMany({ hotelId, reservationId } as any),
   ])
 
-  // Un mismo `payments` puede colgar del folio Y de la factura que ese folio generó: se deduplica
-  // por id antes de sumar, si no el cobro del checkout se contaría dos veces.
   const rows = new Map<string, PaymentRowLike>()
   const collect = (found: readonly PaymentRowLike[]) => {
     found.forEach((p, i) => rows.set(String(p?.id ?? `anon-${rows.size}-${i}`), p))
@@ -162,13 +181,13 @@ export async function paidForReservation(
     (invoices as any[]).map((inv) => repos.paymentRepo.findMany({ hotelId, invoiceId: inv?.id } as any)),
   )
   // Tercer vínculo: el cobro que no cuelga de folio ni factura (diferencia de una reprogramación
-  // cobrada en efectivo/tarjeta). El `Map` por id lo deduplica si además tuviera folio o factura.
+  // cobrada en efectivo/tarjeta).
   const byReservation = await repos.paymentRepo.findMany({ hotelId, reservationId } as any)
   byFolio.forEach(collect)
   byInvoice.forEach(collect)
   collect(byReservation as PaymentRowLike[])
 
-  return combinePaid(deposit, splitPayments([...rows.values()]))
+  return [...rows.values()]
 }
 
 /** Fila de reserva mínima que necesita un `PaidSource`: el hotel (multi-tenancy) y el anticipo. */
