@@ -92,6 +92,9 @@ export class PaymentCrudUseCase {
       stripePaymentId: dto.stripePaymentId ?? '',
       stripeSessionId: dto.stripeSessionId ?? '',
       metadata: dto.metadata ?? {},
+      // Quién registró el cobro. El payload es una allow-list explícita: un campo que no esté
+      // acá se descarta en silencio, aunque el modelo y el DTO lo declaren (así se perdía).
+      createdBy: dto.createdBy ?? '',
       processedAt: status === 'completed' ? new Date().toISOString() : undefined,
     }
 
