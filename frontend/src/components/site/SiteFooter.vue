@@ -46,12 +46,8 @@
             </div>
           </div>
         </div>
-        <div class="border-t border-white/8 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div class="border-t border-white/8 pt-8 text-center">
           <div class="text-sm text-white/30">© 2026 SolmiOS. Todos los derechos reservados.</div>
-          <div class="flex gap-6">
-            <router-link v-for="link in legalLinks" :key="link.label" :to="link.to"
-              class="text-sm text-white/30 hover:text-blue-400 transition-colors">{{ link.label }}</router-link>
-          </div>
         </div>
       </div>
     </footer>
@@ -86,6 +82,9 @@ function linksFor(category: string, anchors: FooterLink[]): FooterLink[] {
 }
 
 // Columnas sin links no se muestran: sin CMS solo queda "Producto" (con sus anclas reales).
+// Legal (Términos, Privacidad, Eliminación de datos) es una columna más, como Blog — antes
+// vivían aparte en la barra inferior, apretadas junto al copyright y perdidas más abajo del
+// scroll. Pedido del cliente: que se vean igual que el resto de las secciones del footer.
 const footerCols = computed(() => ([
   { title: 'Producto', links: linksFor('producto', [
     { label: 'Funciones', href: '#features' }, { label: 'Precios', href: '#pricing' }, { label: 'Integraciones', href: '#integrations' },
@@ -93,11 +92,6 @@ const footerCols = computed(() => ([
   { title: 'Empresa', links: linksFor('empresa', []) },
   { title: 'Soporte', links: linksFor('soporte', []) },
   { title: 'Blog', links: linksFor('blog', []) },
+  { title: 'Legal', links: linksFor('legal', []) },
 ]).filter((c) => c.links.length > 0))
-
-/** Legales del CMS (orden por sortOrder). */
-const legalLinks = computed(() => {
-  const pages = sitePages.value.filter((p) => p.category === 'legal')
-  return pages.map((p) => ({ label: p.title, to: `/p/${p.slug}` }))
-})
 </script>

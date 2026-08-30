@@ -117,6 +117,8 @@ describe('SubscriptionsService.signup', () => {
 // la query (`shared/utils/plans-order.ts`: price ASC, slug ASC) y ninguna UI re-ordena.
 // Antes mandaba `sortOrder`, un campo cargado a mano, y en producción la lista salía
 // Host $29 → Starter $49 → Enterprise $199 → Professional $123 → Essential $99 → Ultra $0.
+// Reversión posterior (pedido del cliente): los planes a cotización (`price <= 0`, sin número,
+// "A cotización"/"Consultar") van AL FINAL, no primero — ver `listPublicPlans`.
 describe('SubscriptionsService.publicPlans — orden por precio (#30)', () => {
   const active = (over: any) => ({ currency: 'USD', description: '', features: [], isActive: 1, ...over })
   const slugs = (plans: any[]) => plans.map((p: any) => p.slug)
@@ -142,13 +144,13 @@ describe('SubscriptionsService.publicPlans — orden por precio (#30)', () => {
     expect(slugs(plans)).toEqual(['host', 'professional', 'enterprise'])
   })
 
-  it('(c) sin sortOrder (ausente o null) manda el precio igual', async () => {
+  it('(c) sin sortOrder (ausente o null) manda el precio igual, y el de cotización ($0) va al final', async () => {
     const plans = await serviceWith([
       active({ id: 'a', name: 'Enterprise', slug: 'enterprise', price: 199, sortOrder: null }),
       active({ id: 'b', name: 'Starter', slug: 'starter', price: 49 }),
       active({ id: 'c', name: 'Ultra', slug: 'ultra', price: 0, sortOrder: null }),
     ]).publicPlans()
-    expect(slugs(plans)).toEqual(['ultra', 'starter', 'enterprise'])
+    expect(slugs(plans)).toEqual(['starter', 'enterprise', 'ultra'])
   })
 
   // CFG-2: "sin tope" lo resuelve el SERVIDOR contra `UNLIMITED_LIMIT_SENTINEL`. El frontend tenía

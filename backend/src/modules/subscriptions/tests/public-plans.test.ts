@@ -45,20 +45,21 @@ async function withPlansRepo(fn: (repo: OrmRepository<any>) => Promise<void>): P
   }
 }
 
-describe('listPublicPlans — #30: precio ASC, del más barato al más caro', () => {
-  it('devuelve los planes del seed en [ultra, host, starter, essential, professional, enterprise]', async () => {
+describe('listPublicPlans — #30: precio ASC, del más barato al más caro, cotización al final', () => {
+  it('devuelve los planes del seed en [host, starter, essential, professional, enterprise, ultra]', async () => {
     await withPlansRepo(async (repo) => {
       const plans = await listPublicPlans(repo)
-      expect(plans.map((p) => p.slug)).toEqual(['ultra', 'host', 'starter', 'essential', 'professional', 'enterprise'])
-      expect(plans.map((p) => p.price)).toEqual([0, 29, 49, 99, 99, 199])
+      expect(plans.map((p) => p.slug)).toEqual(['host', 'starter', 'essential', 'professional', 'enterprise', 'ultra'])
+      expect(plans.map((p) => p.price)).toEqual([29, 49, 99, 99, 199, 0])
     })
   })
 
-  it('el $0 (ultra, a cotización) sale primero — es lo esperado con precio ASC', async () => {
+  it('el $0 (ultra, a cotización) sale último — pedido del cliente sobre #30', async () => {
     await withPlansRepo(async (repo) => {
-      const first = (await listPublicPlans(repo))[0]
-      expect(first?.slug).toBe('ultra')
-      expect(first?.price).toBe(0)
+      const plans = await listPublicPlans(repo)
+      const last = plans[plans.length - 1]
+      expect(last?.slug).toBe('ultra')
+      expect(last?.price).toBe(0)
     })
   })
 
@@ -72,10 +73,21 @@ describe('listPublicPlans — #30: precio ASC, del más barato al más caro', ()
     })
   })
 
-  it('`sortOrder` ya NO manda: enterprise (sortOrder 2, $199) va último, no tercero', async () => {
+  it('`sortOrder` ya NO manda: enterprise (sortOrder 2, $199) va penúltimo, no tercero — solo el de cotización va después', async () => {
     await withPlansRepo(async (repo) => {
       const plans = await listPublicPlans(repo)
-      expect(plans[plans.length - 1]?.slug).toBe('enterprise')
+      expect(plans[plans.length - 2]?.slug).toBe('enterprise')
+    })
+  })
+
+  it('con más de un plan a cotización, ambos van al final y mantienen slug ASC entre sí', async () => {
+    await withPlansRepo(async (repo) => {
+      await repo.create({
+        id: 'plan-a-medida', name: 'A Medida', slug: 'a-medida', price: 0, currency: 'USD',
+        isActive: 1, sortOrder: -5,
+      } as any)
+      const plans = await listPublicPlans(repo)
+      expect(plans.slice(-2).map((p) => p.slug)).toEqual(['a-medida', 'ultra'])
     })
   })
 

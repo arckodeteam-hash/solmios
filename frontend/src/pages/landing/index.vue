@@ -256,41 +256,63 @@
         <p v-if="plansFailed" class="text-center text-xs text-slate-400 mb-6" data-testid="plans-fallback-notice">
           No pudimos cargar los precios actualizados. Escribinos y te los pasamos al instante.
         </p>
-        <div class="grid sm:grid-cols-2 lg:grid-cols-5 gap-5 items-start">
-          <div v-for="plan in plans" :key="plan.id"
-            class="rounded-2xl border border-slate-200 bg-white overflow-hidden transition-all flex flex-col h-full"
-            :class="plan.featured ? 'shadow-xl lg:-translate-y-2 ring-1 ring-purple/15' : 'hover:shadow-md'">
-            <div class="p-6" :class="planColor(plan.color).header">
-              <div v-if="plan.badge" class="inline-flex mb-3 text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider" :class="planColor(plan.color).badge">{{ plan.badge }}</div>
-              <div class="text-lg font-black text-white mb-1">{{ plan.name }}</div>
-              <div class="flex items-end gap-1.5 flex-wrap">
-                <span v-if="plansLoading && !plan.priceKnown" class="h-7 w-24 rounded bg-white/20 animate-pulse" data-testid="plan-price-loading"></span>
-                <template v-else>
-                  <span class="text-2xl font-black text-white" data-testid="plan-price">{{ plan.priceLabel }}</span>
-                  <span v-if="plan.priceKnown && !plan.quote" class="text-xs text-white/60 mb-1">/mes</span>
-                </template>
+
+        <!-- Carrusel horizontal: nunca baja de fila (evita el wrap del grid con muchos planes).
+             `plans` ya llega ordenado por el backend — precio ASC y los "a cotización" al final
+             (`PlanCatalogService`/`listPublicPlans`) — así que solo se pinta en el orden recibido. -->
+        <div class="relative">
+          <button
+            v-if="canScrollPlansPrev" type="button" @click="scrollPlansBy(-1)" aria-label="Planes anteriores"
+            class="hidden md:flex absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-white border border-slate-200 shadow-md items-center justify-center text-navy hover:bg-slate-50 transition-colors"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"/></svg>
+          </button>
+          <button
+            v-if="canScrollPlansNext" type="button" @click="scrollPlansBy(1)" aria-label="Más planes"
+            class="hidden md:flex absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-white border border-slate-200 shadow-md items-center justify-center text-navy hover:bg-slate-50 transition-colors"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+          </button>
+
+          <div
+            ref="plansTrackEl" class="plans-track flex gap-5 overflow-x-auto snap-x snap-mandatory scroll-smooth items-start pb-2"
+            @scroll="updatePlansScrollState"
+          >
+            <div v-for="plan in plans" :key="plan.id" data-plan-card
+              class="snap-start shrink-0 w-[78vw] max-w-75 sm:w-70 rounded-2xl border border-slate-200 bg-white overflow-hidden transition-all flex flex-col h-full"
+              :class="plan.featured ? 'shadow-xl md:-translate-y-2 ring-1 ring-purple/15' : 'hover:shadow-md'">
+              <div class="p-6" :class="planColor(plan.color).header">
+                <div v-if="plan.badge" class="inline-flex mb-3 text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider" :class="planColor(plan.color).badge">{{ plan.badge }}</div>
+                <div class="text-lg font-black text-white mb-1">{{ plan.name }}</div>
+                <div class="flex items-end gap-1.5 flex-wrap">
+                  <span v-if="plansLoading && !plan.priceKnown" class="h-7 w-24 rounded bg-white/20 animate-pulse" data-testid="plan-price-loading"></span>
+                  <template v-else>
+                    <span class="text-2xl font-black text-white" data-testid="plan-price">{{ plan.priceLabel }}</span>
+                    <span v-if="plan.priceKnown && !plan.quote" class="text-xs text-white/60 mb-1">/mes</span>
+                  </template>
+                </div>
+                <div v-if="plan.rooms" class="text-[11px] text-white/70 mt-1">{{ plan.rooms }}</div>
               </div>
-              <div v-if="plan.rooms" class="text-[11px] text-white/70 mt-1">{{ plan.rooms }}</div>
-            </div>
-            <div class="p-6 flex flex-col flex-1">
-              <p class="text-xs text-slate-500 mb-5 min-h-10">{{ plan.desc }}</p>
-              <a v-if="plan.quote" :href="SALES_MAILTO"
-                class="block w-full py-2.5 rounded-xl text-center text-xs font-bold mb-6 border transition-colors"
-                :class="planColor(plan.color).cta">
-                Contactar ventas
-              </a>
-              <!-- `?plan=` preselecciona el plan en el alta: elegir "Professional" acá y que el
-                   formulario abra en el primero de la lista pierde la intención del visitante.
-                   Un slug desconocido no rompe nada — el alta cae a su default. -->
-              <router-link v-else :to="{ path: '/registro', query: { plan: plan.slug } }"
-                class="block w-full py-2.5 rounded-xl text-center text-xs font-bold mb-6 border transition-colors"
-                :class="planColor(plan.color).cta">
-                Prueba gratis {{ trialDays }} días
-              </router-link>
-              <div class="space-y-2.5 flex-1">
-                <div v-for="feat in plan.features" :key="feat" class="flex items-start gap-2 text-xs text-slate-600">
-                  <svg class="w-3.5 h-3.5 shrink-0 mt-0.5" :class="planColor(plan.color).check" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
-                  {{ feat }}
+              <div class="p-6 flex flex-col flex-1">
+                <p class="text-xs text-slate-500 mb-5 min-h-10">{{ plan.desc }}</p>
+                <button v-if="plan.quote" type="button" @click="openSalesModal(plan.slug)"
+                  class="block w-full py-2.5 rounded-xl text-center text-xs font-bold mb-6 border transition-colors cursor-pointer"
+                  :class="planColor(plan.color).cta">
+                  Contactar ventas
+                </button>
+                <!-- `?plan=` preselecciona el plan en el alta: elegir "Professional" acá y que el
+                     formulario abra en el primero de la lista pierde la intención del visitante.
+                     Un slug desconocido no rompe nada — el alta cae a su default. -->
+                <router-link v-else :to="{ path: '/registro', query: { plan: plan.slug } }"
+                  class="block w-full py-2.5 rounded-xl text-center text-xs font-bold mb-6 border transition-colors"
+                  :class="planColor(plan.color).cta">
+                  Prueba gratis {{ trialDays }} días
+                </router-link>
+                <div class="space-y-2.5 flex-1">
+                  <div v-for="feat in plan.features" :key="feat" class="flex items-start gap-2 text-xs text-slate-600">
+                    <svg class="w-3.5 h-3.5 shrink-0 mt-0.5" :class="planColor(plan.color).check" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+                    {{ feat }}
+                  </div>
                 </div>
               </div>
             </div>
@@ -321,7 +343,7 @@
             Comenzar Gratis
             <svg class="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
           </router-link>
-          <a :href="SALES_MAILTO" class="inline-flex items-center gap-2 border border-white/20 text-white font-semibold text-sm px-8 py-4 rounded-xl hover:bg-white/10 transition-colors">Hablar con Ventas</a>
+          <button type="button" @click="openSalesModal()" class="inline-flex items-center gap-2 border border-white/20 text-white font-semibold text-sm px-8 py-4 rounded-xl hover:bg-white/10 transition-colors cursor-pointer">Hablar con Ventas</button>
         </div>
         <!-- Trust mini-badges -->
         <div class="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 mt-12 text-white/40">
@@ -334,18 +356,29 @@
 
     <!-- ═══ FOOTER — componente compartido del sitio (mismo footer en /p/:slug) ═══ -->
     <SiteFooter />
+
+    <!-- ═══ Modal "Hablar con Ventas" — formulario público, llega a Panel › Leads de Ventas ═══ -->
+    <SalesContactModal v-model:open="salesModalOpen" :plan-interest="salesModalPlan" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { SignupService } from '@/services/Signup.service'
 import heroImage from '@/assets/hero.png'
 import SiteHeader from '@/components/site/SiteHeader.vue'
 import SiteFooter from '@/components/site/SiteFooter.vue'
+import SalesContactModal from '@/components/site/SalesContactModal.vue'
 import { usePageMeta } from '@/composables/usePageMeta'
 import { PUBLIC_PAGE_META } from '@/pages/public-meta'
-import { PlanCatalogService, SALES_MAILTO, type DisplayPlan } from '@/services/PlanCatalog.service'
+import { PlanCatalogService, type DisplayPlan } from '@/services/PlanCatalog.service'
+
+const salesModalOpen = ref(false)
+const salesModalPlan = ref<string | undefined>(undefined)
+function openSalesModal(planSlug?: string) {
+  salesModalPlan.value = planSlug
+  salesModalOpen.value = true
+}
 
 usePageMeta(PUBLIC_PAGE_META.landing)
 
@@ -440,6 +473,27 @@ const plansLoading = ref(true)
 /** La API no contestó (o no hay planes publicados): se muestra el fallback y se avisa. */
 const plansFailed = ref(false)
 
+// Carrusel de planes: pedido del cliente — con muchos planes la sección NO puede bajar de fila
+// (el `grid` viejo envolvía a una segunda fila con 6+ planes), tiene que scrollear horizontal.
+// Las flechas son un atajo de desktop; en mobile/tablet el scroll nativo (swipe) ya funciona
+// solo con `overflow-x-auto` — por eso están `hidden md:flex`.
+const plansTrackEl = ref<HTMLElement | null>(null)
+const canScrollPlansPrev = ref(false)
+const canScrollPlansNext = ref(false)
+function updatePlansScrollState() {
+  const el = plansTrackEl.value
+  if (!el) return
+  canScrollPlansPrev.value = el.scrollLeft > 8
+  canScrollPlansNext.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 8
+}
+function scrollPlansBy(dir: 1 | -1) {
+  const el = plansTrackEl.value
+  if (!el) return
+  const card = el.querySelector<HTMLElement>('[data-plan-card]')
+  const step = (card?.offsetWidth ?? 280) + 20 // gap-5 = 20px
+  el.scrollBy({ left: dir * step * 2, behavior: 'smooth' })
+}
+
 /**
  * #28 — la landing prometía "Sin tarjeta de crédito" en duro mientras el super-admin podía
  * exigirla. El texto ahora lo decide `GET /api/public/signup-policy`, la misma fuente que usa el
@@ -471,8 +525,13 @@ onMounted(async () => {
   plans.value = res.plans
   plansFailed.value = !res.fromApi
   plansLoading.value = false
+  await nextTick()
+  updatePlansScrollState()
   await policyPromise
 })
+
+onMounted(() => window.addEventListener('resize', updatePlansScrollState, { passive: true }))
+onUnmounted(() => window.removeEventListener('resize', updatePlansScrollState))
 
 </script>
 
@@ -507,6 +566,15 @@ onMounted(async () => {
 
 @media (prefers-reduced-motion: reduce) {
   .hero-fade-up { animation: none; opacity: 1; transform: none; }
+}
+
+/* ── CARRUSEL DE PLANES (pricing) ── */
+.plans-track {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;
+}
+.plans-track::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Edge */
 }
 
 /* ── CARRUSEL INFINITO (trust strip) ── */
