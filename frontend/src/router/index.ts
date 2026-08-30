@@ -195,6 +195,11 @@ const router = createRouter({
           component: () => import('@/pages/super-admin/eliminacion-datos.vue'),
         },
         {
+          path: 'leads-ventas',
+          name: 'super-admin-leads-ventas',
+          component: () => import('@/pages/super-admin/leads-ventas.vue'),
+        },
+        {
           path: 'support',
           name: 'super-admin-support',
           component: () => import('@/pages/super-admin/support.vue'),

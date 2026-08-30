@@ -120,6 +120,14 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
     deletionRequestsForEmail.setEmailDeps(emailService)
   }
 
+  // Leads de ventas: acuse de recibo al lead + aviso al equipo de ventas, best-effort desde
+  // el service — sin esto el lead igual queda guardado, solo no avisa por correo (degrada a
+  // "hay que mirar Panel › Leads de Ventas a mano").
+  const salesLeadsForEmail = resolveModule<{ setEmailDeps(es: EmailSender): void }>('sales-leads')
+  if (salesLeadsForEmail && typeof salesLeadsForEmail.setEmailDeps === 'function') {
+    salesLeadsForEmail.setEmailDeps(emailService)
+  }
+
   // Correo de confirmación de PAGO del motor público (pedido del cliente 2026-08-29). Va acá y
   // no en un connector porque el EmailService se construye DESPUÉS de `system.start()`: un
   // connector que lo referenciara reventaría por TDZ al arrancar. `setSockets` compone, así que
