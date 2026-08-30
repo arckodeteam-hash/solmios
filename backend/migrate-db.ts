@@ -1083,15 +1083,22 @@ async function seedBase(): Promise<void> {
   if (!(await exists('hotels', HOTEL2_ID)))
     await run(HOTELS_SQL, [HOTEL2_ID, 'SolmiOS Corp', 'Oficinas Centrales', '+1 809 555 0000', 'admin@solmios.com', 'DO', 'USD', 'America/Santo_Domingo', '14:00', '11:00', 'enterprise', 'active', 0, 1, now(), now()])
 
-  const users: Array<[string, string, string, string, string, string]> = [
-    ['user-super-0000-0000-000000000001', 'Super Admin', 'admin@solmios.com', SUPER_HASH, 'super_admin', HOTEL2_ID],
-    ['user-admin-0000-0000-000000000002', 'Admin Palma', 'admin@caribeparadise.com', ADMIN_HASH, 'hotel_admin', HOTEL_ID],
-    ['user-recep-0000-0000-000000000003', 'Maria Lopez', 'maria@caribeparadise.com', RECEP_HASH, 'receptionist', HOTEL_ID],
-    ['user-hotel-0000-0000-000000000004', 'Hotel Admin', 'hotel@solmios.com', ADMIN_HASH, 'hotel_admin', HOTEL2_ID],
-    ['user-recep-0000-0000-000000000005', 'Recepcion Solmios', 'recepcion@solmios.com', RECEP_HASH, 'receptionist', HOTEL2_ID],
-    ['user-house-0000-0000-000000000006', 'Rosa Martinez', 'rosa@solmios.com', RECEP_HASH, 'housekeeper', HOTEL2_ID],
-    ['user-maint-0000-0000-000000000007', 'Carlos Fernandez', 'carlos@solmios.com', RECEP_HASH, 'maintenance', HOTEL2_ID],
-    ['user-recep-0000-0000-000000000008', 'Luis Ramirez', 'luis@solmios.com', RECEP_HASH, 'receptionist', HOTEL2_ID],
+  // userType: 'admin' SOLO para el super_admin de plataforma — el resto son 'merchant'
+  // (dueños/staff de un hotel). Antes esta columna no se seteaba acá y caía siempre al
+  // default del modelo (`usuarios/model.ts:11`, 'merchant'), así que `admin@solmios.com`
+  // (role=super_admin) quedaba con userType='merchant' → cualquier ruta
+  // `requireUserType('admin')` lo rechazaba con 401 pese a tener sesión válida (bug real,
+  // reproducido en dev 2026-08-30: login OK, pero el dashboard de super-admin tira 401
+  // "Acceso denegado. Tipo de usuario requerido: admin").
+  const users: Array<[string, string, string, string, string, string, string]> = [
+    ['user-super-0000-0000-000000000001', 'Super Admin', 'admin@solmios.com', SUPER_HASH, 'super_admin', HOTEL2_ID, 'admin'],
+    ['user-admin-0000-0000-000000000002', 'Admin Palma', 'admin@caribeparadise.com', ADMIN_HASH, 'hotel_admin', HOTEL_ID, 'merchant'],
+    ['user-recep-0000-0000-000000000003', 'Maria Lopez', 'maria@caribeparadise.com', RECEP_HASH, 'receptionist', HOTEL_ID, 'merchant'],
+    ['user-hotel-0000-0000-000000000004', 'Hotel Admin', 'hotel@solmios.com', ADMIN_HASH, 'hotel_admin', HOTEL2_ID, 'merchant'],
+    ['user-recep-0000-0000-000000000005', 'Recepcion Solmios', 'recepcion@solmios.com', RECEP_HASH, 'receptionist', HOTEL2_ID, 'merchant'],
+    ['user-house-0000-0000-000000000006', 'Rosa Martinez', 'rosa@solmios.com', RECEP_HASH, 'housekeeper', HOTEL2_ID, 'merchant'],
+    ['user-maint-0000-0000-000000000007', 'Carlos Fernandez', 'carlos@solmios.com', RECEP_HASH, 'maintenance', HOTEL2_ID, 'merchant'],
+    ['user-recep-0000-0000-000000000008', 'Luis Ramirez', 'luis@solmios.com', RECEP_HASH, 'receptionist', HOTEL2_ID, 'merchant'],
   ]
   // Verificación dual (id + email): `exists('users', id)` cubre el caso idempotente
   // clásico (mismo ID ya insertado por un run previo). `ON CONFLICT(email) DO NOTHING`
@@ -1107,10 +1114,10 @@ async function seedBase(): Promise<void> {
   // El lookup `USERS = SELECT id, ... FROM users` (main, línea 938) lee los IDs reales
   // de la DB, así que los seeds posteriores que referencian USERS[n]?.id siguen
   // resolviendo contra el usuario existente (no contra el ID estático del seed).
-  for (const [id, name, email, password, role, hotelId] of users)
+  for (const [id, name, email, password, role, hotelId, userType] of users)
     if (!(await exists('users', id)))
-      await run("INSERT INTO users (id, name, email, password, role, hotelId, active, isDemo, createdAt, updatedAt) VALUES (?,?,?,?,?,?,1,1,?,?) ON CONFLICT(email) DO NOTHING",
-        [id, name, email, password, role, hotelId, now(), now()])
+      await run("INSERT INTO users (id, name, email, password, role, hotelId, userType, active, isDemo, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,1,1,?,?) ON CONFLICT(email) DO NOTHING",
+        [id, name, email, password, role, hotelId, userType, now(), now()])
 
   const rooms: Array<[string, string, string, string, number, string, number]> = [
     ['room-0001-0000-0000-000000000001', '101', 'Suite Junior', 'suite', 120, 'available', 2],

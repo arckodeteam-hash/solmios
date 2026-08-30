@@ -42,21 +42,22 @@ describe('GET /api/admin/modules/catalog — forma del árbol', () => {
   it('super_admin (userType admin) → 200 con el árbol completo del catálogo', async () => {
     const res = await router.resolve('GET', '/api/admin/modules/catalog', { headers: headersFor('super_admin', 'admin') })
     expect(res.status).toBe(200)
-    const tree = res.body as Array<{ key: string; label: string; children: Array<{ key: string; label: string }> }>
+    const tree = res.body as Array<{ key: string; label: string; description: string; children: Array<{ key: string; label: string; description: string }> }>
     expect(Array.isArray(tree)).toBe(true)
     // Mismas claves, mismo orden que el catálogo del gate — es una proyección, no una copia.
     expect(tree.map((m) => m.key)).toEqual(MODULE_CATALOG.map((m) => m.key))
     const finance = tree.find((m) => m.key === 'finance')!
     expect(finance.label).toBe('Finanzas')
-    expect(finance.children).toContainEqual({ key: 'finance.billing', label: 'Facturación' })
+    expect(finance.description).toBe('Facturación, folios, caja y reportes')
+    expect(finance.children).toContainEqual({ key: 'finance.billing', label: 'Facturación', description: 'Facturas y notas de crédito' })
   })
 
-  it('los submódulos viajan como children (solo key+label) y un módulo sin submódulos en [] (no undefined)', async () => {
+  it('los submódulos viajan como children (key+label+description) y un módulo sin submódulos en [] (no undefined)', async () => {
     const res = await router.resolve('GET', '/api/admin/modules/catalog', { headers: headersFor('super_admin', 'admin') })
     const tree = res.body as any[]
     const reservations = MODULE_CATALOG.find((m) => m.key === 'reservations')!
     expect(tree.find((m) => m.key === 'reservations')!.children)
-      .toEqual(reservations.submodules!.map((s) => ({ key: s.key, label: s.label })))
+      .toEqual(reservations.submodules!.map((s) => ({ key: s.key, label: s.label, description: s.description })))
     const crm = tree.find((m) => m.key === 'crm')!
     expect(crm.children).toEqual([]) // forma estable para el editor: iterar sin guard de undefined
   })
@@ -69,13 +70,13 @@ describe('GET /api/admin/modules/catalog — forma del árbol', () => {
     const sitePages = tree.find((m) => m.key === 'site-pages')!
     expect(sitePages.label).toBe('Página pública')
     expect(sitePages.children).toEqual([
-      { key: 'site-pages.landing', label: 'Landing' },
-      { key: 'site-pages.media', label: 'Media' },
-      { key: 'site-pages.booking', label: 'Motor de reservas' },
-      { key: 'site-pages.promos', label: 'Códigos de descuento' },
+      { key: 'site-pages.landing', label: 'Landing', description: 'Bloques de la landing pública' },
+      { key: 'site-pages.media', label: 'Media', description: 'Galería de fotos del hotel' },
+      { key: 'site-pages.booking', label: 'Motor de reservas', description: 'Configuración del booking engine' },
+      { key: 'site-pages.promos', label: 'Códigos de descuento', description: 'Códigos promocionales del checkout' },
     ])
     const settings = tree.find((m) => m.key === 'settings')!
-    expect(settings.children).toContainEqual({ key: 'settings.rates', label: 'Temporadas y Tarifas' })
-    expect(settings.children).toContainEqual({ key: 'settings.audit', label: 'Auditoría' })
+    expect(settings.children).toContainEqual({ key: 'settings.rates', label: 'Temporadas y Tarifas', description: 'Temporadas y matriz de tarifas' })
+    expect(settings.children).toContainEqual({ key: 'settings.audit', label: 'Auditoría', description: 'Log de acciones sensibles del hotel' })
   })
 })

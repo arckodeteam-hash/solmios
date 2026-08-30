@@ -3,7 +3,7 @@
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { ValidationError } from 'arckode-framework'
 import { auditSafely, planDeleteEntry, type AuditPort } from './audit'
-import { invalidPlanModuleKeys } from './modules'
+import { invalidPlanModuleKeys, suggestPlanCopy } from './modules'
 
 export interface PlansDeps {
   plansRepo: RepositoryAdapter<any>
@@ -31,15 +31,37 @@ function assertValidPlanModules(modules: unknown): void {
   }
 }
 
+/**
+ * QA 2026-08-30 — si el admin eligió módulos pero dejó Descripción/Features en blanco, el plan
+ * quedaba "mudo" en la landing pública (sin ninguna copy, aunque el catálogo SÍ describe cada
+ * módulo). Completa esos dos campos con `suggestPlanCopy` SOLO cuando llegan vacíos — nunca pisa
+ * texto que el admin ya escribió a mano. Sigue siendo texto plano editable después (no un
+ * template server-side): el admin puede reescribirlo desde `plans.vue` como siempre.
+ */
+function withSuggestedCopy(body: any, modules: unknown[]): { description: string; features: unknown[] } {
+  const needsDescription = !body.description
+  const needsFeatures = !Array.isArray(body.features) || body.features.length === 0
+  if (modules.length === 0 || (!needsDescription && !needsFeatures)) {
+    return { description: body.description || '', features: body.features || [] }
+  }
+  const suggested = suggestPlanCopy(modules)
+  return {
+    description: needsDescription ? suggested.description : body.description,
+    features: needsFeatures ? suggested.features : body.features,
+  }
+}
+
 export async function createPlan(deps: PlansDeps, body: any): Promise<any> {
   if (!body.name || !body.price) throw new Error('name y price requeridos')
   if (body.modules !== undefined) assertValidPlanModules(body.modules)
+  const modules = Array.isArray(body.modules) ? body.modules : []
+  const copy = withSuggestedCopy(body, modules)
   return await deps.plansRepo.create({
     name: body.name,
     slug: body.name.toLowerCase().replace(/\s+/g, '-'),
     price: Number(body.price), currency: body.currency || 'USD',
-    description: body.description || '', features: body.features || [],
-    modules: Array.isArray(body.modules) ? body.modules : [],
+    description: copy.description, features: copy.features,
+    modules,
     limits: body.limits || { rooms: 30, users: 2, properties: 1 },
     isActive: body.isActive !== false ? 1 : 0, sortOrder: body.sortOrder || 0,
   })
@@ -53,6 +75,11 @@ export async function updatePlan(deps: PlansDeps, id: string, body: any, user?: 
   const patch: Record<string, any> = {}
   for (const k of ['name', 'price', 'currency', 'description', 'features', 'modules', 'limits', 'isActive', 'sortOrder']) {
     if (body[k] !== undefined) patch[k] = k === 'isActive' ? (body[k] ? 1 : 0) : body[k]
+  }
+  if (body.modules !== undefined) {
+    const copy = withSuggestedCopy(body, body.modules)
+    patch.description = copy.description
+    patch.features = copy.features
   }
   if (body.name) patch.slug = body.name.toLowerCase().replace(/\s+/g, '-')
   return await deps.plansRepo.update(id, patch)

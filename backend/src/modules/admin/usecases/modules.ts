@@ -147,16 +147,41 @@ export function allKeys(): string[] {
 // Fuente única: el mismo MODULE_CATALOG que lee el gate. El frontend NO duplica la lista —
 // la pide a GET /api/admin/modules/catalog, así una clave nueva o retirada del catálogo
 // aparece/desaparece del editor sin tocar código de UI.
-export interface CatalogChild { key: string; label: string }
-export interface CatalogModule { key: string; label: string; children: CatalogChild[] }
+// `description` viaja acá (QA 2026-08-30) para que el picker de `plans.vue` muestre qué hace
+// cada módulo mientras el admin lo tilda — antes solo mandaba key+label, sin ninguna pista de
+// qué texto se sugeriría para la landing (ver `suggestPlanCopy`).
+export interface CatalogChild { key: string; label: string; description: string }
+export interface CatalogModule { key: string; label: string; description: string; children: CatalogChild[] }
 
 /** Árbol módulo→sub-módulos con labels en español para display. */
 export function moduleCatalogTree(): CatalogModule[] {
   return MODULE_CATALOG.map((m) => ({
     key: m.key,
     label: m.label,
-    children: (m.submodules ?? []).map((s) => ({ key: s.key, label: s.label })),
+    description: m.description,
+    children: (m.submodules ?? []).map((s) => ({ key: s.key, label: s.label, description: s.description })),
   }))
+}
+
+/**
+ * QA 2026-08-30 — un admin que arma un plan eligiendo módulos esperaba que la Descripción/
+ * Features de la landing salieran solas ("¿se pone automática o cómo?"); hoy son texto libre
+ * sin ninguna conexión con `modules` (ver mem `plan-modules-landing-description-gap`). Esto
+ * NO reemplaza esos campos — les da un valor de arranque razonable cuando el admin los deja
+ * vacíos, usando el MISMO catálogo que ya describe cada módulo (single source, GH-31-like).
+ * Solo mira módulos TOP-LEVEL: si el plan trae una sub-clave suelta (`finance.billing` sin
+ * `finance`), igual cuenta el módulo padre una sola vez — el resumen es a nivel de producto,
+ * no de submenú.
+ */
+export function suggestPlanCopy(keys: readonly unknown[]): { description: string; features: string[] } {
+  const set = new Set((keys ?? []).map(String))
+  const mods = MODULE_CATALOG.filter((m) => set.has(m.key) || (m.submodules ?? []).some((s) => set.has(s.key)))
+  if (mods.length === 0) return { description: '', features: [] }
+  const labels = mods.map((m) => m.label)
+  const description = labels.length === 1
+    ? `Incluye ${labels[0]}.`
+    : `Incluye ${labels.slice(0, -1).join(', ')} y ${labels[labels.length - 1]}.`
+  return { description, features: mods.map((m) => m.description) }
 }
 
 /**

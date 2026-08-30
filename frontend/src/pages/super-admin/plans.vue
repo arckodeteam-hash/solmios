@@ -64,6 +64,14 @@
             <div>
               <label class="block text-[10px] font-bold text-text-muted uppercase mb-1">Features (una por línea)</label>
               <textarea v-model="featuresText" rows="4" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm resize-none" placeholder="Hasta 30 habitaciones&#10;2 usuarios&#10;Reportes básicos"></textarea>
+              <!-- QA 2026-08-30 — antes no había ninguna pista de que estos 2 campos son texto
+                   libre sin relación automática con los módulos elegidos abajo. Si se guardan
+                   vacíos, el backend sugiere una descripción/lista a partir de los módulos
+                   tildados (`suggestPlanCopy`) — sigue siendo editable, esto solo evita un plan
+                   sin ninguna copy visible en la landing pública. -->
+              <p class="text-[11px] text-text-muted mt-1">
+                Si dejás esto vacío, se completa solo con la descripción de los módulos que tildes abajo — después lo podés reescribir.
+              </p>
             </div>
             <div class="grid grid-cols-3 gap-4">
               <div>
@@ -95,8 +103,11 @@
               </div>
               <div class="space-y-2 max-h-72 overflow-y-auto pr-1">
                 <div v-for="m in visibleCatalog" :key="m.key" class="rounded-xl border" :class="isFullModule(form.modules, m) ? 'border-teal bg-teal/5' : 'border-border bg-surface'">
-                  <!-- Módulo: tildado = COMPLETO. Destildar el completo deja los hijos sueltos (parcial). -->
-                  <button type="button" @click="toggleFull(m)"
+                  <!-- Módulo: tildado = COMPLETO. Destildar el completo deja los hijos sueltos (parcial).
+                       `title` = descripción del catálogo (QA 2026-08-30): esta es la misma copy que
+                       `suggestPlanCopy` usa como default de Descripción/Features si el admin las deja
+                       vacías — verla acá evita elegir un módulo sin saber qué texto va a salir en la landing. -->
+                  <button type="button" @click="toggleFull(m)" :title="m.description"
                     class="w-full flex items-center gap-2 px-3 py-2 text-sm font-bold text-left cursor-pointer"
                     :class="isFullModule(form.modules, m) ? 'text-teal' : 'text-text-secondary'">
                     <span class="w-4 h-4 rounded flex items-center justify-center shrink-0 border" :class="isFullModule(form.modules, m) ? 'bg-teal border-teal text-white' : 'border-border'">
@@ -111,7 +122,7 @@
                       :disabled="isFullModule(form.modules, m)"
                       class="flex items-center gap-2 px-2 py-1.5 rounded-lg text-[12px] font-semibold text-left transition-colors"
                       :class="[childIncluded(m, c) ? 'text-navy' : 'text-text-muted', isFullModule(form.modules, m) ? 'cursor-not-allowed opacity-70' : 'cursor-pointer']"
-                      :title="isFullModule(form.modules, m) ? 'Incluido por el módulo completo — destildá el módulo para elegir partes' : c.key">
+                      :title="isFullModule(form.modules, m) ? 'Incluido por el módulo completo — destildá el módulo para elegir partes' : c.description">
                       <span class="w-3.5 h-3.5 rounded flex items-center justify-center shrink-0 border" :class="childIncluded(m, c) ? 'bg-teal border-teal text-white' : 'border-border'">
                         <span v-if="childIncluded(m, c)" class="text-[9px] leading-none">✓</span>
                       </span>

@@ -12,15 +12,15 @@ import {
 } from './plan-modules'
 
 const CATALOG: CatalogModuleDTO[] = [
-  { key: 'planning', label: 'Planning', children: [] },
+  { key: 'planning', label: 'Planning', description: 'Calendario de reservas, tarifas y temporadas', children: [] },
   {
-    key: 'reservations', label: 'Reservas',
+    key: 'reservations', label: 'Reservas', description: 'Reservas y check-in / check-out',
     children: [
-      { key: 'reservations.list', label: 'Reservas' },
-      { key: 'reservations.checkin', label: 'Check-in / Check-out' },
+      { key: 'reservations.list', label: 'Reservas', description: 'Listado y alta de reservas' },
+      { key: 'reservations.checkin', label: 'Check-in / Check-out', description: 'Proceso de entrada y salida' },
     ],
   },
-  { key: 'finance', label: 'Finanzas', children: [{ key: 'finance.billing', label: 'Facturación' }] },
+  { key: 'finance', label: 'Finanzas', description: 'Facturación, folios, caja y reportes', children: [{ key: 'finance.billing', label: 'Facturación', description: 'Facturas y notas de crédito' }] },
 ]
 
 const reservations = CATALOG[1]!
