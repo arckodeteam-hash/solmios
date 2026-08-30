@@ -13,12 +13,12 @@ export const BASE_CHART: SeedAccount[] = [
   { code: '1.1.01', name: 'Caja', type: 'asset', postable: true },
   { code: '1.1.02', name: 'Bancos', type: 'asset', postable: true },
   { code: '1.1.03', name: 'Cuentas por Cobrar Clientes', type: 'asset', postable: true },
-  { code: '1.1.04', name: 'ITBIS Adelantado', type: 'asset', postable: true },
+  { code: '1.1.04', name: '{tax} Adelantado', type: 'asset', postable: true },
   { code: '1.2', name: 'Activo Fijo', type: 'asset', postable: false },
   { code: '2', name: 'Pasivo', type: 'liability', postable: false },
   { code: '2.1', name: 'Pasivo Corriente', type: 'liability', postable: false },
   { code: '2.1.01', name: 'Cuentas por Pagar Proveedores', type: 'liability', postable: true },
-  { code: '2.1.02', name: 'ITBIS por Pagar', type: 'liability', postable: true },
+  { code: '2.1.02', name: '{tax} por Pagar', type: 'liability', postable: true },
   { code: '2.1.03', name: 'Depósitos de Huéspedes', type: 'liability', postable: true },
   { code: '2.1.04', name: 'Ingresos Diferidos', type: 'liability', postable: true },
   { code: '2.1.05', name: 'Propinas por Pagar', type: 'liability', postable: true },
@@ -58,9 +58,26 @@ function parentCode(code: string): string | undefined {
  * Inserta el plan base para un hotel. Idempotente: salta las cuentas cuyo `code` ya existe.
  * Devuelve cuántas creó. Los grupos van primero (orden del array) para que el `parentId` resuelva.
  */
+/** Default alineado con `hoteles/model.ts` (`taxName`). */
+export const DEFAULT_TAX_NAME = 'ITBIS'
+
+/**
+ * Nombre del impuesto que el HOTEL configuró (`hotels.taxName`), no un literal.
+ * El plan base nombraba las dos cuentas de impuesto como "ITBIS" —el de República Dominicana—
+ * aunque el hotel fuera de México (IVA) o de otro país. El nombre del impuesto es configuración
+ * del hotel, así que el plan que se le siembra tiene que usarla (2026-08-30).
+ */
+export function taxNameOf(hotel: { taxName?: unknown } | null | undefined): string {
+  const raw = hotel?.taxName
+  const name = typeof raw === 'string' ? raw.trim() : ''
+  return name || DEFAULT_TAX_NAME
+}
+
 export async function seedChartOfAccounts(
   accounts: RepositoryAdapter<AccountDTO>,
   hotelId: string,
+  /** Impuesto del hotel. Sin él se usa el default del modelo. */
+  taxName: string = DEFAULT_TAX_NAME,
 ): Promise<{ created: number; total: number }> {
   const existing = await accounts.findMany({ hotelId })
   const byCode = new Map<string, string>()   // code → id (existentes + recién creadas)
@@ -72,7 +89,7 @@ export async function seedChartOfAccounts(
     const pCode = parentCode(node.code)
     const parentId = pCode ? byCode.get(pCode) : undefined
     const row = await accounts.create({
-      hotelId, code: node.code, name: node.name, type: node.type,
+      hotelId, code: node.code, name: node.name.replace('{tax}', taxName), type: node.type,
       parentId, isPostable: node.postable ? 1 : 0, active: 1,
     } as Omit<AccountDTO, 'id'>)
     byCode.set(node.code, row.id)

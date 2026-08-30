@@ -6,7 +6,7 @@
 // no-op — así la contabilidad automática solo corre para hoteles que la configuraron. Best-effort:
 // el conector envuelve la llamada en try/catch, un fallo acá nunca rompe el módulo origen.
 import { createJournalEntry, postEntry, type JournalDeps } from './journal-entry'
-import { seedChartOfAccounts } from './seed-chart-of-accounts'
+import { seedChartOfAccounts, taxNameOf } from './seed-chart-of-accounts'
 
 export interface AutoLineInput { code: string; debit?: number; credit?: number; description?: string }
 
@@ -72,7 +72,15 @@ async function resolveLines(
  */
 async function seedIfPossible(deps: JournalDeps, hotelId: string): Promise<boolean> {
   try {
-    const res = await seedChartOfAccounts(deps.accounts, hotelId)
+    // El nombre del impuesto lo configura el HOTEL (`hotels.taxName`), no la plataforma: un
+    // hotel mexicano no puede terminar con cuentas llamadas "ITBIS". Si no se puede leer, el
+    // seed usa su default y el hotel puede renombrarlas desde su Plan de Cuentas.
+    let taxName: string | undefined
+    try {
+      const hotel = await (deps.orm as any).findMany?.('Hotels', { id: hotelId })
+      taxName = taxNameOf(hotel?.[0])
+    } catch { /* default del seed */ }
+    const res = await seedChartOfAccounts(deps.accounts, hotelId, taxName)
     return res.created > 0
   } catch {
     return false
