@@ -172,7 +172,7 @@ export class ReservasService {
 
   async getExtendedDetail(id: string, currentUser: any): Promise<any> {
     const messageLogs = requireMessageLogSource(this.orchestrationDeps.listMessageLogs)
-    return getExtendedDetailUsecase(this.repo, this.guestRepo, this.roomRepo, this.queries, id, currentUser, messageLogs)
+    return getExtendedDetailUsecase(this.repo, this.guestRepo, this.roomRepo, this.queries, id, currentUser, messageLogs, this.userRepo)
   }
 
   // ── AUDIT TRAIL ────────────────────────────────────────────────────────

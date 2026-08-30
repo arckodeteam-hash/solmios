@@ -59,7 +59,8 @@ export interface CreatePaymentDTO {
   status?: PaymentStatus
   /** Identidad del cobro en Stripe. Permite deduplicar los reintentos del webhook. */
   stripeSessionId?: string
-  stripePaymentId?: string
+  stripePaymentId?: string  /** Quién registró el cobro (`users.id`). Lo pone el servidor desde el JWT, nunca el body. */
+  createdBy?: string
 }
 
 export interface ChargeCardDTO {

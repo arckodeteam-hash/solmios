@@ -29,6 +29,12 @@ export const PaymentModel: ModelDefinition = {
     stripePaymentId: { type: 'string', default: '' },
     stripeSessionId: { type: 'string', default: '' },
     metadata: { type: 'json', default: {} },
+    // Quién registró el cobro (`users.id`). Lo que pide el hotel para auditar un pago en
+    // efectivo o transferencia cargado en recepción (2026-08-30). Vacío = lo asentó el sistema
+    // (webhook de Stripe, motor de reservas, settlement del checkout), no una persona.
+    // El nombre se resuelve contra `/api/usuarios` — NUNCA contra `employee-profiles`, que es
+    // otro módulo con otros ids (regla CLAUDE.md). Anti-patrón ORM D5: declarado acá.
+    createdBy: { type: 'string', default: '' },
     processedAt: { type: 'string' },
   },
 }

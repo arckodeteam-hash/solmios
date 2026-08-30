@@ -455,6 +455,23 @@ function payMethodLabel(p?: string | null): string {
   const m: Record<string, string> = { transfer: 'Transferencia', card: 'Tarjeta', cash: 'Efectivo', link: 'Link de pago', deposit: 'Depósito' }
   return m[p || ''] || (p || 'No especificado')
 }
+// ── Historial de cobros (2026-08-30, pedido del cliente) ────────────────────
+// La tarjeta mostraba un total "Pagado" y recepción no podía responder "¿por dónde pagó?".
+// El backend lo arma en `shared/usecases/reservation-payment-history.ts`, desde la MISMA
+// recolección con la que calcula el total — el desglose cuadra con el número de arriba.
+const paymentHistory = computed(() => d.value?.paymentHistory ?? [])
+
+function paymentStatusLabel(status?: string | null): { label: string; cls: string } {
+  const m: Record<string, { label: string; cls: string }> = {
+    completed: { label: 'Cobrado', cls: 'bg-teal/10 text-teal' },
+    pending: { label: 'Pendiente', cls: 'bg-gold/10 text-gold' },
+    processing: { label: 'Procesando', cls: 'bg-gold/10 text-gold' },
+    failed: { label: 'Fallido', cls: 'bg-coral/10 text-coral' },
+    refunded: { label: 'Devuelto', cls: 'bg-purple/10 text-purple' },
+  }
+  return m[status || ''] || { label: status || '—', cls: 'bg-gray-100 text-gray-500' }
+}
+
 function payStatusBadge(dep?: number, total?: number): { label: string; cls: string } {
   const t = total ?? 0
   const dd = dep ?? 0
@@ -935,6 +952,33 @@ function irAFacturacion() {
                   Crear link de pago Stripe
                 </button>
               </div>
+              <!-- Historial de cobros (2026-08-30): antes solo se veía el total "Pagado" y no
+                   había forma de saber por dónde entró la plata, con qué referencia ni quién la
+                   cargó. El listado de /panel/billing es global del hotel y no filtra por reserva. -->
+              <details class="mt-3 pt-3 border-t border-teal/20" data-testid="payment-history" open>
+                <summary class="text-xs font-black text-navy cursor-pointer select-none flex items-center gap-1.5">
+                  Historial de cobros
+                  <span v-if="paymentHistory.length" class="text-[10px] font-bold text-text-muted">({{ paymentHistory.length }})</span>
+                </summary>
+                <div v-if="paymentHistory.length" class="mt-2 space-y-2">
+                  <div v-for="p in paymentHistory" :key="p.id" class="rounded-lg border border-border/60 bg-surface px-2.5 py-2" data-testid="payment-history-row">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="text-xs font-black tabular-nums" :class="p.amount < 0 ? 'text-purple' : 'text-teal'">
+                        {{ p.amount < 0 ? '−' : '+' }}{{ money(Math.abs(p.amount)) }}
+                      </span>
+                      <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0" :class="paymentStatusLabel(p.status).cls">{{ paymentStatusLabel(p.status).label }}</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-2 mt-0.5">
+                      <span class="text-[11px] text-text-secondary font-bold">{{ payMethodLabel(p.method) }}</span>
+                      <span class="text-[10px] text-text-muted">{{ fmtDateTime(p.createdAt) }}</span>
+                    </div>
+                    <div v-if="p.registeredBy" class="text-[10px] text-text-muted mt-0.5">Registró: {{ p.registeredBy }}</div>
+                    <div v-if="p.reference" class="text-[10px] text-text-muted font-mono truncate mt-0.5" :title="p.reference">Ref: {{ p.reference }}</div>
+                  </div>
+                </div>
+                <div v-else class="mt-2 text-xs text-text-muted italic">Todavía no se registró ningún cobro para esta reserva.</div>
+              </details>
+
               <!-- Movimientos del folio (inline) -->
               <div v-if="folioCharges" class="mt-3 pt-3 border-t border-teal/20">
                 <div class="text-xs font-black text-navy mb-1">Movimientos de caja</div>

@@ -468,6 +468,23 @@ export interface AuditLogEntry {
   createdAt?: string
 }
 
+/** Una línea del historial de cobros de la reserva (backend: `reservation-payment-history.ts`). */
+export interface ReservationPaymentEntry {
+  id: string
+  /** 'charge' | 'refund' | 'deposit' | 'withdrawal'. */
+  type: string
+  method: string
+  status: string
+  /** NEGATIVO en las devoluciones, para que la columna sume a la vista. */
+  amount: number
+  currency: string
+  description: string
+  reference: string
+  /** Nombre de quien lo registró. Vacío = lo asentó el sistema. */
+  registeredBy: string
+  createdAt: string
+}
+
 export interface ReservationDetail {
   id: string
   hotelId: string
@@ -514,6 +531,8 @@ export interface ReservationDetail {
    *  Define la ventana del código de la cerradura (ver `utils/hotel-schedule.ts`). */
   checkInTime?: string | null
   checkOutTime?: string | null
+  /** Movimientos de dinero de la reserva: cobros y devoluciones, del más reciente al más viejo. */
+  paymentHistory?: ReservationPaymentEntry[]
   // F3 MisterPlan: condiciones + otros cobros + código de check-in digital
   gdprAccepted?: boolean
   marketingAccepted?: boolean

@@ -2,12 +2,15 @@ import { NotFoundError, AuthError } from 'arckode-framework'
 import type { ReservasQueries } from './reservas-queries'
 import { addonsTotal, chargeableTotal, pendingBalance } from '../../../shared/utils/reservation-balance'
 import { paidForReservation } from '../../../shared/usecases/reservation-paid'
+import { reservationPaymentHistory, type PaymentHistoryEntry } from '../../../shared/usecases/reservation-payment-history'
 import { toMessageLogViews, type MessageLogSource } from './message-log'
 
 export async function getExtendedDetail(
   repo: any, guestRepo: any, roomRepo: any, queries: ReservasQueries, id: string, currentUser: any,
   /** Puerto al módulo marketing (dueño de `message_logs`). OBLIGATORIO: sin él el historial mentiría. */
   listMessageLogs: MessageLogSource,
+  /** Repo `Users` — resuelve quién registró cada cobro. Opcional: sin él el nombre va vacío. */
+  userRepo?: { findMany(filter: Record<string, unknown>): Promise<any[]> },
 ): Promise<any> {
   const r = await repo.findById(id) as any
   if (!r) throw new NotFoundError('Reserva no encontrada')
@@ -32,6 +35,19 @@ export async function getExtendedDetail(
   // Stripe (`payment-requests/usecases/charge-ceiling.ts`). Si el modal y el techo no midieran lo
   // mismo, el operador vería "Pendiente $500" sobre una reserva con $300 ya cobrados.
   const paid = await paidForReservation(queries.paidRepos, r.hotelId, r.id, r)
+  // Historial de cobros de ESTA reserva (pedido del cliente 2026-08-30): la vista mostraba un
+  // total "Pagado" sin decir por dónde entró la plata. Sale de la MISMA recolección que `paid`,
+  // así el desglose cuadra con el número de arriba. Best-effort: un fallo acá no puede tumbar
+  // el detalle entero de la reserva.
+  let paymentHistory: PaymentHistoryEntry[] = []
+  try {
+    const history = await reservationPaymentHistory(
+      { ...queries.paidRepos, userRepo }, r.hotelId, r.id,
+    )
+    paymentHistory = history.entries
+  } catch {
+    // Se devuelve vacío: el modal muestra "sin movimientos" en vez de romperse.
+  }
   const CARD_FIELDS = ['cardHolder', 'cardBrand', 'cardLast4', 'cardExpMonth', 'cardExpYear']
   const safeReservation = Object.fromEntries(Object.entries(r).filter(([k]) => !CARD_FIELDS.includes(k)))
   // El total cobrable es UNO solo: alojamiento + otros cobros + extras (shared/utils/reservation-balance).
@@ -49,6 +65,8 @@ export async function getExtendedDetail(
     pendingAmount: pendingBalance(r, addons, paid),
     /** Lo ya cobrado según `payments` (GH-0.2). El modal lo muestra junto al pendiente. */
     paidAmount: paid,
+    /** Movimientos de dinero de la reserva: cobros y devoluciones, con método y referencia. */
+    paymentHistory,
   }
 }
 

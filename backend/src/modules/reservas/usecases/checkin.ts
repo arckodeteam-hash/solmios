@@ -1,4 +1,5 @@
 import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
+import { prepaidLinesFrom, type PrepaidLine } from '../../../shared/usecases/prepaid-folio-lines'
 
 /**
  * Tasa de impuesto del hotel, para el cargo automático de habitación al check-in.
@@ -68,6 +69,24 @@ export async function executeCheckin(r: any, user: any, deps: {
 
   const room = (await deps.orm.findMany('Rooms', { id: r.roomId }))[0] as any
   const roomRate = Number(room?.basePrice || r.totalAmount || 0)
+
+  // Lo que el huésped YA pagó (motor web / link de pago) y todavía no está en ningún folio.
+  // El folio no existe hasta este momento, así que ese cobro quedaba fuera: el folio nacía
+  // diciendo que se debía todo, y el settlement del checkout facturaba contra el folio → se
+  // cobraba dos veces (reporte de cliente 2026-08-30, reproducido en producción).
+  // Se lee ACÁ, fuera de la transacción: el puerto de dinero es de otro módulo.
+  let prepaid: PrepaidLine[] = []
+  try {
+    const repos = deps.queries?.paidRepos
+    if (repos?.paymentRepo) {
+      const rows = await repos.paymentRepo.findMany({ hotelId: r.hotelId, reservationId: r.id })
+      prepaid = prepaidLinesFrom(rows as any[])
+    }
+  } catch (e: any) {
+    // Best-effort: sin esto el check-in igual procede. El pago sigue en `payments` y el
+    // historial de la reserva lo muestra; lo que se pierde es el reflejo en el folio.
+    deps.logger?.warn?.('checkin: no se pudieron leer los pagos anticipados', { reservationId: r.id, error: e?.message })
+  }
   const checkInDate = String(r.checkIn).slice(0, 10)
   const taxRate = await taxRateForCheckin(deps.orm, r.hotelId)
   const roomTax = Math.round((roomRate * taxRate / 100 + Number.EPSILON) * 100) / 100
@@ -113,6 +132,18 @@ export async function executeCheckin(r: any, user: any, deps: {
           category: 'room', kind: 'charge', quantity: 1,
           amount: roomRate, taxes: roomTax, total: roomRate + roomTax,
           source: 'checkin', postedAt: nowIso,
+        })
+      }
+      // Pagos ya cobrados → líneas del folio. NO se crean filas nuevas en `payments`: el cobro
+      // ya está asentado ahí (fuente de verdad del dinero). `reference` lleva el id del pago,
+      // que es la trazabilidad y la clave de idempotencia.
+      for (const line of prepaid) {
+        await tx.create('FolioCharges', {
+          id: crypto.randomUUID(), folioId, hotelId: r.hotelId,
+          description: line.description,
+          category: 'payment', kind: line.kind, quantity: 1,
+          amount: line.amount, taxes: 0, total: line.amount,
+          source: 'prepaid', postedAt: nowIso, reference: line.paymentId,
         })
       }
       await tx.update('Reservations', r.id, { status: 'checked_in', checkedInAt: nowIso, folioId, guestId })
