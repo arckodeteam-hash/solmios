@@ -3,6 +3,10 @@ name: Deploy
 on:
   push:
     branches: [main]
+  # Relanzar el deploy a mano, sin tener que inventar un commit vacío. Sirve cuando el deploy
+  # falló por algo ajeno al código (red, servidor caído) o para redeployar el mismo commit.
+  # `verify` corre igual: un dispatch no saltea las pruebas.
+  workflow_dispatch:
 
 concurrency:
   group: deploy-solmios
