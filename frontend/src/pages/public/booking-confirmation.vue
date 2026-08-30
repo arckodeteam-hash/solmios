@@ -159,9 +159,28 @@
           </div>
           <div v-if="reservation.reservation.totalAmount" class="flex justify-between border-t border-slate-200 pt-1 mt-1">
             <span class="text-text-muted">{{ t('confirm.total') }}</span>
-            <span class="font-bold text-navy">{{ reservation.reservation.totalAmount }}</span>
+            <span class="font-bold text-navy">{{ fmtMoney(reservation.reservation.totalAmount) }}</span>
+          </div>
+          <!-- Lo que el huésped pagó. Antes solo se mostraba el total y no había forma de saber
+               si ya estaba cobrado: el backend mandaba `paymentStatus` leyendo una columna que
+               no existe, así que siempre decía 'unpaid' (reporte de cliente 2026-08-30). -->
+          <div v-if="amountPaid > 0" class="flex justify-between" data-testid="confirm-paid">
+            <span class="text-text-muted">{{ t('confirm.paid') }}</span>
+            <span class="font-bold text-teal">{{ fmtMoney(amountPaid) }}</span>
+          </div>
+          <div v-if="pendingAmount > 0" class="flex justify-between" data-testid="confirm-pending">
+            <span class="text-text-muted">{{ t('confirm.pendingAmount') }}</span>
+            <span class="font-bold text-gold">{{ fmtMoney(pendingAmount) }}</span>
           </div>
         </div>
+
+        <!-- El estado en palabras, no solo números: es lo primero que busca quien acaba de pagar. -->
+        <p v-if="reservation" class="mt-3 text-sm font-bold" data-testid="confirm-payment-state"
+          :class="paymentState === 'paid' ? 'text-teal' : paymentState === 'partial' ? 'text-gold' : 'text-text-muted'">
+          {{ paymentState === 'paid' ? t('confirm.paidInFull')
+             : paymentState === 'partial' ? t('confirm.partiallyPaid')
+             : t('confirm.notPaid') }}
+        </p>
 
         <p class="text-[11px] text-text-muted mt-4">
           {{ t('confirm.keepNumber') }}
@@ -281,6 +300,21 @@ const slug = ref('')
 const hotelIdForTracking = ref('')
 // Currency real del hotel (para tracker). Default 'USD' si no carga (mismo fallback que antes).
 const hotelCurrency = ref<string>(CurrencyCode.USD)
+
+// ── Pago del huésped ────────────────────────────────────────────────────────
+// El backend deriva estos tres de `payments` (fuente de verdad del dinero). Antes mandaba
+// `paymentStatus` leyendo una columna inexistente de `reservations` y siempre decía 'unpaid'.
+const amountPaid = computed(() => Number(reservation.value?.reservation?.amountPaid ?? 0))
+const pendingAmount = computed(() => Number(reservation.value?.reservation?.pendingAmount ?? 0))
+const paymentState = computed(() => String(reservation.value?.reservation?.paymentStatus ?? 'pending'))
+
+/** Importe con su moneda: "613.60 USD". Sin esto la pantalla mostraba "613.6" pelado. */
+function fmtMoney(amount: unknown): string {
+  const n = Number(amount)
+  if (!Number.isFinite(n)) return '—'
+  const currency = String(reservation.value?.reservation?.currency || hotelCurrency.value || '').toUpperCase()
+  return currency ? `${n.toFixed(2)} ${currency}` : n.toFixed(2)
+}
 
 const MAX_ATTEMPTS = 10
 const POLL_INTERVAL_MS = 3000
