@@ -25,6 +25,9 @@ export const HotelMediaModel: ModelDefinition = {
     sortOrder: { type: 'number', default: 0 },
     // FK lógica a rooms.id. REQUIRED si type='room' (lo enforca el usecase, no el ORM).
     roomId: { type: 'string', indexed: true },
+    // Tarea 3.5 (QA 2026-08-27) — "ocultar" sin borrar: el endpoint público filtra
+    // active=false, el panel las sigue mostrando (atenuadas) para poder reactivarlas.
+    active: { type: 'boolean', default: true },
   },
   timestamps: true,
 }

@@ -144,16 +144,23 @@
             <img
               :src="item.url"
               :alt="item.alt ?? ''"
-              class="h-full w-full object-cover"
+              class="h-full w-full object-cover transition-opacity"
+              :class="item.active === false ? 'opacity-40 grayscale' : ''"
               loading="lazy"
               draggable="false"
             />
+
+            <!-- Badge fijo (sin hover) — oculta no debe depender de pasar el mouse para notarse. -->
+            <span
+              v-if="item.active === false"
+              class="absolute bottom-1.5 left-1.5 rounded-full bg-navy/80 px-2 py-0.5 text-[10px] font-black text-white"
+            >Oculta</span>
 
             <!-- Overlay de acciones (hover) -->
             <div
               class="absolute inset-0 flex flex-col justify-between bg-navy/0 opacity-0 transition-all group-hover:bg-navy/40 group-hover:opacity-100"
             >
-              <!-- Top bar: contador + estrella (marcar principal) + delete -->
+              <!-- Top bar: contador + estrella (marcar principal) + ocultar + delete -->
               <div class="flex items-start justify-between p-1.5">
                 <span class="rounded-full bg-navy/80 px-2 py-0.5 text-[10px] font-black text-white tabular-nums">
                   #{{ idx + 1 }}
@@ -171,6 +178,15 @@
                     class="grid h-7 w-7 place-items-center rounded-full shadow cursor-pointer disabled:cursor-not-allowed"
                     :class="idx === 0 ? 'bg-gold text-white' : 'bg-white/90 text-navy hover:bg-white disabled:opacity-60'"
                   ><span class="w-3.5 h-3.5" v-html="idx === 0 ? ICON_STAR : ICON_STAR_OUTLINE"></span></button>
+                  <!-- Ocultar sin borrar: sale de la landing/motor pero se puede reactivar acá mismo. -->
+                  <button
+                    type="button"
+                    @click="toggleActive(item)"
+                    :disabled="togglingActiveId === item.id"
+                    :aria-label="item.active === false ? `Mostrar ${activeTabMeta.labelLower}` : `Ocultar ${activeTabMeta.labelLower}`"
+                    :title="item.active === false ? 'Mostrar en la landing' : 'Ocultar de la landing'"
+                    class="grid h-7 w-7 place-items-center rounded-full bg-white/90 text-navy shadow hover:bg-white cursor-pointer disabled:opacity-50"
+                  ><span class="w-3.5 h-3.5" v-html="item.active === false ? ICON_EYE_OFF : ICON_EYE"></span></button>
                   <button
                     type="button"
                     @click="confirmRemove(item)"
@@ -287,7 +303,7 @@ import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth.store'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
-import { ICON_CAMERA, ICON_IMAGE, ICON_BED, ICON_STAR, ICON_STAR_OUTLINE, ICON_X, ICON_PENCIL, ICON_WARNING, TRUST_ICONS } from '@/components/landing/landing-icons'
+import { ICON_CAMERA, ICON_IMAGE, ICON_BED, ICON_STAR, ICON_STAR_OUTLINE, ICON_X, ICON_PENCIL, ICON_WARNING, ICON_EYE, ICON_EYE_OFF, TRUST_ICONS } from '@/components/landing/landing-icons'
 
 const toast = useToast()
 const auth = useAuthStore()
@@ -499,6 +515,27 @@ async function setAsPrimary(item: HotelMediaItem) {
     items.value = previous
   } finally {
     reordering.value = false
+  }
+}
+
+// ─── Ocultar/mostrar (Tarea 3.5, QA 2026-08-27) ────────────────────────────
+// A diferencia de borrar, esto es reversible: la foto sigue en el panel (atenuada) pero
+// desaparece de la landing pública/motor de reservas hasta que se vuelva a activar.
+const togglingActiveId = ref<string | null>(null)
+
+async function toggleActive(item: HotelMediaItem) {
+  if (togglingActiveId.value) return
+  const nextActive = item.active === false
+  togglingActiveId.value = item.id
+  try {
+    const updated = await HotelMediaService.update(item.id, { active: nextActive })
+    const idx = items.value.findIndex((m) => m.id === item.id)
+    if (idx >= 0) items.value[idx] = { ...items.value[idx], ...updated }
+    toast.success(nextActive ? 'Imagen visible en la landing' : 'Imagen oculta de la landing')
+  } catch (e) {
+    actionError.value = (e as Error)?.message || 'No se pudo cambiar la visibilidad de la imagen.'
+  } finally {
+    togglingActiveId.value = null
   }
 }
 

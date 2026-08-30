@@ -140,6 +140,14 @@ describe('hotel_media — upload', () => {
     expect(created.sortOrder).toBe(0)
   })
 
+  // Tarea 3.5 (QA 2026-08-27) — "ocultar" sin borrar: toda foto nace visible.
+  it('nace con active:true, sin necesidad de pasarlo en el DTO', async () => {
+    let created: any = null
+    const media = makeRepo<HotelMediaDTO>({ create: async (d: any) => { created = d; return { id: 'm1', ...d } } })
+    await svc({ media }).upload('h1', { type: 'gallery', url: 'https://cdn/x.jpg' }, user)
+    expect(created.active).toBe(true)
+  })
+
   it('data-URL: sube al storage con dir hotel-media y persiste la URL devuelta', async () => {
     let uploadDir = ''
     let uploadFile: any = null
@@ -241,6 +249,19 @@ describe('hotel_media — update', () => {
     const m = await svc({ media, auth: strictAuth }).update('m1', { alt: 'new', sortOrder: 5 }, user)
     expect(m.alt).toBe('new')
     expect(m.sortOrder).toBe(5)
+  })
+
+  // Tarea 3.5 — toggle ocultar/mostrar sin tocar ningún otro campo.
+  it('active se puede togglear independientemente del resto de campos', async () => {
+    const existing = { id: 'm1', hotelId: 'h1', type: 'gallery', url: 'u', alt: 'x', sortOrder: 3, active: true }
+    const media = makeRepo<HotelMediaDTO>({
+      findOne: async () => ({ ...existing }) as any,
+      update: async (id: any, d: any) => ({ ...existing, ...d, id } as HotelMediaDTO),
+    })
+    const hidden = await svc({ media, auth: strictAuth }).update('m1', { active: false }, user)
+    expect(hidden.active).toBe(false)
+    expect(hidden.alt).toBe('x') // resto de campos intacto
+    expect(hidden.sortOrder).toBe(3)
   })
 
   it('cambiar type a room sin roomId → ValidationError', async () => {

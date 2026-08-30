@@ -22,6 +22,8 @@ export const UpdateHotelMediaSchema: Record<string, ValidationRule> = {
   alt: { type: 'string' as const },
   sortOrder: { type: 'number' as const },
   roomId: { type: 'string' as const },
+  // Tarea 3.5 — toggle ocultar/mostrar sin borrar.
+  active: { type: 'boolean' as const },
 }
 
 /** Reordenar: lista de ids en el orden final deseado. */

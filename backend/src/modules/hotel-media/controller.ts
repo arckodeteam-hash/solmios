@@ -121,10 +121,14 @@ export class HotelMediaController {
       return { status: 404, body: { error: 'Hotel no encontrado' } }
     }
 
-    const [allMedia, allRooms] = await Promise.all([
+    const [rawMedia, allRooms] = await Promise.all([
       this.mediaRepo.findMany({ hotelId: hotel.id }),
       this.roomsRepo.findMany({ hotelId: hotel.id }),
     ])
+    // Tarea 3.5 — "ocultar" sin borrar: `active === false` explícito la saca de acá. Filas
+    // viejas sin el campo (`undefined`, previas a esta tarea) siguen públicas — nunca hubo
+    // un default `false` que las hiciera desaparecer de golpe.
+    const allMedia = rawMedia.filter((m) => m.active !== false)
 
     const hero = this.collectPlain(allMedia, 'hero')
     const gallery = this.collectPlain(allMedia, 'gallery')

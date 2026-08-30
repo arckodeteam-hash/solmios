@@ -22,6 +22,8 @@ export interface HotelMediaItem {
   alt: string | null
   sortOrder: number
   roomId: string | null
+  /** Tarea 3.5 — false = oculta de la landing pública sin borrarla. Default true. */
+  active?: boolean
 }
 
 export interface HotelMediaListResult {

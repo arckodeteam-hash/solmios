@@ -16,6 +16,8 @@ export interface HotelMediaDTO {
   alt?: string | null
   sortOrder?: number
   roomId?: string | null
+  /** Tarea 3.5 — false = oculta de la landing pública sin borrarla. Default true. */
+  active?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -41,6 +43,7 @@ export interface UpdateHotelMediaDTO {
   alt?: string | null
   sortOrder?: number
   roomId?: string | null
+  active?: boolean
 }
 
 /** Payload del endpoint `/reorder`. ids en el orden final deseado, sin gaps (0..N-1). */

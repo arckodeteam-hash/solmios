@@ -102,6 +102,9 @@ export const ICON_FOOTER = '<svg viewBox="0 0 24 24" fill="none" stroke="current
 export const ICON_SUNRISE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 2v4M4.2 10.2l1.4 1.4M19.8 10.2l-1.4 1.4M2 18h20M6 18a6 6 0 0 1 12 0"/></svg>'
 export const ICON_CHART = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M6 21V10M12 21V4M18 21v-7"/></svg>'
 export const ICON_WIDGET = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18"/><circle cx="6" cy="6" r=".6" fill="currentColor" stroke="none"/><circle cx="8.5" cy="6" r=".6" fill="currentColor" stroke="none"/></svg>'
+// Tarea 3.5 (QA 2026-08-27) — toggle ocultar/mostrar en el gestor de galería.
+export const ICON_EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 12S5 5 12 5s10.5 7 10.5 7-3.5 7-10.5 7S1.5 12 1.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>'
+export const ICON_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A11 11 0 0 1 12 5c7 0 10.5 7 10.5 7a13.9 13.9 0 0 1-3.2 4.2M6.6 6.6C3.5 8.5 1.5 12 1.5 12s3.5 7 10.5 7a10 10 0 0 0 4.2-.9"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>'
 
 /** Metadatos visuales por tipo de bloque del landing builder (pagina-publica/landing.vue). */
 export const BLOCK_TYPE_ICONS: Record<string, string> = {

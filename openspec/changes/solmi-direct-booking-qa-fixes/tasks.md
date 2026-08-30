@@ -1057,10 +1057,56 @@ Specs: `specs/booking-checkout-ux/spec.md`, `specs/booking-content-policies/spec
       y `booking_config` restaurados a sus valores originales al terminar. Detalle
       completo en memoria `manager-hotel/openspec/solmi-direct-booking-qa-fixes`.
 
-- [ ] 3.5 Confirmar/completar la gestión de galería por hotel: agregar, eliminar,
+- [x] 3.5 Confirmar/completar la gestión de galería por hotel: agregar, eliminar,
       reordenar, ocultar, y asociar imágenes al hotel o a un tipo de habitación
       específico (Tarea 14). **Acceptance**: reordenar en el panel persiste el orden
       mostrado en la landing pública.
+
+      **Auditado 2026-08-27 — 3 de 4 capacidades ya estaban completas, "ocultar" faltaba
+      del todo**: `hotel-media` (módulo backend, `pages/pagina-publica/media.vue` en el
+      panel) ya tenía agregar (upload multi-archivo, data-URL→S3), eliminar (con confirm),
+      reordenar (flechas ↑↓ + atajo "marcar como principal", atómico con `transaction` en
+      el backend) y asociar a hotel o a una habitación específica (`roomId`, selector en el
+      tab "Habitaciones"). El acceptance literal (orden persiste en la landing) YA cumplía:
+      `GET /api/public/hotels/:slug/media` ordena por el mismo `sortOrder` que reescribe
+      `POST /api/hotel-media/reorder`. Lo que NO existía: ningún campo `active`/`visible`/
+      `hidden` en el modelo — la única forma de sacar una foto de la landing era borrarla
+      para siempre.
+
+      **Implementado "ocultar" de verdad (decisión del usuario: implementar, no solo
+      documentar el gap)**:
+      - Backend: columna `active` (boolean, default true) en `hotel_media` (`model.ts`,
+        migrada con `RUN_MIGRATE=1` sobre la DB de dev — filas viejas quedan `NULL`,
+        tratadas como visibles por el filtro `!== false`, nunca desaparecen de golpe).
+        `upload()` fuerza `active:true` en toda foto nueva. `update()`/`UpdateHotelMediaSchema`
+        aceptan `active` como campo editable (toggle, no afecta ningún otro campo).
+        `GET /api/public/hotels/:slug/media` (`controller.ts:publicMedia`) filtra
+        `active !== false` ANTES de agrupar hero/gallery/rooms — una foto oculta desaparece
+        de la landing Y del motor de reservas en el mismo request, pero el listado admin
+        (`GET /api/hotel-media`) la sigue devolviendo (atenuada) para poder reactivarla.
+      - Frontend: botón ojo/ojo-tachado (`ICON_EYE`/`ICON_EYE_OFF`, nuevos en
+        `landing-icons.ts`) junto a la estrella "marcar principal" y borrar, en
+        `pages/pagina-publica/media.vue`. Thumbnail atenuado (`opacity-40 grayscale`) +
+        badge fijo "Oculta" (sin depender de hover) cuando `active === false`.
+      - Verificado extremo a extremo contra el servidor real (dev local,
+        `hotel-boutique-palma`): subida → `active:true` en la respuesta → oculta
+        (`PUT {active:false}`) → confirmado que desaparece de
+        `GET /api/public/hotels/:slug/media` → confirmado que SIGUE en el listado admin →
+        reactivada → borrada (limpieza del dato + archivo en `uploads/hotel-media/`).
+      - Tests nuevos (revert-testeados a mano — comentado el filtro real, confirmado que
+        2 de 4 tests fallan con el síntoma exacto ["p2hidden" aparece donde no debía],
+        restaurado, vuelven a pasar): `media-crud.test.ts` (+2: upload nace `active:true`,
+        update togglea `active` sin tocar el resto de campos) y `public-media.test.ts`
+        (archivo nuevo, +4: `publicMedia()` no tenía NINGÚN test hasta ahora — filtra
+        hero/gallery ocultos, filas legacy sin el campo siguen públicas, filtra fotos de
+        habitación ocultas del grupo, sanity del fixture). Suite `hotel-media` completa:
+        35/35. `arckode analyze` 0 violaciones, `tsc --noEmit` limpio backend y frontend,
+        `vite build` ✓ built. Suite completa backend `bun test`: 3648/3649 (misma 1 falla
+        preexistente de Redis, `rate-limit-distributed.test.ts`, ajena).
+      - No verificado visualmente en navegador esta sesión (Playwright quedó "conectado"
+        a nivel de proceso pero sus tools no se sincronizaron a la conversación — mismo
+        problema intermitente ya documentado en sesiones previas). El usuario pidió seguir
+        sin bloquear en eso.
 
 ### Gate G3 (final)
 

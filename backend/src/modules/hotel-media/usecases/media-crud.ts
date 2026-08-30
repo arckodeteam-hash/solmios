@@ -151,6 +151,7 @@ export async function upload(
     alt: dto.alt ?? undefined,
     sortOrder: dto.sortOrder ?? 0,
     roomId: dto.roomId || undefined,
+    active: true,
   } as Omit<HotelMediaDTO, 'id'>)
 }
 
@@ -177,6 +178,7 @@ export async function update(
     if (dto.roomId) await assertRoomOfHotel(deps, dto.roomId, existing.hotelId)
     patch.roomId = dto.roomId || undefined
   }
+  if (dto.active !== undefined) patch.active = dto.active
 
   // Si el type final (nuevo o heredado) es 'room', `roomId` debe quedar presente.
   const finalType = (patch.type as MediaType | undefined) ?? existing.type
