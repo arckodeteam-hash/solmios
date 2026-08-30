@@ -51,7 +51,7 @@ export function PaymentRequestsModule() {
       name: 'payment-requests',
       version: '1.4.1',
       description: 'Solicitud de pago pre-pago con Stripe Checkout; webhook aplica el pago a reserva+folio',
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'stripeStatus', 'createCheckout', 'handleWebhook', 'clampRequestsToCeiling', 'releaseRequestsOfReservation'],
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'stripeStatus', 'createCheckout', 'handleWebhook', 'clampRequestsToCeiling', 'releaseRequestsOfReservation', 'setBookingWebhookPort'],
       events: ['onPaymentRequestCreated', 'onPaymentRequestUpdated', 'onPaymentRequestDeleted', 'onPaymentRequestPaid'],
       // Cross-table del bridge del webhook (deuda F10) + los extras que definen el saldo cobrable.
       tables: ['payment_requests', 'reservations', 'folios', 'folio_charges', 'reservation_addons', 'invoices', 'payments', 'payment_events'],

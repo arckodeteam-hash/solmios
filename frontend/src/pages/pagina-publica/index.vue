@@ -2,9 +2,24 @@
   <!-- Header de la sección. El <h2> de cada vista hija queda debajo y se lee
        como título de la tab activa, así que acá va solo el nombre del grupo
        (mismo patrón que pages/mensajeria/index.vue). -->
-  <div class="mb-5">
-    <h1 class="text-2xl font-black text-navy">Página pública</h1>
-    <p class="text-sm text-text-muted mt-0.5">Landing, motor de reservas, reputación y marketing — todo lo que ve y usa el huésped en un solo lugar.</p>
+  <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
+    <div>
+      <h1 class="text-2xl font-black text-navy">Página pública</h1>
+      <p class="text-sm text-text-muted mt-0.5">Landing, motor de reservas, reputación y marketing — todo lo que ve y usa el huésped en un solo lugar.</p>
+    </div>
+    <!-- Vive ACÁ y no en cada vista: se está editando la misma página pública en las 8 tabs, así
+         que poder ir a verla no depende de en cuál estés. Antes existía sólo en Landing y
+         Apariencia — desde Media, Motor de reservas o Tracking no había forma de abrirla. -->
+    <a
+      v-if="publicSlug"
+      :href="publicUrl"
+      target="_blank"
+      rel="noopener"
+      class="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-white px-4 py-2 text-sm font-bold text-navy transition-colors hover:border-navy/40"
+    >
+      Ver en la web pública
+      <span aria-hidden="true" class="text-cyan">↗</span>
+    </a>
   </div>
 
   <!-- Tabs agrupadas: 8 vistas en una sola fila plana se leen mal, así que se -->
@@ -44,15 +59,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, watch, onMounted, type Component } from 'vue'
+import { computed, defineAsyncComponent, ref, watch, onMounted, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth.store'
 import { PAGINA_PUBLICA_PATH, PAGINA_PUBLICA_TABS } from '@/config/pagina-publica-tabs'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import { SettingsService } from '@/services/Settings.service'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+
+// Slug del hotel para el link "Ver en la web pública". Se pide UNA vez acá en vez de una por tab.
+// Sin slug el link no se muestra: la landing todavía no tiene dirección a la que ir.
+const publicSlug = ref('')
+const publicUrl = computed(() => `/h/${encodeURIComponent(publicSlug.value)}`)
 
 // Lazy: cada vista sigue siendo su propio chunk, igual que cuando eran rutas.
 const tabComponents: Record<string, Component> = {
@@ -121,5 +142,11 @@ function syncUrl() {
 }
 
 onMounted(syncUrl)
+onMounted(async () => {
+  try {
+    const s = await SettingsService.get()
+    publicSlug.value = (s.hotel?.slug as string) || ''
+  } catch { /* sin slug o sin permiso: el link simplemente no aparece */ }
+})
 watch(activeTab, syncUrl)
 </script>

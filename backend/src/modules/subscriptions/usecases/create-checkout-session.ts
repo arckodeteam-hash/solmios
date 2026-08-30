@@ -30,6 +30,13 @@ export async function createCheckoutSession(
   hotelId: string,
   planId: string,
   origin: string,
+  /**
+   * Días de prueba a arrancar DENTRO del Checkout (#28). Solo lo manda el alta cuando la
+   * plataforma exige tarjeta antes de la prueba: Stripe guarda el método de pago, no cobra nada
+   * durante el trial y factura solo al vencer. `undefined` = conversión normal a plan pago
+   * (cobro inmediato), que es el camino del botón "Suscribirse" del panel.
+   */
+  trialDays?: number,
 ): Promise<CreateCheckoutResult> {
   const { subscriptionsRepo, hotelsRepo, plansRepo, logger } = deps
   if (!hotelId) throw new ValidationError('Falta el hotel')
@@ -97,7 +104,15 @@ export async function createCheckoutSession(
     success_url: `${base}/panel/suscripcion?checkout=success`,
     cancel_url: `${base}/panel/suscripcion?checkout=cancelled`,
     metadata: { hotelId, planId },
-    subscription_data: { metadata: { hotelId, planId } },
+    subscription_data: {
+      metadata: { hotelId, planId },
+      // Stripe cobra solo al vencer el trial. `trial_period_days` va únicamente con días > 0:
+      // mandarlo en 0 o negativo es un 400 de la API, y `undefined` es "sin prueba".
+      ...(trialDays && trialDays > 0 ? { trial_period_days: Math.floor(trialDays) } : {}),
+    },
+    // La tarjeta se pide SIEMPRE, incluso con trial: es el punto del #28 — sin método de pago
+    // guardado no hay cobro automático al día siguiente del vencimiento.
+    payment_method_collection: 'always',
   })
 
   if (!session.url) throw new Error('Stripe no devolvió una URL de checkout')

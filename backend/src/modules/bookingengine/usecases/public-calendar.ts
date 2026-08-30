@@ -26,6 +26,7 @@
 // `usecases/stay-restrictions.ts`— también en `AvailabilityUseCase`, que antes los ignoraba: el
 // calendario cerraba la noche y el buscador la vendía igual.
 import type { RepositoryAdapter, CacheAdapter } from 'arckode-framework'
+import { isRoomSellable } from '../../../shared/usecases/room-status'
 import {
   computeDailyAvailability,
   eachDayInclusive,
@@ -53,7 +54,6 @@ export { MAX_CALENDAR_DAYS }
 const CACHE_TTL_SECONDS = 60
 
 /** Estados en los que una habitación NO se puede vender (idéntico a `usecases/availability.ts`). */
-const UNSELLABLE_ROOM_STATUS = new Set(['out_of_order', 'out_of_service', 'maintenance'])
 
 /** Reservas que ocupan la habitación en el motor público. Whitelist, no "todo lo no cancelado". */
 const BLOCKING_RESERVATION_STATUS = new Set(['confirmed', 'checked_in', 'pending', 'guaranteed'])
@@ -251,7 +251,7 @@ function buildTypeBuckets(rooms: any[], guests: number): Map<string, TypeBucket>
   const out = new Map<string, TypeBucket>()
   for (const room of rooms) {
     const type = room.type || 'standard'
-    if (UNSELLABLE_ROOM_STATUS.has(String(room.status ?? '').toLowerCase())) continue
+    if (!isRoomSellable(room.status)) continue
     if (Number(room.capacity ?? guests) < guests) continue
     const bucket = out.get(type) ?? { roomIds: [], basePrice: 0 }
     bucket.roomIds.push(room.id)

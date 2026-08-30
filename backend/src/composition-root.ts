@@ -22,6 +22,7 @@ import { createAutoMessagesCron } from './modules/marketing/usecases/auto-messag
 import { createNightAuditCron } from './shared/usecases/night-audit-cron'
 import { createEvidenceRetentionCron } from './shared/usecases/evidence-retention-cron'
 import { createTrialReminderCron } from './shared/usecases/trial-reminder-cron'
+import { createPrearrivalPassCron } from './shared/usecases/prearrival-pass-cron'
 import { createSubscriptionSuspensionCron } from './shared/usecases/subscription-suspension-cron'
 import { createReferralCreditsCron } from './shared/usecases/referral-credits-cron'
 import { createCurrencyRatesCron, CURRENCY_RATES_TICK_MS } from './shared/usecases/currency-rates-cron'
@@ -182,6 +183,7 @@ import { HotelMediaModule } from './modules/hotel-media'
 // seeder + service + rutas admin/pública). El admin la edita desde /settings/landing.
 import { LandingModule } from './modules/landing'
 import { SitePagesModule } from './modules/site-pages'
+import { DeletionRequestsModule } from './modules/deletion-requests'
 // F2 2.1–2.3 (solmi-direct-booking): códigos promocionales del widget de reservas.
 // Modelo promo_codes (con UNIQUE index creado en migrate-db.ts) + CRUD admin + validación
 // pública (sin auth, rate-limited). Upsells NO va acá: es sub-dominio de bookingengine.
@@ -313,6 +315,10 @@ const mods = [
   // Scope plataforma (hotelId='platform'), CRUD solo super_admin, lectura pública rate-limited
   // de las published (`/api/public/site-pages[/:slug]`) — la consume el landing para renderizar.
   SitePagesModule(),
+  // Solicitudes de eliminación de datos personales (Ley 172-13): formulario público al
+  // final de /p/eliminacion-datos (sin auth, rate-limited) + gestión del flujo
+  // received→verifying→completed/rejected desde /admin/eliminacion-datos (solo super_admin).
+  DeletionRequestsModule(),
   // F2 2.1–2.3 (solmi-direct-booking) — Códigos promocionales del widget de reservas.
   // Modelo promo_codes (UNIQUE (hotelId, code) creado en migrate-db.ts) + CRUD admin
   // (`/api/promo-codes` auth + permiso `promo:*`) + ruta pública de validación
@@ -346,6 +352,7 @@ for (const m of mods) system.addModule(m as any)
 // ─── Conectores ────────────────────────────────────────────────────────────
 import { reservasHousekeepingConnector } from './connectors/reservas-housekeeping'
 import { reservasTtlockConnector } from './connectors/reservas-ttlock'
+import { reportsTtlockConnector } from './connectors/reports-ttlock'
 import { habitacionesCanalesConnector } from './connectors/habitaciones-canales'
 import { habitacionesReservasConnector } from './connectors/habitaciones-reservas'
 import { reservasCanalesConnector } from './connectors/reservas-canales'
@@ -467,6 +474,9 @@ import { publicapiReservasConnector } from './connectors/publicapi-reservas'
 import { reservasWebhooksConnector } from './connectors/reservas-webhooks'
 import { paymentsWebhooksConnector } from './connectors/payments-webhooks'
 import { subscriptionsReferralsConnector } from './connectors/subscriptions-referrals'
+import { subscriptionsAdminPolicyConnector } from './connectors/subscriptions-admin-policy'
+import { subscriptionsUsuariosOwnerConnector } from './connectors/subscriptions-usuarios-owner'
+import { paymentRequestsBookingengineWebhookConnector } from './connectors/payment-requests-bookingengine-webhook'
 // F3 3.2 (solmi-direct-booking) — Adaptadores HTTP externos de reviews. NO son conectores
 // inter-módulo (los que wirean sockets): son clientes de APIs externas. Imports y factory
 // `externalReviewsFetchers` viven arriba (cerca de ExternalReviewsModule) para que el módulo
@@ -476,6 +486,9 @@ import { createExternalReviewsCron } from './shared/usecases/external-reviews-cr
 
 system.addConnector('reservas-housekeeping', reservasHousekeepingConnector)
 system.addConnector('reservas-ttlock', reservasTtlockConnector)
+// El no-show lo marca `reports` (endpoint + cron), no `reservas`: sin este connector el PIN
+// del que no se presentó seguía vivo sobre una habitación ya liberada para revender.
+system.addConnector('reports-ttlock', reportsTtlockConnector)
 system.addConnector('habitaciones-canales', habitacionesCanalesConnector)
 // #648 — disponibilidad por rango de fechas en GET /api/habitaciones?checkIn&checkOut, mismo
 // criterio de solapamiento que reservas/usecases/availability.ts (shared/usecases/room-overlap.ts).
@@ -616,6 +629,10 @@ system.addConnector('payment-requests-payments', paymentRequestsPaymentsConnecto
 system.addConnector('payment-requests-ttlock', paymentRequestsTtlockConnector(logger))
 // El widget público cobra con Stripe: ese dinero vivía solo en la tabla `bookings`.
 system.addConnector('bookingengine-payments', bookingenginePaymentsConnector)
+// El correo de confirmación de PAGO del motor NO va acá: necesita el EmailService, que se
+// construye recién en `bootstrapEmail()` DESPUÉS de `system.start()`. Referenciarlo desde un
+// connector daba ReferenceError por TDZ al arrancar. Se suscribe en `email-bootstrap.ts`,
+// junto al resto de las inyecciones de correo.
 // F5 #627 — Cuando el huésped auto-cancela desde la página pública, marca/libera depósitos held.
 system.addConnector('bookingengine-deposits', bookingengineDepositsConnector)
 system.addConnector('reservas-payment-requests', reservasPaymentRequestsConnector(orm))
@@ -678,6 +695,13 @@ system.addConnector('payments-webhooks', paymentsWebhooksConnector)
 // Programa de referidos: subscriptions emite onTrialStarted con el referralCode del alta pública →
 // referrals.linkSignup() vincula al referido con el referidor. Best-effort (un fallo nunca volta el alta).
 system.addConnector('subscriptions-referrals', subscriptionsReferralsConnector)
+// #28 — la política de alta (¿tarjeta antes de la prueba?) la fija el super-admin, no el código.
+system.addConnector('subscriptions-admin-policy', subscriptionsAdminPolicyConnector)
+// #28 — quien abandonó el Checkout del alta no puede loguearse: prueba quién es con su clave.
+system.addConnector('subscriptions-usuarios-owner', subscriptionsUsuariosOwnerConnector)
+// Una sola URL de webhook para el hotel: cada handler reenvía al otro el evento que no es suyo.
+// Sin esto, todo cobro del motor de reservas moría en el handler de los links de pago (200 mudo).
+system.addConnector('payment-requests-bookingengine-webhook', paymentRequestsBookingengineWebhookConnector)
 
 // ─── Infraestructura transversal ────────────────────────────────────────────
 configureStripe(orm, logger)
@@ -732,7 +756,13 @@ startWorker()
 
 // ─── Cron jobs ──────────────────────────────────────────────────────────────
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
-const noShowCron = createNoShowCron(orm, emailService, logger)
+// El 4º argumento expira el PIN de la puerta al marcar no-show: sin esto, quien no se
+// presentó conservaba acceso a una habitación que ya se liberó y se puede revender.
+// `reservas-ttlock` cubre checkout y cancelación; el no-show lo marca este cron.
+const noShowCron = createNoShowCron(orm, emailService, logger, async (reservationId: string) => {
+  const ttlock = system.resolveModule<{ expireCodesByReservation(id: string): Promise<void> }>('ttlock')
+  if (ttlock?.expireCodesByReservation) await ttlock.expireCodesByReservation(reservationId)
+})
 // FIX G1 (fix-noshow-cron-init): corrida inicial a los 10s de arrancar (igual que night-audit). Antes
 // solo setInterval(24h): si el backend restarteaba antes de 24h (deploy/crash/OOM) el contador se
 // reiniciaba y el cron podía no llegar a ejecutarse nunca → reservas confirmed vencidas quedaban
@@ -784,6 +814,20 @@ setInterval(() => {
   bookingSyncCron().catch((e) => logger.warn('booking-sync cron failed', { error: (e as Error).message }))
 }, BOOKING_SYNC_TICK_MS)
 logger.info('Booking-sync cron listo', { tickMs: BOOKING_SYNC_TICK_MS })
+
+// Pase + código de acceso 24 h antes de la llegada (pedido del cliente 2026-08-29). El pase y
+// el PIN se crean al pagar, pero el correo con la HABITACIÓN y el código sale recién ahora: la
+// habitación puede reasignarse hasta la víspera. Al pagar va la confirmación de pago
+// (`booking-paid-email.ts`), sin habitación ni código. Dedup con `wallet_passes.emailSentAt`.
+const PREARRIVAL_TICK_MS = 60_000 * 60 // cada hora: la ventana es de 24 h, no hace falta más fino
+const prearrivalPassCron = createPrearrivalPassCron(orm, (name) => system.resolveModule(name), logger)
+setTimeout(() => {
+  prearrivalPassCron().catch((e) => logger.warn('prearrival-pass initial run failed', { error: (e as Error).message }))
+}, 10_000)
+setInterval(() => {
+  prearrivalPassCron().catch((e) => logger.warn('prearrival-pass cron failed', { error: (e as Error).message }))
+}, PREARRIVAL_TICK_MS)
+logger.info('Prearrival-pass cron listo', { tickMs: PREARRIVAL_TICK_MS })
 
 // Crones del ciclo SaaS (PLAN-SUSCRIPCIONES.md). Mismo molde que night-audit: factory, corrida
 // inicial a los 10s (anti-restart), setInterval con catch que no tira. Los tres son idempotentes

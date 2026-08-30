@@ -73,7 +73,14 @@ export async function sendLockCodeEmail(deps: LockCodeEmailDeps, reservationId: 
   //    las variables del email — no se duplica esa lógica.
   const result = await sendCheckinEmail(
     { emailSender, guestRepo, roomRepo, hotelRepo, messageLogRepo, lockCodeRepo, logger },
-    { reservationId: r.id, hotelId: r.hotelId, guestId: r.guestId, roomId: r.roomId, checkIn: r.checkIn, checkOut: r.checkOut },
+    // El horario acordado con este huésped viaja: si hay early check-in, el correo dice esa
+    // hora — la misma con la que se abrió el PIN — y no el horario general del hotel.
+    {
+      reservationId: r.id, hotelId: r.hotelId, guestId: r.guestId, roomId: r.roomId,
+      checkIn: r.checkIn, checkOut: r.checkOut,
+      checkInTime: (r as { checkInTime?: string }).checkInTime,
+      checkOutTime: (r as { checkOutTime?: string }).checkOutTime,
+    },
   )
   if (result.status === 'failed') throw new Error('No se pudo encolar el email. Intentá de nuevo.')
   // 'skipped' no debería ocurrir tras la validación de email de arriba, pero se defiende:

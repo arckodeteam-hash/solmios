@@ -26,12 +26,10 @@ import type { AvailabilityQuery, AvailabilityResult, RoomTypeAvailability } from
 import { blockedRoomIds, isClosedForOccupancy, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate } from './rate-resolution'
 import { MAX_OCCUPANCY_ROWS } from './occupancy-matrix'
+import { isRoomSellable } from '../../../shared/usecases/room-status'
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24
 const CACHE_TTL_SECONDS = 60
-
-/** Estados en los que una habitación NO se puede vender. */
-const UNSELLABLE_ROOM_STATUS = new Set(['out_of_order', 'out_of_service', 'maintenance'])
 
 /** Reservas que ocupan la habitación. Una cancelada libera la fecha. */
 const BLOCKING_RESERVATION_STATUS = new Set(['confirmed', 'checked_in', 'pending', 'guaranteed'])
@@ -195,7 +193,7 @@ export class AvailabilityUseCase {
       // Bloqueo por mantenimiento/uso interno: la habitación puede estar libre de reservas y
       // aun así cerrada por el hotel para esas fechas.
       if (blocked.has(room.id)) continue
-      if (UNSELLABLE_ROOM_STATUS.has(String(room.status ?? '').toLowerCase())) continue
+      if (!isRoomSellable(room.status)) continue
       // La habitación es VENDIBLE (libre, sin bloqueo, en servicio). Se guarda su capacidad
       // ANTES de filtrar por el grupo consultado: `availableByOccupancy` necesita saber cuántas
       // unidades aceptan 1, 2, 3... huéspedes, no solo cuántas aceptan `adults`.

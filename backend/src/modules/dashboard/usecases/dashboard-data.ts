@@ -1,3 +1,4 @@
+import { isCleaning, isUnderMaintenance } from '../../../shared/usecases/room-status'
 export async function getDashboardData(orm: any, hotelId: string): Promise<any> {
   const [rooms, res, guests] = await Promise.all([
     orm.findMany('Rooms', { hotelId }),
@@ -5,8 +6,11 @@ export async function getDashboardData(orm: any, hotelId: string): Promise<any> 
     orm.findMany('Guests', { hotelId }),
   ])
   const occupied = rooms.filter((r: any) => r.status === 'occupied').length
-  const dirty = rooms.filter((r: any) => r.status === 'dirty').length
-  const maintenance = rooms.filter((r: any) => r.status === 'out_of_service').length
+  // `dirty` y `out_of_service` NO existen en el enum de `rooms.status`
+  // (available|occupied|maintenance|cleaning|out_of_order|reserved): los dos contadores daban
+  // SIEMPRE 0 y el panel mostraba el hotel sin limpieza ni mantenimiento pendiente.
+  const dirty = rooms.filter((r: any) => isCleaning(r.status)).length
+  const maintenance = rooms.filter((r: any) => isUnderMaintenance(r.status)).length
   const t = new Date().toISOString().split('T')[0]
   const revenueToday = res.filter((r: any) => String(r.checkIn || '').slice(0, 10) === t).reduce((s: number, r: any) => s + (r.totalAmount || 0), 0)
   const checkins = res.filter((r: any) => r.checkIn && String(r.checkIn).slice(0, 10) === t && (r.status === 'confirmed' || r.status === 'checked_in')).length

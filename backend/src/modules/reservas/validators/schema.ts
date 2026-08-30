@@ -107,6 +107,10 @@ export const UpdateReservasSchema: Record<string, ValidationRule> = {
   // validateSchema lo descartaba en silencio (cambiar/quitar el código en edición no hacía
   // nada). crud.updateReservation lo valida/consume/libera según cambie.
   promoCode: { type: 'string' as const, max: 50 },
+  // Horario acordado con este huésped (early check-in / late checkout), 'HH:MM' o '' para
+  // volver al horario del hotel. Define la ventana del código de la cerradura (2026-08-29).
+  checkInTime: { type: 'string' as const, pattern: /^$|^([01]\d|2[0-3]):[0-5]\d$/ },
+  checkOutTime: { type: 'string' as const, pattern: /^$|^([01]\d|2[0-3]):[0-5]\d$/ },
 }
 
 export const ReservasValidator = { create: CreateReservasSchema, update: UpdateReservasSchema }

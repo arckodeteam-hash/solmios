@@ -29,6 +29,7 @@ import { generateApplePass } from './apple-pass'
 import { generateGooglePass } from './google-pass'
 import { sendWalletPassEmail } from './pass-email'
 import { isDuplicateError } from './duplicate-detector'
+import { effectiveCheckInTime, effectiveCheckOutTime } from '../../../shared/utils/hotel-schedule'
 
 /** Puerto para generar lockCodes de TTLock (lo implementa el módulo ttlock vía resolveModule). */
 export interface TtlockPort {
@@ -44,6 +45,9 @@ export interface ReservationInfo {
   guestEmail: string
   checkIn: string
   checkOut: string
+  /** Horario EFECTIVO ('HH:MM'): desde/hasta cuándo abre el código en la cerradura. */
+  checkInTime: string
+  checkOutTime: string
   roomNumber?: string
 }
 
@@ -74,7 +78,7 @@ export interface GeneratePassDeps {
 }
 
 /** Resuelve los datos del hotel + reserva + guest necesarios para el pass + email. */
-async function resolveReservationInfo(
+export async function resolveReservationInfo(
   deps: GeneratePassDeps,
   reservationId: string,
 ): Promise<ReservationInfo | null> {
@@ -93,6 +97,10 @@ async function resolveReservationInfo(
     guestEmail: String(guest?.email ?? ''),
     checkIn: String(r.checkIn ?? ''),
     checkOut: String(r.checkOut ?? ''),
+    // MISMO cálculo con el que se abre el PIN (`shared/utils/hotel-schedule`): el correo tiene
+    // que decir la hora real desde la que el código funciona, no una distinta.
+    checkInTime: effectiveCheckInTime(r, hotel),
+    checkOutTime: effectiveCheckOutTime(r, hotel),
     roomNumber: room?.number ? String(room.number) : undefined,
   }
 }
@@ -133,7 +141,17 @@ async function resolveLockCode(
  * Punto de entrada. Best-effort total — NUNCA lanza (el connector best-effort lo llamaría
  * con try/catch igual, pero las fallas parciales ya se manejan acá).
  */
-export async function generatePass(deps: GeneratePassDeps, reservationId: string): Promise<GeneratePassResult | null> {
+export async function generatePass(
+  deps: GeneratePassDeps,
+  reservationId: string,
+  /**
+   * `false` genera el pase y el código de la cerradura pero NO le avisa al huésped todavía
+   * (pedido del cliente 2026-08-29): la habitación puede reasignarse hasta el día antes, así
+   * que el correo con habitación + código lo manda `prearrival-pass-cron.ts` 24 h antes de la
+   * llegada. Default `true` para no cambiar los llamadores manuales (reenvío desde el panel).
+   */
+  sendEmail = true,
+): Promise<GeneratePassResult | null> {
   const log = deps.logger
 
   // 0) Idempotencia previa a trabajo costoso: si ya existe pass para esta reserva, devolverlo.
@@ -217,9 +235,10 @@ export async function generatePass(deps: GeneratePassDeps, reservationId: string
     return { pass: refetch, alreadyExisted: true, emailQueued: false }
   }
 
-  // 5) Encolar email. Si no hay EmailService o no hay guest email, no rompe.
+  // 5) Encolar email. Si no hay EmailService, no hay guest email, o el envío se difirió
+  // al cron de pre-llegada (`sendEmail === false`), no rompe.
   let emailQueued = false
-  if (deps.emailService) {
+  if (deps.emailService && sendEmail) {
     const result = await sendWalletPassEmail(
       { emailService: deps.emailService, logger: log },
       {
@@ -230,6 +249,9 @@ export async function generatePass(deps: GeneratePassDeps, reservationId: string
         guestName: info.guestName,
         checkIn: info.checkIn,
         checkOut: info.checkOut,
+        // Ventana REAL del PIN: la misma que se cargó en la cerradura.
+        checkInTime: info.checkInTime,
+        checkOutTime: info.checkOutTime,
         roomNumber: info.roomNumber,
         lockCode,
         appleUrl: pass.appleUrl,

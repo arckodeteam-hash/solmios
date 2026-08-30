@@ -1,23 +1,48 @@
-import { Pool } from 'pg'
+// scripts/create-plans-table.ts — UNIVERSAL (PostgreSQL + SQLite vía DbAdapter del framework).
+// Antes era Postgres-only (`pg` crudo, hardcodeado) — sin rama SQLite no había forma de
+// probar el catálogo de planes en dev local. Migrado al mismo patrón portable que
+// migrate-db.ts/seed-legal-pages.ts (DbAdapter condicional por DATABASE_URL).
+import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
+import { PostgresAdapter } from 'arckode-framework/adapters/postgres'
+import type { DbAdapter } from 'arckode-framework'
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgres://solmios:solmios123@localhost:5432/solmios'
-})
+const DATABASE_URL = process.env.DATABASE_URL
+const db: DbAdapter & { connect(): Promise<void> } = DATABASE_URL
+  ? new PostgresAdapter({ connectionString: DATABASE_URL })
+  : new SqliteAdapter({
+      path: process.env.DB_PATH || './data/managerhotel.db',
+      wal: true,
+      foreignKeys: true,
+    })
+
+function isAlreadyExistsError(e: unknown): boolean {
+  const code = (e as { code?: string } | null)?.code
+  if (code === '42P07' || code === '42701' || code === '42710') return true
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase()
+  return msg.includes('already exists') || msg.includes('duplicate column')
+}
+
+async function exec(sql: string): Promise<void> {
+  try {
+    await db.run(sql)
+  } catch (e: unknown) {
+    if (!isAlreadyExistsError(e)) throw e
+  }
+}
 
 async function migrate() {
-  const client = await pool.connect()
+  await db.connect()
   try {
     // `plans`/`amenities_catalog` ya existen como modelos ORM compartidos
     // (src/shared/models.ts → Plans/AmenitiesCatalog, registrados por
     // registerSharedModels en composition-root). El ORM crea las columnas SIN
     // comillas, así que Postgres las pliega a minúsculas (isActive→isactive,
     // sortOrder→sortorder) y el framework remapea camelCase↔lowercase al leer/escribir.
-    // Este script NO pasa por el ORM (usa `pg` crudo), así que debe usar los
-    // mismos nombres físicos (minúsculas) — antes usaba comillas con camelCase,
-    // lo que rompía contra la tabla ya creada por el ORM (columna "isActive"
-    // no existe, la física es "isactive"). CREATE TABLE IF NOT EXISTS queda
+    // Este script NO pasa por el ORM (SQL directo), así que debe usar los mismos
+    // nombres físicos (minúsculas) — antes usaba comillas con camelCase, lo que
+    // rompía contra la tabla ya creada por el ORM. CREATE TABLE IF NOT EXISTS queda
     // como red de seguridad si este script corriera antes que el ORM.
-    await client.query(`
+    await exec(`
       CREATE TABLE IF NOT EXISTS plans (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -75,28 +100,43 @@ async function migrate() {
     // ultra NO las necesitan: su matriz es [] = TODOS los módulos, y enumerar claves en un []
     // lo RESTRINGIRÍA a solo esas (semántica de getModuleStateForPlan). Por lo mismo, en prod NO
     // hay que correrles UPDATE a los planes [].
-    const plans = [
+    //
+    // essential: $99→$39 + sortorder 3→0 (auditoría Meta 2026-08-26): el copy de marketing de
+    // starter (frontend/src/services/PlanCatalog.service.ts) dice literalmente "Todo lo del plan
+    // Essential" como primer beneficio — Starter se vende como un SUPERSET de Essential (y lo es:
+    // starter tiene modules:[] = todos los módulos, essential tiene la lista acotada del PRD §5).
+    // Con Essential a $99 (lo mismo que Professional) y Starter a $49, el resultado era que la
+    // opción MÁS CARA ofrecía MENOS que una MÁS BARATA que además dice incluirla — nadie elegiría
+    // Essential nunca. La cantidad de habitaciones (20) no era el problema: subirla por encima de
+    // Starter (30) rompería la promesa "incluye Essential" en la otra dirección. El precio es lo
+    // que hay que bajar para que la relación de inclusión tenga sentido comercial: Essential queda
+    // entre Host y Starter, tanto en precio como en sortorder. Habitaciones y set de módulos quedan
+    // intactos (eso sí es una decisión de producto que no me corresponde inventar).
+    const plans: [string, string, string, number, string, string, string, string, string, number, number][] = [
       // id, name, slug, price, currency, desc, features, limits, modules, isactive, sortorder
       ['plan-host', 'Host', 'host', 29, 'USD', 'Plan de entrada — motor de reservas básico', JSON.stringify(['10 habitaciones', '1 usuario']), JSON.stringify({rooms:10,users:1}), JSON.stringify(['planning','reservations','reservations.checkin','guests','settings.rooms','site-pages','settings.rates','settings.audit']), 1, -1],
-      ['plan-starter', 'Starter', 'starter', 49, 'USD', 'Para hoteles pequeños', JSON.stringify(['30 habitaciones', '2 usuarios']), JSON.stringify({rooms:30,users:2}), JSON.stringify([]), 1, 0],
-      ['plan-professional', 'Professional', 'professional', 99, 'USD', 'Para hoteles en crecimiento', JSON.stringify(['100 habitaciones', '6 usuarios']), JSON.stringify({rooms:100,users:6}), JSON.stringify([]), 1, 1],
-      ['plan-enterprise', 'Enterprise', 'enterprise', 199, 'USD', 'Para hoteles grandes', JSON.stringify(['Habitaciones ilimitadas', 'Usuarios ilimitados']), JSON.stringify({rooms:9999,users:9999}), JSON.stringify([]), 1, 2],
-      ['plan-essential', 'Essential', 'essential', 99, 'USD', 'PMS + Channel + Reservas + Pagos', JSON.stringify(['20 habitaciones', '2 usuarios']), JSON.stringify({rooms:20,users:2}), JSON.stringify(['planning','reservations','reservations.checkin','guests','settings.rooms','channel','finance.billing','finance.payments','operations.maintenance','site-pages','settings.rates','settings.audit']), 1, 3],
+      ['plan-essential', 'Essential', 'essential', 39, 'USD', 'PMS + Channel + Reservas + Pagos', JSON.stringify(['20 habitaciones', '2 usuarios']), JSON.stringify({rooms:20,users:2}), JSON.stringify(['planning','reservations','reservations.checkin','guests','settings.rooms','channel','finance.billing','finance.payments','operations.maintenance','site-pages','settings.rates','settings.audit']), 1, 0],
+      ['plan-starter', 'Starter', 'starter', 49, 'USD', 'Para hoteles pequeños', JSON.stringify(['30 habitaciones', '2 usuarios']), JSON.stringify({rooms:30,users:2}), JSON.stringify([]), 1, 1],
+      ['plan-professional', 'Professional', 'professional', 99, 'USD', 'Para hoteles en crecimiento', JSON.stringify(['100 habitaciones', '6 usuarios']), JSON.stringify({rooms:100,users:6}), JSON.stringify([]), 1, 2],
+      ['plan-enterprise', 'Enterprise', 'enterprise', 199, 'USD', 'Para hoteles grandes', JSON.stringify(['Habitaciones ilimitadas', 'Usuarios ilimitados']), JSON.stringify({rooms:9999,users:9999}), JSON.stringify([]), 1, 3],
       ['plan-ultra', 'Ultra', 'ultra', 0, 'USD', 'Plan custom — todos los módulos', JSON.stringify(['Habitaciones ilimitadas', 'Usuarios ilimitados']), JSON.stringify({rooms:9999,users:9999}), JSON.stringify([]), 1, 4],
     ]
 
     for (const [id, name, slug, price, currency, desc, features, limits, modules, active, sort] of plans) {
-      await client.query(
-        `INSERT INTO plans (id, name, slug, price, currency, description, features, limits, modules, isactive, sortorder)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-         ON CONFLICT (id) DO NOTHING`,
-        [id, name, slug, price, currency, desc, features, limits, modules, active, sort]
-      )
+      try {
+        await db.run(
+          `INSERT INTO plans (id, name, slug, price, currency, description, features, limits, modules, isactive, sortorder)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, name, slug, price, currency, desc, features, limits, modules, active, sort]
+        )
+      } catch (e: unknown) {
+        if (!isAlreadyExistsError(e) && !(e instanceof Error && /unique|duplicate/i.test(e.message))) throw e
+      }
     }
     console.log('✅ Plans seed completado')
 
     // Create amenities_catalog if not exists
-    await client.query(`
+    await exec(`
       CREATE TABLE IF NOT EXISTS amenities_catalog (
         id TEXT PRIMARY KEY,
         key TEXT UNIQUE NOT NULL,
@@ -113,9 +153,8 @@ async function migrate() {
 
     console.log('✅ Migración completada')
   } finally {
-    client.release()
-    await pool.end()
+    await db.close()
   }
 }
 
-migrate().catch(console.error)
+migrate().catch((e) => { console.error(e); process.exitCode = 1 })

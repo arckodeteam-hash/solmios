@@ -27,4 +27,12 @@ export class ReportsService {
     const id = await this.queries.resolveHotelId(req)
     return this.queries.markNoShows(id)
   }
+
+  /**
+   * Inyecta cómo expirar los códigos TTLock al marcar no-show (lo hace `reports-ttlock`).
+   * reports no puede importar ttlock: la dependencia entra por connector.
+   */
+  setLockCodeExpirer(fn: (reservationId: string) => Promise<void>): void {
+    this.queries.setLockCodeExpirer(fn)
+  }
 }

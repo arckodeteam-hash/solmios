@@ -61,6 +61,8 @@ export interface SubscriptionSettings {
   gracePeriodDays: number
   founderChurnBlocksReturn: boolean
   maxManualDiscountPct: number
+  /** #28 — el alta pide tarjeta antes de arrancar la prueba y cobra sola al vencer. */
+  requireCardOnTrial: boolean
 }
 
 export const SubscriptionsAdminService = {

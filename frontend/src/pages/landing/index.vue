@@ -77,7 +77,7 @@
 
     <!-- ═══ TRUST STRIP — carrusel infinito full-width ═══ -->
     <section class="w-full bg-white border-y border-slate-100 py-10 overflow-hidden">
-      <p class="text-center text-xs text-slate-400 mb-7 px-6">Más de 500 hoteles y alojamientos confían en SolmiOS</p>
+      <p class="text-center text-xs text-slate-400 mb-7 px-6">Conectado con las plataformas que tu hotel ya usa</p>
       <div class="relative overflow-hidden">
         <!-- Degradados laterales para efecto fade -->
         <div class="absolute left-0 top-0 bottom-0 w-20 md:w-32 bg-gradient-to-r from-white to-transparent z-10 pointer-events-none"></div>
@@ -285,40 +285,13 @@
               <router-link v-else :to="{ path: '/registro', query: { plan: plan.slug } }"
                 class="block w-full py-2.5 rounded-xl text-center text-xs font-bold mb-6 border transition-colors"
                 :class="planColor(plan.color).cta">
-                Prueba gratis 30 días
+                Prueba gratis {{ trialDays }} días
               </router-link>
               <div class="space-y-2.5 flex-1">
                 <div v-for="feat in plan.features" :key="feat" class="flex items-start gap-2 text-xs text-slate-600">
                   <svg class="w-3.5 h-3.5 shrink-0 mt-0.5" :class="planColor(plan.color).check" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
                   {{ feat }}
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ═══ TESTIMONIALS ═══ -->
-    <section id="testimonials" class="py-24 px-6 bg-slate-50">
-      <div class="max-w-7xl mx-auto">
-        <div class="text-center mb-16">
-          <div class="inline-flex items-center gap-2 mb-5 px-3.5 py-1.5 rounded-full bg-blue-50 border border-blue-100">
-            <span class="text-[11px] font-extrabold tracking-wide text-blue uppercase">Testimonios</span>
-          </div>
-          <h2 class="text-3xl md:text-4xl font-black text-navy">Hoteles que están creciendo con nosotros</h2>
-        </div>
-        <div class="grid md:grid-cols-3 gap-6">
-          <div v-for="t in testimonials" :key="t.name" class="bg-white border border-slate-100 rounded-2xl p-8 hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
-            <div class="flex gap-0.5 mb-5">
-              <svg v-for="i in 5" :key="i" class="w-4 h-4" fill="#D4AC0D" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            </div>
-            <p class="text-sm text-slate-600 leading-relaxed mb-6">"{{ t.quote }}"</p>
-            <div class="flex items-center gap-3">
-              <div class="w-10 h-10 rounded-full flex items-center justify-center text-sm font-black text-white" :style="`background:${t.avatarBg}`">{{ t.initials }}</div>
-              <div>
-                <div class="text-sm font-bold text-navy">{{ t.name }}</div>
-                <div class="text-[10px] text-slate-400">{{ t.hotel }}</div>
               </div>
             </div>
           </div>
@@ -339,10 +312,10 @@
       <div class="max-w-3xl mx-auto text-center relative z-10">
         <div class="inline-flex items-center gap-2 mb-6 px-3.5 py-1.5 rounded-full bg-white/10 border border-white/15 backdrop-blur">
           <span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
-          <span class="text-[11px] font-extrabold tracking-wide text-white/90 uppercase">Prueba gratis 14 días</span>
+          <span class="text-[11px] font-extrabold tracking-wide text-white/90 uppercase">Prueba gratis {{ trialDays }} días</span>
         </div>
         <h2 class="text-3xl md:text-5xl font-black text-white mb-6 leading-tight">¿Listo para transformar<br>tu hotel?</h2>
-        <p class="text-white/60 mb-10 max-w-xl mx-auto">Únete a 500+ hoteles que ya gestionan todo desde SolmiOS. Sin tarjeta de crédito, cancela cuando quieras.</p>
+        <p class="text-white/60 mb-10 max-w-xl mx-auto">Gestiona reservas, canales, limpieza y facturación desde un solo panel. {{ trialPromise }}</p>
         <div class="flex flex-wrap gap-4 justify-center">
           <router-link to="/registro" class="group inline-flex items-center gap-2 bg-white text-blue font-bold text-sm px-8 py-4 rounded-xl hover:bg-blue-50 hover:-translate-y-0.5 transition-all duration-300 shadow-xl shadow-blue-900/30">
             Comenzar Gratis
@@ -352,7 +325,7 @@
         </div>
         <!-- Trust mini-badges -->
         <div class="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 mt-12 text-white/40">
-          <span class="inline-flex items-center gap-2 text-xs font-semibold"><svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Sin tarjeta de crédito</span>
+          <span class="inline-flex items-center gap-2 text-xs font-semibold"><svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>{{ trialBadge }}</span>
           <span class="inline-flex items-center gap-2 text-xs font-semibold"><svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Configuración en 24h</span>
           <span class="inline-flex items-center gap-2 text-xs font-semibold"><svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Cancela cuando quieras</span>
         </div>
@@ -365,7 +338,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { SignupService } from '@/services/Signup.service'
 import heroImage from '@/assets/hero.png'
 import SiteHeader from '@/components/site/SiteHeader.vue'
 import SiteFooter from '@/components/site/SiteFooter.vue'
@@ -404,7 +378,9 @@ const heroFeatures = [
   { title: 'Todo seguro', desc: 'Datos protegidos 24/7', icon: '<svg class="w-5 h-5 text-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m6-3v8.25a9 9 0 01-9 9 9 9 0 01-9-9V6.75L12 3l9 3.75z"/></svg>' },
 ]
 
-const socialBrands = ['Hotel Caribe', 'Gran Hotel SD', 'Resort Playa', 'Boutique Colonial', 'Eco Lodge', 'Casa Azul', 'Villa del Mar', 'Posada Real', 'Hotel Mirador', 'Sunset Suites']
+// Integraciones reales (Channex/CLAUDE.md "Integraciones") — no nombres de hoteles inventados:
+// el sitio no afirma tener clientes que no existen, solo lista con qué se conecta de verdad.
+const socialBrands = ['Booking.com', 'Airbnb', 'Expedia', 'Stripe', 'TTLock', 'Channex']
 const carouselBrands = [...socialBrands, ...socialBrands]
 
 const quickFeatures = [
@@ -418,11 +394,11 @@ const quickFeatures = [
 
 const benefits = [
   'Implementación en menos de 24 horas, sin curva de aprendizaje',
-  'Soporte en español, 24/7, por chat y WhatsApp',
+  'Soporte en español, por chat y WhatsApp',
   'Sin contratos largos: cancela cuando quieras',
   'Migración de datos gratuita desde tu sistema actual',
   'Actualizaciones y nuevas funciones sin costo adicional',
-  'Cumple normativa fiscal de 6 países LATAM automáticamente',
+  'Facturación configurable con los impuestos y la moneda de tu país',
 ]
 
 const steps = [
@@ -464,18 +440,40 @@ const plansLoading = ref(true)
 /** La API no contestó (o no hay planes publicados): se muestra el fallback y se avisa. */
 const plansFailed = ref(false)
 
+/**
+ * #28 — la landing prometía "Sin tarjeta de crédito" en duro mientras el super-admin podía
+ * exigirla. El texto ahora lo decide `GET /api/public/signup-policy`, la misma fuente que usa el
+ * registro; el valor inicial es el conservador por si el endpoint no responde.
+ */
+const requireCard = ref(false)
+const trialDays = ref(7)
+const trialPromise = computed(() =>
+  requireCard.value
+    ? `Empiezas con ${trialDays.value} días sin cargo, cancela cuando quieras.`
+    : 'Sin tarjeta de crédito, cancela cuando quieras.',
+)
+const trialBadge = computed(() =>
+  requireCard.value ? `${trialDays.value} días sin cargo` : 'Sin tarjeta de crédito',
+)
+
 onMounted(async () => {
+  // Las dos lecturas son independientes y arrancan JUNTAS: encadenarlas retrasaba la carga de los
+  // planes —el contenido de la página— por un texto. La política además va aislada: decide UN
+  // copy y no puede tumbar el resto; sin ella queda el conservador ("Sin tarjeta de crédito").
+  const policyPromise = SignupService.signupPolicy()
+    .then((policy) => {
+      requireCard.value = policy.requireCardOnTrial
+      trialDays.value = policy.trialDays
+    })
+    .catch(() => { /* queda el default */ })
+
   const res = await PlanCatalogService.load()
   plans.value = res.plans
   plansFailed.value = !res.fromApi
   plansLoading.value = false
+  await policyPromise
 })
 
-const testimonials = [
-  { quote: 'Pasamos de usar 4 herramientas diferentes a solo SolmiOS. El Channel Manager nos ahorró 3 horas diarias de trabajo manual.', name: 'Juan García', hotel: 'Hotel Caribe Paradise', initials: 'JG', avatarBg: '#1D6FA4' },
-  { quote: 'La facturación electrónica para DGII era un dolor de cabeza. Ahora se genera automáticamente. El soporte es excepcional.', name: 'Roberto Suárez', hotel: 'Gran Hotel Santo Domingo', initials: 'RS', avatarBg: '#117A65' },
-  { quote: 'Como recepcionista, todo es muy intuitivo. El check-in toma 30 segundos. Los huéspedes quedan impresionados.', name: 'María López', hotel: 'Hotel Caribe Paradise', initials: 'ML', avatarBg: '#6C3483' },
-]
 </script>
 
 <style scoped>

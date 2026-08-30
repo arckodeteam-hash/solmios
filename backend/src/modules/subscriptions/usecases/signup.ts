@@ -40,6 +40,20 @@ export interface SignupResult {
   userId: string
   trialEndsAt: string
   trialDays: number
+  /**
+   * #28: la plataforma exige tarjeta antes de que corra la prueba
+   * (`subscription_settings.requireCardOnTrial`). El alta creó la cuenta igual —hace falta para
+   * el Customer de Stripe— pero el frontend NO debe mandar al panel: tiene que ir al Checkout.
+   * Si el usuario lo abandona, `access.ts` lo corta con `payment_method_required`.
+   */
+  requiresPaymentMethod: boolean
+  /**
+   * URL del Checkout de Stripe a la que hay que mandar al usuario cuando `requiresPaymentMethod`.
+   * La arma el service en el mismo request del alta (el usuario todavía no tiene sesión, y el
+   * login lo cortaría por falta de método de pago). Ausente si Stripe no respondió: la cuenta
+   * quedó creada igual y el pago se completa desde el login.
+   */
+  checkoutUrl?: string
 }
 
 export interface SignupDeps {
@@ -182,6 +196,12 @@ export class SignupUseCase {
         // SMTP caído no puede perder el hotel, pero tiene que quedar registrado.
         this.deps.logger.warn('Alta: no se pudo encolar el correo de verificación', { hotelId, email, error: (e as Error).message })
       }
+    } else {
+      // El `catch` de arriba sólo cubre un `enqueue` que TIRA. Sin este else, un `emailSender`
+      // ausente (bootstrap de email que no corrió, `resolveModule` fallido) devolvía 201 y no
+      // dejaba ni una línea: el correo nunca se encolaba y nadie se enteraba. Es literalmente el
+      // síntoma del issue #27 — "no envía el correo de confirmación", sin rastro para diagnosticar.
+      this.deps.logger.warn('Alta: sin emailSender configurado — el correo de verificación NO se encoló', { hotelId, email })
     }
 
     // Correo de bienvenida (platform-emails, plantilla `welcome`). BEST-EFFORT: el alta ya terminó
@@ -201,6 +221,8 @@ export class SignupUseCase {
       userId,
       trialEndsAt: trialEnds.toISOString(),
       trialDays: TRIAL_DAYS,
+      // Lo resuelve el service, que es quien tiene el puerto de la política de plataforma.
+      requiresPaymentMethod: false,
     }
   }
 

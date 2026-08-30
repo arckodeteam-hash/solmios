@@ -1,7 +1,9 @@
 // scripts/add-user-type.ts — Agrega campo userType a usuarios existentes
 import { Database } from 'bun:sqlite'
 
-const db = new Database('data/managerhotel.db', { create: false })
+// `{ create: false }` rompe con SQLITE_MISUSE en Bun 1.3 aunque el archivo exista —
+// sin opciones, bun:sqlite abre normal (mismo criterio DB_PATH que migrate-db.ts).
+const db = new Database(process.env.DB_PATH || 'data/managerhotel.db')
 
 // Agregar columna si no existe
 try {

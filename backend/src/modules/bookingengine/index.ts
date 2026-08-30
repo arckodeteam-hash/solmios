@@ -35,7 +35,7 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       name: 'bookingengine',
       version: '1.0.0',
       description: 'Booking engine: widget config, public availability, reservations, analytics',
-      actions: ['getConfig', 'updateConfig', 'checkAvailability', 'trackEvent', 'getAnalytics', 'getPublicBookingBySlug', 'createPublicBookingDirect'],
+      actions: ['getConfig', 'updateConfig', 'checkAvailability', 'trackEvent', 'getAnalytics', 'getPublicBookingBySlug', 'createPublicBookingDirect', 'handleStripeWebhook', 'setPaymentRequestWebhookPort'],
       events: ['onBookingCreated', 'onBookingCancelled', 'onConversionEvent'],
       tables: ['booking_config', 'conversion_events'],
       dependencies: ['canales', 'hoteles', 'habitaciones'],

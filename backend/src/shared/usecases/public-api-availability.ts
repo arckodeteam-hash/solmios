@@ -4,6 +4,7 @@
 // `notify-task-assigned.ts`: usecase puro en shared/, consumido por un connector.
 
 import type { PublicRoomAvailabilityDTO, PublicRoomsQuery } from '../../modules/publicapi/types'
+import { isRoomSellable } from './room-status'
 import { overlapsRange } from './room-overlap'
 
 const ROOM_LIST_LIMIT = 100
@@ -16,9 +17,10 @@ export function publicApiSystemUser(hotelId: string) {
 }
 
 async function roomAvailability(reservas: ReservasListPort, user: any, room: any, query: PublicRoomsQuery): Promise<boolean> {
-  if (!query.checkIn || !query.checkOut) return room.status === 'available'
-  const blockedStatus = room.status === 'out_of_order' || room.status === 'maintenance'
-  if (blockedStatus) return false
+  // Mismo criterio que el motor público (`shared/usecases/room-status.ts`): antes, sin fechas
+  // exigía `available` y con fechas usaba otra lista — tres criterios para el mismo dato.
+  if (!isRoomSellable(room.status)) return false
+  if (!query.checkIn || !query.checkOut) return true
   // Por-cuarto para no depender del tope de paginación de reservas a nivel hotel (MAX_LIMIT=100
   // en reservas/usecases/crud.ts) — un cuarto puntual sí entra holgado.
   const { data: reservations } = await reservas.list({ roomId: room.id, limit: ROOM_LIST_LIMIT }, user)

@@ -1,6 +1,6 @@
 {
   "_arckode": "1.0.0",
-  "_generated": "2026-08-28T00:58:34.779Z",
+  "_generated": "2026-08-30T15:15:19.620Z",
   "_instructions": "Lee este archivo ANTES de escribir código. Contiene el estado completo del sistema: módulos, conectores, violaciones. Si está desactualizado, corré: bun run analyze --json",
   "system": {
     "healthy": true,
@@ -270,6 +270,19 @@
     },
     {
       "name": "dashboard",
+      "structure": {
+        "index": true,
+        "types": true,
+        "sockets": true,
+        "service": true,
+        "controller": true,
+        "validators": true,
+        "tests": true
+      },
+      "complete": true
+    },
+    {
+      "name": "deletion-requests",
       "structure": {
         "index": true,
         "types": true,
@@ -977,6 +990,7 @@
     "paquetes-auditlog.ts",
     "paquetes-bookingengine.ts",
     "payment-requests-auditlog.ts",
+    "payment-requests-bookingengine-webhook.ts",
     "payment-requests-money.ts",
     "payment-requests-payments.ts",
     "payment-requests-ttlock.ts",
@@ -996,6 +1010,7 @@
     "reclutamiento-empleados.ts",
     "reembolsos-auditlog.ts",
     "reembolsos-gastos.ts",
+    "reports-ttlock.ts",
     "reservas-auditlog.ts",
     "reservas-canales.ts",
     "reservas-deposits.ts",
@@ -1018,7 +1033,9 @@
     "roles-auditlog.ts",
     "stayapi-ota-prices.ts",
     "stayapi-reviews.ts",
+    "subscriptions-admin-policy.ts",
     "subscriptions-referrals.ts",
+    "subscriptions-usuarios-owner.ts",
     "tickets-auditlog.ts",
     "tripadvisor-reviews.ts",
     "usuarios-auditlog.ts",

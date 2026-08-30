@@ -1,3 +1,4 @@
+import { isCleaning, isUnderMaintenance } from '../../../shared/usecases/room-status'
 // Ms por día. reports/helpers.ts expone la misma constante como MS_PER_DAY; se duplica acá
 // para no importar cross-module (prohibido por convención: iría por connector).
 const MS_PER_DAY = 86_400_000
@@ -16,8 +17,11 @@ export class DashboardQueries {
       this.orm.findMany('Invoices', { hotelId }),
     ])
     const occupied = rooms.filter((r: any) => r.status === 'occupied').length
-    const dirty = rooms.filter((r: any) => r.status === 'dirty').length
-    const maintenance = rooms.filter((r: any) => r.status === 'out_of_service').length
+    // `dirty` y `out_of_service` NO existen en el enum de `rooms.status`
+    // (available|occupied|maintenance|cleaning|out_of_order|reserved): los dos contadores daban
+    // SIEMPRE 0 y el panel mostraba el hotel sin limpieza ni mantenimiento pendiente.
+    const dirty = rooms.filter((r: any) => isCleaning(r.status)).length
+    const maintenance = rooms.filter((r: any) => isUnderMaintenance(r.status)).length
     const t = new Date().toISOString().split('T')[0]
     // Una reserva cancelada o no-show nunca generó ingreso: excluirla de todo agregado de dinero,
     // igual que report-queries.ts (medido: incluirlas inflaba el revenue +75%). Los CONTEOS

@@ -24,9 +24,15 @@ export function reservasWalletConnector(ctx: ConnectorContext): void {
       try {
         const reservationId = (data as { id?: string })?.id
         if (!reservationId) return
-        const wallet = ctx.resolveModule<{ generatePass(reservationId: string): Promise<unknown> }>('wallet-pass')
+        const wallet = ctx.resolveModule<{ generatePass(reservationId: string, sendEmail?: boolean): Promise<unknown> }>('wallet-pass')
         if (!wallet?.generatePass) return
-        await wallet.generatePass(reservationId)
+        // `false`: se genera el pase y el PIN de la cerradura AHORA (para que existan), pero el
+        // correo con habitación + código NO sale todavía. La habitación puede reasignarse hasta
+        // el día antes de la llegada; avisarla al momento de pagar es prometer un número que el
+        // hotel aún no puede sostener (pedido del cliente 2026-08-29). Lo manda
+        // `prearrival-pass-cron.ts` 24 h antes. Al pagar va el correo de confirmación de pago
+        // (`booking-paid-email.ts`), sin habitación ni código.
+        await wallet.generatePass(reservationId, false)
       } catch {
         // Best-effort: el webhook del confirm ya hizo su trabajo (reserva confirmada).
         // El pass es bonus; si falla, no hay rollback. La próxima vez que se dispare el

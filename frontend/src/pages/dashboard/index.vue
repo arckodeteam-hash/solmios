@@ -482,30 +482,40 @@ const channelDistribution = computed<ChannelSlice[]>(() => {
 const hotelServices = computed<ServiceStatus[]>(() => {
   const offline: ServiceStatus['tone'] = 'error'
   const services: ServiceStatus[] = [
-    { label: 'Recepción', status: apiOnline.value ? 'Online' : 'Offline', tone: apiOnline.value ? 'ok' : offline },
+    { label: 'Recepción', status: apiOnline.value ? 'En línea' : 'Fuera de línea', tone: apiOnline.value ? 'ok' : offline },
   ]
 
   const engineOn = Boolean(hotelData.value?.bookingEngineUrl) || hotelData.value?.onlineBookingStatus === 'active'
   services.push({
     label: 'Motor de Reservas',
-    status: !apiOnline.value ? 'Offline' : engineOn ? 'Online' : 'Inactivo',
+    status: !apiOnline.value ? 'Fuera de línea' : engineOn ? 'En línea' : 'Inactivo',
     tone: !apiOnline.value ? offline : engineOn ? 'ok' : 'warn',
   })
 
+  // "Sincronizado" antes salía solo de si el toggle estaba prendido — un cron caído hace
+  // días igual mostraba luz verde acá mientras el header (CommandCenterHeader) ya decía
+  // "hace 11 días" al lado (auditoría Meta 2026-08-26: contradicción visible en la misma
+  // pantalla). El booking-sync-cron corre cada 15 min (composition-root.ts); más de 2h sin
+  // sincronizar ya no es una demora normal, es que algo se rompió.
+  const SYNC_STALE_MS = 2 * 60 * 60 * 1000
+  const syncAgeMs = channelLastSync.value ? Date.now() - new Date(channelLastSync.value).getTime() : null
+  const syncStale = channelSyncEnabled.value && syncAgeMs !== null && syncAgeMs > SYNC_STALE_MS
   services.push({
     label: 'Channel Manager',
-    status: channelConnected.value > 0 ? (channelSyncEnabled.value ? 'Sincronizado' : 'Conectado') : 'Sin conectar',
-    tone: channelConnected.value > 0 ? 'sync' : 'off',
+    status: channelConnected.value > 0
+      ? (syncStale ? 'Desincronizado' : channelSyncEnabled.value ? 'Sincronizado' : 'Conectado')
+      : 'Sin conectar',
+    tone: channelConnected.value > 0 ? (syncStale ? 'warn' : 'sync') : 'off',
   })
 
   const paymentsConfigured = Boolean(hotelData.value?.defaultPaymentMethod || hotelData.value?.depositType)
   services.push({
     label: 'Sistema de Pagos',
-    status: !apiOnline.value ? 'Offline' : paymentsConfigured ? 'Online' : 'Sin configurar',
+    status: !apiOnline.value ? 'Fuera de línea' : paymentsConfigured ? 'En línea' : 'Sin configurar',
     tone: !apiOnline.value ? offline : paymentsConfigured ? 'ok' : 'warn',
   })
 
-  services.push({ label: 'IA Hotel', status: apiOnline.value ? 'Disponible' : 'Offline', tone: apiOnline.value ? 'ok' : offline })
+  services.push({ label: 'IA Hotel', status: apiOnline.value ? 'Disponible' : 'Fuera de línea', tone: apiOnline.value ? 'ok' : offline })
   return services
 })
 

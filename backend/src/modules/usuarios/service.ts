@@ -2,6 +2,7 @@
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
 import { NotFoundError, AuthError } from 'arckode-framework'
 import { normalizePhone, looksLikePhone, toStoredPhone } from './usecases/normalize-phone'
+import { verifyOwnerCredentials } from './usecases/verify-owner'
 import { getProfile, updateProfile, type ProfilePatch } from './usecases/profile'
 import { verifyEmailToken, resendVerificationEmail, type VerifyOutcome } from './usecases/email-verification'
 import {
@@ -53,6 +54,11 @@ export class UsuariosService {
     return switchHotel({ repo: this.repo, hotelRepo: this.hotelRepo, auth: this.auth }, userId, targetHotelId, currentRole)
   }
 
+  /** #28 — identidad sin sesión, para retomar el pago del alta. Ver `usecases/verify-owner.ts`. */
+  verifyOwnerCredentials(emailOrPhone: string, password: string): Promise<{ hotelId?: string } | null> {
+    return verifyOwnerCredentials(this.repo as any, emailOrPhone, password)
+  }
+
   async login(emailOrPhone: string, password: string): Promise<{ token: string; refreshToken: string; user: any }> {
     const trimmed = emailOrPhone.trim()
     let user: any = null
@@ -65,12 +71,12 @@ export class UsuariosService {
       user = await this.repo.findOne({ email: trimmed.toLowerCase() })
     }
     if (!user || user.active === 0) throw new AuthError('Credenciales inválidas')
-    const valid = await this.verifyPassword(password, user.password)
+    const valid = await verifyPassword(password, user.password)
     if (!valid) throw new AuthError('Credenciales inválidas')
     await assertHotelCanOperate(user, this.checkSubscription)
     // migración lazy de legacy plaintext → bcrypt
     if (!String(user.password).startsWith('$2') && !String(user.password).startsWith('$argon2') && !String(user.password).includes(':')) {
-      await this.repo.update(user.id, { password: await this.hashPassword(password) })
+      await this.repo.update(user.id, { password: await hashPassword(password) })
     }
     const tokenPayload = { id: user.id, role: user.role, hotelId: user.hotelId, userType: user.userType || 'merchant' }
     const token = (this.auth as any).createToken(tokenPayload)
@@ -127,7 +133,7 @@ export class UsuariosService {
 
   async create(data: any): Promise<any> {
     if (!data.password) throw new Error('Password is required')
-    const password = await this.hashPassword(data.password)
+    const password = await hashPassword(data.password)
     const phone = toStoredPhone(data.phone)
     const created = await this.repo.create({ ...data, ...phone, id: crypto.randomUUID(), password, active: 1 })
     const { password: _, token: __, resetToken: ___, resetExpires: ____, ...rest } = created
@@ -139,7 +145,7 @@ export class UsuariosService {
     // llegaba al ORM con name/password en undefined y los escribía como NULL → NOT NULL violado.
     // Se descartan las ausentes: un campo que no vino no es un campo que se quiere borrar.
     const allowed = pickDefined(data, ['name', 'email', 'password', 'phone', 'avatar', 'role'])
-    if (allowed.password) allowed.password = await this.hashPassword(allowed.password)
+    if (allowed.password) allowed.password = await hashPassword(allowed.password)
     Object.assign(allowed, toStoredPhone(allowed.phone))
     // El estado anterior se lee ANTES del update por dos razones: valida que el usuario sea del
     // hotel de quien lo edita (IDOR), y sin el rol viejo la auditoría diría "cambió el rol" sin
@@ -188,11 +194,5 @@ export class UsuariosService {
 
   async changePassword(id: string, currentPassword: string, newPassword: string): Promise<void> {
     return changePassword(this.repo, id, currentPassword, newPassword)
-  }
-  private async hashPassword(p: string): Promise<string> {
-    return hashPassword(p)
-  }
-  private async verifyPassword(plain: string, stored: string): Promise<boolean> {
-    return verifyPassword(plain, stored)
   }
 }

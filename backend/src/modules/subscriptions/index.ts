@@ -22,7 +22,7 @@ export function SubscriptionsModule() {
     contract: {
       name: 'subscriptions', version: '1.2.0',
       description: 'SaaS subscription lifecycle',
-      actions: ['signup', 'publicPlans', 'publicFounderDiscount', 'myStatus', 'onboarding', 'checkout', 'portal', 'webhookPlatform', 'applyStripeDiscount'],
+      actions: ['signup', 'publicPlans', 'publicFounderDiscount', 'myStatus', 'onboarding', 'checkout', 'portal', 'webhookPlatform', 'applyStripeDiscount', 'publicSignupPolicy', 'resumeCheckout'],
       events: [],
       tables: ['subscriptions', 'subscription_discounts', 'special_category_config', 'founder_history'],
       dependencies: [],
@@ -105,6 +105,21 @@ export function SubscriptionsModule() {
       // CFG-1: el % del programa Fundador. Público porque la página ya lo publica; no expone
       // cupos ni ocupación, sólo el número que el hotel ve.
       router.get('/api/public/founder-discount', publicRead('public-founder-discount', (req) => controller.publicFounderDiscount(req)))
+      // #28: política del alta (¿pide tarjeta? ¿cuántos días de prueba?). Pública y sin datos
+      // sensibles: es exactamente lo que el visitante ve escrito en el botón de registro.
+      router.get('/api/public/signup-policy', publicRead('public-signup-policy', (req) => controller.publicSignupPolicy(req)))
+
+      // #28 — completar el pago del alta sin poder loguearse. Es un POST con contraseña, así que
+      // NO va por `publicRead` (30/min es de lecturas): mismo tope que un login, 5 intentos por
+      // IP cada 15 minutos, para que esto no sea un oráculo de fuerza bruta contra las claves.
+      router.post('/api/public/resume-checkout', async (req: any) => {
+        const { allowed, retryAfter } = await rateLimit(`resume-checkout:${getClientIp(req)}`, {
+          maxAttempts: 5,
+          windowMs: 15 * 60_000,
+        })
+        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
+        return controller.resumeCheckout(req)
+      })
 
       // Del hotel logueado: cuánto le queda de prueba / si tiene que pagar.
       router.get('/api/subscription/me', [auth.authenticate()], (req: any) => controller.myStatus(req))

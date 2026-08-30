@@ -11,6 +11,7 @@ import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import type { EmailSender } from '../../../services/email-sender'
 import { resolveGuestLanguage } from '../../../services/guest-language'
 import type { GuestSummary, RoomSummary, HotelSummary, MessageLogSummary } from './types'
+import { effectiveCheckInTime, effectiveCheckOutTime } from '../../../shared/utils/hotel-schedule'
 
 interface CheckinEmailDeps {
   emailSender: EmailSender
@@ -31,6 +32,10 @@ interface CheckinEmailInput {
   roomId: string | null | undefined
   checkIn: string
   checkOut: string
+  /** Horario acordado con ESTE huésped ('HH:MM'). Vacío = manda el del hotel. Es lo que abre
+   *  la cerradura, así que el correo tiene que decir esa hora y no la general. */
+  checkInTime?: string | null
+  checkOutTime?: string | null
 }
 
 /**
@@ -86,9 +91,11 @@ export async function sendCheckinEmail(deps: CheckinEmailDeps, input: CheckinEma
     room_number: room?.number ?? '',
     checkin_date: input.checkIn,
     checkout_date: input.checkOut,
-    // Horarios del hotel (mismos defaults que usa el AI recepcionista). Formato "HH:MM".
-    checkin_time: (hotel as { checkInTime?: string } | null)?.checkInTime || '14:00',
-    checkout_time: (hotel as { checkOutTime?: string } | null)?.checkOutTime || '12:00',
+    // Horario EFECTIVO: override de la reserva > horario del hotel > default del modelo.
+    // Antes leía `hotel.checkInTime`, campo INEXISTENTE (el modelo es `hotel.checkIn`), así que
+    // el correo anunciaba 14:00 aunque el hotel tuviera otro horario cargado (fix 2026-08-29).
+    checkin_time: effectiveCheckInTime(input as any, hotel as any),
+    checkout_time: effectiveCheckOutTime(input as any, hotel as any),
     wifi_network: (hotel as { wifiNetwork?: string } | null)?.wifiNetwork ?? '',
     wifi_password: (hotel as { wifiPassword?: string } | null)?.wifiPassword ?? '',
     logo_url: (hotel as { logo?: string } | null)?.logo ?? '',

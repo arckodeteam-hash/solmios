@@ -31,6 +31,9 @@ export interface ReservasDTO {
   otaNotes?: string
   checkedInAt?: string
   checkedOutAt?: string
+  /** Horario acordado con este huésped ('HH:MM'). Vacío = manda el del hotel. */
+  checkInTime?: string
+  checkOutTime?: string
   folioId?: string
   // F3 MisterPlan: condiciones + otros cobros
   gdprAccepted?: boolean
@@ -125,6 +128,9 @@ export interface UpdateReservasDTO {
   otaNotes?: string
   checkedInAt?: string
   checkedOutAt?: string
+  /** Horario acordado con este huésped ('HH:MM'). Vacío = manda el del hotel. */
+  checkInTime?: string
+  checkOutTime?: string
   folioId?: string
   // F3 MisterPlan: condiciones + otros cobros
   gdprAccepted?: boolean

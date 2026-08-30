@@ -23,7 +23,7 @@ export function UsuariosModule(opts: { storage?: StorageService } = {}) {
     contract: {
       name: 'usuarios', version: '1.0.0',
       description: 'Login JWT + CRUD de empleados del hotel',
-      actions: ['login', 'me', 'updateMe', 'uploadAvatar', 'logout', 'list', 'create', 'update', 'delete', 'changePassword', 'getHotels', 'switchHotel'],
+      actions: ['login', 'me', 'updateMe', 'uploadAvatar', 'logout', 'list', 'create', 'update', 'delete', 'changePassword', 'getHotels', 'switchHotel', 'verifyOwnerCredentials'],
       events: ['user.created', 'user.disabled'],
       tables: ['users'],
       dependencies: [],

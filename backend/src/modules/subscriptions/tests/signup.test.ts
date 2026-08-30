@@ -216,6 +216,30 @@ describe('SignupUseCase — un envío caído se loguea, no se silencia', () => {
     expect(warns[0]!.meta).toMatchObject({ hotelId: res.hotelId, error: 'plantilla welcome rota' })
   })
 
+  // El hueco que quedaba: los tests de arriba cubren un sender que TIRA. Un sender AUSENTE
+  // (bootstrap de email que no corrió, `resolveModule` fallido) caía fuera del `try` y no dejaba
+  // ni una línea — el alta devolvía 201 y el correo nunca se encolaba, indistinguible de un SMTP
+  // caído o de un correo que salió y no llegó. Es el síntoma exacto reportado en #27.
+  it('sin emailSender cableado: avisa que el correo NO se encoló', async () => {
+    const { hotels, users, roles, subs, repo } = repos()
+    const { logger, warns } = recordingLogger()
+    const uc = new SignupUseCase({
+      hotelsRepo: repo(hotels), usersRepo: repo(users), rolesRepo: repo(roles), subscriptionsRepo: repo(subs),
+      plansRepo: repo([]),
+      hashPassword: async (p: string) => `hashed:${p}`,
+      logger,
+      appUrl: 'https://hotel.example.com',
+      // sin `emailSender` a propósito
+    })
+
+    const res = await uc.signup(VALID, NOW)
+
+    expect(hotels).toHaveLength(1)  // el alta sigue funcionando; el aviso es para el operador
+    expect(warns).toHaveLength(1)
+    expect(warns[0]!.msg).toContain('sin emailSender configurado')
+    expect(warns[0]!.meta).toMatchObject({ hotelId: res.hotelId })
+  })
+
   it('con los dos envíos OK no ensucia el log', async () => {
     const { hotels, users, roles, subs, repo } = repos()
     const { logger, warns } = recordingLogger()

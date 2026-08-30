@@ -11,6 +11,7 @@ import type { RepositoryAdapter } from 'arckode-framework'
 
 /** Motivo por el que se corta el acceso. El frontend decide qué mostrar con esto. */
 export type DenyReason =
+  | 'payment_method_required'
   | 'trial_expired'
   | 'subscription_expired'
   | 'hotel_suspended'
@@ -40,7 +41,24 @@ export class SubscriptionAccess {
   constructor(
     private readonly subscriptionsRepo: RepositoryAdapter<any>,
     private readonly hotelsRepo: RepositoryAdapter<any>,
+    /**
+     * Política de alta de la plataforma (#28). OPCIONAL a propósito: sin cablear, el acceso se
+     * comporta como antes de que existiera el switch — un trial sin tarjeta entra igual. Así el
+     * corte nuevo solo aparece donde la plataforma pidió explícitamente exigir tarjeta, y un
+     * fallo de wiring no puede dejar afuera a todos los hoteles en prueba.
+     */
+    private readonly readPolicy?: () => Promise<{ requireCardOnTrial: boolean }>,
   ) {}
+
+  /** Un fallo leyendo la config NO puede cortar accesos: ante la duda, se deja entrar. */
+  private async requiresCard(): Promise<boolean> {
+    if (!this.readPolicy) return false
+    try {
+      return (await this.readPolicy()).requireCardOnTrial === true
+    } catch {
+      return false
+    }
+  }
 
   /**
    * Un hotel sin suscripción registrada NO se bloquea: son los hoteles que ya
@@ -58,6 +76,18 @@ export class SubscriptionAccess {
     if (!sub) return { allowed: true }
 
     if (sub.status === 'trialing') {
+      // #28: con la política en `requireCardOnTrial`, la prueba NO empieza hasta que Stripe
+      // confirmó la tarjeta (`paymentMethodAddedAt`). Va ANTES del chequeo de vencimiento: si
+      // alguien abandonó el Checkout, el motivo real es que falta el método de pago, no que se
+      // le venció un trial que nunca llegó a correr.
+      //
+      // Se exige `awaitingPaymentMethodSince`: sólo se bloquea a quien EFECTIVAMENTE fue mandado
+      // al Checkout. Un hotel al que nunca se le pudo pedir la tarjeta (plan sin `stripePriceId`,
+      // altas anteriores a esta política) entra normal — si no, prender el switch con Stripe a
+      // medio configurar dejaba afuera a todo el mundo sin forma de pagar.
+      if (sub.awaitingPaymentMethodSince && !sub.paymentMethodAddedAt && (await this.requiresCard())) {
+        return { allowed: false, reason: 'payment_method_required', status: sub.status, trialEndsAt: sub.trialEndsAt }
+      }
       const endsAt = sub.trialEndsAt ? new Date(sub.trialEndsAt) : null
       if (endsAt && endsAt.getTime() <= now.getTime()) {
         // Se deja asentado para que el super-admin lo vea, pero la decisión ya

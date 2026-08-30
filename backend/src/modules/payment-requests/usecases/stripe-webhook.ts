@@ -19,6 +19,7 @@ import { webhookPaidEntry, webhookFailedEntry, type AuditEntry } from './audit'
 import { pendingBalance } from '../../../shared/utils/reservation-balance'
 import { paidForReservation, type ReservationPaidRepos } from '../../../shared/usecases/reservation-paid'
 import { round2, BALANCE_EPSILON } from '../../../shared/utils/money'
+import { flowOfMetadata } from '../../../shared/usecases/webhook-routing'
 
 export interface WebhookDeps {
   repo: RepositoryAdapter<PaymentRequestDTO>
@@ -44,6 +45,17 @@ export interface WebhookDeps {
   events: PaymentEventStore | null
   /** SC-05: registra el cobro en el audit log. Lo pasa el service (`auditSafely` absorbe fallos). */
   audit?: (entry: AuditEntry) => Promise<void>
+  /**
+   * Puerto al webhook del MOTOR DE RESERVAS público (`bookingengine`), inyectado por el connector
+   * `payment-requests-bookingengine-webhook`.
+   *
+   * Existe porque el hotel configura UNA sola URL en su cuenta de Stripe, pero el sistema tiene dos
+   * flujos de cobro con handlers distintos: los links de pago (este módulo) y el motor de reservas.
+   * Un evento del motor que aterriza acá no es "basura": es un cobro real que hay que confirmar,
+   * así que se reenvía a su dueño en vez de descartarse. Nullable por wiring — sin él sólo se
+   * loguea el descarte.
+   */
+  bookingWebhook?: (hotelId: string, rawBody: string | Buffer, signature: string) => Promise<unknown>
 }
 
 /**
@@ -102,10 +114,26 @@ async function handleCheckoutCompleted(
   const { repo, logger, sockets, audit } = deps
 
   const paymentRequestId = session.metadata?.paymentRequestId
-  if (!paymentRequestId) return null
+  if (!paymentRequestId) {
+    // Un cobro CONFIRMADO que nadie va a aplicar. Antes salía por acá en silencio y respondía 200:
+    // Stripe lo daba por entregado, no reintentaba, y quedaba el dinero cobrado con la reserva sin
+    // confirmar — sin una sola línea para diagnosticarlo. El reenvío al dueño ya se intentó antes
+    // (`dispatchForeignEvent`); si llegamos hasta acá, el evento no es de nadie conocido.
+    logger.warn('checkout.session.completed sin paymentRequestId ni reservationId: cobro cobrado y NO aplicado', {
+      hotelId, sessionId: session.id, metadata: session.metadata ?? null,
+    })
+    return null
+  }
 
   const pr = await repo.findById(paymentRequestId)
-  if (!pr) return null
+  if (!pr) {
+    // El id viene del metadata de una sesión de Stripe ya verificada: si no existe la fila, algo se
+    // borró o el metadata apunta a otro entorno. Es un cobro real sin destino — no puede ser mudo.
+    logger.warn('checkout.session.completed apunta a un PaymentRequest inexistente: cobro cobrado y NO aplicado', {
+      hotelId, paymentRequestId, sessionId: session.id,
+    })
+    return null
+  }
   // El webhook del Hotel A no puede marcar como pagado un cobro del Hotel B.
   if (pr.hotelId !== hotelId) {
     logger.error(`Webhook del hotel ${hotelId} quiso pagar el request ${paymentRequestId}, que no es suyo`)
@@ -238,6 +266,52 @@ async function handlePaymentFailed(deps: WebhookDeps, intent: StripePaymentInten
  * tenant enterrado en el medio. Los handlers devuelven `null` cuando no hay nada que reportar y un
  * `WebhookResult` sólo para cortar con un error HTTP.
  */
+/**
+ * ¿Este evento es de otro flujo de cobro del MISMO hotel? Si sí, lo reenvía a su dueño.
+ *
+ * El ruteo mira el `metadata` del objeto —`paymentRequestId` = link de pago (este módulo),
+ * `reservationId` = motor de reservas— y NO otorga autoridad: quien recibe el reenvío vuelve a
+ * verificar la firma con el secreto del hotel. Acá el metadata sólo elige a quién despertar.
+ *
+ * Devuelve el resultado del reenvío (para cortar el flujo local) o `null` si el evento es propio,
+ * no es ruteable, o el reenvío falló — en ese último caso el evento sigue su curso normal acá.
+ */
+async function dispatchForeignEvent(
+  deps: WebhookDeps,
+  event: any,
+  hotelId: string,
+  rawBody: string | Buffer,
+  signature: string,
+): Promise<WebhookResult | null> {
+  const meta = event?.data?.object?.metadata ?? {}
+  // Un solo criterio de ruteo para los dos handlers: `shared/usecases/webhook-routing.ts`. Si cada
+  // lado decidiera por su cuenta, un evento podría rebotar entre ambos o no ser de ninguno.
+  if (flowOfMetadata(meta) !== 'reservation') return null
+
+  if (!deps.bookingWebhook) {
+    deps.logger.warn(
+      'Webhook de una reserva del motor recibido en el endpoint de links de pago, y sin puerto al motor: el cobro NO se confirma',
+      { hotelId, reservationId: meta.reservationId, eventType: event?.type },
+    )
+    return null
+  }
+
+  try {
+    await deps.bookingWebhook(hotelId, rawBody, signature)
+    deps.logger.info('Webhook del motor de reservas reenviado a su dueño', {
+      hotelId, reservationId: meta.reservationId, eventType: event?.type,
+    })
+    return { received: true } as WebhookResult
+  } catch (e: any) {
+    // Un 500 hace que Stripe REINTENTE, que es lo correcto si el reenvío falló: preferimos el
+    // reintento a dar por bueno un cobro que no se aplicó.
+    deps.logger.error('No se pudo reenviar el webhook al motor de reservas', {
+      hotelId, reservationId: meta.reservationId, error: e?.message,
+    })
+    return { status: 500, error: 'No se pudo procesar el cobro' } as any
+  }
+}
+
 export async function processStripeWebhook(
   deps: WebhookDeps,
   hotelId: string,
@@ -259,6 +333,13 @@ export async function processStripeWebhook(
     logger.warn('Stripe webhook signature failed', { error: e.message })
     return { status: 400, error: 'Firma inválida', detail: e.message } as any
   }
+
+  // Despacho multi-flujo: el hotel pone UNA URL en Stripe y desde ahí llegan los eventos de los
+  // DOS caminos de cobro. Si este evento es del motor de reservas, se lo reenvía a su dueño en vez
+  // de contestar 200 y perderlo — Stripe da el 200 por entregado y NO reintenta, así que un
+  // descarte silencioso deja el cobro hecho y la reserva sin confirmar, para siempre.
+  const foreign = await dispatchForeignEvent(deps, event, hotelId, rawBody, signature)
+  if (foreign) return foreign
 
   try {
     switch (event.type) {

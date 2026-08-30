@@ -79,6 +79,7 @@ export const UpdateSubscriptionSettingsSchema: Record<string, ValidationRule> = 
   gracePeriodDays: { type: 'number' as const, min: 0, max: 60 },
   founderChurnBlocksReturn: { type: 'boolean' as const },
   maxManualDiscountPct: { type: 'number' as const, min: 0, max: 100 },
+  requireCardOnTrial: { type: 'boolean' as const },
 }
 
 // Override por hotel de módulo (upsert). moduleKey se valida contra el catálogo en el service.

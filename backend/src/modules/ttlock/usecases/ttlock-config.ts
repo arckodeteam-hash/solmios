@@ -1,3 +1,5 @@
+import { reservationAccessWindow } from '../../../shared/utils/hotel-schedule'
+
 function safeParse(v: any) { if (typeof v !== 'string') return v; try { return JSON.parse(v) } catch { return v } }
 
 export async function generateCodeForReservation(
@@ -10,6 +12,7 @@ export async function generateCodeForReservation(
   randomPinFn: Function,
   getConfigFn: (hotelId: string) => Promise<any>,
   findReservationFn: (id: string) => Promise<any>,
+  findHotelFn: (hotelId: string) => Promise<any>,
   auth?: any,
   customCode?: string,
 ): Promise<any> {
@@ -41,7 +44,17 @@ export async function generateCodeForReservation(
   const parsed = await getConfigFn(hotelId)
   if (!parsed?.accessToken) throw new Error('TTLock no conectado')
   const creds = { clientId: parsed.clientId, accessToken: parsed.accessToken, region: parsed.region, addType: parsed.addType }
-  const startMs = new Date(res.checkIn).getTime(); const endMs = new Date(res.checkOut).getTime()
+  // Ventana del PIN en la ZONA DEL HOTEL (fix 2026-08-29, reporte de cliente). Antes era
+  // `new Date(res.checkIn).getTime()` sobre una fecha sin hora = medianoche UTC: en UTC-4 el
+  // código abría el día anterior a las 20:00 y moría a las 20:00 de la víspera de la salida,
+  // dejando al huésped sin acceso su última noche. Ahora respeta el horario del hotel y el
+  // override de la reserva (early check-in / late checkout).
+  const hotel = await findHotelFn(hotelId)
+  const accessWindow = reservationAccessWindow(res, hotel)
+  const { startMs, endMs } = accessWindow
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) {
+    throw new Error('Fechas de la reserva inválidas para generar el código')
+  }
   let pwdId = ''
   try { const r = await addKeyboardPasswordFn(creds, Number(lock.ttlockLockId), password, startMs, endMs); pwdId = r.keyboardPwdId || '' } catch (e: any) { throw new Error(e.message || 'No se pudo crear el PIN') }
   return await lockCodesRepo.create({ lockId: lock.id, hotelId, reservationId, code: password, codeType: 'time', startDate: String(res.checkIn).slice(0, 10), endDate: String(res.checkOut).slice(0, 10), status: 'active', ttlockKeyboardPwdId: pwdId, sentVia: '' })
