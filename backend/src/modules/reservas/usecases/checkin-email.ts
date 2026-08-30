@@ -32,6 +32,10 @@ interface CheckinEmailInput {
   roomId: string | null | undefined
   checkIn: string
   checkOut: string
+  /** Horario acordado con ESTE huésped ('HH:MM'). Vacío = manda el del hotel. Es lo que abre
+   *  la cerradura, así que el correo tiene que decir esa hora y no la general. */
+  checkInTime?: string | null
+  checkOutTime?: string | null
 }
 
 /**
