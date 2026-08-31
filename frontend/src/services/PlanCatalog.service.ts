@@ -72,7 +72,7 @@ export const PLAN_PRESENTATION: Record<string, PlanPresentation> = {
     color: 'coral', rooms: '200+ hab. · Ilimitado',
     desc: 'Para cadenas regionales, grupos hoteleros y franquicias.',
     badge: 'Premium',
-    features: ['Todos los 26 módulos sin límite', 'Multipropiedad ilimitada', 'Gerente Virtual IA personalizado', 'Integraciones a medida', 'Capacitación presencial', 'SLA < 1 hora de respuesta', 'Gerente de cuenta ejecutivo dedicado', 'Precio según volumen de propiedades'],
+    features: ['Todos los 27 módulos sin límite', 'Multipropiedad ilimitada', 'Gerente Virtual IA personalizado', 'Integraciones a medida', 'Capacitación presencial', 'SLA < 1 hora de respuesta', 'Gerente de cuenta ejecutivo dedicado', 'Precio según volumen de propiedades'],
   },
 }
 

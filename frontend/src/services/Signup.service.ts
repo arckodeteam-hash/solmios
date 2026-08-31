@@ -109,6 +109,20 @@ export const SignupService = {
   },
 
   /**
+   * Contador cíclico de /hotel-fundador — prendido/apagado y duración del ciclo, editables desde
+   * /admin (`subscription_settings`). `anchorAt` es una fecha ancla fija: el frontend calcula el
+   * corte vigente con `%` contra ella, así que nunca hace falta reiniciar nada a mano cuando el
+   * ciclo llega a 0 — el siguiente cálculo ya cae dentro del próximo ciclo.
+   */
+  async founderCountdown(): Promise<{ enabled: boolean; durationDays: number; anchorAt: string } | null> {
+    const res = await http.get<any>('/public/founder-countdown')
+    const data = res?.data ?? res
+    const durationDays = Number(data?.durationDays)
+    if (!data || typeof data.anchorAt !== 'string' || !Number.isFinite(durationDays) || durationDays <= 0) return null
+    return { enabled: data.enabled === true, durationDays, anchorAt: data.anchorAt }
+  },
+
+  /**
    * Política del alta. Ante cualquier fallo devuelve el camino conservador —sin tarjeta, 7 días—
    * para que la pantalla de registro se pueda dibujar aunque el endpoint no responda; el backend
    * es igual el que decide de verdad, esto solo elige el texto.

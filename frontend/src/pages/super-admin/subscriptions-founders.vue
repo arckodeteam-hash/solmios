@@ -75,6 +75,26 @@
             </span>
           </label>
         </div>
+        <!-- Contador de la landing /hotel-fundador: se calcula siempre contra una duración fija,
+             nunca una fecha límite guardada — al llegar a 0 arranca otro ciclo solo. -->
+        <div class="md:col-span-4 rounded-xl border border-border bg-surface p-4">
+          <label class="flex items-start gap-3 cursor-pointer mb-3">
+            <input v-model="settingsForm.founderCountdownEnabled" type="checkbox" class="accent-cyan mt-0.5" />
+            <span>
+              <span class="block text-sm font-bold text-text-secondary">Mostrar el contador en /hotel-fundador</span>
+              <span class="block text-xs text-text-muted mt-1">
+                Apagado, la landing sigue mostrando los cupos pero sin la cuenta regresiva.
+              </span>
+            </span>
+          </label>
+          <div v-if="settingsForm.founderCountdownEnabled" class="max-w-xs">
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-1">Duración del ciclo (días)</label>
+            <input v-model.number="settingsForm.founderCountdownDurationDays" type="number" min="1" max="3650" class="w-full px-4 py-2.5 bg-white border border-border rounded-xl text-sm" />
+            <p class="text-xs text-text-muted mt-1.5">
+              ≈ {{ (settingsForm.founderCountdownDurationDays / 30).toFixed(1) }} meses. Al llegar a 0 arranca otro ciclo igual, sin que nadie tenga que reiniciarlo.
+            </p>
+          </div>
+        </div>
         <div class="md:col-span-4">
           <button type="submit" :disabled="savingSettings" class="px-5 py-2.5 bg-navy text-white rounded-xl text-sm font-bold cursor-pointer disabled:opacity-50">
             {{ savingSettings ? 'Guardando...' : 'Guardar reglas' }}
@@ -101,7 +121,7 @@ const savingSettings = ref(false)
 const categories = ref<SpecialCategoryConfig[]>([])
 const settingsForm = ref<SubscriptionSettings>({
   reminderDaysBefore: 5, gracePeriodDays: 5, founderChurnBlocksReturn: true, maxManualDiscountPct: 100,
-  requireCardOnTrial: true,
+  requireCardOnTrial: true, founderCountdownEnabled: true, founderCountdownDurationDays: 90,
 })
 
 const CATEGORY_LABELS: Record<string, string> = { founder_one: 'Fundador Uno', founder_two: 'Fundador Dos', pioneer: 'Pionero' }

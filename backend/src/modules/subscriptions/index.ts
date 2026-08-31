@@ -17,12 +17,14 @@ export function SubscriptionsModule() {
     // orden del repo. Misma regla que se aplicó en `admin/index.ts` (1.1.0), `reservas` (2.2.0) y
     // `payment-requests` (1.3.0): un cambio observable del contrato bumpea la versión.
     // #30: el orden de la lista pasó de `sortOrder` a precio ASC — observable, 1.2.0.
-    version: '1.2.0',
+    // Nuevo endpoint público `publicFounderCountdown` (contador cíclico de /hotel-fundador,
+    // reemplaza la fecha límite hardcodeada del frontend) — observable, 1.3.0.
+    version: '1.3.0',
     description: 'Suscripción del hotel a la plataforma: alta pública, prueba gratis y corte de servicio',
     contract: {
-      name: 'subscriptions', version: '1.2.0',
+      name: 'subscriptions', version: '1.3.0',
       description: 'SaaS subscription lifecycle',
-      actions: ['signup', 'publicPlans', 'publicFounderDiscount', 'myStatus', 'onboarding', 'checkout', 'portal', 'webhookPlatform', 'applyStripeDiscount', 'publicSignupPolicy', 'resumeCheckout'],
+      actions: ['signup', 'publicPlans', 'publicFounderDiscount', 'publicFounderCountdown', 'myStatus', 'onboarding', 'checkout', 'portal', 'webhookPlatform', 'applyStripeDiscount', 'publicSignupPolicy', 'resumeCheckout'],
       events: [],
       tables: ['subscriptions', 'subscription_discounts', 'special_category_config', 'founder_history'],
       dependencies: [],
@@ -32,6 +34,7 @@ export function SubscriptionsModule() {
         'publicPlans: los límites (`rooms`/`users`) salen de `plans.limits`, nunca de un literal en el template del frontend (GH-31)',
         'publicPlans: la lista sale del más barato al más caro (price ASC, slug ASC — #30); el orden lo fija el backend, ninguna vista re-ordena',
         'publicFounderDiscount: el % del programa Fundador sale de `special_category_config`, no de una variable de build del frontend (CFG-1)',
+        'publicFounderCountdown: se calcula siempre contra un ancla fija (durationDays desde subscription_settings) — nunca una fecha límite guardada que haya que reiniciar a mano',
         'Toda ruta pública (sin auth) va rate-limitada por IP a 30 req/min antes del controller, como landing y opiniones',
       ],
     },
@@ -105,6 +108,10 @@ export function SubscriptionsModule() {
       // CFG-1: el % del programa Fundador. Público porque la página ya lo publica; no expone
       // cupos ni ocupación, sólo el número que el hotel ve.
       router.get('/api/public/founder-discount', publicRead('public-founder-discount', (req) => controller.publicFounderDiscount(req)))
+      // Contador cíclico de /hotel-fundador: prendido/apagado + duración del ciclo, editables
+      // desde /admin (subscription_settings). Público porque la landing ya lo muestra a
+      // cualquiera; no expone nada del negocio (cupos/ocupación siguen en founder-discount aparte).
+      router.get('/api/public/founder-countdown', publicRead('public-founder-countdown', (req) => controller.publicFounderCountdown(req)))
       // #28: política del alta (¿pide tarjeta? ¿cuántos días de prueba?). Pública y sin datos
       // sensibles: es exactamente lo que el visitante ve escrito en el botón de registro.
       router.get('/api/public/signup-policy', publicRead('public-signup-policy', (req) => controller.publicSignupPolicy(req)))

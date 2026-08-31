@@ -22,6 +22,14 @@ export interface SubscriptionSettings {
    * no es un literal: prometer "sin tarjeta" con el flag en true es la contradicción del #28.
    */
   requireCardOnTrial: boolean
+  /**
+   * Contador de la landing /hotel-fundador. Se calcula siempre contra un ancla fija +
+   * `founderCountdownDurationDays` (`subscriptions/usecases/founder-countdown.ts`) — apagarlo
+   * oculta la cuenta regresiva sin tocar código; no hay una fecha límite que reiniciar a mano.
+   */
+  founderCountdownEnabled: boolean
+  /** Duración de cada ciclo del contador, en días. Por defecto 90 (~3 meses). */
+  founderCountdownDurationDays: number
 }
 
 export const DEFAULT_SUBSCRIPTION_SETTINGS: SubscriptionSettings = {
@@ -31,6 +39,8 @@ export const DEFAULT_SUBSCRIPTION_SETTINGS: SubscriptionSettings = {
   maxManualDiscountPct: 100,
   // Decisión del dueño (#28): la política por defecto es pedir la tarjeta al iniciar la prueba.
   requireCardOnTrial: true,
+  founderCountdownEnabled: true,
+  founderCountdownDurationDays: 90,
 }
 
 const SETTINGS_KEY = 'subscription_settings'
@@ -58,6 +68,9 @@ export async function setSubscriptionSettings(
   }
   if (next.reminderDaysBefore < 0 || next.gracePeriodDays < 0 || next.maxManualDiscountPct < 0 || next.maxManualDiscountPct > 100) {
     throw new ValidationError('Valores fuera de rango: días >= 0, maxManualDiscountPct entre 0 y 100')
+  }
+  if (!Number.isFinite(next.founderCountdownDurationDays) || next.founderCountdownDurationDays < 1 || next.founderCountdownDurationDays > 3650) {
+    throw new ValidationError('founderCountdownDurationDays fuera de rango: entre 1 y 3650 días')
   }
   if (row) await configRepo.update(row.id, { value: next })
   else await configRepo.create({ id: crypto.randomUUID(), hotelId: PLATFORM, key: SETTINGS_KEY, value: next })

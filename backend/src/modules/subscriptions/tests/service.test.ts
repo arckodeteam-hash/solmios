@@ -200,13 +200,13 @@ describe('SubscriptionsService — política de tarjeta en la prueba (#28)', () 
 
   it('con la política prendida, la política pública la refleja junto con los días de prueba', async () => {
     const svc = setup()
-    svc.setSignupPolicyDeps(async () => ({ requireCardOnTrial: true }))
+    svc.setPlatformSettingsDeps(async () => ({ requireCardOnTrial: true, enabled: false, durationDays: 90 }))
     expect(await svc.publicSignupPolicy()).toEqual({ requireCardOnTrial: true, trialDays: 7 })
   })
 
   it('si la config explota, la política pública cae al camino conservador (no exige tarjeta)', async () => {
     const svc = setup()
-    svc.setSignupPolicyDeps(async () => { throw new Error('configuration caída') })
+    svc.setPlatformSettingsDeps(async () => { throw new Error('configuration caída') })
     expect(await svc.signupPolicy()).toEqual({ requireCardOnTrial: false })
   })
 
@@ -217,7 +217,7 @@ describe('SubscriptionsService — política de tarjeta en la prueba (#28)', () 
 
   it('credenciales que no validan no devuelven checkout (ni dicen si la cuenta existe)', async () => {
     const svc = setup()
-    svc.setSignupPolicyDeps(async () => ({ requireCardOnTrial: true }))
+    svc.setPlatformSettingsDeps(async () => ({ requireCardOnTrial: true, enabled: false, durationDays: 90 }))
     svc.setOwnerVerifier(async () => null)
     expect(svc.resumeCheckout('a@b.com', 'mala', 'https://app.test')).rejects.toThrow()
   })
@@ -227,7 +227,7 @@ describe('SubscriptionsService — política de tarjeta en la prueba (#28)', () 
     const svc = setup([
       { id: 's1', hotelId: 'h1', planId: 'p1', status: 'trialing', trialEndsAt: new Date(Date.now() + 3 * 86_400_000).toISOString(), paymentMethodAddedAt: '2026-08-01T00:00:00Z' },
     ])
-    svc.setSignupPolicyDeps(async () => ({ requireCardOnTrial: true }))
+    svc.setPlatformSettingsDeps(async () => ({ requireCardOnTrial: true, enabled: false, durationDays: 90 }))
     svc.setOwnerVerifier(async () => ({ hotelId: 'h1' }))
     expect(svc.resumeCheckout('a@b.com', 'ok', 'https://app.test')).rejects.toThrow(/pago pendiente/i)
   })
@@ -236,7 +236,7 @@ describe('SubscriptionsService — política de tarjeta en la prueba (#28)', () 
     const svc = setup([
       { id: 's1', hotelId: 'h1', planId: 'p1', status: 'trialing', trialEndsAt: new Date(Date.now() - 86_400_000).toISOString() },
     ])
-    svc.setSignupPolicyDeps(async () => ({ requireCardOnTrial: true }))
+    svc.setPlatformSettingsDeps(async () => ({ requireCardOnTrial: true, enabled: false, durationDays: 90 }))
     svc.setOwnerVerifier(async () => ({ hotelId: 'h1' }))
     expect(svc.resumeCheckout('a@b.com', 'ok', 'https://app.test')).rejects.toThrow(/pago pendiente/i)
   })

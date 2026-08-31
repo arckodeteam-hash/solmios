@@ -60,6 +60,11 @@ export class SubscriptionsController {
     return { status: 200, body: { discountPct: await this.service.publicFounderDiscount() } }
   }
 
+  /** Contador cíclico de /hotel-fundador: prendido/apagado y duración del ciclo, editables desde /admin. */
+  async publicFounderCountdown(_req: HttpRequest) {
+    return { status: 200, body: await this.service.publicFounderCountdown() }
+  }
+
   /** Guía de primeros pasos: qué le falta configurar al hotel. */
   async onboarding(req: HttpRequest) {
     const hotelId = (req.user as any)?.hotelId

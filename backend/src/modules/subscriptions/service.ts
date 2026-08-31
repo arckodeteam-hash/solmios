@@ -4,10 +4,7 @@ import { SubscriptionAccess, type AccessResult } from './usecases/access'
 import { statusOf, type SubscriptionStatus } from './usecases/status-of'
 import { composeSockets } from '../../shared/utils/compose-sockets'
 import { completeSignup } from './usecases/complete-signup'
-import {
-  readSignupPolicy, pendingTrialDays, checkoutUrlForSignup, resumeAbandonedCheckout,
-  type SignupPolicy,
-} from './usecases/signup-policy'
+import { readSignupPolicy, pendingTrialDays, checkoutUrlForSignup, resumeAbandonedCheckout, type SignupPolicy } from './usecases/signup-policy'
 import { OnboardingUseCase, type OnboardingStatus } from './usecases/onboarding'
 import { hashPassword } from '../usuarios/usecases/password'
 import { createCheckoutSession, type CreateCheckoutResult } from './usecases/create-checkout-session'
@@ -16,6 +13,7 @@ import { processSubscriptionWebhook } from './usecases/handle-stripe-event'
 import { applyStripeDiscount, type ApplyStripeDiscountResult, type ApplyStripeDiscountMeta } from './usecases/apply-stripe-discount'
 import { listPublicPlans, type PublicPlan } from './usecases/public-plans'
 import { publicFounderDiscount } from './usecases/public-founder-discount'
+import { readFounderCountdown, type FounderCountdownConfig, type PublicFounderCountdown } from './usecases/founder-countdown'
 import type { SubscriptionSockets } from './sockets'
 
 export class SubscriptionsService {
@@ -26,7 +24,7 @@ export class SubscriptionsService {
    *  (webhook de Stripe). Opcional: sin cablear, el correo simplemente no sale (best-effort). */
   private sendPlatformEmail?: (event: string, to: string, hotelId: string, vars: Record<string, string>) => Promise<{ sent: boolean }>
   private sockets: SubscriptionSockets = {}
-  private readSignupPolicy?: () => Promise<{ requireCardOnTrial: boolean }>
+  private readPlatformSettings?: () => Promise<{ requireCardOnTrial: boolean } & FounderCountdownConfig>
   private verifyOwner?: (email: string, password: string) => Promise<{ hotelId?: string } | null>
 
   constructor(
@@ -57,20 +55,21 @@ export class SubscriptionsService {
     this.accessUc = new SubscriptionAccess(
       subscriptionsRepo,
       hotelsRepo,
-      async () => (this.readSignupPolicy ? this.readSignupPolicy() : { requireCardOnTrial: false }),
+      async () => (this.readPlatformSettings ? this.readPlatformSettings() : { requireCardOnTrial: false }),
     )
     this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, ratesRepo, hotelsRepo, channelsRepo })
   }
 
-  /** Puerto #28: la política de alta vive en `admin` y la inyecta `subscriptions-admin-policy`. */
-  setSignupPolicyDeps(read: () => Promise<{ requireCardOnTrial: boolean }>): void {
-    this.readSignupPolicy = read
+  /** Puerto #28 + contador: `subscription_settings` vive en `admin`, una sola lectura para las dos (misma fila). */
+  setPlatformSettingsDeps(read: () => Promise<{ requireCardOnTrial: boolean } & FounderCountdownConfig>): void {
+    this.readPlatformSettings = read
   }
 
   /** Política de alta vigente. La usa el alta para decidir si manda al Checkout antes del trial. */
-  signupPolicy(): Promise<SignupPolicy> {
-    return readSignupPolicy(this.readSignupPolicy)
-  }
+  signupPolicy(): Promise<SignupPolicy> { return readSignupPolicy(this.readPlatformSettings) }
+
+  /** Público — de acá sale si el contador de la landing Fundador se muestra y cada cuánto se recicla. */
+  publicFounderCountdown(): Promise<PublicFounderCountdown> { return readFounderCountdown(this.readPlatformSettings) }
 
   /** Cablea el correo de verificación del alta (#421). Lo llama el bootstrap de email. */
   setEmailDeps(sender: any, appUrl?: string): void {

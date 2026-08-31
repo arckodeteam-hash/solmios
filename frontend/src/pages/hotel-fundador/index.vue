@@ -12,7 +12,6 @@
         </router-link>
         <div class="hidden lg:flex items-center gap-8">
           <button type="button" @click="scrollTo('solucion')" class="text-xs font-bold tracking-wide text-white/60 hover:text-white uppercase transition-colors">Módulos</button>
-          <button type="button" @click="scrollTo('oferta')" class="text-xs font-bold tracking-wide text-white/60 hover:text-white uppercase transition-colors">Precios</button>
           <button type="button" @click="scrollTo('contador')" class="text-xs font-bold tracking-wide text-white/60 hover:text-white uppercase transition-colors">Fundadores</button>
           <button type="button" @click="scrollTo('faq')" class="text-xs font-bold tracking-wide text-white/60 hover:text-white uppercase transition-colors">FAQ</button>
         </div>
@@ -24,7 +23,7 @@
     </nav>
 
     <!-- ═══ SECCIÓN 1 — HERO — editorial oscuro, foto a sangre completa, sin card ═══ -->
-    <section id="hero" class="relative w-full overflow-hidden bg-navy-deep pt-32 md:pt-40 pb-16 lg:pb-24">
+    <section id="hero" class="relative w-full overflow-hidden bg-navy-deep pt-28 md:pt-32 pb-12 lg:pb-16">
       <!-- Fondo: grid + glows -->
       <div class="absolute inset-0 hero-grid opacity-[0.35] pointer-events-none"></div>
       <div class="absolute top-[-10%] right-[-5%] w-[560px] h-[560px] rounded-full bg-cyan-light/10 blur-[120px] pointer-events-none"></div>
@@ -126,8 +125,86 @@
       </div>
     </section>
 
-    <!-- ═══ SECCIÓN 2 — EL PROBLEMA + CALCULADORA (2 columnas, claro) ═══ -->
-    <section id="problema" class="py-24 lg:py-28 px-6 bg-white">
+    <!-- ═══ SECCIÓN 2 — CONTADOR + CUPOS (Programa Fundador) — pedido del cliente: arriba de
+         todo, apenas entra el visitante, no enterrado al final de la sección de precios ═══ -->
+    <section class="py-10 px-6 bg-white">
+      <div class="max-w-6xl mx-auto">
+        <div id="contador" class="reveal rounded-3xl overflow-hidden border border-navy-deep shadow-2xl">
+          <div class="relative bg-navy-deep p-7 sm:p-9">
+            <div class="absolute top-[-30%] right-[-8%] w-72 h-72 rounded-full bg-cyan-light/10 blur-[100px] pointer-events-none"></div>
+            <div class="absolute bottom-[-40%] left-[-5%] w-64 h-64 rounded-full bg-blue/10 blur-[100px] pointer-events-none"></div>
+
+            <div class="relative flex flex-col lg:flex-row items-center justify-between gap-8">
+              <!-- Cupos -->
+              <div class="flex items-center gap-5">
+                <div class="w-16 h-16 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center shrink-0">
+                  <svg class="w-8 h-8 text-cyan-light" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"/></svg>
+                </div>
+                <div>
+                  <div class="inline-flex items-center gap-1.5 mb-2 px-2.5 py-1 rounded-full bg-coral/20 border border-coral/30">
+                    <span class="w-1.5 h-1.5 rounded-full bg-coral animate-pulse"></span>
+                    <span class="text-[10px] font-black text-coral uppercase tracking-wide">Cupos casi agotados</span>
+                  </div>
+                  <div class="font-black text-white text-3xl sm:text-4xl leading-none">Quedan <span class="text-cyan-light">{{ slotsLeft }}</span> de {{ slotsTotal }}</div>
+                  <div class="text-xs sm:text-sm text-white/50 mt-1.5">cupos de la Ola 1 · Actualizado {{ lastUpdated }}</div>
+                  <div class="mt-3 w-52 h-2 rounded-full bg-white/10 overflow-hidden">
+                    <div class="h-full bg-gradient-to-r from-cyan-light to-blue rounded-full transition-all duration-700" :style="{ width: slotsPercent + '%' }"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Cuenta regresiva — puede apagarse desde /admin (Panel › Suscripciones › Cupos
+                   Fundador/Pionero) sin tocar código; los cupos de arriba siguen mostrándose igual. -->
+              <template v-if="countdownEnabled">
+                <div class="hidden lg:block w-px h-24 bg-white/10"></div>
+                <div class="text-center">
+                  <div class="text-[11px] font-black text-white/60 uppercase tracking-wide mb-3">La Ola 1 cierra en</div>
+                  <div class="flex items-center gap-2 sm:gap-3">
+                    <div v-for="unit in countdown" :key="unit.label" class="flex flex-col items-center">
+                      <div class="w-14 h-14 sm:w-16 sm:h-16 rounded-xl bg-white/8 border border-cyan-light/25 flex items-center justify-center font-black text-xl sm:text-2xl text-white tabular-nums shadow-inner">{{ unit.value }}</div>
+                      <div class="text-[10px] text-white/40 uppercase tracking-wide mt-1.5">{{ unit.label }}</div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <a href="#formulario" class="shrink-0 inline-flex items-center gap-2 bg-cyan-light text-navy-deep font-black text-sm px-7 py-3.5 rounded-xl hover:-translate-y-0.5 transition-all duration-300 shadow-[0_16px_40px_rgba(0,180,216,0.25)] whitespace-nowrap">
+                Reservar mi cupo
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
+              </a>
+            </div>
+
+            <div class="relative mt-7 pt-6 border-t border-white/10 flex items-center justify-center lg:justify-start gap-3">
+              <div class="text-xs text-white/50">{{ slotsTaken }} de {{ slotsTotal }} cupos ya reservados</div>
+              <div class="flex -space-x-2">
+                <div v-for="n in slotsTotal" :key="n" class="w-6 h-6 rounded-full border-2 border-navy flex items-center justify-center" :class="n <= slotsTaken ? 'bg-cyan-light' : 'bg-white/10'">
+                  <svg class="w-3 h-3" :class="n <= slotsTaken ? 'text-navy-deep' : 'text-white/30'" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12a4.5 4.5 0 100-9 4.5 4.5 0 000 9zM3.75 20.25a8.25 8.25 0 0116.5 0 .75.75 0 01-.75.75H4.5a.75.75 0 01-.75-.75z"/></svg>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ SECCIÓN 3 — TRUST STRIP — carrusel infinito full-width (mismo patrón que la landing
+         principal, ausente acá — pedido del cliente: la página se sentía vacía) ═══ -->
+    <section class="w-full bg-white border-y border-slate-100 py-7 overflow-hidden">
+      <p class="text-center text-xs text-slate-400 mb-7 px-6">Conectado con las plataformas que su hotel ya usa</p>
+      <div class="relative overflow-hidden">
+        <div class="absolute left-0 top-0 bottom-0 w-20 md:w-32 bg-gradient-to-r from-white to-transparent z-10 pointer-events-none"></div>
+        <div class="absolute right-0 top-0 bottom-0 w-20 md:w-32 bg-gradient-to-l from-white to-transparent z-10 pointer-events-none"></div>
+        <div class="flex w-max marquee-track gap-14 px-7">
+          <div v-for="(brand, i) in carouselBrands" :key="i" class="flex items-center gap-2.5 shrink-0">
+            <svg class="w-6 h-6 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3.75-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21"/></svg>
+            <span class="text-base font-black text-slate-300 uppercase tracking-wider whitespace-nowrap">{{ brand }}</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ SECCIÓN 4 — EL PROBLEMA + CALCULADORA (2 columnas, claro) ═══ -->
+    <section id="problema" class="py-16 lg:py-20 px-6 bg-white">
       <div class="max-w-6xl mx-auto grid lg:grid-cols-2 gap-16">
 
         <!-- Columna izquierda: El Problema -->
@@ -199,14 +276,14 @@
       </div>
     </section>
 
-    <!-- ═══ SECCIÓN 3 — LA SOLUCIÓN ═══ -->
-    <section id="solucion" class="py-24 lg:py-28 px-6 bg-white">
+    <!-- ═══ SECCIÓN 5 — LA SOLUCIÓN ═══ -->
+    <section id="solucion" class="py-16 lg:py-20 px-6 bg-white">
       <div class="max-w-6xl mx-auto">
-        <div class="reveal text-center mb-16">
+        <div class="reveal text-center mb-10">
           <div class="inline-flex items-center gap-2 mb-5 px-3.5 py-1.5 rounded-full bg-blue-50 border border-blue-100">
             <span class="text-[11px] font-extrabold tracking-wide text-blue uppercase">La Solución</span>
           </div>
-          <h2 class="section-title text-navy mb-4">Cinco piezas. No veintiséis.</h2>
+          <h2 class="section-title text-navy mb-4">Cinco piezas. No veintisiete.</h2>
           <p class="text-slate-500 max-w-xl mx-auto">SOLMI OS resuelve exactamente los problemas de arriba. Nada más.</p>
         </div>
 
@@ -238,138 +315,10 @@
       </div>
     </section>
 
-    <!-- ═══ SECCIÓN 4 — OFERTA ═══ -->
-    <section id="oferta" class="py-24 lg:py-28 px-6 bg-white">
-      <div class="max-w-6xl mx-auto">
-        <div class="reveal">
-          <div class="inline-flex items-center gap-2 mb-5 px-3.5 py-1.5 rounded-full bg-blue-50 border border-blue-100">
-            <span class="text-[11px] font-extrabold tracking-wide text-blue uppercase">Programa Hotel Fundador</span>
-          </div>
-          <h2 class="section-title text-navy mb-3">25 hoteles fundadores. Precio congelado para siempre.</h2>
-          <p class="text-slate-500 max-w-xl mb-12">No es un descuento de campaña. Es reconocimiento por confiar en SOLMI OS desde el primer día.</p>
-        </div>
-
-        <p v-if="plansFailed" class="reveal text-center text-xs text-slate-400 mb-6" data-testid="plans-fallback-notice">
-          No pudimos cargar los precios actualizados. Dejanos tus datos y te los pasamos al instante.
-        </p>
-        <!-- Mismos 5 planes de la landing principal, con precio fundador -->
-        <div class="stagger-grid grid sm:grid-cols-2 lg:grid-cols-5 gap-5 items-start mb-10">
-          <div v-for="plan in founderPlans" :key="plan.id"
-            class="reveal rounded-2xl border border-slate-200 bg-white overflow-hidden flex flex-col h-full"
-            :class="plan.featured ? 'shadow-xl lg:-translate-y-2 ring-1 ring-purple/15' : 'hover:shadow-md transition-shadow'">
-            <div class="p-6" :class="planColor(plan.color).header">
-              <div v-if="plan.badge" class="inline-flex mb-3 text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider" :class="planColor(plan.color).badge">{{ plan.badge }}</div>
-              <div class="text-lg font-black text-white mb-2">{{ plan.name }}</div>
-              <!-- Precio público = el de la tabla `plans`; el fundador se deriva de ese número
-                   con FOUNDER_DISCOUNT_PCT. Nunca un literal en el template (GH-31). -->
-              <div v-if="plansLoading && !plan.priceKnown" class="h-9 w-28 rounded bg-white/20 animate-pulse" data-testid="plan-price-loading"></div>
-              <template v-else-if="plan.quote || !plan.priceKnown">
-                <div class="text-2xl font-black text-white" data-testid="plan-public-price">{{ plan.publicPrice }}</div>
-              </template>
-              <template v-else>
-                <div class="text-xs text-white/50 line-through" data-testid="plan-public-price">Precio público {{ plan.publicPrice }}</div>
-                <div class="flex items-end gap-1.5 flex-wrap">
-                  <span class="text-2xl font-black text-white" data-testid="plan-founder-price">{{ plan.founderPrice }}</span>
-                  <span class="text-xs text-white/60 mb-1">/mes</span>
-                </div>
-                <div class="text-[11px] font-bold mt-1 text-white/90">{{ FOUNDER_DISCOUNT_PCT }}% de descuento</div>
-              </template>
-              <div v-if="plan.rooms" class="text-[11px] text-white/70 mt-1">{{ plan.rooms }}</div>
-            </div>
-            <div class="p-6 flex flex-col flex-1">
-              <div class="space-y-2.5 flex-1 mb-6">
-                <div v-for="b in plan.features" :key="b" class="flex items-start gap-2 text-xs text-slate-600">
-                  <svg class="w-3.5 h-3.5 shrink-0 mt-0.5" :class="planColor(plan.color).check" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
-                  {{ b }}
-                </div>
-              </div>
-              <a :href="plan.quote ? SALES_MAILTO : '#formulario'"
-                class="block w-full py-2.5 rounded-xl text-center text-xs font-bold border transition-colors"
-                :class="planColor(plan.color).cta">
-                {{ plan.quote ? 'Contactar ventas' : 'Reservar mi cupo' }}
-              </a>
-            </div>
-          </div>
-        </div>
-
-        <!-- Beneficios del programa fundador -->
-        <div class="reveal grid md:grid-cols-2 gap-8 items-start max-w-4xl mb-8">
-          <div>
-            <h3 class="text-xs font-black text-blue mb-4 uppercase tracking-wide">Todo hotel fundador recibe</h3>
-            <div class="space-y-2.5">
-              <div v-for="b in founderBenefits" :key="b" class="flex items-start gap-2 text-sm text-slate-600">
-                <svg class="w-4 h-4 shrink-0 mt-0.5 text-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
-                {{ b }}
-              </div>
-            </div>
-          </div>
-          <div class="rounded-2xl bg-slate-50 border border-slate-100 p-6">
-            <h3 class="text-sm font-black text-navy mb-3">Sin letra pequeña</h3>
-            <p class="text-sm text-slate-500 leading-relaxed mb-3">No hay permanencia mínima. El pago es mensual y puede cancelar cuando quiera, sin penalidad.</p>
-            <p class="text-sm text-slate-500 leading-relaxed">El precio congelado se mantiene mientras su hotel se mantenga como cliente activo de SOLMI OS.</p>
-          </div>
-        </div>
-
-        <!-- Contador + Cuenta regresiva Ola 1 -->
-        <div id="contador" class="reveal mt-8 rounded-3xl overflow-hidden border border-navy-deep shadow-2xl">
-          <div class="relative bg-navy-deep p-7 sm:p-9">
-            <div class="absolute top-[-30%] right-[-8%] w-72 h-72 rounded-full bg-cyan-light/10 blur-[100px] pointer-events-none"></div>
-            <div class="absolute bottom-[-40%] left-[-5%] w-64 h-64 rounded-full bg-blue/10 blur-[100px] pointer-events-none"></div>
-
-            <div class="relative flex flex-col lg:flex-row items-center justify-between gap-8">
-              <!-- Cupos -->
-              <div class="flex items-center gap-5">
-                <div class="w-16 h-16 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center shrink-0">
-                  <svg class="w-8 h-8 text-cyan-light" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"/></svg>
-                </div>
-                <div>
-                  <div class="inline-flex items-center gap-1.5 mb-2 px-2.5 py-1 rounded-full bg-coral/20 border border-coral/30">
-                    <span class="w-1.5 h-1.5 rounded-full bg-coral animate-pulse"></span>
-                    <span class="text-[10px] font-black text-coral uppercase tracking-wide">Cupos casi agotados</span>
-                  </div>
-                  <div class="font-black text-white text-3xl sm:text-4xl leading-none">Quedan <span class="text-cyan-light">{{ slotsLeft }}</span> de {{ slotsTotal }}</div>
-                  <div class="text-xs sm:text-sm text-white/50 mt-1.5">cupos de la Ola 1 · Actualizado {{ lastUpdated }}</div>
-                  <div class="mt-3 w-52 h-2 rounded-full bg-white/10 overflow-hidden">
-                    <div class="h-full bg-gradient-to-r from-cyan-light to-blue rounded-full transition-all duration-700" :style="{ width: slotsPercent + '%' }"></div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="hidden lg:block w-px h-24 bg-white/10"></div>
-
-              <!-- Cuenta regresiva -->
-              <div class="text-center">
-                <div class="text-[11px] font-black text-white/60 uppercase tracking-wide mb-3">La Ola 1 cierra en</div>
-                <div class="flex items-center gap-2 sm:gap-3">
-                  <div v-for="unit in countdown" :key="unit.label" class="flex flex-col items-center">
-                    <div class="w-14 h-14 sm:w-16 sm:h-16 rounded-xl bg-white/8 border border-cyan-light/25 flex items-center justify-center font-black text-xl sm:text-2xl text-white tabular-nums shadow-inner">{{ unit.value }}</div>
-                    <div class="text-[10px] text-white/40 uppercase tracking-wide mt-1.5">{{ unit.label }}</div>
-                  </div>
-                </div>
-              </div>
-
-              <a href="#formulario" class="shrink-0 inline-flex items-center gap-2 bg-cyan-light text-navy-deep font-black text-sm px-7 py-3.5 rounded-xl hover:-translate-y-0.5 transition-all duration-300 shadow-[0_16px_40px_rgba(0,180,216,0.25)] whitespace-nowrap">
-                Reservar mi cupo
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
-              </a>
-            </div>
-
-            <div class="relative mt-7 pt-6 border-t border-white/10 flex items-center justify-center lg:justify-start gap-3">
-              <div class="text-xs text-white/50">{{ slotsTaken }} de {{ slotsTotal }} cupos ya reservados</div>
-              <div class="flex -space-x-2">
-                <div v-for="n in slotsTotal" :key="n" class="w-6 h-6 rounded-full border-2 border-navy flex items-center justify-center" :class="n <= slotsTaken ? 'bg-cyan-light' : 'bg-white/10'">
-                  <svg class="w-3 h-3" :class="n <= slotsTaken ? 'text-navy-deep' : 'text-white/30'" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12a4.5 4.5 0 100-9 4.5 4.5 0 000 9zM3.75 20.25a8.25 8.25 0 0116.5 0 .75.75 0 01-.75.75H4.5a.75.75 0 01-.75-.75z"/></svg>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
 
     <!-- ═══ SECCIÓN 6 — PRUEBA ═══ -->
-    <section id="prueba" class="py-24 lg:py-28 px-6 bg-white">
-      <div class="max-w-6xl mx-auto grid lg:grid-cols-2 gap-16 items-center mb-14">
+    <section id="prueba" class="py-16 lg:py-20 px-6 bg-white">
+      <div class="max-w-6xl mx-auto grid lg:grid-cols-2 gap-16 items-center mb-10">
         <div class="reveal">
           <div class="inline-flex items-center gap-2 mb-5 px-3.5 py-1.5 rounded-full bg-blue-50 border border-blue-100">
             <span class="text-[11px] font-extrabold tracking-wide text-blue uppercase">Construido dentro de un hotel real</span>
@@ -419,7 +368,7 @@
     </section>
 
     <!-- ═══ SECCIÓN 7 — FORMULARIO + FAQ (2 columnas, claro) ═══ -->
-    <section id="formulario" class="py-24 lg:py-28 px-6 bg-slate-50">
+    <section id="formulario" class="py-16 lg:py-20 px-6 bg-slate-50">
       <div class="max-w-6xl mx-auto grid lg:grid-cols-2 gap-16">
 
         <!-- Formulario -->
@@ -554,13 +503,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import heroImage from '@/assets/hero.png'
 import stressedManagerImage from '@/assets/hotel-manager-stressed.png'
 import logoWhite from '@/assets/logo/logo-horizontal-white.png'
 import { usePageMeta } from '@/composables/usePageMeta'
 import { PUBLIC_PAGE_META } from '@/pages/public-meta'
-import { PlanCatalogService, SALES_EMAIL, SALES_MAILTO, type DisplayPlan } from '@/services/PlanCatalog.service'
+import { SALES_EMAIL, SALES_MAILTO } from '@/services/PlanCatalog.service'
 import { SignupService } from '@/services/Signup.service'
 
 usePageMeta(PUBLIC_PAGE_META.hotelFundador)
@@ -583,6 +532,19 @@ function handleScroll() {
 
 let revealObserver: IntersectionObserver
 
+/**
+ * Pone en observación cualquier `.reveal` que todavía no lo esté (`IntersectionObserver.observe`
+ * es un no-op seguro sobre un elemento ya observado). Hace falta llamarla de nuevo cada vez que
+ * un `v-for` reemplaza sus nodos por completo — ej. las tarjetas de plan, que arrancan con el
+ * fallback (`id` = slug: 'host', 'essential'...) y al llegar la API se reemplazan por las reales
+ * (`id` = UUID de la fila). Como el `:key` cambia, Vue destruye los nodos viejos y crea nodos
+ * NUEVOS que el observer del mount nunca vio — sin este re-scan quedaban con `opacity:0` para
+ * siempre (el hueco en blanco reportado donde debían verse los planes).
+ */
+function observeReveals() {
+  document.querySelectorAll('.reveal:not(.is-visible)').forEach((el) => revealObserver.observe(el))
+}
+
 onMounted(() => {
   window.addEventListener('scroll', handleScroll, { passive: true })
   handleScroll()
@@ -595,7 +557,7 @@ onMounted(() => {
       }
     }
   }, { threshold: 0, rootMargin: '0px 0px 80px 0px' })
-  document.querySelectorAll('.reveal').forEach((el) => revealObserver.observe(el))
+  observeReveals()
 
   countdownTimer = setInterval(() => { nowTs.value = Date.now() }, 1000)
 })
@@ -626,6 +588,10 @@ const heroTrustBar = [
   { label: 'Voto sobre el futuro del sistema', icon: '<svg class="w-4 h-4 text-cyan-light" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>' },
   { label: 'Solo 25 cupos disponibles', icon: '<svg class="w-4 h-4 text-cyan-light" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5"/></svg>' },
 ]
+
+// ── Trust strip (mismo patrón que la landing principal) — integraciones reales, no clientes inventados. ──
+const socialBrands = ['Booking.com', 'Airbnb', 'Expedia', 'Stripe', 'TTLock', 'Channex']
+const carouselBrands = [...socialBrands, ...socialBrands]
 
 // ── Dolores ──
 const painPoints = [
@@ -694,80 +660,6 @@ const solutionCards = [
   },
 ]
 
-// ── Oferta — los mismos planes que la landing principal, servidos por el catálogo compartido
-// (services/PlanCatalog.service.ts). El precio público sale de la tabla `plans`; el precio
-// fundador se deriva de ese número con FOUNDER_DISCOUNT_PCT ──
-const PLAN_COLORS: Record<string, { header: string; badge: string; cta: string; check: string }> = {
-  navy: { header: 'bg-navy', badge: 'bg-white/20 text-white', cta: 'bg-navy/5 text-navy border-navy/15 hover:bg-navy/10', check: 'text-navy' },
-  teal: { header: 'bg-teal', badge: 'bg-white/20 text-white', cta: 'bg-teal/5 text-teal border-teal/15 hover:bg-teal/10', check: 'text-teal' },
-  purple: { header: 'bg-purple', badge: 'bg-white/20 text-white', cta: 'bg-purple/5 text-purple border-purple/15 hover:bg-purple/10', check: 'text-purple' },
-  gold: { header: 'bg-gold', badge: 'bg-white/20 text-white', cta: 'bg-gold/5 text-gold border-gold/15 hover:bg-gold/10', check: 'text-gold' },
-  coral: { header: 'bg-coral', badge: 'bg-white/20 text-white', cta: 'bg-coral/5 text-coral border-coral/15 hover:bg-coral/10', check: 'text-coral' },
-}
-function planColor(color: string) {
-  return PLAN_COLORS[color] ?? PLAN_COLORS.navy
-}
-
-/**
- * Descuento del programa Hotel Fundador sobre el precio público. El número base sale siempre de la
- * tabla `plans`; esto es la regla comercial que se le aplica encima.
- *
- * CFG-1: la VERDAD es `special_category_config.discountPct` (editable desde /admin), que es el %
- * con el que `applySpecialConditions` cobra de verdad. Mientras esto salía sólo del build
- * (`VITE_FOUNDER_DISCOUNT_PCT`), bajar el descuento desde /admin dejaba la página prometiendo el
- * viejo: la misma divergencia precio-mostrado vs precio-cobrado que GH-31 cerró para el precio base.
- * El build queda como respaldo para cuando la API no contesta, y el literal 30 sólo como último
- * recurso — nunca como fuente.
- */
-const FOUNDER_DISCOUNT_DEFAULT = 30
-function readFounderDiscountFallback(): number {
-  const raw = Number(import.meta.env.VITE_FOUNDER_DISCOUNT_PCT)
-  return Number.isFinite(raw) && raw > 0 && raw < 100 ? raw : FOUNDER_DISCOUNT_DEFAULT
-}
-const FOUNDER_DISCOUNT_PCT = ref(readFounderDiscountFallback())
-
-/** Plan de la landing + su precio fundador ya derivado. */
-interface FounderPlan extends DisplayPlan {
-  publicPrice: string
-  founderPrice: string
-}
-
-function withFounderPrice(p: DisplayPlan): FounderPlan {
-  if (!p.priceKnown || p.quote || p.price === null) {
-    return { ...p, publicPrice: p.priceLabel, founderPrice: p.priceLabel }
-  }
-  const founder = Math.round(p.price * (1 - FOUNDER_DISCOUNT_PCT.value / 100))
-  return { ...p, publicPrice: PlanCatalogService.formatPrice(p.price, p.currency), founderPrice: PlanCatalogService.formatPrice(founder, p.currency) }
-}
-
-const founderPlans = ref<FounderPlan[]>(PlanCatalogService.fallback().map(withFounderPrice))
-const plansLoading = ref(true)
-/** La API no contestó: se muestra el copy con "Consultar" en vez de un precio inventado. */
-const plansFailed = ref(false)
-
-onMounted(async () => {
-  // El % del servidor se resuelve ANTES de derivar los precios: si llegara después, la tarjeta
-  // mostraría un instante el descuento del build y otro el real. Un fallo acá no rompe la página:
-  // se sigue con el respaldo del build (CFG-1).
-  const pct = await SignupService.founderDiscountPct().catch(() => null)
-  if (pct !== null) FOUNDER_DISCOUNT_PCT.value = pct
-  const res = await PlanCatalogService.load()
-  founderPlans.value = res.plans.map(withFounderPrice)
-  plansFailed.value = !res.fromApi
-  plansLoading.value = false
-})
-
-const founderBenefits = [
-  'Precio congelado mientras sea cliente activo',
-  'Implementación y configuración incluidas',
-  'Migración de sus datos actuales sin costo',
-  'Soporte prioritario por WhatsApp',
-  'Acceso anticipado a cada función nueva',
-  'Línea directa con el equipo fundador',
-  'Voto sobre qué se construye después',
-  'Acceso completo a SOLMI Academy',
-]
-
 // ── Contador ──
 const slotsTotal = 10
 const slotsTaken = 3
@@ -775,13 +667,26 @@ const slotsLeft = computed(() => slotsTotal - slotsTaken)
 const slotsPercent = computed(() => Math.round((slotsTaken / slotsTotal) * 100))
 const lastUpdated = new Date().toLocaleDateString('es-DO', { day: 'numeric', month: 'long', year: 'numeric' })
 
-// ── Cuenta regresiva Ola 1 (20 días desde el lanzamiento) ──
-const FOUNDER_DEADLINE = new Date('2026-08-26T23:59:59-04:00').getTime()
+// ── Cuenta regresiva Ola 1 — cíclica, editable desde /admin ──
+//
+// Antes la fecha límite estaba HARDCODEADA (`FOUNDER_DEADLINE = new Date('2026-08-26...')`): al
+// pasar esa fecha el contador se quedaba clavado en 00:00:00:00 para siempre, nadie la reiniciaba
+// porque no había desde dónde. Ahora `enabled`/`durationDays` salen de `/api/public/founder-countdown`
+// (editable en Panel › Suscripciones › Cupos Fundador/Pionero) y el ciclo vigente se calcula con
+// `%` contra `anchorAt` — al llegar a 0, el próximo tick ya cae dentro del ciclo siguiente solo,
+// sin ningún reset manual. Fallback (API caída): contador oculto, nunca una fecha inventada.
+const FOUNDER_COUNTDOWN_ANCHOR_FALLBACK = '2026-01-01T00:00:00.000Z'
+const countdownEnabled = ref(false)
+const countdownDurationDays = ref(90)
+const countdownAnchorMs = ref(Date.parse(FOUNDER_COUNTDOWN_ANCHOR_FALLBACK))
 const nowTs = ref(Date.now())
 let countdownTimer: ReturnType<typeof setInterval>
 
 const countdown = computed(() => {
-  const remaining = Math.max(0, FOUNDER_DEADLINE - nowTs.value)
+  const durationMs = countdownDurationDays.value * 86400000
+  const elapsed = nowTs.value - countdownAnchorMs.value
+  const intoCycle = ((elapsed % durationMs) + durationMs) % durationMs
+  const remaining = durationMs - intoCycle
   const days = Math.floor(remaining / 86400000)
   const hours = Math.floor((remaining % 86400000) / 3600000)
   const minutes = Math.floor((remaining % 3600000) / 60000)
@@ -792,6 +697,14 @@ const countdown = computed(() => {
     { label: 'Min', value: String(minutes).padStart(2, '0') },
     { label: 'Seg', value: String(seconds).padStart(2, '0') },
   ]
+})
+
+onMounted(async () => {
+  const cfg = await SignupService.founderCountdown().catch(() => null)
+  if (!cfg) return // API caída: el contador queda oculto (countdownEnabled ya arranca en false)
+  countdownEnabled.value = cfg.enabled
+  countdownDurationDays.value = cfg.durationDays
+  countdownAnchorMs.value = Date.parse(cfg.anchorAt) || countdownAnchorMs.value
 })
 
 // ── Prueba ──
@@ -839,6 +752,19 @@ const faqs = [
 </script>
 
 <style scoped>
+/* ── CARRUSEL INFINITO (trust strip) — mismo patrón que pages/landing/index.vue ── */
+.marquee-track {
+  animation: marqueeScroll 35s linear infinite;
+  will-change: transform;
+}
+.marquee-track:hover {
+  animation-play-state: paused;
+}
+@keyframes marqueeScroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
 .hero-title {
   font-family: 'Inter', sans-serif;
   font-size: clamp(2.5rem, 4.6vw, 4rem);

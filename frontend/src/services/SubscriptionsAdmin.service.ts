@@ -63,6 +63,10 @@ export interface SubscriptionSettings {
   maxManualDiscountPct: number
   /** #28 — el alta pide tarjeta antes de arrancar la prueba y cobra sola al vencer. */
   requireCardOnTrial: boolean
+  /** Contador de la landing /hotel-fundador — apagarlo oculta la cuenta regresiva sin deploy. */
+  founderCountdownEnabled: boolean
+  /** Duración de cada ciclo del contador, en días (90 ≈ 3 meses). Al llegar a 0 arranca otro ciclo solo. */
+  founderCountdownDurationDays: number
 }
 
 export const SubscriptionsAdminService = {
