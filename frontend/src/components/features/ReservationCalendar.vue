@@ -359,45 +359,88 @@
 
     <!-- Quote / Cotización Modal -->
     <AppModal :open="quote.show" title="Cotización" size="lg" body-class="p-6" @close="quote.show = false">
-          <!-- PRINT VIEW -->
+          <!-- PRINT VIEW — cotización A4 con la identidad del panel (navy/teal/gold, tokens de
+               main.css). Montos por qMoney() y fechas por qDate(): al huésped se le entrega
+               "$1,234.00" y "31/08/2026", no el ISO crudo del <input type="date">. -->
           <div class="print-only">
-            <div class="text-center mb-6">
-              <h2 class="text-2xl font-black" style="color:#1a2b4c">{{ quote.hotel }}</h2>
-              <p class="text-sm" style="color:#6b7280">{{ quote.hotelAddress }}</p>
-              <p class="text-sm" style="color:#6b7280">{{ quote.hotelPhone }} · {{ quote.hotelEmail }}</p>
-              <div style="border-bottom:2px solid #1a2b4c;width:120px;margin:16px auto 0"></div>
-              <h3 class="text-lg font-black mt-4" style="color:#1a2b4c">COTIZACIÓN / PROFORMA</h3>
-              <p class="text-xs" style="color:#6b7280">Nº {{ quote.id }} · {{ quote.today }}</p>
+            <div class="qdoc">
+              <div class="qdoc-brandbar"></div>
+
+              <!-- Emisor + documento -->
+              <div class="qdoc-head">
+                <div class="qdoc-issuer">
+                  <div class="qdoc-monogram">{{ quoteMonogram }}</div>
+                  <div class="min-w-0">
+                    <h2 class="qdoc-hotel">{{ quote.hotel }}</h2>
+                    <p v-if="quote.hotelAddress">{{ quote.hotelAddress }}</p>
+                    <p v-if="quote.hotelPhone || quote.hotelEmail"><template v-if="quote.hotelPhone">Tel: {{ quote.hotelPhone }}</template><template v-if="quote.hotelPhone && quote.hotelEmail"> · </template>{{ quote.hotelEmail }}</p>
+                  </div>
+                </div>
+                <div class="qdoc-doc">
+                  <div class="qdoc-doc-title">Cotización</div>
+                  <div class="qdoc-doc-sub">Proforma</div>
+                  <div class="qdoc-doc-meta">Nº {{ quote.id }} · {{ quote.today }}</div>
+                </div>
+              </div>
+
+              <!-- Cliente + estadía -->
+              <div class="qdoc-info">
+                <div class="qdoc-panel">
+                  <div class="qdoc-label">Cliente</div>
+                  <div class="qdoc-name">{{ quote.guest }}</div>
+                  <p v-if="quote.email">{{ quote.email }}</p>
+                  <p v-if="quote.phone">{{ quote.phone }}</p>
+                </div>
+                <div class="qdoc-panel">
+                  <div class="qdoc-label">Estadía</div>
+                  <div class="qdoc-kv"><span>Entrada</span><b>{{ qDate(quote.checkIn) }}</b></div>
+                  <div class="qdoc-kv"><span>Salida</span><b>{{ qDate(quote.checkOut) }}</b></div>
+                  <div class="qdoc-kv"><span>Noches</span><b>{{ quoteNights }}</b></div>
+                  <div class="qdoc-kv"><span>Huéspedes</span><b>{{ quote.adults }} adulto{{ quote.adults === 1 ? '' : 's' }}<template v-if="quote.kids">, {{ quote.kids }} niño{{ quote.kids === 1 ? '' : 's' }}</template></b></div>
+                </div>
+              </div>
+
+              <!-- Detalle -->
+              <table class="qdoc-table">
+                <thead>
+                  <tr>
+                    <th class="qdoc-th-left">Habitación</th>
+                    <th>Cant.</th>
+                    <th>Precio / noche</th>
+                    <th>Noches</th>
+                    <th>Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(item, i) in quote.rooms" :key="i">
+                    <td class="qdoc-room">{{ item.type }}</td>
+                    <td class="qdoc-num">{{ item.qty }}</td>
+                    <td class="qdoc-num">{{ qMoney(item.price) }}</td>
+                    <td class="qdoc-num">{{ quoteNights }}</td>
+                    <td class="qdoc-num qdoc-strong">{{ qMoney(item.qty * item.price * quoteNights) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <!-- Totales. Sin tasa configurada no se desglosa: Subtotal sería una copia del Total. -->
+              <div class="qdoc-totals">
+                <div v-if="quote.taxRate > 0" class="qdoc-trow"><span>Subtotal</span><b>{{ qMoney(quoteSubtotal) }}</b></div>
+                <div v-if="quote.taxRate > 0" class="qdoc-trow"><span>{{ quote.taxName }} ({{ quote.taxRate }}%)</span><b>{{ qMoney(quoteTax) }}</b></div>
+                <div class="qdoc-ttotal"><span>Total</span><b>{{ qMoney(quoteTotal) }}</b></div>
+              </div>
+
+              <!-- Condiciones -->
+              <div v-if="quote.notes" class="qdoc-notes">
+                <div class="qdoc-label">Condiciones</div>
+                <p>{{ quote.notes }}</p>
+              </div>
+
+              <!-- Pie -->
+              <div class="qdoc-foot">
+                <p class="qdoc-thanks">Gracias por su preferencia · {{ quote.hotel }}</p>
+                <p>Documento informativo · No válido como factura fiscal</p>
+              </div>
             </div>
-            <div class="mb-4">
-              <h4 class="text-xs font-bold uppercase mb-2" style="color:#1a2b4c">Datos del Cliente</h4>
-              <p class="text-sm font-bold" style="color:#1a2b4c">{{ quote.guest || '—' }}</p>
-              <p class="text-xs" style="color:#6b7280" v-if="quote.email || quote.phone">{{ quote.email }}{{ quote.email && quote.phone ? ' · ' : '' }}{{ quote.phone }}</p>
-            </div>
-            <table style="width:100%;font-size:12px;margin-bottom:16px;border-collapse:collapse">
-              <thead><tr style="border-bottom:2px solid #1a2b4c"><th style="text-align:left;padding:8px 0;font-size:10px;text-transform:uppercase;color:#6b7280">Habitación</th><th style="text-align:center;padding:8px 0;font-size:10px;text-transform:uppercase;color:#6b7280">Cant.</th><th style="text-align:right;padding:8px 0;font-size:10px;text-transform:uppercase;color:#6b7280">Precio/n</th><th style="text-align:right;padding:8px 0;font-size:10px;text-transform:uppercase;color:#6b7280">Subtotal</th></tr></thead>
-              <tbody>
-                <tr v-for="(item, i) in quote.rooms" :key="i" style="border-bottom:1px solid #e5e7eb">
-                  <td style="padding:8px 0;font-weight:700;color:#1a2b4c">{{ item.type }}</td><td style="padding:8px 0;text-align:center">{{ item.qty }}</td><td style="padding:8px 0;text-align:right">{{ money }}{{ item.price }}</td><td style="padding:8px 0;text-align:right;font-weight:700">{{ money }}{{ item.qty * item.price * quoteNights }}</td>
-                </tr>
-              </tbody>
-            </table>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;margin-bottom:16px">
-              <div><span style="color:#6b7280">Check-in:</span> <strong>{{ quote.checkIn }}</strong></div>
-              <div><span style="color:#6b7280">Check-out:</span> <strong>{{ quote.checkOut }}</strong></div>
-              <div><span style="color:#6b7280">Noches:</span> <strong>{{ quoteNights }}</strong></div>
-              <div><span style="color:#6b7280">Huéspedes:</span> <strong>{{ quote.adults }} adultos, {{ quote.kids }} niños</strong></div>
-            </div>
-            <div style="border-top:2px solid #1a2b4c;padding-top:12px;font-size:12px">
-              <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Subtotal</span><strong>{{ money }}{{ quoteSubtotal }}</strong></div>
-              <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>{{ quote.taxName }} ({{ quote.taxRate }}%)</span><strong>{{ money }}{{ Math.round(quoteSubtotal * quote.taxRate / 100) }}</strong></div>
-              <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:900;border-top:2px solid #1a2b4c;padding-top:8px;margin-top:8px"><span>TOTAL</span><span>{{ money }}{{ quoteSubtotal + Math.round(quoteSubtotal * quote.taxRate / 100) }}</span></div>
-            </div>
-            <div v-if="quote.notes" style="margin-top:16px;font-size:10px;color:#6b7280;border-top:1px solid #e5e7eb;padding-top:12px">
-              <p style="font-weight:700;color:#1a2b4c;margin-bottom:4px">Notas:</p>
-              <p>{{ quote.notes }}</p>
-            </div>
-            <p style="font-size:9px;color:#9ca3af;text-align:center;margin-top:24px">Documento informativo · No válido como factura fiscal</p>
           </div>
 
           <!-- EDIT FORM -->
@@ -454,12 +497,12 @@
             <label class="block text-[11px] font-bold text-navy uppercase tracking-wide mb-2">Precios</label>
             <div class="bg-surface rounded-xl p-4 space-y-2 text-sm">
               <div v-for="(item, i) in quote.rooms" :key="'p'+i" class="flex justify-between">
-                <span class="text-text-secondary">{{ item.type }} ×{{ item.qty }} ({{ quoteNights }}n × {{ money }}{{ item.price }})</span>
-                <span class="font-bold">{{ money }}{{ item.qty * item.price * quoteNights }}</span>
+                <span class="text-text-secondary">{{ item.type }} ×{{ item.qty }} ({{ quoteNights }}n × {{ qMoney(item.price) }})</span>
+                <span class="font-bold">{{ qMoney(item.qty * item.price * quoteNights) }}</span>
               </div>
               <div class="flex justify-between border-t border-border pt-2">
                 <span class="text-text-secondary">Subtotal</span>
-                <span class="font-bold">{{ money }}{{ quoteSubtotal }}</span>
+                <span class="font-bold">{{ qMoney(quoteSubtotal) }}</span>
               </div>
               <div class="flex justify-between items-center">
                 <span class="text-text-secondary">Impuesto</span>
@@ -469,10 +512,10 @@
                   <span class="text-xs">%</span>
                 </div>
               </div>
-              <div class="flex justify-between"><span class="text-text-secondary">Impuesto calculado</span><span class="font-bold">{{ money }}{{ Math.round(quoteSubtotal * quote.taxRate / 100) }}</span></div>
+              <div class="flex justify-between"><span class="text-text-secondary">Impuesto calculado</span><span class="font-bold">{{ qMoney(quoteTax) }}</span></div>
               <div class="border-t border-border pt-2 flex justify-between">
                 <span class="font-extrabold text-navy">Total</span>
-                <span class="font-extrabold text-navy text-lg">{{ money }}{{ quoteSubtotal + Math.round(quoteSubtotal * quote.taxRate / 100) }}</span>
+                <span class="font-extrabold text-navy text-lg">{{ qMoney(quoteTotal) }}</span>
               </div>
             </div>
           </div>
@@ -886,6 +929,20 @@ const quoteNights = computed(() => {
   return Math.max(0, Math.round((new Date(co).getTime() - new Date(ci).getTime()) / MS_PER_DAY))
 })
 const quoteSubtotal = computed(() => quote.value.rooms.reduce((s, r) => s + r.qty * r.price * quoteNights.value, 0))
+// Impuesto y total como computeds: el template viejo repetía la fórmula Math.round(...) 3 veces.
+const quoteTax = computed(() => Math.round(quoteSubtotal.value * quote.value.taxRate / 100))
+const quoteTotal = computed(() => quoteSubtotal.value + quoteTax.value)
+// Iniciales del hotel para el monograma del encabezado imprimible (el hotel no tiene logo cargado).
+const quoteMonogram = computed(() => quote.value.hotel.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]!.toUpperCase()).join(''))
+/** Montos de la cotización con miles y 2 decimales ("$1,234.00"), no el número crudo del input. */
+function qMoney(n: number): string {
+  return money.value + (n ?? 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+/** Fechas legibles en la cotización ("31/08/2026"), no el ISO "2026-08-31" del input date. */
+function qDate(s: string): string {
+  const [y, m, d] = (s || '').split('-')
+  return y && m && d ? `${d}/${m}/${y}` : s
+}
 const quoteRoomTypes = computed(() => {
   const types = new Set<string>()
   for (const r of planRooms.value) types.add((r.type || 'double').charAt(0).toUpperCase() + (r.type || 'double').slice(1))
@@ -1661,7 +1718,7 @@ function popupQuote() {
   const room = p.room
   const roomData = planRooms.value.find((r: any) => r.id === room?.id)
   const roomType = (roomData?.type || 'Standard').charAt(0).toUpperCase() + (roomData?.type || 'Standard').slice(1)
-  const today = new Date().toLocaleDateString('es-DO')
+  const today = new Date().toLocaleDateString('es-DO', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const id = Date.now().toString().slice(-6)
   quote.value = {
     show: true, id, today,
@@ -1915,6 +1972,53 @@ function goToday() { weekOffset.value = 0; lastSel.value = null; popup.value.sho
 /* Cursor consistente durante el arrastre de reservas (mover / extender). */
 .planning-dragging-move, .planning-dragging-move * { cursor: move !important; }
 .planning-dragging-resize, .planning-dragging-resize * { cursor: ew-resize !important; }
+
+/* ── Cotización imprimible (.print-only > .qdoc) ─────────────────────────────
+   Identidad del panel vía tokens de main.css (@theme de Tailwind 4 los emite
+   como variables CSS en :root, alcanza con var(--color-*)). print-color-adjust:
+   exact es OBLIGATORIO — sin él los navegadores tapan los fondos al imprimir y
+   el navy del encabezado/tabla sale gris lavado. */
+.qdoc { font-size: 12px; color: var(--color-text); }
+.qdoc, .qdoc * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.qdoc-brandbar { height: 6px; border-radius: 999px; background: linear-gradient(90deg, var(--color-navy) 0%, var(--color-teal) 55%, var(--color-gold-light) 100%); margin-bottom: 22px; }
+.qdoc-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 18px; }
+.qdoc-issuer { display: flex; gap: 12px; align-items: flex-start; min-width: 0; }
+.qdoc-monogram { width: 44px; height: 44px; border-radius: 12px; background: var(--color-navy); color: #fff; font-weight: 900; font-size: 16px; letter-spacing: .5px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.qdoc-hotel { margin: 0; font-size: 20px; font-weight: 900; color: var(--color-navy); letter-spacing: .2px; }
+.qdoc-issuer p { margin: 3px 0 0; font-size: 11px; color: var(--color-text-secondary); }
+.qdoc-doc { background: var(--color-navy); color: #fff; border-radius: 12px; padding: 12px 18px; text-align: right; flex-shrink: 0; }
+.qdoc-doc-title { font-size: 17px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; }
+.qdoc-doc-sub { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--color-gold-light); margin-top: 2px; }
+.qdoc-doc-meta { font-size: 10.5px; color: rgba(255,255,255,.75); margin-top: 6px; }
+.qdoc-info { display: grid; grid-template-columns: 1.15fr 1fr; gap: 14px; margin-bottom: 20px; }
+.qdoc-panel { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 12px 16px; }
+.qdoc-label { font-size: 9px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: var(--color-teal); margin-bottom: 6px; }
+.qdoc-name { font-size: 14px; font-weight: 800; color: var(--color-navy); margin-bottom: 2px; }
+.qdoc-panel p { margin: 2px 0 0; font-size: 11px; color: var(--color-text-secondary); }
+.qdoc-kv { display: flex; justify-content: space-between; gap: 12px; font-size: 11.5px; padding: 2.5px 0; }
+.qdoc-kv span { color: var(--color-text-secondary); }
+.qdoc-kv b { color: var(--color-navy); }
+.qdoc-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 18px; }
+.qdoc-table th { background: var(--color-navy); color: #fff; font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; padding: 9px 12px; text-align: right; }
+.qdoc-table th.qdoc-th-left { text-align: left; border-radius: 8px 0 0 8px; }
+.qdoc-table th:last-child { border-radius: 0 8px 8px 0; }
+.qdoc-table td { padding: 9px 12px; border-bottom: 1px solid var(--color-border); }
+.qdoc-table tbody tr:nth-child(even) td { background: var(--color-surface); }
+.qdoc-room { font-weight: 800; color: var(--color-navy); }
+.qdoc-num { text-align: right; font-variant-numeric: tabular-nums; }
+.qdoc-strong { font-weight: 800; color: var(--color-navy); }
+.qdoc-totals { width: 300px; margin-left: auto; margin-bottom: 20px; }
+.qdoc-trow { display: flex; justify-content: space-between; gap: 24px; font-size: 12px; color: var(--color-text-secondary); padding: 5px 14px; }
+.qdoc-trow b { font-variant-numeric: tabular-nums; color: var(--color-navy); }
+.qdoc-ttotal { display: flex; justify-content: space-between; align-items: center; gap: 24px; background: var(--color-navy); color: #fff; border-radius: 10px; padding: 10px 14px; font-size: 14px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; margin-top: 6px; }
+.qdoc-ttotal b { font-variant-numeric: tabular-nums; color: var(--color-gold-light); font-size: 15px; letter-spacing: 0; }
+.qdoc-notes { background: color-mix(in srgb, var(--color-gold) 8%, white); border: 1px solid color-mix(in srgb, var(--color-gold) 30%, white); border-left: 3px solid var(--color-gold); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+.qdoc-notes .qdoc-label { color: var(--color-gold); margin-bottom: 3px; }
+.qdoc-notes p { margin: 0; font-size: 10.5px; color: var(--color-text-secondary); white-space: pre-line; }
+.qdoc-foot { border-top: 1px solid var(--color-border); margin-top: 26px; padding-top: 12px; text-align: center; }
+.qdoc-thanks { margin: 0; font-size: 11px; font-weight: 800; color: var(--color-navy); }
+.qdoc-foot p:last-child { margin: 4px 0 0; font-size: 9px; color: var(--color-text-muted); }
+
 @media screen { .print-only { display: none !important; } }
 @media print {
   /* Mismo patrón que ReservationModal.vue (.rm-invoice): la Cotización vive dentro de un
