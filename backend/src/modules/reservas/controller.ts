@@ -37,6 +37,7 @@ export class ReservasController {
     private readonly messageLogRepo?: any,
     private readonly roomRepoForEmail?: any,
     private readonly hotelRepoForEmail?: any,
+    private readonly guestRepoForEmail?: any,
   ) {}
 
   // ── CRUD reservas (/api/reservas) ──
@@ -183,7 +184,7 @@ export class ReservasController {
       const { reservation, hotelId } = await this.service.checkin(req.params.id, req.user as any)
       const result = await this.service.executeCheckin(reservation, req.user as any, { orm: this.orm, logger: this.logger })
       this.pushChannex(reservation.hotelId, reservation.roomId)
-      sendCheckinEmail({ emailSender: this.emailSender, guestRepo: this.userRepo, roomRepo: this.roomRepoForEmail, hotelRepo: this.hotelRepoForEmail, messageLogRepo: this.messageLogRepo, lockCodeRepo: this.orm ? new OrmRepository(this.orm, 'LockCodes') : undefined, logger: this.logger }, { reservationId: reservation.id, hotelId: reservation.hotelId, guestId: result.guestId, roomId: reservation.roomId, checkIn: reservation.checkIn, checkOut: reservation.checkOut, checkInTime: (reservation as any).checkInTime, checkOutTime: (reservation as any).checkOutTime }).catch((e: any) => this.logger.warn('check-in email', { error: e.message }))
+      sendCheckinEmail({ ...this.service.getNotifyDeps(), messageLogRepo: this.messageLogRepo, lockCodeRepo: this.orm ? new OrmRepository(this.orm, 'LockCodes') : undefined }, { reservationId: reservation.id, hotelId: reservation.hotelId, guestId: result.guestId, roomId: reservation.roomId, checkIn: reservation.checkIn, checkOut: reservation.checkOut, checkInTime: (reservation as any).checkInTime, checkOutTime: (reservation as any).checkOutTime }).catch((e: any) => this.logger.warn('check-in email', { error: e.message }))
       return { status: 200, body: result }
     } catch (e: any) {
       if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
@@ -216,7 +217,7 @@ export class ReservasController {
       }
 
       this.pushChannex(reservation.hotelId, reservation.roomId)
-      dispatchLifecycleEmail({ emailSender: this.emailSender, guestRepo: this.userRepo, roomRepo: this.roomRepoForEmail, hotelRepo: this.hotelRepoForEmail, messageLogRepo: this.messageLogRepo, logger: this.logger }, { reservationId: reservation.id, hotelId: reservation.hotelId, guestId: reservation.guestId, roomId: reservation.roomId, checkIn: reservation.checkIn, checkOut: reservation.checkOut, event: 'checkout' }).catch((e: any) => this.logger.warn('checkout email', { error: e.message }))
+      dispatchLifecycleEmail({ ...this.service.getNotifyDeps(), messageLogRepo: this.messageLogRepo }, { reservationId: reservation.id, hotelId: reservation.hotelId, guestId: reservation.guestId, roomId: reservation.roomId, checkIn: reservation.checkIn, checkOut: reservation.checkOut, event: 'checkout' }).catch((e: any) => this.logger.warn('checkout email', { error: e.message }))
       return { status: 200, body: { ...result, settlement: settlementResult } }
     } catch (e: any) {
       if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
