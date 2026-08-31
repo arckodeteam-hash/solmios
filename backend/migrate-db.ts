@@ -1079,7 +1079,10 @@ async function seedBase(): Promise<void> {
   const HOTELS_SQL = "INSERT INTO hotels (id, name, address, phone, email, country, currency, timezone, checkIn, checkOut, plan, status, roomsCount, active, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
 
   if (!(await exists('hotels', HOTEL_ID)))
-    await run(HOTELS_SQL, [HOTEL_ID, 'Hotel Boutique Palma', 'Calle Principal 123, Punta Cana', '+1 809 555 0100', 'admin@caribeparadise.com', 'DO', 'USD', 'America/Santo_Domingo', '15:00', '12:00', 'professional', 'active', 12, 1, now(), now()])
+    // Email de contacto del HOTEL (no login): sale impreso en la cotización y otros documentos.
+    // Era admin@caribeparadise.com (dominio viejo re-seedeado a @solmios.com en prod) — la
+    // proforma del planning lo mostraba como contacto del hotel.
+    await run(HOTELS_SQL, [HOTEL_ID, 'Hotel Boutique Palma', 'Calle Principal 123, Punta Cana', '+1 809 555 0100', 'hotel@solmios.com', 'DO', 'USD', 'America/Santo_Domingo', '15:00', '12:00', 'professional', 'active', 12, 1, now(), now()])
   if (!(await exists('hotels', HOTEL2_ID)))
     await run(HOTELS_SQL, [HOTEL2_ID, 'SolmiOS Corp', 'Oficinas Centrales', '+1 809 555 0000', 'admin@solmios.com', 'DO', 'USD', 'America/Santo_Domingo', '14:00', '11:00', 'enterprise', 'active', 0, 1, now(), now()])
 
