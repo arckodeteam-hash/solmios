@@ -784,6 +784,7 @@ import { useAuthStore } from '@/stores/auth.store'
 import { useModulesStore } from '@/stores/modules.store'
 import { useToast } from '@/composables/useToast'
 import { currencySymbol } from '@/composables/useCurrency'
+import { quoteTotals } from '@/utils/quote-totals'
 import { CurrencyCode } from '@/types/currency'
 import ReservationModal from '@/components/features/ReservationModal.vue'
 import ReservationWizardModal from '@/components/features/ReservationWizardModal.vue'
@@ -928,10 +929,12 @@ const quoteNights = computed(() => {
   if (!ci || !co) return 0
   return Math.max(0, Math.round((new Date(co).getTime() - new Date(ci).getTime()) / MS_PER_DAY))
 })
-const quoteSubtotal = computed(() => quote.value.rooms.reduce((s, r) => s + r.qty * r.price * quoteNights.value, 0))
-// Impuesto y total como computeds: el template viejo repetía la fórmula Math.round(...) 3 veces.
-const quoteTax = computed(() => Math.round(quoteSubtotal.value * quote.value.taxRate / 100))
-const quoteTotal = computed(() => quoteSubtotal.value + quoteTax.value)
+// Totales de la cotización: la matemática vive en utils/quote-totals.ts (testeable sola,
+// redondeo a centavos — el Math.round al entero imprimía 18% de $360 como $65.00).
+const qTotals = computed(() => quoteTotals(quote.value.rooms, quoteNights.value, quote.value.taxRate))
+const quoteSubtotal = computed(() => qTotals.value.subtotal)
+const quoteTax = computed(() => qTotals.value.tax)
+const quoteTotal = computed(() => qTotals.value.total)
 // Iniciales del hotel para el monograma del encabezado imprimible (el hotel no tiene logo cargado).
 const quoteMonogram = computed(() => quote.value.hotel.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]!.toUpperCase()).join(''))
 /** Montos de la cotización con miles y 2 decimales ("$1,234.00"), no el número crudo del input. */
