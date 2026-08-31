@@ -3,6 +3,7 @@
 // `StripeService.getClient()` SIN hotelId = cuenta de la PLATAFORMA.
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { StripeService } from '../../../services/stripe-service'
+import { addMonths } from '../../../shared/utils/add-months'
 
 export interface ApplyStripeDiscountDeps {
   subscriptionsRepo: RepositoryAdapter<any>
@@ -63,9 +64,9 @@ export async function applyStripeDiscount(
 
     if (meta && discountsRepo) {
       const now = new Date()
-      const endsAt = durationMonths
-        ? new Date(now.getFullYear(), now.getMonth() + durationMonths, now.getDate()).toISOString()
-        : null
+      // Mismo criterio que admin/special-conditions: `addMonths` recorta al último día del mes
+      // destino en vez de desbordarse al siguiente (31/08 + 1 mes = 30/09, no 01/10).
+      const endsAt = durationMonths ? addMonths(now, durationMonths).toISOString() : null
       await discountsRepo.create({
         id: crypto.randomUUID(),
         hotelId, subscriptionId: sub.id, type: meta.type, discountPct,

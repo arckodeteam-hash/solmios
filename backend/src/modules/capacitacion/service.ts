@@ -12,6 +12,7 @@ import { StatsUseCase } from './usecases/stats'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 import { composeSockets } from '../../shared/usecases/compose-sockets'
 import type { CapacitacionSockets } from './sockets'
+import { addMonths } from '../../shared/utils/add-months'
 export type { TrainingStaffStat } from './usecases/stats'
 
 /** Puerto de email (lo cablea email-bootstrap con setEmailDeps). */
@@ -59,8 +60,9 @@ export class CapacitacionService {
   private expiresFor(course: CourseDTO | null): string | null {
     const validity = Number(course?.validityMonths ?? 0)
     if (validity <= 0) return null
-    const exp = new Date(); exp.setMonth(exp.getMonth() + validity)
-    return exp.toISOString()
+    // `setMonth` desborda cuando el día no existe en el mes destino: una certificación emitida
+    // un 31 con validez de 1 mes vencía el 1 del subsiguiente. `addMonths` recorta al último día.
+    return addMonths(new Date(), validity).toISOString()
   }
 
   // ─── Cursos ───────────────────────────────────────────

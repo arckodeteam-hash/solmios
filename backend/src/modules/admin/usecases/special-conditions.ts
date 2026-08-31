@@ -5,6 +5,7 @@
 // RepositoryAdapter/OrmRepository). Mismo criterio que DashboardQueries (admin/usecases/dashboard-queries.ts):
 // vive en usecases/, nunca `orm` inyectado directo en admin/service.ts.
 import { ValidationError, NotFoundError } from 'arckode-framework'
+import { addMonths } from '../../../shared/utils/add-months'
 
 export type ApplyType = 'category' | 'percentage' | 'free_month'
 export type SpecialCategoryKey = 'founder_one' | 'founder_two' | 'pioneer'
@@ -50,9 +51,9 @@ export class SpecialConditionsUseCase {
     }
 
     const now = new Date()
-    const endsAt = durationMonths
-      ? new Date(now.getFullYear(), now.getMonth() + durationMonths, now.getDate()).toISOString()
-      : null
+    // `addMonths` y no `new Date(y, m + n, d)`: el constructor desborda al mes siguiente cuando
+    // el día no existe en el destino (mes gratis dado un 31/08 vencía el 01/10).
+    const endsAt = durationMonths ? addMonths(now, durationMonths).toISOString() : null
     const discount = await this.orm.create('SubscriptionDiscounts', {
       id: crypto.randomUUID(),
       hotelId, subscriptionId: sub.id, type: input.type, discountPct,
