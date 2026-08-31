@@ -7,7 +7,7 @@ import { ValidationError } from 'arckode-framework'
 import type { CreateAccountDTO, UpdateAccountDTO, AccountsQuery, CurrentUser, AccountDTO } from './types'
 import type { AccountingSockets } from './sockets'
 import * as crud from './usecases/accounts-crud'
-import { seedChartOfAccounts } from './usecases/seed-chart-of-accounts'
+import { seedChartOfAccounts, taxNameOf } from './usecases/seed-chart-of-accounts'
 import {
   createJournalEntry, postEntry, reverseEntry, listEntries,
   type CreateEntryInput, type JournalDeps,
@@ -73,7 +73,14 @@ export class AccountingService {
 
   /** Siembra el plan de cuentas base para el hotel del usuario. Idempotente (CTB-1.3). */
   async seedChart(user: CurrentUser): Promise<{ created: number; total: number }> {
-    const res = await seedChartOfAccounts(this.accounts, this.hotelFor(user))
+    // El impuesto sale de la configuración del HOTEL, no de un literal (2026-08-30).
+    const hotelId = this.hotelFor(user)
+    let taxName: string | undefined
+    try {
+      const rows = await (this.orm as any).findMany?.('Hotels', { id: hotelId })
+      taxName = taxNameOf(rows?.[0])
+    } catch { /* el seed cae a su default */ }
+    const res = await seedChartOfAccounts(this.accounts, hotelId, taxName)
     this.state.version++
     return res
   }

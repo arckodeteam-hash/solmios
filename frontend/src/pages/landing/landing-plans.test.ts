@@ -58,7 +58,9 @@ describe('landing — el precio lo manda la DB, no el template', () => {
     await flushPromises()
 
     expect(prices(w)).toEqual(['A cotización'])
-    expect(w.findAll('a').some(a => a.attributes('href')?.startsWith('mailto:'))).toBe(true)
+    // El plan a cotización abre el formulario de ventas (llega a Panel › Leads de Ventas);
+    // antes era un `mailto:`, que dejaba el lead fuera del sistema.
+    expect(w.findAll('button').some(b => /contactar ventas/i.test(b.text()))).toBe(true)
   })
 
   it('el nombre también sale de la DB: renombrar el plan se refleja en la landing', async () => {
