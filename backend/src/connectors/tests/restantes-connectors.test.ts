@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'bun:test'
 import type { ConnectorContext } from 'arckode-framework'
 import { bookingChannexConnector } from '../booking-channex'
+import { pricingCanalesConnector } from '../pricing-canales'
 import { bookingenginePaymentsConnector } from '../bookingengine-payments'
 import { habitacionesCanalesConnector } from '../habitaciones-canales'
 import { messagesPushtokensConnector } from '../messages-pushtokens'
@@ -106,6 +107,55 @@ describe('habitacionesCanalesConnector', () => {
 
     // Sin canal: la ruta base por temporada (antes pushRate plano 30d que pisaba temporadas).
     expect(calls).toEqual([['h1', undefined]])
+  })
+})
+
+describe('pricingCanalesConnector — coalescing (un push por ráfaga de guardado)', () => {
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+  it('rates + restrictions del mismo guardado → UN solo push, con el canal del override', async () => {
+    const pushes: Array<[string, string | undefined]> = []
+    const { ctx, captured } = makeCtx(['pricing'], {
+      canales: { pushSeasonalRates: async (h: string, channel?: string) => { pushes.push([h, channel]); return { pushed: 1 } } },
+    })
+    pricingCanalesConnector(ctx, 40) // debounce corto para el test
+
+    // La ráfaga real de la UI: PUT /rates (con canal) + PUT /rate-restrictions seguidos.
+    await captured.sockets.onRatesUpdated('h1', 16, ['OpenChannel'])
+    await captured.sockets.onRateRestrictionsUpdated('h1', 16)
+    await sleep(90)
+
+    expect(pushes).toEqual([['h1', 'OpenChannel']])   // UN push, del canal tocado
+  })
+
+  it('hoteles distintos no se mezclan: un push cada uno', async () => {
+    const pushes: Array<[string, string | undefined]> = []
+    const { ctx, captured } = makeCtx(['pricing'], {
+      canales: { pushSeasonalRates: async (h: string, channel?: string) => { pushes.push([h, channel]); return { pushed: 1 } } },
+    })
+    pricingCanalesConnector(ctx, 40)
+
+    await captured.sockets.onRatesUpdated('h1', 1)
+    await captured.sockets.onRatesUpdated('h2', 1, ['booking'])
+    await sleep(90)
+
+    expect(pushes.sort()).toEqual([['h1', undefined], ['h2', 'booking']])
+  })
+
+  it('un segundo guardado dentro de la ventana retrasa el push (se acumulan los canales)', async () => {
+    const pushes: Array<[string, string | undefined]> = []
+    const { ctx, captured } = makeCtx(['pricing'], {
+      canales: { pushSeasonalRates: async (h: string, channel?: string) => { pushes.push([h, channel]); return { pushed: 1 } } },
+    })
+    pricingCanalesConnector(ctx, 60)
+
+    await captured.sockets.onRatesUpdated('h1', 1, ['booking'])
+    await sleep(30)                                    // todavía dentro de la ventana
+    await captured.sockets.onRatesUpdated('h1', 1, ['airbnb'])
+    await sleep(120)
+
+    expect(pushes.length).toBe(2)                      // un push por canal, ambos al final
+    expect(pushes.map((p) => p[1]).sort()).toEqual(['airbnb', 'booking'])
   })
 })
 
