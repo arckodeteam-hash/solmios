@@ -93,6 +93,13 @@ export const HotelService = {
   async saveRates(rates: Partial<RoomRate>[]) {
     return http.put('/rates', { rates })
   },
+  /** Restricciones por (roomType, season): CTA/CTD y estadía mínima through — P4 certificación Channex. */
+  async rateRestrictions(): Promise<{ data: Array<{ roomType: string; season: string; cta?: number; ctd?: number; closedToArrival?: number; closedToDeparture?: number; minStayThrough?: number }> }> {
+    return http.get('/rate-restrictions')
+  },
+  async saveRateRestrictions(restrictions: Array<{ roomType: string; season: string; closedToArrival?: number; closedToDeparture?: number; minStayThrough?: number }>) {
+    return http.put('/rate-restrictions', { restrictions })
+  },
   async copyRatesNextYear(): Promise<{ success: boolean; copied: number; total: number }> {
     return http.post('/rates/copy-next-year')
   },

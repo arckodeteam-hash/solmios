@@ -52,4 +52,20 @@ export class CanalesQueries {
     if (row) await this.orm.update('Configuration', row.id, { value })
     else await this.orm.create('Configuration', { id: crypto.randomUUID(), hotelId: 'platform', key: 'channex', value })
   }
+
+  // ─── Mapping persistente local↔Channex (P6) ──────────────────────────
+  // Mismo patrón que setPlatformChannex: el queries encapsula el orm, el service no lo toca.
+
+  async readChannelMappings(hotelId: string): Promise<any[]> {
+    return this.orm.findMany('ChannelMapping', { hotelId })
+  }
+
+  async upsertChannelMapping(hotelId: string, entry: { kind: string; localId: string; channexId: string }): Promise<void> {
+    const row = ((await this.orm.findMany('ChannelMapping', { hotelId, kind: entry.kind, localId: entry.localId })) as any[])?.[0]
+    if (row) {
+      if (row.channexId !== entry.channexId) await this.orm.update('ChannelMapping', row.id, { channexId: entry.channexId })
+    } else {
+      await this.orm.create('ChannelMapping', { id: crypto.randomUUID(), hotelId, kind: entry.kind, localId: entry.localId, channexId: entry.channexId })
+    }
+  }
 }

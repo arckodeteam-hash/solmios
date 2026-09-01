@@ -85,6 +85,20 @@
                     <span class="text-xs text-text-muted">%</span>
                   </div>
                   <div class="text-sm font-black text-teal">= {{ resultPrice(g.basePrice, cell.percentage) }} <span class="text-[10px] text-text-muted">{{ currency }}</span></div>
+                  <!-- Restricciones de la temporada: CTA/CTD + estadía mínima through (P4 certificación) -->
+                  <div class="flex items-center gap-1">
+                    <button @click="cell.cta = cell.cta ? 0 : 1" title="Cerrado a llegadas (CTA): no se puede llegar este día"
+                      class="flex-1 py-1 text-[9px] font-black rounded-lg border-2 transition-colors cursor-pointer"
+                      :class="cell.cta ? 'bg-coral border-coral text-white' : 'border-navy/30 text-text-secondary hover:border-coral hover:text-coral'">CTA</button>
+                    <button @click="cell.ctd = cell.ctd ? 0 : 1" title="Cerrado a salidas (CTD): no se puede salir este día"
+                      class="flex-1 py-1 text-[9px] font-black rounded-lg border-2 transition-colors cursor-pointer"
+                      :class="cell.ctd ? 'bg-coral border-coral text-white' : 'border-navy/30 text-text-secondary hover:border-coral hover:text-coral'">CTD</button>
+                  </div>
+                  <div class="flex items-center gap-1">
+                    <span class="text-[9px] text-text-muted shrink-0">Mín. estancia</span>
+                    <input type="number" min="0" inputmode="numeric" v-model.number="cell.minStayThrough"
+                      class="w-full min-w-0 px-1.5 py-1 rounded-lg border-2 border-navy/30 text-[11px] font-bold text-navy text-right focus:border-navy outline-none" />
+                  </div>
                   <button @click="cell.closed = cell.closed ? 0 : 1"
                     class="mt-auto w-full py-1.5 text-[10px] font-black rounded-lg border-2 transition-colors cursor-pointer"
                     :class="cell.closed ? 'bg-coral border-coral text-white' : 'border-navy/30 text-text-secondary hover:border-coral hover:text-coral'">
@@ -185,7 +199,7 @@ async function saveSeasons() {
   } catch { toast.error('Error al guardar temporadas') } finally { savingSeasons.value = false }
 }
 
-interface Cell { season: string; percentage: number; closed: number }
+interface Cell { season: string; percentage: number; closed: number; cta: number; ctd: number; minStayThrough: number }
 interface Group { key: string; roomType: string; occupancy: number; basePrice: number; minStay: number; maxStay: number; cells: Cell[] }
 const groups = ref<Group[]>([])
 
@@ -218,7 +232,9 @@ function resultPrice(base: number, pct: number): string {
 }
 
 // Agrupa las filas planas (una por roomType×occupancy×season) en tarjetas por habitación.
-function buildGroups(rates: RoomRate[]): Group[] {
+// `restrictions` (CTA/CTD/through por roomType×season) se mergea en las celdas — P4 certificación.
+function buildGroups(rates: RoomRate[], restrictions: Array<{ roomType: string; season: string; cta?: number; ctd?: number; closedToArrival?: number; closedToDeparture?: number; minStayThrough?: number }> = []): Group[] {
+  const restrictionBy = new Map(restrictions.map((r) => [`${r.roomType.toLowerCase()}|${r.season}`, r]))
   const byRoom = new Map<string, Group>()
   for (const r of rates) {
     const key = `${r.roomType}|${r.occupancy}`
@@ -231,7 +247,13 @@ function buildGroups(rates: RoomRate[]): Group[] {
     if (!g.basePrice && r.basePrice) g.basePrice = r.basePrice
     if (!g.minStay && r.minStay) g.minStay = r.minStay
     if (!g.maxStay && r.maxStay) g.maxStay = r.maxStay
-    g.cells.push({ season: r.season, percentage: r.percentage ?? 0, closed: r.closed ? 1 : 0 })
+    const restriction = restrictionBy.get(`${String(r.roomType).toLowerCase()}|${r.season}`)
+    g.cells.push({
+      season: r.season, percentage: r.percentage ?? 0, closed: r.closed ? 1 : 0,
+      cta: (restriction && (restriction.closedToArrival || restriction.cta)) ? 1 : 0,
+      ctd: (restriction && (restriction.closedToDeparture || restriction.ctd)) ? 1 : 0,
+      minStayThrough: restriction?.minStayThrough ?? 0,
+    })
   }
   // Ordena las celdas según el orden de temporadas del hotel.
   const order = seasons.value.map((s) => s.name)
@@ -243,8 +265,11 @@ async function loadRates() {
   if (!selectedChannel.value) return
   loading.value = true
   try {
-    const r = await HotelService.rates(selectedChannel.value)
-    groups.value = buildGroups(r.data || [])
+    const [r, restrictions] = await Promise.all([
+      HotelService.rates(selectedChannel.value),
+      HotelService.rateRestrictions().catch(() => ({ data: [] })),
+    ])
+    groups.value = buildGroups(r.data || [], restrictions.data || [])
   } catch { toast.error('Error al cargar tarifas') } finally { loading.value = false }
 }
 
@@ -255,15 +280,22 @@ async function save() {
     // Expande las tarjetas a filas planas: una por (roomType, occupancy, season), con la base/estadías
     // de la habitación repetidas en cada temporada.
     const rates: Partial<RoomRate>[] = []
+    // Restricciones CTA/CTD/through: una por (roomType, season) — sin duplicar por ocupación.
+    const restrictions = new Map<string, { roomType: string; season: string; closedToArrival: number; closedToDeparture: number; minStayThrough: number }>()
     for (const g of groups.value) {
       for (const cell of g.cells) {
         rates.push({
           roomType: g.roomType, occupancy: g.occupancy, season: cell.season, channel: selectedChannel.value,
           basePrice: g.basePrice, percentage: cell.percentage, closed: cell.closed, minStay: g.minStay, maxStay: g.maxStay,
         })
+        restrictions.set(`${g.roomType}|${cell.season}`, {
+          roomType: g.roomType, season: cell.season,
+          closedToArrival: cell.cta, closedToDeparture: cell.ctd, minStayThrough: cell.minStayThrough,
+        })
       }
     }
     await HotelService.saveRates(rates)
+    await HotelService.saveRateRestrictions([...restrictions.values()])
     toast.success('Tarifas guardadas')
     await loadRates()
   } catch { toast.error('Error al guardar tarifas') } finally { saving.value = false }

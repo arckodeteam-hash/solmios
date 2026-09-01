@@ -1,6 +1,17 @@
 import type { CanalesDTO, PushRatesResultDTO, DateRange } from '../types'
 import { readRatePlans, type RatePlanDef } from './rate-plans'
 
+/** Restricciones por (roomType, season) — la capa de closures/through que edita PUT /api/rate-restrictions. */
+export interface SeasonRestriction {
+  roomType: string
+  season: string
+  cta?: number
+  ctd?: number
+  closedToArrival?: number
+  closedToDeparture?: number
+  minStayThrough?: number
+}
+
 /** Modo de tarificación del hotel: precio por habitación o por persona (ocupación). */
 export type PricingMode = 'per_room' | 'per_person'
 
@@ -28,6 +39,7 @@ interface PushRatesDeps {
     assignedRanges: Map<string, DateRange[]>,
     pricingMode: PricingMode,
     ratePlans: RatePlanDef[],
+    restrictions: SeasonRestriction[],
   ) => Promise<PushRatesResultDTO>
 }
 
@@ -85,7 +97,7 @@ export async function pushSeasonalRatesToChannex(
   hotelId: string,
   channel?: string,
 ): Promise<PushRatesResultDTO> {
-  const [cfg, allRates, seasons, assignments, pricingMode, ratePlans] = await Promise.all([
+  const [cfg, allRates, seasons, assignments, pricingMode, ratePlans, restrictions] = await Promise.all([
     deps.getConfig(hotelId),
     deps.findMany('RoomRates', { hotelId }),
     deps.findMany('Seasons', { hotelId }),
@@ -94,6 +106,8 @@ export async function pushSeasonalRatesToChannex(
     deps.getPricingMode(hotelId),
     // Planes del hotel (BAR + B&B por defecto, configuration key='rate_plans') — P5.
     readRatePlans(deps.findMany, hotelId),
+    // Closures/through por (roomType, season) — tabla rate_restrictions — P4.
+    deps.findMany('RateRestrictions', { hotelId }),
   ])
   const assignedRanges = groupAssignmentsIntoRanges(assignments as Array<{ date: string; season: string }>)
   const wanted = channel || ''
@@ -129,5 +143,5 @@ export async function pushSeasonalRatesToChannex(
     roomType: r.roomType, season: r.season, occupancy: Number(r.occupancy) || 0,
     basePrice: r.basePrice, percentage: r.percentage, closed: r.closed, minStay: r.minStay, maxStay: r.maxStay,
   }))
-  return deps.pushSeasonalRates(cfg, rates, seasons, assignedRanges, pricingMode, ratePlans)
+  return deps.pushSeasonalRates(cfg, rates, seasons, assignedRanges, pricingMode, ratePlans, restrictions as SeasonRestriction[])
 }

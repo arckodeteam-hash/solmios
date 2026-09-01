@@ -128,8 +128,7 @@ export class PricingService {
     }
     if (changes.length > 0) {
       await this.audit(rateChangeEntry(hotelId, changes, actor))
-      // Tarifas cambiaron → push a OTAs (fire-and-forget). Los canales con override van al evento:
-      // el push sin canal solo toma la base (push-rates descarta filas con canal).
+      // Tarifas cambiaron → push a OTAs. Los canales con override van al evento (el push sin canal solo toma la base).
       const channels = [...new Set(rates.map((r) => (typeof r.channel === 'string' ? r.channel : '')).filter(Boolean))]
       await this.sockets.onRatesUpdated?.(hotelId, saved, channels)
     }
@@ -180,15 +179,16 @@ export class PricingService {
     let saved = 0
     for (const r of restrictions) {
       if (!r.roomType || !r.season) continue
+      const patch = { minStay: r.minStay ?? 0, maxStay: r.maxStay ?? 0, cta: r.cta ?? 0, ctd: r.ctd ?? 0, closedToArrival: r.closedToArrival ?? 0, closedToDeparture: r.closedToDeparture ?? 0, minStayThrough: r.minStayThrough ?? 0 }
       const existing = (await this.restrictionsRepo.findMany({ hotelId, roomType: r.roomType, season: r.season }))[0] as any
-      if (existing) {
-        await this.restrictionsRepo.update(existing.id, { minStay: r.minStay ?? 0, maxStay: r.maxStay ?? 0, cta: r.cta ?? 0, ctd: r.ctd ?? 0, closedToArrival: r.closedToArrival ?? 0, closedToDeparture: r.closedToDeparture ?? 0 })
-      } else {
-        await this.restrictionsRepo.create({ id: crypto.randomUUID(), hotelId, roomType: r.roomType, season: r.season, minStay: r.minStay ?? 0, maxStay: r.maxStay ?? 0, cta: r.cta ?? 0, ctd: r.ctd ?? 0, closedToArrival: r.closedToArrival ?? 0, closedToDeparture: r.closedToDeparture ?? 0 })
-      }
+      if (existing) await this.restrictionsRepo.update(existing.id, patch)
+      else await this.restrictionsRepo.create({ id: crypto.randomUUID(), hotelId, roomType: r.roomType, season: r.season, ...patch })
       saved++
     }
-    if (saved > 0) await this.audit(restrictionsChangeEntry(hotelId, saved, actor))
+    if (saved > 0) {
+      await this.audit(restrictionsChangeEntry(hotelId, saved, actor))
+      await this.sockets.onRateRestrictionsUpdated?.(hotelId, saved) // → push a OTAs (pricing-canales)
+    }
     return saved
   }
 

@@ -108,6 +108,27 @@ describe('pushSeasonalRates multi-plan (P5)', () => {
     expect(res.pushed).toBe(1)   // solo BAR; B&B no tiene counterpart y se omite sin error
     expect((globalThis as any).__captured.values[0].rate_plan_id).toBe('rp-1')
   })
+
+  it('P4: CTA/CTD/min_stay_through van en el entry (test 7 de certificación)', async () => {
+    const captured: { restrictions?: any } = {}
+    restore = installFetch(captured as any)
+    const uc = new ChannexUseCase(log as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any)
+    await uc.pushSeasonalRates({ channexPropertyId: 'p1', channexApiKey: 'k' } as any,
+      [{ roomType: 'Double', season: 'media', occupancy: 2, basePrice: 100, percentage: 0, minStay: 2, maxStay: 7 }],
+      [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), 'per_room', DEFAULT_RATE_PLANS,
+      [{ roomType: 'Double', season: 'media', closedToArrival: 1, ctd: 0, minStayThrough: 3 }])
+
+    const bar = captured.restrictions!.values.find((v: any) => v.rate_plan_id === 'rp-bar')
+    expect(bar.min_stay_arrival).toBe(2)       // de RoomRates (como siempre)
+    expect(bar.max_stay).toBe(7)
+    expect(bar.closed_to_arrival).toBe(true)   // CTA — de rate_restrictions
+    expect(bar.closed_to_departure).toBeUndefined()  // CTD en 0: NO se manda (update parcial)
+    expect(bar.min_stay_through).toBe(3)       // through — de rate_restrictions
+    // Los dos planes llevan las mismas restricciones en la misma llamada.
+    const bb = captured.restrictions!.values.find((v: any) => v.rate_plan_id === 'rp-bb')
+    expect(bb.closed_to_arrival).toBe(true)
+    expect(bb.min_stay_through).toBe(3)
+  })
 })
 
 describe('syncProperty multi-plan (P5)', () => {
@@ -126,7 +147,7 @@ describe('syncProperty multi-plan (P5)', () => {
     const restore = () => { globalThis.fetch = orig }
     try {
       const uc = new ChannexUseCase(log as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any)
-      await uc.syncProperty({ name: 'H' }, [{ type: 'Double', cnt: 2, capacity: 2, basePrice: 100 }],
+      await uc.syncProperty('h1', { name: 'H' }, [{ type: 'Double', cnt: 2, capacity: 2, basePrice: 100 }],
         { channexPropertyId: 'p1', channexApiKey: 'k' } as any, 'per_room', DEFAULT_RATE_PLANS)
 
       const titles = created.map((rp) => rp.title).sort()

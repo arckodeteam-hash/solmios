@@ -282,23 +282,23 @@ idempotente y deja de romper los UUIDs que los canales OTA tienen mapeados.
 
 ## 6. Plan priorizado (dependencias → aprobación)
 
-> **Actualización 2026-09-01 (tarde)**: P1, P2, P3, P5, P7, P8, P9 y P10 están HECHOS
-> (commits del 2026-09-01). **E2E verificado contra staging real** (ver §9). Quedan P4 y P6.
+> **Actualización 2026-09-01 (noche)**: **P1–P10 COMPLETOS** — los 14 tests de la
+> certificación tienen su camino implementado (commits del 2026-09-01). E2E verificado
+> contra staging real (ver §9). Lo que queda es ejecutar los escenarios oficiales,
+> anotar los task_ids y presentar el form.
 
 | P# | Ítem | Desbloquea | Esfuerzo | Estado |
 |---|---|---|---|---|
 | **P1** | **Limiter de ARI updates ~18/min + retry/backoff 429/5xx + timeout** en `channex-http.ts` (transport único, singleton module-level). El límite aplica SOLO a POST /availability y /restrictions — el CRUD del sync no se auto-limita | T12 (veto) | M | ✅ hecho |
 | **P2** | **Full sync 500d en exactamente 2 llamadas** (`pushAllRoomTypesAvailability` + `pushSeasonalRates`, orquestados por `usecases/full-sync.ts`; el sync de estructura ya no pushea ARI) | T1 | M | ✅ hecho |
 | **P3** | **pushRate ELIMINADO** (pisaba temporadas con precio plano 30d). Ruta única: conector habitaciones → `pushSeasonalRates` (delta por temporada, 1 llamada) | T2, T13 | S | ✅ hecho |
-| **P4** | **Restrictions completas**: `min_stay_through`, CTA, CTD (modelo + payload + UI calendario) | T5/T7/T14 | M | ⬜ pendiente |
+| **P4** | **Restrictions completas**: `minStayThrough` nuevo en `RateRestrictions` (modelo) + `PUT /api/rate-restrictions` persiste CTA/CTD/through y emite `onRateRestrictionsUpdated` → push. Payload con `closed_to_arrival`/`closed_to_departure`/`min_stay_through` (updates parciales: lo que está en 0 no se manda). UI: toggles CTA/CTD + "mín. estancia" por temporada en el editor de tarifas | T5/T7/T14 | M | ✅ hecho |
 | **P5** | **Multi-rate-plan** por room type: planes en `configuration(key='rate_plans')` (default BAR +0% / B&B +20%), sync crea un RP de Channex por (tipo × plan), push manda un entry por plan en la MISMA llamada (match por keywords, retrocompatible con "X Standard") | Setup, T3/T4/T14 | M-L | ✅ hecho + E2E |
-| **P6** | **Mapping persistente** `channel_mapping` + sync upsert no destructivo | Robustez, T12 (menos GETs) | M | ⬜ pendiente |
+| **P6** | **Mapping persistente** `channel_mapping` (hotelId, kind, localId)→channexId: el sync lo regenera al crear y los pushes resuelven UUIDs **sin los 2 GETs** ni el match por título (fallback a GET+título para hoteles sin mapping) | Robustez, T12 | M | ✅ hecho |
 | **P7** | Fix firma `connectors/booking-channex.ts` (push inefectivo del motor de reservas → `pushAvailabilityByRoom`) + errores logueados en los 3 conectores | T9/T10 | S | ✅ hecho |
 | **P8** | **Limpieza staging**: 4 properties huérfanas borradas, 4 webhooks `url:null` borrados, **"Test Property - SolmiOS" creada** (verificada con readback) | Setup | S | ✅ hecho |
 | **P9** | **Fix data**: property `6fe6fcd0` renombrada "Hotel Boutique Palma" (la que usa prod), la de dev renombrada "(dev)" | Cuenta demo coherente | S | ✅ hecho |
 | **P10** | Cuestionario T14 redactado (ver §8) | T14 | S | ✅ hecho |
-
-Pendientes: **P4** (CTA/CTD/through) y **P6** (mapping persistente) — ~1 semana.
 
 ---
 

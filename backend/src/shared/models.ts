@@ -106,6 +106,8 @@ export function registerSharedModels(orm: ORM): void {
       ctd: { type: 'number', default: 0 },
       closedToArrival: { type: 'number', default: 0 },
       closedToDeparture: { type: 'number', default: 0 },
+      // Estadía mínima THROUGH (por noches de estancia, distinta de la de llegada): certificación Channex.
+      minStayThrough: { type: 'number', default: 0 },
     },
   })
 

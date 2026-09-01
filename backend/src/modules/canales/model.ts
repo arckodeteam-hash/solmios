@@ -19,6 +19,23 @@ export const CanalesModel: ModelDefinition = {
   },
 }
 
+// Mapping persistente local↔Channex (P6, certificación): (hotelId, kind, localId) → channexId.
+// `kind='room_type'` → localId = el type local (lowercase en el lookup); `kind='rate_plan'` →
+// localId = `${type}|${plan.code}` (ej. "double|bar"). El sync lo regenera en cada corrida;
+// los pushes resuelven UUIDs por acá sin los 2 GETs por push ni el match frágil por título.
+export const ChannelMappingModel: ModelDefinition = {
+  table: 'channel_mapping',
+  timestamps: true,
+  fields: {
+    id: { type: 'string', required: true },
+    hotelId: { type: 'string', required: true, indexed: true },
+    kind: { type: 'string', required: true },
+    localId: { type: 'string', required: true },
+    channexId: { type: 'string', required: true },
+  },
+}
+
 export function registerCanalesModels(orm: ORM): void {
   orm.define('Canales', CanalesModel)
+  orm.define('ChannelMapping', ChannelMappingModel)
 }

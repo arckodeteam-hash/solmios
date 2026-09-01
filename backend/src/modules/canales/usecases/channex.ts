@@ -7,6 +7,7 @@ import type { Logger } from 'arckode-framework'
 import type { CanalesDTO, ChannelDTO, ChannelsResultDTO, RoomTypeSummary, SyncResultDTO, TestConnectionDTO, TestConnectionResultDTO, MappingDetailDTO, OTAChannelCreateDTO, OTAChannelResultDTO, GroupDTO, OTAChannelMeta, BookingRevisionDTO, PushRatesResultDTO, DateRange } from '../types'
 import { sharedChannexHttp } from './channex-http'
 import { DEFAULT_RATE_PLANS, planPrice, matchRatePlan, type RatePlanDef } from './rate-plans'
+import { targetsFromMappings, type ChannelMappingStore, type MappingEntry, type AriTargets } from './channex-mapping'
 
 const STAGING_BASE = process.env.CHANNEX_BASE_URL || 'https://staging.channex.io/api/v1'
 const PROD_BASE = 'https://api.channex.io/api/v1'
@@ -19,7 +20,36 @@ export class ChannexUseCase {
   constructor(
     private readonly logger: Logger,
     private readonly getPlatformCreds?: PlatformCredsResolver,
+    /** Mapping persistente local↔Channex (P6): sin él, los pushes resuelven por GET+título. */
+    private readonly mappingStore?: ChannelMappingStore,
   ) {}
+
+  /**
+   * UUIDs de Channex para los pushes de ARI (P6): primero por mapping persistido (sin GETs,
+   * inmune a renombres de tipos); fallback a GET + match por título para hoteles sin mapping.
+   */
+  private async resolveAriTargets(cfg: CanalesDTO): Promise<AriTargets> {
+    if (this.mappingStore && cfg.hotelId) {
+      try {
+        const mappings = (await this.mappingStore.read(cfg.hotelId)) as MappingEntry[]
+        if (mappings?.length) return targetsFromMappings(mappings)
+      } catch { /* store caído → fallback a GETs */ }
+    }
+    const key = this.resolveKey(cfg)
+    const pid = cfg.channexPropertyId!
+    const rts = ((await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${pid}`)).data as any)?.data || []
+    const rps = ((await this.channexReq(key, 'GET', `/rate_plans?filter[property_id]=${pid}`)).data as any)?.data || []
+    const rtIdByTitle = new Map<string, string>(rts.map((rt: any) => [String(rt.attributes?.title || '').toLowerCase(), rt.id]))
+    const rpsByRt = new Map<string, Array<{ id: string; title?: string }>>()
+    for (const rp of rps) {
+      const rtid = rp.attributes?.room_type_id || rp.relationships?.room_type?.data?.id
+      if (!rtid) continue
+      const list = rpsByRt.get(rtid) ?? []
+      list.push({ id: rp.id, title: rp.attributes?.title })
+      rpsByRt.set(rtid, list)
+    }
+    return { rtIdByTitle, rpsByRt }
+  }
 
   /** Credenciales efectivas: la cuenta de PLATAFORMA manda (admin > env); el entorno define staging/prod. */
   private async platform(): Promise<{ key: string; base: string }> {
@@ -131,8 +161,9 @@ export class ChannexUseCase {
   // ─── Sincronización: crea propiedad + room types + rate plans + ARI ──
   // Si ya existe channexPropertyId → limpia datos viejos y resincroniza.
   // Un rate plan de Channex por (room type × plan del hotel): BAR + Bed & Breakfast por
-  // defecto (P5) — el setup que exige la certificación PMS.
-  async syncProperty(hotel: { name: string; currency?: string; email?: string; address?: string; timezone?: string }, rooms: RoomTypeSummary[], cfg: CanalesDTO | undefined, pricingMode: 'per_room' | 'per_person' = 'per_room', ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS): Promise<{ result: SyncResultDTO; newPropertyId: string | null }> {
+  // defecto (P5). Al terminar persiste el mapping local↔UUID (P6) para que los pushes
+  // resuelvan sin GETs ni match por título.
+  async syncProperty(hotelId: string, hotel: { name: string; currency?: string; email?: string; address?: string; timezone?: string }, rooms: RoomTypeSummary[], cfg: CanalesDTO | undefined, pricingMode: 'per_room' | 'per_person' = 'per_room', ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS): Promise<{ result: SyncResultDTO; newPropertyId: string | null }> {
     const key = this.resolveKey(cfg)
 
     let channexPId: string | undefined = cfg?.channexPropertyId || undefined
@@ -190,6 +221,28 @@ export class ChannexUseCase {
     // llamadas (1 availability consolidado de 500 días con reservas descontadas + 1 restrictions
     // consolidado por temporada) — es lo que exige el test 1 de la certificación PMS de Channex.
 
+    // P6: persistir (kind, localId) → channexId. El label del plan se deriva del título del RP
+    // ("Double Bed & Breakfast" → "Bed & Breakfast"; títulos de terceros quedan completos y el
+    // matcheo por keywords los resuelve igual).
+    if (this.mappingStore && hotelId) {
+      try {
+        const entries: MappingEntry[] = [{ kind: 'property', localId: 'default', channexId: channexPId! }]
+        for (const rt of rtList) {
+          entries.push({ kind: 'room_type', localId: String(rt.attributes?.title || ''), channexId: rt.id })
+        }
+        for (const rp of rpList) {
+          const rt = rtList.find((r: any) => r.id === (rp.attributes?.room_type_id || rp.relationships?.room_type?.data?.id))
+          const rtTitle = String(rt?.attributes?.title || '')
+          const rpTitle = String(rp.attributes?.title || '')
+          const planLabel = rtTitle && rpTitle.startsWith(`${rtTitle} `) ? rpTitle.slice(rtTitle.length + 1) : rpTitle
+          if (rtTitle && planLabel) entries.push({ kind: 'rate_plan', localId: `${rtTitle}|${planLabel}`, channexId: rp.id })
+        }
+        await this.mappingStore.upsert(hotelId, entries)
+      } catch (e) {
+        this.logger.error('No se pudo persistir el mapping Channex', { hotelId, error: e instanceof Error ? e.message : String(e) })
+      }
+    }
+
     this.logger.info('Sync Channex OK', { channexPropertyId: channexPId, roomTypes: rtList.length, ratePlans: rpList.length })
     return { result: { success: true, message: `Sincronización completa: ${rtList.length} room types, ${rpList.length} rate plans`, channexPropertyId: channexPId || '', roomTypes: rtList.length, ratePlans: rpList.length }, newPropertyId: channexPId || null }
   }
@@ -209,24 +262,17 @@ export class ChannexUseCase {
     assignedRanges: Map<string, DateRange[]> = new Map(),
     pricingMode: 'per_room' | 'per_person' = 'per_room',
     ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS,
+    restrictions: Array<{ roomType: string; season: string; cta?: number; ctd?: number; closedToArrival?: number; closedToDeparture?: number; minStayThrough?: number }> = [],
   ): Promise<PushRatesResultDTO> {
     const empty = (): PushRatesResultDTO => ({ pushed: 0, skipped: 0, notConnected: false, seasonsWithoutDates: [], expiredSeasons: [], roomTypesWithoutRatePlan: [] })
     if (!cfg?.channexPropertyId) return { ...empty(), skipped: rates.length, notConnected: true }
     const key = this.resolveKey(cfg)
     const pid = cfg.channexPropertyId
-    const rts = ((await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${pid}`)).data as any)?.data || []
-    const rps = ((await this.channexReq(key, 'GET', `/rate_plans?filter[property_id]=${pid}`)).data as any)?.data || []
-    const rtIdByTitle = new Map<string, string>(rts.map((rt: any) => [String(rt.attributes?.title || '').toLowerCase(), rt.id]))
-    // TODOS los rate plans de cada room type (P5): un entry por plan en la misma llamada.
-    const rpsByRt = new Map<string, Array<{ id: string; title?: string }>>()
-    for (const rp of rps) {
-      const rtid = rp.attributes?.room_type_id || rp.relationships?.room_type?.data?.id
-      if (!rtid) continue
-      const list = rpsByRt.get(rtid) ?? []
-      list.push({ id: rp.id, title: rp.attributes?.title })
-      rpsByRt.set(rtid, list)
-    }
+    // UUIDs por mapping persistido si existe (P6, sin GETs); si no, GET + match por título.
+    const { rtIdByTitle, rpsByRt } = await this.resolveAriTargets(cfg)
     const seasonByName = new Map(seasons.map((s) => [s.name, s]))
+    // Closures/through por (roomType|season) — la capa que edita PUT /api/rate-restrictions (P4).
+    const restrictionBy = new Map(restrictions.map((r) => [`${String(r.roomType).toLowerCase()}|${r.season}`, r]))
     const today = new Date().toISOString().slice(0, 10)
     const values: any[] = []
     let skipped = 0
@@ -280,6 +326,13 @@ export class ChannexUseCase {
           }
           if (Number(head.minStay) > 0) entry.min_stay_arrival = Number(head.minStay)
           if (Number(head.maxStay) > 0) entry.max_stay = Number(head.maxStay)
+          // CTA/CTD/through (P4): los closures aceptan ambos campos históricos (cta/ctd o closedToX).
+          const restriction = restrictionBy.get(`${String(head.roomType).toLowerCase()}|${head.season}`)
+          if (restriction) {
+            if (Number(restriction.closedToArrival) || Number(restriction.cta)) entry.closed_to_arrival = true
+            if (Number(restriction.closedToDeparture) || Number(restriction.ctd)) entry.closed_to_departure = true
+            if (Number(restriction.minStayThrough) > 0) entry.min_stay_through = Number(restriction.minStayThrough)
+          }
           values.push(entry)
           queued++
         }
@@ -334,8 +387,7 @@ export class ChannexUseCase {
   ): Promise<{ pushed: number }> {
     if (!cfg?.channexPropertyId || !list.length) return { pushed: 0 }
     const key = this.resolveKey(cfg)
-    const rts = (await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${cfg.channexPropertyId}`)).data?.data || []
-    const rtIdByTitle = new Map<string, string>(rts.map((rt: any) => [String(rt.attributes?.title || '').toLowerCase(), rt.id]))
+    const { rtIdByTitle } = await this.resolveAriTargets(cfg)
     const values: any[] = []
     for (const { roomType, ranges } of list) {
       const rtId = rtIdByTitle.get(String(roomType).toLowerCase())

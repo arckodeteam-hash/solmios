@@ -44,7 +44,7 @@ describe('Test 1 — sync de estructura NO pushea ARI', () => {
   it('syncProperty crea room types/rate plans sin POST de availability ni restrictions', async () => {
     const captured: HttpLog = { availability: [], restrictions: [] }
     restore = installFetch(captured)
-    await uc().syncProperty({ name: 'H1' }, [{ type: 'Double', cnt: 2, capacity: 2, basePrice: 100 }], CFG, 'per_room')
+    await uc().syncProperty('h1', { name: 'H1' }, [{ type: 'Double', cnt: 2, capacity: 2, basePrice: 100 }], CFG, 'per_room')
     expect(captured.availability).toHaveLength(0)   // el ARI lo manda el service en 2 llamadas
     expect(captured.restrictions).toHaveLength(0)
   })

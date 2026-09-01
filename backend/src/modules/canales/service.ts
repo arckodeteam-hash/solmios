@@ -44,7 +44,11 @@ export class CanalesService {
     private readonly syncLogRepo?: RepositoryAdapter<any>,
   ) {
     this.config = new ConfigUseCase(repo, queries)
-    this.channex = new ChannexUseCase(logger, () => this.config.getPlatformChannex())  // white-label: cuenta de plataforma
+    // Cuenta white-label de plataforma + mappingStore (P6): pushes resuelven UUIDs sin GETs.
+    this.channex = new ChannexUseCase(logger, () => this.config.getPlatformChannex(), {
+      read: (h) => this.queries.readChannelMappings(h),
+      upsert: async (h, es) => { for (const e of es) await this.queries.upsertChannelMapping(h, e) },
+    })
     this.crud = new CanalesCrudUseCase(repo, userRepo, auth)
     this.channelApi = new ChannelApiUseCase(this.channex)
     this.bookings = new BookingsUseCase(this.channex)
@@ -93,7 +97,7 @@ export class CanalesService {
     const pricingMode = await readPricingMode((m, q) => this.queries.findMany(m, q), hotelId)
     // Planes del hotel (BAR + B&B por defecto): un rate plan de Channex por (room type × plan) — P5.
     const ratePlans = await readRatePlans((m, q) => this.queries.findMany(m, q), hotelId)
-    const { result, newPropertyId } = await this.channex.syncProperty(hotel, rooms, cfg, pricingMode, ratePlans)
+    const { result, newPropertyId } = await this.channex.syncProperty(hotelId, hotel, rooms, cfg, pricingMode, ratePlans)
     if (newPropertyId) await this.upsertConfig(hotelId, { channexPropertyId: newPropertyId, syncEnabled: 1, lastSync: new Date().toISOString() })
     else await this.upsertConfig(hotelId, { lastSync: new Date().toISOString() })
 
@@ -131,12 +135,8 @@ export class CanalesService {
   async testConnection(hotelId: string, channel: string, otaHotelId: string): Promise<TestConnectionResultDTO> { return this.channelApi.testConnection(await this.getConfig(hotelId), channel, otaHotelId) }
   async getMappingDetails(hotelId: string, channel: string, otaHotelId: string): Promise<{ success: boolean; rooms: MappingDetailDTO[]; error?: string }> { return this.channelApi.getMappingDetails(await this.getConfig(hotelId), channel, otaHotelId) }
   async listGroups(hotelId: string): Promise<GroupDTO[]> { return this.channelApi.listGroups(await this.getConfig(hotelId)) }
-  async createOTAChannel(hotelId: string, dto: OTAChannelCreateDTO): Promise<OTAChannelResultDTO> {
-    return this.channelApi.createOTAChannel(await this.getConfig(hotelId), dto)
-  }
-  async deactivateChannel(hotelId: string, channelId: string): Promise<{ success: boolean; message: string }> {
-    return this.channelApi.deactivateChannel(await this.getConfig(hotelId), channelId)
-  }
+  async createOTAChannel(hotelId: string, dto: OTAChannelCreateDTO): Promise<OTAChannelResultDTO> { return this.channelApi.createOTAChannel(await this.getConfig(hotelId), dto) }
+  async deactivateChannel(hotelId: string, channelId: string): Promise<{ success: boolean; message: string }> { return this.channelApi.deactivateChannel(await this.getConfig(hotelId), channelId) }
 
   // ─── Bookings delegado a usecase ─────────────────────────────────────
   async getBookings(hotelId: string): Promise<BookingRevisionDTO[]> {
@@ -166,7 +166,7 @@ export class CanalesService {
     return pushSeasonalRatesToChannex({
       getConfig: (h) => this.getConfig(h), findMany: (m, q) => this.queries.findMany(m, q),
       getPricingMode: (h) => readPricingMode((m, q) => this.queries.findMany(m, q), h),
-      pushSeasonalRates: (c, r, s, a, mode, plans) => this.channex.pushSeasonalRates(c, r, s, a, mode, plans),
+      pushSeasonalRates: (c, r, s, a, mode, plans, restrictions) => this.channex.pushSeasonalRates(c, r, s, a, mode, plans, restrictions),
     }, hotelId, channel)
   }
 

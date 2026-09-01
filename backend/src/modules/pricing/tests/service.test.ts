@@ -399,4 +399,25 @@ describe('PricingService — tenancy (SEC-2.2)', () => {
       expect(emitted!.channels).toEqual([])
     })
   })
+
+  describe('updateRateRestrictions (P4 — CTA/CTD/through)', () => {
+    it('persiste minStayThrough y emite onRateRestrictionsUpdated para el push', async () => {
+      const saved: any[] = []
+      const orm = makeOrm({
+        findMany: async (table: string) => (table === 'RateRestrictions' ? [] : []),
+        update: async () => {},
+      })
+      const repo = { findMany: async () => [], update: async (_id: string, d: any) => { saved.push(d) }, create: async (d: any) => { saved.push(d) }, findById: async () => null, findOne: async () => null, delete: async () => true, count: async () => 0, paginate: async () => ({ data: [], total: 0, limit: 20, offset: 0, pages: 0 }) }
+      const svc = new PricingService(makeRepo(orm, 'Seasons'), makeRepo(orm, 'RoomRates'), makeRepo(orm, 'RoomBlocks'), repo as any, log, new PricingQueries(orm))
+      let emitted = 0
+      svc.setSockets({ onRateRestrictionsUpdated: async () => { emitted++ } })
+
+      await svc.updateRateRestrictions('h1', [{ roomType: 'double', season: 'media', closedToArrival: 1, minStayThrough: 3 }])
+
+      expect(saved).toHaveLength(1)
+      expect(saved[0].minStayThrough).toBe(3)
+      expect(saved[0].closedToArrival).toBe(1)
+      expect(emitted).toBe(1)
+    })
+  })
 })
