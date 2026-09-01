@@ -209,9 +209,13 @@ export class ReservasController {
       const result = await this.service.executeCheckout(reservation, req.user as any, { orm: this.orm, logger: this.logger })
 
       // Settlement: close folio → create invoice → record payment (if any)
+      // `!= null` (no `!== undefined`): el checkout "con deuda" del frontend manda
+      // `{ settle: null }` a propósito (Reservation.service.ts siempre incluye la clave) — con
+      // `!== undefined` un `null` explícito entraba a validateSchema y explotaba con 400 antes
+      // de settear nada, aunque el claim ya había corrido (folio quedaba open sin aviso claro).
       let settlementResult = null
       const body = req.body as Record<string, any> | undefined
-      if (body?.settle !== undefined) {
+      if (body?.settle != null) {
         const settle = validateSchema(SettleSchema, body.settle) as { method: string; amount: number; reference?: string }
         settlementResult = await this.service.settleFolioForCheckout(reservation, settle, toSettleActor(req.user))
       }
