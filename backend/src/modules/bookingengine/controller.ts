@@ -107,6 +107,8 @@ export class BookingengineController {
     // tests construyen el controller posicionalmente). Opcional — defense-in-depth igual que
     // upsellRepo (los handlers tiran 500 explícito si no está cableado).
     private readonly mealPlanRepo?: RepositoryAdapter<MealPlanDTO>,
+    /** `RateOverrides` — tarifa por FECHA. Al final, mismo motivo que el resto de los deps nuevos. */
+    private readonly rateOverridesRepo?: RepositoryAdapter<any>,
   ) {}
 
   /** Deps para los usecases de upsells. Tirar si no están cableadas (claramente un bug de wiring). */
@@ -361,6 +363,7 @@ export class BookingengineController {
         // sin ellos (min(basePrice) × noches) el calendario anunciaría un precio y el buscador
         // otro para las mismas fechas en cualquier hotel con temporadas cargadas.
         seasonAssignments: this.seasonAssignmentsRepo, roomRates: this.roomRatesRepo,
+        rateOverrides: this.rateOverridesRepo,
       },
       String(req.params?.slug || ''),
       {
@@ -393,6 +396,7 @@ export class BookingengineController {
         roomBlocks: this.roomBlocksRepo,
         seasonAssignments: this.seasonAssignmentsRepo,
         roomRates: this.roomRatesRepo,
+        rateOverrides: this.rateOverridesRepo,
         config: this.configRepo,
         bookingConfig: this.bookingConfigRepo,
         cache: this.cache,

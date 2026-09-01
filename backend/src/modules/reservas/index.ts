@@ -100,11 +100,13 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // motor público para su precio por fecha. Sin ellos el reprice degrada a `rooms.basePrice`.
       const seasonAssignmentRepo = new OrmRepository<any>(orm, 'SeasonAssignments')
       const roomRateRepo = new OrmRepository<any>(orm, 'RoomRates')
+      // Tarifa por FECHA: el mostrador tiene que cotizar el mismo número que se publicó a las OTAs.
+      const rateOverrideRepo = new OrmRepository<any>(orm, 'RateOverrides')
       // Catálogo de temporadas (label/color) para el desglose del quote del wizard. Modelo
       // COMPARTIDO (shared/models.ts) — no es un import del módulo pricing.
       const seasonsRepo = new OrmRepository<any>(orm, 'Seasons')
       const queries = new ReservasQueries(orm)
-      const service = new ReservasService(repo, log, cache, userRepo, auth, guestRepo, roomRepo, hotelRepo, queries, blockRepo, dateRestrictionRepo, policyRepo, groupRepo, seasonAssignmentRepo, roomRateRepo, opts.storage, seasonsRepo)
+      const service = new ReservasService(repo, log, cache, userRepo, auth, guestRepo, roomRepo, hotelRepo, queries, blockRepo, dateRestrictionRepo, policyRepo, groupRepo, seasonAssignmentRepo, roomRateRepo, opts.storage, seasonsRepo, rateOverrideRepo)
       const controller = new ReservasController(service, log, companionsRepo, addonsRepo, repo, userRepo, auth, orm, null, messageLogRepo, roomRepo, hotelRepo, guestRepo)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')

@@ -40,3 +40,34 @@ export class PushCoalescer {
     }
   }
 }
+
+/** Dependencias del despacho de la grilla de tarifas por fecha (las inyecta `pricing-canales`). */
+export interface OverrideDispatchDeps {
+  /** Push DELTA: una sola llamada con las celdas tocadas. */
+  pushOverrides: (hotelId: string, items: Array<Record<string, unknown>>) => Promise<unknown>
+  /** Push CONSOLIDADO por temporadas (el que sabe qué precio va cuando se revierte un override). */
+  scheduleConsolidated: (hotelId: string) => void | Promise<void>
+  onError: (hotelId: string, err: unknown) => void
+}
+
+/**
+ * Qué se publica cuando el hotel guarda la grilla de tarifas por fecha.
+ *
+ * Celdas GUARDADAS → push delta inmediato (no pasa por el coalescer: el coalescer dispara el mapa
+ * consolidado de temporadas, que es justo lo que el test 13 de la certificación pide NO mandar en
+ * cada cambio). Celdas REVERTIDAS → sí hace falta el consolidado, porque Channex tiene publicado
+ * el precio del override y solo el mapa de temporadas sabe con qué reemplazarlo.
+ *
+ * Fire-and-forget en el delta: guardar la grilla nunca espera a Channex.
+ */
+export async function dispatchOverridePush(
+  deps: OverrideDispatchDeps,
+  hotelId: string,
+  saved: Array<Record<string, unknown>>,
+  removed: number,
+): Promise<void> {
+  if (saved.length) {
+    void deps.pushOverrides(hotelId, saved).catch((err: unknown) => deps.onError(hotelId, err))
+  }
+  if (removed > 0) await deps.scheduleConsolidated(hotelId)
+}

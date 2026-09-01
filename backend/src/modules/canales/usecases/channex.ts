@@ -8,6 +8,8 @@ import type { CanalesDTO, ChannelDTO, ChannelsResultDTO, RoomTypeSummary, SyncRe
 import { sharedChannexHttp } from './channex-http'
 import { DEFAULT_RATE_PLANS, planPrice, matchRatePlan, type RatePlanDef } from './rate-plans'
 import { targetsFromMappings, type ChannelMappingStore, type MappingEntry, type AriTargets } from './channex-mapping'
+import { FULL_SYNC_HORIZON_DAYS, MS_PER_DAY } from './availability'
+import { buildOverrideValues, type OverridePushItem, type OverridePushSkips } from './push-overrides'
 
 const STAGING_BASE = process.env.CHANNEX_BASE_URL || 'https://staging.channex.io/api/v1'
 const PROD_BASE = 'https://api.channex.io/api/v1'
@@ -304,6 +306,40 @@ export class ChannexUseCase {
     })
     const priceOf = (r: { basePrice: number; percentage: number }) =>
       Math.round((r.basePrice || 0) * (1 + (r.percentage || 0) / 100) * 100)  // centavos
+
+    // ── Línea base de 500 días (test 1 de la certificación) ────────────────────────────────
+    // Las temporadas cubren solo sus rangos: fuera de ellos Channex se quedaba SIN tarifa, así que
+    // el "full sync de 500 días" solo lo era para availability. Se emite primero un tramo que cubre
+    // todo el horizonte con la tarifa base del tipo (percentage 0) y las temporadas caen encima:
+    // Channex aplica los entries FIFO y el último gana, que es el mismo criterio del orden de
+    // `groupList` (catálogo → días pintados). Los overrides por fecha van después, en su propio push.
+    const horizonEnd = new Date(Date.parse(`${today}T00:00:00Z`) + (FULL_SYNC_HORIZON_DAYS - 1) * MS_PER_DAY)
+      .toISOString().slice(0, 10)
+    const baselineByRoomType = new Map<string, typeof rates>()
+    for (const group of groupList) {
+      const rt = String(group[0]!.roomType)
+      if (!baselineByRoomType.has(rt)) baselineByRoomType.set(rt, group)
+    }
+    for (const [roomType, group] of baselineByRoomType) {
+      const rtId = rtIdByTitle.get(roomType.toLowerCase())
+      const rtRps = rtId ? rpsByRt.get(rtId) : undefined
+      if (!rtRps?.length) continue   // el motivo ya lo reporta el loop de temporadas de abajo
+      const flat = group.map((r) => ({ occupancy: Number(r.occupancy) || 0, rate: priceOf({ basePrice: r.basePrice, percentage: 0 }) }))
+        .filter((x) => x.occupancy > 0)
+      const head = group[0]!
+      for (const plan of ratePlans) {
+        const rpId = matchRatePlan(rtRps, plan)
+        if (!rpId) continue
+        const entry: any = { property_id: pid, rate_plan_id: rpId, date_from: today, date_to: horizonEnd }
+        if (pricingMode === 'per_person' && flat.length > 0) {
+          entry.rates = flat.map((o) => ({ occupancy: o.occupancy, rate: planPrice(o.rate, plan.markupPct) }))
+        } else {
+          entry.rate = planPrice(priceOf({ basePrice: head.basePrice, percentage: 0 }), plan.markupPct)
+        }
+        values.push(entry)
+      }
+    }
+
     for (const group of groupList) {
       const head = group[0]!
       const s = seasonByName.get(head.season)
@@ -357,6 +393,33 @@ export class ChannexUseCase {
     if (!res.ok) throw new Error('Channex rechazó las tarifas: ' + JSON.stringify((res.data as any)?.errors || '').slice(0, 200))
     this.logger.info('Tarifas por temporada empujadas a Channex', { pushed: values.length, skipped, ...reasons })
     return { ...empty(), pushed: values.length, skipped, ...reasons }
+  }
+
+  /**
+   * Push DELTA de la grilla de tarifas por fecha: SOLO las celdas que el usuario acaba de guardar,
+   * en UNA sola llamada a `POST /restrictions`. Es el camino que ejercitan los tests 2 a 8 de la
+   * certificación PMS (un precio en una fecha, varios precios en varias fechas, min stay, stop
+   * sell, CTA/CTD, medio año) y el que responde el test 13 ("solo mandás lo que cambió").
+   *
+   * La construcción del payload vive en `push-overrides.ts` (pura, testeable sin red); acá solo se
+   * resuelven los UUIDs y se manda.
+   */
+  async pushRateOverrides(
+    cfg: CanalesDTO | undefined,
+    items: OverridePushItem[],
+    ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS,
+  ): Promise<{ pushed: number; calls: number; skips: OverridePushSkips }> {
+    const noSkips: OverridePushSkips = { roomTypesWithoutRatePlan: [], ratePlansUnknown: [], expiredRanges: 0 }
+    if (!cfg?.channexPropertyId || !items?.length) return { pushed: 0, calls: 0, skips: noSkips }
+    const key = this.resolveKey(cfg)
+    const targets = await this.resolveAriTargets(cfg)
+    const today = new Date().toISOString().slice(0, 10)
+    const { values, skips } = buildOverrideValues(items, cfg.channexPropertyId, targets, ratePlans, today)
+    if (!values.length) return { pushed: 0, calls: 0, skips }
+    const res = await this.channexReq(key, 'POST', '/restrictions', { values })
+    if (!res.ok) throw new Error('Channex rechazó los overrides: ' + JSON.stringify((res.data as any)?.errors || '').slice(0, 200))
+    this.logger.info('Overrides de tarifa empujados a Channex (1 llamada)', { pushed: values.length, ...skips })
+    return { pushed: values.length, calls: 1, skips }
   }
 
   // ─── Push de availability (reservas/checkin/checkout/bloqueos) ───────

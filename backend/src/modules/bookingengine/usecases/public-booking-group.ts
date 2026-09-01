@@ -143,11 +143,13 @@ export async function createPublicBookingGroup(
   }
 
   const stayNightDates = stayNights(checkIn, checkOut)
-  const [rawBlocks, rawRates, rawAssignments, hotelReservations] = await Promise.all([
+  const [rawBlocks, rawRates, rawAssignments, hotelReservations, rawOverrides] = await Promise.all([
     orm.findMany('RoomBlocks', { hotelId }) as Promise<any[]>,
     orm.findMany('RoomRates', { hotelId }) as Promise<any[]>,
     orm.findMany('SeasonAssignments', { hotelId }) as Promise<any[]>,
     orm.findMany('Reservations', { hotelId }) as Promise<any[]>,
+    // Ver la nota equivalente en public-booking.ts: el override pisa a la temporada.
+    orm.findMany('RateOverrides', { hotelId }) as Promise<any[]>,
   ])
   const blockedIds = blockedRoomIds(rawBlocks ?? [], stayNightDates)
   const busyRoomIds = new Set(
@@ -202,7 +204,7 @@ export async function createPublicBookingGroup(
 
     const fallbackNightly = Number(chosen[0].basePrice) || 0
     const perUnitPrice = stayNightDates.length > 0
-      ? sumStayPrice(stayNightDates, baseRates, line.roomType, seasonByDate, line.adults, fallbackNightly)
+      ? sumStayPrice(stayNightDates, baseRates, line.roomType, seasonByDate, line.adults, fallbackNightly, rawOverrides ?? [])
       : round2(fallbackNightly * nights)
 
     resolvedLines.push({

@@ -18,7 +18,7 @@
 
 import { ConflictError, NotFoundError } from 'arckode-framework'
 import { eachDayExclusive } from '../../../shared/utils/daily-availability'
-import { baseRatesOnly, buildSeasonByDate, pickRate, ratePrice } from '../../../shared/utils/rate-resolution'
+import { baseRatesOnly, buildSeasonByDate, pickRate, ratePrice, overrideRateFor } from '../../../shared/utils/rate-resolution'
 import { round2 } from '../../../shared/utils/money'
 
 export interface QuoteRepos {
@@ -27,6 +27,8 @@ export interface QuoteRepos {
   seasonAssignmentRepo?: any
   /** Repo de `RoomRates` (modelo compartido). Opcional — sin él cada noche va al fallback. */
   roomRateRepo?: any
+  /** Repo de `RateOverrides` — tarifa por FECHA. Opcional (misma degradación que los de arriba). */
+  rateOverrideRepo?: any
   /** Repo de `Seasons` (catálogo, modelo compartido). Opcional — sin él no hay label/color. */
   seasonsRepo?: any
 }
@@ -92,15 +94,18 @@ export async function quoteStay(repos: QuoteRepos, params: QuoteParams): Promise
   // explícita que reprice.ts: `fromRates:false` le avisa a la UI que no se consultó ninguna grilla.
   let assignments: any[] = []
   let rates: any[] = []
+  let overrides: any[] = []
   if (repos.seasonAssignmentRepo && repos.roomRateRepo) {
     try {
-      ;[assignments, rates] = await Promise.all([
+      ;[assignments, rates, overrides] = await Promise.all([
         repos.seasonAssignmentRepo.findMany({ hotelId }) as Promise<any[]>,
         repos.roomRateRepo.findMany({ hotelId }) as Promise<any[]>,
+        (repos.rateOverrideRepo ? repos.rateOverrideRepo.findMany({ hotelId }) : Promise.resolve([])) as Promise<any[]>,
       ])
     } catch {
       assignments = []
       rates = []
+      overrides = []
     }
   }
   const seasonByDate = buildSeasonByDate(assignments)
@@ -123,8 +128,12 @@ export async function quoteStay(repos: QuoteRepos, params: QuoteParams): Promise
   for (const date of nightDates) {
     const season = seasonByDate.get(date) ?? null
     const rate = season ? pickRate(baseRates, roomType, season, guests) : null
-    const fromRate = !!(rate && ratePrice(rate) > 0)
-    const price = fromRate ? ratePrice(rate) : fallbackPrice
+    // La tarifa por FECHA es la capa más específica: si hay una para esta noche, gana sobre la
+    // temporada. `fromRate` sigue en true porque el precio salió de una grilla del hotel, no del
+    // fallback `rooms.basePrice` — que es lo que ese flag le comunica a la UI.
+    const override = overrideRateFor(overrides as any[], roomType, date)
+    const fromRate = override > 0 || !!(rate && ratePrice(rate) > 0)
+    const price = override > 0 ? override : (rate && ratePrice(rate) > 0 ? ratePrice(rate) : fallbackPrice)
     if (fromRate && Number(rate.closed) === 1) closedNights++
     const meta = season ? seasonMeta.get(season) : undefined
     nights.push({

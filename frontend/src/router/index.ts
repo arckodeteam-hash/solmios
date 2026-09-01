@@ -360,6 +360,12 @@ const router = createRouter({
           meta: { requiresHotelAdmin: true },
         },
         {
+          path: 'config/tarifas-fecha',
+          name: 'rate-calendar',
+          component: () => import('@/pages/rate-calendar/index.vue'),
+          meta: { requiresHotelAdmin: true },
+        },
+        {
           path: 'guests',
           name: 'guests',
           component: () => import('@/pages/guests/index.vue'),

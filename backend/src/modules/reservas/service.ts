@@ -30,6 +30,7 @@ import { syncPendingAfterPayment, pendingAfterPaymentDeps, type MoneyRowRef } fr
 import type { ReservationMoneyPort } from './usecases/money-port'
 import { settleFolioForCheckout as settleFolioForCheckoutUsecase, type SettleInput, type SettleActor, type SettleFolioPort, type SettleReservation, type SettleResult } from './usecases/settle-port'
 import { ceilingGuardOf, type PaymentRequestsCeilingPort } from './usecases/ceiling-guard'
+import type { ReservasOrchestrationDeps } from './usecases/orchestration-deps'
 
 export class ReservasService {
   private sockets: ReservasSockets = {}
@@ -41,21 +42,9 @@ export class ReservasService {
   private notifyDeps = () => ({ emailSender: this.emailSender, messageLogRepo: this.messageLogRepo, guestRepo: this.guestRepo, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, logger: this.logger })
   getNotifyDeps() { return this.notifyDeps() } // deps reales (post setEmailDeps) para checkin/checkout
 
-  private orchestrationDeps: { // cross-module deps (set from composition-root)
-    pushAvailabilityToChannex?: (hotelId: string, roomId: string) => void
-    sendCheckinEmail?: (deps: any, data: any) => Promise<void>
-    dispatchLifecycleEmail?: (deps: any, data: any) => Promise<void>
-    /** Ver `usecases/settle-port.ts` — el actor va TIPADO: `any` acá reabre el agujero de DEBT-1. */
-    settleFolio?: SettleFolioPort
-    chargeReschedule?: RescheduleChargePort
-    promoCodes?: PromoCodePort // FIX 2026-07-31 — connectors/reservas-promocodes.ts
-    /** STR-3 — connectors/reservas-marketing.ts: `message_logs` es del módulo marketing. */
-    listMessageLogs?: (hotelId: string, reservationId: string) => Promise<Record<string, any>[]>
-    moneyPort?: ReservationMoneyPort // connectors/reservas-money.ts (tablas de otros módulos)
-    /** SEC3-2/SEC3-3/RTC-8.7 (connectors/reservas-payment-requests.ts): clamp/liberación de links vivos. */
-    paymentRequestsCeiling?: PaymentRequestsCeilingPort
-  } = {}
-  setOrchestrationDeps(deps: typeof ReservasService.prototype.orchestrationDeps): void {
+  /** Puertos cross-módulo que inyectan los connectors. Tipo en usecases/orchestration-deps.ts. */
+  private orchestrationDeps: ReservasOrchestrationDeps = {}
+  setOrchestrationDeps(deps: ReservasOrchestrationDeps): void {
     Object.assign(this.orchestrationDeps, deps)
     if (deps.moneyPort) this.queries.setMoneyPort(deps.moneyPort) // lo consume ReservasQueries
   }
@@ -77,6 +66,7 @@ export class ReservasService {
     /** Reprice del reagendado (temporadas → tarifas). OPCIONALES: sin ellos cae a `rooms.basePrice` — ver usecases/reprice.ts. */ private readonly seasonAssignmentRepo?: RepositoryAdapter<any>, private readonly roomRateRepo?: RepositoryAdapter<any>,
     /** Storage (foto de documento + firma del pre-checkin público). Sin él, `submitPreCheckin`/`uploadPreCheckinPhoto` fallan — ver composition-root.ts. */ private readonly storage?: StorageService,
     /** Catálogo `Seasons` (label/color) para el quote del wizard — ver index.ts. */ private readonly seasonsRepo?: RepositoryAdapter<any>,
+    /** `RateOverrides` — tarifa por FECHA. AL FINAL: no corre ningún posicional existente. */ private readonly rateOverrideRepo?: RepositoryAdapter<any>,
   ) {}
 
   // ACUMULA handlers (cadena secuencial; implementación única en shared/utils/accumulate-sockets.ts).
@@ -88,7 +78,7 @@ export class ReservasService {
   }
   async create(dto: CreateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> {
     this.logger.info('Creando reserva', { userId: currentUser.id, roomId: dto.roomId })
-    const item = await createReservation(this.repo, this.blockRepo, this.logger, this.cache, this.sockets, this.notifyDeps(), dto, currentUser, this.roomRepo, this.guestRepo, this.dateRestrictionRepo, this.orchestrationDeps.promoCodes, { seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo })
+    const item = await createReservation(this.repo, this.blockRepo, this.logger, this.cache, this.sockets, this.notifyDeps(), dto, currentUser, this.roomRepo, this.guestRepo, this.dateRestrictionRepo, this.orchestrationDeps.promoCodes, { seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, rateOverrideRepo: this.rateOverrideRepo })
     dispatchCreateEmail(this.notifyDeps(), dto, item)
     return item
   }
@@ -148,8 +138,8 @@ export class ReservasService {
 
   // ── RESCHEDULE (mover/extender desde planning) ──────────────────────────
   // `addonsOf` (STR-2): el reprice cambia `totalAmount` → el saldo persistido se mueve con él. `ceilingGuard` (SEC3-2): un reprice que BAJA el total recorta los links de pago vivos — mismo connector que `update()` (reservas-payment-requests).
-  private rescheduleDeps = () => ({ repo: this.repo, roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource(), ceilingGuard: this.orchestrationDeps.paymentRequestsCeiling?.clamp })
-  async quoteStay(params: QuoteParams): Promise<any> { return quoteStayUsecase({ roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, seasonsRepo: this.seasonsRepo }, params) }
+  private rescheduleDeps = () => ({ repo: this.repo, roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, rateOverrideRepo: this.rateOverrideRepo, addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource(), ceilingGuard: this.orchestrationDeps.paymentRequestsCeiling?.clamp })
+  async quoteStay(params: QuoteParams): Promise<any> { return quoteStayUsecase({ roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, seasonsRepo: this.seasonsRepo, rateOverrideRepo: this.rateOverrideRepo }, params) }
 
   async quoteReschedule(id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<any> {
     return quoteRescheduleUsecase(this.rescheduleDeps(), id, input, user)

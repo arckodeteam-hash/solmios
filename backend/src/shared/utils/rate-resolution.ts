@@ -199,6 +199,55 @@ export function resolveNightlyPrice(
 }
 
 /**
+ * Un override de `rate_overrides` visto desde la cadena de precio. Solo interesan las dimensiones
+ * que cambian el importe; las restricciones (stop sell, CTA/CTD) las mira `stay-restrictions.ts`.
+ */
+export interface NightlyRateOverride {
+  roomType: string
+  ratePlan: string
+  dateFrom: string
+  dateTo: string
+  rate: number
+}
+
+/**
+ * El plan que vende el motor DIRECTO: la tarifa base, sin markup de plan.
+ *
+ * Un override cargado sobre `bb` (Bed & Breakfast) es un precio de canal — el hotel lo vende con
+ * desayuno a través de una OTA — y no debe filtrarse al precio de la web propia, igual que ya pasa
+ * con los overrides por canal de `room_rates` (ver `baseRatesOnly`).
+ */
+export const DIRECT_RATE_PLAN = 'bar'
+
+/**
+ * Precio del override que aplica a una fecha, o 0 si no hay ninguno.
+ *
+ * Gana el MÁS ESPECÍFICO (el rango más corto): "todo diciembre a 432" y encima "el 24 y 25 a 900"
+ * tiene que dar 900 esos dos días. Es la misma regla que `pricing/usecases/rate-overrides.ts`
+ * aplica del lado del panel y que el orden del payload reproduce del lado de Channex — las tres
+ * capas tienen que coincidir o el hotel ve un precio y el huésped paga otro.
+ */
+export function overrideRateFor(
+  overrides: NightlyRateOverride[],
+  roomType: string,
+  date: string,
+  ratePlan: string = DIRECT_RATE_PLAN,
+): number {
+  const rt = String(roomType).toLowerCase()
+  const rp = String(ratePlan).toLowerCase()
+  let best: NightlyRateOverride | null = null
+  for (const o of overrides) {
+    if (!(Number(o?.rate) > 0)) continue
+    if (String(o.roomType).toLowerCase() !== rt || String(o.ratePlan).toLowerCase() !== rp) continue
+    if (o.dateFrom > date || o.dateTo < date) continue
+    if (!best || Date.parse(o.dateTo) - Date.parse(o.dateFrom) < Date.parse(best.dateTo) - Date.parse(best.dateFrom)) {
+      best = o
+    }
+  }
+  return best ? Number(best.rate) : 0
+}
+
+/**
  * Total de la estadía para un tipo: SUMA del precio de cada noche, no `precio × noches`.
  * `nightDates` son las noches reales (`[checkIn, checkOut)` — la noche del checkout no existe).
  */
@@ -209,10 +258,16 @@ export function sumStayPrice(
   seasonByDate: Map<string, string>,
   guests: number,
   fallbackPrice: number,
+  /** Tarifas por fecha (`rate_overrides`). Pisan a la temporada. Vacío = comportamiento de siempre. */
+  overrides: NightlyRateOverride[] = [],
 ): number {
   let total = 0
   for (const date of nightDates) {
-    total += resolveNightlyPrice(baseRates, roomType, seasonByDate.get(date) ?? null, guests, fallbackPrice)
+    // El override es la capa MÁS específica: si fija precio para esa noche, no se mira la temporada.
+    const override = overrideRateFor(overrides, roomType, date)
+    total += override > 0
+      ? override
+      : resolveNightlyPrice(baseRates, roomType, seasonByDate.get(date) ?? null, guests, fallbackPrice)
   }
   // round2 al final: sumar N veces el mismo float puede dejar cola binaria (33.33 × 3 = 99.99000…1).
   return round2(total)

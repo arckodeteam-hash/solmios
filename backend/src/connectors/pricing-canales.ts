@@ -4,7 +4,7 @@
 // canales/usecases/push-coalescing.ts (CLAUDE #3: el conector solo wirea).
 
 import type { ConnectorContext } from 'arckode-framework'
-import { PushCoalescer } from '../modules/canales/usecases/push-coalescing'
+import { PushCoalescer, dispatchOverridePush, type OverrideDispatchDeps } from '../modules/canales/usecases/push-coalescing'
 
 export function pricingCanalesConnector(ctx: ConnectorContext, debounceMs?: number): void {
   const pricing = ctx.resolveModule<{ setSockets: (s: any) => void }>('pricing')
@@ -20,6 +20,15 @@ export function pricingCanalesConnector(ctx: ConnectorContext, debounceMs?: numb
     },
   )
 
+  const overrideDeps: OverrideDispatchDeps = {
+    pushOverrides: (hotelId, items) =>
+      ctx.resolveModule<{ pushRateOverrides: (h: string, i: any[]) => Promise<unknown> }>('canales')
+        .pushRateOverrides(hotelId, items as any[]),
+    scheduleConsolidated: (hotelId) => coalescer.schedule(hotelId),
+    onError: (hotelId, err) =>
+      console.error(`[pricing-canales] push de tarifas por fecha falló (hotel=${hotelId}):`, err instanceof Error ? err.message : err),
+  }
+
   pricing.setSockets({
     onRatesUpdated: async (hotelId: string, _count: number, channels?: string[]) => coalescer.schedule(hotelId, channels?.length ? channels : [undefined]),
     onRateRestrictionsUpdated: async (hotelId: string) => coalescer.schedule(hotelId),
@@ -28,6 +37,9 @@ export function pricingCanalesConnector(ctx: ConnectorContext, debounceMs?: numb
     onSeasonsUpdated: async (hotelId: string) => coalescer.schedule(hotelId),
     onRatesCopied: async (hotelId: string) => coalescer.schedule(hotelId),
     onSeasonAssignmentsUpdated: async (hotelId: string) => coalescer.schedule(hotelId),
+    // Grilla de tarifas por fecha → push delta / consolidado. La regla vive en el usecase.
+    onRateOverridesUpdated: async (hotelId: string, saved: Array<Record<string, unknown>>, removed: number) =>
+      dispatchOverridePush(overrideDeps, hotelId, saved, removed),
     // Bloqueos: cambian DISPONIBILIDAD (no precio) → push de availability por habitación.
     onBlocksChanged: async (hotelId: string, roomIds: string[]) => {
       try {

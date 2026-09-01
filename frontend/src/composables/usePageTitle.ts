@@ -121,6 +121,7 @@ export const ROUTE_LABELS: Record<string, string> = {
   presupuesto: 'Presupuesto',
   auditoria: 'Auditoría',
   tarifas: 'Temporadas y Tarifas',
+  'tarifas-fecha': 'Tarifas por fecha',
   general: 'General',
   landing: 'Landing',
   media: 'Media',

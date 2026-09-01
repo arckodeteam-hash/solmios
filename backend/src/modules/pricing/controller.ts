@@ -4,9 +4,9 @@ import type { PricingService } from './service'
 import type { PricingCalendarService } from './service-calendar'
 import {
   UpdateSeasonsSchema, UpdateRatesSchema, UpdateRateRestrictionsSchema, CreateBlockSchema,
-  ActivateSeasonSchema, UpdateDateRestrictionsSchema, AssignSeasonSchema,
+  ActivateSeasonSchema, UpdateDateRestrictionsSchema, AssignSeasonSchema, UpdateRateOverridesSchema,
   validateRateItems, validateSeasonItems, validateRestrictionItems, validateBlockRange,
-  validateDateRestrictionItems, validateAssignSeason,
+  validateDateRestrictionItems, validateAssignSeason, validateRateOverrideItems,
 } from './validators/schema'
 
 export class PricingController {
@@ -158,4 +158,42 @@ export class PricingController {
     if (count > 0) await this.service.notifySeasonAssignmentsUpdated(id, count)
     return { status: 200, body: { success: true, count } }
   }
+  // ── Tarifas por fecha (grilla): la capa que cierra los tests 2 a 8 de la certificación ──
+
+  /** Planes del hotel (BAR, B&B, …). La grilla los necesita para no hardcodear la lista. */
+  async listRatePlans(req: HttpRequest) {
+    const id = await this.hotelOf(req); if (!id) return { status: 200, body: { data: [] } }
+    return { status: 200, body: { data: await this.service.listRatePlans(id) } }
+  }
+
+  async listRateOverrides(req: HttpRequest) {
+    const id = await this.hotelOf(req); if (!id) return { status: 200, body: { data: [] } }
+    const { from, to } = (req.query || {}) as any
+    return { status: 200, body: { data: await this.calendar.listRateOverrides(id, from, to) } }
+  }
+
+  async updateRateOverrides(req: HttpRequest) {
+    const id = await this.hotelOf(req); if (!id) return { status: 400, body: { error: 'hotelId requerido' } }
+    validateSchema(UpdateRateOverridesSchema, req.body)
+    const { items } = req.body as any
+    validateRateOverrideItems(items)
+    const { saved, removed } = await this.calendar.updateRateOverrides(id, items)
+    // El push a las OTAs va por el connector (fire-and-forget): guardar nunca espera a Channex.
+    await this.service.notifyRateOverridesUpdated(
+      id,
+      saved.map((s) => ({ ...s.row, cleared: s.cleared })),
+      removed,
+    )
+    return { status: 200, body: { success: true, saved: saved.length, removed, data: saved.map((s) => s.row) } }
+  }
+
+  async deleteRateOverride(req: HttpRequest) {
+    const id = await this.hotelOf(req); if (!id) return { status: 400, body: { error: 'hotelId requerido' } }
+    const row = await this.calendar.deleteRateOverride(id, req.params.id)
+    if (!row) return { status: 404, body: { error: 'Override no encontrado' } }
+    // Borrar es revertir a la tarifa de temporada: hay que re-publicar el mapa consolidado.
+    await this.service.notifyRateOverridesUpdated(id, [], 1)
+    return { status: 200, body: { success: true } }
+  }
+
 }

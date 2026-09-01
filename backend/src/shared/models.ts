@@ -111,6 +111,41 @@ export function registerSharedModels(orm: ORM): void {
     },
   })
 
+  // ─── Rate Overrides (tarifa/restricción por RANGO DE FECHAS y RATE PLAN) ────
+  // Capa MÁS ESPECÍFICA de la cadena de precio, por encima de temporadas.
+  //
+  // Por qué existe: `RoomRates` está indexada por (roomType, occupancy, season) y el precio es
+  // `basePrice × (1 + percentage/100)`. Con eso NO se puede expresar "Twin BAR a 333 el 22/11/2026"
+  // ni dos precios distintos para el mismo room type el mismo día en dos rate plans (BAR vs B&B,
+  // que está atado a BAR × 1.2). Los tests 2 a 8 de la certificación PMS de Channex piden
+  // exactamente eso, y un hotel real lo necesita para tarifar un fin de semana largo.
+  //
+  // Semántica de los campos numéricos: 0 = "sin override", se cae a la capa de abajo (temporada).
+  // Por eso `rate` 0 no es "gratis" sino "no toco el precio" — un override puede traer solo
+  // restricciones (minStay/stopSell/CTA) sin tocar la tarifa.
+  //
+  // `ratePlan` guarda el CÓDIGO del plan (`rate-plans.ts`: 'bar', 'bb'), no el UUID de Channex:
+  // el mapping local↔Channex vive en channel_mappings y no debe filtrarse a la capa de precio.
+  orm.define('RateOverrides', {
+    table: 'rate_overrides', timestamps: true,
+    fields: {
+      id: { type: 'string', required: true },
+      hotelId: { type: 'string', required: true, indexed: true },
+      roomType: { type: 'string', required: true },
+      ratePlan: { type: 'string', required: true },
+      dateFrom: { type: 'string', required: true, indexed: true },
+      dateTo: { type: 'string', required: true },
+      // Precio de la noche en unidades MAYORES (como room_rates.price). 0 = sin override de precio.
+      rate: { type: 'number', default: 0 },
+      minStay: { type: 'number', default: 0 },
+      maxStay: { type: 'number', default: 0 },
+      stopSell: { type: 'number', default: 0 },
+      closedToArrival: { type: 'number', default: 0 },
+      closedToDeparture: { type: 'number', default: 0 },
+      minStayThrough: { type: 'number', default: 0 },
+    },
+  })
+
   // ─── Date Restrictions (estadía mínima por fecha) ────
   // minStay por FECHA de check-in (a diferencia de RateRestrictions, que es por roomType+season).
   // Alimenta la fila "Días Mínimos" del planning y se valida al crear una reserva. Solo se

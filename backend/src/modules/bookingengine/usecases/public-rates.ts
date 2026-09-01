@@ -112,6 +112,9 @@ export interface PublicRatesDeps {
    */
   seasonAssignments?: RepositoryAdapter<any>
   roomRates?: RepositoryAdapter<any>
+  /** Repo de `RateOverrides` — tarifa por FECHA, la capa que pisa a la temporada. Opcional: sin
+   *  cablear, el motor cotiza solo por temporada (comportamiento previo). */
+  rateOverrides?: RepositoryAdapter<any>
 }
 
 export interface PublicRatesQuery {
@@ -224,7 +227,7 @@ export async function getPublicRates(
   // Son exactamente las mismas celdas que pinta `/calendar` entre `from=checkIn` y
   // `to=checkOut - 1 día`, así que los dos endpoints suman sobre el mismo conjunto de fechas.
   const nightDates = eachDayExclusive(query.checkIn, query.checkOut)
-  const { seasonByDate, baseRates } = await readSeasonPricing(deps, hotel.id)
+  const { seasonByDate, baseRates, overrides } = await readSeasonPricing(deps, hotel.id)
 
   /** Impuestos de un total. Un solo lugar: `fromPrice` y cada fila de `occupancies` los computan igual. */
   const breakdownOf = (total: number) => taxes.map((t) => ({
@@ -240,7 +243,7 @@ export async function getPublicRates(
     // precio, y un hotel sin temporadas da idéntico total al de antes (N veces el mismo número).
     const fallbackNightly = Number(rt.price) || 0
     const stayTotal = nightDates.length > 0
-      ? sumStayPrice(nightDates, baseRates, rt.roomType, seasonByDate, adults, fallbackNightly)
+      ? sumStayPrice(nightDates, baseRates, rt.roomType, seasonByDate, adults, fallbackNightly, overrides)
       // Defensa: `nights` nunca es < 1 (se valida checkOut > checkIn arriba), pero si
       // `eachDayExclusive` no pudiera parsear las fechas no se puede devolver 0 en silencio.
       : round2(fallbackNightly * nights)
@@ -261,6 +264,7 @@ export async function getPublicRates(
       nights,
       baseRates,
       seasonByDate,
+      overrides,
       fallbackNightly,
       guests: adults,
     }).map((o) => {
@@ -327,19 +331,22 @@ export async function getPublicRates(
  *    peor caso es cotizar al precio base, que es exactamente lo que hacía antes este endpoint.
  */
 async function readSeasonPricing(
-  deps: Pick<PublicRatesDeps, 'seasonAssignments' | 'roomRates'>,
+  deps: Pick<PublicRatesDeps, 'seasonAssignments' | 'roomRates' | 'rateOverrides'>,
   hotelId: string,
-): Promise<{ seasonByDate: Map<string, string>; baseRates: any[] }> {
-  const empty = { seasonByDate: new Map<string, string>(), baseRates: [] as any[] }
+): Promise<{ seasonByDate: Map<string, string>; baseRates: any[]; overrides: any[] }> {
+  const empty = { seasonByDate: new Map<string, string>(), baseRates: [] as any[], overrides: [] as any[] }
   if (!deps.seasonAssignments || !deps.roomRates) return empty
   try {
-    const [assignments, rates] = await Promise.all([
+    const [assignments, rates, overrides] = await Promise.all([
       deps.seasonAssignments.findMany({ hotelId }),
       deps.roomRates.findMany({ hotelId }),
+      // Repo opcional: un caller viejo que no lo inyecte sigue cotizando por temporada.
+      deps.rateOverrides ? deps.rateOverrides.findMany({ hotelId }) : Promise.resolve([]),
     ])
     return {
       seasonByDate: buildSeasonByDate(assignments as any[]),
       baseRates: baseRatesOnly(rates as any[]),
+      overrides: (overrides ?? []) as any[],
     }
   } catch {
     return empty

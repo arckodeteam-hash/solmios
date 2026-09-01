@@ -32,7 +32,7 @@ import {
   eachDayInclusive,
 } from '../../../shared/utils/daily-availability'
 import { readCurrencyRates } from './public-rates'
-import { baseRatesOnly, buildSeasonByDate, pickRate, ratePrice } from './rate-resolution'
+import { baseRatesOnly, buildSeasonByDate, pickRate, ratePrice, overrideRateFor } from './rate-resolution'
 import { round2 } from '../../../shared/utils/money'
 import { isRateClosed } from './stay-restrictions'
 import { validatePublicCalendarQuery, MAX_CALENDAR_DAYS } from '../validators/schema'
@@ -65,6 +65,10 @@ export interface PublicCalendarDeps {
   roomBlocks: RepositoryAdapter<any>
   seasonAssignments: RepositoryAdapter<any>
   roomRates: RepositoryAdapter<any>
+  /** `RateOverrides` — tarifa por FECHA, la capa que pisa a la temporada. Opcional: sin ella el
+   *  calendario anunciaría el precio de temporada para una noche ya re-tarifada, y `/rates` (que
+   *  sí las lee) cobraría otro — el mismo desfasaje que este archivo evita entre buscador y calendario. */
+  rateOverrides?: RepositoryAdapter<any>
   /** `Configuration` KV — solo para `currency_rates` (hotelId='platform'). Opcional: sin él
    *  el calendario responde en la moneda base del hotel. */
   config?: RepositoryAdapter<any>
@@ -141,12 +145,13 @@ export async function getPublicCalendar(
     if (cached) return { status: 200, body: cached }
   }
 
-  const [rooms, reservations, blocks, assignments, rates] = await Promise.all([
+  const [rooms, reservations, blocks, assignments, rates, overrides] = await Promise.all([
     deps.rooms.findMany({ hotelId: hotel.id }),
     deps.reservations.findMany({ hotelId: hotel.id }),
     deps.roomBlocks.findMany({ hotelId: hotel.id }),
     deps.seasonAssignments.findMany({ hotelId: hotel.id }),
     deps.roomRates.findMany({ hotelId: hotel.id }),
+    deps.rateOverrides ? deps.rateOverrides.findMany({ hotelId: hotel.id }) : Promise.resolve([]),
   ])
 
   const days = eachDayInclusive(from, to)
@@ -196,8 +201,9 @@ export async function getPublicCalendar(
       if (free <= 0) continue
       available += free
 
-      const price = rate ? ratePrice(rate) : 0
-      // Fallback: sin temporada asignada o sin fila de tarifa → `rooms.basePrice` del tipo.
+      // Orden de la cadena: tarifa por FECHA → temporada → `rooms.basePrice` del tipo.
+      const override = overrideRateFor(overrides as any[], type, date)
+      const price = override > 0 ? override : (rate ? ratePrice(rate) : 0)
       const effective = price > 0 ? price : bucket.basePrice
       if (effective <= 0) continue
       if (!best || effective < best.price) {

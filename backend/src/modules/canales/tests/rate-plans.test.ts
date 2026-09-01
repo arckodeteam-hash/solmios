@@ -83,8 +83,10 @@ describe('pushSeasonalRates multi-plan (P5)', () => {
     const res = await uc.pushSeasonalRates({ channexPropertyId: 'p1', channexApiKey: 'k' } as any, rates,
       [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), 'per_room', DEFAULT_RATE_PLANS)
 
-    expect(res.pushed).toBe(2)
-    const byRp = Object.fromEntries(captured.restrictions!.values.map((v: any) => [v.rate_plan_id, v.rate]))
+    // 4 entries en UNA llamada: línea base de 500 días (BAR + B&B) + la temporada (BAR + B&B).
+    expect(res.pushed).toBe(4)
+    const byRp = Object.fromEntries(captured.restrictions!.values
+      .filter((v: any) => v.date_from === '2099-06-01').map((v: any) => [v.rate_plan_id, v.rate]))
     expect(byRp['rp-bar']).toBe(10000)
     expect(byRp['rp-bb']).toBe(12000)
   })
@@ -105,8 +107,9 @@ describe('pushSeasonalRates multi-plan (P5)', () => {
       [{ roomType: 'Double', season: 'media', occupancy: 2, basePrice: 100, percentage: 0 }],
       [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), 'per_room', DEFAULT_RATE_PLANS)
 
-    expect(res.pushed).toBe(1)   // solo BAR; B&B no tiene counterpart y se omite sin error
-    expect((globalThis as any).__captured.values[0].rate_plan_id).toBe('rp-1')
+    expect(res.pushed).toBe(2)   // línea base + temporada, ambas solo BAR: B&B no tiene counterpart
+    const ids = [...new Set((globalThis as any).__captured.values.map((v: any) => v.rate_plan_id))]
+    expect(ids).toEqual(['rp-1'])
   })
 
   it('P4: CTA/CTD/min_stay_through van en el entry (test 7 de certificación)', async () => {
@@ -118,14 +121,18 @@ describe('pushSeasonalRates multi-plan (P5)', () => {
       [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), 'per_room', DEFAULT_RATE_PLANS,
       [{ roomType: 'Double', season: 'media', closedToArrival: 1, ctd: 0, minStayThrough: 3 }])
 
-    const bar = captured.restrictions!.values.find((v: any) => v.rate_plan_id === 'rp-bar')
+    // La línea base de 500 días no lleva restricciones: las restricciones son de la TEMPORADA.
+    const baseline = captured.restrictions!.values.find((v: any) => v.rate_plan_id === 'rp-bar' && v.date_from !== '2099-06-01')
+    expect(baseline.min_stay_arrival).toBeUndefined()
+    expect(baseline.closed_to_arrival).toBeUndefined()
+    const bar = captured.restrictions!.values.find((v: any) => v.rate_plan_id === 'rp-bar' && v.date_from === '2099-06-01')
     expect(bar.min_stay_arrival).toBe(2)       // de RoomRates (como siempre)
     expect(bar.max_stay).toBe(7)
     expect(bar.closed_to_arrival).toBe(true)   // CTA — de rate_restrictions
     expect(bar.closed_to_departure).toBeUndefined()  // CTD en 0: NO se manda (update parcial)
     expect(bar.min_stay_through).toBe(3)       // through — de rate_restrictions
     // Los dos planes llevan las mismas restricciones en la misma llamada.
-    const bb = captured.restrictions!.values.find((v: any) => v.rate_plan_id === 'rp-bb')
+    const bb = captured.restrictions!.values.find((v: any) => v.rate_plan_id === 'rp-bb' && v.date_from === '2099-06-01')
     expect(bb.closed_to_arrival).toBe(true)
     expect(bb.min_stay_through).toBe(3)
   })
@@ -142,8 +149,11 @@ describe('pushSeasonalRates multi-plan (P5)', () => {
       { roomType: 'Double', season: 'media', occupancy: 2, basePrice: 110, percentage: 30 },
     ], [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], assigned, 'per_room', DEFAULT_RATE_PLANS)
 
+    // Orden del payload: línea base (hoy) → catálogo → días pintados. Channex aplica FIFO y el
+    // último gana, así que el tramo pintado tiene que salir DESPUÉS del rango del catálogo.
     const dates = captured.restrictions!.values.filter((v: any) => v.rate_plan_id === 'rp-bar').map((v: any) => v.date_from)
-    expect(dates).toEqual(['2099-06-01', '2099-06-10'])   // catálogo primero, pintado después (pisa)
+    expect(dates.slice(1)).toEqual(['2099-06-01', '2099-06-10'])
+    expect(dates[0]).toBe(new Date().toISOString().slice(0, 10))   // la línea base arranca hoy
   })
 })
 

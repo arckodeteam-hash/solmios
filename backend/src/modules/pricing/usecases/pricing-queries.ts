@@ -1,6 +1,12 @@
+import { readRatePlans, type RatePlanDef } from '../../../shared/utils/rate-plans'
 export type PricingMode = 'per_room' | 'per_person'
 
 export class PricingQueries {
+  /** Planes del hotel (BAR, B&B, …). La lógica y el default viven en shared/utils/rate-plans.ts. */
+  ratePlans(hotelId: string): Promise<RatePlanDef[]> {
+    return readRatePlans((m, q) => this.orm.findMany(m, q) as Promise<any[]>, hotelId)
+  }
+
   constructor(private readonly orm: any) {}
 
   /**

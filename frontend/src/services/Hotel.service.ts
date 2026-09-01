@@ -38,6 +38,39 @@ export interface RoomRate {
   channel?: string; minStay?: number; maxStay?: number; _inherited?: boolean
 }
 
+/** Plan del hotel. `markupPct` es el ajuste sobre la tarifa base del tipo (BAR 0%, B&B +20%). */
+export interface RatePlan {
+  code: string
+  label: string
+  markupPct: number
+  keywords: string[]
+}
+
+/**
+ * Tarifa y restricciones para un RANGO de fechas y un rate plan concreto.
+ * Convención del backend: 0 = "sin override de esa dimensión" (se cae a la tarifa por temporada),
+ * NO "gratis"/"cero noches". Por eso un override puede llevar solo restricciones y ningún precio.
+ */
+export interface RateOverride {
+  id: string
+  hotelId: string
+  roomType: string
+  ratePlan: string
+  dateFrom: string
+  dateTo: string
+  rate: number
+  minStay: number
+  maxStay: number
+  stopSell: number
+  closedToArrival: number
+  closedToDeparture: number
+  minStayThrough: number
+}
+
+/** Lo que manda la grilla al guardar. `dateTo` ausente ≡ un solo día. */
+export type RateOverrideInput = Partial<Omit<RateOverride, 'id' | 'hotelId'>> &
+  Pick<RateOverride, 'roomType' | 'ratePlan' | 'dateFrom'>
+
 export interface AmenityCatalog {
   interior: string[]; exterior: string[]; services: string[]
 }
@@ -110,6 +143,25 @@ export const HotelService = {
   },
   async setPricingMode(mode: 'per_room' | 'per_person'): Promise<{ mode: 'per_room' | 'per_person' }> {
     return http.put('/pricing-mode', { mode })
+  },
+
+  /** Planes del hotel (BAR, Bed & Breakfast, …) — la grilla de tarifas por fecha los usa como filas. */
+  async ratePlans(): Promise<{ data: RatePlan[] }> {
+    return http.get('/rate-plans')
+  },
+
+  // Tarifas y restricciones por RANGO DE FECHAS (grilla /panel/config/tarifas-fecha).
+  // Es la capa más específica de la cadena de precio: pisa a la tarifa por temporada.
+  async rateOverrides(from?: string, to?: string): Promise<{ data: RateOverride[] }> {
+    const qs = from && to ? `?from=${from}&to=${to}` : ''
+    return http.get(`/rate-overrides${qs}`)
+  },
+  /** Guarda el lote entero en UNA llamada: el backend lo publica a los canales en un solo push. */
+  async saveRateOverrides(items: RateOverrideInput[]): Promise<{ success: boolean; saved: number; removed: number; data: RateOverride[] }> {
+    return http.put('/rate-overrides', { items })
+  },
+  async deleteRateOverride(id: string): Promise<{ success: boolean }> {
+    return http.delete(`/rate-overrides/${id}`)
   },
 
   // Días Mínimos por fecha (fila del planning). Solo devuelve overrides (minStay > 1).

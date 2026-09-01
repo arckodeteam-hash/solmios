@@ -27,6 +27,8 @@ export interface RepriceRepos {
   seasonAssignmentRepo?: any
   /** Repo de `RoomRates` (modelo compartido). Opcional — ver degradación en la cabecera. */
   roomRateRepo?: any
+  /** Repo de `RateOverrides` — tarifa por FECHA, pisa a la temporada. Opcional (misma degradación). */
+  rateOverrideRepo?: any
 }
 
 export interface RepriceParams {
@@ -58,13 +60,14 @@ export async function repriceStay(repos: RepriceRepos, params: RepriceParams): P
   if (!repos.seasonAssignmentRepo || !repos.roomRateRepo) return { total: fallbackTotal, fromRates: false }
 
   try {
-    const [assignments, rates] = await Promise.all([
+    const [assignments, rates, overrides] = await Promise.all([
       repos.seasonAssignmentRepo.findMany({ hotelId: params.hotelId }),
       repos.roomRateRepo.findMany({ hotelId: params.hotelId }),
+      repos.rateOverrideRepo ? repos.rateOverrideRepo.findMany({ hotelId: params.hotelId }) : Promise.resolve([]),
     ])
     const seasonByDate = buildSeasonByDate((assignments ?? []) as any[])
     const baseRates = baseRatesOnly((rates ?? []) as any[])
-    const total = sumStayPrice(nightDates, baseRates, params.roomType, seasonByDate, params.guests, params.fallbackPrice)
+    const total = sumStayPrice(nightDates, baseRates, params.roomType, seasonByDate, params.guests, params.fallbackPrice, (overrides ?? []) as any[])
     return { total, fromRates: true }
   } catch {
     // Leer tarifas no puede tumbar un reagendado: se degrada al fallback y se avisa con fromRates.

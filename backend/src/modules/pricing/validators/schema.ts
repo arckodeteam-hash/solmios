@@ -39,6 +39,10 @@ export const UpdateDateRestrictionsSchema: Record<string, ValidationRule> = {
   items: { type: arrayType, required: true },
 }
 
+export const UpdateRateOverridesSchema: Record<string, ValidationRule> = {
+  items: { type: arrayType, required: true },
+}
+
 const MAX_MIN_STAY = 365   // estadía mínima disparatada (más de un año) se corta acá
 
 export const AssignSeasonSchema: Record<string, ValidationRule> = {
@@ -120,6 +124,33 @@ export function validateDateRestrictionItems(items: unknown): void {
   })
 }
 
+/**
+ * Cada celda de la grilla de tarifas por fecha: rango válido, precio y estadías no negativas.
+ * `dateTo` es opcional (ausente ≡ un solo día); el resto de la normalización la hace el usecase
+ * `rate-overrides.ts` — acá solo se rechaza lo que sería un error del cliente, no se corrige.
+ */
+export function validateRateOverrideItems(items: unknown): void {
+  if (!Array.isArray(items)) throw new ValidationError('items debe ser un array')
+  items.forEach((it: any, i: number) => {
+    const at = `items[${i}]`
+    if (!it || typeof it !== 'object') throw new ValidationError(`${at}: item inválido`)
+    if (!it.roomType || !it.ratePlan) throw new ValidationError(`${at}: roomType y ratePlan son requeridos`)
+    if (!DATE_RE.test(String(it.dateFrom || ''))) throw new ValidationError(`${at}: dateFrom inválido (YYYY-MM-DD)`)
+    if (it.dateTo !== undefined && it.dateTo !== null && it.dateTo !== '') {
+      if (!DATE_RE.test(String(it.dateTo))) throw new ValidationError(`${at}: dateTo inválido (YYYY-MM-DD)`)
+      if (String(it.dateTo) < String(it.dateFrom)) throw new ValidationError(`${at}: dateTo no puede ser anterior a dateFrom`)
+    }
+    for (const f of ['rate', 'minStay', 'maxStay', 'minStayThrough'] as const) {
+      if (it[f] !== undefined && it[f] !== null && it[f] !== '') {
+        const v = num(it[f])
+        if (!Number.isFinite(v) || v < 0) throw new ValidationError(`${at}: ${f} no puede ser negativo`)
+      }
+    }
+    const min = num(it.minStay), max = num(it.maxStay)
+    if (max > 0 && max < min) throw new ValidationError(`${at}: maxStay no puede ser menor que minStay`)
+  })
+}
+
 /** Asignación de temporada: rango coherente y weekdays (si vienen) enteros 0..6 (0=Dom). */
 export function validateAssignSeason(body: any): void {
   if (!body || typeof body !== 'object') throw new ValidationError('body inválido')
@@ -145,4 +176,5 @@ export const PricingValidator = {
   updateRateRestrictions: UpdateRateRestrictionsSchema,
   updateDateRestrictions: UpdateDateRestrictionsSchema,
   assignSeason: AssignSeasonSchema,
+  updateRateOverrides: UpdateRateOverridesSchema,
 }

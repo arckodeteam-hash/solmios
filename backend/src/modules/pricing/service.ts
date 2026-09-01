@@ -3,6 +3,8 @@ import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { hotelIdOfUserLegacy } from '../../shared/usecases/hotel-of-legacy'
 import { composeSockets } from '../../shared/usecases/compose-sockets'
 import type { PricingQueries } from './usecases/pricing-queries'
+import { applyActiveSeason } from './usecases/season-catalog'
+import { DEFAULT_RATE_PLANS, type RatePlanDef } from '../../shared/utils/rate-plans'
 import type { PricingSockets } from './sockets'
 import { defaultSeasons } from './usecases/defaults'
 import { listBlocks, createBlocks, deleteBlock } from './usecases/blocks'
@@ -75,14 +77,7 @@ export class PricingService {
   /** Cambia la temporada activa del hotel (por nombre). Solo una queda activa. #148 */
   async activateSeason(hotelId: string, name: string, actor?: Actor): Promise<any[]> {
     const seasons = await this.listSeasons(hotelId) // garantiza que haya data seedeada
-    const target = seasons.find((s) => s.name === name)
-    if (!target) throw new AuthError(`Temporada '${name}' no existe en este hotel`)
-    for (const s of seasons) {
-      const shouldBeActive = s.name === name ? 1 : 0
-      if ((s.active ? 1 : 0) !== shouldBeActive) {
-        await this.seasonsRepo.update(s.id, { active: shouldBeActive })
-      }
-    }
+    await applyActiveSeason(this.seasonsRepo, seasons, name)
     await this.audit(seasonsChangeEntry(hotelId, seasons.length, actor))
     return this.listSeasons(hotelId)
   }
@@ -170,6 +165,11 @@ export class PricingService {
 
   /** Días pintados con temporada (el controller lo llama tras assignSeason). */
   async notifySeasonAssignmentsUpdated(hotelId: string, count: number): Promise<void> { await this.sockets.onSeasonAssignmentsUpdated?.(hotelId, count) }
+  /** Grilla de tarifas por fecha → push delta a las OTAs (connector pricing-canales). */
+  async notifyRateOverridesUpdated(hotelId: string, saved: Array<Record<string, unknown>>, removed: number): Promise<void> { await this.sockets.onRateOverridesUpdated?.(hotelId, saved, removed) }
+
+  /** Planes del hotel (configuration key='rate_plans'; default BAR + B&B). Ver shared/utils/rate-plans.ts. */
+  listRatePlans(hotelId: string): Promise<RatePlanDef[]> { return this.queries ? this.queries.ratePlans(hotelId) : Promise.resolve(DEFAULT_RATE_PLANS) }
 
   async listRateRestrictions(hotelId: string): Promise<any[]> {
     return await this.restrictionsRepo.findMany({ hotelId }) as any[]

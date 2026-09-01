@@ -48,6 +48,7 @@
 // Ahora `covered` sale de `isOccupancyQuotable`, que recorre las noches REALES con la misma
 // cadena de precio que `sumStayPrice`: solo es `no_rate` lo que de verdad no se puede cotizar.
 import { occupanciesForStay, isOccupancyQuotable, sumStayPrice } from './rate-resolution'
+import type { NightlyRateOverride } from '../../../shared/utils/rate-resolution'
 import { round2 } from '../../../shared/utils/money'
 import { isClosedForOccupancy } from './stay-restrictions'
 import type { OccupancyUnavailableReason } from '../types'
@@ -74,6 +75,8 @@ export interface OccupancyMatrixInput {
   /** Tarifas BASE del hotel (ya pasadas por `baseRatesOnly`). */
   baseRates: any[]
   seasonByDate: Map<string, string>
+  /** Tarifas por fecha (`rate_overrides`): pisan a la temporada. Vacío = solo temporadas. */
+  overrides?: NightlyRateOverride[]
   /** Precio por noche del tipo sin temporadas (`rooms.basePrice`, el más bajo del tipo). */
   fallbackNightly: number
   /** Huéspedes consultados: garantiza que la fila que el usuario pidió siempre exista. */
@@ -135,7 +138,7 @@ export function buildOccupancyMatrix(input: OccupancyMatrixInput): OccupancyPric
   for (let occupancy = 1; occupancy <= maxOccupancy; occupancy++) {
     // MISMO resolver que `fromPrice`, solo que cotizando para `occupancy` en vez de `guests`.
     const stayTotal = nightDates.length > 0
-      ? sumStayPrice(nightDates, baseRates, roomType, seasonByDate, occupancy, fallbackNightly)
+      ? sumStayPrice(nightDates, baseRates, roomType, seasonByDate, occupancy, fallbackNightly, input.overrides ?? [])
       : round2(fallbackNightly * Math.max(1, nights))
 
     const reason = resolveReason({

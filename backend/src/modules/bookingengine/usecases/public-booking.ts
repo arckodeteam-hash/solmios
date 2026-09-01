@@ -250,10 +250,13 @@ export async function createPublicBookingDirect(
   // Las tres lecturas son sobre modelos COMPARTIDOS (`shared/models.ts`) — mismo criterio de
   // acceso que `Rooms`/`Reservations` acá arriba, sin import cross-module.
   const stayNightDates = stayNights(checkIn, checkOut)
-  const [rawBlocks, rawRates, rawAssignments] = await Promise.all([
+  const [rawBlocks, rawRates, rawAssignments, rawOverrides] = await Promise.all([
     orm.findMany('RoomBlocks', { hotelId }) as Promise<any[]>,
     orm.findMany('RoomRates', { hotelId }) as Promise<any[]>,
     orm.findMany('SeasonAssignments', { hotelId }) as Promise<any[]>,
+    // Tarifas por fecha: la capa que pisa a la temporada. Sin esto la web propia cobraría el
+    // precio de temporada por una noche que el hotel ya re-tarifó (y publicó a las OTAs).
+    orm.findMany('RateOverrides', { hotelId }) as Promise<any[]>,
   ])
   const blockedIds = blockedRoomIds(rawBlocks ?? [], stayNightDates)
   const closedTypes = closedRoomTypes(rawRates ?? [], rawAssignments ?? [], stayNightDates, Number(adults) || 2)
@@ -355,7 +358,7 @@ export async function createPublicBookingDirect(
   const occupancy = Number(adults) || 2
   const fallbackNightly = Number(room.basePrice) || 0
   const roomSubtotal = stayNightDates.length > 0
-    ? sumStayPrice(stayNightDates, baseRates, String(room.type ?? ''), seasonByDate, occupancy, fallbackNightly)
+    ? sumStayPrice(stayNightDates, baseRates, String(room.type ?? ''), seasonByDate, occupancy, fallbackNightly, rawOverrides ?? [])
     // Defensa: `checkOut > checkIn` ya se validó, pero si las fechas no se pudieran parsear no se
     // puede cobrar 0 en silencio (mismo criterio que `public-rates.ts`).
     : round2(fallbackNightly * nights)

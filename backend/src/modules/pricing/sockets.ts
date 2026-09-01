@@ -8,6 +8,16 @@ export interface PricingSockets {
   onRateRestrictionsUpdated?: (hotelId: string, count: number) => Promise<void>
   /** Días pintados con temporada en el planning (precio por fecha puntual) → re-publicar tarifas. */
   onSeasonAssignmentsUpdated?: (hotelId: string, count: number) => Promise<void>
+  /**
+   * Grilla de tarifas por fecha guardada. `saved` son las celdas que quedaron vivas (se publican
+   * como DELTA en una sola llamada) y `removed` las que se revirtieron a la tarifa de temporada
+   * (obligan a re-publicar el mapa consolidado, que es el que sabe qué precio va en su lugar).
+   */
+  onRateOverridesUpdated?: (
+    hotelId: string,
+    saved: Array<Record<string, unknown>>,
+    removed: number,
+  ) => Promise<void>
   /** Bloqueos creados/borrados → re-publicar availability de las habitaciones tocadas. */
   onBlocksChanged?: (hotelId: string, roomIds: string[]) => Promise<void>
 }

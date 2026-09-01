@@ -57,9 +57,13 @@ describe('push con mappingStore (P6)', () => {
       [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), 'per_room', DEFAULT_RATE_PLANS)
 
     expect(captured.gets).toBe(0)   // cero GETs: todo vino del mapping
-    expect(res.pushed).toBe(2)
-    const rpIds = captured.restrictions!.values.map((v: any) => v.rate_plan_id).sort()
+    // 4 entries: la línea base de 500 días (BAR + B&B) y encima la temporada (BAR + B&B).
+    expect(res.pushed).toBe(4)
+    const rpIds = [...new Set(captured.restrictions!.values.map((v: any) => v.rate_plan_id))].sort()
     expect(rpIds).toEqual(['rp-bar-mapped', 'rp-bb-mapped'])
+    const seasonIds = captured.restrictions!.values
+      .filter((v: any) => v.date_from === '2099-06-01').map((v: any) => v.rate_plan_id).sort()
+    expect(seasonIds).toEqual(['rp-bar-mapped', 'rp-bb-mapped'])
   })
 
   it('sin mappings persistidos cae al fallback GET + título (comportamiento viejo)', async () => {

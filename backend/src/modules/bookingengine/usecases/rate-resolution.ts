@@ -20,6 +20,7 @@ export {
   ratePrice,
   resolveNightlyPrice,
   sumStayPrice,
+  overrideRateFor,
 } from '../../../shared/utils/rate-resolution'
 
 // STR-1: `round2` NO pasa por acá. Su único origen es `shared/utils/money.ts`; encadenarlo por dos

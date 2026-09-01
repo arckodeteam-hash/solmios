@@ -51,6 +51,7 @@ export const ROUTE_TO_KEY: Record<string, string> = {
   '/panel/config/dispositivos': 'settings.devices',
   '/panel/push-tokens': 'settings.push',
   '/panel/config/tarifas': 'settings.rates',
+  '/panel/config/tarifas-fecha': 'settings.rates',
   '/panel/config/auditoria': 'settings.audit',
   // Página pública: las 8 tabs colapsan en UNA ruta (/panel/pagina-publica?tab=X — landing/media/
   // apariencia/booking-engine/promo-codes/reputacion/tracking son redirects), así que el gate de

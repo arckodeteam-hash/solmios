@@ -16,9 +16,9 @@ export function PricingModule() {
     contract: {
       name: 'pricing', version: '1.0.0',
       description: 'Inventory and pricing management',
-      actions: ['listSeasons', 'updateSeasons', 'listRates', 'updateRates', 'copyRatesNextYear', 'listBlocks', 'createBlocks', 'deleteBlock', 'listRateRestrictions', 'updateRateRestrictions', 'listDateRestrictions', 'updateDateRestrictions', 'listSeasonAssignments', 'assignSeason', 'getChannelMetrics'],
+      actions: ['listSeasons', 'updateSeasons', 'listRates', 'updateRates', 'copyRatesNextYear', 'listBlocks', 'createBlocks', 'deleteBlock', 'listRateRestrictions', 'updateRateRestrictions', 'listDateRestrictions', 'updateDateRestrictions', 'listSeasonAssignments', 'assignSeason', 'getChannelMetrics', 'listRateOverrides', 'updateRateOverrides', 'deleteRateOverride', 'listRatePlans'],
       events: [],
-      tables: ['seasons', 'room_rates', 'room_blocks', 'rate_restrictions', 'date_restrictions', 'season_assignments'],
+      tables: ['seasons', 'room_rates', 'room_blocks', 'rate_restrictions', 'date_restrictions', 'season_assignments', 'rate_overrides'],
       dependencies: [],
       rules: [],
     },
@@ -31,10 +31,11 @@ export function PricingModule() {
       const restrictionsRepo = new OrmRepository<any>(orm, 'RateRestrictions')
       const dateRestrictionsRepo = new OrmRepository<any>(orm, 'DateRestrictions')
       const seasonAssignmentsRepo = new OrmRepository<any>(orm, 'SeasonAssignments')
+      const rateOverridesRepo = new OrmRepository<any>(orm, 'RateOverrides')
       const queries = new PricingQueries(orm)
       const usersRepo = new OrmRepository<any>(orm, 'Users')
       const service = new PricingService(seasonsRepo, ratesRepo, blocksRepo, restrictionsRepo, log, queries, usersRepo)
-      const calendar = new PricingCalendarService(dateRestrictionsRepo, seasonAssignmentsRepo, log)
+      const calendar = new PricingCalendarService(dateRestrictionsRepo, seasonAssignmentsRepo, log, rateOverridesRepo)
       const controller = new PricingController(service, log, calendar)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
@@ -65,9 +66,15 @@ export function PricingModule() {
       // reservations:view (el calendario la pinta); asignación con settings:edit (config de tarifas).
       router.get('/api/season-assignments', guard('reservations', 'view'), (req: any) => controller.listSeasonAssignments(req))
       router.post('/api/season-assignments', guard('settings', 'edit'), (req: any) => controller.assignSeason(req))
+      // Tarifas por fecha (grilla roomType×ratePlan × rango). Misma sub-clave de plan que la matriz
+      // de temporadas: es la misma función de negocio, con más resolución.
+      router.get('/api/rate-plans', ratesGuard('view'), (req: any) => controller.listRatePlans(req))
+      router.get('/api/rate-overrides', ratesGuard('view'), (req: any) => controller.listRateOverrides(req))
+      router.put('/api/rate-overrides', ratesGuard('edit'), (req: any) => controller.updateRateOverrides(req))
+      router.delete('/api/rate-overrides/:id', ratesGuard('edit'), (req: any) => controller.deleteRateOverride(req))
       router.get('/api/channel-metrics', guard('settings', 'view'), (req: any) => controller.getChannelMetrics(req))
 
-      log.info('Módulo pricing listo (15 endpoints)')
+      log.info('Módulo pricing listo (19 endpoints)')
       return service
     },
   })

@@ -22,6 +22,14 @@ function installFetch(captured: { restrictions?: any }) {
 }
 
 const uc = () => new ChannexUseCase(silentLogger() as any, async () => ({ apiKey: 'key-1', environment: 'staging' } as any))
+
+/**
+ * El entry de la TEMPORADA. El push arranca con una línea base de 500 días desde hoy (test 1 de la
+ * certificación: fuera de las temporadas Channex igual tiene que tener tarifa), así que `values[0]`
+ * es esa línea base, no lo que estos tests miran. Se selecciona por la fecha de la temporada.
+ */
+const seasonEntry = (captured: { restrictions?: any }) =>
+  captured.restrictions.values.find((v: any) => v.date_from === SEASONS[0]!.startDate)
 let restore: () => void
 afterEach(() => restore?.())
 
@@ -34,7 +42,7 @@ describe('pushSeasonalRates — OBP (#404)', () => {
       { roomType: 'Doble', season: 'alta', occupancy: 2, basePrice: 100, percentage: 0 },
     ]
     await uc().pushSeasonalRates(CFG, rates, SEASONS, new Map(), 'per_person')
-    const entry = captured.restrictions.values[0]
+    const entry = seasonEntry(captured)
     expect(entry.rate_plan_id).toBe('rp-1')
     expect(entry.rate).toBeUndefined()                       // NO manda rate plano
     expect(entry.rates).toEqual([{ occupancy: 1, rate: 8000 }, { occupancy: 2, rate: 10000 }])  // centavos
@@ -45,7 +53,7 @@ describe('pushSeasonalRates — OBP (#404)', () => {
     restore = installFetch(captured)
     const rates = [{ roomType: 'Doble', season: 'alta', occupancy: 2, basePrice: 100, percentage: 0 }]
     await uc().pushSeasonalRates(CFG, rates, SEASONS, new Map(), 'per_room')
-    const entry = captured.restrictions.values[0]
+    const entry = seasonEntry(captured)
     expect(entry.rate).toBe(10000)
     expect(entry.rates).toBeUndefined()
   })
@@ -55,6 +63,6 @@ describe('pushSeasonalRates — OBP (#404)', () => {
     restore = installFetch(captured)
     const rates = [{ roomType: 'Doble', season: 'alta', occupancy: 2, basePrice: 100, percentage: 10 }]
     await uc().pushSeasonalRates(CFG, rates, SEASONS, new Map(), 'per_person')
-    expect(captured.restrictions.values[0].rates).toEqual([{ occupancy: 2, rate: 11000 }])  // 100*1.10*100
+    expect(seasonEntry(captured).rates).toEqual([{ occupancy: 2, rate: 11000 }])  // 100*1.10*100
   })
 })

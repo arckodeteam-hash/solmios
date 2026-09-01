@@ -9,7 +9,7 @@ import type {
 import type { CanalesSockets } from './sockets'
 import { ChannexUseCase } from './usecases/channex'
 import { pushAvailabilityForRoomType, pushAvailabilityForRoom, pushAllRoomTypesAvailability, type AvailabilityDeps } from './usecases/availability'
-import { pushFullSyncAri } from './usecases/full-sync'
+import { syncPropertyToChannex, type SyncPropertyHotel } from './usecases/sync-property'
 import { CanalesCrudUseCase } from './usecases/crud'
 import { ChannelApiUseCase } from './usecases/channel-api'
 import { BookingsUseCase } from './usecases/bookings'
@@ -23,6 +23,7 @@ import { getSyncLog as getSyncLogFromTable } from './usecases/sync-log'
 import { pushSeasonalRatesToChannex } from './usecases/push-rates'
 import { readPricingMode } from './usecases/pricing-mode'
 import { readRatePlans } from './usecases/rate-plans'
+import { pushRateOverridesFor, type OverridePushItem, type OverridePushResult } from './usecases/push-overrides'
 
 export class CanalesService {
   private sockets: CanalesSockets = {}
@@ -92,31 +93,18 @@ export class CanalesService {
 
   async getFeed(): Promise<{ pendingBookings: number }> { return this.channex.getFeed() }
 
-  async syncProperty(hotelId: string, hotel: { name: string; currency?: string; email?: string; address?: string; timezone?: string }, rooms: RoomTypeSummary[]): Promise<SyncResultDTO> {
-    const cfg = await this.getConfig(hotelId)
-    const pricingMode = await readPricingMode((m, q) => this.queries.findMany(m, q), hotelId)
-    // Planes del hotel (BAR + B&B por defecto): un rate plan de Channex por (room type × plan) — P5.
-    const ratePlans = await readRatePlans((m, q) => this.queries.findMany(m, q), hotelId)
-    const { result, newPropertyId } = await this.channex.syncProperty(hotelId, hotel, rooms, cfg, pricingMode, ratePlans)
-    if (newPropertyId) await this.upsertConfig(hotelId, { channexPropertyId: newPropertyId, syncEnabled: 1, lastSync: new Date().toISOString() })
-    else await this.upsertConfig(hotelId, { lastSync: new Date().toISOString() })
-
-    // ARI del full sync en exactamente 2 llamadas (test 1 de certificación) — lógica en usecases/full-sync.ts.
-    await pushFullSyncAri({
-      pushAll: () => pushAllRoomTypesAvailability(this.availDeps(), hotelId),
-      pushRates: () => this.pushSeasonalRates(hotelId),
+  async syncProperty(hotelId: string, hotel: SyncPropertyHotel, rooms: RoomTypeSummary[]): Promise<SyncResultDTO> {
+    return syncPropertyToChannex({
+      getConfig: (h) => this.getConfig(h),
+      getPricingMode: (h) => readPricingMode((m, q) => this.queries.findMany(m, q), h),
+      getRatePlans: (h) => readRatePlans((m, q) => this.queries.findMany(m, q), h),
+      channexSync: (h, ht, r, c, mode, plans) => this.channex.syncProperty(h, ht, r, c, mode, plans),
+      upsertConfig: (h, patch) => this.upsertConfig(h, patch),
+      pushAllAvailability: (h) => pushAllRoomTypesAvailability(this.availDeps(), h),
+      pushRates: (h) => this.pushSeasonalRates(h),
       logger: this.logger,
-    }, hotelId)
-
-    if (this.syncLogRepo) try {
-      await this.syncLogRepo.create({
-        id: crypto.randomUUID(), hotelId, channel: 'channex', action: 'sync_property',
-        status: result.success ? 'success' : 'error',
-        details: { roomTypes: result.roomTypes, ratePlans: result.ratePlans, newPropertyId },
-        createdAt: new Date().toISOString(),
-      })
-    } catch {}
-    return result
+      syncLogRepo: this.syncLogRepo,
+    }, hotelId, hotel, rooms)
   }
 
   // Push de availability: recálculo + push. Disparado por reservas/checkin/checkout/bloqueos. Lógica en usecases/availability.ts.
@@ -168,6 +156,15 @@ export class CanalesService {
       getPricingMode: (h) => readPricingMode((m, q) => this.queries.findMany(m, q), h),
       pushSeasonalRates: (c, r, s, a, mode, plans, restrictions) => this.channex.pushSeasonalRates(c, r, s, a, mode, plans, restrictions),
     }, hotelId, channel)
+  }
+
+  /** Push DELTA de la grilla de tarifas por fecha (una llamada, solo lo tocado). Ver push-overrides.ts. */
+  async pushRateOverrides(hotelId: string, items: OverridePushItem[]): Promise<OverridePushResult> {
+    return pushRateOverridesFor({
+      getConfig: (h) => this.getConfig(h),
+      getRatePlans: (h) => readRatePlans((m, q) => this.queries.findMany(m, q), h),
+      push: (cfg, i, plans) => this.channex.pushRateOverrides(cfg, i, plans),
+    }, hotelId, items)
   }
 
   // ─── CRUD delegado a usecase ─────────────────────────────────────────

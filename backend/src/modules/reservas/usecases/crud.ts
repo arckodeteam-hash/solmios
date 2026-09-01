@@ -89,6 +89,8 @@ export async function getReservationById(repo: any, id: string, currentUser: { i
 export interface CreatePricingRepos {
   /** Reprice del alta del panel (`priceFrom:'rates'`): temporada por fecha + grilla de tarifas. */
   seasonAssignmentRepo?: any
+  /** Repo de `RateOverrides` — tarifa por FECHA. Opcional: sin él se cotiza solo por temporada. */
+  rateOverrideRepo?: any
   roomRateRepo?: any
 }
 
@@ -140,14 +142,17 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
   if (dto.priceFrom === 'rates' && pricing?.seasonAssignmentRepo && pricing.roomRateRepo && roomRepo) {
     const room = await roomRepo.findOne({ id: dto.roomId })
     if (room) {
-      const [assignments, rates] = await Promise.all([
+      const [assignments, rates, overrides] = await Promise.all([
         pricing.seasonAssignmentRepo.findMany({ hotelId: dto.hotelId }),
         pricing.roomRateRepo.findMany({ hotelId: dto.hotelId }),
+        // Tarifa por fecha: el mostrador tiene que cotizar el mismo número que se publicó a las OTAs.
+        pricing.rateOverrideRepo ? pricing.rateOverrideRepo.findMany({ hotelId: dto.hotelId }) : Promise.resolve([]),
       ])
       const nightDates = eachDayExclusive(dto.checkIn, dto.checkOut)
       roomSubtotal = sumStayPrice(
         nightDates, baseRatesOnly((rates ?? []) as any[]), String(room.type ?? ''),
         buildSeasonByDate((assignments ?? []) as any[]), guestsOfReservation(dto), Number(room.basePrice) || 0,
+        (overrides ?? []) as any[],
       )
     }
   }
