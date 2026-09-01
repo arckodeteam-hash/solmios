@@ -19,6 +19,7 @@
 // por hotel (no hay JWT: quien llama es el servidor de Channex, no un usuario logueado).
 
 import type { RepositoryAdapter } from 'arckode-framework'
+import { readRatePlans } from '../../../shared/utils/rate-plans'
 import type { CanalesDTO } from '../types'
 
 export interface OpenChannelDeps {
@@ -92,19 +93,25 @@ export async function verifyOpenChannelKey(
 
 /**
  * `mapping_details` — le dice a Channex qué tipos de habitación y "rate plans" tiene el hotel, para
- * que el hotel los mapee en la UI de Channex. Un rate plan "Standard" por cada tipo de habitación:
- * este proyecto no tiene el concepto de múltiples rate plans por tipo (no-reembolsable, flexible…),
- * así que se expone uno solo por tipo, igual que ya se ve en el canal existente de Hotel Boutique
- * Palma ("double Standard", "single Standard"…), que fue mapeado a mano en algún momento con este
- * mismo criterio.
+ * que el hotel los mapee en la UI de Channex.
+ *
+ * Lo que se declara acá TIENE que ser lo que el hotel realmente vende: un rate plan por cada
+ * (tipo de habitación × plan del hotel) — BAR, Bed & Breakfast… — en `per_person`, que es como
+ * tarifa el sistema. Antes se exponía UNO solo por tipo llamado "X Standard" y en `per_room`:
+ * con eso, la mitad de los planes del hotel no tenía contraparte que mapear (por eso un canal
+ * quedaba con 0 rate plans mapeados) y Channex mandaba updates solo de la ocupación máxima.
+ *
+ * Los ids son estables (`${tipo}-${plan}`): son los códigos con los que Channex referencia cada
+ * plan cuando devuelve cambios, así que cambiarlos rompe un mapeo ya hecho.
  */
 export async function buildMappingDetails(
   deps: Pick<OpenChannelDeps, 'findMany'>,
   hotelId: string,
 ): Promise<{ data: { type: string; attributes: { room_types: unknown[] } } }> {
-  const [rooms, hotels] = await Promise.all([
+  const [rooms, hotels, ratePlans] = await Promise.all([
     deps.findMany('Rooms', { hotelId }),
     deps.findMany('Hotels', { id: hotelId }),
+    readRatePlans((model, query) => deps.findMany(model, query), hotelId),
   ])
   const currency = (hotels as any[])?.[0]?.currency || 'USD'
 
@@ -116,17 +123,20 @@ export async function buildMappingDetails(
     if (!cur || capacity > cur.capacity) byType.set(type, { capacity })
   }
 
+  const titleOf = (t: string) => t.charAt(0).toUpperCase() + t.slice(1)
   const room_types = [...byType.entries()].map(([type, { capacity }]) => ({
     id: type,
-    title: type.charAt(0).toUpperCase() + type.slice(1),
-    rate_plans: [{
-      id: `${type}-standard`,
-      title: `${type.charAt(0).toUpperCase() + type.slice(1)} Standard`,
-      sell_mode: 'per_room',
+    title: titleOf(type),
+    rate_plans: ratePlans.map((plan) => ({
+      id: `${type}-${plan.code}`,
+      title: `${titleOf(type)} ${plan.label}`,
+      // El hotel tarifa SIEMPRE por persona: Channex tiene que mandar el precio de cada ocupación,
+      // no solo el de la máxima.
+      sell_mode: 'per_person',
       max_persons: capacity,
       currency,
       read_only: false,
-    }],
+    })),
   }))
 
   return { data: { type: 'mapping_details', attributes: { room_types } } }

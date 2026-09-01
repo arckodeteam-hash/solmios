@@ -127,6 +127,31 @@ export class CanalesController {
     return { status: result ? 200 : 404, body: result || { error: 'Canal no encontrado' } }
   }
 
+  // PUT /api/channels/:id/mapping — mapea los rate plans del hotel contra los del canal.
+  // REEMPLAZA el mapeo completo (semántica de Channex): el body trae la lista entera.
+  async updateMapping(req: HttpRequest) {
+    const hotelId = resolveTenant(req) as string
+    const ratePlans = (req.body as any)?.ratePlans
+    if (!Array.isArray(ratePlans)) return { status: 400, body: { error: 'ratePlans debe ser un array' } }
+    this.logger.info('PUT /api/channels/:id/mapping', { id: req.params.id, hotelId, ratePlans: ratePlans.length })
+    const result = await this.service.updateChannelMapping(hotelId, req.params.id, ratePlans)
+    return { status: result.success ? 200 : 422, body: result }
+  }
+
+  // GET /api/channels/:id/readiness — qué falta para poder activar el canal.
+  async channelReadiness(req: HttpRequest) {
+    const hotelId = resolveTenant(req) as string
+    return { status: 200, body: await this.service.checkChannelReadiness(hotelId, req.params.id) }
+  }
+
+  // POST /api/channels/:id/activate — verifica primero y activa.
+  async activate(req: HttpRequest) {
+    const hotelId = resolveTenant(req) as string
+    this.logger.info('POST /api/channels/:id/activate', { id: req.params.id, hotelId })
+    const result = await this.service.activateChannel(hotelId, req.params.id)
+    return { status: result.success ? 200 : 422, body: result }
+  }
+
   // ─── CRUD admin sobre la config ──────────────────────────────────────
   async index(req: HttpRequest) {
     const result = await this.service.list(req.query as any, req.user as any)

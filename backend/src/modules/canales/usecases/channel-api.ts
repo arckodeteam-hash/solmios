@@ -28,4 +28,19 @@ export class ChannelApiUseCase {
   async getChannelDetail(cfg: any, channelId: string): Promise<any | null> {
     return this.channex.getChannelDetail(cfg, channelId)
   }
+
+  /** Reemplaza el mapeo de rate plans de un canal existente. Semántica de REEMPLAZO — ver channex.ts. */
+  async updateChannelMapping(cfg: any, channelId: string, ratePlans: any[]): Promise<{ success: boolean; mapped: number; message: string }> {
+    return this.channex.updateChannelMapping(cfg, channelId, ratePlans)
+  }
+
+  /** Qué falta para poder activar el canal. */
+  async checkChannelReadiness(cfg: any, channelId: string): Promise<{ ready: boolean; issues: string[] }> {
+    return this.channex.checkChannelReadiness(cfg, channelId)
+  }
+
+  /** Verifica y activa. */
+  async activateChannel(cfg: any, channelId: string): Promise<{ success: boolean; message: string; issues: string[] }> {
+    return this.channex.activateChannel(cfg, channelId)
+  }
 }

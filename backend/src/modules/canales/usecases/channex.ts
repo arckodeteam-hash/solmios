@@ -568,6 +568,82 @@ export class ChannexUseCase {
     return Array.isArray(data) ? data.map((g: any) => ({ id: g.id, name: g.attributes?.name || g.name || g.id })) : []
   }
 
+  /**
+   * Reemplaza el mapeo de rate plans de un canal YA CREADO (`PUT /channels/:id`).
+   *
+   * Es lo que faltaba para que un canal con "Rate Plans Mapeados (0)" se pudiera arreglar desde
+   * el panel: hasta ahora solo se podía crear un canal NUEVO con su mapeo, y un canal existente
+   * (creado a mano en Channex, o al que se le agregaron rate plans después) no tenía arreglo.
+   *
+   * Ojo con la semántica de Channex, que es de REEMPLAZO: el array que se manda pasa a ser el
+   * mapeo completo — lo que no esté en él se borra. Por eso el caller manda SIEMPRE la lista
+   * entera, no un delta.
+   */
+  async updateChannelMapping(
+    cfg: CanalesDTO | undefined,
+    channelId: string,
+    ratePlans: Array<{ ratePlanId: string; roomTypeCode: string | number; ratePlanCode: string | number; occupancy?: number; pricingType?: string; primaryOcc?: boolean }>,
+  ): Promise<{ success: boolean; mapped: number; message: string }> {
+    const key = this.resolveKey(cfg)
+    const res = await this.channexReq(key, 'PUT', `/channels/${channelId}`, {
+      channel: {
+        rate_plans: ratePlans.map((rp) => ({
+          rate_plan_id: rp.ratePlanId,
+          settings: {
+            room_type_code: rp.roomTypeCode,
+            rate_plan_code: rp.ratePlanCode,
+            ...(rp.occupancy ? { occupancy: rp.occupancy } : {}),
+            ...(rp.pricingType ? { pricing_type: rp.pricingType } : {}),
+            ...(rp.primaryOcc !== undefined ? { primary_occ: rp.primaryOcc } : {}),
+          },
+        })),
+      },
+    })
+    if (!res.ok) {
+      const err = (res.data as any)?.errors
+      return { success: false, mapped: 0, message: err?.title || err?.details?.join(', ') || 'Channex rechazó el mapeo' }
+    }
+    return { success: true, mapped: ratePlans.length, message: `${ratePlans.length} rate plan(s) mapeados` }
+  }
+
+  /**
+   * `POST /channels/:id/check_readiness` — qué falta para poder activar el canal.
+   *
+   * La doc lo pone ANTES de `activate`. Sin esto el activate salía a ciegas y, si fallaba, el
+   * usuario solo veía "pendiente de activación" sin ningún motivo.
+   */
+  async checkChannelReadiness(cfg: CanalesDTO | undefined, channelId: string): Promise<{ ready: boolean; issues: string[] }> {
+    const key = this.resolveKey(cfg)
+    const res = await this.channexReq(key, 'POST', `/channels/${channelId}/check_readiness`, {})
+    const payload = (res.data as any)?.data?.attributes ?? (res.data as any)?.data ?? res.data
+    // Channex devuelve la lista de problemas; su forma exacta varía por adaptador, así que se
+    // normaliza a strings sin asumir una estructura fija.
+    const raw = payload?.errors ?? payload?.issues ?? payload?.problems ?? []
+    const issues = (Array.isArray(raw) ? raw : [raw])
+      .filter(Boolean)
+      .map((i: any) => typeof i === 'string' ? i : (i?.title || i?.message || JSON.stringify(i)))
+    if (!res.ok) {
+      const err = (res.data as any)?.errors
+      return { ready: false, issues: issues.length ? issues : [err?.title || 'Channex no pudo verificar el canal'] }
+    }
+    return { ready: issues.length === 0, issues }
+  }
+
+  /** `POST /channels/:id/activate`. Verifica primero: un activate a ciegas no dice por qué falla. */
+  async activateChannel(cfg: CanalesDTO | undefined, channelId: string): Promise<{ success: boolean; message: string; issues: string[] }> {
+    const readiness = await this.checkChannelReadiness(cfg, channelId)
+    if (!readiness.ready) {
+      return { success: false, message: 'El canal todavía no puede activarse', issues: readiness.issues }
+    }
+    const key = this.resolveKey(cfg)
+    const res = await this.channexReq(key, 'POST', `/channels/${channelId}/activate`, {})
+    if (!res.ok) {
+      const err = (res.data as any)?.errors
+      return { success: false, message: err?.title || 'Channex rechazó la activación', issues: [] }
+    }
+    return { success: true, message: 'Canal activado', issues: [] }
+  }
+
   async createOTAChannel(cfg: CanalesDTO | undefined, dto: OTAChannelCreateDTO): Promise<OTAChannelResultDTO> {
     const key = this.resolveKey(cfg)
     const steps = { test: false, mapping: false, create: false, activate: false }
@@ -655,7 +731,9 @@ export class ChannexUseCase {
         const rtRes = await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${cfg.channexPropertyId}`)
         rps.forEach((rp: any) => {
           const a = rp.attributes || rp
-          const rt = (rtRes.data?.data || []).find((r: any) => (r.attributes || r).id === a.room_type_id)
+          // El id del room type viene al NIVEL RAÍZ del recurso, no dentro de `attributes`:
+          // `(r.attributes || r).id` nunca matcheaba y el título salía siempre '—' en el panel.
+          const rt = (rtRes.data?.data || []).find((r: any) => r.id === a.room_type_id)
           a.room_type_title = (rt?.attributes || rt)?.title || '—'
         })
       } catch {}
@@ -671,9 +749,13 @@ export class ChannexUseCase {
       allRatePlans: rps.map((rp: any) => {
         const a = rp.attributes || rp
         const opts = a.options || []
+        // Ocupación PRIMARIA (la que el canal usa de referencia), no la primera del array: en
+        // per_person `options[0]` es la de 1 persona.
+        const primary = opts.find((o: any) => o.is_primary) ?? opts[opts.length - 1] ?? opts[0]
         return {
           id: rp.id, title: a.title, roomTypeId: a.room_type_id,
-          roomTypeTitle: a.room_type_title || '—', occupancy: opts[0]?.occupancy || 2,
+          roomTypeTitle: a.room_type_title || '—', occupancy: primary?.occupancy || 2,
+          sellMode: a.sell_mode || 'per_person',
         }
       }),
     }

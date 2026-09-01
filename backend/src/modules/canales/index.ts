@@ -32,7 +32,7 @@ export function CanalesModule() {
       name: 'canales',
       version: '1.0.0',
       description: 'Channel manager Channex',
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'channels', 'feed', 'sync', 'syncHotel', 'autoProvision', 'pushAvailability', 'pushAvailabilityByRoom', 'testConnection', 'mappingDetails', 'groups', 'connectOTA', 'deactivateChannel', 'pushRateOverrides'],
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'channels', 'feed', 'sync', 'syncHotel', 'autoProvision', 'pushAvailability', 'pushAvailabilityByRoom', 'testConnection', 'mappingDetails', 'groups', 'connectOTA', 'deactivateChannel', 'pushRateOverrides', 'updateChannelMapping', 'checkChannelReadiness', 'activateChannel'],
       events: ['onCanalesCreated', 'onCanalesUpdated', 'onCanalesDeleted', 'onCanalesSynced'],
       tables: ['canales_config'],
       dependencies: [],
@@ -84,6 +84,11 @@ export function CanalesModule() {
       router.get('/api/channels/groups', guard('channel-manager', 'view'), (req) => controller.groups(req))
       router.post('/api/channels/connect', guard('channel-manager', 'edit'), (req) => controller.connectOTA(req))
       router.post('/api/channels/:id/deactivate', guard('channel-manager', 'edit'), (req) => controller.deactivate(req))
+      // Mapeo de rate plans de un canal YA CREADO. Sin esto un canal con "Rate Plans Mapeados (0)"
+      // no tenía arreglo desde el panel: solo se podía crear uno nuevo con su mapeo.
+      router.put('/api/channels/:id/mapping', guard('channel-manager', 'edit'), (req) => controller.updateMapping(req))
+      router.get('/api/channels/:id/readiness', guard('channel-manager', 'view'), (req) => controller.channelReadiness(req))
+      router.post('/api/channels/:id/activate', guard('channel-manager', 'edit'), (req) => controller.activate(req))
       router.get('/api/channels/:id/detail', guard('channel-manager', 'view'), (req) => controller.channelDetail(req))
 
       router.get('/api/channels/bookings', guard('channel-manager', 'view'), (req) => controller.bookings(req))

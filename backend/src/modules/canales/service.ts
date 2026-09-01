@@ -134,6 +134,10 @@ export class CanalesService {
   async listGroups(hotelId: string): Promise<GroupDTO[]> { return this.channelApi.listGroups(await this.getConfig(hotelId)) }
   async createOTAChannel(hotelId: string, dto: OTAChannelCreateDTO): Promise<OTAChannelResultDTO> { return this.channelApi.createOTAChannel(await this.getConfig(hotelId), dto) }
   async deactivateChannel(hotelId: string, channelId: string): Promise<{ success: boolean; message: string }> { return this.channelApi.deactivateChannel(await this.getConfig(hotelId), channelId) }
+  /** Mapeo de rate plans de un canal EXISTENTE (reemplaza el mapeo completo — ver channex.ts). */
+  async updateChannelMapping(hotelId: string, channelId: string, ratePlans: any[]): Promise<{ success: boolean; mapped: number; message: string }> { return this.channelApi.updateChannelMapping(await this.getConfig(hotelId), channelId, ratePlans) }
+  async checkChannelReadiness(hotelId: string, channelId: string): Promise<{ ready: boolean; issues: string[] }> { return this.channelApi.checkChannelReadiness(await this.getConfig(hotelId), channelId) }
+  async activateChannel(hotelId: string, channelId: string): Promise<{ success: boolean; message: string; issues: string[] }> { return this.channelApi.activateChannel(await this.getConfig(hotelId), channelId) }
 
   // ─── Bookings e iFrame (delegan al usecase, igual que el bloque de arriba) ───────────
   async getBookings(hotelId: string): Promise<BookingRevisionDTO[]> { return this.bookings.getBookings(await this.getConfig(hotelId)) }

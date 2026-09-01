@@ -101,7 +101,10 @@ describe('verifyOpenChannelKey', () => {
 })
 
 describe('buildMappingDetails', () => {
-  it('agrupa las habitaciones por tipo y arma un rate plan "Standard" por tipo', async () => {
+  // Lo que se declara acá tiene que ser lo que el hotel VENDE. Antes se exponía un solo plan
+  // "X Standard" en per_room: la mitad de los planes del hotel no tenía contraparte que mapear
+  // (de ahí los canales con "Rate Plans Mapeados (0)") y Channex mandaba solo la ocupación máxima.
+  it('arma un rate plan por cada (tipo × plan del hotel), en per_person', async () => {
     const findMany = async (model: string) => {
       if (model === 'Rooms') return [
         { type: 'double', capacity: 2 },
@@ -109,16 +112,18 @@ describe('buildMappingDetails', () => {
         { type: 'suite', capacity: 4 },
       ]
       if (model === 'Hotels') return [{ id: 'h1', currency: 'USD' }]
-      return []
+      return []   // sin Configuration → planes por defecto: BAR + Bed & Breakfast
     }
     const result = await buildMappingDetails({ findMany }, 'h1')
     const types = result.data.attributes.room_types as any[]
     expect(types).toHaveLength(2)
     const double = types.find((t) => t.id === 'double')
     expect(double.title).toBe('Double')
+    expect(double.rate_plans.map((p: any) => p.id)).toEqual(['double-bar', 'double-bb'])
     expect(double.rate_plans[0]).toMatchObject({
-      id: 'double-standard', title: 'Double Standard', sell_mode: 'per_room', max_persons: 2, currency: 'USD', read_only: false,
+      id: 'double-bar', title: 'Double BAR', sell_mode: 'per_person', max_persons: 2, currency: 'USD', read_only: false,
     })
+    expect(double.rate_plans[1].title).toBe('Double Bed & Breakfast')
   })
 
   it('usa la capacidad MÁXIMA encontrada entre habitaciones del mismo tipo', async () => {

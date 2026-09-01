@@ -100,6 +100,19 @@ export interface OTAConnectResult {
   steps?: { test: boolean; mapping: boolean; create: boolean; activate: boolean }
 }
 
+/** Una fila del mapeo: un rate plan NUESTRO contra el room/rate que expone el canal. */
+export interface ChannelRatePlanMapping {
+  /** UUID del rate plan de la property en Channex. */
+  ratePlanId: string
+  /** Código de la habitación DEL CANAL (lo devuelve mapping_details). */
+  roomTypeCode: string | number
+  /** Código de la tarifa DEL CANAL. */
+  ratePlanCode: string | number
+  occupancy?: number
+  pricingType?: string
+  primaryOcc?: boolean
+}
+
 export const ChannelService = {
   async status(hotelId?: string): Promise<ChannelStatus> {
     const query = hotelId ? `?hotelId=${hotelId}` : ''
@@ -154,6 +167,24 @@ export const ChannelService = {
 
   async detail(channelId: string): Promise<any> {
     return http.get(`/channels/${channelId}/detail`)
+  },
+
+  /**
+   * Mapeo de rate plans de un canal YA CREADO. REEMPLAZA el mapeo completo: hay que mandar la
+   * lista entera, no un delta — lo que no vaya en el array, Channex lo borra.
+   */
+  async updateMapping(channelId: string, ratePlans: ChannelRatePlanMapping[]): Promise<{ success: boolean; mapped: number; message: string }> {
+    return http.put(`/channels/${channelId}/mapping`, { ratePlans })
+  },
+
+  /** Qué falta para poder activar el canal (lo que Channex reporta en check_readiness). */
+  async readiness(channelId: string): Promise<{ ready: boolean; issues: string[] }> {
+    return http.get(`/channels/${channelId}/readiness`)
+  },
+
+  /** Verifica y activa. Si no está listo, devuelve los motivos en `issues`. */
+  async activate(channelId: string): Promise<{ success: boolean; message: string; issues: string[] }> {
+    return http.post(`/channels/${channelId}/activate`, {})
   },
 
   async syncLog(hotelId?: string): Promise<any> {
