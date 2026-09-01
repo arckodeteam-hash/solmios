@@ -105,7 +105,7 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       const seasonsRepo = new OrmRepository<any>(orm, 'Seasons')
       const queries = new ReservasQueries(orm)
       const service = new ReservasService(repo, log, cache, userRepo, auth, guestRepo, roomRepo, hotelRepo, queries, blockRepo, dateRestrictionRepo, policyRepo, groupRepo, seasonAssignmentRepo, roomRateRepo, opts.storage, seasonsRepo)
-      const controller = new ReservasController(service, log, companionsRepo, addonsRepo, repo, userRepo, auth, orm, null, messageLogRepo, roomRepo, hotelRepo)
+      const controller = new ReservasController(service, log, companionsRepo, addonsRepo, repo, userRepo, auth, orm, null, messageLogRepo, roomRepo, hotelRepo, guestRepo)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
       const configRepo = new OrmRepository<any>(orm, 'Configuration')

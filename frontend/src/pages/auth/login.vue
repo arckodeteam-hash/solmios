@@ -67,9 +67,17 @@
               <!-- autocomplete="current-password": es el login real, el gestor de contraseñas
                    TIENE que poder ofrecer la credencial guardada. Acá "new-password" rompería
                    el acceso de todos los usuarios (GH-32). -->
-              <input id="auth-login-password" aria-required="true" v-model="password" type="password" placeholder="Contraseña" data-testid="login-password"
-                autocomplete="current-password" name="password"
-                class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
+              <div class="relative">
+                <input id="auth-login-password" aria-required="true" v-model="password" :type="showPassword ? 'text' : 'password'" placeholder="Contraseña" data-testid="login-password"
+                  autocomplete="current-password" name="password"
+                  class="w-full h-11 pl-4 pr-11 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
+                <button type="button" @click="showPassword = !showPassword"
+                  :aria-label="showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
+                  :title="showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
+                  class="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted hover:text-navy cursor-pointer"
+                  v-html="showPassword ? ICON_EYE_OFF : ICON_EYE">
+                </button>
+              </div>
             </div>
 
             <!-- Cuenta bloqueada por la suscripción: no alcanza con el error,
@@ -139,6 +147,8 @@ const ICON_BUILDING = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none
 const ICON_GLOBE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0 0c2.25 0 4-4 4-9s-1.75-9-4-9-4 4-4 9 1.75 9 4 9ZM3.5 9h17M3.5 15h17"/></svg>'
 const ICON_WALLET = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-1.5M21 12h-4a1.5 1.5 0 0 0 0 3h4v-3Z"/></svg>'
 const ICON_CHART = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M8 17V10m5 7V6m5 11v-4"/></svg>'
+const ICON_EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></svg>'
+const ICON_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88"/></svg>'
 
 const slides = [
   { icon: ICON_BUILDING, title: 'Todo tu hotel, en un solo panel', text: 'Reservas, habitaciones, huéspedes y facturación conectados en tiempo real.', image: 'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80' },
@@ -173,6 +183,7 @@ const auth = useAuthStore()
 // ya llenan y envían por su cuenta — no hace falta ningún default acá.
 const email = ref('')
 const password = ref('')
+const showPassword = ref(false)
 const error = ref('')
 /** El corte por suscripción se resuelve contratando, no reintentando la clave. */
 const needsPlan = ref(false)

@@ -39,6 +39,7 @@ export class ReservasService {
   private messageLogRepo: RepositoryAdapter<any> | null = null
   setEmailDeps(es: EmailSender, r: RepositoryAdapter<any>): void { this.emailSender = es; this.messageLogRepo = r }
   private notifyDeps = () => ({ emailSender: this.emailSender, messageLogRepo: this.messageLogRepo, guestRepo: this.guestRepo, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, logger: this.logger })
+  getNotifyDeps() { return this.notifyDeps() } // deps reales (post setEmailDeps) para checkin/checkout
 
   private orchestrationDeps: { // cross-module deps (set from composition-root)
     pushAvailabilityToChannex?: (hotelId: string, roomId: string) => void
