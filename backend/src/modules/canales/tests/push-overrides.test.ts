@@ -216,3 +216,51 @@ describe('ChannexUseCase.pushRateOverrides — una sola llamada HTTP', () => {
     await expect(uc().pushRateOverrides(CFG, [cell({ rate: 333 })])).rejects.toThrow(/Channex rechazó los overrides/)
   })
 })
+
+describe('el push CONSOLIDADO no revierte las tarifas por fecha', () => {
+  let restore: (() => void) | undefined
+  afterEach(() => { restore?.(); resetChannexHttpForTests() })
+
+  /** Property con un solo room type y un solo rate plan (BAR), para leer el payload sin ruido. */
+  function installFetch(captured: { restrictions?: any }) {
+    const orig = globalThis.fetch
+    globalThis.fetch = (async (url: string, opts: any) => {
+      const u = String(url)
+      const json = (data: any) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } })
+      if (u.includes('/room_types')) return json({ data: [{ id: 'rt-1', attributes: { title: 'Double' } }] })
+      if (u.includes('/rate_plans')) return json({ data: [{ id: 'rp-bar', attributes: { title: 'Double BAR', room_type_id: 'rt-1' } }] })
+      if (u.includes('/restrictions')) { captured.restrictions = JSON.parse(opts.body); return json({ data: [] }) }
+      return json({ data: [] })
+    }) as any
+    return () => { globalThis.fetch = orig }
+  }
+
+  const CFG = { channexPropertyId: 'prop-1', channexApiKey: 'k' } as any
+  const SEASONS = [{ name: 'alta', startDate: '2099-06-01', endDate: '2099-06-30' }]
+  const RATES = [{ roomType: 'Double', season: 'alta', occupancy: 2, basePrice: 100, percentage: 0 }]
+
+  it('la tarifa por fecha viaja en el MISMO payload y DESPUÉS de la temporada (Channex aplica el último)', async () => {
+    const captured: { restrictions?: any } = {}
+    restore = installFetch(captured)
+    const uc = new ChannexUseCase(silentLogger() as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any)
+    await uc.pushSeasonalRates(CFG, RATES, SEASONS, new Map(), DEFAULT_RATE_PLANS, [], [
+      { roomType: 'Double', ratePlan: 'bar', dateFrom: '2099-06-15', dateTo: '2099-06-15', rate: 333 },
+    ])
+
+    const values = captured.restrictions!.values
+    const idxTemporada = values.findIndex((v: any) => v.date_from === '2099-06-01')
+    const idxOverride = values.findIndex((v: any) => v.date_from === '2099-06-15')
+    expect(idxTemporada).toBeGreaterThanOrEqual(0)
+    expect(idxOverride).toBeGreaterThan(idxTemporada)   // el override GANA: sale al final
+    expect(values[idxOverride].rate).toBe(33300)
+  })
+
+  it('sin tarifas por fecha, el payload es el de siempre', async () => {
+    const captured: { restrictions?: any } = {}
+    restore = installFetch(captured)
+    const uc = new ChannexUseCase(silentLogger() as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any)
+    await uc.pushSeasonalRates(CFG, RATES, SEASONS, new Map(), DEFAULT_RATE_PLANS, [])
+    // Línea base de 500 días + la temporada. Ninguna entrada suelta de más.
+    expect(captured.restrictions!.values).toHaveLength(2)
+  })
+})

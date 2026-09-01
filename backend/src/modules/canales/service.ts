@@ -151,7 +151,7 @@ export class CanalesService {
   async pushSeasonalRates(hotelId: string, channel?: string): Promise<PushRatesResultDTO> {
     return pushSeasonalRatesToChannex({
       getConfig: (h) => this.getConfig(h), findMany: (m, q) => this.queries.findMany(m, q),
-      pushSeasonalRates: (c, r, s, a, plans, restrictions) => this.channex.pushSeasonalRates(c, r, s, a, plans, restrictions),
+      pushSeasonalRates: (c, r, s, a, plans, restrictions, overrides) => this.channex.pushSeasonalRates(c, r, s, a, plans, restrictions, overrides),
     }, hotelId, channel)
   }
 

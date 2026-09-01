@@ -1,5 +1,6 @@
 import type { CanalesDTO, PushRatesResultDTO, DateRange } from '../types'
 import { readRatePlans, type RatePlanDef } from './rate-plans'
+import type { OverridePushItem } from './push-overrides'
 
 /** Restricciones por (roomType, season) — la capa de closures/through que edita PUT /api/rate-restrictions. */
 export interface SeasonRestriction {
@@ -34,6 +35,7 @@ interface PushRatesDeps {
     assignedRanges: Map<string, DateRange[]>,
     ratePlans: RatePlanDef[],
     restrictions: SeasonRestriction[],
+    overrides: OverridePushItem[],
   ) => Promise<PushRatesResultDTO>
 }
 
@@ -91,7 +93,7 @@ export async function pushSeasonalRatesToChannex(
   hotelId: string,
   channel?: string,
 ): Promise<PushRatesResultDTO> {
-  const [cfg, allRates, seasons, assignments, ratePlans, restrictions] = await Promise.all([
+  const [cfg, allRates, seasons, assignments, ratePlans, restrictions, overrides] = await Promise.all([
     deps.getConfig(hotelId),
     deps.findMany('RoomRates', { hotelId }),
     deps.findMany('Seasons', { hotelId }),
@@ -101,6 +103,9 @@ export async function pushSeasonalRatesToChannex(
     readRatePlans(deps.findMany, hotelId),
     // Closures/through por (roomType, season) — tabla rate_restrictions — P4.
     deps.findMany('RateRestrictions', { hotelId }),
+    // Tarifas por FECHA: viajan en el MISMO payload, al final, para que no las pise el
+    // consolidado. Ver la nota de `overrides` en `channex.pushSeasonalRates`.
+    deps.findMany('RateOverrides', { hotelId }),
   ])
   const assignedRanges = groupAssignmentsIntoRanges(assignments as Array<{ date: string; season: string }>)
   const wanted = channel || ''
@@ -125,5 +130,5 @@ export async function pushSeasonalRatesToChannex(
     roomType: r.roomType, season: r.season, occupancy: Number(r.occupancy) || 0,
     basePrice: r.basePrice, percentage: r.percentage, closed: r.closed, minStay: r.minStay, maxStay: r.maxStay,
   }))
-  return deps.pushSeasonalRates(cfg, rates, seasons, assignedRanges, ratePlans, restrictions as SeasonRestriction[])
+  return deps.pushSeasonalRates(cfg, rates, seasons, assignedRanges, ratePlans, restrictions as SeasonRestriction[], overrides as OverridePushItem[])
 }

@@ -266,13 +266,23 @@ export class ChannexUseCase {
     assignedRanges: Map<string, DateRange[]> = new Map(),
     ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS,
     restrictions: Array<{ roomType: string; season: string; cta?: number; ctd?: number; closedToArrival?: number; closedToDeparture?: number; minStayThrough?: number }> = [],
+    /**
+     * Tarifas por FECHA (`rate_overrides`). Van en el MISMO payload y AL FINAL, después de la
+     * línea base y de las temporadas: Channex aplica los entries FIFO y gana el último.
+     *
+     * Sin esto el push consolidado revertía en Channex todo override ya publicado — el hotel
+     * cargaba 333 el 22/11, lo veía en el panel, y el siguiente cambio de temporada lo devolvía
+     * al precio de temporada en la OTA sin que nada lo avisara. Dos fuentes de verdad.
+     */
+    overrides: OverridePushItem[] = [],
   ): Promise<PushRatesResultDTO> {
     const empty = (): PushRatesResultDTO => ({ pushed: 0, skipped: 0, notConnected: false, seasonsWithoutDates: [], expiredSeasons: [], roomTypesWithoutRatePlan: [] })
     if (!cfg?.channexPropertyId) return { ...empty(), skipped: rates.length, notConnected: true }
     const key = this.resolveKey(cfg)
     const pid = cfg.channexPropertyId
     // UUIDs por mapping persistido si existe (P6, sin GETs); si no, GET + match por título.
-    const { rtIdByTitle, rpsByRt } = await this.resolveAriTargets(cfg)
+    const targets = await this.resolveAriTargets(cfg)
+    const { rtIdByTitle, rpsByRt } = targets
     const seasonByName = new Map(seasons.map((s) => [s.name, s]))
     // Closures/through por (roomType|season) — la capa que edita PUT /api/rate-restrictions (P4).
     const restrictionBy = new Map(restrictions.map((r) => [`${String(r.roomType).toLowerCase()}|${r.season}`, r]))
@@ -385,6 +395,11 @@ export class ChannexUseCase {
       }
       if (queued === 0) { skipped++; expiredSeasons.add(seasonLabel(head.season)) }
     }
+    // Las tarifas por fecha, al final del payload: son la capa más específica y tienen que ganar.
+    if (overrides.length) {
+      values.push(...buildOverrideValues(overrides, pid, targets, ratePlans, today).values)
+    }
+
     const reasons = {
       seasonsWithoutDates: [...seasonsWithoutDates],
       expiredSeasons: [...expiredSeasons],
