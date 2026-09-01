@@ -250,13 +250,15 @@ export async function createPublicBookingDirect(
   // Las tres lecturas son sobre modelos COMPARTIDOS (`shared/models.ts`) — mismo criterio de
   // acceso que `Rooms`/`Reservations` acá arriba, sin import cross-module.
   const stayNightDates = stayNights(checkIn, checkOut)
-  const [rawBlocks, rawRates, rawAssignments, rawOverrides] = await Promise.all([
+  const [rawBlocks, rawRates, rawAssignments, rawOverrides, rawSeasons] = await Promise.all([
     orm.findMany('RoomBlocks', { hotelId }) as Promise<any[]>,
     orm.findMany('RoomRates', { hotelId }) as Promise<any[]>,
     orm.findMany('SeasonAssignments', { hotelId }) as Promise<any[]>,
     // Tarifas por fecha: la capa que pisa a la temporada. Sin esto la web propia cobraría el
     // precio de temporada por una noche que el hotel ya re-tarifó (y publicó a las OTAs).
     orm.findMany('RateOverrides', { hotelId }) as Promise<any[]>,
+    // Catálogo de temporadas: su RANGO también asigna temporada, no solo los días pintados.
+    orm.findMany('Seasons', { hotelId }) as Promise<any[]>,
   ])
   const blockedIds = blockedRoomIds(rawBlocks ?? [], stayNightDates)
   const closedTypes = closedRoomTypes(rawRates ?? [], rawAssignments ?? [], stayNightDates, Number(adults) || 2)
@@ -353,7 +355,7 @@ export async function createPublicBookingDirect(
   // `fallbackNightly` sale de la habitación YA RESUELTA (la libre más barata del tipo), que es la
   // misma que se le cotizó al huésped: `/rates` publica el `min(basePrice)` del tipo.
   const baseRates = baseRatesOnly(rawRates ?? [])
-  const seasonByDate = buildSeasonByDate(rawAssignments ?? [])
+  const seasonByDate = buildSeasonByDate(rawAssignments ?? [], rawSeasons ?? [], stayNightDates)
   // Misma ocupación y mismo default (2) que `/rates` y que el `closedRoomTypes` de arriba.
   const occupancy = Number(adults) || 2
   const fallbackNightly = Number(room.basePrice) || 0

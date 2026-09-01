@@ -109,6 +109,8 @@ export class BookingengineController {
     private readonly mealPlanRepo?: RepositoryAdapter<MealPlanDTO>,
     /** `RateOverrides` — tarifa por FECHA. Al final, mismo motivo que el resto de los deps nuevos. */
     private readonly rateOverridesRepo?: RepositoryAdapter<any>,
+    /** Catálogo `Seasons` — el RANGO de cada temporada. Al final, mismo motivo. */
+    private readonly seasonsCatalogRepo?: RepositoryAdapter<any>,
   ) {}
 
   /** Deps para los usecases de upsells. Tirar si no están cableadas (claramente un bug de wiring). */
@@ -363,7 +365,7 @@ export class BookingengineController {
         // sin ellos (min(basePrice) × noches) el calendario anunciaría un precio y el buscador
         // otro para las mismas fechas en cualquier hotel con temporadas cargadas.
         seasonAssignments: this.seasonAssignmentsRepo, roomRates: this.roomRatesRepo,
-        rateOverrides: this.rateOverridesRepo,
+        rateOverrides: this.rateOverridesRepo, seasons: this.seasonsCatalogRepo,
       },
       String(req.params?.slug || ''),
       {
@@ -397,6 +399,7 @@ export class BookingengineController {
         seasonAssignments: this.seasonAssignmentsRepo,
         roomRates: this.roomRatesRepo,
         rateOverrides: this.rateOverridesRepo,
+        seasons: this.seasonsCatalogRepo,
         config: this.configRepo,
         bookingConfig: this.bookingConfigRepo,
         cache: this.cache,

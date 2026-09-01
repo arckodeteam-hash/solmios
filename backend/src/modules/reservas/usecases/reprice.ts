@@ -29,6 +29,8 @@ export interface RepriceRepos {
   roomRateRepo?: any
   /** Repo de `RateOverrides` — tarifa por FECHA, pisa a la temporada. Opcional (misma degradación). */
   rateOverrideRepo?: any
+  /** Catálogo `Seasons` — su rango también asigna temporada. Opcional (misma degradación). */
+  seasonsRepo?: any
 }
 
 export interface RepriceParams {
@@ -60,12 +62,13 @@ export async function repriceStay(repos: RepriceRepos, params: RepriceParams): P
   if (!repos.seasonAssignmentRepo || !repos.roomRateRepo) return { total: fallbackTotal, fromRates: false }
 
   try {
-    const [assignments, rates, overrides] = await Promise.all([
+    const [assignments, rates, overrides, seasons] = await Promise.all([
       repos.seasonAssignmentRepo.findMany({ hotelId: params.hotelId }),
       repos.roomRateRepo.findMany({ hotelId: params.hotelId }),
       repos.rateOverrideRepo ? repos.rateOverrideRepo.findMany({ hotelId: params.hotelId }) : Promise.resolve([]),
+      repos.seasonsRepo ? repos.seasonsRepo.findMany({ hotelId: params.hotelId }) : Promise.resolve([]),
     ])
-    const seasonByDate = buildSeasonByDate((assignments ?? []) as any[])
+    const seasonByDate = buildSeasonByDate((assignments ?? []) as any[], (seasons ?? []) as any[], nightDates)
     const baseRates = baseRatesOnly((rates ?? []) as any[])
     const total = sumStayPrice(nightDates, baseRates, params.roomType, seasonByDate, params.guests, params.fallbackPrice, (overrides ?? []) as any[])
     return { total, fromRates: true }

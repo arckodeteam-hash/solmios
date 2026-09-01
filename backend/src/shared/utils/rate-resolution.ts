@@ -30,9 +30,48 @@
 
 import { round2 } from './money'
 
-/** `date (YYYY-MM-DD) → season`. Última fila gana si hubiera duplicados (no debería haberlos). */
-export function buildSeasonByDate(assignments: any[]): Map<string, string> {
+/** Una temporada del catálogo con su rango propio (`seasons.startDate` / `endDate`). */
+export interface SeasonRange {
+  name: string
+  startDate?: string | null
+  endDate?: string | null
+}
+
+/**
+ * `date (YYYY-MM-DD) → season`, con las DOS formas de asignar temporada que tiene el sistema:
+ *
+ *  1. el **rango del catálogo** (`seasons.startDate`/`endDate`) — cubre el año de una;
+ *  2. los **días pintados en el planning** (`season_assignments`) — la excepción puntual.
+ *
+ * Los pintados van DESPUÉS y pisan al rango: es la misma precedencia que el push usa contra
+ * Channex (el catálogo sale primero en el payload y los días pintados al final, y Channex aplica
+ * el último). Sin esto las dos capas divergían: cargar el rango de una temporada publicaba su
+ * precio a las OTAs pero el motor propio seguía cotizando el fallback `rooms.basePrice`, porque
+ * acá solo se miraban los días pintados. Un hotel con temporadas por rango vendía a un precio en
+ * Booking y a otro en su propia web.
+ *
+ * `dates` acota el trabajo a las noches consultadas: sin ellas no se expanden los rangos (un
+ * caller que solo tenga los días pintados sigue funcionando igual que antes).
+ */
+export function buildSeasonByDate(
+  assignments: any[],
+  seasons: SeasonRange[] = [],
+  dates: string[] = [],
+): Map<string, string> {
   const out = new Map<string, string>()
+  const ranged = seasons.filter((s) => s?.name && s.startDate && s.endDate)
+  for (const date of dates) {
+    // El rango MÁS CORTO que contenga la fecha: si dos se solapan, gana el más específico
+    // (mismo criterio que las tarifas por fecha).
+    let best: SeasonRange | null = null
+    for (const s of ranged) {
+      if (String(s.startDate) > date || String(s.endDate!) < date) continue
+      if (!best || Date.parse(s.endDate!) - Date.parse(s.startDate!) < Date.parse(best.endDate!) - Date.parse(best.startDate!)) {
+        best = s
+      }
+    }
+    if (best) out.set(date, String(best.name))
+  }
   for (const a of assignments) {
     if (!a?.date || !a?.season) continue
     out.set(String(a.date).slice(0, 10), String(a.season))

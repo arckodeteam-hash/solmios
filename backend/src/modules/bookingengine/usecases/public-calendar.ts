@@ -65,6 +65,8 @@ export interface PublicCalendarDeps {
   roomBlocks: RepositoryAdapter<any>
   seasonAssignments: RepositoryAdapter<any>
   roomRates: RepositoryAdapter<any>
+  /** Catálogo `Seasons` — el RANGO de cada temporada. Sin él solo cuentan los días pintados. */
+  seasons?: RepositoryAdapter<any>
   /** `RateOverrides` — tarifa por FECHA, la capa que pisa a la temporada. Opcional: sin ella el
    *  calendario anunciaría el precio de temporada para una noche ya re-tarifada, y `/rates` (que
    *  sí las lee) cobraría otro — el mismo desfasaje que este archivo evita entre buscador y calendario. */
@@ -145,17 +147,18 @@ export async function getPublicCalendar(
     if (cached) return { status: 200, body: cached }
   }
 
-  const [rooms, reservations, blocks, assignments, rates, overrides] = await Promise.all([
+  const [rooms, reservations, blocks, assignments, rates, overrides, seasonCatalog] = await Promise.all([
     deps.rooms.findMany({ hotelId: hotel.id }),
     deps.reservations.findMany({ hotelId: hotel.id }),
     deps.roomBlocks.findMany({ hotelId: hotel.id }),
     deps.seasonAssignments.findMany({ hotelId: hotel.id }),
     deps.roomRates.findMany({ hotelId: hotel.id }),
     deps.rateOverrides ? deps.rateOverrides.findMany({ hotelId: hotel.id }) : Promise.resolve([]),
+    deps.seasons ? deps.seasons.findMany({ hotelId: hotel.id }) : Promise.resolve([]),
   ])
 
   const days = eachDayInclusive(from, to)
-  const seasonByDate = buildSeasonByDate(assignments as any[])
+  const seasonByDate = buildSeasonByDate(assignments as any[], (seasonCatalog ?? []) as any[], days)
   const types = buildTypeBuckets(rooms as any[], guests)
 
   // Índices por roomId para no re-filtrar el array completo por cada tipo.

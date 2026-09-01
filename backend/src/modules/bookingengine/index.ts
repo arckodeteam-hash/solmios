@@ -94,6 +94,8 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       const roomRatesRepo = new OrmRepository<any>(orm, 'RoomRates')
       // Tarifa por FECHA: el precio público tiene que coincidir con el que se publica a las OTAs.
       const rateOverridesRepo = new OrmRepository<any>(orm, 'RateOverrides')
+      // Catálogo de temporadas: su RANGO asigna temporada, igual que los días pintados.
+      const seasonsCatalogRepo = new OrmRepository<any>(orm, 'Seasons')
 
       const service = new BookingengineService(
         configRepo, roomsRepo, reservationsRepo, hotelsRepo,
@@ -123,6 +125,7 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         // tasks.md 2.2/2.4 — Regímenes de alimentación, al final por el mismo motivo.
         mealPlanRepo,
         rateOverridesRepo,
+        seasonsCatalogRepo,
       )
 
       // Admin routes (protegidas con auth)

@@ -108,19 +108,23 @@ export async function quoteStay(repos: QuoteRepos, params: QuoteParams): Promise
       overrides = []
     }
   }
-  const seasonByDate = buildSeasonByDate(assignments)
-  const baseRates = baseRatesOnly(rates)
-
-  let seasonMeta = new Map<string, { label: string | null; color: string | null }>()
+  // El catálogo se lee UNA vez y sirve para dos cosas: el RANGO de cada temporada (que asigna
+  // temporada a una fecha igual que los días pintados) y el label/color de los badges.
+  let seasonCatalog: any[] = []
   if (repos.seasonsRepo) {
     try {
-      const seasons = (await repos.seasonsRepo.findMany({ hotelId })) as any[]
-      seasonMeta = new Map(seasons.map((s: any) => [String(s.name), {
-        label: s.label ? String(s.label) : null,
-        color: s.color ? String(s.color) : null,
-      }]))
-    } catch { /* sin metadatos: badges sin label/color, el nombre siempre está */ }
+      seasonCatalog = (await repos.seasonsRepo.findMany({ hotelId })) as any[]
+    } catch { /* sin catálogo: solo cuentan los días pintados, badges sin label/color */ }
   }
+  const seasonMeta = new Map<string, { label: string | null; color: string | null }>(
+    seasonCatalog.map((s: any) => [String(s.name), {
+      label: s.label ? String(s.label) : null,
+      color: s.color ? String(s.color) : null,
+    }]),
+  )
+
+  const seasonByDate = buildSeasonByDate(assignments, seasonCatalog, nightDates)
+  const baseRates = baseRatesOnly(rates)
 
   const nights: QuoteNight[] = []
   let subtotal = 0

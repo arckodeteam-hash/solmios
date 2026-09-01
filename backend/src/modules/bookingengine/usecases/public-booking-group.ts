@@ -143,20 +143,21 @@ export async function createPublicBookingGroup(
   }
 
   const stayNightDates = stayNights(checkIn, checkOut)
-  const [rawBlocks, rawRates, rawAssignments, hotelReservations, rawOverrides] = await Promise.all([
+  const [rawBlocks, rawRates, rawAssignments, hotelReservations, rawOverrides, rawSeasons] = await Promise.all([
     orm.findMany('RoomBlocks', { hotelId }) as Promise<any[]>,
     orm.findMany('RoomRates', { hotelId }) as Promise<any[]>,
     orm.findMany('SeasonAssignments', { hotelId }) as Promise<any[]>,
     orm.findMany('Reservations', { hotelId }) as Promise<any[]>,
     // Ver la nota equivalente en public-booking.ts: el override pisa a la temporada.
     orm.findMany('RateOverrides', { hotelId }) as Promise<any[]>,
+    orm.findMany('Seasons', { hotelId }) as Promise<any[]>,
   ])
   const blockedIds = blockedRoomIds(rawBlocks ?? [], stayNightDates)
   const busyRoomIds = new Set(
     (hotelReservations ?? []).filter((r: any) => overlaps(r, checkIn, checkOut)).map((r: any) => r.roomId),
   )
   const baseRates = baseRatesOnly(rawRates ?? [])
-  const seasonByDate = buildSeasonByDate(rawAssignments ?? [])
+  const seasonByDate = buildSeasonByDate(rawAssignments ?? [], rawSeasons ?? [], stayNightDates)
 
   // ─── Resolver TODAS las líneas ANTES de la tx: qué unidades físicas, a qué precio ─────────
   // `claimedIds` evita que 2 líneas del MISMO POST se lleven la misma unidad física (2 líneas

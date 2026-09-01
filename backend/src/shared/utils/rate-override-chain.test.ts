@@ -4,7 +4,7 @@
 // que dar el MISMO número. Si estas dos capas se separan, el hotelero ve 333 en el panel, la OTA
 // vende a 333 y la web propia cobra 110 — el bug que este archivo existe para que no vuelva.
 import { describe, it, expect } from 'bun:test'
-import { overrideRateFor, sumStayPrice, DIRECT_RATE_PLAN, type NightlyRateOverride } from './rate-resolution'
+import { overrideRateFor, sumStayPrice, buildSeasonByDate, DIRECT_RATE_PLAN, type NightlyRateOverride } from './rate-resolution'
 
 const ovr = (o: Partial<NightlyRateOverride>): NightlyRateOverride => ({
   roomType: 'Twin', ratePlan: 'bar', dateFrom: '2026-11-22', dateTo: '2026-11-22', rate: 333, ...o,
@@ -77,5 +77,48 @@ describe('sumStayPrice con tarifas por fecha', () => {
   it('decimales: el total se redondea una sola vez al final', () => {
     const centavos = [ovr({ dateFrom: '2026-11-21', dateTo: '2026-11-23', rate: 456.23 })]
     expect(sumStayPrice(nights, baseRates, 'Twin', seasonByDate, 2, 100, centavos)).toBe(1368.69)
+  })
+})
+
+describe('buildSeasonByDate — el RANGO del catálogo también asigna temporada', () => {
+  const CATALOGO = [
+    { name: 'baja', startDate: '2026-09-01', endDate: '2026-12-14' },
+    { name: 'alta', startDate: '2026-12-15', endDate: '2027-04-15' },
+    { name: 'especial', startDate: null, endDate: null },   // se pinta en el planning
+  ]
+
+  it('una fecha dentro del rango del catálogo queda con esa temporada', () => {
+    const m = buildSeasonByDate([], CATALOGO, ['2026-10-05', '2027-01-20'])
+    expect(m.get('2026-10-05')).toBe('baja')
+    expect(m.get('2027-01-20')).toBe('alta')
+  })
+
+  it('el día PINTADO en el planning pisa al rango del catálogo', () => {
+    const m = buildSeasonByDate([{ date: '2026-10-05', season: 'especial' }], CATALOGO, ['2026-10-05'])
+    expect(m.get('2026-10-05')).toBe('especial')
+  })
+
+  it('una fecha fuera de todo rango no queda con temporada (cotiza por el precio base)', () => {
+    expect(buildSeasonByDate([], CATALOGO, ['2028-03-01']).get('2028-03-01')).toBeUndefined()
+  })
+
+  it('si dos rangos se solapan gana el MÁS CORTO — el más específico', () => {
+    const solapado = [
+      { name: 'anual', startDate: '2026-01-01', endDate: '2026-12-31' },
+      { name: 'navidad', startDate: '2026-12-20', endDate: '2026-12-26' },
+    ]
+    const m = buildSeasonByDate([], solapado, ['2026-12-24', '2026-06-10'])
+    expect(m.get('2026-12-24')).toBe('navidad')
+    expect(m.get('2026-06-10')).toBe('anual')
+  })
+
+  it('sin catálogo se comporta como siempre: solo los días pintados', () => {
+    const m = buildSeasonByDate([{ date: '2026-10-05', season: 'alta' }])
+    expect(m.get('2026-10-05')).toBe('alta')
+    expect(m.size).toBe(1)
+  })
+
+  it('una temporada sin fechas no asigna nada por rango', () => {
+    expect(buildSeasonByDate([], [{ name: 'especial' }], ['2026-10-05']).size).toBe(0)
   })
 })
