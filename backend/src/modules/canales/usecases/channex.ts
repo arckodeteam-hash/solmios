@@ -731,9 +731,12 @@ export class ChannexUseCase {
         const rtRes = await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${cfg.channexPropertyId}`)
         rps.forEach((rp: any) => {
           const a = rp.attributes || rp
-          // El id del room type viene al NIVEL RAÍZ del recurso, no dentro de `attributes`:
-          // `(r.attributes || r).id` nunca matcheaba y el título salía siempre '—' en el panel.
-          const rt = (rtRes.data?.data || []).find((r: any) => r.id === a.room_type_id)
+          // DOS correcciones sobre el lookup viejo, que dejaba el título siempre en '—':
+          //  - el id del room type puede venir en `attributes.room_type_id` O en
+          //    `relationships.room_type.data.id` (mismo fallback que usa `resolveAriTargets`);
+          //  - el id del recurso destino está al NIVEL RAÍZ, no dentro de `attributes`.
+          const rtId = a.room_type_id || rp.relationships?.room_type?.data?.id
+          const rt = (rtRes.data?.data || []).find((r: any) => r.id === rtId)
           a.room_type_title = (rt?.attributes || rt)?.title || '—'
         })
       } catch {}
