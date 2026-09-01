@@ -126,3 +126,61 @@ describe('activateChannel — verifica ANTES de activar', () => {
     expect(await uc().activateChannel(CFG, 'ch-1')).toMatchObject({ success: false, message: 'Channel is already active' })
   })
 })
+
+describe('paginación de Channex — un listado NO se corta en la primera página', () => {
+  let restore: (() => void) | undefined
+  afterEach(() => { restore?.(); resetChannexHttpForTests() })
+
+  /** 16 rate plans: 8 propios + los 8 derivados que Channex crea al mapear un canal. */
+  function installPaged(total: number, captured: { paths: string[] }) {
+    const orig = globalThis.fetch
+    globalThis.fetch = (async (url: string) => {
+      const u = String(url)
+      const json = (data: any) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } })
+      if (u.includes('/rate_plans')) {
+        captured.paths.push(u)
+        const page = Number(new URL(u).searchParams.get('pagination[page]') || 1)
+        const limit = Number(new URL(u).searchParams.get('pagination[limit]') || 10)
+        const from = (page - 1) * limit
+        const rows = Array.from({ length: Math.max(0, Math.min(limit, total - from)) }, (_, i) => ({
+          id: `rp-${from + i}`, attributes: { title: `Plan ${from + i}`, room_type_id: 'rt-1' },
+        }))
+        return json({ data: rows, meta: { page, limit, total } })
+      }
+      if (u.includes('/room_types')) return json({ data: [{ id: 'rt-1', attributes: { title: 'Double' } }], meta: { total: 1 } })
+      if (u.includes('/channels/')) return json({ data: { id: 'ch-1', attributes: { title: 'C', is_active: true, rate_plans: [] } } })
+      return json({ data: [], meta: { total: 0 } })
+    }) as any
+    return () => { globalThis.fetch = orig }
+  }
+
+  const uc = () => new ChannexUseCase(silentLogger() as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any)
+
+  it('trae los 16 rate plans, no los 10 de la primera página', async () => {
+    const captured = { paths: [] as string[] }
+    restore = installPaged(16, captured)
+    const detail = await uc().getChannelDetail(CFG, 'ch-1')
+
+    expect(detail.allRatePlans).toHaveLength(16)
+    // Pide de a 100 (el máximo de Channex), no de a 10: una sola llamada alcanza.
+    expect(captured.paths[0]).toContain('pagination[limit]=100')
+    expect(captured.paths).toHaveLength(1)
+  })
+
+  it('con más de una página las concatena todas', async () => {
+    const captured = { paths: [] as string[] }
+    restore = installPaged(230, captured)
+    const detail = await uc().getChannelDetail(CFG, 'ch-1')
+
+    expect(detail.allRatePlans).toHaveLength(230)
+    expect(captured.paths).toHaveLength(3)   // 100 + 100 + 30
+  })
+
+  it('una colección vacía no entra en loop', async () => {
+    const captured = { paths: [] as string[] }
+    restore = installPaged(0, captured)
+    const detail = await uc().getChannelDetail(CFG, 'ch-1')
+    expect(detail.allRatePlans).toEqual([])
+    expect(captured.paths).toHaveLength(1)
+  })
+})

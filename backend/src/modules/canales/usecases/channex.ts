@@ -39,8 +39,8 @@ export class ChannexUseCase {
     }
     const key = this.resolveKey(cfg)
     const pid = cfg.channexPropertyId!
-    const rts = ((await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${pid}`)).data as any)?.data || []
-    const rps = ((await this.channexReq(key, 'GET', `/rate_plans?filter[property_id]=${pid}`)).data as any)?.data || []
+    const rts = await this.channexList(key, `/room_types?filter[property_id]=${pid}`)
+    const rps = await this.channexList(key, `/rate_plans?filter[property_id]=${pid}`)
     const rtIdByTitle = new Map<string, string>(rts.map((rt: any) => [String(rt.attributes?.title || '').toLowerCase(), rt.id]))
     const rpsByRt = new Map<string, Array<{ id: string; title?: string }>>()
     for (const rp of rps) {
@@ -85,6 +85,32 @@ export class ChannexUseCase {
     return !!(await this.platform()).key
   }
 
+  /**
+   * GET de una colección COMPLETA de Channex.
+   *
+   * Channex pagina de a 10 por defecto (máximo 100) y devuelve `meta.total`. Un GET pelado a
+   * `/rate_plans` de una property con 4 tipos × 2 planes YA se pasa de 10 en cuanto Channex
+   * agrega sus rate plans derivados al mapear un canal — y el resto se perdía en silencio:
+   * el mapeo mostraba 5 de 8 tarifas, y `resolveAriTargets` resolvía los UUIDs de los pushes
+   * contra una lista incompleta (un room type que caía fuera de la primera página dejaba de
+   * publicar precios, sin ningún error).
+   */
+  private async channexList(apiKey: string, path: string): Promise<any[]> {
+    const sep = path.includes('?') ? '&' : '?'
+    const LIMIT = 100          // el máximo que acepta Channex
+    const MAX_PAGES = 50       // tope de seguridad: 5000 filas es mucho más que cualquier hotel
+    const out: any[] = []
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const res = await this.channexReq(apiKey, 'GET', `${path}${sep}pagination[page]=${page}&pagination[limit]=${LIMIT}`)
+      const rows = (res.data as any)?.data
+      if (!Array.isArray(rows) || rows.length === 0) break
+      out.push(...rows)
+      const total = Number((res.data as any)?.meta?.total)
+      if (rows.length < LIMIT || (Number.isFinite(total) && out.length >= total)) break
+    }
+    return out
+  }
+
   /** Prueba la credencial de plataforma con un GET liviano a Channex. Para el botón "Probar conexión" del admin. */
   async testApiKey(): Promise<{ success: boolean; message: string; environment: string }> {
     const plat = await this.platform()
@@ -117,8 +143,7 @@ export class ChannexUseCase {
 
     if (cfg?.channexPropertyId) {
       try {
-        const res = await this.channexReq(key, 'GET', `/channels?filter[property_id]=${cfg.channexPropertyId}`)
-        const raw = Array.isArray(res.data?.data) ? res.data.data : (Array.isArray(res.data) ? res.data : [])
+        const raw = await this.channexList(key, `/channels?filter[property_id]=${cfg.channexPropertyId}`)
         for (const ch of raw) {
           const a = ch.attributes || ch
           const otaCode = a.channel || ''
@@ -189,14 +214,14 @@ export class ChannexUseCase {
       channexPId = propRes.data.data.id
     } else {
       try {
-        const oldRPs = await this.channexReq(key, 'GET', `/rate_plans?filter[property_id]=${channexPId}`)
-        for (const rp of (oldRPs.data?.data || [])) {
+        const oldRPs = await this.channexList(key, `/rate_plans?filter[property_id]=${channexPId}`)
+        for (const rp of oldRPs) {
           await this.channexReq(key, 'DELETE', `/rate_plans/${rp.id}`).catch(() => {})
         }
       } catch {}
       try {
-        const oldRTs = await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${channexPId}`)
-        for (const rt of (oldRTs.data?.data || [])) {
+        const oldRTs = await this.channexList(key, `/room_types?filter[property_id]=${channexPId}`)
+        for (const rt of oldRTs) {
           await this.channexReq(key, 'DELETE', `/room_types/${rt.id}`).catch(() => {})
         }
       } catch {}
@@ -208,7 +233,7 @@ export class ChannexUseCase {
     ))
     rtResults.filter(r => r.ok && r.data?.data).forEach(r => createdRTs.push(r.data.data))
 
-    const rtList = (await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${channexPId}`)).data?.data || []
+    const rtList = await this.channexList(key, `/room_types?filter[property_id]=${channexPId}`)
 
     // Batch rate plan creation — UNO POR PLAN (P5): "Double BAR", "Double Bed & Breakfast"…
     const rpCreated = await Promise.all(createdRTs.flatMap(rt => {
@@ -230,7 +255,7 @@ export class ChannexUseCase {
     }))
     // Rate plans: releer DESPUÉS de crear (rpList alimenta el reporte).
     // Antes se leía antes de crear → siempre 0 y sin restrictions iniciales.
-    const rpList = (await this.channexReq(key, 'GET', `/rate_plans?filter[property_id]=${channexPId}`)).data?.data || []
+    const rpList = await this.channexList(key, `/rate_plans?filter[property_id]=${channexPId}`)
 
     // ARI del full sync: NO se empuja acá. El service lo manda al terminar en EXACTAMENTE 2
     // llamadas (1 availability consolidado de 500 días con reservas descontadas + 1 restrictions
@@ -273,8 +298,8 @@ export class ChannexUseCase {
   private async ensureGroup(key: string, hotelName: string): Promise<string | undefined> {
     const title = String(hotelName || '').trim() || 'Hotel'
     try {
-      const list = await this.channexReq(key, 'GET', '/groups')
-      const existing = ((list.data as any)?.data || []).find(
+      const list = await this.channexList(key, '/groups')
+      const existing = list.find(
         (g: any) => String(g.attributes?.title ?? g.title ?? '').toLowerCase() === title.toLowerCase())
       if (existing?.id) return existing.id
     } catch { /* no poder listar no impide intentar crear */ }
@@ -529,8 +554,7 @@ export class ChannexUseCase {
   // Resuelve el room_type_id de Channex por title (rt.type == room_type title).
   // Mismo criterio que pushRate/sync usan para matchear tipo local → Channex.
   private async resolveChannexRoomTypeId(apiKey: string, propertyId: string, roomType: string): Promise<string | null> {
-    const rts = await this.channexReq(apiKey, 'GET', `/room_types?filter[property_id]=${propertyId}`)
-    const rtList: any[] = rts.data?.data || []
+    const rtList = await this.channexList(apiKey, `/room_types?filter[property_id]=${propertyId}`)
     const target = rtList.find(rt => String(rt.attributes?.title || '').toLowerCase() === roomType.toLowerCase())
     return target?.id || null
   }
@@ -562,10 +586,8 @@ export class ChannexUseCase {
 
   async listGroups(cfg: CanalesDTO | undefined): Promise<GroupDTO[]> {
     const key = this.resolveKey(cfg)
-    const res = await this.channexReq(key, 'GET', '/groups')
-    if (!res.ok) return []
-    const data = res.data?.data || res.data || []
-    return Array.isArray(data) ? data.map((g: any) => ({ id: g.id, name: g.attributes?.name || g.name || g.id })) : []
+    const data = await this.channexList(key, '/groups')
+    return data.map((g: any) => ({ id: g.id, name: g.attributes?.title || g.attributes?.name || g.name || g.id }))
   }
 
   /**
@@ -650,8 +672,7 @@ export class ChannexUseCase {
 
     let ratePlansData = dto.ratePlans
     if (ratePlansData.length === 0 && dto.propertyId) {
-      const rps = await this.channexReq(key, 'GET', `/rate_plans?filter[property_id]=${dto.propertyId}`)
-      const rpList: any[] = rps.data?.data || []
+      const rpList = await this.channexList(key, `/rate_plans?filter[property_id]=${dto.propertyId}`)
       ratePlansData = rpList.map((rp: any, i: number) => {
         const a = rp.attributes || rp
         const opts = a.options || []
@@ -724,11 +745,10 @@ export class ChannexUseCase {
     const rps: any[] = []
     if (cfg?.channexPropertyId) {
       try {
-        const rpRes = await this.channexReq(key, 'GET', `/rate_plans?filter[property_id]=${cfg.channexPropertyId}`)
-        rps.push(...(rpRes.data?.data || []))
+        rps.push(...(await this.channexList(key, `/rate_plans?filter[property_id]=${cfg.channexPropertyId}`)))
       } catch {}
       try {
-        const rtRes = await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${cfg.channexPropertyId}`)
+        const rtList = await this.channexList(key, `/room_types?filter[property_id]=${cfg.channexPropertyId}`)
         rps.forEach((rp: any) => {
           const a = rp.attributes || rp
           // DOS correcciones sobre el lookup viejo, que dejaba el título siempre en '—':
@@ -736,7 +756,7 @@ export class ChannexUseCase {
           //    `relationships.room_type.data.id` (mismo fallback que usa `resolveAriTargets`);
           //  - el id del recurso destino está al NIVEL RAÍZ, no dentro de `attributes`.
           const rtId = a.room_type_id || rp.relationships?.room_type?.data?.id
-          const rt = (rtRes.data?.data || []).find((r: any) => r.id === rtId)
+          const rt = rtList.find((r: any) => r.id === rtId)
           a.room_type_title = (rt?.attributes || rt)?.title || '—'
         })
       } catch {}
