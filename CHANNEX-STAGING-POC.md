@@ -68,6 +68,11 @@ Doc oficial de certificación:
 
 ## 3. Gap analysis — 14 tests de certificación PMS vs estado actual
 
+> ⚠️ **DESACTUALIZADO (2026-09-01)** — esta tabla es el baseline de junio-2026.
+> R4 (compresión de rangos), R5 (connector reservas→canales), R7 (poller del feed)
+> y parte de R3 (push batcheado) ya están implementados. El gap real actual está
+> en **`CHANNEX-CERTIFICACION-GAPS.md`** — usar ese documento.
+
 | # | Test de certificación | Estado hoy | Por qué falla / falta |
 |---|---|:---:|---|
 | Setup | 4 rate plans (Twin BAR 100 + B&B 120, Double BAR 100 + B&B 120) | ❌ | `syncProperty` crea **1 solo** "Standard" por room type (`channex.ts:138`). |

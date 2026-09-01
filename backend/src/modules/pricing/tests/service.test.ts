@@ -377,5 +377,26 @@ describe('PricingService — tenancy (SEC-2.2)', () => {
       await svc.updateRates('h1', [{ roomType: 'standard', season: 'Summer', occupancy: 2, basePrice: 100, percentage: 20 }])
       expect(calls).toBe(0)
     })
+
+    // Bug "cambiar el precio en el editor de un canal y no pasa nada": el guardado con override
+    // de canal persistía, pero el push automático iba SIN canal → solo publicaba la base. El
+    // evento ahora lleva los canales tocados para que el connector publique el override.
+    it('emite con los canales cuando el guardado trae override de canal', async () => {
+      const svc = makeService()
+      let emitted: { hotelId: string; channels?: string[] } | null = null
+      svc.setSockets({ onRatesUpdated: async (hotelId, _count, channels) => { emitted = { hotelId, channels } } })
+      await svc.updateRates('h1', [{ roomType: 'standard', season: 'Summer', occupancy: 2, basePrice: 110, percentage: 0, channel: 'OpenChannel' }])
+      expect(emitted).not.toBeNull()
+      expect(emitted!.channels).toEqual(['OpenChannel'])
+    })
+
+    it('emite con lista vacía de canales cuando el guardado es solo base', async () => {
+      const svc = makeService()
+      let emitted: { channels?: string[] } | null = null
+      svc.setSockets({ onRatesUpdated: async (_hotelId, _count, channels) => { emitted = { channels } } })
+      await svc.updateRates('h1', [{ roomType: 'standard', season: 'Summer', occupancy: 2, basePrice: 100, percentage: 0 }])
+      expect(emitted).not.toBeNull()
+      expect(emitted!.channels).toEqual([])
+    })
   })
 })

@@ -128,8 +128,10 @@ export class PricingService {
     }
     if (changes.length > 0) {
       await this.audit(rateChangeEntry(hotelId, changes, actor))
-      // Tarifas cambiaron → push a OTAs (connector pricing-canales, fire-and-forget: no bloquea el grid).
-      await this.sockets.onRatesUpdated?.(hotelId, saved)
+      // Tarifas cambiaron → push a OTAs (fire-and-forget). Los canales con override van al evento:
+      // el push sin canal solo toma la base (push-rates descarta filas con canal).
+      const channels = [...new Set(rates.map((r) => (typeof r.channel === 'string' ? r.channel : '')).filter(Boolean))]
+      await this.sockets.onRatesUpdated?.(hotelId, saved, channels)
     }
     return saved
   }
