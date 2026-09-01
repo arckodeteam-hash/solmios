@@ -44,7 +44,7 @@ describe('Test 1 — sync de estructura NO pushea ARI', () => {
   it('syncProperty crea room types/rate plans sin POST de availability ni restrictions', async () => {
     const captured: HttpLog = { availability: [], restrictions: [] }
     restore = installFetch(captured)
-    await uc().syncProperty('h1', { name: 'H1' }, [{ type: 'Double', cnt: 2, capacity: 2, basePrice: 100 }], CFG, 'per_room')
+    await uc().syncProperty('h1', { name: 'H1' }, [{ type: 'Double', cnt: 2, capacity: 2, basePrice: 100 }], CFG)
     expect(captured.availability).toHaveLength(0)   // el ARI lo manda el service en 2 llamadas
     expect(captured.restrictions).toHaveLength(0)
   })
@@ -141,8 +141,24 @@ describe('Test 1 — service.syncProperty: el ARI completo sale en exactamente 2
     const rpIds = [...new Set(captured.restrictions[0].values.map((v: any) => v.rate_plan_id))]
     expect(rpIds.sort()).toEqual(['rp-double', 'rp-suite'])
     // Valores variados: el Double lleva el % de la temporada (110), el Suite queda plano (200→20000).
-    const byRp = Object.fromEntries(captured.restrictions[0].values.map((v: any) => [v.rate_plan_id, v.rate]))
+    // El entry de la temporada, no la línea base de 500 días que abre el payload.
+    const deTemporada = captured.restrictions[0].values.filter((v: any) => v.date_from !== hoy())
+    const byRp = Object.fromEntries(deTemporada.map((v: any) => [v.rate_plan_id, topRate(v)]))
     expect(byRp['rp-double']).toBe(11000)
     expect(byRp['rp-suite']).toBe(20000)
+    // OBP: el precio va por ocupación, no como un rate plano.
+    expect(deTemporada.find((v: any) => v.rate_plan_id === 'rp-double').rates)
+      .toEqual([{ occupancy: 2, rate: 11000 }])
   })
 })
+
+/**
+ * Precio del entry para la ocupación PRIMARIA (la más alta). Las tarifas viajan siempre como
+ * `rates: [{occupancy, rate}]` — el hotel tarifa por persona; `rate` plano solo queda para filas
+ * legacy sin ocupación.
+ */
+const topRate = (v: any): number | undefined =>
+  v.rate ?? [...(v.rates ?? [])].sort((a: any, b: any) => b.occupancy - a.occupancy)[0]?.rate
+
+/** Fecha con la que arranca la línea base de 500 días del push. */
+const hoy = (): string => new Date().toISOString().slice(0, 10)

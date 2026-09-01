@@ -59,7 +59,9 @@ describe('PricingService', () => {
     it('returns room rates', async () => {
       const svc = makeService()
       const result = await svc.listRates('h1')
-      expect(result).toHaveLength(1)
+      // La grilla abre una fila por ocupación 1..capacidad (capacidad default 2) × 1 temporada.
+      expect(result).toHaveLength(2)
+      expect(result.find((r: any) => r.id === 'r1')).toBeTruthy()   // la fila REAL, sin pisar
     })
 
     // Tarea 2 QA (2026-08-20): un hotel sin tarifas base guardadas todavía tiene que ver una
@@ -81,9 +83,10 @@ describe('PricingService', () => {
       const result = await svc.listRates('h1')
       expect(result.length).toBeGreaterThan(0)
       expect(result.every((r: any) => r._inherited)).toBe(true)
-      // per_room (default): una fila por tipo, en la ocupación = capacidad.
-      const double = result.find((r: any) => r.roomType === 'double')
-      expect(double).toMatchObject({ occupancy: 2, basePrice: 100, price: 100, channel: '' })
+      // Una fila por ocupación 1..capacidad de cada tipo (el hotel tarifa siempre por persona).
+      const double = result.filter((r: any) => r.roomType === 'double')
+      expect(double.map((r: any) => r.occupancy).sort()).toEqual([1, 2])
+      expect(double.find((r: any) => r.occupancy === 2)).toMatchObject({ basePrice: 100, price: 100, channel: '' })
     })
 
     // Revisión post-implementación (2026-08-20): un tipo puede agrupar varias habitaciones
@@ -158,8 +161,9 @@ describe('PricingService', () => {
       // ya calculado), no la celda genérica derivada.
       const svc = makeService()
       const result = await svc.listRates('h1')
-      expect(result[0]).not.toHaveProperty('_inherited')
-      expect(result[0].id).toBe('r1')
+      const real = result.find((r: any) => r.id === 'r1')
+      expect(real).toBeTruthy()
+      expect(real).not.toHaveProperty('_inherited')
     })
   })
 

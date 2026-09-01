@@ -23,11 +23,10 @@ export interface SyncPropertyHotel {
 
 export interface SyncPropertyDeps {
   getConfig: (hotelId: string) => Promise<CanalesDTO | undefined>
-  getPricingMode: (hotelId: string) => Promise<'per_room' | 'per_person'>
   getRatePlans: (hotelId: string) => Promise<RatePlanDef[]>
   channexSync: (
     hotelId: string, hotel: SyncPropertyHotel, rooms: RoomTypeSummary[], cfg: CanalesDTO | undefined,
-    pricingMode: 'per_room' | 'per_person', ratePlans: RatePlanDef[],
+    ratePlans: RatePlanDef[],
   ) => Promise<{ result: SyncResultDTO; newPropertyId: string | null }>
   upsertConfig: (hotelId: string, patch: Partial<CanalesDTO>) => Promise<CanalesDTO>
   pushAllAvailability: (hotelId: string) => Promise<unknown>
@@ -39,13 +38,12 @@ export interface SyncPropertyDeps {
 export async function syncPropertyToChannex(
   deps: SyncPropertyDeps, hotelId: string, hotel: SyncPropertyHotel, rooms: RoomTypeSummary[],
 ): Promise<SyncResultDTO> {
-  const [cfg, pricingMode, ratePlans] = await Promise.all([
+  const [cfg, ratePlans] = await Promise.all([
     deps.getConfig(hotelId),
-    deps.getPricingMode(hotelId),
     // Planes del hotel (BAR + B&B por defecto): un rate plan de Channex por (room type × plan) — P5.
     deps.getRatePlans(hotelId),
   ])
-  const { result, newPropertyId } = await deps.channexSync(hotelId, hotel, rooms, cfg, pricingMode, ratePlans)
+  const { result, newPropertyId } = await deps.channexSync(hotelId, hotel, rooms, cfg, ratePlans)
   const lastSync = new Date().toISOString()
   await deps.upsertConfig(hotelId, newPropertyId
     ? { channexPropertyId: newPropertyId, syncEnabled: 1, lastSync }

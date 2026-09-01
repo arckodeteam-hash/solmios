@@ -14,7 +14,7 @@ const SEASONS = ['baja', 'media', 'alta', 'especial']
  * ORM del hotel de certificación reducido a lo que importa: 4 tipos de habitación, 4 temporadas y
  * tarifas guardadas SOLO para `double` en dos de las cuatro temporadas.
  */
-function makeOrm(opts: { mode?: 'per_room' | 'per_person'; rates?: any[] } = {}) {
+function makeOrm(opts: { rates?: any[] } = {}) {
   const rates = opts.rates ?? [
     { id: 'r1', hotelId: 'h1', roomType: 'double', occupancy: 2, season: 'media', channel: '', basePrice: 110, percentage: 35, price: 148.5, closed: 0, minStay: 2, maxStay: 0 },
     { id: 'r2', hotelId: 'h1', roomType: 'double', occupancy: 2, season: 'especial', channel: '', basePrice: 110, percentage: 25, price: 137.5, closed: 0, minStay: 0, maxStay: 0 },
@@ -29,7 +29,6 @@ function makeOrm(opts: { mode?: 'per_room' | 'per_person'; rates?: any[] } = {})
         { id: 'rm3', hotelId: 'h1', type: 'suite', capacity: 2, basePrice: 120 },
         { id: 'rm4', hotelId: 'h1', type: 'triple', capacity: 3, basePrice: 130 },
       ]
-      if (table === 'Configuration') return [{ hotelId: 'h1', key: 'pricing_mode', value: opts.mode ?? 'per_room' }]
       return []
     },
     create: async (_t: string, d: any) => d,
@@ -48,7 +47,7 @@ describe('listBaseRates — la grilla completa, no solo lo guardado', () => {
 
   it('lista las CUATRO temporadas aunque solo dos tengan tarifa guardada', async () => {
     const rows = await new PricingQueries(makeOrm() as any).listBaseRates('h1')
-    const deDouble = rows.filter((r: any) => r.roomType === 'double').map((r: any) => r.season).sort()
+    const deDouble = [...new Set(rows.filter((r: any) => r.roomType === 'double').map((r: any) => r.season))].sort()
     expect(deDouble).toEqual(['alta', 'baja', 'especial', 'media'])
   })
 
@@ -73,7 +72,8 @@ describe('listBaseRates — la grilla completa, no solo lo guardado', () => {
   it('no duplica: exactamente una fila por (tipo, ocupación, temporada)', async () => {
     const rows = await new PricingQueries(makeOrm() as any).listBaseRates('h1')
     expect(rows.length).toBe(new Set(rows.map(key)).size)
-    expect(rows.length).toBe(4 * 4)   // 4 tipos × 4 temporadas, una ocupación cada uno (per_room)
+    // Ocupaciones 1..capacidad: double 2 + single 1 + suite 2 + triple 3 = 8 grupos × 4 temporadas.
+    expect(rows.length).toBe(8 * 4)
   })
 
   it('una fila guardada que ya no entra en la grilla se devuelve igual — esconderla la borraría de la vista sin sacarla de la base', async () => {
@@ -85,23 +85,24 @@ describe('listBaseRates — la grilla completa, no solo lo guardado', () => {
   })
 })
 
-describe('per_person — el switch "Por persona" ahora sí abre las ocupaciones', () => {
+// El hotel tarifa SIEMPRE por persona: no hay modo "por habitación" ni switch que lo cambie.
+describe('ocupaciones — siempre una fila por persona', () => {
   it('expande una fila por ocupación 1..capacidad, con las guardadas intactas', async () => {
-    const rows = await new PricingQueries(makeOrm({ mode: 'per_person' }) as any).listBaseRates('h1')
+    const rows = await new PricingQueries(makeOrm() as any).listBaseRates('h1')
     const dobleMedia = rows.filter((r: any) => r.roomType === 'double' && r.season === 'media')
     expect(dobleMedia.map((r: any) => r.occupancy).sort()).toEqual([1, 2])
     expect(dobleMedia.find((r: any) => r.occupancy === 2)!.id).toBe('r1')   // la guardada, no pisada
   })
 
   it('la ocupación nueva arranca con el MISMO precio y el mismo % que la ya cargada', async () => {
-    const rows = await new PricingQueries(makeOrm({ mode: 'per_person' }) as any).listBaseRates('h1')
+    const rows = await new PricingQueries(makeOrm() as any).listBaseRates('h1')
     const unaPersona = rows.find((r: any) => key(r) === 'double|1|media')
     // basePrice del grupo (110) y % de la temporada (35) → el mismo precio que 2 personas.
     expect(unaPersona).toMatchObject({ basePrice: 110, percentage: 35, price: 148.5, _inherited: true })
   })
 
   it('triple (capacidad 3) abre 1, 2 y 3', async () => {
-    const rows = await new PricingQueries(makeOrm({ mode: 'per_person' }) as any).listBaseRates('h1')
+    const rows = await new PricingQueries(makeOrm() as any).listBaseRates('h1')
     const triple = rows.filter((r: any) => r.roomType === 'triple' && r.season === 'baja')
     expect(triple.map((r: any) => r.occupancy).sort()).toEqual([1, 2, 3])
   })

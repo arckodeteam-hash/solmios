@@ -71,15 +71,6 @@ export class PricingService {
     return this.listSeasons(hotelId)
   }
 
-  /** Modo de tarificación del hotel (per_room | per_person) — config PMS por cliente. */
-  async getPricingMode(hotelId: string): Promise<'per_room' | 'per_person'> {
-    return this.queries ? this.queries.getPricingMode(hotelId) : 'per_room'
-  }
-  async setPricingMode(hotelId: string, mode: string): Promise<'per_room' | 'per_person'> {
-    const m = mode === 'per_person' ? 'per_person' : 'per_room'
-    return this.queries ? this.queries.setPricingMode(hotelId, m) : m
-  }
-
   /** Base y por-canal delegan a `queries` (ver `listBaseRates`/`listChannelRates` ahí — nunca
    *  vacío, derivan de los room types + pricing_mode si no hay filas guardadas). Fallback
    *  defensivo a filtrar `all` si no hay queries inyectadas. */

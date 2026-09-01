@@ -41,18 +41,21 @@ describe('pushSeasonalRates — OBP (#404)', () => {
       { roomType: 'Doble', season: 'alta', occupancy: 1, basePrice: 80, percentage: 0 },
       { roomType: 'Doble', season: 'alta', occupancy: 2, basePrice: 100, percentage: 0 },
     ]
-    await uc().pushSeasonalRates(CFG, rates, SEASONS, new Map(), 'per_person')
+    await uc().pushSeasonalRates(CFG, rates, SEASONS, new Map())
     const entry = seasonEntry(captured)
     expect(entry.rate_plan_id).toBe('rp-1')
     expect(entry.rate).toBeUndefined()                       // NO manda rate plano
     expect(entry.rates).toEqual([{ occupancy: 1, rate: 8000 }, { occupancy: 2, rate: 10000 }])  // centavos
   })
 
-  it('per_room: el entry lleva un rate plano, sin array de ocupaciones', async () => {
+  // Ya no existe un modo "por habitación": el precio SIEMPRE va por ocupación. Lo único que
+  // todavía sale como `rate` plano es la fila legacy sin `occupancy` válida — sin esa defensa el
+  // entry se publicaría sin precio.
+  it('una fila legacy sin ocupación cae a un rate plano en vez de quedarse sin precio', async () => {
     const captured: { restrictions?: any } = {}
     restore = installFetch(captured)
-    const rates = [{ roomType: 'Doble', season: 'alta', occupancy: 2, basePrice: 100, percentage: 0 }]
-    await uc().pushSeasonalRates(CFG, rates, SEASONS, new Map(), 'per_room')
+    const rates = [{ roomType: 'Doble', season: 'alta', occupancy: 0, basePrice: 100, percentage: 0 }]
+    await uc().pushSeasonalRates(CFG, rates, SEASONS, new Map())
     const entry = seasonEntry(captured)
     expect(entry.rate).toBe(10000)
     expect(entry.rates).toBeUndefined()
@@ -62,7 +65,7 @@ describe('pushSeasonalRates — OBP (#404)', () => {
     const captured: { restrictions?: any } = {}
     restore = installFetch(captured)
     const rates = [{ roomType: 'Doble', season: 'alta', occupancy: 2, basePrice: 100, percentage: 10 }]
-    await uc().pushSeasonalRates(CFG, rates, SEASONS, new Map(), 'per_person')
+    await uc().pushSeasonalRates(CFG, rates, SEASONS, new Map())
     expect(seasonEntry(captured).rates).toEqual([{ occupancy: 2, rate: 11000 }])  // 100*1.10*100
   })
 })

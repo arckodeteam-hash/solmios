@@ -21,7 +21,6 @@ import type { CanalesQueries } from './usecases/canales-queries'
 import { auditSafely, channelDeleteEntry, type AuditPort } from './usecases/audit'
 import { getSyncLog as getSyncLogFromTable } from './usecases/sync-log'
 import { pushSeasonalRatesToChannex } from './usecases/push-rates'
-import { readPricingMode } from './usecases/pricing-mode'
 import { readRatePlans } from './usecases/rate-plans'
 import { pushRateOverridesFor, type OverridePushItem, type OverridePushResult } from './usecases/push-overrides'
 
@@ -96,9 +95,8 @@ export class CanalesService {
   async syncProperty(hotelId: string, hotel: SyncPropertyHotel, rooms: RoomTypeSummary[]): Promise<SyncResultDTO> {
     return syncPropertyToChannex({
       getConfig: (h) => this.getConfig(h),
-      getPricingMode: (h) => readPricingMode((m, q) => this.queries.findMany(m, q), h),
       getRatePlans: (h) => readRatePlans((m, q) => this.queries.findMany(m, q), h),
-      channexSync: (h, ht, r, c, mode, plans) => this.channex.syncProperty(h, ht, r, c, mode, plans),
+      channexSync: (h, ht, r, c, plans) => this.channex.syncProperty(h, ht, r, c, plans),
       upsertConfig: (h, patch) => this.upsertConfig(h, patch),
       pushAllAvailability: (h) => pushAllRoomTypesAvailability(this.availDeps(), h),
       pushRates: (h) => this.pushSeasonalRates(h),
@@ -153,8 +151,7 @@ export class CanalesService {
   async pushSeasonalRates(hotelId: string, channel?: string): Promise<PushRatesResultDTO> {
     return pushSeasonalRatesToChannex({
       getConfig: (h) => this.getConfig(h), findMany: (m, q) => this.queries.findMany(m, q),
-      getPricingMode: (h) => readPricingMode((m, q) => this.queries.findMany(m, q), h),
-      pushSeasonalRates: (c, r, s, a, mode, plans, restrictions) => this.channex.pushSeasonalRates(c, r, s, a, mode, plans, restrictions),
+      pushSeasonalRates: (c, r, s, a, plans, restrictions) => this.channex.pushSeasonalRates(c, r, s, a, plans, restrictions),
     }, hotelId, channel)
   }
 

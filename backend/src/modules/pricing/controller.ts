@@ -56,17 +56,6 @@ export class PricingController {
     return { status: 200, body: { success: true, data: await this.service.activateSeason(id, String(name), this.actorOf(req)) } }
   }
 
-  async getPricingMode(req: HttpRequest) {
-    const id = await this.hotelOf(req); if (!id) return { status: 200, body: { mode: 'per_room' } }
-    return { status: 200, body: { mode: await this.service.getPricingMode(id) } }
-  }
-
-  async setPricingMode(req: HttpRequest) {
-    const id = await this.hotelOf(req); if (!id) return { status: 400, body: { error: 'hotelId requerido' } }
-    const mode = (req.body as any)?.mode
-    if (mode !== 'per_room' && mode !== 'per_person') return { status: 400, body: { error: 'mode inválido (per_room|per_person)' } }
-    return { status: 200, body: { mode: await this.service.setPricingMode(id, mode) } }
-  }
 
   async listRates(req: HttpRequest) {
     const id = await this.hotelOf(req); if (!id) return { status: 200, body: { data: [] } }

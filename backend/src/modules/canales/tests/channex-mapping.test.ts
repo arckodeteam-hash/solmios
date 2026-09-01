@@ -54,7 +54,7 @@ describe('push con mappingStore (P6)', () => {
     const uc = new ChannexUseCase(log as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any, store)
     const res = await uc.pushSeasonalRates({ hotelId: 'h1', channexPropertyId: 'p1', channexApiKey: 'k' } as any,
       [{ roomType: 'Double', season: 'media', occupancy: 2, basePrice: 100, percentage: 0 }],
-      [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), 'per_room', DEFAULT_RATE_PLANS)
+      [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), DEFAULT_RATE_PLANS)
 
     expect(captured.gets).toBe(0)   // cero GETs: todo vino del mapping
     // 4 entries: la línea base de 500 días (BAR + B&B) y encima la temporada (BAR + B&B).
@@ -80,7 +80,7 @@ describe('push con mappingStore (P6)', () => {
     const uc = new ChannexUseCase(log as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any, { read: async () => [], upsert: async () => {} })
     await uc.pushSeasonalRates({ hotelId: 'h1', channexPropertyId: 'p1', channexApiKey: 'k' } as any,
       [{ roomType: 'Double', season: 'media', occupancy: 2, basePrice: 100, percentage: 0 }],
-      [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), 'per_room', DEFAULT_RATE_PLANS)
+      [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), DEFAULT_RATE_PLANS)
 
     expect(captured.gets).toBe(2)   // volvió a los GETs
   })
@@ -107,7 +107,7 @@ describe('syncProperty persiste mappings (P6)', () => {
       const store = { read: async () => [] as MappingEntry[], upsert: async (_h: string, entries: MappingEntry[]) => { saved.push(...entries) } }
       const uc = new ChannexUseCase(log as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any, store)
       await uc.syncProperty('h1', { name: 'H' }, [{ type: 'Double', cnt: 2, capacity: 2, basePrice: 100 }],
-        { channexPropertyId: 'p1', channexApiKey: 'k' } as any, 'per_room', DEFAULT_RATE_PLANS)
+        { channexPropertyId: 'p1', channexApiKey: 'k' } as any, DEFAULT_RATE_PLANS)
 
       expect(saved.find((e) => e.kind === 'room_type')).toEqual({ kind: 'room_type', localId: 'Double', channexId: 'rt-created' })
       expect(saved.filter((e) => e.kind === 'rate_plan').map((e) => e.localId).sort())

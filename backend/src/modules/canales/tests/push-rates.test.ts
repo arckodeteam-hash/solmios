@@ -69,8 +69,8 @@ interface Captured {
   assigned: Map<string, DateRange[]>
 }
 
-function makeDeps(data: { rates: any[]; seasons: any[]; assignments: any[]; mode?: 'per_room' | 'per_person' }) {
-  const captured: Captured & { mode?: string } = { rates: [], seasons: [], assigned: new Map() }
+function makeDeps(data: { rates: any[]; seasons: any[]; assignments: any[] }) {
+  const captured: Captured = { rates: [], seasons: [], assigned: new Map() }
   const deps = {
     getConfig: async () => CFG,
     findMany: async (model: string) => {
@@ -79,18 +79,15 @@ function makeDeps(data: { rates: any[]; seasons: any[]; assignments: any[]; mode
       if (model === 'SeasonAssignments') return data.assignments
       return []
     },
-    getPricingMode: async () => data.mode ?? 'per_room',
     pushSeasonalRates: async (
       _cfg: CanalesDTO | undefined,
       rates: any[],
       seasons: any[],
       assigned: Map<string, DateRange[]>,
-      mode: string,
     ): Promise<PushRatesResultDTO> => {
       captured.rates = rates
       captured.seasons = seasons
       captured.assigned = assigned
-      captured.mode = mode
       return { pushed: rates.length, skipped: 0, notConnected: false, seasonsWithoutDates: [], expiredSeasons: [], roomTypesWithoutRatePlan: [] }
     },
   }
@@ -136,10 +133,11 @@ describe('pushSeasonalRatesToChannex', () => {
     expect((captured.rates[0] as any).basePrice).toBe(150)
   })
 
-  // #404: precio por ocupación (OBP).
-  it('per_room: colapsa a la ocupación máxima (una fila por room type)', async () => {
+  // #404: precio por ocupación (OBP). Existió un modo "por habitación" que colapsaba a la
+  // ocupación máxima y tiraba el resto — el precio de 1 persona se cargaba en el panel y nunca
+  // llegaba a la OTA. Ese modo se eliminó: ahora se empujan siempre todas las ocupaciones.
+  it('empuja TODAS las ocupaciones del room type, no solo la máxima', async () => {
     const { deps, captured } = makeDeps({
-      mode: 'per_room',
       rates: [
         { roomType: 'Doble', season: 'alta', occupancy: 1, basePrice: 80, percentage: 0, channel: '' },
         { roomType: 'Doble', season: 'alta', occupancy: 2, basePrice: 100, percentage: 0, channel: '' },
@@ -148,24 +146,6 @@ describe('pushSeasonalRatesToChannex', () => {
       assignments: [],
     })
     await pushSeasonalRatesToChannex(deps, 'hotel-1')
-    expect((captured as any).mode).toBe('per_room')
-    expect(captured.rates).toHaveLength(1)
-    expect((captured.rates[0] as any).occupancy).toBe(2)      // la máxima
-    expect((captured.rates[0] as any).basePrice).toBe(100)
-  })
-
-  it('per_person: empuja TODAS las ocupaciones del room type', async () => {
-    const { deps, captured } = makeDeps({
-      mode: 'per_person',
-      rates: [
-        { roomType: 'Doble', season: 'alta', occupancy: 1, basePrice: 80, percentage: 0, channel: '' },
-        { roomType: 'Doble', season: 'alta', occupancy: 2, basePrice: 100, percentage: 0, channel: '' },
-      ],
-      seasons: [{ name: 'alta', startDate: '2026-12-01', endDate: '2026-12-31' }],
-      assignments: [],
-    })
-    await pushSeasonalRatesToChannex(deps, 'hotel-1')
-    expect((captured as any).mode).toBe('per_person')
     expect(captured.rates).toHaveLength(2)                    // las dos ocupaciones, no se descarta ninguna
     expect(captured.rates.map((r: any) => r.occupancy).sort()).toEqual([1, 2])
     expect(captured.rates.map((r: any) => r.basePrice).sort((a: number, b: number) => a - b)).toEqual([80, 100])

@@ -165,7 +165,7 @@ export class ChannexUseCase {
   // Un rate plan de Channex por (room type × plan del hotel): BAR + Bed & Breakfast por
   // defecto (P5). Al terminar persiste el mapping local↔UUID (P6) para que los pushes
   // resuelvan sin GETs ni match por título.
-  async syncProperty(hotelId: string, hotel: { name: string; currency?: string; email?: string; address?: string; timezone?: string }, rooms: RoomTypeSummary[], cfg: CanalesDTO | undefined, pricingMode: 'per_room' | 'per_person' = 'per_room', ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS): Promise<{ result: SyncResultDTO; newPropertyId: string | null }> {
+  async syncProperty(hotelId: string, hotel: { name: string; currency?: string; email?: string; address?: string; timezone?: string }, rooms: RoomTypeSummary[], cfg: CanalesDTO | undefined, ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS): Promise<{ result: SyncResultDTO; newPropertyId: string | null }> {
     const key = this.resolveKey(cfg)
 
     let channexPId: string | undefined = cfg?.channexPropertyId || undefined
@@ -207,12 +207,14 @@ export class ChannexUseCase {
       const cap = Math.max(1, roomData?.capacity || 2)
       return ratePlans.map(plan => {
         const price = planPrice(basePrice, plan.markupPct)
-        // per_person: una option por ocupación 1..capacidad (la máxima is_primary). Los precios
-        // reales por ocupación los pone el push de tarifas; acá se crea la ESTRUCTURA (#404).
-        const options = pricingMode === 'per_person'
-          ? Array.from({ length: cap }, (_, i) => ({ occupancy: i + 1, is_primary: i + 1 === cap, rate: price }))
-          : [{ occupancy: cap, is_primary: true, rate: price }]
-        return this.channexReq(key, 'POST', '/rate_plans', { rate_plan: { property_id: channexPId, room_type_id: rt.id, title: `${title} ${plan.label}`, currency: hotel.currency || 'USD', sell_mode: pricingMode, rate_mode: 'manual', options } })
+        // Una option por ocupación 1..capacidad (la máxima is_primary). Los precios reales por
+        // ocupación los pone el push de tarifas; acá se crea la ESTRUCTURA (#404).
+        //
+        // `sell_mode` se fija ACÁ, al crear el rate plan, y no se puede cambiar después con un
+        // push: por eso el hotel tarifa siempre por persona y no hay switch. Una propiedad creada
+        // con `per_room` necesita re-sincronizarse para aceptar precios por ocupación.
+        const options = Array.from({ length: cap }, (_, i) => ({ occupancy: i + 1, is_primary: i + 1 === cap, rate: price }))
+        return this.channexReq(key, 'POST', '/rate_plans', { rate_plan: { property_id: channexPId, room_type_id: rt.id, title: `${title} ${plan.label}`, currency: hotel.currency || 'USD', sell_mode: 'per_person', rate_mode: 'manual', options } })
       })
     }))
     // Rate plans: releer DESPUÉS de crear (rpList alimenta el reporte).
@@ -262,7 +264,6 @@ export class ChannexUseCase {
     rates: Array<{ roomType: string; season: string; occupancy?: number; basePrice: number; percentage: number; closed?: number; minStay?: number; maxStay?: number }>,
     seasons: Array<{ name: string; label?: string; startDate?: string; endDate?: string }>,
     assignedRanges: Map<string, DateRange[]> = new Map(),
-    pricingMode: 'per_room' | 'per_person' = 'per_room',
     ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS,
     restrictions: Array<{ roomType: string; season: string; cta?: number; ctd?: number; closedToArrival?: number; closedToDeparture?: number; minStayThrough?: number }> = [],
   ): Promise<PushRatesResultDTO> {
@@ -286,9 +287,9 @@ export class ChannexUseCase {
     const roomTypesWithoutRatePlan = new Set<string>()
     // Nombre visible de la temporada: el label si lo tiene, si no el name técnico.
     const seasonLabel = (name: string): string => seasonByName.get(name)?.label || name
-    // Se agrupan las filas por room type + temporada para juntar las ocupaciones: en per_person un
-    // rate plan lleva TODAS las ocupaciones en un mismo entry (rates:[{occupancy,rate}]); en per_room
-    // hay una sola fila por grupo. Antes se empujaba fila por fila con un rate plano → OBP no salía.
+    // Se agrupan las filas por room type + temporada para juntar las ocupaciones: un rate plan
+    // lleva TODAS las ocupaciones en un mismo entry (`rates: [{occupancy, rate}]`). Antes se
+    // empujaba fila por fila con un rate plano → el precio por persona no salía.
     const groups = new Map<string, typeof rates>()
     for (const r of rates) {
       const k = `${r.roomType}|${r.season}`
@@ -331,7 +332,7 @@ export class ChannexUseCase {
         const rpId = matchRatePlan(rtRps, plan)
         if (!rpId) continue
         const entry: any = { property_id: pid, rate_plan_id: rpId, date_from: today, date_to: horizonEnd }
-        if (pricingMode === 'per_person' && flat.length > 0) {
+        if (flat.length > 0) {
           entry.rates = flat.map((o) => ({ occupancy: o.occupancy, rate: planPrice(o.rate, plan.markupPct) }))
         } else {
           entry.rate = planPrice(priceOf({ basePrice: head.basePrice, percentage: 0 }), plan.markupPct)
@@ -363,10 +364,11 @@ export class ChannexUseCase {
           const from = rg.startDate < today ? today : rg.startDate   // nunca fechas pasadas
           if (rg.endDate < from) continue                            // tramo ya terminó
           const entry: any = { property_id: pid, rate_plan_id: rpId, date_from: from, date_to: rg.endDate, stop_sell: !!head.closed }
-          if (pricingMode === 'per_person' && perOcc.length > 0) {
+          if (perOcc.length > 0) {
             entry.rates = perOcc.map((o) => ({ occupancy: o.occupancy, rate: planPrice(o.rate, plan.markupPct) }))  // OBP × plan
           } else {
-            entry.rate = planPrice(priceOf(head), plan.markupPct)    // per_room: precio del plan
+            // Defensa para filas legacy sin `occupancy` (< 1): sin ellas el entry saldría sin precio.
+            entry.rate = planPrice(priceOf(head), plan.markupPct)
           }
           if (Number(head.minStay) > 0) entry.min_stay_arrival = Number(head.minStay)
           if (Number(head.maxStay) > 0) entry.max_stay = Number(head.maxStay)

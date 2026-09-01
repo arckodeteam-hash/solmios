@@ -12,9 +12,6 @@ export interface SeasonRestriction {
   minStayThrough?: number
 }
 
-/** Modo de tarificación del hotel: precio por habitación o por persona (ocupación). */
-export type PricingMode = 'per_room' | 'per_person'
-
 /** Una fila de tarifa a empujar. `occupancy` importa solo en per_person. */
 export interface PushRate {
   roomType: string
@@ -30,14 +27,11 @@ export interface PushRate {
 interface PushRatesDeps {
   getConfig: (hotelId: string) => Promise<CanalesDTO | undefined>
   findMany: (model: string, query: any) => Promise<any[]>
-  /** Modo del hotel. per_person → se empujan todas las ocupaciones; per_room → una por room type. */
-  getPricingMode: (hotelId: string) => Promise<PricingMode>
   pushSeasonalRates: (
     cfg: CanalesDTO | undefined,
     rates: PushRate[],
     seasons: Array<{ name: string; label?: string; startDate?: string; endDate?: string }>,
     assignedRanges: Map<string, DateRange[]>,
-    pricingMode: PricingMode,
     ratePlans: RatePlanDef[],
     restrictions: SeasonRestriction[],
   ) => Promise<PushRatesResultDTO>
@@ -90,20 +84,19 @@ export function groupAssignmentsIntoRanges(
 /**
  * Lee las tarifas del hotel y las empuja a Channex por temporada. Elige UNA tarifa por (roomType, season):
  * prefiere el override del canal pedido sobre la base, y dentro del mismo origen la de mayor ocupación
- * (la primaria/per_room). El push va a los rate plans de la propiedad (Channex los distribuye a los canales).
+ * (la primaria). El push va a los rate plans de la propiedad (Channex los distribuye a los canales).
  */
 export async function pushSeasonalRatesToChannex(
   deps: PushRatesDeps,
   hotelId: string,
   channel?: string,
 ): Promise<PushRatesResultDTO> {
-  const [cfg, allRates, seasons, assignments, pricingMode, ratePlans, restrictions] = await Promise.all([
+  const [cfg, allRates, seasons, assignments, ratePlans, restrictions] = await Promise.all([
     deps.getConfig(hotelId),
     deps.findMany('RoomRates', { hotelId }),
     deps.findMany('Seasons', { hotelId }),
     // Temporada pintada día-a-día en el planning: da el rango de las temporadas sin fechas propias.
     deps.findMany('SeasonAssignments', { hotelId }),
-    deps.getPricingMode(hotelId),
     // Planes del hotel (BAR + B&B por defecto, configuration key='rate_plans') — P5.
     readRatePlans(deps.findMany, hotelId),
     // Closures/through por (roomType, season) — tabla rate_restrictions — P4.
@@ -113,7 +106,7 @@ export async function pushSeasonalRatesToChannex(
   const wanted = channel || ''
 
   // Primero elegir, por room type + temporada + OCUPACIÓN, la mejor fila (override del canal pedido
-  // por sobre la base). En per_room hay una ocupación por room type; en per_person hay varias.
+  // por sobre la base). Hay una fila por cada ocupación 1..capacidad del tipo.
   const byOcc = new Map<string, any>()
   for (const r of allRates) {
     if (r.channel !== wanted && r.channel) continue // solo el canal pedido + la base
@@ -123,25 +116,14 @@ export async function pushSeasonalRatesToChannex(
     if (better) byOcc.set(k, r)
   }
 
-  let selected: any[]
-  if (pricingMode === 'per_person') {
-    // OBP: se empujan TODAS las ocupaciones. Antes se descartaban las menores y la OTA solo veía
-    // el precio de la ocupación máxima → el precio por persona nunca llegaba al canal (#404).
-    selected = [...byOcc.values()]
-  } else {
-    // per_room: un precio por room type/temporada. Se queda la de mayor ocupación (la "llena").
-    const byRoom = new Map<string, any>()
-    for (const r of byOcc.values()) {
-      const k = `${r.roomType}|${r.season}`
-      const cur = byRoom.get(k)
-      if (!cur || Number(r.occupancy) > Number(cur.occupancy)) byRoom.set(k, r)
-    }
-    selected = [...byRoom.values()]
-  }
+  // OBP: se empujan TODAS las ocupaciones. Antes, en el modo por habitación, se descartaban las
+  // menores y la OTA solo veía el precio de la ocupación máxima — el precio por persona se podía
+  // cargar en el panel y nunca llegaba al canal (#404). Ese modo ya no existe.
+  const selected: any[] = [...byOcc.values()]
 
   const rates: PushRate[] = selected.map((r) => ({
     roomType: r.roomType, season: r.season, occupancy: Number(r.occupancy) || 0,
     basePrice: r.basePrice, percentage: r.percentage, closed: r.closed, minStay: r.minStay, maxStay: r.maxStay,
   }))
-  return deps.pushSeasonalRates(cfg, rates, seasons, assignedRanges, pricingMode, ratePlans, restrictions as SeasonRestriction[])
+  return deps.pushSeasonalRates(cfg, rates, seasons, assignedRanges, ratePlans, restrictions as SeasonRestriction[])
 }

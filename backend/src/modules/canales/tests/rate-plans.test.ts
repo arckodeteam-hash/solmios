@@ -81,14 +81,17 @@ describe('pushSeasonalRates multi-plan (P5)', () => {
     const uc = new ChannexUseCase(log as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any)
     const rates = [{ roomType: 'Double', season: 'media', occupancy: 2, basePrice: 100, percentage: 0 }]
     const res = await uc.pushSeasonalRates({ channexPropertyId: 'p1', channexApiKey: 'k' } as any, rates,
-      [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), 'per_room', DEFAULT_RATE_PLANS)
+      [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), DEFAULT_RATE_PLANS)
 
     // 4 entries en UNA llamada: línea base de 500 días (BAR + B&B) + la temporada (BAR + B&B).
     expect(res.pushed).toBe(4)
-    const byRp = Object.fromEntries(captured.restrictions!.values
-      .filter((v: any) => v.date_from === '2099-06-01').map((v: any) => [v.rate_plan_id, v.rate]))
+    const deTemporada = captured.restrictions!.values.filter((v: any) => v.date_from === '2099-06-01')
+    const byRp = Object.fromEntries(deTemporada.map((v: any) => [v.rate_plan_id, topRate(v)]))
     expect(byRp['rp-bar']).toBe(10000)
     expect(byRp['rp-bb']).toBe(12000)
+    // OBP: el precio viaja por ocupación en los dos planes.
+    expect(deTemporada.find((v: any) => v.rate_plan_id === 'rp-bb').rates)
+      .toEqual([{ occupancy: 2, rate: 12000 }])
   })
 
   it('con la grilla del examen (1 solo RP Standard) solo publica BAR — no rompe', async () => {
@@ -105,7 +108,7 @@ describe('pushSeasonalRates multi-plan (P5)', () => {
     const uc = new ChannexUseCase(log as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any)
     const res = await uc.pushSeasonalRates({ channexPropertyId: 'p1', channexApiKey: 'k' } as any,
       [{ roomType: 'Double', season: 'media', occupancy: 2, basePrice: 100, percentage: 0 }],
-      [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), 'per_room', DEFAULT_RATE_PLANS)
+      [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), DEFAULT_RATE_PLANS)
 
     expect(res.pushed).toBe(2)   // línea base + temporada, ambas solo BAR: B&B no tiene counterpart
     const ids = [...new Set((globalThis as any).__captured.values.map((v: any) => v.rate_plan_id))]
@@ -118,7 +121,7 @@ describe('pushSeasonalRates multi-plan (P5)', () => {
     const uc = new ChannexUseCase(log as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any)
     await uc.pushSeasonalRates({ channexPropertyId: 'p1', channexApiKey: 'k' } as any,
       [{ roomType: 'Double', season: 'media', occupancy: 2, basePrice: 100, percentage: 0, minStay: 2, maxStay: 7 }],
-      [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), 'per_room', DEFAULT_RATE_PLANS,
+      [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], new Map(), DEFAULT_RATE_PLANS,
       [{ roomType: 'Double', season: 'media', closedToArrival: 1, ctd: 0, minStayThrough: 3 }])
 
     // La línea base de 500 días no lleva restricciones: las restricciones son de la TEMPORADA.
@@ -147,7 +150,7 @@ describe('pushSeasonalRates multi-plan (P5)', () => {
     await uc.pushSeasonalRates({ channexPropertyId: 'p1', channexApiKey: 'k' } as any, [
       { roomType: 'Double', season: 'especial', occupancy: 2, basePrice: 300, percentage: 50 },
       { roomType: 'Double', season: 'media', occupancy: 2, basePrice: 110, percentage: 30 },
-    ], [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], assigned, 'per_room', DEFAULT_RATE_PLANS)
+    ], [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], assigned, DEFAULT_RATE_PLANS)
 
     // Orden del payload: línea base (hoy) → catálogo → días pintados. Channex aplica FIFO y el
     // último gana, así que el tramo pintado tiene que salir DESPUÉS del rango del catálogo.
@@ -174,7 +177,7 @@ describe('syncProperty multi-plan (P5)', () => {
     try {
       const uc = new ChannexUseCase(log as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any)
       await uc.syncProperty('h1', { name: 'H' }, [{ type: 'Double', cnt: 2, capacity: 2, basePrice: 100 }],
-        { channexPropertyId: 'p1', channexApiKey: 'k' } as any, 'per_room', DEFAULT_RATE_PLANS)
+        { channexPropertyId: 'p1', channexApiKey: 'k' } as any, DEFAULT_RATE_PLANS)
 
       const titles = created.map((rp) => rp.title).sort()
       expect(titles).toEqual(['Double BAR', 'Double Bed & Breakfast'])
@@ -183,3 +186,11 @@ describe('syncProperty multi-plan (P5)', () => {
     } finally { restore(); resetChannexHttpForTests() }
   })
 })
+
+/**
+ * Precio del entry para la ocupación PRIMARIA (la más alta). Las tarifas viajan siempre como
+ * `rates: [{occupancy, rate}]` — el hotel tarifa por persona; `rate` plano solo queda para filas
+ * legacy sin ocupación.
+ */
+const topRate = (v: any): number | undefined =>
+  v.rate ?? [...(v.rates ?? [])].sort((a: any, b: any) => b.occupancy - a.occupancy)[0]?.rate

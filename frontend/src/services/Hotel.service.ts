@@ -137,14 +137,6 @@ export const HotelService = {
     return http.post('/rates/copy-next-year')
   },
 
-  // Modo de tarificación del hotel: 'per_room' (precio por habitación) | 'per_person' (por ocupación).
-  async pricingMode(): Promise<{ mode: 'per_room' | 'per_person' }> {
-    return http.get('/pricing-mode')
-  },
-  async setPricingMode(mode: 'per_room' | 'per_person'): Promise<{ mode: 'per_room' | 'per_person' }> {
-    return http.put('/pricing-mode', { mode })
-  },
-
   /**
    * Los dos EJES de la grilla de tarifas por fecha: planes y tipos de habitación.
    * `roomTypes` sale de las habitaciones reales, no de `/rates` — ese solo devuelve los tipos

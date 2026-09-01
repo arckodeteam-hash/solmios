@@ -105,9 +105,11 @@ describe('E2E — pricing genera/guarda → el motor público cobra exactamente 
 
     // Sin tarifas guardadas todavía → GET /rates genera el esqueleto. Esto es lo que arreglé:
     // capacidad MÁXIMA=4, precio MÍNIMO=120 — no los de la primera habitación de la query.
+    // El esqueleto abre una fila por ocupación 1..capacidad (el hotel tarifa por persona).
     const skeleton = await pricingService.listRates(HOTEL_ID)
     expect(skeleton.length).toBeGreaterThan(0)
-    expect(skeleton.every((r: any) => r.occupancy === 4 && r.basePrice === 120)).toBe(true)
+    expect(Math.max(...skeleton.map((r: any) => r.occupancy))).toBe(4)
+    expect(skeleton.every((r: any) => r.basePrice === 120)).toBe(true)
 
     // ─── Paso 2: guarda sin tocar nada (mismo payload que buildRatesPayload() del frontend) ──
     const payload = skeleton.map((r: any) => ({
@@ -117,7 +119,7 @@ describe('E2E — pricing genera/guarda → el motor público cobra exactamente 
     await pricingService.updateRates(HOTEL_ID, payload)
     // Ahora SÍ hay filas reales en room_rates — no generadas en memoria en cada request.
     expect(tables.RoomRates!.length).toBeGreaterThan(0)
-    expect(tables.RoomRates!.every((r: any) => r.occupancy === 4)).toBe(true)
+    expect(tables.RoomRates!.some((r: any) => r.occupancy === 4)).toBe(true)
 
     // ─── Paso 3: un huésped busca el motor público para el GRUPO COMPLETO (4 personas) ─────
     const availability = new AvailabilityUseCase(

@@ -1,5 +1,10 @@
 import { readRatePlans, type RatePlanDef } from '../../../shared/utils/rate-plans'
-export type PricingMode = 'per_room' | 'per_person'
+// El hotel tarifa SIEMPRE por persona (ocupación). Existió un modo 'per_room' (un precio por
+// habitación sin importar cuánta gente entre) con un switch en la UI, y se sacó: era la fuente de
+// una clase entera de confusiones — la grilla mostraba una sola fila por tipo, el precio de "1
+// persona" se podía editar pero NUNCA se publicaba (el push se quedaba con la ocupación más alta),
+// y cambiar el switch no tenía efecto real hasta re-sincronizar la propiedad en Channex, porque el
+// `sell_mode` de los rate plans se fija al crearlos. Un solo modo elimina las tres.
 
 /** Temporadas de arranque cuando el hotel todavía no tiene catálogo propio. */
 const DEFAULT_SEASON_NAMES = ['baja', 'media', 'alta', 'especial']
@@ -30,7 +35,7 @@ export class PricingQueries {
   async rateGridAxes(hotelId: string): Promise<{ plans: RatePlanDef[]; roomTypes: string[] }> {
     const [plans, types] = await Promise.all([
       readRatePlans((m, q) => this.orm.findMany(m, q) as Promise<any[]>, hotelId),
-      this.roomTypesFor(hotelId, 'per_room'),
+      this.roomTypesFor(hotelId),
     ])
     return { plans, roomTypes: [...new Set(types.map((t) => String(t.type)).filter(Boolean))] }
   }
@@ -38,35 +43,10 @@ export class PricingQueries {
   constructor(private readonly orm: any) {}
 
   /**
-   * Modo de tarificación del hotel (config PMS por cliente):
-   *  - 'per_room'   → un precio por habitación sin importar huéspedes (default).
-   *  - 'per_person' → precio distinto por cantidad de personas (occupancy-based).
-   * Guardado en configuration(hotelId, key='pricing_mode') = { mode }.
+   * Tipos de habitación del hotel expandidos por ocupación: una fila por cada ocupación
+   * 1..capacidad. El hotel tarifa SIEMPRE por persona — ver la nota del encabezado.
    */
-  async getPricingMode(hotelId: string): Promise<PricingMode> {
-    try {
-      const rows = await this.orm.findMany('Configuration', { hotelId, key: 'pricing_mode' }) as any[]
-      const raw = rows[0]?.value
-      const v = typeof raw === 'string' ? (() => { try { return JSON.parse(raw) } catch { return raw } })() : raw
-      const mode = (v && typeof v === 'object') ? v.mode : v
-      return mode === 'per_person' ? 'per_person' : 'per_room'
-    } catch { return 'per_room' }
-  }
-
-  async setPricingMode(hotelId: string, mode: PricingMode): Promise<PricingMode> {
-    const value = { mode: mode === 'per_person' ? 'per_person' : 'per_room' }
-    const rows = await this.orm.findMany('Configuration', { hotelId, key: 'pricing_mode' }) as any[]
-    if (rows[0]) await this.orm.update('Configuration', rows[0].id, { value })
-    else await this.orm.create('Configuration', { id: crypto.randomUUID(), hotelId, key: 'pricing_mode', value })
-    return value.mode as PricingMode
-  }
-
-  /**
-   * Tipos de habitación del hotel expandidos por ocupación según el modo:
-   *  - per_room   → una fila por tipo (ocupación = capacidad).
-   *  - per_person → una fila por cada ocupación 1..capacidad (para precio por persona).
-   */
-  async roomTypesFor(hotelId: string, mode: PricingMode = 'per_room'): Promise<{ type: string; occupancy: number; basePrice: number }[]> {
+  async roomTypesFor(hotelId: string): Promise<{ type: string; occupancy: number; basePrice: number }[]> {
     const rooms = await this.orm.findMany('Rooms', { hotelId }) as any[]
     // Un tipo agrupa VARIAS habitaciones físicas, que pueden tener capacidad y basePrice
     // distintos entre sí. FIX (revisión Tarea 2, 2026-08-20): antes se quedaba con los valores
@@ -91,23 +71,19 @@ export class PricingQueries {
     }
     const out: { type: string; occupancy: number; basePrice: number }[] = []
     for (const t of byType.values()) {
-      if (mode === 'per_person') {
-        for (let occ = 1; occ <= t.capacity; occ++) out.push({ type: t.type, occupancy: occ, basePrice: t.basePrice })
-      } else {
-        out.push({ type: t.type, occupancy: t.capacity, basePrice: t.basePrice })
-      }
+      for (let occ = 1; occ <= t.capacity; occ++) out.push({ type: t.type, occupancy: occ, basePrice: t.basePrice })
     }
     return out
   }
 
   /**
-   * Todas las combinaciones (tipo × ocupación × temporada) que el hotel PUEDE tarifar hoy.
-   * `per_room` da una ocupación por tipo (la capacidad); `per_person`, una por cada ocupación.
+   * Todas las combinaciones (tipo × ocupación × temporada) que el hotel PUEDE tarifar hoy:
+   * una fila por cada ocupación 1..capacidad de cada tipo, por cada temporada del catálogo.
    */
-  private async rateGridCells(hotelId: string, mode: PricingMode): Promise<RateGridCell[]> {
+  private async rateGridCells(hotelId: string): Promise<RateGridCell[]> {
     const seasons = await this.orm.findMany('Seasons', { hotelId }) as any[]
     const seasonNames = seasons.length ? seasons.map((s: any) => String(s.name)) : DEFAULT_SEASON_NAMES
-    const roomTypes = await this.roomTypesFor(hotelId, mode)
+    const roomTypes = await this.roomTypesFor(hotelId)
     const out: RateGridCell[] = []
     for (const rt of roomTypes) {
       for (const season of seasonNames) {
@@ -175,8 +151,7 @@ export class PricingQueries {
   /** Grilla de tarifas BASE (channel=''): la grilla completa, con las filas reales donde existen. */
   async listBaseRates(hotelId: string, allRates?: any[]): Promise<any[]> {
     const all = allRates ?? (await this.orm.findMany('RoomRates', { hotelId }) as any[])
-    const mode = await this.getPricingMode(hotelId)
-    const cells = await this.rateGridCells(hotelId, mode)
+    const cells = await this.rateGridCells(hotelId)
     return this.fillRateGrid(hotelId, cells, all.filter((r) => !r.channel), '')
   }
 
@@ -190,8 +165,7 @@ export class PricingQueries {
    */
   async listChannelRates(hotelId: string, channel: string, allRates?: any[]): Promise<any[]> {
     const all = allRates ?? (await this.orm.findMany('RoomRates', { hotelId }) as any[])
-    const mode = await this.getPricingMode(hotelId)
-    const cells = await this.rateGridCells(hotelId, mode)
+    const cells = await this.rateGridCells(hotelId)
     const base = this.fillRateGrid(hotelId, cells, all.filter((r) => !r.channel), '')
     const overrides = new Map(
       all.filter((r) => r.channel === channel).map((o) => [rateKey(o.roomType, o.occupancy, o.season), o]),

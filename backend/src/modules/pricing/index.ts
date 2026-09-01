@@ -51,8 +51,6 @@ export function PricingModule() {
       router.get('/api/rates', ratesGuard('view'), (req: any) => controller.listRates(req))
       router.put('/api/rates', ratesGuard('edit'), (req: any) => controller.updateRates(req))
       router.post('/api/rates/copy-next-year', ratesGuard('edit'), (req: any) => controller.copyRatesNextYear(req))
-      router.get('/api/pricing-mode', guard('settings', 'view'), (req: any) => controller.getPricingMode(req))
-      router.put('/api/pricing-mode', guard('settings', 'edit'), (req: any) => controller.setPricingMode(req))
       router.get('/api/blocks', guard('settings', 'view'), (req: any) => controller.listBlocks(req))
       router.post('/api/blocks', guard('settings', 'create'), (req: any) => controller.createBlocks(req))
       router.delete('/api/blocks/:id', guard('settings', 'delete'), (req: any) => controller.deleteBlock(req))
@@ -74,7 +72,7 @@ export function PricingModule() {
       router.delete('/api/rate-overrides/:id', ratesGuard('edit'), (req: any) => controller.deleteRateOverride(req))
       router.get('/api/channel-metrics', guard('settings', 'view'), (req: any) => controller.getChannelMetrics(req))
 
-      log.info('Módulo pricing listo (19 endpoints)')
+      log.info('Módulo pricing listo (17 endpoints)')
       return service
     },
   })
