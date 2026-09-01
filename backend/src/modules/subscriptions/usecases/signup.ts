@@ -12,6 +12,7 @@ import { passwordIssues } from '../../../shared/password-policy'
 import { isValidEmail } from '../../../shared/email'
 import { newVerificationToken, verificationEmail } from '../../usuarios/usecases/email-verification'
 import { DEFAULT_ROLE_PERMISSIONS } from '../../../shared/permissions'
+import { buildHotelSlug } from '../../../shared/utils/hotel-slug'
 
 /** Días de prueba gratis. Es la promesa de la landing: si cambia, cambia acá. */
 export const TRIAL_DAYS = 7
@@ -137,9 +138,16 @@ export class SignupUseCase {
     input: SignupInput,
     trialEnds: Date,
   ): Promise<SignupResult> {
+    // El slug se calcula ACÁ, al crear. Sin él el hotel nace sin página pública
+    // (`GET /api/public/hotels/:slug`) y queda fuera del sitemap — antes solo lo poblaba el
+    // seeder `scripts/seed-hotel-slugs.ts`, que nadie corre después de cada alta.
+    const slug = await buildHotelSlug(hotelId, hotelName, async (candidate) =>
+      ((await this.deps.hotelsRepo.findMany({ slug: candidate })) as any[]).length > 0)
+
     await this.deps.hotelsRepo.create({
       id: hotelId,
       name: hotelName,
+      slug,
       email,
       phone: input.phone ?? '',
       // `address`, no `location`: el formulario del super-admin manda `location`,
