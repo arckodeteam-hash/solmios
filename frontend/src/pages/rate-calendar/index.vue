@@ -199,14 +199,14 @@ async function removeOverride(o: RateOverride) {
 
 // ── Carga ────────────────────────────────────────────────────────────────────────────────────
 async function load() {
-  const [rates, plans, ovr] = await Promise.all([
-    HotelService.rates().catch(() => ({ data: [] as any[] })),
-    HotelService.ratePlans().catch(() => ({ data: [] as RatePlan[] })),
+  const [axes, ovr] = await Promise.all([
+    HotelService.ratePlans().catch(() => ({ data: [] as RatePlan[], roomTypes: [] as string[] })),
     HotelService.rateOverrides(windowStart.value, windowEnd.value).catch(() => ({ data: [] as RateOverride[] })),
   ])
-  // Los tipos salen de la misma fuente que la matriz de temporadas: así las dos vistas coinciden.
-  roomTypes.value = [...new Set((rates.data || []).map((r: any) => String(r.roomType)).filter(Boolean))]
-  ratePlans.value = plans.data || []
+  // Tipos REALES del hotel: la matriz de temporadas solo lista los que ya tienen tarifa cargada,
+  // y acá hay que poder tarifar cualquier tipo para una fecha.
+  roomTypes.value = axes.roomTypes || []
+  ratePlans.value = axes.data || []
   overrides.value = ovr.data || []
 }
 
@@ -254,13 +254,13 @@ onMounted(async () => {
 
     <EmptyState
       v-else-if="!ready"
-      title="Todavía no hay tipos de habitación tarifados"
-      message="Cargá el precio base de cada tipo en Temporadas y Tarifas. Después volvé acá para ajustar días concretos."
+      title="Todavía no hay habitaciones cargadas"
+      message="Creá los tipos de habitación del hotel. Después volvé acá para ponerle precio a días concretos."
     >
       <template #action>
-        <router-link to="/panel/config/tarifas"
+        <router-link to="/panel/config/habitaciones"
           class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white">
-          Ir a Temporadas y Tarifas
+          Ir a Habitaciones
         </router-link>
       </template>
     </EmptyState>

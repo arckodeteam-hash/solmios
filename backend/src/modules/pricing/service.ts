@@ -3,10 +3,9 @@ import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { hotelIdOfUserLegacy } from '../../shared/usecases/hotel-of-legacy'
 import { composeSockets } from '../../shared/usecases/compose-sockets'
 import type { PricingQueries } from './usecases/pricing-queries'
-import { applyActiveSeason } from './usecases/season-catalog'
+import { applyActiveSeason, listSeasonsSeeded } from './usecases/season-catalog'
 import { DEFAULT_RATE_PLANS, type RatePlanDef } from '../../shared/utils/rate-plans'
 import type { PricingSockets } from './sockets'
-import { defaultSeasons } from './usecases/defaults'
 import { listBlocks, createBlocks, deleteBlock } from './usecases/blocks'
 import {
   auditSafely, rateChangeEntry, rateCopyEntry, seasonsChangeEntry,
@@ -43,17 +42,7 @@ export class PricingService {
     return auditSafely(this.auditPort, this.logger, entry)
   }
 
-  async listSeasons(hotelId: string): Promise<any[]> {
-    let data = await this.seasonsRepo.findMany({ hotelId }) as any[]
-    // Seed la 1ª vez: sin esto la temporada activa no tendría sobre qué operar.
-    if (data.length === 0) {
-      for (const s of defaultSeasons()) {
-        await this.seasonsRepo.create({ id: crypto.randomUUID(), hotelId, ...s })
-      }
-      data = await this.seasonsRepo.findMany({ hotelId }) as any[]
-    }
-    return data.sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0))
-  }
+  listSeasons(hotelId: string): Promise<any[]> { return listSeasonsSeeded(this.seasonsRepo, hotelId) }
 
   async updateSeasons(hotelId: string, seasons: any[], actor?: Actor): Promise<number> {
     const existing = await this.seasonsRepo.findMany({ hotelId }) as any[]
@@ -168,8 +157,8 @@ export class PricingService {
   /** Grilla de tarifas por fecha → push delta a las OTAs (connector pricing-canales). */
   async notifyRateOverridesUpdated(hotelId: string, saved: Array<Record<string, unknown>>, removed: number): Promise<void> { await this.sockets.onRateOverridesUpdated?.(hotelId, saved, removed) }
 
-  /** Planes del hotel (configuration key='rate_plans'; default BAR + B&B). Ver shared/utils/rate-plans.ts. */
-  listRatePlans(hotelId: string): Promise<RatePlanDef[]> { return this.queries ? this.queries.ratePlans(hotelId) : Promise.resolve(DEFAULT_RATE_PLANS) }
+  /** Ejes de la grilla de tarifas por fecha (planes + tipos reales). Detalle en usecases/pricing-queries.ts. */
+  rateGridAxes(hotelId: string): Promise<{ plans: RatePlanDef[]; roomTypes: string[] }> { return this.queries ? this.queries.rateGridAxes(hotelId) : Promise.resolve({ plans: DEFAULT_RATE_PLANS, roomTypes: [] }) }
 
   async listRateRestrictions(hotelId: string): Promise<any[]> {
     return await this.restrictionsRepo.findMany({ hotelId }) as any[]

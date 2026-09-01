@@ -160,10 +160,18 @@ export class PricingController {
   }
   // ── Tarifas por fecha (grilla): la capa que cierra los tests 2 a 8 de la certificación ──
 
-  /** Planes del hotel (BAR, B&B, …). La grilla los necesita para no hardcodear la lista. */
+  /**
+   * Los dos EJES de la grilla de tarifas por fecha: los planes del hotel y sus tipos de habitación.
+   *
+   * Los tipos NO salen de `/api/rates`: ese endpoint devuelve solo las filas de `room_rates` que
+   * existen, así que un hotel que tarifó `double` por temporada pierde `single`/`suite`/`triple`
+   * de la lista — y son justamente los que hay que poder tarifar por fecha. Acá salen de las
+   * habitaciones reales, que es lo mismo que se publica como room types al channel manager.
+   */
   async listRatePlans(req: HttpRequest) {
-    const id = await this.hotelOf(req); if (!id) return { status: 200, body: { data: [] } }
-    return { status: 200, body: { data: await this.service.listRatePlans(id) } }
+    const id = await this.hotelOf(req); if (!id) return { status: 200, body: { data: [], roomTypes: [] } }
+    const { plans, roomTypes } = await this.service.rateGridAxes(id)
+    return { status: 200, body: { data: plans, roomTypes } }
   }
 
   async listRateOverrides(req: HttpRequest) {

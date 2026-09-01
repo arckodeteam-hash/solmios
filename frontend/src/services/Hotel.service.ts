@@ -145,8 +145,12 @@ export const HotelService = {
     return http.put('/pricing-mode', { mode })
   },
 
-  /** Planes del hotel (BAR, Bed & Breakfast, …) — la grilla de tarifas por fecha los usa como filas. */
-  async ratePlans(): Promise<{ data: RatePlan[] }> {
+  /**
+   * Los dos EJES de la grilla de tarifas por fecha: planes y tipos de habitación.
+   * `roomTypes` sale de las habitaciones reales, no de `/rates` — ese solo devuelve los tipos
+   * que YA tienen tarifa por temporada, y son los otros los que hay que poder tarifar.
+   */
+  async ratePlans(): Promise<{ data: RatePlan[]; roomTypes: string[] }> {
     return http.get('/rate-plans')
   },
 

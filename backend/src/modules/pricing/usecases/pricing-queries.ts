@@ -2,9 +2,20 @@ import { readRatePlans, type RatePlanDef } from '../../../shared/utils/rate-plan
 export type PricingMode = 'per_room' | 'per_person'
 
 export class PricingQueries {
-  /** Planes del hotel (BAR, B&B, …). La lógica y el default viven en shared/utils/rate-plans.ts. */
-  ratePlans(hotelId: string): Promise<RatePlanDef[]> {
-    return readRatePlans((m, q) => this.orm.findMany(m, q) as Promise<any[]>, hotelId)
+  /**
+   * Los dos EJES de la grilla de tarifas por fecha: los planes del hotel (BAR, B&B, … — catálogo y
+   * default en shared/utils/rate-plans.ts) y sus tipos de habitación REALES.
+   *
+   * Los tipos salen de `Rooms`, no de `listBaseRates`: ese devuelve solo las filas de `room_rates`
+   * que existen, así que un hotel que tarifó `double` por temporada perdería `single`/`suite`/
+   * `triple` — y son justamente los que hay que poder tarifar para una fecha puntual.
+   */
+  async rateGridAxes(hotelId: string): Promise<{ plans: RatePlanDef[]; roomTypes: string[] }> {
+    const [plans, types] = await Promise.all([
+      readRatePlans((m, q) => this.orm.findMany(m, q) as Promise<any[]>, hotelId),
+      this.roomTypesFor(hotelId, 'per_room'),
+    ])
+    return { plans, roomTypes: [...new Set(types.map((t) => String(t.type)).filter(Boolean))] }
   }
 
   constructor(private readonly orm: any) {}

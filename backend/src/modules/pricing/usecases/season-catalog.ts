@@ -4,6 +4,7 @@
 
 import { AuthError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
+import { defaultSeasons } from './defaults'
 
 /**
  * Deja ACTIVA una sola temporada del hotel (#148) y apaga el resto.
@@ -22,4 +23,19 @@ export async function applyActiveSeason(
     const shouldBeActive = s.name === name ? 1 : 0
     if ((s.active ? 1 : 0) !== shouldBeActive) await repo.update(s.id, { active: shouldBeActive })
   }
+}
+
+/**
+ * Temporadas del hotel, ordenadas — sembrando el catálogo por defecto la primera vez.
+ *
+ * El seed no es cosmético: `activateSeason` y la matriz de tarifas necesitan que exista algo
+ * sobre lo que operar, y un hotel recién creado no tiene ninguna fila.
+ */
+export async function listSeasonsSeeded(repo: RepositoryAdapter<any>, hotelId: string): Promise<any[]> {
+  let data = (await repo.findMany({ hotelId })) as any[]
+  if (data.length === 0) {
+    for (const s of defaultSeasons()) await repo.create({ id: crypto.randomUUID(), hotelId, ...s })
+    data = (await repo.findMany({ hotelId })) as any[]
+  }
+  return data.sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0))
 }
