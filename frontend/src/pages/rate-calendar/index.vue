@@ -10,7 +10,7 @@
 //  - escribir directo en una celda → override de UN día (el caso "subime el 24 de diciembre");
 //  - "Editar un rango" → override de un tramo entero en una sola fila (el caso "toda la
 //    temporada de invierno"), que además es lo que evita mandar 180 entries por un semestre.
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
@@ -146,6 +146,34 @@ function openRange() {
 const rangeValid = computed(() => {
   const f = rangeForm.value
   return !!f.roomType && !!f.ratePlan && !!f.dateFrom && !!f.dateTo && f.dateTo >= f.dateFrom
+})
+
+/** El override YA guardado para la combinación exacta que tiene el formulario, si existe. */
+const rangeExisting = computed<RateOverride | null>(() => {
+  const f = rangeForm.value
+  if (!f.roomType || !f.ratePlan || !f.dateFrom) return null
+  const k = keyOf(f)
+  return overrides.value.find((o) => keyOf(o) === k) ?? null
+})
+
+/**
+ * Cuando la combinación elegida ya tiene una tarifa cargada, el formulario la PRECARGA.
+ *
+ * Sin esto el modal borraba en silencio lo que no se volvía a tipear: guardar "estadía mínima 2"
+ * sobre un rango que ya tenía 444 dejaba el precio en 0 y la OTA volvía al de temporada. El
+ * guardado reemplaza la celda entera (esa es su semántica: lo que dejás vacío vuelve a la
+ * temporada), así que lo que hay que mostrar es qué hay antes de tocar nada.
+ */
+watch(rangeExisting, (o) => {
+  if (!o) return
+  const f = rangeForm.value
+  f.rate = o.rate > 0 ? String(o.rate) : ''
+  f.minStay = o.minStay > 0 ? String(o.minStay) : ''
+  f.maxStay = o.maxStay > 0 ? String(o.maxStay) : ''
+  f.minStayThrough = o.minStayThrough > 0 ? String(o.minStayThrough) : ''
+  f.stopSell = o.stopSell === 1
+  f.closedToArrival = o.closedToArrival === 1
+  f.closedToDeparture = o.closedToDeparture === 1
 })
 
 function applyRange() {
@@ -394,6 +422,11 @@ onMounted(async () => {
 
     <AppModal v-if="rangeOpen" size="lg" title="Editar un rango"
       subtitle="Un tramo entero en una sola tarifa — no un precio por día" @close="rangeOpen = false">
+      <p v-if="rangeExisting"
+        class="mb-4 rounded-xl bg-cyan/10 px-3 py-2 text-xs text-navy">
+        Estas fechas ya tienen una tarifa cargada. Los campos muestran lo que hay: lo que borres
+        vuelve al precio de temporada.
+      </p>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <label class="block">
           <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Habitación</span>
