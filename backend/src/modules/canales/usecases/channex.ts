@@ -759,6 +759,9 @@ export class ChannexUseCase {
           id: rp.id, title: a.title, roomTypeId: a.room_type_id,
           roomTypeTitle: a.room_type_title || '—', occupancy: primary?.occupancy || 2,
           sellMode: a.sell_mode || 'per_person',
+          // Channex crea rate plans DERIVADOS al mapear un canal ("X - OpenChannel …"). Son suyos,
+          // no del catálogo del hotel: mapearlos no tiene sentido y ensuciaban el contador.
+          parentRatePlanId: a.parent_rate_plan_id || rp.relationships?.parent_rate_plan?.data?.id || null,
         }
       }),
     }

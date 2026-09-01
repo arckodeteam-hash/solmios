@@ -36,6 +36,14 @@ onMounted(async () => {
 // El guardado REEMPLAZA el mapeo completo (así lo define Channex): se manda siempre la lista
 // entera, y una fila sin códigos se omite — es la forma de desmapear una tarifa.
 const mapping = ref<Record<string, { roomTypeCode: string; ratePlanCode: string }>>({})
+
+/**
+ * Los rate plans PROPIOS del hotel. Channex crea copias derivadas al mapear un canal
+ * ("double BAR - OpenChannel …", con `parent_rate_plan_id`): son artefactos suyos, mapearlas no
+ * tiene sentido y hacían que el contador dijera "5 de 10" con las 8 reales ya mapeadas.
+ */
+const ownRatePlans = computed<any[]>(() =>
+  (detail.value?.allRatePlans ?? []).filter((rp: any) => !rp.parentRatePlanId))
 const savingMapping = ref(false)
 const readiness = ref<{ ready: boolean; issues: string[] } | null>(null)
 const activating = ref(false)
@@ -43,7 +51,7 @@ const activating = ref(false)
 /** Precarga el formulario con lo que ya está mapeado en Channex. */
 function loadMapping() {
   const next: Record<string, { roomTypeCode: string; ratePlanCode: string }> = {}
-  for (const rp of detail.value?.allRatePlans ?? []) {
+  for (const rp of ownRatePlans.value) {
     const existing = (detail.value?.ratePlans ?? []).find((m: any) => m.rate_plan_id === rp.id)
     next[rp.id] = {
       roomTypeCode: String(existing?.settings?.room_type_code ?? ''),
@@ -60,7 +68,7 @@ async function saveMapping() {
   if (savingMapping.value) return
   savingMapping.value = true
   try {
-    const ratePlans = (detail.value?.allRatePlans ?? [])
+    const ratePlans = ownRatePlans.value
       .map((rp: any) => ({ rp, m: mapping.value[rp.id] }))
       .filter((row: { rp: any; m?: { roomTypeCode: string; ratePlanCode: string } }) =>
         !!row.m?.roomTypeCode.trim() && !!row.m?.ratePlanCode.trim())
@@ -143,7 +151,7 @@ const logo = computed(() => resolveChannelLogo(detail.value?.channel, detail.val
 
     <!-- Mapeo con el canal: sin esto Channex no intercambia nada ni deja activar -->
     <SectionCard title="Mapeo con el canal"
-      :subtitle="`${mappedCount} de ${detail.allRatePlans?.length || 0} tarifas mapeadas`">
+      :subtitle="`${mappedCount} de ${ownRatePlans.length} tarifas mapeadas`">
       <template #actions>
         <button type="button" :disabled="savingMapping"
           class="rounded-full bg-cyan px-4 py-2 text-xs font-bold text-navy disabled:opacity-50"
@@ -170,7 +178,7 @@ const logo = computed(() => resolveChannelLogo(detail.value?.channel, detail.val
         El canal está listo para activarse.
       </p>
 
-      <EmptyState v-if="!detail.allRatePlans?.length"
+      <EmptyState v-if="!ownRatePlans.length"
         title="Este hotel todavía no tiene tarifas en el channel manager"
         message="Sincronizá el hotel desde Channel para que se creen sus habitaciones y tarifas. Después volvé acá a mapearlas." />
 
@@ -185,7 +193,7 @@ const logo = computed(() => resolveChannelLogo(detail.value?.channel, detail.val
             </tr>
           </thead>
           <tbody>
-            <tr v-for="rp in detail.allRatePlans" :key="rp.id" class="border-t border-border">
+            <tr v-for="rp in ownRatePlans" :key="rp.id" class="border-t border-border">
               <td class="px-4 py-2.5">
                 <div class="text-xs font-bold text-navy">{{ rp.title }}</div>
                 <div class="text-[10px] text-text-muted capitalize">{{ rp.roomTypeTitle }} · {{ rp.occupancy }}p</div>
