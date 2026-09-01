@@ -1,6 +1,23 @@
 import { readRatePlans, type RatePlanDef } from '../../../shared/utils/rate-plans'
 export type PricingMode = 'per_room' | 'per_person'
 
+/** Temporadas de arranque cuando el hotel todavía no tiene catálogo propio. */
+const DEFAULT_SEASON_NAMES = ['baja', 'media', 'alta', 'especial']
+
+/** Una celda de la grilla de tarifas. La clave natural de `room_rates` sin el canal. */
+interface RateGridCell {
+  roomType: string
+  occupancy: number
+  season: string
+  basePrice: number
+}
+
+const rateKey = (roomType: string, occupancy: number, season: string): string =>
+  `${roomType}|${occupancy}|${season}`
+
+const effectivePrice = (basePrice: number, percentage: number): number =>
+  Math.round(basePrice * (1 + percentage / 100) * 100) / 100
+
 export class PricingQueries {
   /**
    * Los dos EJES de la grilla de tarifas por fecha: los planes del hotel (BAR, B&B, … — catálogo y
@@ -84,75 +101,111 @@ export class PricingQueries {
   }
 
   /**
-   * Grilla de tarifas BASE (channel=''): las reales si existen, o derivadas de los tipos de
-   * habitación × temporadas si el hotel todavía no guardó ninguna — mismo criterio "nunca vacío"
-   * que ya usa `listChannelRates` para las vistas por canal, pero escrito aparte (no reusando esa
-   * función con channel='') porque su merge con `overrides` compara `r.channel === channel` contra
-   * `!r.channel`: una fila real con `channel: undefined` matchea el segundo pero no el primero, y
-   * reusarla ahí devolvería la celda GENERADA en vez de la real (perdiendo su `id`/percentage/
-   * closed ya guardados) para cualquier fila cuyo `channel` no sea el string `''` exacto.
-   *
-   * Bug real que esto cierra (Tarea 2, QA 2026-08-20): sin esto, un hotel que nunca guardó una
-   * tarifa base veía "Temporadas y Tarifas" vacío y no tenía forma de configurar precio por
-   * ocupación salvo entrando a Channel Manager → un canal OTA ya conectado (donde
-   * `listChannelRates` sí generaba el esqueleto) — inalcanzable para un hotel sin canales.
+   * Todas las combinaciones (tipo × ocupación × temporada) que el hotel PUEDE tarifar hoy.
+   * `per_room` da una ocupación por tipo (la capacidad); `per_person`, una por cada ocupación.
    */
-  async listBaseRates(hotelId: string, allRates?: any[]): Promise<any[]> {
-    const all = allRates ?? (await this.orm.findMany('RoomRates', { hotelId }) as any[])
-    const base = all.filter((r) => !r.channel)
-    if (base.length) return base
-
-    const mode = await this.getPricingMode(hotelId)
+  private async rateGridCells(hotelId: string, mode: PricingMode): Promise<RateGridCell[]> {
     const seasons = await this.orm.findMany('Seasons', { hotelId }) as any[]
-    const seasonNames = seasons.length ? seasons.map((s: any) => s.name) : ['baja', 'media', 'alta', 'especial']
+    const seasonNames = seasons.length ? seasons.map((s: any) => String(s.name)) : DEFAULT_SEASON_NAMES
     const roomTypes = await this.roomTypesFor(hotelId, mode)
-    const out: any[] = []
+    const out: RateGridCell[] = []
     for (const rt of roomTypes) {
       for (const season of seasonNames) {
-        out.push({
-          hotelId, roomType: rt.type, occupancy: rt.occupancy, season, channel: '',
-          basePrice: rt.basePrice, percentage: 0, price: rt.basePrice, closed: 0, minStay: 0, maxStay: 0,
-          _inherited: true,
-        })
+        out.push({ roomType: rt.type, occupancy: rt.occupancy, season, basePrice: rt.basePrice })
       }
     }
     return out
   }
 
   /**
-   * Grilla de tarifas para un canal: una fila por (roomType × occupancy × season). La base sale de las
-   * tarifas base (channel='') si existen; si no, se deriva de los tipos de habitación + temporadas para
-   * que el editor nunca aparezca vacío (estilo MisterPlan). Aplica el override del canal donde exista;
-   * las demás filas van marcadas `_inherited` (aún sin override propio, precio = base).
+   * Completa la grilla: cada celda con fila guardada devuelve la fila REAL (con su id y todo lo
+   * que el hotel cargó); las que faltan se generan heredando de las vecinas.
+   *
+   * Por qué la unión y no "si hay filas guardadas, devolver solo esas" (que es lo que hacía antes):
+   * apenas el hotel guardaba UNA tarifa, el editor dejaba de mostrar el resto de la grilla. En el
+   * hotel de certificación eso se veía como tres bugs distintos que en realidad eran el mismo —
+   * aparecía un solo tipo de habitación (`double`), dos temporadas de cuatro (las que tenían fila)
+   * y una sola ocupación — y el switch "Por persona" no hacía nada visible, porque las filas
+   * guardadas tapaban las ocupaciones derivadas. Todo lo que el hotel no tarifó todavía quedaba
+   * inalcanzable desde la UI, sin ninguna señal de por qué.
+   *
+   * Qué hereda una celda nueva, y de dónde:
+   *  - `basePrice`, `minStay`, `maxStay` son del GRUPO (tipo × ocupación) — es como los agrupa la UI;
+   *  - `percentage` y `closed` son de la TEMPORADA de ese tipo, así una ocupación nueva arranca con
+   *    la misma curva de recargos que la que ya estaba cargada, en vez de en cero.
+   */
+  private fillRateGrid(hotelId: string, cells: RateGridCell[], saved: any[], channel: string): any[] {
+    const byKey = new Map(saved.map((r) => [rateKey(r.roomType, r.occupancy, r.season), r]))
+    const byGroup = new Map<string, any>()
+    const bySeasonOfType = new Map<string, any>()
+    const byType = new Map<string, any>()
+    for (const r of saved) {
+      const group = `${r.roomType}|${r.occupancy}`
+      if (!byGroup.has(group)) byGroup.set(group, r)
+      const seasonOfType = `${r.roomType}|${r.season}`
+      if (!bySeasonOfType.has(seasonOfType)) bySeasonOfType.set(seasonOfType, r)
+      if (!byType.has(r.roomType)) byType.set(r.roomType, r)
+    }
+
+    const filled = cells.map((c) => {
+      const real = byKey.get(rateKey(c.roomType, c.occupancy, c.season))
+      if (real) return real
+      const group = byGroup.get(`${c.roomType}|${c.occupancy}`) ?? byType.get(c.roomType)
+      const sameSeason = bySeasonOfType.get(`${c.roomType}|${c.season}`)
+      const basePrice = Number(group?.basePrice) || c.basePrice || 0
+      const percentage = Number(sameSeason?.percentage) || 0
+      return {
+        hotelId, roomType: c.roomType, occupancy: c.occupancy, season: c.season, channel,
+        basePrice, percentage, price: effectivePrice(basePrice, percentage),
+        closed: Number(sameSeason?.closed) || 0,
+        minStay: Number(group?.minStay) || 0,
+        maxStay: Number(group?.maxStay) || 0,
+        _inherited: true,
+      }
+    })
+
+    // Filas guardadas que ya no entran en la grilla (tipo de habitación borrado, temporada sacada
+    // del catálogo, ocupación por encima de la capacidad actual). Se devuelven igual: esconderlas
+    // las haría desaparecer del editor sin borrarlas de la base, y seguirían publicándose.
+    const inGrid = new Set(cells.map((c) => rateKey(c.roomType, c.occupancy, c.season)))
+    const orphans = saved.filter((r) => !inGrid.has(rateKey(r.roomType, r.occupancy, r.season)))
+    return [...filled, ...orphans]
+  }
+
+  /** Grilla de tarifas BASE (channel=''): la grilla completa, con las filas reales donde existen. */
+  async listBaseRates(hotelId: string, allRates?: any[]): Promise<any[]> {
+    const all = allRates ?? (await this.orm.findMany('RoomRates', { hotelId }) as any[])
+    const mode = await this.getPricingMode(hotelId)
+    const cells = await this.rateGridCells(hotelId, mode)
+    return this.fillRateGrid(hotelId, cells, all.filter((r) => !r.channel), '')
+  }
+
+  /**
+   * Grilla de tarifas de un CANAL: la misma grilla, con el override del canal donde exista.
+   *
+   * Una celda sin override hereda la tarifa base COMPLETA (incluido el % de temporada y los
+   * cierres), no solo el precio base con 0%. Eso es lo que el push publica realmente para esa
+   * celda (`canales/usecases/push-rates.ts` usa la fila base cuando el canal no tiene override),
+   * así que mostrar 0% hacía que el editor anunciara un precio distinto al que ve la OTA.
    */
   async listChannelRates(hotelId: string, channel: string, allRates?: any[]): Promise<any[]> {
     const all = allRates ?? (await this.orm.findMany('RoomRates', { hotelId }) as any[])
-    const base = all.filter((r) => !r.channel)
-    const key = (rt: string, occ: number, s: string) => `${rt}|${occ}|${s}`
-    const overrides = new Map(all.filter((r) => r.channel === channel).map((o) => [key(o.roomType, o.occupancy, o.season), o]))
-    const baseByKey = new Map(base.map((b) => [key(b.roomType, b.occupancy, b.season), b]))
-
-    // Celdas base: las tarifas base existentes, o derivadas de room types × temporadas si no hay ninguna.
-    // Con per_person se expanden por cada ocupación; con per_room, una por tipo.
     const mode = await this.getPricingMode(hotelId)
-    let cells: { roomType: string; occupancy: number; season: string; basePrice: number }[]
-    if (base.length) {
-      cells = base.map((b) => ({ roomType: b.roomType, occupancy: b.occupancy, season: b.season, basePrice: b.basePrice ?? 0 }))
-    } else {
-      const seasons = await this.orm.findMany('Seasons', { hotelId }) as any[]
-      const seasonNames = seasons.length ? seasons.map((s: any) => s.name) : ['baja', 'media', 'alta', 'especial']
-      const roomTypes = await this.roomTypesFor(hotelId, mode)
-      cells = []
-      for (const rt of roomTypes) for (const season of seasonNames) cells.push({ roomType: rt.type, occupancy: rt.occupancy, season, basePrice: rt.basePrice })
-    }
-
-    return cells.map((c) => {
-      const ov = overrides.get(key(c.roomType, c.occupancy, c.season))
-      if (ov) return ov
-      const b = baseByKey.get(key(c.roomType, c.occupancy, c.season))
-      const basePrice = (b?.basePrice ?? c.basePrice) || 0
-      return { hotelId, roomType: c.roomType, occupancy: c.occupancy, season: c.season, channel, basePrice, percentage: 0, price: basePrice, closed: 0, minStay: 0, maxStay: 0, _inherited: true }
+    const cells = await this.rateGridCells(hotelId, mode)
+    const base = this.fillRateGrid(hotelId, cells, all.filter((r) => !r.channel), '')
+    const overrides = new Map(
+      all.filter((r) => r.channel === channel).map((o) => [rateKey(o.roomType, o.occupancy, o.season), o]),
+    )
+    const out = base.map((b) => {
+      const override = overrides.get(rateKey(b.roomType, b.occupancy, b.season))
+      if (override) return override
+      // Sin `id`: es una celda del CANAL derivada de la base, no la fila base — devolver su id
+      // invitaría a que un guardado la pisara.
+      const { id: _id, ...cell } = b
+      return { ...cell, channel, _inherited: true }
     })
+    const inOut = new Set(out.map((r) => rateKey(r.roomType, r.occupancy, r.season)))
+    return [...out, ...[...overrides.values()].filter((o) => !inOut.has(rateKey(o.roomType, o.occupancy, o.season)))]
   }
 
   async getChannelMetrics(hotelId: string): Promise<any[]> {
