@@ -141,7 +141,8 @@ const NOT_CANCELLED = (status: string): boolean => status !== 'cancelled'
 
 /**
  * Filtra rooms/reservas/bloqueos del roomType indicado y devuelve los rangos de availability
- * para hoy → +90 días. Devuelve null si el hotel no tiene rooms de ese tipo (nada que empujar).
+ * para hoy → +horizonDays. Default 90 (delta por evento); el full sync de certificación pide 500.
+ * Devuelve null si el hotel no tiene rooms de ese tipo (nada que empujar).
  *
  * `isBlockingStatus` decide qué reserva ocupa. Default = criterio de canales (≠ 'cancelled').
  */
@@ -151,13 +152,14 @@ export function buildAvailabilityRanges(
   reservations: { roomId: string; status: string; checkIn: string; checkOut: string }[],
   blocks: { roomId: string; startDate: string; endDate: string }[],
   isBlockingStatus: (status: string) => boolean = NOT_CANCELLED,
+  horizonDays: number = AVAILABILITY_HORIZON_DAYS,
 ): AvailabilityRange[] | null {
   const typeRooms = roomsOfType(roomType, rooms)
   if (typeRooms.length === 0) return null
   const typeRoomIds = new Set(typeRooms.map((r) => r.id))
 
   const today = new Date().toISOString().split('T')[0]!
-  const end = new Date(Date.now() + AVAILABILITY_HORIZON_DAYS * MS_PER_DAY).toISOString().split('T')[0]!
+  const end = new Date(Date.now() + horizonDays * MS_PER_DAY).toISOString().split('T')[0]!
 
   const relRes = reservations.filter((r) =>
     typeRoomIds.has(r.roomId) && isBlockingStatus(r.status) && r.checkIn && r.checkOut && r.checkIn < end && r.checkOut > today)

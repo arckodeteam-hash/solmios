@@ -8,7 +8,8 @@ import type {
 } from './types'
 import type { CanalesSockets } from './sockets'
 import { ChannexUseCase } from './usecases/channex'
-import { pushAvailabilityForRoomType, pushAvailabilityForRoom, type AvailabilityDeps } from './usecases/availability'
+import { pushAvailabilityForRoomType, pushAvailabilityForRoom, pushAllRoomTypesAvailability, type AvailabilityDeps } from './usecases/availability'
+import { pushFullSyncAri } from './usecases/full-sync'
 import { CanalesCrudUseCase } from './usecases/crud'
 import { ChannelApiUseCase } from './usecases/channel-api'
 import { BookingsUseCase } from './usecases/bookings'
@@ -93,6 +94,13 @@ export class CanalesService {
     if (newPropertyId) await this.upsertConfig(hotelId, { channexPropertyId: newPropertyId, syncEnabled: 1, lastSync: new Date().toISOString() })
     else await this.upsertConfig(hotelId, { lastSync: new Date().toISOString() })
 
+    // ARI del full sync en exactamente 2 llamadas (test 1 de certificación) — lógica en usecases/full-sync.ts.
+    await pushFullSyncAri({
+      pushAll: () => pushAllRoomTypesAvailability(this.availDeps(), hotelId),
+      pushRates: () => this.pushSeasonalRates(hotelId),
+      logger: this.logger,
+    }, hotelId)
+
     if (this.syncLogRepo) try {
       await this.syncLogRepo.create({
         id: crypto.randomUUID(), hotelId, channel: 'channex', action: 'sync_property',
@@ -104,33 +112,22 @@ export class CanalesService {
     return result
   }
 
-  async pushRate(hotelId: string, roomType: string, precioBase: number): Promise<{ pushed: boolean }> { return this.channex.pushRate(await this.getConfig(hotelId), roomType, precioBase) }
-
   // Push de availability: recálculo + push. Disparado por reservas/checkin/checkout/bloqueos. Lógica en usecases/availability.ts.
   private availDeps(): AvailabilityDeps {
     return {
       findMany: (m, q) => this.queries.findMany(m, q),
       getConfig: h => this.getConfig(h),
       pushToChannex: (c, rt, r) => this.channex.pushAvailability(c, rt, r),
+      pushAllToChannex: (c, list) => this.channex.pushAllAvailability(c, list),
     }
   }
-  async pushAvailability(hotelId: string, roomType: string): Promise<{ pushed: boolean }> {
-    return pushAvailabilityForRoomType(this.availDeps(), hotelId, roomType)
-  }
-  async pushAvailabilityByRoom(hotelId: string, roomId: string): Promise<{ pushed: boolean }> {
-    return pushAvailabilityForRoom(this.availDeps(), hotelId, roomId)
-  }
+  async pushAvailability(hotelId: string, roomType: string): Promise<{ pushed: boolean }> { return pushAvailabilityForRoomType(this.availDeps(), hotelId, roomType) }
+  async pushAvailabilityByRoom(hotelId: string, roomId: string): Promise<{ pushed: boolean }> { return pushAvailabilityForRoom(this.availDeps(), hotelId, roomId) }
 
   // ─── Channel API delegado a usecase ──────────────────────────────────
-  async testConnection(hotelId: string, channel: string, otaHotelId: string): Promise<TestConnectionResultDTO> {
-    return this.channelApi.testConnection(await this.getConfig(hotelId), channel, otaHotelId)
-  }
-  async getMappingDetails(hotelId: string, channel: string, otaHotelId: string): Promise<{ success: boolean; rooms: MappingDetailDTO[]; error?: string }> {
-    return this.channelApi.getMappingDetails(await this.getConfig(hotelId), channel, otaHotelId)
-  }
-  async listGroups(hotelId: string): Promise<GroupDTO[]> {
-    return this.channelApi.listGroups(await this.getConfig(hotelId))
-  }
+  async testConnection(hotelId: string, channel: string, otaHotelId: string): Promise<TestConnectionResultDTO> { return this.channelApi.testConnection(await this.getConfig(hotelId), channel, otaHotelId) }
+  async getMappingDetails(hotelId: string, channel: string, otaHotelId: string): Promise<{ success: boolean; rooms: MappingDetailDTO[]; error?: string }> { return this.channelApi.getMappingDetails(await this.getConfig(hotelId), channel, otaHotelId) }
+  async listGroups(hotelId: string): Promise<GroupDTO[]> { return this.channelApi.listGroups(await this.getConfig(hotelId)) }
   async createOTAChannel(hotelId: string, dto: OTAChannelCreateDTO): Promise<OTAChannelResultDTO> {
     return this.channelApi.createOTAChannel(await this.getConfig(hotelId), dto)
   }

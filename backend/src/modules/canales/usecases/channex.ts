@@ -5,6 +5,7 @@
 
 import type { Logger } from 'arckode-framework'
 import type { CanalesDTO, ChannelDTO, ChannelsResultDTO, RoomTypeSummary, SyncResultDTO, TestConnectionDTO, TestConnectionResultDTO, MappingDetailDTO, OTAChannelCreateDTO, OTAChannelResultDTO, GroupDTO, OTAChannelMeta, BookingRevisionDTO, PushRatesResultDTO, DateRange } from '../types'
+import { sharedChannexHttp } from './channex-http'
 
 const STAGING_BASE = process.env.CHANNEX_BASE_URL || 'https://staging.channex.io/api/v1'
 const PROD_BASE = 'https://api.channex.io/api/v1'
@@ -31,16 +32,19 @@ export class ChannexUseCase {
     return cfg?.channexApiKey || CHANNEX_KEY
   }
 
-  private async channexReq(apiKeyOverride: string, method: string, path: string, body?: any) {
+  private async channexReq(apiKeyOverride: string, method: string, path: string, body?: any): Promise<{ ok: boolean; data: any }> {
     const plat = await this.platform()
     const apiKey = plat.key || apiKeyOverride   // plataforma primero; el por-hotel es último recurso
     if (!apiKey) throw new Error('Channex API key no configurada (configurala en Admin → Integraciones)')
     const url = `${plat.base}${path}`
-    const opts: any = { method, headers: { 'Content-Type': 'application/json', 'user-api-key': apiKey } }
-    if (body && method !== 'GET') opts.body = JSON.stringify(body)
-    const r = await fetch(url, opts)
-    const t = await r.text()
-    try { return { ok: r.ok, data: JSON.parse(t) } } catch { return { ok: r.ok, data: t } }
+    const headers: any = { 'Content-Type': 'application/json', 'user-api-key': apiKey }
+    const init: RequestInit = method === 'GET' || !body
+      ? { method, headers }
+      : { method, headers, body: JSON.stringify(body) }
+    // Transport compartido (channex-http): rate limit ~18/min + backoff en 429/5xx + timeout.
+    // Es lo que responde el test 12 de la certificación ("can you stay in rate limits?").
+    const r = await sharedChannexHttp.request<unknown>(url, init)
+    return { ok: r.ok, data: r.data }
   }
 
   /** Prueba la credencial de plataforma con un GET liviano a Channex. Para el botón "Probar conexión" del admin. */
@@ -157,8 +161,6 @@ export class ChannexUseCase {
     ))
     rtResults.filter(r => r.ok && r.data?.data).forEach(r => createdRTs.push(r.data.data))
 
-    const today = new Date().toISOString().split('T')[0]
-    const future = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
     const rtList = (await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${channexPId}`)).data?.data || []
 
     // Batch rate plan creation
@@ -175,44 +177,20 @@ export class ChannexUseCase {
         : [{ occupancy: cap, is_primary: true, rate: price }]
       return this.channexReq(key, 'POST', '/rate_plans', { rate_plan: { property_id: channexPId, room_type_id: rt.id, title: `${title} Standard`, currency: hotel.currency || 'USD', sell_mode: pricingMode, rate_mode: 'manual', options } })
     }))
-    // Rate plans: releer DESPUÉS de crear (rpList alimenta el push de restrictions y el reporte).
+    // Rate plans: releer DESPUÉS de crear (rpList alimenta el reporte).
     // Antes se leía antes de crear → siempre 0 y sin restrictions iniciales.
     const rpList = (await this.channexReq(key, 'GET', `/rate_plans?filter[property_id]=${channexPId}`)).data?.data || []
 
-    // Batch availability push
-    await Promise.all(rtList.map((rt: any) => {
-      const rData = rooms.find(rm => rm.type === (rt.attributes?.title || rt.title))
-      return this.channexReq(key, 'POST', '/availability', { values: [{ property_id: channexPId, room_type_id: rt.id, date_from: today, date_to: future, availability: rData?.cnt || rt.attributes?.count_of_rooms || 1 }] })
-    }))
-
-    // Batch restrictions push (room_type_id viene en relationships, no attributes — mismo patrón que pushRate)
-    await Promise.all(rpList.map((rp: any) => {
-      const rt = rtList.find((r: any) => r.id === (rp.attributes?.room_type_id || rp.relationships?.room_type?.data?.id))
-      const rData = rooms.find(rm => rm.type === (rt?.attributes?.title || rt?.title))
-      return this.channexReq(key, 'POST', '/restrictions', { values: [{ property_id: channexPId, rate_plan_id: rp.id, date_from: today, date_to: future, rate: Math.round(rData?.basePrice || 100) }] })
-    }))
+    // ARI del full sync: NO se empuja acá. El service lo manda al terminar en EXACTAMENTE 2
+    // llamadas (1 availability consolidado de 500 días con reservas descontadas + 1 restrictions
+    // consolidado por temporada) — es lo que exige el test 1 de la certificación PMS de Channex.
 
     this.logger.info('Sync Channex OK', { channexPropertyId: channexPId, roomTypes: rtList.length, ratePlans: rpList.length })
     return { result: { success: true, message: `Sincronización completa: ${rtList.length} room types, ${rpList.length} rate plans`, channexPropertyId: channexPId || '', roomTypes: rtList.length, ratePlans: rpList.length }, newPropertyId: channexPId || null }
   }
 
-  // ─── Push de tarifa (cuando cambia precioBase de una habitación) ─────
-  async pushRate(cfg: CanalesDTO | undefined, roomType: string, precioBase: number): Promise<{ pushed: boolean }> {
-    if (!cfg?.channexPropertyId) return { pushed: false }
-    const key = this.resolveKey(cfg)
-    const rts = await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${cfg.channexPropertyId}`)
-    const rtList: any[] = rts.data?.data || []
-    const targetRt = rtList.find(rt => String(rt.attributes?.title || '').toLowerCase() === roomType.toLowerCase())
-    const rps = await this.channexReq(key, 'GET', `/rate_plans?filter[property_id]=${cfg.channexPropertyId}`)
-    const rpList: any[] = rps.data?.data || []
-    const targetRp = rpList.find(rp => (rp.attributes?.room_type_id || rp.relationships?.room_type?.data?.id) === targetRt?.id)
-    if (!targetRp) return { pushed: false }
-    const today = new Date().toISOString().split('T')[0]
-    const future = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
-    await this.channexReq(key, 'POST', '/restrictions', { values: [{ property_id: cfg.channexPropertyId, rate_plan_id: targetRp.id, date_from: today, date_to: future, rate: Math.round(precioBase * 100) }] })
-    this.logger.info('Tarifa Channex actualizada', { roomType, precioBase })
-    return { pushed: true }
-  }
+  // pushRate (precio plano 30d) fue ELIMINADO: pisaba los precios por temporada ya publicados
+  // (dos fuentes de verdad). El push por cambio de basePrice va por pushSeasonalRates.
 
   /**
    * Etapa 2 — Push de tarifas POR TEMPORADA a Channex. Para cada tarifa (roomType, season) empuja al
@@ -329,6 +307,33 @@ export class ChannexUseCase {
     await this.channexReq(key, 'POST', '/availability', { values })
     this.logger.info('Availability Channex actualizada', { roomType, rangos: ranges.length })
     return { pushed: true }
+  }
+
+  /**
+   * Full sync de availability (test 1 de certificación): TODOS los room types en UNA sola
+   * llamada POST /availability. Los rangos ya vienen comprimidos y con reservas/bloques
+   * descontados (los arma availability.ts); acá solo se resuelve el mapa título→UUID.
+   */
+  async pushAllAvailability(
+    cfg: CanalesDTO | undefined,
+    list: Array<{ roomType: string; ranges: Array<{ dateFrom: string; dateTo: string; availability: number }> }>,
+  ): Promise<{ pushed: number }> {
+    if (!cfg?.channexPropertyId || !list.length) return { pushed: 0 }
+    const key = this.resolveKey(cfg)
+    const rts = (await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${cfg.channexPropertyId}`)).data?.data || []
+    const rtIdByTitle = new Map<string, string>(rts.map((rt: any) => [String(rt.attributes?.title || '').toLowerCase(), rt.id]))
+    const values: any[] = []
+    for (const { roomType, ranges } of list) {
+      const rtId = rtIdByTitle.get(String(roomType).toLowerCase())
+      if (!rtId) continue // tipo sin counterpart en Channex: el sync de estructura lo crea
+      for (const r of ranges) {
+        values.push({ property_id: cfg.channexPropertyId, room_type_id: rtId, date_from: r.dateFrom, date_to: r.dateTo, availability: r.availability })
+      }
+    }
+    if (!values.length) return { pushed: 0 }
+    await this.channexReq(key, 'POST', '/availability', { values })
+    this.logger.info('Full availability Channex empujada (1 llamada)', { roomTypes: list.length, rangos: values.length })
+    return { pushed: values.length }
   }
 
   // Resuelve el room_type_id de Channex por title (rt.type == room_type title).

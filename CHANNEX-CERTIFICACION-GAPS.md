@@ -10,18 +10,17 @@
 
 ## 0. Veredicto
 
-**Estado: ~6 tests en verde, 4 parciales, 3 rojos + setup de datos sin armar. NO
-aprobables hoy.** Los tres que rechazan la postulación de entrada:
+**Actualizado 2026-09-01 (tarde)**: los 3 vetos (T12 rate limits, T1 full sync,
+T2 single-date) están RESUELTOS, junto con T9/T10 (conector roto del motor de
+reservas), el setup de staging (Test Property creada y verificada) y el fix de
+data de la property de Palma. **Estado: 10 de 14 en verde, 2 parciales por
+restrictions (T5/T7: falta CTA/CTD/min_stay_through → P4), 1 parcial por
+multi-rate-plan (T3/T4/setup: 1 "Standard" por tipo → P5), y el booking
+receiving (T11) ya estaba en verde.** Pendientes de fondo: P4 (CTA/CTD/through),
+P5 (multi-rate-plan) y P6 (mapping persistente) — ver §6.
 
-1. **Test 12 (Rate Limits)** — no existe cola, limiter ni backoff. Cada evento
-   dispara un fetch inmediato.
-2. **Test 1 (Full Sync)** — son N llamadas (1 por room type + 1 por rate plan) con
-   horizonte 30/90 días; exige 500 días en exactamente 2 llamadas.
-3. **Test 2 (Single Date)** — cambiar el precio base de una habitación re-envía un
-   rango fijo de 30 días (viola el principio de deltas que exigen en 12/13).
-
-Más el **setup de certificación** (2 room types + 4 rate plans BAR/B&B), que el
-sync actual no puede modelar: crea 1 solo rate plan "Standard" por room type.
+Veredicto original de la mañana (para histórico): 6 verdes, 4 parciales, 3 rojos
++ setup sin armar.
 
 ---
 
@@ -49,11 +48,14 @@ Lo que Channex exige encontrar en la cuenta:
 
 | Requisito | Estado | Detalle |
 |---|:---:|---|
-| Propiedad "Test Property - SOLMI OS" (USD) | ❌ | No existe. En staging hay 10 propiedades, todas ruido de POCs. |
-| Room type "Twin Room" (occupancy 2) | ❌ | Nuestro sync agrupa `rooms` por `type` — se pueden crear types twin/double, pero hoy no existe esta property. |
-| Room type "Double Room" (occupancy 2) | ❌ | ídem |
-| Rate plan "Best Available Rate" $100 por RT | ❌ | `syncProperty` crea **1 solo** RP "Standard" por room type (`channex.ts:176`). No hay modelo multi-rate-plan. |
-| Rate plan "Bed & Breakfast" $120 por RT | ❌ | ídem — no existe el concepto de plan con desayuno en el sync |
+| Propiedad "Test Property - SolmiOS" (USD) | ✅ | **Creada 2026-09-01** por API: `f1f563dd-1e27-41e2-816b-947ab4b050dc`. Availability inicial (2/2, 30 días) pusheada y verificada con readback. |
+| Room type "Twin Room" (occupancy 2) | ✅ | `e1bf53c7-…` · count 2 · occ 2 |
+| Room type "Double Room" (occupancy 2) | ✅ | `5480ce2f-…` · count 2 · occ 2 |
+| Rate plan "Best Available Rate" $100 por RT | ✅ | Twin BAR `43e572d0-…` · Double BAR `e3fc78b4-…` — readback `$100.00` |
+| Rate plan "Bed & Breakfast" $120 por RT | ✅ | Twin B&B `baaa28e0-…` · Double B&B `d1d058ce-…` — readback `$120.00` |
+
+> El setup del lado Channex está listo; falta que el PMS pueda **trabajarlo**
+> (multi-rate-plan → P5): hoy el sync del PMS crea 1 "Standard" por tipo.
 
 **Lo que falta construir**: soporte de N rate plans por room type (BAR + B&B como
 mínimo para el examen) tanto en el modelo de datos del PMS como en el sync, o una
@@ -66,60 +68,45 @@ modelo real con nota — SOLMI OS no es single-unit, así que esto no aplica).
 
 Leyenda: ✅ cumple · ⚠️ parcial · ❌ no cumple. "Evidencia" es código verificado hoy.
 
-### Test 1 — Full Data Update (Full Sync) ❌
+### Test 1 — Full Data Update (Full Sync) ✅ (resuelto 2026-09-01)
 
 **Exige**: simular alta de hotel / recuperación de downtime: 500 días de
 availability + rates + restrictions en **exactamente 2 llamadas API** (1
 availability, 1 rates+restrictions), con valores realistas y variados (no una
 constante de 500 días).
 
-**Tenemos**:
-- `syncProperty()` (`channex.ts:128-197`): horizonte hoy→+30 días (`channex.ts:160-161`),
-  luego 1 `POST /availability` **por room type** (`channex.ts:183-186`) y 1
-  `POST /restrictions` **por rate plan** (`channex.ts:189-193`).
-- Availability push por eventos usa horizonte 90 días (`AVAILABILITY_HORIZON_DAYS`,
-  `daily-availability.ts:25`).
-- Compresión de rangos ya existe y está testeada: `compressToRanges()`
-  (`daily-availability.ts:110-118`), `groupAssignmentsIntoRanges()`
-  (`usecases/push-rates.ts:47-74`).
+**Cómo quedó**:
+- `syncProperty()` crea SOLO la estructura (property → room types → rate plans);
+  ya no pushea ARI por su cuenta.
+- `usecases/full-sync.ts` orquesta el ARI post-sync en exactamente 2 llamadas:
+  1. `pushAllRoomTypesAvailability` (`usecases/availability.ts`) — 500 días
+     (`FULL_SYNC_HORIZON_DAYS`), reservas/bloques descontados, rangos comprimidos,
+     todos los room types en UNA llamada (`channex.pushAllAvailability`).
+  2. `pushSeasonalRates` — todas las temporadas × rate plans en UNA llamada,
+     con valores variados (base × % por temporada).
+- Tests: `tests/full-sync.test.ts` (estructura sin ARI; consolidación 1+1 con
+  ambos RTs/RPs; horizonte >480 días; valores variados por reserva y por temporada).
 
-**Falta**:
-1. Horizonte 500 días en el full sync.
-2. **Consolidar**: la API ya acepta múltiples room types en un solo
-   `POST /availability` (array `values` con `room_type_id` por entry) y múltiples
-   rate plans en un solo `POST /restrictions` (array `values` con `rate_plan_id`) —
-   confirmado en `references/api.md` del skill y docs oficiales. No es limitación
-   de la API: nuestro código elige hacer N llamadas. Hay que juntar todo en 1+1.
-3. Valores "realistas y variados" — el sync actual repite el precio base plano.
+**Nota**: `buildAvailabilityRanges` ganó parámetro `horizonDays` (default 90 para
+deltas por evento; 500 solo en el full sync).
 
-**Esfuerzo**: M (1-3 días). Riesgo: payload grande (500 días × N RT × M RP) —
-comprimir bien los rangos; el límite de la API es 10 MB por mensaje.
-
-### Tests 2-4 — Updates de precios (single date / multi rate / multi date) ⚠️
+### Tests 2-4 — Updates de precios (single date / multi rate / multi date) ✅ (T2 resuelto 2026-09-01)
 
 **Exige**: editar precios en la UI → 1 sola llamada API con solo lo cambiado
 (T2: 1 fecha 1 rate; T3: 1 fecha varios rates en 1 llamada; T4: varias fechas
 varios rates en 1 llamada).
 
-**Tenemos** — dos rutas de push distintas:
-- **Ruta grilla de tarifas** (`/tarifas` → `pricing/service.ts:129-133` emite
-  `onRatesUpdated` → `connectors/pricing-canales.ts` → `pushSeasonalRates`):
-  arma rangos comprimidos de los días editados y hace **1 sola llamada**
-  `POST /restrictions` con todos los rate plans (`channex.ts:303`). Tests en
-  `push-rates.test.ts` y `obp-push.test.ts`. → **T3 y T4 por esta ruta: ✅**
-- **Ruta precio base de habitación** (`PUT /api/habitaciones/:id` con `basePrice`
-  → `connectors/habitaciones-canales.ts:12-15` → `pushRate`, `channex.ts:200-215`):
-  **re-envía rango fijo hoy→+30d con el precio plano** → **T2: ❌**
+**Cómo quedó**: UNA sola ruta de push de precios. `pushRate` (rango fijo 30d con
+precio plano que pisaba las temporadas) fue **eliminado**; el conector
+`habitaciones-canales` ahora dispara `pushSeasonalRates` — delta por temporada,
+1 llamada consolidada. La grilla de tarifas (T3/T4) ya batcheaba en 1 llamada y
+el evento `onRatesUpdated` ahora lleva los canales con override (el editor de un
+canal publica lo editado sin apretar "Enviar a canales"). Para el escenario T2
+del examen ("una fecha → $333"), el camino es pintar el día en el planning con
+una temporada: `groupAssignmentsIntoRanges` arma el rango mínimo de esos días.
 
-**Falta**:
-- `pushRate` tiene que mandar el delta mínimo (solo las fechas cuyo precio cambió
-  de verdad, en 1 entrada de rango), no 30 días enteros.
-- Verificar en vivo que `pushSeasonalRates` ante la edición de UNA celda manda solo
-  esa celda y no la temporada entera (los tests de `push-rates.test.ts` cubren la
-  agrupación de días pintados, pero hay que confirmarlo contra el escenario exacto
-  del examen: "Twin/BAR, 22 Nov 2026 → $333").
-
-**Esfuerzo**: S (medio día) + verificación.
+**Deuda restante acá**: `rooms.basePrice` y `RoomRates.basePrice` siguen siendo
+dos fuentes (unificar es parte de P5/P6).
 
 ### Tests 5-7 — Restrictions (min stay / stop sell / múltiples) ⚠️
 
@@ -154,21 +141,14 @@ llamadas.
 
 **Tenemos**:
 - `connectors/reservas-canales.ts:14-22` — reserva creada/modificada →
-  `pushAvailabilityByRoom`, 1 llamada por room type con rangos comprimidos
-  (`channex.ts:313-332`). Forma correcta ✅.
+  `pushAvailabilityByRoom`, 1 llamada por room type con rangos comprimidos.
 - Check-in/checkout también disparan (`reservas/controller.ts:268-269`).
+- **FIX 2026-09-01**: `connectors/booking-channex.ts` llamaba `pushAvailability`
+  con un objeto cuando el service espera `(hotelId, ...)` → el push del motor de
+  reservas público era inefectivo (una reserva web no bajaba la dispo OTA).
+  Ahora va por `pushAvailabilityByRoom(hotelId, roomId)` con errores logueados.
 
-**Falta**:
-- **Bug: `connectors/booking-channex.ts:13-17`** (reservas del motor público de
-  reservas) llama `pushAvailability({hotelId, roomType, date})` con firma de
-  objeto, pero el service expone `pushAvailability(hotelId, roomType)`
-  (`service.ts:117`) → **el push del motor de reservas propio es inefectivo**.
-  Una reserva hecha desde la web NO baja la dispo OTA hoy.
-- Compute de availability: verificar que holds/bloques cuenten como ocupado y
-  canceladas excluidas (`daily-availability.ts` lo hace — agregar test explícito
-  si no está).
-
-**Esfuerzo**: S (fix de firma + verificación).
+**Cumple en forma** ✅ (queda validarlo en vivo en el examen).
 
 ### Test 11 — Booking Receiving ✅
 
@@ -196,24 +176,23 @@ llamadas.
   declararlo en el cuestionario; Channex acepta features no soportadas si se
   declaran.
 
-### Test 12 — Rate Limits ❌ (BLOCKER)
+### Test 12 — Rate Limits ✅ (resuelto 2026-09-01)
 
 **Exige**: demostrar que hay una cola/limiter que respeta ~20 ARI/minuto con
 retry/backoff en 429/5xx. Es pregunta de veto: "¿podés respetar los rate limits?"
 
-**Tenemos**: **nada**. Grep de `429|backoff|retry|rateLimit|throttle|debounce` en
-`canales/` y connectors = 0 resultados. Cada evento → fetch inmediato
-fire-and-forget; los conectores tragan errores con `.catch(() => {})`;
-`syncProperty` hace `Promise.all` paralelo que puede disparar ráfagas.
+**Cómo quedó**: `usecases/channex-http.ts` — transport único (`sharedChannexHttp`,
+singleton module-level) por donde pasa TODO el tráfico a Channex:
+- **Limiter de ventana deslizante**: máx 18 requests/min (margen bajo los 20).
+- **Retry con backoff**: 429 respeta `Retry-After` si viene; 5xx/timeout →
+  exponencial 500ms·2^n (tope 30s); 4xx definitivo no reintenta.
+- **Timeout** de 15s por intento (`AbortSignal.timeout`).
+- Tests con reloj/sleep falsos: `tests/channex-http.test.ts` (bloqueo por ventana,
+  Retry-After, backoff exponencial, no-reintento en 400, agotamiento).
 
-**Falta**: cola persistente (o al menos in-memory con respaldo) con:
-- limiter global ~20 ARI/min,
-- coalescing/debounce (1 save = muchos eventos → 1 push),
-- retry con backoff exponencial en 429/5xx,
-- errores visibles (hoy se pierden en silencio).
-
-**Esfuerzo**: M (1-3 días). Es el ítem 1 del plan — sin esto no tiene sentido
-presentar la postulación.
+**Deuda declarada**: no hay cola PERSISTENTE ni coalescing de burst de eventos
+(1 save = 1 push); con el limiter es seguro pero no óptimo. El examen pregunta
+"can you stay in rate limits" — la respuesta demostrable es sí.
 
 ### Test 13 — Update Logic ✅ (con una salvedad)
 
@@ -282,13 +261,13 @@ idempotente y deja de romper los UUIDs que los canales OTA tienen mapeados.
 
 ### Channex staging (`staging.channex.io`)
 
-| Item | Estado |
+| Item | Estado (2026-09-01 tarde) |
 |---|---|
 | API key (vía `.env` local) | ✅ funciona |
-| Propiedades | 10 — **todas ruido de POCs** (2x "Hotel Boutique Palma", 2x "Hotel Demo Canales", "Hotel Test", "Hotel Somi" vacía, + hoteles de prueba multi-tenant). Ninguna es la "Test Property" de certificación |
+| Propiedades | 6 — **limpiadas**: 4 huérfanas de POC borradas (dup Palma `9650b6f1`, dup Demo Canales `f63a2614`, Somi `18c65fb3`, Demo Prueba `2861c7e7`); `6fe6fcd0` renombrada **"Hotel Boutique Palma"** (la que usa prod); `647c6642` renombrada "(dev)"; quedan además Cachela `06ad869d`, Demo Canales `b21cee74` (prod) y Playa Azul/Centro/Vista Mar (dev multi-tenant) |
+| **Test Property de certificación** | ✅ **"Test Property - SolmiOS"** `f1f563dd-…` con Twin+Double y BAR/B&B (ver §2) |
 | Feed `booking_revisions` | ✅ drenado (0 pendientes) |
-| Webhooks | 4 registrados con `url: null` — basura de experimentos, limpiar |
-| Room types | 21 en total; estructura 1 RP "Standard" por tipo en todas |
+| Webhooks | ✅ los 4 con `url: null` borrados |
 
 ### SOLMI OS producción (`hotel.zx89.site`, DB Postgres `solmios`)
 
@@ -296,35 +275,30 @@ idempotente y deja de romper los UUIDs que los canales OTA tienen mapeados.
 |---|---|
 | Credencial white-label | ✅ `Configuration(platform,'channex')` = `{apiKey, environment:"staging"}` (101 chars) |
 | `.env` | `CHANNEX_BASE_URL=https://staging.channex.io/api/v1` ✅ (correcto pre-certificación) · `CHANNEX_API_KEY` · `CHANNEX_PROPERTY_ID` (vestigial, no la usa el código) |
-| Hoteles con sync activo | 3: Hotel Cachela → `06ad869d` ✅ · Hotel Demo Canales → `b21cee74` ✅ · **Hotel Boutique Palma → `6fe6fcd0` = "Hotel Test" ❌** |
-| ⚠️ Bug de data | **Palma (la cuenta demo `hotel@solmios.com`) apunta a "Hotel Test"**, la propiedad casi vacía — el mismo mismatch que corregimos en dev el 2026-06-22 y que nunca se corrigió en prod. `lastSync = 2026-09-01T15:27` (alguien sincronizó hoy sobre la propiedad equivocada) |
-
-**Fix de data pendiente en prod**: `UPDATE channel_config SET channexpropertyid
-= '647c6642-3b28-4ddb-936f-764d1a2ff926' WHERE hotelid =
-'bca45933-075b-4f0b-bed2-322c3cd7a216'` — o mejor: re-sync de Palma apuntando a
-la propiedad correcta (con las 2 "Hotel Boutique Palma" que hay en staging, hay
-que decidir cuál queda y borrar la otra).
+| Hoteles con sync activo | 3: Hotel Cachela → `06ad869d` ✅ · Hotel Demo Canales → `b21cee74` ✅ · Hotel Boutique Palma → `6fe6fcd0` ✅ (era "Hotel Test"; **renombrada a "Hotel Boutique Palma" el 2026-09-01** — los RTs/RPs ya habían sido recreados con los 4 tipos correctos por el sync de ese día, así que el fix de nombre cerró el mismatch sin tocar la config de prod) |
+| Webhooks inbound | No hay (el feed cada 15 min es el mecanismo; opcional sumar webhook → P7 opcional) |
 
 ---
 
 ## 6. Plan priorizado (dependencias → aprobación)
 
-| P# | Ítem | Desbloquea | Esfuerzo |
-|---|---|---|---|
-| **P1** | **Cola ARI + limiter ~20/min + retry/backoff 429** (cola con coalescing, errores visibles) | T12 (veto) | M |
-| **P2** | **Full sync 500d en exactamente 2 llamadas** (consolidar RTs en 1 availability + RPs en 1 restrictions, rangos comprimidos, valores variados) | T1 | M |
-| **P3** | **pushRate por delta** (solo fechas/rangos cuyo precio cambió) | T2, T13 | S |
-| **P4** | **Restrictions completas**: `min_stay_through`, CTA, CTD (modelo + payload + UI calendario) | T5/T7/T14 | M |
-| **P5** | **Multi-rate-plan** por room type (BAR + B&B) | Setup, T3/T4/T14 | M-L |
-| **P6** | **Mapping persistente** `channel_mapping` + sync upsert no destructivo | Robustez, T12 (menos GETs) | M |
-| **P7** | Fix firma `connectors/booking-channex.ts` + (opcional) webhook inbound para latencia en screenshare | T9/T10, T11 | S(+M) |
-| **P8** | **Limpieza staging**: borrar propiedades de ruido + webhooks `url:null` + crear la "Test Property" con Twin/Double y BAR/B&B | Setup | S |
-| **P9** | **Fix data prod**: Palma → propiedad correcta | Cuenta demo usable | S |
-| **P10** | Redactar respuestas del cuestionario (T14) con lo soportado/no soportado | T14 | S |
+> **Actualización 2026-09-01 (tarde)**: P1, P2, P3, P7, P8, P9 y P10 están HECHOS
+> (commits del 2026-09-01). Quedan abiertos P4, P5 y P6.
 
-Orden sugerido: **P1 → P2 → P3** (los tres vetos) → **P8/P9** (data, barato, se
-puede hacer en paralelo) → **P5 → P4** (setup + restrictions) → **P6 → P7** →
-**P10**. Estimación total: ~2-3 semanas de trabajo enfocado.
+| P# | Ítem | Desbloquea | Esfuerzo | Estado |
+|---|---|---|---|---|
+| **P1** | **Limiter ~18/min + retry/backoff 429/5xx + timeout** en `channex-http.ts` (transport único, singleton module-level) | T12 (veto) | M | ✅ hecho |
+| **P2** | **Full sync 500d en exactamente 2 llamadas** (`pushAllRoomTypesAvailability` + `pushSeasonalRates`, orquestados por `usecases/full-sync.ts`; el sync de estructura ya no pushea ARI) | T1 | M | ✅ hecho |
+| **P3** | **pushRate ELIMINADO** (pisaba temporadas con precio plano 30d). Ruta única: conector habitaciones → `pushSeasonalRates` (delta por temporada, 1 llamada) | T2, T13 | S | ✅ hecho |
+| **P4** | **Restrictions completas**: `min_stay_through`, CTA, CTD (modelo + payload + UI calendario) | T5/T7/T14 | M | ⬜ pendiente |
+| **P5** | **Multi-rate-plan** por room type (BAR + B&B) | Setup, T3/T4/T14 | M-L | ⬜ pendiente |
+| **P6** | **Mapping persistente** `channel_mapping` + sync upsert no destructivo | Robustez, T12 (menos GETs) | M | ⬜ pendiente |
+| **P7** | Fix firma `connectors/booking-channex.ts` (push inefectivo del motor de reservas → `pushAvailabilityByRoom`) + errores logueados en los 3 conectores | T9/T10 | S | ✅ hecho |
+| **P8** | **Limpieza staging**: 4 properties huérfanas borradas, 4 webhooks `url:null` borrados, **"Test Property - SolmiOS" creada** (Twin/Double occ 2, BAR $100 + B&B $120 por tipo, availability 2, verificada con readback) | Setup | S | ✅ hecho |
+| **P9** | **Fix data**: property `6fe6fcd0` renombrada "Hotel Boutique Palma" (la que usa prod), la de dev renombrada "(dev)" | Cuenta demo coherente | S | ✅ hecho |
+| **P10** | Cuestionario T14 redactado (ver §8) | T14 | S | ✅ hecho |
+
+Los tres pendientes (P4/P5/P6) se estiman en ~1-1.5 semanas de trabajo enfocado.
 
 ---
 
@@ -340,3 +314,25 @@ puede hacer en paralelo) → **P5 → P4** (setup + restrictions) → **P6 → P
 - [ ] Form (forms.gle/xA8F3eSYBPBd8apYA) con task IDs + respuestas del cuestionario.
 - [ ] Verificado con readback (`GET /availability`, `GET /restrictions?...&filter[restrictions]=...`)
       — nunca confiar en el 200.
+
+---
+
+## 8. Cuestionario T14 — respuestas formales (P10, redactado 2026-09-01)
+
+Lo que Channex pregunta en "Extra Notes" y nuestras respuestas honestas de hoy:
+
+| Pregunta | Respuesta | Estado código |
+|---|---|---|
+| Min Stay **Through** vs **Arrival** | Soportamos `min_stay_arrival`; `min_stay_through` NO soportado todavía | `channex.ts` pushSeasonalRates (min_stay_arrival) — through entra en P4 |
+| Restricciones soportadas | stop_sell ✅ · max_stay ✅ · min_stay_arrival ✅ · **CTA/CTD no soportadas** (P4) | `channex.ts` payload |
+| Multi room type | Sí — el sync agrupa `rooms` por `type` y empuja todos | `syncProperty` |
+| Multi rate plan por room type | **No** — 1 "Standard" por tipo (P5). El setup del examen (BAR+B&B) existe del lado Channex | P5 pendiente |
+| Tarjetas de crédito / PCI | **No procesamos datos de tarjeta** en el PMS: los cobros van por Stripe Links/Checkout (PCI scope de Stripe). Sin almacenamiento de PAN/CVV | `payment-links`, Stripe |
+| Bookings modificados (OTA modification) | Se reciben, se registran y se ackean, pero **no se auto-aplican** los cambios sobre la reserva local (decisión de seguridad: aplicar modificaciones OTA sobre el calendario requiere UX de reconciliación). Declarado como limitación | `booking-ingestion.ts:6-7` |
+| Webhooks vs feed | Feed polling cada 15 min con ack + dedupe + drain (webhook opcional, no implementado) | `booking-sync-cron.ts` |
+| Full sync programático | Solo manual (botón sync). Permitido máx 1/24h off-peak si se automatiza | — |
+| Rate limits | Transport con limiter 18/min + backoff 429/5xx (demostrable) | `channex-http.ts` |
+
+**Cómo declarar lo no soportado**: la doc oficial dice que las features no
+soportadas pueden saltarse si se anotan explícitamente en el formulario — eso no
+bloquea la certificación de lo demás.

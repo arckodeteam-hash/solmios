@@ -51,20 +51,20 @@ describe('bookingChannexConnector', () => {
   it('empuja disponibilidad SOLO si la reserva del motor queda confirmada', async () => {
     const pushes: any[] = []
     const { ctx, captured } = makeCtx(['bookingengine'], {
-      canales: { pushAvailability: async (d: any) => { pushes.push(d); return { pushed: true } } },
+      canales: { pushAvailabilityByRoom: async (h: string, r: string) => { pushes.push([h, r]); return { pushed: true } } },
     })
     bookingChannexConnector(ctx)
 
-    await captured.sockets.onBookingCreated({ hotelId: 'h1', roomType: 'suite', checkIn: '2026-08-01', status: 'confirmed' })
-    await captured.sockets.onBookingCreated({ hotelId: 'h1', roomType: 'suite', checkIn: '2026-08-02', status: 'pending' })
+    await captured.sockets.onBookingCreated({ hotelId: 'h1', roomType: 'suite', roomId: 'rm1', checkIn: '2026-08-01', status: 'confirmed' })
+    await captured.sockets.onBookingCreated({ hotelId: 'h1', roomType: 'suite', roomId: 'rm2', checkIn: '2026-08-02', status: 'pending' })
 
     expect(pushes).toHaveLength(1) // la pendiente NO empuja
-    expect(pushes[0].roomType).toBe('suite')
+    expect(pushes[0]).toEqual(['h1', 'rm1']) // por roomId: resuelve el room type real
   })
 
   it('si Channex falla, la reserva del motor NO se rompe', async () => {
     const { ctx, captured } = makeCtx(['bookingengine'], {
-      canales: { pushAvailability: async () => { throw new Error('channex caído') } },
+      canales: { pushAvailabilityByRoom: async () => { throw new Error('channex caído') } },
     })
     bookingChannexConnector(ctx)
     await expect(
@@ -96,15 +96,16 @@ describe('bookingenginePaymentsConnector', () => {
 })
 
 describe('habitacionesCanalesConnector', () => {
-  it('al cambiar el precio de la habitación empuja la tarifa al canal', async () => {
-    const rates: any[] = []
+  it('al cambiar el precio de la habitación empuja las tarifas por temporada al canal', async () => {
+    const calls: any[] = []
     const { ctx, captured } = makeCtx(['habitaciones'], {
-      canales: { pushRate: async (h: string, t: string, p: number) => { rates.push([h, t, p]); return { pushed: true } } },
+      canales: { pushSeasonalRates: async (h: string, channel?: string) => { calls.push([h, channel]); return { pushed: 1 } } },
     })
     habitacionesCanalesConnector(ctx)
     await captured.sockets.onHabitacionesUpdated({ hotelId: 'h1', type: 'double', basePrice: '150' })
 
-    expect(rates).toEqual([['h1', 'double', 150]]) // castea el precio a número
+    // Sin canal: la ruta base por temporada (antes pushRate plano 30d que pisaba temporadas).
+    expect(calls).toEqual([['h1', undefined]])
   })
 })
 
