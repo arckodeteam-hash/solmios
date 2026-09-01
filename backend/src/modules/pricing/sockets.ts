@@ -6,4 +6,8 @@ export interface PricingSockets {
   onBlockCreated?: (data: any) => Promise<void>
   onBlockDeleted?: (id: string) => Promise<void>
   onRateRestrictionsUpdated?: (hotelId: string, count: number) => Promise<void>
+  /** Días pintados con temporada en el planning (precio por fecha puntual) → re-publicar tarifas. */
+  onSeasonAssignmentsUpdated?: (hotelId: string, count: number) => Promise<void>
+  /** Bloqueos creados/borrados → re-publicar availability de las habitaciones tocadas. */
+  onBlocksChanged?: (hotelId: string, roomIds: string[]) => Promise<void>
 }

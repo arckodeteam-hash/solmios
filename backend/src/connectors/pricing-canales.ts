@@ -23,5 +23,23 @@ export function pricingCanalesConnector(ctx: ConnectorContext, debounceMs?: numb
   pricing.setSockets({
     onRatesUpdated: async (hotelId: string, _count: number, channels?: string[]) => coalescer.schedule(hotelId, channels?.length ? channels : [undefined]),
     onRateRestrictionsUpdated: async (hotelId: string) => coalescer.schedule(hotelId),
+    // Cambiar fechas del catálogo de temporadas, copiar tarifas al año próximo o pintar días
+    // en el planning cambian el precio publicado → mismo push consolidado.
+    onSeasonsUpdated: async (hotelId: string) => coalescer.schedule(hotelId),
+    onRatesCopied: async (hotelId: string) => coalescer.schedule(hotelId),
+    onSeasonAssignmentsUpdated: async (hotelId: string) => coalescer.schedule(hotelId),
+    // Bloqueos: cambian DISPONIBILIDAD (no precio) → push de availability por habitación.
+    onBlocksChanged: async (hotelId: string, roomIds: string[]) => {
+      try {
+        const canales = ctx.resolveModule<{ pushAvailabilityByRoom: (hotelId: string, roomId: string) => Promise<unknown> }>('canales')
+        for (const roomId of roomIds) {
+          void canales.pushAvailabilityByRoom(hotelId, roomId).catch((err: unknown) => {
+            console.error(`[pricing-canales] push de availability falló (hotel=${hotelId} room=${roomId}):`, err instanceof Error ? err.message : err)
+          })
+        }
+      } catch {
+        // canales puede no estar disponible (módulo desactivado).
+      }
+    },
   })
 }

@@ -157,6 +157,34 @@ describe('pricingCanalesConnector — coalescing (un push por ráfaga de guardad
     expect(pushes.length).toBe(2)                      // un push por canal, ambos al final
     expect(pushes.map((p) => p[1]).sort()).toEqual(['airbnb', 'booking'])
   })
+
+  it('temporadas editadas / copiadas / días pintados → mismo push consolidado de tarifas', async () => {
+    const pushes: Array<[string, string | undefined]> = []
+    const { ctx, captured } = makeCtx(['pricing'], {
+      canales: { pushSeasonalRates: async (h: string, channel?: string) => { pushes.push([h, channel]); return { pushed: 1 } } },
+    })
+    pricingCanalesConnector(ctx, 40)
+
+    await captured.sockets.onSeasonsUpdated('h1', 4)
+    await captured.sockets.onRatesCopied('h1', 8)
+    await captured.sockets.onSeasonAssignmentsUpdated('h1', 3)
+    await sleep(90)
+
+    expect(pushes).toEqual([['h1', undefined]])        // UN push por toda la ráfaga
+  })
+
+  it('bloquear/desbloquear habitaciones → push de availability POR habitación', async () => {
+    const avail: Array<[string, string]> = []
+    const { ctx, captured } = makeCtx(['pricing'], {
+      canales: { pushAvailabilityByRoom: async (h: string, r: string) => { avail.push([h, r]); return { pushed: true } } },
+    })
+    pricingCanalesConnector(ctx, 40)
+
+    await captured.sockets.onBlocksChanged('h1', ['rm1', 'rm2'])
+    await sleep(50)
+
+    expect(avail).toEqual([['h1', 'rm1'], ['h1', 'rm2']])
+  })
 })
 
 describe('messagesPushtokensConnector', () => {

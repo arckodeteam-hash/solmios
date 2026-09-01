@@ -154,6 +154,8 @@ export class PricingController {
     validateAssignSeason(req.body)
     const { from, to, weekdays, season } = req.body as any
     const count = await this.calendar.assignSeason(id, { from, to, weekdays, season: season ?? '' })
+    // Pintar días cambia el precio de esas fechas → re-publicar tarifas en los canales.
+    if (count > 0) await this.service.notifySeasonAssignmentsUpdated(id, count)
     return { status: 200, body: { success: true, count } }
   }
 }

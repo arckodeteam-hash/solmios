@@ -5,6 +5,7 @@ import { composeSockets } from '../../shared/usecases/compose-sockets'
 import type { PricingQueries } from './usecases/pricing-queries'
 import type { PricingSockets } from './sockets'
 import { defaultSeasons } from './usecases/defaults'
+import { listBlocks, createBlocks, deleteBlock } from './usecases/blocks'
 import {
   auditSafely, rateChangeEntry, rateCopyEntry, seasonsChangeEntry,
   restrictionsChangeEntry, blockDeleteEntry,
@@ -67,6 +68,7 @@ export class PricingService {
       })
     }
     await this.audit(seasonsChangeEntry(hotelId, seasons.length, actor))
+    await this.sockets.onSeasonsUpdated?.(hotelId, seasons.length)
     return seasons.length
   }
 
@@ -143,33 +145,31 @@ export class PricingService {
       const exists = (await this.ratesRepo.findMany({ hotelId, roomType: r.roomType, occupancy: r.occupancy, season: nextYear }))[0]
       if (!exists) { await this.ratesRepo.create({ id: crypto.randomUUID(), hotelId, roomType: r.roomType, occupancy: r.occupancy, season: nextYear, price: r.price, basePrice: r.basePrice, percentage: r.percentage }); copied++ }
     }
-    if (copied > 0) await this.audit(rateCopyEntry(hotelId, copied, rates.length, actor))
+    if (copied > 0) {
+      await this.audit(rateCopyEntry(hotelId, copied, rates.length, actor))
+      await this.sockets.onRatesCopied?.(hotelId, copied)
+    }
     return { copied, total: rates.length }
   }
 
   async listBlocks(hotelId: string, startDate?: string, endDate?: string): Promise<any[]> {
-    let data = await this.blocksRepo.findMany({ hotelId }) as any[]
-    if (startDate && endDate) data = data.filter((b: any) => b.startDate <= endDate && b.endDate >= startDate)
-    return data
+    return listBlocks(this.blocksRepo, hotelId, startDate, endDate)
   }
 
   async createBlocks(hotelId: string, userId: string, roomIds: string[], reason: string, startDate: string, endDate: string): Promise<any[]> {
-    const created: any[] = []
-    for (const roomId of roomIds) {
-      created.push(await this.blocksRepo.create({ id: crypto.randomUUID(), hotelId, roomId, reason: reason || '', startDate, endDate, createdBy: userId }))
-    }
+    const created = await createBlocks(this.blocksRepo, hotelId, userId, roomIds, reason, startDate, endDate)
+    await this.sockets.onBlocksChanged?.(hotelId, roomIds)
     return created
   }
 
   async deleteBlock(id: string, hotelId: string, actor?: Actor): Promise<void> {
-    // Seguridad (IDOR): solo se borra un bloqueo del hotel del token. Sin este check, cualquier
-    // usuario con settings:delete borraba bloqueos de otro hotel pasando su id.
-    const block = await this.blocksRepo.findById(id) as any
-    if (!block) return
-    if (block.hotelId !== hotelId) throw new AuthError('Sin acceso a este bloqueo')
-    await this.blocksRepo.delete(id)
+    const block = await deleteBlock(this.blocksRepo, id, hotelId)
     await this.audit(blockDeleteEntry(block, actor))
+    await this.sockets.onBlocksChanged?.(hotelId, [block.roomId])
   }
+
+  /** Días pintados con temporada (el controller lo llama tras assignSeason). */
+  async notifySeasonAssignmentsUpdated(hotelId: string, count: number): Promise<void> { await this.sockets.onSeasonAssignmentsUpdated?.(hotelId, count) }
 
   async listRateRestrictions(hotelId: string): Promise<any[]> {
     return await this.restrictionsRepo.findMany({ hotelId }) as any[]
