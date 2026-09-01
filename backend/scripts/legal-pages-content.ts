@@ -95,7 +95,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
   {
     slug: 'privacidad', title: 'Política de Privacidad', category: 'legal', sortOrder: 2,
     metaDescription: 'Política de privacidad de SOLMI OS: qué datos recogemos por WhatsApp/Instagram/Facebook y reservas, para qué los usamos y tus derechos bajo la Ley 172-13.',
-    contentHtml: `<p><em>SOLMI OS, S.R.L. · RNC 133-78277-4 · Santo Domingo Este, República Dominicana<br>Última actualización: 25 de agosto de 2026</em></p>
+    contentHtml: `<p><em>SOLMI OS, S.R.L. · RNC 133-78277-4 · Santo Domingo Este, República Dominicana<br>Última actualización: 1 de septiembre de 2026</em></p>
 <h2>1. Quiénes somos</h2>
 <p>SOLMI OS, S.R.L. es una sociedad de responsabilidad limitada constituida conforme a las leyes de la República Dominicana, que opera bajo el nombre comercial SOLMI OS, registrado ante la Oficina Nacional de la Propiedad Industrial (ONAPI) con el número 941808.</p>
 <ul>
@@ -131,6 +131,24 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <p>Los pagos se procesan a través de pasarelas de pago externas. SOLMI OS no almacena números completos de tarjeta, códigos de seguridad (CVV) ni credenciales bancarias. Solo conservamos la confirmación de la transacción, el monto, la fecha y los últimos cuatro dígitos del medio de pago.</p>
 <h3>3.4 Datos técnicos</h3>
 <p>Dirección IP, tipo de dispositivo y navegador, y páginas visitadas dentro de nuestro sitio.</p>
+<h3>3.5 Cuando el personal del hotel usa la aplicación móvil</h3>
+<p>SOLMI OS ofrece una aplicación móvil para Android destinada exclusivamente al personal de los establecimientos que contratan la plataforma: camareras de piso, supervisores, personal de mantenimiento y administración. No está dirigida a huéspedes ni al público general, y el acceso requiere una cuenta creada por el establecimiento. No existe registro abierto.</p>
+<p><strong>Datos de la cuenta del empleado.</strong> Nombre completo, correo electrónico, número de teléfono, cargo o rol dentro del establecimiento, y el hotel al que pertenece. Estos datos los provee el establecimiento empleador al dar de alta a la persona, y se usan para autenticar el acceso y determinar qué información puede ver cada quien según su función. Base legal: ejecución de la relación contractual con el establecimiento e interés legítimo en la gestión de sus operaciones.</p>
+<p><strong>Fotografía de perfil.</strong> Opcional. La persona puede subir una foto para su avatar dentro de la aplicación, y puede eliminarla en cualquier momento desde su perfil.</p>
+<p><strong>Fotografías y videos del trabajo realizado.</strong> La aplicación permite al personal de limpieza registrar evidencia del estado de las habitaciones antes y después de cada servicio. Estas imágenes documentan espacios físicos del establecimiento, no personas, y quedan asociadas a la tarea, a quien la ejecutó y al momento en que se tomaron. Su finalidad es el control de calidad interno: el supervisor las revisa para aprobar o rechazar el trabajo. Base legal: interés legítimo del establecimiento en verificar la prestación del servicio.</p>
+<p>Las imágenes se capturan mediante la aplicación de cámara del sistema operativo, que gestiona sus propios permisos. SOLMI OS no accede a la galería ni al carrete del dispositivo, ni a ninguna imagen distinta de la que la persona decide adjuntar a una tarea.</p>
+<p><strong>Notificaciones.</strong> Si la persona autoriza las notificaciones, se registra un identificador del dispositivo provisto por Firebase Cloud Messaging (Google) para poder enviarle avisos de tareas asignadas y mensajes de su equipo. Ese identificador no revela la identidad de la persona y deja de utilizarse al cerrar sesión. Base legal: consentimiento, otorgado al aceptar el permiso de notificaciones del sistema.</p>
+<p><strong>Desbloqueo por huella digital.</strong> La aplicación permite desbloquear la sesión con la huella o el reconocimiento facial ya configurados en el teléfono. Esa verificación la realiza íntegramente el sistema operativo del dispositivo: SOLMI OS no recibe, no procesa y no almacena ningún dato biométrico. La aplicación solo obtiene la confirmación de que el sistema validó a la persona.</p>
+<p><strong>Mensajería interna.</strong> El personal puede intercambiar mensajes dentro de la aplicación para coordinar el trabajo. El contenido se conserva mientras la cuenta esté activa en el establecimiento.</p>
+<h3>3.6 Qué NO recoge la aplicación móvil</h3>
+<p>Con el mismo detalle que lo anterior, y porque conviene que quede escrito:</p>
+<ul>
+<li><strong>No recoge la ubicación</strong> del dispositivo. La aplicación no solicita ni declara ningún permiso de geolocalización.</li>
+<li><strong>No utiliza herramientas de analítica ni de publicidad.</strong> No hay rastreo de comportamiento, ni perfiles publicitarios, ni identificadores de marketing.</li>
+<li><strong>No accede</strong> a los contactos, al calendario, a los archivos personales, al micrófono ni a las llamadas.</li>
+<li><strong>No comparte datos con terceros con fines comerciales.</strong> La información viaja únicamente a los servidores de SOLMI OS.</li>
+</ul>
+<p>Toda la comunicación entre la aplicación y nuestros servidores viaja cifrada mediante HTTPS.</p>
 <h2>4. Para qué usamos tus datos</h2>
 <ul>
 <li><strong>Responder tus mensajes y consultas, incluso de forma automatizada</strong> — base legal: ejecución de la relación contractual y consentimiento.</li>
@@ -168,6 +186,7 @@ export const LEGAL_PAGES_SEED: LegalPageSeed[] = [
 <li><strong>Datos de marketing:</strong> hasta que retires tu consentimiento.</li>
 <li><strong>Datos técnicos y de navegación:</strong> 12 meses.</li>
 </ul>
+<p>Los datos del personal que usa la aplicación móvil se conservan mientras la persona mantenga una cuenta activa en el establecimiento. Cuando el establecimiento da de baja a un empleado, su cuenta se desactiva y deja de tener acceso. Las fotografías y videos de las tareas de limpieza se conservan como registro de la operación del establecimiento, que es el responsable de definir por cuánto tiempo los necesita.</p>
 <p>Cumplido el plazo, los datos se eliminan o se anonimizan de forma irreversible.</p>
 <h2>9. Tus derechos</h2>
 <p>Tienes derecho a:</p>
