@@ -12,6 +12,15 @@ export const CanalesModel: ModelDefinition = {
     id: { type: 'string', required: true },
     hotelId: { type: 'string', required: true, indexed: true },
     channexPropertyId: { type: 'string' },
+    // Grupo de Channex del hotel. UNO POR HOTEL: la cuenta es de la plataforma (white-label) y el
+    // grupo es la frontera de aislamiento entre hoteles dentro de esa cuenta.
+    //
+    // Estaba en `types.ts` y se leía en `generateIframeToken`, pero NO acá — el ORM descarta los
+    // campos que no declara el modelo, sin warning (anti-patrón mem 1805), así que se guardaba
+    // en el vacío y el token del iframe siempre salía sin grupo. La property, además, se creaba
+    // sin `group_id`: la doc de Channex dice que entonces cae en el "Default User Group", o sea
+    // TODOS los hoteles juntos.
+    channexGroupId: { type: 'string' },
     channexApiKey: { type: 'string' },
     syncEnabled: { type: 'number', default: 1 },
     lastSync: { type: 'string' },

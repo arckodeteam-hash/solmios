@@ -80,6 +80,11 @@ export class ChannexUseCase {
     return { ok: r.ok, data: r.data }
   }
 
+  /** ¿Hay credencial de plataforma configurada? Sin ella no hay nada que sincronizar. */
+  async hasPlatformKey(): Promise<boolean> {
+    return !!(await this.platform()).key
+  }
+
   /** Prueba la credencial de plataforma con un GET liviano a Channex. Para el botón "Probar conexión" del admin. */
   async testApiKey(): Promise<{ success: boolean; message: string; environment: string }> {
     const plat = await this.platform()
@@ -165,14 +170,20 @@ export class ChannexUseCase {
   // Un rate plan de Channex por (room type × plan del hotel): BAR + Bed & Breakfast por
   // defecto (P5). Al terminar persiste el mapping local↔UUID (P6) para que los pushes
   // resuelvan sin GETs ni match por título.
-  async syncProperty(hotelId: string, hotel: { name: string; currency?: string; email?: string; address?: string; timezone?: string }, rooms: RoomTypeSummary[], cfg: CanalesDTO | undefined, ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS): Promise<{ result: SyncResultDTO; newPropertyId: string | null }> {
+  async syncProperty(hotelId: string, hotel: { name: string; currency?: string; email?: string; address?: string; timezone?: string }, rooms: RoomTypeSummary[], cfg: CanalesDTO | undefined, ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS): Promise<{ result: SyncResultDTO; newPropertyId: string | null; newGroupId: string | null }> {
     const key = this.resolveKey(cfg)
 
     let channexPId: string | undefined = cfg?.channexPropertyId || undefined
+    let newGroupId: string | null = null
 
     if (!channexPId) {
+      // Un GRUPO por hotel. La cuenta de Channex es de la plataforma (white-label) y todos los
+      // hoteles viven adentro; el grupo es lo que los separa. Sin `group_id` la doc dice que la
+      // property cae en el "Default User Group" — es decir, todos los hoteles en la misma bolsa.
+      const groupId = cfg?.channexGroupId || await this.ensureGroup(key, hotel.name)
+      if (!cfg?.channexGroupId) newGroupId = groupId ?? null
       const propRes = await this.channexReq(key, 'POST', '/properties', {
-        property: { title: hotel.name, currency: hotel.currency || 'USD', email: hotel.email, address: hotel.address, timezone: hotel.timezone || 'America/Santo_Domingo' },
+        property: { title: hotel.name, currency: hotel.currency || 'USD', email: hotel.email, address: hotel.address, timezone: hotel.timezone || 'America/Santo_Domingo', group_id: groupId },
       })
       if (!propRes.ok || !propRes.data?.data) throw new Error('No se pudo crear la propiedad en Channex')
       channexPId = propRes.data.data.id
@@ -248,7 +259,32 @@ export class ChannexUseCase {
     }
 
     this.logger.info('Sync Channex OK', { channexPropertyId: channexPId, roomTypes: rtList.length, ratePlans: rpList.length })
-    return { result: { success: true, message: `Sincronización completa: ${rtList.length} room types, ${rpList.length} rate plans`, channexPropertyId: channexPId || '', roomTypes: rtList.length, ratePlans: rpList.length }, newPropertyId: channexPId || null }
+    return { result: { success: true, message: `Sincronización completa: ${rtList.length} room types, ${rpList.length} rate plans`, channexPropertyId: channexPId || '', roomTypes: rtList.length, ratePlans: rpList.length }, newPropertyId: channexPId || null, newGroupId }
+  }
+
+  /**
+   * Grupo de Channex del hotel, creándolo si hace falta.
+   *
+   * Reusa un grupo existente con el MISMO título antes de crear otro: re-sincronizar un hotel que
+   * perdió su `channexGroupId` no debe dejar grupos huérfanos acumulándose en la cuenta.
+   * Si Channex rechaza la creación se devuelve `undefined` y la property se crea sin grupo — el
+   * sync no se cae por esto, pero el hotel queda en el grupo por defecto (queda en el log).
+   */
+  private async ensureGroup(key: string, hotelName: string): Promise<string | undefined> {
+    const title = String(hotelName || '').trim() || 'Hotel'
+    try {
+      const list = await this.channexReq(key, 'GET', '/groups')
+      const existing = ((list.data as any)?.data || []).find(
+        (g: any) => String(g.attributes?.title ?? g.title ?? '').toLowerCase() === title.toLowerCase())
+      if (existing?.id) return existing.id
+    } catch { /* no poder listar no impide intentar crear */ }
+    const res = await this.channexReq(key, 'POST', '/groups', { group: { title } })
+    const id = (res.data as any)?.data?.id
+    if (!res.ok || !id) {
+      this.logger.error('No se pudo crear el grupo del hotel en Channex — la propiedad queda en el grupo por defecto', { hotelName: title })
+      return undefined
+    }
+    return id
   }
 
   // pushRate (precio plano 30d) fue ELIMINADO: pisaba los precios por temporada ya publicados

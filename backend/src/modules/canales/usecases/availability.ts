@@ -78,3 +78,24 @@ export async function pushAvailabilityForRoom(deps: AvailabilityDeps, hotelId: s
   if (!room) return { pushed: false }
   return pushAvailabilityForRoomType(deps, hotelId, room.type)
 }
+
+/**
+ * Arma las dependencias del push de availability a partir de los colaboradores que ya tiene el
+ * service. Vive acá y no en el service para que la fachada no se llene de cableado (gate del
+ * analyzer) y para que exista UN solo lugar donde se decide qué necesita este usecase.
+ */
+export function makeAvailabilityDeps(
+  findMany: (model: string, query: any) => Promise<any[]>,
+  getConfig: (hotelId: string) => Promise<any>,
+  channex: {
+    pushAvailability: (cfg: any, roomType: string, ranges: AvailabilityRange[]) => Promise<{ pushed: boolean }>
+    pushAllAvailability: (cfg: any, list: Array<{ roomType: string; ranges: AvailabilityRange[] }>) => Promise<{ pushed: number }>
+  },
+): AvailabilityDeps {
+  return {
+    findMany,
+    getConfig,
+    pushToChannex: (cfg, roomType, ranges) => channex.pushAvailability(cfg, roomType, ranges),
+    pushAllToChannex: (cfg, list) => channex.pushAllAvailability(cfg, list),
+  }
+}

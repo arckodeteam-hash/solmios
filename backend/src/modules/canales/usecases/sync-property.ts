@@ -27,7 +27,7 @@ export interface SyncPropertyDeps {
   channexSync: (
     hotelId: string, hotel: SyncPropertyHotel, rooms: RoomTypeSummary[], cfg: CanalesDTO | undefined,
     ratePlans: RatePlanDef[],
-  ) => Promise<{ result: SyncResultDTO; newPropertyId: string | null }>
+  ) => Promise<{ result: SyncResultDTO; newPropertyId: string | null; newGroupId: string | null }>
   upsertConfig: (hotelId: string, patch: Partial<CanalesDTO>) => Promise<CanalesDTO>
   pushAllAvailability: (hotelId: string) => Promise<unknown>
   pushRates: (hotelId: string) => Promise<unknown>
@@ -43,10 +43,12 @@ export async function syncPropertyToChannex(
     // Planes del hotel (BAR + B&B por defecto): un rate plan de Channex por (room type × plan) — P5.
     deps.getRatePlans(hotelId),
   ])
-  const { result, newPropertyId } = await deps.channexSync(hotelId, hotel, rooms, cfg, ratePlans)
+  const { result, newPropertyId, newGroupId } = await deps.channexSync(hotelId, hotel, rooms, cfg, ratePlans)
   const lastSync = new Date().toISOString()
+  // El grupo se persiste junto con la property: es la frontera de aislamiento del hotel dentro de
+  // la cuenta de plataforma, y el token del iframe lo necesita para acotar lo que el hotel ve.
   await deps.upsertConfig(hotelId, newPropertyId
-    ? { channexPropertyId: newPropertyId, syncEnabled: 1, lastSync }
+    ? { channexPropertyId: newPropertyId, syncEnabled: 1, lastSync, ...(newGroupId ? { channexGroupId: newGroupId } : {}) }
     : { lastSync })
 
   // ARI del full sync en exactamente 2 llamadas (test 1 de certificación) — ver usecases/full-sync.ts.
@@ -60,9 +62,37 @@ export async function syncPropertyToChannex(
     await deps.syncLogRepo.create({
       id: crypto.randomUUID(), hotelId, channel: 'channex', action: 'sync_property',
       status: result.success ? 'success' : 'error',
-      details: { roomTypes: result.roomTypes, ratePlans: result.ratePlans, newPropertyId },
+      details: { roomTypes: result.roomTypes, ratePlans: result.ratePlans, newPropertyId, newGroupId },
       createdAt: new Date().toISOString(),
     })
   } catch { /* el log de auditoría no debe romper el sync */ }
   return result
+}
+
+/**
+ * Agrupa las habitaciones FÍSICAS del hotel en los room types que entiende Channex.
+ *
+ * Channex vende TIPOS con un `count_of_rooms`, no unidades sueltas. Vive acá para que la ruta
+ * manual (`POST /api/channels/sync`) y el aprovisionamiento automático de un hotel nuevo armen
+ * exactamente el mismo payload — si divergen, un hotel termina con un catálogo distinto según
+ * por dónde se sincronizó.
+ */
+export function summarizeRoomTypes(rooms: Array<{ type?: string; basePrice?: number; capacity?: number }>): RoomTypeSummary[] {
+  const seen = new Map<string, RoomTypeSummary>()
+  for (const r of rooms) {
+    const type = String(r?.type || '').trim()
+    if (!type) continue
+    const current = seen.get(type)
+    if (current) {
+      current.cnt++
+      // Capacidad MÁXIMA y precio MÍNIMO positivo entre las unidades del tipo — mismo criterio
+      // que usa el motor público para publicar "desde $X" (bookingengine/availability.ts).
+      current.capacity = Math.max(current.capacity, Number(r.capacity) || 0)
+      const price = Number(r.basePrice) || 0
+      if (price > 0 && (current.basePrice <= 0 || price < current.basePrice)) current.basePrice = price
+    } else {
+      seen.set(type, { type, basePrice: Number(r.basePrice) || 0, capacity: Number(r.capacity) || 2, cnt: 1 })
+    }
+  }
+  return [...seen.values()]
 }

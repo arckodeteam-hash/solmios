@@ -21,6 +21,28 @@ const gateLogger = new AppLogger('module-gate')
  *   const guard = (m, a) => [...permGuard(m, a), moduleGuard('channel')]
  *   router.get('/api/channels', guard('channel-manager', 'view'), handler)  // sin cambiar cada ruta
  */
+/**
+ * Mismo entitlement que `createModuleGuard`, pero como PREGUNTA en vez de middleware: sirve para
+ * los caminos que no son un request HTTP (crons, connectors, alta automática en Channex).
+ *
+ * Misma semántica que el guard: solo un `false` explícito bloquea — ante datos faltantes se
+ * asume habilitado, para no cortar la operación de un hotel por un plan mal cargado.
+ */
+export function createModuleChecker(orm: ORM, logger: Pick<Logger, 'warn' | 'error'> = gateLogger) {
+  const configRepo = new OrmRepository<any>(orm, 'Configuration')
+  const plansRepo = new OrmRepository<any>(orm, 'Plans')
+  const hotelsRepo = new OrmRepository<any>(orm, 'Hotels')
+  const subscriptionsRepo = new OrmRepository<any>(orm, 'Subscriptions')
+  const overridesRepo = new OrmRepository<any>(orm, 'HotelModuleOverrides')
+
+  return async (hotelId: string, moduleKey: string): Promise<boolean> => {
+    if (!hotelId || hotelId === 'platform') return true
+    const hotel = ((await hotelsRepo.findMany({ id: hotelId })) as any[])?.[0]
+    const state = await getModuleStateForHotel(configRepo, plansRepo, subscriptionsRepo, hotelId, overridesRepo, hotel?.plan, logger)
+    return state[moduleKey] !== false
+  }
+}
+
 export function createModuleGuard(orm: ORM, logger: Pick<Logger, 'warn' | 'error'> = gateLogger) {
   const configRepo = new OrmRepository<any>(orm, 'Configuration')
   const plansRepo = new OrmRepository<any>(orm, 'Plans')

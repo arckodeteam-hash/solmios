@@ -8,8 +8,11 @@ import type {
 } from './types'
 import type { CanalesSockets } from './sockets'
 import { ChannexUseCase } from './usecases/channex'
-import { pushAvailabilityForRoomType, pushAvailabilityForRoom, pushAllRoomTypesAvailability, type AvailabilityDeps } from './usecases/availability'
+import { pushAvailabilityForRoomType, pushAvailabilityForRoom, pushAllRoomTypesAvailability, makeAvailabilityDeps, type AvailabilityDeps } from './usecases/availability'
 import { syncPropertyToChannex, type SyncPropertyHotel } from './usecases/sync-property'
+import { ProvisioningUseCase } from './usecases/provisioning'
+import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
+import type { AutoProvisionOutcome } from './usecases/auto-provision'
 import { CanalesCrudUseCase } from './usecases/crud'
 import { ChannelApiUseCase } from './usecases/channel-api'
 import { BookingsUseCase } from './usecases/bookings'
@@ -33,6 +36,9 @@ export class CanalesService {
   private readonly bookings: BookingsUseCase
   private readonly bookingSync: BookingSyncUseCase
   private readonly config: ConfigUseCase
+  private readonly provisioning: ProvisioningUseCase
+  /** Entitlement del módulo 'channel'. Lo inyecta el composition-root; sin él se asume habilitado. */
+  private moduleCheck?: (hotelId: string, moduleKey: string) => Promise<boolean>
 
   constructor(
     private readonly repo: RepositoryAdapter<CanalesDTO>,
@@ -50,6 +56,14 @@ export class CanalesService {
       upsert: async (h, es) => { for (const e of es) await this.queries.upsertChannelMapping(h, e) },
     })
     this.crud = new CanalesCrudUseCase(repo, userRepo, auth)
+    this.provisioning = new ProvisioningUseCase({
+      getConfig: (h) => this.getConfig(h),
+      findMany: (m, q) => this.queries.findMany(m, q),
+      syncProperty: (h, hotel, rooms) => this.syncProperty(h, hotel, rooms),
+      hasPlatformKey: () => this.channex.hasPlatformKey(),
+      isModuleEnabled: (h, k) => this.moduleCheck ? this.moduleCheck(h, k) : Promise.resolve(true),
+      logger: this.logger,
+    })
     this.channelApi = new ChannelApiUseCase(this.channex)
     this.bookings = new BookingsUseCase(this.channex)
     // Sync GLOBAL de bookings (cron #564): feed por cuenta de plataforma → deriva por propertyId.
@@ -63,22 +77,24 @@ export class CanalesService {
   /** Conecta el audit log. Lo inyecta el connector `canales-auditlog`. */
   setAuditDeps(port: AuditPort): void { this.auditPort = port }
 
+  /** Checker de entitlement para el alta automática (no hay request HTTP del que sacarlo). */
+  setModuleCheck(fn: (hotelId: string, moduleKey: string) => Promise<boolean>): void { this.moduleCheck = fn }
+
+  /** Sync completo del hotel (botón "Sincronizar"). Lee sus habitaciones reales. */
+  syncHotel(hotelId: string): Promise<SyncResultDTO> { return this.provisioning.syncHotel(hotelId) }
+
+  /** Alta automática en el channel manager cuando el hotel carga su primera habitación. */
+  autoProvision(hotelId: string): Promise<AutoProvisionOutcome> { return this.provisioning.autoProvision(hotelId) }
+
   /** Conecta el gate de suscripción (#542). Lo inyecta el connector `canales-subscriptions`. */
   setSubscriptionCheck(fn: (hotelId: string) => Promise<{ allowed: boolean }>): void { this.bookingSync.setSubscriptionCheck(fn) }
 
   /** Conecta la cancelación real de reservas. Lo inyecta el connector `canales-reservas`. */
   setReservationCancelPort(fn: ReservationCancelPort): void { this.bookingSync.setCancelPort(fn) }
 
-  setSockets(s: Partial<CanalesSockets>): void {
-    const next = s as Record<string, any>
-    const cur = this.sockets as Record<string, any>
-    for (const key of Object.keys(next)) {
-      const h = next[key]
-      if (!h) continue
-      const prev = cur[key]
-      cur[key] = prev ? async (...a: any[]) => { await prev(...a); await h(...a) } : h
-    }
-  }
+  // ACUMULA handlers (implementación única en shared/utils/accumulate-sockets.ts): dos conectores
+  // sobre el mismo evento corren en cadena, no se pisan.
+  setSockets(s: Partial<CanalesSockets>): void { accumulateSockets(this.sockets as any, s as any) }
 
   // ─── Config delegado a usecase ───────────────────────────────────────
   async getConfig(hotelId: string): Promise<CanalesDTO | undefined> { return this.config.getConfig(hotelId) }
@@ -105,14 +121,9 @@ export class CanalesService {
     }, hotelId, hotel, rooms)
   }
 
-  // Push de availability: recálculo + push. Disparado por reservas/checkin/checkout/bloqueos. Lógica en usecases/availability.ts.
+  // Push de availability: recálculo + push. Disparado por reservas/checkin/checkout/bloqueos.
   private availDeps(): AvailabilityDeps {
-    return {
-      findMany: (m, q) => this.queries.findMany(m, q),
-      getConfig: h => this.getConfig(h),
-      pushToChannex: (c, rt, r) => this.channex.pushAvailability(c, rt, r),
-      pushAllToChannex: (c, list) => this.channex.pushAllAvailability(c, list),
-    }
+    return makeAvailabilityDeps((m, q) => this.queries.findMany(m, q), (h) => this.getConfig(h), this.channex)
   }
   async pushAvailability(hotelId: string, roomType: string): Promise<{ pushed: boolean }> { return pushAvailabilityForRoomType(this.availDeps(), hotelId, roomType) }
   async pushAvailabilityByRoom(hotelId: string, roomId: string): Promise<{ pushed: boolean }> { return pushAvailabilityForRoom(this.availDeps(), hotelId, roomId) }
@@ -124,26 +135,15 @@ export class CanalesService {
   async createOTAChannel(hotelId: string, dto: OTAChannelCreateDTO): Promise<OTAChannelResultDTO> { return this.channelApi.createOTAChannel(await this.getConfig(hotelId), dto) }
   async deactivateChannel(hotelId: string, channelId: string): Promise<{ success: boolean; message: string }> { return this.channelApi.deactivateChannel(await this.getConfig(hotelId), channelId) }
 
-  // ─── Bookings delegado a usecase ─────────────────────────────────────
-  async getBookings(hotelId: string): Promise<BookingRevisionDTO[]> {
-    return this.bookings.getBookings(await this.getConfig(hotelId))
-  }
+  // ─── Bookings e iFrame (delegan al usecase, igual que el bloque de arriba) ───────────
+  async getBookings(hotelId: string): Promise<BookingRevisionDTO[]> { return this.bookings.getBookings(await this.getConfig(hotelId)) }
   /** Ingesta GLOBAL del feed de bookings OTA (deriva por propertyId). Cron #564 + botón manual. */
-  async syncAllBookingRevisions(): Promise<BookingSyncResult> {
-    return this.bookingSync.run()
-  }
-
-  // ─── iFrame ────────────────────────────────────────────────────────
-  async getIframeToken(hotelId: string, username: string): Promise<string | null> {
-    return this.channex.generateIframeToken(await this.getConfig(hotelId), username)
-  }
+  async syncAllBookingRevisions(): Promise<BookingSyncResult> { return this.bookingSync.run() }
+  /** Token de un solo uso para el iframe de Channex, acotado a la property Y AL GRUPO del hotel. */
+  async getIframeToken(hotelId: string, username: string): Promise<string | null> { return this.channex.generateIframeToken(await this.getConfig(hotelId), username) }
   /** Devuelve el channexPropertyId configurado para el hotel (null si no sincronizó). */
-  async getPropertyId(hotelId: string): Promise<string | null> {
-    return (await this.getConfig(hotelId))?.channexPropertyId || null
-  }
-  async getChannelDetail(hotelId: string, channelId: string): Promise<any | null> {
-    return this.channelApi.getChannelDetail(await this.getConfig(hotelId), channelId)
-  }
+  async getPropertyId(hotelId: string): Promise<string | null> { return (await this.getConfig(hotelId))?.channexPropertyId || null }
+  async getChannelDetail(hotelId: string, channelId: string): Promise<any | null> { return this.channelApi.getChannelDetail(await this.getConfig(hotelId), channelId) }
 
   async getSyncLog(hotelId?: string): Promise<any[]> { return getSyncLogFromTable(this.syncLogRepo, hotelId) }
 

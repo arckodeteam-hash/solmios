@@ -13,7 +13,7 @@ import { ChannexAdminService } from './service-channex-admin'
 import { getOrCreateOpenChannelKey, verifyOpenChannelKey, buildMappingDetails, applyChanges, logOpenChannelCall, buildEndpointUrl } from './usecases/open-channel-api'
 import type { RoomTypeSummary, CanalesDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
-import { createModuleGuard } from '../../infrastructure/auth/require-module'
+import { createModuleGuard, createModuleChecker } from '../../infrastructure/auth/require-module'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
 import { resolveTenant } from '../../shared/utils/resolve-tenant'
 
@@ -32,7 +32,7 @@ export function CanalesModule() {
       name: 'canales',
       version: '1.0.0',
       description: 'Channel manager Channex',
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'channels', 'feed', 'sync', 'pushAvailability', 'pushAvailabilityByRoom', 'testConnection', 'mappingDetails', 'groups', 'connectOTA', 'deactivateChannel', 'pushRateOverrides'],
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'channels', 'feed', 'sync', 'syncHotel', 'autoProvision', 'pushAvailability', 'pushAvailabilityByRoom', 'testConnection', 'mappingDetails', 'groups', 'connectOTA', 'deactivateChannel', 'pushRateOverrides'],
       events: ['onCanalesCreated', 'onCanalesUpdated', 'onCanalesDeleted', 'onCanalesSynced'],
       tables: ['canales_config'],
       dependencies: [],
@@ -57,6 +57,8 @@ export function CanalesModule() {
       // envolviendo el permission guard, sin tocar cada ruta. Las rutas /api/admin/* usan adminOnly aparte.
       const permGuard = createPermissionGuard(auth, roleRepo)
       const moduleGuard = createModuleGuard(orm)
+      // El alta automática corre fuera de un request: necesita preguntar el entitlement a mano.
+      service.setModuleCheck(createModuleChecker(orm))
       const guard = (m: string, a: string) => [...permGuard(m, a), moduleGuard('channel')]
 
       // ── Config Channex a nivel PLATAFORMA (super_admin) — white-label: una cuenta para todos ──
@@ -95,18 +97,9 @@ export function CanalesModule() {
         // disparaba sobre la cuenta Channex de B con las credenciales de B → oversell / caída de OTAs.
         const hotelId = resolveTenant(req)
         if (!hotelId) return { status: 404, body: { error: 'Hotel no encontrado' } }
-        const hotels = await queries.findMany('Hotels', { id: hotelId })
-        const hotel = hotels[0] as any
-        if (!hotel) return { status: 404, body: { error: 'Hotel no encontrado' } }
-        const rooms = await queries.findMany('Rooms', { hotelId }) as any[]
-        const seen = new Map<string, RoomTypeSummary>()
-        for (const r of rooms) {
-          const cur = seen.get(r.type)
-          if (cur) cur.cnt++
-          else seen.set(r.type, { type: r.type, basePrice: r.basePrice, capacity: r.capacity, cnt: 1 })
-        }
-        const result = await service.syncProperty(hotelId, hotel, [...seen.values()])
-        return { status: 200, body: result }
+        // Mismo camino que el alta automática del connector habitaciones-canales: si divergieran,
+        // un hotel terminaría con un catálogo distinto según por dónde se sincronizó.
+        return { status: 200, body: await service.syncHotel(hotelId) }
       })
 
       router.get('/api/canales', guard('channel-manager', 'view'), (req) => controller.index(req))
