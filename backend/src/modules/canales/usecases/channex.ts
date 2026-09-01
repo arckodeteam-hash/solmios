@@ -294,9 +294,17 @@ export class ChannexUseCase {
       arr.push(r)
       groups.set(k, arr)
     }
+    // Channex aplica los entries FIFO ("last win"): si una temporada por DÍAS PINTADOS solapa
+    // el rango del catálogo de otra (p.ej. 3 días de "especial" dentro de "media"), el específico
+    // tiene que salir DESPUÉS o el rango general lo pisa. Catálogo primero, días pintados al final.
+    const groupList = [...groups.values()].sort((a, b) => {
+      const aFixed = seasonByName.get(a[0]!.season)?.startDate ? 0 : 1
+      const bFixed = seasonByName.get(b[0]!.season)?.startDate ? 0 : 1
+      return aFixed - bFixed
+    })
     const priceOf = (r: { basePrice: number; percentage: number }) =>
       Math.round((r.basePrice || 0) * (1 + (r.percentage || 0) / 100) * 100)  // centavos
-    for (const group of groups.values()) {
+    for (const group of groupList) {
       const head = group[0]!
       const s = seasonByName.get(head.season)
       // Dos orígenes de rango, en orden de prioridad:

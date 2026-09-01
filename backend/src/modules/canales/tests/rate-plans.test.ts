@@ -129,6 +129,22 @@ describe('pushSeasonalRates multi-plan (P5)', () => {
     expect(bb.closed_to_arrival).toBe(true)
     expect(bb.min_stay_through).toBe(3)
   })
+
+  it('días pintados (temporada sin catálogo) salen DESPUÉS del rango del catálogo — last win', async () => {
+    const captured: { restrictions?: any } = {}
+    restore = installFetch(captured as any)
+    const uc = new ChannexUseCase(log as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any)
+    // media: catálogo 2099-06-01→30; especial: SIN fechas, pintada 2099-06-10→12 (solapa).
+    const assigned = new Map([['especial', [{ startDate: '2099-06-10', endDate: '2099-06-12' }]]])
+    // 'especial' PRIMERO en el array de rates: el orden de entrada NO debe decidir el ganador.
+    await uc.pushSeasonalRates({ channexPropertyId: 'p1', channexApiKey: 'k' } as any, [
+      { roomType: 'Double', season: 'especial', occupancy: 2, basePrice: 300, percentage: 50 },
+      { roomType: 'Double', season: 'media', occupancy: 2, basePrice: 110, percentage: 30 },
+    ], [{ name: 'media', startDate: '2099-06-01', endDate: '2099-06-30' }], assigned, 'per_room', DEFAULT_RATE_PLANS)
+
+    const dates = captured.restrictions!.values.filter((v: any) => v.rate_plan_id === 'rp-bar').map((v: any) => v.date_from)
+    expect(dates).toEqual(['2099-06-01', '2099-06-10'])   // catálogo primero, pintado después (pisa)
+  })
 })
 
 describe('syncProperty multi-plan (P5)', () => {
