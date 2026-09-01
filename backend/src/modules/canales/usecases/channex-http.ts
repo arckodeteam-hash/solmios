@@ -32,6 +32,14 @@ const RETRYABLE_STATUS = (status: number): boolean => status === 429 || status >
 
 const MS_PER_SECOND = 1000
 
+/**
+ * El rate limit de Channex (~20/min) aplica a los ARI UPDATES (POST /availability y
+ * POST /restrictions), no al CRUD de contenido ni a los GETs. Limitar todo el tráfico
+ * haría que un full sync (property + room types + N planes) se auto-bloquee a sí mismo.
+ */
+const isAriUpdate = (url: string, method?: string): boolean =>
+  method === 'POST' && /\/(availability|restrictions)$/.test(String(url).split('?')[0] ?? '')
+
 export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOptions = {}) {
   const maxPerMinute = opts.maxPerMinute ?? 18
   const windowMs = opts.windowMs ?? 60_000
@@ -67,7 +75,7 @@ export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOpt
     const doFetch = fetchImpl ?? ((u: Parameters<typeof fetch>[0], i: Parameters<typeof fetch>[1]) => globalThis.fetch(u, i))
     let last: ChannexHttpResponse<T> = { ok: false, status: 0, data: null as T }
     for (let attempt = 0; attempt <= retries; attempt++) {
-      await acquireSlot()
+      if (isAriUpdate(url, init.method)) await acquireSlot()
       try {
         const res = await doFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
         const text = await res.text()

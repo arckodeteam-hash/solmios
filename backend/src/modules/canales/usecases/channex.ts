@@ -6,6 +6,7 @@
 import type { Logger } from 'arckode-framework'
 import type { CanalesDTO, ChannelDTO, ChannelsResultDTO, RoomTypeSummary, SyncResultDTO, TestConnectionDTO, TestConnectionResultDTO, MappingDetailDTO, OTAChannelCreateDTO, OTAChannelResultDTO, GroupDTO, OTAChannelMeta, BookingRevisionDTO, PushRatesResultDTO, DateRange } from '../types'
 import { sharedChannexHttp } from './channex-http'
+import { DEFAULT_RATE_PLANS, planPrice, matchRatePlan, type RatePlanDef } from './rate-plans'
 
 const STAGING_BASE = process.env.CHANNEX_BASE_URL || 'https://staging.channex.io/api/v1'
 const PROD_BASE = 'https://api.channex.io/api/v1'
@@ -129,7 +130,9 @@ export class ChannexUseCase {
 
   // ─── Sincronización: crea propiedad + room types + rate plans + ARI ──
   // Si ya existe channexPropertyId → limpia datos viejos y resincroniza.
-  async syncProperty(hotel: { name: string; currency?: string; email?: string; address?: string; timezone?: string }, rooms: RoomTypeSummary[], cfg: CanalesDTO | undefined, pricingMode: 'per_room' | 'per_person' = 'per_room'): Promise<{ result: SyncResultDTO; newPropertyId: string | null }> {
+  // Un rate plan de Channex por (room type × plan del hotel): BAR + Bed & Breakfast por
+  // defecto (P5) — el setup que exige la certificación PMS.
+  async syncProperty(hotel: { name: string; currency?: string; email?: string; address?: string; timezone?: string }, rooms: RoomTypeSummary[], cfg: CanalesDTO | undefined, pricingMode: 'per_room' | 'per_person' = 'per_room', ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS): Promise<{ result: SyncResultDTO; newPropertyId: string | null }> {
     const key = this.resolveKey(cfg)
 
     let channexPId: string | undefined = cfg?.channexPropertyId || undefined
@@ -163,19 +166,21 @@ export class ChannexUseCase {
 
     const rtList = (await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${channexPId}`)).data?.data || []
 
-    // Batch rate plan creation
-    const rpCreated = await Promise.all(createdRTs.map(rt => {
+    // Batch rate plan creation — UNO POR PLAN (P5): "Double BAR", "Double Bed & Breakfast"…
+    const rpCreated = await Promise.all(createdRTs.flatMap(rt => {
       const title = rt.attributes?.title || rt.title
       const roomData = rooms.find(rm => rm.type === title)
-      const price = Math.round((roomData?.basePrice || 100) * 100)
+      const basePrice = Math.round((roomData?.basePrice || 100) * 100)
       const cap = Math.max(1, roomData?.capacity || 2)
-      // per_person: una option por ocupación 1..capacidad (la máxima es_primary). Los precios reales
-      // por ocupación los pone el push de tarifas (restrictions); acá se crea la ESTRUCTURA (#404).
-      // per_room: una sola option con la capacidad, como siempre.
-      const options = pricingMode === 'per_person'
-        ? Array.from({ length: cap }, (_, i) => ({ occupancy: i + 1, is_primary: i + 1 === cap, rate: price }))
-        : [{ occupancy: cap, is_primary: true, rate: price }]
-      return this.channexReq(key, 'POST', '/rate_plans', { rate_plan: { property_id: channexPId, room_type_id: rt.id, title: `${title} Standard`, currency: hotel.currency || 'USD', sell_mode: pricingMode, rate_mode: 'manual', options } })
+      return ratePlans.map(plan => {
+        const price = planPrice(basePrice, plan.markupPct)
+        // per_person: una option por ocupación 1..capacidad (la máxima is_primary). Los precios
+        // reales por ocupación los pone el push de tarifas; acá se crea la ESTRUCTURA (#404).
+        const options = pricingMode === 'per_person'
+          ? Array.from({ length: cap }, (_, i) => ({ occupancy: i + 1, is_primary: i + 1 === cap, rate: price }))
+          : [{ occupancy: cap, is_primary: true, rate: price }]
+        return this.channexReq(key, 'POST', '/rate_plans', { rate_plan: { property_id: channexPId, room_type_id: rt.id, title: `${title} ${plan.label}`, currency: hotel.currency || 'USD', sell_mode: pricingMode, rate_mode: 'manual', options } })
+      })
     }))
     // Rate plans: releer DESPUÉS de crear (rpList alimenta el reporte).
     // Antes se leía antes de crear → siempre 0 y sin restrictions iniciales.
@@ -203,6 +208,7 @@ export class ChannexUseCase {
     seasons: Array<{ name: string; label?: string; startDate?: string; endDate?: string }>,
     assignedRanges: Map<string, DateRange[]> = new Map(),
     pricingMode: 'per_room' | 'per_person' = 'per_room',
+    ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS,
   ): Promise<PushRatesResultDTO> {
     const empty = (): PushRatesResultDTO => ({ pushed: 0, skipped: 0, notConnected: false, seasonsWithoutDates: [], expiredSeasons: [], roomTypesWithoutRatePlan: [] })
     if (!cfg?.channexPropertyId) return { ...empty(), skipped: rates.length, notConnected: true }
@@ -211,10 +217,14 @@ export class ChannexUseCase {
     const rts = ((await this.channexReq(key, 'GET', `/room_types?filter[property_id]=${pid}`)).data as any)?.data || []
     const rps = ((await this.channexReq(key, 'GET', `/rate_plans?filter[property_id]=${pid}`)).data as any)?.data || []
     const rtIdByTitle = new Map<string, string>(rts.map((rt: any) => [String(rt.attributes?.title || '').toLowerCase(), rt.id]))
-    const rpIdByRt = new Map<string, string>()
+    // TODOS los rate plans de cada room type (P5): un entry por plan en la misma llamada.
+    const rpsByRt = new Map<string, Array<{ id: string; title?: string }>>()
     for (const rp of rps) {
       const rtid = rp.attributes?.room_type_id || rp.relationships?.room_type?.data?.id
-      if (rtid && !rpIdByRt.has(rtid)) rpIdByRt.set(rtid, rp.id)
+      if (!rtid) continue
+      const list = rpsByRt.get(rtid) ?? []
+      list.push({ id: rp.id, title: rp.attributes?.title })
+      rpsByRt.set(rtid, list)
     }
     const seasonByName = new Map(seasons.map((s) => [s.name, s]))
     const today = new Date().toISOString().slice(0, 10)
@@ -251,24 +261,28 @@ export class ChannexUseCase {
         : (assignedRanges.get(head.season) || [])
       if (ranges.length === 0) { skipped++; seasonsWithoutDates.add(seasonLabel(head.season)); continue }
       const rtId = rtIdByTitle.get(String(head.roomType).toLowerCase())
-      const rpId = rtId ? rpIdByRt.get(rtId) : undefined
-      if (!rpId) { skipped++; roomTypesWithoutRatePlan.add(String(head.roomType)); continue }
-      // Precio por ocupación (per_person) o precio único del grupo (per_room).
+      const rtRps = rtId ? rpsByRt.get(rtId) : undefined
+      if (!rtRps?.length) { skipped++; roomTypesWithoutRatePlan.add(String(head.roomType)); continue }
+      // Precio por ocupación (per_person) o precio único del grupo (per_room), ANTES del markup del plan.
       const perOcc = group.map((r) => ({ occupancy: Number(r.occupancy) || 0, rate: priceOf(r) })).filter((x) => x.occupancy > 0)
       let queued = 0
-      for (const rg of ranges) {
-        const from = rg.startDate < today ? today : rg.startDate   // nunca fechas pasadas
-        if (rg.endDate < from) continue                            // tramo ya terminó
-        const entry: any = { property_id: pid, rate_plan_id: rpId, date_from: from, date_to: rg.endDate, stop_sell: !!head.closed }
-        if (pricingMode === 'per_person' && perOcc.length > 0) {
-          entry.rates = perOcc                       // Channex OBP: un rate por ocupación
-        } else {
-          entry.rate = priceOf(head)                 // per_room: precio único del room type
+      for (const plan of ratePlans) {
+        const rpId = matchRatePlan(rtRps, plan)
+        if (!rpId) continue   // plan sin counterpart en ese room type: no se publica, sin romper el resto
+        for (const rg of ranges) {
+          const from = rg.startDate < today ? today : rg.startDate   // nunca fechas pasadas
+          if (rg.endDate < from) continue                            // tramo ya terminó
+          const entry: any = { property_id: pid, rate_plan_id: rpId, date_from: from, date_to: rg.endDate, stop_sell: !!head.closed }
+          if (pricingMode === 'per_person' && perOcc.length > 0) {
+            entry.rates = perOcc.map((o) => ({ occupancy: o.occupancy, rate: planPrice(o.rate, plan.markupPct) }))  // OBP × plan
+          } else {
+            entry.rate = planPrice(priceOf(head), plan.markupPct)    // per_room: precio del plan
+          }
+          if (Number(head.minStay) > 0) entry.min_stay_arrival = Number(head.minStay)
+          if (Number(head.maxStay) > 0) entry.max_stay = Number(head.maxStay)
+          values.push(entry)
+          queued++
         }
-        if (Number(head.minStay) > 0) entry.min_stay_arrival = Number(head.minStay)
-        if (Number(head.maxStay) > 0) entry.max_stay = Number(head.maxStay)
-        values.push(entry)
-        queued++
       }
       if (queued === 0) { skipped++; expiredSeasons.add(seasonLabel(head.season)) }
     }

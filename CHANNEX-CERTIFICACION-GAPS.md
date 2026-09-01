@@ -282,23 +282,23 @@ idempotente y deja de romper los UUIDs que los canales OTA tienen mapeados.
 
 ## 6. Plan priorizado (dependencias → aprobación)
 
-> **Actualización 2026-09-01 (tarde)**: P1, P2, P3, P7, P8, P9 y P10 están HECHOS
-> (commits del 2026-09-01). Quedan abiertos P4, P5 y P6.
+> **Actualización 2026-09-01 (tarde)**: P1, P2, P3, P5, P7, P8, P9 y P10 están HECHOS
+> (commits del 2026-09-01). **E2E verificado contra staging real** (ver §9). Quedan P4 y P6.
 
 | P# | Ítem | Desbloquea | Esfuerzo | Estado |
 |---|---|---|---|---|
-| **P1** | **Limiter ~18/min + retry/backoff 429/5xx + timeout** en `channex-http.ts` (transport único, singleton module-level) | T12 (veto) | M | ✅ hecho |
+| **P1** | **Limiter de ARI updates ~18/min + retry/backoff 429/5xx + timeout** en `channex-http.ts` (transport único, singleton module-level). El límite aplica SOLO a POST /availability y /restrictions — el CRUD del sync no se auto-limita | T12 (veto) | M | ✅ hecho |
 | **P2** | **Full sync 500d en exactamente 2 llamadas** (`pushAllRoomTypesAvailability` + `pushSeasonalRates`, orquestados por `usecases/full-sync.ts`; el sync de estructura ya no pushea ARI) | T1 | M | ✅ hecho |
 | **P3** | **pushRate ELIMINADO** (pisaba temporadas con precio plano 30d). Ruta única: conector habitaciones → `pushSeasonalRates` (delta por temporada, 1 llamada) | T2, T13 | S | ✅ hecho |
 | **P4** | **Restrictions completas**: `min_stay_through`, CTA, CTD (modelo + payload + UI calendario) | T5/T7/T14 | M | ⬜ pendiente |
-| **P5** | **Multi-rate-plan** por room type (BAR + B&B) | Setup, T3/T4/T14 | M-L | ⬜ pendiente |
+| **P5** | **Multi-rate-plan** por room type: planes en `configuration(key='rate_plans')` (default BAR +0% / B&B +20%), sync crea un RP de Channex por (tipo × plan), push manda un entry por plan en la MISMA llamada (match por keywords, retrocompatible con "X Standard") | Setup, T3/T4/T14 | M-L | ✅ hecho + E2E |
 | **P6** | **Mapping persistente** `channel_mapping` + sync upsert no destructivo | Robustez, T12 (menos GETs) | M | ⬜ pendiente |
 | **P7** | Fix firma `connectors/booking-channex.ts` (push inefectivo del motor de reservas → `pushAvailabilityByRoom`) + errores logueados en los 3 conectores | T9/T10 | S | ✅ hecho |
-| **P8** | **Limpieza staging**: 4 properties huérfanas borradas, 4 webhooks `url:null` borrados, **"Test Property - SolmiOS" creada** (Twin/Double occ 2, BAR $100 + B&B $120 por tipo, availability 2, verificada con readback) | Setup | S | ✅ hecho |
+| **P8** | **Limpieza staging**: 4 properties huérfanas borradas, 4 webhooks `url:null` borrados, **"Test Property - SolmiOS" creada** (verificada con readback) | Setup | S | ✅ hecho |
 | **P9** | **Fix data**: property `6fe6fcd0` renombrada "Hotel Boutique Palma" (la que usa prod), la de dev renombrada "(dev)" | Cuenta demo coherente | S | ✅ hecho |
 | **P10** | Cuestionario T14 redactado (ver §8) | T14 | S | ✅ hecho |
 
-Los tres pendientes (P4/P5/P6) se estiman en ~1-1.5 semanas de trabajo enfocado.
+Pendientes: **P4** (CTA/CTD/through) y **P6** (mapping persistente) — ~1 semana.
 
 ---
 
@@ -336,3 +336,31 @@ Lo que Channex pregunta en "Extra Notes" y nuestras respuestas honestas de hoy:
 **Cómo declarar lo no soportado**: la doc oficial dice que las features no
 soportadas pueden saltarse si se anotan explícitamente en el formulario — eso no
 bloquea la certificación de lo demás.
+
+---
+
+## 9. E2E verificado contra staging (2026-09-01, tras P5)
+
+Flujo completo ejecutado con backend real (dev) + staging real de Channex, sobre
+la Test Property `f1f563dd`:
+
+| Paso | Resultado |
+|---|---|
+| `POST /api/channels/sync` | 4 room types + **8 rate plans** (4 tipos × BAR/B&B) creados |
+| Full availability (1ª llamada) | 500 días, 88 rangos comprimidos, valores reales por tipo (1/3/1/3) — readback OK a +498 días |
+| Full restrictions (2ª llamada) | pushed 8 (4 tipos × 2 planes × temporadas); **cada par BAR/B&B con +20% exacto** (85→102, 65→78, 120→144, 130→156); valores **variados por temporada** (double media 85 vs alta 106.96) |
+| Edición de UNA tarifa (`PUT /api/rates` double media → 333) | push automático **700ms después**, pushed 8 en 1 llamada |
+| Readback final | **double BAR = $333.00 · double B&B = $399.60** (333×1.2) en las fechas de la temporada |
+| Skips reportados | Correctos: "Temporada Especial" sin fechas, "Temporada Baja" expirada |
+
+La Test Property quedó con los 4 tipos del hotel de prueba × 2 planes y datos
+reales verificados. El setup "oficial" twin/double se recrea por API cuando se
+defina el hotel exacto del examen.
+
+### Hallazgo del E2E (bug a trackear — NO de Channex, nuestro)
+
+`PUT /api/rates?hotelId=X` hecho con token **super_admin** ignoró el hotelId del
+query y guardó la fila en el hotel DEL USUARIO (SolmiOS Corp). El `GET /rates`
+con query hotelId también devolvió filas de otro hotel. Con token `hotel_admin`
+del hotel funciona correcto. Filtrar/validar el hotelId del query para
+super_admin en pricing (y revisar el listado) — tarea aparte.

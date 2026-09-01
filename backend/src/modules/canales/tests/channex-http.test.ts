@@ -32,9 +32,9 @@ describe('createChannexHttp — rate limit (test 12)', () => {
     let calls = 0
     const { http, sleeps } = makeTransport(async () => { calls++; return jsonResponse(200, { data: [] }) }, clock, 2)
 
-    await http.request('https://x/1', { method: 'GET' })
-    await http.request('https://x/2', { method: 'GET' })
-    const third = http.request('https://x/3', { method: 'GET' })
+    await http.request('https://x/availability', { method: 'POST' })
+    await http.request('https://x/availability', { method: 'POST' })
+    const third = http.request('https://x/availability', { method: 'POST' })
     expect(calls).toBe(2)        // el tercero NO salió: ventana llena
     await third
     expect(calls).toBe(3)        // salió tras esperar lo que le faltaba al más viejo
@@ -48,10 +48,24 @@ describe('createChannexHttp — rate limit (test 12)', () => {
     let calls = 0
     const { http } = makeTransport(async () => { calls++; return jsonResponse(200, { data: [] }) }, clock, 2)
 
-    await http.request('https://x/1', { method: 'GET' })
+    await http.request('https://x/restrictions', { method: 'POST' })
     clock.advance(60_001)        // la ventana entera expiró
-    await http.request('https://x/2', { method: 'GET' })
+    await http.request('https://x/restrictions', { method: 'POST' })
     expect(calls).toBe(2)        // sin bloqueo: no hizo falta dormir
+  })
+
+  it('el límite aplica SOLO a los ARI updates, no a GETs ni CRUD de contenido', async () => {
+    const clock = fakeClock()
+    let calls = 0
+    const { http, sleeps } = makeTransport(async () => { calls++; return jsonResponse(200, { data: [] }) }, clock, 1)
+
+    // Dos ARI updates llenan la ventana (max 1)…
+    await http.request('https://x/availability', { method: 'POST' })
+    // …pero GETs y POSTs de contenido pasan sin bloqueo (el sync no se auto-limita).
+    await http.request('https://x/room_types', { method: 'GET' })
+    await http.request('https://x/rate_plans', { method: 'POST' })
+    expect(calls).toBe(3)
+    expect(sleeps).toEqual([])
   })
 })
 

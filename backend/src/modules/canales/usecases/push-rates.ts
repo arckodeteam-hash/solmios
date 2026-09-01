@@ -1,4 +1,5 @@
 import type { CanalesDTO, PushRatesResultDTO, DateRange } from '../types'
+import { readRatePlans, type RatePlanDef } from './rate-plans'
 
 /** Modo de tarificación del hotel: precio por habitación o por persona (ocupación). */
 export type PricingMode = 'per_room' | 'per_person'
@@ -26,6 +27,7 @@ interface PushRatesDeps {
     seasons: Array<{ name: string; label?: string; startDate?: string; endDate?: string }>,
     assignedRanges: Map<string, DateRange[]>,
     pricingMode: PricingMode,
+    ratePlans: RatePlanDef[],
   ) => Promise<PushRatesResultDTO>
 }
 
@@ -83,13 +85,15 @@ export async function pushSeasonalRatesToChannex(
   hotelId: string,
   channel?: string,
 ): Promise<PushRatesResultDTO> {
-  const [cfg, allRates, seasons, assignments, pricingMode] = await Promise.all([
+  const [cfg, allRates, seasons, assignments, pricingMode, ratePlans] = await Promise.all([
     deps.getConfig(hotelId),
     deps.findMany('RoomRates', { hotelId }),
     deps.findMany('Seasons', { hotelId }),
     // Temporada pintada día-a-día en el planning: da el rango de las temporadas sin fechas propias.
     deps.findMany('SeasonAssignments', { hotelId }),
     deps.getPricingMode(hotelId),
+    // Planes del hotel (BAR + B&B por defecto, configuration key='rate_plans') — P5.
+    readRatePlans(deps.findMany, hotelId),
   ])
   const assignedRanges = groupAssignmentsIntoRanges(assignments as Array<{ date: string; season: string }>)
   const wanted = channel || ''
@@ -125,5 +129,5 @@ export async function pushSeasonalRatesToChannex(
     roomType: r.roomType, season: r.season, occupancy: Number(r.occupancy) || 0,
     basePrice: r.basePrice, percentage: r.percentage, closed: r.closed, minStay: r.minStay, maxStay: r.maxStay,
   }))
-  return deps.pushSeasonalRates(cfg, rates, seasons, assignedRanges, pricingMode)
+  return deps.pushSeasonalRates(cfg, rates, seasons, assignedRanges, pricingMode, ratePlans)
 }
