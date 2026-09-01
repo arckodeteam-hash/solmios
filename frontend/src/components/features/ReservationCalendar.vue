@@ -359,90 +359,6 @@
 
     <!-- Quote / Cotización Modal -->
     <AppModal :open="quote.show" title="Cotización" size="lg" body-class="p-6" @close="quote.show = false">
-          <!-- PRINT VIEW — cotización A4 con la identidad del panel (navy/teal/gold, tokens de
-               main.css). Montos por qMoney() y fechas por qDate(): al huésped se le entrega
-               "$1,234.00" y "31/08/2026", no el ISO crudo del <input type="date">. -->
-          <div class="print-only">
-            <div class="qdoc">
-              <div class="qdoc-brandbar"></div>
-
-              <!-- Emisor + documento -->
-              <div class="qdoc-head">
-                <div class="qdoc-issuer">
-                  <div class="qdoc-monogram">{{ quoteMonogram }}</div>
-                  <div class="min-w-0">
-                    <h2 class="qdoc-hotel">{{ quote.hotel }}</h2>
-                    <p v-if="quote.hotelAddress">{{ quote.hotelAddress }}</p>
-                    <p v-if="quote.hotelPhone || quote.hotelEmail"><template v-if="quote.hotelPhone">Tel: {{ quote.hotelPhone }}</template><template v-if="quote.hotelPhone && quote.hotelEmail"> · </template>{{ quote.hotelEmail }}</p>
-                  </div>
-                </div>
-                <div class="qdoc-doc">
-                  <div class="qdoc-doc-title">Cotización</div>
-                  <div class="qdoc-doc-sub">Proforma</div>
-                  <div class="qdoc-doc-meta">Nº {{ quote.id }} · {{ quote.today }}</div>
-                </div>
-              </div>
-
-              <!-- Cliente + estadía -->
-              <div class="qdoc-info">
-                <div class="qdoc-panel">
-                  <div class="qdoc-label">Cliente</div>
-                  <div class="qdoc-name">{{ quote.guest }}</div>
-                  <p v-if="quote.email">{{ quote.email }}</p>
-                  <p v-if="quote.phone">{{ quote.phone }}</p>
-                </div>
-                <div class="qdoc-panel">
-                  <div class="qdoc-label">Estadía</div>
-                  <div class="qdoc-kv"><span>Entrada</span><b>{{ qDate(quote.checkIn) }}</b></div>
-                  <div class="qdoc-kv"><span>Salida</span><b>{{ qDate(quote.checkOut) }}</b></div>
-                  <div class="qdoc-kv"><span>Noches</span><b>{{ quoteNights }}</b></div>
-                  <div class="qdoc-kv"><span>Huéspedes</span><b>{{ quote.adults }} adulto{{ quote.adults === 1 ? '' : 's' }}<template v-if="quote.kids">, {{ quote.kids }} niño{{ quote.kids === 1 ? '' : 's' }}</template></b></div>
-                </div>
-              </div>
-
-              <!-- Detalle -->
-              <table class="qdoc-table">
-                <thead>
-                  <tr>
-                    <th class="qdoc-th-left">Habitación</th>
-                    <th>Cant.</th>
-                    <th>Precio / noche</th>
-                    <th>Noches</th>
-                    <th>Subtotal</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(item, i) in quote.rooms" :key="i">
-                    <td class="qdoc-room">{{ item.type }}</td>
-                    <td class="qdoc-num">{{ item.qty }}</td>
-                    <td class="qdoc-num">{{ qMoney(item.price) }}</td>
-                    <td class="qdoc-num">{{ quoteNights }}</td>
-                    <td class="qdoc-num qdoc-strong">{{ qMoney(item.qty * item.price * quoteNights) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-
-              <!-- Totales. Sin tasa configurada no se desglosa: Subtotal sería una copia del Total. -->
-              <div class="qdoc-totals">
-                <div v-if="quote.taxRate > 0" class="qdoc-trow"><span>Subtotal</span><b>{{ qMoney(quoteSubtotal) }}</b></div>
-                <div v-if="quote.taxRate > 0" class="qdoc-trow"><span>{{ quote.taxName }} ({{ quote.taxRate }}%)</span><b>{{ qMoney(quoteTax) }}</b></div>
-                <div class="qdoc-ttotal"><span>Total</span><b>{{ qMoney(quoteTotal) }}</b></div>
-              </div>
-
-              <!-- Condiciones -->
-              <div v-if="quote.notes" class="qdoc-notes">
-                <div class="qdoc-label">Condiciones</div>
-                <p>{{ quote.notes }}</p>
-              </div>
-
-              <!-- Pie -->
-              <div class="qdoc-foot">
-                <p class="qdoc-thanks">Gracias por su preferencia · {{ quote.hotel }}</p>
-                <p>Documento informativo · No válido como factura fiscal</p>
-              </div>
-            </div>
-          </div>
-
           <!-- EDIT FORM -->
           <div class="screen-only">
           <!-- Datos del Cliente -->
@@ -531,6 +447,99 @@
         <button @click="printQuote" class="flex-1 py-2.5 bg-navy text-white rounded-xl text-sm font-bold cursor-pointer no-print inline-flex items-center justify-center gap-2"><Icon name="printer" :size="15" /> Imprimir</button>
       </template>
     </AppModal>
+
+    <!-- PRINT VIEW — cotización A4 con la identidad del panel (navy/teal/gold, tokens de
+         main.css). Montos por qMoney() y fechas por qDate(): al huésped se le entrega
+         "$1,234.00" y "31/08/2026", no el ISO crudo del <input type="date">.
+
+         VIVE EN UN TELEPORT A BODY, no dentro del AppModal: el modal es position:fixed con
+         overflow, así que el documento re-anclado con position:fixed (patrón viejo) era
+         REPETIDO por Chromium en cada hoja impresa — una cotización larga salía duplicada
+         (verificado con page.pdf: 2 hojas idénticas). Fuera de #app, el @media print oculta
+         la app entera por display y esto fluye como página normal: se imprime UNA vez y una
+         cotización que no entra en A4 continúa en la hoja 2 en vez de repetirse. -->
+    <Teleport to="body">
+      <div class="print-only" v-if="quote.show">
+        <div class="qdoc">
+          <div class="qdoc-brandbar"></div>
+
+          <!-- Emisor + documento -->
+          <div class="qdoc-head">
+            <div class="qdoc-issuer">
+              <div class="qdoc-monogram">{{ quoteMonogram }}</div>
+              <div class="min-w-0">
+                <h2 class="qdoc-hotel">{{ quote.hotel }}</h2>
+                <p v-if="quote.hotelAddress">{{ quote.hotelAddress }}</p>
+                <p v-if="quote.hotelPhone || quote.hotelEmail"><template v-if="quote.hotelPhone">Tel: {{ quote.hotelPhone }}</template><template v-if="quote.hotelPhone && quote.hotelEmail"> · </template>{{ quote.hotelEmail }}</p>
+              </div>
+            </div>
+            <div class="qdoc-doc">
+              <div class="qdoc-doc-title">Cotización</div>
+              <div class="qdoc-doc-sub">Proforma</div>
+              <div class="qdoc-doc-meta">Nº {{ quote.id }} · {{ quote.today }}</div>
+            </div>
+          </div>
+
+          <!-- Cliente + estadía -->
+          <div class="qdoc-info">
+            <div class="qdoc-panel">
+              <div class="qdoc-label">Cliente</div>
+              <div class="qdoc-name">{{ quote.guest }}</div>
+              <p v-if="quote.email">{{ quote.email }}</p>
+              <p v-if="quote.phone">{{ quote.phone }}</p>
+            </div>
+            <div class="qdoc-panel">
+              <div class="qdoc-label">Estadía</div>
+              <div class="qdoc-kv"><span>Entrada</span><b>{{ qDate(quote.checkIn) }}</b></div>
+              <div class="qdoc-kv"><span>Salida</span><b>{{ qDate(quote.checkOut) }}</b></div>
+              <div class="qdoc-kv"><span>Noches</span><b>{{ quoteNights }}</b></div>
+              <div class="qdoc-kv"><span>Huéspedes</span><b>{{ quote.adults }} adulto{{ quote.adults === 1 ? '' : 's' }}<template v-if="quote.kids">, {{ quote.kids }} niño{{ quote.kids === 1 ? '' : 's' }}</template></b></div>
+            </div>
+          </div>
+
+          <!-- Detalle -->
+          <table class="qdoc-table">
+            <thead>
+              <tr>
+                <th class="qdoc-th-left">Habitación</th>
+                <th>Cant.</th>
+                <th>Precio / noche</th>
+                <th>Noches</th>
+                <th>Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(item, i) in quote.rooms" :key="i">
+                <td class="qdoc-room">{{ item.type }}</td>
+                <td class="qdoc-num">{{ item.qty }}</td>
+                <td class="qdoc-num">{{ qMoney(item.price) }}</td>
+                <td class="qdoc-num">{{ quoteNights }}</td>
+                <td class="qdoc-num qdoc-strong">{{ qMoney(item.qty * item.price * quoteNights) }}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- Totales. Sin tasa configurada no se desglosa: Subtotal sería una copia del Total. -->
+          <div class="qdoc-totals">
+            <div v-if="quote.taxRate > 0" class="qdoc-trow"><span>Subtotal</span><b>{{ qMoney(quoteSubtotal) }}</b></div>
+            <div v-if="quote.taxRate > 0" class="qdoc-trow"><span>{{ quote.taxName }} ({{ quote.taxRate }}%)</span><b>{{ qMoney(quoteTax) }}</b></div>
+            <div class="qdoc-ttotal"><span>Total</span><b>{{ qMoney(quoteTotal) }}</b></div>
+          </div>
+
+          <!-- Condiciones -->
+          <div v-if="quote.notes" class="qdoc-notes">
+            <div class="qdoc-label">Condiciones</div>
+            <p>{{ quote.notes }}</p>
+          </div>
+
+          <!-- Pie -->
+          <div class="qdoc-foot">
+            <p class="qdoc-thanks">Gracias por su preferencia · {{ quote.hotel }}</p>
+            <p>Documento informativo · No válido como factura fiscal</p>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Modal: mover / extender reserva — elección de precio + cobro de diferencia (#204/#207).
          Vive en su propio componente porque la decisión de precio (mantener vs. recalcular) es una
@@ -2024,20 +2033,18 @@ function goToday() { weekOffset.value = 0; lastSel.value = null; popup.value.sho
 
 @media screen { .print-only { display: none !important; } }
 @media print {
-  /* Mismo patrón que ReservationModal.vue (.rm-invoice): la Cotización vive dentro de un
-     AppModal centrado (position:fixed + overflow-y-auto + max-height). Antes solo se ocultaba
-     con display, así que el contenido quedaba anclado/recortado a ese contenedor y la hoja
-     salía en blanco o cortada. Ocultar TODO el documento y reanclar .print-only a la página
-     (position:fixed, sin max-height/overflow) es lo que hace que imprima completo. */
-  body * { visibility: hidden; }
+  /* El documento vive en un Teleport a body (hermano de #app), así que basta ocultar la app
+     entera por DISPLAY y dejar .print-only en flujo normal. El patrón viejo (body * con
+     visibility:hidden + .print-only position:fixed) ocultaba ocupando lugar y Chromium
+     REPETÍA el elemento fixed en cada hoja: una cotización larga salía duplicada entera
+     (verificado con page.pdf: 2 hojas idénticas con 9 habitaciones). En flujo normal se
+     imprime una sola vez y lo que no entra en A4 continúa en la hoja siguiente. */
+  #app { display: none !important; }
+  .print-only { display: block !important; padding: 32px 40px; }
+  /* ReservationModal (montado en esta misma página para el detalle de reservas) trae un
+     @media print GLOBAL con body * { visibility: hidden } — sin restituirlo acá, su regla
+     oculta este documento aunque viva fuera de #app. La clase (0,1,0) le gana a body * (0,0,1). */
   .print-only, .print-only * { visibility: visible; }
-  .print-only {
-    display: block !important;
-    position: fixed; left: 0; top: 0; width: 100%;
-    max-height: none; overflow: visible;
-    padding: 32px 40px;
-  }
-  .no-print, .screen-only { display: none !important; }
   body { background: white !important; }
 }
 </style>
