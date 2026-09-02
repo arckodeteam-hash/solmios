@@ -11,6 +11,8 @@ import { ConfigUseCase } from './usecases/config'
 import { ChannexUseCase } from './usecases/channex'
 import { ChannexAdminService } from './service-channex-admin'
 import { getOrCreateOpenChannelKey, verifyOpenChannelKey, buildMappingDetails, applyChanges, logOpenChannelCall, buildEndpointUrl } from './usecases/open-channel-api'
+import { buildOpenChannelMappings, roomTypesFromRooms } from './usecases/open-channel-connect'
+import { readRatePlans } from '../../shared/utils/rate-plans'
 import type { RoomTypeSummary, CanalesDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { createModuleGuard, createModuleChecker } from '../../infrastructure/auth/require-module'
@@ -176,6 +178,51 @@ export function CanalesModule() {
         }
         const { recorded } = await applyChanges(ocDeps, hotelId, entry.changes)
         return { status: 200, body: { success: true, unique_id: crypto.randomUUID(), recorded } }
+      })
+
+      // Conectar SolmiOS como canal EN UN CLICK. El servidor ya conoce las tres credenciales
+      // (endpoint, api key, hotel code) y el mapeo sale del sync: pedirle al hotelero que las
+      // transcriba en el asistente de Channex era el paso que dejaba a los hoteles nuevos sin
+      // ningún canal conectado. Ver `usecases/open-channel-connect.ts`.
+      router.post('/api/channels/open-channel/connect', guard('channel-manager', 'edit'), async (req: any) => {
+        const hotelId = resolveTenant(req)
+        if (!hotelId) return { status: 404, body: { error: 'Hotel no encontrado' } }
+        const cfg = (await queries.findMany('Canales', { hotelId }))[0] as CanalesDTO | undefined
+        if (!cfg?.channexPropertyId) {
+          return { status: 422, body: { success: false, message: 'El hotel todavía no está publicado en el channel manager. Sincronizá primero.' } }
+        }
+        const [apiKey, mappings, rooms, plans] = await Promise.all([
+          getOrCreateOpenChannelKey(ocDeps, hotelId),
+          queries.findMany('ChannelMapping', { hotelId }),
+          queries.findMany('Rooms', { hotelId }),
+          readRatePlans((model: string, q: any) => queries.findMany(model, q), hotelId),
+        ])
+        const ratePlans = buildOpenChannelMappings(mappings as any, plans, roomTypesFromRooms(rooms as any))
+        if (!ratePlans.length) {
+          return { status: 422, body: { success: false, message: 'No hay tarifas publicadas para mapear. Sincronizá el hotel y volvé a intentar.' } }
+        }
+        // El grupo es obligatorio para crear un canal. Los hoteles sincronizados antes de que el
+        // sync lo guardara lo tienen vacío: se lee de la property y se persiste, que es lo que
+        // además necesita el token del iframe para acotar lo que el hotel ve.
+        let groupId = cfg.channexGroupId || ''
+        if (!groupId) {
+          const hotel = (await queries.findMany('Hotels', { id: hotelId }))[0] as any
+          groupId = (await adminChannex.ensureGroupForProperty(cfg, hotel?.name || 'Hotel')) || ''
+          if (groupId && cfg.id) await repo.update(cfg.id, { channexGroupId: groupId } as any)
+        }
+        if (!groupId) {
+          return { status: 422, body: { success: false, message: 'No se pudo resolver el grupo del hotel en Channex.' } }
+        }
+        const result = await service.createOTAChannel(hotelId, {
+          channel: 'OpenChannel',
+          title: 'SolmiOS Open',
+          groupId,
+          propertyId: cfg.channexPropertyId,
+          ratePlans,
+          settings: { endpoint: buildEndpointUrl(req), api_key: apiKey, hotel_code: hotelId },
+        })
+        if (!result.success) log.warn('No se pudo conectar SolmiOS como canal', { hotelId, message: result.message })
+        return { status: result.success ? 200 : 422, body: result }
       })
 
       log.info('Módulo canales (Channex) listo')

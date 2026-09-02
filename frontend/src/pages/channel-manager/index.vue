@@ -180,7 +180,13 @@
       <p v-if="loadingStatus" class="text-sm text-text-muted py-10 text-center">Cargando canales…</p>
       <EmptyState v-else-if="connectedChannels.length === 0"
         title="Sin canales conectados"
-        message="Todavía no conectaste ninguna OTA. Elegí uno de los canales disponibles abajo para empezar a sincronizar precios y reservas.">
+        message="Todavía no conectaste ninguna OTA. Podés empezar conectando SolmiOS como canal —prueba el circuito completo sin credenciales de nadie— o pedir la conexión de una OTA de la lista de abajo.">
+        <template #action>
+          <button v-if="cmConnected" @click="connectOpenChannel" :disabled="connectingOpen"
+            class="px-5 py-2.5 rounded-xl bg-navy text-white text-sm font-black hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            {{ connectingOpen ? 'Conectando…' : 'Conectar SolmiOS como canal' }}
+          </button>
+        </template>
       </EmptyState>
       <div v-else class="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <div v-for="channel in connectedChannels" :key="channel.id"
@@ -283,6 +289,10 @@
       </div>
       <template #footer>
         <button @click="openChannelModal = false" class="text-sm font-bold text-text-secondary hover:text-navy cursor-pointer transition-colors">Cerrar</button>
+        <button @click="connectOpenChannel" :disabled="connectingOpen"
+          class="ml-3 px-4 py-2 rounded-xl bg-navy text-white text-sm font-black hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+          {{ connectingOpen ? 'Conectando…' : 'Conectar automáticamente' }}
+        </button>
       </template>
     </AppModal>
 
@@ -404,6 +414,7 @@ const cmConnected = computed(() => !!status.value?.channexPropertyId)
 const syncPaused = computed(() => cmConnected.value && status.value?.syncEnabled === false)
 const confirmDisconnect = ref(false)
 const togglingSync = ref(false)
+const connectingOpen = ref(false)
 /** Hasta la certificación, todo corre contra la cuenta de prueba de Channex. Hay que decirlo. */
 const isTestEnv = computed(() => status.value?.environment === 'staging')
 const propertyShort = computed(() => {
@@ -562,6 +573,25 @@ async function openConnectFlow() {
     toast.error('No se pudo abrir el asistente de conexión')
   } finally {
     openingConfig.value = false
+  }
+}
+
+/**
+ * Conecta SolmiOS como canal en un click. Antes había que copiar tres credenciales del modal y
+ * pegarlas en el asistente de Channex: ese paso manual es la razón por la que un hotel nuevo se
+ * quedaba sin ningún canal conectado.
+ */
+async function connectOpenChannel() {
+  connectingOpen.value = true
+  try {
+    const r = await ChannelService.connectOpenChannel()
+    openChannelModal.value = false
+    await loadStatus()
+    toast.success(r.message || 'Canal conectado')
+  } catch (e: any) {
+    toast.error(e?.message || 'No se pudo conectar el canal')
+  } finally {
+    connectingOpen.value = false
   }
 }
 

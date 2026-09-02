@@ -135,6 +135,14 @@ export const ChannelService = {
    * configuración del hotel, que es lo que el backend mira antes de publicar. Volver a
    * sincronizar a mano también la reactiva.
    */
+  /**
+   * Conecta SolmiOS como canal (Open Channel) sin copiar credenciales: el servidor ya conoce el
+   * endpoint, la api key y el hotel code, y arma el mapeo desde el último sync.
+   */
+  async connectOpenChannel(): Promise<{ success: boolean; message: string; channelId?: string }> {
+    return http.post('/channels/open-channel/connect', {})
+  },
+
   async setSyncEnabled(hotelId: string | undefined, enabled: boolean): Promise<void> {
     const list = await http.get<any>(`/canales${hotelId ? `?hotelId=${hotelId}` : ''}`)
     const rows = Array.isArray(list) ? list : (list?.data ?? [])

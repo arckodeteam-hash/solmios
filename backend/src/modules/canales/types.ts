@@ -160,8 +160,12 @@ export interface OTAChannelCreateDTO {
 
 export interface OTAChannelMappingDTO {
   ratePlanId: string
-  roomTypeCode: number
-  ratePlanCode: number
+  /**
+   * Códigos del canal. Las OTAs reales los numeran; el Open Channel del PMS usa los códigos que
+   * publica `buildMappingDetails` (`double`, `double-bar`), que son texto. Aceptar los dos.
+   */
+  roomTypeCode: string | number
+  ratePlanCode: string | number
   occupancy: number
   pricingType: string
   primaryOcc?: boolean

@@ -698,7 +698,49 @@ export class ChannexUseCase {
     return { success: true, message: 'Canal activado', issues: [] }
   }
 
+  /**
+   * El grupo al que Channex tiene asignada una property.
+   *
+   * Hace falta para crear un canal (`group_id` es obligatorio: sin él Channex responde
+   * "can't be blank") y los hoteles sincronizados antes de que el sync guardara el grupo lo
+   * tienen vacío en su configuración. En vez de fallar, se lee de la property y se reusa.
+   */
+  async getPropertyGroupId(cfg: CanalesDTO | undefined): Promise<string | null> {
+    if (!cfg?.channexPropertyId) return null
+    const res = await this.channexReq(this.resolveKey(cfg), 'GET', `/properties/${cfg.channexPropertyId}`)
+    const a = (res.data as any)?.data?.attributes
+    return a?.group_id || null
+  }
+
+  /**
+   * El grupo del hotel, creándolo y ASIGNANDO la property si hiciera falta.
+   *
+   * El sync solo crea grupo cuando crea la property: una property que nació sin grupo (creada a
+   * mano, o antes de que el sync los manejara) no lo conseguía nunca, y sin grupo Channex no deja
+   * crear ningún canal ("group_id can't be blank"). Devuelve null si Channex rechaza las dos cosas.
+   */
+  async ensureGroupForProperty(cfg: CanalesDTO | undefined, hotelName: string): Promise<string | null> {
+    const existing = await this.getPropertyGroupId(cfg)
+    if (existing) return existing
+    if (!cfg?.channexPropertyId) return null
+    const key = this.resolveKey(cfg)
+    const groupId = await this.ensureGroup(key, hotelName)
+    if (!groupId) return null
+    const res = await this.channexReq(key, 'PUT', `/properties/${cfg.channexPropertyId}`, { property: { group_id: groupId } })
+    if (!res.ok) {
+      this.logger.warn('No se pudo asignar la property a su grupo', { propertyId: cfg.channexPropertyId })
+      return null
+    }
+    return groupId
+  }
+
+  /** Un código de canal numérico viaja como número; uno con texto, tal cual. */
+  private codeOf(value: string | number): string | number {
+    return typeof value === 'number' ? value : (/^\d+$/.test(value) ? Number(value) : value)
+  }
+
   async createOTAChannel(cfg: CanalesDTO | undefined, dto: OTAChannelCreateDTO): Promise<OTAChannelResultDTO> {
+    const channelCode = (v: string | number) => this.codeOf(v)
     const key = this.resolveKey(cfg)
     const steps = { test: false, mapping: false, create: false, activate: false }
 
@@ -723,15 +765,17 @@ export class ChannexUseCase {
     const createRes = await this.channexReq(key, 'POST', '/channels', {
       channel: {
         channel: dto.channel,
-        group_id: dto.groupId,
+        // Vacío NO: Channex lo rechaza con "can't be blank" y el error sale como validación genérica.
+        ...(dto.groupId ? { group_id: dto.groupId } : {}),
         is_active: true,
         title: dto.title,
         properties: [dto.propertyId],
         rate_plans: ratePlansData.map(rp => ({
           rate_plan_id: rp.ratePlanId,
           settings: {
-            room_type_code: Number(rp.roomTypeCode),
-            rate_plan_code: Number(rp.ratePlanCode),
+            // `Number()` a secas convertía "double-bar" en NaN y Channex recibía un mapeo roto.
+            room_type_code: channelCode(rp.roomTypeCode),
+            rate_plan_code: channelCode(rp.ratePlanCode),
             occupancy: rp.occupancy,
             pricing_type: rp.pricingType,
             primary_occ: rp.primaryOcc ?? true,
@@ -751,10 +795,16 @@ export class ChannexUseCase {
     const actRes = await this.channexReq(key, 'POST', `/channels/${channelId}/activate`, {})
     if (actRes.ok) steps.activate = true
 
-    this.logger.info('Canal OTA creado', { channel: dto.channel, channelId })
+    // Por qué NO activó, que es lo único accionable: Channex prueba la conexión contra el endpoint
+    // del canal antes de activarlo, y responde `invalid_credentials` si no llega. Sin este motivo
+    // el panel decía "pendiente de activación" y no había forma de saber qué arreglar.
+    const actErr = actRes.ok ? '' : String((actRes.data as any)?.errors?.title || (actRes.data as any)?.errors || '').slice(0, 120)
+    this.logger.info('Canal OTA creado', { channel: dto.channel, channelId, activado: steps.activate, motivo: actErr || undefined })
     return {
       success: true,
-      message: `Canal ${dto.channel} creado y ${steps.activate ? 'activado' : 'pendiente de activación'}`,
+      message: steps.activate
+        ? `Canal ${dto.channel} creado y activado`
+        : `Canal ${dto.channel} creado, pendiente de activación${actErr ? ` (${actErr})` : ''}`,
       channelId,
       steps,
     }
