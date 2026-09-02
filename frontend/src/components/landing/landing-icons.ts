@@ -63,6 +63,50 @@ const AMENITY_ALIASES: Record<string, keyof typeof AMENITY_ICON_SVGS> = {
   conserjeria: 'concierge', conserjeria_24h: 'concierge',
 }
 
+/** Catálogo FIJO de amenities del hotel (data de dominio) — ÚNICA fuente de las etiquetas en
+ *  español. `pagina-publica/general.vue` (picker del admin) y `AmenitiesBlock.vue` (landing
+ *  pública) lo comparten: antes cada uno tenía su propia copia y la landing pública nunca tuvo
+ *  una — mostraba la key cruda capitalizada ('airport_shuttle' → 'Airport Shuttle') aunque el
+ *  admin sí mostrara "Traslado aeropuerto" al elegirla. Bug real reportado 2026-09-02. */
+export const HOTEL_AMENITY_CATALOG: { key: string; label: string }[] = [
+  { key: 'pool', label: 'Piscina' },
+  { key: 'gym', label: 'Gimnasio' },
+  { key: 'spa', label: 'Spa' },
+  { key: 'parking', label: 'Parking' },
+  { key: 'wifi', label: 'WiFi' },
+  { key: 'restaurant', label: 'Restaurante' },
+  { key: 'bar', label: 'Bar' },
+  { key: 'breakfast', label: 'Desayuno' },
+  { key: 'ac', label: 'Aire acondicionado' },
+  { key: 'heating', label: 'Calefacción' },
+  { key: 'elevator', label: 'Ascensor' },
+  { key: 'garden', label: 'Jardín' },
+  { key: 'terrace', label: 'Terraza' },
+  { key: 'beach_access', label: 'Acceso a playa' },
+  { key: 'concierge', label: 'Conserjería 24h' },
+  { key: 'room_service', label: 'Room service' },
+  { key: 'laundry', label: 'Lavandería' },
+  { key: 'pets_allowed', label: 'Mascotas permitidas' },
+  { key: 'wheelchair', label: 'Acceso silla ruedas' },
+  { key: 'airport_shuttle', label: 'Traslado aeropuerto' },
+]
+
+const AMENITY_LABELS: Record<string, string> = Object.fromEntries(
+  HOTEL_AMENITY_CATALOG.map(({ key, label }) => [key, label]),
+)
+
+/** Etiqueta en español de una amenity guardada en `hotel.amenities` (key del catálogo fijo,
+ *  o un alias viejo en español/con guión). Si no matchea nada conocido, capitaliza la key cruda
+ *  en vez de dejarla vacía — mismo criterio defensivo que `amenityIcon` con su `fallback`. */
+export function amenityLabel(key: string): string {
+  const k = key.toLowerCase().trim().replace(/\s+/g, '_')
+  const canonical = (AMENITY_ALIASES[k] as string | undefined) ?? k
+  const direct = AMENITY_LABELS[k] ?? AMENITY_LABELS[canonical] ?? AMENITY_LABELS[canonical.replace(/-/g, '_')]
+  if (direct) return direct
+  if (key.includes(' ')) return key
+  return key.split(/[-_]/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+}
+
 export const AMENITY_ICONS: Record<string, string> = AMENITY_ICON_SVGS
 
 export const TRUST_ICONS: Record<string, string> = {

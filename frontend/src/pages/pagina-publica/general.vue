@@ -169,31 +169,7 @@ import { SettingsService, type HotelFull } from '@/services/Settings.service'
 import { PublicHotelService } from '@/services/PublicHotel.service'
 import { useToast } from '@/composables/useToast'
 import { warnOnUnsavedChanges } from '@/composables/useFieldValidation'
-import { amenityIcon, ICON_CHECK, ICON_X_CIRCLE } from '@/components/landing/landing-icons'
-
-/** Catálogo FIJO de amenities del hotel (data de dominio). Ícono resuelto vía `amenityIcon(key)`. */
-const HOTEL_AMENITY_CATALOG: { key: string; label: string }[] = [
-  { key: 'pool', label: 'Piscina' },
-  { key: 'gym', label: 'Gimnasio' },
-  { key: 'spa', label: 'Spa' },
-  { key: 'parking', label: 'Parking' },
-  { key: 'wifi', label: 'WiFi' },
-  { key: 'restaurant', label: 'Restaurante' },
-  { key: 'bar', label: 'Bar' },
-  { key: 'breakfast', label: 'Desayuno' },
-  { key: 'ac', label: 'Aire acondicionado' },
-  { key: 'heating', label: 'Calefacción' },
-  { key: 'elevator', label: 'Ascensor' },
-  { key: 'garden', label: 'Jardín' },
-  { key: 'terrace', label: 'Terraza' },
-  { key: 'beach_access', label: 'Acceso a playa' },
-  { key: 'concierge', label: 'Conserjería 24h' },
-  { key: 'room_service', label: 'Room service' },
-  { key: 'laundry', label: 'Lavandería' },
-  { key: 'pets_allowed', label: 'Mascotas permitidas' },
-  { key: 'wheelchair', label: 'Acceso silla ruedas' },
-  { key: 'airport_shuttle', label: 'Traslado aeropuerto' },
-]
+import { amenityIcon, HOTEL_AMENITY_CATALOG, ICON_CHECK, ICON_X_CIRCLE } from '@/components/landing/landing-icons'
 
 const publicLangs = [
   { code: 'es' },

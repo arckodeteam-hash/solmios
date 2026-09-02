@@ -25,7 +25,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { LandingBlock, PublicHotelInfo, PublicHotelMedia } from '@/types'
-import { amenityIcon } from './landing-icons'
+import { amenityIcon, amenityLabel } from './landing-icons'
 
 const props = defineProps<{
   block: LandingBlock
@@ -42,13 +42,5 @@ const title = computed(() => {
 
 const amenities = computed<string[]>(() => props.hotel.amenities ?? [])
 
-function labelFor(a: string): string {
-  // Si es slug kebab/snake → capitalizo palabras; si ya es texto con espacios lo dejo.
-  if (a.includes(' ')) return a
-  return a
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
-}
+const labelFor = amenityLabel
 </script>
