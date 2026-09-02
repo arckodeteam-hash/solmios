@@ -44,7 +44,12 @@ export async function listCacheKey(
  * También se bumpea la versión global (`all`), que es la que ve el super_admin.
  */
 export async function bumpListVersion(cache: CacheAdapter, hotelId?: HotelKey): Promise<void> {
-  const next = Date.now()
+  // MONOTÓNICO, no `Date.now()` pelado: dos escrituras en el mismo milisegundo daban el MISMO
+  // token y la invalidación quedaba en nada (crear y listar enseguida es exactamente ese caso).
+  const next = Math.max(Date.now(), (await currentVersion(cache, hotelId)) + 1)
   await cache.set(versionKey(hotelId), next, VERSION_TTL_SECONDS)
-  if (hotelId) await cache.set(versionKey(null), next, VERSION_TTL_SECONDS)
+  if (hotelId) {
+    const global = Math.max(next, (await currentVersion(cache, null)) + 1)
+    await cache.set(versionKey(null), global, VERSION_TTL_SECONDS)
+  }
 }

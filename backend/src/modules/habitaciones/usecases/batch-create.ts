@@ -5,6 +5,7 @@
 import type { RepositoryAdapter, Logger, CacheAdapter, ORM } from 'arckode-framework'
 import { AuthError, ValidationError, OrmRepository } from 'arckode-framework'
 import type { HabitacionesDTO } from '../types'
+import { bumpListVersion } from './cache'
 
 export interface BatchCreateInput {
   hotelId: string
@@ -89,6 +90,10 @@ export async function batchCreateRooms(
     await deps.onCreated?.(item)
   }
 
-  await deps.cache.delete(`habitaciones:list:${input.hotelId}`)
+  // El listado se cachea con clave VERSIONADA (ver `usecases/cache.ts`): el `delete` de una clave
+  // fija que había acá no borraba nada —esa clave no existe— y el lote recién creado quedaba
+  // invisible en el panel durante los 5 minutos del TTL. El alta de a una ya bumpeaba la versión;
+  // el lote no, que es justo por donde carga sus habitaciones un hotel nuevo.
+  await bumpListVersion(deps.cache, input.hotelId)
   return created
 }
