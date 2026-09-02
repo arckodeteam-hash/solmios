@@ -22,6 +22,11 @@ function installFetch(captured: Captured, responses: Record<string, { status?: n
     if (opts?.method === 'PUT') { captured.puts.push(JSON.parse(opts.body)); const r = responses.put; return json(r?.body ?? { data: {} }, r?.status ?? 200) }
     if (u.includes('/check_readiness')) { captured.posts.push({ path: 'readiness', body: null }); const r = responses.readiness; return json(r?.body ?? { data: { attributes: { errors: [] } } }, r?.status ?? 200) }
     if (u.includes('/activate')) { captured.posts.push({ path: 'activate', body: null }); const r = responses.activate; return json(r?.body ?? { data: {} }, r?.status ?? 200) }
+    // GET del canal: Channex devuelve de qué property(s) cuelga, y es lo que mira la comprobación
+    // de pertenencia (un canal de otro hotel no se toca — ver channel-ownership.test.ts).
+    if (/\/channels\/[^/]+$/.test(u.split('?')[0]!)) {
+      return json({ data: { id: 'ch-1', attributes: { title: 'SolmiOS Open', channel: 'OpenChannel', is_active: true, properties: ['prop-1'] } } })
+    }
     return json({ data: [] })
   }) as any
   return () => { globalThis.fetch = orig }
@@ -148,7 +153,8 @@ describe('paginación de Channex — un listado NO se corta en la primera págin
         return json({ data: rows, meta: { page, limit, total } })
       }
       if (u.includes('/room_types')) return json({ data: [{ id: 'rt-1', attributes: { title: 'Double' } }], meta: { total: 1 } })
-      if (u.includes('/channels/')) return json({ data: { id: 'ch-1', attributes: { title: 'C', is_active: true, rate_plans: [] } } })
+      // `properties` es lo que mira la comprobación de pertenencia del canal.
+      if (u.includes('/channels/')) return json({ data: { id: 'ch-1', attributes: { title: 'C', is_active: true, rate_plans: [], properties: ['prop-1'] } } })
       return json({ data: [], meta: { total: 0 } })
     }) as any
     return () => { globalThis.fetch = orig }

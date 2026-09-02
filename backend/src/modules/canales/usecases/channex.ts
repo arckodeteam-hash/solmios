@@ -678,6 +678,9 @@ export class ChannexUseCase {
     ratePlans: Array<{ ratePlanId: string; roomTypeCode: string | number; ratePlanCode: string | number; occupancy?: number; pricingType?: string; primaryOcc?: boolean }>,
   ): Promise<{ success: boolean; mapped: number; message: string }> {
     const key = this.resolveKey(cfg)
+    if (!(await this.fetchOwnedChannel(cfg, channelId))) {
+      return { success: false, mapped: 0, message: 'Ese canal no es de este hotel' }
+    }
     const res = await this.channexReq(key, 'PUT', `/channels/${channelId}`, {
       channel: {
         rate_plans: ratePlans.map((rp) => ({
@@ -707,6 +710,7 @@ export class ChannexUseCase {
    */
   async checkChannelReadiness(cfg: CanalesDTO | undefined, channelId: string): Promise<{ ready: boolean; issues: string[] }> {
     const key = this.resolveKey(cfg)
+    if (!(await this.fetchOwnedChannel(cfg, channelId))) return { ready: false, issues: ['Ese canal no es de este hotel'] }
     const res = await this.channexReq(key, 'POST', `/channels/${channelId}/check_readiness`, {})
     const payload = (res.data as any)?.data?.attributes ?? (res.data as any)?.data ?? res.data
     // Channex devuelve la lista de problemas; su forma exacta varía por adaptador, así que se
@@ -891,17 +895,43 @@ export class ChannexUseCase {
 
   async deactivateChannel(cfg: CanalesDTO | undefined, channelId: string): Promise<{ success: boolean; message: string }> {
     const key = this.resolveKey(cfg)
+    if (!(await this.fetchOwnedChannel(cfg, channelId))) return { success: false, message: 'Ese canal no es de este hotel' }
     const res = await this.channexReq(key, 'POST', `/channels/${channelId}/deactivate`, {})
     if (!res.ok) return { success: false, message: res.data?.errors?.title || 'Error al desactivar canal' }
     return { success: true, message: 'Canal desactivado' }
   }
 
   // ─── Channel detail ──────────────────────────────────────────────────
+  /**
+   * El canal, SOLO si es de la property de este hotel.
+   *
+   * La cuenta de Channex es una sola para toda la plataforma (white-label): un `channelId` es
+   * global, así que pedirlo por id sin comprobar de quién es deja a cualquier hotel leer —y
+   * escribir— la configuración del canal de otro. El id no es secreto: está en la URL del panel
+   * (`/panel/channel/:id`). Es el `assertOwnership` que la regla del proyecto exige después de
+   * todo findById, acá contra un recurso que vive en Channex y no en nuestra base.
+   *
+   * Channex expone la pertenencia en `attributes.properties` (array de property ids).
+   */
+  private async fetchOwnedChannel(cfg: CanalesDTO | undefined, channelId: string): Promise<any | null> {
+    const pid = cfg?.channexPropertyId
+    if (!pid) return null
+    const res = await this.channexReq(this.resolveKey(cfg), 'GET', `/channels/${channelId}`)
+    const data = (res.data as any)?.data
+    if (!res.ok || !data) return null
+    const props = (data.attributes?.properties ?? data.relationships?.properties?.data?.map((p: any) => p.id) ?? []) as string[]
+    if (!props.includes(pid)) {
+      this.logger.warn('Intento de operar sobre un canal de otro hotel', { channelId, hotelId: cfg?.hotelId, propertyId: pid })
+      return null
+    }
+    return data
+  }
+
   async getChannelDetail(cfg: CanalesDTO | undefined, channelId: string): Promise<any | null> {
     const key = this.resolveKey(cfg)
-    const ch = await this.channexReq(key, 'GET', `/channels/${channelId}`)
-    if (!ch.ok || !ch.data?.data) return null
-    const channel = ch.data.data.attributes || ch.data.data
+    const owned = await this.fetchOwnedChannel(cfg, channelId)
+    if (!owned) return null
+    const channel = owned.attributes || owned
 
     const rps: any[] = []
     if (cfg?.channexPropertyId) {

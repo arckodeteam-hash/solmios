@@ -182,6 +182,10 @@ describe('createOTAChannel sobre una property que ya tiene ese canal', () => {
       const method = opts?.method || 'GET'
       calls.push({ method, url: u, body: opts?.body ? JSON.parse(opts.body) : undefined })
       const json = (d: any) => new Response(JSON.stringify(d), { status: 200 })
+      // GET de UN canal: trae de qué property cuelga (lo mira la comprobación de pertenencia).
+      if (method === 'GET' && /\/channels\/[^/]+$/.test(u.split('?')[0]!)) {
+        return json({ data: { id: 'ch-1', attributes: { channel: 'OpenChannel', title: 'SolmiOS Open', properties: ['prop-1'] } } })
+      }
       if (method === 'GET' && u.includes('/channels')) {
         return json({ data: [{ id: 'ch-1', attributes: { channel: 'OpenChannel', title: 'SolmiOS Open' } }], meta: { total: 1 } })
       }
