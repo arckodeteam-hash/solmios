@@ -1,5 +1,16 @@
 # Channex — Gap de Certificación PMS (estado 2026-09-01)
 
+> **Desactualizado en dos puntos desde el 2026-09-02** — el estado vigente está en
+> `CHANNEX-CERTIFICACION.md`:
+> 1. La property del examen ya NO es `f1f563dd` (creada a mano) sino **`bddf7d23`**, la que creó el
+>    PMS solo para el hotel `a7c8d8e4-…` dado de alta por el registro público en producción. Ahí es
+>    donde vive el canal **SolmiOS Open** mapeado, que es lo que el examen mira.
+> 2. `min_stay_through` **sí se soporta** (§8 lo daba por faltante: ese texto es anterior a P4).
+>    Verificado con readback el 2026-09-02, distinto del de llegada.
+>
+> Y falta acá el veto que apareció el 2026-09-02: el sync borraba y recreaba los rate plans, así que
+> el test 1 dejaba al canal con **0 mapeos**. Resuelto (`usecases/sync-structure.ts`).
+
 > Documento de trabajo. Reemplaza la tabla §3 de `CHANNEX-STAGING-POC.md` (baseline
 > junio-2026, "0/14"), que quedó desactualizada: R4 (compresión de rangos), R5
 > (connector reservas→canales), R7 (poller del feed) y parte de R3 (push batcheado)
@@ -356,7 +367,7 @@ Lo que Channex pregunta en "Extra Notes" y nuestras respuestas honestas de hoy:
 
 | Pregunta | Respuesta | Estado código |
 |---|---|---|
-| Min Stay **Through** vs **Arrival** | Soportamos `min_stay_arrival`; `min_stay_through` NO soportado todavía | `channex.ts` pushSeasonalRates (min_stay_arrival) — through entra en P4 |
+| Min Stay **Through** vs **Arrival** | ~~NO soportado~~ → **soportados los dos** desde P4; verificado con readback el 2026-09-02 (arrival 10 · through 7). Sin control propio en la UI: la pantalla publica el de llegada | `push-overrides.ts:93`, `channex.ts:517` |
 | Restricciones soportadas | stop_sell ✅ · max_stay ✅ · min_stay_arrival ✅ · **CTA/CTD no soportadas** (P4) | `channex.ts` payload |
 | Multi room type | Sí — el sync agrupa `rooms` por `type` y empuja todos | `syncProperty` |
 | Multi rate plan por room type | **No** — 1 "Standard" por tipo (P5). El setup del examen (BAR+B&B) existe del lado Channex | P5 pendiente |

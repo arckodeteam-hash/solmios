@@ -1,88 +1,113 @@
-# Certificación PMS de Channex — qué nos falta
+# Certificación PMS de Channex — estado y qué falta
 
-> Auditoría de la integración real (`backend/src/modules/canales/`, `backend/src/connectors/*canales*`, `backend/src/shared/usecases/booking-sync-cron.ts`) contra el checklist oficial de Channex: https://docs.channex.io/api-v.1-documentation/pms-certification-tests
->
-> Hecha el 2026-09-01. Todo lo citado abajo es código que ya existe hoy en el repo — no hay nada inventado ni simulado.
+> Guion oficial: https://docs.channex.io/api-v.1-documentation/pms-certification-tests
+> Formulario: https://forms.gle/xA8F3eSYBPBd8apYA
+> Última corrida: **2026-09-02**, contra **producción** (`solmios.com` → `staging.channex.io`).
+> Detalle por test y task ids: `CHANNEX-CERTIFICACION-EVIDENCIA.md`. Historial del gap y las
+> decisiones de diseño: `CHANNEX-CERTIFICACION-GAPS.md`.
 
 ## Veredicto
 
-Según el **pre-flight checklist del propio Channex**, todavía no estamos listos para arrancar los 14 tests de certificación. Fallamos 2 de los 5 puntos obligatorios, y un tercero está débil. Channex lo dice explícito en su documento: *"If any of these is missing, stop and build it first."*
+**Los 11 escenarios técnicos pasan, con el canal conectado y en el entorno público.**
+26 checks OK · 0 fallidos. Lo que queda es administrativo (formulario + screenshare) y una
+decisión de negocio (que la cuenta del examen no se quede sin plan a mitad de camino).
 
-No tiene sentido llenar el formulario de certificación (https://forms.gle/xA8F3eSYBPBd8apYA) todavía — en la revisión en vivo por screenshare (etapa 4 de su proceso) se nota inmediatamente si falta una cola/rate limiter real, y nos devuelven a la etapa 1.
+La corrida anterior (2026-09-01) valía menos de lo que parecía: corría contra un backend local y
+contra una property **sin ningún canal conectado**. El examen no es eso — Channex dispara acciones
+sobre la UI y mira lo que sale hacia **un canal mapeado**, y prueba la conexión de ese canal contra
+un endpoint público antes de dejar activarlo. `localhost` no le llega.
 
-## 1. Checklist pre-flight de Channex
+## El entorno del examen
 
-| # | Requisito de Channex | Estado | Evidencia |
-|---|---|---|---|
-| 1 | Detecta cambios de ARI en tiempo real (evento/observer, no polling sobre la DB) | ✅ Sí | Patrón: módulo emite socket → connector lo escucha → empuja a Channex. Ej. `backend/src/connectors/pricing-canales.ts:13-21`, `backend/src/connectors/habitaciones-canales.ts:12-15`, `backend/src/connectors/reservas-canales.ts:14-22` |
-| 2 | Cola/outbox que respeta el límite de 20 llamadas ARI/minuto | ❌ **No existe** | No hay tabla de cola, no hay worker que la drene, no hay rate limiter para llamadas salientes a `api.channex.io`. El único rate limiter del repo (`backend/src/shared/middlewares/rate-limit.ts`) protege *nuestra propia API entrante*, no las llamadas salientes a Channex. |
-| 3 | Retry/backoff para respuestas 429 y 5xx | ❌ **No existe** | `channexReq` (`backend/src/modules/canales/usecases/channex.ts:34-44`) es un `fetch()` desnudo: sin distinguir status code, sin `Retry-After`, sin backoff, sin reintento. Un push fallido se pierde (paths "fire-and-forget") o rompe el guardado en el panel (paths síncronos). |
-| 4 | Webhook para recibir reservas + flujo de acknowledgement | ⚠️ Parcial | No hay webhook HTTP real — es **polling cada 15 minutos** contra `booking_revisions/feed` (`backend/src/shared/usecases/booking-sync-cron.ts`, cron registrado en `composition-root.ts:816-823`). El `ack` sí está bien implementado (`channex.ts:534-537`, `POST /booking_revisions/:id/ack`), y usamos el endpoint correcto (`booking_revisions/feed`, **no** el `GET /bookings` deprecado). |
-| 5 | Mapeo interno (roomId/rateId) ↔ UUID de Channex | ⚠️ Débil | No hay columna que guarde el UUID. Se resuelve **en vivo, por nombre de habitación** (case-insensitive string match) en cada push (`channex.ts:336-341` y otros). Frágil: renombrar una habitación en el panel rompe el mapeo en silencio. Además gasta llamadas extra en cada push, lo que empeora el problema del punto 2. |
+| Qué | Valor |
+|---|---|
+| Panel | https://solmios.com/panel/channel-manager (producción, apuntando a `staging.channex.io`) |
+| Usuario | `cert@solmios.com` — dado de alta por el **registro público**, como cualquier hotel |
+| Hotel del PMS | `a7c8d8e4-90a6-4431-862b-a09dff6bdc43` — "Test Property - SolmiOS" |
+| Property en Channex | `bddf7d23-83c5-437d-a2ff-c4e85ccaf412` |
+| Estructura | Twin Room (2 unidades, occ 2) · Double Room (2, occ 2) · BAR $100 + Bed & Breakfast $120 por tipo — el setup exacto que pide la doc |
+| Canal | **SolmiOS Open** (`ef9481b7-…`), activo, **4 de 4 tarifas mapeadas** (`twin/twin-bar`, `twin/twin-bb`, `double/double-bar`, `double/double-bb`) |
 
-**Los puntos 2 y 3 son los bloqueantes reales.** El punto 5 no bloquea per se, pero agrava el punto 2 (cada push gasta 1-2 llamadas de más solo para re-resolver IDs que ya se resolvieron antes).
+La property **`f1f563dd-…`**, creada a mano para la corrida del 2026-09-01, quedó renombrada
+"Test Property - SolmiOS (vieja, reemplazada 2026-09-02)" y ya no la usa nadie. La nueva la creó
+el PMS solo, que es lo que Channex quiere ver.
 
-## 2. Qué construir, en orden de impacto
+### Cómo se reproduce desde la UI (lo que se muestra en la screenshare)
 
-### 2.1 Cola + rate limiter (bloqueante #1)
-Falta un mecanismo que:
-- Encole cada cambio de ARI en vez de llamar a Channex directo desde el connector.
-- Drene la cola respetando el límite de 20 llamadas/minuto (documentado en https://docs.channex.io/api-v.1-documentation/rate-limits).
-- Sirva también como base para el retry (punto 2.2): un item de la cola que falla vuelve a la cola en vez de perderse.
+1. `/panel/channel-manager` → tarjeta **"Conectado a Channex"** (property, última sync, tipos y
+   tarifas publicados) y la tarjeta del canal **"SolmiOS Open · Conectado"**.
+2. **"Configurar tarifas"** → precio base + ajuste por temporada por ocupación, toggles **CTA/CTD**,
+   **mín. estancia**, **"Cerrar ventas"** (stop sell) y **"Enviar a canales"**; al pie, **"Mapeo con
+   el canal"** (4 de 4).
+3. Planning / grilla de tarifas / reservas: cada acción dispara su push por evento.
 
-Los connectors actuales (`pricing-canales.ts`, `habitaciones-canales.ts`, `reservas-canales.ts`) ya son el lugar correcto para *encolar* — hoy llaman directo a `CanalesService`, tendrían que pasar a insertar en la cola nueva en su lugar. No hace falta tocar el modelo de datos del resto del sistema, solo el punto de entrada a Channex.
+## Los tests — corrida del 2026-09-02
 
-### 2.2 Retry/backoff para 429 y 5xx (bloqueante #2)
-`channexReq` (`backend/src/modules/canales/usecases/channex.ts:34-44`) necesita:
-- Leer el status code de la respuesta.
-- En 429: respetar `Retry-After` si viene, o backoff exponencial con jitter, y reintentar desde la cola (no perder el cambio).
-- En 5xx: mismo backoff, tope de reintentos, y si se agotan, dejar constancia clara (hoy `sync_log` es solo auditoría de lectura — habría que empezar a usarlo para saber qué quedó pendiente de reintentar, o agregar los campos que le faltan: `retryCount`, `status: pending/failed`, `nextAttemptAt`).
+Todos verificados con **readback contra la API de Channex**, nunca con el 200 del push, y contando
+las llamadas en el rastro de `sync_log` (solo las salientes).
 
-### 2.3 Full sync real (test #1 del certificado)
-`syncProperty` (`channex.ts:128-197`) hoy:
-- Cubre solo **30 días**, no los ~500 que pide el test.
-- Dispara **una llamada POST por cada tipo de habitación** (disponibilidad) **+ una por cada rate plan** (tarifas/restricciones) en paralelo vía `Promise.all` — no las 2 llamadas batcheadas que exige el test ("1 x 500 días Availability, 1 x 500 días Rates & restrictions").
+| Test | Llamadas | Estado |
+|---|:--:|:--:|
+| Setup Mapping (canal activo y mapeado) | — | ✅ |
+| T1 Full sync 500 días | 2 (1 availability + 1 rates) | ✅ |
+| T2 · T3 · T4 precios | 1 c/u | ✅ |
+| T5 min stay · T6 stop sell · T7 CTA/CTD/max/min stay (arrival **y** through) | 1 c/u | ✅ |
+| T8 medio año (dic 2026 → may 2027) | 1 | ✅ |
+| T9 · T10 disponibilidad por reserva | 1 por reserva | ✅ |
+| T11 recepción de reservas (feed + ack) | — | ✅ |
+| T12 rate limits (18/min + backoff 429/5xx) | — | ✅ (`usecases/channex-http.ts`) |
+| T13 update logic (por evento, sin full sync por timer) | — | ✅ |
+| T14 cuestionario | — | redactado en `CHANNEX-CERTIFICACION-GAPS.md` §8 |
 
-Ya existe el patrón correcto para copiar: `pushSeasonalRates` (`channex.ts:222-307`) arma **un solo array `values[]`** con todas las entradas y manda **una** llamada — hay que aplicar la misma lógica al sync inicial, ampliando el rango de fechas.
+Reproducir la corrida:
 
-### 2.4 Mapeo de IDs guardado (no resuelto por nombre)
-Agregar una columna (ej. `channexRoomTypeId` en `Rooms`, `channexRatePlanId` en donde corresponda) que se llene una vez al crear/sincronizar el room type/rate plan en Channex, y que los pushes posteriores lean de ahí en vez de volver a pedir `GET /room_types`/`GET /rate_plans` y hacer match por título cada vez.
+```bash
+cd backend && set -a && source .env && set +a
+BASE_URL=https://solmios.com \
+CERT_HOTEL_ID=a7c8d8e4-90a6-4431-862b-a09dff6bdc43 \
+CERT_PROPERTY_ID=bddf7d23-83c5-437d-a2ff-c4e85ccaf412 \
+CERT_EMAIL=cert@solmios.com CERT_PASSWORD='<la del alta>' \
+bun run scripts/e2e/channex-certification.e2e.ts
+```
 
-### 2.5 Limpieza menor (no bloqueante, pero vale la pena)
-- `backend/src/connectors/booking-channex.ts` está roto: llama a `canales.pushAvailability?.({hotelId, roomType, date})` pasando un objeto donde la función espera `(hotelId: string, roomType: string)` — hoy es un no-op silencioso (el error queda tragado por su propio `.catch(() => {})`). El path real de disponibilidad funciona por otro lado (`reservas-canales.ts`), así que esto no rompe nada hoy, pero conviene arreglarlo o borrarlo para no confundir a nadie.
-- `channexGroupId` existe en el tipo (`types.ts:11`) y se lee en `generateIframeToken`, pero nunca se guarda en ningún lado — queda siempre `undefined` en la práctica.
+## Lo que se arregló para llegar hasta acá (2026-09-02)
 
-## 3. Qué declarar como "no soportado" en el formulario
+1. **Sincronizar dejaba al canal sin ningún mapeo.** El sync de estructura borraba y recreaba todos
+   los room types y rate plans de una property que ya existía; los UUIDs cambiaban y el mapeo del
+   canal —lo único que los referencia del otro lado— quedaba en **cero**, con la tarjeta todavía
+   verde. Verificado en vivo: 4 mapeos → un `POST /api/channels/sync` → 0. Veto directo para la
+   certificación, porque **el test 1 ES un full sync**. Ahora el sync es idempotente (update por
+   título, mismo UUID) y no toca las copias derivadas que Channex crea para el canal.
+   (`usecases/sync-structure.ts`)
+2. **"Conectar" sobre un canal que ya existía fallaba** con "Validation Error" — Channex no acepta
+   dos canales del mismo tipo en una property. Ahora re-mapea y reactiva el que está, que es lo que
+   hay que hacer después de que un sync viejo dejara el mapeo en cero.
+3. **El runner de evidencia corre contra el entorno público** (`CERT_HOTEL_ID`) sin tocar ninguna
+   base, y verifica dos cosas nuevas: que el canal esté activo y mapeado, y que el mapeo **siga ahí
+   después del full sync**.
 
-Channex lo permite explícitamente ("If you cant support anything please make a note in the certification file"). Declarar:
+## Lo que falta
 
-- **`closed_to_arrival` (CTA) y `closed_to_departure` (CTD)** — no existen ni en el modelo de datos (`RoomRates`) ni en el payload que mandamos. Solo soportamos `stop_sell`, `min_stay_arrival` y `max_stay`.
-- **`min_stay_through`** — solo tenemos un único campo `minStay`, siempre se manda como `min_stay_arrival`.
-- **Múltiples rate plans por tipo de habitación** — hoy es 1 a 1 (un solo rate plan por room type, título `"{Room Type} Standard"`). No hay forma de representar, por ejemplo, "Best Available Rate" + "Bed & Breakfast Rate" para el mismo Twin Room. Esto ya estaba documentado como limitación conocida en el propio código (`open-channel-api.ts:96-97`).
+| # | Qué | De quién depende |
+|---|---|---|
+| 1 | **El plan de la cuenta del examen**: el alta entró como prueba gratis y vence el **2026-09-09**. Si la screenshare cae después, el panel puede bloquearse a mitad del examen. Hay que asignarle un plan desde el admin (o mover la fecha). | Decisión del dueño |
+| 2 | Screenshots de la pantalla de mapeo para adjuntar al formulario | Se pueden sacar del panel tal como está |
+| 3 | Enviar el formulario con los task ids de `CHANNEX-CERTIFICACION-EVIDENCIA.md` y las respuestas del cuestionario (§8 de `-GAPS.md`) | Trámite |
+| 4 | `bun run doctor` no se corrió: **escribe ARI de prueba sobre la primera property de la cuenta** (`doctor.ts:148-176`). Correrlo solo apuntado a la property del examen, o no correrlo. | Cuidado al usarlo |
 
-## 4. Los 14 tests del certificado — estado esperado hoy
+### Lo que se declara como NO soportado en el formulario
 
-| # | Test | ¿Pasaría hoy? | Por qué |
-|---|---|---|---|
-| 1 | Full Data Update (Full Sync) | ❌ No | Solo 30 días, no ~500; no son 2 llamadas batcheadas (ver 2.3) |
-| 2 | Single Date Update, Single Rate | ✅ Probablemente sí | `pushRate`/`pushSeasonalRates` cubren este caso |
-| 3-8 | Multi rate plan / multi room type / stop sell / restricciones / medio año | ⚠️ No aplican tal cual | Nuestro modelo es 1 room type : 1 rate plan — hay que adaptar cada test a esa estructura y aclararlo en el formulario, tal como Channex permite para "single-unit or single-rate products" (sección "Setup Mapping" del documento) |
-| 9-10 | Disponibilidad (single/multi fecha) | ✅ Probablemente sí | `pushAvailability` está bien batcheado dentro de un room type |
-| 11 | Recepción de reservas (crear/modificar/cancelar + ack) | ✅ Sí, con matiz | El polling de 15 min podría ser lento para la revisión en vivo si esperan ver la reserva aparecer "en el momento" — probablemente conviene poder forzar un sync manual durante la llamada (el botón de admin ya existe) |
-| 12 | Rate Limits | ❌ No | No hay limiter — ver bloqueante #1 |
-| 13 | Update Logic (solo deltas, no full-sync por timer) | ✅ Sí | Confirmado: los pushes son por evento, no hay ningún timer que reenvíe todo periódicamente |
-| 14 | Extra Notes (preguntas de soporte) | — | Ver sección 3 de este documento para las respuestas |
+Channex lo permite si se anota. Sigue vigente lo de `-GAPS.md` §8:
 
-## 5. Orden recomendado
-
-1. Cola + rate limiter (bloqueante duro, sección 2.1)
-2. Retry/backoff (sección 2.2) — se apoya en la cola del paso 1
-3. Full sync a 500 días batcheado (sección 2.3) — necesario para el test #1, el primero que piden
-4. Mapeo de IDs guardado (sección 2.4) — mejora la eficiencia y reduce el riesgo de tropezar con el rate limit
-5. Recién ahí: correr los 14 tests contra el staging de Channex, juntar los `task_id` de cada respuesta, y llenar el formulario
-
-## Referencias
-- Documento de certificación: https://docs.channex.io/api-v.1-documentation/pms-certification-tests
-- Rate limits de Channex: https://docs.channex.io/api-v.1-documentation/rate-limits
-- Best Practices Guide de Channex (mencionado en su documento, revisar antes de implementar la cola)
-- Formulario de certificación: https://forms.gle/xA8F3eSYBPBd8apYA
+- **`min_stay_through` sí se soporta** (corregido: `-GAPS.md` §8 lo daba por faltante, pero es
+  anterior a P4). Sale como campo propio (`push-overrides.ts:93`, `channex.ts:517`) y la corrida lo
+  verifica con readback distinto del de llegada (arrival 10 · through 7, T7). Lo que falta es el
+  **control en la UI**: la pantalla de tarifas tiene un solo "Mín. estancia", que publica el de
+  llegada — por API se puede setear el through, por pantalla no.
+- **Reservas modificadas por la OTA**: se reciben, se registran y se ackean, pero **no se
+  auto-aplican** sobre la reserva local (aplicar una modificación sobre el calendario necesita una
+  UX de reconciliación que todavía no existe).
+- **Tarjetas de crédito**: el PMS no procesa datos de tarjeta — los cobros van por Stripe
+  (Links/Checkout), sin PAN/CVV en nuestro lado.
+- **Webhooks de bookings**: se usa el feed `booking_revisions` cada 15 min + ack, más el botón
+  manual de ingesta. No hay webhook HTTP.

@@ -136,6 +136,39 @@ function clearCertReservations(id: string) {
   return rows.length
 }
 
+/**
+ * Modo remoto: sin acceso a la base, las reservas de la corrida anterior se borran por API.
+ * Cada borrado dispara su push de disponibilidad, pero eso pasa ANTES del corte del rastro, así
+ * que no entra en el conteo de llamadas de ningún test.
+ */
+async function clearCertReservationsByApi(): Promise<number> {
+  const list = await api('GET', `/api/reservas?hotelId=${hotelId}&limit=200`)
+  const rows: any[] = Array.isArray(list.data) ? list.data : (list.data?.data ?? [])
+  let wiped = 0
+  for (const r of rows) {
+    const res = await api('DELETE', `/api/reservas/${r.id}`)
+    if (res.status < 300) wiped++
+  }
+  return wiped
+}
+
+/**
+ * El canal del examen tal como está en Channex: título, si está activo y cuántas tarifas tiene
+ * mapeadas. El mapeo es lo único que referencia los UUIDs de los rate plans desde el otro lado —
+ * si queda en cero, el canal sigue verde y el hotel deja de publicar.
+ */
+async function channelState(): Promise<{ id: string; title: string; active: boolean; mapped: number } | null> {
+  const res = await channex(`/channels?filter%5Bproperty_id%5D=${PROPERTY_ID}&pagination%5Blimit%5D=100`)
+  const c = (res.body?.data ?? [])[0]
+  if (!c) return null
+  return {
+    id: c.id,
+    title: String(c.attributes?.title || ''),
+    active: !!c.attributes?.is_active,
+    mapped: (c.attributes?.rate_plans ?? []).length,
+  }
+}
+
 /** 2 habitaciones por tipo (el setup del examen: Twin y Double, occupancy 2, 2 unidades). */
 async function ensureRooms(): Promise<Record<string, string[]>> {
   const list = await api('GET', `/api/habitaciones?hotelId=${hotelId}&limit=100`)
@@ -175,9 +208,20 @@ async function ensureRatesBaseline() {
 
 interface TrailRow { id: string; action: string; status: string; details: string; taskIds: string[]; createdAt: string }
 
+/**
+ * Solo las llamadas ARI SALIENTES.
+ *
+ * `sync_log` es el rastro completo del canal, y con el canal ya conectado también entran las
+ * filas de VUELTA: Channex reenvía cada cambio al canal ("Open Channel: cambio recibido"), que
+ * es nuestro propio endpoint. Son la prueba de que el circuito cierra, pero no son llamadas
+ * nuestras a Channex: contarlas hacía que un push de 1 llamada apareciera como 11.
+ */
+const OUTBOUND = /enviad[ao]s?/i
+
 async function trail(): Promise<TrailRow[]> {
   const res = await api('GET', `/api/channels/sync-log?hotelId=${hotelId}`)
-  return (Array.isArray(res.data) ? res.data : res.data?.data ?? []) as TrailRow[]
+  const rows = (Array.isArray(res.data) ? res.data : res.data?.data ?? []) as TrailRow[]
+  return rows.filter((r) => OUTBOUND.test(String(r.action || '')))
 }
 
 /** Filas nuevas desde un corte, esperando a que el push (fire-and-forget, coalescido) aterrice. */
@@ -241,18 +285,36 @@ try {
   console.log(`\n═══ Certificación PMS Channex — property ${PROPERTY_ID} ═══`)
   if (!CHANNEX_KEY) throw new Error('CHANNEX_API_KEY vacía: sin ella no hay readback (source .env)')
 
-  hotelId = seedCertHotel()
-  const wiped = clearCertReservations(hotelId)
-  if (wiped) console.log(`  ♻️  ${wiped} reserva(s) de la corrida anterior borradas`)
+  hotelId = REMOTE_HOTEL_ID || seedCertHotel()
+  if (REMOTE_HOTEL_ID) console.log(`  🌐 modo remoto: ${BASE} · hotel ${hotelId} (no se toca ninguna base)`)
   const login = await api('POST', '/api/auth/login', { email: CERT_EMAIL, password: CERT_PASSWORD })
   token = login.data?.token
   ok(login.status === 200 && !!token, `login ${CERT_EMAIL} → ${login.status}`)
   if (!token) throw new Error('sin token no hay corrida')
+  const wiped = REMOTE_HOTEL_ID ? await clearCertReservationsByApi() : clearCertReservations(hotelId)
+  if (wiped) console.log(`  ♻️  ${wiped} reserva(s) de la corrida anterior borradas`)
 
   console.log('\n— Setup (habitaciones + tarifa base) —')
   const rooms = await ensureRooms()
   ok(rooms[TWIN]!.length === 2 && rooms[DOUBLE]!.length === 2, `2 Twin + 2 Double en el PMS`)
   await ensureRatesBaseline()
+
+  // ── Setup Mapping: el canal conectado, que es lo que el examen mira en vivo ──
+  //
+  // Channex no intercambia NADA con un canal sin rate plans mapeados. La tarjeta "SolmiOS Open"
+  // del panel es ese canal: se conecta de un click (`POST /api/channels/open-channel/connect`,
+  // el mismo botón), y desde ahí "Configurar tarifas" abre el mapeo y el editor de precios.
+  console.log('\n— Setup: canal conectado (SolmiOS Open) —')
+  let channel = await channelState()
+  if (!channel) {
+    const conn = await api('POST', `/api/channels/open-channel/connect?hotelId=${hotelId}`, {})
+    ok(conn.status === 200, `POST /api/channels/open-channel/connect → ${conn.status}`)
+    channel = await channelState()
+  }
+  const mappedBefore = channel?.mapped ?? 0
+  const setupOk = ok(!!channel?.active && mappedBefore > 0,
+    `canal "${channel?.title ?? '—'}" activo con ${mappedBefore} tarifa(s) mapeada(s)`)
+  record('Setup Mapping', setupOk, [], `canal "${channel?.title ?? '—'}" activo · ${mappedBefore} rate plans mapeados`)
 
   // El push de tarifas del setup está coalescido (700ms): sin esperarlo, su fila cae DESPUÉS del
   // corte y se contaría como una llamada del test 1.
@@ -268,8 +330,14 @@ try {
   const t1rates = t1rows.filter((r) => /Tarifas enviadas/.test(r.action))
   const t1ok = ok(t1avail.length === 1 && t1rates.length === 1,
     `ARI del full sync en 2 llamadas (availability ${t1avail.length}, rates ${t1rates.length})`)
+  // El full sync NO puede dejar al canal sin mapeo: hasta el 2026-09-02 borraba y recreaba los
+  // rate plans, así que el test 1 del examen tiraba abajo la conexión que usan los otros 13.
+  const afterSync = await channelState()
+  const mapSurvives = ok(!!afterSync?.active && afterSync?.mapped === mappedBefore,
+    `el mapeo del canal sobrevive al full sync (${mappedBefore} → ${afterSync?.mapped ?? 0} tarifas)`)
   // Solo las 2 filas ARI: `sync_property` es el alta de estructura, no una llamada de ARI.
-  record('T1 Full Sync', t1ok, [...t1avail, ...t1rates], '500 días: 1 availability + 1 rates/restrictions')
+  record('T1 Full Sync', t1ok && mapSurvives, [...t1avail, ...t1rates],
+    `500 días: 1 availability + 1 rates/restrictions · canal con ${afterSync?.mapped ?? 0} tarifas mapeadas después`)
 
   const ids = await channexIds()
   const twinBar = ids.ratePlans.get(`${TWIN_TITLE.toLowerCase()}|bar`)
@@ -366,7 +434,9 @@ try {
       { roomType: TWIN, ratePlan: 'bar', dateFrom: '2026-11-01', dateTo: '2026-11-10', closedToArrival: 1, closedToDeparture: 0, maxStay: 4, minStay: 1, cleared: ['closedToDeparture'] },
       { roomType: TWIN, ratePlan: 'bb', dateFrom: '2026-11-12', dateTo: '2026-11-16', closedToArrival: 0, closedToDeparture: 1, minStay: 6, cleared: ['closedToArrival'] },
       { roomType: DOUBLE, ratePlan: 'bar', dateFrom: '2026-11-10', dateTo: '2026-11-16', closedToArrival: 1, minStay: 2 },
-      { roomType: DOUBLE, ratePlan: 'bb', dateFrom: '2026-11-01', dateTo: '2026-11-20', minStay: 10 },
+      // `minStayThrough` es la pregunta explícita del cuestionario (through vs arrival): se pide
+      // distinto del de llegada para que el readback distinga los dos campos.
+      { roomType: DOUBLE, ratePlan: 'bb', dateFrom: '2026-11-01', dateTo: '2026-11-20', minStay: 10, minStayThrough: 7 },
     ],
   })
   rows = await newTrailSince(known, 1)
@@ -379,9 +449,10 @@ try {
     field(rb, twinBb, '2026-11-14', 'closed_to_departure') === true &&
     field(rb, twinBb, '2026-11-14', 'min_stay_arrival') === 6 &&
     field(rb, dblBar, '2026-11-12', 'closed_to_arrival') === true &&
-    field(rb, dblBb, '2026-11-18', 'min_stay_arrival') === 10,
-    'CTA/CTD/max stay/min stay en 1 llamada')
-  record('T7 Multiple Restrictions', t7ok, rows, 'CTA/CTD + max stay + min stay sobre 4 rate plans')
+    field(rb, dblBb, '2026-11-18', 'min_stay_arrival') === 10 &&
+    field(rb, dblBb, '2026-11-18', 'min_stay_through') === 7,
+    'CTA/CTD/max stay/min stay arrival y through en 1 llamada')
+  record('T7 Multiple Restrictions', t7ok, rows, 'CTA/CTD + max stay + min stay arrival (10) y through (7) sobre 4 rate plans')
 
   // ── Test 8 — medio año en una llamada ──
   console.log('\n— Test 8: Half-year Update —')
