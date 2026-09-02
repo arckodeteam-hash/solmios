@@ -17,6 +17,7 @@ function makeDeps(over: Partial<AutoProvisionDeps> = {}) {
   const deps: AutoProvisionDeps = {
     getConfig: async () => ({}),
     findMany: async () => [{ id: 'rm1', type: 'double' }],
+    readMappings: async () => [{ kind: 'room_type', localId: 'double' }],
     hasPlatformKey: async () => true,
     isModuleEnabled: async () => true,
     sync: async (hotelId) => { calls.push(hotelId); return {} },
@@ -33,10 +34,32 @@ describe('autoProvisionChannex — cuándo SÍ y cuándo NO se da de alta', () =
     expect(calls).toEqual(['h1'])
   })
 
-  it('hotel YA sincronizado: no toca nada — re-sincronizar es DESTRUCTIVO', async () => {
+  it('hotel YA sincronizado y sin tipos nuevos: no toca nada', async () => {
     const { deps, calls } = makeDeps({ getConfig: async () => ({ channexPropertyId: 'p1' }) })
     expect(await autoProvisionChannex(deps, 'h1')).toBe('already-synced')
-    expect(calls).toEqual([])   // ni un solo sync: tiraría abajo el ARI ya publicado
+    expect(calls).toEqual([])   // el catálogo no cambió: cargar más dobles no republica nada
+  })
+
+  // El hotel que carga su inventario en tandas: 4 dobles, y después 2 twin. Las twin quedaban
+  // SIN publicar y sin venderse, con el panel diciendo "Conectado" (visto en producción).
+  it('hotel YA sincronizado con un TIPO nuevo: re-publica la estructura', async () => {
+    const { deps, calls } = makeDeps({
+      getConfig: async () => ({ channexPropertyId: 'p1' }),
+      findMany: async () => [{ id: 'rm1', type: 'double' }, { id: 'rm2', type: 'twin' }],
+      readMappings: async () => [{ kind: 'room_type', localId: 'double' }],
+    })
+    expect(await autoProvisionChannex(deps, 'h1')).toBe('restructured')
+    expect(calls).toEqual(['h1'])
+  })
+
+  it('property sin mapping (sincronizada antes de P6): no se re-sincroniza a ciegas', async () => {
+    const { deps, calls } = makeDeps({
+      getConfig: async () => ({ channexPropertyId: 'p1' }),
+      findMany: async () => [{ id: 'rm1', type: 'double' }, { id: 'rm2', type: 'twin' }],
+      readMappings: async () => [],
+    })
+    expect(await autoProvisionChannex(deps, 'h1')).toBe('already-synced')
+    expect(calls).toEqual([])
   })
 
   it('sin habitaciones no crea una property vacía', async () => {

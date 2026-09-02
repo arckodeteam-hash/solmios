@@ -206,3 +206,56 @@ describe('createOTAChannel sobre una property que ya tiene ese canal', () => {
     } finally { globalThis.fetch = orig; resetChannexHttpForTests() }
   })
 })
+
+// ─── El sync deja el canal propio al día ────────────────────────────────────────────────────
+//
+// Un hotel que carga habitaciones en dos tandas conectaba el canal con lo que había y el tipo
+// nuevo quedaba "Sin mapear", sin venderse, con la tarjeta diciendo "Conectado". Visto en
+// producción el 2026-09-02 con un hotel recién registrado: 2 de 4 tarifas mapeadas.
+
+import { syncOpenChannelMapping, type OpenChannelSyncDeps } from '../usecases/open-channel-connect'
+
+function mappingDeps(over: Partial<OpenChannelSyncDeps> = {}) {
+  const mapped: any[][] = []
+  const deps: OpenChannelSyncDeps = {
+    findOpenChannel: async () => 'ch-1',
+    readMappings: async () => [
+      { kind: 'rate_plan', localId: 'double|BAR', channexId: 'rp-double-bar' },
+      { kind: 'rate_plan', localId: 'double|Bed & Breakfast', channexId: 'rp-double-bb' },
+      { kind: 'rate_plan', localId: 'twin|BAR', channexId: 'rp-twin-bar' },
+      { kind: 'rate_plan', localId: 'twin|Bed & Breakfast', channexId: 'rp-twin-bb' },
+    ] as any,
+    readRatePlans: async () => PLANS as any,
+    readRooms: async () => [{ type: 'double', capacity: 2 }, { type: 'twin', capacity: 2 }],
+    updateMapping: async (_h, _c, rps) => { mapped.push(rps); return { success: true, mapped: rps.length, message: 'ok' } },
+    logger: log as any,
+    ...over,
+  }
+  return { deps, mapped }
+}
+
+describe('syncOpenChannelMapping', () => {
+  it('re-mapea las tarifas del tipo nuevo contra el canal ya conectado', async () => {
+    const { deps, mapped } = mappingDeps()
+    expect(await syncOpenChannelMapping(deps, 'h1')).toBe(4)
+    expect(mapped[0]!.map((m: any) => m.ratePlanCode).sort())
+      .toEqual(['double-bar', 'double-bb', 'twin-bar', 'twin-bb'])
+  })
+
+  it('sin canal conectado no hace nada (conectarlo es decisión del hotelero)', async () => {
+    const { deps, mapped } = mappingDeps({ findOpenChannel: async () => null })
+    expect(await syncOpenChannelMapping(deps, 'h1')).toBeNull()
+    expect(mapped).toHaveLength(0)
+  })
+
+  it('sin tarifas que mapear NO manda un PUT vacío: desmaparía el canal entero', async () => {
+    const { deps, mapped } = mappingDeps({ readMappings: async () => [] })
+    expect(await syncOpenChannelMapping(deps, 'h1')).toBeNull()
+    expect(mapped).toHaveLength(0)
+  })
+
+  it('un fallo del re-mapeo no tira abajo el sync que ya publicó', async () => {
+    const { deps } = mappingDeps({ updateMapping: async () => { throw new Error('Channex caído') } })
+    expect(await syncOpenChannelMapping(deps, 'h1')).toBeNull()
+  })
+})

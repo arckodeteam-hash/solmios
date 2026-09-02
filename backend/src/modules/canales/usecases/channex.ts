@@ -778,6 +778,19 @@ export class ChannexUseCase {
     return typeof value === 'number' ? value : (/^\d+$/.test(value) ? Number(value) : value)
   }
 
+  /**
+   * El canal de un tipo dado que ya está creado sobre la property (o null).
+   *
+   * Lo usan dos caminos que necesitan saber si el canal EXISTE antes de decidir: el alta de un
+   * canal (que si ya está, re-mapea en vez de duplicar) y el re-mapeo automático post-sync.
+   */
+  async findChannelByType(cfg: CanalesDTO | undefined, channelType: string): Promise<string | null> {
+    if (!cfg?.channexPropertyId) return null
+    const list = await this.channexList(this.resolveKey(cfg), `/channels?filter[property_id]=${cfg.channexPropertyId}`)
+    const hit = list.find((c: any) => String(c?.attributes?.channel || '') === channelType)
+    return hit?.id ?? null
+  }
+
   async createOTAChannel(cfg: CanalesDTO | undefined, dto: OTAChannelCreateDTO): Promise<OTAChannelResultDTO> {
     const channelCode = (v: string | number) => this.codeOf(v)
     const key = this.resolveKey(cfg)

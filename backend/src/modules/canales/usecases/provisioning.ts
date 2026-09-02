@@ -16,6 +16,8 @@ import { autoProvisionChannex, type AutoProvisionOutcome } from './auto-provisio
 export interface ProvisioningDeps {
   getConfig: (hotelId: string) => Promise<CanalesDTO | undefined>
   findMany: (model: string, query: Record<string, unknown>) => Promise<any[]>
+  /** Mapping persistido: qué tipos ya están publicados (para no re-sincronizar de gusto). */
+  readMappings: (hotelId: string) => Promise<Array<{ kind: string; localId: string }>>
   /** El sync de bajo nivel del service (property + room types + rate plans + ARI). */
   syncProperty: (hotelId: string, hotel: any, rooms: RoomTypeSummary[]) => Promise<SyncResultDTO>
   /** ¿La plataforma tiene credencial de Channex? Sin ella no tiene sentido intentar. */
@@ -62,6 +64,7 @@ export class ProvisioningUseCase {
     return autoProvisionChannex({
       getConfig: (h) => this.deps.getConfig(h),
       findMany: (m, q) => this.deps.findMany(m, q),
+      readMappings: (h) => this.deps.readMappings(h),
       hasPlatformKey: () => this.deps.hasPlatformKey(),
       isModuleEnabled: (h, k) => this.deps.isModuleEnabled ? this.deps.isModuleEnabled(h, k) : Promise.resolve(true),
       sync: (h) => this.syncHotel(h),

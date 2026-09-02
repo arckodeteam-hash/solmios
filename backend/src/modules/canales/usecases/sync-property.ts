@@ -31,6 +31,12 @@ export interface SyncPropertyDeps {
   upsertConfig: (hotelId: string, patch: Partial<CanalesDTO>) => Promise<CanalesDTO>
   pushAllAvailability: (hotelId: string) => Promise<unknown>
   pushRates: (hotelId: string) => Promise<unknown>
+  /**
+   * Deja el canal propio del hotel mapeado contra la estructura que se acaba de publicar.
+   * Sin esto, un tipo nuevo queda "Sin mapear" en el canal y no se vende, con la tarjeta del
+   * panel diciendo "Conectado" (ver `open-channel-connect.ts`).
+   */
+  syncOpenChannelMapping?: (hotelId: string) => Promise<number | null>
   logger: Logger
   syncLogRepo?: RepositoryAdapter<any> | null
 }
@@ -60,6 +66,10 @@ export async function syncPropertyToChannex(
     pushRates: () => deps.pushRates(hotelId),
     logger: deps.logger,
   }, hotelId)
+
+  // El canal propio queda apuntando a los rate plans que ACABAN de publicarse — incluidos los de
+  // un tipo de habitación nuevo, que si no quedaban sin mapear y sin vender.
+  if (deps.syncOpenChannelMapping) await deps.syncOpenChannelMapping(hotelId)
 
   if (deps.syncLogRepo) try {
     await deps.syncLogRepo.create({

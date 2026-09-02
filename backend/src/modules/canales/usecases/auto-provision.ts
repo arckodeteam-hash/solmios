@@ -6,9 +6,12 @@
 //
 // Las cuatro guardas de abajo NO son defensivas de más — cada una evita un daño concreto:
 //
-//  1. `channexPropertyId` ya cargado → NO se toca. `syncProperty` sobre una property existente es
-//     DESTRUCTIVO (borra rate plans y room types antes de recrearlos): dispararlo por cada
-//     habitación que el hotel agregue le tiraría abajo el ARI publicado.
+//  1. `channexPropertyId` ya cargado → solo se re-sincroniza si apareció un TIPO de habitación que
+//     no está publicado. Hasta el 2026-09-02 no se hacía nada nunca, porque `syncProperty` era
+//     destructivo; ahora es idempotente (`sync-structure.ts`) y el caso real que quedaba sin
+//     cubrir es el hotel que carga su inventario en tandas: 4 dobles y después 2 twin dejaban
+//     las twin SIN publicar, con el panel diciendo "Conectado". Cargar más habitaciones del
+//     mismo tipo NO dispara nada: el catálogo no cambió.
 //  2. Sin habitaciones no hay room types que crear: se crearía una property vacía.
 //  3. Sin credencial de plataforma el sync tira; mejor no intentarlo por cada habitación.
 //  4. Si el plan del hotel no incluye el channel manager, no se le crea una property —
@@ -19,9 +22,11 @@
 import type { Logger } from 'arckode-framework'
 
 export interface AutoProvisionDeps {
-  /** Config del hotel: si ya tiene `channexPropertyId`, no se hace nada. */
+  /** Config del hotel: sin `channexPropertyId` es un alta; con él, a lo sumo un re-sync. */
   getConfig: (hotelId: string) => Promise<{ channexPropertyId?: string | null } | undefined>
   findMany: (model: string, query: Record<string, unknown>) => Promise<any[]>
+  /** Mapping persistido local↔Channex: de ahí salen los tipos que YA están publicados. */
+  readMappings: (hotelId: string) => Promise<Array<{ kind: string; localId: string }>>
   /** ¿La plataforma tiene credencial de Channex configurada? */
   hasPlatformKey: () => Promise<boolean>
   /** ¿El plan del hotel incluye el channel manager? */
@@ -34,6 +39,7 @@ export interface AutoProvisionDeps {
 /** Por qué NO se aprovisionó. `provisioned` es el único caso en que se llamó a Channex. */
 export type AutoProvisionOutcome =
   | 'provisioned'
+  | 'restructured'
   | 'already-synced'
   | 'no-rooms'
   | 'no-platform-key'
@@ -45,13 +51,21 @@ export async function autoProvisionChannex(
 ): Promise<AutoProvisionOutcome> {
   try {
     const cfg = await deps.getConfig(hotelId)
-    if (cfg?.channexPropertyId) return 'already-synced'
+    const alreadyPublished = !!cfg?.channexPropertyId
 
     if (!(await deps.hasPlatformKey())) return 'no-platform-key'
     if (!(await deps.isModuleEnabled(hotelId, 'channel'))) return 'module-disabled'
 
     const rooms = await deps.findMany('Rooms', { hotelId })
     if (!rooms?.length) return 'no-rooms'
+
+    if (alreadyPublished) {
+      const nuevos = await missingRoomTypes(deps, hotelId, rooms)
+      if (!nuevos.length) return 'already-synced'
+      await deps.sync(hotelId)
+      deps.logger.info('Tipos de habitación nuevos publicados en el channel manager', { hotelId, tipos: nuevos })
+      return 'restructured'
+    }
 
     await deps.sync(hotelId)
     deps.logger.info('Hotel dado de alta en el channel manager automáticamente', { hotelId, rooms: rooms.length })
@@ -63,4 +77,25 @@ export async function autoProvisionChannex(
     })
     return 'failed'
   }
+}
+
+/**
+ * Tipos de habitación del hotel que NO figuran publicados, según el mapping persistido.
+ *
+ * Un hotel sin ningún `room_type` mapeado devuelve lista vacía a propósito: puede ser una property
+ * sincronizada antes de que existiera el mapping (P6), y no hay forma de distinguirla de una vacía.
+ * Re-sincronizar a ciegas ahí sería empujar ARI de más por cada habitación que carguen.
+ */
+async function missingRoomTypes(
+  deps: Pick<AutoProvisionDeps, 'readMappings'>, hotelId: string, rooms: any[],
+): Promise<string[]> {
+  const mappings = await Promise.resolve()
+    .then(() => deps.readMappings(hotelId))
+    .catch(() => [] as Array<{ kind: string; localId: string }>)
+  const publicados = new Set(
+    mappings.filter((m) => m.kind === 'room_type').map((m) => String(m.localId || '').trim().toLowerCase()))
+  if (!publicados.size) return []
+  const locales = new Set(
+    rooms.map((r) => String(r?.type || '').trim().toLowerCase()).filter(Boolean))
+  return [...locales].filter((t) => !publicados.has(t))
 }

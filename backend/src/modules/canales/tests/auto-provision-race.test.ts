@@ -23,6 +23,7 @@ function makeDeps(syncMs = 20) {
         propertyId = `prop-${syncs}`
         return { success: true } as any
       },
+      readMappings: async () => [{ kind: 'room_type', localId: 'double' }],
       hasPlatformKey: async () => true,
       logger: log,
     },

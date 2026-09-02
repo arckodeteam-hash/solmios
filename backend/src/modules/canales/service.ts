@@ -60,12 +60,13 @@ export class CanalesService {
     this.provisioning = new ProvisioningUseCase({
       getConfig: (h) => this.getConfig(h),
       findMany: (m, q) => this.queries.findMany(m, q),
+      readMappings: (h) => this.queries.readChannelMappings(h) as any,
       syncProperty: (h, hotel, rooms) => this.syncProperty(h, hotel, rooms),
       hasPlatformKey: () => this.channex.hasPlatformKey(),
       isModuleEnabled: (h, k) => this.moduleCheck ? this.moduleCheck(h, k) : Promise.resolve(true),
       logger: this.logger,
     })
-    this.channelApi = new ChannelApiUseCase(this.channex)
+    this.channelApi = new ChannelApiUseCase(this.channex, { config: this.config, queries: this.queries as any, logger })
     this.bookings = new BookingsUseCase(this.channex)
     // Sync GLOBAL de bookings (cron #564): feed por cuenta de plataforma → deriva por propertyId.
     // El orm se obtiene de queries (escape hatch) para no inyectar ORM directo en el service.
@@ -117,6 +118,7 @@ export class CanalesService {
       upsertConfig: (h, patch) => this.upsertConfig(h, patch),
       pushAllAvailability: (h) => withAvailabilityTrail(this.syncLogRepo, h, () => pushAllRoomTypesAvailability(this.availDeps(), h)),
       pushRates: (h) => this.pushSeasonalRates(h),
+      syncOpenChannelMapping: (h) => this.channelApi.syncOpenChannelMapping(h),
       logger: this.logger,
       syncLogRepo: this.syncLogRepo,
     }, hotelId, hotel, rooms)

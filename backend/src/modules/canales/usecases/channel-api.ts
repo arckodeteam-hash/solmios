@@ -1,9 +1,42 @@
 // canales/usecases/channel-api.ts — Channel API operations (test connection, mapping, groups, etc.)
+import type { Logger } from 'arckode-framework'
 import { ChannexUseCase } from './channex'
-import type { TestConnectionResultDTO, MappingDetailDTO, GroupDTO, OTAChannelCreateDTO, OTAChannelResultDTO } from '../types'
+import type { CanalesDTO, TestConnectionResultDTO, MappingDetailDTO, GroupDTO, OTAChannelCreateDTO, OTAChannelResultDTO } from '../types'
+import { syncOpenChannelMapping } from './open-channel-connect'
+import { readRatePlans } from './rate-plans'
+
+/** Lo que el re-mapeo automático necesita del hotel. Lo inyecta el service (que es una fachada). */
+export interface OpenChannelPorts {
+  config: { getConfig: (hotelId: string) => Promise<CanalesDTO | undefined> }
+  queries: {
+    findMany: (model: string, query: Record<string, unknown>) => Promise<any[]>
+    readChannelMappings: (hotelId: string) => Promise<any[]>
+  }
+  logger: Logger
+}
 
 export class ChannelApiUseCase {
-  constructor(private readonly channex: ChannexUseCase) {}
+  constructor(
+    private readonly channex: ChannexUseCase,
+    private readonly ports?: OpenChannelPorts,
+  ) {}
+
+  /**
+   * Deja el canal propio del hotel mapeado contra la estructura recién publicada.
+   * Se llama al final de cada sync: un tipo de habitación nuevo quedaba si no "Sin mapear".
+   */
+  async syncOpenChannelMapping(hotelId: string): Promise<number | null> {
+    const p = this.ports
+    if (!p) return null
+    return syncOpenChannelMapping({
+      findOpenChannel: async (h) => this.channex.findChannelByType(await p.config.getConfig(h), 'OpenChannel'),
+      readMappings: (h) => p.queries.readChannelMappings(h),
+      readRatePlans: (h) => readRatePlans((m, q) => p.queries.findMany(m, q), h),
+      readRooms: (h) => p.queries.findMany('Rooms', { hotelId: h }),
+      updateMapping: async (h, c, rps) => this.channex.updateChannelMapping(await p.config.getConfig(h), c, rps),
+      logger: p.logger,
+    }, hotelId)
+  }
 
   async testConnection(cfg: any, channel: string, otaHotelId: string): Promise<TestConnectionResultDTO> {
     return this.channex.testConnection(cfg, { channel, hotel_id: otaHotelId })

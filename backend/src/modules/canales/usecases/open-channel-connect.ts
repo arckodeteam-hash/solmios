@@ -69,3 +69,53 @@ export function roomTypesFromRooms(rooms: Array<{ type?: string; capacity?: numb
   }
   return [...byType.entries()].map(([type, capacity]) => ({ type, capacity }))
 }
+
+// ─── Mantener el mapeo al día ────────────────────────────────────────────────────────────────
+//
+// Un hotel que carga sus habitaciones en dos tandas (4 dobles, después 2 twin) terminaba con el
+// canal mapeado SOLO contra lo que existía cuando lo conectó: las tarifas del tipo nuevo quedaban
+// "Sin mapear" y no se publicaban, con la tarjeta del panel diciendo "Conectado". Verificado en
+// producción el 2026-09-02 con un hotel recién registrado: 2 de 4 tarifas mapeadas.
+//
+// Por eso el sync, además de publicar la estructura, deja el canal propio al día. No CREA el canal
+// —conectarlo es decisión del hotelero— y no toca las credenciales: solo re-mapea lo que hay.
+
+import type { Logger } from 'arckode-framework'
+
+export interface OpenChannelSyncDeps {
+  /** Id del canal OpenChannel de la property, o null si el hotel no conectó ninguno. */
+  findOpenChannel: (hotelId: string) => Promise<string | null>
+  readMappings: (hotelId: string) => Promise<MappingEntry[]>
+  readRatePlans: (hotelId: string) => Promise<RatePlanDef[]>
+  readRooms: (hotelId: string) => Promise<Array<{ type?: string; capacity?: number }>>
+  updateMapping: (hotelId: string, channelId: string, ratePlans: OTAChannelMappingDTO[]) => Promise<{ success: boolean; mapped: number; message: string }>
+  logger: Logger
+}
+
+/** `null` si no había canal que actualizar; si no, cuántas tarifas quedaron mapeadas. */
+export async function syncOpenChannelMapping(
+  deps: OpenChannelSyncDeps, hotelId: string,
+): Promise<number | null> {
+  try {
+    const channelId = await deps.findOpenChannel(hotelId)
+    if (!channelId) return null
+    const [mappings, plans, rooms] = await Promise.all([
+      deps.readMappings(hotelId), deps.readRatePlans(hotelId), deps.readRooms(hotelId),
+    ])
+    const ratePlans = buildOpenChannelMappings(mappings, plans, roomTypesFromRooms(rooms))
+    // Sin tarifas que mapear, un PUT vacío DESMAPEARÍA el canal entero (el mapeo se reemplaza
+    // completo): mejor dejarlo como está.
+    if (!ratePlans.length) return null
+    const res = await deps.updateMapping(hotelId, channelId, ratePlans)
+    if (!res.success) {
+      deps.logger.warn('No se pudo actualizar el mapeo del canal propio', { hotelId, channelId, message: res.message })
+      return null
+    }
+    deps.logger.info('Mapeo del canal propio actualizado tras el sync', { hotelId, channelId, mapeados: res.mapped })
+    return res.mapped
+  } catch (e) {
+    // El mapeo del canal NUNCA puede tirar abajo un sync que ya publicó la estructura.
+    deps.logger.error('Falló el re-mapeo del canal propio', { hotelId, error: e instanceof Error ? e.message : String(e) })
+    return null
+  }
+}
