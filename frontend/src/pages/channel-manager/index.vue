@@ -89,6 +89,21 @@
       <div v-else class="w-full h-full flex items-center justify-center text-text-muted text-sm">Cargando...</div>
     </AppModal>
 
+    <!-- Desconectar: es reversible y no borra nada en Channex, pero deja de publicar. Se dice. -->
+    <AppModal v-if="confirmDisconnect" title="¿Desconectar del channel manager?" @close="confirmDisconnect = false">
+      <div class="space-y-3 text-sm text-text-secondary">
+        <p>Dejamos de enviar <strong class="text-navy">precios y disponibilidad</strong> a Channex. Tu propiedad, tus tipos de habitación y los canales que tengas conectados <strong class="text-navy">no se borran</strong>.</p>
+        <p class="text-coral font-bold">Ojo: las OTAs siguen vendiendo con los últimos datos publicados. Si cambian tus precios o se te ocupa una habitación, el canal no se entera hasta que reconectes.</p>
+      </div>
+      <template #footer>
+        <button @click="confirmDisconnect = false" class="text-sm font-bold text-text-secondary hover:text-navy cursor-pointer transition-colors">Cancelar</button>
+        <button @click="disconnectChannelManager" :disabled="togglingSync"
+          class="ml-3 px-4 py-2 rounded-xl bg-coral text-white text-sm font-black hover:opacity-90 cursor-pointer disabled:opacity-50">
+          {{ togglingSync ? 'Desconectando…' : 'Sí, desconectar' }}
+        </button>
+      </template>
+    </AppModal>
+
     <!-- Estado de la conexión con el channel manager.
          Antes esta vista solo hablaba de OTAs: un hotel ya publicado en Channex, con sus tipos y
          tarifas arriba, veía "Sin canales conectados" y nada más. No había forma de saber si el
@@ -97,15 +112,16 @@
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div class="flex items-start gap-3 min-w-0">
           <span class="w-2.5 h-2.5 rounded-full mt-2 shrink-0"
-            :class="loadingStatus ? 'bg-gray-300 animate-pulse' : cmConnected ? 'bg-teal animate-pulse' : 'bg-coral'"></span>
+            :class="loadingStatus ? 'bg-gray-300 animate-pulse' : !cmConnected ? 'bg-coral' : syncPaused ? 'bg-gold' : 'bg-teal animate-pulse'"></span>
           <div class="min-w-0">
             <h2 class="text-lg font-black text-navy">
-              {{ loadingStatus ? 'Verificando la conexión…' : cmConnected ? 'Conectado a Channex' : 'Sin conectar al channel manager' }}
+              {{ loadingStatus ? 'Verificando la conexión…' : !cmConnected ? 'Sin conectar al channel manager' : syncPaused ? 'Sincronización pausada' : 'Conectado a Channex' }}
             </h2>
             <p class="text-xs text-text-secondary mt-0.5 max-w-2xl">
               <template v-if="loadingStatus">Un momento, estamos leyendo el estado de tu propiedad.</template>
-              <template v-else-if="cmConnected">Tu hotel está publicado en el channel manager. Desde acá salen los precios y la disponibilidad hacia las OTAs que conectes; en «Abrir configuración» se mapean habitaciones y tarifas y se dan de alta los canales.</template>
-              <template v-else>Tu hotel todavía no está publicado. Apretá «Forzar Sync Ahora» para crearlo en el channel manager.</template>
+              <template v-else-if="!cmConnected">Tu hotel todavía no está publicado. Apretá «Forzar Sync Ahora» para crearlo en el channel manager.</template>
+              <template v-else-if="syncPaused">Tu propiedad sigue creada en Channex, pero dejamos de enviarle precios y disponibilidad. Lo que ya está publicado queda como estaba: las OTAs siguen vendiendo con esos datos hasta que reconectes.</template>
+              <template v-else>Tu hotel está publicado en el channel manager. Desde acá salen los precios y la disponibilidad hacia las OTAs que conectes; en «Abrir configuración» se mapean habitaciones y tarifas y se dan de alta los canales.</template>
             </p>
           </div>
         </div>
@@ -121,6 +137,11 @@
           <button v-if="!loadingStatus && cmConnected" @click="openConnectFlow()" :disabled="openingConfig"
             class="px-4 py-2 rounded-xl bg-navy text-white text-xs font-black hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
             {{ openingConfig ? 'Abriendo…' : 'Abrir configuración' }}
+          </button>
+          <button v-if="!loadingStatus && cmConnected" @click="syncPaused ? reconnectChannelManager() : (confirmDisconnect = true)" :disabled="togglingSync"
+            class="px-4 py-2 rounded-xl border-2 text-xs font-black transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            :class="syncPaused ? 'border-teal text-teal hover:bg-teal hover:text-white' : 'border-coral text-coral hover:bg-coral hover:text-white'">
+            {{ togglingSync ? 'Un momento…' : syncPaused ? 'Reconectar' : 'Desconectar' }}
           </button>
         </div>
       </div>
@@ -379,6 +400,10 @@ const copiedProperty = ref(false)
 
 /** Conectado al channel manager = el hotel tiene propiedad publicada, aunque no haya OTAs todavía. */
 const cmConnected = computed(() => !!status.value?.channexPropertyId)
+/** Publicada pero muda: el hotel apagó la sincronización desde acá. */
+const syncPaused = computed(() => cmConnected.value && status.value?.syncEnabled === false)
+const confirmDisconnect = ref(false)
+const togglingSync = ref(false)
 /** Hasta la certificación, todo corre contra la cuenta de prueba de Channex. Hay que decirlo. */
 const isTestEnv = computed(() => status.value?.environment === 'staging')
 const propertyShort = computed(() => {
@@ -537,6 +562,34 @@ async function openConnectFlow() {
     toast.error('No se pudo abrir el asistente de conexión')
   } finally {
     openingConfig.value = false
+  }
+}
+
+/** Pausa el envío de ARI. No borra nada del lado de Channex — ver el modal de confirmación. */
+async function disconnectChannelManager() {
+  togglingSync.value = true
+  try {
+    await ChannelService.setSyncEnabled(hotelId.value, false)
+    confirmDisconnect.value = false
+    await loadStatus()
+    toast.success('Desconectado: dejamos de enviar precios y disponibilidad')
+  } catch {
+    toast.error('No se pudo desconectar')
+  } finally {
+    togglingSync.value = false
+  }
+}
+
+async function reconnectChannelManager() {
+  togglingSync.value = true
+  try {
+    await ChannelService.setSyncEnabled(hotelId.value, true)
+    await loadStatus()
+    toast.success('Reconectado. Sincronizá para publicar los cambios de este período')
+  } catch {
+    toast.error('No se pudo reconectar')
+  } finally {
+    togglingSync.value = false
   }
 }
 

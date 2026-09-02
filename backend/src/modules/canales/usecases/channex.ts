@@ -11,6 +11,7 @@ import { targetsFromMappings, type ChannelMappingStore, type MappingEntry, type 
 import { FULL_SYNC_HORIZON_DAYS, MS_PER_DAY } from './availability'
 import { buildOverrideValues, type OverridePushItem, type OverridePushSkips } from './push-overrides'
 import { extractTaskIds } from './ari-tasks'
+import { canPublish } from './publish-guard'
 import { channexRoomTypeTitle, localRoomTypeFromTitle } from '../../../shared/utils/room-type-titles'
 
 const STAGING_BASE = process.env.CHANNEX_BASE_URL || 'https://staging.channex.io/api/v1'
@@ -363,7 +364,8 @@ export class ChannexUseCase {
     overrides: OverridePushItem[] = [],
   ): Promise<PushRatesResultDTO> {
     const empty = (): PushRatesResultDTO => ({ pushed: 0, skipped: 0, notConnected: false, seasonsWithoutDates: [], expiredSeasons: [], roomTypesWithoutRatePlan: [] })
-    if (!cfg?.channexPropertyId) return { ...empty(), skipped: rates.length, notConnected: true }
+    // Sin propiedad, o con la sincronización pausada desde el panel, no se publica nada.
+    if (!canPublish(cfg)) return { ...empty(), skipped: rates.length, notConnected: true }
     const key = this.resolveKey(cfg)
     const pid = cfg.channexPropertyId
     // UUIDs por mapping persistido si existe (P6, sin GETs); si no, GET + match por título.
@@ -514,7 +516,7 @@ export class ChannexUseCase {
     ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS,
   ): Promise<{ pushed: number; calls: number; skips: OverridePushSkips; taskIds: string[] }> {
     const noSkips: OverridePushSkips = { roomTypesWithoutRatePlan: [], ratePlansUnknown: [], expiredRanges: 0 }
-    if (!cfg?.channexPropertyId || !items?.length) return { pushed: 0, calls: 0, skips: noSkips, taskIds: [] }
+    if (!canPublish(cfg) || !items?.length) return { pushed: 0, calls: 0, skips: noSkips, taskIds: [] }
     const key = this.resolveKey(cfg)
     const targets = await this.resolveAriTargets(cfg)
     const today = new Date().toISOString().slice(0, 10)
@@ -536,7 +538,7 @@ export class ChannexUseCase {
     roomType: string,
     ranges: { dateFrom: string; dateTo: string; availability: number }[],
   ): Promise<{ pushed: boolean; taskIds: string[] }> {
-    if (!cfg?.channexPropertyId || ranges.length === 0) return { pushed: false, taskIds: [] }
+    if (!canPublish(cfg) || ranges.length === 0) return { pushed: false, taskIds: [] }
     const key = this.resolveKey(cfg)
     // Mismo camino de resolución que el full sync (P6): mapping persistido primero, GET+título de
     // fallback. Antes esta ruta hacía SIEMPRE un GET /room_types propio — dos resoluciones distintas
@@ -569,7 +571,7 @@ export class ChannexUseCase {
     cfg: CanalesDTO | undefined,
     list: Array<{ roomType: string; ranges: Array<{ dateFrom: string; dateTo: string; availability: number }> }>,
   ): Promise<{ pushed: number; taskIds: string[] }> {
-    if (!cfg?.channexPropertyId || !list.length) return { pushed: 0, taskIds: [] }
+    if (!canPublish(cfg) || !list.length) return { pushed: 0, taskIds: [] }
     const key = this.resolveKey(cfg)
     const { rtIdByTitle } = await this.resolveAriTargets(cfg)
     const values: any[] = []

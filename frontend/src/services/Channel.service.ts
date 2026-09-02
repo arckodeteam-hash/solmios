@@ -128,6 +128,21 @@ export const ChannelService = {
     return http.post('/channels/sync', hotelId ? { hotelId } : {})
   },
 
+  /**
+   * Pausa o reanuda el envío de precios y disponibilidad al channel manager.
+   *
+   * No borra la propiedad ni los canales del lado de Channex: apaga la marca `syncEnabled` de la
+   * configuración del hotel, que es lo que el backend mira antes de publicar. Volver a
+   * sincronizar a mano también la reactiva.
+   */
+  async setSyncEnabled(hotelId: string | undefined, enabled: boolean): Promise<void> {
+    const list = await http.get<any>(`/canales${hotelId ? `?hotelId=${hotelId}` : ''}`)
+    const rows = Array.isArray(list) ? list : (list?.data ?? [])
+    const id = rows[0]?.id
+    if (!id) throw new Error('El hotel no tiene configuración de canales')
+    await http.put(`/canales/${id}`, { syncEnabled: enabled ? 1 : 0 })
+  },
+
   // Etapa 2: empuja las tarifas por temporada (precio/cierre/estadía) a Channex.
   async pushRates(channel?: string): Promise<PushRatesResult> {
     return http.post('/channels/push-rates', channel ? { channel } : {})

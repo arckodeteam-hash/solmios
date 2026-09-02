@@ -47,9 +47,12 @@ export async function syncPropertyToChannex(
   const lastSync = new Date().toISOString()
   // El grupo se persiste junto con la property: es la frontera de aislamiento del hotel dentro de
   // la cuenta de plataforma, y el token del iframe lo necesita para acotar lo que el hotel ve.
+  // `syncEnabled: 1` SIEMPRE, no solo al crear la propiedad: sincronizar a mano es pedir publicar,
+  // así que reactiva un hotel que había pausado la sincronización desde el panel. Sin esto, el
+  // botón "Forzar Sync Ahora" publicaría una vez y los cambios siguientes volverían a quedar mudos.
   await deps.upsertConfig(hotelId, newPropertyId
     ? { channexPropertyId: newPropertyId, syncEnabled: 1, lastSync, ...(newGroupId ? { channexGroupId: newGroupId } : {}) }
-    : { lastSync })
+    : { syncEnabled: 1, lastSync })
 
   // ARI del full sync en exactamente 2 llamadas (test 1 de certificación) — ver usecases/full-sync.ts.
   await pushFullSyncAri({
