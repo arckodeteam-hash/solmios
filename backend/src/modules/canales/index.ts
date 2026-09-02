@@ -226,14 +226,19 @@ export function CanalesModule() {
         if (!hotelId) return { status: 404, body: { error: 'Hotel no encontrado' } }
         const channel = String(req.body?.channel || '').trim()
         if (!channel) return { status: 400, body: { error: 'Falta el canal' } }
-        const hotel = (await queries.findMany('Hotels', { id: hotelId }))[0] as any
+        // El JWT lleva id/role/hotelId, NO nombre ni correo: sin leer el usuario, el admin recibe
+        // la solicitud sin saber a quién contestarle.
+        const [hotel, user] = await Promise.all([
+          queries.findMany('Hotels', { id: hotelId }).then((r) => r[0] as any),
+          req.user?.id ? queries.findMany('Users', { id: req.user.id }).then((r) => r[0] as any) : Promise.resolve(null),
+        ])
         const { request, created } = await requestChannel(requestDeps, {
           hotelId,
           hotelName: hotel?.name,
           channel,
           channelName: String(req.body?.channelName || channel),
-          requestedByName: req.user?.name,
-          requestedByEmail: req.user?.email,
+          requestedByName: user?.name ?? req.user?.name,
+          requestedByEmail: user?.email ?? req.user?.email ?? hotel?.email,
           message: String(req.body?.message || '').slice(0, 500),
         })
         return {
