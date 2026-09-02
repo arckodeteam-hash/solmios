@@ -44,7 +44,37 @@ export const ChannelMappingModel: ModelDefinition = {
   },
 }
 
+// Solicitud de conexión de una OTA. El hotelero no puede conectar Booking o Airbnb solo: hace
+// falta un contrato con la OTA y credenciales que da la plataforma. Antes el botón "Solicitar
+// Conexión" abría el asistente embebido de Channex —en inglés, con adaptadores y credenciales de
+// OTA— y ahí terminaba: nadie se enteraba de que el hotel quería conectarse. Ahora queda pedido
+// por escrito, con estado, y lo atiende el admin de la plataforma.
+export const ChannelRequestModel: ModelDefinition = {
+  table: 'channel_requests',
+  timestamps: true,
+  fields: {
+    id: { type: 'string', required: true },
+    hotelId: { type: 'string', required: true, indexed: true },
+    // Copia del nombre al momento de pedir: el admin ve la lista sin un join por hotel, y si el
+    // hotel se renombra después, la solicitud sigue diciendo con qué nombre entró.
+    hotelName: { type: 'string' },
+    // Código del canal en el catálogo (`airbnb`, `booking`…) y su nombre visible.
+    channel: { type: 'string', required: true },
+    channelName: { type: 'string' },
+    // Quién la pidió, para que el admin sepa a quién contestarle.
+    requestedByName: { type: 'string' },
+    requestedByEmail: { type: 'string' },
+    // pending → in_progress → connected | rejected.
+    status: { type: 'string', default: 'pending' },
+    // Lo que escribe el hotelero (número de propiedad en la OTA, dudas).
+    message: { type: 'string' },
+    // Notas del admin. NUNCA se le muestran al hotel.
+    notes: { type: 'string' },
+  },
+}
+
 export function registerCanalesModels(orm: ORM): void {
   orm.define('Canales', CanalesModel)
   orm.define('ChannelMapping', ChannelMappingModel)
+  orm.define('ChannelRequests', ChannelRequestModel)
 }

@@ -174,13 +174,19 @@
     <!-- Connected Channels -->
     <SectionCard title="Canales Conectados" class="mb-8">
       <template #actions>
+        <!-- El botón vivía SOLO dentro del estado vacío: un hotel que conectaba una OTA primero
+             perdía para siempre el acceso a conectar SolmiOS. Ahora está siempre a mano. -->
+        <button v-if="cmConnected && !hasOpenChannel" @click="connectOpenChannel" :disabled="connectingOpen"
+          class="px-3 py-1.5 rounded-lg bg-white text-navy text-xs font-black hover:bg-white/90 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+          {{ connectingOpen ? 'Conectando…' : 'Conectar SolmiOS' }}
+        </button>
         <span class="px-3 py-1 rounded-lg bg-white/10 text-xs font-black text-white">{{ connectedChannels.filter(c => c.connected).length }} de {{ connectedChannels.length }}</span>
       </template>
       <!-- El vacío solo después de responder: mostrarlo mientras carga hacía creer que no había nada. -->
       <p v-if="loadingStatus" class="text-sm text-text-muted py-10 text-center">Cargando canales…</p>
       <EmptyState v-else-if="connectedChannels.length === 0"
         title="Sin canales conectados"
-        message="Todavía no conectaste ninguna OTA. Podés empezar conectando SolmiOS como canal —prueba el circuito completo sin credenciales de nadie— o pedir la conexión de una OTA de la lista de abajo.">
+        message="Conectá SolmiOS como canal para probar que tus precios y tu disponibilidad salen bien, o pedí la conexión de una OTA de la lista de abajo.">
         <template #action>
           <button v-if="cmConnected" @click="connectOpenChannel" :disabled="connectingOpen"
             class="px-5 py-2.5 rounded-xl bg-navy text-white text-sm font-black hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
@@ -243,11 +249,7 @@
 
     <!-- Available Channels -->
     <SectionCard title="Canales Disponibles para Conectar" subtitle="Pedí la conexión y te guiamos con el mapeo" class="mb-8">
-      <template #actions>
-        <button @click="openOpenChannelCreds" class="text-[11px] font-bold text-text-secondary hover:text-navy underline decoration-dotted cursor-pointer">
-          ¿Tenés tu propio sistema? Conectalo como canal
-        </button>
-      </template>
+
       <div class="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <div v-for="channel in availableChannels" :key="channel.id"
           class="rounded-2xl border-2 border-navy bg-white p-4 flex flex-col gap-3 transition-transform duration-300 hover:-translate-y-1 hover:shadow-lg">
@@ -261,40 +263,19 @@
               <div class="text-[10px] font-bold text-text-muted uppercase">{{ channel.category || channel.type || 'OTA' }}</div>
             </div>
           </div>
-          <button @click="openConnectFlow()"
-            class="mt-auto w-full py-2.5 text-sm font-extrabold rounded-xl border-2 border-navy text-navy hover:bg-navy hover:text-white transition-colors cursor-pointer">
-            Solicitar Conexión
+          <!-- Pedir la conexión NO abre el asistente de Channex: deja la solicitud registrada para
+               que la atienda el equipo. El hotelero no tiene las credenciales de la OTA. -->
+          <div v-if="requestOf(channel.id)" class="mt-auto w-full py-2.5 text-sm font-extrabold rounded-xl text-center"
+            :class="requestStatusClass(requestOf(channel.id)!.status)">
+            {{ CHANNEL_REQUEST_LABELS[requestOf(channel.id)!.status] }}
+          </div>
+          <button v-else @click="askChannel(channel.id, channel.name)" :disabled="requestingChannel === channel.id"
+            class="mt-auto w-full py-2.5 text-sm font-extrabold rounded-xl border-2 border-navy text-navy hover:bg-navy hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            {{ requestingChannel === channel.id ? 'Enviando…' : 'Solicitar Conexión' }}
           </button>
         </div>
       </div>
     </SectionCard>
-
-    <!-- Credenciales para conectar un sistema propio (Open Channel) -->
-    <AppModal v-if="openChannelModal" size="md" title="Conectar tu propio sistema" subtitle="Pegá estos 3 datos en el asistente de conexión" @close="openChannelModal = false">
-      <div v-if="openChannelLoading" class="text-center py-6 text-sm text-text-muted">Generando credenciales…</div>
-      <div v-else-if="openChannelCreds" class="space-y-4">
-        <div v-for="field in openChannelFields" :key="field.key">
-          <label :for="`open-channel-${field.key}`" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">{{ field.label }}</label>
-          <div class="flex items-center gap-2">
-            <input :id="`open-channel-${field.key}`" :value="field.value" readonly class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm font-mono text-navy" />
-            <button @click="copyField(field.key, field.value)"
-              class="shrink-0 px-3 py-2.5 rounded-xl border border-border text-xs font-bold text-text-secondary hover:border-navy/30 hover:text-navy transition-colors cursor-pointer">
-              {{ copiedField === field.key ? '✓' : 'Copiar' }}
-            </button>
-          </div>
-        </div>
-        <p class="text-[11px] text-text-muted">
-          En el asistente de conexión, elegí "Solicitar Conexión" en cualquier canal, después "Crear Canal" y pegá estos 3 valores en "Configuración general".
-        </p>
-      </div>
-      <template #footer>
-        <button @click="openChannelModal = false" class="text-sm font-bold text-text-secondary hover:text-navy cursor-pointer transition-colors">Cerrar</button>
-        <button @click="connectOpenChannel" :disabled="connectingOpen"
-          class="ml-3 px-4 py-2 rounded-xl bg-navy text-white text-sm font-black hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-          {{ connectingOpen ? 'Conectando…' : 'Conectar automáticamente' }}
-        </button>
-      </template>
-    </AppModal>
 
     <!-- Sync Log -->
     <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
@@ -356,7 +337,7 @@ import SectionCard from '@/components/ui/SectionCard.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Icon from '@/components/ui/Icon.vue'
-import type { OpenChannelCredentials } from '@/services/Channel.service'
+import { CHANNEL_REQUEST_LABELS, type ChannelRequest } from '@/services/Channel.service'
 
 const ICON_REFRESH = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>'
 const ICON_DOWNLOAD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>'
@@ -410,6 +391,9 @@ const copiedProperty = ref(false)
 
 /** Conectado al channel manager = el hotel tiene propiedad publicada, aunque no haya OTAs todavía. */
 const cmConnected = computed(() => !!status.value?.channexPropertyId)
+/** ¿Ya está conectado el canal propio? Si sí, el botón de conectarlo no tiene nada que hacer. */
+const hasOpenChannel = computed(() =>
+  connectedChannels.value.some((c: any) => /solmios/i.test(String(c?.name || ''))))
 /** Publicada pero muda: el hotel apagó la sincronización desde acá. */
 const syncPaused = computed(() => cmConnected.value && status.value?.syncEnabled === false)
 const confirmDisconnect = ref(false)
@@ -450,40 +434,41 @@ const iframeUrl = ref('')
 /** El token del iframe es un round-trip al servidor: sin aviso, el botón parece no hacer nada. */
 const openingConfig = ref(false)
 
-// ── Conectar un sistema propio (Open Channel) ──────────────────────────────
-const openChannelModal = ref(false)
-const openChannelLoading = ref(false)
-const openChannelCreds = ref<OpenChannelCredentials | null>(null)
-const copiedField = ref('')
+// ── Solicitudes de conexión de una OTA ─────────────────────────────────────
+// Conectar Booking o Airbnb necesita contrato y credenciales que gestiona la plataforma: el hotel
+// lo PIDE y lo atiende el equipo. Antes este botón abría el asistente embebido de Channex —en
+// inglés, pidiendo credenciales que el hotelero no tiene— y del lado nuestro nadie se enteraba.
+const requests = ref<ChannelRequest[]>([])
+const requestingChannel = ref('')
 
-const openChannelFields = computed(() => {
-  if (!openChannelCreds.value) return []
-  const c = openChannelCreds.value
-  return [
-    { key: 'endpoint', label: 'Endpoint', value: c.endpoint },
-    { key: 'apiKey', label: 'API Key', value: c.apiKey },
-    { key: 'hotelCode', label: 'Hotel Code', value: c.hotelCode },
-  ]
-})
-
-async function openOpenChannelCreds() {
-  openChannelModal.value = true
-  if (openChannelCreds.value) return
-  openChannelLoading.value = true
-  try {
-    openChannelCreds.value = await ChannelService.openChannelCredentials()
-  } catch {
-    toast.error('No se pudieron generar las credenciales')
-    openChannelModal.value = false
-  } finally {
-    openChannelLoading.value = false
-  }
+/** La solicitud abierta o resuelta de un canal del catálogo, si existe. */
+function requestOf(channelCode: string): ChannelRequest | undefined {
+  return requests.value.find((r) => r.channel === channelCode)
 }
 
-function copyField(key: string, value: string) {
-  navigator.clipboard.writeText(value)
-  copiedField.value = key
-  setTimeout(() => { if (copiedField.value === key) copiedField.value = '' }, 2000)
+const REQUEST_CLASSES: Record<ChannelRequest['status'], string> = {
+  pending: 'bg-amber/10 text-amber border-2 border-amber/30',
+  in_progress: 'bg-navy/5 text-navy border-2 border-navy/20',
+  connected: 'bg-teal/10 text-teal border-2 border-teal/30',
+  rejected: 'bg-coral/10 text-coral border-2 border-coral/30',
+}
+const requestStatusClass = (s: ChannelRequest['status']) => REQUEST_CLASSES[s]
+
+async function loadRequests() {
+  try { requests.value = await ChannelService.listRequests() } catch { requests.value = [] }
+}
+
+async function askChannel(channelCode: string, channelName: string) {
+  requestingChannel.value = channelCode
+  try {
+    const r = await ChannelService.requestChannel(channelCode, channelName)
+    await loadRequests()
+    toast.success(r.message)
+  } catch (e: any) {
+    toast.error(e?.message || 'No se pudo enviar la solicitud')
+  } finally {
+    requestingChannel.value = ''
+  }
 }
 
 // Ensures every catalog entry (from platform config or the default list) carries a
@@ -585,7 +570,6 @@ async function connectOpenChannel() {
   connectingOpen.value = true
   try {
     const r = await ChannelService.connectOpenChannel()
-    openChannelModal.value = false
     await loadStatus()
     toast.success(r.message || 'Canal conectado')
   } catch (e: any) {
@@ -633,7 +617,7 @@ async function syncNow() {
   } finally { syncing.value = false }
 }
 
-onMounted(loadStatus)
+onMounted(() => { loadStatus(); loadRequests() })
 
 function connectChannel(id: string) {
   const ch = connectedChannels.value.find(c => c.id === id)

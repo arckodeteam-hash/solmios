@@ -48,6 +48,23 @@ export interface TestConnectionResult {
   details?: unknown
 }
 
+/** Estado de una solicitud de conexión de OTA, tal como lo ve el hotel (sin notas internas). */
+export interface ChannelRequest {
+  id: string
+  channel: string
+  channelName?: string | null
+  status: 'pending' | 'in_progress' | 'connected' | 'rejected'
+  message?: string | null
+  createdAt?: string
+}
+
+export const CHANNEL_REQUEST_LABELS: Record<ChannelRequest['status'], string> = {
+  pending: 'Solicitada',
+  in_progress: 'En gestión',
+  connected: 'Conectada',
+  rejected: 'Rechazada',
+}
+
 export interface OpenChannelCredentials {
   apiKey: string
   hotelCode: string
@@ -220,11 +237,27 @@ export const ChannelService = {
   },
 
   /**
-   * Credenciales para conectar el canal "Open Channel" de Channex (self-service, sin depender de
-   * ninguna OTA real): endpoint fijo del backend, la clave propia del hotel (se genera la primera
-   * vez que se pide) y el "Hotel Code" a pegar en el asistente de Channex.
+   * Credenciales del canal propio (endpoint del backend + clave del hotel + hotel code).
+   *
+   * Ya NO son un paso del alta: el canal se conecta de un click. Quedan como diagnóstico, para
+   * ver qué se le configuró a Channex cuando algo no conecta.
    */
   async openChannelCredentials(): Promise<OpenChannelCredentials> {
     return http.get('/channels/open-channel-key')
+  },
+
+  /**
+   * Pide la conexión de una OTA. Conectar Booking o Airbnb necesita contrato y credenciales que
+   * gestiona la plataforma: el hotel lo pide, y lo atiende el admin. Antes este botón abría el
+   * asistente embebido de Channex y nadie del lado nuestro se enteraba del pedido.
+   */
+  async requestChannel(channel: string, channelName: string, message?: string): Promise<{ success: boolean; created: boolean; message: string; request: ChannelRequest }> {
+    return http.post('/channels/requests', { channel, channelName, message })
+  },
+
+  /** Las solicitudes del hotel, para mostrar en qué anda cada una. */
+  async listRequests(): Promise<ChannelRequest[]> {
+    const res = await http.get<{ data: ChannelRequest[] }>('/channels/requests')
+    return (res as any)?.data ?? (res as any) ?? []
   },
 }

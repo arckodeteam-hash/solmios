@@ -12,6 +12,7 @@ import { ChannexUseCase } from './usecases/channex'
 import { ChannexAdminService } from './service-channex-admin'
 import { getOrCreateOpenChannelKey, verifyOpenChannelKey, buildMappingDetails, applyChanges, logOpenChannelCall, buildEndpointUrl } from './usecases/open-channel-api'
 import { buildOpenChannelMappings, roomTypesFromRooms } from './usecases/open-channel-connect'
+import { requestChannel, updateChannelRequest, forHotel, type ChannelRequestRow } from './usecases/channel-requests'
 import { readRatePlans } from '../../shared/utils/rate-plans'
 import type { RoomTypeSummary, CanalesDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
@@ -63,6 +64,21 @@ export function CanalesModule() {
       service.setModuleCheck(createModuleChecker(orm))
       const guard = (m: string, a: string) => [...permGuard(m, a), moduleGuard('channel')]
 
+      // ── Solicitudes de conexión de una OTA ────────────────────────────────────────────────
+      // El hotel las pide desde su panel; las atiende el admin de la plataforma. Ver
+      // `usecases/channel-requests.ts` (por qué el botón dejó de abrir el asistente de Channex).
+      const requestsRepo = new OrmRepository<ChannelRequestRow>(orm, 'ChannelRequests')
+      const requestDeps = {
+        findMany: (q: any) => requestsRepo.findMany(q) as Promise<ChannelRequestRow[]>,
+        create: (row: ChannelRequestRow) => requestsRepo.create(row as any) as Promise<ChannelRequestRow>,
+        update: (id: string, patch: Partial<ChannelRequestRow>) => requestsRepo.update(id, patch as any) as Promise<ChannelRequestRow>,
+        notify: async (row: ChannelRequestRow) => {
+          log.info('Solicitud de conexión de canal', {
+            hotelId: row.hotelId, hotel: row.hotelName, canal: row.channelName, pidio: row.requestedByEmail,
+          })
+        },
+      }
+
       // ── Config Channex a nivel PLATAFORMA (super_admin) — white-label: una cuenta para todos ──
       const adminConfig = new ConfigUseCase(repo, queries)
       const adminChannex = new ChannexUseCase(log, () => adminConfig.getPlatformChannex())
@@ -71,6 +87,18 @@ export function CanalesModule() {
       router.get('/api/admin/channex-config', adminOnly, async () => ({ status: 200, body: await channexAdmin.getStatus() }))
       router.put('/api/admin/channex-config', adminOnly, async (req: any) => ({ status: 200, body: await channexAdmin.save(req.body || {}) }))
       router.post('/api/admin/channex-config/test', adminOnly, async () => ({ status: 200, body: await channexAdmin.test() }))
+
+      // Bandeja del admin: todas las solicitudes de todos los hoteles, la más nueva primero.
+      router.get('/api/admin/channel-requests', adminOnly, async () => {
+        const rows = await requestsRepo.findMany({} as any) as ChannelRequestRow[]
+        const data = [...rows].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+        return { status: 200, body: { data, total: data.length } }
+      })
+      router.put('/api/admin/channel-requests/:id', adminOnly, async (req: any) => {
+        const updated = await updateChannelRequest(requestDeps, req.params.id, req.body || {})
+        if (!updated) return { status: 400, body: { error: 'Estado inválido' } }
+        return { status: 200, body: updated }
+      })
 
       router.get('/api/channels', guard('channel-manager', 'view'), async (req) => {
         // resolveTenant (no resolveHotelId del cliente): el merchant queda forzado a su hotel; solo
@@ -184,6 +212,43 @@ export function CanalesModule() {
       // (endpoint, api key, hotel code) y el mapeo sale del sync: pedirle al hotelero que las
       // transcriba en el asistente de Channex era el paso que dejaba a los hoteles nuevos sin
       // ningún canal conectado. Ver `usecases/open-channel-connect.ts`.
+      // Solicitudes del hotel: pedir una OTA y ver en qué anda lo pedido.
+      router.get('/api/channels/requests', guard('channel-manager', 'view'), async (req) => {
+        const hotelId = resolveTenant(req)
+        if (!hotelId) return { status: 404, body: { error: 'Hotel no encontrado' } }
+        const rows = await requestsRepo.findMany({ hotelId } as any) as ChannelRequestRow[]
+        // Sin `notes`: son internas del admin.
+        return { status: 200, body: { data: rows.map(forHotel), total: rows.length } }
+      })
+
+      router.post('/api/channels/requests', guard('channel-manager', 'edit'), async (req: any) => {
+        const hotelId = resolveTenant(req)
+        if (!hotelId) return { status: 404, body: { error: 'Hotel no encontrado' } }
+        const channel = String(req.body?.channel || '').trim()
+        if (!channel) return { status: 400, body: { error: 'Falta el canal' } }
+        const hotel = (await queries.findMany('Hotels', { id: hotelId }))[0] as any
+        const { request, created } = await requestChannel(requestDeps, {
+          hotelId,
+          hotelName: hotel?.name,
+          channel,
+          channelName: String(req.body?.channelName || channel),
+          requestedByName: req.user?.name,
+          requestedByEmail: req.user?.email,
+          message: String(req.body?.message || '').slice(0, 500),
+        })
+        return {
+          status: 200,
+          body: {
+            success: true,
+            created,
+            request: forHotel(request),
+            message: created
+              ? 'Solicitud enviada. El equipo de SolmiOS te contacta para conectar el canal.'
+              : 'Ya tenías una solicitud abierta para este canal: la estamos gestionando.',
+          },
+        }
+      })
+
       router.post('/api/channels/open-channel/connect', guard('channel-manager', 'edit'), async (req: any) => {
         const hotelId = resolveTenant(req)
         if (!hotelId) return { status: 404, body: { error: 'Hotel no encontrado' } }
