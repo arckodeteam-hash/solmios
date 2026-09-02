@@ -218,6 +218,7 @@
               <th class="text-left py-3 text-[10px] font-bold text-text-muted uppercase">Canal</th>
               <th class="text-left py-3 text-[10px] font-bold text-text-muted uppercase">Fecha</th>
               <th class="text-left py-3 text-[10px] font-bold text-text-muted uppercase">Estado</th>
+              <th class="text-left py-3 text-[10px] font-bold text-text-muted uppercase">Tarea Channex</th>
               <th class="text-left py-3 text-[10px] font-bold text-text-muted uppercase">Detalle</th>
             </tr>
           </thead>
@@ -228,6 +229,16 @@
               <td class="py-3 text-xs text-text-muted">{{ log.createdAt?.slice(0, 16)?.replace('T', ' ') }}</td>
               <td class="py-3">
                 <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="log.status === 'success' ? 'bg-teal/10 text-teal' : 'bg-coral/10 text-coral'">{{ log.status === 'success' ? 'Exitoso' : 'Error' }}</span>
+              </td>
+              <td class="py-3">
+                <button v-if="log.taskIds?.length" @click="copyTaskIds(log.taskIds)"
+                  class="inline-flex items-center gap-1 text-[10px] font-mono text-text-secondary hover:text-navy cursor-pointer transition-colors"
+                  :title="`Copiar ${log.taskIds.length} id(s) de tarea de Channex`">
+                  <span>{{ log.taskIds[0].slice(0, 8) }}…</span>
+                  <span v-if="log.taskIds.length > 1" class="font-sans text-text-muted">+{{ log.taskIds.length - 1 }}</span>
+                  <Icon :name="copiedTaskIds === log.id ? 'check' : 'clipboard'" class="w-3 h-3" />
+                </button>
+                <span v-else class="text-xs text-text-muted">—</span>
               </td>
               <td class="py-3 text-xs text-text-muted max-w-xs truncate">{{ log.details }}</td>
             </tr>
@@ -249,6 +260,7 @@ import { resolveChannelLogo } from '@/utils/channelLogos'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import Icon from '@/components/ui/Icon.vue'
 import type { OpenChannelCredentials } from '@/services/Channel.service'
 
 const ICON_REFRESH = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>'
@@ -266,6 +278,21 @@ const ICON_PLANE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="current
 
 const auth = useAuthStore()
 const toast = useToast()
+
+/**
+ * Copia los ids de tarea que Channex devolvió por ese push. Son el ÚNICO identificador con el
+ * que soporte de Channex puede rastrear un envío de precios o disponibilidad — y lo que pide
+ * el formulario de certificación PMS por cada test.
+ */
+async function copyTaskIds(ids: string[]) {
+  try {
+    await navigator.clipboard.writeText(ids.join('\n'))
+    const row = syncLog.value.find((l) => l.taskIds === ids)
+    copiedTaskIds.value = row?.id || ''
+    setTimeout(() => { if (copiedTaskIds.value === row?.id) copiedTaskIds.value = '' }, 1500)
+    toast.success(ids.length > 1 ? `${ids.length} ids copiados` : 'Id de tarea copiado')
+  } catch { toast.error('No se pudo copiar') }
+}
 const router = useRouter()
 const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
 
@@ -286,6 +313,8 @@ const syncing = ref(false)
 const connectedChannels = ref<any[]>([])
 const availableChannels = ref<any[]>([])
 const syncLog = ref<any[]>([])
+/** Fila cuyo id de tarea se acaba de copiar — el ✓ vuelve a ser clip a los 1.5s. */
+const copiedTaskIds = ref('')
 
 const connectDialog = ref<{ channelId: string; channelName: string; channelCode: string; title: string; connected: boolean } | null>(null)
 const configDialog = ref<{ id: string; name: string; otaCode: string; active: boolean; bookings: number; lastSync: string; connected: boolean } | null>(null)
@@ -383,7 +412,12 @@ async function loadStatus() {
   // Load sync history from DB
   try {
     const logData = await ChannelService.syncLog(hotelId.value)
-    syncLog.value = (logData?.data || []).slice(0, 20)
+    // `http.get` ya devuelve el contenido del envelope: el historial llega como ARRAY. Leer
+    // `logData.data` daba siempre `undefined` y la tabla mostraba "Sin sincronizaciones" aunque
+    // el backend tuviera las filas (verificado en producción el 2026-09-01). Se aceptan las dos
+    // formas por si alguna respuesta viniera sin envolver (ver la deuda de compresión en CLAUDE.md).
+    const rows = Array.isArray(logData) ? logData : (logData?.data ?? [])
+    syncLog.value = rows.slice(0, 20)
   } catch {}
 }
 

@@ -19,20 +19,25 @@ export type { AvailabilityRange } from '../../../shared/utils/daily-availability
 import { buildAvailabilityRanges } from '../../../shared/utils/daily-availability'
 import type { AvailabilityRange } from '../../../shared/utils/daily-availability'
 
+/** Resultado de un push de availability: los `taskIds` son el rastro del lado de Channex. */
+export interface AvailabilityPushResult { pushed: boolean; taskIds?: string[] }
+/** Igual, para el push consolidado: `pushed` cuenta los rangos enviados en la única llamada. */
+export interface FullAvailabilityPushResult { pushed: number; taskIds?: string[] }
+
 /** Dependencias que el service inyecta al usecase (ORM + config + push a Channex). */
 export interface AvailabilityDeps {
   findMany: (model: string, query: any) => Promise<any[]>
   getConfig: (hotelId: string) => Promise<{ channexPropertyId?: string | null } | undefined>
-  pushToChannex: (cfg: any, roomType: string, ranges: AvailabilityRange[]) => Promise<{ pushed: boolean }>
+  pushToChannex: (cfg: any, roomType: string, ranges: AvailabilityRange[]) => Promise<AvailabilityPushResult>
   /** Full sync (test 1 de certificación): TODOS los room types en UNA sola llamada. */
-  pushAllToChannex: (cfg: any, list: Array<{ roomType: string; ranges: AvailabilityRange[] }>) => Promise<{ pushed: number }>
+  pushAllToChannex: (cfg: any, list: Array<{ roomType: string; ranges: AvailabilityRange[] }>) => Promise<FullAvailabilityPushResult>
 }
 
 /** Horizonte del full sync: la certificación PMS de Channex exige 500 días de ARI. */
 export const FULL_SYNC_HORIZON_DAYS = 500
 
 /** Lee DB del hotel, recalcula availability del roomType y empuja a Channex. */
-export async function pushAvailabilityForRoomType(deps: AvailabilityDeps, hotelId: string, roomType: string): Promise<{ pushed: boolean }> {
+export async function pushAvailabilityForRoomType(deps: AvailabilityDeps, hotelId: string, roomType: string): Promise<AvailabilityPushResult> {
   const cfg = await deps.getConfig(hotelId)
   if (!cfg?.channexPropertyId) return { pushed: false }
   const [rooms, reservations, blocks] = await Promise.all([
@@ -51,7 +56,7 @@ export async function pushAvailabilityForRoomType(deps: AvailabilityDeps, hotelI
  * Cada push por evento sigue siendo delta (90 días del tipo tocado); esto es el arranque
  * y la recuperación de desincronización.
  */
-export async function pushAllRoomTypesAvailability(deps: AvailabilityDeps, hotelId: string): Promise<{ pushed: number }> {
+export async function pushAllRoomTypesAvailability(deps: AvailabilityDeps, hotelId: string): Promise<FullAvailabilityPushResult> {
   const cfg = await deps.getConfig(hotelId)
   if (!cfg?.channexPropertyId) return { pushed: 0 }
   const [rooms, reservations, blocks] = await Promise.all([
@@ -73,7 +78,7 @@ export async function pushAllRoomTypesAvailability(deps: AvailabilityDeps, hotel
 }
 
 /** Atajo: resuelve el roomType desde roomId y empuja availability de ese tipo. */
-export async function pushAvailabilityForRoom(deps: AvailabilityDeps, hotelId: string, roomId: string): Promise<{ pushed: boolean }> {
+export async function pushAvailabilityForRoom(deps: AvailabilityDeps, hotelId: string, roomId: string): Promise<AvailabilityPushResult> {
   const room = (await deps.findMany('Rooms', { id: roomId }))[0]
   if (!room) return { pushed: false }
   return pushAvailabilityForRoomType(deps, hotelId, room.type)
@@ -88,8 +93,8 @@ export function makeAvailabilityDeps(
   findMany: (model: string, query: any) => Promise<any[]>,
   getConfig: (hotelId: string) => Promise<any>,
   channex: {
-    pushAvailability: (cfg: any, roomType: string, ranges: AvailabilityRange[]) => Promise<{ pushed: boolean }>
-    pushAllAvailability: (cfg: any, list: Array<{ roomType: string; ranges: AvailabilityRange[] }>) => Promise<{ pushed: number }>
+    pushAvailability: (cfg: any, roomType: string, ranges: AvailabilityRange[]) => Promise<AvailabilityPushResult>
+    pushAllAvailability: (cfg: any, list: Array<{ roomType: string; ranges: AvailabilityRange[] }>) => Promise<FullAvailabilityPushResult>
   },
 ): AvailabilityDeps {
   return {

@@ -13,7 +13,7 @@
 
 import { matchRatePlan, type RatePlanDef } from './rate-plans'
 import type { CanalesDTO } from '../types'
-import type { AriTargets } from './channex-mapping'
+import { lookupRoomTypeId, type AriTargets } from './channex-mapping'
 
 /** Una celda de la grilla lista para publicar. `cleared` = dimensiones que se APAGARON al guardar. */
 export interface OverridePushItem {
@@ -70,7 +70,7 @@ export function buildOverrideValues(
     const plan = planByCode.get(String(item.ratePlan).toLowerCase())
     if (!plan) { ratePlansUnknown.add(String(item.ratePlan)); continue }
 
-    const rtId = targets.rtIdByTitle.get(String(item.roomType).toLowerCase())
+    const rtId = lookupRoomTypeId(targets.rtIdByTitle, String(item.roomType))
     const rtRps = rtId ? targets.rpsByRt.get(rtId) : undefined
     const rpId = rtRps?.length ? matchRatePlan(rtRps, plan) : undefined
     if (!rpId) { roomTypesWithoutRatePlan.add(String(item.roomType)); continue }
@@ -120,6 +120,8 @@ export interface OverridePushResult {
   pushed: number
   calls: number
   skips: OverridePushSkips
+  /** Ids de las tareas que encoló Channex — el rastro del push (ver `ari-tasks.ts`). */
+  taskIds?: string[]
 }
 
 /** Dependencias que el service inyecta: nada de DB ni de HTTP directo acá. */

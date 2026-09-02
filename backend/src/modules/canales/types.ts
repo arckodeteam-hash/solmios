@@ -104,6 +104,12 @@ export interface PushRatesResultDTO {
   expiredSeasons: string[]
   /** Tipos de habitación sin rate plan en Channex (falta sincronizar la propiedad). */
   roomTypesWithoutRatePlan: string[]
+  /**
+   * Ids de las tareas que Channex encoló para este push (`data[].id` de la respuesta).
+   * Es el único identificador con el que se rastrea un ARI update del lado de Channex —
+   * soporte lo pide y la certificación PMS lo exige por test. Vacío si no se empujó nada.
+   */
+  taskIds?: string[]
 }
 
 // ─── Channel API (conexión OTA) ────────────────────────

@@ -23,6 +23,7 @@ import { ConfigUseCase } from './usecases/config'
 import type { CanalesQueries } from './usecases/canales-queries'
 import { auditSafely, channelDeleteEntry, type AuditPort } from './usecases/audit'
 import { getSyncLog as getSyncLogFromTable } from './usecases/sync-log'
+import { withAvailabilityTrail, withRatesTrail } from './usecases/ari-tasks'
 import { pushSeasonalRatesToChannex } from './usecases/push-rates'
 import { readRatePlans } from './usecases/rate-plans'
 import { pushRateOverridesFor, type OverridePushItem, type OverridePushResult } from './usecases/push-overrides'
@@ -114,19 +115,20 @@ export class CanalesService {
       getRatePlans: (h) => readRatePlans((m, q) => this.queries.findMany(m, q), h),
       channexSync: (h, ht, r, c, plans) => this.channex.syncProperty(h, ht, r, c, plans),
       upsertConfig: (h, patch) => this.upsertConfig(h, patch),
-      pushAllAvailability: (h) => pushAllRoomTypesAvailability(this.availDeps(), h),
+      pushAllAvailability: (h) => withAvailabilityTrail(this.syncLogRepo, h, () => pushAllRoomTypesAvailability(this.availDeps(), h)),
       pushRates: (h) => this.pushSeasonalRates(h),
       logger: this.logger,
       syncLogRepo: this.syncLogRepo,
     }, hotelId, hotel, rooms)
   }
 
-  // Push de availability: recálculo + push. Disparado por reservas/checkin/checkout/bloqueos.
+  // Push de availability: recálculo + push (reservas/checkin/checkout/bloqueos). Todo push ARI
+  // deja su fila en sync_log con los task ids de Channex — ver `usecases/ari-tasks.ts`.
   private availDeps(): AvailabilityDeps {
     return makeAvailabilityDeps((m, q) => this.queries.findMany(m, q), (h) => this.getConfig(h), this.channex)
   }
-  async pushAvailability(hotelId: string, roomType: string): Promise<{ pushed: boolean }> { return pushAvailabilityForRoomType(this.availDeps(), hotelId, roomType) }
-  async pushAvailabilityByRoom(hotelId: string, roomId: string): Promise<{ pushed: boolean }> { return pushAvailabilityForRoom(this.availDeps(), hotelId, roomId) }
+  async pushAvailability(hotelId: string, roomType: string): Promise<{ pushed: boolean }> { return withAvailabilityTrail(this.syncLogRepo, hotelId, () => pushAvailabilityForRoomType(this.availDeps(), hotelId, roomType)) }
+  async pushAvailabilityByRoom(hotelId: string, roomId: string): Promise<{ pushed: boolean }> { return withAvailabilityTrail(this.syncLogRepo, hotelId, () => pushAvailabilityForRoom(this.availDeps(), hotelId, roomId)) }
 
   // ─── Channel API delegado a usecase ──────────────────────────────────
   async testConnection(hotelId: string, channel: string, otaHotelId: string): Promise<TestConnectionResultDTO> { return this.channelApi.testConnection(await this.getConfig(hotelId), channel, otaHotelId) }
@@ -153,19 +155,19 @@ export class CanalesService {
 
   /** Etapa 2 — empuja las tarifas por temporada a Channex (todos los planes del hotel). getPricingMode: per_person → OBP (#404). */
   async pushSeasonalRates(hotelId: string, channel?: string): Promise<PushRatesResultDTO> {
-    return pushSeasonalRatesToChannex({
+    return withRatesTrail(this.syncLogRepo, hotelId, 'push_rates', () => pushSeasonalRatesToChannex({
       getConfig: (h) => this.getConfig(h), findMany: (m, q) => this.queries.findMany(m, q),
       pushSeasonalRates: (c, r, s, a, plans, restrictions, overrides) => this.channex.pushSeasonalRates(c, r, s, a, plans, restrictions, overrides),
-    }, hotelId, channel)
+    }, hotelId, channel))
   }
 
   /** Push DELTA de la grilla de tarifas por fecha (una llamada, solo lo tocado). Ver push-overrides.ts. */
   async pushRateOverrides(hotelId: string, items: OverridePushItem[]): Promise<OverridePushResult> {
-    return pushRateOverridesFor({
+    return withRatesTrail(this.syncLogRepo, hotelId, 'push_rate_overrides', () => pushRateOverridesFor({
       getConfig: (h) => this.getConfig(h),
       getRatePlans: (h) => readRatePlans((m, q) => this.queries.findMany(m, q), h),
       push: (cfg, i, plans) => this.channex.pushRateOverrides(cfg, i, plans),
-    }, hotelId, items)
+    }, hotelId, items))
   }
 
   // ─── CRUD delegado a usecase ─────────────────────────────────────────
