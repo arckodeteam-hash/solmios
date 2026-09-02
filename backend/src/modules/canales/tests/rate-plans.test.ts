@@ -169,7 +169,9 @@ describe('syncProperty multi-plan (P5)', () => {
       const json = (data: any) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } })
       if (u.includes('/rate_plans') && opts?.method === 'POST') { created.push(JSON.parse(opts.body).rate_plan); return json({ data: { id: crypto.randomUUID() } }) }
       if (u.includes('/rate_plans')) return json({ data: [] })
-      if (u.includes('/room_types') && opts?.method === 'POST') return json({ data: { id: 'rt-1', attributes: { title: 'Double' } } })
+      // Channex devuelve el room type con el título que se le mandó ("Double" → "Double Room",
+      // ver shared/utils/room-type-titles): el fake lo espeja en vez de inventar otro.
+      if (u.includes('/room_types') && opts?.method === 'POST') return json({ data: { id: 'rt-1', attributes: { title: JSON.parse(opts.body).room_type.title } } })
       if (u.includes('/room_types')) return json({ data: [] })
       return json({ data: [] })
     }) as any
@@ -180,8 +182,8 @@ describe('syncProperty multi-plan (P5)', () => {
         { channexPropertyId: 'p1', channexApiKey: 'k' } as any, DEFAULT_RATE_PLANS)
 
       const titles = created.map((rp) => rp.title).sort()
-      expect(titles).toEqual(['Double BAR', 'Double Bed & Breakfast'])
-      const bb = created.find((rp) => rp.title === 'Double Bed & Breakfast')!
+      expect(titles).toEqual(['Double Room BAR', 'Double Room Bed & Breakfast'])
+      const bb = created.find((rp) => rp.title === 'Double Room Bed & Breakfast')!
       expect(bb.options[0].rate).toBe(12000)   // base 100 × (1+20%) en centavos
     } finally { restore(); resetChannexHttpForTests() }
   })

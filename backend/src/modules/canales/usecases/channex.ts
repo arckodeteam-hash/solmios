@@ -13,6 +13,7 @@ import { buildOverrideValues, type OverridePushItem, type OverridePushSkips } fr
 import { extractTaskIds } from './ari-tasks'
 import { canPublish } from './publish-guard'
 import { channexRoomTypeTitle, localRoomTypeFromTitle } from '../../../shared/utils/room-type-titles'
+import { planStructure, parseRoomTypes, parseRatePlans, optionsChanged } from './sync-structure'
 
 const STAGING_BASE = process.env.CHANNEX_BASE_URL || 'https://staging.channex.io/api/v1'
 const PROD_BASE = 'https://api.channex.io/api/v1'
@@ -224,6 +225,7 @@ export class ChannexUseCase {
 
     let channexPId: string | undefined = cfg?.channexPropertyId || undefined
     let newGroupId: string | null = null
+    let propertyIsNew = false
 
     if (!channexPId) {
       // Un GRUPO por hotel. La cuenta de Channex es de la plataforma (white-label) y todos los
@@ -236,51 +238,88 @@ export class ChannexUseCase {
       })
       if (!propRes.ok || !propRes.data?.data) throw new Error('No se pudo crear la propiedad en Channex')
       channexPId = propRes.data.data.id
-    } else {
-      try {
-        const oldRPs = await this.channexList(key, `/rate_plans?filter[property_id]=${channexPId}`)
-        for (const rp of oldRPs) {
-          await this.channexReq(key, 'DELETE', `/rate_plans/${rp.id}`).catch(() => {})
-        }
-      } catch {}
-      try {
-        const oldRTs = await this.channexList(key, `/room_types?filter[property_id]=${channexPId}`)
-        for (const rt of oldRTs) {
-          await this.channexReq(key, 'DELETE', `/room_types/${rt.id}`).catch(() => {})
-        }
-      } catch {}
+      propertyIsNew = true
     }
 
-    const createdRTs: any[] = []
-    const rtResults = await Promise.all(rooms.map((rt: RoomTypeSummary) =>
-      this.channexReq(key, 'POST', '/room_types', { room_type: { property_id: channexPId, title: channexRoomTypeTitle(rt.type), count_of_rooms: rt.cnt, occ_adults: rt.capacity, occ_children: 1, occ_infants: 1 } })
-    ))
-    rtResults.filter(r => r.ok && r.data?.data).forEach(r => createdRTs.push(r.data.data))
+    // Estructura IDEMPOTENTE (ver usecases/sync-structure.ts): lo que ya está se ACTUALIZA en su
+    // lugar. Antes se borraba y recreaba todo en cada sync: los UUIDs cambiaban y el mapeo del
+    // canal —que es lo único que los referencia del otro lado— quedaba en cero, con el canal
+    // igual de verde. Una property recién creada no tiene nada que leer.
+    const existingRTs = propertyIsNew
+      ? []
+      : parseRoomTypes(await this.channexList(key, `/room_types?filter[property_id]=${channexPId}`).catch(() => []))
+    const desiredRTs = rooms
+      .map((rt: RoomTypeSummary) => ({ title: channexRoomTypeTitle(rt.type), room: rt }))
+      .filter((rt) => !!rt.title)
+    const rtPlan = planStructure(desiredRTs, existingRTs)
+    const rtBody = (d: { title: string; room: RoomTypeSummary }) => ({
+      room_type: {
+        property_id: channexPId, title: d.title, count_of_rooms: d.room.cnt,
+        occ_adults: Math.max(1, d.room.capacity || 2), occ_children: 1, occ_infants: 1,
+      },
+    })
+    const rtCreated = await Promise.all(rtPlan.create.map(async (d) => ({ d, res: await this.channexReq(key, 'POST', '/room_types', rtBody(d)) })))
+    await Promise.all(rtPlan.update.map(({ id, item }) => this.channexReq(key, 'PUT', `/room_types/${id}`, rtBody(item))))
+    // Un tipo que el hotel ya no tiene deja de venderse: se borra (y con él sus rate plans).
+    for (const gone of rtPlan.remove) await this.channexReq(key, 'DELETE', `/room_types/${gone.id}`).catch(() => {})
 
-    const rtList = await this.channexList(key, `/room_types?filter[property_id]=${channexPId}`)
+    // Los tipos vivos con su UUID, sin depender de releer: los que ya estaban conservan el suyo y
+    // los nuevos traen el de su POST. Cada uno con la habitación local de la que salió (precio y
+    // capacidad), que es lo que define sus rate plans.
+    const rtIndex: Array<{ id: string; title: string; room: RoomTypeSummary }> = [
+      ...rtPlan.update.map(({ id, item }) => ({ id, title: item.title, room: item.room })),
+      ...rtCreated
+        .filter((r) => r.res.ok && r.res.data?.data?.id)
+        .map((r) => ({ id: String(r.res.data.data.id), title: r.d.title, room: r.d.room })),
+    ]
 
-    // Batch rate plan creation — UNO POR PLAN (P5): "Double BAR", "Double Bed & Breakfast"…
-    const rpCreated = await Promise.all(createdRTs.flatMap(rt => {
-      const title = rt.attributes?.title || rt.title
-      // El título publicado ya no es el código local: se compara traduciendo (ver room-type-titles).
-      const roomData = rooms.find(rm => channexRoomTypeTitle(rm.type) === title)
-      const basePrice = Math.round((roomData?.basePrice || 100) * 100)
-      const cap = Math.max(1, roomData?.capacity || 2)
-      return ratePlans.map(plan => {
-        const price = planPrice(basePrice, plan.markupPct)
+    // Rate plans — UNO POR PLAN (P5): "Double Room BAR", "Double Room Bed & Breakfast"…
+    const existingRPs = propertyIsNew
+      ? []
+      : parseRatePlans(await this.channexList(key, `/rate_plans?filter[property_id]=${channexPId}`).catch(() => []))
+    const desiredRPs = rtIndex.flatMap((rt) => {
+      const basePrice = Math.round((rt.room.basePrice || 100) * 100)
+      const cap = Math.max(1, rt.room.capacity || 2)
+      return ratePlans.map((plan) => ({
+        title: `${rt.title} ${plan.label}`,
+        roomTypeId: rt.id,
         // Una option por ocupación 1..capacidad (la máxima is_primary). Los precios reales por
-        // ocupación los pone el push de tarifas; acá se crea la ESTRUCTURA (#404).
-        //
-        // `sell_mode` se fija ACÁ, al crear el rate plan, y no se puede cambiar después con un
-        // push: por eso el hotel tarifa siempre por persona y no hay switch. Una propiedad creada
-        // con `per_room` necesita re-sincronizarse para aceptar precios por ocupación.
-        const options = Array.from({ length: cap }, (_, i) => ({ occupancy: i + 1, is_primary: i + 1 === cap, rate: price }))
-        return this.channexReq(key, 'POST', '/rate_plans', { rate_plan: { property_id: channexPId, room_type_id: rt.id, title: `${title} ${plan.label}`, currency: hotel.currency || 'USD', sell_mode: 'per_person', rate_mode: 'manual', options } })
-      })
-    }))
-    // Rate plans: releer DESPUÉS de crear (rpList alimenta el reporte).
-    // Antes se leía antes de crear → siempre 0 y sin restrictions iniciales.
-    const rpList = await this.channexList(key, `/rate_plans?filter[property_id]=${channexPId}`)
+        // fecha los pone el push de tarifas; acá se crea la ESTRUCTURA (#404).
+        options: Array.from({ length: cap }, (_, i) => ({
+          occupancy: i + 1, is_primary: i + 1 === cap, rate: planPrice(basePrice, plan.markupPct),
+        })),
+      }))
+    })
+    // Las copias que Channex crea al mapear un canal ("… - OpenChannel …") no son nuestras: no
+    // entran al diff, así no se actualizan ni se borran.
+    const rpPlan = planStructure(desiredRPs, existingRPs.filter((rp) => !rp.derived))
+    await Promise.all([
+      // `sell_mode` se fija ACÁ, al crear, y no se puede cambiar después: por eso el hotel tarifa
+      // siempre por persona y no hay switch. Una property creada con `per_room` necesita que se
+      // recree el rate plan para aceptar precios por ocupación.
+      ...rpPlan.create.map((d) => this.channexReq(key, 'POST', '/rate_plans', {
+        rate_plan: {
+          property_id: channexPId, room_type_id: d.roomTypeId, title: d.title,
+          currency: hotel.currency || 'USD', sell_mode: 'per_person', rate_mode: 'manual', options: d.options,
+        },
+      })),
+      // En el update las options solo se mandan si cambiaron (capacidad o precio base): un PUT
+      // reemplaza las que están, y de ellas cuelgan las `derived_option` de los canales mapeados.
+      ...rpPlan.update.map(({ id, item }) => {
+        const before = existingRPs.find((rp) => rp.id === id)?.options
+        const changed = optionsChanged(before, item.options)
+        return this.channexReq(key, 'PUT', `/rate_plans/${id}`, {
+          rate_plan: { title: item.title, ...(changed ? { options: item.options } : {}) },
+        })
+      }),
+    ])
+    for (const gone of rpPlan.remove) await this.channexReq(key, 'DELETE', `/rate_plans/${gone.id}`).catch(() => {})
+    // Releer DESPUÉS de aplicar el plan: de acá salen el mapping persistido y el reporte.
+    // Las copias de canal ("… - OpenChannel …") se descartan: no son tarifas del hotel, y
+    // contarlas infla el número que muestra el panel.
+    const rtList = await this.channexList(key, `/room_types?filter[property_id]=${channexPId}`)
+    const rpList = parseRatePlans(await this.channexList(key, `/rate_plans?filter[property_id]=${channexPId}`))
+      .filter((rp) => !rp.derived)
 
     // ARI del full sync: NO se empuja acá. El service lo manda al terminar en EXACTAMENTE 2
     // llamadas (1 availability consolidado de 500 días con reservas descontadas + 1 restrictions
@@ -296,9 +335,9 @@ export class ChannexUseCase {
           entries.push({ kind: 'room_type', localId: localRoomTypeFromTitle(String(rt.attributes?.title || '')), channexId: rt.id })
         }
         for (const rp of rpList) {
-          const rt = rtList.find((r: any) => r.id === (rp.attributes?.room_type_id || rp.relationships?.room_type?.data?.id))
+          const rt = rtList.find((r: any) => r.id === rp.roomTypeId)
           const rtTitle = String(rt?.attributes?.title || '')
-          const rpTitle = String(rp.attributes?.title || '')
+          const rpTitle = rp.title
           const planLabel = rtTitle && rpTitle.startsWith(`${rtTitle} `) ? rpTitle.slice(rtTitle.length + 1) : rpTitle
           const localType = localRoomTypeFromTitle(rtTitle)
           if (localType && planLabel) entries.push({ kind: 'rate_plan', localId: `${localType}|${planLabel}`, channexId: rp.id })
