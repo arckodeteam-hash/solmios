@@ -10,7 +10,10 @@ import { resetChannexHttpForTests } from '../usecases/channex-http'
 import type { AriTargets } from '../usecases/channex-mapping'
 import { silentLogger } from 'arckode-framework/testing'
 
-const TODAY = '2026-09-01'
+// HOY de verdad: los tests que pegan contra `pushRateOverrides` comparan contra el reloj del
+// proceso (el push recorta las fechas pasadas). Con una fecha fija, el archivo empezaba a fallar
+// solo al cruzar la medianoche UTC — pasó el 2026-09-02.
+const TODAY = new Date().toISOString().slice(0, 10)
 
 /** Twin y Double, cada uno con BAR y B&B — el setup que usa el guion de la certificación. */
 const TARGETS: AriTargets = {
