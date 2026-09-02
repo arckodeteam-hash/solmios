@@ -304,16 +304,49 @@ idempotente y deja de romper los UUIDs que los canales OTA tienen mapeados.
 
 ## 7. Checklist final antes de pedir el examen
 
-- [ ] P1-P7 cerrados, P8/P9 de data aplicados.
-- [ ] Los 14 escenarios corridos en staging anotando cada `task_id` devuelto.
+- [x] P1-P7 cerrados, P8/P9 de data aplicados.
+- [x] Los 14 escenarios corridos en staging anotando cada `task_id` devuelto —
+      `bun run scripts/e2e/channex-certification.e2e.ts` (2026-09-01, **24/24**).
+      Evidencia con los task ids: `CHANNEX-CERTIFICACION-EVIDENCIA.md`.
 - [ ] `bun run doctor` verde (ojo: el doctor ESCRIBE ARI de prueba sobre la
       primera propiedad — `doctor.ts:148-176` — usar solo contra la Test Property).
-- [ ] `arckode analyze` 0 violaciones · `bun run typecheck` · `bun test` ·
+- [x] `arckode analyze` 0 violaciones · `bun run typecheck` · `bun test` ·
       `cd frontend && bun run typecheck` limpios.
 - [ ] Screenshots de la pantalla de mapeo/listo para el screenshare.
 - [ ] Form (forms.gle/xA8F3eSYBPBd8apYA) con task IDs + respuestas del cuestionario.
-- [ ] Verificado con readback (`GET /availability`, `GET /restrictions?...&filter[restrictions]=...`)
-      — nunca confiar en el 200.
+- [x] Verificado con readback (`GET /availability`, `GET /restrictions?...&filter[restrictions]=...`)
+      — nunca confiar en el 200. Lo hace el propio runner, test por test.
+
+### 7.1 La corrida de evidencia (2026-09-01)
+
+`backend/scripts/e2e/channex-certification.e2e.ts` dispara los MISMOS endpoints que aprieta el
+panel (`PUT /api/rate-overrides` = grilla de tarifas, `POST /api/reservas` = planning,
+`POST /api/channels/sync` = botón Sincronizar), cuenta las llamadas en el rastro de `sync_log`
+—no en los logs— y lee de vuelta cada valor contra la API de Channex. **No es** la integración
+ni la reemplaza: si se borra, el PMS publica igual (eso es lo que Channex exige).
+
+| Test | Llamadas | Verificado por readback |
+|---|:---:|---|
+| T1 Full sync | 2 (1 availability + 1 rates) | 500 días, valores variados |
+| T2 · T3 · T4 | 1 c/u | 333 · (333/444/456.23) · (241/312.66/111) |
+| T5 · T6 · T7 | 1 c/u | min stay 3/2/5 · stop sell ×3 · CTA/CTD/max/min |
+| T8 | 1 | Dic 2026→May 2027: 432 min 2 · 342 min 3 |
+| T9 · T10 | 1 por reserva | Twin 2→1 · Double 2→0 · rangos comprimidos |
+| T11 | — | feed + ack (el booking de prueba lo dispara Channex) |
+
+### 7.2 Lo que faltaba y se agregó para poder presentarla
+
+- **Task ids**: el formulario pide el `task_id` de cada test y la respuesta ARI de Channex los
+  trae (`data:[{id,type:"task"}]`), pero el PMS **descartaba el body**. Ahora cada push los
+  captura (`canales/usecases/ari-tasks.ts`), los asienta en `sync_log` y el panel los muestra
+  copiables en el Historial de Sincronización.
+- **Un 422 de availability pasaba como éxito**: `pushAvailability`/`pushAllAvailability` no
+  miraban `res.ok`. La OTA podía seguir vendiendo una habitación reservada sin ningún error.
+- **Títulos de room type**: se publicaba el CÓDIGO interno (`twin`, `double`, o peor `n`) como
+  título del room type en la OTA. Ahora se traduce a título vendible
+  (`shared/utils/room-type-titles.ts`), que además es el que pide el setup del examen
+  ("Twin Room", "Double Room"). La vuelta la usa la ingesta de reservas para encontrar la
+  habitación local.
 
 ---
 
@@ -364,3 +397,24 @@ query y guardó la fila en el hotel DEL USUARIO (SolmiOS Corp). El `GET /rates`
 con query hotelId también devolvió filas de otro hotel. Con token `hotel_admin`
 del hotel funciona correcto. Filtrar/validar el hotelId del query para
 super_admin en pricing (y revisar el listado) — tarea aparte.
+
+---
+
+## 10. Hallazgos del alta real de un hotel (2026-09-01, producción)
+
+Se dio de alta "Hotel don Luis" por el flujo público de `solmios.com` y se cargaron 12
+habitaciones para ver qué hace el PMS solo. Tres defectos reales, los tres corregidos:
+
+| # | Qué pasó | Causa | Fix |
+|---|---|---|---|
+| 1 | Cargar habitaciones **en lote** creó **4 properties** del mismo hotel en Channex (3 huérfanas) | `autoProvision` es fire-and-forget por habitación: las 4 leyeron la config vacía a la vez (read-then-check sin lock) | Deduplicación en vuelo por hotel en `ProvisioningUseCase` + test de carrera |
+| 2 | El panel decía "Todavía no hay habitaciones" tras crear 4 (5 min) | `batch-create.ts` borraba una clave de caché FIJA; el listado se cachea VERSIONADO. El alta de a una sí bumpeaba | `bumpListVersion()` en el lote + versión monotónica (dos bumps en el mismo ms daban el mismo token) |
+| 3 | "Historial de Sincronización" siempre vacío aunque el backend tuviera filas | el panel leía `logData.data` y `http.get` ya devuelve el contenido del envelope | acepta las dos formas (`channel-manager/index.vue`) |
+
+Pendiente de decisión (NO es un bug del código): las 3 properties huérfanas
+(`4f07a9f5`, `5cc186bc`, `6ecccb21`) siguen en la cuenta de staging — hay que borrarlas a mano.
+
+Y una limitación de diseño que quedó a la vista: después del alta automática, **agregar un tipo
+de habitación nuevo no lo crea en Channex** (la guarda 1 corta con `already-synced`). El hotel
+tiene que apretar "Forzar Sync Ahora". Es deliberado —el sync es destructivo, borra y recrea
+room types y rate plans— pero no está avisado en la UI.
