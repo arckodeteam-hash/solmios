@@ -18,7 +18,16 @@
 //   PORT=3001 bun run src/composition-root.ts     (en otra terminal, con el .env de staging)
 //   bun run scripts/e2e/channex-certification.e2e.ts
 //
-// Env: BASE_URL, DB_PATH, CERT_PROPERTY_ID, CHANNEX_API_KEY, CHANNEX_BASE_URL, REPORT (ruta md).
+// MODO REMOTO (el que vale para el examen): contra el entorno que Channex va a ver de verdad,
+// porque el canal necesita un endpoint público —Channex prueba la conexión antes de activar y
+// `localhost` no le llega. Con `CERT_HOTEL_ID` no se toca ninguna base: el hotel ya existe (se dio
+// de alta por el registro público) y las reservas de la corrida anterior se limpian por API.
+//
+//   BASE_URL=https://solmios.com CERT_HOTEL_ID=… CERT_PROPERTY_ID=… CERT_PASSWORD=… \
+//     bun run scripts/e2e/channex-certification.e2e.ts
+//
+// Env: BASE_URL, DB_PATH, CERT_HOTEL_ID, CERT_PROPERTY_ID, CERT_EMAIL, CERT_PASSWORD,
+//      CHANNEX_API_KEY, CHANNEX_BASE_URL, REPORT (ruta md).
 
 import { Database } from 'bun:sqlite'
 
@@ -27,12 +36,14 @@ const DB_PATH = process.env.DB_PATH ?? 'data/managerhotel.db'
 const CHANNEX_BASE = process.env.CHANNEX_BASE_URL ?? 'https://staging.channex.io/api/v1'
 const CHANNEX_KEY = process.env.CHANNEX_API_KEY ?? ''
 // La property del examen: Twin Room + Double Room, BAR $100 + B&B $120 (setup de la doc).
-const PROPERTY_ID = process.env.CERT_PROPERTY_ID ?? 'f1f563dd-1e27-41e2-816b-947ab4b050dc'
+const PROPERTY_ID = process.env.CERT_PROPERTY_ID ?? 'bddf7d23-83c5-437d-a2ff-c4e85ccaf412'
 const REPORT = process.env.REPORT ?? '../CHANNEX-CERTIFICACION-EVIDENCIA.md'
 
+// Hotel del PMS ya existente (modo remoto). Vacío = sembrar uno en la SQLite local.
+const REMOTE_HOTEL_ID = process.env.CERT_HOTEL_ID ?? ''
 const HOTEL_NAME = 'Test Property - SolmiOS'
-const CERT_EMAIL = 'cert@solmios.com'
-const CERT_PASSWORD = 'demo123'
+const CERT_EMAIL = process.env.CERT_EMAIL ?? 'cert@solmios.com'
+const CERT_PASSWORD = process.env.CERT_PASSWORD ?? 'demo123'
 // El PMS guarda el tipo como CÓDIGO del enum; Channex lo publica con título (room-type-titles.ts).
 const TWIN = 'twin'
 const DOUBLE = 'double'
@@ -76,35 +87,35 @@ const channex = async (path: string) => {
 // integración bajo prueba y el signup público arrastra plan/Stripe. Todo lo que SÍ es parte
 // —habitaciones, tarifas, reservas, sync— va por HTTP, por el mismo camino que la UI.
 
-const db = new Database(DB_PATH)
+const db = REMOTE_HOTEL_ID ? null : new Database(DB_PATH)
 function seedCertHotel(): string {
-  const existing = db.query('SELECT id FROM hotels WHERE name = ?').get(HOTEL_NAME) as any
+  const existing = db!.query('SELECT id FROM hotels WHERE name = ?').get(HOTEL_NAME) as any
   const now = new Date().toISOString()
   const id = existing?.id ?? crypto.randomUUID()
   if (!existing) {
-    db.run(
+    db!.run(
       'INSERT INTO hotels (id, name, email, currency, timezone, plan, status, active, slug, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
       [id, HOTEL_NAME, CERT_EMAIL, 'USD', 'America/Santo_Domingo', 'professional', 'active', 1, `test-property-solmios`, now, now],
     )
   }
-  const user = db.query('SELECT id FROM users WHERE email = ?').get(CERT_EMAIL) as any
+  const user = db!.query('SELECT id FROM users WHERE email = ?').get(CERT_EMAIL) as any
   if (!user) {
     // Hash de la demo (misma contraseña): sembrar un usuario no es lo que se está probando.
-    const source = db.query("SELECT password FROM users WHERE email = 'admin@caribeparadise.com'").get() as any
+    const source = db!.query("SELECT password FROM users WHERE email = 'admin@caribeparadise.com'").get() as any
     if (!source?.password) throw new Error('No hay usuario demo del que copiar el hash — sembrá la DB primero')
-    db.run(
+    db!.run(
       'INSERT INTO users (id, name, email, password, userType, role, hotelId, active, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)',
       [crypto.randomUUID(), 'Certificación Channex', CERT_EMAIL, source.password, 'merchant', 'hotel_admin', id, 1, now, now],
     )
   }
   // Mapping a la property del examen ANTES de crear habitaciones: con `channexPropertyId` cargado
   // el auto-provisioning no crea una property nueva (auto-provision.ts, guarda 1).
-  const cfg = db.query('SELECT id, channexPropertyId FROM channel_config WHERE hotelId = ?').get(id) as any
+  const cfg = db!.query('SELECT id, channexPropertyId FROM channel_config WHERE hotelId = ?').get(id) as any
   if (!cfg) {
-    db.run('INSERT INTO channel_config (id, hotelId, channexPropertyId, syncEnabled, createdAt, updatedAt) VALUES (?,?,?,?,?,?)',
+    db!.run('INSERT INTO channel_config (id, hotelId, channexPropertyId, syncEnabled, createdAt, updatedAt) VALUES (?,?,?,?,?,?)',
       [crypto.randomUUID(), id, PROPERTY_ID, 1, now, now])
   } else if (cfg.channexPropertyId !== PROPERTY_ID) {
-    db.run('UPDATE channel_config SET channexPropertyId = ?, syncEnabled = 1, updatedAt = ? WHERE id = ?', [PROPERTY_ID, now, cfg.id])
+    db!.run('UPDATE channel_config SET channexPropertyId = ?, syncEnabled = 1, updatedAt = ? WHERE id = ?', [PROPERTY_ID, now, cfg.id])
   }
   return id
 }
@@ -116,11 +127,11 @@ function seedCertHotel(): string {
  * ensuciarían el conteo de llamadas de los tests.
  */
 function clearCertReservations(id: string) {
-  const rows = db.query('SELECT id FROM reservations WHERE hotelId = ?').all(id) as Array<{ id: string }>
+  const rows = db!.query('SELECT id FROM reservations WHERE hotelId = ?').all(id) as Array<{ id: string }>
   for (const r of rows) {
-    db.run('DELETE FROM folio_charges WHERE folioId IN (SELECT id FROM folios WHERE reservationId=?)', [r.id])
-    db.run('DELETE FROM folios WHERE reservationId=?', [r.id])
-    db.run('DELETE FROM reservations WHERE id=?', [r.id])
+    db!.run('DELETE FROM folio_charges WHERE folioId IN (SELECT id FROM folios WHERE reservationId=?)', [r.id])
+    db!.run('DELETE FROM folios WHERE reservationId=?', [r.id])
+    db!.run('DELETE FROM reservations WHERE id=?', [r.id])
   }
   return rows.length
 }
@@ -464,7 +475,7 @@ try {
   console.error('\n💥 Corrida abortada:', e instanceof Error ? e.message : e)
   fail++
 } finally {
-  db.close()
+  db?.close()
 }
 
 process.exit(fail > 0 ? 1 : 0)

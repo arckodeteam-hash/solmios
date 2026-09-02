@@ -801,6 +801,33 @@ export class ChannexUseCase {
       steps.mapping = ratePlansData.length > 0
     }
 
+    // Un canal que YA existe no se duplica: se re-mapea. Channex rechaza el alta de un segundo
+    // canal del mismo tipo sobre la property ("Validation Error"), y el hotelero que aprieta
+    // "Conectar" otra vez —después de un sync que le dejó el mapeo en cero, o simplemente para
+    // reintentar— quiere que su canal vuelva a funcionar, no un canal nuevo.
+    const existing = dto.propertyId
+      ? (await this.channexList(key, `/channels?filter[property_id]=${dto.propertyId}`))
+        .find((c: any) => String(c?.attributes?.channel || '') === dto.channel)
+      : undefined
+    if (existing?.id) {
+      const remap = await this.updateChannelMapping(cfg, existing.id, ratePlansData)
+      if (!remap.success) return { success: false, message: remap.message, steps }
+      steps.mapping = true
+      // Las credenciales pueden haber cambiado (dominio nuevo, key rotada): se reescriben también.
+      if (dto.settings) await this.channexReq(key, 'PUT', `/channels/${existing.id}`, { channel: { settings: dto.settings } })
+      const act = await this.activateChannel(cfg, existing.id)
+      steps.activate = act.success
+      this.logger.info('Canal OTA re-mapeado', { channel: dto.channel, channelId: existing.id, mapeados: remap.mapped, activado: act.success })
+      return {
+        success: true,
+        message: act.success
+          ? `Canal ${dto.channel} reconectado (${remap.mapped} tarifas mapeadas)`
+          : `Canal ${dto.channel} re-mapeado, pendiente de activación${act.message ? ` (${act.message})` : ''}`,
+        channelId: existing.id,
+        steps,
+      }
+    }
+
     const createRes = await this.channexReq(key, 'POST', '/channels', {
       channel: {
         channel: dto.channel,

@@ -166,3 +166,43 @@ describe('syncProperty sobre una property que ya existe', () => {
     expect(deletes.some((d) => d!.includes('rp-derived'))).toBe(false)
   })
 })
+
+// ─── Reconectar un canal que ya existe ──────────────────────────────────────────────────────
+//
+// Channex rechaza el alta de un segundo canal del mismo tipo sobre la property ("Validation
+// Error"), así que apretar "Conectar" otra vez —para reintentar, o para recuperar un mapeo que se
+// había perdido— fallaba sin decir nada útil.
+
+describe('createOTAChannel sobre una property que ya tiene ese canal', () => {
+  it('re-mapea y reactiva el canal existente en vez de crear otro', async () => {
+    const calls: Call[] = []
+    const orig = globalThis.fetch
+    globalThis.fetch = (async (url: string, opts: any) => {
+      const u = String(url)
+      const method = opts?.method || 'GET'
+      calls.push({ method, url: u, body: opts?.body ? JSON.parse(opts.body) : undefined })
+      const json = (d: any) => new Response(JSON.stringify(d), { status: 200 })
+      if (method === 'GET' && u.includes('/channels')) {
+        return json({ data: [{ id: 'ch-1', attributes: { channel: 'OpenChannel', title: 'SolmiOS Open' } }], meta: { total: 1 } })
+      }
+      if (u.includes('check_readiness')) return json({ data: { attributes: { errors: [] } } })
+      return json({ data: { id: 'ch-1' } })
+    }) as any
+    try {
+      const uc = new ChannexUseCase(log as any, async () => ({ apiKey: 'k', environment: 'staging' }) as any)
+      const res = await uc.createOTAChannel(CFG, {
+        channel: 'OpenChannel', title: 'SolmiOS Open', groupId: 'g1', propertyId: 'prop-1',
+        ratePlans: [{ ratePlanId: 'rp-twin-bar', roomTypeCode: 'twin', ratePlanCode: 'twin-bar', occupancy: 2, pricingType: 'per_person', primaryOcc: true }],
+        settings: { endpoint: 'https://solmios.com/api/channels/open-ari/', api_key: 'k', hotel_code: 'h1' },
+      } as any)
+
+      expect(res.success).toBe(true)
+      expect(res.channelId).toBe('ch-1')
+      expect(res.steps).toMatchObject({ mapping: true, create: false, activate: true })
+      expect(calls.filter((c) => c.method === 'POST' && c.url.endsWith('/channels'))).toHaveLength(0)
+      const remap = calls.find((c) => c.method === 'PUT' && c.url.includes('/channels/ch-1') && c.body?.channel?.rate_plans)
+      expect(remap?.body.channel.rate_plans[0].settings.rate_plan_code).toBe('twin-bar')
+      expect(calls.some((c) => c.method === 'POST' && c.url.includes('/channels/ch-1/activate'))).toBe(true)
+    } finally { globalThis.fetch = orig; resetChannexHttpForTests() }
+  })
+})
