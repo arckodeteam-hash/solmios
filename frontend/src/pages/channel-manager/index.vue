@@ -89,12 +89,66 @@
       <div v-else class="w-full h-full flex items-center justify-center text-text-muted text-sm">Cargando...</div>
     </AppModal>
 
+    <!-- Estado de la conexión con el channel manager.
+         Antes esta vista solo hablaba de OTAs: un hotel ya publicado en Channex, con sus tipos y
+         tarifas arriba, veía "Sin canales conectados" y nada más. No había forma de saber si el
+         channel manager estaba conectado, contra qué cuenta, ni qué se había publicado. -->
+    <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6 mb-8">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div class="flex items-start gap-3 min-w-0">
+          <span class="w-2.5 h-2.5 rounded-full mt-2 shrink-0"
+            :class="loadingStatus ? 'bg-gray-300 animate-pulse' : cmConnected ? 'bg-teal animate-pulse' : 'bg-coral'"></span>
+          <div class="min-w-0">
+            <h2 class="text-lg font-black text-navy">
+              {{ loadingStatus ? 'Verificando la conexión…' : cmConnected ? 'Conectado a Channex' : 'Sin conectar al channel manager' }}
+            </h2>
+            <p class="text-xs text-text-secondary mt-0.5 max-w-2xl">
+              <template v-if="loadingStatus">Un momento, estamos leyendo el estado de tu propiedad.</template>
+              <template v-else-if="cmConnected">Tu hotel está publicado en el channel manager. Desde acá salen los precios y la disponibilidad hacia las OTAs que conectes.</template>
+              <template v-else>Tu hotel todavía no está publicado. Apretá «Forzar Sync Ahora» para crearlo en el channel manager.</template>
+            </p>
+          </div>
+        </div>
+        <span v-if="!loadingStatus && cmConnected && isTestEnv"
+          class="shrink-0 text-[10px] font-black uppercase px-3 py-1 rounded-full bg-gold/10 text-gold border border-gold/30"
+          title="Los precios y la disponibilidad viajan a la cuenta de prueba de Channex, no a las OTAs reales">
+          Entorno de prueba
+        </span>
+      </div>
+
+      <dl v-if="!loadingStatus && cmConnected" class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-5">
+        <div class="rounded-2xl border border-border p-4">
+          <dt class="text-[10px] font-bold text-text-muted uppercase">Propiedad en Channex</dt>
+          <dd class="mt-1 flex items-center gap-2">
+            <code class="text-xs font-mono text-navy truncate">{{ propertyShort }}</code>
+            <button @click="copyProperty" class="text-text-muted hover:text-navy cursor-pointer transition-colors" title="Copiar el id completo">
+              <Icon :name="copiedProperty ? 'check' : 'clipboard'" class="w-3.5 h-3.5" />
+            </button>
+          </dd>
+        </div>
+        <div class="rounded-2xl border border-border p-4">
+          <dt class="text-[10px] font-bold text-text-muted uppercase">Última sincronización</dt>
+          <dd class="mt-1 text-sm font-bold text-navy">{{ formatSync(status?.lastSync) }}</dd>
+        </div>
+        <div class="rounded-2xl border border-border p-4">
+          <dt class="text-[10px] font-bold text-text-muted uppercase">Tipos publicados</dt>
+          <dd class="mt-1 text-sm font-bold text-navy">{{ status?.publishedRoomTypes ?? 0 }}</dd>
+        </div>
+        <div class="rounded-2xl border border-border p-4">
+          <dt class="text-[10px] font-bold text-text-muted uppercase">Tarifas publicadas</dt>
+          <dd class="mt-1 text-sm font-bold text-navy">{{ status?.publishedRatePlans ?? 0 }}</dd>
+        </div>
+      </dl>
+    </div>
+
     <!-- Connected Channels -->
     <SectionCard title="Canales Conectados" class="mb-8">
       <template #actions>
         <span class="px-3 py-1 rounded-lg bg-white/10 text-xs font-black text-white">{{ connectedChannels.filter(c => c.connected).length }} de {{ connectedChannels.length }}</span>
       </template>
-      <EmptyState v-if="connectedChannels.length === 0"
+      <!-- El vacío solo después de responder: mostrarlo mientras carga hacía creer que no había nada. -->
+      <p v-if="loadingStatus" class="text-sm text-text-muted py-10 text-center">Cargando canales…</p>
+      <EmptyState v-else-if="connectedChannels.length === 0"
         title="Sin canales conectados"
         message="Todavía no conectaste ninguna OTA. Elegí uno de los canales disponibles abajo para empezar a sincronizar precios y reservas.">
       </EmptyState>
@@ -208,7 +262,8 @@
         <h2 class="text-lg font-black text-navy">Historial de Sincronización</h2>
         <span class="text-[10px] text-text-muted">{{ syncLog.length }} registros</span>
       </div>
-      <EmptyState v-if="syncLog.length === 0" title="Sin sincronizaciones"
+      <p v-if="loadingStatus" class="text-sm text-text-muted py-10 text-center">Cargando historial…</p>
+      <EmptyState v-else-if="syncLog.length === 0" title="Sin sincronizaciones"
         message="Todavía no hubo sincronizaciones con los canales. Aparecerán acá a medida que se envíen precios o lleguen reservas." />
       <div v-else class="overflow-x-auto">
         <table class="w-full">
@@ -309,6 +364,29 @@ const DEFAULT_OTA_CATALOG = [
 
 const status = ref<Awaited<ReturnType<typeof ChannelService.status>> | null>(null)
 const syncing = ref(false)
+/** La vista arranca cargando: sin esto los estados vacíos se muestran como si fueran la respuesta. */
+const loadingStatus = ref(true)
+const copiedProperty = ref(false)
+
+/** Conectado al channel manager = el hotel tiene propiedad publicada, aunque no haya OTAs todavía. */
+const cmConnected = computed(() => !!status.value?.channexPropertyId)
+/** Hasta la certificación, todo corre contra la cuenta de prueba de Channex. Hay que decirlo. */
+const isTestEnv = computed(() => status.value?.environment === 'staging')
+const propertyShort = computed(() => {
+  const id = status.value?.channexPropertyId || ''
+  return id ? `${id.slice(0, 8)}…${id.slice(-4)}` : '—'
+})
+
+async function copyProperty() {
+  const id = status.value?.channexPropertyId
+  if (!id) return
+  try {
+    await navigator.clipboard.writeText(id)
+    copiedProperty.value = true
+    setTimeout(() => { copiedProperty.value = false }, 1500)
+    toast.success('Id de la propiedad copiado')
+  } catch { toast.error('No se pudo copiar') }
+}
 
 const connectedChannels = ref<any[]>([])
 const availableChannels = ref<any[]>([])
@@ -380,6 +458,7 @@ function normalizeCatalog(list: any[]): any[] {
 }
 
 async function loadStatus() {
+  loadingStatus.value = true
   try {
     status.value = await ChannelService.status(hotelId.value)
     connectedChannels.value = status.value.data.map((c: any) => {
@@ -419,6 +498,7 @@ async function loadStatus() {
     const rows = Array.isArray(logData) ? logData : (logData?.data ?? [])
     syncLog.value = rows.slice(0, 20)
   } catch {}
+  loadingStatus.value = false
 }
 
 // Fecha de última sincronización legible (evita mostrar el timestamp ISO crudo).

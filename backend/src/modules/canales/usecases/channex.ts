@@ -181,7 +181,28 @@ export class ChannexUseCase {
       pendingBookings = feed.data?.meta?.total || 0
     } catch { /* feed opcional */ }
 
-    return { data: channels, connectedCount, pendingBookings, syncEnabled: (cfg?.syncEnabled ?? 1) === 1, lastSync: cfg?.lastSync || null, channexPropertyId: cfg?.channexPropertyId || null }
+    // Entorno y publicado: lo que el panel necesita para decir "estás conectado a X y publicaste Y".
+    // Los conteos salen del mapping local (`channel_mapping`), no de Channex: es una query barata
+    // y el panel se abre mucho más seguido de lo que se sincroniza.
+    const { base } = await this.platform()
+    const environment: 'staging' | 'production' = base === PROD_BASE ? 'production' : 'staging'
+    let publishedRoomTypes = 0
+    let publishedRatePlans = 0
+    if (this.mappingStore && cfg?.hotelId) {
+      try {
+        const mappings = (await this.mappingStore.read(cfg.hotelId)) as MappingEntry[]
+        publishedRoomTypes = mappings.filter((m) => m.kind === 'room_type').length
+        publishedRatePlans = mappings.filter((m) => m.kind === 'rate_plan').length
+      } catch { /* sin mapping todavía: quedan en 0 */ }
+    }
+
+    return {
+      data: channels, connectedCount, pendingBookings,
+      syncEnabled: (cfg?.syncEnabled ?? 1) === 1,
+      lastSync: cfg?.lastSync || null,
+      channexPropertyId: cfg?.channexPropertyId || null,
+      environment, publishedRoomTypes, publishedRatePlans,
+    }
   }
 
   async getFeed(): Promise<{ pendingBookings: number }> {

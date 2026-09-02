@@ -5,6 +5,7 @@
     :star-rating="hotelStars"
     :api-online="apiOnline"
     :last-sync="lastSync"
+    :sync-loading="syncLoading"
     :weather="weather"
     :alerts="alerts"
   />
@@ -28,6 +29,8 @@ const modules = useModulesStore()
 const hotelData = ref<HotelData | null>(null)
 const apiOnline = ref(true)
 const lastSync = ref<string | null>(null)
+/** Mientras se consulta el channel manager, la barra no puede afirmar que no está configurado. */
+const syncLoading = ref(true)
 const weather = ref<WeatherInfo | null>(null)
 /** Logo del hotel: sale del mismo GET /settings que el nombre y las estrellas, así el header
  *  se ve igual para todos los roles del panel (leerlo de `hotel-media` exigiría `media:view`,
@@ -55,6 +58,7 @@ onMounted(async () => {
   if (modules.enabled('channel')) {
     try { lastSync.value = (await ChannelService.status(hotelId.value)).lastSync ?? null; apiOnline.value = true } catch { apiOnline.value = false }
   }
+  syncLoading.value = false
   weather.value = await WeatherService.current(hotelData.value?.latitude, hotelData.value?.longitude)
 })
 </script>

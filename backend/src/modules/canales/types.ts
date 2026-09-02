@@ -60,6 +60,15 @@ export interface ChannelsResultDTO {
   syncEnabled: boolean
     lastSync: string | null
   channexPropertyId: string | null
+  /**
+   * Con qué cuenta de Channex está hablando el hotel. El panel lo muestra porque hasta la
+   * certificación TODO corre contra el entorno de prueba: un hotelero que ve precios publicados
+   * tiene que saber que todavía no llegan a las OTAs de verdad.
+   */
+  environment: 'staging' | 'production'
+  /** Tipos y tarifas efectivamente publicados, contados del mapping local (sin pegarle a Channex). */
+  publishedRoomTypes: number
+  publishedRatePlans: number
 }
 
 // Resumen de tipo de habitación (para sincronización ARI).

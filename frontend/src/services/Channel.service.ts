@@ -21,6 +21,11 @@ export interface ChannelStatus {
   syncEnabled: boolean
   lastSync: string | null
   channexPropertyId: string | null
+  /** Cuenta de Channex contra la que corre el hotel: hasta la certificación, `staging` (prueba). */
+  environment: 'staging' | 'production'
+  /** Tipos y tarifas publicados, según el mapeo guardado del último sync. */
+  publishedRoomTypes: number
+  publishedRatePlans: number
 }
 
 /**

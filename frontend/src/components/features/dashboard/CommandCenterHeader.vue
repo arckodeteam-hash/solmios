@@ -65,8 +65,8 @@
           </span>
           <div class="min-w-0">
             <div class="cc-pill-label truncate">Sincronización</div>
-            <div class="truncate text-[12px] font-black leading-tight" :class="lastSync ? 'text-white' : 'text-slate-500'">{{ lastSync ? syncAgoShort : 'Sin conectar' }}</div>
-            <div class="cc-pill-sub truncate">{{ lastSync ? syncAgoLong : 'Channel Manager no configurado' }}</div>
+            <div class="truncate text-[12px] font-black leading-tight" :class="lastSync ? 'text-white' : 'text-slate-500'">{{ lastSync ? syncAgoShort : syncLoading ? '…' : 'Sin conectar' }}</div>
+            <div class="cc-pill-sub truncate">{{ lastSync ? syncAgoLong : syncLoading ? 'Consultando el channel manager' : 'Channel Manager no configurado' }}</div>
           </div>
         </div>
 
@@ -143,6 +143,12 @@ const props = defineProps<{
   starRating?: number | string | null
   apiOnline: boolean
   lastSync?: string | null
+  /**
+   * Todavía no llegó la respuesta del channel manager. Sin esto, la barra afirmaba
+   * "Sin conectar · Channel Manager no configurado" durante los segundos que tarda la
+   * consulta — a un hotel que SÍ estaba sincronizado.
+   */
+  syncLoading?: boolean
   weather?: WeatherInfo | null
   /** Incidencias/tareas abiertas que recepción debería mirar */
   alerts?: number
