@@ -28,6 +28,7 @@
               <th class="text-left font-bold px-4 py-3">Fecha</th>
               <th class="text-left font-bold px-4 py-3">Estado</th>
               <th class="text-left font-bold px-4 py-3">Notas internas</th>
+              <th class="text-left font-bold px-4 py-3"></th>
             </tr>
           </thead>
           <tbody>
@@ -49,6 +50,17 @@
                 <input :value="r.notes || ''" @change="guardarNota(r, ($event.target as HTMLInputElement).value)"
                   placeholder="Solo las vemos nosotros"
                   class="w-full px-2 py-1.5 rounded-lg border border-border text-xs" />
+              </td>
+              <td class="px-4 py-3">
+                <!-- El canal propio se conecta de un click desde acá (no necesita credenciales de
+                     nadie). Las OTAs reales se dan de alta en el asistente de Channex, con el
+                     contrato y las credenciales — acá solo se mueve el estado. -->
+                <button v-if="r.channel === 'solmios-open' && r.status !== 'connected'"
+                  @click="conectarPropio(r)" :disabled="conectando === r.id"
+                  class="px-3 py-1.5 rounded-lg bg-navy text-white text-xs font-black hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
+                  {{ conectando === r.id ? 'Conectando…' : 'Conectar ahora' }}
+                </button>
+                <span v-else-if="r.channel !== 'solmios-open'" class="text-xs text-text-muted">Alta manual en Channex</span>
               </td>
             </tr>
           </tbody>
@@ -121,6 +133,27 @@ async function guardar(r: ChannelRequestAdmin, patch: Record<string, string>) {
   } catch {
     toast.error('No se pudo actualizar')
     await cargar()
+  }
+}
+
+const conectando = ref('')
+
+/**
+ * Conecta el canal propio del hotel que lo pidió y deja la solicitud en "Conectada".
+ * `?hotelId=` apunta al hotel de la solicitud: el endpoint es de admin y resuelve el tenant del
+ * query solo para super_admin.
+ */
+async function conectarPropio(r: ChannelRequestAdmin) {
+  conectando.value = r.id
+  try {
+    const res = await http.post<{ success: boolean; message: string }>(`/channels/open-channel/connect?hotelId=${r.hotelId}`, {})
+    if (!res?.success) { toast.error(res?.message || 'Channex rechazó la conexión'); return }
+    await guardar(r, { status: 'connected' })
+    toast.success(res.message)
+  } catch (e: any) {
+    toast.error(e?.message || 'No se pudo conectar el canal')
+  } finally {
+    conectando.value = ''
   }
 }
 

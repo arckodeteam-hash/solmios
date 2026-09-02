@@ -112,7 +112,11 @@ export function CanalesModule() {
       router.post('/api/channels/test-connection', guard('channel-manager', 'edit'), (req) => controller.testConnection(req))
       router.get('/api/channels/mapping-details', guard('channel-manager', 'view'), (req) => controller.mappingDetails(req))
       router.get('/api/channels/groups', guard('channel-manager', 'view'), (req) => controller.groups(req))
-      router.post('/api/channels/connect', guard('channel-manager', 'edit'), (req) => controller.connectOTA(req))
+      // Conectar un canal es SIEMPRE del admin de la plataforma, nunca del hotel: hace falta el
+      // contrato con la OTA, sus credenciales, y cada canal abierto cuesta plata en la cuenta de
+      // Channex. El hotel lo PIDE (`POST /api/channels/requests`) y acá se lo conectan, apuntando
+      // a su hotel con `?hotelId=` (resolveTenant deja targetear otro hotel solo a super_admin).
+      router.post('/api/channels/connect', adminOnly, (req) => controller.connectOTA(req))
       router.post('/api/channels/:id/deactivate', guard('channel-manager', 'edit'), (req) => controller.deactivate(req))
       // Mapeo de rate plans de un canal YA CREADO. Sin esto un canal con "Rate Plans Mapeados (0)"
       // no tenía arreglo desde el panel: solo se podía crear uno nuevo con su mapeo.
@@ -254,7 +258,9 @@ export function CanalesModule() {
         }
       })
 
-      router.post('/api/channels/open-channel/connect', guard('channel-manager', 'edit'), async (req: any) => {
+      // El canal propio no es una OTA, pero sigue siendo un canal en la cuenta de Channex: misma
+      // regla que el resto. El hotel lo pide como cualquier otro y lo conecta el admin.
+      router.post('/api/channels/open-channel/connect', adminOnly, async (req: any) => {
         const hotelId = resolveTenant(req)
         if (!hotelId) return { status: 404, body: { error: 'Hotel no encontrado' } }
         const cfg = (await queries.findMany('Canales', { hotelId }))[0] as CanalesDTO | undefined

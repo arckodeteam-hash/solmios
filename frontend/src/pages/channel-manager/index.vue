@@ -83,9 +83,15 @@
       </template>
     </AppModal>
 
-    <!-- Conectar canales (iFrame) -->
+    <!-- El asistente del channel manager. Sirve para MIRAR lo que está conectado y cómo quedó
+         mapeado; dar de alta un canal desde acá no corresponde (cada canal necesita contrato y
+         credenciales de la OTA, y lo abre el equipo). Se avisa arriba en vez de esconderlo. -->
     <AppModal v-if="showIframe" size="xl" title="Configuración de canales" body-class="p-0 h-[88vh] !flex-none" @close="showIframe = false; loadStatus()">
-      <iframe v-if="iframeUrl" :src="iframeUrl" class="w-full h-full block" frameborder="0" />
+      <div class="px-4 py-2.5 bg-amber/10 border-b border-amber/30 text-[12px] text-navy font-bold">
+        Acá podés ver tus canales y cómo quedaron mapeadas tus tarifas.
+        <span class="font-normal text-text-secondary">Para conectar uno nuevo, pedilo desde «Canales Disponibles para Conectar» — lo conectamos nosotros.</span>
+      </div>
+      <iframe v-if="iframeUrl" :src="iframeUrl" class="w-full h-[calc(100%-42px)] block" frameborder="0" />
       <div v-else class="w-full h-full flex items-center justify-center text-text-muted text-sm">Cargando...</div>
     </AppModal>
 
@@ -174,26 +180,13 @@
     <!-- Connected Channels -->
     <SectionCard title="Canales Conectados" class="mb-8">
       <template #actions>
-        <!-- El botón vivía SOLO dentro del estado vacío: un hotel que conectaba una OTA primero
-             perdía para siempre el acceso a conectar SolmiOS. Ahora está siempre a mano. -->
-        <button v-if="cmConnected && !hasOpenChannel" @click="connectOpenChannel" :disabled="connectingOpen"
-          class="px-3 py-1.5 rounded-lg bg-white text-navy text-xs font-black hover:bg-white/90 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-          {{ connectingOpen ? 'Conectando…' : 'Conectar SolmiOS' }}
-        </button>
         <span class="px-3 py-1 rounded-lg bg-white/10 text-xs font-black text-white">{{ connectedChannels.filter(c => c.connected).length }} de {{ connectedChannels.length }}</span>
       </template>
       <!-- El vacío solo después de responder: mostrarlo mientras carga hacía creer que no había nada. -->
       <p v-if="loadingStatus" class="text-sm text-text-muted py-10 text-center">Cargando canales…</p>
       <EmptyState v-else-if="connectedChannels.length === 0"
         title="Sin canales conectados"
-        message="Conectá SolmiOS como canal para probar que tus precios y tu disponibilidad salen bien, o pedí la conexión de una OTA de la lista de abajo.">
-        <template #action>
-          <button v-if="cmConnected" @click="connectOpenChannel" :disabled="connectingOpen"
-            class="px-5 py-2.5 rounded-xl bg-navy text-white text-sm font-black hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-            {{ connectingOpen ? 'Conectando…' : 'Conectar SolmiOS como canal' }}
-          </button>
-        </template>
-      </EmptyState>
+        message="Pedí abajo el canal que quieras conectar. Las conexiones las hace el equipo de SolmiOS: cada canal necesita el contrato y las credenciales de esa OTA." />
       <div v-else class="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <div v-for="channel in connectedChannels" :key="channel.id"
           class="rounded-2xl border-2 border-navy bg-white overflow-hidden flex flex-col transition-transform duration-300 hover:-translate-y-1 hover:shadow-lg">
@@ -251,7 +244,7 @@
     <SectionCard title="Canales Disponibles para Conectar" subtitle="Pedí la conexión y te guiamos con el mapeo" class="mb-8">
 
       <div class="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        <div v-for="channel in availableChannels" :key="channel.id"
+        <div v-for="channel in pedibles" :key="channel.id"
           class="rounded-2xl border-2 border-navy bg-white p-4 flex flex-col gap-3 transition-transform duration-300 hover:-translate-y-1 hover:shadow-lg">
           <div class="flex items-center gap-3">
             <div class="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" :class="channel.bgColor">
@@ -372,6 +365,17 @@ async function copyTaskIds(ids: string[]) {
 const router = useRouter()
 const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
 
+/**
+ * El canal propio del PMS. Va PRIMERO y con su propia etiqueta: no es una OTA (no hay contrato ni
+ * comisiones), sirve para comprobar que los precios y la disponibilidad salen bien. Se pide igual
+ * que el resto — conectar cualquier canal es del admin de la plataforma, porque cada canal abierto
+ * cuesta en la cuenta de Channex.
+ */
+const SELF_CHANNEL = {
+  id: 'solmios-open', name: 'SolmiOS (conexión de prueba)', channexCode: 'OpenChannel',
+  icon: '', bgColor: 'bg-navy/10', iconColor: 'text-navy', type: 'prueba', connected: false,
+}
+
 const DEFAULT_OTA_CATALOG = [
   { id: 'airbnb', name: 'Airbnb', channexCode: 'AirBNB', icon: ICON_AIRBNB, bgColor: 'bg-coral/10', iconColor: 'text-coral', type: 'ota', connected: false },
   { id: 'booking', name: 'Booking.com', channexCode: 'BookingCom', icon: ICON_BOOKING, bgColor: 'bg-cyan/10', iconColor: 'text-cyan', type: 'ota', connected: false },
@@ -391,14 +395,10 @@ const copiedProperty = ref(false)
 
 /** Conectado al channel manager = el hotel tiene propiedad publicada, aunque no haya OTAs todavía. */
 const cmConnected = computed(() => !!status.value?.channexPropertyId)
-/** ¿Ya está conectado el canal propio? Si sí, el botón de conectarlo no tiene nada que hacer. */
-const hasOpenChannel = computed(() =>
-  connectedChannels.value.some((c: any) => /solmios/i.test(String(c?.name || ''))))
 /** Publicada pero muda: el hotel apagó la sincronización desde acá. */
 const syncPaused = computed(() => cmConnected.value && status.value?.syncEnabled === false)
 const confirmDisconnect = ref(false)
 const togglingSync = ref(false)
-const connectingOpen = ref(false)
 /** Hasta la certificación, todo corre contra la cuenta de prueba de Channex. Hay que decirlo. */
 const isTestEnv = computed(() => status.value?.environment === 'staging')
 const propertyShort = computed(() => {
@@ -440,6 +440,10 @@ const openingConfig = ref(false)
 // inglés, pidiendo credenciales que el hotelero no tiene— y del lado nuestro nadie se enteraba.
 const requests = ref<ChannelRequest[]>([])
 const requestingChannel = ref('')
+
+/** Los canales que ya están conectados no se vuelven a ofrecer para pedir. */
+const pedibles = computed(() => availableChannels.value.filter((c: any) =>
+  !connectedChannels.value.some((k: any) => String(k?.name || '').toLowerCase().includes(String(c?.name || '').split(' ')[0]!.toLowerCase()))))
 
 /** La solicitud abierta o resuelta de un canal del catálogo, si existe. */
 function requestOf(channelCode: string): ChannelRequest | undefined {
@@ -518,8 +522,8 @@ async function loadStatus() {
     const otas = await ConfigService.get('ota_catalog', 'platform')
       || await ConfigService.get('catalogo_otas', 'platform')
     const source = (Array.isArray(otas) && otas.length > 0) ? otas : DEFAULT_OTA_CATALOG
-    availableChannels.value = normalizeCatalog(source)
-  } catch { availableChannels.value = normalizeCatalog(DEFAULT_OTA_CATALOG) }
+    availableChannels.value = normalizeCatalog([SELF_CHANNEL, ...source])
+  } catch { availableChannels.value = normalizeCatalog([SELF_CHANNEL, ...DEFAULT_OTA_CATALOG]) }
   // Load sync history from DB
   try {
     const logData = await ChannelService.syncLog(hotelId.value)
@@ -558,24 +562,6 @@ async function openConnectFlow() {
     toast.error('No se pudo abrir el asistente de conexión')
   } finally {
     openingConfig.value = false
-  }
-}
-
-/**
- * Conecta SolmiOS como canal en un click. Antes había que copiar tres credenciales del modal y
- * pegarlas en el asistente de Channex: ese paso manual es la razón por la que un hotel nuevo se
- * quedaba sin ningún canal conectado.
- */
-async function connectOpenChannel() {
-  connectingOpen.value = true
-  try {
-    const r = await ChannelService.connectOpenChannel()
-    await loadStatus()
-    toast.success(r.message || 'Canal conectado')
-  } catch (e: any) {
-    toast.error(e?.message || 'No se pudo conectar el canal')
-  } finally {
-    connectingOpen.value = false
   }
 }
 
