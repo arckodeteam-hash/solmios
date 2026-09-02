@@ -6,6 +6,8 @@
 // (kind, localId) → channexId y los pushes resuelven por mapping, con fallback a la
 // vía vieja (GET + título) para hoteles sin mapping todavía.
 
+import { channexRoomTypeTitle } from '../../../shared/utils/room-type-titles'
+
 export type MappingKind = 'property' | 'room_type' | 'rate_plan'
 
 export interface MappingEntry {
@@ -54,4 +56,18 @@ export function targetsFromMappings(mappings: MappingEntry[]): AriTargets {
     rpsByRt.set(rtId, list.map((x) => ({ id: x.id, title: x.planLabel })))
   }
   return { rtIdByTitle, rpsByRt }
+}
+
+/**
+ * UUID del room type de Channex para un tipo local.
+ *
+ * Busca por el CÓDIGO local (así lo indexa el mapping persistido) y, si no está, por el TÍTULO
+ * publicado — que es como quedan indexadas las properties viejas resueltas por GET + título.
+ * Sin el segundo intento, un hotel sin mapping dejaría de publicar en silencio en cuanto los
+ * room types de Channex pasaron a llamarse "Twin Room" en vez de "twin".
+ */
+export function lookupRoomTypeId(rtIdByTitle: Map<string, string>, type: string): string | undefined {
+  const raw = String(type || '').toLowerCase()
+  if (!raw) return undefined
+  return rtIdByTitle.get(raw) ?? rtIdByTitle.get(channexRoomTypeTitle(raw).toLowerCase())
 }

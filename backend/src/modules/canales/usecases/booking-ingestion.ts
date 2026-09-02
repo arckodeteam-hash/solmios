@@ -8,6 +8,7 @@
 import type { ORM } from 'arckode-framework'
 import type { ChannexUseCase } from './channex'
 import type { BookingRevisionDTO } from '../types'
+import { localRoomTypeFromTitle } from '../../../shared/utils/room-type-titles'
 
 /**
  * Puerto de cancelación hacia `reservas` (lo cablea `connectors/canales-reservas.ts`).
@@ -146,7 +147,10 @@ export async function applyBookingRevision(deps: BookingIngestDeps, dto: any): P
   if (channexRoomTypeId) {
     const rt = await channex.getRoomTypeById(apiKey, channexRoomTypeId)
     if (rt?.title) {
-      const rooms = await orm.findMany('Rooms', { hotelId, type: rt.title })
+      // El room type de Channex se publica con título vendible ("Twin Room"); la habitación local
+      // guarda el código del enum ('twin'). Sin traducir, toda reserva OTA caía en el fallback de
+      // auto-asignación y terminaba en una habitación de otro tipo.
+      const rooms = await orm.findMany('Rooms', { hotelId, type: localRoomTypeFromTitle(rt.title) })
       roomId = rooms?.[0]?.id || null
     }
   }

@@ -7,9 +7,11 @@ import type { Logger } from 'arckode-framework'
 import type { CanalesDTO, ChannelDTO, ChannelsResultDTO, RoomTypeSummary, SyncResultDTO, TestConnectionDTO, TestConnectionResultDTO, MappingDetailDTO, OTAChannelCreateDTO, OTAChannelResultDTO, GroupDTO, OTAChannelMeta, BookingRevisionDTO, PushRatesResultDTO, DateRange } from '../types'
 import { sharedChannexHttp } from './channex-http'
 import { DEFAULT_RATE_PLANS, planPrice, matchRatePlan, type RatePlanDef } from './rate-plans'
-import { targetsFromMappings, type ChannelMappingStore, type MappingEntry, type AriTargets } from './channex-mapping'
+import { targetsFromMappings, type ChannelMappingStore, type MappingEntry, type AriTargets, lookupRoomTypeId } from './channex-mapping'
 import { FULL_SYNC_HORIZON_DAYS, MS_PER_DAY } from './availability'
 import { buildOverrideValues, type OverridePushItem, type OverridePushSkips } from './push-overrides'
+import { extractTaskIds } from './ari-tasks'
+import { channexRoomTypeTitle, localRoomTypeFromTitle } from '../../../shared/utils/room-type-titles'
 
 const STAGING_BASE = process.env.CHANNEX_BASE_URL || 'https://staging.channex.io/api/v1'
 const PROD_BASE = 'https://api.channex.io/api/v1'
@@ -229,7 +231,7 @@ export class ChannexUseCase {
 
     const createdRTs: any[] = []
     const rtResults = await Promise.all(rooms.map((rt: RoomTypeSummary) =>
-      this.channexReq(key, 'POST', '/room_types', { room_type: { property_id: channexPId, title: rt.type, count_of_rooms: rt.cnt, occ_adults: rt.capacity, occ_children: 1, occ_infants: 1 } })
+      this.channexReq(key, 'POST', '/room_types', { room_type: { property_id: channexPId, title: channexRoomTypeTitle(rt.type), count_of_rooms: rt.cnt, occ_adults: rt.capacity, occ_children: 1, occ_infants: 1 } })
     ))
     rtResults.filter(r => r.ok && r.data?.data).forEach(r => createdRTs.push(r.data.data))
 
@@ -238,7 +240,8 @@ export class ChannexUseCase {
     // Batch rate plan creation — UNO POR PLAN (P5): "Double BAR", "Double Bed & Breakfast"…
     const rpCreated = await Promise.all(createdRTs.flatMap(rt => {
       const title = rt.attributes?.title || rt.title
-      const roomData = rooms.find(rm => rm.type === title)
+      // El título publicado ya no es el código local: se compara traduciendo (ver room-type-titles).
+      const roomData = rooms.find(rm => channexRoomTypeTitle(rm.type) === title)
       const basePrice = Math.round((roomData?.basePrice || 100) * 100)
       const cap = Math.max(1, roomData?.capacity || 2)
       return ratePlans.map(plan => {
@@ -268,14 +271,15 @@ export class ChannexUseCase {
       try {
         const entries: MappingEntry[] = [{ kind: 'property', localId: 'default', channexId: channexPId! }]
         for (const rt of rtList) {
-          entries.push({ kind: 'room_type', localId: String(rt.attributes?.title || ''), channexId: rt.id })
+          entries.push({ kind: 'room_type', localId: localRoomTypeFromTitle(String(rt.attributes?.title || '')), channexId: rt.id })
         }
         for (const rp of rpList) {
           const rt = rtList.find((r: any) => r.id === (rp.attributes?.room_type_id || rp.relationships?.room_type?.data?.id))
           const rtTitle = String(rt?.attributes?.title || '')
           const rpTitle = String(rp.attributes?.title || '')
           const planLabel = rtTitle && rpTitle.startsWith(`${rtTitle} `) ? rpTitle.slice(rtTitle.length + 1) : rpTitle
-          if (rtTitle && planLabel) entries.push({ kind: 'rate_plan', localId: `${rtTitle}|${planLabel}`, channexId: rp.id })
+          const localType = localRoomTypeFromTitle(rtTitle)
+          if (localType && planLabel) entries.push({ kind: 'rate_plan', localId: `${localType}|${planLabel}`, channexId: rp.id })
         }
         await this.mappingStore.upsert(hotelId, entries)
       } catch (e) {
@@ -393,7 +397,7 @@ export class ChannexUseCase {
       if (!baselineByRoomType.has(rt)) baselineByRoomType.set(rt, group)
     }
     for (const [roomType, group] of baselineByRoomType) {
-      const rtId = rtIdByTitle.get(roomType.toLowerCase())
+      const rtId = lookupRoomTypeId(rtIdByTitle, roomType)
       const rtRps = rtId ? rpsByRt.get(rtId) : undefined
       if (!rtRps?.length) continue   // el motivo ya lo reporta el loop de temporadas de abajo
       const flat = group.map((r) => ({ occupancy: Number(r.occupancy) || 0, rate: priceOf({ basePrice: r.basePrice, percentage: 0 }) }))
@@ -422,7 +426,7 @@ export class ChannexUseCase {
         ? [{ startDate: s.startDate, endDate: s.endDate }]
         : (assignedRanges.get(head.season) || [])
       if (ranges.length === 0) { skipped++; seasonsWithoutDates.add(seasonLabel(head.season)); continue }
-      const rtId = rtIdByTitle.get(String(head.roomType).toLowerCase())
+      const rtId = lookupRoomTypeId(rtIdByTitle, String(head.roomType))
       const rtRps = rtId ? rpsByRt.get(rtId) : undefined
       if (!rtRps?.length) { skipped++; roomTypesWithoutRatePlan.add(String(head.roomType)); continue }
       // Precio por ocupación (per_person) o precio único del grupo (per_room), ANTES del markup del plan.
@@ -469,8 +473,9 @@ export class ChannexUseCase {
     if (values.length === 0) return { ...empty(), skipped, ...reasons }
     const res = await this.channexReq(key, 'POST', '/restrictions', { values })
     if (!res.ok) throw new Error('Channex rechazó las tarifas: ' + JSON.stringify((res.data as any)?.errors || '').slice(0, 200))
-    this.logger.info('Tarifas por temporada empujadas a Channex', { pushed: values.length, skipped, ...reasons })
-    return { ...empty(), pushed: values.length, skipped, ...reasons }
+    const taskIds = extractTaskIds(res.data)
+    this.logger.info('Tarifas por temporada empujadas a Channex', { pushed: values.length, skipped, taskIds, ...reasons })
+    return { ...empty(), pushed: values.length, skipped, taskIds, ...reasons }
   }
 
   /**
@@ -486,18 +491,19 @@ export class ChannexUseCase {
     cfg: CanalesDTO | undefined,
     items: OverridePushItem[],
     ratePlans: RatePlanDef[] = DEFAULT_RATE_PLANS,
-  ): Promise<{ pushed: number; calls: number; skips: OverridePushSkips }> {
+  ): Promise<{ pushed: number; calls: number; skips: OverridePushSkips; taskIds: string[] }> {
     const noSkips: OverridePushSkips = { roomTypesWithoutRatePlan: [], ratePlansUnknown: [], expiredRanges: 0 }
-    if (!cfg?.channexPropertyId || !items?.length) return { pushed: 0, calls: 0, skips: noSkips }
+    if (!cfg?.channexPropertyId || !items?.length) return { pushed: 0, calls: 0, skips: noSkips, taskIds: [] }
     const key = this.resolveKey(cfg)
     const targets = await this.resolveAriTargets(cfg)
     const today = new Date().toISOString().slice(0, 10)
     const { values, skips } = buildOverrideValues(items, cfg.channexPropertyId, targets, ratePlans, today)
-    if (!values.length) return { pushed: 0, calls: 0, skips }
+    if (!values.length) return { pushed: 0, calls: 0, skips, taskIds: [] }
     const res = await this.channexReq(key, 'POST', '/restrictions', { values })
     if (!res.ok) throw new Error('Channex rechazó los overrides: ' + JSON.stringify((res.data as any)?.errors || '').slice(0, 200))
-    this.logger.info('Overrides de tarifa empujados a Channex (1 llamada)', { pushed: values.length, ...skips })
-    return { pushed: values.length, calls: 1, skips }
+    const taskIds = extractTaskIds(res.data)
+    this.logger.info('Overrides de tarifa empujados a Channex (1 llamada)', { pushed: values.length, taskIds, ...skips })
+    return { pushed: values.length, calls: 1, skips, taskIds }
   }
 
   // ─── Push de availability (reservas/checkin/checkout/bloqueos) ───────
@@ -508,11 +514,15 @@ export class ChannexUseCase {
     cfg: CanalesDTO | undefined,
     roomType: string,
     ranges: { dateFrom: string; dateTo: string; availability: number }[],
-  ): Promise<{ pushed: boolean }> {
-    if (!cfg?.channexPropertyId || ranges.length === 0) return { pushed: false }
+  ): Promise<{ pushed: boolean; taskIds: string[] }> {
+    if (!cfg?.channexPropertyId || ranges.length === 0) return { pushed: false, taskIds: [] }
     const key = this.resolveKey(cfg)
-    const rtId = await this.resolveChannexRoomTypeId(key, cfg.channexPropertyId, roomType)
-    if (!rtId) return { pushed: false }
+    // Mismo camino de resolución que el full sync (P6): mapping persistido primero, GET+título de
+    // fallback. Antes esta ruta hacía SIEMPRE un GET /room_types propio — dos resoluciones distintas
+    // para el mismo UUID y una request de más contra el rate limit por cada reserva que se movía.
+    const { rtIdByTitle } = await this.resolveAriTargets(cfg)
+    const rtId = lookupRoomTypeId(rtIdByTitle, String(roomType))
+    if (!rtId) return { pushed: false, taskIds: [] }
     const values = ranges.map(r => ({
       property_id: cfg.channexPropertyId,
       room_type_id: rtId,
@@ -520,9 +530,13 @@ export class ChannexUseCase {
       date_to: r.dateTo,
       availability: r.availability,
     }))
-    await this.channexReq(key, 'POST', '/availability', { values })
-    this.logger.info('Availability Channex actualizada', { roomType, rangos: ranges.length })
-    return { pushed: true }
+    const res = await this.channexReq(key, 'POST', '/availability', { values })
+    // Sin este check un 422 (rango inválido, room type de otra property) pasaba como éxito: la OTA
+    // seguía vendiendo una habitación ya reservada y el panel decía "pushed".
+    if (!res.ok) throw new Error('Channex rechazó la disponibilidad: ' + JSON.stringify((res.data as any)?.errors || '').slice(0, 200))
+    const taskIds = extractTaskIds(res.data)
+    this.logger.info('Availability Channex actualizada', { roomType, rangos: ranges.length, taskIds })
+    return { pushed: true, taskIds }
   }
 
   /**
@@ -533,31 +547,26 @@ export class ChannexUseCase {
   async pushAllAvailability(
     cfg: CanalesDTO | undefined,
     list: Array<{ roomType: string; ranges: Array<{ dateFrom: string; dateTo: string; availability: number }> }>,
-  ): Promise<{ pushed: number }> {
-    if (!cfg?.channexPropertyId || !list.length) return { pushed: 0 }
+  ): Promise<{ pushed: number; taskIds: string[] }> {
+    if (!cfg?.channexPropertyId || !list.length) return { pushed: 0, taskIds: [] }
     const key = this.resolveKey(cfg)
     const { rtIdByTitle } = await this.resolveAriTargets(cfg)
     const values: any[] = []
     for (const { roomType, ranges } of list) {
-      const rtId = rtIdByTitle.get(String(roomType).toLowerCase())
+      const rtId = lookupRoomTypeId(rtIdByTitle, String(roomType))
       if (!rtId) continue // tipo sin counterpart en Channex: el sync de estructura lo crea
       for (const r of ranges) {
         values.push({ property_id: cfg.channexPropertyId, room_type_id: rtId, date_from: r.dateFrom, date_to: r.dateTo, availability: r.availability })
       }
     }
-    if (!values.length) return { pushed: 0 }
-    await this.channexReq(key, 'POST', '/availability', { values })
-    this.logger.info('Full availability Channex empujada (1 llamada)', { roomTypes: list.length, rangos: values.length })
-    return { pushed: values.length }
+    if (!values.length) return { pushed: 0, taskIds: [] }
+    const res = await this.channexReq(key, 'POST', '/availability', { values })
+    if (!res.ok) throw new Error('Channex rechazó la disponibilidad: ' + JSON.stringify((res.data as any)?.errors || '').slice(0, 200))
+    const taskIds = extractTaskIds(res.data)
+    this.logger.info('Full availability Channex empujada (1 llamada)', { roomTypes: list.length, rangos: values.length, taskIds })
+    return { pushed: values.length, taskIds }
   }
 
-  // Resuelve el room_type_id de Channex por title (rt.type == room_type title).
-  // Mismo criterio que pushRate/sync usan para matchear tipo local → Channex.
-  private async resolveChannexRoomTypeId(apiKey: string, propertyId: string, roomType: string): Promise<string | null> {
-    const rtList = await this.channexList(apiKey, `/room_types?filter[property_id]=${propertyId}`)
-    const target = rtList.find(rt => String(rt.attributes?.title || '').toLowerCase() === roomType.toLowerCase())
-    return target?.id || null
-  }
 
   // ─── Channel API (conexión OTA) ──────────────────────────────────────
   async testConnection(cfg: CanalesDTO | undefined, dto: TestConnectionDTO): Promise<TestConnectionResultDTO> {
