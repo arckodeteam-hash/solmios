@@ -26,6 +26,19 @@ export interface ProvisioningDeps {
 }
 
 export class ProvisioningUseCase {
+  /**
+   * Altas automáticas EN VUELO por hotel.
+   *
+   * La guarda de `auto-provision.ts` ("¿ya tiene property?") es un read-then-check: no alcanza
+   * cuando llegan varios eventos a la vez. Cargar habitaciones EN LOTE dispara `onRoomCreated`
+   * una vez por habitación y todas corren en paralelo (fire-and-forget), así que las N leían la
+   * config vacía y creaban N properties —y N grupos— en Channex para el mismo hotel. Pasó de
+   * verdad el 2026-09-01: un hotel nuevo quedó con 2 properties, una huérfana.
+   *
+   * Con esto, las llamadas concurrentes del mismo hotel comparten UNA sola ejecución.
+   */
+  private readonly inFlight = new Map<string, Promise<AutoProvisionOutcome>>()
+
   constructor(private readonly deps: ProvisioningDeps) {}
 
   /** Sync completo del hotel: lee sus datos y sus habitaciones reales y las publica. */
@@ -36,8 +49,16 @@ export class ProvisioningUseCase {
     return this.deps.syncProperty(hotelId, hotel, summarizeRoomTypes(rooms))
   }
 
-  /** Alta automática. Best-effort y con guardas — ver `auto-provision.ts`. */
+  /** Alta automática. Best-effort, con guardas (`auto-provision.ts`) y sin carreras (ver arriba). */
   autoProvision(hotelId: string): Promise<AutoProvisionOutcome> {
+    const running = this.inFlight.get(hotelId)
+    if (running) return running
+    const run = this.runAutoProvision(hotelId).finally(() => this.inFlight.delete(hotelId))
+    this.inFlight.set(hotelId, run)
+    return run
+  }
+
+  private runAutoProvision(hotelId: string): Promise<AutoProvisionOutcome> {
     return autoProvisionChannex({
       getConfig: (h) => this.deps.getConfig(h),
       findMany: (m, q) => this.deps.findMany(m, q),
