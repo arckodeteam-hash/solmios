@@ -84,7 +84,7 @@
     </AppModal>
 
     <!-- Conectar canales (iFrame) -->
-    <AppModal v-if="showIframe" size="xl" title="Conectar Canales" body-class="p-0 h-[88vh] !flex-none" @close="showIframe = false; loadStatus()">
+    <AppModal v-if="showIframe" size="xl" title="Configuración de canales" body-class="p-0 h-[88vh] !flex-none" @close="showIframe = false; loadStatus()">
       <iframe v-if="iframeUrl" :src="iframeUrl" class="w-full h-full block" frameborder="0" />
       <div v-else class="w-full h-full flex items-center justify-center text-text-muted text-sm">Cargando...</div>
     </AppModal>
@@ -104,16 +104,25 @@
             </h2>
             <p class="text-xs text-text-secondary mt-0.5 max-w-2xl">
               <template v-if="loadingStatus">Un momento, estamos leyendo el estado de tu propiedad.</template>
-              <template v-else-if="cmConnected">Tu hotel está publicado en el channel manager. Desde acá salen los precios y la disponibilidad hacia las OTAs que conectes.</template>
+              <template v-else-if="cmConnected">Tu hotel está publicado en el channel manager. Desde acá salen los precios y la disponibilidad hacia las OTAs que conectes; en «Abrir configuración» se mapean habitaciones y tarifas y se dan de alta los canales.</template>
               <template v-else>Tu hotel todavía no está publicado. Apretá «Forzar Sync Ahora» para crearlo en el channel manager.</template>
             </p>
           </div>
         </div>
-        <span v-if="!loadingStatus && cmConnected && isTestEnv"
-          class="shrink-0 text-[10px] font-black uppercase px-3 py-1 rounded-full bg-gold/10 text-gold border border-gold/30"
-          title="Los precios y la disponibilidad viajan a la cuenta de prueba de Channex, no a las OTAs reales">
-          Entorno de prueba
-        </span>
+        <div class="flex items-center gap-3 shrink-0">
+          <span v-if="!loadingStatus && cmConnected && isTestEnv"
+            class="text-[10px] font-black uppercase px-3 py-1 rounded-full bg-gold/10 text-gold border border-gold/30"
+            title="Los precios y la disponibilidad viajan a la cuenta de prueba de Channex, no a las OTAs reales">
+            Entorno de prueba
+          </span>
+          <!-- El asistente de Channex (mapeo de habitaciones y tarifas, alta de OTAs) ya existía,
+               pero su ÚNICO acceso era el botón "Solicitar Conexión" de una tarjeta de OTA: no
+               había forma de entrar a configurar el channel manager en sí. -->
+          <button v-if="!loadingStatus && cmConnected" @click="openConnectFlow()" :disabled="openingConfig"
+            class="px-4 py-2 rounded-xl bg-navy text-white text-xs font-black hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            {{ openingConfig ? 'Abriendo…' : 'Abrir configuración' }}
+          </button>
+        </div>
       </div>
 
       <dl v-if="!loadingStatus && cmConnected" class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-5">
@@ -402,6 +411,8 @@ const connectError = ref('')
 const connectResult = ref('')
 const showIframe = ref(false)
 const iframeUrl = ref('')
+/** El token del iframe es un round-trip al servidor: sin aviso, el botón parece no hacer nada. */
+const openingConfig = ref(false)
 
 // ── Conectar un sistema propio (Open Channel) ──────────────────────────────
 const openChannelModal = ref(false)
@@ -517,12 +528,15 @@ function formatSync(raw: string | null | undefined): string {
 
 // Solicitar conexión de un canal: abre el flujo de mapeo/conexión de Channex embebido (iframe).
 async function openConnectFlow() {
+  openingConfig.value = true
   try {
     const r = await ChannelService.iframeToken(hotelId.value, auth.user?.name)
     iframeUrl.value = r.iframeUrl
     showIframe.value = true
   } catch {
     toast.error('No se pudo abrir el asistente de conexión')
+  } finally {
+    openingConfig.value = false
   }
 }
 
