@@ -187,21 +187,14 @@
                     @mousedown.prevent="onMouseDown(room, day, $event)">
 
                     <!-- Reservation -->
-                    <!-- pr-4 (NO px-2 simétrico): el handle de resize es `w-2` (8px) y se ancla a
-                         `right:0` del PADDING BOX, ignorando el padding propio del contenido — con
-                         `px-2` el texto/precio terminaba exactamente en el mismo píxel donde arranca
-                         el handle (0px de margen). En una reserva corta esos 8px son buena parte del
-                         ancho total agarrable, así que "mover" desde cerca del precio disparaba
-                         "extender" por error. pr-4 deja un colchón de ~8px de body real (sigue
-                         siendo `cursor-move`) entre el contenido y el handle. -->
                     <div v-if="gRes(room.id, day.dateStr) && isResFirst(room.id, day.dateStr)"
-                      class="absolute inset-y-1 left-0 rounded-md flex items-center pl-2 pr-4 z-10 overflow-hidden cursor-move hover:brightness-90 select-none"
+                      class="absolute inset-y-1 left-0 rounded-md flex items-center px-2 z-10 overflow-hidden cursor-move hover:brightness-90 select-none"
                       :class="[gRes(room.id, day.dateStr)!.bg, resDrag?.id === gRes(room.id, day.dateStr)!.id ? 'ring-2 ring-white/80 shadow-lg z-30' : '', resDrag?.id === gRes(room.id, day.dateStr)!.id && resDrag?.moved ? 'pointer-events-none opacity-90' : '']"
                       :style="barStyle(room.id, day)"
                       @mousedown.stop="onResDown(gRes(room.id, day.dateStr)!, $event)"
-                      @click.stop="openContext($event, gRes(room.id, day.dateStr)!, room)"
-                      @dblclick.stop="openResDirect(gRes(room.id, day.dateStr)!)"
-                      @contextmenu.prevent.stop="openContext($event, gRes(room.id, day.dateStr)!, room)">
+                      @click.stop="openContextDeferred(gRes(room.id, day.dateStr)!, room)"
+                      @dblclick.stop="openResFromDblClick(gRes(room.id, day.dateStr)!)"
+                      @contextmenu.prevent.stop="openContext(gRes(room.id, day.dateStr)!, room)">
                       <ChannelIcon :channel="gRes(room.id, day.dateStr)!.chKey" :size="13" class="mr-1 shrink-0 ring-1 ring-white/40 rounded-[4px]" />
                       <span class="text-[9px] font-extrabold truncate text-white"><span v-if="gRes(room.id, day.dateStr)!.pax" class="text-white/75">{{ gRes(room.id, day.dateStr)!.pax }}P·</span>{{ gRes(room.id, day.dateStr)!.name }}</span>
                       <span class="text-[8px] text-white/70 ml-auto shrink-0 flex items-center gap-0.5">
@@ -209,17 +202,12 @@
                         <Icon :name="PAY_ICON[gRes(room.id, day.dateStr)!.paymentStatus]" :size="10" :title="`Pago: ${gRes(room.id, day.dateStr)!.paymentStatus}`" />
                         <span>{{ money }}{{ gRes(room.id, day.dateStr)!.amt }}</span>
                       </span>
-                      <!-- Handle para extender/acortar (arrastrar el borde derecho) — #204/#207.
-                           w-2 (8px), NO w-4 (16px): con el handle ancho, arrastrar la reserva desde
-                           cerca del borde derecho para MOVERLA disparaba resize por error — el
-                           usuario "solo quería mover" y la estadía se alargaba/acortaba sola. Angosto
-                           y con mayor contraste en hover para que agarrarlo siga siendo intencional. -->
-                      <div class="absolute right-0 inset-y-0 w-2 cursor-ew-resize bg-white/10 hover:bg-white/70 z-20 flex items-center justify-center rounded-r-md"
-                        title="Arrastrá para extender o acortar la estadía"
-                        @mousedown.stop.prevent="onResizeDown(gRes(room.id, day.dateStr)!, $event)"
-                        @click.stop>
-                        <span class="w-0.5 h-4 bg-white/90 rounded"></span>
-                      </div>
+                      <!-- Acá vivía la manija para extender arrastrando el borde derecho. Se
+                           quitó: en una barra de 1 noche (72px) esos 8px eran el 11% del ancho, y
+                           agarrar la reserva para MOVERLA terminaba alargando la estadía. Se
+                           achicó de 16px a 8px y siguió pasando. Arrastrar ahora hace UNA cosa
+                           sola —mover—, y extender está en el panel ("Extender estadía"), que
+                           además abre el modal con las fechas editables y el precio recalculado. -->
                     </div>
 
                     <!-- Block -->
@@ -819,7 +807,7 @@
     <Teleport to="body">
       <div v-if="resDrag && dragPointer" class="fixed z-[60] pointer-events-none px-3 py-2 rounded-xl bg-navy text-white text-xs font-bold shadow-xl whitespace-nowrap"
         :style="{ left: (dragPointer.x + 14) + 'px', top: (dragPointer.y + 14) + 'px' }">
-        <div>{{ resDrag.mode === 'resize' ? 'Extender/acortar' : 'Mover' }} · Hab. {{ roomNumberOf(resDrag.roomId) }}</div>
+        <div>Mover · Hab. {{ roomNumberOf(resDrag.roomId) }}</div>
         <div class="text-white/70 tabular-nums">{{ resDrag.checkIn }} → {{ resDrag.checkOut }} · {{ nightsBetween(resDrag.checkIn, resDrag.checkOut) }}n</div>
       </div>
     </Teleport>
@@ -941,7 +929,7 @@ const dragEnd = ref('')
 // sumando las noches desde ahí, la reserva se veía "alargarse" sola. Con ancla, el movimiento es
 // SIEMPRE relativo (delta de días desde donde agarraste), como cualquier drag — arrastrar es
 // arrastrar, nunca reancla el inicio real de la reserva a la posición del cursor.
-const resDrag = ref<{ id: string; mode: 'move' | 'resize'; roomId: string; checkIn: string; checkOut: string; origRoomId: string; origCheckIn: string; origCheckOut: string; anchorDate: string; moved: boolean } | null>(null)
+const resDrag = ref<{ id: string; roomId: string; checkIn: string; checkOut: string; origRoomId: string; origCheckIn: string; origCheckOut: string; anchorDate: string; moved: boolean } | null>(null)
 // Posición del cursor mientras se arrastra — alimenta el cartel flotante (ver template, Teleport
 // a body) que muestra fechas/noches en vivo, para no depender de leer el ancho dibujado de la
 // barra (que se recorta visualmente cerca de los bordes del calendario, ver comentario del cartel).
@@ -1581,7 +1569,7 @@ async function onWizardSaved() {
 }
 
 /** Context menu (right-click) sobre una reserva existente */
-function openContext(ev: MouseEvent, rb: any, room: any) {
+function openContext(rb: any, room: any) {
   if (suppressClick) { suppressClick = false; return } // venía de un drag, no de un click
   cancelDuplicateMode() // right-click en reserva existente: abandona el modo duplicar
   const orig = planReservas.value.find((b: any) => b.id === rb.id)
@@ -1600,6 +1588,27 @@ function openContext(ev: MouseEvent, rb: any, room: any) {
  *  (feedback #630 — "deberían poder abrir la reserva con doble clic"). El navegador dispara
  *  2× `click` (que abre el popup vía `openContext`) ANTES del `dblclick` — hay que cerrar ese
  *  popup acá, si no queda tapando el modal de detalle que abre `viewResDetail`. */
+/**
+ * El clic simple abre la gaveta, pero con un retardo corto para que el DOBLE clic pueda ganar.
+ *
+ * La gaveta es un modal con overlay a pantalla completa: apenas se abre con el primer clic, el
+ * segundo aterriza en el overlay y no en la barra, así que `dblclick` no llegaba a dispararse y
+ * "abrir la reserva con doble clic" (#630) dejó de funcionar. Con el retardo, el doble clic
+ * cancela la apertura de la gaveta y abre el detalle, que es lo que se espera.
+ */
+const DBLCLICK_GRACE_MS = 240
+let pendingContext: ReturnType<typeof setTimeout> | null = null
+
+function openContextDeferred(rb: any, room: any) {
+  if (pendingContext) clearTimeout(pendingContext)
+  pendingContext = setTimeout(() => { pendingContext = null; openContext(rb, room) }, DBLCLICK_GRACE_MS)
+}
+
+function openResFromDblClick(rb: any) {
+  if (pendingContext) { clearTimeout(pendingContext); pendingContext = null }
+  openResDirect(rb)
+}
+
 function openResDirect(rb: any) {
   if (suppressClick) { suppressClick = false; return } // venía de un drag, no de un click
   const orig = planReservas.value.find((b: any) => b.id === rb.id)
@@ -1632,15 +1641,7 @@ function onResDown(rb: any, e: MouseEvent) {
   // ese punto de agarre, así el delta que se calcula en cada mousemove es relativo a DÓNDE
   // agarraste, nunca un salto al checkIn verdadero (invisible, fuera de pantalla).
   const anchorDate = cellDateAt(e.clientX, e.clientY) || ci
-  resDrag.value = { id: rb.id, mode: 'move', roomId: String(orig.roomId), checkIn: ci, checkOut: co, origRoomId: String(orig.roomId), origCheckIn: ci, origCheckOut: co, anchorDate, moved: false }
-}
-// mousedown en el borde derecho → arrastrar para extender/acortar.
-function onResizeDown(rb: any, e: MouseEvent) {
-  e.stopPropagation(); e.preventDefault()
-  const orig = planReservas.value.find((x: any) => x.id === rb.id)
-  if (!orig) return
-  const ci = String(orig.checkIn || '').slice(0, 10), co = String(orig.checkOut || '').slice(0, 10)
-  resDrag.value = { id: rb.id, mode: 'resize', roomId: String(orig.roomId), checkIn: ci, checkOut: co, origRoomId: String(orig.roomId), origCheckIn: ci, origCheckOut: co, anchorDate: '', moved: false }
+  resDrag.value = { id: rb.id, roomId: String(orig.roomId), checkIn: ci, checkOut: co, origRoomId: String(orig.roomId), origCheckIn: ci, origCheckOut: co, anchorDate, moved: false }
 }
 // Actualiza el preview según la celda bajo el cursor. Devuelve true si consumió el evento.
 function onResDragMove(e: MouseEvent): boolean {
@@ -1656,10 +1657,7 @@ function onResDragMove(e: MouseEvent): boolean {
   if (!cell) return true
   const rid = cell.dataset.rid, date = cell.dataset.date
   if (!rid || !date) return true
-  if (rd.mode === 'resize') {
-    const newCo = addDaysStr(date, 1) // el borde cae sobre la última noche → checkout exclusivo
-    if (newCo > rd.checkIn) { if (newCo !== rd.checkOut) rd.moved = true; rd.checkOut = newCo }
-  } else {
+  {
     // El destino vive en `utils/planning-drag.ts` (puro y testeado): acá se rompió que arrastrar
     // UNA celda moviera la reserva CUATRO días, y en un módulo plano eso se cubre con un test.
     const dest = moveDragDestination({
@@ -1695,7 +1693,7 @@ const cancelDlg = ref<{ show: boolean; res: CancellableReservation | null }>({ s
 
 // Cursor global durante el arrastre: ✥ para mover, ↔ para extender. Sin esto, al poner el
 // bloque en pointer-events-none el cursor "cae" a la celda (👆 pointer) durante todo el drag.
-const dragCursorClass = computed(() => resDrag.value ? (resDrag.value.mode === 'resize' ? 'planning-dragging-resize' : 'planning-dragging-move') : '')
+const dragCursorClass = computed(() => resDrag.value ? 'planning-dragging-move' : '')
 
 function roomNumberOf(id: string): string { return planRooms.value.find((r: any) => String(r.id) === String(id))?.number || id }
 function closeReschedule() { reschedule.value.show = false }
@@ -2030,7 +2028,6 @@ function goToday() { weekOffset.value = 0; lastSel.value = null; popup.value.sho
 <style>
 /* Cursor consistente durante el arrastre de reservas (mover / extender). */
 .planning-dragging-move, .planning-dragging-move * { cursor: move !important; }
-.planning-dragging-resize, .planning-dragging-resize * { cursor: ew-resize !important; }
 
 /* ── Cotización imprimible (.print-only > .qdoc) ─────────────────────────────
    Identidad del panel vía tokens de main.css (@theme de Tailwind 4 los emite
