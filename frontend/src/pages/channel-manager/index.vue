@@ -110,6 +110,22 @@
       </template>
     </AppModal>
 
+    <!-- Un click de más acá le arma trabajo al equipo por nada: confirmar antes de mandarla. -->
+    <AppModal v-if="confirmRequest" title="¿Pedir esta conexión?" size="sm" @close="confirmRequest = null">
+      <p class="text-sm text-text-secondary">
+        Vamos a pedirle al equipo de SolmiOS que conecte
+        <strong class="text-navy">{{ confirmRequest.name }}</strong>.
+        Te van a contactar para coordinarlo.
+      </p>
+      <template #footer>
+        <button @click="confirmRequest = null" class="text-sm font-bold text-text-secondary hover:text-navy cursor-pointer transition-colors">Cancelar</button>
+        <button @click="confirmAskChannel" :disabled="requestingChannel === confirmRequest.code"
+          class="ml-3 px-4 py-2 rounded-xl bg-navy text-white text-sm font-black hover:bg-navy-light cursor-pointer disabled:opacity-50">
+          {{ requestingChannel === confirmRequest.code ? 'Enviando…' : 'Sí, pedir conexión' }}
+        </button>
+      </template>
+    </AppModal>
+
     <!-- Estado de la conexión con el channel manager.
          Antes esta vista solo hablaba de OTAs: un hotel ya publicado en Channex, con sus tipos y
          tarifas arriba, veía "Sin canales conectados" y nada más. No había forma de saber si el
@@ -262,7 +278,7 @@
             :class="requestStatusClass(requestOf(channel.id)!.status)">
             {{ CHANNEL_REQUEST_LABELS[requestOf(channel.id)!.status] }}
           </div>
-          <button v-else @click="askChannel(channel.id, channel.name)" :disabled="requestingChannel === channel.id"
+          <button v-else @click="confirmRequest = { code: channel.id, name: channel.name }" :disabled="requestingChannel === channel.id"
             class="mt-auto w-full py-2.5 text-sm font-extrabold rounded-xl border-2 border-navy text-navy hover:bg-navy hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
             {{ requestingChannel === channel.id ? 'Enviando…' : 'Solicitar Conexión' }}
           </button>
@@ -462,12 +478,18 @@ async function loadRequests() {
   try { requests.value = await ChannelService.listRequests() } catch { requests.value = [] }
 }
 
-async function askChannel(channelCode: string, channelName: string) {
-  requestingChannel.value = channelCode
+/** El click abre la confirmación; el envío real es `confirmAskChannel`. */
+const confirmRequest = ref<{ code: string; name: string } | null>(null)
+
+async function confirmAskChannel() {
+  if (!confirmRequest.value) return
+  const { code, name } = confirmRequest.value
+  requestingChannel.value = code
   try {
-    const r = await ChannelService.requestChannel(channelCode, channelName)
+    const r = await ChannelService.requestChannel(code, name)
     await loadRequests()
     toast.success(r.message)
+    confirmRequest.value = null
   } catch (e: any) {
     toast.error(e?.message || 'No se pudo enviar la solicitud')
   } finally {
