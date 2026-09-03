@@ -846,6 +846,7 @@ import RoomLockModal from '@/components/features/RoomLockModal.vue'
 import RescheduleModal from '@/components/features/RescheduleModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
+import { moveDragDestination } from '@/utils/planning-drag'
 import Icon from '@/components/ui/Icon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import { TTLockService } from '@/services/TTLock.service'
@@ -1659,19 +1660,14 @@ function onResDragMove(e: MouseEvent): boolean {
     const newCo = addDaysStr(date, 1) // el borde cae sobre la última noche → checkout exclusivo
     if (newCo > rd.checkIn) { if (newCo !== rd.checkOut) rd.moved = true; rd.checkOut = newCo }
   } else {
-    const nights = nightsBetween(rd.origCheckIn, rd.origCheckOut)
-    // Delta relativo al ancla (celda donde agarraste), NO snap absoluto a la celda del cursor —
-    // ver comentario de `anchorDate`. Mover 3 celdas siempre son 3 días, agarres donde agarres.
-    const deltaDays = Math.round((new Date(date + 'T00:00:00Z').getTime() - new Date(rd.anchorDate + 'T00:00:00Z').getTime()) / MS_PER_DAY)
-    let newCheckIn = addDaysStr(rd.origCheckIn, deltaDays)
-    // Tope en HOY: no tiene sentido operativo mover una reserva a que arranque en el pasado (no
-    // se puede hacer check-in "ayer"). Si el arrastre la llevaría antes, se clampea a hoy — sigue
-    // al cursor hasta ese límite y ahí se frena, no lo cruza. Una reserva que YA empezó antes de
-    // hoy (huésped en curso) puede seguir mostrándose así; el límite es solo para el DESTINO.
-    const t = todayStr()
-    if (newCheckIn < t) newCheckIn = t
-    if (newCheckIn !== rd.checkIn || String(rid) !== rd.roomId) rd.moved = true
-    rd.roomId = String(rid); rd.checkIn = newCheckIn; rd.checkOut = addDaysStr(newCheckIn, nights)
+    // El destino vive en `utils/planning-drag.ts` (puro y testeado): acá se rompió que arrastrar
+    // UNA celda moviera la reserva CUATRO días, y en un módulo plano eso se cubre con un test.
+    const dest = moveDragDestination({
+      origCheckIn: rd.origCheckIn, origCheckOut: rd.origCheckOut,
+      anchorDate: rd.anchorDate, dropDate: date, today: todayStr(),
+    })
+    if (dest.checkIn !== rd.checkIn || String(rid) !== rd.roomId) rd.moved = true
+    rd.roomId = String(rid); rd.checkIn = dest.checkIn; rd.checkOut = dest.checkOut
   }
   return true
 }
