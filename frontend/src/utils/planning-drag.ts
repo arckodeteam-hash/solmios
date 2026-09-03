@@ -26,6 +26,27 @@ export function nightsBetween(checkIn: string, checkOut: string): number {
   return Math.max(1, daysBetween(checkIn, checkOut))
 }
 
+/**
+ * Qué se le puede tocar a una reserva arrastrándola, según en qué punto de su vida está.
+ *
+ * Una reserva con el huésped YA ADENTRO no puede cambiar su fecha de entrada: el huésped llegó
+ * ese día, es un hecho. Lo que sí sigue siendo legítimo es cambiarlo de habitación (traslado) y
+ * extenderle la salida. Una reserva ya cerrada es historia: no se arrastra.
+ *
+ * Sin esto, arrastrar la reserva de un huésped alojado le corría la entrada al pasado o al
+ * futuro sin que nada lo impidiera —ni acá ni en el backend—, y como esas reservas empiezan
+ * antes del rango visible y se dibujan recortadas, al moverse mostraban más noches y parecían
+ * "alargarse solas".
+ */
+export type DragScope = 'full' | 'room-only' | 'none'
+
+export function dragScopeFor(status: string | undefined): DragScope {
+  const s = String(status || '').toLowerCase()
+  if (s === 'checked_out') return 'none'        // ya se fue: es historia
+  if (s === 'checked_in') return 'room-only'    // está adentro: traslado sí, correrle la entrada no
+  return 'full'
+}
+
 export interface MoveDragInput {
   /** Estadía original, la que se está arrastrando. */
   origCheckIn: string

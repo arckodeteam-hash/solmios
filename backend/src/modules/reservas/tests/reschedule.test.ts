@@ -131,3 +131,59 @@ describe('commitReschedule — IDOR #668 (aplica el cambio real)', () => {
     expect(clamped).toEqual([{ hotelId: HOTEL, reservationId: 'r1' }])
   })
 })
+
+// ── Estado de la reserva: qué se puede reprogramar y qué ya ocurrió ────────────────────────
+//
+// No había NINGUNA comprobación de estado: se le podía correr la fecha de ENTRADA a un huésped
+// que ya había hecho check-in, o reprogramar una estadía ya cerrada, y el sistema lo aceptaba.
+// La entrada de alguien que ya llegó es un hecho ocurrido, no un campo editable. Reportado
+// desde el planning: al arrastrar esas reservas se corrían solas y "se alargaban" en pantalla.
+
+describe('reschedule — respeta el estado de la reserva', () => {
+  const ROOMS = { 'room-1': { id: 'room-1', hotelId: HOTEL, basePrice: 100 }, 'room-2': { id: 'room-2', hotelId: HOTEL, basePrice: 100 } }
+
+  it('con el huésped ADENTRO no se le corre la fecha de entrada', async () => {
+    const reserva = makeReservation({ status: 'checked_in' })
+    const deps = makeDeps(reserva, ROOMS)
+    const call = quoteReschedule(deps, 'r1', { checkIn: '2030-01-11', checkOut: '2030-01-13' }, hotelAdmin)
+    await expect(call).rejects.toThrow('ya hizo check-in')
+  })
+
+  it('pero SÍ se lo puede trasladar de habitación', async () => {
+    const reserva = makeReservation({ status: 'checked_in' })
+    const deps = makeDeps(reserva, ROOMS)
+    const quote = await quoteReschedule(deps, 'r1', { roomId: 'room-2' }, hotelAdmin)
+    expect(quote.roomId).toBe('room-2')
+    expect(quote.checkIn).toBe('2030-01-10')
+  })
+
+  it('y SÍ se le puede extender la salida', async () => {
+    const reserva = makeReservation({ status: 'checked_in' })
+    const deps = makeDeps(reserva, ROOMS)
+    const quote = await quoteReschedule(deps, 'r1', { checkOut: '2030-01-15' }, hotelAdmin)
+    expect(quote.checkOut).toBe('2030-01-15')
+    expect(quote.newNights).toBe(5)
+  })
+
+  it('una estadía ya cerrada no se reprograma de ninguna forma', async () => {
+    const reserva = makeReservation({ status: 'checked_out' })
+    const deps = makeDeps(reserva, ROOMS)
+    await expect(quoteReschedule(deps, 'r1', { roomId: 'room-2' }, hotelAdmin)).rejects.toThrow('ya está cerrada')
+    await expect(quoteReschedule(deps, 'r1', { checkOut: '2030-01-15' }, hotelAdmin)).rejects.toThrow('ya está cerrada')
+  })
+
+  it('una reserva que todavía no llegó se mueve entera, como siempre', async () => {
+    const reserva = makeReservation({ status: 'confirmed' })
+    const deps = makeDeps(reserva, ROOMS)
+    const quote = await quoteReschedule(deps, 'r1', { checkIn: '2030-01-20', checkOut: '2030-01-22' }, hotelAdmin)
+    expect(quote.checkIn).toBe('2030-01-20')
+  })
+
+  // El commit pasa por el MISMO buildQuote: si alguien saltea el dry-run, igual rebota.
+  it('el commit tampoco deja correr la entrada de un huésped alojado', async () => {
+    const reserva = makeReservation({ status: 'checked_in' })
+    const deps = makeDeps(reserva, ROOMS)
+    const call = commitReschedule(deps, 'r1', { checkIn: '2030-01-11', checkOut: '2030-01-13', pricingMode: 'keep' } as any, hotelAdmin)
+    await expect(call).rejects.toThrow('ya hizo check-in')
+  })
+})

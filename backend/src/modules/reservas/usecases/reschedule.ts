@@ -138,12 +138,34 @@ function assertOwnership(existing: any, user: { role: string; hotelId?: string }
   if (user.role !== 'super_admin' && existing.hotelId !== user.hotelId) throw new AuthError('No autorizado')
 }
 
+/**
+ * Qué se le puede reprogramar a una reserva según en qué punto de su vida está.
+ *
+ * No había NINGUNA comprobación de estado: se le podía correr la fecha de entrada a un huésped
+ * que ya había hecho check-in —o a una estadía ya cerrada— y el sistema lo aceptaba. La entrada
+ * de alguien que ya llegó es un hecho ocurrido, no una fecha editable; lo que sí sigue siendo
+ * legítimo con el huésped adentro es trasladarlo de habitación y extenderle la salida.
+ *
+ * Vive en el quote (y no solo en la UI) porque el panel no es el único que llega hasta acá.
+ */
+function assertReschedulableStatus(existing: any, checkIn: string): void {
+  const status = String(existing?.status || '').toLowerCase()
+  const entradaOriginal = String(existing?.checkIn || '').slice(0, 10)
+  if (status === 'checked_out') {
+    throw new ConflictError('La estadía ya está cerrada: no se puede reprogramar. Editá la reserva si hay que corregirla.')
+  }
+  if (status === 'checked_in' && checkIn.slice(0, 10) !== entradaOriginal) {
+    throw new ConflictError('El huésped ya hizo check-in: no se puede cambiar la fecha de entrada. Se puede cambiar de habitación o extender la salida.')
+  }
+}
+
 async function buildQuote(deps: RescheduleDeps, existing: any, input: RescheduleInput): Promise<RescheduleQuote> {
   const roomRepo = deps.roomRepo
   const roomId = input.roomId || existing.roomId
   const checkIn = input.checkIn || existing.checkIn
   const checkOut = input.checkOut || existing.checkOut
   if (checkIn >= checkOut) throw new ConflictError('checkIn debe ser anterior a checkOut')
+  assertReschedulableStatus(existing, checkIn)
   const room = await roomRepo.findById(roomId)
   // IDOR #668: si se pide mover a otra habitación (input.roomId explícito), debe pertenecer al
   // MISMO hotel que la reserva — si no, no hay que exponer basePrice ni disponibilidad de un

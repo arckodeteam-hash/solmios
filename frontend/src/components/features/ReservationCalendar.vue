@@ -188,7 +188,7 @@
 
                     <!-- Reservation -->
                     <div v-if="gRes(room.id, day.dateStr) && isResFirst(room.id, day.dateStr)"
-                      class="absolute inset-y-1 left-0 rounded-md flex items-center px-2 z-10 overflow-hidden cursor-move hover:brightness-90 select-none"
+                      class="absolute inset-y-1 left-0 rounded-md flex items-center pl-2 pr-4 z-10 overflow-hidden cursor-move hover:brightness-90 select-none"
                       :class="[gRes(room.id, day.dateStr)!.bg, resDrag?.id === gRes(room.id, day.dateStr)!.id ? 'ring-2 ring-white/80 shadow-lg z-30' : '', resDrag?.id === gRes(room.id, day.dateStr)!.id && resDrag?.moved ? 'pointer-events-none opacity-90' : '']"
                       :style="barStyle(room.id, day)"
                       @mousedown.stop="onResDown(gRes(room.id, day.dateStr)!, $event)"
@@ -202,12 +202,15 @@
                         <Icon :name="PAY_ICON[gRes(room.id, day.dateStr)!.paymentStatus]" :size="10" :title="`Pago: ${gRes(room.id, day.dateStr)!.paymentStatus}`" />
                         <span>{{ money }}{{ gRes(room.id, day.dateStr)!.amt }}</span>
                       </span>
-                      <!-- Acá vivía la manija para extender arrastrando el borde derecho. Se
-                           quitó: en una barra de 1 noche (72px) esos 8px eran el 11% del ancho, y
-                           agarrar la reserva para MOVERLA terminaba alargando la estadía. Se
-                           achicó de 16px a 8px y siguió pasando. Arrastrar ahora hace UNA cosa
-                           sola —mover—, y extender está en el panel ("Extender estadía"), que
-                           además abre el modal con las fechas editables y el precio recalculado. -->
+                      <!-- Handle para extender/acortar (arrastrar el borde derecho) — #204/#207.
+                           w-2 (8px), NO w-4 (16px): con el handle ancho, arrastrar la reserva desde
+                           cerca del borde derecho para MOVERLA disparaba resize por error. -->
+                      <div class="absolute right-0 inset-y-0 w-2 cursor-ew-resize bg-white/10 hover:bg-white/70 z-20 flex items-center justify-center rounded-r-md"
+                        title="Arrastrá para extender o acortar la estadía"
+                        @mousedown.stop.prevent="onResizeDown(gRes(room.id, day.dateStr)!, $event)"
+                        @click.stop>
+                        <span class="w-0.5 h-4 bg-white/90 rounded"></span>
+                      </div>
                     </div>
 
                     <!-- Block -->
@@ -807,7 +810,8 @@
     <Teleport to="body">
       <div v-if="resDrag && dragPointer" class="fixed z-[60] pointer-events-none px-3 py-2 rounded-xl bg-navy text-white text-xs font-bold shadow-xl whitespace-nowrap"
         :style="{ left: (dragPointer.x + 14) + 'px', top: (dragPointer.y + 14) + 'px' }">
-        <div>Mover · Hab. {{ roomNumberOf(resDrag.roomId) }}</div>
+        <div>{{ resDrag.mode === 'resize' ? 'Extender/acortar' : resDrag.scope === 'room-only' ? 'Cambiar de habitación' : 'Mover' }} · Hab. {{ roomNumberOf(resDrag.roomId) }}</div>
+        <div v-if="resDrag.scope === 'room-only'" class="text-white/70">El huésped ya entró: las fechas no se mueven</div>
         <div class="text-white/70 tabular-nums">{{ resDrag.checkIn }} → {{ resDrag.checkOut }} · {{ nightsBetween(resDrag.checkIn, resDrag.checkOut) }}n</div>
       </div>
     </Teleport>
@@ -834,7 +838,7 @@ import RoomLockModal from '@/components/features/RoomLockModal.vue'
 import RescheduleModal from '@/components/features/RescheduleModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
-import { moveDragDestination } from '@/utils/planning-drag'
+import { moveDragDestination, dragScopeFor, type DragScope } from '@/utils/planning-drag'
 import Icon from '@/components/ui/Icon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import { TTLockService } from '@/services/TTLock.service'
@@ -929,7 +933,7 @@ const dragEnd = ref('')
 // sumando las noches desde ahí, la reserva se veía "alargarse" sola. Con ancla, el movimiento es
 // SIEMPRE relativo (delta de días desde donde agarraste), como cualquier drag — arrastrar es
 // arrastrar, nunca reancla el inicio real de la reserva a la posición del cursor.
-const resDrag = ref<{ id: string; roomId: string; checkIn: string; checkOut: string; origRoomId: string; origCheckIn: string; origCheckOut: string; anchorDate: string; moved: boolean } | null>(null)
+const resDrag = ref<{ id: string; mode: 'move' | 'resize'; scope: DragScope; roomId: string; checkIn: string; checkOut: string; origRoomId: string; origCheckIn: string; origCheckOut: string; anchorDate: string; moved: boolean } | null>(null)
 // Posición del cursor mientras se arrastra — alimenta el cartel flotante (ver template, Teleport
 // a body) que muestra fechas/noches en vivo, para no depender de leer el ancho dibujado de la
 // barra (que se recorta visualmente cerca de los bordes del calendario, ver comentario del cartel).
@@ -1640,9 +1644,26 @@ function onResDown(rb: any, e: MouseEvent) {
   // rango visible, la barra se ve recortada desde el primer día visible — el ancla tiene que ser
   // ese punto de agarre, así el delta que se calcula en cada mousemove es relativo a DÓNDE
   // agarraste, nunca un salto al checkIn verdadero (invisible, fuera de pantalla).
+  // Qué se le puede tocar a esta reserva arrastrándola (ver `dragScopeFor`): la de un huésped
+  // que ya se fue no se arrastra, y la de uno que está adentro solo cambia de habitación — su
+  // fecha de entrada ya ocurrió, correrla no es una operación real de hotel.
+  const scope = dragScopeFor(orig.status)
+  if (scope === 'none') {
+    toast.info('Esta reserva ya cerró su estadía. Para corregirla, abrila y editala.')
+    return
+  }
   const anchorDate = cellDateAt(e.clientX, e.clientY) || ci
-  resDrag.value = { id: rb.id, roomId: String(orig.roomId), checkIn: ci, checkOut: co, origRoomId: String(orig.roomId), origCheckIn: ci, origCheckOut: co, anchorDate, moved: false }
+  resDrag.value = { id: rb.id, mode: 'move', scope, roomId: String(orig.roomId), checkIn: ci, checkOut: co, origRoomId: String(orig.roomId), origCheckIn: ci, origCheckOut: co, anchorDate, moved: false }
 }
+// mousedown en el borde derecho → arrastrar para extender/acortar.
+function onResizeDown(rb: any, e: MouseEvent) {
+  e.stopPropagation(); e.preventDefault()
+  const orig = planReservas.value.find((x: any) => x.id === rb.id)
+  if (!orig) return
+  const ci = String(orig.checkIn || '').slice(0, 10), co = String(orig.checkOut || '').slice(0, 10)
+  resDrag.value = { id: rb.id, mode: 'resize', scope: 'full', roomId: String(orig.roomId), checkIn: ci, checkOut: co, origRoomId: String(orig.roomId), origCheckIn: ci, origCheckOut: co, anchorDate: '', moved: false }
+}
+
 // Actualiza el preview según la celda bajo el cursor. Devuelve true si consumió el evento.
 function onResDragMove(e: MouseEvent): boolean {
   const rd = resDrag.value
@@ -1657,13 +1678,20 @@ function onResDragMove(e: MouseEvent): boolean {
   if (!cell) return true
   const rid = cell.dataset.rid, date = cell.dataset.date
   if (!rid || !date) return true
-  {
+  if (rd.mode === 'resize') {
+    const newCo = addDaysStr(date, 1) // el borde cae sobre la última noche → checkout exclusivo
+    if (newCo > rd.checkIn) { if (newCo !== rd.checkOut) rd.moved = true; rd.checkOut = newCo }
+  } else {
     // El destino vive en `utils/planning-drag.ts` (puro y testeado): acá se rompió que arrastrar
     // UNA celda moviera la reserva CUATRO días, y en un módulo plano eso se cubre con un test.
-    const dest = moveDragDestination({
-      origCheckIn: rd.origCheckIn, origCheckOut: rd.origCheckOut,
-      anchorDate: rd.anchorDate, dropDate: date, today: todayStr(),
-    })
+    // `room-only`: el huésped ya está adentro. Se lo puede trasladar de habitación, pero las
+    // fechas quedan clavadas — arrastrar de costado no le corre la entrada.
+    const dest = rd.scope === 'room-only'
+      ? { checkIn: rd.origCheckIn, checkOut: rd.origCheckOut }
+      : moveDragDestination({
+        origCheckIn: rd.origCheckIn, origCheckOut: rd.origCheckOut,
+        anchorDate: rd.anchorDate, dropDate: date, today: todayStr(),
+      })
     if (dest.checkIn !== rd.checkIn || String(rid) !== rd.roomId) rd.moved = true
     rd.roomId = String(rid); rd.checkIn = dest.checkIn; rd.checkOut = dest.checkOut
   }
@@ -1693,7 +1721,7 @@ const cancelDlg = ref<{ show: boolean; res: CancellableReservation | null }>({ s
 
 // Cursor global durante el arrastre: ✥ para mover, ↔ para extender. Sin esto, al poner el
 // bloque en pointer-events-none el cursor "cae" a la celda (👆 pointer) durante todo el drag.
-const dragCursorClass = computed(() => resDrag.value ? 'planning-dragging-move' : '')
+const dragCursorClass = computed(() => resDrag.value ? (resDrag.value.mode === 'resize' ? 'planning-dragging-resize' : 'planning-dragging-move') : '')
 
 function roomNumberOf(id: string): string { return planRooms.value.find((r: any) => String(r.id) === String(id))?.number || id }
 function closeReschedule() { reschedule.value.show = false }
@@ -2028,6 +2056,7 @@ function goToday() { weekOffset.value = 0; lastSel.value = null; popup.value.sho
 <style>
 /* Cursor consistente durante el arrastre de reservas (mover / extender). */
 .planning-dragging-move, .planning-dragging-move * { cursor: move !important; }
+.planning-dragging-resize, .planning-dragging-resize * { cursor: ew-resize !important; }
 
 /* ── Cotización imprimible (.print-only > .qdoc) ─────────────────────────────
    Identidad del panel vía tokens de main.css (@theme de Tailwind 4 los emite

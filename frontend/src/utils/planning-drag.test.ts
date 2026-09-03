@@ -6,7 +6,7 @@
 // "creció" de 2 celdas a 6. La culpa era del tope de "no arrancar en el pasado", que usaba HOY
 // como piso: a una reserva ya empezada la empujaba hacia adelante en vez de frenarla.
 import { describe, it, expect } from 'vitest'
-import { moveDragDestination, nightsBetween, addDays, daysBetween } from './planning-drag'
+import { moveDragDestination, dragScopeFor, nightsBetween, addDays, daysBetween } from './planning-drag'
 
 const HOY = '2026-09-03'
 
@@ -81,5 +81,21 @@ describe('moveDragDestination — mover es mover', () => {
       anchorDate: '2026-09-11', dropDate: '2026-09-11', today: HOY,
     })
     expect(r).toEqual({ checkIn: '2026-09-10', checkOut: '2026-09-12' })
+  })
+})
+
+describe('dragScopeFor — qué se puede arrastrar según el estado', () => {
+  it('una reserva sin llegar todavía se mueve entera', () => {
+    for (const s of ['confirmed', 'pending', 'guaranteed', undefined]) {
+      expect(dragScopeFor(s)).toBe('full')
+    }
+  })
+
+  it('con el huésped ADENTRO solo se cambia de habitación: la entrada ya ocurrió', () => {
+    expect(dragScopeFor('checked_in')).toBe('room-only')
+  })
+
+  it('una reserva ya cerrada no se arrastra: es historia', () => {
+    expect(dragScopeFor('checked_out')).toBe('none')
   })
 })
