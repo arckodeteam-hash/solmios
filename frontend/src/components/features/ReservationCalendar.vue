@@ -247,50 +247,87 @@
     </div>
 
     <!-- Popup (MisterPlan style: appears next to cell) -->
-    <Teleport to="body">
-      <div v-if="popup.show" class="fixed z-[100] bg-white rounded-xl border border-border shadow-xl py-1 min-w-[240px]"
-        :style="{ left: popup.x + 'px', top: popup.y + 'px' }">
-        <div class="px-3 py-2 text-[10px] font-bold text-text-muted uppercase border-b border-border flex items-center justify-between">
-          <span>{{ popup.room?.number }} · {{ popup.fromDate }}{{ popup.fromDate !== popup.toDate ? ' → ' + popup.toDate : '' }}
-            <span v-if="popup.nights > 0" class="text-navy ml-1">({{ popup.nights }}n)</span>
-          </span>
-          <button @click="closePopup" class="text-text-muted hover:text-coral font-bold text-sm cursor-pointer ml-3"><Icon name="x" :size="14" /></button>
+    <!-- Acciones sobre lo que el usuario acaba de marcar en la grilla.
+         Era un menú flotante posicionado en el click: quedaba sobre las celdas —tapando justo el
+         tramo elegido—, se salía de la pantalla en las filas de abajo y, con la sección de
+         cerradura abierta, no entraba en ningún lado. Como gaveta no tapa la grilla, tiene alto
+         para respirar y el overlay deja claro que hay una decisión pendiente. -->
+    <AppModal :open="popup.show" placement="right" size="sm" body-class="p-0"
+      :title="popup.room?.number ? `Habitación ${popup.room.number}` : 'Selección'"
+      :subtitle="popupSubtitle" @close="closePopup">
+
+      <div class="px-5 py-4 border-b border-border bg-surface">
+        <div class="text-[10px] font-bold text-text-muted uppercase tracking-wide">
+          {{ popup.res ? 'Reserva' : popup.blk ? 'Bloqueo' : 'Fechas seleccionadas' }}
         </div>
-        <button v-if="!popup.res && !popup.blk" @click="popupNewRes" class="w-full text-left px-4 py-2.5 text-sm font-bold text-navy hover:bg-surface cursor-pointer flex items-center gap-2">
-          <span class="text-teal text-base">+</span> Nueva Reserva
+        <div class="mt-1 text-sm font-bold text-navy">
+          {{ popup.fromDate }}<span v-if="popup.fromDate !== popup.toDate"> → {{ popup.toDate }}</span>
+          <span v-if="popup.nights > 0" class="ml-1.5 text-text-secondary font-normal">
+            {{ popup.nights }} {{ popup.nights === 1 ? 'noche' : 'noches' }}
+          </span>
+        </div>
+        <div v-if="popup.room?.type" class="text-[11px] text-text-muted mt-0.5">{{ popup.room.type }}</div>
+      </div>
+
+      <!-- Celda libre -->
+      <div v-if="!popup.res && !popup.blk" class="p-3 space-y-1">
+        <button @click="popupNewRes" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
+          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-teal/10 text-teal text-lg font-black">+</span>
+          <span class="min-w-0">
+            <span class="block text-sm font-bold text-navy">Nueva Reserva</span>
+            <span class="block text-[11px] text-text-muted">Cargar un huésped en estas fechas</span>
+          </span>
         </button>
-        <button v-if="!popup.res && !popup.blk" @click="popupBlock" class="w-full text-left px-4 py-2.5 text-sm font-bold text-navy hover:bg-surface cursor-pointer flex items-center gap-2">
-          <Icon name="ban" :size="15" class="text-coral" /> Bloquear
+        <button @click="popupQuote" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
+          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-gold/10 text-gold"><Icon name="document" :size="17" /></span>
+          <span class="min-w-0">
+            <span class="block text-sm font-bold text-navy">Cotización</span>
+            <span class="block text-[11px] text-text-muted">Calcular el precio sin reservar</span>
+          </span>
         </button>
-        <button v-if="!popup.res && !popup.blk" @click="popupQuote" class="w-full text-left px-4 py-2.5 text-sm font-bold text-navy hover:bg-surface cursor-pointer flex items-center gap-2">
-          <Icon name="document" :size="15" class="text-gold" /> Cotización
+        <button @click="popupBlock" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
+          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-coral/10 text-coral"><Icon name="ban" :size="17" /></span>
+          <span class="min-w-0">
+            <span class="block text-sm font-bold text-navy">Bloquear</span>
+            <span class="block text-[11px] text-text-muted">Sacarla de la venta, también en las OTAs</span>
+          </span>
         </button>
-        <button v-if="popup.res" @click="popupViewRes" class="w-full text-left px-4 py-2.5 text-sm font-bold text-navy hover:bg-surface cursor-pointer flex items-center gap-2">
-          <Icon name="clipboard" :size="15" /> Ver Reserva
+      </div>
+
+      <!-- Reserva existente -->
+      <div v-if="popup.res" class="p-3 space-y-1">
+        <button @click="popupViewRes" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
+          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-navy/10 text-navy"><Icon name="clipboard" :size="17" /></span>
+          <span class="text-sm font-bold text-navy">Ver Reserva</span>
         </button>
-        <button v-if="popup.res" @click="popupExtend" class="w-full text-left px-4 py-2.5 text-sm font-bold text-navy hover:bg-surface cursor-pointer flex items-center gap-2">
-          <Icon name="calendar-plus" :size="15" /> Extender estadía
+        <button @click="popupCheckin" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
+          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-teal/10 text-teal"><Icon name="bell" :size="17" /></span>
+          <span class="text-sm font-bold text-teal">Hacer Check-in</span>
         </button>
-        <button v-if="popup.res" @click="popupDuplicate" class="w-full text-left px-4 py-2.5 text-sm font-bold text-navy hover:bg-surface cursor-pointer flex items-center gap-2">
-          <Icon name="document" :size="15" /> Duplicar reserva
+        <button @click="popupExtend" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
+          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-navy/10 text-navy"><Icon name="calendar-plus" :size="17" /></span>
+          <span class="text-sm font-bold text-navy">Extender estadía</span>
         </button>
-        <button v-if="popup.res" @click="popupCheckin" class="w-full text-left px-4 py-2.5 text-sm font-bold text-teal hover:bg-surface cursor-pointer flex items-center gap-2">
-          <Icon name="bell" :size="15" /> Hacer Check-in
+        <button @click="popupDuplicate" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
+          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-navy/10 text-navy"><Icon name="document" :size="17" /></span>
+          <span class="text-sm font-bold text-navy">Duplicar reserva</span>
         </button>
-        <button v-if="popup.res" @click="popupCancel" class="w-full text-left px-4 py-2.5 text-sm font-bold text-coral hover:bg-surface cursor-pointer flex items-center gap-2">
-          <Icon name="x" :size="15" /> Cancelar Reserva
+        <button @click="popupCancel" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-coral/5 transition-colors cursor-pointer">
+          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-coral/10 text-coral"><Icon name="x" :size="17" /></span>
+          <span class="text-sm font-bold text-coral">Cancelar Reserva</span>
         </button>
 
         <!-- Cerradura de la reserva: ver código, generarlo (auto/manual) y enviarlo — inline -->
-        <div v-if="popup.res" class="border-t border-border mt-1 pt-1" data-testid="popup-lock">
-          <button @click="togglePopupLock" class="w-full text-left px-4 py-2.5 text-sm font-bold text-navy hover:bg-surface cursor-pointer flex items-center gap-2">
-            🔒 Cerradura
+        <div class="border-t border-border mt-2 pt-2" data-testid="popup-lock">
+          <button @click="togglePopupLock" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
+            <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-gold/10 text-base">🔒</span>
+            <span class="text-sm font-bold text-navy">Cerradura</span>
             <span class="ml-auto text-text-muted text-xs">{{ popupLock.open ? '▲' : '▼' }}</span>
           </button>
-          <div v-if="popupLock.open" class="px-4 pb-3 space-y-2">
+          <div v-if="popupLock.open" class="px-3 pb-3 space-y-2">
             <div v-if="popupLock.loading" class="text-xs text-text-muted">Buscando código…</div>
             <template v-else>
-              <div v-if="popupLock.code" data-testid="popup-lock-code" class="bg-surface rounded-lg p-2.5">
+              <div v-if="popupLock.code" data-testid="popup-lock-code" class="bg-surface rounded-xl p-3">
                 <div class="flex items-center gap-2">
                   <code class="text-xl font-black tracking-[0.2em] font-mono text-navy">{{ popupLock.code.code }}</code>
                   <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="popupLock.code.status === 'active' ? 'bg-teal/10 text-teal' : 'bg-gold/10 text-gold'">{{ popupLock.code.status === 'pending' ? 'pendiente' : 'activo' }}</span>
@@ -321,11 +358,19 @@
             </template>
           </div>
         </div>
-        <button v-if="popup.blk" @click="popupUnblock" class="w-full text-left px-4 py-2.5 text-sm font-bold text-coral hover:bg-surface cursor-pointer flex items-center gap-2">
-          <Icon name="trash" :size="15" /> Eliminar Bloqueo
+      </div>
+
+      <!-- Bloqueo existente -->
+      <div v-if="popup.blk" class="p-3">
+        <button @click="popupUnblock" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-coral/5 transition-colors cursor-pointer">
+          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-coral/10 text-coral"><Icon name="trash" :size="17" /></span>
+          <span class="min-w-0">
+            <span class="block text-sm font-bold text-coral">Eliminar Bloqueo</span>
+            <span class="block text-[11px] text-text-muted">Vuelve a venderse, también en las OTAs</span>
+          </span>
         </button>
       </div>
-    </Teleport>
+    </AppModal>
 
     <!-- Block dialog -->
     <AppModal :open="blockDlg.show" title="Bloquear" size="sm" @close="blockDlg.show = false">
@@ -912,7 +957,15 @@ let dragStarted = false
 const lastSel = ref<{ room: any; from: string; to: string } | null>(null)
 
 // Popups
-const popup = ref<{ show: boolean; x: number; y: number; room: any; fromDate: string; toDate: string; nights: number; res: any; blk: any }>({ show: false, x: 0, y: 0, room: null, fromDate: '', toDate: '', nights: 0, res: null, blk: null })
+const popup = ref<{ show: boolean; room: any; fromDate: string; toDate: string; nights: number; res: any; blk: any }>({ show: false, room: null, fromDate: '', toDate: '', nights: 0, res: null, blk: null })
+
+/** Bajada del header de la gaveta: qué se marcó, en una línea. */
+const popupSubtitle = computed(() => {
+  const p = popup.value
+  if (!p.show) return ''
+  const rango = p.fromDate === p.toDate ? p.fromDate : `${p.fromDate} → ${p.toDate}`
+  return p.res ? `Reserva · ${rango}` : p.blk ? `Bloqueo · ${rango}` : rango
+})
 const blockDlg = ref<{ show: boolean; room: string; from: string; to: string; reason: string; customReason: string; rid: string }>({ show: false, room: '', from: '', to: '', reason: '', customReason: '', rid: '' })
 const unblock = ref<{ show: boolean; id: string; room: string; reason: string; from: string; to: string }>({ show: false, id: '', room: '', reason: '', from: '', to: '' })
 const detailId = ref<string | null>(null)
@@ -1355,11 +1408,11 @@ function onMouseUp(ev: MouseEvent) {
     // El rango de celdas es INCLUSIVO en ambos extremos: de `from` a `to` hay (to-from)+1
     // celdas = noches. Antes faltaba el +1 y la reserva salía una noche corta (C1).
     const nights = Math.max(1, Math.round((new Date(to).getTime() - new Date(from).getTime()) / MS_PER_DAY) + 1)
-    popup.value = { show: true, x: Math.min(ev.clientX, window.innerWidth - 210), y: Math.min(ev.clientY + 5, window.innerHeight - 180), room, fromDate: from, toDate: to, nights, res: null, blk: null }
+    popup.value = { show: true, room, fromDate: from, toDate: to, nights, res: null, blk: null }
   } else if (room && !dragStarted) {
     if (duplicateSource.value) { lastSel.value = { room, from, to }; openDuplicateWizard(room, from, to); return }
     lastSel.value = { room, from, to }
-    popup.value = { show: true, x: Math.min(ev.clientX, window.innerWidth - 210), y: Math.min(ev.clientY + 5, window.innerHeight - 180), room, fromDate: from, toDate: from, nights: 1, res: null, blk: null }
+    popup.value = { show: true, room, fromDate: from, toDate: from, nights: 1, res: null, blk: null }
   }
 }
 
@@ -1367,7 +1420,7 @@ function showPopup(e: MouseEvent, room: any, day: DI, res: any, blk: any) {
   cancelDuplicateMode() // clic en reserva/bloque existente: abandona el modo duplicar
   lastSel.value = null
   const from = day.dateStr; const to = day.dateStr
-  popup.value = { show: true, x: Math.min(e.clientX, window.innerWidth - 210), y: Math.min(e.clientY + 5, window.innerHeight - 180), room, fromDate: from, toDate: to, nights: 1, res, blk }
+  popup.value = { show: true, room, fromDate: from, toDate: to, nights: 1, res, blk }
   // La sección Cerradura del popover arranca cerrada y limpia por reserva.
   popupLock.value = { open: false, loading: false, code: null, detail: null, generating: false, manualOpen: false, manualCode: '', sending: false, copied: '' }
 }
@@ -1536,8 +1589,6 @@ function openContext(ev: MouseEvent, rb: any, room: any) {
   const co = String(orig.checkOut || '').slice(0, 10)
   popup.value = {
     show: true,
-    x: Math.min(ev.clientX, window.innerWidth - 210),
-    y: Math.min(ev.clientY, window.innerHeight - 220),
     room,
     fromDate: ci, toDate: co, nights: Math.max(1, Math.round((new Date(co).getTime() - new Date(ci).getTime()) / MS_PER_DAY)),
     res: orig, blk: null,

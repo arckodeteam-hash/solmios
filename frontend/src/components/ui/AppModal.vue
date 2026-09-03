@@ -1,9 +1,11 @@
 <template>
   <Teleport to="body">
     <Transition name="app-modal">
-      <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div v-if="open" class="fixed inset-0 z-50 flex"
+        :class="isDrawer ? 'justify-end' : 'items-center justify-center p-4'">
         <div class="absolute inset-0 bg-navy/50 backdrop-blur-sm" @click="closeOnBackdrop && emit('close')"></div>
-        <div class="app-modal-panel relative flex flex-col w-full max-h-[92vh] overflow-hidden rounded-[20px] border-2 border-navy bg-white shadow-2xl" :class="sizeClass">
+        <div class="app-modal-panel relative flex flex-col w-full overflow-hidden border-navy bg-white shadow-2xl"
+          :class="[isDrawer ? 'app-modal-panel--drawer h-full border-l-2 rounded-l-[20px]' : 'max-h-[92vh] rounded-[20px] border-2', sizeClass]">
           <!-- Header oscuro (mismo look en todo el sistema) -->
           <div v-if="title || $slots.header" class="shrink-0 flex items-center justify-between gap-3 bg-navy px-5 py-4">
             <slot name="header">
@@ -46,7 +48,14 @@ const props = withDefaults(defineProps<{
   closeOnBackdrop?: boolean
   /** Padding del cuerpo. Pasar 'p-0' cuando el contenido es una tabla full-bleed. */
   bodyClass?: string
-}>(), { open: true, size: 'md', closable: true, closeOnBackdrop: true, bodyClass: 'p-5' })
+  /**
+   * Dónde se pega el panel. `right` lo vuelve una gaveta a pantalla completa contra el borde
+   * derecho: para acciones sobre algo que el usuario acaba de señalar en una grilla o un mapa,
+   * donde un modal centrado le tapa justo lo que eligió. Hereda todo lo demás (ESC, pila,
+   * bloqueo de scroll, header navy) — por eso vive acá y no como componente aparte.
+   */
+  placement?: 'center' | 'right'
+}>(), { open: true, size: 'md', closable: true, closeOnBackdrop: true, bodyClass: 'p-5', placement: 'center' })
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -54,6 +63,7 @@ const emit = defineEmits<{ close: [] }>()
 // '3xl' (max-w-7xl) agregado para el modal de reserva del planning con códigos de cerradura (#622).
 const SIZES: Record<string, string> = { sm: 'max-w-sm', md: 'max-w-md', lg: 'max-w-2xl', xl: 'max-w-5xl', '2xl': 'max-w-6xl', '3xl': 'max-w-7xl' }
 const sizeClass = computed(() => SIZES[props.size] || SIZES.md)
+const isDrawer = computed(() => props.placement === 'right')
 
 // Pila de modales abiertos (módulo, compartida entre instancias): con modales apilados (uno abre otro
 // encima, ej. detalle de OC → recibir mercancía), un solo listener global de Escape cerraba AMBOS a la
@@ -98,5 +108,9 @@ onBeforeUnmount(() => {
 }
 .app-modal-enter-from .app-modal-panel, .app-modal-leave-to .app-modal-panel {
   opacity: 0; transform: scale(0.96) translateY(12px);
+}
+/* La gaveta entra deslizando desde el borde, no escalando desde el centro. */
+.app-modal-enter-from .app-modal-panel--drawer, .app-modal-leave-to .app-modal-panel--drawer {
+  opacity: 1; transform: translateX(100%);
 }
 </style>
