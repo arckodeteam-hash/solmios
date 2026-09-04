@@ -254,9 +254,19 @@ function resultPrice(base: number, pct: number): string {
 const assignedFuture = ref<Set<string>>(new Set())
 const todayISO = new Date().toISOString().slice(0, 10)
 
-/** Estado de publicación de la temporada. La regla vive en `utils/season-state.ts` (testeada ahí). */
+/**
+ * Estado de publicación por temporada. La regla vive en `utils/season-state.ts` (testeada ahí).
+ * Precalculado en un mapa: el template lo consulta varias veces por celda y resolverlo con un
+ * `find` en cada lectura recorre el catálogo entero en cada render.
+ */
+const seasonStates = computed<Map<string, SeasonState>>(() => {
+  const m = new Map<string, SeasonState>()
+  for (const s of seasons.value) m.set(s.name, computeSeasonState(s, todayISO, assignedFuture.value))
+  return m
+})
+const UNKNOWN_SEASON: SeasonState = { publishes: false, live: false, badge: 'Sin fechas', reason: 'Sin fechas · no se publica' }
 function seasonState(name: string): SeasonState {
-  return computeSeasonState(seasons.value.find((x) => x.name === name), todayISO, assignedFuture.value)
+  return seasonStates.value.get(name) ?? UNKNOWN_SEASON
 }
 
 async function loadSeasonAssignments() {
