@@ -254,129 +254,131 @@
       </div>
     </div>
 
-    <!-- Popup (MisterPlan style: appears next to cell) -->
-    <!-- Acciones sobre lo que el usuario acaba de marcar en la grilla.
-         Era un menú flotante posicionado en el click: quedaba sobre las celdas —tapando justo el
-         tramo elegido—, se salía de la pantalla en las filas de abajo y, con la sección de
-         cerradura abierta, no entraba en ningún lado. Como gaveta no tapa la grilla, tiene alto
-         para respirar y el overlay deja claro que hay una decisión pendiente. -->
-    <AppModal :open="popup.show" placement="right" size="sm" body-class="p-0"
-      :title="popup.room?.number ? `Habitación ${popup.room.number}` : 'Selección'"
-      :subtitle="popupSubtitle" @close="closePopup">
+    <!-- Menú de acciones sobre lo que el usuario acaba de señalar en la grilla.
+         Anclado a la celda (o al tramo) y acotado a la pantalla — ver `AppPopover`: la versión
+         anterior se posicionaba en las coordenadas crudas del click, así que tapaba justo el
+         tramo elegido y se salía por abajo en las últimas filas. Corto a propósito: entra sin
+         scrollear. Lo largo (la cerradura) vive en su propio modal. -->
+    <AppPopover :open="popup.show" :anchor="popup.anchor" :width="276"
+      aria-label="Acciones sobre la selección del planning" @close="closePopup">
 
-      <div class="px-5 py-4 border-b border-border bg-surface">
-        <div class="text-[10px] font-bold text-text-muted uppercase tracking-wide">
-          {{ popup.res ? 'Reserva' : popup.blk ? 'Bloqueo' : 'Fechas seleccionadas' }}
-        </div>
-        <div class="mt-1 text-sm font-bold text-navy">
-          {{ popup.fromDate }}<span v-if="popup.fromDate !== popup.toDate"> → {{ popup.toDate }}</span>
-          <span v-if="popup.nights > 0" class="ml-1.5 text-text-secondary font-normal">
-            {{ popup.nights }} {{ popup.nights === 1 ? 'noche' : 'noches' }}
-          </span>
-        </div>
-        <div v-if="popup.room?.type" class="text-[11px] text-text-muted mt-0.5">{{ popup.room.type }}</div>
-      </div>
-
-      <!-- Celda libre -->
-      <div v-if="!popup.res && !popup.blk" class="p-3 space-y-1">
-        <button @click="popupNewRes" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
-          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-teal/10 text-teal text-lg font-black">+</span>
-          <span class="min-w-0">
-            <span class="block text-sm font-bold text-navy">Nueva Reserva</span>
-            <span class="block text-[11px] text-text-muted">Cargar un huésped en estas fechas</span>
-          </span>
-        </button>
-        <button @click="popupQuote" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
-          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-gold/10 text-gold"><Icon name="document" :size="17" /></span>
-          <span class="min-w-0">
-            <span class="block text-sm font-bold text-navy">Cotización</span>
-            <span class="block text-[11px] text-text-muted">Calcular el precio sin reservar</span>
-          </span>
-        </button>
-        <button @click="popupBlock" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
-          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-coral/10 text-coral"><Icon name="ban" :size="17" /></span>
-          <span class="min-w-0">
-            <span class="block text-sm font-bold text-navy">Bloquear</span>
-            <span class="block text-[11px] text-text-muted">Sacarla de la venta, también en las OTAs</span>
-          </span>
-        </button>
-      </div>
-
-      <!-- Reserva existente -->
-      <div v-if="popup.res" class="p-3 space-y-1">
-        <button @click="popupViewRes" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
-          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-navy/10 text-navy"><Icon name="clipboard" :size="17" /></span>
-          <span class="text-sm font-bold text-navy">Ver Reserva</span>
-        </button>
-        <button @click="popupCheckin" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
-          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-teal/10 text-teal"><Icon name="bell" :size="17" /></span>
-          <span class="text-sm font-bold text-teal">Hacer Check-in</span>
-        </button>
-        <button @click="popupExtend" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
-          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-navy/10 text-navy"><Icon name="calendar-plus" :size="17" /></span>
-          <span class="text-sm font-bold text-navy">Extender estadía</span>
-        </button>
-        <button @click="popupDuplicate" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
-          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-navy/10 text-navy"><Icon name="document" :size="17" /></span>
-          <span class="text-sm font-bold text-navy">Duplicar reserva</span>
-        </button>
-        <button @click="popupCancel" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-coral/5 transition-colors cursor-pointer">
-          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-coral/10 text-coral"><Icon name="x" :size="17" /></span>
-          <span class="text-sm font-bold text-coral">Cancelar Reserva</span>
-        </button>
-
-        <!-- Cerradura de la reserva: ver código, generarlo (auto/manual) y enviarlo — inline -->
-        <div class="border-t border-border mt-2 pt-2" data-testid="popup-lock">
-          <button @click="togglePopupLock" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-surface transition-colors cursor-pointer">
-            <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-gold/10 text-base">🔒</span>
-            <span class="text-sm font-bold text-navy">Cerradura</span>
-            <span class="ml-auto text-text-muted text-xs">{{ popupLock.open ? '▲' : '▼' }}</span>
-          </button>
-          <div v-if="popupLock.open" class="px-3 pb-3 space-y-2">
-            <div v-if="popupLock.loading" class="text-xs text-text-muted">Buscando código…</div>
-            <template v-else>
-              <div v-if="popupLock.code" data-testid="popup-lock-code" class="bg-surface rounded-xl p-3">
-                <div class="flex items-center gap-2">
-                  <code class="text-xl font-black tracking-[0.2em] font-mono text-navy">{{ popupLock.code.code }}</code>
-                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="popupLock.code.status === 'active' ? 'bg-teal/10 text-teal' : 'bg-gold/10 text-gold'">{{ popupLock.code.status === 'pending' ? 'pendiente' : 'activo' }}</span>
-                  <button @click="popupCopy" class="ml-auto text-[11px] font-bold text-text-secondary hover:text-navy cursor-pointer">{{ popupLock.copied ? '✓' : 'Copiar' }}</button>
-                </div>
-                <div class="text-[11px] text-text-muted mt-1">{{ popupLock.code.startDate || '?' }} → {{ popupLock.code.endDate || '?' }}</div>
-              </div>
-              <p v-else class="text-xs text-text-muted">Sin código para esta reserva todavía.</p>
-              <div class="flex flex-wrap gap-1.5">
-                <button @click="popupGenCode()" :disabled="popupLock.generating" data-testid="popup-lock-generate"
-                  class="px-3 py-1.5 bg-teal text-white text-xs font-bold rounded-lg hover:bg-teal-light disabled:opacity-60 cursor-pointer">{{ popupLock.generating ? 'Generando…' : (popupLock.code ? 'Regenerar' : 'Generar código') }}</button>
-                <button v-if="!popupLock.manualOpen" @click="popupLock.manualOpen = true" data-testid="popup-lock-manual-toggle"
-                  class="px-3 py-1.5 border border-border text-text-secondary text-xs font-bold rounded-lg hover:border-navy hover:text-navy cursor-pointer">{{ popupLock.code ? 'Cambiar código' : 'Crear manual' }}</button>
-                <button v-if="popupLock.code" @click="popupRevokeCode" :disabled="popupRevoking" data-testid="popup-lock-revoke" title="Borra el PIN de la cerradura física"
-                  class="px-3 py-1.5 border border-coral/30 text-coral text-xs font-bold rounded-lg hover:bg-coral/5 disabled:opacity-60 cursor-pointer">{{ popupRevoking ? 'Desactivando…' : 'Desactivar' }}</button>
-              </div>
-              <div v-if="popupLock.manualOpen" class="flex gap-1.5">
-                <input v-model="popupLock.manualCode" type="text" inputmode="numeric" maxlength="9" placeholder="4-9 dígitos" data-testid="popup-lock-manual-input"
-                  class="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-border text-sm font-mono font-bold tracking-wider focus:border-navy focus:outline-none" @keydown.enter="popupGenCode(popupLock.manualCode.trim())" />
-                <button @click="popupGenCode(popupLock.manualCode.trim())" :disabled="popupLock.generating" class="px-3 py-1.5 bg-navy text-white text-xs font-bold rounded-lg hover:bg-navy-light disabled:opacity-60 cursor-pointer">Crear</button>
-              </div>
-              <div v-if="popupLock.code" class="flex gap-1.5">
-                <button @click="popupSendEmail" :disabled="popupLock.sending" data-testid="popup-lock-email"
-                  class="flex-1 px-3 py-1.5 bg-navy text-white text-xs font-bold rounded-lg hover:bg-navy-light disabled:opacity-60 cursor-pointer">{{ popupLock.sending ? 'Enviando…' : 'Enviar por email' }}</button>
-                <a v-if="popupWaLink()" :href="popupWaLink()!" target="_blank" rel="noopener" data-testid="popup-lock-whatsapp"
-                  class="flex-1 text-center px-3 py-1.5 bg-teal text-white text-xs font-bold rounded-lg hover:bg-teal-light cursor-pointer">WhatsApp</a>
-              </div>
-            </template>
+      <div class="flex items-start gap-2 px-3 py-2 border-b border-border bg-surface">
+        <div class="min-w-0 flex-1">
+          <div class="text-[11px] font-black text-navy truncate">
+            <span v-if="popup.room?.number">{{ popup.room.number }} · </span>{{ popupRango }}
+            <span v-if="popup.nights > 0" class="text-text-secondary">({{ popup.nights }}N)</span>
+          </div>
+          <div class="text-[10px] font-bold uppercase tracking-wide text-text-muted truncate">
+            {{ popup.res ? (popup.res.guestName || 'Reserva') : popup.blk ? 'Bloqueo' : (popup.room?.type || 'Fechas seleccionadas') }}
           </div>
         </div>
+        <button @click="closePopup" aria-label="Cerrar"
+          class="shrink-0 w-6 h-6 grid place-items-center rounded-md text-text-muted hover:bg-navy/10 hover:text-navy cursor-pointer"><Icon name="x" :size="13" /></button>
+      </div>
+
+      <!-- Celda libre. Son tres, así que cada una puede decir qué hace sin estirar el menú. -->
+      <div v-if="!popup.res && !popup.blk" class="p-1.5">
+        <button @click="popupNewRes" class="pop-row">
+          <span class="pop-ico bg-teal/10 text-teal text-base font-black">+</span>
+          <span class="min-w-0">
+            <span class="block text-[13px] font-bold text-navy">Nueva Reserva</span>
+            <span class="block text-[10px] text-text-muted">Cargar un huésped en estas fechas</span>
+          </span>
+        </button>
+        <button @click="popupQuote" class="pop-row">
+          <span class="pop-ico bg-gold/10 text-gold"><Icon name="document" :size="15" /></span>
+          <span class="min-w-0">
+            <span class="block text-[13px] font-bold text-navy">Cotización</span>
+            <span class="block text-[10px] text-text-muted">Calcular el precio sin reservar</span>
+          </span>
+        </button>
+        <button @click="popupBlock" class="pop-row">
+          <span class="pop-ico bg-coral/10 text-coral"><Icon name="ban" :size="15" /></span>
+          <span class="min-w-0">
+            <span class="block text-[13px] font-bold text-navy">Bloquear</span>
+            <span class="block text-[10px] text-text-muted">Sacarla de la venta, también en las OTAs</span>
+          </span>
+        </button>
+      </div>
+
+      <!-- Reserva existente. Una línea por acción: seis filas con bajada no entran en pantalla. -->
+      <div v-if="popup.res" class="p-1.5">
+        <button @click="popupViewRes" class="pop-row">
+          <span class="pop-ico bg-navy/10 text-navy"><Icon name="clipboard" :size="15" /></span>
+          <span class="text-[13px] font-bold text-navy">Ver reserva</span>
+        </button>
+        <button @click="popupCheckin" class="pop-row">
+          <span class="pop-ico bg-teal/10 text-teal"><Icon name="bell" :size="15" /></span>
+          <span class="text-[13px] font-bold text-teal">Hacer check-in</span>
+        </button>
+        <button @click="popupExtend" class="pop-row">
+          <span class="pop-ico bg-navy/10 text-navy"><Icon name="calendar-plus" :size="15" /></span>
+          <span class="text-[13px] font-bold text-navy">Extender estadía</span>
+        </button>
+        <button @click="popupDuplicate" class="pop-row">
+          <span class="pop-ico bg-navy/10 text-navy"><Icon name="document" :size="15" /></span>
+          <span class="text-[13px] font-bold text-navy">Duplicar reserva</span>
+        </button>
+        <button @click="openLockDialog" data-testid="popup-lock" class="pop-row">
+          <span class="pop-ico bg-gold/10 text-sm">🔒</span>
+          <span class="text-[13px] font-bold text-navy">Cerradura</span>
+          <span class="ml-auto text-text-muted text-xs">›</span>
+        </button>
+        <button @click="popupCancel" class="pop-row hover:bg-coral/5">
+          <span class="pop-ico bg-coral/10 text-coral"><Icon name="x" :size="15" /></span>
+          <span class="text-[13px] font-bold text-coral">Cancelar reserva</span>
+        </button>
       </div>
 
       <!-- Bloqueo existente -->
-      <div v-if="popup.blk" class="p-3">
-        <button @click="popupUnblock" class="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-coral/5 transition-colors cursor-pointer">
-          <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 bg-coral/10 text-coral"><Icon name="trash" :size="17" /></span>
+      <div v-if="popup.blk" class="p-1.5">
+        <button @click="popupUnblock" class="pop-row hover:bg-coral/5">
+          <span class="pop-ico bg-coral/10 text-coral"><Icon name="trash" :size="15" /></span>
           <span class="min-w-0">
-            <span class="block text-sm font-bold text-coral">Eliminar Bloqueo</span>
-            <span class="block text-[11px] text-text-muted">Vuelve a venderse, también en las OTAs</span>
+            <span class="block text-[13px] font-bold text-coral">Eliminar bloqueo</span>
+            <span class="block text-[10px] text-text-muted">Vuelve a venderse, también en las OTAs</span>
           </span>
         </button>
+      </div>
+    </AppPopover>
+
+    <!-- Cerradura de la reserva: ver el código, generarlo (auto o manual) y enviarlo.
+         Vive en su propio modal y no dentro del menú: son ~14 controles: desplegados ahí adentro
+         el menú no entraba en ninguna pantalla y había que scrollearlo. -->
+    <AppModal :open="popupLock.open" size="sm" title="Cerradura"
+      :subtitle="popup.res ? (popup.res.guestName || 'Reserva') : ''" @close="closePopupLock">
+      <div data-testid="popup-lock-panel" class="space-y-3">
+        <div v-if="popupLock.loading" class="text-xs text-text-muted">Buscando código…</div>
+        <template v-else>
+          <div v-if="popupLock.code" data-testid="popup-lock-code" class="bg-surface rounded-xl p-3">
+            <div class="flex items-center gap-2">
+              <code class="text-xl font-black tracking-[0.2em] font-mono text-navy">{{ popupLock.code.code }}</code>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="popupLock.code.status === 'active' ? 'bg-teal/10 text-teal' : 'bg-gold/10 text-gold'">{{ popupLock.code.status === 'pending' ? 'pendiente' : 'activo' }}</span>
+              <button @click="popupCopy" class="ml-auto text-[11px] font-bold text-text-secondary hover:text-navy cursor-pointer">{{ popupLock.copied ? '✓' : 'Copiar' }}</button>
+            </div>
+            <div class="text-[11px] text-text-muted mt-1">{{ popupLock.code.startDate || '?' }} → {{ popupLock.code.endDate || '?' }}</div>
+          </div>
+          <p v-else class="text-xs text-text-muted">Sin código para esta reserva todavía.</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button @click="popupGenCode()" :disabled="popupLock.generating" data-testid="popup-lock-generate"
+              class="px-3 py-1.5 bg-teal text-white text-xs font-bold rounded-lg hover:bg-teal-light disabled:opacity-60 cursor-pointer">{{ popupLock.generating ? 'Generando…' : (popupLock.code ? 'Regenerar' : 'Generar código') }}</button>
+            <button v-if="!popupLock.manualOpen" @click="popupLock.manualOpen = true" data-testid="popup-lock-manual-toggle"
+              class="px-3 py-1.5 border border-border text-text-secondary text-xs font-bold rounded-lg hover:border-navy hover:text-navy cursor-pointer">{{ popupLock.code ? 'Cambiar código' : 'Crear manual' }}</button>
+            <button v-if="popupLock.code" @click="popupRevokeCode" :disabled="popupRevoking" data-testid="popup-lock-revoke" title="Borra el PIN de la cerradura física"
+              class="px-3 py-1.5 border border-coral/30 text-coral text-xs font-bold rounded-lg hover:bg-coral/5 disabled:opacity-60 cursor-pointer">{{ popupRevoking ? 'Desactivando…' : 'Desactivar' }}</button>
+          </div>
+          <div v-if="popupLock.manualOpen" class="flex gap-1.5">
+            <input v-model="popupLock.manualCode" type="text" inputmode="numeric" maxlength="9" placeholder="4-9 dígitos" data-testid="popup-lock-manual-input"
+              class="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-border text-sm font-mono font-bold tracking-wider focus:border-navy focus:outline-none" @keydown.enter="popupGenCode(popupLock.manualCode.trim())" />
+            <button @click="popupGenCode(popupLock.manualCode.trim())" :disabled="popupLock.generating" class="px-3 py-1.5 bg-navy text-white text-xs font-bold rounded-lg hover:bg-navy-light disabled:opacity-60 cursor-pointer">Crear</button>
+          </div>
+          <div v-if="popupLock.code" class="flex gap-1.5">
+            <button @click="popupSendEmail" :disabled="popupLock.sending" data-testid="popup-lock-email"
+              class="flex-1 px-3 py-1.5 bg-navy text-white text-xs font-bold rounded-lg hover:bg-navy-light disabled:opacity-60 cursor-pointer">{{ popupLock.sending ? 'Enviando…' : 'Enviar por email' }}</button>
+            <a v-if="popupWaLink()" :href="popupWaLink()!" target="_blank" rel="noopener" data-testid="popup-lock-whatsapp"
+              class="flex-1 text-center px-3 py-1.5 bg-teal text-white text-xs font-bold rounded-lg hover:bg-teal-light cursor-pointer">WhatsApp</a>
+          </div>
+        </template>
       </div>
     </AppModal>
 
@@ -858,6 +860,8 @@ import ChannelIcon from '@/components/ui/ChannelIcon.vue'
 import { moveDragDestination, dragScopeFor, type DragScope } from '@/utils/planning-drag'
 import Icon from '@/components/ui/Icon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import AppPopover from '@/components/ui/AppPopover.vue'
+import { type Rect } from '@/utils/popover-position'
 import { TTLockService } from '@/services/TTLock.service'
 import { useRouter } from 'vue-router'
 import type { ReschedulableReservation, RescheduleTarget, RescheduleResult, CancellableReservation, Reservation } from '@/types'
@@ -967,15 +971,40 @@ let dragStarted = false
 const lastSel = ref<{ room: any; from: string; to: string } | null>(null)
 
 // Popups
-const popup = ref<{ show: boolean; room: any; fromDate: string; toDate: string; nights: number; res: any; blk: any }>({ show: false, room: null, fromDate: '', toDate: '', nights: 0, res: null, blk: null })
+const popup = ref<{ show: boolean; room: any; fromDate: string; toDate: string; nights: number; res: any; blk: any; anchor: Rect | null }>({ show: false, room: null, fromDate: '', toDate: '', nights: 0, res: null, blk: null, anchor: null })
 
-/** Bajada del header de la gaveta: qué se marcó, en una línea. */
-const popupSubtitle = computed(() => {
+const MES_CORTO = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+/** '2026-09-03' → '03 sep'. La fecha ISO completa no entra en un menú de 276px. */
+function diaCorto(ds: string): string {
+  const [, m, d] = String(ds || '').split('-')
+  return m && d ? `${d} ${MES_CORTO[Number(m) - 1] ?? m}` : String(ds || '')
+}
+/** Encabezado del menú: el tramo señalado, en una línea. */
+const popupRango = computed(() => {
   const p = popup.value
-  if (!p.show) return ''
-  const rango = p.fromDate === p.toDate ? p.fromDate : `${p.fromDate} → ${p.toDate}`
-  return p.res ? `Reserva · ${rango}` : p.blk ? `Bloqueo · ${rango}` : rango
+  if (!p.fromDate) return ''
+  return p.fromDate === p.toDate ? diaCorto(p.fromDate) : `${diaCorto(p.fromDate)} → ${diaCorto(p.toDate)}`
 })
+
+/**
+ * Rectángulo de lo señalado (una celda o un tramo de varias), en coordenadas de pantalla. El menú
+ * se ancla ahí y se acomoda AL LADO: antes se dibujaba en las coordenadas del click y tapaba justo
+ * el tramo que acababas de marcar. `null` (ninguna celda visible) → el menú va al centro.
+ */
+function anchorFor(roomId: string, from: string, to: string): Rect | null {
+  if (typeof document === 'undefined') return null
+  const rects = Array.from(document.querySelectorAll<HTMLElement>('[data-rid][data-date]'))
+    .filter((n) => n.dataset.rid === String(roomId) && n.dataset.date! >= from && n.dataset.date! <= to)
+    .map((n) => n.getBoundingClientRect())
+  if (!rects.length) return null
+  const left = Math.min(...rects.map((r) => r.left))
+  const top = Math.min(...rects.map((r) => r.top))
+  return {
+    left, top,
+    width: Math.max(...rects.map((r) => r.right)) - left,
+    height: Math.max(...rects.map((r) => r.bottom)) - top,
+  }
+}
 const blockDlg = ref<{ show: boolean; room: string; from: string; to: string; reason: string; customReason: string; rid: string }>({ show: false, room: '', from: '', to: '', reason: '', customReason: '', rid: '' })
 const unblock = ref<{ show: boolean; id: string; room: string; reason: string; from: string; to: string }>({ show: false, id: '', room: '', reason: '', from: '', to: '' })
 const detailId = ref<string | null>(null)
@@ -1415,18 +1444,18 @@ function onMouseUp(ev: MouseEvent) {
   if (room && (dragStarted || from !== to)) {
     // Modo duplicar (#631): el drag en celdas vacías elige el destino (habitación+fechas).
     // Abre el wizard directo con los datos copiados de la reserva origen; NO muestra el
-    // popup Nueva/Cotizar/Bloquear.
+    // menú Nueva/Cotizar/Bloquear.
     if (duplicateSource.value) { lastSel.value = { room, from, to }; openDuplicateWizard(room, from, to); return }
     // Keep selection visible
     lastSel.value = { room, from, to }
     // El rango de celdas es INCLUSIVO en ambos extremos: de `from` a `to` hay (to-from)+1
     // celdas = noches. Antes faltaba el +1 y la reserva salía una noche corta (C1).
     const nights = Math.max(1, Math.round((new Date(to).getTime() - new Date(from).getTime()) / MS_PER_DAY) + 1)
-    popup.value = { show: true, room, fromDate: from, toDate: to, nights, res: null, blk: null }
+    popup.value = { show: true, room, fromDate: from, toDate: to, nights, res: null, blk: null, anchor: anchorFor(room.id, from, to) }
   } else if (room && !dragStarted) {
     if (duplicateSource.value) { lastSel.value = { room, from, to }; openDuplicateWizard(room, from, to); return }
     lastSel.value = { room, from, to }
-    popup.value = { show: true, room, fromDate: from, toDate: from, nights: 1, res: null, blk: null }
+    popup.value = { show: true, room, fromDate: from, toDate: from, nights: 1, res: null, blk: null, anchor: anchorFor(room.id, from, from) }
   }
 }
 
@@ -1434,7 +1463,7 @@ function showPopup(e: MouseEvent, room: any, day: DI, res: any, blk: any) {
   cancelDuplicateMode() // clic en reserva/bloque existente: abandona el modo duplicar
   lastSel.value = null
   const from = day.dateStr; const to = day.dateStr
-  popup.value = { show: true, room, fromDate: from, toDate: to, nights: 1, res, blk }
+  popup.value = { show: true, room, fromDate: from, toDate: to, nights: 1, res, blk, anchor: anchorFor(room.id, from, to) }
   // La sección Cerradura del popover arranca cerrada y limpia por reserva.
   popupLock.value = { open: false, loading: false, code: null, detail: null, generating: false, manualOpen: false, manualCode: '', sending: false, copied: '' }
 }
@@ -1445,10 +1474,14 @@ function showPopup(e: MouseEvent, room: any, day: DI, res: any, blk: any) {
 //    sendLockCodeEmail) y el link wa.me (WhatsApp sin creds de Meta Business).
 const popupLock = ref({ open: false, loading: false, code: null as any, detail: null as any, generating: false, manualOpen: false, manualCode: '', sending: false, copied: '' })
 
-function togglePopupLock() {
-  popupLock.value.open = !popupLock.value.open
-  if (popupLock.value.open && !popupLock.value.code && !popupLock.value.loading) loadPopupLock()
+/** La cerradura son ~14 controles: adentro del menú no entraba en ninguna pantalla. Abre su
+ *  propio modal y cierra el menú — si no, el menú (z superior) le quedaría encima. */
+function openLockDialog() {
+  popup.value.show = false
+  popupLock.value.open = true
+  if (!popupLock.value.code && !popupLock.value.loading) loadPopupLock()
 }
+function closePopupLock() { popupLock.value.open = false }
 
 async function loadPopupLock() {
   const resId = popup.value.res?.id
@@ -1606,7 +1639,10 @@ function openContext(rb: any, room: any) {
     room,
     fromDate: ci, toDate: co, nights: Math.max(1, Math.round((new Date(co).getTime() - new Date(ci).getTime()) / MS_PER_DAY)),
     res: orig, blk: null,
+    anchor: anchorFor(room.id, ci, co),
   }
+  // Cada reserva arranca con su cerradura cerrada y sin el código de la anterior.
+  popupLock.value = { open: false, loading: false, code: null, detail: null, generating: false, manualOpen: false, manualCode: '', sending: false, copied: '' }
 }
 
 /** Doble clic sobre una reserva: abre el detalle directo, sin pasar por el menú contextual
@@ -1614,12 +1650,12 @@ function openContext(rb: any, room: any) {
  *  2× `click` (que abre el popup vía `openContext`) ANTES del `dblclick` — hay que cerrar ese
  *  popup acá, si no queda tapando el modal de detalle que abre `viewResDetail`. */
 /**
- * El clic simple abre la gaveta, pero con un retardo corto para que el DOBLE clic pueda ganar.
+ * El clic simple abre el menú, pero con un retardo corto para que el DOBLE clic pueda ganar.
  *
- * La gaveta es un modal con overlay a pantalla completa: apenas se abre con el primer clic, el
- * segundo aterriza en el overlay y no en la barra, así que `dblclick` no llegaba a dispararse y
- * "abrir la reserva con doble clic" (#630) dejó de funcionar. Con el retardo, el doble clic
- * cancela la apertura de la gaveta y abre el detalle, que es lo que se espera.
+ * El menú trae una capa que cubre la pantalla (para que un clic afuera lo cierre): apenas se abre
+ * con el primer clic, el segundo aterriza en esa capa y no en la barra, así que `dblclick` no
+ * llegaba a dispararse y "abrir la reserva con doble clic" (#630) dejaba de funcionar. Con el
+ * retardo, el doble clic cancela la apertura del menú y abre el detalle, que es lo que se espera.
  */
 const DBLCLICK_GRACE_MS = 240
 let pendingContext: ReturnType<typeof setTimeout> | null = null
@@ -2085,6 +2121,18 @@ function goToday() { weekOffset.value = 0; lastSel.value = null; popup.value.sho
 </script>
 
 <style>
+/* Filas del menú anclado (AppPopover). Una línea por acción y sin recuadro de 36px por ícono:
+   con las filas altas de antes, seis acciones no entraban en pantalla y había que scrollear. */
+.pop-row {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border-radius: 10px; text-align: left; cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.pop-row:hover { background: var(--color-surface); }
+.pop-ico {
+  width: 26px; height: 26px; flex-shrink: 0; border-radius: 8px;
+  display: grid; place-items: center;
+}
 /* Cursor consistente durante el arrastre de reservas (mover / extender). */
 .planning-dragging-move, .planning-dragging-move * { cursor: move !important; }
 .planning-dragging-resize, .planning-dragging-resize * { cursor: ew-resize !important; }
