@@ -3,32 +3,27 @@
 // incrementan el MISMO contador" — sin esto, un atacante que rota entre workers multiplica
 // su cupo (el bug que este issue viene a cerrar).
 //
-// rate-limit.ts decide memoria-vs-Redis leyendo REDIS_URL UNA sola vez al cargar el módulo
-// (mismo patrón que el resto del repo: DATABASE_URL/REDIS_URL se resuelven al boot, no en
-// cada request). El resto del suite importa el módulo sin REDIS_URL (modo memoria) — no
-// conviene forzar TODO el suite a depender de Redis. Para probar el modo distribuido en
-// aislamiento, se fuerza una instancia FRESCA del módulo vía import dinámico con
-// cache-busting (query string única) DESPUÉS de setear REDIS_URL — Bun trata cada specifier
-// distinto como un módulo nuevo, así que el singleton `redis`/`attempts` de esa instancia sí
-// queda inicializado en modo Redis, sin tocar el resto de los tests que ya corrieron con el
-// módulo en modo memoria.
+// El modo distribuido se instancia con `createRateLimiter(url)`, que recibe la URL por argumento.
+// La versión anterior seteaba `process.env.REDIS_URL` y reimportaba el módulo con cache-busting
+// para forzar el modo Redis: eso dejaba la variable puesta durante el `await` del import, así que
+// cualquier otro test que cargara rate-limit.ts en esa ventana arrancaba en modo Redis, no podía
+// conectar y caía en fail-open (permitir todo). Los tests de "a la 21ª bloquea" fallaban en
+// bloque según el orden de archivos y trababan el deploy. Sin variables globales no hay ventana.
 //
 // Si no hay Redis disponible en TEST_REDIS_URL/localhost:6379, el test se salta (skip) en vez
 // de fallar el suite — no todos los entornos de dev/CI tienen redis-server instalado.
 
 import { describe, it, expect, beforeAll } from 'bun:test'
+import { createRateLimiter } from '../middlewares/rate-limit'
 
 const TEST_REDIS_URL = process.env.TEST_REDIS_URL || 'redis://localhost:6379/15'
 
-let rateLimitDistributed: typeof import('../middlewares/rate-limit').rateLimit
+let rateLimitDistributed: ReturnType<typeof createRateLimiter>['rateLimit']
 let redisAvailable = true
 
 beforeAll(async () => {
-  const prevRedisUrl = process.env.REDIS_URL
-  process.env.REDIS_URL = TEST_REDIS_URL
-  const mod = await import(`../middlewares/rate-limit?distributed-test=${Date.now()}-${Math.random()}`)
-  process.env.REDIS_URL = prevRedisUrl
-  rateLimitDistributed = mod.rateLimit
+  const limiter = createRateLimiter(TEST_REDIS_URL)
+  rateLimitDistributed = limiter.rateLimit
 
   try {
     // Race contra un timeout corto: el RedisClient puede tardar más en fallar que rechazar
