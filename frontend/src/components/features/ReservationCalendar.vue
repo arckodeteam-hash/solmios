@@ -933,7 +933,7 @@ const dragEnd = ref('')
 // sumando las noches desde ahí, la reserva se veía "alargarse" sola. Con ancla, el movimiento es
 // SIEMPRE relativo (delta de días desde donde agarraste), como cualquier drag — arrastrar es
 // arrastrar, nunca reancla el inicio real de la reserva a la posición del cursor.
-const resDrag = ref<{ id: string; mode: 'move' | 'resize'; scope: DragScope; roomId: string; checkIn: string; checkOut: string; origRoomId: string; origCheckIn: string; origCheckOut: string; anchorDate: string; moved: boolean } | null>(null)
+const resDrag = ref<{ id: string; mode: 'move' | 'resize'; scope: DragScope; triedDates?: boolean; roomId: string; checkIn: string; checkOut: string; origRoomId: string; origCheckIn: string; origCheckOut: string; anchorDate: string; moved: boolean } | null>(null)
 // Posición del cursor mientras se arrastra — alimenta el cartel flotante (ver template, Teleport
 // a body) que muestra fechas/noches en vivo, para no depender de leer el ancho dibujado de la
 // barra (que se recorta visualmente cerca de los bordes del calendario, ver comentario del cartel).
@@ -1686,6 +1686,11 @@ function onResDragMove(e: MouseEvent): boolean {
     // UNA celda moviera la reserva CUATRO días, y en un módulo plano eso se cubre con un test.
     // `room-only`: el huésped ya está adentro. Se lo puede trasladar de habitación, pero las
     // fechas quedan clavadas — arrastrar de costado no le corre la entrada.
+    //
+    // Se anota el INTENTO: sin esto, arrastrar de costado no hacía absolutamente nada y encima
+    // al soltar se abría el panel, así que parecía que la reserva "no se podía ni mover". Ahora
+    // al soltar se explica por qué no se movió y qué sí se puede hacer.
+    if (rd.scope === 'room-only' && date !== rd.anchorDate) rd.triedDates = true
     const dest = rd.scope === 'room-only'
       ? { checkIn: rd.origCheckIn, checkOut: rd.origCheckOut }
       : moveDragDestination({
@@ -1703,6 +1708,11 @@ function onResDragEnd(): boolean {
   if (!rd) return false
   resDrag.value = null
   dragPointer.value = null
+  if (rd.triedDates && !rd.moved) {
+    toast.info('El huésped ya hizo check-in: la fecha de entrada no se mueve. Podés cambiarlo de habitación arrastrándolo hacia otra fila, o extender la salida desde el borde derecho.')
+    suppressClick = true   // el aviso ya explicó lo que pasó; no abrir además el panel
+    return true
+  }
   if (!rd.moved) return true // fue un click, no un drag → onResDown ya frenó; el click abrirá el context
   if (rd.roomId === rd.origRoomId && rd.checkIn === rd.origCheckIn && rd.checkOut === rd.origCheckOut) return true
   suppressClick = true
