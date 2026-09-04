@@ -175,6 +175,14 @@ export const RescheduleChargeSchema: Record<string, ValidationRule> = {
   reason: { type: 'string' as const, max: 300 },
 }
 
+// Qué se hace con lo que el huésped pagó DE MÁS cuando el cambio baja el total. Sin `amount`: el
+// monto lo calcula el servidor contra lo realmente cobrado — que el cliente diga cuánto devolver
+// sería dejarle fijar cuánta plata sale de la caja.
+export const RescheduleCreditSchema: Record<string, ValidationRule> = {
+  action: { type: 'string' as const, required: true, enum: ['keep', 'refund'] },
+  reason: { type: 'string' as const, max: 300 },
+}
+
 // ── Settlement en checkout (F?): datos financieros del cierre de folio ──
 export const SettleSchema: Record<string, ValidationRule> = {
   method: { type: 'string' as const, required: true, max: 50 },

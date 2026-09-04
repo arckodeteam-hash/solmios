@@ -25,6 +25,10 @@ function loadEnv(path: string): Record<string, string> {
 const env = loadEnv('.env')
 const API_KEY = env.CHANNEX_API_KEY || process.env.CHANNEX_API_KEY || ''
 const BASE_URL = env.CHANNEX_BASE_URL || process.env.CHANNEX_BASE_URL || 'https://staging.channex.io/api/v1'
+// Property a revisar. La cuenta de Channex es UNA sola white-label para todos los hoteles, así que
+// `GET /properties` devuelve las de todos: agarrar la primera y escribirle ARI de prueba le pisa la
+// disponibilidad y el precio a un hotel real. Sin esta variable, el doctor es de SOLO LECTURA.
+const PROPERTY_ID = process.env.CHANNEX_PROPERTY_ID || env.CHANNEX_PROPERTY_ID || ''
 
 // ─── Simple HTTP client (no framework deps) ──────────────────────────
 
@@ -97,9 +101,18 @@ if (properties.length === 0) {
   }
 }
 
-// 4. Room Types de la primera propiedad
-if (properties.length > 0) {
-  const propId = properties[0].id
+// 4. Room Types de la propiedad elegida
+const target = PROPERTY_ID ? properties.find((p: any) => p.id === PROPERTY_ID) : properties[0]
+if (PROPERTY_ID && !target) {
+  fail('Propiedad objetivo', `CHANNEX_PROPERTY_ID=${PROPERTY_ID} no está en esta cuenta`)
+}
+if (!PROPERTY_ID) {
+  console.log('\n   ⚠️  Sin CHANNEX_PROPERTY_ID: modo SOLO LECTURA (no se escribe ARI de prueba).')
+  console.log('      Para ejercitar el push, apuntá a la property de pruebas:')
+  console.log('      CHANNEX_PROPERTY_ID=<uuid> bun run doctor\n')
+}
+if (target) {
+  const propId = target.id
   console.log(`\n   Revisando propiedad: ${propId.slice(0, 8)}...\n`)
 
   const rtRes = await channexRequest('GET', `/room_types?filter[property_id]=${propId}`)
@@ -138,7 +151,7 @@ if (properties.length > 0) {
     const rts = Array.isArray(rtRes.data) ? rtRes.data : []
     const rps = Array.isArray(rpRes.data) ? rpRes.data : []
 
-    if (rts.length > 0 && rps.length > 0) {
+    if (rts.length > 0 && rps.length > 0 && PROPERTY_ID) {
       const roomId = rts[0].id
       const rateId = rps[0].id
       const today = new Date().toISOString().split('T')[0]

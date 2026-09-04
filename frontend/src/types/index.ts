@@ -215,6 +215,11 @@ export interface RescheduleInput extends Partial<RescheduleTarget> {
 
 export interface RescheduleCommitInput extends RescheduleInput {
   charge?: { method: RescheduleChargeMethod; amount?: number; reason?: string }
+  /**
+   * Qué hacer con lo que el huésped pagó DE MÁS. Sin monto: lo calcula el servidor contra lo
+   * realmente cobrado — que el cliente diga cuánto devolver sería dejarle fijar cuánta plata sale.
+   */
+  credit?: { action: RescheduleCreditAction; reason?: string }
   successUrl?: string
   cancelUrl?: string
 }
@@ -246,8 +251,27 @@ export interface RescheduleQuote {
   roomChanged: boolean
   datesChanged: boolean
   currency: string
+  /**
+   * Lo REALMENTE cobrado de la reserva (`payments`). Distingue los dos casos que se veían iguales:
+   * "el total baja y ahora debe menos" (no hay nada que devolver) de "pagó de más" (sí la hay).
+   */
+  paidAmount: number
   available: boolean
   reason: string
+}
+
+/** `keep` = queda a favor del huésped · `refund` = se le devuelve la plata. */
+export type RescheduleCreditAction = 'keep' | 'refund'
+
+export interface RescheduleCredit {
+  action: RescheduleCreditAction
+  applied: boolean
+  /** Por dónde salió: `none` = quedó a favor, no se movió plata. */
+  target: 'none' | 'card' | 'cash'
+  paymentId?: string
+  message?: string
+  /** Ya hay factura emitida: falta la nota de crédito para que el libro de ventas cuadre. */
+  needsCreditNote?: boolean
 }
 
 export interface RescheduleCharge {
@@ -266,10 +290,13 @@ export interface RescheduleResult {
   quote: RescheduleQuote & {
     chargeAmount: number
     newTotal: number
-    /** `max(0, previousTotal - newTotal)` — saldo a favor. Se INFORMA, no se devuelve solo. */
+    /** `max(0, previousTotal - newTotal)` — cuánto BAJÓ el total. No es plata de nadie por sí solo. */
     creditAmount: number
+    /** `max(0, paidAmount - newTotal)` — lo que el huésped pagó DE MÁS. Esto sí es plata suya. */
+    overpaidAmount: number
   }
   charge: RescheduleCharge | null
+  credit: RescheduleCredit | null
 }
 
 // === STAY QUOTE (wizard de nueva reserva: precio por temporada) ===
@@ -501,6 +528,9 @@ export interface ReservationDetail {
   /** Saldo REAL a cobrar = chargeableTotal − paidAmount. Lo calcula el backend
    *  (`shared/utils/reservation-balance.ts`): incluye addons y otherCharges. */
   pendingAmount?: number
+  /** Lo que el huésped pagó DE MÁS (`creditBalance`). `pendingAmount` recorta en 0, así que un
+   *  excedente se veía igual que una reserva saldada y no aparecía en ninguna pantalla. */
+  creditAmount?: number
   /** Lo ya cobrado según `payments` (backend `shared/usecases/reservation-paid.ts`). NO es
    *  `deposit`: incluye lo pagado por folio y por factura, que no tocan esa columna. */
   paidAmount?: number

@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from 'bun:test'
 import { getExtendedDetail } from '../usecases/detail'
-import { chargeableTotal, pendingBalance, addonsTotal } from '../../../shared/utils/reservation-balance'
+import { chargeableTotal, pendingBalance, creditBalance, addonsTotal } from '../../../shared/utils/reservation-balance'
 
 const HOTEL = 'h1'
 const USER = { id: 'u1', role: 'hotel_admin', hotelId: HOTEL }
@@ -175,5 +175,48 @@ describe('reservation-balance — helper compartido', () => {
     const addons = [{ amount: 10, quantity: 3, kind: 'service' }]
     expect(chargeableTotal(r, addons)).toBe(550)
     expect(pendingBalance(r, addons)).toBe(450)
+  })
+})
+
+// El excedente estaba desapareciendo: `pendingBalance` recorta en 0, así que un huésped que pagó
+// de más se veía igual que uno que pagó justo, y esa plata no aparecía en ninguna pantalla.
+describe('creditBalance — lo que el huésped pagó de más', () => {
+  it('pagó más de lo que debía: la diferencia queda a su favor', () => {
+    const r = { totalAmount: 195 }
+    expect(creditBalance(r, [], 210)).toBe(15)
+    expect(pendingBalance(r, [], 210)).toBe(0)   // y no debe nada
+  })
+
+  it('pagó justo: no hay crédito ni deuda', () => {
+    const r = { totalAmount: 195 }
+    expect(creditBalance(r, [], 195)).toBe(0)
+    expect(pendingBalance(r, [], 195)).toBe(0)
+  })
+
+  it('debe plata: el crédito es cero, no un número negativo', () => {
+    const r = { totalAmount: 300 }
+    expect(creditBalance(r, [], 100)).toBe(0)
+    expect(pendingBalance(r, [], 100)).toBe(200)
+  })
+
+  it('nunca hay crédito y pendiente al mismo tiempo', () => {
+    const r = { totalAmount: 250, otherCharges: 30 }
+    const addons = [{ amount: 20, quantity: 2 }]
+    for (const paid of [0, 100, 320, 400]) {
+      const debe = pendingBalance(r, addons, paid)
+      const aFavor = creditBalance(r, addons, paid)
+      expect(debe > 0 && aFavor > 0).toBe(false)
+    }
+  })
+
+  it('los extras cuentan: un crédito contra el total pelado sería falso', () => {
+    const r = { totalAmount: 195 }
+    const addons = [{ amount: 30 }]              // total cobrable = 225
+    expect(creditBalance(r, addons, 210)).toBe(0)      // no pagó de más: debe 15
+    expect(pendingBalance(r, addons, 210)).toBe(15)
+  })
+
+  it('redondea a centavos, sin arrastre binario', () => {
+    expect(creditBalance({ totalAmount: 0.1 }, [], 0.3)).toBe(0.2)
   })
 })

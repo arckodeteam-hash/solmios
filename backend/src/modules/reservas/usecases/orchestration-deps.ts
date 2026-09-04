@@ -7,7 +7,7 @@
 // connector que lo cablea esté desactivado.
 
 import type { SettleFolioPort } from './settle-port'
-import type { RescheduleChargePort } from './reschedule'
+import type { RescheduleChargePort, RescheduleCreditPort } from './reschedule'
 import type { PromoCodePort } from './crud'
 import type { ReservationMoneyPort } from './money-port'
 import type { PaymentRequestsCeilingPort } from './ceiling-guard'
@@ -19,6 +19,8 @@ export interface ReservasOrchestrationDeps {
   /** Ver `usecases/settle-port.ts` — el actor va TIPADO: `any` acá reabre el agujero de DEBT-1. */
   settleFolio?: SettleFolioPort
   chargeReschedule?: RescheduleChargePort
+  /** connectors/reservas-reschedule-charge.ts — qué se hace con lo que el huésped pagó de más. */
+  creditReschedule?: RescheduleCreditPort
   promoCodes?: PromoCodePort // FIX 2026-07-31 — connectors/reservas-promocodes.ts
   /** STR-3 — connectors/reservas-marketing.ts: `message_logs` es del módulo marketing. */
   listMessageLogs?: (hotelId: string, reservationId: string) => Promise<Record<string, any>[]>

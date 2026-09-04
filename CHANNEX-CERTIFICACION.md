@@ -36,9 +36,11 @@ el PMS solo, que es lo que Channex quiere ver.
 
 1. `/panel/channel-manager` → tarjeta **"Conectado a Channex"** (property, última sync, tipos y
    tarifas publicados) y la tarjeta del canal **"SolmiOS Open · Conectado"**.
-2. **"Configurar tarifas"** → precio base + ajuste por temporada por ocupación, toggles **CTA/CTD**,
-   **mín. estancia**, **"Cerrar ventas"** (stop sell) y **"Enviar a canales"**; al pie, **"Mapeo con
-   el canal"** (4 de 4).
+2. **"Configurar tarifas"** (`channel-manager` → `channel-detail`, monta `ChannelRatesEditor.vue`) →
+   precio base + ajuste por temporada por ocupación, **"Mín. al llegar"** (min stay arrival, por
+   habitación), y por temporada los toggles **CTA/CTD**, **"Mín. en estadía"** (min stay through) y
+   **"Cerrar ventas"** (stop sell); arriba, **"Enviar a canales"**. Al pie, **"Mapeo con el canal"**
+   (4 de 4).
 3. Planning / grilla de tarifas / reservas: cada acción dispara su push por evento.
 
 ## Los tests — corrida del 2026-09-02
@@ -93,17 +95,23 @@ bun run scripts/e2e/channex-certification.e2e.ts
 | 1 | **El plan de la cuenta del examen**: el alta entró como prueba gratis y vence el **2026-09-09**. Si la screenshare cae después, el panel puede bloquearse a mitad del examen. Hay que asignarle un plan desde el admin (o mover la fecha). | Decisión del dueño |
 | 2 | Screenshots de la pantalla de mapeo para adjuntar al formulario | Se pueden sacar del panel tal como está |
 | 3 | Enviar el formulario con los task ids de `CHANNEX-CERTIFICACION-EVIDENCIA.md` y las respuestas del cuestionario (§8 de `-GAPS.md`) | Trámite |
-| 4 | `bun run doctor` no se corrió: **escribe ARI de prueba sobre la primera property de la cuenta** (`doctor.ts:148-176`). Correrlo solo apuntado a la property del examen, o no correrlo. | Cuidado al usarlo |
+| 4 | ~~`bun run doctor` escribe ARI sobre la primera property de la cuenta~~ **Resuelto el 2026-09-04**: el doctor sólo escribe si se le pasa `CHANNEX_PROPERTY_ID`; sin esa variable es **solo lectura**. Corrido así: **16 ✓ / 0 ✗**. Para ejercitar push+readback: `CHANNEX_PROPERTY_ID=bddf7d23-… bun run doctor` (pisa ARI de esa property con valores de prueba — no correrlo con el examen en curso). | — |
 
 ### Lo que se declara como NO soportado en el formulario
 
+> Ojo con `-GAPS.md`: su cuerpo (congelado el 2026-09-01) declara **CTA/CTD** y **multi rate plan
+> por tipo de habitación** como no soportados. Es falso desde P4/P5 — las dos cosas funcionan y
+> están verificadas con readback. La §8 de ese documento ya está corregida; el resto no.
+
 Channex lo permite si se anota. Sigue vigente lo de `-GAPS.md` §8:
 
-- **`min_stay_through` sí se soporta** (corregido: `-GAPS.md` §8 lo daba por faltante, pero es
-  anterior a P4). Sale como campo propio (`push-overrides.ts:93`, `channex.ts:517`) y la corrida lo
-  verifica con readback distinto del de llegada (arrival 10 · through 7, T7). Lo que falta es el
-  **control en la UI**: la pantalla de tarifas tiene un solo "Mín. estancia", que publica el de
-  llegada — por API se puede setear el through, por pantalla no.
+- **`min_stay_through` sí se soporta**, igual que `min_stay_arrival`, y los dos tienen control en
+  la UI (`push-overrides.ts:93`, `channex.ts:517`). La corrida los verifica con readback distinto
+  (arrival 10 · through 7, T7). La salvedad real es que se editan en **dos lugares distintos** del
+  editor de tarifas del canal (`ChannelRatesEditor.vue`): **"Mín. al llegar"** es por habitación
+  (arrival, `:61`) y **"Mín. en estadía"** es por temporada (through, `:93`) — no hay una grilla
+  única que muestre los dos por fecha. Hasta el 2026-09-04 los rótulos eran "Días mín." y "Mín.
+  estancia", que no dejaban ver cuál era cuál.
 - **Reservas modificadas por la OTA**: se reciben, se registran y se ackean, pero **no se
   auto-aplican** sobre la reserva local (aplicar una modificación sobre el calendario necesita una
   UX de reconciliación que todavía no existe).

@@ -74,6 +74,27 @@ export function pendingBalance(
   return Math.max(0, round2(chargeableTotal(reservation, addons) - paid))
 }
 
+/**
+ * La otra mitad de `pendingBalance`: lo que el huésped pagó DE MÁS. Nunca negativo.
+ *
+ * `pendingBalance` recorta con `Math.max(0, …)`, y ese recorte tira un dato real: un huésped que
+ * pagó $210 por una estadía que después bajó a $195 queda con "Pendiente: 0", igual que uno que
+ * pagó justo. Los $15 no aparecían en ningún lado — ni en la reserva, ni en el listado, ni en la
+ * factura: el aviso salía una vez en un toast al reprogramar y se perdía. Si el recepcionista no
+ * lo anotaba en un papel, nadie se enteraba.
+ *
+ * Las dos funciones son excluyentes por construcción (una es cero cuando la otra no lo es), así
+ * que juntas dicen la verdad completa del saldo sin que nadie tenga que restar a mano.
+ */
+export function creditBalance(
+  reservation: ReservationAmountsLike | null | undefined,
+  addons?: readonly ReservationAddonLike[] | null,
+  paidAmount?: number | null,
+): number {
+  const paid = resolvePaid(reservation, paidAmount)
+  return Math.max(0, round2(paid - chargeableTotal(reservation, addons)))
+}
+
 /** Lo pagado que usa la fórmula: `paidAmount` si es un número usable, si no `deposit`. */
 function resolvePaid(
   reservation: ReservationAmountsLike | null | undefined,

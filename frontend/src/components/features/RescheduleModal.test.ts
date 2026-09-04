@@ -52,6 +52,7 @@ function quoteFixture(over: Partial<RescheduleQuote> = {}): RescheduleQuote {
     roomChanged: true,
     datesChanged: false,
     currency: 'USD',
+    paidAmount: 0,          // por defecto: la reserva no tiene un peso cobrado
     available: true,
     reason: '',
     ...over,
@@ -65,8 +66,15 @@ function resultFixture(quote: RescheduleQuote): RescheduleResult {
       checkIn: quote.checkIn, checkOut: quote.checkOut, channel: 'direct',
       totalAmount: quote.quotedNewPrice, status: 'confirmed',
     },
-    quote: { ...quote, chargeAmount: Math.max(0, quote.difference), newTotal: quote.quotedNewPrice, creditAmount: Math.max(0, -quote.difference) },
+    quote: {
+      ...quote,
+      chargeAmount: Math.max(0, quote.difference),
+      newTotal: quote.quotedNewPrice,
+      creditAmount: Math.max(0, -quote.difference),
+      overpaidAmount: Math.max(0, quote.paidAmount - quote.quotedNewPrice),
+    },
     charge: null,
+    credit: null,
   }
 }
 
@@ -217,9 +225,11 @@ describe('RescheduleModal — elección de precio', () => {
     expect(body.charge?.amount).toBeUndefined()   // igual a la diferencia → no se manda override
   })
 
-  it('un total MENOR al anterior se muestra como saldo a favor y no abre el bloque de cobro', async () => {
-    // Menos días (o habitación más barata): repreciar da 220 sobre un total previo de 300.
-    const quote = quoteFixture({ newNights: 2, checkOut: '2026-09-03', repricedTotal: 220, repricedDifference: -80 })
+  it('el total baja pero el huésped NO había pagado: no hay nada que devolver, y no se pregunta', async () => {
+    // Menos días (o habitación más barata): repreciar da 220 sobre un total previo de 300, pero
+    // la reserva está impaga. Ese "a favor" no existe: simplemente ahora debe menos. Preguntarle
+    // al recepcionista qué hacer con plata que nunca entró es cómo se devolvía de más.
+    const quote = quoteFixture({ newNights: 2, checkOut: '2026-09-03', repricedTotal: 220, repricedDifference: -80, paidAmount: 0 })
     await open(quote)
 
     byTestId('pricing-reprice')!.click()
@@ -229,12 +239,9 @@ describe('RescheduleModal — elección de precio', () => {
     expect(credit).not.toBeNull()
     expect(credit?.textContent).toContain('El total baja')
     expect(credit?.textContent).toContain('USD 80.00')
-    // NO se afirma que haya plata a favor: la diferencia se calcula contra el total anterior de
-    // la reserva, no contra lo pagado. Si el huésped todavía no pagó, no hay nada a su favor —
-    // afirmarlo llevaba al recepcionista a devolver plata que nunca entró.
-    expect(credit?.textContent).toContain('Si ya había pagado')
-    // Y no se inventa un flujo de devolución: se resuelve en el mostrador.
-    expect(credit?.textContent).toContain('se resuelve en el mostrador')
+    expect(byTestId('credit-none')).not.toBeNull()
+    expect(credit?.textContent).toContain('No hay nada que devolver')
+    expect(byTestId('credit-refund')).toBeNull()        // ni siquiera se ofrece devolver
     expect(byTestId('charge-block')).toBeNull()
     expect(byTestId('no-difference')).toBeNull()
 
@@ -243,7 +250,58 @@ describe('RescheduleModal — elección de precio', () => {
     await flushPromises()
 
     expect(commitBody().pricingMode).toBe('reprice')
-    expect(commitBody().charge).toBeUndefined()   // saldo a favor: no se cobra nada
+    expect(commitBody().charge).toBeUndefined()   // no se cobra nada
+    expect(commitBody().credit).toBeUndefined()   // ni se decide sobre plata inexistente
+  })
+
+  it('el huésped SÍ pagó de más: se resuelve en el mismo modal, sin ir a Finanzas', async () => {
+    // Pagó los 300 y la estadía bajó a 220: hay 80 suyos de verdad.
+    const quote = quoteFixture({ newNights: 2, checkOut: '2026-09-03', repricedTotal: 220, repricedDifference: -80, paidAmount: 300 })
+    await open(quote)
+    byTestId('pricing-reprice')!.click()
+    await flushPromises()
+
+    const credit = byTestId('credit-block')
+    expect(credit?.textContent).toContain('Pagó de más')
+    expect(credit?.textContent).toContain('USD 80.00')
+    expect(byTestId('credit-keep')).not.toBeNull()
+    expect(byTestId('credit-refund')).not.toBeNull()
+
+    vi.mocked(ReservationService.reschedule).mockResolvedValue(resultFixture({ ...quote, pricingMode: 'reprice', quotedNewPrice: 220, difference: -80 }))
+    buttonByText('Confirmar').click()
+    await flushPromises()
+
+    // Sin tocar nada va 'keep': lo único que no mueve plata.
+    expect(commitBody().credit).toEqual({ action: 'keep' })
+  })
+
+  it('elegir "Devolver" viaja al backend — y el monto NO lo decide el navegador', async () => {
+    const quote = quoteFixture({ newNights: 2, checkOut: '2026-09-03', repricedTotal: 220, repricedDifference: -80, paidAmount: 300 })
+    await open(quote)
+    byTestId('pricing-reprice')!.click()
+    await flushPromises()
+
+    byTestId('credit-refund')!.click()
+    await flushPromises()
+
+    vi.mocked(ReservationService.reschedule).mockResolvedValue(resultFixture({ ...quote, pricingMode: 'reprice', quotedNewPrice: 220, difference: -80 }))
+    buttonByText('Confirmar').click()
+    await flushPromises()
+
+    expect(commitBody().credit).toEqual({ action: 'refund' })
+    // Cuánta plata sale lo calcula el servidor contra lo cobrado: si el monto viajara desde acá,
+    // el cliente elegiría cuánto se saca de la caja.
+    expect((commitBody().credit as any).amount).toBeUndefined()
+  })
+
+  it('pagó de más pero el total SUBE: se cobra, no se pregunta por devoluciones', async () => {
+    const quote = quoteFixture({ repricedTotal: 380, repricedDifference: 80, paidAmount: 300 })
+    await open(quote)
+    byTestId('pricing-reprice')!.click()
+    await flushPromises()
+
+    expect(byTestId('charge-block')).not.toBeNull()
+    expect(byTestId('credit-block')).toBeNull()
   })
 
   it('avisa cuando el recálculo degradó al precio base por falta de tarifas cargadas', async () => {

@@ -323,6 +323,12 @@ const hotelCheckOut = computed(() => hotelCheckOutTime(hotelInfo.value))
 // detalle cargado (`:open="!loading && !!d"`), así que siempre hay número del backend.
 const grandTotal = computed(() => d.value?.chargeableTotal ?? 0)
 const pending = computed(() => d.value?.pendingAmount ?? 0)
+/**
+ * Lo que el huésped pagó DE MÁS. `pendingAmount` recorta en 0, así que sin esta fila un excedente
+ * se veía idéntico a una reserva saldada: quien pagó $210 por una estadía que después bajó a $195
+ * quedaba en "Pendiente: 0" y esos $15 no aparecían en ninguna pantalla del panel.
+ */
+const credit = computed(() => d.value?.creditAmount ?? 0)
 // Lo COBRADO según `payments` (backend `shared/usecases/reservation-paid.ts`). Los documentos
 // impresos decían "Pagado" mostrando `deposit`, que no incluye lo cobrado por folio ni por
 // factura: con "Pendiente" ya calculado sobre `payments`, TOTAL − Pagado no cerraba (GH-0.2).
@@ -937,6 +943,7 @@ function irAFacturacion() {
                   <span v-else class="font-bold text-navy">{{ money(otherCharges) }}</span>
                 </div>
                 <div class="flex justify-between border-t border-border/50 pt-1.5"><span class="font-bold text-text-secondary">Pendiente de cobro</span><span class="font-black" :class="pending > 0 ? 'text-coral' : 'text-teal'">{{ money(pending) }}</span></div>
+                <div v-if="credit > 0" data-testid="reservation-credit" class="flex justify-between"><span class="font-bold text-teal">A favor del huésped</span><span class="font-black text-teal">{{ money(credit) }}</span></div>
                 <div v-if="secondaryTotal !== null" class="flex justify-between"><span class="text-text-muted">Total ({{ secondaryCurrency }})</span><span class="font-bold text-purple">{{ moneySecondary(secondaryTotal) }}</span></div>
                 <!-- GH-0.1: el monto del link vivo NO se veía en ninguna pantalla, así que un link
                      emitido por menos que el saldo pasaba desapercibido. -->

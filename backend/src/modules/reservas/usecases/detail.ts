@@ -1,6 +1,6 @@
 import { NotFoundError, AuthError } from 'arckode-framework'
 import type { ReservasQueries } from './reservas-queries'
-import { addonsTotal, chargeableTotal, pendingBalance } from '../../../shared/utils/reservation-balance'
+import { addonsTotal, chargeableTotal, pendingBalance, creditBalance } from '../../../shared/utils/reservation-balance'
 import { paidForReservation } from '../../../shared/usecases/reservation-paid'
 import { reservationPaymentHistory, type PaymentHistoryEntry } from '../../../shared/usecases/reservation-payment-history'
 import { toMessageLogViews, type MessageLogSource } from './message-log'
@@ -63,6 +63,12 @@ export async function getExtendedDetail(
     addonsTotal: addonsTotal(addons),
     chargeableTotal: chargeableTotal(r, addons),
     pendingAmount: pendingBalance(r, addons, paid),
+    /**
+     * Lo que el huésped pagó DE MÁS. `pendingAmount` recorta en 0, así que sin este campo un
+     * excedente se ve idéntico a una reserva saldada: quien pagó $210 por una estadía que después
+     * bajó a $195 quedaba en "Pendiente: 0" y los $15 no aparecían en ninguna pantalla.
+     */
+    creditAmount: creditBalance(r, addons, paid),
     /** Lo ya cobrado según `payments` (GH-0.2). El modal lo muestra junto al pendiente. */
     paidAmount: paid,
     /** Movimientos de dinero de la reserva: cobros y devoluciones, con método y referencia. */

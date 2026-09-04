@@ -57,8 +57,8 @@
                 <span class="text-xs text-text-muted shrink-0">{{ currency }}</span>
               </div>
               <div class="grid grid-cols-2 gap-2">
-                <div>
-                  <div class="text-[10px] text-text-muted">Días mín.</div>
+                <div title="Mínimo de noches para poder LLEGAR (min stay arrival): se exige el día del check-in">
+                  <div class="text-[10px] text-text-muted">Mín. al llegar</div>
                   <input type="number" min="0" inputmode="numeric" v-model.number="g.minStay" class="w-full px-2 py-1 rounded-lg border-2 border-navy/30 text-xs text-right focus:border-navy outline-none" />
                 </div>
                 <div>
@@ -89,8 +89,8 @@
                       class="flex-1 py-1 text-[9px] font-black rounded-lg border-2 transition-colors cursor-pointer"
                       :class="cell.ctd ? 'bg-coral border-coral text-white' : 'border-navy/30 text-text-secondary hover:border-coral hover:text-coral'">CTD</button>
                   </div>
-                  <div class="flex items-center gap-1">
-                    <span class="text-[9px] text-text-muted shrink-0">Mín. estancia</span>
+                  <div class="flex items-center gap-1" title="Mínimo de noches para estadías que ATRAVIESAN estos días (min stay through), aunque la llegada sea anterior">
+                    <span class="text-[9px] text-text-muted shrink-0">Mín. en estadía</span>
                     <input type="number" min="0" inputmode="numeric" v-model.number="cell.minStayThrough"
                       class="w-full min-w-0 px-1.5 py-1 rounded-lg border-2 border-navy/30 text-[11px] font-bold text-navy text-right focus:border-navy outline-none" />
                   </div>

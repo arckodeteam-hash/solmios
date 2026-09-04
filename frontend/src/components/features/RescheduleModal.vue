@@ -116,25 +116,35 @@
           </div>
         </div>
 
-        <!-- Saldo a favor del huésped. Se INFORMA, no se devuelve: no hay flujo de devolución
-             automática todavía (PENDIENTE DE DECISIÓN: nota de crédito vs. reembolso vs. descuento
-             en el folio). Mientras tanto lo resuelve el recepcionista en el mostrador. -->
+        <!-- El total baja. Dos situaciones que se veían idénticas y NO lo son: que el huésped
+             ahora deba menos (no hay plata de nadie) y que haya pagado de más (sí la hay). El
+             servidor manda `paidAmount`, así que acá ya no se adivina. -->
         <div v-else-if="selectedDifference < 0" data-testid="credit-block"
-          class="rounded-xl border border-teal/30 bg-teal/10 px-3 py-2.5 space-y-1">
+          class="rounded-xl border border-teal/30 bg-teal/10 px-3 py-2.5 space-y-2">
           <div class="flex items-center justify-between text-sm font-black text-teal">
-            <span>El total baja</span>
-            <span class="tabular-nums">{{ money(Math.abs(selectedDifference)) }}</span>
+            <span>{{ overpaid > 0 ? 'Pagó de más' : 'El total baja' }}</span>
+            <span class="tabular-nums">{{ money(overpaid > 0 ? overpaid : Math.abs(selectedDifference)) }}</span>
           </div>
-          <!--
-            Antes decía "A favor del huésped", y eso podía ser MENTIRA: la diferencia se calcula
-            contra el total anterior de la reserva (`previousTotal`), no contra lo que el huésped
-            efectivamente pagó. Si todavía no pagó nada, no hay nada a su favor — simplemente
-            ahora debe menos. Afirmarlo llevaba al recepcionista a devolver plata que nunca entró.
-          -->
-          <p class="text-[11px] text-teal/90 leading-snug">
-            Si ya había pagado la reserva completa, esta diferencia queda a su favor. El sistema no
-            revisa los pagos ni devuelve nada: se resuelve en el mostrador.
+
+          <!-- No pagó de más: no hay nada que decidir. -->
+          <p v-if="overpaid <= 0" data-testid="credit-none" class="text-[11px] text-teal/90 leading-snug">
+            Ahora debe {{ money(Math.abs(selectedDifference)) }} menos. No hay nada que devolver:
+            todavía no había pagado esa plata.
           </p>
+
+          <!-- Pagó de más: se resuelve acá mismo, sin ir a Finanzas. -->
+          <template v-else>
+            <p class="text-[11px] text-teal/90 leading-snug">Ya pagó esa plata. ¿Qué hacés con ella?</p>
+            <div class="grid grid-cols-2 gap-2">
+              <button v-for="opt in creditOptions" :key="opt.key" type="button"
+                :data-testid="`credit-${opt.key}`" @click="creditAction = opt.key"
+                class="rounded-lg border-2 px-2.5 py-2 text-left transition-colors cursor-pointer"
+                :class="creditAction === opt.key ? 'border-teal bg-white' : 'border-transparent bg-white/60 hover:bg-white'">
+                <span class="block text-xs font-black text-navy">{{ opt.label }}</span>
+                <span class="block text-[10px] text-text-muted leading-snug">{{ opt.hint }}</span>
+              </button>
+            </div>
+          </template>
         </div>
 
         <div v-else-if="pricingMode" data-testid="no-difference" class="text-xs text-text-muted italic">Sin diferencia a cobrar.</div>
@@ -178,6 +188,7 @@ import { useToast } from '@/composables/useToast'
 import type {
   RescheduleQuote, RescheduleCommitInput, RescheduleResult, RescheduleTarget,
   ReschedulePricingMode, RescheduleChargeMethod, ReschedulableReservation, RescheduleRoomRef,
+  RescheduleCreditAction,
 } from '@/types'
 
 const props = withDefaults(defineProps<{
@@ -209,6 +220,12 @@ const submitting = ref(false)
  * hay nada que elegir, las dos rutas dan el mismo número.
  */
 const pricingMode = ref<ReschedulePricingMode | null>(null)
+/**
+ * Qué se hace con lo que pagó de más. Arranca en 'keep' (dejarlo a favor) a propósito: es lo
+ * único que no mueve plata, y por lo tanto lo único que no hay que deshacer si el recepcionista
+ * apretó sin leer. Devolver es explícito.
+ */
+const creditAction = ref<RescheduleCreditAction>('keep')
 const method = ref<RescheduleChargeMethod>('folio')
 const amount = ref('')
 const reason = ref('')
@@ -268,6 +285,23 @@ const selectedDifference = computed(() => {
   if (!q || !pricingMode.value) return 0
   return pricingMode.value === 'reprice' ? q.repricedDifference : q.keepDifference
 })
+
+/**
+ * Lo que el huésped pagó DE MÁS con la opción elegida: contra lo COBRADO, no contra el total
+ * anterior. Antes el modal decía "a favor" en cuanto el total bajaba, y eso podía ser mentira —
+ * si todavía no había pagado nada, no hay nada a su favor: simplemente ahora debe menos. Con esa
+ * afirmación de por medio, el recepcionista devolvía plata que nunca había entrado.
+ */
+const overpaid = computed(() => {
+  const q = quote.value
+  if (!q || !pricingMode.value) return 0
+  return Math.max(0, Math.round((Number(q.paidAmount ?? 0) - selectedTotal.value) * 100) / 100)
+})
+
+const creditOptions: { key: RescheduleCreditAction; label: string; hint: string }[] = [
+  { key: 'keep', label: 'Dejar a favor', hint: 'Se le descuenta al cerrar la cuenta' },
+  { key: 'refund', label: 'Devolver', hint: 'Vuelve por donde pagó' },
+]
 
 const pricingOptions = computed<{ key: ReschedulePricingMode; label: string; hint: string; total: number; difference: number }[]>(() => {
   const q = quote.value
@@ -377,14 +411,22 @@ async function confirm() {
       if (amountNum !== null && amountNum !== difference) body.charge.amount = amountNum
       if (method.value === 'card') { body.successUrl = window.location.href; body.cancelUrl = window.location.href }
     }
+    // El monto NO viaja: lo calcula el servidor contra lo realmente cobrado. Acá solo va la
+    // decisión de la persona.
+    if (overpaid.value > 0) body.credit = { action: creditAction.value }
     const result = await ReservationService.reschedule(reservation.id, body)
     if (result.charge?.method === 'card') {
       if (result.charge.applied && result.charge.checkoutUrl) { window.open(result.charge.checkoutUrl, '_blank'); toast.success('Cambio aplicado — link de pago abierto') }
       else { toast.error(result.charge.message || 'No se pudo generar el cobro con tarjeta; cobrá en efectivo/POS') }
     } else if (result.charge?.applied) {
       toast.success(result.charge.target === 'folio' ? 'Cambio aplicado — cargado al folio' : 'Cambio aplicado — cobrado en efectivo')
-    } else if (result.quote.creditAmount > 0) {
-      toast.success(`Reserva actualizada — quedan ${money(result.quote.creditAmount)} a favor del huésped`)
+    } else if (result.credit) {
+      // El mensaje lo arma el servidor porque depende de por dónde salió la plata (tarjeta o caja)
+      // y de si además hace falta una nota de crédito.
+      const monto = money(result.quote.overpaidAmount)
+      const texto = `${result.credit.action === 'refund' ? 'Devuelto' : 'A favor del huésped'}: ${monto}. ${result.credit.message ?? ''}`.trim()
+      if (result.credit.needsCreditNote) toast.info('Cambio aplicado', texto)
+      else toast.success('Cambio aplicado', texto)
     } else {
       toast.success('Reserva actualizada')
     }

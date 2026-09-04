@@ -12,6 +12,7 @@ import { dispatchCreateEmail } from './usecases/reservation-notifications'
 import { setGuaranteePin as setGuaranteePinUsecase, getGuaranteeHasPin as getGuaranteeHasPinUsecase, unlockGuaranteeCard as unlockGuaranteeCardUsecase } from './usecases/guarantee'
 import { listReservations, getReservationById, createReservation, updateReservationWithBalance, deleteReservation, type PromoCodePort } from './usecases/crud'
 import { paidSourceFrom, type PaidSource } from '../../shared/usecases/reservation-paid'
+import { paymentsOfReservation as paymentsOfReservationUsecase, hasInvoiceForReservation as hasInvoiceForReservationUsecase } from './usecases/reservation-money-links'
 import { cancelReservation as cancelReservationUsecase } from './usecases/cancel'
 import { approveReservation as approveReservationUsecase } from './usecases/approve'
 import { cancelReservationBySystem, type SystemCancelInput, type SystemCancelOutcome } from './usecases/cancel-system'
@@ -129,6 +130,10 @@ export class ReservasService {
   /** Lo COBRADO, derivado de `payments` (GH-0.2) — ver shared/usecases/reservation-paid.ts. */
   paidSource(): PaidSource { return paidSourceFrom(this.queries.paidRepos) }
 
+  // Ver usecases/reservation-money-links.ts — los usa el connector del cambio de reserva.
+  paymentsOfReservation(hotelId: string, rid: string) { return paymentsOfReservationUsecase(this.queries.paidRepos, hotelId, rid) }
+  hasInvoiceForReservation(hotelId: string, rid: string) { return hasInvoiceForReservationUsecase(this.queries.paidRepos, hotelId, rid) }
+
   addonsCeilingGuard() { return (rid: string, hid: string) => ceilingGuardOf(this.orchestrationDeps.paymentRequestsCeiling, 'clamp')(hid, rid) } // SEC3-2/RTC-8.8, fail-closed — ver usecases/ceiling-guard.ts
 
   /** COR-1/RTC-7.3 — un movimiento de dinero mueve el saldo Y baja el techo (connector payments-reservas). */
@@ -146,7 +151,7 @@ export class ReservasService {
   }
 
   async reschedule(id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<any> {
-    return commitRescheduleUsecase({ ...this.rescheduleDeps(), logger: this.logger, cache: this.cache, sockets: this.sockets, chargePort: this.orchestrationDeps.chargeReschedule, audit: (e) => this.queries.createAuditLog({ id: crypto.randomUUID(), entity: 'Reservations', entityId: id, action: 'reschedule', userId: user.id, hotelId: String(e.hotelId), detail: JSON.stringify(e), createdAt: new Date().toISOString() }) }, id, input, user)
+    return commitRescheduleUsecase({ ...this.rescheduleDeps(), logger: this.logger, cache: this.cache, sockets: this.sockets, chargePort: this.orchestrationDeps.chargeReschedule, creditPort: this.orchestrationDeps.creditReschedule, audit: (e) => this.queries.createAuditLog({ id: crypto.randomUUID(), entity: 'Reservations', entityId: id, action: 'reschedule', userId: user.id, hotelId: String(e.hotelId), detail: JSON.stringify(e), createdAt: new Date().toISOString() }) }, id, input, user)
   }
 
   // ── PRE-CHECKIN (público) ──────────────────────────────────────────────

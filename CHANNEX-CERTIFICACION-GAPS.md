@@ -1,15 +1,27 @@
-# Channex — Gap de Certificación PMS (estado 2026-09-01)
+# Channex — Gap de Certificación PMS
 
-> **Desactualizado en dos puntos desde el 2026-09-02** — el estado vigente está en
-> `CHANNEX-CERTIFICACION.md`:
-> 1. La property del examen ya NO es `f1f563dd` (creada a mano) sino **`bddf7d23`**, la que creó el
->    PMS solo para el hotel `a7c8d8e4-…` dado de alta por el registro público en producción. Ahí es
->    donde vive el canal **SolmiOS Open** mapeado, que es lo que el examen mira.
-> 2. `min_stay_through` **sí se soporta** (§8 lo daba por faltante: ese texto es anterior a P4).
->    Verificado con readback el 2026-09-02, distinto del de llegada.
+> ## ⛔ DOCUMENTO HISTÓRICO — foto del 2026-09-01, NO es el estado actual
 >
-> Y falta acá el veto que apareció el 2026-09-02: el sync borraba y recreaba los rate plans, así que
-> el test 1 dejaba al canal con **0 mapeos**. Resuelto (`usecases/sync-structure.ts`).
+> Se conserva porque explica **cómo se llegó** hasta acá (el gap original, las decisiones de
+> diseño y el plan P1–P10). **No lo uses para responder nada**: el estado vigente está en
+> `CHANNEX-CERTIFICACION.md` y la evidencia en `CHANNEX-CERTIFICACION-EVIDENCIA.md`.
+>
+> La única sección mantenida al día es **§8 (cuestionario T14)**, porque es la que se transcribe
+> al formulario oficial. Todo el resto quedó congelado el 2026-09-01 y **contradice al código**
+> en al menos esto (auditado el 2026-09-04, cada punto verificado contra el repo):
+>
+> | Lo que dice el cuerpo del documento | Lo que hace el código hoy |
+> |---|---|
+> | §0/§3: «CTA/CTD ❌ · T7 ❌» | Soportadas: `canales/usecases/channex.ts:515-516`, `push-overrides.ts:99-103`, UI `ChannelRatesEditor.vue:85-90`. T7 pasó con readback |
+> | §0/§2/§3: «multi rate plan ❌ — 1 "Standard" por tipo» | BAR + Bed & Breakfast: `shared/utils/rate-plans.ts:30`. El canal del examen tiene 4 rate plans mapeados |
+> | §3: «`min_stay_through` falta» | Se manda y se verificó con readback distinto del de llegada (T7: arrival 10 · through 7) |
+> | §3: toggles en «`tarifas/index.vue:276-284,344-350`» | Esas líneas son `setBasePrice()` y `copyRatesNextYear()`. Los controles viven en `ChannelRatesEditor.vue`, montado desde `channel-detail/index.vue:150` |
+> | §4.1: «mapping persistente ❌ — falta `channel_mapping`» | Existe (`shared/models.ts`, `canales/service.ts`, `usecases/canales-queries.ts`) — §6 P6 ✅ |
+> | §4.2: «sin timeout ni retry ❌» | `canales/usecases/channex-http.ts`: 18/min, backoff 429/5xx, timeout 15s — §6 P1 ✅ |
+> | §4.3 y §10: «el sync **es destructivo**, borra y recrea» | Idempotente desde el 2026-09-02: `usecases/sync-structure.ts` actualiza por título y sólo borra lo que el hotel ya no tiene. (El `already-synced` de `auto-provision.ts:64` sigue, pero el motivo escrito acá ya no es cierto) |
+> | §2/§5/§9: property `f1f563dd` | Descartada. La del examen es `bddf7d23`, creada por el propio PMS |
+> | §7: «24/24 el 2026-09-01» | Esa corrida fue local y contra una property sin canal. La válida: **2026-09-02, 26 checks** |
+> | §0: «10 de 14 en verde, 2 parciales» | 11 escenarios corridos en verde + T12/T13 por código |
 
 > Documento de trabajo. Reemplaza la tabla §3 de `CHANNEX-STAGING-POC.md` (baseline
 > junio-2026, "0/14"), que quedó desactualizada: R4 (compresión de rangos), R5
@@ -361,25 +373,43 @@ ni la reemplaza: si se borra, el PMS publica igual (eso es lo que Channex exige)
 
 ---
 
-## 8. Cuestionario T14 — respuestas formales (P10, redactado 2026-09-01)
+## 8. Cuestionario T14 — respuestas formales
 
-Lo que Channex pregunta en "Extra Notes" y nuestras respuestas honestas de hoy:
+> **Única sección vigente de este documento.** Verificada contra el código el **2026-09-04**; cada
+> fila lleva dónde mirarlo. Esto es lo que se transcribe al formulario
+> (https://forms.gle/xA8F3eSYBPBd8apYA).
 
-| Pregunta | Respuesta | Estado código |
+### Lo que SÍ soportamos
+
+| Pregunta | Respuesta | Dónde está |
 |---|---|---|
-| Min Stay **Through** vs **Arrival** | ~~NO soportado~~ → **soportados los dos** desde P4; verificado con readback el 2026-09-02 (arrival 10 · through 7). Sin control propio en la UI: la pantalla publica el de llegada | `push-overrides.ts:93`, `channex.ts:517` |
-| Restricciones soportadas | stop_sell ✅ · max_stay ✅ · min_stay_arrival ✅ · **CTA/CTD no soportadas** (P4) | `channex.ts` payload |
-| Multi room type | Sí — el sync agrupa `rooms` por `type` y empuja todos | `syncProperty` |
-| Multi rate plan por room type | **No** — 1 "Standard" por tipo (P5). El setup del examen (BAR+B&B) existe del lado Channex | P5 pendiente |
-| Tarjetas de crédito / PCI | **No procesamos datos de tarjeta** en el PMS: los cobros van por Stripe Links/Checkout (PCI scope de Stripe). Sin almacenamiento de PAN/CVV | `payment-links`, Stripe |
-| Bookings modificados (OTA modification) | Se reciben, se registran y se ackean, pero **no se auto-aplican** los cambios sobre la reserva local (decisión de seguridad: aplicar modificaciones OTA sobre el calendario requiere UX de reconciliación). Declarado como limitación | `booking-ingestion.ts:6-7` |
-| Webhooks vs feed | Feed polling cada 15 min con ack + dedupe + drain (webhook opcional, no implementado) | `booking-sync-cron.ts` |
-| Full sync programático | Solo manual (botón sync). Permitido máx 1/24h off-peak si se automatiza | — |
-| Rate limits | Transport con limiter 18/min + backoff 429/5xx (demostrable) | `channex-http.ts` |
+| Restricciones | `stop_sell` · `max_stay` · `min_stay_arrival` · `min_stay_through` · **CTA** (`closed_to_arrival`) · **CTD** (`closed_to_departure`) | `channex.ts:509-520`, `push-overrides.ts:93-103`. Updates parciales: lo que está en 0 no se manda |
+| Min Stay **Through** vs **Arrival** | **Los dos, por separado.** Verificado con readback el 2026-09-02 con valores distintos (arrival 10 · through 7, T7) | `push-overrides.ts:93`, `channex.ts:517` |
+| Multi room type | Sí — el sync agrupa `rooms` por `type` y empuja todos en una llamada | `syncProperty` |
+| **Multi rate plan por room type** | **Sí** — BAR (+0%) y Bed & Breakfast (+20%) por tipo, configurables en `configuration(key='rate_plans')`. El canal del examen corre con 4 rate plans mapeados | `shared/utils/rate-plans.ts:30` |
+| Rate limits | Transport único con limiter de ventana deslizante 18/min, backoff en 429 (respeta `Retry-After`) y 5xx, timeout 15s por intento | `canales/usecases/channex-http.ts` |
+| Update logic | Por evento (sockets del framework), deltas. Full sync **sólo manual**; ningún timer pushea ARI | `connectors/*-canales.ts` |
+| Recepción de reservas | Feed `booking_revisions` + **ack siempre después de procesar**, dedupe por `externalLocator` | `booking-sync.ts:143-146` |
+| **Cancelaciones OTA** | Sí, se aplican sobre la reserva local con la política del PMS y liberan el depósito retenido. Un fallo definitivo (el huésped ya hizo check-in) se registra y se ackea en vez de reintentarse para siempre | `booking-ingestion.ts:117-137`, tests en `tests/booking-cancellation.test.ts` |
 
-**Cómo declarar lo no soportado**: la doc oficial dice que las features no
-soportadas pueden saltarse si se anotan explícitamente en el formulario — eso no
-bloquea la certificación de lo demás.
+### Lo que declaramos NO soportado
+
+| Pregunta | Respuesta | Por qué |
+|---|---|---|
+| **Reservas modificadas por la OTA** | Se reciben, se registran y se ackean, pero **no se auto-aplican** sobre la reserva local | Decisión de diseño: pisar un calendario en vivo necesita una UX de reconciliación que todavía no existe (`booking-ingestion.ts:5-6`) |
+| **Tarjetas de crédito** | El PMS **no procesa ni almacena** datos de tarjeta | Los cobros van por Stripe Links/Checkout — el PCI scope es de Stripe. Sin PAN/CVV de nuestro lado |
+| **Webhooks de bookings** | No hay webhook HTTP: es feed polling cada 15 min con ack + dedupe, más un botón de ingesta manual | `shared/usecases/booking-sync-cron.ts`. En la screenshare se usa el botón manual para no esperar el tick |
+| **Full sync automático** | Sólo manual (botón "Sincronizar"). No hay drift correction diario | Permitido hasta 1/24h off-peak si se automatiza; hoy no está |
+
+### Salvedad de UI que conviene declarar
+
+`min_stay_arrival` y `min_stay_through` se editan en **pantallas distintas** del editor de tarifas
+del canal (`ChannelRatesEditor.vue`): "Mín. al llegar" es por habitación (arrival) y "Mín. en
+estadía" es por temporada (through). Ambos se publican; no hay una sola grilla que muestre los dos
+juntos por fecha.
+
+**Cómo declarar lo no soportado**: la doc oficial dice que las features no soportadas pueden
+saltarse si se anotan explícitamente en el formulario — eso no bloquea la certificación de lo demás.
 
 ---
 

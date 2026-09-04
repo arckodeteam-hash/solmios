@@ -2,7 +2,7 @@ import type { HttpRequest, Logger, Auth, RepositoryAdapter } from 'arckode-frame
 import { validateSchema, OrmRepository } from 'arckode-framework'
 import type { FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasService } from './service'
-import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, CancelReservationSchema, StayQuoteSchema, ManualMessageLogSchema } from './validators/schema'
+import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, StayQuoteSchema, ManualMessageLogSchema } from './validators/schema'
 import { listCompanions, createCompanion, updateCompanion, deleteCompanion } from './usecases/companions'
 import { listAddons, createAddon, deleteAddon } from './usecases/addons'
 import { logManualMessage } from './usecases/message-log'
@@ -248,7 +248,8 @@ export class ReservasController {
       const body = req.body as Record<string, any> | undefined
       const move = validateSchema(RescheduleSchema, body) as any
       const charge = body?.charge ? validateSchema(RescheduleChargeSchema, body.charge) : undefined
-      const result = await this.service.reschedule(req.params.id, { ...move, charge }, req.user as any)
+      const credit = body?.credit ? validateSchema(RescheduleCreditSchema, body.credit) : undefined
+      const result = await this.service.reschedule(req.params.id, { ...move, charge, credit }, req.user as any)
       return { status: 200, body: result }
     } catch (e: any) {
       return this.mapRescheduleError(e)

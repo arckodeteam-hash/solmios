@@ -20,6 +20,9 @@ import { updateReservation } from './crud'
 import { repriceStay, guestsOfReservation, type RepriceRepos } from './reprice'
 import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
 import type { PaidSource } from '../../../shared/usecases/reservation-paid'
+import type {
+  RescheduleCreditAction, RescheduleCreditParams, RescheduleCreditResult,
+} from '../../../shared/usecases/settle-reschedule-credit'
 import { round2 } from '../../../shared/utils/money'
 
 const MS_PER_DAY = 86_400_000
@@ -52,6 +55,8 @@ export interface RescheduleChargeResult {
 }
 
 export type RescheduleChargePort = (params: RescheduleChargeParams, user: any) => Promise<RescheduleChargeResult>
+export type RescheduleCreditPort = (params: RescheduleCreditParams, user: any) => Promise<RescheduleCreditResult>
+export type { RescheduleCreditAction, RescheduleCreditResult }
 
 /**
  * Qué precio queda tras mover la reserva. El quote SIEMPRE devuelve los dos totales para que el
@@ -69,6 +74,11 @@ export interface RescheduleInput {
   checkOut?: string
   pricingMode?: ReschedulePricingMode
   charge?: { method: RescheduleChargeMethod; amount?: number; reason?: string }
+  /**
+   * Qué hacer con lo que el huésped pagó DE MÁS cuando el cambio baja el total. Se ignora si no
+   * pagó de más — no se puede devolver plata que nunca entró.
+   */
+  credit?: { action: RescheduleCreditAction; reason?: string }
   successUrl?: string
   cancelUrl?: string
 }
@@ -95,6 +105,13 @@ export interface RescheduleQuote {
   repricedTotal: number
   /** `repricedTotal - previousTotal`. NEGATIVO = saldo a favor del huésped (no se devuelve solo). */
   repricedDifference: number
+  /**
+   * Lo REALMENTE cobrado de la reserva (`payments`, los tres vínculos). Sin este número no se
+   * puede distinguir los dos casos que se veían iguales: "el total baja y el huésped ahora debe
+   * menos" (no hay nada que devolver) de "el huésped pagó de más" (sí la hay). El frontend decía
+   * "a favor" en los dos, y eso llevaba a devolver plata que nunca había entrado.
+   */
+  paidAmount: number
   /** `false` = el reprice degradó a `rooms.basePrice` (sin repos de temporadas/tarifas). */
   repricedFromRates: boolean
   roomChanged: boolean
@@ -127,6 +144,8 @@ export interface RescheduleDeps extends RepriceRepos {
   cache?: any
   sockets?: any
   chargePort?: RescheduleChargePort
+  /** Resuelve el excedente (dejar a favor / devolver). Sin él, el excedente solo se informa. */
+  creditPort?: RescheduleCreditPort
   audit?: (entry: Record<string, unknown>) => void
   // `seasonAssignmentRepo` / `roomRateRepo` llegan de RepriceRepos: OPCIONALES y al final de las
   // deps a propósito. Sin ellos el modo `reprice` cae a `rooms.basePrice × noches` y lo declara
@@ -178,6 +197,7 @@ async function buildQuote(deps: RescheduleDeps, existing: any, input: Reschedule
   const newNights = nightsBetween(checkIn, checkOut)
   const oldNights = nightsBetween(existing.checkIn, existing.checkOut)
   const previousTotal = Number(existing.totalAmount) || 0
+  const paidAmount = await deps.paidOf(existing.id, existing)
 
   // Opción 1 — MANTENER el precio pactado: solo cobra las NOCHES AGREGADAS a tarifa base del
   // destino, sin repreciar la estadía (el total original pudo salir de otra tarifa/temporada).
@@ -212,6 +232,7 @@ async function buildQuote(deps: RescheduleDeps, existing: any, input: Reschedule
     pricingMode,
     keepTotal, keepDifference,
     repricedTotal, repricedDifference, repricedFromRates: reprice.fromRates,
+    paidAmount,
     roomChanged: String(roomId) !== String(existing.roomId),
     datesChanged: checkIn !== existing.checkIn || checkOut !== existing.checkOut,
     currency: existing.currency || 'USD',
@@ -235,7 +256,12 @@ export async function quoteReschedule(deps: RescheduleDeps, id: string, input: R
 }
 
 /** Aplica el cambio de habitación/fechas y cobra la diferencia según el método elegido. */
-export async function commitReschedule(deps: RescheduleDeps, id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<{ reservation: any; quote: RescheduleQuote & { chargeAmount: number; newTotal: number; creditAmount: number }; charge: RescheduleChargeResult | null }> {
+export async function commitReschedule(deps: RescheduleDeps, id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<{
+  reservation: any
+  quote: RescheduleQuote & { chargeAmount: number; newTotal: number; creditAmount: number; overpaidAmount: number }
+  charge: RescheduleChargeResult | null
+  credit: RescheduleCreditResult | null
+}> {
   const existing = await deps.repo.findById(id)
   assertOwnership(existing, user)
   const quote = await buildQuote(deps, existing, input)
@@ -249,6 +275,10 @@ export async function commitReschedule(deps: RescheduleDeps, id: string, input: 
   // pero NO se devuelve plata: cómo se le reintegra al huésped (nota de crédito, crédito en folio,
   // reembolso) lo decide el usuario en otro flujo.
   const creditAmount = Math.max(0, round2(quote.previousTotal - newTotal))
+
+  // Lo que pagó de más DE VERDAD: contra lo cobrado, no contra el total anterior. `creditAmount`
+  // (arriba) solo dice que el total bajó; con la reserva impaga ese número no es plata de nadie.
+  const overpaidAmount = Math.max(0, round2(quote.paidAmount - newTotal))
 
   // Reusa updateReservation: revalida solape (assertRoomAvailable) y emite el socket + invalida caché.
   // El `afterPersist` recalcula el saldo persistido DENTRO de esa ventana: el socket sale con el
@@ -273,7 +303,8 @@ export async function commitReschedule(deps: RescheduleDeps, id: string, input: 
     reservationId: id, hotelId: existing.hotelId, userId: user.id,
     from: { roomId: existing.roomId, checkIn: existing.checkIn, checkOut: existing.checkOut, total: quote.previousTotal },
     to: { roomId: quote.roomId, checkIn: quote.checkIn, checkOut: quote.checkOut, total: newTotal },
-    chargeAmount, creditAmount, pricingMode: quote.pricingMode, method: charge?.method || null,
+    chargeAmount, creditAmount, overpaidAmount, pricingMode: quote.pricingMode,
+    method: charge?.method || null, creditAction: input.credit?.action || null,
   })
 
   let chargeResult: RescheduleChargeResult | null = null
@@ -285,5 +316,19 @@ export async function commitReschedule(deps: RescheduleDeps, id: string, input: 
     }, user)
   }
 
-  return { reservation, quote: { ...quote, chargeAmount, newTotal, creditAmount }, charge: chargeResult }
+  let creditResult: RescheduleCreditResult | null = null
+  if (input.credit && overpaidAmount > 0 && deps.creditPort) {
+    creditResult = await deps.creditPort({
+      reservationId: id, hotelId: existing.hotelId, guestId: existing.guestId || null,
+      currency: quote.currency, amount: overpaidAmount,
+      action: input.credit.action, reason: input.credit.reason,
+    }, user)
+  }
+
+  return {
+    reservation,
+    quote: { ...quote, chargeAmount, newTotal, creditAmount, overpaidAmount },
+    charge: chargeResult,
+    credit: creditResult,
+  }
 }
