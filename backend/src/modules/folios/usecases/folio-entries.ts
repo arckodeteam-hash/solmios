@@ -71,7 +71,8 @@ export interface FolioEntriesDeps {
 }
 
 /** Carga el folio, valida ownership y que esté abierto. */
-async function assertOpenFolio(deps: FolioEntriesDeps, folioId: string, user: CurrentUser): Promise<FolioDTO> {
+/** Carga el folio, verifica que sea del hotel del usuario y que esté abierto. */
+export async function assertOpenFolio(deps: FolioEntriesDeps, folioId: string, user: CurrentUser): Promise<FolioDTO> {
   const folio = await deps.folioRepo.findById(folioId)
   if (!folio) throw new NotFoundError('Folio no encontrado')
   const me = await deps.userRepo.findById(user.id)

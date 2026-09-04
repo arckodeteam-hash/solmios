@@ -1,5 +1,5 @@
 import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
-import { prepaidLinesFrom, type PrepaidLine } from '../../../shared/usecases/prepaid-folio-lines'
+import { prepaidLinesFrom, depositOnlyPrepaid, depositPrepaidLine, capPrepaidLines, type PrepaidLine } from '../../../shared/usecases/prepaid-folio-lines'
 
 /**
  * Tasa de impuesto del hotel, para el cargo automático de habitación al check-in.
@@ -81,6 +81,11 @@ export async function executeCheckin(r: any, user: any, deps: {
     if (repos?.paymentRepo) {
       const rows = await repos.paymentRepo.findMany({ hotelId: r.hotelId, reservationId: r.id })
       prepaid = prepaidLinesFrom(rows as any[])
+      // El anticipo cargado a mano en el alta vive SOLO en `reservations.deposit` y no deja fila
+      // en `payments`, así que la línea de arriba no lo ve: el folio nacía diciendo que el huésped
+      // debía todo aunque ya hubiera pagado. Se descuenta lo que ya espejan los cobros de Stripe.
+      const linea = depositPrepaidLine(r.id, depositOnlyPrepaid((r as any).deposit, rows as any[]))
+      if (linea) prepaid.push(linea)
     }
   } catch (e: any) {
     // Best-effort: sin esto el check-in igual procede. El pago sigue en `payments` y el
@@ -134,10 +139,13 @@ export async function executeCheckin(r: any, user: any, deps: {
           source: 'checkin', postedAt: nowIso,
         })
       }
+      // Acreditar más de lo consumido dejaría el folio en negativo y la factura con `amountPaid`
+      // mayor que su total. El sobrante queda a favor en la reserva, no acá.
+      const acreditables = capPrepaidLines(prepaid, roomRate > 0 ? roomRate + roomTax : 0)
       // Pagos ya cobrados → líneas del folio. NO se crean filas nuevas en `payments`: el cobro
       // ya está asentado ahí (fuente de verdad del dinero). `reference` lleva el id del pago,
       // que es la trazabilidad y la clave de idempotencia.
-      for (const line of prepaid) {
+      for (const line of acreditables) {
         await tx.create('FolioCharges', {
           id: crypto.randomUUID(), folioId, hotelId: r.hotelId,
           description: line.description,

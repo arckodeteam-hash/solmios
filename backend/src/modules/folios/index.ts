@@ -23,7 +23,7 @@ export function FoliosModule() {
     contract: {
       name: 'folios', version: '1.1.0',
       description: 'Acumulador de cargos/pagos por reserva; al cerrarse genera factura',
-      actions: ['list', 'getById', 'open', 'postCharge', 'applyPayment', 'close', 'summary', 'foliosOfReservation', 'reservationIdOfFolio'],
+      actions: ['list', 'getById', 'open', 'postCharge', 'applyPayment', 'close', 'summary', 'foliosOfReservation', 'reservationIdOfFolio', 'postPrepaidCredit'],
       events: ['onFolioOpened', 'onFolioCharged', 'onFolioPaid', 'onFolioClosed'],
       tables: ['folios', 'folio_charges'],
       dependencies: [],

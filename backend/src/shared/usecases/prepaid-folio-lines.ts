@@ -15,6 +15,7 @@
 // pago en `reference` para poder trazarlo y para no duplicarlo si se corre de nuevo.
 
 import { round2 } from '../utils/money'
+import { splitPayments } from './reservation-paid'
 
 /** Estados que representan dinero efectivamente recibido (mismo criterio que reservation-paid). */
 const SETTLED = new Set(['completed', 'refunded'])
@@ -99,4 +100,62 @@ export function prepaidLinesFrom(
 /** Neto que el folio va a acreditar: cobros menos devoluciones. */
 export function prepaidTotal(lines: readonly PrepaidLine[]): number {
   return round2(lines.reduce((acc, l) => acc + (l.kind === 'payment' ? l.amount : -l.amount), 0))
+}
+
+/**
+ * La parte del anticipo que vive SOLO en `reservations.deposit` y que ninguna fila de `payments`
+ * espeja. Sin esto el folio la ignora por completo.
+ *
+ * Un anticipo cargado a mano en el alta ("el huésped ya transfirió") no genera fila en `payments`
+ * —está documentado en `reservation-paid.ts`— y `prepaidLinesFrom` lee `payments`. Resultado
+ * verificado en dev el 2026-09-04: huésped que pagó 195 por adelantado, folio al check-in con
+ * "cargos 76,70 · pagos 0". El sistema le pedía en el check-out plata que ya había pagado.
+ *
+ * Un cobro por Stripe Checkout SÍ bumpea `deposit` además de asentar el pago (`depositMirror`),
+ * así que se resta: sumarlo entero acreditaría dos veces el mismo dinero.
+ */
+export function depositOnlyPrepaid(
+  deposit: number | null | undefined,
+  rows: readonly PrepaidSourceRow[] | null | undefined,
+): number {
+  const dep = Number(deposit) || 0
+  if (dep <= 0) return 0
+  const { depositMirror } = splitPayments(rows as any[])
+  return round2(Math.max(0, dep - depositMirror))
+}
+
+/** Línea de folio para ese anticipo. `reference` estable: correr el check-in dos veces no duplica. */
+export function depositPrepaidLine(reservationId: string, amount: number): PrepaidLine | null {
+  if (!(amount > 0)) return null
+  return {
+    paymentId: `deposit:${reservationId}`,
+    kind: 'payment',
+    amount: round2(amount),
+    method: 'manual',
+    description: 'Anticipo de la reserva',
+  }
+}
+
+/**
+ * Recorta las líneas para que el folio NO quede en negativo.
+ *
+ * Un huésped que pagó la estadía entera y después la acortó tiene más plata puesta que consumo:
+ * acreditarla toda dejaba el folio con saldo negativo (verificado en dev: cargos 100,30 · pagos
+ * 255 · saldo −154,70), y el cierre emitía una factura con `amountPaid` mayor que su propio total.
+ *
+ * El sobrante NO se pierde ni se inventa como pago de este folio: queda a favor en la RESERVA
+ * (`creditBalance`), que es donde se ve y desde donde se devuelve. Las devoluciones (`kind:'charge'`)
+ * no se tocan: suben el debe, nunca lo bajan.
+ */
+export function capPrepaidLines(lines: readonly PrepaidLine[], maxCredit: number): PrepaidLine[] {
+  let restante = round2(Math.max(0, Number(maxCredit) || 0))
+  const out: PrepaidLine[] = []
+  for (const l of lines) {
+    if (l.kind === 'charge') { out.push(l); continue }
+    if (restante <= 0) continue
+    const monto = round2(Math.min(l.amount, restante))
+    restante = round2(restante - monto)
+    out.push(monto === l.amount ? l : { ...l, amount: monto, description: `${l.description} (parcial)` })
+  }
+  return out
 }

@@ -12,6 +12,7 @@ import { closeAndInvoice as closeAndInvoiceUsecase, type CloseAndInvoiceResult }
 import { postNightAuditRoomCharges as postNightAuditUsecase } from './usecases/night-audit'
 import { foliosListCacheKey, invalidateFoliosCaches } from './usecases/cache'
 import { postCharge as postChargeUsecase, applyPayment as applyPaymentUsecase } from './usecases/folio-entries'
+import { postPrepaidCredit as postPrepaidCreditUsecase, type PrepaidCreditInput } from './usecases/prepaid-credit'
 import { openFolio } from './usecases/open-folio'
 import type { FolioPaymentPort } from './usecases/payment-port'
 import { closeAndCreateInvoice as closeAndCreateInvoiceUsecase, type FolioInvoicingPort, type CloseAndCreateInvoiceResult } from './usecases/close-and-create-invoice'
@@ -134,7 +135,8 @@ export class FoliosService {
     return charge
   }
 
-  // ─── Cerrar folio ──────
+  postPrepaidCredit(folioId: string, i: PrepaidCreditInput, user: CurrentUser) { return postPrepaidCreditUsecase(this.entriesDeps, folioId, i, user) }
+  // ─── Cerrar folio
   async close(folioId: string, user: CurrentUser): Promise<FolioDTO> {
     const folio = await this.loadOwnedFolio(folioId, user)
     if (folio.status !== 'open') throw new ValidationError('El folio no está abierto')
