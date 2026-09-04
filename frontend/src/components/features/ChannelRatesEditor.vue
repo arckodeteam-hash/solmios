@@ -11,13 +11,10 @@
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5"/></svg>
         Temporadas
       </button>
-      <button @click="save" :disabled="saving || !selectedChannel"
-        class="rounded-lg bg-cyan text-navy text-sm font-extrabold px-5 py-2 border-2 border-cyan hover:bg-cyan-light transition-all cursor-pointer disabled:opacity-50">
-        {{ saving ? 'Guardando…' : 'Guardar' }}
-      </button>
-      <button @click="pushToChannex" :disabled="pushing || !selectedChannel" title="Enviar los precios, cierres y estadías a los canales conectados"
+      <button @click="saveAndPush" :disabled="saving || pushing || !selectedChannel"
+        title="Guarda los precios, cierres y estadías, y los publica en el canal"
         class="rounded-lg bg-teal text-white text-sm font-extrabold px-5 py-2 border-2 border-teal hover:bg-teal-light transition-all cursor-pointer disabled:opacity-50">
-        {{ pushing ? 'Enviando…' : 'Enviar a canales' }}
+        {{ saving ? 'Guardando…' : pushing ? 'Enviando…' : 'Guardar y enviar a canales' }}
       </button>
     </template>
 
@@ -51,11 +48,16 @@
             <!-- General + días mín/máx -->
             <div class="rounded-xl border-2 border-navy bg-surface p-3">
               <div class="text-[10px] font-black text-text-muted uppercase mb-1">Tarifa base (General)</div>
-              <div class="flex items-center gap-1 mb-2">
-                <input type="number" min="0" step="0.01" inputmode="decimal" v-model.number="g.basePrice"
-                  class="w-full px-2 py-1.5 rounded-lg border-2 border-navy/30 text-sm font-black text-navy text-right focus:border-navy outline-none" />
+              <div class="flex items-center gap-1 mb-1">
+                <input type="number" :value="g.basePrice" readonly tabindex="-1"
+                  title="La tarifa base es del hotel, no de este canal: se edita en Configuración → Tarifas"
+                  class="w-full px-2 py-1.5 rounded-lg border-2 border-navy/10 bg-navy/5 text-sm font-black text-text-secondary text-right cursor-not-allowed outline-none" />
                 <span class="text-xs text-text-muted shrink-0">{{ currency }}</span>
               </div>
+              <router-link :to="{ name: 'tarifas' }"
+                class="block mb-2 text-[10px] font-bold text-navy underline underline-offset-2 hover:text-cyan">
+                Cambiar la tarifa base →
+              </router-link>
               <div class="grid grid-cols-2 gap-2">
                 <div title="Mínimo de noches para poder LLEGAR (min stay arrival): se exige el día del check-in">
                   <div class="text-[10px] text-text-muted">Mín. al llegar</div>
@@ -70,8 +72,24 @@
 
             <!-- Temporadas: 2 columnas en móvil, 4 en desktop -->
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-              <div v-for="cell in g.cells" :key="cell.season" class="rounded-xl border-2 border-navy overflow-hidden flex flex-col">
-                <div class="px-2.5 py-1.5 text-[10px] font-black uppercase text-white truncate" :style="{ background: seasonColor(cell.season) }">{{ seasonLabel(cell.season) }}</div>
+              <div v-for="cell in g.cells" :key="cell.season"
+                class="rounded-xl border-2 overflow-hidden flex flex-col transition-opacity"
+                :class="seasonState(cell.season).publishes ? 'border-navy' : 'border-navy/25 opacity-60'">
+                <div class="px-2.5 py-1.5 flex items-center justify-between gap-1.5" :style="{ background: seasonColor(cell.season) }">
+                  <span class="text-[10px] font-black uppercase text-white truncate">{{ seasonLabel(cell.season) }}</span>
+                  <span v-if="seasonState(cell.season).live"
+                    class="shrink-0 px-1.5 py-0.5 rounded-full bg-white text-[8px] font-black uppercase tracking-wide text-navy">Vigente hoy</span>
+                  <span v-else class="shrink-0 text-[9px] font-bold text-white/80 whitespace-nowrap">{{ seasonState(cell.season).badge }}</span>
+                </div>
+                <!-- Lo que el push saltea: sin esto, el % se escribe y no llega nunca al canal. -->
+                <div v-if="seasonState(cell.season).reason"
+                  class="px-2.5 py-1.5 bg-coral/10 border-b-2 border-coral/20 flex flex-col gap-0.5">
+                  <span class="text-[9px] font-black text-coral leading-tight">⚠ {{ seasonState(cell.season).reason }}</span>
+                  <button @click="openSeasonsModal"
+                    class="self-start text-[9px] font-bold text-navy underline underline-offset-2 hover:text-cyan cursor-pointer">
+                    Definir fechas →
+                  </button>
+                </div>
                 <div class="p-2.5 flex flex-col gap-1.5 flex-1">
                   <div class="flex items-center gap-1">
                     <span class="text-xs font-black text-navy">+</span>
@@ -163,6 +181,8 @@ const props = defineProps<{
 
 const toast = useToast()
 const currency = props.currency || 'USD'
+import { seasonState as computeSeasonState, type SeasonState } from '@/utils/season-state'
+
 interface SeasonRow { name: string; label?: string; color?: string; startDate?: string; endDate?: string }
 const seasons = ref<SeasonRow[]>([])
 const selectedChannel = ref(props.channels[0]?.code || '')
@@ -226,6 +246,27 @@ function resultPrice(base: number, pct: number): string {
   return (Math.round((base || 0) * (1 + (pct || 0) / 100) * 100) / 100).toLocaleString()
 }
 
+// ── Qué temporadas llegan realmente al canal ──────────────────────────────────
+// Espeja la regla del backend (`canales/usecases/channex.ts:487,501`): una temporada se publica si
+// tiene fechas propias que no terminaron, o si está pintada en el planning a futuro. Si no, el push
+// la saltea y lo único que cubre esos días es la línea base, que va con `percentage: 0`. Sin esta
+// señal, escribir un % en una temporada muerta no hacía nada y la pantalla no lo decía.
+const assignedFuture = ref<Set<string>>(new Set())
+const todayISO = new Date().toISOString().slice(0, 10)
+
+/** Estado de publicación de la temporada. La regla vive en `utils/season-state.ts` (testeada ahí). */
+function seasonState(name: string): SeasonState {
+  return computeSeasonState(seasons.value.find((x) => x.name === name), todayISO, assignedFuture.value)
+}
+
+async function loadSeasonAssignments() {
+  try {
+    const to = new Date(Date.now() + 500 * 86400000).toISOString().slice(0, 10)
+    const r = await HotelService.seasonAssignments(todayISO, to)
+    assignedFuture.value = new Set((r.data || []).map((a) => a.season))
+  } catch { assignedFuture.value = new Set() }
+}
+
 // Agrupa las filas planas (una por roomType×occupancy×season) en tarjetas por habitación.
 // `restrictions` (CTA/CTD/through por roomType×season) se mergea en las celdas — P4 certificación.
 function buildGroups(rates: RoomRate[], restrictions: Array<{ roomType: string; season: string; cta?: number; ctd?: number; closedToArrival?: number; closedToDeparture?: number; minStayThrough?: number }> = []): Group[] {
@@ -263,13 +304,14 @@ async function loadRates() {
     const [r, restrictions] = await Promise.all([
       HotelService.rates(selectedChannel.value),
       HotelService.rateRestrictions().catch(() => ({ data: [] })),
+      loadSeasonAssignments(),
     ])
     groups.value = buildGroups(r.data || [], restrictions.data || [])
   } catch { toast.error('Error al cargar tarifas') } finally { loading.value = false }
 }
 
-async function save() {
-  if (!selectedChannel.value) return
+async function save(): Promise<boolean> {
+  if (!selectedChannel.value) return false
   saving.value = true
   try {
     // Expande las tarjetas a filas planas: una por (roomType, occupancy, season), con la base/estadías
@@ -291,9 +333,24 @@ async function save() {
     }
     await HotelService.saveRates(rates)
     await HotelService.saveRateRestrictions([...restrictions.values()])
-    toast.success('Tarifas guardadas')
     await loadRates()
-  } catch { toast.error('Error al guardar tarifas') } finally { saving.value = false }
+    return true
+  } catch {
+    toast.error('Error al guardar tarifas')
+    return false
+  } finally { saving.value = false }
+}
+
+/**
+ * Guardar y publicar en una sola acción.
+ *
+ * `PUT /api/rates` ya dispara el push por evento (`pricing/service.ts:110` → `pricing-canales.ts`),
+ * pero ese camino es silencioso: si una temporada no se puede publicar —sin fechas, ya terminada,
+ * sin rate plan— nadie se entera. Se vuelve a pedir el push explícito para poder mostrar el motivo.
+ */
+async function saveAndPush() {
+  if (!(await save())) return
+  await pushToChannex()
 }
 
 // Empuja las tarifas por temporada a los canales (precio por rango de fecha + cierre + estadía).
@@ -321,18 +378,22 @@ async function pushToChannex() {
   try {
     const r = await ChannelService.pushRates(selectedChannel.value)
     const reasons = pushSkipReasons(r)
+    // Los mensajes separan las dos mitades del botón: lo guardado ya está guardado aunque el
+    // envío falle, y callarlo dejaba al usuario sin saber si tenía que volver a cargar todo.
     if (r.pushed > 0) {
       // Éxito parcial: se avisa igual, con nombre y apellido de lo que quedó afuera.
-      if (reasons) toast.warning(`${r.pushed} tarifa(s) enviada(s). No se pudieron enviar ${r.skipped}: ${reasons}`)
-      else toast.success(`${r.pushed} tarifa(s) enviada(s) a Canales`)
+      if (reasons) toast.warning(`Guardado. Se enviaron ${r.pushed} tarifa(s); ${r.skipped} no: ${reasons}`)
+      else toast.success(`Guardado y enviado: ${r.pushed} tarifa(s)`)
     } else if (r.notConnected) {
-      toast.warning('El hotel todavía no está sincronizado con los canales: sincronizá la propiedad antes de enviar tarifas')
+      toast.warning('Guardado. El hotel todavía no está sincronizado con los canales: sincronizá la propiedad antes de enviar tarifas')
     } else if (reasons) {
-      toast.warning(`No se envió ninguna tarifa. ${reasons}`)
+      toast.warning(`Guardado, pero no se publicó ninguna tarifa: ${reasons}`)
     } else {
-      toast.warning('Nada que enviar: no hay tarifas cargadas para este canal')
+      toast.warning('Guardado. No hay tarifas para publicar en este canal')
     }
-  } catch { toast.error('No se pudo enviar a Canales') } finally { pushing.value = false }
+  } catch {
+    toast.error('Se guardó, pero no se pudo enviar a Canales')
+  } finally { pushing.value = false }
 }
 
 
