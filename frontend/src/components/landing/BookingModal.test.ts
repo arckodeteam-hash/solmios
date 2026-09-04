@@ -315,4 +315,23 @@ describe('BookingModal', () => {
     // cartTotalFreeChildren = 0 (línea 1) + 1 (línea 2: niño libre) = 1. Total = 5, NO 6.
     expect(store.selectedUpsells).toEqual([{ id: 'breakfast', quantity: 5 }])
   })
+
+  // Auditoría final (Requerimiento 15, 2026-09-04) — FIX encontrado con Playwright contra el
+  // backend real: esta pantalla mostraba TODOS sus precios (habitación, carrito, total, el botón
+  // "Reservar y pagar") con `formatMoney` SIN decimales — la misma función que usan las celdas
+  // chicas del calendario, donde redondear no importa. Con un precio que no cierra en un entero
+  // (impuestos, descuentos, o —como acá— una tarifa con centavos), la landing REDONDEABA lo que
+  // el widget embebible (RoomsStep.vue, `useBookingI18n#formatPrice`) mostraba exacto: dos
+  // entradas públicas anunciando NÚMEROS DISTINTOS para la MISMA reserva — justo lo que el
+  // Requerimiento 15 pide evitar.
+  it('el precio de la habitación se muestra con CENTAVOS exactos, no redondeado (fix de paridad con el widget)', async () => {
+    vi.mocked(BookingService.getRates).mockResolvedValue({
+      ...ratesResponse(),
+      roomTypes: [{ ...ratesResponse().roomTypes[0]!, fromPrice: 99.5 }],
+    })
+    await open(FROM_HERO)
+
+    const text = modalText()
+    expect(text).toContain('99,50') // NO "100" (redondeado) ni "99" (truncado)
+  })
 })

@@ -78,7 +78,7 @@ export class BookingengineService {
     // real con slug + reservationId + accessToken (antes pasaba placeholders literales a Stripe).
     this.stripe = new StripeUseCase(reservationsRepo, logger, registry, events, hotelsRepo ?? undefined)
   }
-
+  async notifyBookingCreated(d: PublicBookingDTO) { await this.sockets.onBookingCreated?.(d) } // wrapper público, ver controller.ts
   setSockets(s: Partial<BookingengineSockets>): void {
     const next = s as Record<string, any>
     const cur = this.sockets as Record<string, any>

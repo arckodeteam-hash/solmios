@@ -307,13 +307,28 @@ export class BookingengineController {
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
       ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo }
       : undefined
-    return createPublicBookingDirect(
+    const result = await createPublicBookingDirect(
       this.orm, body,
       this.pushAvailability, this.auth,
       this.service, this.logger,
       stripeUrls,
       extraDeps,
     )
+    // Bug Playwright (auditoría E2E 2026-09-04): sin este aviso, `onBookingCreated` nunca se
+    // disparaba para el flujo público (ver comentario en service.ts#notifyBookingCreated) — el
+    // listado de Administración podía tardar hasta 5 min (CACHE_TTL) en mostrar el alta.
+    // Best-effort: un fallo acá no puede tumbar una reserva que YA se creó con éxito.
+    if (result.status === 201 && result.body?.reservation) {
+      const r = result.body.reservation
+      this.service.notifyBookingCreated({
+        id: r.id, hotelId: String(body.hotelId), roomId: r.roomId,
+        checkIn: r.checkIn, checkOut: r.checkOut, adults: r.adults, children: r.children,
+        totalAmount: r.totalAmount, status: r.status,
+      } as any).catch((err: unknown) => {
+        this.logger.warn('notifyBookingCreated (alta pública) falló', { err: err instanceof Error ? err.message : err })
+      })
+    }
+    return result
   }
 
   /**
@@ -339,13 +354,24 @@ export class BookingengineController {
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
       ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo }
       : undefined
-    return createPublicBookingGroup(
+    const result = await createPublicBookingGroup(
       this.orm, body,
       this.pushAvailability, this.auth,
       this.service, this.logger,
       stripeUrls,
       extraDeps,
     )
+    // Mismo bug/fix que createPublicBookingDirect arriba — multi-habitación también escribe
+    // directo a Reservations, sin pasar por el CRUD de `reservas`.
+    if (result.status === 201 && Array.isArray(result.body?.reservations) && result.body.reservations[0]) {
+      const r = result.body.reservations[0]
+      this.service.notifyBookingCreated({
+        id: r.id, hotelId: String(body.hotelId), roomId: r.roomId, status: r.status,
+      } as any).catch((err: unknown) => {
+        this.logger.warn('notifyBookingCreated (alta pública grupal) falló', { err: err instanceof Error ? err.message : err })
+      })
+    }
+    return result
   }
 
   // ─── Público rates/upsells (F2 2.4 / 2.6) ──────────────────────────────────

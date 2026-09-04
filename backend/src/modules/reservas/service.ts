@@ -25,6 +25,7 @@ import { quoteStay as quoteStayUsecase, type QuoteParams } from './usecases/quot
 import type { ReservasQueries } from './usecases/reservas-queries'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 import { reservationChangedNotifier, type ReservationChangedNotifier } from './usecases/reservation-changed'
+import { invalidateReservasCaches } from './usecases/cache'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
 import { requireMessageLogSource } from './usecases/message-log'
 import { syncPendingAfterPayment, pendingAfterPaymentDeps, type MoneyRowRef } from './usecases/sync-pending-after-payment'
@@ -73,6 +74,8 @@ export class ReservasService {
 
   // ACUMULA handlers (cadena secuencial; implementación única en shared/utils/accumulate-sockets.ts).
   setSockets(s: Partial<ReservasSockets>): void { accumulateSockets(this.sockets as any, s as any) }
+  /** Invalidación a mano para altas que bypassan el CRUD (ver reservas-bookingengine.ts). */
+  async invalidateListCache(hotelId: string): Promise<void> { await invalidateReservasCaches(this.cache, hotelId) }
   async list(query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> { return listReservations(this.repo, this.userRepo, this.cache, this.logger, query, currentUser) }
   async getById(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> {
     this.logger.info('Obteniendo reserva', { id, userId: currentUser.id })

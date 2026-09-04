@@ -846,14 +846,19 @@ const checkOut = computed<string>({
   set: (v) => { store.checkOut = v },
 })
 const currency = computed(() => store.displayCurrency || props.hotel.currency || 'USD')
+// Auditoría final (Requerimiento 15, 2026-09-04) — FIX: `formatMoney` sin decimales está pensado
+// para celdas de calendario (chicas), no para el flujo de reserva completo. Sin `decimals:true`
+// acá, esta pantalla redondeaba TODOS sus precios (habitación, carrito, impuestos, el botón
+// "Reservar y pagar") mientras el widget embebible (RoomsStep.vue) mostraba el exacto — dos
+// entradas públicas anunciando un número distinto para la MISMA reserva. Ver `rate-calendar.ts`.
 function money(value: number): string {
-  return formatMoney(value, currency.value)
+  return formatMoney(value, currency.value, 'es', true)
 }
 /** Para montos que el backend NUNCA convierte (regímenes, igual que upsells) — viajan siempre
  *  en `hotels.currency` (chargeCurrency). Usar `money()` acá etiquetaría "€25.00" cuando el
  *  cobro real es $25.00 (mismo bug de D10 ya resuelto en el widget embebible). */
 function moneyCharge(value: number): string {
-  return formatMoney(value, store.chargeCurrency || currency.value)
+  return formatMoney(value, store.chargeCurrency || currency.value, 'es', true)
 }
 
 const staySummary = computed(() => {

@@ -8,6 +8,7 @@ import {
   buildMonthCells,
   clampSpan,
   firstBlockedNight,
+  formatMoney,
   formatOccupancy,
   isDaySelectable,
   minStayFor,
@@ -220,5 +221,35 @@ describe('rate-calendar — resumen de ocupación', () => {
     expect(totalGuests({ adults: 2, children: 0, rooms: 2 })).toBe(2)
     // Nunca 0: el endpoint exige guests >= 1.
     expect(totalGuests({ adults: 0, children: 0, rooms: 1 })).toBe(1)
+  })
+})
+
+// Auditoría final (Requerimiento 15, 2026-09-04) — FIX encontrado en Playwright: `formatMoney`
+// sin decimales (pensado para celdas chicas de calendario) se reusaba en TODO el flujo de reserva
+// de BookingModal.vue (landing) — la landing redondeaba precios que el widget embebible
+// (RoomsStep.vue) mostraba exactos, dos entradas públicas anunciando números distintos para la
+// MISMA reserva. `decimals` es opt-in (default `false`) para no tocar el comportamiento de las
+// celdas de calendario (CalendarView.vue/RateCalendar.vue), que siguen sin pasarlo.
+//
+// `Intl.NumberFormat('es', ...)` separa el número del símbolo con un espacio DURO (NBSP,
+// U+00A0), no un espacio común — `plain()` lo normaliza para no depender de un carácter
+// invisible dentro del código fuente del test.
+function plain(s: string): string {
+  return s.replace(/\s/g, ' ')
+}
+
+describe('formatMoney — decimales opt-in (Requerimiento 15, auditoría final)', () => {
+  it('default (sin decimales): redondea — el comportamiento histórico de las celdas de calendario', () => {
+    expect(plain(formatMoney(200, 'USD'))).toBe('200 US$')
+    expect(plain(formatMoney(99.5, 'USD'))).toBe('100 US$') // redondeado — a propósito para celdas chicas
+  })
+
+  it('decimals:true: monto EXACTO, con centavos — lo que necesita el flujo de reserva completo', () => {
+    expect(plain(formatMoney(200, 'USD', 'es', true))).toBe('200,00 US$')
+    expect(plain(formatMoney(99.5, 'USD', 'es', true))).toBe('99,50 US$') // ya NO se pierde el centavo
+  })
+
+  it('decimals:true con moneda inválida: el fallback también respeta los centavos (no Math.round)', () => {
+    expect(plain(formatMoney(99.5, 'NOPE', 'es', true))).toBe('NOPE 99.50')
   })
 })

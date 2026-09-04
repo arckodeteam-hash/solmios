@@ -269,21 +269,35 @@ export function totalGuests(o: Occupancy): number {
   return Math.max(1, o.adults) + Math.max(0, o.children)
 }
 
-/** Monto sin decimales (las celdas del calendario son chicas y los centavos no aportan).
- *  `Intl` tira RangeError con un código de moneda inválido → fallback a "COD 120".
- *  `locale` es opcional y default 'es' (la landing es solo en español); el widget embebible es
- *  multi-idioma y le pasa el suyo (es/en/pt) para que el agrupado de miles no quede en español
- *  dentro de una UI en inglés. */
-export function formatMoney(value: number, currency: string, locale: string = 'es'): string {
+/**
+ * `decimals=false` (default): sin decimales — pensado para las CELDAS del calendario (chicas,
+ * los centavos no aportan ahí). `Intl` tira RangeError con un código de moneda inválido →
+ * fallback a "COD 120". `locale` es opcional y default 'es' (la landing es solo en español); el
+ * widget embebible es multi-idioma y le pasa el suyo (es/en/pt) para que el agrupado de miles no
+ * quede en español dentro de una UI en inglés.
+ *
+ * `decimals=true`: monto con centavos EXACTOS — auditoría final (Requerimiento 15, 2026-09-04):
+ * `BookingModal.vue` (la landing) reusaba este formateador SIN decimales para TODO el flujo de
+ * reserva (precio por habitación, carrito, subtotal, impuestos, y el monto del botón "Reservar y
+ * pagar"), no solo para celdas de calendario. Con una tarifa que no cierra en un entero (ej.
+ * $99,50, o cualquier total con impuestos/descuento aplicados), la landing REDONDEABA el precio
+ * mostrado mientras el widget (`RoomsStep.vue`, vía `useBookingI18n#formatPrice`) mostraba el
+ * exacto — dos entradas públicas mostrando NÚMEROS DISTINTOS para la MISMA reserva (el defecto
+ * que el Requerimiento 15 pide evitar explícitamente), y peor: el botón de pago podía anunciar un
+ * monto que no es el que realmente se cobra. `BookingModal.vue#money()` pasa `true` acá; las
+ * celdas de calendario (`CalendarView.vue`, `RateCalendar.vue`) siguen sin pasarlo — comportamiento
+ * intacto para ellas.
+ */
+export function formatMoney(value: number, currency: string, locale: string = 'es', decimals = false): string {
   try {
     return new Intl.NumberFormat(locale, {
       style: 'currency',
       currency: currency || 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
+      minimumFractionDigits: decimals ? 2 : 0,
+      maximumFractionDigits: decimals ? 2 : 0,
     }).format(value)
   } catch {
-    return `${currency} ${Math.round(value)}`
+    return decimals ? `${currency} ${value.toFixed(2)}` : `${currency} ${Math.round(value)}`
   }
 }
 
