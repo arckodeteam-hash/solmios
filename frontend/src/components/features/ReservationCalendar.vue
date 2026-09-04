@@ -85,7 +85,7 @@
     </div>
 
     <!-- Banner: modo duplicar (#631) — visible mientras el usuario elige destino -->
-    <div v-if="duplicateSource" class="px-6 pb-3">
+    <div v-if="duplicateSource" data-duplicate-banner class="px-6 pb-3">
       <div class="flex items-center justify-between gap-3 rounded-xl border-2 border-cyan/50 bg-cyan/10 px-4 py-2.5 shadow-sm">
         <div class="flex items-center gap-2.5">
           <span class="grid h-7 w-7 place-items-center rounded-lg bg-cyan/20 text-cyan">
@@ -838,7 +838,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { OperationsService } from '@/services/Operations.service'
 import { ReservationService } from '@/services/Reservation.service'
 import { HotelService } from '@/services/Hotel.service'
@@ -1021,6 +1021,22 @@ const wizardPrefill = ref<{ roomId?: string; checkIn?: string; checkOut?: string
 // fechas NO se guardan acá: vienen del drag. Se cancela con el botón del banner o Escape.
 const duplicateSource = ref<{ guestId?: string; source?: string; adults?: number; children?: number } | null>(null)
 function cancelDuplicateMode() { duplicateSource.value = null }
+
+/**
+ * En modo duplicar el único gesto que sirve es elegir un destino LIBRE. Tocar una reserva o un
+ * bloqueo es un error de puntería, no una orden de abandonar.
+ *
+ * Antes esos tres puntos (arrastrar una barra, abrir el menú de una reserva, tocar una celda
+ * ocupada) llamaban `cancelDuplicateMode()`: el modo se apagaba Y no se abría nada —el banner
+ * desaparecía, no salía menú, la pantalla quedaba idéntica a antes de apretar "Duplicar
+ * reserva"—. Se leía, con razón, como que duplicar no funciona. Ahora el modo aguanta y dice qué
+ * falta; se sale con Esc, con "Cancelar" o eligiendo un destino.
+ */
+function duplicateModeBlocks(): boolean {
+  if (!duplicateSource.value) return false
+  toast.info('Estás duplicando una reserva', 'Elegí días LIBRES para la copia — Esc o "Cancelar" para salir.')
+  return true
+}
 const quote = ref<{ show: boolean; id: string; today: string; hotel: string; hotelAddress: string; hotelPhone: string; hotelEmail: string; rooms: { type: string; qty: number; price: number }[]; checkIn: string; checkOut: string; nights: number; guest: string; email: string; phone: string; adults: number; kids: number; taxName: string; taxRate: number; notes: string }>({ show: false, id: '', today: '', hotel: '', hotelAddress: '', hotelPhone: '', hotelEmail: '', rooms: [{ type: 'Standard', qty: 1, price: 100 }], checkIn: '', checkOut: '', nights: 0, guest: '', email: '', phone: '', adults: 1, kids: 0, taxName: 'ITBIS', taxRate: 18, notes: '' })
 // Noches de la cotización: se calculan de check-in/check-out (ahora editables en el modal).
 // Antes era un valor fijo tomado del rango inicial y NO reaccionaba al cambiar las fechas,
@@ -1460,7 +1476,7 @@ function onMouseUp(ev: MouseEvent) {
 }
 
 function showPopup(e: MouseEvent, room: any, day: DI, res: any, blk: any) {
-  cancelDuplicateMode() // clic en reserva/bloque existente: abandona el modo duplicar
+  if (duplicateModeBlocks()) return
   lastSel.value = null
   const from = day.dateStr; const to = day.dateStr
   popup.value = { show: true, room, fromDate: from, toDate: to, nights: 1, res, blk, anchor: anchorFor(room.id, from, to) }
@@ -1629,7 +1645,7 @@ async function onWizardSaved() {
 /** Context menu (right-click) sobre una reserva existente */
 function openContext(rb: any, room: any) {
   if (suppressClick) { suppressClick = false; return } // venía de un drag, no de un click
-  cancelDuplicateMode() // right-click en reserva existente: abandona el modo duplicar
+  if (duplicateModeBlocks()) return
   const orig = planReservas.value.find((b: any) => b.id === rb.id)
   if (!orig) return
   const ci = String(orig.checkIn || '').slice(0, 10)
@@ -1693,7 +1709,7 @@ function cellDateAt(clientX: number, clientY: number): string {
 // mousedown en el cuerpo del bloque → arrastrar para mover (empieza a moverse al cambiar de celda).
 function onResDown(rb: any, e: MouseEvent) {
   e.stopPropagation()
-  cancelDuplicateMode() // empieza a arrastrar una reserva existente: abandona el modo duplicar
+  if (duplicateModeBlocks()) return
   const orig = planReservas.value.find((x: any) => x.id === rb.id)
   if (!orig) return
   const ci = String(orig.checkIn || '').slice(0, 10), co = String(orig.checkOut || '').slice(0, 10)
@@ -1958,6 +1974,11 @@ function popupDuplicate() {
     children: r.children ?? 0,
   }
   toast.info('Modo duplicar: seleccioná la habitación y los días para la nueva reserva')
+  // El banner vive arriba de la grilla: si el usuario venía scrolleado (duplica una reserva de
+  // una habitación de abajo), aparece fuera de la vista y el único aviso es un toast que se va
+  // solo a los segundos. Sin nada en pantalla, la pantalla parece no haber hecho nada.
+  void nextTick(() => document.querySelector('[data-duplicate-banner]')
+    ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
 }
 
 // Drag en celdas vacías mientras estamos en modo duplicar: abre el wizard directo con el
