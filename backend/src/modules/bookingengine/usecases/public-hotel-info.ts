@@ -12,6 +12,7 @@
 import { NotFoundError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
 import type { PublicHotelInfoDTO } from '../types'
+import { resolveChildPolicy } from '../../../shared/usecases/child-composition'
 
 export interface PublicHotelInfoDeps {
   hotels: RepositoryAdapter<any>
@@ -43,6 +44,7 @@ export async function getPublicHotelInfo(
   const { title, description } = resolveI18n(hotel, lang)
   const googleMapsApiKey = await resolveGoogleMapsKey(deps.config, hotel.id)
   const stayLimits = await resolveStayLimits(deps.bookingConfig, hotel.id)
+  const childPolicy = await resolveChildPolicy(deps.config, hotel.id)
 
   // Allow-list ESTRICTA: copia campo por campo. NUNCA `...hotel` — arrastraría ownerName,
   // taxId, wifiPassword, etc. al JSON de respuesta (ver spec, "Anti-patrón allow-list").
@@ -84,6 +86,7 @@ export async function getPublicHotelInfo(
     widgetDefaultLanguage: stayLimits.widgetDefaultLanguage,
     widgetDefaultCurrency: stayLimits.widgetDefaultCurrency,
     widgetAccentPreset: stayLimits.widgetAccentPreset,
+    childPolicy,
   }
 }
 

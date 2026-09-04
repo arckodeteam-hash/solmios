@@ -40,6 +40,9 @@ vi.mock('@/services/Hotel.service', () => ({
     saveAmenitiesHotel: async () => ({}),
   },
 }))
+vi.mock('@/services/Room.service', () => ({
+  RoomService: { list: async () => ({ rooms: [], total: 0 }) },
+}))
 vi.mock('@/services/Platform.service', () => ({
   ConfigService: { get: async () => null, set: async () => ({}) },
   EmergencyContactsService: { get: async () => null, invalidate: () => {} },

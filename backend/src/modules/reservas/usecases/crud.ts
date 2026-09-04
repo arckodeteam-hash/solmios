@@ -1,4 +1,5 @@
 import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
+import type { RepositoryAdapter } from 'arckode-framework'
 import { assertRoomAvailable } from './availability'
 import { assertUpdateValidations } from './validate-update'
 import { safeEmit } from './safe-emit'
@@ -9,6 +10,7 @@ import { round2 } from '../../../shared/utils/money'
 import { guestsOfReservation } from './reprice'
 import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
 import type { PaidSource } from '../../../shared/usecases/reservation-paid'
+import { assertReservationFitsCapacity } from '../../../shared/usecases/reservation-capacity'
 import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from '../types'
 
 /**
@@ -46,6 +48,7 @@ export async function listReservations(repo: any, userRepo: any, cache: any, log
   if (query.channel) filters.channel = query.channel
   if (query.roomId) filters.roomId = query.roomId
   if (query.guestId) filters.guestId = query.guestId
+  if (query.groupId) filters.groupId = query.groupId
   let hotelId = currentUser.hotelId
   if (!hotelId && currentUser.role !== 'super_admin') {
     const user = await userRepo.findById(currentUser.id)
@@ -96,7 +99,7 @@ export interface CreatePricingRepos {
   roomRateRepo?: any
 }
 
-export async function createReservation(repo: any, blockRepo: any | undefined, logger: any, cache: any, sockets: any, notifyDeps: any, dto: CreateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, dateRestrictionRepo?: any, promoCodes?: PromoCodePort, pricing?: CreatePricingRepos): Promise<ReservasDTO> {
+export async function createReservation(repo: any, blockRepo: any | undefined, logger: any, cache: any, sockets: any, notifyDeps: any, dto: CreateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, dateRestrictionRepo?: any, promoCodes?: PromoCodePort, pricing?: CreatePricingRepos, configRepo?: RepositoryAdapter<any>): Promise<ReservasDTO> {
   if (currentUser.role !== 'super_admin' && dto.hotelId !== currentUser.hotelId) throw new AuthError('No autorizado para crear en otro hotel')
   // El estado inicial no puede ser checked_in/checked_out/etc: esos se logran vía /checkin y
   // /checkout (que crean folio y ocupan el cuarto). Una reserva nace confirmada o pendiente.
@@ -107,10 +110,19 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
   // ocupaba/cobraba cuartos de otro pasando un roomId ajeno (el hotelId ya se forzó arriba).
   // Se lee por `findOne({id})` — la pertenencia es lo que se está verificando, no un recurso
   // protegido que requiera assertOwnership del usuario sobre él.
+  let room: any = null
   if (roomRepo) {
-    const room = await roomRepo.findOne({ id: dto.roomId })
+    room = await roomRepo.findOne({ id: dto.roomId })
     if (!room || room.hotelId !== dto.hotelId) throw new ConflictError('La habitación no pertenece a este hotel')
   }
+  // Auditoría de integridad (cierre, 2026-09-04) — decisión de producto: el staff NO puede exceder
+  // silenciosamente la capacidad de la habitación. Mismo criterio (`fitsRoomCapacity` +
+  // `room_type_capacity`) que el motor público y el reagendado — cero reglas nuevas. Reservas
+  // legacy de panel sin `childrenAges` degradan a `resolveAdminCapacityComposition` (conservador:
+  // cada niño declarado consume plaza, nunca se asume libre — ver ese archivo para el detalle).
+  await assertReservationFitsCapacity(configRepo, room, {
+    hotelId: dto.hotelId, adults: Number(dto.adults) || 2, children: Number(dto.children) || 0, childrenAges: dto.childrenAges,
+  })
   if (guestRepo && dto.guestId) {
     const guest = await guestRepo.findOne({ id: dto.guestId })
     if (!guest || guest.hotelId !== dto.hotelId) throw new ConflictError('El huésped no pertenece a este hotel')
@@ -244,11 +256,41 @@ export interface UpdateReservationHooks {
   afterCeilingDrop?: (item: ReservasDTO) => Promise<void>
 }
 
-export async function updateReservation(repo: any, logger: any, cache: any, sockets: any, id: string, dto: UpdateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, groupRepo?: any, promoCodes?: PromoCodePort, hooks?: UpdateReservationHooks): Promise<ReservasDTO> {
+export async function updateReservation(repo: any, logger: any, cache: any, sockets: any, id: string, dto: UpdateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, groupRepo?: any, promoCodes?: PromoCodePort, hooks?: UpdateReservationHooks, configRepo?: RepositoryAdapter<any>): Promise<ReservasDTO> {
   const existing = await repo.findById(id)
   if (!existing) throw new NotFoundError('Reserva no encontrada')
   if (currentUser.role !== 'super_admin' && existing.hotelId !== currentUser.hotelId) throw new AuthError('No autorizado')
   await assertUpdateValidations(repo, existing, dto, currentUser, id, roomRepo, guestRepo, groupRepo)
+  // Auditoría de integridad (cierre, 2026-09-04) — NO debe existir una segunda puerta para mover
+  // una reserva a una habitación incompatible saltándose `reschedule.ts`: si el patch toca
+  // `roomId`/`adults`/`children`/`childrenAges` (cualquier dato que mueva la ocupación), se
+  // revalida capacidad contra la habitación EFECTIVA (la nueva si cambia, si no la actual) con la
+  // composición EFECTIVA (mezcla del dto sobre lo persistido) antes de escribir nada. Mismo
+  // criterio (`fitsRoomCapacity`/`room_type_capacity`) que `reschedule.ts` y el motor público.
+  const touchesOccupancy = dto.roomId !== undefined || dto.adults !== undefined || dto.children !== undefined || dto.childrenAges !== undefined
+  if (touchesOccupancy && roomRepo) {
+    const effectiveRoomId = dto.roomId ?? existing.roomId
+    const room = await roomRepo.findOne({ id: effectiveRoomId })
+    await assertReservationFitsCapacity(configRepo, room, {
+      hotelId: existing.hotelId,
+      adults: Number(dto.adults ?? existing.adults) || 2,
+      children: Number(dto.children ?? existing.children) || 0,
+      childrenAges: dto.childrenAges ?? existing.childrenAges,
+    })
+  }
+  // Auditoría de integridad (cierre, 2026-09-04) — `childrenAgesAsOf` es el check-in "de
+  // referencia" con el que se proyecta cada edad al reagendar (Requerimiento 12). Si el panel
+  // edita `childrenAges` (el controller lo reincorpora desde el body crudo, ver controller.ts) sin
+  // esto, la fecha de referencia queda VIEJA — un reagendado posterior proyectaría la edad EDITADA
+  // desde el momento en que se declaró la edad ANTERIOR, una pareja de datos que ya no tiene
+  // sentido junta. Se resincroniza acá, en el ÚNICO lugar donde `childrenAges` puede cambiar desde
+  // el panel: nuevas edades → el check-in efectivo (el nuevo si también cambia, si no el actual) es
+  // la referencia; array vacío (sin niños) → se limpia, no queda una fecha ancla sin edades que
+  // anclar. `childrenAgesAsOf` en sí NUNCA es aceptado directo del body (types.ts lo documenta:
+  // no es seteable desde el panel) — esto no lo contradice, lo DERIVA de `childrenAges`.
+  if (dto.childrenAges !== undefined) {
+    ;(dto as any).childrenAgesAsOf = dto.childrenAges.length > 0 ? (dto.checkIn ?? existing.checkIn) : null
+  }
   // ─── PC-8 (2026-08-19): promoCode en edición ──────────────────────────────────────────
   // Antes el UpdateReservasSchema ni declaraba `promoCode`: el wizard lo mandaba en edición y
   // validateSchema lo descartaba en silencio (anti-patrón campo-no-declarado, lado validador).
@@ -335,12 +377,13 @@ export async function updateReservationWithBalance(
    *  desde `orchestrationDeps` (connector `reservas-payment-requests`). Opcional: sin cobros
    *  `pending` es no-op. */
   ceilingGuard?: (item: ReservasDTO) => Promise<void>,
+  configRepo?: RepositoryAdapter<any>,
 ): Promise<ReservasDTO> {
   return updateReservation(repo, logger, cache, sockets, id, dto, currentUser, roomRepo, guestRepo, groupRepo, promoCodes, {
     // Dentro de la ventana: el socket sale con el saldo nuevo y la caché se invalida DESPUÉS.
     afterPersist: async (item) => ({ pendingAmount: await syncReservationPending(repo, addonsOf, id, paidOf, item) }),
     afterCeilingDrop: ceilingGuard,
-  })
+  }, configRepo)
 }
 
 /** Devuelve la reserva borrada (SC-05: el service la necesita para el audit log). */

@@ -64,6 +64,10 @@ export interface PublicHotelInfo {
   /** "Tema del Widget" — string libre, el frontend decide qué valores conoce (`ACCENT_PRESETS`
    *  en `booking-widget.vue`) y cae a "sin override" ante cualquiera que no reconozca. */
   widgetAccentPreset?: string | null
+  /** Política de niños del hotel (feature adultos+niños+edades, 2026-09-02). Opcional en el tipo
+   *  por si un backend viejo/caché todavía no la manda — el widget cae a "acepta, nadie gratis"
+   *  (mismo default que `DEFAULT_CHILD_POLICY` del backend). */
+  childPolicy?: { acceptChildren: boolean; maxChildAge: number; maxFreeAge: number }
 }
 
 // ─── Media (GET /api/public/hotels/:slug/media) ────────

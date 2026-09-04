@@ -342,6 +342,41 @@ describe('googleMapsApiKey — resuelto vía configuration KV con fallback a pla
   })
 })
 
+describe('childPolicy — política de niños del hotel en el DTO público (2026-09-02)', () => {
+  it('sin dep `config` ni fila cargada → DEFAULT_CHILD_POLICY (acepta, todo niño consume plaza)', async () => {
+    const hotels = backed<any>([hotelSeed()])
+    const dto = await getPublicHotelInfo({ hotels }, 'hotel-paraiso', undefined)
+    expect(dto.childPolicy).toEqual({ acceptChildren: true, maxChildAge: 17, maxFreeAge: 0 })
+  })
+
+  it('con política configurada del hotel, se usa tal cual (ejemplo del pedido)', async () => {
+    const hotels = backed<any>([hotelSeed()])
+    const config = backed<any>([
+      { hotelId: 'h1', key: 'child_policy', value: JSON.stringify({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }) },
+    ])
+    const dto = await getPublicHotelInfo({ hotels, config }, 'hotel-paraiso', undefined)
+    expect(dto.childPolicy).toEqual({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 })
+  })
+
+  it('NO cae a la política de "platform" — es una decisión de cada hotel, a diferencia de google_maps', async () => {
+    const hotels = backed<any>([hotelSeed()])
+    const config = backed<any>([
+      { hotelId: 'platform', key: 'child_policy', value: JSON.stringify({ acceptChildren: false, maxChildAge: 5, maxFreeAge: 5 }) },
+    ])
+    const dto = await getPublicHotelInfo({ hotels, config }, 'hotel-paraiso', undefined)
+    expect(dto.childPolicy).toEqual({ acceptChildren: true, maxChildAge: 17, maxFreeAge: 0 })
+  })
+
+  it('acceptChildren: false → el widget no debe ofrecer agregar niños', async () => {
+    const hotels = backed<any>([hotelSeed()])
+    const config = backed<any>([
+      { hotelId: 'h1', key: 'child_policy', value: JSON.stringify({ acceptChildren: false, maxChildAge: 17, maxFreeAge: 0 }) },
+    ])
+    const dto = await getPublicHotelInfo({ hotels, config }, 'hotel-paraiso', undefined)
+    expect(dto.childPolicy.acceptChildren).toBe(false)
+  })
+})
+
 describe('F0 0.5 — rate-limit en endpoints públicos (60/60s para getHotelPublicInfo)', () => {
   it('60 requests de la misma IP permiten, la 61ª bloquea con retryAfter > 0', async () => {
     // Clave ÚNICA por test (UUID) — el rate-limit es un Map global en memoria; sin esto,

@@ -6,7 +6,7 @@
 // una Checkout Session de Stripe.
 
 import { describe, it, expect } from 'bun:test'
-import { paidForReservation, sumPayments, paidSourceFrom } from '../usecases/reservation-paid'
+import { paidForReservation, sumPayments, paidSourceFrom, paidAmountsByReservation } from '../usecases/reservation-paid'
 import { pendingBalance } from '../utils/reservation-balance'
 
 const HOTEL = 'h1'
@@ -218,6 +218,18 @@ describe('paidForReservation · cobro colgado directo de la reserva', () => {
     expect(await paidForReservation(r, HOTEL, 'r1', { deposit: 0 })).toBe(0)
   })
 
+  // Requerimiento 14 (Administración | Pago realizado, 2026-09-04) — reserva de varias
+  // habitaciones: cada habitación es su PROPIA fila de `reservations` (mismo `groupId`, distinto
+  // `id`). El vínculo directo filtra por `reservationId` exacto — un cobro suelto de la habitación
+  // A (mismo hotel) no debe sumarse al total de la B, aunque compartan grupo.
+  it('MISMO hotel, DOS reservas del mismo grupo (groupId): el cobro directo de una no se filtra a la otra', async () => {
+    const r = repos({
+      payments: [{ id: 'p1', hotelId: HOTEL, reservationId: 'r-a', type: 'charge', method: 'cash', status: 'completed', amount: 300 }],
+    })
+    expect(await paidForReservation(r, HOTEL, 'r-a', { deposit: 0 })).toBe(300)
+    expect(await paidForReservation(r, HOTEL, 'r-b', { deposit: 0 })).toBe(0) // hermana de grupo, sin su propio cobro
+  })
+
   it('la reprogramación cobrada en efectivo deja el pendiente en cero, no recobrable', async () => {
     // commitReschedule sube totalAmount 500 → 650 y cobra los 150 en efectivo (sin folio).
     const r = repos({
@@ -226,5 +238,90 @@ describe('paidForReservation · cobro colgado directo de la reserva', () => {
     const paid = await paidForReservation(r, HOTEL, 'r1', { deposit: 500 })
     expect(paid).toBe(650)
     expect(pendingBalance({ totalAmount: 650, otherCharges: 0 } as any, [], paid)).toBe(0)
+  })
+})
+
+// Auditoría final (2026-09-04) — la Planning/Calendario (`dashboard/usecases/dashboard-queries.ts
+// #getPlanning`) calculaba el estado de pago con `reservations.deposit` (el mismo bug GH-0.2 ya
+// resuelto para `getExtendedDetail`, pero nunca migrado ahí) porque llamar `paidForReservation`
+// UNA VEZ POR RESERVA visible en el planning sería N+1. `paidAmountsByReservation` es la MISMA
+// fórmula (`combinePaid`/`splitPayments`) pero en lote: 3 arrays ya cargados (folios/invoices/
+// payments del hotel), sin queries extra por fila.
+describe('paidAmountsByReservation — versión en lote (Requerimiento 15, auditoría final)', () => {
+  it('cobro directo (sin folio/factura): se atribuye a SU reserva, no a otras del mismo hotel', () => {
+    const folios: any[] = []
+    const invoices: any[] = []
+    const payments = [{ id: 'p1', hotelId: HOTEL, reservationId: 'r-a', type: 'charge', status: 'completed', amount: 300 }]
+    const reservations = [{ id: 'r-a', deposit: 0 }, { id: 'r-b', deposit: 0 }]
+    const out = paidAmountsByReservation(folios, invoices, payments, reservations)
+    expect(out.get('r-a')).toBe(300)
+    expect(out.get('r-b')).toBe(0)
+  })
+
+  it('cobro colgado de un folio: se resuelve vía folios.reservationId', () => {
+    const folios = [{ id: 'f1', reservationId: 'r-a' }]
+    const payments = [{ id: 'p1', hotelId: HOTEL, folioId: 'f1', type: 'charge', status: 'completed', amount: 300 }]
+    const out = paidAmountsByReservation(folios, [], payments, [{ id: 'r-a', deposit: 0 }])
+    expect(out.get('r-a')).toBe(300)
+  })
+
+  it('cobro colgado de una factura: se resuelve vía invoices.reservationId', () => {
+    const invoices = [{ id: 'inv1', reservationId: 'r-a' }]
+    const payments = [{ id: 'p1', hotelId: HOTEL, invoiceId: 'inv1', type: 'charge', status: 'completed', amount: 300 }]
+    const out = paidAmountsByReservation([], invoices, payments, [{ id: 'r-a', deposit: 0 }])
+    expect(out.get('r-a')).toBe(300)
+  })
+
+  // El caso GH-0.2 que motiva el fix: cobrado en efectivo por folio, `deposit` en 0 — antes el
+  // planning decía "pendiente"/"parcial" sobre esta reserva; con la versión en lote dice lo mismo
+  // que `getExtendedDetail`.
+  it('cobrado por folio en efectivo (deposit=0): el resultado NO es 0 — mismo criterio que getExtendedDetail', () => {
+    const folios = [{ id: 'f1', reservationId: 'r-a' }]
+    const payments = [{ id: 'p1', hotelId: HOTEL, folioId: 'f1', type: 'charge', method: 'cash', status: 'completed', amount: 500 }]
+    const out = paidAmountsByReservation(folios, [], payments, [{ id: 'r-a', deposit: 0 }])
+    expect(out.get('r-a')).toBe(500)
+  })
+
+  it('mezcla deposit (Stripe) + cobro independiente (folio efectivo): combina igual que la versión por-reserva', () => {
+    const folios = [{ id: 'f1', reservationId: 'r-a' }]
+    const payments = [{ id: 'p1', hotelId: HOTEL, folioId: 'f1', type: 'charge', method: 'cash', status: 'completed', amount: 100 }]
+    const out = paidAmountsByReservation(folios, [], payments, [{ id: 'r-a', deposit: 200 }])
+    expect(out.get('r-a')).toBe(300) // deposit(200) + independiente(100), no compiten en el max
+  })
+
+  it('pagos pending/failed no cuentan (misma regla que la versión por-reserva)', () => {
+    const payments = [{ id: 'p1', hotelId: HOTEL, reservationId: 'r-a', type: 'charge', status: 'failed', amount: 500 }]
+    const out = paidAmountsByReservation([], [], payments, [{ id: 'r-a', deposit: 0 }])
+    expect(out.get('r-a')).toBe(0)
+  })
+
+  it('reserva de varias habitaciones (groupId): cada habitación resuelve su propio cobro, sin filtrarse a la hermana', () => {
+    const folios = [{ id: 'f-a', reservationId: 'r-a' }]
+    const payments = [{ id: 'p1', hotelId: HOTEL, folioId: 'f-a', type: 'charge', status: 'completed', amount: 300 }]
+    const reservations = [{ id: 'r-a', deposit: 0 }, { id: 'r-b', deposit: 0 }] // ambas del mismo groupId en la práctica
+    const out = paidAmountsByReservation(folios, [], payments, reservations)
+    expect(out.get('r-a')).toBe(300)
+    expect(out.get('r-b')).toBe(0)
+  })
+
+  it('reservas sin ningún movimiento: 0, no undefined ni excepción', () => {
+    const out = paidAmountsByReservation([], [], [], [{ id: 'r-a', deposit: 0 }, { id: 'r-b' }])
+    expect(out.get('r-a')).toBe(0)
+    expect(out.get('r-b')).toBe(0)
+  })
+
+  it('arrays null/undefined (defensivo): no revienta, todo sale en 0', () => {
+    const out = paidAmountsByReservation(null, undefined, null, [{ id: 'r-a', deposit: 0 }])
+    expect(out.get('r-a')).toBe(0)
+  })
+
+  it('coincide EXACTO con paidForReservation para el mismo dataset (misma fórmula, dos formas de leerla)', async () => {
+    const dataset = {
+      folios: [{ id: 'f1', hotelId: HOTEL, reservationId: 'r1' }],
+      payments: [{ id: 'p1', hotelId: HOTEL, folioId: 'f1', type: 'charge', status: 'completed', amount: 300 }],
+    }
+    const perReservation = await paidForReservation(repos(dataset), HOTEL, 'r1', { deposit: 100 })
+    const batch = paidAmountsByReservation(dataset.folios, [], dataset.payments, [{ id: 'r1', deposit: 100 }])
+    expect(batch.get('r1')).toBe(perReservation)
   })
 })

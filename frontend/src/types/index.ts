@@ -26,6 +26,10 @@ export interface Room {
   status: RoomStatus
   amenities: string[]
   maxGuests: number
+  // Adultos/niños que planea el tipo de habitación (feature adultos+niños+edades, 2026-09-02).
+  // undefined = sin configurar → los usecases de capacidad caen a `maxGuests` completo.
+  maxAdults?: number
+  maxChildren?: number
   basePrice: number
   surfaceArea?: number
   bathrooms?: number
@@ -109,6 +113,14 @@ export interface Reservation {
   checkOut: Date
   adults: number
   children: number
+  /** Edad de cada niño, en el mismo orden en que se cargaron en el widget de reservas.
+   *  Ausente/vacío en reservas creadas antes de esta feature o sin niños. */
+  childrenAges?: number[]
+  /** Requerimiento 13 (Administración | Composición de huéspedes, 2026-09-03) — presente cuando
+   *  esta reserva es UNA habitación de una reserva de varias (mismo `groupId` que sus hermanas).
+   *  Lo usa `ReservationModal.vue` para pedir `ReservationService.list({ groupId })` y mostrar la
+   *  composición de cada habitación. Ausente = reserva de una sola habitación. */
+  groupId?: string
   status: ReservationStatus
   source: ReservationSource
   channelReservationId?: string
@@ -157,6 +169,8 @@ export interface ReservationApiRecord {
   status: string
   adults?: number
   children?: number
+  childrenAges?: number[]
+  groupId?: string
   currency?: string
   deposit?: number
   autoSendEnabled?: boolean
@@ -536,6 +550,15 @@ export interface ReservationDetail {
   paidAmount?: number
   /** Total cobrable de la reserva: alojamiento + otros cobros + extras. Fuente única del backend. */
   chargeableTotal?: number
+  /**
+   * Requerimiento 14 (Administración | Pago realizado, 2026-09-04) — estado de cobro comprensible,
+   * derivado por el backend de `chargeableTotal`/`paidAmount` (`shared/utils/reservation-balance.ts`
+   * `paymentState`) — NUNCA de `deposit` a secas. `pending` = nada cobrado, `partial` = algo pero no
+   * cubre el total, `paid` = cubre el total. Es la fuente para cualquier badge de estado del modal;
+   * no re-derivar con `deposit`/`totalAmount` en el frontend (esa fórmula vieja podía contradecir
+   * a "Pendiente de cobro" cuando el cobro entró por folio/factura en efectivo, que no toca `deposit`).
+   */
+  paymentState?: 'pending' | 'partial' | 'paid'
   /** Suma con signo de los addons (los `discount` restan). */
   addonsTotal?: number
   currency?: string
@@ -554,6 +577,23 @@ export interface ReservationDetail {
   emergencyContact?: { name: string; phone: string; relation: string; email?: string }
   adults?: number
   children?: number
+  /** Edad de cada niño (feature adultos+niños+edades). Ausente/vacío en reservas viejas o sin niños. */
+  childrenAges?: number[]
+  /** Check-in vigente cuando se declararon `childrenAges` (Requerimiento 12). null/ausente =
+   *  reserva legacy o sin niños — no hay nada que proyectar. No se muestra directamente en el
+   *  panel; lo consume el backend para `childrenAgesDetail`. */
+  childrenAgesAsOf?: string | null
+  /**
+   * Requerimiento 13 (Administración | Composición de huéspedes, 2026-09-03) — desglose POR NIÑO:
+   * qué edad se declaró, cuál corresponde HOY (proyectada si la reserva se reagendó cruzando un
+   * año — Requerimiento 12) y en qué balde cae según la política VIGENTE del hotel. `[]` = sin
+   * `childrenAges`. Reemplaza la heurística vieja del modal (`childrenAges.length > children` para
+   * inferir "alguno se reclasificó") por el dato explícito: ahora se sabe CUÁL.
+   */
+  childrenAgesDetail?: { declaredAge: number; effectiveAge: number; classification: 'free' | 'paying' | 'adult' }[]
+  /** Presente si esta reserva es una habitación de una reserva de varias (mismo `groupId` en sus
+   *  hermanas). El modal lo usa para pedir las demás y mostrar la composición de cada una. */
+  groupId?: string | null
   createdAt?: string
   checkedInAt?: string | null
   checkedOutAt?: string | null

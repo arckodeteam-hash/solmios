@@ -462,6 +462,11 @@ onMounted(async () => {
     hotelName.value = hotel.name
     hotelLogo.value = hotel.logo
     hotelIdForTracking.value = hotel.id
+    // Feature adultos+niños+edades (2026-09-02) — RoomsStep.vue la necesita para saber si
+    // ofrecer niños y con qué rango de edades. `hotel.childPolicy` siempre viene (el backend
+    // manda DEFAULT_CHILD_POLICY si el hotel no configuró nada); opcional en el tipo por si un
+    // backend viejo/caché no lo manda, el store ya arranca con ese mismo default.
+    if (hotel.childPolicy) store.childPolicy = hotel.childPolicy
     // F4 4.1 — Disparamos 'view' DESPUÉS de resolver el hotel para que el POST server-side
     // lleve el hotelId correcto (sin eso, el primer step del funnel no se persistiría).
     try {

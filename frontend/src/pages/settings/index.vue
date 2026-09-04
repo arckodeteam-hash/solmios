@@ -564,6 +564,103 @@
       </div>
     </div>
 
+    <!-- ========== NIÑOS (Requerimiento 1) ========== -->
+    <div v-if="(activeTab as string) === 'children'" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
+        <div class="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 class="font-extrabold text-navy">Política de niños</h3>
+            <p class="text-[11px] text-text-muted mt-1 leading-relaxed">
+              Define cómo cuentan los niños en las reservas del motor público (adultos + niños + edad de cada uno).
+            </p>
+          </div>
+          <button @click="saveChildPolicy" :disabled="childPolicySaving || !!childPolicyError"
+            class="shrink-0 px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg cursor-pointer disabled:opacity-50">
+            {{ childPolicySaving ? 'Guardando...' : 'Guardar' }}
+          </button>
+        </div>
+
+        <div class="space-y-4">
+          <div class="flex items-center justify-between p-3 bg-surface rounded-xl">
+            <div>
+              <div class="text-sm font-bold text-navy">Aceptar niños</div>
+              <div class="text-[10px] text-text-muted">Si está apagado, la página de reservas no deja agregar niños</div>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input v-model="childPolicy.acceptChildren" type="checkbox" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal"></div>
+            </label>
+          </div>
+
+          <template v-if="childPolicy.acceptChildren">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Edad máxima considerada niño</label>
+                <input v-model.number="childPolicy.maxChildAge" type="number" min="0" max="17" class="w-full px-3 py-2 rounded-full border border-border text-sm font-bold text-navy text-right">
+              </div>
+              <div>
+                <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Edad máxima sin consumir plaza</label>
+                <input v-model.number="childPolicy.maxFreeAge" type="number" min="0" max="17" class="w-full px-3 py-2 rounded-full border text-sm font-bold text-navy text-right" :class="childPolicyError ? 'border-danger' : 'border-border'">
+              </div>
+            </div>
+            <p v-if="childPolicyError" class="text-[10px] font-bold text-danger">{{ childPolicyError }}</p>
+            <p class="text-[11px] text-text-muted leading-relaxed bg-surface rounded-xl p-3">
+              Con estos valores: 0–{{ childPolicy.maxFreeAge }} años no consume plaza (no genera cargo de alojamiento) ·
+              {{ childPolicy.maxFreeAge + 1 }}–{{ childPolicy.maxChildAge }} años consume plaza y se cobra como un ocupante más ·
+              mayor de {{ childPolicy.maxChildAge }} años se trata como adulto.
+            </p>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== TIPOS DE HABITACIÓN Y CAPACIDAD (Requerimiento 2) ========== -->
+    <div v-if="(activeTab as string) === 'room-types'" class="grid grid-cols-1 gap-6">
+      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
+        <div class="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 class="font-extrabold text-navy">Tipos de habitación y capacidad</h3>
+            <p class="text-[11px] text-text-muted mt-1 leading-relaxed">
+              Capacidad máxima de ocupantes, adultos y niños por TIPO — se aplica a todas las habitaciones de ese tipo
+              y reemplaza lo que tenga cargado cada habitación física. Un tipo sin capacidad configurada acá sigue
+              usando la capacidad de cada habitación, como hasta ahora.
+            </p>
+          </div>
+          <button @click="saveRoomTypeCapacity" :disabled="roomTypeCapacitySaving || roomTypeCapacityHasErrors"
+            class="shrink-0 px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg cursor-pointer disabled:opacity-50">
+            {{ roomTypeCapacitySaving ? 'Guardando...' : 'Guardar' }}
+          </button>
+        </div>
+
+        <div v-if="roomTypeCapacityLoading" class="p-6 text-center text-xs text-text-muted">Cargando tipos de habitación...</div>
+        <div v-else-if="roomTypeCapacityRows.length === 0" class="p-6 bg-surface rounded-xl text-center">
+          <p class="text-xs text-text-muted">Todavía no cargaste habitaciones. Configurá esto después de crear tus tipos en Habitaciones.</p>
+        </div>
+        <div v-else class="space-y-3">
+          <div v-for="row in roomTypeCapacityRows" :key="row.type"
+            class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_repeat(3,140px)] items-start p-3 bg-surface rounded-xl">
+            <div class="pt-2 text-sm font-bold text-navy">{{ ROOM_TYPE_LABEL[row.type] || row.type }}</div>
+            <div>
+              <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Capacidad</label>
+              <input v-model.number="row.capacity" type="number" min="1" max="20" placeholder="sin configurar"
+                class="w-full rounded-xl border px-3 py-2 text-sm font-bold text-navy text-right" :class="roomTypeCapacityErrorOf(row) ? 'border-danger' : 'border-border'">
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Máx. adultos</label>
+              <input v-model.number="row.maxAdults" type="number" min="1" max="20" placeholder="sin límite"
+                class="w-full rounded-xl border border-border px-3 py-2 text-sm text-right">
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Máx. niños</label>
+              <input v-model.number="row.maxChildren" type="number" min="0" max="20" placeholder="sin límite"
+                class="w-full rounded-xl border border-border px-3 py-2 text-sm text-right">
+            </div>
+            <p v-if="roomTypeCapacityErrorOf(row)" class="md:col-span-4 text-[10px] font-bold text-danger">{{ roomTypeCapacityErrorOf(row) }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ========== INTEGRACIONES ========== -->
     <div v-if="(activeTab as string) === 'integrations'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <!-- Channel Manager NO va acá: lo configura y gestiona el admin de la PLATAFORMA (/admin),
@@ -790,6 +887,7 @@ import {
 } from '@/utils/address-components'
 import { validateField, validateAll, warnOnUnsavedChanges, HOTEL_RULES } from '@/composables/useFieldValidation'
 import { HotelService } from '@/services/Hotel.service'
+import { RoomService } from '@/services/Room.service'
 import { SettingsService, type HotelFull } from '@/services/Settings.service'
 import { ConfigService, EmergencyContactsService } from '@/services/Platform.service'
 import { GuaranteeService } from '@/services/Guarantee.service'
@@ -1018,6 +1116,106 @@ async function saveFiscalConfig() {
   }
 }
 
+// ─── Política de niños (Requerimiento 1, 2026-09-03) ───────────────────────────────────────
+// configuration('child_policy'), mismo patrón que automation_config/electronic_invoicing.
+// Consumida por el motor público (backend `resolveChildPolicy`) y por el wizard `/book/:slug`
+// (`childPolicy` de `GET /public/hotel/:slug`) para decidir si ofrece el stepper de niños.
+const childPolicy = reactive({ acceptChildren: true, maxChildAge: 17, maxFreeAge: 0 })
+const childPolicySaving = ref(false)
+async function loadChildPolicy() {
+  try {
+    const c = await ConfigService.get('child_policy') as { acceptChildren?: boolean; maxChildAge?: number; maxFreeAge?: number } | null
+    if (c) {
+      childPolicy.acceptChildren = c.acceptChildren !== false
+      childPolicy.maxChildAge = Number.isFinite(c.maxChildAge) ? Number(c.maxChildAge) : 17
+      childPolicy.maxFreeAge = Number.isFinite(c.maxFreeAge) ? Number(c.maxFreeAge) : 0
+    }
+  } catch { /* default: acepta niños, sin plaza gratis hasta 0 años */ }
+}
+// "La edad máxima sin consumir plaza no puede ser superior a la edad máxima considerada niño."
+const childPolicyError = computed(() => (
+  childPolicy.maxFreeAge > childPolicy.maxChildAge
+    ? 'La edad sin consumir plaza no puede ser mayor que la edad máxima de niño'
+    : ''
+))
+async function saveChildPolicy() {
+  if (childPolicyError.value) { toast.error(childPolicyError.value); return }
+  childPolicySaving.value = true
+  try {
+    await ConfigService.set('child_policy', { acceptChildren: childPolicy.acceptChildren, maxChildAge: childPolicy.maxChildAge, maxFreeAge: childPolicy.maxFreeAge })
+    await nextTick()
+    markClean()
+    toast.success('Política de niños guardada')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo guardar')
+  } finally {
+    childPolicySaving.value = false
+  }
+}
+
+// ─── Tipos de habitación y capacidad (Requerimiento 2, 2026-09-03) ─────────────────────────
+// configuration('room_type_capacity') = { [type]: {capacity, maxAdults, maxChildren} }. Solo se
+// listan los tipos que el hotel ya usa en `/rooms` (no los 9 posibles del enum): configurar un
+// tipo sin ninguna habitación cargada no tiene con qué aplicarse. `resolveRoomTypeCapacityMap`
+// (backend) prioriza esto sobre los campos de la habitación física — ver room-type-capacity.ts.
+const ROOM_TYPE_LABEL: Record<string, string> = {
+  single: 'Individual', double: 'Doble', twin: 'Twin', triple: 'Triple', quad: 'Cuádruple',
+  suite: 'Suite', deluxe: 'Deluxe', presidential: 'Presidencial', family: 'Familiar',
+}
+interface RoomTypeCapacityRow { type: string; capacity: number | null; maxAdults: number | null; maxChildren: number | null }
+const roomTypeCapacityRows = ref<RoomTypeCapacityRow[]>([])
+const roomTypeCapacitySaving = ref(false)
+const roomTypeCapacityLoading = ref(false)
+function roomTypeCapacityErrorOf(row: RoomTypeCapacityRow): string {
+  if (row.capacity == null || row.capacity <= 0) return 'La capacidad es obligatoria'
+  if (row.maxAdults != null && row.maxAdults > row.capacity) return 'Máx. adultos no puede superar la capacidad'
+  if (row.maxChildren != null && row.maxChildren > row.capacity) return 'Máx. niños no puede superar la capacidad'
+  return ''
+}
+async function loadRoomTypeCapacity() {
+  roomTypeCapacityLoading.value = true
+  try {
+    const [{ rooms }, saved] = await Promise.all([
+      RoomService.list({ limit: 500 }),
+      ConfigService.get('room_type_capacity') as Promise<Record<string, { capacity?: number; maxAdults?: number; maxChildren?: number }> | null>,
+    ])
+    const typesInUse = Array.from(new Set(rooms.map(r => r.type as string).filter(Boolean)))
+    roomTypeCapacityRows.value = typesInUse.map(type => {
+      const s = saved?.[type]
+      return {
+        type,
+        capacity: s?.capacity ?? null,
+        maxAdults: s?.maxAdults ?? null,
+        maxChildren: s?.maxChildren ?? null,
+      }
+    })
+  } catch { /* sin habitaciones cargadas todavía: lista vacía */ }
+  finally { roomTypeCapacityLoading.value = false }
+}
+const roomTypeCapacityHasErrors = computed(() =>
+  roomTypeCapacityRows.value.some(r => (r.capacity != null || r.maxAdults != null || r.maxChildren != null) && roomTypeCapacityErrorOf(r)))
+async function saveRoomTypeCapacity() {
+  if (roomTypeCapacityHasErrors.value) { toast.error('Revisá los tipos marcados en rojo antes de guardar'); return }
+  roomTypeCapacitySaving.value = true
+  try {
+    // Solo se persisten los tipos con capacidad configurada — un tipo que el admin no tocó no
+    // debe empezar a limitar reservas por accidente.
+    const value: Record<string, { capacity: number; maxAdults: number | null; maxChildren: number | null }> = {}
+    for (const row of roomTypeCapacityRows.value) {
+      if (row.capacity == null || row.capacity <= 0) continue
+      value[row.type] = { capacity: row.capacity, maxAdults: row.maxAdults, maxChildren: row.maxChildren }
+    }
+    await ConfigService.set('room_type_capacity', value)
+    await nextTick()
+    markClean()
+    toast.success('Capacidad por tipo de habitación guardada')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo guardar')
+  } finally {
+    roomTypeCapacitySaving.value = false
+  }
+}
+
 // Políticas de cancelación y reembolso para factura (configuration['invoice_policy_text']).
 // Texto libre que se imprime al pie de cada factura A4 emitida. Vacío = no se imprime el bloque.
 const invoicePolicyText = ref('')
@@ -1105,6 +1303,8 @@ const tabGroups: SettingsTabGroup[] = [
       { value: 'hotel', label: 'Hotel' },
       { value: 'location', label: 'Ubicación' },
       { value: 'conditions', label: 'Condiciones' },
+      { value: 'children', label: 'Niños' },
+      { value: 'room-types', label: 'Tipos de habitación' },
       { value: 'emergency', label: 'Emergencias' },
       { value: 'hr', label: 'RRHH' },
     ],
@@ -1181,6 +1381,7 @@ function snapshot(): string {
     form: form.value,
     selectedAmenities: selectedAmenities.value, emergencyContacts: emergencyContacts.value,
     currencyConfig, guaranteePinDraft: guaranteePinDraft.value, automation, fiscalConfig,
+    childPolicy, roomTypeCapacityRows: roomTypeCapacityRows.value,
     // Slug, amenities hotel-level, traducciones públicas y flags de reseñas públicas
     // se gestionan y persisten desde la sección "Página pública" del menú.
   })
@@ -1408,6 +1609,8 @@ onMounted(async () => {
     await loadGuaranteePin()
     await loadAutomation()
     await loadFiscalConfig()
+    await loadChildPolicy()
+    await loadRoomTypeCapacity()
     await loadInvoicePolicy()
     await loadWorkingDays()
   } catch (e) {

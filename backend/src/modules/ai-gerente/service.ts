@@ -45,7 +45,7 @@ export class AiGerenteService {
     const apiKey = process.env.DEEPSEEK_API_KEY || process.env.LLM_API_KEY || ''
     const { response, confidence, actions } = await askGerente(
       query, kpis, hotelName, apiKey,
-      { reservationRepo: this.reservationRepo, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, guestRepo: this.guestRepo, cancelReservation: this.cancelReservationPort ?? undefined },
+      { reservationRepo: this.reservationRepo, roomRepo: this.roomRepo, hotelRepo: this.hotelRepo, guestRepo: this.guestRepo, cancelReservation: this.cancelReservationPort ?? undefined, configRepo: this.configRepo },
       hotelId,
     )
 

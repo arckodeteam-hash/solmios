@@ -367,6 +367,10 @@
               </div>
               <div><label for="room-floor" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Piso</label><input id="room-floor" name="floor" v-model.number="form.floor" type="number" min="0" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
               <div><label for="room-capacity" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Capacidad</label><input id="room-capacity" name="capacity" v-model.number="form.maxGuests" type="number" min="1" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <!-- Feature adultos+niños+edades (2026-09-02): opcional — vacío = sin configurar,
+                   el motor de reservas cae a la Capacidad total de arriba. -->
+              <div><label for="room-max-adults" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Máx. adultos <span class="normal-case font-normal text-text-muted">(opcional)</span></label><input id="room-max-adults" name="maxAdults" v-model.number="form.maxAdults" type="number" min="1" placeholder="sin configurar" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
+              <div><label for="room-max-children" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Máx. niños <span class="normal-case font-normal text-text-muted">(opcional)</span></label><input id="room-max-children" name="maxChildren" v-model.number="form.maxChildren" type="number" min="0" placeholder="sin configurar" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm" /></div>
               <div>
                 <label for="room-base-price" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Precio Base $ <span class="text-coral">*</span></label>
                 <input id="room-base-price" name="basePrice" required aria-required="true" v-model.number="form.basePrice" @blur="touched.basePrice = true" type="number" min="0"
@@ -436,6 +440,8 @@ interface MappedRoom {
   floor: number
   status: string
   maxGuests: number
+  maxAdults: number | null
+  maxChildren: number | null
   basePrice: number
   amenities: string[]
   surfaceArea: number
@@ -464,6 +470,10 @@ interface EditForm {
   type: string
   floor: number
   maxGuests: number
+  // Adultos/niños que planea el tipo (feature adultos+niños+edades, 2026-09-02). null = sin
+  // configurar → cae a `maxGuests` completo en el motor de reservas.
+  maxAdults: number | null
+  maxChildren: number | null
   basePrice: number
   status: string
   amenities: string[]
@@ -496,7 +506,7 @@ const detailModal = ref({ show: false })
 const batchModal = ref({ show: false })
 const detailRoom = ref<MappedRoom | null>(null)
 
-const form = ref<EditForm>({ number:'', type:'double', floor:1, maxGuests:2, basePrice:80, status:'available', amenities:[], surfaceArea:null, bathrooms:1, onlineBooking:true })
+const form = ref<EditForm>({ number:'', type:'double', floor:1, maxGuests:2, maxAdults:null, maxChildren:null, basePrice:80, status:'available', amenities:[], surfaceArea:null, bathrooms:1, onlineBooking:true })
 /** Campos "tocados" (blur o intento de submit): el error inline se muestra recién al tocar,
  *  para no pintar de rojo un form recién abierto (A4). */
 const touched = ref({ number: false, basePrice: false })
@@ -750,7 +760,7 @@ async function load() {
 
     const mapped: MappedRoom[] = (res.rooms || []).map((r: Room) => ({
       id: r.id, number: r.number, type: r.type, floor: r.floor || 1, status: r.status || 'available',
-      maxGuests: r.maxGuests || 2, basePrice: r.basePrice || 0,
+      maxGuests: r.maxGuests || 2, maxAdults: r.maxAdults ?? null, maxChildren: r.maxChildren ?? null, basePrice: r.basePrice || 0,
       amenities: [] as string[], surfaceArea: r.surfaceArea || 0, bathrooms: r.bathrooms || 1,
       onlineBooking: r.onlineBookingEnabled !== false,
       guestName: roomGuestMap.get(r.id)?.guestName || null,
@@ -778,13 +788,13 @@ function openEditFromDetail() {
   detailModal.value.show = false
   editId.value = room.id; modal.value = { show: true, edit: true }
   const amenities = [...(room.amenities || [])]
-  form.value = { number: room.number, type: room.type, floor: room.floor || 1, maxGuests: room.maxGuests || 2, basePrice: room.basePrice || 0, status: room.status || 'available', amenities, surfaceArea: room.surfaceArea || null, bathrooms: room.bathrooms || 1, onlineBooking: room.onlineBooking !== false }
+  form.value = { number: room.number, type: room.type, floor: room.floor || 1, maxGuests: room.maxGuests || 2, maxAdults: room.maxAdults ?? null, maxChildren: room.maxChildren ?? null, basePrice: room.basePrice || 0, status: room.status || 'available', amenities, surfaceArea: room.surfaceArea || null, bathrooms: room.bathrooms || 1, onlineBooking: room.onlineBooking !== false }
   touched.value = { number: false, basePrice: false }
 }
 
 function openNew() {
   editId.value = ''; modal.value = { show: true, edit: false }
-  form.value = { number: '', type: 'double', floor: 1, maxGuests: 2, basePrice: 80, status: 'available', amenities: [], surfaceArea: null, bathrooms: 1, onlineBooking: true }
+  form.value = { number: '', type: 'double', floor: 1, maxGuests: 2, maxAdults: null, maxChildren: null, basePrice: 80, status: 'available', amenities: [], surfaceArea: null, bathrooms: 1, onlineBooking: true }
   touched.value = { number: false, basePrice: false }
 }
 
@@ -814,7 +824,7 @@ async function save() {
     const { RoomService } = await import('@/services/Room.service')
     const { AmenitiesService } = await import('@/services/Amenities.service')
     // Superficie vacía → 0 en la API ("sin dato"; el modelo no acepta null).
-    const patch: Record<string, unknown> = { number: form.value.number, type: form.value.type, floor: form.value.floor, maxGuests: form.value.maxGuests, basePrice: form.value.basePrice, status: form.value.status, surfaceArea: Number(form.value.surfaceArea || 0), bathrooms: form.value.bathrooms, onlineBookingEnabled: form.value.onlineBooking }
+    const patch: Record<string, unknown> = { number: form.value.number, type: form.value.type, floor: form.value.floor, maxGuests: form.value.maxGuests, maxAdults: form.value.maxAdults, maxChildren: form.value.maxChildren, basePrice: form.value.basePrice, status: form.value.status, surfaceArea: Number(form.value.surfaceArea || 0), bathrooms: form.value.bathrooms, onlineBookingEnabled: form.value.onlineBooking }
     let roomId = editId.value
     if (roomId) { await RoomService.update(roomId, patch) }
     else { const created = await RoomService.create({ ...patch, hotelId: hid.value! }); roomId = created.id }

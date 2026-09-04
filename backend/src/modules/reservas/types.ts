@@ -16,6 +16,11 @@ export interface ReservasDTO {
   currency?: string
   adults?: number
   children?: number
+  // Feature "adultos+niños+edades" (2026-09-02) / Requerimiento 12 (2026-09-03) — ver
+  // `reservas/model.ts` para el detalle de cada campo. Documentados acá porque `getReservationById`/
+  // `listReservations` (crud.ts) devuelven la fila ORM tal cual, sin allow-list.
+  childrenAges?: number[]
+  childrenAgesAsOf?: string
   notes?: string
   // OTA + payments
   source?: string
@@ -71,6 +76,10 @@ export interface CreateReservasDTO {
   currency?: string
   adults?: number
   children?: number
+  // Reincorporado manualmente en el controller desde el body crudo (el validador nativo descarta
+  // `type:'array'` sin avisar) — ver controller.ts `store`/`update`. `childrenAgesAsOf` NO está acá
+  // a propósito: nunca es seteable desde el panel, solo lo escribe la creación pública (Req12).
+  childrenAges?: number[]
   notes?: string
   ownerNotes?: string
   source?: string
@@ -114,6 +123,8 @@ export interface UpdateReservasDTO {
   currency?: string
   adults?: number
   children?: number
+  // Ver nota en CreateReservasDTO — mismo criterio de reincorporación manual.
+  childrenAges?: number[]
   notes?: string
   source?: string
   externalLocator?: string
@@ -148,6 +159,11 @@ export interface ReservasQuery {
   channel?: ReservationChannel
   roomId?: string
   guestId?: string
+  // Requerimiento 13 (Administración | Composición de huéspedes, 2026-09-03) — filtro para que el
+  // panel pueda traer TODAS las habitaciones de una reserva de varias habitaciones (mismo
+  // `groupId`, ver `bookingengine/usecases/public-booking-group.ts`). Scoped por `hotelId` igual
+  // que el resto de `listReservations` — no es un IDOR nuevo.
+  groupId?: string
   checkInFrom?: string
   checkInTo?: string
   search?: string

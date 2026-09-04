@@ -16,6 +16,16 @@ export const CreateReservasSchema: Record<string, ValidationRule> = {
   currency: { type: 'string' as const, min: 3, max: 3 },
   adults: { type: 'number' as const, min: 1, max: 20 },
   children: { type: 'number' as const, min: 0, max: 20 },
+  // `childrenAges` (array de edades) NO se declara acá a propósito: el `validateSchema` NATIVO
+  // de arckode-framework (import de este archivo) solo conoce
+  // string|number|boolean|email|url|date — un `type:'array'` no matchea ningún case de su switch
+  // y el campo se descarta EN SILENCIO (confirmado leyendo kernel/validator.ts, sin default ni
+  // error). Mismo patrón que ya usa bookingengine para `upsells`/`rooms`: el controller
+  // reincorpora `childrenAges` crudo desde `req.body` (FIX Requerimiento 11, 2026-09-03 — antes
+  // este comentario describía la reincorporación pero nunca se había escrito). A DIFERENCIA de
+  // bookingengine, acá NO se valida contra `child_policy`: el panel es una herramienta de staff
+  // (carga manual, teléfono, OTA), no el flujo público del huésped — se persiste tal cual, sin
+  // reclasificar edades > maxChildAge como adulto.
   deposit: { type: 'number' as const, min: 0 },
   notes: { type: 'string' as const, max: 2000 },
   source: { type: 'string' as const, max: 50 },
@@ -79,6 +89,16 @@ export const UpdateReservasSchema: Record<string, ValidationRule> = {
   currency: { type: 'string' as const, min: 3, max: 3 },
   adults: { type: 'number' as const, min: 1, max: 20 },
   children: { type: 'number' as const, min: 0, max: 20 },
+  // `childrenAges` (array de edades) NO se declara acá a propósito: el `validateSchema` NATIVO
+  // de arckode-framework (import de este archivo) solo conoce
+  // string|number|boolean|email|url|date — un `type:'array'` no matchea ningún case de su switch
+  // y el campo se descarta EN SILENCIO (confirmado leyendo kernel/validator.ts, sin default ni
+  // error). Mismo patrón que ya usa bookingengine para `upsells`/`rooms`: el controller
+  // reincorpora `childrenAges` crudo desde `req.body` (FIX Requerimiento 11, 2026-09-03 — antes
+  // este comentario describía la reincorporación pero nunca se había escrito). A DIFERENCIA de
+  // bookingengine, acá NO se valida contra `child_policy`: el panel es una herramienta de staff
+  // (carga manual, teléfono, OTA), no el flujo público del huésped — se persiste tal cual, sin
+  // reclasificar edades > maxChildAge como adulto.
   deposit: { type: 'number' as const, min: 0 },
   notes: { type: 'string' as const, max: 2000 },
   source: { type: 'string' as const, max: 50 },

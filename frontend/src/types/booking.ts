@@ -54,6 +54,9 @@ export interface CreateBookingDTO {
   checkOut: string
   adults: number
   children?: number
+  /** Feature adultos+niños+edades (2026-09-02) — edades declaradas por el huésped, no fecha de
+   *  nacimiento. Si viene, el backend recalcula `adults`/precio contra la política del hotel. */
+  childrenAges?: number[]
   guest: CreateBookingGuest
   promoCode?: string
   upsells?: CreateBookingUpsell[]
@@ -97,9 +100,13 @@ export interface CreateBookingRoomLine {
   roomType: string
   /** Ocupación de ESTA línea (el "para N" elegido en la matriz de ese tipo). */
   adults: number
-  /** Niños: NO se asignan a una línea específica (el widget no sabe en qué habitación duermen)
-   *  — queda como límite conocido, no como bug. Ver `useBooking.ts:pay()`. */
+  /** Niños SIN edades declaradas (flujo legacy): NO se asignan a una línea específica — queda
+   *  como límite conocido, no como bug. Ver `useBooking.ts:pay()`. */
   children?: number
+  /** Feature adultos+niños+edades (2026-09-02): edades declaradas PARA ESTA habitación — a
+   *  diferencia de `children`, sí quedan asociadas a la línea (cada habitación del grupo lleva
+   *  sus propios niños). */
+  childrenAges?: number[]
   /** Unidades de este tipo+ocupación a reservar (ej. "Deluxe × 2" → quantity: 2). */
   quantity: number
 }
@@ -184,6 +191,11 @@ export interface RoomTypeRate {
   /** Adultos que entran en la habitación (F1 hero-search-rooms-content). Passthrough de
    *  `Rooms.capacity` — el backend lo calculaba pero no lo exponía hasta este endpoint. */
   capacity: number
+  /** Feature adultos+niños+edades (2026-09-02) — máximo entre las rooms del tipo, `null`/
+   *  `undefined` si ninguna lo configuró. Cota de UX (habilita/deshabilita "Agregar"); la
+   *  autoridad real es el backend al crear la reserva. */
+  maxAdults?: number | null
+  maxChildren?: number | null
   /** Metros cuadrados de la habitación. Passthrough de `Rooms.surfaceArea`. */
   surfaceArea: number
   taxBreakdown: RoomTypeTaxItem[]
@@ -450,6 +462,9 @@ export interface PublicReservation {
   source?: string
   adults?: number
   children?: number
+  /** Edad de cada niño declarada al reservar (Requerimiento 4, 2026-09-03). Ausente/`[]` en
+   *  reservas viejas o sin niños. */
+  childrenAges?: number[]
   totalAmount?: number
   /** Moneda del cobro. Sin esto la confirmación mostraba el importe pelado ("613.6"). */
   currency?: string

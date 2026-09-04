@@ -68,6 +68,7 @@ export class ReservasService {
     /** Storage (foto de documento + firma del pre-checkin público). Sin él, `submitPreCheckin`/`uploadPreCheckinPhoto` fallan — ver composition-root.ts. */ private readonly storage?: StorageService,
     /** Catálogo `Seasons` (label/color) para el quote del wizard — ver index.ts. */ private readonly seasonsRepo?: RepositoryAdapter<any>,
     /** `RateOverrides` — tarifa por FECHA. AL FINAL: no corre ningún posicional existente. */ private readonly rateOverrideRepo?: RepositoryAdapter<any>,
+    /** Requerimiento 7 (2026-09-03) — `Configuration` KV general, para `resolveChildPolicy` al repreciar un reagendado con niños. AL FINAL, mismo criterio. */ private readonly configRepo?: RepositoryAdapter<any>,
   ) {}
 
   // ACUMULA handlers (cadena secuencial; implementación única en shared/utils/accumulate-sockets.ts).
@@ -79,7 +80,7 @@ export class ReservasService {
   }
   async create(dto: CreateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> {
     this.logger.info('Creando reserva', { userId: currentUser.id, roomId: dto.roomId })
-    const item = await createReservation(this.repo, this.blockRepo, this.logger, this.cache, this.sockets, this.notifyDeps(), dto, currentUser, this.roomRepo, this.guestRepo, this.dateRestrictionRepo, this.orchestrationDeps.promoCodes, { seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, rateOverrideRepo: this.rateOverrideRepo, seasonsRepo: this.seasonsRepo })
+    const item = await createReservation(this.repo, this.blockRepo, this.logger, this.cache, this.sockets, this.notifyDeps(), dto, currentUser, this.roomRepo, this.guestRepo, this.dateRestrictionRepo, this.orchestrationDeps.promoCodes, { seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, rateOverrideRepo: this.rateOverrideRepo, seasonsRepo: this.seasonsRepo }, this.configRepo)
     dispatchCreateEmail(this.notifyDeps(), dto, item)
     return item
   }
@@ -88,7 +89,7 @@ export class ReservasService {
     // SEC3-2: el clamp de links vivos, si el connector lo cableó (ver orchestrationDeps).
     const c = this.orchestrationDeps.paymentRequestsCeiling
     return updateReservationWithBalance((rid, hid) => this.queries.getReservationAddons(rid, hid), this.paidSource(), this.repo, this.logger, this.cache, this.sockets, id, dto, currentUser, this.roomRepo, this.guestRepo, this.groupRepo, this.orchestrationDeps.promoCodes,
-      c ? (item) => c.clamp(String(item.hotelId), String(item.id)) : undefined)
+      c ? (item) => c.clamp(String(item.hotelId), String(item.id)) : undefined, this.configRepo)
   }
   async delete(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<void> {
     this.logger.info('Eliminando reserva', { id, userId: currentUser.id }) // SEC3-3: release antes del delete
@@ -143,7 +144,7 @@ export class ReservasService {
 
   // ── RESCHEDULE (mover/extender desde planning) ──────────────────────────
   // `addonsOf` (STR-2): el reprice cambia `totalAmount` → el saldo persistido se mueve con él. `ceilingGuard` (SEC3-2): un reprice que BAJA el total recorta los links de pago vivos — mismo connector que `update()` (reservas-payment-requests).
-  private rescheduleDeps = () => ({ repo: this.repo, roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, rateOverrideRepo: this.rateOverrideRepo, seasonsRepo: this.seasonsRepo, addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource(), ceilingGuard: this.orchestrationDeps.paymentRequestsCeiling?.clamp })
+  private rescheduleDeps = () => ({ repo: this.repo, roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, rateOverrideRepo: this.rateOverrideRepo, seasonsRepo: this.seasonsRepo, configRepo: this.configRepo, addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource(), ceilingGuard: this.orchestrationDeps.paymentRequestsCeiling?.clamp })
   async quoteStay(params: QuoteParams): Promise<any> { return quoteStayUsecase({ roomRepo: this.roomRepo, seasonAssignmentRepo: this.seasonAssignmentRepo, roomRateRepo: this.roomRateRepo, seasonsRepo: this.seasonsRepo, rateOverrideRepo: this.rateOverrideRepo }, params) }
 
   async quoteReschedule(id: string, input: RescheduleInput, user: { id: string; role: string; hotelId?: string }): Promise<any> {

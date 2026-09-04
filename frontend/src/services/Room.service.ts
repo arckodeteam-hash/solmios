@@ -10,6 +10,8 @@ interface RawRoom {
   basePrice: number
   status: string
   capacity: number
+  maxAdults?: number
+  maxChildren?: number
   floor: number
   surfaceArea?: number
   bathrooms?: number
@@ -56,6 +58,8 @@ export function mapRoom(r: RawRoom): Room {
     status: ROOM_STATUS_MAP[r.status?.toLowerCase()] ?? 'available',
     amenities: [],
     maxGuests: r.capacity,
+    maxAdults: r.maxAdults ?? undefined,
+    maxChildren: r.maxChildren ?? undefined,
     basePrice: r.basePrice,
     surfaceArea: r.surfaceArea,
     bathrooms: r.bathrooms,
@@ -98,6 +102,8 @@ export const RoomService = {
       basePrice: input.basePrice,
       hotelId: input.hotelId,
       capacity: input.maxGuests ?? 2,
+      ...(input.maxAdults != null ? { maxAdults: input.maxAdults } : {}),
+      ...(input.maxChildren != null ? { maxChildren: input.maxChildren } : {}),
       floor: input.floor ?? 1,
       surfaceArea: input.surfaceArea ?? 0,
       bathrooms: input.bathrooms ?? 1,
@@ -114,6 +120,8 @@ export const RoomService = {
     if (patch.type !== undefined) body.type = patch.type
     if (patch.basePrice !== undefined) body.basePrice = patch.basePrice
     if (patch.maxGuests !== undefined) body.capacity = patch.maxGuests
+    if (patch.maxAdults !== undefined) body.maxAdults = patch.maxAdults
+    if (patch.maxChildren !== undefined) body.maxChildren = patch.maxChildren
     if (patch.floor !== undefined) body.floor = patch.floor
     if (patch.surfaceArea !== undefined) body.surfaceArea = patch.surfaceArea
     if (patch.bathrooms !== undefined) body.bathrooms = patch.bathrooms

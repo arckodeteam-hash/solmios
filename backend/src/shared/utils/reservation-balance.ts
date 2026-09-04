@@ -13,6 +13,7 @@
 // Cualquier lugar que necesite el pendiente usa estas funciones. NO re-derivar a mano.
 
 import { round2 } from './money'
+import { paymentStatusOf } from './payment-status'
 
 /** Fila de `reservation_addons` (shared/models.ts). `kind:'discount'` resta. */
 export interface ReservationAddonLike {
@@ -105,4 +106,32 @@ function resolvePaid(
     return explicit
   }
   return Number(reservation?.deposit) || 0
+}
+
+/**
+ * Requerimiento 14 (Administración | Pago realizado, 2026-09-04) — estado de cobro comprensible
+ * para Administración: `pending` (nada cobrado todavía), `partial` (algo, pero no cubre el total
+ * cobrable), `paid` (cubre el total). NO es un estado nuevo inventado: es una ETIQUETA sobre
+ * `chargeableTotal`/`paidAmount`, que ya salen de `payments` (única fuente de verdad, ver
+ * `shared/usecases/reservation-paid.ts`) — nunca de `reservation.deposit` a secas ni de nada que
+ * el frontend calcule por su cuenta.
+ *
+ * AUDITORÍA FINAL (2026-09-04) — FIX: esta función reimplementaba su propia comparación
+ * total-vs-pagado cuando `shared/utils/payment-status.ts` YA es "la fuente ÚNICA del '¿esta
+ * reserva está pagada?'" del proyecto (su propio encabezado: "REGLA: nadie deriva el estado de
+ * pago por su cuenta"), usada por el dashboard/planning (`dashboardPaymentStatus`) y el motor
+ * público. Delega en `paymentStatusOf` — mismo patrón de traducción de vocabulario que ya usa
+ * `dashboard/usecases/payment-status-label.ts` ('unpaid'→'pending', 'partial'/'paid' igual).
+ */
+export type ReservationPaymentState = 'pending' | 'partial' | 'paid'
+
+export function paymentState(
+  reservation: ReservationAmountsLike | null | undefined,
+  addons: readonly ReservationAddonLike[] | null | undefined,
+  paidAmount?: number | null,
+): ReservationPaymentState {
+  const paid = resolvePaid(reservation, paidAmount)
+  const total = chargeableTotal(reservation, addons)
+  const status = paymentStatusOf(total, paid)
+  return status === 'unpaid' ? 'pending' : status
 }

@@ -21,6 +21,7 @@
 
 import { eachDayExclusive } from '../../../shared/utils/daily-availability'
 import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from '../../../shared/utils/rate-resolution'
+import { composeFromPersistedReservation, type ChildPolicy } from '../../../shared/usecases/child-composition'
 
 export interface RepriceRepos {
   /** Repo de `SeasonAssignments` (modelo compartido). Opcional — ver degradación en la cabecera. */
@@ -79,17 +80,45 @@ export async function repriceStay(repos: RepriceRepos, params: RepriceParams): P
 }
 
 /**
- * Ocupación de la reserva para elegir la fila de `room_rates`. Mismo criterio que el motor
- * público (`bookingengine`): cuenta ADULTOS, no adultos+niños — `room_rates.occupancy` es la
- * ocupación tarifada y los niños suelen no pagar tarifa de adulto. `guests` está soportado por
- * si el caller trae reservas de otra fuente (OTA) que lo usen en vez de `adults`.
+ * Ocupación de la reserva para elegir la fila de `room_rates` (Requerimiento 7, 2026-09-03:
+ * MISMA fórmula que el motor público — `adults` + niños que consumen plaza, nunca la cuenta
+ * plana de `children`, que mezcla libres y con plaza).
+ *
+ * FIX (auditoría Requerimiento 7): antes esta función devolvía SOLO `reservation.adults`, sin
+ * tocar `childrenAges` — `reservation.adults` ya viene post-reclasificación (`effectiveAdults`
+ * de la reserva original: un niño mayor a `maxChildAge` YA está adentro), así que el único dato
+ * que faltaba era `payingChildren`. Reagendar/repreciar una reserva con niños con plaza cotizaba
+ * la estadía nueva a una ocupación MENOR de la que el motor público usó para crear la reserva —
+ * silenciosamente por debajo de precio.
+ *
+ * `childPolicy` se resuelve FRESCO contra la Configuration actual del hotel (mismo criterio que
+ * el resto del sistema — nunca se congela una política al momento de la reserva). Se calcula
+ * `payingChildren` corriendo `childrenAges` solo (adults=1 descartable, no se usa `effectiveAdults`
+ * de este llamado: sumarlo de nuevo duplicaría a un niño ya reclasificado como adulto en
+ * `reservation.adults`). Sin `childPolicy` (reserva sin `childrenAges`, o caller que no la resolvió)
+ * cae exactamente al comportamiento de siempre: solo adultos.
+ *
+ * La reconstrucción segura (sin duplicar a un reclasificado) vive en
+ * `composeFromPersistedReservation` (`shared/usecases/child-composition.ts`), compartida con la
+ * revalidación de capacidad del reagendado (Requerimiento 12).
+ *
+ * `targetCheckIn` (Requerimiento 12 — edad de referencia, 2026-09-03): cuando se pasa junto con
+ * `childrenAgesAsOf` en la reserva, las edades se proyectan al check-in NUEVO antes de clasificar
+ * — un niño puede cruzar `maxFreeAge`/`maxChildAge` por el paso del tiempo, no solo por un cambio
+ * de política. Sin `targetCheckIn` (o sin `childrenAgesAsOf` persistido) se cotiza con la edad
+ * declarada tal cual, igual que antes de este requerimiento.
  */
-export function guestsOfReservation(reservation: any): number {
+export function guestsOfReservation(reservation: any, childPolicy?: ChildPolicy | null, targetCheckIn?: string | null): number {
   const adults = Number(reservation?.adults)
-  if (Number.isFinite(adults) && adults > 0) return adults
-  const guests = Number(reservation?.guests)
-  if (Number.isFinite(guests) && guests > 0) return guests
-  return DEFAULT_OCCUPANCY
+  const baseAdults = Number.isFinite(adults) && adults > 0
+    ? adults
+    : (Number.isFinite(Number(reservation?.guests)) && Number(reservation?.guests) > 0 ? Number(reservation.guests) : DEFAULT_OCCUPANCY)
+  if (!childPolicy) return baseAdults
+  return composeFromPersistedReservation(
+    { adults: baseAdults, children: reservation?.children, childrenAges: reservation?.childrenAges, childrenAgesAsOf: reservation?.childrenAgesAsOf },
+    childPolicy,
+    targetCheckIn,
+  ).chargeableOccupancy
 }
 
 /** Mismo default que `reservations.adults` (model.ts) y que `availability.check` del motor. */

@@ -190,6 +190,58 @@ export async function collectReservationPayments(
   return [...rows.values()]
 }
 
+/** Fila de `folios`/`invoices` en lo que le importa a `paidAmountsByReservation`: el vínculo a la
+ *  reserva dueña. */
+export interface OwnedRowLike {
+  id?: string
+  reservationId?: string | null
+}
+
+/**
+ * Requerimiento 14/auditoría final (2026-09-04) — versión EN LOTE de `paidForReservation`, para
+ * pantallas que listan MUCHAS reservas a la vez (planning/calendario, `dashboard/usecases/
+ * dashboard-queries.ts#getPlanning`). Llamar `paidForReservation` una vez POR reserva ahí sería
+ * N+1 (folios/invoices/payments por cada fila visible). Acá se piden los folios/invoices/payments
+ * del HOTEL una sola vez cada uno (3 queries totales, sin importar cuántas reservas haya) y se
+ * agrupan en memoria — MISMA fórmula que `paidForReservation` (`combinePaid`/`splitPayments`),
+ * nunca una copia distinta.
+ *
+ * Encontrado en la auditoría final del Requerimiento 15: `getPlanning` calculaba el estado de pago
+ * con `reservations.deposit` (nunca lo tocan `folios.applyPayment`/`facturas.pay`) en vez de esto —
+ * el mismo bug GH-0.2 que ya se había resuelto para la vista de detalle (`getExtendedDetail`), pero
+ * vivo todavía en el planning/calendario porque esa vista nunca pasó por el mismo fix.
+ */
+export function paidAmountsByReservation(
+  folios: readonly OwnedRowLike[] | null | undefined,
+  invoices: readonly OwnedRowLike[] | null | undefined,
+  payments: readonly (PaymentRowLike & { reservationId?: string | null; folioId?: string | null; invoiceId?: string | null })[] | null | undefined,
+  reservations: readonly { id: string; deposit?: number | null }[],
+): Map<string, number> {
+  const folioOwner = new Map((folios ?? []).map((f) => [String(f.id ?? ''), f.reservationId ?? null]))
+  const invoiceOwner = new Map((invoices ?? []).map((inv) => [String(inv.id ?? ''), inv.reservationId ?? null]))
+
+  // Un pago cuelga de UN SOLO vínculo en la práctica (folio, factura, o directo — BUG-ceiling-bypass
+  // arriba), así que resolver en este orden no duplica ni pierde filas frente a los tres `findMany`
+  // separados de `collectReservationPayments`.
+  const rowsByReservation = new Map<string, PaymentRowLike[]>()
+  for (const p of payments ?? []) {
+    const reservationId = (p.folioId ? folioOwner.get(String(p.folioId)) : null)
+      ?? (p.invoiceId ? invoiceOwner.get(String(p.invoiceId)) : null)
+      ?? p.reservationId
+      ?? null
+    if (!reservationId) continue
+    const arr = rowsByReservation.get(reservationId) ?? []
+    arr.push(p)
+    rowsByReservation.set(reservationId, arr)
+  }
+
+  const out = new Map<string, number>()
+  for (const r of reservations) {
+    out.set(r.id, combinePaid(Number(r.deposit) || 0, splitPayments(rowsByReservation.get(r.id) ?? [])))
+  }
+  return out
+}
+
 /** Fila de reserva mínima que necesita un `PaidSource`: el hotel (multi-tenancy) y el anticipo. */
 export interface ReservationTenantLike {
   hotelId?: string | null

@@ -14,6 +14,7 @@ import { AutoMessagesService } from '@/services/AutoMessages.service'
 import { AddonsService } from '@/services/Addons.service'
 import { ConfigService } from '@/services/Platform.service'
 import { HotelService, type HotelData } from '@/services/Hotel.service'
+import { RoomService } from '@/services/Room.service'
 import { TTLockService, type LockDevice } from '@/services/TTLock.service'
 import { effectiveCheckInTime, effectiveCheckOutTime, hasCustomSchedule, hotelCheckInTime, hotelCheckOutTime } from '@/utils/hotel-schedule'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
@@ -23,7 +24,7 @@ import RoomLockModal from '@/components/features/RoomLockModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
 import { nationalityToFlag, languageToFlag } from '@/composables/useCountryFlag'
-import type { ReservationDetail, ReservationDetailAddon, CurrencyConfig, GuaranteeCardData, AuditLogEntry, CancellableReservation } from '@/types'
+import type { ReservationDetail, ReservationDetailAddon, CurrencyConfig, GuaranteeCardData, AuditLogEntry, CancellableReservation, Reservation } from '@/types'
 
 const props = defineProps<{ reservationId: string }>()
 const emit = defineEmits<{
@@ -51,6 +52,32 @@ const addons = ref<ReservationDetailAddon[]>([])
 const auditLogs = ref<AuditLogEntry[]>([])
 const newAddon = ref({ description: '', amount: 0, kind: 'service' as 'service' | 'discount' })
 const folioCharges = ref<{ description?: string; amount?: number; kind?: string }[] | null>(null)
+// Requerimiento 13 (Administración | Composición de huéspedes, 2026-09-03) — cuando esta reserva
+// es UNA habitación de una reserva de varias (`d.groupId`), acá quedan las DEMÁS habitaciones del
+// mismo grupo, para mostrar la composición de cada una (adultos/niños/edades/reclasificación) sin
+// tener que abrir cada reserva por separado.
+const groupRooms = ref<Reservation[]>([])
+const otherGroupRooms = computed(() => groupRooms.value.filter((r) => r.id !== props.reservationId))
+
+/** Trae las reservas hermanas (mismo `groupId`) + el catálogo de habitaciones del hotel, para
+ *  poder mostrar "Habitación N · tipo" de cada una — `GET /api/reservas?groupId=` no hace join
+ *  con `rooms` (mismo criterio que el resto del listado, sin enriquecer), así que se resuelve
+ *  acá igual que `pages/reservations/index.vue` (mapa roomId → room). */
+async function loadGroupRooms(hotelId: string, groupId: string) {
+  try {
+    const [{ reservations }, { rooms }] = await Promise.all([
+      ReservationService.list({ groupId, limit: 50 }),
+      RoomService.list({ hotelId }),
+    ])
+    const byRoomId = new Map(rooms.map((r) => [r.id, r]))
+    groupRooms.value = reservations.map((r) => {
+      const room = byRoomId.get(r.roomId)
+      return room ? { ...r, roomNumber: room.number, roomType: room.type } : r
+    })
+  } catch {
+    groupRooms.value = []
+  }
+}
 // Emisor de la factura (nombre, dirección, RNC, impuesto). Se carga del hotel de la reserva.
 const hotelInfo = ref<HotelData | null>(null)
 // 'charges' = comprobante de cargos de la reserva. NO es una factura: no lleva numeración fiscal
@@ -260,6 +287,9 @@ async function load(opts?: { silent?: boolean }) {
     otherCharges.value = serverOtherCharges
     if (!draftIsDirty) otherChargesDraft.value = String(serverOtherCharges)
     addons.value = d?.addons ?? []
+    // Requerimiento 13 — sin `groupId` no hay hermanas que traer; se limpia por si el modal se
+    // reabrió sobre OTRA reserva (misma instancia del componente, `reservationId` cambia por prop).
+    groupRooms.value = []
     // Config + plantillas WA en paralelo (no bloquean el detalle)
     Promise.all([
       ConfigService.get('currency_config').then((c: CurrencyConfig) => { currency.value = c }).catch(() => {}),
@@ -269,6 +299,9 @@ async function load(opts?: { silent?: boolean }) {
       ReservationService.getAudit(props.reservationId).then((r) => { auditLogs.value = r.data || [] }).catch(() => {}),
       HotelService.settings(d?.hotelId).then((s) => { hotelInfo.value = (s as { hotel?: HotelData }).hotel ?? null }).catch(() => {}),
       loadRoomLockDevice(d?.room?.id),
+      // Requerimiento 13 — las demás habitaciones de esta reserva de varias (mismo groupId), para
+      // mostrar la composición de cada una.
+      d?.groupId ? loadGroupRooms(d.hotelId, d.groupId) : Promise.resolve(),
     ]).catch(() => {})
   } catch (e) {
     toast.error((e as Error).message || 'No se pudo cargar la reserva')
@@ -478,13 +511,26 @@ function paymentStatusLabel(status?: string | null): { label: string; cls: strin
   return m[status || ''] || { label: status || '—', cls: 'bg-gray-100 text-gray-500' }
 }
 
-function payStatusBadge(dep?: number, total?: number): { label: string; cls: string } {
-  const t = total ?? 0
-  const dd = dep ?? 0
-  if (dd <= 0) return { label: 'Sin anticipo', cls: 'bg-coral/10 text-coral' }
-  if (dd >= t) return { label: 'Pagado', cls: 'bg-teal/10 text-teal' }
-  return { label: 'Parcial', cls: 'bg-gold/10 text-gold' }
+// Requerimiento 14 (Administración | Pago realizado, 2026-09-04) — badge de estado de la reserva
+// (pendiente/parcial/pagada), sourced de `d.paymentState` (backend, `shared/utils/reservation-
+// balance.ts`). NO se deriva acá de `deposit`/`totalAmount`: esa fórmula vieja (la que usaba este
+// mismo archivo antes, y la que sigue usando `Reservation.service.ts` para el listado/calendario)
+// podía decir "Pendiente" en rojo sobre una reserva ya cobrada por folio/factura en efectivo —
+// ese cobro mueve `payments`, nunca `deposit` — contradiciendo al renglón "Pendiente de cobro" de
+// la MISMA tarjeta, que sí sale de `payments`. Con el estado del backend, ambos SIEMPRE cierran.
+function paymentStateBadge(state?: string | null): { label: string; cls: string } {
+  const m: Record<string, { label: string; cls: string }> = {
+    pending: { label: 'Pendiente', cls: 'bg-coral/10 text-coral' },
+    partial: { label: 'Parcial', cls: 'bg-gold/10 text-gold' },
+    paid: { label: 'Pagada', cls: 'bg-teal/10 text-teal' },
+  }
+  return m[state || ''] || { label: '—', cls: 'bg-gray-100 text-gray-500' }
 }
+// Requerimiento 14 — si algún intento de esta reserva quedó `failed`, se avisa cerca del total:
+// el dinero cobrado (arriba) ya lo excluye correctamente, pero un intento fallido silencioso deja
+// al staff sin saber que el huésped puede necesitar reintentar el cobro. Reusa `paymentHistory`
+// (ya cargado): no es una consulta nueva ni un estado inventado.
+const hasFailedPayment = computed(() => paymentHistory.value.some((p) => p.status === 'failed'))
 function waLink(phone?: string | null, body?: string | null): string | null {
   if (!phone) return null
   const digits = phone.replace(/\D/g, '')
@@ -909,7 +955,15 @@ function irAFacturacion() {
                 </div>
                 <div class="grid grid-cols-2 gap-2 text-xs bg-surface rounded-lg p-3 border border-border/70">
                   <div><span class="text-text-muted">Régimen:</span> <span class="font-bold">{{ regimeLabel(d.regime) }}</span></div>
-                  <div><span class="text-text-muted">Huéspedes:</span> <span class="font-bold">{{ d.adults ?? 0 }} pax{{ d.children ? ` +${d.children}n` : '' }}</span></div>
+                  <div><span class="text-text-muted">Huéspedes:</span> <span class="font-bold">{{ d.adults ?? 0 }} pax{{ d.children ? ` +${d.children}n` : '' }}</span>
+                    <!-- Requerimiento 13 — desglose por niño (declarada/efectiva/balde) del backend
+                         (`childrenAgesDetail`): reemplaza la nota genérica "alguna cuenta como
+                         adulto" por CUÁL edad puntual, para que el panel nunca muestre 0 niños +
+                         edades sin explicar por qué. -->
+                    <div v-if="d.childrenAgesDetail?.length" class="mt-0.5 space-y-0.5">
+                      <span v-for="(c, i) in d.childrenAgesDetail" :key="i" class="block text-[11px] font-normal" :class="c.classification === 'adult' ? 'text-amber-700' : 'text-text-muted'">{{ c.declaredAge }} año(s) declarado(s)<template v-if="c.effectiveAge !== c.declaredAge"> (hoy {{ c.effectiveAge }}, reagendada)</template> — {{ c.classification === 'free' ? 'no consume plaza' : c.classification === 'paying' ? 'consume plaza' : 'cuenta como adulto por edad' }}</span>
+                    </div>
+                  </div>
                   <div><span class="text-text-muted">Noches:</span> <span class="font-bold">{{ nights }}</span></div>
                   <div><span class="text-text-muted">Precio/noche:</span> <span class="font-bold">{{ money(pricePerNight) }}</span></div>
                 </div>
@@ -920,17 +974,42 @@ function irAFacturacion() {
               </div>
             </details>
 
+            <!-- Requerimiento 13 (Administración | Composición de huéspedes, 2026-09-03) — reserva
+                 de varias habitaciones: esta reserva es SOLO una de ellas (`d.groupId`). Se listan
+                 las demás con su propia composición, para no tener que abrir cada una por separado. -->
+            <details v-if="d.groupId && otherGroupRooms.length" open class="rm-card bg-white border border-border/70 border-l-[3px] border-l-navy/60 rounded-2xl overflow-hidden shadow-card">
+              <summary class="flex items-center gap-2 p-4 cursor-pointer list-none font-black text-sm text-navy select-none">
+                <span class="w-7 h-7 rounded-lg bg-navy/10 flex items-center justify-center text-navy"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 21h18M5 21V7l8-4v18M13 21V9l6 3v9M9 9h.01M9 13h.01M9 17h.01"/></svg></span>
+                Otras habitaciones de esta reserva ({{ otherGroupRooms.length }})
+                <span class="ml-auto text-text-muted transition-transform duration-200"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg></span>
+              </summary>
+              <div class="px-4 pb-4 pt-1 space-y-2 text-xs">
+                <div v-for="room in otherGroupRooms" :key="room.id" class="bg-surface rounded-lg p-3 border border-border/70">
+                  <div class="font-bold text-navy">{{ room.roomNumber ? `Habitación ${room.roomNumber}` : 'Habitación' }} <span class="text-text-muted font-normal">{{ room.roomType || '' }}</span></div>
+                  <div class="mt-0.5"><span class="text-text-muted">Huéspedes:</span> <span class="font-bold">{{ room.adults ?? 0 }} pax{{ room.children ? ` +${room.children}n` : '' }}</span>
+                    <span v-if="room.childrenAges?.length" class="block text-[11px] font-normal text-text-muted">Edades declaradas: {{ room.childrenAges.join(', ') }} años<template v-if="room.childrenAges.length > (room.children ?? 0)"> (alguna cuenta como adulto por edad, ver política de niños)</template></span>
+                  </div>
+                </div>
+              </div>
+            </details>
+
             <!-- Importe y Pago -->
             <div class="rm-card bg-white border border-border/70 border-l-[3px] border-l-teal/60 rounded-2xl p-4 shadow-card">
               <div class="flex items-center gap-2 mb-3 pb-2 border-b border-border/50">
                 <span class="w-7 h-7 rounded-lg bg-teal/10 flex items-center justify-center text-teal"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></span>
                 <h4 class="text-sm font-black text-navy">Importe y Pago</h4>
+                <!-- Requerimiento 14 — estado único, comprensible, sourced del backend (nunca de
+                     `deposit` a secas: ver el comentario de `paymentStateBadge` en el script). -->
+                <span data-testid="payment-state-badge" class="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full" :class="paymentStateBadge(d.paymentState).cls">{{ paymentStateBadge(d.paymentState).label }}</span>
               </div>
+              <p v-if="hasFailedPayment" class="mb-2 text-[11px] leading-tight text-coral bg-coral/5 rounded px-2 py-1.5" data-testid="failed-payment-warning">
+                Hay un intento de cobro fallido en el historial — no se contó como pagado, puede necesitar reintentarse.
+              </p>
               <div class="space-y-1.5 text-sm">
                 <button v-if="can('billing','view')" @click="viewMovements" class="flex justify-between w-full hover:text-teal cursor-pointer"><span class="text-text-muted">Caja</span><span class="text-teal font-bold">Ver movimientos →</span></button>
                 <div class="flex justify-between"><span class="text-text-muted">Forma de pago</span><span class="text-right">{{ payMethodLabel(d.paymentMethod) }}</span></div>
                 <div class="flex justify-between bg-teal/5 rounded px-2 py-1"><span class="text-text-muted">Importe de la reserva</span><span class="font-bold text-navy">{{ money(d.totalAmount) }}</span></div>
-                <div class="flex justify-between"><span class="text-text-muted">Anticipo</span><span class="font-bold" :class="payStatusBadge(d.deposit, d.totalAmount).cls">{{ d.deposit && d.deposit > 0 ? money(d.deposit) : 'Sin anticipo' }}</span></div>
+                <div class="flex justify-between"><span class="text-text-muted">Anticipo</span><span class="font-bold text-navy">{{ d.deposit && d.deposit > 0 ? money(d.deposit) : 'Sin anticipo' }}</span></div>
                 <!-- Otros cobros editable -->
                 <div class="flex justify-between items-center gap-2">
                   <span class="text-text-muted">Otros cobros</span>
@@ -1359,7 +1438,7 @@ function irAFacturacion() {
             <tr><td style="padding:4px 0;color:#666">Huésped</td><td style="font-weight:bold">{{ d.guest?.name }}</td></tr>
             <tr><td style="padding:4px 0;color:#666">Habitación</td><td style="font-weight:bold">{{ d.room?.number }} {{ d.room?.name || d.room?.type }}</td></tr>
             <tr><td style="padding:4px 0;color:#666">Entrada – Salida</td><td style="font-weight:bold">{{ fmtDate(d.checkIn) }} – {{ fmtDate(d.checkOut) }} ({{ nights }} noches)</td></tr>
-            <tr><td style="padding:4px 0;color:#666">Huéspedes</td><td>{{ d.adults }} adultos{{ d.children ? `, ${d.children} niños` : '' }}</td></tr>
+            <tr><td style="padding:4px 0;color:#666">Huéspedes</td><td>{{ d.adults }} adultos{{ d.children ? `, ${d.children} niños` : '' }}{{ d.childrenAges?.length ? ` (edades: ${d.childrenAges.join(', ')})` : '' }}</td></tr>
             <tr><td style="padding:8px 0 4px;color:#666;border-top:1px solid #ddd">Total</td><td style="font-weight:900;font-size:16px;border-top:1px solid #ddd">{{ money(grandTotal) }}</td></tr>
           </table>
         </div>

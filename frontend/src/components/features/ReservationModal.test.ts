@@ -19,6 +19,8 @@ vi.mock('@/services/Reservation.service', () => ({
     unlockGuaranteeCard: vi.fn(),
     logManualMessage: vi.fn(),
     sendLockCodeEmail: vi.fn(),
+    // Requerimiento 13 — hermanas de una reserva de varias habitaciones (mismo groupId).
+    list: vi.fn(),
   },
 }))
 vi.mock('@/services/Payments.service', () => ({
@@ -29,6 +31,7 @@ vi.mock('@/services/AutoMessages.service', () => ({ AutoMessagesService: { list:
 vi.mock('@/services/Addons.service', () => ({ AddonsService: { create: vi.fn(), remove: vi.fn() } }))
 vi.mock('@/services/Platform.service', () => ({ ConfigService: { get: vi.fn() } }))
 vi.mock('@/services/Hotel.service', () => ({ HotelService: { settings: vi.fn() } }))
+vi.mock('@/services/Room.service', () => ({ RoomService: { list: vi.fn() } }))
 vi.mock('@/services/TTLock.service', () => ({ TTLockService: { listDevices: vi.fn() } }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 
@@ -53,6 +56,7 @@ import { AddonsService } from '@/services/Addons.service'
 import { AutoMessagesService } from '@/services/AutoMessages.service'
 import { ConfigService } from '@/services/Platform.service'
 import { HotelService } from '@/services/Hotel.service'
+import { RoomService } from '@/services/Room.service'
 import type { ReservationDetail } from '@/types'
 
 const ALL = ['*:*']
@@ -100,6 +104,10 @@ describe('ReservationModal', () => {
     vi.mocked(AutoMessagesService.list).mockResolvedValue({ data: [{ id: 't1', title: 'Bienvenida', channel: 'whatsapp', whatsappBody: 'Hola' }] } as never)
     vi.mocked(ConfigService.get).mockResolvedValue({} as never)
     vi.mocked(HotelService.settings).mockResolvedValue({ hotel: { name: 'Hotel Demo' } } as never)
+    // Requerimiento 13 — default: sin hermanas de grupo, sin catálogo de habitaciones. Los tests
+    // de "varias habitaciones" pisan este mock con reservas concretas.
+    vi.mocked(ReservationService.list).mockResolvedValue({ reservations: [], total: 0 })
+    vi.mocked(RoomService.list).mockResolvedValue({ rooms: [], total: 0 })
     vi.stubGlobal('open', vi.fn())
   })
   afterEach(() => {
@@ -107,6 +115,135 @@ describe('ReservationModal', () => {
     wrapper = null
     document.body.innerHTML = ''
     vi.unstubAllGlobals()
+  })
+
+  // ── Composición (feature adultos+niños+edades, 2026-09-02) ────────────────────────────────
+  // "Toda la composición seleccionada deberá quedar registrada en la reserva y ser visible
+  // posteriormente en Administración" — el modal es esa vidriera; el backend ya la guarda.
+  //
+  // Requerimiento 13 (Administración | Composición de huéspedes, 2026-09-03) — el backend ahora
+  // manda `childrenAgesDetail` (desglose POR NIÑO: edad declarada, edad efectiva hoy, balde), y
+  // el modal lo usa directo en vez de re-derivar la reclasificación con la heurística vieja
+  // (`childrenAges.length > children`). Los fixtures de acá abajo simulan `childrenAgesDetail`
+  // TAL COMO lo devuelve `getExtendedDetail` (ver `backend/.../usecases/detail.ts`).
+  describe('composición de huéspedes', () => {
+    it('muestra la edad y el balde de cada niño cuando la reserva las trae', async () => {
+      await open(detailFixture({
+        adults: 2, children: 2, childrenAges: [4, 9],
+        childrenAgesDetail: [
+          { declaredAge: 4, effectiveAge: 4, classification: 'paying' },
+          { declaredAge: 9, effectiveAge: 9, classification: 'paying' },
+        ],
+      }))
+      const text = modalText()
+      expect(text).toContain('4 año(s) declarado(s)')
+      expect(text).toContain('9 año(s) declarado(s)')
+      expect(text).toContain('consume plaza')
+    })
+
+    it('reserva sin niños o de antes de esta feature: no muestra ninguna línea de edad', async () => {
+      await open(detailFixture({ adults: 2, children: 0, childrenAges: [], childrenAgesDetail: [] }))
+      expect(modalText()).not.toContain('año(s) declarado(s)')
+
+      await open(detailFixture({ adults: 2, children: 1 })) // reserva vieja: sin ninguno de los dos campos
+      expect(modalText()).not.toContain('año(s) declarado(s)')
+    })
+
+    it('niño libre (no consume plaza): lo dice explícitamente', async () => {
+      await open(detailFixture({
+        adults: 2, children: 1, childrenAges: [2],
+        childrenAgesDetail: [{ declaredAge: 2, effectiveAge: 2, classification: 'free' }],
+      }))
+      expect(modalText()).toContain('no consume plaza')
+    })
+
+    // Requerimiento 13 — el pedido explícito: mostrar CUÁL edad se reclasificó, no solo "alguna".
+    // Antes (Requerimiento 11) el modal solo podía decir "alguna cuenta como adulto"; ahora señala
+    // la edad puntual junto al balde.
+    it('menor reclasificado como adulto por edad: identifica CUÁL edad, no solo "alguna"', async () => {
+      await open(detailFixture({
+        adults: 3, children: 0, childrenAges: [15],
+        childrenAgesDetail: [{ declaredAge: 15, effectiveAge: 15, classification: 'adult' }],
+      }))
+      const text = modalText()
+      expect(text).toContain('15 año(s) declarado(s)')
+      expect(text).toContain('cuenta como adulto por edad')
+    })
+
+    it('varios niños con edades distintas: cada uno con SU propio balde, sin mezclar', async () => {
+      await open(detailFixture({
+        adults: 2, children: 2, childrenAges: [1, 8, 16],
+        childrenAgesDetail: [
+          { declaredAge: 1, effectiveAge: 1, classification: 'free' },
+          { declaredAge: 8, effectiveAge: 8, classification: 'paying' },
+          { declaredAge: 16, effectiveAge: 16, classification: 'adult' },
+        ],
+      }))
+      const text = modalText()
+      expect(text).toContain('1 año(s) declarado(s)')
+      expect(text).toContain('8 año(s) declarado(s)')
+      expect(text).toContain('16 año(s) declarado(s)')
+      expect(text).toContain('no consume plaza')
+      expect(text).toContain('consume plaza')
+      expect(text).toContain('cuenta como adulto por edad')
+    })
+
+    it('sin reclasificación: NO muestra "cuenta como adulto por edad"', async () => {
+      await open(detailFixture({
+        adults: 2, children: 2, childrenAges: [4, 9],
+        childrenAgesDetail: [
+          { declaredAge: 4, effectiveAge: 4, classification: 'paying' },
+          { declaredAge: 9, effectiveAge: 9, classification: 'paying' },
+        ],
+      }))
+      expect(modalText()).not.toContain('cuenta como adulto por edad')
+    })
+
+    // Requerimiento 12 (Edad de referencia) + 13 — reserva reagendada cuya clasificación cambió
+    // por `childrenAgesAsOf`: el backend proyecta la edad y el modal aclara que la efectiva de hoy
+    // difiere de la declarada, en vez de mostrar solo el número viejo sin contexto.
+    it('reserva reagendada (edad efectiva ≠ declarada): aclara "hoy X, reagendada"', async () => {
+      await open(detailFixture({
+        adults: 2, children: 1, childrenAges: [3], childrenAgesAsOf: '2030-01-10', checkIn: '2031-06-01',
+        childrenAgesDetail: [{ declaredAge: 3, effectiveAge: 4, classification: 'paying' }],
+      }))
+      const text = modalText()
+      expect(text).toContain('3 año(s) declarado(s)')
+      expect(text).toContain('hoy 4, reagendada')
+    })
+  })
+
+  // ── Requerimiento 13 — reserva de varias habitaciones ──────────────────────────────────────
+  describe('composición de huéspedes — reserva de varias habitaciones (groupId)', () => {
+    it('sin groupId: no pide hermanas ni muestra la sección', async () => {
+      await open(detailFixture({ groupId: null }))
+      expect(ReservationService.list).not.toHaveBeenCalled()
+      expect(modalText()).not.toContain('Otras habitaciones de esta reserva')
+    })
+
+    it('con groupId: pide las hermanas y muestra la composición de cada una (excluyendo la propia)', async () => {
+      vi.mocked(ReservationService.list).mockResolvedValue({
+        total: 2,
+        reservations: [
+          { id: 'res-1', hotelId: 'h1', guestId: 'g1', roomId: 'room-a', checkIn: new Date(), checkOut: new Date(), adults: 2, children: 1, childrenAges: [8], status: 'pending', source: 'direct', totalAmount: 200, depositAmount: 0, paymentStatus: 'pending' } as never,
+          { id: 'res-2', hotelId: 'h1', guestId: 'g1', roomId: 'room-b', checkIn: new Date(), checkOut: new Date(), adults: 2, children: 0, status: 'pending', source: 'direct', totalAmount: 150, depositAmount: 0, paymentStatus: 'pending' } as never,
+        ],
+      })
+      vi.mocked(RoomService.list).mockResolvedValue({
+        total: 2,
+        rooms: [
+          { id: 'room-a', hotelId: 'h1', number: '101', type: 'double' } as never,
+          { id: 'room-b', hotelId: 'h1', number: '102', type: 'suite' } as never,
+        ],
+      })
+      await open(detailFixture({ groupId: 'g1' }))
+      expect(ReservationService.list).toHaveBeenCalledWith({ groupId: 'g1', limit: 50 })
+      const text = modalText()
+      expect(text).toContain('Otras habitaciones de esta reserva (1)') // 2 hermanas − la propia (res-1)
+      expect(text).toContain('Habitación 102')
+      expect(text).toContain('2 pax')
+      expect(text).not.toContain('Habitación 101') // res-1 es LA PROPIA reserva, no debe listarse de nuevo
+    })
   })
 
   // ── 1. El saldo lo dicta el servidor ───────────────────────────────────────────────────────
@@ -183,6 +320,70 @@ describe('ReservationModal', () => {
       expect(vi.mocked(PaymentsService.create)).toHaveBeenCalledWith(
         expect.objectContaining({ reservationId: 'res-1', amount: 500 }),
       )
+    })
+  })
+
+  // ── Requerimiento 14 (Administración | Pago realizado, 2026-09-04) ────────────────────────
+  // El badge de estado sale de `d.paymentState` (backend, `shared/utils/reservation-balance.ts`),
+  // NUNCA se re-deriva de `deposit`/`totalAmount` en el modal — esa fórmula vieja podía contradecir
+  // al renglón "Pendiente de cobro" (que sí sale de `payments`) cuando el cobro entró por folio o
+  // factura en efectivo, que nunca toca `deposit`.
+  describe('estado de pago (Requerimiento 14)', () => {
+    it('sin ningún cobro: badge "Pendiente"', async () => {
+      await open(detailFixture({ paymentState: 'pending', paidAmount: 0, pendingAmount: 500 }))
+      const badge = document.body.querySelector('[data-testid="payment-state-badge"]')
+      expect(badge?.textContent?.trim()).toBe('Pendiente')
+    })
+
+    it('con un pago parcial: badge "Parcial"', async () => {
+      await open(detailFixture({ paymentState: 'partial', paidAmount: 200, pendingAmount: 300 }))
+      const badge = document.body.querySelector('[data-testid="payment-state-badge"]')
+      expect(badge?.textContent?.trim()).toBe('Parcial')
+    })
+
+    it('completamente pagada: badge "Pagada"', async () => {
+      await open(detailFixture({ paymentState: 'paid', paidAmount: 600, pendingAmount: 0 }))
+      const badge = document.body.querySelector('[data-testid="payment-state-badge"]')
+      expect(badge?.textContent?.trim()).toBe('Pagada')
+    })
+
+    // El caso que motiva el requerimiento: cobrado por folio/factura en efectivo (deposit=0, nunca
+    // lo toca ese flujo) — con la fórmula vieja (`deposit` vs `totalAmount`) el badge diría
+    // "Pendiente" en rojo aunque `pendingAmount` (backend) ya diga $0. Con `paymentState` del
+    // backend, badge y "Pendiente de cobro" SIEMPRE cierran entre sí.
+    it('cobrada por folio en efectivo (deposit=0): el badge dice "Pagada", no "Pendiente" pese a deposit=0', async () => {
+      await open(detailFixture({ deposit: 0, paymentState: 'paid', paidAmount: 600, pendingAmount: 0 }))
+      const text = modalText()
+      expect(document.body.querySelector('[data-testid="payment-state-badge"]')?.textContent?.trim()).toBe('Pagada')
+      expect(text).toContain('Pendiente de cobroUS$0,00')
+    })
+
+    it('sin paymentState (fixture vieja / backend no actualizado): el badge no revienta, muestra "—"', async () => {
+      await open(detailFixture({ paymentState: undefined }))
+      const badge = document.body.querySelector('[data-testid="payment-state-badge"]')
+      expect(badge?.textContent?.trim()).toBe('—')
+    })
+
+    it('sin pagos fallidos: no muestra el aviso', async () => {
+      await open(detailFixture({
+        paymentHistory: [{ id: 'p1', type: 'charge', method: 'cash', status: 'completed', amount: 500, currency: 'USD', description: '', reference: '', registeredBy: '', createdAt: '2026-09-01T10:00:00Z' }],
+      }))
+      expect(document.body.querySelector('[data-testid="failed-payment-warning"]')).toBeNull()
+    })
+
+    // Un intento fallido no debe leerse como plata cobrada (ya lo garantiza el backend, `paidAmount`
+    // lo excluye), PERO tampoco debe quedar invisible: el staff necesita saber que puede haber que
+    // reintentar el cobro. Sigue en el historial (ya cubierto por payment-history.test.ts); acá se
+    // agrega el aviso a nivel de tarjeta.
+    it('con un intento de pago fallido en el historial: muestra el aviso, sin contarlo como pagado', async () => {
+      await open(detailFixture({
+        paymentState: 'pending', paidAmount: 0, pendingAmount: 500,
+        paymentHistory: [{ id: 'p1', type: 'charge', method: 'card', status: 'failed', amount: 500, currency: 'USD', description: '', reference: '', registeredBy: '', createdAt: '2026-09-01T10:00:00Z' }],
+      }))
+      const text = modalText()
+      expect(document.body.querySelector('[data-testid="failed-payment-warning"]')).not.toBeNull()
+      expect(document.body.querySelector('[data-testid="payment-state-badge"]')?.textContent?.trim()).toBe('Pendiente')
+      expect(text).toContain('Pendiente de cobroUS$500,00') // sanity: el intento fallido no bajó el pendiente
     })
   })
 

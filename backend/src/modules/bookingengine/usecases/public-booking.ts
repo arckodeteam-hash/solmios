@@ -48,6 +48,8 @@ import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
+import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity } from '../../../shared/usecases/child-composition'
+import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 
 const MS_PER_DAY = 86_400_000
 
@@ -205,6 +207,10 @@ export async function createPublicBookingDirect(
   const {
     hotelId, roomId, roomType, guestName, guestEmail, guestPhone,
     checkIn, checkOut, adults, children: kids,
+    // Feature adultos+niños+edades (2026-09-02). Solo lo manda el widget nuevo — un caller viejo
+    // (BookingModal.vue de la landing, integradores) que solo manda `children` como contador NO
+    // pasa por el motor nuevo: cero cambio de comportamiento para quien no lo usa (ver más abajo).
+    childrenAges: rawChildrenAges,
     // F2 2.5 — promoCode + upsells ahora se PROCESAN (F0 0.16 solo los persistía).
     promoCode,
     upsells,
@@ -260,15 +266,64 @@ export async function createPublicBookingDirect(
     // Catálogo de temporadas: su RANGO también asigna temporada, no solo los días pintados.
     orm.findMany('Seasons', { hotelId }) as Promise<any[]>,
   ])
-  const blockedIds = blockedRoomIds(rawBlocks ?? [], stayNightDates)
-  const closedTypes = closedRoomTypes(rawRates ?? [], rawAssignments ?? [], stayNightDates, Number(adults) || 2)
+  // Feature adultos+niños+edades (2026-09-02): SOLO se activa si el caller mandó `childrenAges`
+  // (el widget nuevo). Un caller viejo (BookingModal.vue, integradores) que manda `children` como
+  // contador plano sigue exactamente igual que antes — `childComposition` degrada a
+  // {effectiveAdults: adults, payingChildren: kids, freeChildren: 0}, MISMA fórmula que ya usaban
+  // `totalGuests` (adults+kids, para capacidad) y `occupancy` (solo adults, para precio) antes de
+  // este feature — pero unificadas en un solo número acá, lo cual SÍ es un cambio deliberado: el
+  // pedido pide que un niño que consume plaza cotice como un ocupante normal, cosa que el sistema
+  // viejo nunca hacía (el precio siempre ignoraba a los niños). Ese cambio de precio solo alcanza
+  // a quien manda `childrenAges` — el caller legacy sigue cotizando por adultos únicamente.
+  const childrenAgesInput: unknown[] = Array.isArray(rawChildrenAges) ? rawChildrenAges : []
+  const hasChildrenAges = childrenAgesInput.length > 0
+  const childPolicy = hasChildrenAges ? await resolveChildPolicy(extraDeps?.config, hotelId) : null
+  if (hasChildrenAges && childPolicy && !childPolicy.acceptChildren) {
+    return { status: 400, body: { error: 'Este hotel no acepta niños en la reserva' } }
+  }
+  // FIX (encontrado en revisión Requerimiento 2, 2026-09-03): un caller legacy (sin
+  // `childrenAges`) armaba acá `chargeableOccupancy: adultos únicamente`, y ESE número es el que
+  // `fitsRoomCapacity` compara contra `capacity` más abajo — los niños del contador plano
+  // (`children`) quedaban afuera del chequeo de capacidad por completo (una reserva de 2 adultos
+  // + 3 niños pasaba contra una habitación de capacity=2). Antes de este feature el chequeo era
+  // `totalGuests (adults+kids) >= room.capacity`, así que esto SÍ era una regresión respecto al
+  // comportamiento previo. `payingChildren: kids` también hace que `maxChildren` (si el hotel lo
+  // configuró) aplique aunque el caller no mande edades — correcto: es una restricción nueva de
+  // la habitación, no algo de lo que un caller viejo pudiera depender.
+  const childComposition = hasChildrenAges && childPolicy
+    ? resolveChildComposition(adults, childrenAgesInput, childPolicy)
+    : {
+        effectiveAdults: Math.max(1, Number(adults) || 1),
+        payingChildren: Math.max(0, Number(kids) || 0),
+        freeChildren: 0,
+        chargeableOccupancy: Math.max(1, Number(adults) || 1) + Math.max(0, Number(kids) || 0),
+      }
+  // Ocupación para CAPACIDAD (cuántas plazas físicas ocupa): adultos + niños con plaza + niños
+  // sin plaza — un niño "libre" no cuenta para el precio pero sigue siendo una persona física en
+  // el cuarto. Legacy (sin edades): adults+kids, igual que el `totalGuests` de siempre.
+  const capacityGuests = hasChildrenAges
+    ? childComposition.effectiveAdults + childComposition.payingChildren + childComposition.freeChildren
+    : Math.max(1, Number(adults) || 1) + Math.max(0, Number(kids) || 0)
+  // Ocupación para PRECIO: adultos + niños que consumen plaza (el niño libre no cotiza). Legacy:
+  // solo adultos, igual que el `occupancy` de siempre — el niño nunca movió el precio.
+  const pricingOccupancy = hasChildrenAges ? childComposition.chargeableOccupancy : childComposition.effectiveAdults
 
-  // Ocupación FÍSICA total (adultos + niños): la matriz de `/rates` deshabilita `over_capacity`
-  // contra este mismo número (`occupancy-matrix.ts`). La UI ya no deja elegir una fila que no
-  // entra, pero un POST directo (integrador, replay, o `roomId` explícito que se salta la
-  // resolución por tipo) nunca pasaba por esa matriz — sin este número acá se podía crear una
-  // reserva de 6 huéspedes en una habitación para 2.
-  const totalGuests = Math.max(1, (Number(adults) || 1) + Math.max(0, Number(kids) || 0))
+  // Requerimiento 2 (2026-09-03) — capacidad/maxAdults/maxChildren por TIPO de habitación,
+  // configurable en Configuración (`room_type_capacity`). Se resuelve SIEMPRE (no solo cuando hay
+  // `childrenAges`): reemplaza el fallback por habitación física para cualquier tipo que el hotel
+  // haya configurado, incluida la reserva sin niños. Sin config para ese tipo, cae a los campos
+  // de la habitación física (comportamiento actual intacto).
+  const roomTypeCapacityMap = await resolveRoomTypeCapacityMap(extraDeps?.config, hotelId)
+
+  const blockedIds = blockedRoomIds(rawBlocks ?? [], stayNightDates)
+  const closedTypes = closedRoomTypes(rawRates ?? [], rawAssignments ?? [], stayNightDates, pricingOccupancy)
+
+  // Ocupación FÍSICA total: la matriz de `/rates` deshabilita `over_capacity` contra este mismo
+  // número (`occupancy-matrix.ts`). La UI ya no deja elegir una fila que no entra, pero un POST
+  // directo (integrador, replay, o `roomId` explícito que se salta la resolución por tipo) nunca
+  // pasaba por esa matriz — sin este número acá se podía crear una reserva de 6 huéspedes en una
+  // habitación para 2.
+  const totalGuests = capacityGuests
 
   // ─── Resolución de la habitación (FIX 2026-07-30, ver cabecera del archivo) ────────
   // 1) `roomId` real (compat callers viejos): si resuelve a una fila de `Rooms`, se usa tal
@@ -300,7 +355,7 @@ export async function createPublicBookingDirect(
       // `room_blocks` descuenta unidades igual que una reserva: la habitación puede no tener
       // reservas y aun así estar cerrada por mantenimiento para ese rango.
       .filter((r: any) => !busyRoomIds.has(r.id) && !blockedIds.has(r.id))
-      .filter((r: any) => Number(r.capacity ?? totalGuests) >= totalGuests)
+      .filter((r: any) => fitsRoomCapacity(effectiveRoomCapacity(roomTypeCapacityMap, { type: r.type, capacity: Number(r.capacity ?? totalGuests), maxAdults: r.maxAdults, maxChildren: r.maxChildren }), childComposition))
       .sort((a: any, b: any) => (Number(a.basePrice) || 0) - (Number(b.basePrice) || 0))
     if (freeOfType.length === 0) {
       // El tipo existe pero no hay unidades libres (o con capacidad suficiente) para esas
@@ -314,8 +369,9 @@ export async function createPublicBookingDirect(
   // Red de seguridad final: cubre el path de `roomId` explícito (arriba nunca filtró por
   // capacidad porque no pasa por la resolución de `roomType`) y actúa como defensa en
   // profundidad del filtro de arriba.
-  if (Number(room.capacity ?? totalGuests) < totalGuests) {
-    return { status: 409, body: { error: `Esta habitación admite hasta ${room.capacity ?? totalGuests} huésped(es); pediste ${totalGuests}` } }
+  const roomCapacity = effectiveRoomCapacity(roomTypeCapacityMap, { type: room.type, capacity: Number(room.capacity ?? totalGuests), maxAdults: room.maxAdults, maxChildren: room.maxChildren })
+  if (!fitsRoomCapacity(roomCapacity, childComposition)) {
+    return { status: 409, body: { error: `Esta habitación admite hasta ${roomCapacity.capacity} huésped(es); pediste ${totalGuests}` } }
   }
 
   // No hay usuario: el motor es público. La habitación tiene que ser del hotel del formulario.
@@ -356,8 +412,9 @@ export async function createPublicBookingDirect(
   // misma que se le cotizó al huésped: `/rates` publica el `min(basePrice)` del tipo.
   const baseRates = baseRatesOnly(rawRates ?? [])
   const seasonByDate = buildSeasonByDate(rawAssignments ?? [], rawSeasons ?? [], stayNightDates)
-  // Misma ocupación y mismo default (2) que `/rates` y que el `closedRoomTypes` de arriba.
-  const occupancy = Number(adults) || 2
+  // Misma ocupación que el `closedRoomTypes` de arriba (`pricingOccupancy` — adultos solo si es
+  // un caller legacy sin `childrenAges`, o adultos+niños-con-plaza si mandó edades).
+  const occupancy = pricingOccupancy
   const fallbackNightly = Number(room.basePrice) || 0
   const roomSubtotal = stayNightDates.length > 0
     ? sumStayPrice(stayNightDates, baseRates, String(room.type ?? ''), seasonByDate, occupancy, fallbackNightly, rawOverrides ?? [])
@@ -508,7 +565,14 @@ export async function createPublicBookingDirect(
       reservation = await tx.create('Reservations', {
         id: crypto.randomUUID(), hotelId, roomId: resolvedRoomId, guestId: guest.id,
         checkIn, checkOut, status: 'pending', source: 'direct',
-        adults: adults || 1, children: kids || 0, totalAmount, deposit: 0,
+        adults: childComposition.effectiveAdults,
+        children: hasChildrenAges ? childComposition.payingChildren + childComposition.freeChildren : (kids || 0),
+        childrenAges: hasChildrenAges ? childrenAgesInput : [],
+        // Requerimiento 12 (edad de referencia, 2026-09-03) — ancla temporal de `childrenAges`:
+        // el check-in VIGENTE al declarar las edades. Sin esto no hay forma de proyectar la edad
+        // a un check-in futuro tras un reagendado (ver `child-composition.ts#projectAge`).
+        childrenAgesAsOf: hasChildrenAges ? checkIn : undefined,
+        totalAmount, deposit: 0,
         notes: notesParts.join(' | '),
         accessToken: crypto.randomUUID(),
         // F2 2.5 — persistimos el promoCode validado (upper-case). Upsells van en `notes`

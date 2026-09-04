@@ -27,6 +27,7 @@ import { blockedRoomIds, isClosedForOccupancy, stayNights } from './stay-restric
 import { baseRatesOnly, buildSeasonByDate } from './rate-resolution'
 import { MAX_OCCUPANCY_ROWS } from './occupancy-matrix'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
+import { resolveRoomTypeCapacityMap, effectiveRoomCapacity, type RoomTypeCapacity } from '../../../shared/usecases/room-type-capacity'
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24
 const CACHE_TTL_SECONDS = 60
@@ -55,6 +56,10 @@ export class AvailabilityUseCase {
     private readonly roomBlocksRepo?: RepositoryAdapter<any>,
     private readonly seasonAssignmentsRepo?: RepositoryAdapter<any>,
     private readonly roomRatesRepo?: RepositoryAdapter<any>,
+    /** Requerimiento 2 (2026-09-03) — `Configuration` KV general, para `room_type_capacity`.
+     *  Opcional: sin cablear, `aggregate()` sigue con el agregado por MÁXIMO entre habitaciones
+     *  físicas de siempre (cero cambio de comportamiento para quien no lo configuró). */
+    private readonly configurationRepo?: RepositoryAdapter<any>,
   ) {}
 
   async check(query: AvailabilityQuery): Promise<AvailabilityResult> {
@@ -77,7 +82,7 @@ export class AvailabilityUseCase {
     const cached = await this.cache.get<AvailabilityResult>(cacheKey)
     if (cached) return cached
 
-    const [rooms, reservations, hotel, blocks, assignments, rates] = await Promise.all([
+    const [rooms, reservations, hotel, blocks, assignments, rates, roomTypeCapacityMap] = await Promise.all([
       this.roomsRepo?.findMany({ hotelId: query.hotelId }) ?? Promise.resolve([]),
       this.reservationsRepo?.findMany({ hotelId: query.hotelId }) ?? Promise.resolve([]),
       // Ruta PÚBLICA: no hay sesión que validar contra el hotel, el cliente
@@ -87,6 +92,7 @@ export class AvailabilityUseCase {
       this.roomBlocksRepo?.findMany({ hotelId: query.hotelId }) ?? Promise.resolve([]),
       this.seasonAssignmentsRepo?.findMany({ hotelId: query.hotelId }) ?? Promise.resolve([]),
       this.roomRatesRepo?.findMany({ hotelId: query.hotelId }) ?? Promise.resolve([]),
+      resolveRoomTypeCapacityMap(this.configurationRepo, query.hotelId),
     ])
 
     // Noches reales de la estadía — las mismas celdas que pinta `/calendar` para este rango.
@@ -100,7 +106,7 @@ export class AvailabilityUseCase {
     const seasonByDate = buildSeasonByDate(assignments as any[])
     const isClosedFor = (roomType: string, occupancy: number): boolean =>
       isClosedForOccupancy(baseRates, seasonByDate, roomType, nightDates, occupancy)
-    const roomTypes = this.aggregate(rooms as any[], occupied, blocked, isClosedFor, adults)
+    const roomTypes = this.aggregate(rooms as any[], occupied, blocked, isClosedFor, adults, roomTypeCapacityMap)
 
     const result: AvailabilityResult = {
       hotelId: query.hotelId,
@@ -166,19 +172,34 @@ export class AvailabilityUseCase {
     blocked: Set<string>,
     isClosedFor: (roomType: string, occupancy: number) => boolean,
     adults: number,
+    roomTypeCapacityMap?: Map<string, RoomTypeCapacity>,
   ): RoomTypeAvailability[] {
-    const grouped: Record<string, { available: number; price: number; capacity: number; surfaceArea: number; amenities: string[]; sellableCapacities: number[] }> = {}
+    const grouped: Record<string, { available: number; price: number; capacity: number; surfaceArea: number; amenities: string[]; sellableCapacities: number[]; maxAdults: number | null; maxChildren: number | null }> = {}
 
     for (const room of rooms) {
       const type = room.type || 'standard'
+      // Requerimiento 2 (2026-09-03) — si el hotel configuró una política para ESTE tipo
+      // (Configuración → Tipos de habitación), reemplaza POR COMPLETO capacity/maxAdults/
+      // maxChildren de la habitación física: todas las unidades del tipo cotizan la misma
+      // capacidad, tal como pide el requerimiento ("la capacidad... debe pertenecer al tipo").
+      // Sin política para ese tipo, `effectiveRoomCapacity` devuelve los campos de la habitación
+      // tal cual — el resto del agregado (MÁXIMO entre unidades) sigue funcionando exactamente
+      // igual que antes de este requerimiento.
+      const cap = effectiveRoomCapacity(roomTypeCapacityMap, room)
       if (!grouped[type]) {
         grouped[type] = {
           available: 0,
           price: 0,
-          capacity: room.capacity ?? adults,
+          capacity: cap.capacity ?? adults,
           surfaceArea: room.surfaceArea ?? 0,
           amenities: room.amenities ?? [],
           sellableCapacities: [],
+          // Feature adultos+niños+edades (2026-09-02): null = ninguna habitación del tipo lo
+          // configuró todavía. Agregado como MÁXIMO entre las unidades del tipo — mismo criterio
+          // que `capacity` arriba: es una cota de UX para el widget, la autoridad real
+          // (`fitsRoomCapacity`) la aplica el backend contra la unidad concreta al reservar.
+          maxAdults: cap.maxAdults ?? null,
+          maxChildren: cap.maxChildren ?? null,
         }
       }
       // Se publica el precio más bajo del tipo.
@@ -186,8 +207,14 @@ export class AvailabilityUseCase {
       if (price > 0 && (grouped[type]!.price === 0 || price < grouped[type]!.price)) {
         grouped[type]!.price = price
       }
-      if (room.capacity) grouped[type]!.capacity = Math.max(grouped[type]!.capacity, room.capacity)
+      if (cap.capacity) grouped[type]!.capacity = Math.max(grouped[type]!.capacity, cap.capacity)
       if (room.surfaceArea) grouped[type]!.surfaceArea = Math.max(grouped[type]!.surfaceArea, room.surfaceArea)
+      if (cap.maxAdults != null) {
+        grouped[type]!.maxAdults = grouped[type]!.maxAdults != null ? Math.max(grouped[type]!.maxAdults!, cap.maxAdults) : cap.maxAdults
+      }
+      if (cap.maxChildren != null) {
+        grouped[type]!.maxChildren = grouped[type]!.maxChildren != null ? Math.max(grouped[type]!.maxChildren!, cap.maxChildren) : cap.maxChildren
+      }
 
       if (occupied.has(room.id)) continue
       // Bloqueo por mantenimiento/uso interno: la habitación puede estar libre de reservas y
@@ -197,9 +224,9 @@ export class AvailabilityUseCase {
       // La habitación es VENDIBLE (libre, sin bloqueo, en servicio). Se guarda su capacidad
       // ANTES de filtrar por el grupo consultado: `availableByOccupancy` necesita saber cuántas
       // unidades aceptan 1, 2, 3... huéspedes, no solo cuántas aceptan `adults`.
-      grouped[type]!.sellableCapacities.push(Number(room.capacity ?? adults) || 0)
+      grouped[type]!.sellableCapacities.push(Number(cap.capacity ?? adults) || 0)
       // No se ofrece una habitación donde no entra el grupo.
-      if ((room.capacity ?? adults) < adults) continue
+      if ((cap.capacity ?? adults) < adults) continue
       grouped[type]!.available++
     }
 
@@ -220,6 +247,8 @@ export class AvailabilityUseCase {
         price: d.price,
         currency: 'USD',
         capacity: d.capacity,
+        maxAdults: d.maxAdults,
+        maxChildren: d.maxChildren,
         surfaceArea: d.surfaceArea,
         amenities: d.amenities,
         availableByOccupancy: byOccupancy,

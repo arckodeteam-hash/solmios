@@ -4,6 +4,7 @@ import { buildResponse } from './response-builder'
 import type { LlmConfig, LlmMessage } from './llm-provider'
 import { llmChat, buildSystemPrompt, RECEPTIONIST_TOOLS } from './llm-provider'
 import { hotelCheckInTime, hotelCheckOutTime } from '../../../shared/utils/hotel-schedule'
+import { assertReservationFitsCapacity } from '../../../shared/usecases/reservation-capacity'
 
 /**
  * Puerto de cancelación hacia `reservas` (lo cablea `connectors/ai-recepcionista-reservas.ts`).
@@ -344,6 +345,13 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
 
       const room = await repos.roomRepo.findById(roomId)
       const hotel = await repos.hotelRepo.findById(hotelId)
+
+      // Auditoría de integridad (cierre, 2026-09-04) — el bot de Recepción IA escribía directo con
+      // `reservationRepo.create`, sin ningún chequeo de capacidad. Mismo criterio que el panel y el
+      // motor público, reutilizado sin copiar reglas: sin edad por niño acá (la tool no las pide),
+      // el conservador de `resolveAdminCapacityComposition` decide — un niño sin edad conocida
+      // SIEMPRE consume plaza.
+      await assertReservationFitsCapacity(repos.configRepo, room, { hotelId, adults, children: 0, childrenAges: [] })
 
       const totalNights = Math.ceil((new Date(checkOut).getTime() - new Date(checkIn).getTime()) / 86400000)
       const totalPrice = (room?.basePrice || room?.price || 0) * totalNights

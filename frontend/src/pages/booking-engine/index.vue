@@ -321,6 +321,46 @@
               </div>
             </div>
 
+            <!-- Feature adultos+niños+edades (2026-09-02) — política de niños del hotel. El
+                 huésped declara adultos + niños + EDAD de cada niño (no fecha de nacimiento) en
+                 el motor de reservas; SOLMI decide con esto si el niño ocupa plaza (y por lo
+                 tanto si se cobra) o no. Se guarda en configuration('child_policy'), mismo
+                 mecanismo que Reglas de estadía de arriba (BookingConfig) pero como config KV
+                 aparte — no es un campo de BookingConfig. -->
+            <div class="mt-6 pt-6 border-t border-border">
+              <label class="text-[10px] font-bold text-text-muted uppercase mb-3 block">Política de niños</label>
+              <label class="flex items-center gap-3 p-3 bg-surface rounded-xl cursor-pointer w-fit">
+                <input id="booking-engine-acepta-ninos" name="acceptChildren" type="checkbox" v-model="childPolicy.acceptChildren" class="w-4 h-4 text-cyan rounded" />
+                <div>
+                  <div class="text-sm font-bold text-navy">Aceptar niños en la reserva</div>
+                  <div class="text-[10px] text-text-muted">Si está apagado, el motor de reservas no ofrece agregar niños</div>
+                </div>
+              </label>
+              <div v-if="childPolicy.acceptChildren" class="grid md:grid-cols-2 gap-6 mt-4">
+                <div>
+                  <label for="booking-engine-edad-maxima-nino" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Edad máxima considerada niño</label>
+                  <input id="booking-engine-edad-maxima-nino" name="maxChildAge"
+                    v-model.number="childPolicy.maxChildAge"
+                    type="number" min="0" max="17"
+                    class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan"
+                  />
+                  <p class="mt-1 text-[10px] text-text-muted">Mayor de esta edad se trata como adulto.</p>
+                </div>
+                <div>
+                  <label for="booking-engine-edad-maxima-sin-plaza" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Edad máxima sin consumir plaza</label>
+                  <input id="booking-engine-edad-maxima-sin-plaza" name="maxFreeAge"
+                    v-model.number="childPolicy.maxFreeAge"
+                    type="number" min="0" :max="childPolicy.maxChildAge"
+                    class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan"
+                    :class="childPolicyAgeError ? 'border-warning' : ''"
+                  />
+                  <p class="mt-1 text-[10px]" :class="childPolicyAgeError ? 'text-warning font-bold' : 'text-text-muted'">
+                    {{ childPolicyAgeError || 'Un niño hasta esta edad no genera cargo de alojamiento.' }}
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div class="mt-6 pt-6 border-t border-border">
               <label class="text-[10px] font-bold text-text-muted uppercase mb-3 block">Opciones de Reserva</label>
               <div class="grid md:grid-cols-2 gap-3">
@@ -409,6 +449,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { BookingEngineService, type BookingConfig, type BookingAnalytics, type FunnelStep } from '@/services/BookingEngine.service'
+import { ConfigService } from '@/services/Platform.service'
 import { http } from '@/services/http'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
@@ -462,6 +503,17 @@ function defaultConfig(): BookingConfig {
 
 // Form editable (reactive). Siempre non-null → los v-model del template son seguros.
 const form = reactive<BookingConfig>(defaultConfig())
+
+// Política de niños (feature adultos+niños+edades, 2026-09-02) — configuration('child_policy'),
+// NO es parte de BookingConfig. Mismos defaults que `DEFAULT_CHILD_POLICY` del backend
+// (shared/usecases/child-composition.ts): acepta niños, nadie es gratis — así un hotel que
+// nunca abrió esta sección no ve cambiar el comportamiento de su motor de reservas.
+const childPolicy = reactive({ acceptChildren: true, maxChildAge: 17, maxFreeAge: 0 })
+const childPolicyAgeError = computed(() =>
+  childPolicy.maxFreeAge > childPolicy.maxChildAge
+    ? 'La edad sin plaza no puede ser mayor a la edad máxima de niño.'
+    : '',
+)
 
 const analytics = ref<BookingAnalytics | null>(null)
 
@@ -520,9 +572,16 @@ const embedCode = computed(() =>
 
 async function saveConfig() {
   if (!configLoaded.value) return
+  if (childPolicyAgeError.value) {
+    toast.error(childPolicyAgeError.value)
+    return
+  }
   saving.value = true
   try {
-    const updated = await BookingEngineService.updateConfig(form)
+    const [updated] = await Promise.all([
+      BookingEngineService.updateConfig(form),
+      ConfigService.set('child_policy', { ...childPolicy }),
+    ])
     // El backend puede normalizar/normalizar campos: reflotar el form con la respuesta.
     Object.assign(form, updated)
     toast.success('Configuración guardada')
@@ -555,15 +614,18 @@ async function loadAll() {
     const tasks: Promise<unknown>[] = [
       BookingEngineService.getConfig(),
       BookingEngineService.getAnalytics(),
+      ConfigService.get('child_policy').catch(() => null),
     ]
     if (hotelId.value) {
       tasks.push(http.get<{ slug?: string }>(`/hoteles/${hotelId.value}`))
     }
-    const [cfg, stats, hotel] = await Promise.all(tasks) as [BookingConfig, BookingAnalytics, { slug?: string } | undefined]
+    const [cfg, stats, savedChildPolicy, hotel] = await Promise.all(tasks) as
+      [BookingConfig, BookingAnalytics, Partial<typeof childPolicy> | null, { slug?: string } | undefined]
     // Hidratar el form reactivo (NO pisar la referencia: tablas reactivas se mutan).
     Object.assign(form, cfg)
     showPolicyText.value = !!form.cancellationPolicy
     analytics.value = stats
+    if (savedChildPolicy) Object.assign(childPolicy, savedChildPolicy)
     if (hotel && typeof hotel.slug === 'string' && hotel.slug.trim() !== '') {
       hotelSlug.value = hotel.slug.trim()
     }

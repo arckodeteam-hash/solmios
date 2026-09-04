@@ -287,6 +287,8 @@ export async function getPublicRates(
       fromPrice,
       availableCount: rt.available,
       capacity: rt.capacity,
+      maxAdults: rt.maxAdults,
+      maxChildren: rt.maxChildren,
       surfaceArea: rt.surfaceArea,
       taxBreakdown,
       photoUrl: photoByType.get(rt.roomType) ?? null,

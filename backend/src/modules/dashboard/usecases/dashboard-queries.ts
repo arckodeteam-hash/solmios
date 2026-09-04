@@ -1,5 +1,6 @@
 import { isCleaning, isUnderMaintenance } from '../../../shared/usecases/room-status'
 import { dashboardPaymentStatus } from './payment-status-label'
+import { paidAmountsByReservation } from '../../../shared/usecases/reservation-paid'
 // Ms por día. reports/helpers.ts expone la misma constante como MS_PER_DAY; se duplica acá
 // para no importar cross-module (prohibido por convención: iría por connector).
 const MS_PER_DAY = 86_400_000
@@ -81,17 +82,29 @@ export class DashboardQueries {
   }
 
   async getPlanning(hotelId: string): Promise<any> {
-    const [rooms, reservas, guests] = await Promise.all([
+    const [rooms, reservas, guests, folios, invoices, payments] = await Promise.all([
       this.orm.findMany('Rooms', { hotelId }),
       this.orm.findMany('Reservations', { hotelId }),
       this.orm.findMany('Guests', { hotelId }),
+      // Auditoría final (Requerimiento 15, 2026-09-04) — FIX: `paymentStatus` acá abajo se
+      // calculaba con `reservations.deposit` (el mismo bug GH-0.2 que ya se había resuelto en
+      // `getExtendedDetail`, pero nunca en el planning/calendario). `deposit` no lo tocan
+      // `folios.applyPayment` ni `facturas.pay` — el ícono de pago del calendario podía decir
+      // "pendiente" sobre una reserva ya cobrada en efectivo por folio. `paidAmountsByReservation`
+      // (shared/usecases/reservation-paid.ts) resuelve el REAL cobrado por reserva, en lote (3
+      // queries totales, no N+1 por fila del planning).
+      this.orm.findMany('Folios', { hotelId }),
+      this.orm.findMany('Invoices', { hotelId }),
+      this.orm.findMany('Payment', { hotelId }),
     ])
     const guestMap = new Map((guests as any[]).map((g: any) => [g.id, g]))
     const roomMap = new Map((rooms as any[]).map((r: any) => [r.id, r]))
+    const paidByReservation = paidAmountsByReservation(folios as any[], invoices as any[], payments as any[], reservas as any[])
     const enriched = (reservas as any[]).map((r: any) => {
       const guest = guestMap.get(r.guestId); const room = roomMap.get(r.roomId)
-      const deposit = Number(r.deposit) || 0; const total = Number(r.totalAmount) || 0
-      return { ...r, guestName: guest?.name || 'Guest', guestEmail: guest?.email || '', roomNumber: room?.number || '', paymentStatus: dashboardPaymentStatus(total, deposit) }
+      const total = Number(r.totalAmount) || 0
+      const paid = paidByReservation.get(r.id) ?? 0
+      return { ...r, guestName: guest?.name || 'Guest', guestEmail: guest?.email || '', roomNumber: room?.number || '', paymentStatus: dashboardPaymentStatus(total, paid) }
     })
     return { rooms, reservas: enriched }
   }

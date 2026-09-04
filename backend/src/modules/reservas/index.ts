@@ -105,12 +105,15 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // Catálogo de temporadas (label/color) para el desglose del quote del wizard. Modelo
       // COMPARTIDO (shared/models.ts) — no es un import del módulo pricing.
       const seasonsRepo = new OrmRepository<any>(orm, 'Seasons')
+      // Requerimiento 7 (2026-09-03) — `Configuration` KV general, para `resolveChildPolicy` al
+      // repreciar un reagendado con niños (`reprice.ts`/`reschedule.ts`). Se declara ACÁ (antes
+      // solo existía más abajo, para permGuard/moduleGuard) porque el service la necesita.
+      const configRepo = new OrmRepository<any>(orm, 'Configuration')
       const queries = new ReservasQueries(orm)
-      const service = new ReservasService(repo, log, cache, userRepo, auth, guestRepo, roomRepo, hotelRepo, queries, blockRepo, dateRestrictionRepo, policyRepo, groupRepo, seasonAssignmentRepo, roomRateRepo, opts.storage, seasonsRepo, rateOverrideRepo)
+      const service = new ReservasService(repo, log, cache, userRepo, auth, guestRepo, roomRepo, hotelRepo, queries, blockRepo, dateRestrictionRepo, policyRepo, groupRepo, seasonAssignmentRepo, roomRateRepo, opts.storage, seasonsRepo, rateOverrideRepo, configRepo)
       const controller = new ReservasController(service, log, companionsRepo, addonsRepo, repo, userRepo, auth, orm, null, messageLogRepo, roomRepo, hotelRepo, guestRepo)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
-      const configRepo = new OrmRepository<any>(orm, 'Configuration')
       const permGuard = createPermissionGuard(auth, roleRepo)
       const moduleGuard = createModuleGuard(orm)
       const guard = (m: string, a: string) => [...permGuard(m, a), moduleGuard('reservations.list')]

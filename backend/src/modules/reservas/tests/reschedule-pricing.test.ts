@@ -50,6 +50,9 @@ const ROOM_RATES = [
   { hotelId: HOTEL, roomType: 'standard', season: 'high', occupancy: 2, price: 90, channel: '' },
   { hotelId: HOTEL, roomType: 'suite', season: 'low', occupancy: 2, price: 150, channel: '' },
   { hotelId: HOTEL, roomType: 'suite', season: 'high', occupancy: 2, price: 250, channel: '' },
+  // Requerimiento 7 — fila occupancy=3 propia (antes solo había 2 y 4), para probar el fix de
+  // `guestsOfReservation` sin depender del fallback "mayor ocupación disponible" de `pickRate`.
+  { hotelId: HOTEL, roomType: 'suite', season: 'high', occupancy: 3, price: 330, channel: '' },
   { hotelId: HOTEL, roomType: 'suite', season: 'high', occupancy: 4, price: 400, channel: '' },
   // Override de canal OTA: NO debe filtrarse al precio del panel (solo tarifas BASE).
   { hotelId: HOTEL, roomType: 'suite', season: 'high', occupancy: 2, price: 9999, channel: 'airbnb' },
@@ -73,7 +76,7 @@ function makeRoomRepo() {
 const listRepo = (rows: any[]) => ({ findMany: async () => rows })
 
 /** `withRates: false` = sin repos de temporadas → el reprice debe degradar a `rooms.basePrice`. */
-function makeDeps(reserva: any, withRates = true): RescheduleDeps {
+function makeDeps(reserva: any, withRates = true, configRepo?: any): RescheduleDeps {
   return {
     repo: makeRepo(reserva),
     roomRepo: makeRoomRepo(),
@@ -83,10 +86,16 @@ function makeDeps(reserva: any, withRates = true): RescheduleDeps {
     sockets: {},
     // STR-2: el commit reprecia y el saldo persistido tiene que moverse con el total nuevo.
     addonsOf: async () => [],
+    configRepo,
     ...(withRates
       ? { seasonAssignmentRepo: listRepo(SEASON_ASSIGNMENTS), roomRateRepo: listRepo(ROOM_RATES) }
       : {}),
   }
+}
+
+/** `Configuration` con `child_policy` — findOne minimal, mismo contrato que el resto del proyecto. */
+function childPolicyConfigRepo(value: { acceptChildren: boolean; maxChildAge: number; maxFreeAge: number }) {
+  return { findOne: async (f: any) => (f.key === 'child_policy' ? { hotelId: HOTEL, key: 'child_policy', value } : null) }
 }
 
 describe('quoteReschedule — mover de habitación SIN cambiar las noches (el bug reportado)', () => {
@@ -249,5 +258,60 @@ describe('reprice sin repos de temporadas — degradación EXPLÍCITA a rooms.ba
     const quote = await quoteReschedule(rotos, 'r1', { roomId: 'room-2', pricingMode: 'reprice' }, hotelAdmin)
     expect(quote.repricedFromRates).toBe(false)
     expect(quote.repricedTotal).toBe(400)
+  })
+})
+
+// ─── Requerimiento 7 (Precio según ocupación, 2026-09-03) — FIX encontrado en la auditoría ───
+// `guestsOfReservation` (reprice.ts) devolvía SOLO `reservation.adults`, ignorando por completo
+// `childrenAges` — una reserva creada por el motor público con 2 adultos + 1 niño con plaza
+// cotizaba (para el precio) a ocupación 3, pero al REAGENDARLA el reprice volvía a cotizar a
+// ocupación 2: la reserva nueva salía más barata que la original, silenciosamente, por el simple
+// hecho de moverla de fecha/habitación. El fix cuenta a `payingChildren` (niños con plaza) igual
+// que `pricingOccupancy` en el motor público — los niños libres siguen sin sumar.
+describe('quoteReschedule — Requerimiento 7: la ocupación del reprice cuenta a los niños con plaza', () => {
+  it('reserva con niño con plaza: reprice cotiza a ocupación 3, no 2 (el bug encontrado)', async () => {
+    // 2 adultos + 1 niño de 8 años. Con la política DEFAULT (maxFreeAge=0), 8 > 0 → con plaza.
+    const conNino = makeReservation({ adults: 2, children: 1, childrenAges: [8] })
+    const quote = await quoteReschedule(makeDeps(conNino), 'r1', { roomId: 'room-2', pricingMode: 'reprice' }, hotelAdmin)
+    // 10/01 baja (occupancy=2, sin fila para 3 → cae a la mayor disponible de esa noche: 150) +
+    // 11/01 alta (occupancy=3, fila EXACTA: 330) = 480 — NO 250+150=400 (lo que daría ocupación 2).
+    expect(quote.repricedTotal).toBe(480)
+    expect(quote.repricedTotal).not.toBe(400)
+  })
+
+  it('niño LIBRE (política del hotel): sigue sin sumar a la ocupación — reprice cotiza a 2', async () => {
+    const cfg = childPolicyConfigRepo({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 10 })
+    // Mismo niño de 8 años, pero ahora la política del hotel dice "libre hasta los 10" → no consume plaza.
+    const conNinoLibre = makeReservation({ adults: 2, children: 1, childrenAges: [8] })
+    const quote = await quoteReschedule(makeDeps(conNinoLibre, true, cfg), 'r1', { roomId: 'room-2', pricingMode: 'reprice' }, hotelAdmin)
+    expect(quote.repricedTotal).toBe(400) // 250 (occ 2, alta) + 150 (occ 2, baja) — igual que sin niños
+  })
+
+  it('sin childrenAges (reserva vieja o creada por el panel): comportamiento intacto, solo adultos', async () => {
+    const sinEdades = makeReservation({ adults: 2, children: 1 }) // children=1 pero SIN childrenAges
+    const quote = await quoteReschedule(makeDeps(sinEdades), 'r1', { roomId: 'room-2', pricingMode: 'reprice' }, hotelAdmin)
+    expect(quote.repricedTotal).toBe(400) // ocupación 2, como siempre — children plano nunca se sumó
+  })
+
+  it('niño mayor a maxChildAge en la reserva original: YA está contado en `adults`, no se duplica', async () => {
+    // La reserva original ya reclasificó a este "niño" de 15 años como adulto (adults=3, con
+    // maxChildAge=12) al crearse — childrenAges lo sigue listando (auditoría), pero al repreciar
+    // NO debe sumarse otra vez solo porque la política vigente lo siga considerando "mayor".
+    const cfg = childPolicyConfigRepo({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 0 })
+    const conMayor = makeReservation({ adults: 3, children: 0, childrenAges: [15] })
+    const quote = await quoteReschedule(makeDeps(conMayor, true, cfg), 'r1', { roomId: 'room-2', pricingMode: 'reprice' }, hotelAdmin)
+    // Ocupación 3 (adults=3 tal cual): 150 (occ 2, baja — sin fila 3 esa noche) + 330 (occ 3, alta) = 480.
+    // NO ocupación 4 (que sería contar al de 15 años dos veces: 150 + 400 = 550).
+    expect(quote.repricedTotal).toBe(480)
+    expect(quote.repricedTotal).not.toBe(550)
+  })
+
+  it('multi-habitación: cada reserva del grupo reaplica el fix con SU propia childrenAges', async () => {
+    const rA = makeReservation({ id: 'rA', roomId: 'room-1', adults: 2, children: 1, childrenAges: [8] })
+    const rB = makeReservation({ id: 'rB', roomId: 'room-1', adults: 2, children: 0, childrenAges: [] })
+    const quoteA = await quoteReschedule(makeDeps(rA), 'rA', { roomId: 'room-2', pricingMode: 'reprice' }, hotelAdmin)
+    const quoteB = await quoteReschedule(makeDeps(rB), 'rB', { roomId: 'room-2', pricingMode: 'reprice' }, hotelAdmin)
+    expect(quoteA.repricedTotal).toBe(480) // ocupación 3 (niño con plaza)
+    expect(quoteB.repricedTotal).toBe(400) // ocupación 2 — la otra habitación del grupo no se contamina
   })
 })

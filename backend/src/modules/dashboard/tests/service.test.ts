@@ -62,5 +62,71 @@ describe('DashboardService', () => {
       expect(result.rooms).toHaveLength(2)
       expect(result.reservas).toHaveLength(1)
     })
+
+    // Auditoría final (Requerimiento 15, 2026-09-04) — FIX GH-0.2: `paymentStatus` se calculaba
+    // con `reservations.deposit`, que `folios.applyPayment`/`facturas.pay` nunca tocan. Una reserva
+    // cobrada en efectivo por folio (deposit=0) mostraba "pendiente" en el planning/calendario
+    // mientras Administración (`getExtendedDetail`) ya la veía "pagada" — misma reserva, dos
+    // pantallas contradictorias. `paidAmountsByReservation` (batch, sin N+1) resuelve el REAL
+    // cobrado desde `payments`, igual que `getExtendedDetail`.
+    it('reserva cobrada en efectivo por folio (deposit=0): paymentStatus="paid", NO "pending"', async () => {
+      const orm = makeOrm({
+        findMany: async (table: string) => {
+          if (table === 'Reservations') return [{ id: 'r1', totalAmount: 200, deposit: 0, status: 'checked_in', roomId: 'rm1', guestId: 'g1' }]
+          if (table === 'Rooms') return [{ id: 'rm1', type: 'standard', status: 'occupied', number: '101' }]
+          if (table === 'Guests') return [{ id: 'g1', name: 'John', email: 'john@test.com' }]
+          if (table === 'Folios') return [{ id: 'f1', hotelId: 'h1', reservationId: 'r1', status: 'open' }]
+          if (table === 'Payment') return [{ id: 'pay1', hotelId: 'h1', folioId: 'f1', type: 'charge', status: 'completed', amount: 200 }]
+          return []
+        },
+      })
+      const svc = new DashboardService(log, new DashboardQueries(orm))
+      const result = await svc.getPlanning({ query: { hotelId: 'h1' } })
+      expect(result.reservas[0].paymentStatus).toBe('paid')
+    })
+
+    it('reserva sin ningún cobro: paymentStatus="pending" (comportamiento previo intacto)', async () => {
+      const svc = new DashboardService(log, new DashboardQueries(makeOrm()))
+      const result = await svc.getPlanning({ user: { id: 'u1' }, query: {} })
+      expect(result.reservas[0].paymentStatus).toBe('pending')
+    })
+
+    it('un intento de pago FALLIDO no cuenta como cobrado: sigue "pending"', async () => {
+      const orm = makeOrm({
+        findMany: async (table: string) => {
+          if (table === 'Reservations') return [{ id: 'r1', totalAmount: 200, deposit: 0, status: 'checked_in', roomId: 'rm1', guestId: 'g1' }]
+          if (table === 'Rooms') return [{ id: 'rm1', type: 'standard', status: 'occupied', number: '101' }]
+          if (table === 'Guests') return [{ id: 'g1', name: 'John', email: 'john@test.com' }]
+          if (table === 'Payment') return [{ id: 'pay1', hotelId: 'h1', reservationId: 'r1', type: 'charge', status: 'failed', amount: 200 }]
+          return []
+        },
+      })
+      const svc = new DashboardService(log, new DashboardQueries(orm))
+      const result = await svc.getPlanning({ query: { hotelId: 'h1' } })
+      expect(result.reservas[0].paymentStatus).toBe('pending')
+    })
+
+    it('reserva de varias habitaciones (groupId): el cobro de una NO se filtra al paymentStatus de la hermana', async () => {
+      const orm = makeOrm({
+        findMany: async (table: string) => {
+          if (table === 'Reservations') return [
+            { id: 'r-a', groupId: 'g1', totalAmount: 200, deposit: 0, status: 'checked_in', roomId: 'rm1', guestId: 'g1' },
+            { id: 'r-b', groupId: 'g1', totalAmount: 200, deposit: 0, status: 'checked_in', roomId: 'rm2', guestId: 'g1' },
+          ]
+          if (table === 'Rooms') return [
+            { id: 'rm1', type: 'standard', status: 'occupied', number: '101' },
+            { id: 'rm2', type: 'standard', status: 'occupied', number: '102' },
+          ]
+          if (table === 'Guests') return [{ id: 'g1', name: 'John', email: 'john@test.com' }]
+          if (table === 'Payment') return [{ id: 'pay1', hotelId: 'h1', reservationId: 'r-a', type: 'charge', status: 'completed', amount: 200 }]
+          return []
+        },
+      })
+      const svc = new DashboardService(log, new DashboardQueries(orm))
+      const result = await svc.getPlanning({ query: { hotelId: 'h1' } })
+      const byId = Object.fromEntries(result.reservas.map((r: any) => [r.id, r]))
+      expect(byId['r-a'].paymentStatus).toBe('paid')
+      expect(byId['r-b'].paymentStatus).toBe('pending')
+    })
   })
 })

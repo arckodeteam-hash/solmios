@@ -72,6 +72,29 @@ describe('getPublicReservation — IDOR cerrado (F0 0.14)', () => {
     expect(res.body.paymentStatus).toBe('unpaid')
   })
 
+  // Requerimiento 4 (Edad de los niños, 2026-09-03) — el huésped tiene que poder recuperar las
+  // edades que declaró al reservar (no solo el conteo `children`), mismo criterio que
+  // `adults`/`children` de siempre en este allow-list.
+  it('expone childrenAges cuando la reserva las trae', async () => {
+    const { orm, reservations } = makeOrm({
+      reservations: [{
+        id: 'res-1', hotelId: 'h1', guestId: 'g1', roomId: 'r1', accessToken: VALID_TOKEN,
+        status: 'pending', paymentStatus: 'unpaid', adults: 2, children: 2,
+        childrenAges: [4, 9], checkIn: '2026-08-10', checkOut: '2026-08-12', totalAmount: 200,
+      }],
+    })
+    const res = await getPublicReservation(orm, reservations[0]!.id, VALID_TOKEN)
+    expect(res.status).toBe(200)
+    expect(res.body.reservation.childrenAges).toEqual([4, 9])
+  })
+
+  it('reserva vieja sin childrenAges: expone [] en vez de undefined', async () => {
+    const { orm, reservations } = makeOrm()
+    const res = await getPublicReservation(orm, reservations[0]!.id, VALID_TOKEN)
+    expect(res.status).toBe(200)
+    expect(res.body.reservation.childrenAges).toEqual([])
+  })
+
   it('accessToken=null (reserva creada desde panel) → 404', async () => {
     const { orm } = makeOrm({
       reservations: [

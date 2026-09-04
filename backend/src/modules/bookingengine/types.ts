@@ -57,6 +57,11 @@ export interface RoomTypeAvailability {
   currency: string
   originalPrice?: number
   capacity: number
+  /** Feature adultos+niños+edades (2026-09-02) — máximo entre las rooms reales del type, null
+   *  si ninguna lo configuró. Cota de UX para el widget; la autoridad real es el backend al
+   *  crear la reserva (`fitsRoomCapacity`, shared/usecases/child-composition.ts). */
+  maxAdults?: number | null
+  maxChildren?: number | null
   /** Metros cuadrados (máximo entre las rooms reales del type). 0 si no está cargado. */
   surfaceArea: number
   amenities: string[]
@@ -273,6 +278,11 @@ export interface PublicHotelInfoDTO {
    *  "sin override" ante cualquier otro — no se valida acá para no tener que migrar filas
    *  viejas si el set de presets cambia. */
   widgetAccentPreset: string | null
+  /** Política de niños del hotel (feature adultos+niños+edades, 2026-09-02) — le dice al widget
+   *  si mostrar la opción de agregar niños y con qué rango de edades. Siempre presente (nunca
+   *  null): hoteles sin configurar reciben `DEFAULT_CHILD_POLICY` (acepta niños, todos consumen
+   *  plaza — cero cambio de comportamiento hasta que el hotel configure lo contrario). */
+  childPolicy: { acceptChildren: boolean; maxChildAge: number; maxFreeAge: number }
 }
 
 // ─── Upsells (F2 2.3 — sub-dominio de bookingengine) ────────────

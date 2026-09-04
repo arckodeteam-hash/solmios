@@ -2,6 +2,8 @@
 // El LLM decide cuál llamar (function calling); executeManagerTool la ejecuta contra los módulos reales.
 // Destructivas (cancel/block/adjust) requieren confirmed:true — el LLM debe pedir confirmación verbal antes.
 
+import { assertReservationFitsCapacity } from '../../../shared/usecases/reservation-capacity'
+
 /**
  * Puerto de cancelación hacia `reservas` (lo cablea `connectors/ai-gerente-reservas.ts`).
  * `ai-gerente` NO puede importar `reservas` → tipo estructural.
@@ -22,6 +24,10 @@ export interface ToolRepos {
   guestRepo: any
   /** Cancelación real vía el módulo reservas. Ausente = la tool no puede cancelar (falla explícito). */
   cancelReservation?: ReservationCancelPort
+  /** `Configuration` (child_policy / room_type_capacity) — auditoría de integridad, 2026-09-04:
+   *  `create_reservation` lo necesita para validar capacidad antes de crear (`shared/usecases/
+   *  reservation-capacity.ts`), reutilizando exactamente lo que ya usa el flujo público. */
+  configRepo?: any
 }
 
 const DAY_MS = 86_400_000
@@ -91,6 +97,13 @@ export async function executeManagerTool(name: string, args: Record<string, unkn
         return { error: `La habitación ${roomId} no está libre en esas fechas` }
       }
       const room = await roomRepo.findById(roomId)
+      // Auditoría de integridad (cierre, 2026-09-04) — el Gerente IA escribía directo con
+      // `reservationRepo.create`, sin ningún chequeo de capacidad (a diferencia del panel y del
+      // motor público). Mismo criterio que ambos, reutilizado sin copiar reglas: sin edad por
+      // niño acá (la tool no las pide), así que el conservador de `resolveAdminCapacityComposition`
+      // decide — un niño sin edad conocida SIEMPRE consume plaza.
+      const adults = (args.adults as number) || 2
+      await assertReservationFitsCapacity(repos.configRepo, room, { hotelId, adults, children: 0, childrenAges: [] })
       const nights = Math.ceil((new Date(checkOut).getTime() - new Date(checkIn).getTime()) / DAY_MS)
       const total = (room?.basePrice ?? room?.price ?? 0) * Math.max(1, nights)
       // Resolver huésped: buscar por nombre, o crear si no existe (Reservations usa guestId FK a guests).
@@ -103,7 +116,7 @@ export async function executeManagerTool(name: string, args: Record<string, unkn
       }
       const reservation = await reservationRepo.create({
         id: crypto.randomUUID(), hotelId, roomId, guestId,
-        checkIn, checkOut, adults: (args.adults as number) || 2, status: 'confirmed', totalAmount: total, createdAt: new Date().toISOString(),
+        checkIn, checkOut, adults, status: 'confirmed', totalAmount: total, createdAt: new Date().toISOString(),
       } as any)
       return { ok: true, reservationId: reservation.id, guestId, roomId, nights, totalAmount: total }
     }

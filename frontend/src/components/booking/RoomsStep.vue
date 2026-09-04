@@ -8,23 +8,30 @@
           ≤1 → "Última disponible" (rojo)
           ≤3 → "Pocas habitaciones a este precio" (ámbar)
           >3 → sin badge (NEVER falsificar urgencia — destruye confianza)
-    Cada ocupación es un carrito (Tarea 10, solmi-direct-booking-qa-fixes): "+"/"-" agregan/quitan
-    unidades de esa (tipo, ocupación) vía store.addToCart/removeCartLine/setCartLineQuantity, sin
-    avanzar de step. Permite combinar tipos distintos y/o varias unidades del mismo tipo en una
-    sola reserva. El resumen al pie del step (carrito) tiene el botón "Continuar" (store.next()).
 
-    ─── Matriz de ocupaciones (una fila por "para N") ────────────────────────────────────────
-    Cada tipo despliega UNA FILA POR OCUPACIÓN ("para 1", "para 2", "para 4"…) con su precio
-    total y por noche, igual que el motor de la competencia. `roomType.occupancies` lo calcula
-    el backend (`bookingengine/usecases/occupancy-matrix.ts`).
+    ─── Requerimiento 9 (Cantidad de habitaciones, 2026-09-03) — huéspedes ≠ habitaciones ────
+    El composer (adultos + niños + edades, ver `composables/useGuestComposer.ts`) es puro ESTADO
+    LOCAL por tarjeta (`composerState`), completamente separado del carrito: subir/bajar el
+    stepper de adultos o niños NUNCA toca `store.cart` — solo lo hace el click explícito en
+    "Agregar esta habitación" (`addComposedRoom`). Cada click agrega UNA unidad real: mismo tipo +
+    misma composición dos veces → SUMA cantidad a la MISMA línea (`cartLineKeyForComposition`
+    identifica la línea por tipo+adultos+edades ordenadas); tipo/composición distinta → línea
+    aparte. `store.removeCartLine(key)` quita SOLO esa línea, el resto del carrito no se toca.
+    El resumen al pie del step usa `store.cartTotalRooms`/`cartTotalGuests` — SIEMPRE derivados
+    del carrito real, nunca de un contador aparte que pudiera desincronizarse.
 
-    REGLA DEL DUEÑO: la ocupación que el hotel NO puede vender **aparece igual, deshabilitada y
-    con el motivo**. No se oculta. Esconderla es indistinguible de "este hotel no ofrece
-    habitaciones para 4"; mostrarla en gris dice "la opción existe, hoy no se puede".
+    ─── Matriz de ocupaciones (`roomType.occupancies`, precio por "para N") ──────────────────
+    El composer traduce la composición elegida a un NÚMERO de ocupación (`chargeableOccupancy`,
+    adultos + niños con plaza) y busca ESA fila en `roomType.occupancies` — la matriz sigue siendo
+    "una fila por ocupación" puertas adentro (mismo backend, `occupancy-matrix.ts`), pero el
+    huésped nunca la ve ni la usa como selector: no elige entre filas, arma su composición y el
+    número sale solo. Las ocupaciones que el hotel NO puede vender siguen existiendo en la
+    respuesta — REGLA DEL DUEÑO: si la composición actual resuelve a una de ellas, se muestra
+    DESHABILITADA y con el motivo, nunca oculta.
 
     DEGRADACIÓN: si `occupancies` no viene (backend viejo, respuesta cacheada en CDN, widget
-    embebido contra otra versión), se cae a la tarjeta única con `fromPrice` — exactamente el
-    comportamiento anterior. El campo es opcional en el tipo a propósito.
+    embebido contra otra versión), el composer sigue funcionando con el precio único `fromPrice`
+    del tipo. El campo es opcional a propósito.
 
     El desglose de impuestos viene pre-computado por el backend (roomType.taxBreakdown). Para
     promo, el recálculo lo hace el backend al crear la reserva — acá solo mostramos el base.
@@ -129,73 +136,73 @@
           </div>
 
           <!--
-            Una fila por ocupación — SALVO corridas de igual precio, que se agrupan para
-            mostrar el número una sola vez (ver utils/occupancy-groups.ts: "para 1/2/3 $130"
-            repetido lee como bug; el precio distinto sí va fila por fila). Las no vendibles
-            NO se filtran: van deshabilitadas con el motivo traducido (regla del dueño).
-          -->
-          <ul v-if="occupancyRows(rt).length > 0" class="mt-3 divide-y divide-slate-100 border-t border-slate-100">
-            <li v-for="entry in groupedOccupancyRows(rt)" :key="entry.kind === 'group' ? `g-${entry.rows[0]!.occupancy}` : entry.row.occupancy" class="py-3">
-              <!-- Grupo de ocupaciones al mismo precio: el precio se pinta UNA vez, cada
-                   ocupación es su propia fila con stepper propio (líneas de carrito distintas). -->
-              <div v-if="entry.kind === 'group'">
-                <div class="flex items-center justify-between gap-3">
-                  <span class="text-[11px] text-text-muted">{{ t('rooms.occupancyPrice', { count: store.nights || 1 }) }}</span>
-                  <span class="text-right">
-                    <span class="block text-sm font-black tabular-nums text-navy">{{ formatPrice(entry.rows[0]!.price, store.displayCurrency) }}</span>
-                    <span class="block text-[11px] tabular-nums text-text-muted">{{ formatPrice(entry.rows[0]!.pricePerNight, store.displayCurrency) }}/{{ t('rooms.perNight') }}</span>
-                  </span>
-                </div>
-                <div class="mt-2 space-y-2">
-                  <div v-for="row in entry.rows" :key="row.occupancy" :data-occupancy="row.occupancy" class="flex items-center gap-3">
-                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-50 text-navy/50">
-                      <Icon :name="row.occupancy > 1 ? 'users' : 'user'" :size="16" />
-                    </span>
-                    <span class="flex-1 text-sm font-bold text-navy">{{ t('rooms.occupancyFor', { count: row.occupancy }) }}</span>
-                    <Stepper
-                      :model-value="cartQuantity(rt, row.occupancy)"
-                      :min="0"
-                      :max="rt.availableCount"
-                      :label="`${prettify(rt.name)} · ${t('rooms.occupancyFor', { count: row.occupancy })}`"
-                      @update:model-value="onQtyChange(rt, row, $event)"
-                    />
-                  </div>
-                </div>
-              </div>
-              <!-- Fila individual: stepper de cantidad (soporta combinar varias ocupaciones/tipos en la misma reserva) -->
-              <div v-else :data-occupancy="entry.row.occupancy" class="flex w-full items-center gap-3" :class="!entry.row.available && 'opacity-60'">
-                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-50 text-navy/50">
-                  <Icon :name="entry.row.occupancy > 1 ? 'users' : 'user'" :size="16" />
-                </span>
-                <span class="min-w-0 flex-1">
-                  <span class="block text-sm font-bold text-navy">{{ t('rooms.occupancyFor', { count: entry.row.occupancy }) }}</span>
-                  <template v-if="entry.row.available">
-                    <span class="block text-[11px] tabular-nums text-text-muted">{{ formatPrice(entry.row.price, store.displayCurrency) }} · {{ formatPrice(entry.row.pricePerNight, store.displayCurrency) }}/{{ t('rooms.perNight') }}</span>
-                  </template>
-                  <span v-else class="block text-[11px] font-bold text-slate-500">{{ unavailableLabel(entry.row.unavailableReason) }}</span>
-                </span>
-                <Stepper
-                  v-if="entry.row.available"
-                  :model-value="cartQuantity(rt, entry.row.occupancy)"
-                  :min="0"
-                  :max="rt.availableCount"
-                  :label="`${prettify(rt.name)} · ${t('rooms.occupancyFor', { count: entry.row.occupancy })}`"
-                  @update:model-value="onQtyChange(rt, entry.row, $event)"
-                />
-              </div>
-            </li>
-          </ul>
+            Feature adultos+niños+edades (2026-09-02) — reemplaza la matriz "Para 1/Para 2" por
+            un composer: adultos + niños + edad de CADA niño. La ocupación a cotizar sale de
+            `resolveChildComposition` (utils/child-composition.ts, espejo del backend) contra
+            `store.childPolicy`. Cada click en "Agregar esta habitación" agrega UNA línea al
+            carrito con ESA composición exacta — así una familia con 2 habitaciones puede darle
+            a cada una sus propios niños (confirmado con el dueño del producto).
 
-          <!-- Fallback sin matriz: stepper de cantidad con el precio único de siempre. -->
-          <div v-else class="mt-3 flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
-            <span class="text-xs font-bold text-text-muted">{{ t('rooms.quantity') }}</span>
-            <Stepper
-              :model-value="cartQuantity(rt, 1)"
-              :min="0"
-              :max="rt.availableCount"
-              :label="prettify(rt.name)"
-              @update:model-value="onFallbackQtyChange(rt, $event)"
-            />
+            REGLA DEL DUEÑO (se mantiene): la composición actual, si no se puede vender, se
+            muestra iguial — deshabilitada y con el motivo — nunca oculta.
+          -->
+          <div class="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-3">
+            <div class="flex items-center justify-between gap-3">
+              <span class="text-sm font-bold text-navy">{{ t('rooms.guests.adults') }}</span>
+              <Stepper
+                :model-value="composer(rt).adults"
+                :min="1"
+                :max="rt.maxAdults ?? rt.capacity"
+                :label="`${prettify(rt.name)} · ${t('rooms.guests.adults')}`"
+                @update:model-value="setAdults(rt, $event)"
+              />
+            </div>
+            <div v-if="store.childPolicy.acceptChildren" class="flex items-center justify-between gap-3">
+              <span class="text-sm font-bold text-navy">{{ t('rooms.guests.children') }}</span>
+              <Stepper
+                :model-value="composer(rt).ages.length"
+                :min="0"
+                :max="rt.maxChildren ?? rt.capacity"
+                :label="`${prettify(rt.name)} · ${t('rooms.guests.children')}`"
+                @update:model-value="setChildrenCount(rt, $event)"
+              />
+            </div>
+            <!-- Un desplegable de edad POR NIÑO — confirmado con el dueño: "si elegís 2 niños,
+                 pregunta la edad del primero y del segundo aparte". -->
+            <div v-if="composer(rt).ages.length > 0" class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <label v-for="(age, i) in composer(rt).ages" :key="i" class="block">
+                <span class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-text-muted">
+                  {{ t('rooms.guests.childAge', { n: i + 1 }) }}
+                </span>
+                <select
+                  :value="age"
+                  :aria-label="t('rooms.guests.childAge', { n: i + 1 })"
+                  class="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"
+                  @change="setChildAge(rt, i, +($event.target as HTMLSelectElement).value)"
+                >
+                  <option v-for="a in maxChildAgeOptions" :key="a" :value="a - 1">{{ a - 1 }}</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="flex items-center justify-between gap-3 border-t border-slate-200 pt-3">
+              <span :data-occupancy="composition(rt).chargeableOccupancy">
+                <template v-if="capacityBlockReason(rt)">
+                  <span class="block text-[11px] font-bold text-slate-500">{{ maxLabel(capacityBlockReason(rt)!) }}</span>
+                </template>
+                <template v-else-if="matchedRow(rt) === null || matchedRow(rt)!.available">
+                  <span class="block text-sm font-black tabular-nums text-navy">{{ formatPrice(composedPrice(rt), store.displayCurrency) }}</span>
+                  <span class="block text-[11px] tabular-nums text-text-muted">{{ t('rooms.totalSuffix') }} · {{ formatPrice(composedPricePerNight(rt), store.displayCurrency) }}/{{ t('rooms.perNight') }}</span>
+                </template>
+                <span v-else class="block text-[11px] font-bold text-slate-500">{{ unavailableLabel(matchedRow(rt)!.unavailableReason) }}</span>
+              </span>
+              <button
+                type="button"
+                :disabled="!canAddComposition(rt)"
+                class="shrink-0 rounded-full bg-cyan px-4 py-2 text-xs font-black text-white transition hover:bg-cyan/90 disabled:cursor-not-allowed disabled:opacity-40"
+                @click="addComposedRoom(rt)"
+              >{{ t('rooms.guests.addRoom') }}</button>
+            </div>
           </div>
 
           <!--
@@ -238,7 +245,7 @@
       <ul class="space-y-2">
         <li v-for="line in store.cart" :key="line.key" class="flex items-center justify-between gap-2 text-sm">
           <div class="min-w-0">
-            <p class="truncate font-bold text-navy">{{ prettify(line.roomName) }} · {{ t('rooms.occupancyFor', { count: line.occupancy }) }}</p>
+            <p class="truncate font-bold text-navy">{{ prettify(line.roomName) }} · {{ cartLineGuestsLabel(line) }}</p>
             <p class="text-xs text-text-muted">{{ line.quantity }} × {{ formatPrice(line.unitPrice, store.displayCurrency) }}</p>
           </div>
           <div class="flex shrink-0 items-center gap-2">
@@ -267,11 +274,11 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useBookingStore } from '@/composables/useBooking'
+import { useBookingStore, type CartLine } from '@/composables/useBooking'
+import { useGuestComposer } from '@/composables/useGuestComposer'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { BookingMessageKey } from '@/composables/useBookingI18n'
-import type { MealPlanCode, OccupancyUnavailableReason, RoomOccupancyRate, RoomTypeRate } from '@/types/booking'
-import { groupOccupancyRows, type OccupancyEntry } from '@/utils/occupancy-groups'
+import type { MealPlanCode, OccupancyUnavailableReason, RoomTypeRate } from '@/types/booking'
 import type { PublicReviewAggregate, PublicReviewsResponse } from '@/types'
 import MultiChannelBadges from '@/components/reviews/MultiChannelBadges.vue'
 import AggregateScore from '@/components/reviews/AggregateScore.vue'
@@ -343,26 +350,9 @@ function prettify(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1)
 }
 
-/** Misma fórmula de key que `cartLineKey` en el store (no exportada) — mantenida en paralelo. */
-function cartKey(rt: RoomTypeRate, occupancy: number): string {
-  return `${rt.id}|${occupancy}`
-}
-
-/** Cantidad ya agregada al carrito para (tipo, ocupación). 0 si no está. */
-function cartQuantity(rt: RoomTypeRate, occupancy: number): number {
-  return store.cart.find((l) => l.key === cartKey(rt, occupancy))?.quantity ?? 0
-}
-
-/** El tipo tiene AL MENOS una línea en el carrito (cualquier ocupación) — resalta la tarjeta. */
+/** El tipo tiene AL MENOS una línea en el carrito — resalta la tarjeta. */
 function cartHasType(roomTypeId: string): boolean {
   return store.cart.some((l) => l.roomType === roomTypeId)
-}
-
-/** Stepper del fallback (sin matriz): cada tarjeta representa ocupación=1 fija. */
-async function onFallbackQtyChange(rt: RoomTypeRate, qty: number): Promise<void> {
-  const current = cartQuantity(rt, 1)
-  if (qty > current) await store.addToCart(rt)
-  else if (qty < current) store.setCartLineQuantity(cartKey(rt, 1), qty)
 }
 
 // ─── Régimen de alimentación (tasks.md 2.2/2.4) ───────────────────────────────
@@ -403,30 +393,44 @@ const UNAVAILABLE_KEY: Record<OccupancyUnavailableReason, BookingMessageKey> = {
   over_capacity: 'rooms.unavailable.over_capacity',
 }
 
-/** Filas de ocupación del tipo, ordenadas ascendente. Vacío = backend sin matriz → fallback. */
-function occupancyRows(rt: RoomTypeRate): RoomOccupancyRate[] {
-  const rows = rt.occupancies
-  if (!Array.isArray(rows) || rows.length === 0) return []
-  return [...rows].sort((a, b) => a.occupancy - b.occupancy)
-}
-
-/** Filas (individual) o grupos (corrida de igual precio) para pintar sin repetir el número. */
-function groupedOccupancyRows(rt: RoomTypeRate): OccupancyEntry[] {
-  return groupOccupancyRows(occupancyRows(rt))
-}
-
 function unavailableLabel(reason: OccupancyUnavailableReason | null): string {
   // `available:false` sin motivo no debería pasar (el backend siempre lo manda), pero un
   // "No disponible" a secas es preferible a una fila muda que parece un bug de render.
   return t(reason ? UNAVAILABLE_KEY[reason] : 'rooms.unavailable.default')
 }
 
-/** Stepper de una fila de ocupación: sube con `addToCart` (crea la línea si no existía),
- *  baja con `setCartLineQuantity` (existe porque solo baja desde una cantidad > 0). */
-async function onQtyChange(rt: RoomTypeRate, row: RoomOccupancyRate, qty: number): Promise<void> {
-  if (!row.available) return
-  const current = cartQuantity(rt, row.occupancy)
-  if (qty > current) await store.addToCart(rt, row.occupancy)
-  else if (qty < current) store.setCartLineQuantity(cartKey(rt, row.occupancy), qty)
+// ─── Composer: adultos + niños + edades por tarjeta (feature 2026-09-02) ───────────────────────
+// Reemplaza la matriz "Para 1/Para 2": el huésped arma UNA composición por tarjeta y la agrega
+// al carrito con "Agregar esta habitación" — cada click es una habitación distinta, cada una con
+// sus propios niños (confirmado con el dueño del producto: "si elegís 2 niños, edad del primero
+// y del segundo aparte"). Lógica compartida con BookingModal.vue (landing) — ver
+// composables/useGuestComposer.ts.
+const {
+  composer, setAdults, setChildrenCount, setChildAge,
+  composition, matchedRow, composedPrice, composedPricePerNight,
+  canAddComposition, addComposedRoom, maxChildAgeOptions, capacityBlockReason,
+} = useGuestComposer()
+
+/** Requerimiento 6 (2026-09-03) — texto del motivo cuando `capacityBlockReason` bloquea por
+ *  maxAdults/maxChildren del tipo (la matriz no lo sabe, ver useGuestComposer.ts). `'capacity'`
+ *  reusa el mismo texto que `unavailableLabel('over_capacity')` — mismo concepto, un solo string. */
+function maxLabel(reason: 'max_adults' | 'max_children' | 'capacity'): string {
+  if (reason === 'max_adults') return t('rooms.guests.maxAdultsExceeded')
+  if (reason === 'max_children') return t('rooms.guests.maxChildrenExceeded')
+  return unavailableLabel('over_capacity')
+}
+
+/** Composición de una línea YA en el carrito, para el resumen al pie del step. Líneas legacy
+ *  (sin `adults`/`childrenAges` — ej. BookingModal.vue de la landing) siguen mostrando "para N". */
+function cartLineGuestsLabel(line: CartLine): string {
+  if (line.adults === undefined || line.childrenAges === undefined) {
+    return t('rooms.occupancyFor', { count: line.occupancy })
+  }
+  if (line.childrenAges.length === 0) return t('rooms.guests.adultsCount', { count: line.adults })
+  return t('rooms.guests.summary', {
+    adults: line.adults,
+    children: line.childrenAges.length,
+    ages: line.childrenAges.join(', '),
+  })
 }
 </script>

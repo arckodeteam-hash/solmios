@@ -60,13 +60,15 @@ export class BookingengineService {
     roomBlocksRepo?: RepositoryAdapter<any>,
     seasonAssignmentsRepo?: RepositoryAdapter<any>,
     roomRatesRepo?: RepositoryAdapter<any>,
+    /** Req. 2 (2026-09-03) — `Configuration` KV GENERAL para `room_type_capacity` (NO `configRepo`, que es `BookingConfig`). */
+    configurationRepo?: RepositoryAdapter<any>,
   ) {
     if (!registry) throw new Error('bookingengine: PaymentGatewayRegistry es requerido (pasarela por hotel)')
     if (!reservationsRepo) throw new Error('bookingengine: reservationsRepo es requerido (F0 0.15 — Stripe opera sobre Reservations)')
     this.config = new ConfigUseCase(configRepo, cache)
     this.availability = new AvailabilityUseCase(
       cache, roomsRepo, reservationsRepo, hotelsRepo,
-      roomBlocksRepo, seasonAssignmentsRepo, roomRatesRepo,
+      roomBlocksRepo, seasonAssignmentsRepo, roomRatesRepo, configurationRepo,
     )
     this.analytics = new AnalyticsUseCase(eventsRepo, trackingRepo)
     // F0 0.15 — Stripe opera sobre Reservations (tabla operacional). Antes usaba `bookingRepo`

@@ -50,12 +50,25 @@ export class ReservasController {
     return { status: 200, body: item }
   }
   async store(req: HttpRequest) {
-    const data = validateSchema(CreateReservasSchema, req.body)
+    const data = validateSchema(CreateReservasSchema, req.body) as Record<string, unknown>
+    // Requerimiento 11 (2026-09-03) — FIX: el schema declaraba (en un comentario) que `childrenAges`
+    // se reincorporaba crudo desde `req.body`, mismo patrón que bookingengine — pero esa
+    // reincorporación nunca se había escrito acá, así que una reserva cargada a mano desde el panel
+    // con edades de niños las perdía en silencio. Mismo motivo que en bookingengine: el validador
+    // nativo descarta `type:'array'` sin avisar.
+    const rawBody = (req.body ?? {}) as Record<string, unknown>
+    if (Array.isArray(rawBody.childrenAges)) data.childrenAges = rawBody.childrenAges
     const item = await this.service.create(data as any, req.user as any)
     return { status: 201, body: item }
   }
   async update(req: HttpRequest) {
-    const data = validateSchema(UpdateReservasSchema, req.body)
+    const data = validateSchema(UpdateReservasSchema, req.body) as Record<string, unknown>
+    // Requerimiento 11 — mismo fix que `store`: sin esto, editar una reserva NUNCA podía tocar
+    // `childrenAges` (ni actualizarla ni, si el caller la manda, conservarla a propósito). Si el
+    // caller no la manda, el campo queda AFUERA del dto y el UPDATE parcial no la toca — no hay
+    // riesgo de borrarla por omisión.
+    const rawBody = (req.body ?? {}) as Record<string, unknown>
+    if (Array.isArray(rawBody.childrenAges)) data.childrenAges = rawBody.childrenAges
     const item = await this.service.update(req.params.id, data as any, req.user as any)
     return { status: 200, body: item }
   }

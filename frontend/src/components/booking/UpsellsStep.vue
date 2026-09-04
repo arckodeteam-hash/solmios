@@ -63,7 +63,7 @@
             <Stepper
               :model-value="qtyFor(up.id)"
               :min="1"
-              :max="up.kind === 'per_room' ? store.rooms : 20"
+              :max="up.kind === 'per_room' ? store.cartTotalRooms : 20"
               @update:model-value="(v) => setQty(up.id, v)"
             />
           </div>
@@ -109,13 +109,27 @@ function qtyFor(id: string): number {
   return store.selectedUpsells.find((u) => u.id === id)?.quantity ?? 1
 }
 
-/** Toggle por checkbox. Default qty por kind: per_room=rooms, per_person=guests, per_stay=1. */
+/**
+ * Toggle por checkbox. Default qty por kind: per_room=habitaciones del carrito, per_person=
+ * ocupación REAL de la reserva, per_stay=1.
+ *
+ * FIX (auditoría Requerimiento 7, 2026-09-03) — usaba `store.rooms`/`store.guests`: los campos de
+ * BÚSQUEDA (default 1 desde la decisión 2026-08-20 de no pedir ocupación por adelantado), NO lo
+ * que el huésped realmente agregó al carrito. Con 2 habitaciones y 4 huéspedes en el carrito, el
+ * desayuno "por persona" arrancaba en cantidad 1 — el huésped tenía que darse cuenta y corregirlo
+ * a mano. Mismo criterio que ya usa BookingModal.vue (`cartTotalGuests`/`cartTotalRooms`):
+ * `cartTotalGuests` ya excluye a los niños libres (no consumen plaza) e incluye a los que sí
+ * pagan; `cartTotalFreeChildren` suma SOLO a los libres — sumar `cartTotalChildren` (TODOS los
+ * niños) los contaría dos veces, porque los que pagan ya están dentro de `cartTotalGuests`.
+ */
 function toggle(id: string, e: Event) {
   const checked = (e.target as HTMLInputElement).checked
   const current = store.selectedUpsells.filter((u) => u.id !== id)
   if (checked) {
     const up = store.upsells.find((u) => u.id === id)
-    const defaultQty = up?.kind === 'per_room' ? store.rooms : up?.kind === 'per_person' ? store.guests : 1
+    const defaultQty = up?.kind === 'per_room'
+      ? store.cartTotalRooms
+      : up?.kind === 'per_person' ? store.cartTotalGuests + store.cartTotalFreeChildren : 1
     store.setSelectedUpsells([...current, { id, quantity: Math.max(1, defaultQty) }])
   } else {
     store.setSelectedUpsells(current)

@@ -18,6 +18,8 @@ import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
 import { assertRoomAvailable } from './availability'
 import { updateReservation } from './crud'
 import { repriceStay, guestsOfReservation, type RepriceRepos } from './reprice'
+import { resolveChildPolicy, composeFromPersistedReservation, fitsRoomCapacity, DEFAULT_CHILD_POLICY } from '../../../shared/usecases/child-composition'
+import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
 import type { PaidSource } from '../../../shared/usecases/reservation-paid'
 import type {
@@ -117,6 +119,14 @@ export interface RescheduleQuote {
   roomChanged: boolean
   datesChanged: boolean
   currency: string
+  /**
+   * Requerimiento 12 (edad de referencia, 2026-09-03) — `adults`/`children` recalculados con las
+   * edades proyectadas al `checkIn` NUEVO. Iguales a `existing.adults`/`existing.children` salvo
+   * que la reserva tenga `childrenAgesAsOf` y algún niño haya cruzado `maxFreeAge`/`maxChildAge`
+   * por el paso del tiempo — en ese caso `commitReschedule` los persiste (ver `buildQuote`).
+   */
+  projectedAdults: number
+  projectedChildren: number
 }
 
 export interface RescheduleDeps extends RepriceRepos {
@@ -150,6 +160,10 @@ export interface RescheduleDeps extends RepriceRepos {
   // `seasonAssignmentRepo` / `roomRateRepo` llegan de RepriceRepos: OPCIONALES y al final de las
   // deps a propósito. Sin ellos el modo `reprice` cae a `rooms.basePrice × noches` y lo declara
   // en `repricedFromRates: false` — degradación explícita, no silenciosa.
+  /** Requerimiento 7 (2026-09-03) — `Configuration` KV general, para `resolveChildPolicy` al
+   *  repreciar una reserva con `childrenAges`. Opcional: sin él, `guestsOfReservation` cae a
+   *  contar solo adultos (comportamiento previo a este fix, no un caso roto). */
+  configRepo?: any
 }
 
 function assertOwnership(existing: any, user: { role: string; hotelId?: string }): void {
@@ -199,6 +213,52 @@ async function buildQuote(deps: RescheduleDeps, existing: any, input: Reschedule
   const previousTotal = Number(existing.totalAmount) || 0
   const paidAmount = await deps.paidOf(existing.id, existing)
 
+  // Política de niños, resuelta UNA sola vez (Requerimiento 7 + 12): la usan tanto el chequeo de
+  // capacidad como el reprice y la proyección de edades. Solo se paga esta lectura si la reserva
+  // declaró `childrenAges` (caso común no la necesita).
+  const childPolicy = Array.isArray(existing.childrenAges) && existing.childrenAges.length > 0
+    ? await resolveChildPolicy(deps.configRepo, existing.hotelId)
+    : null
+
+  // Requerimiento 12 (2026-09-03) — composición reproyectada al check-in NUEVO
+  // (`composeFromPersistedReservation` con `targetCheckIn` — Opción B: cada edad se guarda junto
+  // a la fecha en que se declaró, `childrenAgesAsOf`, así que reagendar puede reclasificar a un
+  // niño que cruzó `maxFreeAge`/`maxChildAge` por el paso del tiempo, no solo por un cambio de
+  // política). Se calcula siempre (no solo si hay `room`) para poder exponer
+  // `projectedAdults`/`projectedChildren` en el quote y que `commitReschedule` los persista si
+  // cambiaron. Sin `childrenAges` cae a `DEFAULT_CHILD_POLICY` — mismo resultado que `adults` tal
+  // cual, sin niños que proyectar.
+  const composition = composeFromPersistedReservation(existing, childPolicy ?? DEFAULT_CHILD_POLICY, checkIn)
+
+  // FIX: `assertRoomAvailable` (más abajo, en quoteReschedule/commitReschedule) solo valida
+  // solape de FECHAS, nunca capacidad — mover una reserva de 3 adultos + 2 niños a una habitación
+  // `capacity:2` pasaba mientras no hubiera otra reserva esas fechas. Se revalida acá contra la
+  // habitación DESTINO (la actual si no cambia de cuarto). Sin `configRepo` cableado, cae a
+  // comparar solo `adults` — mismo criterio de degradación que el resto de esta cadena.
+  //
+  // ⚠️ LÍMITE REAL (auditoría final, 2026-09-04) — esta revalidación protege reservas con
+  // `childrenAges` poblado (el motor público SIEMPRE lo persiste). Una reserva cargada a mano
+  // desde el panel (`/api/reservas`, sin validación de composición — ver `validators/schema.ts`)
+  // puede tener `children:2` con `childrenAges:[]` — `composeFromPersistedReservation` con
+  // `ages.length===0` devuelve `chargeableOccupancy: adults` SOLO (el conteo crudo de `children`
+  // nunca entra a la cuenta, por diseño desde antes de este feature — ver
+  // `reschedule-pricing.test.ts`, "children plano nunca se sumó"). Para ESA reserva, este chequeo
+  // no detecta que 2 niños de más se están moviendo a un cuarto que no los tiene en cuenta: valida
+  // "adultos entran", no "el grupo completo entra". No es una regresión de este fix — es el mismo
+  // hueco que ya existía en el reprice (Requerimiento 7) — pero hay que tenerlo presente: cerrarlo
+  // de verdad requiere decidir qué hacer con reservas de panel sin edades declaradas (ver
+  // Requerimiento B de la auditoría final: ReservationWizardModal.vue nunca las pide).
+  if (room) {
+    const roomTypeCapacityMap = await resolveRoomTypeCapacityMap(deps.configRepo, existing.hotelId)
+    const capacity = effectiveRoomCapacity(roomTypeCapacityMap, {
+      type: room.type, capacity: Number(room.capacity) || composition.chargeableOccupancy,
+      maxAdults: room.maxAdults, maxChildren: room.maxChildren,
+    })
+    if (!fitsRoomCapacity(capacity, composition)) {
+      throw new ConflictError(`Esta habitación admite hasta ${capacity.capacity} huésped(es); la reserva tiene ${composition.chargeableOccupancy}`)
+    }
+  }
+
   // Opción 1 — MANTENER el precio pactado: solo cobra las NOCHES AGREGADAS a tarifa base del
   // destino, sin repreciar la estadía (el total original pudo salir de otra tarifa/temporada).
   // OJO: mover de habitación sin cambiar noches da 0 acá aunque el cuarto nuevo valga el doble.
@@ -208,11 +268,13 @@ async function buildQuote(deps: RescheduleDeps, existing: any, input: Reschedule
 
   // Opción 2 — REPRECIAR toda la estadía nueva a tarifa vigente (season_assignments → room_rates
   // → fallback rooms.basePrice), noche a noche. Es la que sí ve el cambio de habitación.
+  // Requerimiento 7 — la ocupación para elegir la fila de `room_rates` tiene que contar a los
+  // niños con plaza de la reserva ORIGINAL, no solo `adults`.
   const reprice = await repriceStay(deps, {
     hotelId: existing.hotelId,
     roomType: String(room?.type ?? ''),
     checkIn, checkOut,
-    guests: guestsOfReservation(existing),
+    guests: guestsOfReservation(existing, childPolicy, checkIn),
     fallbackPrice: basePrice,
   })
   const repricedTotal = round2(reprice.total)
@@ -236,6 +298,8 @@ async function buildQuote(deps: RescheduleDeps, existing: any, input: Reschedule
     roomChanged: String(roomId) !== String(existing.roomId),
     datesChanged: checkIn !== existing.checkIn || checkOut !== existing.checkOut,
     currency: existing.currency || 'USD',
+    projectedAdults: composition.effectiveAdults,
+    projectedChildren: composition.payingChildren + composition.freeChildren,
   }
 }
 
@@ -280,6 +344,18 @@ export async function commitReschedule(deps: RescheduleDeps, id: string, input: 
   // (arriba) solo dice que el total bajó; con la reserva impaga ese número no es plata de nadie.
   const overpaidAmount = Math.max(0, round2(quote.paidAmount - newTotal))
 
+  // Requerimiento 12 — si la proyección de edades al check-in NUEVO reclasificó a alguien (niño
+  // que cruzó `maxFreeAge`/`maxChildAge` por el paso del tiempo), el `adults`/`children`
+  // PERSISTIDOS quedan desactualizados en cuanto se confirma el reagendado. `childrenAges` (las
+  // edades tal cual declaradas) NUNCA se toca — sigue siendo la auditoría de lo que se tipeó
+  // originalmente; solo se corrigen los contadores derivados. Sin proyección (reserva sin
+  // `childrenAgesAsOf`, o ningún cruce de umbral) esto es un no-op: `projectedAdults`/
+  // `projectedChildren` son idénticos a los ya persistidos.
+  const existingAdults = Number(existing.adults) || 0
+  const existingChildren = Number(existing.children) || 0
+  const reclassified = quote.projectedAdults !== existingAdults || quote.projectedChildren !== existingChildren
+  const reclassifyDto = reclassified ? { adults: quote.projectedAdults, children: quote.projectedChildren } : {}
+
   // Reusa updateReservation: revalida solape (assertRoomAvailable) y emite el socket + invalida caché.
   // El `afterPersist` recalcula el saldo persistido DENTRO de esa ventana: el socket sale con el
   // pendiente del precio NUEVO y la caché del listado se invalida después de escribirlo (STR-2).
@@ -288,7 +364,7 @@ export async function commitReschedule(deps: RescheduleDeps, id: string, input: 
   // vivos por el saldo viejo: el huésped puede pagar un importe mayor que el nuevo.
   const reservation = await updateReservation(
     deps.repo, deps.logger, deps.cache, deps.sockets, id,
-    { roomId: quote.roomId, checkIn: quote.checkIn, checkOut: quote.checkOut, totalAmount: newTotal } as any,
+    { roomId: quote.roomId, checkIn: quote.checkIn, checkOut: quote.checkOut, totalAmount: newTotal, ...reclassifyDto } as any,
     user,
     deps.roomRepo, undefined, undefined, undefined,
     {

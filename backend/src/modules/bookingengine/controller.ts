@@ -287,6 +287,10 @@ export class BookingengineController {
       ...validated,
       ...(Array.isArray(rawBody.upsells) ? { upsells: rawBody.upsells } : {}),
       ...(typeof rawBody.idempotencyKey === 'string' ? { idempotencyKey: rawBody.idempotencyKey } : {}),
+      // childrenAges (array de edades, feature adultos+niños+edades 2026-09-02): mismo motivo
+      // que upsells — el validador nativo descarta en silencio type:'array'. El usecase valida
+      // longitud/rango contra la política de niños del hotel.
+      ...(Array.isArray(rawBody.childrenAges) ? { childrenAges: rawBody.childrenAges } : {}),
     } as { successUrl?: string; cancelUrl?: string; [k: string]: unknown }
 
     // successUrl/cancelUrl: el widget (F2) las va a mandar en el body. Si no llegan, derivamos

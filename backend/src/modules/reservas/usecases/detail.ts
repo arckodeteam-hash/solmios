@@ -1,9 +1,10 @@
 import { NotFoundError, AuthError } from 'arckode-framework'
 import type { ReservasQueries } from './reservas-queries'
-import { addonsTotal, chargeableTotal, pendingBalance, creditBalance } from '../../../shared/utils/reservation-balance'
+import { addonsTotal, chargeableTotal, pendingBalance, creditBalance, paymentState } from '../../../shared/utils/reservation-balance'
 import { paidForReservation } from '../../../shared/usecases/reservation-paid'
 import { reservationPaymentHistory, type PaymentHistoryEntry } from '../../../shared/usecases/reservation-payment-history'
 import { toMessageLogViews, type MessageLogSource } from './message-log'
+import { resolveChildPolicy, describeChildrenAges, type ChildAgeDescription } from '../../../shared/usecases/child-composition'
 
 export async function getExtendedDetail(
   repo: any, guestRepo: any, roomRepo: any, queries: ReservasQueries, id: string, currentUser: any,
@@ -50,6 +51,19 @@ export async function getExtendedDetail(
   }
   const CARD_FIELDS = ['cardHolder', 'cardBrand', 'cardLast4', 'cardExpMonth', 'cardExpYear']
   const safeReservation = Object.fromEntries(Object.entries(r).filter(([k]) => !CARD_FIELDS.includes(k)))
+  // Requerimiento 13 (Administración | Composición de huéspedes, 2026-09-03) — desglose POR NIÑO
+  // para que el panel pueda mostrar CUÁLES edades se reclasificaron como adulto, no solo "alguna
+  // lo fue" (lo que ya hacía `ReservationModal.vue` antes de este requerimiento). Solo se resuelve
+  // la política si hay `childrenAges` (no pagar esta lectura para el caso común, mismo criterio
+  // que `reprice.ts`/`reschedule.ts`).
+  let childrenAgesDetail: ChildAgeDescription[] = []
+  if (Array.isArray(r.childrenAges) && r.childrenAges.length > 0) {
+    const childPolicy = await resolveChildPolicy(
+      { findOne: async (f: { hotelId: string; key: string }) => queries.findConfiguration(f.hotelId, f.key) } as any,
+      r.hotelId,
+    )
+    childrenAgesDetail = describeChildrenAges(r, childPolicy)
+  }
   // El total cobrable es UNO solo: alojamiento + otros cobros + extras (shared/utils/reservation-balance).
   // Antes acá se calculaba `totalAmount - deposit` a mano y se ignoraban addons/otherCharges, así que
   // el renglón "Pendiente de cobro" del modal y el monto de la Checkout Session de Stripe cobraban de menos.
@@ -71,8 +85,16 @@ export async function getExtendedDetail(
     creditAmount: creditBalance(r, addons, paid),
     /** Lo ya cobrado según `payments` (GH-0.2). El modal lo muestra junto al pendiente. */
     paidAmount: paid,
+    /** Requerimiento 14 (Administración | Pago realizado, 2026-09-04) — 'pending'/'partial'/'paid',
+     *  derivado de `chargeableTotal`/`paidAmount` de ACÁ ARRIBA (misma fuente, `payments`). El
+     *  modal lo usa para el badge de estado en vez de re-derivarlo de `deposit` (que un cobro por
+     *  folio/factura en efectivo nunca toca y hacía contradecir a "Pendiente de cobro"). */
+    paymentState: paymentState(r, addons, paid),
     /** Movimientos de dinero de la reserva: cobros y devoluciones, con método y referencia. */
     paymentHistory,
+    /** Requerimiento 13 — desglose por niño (edad declarada, edad efectiva hoy, balde). [] si no
+     *  hay `childrenAges`. */
+    childrenAgesDetail,
   }
 }
 

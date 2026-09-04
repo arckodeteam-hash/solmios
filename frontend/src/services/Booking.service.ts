@@ -101,6 +101,7 @@ export const BookingService = {
     // la unidad física a partir de `roomType`. Solo se manda si un caller lo pasó explícito.
     if (dto.roomId) body.roomId = dto.roomId
     if (dto.children !== undefined) body.children = dto.children
+    if (dto.childrenAges && dto.childrenAges.length > 0) body.childrenAges = dto.childrenAges
     if (dto.guest.estimatedArrival) body.estimatedArrival = dto.guest.estimatedArrival
     if (dto.guest.specialRequests) body.specialRequests = dto.guest.specialRequests
     if (dto.promoCode) body.promoCode = dto.promoCode

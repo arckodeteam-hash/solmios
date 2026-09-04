@@ -107,6 +107,10 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         // abajo. Sin esto, `AvailabilityUseCase` seguía vendiendo habitaciones bloqueadas por
         // mantenimiento y noches con `room_rates.closed` (cerradas en las OTAs, abiertas acá).
         roomBlocksRepo, seasonAssignmentsRepo, roomRatesRepo,
+        // Requerimiento 2 (capacidad por tipo, 2026-09-03) — `Configuration` KV general, para que
+        // `AvailabilityUseCase` lea `room_type_capacity` (mismo repo que `configurationRepo` de
+        // abajo, ya existente).
+        configurationRepo,
       )
       const controller = new BookingengineController(
         service, log, orm, auth, opts?.pushAvailability, hotelsRepo,

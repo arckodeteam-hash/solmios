@@ -41,6 +41,8 @@ import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from '.
 import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem } from './public-booking'
+import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity } from '../../../shared/usecases/child-composition'
+import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
 
 const MS_PER_DAY = 86_400_000
 
@@ -56,6 +58,11 @@ export interface RoomLineInput {
   children?: number
   /** Unidades de este tipo+ocupación a reservar. */
   quantity: number
+  /** Feature adultos+niños+edades (2026-09-02): edades declaradas para ESTA línea/habitación —
+   *  cada habitación del grupo puede llevar niños distintos. Si viene, `adults`/`children` de
+   *  arriba se RECALCULAN acá contra la política del hotel (mismo criterio que public-booking.ts,
+   *  el caller legacy que solo manda `adults`/`children` como contadores sigue igual). */
+  childrenAges?: number[]
 }
 
 class RoomTakenConcurrentlyError extends Error {
@@ -76,8 +83,11 @@ function normalizeRoomLines(raw: any): RoomLineInput[] | null {
     const adults = Math.max(1, Math.floor(Number(r?.adults) || 1))
     const children = Math.max(0, Math.floor(Number(r?.children) || 0))
     const quantity = Math.max(1, Math.floor(Number(r?.quantity) || 1))
+    const childrenAges = Array.isArray(r?.childrenAges)
+      ? r.childrenAges.map((a: unknown) => Number(a)).filter((a: number) => Number.isFinite(a) && a >= 0)
+      : []
     if (!roomType) continue
-    out.push({ roomType, adults, children, quantity })
+    out.push({ roomType, adults, children, quantity, ...(childrenAges.length > 0 ? { childrenAges } : {}) })
   }
   return out.length > 0 ? out : null
 }
@@ -127,6 +137,20 @@ export async function createPublicBookingGroup(
     return { status: 400, body: { error: `No se pueden reservar más de ${MAX_GROUP_UNITS} habitaciones en una sola operación` } }
   }
 
+  // Feature adultos+niños+edades (2026-09-02): UNA lectura de política para todo el grupo (mismo
+  // hotel para todas las líneas). Solo se resuelve si AL MENOS una línea declaró edades — un
+  // grupo armado por un caller legacy (sin `childrenAges` en ninguna línea) no paga el costo de
+  // esta lectura extra y cotiza exactamente como antes.
+  const anyLineHasAges = lines.some((l) => (l.childrenAges?.length ?? 0) > 0)
+  const childPolicy = anyLineHasAges ? await resolveChildPolicy(extraDeps?.config, hotelId) : null
+  if (anyLineHasAges && childPolicy && !childPolicy.acceptChildren) {
+    return { status: 400, body: { error: 'Este hotel no acepta niños en la reserva' } }
+  }
+  // Requerimiento 2 (2026-09-03) — misma política de capacidad por tipo que `public-booking.ts`,
+  // SIEMPRE (no solo si hay edades): una línea sin `childrenAges` también tiene que respetar el
+  // `maxAdults`/`maxChildren` que el hotel haya configurado para ese tipo.
+  const roomTypeCapacityMap = await resolveRoomTypeCapacityMap(extraDeps?.config, hotelId)
+
   const nights = Math.max(1, Math.round((new Date(checkOut).getTime() - new Date(checkIn).getTime()) / MS_PER_DAY))
   if (nights > MAX_STAY_NIGHTS) {
     return { status: 400, body: { error: `La estadía no puede superar ${MAX_STAY_NIGHTS} noches` } }
@@ -163,11 +187,30 @@ export async function createPublicBookingGroup(
   // `claimedIds` evita que 2 líneas del MISMO POST se lleven la misma unidad física (2 líneas
   // del mismo roomType con distinta ocupación, por ejemplo "Deluxe para 2 ×1 + Deluxe para 4 ×1").
   const claimedIds = new Set<string>()
-  interface ResolvedLine { roomType: string; adults: number; children: number; roomIds: string[]; perUnitPrice: number }
+  interface ResolvedLine { roomType: string; adults: number; children: number; childrenAges: number[]; roomIds: string[]; perUnitPrice: number }
   const resolvedLines: ResolvedLine[] = []
 
   for (const line of lines) {
-    const closedForOccupancy = closedRoomTypes(rawRates ?? [], rawAssignments ?? [], stayNightDates, line.adults)
+    const hasAges = (line.childrenAges?.length ?? 0) > 0
+    // FIX (mismo bug que public-booking.ts, encontrado en revisión Requerimiento 2, 2026-09-03):
+    // la composición legacy tiene que contar `line.children` para que `fitsRoomCapacity` (de acá
+    // para abajo, unificado con el path de edades) siga validando capacidad física exactamente
+    // como el chequeo literal `adults+children >= room.capacity` de antes — y para que
+    // `maxChildren`, si el hotel lo configuró, también aplique a una línea sin edades.
+    const composition = hasAges && childPolicy
+      ? resolveChildComposition(line.adults, line.childrenAges!, childPolicy)
+      : {
+          effectiveAdults: line.adults,
+          payingChildren: Math.max(0, line.children ?? 0),
+          freeChildren: 0,
+          chargeableOccupancy: line.adults + Math.max(0, line.children ?? 0),
+        }
+    // Ocupación para PRECIO/cierre por ocupación: chargeable (adultos + niños con plaza) si la
+    // línea declaró edades, o `line.adults` tal cual para un caller legacy — mismo criterio que
+    // `public-booking.ts`.
+    const pricingOccupancy = hasAges ? composition.chargeableOccupancy : line.adults
+
+    const closedForOccupancy = closedRoomTypes(rawRates ?? [], rawAssignments ?? [], stayNightDates, pricingOccupancy)
     if (isRoomTypeClosed(closedForOccupancy, line.roomType)) {
       return { status: 409, body: { error: `No hay disponibilidad de "${line.roomType}" para esa ocupación en esas fechas` } }
     }
@@ -177,16 +220,18 @@ export async function createPublicBookingGroup(
       return { status: 404, body: { error: `Tipo de habitación "${line.roomType}" no encontrado` } }
     }
 
-    // `line.adults` YA es la ocupación TOTAL de la línea (la fila "para N" elegida en la
-    // matriz, ver `RoomLineInput`) — sumamos `children` igual por si algún caller la manda
-    // aparte. Mismo criterio que `public-booking.ts`: sin este filtro, una unidad con capacidad
-    // insuficiente para el grupo se podía asignar igual (dentro del mismo tipo puede haber
-    // unidades de capacidad distinta).
-    const totalGuestsForLine = Math.max(1, line.adults + Math.max(0, line.children ?? 0))
+    // Ocupación FÍSICA de la línea (para el mensaje de error y el fallback sin `maxAdults`/
+    // `maxChildren`): adultos + niños con plaza + niños libres si hay edades, o adults+children
+    // tal cual para un caller legacy — mismo criterio que `public-booking.ts`.
+    const totalGuestsForLine = hasAges
+      ? composition.effectiveAdults + composition.payingChildren + composition.freeChildren
+      : Math.max(1, line.adults + Math.max(0, line.children ?? 0))
     const freeOfType = roomsOfType
       .filter((r: any) => isRoomSellable(r.status))
       .filter((r: any) => !busyRoomIds.has(r.id) && !blockedIds.has(r.id) && !claimedIds.has(r.id))
-      .filter((r: any) => Number(r.capacity ?? totalGuestsForLine) >= totalGuestsForLine)
+      // Requerimiento 2: unificado con el path de edades — la política de tipo (si el hotel la
+      // configuró) reemplaza los campos de la habitación física, en ambas ramas por igual.
+      .filter((r: any) => fitsRoomCapacity(effectiveRoomCapacity(roomTypeCapacityMap, { type: r.type, capacity: Number(r.capacity ?? totalGuestsForLine), maxAdults: r.maxAdults, maxChildren: r.maxChildren }), composition))
       .sort((a: any, b: any) => (Number(a.basePrice) || 0) - (Number(b.basePrice) || 0))
 
     if (freeOfType.length < line.quantity) {
@@ -205,11 +250,14 @@ export async function createPublicBookingGroup(
 
     const fallbackNightly = Number(chosen[0].basePrice) || 0
     const perUnitPrice = stayNightDates.length > 0
-      ? sumStayPrice(stayNightDates, baseRates, line.roomType, seasonByDate, line.adults, fallbackNightly, rawOverrides ?? [])
+      ? sumStayPrice(stayNightDates, baseRates, line.roomType, seasonByDate, pricingOccupancy, fallbackNightly, rawOverrides ?? [])
       : round2(fallbackNightly * nights)
 
     resolvedLines.push({
-      roomType: line.roomType, adults: line.adults, children: line.children ?? 0,
+      roomType: line.roomType,
+      adults: hasAges ? composition.effectiveAdults : line.adults,
+      children: hasAges ? composition.payingChildren + composition.freeChildren : (line.children ?? 0),
+      childrenAges: hasAges ? line.childrenAges! : [],
       roomIds: chosen.map((r: any) => r.id), perUnitPrice,
     })
   }
@@ -323,7 +371,10 @@ export async function createPublicBookingGroup(
           const reservation = await tx.create('Reservations', {
             id: crypto.randomUUID(), hotelId, roomId, guestId: guest.id, groupId: group.id,
             checkIn, checkOut, status: 'pending', source: 'direct',
-            adults: line.adults, children: line.children,
+            adults: line.adults, children: line.children, childrenAges: line.childrenAges,
+            // Requerimiento 12 (edad de referencia, 2026-09-03) — mismo ancla que public-booking.ts:
+            // el check-in VIGENTE al declarar las edades, para poder proyectarlas al reagendar.
+            childrenAgesAsOf: line.childrenAges.length > 0 ? checkIn : undefined,
             // Cada fila lleva SU propio importe (para que folios/reportes sumen bien) — el
             // COBRO real es uno solo, sobre la líder, por `totalAmount` (ver más abajo).
             totalAmount: line.perUnitPrice, deposit: 0,

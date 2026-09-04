@@ -45,6 +45,8 @@ export function mapReservation(r: RawReservation): Reservation {
     checkOut: r.checkOut as unknown as Date,
     adults: r.adults ?? 2,
     children: r.children ?? 0,
+    childrenAges: r.childrenAges,
+    groupId: r.groupId ?? undefined,
     status,
     source: SOURCE_MAP[r.channel?.toLowerCase()] ?? 'other',
     totalAmount: r.totalAmount,
@@ -72,12 +74,15 @@ interface ReservationsResponse {
 }
 
 export const ReservationService = {
-  async list(params?: { hotelId?: string; status?: string; limit?: number; guestId?: string }): Promise<{ reservations: Reservation[]; total: number }> {
+  async list(params?: { hotelId?: string; status?: string; limit?: number; guestId?: string; groupId?: string }): Promise<{ reservations: Reservation[]; total: number }> {
     const qs = new URLSearchParams()
     if (params?.hotelId) qs.set('hotelId', params.hotelId)
     if (params?.status) qs.set('status', params.status)
     if (params?.limit) qs.set('limit', String(params.limit))
     if (params?.guestId) qs.set('guestId', params.guestId)
+    // Requerimiento 13 — trae las demás habitaciones de una reserva de varias (mismo groupId),
+    // para que ReservationModal.vue pueda mostrar la composición de cada una.
+    if (params?.groupId) qs.set('groupId', params.groupId)
     const query = qs.toString()
     const data = await http.get<ReservationsResponse>(`/reservas${query ? `?${query}` : ''}`)
     return { reservations: data.data.map(mapReservation), total: data.total }

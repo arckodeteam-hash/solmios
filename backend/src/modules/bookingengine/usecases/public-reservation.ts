@@ -36,6 +36,7 @@
 import crypto from 'node:crypto'
 import { paymentAmountsOf } from '../../../shared/utils/payment-status'
 import { paidForReservation } from '../../../shared/usecases/reservation-paid'
+import { chargeableTotal } from '../../../shared/utils/reservation-balance'
 
 const NOT_FOUND = { status: 404, body: { error: 'Reservation not found' } } as const
 
@@ -110,7 +111,19 @@ export async function getPublicReservation(
   } catch {
     // Se queda con `deposit`: mostrar el pago del motor web es mejor que no mostrar nada.
   }
-  const amounts = paymentAmountsOf(reservation.totalAmount, paid)
+  // Auditoría final (2026-09-04) — FIX: comparaba `paid` contra `reservation.totalAmount` crudo,
+  // ignorando `otherCharges`/extras — el MISMO bug (2026-08-19) que `shared/utils/
+  // reservation-balance.ts` ya había resuelto para Administración (`getExtendedDetail`), pero
+  // nunca migrado acá. Con extras cargados, esta pantalla podía decir "pendiente" sobre un saldo
+  // que Administración ya veía en $0 (o viceversa). Best-effort: un fallo leyendo extras no puede
+  // tumbar la confirmación pública, se degrada a "sin extras" (mismo total que antes).
+  let addons: unknown[] = []
+  try {
+    addons = await orm.findMany('ReservationAddons', { reservationId: reservation.id, hotelId: reservation.hotelId })
+  } catch {
+    // addons = [] — chargeableTotal degrada a totalAmount + otherCharges, sin extras.
+  }
+  const amounts = paymentAmountsOf(chargeableTotal(reservation, addons as any[]), paid)
 
   // B-6/H-4 (auditoría 2026-08-19): allow-list ESTRICTA, campo por campo — NUNCA la fila
   // cruda (patrón public-hotel-info.ts). La fila de Reservations arrastra ownerNotes,
@@ -130,6 +143,10 @@ export async function getPublicReservation(
         status: reservation.status,
         adults: reservation.adults,
         children: reservation.children,
+        // Requerimiento 4 (2026-09-03) — la edad de cada niño es SUYA, la declaró el huésped al
+        // reservar: mismo criterio que `adults`/`children` de arriba, no un dato interno del
+        // hotel. Ausente/`[]` en reservas viejas (antes de esta feature) o sin niños.
+        childrenAges: reservation.childrenAges ?? [],
         totalAmount: reservation.totalAmount,
         currency: reservation.currency,
         // `reservations` NO tiene columna `paymentStatus`: leerla devolvía SIEMPRE 'unpaid',

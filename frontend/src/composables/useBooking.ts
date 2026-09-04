@@ -55,6 +55,7 @@ import type {
 } from '@/types/booking'
 // Refactor cross-cutting: monedas del enum global (types/currency.ts — source of truth único).
 import { CURRENCY_CODES, type CurrencyCode } from '@/types/currency'
+import { resolveChildComposition, DEFAULT_CHILD_POLICY, type ChildPolicy } from '@/utils/child-composition'
 
 export type BookingStatus =
   | 'idle' // step 0 (SearchStep): aún no busca
@@ -169,6 +170,36 @@ export async function cancelReservation(
   return BookingService.cancelReservation(id, token, reason)
 }
 
+/** Una línea = un tipo de habitación + una ocupación ("para N") + cuántas unidades de ESA
+ *  combinación. `key` es la identidad estable de la línea. Exportada (a diferencia del resto del
+ *  store interno) porque RoomsStep.vue la necesita para tipar `cartLineGuestsLabel(line)`. */
+export interface CartLine {
+  key: string
+  roomType: string
+  roomName: string
+  /** Ocupación CHARGEABLE (la que cotiza) — para una línea con `childrenAges`, es
+   *  `effectiveAdults + payingChildren` (los niños libres no suman acá). */
+  occupancy: number
+  quantity: number
+  /** Feature adultos+niños+edades (2026-09-02). `undefined` solo en líneas armadas por el flujo
+   *  viejo de ocupación plana (`addToCart(room, occupancyNumber)`) — esas se leen por `occupancy`
+   *  tal como siempre. Requerimiento 3 (2026-09-03) migró BookingModal.vue (landing) al composer
+   *  de adultos+niños+edades, igual que RoomsStep.vue (widget): HOY ninguna de las dos entradas
+   *  públicas llama a `addToCart` con un número plano — el branch queda como compat defensiva,
+   *  no como un camino que alguna de las dos UIs siga tomando (ver Requerimiento 15, auditoría de
+   *  paridad wizard/landing, 2026-09-04). */
+  adults?: number
+  childrenAges?: number[]
+  /** Precio de UNA unidad a esta ocupación, la estadía completa (no por noche). */
+  unitPrice: number
+  unitTaxBreakdown: RoomTypeTaxItem[]
+  /** Tope de cantidad al agregar — `rt.availableCount` en el momento de agregar. Es una cota
+   *  de UX, no la autoridad: el backend revalida disponibilidad real al crear la reserva
+   *  (`createPublicBookingGroup`, 409 con el máximo real si la cotización quedó vieja). */
+  maxAvailable: number
+  photoUrl: string | null
+}
+
 export const useBookingStore = defineStore('booking-widget', () => {
   // ─── Hotel + búsqueda (step 0) ────────────────────────────────────────────────
   const slug = ref('')
@@ -191,6 +222,10 @@ export const useBookingStore = defineStore('booking-widget', () => {
    *  backend (`children`) y suma a la ocupación FÍSICA para consultar tarifas. */
   const children = ref(0)
   const rooms = ref(1)
+  /** Política de niños del hotel (feature adultos+niños+edades, 2026-09-02) — la carga
+   *  `booking-widget.vue` desde `PublicHotelInfoDTO.childPolicy` al resolver el hotel.
+   *  Default = DEFAULT_CHILD_POLICY (acepta, nadie gratis) hasta que llegue la real. */
+  const childPolicy = ref<ChildPolicy>({ ...DEFAULT_CHILD_POLICY })
 
   // ─── Resultados (step 1) ──────────────────────────────────────────────────────
   const ratesResponse = ref<PublicRatesResponse | null>(null)
@@ -207,26 +242,22 @@ export const useBookingStore = defineStore('booking-widget', () => {
   // combinación. `key` es la identidad estable de la línea (mismo tipo + misma ocupación =
   // MISMA línea, se suma cantidad; distinta ocupación del mismo tipo = línea aparte, porque
   // cotiza distinto — ver `rate-resolution.ts:sumStayPrice`).
-  interface CartLine {
-    key: string
-    roomType: string
-    roomName: string
-    occupancy: number
-    quantity: number
-    /** Precio de UNA unidad a esta ocupación, la estadía completa (no por noche). */
-    unitPrice: number
-    unitTaxBreakdown: RoomTypeTaxItem[]
-    /** Tope de cantidad al agregar — `rt.availableCount` en el momento de agregar. Es una cota
-     *  de UX, no la autoridad: el backend revalida disponibilidad real al crear la reserva
-     *  (`createPublicBookingGroup`, 409 con el máximo real si la cotización quedó vieja). */
-    maxAvailable: number
-    photoUrl: string | null
-  }
 
   const cart = ref<CartLine[]>([])
 
   function cartLineKey(roomType: string, occupancy: number): string {
     return `${roomType}|${occupancy}`
+  }
+
+  /** Key de una línea con composición (adultos+niños+edades) — DISTINTA del formato legacy
+   *  (`roomType|occupancy`) a propósito: dos habitaciones con la MISMA ocupación chargeable
+   *  pero niños de edades distintas no deben mezclarse en una sola línea "×2" (el huésped
+   *  espera ver cada habitación con SUS edades). Misma composición exacta (mismos adultos,
+   *  mismas edades) sí se agrupa — mismo criterio de "identidad = misma línea" que ya usa el
+   *  formato legacy para ocupación repetida. */
+  function cartLineKeyForComposition(roomType: string, adults: number, childrenAges: number[]): string {
+    const sortedAges = [...childrenAges].sort((a, b) => a - b).join('.')
+    return `${roomType}|a${adults}|c${sortedAges}`
   }
 
   // ─── Upsells (step 2) ─────────────────────────────────────────────────────────
@@ -324,6 +355,29 @@ export const useBookingStore = defineStore('booking-widget', () => {
    *  paso de resumen muestra como "huéspedes totales". Los niños (`children`, trip-level, sin
    *  asignar a una habitación específica) NO están incluidos acá — ver nota en `pay()`. */
   const cartTotalGuests = computed(() => cart.value.reduce((s, l) => s + l.occupancy * l.quantity, 0))
+
+  /** Niños TOTALES del carrito (libres + con plaza, Σ childrenAges.length × quantity de cada
+   *  línea) — a diferencia de `cartTotalGuests` (que excluye a los niños libres, "no consumen
+   *  plaza"), esto cuenta a TODOS: un bebé libre igual desayuna. Líneas legacy (sin
+   *  `childrenAges`, `undefined`) no aportan — mismo criterio que `children` (contador trip-level)
+   *  antes de esta feature: 0 si no se declaró ninguno. */
+  const cartTotalChildren = computed(() => cart.value.reduce((s, l) => s + (l.childrenAges?.length ?? 0) * l.quantity, 0))
+
+  /**
+   * Requerimiento 7 (2026-09-03) — niños que NO consumen plaza (libres) en todo el carrito.
+   *
+   * FIX: `cartTotalGuests + cartTotalChildren` (usado antes acá para "por persona") CONTABA DOS
+   * VECES a un niño con plaza — `cartTotalGuests` ya lo incluye (es ocupación CHARGEABLE =
+   * adultos + niños con plaza), y `cartTotalChildren` lo vuelve a sumar porque cuenta TODOS los
+   * niños sin distinguir. Solo los niños LIBRES son población física que `cartTotalGuests` deja
+   * afuera — un niño libre igual desayuna, aunque no pague habitación. La fórmula correcta para
+   * "ocupación física total" (extras por persona) es `cartTotalGuests + cartTotalFreeChildren`.
+   */
+  const cartTotalFreeChildren = computed(() => cart.value.reduce((s, l) => {
+    if (!l.childrenAges || l.childrenAges.length === 0) return s
+    const composition = resolveChildComposition(l.adults ?? 0, l.childrenAges, childPolicy.value)
+    return s + composition.freeChildren * l.quantity
+  }, 0))
 
   /** Subtotal de TODAS las habitaciones del carrito (antes de upsells/promo/impuestos). */
   const roomsSubtotal = computed(() => round2(
@@ -567,11 +621,26 @@ export const useBookingStore = defineStore('booking-widget', () => {
    * `occupancy` omitido = la tarjeta entera sin fila (fallback cuando el backend no manda
    * `occupancies`, comportamiento previo a la matriz): se agrega 1 unidad al precio publicado
    * (`fromPrice`), ocupación efectiva = 1 (no se puede saber cuánta gente sin la fila elegida).
+   *
+   * Feature adultos+niños+edades (2026-09-02): el segundo parámetro también acepta
+   * `{adults, childrenAges}` — tanto RoomsStep.vue (widget) como BookingModal.vue (landing, desde
+   * el Requerimiento 3) arman esa composición vía `useGuestComposer.addComposedRoom`, la ocupación
+   * a cotizar sale de `resolveChildComposition` contra `childPolicy` (niños libres no suman). El
+   * `occupancy` numérico plano es compat defensiva — ninguna de las dos entradas públicas lo llama
+   * hoy (confirmado en la auditoría de paridad del Requerimiento 15, 2026-09-04).
    */
-  async function addToCart(room: RoomTypeRate, occupancy?: number): Promise<void> {
-    const occ = typeof occupancy === 'number' && Number.isFinite(occupancy) && occupancy > 0
-      ? Math.floor(occupancy)
+  async function addToCart(
+    room: RoomTypeRate,
+    occupancy?: number | { adults: number; childrenAges: number[] },
+  ): Promise<void> {
+    const isComposition = typeof occupancy === 'object' && occupancy !== null
+    const composition = isComposition
+      ? resolveChildComposition(occupancy.adults, occupancy.childrenAges, childPolicy.value)
       : null
+
+    const occ = isComposition
+      ? composition!.chargeableOccupancy
+      : (typeof occupancy === 'number' && Number.isFinite(occupancy) && occupancy > 0 ? Math.floor(occupancy) : null)
     const row = occ !== null ? room.occupancies?.find((o) => o.occupancy === occ) : null
     // Defensa: no agregar una fila que el backend marcó no vendible (la UI ya la deshabilita —
     // esto cubre un estado viejo: deep-link, fechas cambiadas sin refrescar la matriz).
@@ -583,7 +652,9 @@ export const useBookingStore = defineStore('booking-widget', () => {
     // buscada (`physicalGuests` = adultos + niños), no un default fijo — si no, una búsqueda
     // "2 adultos, 2 niños" terminaría grabando la reserva para 1 sola persona.
     const effectiveOccupancy = occ ?? physicalGuests.value
-    const key = cartLineKey(room.id, effectiveOccupancy)
+    const key = isComposition
+      ? cartLineKeyForComposition(room.id, occupancy.adults, occupancy.childrenAges)
+      : cartLineKey(room.id, effectiveOccupancy)
     const cap = Math.max(1, room.availableCount)
     const existing = cart.value.find((l) => l.key === key)
     if (existing) {
@@ -592,6 +663,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
       cart.value.push({
         key, roomType: room.id, roomName: room.name, occupancy: effectiveOccupancy, quantity: 1,
         unitPrice, unitTaxBreakdown, maxAvailable: cap, photoUrl: room.photoUrl ?? null,
+        ...(isComposition ? { adults: occupancy.adults, childrenAges: [...occupancy.childrenAges] } : {}),
       })
     }
 
@@ -607,19 +679,9 @@ export const useBookingStore = defineStore('booking-widget', () => {
     }
   }
 
-  /** Quita una línea entera del carrito (todas sus unidades). */
+  /** Quita una línea entera del carrito (todas sus unidades) — sin afectar las demás. */
   function removeCartLine(key: string): void {
     cart.value = cart.value.filter((l) => l.key !== key)
-  }
-
-  /** Cambia la cantidad de una línea existente (acotada a 1..maxAvailable). 0 o negativo la
-   *  elimina — mismo resultado que `removeCartLine`, más cómodo desde un stepper "−". */
-  function setCartLineQuantity(key: string, quantity: number): void {
-    const q = Math.floor(quantity)
-    if (q <= 0) { removeCartLine(key); return }
-    const line = cart.value.find((l) => l.key === key)
-    if (!line) return
-    line.quantity = Math.min(line.maxAvailable, q)
   }
 
   /** Vacía el carrito (cambio de fechas, o el huésped quiere empezar de nuevo). */
@@ -784,6 +846,13 @@ export const useBookingStore = defineStore('booking-widget', () => {
       let res: CreateBookingResponse
       if (cart.value.length === 1 && cart.value[0]!.quantity === 1) {
         const line = cart.value[0]!
+        // Feature adultos+niños+edades (2026-09-02): si la línea viene de la composición
+        // (RoomsStep.vue y BookingModal.vue arman TODAS sus líneas así, desde el Requerimiento 3),
+        // manda `adults` real + `childrenAges` — el backend recalcula todo contra la política del
+        // hotel. Sin composición (línea del flujo legacy de ocupación plana, hoy inalcanzable
+        // desde ninguna de las dos entradas públicas — ver Requerimiento 15): EXACTAMENTE el
+        // cálculo de siempre, `line.occupancy - children.value`.
+        const hasComposition = line.adults !== undefined && line.childrenAges !== undefined
         res = await BookingService.createBooking({
           slug: slug.value,
           // FIX 2026-07-30 (bug 404 "Habitación no encontrada" en el 100% de los intentos):
@@ -792,10 +861,10 @@ export const useBookingStore = defineStore('booking-widget', () => {
           roomType: line.roomType,
           checkIn: checkIn.value,
           checkOut: checkOut.value,
-          // Ocupación elegida ("para 4") menos los niños ya declarados aparte — se cotizó una
-          // tarifa para 4 personas, la reserva tiene que decir eso.
-          adults: Math.max(1, line.occupancy - Math.max(0, children.value)),
-          ...(children.value > 0 ? { children: children.value } : {}),
+          adults: hasComposition ? line.adults! : Math.max(1, line.occupancy - Math.max(0, children.value)),
+          ...(hasComposition
+            ? (line.childrenAges!.length > 0 ? { childrenAges: line.childrenAges } : {})
+            : (children.value > 0 ? { children: children.value } : {})),
           guest: guestPayload,
           ...promoPayload,
           ...upsellsPayload,
@@ -804,21 +873,19 @@ export const useBookingStore = defineStore('booking-widget', () => {
           idempotencyKey: idempotencyKey.value,
         })
       } else {
-        // NOTA — "children" en reservas de grupo: el campo solo suma al conteo total de
-        // ocupación (capacidad de la habitación); no tiene precio ni lógica propia por edad
-        // (mismo criterio que el flujo de 1 habitación: `adults` + `children` combinados son
-        // "personas", el motor no distingue). Cada línea del carrito ya lleva su ocupación
-        // TOTAL (`line.occupancy`, la fila "para N" elegida) y eso es lo que se manda como
-        // `adults` — correcto para capacidad y precio, no hace falta "repartir" niños entre
-        // habitaciones porque el producto no trata a los niños distinto de un adulto más.
+        // Feature adultos+niños+edades (2026-09-02): cada línea del carrito manda SU propia
+        // composición si la tiene (RoomsStep.vue) — el backend valida/cotiza cada habitación
+        // del grupo con sus propios niños. Sin composición (flujo legacy): mismo criterio de
+        // siempre, `line.occupancy` completo viaja como `adults` (el motor no distinguía niños).
         res = await BookingService.createBookingGroup({
           slug: slug.value,
           checkIn: checkIn.value,
           checkOut: checkOut.value,
           rooms: cart.value.map((l) => ({
             roomType: l.roomType,
-            adults: l.occupancy,
+            adults: l.adults !== undefined ? l.adults : l.occupancy,
             quantity: l.quantity,
+            ...(l.childrenAges && l.childrenAges.length > 0 ? { childrenAges: l.childrenAges } : {}),
           })),
           guest: guestPayload,
           ...promoPayload,
@@ -903,6 +970,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     checkOut,
     guests,
     children,
+    childPolicy,
     rooms,
     ratesResponse,
     ratesLoading,
@@ -935,6 +1003,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
     cancellationSummary,
     cartTotalRooms,
     cartTotalGuests,
+    cartTotalChildren,
+    cartTotalFreeChildren,
     roomsSubtotal,
     subtotal,
     upsellsTotal,
@@ -953,7 +1023,6 @@ export const useBookingStore = defineStore('booking-widget', () => {
     search,
     addToCart,
     removeCartLine,
-    setCartLineQuantity,
     clearCart,
     setSelectedUpsells,
     setGuest,

@@ -290,4 +290,29 @@ describe('BookingModal', () => {
     expect(text).toContain('Suite')
     expect(text).not.toContain('No disponible para estas fechas')
   })
+
+  // Requerimiento 7 (Precio según ocupación, 2026-09-03) — cantidad por defecto de un extra "por
+  // persona": tiene que ser la ocupación FÍSICA real del carrito (adultos + niños con plaza, ya
+  // en `cartTotalGuests` + niños LIBRES aparte, `cartTotalFreeChildren`) — nunca duplicar a un
+  // niño con plaza sumándolo dos veces (bug encontrado en la propia implementación de este fix).
+  it('toggleUpsell "por persona": ocupación física del carrito, sin duplicar al niño con plaza', async () => {
+    await open(FROM_HERO)
+    const store = useBookingStore()
+    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+    // 2 adultos + niño de 8 (con plaza, ya en occupancy=3) + otra línea con 1 niño de 2 (libre).
+    await store.addToCart(ratesResponse().roomTypes[0]!, { adults: 2, childrenAges: [8] })
+    await store.addToCart(ratesResponse().roomTypes[1]!, { adults: 1, childrenAges: [2] })
+    store.upsells = [{ id: 'breakfast', name: 'Desayuno', description: null, price: 10, kind: 'per_person', sortOrder: 0 }]
+    store.status = 'upselling'
+    await flushPromises()
+
+    const checkbox = document.body.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    checkbox.checked = true
+    checkbox.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    // cartTotalGuests = 3 (línea 1: 2 adultos + niño con plaza) + 1 (línea 2: 1 adulto) = 4.
+    // cartTotalFreeChildren = 0 (línea 1) + 1 (línea 2: niño libre) = 1. Total = 5, NO 6.
+    expect(store.selectedUpsells).toEqual([{ id: 'breakfast', quantity: 5 }])
+  })
 })

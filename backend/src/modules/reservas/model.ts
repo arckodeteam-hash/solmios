@@ -17,6 +17,22 @@ export const ReservasModel: ModelDefinition = {
     currency: { type: 'string', default: 'USD' },
     adults: { type: 'number', default: 2 },
     children: { type: 'number', default: 0 },
+    // Edad declarada por el huésped al reservar (no fecha de nacimiento — feature
+    // "adultos+niños+edades" 2026-09-02). NO siempre length === `children`: un niño con edad >
+    // maxChildAge se cuenta en `adults`, no en `children`, pero su edad declarada SIGUE acá (es
+    // la auditoría de lo que se tipeó — ver Requerimiento 11). [] si no hay niños o la reserva es
+    // de antes de este feature (booking-engine viejo mandaba solo el contador).
+    childrenAges: { type: 'json', default: [] },
+    // Requerimiento 12 (Edad de referencia, 2026-09-03) — el check-in VIGENTE cuando se declaró
+    // `childrenAges` (en la creación pública, siempre el checkIn de la reserva en ese momento).
+    // Sin esto, una edad guardada como entero plano no tiene ancla temporal: "4 años" no dice
+    // desde cuándo. Al reagendar, `composeFromPersistedReservation` proyecta cada edad a la
+    // diferencia de AÑOS CALENDARIO entre esta fecha y el checkIn nuevo (aproximado — sin mes de
+    // nacimiento no se puede saber el día exacto del cumpleaños). NUNCA se reescribe: queda fija
+    // en la fecha de la declaración ORIGINAL, para que reagendar dos veces siga proyectando desde
+    // la misma base (proyectar en cadena acumularía redondeo). null = reserva sin niños o de
+    // antes de este campo — cae al comportamiento sin proyección (edad tal cual, como hoy).
+    childrenAgesAsOf: { type: 'string' },
     notes: { type: 'text' },
     // Campos OTA + pagos (Fase 1)
     source: { type: 'string', default: 'direct' },
