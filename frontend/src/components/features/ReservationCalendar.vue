@@ -62,6 +62,13 @@
       <span class="text-text-muted">|</span>
       <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-gray-300"></span> Bloqueo</span>
       <span class="text-text-muted">|</span>
+      <!-- El atenuado no depende del modo de color: una estadía cerrada se ve apagada tanto en
+           "Por Canal" como en "Por Estado", porque lo que comunica es que ya no se puede tocar. -->
+      <span class="flex items-center gap-1" title="El huésped ya salió: la reserva no se arrastra ni se extiende">
+        <span class="w-3 h-3 rounded bg-teal opacity-50 saturate-50"></span>
+        <span class="text-text-muted">Estadía cerrada</span>
+      </span>
+      <span class="text-text-muted">|</span>
       <span class="flex items-center gap-1 text-gold"><Icon name="circle-half" :size="13" /><span class="text-text-muted">Pago parcial</span></span>
       <span class="flex items-center gap-1 text-teal"><Icon name="circle-check" :size="13" /><span class="text-text-muted">Pagada</span></span>
       <span class="flex items-center gap-1 text-navy"><Icon name="lock" :size="13" /><span class="text-text-muted">Con cerradura</span></span>
@@ -188,8 +195,17 @@
 
                     <!-- Reservation -->
                     <div v-if="gRes(room.id, day.dateStr) && isResFirst(room.id, day.dateStr)"
-                      class="absolute inset-y-1 left-0 rounded-md flex items-center pl-2 pr-4 z-10 overflow-hidden cursor-move hover:brightness-90 select-none"
-                      :class="[gRes(room.id, day.dateStr)!.bg, resDrag?.id === gRes(room.id, day.dateStr)!.id ? 'ring-2 ring-white/80 shadow-lg z-30' : '', resDrag?.id === gRes(room.id, day.dateStr)!.id && resDrag?.moved ? 'pointer-events-none opacity-90' : '']"
+                      class="absolute inset-y-1 left-0 rounded-md flex items-center pl-2 pr-4 z-10 overflow-hidden hover:brightness-90 select-none"
+                      :class="[
+                        gRes(room.id, day.dateStr)!.bg,
+                        // Estadía cerrada: apagada y sin cursor de agarre — no se arrastra.
+                        gRes(room.id, day.dateStr)!.scope === 'none' ? 'opacity-50 saturate-50 cursor-default' : 'cursor-move',
+                        resDrag?.id === gRes(room.id, day.dateStr)!.id ? 'ring-2 ring-white/80 shadow-lg z-30' : '',
+                        resDrag?.id === gRes(room.id, day.dateStr)!.id && resDrag?.moved ? 'pointer-events-none opacity-90' : '',
+                      ]"
+                      :title="gRes(room.id, day.dateStr)!.scope === 'none' ? 'Estadía cerrada — el huésped ya salió'
+                        : gRes(room.id, day.dateStr)!.scope === 'room-only' ? 'Huésped alojado — se puede cambiar de habitación o extender la salida, la entrada no se mueve'
+                        : ''"
                       :style="barStyle(room.id, day)"
                       @mousedown.stop="onResDown(gRes(room.id, day.dateStr)!, $event)"
                       @click.stop="openContextDeferred(gRes(room.id, day.dateStr)!, room)"
@@ -205,7 +221,8 @@
                       <!-- Handle para extender/acortar (arrastrar el borde derecho) — #204/#207.
                            w-2 (8px), NO w-4 (16px): con el handle ancho, arrastrar la reserva desde
                            cerca del borde derecho para MOVERLA disparaba resize por error. -->
-                      <div class="absolute right-0 inset-y-0 w-2 cursor-ew-resize bg-white/10 hover:bg-white/70 z-20 flex items-center justify-center rounded-r-md"
+                      <div v-if="gRes(room.id, day.dateStr)!.scope !== 'none'"
+                        class="absolute right-0 inset-y-0 w-2 cursor-ew-resize bg-white/10 hover:bg-white/70 z-20 flex items-center justify-center rounded-r-md"
                         title="Arrastrá para extender o acortar la estadía"
                         @mousedown.stop.prevent="onResizeDown(gRes(room.id, day.dateStr)!, $event)"
                         @click.stop>
@@ -1271,6 +1288,10 @@ function gRes(rid: any, ds: string) {
     amt: r.totalAmount || 0,
     pax: (Number(r.adults) || 0) + (Number(r.children) || 0),
     status,
+    // Qué se le puede hacer arrastrando (ver `dragScopeFor`). Se resuelve acá para que la barra
+    // se DIBUJE distinto según eso: una reserva que no se puede arrastrar tiene que notarse
+    // antes de intentarlo, no después de que no pase nada.
+    scope: dragScopeFor(status),
     lockCode: r.lockCode || '',
     paymentStatus: r.paymentStatus || 'pending',
   }
