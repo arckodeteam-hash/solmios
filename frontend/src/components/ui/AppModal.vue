@@ -58,8 +58,9 @@ const sizeClass = computed(() => SIZES[props.size] || SIZES.md)
 
 // Pila de modales abiertos (módulo, compartida entre instancias): con modales apilados (uno abre otro
 // encima, ej. detalle de OC → recibir mercancía), un solo listener global de Escape cerraba AMBOS a la
-// vez (QA-MEDIO). Solo el modal en el TOPE de la pila reacciona a Escape; y el overflow del body solo
-// se libera cuando no queda ninguno abierto (si no, cerrar el de encima destapaba el scroll del de atrás).
+// vez (QA-MEDIO). Solo el modal en el TOPE de la pila reacciona a Escape. El bloqueo del scroll NO
+// vive acá: lo lleva `useModalStack` por contador, compartido con las otras capas (menús anclados),
+// porque manejando cada uno el suyo el orden de los watchers decidía si el body quedaba bloqueado.
 const modalStack: symbol[] = []
 const instanceId = Symbol('app-modal')
 const isTop = (): boolean => modalStack[modalStack.length - 1] === instanceId
@@ -73,14 +74,12 @@ function popStack() {
   modalStack.splice(idx, 1)
   popModal()
   document.removeEventListener('keydown', onKeydown)
-  if (!modalStack.length) document.body.style.overflow = ''
 }
 watch(() => props.open, (isOpen) => {
   if (typeof document === 'undefined') return
   if (isOpen) {
     if (!modalStack.includes(instanceId)) { modalStack.push(instanceId); pushModal() }
     document.addEventListener('keydown', onKeydown)
-    document.body.style.overflow = 'hidden'
   } else {
     popStack()
   }

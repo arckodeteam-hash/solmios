@@ -26,6 +26,11 @@
  * viven, una sola vez, el anclaje, el volteo contra los bordes, el ESC, la pila de modales y el
  * bloqueo del fondo. La cuenta de posición vive aparte, en `utils/popover-position.ts`, probada.
  *
+ * Mientras está abierto la página NO scrollea (`pushModal` bloquea el body): el menú se posiciona
+ * una vez contra las coordenadas de pantalla del ancla, así que si el fondo se corre, el menú
+ * queda señalando otra cosa. Y si algo igual se mueve (un contenedor con scroll propio), el menú
+ * se vuelve a acomodar en vez de quedar colgado.
+ *
  * Para un formulario o un detalle largo el componente correcto sigue siendo `AppModal`: esto es
  * para menús cortos, que entran sin scrollear.
  */
@@ -87,6 +92,7 @@ function teardown(): void {
   unobserve()
   document.removeEventListener('keydown', onKeydown)
   window.removeEventListener('resize', onViewportChange)
+  window.removeEventListener('scroll', onViewportChange, true)
 }
 
 watch(() => props.open, async (isOpen, wasOpen) => {
@@ -95,6 +101,8 @@ watch(() => props.open, async (isOpen, wasOpen) => {
     if (!wasOpen) pushModal()
     document.addEventListener('keydown', onKeydown)
     window.addEventListener('resize', onViewportChange)
+    // Captura: alcanza cualquier contenedor con scroll propio, no solo la ventana.
+    window.addEventListener('scroll', onViewportChange, true)
     await reposition()
     observe()
   } else {

@@ -1,11 +1,16 @@
 <template>
-  <AppModal :open="open" title="Mover / Extender reserva" size="md" body-class="p-0" @close="emit('close')">
-    <!-- Modo "Extender" desde el menú: elegir la nueva fecha de salida -->
+  <AppModal :open="open" :title="titulo" :subtitle="subtitulo" size="md" body-class="p-0" @close="emit('close')">
+    <!-- Modo "Extender" desde el menú: lo único que se elige acá es hasta cuándo se queda. La
+         entrada y la habitación no se tocan — para eso están arrastrar y "Ver reserva". -->
     <div v-if="editable && target" class="px-5 pt-4">
-      <label class="block text-[10px] font-bold text-text-muted uppercase mb-1.5">Nueva fecha de salida</label>
-      <input type="date" :value="target.checkOut" :min="target.checkIn"
+      <label class="block text-[10px] font-bold text-text-muted uppercase mb-1.5">Se va el</label>
+      <input type="date" :value="target.checkOut" :min="minCheckOut"
         @change="onExtendDateChange(($event.target as HTMLInputElement).value)"
         class="w-full px-3 py-2 rounded-xl border border-border text-sm" />
+      <p class="mt-1.5 text-[11px] text-text-muted">
+        Entra el {{ String(reservation?.checkIn ?? '').slice(0, 10) }} en la hab.
+        {{ roomNumberOf(String(reservation?.roomId ?? '')) }} — eso no cambia acá.
+      </p>
     </div>
 
     <div v-if="loading" class="px-5 py-10 text-center text-sm text-text-muted">Calculando cambio…</div>
@@ -209,6 +214,44 @@ const amount = ref('')
 const reason = ref('')
 /** Copia local del destino: en modo "Extender" la fecha de salida se edita acá dentro. */
 const target = ref<RescheduleTarget | null>(null)
+
+/** Una estadía tiene al menos una noche: salir el mismo día que se entra no es una estadía. */
+const minCheckOut = computed(() => {
+  const ci = String(props.reservation?.checkIn ?? '').slice(0, 10)
+  if (!ci) return ''
+  const d = new Date(`${ci}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + 1)
+  return d.toISOString().slice(0, 10)
+})
+
+/**
+ * El título dice lo que realmente va a pasar. Decía siempre "Mover / Extender reserva", incluso
+ * abierto desde "Extender estadía" —donde lo único editable es la fecha de salida—: prometía dos
+ * cosas y ofrecía un solo campo. Ahora nombra el cambio que se está por aplicar.
+ */
+const titulo = computed(() => {
+  if (props.editable) return 'Extender estadía'
+  const r = props.reservation; const t = target.value
+  if (!r || !t) return 'Mover reserva'
+  const otraHab = String(t.roomId) !== String(r.roomId)
+  const entrada = String(r.checkIn ?? '').slice(0, 10)
+  const salida = String(r.checkOut ?? '').slice(0, 10)
+  const otraEntrada = t.checkIn.slice(0, 10) !== entrada
+  const otraSalida = t.checkOut.slice(0, 10) !== salida
+  if (otraHab && (otraEntrada || otraSalida)) return 'Mover reserva'
+  if (otraHab) return 'Cambiar de habitación'
+  if (otraEntrada) return 'Mover reserva'
+  if (otraSalida) return t.checkOut.slice(0, 10) > salida ? 'Extender estadía' : 'Acortar estadía'
+  return 'Mover reserva'
+})
+
+/** De quién y de qué habitación se está hablando, sin repetirlo en el cuerpo. */
+const subtitulo = computed(() => {
+  const r = props.reservation
+  if (!r) return ''
+  const hab = roomNumberOf(String(r.roomId ?? ''))
+  return [r.name, hab ? `Hab. ${hab}` : ''].filter(Boolean).join(' · ')
+})
 
 const CHARGE_METHODS: { k: RescheduleChargeMethod; l: string }[] = [
   { k: 'folio', l: 'Folio' }, { k: 'cash', l: 'Efectivo' }, { k: 'card', l: 'Tarjeta' },

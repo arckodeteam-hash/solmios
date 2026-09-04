@@ -1794,7 +1794,10 @@ function roomNumberOf(id: string): string { return planRooms.value.find((r: any)
 function closeReschedule() { reschedule.value.show = false }
 
 function openReschedule(res: any, target: RescheduleTarget, editable = false) {
-  reschedule.value = { show: true, res, target, editable }
+  // El bloque dibujado en la grilla trae el huésped en `name`; la fila cruda de `planReservas`
+  // (la que usa el menú) lo trae en `guestName`. El modal lee uno solo: sin normalizar acá,
+  // extender desde el menú mostraba "Reserva" en vez del nombre del huésped.
+  reschedule.value = { show: true, res: { ...res, name: res?.name || res?.guestName || '' }, target, editable }
 }
 
 // El modal ya persistió el cambio (y cobró/informó la diferencia): acá solo se refleja en el

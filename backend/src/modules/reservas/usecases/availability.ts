@@ -36,6 +36,14 @@ export async function assertRoomAvailable(
   const overlapping = await repo.findMany({ roomId } as any)
   const conflict = overlapping.find((r: any) => r.id !== excludeId && overlapsRange(r, checkIn, checkOut))
   if (conflict) {
-    throw new ConflictError(`Habitación no disponible en esas fechas (ocupada del ${(conflict as any).checkIn} al ${(conflict as any).checkOut} por la reserva ${(conflict as any).id})`)
+    // Quién ocupa la habitación se dice por el NOMBRE del huésped, no por el UUID de la reserva:
+    // este texto llega tal cual a la pantalla del recepcionista (el modal de extender lo muestra
+    // en rojo), y un id no le sirve para nada — con el nombre sabe a quién ir a preguntarle.
+    const c = conflict as any
+    const dia = (v: unknown): string => String(v ?? '').slice(0, 10)
+    const quien = String(c.guestName ?? '').trim()
+    throw new ConflictError(
+      `Habitación no disponible en esas fechas: está ocupada del ${dia(c.checkIn)} al ${dia(c.checkOut)}${quien ? ` por ${quien}` : ''}.`,
+    )
   }
 }
