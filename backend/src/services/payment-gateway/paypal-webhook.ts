@@ -113,14 +113,64 @@ export function clearPayPalCertCache(): void {
   certCache.clear()
 }
 
+/** ¿Este nombre es un host de PayPal? Mismo criterio que `isTrustedCertUrl`. */
+function isPayPalName(name: string): boolean {
+  const host = name.trim().toLowerCase()
+  return host === 'paypal.com' || host.endsWith('.paypal.com')
+}
+
+/** Los CN del subject más los dNSName del SAN: los nombres por los que el cert dice ser PayPal. */
+function certNames(cert: X509Certificate): string[] {
+  const names: string[] = []
+  for (const line of (cert.subject || '').split('\n')) {
+    const [attr, ...rest] = line.split('=')
+    if (attr?.trim().toUpperCase() === 'CN') names.push(rest.join('=').replace(/\\,/g, ','))
+  }
+  for (const entry of (cert.subjectAltName || '').split(',')) {
+    const value = entry.trim()
+    if (value.toLowerCase().startsWith('dns:')) names.push(value.slice(4))
+  }
+  return names
+}
+
+/**
+ * ¿El certificado que bajamos es aceptable como certificado de firma de PayPal? Es la segunda
+ * defensa detrás de `isTrustedCertUrl`, que hasta acá era la ÚNICA: si mañana un subdominio de
+ * paypal.com sirve contenido de terceros (un bucket, un CDN mal configurado, un open redirect ya
+ * cerrado por `redirect: 'manual'`), la allowlist de host sola deja pasar cualquier PEM. Se validan
+ * las dos cosas que se pueden validar sin inventar red nueva:
+ *
+ *   1. VIGENCIA: `validFrom`/`validTo` tienen que cubrir el momento del evento. Un cert que PayPal
+ *      ya rotó (y cuya llave privada, por eso mismo, dejó de estar custodiada) no firma nada.
+ *   2. NOMBRE: el subject tiene que ser un host de paypal.com, y el issuer tiene que ser OTRO —
+ *      el cert real lo emite una CA pública, así que un autofirmado que se pone CN de PayPal es
+ *      exactamente el ataque que esto tapa. NO se exige que el issuer diga "PayPal": pinnear eso
+ *      rechazaría los certs reales (hoy DigiCert) en la próxima rotación de CA.
+ *
+ * No se recorre la cadena hasta la raíz: eso ya lo hizo TLS al bajar el cert de un host de PayPal.
+ */
+export function isAcceptablePayPalCert(cert: X509Certificate, nowMs: number): boolean {
+  const from = Date.parse(cert.validFrom)
+  const to = Date.parse(cert.validTo)
+  if (Number.isNaN(from) || Number.isNaN(to)) return false
+  if (nowMs < from || nowMs > to) return false
+  if (!cert.subject || !cert.issuer || cert.issuer === cert.subject) return false
+  return certNames(cert).some(isPayPalName)
+}
+
 /**
  * Acepta un PEM de CERTIFICATE (lo que sirve PayPal) o de PUBLIC KEY. Lo segundo es para poder
  * testear la verificación con un par RSA generado en el test: Node/Bun no traen forma de emitir un
- * X.509 autofirmado, así que sin esta rama los tests dependerían de openssl en el PATH.
+ * X.509 autofirmado, así que sin esta rama los tests dependerían de openssl en el PATH. Esa rama no
+ * pasa por `isAcceptablePayPalCert` porque una clave pelada no trae vigencia ni nombre; el camino
+ * real de producción es siempre el CERTIFICATE.
  */
-function parsePublicKey(pem: string): KeyObject | null {
+function parsePublicKey(pem: string, nowMs: number): KeyObject | null {
   try {
-    if (pem.includes('BEGIN CERTIFICATE')) return new X509Certificate(pem).publicKey
+    if (pem.includes('BEGIN CERTIFICATE')) {
+      const cert = new X509Certificate(pem)
+      return isAcceptablePayPalCert(cert, nowMs) ? cert.publicKey : null
+    }
     if (pem.includes('BEGIN PUBLIC KEY') || pem.includes('BEGIN RSA PUBLIC KEY')) {
       return createPublicKey({ key: pem, format: 'pem' })
     }
@@ -136,7 +186,11 @@ async function loadPublicKey(certUrl: string, fetchImpl: typeof fetch, now: numb
 
   let pem: string
   try {
-    const res = await fetchImpl(certUrl)
+    // `redirect: 'manual'` no es un detalle: sin esto, un 3xx servido desde un host de PayPal
+    // (open redirect, CDN mal configurado) manda el fetch a un servidor del atacante y la
+    // allowlist de `isTrustedCertUrl` queda burlada — se verificaría la firma contra SU llave.
+    // Cualquier respuesta que no sea 2xx (incluido el 3xx que no seguimos) es fallo, no reintento.
+    const res = await fetchImpl(certUrl, { redirect: 'manual' })
     if (!res.ok) return null
     pem = await res.text()
   } catch {
@@ -144,7 +198,7 @@ async function loadPublicKey(certUrl: string, fetchImpl: typeof fetch, now: numb
     return null
   }
 
-  const key = parsePublicKey(pem)
+  const key = parsePublicKey(pem, now)
   if (!key) return null
   certCache.set(certUrl, { key, cachedAt: now })
   return key

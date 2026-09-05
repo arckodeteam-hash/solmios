@@ -55,8 +55,12 @@ const PAYPAL_API_BASE: Record<GatewayMode, string> = {
  * Monedas que PayPal cobra SIN decimales: mandar '50.00' en JPY es un 422 ("DECIMALS_NOT_SUPPORTED")
  * y dividir por 100 igual que en USD cobraría 100 veces menos de lo debido. Lista chica y explícita
  * porque el error es silencioso en plata.
+ *
+ * Son EXACTAMENTE estas tres (PayPal REST: "currencies that do not support decimals"). Ojo con
+ * copiar la lista de Stripe: ahí KRW/CLP/VND también son de cero decimales, pero PayPal las cobra
+ * con dos, y meterlas acá multiplicaría por 100 cada cobro en esas monedas.
  */
-const ZERO_DECIMAL_CURRENCIES = new Set(['JPY', 'KRW', 'HUF', 'TWD', 'CLP', 'VND'])
+const ZERO_DECIMAL_CURRENCIES = new Set(['HUF', 'JPY', 'TWD'])
 
 export function currencyDecimals(currency: string): number {
   return ZERO_DECIMAL_CURRENCIES.has((currency || '').toUpperCase()) ? 0 : 2
@@ -103,6 +107,28 @@ function header(headers: Record<string, string> | undefined, name: string): stri
     if (k.toLowerCase() === name && typeof v === 'string') return v
   }
   return ''
+}
+
+/**
+ * Saca monto, referencia y id de captura del `resource` del webhook, que NO tiene una sola forma:
+ *
+ *   - PAYMENT.CAPTURE.* → el resource ES la captura: `amount` y `custom_id` cuelgan de la raíz.
+ *   - CHECKOUT.ORDER.COMPLETED / APPROVED / VOIDED → el resource es la ORDEN: lo que importa vive
+ *     en `purchase_units[0]` (`amount`, `custom_id`, y la captura en `payments.captures[0]`).
+ *
+ * Leer sólo la raíz — que es lo que se hacía — dejaba los eventos de orden con `amountMinor: 0` y
+ * `reference: ''`: un pago confirmado que no se puede conciliar con ninguna reserva.
+ */
+function readResource(resource: any): { amount: any; reference: string; captureId: string } {
+  const res = resource ?? {}
+  const unit = (Array.isArray(res.purchase_units) ? res.purchase_units[0] : null) ?? {}
+  const capture = (Array.isArray(unit.payments?.captures) ? unit.payments.captures[0] : null) ?? {}
+  const amount = res.amount ?? unit.amount ?? capture.amount
+    ?? res.seller_receivable_breakdown?.gross_amount ?? {}
+  const reference = res.custom_id || res.invoice_id
+    || unit.custom_id || unit.invoice_id || capture.custom_id
+    || res.reference_id || unit.reference_id || ''
+  return { amount, reference: String(reference), captureId: String(capture.id || '') }
 }
 
 export class PayPalGateway implements RefundableGateway {
@@ -251,8 +277,7 @@ export class PayPalGateway implements RefundableGateway {
     const status = this.mapStatus(String(body?.event_type || ''))
     if (!status) return null // evento que no nos interesa
 
-    const resource = body?.resource ?? {}
-    const amount = resource.amount ?? resource.seller_receivable_breakdown?.gross_amount ?? {}
+    const { amount, reference, captureId } = readResource(body?.resource)
     const currency = String(amount.currency_code || this.creds.currency || 'usd')
 
     return {
@@ -260,11 +285,13 @@ export class PayPalGateway implements RefundableGateway {
       // como PK de idempotencia, y un CAPTURE.COMPLETED y un CAPTURE.REFUNDED de la MISMA captura
       // colisionarían — el reembolso se descartaría como duplicado y el folio quedaría cobrado.
       eventId: String(body?.id || ''),
-      providerRef: String(resource.id || ''),
+      // La captura manda sobre la orden: es el id que aceptan /payments/captures/{id}/refund y el
+      // void. Para los PAYMENT.CAPTURE.* el propio resource ya ES la captura.
+      providerRef: String(captureId || body?.resource?.id || ''),
       status,
       amountMinor: fromPayPalAmount(amount.value, currency),
       currency,
-      reference: String(resource.custom_id || resource.invoice_id || resource.reference_id || ''),
+      reference,
       raw: body,
     }
   }

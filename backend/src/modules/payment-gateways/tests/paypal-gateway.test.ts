@@ -134,9 +134,20 @@ describe('conversión de montos (unidades menores ↔ decimal de PayPal)', () =>
     expect(toPayPalAmount(0, 'usd')).toBe('0.00')
   })
 
-  it('monedas de 0 decimales: 5000 JPY es ¥5000, no ¥50', () => {
+  it('las TRES monedas sin decimales de PayPal (HUF, JPY, TWD): 5000 JPY es ¥5000, no ¥50', () => {
     expect(toPayPalAmount(5000, 'JPY')).toBe('5000')
-    expect(toPayPalAmount(150000, 'CLP')).toBe('150000')
+    expect(toPayPalAmount(150000, 'HUF')).toBe('150000')
+    expect(toPayPalAmount(3000, 'twd')).toBe('3000')
+    expect(fromPayPalAmount('150000', 'HUF')).toBe(150000)
+  })
+
+  it('KRW, CLP y VND llevan DOS decimales en PayPal (la lista de cero decimales es la de Stripe)', () => {
+    // Tratarlas como de cero decimales cobraba 100 veces de más: 150000 (=$1500,00) viajaba
+    // como '150000'. PayPal sólo exceptúa HUF/JPY/TWD.
+    expect(toPayPalAmount(150000, 'CLP')).toBe('1500.00')
+    expect(toPayPalAmount(150000, 'KRW')).toBe('1500.00')
+    expect(toPayPalAmount(150000, 'VND')).toBe('1500.00')
+    expect(fromPayPalAmount('1500.00', 'CLP')).toBe(150000)
   })
 
   it('la vuelta es exacta y sin float suelto', () => {
@@ -258,6 +269,35 @@ function eventBody(over: Record<string, any> = {}): string {
   })
 }
 
+/**
+ * Un CHECKOUT.ORDER.*: el `resource` es la ORDEN, no la captura. El monto y el `custom_id` viven
+ * en `purchase_units[0]` y el id de la captura en `purchase_units[0].payments.captures[0]`. Es la
+ * forma real que manda PayPal, y es la que un mock plano (todo colgado de la raíz del resource)
+ * deja pasar: con ella, leer sólo la raíz devuelve amountMinor 0 y reference ''.
+ */
+function orderEventBody(eventType: string, unitOver: Record<string, any> = {}): string {
+  return JSON.stringify({
+    id: 'WH-EVENT-ORDER-1',
+    event_type: eventType,
+    resource: {
+      id: 'ORDER-77',
+      status: 'COMPLETED',
+      purchase_units: [{
+        reference_id: 'default',
+        custom_id: 'RES-77',
+        amount: { currency_code: 'USD', value: '180.50' },
+        payments: {
+          captures: [{
+            id: 'CAPTURE-77', status: 'COMPLETED',
+            amount: { currency_code: 'USD', value: '180.50' },
+          }],
+        },
+        ...unitOver,
+      }],
+    },
+  })
+}
+
 /** Firma como firma PayPal: RSA-SHA256 sobre `id|time|webhookId|crc32(body)`, base64. */
 function sign(body: string, transmissionTime: string): string {
   const signer = createSign('RSA-SHA256')
@@ -346,7 +386,7 @@ describe('PayPalGateway — confirm()', () => {
     expect(outcome!.currency).toBe('JPY')
   })
 
-  it('mapea los cinco estados del dominio', async () => {
+  it('mapea los cinco estados del dominio, con el payload REAL de cada familia de evento', async () => {
     const cases: Array<[string, string]> = [
       ['PAYMENT.CAPTURE.COMPLETED', 'paid'],
       ['CHECKOUT.ORDER.COMPLETED', 'paid'],
@@ -361,10 +401,56 @@ describe('PayPalGateway — confirm()', () => {
     for (const [eventType, expected] of cases) {
       clearPayPalCertCache()
       mockCertFetch()
-      const body = eventBody({ event_type: eventType })
+      // Los CHECKOUT.ORDER.* traen purchase_units; los PAYMENT.CAPTURE.* traen la captura pelada.
+      const isOrder = eventType.startsWith('CHECKOUT.ORDER.')
+      const body = isOrder ? orderEventBody(eventType) : eventBody({ event_type: eventType })
       const outcome = await gw().confirm({ hotelId: 'h1', headers: signedHeaders(body), rawBody: body })
       expect(outcome?.status).toBe(expected as any)
+      // Ningún evento puede salir con monto 0 ni sin referencia: así no se concilia con el folio.
+      expect(outcome!.amountMinor).toBe(isOrder ? 18050 : 25000)
+      expect(outcome!.reference).toBe(isOrder ? 'RES-77' : 'RES-42')
     }
+  })
+
+  it('CHECKOUT.ORDER.COMPLETED: monto y custom_id salen de purchase_units, y el ref es la CAPTURA', async () => {
+    mockCertFetch()
+    const body = orderEventBody('CHECKOUT.ORDER.COMPLETED')
+    const outcome = await gw().confirm({ hotelId: 'h1', headers: signedHeaders(body), rawBody: body })
+    expect(outcome!.status).toBe('paid')
+    expect(outcome!.eventId).toBe('WH-EVENT-ORDER-1')
+    expect(outcome!.amountMinor).toBe(18050)
+    expect(outcome!.currency).toBe('USD')
+    expect(outcome!.reference).toBe('RES-77')
+    // El id que aceptan /payments/captures/{id}/refund y el void, no el de la orden.
+    expect(outcome!.providerRef).toBe('CAPTURE-77')
+  })
+
+  it('CHECKOUT.ORDER.APPROVED (todavía sin captura): monto y referencia igual, ref = id de la orden', async () => {
+    mockCertFetch()
+    const body = orderEventBody('CHECKOUT.ORDER.APPROVED', { payments: undefined })
+    const outcome = await gw().confirm({ hotelId: 'h1', headers: signedHeaders(body), rawBody: body })
+    expect(outcome!.status).toBe('pending')
+    expect(outcome!.amountMinor).toBe(18050)
+    expect(outcome!.reference).toBe('RES-77')
+    expect(outcome!.providerRef).toBe('ORDER-77')
+  })
+
+  it('CHECKOUT.ORDER.VOIDED en moneda sin decimales: 5000 JPY vuelve como 5000', async () => {
+    mockCertFetch()
+    const body = orderEventBody('CHECKOUT.ORDER.VOIDED', {
+      payments: undefined, amount: { currency_code: 'JPY', value: '5000' },
+    })
+    const outcome = await gw().confirm({ hotelId: 'h1', headers: signedHeaders(body), rawBody: body })
+    expect(outcome!.status).toBe('expired')
+    expect(outcome!.amountMinor).toBe(5000)
+    expect(outcome!.currency).toBe('JPY')
+  })
+
+  it('si el purchase_unit no trae custom_id se cae al invoice_id y después al reference_id', async () => {
+    mockCertFetch()
+    const body = orderEventBody('CHECKOUT.ORDER.COMPLETED', { custom_id: undefined, invoice_id: 'INV-77' })
+    const outcome = await gw().confirm({ hotelId: 'h1', headers: signedHeaders(body), rawBody: body })
+    expect(outcome!.reference).toBe('INV-77')
   })
 
   it('evento que no nos interesa (aunque venga bien firmado) → null', async () => {
