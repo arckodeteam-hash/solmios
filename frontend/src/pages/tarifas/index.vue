@@ -19,7 +19,7 @@
     <div v-else class="space-y-6">
       <div>
         <h2 class="text-xl font-black text-navy">Temporadas y Tarifas</h2>
-        <p class="text-sm text-text-muted mt-0.5">Precio base por tipo de habitación y ajuste porcentual por temporada</p>
+        <p class="text-sm text-text-muted mt-0.5">Un precio por temporada para cada tipo de habitación</p>
       </div>
 
       <!-- Sin un rango de fechas guardado el motor no sabe qué temporada aplicarle a una reserva:
@@ -115,7 +115,7 @@
                       <span class="font-extrabold text-navy capitalize">{{ roomType }}</span>
                       <label class="flex items-center gap-2 ml-auto text-[10px] font-bold text-text-muted uppercase">
                         <span class="normal-case text-[11px] text-text-muted font-semibold">
-                          Precio base — uno solo; las temporadas y los canales le aplican su porcentaje
+                          Precio base — se cobra los días sin temporada asignada
                         </span>
                         $
                         <input :aria-label="`Precio base de ${roomType}`" :value="getBasePrice(roomType)" @input="setBasePrice(roomType, $event)" type="number" min="0"
@@ -170,7 +170,9 @@
         </div>
 
         <p class="px-5 pb-4 text-[11px] text-text-muted">
-          Cada celda aplica un % sobre el precio base del tipo de habitación. Precio final = base × (1 + % / 100).
+          Cada celda es el precio de esa temporada, en {{ '$' }}. Una celda sin precio propio cobra el precio base
+          del tipo. Los canales no fijan importes: le suman su porcentaje a este número, desde
+          <router-link :to="{ name: 'channel-manager' }" class="font-bold text-cyan hover:underline">Channel</router-link>.
         </p>
       </SectionCard>
     </div>
