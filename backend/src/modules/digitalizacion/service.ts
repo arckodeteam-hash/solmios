@@ -18,12 +18,17 @@ import type {
   CreateDigitalizationCaseDTO,
   DigitalizationCandidateDTO,
   DigitalizationCaseDTO,
-  DigitalizationCaseStatus,
   DigitalizationListResult,
   UpdateDigitalizationCaseDTO,
 } from './types'
-import { CASE_STATUSES } from './types'
-import { assertTemplateKey, buildAdvanceStepPatch, normalizeUrlField } from './usecases/advance-step'
+import {
+  assertManualCaseStatus,
+  assertTemplateKey,
+  blankToNull,
+  buildAdvanceStepPatch,
+  normalizeUrlField,
+  reconcileCaseStatus,
+} from './usecases/advance-step'
 import type { DigitalizacionHotelRow } from './usecases/candidates'
 import { hasActiveCase, hasWebsite, selectCandidates } from './usecases/candidates'
 
@@ -38,12 +43,6 @@ export type { DigitalizacionHotelRow } from './usecases/candidates'
 export interface DigitalizacionSockets {
   onCaseCreated?: (c: DigitalizationCaseDTO) => Promise<void>
   onCaseUpdated?: (c: DigitalizationCaseDTO) => Promise<void>
-}
-
-function assertCaseStatus(status: string): asserts status is DigitalizationCaseStatus {
-  if (!(CASE_STATUSES as readonly string[]).includes(status)) {
-    throw new ValidationError(`status: debe ser una de ${CASE_STATUSES.join(', ')}`)
-  }
 }
 
 export class DigitalizacionService {
@@ -144,35 +143,47 @@ export class DigitalizacionService {
     return updated
   }
 
-  /** Edición del super_admin: estado del expediente, notas y datos sueltos de los pasos. */
+  /**
+   * Edición del super_admin: estado del expediente, notas y datos sueltos de los pasos.
+   *
+   * Escribe los MISMOS campos que `advanceStep`, así que pasa por las MISMAS invariantes
+   * (`reconcileCaseStatus`): sin eso era la puerta de atrás para dejar el expediente como el avance
+   * no permite —vaciar el dato de un paso ya listo, o marcar 'completado' a mano con los cinco pasos
+   * en 'pendiente'—. Guardar datos VACÍOS sigue valiendo: lo que se prohíbe es el resultado incoherente.
+   */
   async update(id: string, input: UpdateDigitalizationCaseDTO): Promise<DigitalizationCaseDTO> {
-    await this.getById(id) // 404 si no existe
-    if (input.status !== undefined) assertCaseStatus(input.status)
+    const actual = await this.getById(id) // 404 si no existe
+    if (input.status !== undefined) assertManualCaseStatus(input.status)
     if (input.templateKey !== undefined) assertTemplateKey(input.templateKey)
-    // Sin `> 0` acá a propósito: por edición manual 0 es válido (configuración bonificada), igual
-    // que en UpdateDigitalizationCaseSchema.
+    // Sin `> 0` a propósito: por edición manual 0 es válido (configuración bonificada).
     if (input.configFee !== undefined && input.configFee < 0) {
       throw new ValidationError('configFee: no puede ser negativo')
     }
 
     // Las URLs se chequean acá con el MISMO validador que usa advanceStep: el schema HTTP las deja
-    // pasar como `string` para que el vacío pueda BORRAR el dato, así que el formato se valida en
-    // esta capa. Sin esto, `update` sería la puerta de atrás para guardar una URL inválida.
+    // pasar como `string` para que el vacío pueda BORRAR el dato, así que el formato se valida acá.
     const url = (f: 'siteUrl' | 'googleMapsUrl' | 'bookingEngineUrl') =>
       input[f] !== undefined ? { [f]: normalizeUrlField(f, input[f] as string) } : undefined
 
-    const updated = await this.repo.update(id, {
+    // `blankToNull` por la misma razón que en el avance: '' es "borrá el dato", no un '' guardado
+    // (que para el resto del código no es ni dato ni ausencia).
+    const patch: Partial<Omit<DigitalizationCaseDTO, 'id'>> = {
       ...(input.status !== undefined && { status: input.status }),
-      ...(input.notes !== undefined && { notes: input.notes }),
+      ...(input.notes !== undefined && { notes: blankToNull(input.notes) }),
       ...(input.configFee !== undefined && { configFee: input.configFee }),
       ...(input.configCurrency !== undefined && { configCurrency: input.configCurrency }),
       ...(input.configPaid !== undefined && { configPaid: input.configPaid }),
-      ...(input.templateKey !== undefined && { templateKey: input.templateKey }),
-      ...(input.googlePlaceId !== undefined && { googlePlaceId: input.googlePlaceId }),
+      ...(input.templateKey !== undefined && { templateKey: blankToNull(input.templateKey) }),
+      ...(input.googlePlaceId !== undefined && { googlePlaceId: blankToNull(input.googlePlaceId) }),
       ...url('siteUrl'),
       ...url('googleMapsUrl'),
       ...url('bookingEngineUrl'),
-    })
+    }
+    // Coherencia + estado recalculado sobre el expediente YA con el patch aplicado: reabrir un
+    // cancelado con los cinco pasos listos vuelve a 'completado', no a un 'abierto' incoherente.
+    patch.status = reconcileCaseStatus({ ...actual, ...patch })
+
+    const updated = await this.repo.update(id, patch)
     if (!updated) throw new NotFoundError('Expediente de digitalización no encontrado')
     this.logger.info('digitalizacion: expediente actualizado', { id, status: updated.status })
     await this.sockets.onCaseUpdated?.(updated)

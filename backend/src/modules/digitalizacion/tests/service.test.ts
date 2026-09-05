@@ -496,6 +496,14 @@ describe('digitalizacion — borrar un dato cargado (regresiones H2)', () => {
       notes: '',
     })
     expect(guardado.status).toBe('abierto')
+    // Hallazgo H1: el test afirmaba solo el status. El vacío tiene que quedar como null —no como
+    // '' guardado, que para el resto del código no es ni un dato ni "sin dato"—.
+    expect(guardado.templateKey).toBeNull()
+    expect(guardado.googlePlaceId).toBeNull()
+    expect(guardado.siteUrl).toBeNull()
+    expect(guardado.googleMapsUrl).toBeNull()
+    expect(guardado.bookingEngineUrl).toBeNull()
+    expect(guardado.notes).toBeNull()
 
     // Y por la ruta del avance el vacío se persiste como null, no como dato cargado.
     const avanzado = await svc.advanceStep(abierto.id, {
@@ -506,5 +514,90 @@ describe('digitalizacion — borrar un dato cargado (regresiones H2)', () => {
     })
     expect(avanzado.templateKey).toBeNull()
     expect(avanzado.siteUrl).toBeNull()
+  })
+})
+
+// Re-revisión adversarial: `update` escribía los mismos campos que `advanceStep` sin ninguna de sus
+// invariantes. Los tres hallazgos, uno por caso, todos por la ruta de `update`.
+describe('digitalizacion — update no es una puerta de atrás (regresiones H1-H3)', () => {
+  it('H1: el vacío por update BORRA el dato (null), no guarda un string vacío', async () => {
+    const { svc } = build(
+      [],
+      [expediente({ id: 'c1', hotelId: 'h1', templateKey: 'classic', googlePlaceId: 'place-1', notes: 'algo' })],
+    )
+    const caso = await svc.update('c1', { templateKey: '', googlePlaceId: '  ', notes: '' })
+    expect(caso.templateKey).toBeNull()
+    expect(caso.googlePlaceId).toBeNull()
+    expect(caso.notes).toBeNull()
+  })
+
+  it('H2: update no acepta status completado a mano — se llega completando los cinco pasos', async () => {
+    const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
+    // Con los cinco pasos en 'pendiente' esto cerraba el expediente y sacaba al hotel de candidatos.
+    await expect(svc.update('c1', { status: 'completado' })).rejects.toBeInstanceOf(ValidationError)
+    expect((await svc.getById('c1')).status).toBe('abierto')
+    // Cancelar y reabrir sí son decisiones del operador.
+    expect((await svc.update('c1', { status: 'cancelado' })).status).toBe('cancelado')
+    expect((await svc.update('c1', { status: 'abierto' })).status).toBe('abierto')
+  })
+
+  it('H2: reabrir un cancelado con los cinco pasos listos lo deja completado, no abierto', async () => {
+    const { svc } = build(
+      [],
+      [
+        expediente({
+          id: 'c1',
+          hotelId: 'h1',
+          status: 'cancelado',
+          websiteStatus: 'listo',
+          templateKey: 'classic',
+          configStatus: 'listo',
+          configPaid: true,
+          configFee: 300,
+          googleMapsStatus: 'listo',
+          googlePlaceId: 'place-1',
+          googleHotelStatus: 'listo',
+          bookingEngineStatus: 'listo',
+          bookingEngineUrl: 'https://reservas.solmios.com/h1',
+        }),
+      ],
+    )
+    const reabierto = await svc.update('c1', { status: 'abierto' })
+    expect(reabierto.status).toBe('completado')
+  })
+
+  it('H3: update no puede vaciar el dato de un paso que ya está listo', async () => {
+    const { svc } = build(
+      [],
+      [
+        expediente({
+          id: 'c1',
+          hotelId: 'h1',
+          googleMapsStatus: 'listo',
+          googlePlaceId: 'place-1',
+          googleHotelStatus: 'listo',
+          websiteStatus: 'listo',
+          templateKey: 'classic',
+        }),
+      ],
+    )
+    // Borrar el placeId dejaría Google Maps "listo sin su ficha" —y Google Hotel listo sin Maps—,
+    // exactamente el estado que `assertStepNotLocked` bloquea por la ruta del avance.
+    await expect(svc.update('c1', { googlePlaceId: '' })).rejects.toBeInstanceOf(ValidationError)
+    // Y la plantilla del paso web ya cerrado tampoco se puede sacar.
+    await expect(svc.update('c1', { templateKey: '' })).rejects.toBeInstanceOf(ValidationError)
+    const sinTocar = await svc.getById('c1')
+    expect(sinTocar.googlePlaceId).toBe('place-1')
+    expect(sinTocar.templateKey).toBe('classic')
+  })
+
+  it('H3: con el paso pendiente, vaciar el dato desde update sigue siendo válido', async () => {
+    const { svc } = build(
+      [],
+      [expediente({ id: 'c1', hotelId: 'h1', googleMapsStatus: 'en_progreso', googlePlaceId: 'place-1' })],
+    )
+    const caso = await svc.update('c1', { googlePlaceId: '' })
+    expect(caso.googlePlaceId).toBeNull()
+    expect(caso.status).toBe('abierto')
   })
 })

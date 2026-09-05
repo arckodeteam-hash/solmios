@@ -13,8 +13,14 @@
 // repo, logger ni sockets. El service se queda con la orquestación —leer, aplicar el patch, guardar
 // y avisar por socket— (extraído para no pasar de 200 líneas — gate GOD_SERVICE de arckode analyze).
 import { ValidationError } from 'arckode-framework'
-import type { AdvanceStepDTO, DigitalizationCaseDTO, DigitalizationStep, StepStatus } from '../types'
-import { DIGITALIZATION_STEPS, SITE_TEMPLATE_KEYS, STEP_LABELS, STEP_STATUSES } from '../types'
+import type {
+  AdvanceStepDTO,
+  DigitalizationCaseDTO,
+  DigitalizationCaseStatus,
+  DigitalizationStep,
+  StepStatus,
+} from '../types'
+import { CASE_STATUSES, DIGITALIZATION_STEPS, SITE_TEMPLATE_KEYS, STEP_LABELS, STEP_STATUSES } from '../types'
 
 /** Columna de estado de cada paso dentro del expediente. */
 type StepStatusField =
@@ -40,8 +46,11 @@ function isBlank(value?: string | null): boolean {
  * Un string vacío (o sólo espacios) NO es un dato: es "borrá lo que había". La pantalla necesita
  * poder deshacer una URL mal tipeada, y si lo guardáramos tal cual el campo quedaría "cargado" con
  * basura y dejaría cerrar el paso. Se persiste como null y las reglas de cierre lo ven como ausente.
+ *
+ * Exportada porque `service.update` escribe los MISMOS campos que el avance del paso: si ahí el
+ * vacío se guardara crudo quedaría un '' que no es ni un dato ni "sin dato" para el resto del código.
  */
-function blankToNull(value: string): string | null {
+export function blankToNull(value: string): string | null {
   return value.trim() === '' ? null : value
 }
 
@@ -54,6 +63,25 @@ function assertStep(step: string): asserts step is DigitalizationStep {
 function assertStepStatus(status: string): asserts status is StepStatus {
   if (!(STEP_STATUSES as readonly string[]).includes(status)) {
     throw new ValidationError(`status: debe ser uno de ${STEP_STATUSES.join(', ')}`)
+  }
+}
+
+/**
+ * Los estados del expediente que el operador puede fijar A MANO desde `service.update`.
+ *
+ * 'completado' NO es uno de ellos: es un estado DERIVADO de los cinco pasos que calcula
+ * `reconcileCaseStatus`. Aceptarlo a mano dejaba cerrar el expediente con los cinco pasos en
+ * 'pendiente' —y un expediente completado saca al hotel de `listCandidates` para siempre, o sea que
+ * una sola llamada lo bloqueaba—. 'cancelado' y 'abierto' (reabrir) sí son decisiones del operador.
+ */
+export function assertManualCaseStatus(status: string): asserts status is DigitalizationCaseStatus {
+  if (!(CASE_STATUSES as readonly string[]).includes(status)) {
+    throw new ValidationError(`status: debe ser una de ${CASE_STATUSES.join(', ')}`)
+  }
+  if (status === 'completado') {
+    throw new ValidationError(
+      "status: 'completado' no se asigna a mano — el expediente se completa solo cuando los cinco pasos quedan en listo",
+    )
   }
 }
 
@@ -159,6 +187,36 @@ export function allStepsReady(c: DigitalizationCaseDTO): boolean {
 }
 
 /**
+ * Coherencia del expediente ENTERO: todo paso que quede en 'listo' tiene que seguir teniendo su
+ * dato (plantilla, cobro, placeId, url del motor) y Google Hotel listo sigue exigiendo Google Maps
+ * listo. Se mira el expediente RESULTANTE, no el guardado.
+ *
+ * Existe porque `advanceStep` no es la única ruta que escribe estos campos: `service.update` podía
+ * vaciar el dato de un paso ya cerrado (borrar `googlePlaceId` con `googleMapsStatus: 'listo'`) y
+ * dejar el expediente en el mismo estado imposible que `assertStepNotLocked` bloquea en el avance.
+ */
+export function assertCaseCoherent(c: DigitalizationCaseDTO): void {
+  for (const step of DIGITALIZATION_STEPS) {
+    if (c[STEP_STATUS_FIELD[step]] === 'listo') assertStepReady(step, c)
+  }
+}
+
+/**
+ * La puerta única de las DOS rutas que escriben el expediente (`advanceStep` y `update`): verifica
+ * la coherencia del resultado y devuelve el estado del expediente RECALCULADO a partir de los cinco
+ * pasos —cinco 'listo' → 'completado', si alguno se reabre → 'abierto'—.
+ *
+ * 'cancelado' es lo único que el cálculo no pisa: es una decisión del operador. Reabrir un
+ * expediente cancelado (`update({ status: 'abierto' })`) vuelve a pasar por acá, así que si los
+ * cinco pasos ya estaban listos queda 'completado' en vez de un 'abierto' incoherente.
+ */
+export function reconcileCaseStatus(resultante: DigitalizationCaseDTO): DigitalizationCaseStatus {
+  assertCaseCoherent(resultante)
+  if (resultante.status === 'cancelado') return 'cancelado'
+  return allStepsReady(resultante) ? 'completado' : 'abierto'
+}
+
+/**
  * Campos del paso que viajan en el request. Se guardan SIEMPRE, aunque el paso no pase a 'listo'.
  *
  * Sólo se escriben los campos QUE LE PERTENECEN al paso declarado; los de otros pasos que vengan en
@@ -232,19 +290,14 @@ export function buildAdvanceStepPatch(
   // El expediente como quedaría: las reglas de cierre miran los datos que entran en este mismo
   // request, no solo los ya guardados.
   const resultante: DigitalizationCaseDTO = { ...actual, ...patch }
-  if (input.status === 'listo') assertStepReady(input.step, resultante)
-
   patch[STEP_STATUS_FIELD[input.step]] = input.status
   resultante[STEP_STATUS_FIELD[input.step]] = input.status
 
-  // El estado del expediente es una FUNCIÓN de los cinco pasos, en las DOS direcciones: con los
-  // cinco en 'listo' se completa solo, y si después alguno se reabre vuelve a 'abierto' (si no,
-  // quedaría "completado" con un paso sin terminar). 'cancelado' lo pone el operador a mano desde
-  // `update`: es una decisión suya, el auto-cálculo no la pisa.
-  if (actual.status !== 'cancelado') {
-    const automatico = allStepsReady(resultante) ? 'completado' : 'abierto'
-    if (automatico !== actual.status) patch.status = automatico
-  }
+  // Coherencia del resultado (incluido "este paso salta a listo sin su dato") y estado del
+  // expediente recalculado, con la MISMA función que usa `service.update`: si divergieran, una de
+  // las dos rutas volvería a ser la puerta de atrás de la otra.
+  const automatico = reconcileCaseStatus(resultante)
+  if (automatico !== actual.status) patch.status = automatico
 
   return patch
 }
