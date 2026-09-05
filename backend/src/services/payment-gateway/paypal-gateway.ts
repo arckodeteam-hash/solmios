@@ -110,14 +110,38 @@ function header(headers: Record<string, string> | undefined, name: string): stri
 }
 
 /**
+ * Id de la captura escondido en el HATEOAS del resource. En un resource de REEMBOLSO el `id` de la
+ * raíz es el del reembolso, y la única pista de qué captura se reembolsó es el link `rel: "up"`,
+ * que apunta a `/v2/payments/captures/{captureId}`.
+ *
+ * Se exige que el href sea de captura a propósito: en un PAYMENT.CAPTURE.COMPLETED el `rel: "up"`
+ * apunta a la ORDEN (`/v2/checkout/orders/{id}`), y tomar ese id como referencia mandaría el id de
+ * la orden a `/payments/captures/{id}/refund`, que responde 404. El `rel` se compara en minúsculas
+ * porque el casing lo pone PayPal y no es parte del contrato.
+ */
+function captureIdFromLinks(res: any): string {
+  const links = Array.isArray(res?.links) ? res.links : []
+  for (const link of links) {
+    if (String(link?.rel || '').toLowerCase() !== 'up') continue
+    const m = /\/payments\/captures\/([^/?#]+)/.exec(String(link?.href || ''))
+    if (m) return m[1]
+  }
+  return ''
+}
+
+/**
  * Saca monto, referencia y id de captura del `resource` del webhook, que NO tiene una sola forma:
  *
  *   - PAYMENT.CAPTURE.* → el resource ES la captura: `amount` y `custom_id` cuelgan de la raíz.
  *   - CHECKOUT.ORDER.COMPLETED / APPROVED / VOIDED → el resource es la ORDEN: lo que importa vive
  *     en `purchase_units[0]` (`amount`, `custom_id`, y la captura en `payments.captures[0]`).
+ *   - PAYMENT.CAPTURE.REFUNDED / REVERSED → el resource es un REEMBOLSO: su `id` es el del
+ *     reembolso, y el de la captura sólo aparece en `links[rel=up]`.
  *
  * Leer sólo la raíz — que es lo que se hacía — dejaba los eventos de orden con `amountMinor: 0` y
- * `reference: ''`: un pago confirmado que no se puede conciliar con ninguna reserva.
+ * `reference: ''` (un pago confirmado que no se puede conciliar con ninguna reserva) y asentaba el
+ * id del REEMBOLSO como referencia del cobro, con lo que un reembolso posterior sobre ese folio
+ * pegaba a un id que la API de capturas no conoce.
  */
 function readResource(resource: any): { amount: any; reference: string; captureId: string } {
   const res = resource ?? {}
@@ -128,7 +152,9 @@ function readResource(resource: any): { amount: any; reference: string; captureI
   const reference = res.custom_id || res.invoice_id
     || unit.custom_id || unit.invoice_id || capture.custom_id
     || res.reference_id || unit.reference_id || ''
-  return { amount, reference: String(reference), captureId: String(capture.id || '') }
+  // La captura embebida manda sobre el link: cuando la orden la trae, es el dato de primera mano.
+  const captureId = capture.id || captureIdFromLinks(res)
+  return { amount, reference: String(reference), captureId: String(captureId || '') }
 }
 
 export class PayPalGateway implements RefundableGateway {
@@ -285,8 +311,10 @@ export class PayPalGateway implements RefundableGateway {
       // como PK de idempotencia, y un CAPTURE.COMPLETED y un CAPTURE.REFUNDED de la MISMA captura
       // colisionarían — el reembolso se descartaría como duplicado y el folio quedaría cobrado.
       eventId: String(body?.id || ''),
-      // La captura manda sobre la orden: es el id que aceptan /payments/captures/{id}/refund y el
-      // void. Para los PAYMENT.CAPTURE.* el propio resource ya ES la captura.
+      // La captura manda sobre la orden y sobre el reembolso: es el id que aceptan
+      // /payments/captures/{id}/refund y el void. El `resource.id` queda de último recurso porque
+      // sólo es la captura en los PAYMENT.CAPTURE.* de cobro (en los de reembolso es el refund, y
+      // en los CHECKOUT.ORDER.* la orden todavía sin capturar).
       providerRef: String(captureId || body?.resource?.id || ''),
       status,
       amountMinor: fromPayPalAmount(amount.value, currency),

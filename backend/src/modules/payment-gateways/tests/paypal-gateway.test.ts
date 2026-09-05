@@ -310,6 +310,38 @@ function orderEventBody(eventType: string, unitOver: Record<string, any> = {}): 
   })
 }
 
+const REFUND_ID = '5C2166344V858234H'
+const REFUNDED_CAPTURE_ID = '3RM89482H16667828'
+
+/**
+ * Un PAYMENT.CAPTURE.REFUNDED/REVERSED con el payload REAL: el `resource` NO es la captura sino un
+ * REEMBOLSO, cuyo `id` es el del reembolso. La captura reembolsada sólo aparece en el link
+ * `rel: "up"`. Reutilizar acá el `eventBody()` de captura — que es lo que se hacía — deja pasar un
+ * adapter que asienta el id del reembolso como referencia del cobro.
+ */
+function refundEventBody(over: Record<string, any> = {}, linkRelUp = 'up'): string {
+  return JSON.stringify({
+    id: 'WH-EVENT-REFUND-1',
+    event_type: 'PAYMENT.CAPTURE.REFUNDED',
+    resource: {
+      id: REFUND_ID,
+      status: 'COMPLETED',
+      amount: { value: '250.00', currency_code: 'USD' },
+      seller_payable_breakdown: {
+        gross_amount: { value: '250.00', currency_code: 'USD' },
+        paypal_fee: { value: '10.75', currency_code: 'USD' },
+        net_amount: { value: '239.25', currency_code: 'USD' },
+        total_refunded_amount: { value: '250.00', currency_code: 'USD' },
+      },
+      links: [
+        { href: `https://api.paypal.com/v2/payments/refunds/${REFUND_ID}`, rel: 'self', method: 'GET' },
+        { href: `https://api.paypal.com/v2/payments/captures/${REFUNDED_CAPTURE_ID}`, rel: linkRelUp, method: 'GET' },
+      ],
+      ...over,
+    },
+  })
+}
+
 /** Firma como firma PayPal: RSA-SHA256 sobre `id|time|webhookId|crc32(body)`, base64. */
 function sign(body: string, transmissionTime: string): string {
   const signer = createSign('RSA-SHA256')
@@ -463,6 +495,47 @@ describe('PayPalGateway — confirm()', () => {
     const body = orderEventBody('CHECKOUT.ORDER.COMPLETED', { custom_id: undefined, invoice_id: 'INV-77' })
     const outcome = await gw().confirm({ hotelId: 'h1', headers: signedHeaders(body), rawBody: body })
     expect(outcome!.reference).toBe('INV-77')
+  })
+
+  it('PAYMENT.CAPTURE.REFUNDED: el ref es la CAPTURA del links[rel=up], NO el id del reembolso', async () => {
+    mockCertFetch()
+    const body = refundEventBody()
+    const outcome = await gw().confirm({ hotelId: 'h1', headers: signedHeaders(body), rawBody: body })
+    expect(outcome!.status).toBe('refunded')
+    // Con el id del reembolso, /payments/captures/{id}/refund y el void responden 404.
+    expect(outcome!.providerRef).toBe(REFUNDED_CAPTURE_ID)
+    expect(outcome!.providerRef).not.toBe(REFUND_ID)
+    // El eventId sigue siendo el del EVENTO: es la PK de idempotencia de payment-events.
+    expect(outcome!.eventId).toBe('WH-EVENT-REFUND-1')
+    expect(outcome!.amountMinor).toBe(25000)
+    expect(outcome!.currency).toBe('USD')
+  })
+
+  it('PAYMENT.CAPTURE.REVERSED con el rel en mayúsculas: el casing lo pone PayPal, no el contrato', async () => {
+    mockCertFetch()
+    const body = refundEventBody({}, 'UP').replace('PAYMENT.CAPTURE.REFUNDED', 'PAYMENT.CAPTURE.REVERSED')
+    const outcome = await gw().confirm({ hotelId: 'h1', headers: signedHeaders(body), rawBody: body })
+    expect(outcome!.status).toBe('refunded')
+    expect(outcome!.providerRef).toBe(REFUNDED_CAPTURE_ID)
+  })
+
+  it('PAYMENT.CAPTURE.COMPLETED: el links[rel=up] apunta a la ORDEN y ese id NO se toma como ref', async () => {
+    mockCertFetch()
+    const body = eventBody({
+      resource: {
+        id: 'CAPTURE-1',
+        custom_id: 'RES-42',
+        amount: { currency_code: 'USD', value: '250.00' },
+        links: [
+          { href: 'https://api.paypal.com/v2/payments/captures/CAPTURE-1', rel: 'self', method: 'GET' },
+          { href: 'https://api.paypal.com/v2/checkout/orders/ORDER-42', rel: 'up', method: 'GET' },
+        ],
+      },
+    })
+    const outcome = await gw().confirm({ hotelId: 'h1', headers: signedHeaders(body), rawBody: body })
+    expect(outcome!.status).toBe('paid')
+    expect(outcome!.providerRef).toBe('CAPTURE-1')
+    expect(outcome!.providerRef).not.toBe('ORDER-42')
   })
 
   it('evento que no nos interesa (aunque venga bien firmado) → null', async () => {
