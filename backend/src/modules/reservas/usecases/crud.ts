@@ -369,7 +369,7 @@ export async function deleteReservation(
     throw e
   }
   if (!deleted) throw new NotFoundError('Reserva no encontrada')
-  await safeEmit(logger, 'onReservasDeleted', sockets.onReservasDeleted, id)
+  await safeEmit(logger, 'onReservasDeleted', sockets.onReservasDeleted, id, { hotelId: String(existing.hotelId), roomId: existing.roomId ?? null })
   // Invalidación versionada (de la rama, consistente con create/update). Se MANTIENE `return
   // existing`: el service lo necesita para el audit log del borrado (SC-05).
   await invalidateReservasCaches(cache, existing.hotelId)

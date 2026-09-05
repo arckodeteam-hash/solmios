@@ -7,7 +7,9 @@ import type { ReservasDTO } from './types'
 export interface ReservasSockets {
   onReservasCreated?: (data: ReservasDTO) => Promise<void>
   onReservasUpdated?: (data: ReservasDTO) => Promise<void>
-  onReservasDeleted?: (id: string) => Promise<void>
+  /** `ctx` lleva hotel y habitación de la reserva borrada: el channel manager los necesita para
+   *  recalcular la disponibilidad de esas noches. Sin ellos no hay push posible. */
+  onReservasDeleted?: (id: string, ctx?: { hotelId: string; roomId?: string | null }) => Promise<void>
   // `guestId`/`totalAmount` viajan en el payload para que el CRM pueda acreditar puntos sin volver a
   // leer la reserva (un conector delega, no consulta). Ambos pueden faltar: hay reservas sin huésped.
   onReservationCheckedOut?: (data: { reservationId: string; roomId: string; hotelId: string; guestId?: string | null; totalAmount?: number }) => Promise<void>

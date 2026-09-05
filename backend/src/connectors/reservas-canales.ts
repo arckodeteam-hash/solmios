@@ -1,28 +1,28 @@
 // connectors/reservas-canales.ts — Conector entre módulos
-// Cuando una reserva se crea/actualiza/cancela (vía el MÓDULO reservas), recalcula y
-// empuja availability a Channex. Los handlers custom (check-in/checkout/booking público/
-// bloqueos) bypassan el módulo y disparan pushAvailabilityByRoom inline en composition-root.
-// Regla del framework: conectores orquestan módulos SIN que estos se importen entre sí.
+// Cuando una reserva se crea/actualiza/cancela/borra (vía el MÓDULO reservas), recalcula y
+// empuja availability a Channex. Qué se publica ante cada evento vive en
+// `canales/usecases/reservation-events.ts` (CLAUDE #3: el conector solo wirea).
+// Los handlers custom (check-in/checkout/booking público/bloqueos) bypassan el módulo y disparan
+// pushAvailabilityByRoom inline en composition-root.
 
 import type { ConnectorContext } from 'arckode-framework'
+import { onReservationRoomChanged, type ReservationEventDeps, type ReservationRef } from '../modules/canales/usecases/reservation-events'
 
 export function reservasCanalesConnector(ctx: ConnectorContext): void {
   const reservas = ctx.resolveModule<{ setSockets: (s: any) => void }>('reservas')
+  const deps: ReservationEventDeps = {
+    pushAvailabilityByRoom: (hotelId, roomId) =>
+      ctx.resolveModule<{ pushAvailabilityByRoom: (h: string, r: string) => Promise<{ pushed: boolean }> }>('canales')
+        .pushAvailabilityByRoom(hotelId, roomId),
+  }
 
   reservas.setSockets({
     // create → reserva nueva ocupa noches → availability baja.
-    onReservasCreated: async (reserva: any) => {
-      const canales = ctx.resolveModule<{ pushAvailabilityByRoom: (h: string, r: string) => Promise<{ pushed: boolean }> }>('canales')
-      await canales.pushAvailabilityByRoom(reserva.hotelId, reserva.roomId).catch(() => {})
-    },
+    onReservasCreated: (reserva: ReservationRef) => onReservationRoomChanged(deps, reserva),
     // update → cubre cancelación (status='cancelled' libera noches) y cambios de fecha/room.
-    onReservasUpdated: async (reserva: any) => {
-      const canales = ctx.resolveModule<{ pushAvailabilityByRoom: (h: string, r: string) => Promise<{ pushed: boolean }> }>('canales')
-      await canales.pushAvailabilityByRoom(reserva.hotelId, reserva.roomId).catch(() => {})
-    },
-    // onDelete solo recibe id (sin hotelId/roomId) → no se puede recalcular selectivo.
-    // Las cancelaciones reales son soft (status='cancelled' → onReservasUpdated, cubierto arriba).
-    // El delete físico es raro; la availability se corrige en el siguiente push o sync.
-    onReservasDeleted: async () => {},
+    onReservasUpdated: (reserva: ReservationRef) => onReservationRoomChanged(deps, reserva),
+    // delete → las noches quedan libres → availability sube. El evento lleva hotel y habitación
+    // desde el 2026-09-05; antes solo traía el `id` y acá no se hacía nada.
+    onReservasDeleted: (_id: string, borrada?: ReservationRef) => onReservationRoomChanged(deps, borrada),
   })
 }
