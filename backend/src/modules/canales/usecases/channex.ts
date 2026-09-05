@@ -249,7 +249,10 @@ export class ChannexUseCase {
       ? []
       : parseRoomTypes(await this.channexList(key, `/room_types?filter[property_id]=${channexPId}`).catch(() => []))
     const desiredRTs = rooms
-      .map((rt: RoomTypeSummary) => ({ title: channexRoomTypeTitle(rt.type), room: rt }))
+      // `aliases`: hasta el fix de títulos vendibles, el room type se publicaba con el CÓDIGO
+      // interno ('double'). Sin esto el diff no lo reconoce, crea "Double Room" al lado y deja el
+      // viejo (el DELETE lo rechaza Channex si tiene canal mapeado) — la property se duplica.
+      .map((rt: RoomTypeSummary) => ({ title: channexRoomTypeTitle(rt.type), room: rt, aliases: [String(rt.type)] }))
       .filter((rt) => !!rt.title)
     const rtPlan = planStructure(desiredRTs, existingRTs)
     const rtBody = (d: { title: string; room: RoomTypeSummary }) => ({
@@ -261,16 +264,21 @@ export class ChannexUseCase {
     const rtCreated = await Promise.all(rtPlan.create.map(async (d) => ({ d, res: await this.channexReq(key, 'POST', '/room_types', rtBody(d)) })))
     await Promise.all(rtPlan.update.map(({ id, item }) => this.channexReq(key, 'PUT', `/room_types/${id}`, rtBody(item))))
     // Un tipo que el hotel ya no tiene deja de venderse: se borra (y con él sus rate plans).
-    for (const gone of rtPlan.remove) await this.channexReq(key, 'DELETE', `/room_types/${gone.id}`).catch(() => {})
+    // El fallo se REPORTA: Channex rechaza el DELETE de un room type con canal mapeado o con
+    // reservas, y tragárselo dejaba la property con el viejo y el nuevo conviviendo, en silencio.
+    for (const gone of rtPlan.remove) {
+      const res = await this.channexReq(key, 'DELETE', `/room_types/${gone.id}`).catch((e) => ({ ok: false, data: e }))
+      if (!res.ok) this.logger.warn('No se pudo borrar un tipo de habitación en Channex: queda publicado', { propertyId: channexPId, roomTypeId: gone.id, title: gone.title })
+    }
 
     // Los tipos vivos con su UUID, sin depender de releer: los que ya estaban conservan el suyo y
     // los nuevos traen el de su POST. Cada uno con la habitación local de la que salió (precio y
     // capacidad), que es lo que define sus rate plans.
-    const rtIndex: Array<{ id: string; title: string; room: RoomTypeSummary }> = [
-      ...rtPlan.update.map(({ id, item }) => ({ id, title: item.title, room: item.room })),
+    const rtIndex: Array<{ id: string; title: string; room: RoomTypeSummary; aliases: string[] }> = [
+      ...rtPlan.update.map(({ id, item }) => ({ id, title: item.title, room: item.room, aliases: item.aliases })),
       ...rtCreated
         .filter((r) => r.res.ok && r.res.data?.data?.id)
-        .map((r) => ({ id: String(r.res.data.data.id), title: r.d.title, room: r.d.room })),
+        .map((r) => ({ id: String(r.res.data.data.id), title: r.d.title, room: r.d.room, aliases: r.d.aliases })),
     ]
 
     // Rate plans — UNO POR PLAN (P5): "Double Room BAR", "Double Room Bed & Breakfast"…
@@ -282,6 +290,8 @@ export class ChannexUseCase {
       const cap = Math.max(1, rt.room.capacity || 2)
       return ratePlans.map((plan) => ({
         title: `${rt.title} ${plan.label}`,
+        // El título del rate plan cuelga del título del tipo, así que arrastra el mismo rename.
+        aliases: rt.aliases.map((a) => `${a} ${plan.label}`),
         roomTypeId: rt.id,
         // Una option por ocupación 1..capacidad (la máxima is_primary). Los precios reales por
         // fecha los pone el push de tarifas; acá se crea la ESTRUCTURA (#404).
@@ -313,7 +323,10 @@ export class ChannexUseCase {
         })
       }),
     ])
-    for (const gone of rpPlan.remove) await this.channexReq(key, 'DELETE', `/rate_plans/${gone.id}`).catch(() => {})
+    for (const gone of rpPlan.remove) {
+      const res = await this.channexReq(key, 'DELETE', `/rate_plans/${gone.id}`).catch((e) => ({ ok: false, data: e }))
+      if (!res.ok) this.logger.warn('No se pudo borrar una tarifa en Channex: queda publicada', { propertyId: channexPId, ratePlanId: gone.id, title: gone.title })
+    }
     // Releer DESPUÉS de aplicar el plan: de acá salen el mapping persistido y el reporte.
     // Las copias de canal ("… - OpenChannel …") se descartan: no son tarifas del hotel, y
     // contarlas infla el número que muestra el panel.

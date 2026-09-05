@@ -45,6 +45,75 @@ describe('planStructure', () => {
   })
 })
 
+describe('planStructure — títulos anteriores (renombrar en vez de duplicar)', () => {
+  // El título publicable pasó del código interno ("double") al nombre vendible ("Double Room").
+  // Sin alias, el diff crea el nuevo y manda el viejo a `remove`; Channex rechaza ese DELETE
+  // cuando el room type tiene un canal mapeado, y la property queda con los dos.
+  const viejos = [
+    { id: 'rt-double', title: 'double' },
+    { id: 'rt-single', title: 'single' },
+  ]
+
+  it('el título viejo se reconoce por alias → UPDATE con el mismo UUID, sin crear ni borrar', () => {
+    const plan = planStructure(
+      [{ title: 'Double Room', aliases: ['double'] }, { title: 'Single Room', aliases: ['single'] }],
+      viejos,
+    )
+    expect(plan.create).toHaveLength(0)
+    expect(plan.remove).toHaveLength(0)
+    expect(plan.update.map((u) => u.id).sort()).toEqual(['rt-double', 'rt-single'])
+  })
+
+  it('sin alias reproduce el bug: crea el nuevo y manda el viejo a borrar', () => {
+    const plan = planStructure([{ title: 'Double Room' }], [{ id: 'rt-double', title: 'double' }])
+    expect(plan.create).toHaveLength(1)
+    expect(plan.remove.map((r) => r.id)).toEqual(['rt-double'])
+  })
+
+  it('el título exacto gana sobre el alias: ya migrado, el alias no se usa', () => {
+    const plan = planStructure(
+      [{ title: 'Double Room', aliases: ['double'] }],
+      [{ id: 'rt-nuevo', title: 'Double Room' }, { id: 'rt-viejo', title: 'double' }],
+    )
+    expect(plan.update).toEqual([{ id: 'rt-nuevo', item: { title: 'Double Room', aliases: ['double'] } }])
+    expect(plan.remove.map((r) => r.id)).toEqual(['rt-viejo'])   // el viejo sí sobra: ya migró
+  })
+
+  it('un alias que es el título ACTUAL de otro no se lo lleva puesto', () => {
+    // "suite" es a la vez el alias de Suite y el título de un tipo que sigue vigente.
+    const plan = planStructure(
+      [{ title: 'suite' }, { title: 'Suite Premium', aliases: ['suite'] }],
+      [{ id: 'rt-suite', title: 'suite' }],
+    )
+    expect(plan.update).toEqual([{ id: 'rt-suite', item: { title: 'suite' } }])
+    expect(plan.create.map((c) => c.title)).toEqual(['Suite Premium'])
+    expect(plan.remove).toHaveLength(0)
+  })
+
+  it('los rate plans arrastran el rename del tipo por su propio alias', () => {
+    const plan = planStructure(
+      [{ title: 'Double Room BAR', aliases: ['double BAR'] }],
+      [{ id: 'rp-1', title: 'double BAR' }],
+    )
+    expect(plan.update.map((u) => u.id)).toEqual(['rp-1'])
+    expect(plan.create).toHaveLength(0)
+  })
+
+  it('dos ítems no se reparten el mismo existente por alias', () => {
+    const plan = planStructure(
+      [{ title: 'A', aliases: ['x'] }, { title: 'B', aliases: ['x'] }],
+      [{ id: 'solo-uno', title: 'x' }],
+    )
+    expect(plan.update).toHaveLength(1)
+    expect(plan.create).toHaveLength(1)
+  })
+
+  it('sin alias y sin match sigue creando (comportamiento previo intacto)', () => {
+    const plan = planStructure([{ title: 'Nuevo', aliases: ['no-existe'] }], [])
+    expect(plan.create.map((c) => c.title)).toEqual(['Nuevo'])
+  })
+})
+
 describe('parseRatePlans', () => {
   it('marca como derivadas las copias de canal (el flag vive en relationships, no en attributes)', () => {
     const parsed = parseRatePlans([

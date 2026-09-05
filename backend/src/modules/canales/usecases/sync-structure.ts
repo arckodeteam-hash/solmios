@@ -16,6 +16,13 @@
 //   - no está                        → CREATE
 //   - está y ya no lo queremos       → DELETE (un tipo borrado en el PMS no puede seguir vendiéndose)
 //
+// TÍTULOS ANTERIORES (`aliases`): el título publicable cambió una vez —del código interno del PMS
+// ("double") al nombre vendible ("Double Room")— y el diff por título solo no reconoce al viejo:
+// planifica crear el nuevo y borrar el viejo. El DELETE lo rechaza Channex cuando el room type
+// tiene un canal mapeado, así que la property se queda con LOS DOS. Medido en producción el
+// 2026-09-04 sobre Hotel Boutique Palma: un solo sync la llevó de 4 room types a 7 y de 10 rate
+// plans a 22. Con el alias, ese mismo caso es un rename (UPDATE) y el mapeo del canal sobrevive.
+//
 // Los rate plans DERIVADOS (los que Channex crea al mapear un canal: "double BAR - OpenChannel …",
 // con `relationships.parent_rate_plan`) no son nuestros: no se actualizan ni se borran nunca.
 // Borrarlos era justamente parte de lo que rompía el canal.
@@ -51,8 +58,12 @@ const norm = (s: unknown) => String(s ?? '').trim().toLowerCase()
  *
  * Un título repetido en Channex (basura de una corrida vieja) resuelve al primero y manda el resto
  * a `remove`: dos rate plans con el mismo nombre son ambiguos para el mapeo del canal.
+ *
+ * `aliases` son títulos con los que ESE MISMO ítem se pudo haber publicado antes. Se consultan solo
+ * si el título actual no está, y en segundo lugar, para que un rename se resuelva como UPDATE en vez
+ * de crear el nuevo y dejar el viejo colgado. Un alias ya tomado por otro ítem no se reusa.
  */
-export function planStructure<T extends { title: string }>(
+export function planStructure<T extends { title: string; aliases?: string[] }>(
   desired: T[],
   existing: ChannexItem[],
 ): StructurePlan<T> {
@@ -64,12 +75,29 @@ export function planStructure<T extends { title: string }>(
     list.push(item)
     byTitle.set(norm(item.title), list)
   }
+  const free = (title: unknown) => byTitle.get(norm(title))?.find((c) => !taken.has(c.id))
 
+  // Dos pasadas: PRIMERO todos los títulos exactos, DESPUÉS los alias. Al revés, un ítem cuyo alias
+  // es el título actual de otro se lo llevaría puesto y el dueño legítimo terminaría duplicado.
+  const pending: T[] = []
   for (const item of desired) {
-    const hit = byTitle.get(norm(item.title))?.[0]
+    const hit = free(item.title)
     if (hit) {
       taken.add(hit.id)
       plan.update.push({ id: hit.id, item })
+    } else {
+      pending.push(item)
+    }
+  }
+  for (const item of pending) {
+    let hit: ChannexItem | undefined
+    for (const alias of item.aliases ?? []) {
+      hit = free(alias)
+      if (hit) break
+    }
+    if (hit) {
+      taken.add(hit.id)
+      plan.update.push({ id: hit.id, item })   // rename: mismo UUID, el mapeo del canal sobrevive
     } else {
       plan.create.push(item)
     }

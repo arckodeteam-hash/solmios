@@ -185,7 +185,7 @@ export class HabitacionesService {
     }
     const deleted = await this.repo.delete(id)
     if (!deleted) throw new NotFoundError('Habitación no encontrada')
-    await this.sockets.onHabitacionesDeleted?.(id)
+    await this.sockets.onHabitacionesDeleted?.(id, { hotelId: existing.hotelId, type: existing.type })
     await bumpListVersion(this.cache, existing.hotelId)
     await auditSafely(this.auditPort, this.logger, {
       hotelId: existing.hotelId, userId: currentUser.id, action: 'room.delete',

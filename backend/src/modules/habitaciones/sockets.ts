@@ -7,5 +7,6 @@ import type { HabitacionesDTO } from './types'
 export interface HabitacionesSockets {
   onHabitacionesCreated?: (data: HabitacionesDTO) => Promise<void>
   onHabitacionesUpdated?: (data: HabitacionesDTO) => Promise<void>
-  onHabitacionesDeleted?: (id: string) => Promise<void>
+  /** `ctx` lleva el hotel de la habitación borrada: el channel manager lo necesita para republicar. */
+  onHabitacionesDeleted?: (id: string, ctx?: { hotelId: string; type?: string }) => Promise<void>
 }
