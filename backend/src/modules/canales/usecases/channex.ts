@@ -822,6 +822,22 @@ export class ChannexUseCase {
     return hit?.id ?? null
   }
 
+  /**
+   * Tipos de canal ACTIVOS en la property (`attributes.channel`: "OpenChannel", "BookingCom"…).
+   *
+   * Es el identificador con el que el PMS guarda una tarifa por canal —el mismo que muestra el
+   * detalle del canal en el panel—, y NO el `type` del listado de `listChannels`, que es la
+   * categoría genérica ("ota") y no sirve para cruzar contra `RoomRates.channel`.
+   */
+  async listActiveChannelTypes(cfg: CanalesDTO | undefined): Promise<string[]> {
+    if (!cfg?.channexPropertyId) return []
+    const list = await this.channexList(this.resolveKey(cfg), `/channels?filter[property_id]=${cfg.channexPropertyId}`)
+    return list
+      .filter((c: any) => c?.attributes?.is_active !== false)
+      .map((c: any) => String(c?.attributes?.channel || ''))
+      .filter(Boolean)
+  }
+
   async createOTAChannel(cfg: CanalesDTO | undefined, dto: OTAChannelCreateDTO): Promise<OTAChannelResultDTO> {
     const channelCode = (v: string | number) => this.codeOf(v)
     const key = this.resolveKey(cfg)

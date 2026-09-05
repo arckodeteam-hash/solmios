@@ -118,7 +118,7 @@ export class CanalesService {
       upsertConfig: (h, patch) => this.upsertConfig(h, patch),
       pushAllAvailability: (h) => withAvailabilityTrail(this.syncLogRepo, h, () => pushAllRoomTypesAvailability(this.availDeps(), h)),
       pushRates: (h, channel) => this.pushSeasonalRates(h, channel),
-      overrideChannels: (h) => listOverrideChannels((m, q) => this.queries.findMany(m, q), h, async () => (await this.listChannels(h)).data),
+      overrideChannels: (h) => listOverrideChannels((m, q) => this.queries.findMany(m, q), h, async () => this.channex.listActiveChannelTypes(await this.getConfig(h))),
       syncOpenChannelMapping: (h) => this.channelApi.syncOpenChannelMapping(h),
       logger: this.logger, syncLogRepo: this.syncLogRepo,
     }, hotelId, hotel, rooms)

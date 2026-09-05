@@ -10,20 +10,19 @@
 // columna `channel` hace que una fila vieja —de un canal que se desconectó, o cargada por una
 // integración con el id en vez del código— pise el precio del canal que sí está vendiendo. Pasó en
 // producción el 2026-09-05: cuatro pushes seguidos y el precio final salió de filas huérfanas.
-
-export interface ConnectedChannel {
-  type: string
-  conectado: boolean
-}
+//
+// El identificador que se cruza es el `attributes.channel` de Channex ("OpenChannel"), que es lo
+// que el PMS guarda en `RoomRates.channel`. NO el `type` del listado de canales del panel, que es
+// la categoría genérica ("ota") y no matchea con nada.
 
 /**
- * Canales distintos con tarifa propia, acotados a los que están conectados y en el orden en que
- * el hotel los tiene conectados. Vacío si el hotel vende al mismo precio en todos lados.
+ * Canales distintos con tarifa propia, acotados a los que están activos en la property.
+ * Vacío si el hotel vende al mismo precio en todos lados.
  */
 export async function listOverrideChannels(
   findMany: (model: string, query: Record<string, unknown>) => Promise<any[]>,
   hotelId: string,
-  connected: () => Promise<ConnectedChannel[]>,
+  activeChannels: () => Promise<string[]>,
 ): Promise<string[]> {
   const rows = (await findMany('RoomRates', { hotelId })) as Array<{ channel?: unknown }>
   const withRates = new Set<string>()
@@ -33,6 +32,8 @@ export async function listOverrideChannels(
   }
   if (withRates.size === 0) return []
 
-  const live = await connected().catch(() => [])
-  return live.filter((c) => c.conectado && withRates.has(c.type)).map((c) => c.type)
+  // Si no se puede saber cuáles están activos, no se publica ninguno: la tarifa base sola es peor
+  // que el precio correcto, pero mucho mejor que publicar un precio elegido por el orden de la tabla.
+  const active = await activeChannels().catch(() => [] as string[])
+  return active.filter((c) => withRates.has(c))
 }
