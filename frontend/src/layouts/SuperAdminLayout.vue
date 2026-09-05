@@ -198,6 +198,7 @@ const navItems = computed(() => {
     { path: '/admin/sitio', label: 'Sitio Público', icon: ICONS.document },
     { path: '/admin/eliminacion-datos', label: 'Eliminación de Datos', icon: ICONS.trash, badge: s.solicitudesEliminacion || undefined },
     { path: '/admin/leads-ventas', label: 'Leads de Ventas', icon: ICONS.briefcase, badge: s.leadsVentas || undefined },
+    { path: '/admin/digitalizacion', label: 'Digitalización', icon: ICONS.sparkles },
     { path: '/admin/roles', label: 'Roles & Permisos', icon: ICONS.shield },
     { path: '/admin/settings', label: 'Configuración', icon: ICONS.cog },
   ]
@@ -227,6 +228,7 @@ const pageTitle = computed(() => {
     'super-admin-sitio': 'Sitio Público (solmios.com)',
     'super-admin-eliminacion-datos': 'Eliminación de Datos',
     'super-admin-leads-ventas': 'Leads de Ventas',
+    'super-admin-digitalizacion': 'Digitalización',
     'super-admin-roles': 'Roles & Permisos',
     'super-admin-channels': 'Canales (Channel Manager)',
     'super-admin-settings': 'Configuración',

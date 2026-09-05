@@ -200,6 +200,11 @@ const router = createRouter({
           component: () => import('@/pages/super-admin/leads-ventas.vue'),
         },
         {
+          path: 'digitalizacion',
+          name: 'super-admin-digitalizacion',
+          component: () => import('@/pages/super-admin/digitalizacion.vue'),
+        },
+        {
           path: 'support',
           name: 'super-admin-support',
           component: () => import('@/pages/super-admin/support.vue'),
