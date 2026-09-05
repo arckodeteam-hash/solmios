@@ -15,7 +15,7 @@
 // `false`, o sea "no confirmes el pago". Un falso negativo se reintenta; un falso positivo regala
 // una noche de hotel.
 
-import { createVerify, createPublicKey, X509Certificate, type KeyObject } from 'node:crypto'
+import { createVerify, X509Certificate, type KeyObject } from 'node:crypto'
 
 /** Único algoritmo que PayPal usa hoy. Allowlist a propósito: un `paypal-auth-algo` desconocido
  *  (o débil, tipo SHA1) no se "intenta igual", se rechaza. */
@@ -159,22 +159,17 @@ export function isAcceptablePayPalCert(cert: X509Certificate, nowMs: number): bo
 }
 
 /**
- * Acepta un PEM de CERTIFICATE (lo que sirve PayPal) o de PUBLIC KEY. Lo segundo es para poder
- * testear la verificación con un par RSA generado en el test: Node/Bun no traen forma de emitir un
- * X.509 autofirmado, así que sin esta rama los tests dependerían de openssl en el PATH. Esa rama no
- * pasa por `isAcceptablePayPalCert` porque una clave pelada no trae vigencia ni nombre; el camino
- * real de producción es siempre el CERTIFICATE.
+ * SÓLO un PEM de CERTIFICATE, que es lo único que PayPal sirve en su cert-url: nunca una clave
+ * pelada. Aceptar además un `PUBLIC KEY` (que es lo que se hacía, para comodidad de los tests)
+ * abría un segundo camino de confianza que ESQUIVA `isAcceptablePayPalCert` — sin vigencia, sin
+ * CN de paypal.com y sin rechazo del autofirmado —, o sea justo el agujero que esa función vino a
+ * tapar. Cualquier otro material de clave es "no verificable" → null, y el webhook se rechaza.
  */
 function parsePublicKey(pem: string, nowMs: number): KeyObject | null {
+  if (!pem.includes('BEGIN CERTIFICATE')) return null
   try {
-    if (pem.includes('BEGIN CERTIFICATE')) {
-      const cert = new X509Certificate(pem)
-      return isAcceptablePayPalCert(cert, nowMs) ? cert.publicKey : null
-    }
-    if (pem.includes('BEGIN PUBLIC KEY') || pem.includes('BEGIN RSA PUBLIC KEY')) {
-      return createPublicKey({ key: pem, format: 'pem' })
-    }
-    return null
+    const cert = new X509Certificate(pem)
+    return isAcceptablePayPalCert(cert, nowMs) ? cert.publicKey : null
   } catch {
     return null
   }

@@ -5,9 +5,10 @@
 // mockeadas tienen la forma documentada de Orders v2 / Payments v2.
 //
 // Para el camino de `confirm()` con firma VÁLIDA se genera un par RSA en el test y se firma el
-// mensaje exactamente como lo firma PayPal (misma técnica que paypal-webhook.test.ts): el "cert"
-// se sirve como PEM de clave pública desde una URL de api.paypal.com, que es lo único que la
-// allowlist del verificador acepta.
+// mensaje exactamente como lo firma PayPal (misma técnica que paypal-webhook.test.ts): el
+// certificado que envuelve esa clave se emite con `x509-fixture.ts` y se sirve desde una URL de
+// api.paypal.com, que es lo único que la allowlist del verificador acepta — y el verificador sólo
+// acepta CERTIFICADOS, nunca una clave pelada.
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { createSign, generateKeyPairSync } from 'node:crypto'
@@ -22,6 +23,7 @@ import {
   buildVerificationMessage,
   clearPayPalCertCache,
 } from '../../../services/payment-gateway/paypal-webhook'
+import { makeCertificate } from './x509-fixture'
 
 const WEBHOOK_ID = 'WH-77D19822CH2334701-1TU21456UF8'
 const CERT_URL = 'https://api.paypal.com/v1/notifications/certs/CERT-360caa42'
@@ -36,7 +38,8 @@ function gw(overrides: Partial<PayPalCredentials> = {}) {
 }
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
-const publicPem = publicKey.export({ type: 'spki', format: 'pem' }).toString()
+/** El certificado que PayPal serviría para esa clave: CN de paypal.com, emitido y vigente. */
+const PAYPAL_CERT_PEM = makeCertificate({ publicKey })
 
 const originalFetch = globalThis.fetch
 
@@ -68,6 +71,15 @@ function mockFetch(routes: Array<{ match: RegExp; respond: (call: FetchCall) => 
 const tokenRoute = (accessToken = 'A21AA-token', expiresIn = 32400) => ({
   match: /\/v1\/oauth2\/token$/,
   respond: () => new Response(JSON.stringify({ access_token: accessToken, expires_in: expiresIn }), { status: 200 }),
+})
+
+/** GET /v2/payments/captures/{id}: de acá sale la moneda REAL del cobro que se va a reembolsar. */
+const captureRoute = (currency: string, value = '250.00') => ({
+  match: /\/v2\/payments\/captures\/[^/]+$/,
+  respond: () => new Response(
+    JSON.stringify({ id: 'CAPTURE-1', status: 'COMPLETED', amount: { currency_code: currency, value } }),
+    { status: 200 },
+  ),
 })
 
 const orderRoute = (body: any, status = 201) => ({
@@ -318,9 +330,9 @@ function signedHeaders(body: string): Record<string, string> {
   }
 }
 
-/** El verificador baja el "certificado" por el fetch global: se lo servimos desde paypal.com. */
+/** El verificador baja el certificado por el fetch global: se lo servimos desde paypal.com. */
 function mockCertFetch() {
-  return mockFetch([{ match: /^https:\/\/api\.paypal\.com\//, respond: () => new Response(publicPem, { status: 200 }) }])
+  return mockFetch([{ match: /^https:\/\/api\.paypal\.com\//, respond: () => new Response(PAYPAL_CERT_PEM, { status: 200 }) }])
 }
 
 describe('PayPalGateway — confirm()', () => {
@@ -356,7 +368,7 @@ describe('PayPalGateway — confirm()', () => {
   })
 
   it('cert-url de un host ajeno → null y NO se descarga nada', async () => {
-    const calls = mockFetch([{ match: /.*/, respond: () => new Response(publicPem, { status: 200 }) }])
+    const calls = mockFetch([{ match: /.*/, respond: () => new Response(PAYPAL_CERT_PEM, { status: 200 }) }])
     const body = eventBody()
     const headers = { ...signedHeaders(body), 'paypal-cert-url': 'https://paypal.com.attacker.test/cert.pem' }
     expect(await gw().confirm({ hotelId: 'h1', headers, rawBody: body })).toBeNull()
@@ -481,14 +493,81 @@ describe('PayPalGateway — refund / voidCharge', () => {
     expect(call.body).toEqual({})
   })
 
+  it('refund total NO consulta la captura: sin `amount` no hace falta la moneda', async () => {
+    const calls = mockFetch([
+      tokenRoute(),
+      captureRoute('EUR'),
+      { match: /\/refund$/, respond: () => new Response(JSON.stringify({ id: 'REFUND-1', status: 'COMPLETED' }), { status: 201 }) },
+    ])
+    await gw().refund('CAPTURE-1')
+    expect(calls.some(c => c.url.endsWith('/captures/CAPTURE-1'))).toBe(false)
+  })
+
   it('refund parcial manda el monto como decimal de PayPal', async () => {
     const calls = mockFetch([
       tokenRoute(),
+      captureRoute('USD'),
       { match: /\/refund$/, respond: () => new Response(JSON.stringify({ id: 'REFUND-2', status: 'PENDING' }), { status: 201 }) },
     ])
     await gw().refund('CAPTURE-1', 10000)
+    const get = calls.find(c => c.url.endsWith('/captures/CAPTURE-1'))!
+    expect(get.url).toBe('https://api-m.sandbox.paypal.com/v2/payments/captures/CAPTURE-1')
+    expect(get.method).toBe('GET')
     const call = calls.find(c => c.url.includes('/refund'))!
     expect(call.body).toEqual({ amount: { currency_code: 'USD', value: '100.00' } })
+  })
+
+  /**
+   * `creds.currency` es apenas el DEFAULT de la pasarela: el cobro pudo hacerse en la moneda de la
+   * reserva (bookingengine/stripe.ts la deriva de la reserva, no de las credenciales). Armar el
+   * reembolso parcial con la default mandaba '100.00 EUR' sobre una captura en USD — plata mal
+   * devuelta, en la moneda equivocada.
+   */
+  it('refund parcial usa la moneda de la CAPTURA, no la default de las credenciales', async () => {
+    const calls = mockFetch([
+      tokenRoute(),
+      captureRoute('USD'),
+      { match: /\/refund$/, respond: () => new Response(JSON.stringify({ id: 'REFUND-3', status: 'PENDING' }), { status: 201 }) },
+    ])
+    await gw({ currency: 'eur' }).refund('CAPTURE-1', 10000)
+    const call = calls.find(c => c.url.includes('/refund'))!
+    expect(call.body).toEqual({ amount: { currency_code: 'USD', value: '100.00' } })
+  })
+
+  it('los decimales también salen de la moneda de la captura: 5000 JPY es "5000", no "50.00"', async () => {
+    const calls = mockFetch([
+      tokenRoute(),
+      captureRoute('JPY', '5000'),
+      { match: /\/refund$/, respond: () => new Response(JSON.stringify({ id: 'REFUND-4', status: 'PENDING' }), { status: 201 }) },
+    ])
+    await gw({ currency: 'usd' }).refund('CAPTURE-1', 5000)
+    const call = calls.find(c => c.url.includes('/refund'))!
+    expect(call.body).toEqual({ amount: { currency_code: 'JPY', value: '5000' } })
+  })
+
+  it('si no se puede leer la captura, el refund parcial TIRA y no sale con la moneda default', async () => {
+    const calls = mockFetch([
+      tokenRoute(),
+      {
+        match: /\/v2\/payments\/captures\/[^/]+$/,
+        respond: () => new Response(JSON.stringify({ message: 'RESOURCE_NOT_FOUND' }), { status: 404 }),
+      },
+      { match: /\/refund$/, respond: () => new Response(JSON.stringify({ id: 'REFUND-5', status: 'PENDING' }), { status: 201 }) },
+    ])
+    await expect(gw().refund('CAPTURE-1', 10000)).rejects.toThrow(/RESOURCE_NOT_FOUND/)
+    expect(calls.some(c => c.url.includes('/refund'))).toBe(false)
+  })
+
+  it('captura sin currency_code → tira: reembolsar en la moneda default sería devolver mal', async () => {
+    mockFetch([
+      tokenRoute(),
+      {
+        match: /\/v2\/payments\/captures\/[^/]+$/,
+        respond: () => new Response(JSON.stringify({ id: 'CAPTURE-1' }), { status: 200 }),
+      },
+      { match: /\/refund$/, respond: () => new Response(JSON.stringify({ id: 'REFUND-6' }), { status: 201 }) },
+    ])
+    await expect(gw().refund('CAPTURE-1', 10000)).rejects.toThrow(/moneda/)
   })
 
   it('refund con respuesta no-ok tira con el mensaje de PayPal', async () => {

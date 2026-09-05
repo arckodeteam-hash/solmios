@@ -319,18 +319,39 @@ export class PayPalGateway implements RefundableGateway {
     }
   }
 
+  /**
+   * Moneda REAL de una captura, leída de PayPal. `this.creds.currency` es sólo el default de la
+   * pasarela: si el cobro se hizo en otra moneda (la de la reserva — ver bookingengine/stripe.ts,
+   * que la deriva de la reserva y no de las credenciales), un reembolso parcial armado con la
+   * default manda `EUR` sobre una captura en `USD` y PayPal reembolsa el monto equivocado.
+   * El contrato compartido `refund(providerRef, amountMinor?)` no lleva moneda a propósito (la
+   * comparten Stripe/Azul/CardNet), así que se consulta acá.
+   */
+  private async captureCurrency(captureId: string, accessToken: string): Promise<string> {
+    const res = await fetch(`${this.base}/v2/payments/captures/${encodeURIComponent(captureId)}`, {
+      headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+    })
+    const body = await res.json().catch(() => ({})) as any
+    if (!res.ok) throw new Error(body?.message || 'PayPal no devolvió la captura a reembolsar')
+    const currency = String(body?.amount?.currency_code || '')
+    // Sin moneda no se inventa una: reembolsar en la default es el bug que esto evita.
+    if (!currency) throw new Error('PayPal no devolvió la moneda de la captura a reembolsar')
+    return currency.toUpperCase()
+  }
+
   /** Reembolso de una CAPTURA. Sin monto = total; con monto = parcial, en el decimal de PayPal. */
   async refund(providerRef: string, amountMinor?: number): Promise<RefundResult> {
     const token = await this.getAccessToken()
-    const currency = (this.creds.currency || 'usd').toUpperCase()
+    // El total no manda `amount` (es lo que espera la API), así que tampoco necesita la consulta.
+    let amount: { currency_code: string; value: string } | undefined
+    if (amountMinor) {
+      const currency = await this.captureCurrency(providerRef, token)
+      amount = { currency_code: currency, value: toPayPalAmount(amountMinor, currency) }
+    }
     const res = await fetch(`${this.base}/v2/payments/captures/${encodeURIComponent(providerRef)}/refund`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(
-        amountMinor
-          ? { amount: { currency_code: currency, value: toPayPalAmount(amountMinor, currency) } }
-          : {}, // body vacío = reembolso total, es lo que espera la API
-      ),
+      body: JSON.stringify(amount ? { amount } : {}),
     })
     const body = await res.json().catch(() => ({})) as any
     if (!res.ok) throw new Error(body?.message || 'PayPal rechazó el reembolso')

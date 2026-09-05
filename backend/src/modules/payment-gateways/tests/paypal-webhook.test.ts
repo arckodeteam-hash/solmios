@@ -7,13 +7,14 @@
 //
 // Sin credenciales de PayPal (.env.test sólo trae JWT_SECRET) y sin red: se genera un par RSA de
 // verdad con generateKeyPairSync, se firma el mensaje exactamente como lo firma PayPal y el
-// "certificado" se sirve por `fetchImpl`. Se inyecta la CLAVE PÚBLICA en PEM en vez de un X.509
-// autofirmado porque ni Node ni Bun traen forma de emitir un certificado — por eso el módulo acepta
-// tanto un PEM `CERTIFICATE` (lo real de PayPal) como uno `PUBLIC KEY` (esto). Mismo criterio que
-// wallet-pass/tests/generate-pass.test.ts: llaves on-the-fly, cero fixtures pegadas al repo.
+// certificado que lo envuelve se emite en el momento con `x509-fixture.ts` y se sirve por
+// `fetchImpl`. El módulo acepta ÚNICAMENTE PEMs `CERTIFICATE` — lo único que PayPal publica —, así
+// que todo el material de clave pasa por `isAcceptablePayPalCert`. Mismo criterio que
+// wallet-pass/tests/generate-pass.test.ts: llaves on-the-fly, cero secretos pegados al repo.
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { createSign, generateKeyPairSync, X509Certificate } from 'node:crypto'
+import { makeCertificate, PAYPAL_CERT_CN } from './x509-fixture'
 import {
   crc32,
   buildVerificationMessage,
@@ -36,12 +37,18 @@ const RAW_BODY = JSON.stringify({
 })
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+/** El cert como lo sirve PayPal: CN de paypal.com, emitido por una CA y vigente. */
+const PAYPAL_CERT_PEM = makeCertificate({ publicKey })
+/** La MISMA clave pública, servida pelada (SPKI). No es lo que PayPal publica: no debe valer. */
 const publicPem = publicKey.export({ type: 'spki', format: 'pem' }).toString()
+
 // Un segundo par: la llave del "atacante". Sirve para probar que una firma hecha con OTRA llave no
-// pasa, y para el caso del redirect (donde el PEM del atacante se sirve desde su propio host).
+// pasa, y para el caso del redirect, donde su cert se sirve desde el host del atacante. Ese cert
+// es indistinguible del bueno para `isAcceptablePayPalCert` (mismo CN, misma vigencia, emitido):
+// lo único que lo frena es no seguir la redirección.
 const otherPair = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const otherKey = otherPair.privateKey
-const otherPublicPem = otherPair.publicKey.export({ type: 'spki', format: 'pem' }).toString()
+const OTHER_KEY_PAYPAL_CERT_PEM = makeCertificate({ publicKey: otherPair.publicKey })
 
 /** Firma como firma PayPal: RSA-SHA256 sobre `id|time|webhookId|crc32(body)`, base64. */
 function sign(opts: {
@@ -74,8 +81,8 @@ function headers(overrides: Record<string, string> = {}): Record<string, string>
   }
 }
 
-/** fetch doble que sirve el PEM de la clave pública y cuenta cuántas veces lo llamaron. */
-function certFetch(pem: string = publicPem) {
+/** fetch doble que sirve el PEM del certificado y cuenta cuántas veces lo llamaron. */
+function certFetch(pem: string = PAYPAL_CERT_PEM) {
   const calls: string[] = []
   const impl = (async (url: any) => {
     calls.push(String(url))
@@ -337,70 +344,31 @@ describe('verifyPayPalWebhookSignature — problemas al traer el certificado', (
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Certificados X.509 de fixture. Generados una vez con openssl (EC P-256 para que entren en
-// pantalla) y pegados acá a propósito: son datos, no secretos, y las fechas están fijadas para que
-// el test signifique lo mismo dentro de cien años. Ni Node ni Bun saben EMITIR un X.509, así que la
-// alternativa sería depender de openssl en el PATH de CI.
+// Certificados X.509 emitidos en el momento (x509-fixture.ts) sobre la MISMA clave con la que se
+// firma: así el test cubre el camino real de punta a punta (cert → clave → firma) y cada caso
+// negativo cambia UNA sola cosa respecto del cert bueno.
 //
-//   PAYPAL_CERT_PEM          → CN=messageverificationcerts.paypal.com, emitido por una CA, vigente
-//                              2020-01-01 → 2126-01-01 (la forma del cert real de PayPal).
-//   EXPIRED_PAYPAL_CERT_PEM  → el MISMO subject e issuer, pero vencido en 2016.
-//   OTHER_SUBJECT_CERT_PEM   → vigente y emitido por la misma CA, pero CN=cert.evil.example.com.
-//   SELF_SIGNED_PAYPAL_PEM   → CN de PayPal y vigente, pero autofirmado (issuer === subject).
+//   PAYPAL_CERT_PEM             → CN=messageverificationcerts.paypal.com, emitido por una CA y
+//                                 vigente: la forma del cert real de PayPal.
+//   EXPIRED_PAYPAL_CERT_PEM     → el mismo subject e issuer, pero vencido en 2016.
+//   OTHER_SUBJECT_CERT_PEM      → vigente y emitido por la misma CA, pero CN=cert.evil.example.com.
+//   SELF_SIGNED_PAYPAL_PEM      → CN de PayPal y vigente, pero autofirmado (issuer === subject).
+//   BARE_PUBLIC_KEY_PEM         → la clave pelada, sin certificado que la avale.
 
-const PAYPAL_CERT_PEM = `-----BEGIN CERTIFICATE-----
-MIIB7TCCAZQCFBWvn/+WdlKwzyZkyFQhGACvDupEMAoGCCqGSM49BAMCMFoxCzAJ
-BgNVBAYTAlVTMRUwEwYDVQQKDAxEaWdpQ2VydCBJbmMxNDAyBgNVBAMMK0RpZ2lD
-ZXJ0IFNIQTIgRXh0ZW5kZWQgVmFsaWRhdGlvbiBTZXJ2ZXIgQ0EwIBcNMjAwMTAx
-MDAwMDAwWhgPMjEyNjAxMDEwMDAwMDBaMIGWMQswCQYDVQQGEwJVUzETMBEGA1UE
-CAwKQ2FsaWZvcm5pYTERMA8GA1UEBwwIU2FuIEpvc2UxFTATBgNVBAoMDFBheVBh
-bCwgSW5jLjEaMBgGA1UECwwRUGF5UGFsIFByb2R1Y3Rpb24xLDAqBgNVBAMMI21l
-c3NhZ2V2ZXJpZmljYXRpb25jZXJ0cy5wYXlwYWwuY29tMFkwEwYHKoZIzj0CAQYI
-KoZIzj0DAQcDQgAEtuUOBhzdcUFmGgOjZ0Ydwy8uuEgnDOD0T16lbASD9r+I0/DP
-In2HYHXlohVykokszdeB1RB1v4tjIC8vDn7+ajAKBggqhkjOPQQDAgNHADBEAiBx
-cP+/6rYbKeHtXzbj4eIMb8rLz6Yl8ZwhEOU8QS4h8AIgafJ84NxuN5ezngvZY0R9
-R7/pfcZPZC06XabkLLFniQc=
------END CERTIFICATE-----`
+const EXPIRED_PAYPAL_CERT_PEM = makeCertificate({
+  publicKey,
+  validFrom: new Date('2015-01-01T00:00:00Z'),
+  validTo: new Date('2016-01-01T00:00:00Z'),
+})
 
-const EXPIRED_PAYPAL_CERT_PEM = `-----BEGIN CERTIFICATE-----
-MIIB6zCCAZICFH6Zm+1/Tc6fWnYV2183JviQsjsHMAoGCCqGSM49BAMCMFoxCzAJ
-BgNVBAYTAlVTMRUwEwYDVQQKDAxEaWdpQ2VydCBJbmMxNDAyBgNVBAMMK0RpZ2lD
-ZXJ0IFNIQTIgRXh0ZW5kZWQgVmFsaWRhdGlvbiBTZXJ2ZXIgQ0EwHhcNMTUwMTAx
-MDAwMDAwWhcNMTYwMTAxMDAwMDAwWjCBljELMAkGA1UEBhMCVVMxEzARBgNVBAgM
-CkNhbGlmb3JuaWExETAPBgNVBAcMCFNhbiBKb3NlMRUwEwYDVQQKDAxQYXlQYWws
-IEluYy4xGjAYBgNVBAsMEVBheVBhbCBQcm9kdWN0aW9uMSwwKgYDVQQDDCNtZXNz
-YWdldmVyaWZpY2F0aW9uY2VydHMucGF5cGFsLmNvbTBZMBMGByqGSM49AgEGCCqG
-SM49AwEHA0IABLblDgYc3XFBZhoDo2dGHcMvLrhIJwzg9E9epWwEg/a/iNPwzyJ9
-h2B15aIVcpKJLM3XgdUQdb+LYyAvLw5+/mowCgYIKoZIzj0EAwIDRwAwRAIgKmI3
-nNAf0KWWdh5oGDRQOVf1ve+2xSgJ727yOn623lkCIF7NOO8GsAEulMiLZcHt7ErG
-RX/xZZNVuqC0vHDpjFHT
------END CERTIFICATE-----`
+const OTHER_SUBJECT_CERT_PEM = makeCertificate({ publicKey, subjectCN: 'cert.evil.example.com' })
 
-const OTHER_SUBJECT_CERT_PEM = `-----BEGIN CERTIFICATE-----
-MIIBlzCCAT0CFEkJVZZ/0HVFSocXz9OVi/YUyITjMAoGCCqGSM49BAMCMFoxCzAJ
-BgNVBAYTAlVTMRUwEwYDVQQKDAxEaWdpQ2VydCBJbmMxNDAyBgNVBAMMK0RpZ2lD
-ZXJ0IFNIQTIgRXh0ZW5kZWQgVmFsaWRhdGlvbiBTZXJ2ZXIgQ0EwIBcNMjAwMTAx
-MDAwMDAwWhgPMjEyNjAxMDEwMDAwMDBaMEAxCzAJBgNVBAYTAlVTMREwDwYDVQQK
-DAhFdmlsIEluYzEeMBwGA1UEAwwVY2VydC5ldmlsLmV4YW1wbGUuY29tMFkwEwYH
-KoZIzj0CAQYIKoZIzj0DAQcDQgAEtuUOBhzdcUFmGgOjZ0Ydwy8uuEgnDOD0T16l
-bASD9r+I0/DPIn2HYHXlohVykokszdeB1RB1v4tjIC8vDn7+ajAKBggqhkjOPQQD
-AgNIADBFAiEAjWdc3XSYY+w/y0LxhaY4SVrcKRnA3pL5/6hVbIKwuXoCIB5CNtlT
-aM5/Fv4WgoLUcbXX5ZaXrKAfqtLF1DsLkHkM
------END CERTIFICATE-----`
+const SELF_SIGNED_PAYPAL_PEM = makeCertificate({
+  publicKey, issuerCN: PAYPAL_CERT_CN, signWith: privateKey,
+})
 
-const SELF_SIGNED_PAYPAL_PEM = `-----BEGIN CERTIFICATE-----
-MIIB+zCCAaGgAwIBAgIUeJjkGmoqq2SiLEyq33K9obZxlfowCgYIKoZIzj0EAwIw
-UjELMAkGA1UEBhMCVVMxFTATBgNVBAoMDFBheVBhbCwgSW5jLjEsMCoGA1UEAwwj
-bWVzc2FnZXZlcmlmaWNhdGlvbmNlcnRzLnBheXBhbC5jb20wIBcNMjYwOTA1MjA1
-NDU1WhgPMjEyNjA4MTIyMDU0NTVaMFIxCzAJBgNVBAYTAlVTMRUwEwYDVQQKDAxQ
-YXlQYWwsIEluYy4xLDAqBgNVBAMMI21lc3NhZ2V2ZXJpZmljYXRpb25jZXJ0cy5w
-YXlwYWwuY29tMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEtuUOBhzdcUFmGgOj
-Z0Ydwy8uuEgnDOD0T16lbASD9r+I0/DPIn2HYHXlohVykokszdeB1RB1v4tjIC8v
-Dn7+aqNTMFEwHQYDVR0OBBYEFBjZk+bR6ZgleKoB7VIoVMfYaYH2MB8GA1UdIwQY
-MBaAFBjZk+bR6ZgleKoB7VIoVMfYaYH2MA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZI
-zj0EAwIDSAAwRQIhALsZYmjE7Co1zDah/R4I2HXzrfbu3EiNekAJJz8ZtGsEAiAJ
-ggJ5eeugZIt/aOrUdIMB63cSOCs2JXDeJ4bLVaFQOg==
------END CERTIFICATE-----`
+/** PKCS#1 (`BEGIN RSA PUBLIC KEY`), la otra forma de clave pelada. */
+const BARE_RSA_PUBLIC_KEY_PEM = publicKey.export({ type: 'pkcs1', format: 'pem' }).toString()
 
 describe('isAcceptablePayPalCert — el cert, no sólo el host que lo sirve', () => {
   it('acepta el cert de PayPal vigente emitido por una CA', () => {
@@ -458,12 +426,46 @@ describe('verifyPayPalWebhookSignature — el certificado descargado también se
       headers: headers(), rawBody: RAW_BODY, webhookId: WEBHOOK_ID, now: () => NOW_MS,
       fetchImpl: bueno.impl,
     }
-    // La firma no valida porque el fixture no es la llave con la que firmamos (no se puede pegar
-    // una privada al repo), pero un solo fetch en dos eventos prueba que la clave del cert se
-    // ACEPTÓ y quedó en caché: sin eso, la validación estaría rechazando incluso al cert bueno.
-    await verifyPayPalWebhookSignature(args)
-    await verifyPayPalWebhookSignature(args)
+    // El cert lleva la clave con la que se firmó: si la validación rechazara al cert bueno, esto
+    // sería false. Un solo fetch en dos eventos prueba además que quedó en caché.
+    expect(await verifyPayPalWebhookSignature(args)).toBe(true)
+    expect(await verifyPayPalWebhookSignature(args)).toBe(true)
     expect(bueno.calls.length).toBe(1)
+  })
+
+  it('el cert con OTRO subject servido desde api.paypal.com → false', async () => {
+    const ajeno = serve(OTHER_SUBJECT_CERT_PEM)
+    expect(await verifyPayPalWebhookSignature({
+      headers: headers(), rawBody: RAW_BODY, webhookId: WEBHOOK_ID, now: () => NOW_MS,
+      fetchImpl: ajeno.impl,
+    })).toBe(false)
+  })
+
+  it('el AUTOFIRMADO con CN de PayPal → false, aunque la firma del webhook cierre', async () => {
+    const autofirmado = serve(SELF_SIGNED_PAYPAL_PEM)
+    expect(await verifyPayPalWebhookSignature({
+      headers: headers(), rawBody: RAW_BODY, webhookId: WEBHOOK_ID, now: () => NOW_MS,
+      fetchImpl: autofirmado.impl,
+    })).toBe(false)
+  })
+
+  /**
+   * El agujero que esto tapa: mientras `parsePublicKey` aceptó PEMs de CLAVE PELADA, ese material
+   * entraba SIN pasar por `isAcceptablePayPalCert` — sin vigencia, sin CN de paypal.com y sin
+   * rechazo del autofirmado. Bastaba servir una clave pública desde cualquier URL de paypal.com
+   * para firmar webhooks. PayPal sólo publica certificados: una clave pelada no se acepta nunca.
+   */
+  it('una CLAVE PÚBLICA PELADA no se acepta, ni siquiera con la firma correcta', async () => {
+    for (const pem of [publicPem, BARE_RSA_PUBLIC_KEY_PEM]) {
+      clearPayPalCertCache()
+      const pelada = serve(pem)
+      expect(await verifyPayPalWebhookSignature({
+        // Firma legítima hecha con la privada de ESA misma clave: lo único que la rechaza es que
+        // el material no venga dentro de un certificado validable.
+        headers: headers(), rawBody: RAW_BODY, webhookId: WEBHOOK_ID, now: () => NOW_MS,
+        fetchImpl: pelada.impl,
+      })).toBe(false)
+    }
   })
 })
 
@@ -484,7 +486,7 @@ describe('verifyPayPalWebhookSignature — el cert-url no se sigue por redirect'
         if (!manual) return serve(EVIL_CERT_URL, init)
         return new Response('', { status: 302, headers: { location: EVIL_CERT_URL } })
       }
-      return new Response(otherPublicPem, { status: 200 })
+      return new Response(OTHER_KEY_PAYPAL_CERT_PEM, { status: 200 })
     }
     const impl = ((url: any, init: any = {}) => serve(String(url), init)) as unknown as typeof fetch
     return { impl, calls }
