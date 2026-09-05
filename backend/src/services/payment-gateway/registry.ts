@@ -15,6 +15,7 @@ import { IMPLEMENTED_PROVIDERS, type GatewayMode, type PaymentGateway, type Paym
 import { StripeGateway, type StripeCredentials } from './stripe-gateway'
 import { AzulGateway, toAzulCredentials } from './azul-gateway'
 import { CardnetGateway, toCardnetCredentials } from './cardnet-gateway'
+import { PayPalGateway, toPayPalCredentials } from './paypal-gateway'
 import { decryptCredentials } from './crypto'
 
 export interface GatewayRow {
@@ -92,6 +93,8 @@ export class PaymentGatewayRegistry {
         return new AzulGateway(toAzulCredentials(creds), row.mode)
       case 'cardnet':
         return new CardnetGateway(toCardnetCredentials(creds), row.mode)
+      case 'paypal':
+        return new PayPalGateway(toPayPalCredentials(creds), row.mode)
       default:
         this.logger.warn(`Pasarela '${row.provider}' configurada pero sin adapter implementado`)
         return null

@@ -8,7 +8,8 @@
 // Azul Payment Page y CardNet Ztrans no exponen un endpoint de "verificar credenciales" público
 // (no hay sandbox real contra el que probar esto todavía): para esos dos se valida el FORMATO de
 // lo guardado (el constructor del adapter tira si falta un campo requerido) y se avisa que la
-// única verificación real es un pago de prueba.
+// única verificación real es un pago de prueba. PayPal sí tiene endpoint (el token OAuth2), así
+// que para ese se verifica de verdad contra la API.
 
 import type { PaymentGatewayRow, TestConnectionResult } from '../types'
 import { IMPLEMENTED_PROVIDERS } from '../../../services/payment-gateway/types'
@@ -16,6 +17,7 @@ import { decryptCredentials } from '../../../services/payment-gateway/crypto'
 import { StripeGateway } from '../../../services/payment-gateway/stripe-gateway'
 import { AzulGateway, toAzulCredentials } from '../../../services/payment-gateway/azul-gateway'
 import { CardnetGateway, toCardnetCredentials } from '../../../services/payment-gateway/cardnet-gateway'
+import { PayPalGateway, toPayPalCredentials } from '../../../services/payment-gateway/paypal-gateway'
 
 export async function testGatewayConnection(row: PaymentGatewayRow): Promise<TestConnectionResult> {
   if (!IMPLEMENTED_PROVIDERS.includes(row.provider)) {
@@ -50,6 +52,18 @@ export async function testGatewayConnection(row: PaymentGatewayRow): Promise<Tes
         ok: true,
         message: 'Credenciales de CardNet guardadas con el formato esperado. No hay endpoint ' +
           'público de test de credenciales: confirmá con un pago real en modo prueba antes de pasar a producción.',
+      }
+    }
+
+    if (row.provider === 'paypal') {
+      // A diferencia de Azul/CardNet, PayPal SÍ tiene con qué verificar de verdad: el token
+      // OAuth2 de client_credentials. Credenciales revocadas, mal copiadas o de la otra cuenta
+      // fallan acá y no en el primer cobro real del huésped.
+      const gw = new PayPalGateway(toPayPalCredentials(creds), row.mode) // valida clientId/clientSecret al construir
+      await gw.getAccessToken()
+      return {
+        ok: true,
+        message: `Credenciales de PayPal válidas: la app REST respondió el token OAuth2 (${row.mode}).`,
       }
     }
 
