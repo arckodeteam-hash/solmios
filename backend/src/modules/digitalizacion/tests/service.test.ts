@@ -193,11 +193,31 @@ describe('digitalizacion — reglas de cierre de cada paso', () => {
     ).rejects.toBeInstanceOf(ValidationError)
   })
 
-  it('config con configFee <= 0 es ValidationError', async () => {
+  it('config con configFee negativo es ValidationError', async () => {
     const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
     await expect(
-      svc.advanceStep('c1', { step: 'config', status: 'listo', configPaid: true, configFee: 0 }),
+      svc.advanceStep('c1', { step: 'config', status: 'listo', configPaid: true, configFee: -1 }),
     ).rejects.toBeInstanceOf(ValidationError)
+  })
+
+  // Regresión: exigir `configFee > 0` para cerrar el paso dejaba trabado para siempre a un
+  // expediente con la configuración bonificada — nunca llegaba a 'completado' y el hotel quedaba
+  // fuera de listCandidates sin poder volver a entrar. 0 es un importe válido; el cobro lo
+  // acredita configPaid, y ese sí se exige.
+  it('una configuracion bonificada (configFee 0, configPaid true) puede cerrar el paso', async () => {
+    const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
+    const caso = await svc.advanceStep('c1', { step: 'config', status: 'listo', configPaid: true, configFee: 0 })
+    expect(caso.configStatus).toBe('listo')
+    expect(caso.configFee).toBe(0)
+  })
+
+  // Regresión: la URL se validaba con trim() pero se persistía cruda, guardando los espacios.
+  it('una URL con espacios se guarda recortada', async () => {
+    const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
+    const caso = await svc.advanceStep('c1', {
+      step: 'bookingEngine', status: 'listo', bookingEngineUrl: '  https://reservas.test/x  ',
+    })
+    expect(caso.bookingEngineUrl).toBe('https://reservas.test/x')
   })
 
   it('googleMaps listo sin googlePlaceId es ValidationError', async () => {

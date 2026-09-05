@@ -118,7 +118,9 @@ export function normalizeUrlField(field: string, value: string): string | null {
     throw invalida
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw invalida
-  return value
+  // Se persiste lo VALIDADO, no lo crudo: devolver `value` guardaba la URL con los espacios de
+  // los extremos, que después rompen la comparación y el link de la pantalla.
+  return value.trim()
 }
 
 /**
@@ -139,9 +141,11 @@ export function assertStepReady(step: DigitalizationStep, c: DigitalizationCaseD
       if (c.configPaid !== true) {
         throw new ValidationError(`${STEP_LABELS.config}: la configuración completa se cobra — marcá configPaid antes de darlo por listo`)
       }
-      if (c.configFee !== null && c.configFee !== undefined && c.configFee <= 0) {
-        throw new ValidationError('configFee: el precio de la configuración debe ser mayor que 0')
-      }
+      // `configFee` NO se exige acá a propósito. El issue dice que el precio exacto no está
+      // definido, así que null es "todavía sin cotizar", y 0 es una configuración bonificada —
+      // ambas legítimas. Quien acredita que se cobró es `configPaid`, y ya lo exigimos arriba.
+      // Exigir `> 0` dejaba un expediente bonificado trabado para siempre: nunca llegaba a
+      // 'completado' y el hotel quedaba fuera de listCandidates sin poder volver a entrar.
       return
     case 'googleMaps':
       // isBlank trata '   ' como ausente: una ficha no queda "hecha" con un placeId de espacios.
@@ -242,10 +246,11 @@ function buildFieldsPatch(
       return patch
     case 'config':
       if (input.configFee !== undefined) {
-        // Cotizar en 0 desde el avance del paso sería "configuración gratis": el issue dice que la
-        // configuración completa se cobra. Bonificarla se hace por `update`, no avanzando el paso.
-        if (input.configFee <= 0) {
-          throw new ValidationError('configFee: el precio de la configuración debe ser mayor que 0')
+        // Mismo criterio que `update`: 0 es una configuración bonificada, no un error, y el issue
+        // deja el precio sin definir. Lo único inválido es un importe negativo. Que se haya
+        // cobrado lo acredita `configPaid`, que sí se exige para cerrar el paso.
+        if (input.configFee < 0) {
+          throw new ValidationError('configFee: no puede ser negativo')
         }
         patch.configFee = input.configFee
       }
