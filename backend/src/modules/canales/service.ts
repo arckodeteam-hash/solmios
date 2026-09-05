@@ -16,15 +16,15 @@ import type { AutoProvisionOutcome } from './usecases/auto-provision'
 import { CanalesCrudUseCase } from './usecases/crud'
 import { ChannelApiUseCase } from './usecases/channel-api'
 import { BookingsUseCase } from './usecases/bookings'
-import { BookingSyncUseCase } from './usecases/booking-sync'
+import { BookingSyncUseCase, type BookingSyncResult } from './usecases/booking-sync'
 import type { ReservationCancelPort } from './usecases/booking-ingestion'
-import type { BookingSyncResult } from './usecases/booking-sync'
 import { ConfigUseCase } from './usecases/config'
 import type { CanalesQueries } from './usecases/canales-queries'
 import { auditSafely, channelDeleteEntry, type AuditPort } from './usecases/audit'
 import { getSyncLog as getSyncLogFromTable } from './usecases/sync-log'
 import { withAvailabilityTrail, withRatesTrail } from './usecases/ari-tasks'
 import { pushSeasonalRatesToChannex } from './usecases/push-rates'
+import { listOverrideChannels } from './usecases/override-channels'
 import { readRatePlans } from './usecases/rate-plans'
 import { pushRateOverridesFor, type OverridePushItem, type OverridePushResult } from './usecases/push-overrides'
 
@@ -117,10 +117,10 @@ export class CanalesService {
       channexSync: (h, ht, r, c, plans) => this.channex.syncProperty(h, ht, r, c, plans),
       upsertConfig: (h, patch) => this.upsertConfig(h, patch),
       pushAllAvailability: (h) => withAvailabilityTrail(this.syncLogRepo, h, () => pushAllRoomTypesAvailability(this.availDeps(), h)),
-      pushRates: (h) => this.pushSeasonalRates(h),
+      pushRates: (h, channel) => this.pushSeasonalRates(h, channel),
+      overrideChannels: (h) => listOverrideChannels((m, q) => this.queries.findMany(m, q), h),
       syncOpenChannelMapping: (h) => this.channelApi.syncOpenChannelMapping(h),
-      logger: this.logger,
-      syncLogRepo: this.syncLogRepo,
+      logger: this.logger, syncLogRepo: this.syncLogRepo,
     }, hotelId, hotel, rooms)
   }
 

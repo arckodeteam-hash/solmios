@@ -30,7 +30,10 @@ export interface SyncPropertyDeps {
   ) => Promise<{ result: SyncResultDTO; newPropertyId: string | null; newGroupId: string | null }>
   upsertConfig: (hotelId: string, patch: Partial<CanalesDTO>) => Promise<CanalesDTO>
   pushAllAvailability: (hotelId: string) => Promise<unknown>
-  pushRates: (hotelId: string) => Promise<unknown>
+  /** Sin canal publica la tarifa base; con canal, la que ese canal tiene aparte. */
+  pushRates: (hotelId: string, channel?: string) => Promise<unknown>
+  /** Canales con tarifa propia, para no pisarlos con la base al sincronizar. */
+  overrideChannels?: (hotelId: string) => Promise<string[]>
   /**
    * Deja el canal propio del hotel mapeado contra la estructura que se acaba de publicar.
    * Sin esto, un tipo nuevo queda "Sin mapear" en el canal y no se vende, con la tarjeta del
@@ -63,7 +66,8 @@ export async function syncPropertyToChannex(
   // ARI del full sync en exactamente 2 llamadas (test 1 de certificación) — ver usecases/full-sync.ts.
   await pushFullSyncAri({
     pushAll: () => deps.pushAllAvailability(hotelId),
-    pushRates: () => deps.pushRates(hotelId),
+    pushRates: (channel) => deps.pushRates(hotelId, channel),
+    overrideChannels: () => deps.overrideChannels?.(hotelId) ?? Promise.resolve([]),
     logger: deps.logger,
   }, hotelId)
 

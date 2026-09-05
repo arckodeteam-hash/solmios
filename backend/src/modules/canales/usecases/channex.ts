@@ -520,15 +520,20 @@ export class ChannexUseCase {
             // Defensa para filas legacy sin `occupancy` (< 1): sin ellas el entry saldría sin precio.
             entry.rate = planPrice(priceOf(head), plan.markupPct)
           }
-          if (Number(head.minStay) > 0) entry.min_stay_arrival = Number(head.minStay)
+          // Las restricciones se mandan SIEMPRE, también cuando están en cero. Omitirlas hacía que
+          // Channex conservara el valor anterior: se podían poner y no sacar. El hotel cerraba un
+          // día a llegadas, después lo abría, y la OTA lo seguía rechazando para siempre (medido en
+          // producción el 2026-09-04). `stop_sell` nunca tuvo el problema porque ya iba siempre.
+          //
+          // El neutro de `min_stay` en Channex es 1, NO 0: mandar 0 hace que rechace el entry
+          // ENTERO con un warning —y con él se pierden las otras restricciones del mismo entry.
+          entry.min_stay_arrival = Math.max(1, Number(head.minStay) || 0)
           if (Number(head.maxStay) > 0) entry.max_stay = Number(head.maxStay)
           // CTA/CTD/through (P4): los closures aceptan ambos campos históricos (cta/ctd o closedToX).
           const restriction = restrictionBy.get(`${String(head.roomType).toLowerCase()}|${head.season}`)
-          if (restriction) {
-            if (Number(restriction.closedToArrival) || Number(restriction.cta)) entry.closed_to_arrival = true
-            if (Number(restriction.closedToDeparture) || Number(restriction.ctd)) entry.closed_to_departure = true
-            if (Number(restriction.minStayThrough) > 0) entry.min_stay_through = Number(restriction.minStayThrough)
-          }
+          entry.closed_to_arrival = !!(Number(restriction?.closedToArrival) || Number(restriction?.cta))
+          entry.closed_to_departure = !!(Number(restriction?.closedToDeparture) || Number(restriction?.ctd))
+          entry.min_stay_through = Math.max(1, Number(restriction?.minStayThrough) || 0)
           values.push(entry)
           queued++
         }
@@ -548,6 +553,15 @@ export class ChannexUseCase {
     if (values.length === 0) return { ...empty(), skipped, ...reasons }
     const res = await this.channexReq(key, 'POST', '/restrictions', { values })
     if (!res.ok) throw new Error('Channex rechazó las tarifas: ' + JSON.stringify((res.data as any)?.errors || '').slice(0, 200))
+    // Un 200 NO significa que se aplicó todo: Channex descarta los entries inválidos y los devuelve
+    // en `meta.warnings`. Sin mirarlos, un push que no publicó nada se reporta como éxito — así pasó
+    // desapercibido que `min_stay: 0` invalidaba el entry entero.
+    const warnings = (res.data as any)?.meta?.warnings
+    if (Array.isArray(warnings) && warnings.length > 0) {
+      this.logger.warn('Channex descartó parte del push de tarifas', {
+        propertyId: pid, descartados: warnings.length, detalle: JSON.stringify(warnings).slice(0, 500),
+      })
+    }
     const taskIds = extractTaskIds(res.data)
     this.logger.info('Tarifas por temporada empujadas a Channex', { pushed: values.length, skipped, taskIds, ...reasons })
     return { ...empty(), pushed: values.length, skipped, taskIds, ...reasons }

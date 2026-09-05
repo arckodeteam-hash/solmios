@@ -132,7 +132,9 @@ describe('pushSeasonalRates multi-plan (P5)', () => {
     expect(bar.min_stay_arrival).toBe(2)       // de RoomRates (como siempre)
     expect(bar.max_stay).toBe(7)
     expect(bar.closed_to_arrival).toBe(true)   // CTA — de rate_restrictions
-    expect(bar.closed_to_departure).toBeUndefined()  // CTD en 0: NO se manda (update parcial)
+    // CTD en 0 se manda EXPLÍCITO en false. Omitirlo (lo que se hacía hasta el 2026-09-04) dejaba
+    // que Channex conservara el valor anterior: la restricción se podía poner y no sacar nunca.
+    expect(bar.closed_to_departure).toBe(false)
     expect(bar.min_stay_through).toBe(3)       // through — de rate_restrictions
     // Los dos planes llevan las mismas restricciones en la misma llamada.
     const bb = captured.restrictions!.values.find((v: any) => v.rate_plan_id === 'rp-bb' && v.date_from === '2099-06-01')
