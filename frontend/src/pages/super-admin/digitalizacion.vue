@@ -179,11 +179,23 @@
             </div>
             <label class="block">
               <span class="text-[11px] font-black uppercase text-text-muted">Plantilla</span>
-              <select v-model="draft.templateKey" class="w-full mt-1 px-3 py-2 rounded-lg border border-border text-sm bg-surface focus:outline-none focus:border-cyan">
-                <option value="">Sin elegir</option>
+              <select
+                v-model="draft.templateKey"
+                :disabled="loadingTemplates"
+                class="w-full mt-1 px-3 py-2 rounded-lg border border-border text-sm bg-surface focus:outline-none focus:border-cyan disabled:opacity-60"
+              >
+                <option value="">{{ loadingTemplates ? 'Cargando plantillas…' : 'Sin elegir' }}</option>
+                <!-- El catálogo no cargó, pero el expediente YA tenía plantilla guardada: se muestra
+                     igual, para no hacerle creer al operador que el paso quedó sin plantilla (y para
+                     que guardar no la pise con "sin elegir"). -->
+                <option v-if="savedTemplateMissing" :value="draft.templateKey">{{ draft.templateKey }} (guardada)</option>
                 <option v-for="t in templates" :key="t.key" :value="t.key">{{ t.name }} — {{ t.description }}</option>
               </select>
             </label>
+            <p v-if="templatesError" class="text-xs text-danger font-bold">
+              No se pudo cargar el catálogo de plantillas: {{ templatesError }}
+              <button class="font-bold text-cyan cursor-pointer hover:underline ml-1" @click="loadTemplates">Reintentar</button>
+            </p>
             <label class="block">
               <span class="text-[11px] font-black uppercase text-text-muted">URL del sitio</span>
               <input
@@ -255,6 +267,11 @@
                 class="w-full mt-1 px-3 py-2 rounded-lg border border-border text-sm bg-surface focus:outline-none focus:border-cyan"
               >
             </label>
+            <!-- Vaciar el campo BORRA el dato en el backend, y sin Place ID el paso no cierra. -->
+            <p v-if="googleMapsReady && draft.googlePlaceId.trim() === ''" class="text-xs text-amber font-bold">
+              Dejarlo vacío borra el Place ID guardado: {{ STEP_LABELS.googleMaps }} no se va a poder
+              volver a marcar “{{ STEP_STATUS_LABELS.listo }}” hasta cargarlo de nuevo.
+            </p>
             <label class="block">
               <span class="text-[11px] font-black uppercase text-text-muted">URL de la ficha</span>
               <input
@@ -374,6 +391,8 @@ const loadingCases = ref(true)
 const casesError = ref('')
 
 const templates = ref<SiteTemplate[]>([])
+const loadingTemplates = ref(true)
+const templatesError = ref('')
 
 const detail = ref<DigitalizationCase | null>(null)
 const detailError = ref('')
@@ -392,6 +411,14 @@ const draft = reactive({
 })
 
 const googleMapsReady = computed(() => detail.value?.googleMapsStatus === 'listo')
+
+/**
+ * La plantilla ya elegida no está entre las opciones cargadas — pasa cuando el catálogo falló.
+ * Sin esto el `<select>` se queda en blanco y el expediente parece no tener plantilla.
+ */
+const savedTemplateMissing = computed(
+  () => draft.templateKey !== '' && !templates.value.some((t) => t.key === draft.templateKey),
+)
 
 /** Estado de un paso dentro de la fila del expediente (cada paso tiene su columna). */
 function stepStatus(c: DigitalizationCase, step: DigitalizationStep): StepStatus {
@@ -437,10 +464,18 @@ function message(e: unknown, fallback: string): string {
   return e instanceof ApiError ? e.message : fallback
 }
 
-/** '' → undefined: un campo vacío no se manda, así no pisa lo guardado con un string vacío. */
-function text(value: string): string | undefined {
-  const v = value.trim()
-  return v === '' ? undefined : v
+/**
+ * El vacío VIAJA, y ahora en TODOS los campos de texto: el backend borra el dato cuando recibe un
+ * string vacío o en blanco (`usecases/advance-step.ts` → lo persiste como null y lo cuenta como
+ * AUSENTE en las reglas de cierre del paso). Mandando `undefined` un dato cargado sólo se podía
+ * sobrescribir, nunca limpiar: una URL o un Place ID mal tipeados quedaban para siempre.
+ *
+ * `siteUrl`, `googleMapsUrl`, `bookingEngineUrl` y `templateKey` quedaban afuera porque el schema
+ * los declaraba `url`/`enum` y devolvía 400 ante el vacío; ya no: `validators/schema.ts` los acepta
+ * como `string` y el formato se valida en el usecase, así que usan `text()` como el resto.
+ */
+function text(value: string): string {
+  return value.trim()
 }
 
 /** El importe puede quedar vacío (todavía no cotizado) → undefined, nunca 0. */
@@ -477,12 +512,22 @@ async function loadCases() {
   }
 }
 
+/**
+ * Catálogo de plantillas de la página web. Si falla, el error se MUESTRA y se puede reintentar:
+ * tragarlo dejaba el selector vacío y el paso "página web por plantilla" inoperable sin que el
+ * operador supiera por qué (misma política que `loadCandidates` / `loadCases`).
+ */
 async function loadTemplates() {
+  loadingTemplates.value = true
+  templatesError.value = ''
   try {
     const res = await DigitalizacionService.templates()
     templates.value = res.data
-  } catch {
+  } catch (e) {
     templates.value = []
+    templatesError.value = message(e, 'Error desconocido')
+  } finally {
+    loadingTemplates.value = false
   }
 }
 

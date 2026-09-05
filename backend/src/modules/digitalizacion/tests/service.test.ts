@@ -145,12 +145,12 @@ describe('digitalizacion — apertura del expediente', () => {
 
   it('no abre expediente para un hotel que YA tiene página web (ValidationError)', async () => {
     const { svc } = build([hotel({ id: 'h1', website: 'https://hotel1.com' })])
-    expect(svc.create({ hotelId: 'h1' })).rejects.toBeInstanceOf(ValidationError)
+    await expect(svc.create({ hotelId: 'h1' })).rejects.toBeInstanceOf(ValidationError)
   })
 
   it('404 si el hotel no existe', async () => {
     const { svc } = build([hotel({ id: 'h1' })])
-    expect(svc.create({ hotelId: 'no-existe' })).rejects.toBeInstanceOf(NotFoundError)
+    await expect(svc.create({ hotelId: 'no-existe' })).rejects.toBeInstanceOf(NotFoundError)
   })
 
   it('un segundo expediente para el mismo hotel es ConflictError', async () => {
@@ -158,7 +158,7 @@ describe('digitalizacion — apertura del expediente', () => {
       [hotel({ id: 'h1' })],
       [expediente({ id: 'c1', hotelId: 'h1', status: 'abierto' })],
     )
-    expect(svc.create({ hotelId: 'h1' })).rejects.toBeInstanceOf(ConflictError)
+    await expect(svc.create({ hotelId: 'h1' })).rejects.toBeInstanceOf(ConflictError)
   })
 
   it('tras cancelar, el hotel puede volver a entrar al programa', async () => {
@@ -174,42 +174,42 @@ describe('digitalizacion — apertura del expediente', () => {
 describe('digitalizacion — reglas de cierre de cada paso', () => {
   it('website listo sin templateKey es ValidationError', async () => {
     const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
-    expect(svc.advanceStep('c1', { step: 'website', status: 'listo' })).rejects.toBeInstanceOf(
+    await expect(svc.advanceStep('c1', { step: 'website', status: 'listo' })).rejects.toBeInstanceOf(
       ValidationError,
     )
   })
 
   it('templateKey fuera del catálogo es ValidationError aunque el paso no se cierre', async () => {
     const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
-    expect(
+    await expect(
       svc.advanceStep('c1', { step: 'website', status: 'en_progreso', templateKey: 'inventada' }),
     ).rejects.toBeInstanceOf(ValidationError)
   })
 
   it('config listo con configPaid false es ValidationError (la configuración se cobra)', async () => {
     const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1', configFee: 300 })])
-    expect(
+    await expect(
       svc.advanceStep('c1', { step: 'config', status: 'listo', configPaid: false }),
     ).rejects.toBeInstanceOf(ValidationError)
   })
 
   it('config con configFee <= 0 es ValidationError', async () => {
     const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
-    expect(
+    await expect(
       svc.advanceStep('c1', { step: 'config', status: 'listo', configPaid: true, configFee: 0 }),
     ).rejects.toBeInstanceOf(ValidationError)
   })
 
   it('googleMaps listo sin googlePlaceId es ValidationError', async () => {
     const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
-    expect(svc.advanceStep('c1', { step: 'googleMaps', status: 'listo' })).rejects.toBeInstanceOf(
+    await expect(svc.advanceStep('c1', { step: 'googleMaps', status: 'listo' })).rejects.toBeInstanceOf(
       ValidationError,
     )
   })
 
   it('googleHotel listo con googleMaps pendiente es ValidationError', async () => {
     const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1', googleMapsStatus: 'pendiente' })])
-    expect(svc.advanceStep('c1', { step: 'googleHotel', status: 'listo' })).rejects.toBeInstanceOf(
+    await expect(svc.advanceStep('c1', { step: 'googleHotel', status: 'listo' })).rejects.toBeInstanceOf(
       ValidationError,
     )
   })
@@ -226,7 +226,7 @@ describe('digitalizacion — reglas de cierre de cada paso', () => {
 
   it('bookingEngine listo sin bookingEngineUrl es ValidationError', async () => {
     const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
-    expect(svc.advanceStep('c1', { step: 'bookingEngine', status: 'listo' })).rejects.toBeInstanceOf(
+    await expect(svc.advanceStep('c1', { step: 'bookingEngine', status: 'listo' })).rejects.toBeInstanceOf(
       ValidationError,
     )
   })
@@ -245,7 +245,7 @@ describe('digitalizacion — reglas de cierre de cada paso', () => {
 
   it('404 al avanzar un expediente inexistente', async () => {
     const { svc } = build()
-    expect(svc.advanceStep('nada', { step: 'website', status: 'listo' })).rejects.toBeInstanceOf(
+    await expect(svc.advanceStep('nada', { step: 'website', status: 'listo' })).rejects.toBeInstanceOf(
       NotFoundError,
     )
   })
@@ -303,7 +303,7 @@ describe('digitalizacion — listado, edición y borrado', () => {
     const caso = await svc.update('c1', { status: 'cancelado', notes: 'El hotel lo pospone' })
     expect(caso.status).toBe('cancelado')
     expect(caso.notes).toBe('El hotel lo pospone')
-    expect(svc.update('c1', { status: 'archivado' as any })).rejects.toBeInstanceOf(ValidationError)
+    await expect(svc.update('c1', { status: 'archivado' as any })).rejects.toBeInstanceOf(ValidationError)
   })
 
   it('update permite bonificar la configuración con configFee 0', async () => {
@@ -314,9 +314,197 @@ describe('digitalizacion — listado, edición y borrado', () => {
 
   it('getById / update / remove dan 404 si el expediente no existe', async () => {
     const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
-    expect(svc.getById('nada')).rejects.toBeInstanceOf(NotFoundError)
-    expect(svc.update('nada', { notes: 'x' })).rejects.toBeInstanceOf(NotFoundError)
+    await expect(svc.getById('nada')).rejects.toBeInstanceOf(NotFoundError)
+    await expect(svc.update('nada', { notes: 'x' })).rejects.toBeInstanceOf(NotFoundError)
     await svc.remove('c1')
-    expect(svc.remove('c1')).rejects.toBeInstanceOf(NotFoundError)
+    await expect(svc.remove('c1')).rejects.toBeInstanceOf(NotFoundError)
+  })
+})
+
+// Regresiones de la revisión adversarial: estados imposibles que el servicio dejaba pasar.
+describe('digitalizacion — coherencia del expediente (regresiones)', () => {
+  it('no deja reabrir Google Maps mientras Google Hotel esté listo (ValidationError)', async () => {
+    const { svc } = build(
+      [],
+      [
+        expediente({
+          id: 'c1',
+          hotelId: 'h1',
+          googleMapsStatus: 'listo',
+          googlePlaceId: 'place-1',
+          googleHotelStatus: 'listo',
+        }),
+      ],
+    )
+    // Sin la guarda quedaría "Google Hotel listo sin Maps", que el issue declara imposible.
+    await expect(
+      svc.advanceStep('c1', { step: 'googleMaps', status: 'en_progreso' }),
+    ).rejects.toBeInstanceOf(ValidationError)
+    // Bajando primero Google Hotel, sí se puede reabrir Google Maps.
+    await svc.advanceStep('c1', { step: 'googleHotel', status: 'en_progreso' })
+    const caso = await svc.advanceStep('c1', { step: 'googleMaps', status: 'en_progreso' })
+    expect(caso.googleMapsStatus).toBe('en_progreso')
+  })
+
+  it('si un paso se reabre, el expediente completado vuelve a abierto', async () => {
+    const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
+    await svc.advanceStep('c1', { step: 'website', status: 'listo', templateKey: 'classic' })
+    await svc.advanceStep('c1', { step: 'config', status: 'listo', configPaid: true, configFee: 350 })
+    await svc.advanceStep('c1', { step: 'googleMaps', status: 'listo', googlePlaceId: 'place-1' })
+    await svc.advanceStep('c1', { step: 'googleHotel', status: 'listo' })
+    const completo = await svc.advanceStep('c1', {
+      step: 'bookingEngine',
+      status: 'listo',
+      bookingEngineUrl: 'https://reservas.solmios.com/h1',
+    })
+    expect(completo.status).toBe('completado')
+
+    const reabierto = await svc.advanceStep('c1', { step: 'bookingEngine', status: 'en_progreso' })
+    expect(reabierto.status).toBe('abierto')
+
+    // Y al volver a cerrarlo se completa otra vez: el estado es función de los cinco pasos.
+    const recompletado = await svc.advanceStep('c1', { step: 'bookingEngine', status: 'listo' })
+    expect(recompletado.status).toBe('completado')
+  })
+
+  it('un expediente cancelado no se auto-completa ni se reabre solo', async () => {
+    const { svc } = build(
+      [],
+      [
+        expediente({
+          id: 'c1',
+          hotelId: 'h1',
+          status: 'cancelado',
+          websiteStatus: 'listo',
+          templateKey: 'classic',
+          configStatus: 'listo',
+          configPaid: true,
+          googleMapsStatus: 'listo',
+          googlePlaceId: 'place-1',
+          googleHotelStatus: 'listo',
+          bookingEngineUrl: 'https://reservas.solmios.com/h1',
+        }),
+      ],
+    )
+    const caso = await svc.advanceStep('c1', { step: 'bookingEngine', status: 'listo' })
+    expect(caso.bookingEngineStatus).toBe('listo')
+    expect(caso.status).toBe('cancelado') // cancelar es decisión del operador, no la pisa el cálculo
+  })
+
+  it('avanzar un paso NO escribe los campos de otro paso', async () => {
+    const { svc } = build(
+      [],
+      [
+        expediente({
+          id: 'c1',
+          hotelId: 'h1',
+          configStatus: 'listo',
+          configPaid: true,
+          configFee: 300,
+          googlePlaceId: 'place-1',
+        }),
+      ],
+    )
+    // Desmarcar el cobro colándolo en el avance de otro paso no puede funcionar.
+    const caso = await svc.advanceStep('c1', {
+      step: 'website',
+      status: 'en_progreso',
+      templateKey: 'classic',
+      configPaid: false,
+      configFee: 1,
+      googlePlaceId: 'otro-place',
+    })
+    expect(caso.templateKey).toBe('classic')
+    expect(caso.configPaid).toBe(true)
+    expect(caso.configFee).toBe(300)
+    expect(caso.googlePlaceId).toBe('place-1')
+  })
+
+  it('un string vacío borra el dato y un dato en blanco no cierra el paso', async () => {
+    const { svc } = build(
+      [],
+      [expediente({ id: 'c1', hotelId: 'h1', siteUrl: 'https://mal-tipeada.com' })],
+    )
+    const borrado = await svc.advanceStep('c1', { step: 'website', status: 'en_progreso', siteUrl: '  ' })
+    expect(borrado.siteUrl).toBeNull()
+
+    await expect(
+      svc.advanceStep('c1', { step: 'googleMaps', status: 'listo', googlePlaceId: '   ' }),
+    ).rejects.toBeInstanceOf(ValidationError)
+  })
+})
+
+// Hallazgo H2 de la revisión: un dato ya cargado no se podía borrar desde la pantalla. El vacío
+// se rechazaba en el borde HTTP (`type: 'url'` / `enum` en validators/schema.ts) antes de llegar a
+// la regla de borrado del usecase, y encima un expediente recién abierto —todo vacío— no podía ni
+// guardar sus datos. La validación de formato bajó al usecase; acá se prueban las dos mitades.
+describe('digitalizacion — borrar un dato cargado (regresiones H2)', () => {
+  it('mandar siteUrl vacío borra la URL cargada y deja el expediente en null', async () => {
+    const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1', siteUrl: 'https://vieja.com' })])
+    const caso = await svc.advanceStep('c1', { step: 'website', status: 'en_progreso', siteUrl: '' })
+    expect(caso.siteUrl).toBeNull()
+  })
+
+  it('una URL no vacía mal formada da ValidationError', async () => {
+    const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
+    await expect(
+      svc.advanceStep('c1', { step: 'website', status: 'en_progreso', siteUrl: 'no-es-una-url' }),
+    ).rejects.toBeInstanceOf(ValidationError)
+    // `new URL` sola aceptaría `javascript:`; la regla exige http(s) porque la pantalla la linkea.
+    await expect(
+      svc.advanceStep('c1', { step: 'googleMaps', status: 'en_progreso', googleMapsUrl: 'javascript:alert(1)' }),
+    ).rejects.toBeInstanceOf(ValidationError)
+    await expect(
+      svc.advanceStep('c1', { step: 'bookingEngine', status: 'en_progreso', bookingEngineUrl: 'ftp://reservas' }),
+    ).rejects.toBeInstanceOf(ValidationError)
+  })
+
+  it('un templateKey fuera del catálogo da ValidationError aunque el paso no se marque listo', async () => {
+    const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1' })])
+    await expect(
+      svc.advanceStep('c1', { step: 'website', status: 'en_progreso', templateKey: 'inventada' }),
+    ).rejects.toBeInstanceOf(ValidationError)
+    // Misma guarda por la otra ruta que escribe el campo.
+    await expect(svc.update('c1', { templateKey: 'inventada' })).rejects.toBeInstanceOf(ValidationError)
+  })
+
+  // `update` es la otra puerta que escribe las URLs. Como el schema HTTP las bajó a `string` para
+  // dejar entrar el vacío, sin este chequeo sería la puerta de atrás para guardar basura.
+  it('update valida el formato de las URLs y acepta el vacío como borrado', async () => {
+    const { svc } = build([], [expediente({ id: 'c1', hotelId: 'h1', siteUrl: 'https://vieja.com' })])
+    await expect(svc.update('c1', { siteUrl: 'no-es-una-url' })).rejects.toBeInstanceOf(ValidationError)
+    await expect(svc.update('c1', { googleMapsUrl: 'javascript:alert(1)' })).rejects.toBeInstanceOf(ValidationError)
+    await expect(svc.update('c1', { bookingEngineUrl: 'ftp://reservas' })).rejects.toBeInstanceOf(ValidationError)
+
+    const borrado = await svc.update('c1', { siteUrl: '' })
+    expect(borrado.siteUrl).toBeNull()
+    const puesta = await svc.update('c1', { siteUrl: 'https://nueva.com' })
+    expect(puesta.siteUrl).toBe('https://nueva.com')
+  })
+
+  it('un expediente recién abierto guarda sus datos con todos los campos vacíos', async () => {
+    const { svc } = build([hotel({ id: 'h1' })])
+    const abierto = await svc.create({ hotelId: 'h1' })
+
+    // Lo que manda la pantalla al tocar "Guardar datos" sin haber cargado nada todavía.
+    const guardado = await svc.update(abierto.id, {
+      templateKey: '',
+      siteUrl: '',
+      googlePlaceId: '',
+      googleMapsUrl: '',
+      bookingEngineUrl: '',
+      notes: '',
+    })
+    expect(guardado.status).toBe('abierto')
+
+    // Y por la ruta del avance el vacío se persiste como null, no como dato cargado.
+    const avanzado = await svc.advanceStep(abierto.id, {
+      step: 'website',
+      status: 'en_progreso',
+      templateKey: '',
+      siteUrl: '',
+    })
+    expect(avanzado.templateKey).toBeNull()
+    expect(avanzado.siteUrl).toBeNull()
   })
 })

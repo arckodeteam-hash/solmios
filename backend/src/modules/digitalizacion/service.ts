@@ -23,7 +23,7 @@ import type {
   UpdateDigitalizationCaseDTO,
 } from './types'
 import { CASE_STATUSES } from './types'
-import { assertTemplateKey, buildAdvanceStepPatch } from './usecases/advance-step'
+import { assertTemplateKey, buildAdvanceStepPatch, normalizeUrlField } from './usecases/advance-step'
 import type { DigitalizacionHotelRow } from './usecases/candidates'
 import { hasActiveCase, hasWebsite, selectCandidates } from './usecases/candidates'
 
@@ -155,6 +155,12 @@ export class DigitalizacionService {
       throw new ValidationError('configFee: no puede ser negativo')
     }
 
+    // Las URLs se chequean acá con el MISMO validador que usa advanceStep: el schema HTTP las deja
+    // pasar como `string` para que el vacío pueda BORRAR el dato, así que el formato se valida en
+    // esta capa. Sin esto, `update` sería la puerta de atrás para guardar una URL inválida.
+    const url = (f: 'siteUrl' | 'googleMapsUrl' | 'bookingEngineUrl') =>
+      input[f] !== undefined ? { [f]: normalizeUrlField(f, input[f] as string) } : undefined
+
     const updated = await this.repo.update(id, {
       ...(input.status !== undefined && { status: input.status }),
       ...(input.notes !== undefined && { notes: input.notes }),
@@ -162,10 +168,10 @@ export class DigitalizacionService {
       ...(input.configCurrency !== undefined && { configCurrency: input.configCurrency }),
       ...(input.configPaid !== undefined && { configPaid: input.configPaid }),
       ...(input.templateKey !== undefined && { templateKey: input.templateKey }),
-      ...(input.siteUrl !== undefined && { siteUrl: input.siteUrl }),
       ...(input.googlePlaceId !== undefined && { googlePlaceId: input.googlePlaceId }),
-      ...(input.googleMapsUrl !== undefined && { googleMapsUrl: input.googleMapsUrl }),
-      ...(input.bookingEngineUrl !== undefined && { bookingEngineUrl: input.bookingEngineUrl }),
+      ...url('siteUrl'),
+      ...url('googleMapsUrl'),
+      ...url('bookingEngineUrl'),
     })
     if (!updated) throw new NotFoundError('Expediente de digitalización no encontrado')
     this.logger.info('digitalizacion: expediente actualizado', { id, status: updated.status })
