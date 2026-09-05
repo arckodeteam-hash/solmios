@@ -491,16 +491,28 @@ export class ChannexUseCase {
       }
     }
 
+    // Dos pasadas sobre las mismas temporadas, y el orden ES la regla:
+    //
+    //  1ª — el rango del catálogo (`Seasons.startDate/endDate`).
+    //  2ª — los días pintados en el planning (`season_assignments`), agrupados en tramos.
+    //
+    // Los pintados salen DESPUÉS porque son la capa específica y Channex aplica los entries FIFO:
+    // el último gana. Antes eran EXCLUYENTES —si la temporada tenía fechas propias, lo pintado se
+    // descartaba—, así que pintar días de una temporada con fechas no hacía absolutamente nada.
+    // Medido en producción el 2026-09-05: el 10/9 estaba pintado como "media" (+70%) y el canal
+    // publicaba el precio de "baja". Sólo servía para temporadas sin fechas, como "especial".
+    for (const pass of ['catalogo', 'pintados'] as const) {
     for (const group of groupList) {
       const head = group[0]!
       const s = seasonByName.get(head.season)
-      // Dos orígenes de rango, en orden de prioridad:
-      //  1) las fechas propias de la temporada (catálogo Seasons), si las tiene;
-      //  2) los días pintados en el planning (season_assignments), agrupados en tramos contiguos.
-      const ranges: DateRange[] = (s?.startDate && s?.endDate)
-        ? [{ startDate: s.startDate, endDate: s.endDate }]
-        : (assignedRanges.get(head.season) || [])
-      if (ranges.length === 0) { skipped++; seasonsWithoutDates.add(seasonLabel(head.season)); continue }
+      const delCatalogo: DateRange[] = (s?.startDate && s?.endDate) ? [{ startDate: s.startDate, endDate: s.endDate }] : []
+      const pintados = assignedRanges.get(head.season) || []
+      const ranges: DateRange[] = pass === 'catalogo' ? delCatalogo : pintados
+      // Sin fechas ni días pintados no hay dónde publicarla; se reporta una sola vez (1ª pasada).
+      if (ranges.length === 0) {
+        if (pass === 'catalogo' && pintados.length === 0) { skipped++; seasonsWithoutDates.add(seasonLabel(head.season)) }
+        continue
+      }
       const rtId = lookupRoomTypeId(rtIdByTitle, String(head.roomType))
       const rtRps = rtId ? rpsByRt.get(rtId) : undefined
       if (!rtRps?.length) { skipped++; roomTypesWithoutRatePlan.add(String(head.roomType)); continue }
@@ -538,7 +550,10 @@ export class ChannexUseCase {
           queued++
         }
       }
-      if (queued === 0) { skipped++; expiredSeasons.add(seasonLabel(head.season)) }
+      // "Expirada" solo tiene sentido para el rango del catálogo: unos días pintados que ya pasaron
+      // no son una temporada vencida, y contarlos dos veces inflaba el reporte de skips.
+      if (queued === 0 && pass === 'catalogo') { skipped++; expiredSeasons.add(seasonLabel(head.season)) }
+    }
     }
     // Las tarifas por fecha, al final del payload: son la capa más específica y tienen que ganar.
     if (overrides.length) {
