@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'bun:test'
 import {
   indexBasePrices, basePriceFor, effectiveRate, percentagePreserving,
-} from '../usecases/base-price'
+} from '../../../shared/utils/base-price'
 import { applyBasePrices } from '../usecases/base-price-port'
 
 describe('indexBasePrices', () => {

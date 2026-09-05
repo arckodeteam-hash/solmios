@@ -31,7 +31,7 @@
 import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
 import { PostgresAdapter } from 'arckode-framework/adapters/postgres'
 import type { DbAdapter } from 'arckode-framework'
-import { percentagePreserving, effectiveRate } from '../src/modules/pricing/usecases/base-price'
+import { percentagePreserving, effectiveRate } from '../src/shared/utils/base-price'
 
 const APPLY = process.argv.includes('--apply')
 

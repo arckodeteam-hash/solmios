@@ -126,7 +126,7 @@ export class PricingQueries {
     const filled = cells.map((c) => {
       const real = byKey.get(rateKey(c.roomType, c.occupancy, c.season))
       // El base de una fila guardada NO es el que tiene grabado, es el del tipo de habitación:
-      // uno solo para todas las temporadas, ocupaciones y canales (ver usecases/base-price.ts).
+      // uno solo para todas las temporadas, ocupaciones y canales (ver shared/utils/base-price.ts).
       // Devolver el grabado es lo que dejaba que el editor mostrara 220 mientras el hotel tenía
       // 120 cargado en la habitación. `c.basePrice` sale de `roomTypesFor`; si el tipo ya no
       // existe vale 0 y se respeta lo grabado, que es lo que se está publicando.
@@ -181,7 +181,7 @@ export class PricingQueries {
     const out = base.map((b) => {
       const override = overrides.get(rateKey(b.roomType, b.occupancy, b.season))
       // El override del canal aporta el PORCENTAJE y los cierres, nunca el precio base: ese es uno
-      // solo por tipo de habitación y ya viene derivado en la celda base (ver base-price.ts). Antes
+      // solo por tipo de habitación y ya viene derivado en la celda base (ver shared/utils/base-price.ts). Antes
       // se devolvía la fila cruda, y era el camino por el que el editor del canal mostraba 220
       // mientras la habitación tenía 120 cargado.
       if (override) {

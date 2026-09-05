@@ -1,6 +1,7 @@
 import type { CanalesDTO, PushRatesResultDTO, DateRange } from '../types'
 import { readRatePlans, type RatePlanDef } from './rate-plans'
 import type { OverridePushItem } from './push-overrides'
+import { indexBasePrices, basePriceFor } from '../../../shared/utils/base-price'
 
 /** Restricciones por (roomType, season) — la capa de closures/through que edita PUT /api/rate-restrictions. */
 export interface SeasonRestriction {
@@ -93,7 +94,7 @@ export async function pushSeasonalRatesToChannex(
   hotelId: string,
   channel?: string,
 ): Promise<PushRatesResultDTO> {
-  const [cfg, allRates, seasons, assignments, ratePlans, restrictions, overrides] = await Promise.all([
+  const [cfg, allRates, seasons, assignments, ratePlans, restrictions, overrides, rooms] = await Promise.all([
     deps.getConfig(hotelId),
     deps.findMany('RoomRates', { hotelId }),
     deps.findMany('Seasons', { hotelId }),
@@ -106,8 +107,16 @@ export async function pushSeasonalRatesToChannex(
     // Tarifas por FECHA: viajan en el MISMO payload, al final, para que no las pise el
     // consolidado. Ver la nota de `overrides` en `channex.pushSeasonalRates`.
     deps.findMany('RateOverrides', { hotelId }),
+    // El precio base es de la HABITACIÓN, uno solo por tipo — no el que la fila de tarifas tenga
+    // grabado (ver `pricing/usecases/base-price.ts`). Sin esto, el panel deriva del precio nuevo y
+    // la OTA sigue publicando el viejo: la misma discrepancia que el fix vino a cerrar, movida un
+    // paso más adelante. Pasa igual cuando el precio se cambia desde `/panel/habitaciones`, que no
+    // reescribe `room_rates`.
+    deps.findMany('Rooms', { hotelId }),
   ])
   const assignedRanges = groupAssignmentsIntoRanges(assignments as Array<{ date: string; season: string }>)
+  const bases = indexBasePrices((rooms as Array<{ type?: string; basePrice?: number }>)
+    .map((r) => ({ type: String(r.type || 'standard'), basePrice: Number(r.basePrice) || 0 })))
   const wanted = channel || ''
 
   // Primero elegir, por room type + temporada + OCUPACIÓN, la mejor fila (override del canal pedido
@@ -128,7 +137,8 @@ export async function pushSeasonalRatesToChannex(
 
   const rates: PushRate[] = selected.map((r) => ({
     roomType: r.roomType, season: r.season, occupancy: Number(r.occupancy) || 0,
-    basePrice: r.basePrice, percentage: r.percentage, closed: r.closed, minStay: r.minStay, maxStay: r.maxStay,
+    basePrice: basePriceFor(bases, r.roomType, r.basePrice),
+    percentage: r.percentage, closed: r.closed, minStay: r.minStay, maxStay: r.maxStay,
   }))
   return deps.pushSeasonalRates(cfg, rates, seasons, assignedRanges, ratePlans, restrictions as SeasonRestriction[], overrides as OverridePushItem[])
 }

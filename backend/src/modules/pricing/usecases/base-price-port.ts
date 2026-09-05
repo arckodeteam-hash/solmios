@@ -1,6 +1,6 @@
 // pricing/usecases/base-price-port.ts — Cómo pricing fija el precio base de un tipo de habitación.
 //
-// El precio base vive en `rooms.basePrice` (ver base-price.ts): es de la habitación, no de la
+// El precio base vive en `rooms.basePrice` (ver shared/utils/base-price.ts): es de la habitación, no de la
 // tarifa. Pero se EDITA desde la grilla de tarifas, que es donde el hotel piensa los precios. Como
 // pricing no puede importar habitaciones (CLAUDE #3), el connector `pricing-habitaciones` inyecta
 // este puerto.

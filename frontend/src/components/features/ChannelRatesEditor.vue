@@ -33,11 +33,24 @@
       <!-- Una tarjeta POR TIPO DE HABITACIÓN, con una sub-sección por ocupación -->
       <div v-else class="space-y-4">
         <div v-for="tc in typeCards" :key="tc.roomType" class="rounded-2xl border-2 border-navy overflow-hidden">
-          <div class="bg-navy px-4 py-2.5 flex items-center justify-between gap-2">
+          <div class="bg-navy px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
             <h3 class="text-sm font-black text-white capitalize">{{ tc.roomType }}</h3>
-            <span class="text-[10px] font-black uppercase text-white/70">
-              {{ tc.groups.length }} {{ tc.groups.length === 1 ? 'ocupación' : 'ocupaciones' }}
-            </span>
+            <!-- El precio base es UNO SOLO por tipo de habitación: las temporadas y los canales solo
+                 le aplican su porcentaje. Estaba repetido en cada bloque de ocupación, que hacía
+                 parecer que había un base por ocupación. -->
+            <div class="flex items-center gap-2 ml-auto">
+              <span class="text-[10px] font-black uppercase text-white/70">Tarifa base</span>
+              <span class="px-2.5 py-1 rounded-lg bg-white/10 text-sm font-black text-white">
+                {{ tc.basePrice }} <span class="text-[10px] font-bold text-white/60">{{ currency }}</span>
+              </span>
+              <router-link :to="{ name: 'tarifas' }"
+                class="text-[10px] font-bold text-white/80 underline underline-offset-2 hover:text-cyan">
+                Cambiar →
+              </router-link>
+              <span class="text-[10px] font-black uppercase text-white/50 pl-1">
+                {{ tc.groups.length }} {{ tc.groups.length === 1 ? 'ocupación' : 'ocupaciones' }}
+              </span>
+            </div>
           </div>
           <div v-for="g in tc.groups" :key="g.key" :class="g !== tc.groups[0] ? 'border-t-2 border-navy/10' : ''">
           <div class="px-4 pt-2.5 pb-0.5 text-[11px] font-black text-text-muted uppercase">
@@ -45,19 +58,9 @@
           </div>
           <!-- Responsive: en móvil General arriba + temporadas 2×2; en desktop General a la izq + 4 temporadas en fila -->
           <div class="p-3 grid grid-cols-1 lg:grid-cols-[190px_1fr] gap-3">
-            <!-- General + días mín/máx -->
+            <!-- Solo lo que SÍ es por ocupación. El precio base está arriba, en el tipo. -->
             <div class="rounded-xl border-2 border-navy bg-surface p-3">
-              <div class="text-[10px] font-black text-text-muted uppercase mb-1">Tarifa base (General)</div>
-              <div class="flex items-center gap-1 mb-1">
-                <input type="number" :value="g.basePrice" readonly tabindex="-1"
-                  title="La tarifa base es del hotel, no de este canal: se edita en Configuración → Tarifas"
-                  class="w-full px-2 py-1.5 rounded-lg border-2 border-navy/10 bg-navy/5 text-sm font-black text-text-secondary text-right cursor-not-allowed outline-none" />
-                <span class="text-xs text-text-muted shrink-0">{{ currency }}</span>
-              </div>
-              <router-link :to="{ name: 'tarifas' }"
-                class="block mb-2 text-[10px] font-bold text-navy underline underline-offset-2 hover:text-cyan">
-                Cambiar la tarifa base →
-              </router-link>
+              <div class="text-[10px] font-black text-text-muted uppercase mb-2">Estadía</div>
               <div class="grid grid-cols-2 gap-2">
                 <div title="Mínimo de noches para poder LLEGAR (min stay arrival): se exige el día del check-in">
                   <div class="text-[10px] text-text-muted">Mín. al llegar</div>
@@ -225,14 +228,19 @@ const groups = ref<Group[]>([])
  * nombre del tipo en cada card. Solo presentación: `groups` sigue siendo la fuente que
  * se edita y la que `toFlatRows()` expande para guardar.
  */
-const typeCards = computed<Array<{ roomType: string; groups: Group[] }>>(() => {
+const typeCards = computed<Array<{ roomType: string; groups: Group[]; basePrice: number }>>(() => {
   const byType = new Map<string, Group[]>()
   for (const g of groups.value) {
     const list = byType.get(g.roomType)
     if (list) list.push(g)
     else byType.set(g.roomType, [g])
   }
-  return [...byType.entries()].map(([roomType, gs]) => ({ roomType, groups: gs }))
+  // El base es uno solo por tipo (el backend lo deriva de la habitación), así que alcanza con el
+  // primer grupo no-cero. Se toma el primero positivo y no el del grupo [0] por si una ocupación
+  // quedara sin fila cargada.
+  return [...byType.entries()].map(([roomType, gs]) => ({
+    roomType, groups: gs, basePrice: gs.find((g) => g.basePrice > 0)?.basePrice ?? 0,
+  }))
 })
 
 const DEFAULT_COLORS: Record<string, string> = { baja: '#e2e8f0', media: '#38bdf8', alta: '#22c55e', especial: '#eab308' }
