@@ -123,8 +123,10 @@ export const HotelService = {
   async rates(channel?: string): Promise<{ data: RoomRate[] }> {
     return http.get(`/rates${channel ? `?channel=${encodeURIComponent(channel)}` : ''}`)
   },
-  async saveRates(rates: Partial<RoomRate>[]) {
-    return http.put('/rates', { rates })
+  /** `basePrices` es UN precio base por tipo de habitación: el mismo para todas las temporadas,
+   *  ocupaciones y canales. La temporada y el canal solo aplican su porcentaje encima. */
+  async saveRates(rates: Partial<RoomRate>[], basePrices?: Array<{ roomType: string; basePrice: number }>) {
+    return http.put('/rates', { rates, basePrices })
   },
   /** Restricciones por (roomType, season): CTA/CTD y estadía mínima through — P4 certificación Channex. */
   async rateRestrictions(): Promise<{ data: Array<{ roomType: string; season: string; cta?: number; ctd?: number; closedToArrival?: number; closedToDeparture?: number; minStayThrough?: number }> }> {

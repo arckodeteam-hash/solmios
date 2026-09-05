@@ -4,6 +4,8 @@ import { hotelIdOfUserLegacy } from '../../shared/usecases/hotel-of-legacy'
 import { composeSockets } from '../../shared/usecases/compose-sockets'
 import type { PricingQueries } from './usecases/pricing-queries'
 import { applyActiveSeason, listSeasonsSeeded } from './usecases/season-catalog'
+import { indexBasePrices, basePriceFor, effectiveRate } from './usecases/base-price'
+import { applyBasePrices, type BasePricePort, type BasePriceInput } from './usecases/base-price-port'
 import { DEFAULT_RATE_PLANS, type RatePlanDef } from '../../shared/utils/rate-plans'
 import type { PricingSockets } from './sockets'
 import { listBlocks, createBlocks, deleteBlock } from './usecases/blocks'
@@ -15,6 +17,9 @@ import {
 
 export class PricingService {
   private auditPort: AuditPort | null = null
+  private basePricePort: BasePricePort | null = null
+  /** Conecta la escritura del precio base. Lo inyecta el connector `pricing-habitaciones`. */
+  setBasePriceDeps(port: BasePricePort): void { this.basePricePort = port }
   private sockets: PricingSockets = {}
   setSockets(s: Partial<PricingSockets>): void { composeSockets(this.sockets as any, s as any) }
 
@@ -80,14 +85,18 @@ export class PricingService {
     return this.queries ? this.queries.listChannelRates(hotelId, channel, all) : all.filter((r) => r.channel === channel)
   }
 
-  async updateRates(hotelId: string, rates: any[], actor?: Actor): Promise<number> {
+  async updateRates(hotelId: string, rates: any[], actor?: Actor, basePrices?: BasePriceInput[]): Promise<number> {
     let saved = 0
     const changes: RateChange[] = []
+    // El base NO sale de la fila de tarifas: es uno solo por tipo de habitación y vive en la
+    // habitación (ver base-price.ts). Se escribe ANTES de derivar, o las filas guardarían el viejo.
+    await applyBasePrices(this.basePricePort, hotelId, basePrices)
+    const bases = indexBasePrices(this.queries ? await this.queries.roomTypesFor(hotelId) : [])
     for (const r of rates) {
       if (!r.roomType || !r.season || r.occupancy === undefined) continue
       const channel = typeof r.channel === 'string' ? r.channel : ''
-      const basePrice = r.basePrice ?? 0; const percentage = r.percentage ?? 0
-      const price = Math.round(basePrice * (1 + percentage / 100) * 100) / 100
+      const basePrice = basePriceFor(bases, r.roomType, r.basePrice); const percentage = r.percentage ?? 0
+      const price = effectiveRate(basePrice, percentage)
       const closed = r.closed ? 1 : 0
       const minStay = Number(r.minStay) || 0; const maxStay = Number(r.maxStay) || 0
       const existing = (await this.ratesRepo.findMany({ hotelId, roomType: r.roomType, occupancy: r.occupancy, season: r.season, channel }))[0] as any

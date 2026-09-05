@@ -29,6 +29,8 @@ export const ActivateSeasonSchema: Record<string, ValidationRule> = {
 
 export const UpdateRatesSchema: Record<string, ValidationRule> = {
   rates: { type: arrayType, required: true },
+  // Precio base por tipo de habitación. Opcional: guardar solo porcentajes es válido.
+  basePrices: { type: arrayType },
 }
 
 export const UpdateRateRestrictionsSchema: Record<string, ValidationRule> = {

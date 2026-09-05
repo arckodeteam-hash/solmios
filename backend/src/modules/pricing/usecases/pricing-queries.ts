@@ -125,10 +125,18 @@ export class PricingQueries {
 
     const filled = cells.map((c) => {
       const real = byKey.get(rateKey(c.roomType, c.occupancy, c.season))
-      if (real) return real
+      // El base de una fila guardada NO es el que tiene grabado, es el del tipo de habitación:
+      // uno solo para todas las temporadas, ocupaciones y canales (ver usecases/base-price.ts).
+      // Devolver el grabado es lo que dejaba que el editor mostrara 220 mientras el hotel tenía
+      // 120 cargado en la habitación. `c.basePrice` sale de `roomTypesFor`; si el tipo ya no
+      // existe vale 0 y se respeta lo grabado, que es lo que se está publicando.
+      if (real) {
+        const base = c.basePrice || Number(real.basePrice) || 0
+        return { ...real, basePrice: base, price: effectivePrice(base, Number(real.percentage) || 0) }
+      }
       const group = byGroup.get(`${c.roomType}|${c.occupancy}`) ?? byType.get(c.roomType)
       const sameSeason = bySeasonOfType.get(`${c.roomType}|${c.season}`)
-      const basePrice = Number(group?.basePrice) || c.basePrice || 0
+      const basePrice = c.basePrice || Number(group?.basePrice) || 0
       const percentage = Number(sameSeason?.percentage) || 0
       return {
         hotelId, roomType: c.roomType, occupancy: c.occupancy, season: c.season, channel,
@@ -172,7 +180,14 @@ export class PricingQueries {
     )
     const out = base.map((b) => {
       const override = overrides.get(rateKey(b.roomType, b.occupancy, b.season))
-      if (override) return override
+      // El override del canal aporta el PORCENTAJE y los cierres, nunca el precio base: ese es uno
+      // solo por tipo de habitación y ya viene derivado en la celda base (ver base-price.ts). Antes
+      // se devolvía la fila cruda, y era el camino por el que el editor del canal mostraba 220
+      // mientras la habitación tenía 120 cargado.
+      if (override) {
+        const base = Number(b.basePrice) || Number(override.basePrice) || 0
+        return { ...override, basePrice: base, price: effectivePrice(base, Number(override.percentage) || 0) }
+      }
       // Sin `id`: es una celda del CANAL derivada de la base, no la fila base — devolver su id
       // invitaría a que un guardado la pisara.
       const { id: _id, ...cell } = b

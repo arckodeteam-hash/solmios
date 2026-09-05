@@ -9,6 +9,9 @@ import { annotateRoomsAvailability, type ReservationsListPort } from '../../shar
 
 export type { BatchCreateInput }
 
+import { setTypeBasePrice as setTypeBasePriceUC } from './usecases/set-type-base-price'
+import { assertRoomDeletable } from './usecases/assert-deletable'
+
 export class HabitacionesService {
   private sockets: HabitacionesSockets = {}
   private auditPort: AuditPort | null = null
@@ -163,26 +166,7 @@ export class HabitacionesService {
     if (currentUser.role !== 'super_admin' && existing.hotelId !== currentUser.hotelId) {
       throw new AuthError('No autorizado')
     }
-    // ─── A-1 (auditoría 2026-08-19): integridad referencial del delete ──────────────────
-    // El ORM crea las tablas SIN FKs físicos y borra con DELETE FROM crudo: sin este guard,
-    // borrar dejaba reservas activas, cerraduras TTLock, blocks y amenities apuntando a una
-    // habitación inexistente (planning/detalle/checkout rompían silenciosamente). Acceso por
-    // nombre de modelo global (patrón bookingengine — this.orm ya estaba cableado para la
-    // transacción de batch). Sin orm (tests mínimos) el delete sigue como antes.
-    if (this.orm) {
-      const reservas = (await this.orm.findMany('Reservations', { roomId: id })) as any[]
-      const activas = reservas.filter((r) => !['cancelled', 'no_show', 'checked_out'].includes(String(r.status)))
-      if (activas.length > 0) {
-        throw new ConflictError(`No se puede eliminar: la habitación tiene ${activas.length} reserva(s) activa(s). Cancelá o mové las reservas primero (el historial pasado no bloquea).`)
-      }
-      const locks = (await this.orm.findMany('LockDevices', { roomId: id })) as any[]
-      if (locks.length > 0) {
-        throw new ConflictError('No se puede eliminar: hay cerraduras TTLock vinculadas a esta habitación. Desvinculalas primero desde la vista de cerraduras.')
-      }
-      // Referencias muertas sin valor (bloqueos y amenities de un cuarto que ya no existe).
-      await this.orm.deleteMany('RoomBlocks', { roomId: id }).catch(() => 0)
-      await this.orm.deleteMany('RoomAmenities', { roomId: id }).catch(() => 0)
-    }
+    await assertRoomDeletable(this.orm, id)
     const deleted = await this.repo.delete(id)
     if (!deleted) throw new NotFoundError('Habitación no encontrada')
     await this.sockets.onHabitacionesDeleted?.(id, { hotelId: existing.hotelId, type: existing.type })
@@ -192,5 +176,11 @@ export class HabitacionesService {
       entity: 'room', entityId: id,
       detail: `Habitación "${existing.number}"${existing.name ? ` (${existing.name})` : ''} eliminada`,
     })
+  }
+
+  /** Precio base de TODAS las habitaciones de un tipo, de una sola vez (lo usa la grilla de
+   *  tarifas: ahí el precio base es del TIPO). Ver usecases/set-type-base-price.ts. */
+  setTypeBasePrice(hotelId: string, roomType: string, basePrice: unknown): Promise<number> {
+    return setTypeBasePriceUC(this.repo as any, hotelId, roomType, basePrice, (h) => bumpListVersion(this.cache, h))
   }
 }

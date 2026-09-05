@@ -445,6 +445,7 @@ import { aiRecepcionistaAuditlogConnector } from './connectors/ai-recepcionista-
 import { cashAuditlogConnector } from './connectors/cash-auditlog'
 import { paymentRequestsAuditlogConnector } from './connectors/payment-requests-auditlog'
 import { pricingAuditlogConnector } from './connectors/pricing-auditlog'
+import { pricingHabitacionesConnector } from './connectors/pricing-habitaciones'
 import { payrollAuditlogConnector } from './connectors/payroll-auditlog'
 import { facturasPaymentsConnector } from './connectors/facturas-payments'
 import { foliosFacturasConnector } from './connectors/folios-facturas'
@@ -599,6 +600,7 @@ system.addConnector('admin-auditlog', adminAuditlogConnector)
 system.addConnector('cash-auditlog', cashAuditlogConnector)
 system.addConnector('payment-requests-auditlog', paymentRequestsAuditlogConnector)
 system.addConnector('pricing-auditlog', pricingAuditlogConnector)
+system.addConnector('pricing-habitaciones', pricingHabitacionesConnector)
 system.addConnector('payroll-auditlog', payrollAuditlogConnector)
 // SC-05: borrados sensibles — credenciales, tenant entero, sesiones, RRHH y plata.
 system.addConnector('apikeys-auditlog', apikeysAuditlogConnector)

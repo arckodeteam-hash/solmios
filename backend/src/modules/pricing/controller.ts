@@ -67,9 +67,11 @@ export class PricingController {
   async updateRates(req: HttpRequest) {
     const id = await this.hotelOf(req); if (!id) return { status: 400, body: { error: 'hotelId requerido' } }
     validateSchema(UpdateRatesSchema, req.body)
-    const { rates } = req.body as any
+    const { rates, basePrices } = req.body as any
     validateRateItems(rates)
-    return { status: 200, body: { success: true, count: await this.service.updateRates(id, rates, this.actorOf(req)) } }
+    // basePrices: un precio base por TIPO de habitación. Va aparte de `rates` porque no es de la
+    // tarifa — es de la habitación, y una sola por tipo manda para todas las temporadas y canales.
+    return { status: 200, body: { success: true, count: await this.service.updateRates(id, rates, this.actorOf(req), basePrices) } }
   }
 
   async copyRatesNextYear(req: HttpRequest) {

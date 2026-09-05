@@ -104,7 +104,10 @@
                       </div>
                       <span class="font-extrabold text-navy capitalize">{{ roomType }}</span>
                       <label class="flex items-center gap-2 ml-auto text-[10px] font-bold text-text-muted uppercase">
-                        Precio Base $
+                        <span class="normal-case text-[11px] text-text-muted font-semibold">
+                          Precio base — uno solo; las temporadas y los canales le aplican su porcentaje
+                        </span>
+                        $
                         <input :aria-label="`Precio base de ${roomType}`" :value="getBasePrice(roomType)" @input="setBasePrice(roomType, $event)" type="number" min="0"
                           class="w-24 px-3 py-1.5 rounded-full border border-border text-sm font-bold text-navy focus:outline-none focus:border-cyan" />
                       </label>
@@ -343,6 +346,18 @@ function buildRatesPayload() {
   return rates
 }
 
+/** Un precio base por TIPO de habitación — no por temporada ni por ocupación. El backend lo escribe
+ *  en las habitaciones de ese tipo y de ahí lo deriva todo lo demás (ver backend
+ *  `pricing/usecases/base-price.ts`). Se manda el valor que muestra el input, que es el del grupo. */
+function buildBasePricesPayload(): Array<{ roomType: string; basePrice: number }> {
+  const out: Array<{ roomType: string; basePrice: number }> = []
+  for (const type of roomTypes.value) {
+    const base = getBasePrice(type)
+    if (base > 0) out.push({ roomType: type, basePrice: base })
+  }
+  return out
+}
+
 const copying = ref(false)
 async function copyRatesNextYear() {
   if (copying.value) return
@@ -368,7 +383,7 @@ async function saveRates() {
       color: s.color, sortOrder: i, active: s.active ? 1 : 0,
     }))
     await HotelService.saveSeasons(seasons)
-    await HotelService.saveRates(buildRatesPayload())
+    await HotelService.saveRates(buildRatesPayload(), buildBasePricesPayload())
     toast.success('Tarifas guardadas')
   } catch {
     toast.error('Error al guardar tarifas')
