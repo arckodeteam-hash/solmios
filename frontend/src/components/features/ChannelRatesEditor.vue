@@ -268,8 +268,15 @@ function resultPrice(base: number, pct: number): string {
 // la saltea y lo único que cubre esos días es la línea base, que va con `percentage: 0`. Sin esta
 // señal, escribir un % en una temporada muerta no hacía nada y la pantalla no lo decía.
 const assignedFuture = ref<Set<string>>(new Set())
-/** Temporada que el planning tiene pintada para HOY. Manda sobre el rango del catálogo, igual que
- *  en el motor (`buildSeasonByDate` aplica los assignments encima) — ver utils/season-state.ts. */
+/**
+ * La temporada que RIGE HOY, resuelta por el backend con la misma regla que cobra el motor
+ * (`GET /api/season-calendar` → `buildSeasonByDate`: rango del catálogo, planning encima).
+ *
+ * Se pide en vez de deducirla acá para que las tres pantallas que hablan de temporadas —el planning,
+ * la grilla de tarifas y este editor— den siempre la misma respuesta. Deducirla del lado del cliente
+ * ya falló una vez: con dos rangos solapados, el motor toma el más corto y la pantalla marcaba las
+ * dos como vigentes.
+ */
 const assignedToday = ref('')
 const todayISO = new Date().toISOString().slice(0, 10)
 
@@ -291,10 +298,14 @@ function seasonState(name: string): SeasonState {
 async function loadSeasonAssignments() {
   try {
     const to = new Date(Date.now() + 500 * 86400000).toISOString().slice(0, 10)
-    const r = await HotelService.seasonAssignments(todayISO, to)
-    const rows = r.data || []
-    assignedFuture.value = new Set(rows.map((a) => a.season))
-    assignedToday.value = rows.find((a) => String(a.date).slice(0, 10) === todayISO)?.season || ''
+    // `assignedFuture` son los días PINTADOS (lo que hace publicable a una temporada sin fechas
+    // propias); `assignedToday` es la temporada EFECTIVA de hoy, que además resuelve por rango.
+    const [painted, today] = await Promise.all([
+      HotelService.seasonAssignments(todayISO, to),
+      HotelService.seasonCalendar(todayISO, todayISO).catch(() => ({ data: [] })),
+    ])
+    assignedFuture.value = new Set((painted.data || []).map((a) => a.season))
+    assignedToday.value = (today.data || [])[0]?.season || ''
   } catch { assignedFuture.value = new Set(); assignedToday.value = '' }
 }
 

@@ -35,7 +35,7 @@ export function PricingModule() {
       const queries = new PricingQueries(orm)
       const usersRepo = new OrmRepository<any>(orm, 'Users')
       const service = new PricingService(seasonsRepo, ratesRepo, blocksRepo, restrictionsRepo, log, queries, usersRepo)
-      const calendar = new PricingCalendarService(dateRestrictionsRepo, seasonAssignmentsRepo, log, rateOverridesRepo)
+      const calendar = new PricingCalendarService(dateRestrictionsRepo, seasonAssignmentsRepo, log, rateOverridesRepo, seasonsRepo)
       const controller = new PricingController(service, log, calendar)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
@@ -64,6 +64,9 @@ export function PricingModule() {
       // reservations:view (el calendario la pinta); asignación con settings:edit (config de tarifas).
       router.get('/api/season-assignments', guard('reservations', 'view'), (req: any) => controller.listSeasonAssignments(req))
       router.post('/api/season-assignments', guard('settings', 'edit'), (req: any) => controller.assignSeason(req))
+      // Temporada efectiva por día (rango del catálogo + planning encima), la misma que cobra el
+      // motor. La consumen el planning, la grilla de tarifas y el editor de canal: una sola fuente.
+      router.get('/api/season-calendar', guard('reservations', 'view'), (req: any) => controller.seasonCalendar(req))
       // Tarifas por fecha (grilla roomType×ratePlan × rango). Misma sub-clave de plan que la matriz
       // de temporadas: es la misma función de negocio, con más resolución.
       router.get('/api/rate-plans', ratesGuard('view'), (req: any) => controller.listRatePlans(req))
@@ -72,7 +75,7 @@ export function PricingModule() {
       router.delete('/api/rate-overrides/:id', ratesGuard('edit'), (req: any) => controller.deleteRateOverride(req))
       router.get('/api/channel-metrics', guard('settings', 'view'), (req: any) => controller.getChannelMetrics(req))
 
-      log.info('Módulo pricing listo (17 endpoints)')
+      log.info('Módulo pricing listo (18 endpoints)')
       return service
     },
   })

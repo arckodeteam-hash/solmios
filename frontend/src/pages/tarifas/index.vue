@@ -39,14 +39,24 @@
         </template>
       </SetupAlert>
 
-      <SectionCard title="Temporadas" subtitle="Definí el rango de fechas de cada una y cuál está activa">
+      <SectionCard title="Temporadas"
+        :subtitle="currentSeasonLabel
+          ? `Hoy rige ${currentSeasonLabel} — la temporada sale de estas fechas y de los días marcados en el planning`
+          : 'Definí el rango de fechas de cada una. La que rige cada día sale de acá y del planning'">
         <div class="grid md:grid-cols-4 gap-4">
+          <!-- "Rige hoy" NO es un botón: sale de la fecha y del planning, la misma regla con la que
+               se cobra (`GET /api/season-calendar`). Antes había un botón "Activar temporada" que
+               escribía `seasons.active`, un campo que ningún cálculo de precio lee: la tarjeta podía
+               decir "Activa: Alta" mientras el motor y las OTAs cobraban Baja, y no había forma de
+               notarlo desde la pantalla. Una sola fuente, en las tres vistas. -->
           <div v-for="(s, i) in seasonsList" :key="i" class="bg-surface rounded-xl p-4"
-            :class="s.active ? 'ring-2 ring-cyan' : ''">
+            :class="s.name === currentSeason ? 'ring-2 ring-cyan' : ''">
             <div class="flex items-center gap-2 mb-3">
               <div class="w-4 h-4 rounded-full" :style="{ backgroundColor: s.color || '#3b82f6' }"></div>
               <span class="text-sm font-bold text-navy">{{ s.label || s.name }}</span>
-              <span v-if="s.active" class="ml-auto inline-flex items-center gap-1 rounded-full bg-[#DCFCE7] px-2 py-0.5 text-[9px] font-extrabold uppercase text-[#16A34A]">Activa</span>
+              <span v-if="s.name === currentSeason"
+                :title="currentSeasonSource === 'planning' ? 'Marcada para hoy en el planning' : 'Hoy cae dentro de su rango de fechas'"
+                class="ml-auto inline-flex items-center gap-1 rounded-full bg-[#DCFCE7] px-2 py-0.5 text-[9px] font-extrabold uppercase text-[#16A34A]">Rige hoy</span>
             </div>
             <div class="space-y-2">
               <div>
@@ -57,10 +67,10 @@
                 <label class="text-[10px] font-bold text-text-muted uppercase">Fin</label>
                 <input :id="`temporada-${i}-fin`" :aria-label="`Fin de la temporada ${s.name}`" v-model="s.endDate" type="date" class="w-full mt-1 px-3 py-2 rounded-full border border-border text-xs focus:outline-none focus:border-navy" />
               </div>
-              <button v-if="!s.active" @click="activateSeason(s.name)" :disabled="activatingSeason"
-                class="w-full mt-1 px-3 py-2 rounded-full bg-navy/5 hover:bg-navy text-navy hover:text-white text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-50">
-                Activar temporada
-              </button>
+              <router-link v-if="s.name !== currentSeason" :to="{ name: 'planning' }"
+                class="block w-full mt-1 px-3 py-2 rounded-full bg-navy/5 hover:bg-navy text-navy hover:text-white text-[11px] font-bold text-center transition-colors cursor-pointer">
+                Marcar días en el planning
+              </router-link>
             </div>
           </div>
         </div>
@@ -221,7 +231,7 @@ onMounted(async () => {
       seasonsList.value = seas.data
     }
 
-    await loadRates()
+    await Promise.all([loadRates(), loadCurrentSeason()])
   } catch {
     toast.error('Error al cargar tarifas')
   } finally {
@@ -392,20 +402,29 @@ async function saveRates() {
   }
 }
 
-const activatingSeason = ref(false)
-async function activateSeason(name: string) {
-  if (activatingSeason.value) return
-  activatingSeason.value = true
+/**
+ * La temporada que RIGE HOY. No es una elección: sale de `GET /api/season-calendar`, que resuelve el
+ * rango del catálogo con los días del planning encima — la misma regla con la que cobra el motor y
+ * con la que se publica a las OTAs. Ver `backend/src/modules/pricing/usecases/season-calendar.ts`.
+ *
+ * Reemplaza al viejo botón "Activar temporada", que escribía `seasons.active`: un campo que ningún
+ * cálculo de precio lee. Medido en producción el 2026-09-05, esta pantalla decía "Activa: Alta"
+ * mientras el motor y el editor de canal cobraban Baja.
+ */
+const currentSeason = ref('')
+const currentSeasonSource = ref('')
+const currentSeasonLabel = computed(() => {
+  const s = seasonsList.value.find((x) => x.name === currentSeason.value)
+  return s ? (s.label || s.name) : ''
+})
+
+async function loadCurrentSeason() {
+  const today = new Date().toISOString().slice(0, 10)
   try {
-    const res = await HotelService.activateSeason(name)
-    // Reflejar la nueva activa (el backend deja una sola). Fallback: marcar localmente.
-    if (res?.data?.length) seasonsList.value = res.data
-    else seasonsList.value.forEach((s) => (s.active = s.name === name ? 1 : 0))
-    toast.success(`Temporada activa: ${name}`)
-  } catch {
-    toast.error('No se pudo cambiar la temporada activa')
-  } finally {
-    activatingSeason.value = false
-  }
+    const r = await HotelService.seasonCalendar(today, today)
+    const day = (r.data || [])[0]
+    currentSeason.value = day?.season || ''
+    currentSeasonSource.value = day?.source || ''
+  } catch { currentSeason.value = ''; currentSeasonSource.value = '' }
 }
 </script>
