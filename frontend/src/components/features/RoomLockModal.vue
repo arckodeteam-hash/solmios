@@ -121,12 +121,22 @@
                   </div>
                 </div>
 
-                <button @click="unlockDoor" :disabled="unlocking || lock.status !== 'online'"
-                  class="w-full mt-2 py-2.5 bg-navy text-white text-sm font-bold rounded-full hover:bg-navy-light transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2">
-                  <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/><path d="M12 14.5v3"/></svg>
-                  {{ unlocking ? 'Abriendo…' : 'Abrir puerta' }}
-                </button>
-                <p v-if="lock.status !== 'online'" class="text-[11px] text-text-muted text-center">La cerradura debe estar online para abrir en remoto.</p>
+                <!-- Las dos mitades de operar la puerta. Cerrar estaba sin hacer: se podía abrir en
+                     remoto y no había forma de volver a echar el pestillo desde el panel. -->
+                <div class="grid grid-cols-2 gap-2 mt-2">
+                  <button @click="unlockDoor" :disabled="unlocking || locking || lock.status !== 'online'"
+                    class="py-2.5 bg-navy text-white text-sm font-bold rounded-full hover:bg-navy-light transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2">
+                    <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/><path d="M12 14.5v3"/></svg>
+                    {{ unlocking ? 'Abriendo…' : 'Abrir' }}
+                  </button>
+                  <button @click="lockDoor" :disabled="unlocking || locking || lock.status !== 'online'"
+                    class="py-2.5 border-2 border-navy text-navy text-sm font-bold rounded-full hover:bg-navy hover:text-white transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2">
+                    <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><path d="M12 14.5v3"/></svg>
+                    {{ locking ? 'Cerrando…' : 'Cerrar' }}
+                  </button>
+                </div>
+                <p v-if="lock.status !== 'online'" class="text-[11px] text-text-muted text-center">La cerradura debe estar online para operarla en remoto.</p>
+                <p v-else class="text-[11px] text-text-muted text-center">No todos los modelos cierran en remoto: los de resorte cierran solos al cerrar la puerta.</p>
 
                 <!-- Cambiar / desasignar la cerradura de esta habitación -->
                 <div class="pt-2 border-t border-border">
@@ -438,6 +448,24 @@ async function toggleAutoCodes() {
     toast.error((e as Error).message || 'No se pudo cambiar el auto-código')
   } finally {
     togglingAuto.value = false
+  }
+}
+
+/**
+ * Cierra la puerta en remoto. Si el modelo no lo soporta, TTLock responde con error y se muestra su
+ * texto: decir "puerta cerrada" cuando el pestillo no se movió es peor que no tener el botón.
+ */
+const locking = ref(false)
+async function lockDoor() {
+  if (!lock.value?.id || locking.value) return
+  locking.value = true
+  try {
+    await TTLockService.lockLock(lock.value.id)
+    toast.success('Puerta cerrada')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo cerrar la puerta')
+  } finally {
+    locking.value = false
   }
 }
 

@@ -158,6 +158,9 @@ export const TTLockService = {
   listLockRecords: (lockId: string) => http.get<{ data: LockRecord[] }>(`/ttlock/locks/${lockId}/records`),
   /** Abre la puerta en remoto por el gateway. */
   unlockLock: (lockId: string) => http.post<{ success: boolean }>(`/ttlock/locks/${lockId}/unlock`),
+  /** Cierra la puerta en remoto. Falla con el mensaje de TTLock si el modelo no lo soporta
+   *  (muchas cerraduras son de resorte y no tienen motor para echar el pestillo). */
+  lockLock: (lockId: string) => http.post<{ success: boolean }>(`/ttlock/locks/${lockId}/lock`),
   /** Borra un PIN directo del hardware (keyboardPwdId de la cerradura). */
   deletePasscode: (lockId: string, pwdId: string | number) => http.delete<{ success: boolean }>(`/ttlock/locks/${lockId}/passcodes/${pwdId}`),
   /** Gateway(s) que alcanzan esta cerradura (con señal). */

@@ -17,7 +17,7 @@ export function TtlockModule() {
     contract: {
       name: 'ttlock', version: '1.0.0',
       description: 'TTLock smart lock management',
-      actions: ['getConfig', 'updateConfig', 'connect', 'listLocks', 'listCodes', 'listGateways', 'listActiveCodes', 'listRecords', 'unlock', 'deletePasscode', 'listLockGateways', 'createPermanentCode', 'syncLocks', 'generateCode', 'revokeCode', 'purgeCodes', 'purgeAllCodes', 'updateLock', 'listMasterKeys', 'createMasterKey', 'revokeMasterKey', 'masterKeyAccessLog', 'masterKeyLocks', 'addMasterKeyLock', 'removeMasterKeyLock'],
+      actions: ['getConfig', 'updateConfig', 'connect', 'listLocks', 'listCodes', 'listGateways', 'listActiveCodes', 'listRecords', 'unlock', 'deletePasscode', 'listLockGateways', 'createPermanentCode', 'syncLocks', 'generateCode', 'revokeCode', 'purgeCodes', 'purgeAllCodes', 'updateLock', 'listMasterKeys', 'createMasterKey', 'revokeMasterKey', 'masterKeyAccessLog', 'masterKeyLocks', 'addMasterKeyLock', 'removeMasterKeyLock', 'lock'],
       events: [],
       tables: ['lock_devices', 'lock_codes'],
       dependencies: [],
@@ -51,6 +51,8 @@ export function TtlockModule() {
       router.get('/api/ttlock/locks/:id/active-codes', guard('ttlock', 'view'), (req: any) => controller.listActiveCodes(req))
       router.get('/api/ttlock/locks/:id/records', guard('ttlock', 'view'), (req: any) => controller.listRecords(req))
       router.post('/api/ttlock/locks/:id/unlock', guard('ttlock', 'edit'), (req: any) => controller.unlock(req))
+      // Cerrar en remoto. Mismo permiso que abrir: las dos son operar la puerta.
+      router.post('/api/ttlock/locks/:id/lock', guard('ttlock', 'edit'), (req: any) => controller.lock(req))
       router.delete('/api/ttlock/locks/:id/passcodes/:pwdId', guard('ttlock', 'edit'), (req: any) => controller.deletePasscode(req))
       router.get('/api/ttlock/locks/:id/gateways', guard('ttlock', 'view'), (req: any) => controller.listLockGateways(req))
       router.post('/api/ttlock/locks/:id/permanent-codes', guard('ttlock', 'edit'), (req: any) => controller.createPermanentCode(req))
