@@ -18,6 +18,9 @@ export function pricingCanalesConnector(ctx: ConnectorContext, debounceMs?: numb
       const scope = channel ? `canal=${channel}` : 'base'
       console.error(`[pricing-canales] push de tarifas falló (hotel=${hotelId} ${scope}):`, err instanceof Error ? err.message : err)
     },
+    // Un cambio de temporada o del planning no dice a qué canal afecta: sin esto se publicaba solo
+    // la base y se borraban los precios por canal.
+    (hotelId) => ctx.resolveModule<{ overrideChannels: (h: string) => Promise<string[]> }>('canales').overrideChannels(hotelId),
   )
 
   const overrideDeps: OverrideDispatchDeps = {

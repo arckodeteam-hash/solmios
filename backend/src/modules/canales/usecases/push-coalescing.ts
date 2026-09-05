@@ -18,6 +18,8 @@ export class PushCoalescer {
     private readonly push: PushFn,
     private readonly debounceMs: number = DEFAULT_DEBOUNCE_MS,
     private readonly onError: (hotelId: string, channel: string | undefined, err: unknown) => void = () => {},
+    /** Canales con tarifa propia. Se consulta solo en los cambios GLOBALES (ver `flush`). */
+    private readonly overrideChannels?: (hotelId: string) => Promise<string[]>,
   ) {}
 
   /** Agenda un push para el hotel; `channel` con override se acumula con los de la ráfaga. */
@@ -25,18 +27,46 @@ export class PushCoalescer {
     const entry = this.pending.get(hotelId) ?? { timer: null, channels: new Set<string>() }
     for (const channel of channels) if (channel) entry.channels.add(channel)
     if (entry.timer) clearTimeout(entry.timer)
-    entry.timer = setTimeout(() => this.flush(hotelId), this.debounceMs)
+    entry.timer = setTimeout(() => void this.flush(hotelId), this.debounceMs)
     this.pending.set(hotelId, entry)
   }
 
-  private flush(hotelId: string): void {
+  private async flush(hotelId: string): Promise<void> {
     const entry = this.pending.get(hotelId)
     this.pending.delete(hotelId)
-    // Con override de canal(es): un push por canal (el push con canal prefiere el override).
-    // Sin canal: la base. El push lee rates + restrictions ya persistidos → viaja todo junto.
-    const targets: Array<string | undefined> = entry?.channels.size ? [...entry.channels] : [undefined]
+    // Dos casos distintos:
+    //
+    //  - La ráfaga trae canal(es): el hotel editó la tarifa DE ESE canal. Se publica solo eso.
+    //  - La ráfaga no trae ninguno: es un cambio GLOBAL —fechas de una temporada, días pintados en
+    //    el planning, copiar tarifas al año próximo, CTA/CTD—. Ahí hay que publicar la base Y
+    //    DESPUÉS los canales con tarifa propia.
+    //
+    // Publicar solo la base era el comportamiento hasta el 2026-09-05, y borraba los precios por
+    // canal en cada cambio de temporada: medido en producción, la suite pasó de los $330 del canal
+    // a $120 —la tarifa base— ocho segundos después de mover la fecha de fin de una temporada, sin
+    // haber tocado una sola tarifa.
+    const explicit = entry?.channels.size ? [...entry.channels] : null
+    const targets: Array<string | undefined> = explicit
+      ?? [undefined, ...(await this.resolveOverrides(hotelId))]
+    // SECUENCIAL, no en paralelo: todos los pushes escriben sobre los mismos rate plans y el último
+    // gana, así que el orden —base primero, canales después— es lo que hace que el canal mande.
     for (const channel of targets) {
-      void this.push(hotelId, channel).catch((err: unknown) => this.onError(hotelId, channel, err))
+      try {
+        await this.push(hotelId, channel)
+      } catch (err: unknown) {
+        this.onError(hotelId, channel, err)
+      }
+    }
+  }
+
+  /** Sin resolver (o si falla) se publica solo la base: es preferible a un precio elegido al azar. */
+  private async resolveOverrides(hotelId: string): Promise<string[]> {
+    if (!this.overrideChannels) return []
+    try {
+      return await this.overrideChannels(hotelId)
+    } catch (err) {
+      this.onError(hotelId, undefined, err)
+      return []
     }
   }
 }

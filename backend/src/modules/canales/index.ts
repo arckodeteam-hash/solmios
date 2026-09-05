@@ -35,7 +35,7 @@ export function CanalesModule() {
       name: 'canales',
       version: '1.0.0',
       description: 'Channel manager Channex',
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'channels', 'feed', 'sync', 'syncHotel', 'autoProvision', 'pushAvailability', 'pushAvailabilityByRoom', 'testConnection', 'mappingDetails', 'groups', 'connectOTA', 'deactivateChannel', 'pushRateOverrides', 'updateChannelMapping', 'checkChannelReadiness', 'activateChannel'],
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'channels', 'feed', 'sync', 'syncHotel', 'autoProvision', 'pushAvailability', 'pushAvailabilityByRoom', 'testConnection', 'mappingDetails', 'groups', 'connectOTA', 'deactivateChannel', 'pushRateOverrides', 'updateChannelMapping', 'checkChannelReadiness', 'activateChannel', 'overrideChannels'],
       events: ['onCanalesCreated', 'onCanalesUpdated', 'onCanalesDeleted', 'onCanalesSynced'],
       tables: ['canales_config'],
       dependencies: [],

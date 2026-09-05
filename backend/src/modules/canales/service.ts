@@ -112,17 +112,17 @@ export class CanalesService {
 
   async syncProperty(hotelId: string, hotel: SyncPropertyHotel, rooms: RoomTypeSummary[]): Promise<SyncResultDTO> {
     return syncPropertyToChannex({
-      getConfig: (h) => this.getConfig(h),
+      getConfig: (h) => this.getConfig(h), upsertConfig: (h, patch) => this.upsertConfig(h, patch),
       getRatePlans: (h) => readRatePlans((m, q) => this.queries.findMany(m, q), h),
       channexSync: (h, ht, r, c, plans) => this.channex.syncProperty(h, ht, r, c, plans),
-      upsertConfig: (h, patch) => this.upsertConfig(h, patch),
       pushAllAvailability: (h) => withAvailabilityTrail(this.syncLogRepo, h, () => pushAllRoomTypesAvailability(this.availDeps(), h)),
-      pushRates: (h, channel) => this.pushSeasonalRates(h, channel),
-      overrideChannels: (h) => listOverrideChannels((m, q) => this.queries.findMany(m, q), h, async () => this.channex.listActiveChannelTypes(await this.getConfig(h))),
-      syncOpenChannelMapping: (h) => this.channelApi.syncOpenChannelMapping(h),
-      logger: this.logger, syncLogRepo: this.syncLogRepo,
+      pushRates: (h, channel) => this.pushSeasonalRates(h, channel), overrideChannels: (h) => this.overrideChannels(h),
+      syncOpenChannelMapping: (h) => this.channelApi.syncOpenChannelMapping(h), logger: this.logger, syncLogRepo: this.syncLogRepo,
     }, hotelId, hotel, rooms)
   }
+
+  /** Canales con tarifa propia y activos. Lo usan el ARI post-sync y el push por evento. */
+  overrideChannels(h: string): Promise<string[]> { return listOverrideChannels((m, q) => this.queries.findMany(m, q), h, async () => this.channex.listActiveChannelTypes(await this.getConfig(h))) }
 
   // Push de availability: recálculo + push (reservas/checkin/checkout/bloqueos). Todo push ARI
   // deja su fila en sync_log con los task ids de Channex — ver `usecases/ari-tasks.ts`.
