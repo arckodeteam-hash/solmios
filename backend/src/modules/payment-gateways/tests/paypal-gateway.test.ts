@@ -82,6 +82,12 @@ const captureRoute = (currency: string, value = '250.00') => ({
   ),
 })
 
+/** POST /v2/checkout/orders/{id}/capture: la captura que dispara el webhook APPROVED. */
+const captureOrderRoute = (respond: () => Response) => ({
+  match: /\/v2\/checkout\/orders\/[^/]+\/capture$/,
+  respond,
+})
+
 const orderRoute = (body: any, status = 201) => ({
   match: /\/v2\/checkout\/orders$/,
   respond: () => new Response(JSON.stringify(body), { status }),
@@ -469,6 +475,61 @@ describe('PayPalGateway — confirm()', () => {
     expect(outcome!.providerRef).toBe('CAPTURE-77')
   })
 
+  /**
+   * La orden se crea con `intent: 'CAPTURE'`, que NO cobra sola, y el contrato compartido no tiene
+   * hook de "vuelta del redirect": si el APPROVED no dispara el capture, el huésped aprueba, la
+   * plata nunca se mueve y el cobro queda 'pending' para siempre.
+   */
+  it('CHECKOUT.ORDER.APPROVED captura la orden: UN POST a /orders/{id}/capture con PayPal-Request-Id = orderId', async () => {
+    const calls = mockFetch([
+      { match: /^https:\/\/api\.paypal\.com\//, respond: () => new Response(PAYPAL_CERT_PEM, { status: 200 }) },
+      tokenRoute(),
+      captureOrderRoute(() => new Response(JSON.stringify({ id: 'ORDER-77', status: 'COMPLETED' }), { status: 201 })),
+    ])
+    const body = orderEventBody('CHECKOUT.ORDER.APPROVED', { payments: undefined })
+    const outcome = await gw().confirm({ hotelId: 'h1', headers: signedHeaders(body), rawBody: body })
+
+    const captures = calls.filter(c => c.url.endsWith('/capture'))
+    expect(captures.length).toBe(1)
+    expect(captures[0]!.url).toBe('https://api-m.sandbox.paypal.com/v2/checkout/orders/ORDER-77/capture')
+    expect(captures[0]!.method).toBe('POST')
+    expect(captures[0]!.headers.authorization).toBe('Bearer A21AA-token')
+    // Idempotencia: dos entregas del MISMO webhook mandan el mismo key y no cobran dos veces.
+    expect(captures[0]!.headers['paypal-request-id']).toBe('ORDER-77')
+    // El outcome no cambia: quien marca 'paid' es el PAYMENT.CAPTURE.COMPLETED que esto dispara.
+    expect(outcome!.status).toBe('pending')
+  })
+
+  it('el capture que falla (422 ORDER_ALREADY_CAPTURED) NO tira: el outcome pending sale igual', async () => {
+    // Una excepción acá devolvería 500 a un webhook auténtico y PayPal lo reintentaría en loop,
+    // reintentando la captura. Re-entregar el mismo evento es normal, no un error.
+    const calls = mockFetch([
+      { match: /^https:\/\/api\.paypal\.com\//, respond: () => new Response(PAYPAL_CERT_PEM, { status: 200 }) },
+      tokenRoute(),
+      captureOrderRoute(() => new Response(
+        JSON.stringify({ name: 'UNPROCESSABLE_ENTITY', details: [{ issue: 'ORDER_ALREADY_CAPTURED' }] }),
+        { status: 422 },
+      )),
+    ])
+    const body = orderEventBody('CHECKOUT.ORDER.APPROVED', { payments: undefined })
+    const outcome = await gw().confirm({ hotelId: 'h1', headers: signedHeaders(body), rawBody: body })
+    expect(calls.filter(c => c.url.endsWith('/capture')).length).toBe(1)
+    expect(outcome!.status).toBe('pending')
+    expect(outcome!.providerRef).toBe('ORDER-77')
+  })
+
+  it('PAYMENT.CAPTURE.COMPLETED no captura nada (sólo el APPROVED dispara la captura)', async () => {
+    const calls = mockFetch([
+      { match: /^https:\/\/api\.paypal\.com\//, respond: () => new Response(PAYPAL_CERT_PEM, { status: 200 }) },
+      tokenRoute(),
+      captureOrderRoute(() => new Response(JSON.stringify({ id: 'ORDER-77' }), { status: 201 })),
+    ])
+    const body = eventBody()
+    const outcome = await gw().confirm({ hotelId: 'h1', headers: signedHeaders(body), rawBody: body })
+    expect(outcome!.status).toBe('paid')
+    expect(calls.some(c => c.url.endsWith('/capture'))).toBe(false)
+  })
+
   it('CHECKOUT.ORDER.APPROVED (todavía sin captura): monto y referencia igual, ref = id de la orden', async () => {
     mockCertFetch()
     const body = orderEventBody('CHECKOUT.ORDER.APPROVED', { payments: undefined })
@@ -668,5 +729,7 @@ describe('PayPalGateway — refund / voidCharge', () => {
       { match: /\/void$/, respond: () => new Response(JSON.stringify({ message: 'AUTHORIZATION_ALREADY_CAPTURED' }), { status: 422 }) },
     ])
     await expect(gw().voidCharge('AUTH-1')).rejects.toThrow(/AUTHORIZATION_ALREADY_CAPTURED/)
+    // El adapter cobra con intent:'CAPTURE': anular no revierte nada, el remedio es refund().
+    await expect(gw().voidCharge('AUTH-1')).rejects.toThrow(/refund\(\)/)
   })
 })

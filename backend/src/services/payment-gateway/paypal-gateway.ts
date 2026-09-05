@@ -306,6 +306,18 @@ export class PayPalGateway implements RefundableGateway {
     const { amount, reference, captureId } = readResource(body?.resource)
     const currency = String(amount.currency_code || this.creds.currency || 'usd')
 
+    // La captura se dispara ACÁ porque no hay otro lado donde hacerlo: la orden se crea con
+    // `intent: 'CAPTURE'`, que en Orders v2 NO cobra sola — hay que pedir el capture después de
+    // que el huésped aprueba. El contrato compartido (types.ts) sólo expone createCharge/confirm/
+    // refund/voidCharge: no tiene hook de "vuelta del redirect" donde enganchar esa llamada, así
+    // que el webhook APPROVED es el único aviso de que la orden ya está aprobada. Sin esto el
+    // huésped aprueba, la plata nunca se mueve, el PAYMENT.CAPTURE.COMPLETED nunca llega y el
+    // cobro queda 'pending' para siempre.
+    if (String(body?.event_type || '') === 'CHECKOUT.ORDER.APPROVED') {
+      // En el APPROVED el `resource` ES la orden, así que su `id` es el orderId que espera el capture.
+      await this.captureApprovedOrder(String(body?.resource?.id || ''))
+    }
+
     return {
       // El id del EVENTO, no el de la captura: `payment-events.ts` usa `${provider}:${eventId}`
       // como PK de idempotencia, y un CAPTURE.COMPLETED y un CAPTURE.REFUNDED de la MISMA captura
@@ -321,6 +333,33 @@ export class PayPalGateway implements RefundableGateway {
       currency,
       reference,
       raw: body,
+    }
+  }
+
+  /**
+   * Captura una orden ya aprobada. NUNCA lanza: un error acá convertiría un webhook AUTÉNTICO en
+   * un 500, y PayPal reintenta los 500 en loop — reintentando la captura una y otra vez. Además,
+   * el 422 `ORDER_ALREADY_CAPTURED` de una re-entrega del mismo evento es el caso NORMAL, no una
+   * falla. El `PayPal-Request-Id` con el id de la ORDEN cierra esa idempotencia del lado de PayPal:
+   * dos entregas del mismo webhook no cobran dos veces.
+   *
+   * El outcome del APPROVED no cambia por esto: sigue siendo 'pending'. Quien marca 'paid' es el
+   * PAYMENT.CAPTURE.COMPLETED que dispara justamente esta llamada.
+   */
+  private async captureApprovedOrder(orderId: string): Promise<void> {
+    if (!orderId) return
+    try {
+      const token = await this.getAccessToken()
+      await fetch(`${this.base}/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          'PayPal-Request-Id': orderId,
+        },
+      })
+    } catch {
+      // Se traga a propósito: ver el porqué en el comentario de arriba.
     }
   }
 
@@ -386,7 +425,13 @@ export class PayPalGateway implements RefundableGateway {
     return { refundId: String(body?.id || providerRef), status: String(body?.status || 'unknown') }
   }
 
-  /** Anula una AUTORIZACIÓN todavía no capturada (libera el dinero retenido al huésped). */
+  /**
+   * Anula una AUTORIZACIÓN todavía no capturada (libera el dinero retenido al huésped). El
+   * endpoint es el correcto para una autorización, pero este adapter crea las órdenes con
+   * `intent: 'CAPTURE'`: sus propios `providerRef` son CAPTURAS, y PayPal rechaza anular una
+   * captura. Por eso el error dice cuál es el remedio real (`refund()`) en vez de dejar al
+   * operador con un 422 opaco: acá la anulación no es el camino para revertir un cobro.
+   */
   async voidCharge(providerRef: string): Promise<void> {
     const token = await this.getAccessToken()
     const res = await fetch(`${this.base}/v2/payments/authorizations/${encodeURIComponent(providerRef)}/void`, {
@@ -395,7 +440,11 @@ export class PayPalGateway implements RefundableGateway {
     })
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as any
-      throw new Error(body?.message || 'PayPal rechazó la anulación')
+      const reason = body?.message || 'PayPal rechazó la anulación'
+      throw new Error(
+        `${reason}. Este adapter cobra con intent:'CAPTURE', así que sus providerRef son capturas ` +
+        'y no autorizaciones: lo que revierte un cobro ya hecho es refund(), no la anulación.',
+      )
     }
   }
 }
