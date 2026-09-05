@@ -38,7 +38,7 @@ export interface PaymentGatewayDTO {
     paymentLinks: boolean
     confirmation: ConfirmationMode
   }
-  /** false = el puerto lo admite pero todavía no hay adapter (hoy solo PayPal). */
+  /** false = el puerto admite el proveedor pero todavía no hay adapter escrito. Hoy los cuatro lo tienen. */
   implemented: boolean
   /** MerchantId (Azul) / Comercio (CardNet) guardado. Mismo criterio que hasSecret: nunca el valor. */
   hasMerchantId: boolean
