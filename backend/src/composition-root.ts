@@ -187,6 +187,10 @@ import { DeletionRequestsModule } from './modules/deletion-requests'
 // Leads del formulario de ventas de la landing pública ("Hablar con Ventas"/"Contactar
 // ventas"). Mismo patrón que deletion-requests: formulario público + gestión super_admin.
 import { SalesLeadsModule } from './modules/sales-leads'
+// Digitalización: expediente de los hoteles SIN presencia digital. El sistema detecta los que no
+// tienen web y el super_admin los acompaña por los cinco pasos (página por plantilla,
+// configuración completa —que se cobra—, Google Maps, Google Hotel y motor de reservas).
+import { DigitalizacionModule } from './modules/digitalizacion'
 // F2 2.1–2.3 (solmi-direct-booking): códigos promocionales del widget de reservas.
 // Modelo promo_codes (con UNIQUE index creado en migrate-db.ts) + CRUD admin + validación
 // pública (sin auth, rate-limited). Upsells NO va acá: es sub-dominio de bookingengine.
@@ -326,6 +330,9 @@ const mods = [
   // rate-limited) + gestión del flujo new→contacted→won/lost desde /admin/leads-ventas
   // (solo super_admin).
   SalesLeadsModule(),
+  // Digitalización de hoteles sin web (herramienta interna de ventas, solo super_admin):
+  // detección de candidatos + expediente con los cinco pasos en `/api/digitalizacion`.
+  DigitalizacionModule(),
   // F2 2.1–2.3 (solmi-direct-booking) — Códigos promocionales del widget de reservas.
   // Modelo promo_codes (UNIQUE (hotelId, code) creado en migrate-db.ts) + CRUD admin
   // (`/api/promo-codes` auth + permiso `promo:*`) + ruta pública de validación

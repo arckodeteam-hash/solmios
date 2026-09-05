@@ -175,6 +175,15 @@ async function createTablesBlock1(): Promise<void> {
   // admins crean el mismo slug a la vez, la carrera la frena el índice.
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_site_pages_slug ON site_pages (slug)`)
 
+  // Expedientes de digitalización (módulo digitalizacion). La tabla la crea ormMigrate (modelo
+  // ORM, Paso 1); acá solo el índice de búsqueda por hotel, que es como se consulta siempre
+  // (¿este hotel ya tiene expediente?) al abrir uno y al armar la lista de candidatos.
+  // NO es UNIQUE a propósito: la unicidad real es "un solo expediente VIVO (abierto|completado)
+  // por hotel" y esa condición la aplica el service (ConflictError 409). Un hotel cuyo
+  // expediente se canceló puede volver a entrar al programa, así que un UNIQUE físico sobre
+  // hotelId lo dejaría bloqueado para siempre.
+  await exec(`CREATE INDEX IF NOT EXISTS idx_digitalization_cases_hotel ON digitalization_cases (hotelId)`)
+
   // Seed del contenido inicial del sitio público (footer). SOLO si la tabla está vacía:
   // si el super_admin ya creó/editó páginas, no se tocan (el CMS manda).
   // Scope plataforma (hotelId='platform'). El HTML es semántico simple (h2/p/ul): lo estiliza
