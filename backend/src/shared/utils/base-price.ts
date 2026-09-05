@@ -17,19 +17,39 @@
 // (`canales/usecases/channex.ts:458`). Queda como ESPEJO derivado — se sigue escribiendo, pero
 // siempre con el valor del tipo, nunca con lo que mande el cliente.
 
-/** Precio base por tipo, tal como lo deriva `PricingQueries.roomTypesFor` (mínimo positivo entre
- *  las unidades del tipo — mismo criterio que el motor público usa para publicar "desde $X"). */
+/** Precio base por tipo: el MÍNIMO POSITIVO entre las unidades del tipo — mismo criterio que
+ *  `PricingQueries.roomTypesFor`, que `sync-property.ts:summarizeRoomTypes` y que el motor público
+ *  para publicar "desde $X". */
 export type BasePriceByType = ReadonlyMap<string, number>
 
 export interface RoomTypeRow { type: string; basePrice: number }
 
-/** Índice tipo → precio base. `roomTypesFor` devuelve una fila por ocupación con el mismo base del
- *  tipo, así que quedarse con la primera de cada tipo alcanza. */
+/**
+ * Índice tipo → precio base.
+ *
+ * Se queda con el MÍNIMO POSITIVO, no con la primera fila. Los dos llamadores le pasan cosas
+ * distintas y por eso el criterio importa:
+ *
+ *  - `pricing/service.ts` le pasa la salida de `roomTypesFor`, ya agregada: una fila por ocupación,
+ *    todas con el mismo base del tipo. Mínimo o primera dan lo mismo.
+ *  - `canales/usecases/push-rates.ts` le pasa las filas CRUDAS de `Rooms`, una por habitación
+ *    física. Ahí un tipo con dos unidades a precios distintos —alta de una habitación nueva, o
+ *    edición de una sola desde `/panel/habitaciones`— publicaba el de "la primera que devolviera la
+ *    query", cuyo orden no está garantizado, mientras el panel mostraba el mínimo: el editor decía
+ *    120 y la OTA salía con 200. Un tipo con una unidad en 0 era peor todavía — el índice guardaba
+ *    el 0, `basePriceFor` lo descartaba y el push caía al `basePrice` grabado en la fila.
+ *
+ * Las unidades en 0 (habitación cargada sin precio) NO entran: si ninguna del tipo tiene precio, el
+ * tipo queda fuera del índice y `basePriceFor` cae al fallback, igual que antes.
+ */
 export function indexBasePrices(roomTypes: readonly RoomTypeRow[]): BasePriceByType {
   const out = new Map<string, number>()
   for (const rt of roomTypes) {
     const type = String(rt.type || '')
-    if (type && !out.has(type)) out.set(type, Number(rt.basePrice) || 0)
+    const price = Number(rt.basePrice) || 0
+    if (!type || price <= 0) continue
+    const current = out.get(type)
+    if (current === undefined || price < current) out.set(type, price)
   }
   return out
 }

@@ -11,8 +11,9 @@ import { pushSeasonalRatesToChannex } from '../usecases/push-rates'
 
 interface Captured { roomType: string; season: string; occupancy: number; basePrice: number; percentage: number }
 
-/** Deps mínimas: una suite a $120 en `Rooms` y una fila de tarifas con el base viejo grabado. */
-function makeDeps(roomBasePrice: number, savedBasePrice: number) {
+/** Deps mínimas: una suite a $120 en `Rooms` y una fila de tarifas con el base viejo grabado.
+ *  `extraRoom` agrega una SEGUNDA unidad del mismo tipo con otro precio. */
+function makeDeps(roomBasePrice: number, savedBasePrice: number, extraRoomPrice?: number) {
   const captured: { rates: Captured[] } = { rates: [] }
   const deps = {
     getConfig: async () => ({ apiKey: 'k', propertyId: 'p', baseUrl: 'https://x' }),
@@ -20,7 +21,11 @@ function makeDeps(roomBasePrice: number, savedBasePrice: number) {
       if (model === 'RoomRates') {
         return [{ roomType: 'suite', season: 'alta', occupancy: 2, channel: '', basePrice: savedBasePrice, percentage: 70, closed: 0, minStay: 0, maxStay: 0 }]
       }
-      if (model === 'Rooms') return [{ id: 'rm1', type: 'suite', capacity: 2, basePrice: roomBasePrice }]
+      if (model === 'Rooms') {
+        const rooms = [{ id: 'rm1', type: 'suite', capacity: 2, basePrice: roomBasePrice }]
+        if (extraRoomPrice !== undefined) rooms.push({ id: 'rm2', type: 'suite', capacity: 2, basePrice: extraRoomPrice })
+        return rooms
+      }
       if (model === 'Seasons') return [{ id: 's1', name: 'alta', label: 'Alta', startDate: '2026-01-01', endDate: '2026-03-31' }]
       return []
     },
@@ -56,5 +61,28 @@ describe('push a Channex — el base publicado es el de la habitación', () => {
     const { deps, captured } = makeDeps(0, 175)
     await pushSeasonalRatesToChannex(deps, 'h1')
     expect(captured.rates[0]!.basePrice).toBe(175)
+  })
+
+  // Dos unidades del mismo tipo a precios distintos: pasa al dar de alta una habitación nueva o al
+  // editar UNA sola desde /panel/habitaciones. El panel muestra el mínimo positivo
+  // (`PricingQueries.roomTypesFor`) y `sync-property.ts` publica el mínimo: el push tiene que usar
+  // el MISMO criterio o la OTA sale con un número que el editor no muestra en ninguna parte.
+  it('con varias unidades del tipo publica el MÍNIMO, igual que el panel', async () => {
+    const { deps, captured } = makeDeps(200, 999, 120)
+    await pushSeasonalRatesToChannex(deps, 'h1')
+    expect(captured.rates[0]!.basePrice).toBe(120)
+  })
+
+  it('el orden de las unidades no cambia lo publicado', async () => {
+    const { deps, captured } = makeDeps(120, 999, 200)
+    await pushSeasonalRatesToChannex(deps, 'h1')
+    expect(captured.rates[0]!.basePrice).toBe(120)
+  })
+
+  // Una habitación cargada sin precio no puede arrastrar al tipo entero al fallback grabado.
+  it('una unidad en 0 no tapa a la que sí tiene precio', async () => {
+    const { deps, captured } = makeDeps(0, 999, 120)
+    await pushSeasonalRatesToChannex(deps, 'h1')
+    expect(captured.rates[0]!.basePrice).toBe(120)
   })
 })

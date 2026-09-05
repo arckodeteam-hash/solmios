@@ -33,46 +33,51 @@
       <!-- Una tarjeta POR TIPO DE HABITACIÓN, con una sub-sección por ocupación -->
       <div v-else class="space-y-4">
         <div v-for="tc in typeCards" :key="tc.roomType" class="rounded-2xl border-2 border-navy overflow-hidden">
-          <div class="bg-navy px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
-            <h3 class="text-sm font-black text-white capitalize">{{ tc.roomType }}</h3>
+          <div class="bg-navy px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+            <div class="min-w-0">
+              <h3 class="text-base font-black text-white capitalize leading-tight">{{ tc.roomType }}</h3>
+              <p class="text-[10px] font-bold uppercase tracking-wide text-white/45 mt-0.5">
+                {{ tc.groups.length }} {{ tc.groups.length === 1 ? 'ocupación' : 'ocupaciones' }} · un solo precio para todas
+              </p>
+            </div>
             <!-- El precio base es UNO SOLO por tipo de habitación: las temporadas y los canales solo
-                 le aplican su porcentaje. Estaba repetido en cada bloque de ocupación, que hacía
-                 parecer que había un base por ocupación. -->
-            <div class="flex items-center gap-2 ml-auto">
-              <span class="text-[10px] font-black uppercase text-white/70">Tarifa base</span>
-              <span class="px-2.5 py-1 rounded-lg bg-white/10 text-sm font-black text-white">
-                {{ tc.basePrice }} <span class="text-[10px] font-bold text-white/60">{{ currency }}</span>
-              </span>
-              <router-link :to="{ name: 'tarifas' }"
-                class="text-[10px] font-bold text-white/80 underline underline-offset-2 hover:text-cyan">
-                Cambiar →
+                 le aplican su porcentaje. Se muestra grande y una sola vez — repetido en cada bloque
+                 de ocupación hacía parecer que había un base por ocupación, y de chiquito parecía un
+                 dato de relleno cuando es el número del que se deriva todo lo demás de la tarjeta. -->
+            <div class="flex items-center gap-3 rounded-2xl bg-white/10 ring-1 ring-white/15 px-4 py-2">
+              <div class="leading-none">
+                <span class="block text-[10px] font-bold uppercase tracking-wide text-white/55 mb-1.5">Tarifa base</span>
+                <span class="text-3xl font-black tabular-nums text-white">{{ tc.basePrice.toLocaleString() }}</span>
+                <span class="ml-1 text-xs font-bold text-white/60">{{ currency }}</span>
+              </div>
+              <router-link :to="{ name: 'tarifas' }" title="El precio base se edita en la grilla de tarifas: vale para todo el tipo de habitación"
+                class="shrink-0 rounded-full border-2 border-white/25 px-4 py-1.5 text-[11px] font-black text-white hover:bg-white/15 hover:border-white/50 transition-colors">
+                Cambiar
               </router-link>
-              <span class="text-[10px] font-black uppercase text-white/50 pl-1">
-                {{ tc.groups.length }} {{ tc.groups.length === 1 ? 'ocupación' : 'ocupaciones' }}
-              </span>
             </div>
           </div>
           <div v-for="g in tc.groups" :key="g.key" :class="g !== tc.groups[0] ? 'border-t-2 border-navy/10' : ''">
-          <div class="px-4 pt-2.5 pb-0.5 text-[11px] font-black text-text-muted uppercase">
-            {{ g.occupancy }} {{ g.occupancy === 1 ? 'persona' : 'personas' }}
-          </div>
-          <!-- Responsive: en móvil General arriba + temporadas 2×2; en desktop General a la izq + 4 temporadas en fila -->
-          <div class="p-3 grid grid-cols-1 lg:grid-cols-[190px_1fr] gap-3">
-            <!-- Solo lo que SÍ es por ocupación. El precio base está arriba, en el tipo. -->
-            <div class="rounded-xl border-2 border-navy bg-surface p-3">
-              <div class="text-[10px] font-black text-text-muted uppercase mb-2">Estadía</div>
-              <div class="grid grid-cols-2 gap-2">
-                <div title="Mínimo de noches para poder LLEGAR (min stay arrival): se exige el día del check-in">
-                  <div class="text-[10px] text-text-muted">Mín. al llegar</div>
-                  <input type="number" min="0" inputmode="numeric" v-model.number="g.minStay" class="w-full px-2 py-1 rounded-lg border-2 border-navy/30 text-xs text-right focus:border-navy outline-none" />
-                </div>
-                <div>
-                  <div class="text-[10px] text-text-muted">Días máx.</div>
-                  <input type="number" min="0" inputmode="numeric" v-model.number="g.maxStay" class="w-full px-2 py-1 rounded-lg border-2 border-navy/30 text-xs text-right focus:border-navy outline-none" />
-                </div>
-              </div>
+          <!-- Los límites de estadía son del par (tipo × ocupación), no de la temporada: van en el
+               encabezado de la fila, no en una tarjeta que competía de igual a igual con las cuatro
+               temporadas y se leía como si fuera una quinta. -->
+          <div class="px-4 pt-3 pb-1 flex items-center justify-between gap-3 flex-wrap">
+            <span class="text-[11px] font-black text-text-muted uppercase">
+              {{ g.occupancy }} {{ g.occupancy === 1 ? 'persona' : 'personas' }}
+            </span>
+            <div class="flex items-center gap-2">
+              <label class="flex items-center gap-1.5" title="Mínimo de noches para poder LLEGAR (min stay arrival): se exige el día del check-in">
+                <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Mín. al llegar</span>
+                <input type="number" min="0" inputmode="numeric" v-model.number="g.minStay"
+                  class="w-14 px-2 py-1 rounded-lg border-2 border-navy/20 text-xs font-bold text-navy text-right tabular-nums focus:border-navy outline-none" />
+              </label>
+              <label class="flex items-center gap-1.5" title="Tope de noches para una estadía que empieza en estos días">
+                <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Días máx.</span>
+                <input type="number" min="0" inputmode="numeric" v-model.number="g.maxStay"
+                  class="w-14 px-2 py-1 rounded-lg border-2 border-navy/20 text-xs font-bold text-navy text-right tabular-nums focus:border-navy outline-none" />
+              </label>
             </div>
-
+          </div>
+          <div class="p-3 pt-2">
             <!-- Temporadas: 2 columnas en móvil, 4 en desktop -->
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
               <div v-for="cell in g.cells" :key="cell.season"
@@ -100,7 +105,10 @@
                       class="w-full min-w-0 px-2 py-1.5 rounded-lg border-2 border-navy/30 text-sm font-black text-navy text-right focus:border-navy outline-none" />
                     <span class="text-xs text-text-muted">%</span>
                   </div>
-                  <div class="text-sm font-black text-teal">= {{ resultPrice(g.basePrice, cell.percentage) }} <span class="text-[10px] text-text-muted">{{ currency }}</span></div>
+                  <!-- Se deriva del base del TIPO (el número grande de arriba), no del que traiga la
+                       fila: son el mismo dato y mostrar dos fuentes distintas es justo lo que hacía
+                       que el editor anunciara un precio y la OTA publicara otro. -->
+                  <div class="text-sm font-black text-teal">= {{ resultPrice(tc.basePrice, cell.percentage) }} <span class="text-[10px] text-text-muted">{{ currency }}</span></div>
                   <!-- Restricciones de la temporada: CTA/CTD + estadía mínima through (P4 certificación) -->
                   <div class="flex items-center gap-1">
                     <button @click="cell.cta = cell.cta ? 0 : 1" title="Cerrado a llegadas (CTA): no se puede llegar este día"

@@ -1,6 +1,6 @@
 {
   "_arckode": "1.0.0",
-  "_generated": "2026-09-05T15:48:33.874Z",
+  "_generated": "2026-09-05T17:49:47.369Z",
   "_instructions": "Lee este archivo ANTES de escribir código. Contiene el estado completo del sistema: módulos, conectores, violaciones. Si está desactualizado, corré: bun run analyze --json",
   "system": {
     "healthy": true,
@@ -1067,7 +1067,8 @@
     "reservas-ttlock.ts",
     "mantenimiento-auditlog.ts",
     "booking-channex.ts",
-    "restaurante-accounting.ts"
+    "restaurante-accounting.ts",
+    "habitaciones-pricing.ts"
   ],
   "violations": [],
   "warnings": [],

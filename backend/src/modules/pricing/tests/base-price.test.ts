@@ -27,6 +27,24 @@ describe('indexBasePrices', () => {
     expect(indexBasePrices([{ type: '', basePrice: 99 }]).size).toBe(0)
     expect(indexBasePrices([]).size).toBe(0)
   })
+
+  // `push-rates.ts` le pasa las filas CRUDAS de `Rooms`, una por habitación física: ahí un tipo con
+  // dos unidades a precios distintos tiene que resolver al mismo número que muestra el panel
+  // (`roomTypesFor`) y que publica `sync-property.ts` — el mínimo positivo.
+  it('con varias unidades del tipo se queda con el MÍNIMO, no con la primera', () => {
+    expect(indexBasePrices([{ type: 'suite', basePrice: 200 }, { type: 'suite', basePrice: 120 }]).get('suite')).toBe(120)
+    expect(indexBasePrices([{ type: 'suite', basePrice: 120 }, { type: 'suite', basePrice: 200 }]).get('suite')).toBe(120)
+  })
+
+  it('una unidad sin precio no tapa a la que sí lo tiene', () => {
+    expect(indexBasePrices([{ type: 'suite', basePrice: 0 }, { type: 'suite', basePrice: 120 }]).get('suite')).toBe(120)
+  })
+
+  // Un tipo entero sin precio queda FUERA del índice: `basePriceFor` cae al fallback grabado, que
+  // es lo que la OTA está vendiendo. Un 0 en el índice lo publicaría gratis.
+  it('un tipo con todas las unidades en 0 no entra al índice', () => {
+    expect(indexBasePrices([{ type: 'suite', basePrice: 0 }]).size).toBe(0)
+  })
 })
 
 describe('basePriceFor', () => {

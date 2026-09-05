@@ -6,6 +6,7 @@ import type { PricingQueries } from './usecases/pricing-queries'
 import { applyActiveSeason, listSeasonsSeeded } from './usecases/season-catalog'
 import { indexBasePrices, basePriceFor, effectiveRate } from '../../shared/utils/base-price'
 import { applyBasePrices, type BasePricePort, type BasePriceInput } from './usecases/base-price-port'
+import { resyncBasePrices } from './usecases/resync-base-prices'
 import { DEFAULT_RATE_PLANS, type RatePlanDef } from '../../shared/utils/rate-plans'
 import type { PricingSockets } from './sockets'
 import { listBlocks, createBlocks, deleteBlock } from './usecases/blocks'
@@ -184,5 +185,15 @@ export class PricingService {
   async getChannelMetrics(hotelId: string): Promise<any[]> {
     if (!this.queries) throw new Error('Queries no disponible')
     return this.queries.getChannelMetrics(hotelId)
+  }
+  /** Re-deriva el espejo `room_rates.basePrice/price` desde el precio de la habitación: lo dispara
+   *  `habitaciones-pricing` al cambiar `rooms.basePrice`. Motivo: usecases/resync-base-prices.ts. */
+  async resyncBasePrices(hotelId: string): Promise<number> {
+    if (!this.queries) return 0
+    return resyncBasePrices({
+      roomTypes: (h) => this.queries!.roomTypesFor(h),
+      listRates: (h) => this.ratesRepo.findMany({ hotelId: h }) as Promise<any[]>,
+      updateRate: (id, patch) => this.ratesRepo.update(id, patch),
+    }, hotelId)
   }
 }
