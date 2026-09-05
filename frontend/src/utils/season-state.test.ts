@@ -70,4 +70,50 @@ describe('seasonState', () => {
     expect(formatShortDate('2026-12-31')).toBe('31/12')
     expect(formatShortDate('')).toBe('')
   })
+
+  // Medido en producción el 2026-09-05: el catálogo del Hotel Boutique Palma tenía `media` en
+  // 2027-04-16 → 2027-08-31 y la pantalla la mostraba como "16/4 → 31/8". Sin el año eso se lee
+  // como el rango de este año, recién terminado, y no hay forma de notar que falta un año entero.
+  it('formatShortDate muestra el año cuando NO es el de la fecha de referencia', () => {
+    expect(formatShortDate('2027-04-16', '2026-09-05')).toBe('16/4/27')
+    expect(formatShortDate('2026-12-15', '2026-09-05')).toBe('15/12')
+  })
+
+  it('el badge del rango de otro año lo dice', () => {
+    const r = seasonState(s({ startDate: '2027-04-16', endDate: '2027-08-31' }), TODAY)
+    expect(r.badge).toBe('16/4/27 → 31/8/27')
+  })
+
+  // El planning PISA al catálogo en el backend (`buildSeasonByDate` aplica los assignments al
+  // final). Si la pantalla mira solo el rango, anuncia una temporada vigente mientras el motor
+  // cobra la otra — el mismo molde de "el panel dice una cosa y el motor cobra otra".
+  describe('el planning manda sobre el rango del catálogo', () => {
+    it('hoy pintado con OTRA temporada saca a la del rango', () => {
+      const r = seasonState(s({ name: 'baja', startDate: '2026-09-01', endDate: '2026-12-14' }), TODAY, new Set(['media']), 'media')
+      expect(r.live).toBe(false)
+      expect(r.publishes).toBe(true)
+    })
+
+    it('hoy pintado con ESTA la vuelve vigente aunque su rango sea de otro año', () => {
+      const r = seasonState(s({ name: 'media', startDate: '2027-04-16', endDate: '2027-08-31' }), TODAY, new Set(['media']), 'media')
+      expect(r.live).toBe(true)
+      expect(r.badge).toBe('Vigente hoy')
+    })
+
+    it('hoy pintado con ESTA la vuelve vigente aunque su rango haya terminado', () => {
+      const r = seasonState(s({ name: 'baja', startDate: '2026-01-01', endDate: '2026-05-31' }), TODAY, new Set(['baja']), 'baja')
+      expect(r.live).toBe(true)
+      expect(r.reason).toBe('')
+    })
+
+    it('sin fechas propias, pintada HOY es la vigente', () => {
+      const r = seasonState(s({ name: 'especial' }), TODAY, new Set(['especial']), 'especial')
+      expect(r).toEqual({ publishes: true, live: true, badge: 'Vigente hoy', reason: '' })
+    })
+
+    it('sin planning para hoy, el rango decide como antes', () => {
+      const r = seasonState(s({ name: 'baja', startDate: '2026-09-01', endDate: '2026-12-14' }), TODAY, new Set(['media']))
+      expect(r.live).toBe(true)
+    })
+  })
 })

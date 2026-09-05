@@ -268,6 +268,9 @@ function resultPrice(base: number, pct: number): string {
 // la saltea y lo único que cubre esos días es la línea base, que va con `percentage: 0`. Sin esta
 // señal, escribir un % en una temporada muerta no hacía nada y la pantalla no lo decía.
 const assignedFuture = ref<Set<string>>(new Set())
+/** Temporada que el planning tiene pintada para HOY. Manda sobre el rango del catálogo, igual que
+ *  en el motor (`buildSeasonByDate` aplica los assignments encima) — ver utils/season-state.ts. */
+const assignedToday = ref('')
 const todayISO = new Date().toISOString().slice(0, 10)
 
 /**
@@ -277,7 +280,7 @@ const todayISO = new Date().toISOString().slice(0, 10)
  */
 const seasonStates = computed<Map<string, SeasonState>>(() => {
   const m = new Map<string, SeasonState>()
-  for (const s of seasons.value) m.set(s.name, computeSeasonState(s, todayISO, assignedFuture.value))
+  for (const s of seasons.value) m.set(s.name, computeSeasonState(s, todayISO, assignedFuture.value, assignedToday.value))
   return m
 })
 const UNKNOWN_SEASON: SeasonState = { publishes: false, live: false, badge: 'Sin fechas', reason: 'Sin fechas · no se publica' }
@@ -289,8 +292,10 @@ async function loadSeasonAssignments() {
   try {
     const to = new Date(Date.now() + 500 * 86400000).toISOString().slice(0, 10)
     const r = await HotelService.seasonAssignments(todayISO, to)
-    assignedFuture.value = new Set((r.data || []).map((a) => a.season))
-  } catch { assignedFuture.value = new Set() }
+    const rows = r.data || []
+    assignedFuture.value = new Set(rows.map((a) => a.season))
+    assignedToday.value = rows.find((a) => String(a.date).slice(0, 10) === todayISO)?.season || ''
+  } catch { assignedFuture.value = new Set(); assignedToday.value = '' }
 }
 
 // Agrupa las filas planas (una por roomType×occupancy×season) en tarjetas por habitación.
