@@ -132,15 +132,19 @@
                   <td v-for="s in seasonsList" :key="s.name" class="px-2 py-2 text-center align-top"
                     :class="isCellClosed(roomType, occ, s.name) ? 'opacity-60' : ''"
                     :style="!isCellClosed(roomType, occ, s.name) ? { backgroundColor: s.color + '0D' } : { backgroundColor: 'rgba(239,68,68,0.12)' }">
+                    <!-- El precio de la temporada es un IMPORTE, no un recargo: el hotel piensa en
+                         pesos. El porcentaje sigue existiendo, pero es cosa del CANAL, que lo aplica
+                         sobre este número (ver backend/src/shared/utils/season-price.ts). -->
                     <div class="flex flex-col items-center gap-1">
                       <div class="flex items-center gap-1">
-                        <span class="text-xs font-black" :style="{ color: s.color }">+</span>
-                        <input :aria-label="`Recargo % de ${roomType}, ${occ} huésped(es), temporada ${s.name}`" :value="getPercentage(roomType, occ, s.name)" @input="setPercentage(roomType, occ, s.name, $event)"
-                          type="number" min="0" max="500" step="0.5"
-                          class="w-14 px-2 py-1 rounded-full border border-border text-sm font-bold text-navy text-right focus:outline-none focus:border-cyan" />
-                        <span class="text-xs font-bold text-text-muted">%</span>
+                        <span class="text-xs font-black" :style="{ color: s.color }">$</span>
+                        <input :aria-label="`Precio de ${roomType}, ${occ} huésped(es), temporada ${s.name}`" :value="getSeasonPrice(roomType, occ, s.name)" @input="setSeasonPrice(roomType, occ, s.name, $event)"
+                          type="number" min="0" step="1"
+                          class="w-20 px-2 py-1 rounded-full border border-border text-sm font-bold text-navy text-right tabular-nums focus:outline-none focus:border-cyan" />
                       </div>
-                      <div class="text-xs font-extrabold text-navy">= ${{ getCalculatedPrice(roomType, occ, s.name) }}</div>
+                      <div v-if="priceDeltaLabel(roomType, occ, s.name)" class="text-[10px] font-bold text-text-muted">
+                        {{ priceDeltaLabel(roomType, occ, s.name) }}
+                      </div>
                       <button @click="toggleClosed(roomType, occ, s.name)"
                         class="text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors cursor-pointer"
                         :class="isCellClosed(roomType, occ, s.name) ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-surface text-text-muted hover:bg-surface-dark'">
@@ -285,37 +289,50 @@ function getBasePrice(roomType: string): number {
   return row.basePrices?.[seasonsList.value[0]?.name] ?? 0
 }
 
+/**
+ * Cambiar el precio base del TIPO no mueve los precios de temporada ya cargados: cada temporada
+ * tiene su importe propio, decidido por el hotel. Solo se arrastran las celdas que todavía valen lo
+ * mismo que la base (nunca se les puso un precio distinto) y las vacías.
+ */
 function setBasePrice(roomType: string, event: Event) {
   const val = Number((event.target as HTMLInputElement).value) || 0
   for (const row of ratesMatrix.value) {
-    if (row.roomType === roomType) {
-      for (const s of seasonsList.value) {
-        row.basePrices[s.name] = val
-        const pct = row.percentages[s.name] ?? 0
-        row.prices[s.name] = Math.round(val * (1 + pct / 100) * 100) / 100
-      }
+    if (row.roomType !== roomType) continue
+    for (const s of seasonsList.value) {
+      const previousBase = row.basePrices[s.name] ?? 0
+      const price = row.prices[s.name] ?? 0
+      row.basePrices[s.name] = val
+      if (!price || price === previousBase) row.prices[s.name] = val
     }
   }
 }
 
-function getPercentage(roomType: string, occupancy: number, season: string): number {
-  const row = ratesMatrix.value.find(r => r.roomType === roomType && r.occupancy === occupancy)
-  return row?.percentages?.[season] ?? 0
-}
-
-function setPercentage(roomType: string, occupancy: number, season: string, event: Event) {
-  const val = Number((event.target as HTMLInputElement).value) || 0
-  const row = ratesMatrix.value.find(r => r.roomType === roomType && r.occupancy === occupancy)
-  if (row) {
-    row.percentages[season] = val
-    const base = row.basePrices[season] ?? 0
-    row.prices[season] = Math.round(base * (1 + val / 100) * 100) / 100
-  }
-}
-
-function getCalculatedPrice(roomType: string, occupancy: number, season: string): number {
+/** El precio de esa temporada, en pesos. Es el dato que el hotel escribe. */
+function getSeasonPrice(roomType: string, occupancy: number, season: string): number {
   const row = ratesMatrix.value.find(r => r.roomType === roomType && r.occupancy === occupancy)
   return row?.prices?.[season] ?? 0
+}
+
+function setSeasonPrice(roomType: string, occupancy: number, season: string, event: Event) {
+  const val = Number((event.target as HTMLInputElement).value) || 0
+  const row = ratesMatrix.value.find(r => r.roomType === roomType && r.occupancy === occupancy)
+  if (!row) return
+  row.prices[season] = val
+  // El porcentaje pasa a ser informativo: cuánto se aparta del precio base del tipo. Se sigue
+  // mandando para que el backend lo guarde como espejo, pero ya no decide nada.
+  const base = row.basePrices[season] ?? 0
+  row.percentages[season] = base > 0 ? Math.round((val / base - 1) * 10000) / 100 : 0
+}
+
+/** "= precio base" o "+25% sobre la base": ubica el importe sin obligar a hacer la cuenta. */
+function priceDeltaLabel(roomType: string, occupancy: number, season: string): string {
+  const row = ratesMatrix.value.find(r => r.roomType === roomType && r.occupancy === occupancy)
+  const base = row?.basePrices?.[season] ?? 0
+  const price = row?.prices?.[season] ?? 0
+  if (!base || !price) return ''
+  if (price === base) return '= precio base'
+  const pct = Math.round((price / base - 1) * 1000) / 10
+  return `${pct > 0 ? '+' : ''}${pct}% sobre la base`
 }
 
 function isCellClosed(roomType: string, occupancy: number, season: string): boolean {

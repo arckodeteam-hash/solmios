@@ -7,6 +7,7 @@ import { applyActiveSeason, listSeasonsSeeded } from './usecases/season-catalog'
 import { indexBasePrices, basePriceFor, effectiveRate } from '../../shared/utils/base-price'
 import { applyBasePrices, type BasePricePort, type BasePriceInput } from './usecases/base-price-port'
 import { resyncBasePrices } from './usecases/resync-base-prices'
+import { updateRates as updateRatesUC } from './usecases/update-rates'
 import { DEFAULT_RATE_PLANS, type RatePlanDef } from '../../shared/utils/rate-plans'
 import type { PricingSockets } from './sockets'
 import { listBlocks, createBlocks, deleteBlock } from './usecases/blocks'
@@ -87,32 +88,11 @@ export class PricingService {
   }
 
   async updateRates(hotelId: string, rates: any[], actor?: Actor, basePrices?: BasePriceInput[]): Promise<number> {
-    let saved = 0
-    const changes: RateChange[] = []
-    // El base NO sale de la fila de tarifas: es uno solo por tipo de habitación y vive en la
-    // habitación (ver base-price.ts). Se escribe ANTES de derivar, o las filas guardarían el viejo.
-    await applyBasePrices(this.basePricePort, hotelId, basePrices)
-    const bases = indexBasePrices(this.queries ? await this.queries.roomTypesFor(hotelId) : [])
-    for (const r of rates) {
-      if (!r.roomType || !r.season || r.occupancy === undefined) continue
-      const channel = typeof r.channel === 'string' ? r.channel : ''
-      const basePrice = basePriceFor(bases, r.roomType, r.basePrice); const percentage = r.percentage ?? 0
-      const price = effectiveRate(basePrice, percentage)
-      const closed = r.closed ? 1 : 0
-      const minStay = Number(r.minStay) || 0; const maxStay = Number(r.maxStay) || 0
-      const existing = (await this.ratesRepo.findMany({ hotelId, roomType: r.roomType, occupancy: r.occupancy, season: r.season, channel }))[0] as any
-      const change: RateChange = { roomType: r.roomType, season: r.season, occupancy: r.occupancy, from: null, to: price, closed }
-      if (existing) {
-        await this.ratesRepo.update(existing.id, { basePrice, percentage, price, closed, minStay, maxStay })
-        // El grid manda TODAS las celdas en cada guardado: solo se audita lo que realmente cambió.
-        const moved = Number(existing.price ?? 0) !== price || Number(existing.closed ?? 0) !== closed
-        if (moved) changes.push({ ...change, from: Number(existing.price ?? 0) })
-      } else {
-        await this.ratesRepo.create({ id: crypto.randomUUID(), hotelId, roomType: r.roomType, occupancy: r.occupancy, season: r.season, channel, basePrice, percentage, price, closed, minStay, maxStay })
-        changes.push(change)
-      }
-      saved++
-    }
+    const { saved, changes } = await updateRatesUC({
+      repo: this.ratesRepo,
+      roomTypes: (h) => (this.queries ? this.queries.roomTypesFor(h) : Promise.resolve([])),
+      basePricePort: this.basePricePort,
+    }, hotelId, rates, basePrices)
     if (changes.length > 0) {
       await this.audit(rateChangeEntry(hotelId, changes, actor))
       // Tarifas cambiaron → push a OTAs. Los canales con override van al evento (el push sin canal solo toma la base).

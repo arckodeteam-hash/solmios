@@ -2,6 +2,8 @@ import type { CanalesDTO, PushRatesResultDTO, DateRange } from '../types'
 import { readRatePlans, type RatePlanDef } from './rate-plans'
 import type { OverridePushItem } from './push-overrides'
 import { indexBasePrices, basePriceFor } from '../../../shared/utils/base-price'
+// `pricing` no se importa desde acá (CLAUDE #3): la regla de las dos capas vive en shared.
+import { indexSeasonPrices, seasonPriceFor, channelPriceFor } from '../../../shared/utils/season-price'
 
 /** Restricciones por (roomType, season) — la capa de closures/through que edita PUT /api/rate-restrictions. */
 export interface SeasonRestriction {
@@ -19,8 +21,17 @@ export interface PushRate {
   roomType: string
   season: string
   occupancy: number
+  /** Precio del TIPO (`rooms.basePrice`). Es lo que cubre el horizonte SIN temporada. */
   basePrice: number
   percentage: number
+  /**
+   * Lo que se publica para esa temporada: el importe de la grilla global, con el porcentaje del
+   * canal encima si lo hay. Se manda ya resuelto porque desde que la grilla se edita en pesos,
+   * `basePrice × (1 + percentage/100)` dejó de dar el precio real (ver
+   * `shared/utils/season-price.ts`): la temporada vale lo que el hotel escribió, no lo que
+   * salga de un porcentaje sobre el precio del tipo.
+   */
+  price: number
   closed?: number
   minStay?: number
   maxStay?: number
@@ -135,10 +146,21 @@ export async function pushSeasonalRatesToChannex(
   // cargar en el panel y nunca llegaba al canal (#404). Ese modo ya no existe.
   const selected: any[] = [...byOcc.values()]
 
-  const rates: PushRate[] = selected.map((r) => ({
-    roomType: r.roomType, season: r.season, occupancy: Number(r.occupancy) || 0,
-    basePrice: basePriceFor(bases, r.roomType, r.basePrice),
-    percentage: r.percentage, closed: r.closed, minStay: r.minStay, maxStay: r.maxStay,
-  }))
+  // Precio de cada temporada en la grilla GLOBAL: es sobre ese importe que el canal aplica su %.
+  const seasonPrices = indexSeasonPrices(allRates)
+
+  const rates: PushRate[] = selected.map((r) => {
+    const basePrice = basePriceFor(bases, r.roomType, r.basePrice)
+    const seasonPrice = seasonPriceFor(seasonPrices, r.roomType, r.occupancy, r.season, basePrice)
+    // La fila elegida es la del canal (con su %) o la global (que ya trae el importe).
+    const price = r.channel
+      ? channelPriceFor(seasonPrice, r.percentage)
+      : (Number(r.price) || seasonPrice)
+    return {
+      roomType: r.roomType, season: r.season, occupancy: Number(r.occupancy) || 0,
+      basePrice, price,
+      percentage: r.percentage, closed: r.closed, minStay: r.minStay, maxStay: r.maxStay,
+    }
+  })
   return deps.pushSeasonalRates(cfg, rates, seasons, assignedRanges, ratePlans, restrictions as SeasonRestriction[], overrides as OverridePushItem[])
 }

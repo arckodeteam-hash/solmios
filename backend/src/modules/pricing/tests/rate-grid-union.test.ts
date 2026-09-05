@@ -125,10 +125,13 @@ describe('listChannelRates — misma grilla, con el override del canal donde exi
     expect(rows.find((r: any) => key(r) === 'double|2|alta')).toMatchObject({ id: 'ov1', percentage: 60 })
   })
 
-  it('sin override, la celda hereda la tarifa base COMPLETA — es la que el push publica para esa celda', async () => {
+  // El PRECIO heredado es el de la temporada (lo que el push publica para esa celda). El porcentaje
+  // que se muestra es el del CANAL, y sin override es 0: mostrar el 35 de la temporada haría que el
+  // editor ofreciera "+35%" sobre un precio que ya lo incluye, y al guardar lo aplicaría dos veces.
+  it('sin override, la celda hereda el PRECIO de la temporada, con 0% de recargo del canal', async () => {
     const rows = await new PricingQueries(conOverride() as any).listChannelRates('h1', 'booking')
     const heredada = rows.find((r: any) => key(r) === 'double|2|media')
-    expect(heredada).toMatchObject({ channel: 'booking', basePrice: 110, percentage: 35, price: 148.5, _inherited: true })
+    expect(heredada).toMatchObject({ channel: 'booking', basePrice: 110, percentage: 0, price: 148.5, _inherited: true })
   })
 
   it('una celda heredada NO arrastra el id de la fila base (un guardado la pisaría)', async () => {

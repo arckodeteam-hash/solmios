@@ -105,10 +105,14 @@
                       class="w-full min-w-0 px-2 py-1.5 rounded-lg border-2 border-navy/30 text-sm font-black text-navy text-right focus:border-navy outline-none" />
                     <span class="text-xs text-text-muted">%</span>
                   </div>
-                  <!-- Se deriva del base del TIPO (el número grande de arriba), no del que traiga la
-                       fila: son el mismo dato y mostrar dos fuentes distintas es justo lo que hacía
-                       que el editor anunciara un precio y la OTA publicara otro. -->
-                  <div class="text-sm font-black text-teal">= {{ resultPrice(tc.basePrice, cell.percentage) }} <span class="text-[10px] text-text-muted">{{ currency }}</span></div>
+                  <!-- El porcentaje del canal se aplica sobre el PRECIO DE ESA TEMPORADA, que se
+                       carga en Configuración → Temporadas y Tarifas y vale para todo el hotel. Acá
+                       se muestra sobre qué número está operando: sin eso, un +50% sobre 200 y uno
+                       sobre 120 se ven idénticos en pantalla. -->
+                  <div class="text-[9px] font-bold text-text-muted leading-tight">
+                    sobre {{ cell.seasonPrice.toLocaleString() }} {{ currency }} de la temporada
+                  </div>
+                  <div class="text-sm font-black text-teal">= {{ resultPrice(cell.seasonPrice, cell.percentage) }} <span class="text-[10px] text-text-muted">{{ currency }}</span></div>
                   <!-- Restricciones de la temporada: CTA/CTD + estadía mínima through (P4 certificación) -->
                   <div class="flex items-center gap-1">
                     <button @click="cell.cta = cell.cta ? 0 : 1" title="Cerrado a llegadas (CTA): no se puede llegar este día"
@@ -225,7 +229,9 @@ async function saveSeasons() {
   } catch { toast.error('Error al guardar temporadas') } finally { savingSeasons.value = false }
 }
 
-interface Cell { season: string; percentage: number; closed: number; cta: number; ctd: number; minStayThrough: number }
+/** `seasonPrice` es el precio de esa temporada en la grilla GLOBAL — el número sobre el que este
+ *  canal aplica su porcentaje. Lo manda el backend (`listChannelRates`); el canal no lo edita. */
+interface Cell { season: string; percentage: number; seasonPrice: number; closed: number; cta: number; ctd: number; minStayThrough: number }
 interface Group { key: string; roomType: string; occupancy: number; basePrice: number; minStay: number; maxStay: number; cells: Cell[] }
 const groups = ref<Group[]>([])
 
@@ -327,7 +333,9 @@ function buildGroups(rates: RoomRate[], restrictions: Array<{ roomType: string; 
     if (!g.maxStay && r.maxStay) g.maxStay = r.maxStay
     const restriction = restrictionBy.get(`${String(r.roomType).toLowerCase()}|${r.season}`)
     g.cells.push({
-      season: r.season, percentage: r.percentage ?? 0, closed: r.closed ? 1 : 0,
+      season: r.season, percentage: r.percentage ?? 0,
+      seasonPrice: Number((r as any).seasonPrice ?? r.price ?? 0),
+      closed: r.closed ? 1 : 0,
       cta: (restriction && (restriction.closedToArrival || restriction.cta)) ? 1 : 0,
       ctd: (restriction && (restriction.closedToDeparture || restriction.ctd)) ? 1 : 0,
       minStayThrough: restriction?.minStayThrough ?? 0,
@@ -363,6 +371,8 @@ async function save(): Promise<boolean> {
     const restrictions = new Map<string, { roomType: string; season: string; closedToArrival: number; closedToDeparture: number; minStayThrough: number }>()
     for (const g of groups.value) {
       for (const cell of g.cells) {
+        // El canal manda su PORCENTAJE; el precio lo resuelve el backend sobre el importe de la
+        // temporada. Mandar un precio desde acá le daría al canal una segunda fuente de verdad.
         rates.push({
           roomType: g.roomType, occupancy: g.occupancy, season: cell.season, channel: selectedChannel.value,
           basePrice: g.basePrice, percentage: cell.percentage, closed: cell.closed, minStay: g.minStay, maxStay: g.maxStay,
