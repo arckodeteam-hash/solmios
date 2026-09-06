@@ -216,7 +216,7 @@
 
 **Acceptance:** Se sabe por qué hay 9 movimientos de caja con origen `payment_connector` y solo 5 cobros en efectivo.
 
-- [ ] 1.5 Investigar la discrepancia de movimientos de caja en producción
+- [x] 1.5 Investigar la discrepancia de movimientos de caja en producción
 > **Severidad:** normal · **Tipo:** bug · **Módulos:** `cash`, `connectors`
 >
 > **Problema**
@@ -245,9 +245,33 @@
 > - [ ] Si es un bug, existe un test que lo reproduce.
 > - [ ] **No se modificó ninguna fila de producción** como parte de esta tarea de diagnóstico.
 >
+> **RESUELTO 2026-09-06 — es un bug, no dato legítimo**
+>
+> Consulta ejecutada en producción (solo lectura):
+> ```sql
+> SELECT cm.id, cm.amount, p.id IS NOT NULL tiene_payment, p.method, p.status
+> FROM cash_movements cm LEFT JOIN payments p ON p.id = cm.paymentid
+> WHERE cm.source='payment_connector' ORDER BY cm.createdat;
+> ```
+>
+> Resultado: de los 9 movimientos, **5 tienen su pago en efectivo** (`method='cash'`,
+> `status='completed'`) — esos son correctos. Los **otros 4 tienen `paymentId` COLGADO**: el campo
+> no es NULL, apunta a una fila de `payments` que **ya no existe**. Los cuatro son del 2026-07-16
+> entre 18:44 y 19:05, concepto "Pago automático", sin `guestName`.
+>
+> **Causa**: el pago se borró después de que el conector creó el movimiento. No hay cascada, y
+> `cash/usecases/movements.ts:78-80` **prohíbe borrar un movimiento con `source:'payment_connector'`**
+> — así que un pago borrado no puede llevarse su movimiento. El movimiento sobrevive y **sigue
+> sumando en el arqueo del turno**: 485,00 de ingreso en caja que no tienen pago detrás.
+>
+> El conector NO está mal: `payments-caja.ts:19` filtra bien por efectivo y `auto-movements.ts:43-47`
+> deduplica por `paymentId`. El hueco está en el borrado de un pago.
+>
+> **No se modificó ninguna fila de producción.** El saneo de esas 4 filas y el fix del borrado van
+> en la tarea sucesora 1.7.
+>
 > **Verificación**
-> Consulta documentada en el comentario del issue, ejecutada contra la base de producción en modo
-> lectura.
+> Consulta de arriba, ejecutada contra la base de producción en modo lectura.
 
 ### 1.6 Link de pago de la IA
 
@@ -298,6 +322,54 @@
 > **Verificación**
 > ```bash
 > cd backend && bun test src/modules/ai-recepcionista src/modules/payment-requests
+> ```
+
+### 1.7 Borrado de pago deja el movimiento de caja huérfano
+
+**Acceptance:** Borrar un pago no deja plata fantasma sumando en el arqueo.
+
+- [ ] 1.7 Borrar un pago deja su movimiento de caja contando en el turno
+> **Severidad:** alta · **Tipo:** bug · **Módulos:** `payments`, `cash`, `connectors`
+>
+> **Sucesora de la 1.5**, que diagnosticó la causa contra producción.
+>
+> **Problema**
+> Cuando se borra una fila de `payments`, el `cash_movements` que el conector creó a partir de ella
+> **queda**. No hay cascada (`cash/model.ts:23` guarda `paymentId` sin FK), y
+> `cash/usecases/movements.ts:78-80` prohíbe borrar a mano cualquier movimiento con
+> `source:'payment_connector'` — o sea que ni el sistema ni el usuario pueden limpiarlo.
+>
+> El movimiento huérfano **sigue sumando en el `expected` del arqueo**
+> (`cash/usecases/reconcile.ts:12,41` solo mira `shiftId` y `method`, nunca si el pago existe). En
+> producción hay **4 filas así, 485,00** que el cajero tiene que "encontrar" en la caja y no están.
+>
+> **Qué hacer**
+> 1. Que borrar un pago retire (o anule) su `cash_movements`. Vía el conector, con el socket que
+>    corresponda — `cash` no puede importar `payments`.
+> 2. Decidir entre borrar el movimiento o marcarlo anulado. Un turno **ya cerrado** no se puede
+>    recalcular hacia atrás sin romper su arqueo histórico: para esos, anular y dejar rastro.
+> 3. Script de saneo para las 4 filas de producción, **con `pg_dump` previo**. Documentar a qué
+>    turno pertenecían y si ese turno ya estaba cerrado.
+>
+> **Criterios de aceptación**
+> - [ ] **Dado** un pago en efectivo con su movimiento de caja en un turno ABIERTO,
+>       **cuando** se borra el pago,
+>       **entonces** el movimiento desaparece y el `expected` del turno baja por ese monto.
+>       **Este test debe fallar contra el código actual.**
+> - [ ] **Dado** el mismo caso pero con el turno YA CERRADO,
+>       **cuando** se borra el pago,
+>       **entonces** el arqueo histórico del turno cerrado **no cambia** y queda rastro de la anulación.
+> - [ ] **Dado** un pago que no es en efectivo (sin movimiento de caja),
+>       **cuando** se borra,
+>       **entonces** no falla ni intenta borrar nada.
+> - [ ] **Dado** producción después del saneo,
+>       **cuando** se corre la consulta de la tarea 1.5,
+>       **entonces** los 9 movimientos tienen su pago, o los huérfanos están marcados como anulados.
+> - [ ] Hay backup `pg_dump` anterior al saneo, y su ruta está anotada en el issue.
+>
+> **Verificación**
+> ```bash
+> cd backend && bun test src/modules/cash src/modules/payments
 > ```
 
 ## Phase 2 — Coser las islas
