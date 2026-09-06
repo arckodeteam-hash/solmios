@@ -40,6 +40,7 @@ de darlo por bueno, y tachalo de acá (o dejalo — el ID sirve de referencia es
 | RRHH-09 — Corrida de nómina completa (draft→calc→approve→pay) + idempotencia pay | `e2e/hr/payroll-run.spec.ts` |
 | AUTH-06 — Aislamiento multi-tenant / IDOR cross-hotel + switch-hotel 403 | `e2e/auth/multitenant.spec.ts` |
 | AUTH — Registro público (2 pasos) | `e2e/auth/register.spec.ts` |
+| AUTH-02 — Correo de verificación real (IMAP) + enlace verifica + token de un solo uso | `e2e/auth/email-verification.spec.ts` |
 | Smoke (la app monta, login se renderiza) | `e2e/smoke.spec.ts` |
 
 ### Infra E2E (compartida por todos los specs de operaciones)
@@ -50,6 +51,10 @@ de darlo por bueno, y tachalo de acá (o dejalo — el ID sirve de referencia es
   (lecturas/escrituras autenticadas para verificar efectos colaterales contra las tablas reales).
 - Specs de operaciones: `test.use({ storageState: ADMIN_STORAGE_STATE })` al inicio (arrancan
   logueados, sin pasar por el form de login). Register/smoke no lo usan (prueban flujos públicos).
+- `e2e/helpers/mailbox.ts`: buzón real por IMAP (`uniqueRecipient`, `waitForMessageTo`,
+  `extractVerificationLink`). Lo usa AUTH-02 para afirmar "el correo llegó" con evidencia en vez
+  de asumirlo. Credenciales por entorno (`MAILBOX_PASS`); sin ellas el spec se SALTA, nunca pasa
+  en falso.
 - **16 specs, ~38s**, corren contra el backend de dev (`:3001`) con datos reales que persisten.
 
 ## Índice por dominio
@@ -148,6 +153,13 @@ del hotel), ADM-12 (programa Aliados).
 - **UI:** banner en `frontend/src/layouts/AdminLayout.vue`, `frontend/src/pages/verificar-email.vue`.
 - **Casos borde / errores a cubrir:** token ya usado/de cuenta ya verificada → `already_verified`; token vencido (>24h) → `expired`; token vacío/inválido → `invalid`; el banner desaparece al verificar.
 - **Prioridad E2E:** Media.
+- **Cubierto por** `e2e/auth/email-verification.spec.ts`: alta contra el backend real con destinatario único
+  (sub-dirección `autowork+alta-<uuid>@…` — el buzón no tiene catch-all), espera del correo por IMAP, apertura
+  del enlace en Chromium (`status=verified` + pantalla) y efecto en `users` (`emailVerifiedAt` seteado,
+  `emailVerificationToken` en NULL); segunda visita al mismo enlace → `status=invalid`. Requiere el backend con
+  `PUBLIC_URL` apuntando al FRONTEND (el 302 lleva `Location` relativo) y la config SMTP en la tabla
+  `configuration` (el spec la siembra con `MAILBOX_PASS`). Falta por cubrir: reenvío desde el banner,
+  `expired` y `already_verified`.
 
 ### AUTH-03 — Acceso bloqueado por trial/suscripción vencida
 - **Actor(es):** Merchant de un hotel cuyo trial (7 días) o suscripción venció.
