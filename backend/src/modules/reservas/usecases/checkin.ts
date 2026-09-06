@@ -1,4 +1,5 @@
 import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
+import { roomChargeRate } from '../../../shared/usecases/room-charge-rate'
 import { prepaidLinesFrom, depositOnlyPrepaid, depositPrepaidLine, capPrepaidLines, type PrepaidLine } from '../../../shared/usecases/prepaid-folio-lines'
 
 /**
@@ -68,7 +69,16 @@ export async function executeCheckin(r: any, user: any, deps: {
   let folioId = ''
 
   const room = (await deps.orm.findMany('Rooms', { id: r.roomId }))[0] as any
-  const roomRate = Number(room?.basePrice || r.totalAmount || 0)
+  // La noche del ingreso se cobra por la MISMA cadena que cotizó la reserva (temporada →
+  // room_rates → rooms.basePrice). Antes era `rooms.basePrice` a secas y el folio ignoraba la
+  // temporada: ver shared/usecases/room-charge-rate.ts.
+  const roomRate = await roomChargeRate(deps.orm, {
+    hotelId: r.hotelId,
+    date: String(r.checkIn).slice(0, 10),
+    roomType: String(room?.type || ''),
+    guests: Number(r.adults) || 1,
+    fallbackPrice: Number(room?.basePrice || r.totalAmount || 0),
+  })
 
   // Lo que el huésped YA pagó (motor web / link de pago) y todavía no está en ningún folio.
   // El folio no existe hasta este momento, así que ese cobro quedaba fuera: el folio nacía

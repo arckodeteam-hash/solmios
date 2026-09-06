@@ -153,8 +153,13 @@ export const ReservationService = {
 
   /** Check-out real: reserva → checked_out + habitación cleaning + tarea de limpieza.
    * Opcionalmente cierra folio, genera factura y registra pago. */
-  async checkout(id: string, settle?: { method: string; amount: number; reference?: string } | null): Promise<{ settlement?: { folioId: string; invoiceId: string | null; balance: number; amountPaid: number; invoiceNumber: string | null } }> {
-    return http.post(`/reservas/${id}/checkout`, { settle })
+  /**
+   * `acknowledgeDebt` es la confirmación de cerrar con saldo pendiente. El servidor la EXIGE
+   * (409 con el importe si falta): la guarda dejó de vivir sólo en esta pantalla para valer también
+   * en la app móvil y en cualquier integración. Ver `reservas/usecases/checkout-debt-guard.ts`.
+   */
+  async checkout(id: string, settle?: { method: string; amount: number; reference?: string } | null, acknowledgeDebt = false): Promise<{ settlement?: { folioId: string; invoiceId: string | null; balance: number; amountPaid: number; invoiceNumber: string | null } }> {
+    return http.post(`/reservas/${id}/checkout`, { settle, acknowledgeDebt })
   },
 
   /**

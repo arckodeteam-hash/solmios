@@ -104,7 +104,17 @@ describe('Reservation.service — endpoints', () => {
 
     await ReservationService.checkout('r1', { method: 'cash', amount: 100 })
 
-    expect(http.post).toHaveBeenCalledWith('/reservas/r1/checkout', { settle: { method: 'cash', amount: 100 } })
+    expect(http.post).toHaveBeenCalledWith('/reservas/r1/checkout', { settle: { method: 'cash', amount: 100 }, acknowledgeDebt: false })
+  })
+
+  // El servidor exige la confirmación cuando la estadía se cierra debiendo: si el flag no viaja,
+  // el checkout con deuda vuelve con 409 y la pantalla no puede completarlo.
+  it('checkout con deuda manda acknowledgeDebt', async () => {
+    vi.mocked(http.post).mockResolvedValue({} as any)
+
+    await ReservationService.checkout('r1', null, true)
+
+    expect(http.post).toHaveBeenCalledWith('/reservas/r1/checkout', { settle: null, acknowledgeDebt: true })
   })
 
   it('remove pega DELETE a /reservas/:id', async () => {

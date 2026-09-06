@@ -32,6 +32,7 @@ import { syncPendingAfterPayment, pendingAfterPaymentDeps, type MoneyRowRef } fr
 import type { ReservationMoneyPort } from './usecases/money-port'
 import { settleFolioForCheckout as settleFolioForCheckoutUsecase, type SettleInput, type SettleActor, type SettleFolioPort, type SettleReservation, type SettleResult } from './usecases/settle-port'
 import { ceilingGuardOf, type PaymentRequestsCeilingPort } from './usecases/ceiling-guard'
+import { openFolioBalance, type OpenFolioBalance as OpenFolioBalanceResult } from '../../shared/usecases/open-folio-balance'
 import type { ReservasOrchestrationDeps } from './usecases/orchestration-deps'
 
 export class ReservasService {
@@ -127,9 +128,10 @@ export class ReservasService {
   }
 
   // ── SETTLEMENT (folio → invoice → payment) — ver usecases/settle-port.ts ────────────────
-  settleFolioForCheckout(reservation: SettleReservation, settle: SettleInput | null | undefined, user: SettleActor): Promise<SettleResult | null> {
-    return settleFolioForCheckoutUsecase(this.orchestrationDeps.settleFolio, reservation, settle, user)
-  }
+  /** Saldo de la cuenta abierta — lo consulta la guarda de deuda del checkout. */
+  openFolioBalance(rid: string, user: unknown): Promise<OpenFolioBalanceResult | null> { return openFolioBalance(this.orchestrationDeps.folioReader, rid, user) }
+
+  settleFolioForCheckout(r: SettleReservation, settle: SettleInput | null | undefined, user: SettleActor): Promise<SettleResult | null> { return settleFolioForCheckoutUsecase(this.orchestrationDeps.settleFolio, r, settle, user) }
 
   /** Lo COBRADO, derivado de `payments` (GH-0.2) — ver shared/usecases/reservation-paid.ts. */
   paidSource(): PaidSource { return paidSourceFrom(this.queries.paidRepos) }
@@ -141,9 +143,7 @@ export class ReservasService {
   addonsCeilingGuard() { return (rid: string, hid: string) => ceilingGuardOf(this.orchestrationDeps.paymentRequestsCeiling, 'clamp')(hid, rid) } // SEC3-2/RTC-8.8, fail-closed — ver usecases/ceiling-guard.ts
 
   /** COR-1/RTC-7.3 — un movimiento de dinero mueve el saldo Y baja el techo (connector payments-reservas). */
-  syncPendingAfterPayment(row: MoneyRowRef): Promise<number | null> {
-    return syncPendingAfterPayment(pendingAfterPaymentDeps(this.repo, this.queries, this.paidSource(), this.reservationChanged(), this.logger, this.orchestrationDeps.paymentRequestsCeiling?.clamp), row)
-  }
+  syncPendingAfterPayment(row: MoneyRowRef): Promise<number | null> { return syncPendingAfterPayment(pendingAfterPaymentDeps(this.repo, this.queries, this.paidSource(), this.reservationChanged(), this.logger, this.orchestrationDeps.paymentRequestsCeiling?.clamp), row) }
 
   // ── RESCHEDULE (mover/extender desde planning) ──────────────────────────
   // `addonsOf` (STR-2): el reprice cambia `totalAmount` → el saldo persistido se mueve con él. `ceilingGuard` (SEC3-2): un reprice que BAJA el total recorta los links de pago vivos — mismo connector que `update()` (reservas-payment-requests).

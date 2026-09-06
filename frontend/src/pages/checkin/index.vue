@@ -1062,7 +1062,8 @@ async function doCheckout(guest: CheckinGuest) {
     const settle = balance > 0 && settleMethod.value
       ? { method: settleMethod.value, amount: balance }
       : null
-    const result = await ReservationService.checkout(guest.id, settle)
+    // El servidor exige la confirmación explícita cuando queda saldo (409 con el importe si falta).
+    const result = await ReservationService.checkout(guest.id, settle, debtAck.value)
     checkedOut.value.add(guest.id)
     // Cierre directo en el path de éxito (mismo motivo que doCheckin: closeCheckoutModal() hace
     // guard por processing y no cerraría hasta el finally).

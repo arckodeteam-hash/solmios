@@ -6,6 +6,7 @@
 // importarlos. Cada campo es opcional a propósito — el módulo tiene que arrancar aunque el
 // connector que lo cablea esté desactivado.
 
+import type { FolioReaderPort } from '../../../shared/usecases/open-folio-balance'
 import type { SettleFolioPort } from './settle-port'
 import type { RescheduleChargePort, RescheduleCreditPort } from './reschedule'
 import type { PromoCodePort } from './crud'
@@ -18,6 +19,8 @@ export interface ReservasOrchestrationDeps {
   dispatchLifecycleEmail?: (deps: any, data: any) => Promise<void>
   /** Ver `usecases/settle-port.ts` — el actor va TIPADO: `any` acá reabre el agujero de DEBT-1. */
   settleFolio?: SettleFolioPort
+  /** Lector de folios para la guarda de deuda del checkout (ver usecases/checkout-debt-guard.ts). */
+  folioReader?: FolioReaderPort
   chargeReschedule?: RescheduleChargePort
   /** connectors/reservas-reschedule-charge.ts — qué se hace con lo que el huésped pagó de más. */
   creditReschedule?: RescheduleCreditPort

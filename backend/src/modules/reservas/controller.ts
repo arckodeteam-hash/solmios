@@ -1,3 +1,4 @@
+import { assertDebtAcknowledged } from './usecases/checkout-debt-guard'
 import type { HttpRequest, Logger, Auth, RepositoryAdapter } from 'arckode-framework'
 import { validateSchema, OrmRepository } from 'arckode-framework'
 import type { FileUpload } from 'arckode-framework/modules/storage'
@@ -212,6 +213,17 @@ export class ReservasController {
   async checkout(req: HttpRequest) {
     try {
       const { reservation, hotelId } = await this.service.checkout(req.params.id, req.user as any)
+
+      // Guarda de deuda ANTES del claim: si corriera después, la reserva ya estaría en
+      // `checked_out` y el 409 dejaría el estado movido con la operación rechazada. La regla vivía
+      // sólo en el panel web; acá vale para cualquier cliente (móvil, API). Ver
+      // usecases/checkout-debt-guard.ts.
+      const preBody = req.body as Record<string, any> | undefined
+      assertDebtAcknowledged({
+        folio: await this.service.openFolioBalance(reservation.id, req.user),
+        settle: preBody?.settle ?? null,
+        acknowledgeDebt: preBody?.acknowledgeDebt === true,
+      })
 
       // R-1 (auditoría 2026-08-19): el CLAIM (executeCheckout con CAS) corre ANTES del
       // settlement — en el orden viejo, dos checkouts concurrentes hacían el settlement

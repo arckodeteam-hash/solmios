@@ -6,6 +6,9 @@ export function reservasFoliosSettlementConnector(ctx: ConnectorContext): void {
   const reservas = ctx.resolveModule<any>('reservas')
 
   reservas.setOrchestrationDeps({
+    // Lector para la guarda de deuda del checkout: sin él, el servidor no sabe cuánto se debe y
+    // cerrar con saldo pendiente vuelve a depender de que el cliente sea el panel web.
+    folioReader: { list: (q: any, u: any) => folios.list(q, u), getById: (id: string, u: any) => folios.getById(id, u) },
     // `paidOf` viene de reservas (tiene los repos): al cerrar la cuenta, lo que el hotel ya cobró
     // y el folio todavía no refleja se acredita antes de facturar. Ver settle-folio-at-checkout.
     settleFolio: async (params: SettleFolioParams, user: any): Promise<SettleFolioResult> =>
