@@ -55,13 +55,28 @@ export function uniqueRecipient(prefix = 'alta'): string {
 
 let client: ImapFlow | null = null
 
+/** Cierra a la fuerza un cliente que ya no se va a usar, antes de soltar la referencia: sin esto
+ *  su socket TCP queda abierto hasta que muera el proceso y cada reintento fallido deja uno más.
+ *  `close()` es sincrónico y no habla con el servidor, así que sirve con la conexión ya rota; y va
+ *  envuelto porque un fallo AL CERRAR no debe tapar el error original ni cortar el reintento. */
+function discardClient(c: ImapFlow | null): void {
+  if (!c) return
+  try {
+    c.close()
+  } catch {
+    // Ya estaba cerrado o el socket murió solo: no queda nada que liberar.
+  }
+}
+
 /** El servidor de pruebas escucha IMAP en claro (143, sin TLS ni STARTTLS): con `secure: true`
  *  el handshake muere antes del saludo. Conexión única reutilizada entre polls para no pagar
  *  login en cada reintento. */
 async function getClient(): Promise<ImapFlow> {
   const pass = requirePass()
   if (client?.usable) return client
-  client = new ImapFlow({
+  // El anterior quedó inservible (conexión caída o login fallido): cerrarlo antes de pisarlo.
+  discardClient(client)
+  const next = new ImapFlow({
     host: HOST,
     port: PORT,
     secure: false,
@@ -69,8 +84,16 @@ async function getClient(): Promise<ImapFlow> {
     auth: { user: USER, pass },
     logger: false,
   })
-  await client.connect()
-  return client
+  client = next
+  try {
+    await next.connect()
+  } catch (err) {
+    // Un connect() a medias también deja socket: se cierra acá y se propaga el error de siempre.
+    if (client === next) client = null
+    discardClient(next)
+    throw err
+  }
+  return next
 }
 
 /** Cierra la conexión IMAP. Sin esto el proceso de Playwright/bun queda colgado del socket. */
@@ -78,11 +101,15 @@ export async function closeMailbox(): Promise<void> {
   if (!client) return
   const c = client
   client = null
-  try {
-    await c.logout()
-  } catch {
-    c.close()
+  if (c.usable) {
+    try {
+      // Cierre ordenado: avisa al servidor. Si falla, abajo queda el cierre duro igual.
+      await c.logout()
+    } catch {
+      // La conexión ya estaba rota; el close() de abajo libera el socket.
+    }
   }
+  discardClient(c)
 }
 
 /** Cantidad de mensajes en el INBOX. Chequeo de humo de credenciales + conectividad. */
@@ -153,10 +180,12 @@ export async function waitForMessageTo(
       if (found) return found
       lastError = null
     } catch (err) {
-      // Un corte de conexión a mitad de la espera no debe abortar: se reconecta en el próximo
-      // intento. Sólo importa si al final no llegó nada.
+      // Un corte de conexión a mitad de la espera no debe abortar: se cierra el cliente roto y se
+      // reconecta en el próximo intento. Sólo importa si al final no llegó nada.
       lastError = err
+      const broken = client
       client = null
+      discardClient(broken)
     }
     await new Promise((r) => setTimeout(r, pollMs))
   } while (Date.now() < deadline)
