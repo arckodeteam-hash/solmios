@@ -107,6 +107,32 @@ const checkingLockStatus = ref(false)
 // habitación no tiene, y administrar batería/gateway/apertura cuando sí.
 const showRoomLockManager = ref(false)
 function openRoomLockManager() { showRoomLockManager.value = true }
+
+/**
+ * Abrir / cerrar la puerta desde la reserva. Una sola bandera para las dos: no tiene sentido pedir
+ * abrir mientras se está cerrando, y evita que el usuario dispare las dos órdenes contra la misma
+ * cerradura. No todos los modelos cierran en remoto; si el de esta habitación no lo hace, el
+ * backend devuelve el motivo de TTLock y se muestra tal cual.
+ */
+const doorAction = ref<'lock' | 'unlock' | null>(null)
+const doorBusy = computed(() => doorAction.value !== null)
+
+async function operateDoor(action: 'lock' | 'unlock') {
+  const id = roomLockDevice.value?.id
+  if (!id || doorBusy.value) return
+  doorAction.value = action
+  try {
+    if (action === 'unlock') await TTLockService.unlockLock(id)
+    else await TTLockService.lockLock(id)
+    toast.success(action === 'unlock' ? 'Puerta abierta' : 'Puerta cerrada')
+  } catch (e) {
+    toast.error((e as Error).message || (action === 'unlock' ? 'No se pudo abrir la puerta' : 'No se pudo cerrar la puerta'))
+  } finally {
+    doorAction.value = null
+  }
+}
+const doorUnlock = () => operateDoor('unlock')
+const doorLock = () => operateDoor('lock')
 async function onRoomLockChanged() {
   await load()
   if (d.value?.roomId) await loadRoomLockDevice(d.value.roomId)
@@ -1182,6 +1208,23 @@ function irAFacturacion() {
                   {{ roomLockDevice.status === 'online' ? 'En línea' : (roomLockDevice.status || 'Desconocido') }}
                   <span v-if="roomLockDevice.batteryLevel != null"> · 🔋 {{ roomLockDevice.batteryLevel }}%</span>
                 </div>
+                <!-- Operar la puerta desde la reserva, que es donde se está mirando al huésped.
+                     Antes esto vivía sólo detrás del engranaje (RoomLockModal): había que abrir un
+                     segundo modal para algo que se necesita en el momento, y sin etiqueta que lo
+                     dijera. Las dos mitades juntas — abrir sin poder cerrar deja la puerta abierta. -->
+                <div v-if="roomLockDevice && can('ttlock','edit')" class="grid grid-cols-2 gap-2" data-testid="lock-door-actions">
+                  <button @click="doorUnlock" :disabled="doorBusy || roomLockDevice.status !== 'online'"
+                    class="py-2 rounded-lg bg-navy text-white text-xs font-bold hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                    {{ doorAction === 'unlock' ? 'Abriendo…' : 'Abrir puerta' }}
+                  </button>
+                  <button @click="doorLock" :disabled="doorBusy || roomLockDevice.status !== 'online'"
+                    class="py-2 rounded-lg border-2 border-navy text-navy text-xs font-bold hover:bg-navy hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                    {{ doorAction === 'lock' ? 'Cerrando…' : 'Cerrar puerta' }}
+                  </button>
+                </div>
+                <p v-if="roomLockDevice && roomLockDevice.status !== 'online'" class="text-[10px] text-text-muted">
+                  La cerradura debe estar en línea para operarla en remoto.
+                </p>
                 <!-- Horario de acceso: lo que define desde/hasta cuándo abre el PIN. Antes no
                      existía en ningún lado y el código se generaba a medianoche UTC (2026-08-29). -->
                 <div class="bg-surface rounded-lg p-3 border border-border/70" data-testid="lock-schedule">
@@ -1308,8 +1351,20 @@ function irAFacturacion() {
                 <button @click="checkLockStatus" :disabled="checkingLockStatus" class="px-3 py-2.5 rounded-lg border border-border text-text-secondary text-xs font-bold hover:bg-surface disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer transition-colors whitespace-nowrap">
                   {{ checkingLockStatus ? '…' : `${roomLockDevice.batteryLevel ?? '—'}% 🔋` }}
                 </button>
-                <button @click="openRoomLockManager" title="Gestionar cerradura: asignar, batería, gateway, abrir puerta" data-testid="lock-open-manager"
+                <button @click="openRoomLockManager" title="Gestionar cerradura: asignar, batería, gateway, códigos fijos" data-testid="lock-open-manager"
                   class="px-3 py-2.5 rounded-lg border border-border text-text-secondary text-xs font-bold hover:bg-surface cursor-pointer transition-colors whitespace-nowrap">⚙️</button>
+              </div>
+              <!-- Misma pareja de acciones que en la tarjeta con código: la puerta se opera aunque
+                   la reserva todavía no tenga PIN generado. -->
+              <div v-if="can('ttlock','edit')" class="grid grid-cols-2 gap-2 mt-2">
+                <button @click="doorUnlock" :disabled="doorBusy || roomLockDevice.status !== 'online'"
+                  class="py-2 rounded-lg bg-navy text-white text-xs font-bold hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                  {{ doorAction === 'unlock' ? 'Abriendo…' : 'Abrir puerta' }}
+                </button>
+                <button @click="doorLock" :disabled="doorBusy || roomLockDevice.status !== 'online'"
+                  class="py-2 rounded-lg border-2 border-navy text-navy text-xs font-bold hover:bg-navy hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                  {{ doorAction === 'lock' ? 'Cerrando…' : 'Cerrar puerta' }}
+                </button>
               </div>
               <div v-if="manualLockOpen && can('ttlock','edit')" data-testid="lock-manual-form" class="mt-2 bg-surface rounded-lg p-3 border border-border/70">
                 <div class="text-[10px] uppercase font-bold text-text-muted mb-1.5">Código manual (4-9 dígitos)</div>
