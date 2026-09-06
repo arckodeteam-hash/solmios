@@ -21,7 +21,8 @@ import {
   processIncomingMessage,
 } from './usecases/intents'
 import { listTemplates, createTemplate, updateTemplate } from './usecases/templates'
-import type { ReservationCancelPort } from './usecases/llm-pipeline'
+import { conversationChannel } from './usecases/conversation-channel'
+import type { ReservationCancelPort, InvoiceIssuePort } from './usecases/llm-pipeline'
 import { getWhatsappConfig, updateWhatsappConfig } from './usecases/whatsapp-config'
 import { getMetrics, getDashboardMetrics } from './usecases/metrics'
 import { deleteIntentAudited, deleteTemplateAudited } from './usecases/audit-deletes'
@@ -35,6 +36,8 @@ export class AiRecepcionistaService {
   channexPusher: ((hotelId: string, roomId: string) => void) | null = null
   /** Cancelación real de reservas (política + snapshot + release de depósito). Lo inyecta el connector `ai-recepcionista-reservas`. */
   cancelReservationPort: ReservationCancelPort | null = null
+  /** Emisión de factura vía el módulo `facturas`. Lo inyecta el connector `ai-facturas`. */
+  invoicingPort: InvoiceIssuePort | null = null
 
   /** Conecta el audit log. Lo inyecta el connector `ai-recepcionista-auditlog`. */
   setAuditDeps(port: AuditPort): void { this.auditPort = port }
@@ -52,9 +55,7 @@ export class AiRecepcionistaService {
     private readonly hotelRepo: any,
     private readonly roomRepo: any,
     private readonly reservationRepo: any,
-    private readonly paymentLinkRepo: any,
     private readonly configRepo: any,
-    private readonly invoiceRepo: any,
     private readonly guestRepo: any,
     private readonly logger: any,
     private readonly cache: any,
@@ -95,17 +96,15 @@ export class AiRecepcionistaService {
     return sendMessage(this.conversationRepo, this.messageRepo, this.sockets, this.cache, { ...dto, conversationId }, this.userHotel(u), this.userRole(u))
   }
   async processIncomingMessage(conversationId: string, content: string, hotelId: string) {
-    // Fetch real hotel name for personalization
-    let hotelName = 'Hotel'
+    let hotelName = 'Hotel' // nombre real del hotel, para personalizar la respuesta
     try {
       // @ignore IDOR_RISK
-      const hotel = await this.hotelRepo.findById(hotelId)
-      hotelName = hotel?.name || 'Hotel'
-      console.log(`[AI] hotelId=${hotelId} hotelName=${hotelName}`)
+      hotelName = (await this.hotelRepo.findById(hotelId))?.name || 'Hotel'
     } catch (e: any) {
-      console.log(`[AI] hotel lookup failed: ${e?.message}`)
+      this.logger?.warn?.('No se pudo leer el nombre del hotel', { hotelId, error: e?.message })
     }
-    return processIncomingMessage(this.conversationRepo, this.messageRepo, this.intentRepo, this.whatsappConfigRepo, this.sockets, this.cache, this.logger, conversationId, content, hotelId, hotelName, { roomRepo: this.roomRepo, reservationRepo: this.reservationRepo, hotelRepo: this.hotelRepo, guestRepo: this.guestRepo, paymentLinkRepo: this.paymentLinkRepo, configRepo: this.configRepo, invoiceRepo: this.invoiceRepo, logger: this.logger, onReservationCreated: this.onReservationCreated, cancelReservation: this.cancelReservationPort ?? undefined })
+    const channel = await conversationChannel(this.conversationRepo, conversationId, hotelId)
+    return processIncomingMessage(this.conversationRepo, this.messageRepo, this.intentRepo, this.whatsappConfigRepo, this.sockets, this.cache, this.logger, conversationId, content, hotelId, hotelName, { roomRepo: this.roomRepo, reservationRepo: this.reservationRepo, hotelRepo: this.hotelRepo, guestRepo: this.guestRepo, configRepo: this.configRepo, issueInvoice: this.invoicingPort ?? undefined, channel, logger: this.logger, onReservationCreated: this.onReservationCreated, cancelReservation: this.cancelReservationPort ?? undefined })
   }
 
   async listIntents(q: IntentQuery, u: any) {

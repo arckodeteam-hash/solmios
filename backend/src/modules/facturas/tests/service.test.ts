@@ -113,6 +113,9 @@ describe('FacturasService', () => {
     it('marca la factura como pagada', async () => {
       const inv = { id: 'i1', hotelId: 'h1', amount: 100, taxes: 0, status: 'pending' } as FacturasDTO
       const service = new FacturasService(makeRepo({ findById: async () => inv }), emptyRepo(), enrichDeps, userRepo, log, silentCache, mockAuth, emptyRepo())
+      // El cobro exige asiento en `payments`: sin el conector, `pay` falla en vez de marcar la
+      // factura pagada sin respaldo (finanzas-consolidacion 1.4).
+      service.setPaymentDeps({ recordPayment: async () => ({ id: 'pay-1', status: 'completed' }) })
       const result = await service.pay('i1', { method: 'card' }, user)
       expect(result.status).toBe('paid')
     })

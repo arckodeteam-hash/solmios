@@ -26,17 +26,6 @@ export const ChargeCardSchema: Record<string, ValidationRule> = {
   cancelUrl: { type: 'string' as const, required: true },
 }
 
-export const CreatePaymentLinkSchema: Record<string, ValidationRule> = {
-  hotelId: { type: 'string' as const, required: true },
-  guestId: { type: 'string' as const },
-  folioId: { type: 'string' as const },
-  amount: { type: 'number' as const, required: true },
-  currency: { type: 'string' as const },
-  description: { type: 'string' as const },
-  expiresInHours: { type: 'number' as const },
-  maxUses: { type: 'number' as const },
-}
-
 export const CreateDepositSchema: Record<string, ValidationRule> = {
   hotelId: { type: 'string' as const, required: true },
   reservationId: { type: 'string' as const },
@@ -70,7 +59,6 @@ export const RefundSchema: Record<string, ValidationRule> = {
 export const PaymentsValidator = {
   createPayment: CreatePaymentSchema,
   chargeCard: ChargeCardSchema,
-  createLink: CreatePaymentLinkSchema,
   createDeposit: CreateDepositSchema,
   refundDeposit: RefundDepositSchema,
   reconcile: ReconcileSchema,

@@ -1,5 +1,5 @@
 // payments/model.ts — Schema de base de datos
-// Tablas: Payments (transacciones), PaymentMethods (métodos guardados), PaymentLinks (enlaces)
+// Tablas: Payments (transacciones), PaymentMethods (métodos guardados), Deposits (garantías)
 
 import type { ModelDefinition, ORM } from 'arckode-framework'
 
@@ -39,26 +39,9 @@ export const PaymentModel: ModelDefinition = {
   },
 }
 
-export const PaymentLinkModel: ModelDefinition = {
-  table: 'payment_links',
-  timestamps: true,
-  fields: {
-    id: { type: 'string', required: true },
-    hotelId: { type: 'string', required: true, indexed: true },
-    guestId: { type: 'string' },
-    folioId: { type: 'string' },
-    amount: { type: 'number', required: true },
-    currency: { type: 'string', default: 'USD' },
-    description: { type: 'string', default: '' },
-    status: { type: 'string', default: 'active' }, // active | used | expired | cancelled
-    token: { type: 'string', required: true, indexed: true },
-    expiresAt: { type: 'string' },
-    maxUses: { type: 'number', default: 1 },
-    useCount: { type: 'number', default: 0 },
-    paymentId: { type: 'string' }, // linked payment after use
-  },
-}
-
+// callers, sin endpoint para pagar el link y 0 filas en producción. El link que el huésped
+// realmente paga es `payment_requests` (shared/models.ts). La tabla física NO se dropeó.
+// Ver openspec/changes/finanzas-consolidacion (tarea 1.2).
 export const DepositModel: ModelDefinition = {
   table: 'deposits',
   timestamps: true,
@@ -82,6 +65,5 @@ export const DepositModel: ModelDefinition = {
 
 export function registerPaymentsModels(orm: ORM): void {
   orm.define('Payment', PaymentModel)
-  orm.define('PaymentLink', PaymentLinkModel)
   orm.define('Deposit', DepositModel)
 }

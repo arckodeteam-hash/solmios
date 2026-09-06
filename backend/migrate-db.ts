@@ -126,6 +126,16 @@ async function createTablesBlock1(): Promise<void> {
   // IF NOT EXISTS lo saltea sin error.
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_configuration_hotel_key ON configuration(hotelId, key)`)
 
+  // Facturas: el correlativo fiscal no puede repetirse. `nextInvoiceNumber` es read-modify-write
+  // sobre el contador de `configuration` (la API del RepositoryAdapter no da UPDATE condicional ni
+  // RETURNING), así que dos altas concurrentes pueden leer la misma secuencia. Este UNIQUE es la
+  // garantía dura: el perdedor de la carrera falla el create y `createInvoice` reintenta con el
+  // número siguiente. Es por hotel — dos hoteles emiten su INV-2026-0001 sin chocar. La tabla la
+  // crea ormMigrate (RUN_MIGRATE) antes; si todavía no existe, el índice entra en la próxima corrida.
+  try {
+    await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_hotel_number ON invoices(hotelId, invoiceNumber)`)
+  } catch { /* la tabla se crea con RUN_MIGRATE; el índice se aplica en la próxima corrida */ }
+
   // Inventario (INV-2, QA-A3): garantía DURA de idempotencia del ledger de stock. El dedup en JS es
   // check-then-create (no atómico): dos conectores concurrentes con el mismo sourceId (recepción de
   // compra / venta POS reintentando) aplicarían el movimiento dos veces → stock doble. El UNIQUE

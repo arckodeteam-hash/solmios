@@ -51,7 +51,7 @@ function makeService() {
     create: async function (d: any) { if (this._rows.has(d.id)) throw new Error('UNIQUE constraint failed'); this._rows.set(d.id, d); return d },
     delete: async function (id: string) { this._rows.delete(id) },
   } as any, log)
-  const svc = new PaymentsService(pRepo, paymentRepo(), paymentRepo(), log, silentCache, undefined, undefined, registryWith(), eventStore)
+  const svc = new PaymentsService(pRepo, paymentRepo(), log, silentCache, undefined, undefined, registryWith(), eventStore)
   let completedCalls = 0
   svc.setSockets({ onPaymentCompleted: async () => { completedCalls++ } })
   return { svc, pRepo, completedCalls: () => completedCalls }

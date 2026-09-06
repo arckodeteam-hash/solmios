@@ -87,35 +87,7 @@ export interface ChargeCardDTO {
   expiresInMinutes?: number
 }
 
-// ─── Payment Link ──────────────────────────────────────
-export interface PaymentLinkDTO {
-  id: string
-  hotelId: string
-  guestId?: string
-  folioId?: string
-  amount: number
-  currency: string
-  description: string
-  status: LinkStatus
-  token: string
-  expiresAt?: string
-  maxUses: number
-  useCount: number
-  paymentId?: string
-  createdAt: string
-  updatedAt: string
-}
 
-export interface CreatePaymentLinkDTO {
-  hotelId: string
-  guestId?: string
-  folioId?: string
-  amount: number
-  currency?: string
-  description?: string
-  expiresInHours?: number
-  maxUses?: number
-}
 
 // ─── Deposit ───────────────────────────────────────────
 export interface DepositDTO {

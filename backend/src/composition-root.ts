@@ -485,6 +485,7 @@ import { usuariosSubscriptionsConnector } from './connectors/usuarios-subscripti
 import { canalesSubscriptionsConnector } from './connectors/canales-subscriptions'
 import { canalesReservasConnector } from './connectors/canales-reservas'
 import { aiRecepcionistaReservasConnector } from './connectors/ai-recepcionista-reservas'
+import { aiFacturasConnector } from './connectors/ai-facturas'
 import { aiGerenteReservasConnector } from './connectors/ai-gerente-reservas'
 import { aliadosFeedbackConnector } from './connectors/aliados-feedback'
 import { publicapiReservasConnector } from './connectors/publicapi-reservas'
@@ -705,6 +706,8 @@ system.addConnector('canales-subscriptions', canalesSubscriptionsConnector)
 // depósito retenido (reservas-deposits). Ahora delegan en `reservas.cancelBySystem()`.
 system.addConnector('canales-reservas', canalesReservasConnector)
 system.addConnector('ai-recepcionista-reservas', aiRecepcionistaReservasConnector)
+// La IA emite facturas por el usecase real de `facturas`, no escribiendo el repo a mano.
+system.addConnector('ai-facturas', aiFacturasConnector)
 system.addConnector('ai-gerente-reservas', aiGerenteReservasConnector)
 // "Escalar a SOLMI OS" de un Aliado Certificado reusa el pipeline de feedback pins (#559).
 system.addConnector('aliados-feedback', aliadosFeedbackConnector)

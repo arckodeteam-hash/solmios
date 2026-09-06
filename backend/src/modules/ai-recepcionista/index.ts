@@ -78,12 +78,9 @@ export function AiRecepcionistaModule() {
       const hotelRepo = new OrmRepository<any>(orm, 'Hotels')
       const roomRepo = new OrmRepository<any>(orm, 'Rooms')
       const reservationRepo = new OrmRepository<any>(orm, 'Reservations')
-      // El modelo se registra en singular (`orm.define('PaymentLink', ...)` en payments/model.ts).
-      // Con 'PaymentLinks' el ORM tiraba `Modelo no definido` y el `catch {}` del pipeline lo tragaba:
-      // la IA le mandaba al huésped un link de pago que nunca se guardaba.
-      const paymentLinkRepo = new OrmRepository<any>(orm, 'PaymentLink')
+      // Sin repo de links ni de facturas: la IA ya no escribe esas tablas a mano. Los links van a
+      // derivar a `payment-requests` y las facturas ya pasan por el connector `ai-facturas`.
       const configRepo = new OrmRepository<any>(orm, 'Configuration')
-      const invoiceRepo = new OrmRepository<any>(orm, 'Invoices')
       const guestRepo = new OrmRepository<any>(orm, 'Guests')
 
       const log = logger.child('ai-recepcionista')
@@ -98,7 +95,7 @@ export function AiRecepcionistaModule() {
       service = new AiRecepcionistaService(
         conversationRepo, messageRepo, intentRepo, templateRepo,
         whatsappConfigRepo, metricsRepo, bookingFlowRepo, voiceConfigRepo,
-        userRepo, hotelRepo, roomRepo, reservationRepo, paymentLinkRepo, configRepo, invoiceRepo,
+        userRepo, hotelRepo, roomRepo, reservationRepo, configRepo,
         guestRepo,
         log, cache, auth!, onReservationCreated,
       )

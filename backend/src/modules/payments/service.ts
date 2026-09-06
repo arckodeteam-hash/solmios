@@ -3,7 +3,7 @@ import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-fram
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
 import { paymentsLinkedTo, settledNetOfReservation, type PaymentReservationRef } from './usecases/reservation-money'
 import type {
-  PaymentDTO, CreatePaymentDTO, ChargeCardDTO, PaymentLinkDTO, CreatePaymentLinkDTO,
+  PaymentDTO, CreatePaymentDTO, ChargeCardDTO,
   DepositDTO, CreateDepositDTO, RefundDepositDTO, PaymentsQuery, PaymentsPaginated,
   ReconciliationEntry, ReconciliationResult,
 } from './types'
@@ -12,7 +12,6 @@ import { StripeUseCase } from './usecases/stripe'
 import type { PaymentGatewayRegistry } from '../../services/payment-gateway/registry'
 import type { PaymentEventStore } from '../../services/payment-gateway/payment-events'
 import { PaymentCrudUseCase } from './usecases/payment-crud'
-import { PaymentLinksUseCase } from './usecases/payment-links'
 import { DepositsUseCase } from './usecases/deposits'
 import { ReconciliationUseCase } from './usecases/reconciliation'
 import { refundPayment } from './usecases/refund'
@@ -29,7 +28,6 @@ export class PaymentsService {
   private sockets: PaymentsSockets = {}
   private stripe: StripeUseCase
   private crud: PaymentCrudUseCase
-  private links: PaymentLinksUseCase
   private deposits: DepositsUseCase
   private reconciliation: ReconciliationUseCase
   private auditPort: AuditPort | null = null
@@ -40,7 +38,6 @@ export class PaymentsService {
 
   constructor(
     private readonly paymentRepo: RepositoryAdapter<PaymentDTO>,
-    linkRepo: RepositoryAdapter<PaymentLinkDTO>,
     depositRepo: RepositoryAdapter<DepositDTO>,
     private readonly logger: Logger,
     cache: CacheAdapter,
@@ -55,7 +52,6 @@ export class PaymentsService {
     this.stripe = new StripeUseCase(registry, logger)
     this.crud = new PaymentCrudUseCase(paymentRepo, logger, auth, userRepo, folioRepo, invoiceRepo, guestRepo, reservationRepo)
     this.liveChargePort = liveChargesPort(paymentRepo, this.crud)
-    this.links = new PaymentLinksUseCase(linkRepo, auth, userRepo)
     this.deposits = new DepositsUseCase(depositRepo, logger, auth, userRepo)
     this.reconciliation = new ReconciliationUseCase(paymentRepo)
   }
@@ -129,24 +125,6 @@ export class PaymentsService {
   /** Asiento de un cobro Stripe, si ya existe. */
   async findByStripeSession(hotelId: string, stripeSessionId: string): Promise<PaymentDTO | null> {
     return this.crud.findByStripeSession(hotelId, stripeSessionId)
-  }
-
-  // ─── Payment Links ───────────────────────────────────
-
-  async createPaymentLink(dto: CreatePaymentLinkDTO): Promise<PaymentLinkDTO> {
-    return this.links.create(dto)
-  }
-
-  async getPaymentLinkByToken(token: string): Promise<PaymentLinkDTO> {
-    return this.links.getByToken(token)
-  }
-
-  async cancelPaymentLink(id: string, user?: { id?: string; role?: string }): Promise<void> {
-    return this.links.cancel(id, user?.id, user?.role)
-  }
-
-  async listPaymentLinks(hotelId: string): Promise<PaymentLinkDTO[]> {
-    return this.links.list(hotelId)
   }
 
   // ─── Deposits ────────────────────────────────────────
