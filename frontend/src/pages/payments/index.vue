@@ -223,6 +223,37 @@
       </template>
     </AppModal>
 
+    <!-- Modal Compartir link (aparece justo después de crear) -->
+    <AppModal v-if="shareModal" size="md" title="Link de pago creado"
+      subtitle="Copiá el link o enviaselo al huésped por WhatsApp" @close="shareModal = null">
+      <div class="space-y-4">
+        <div>
+          <label for="share-link-url" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Link de pago</label>
+          <div class="flex items-center gap-2">
+            <input id="share-link-url" name="shareUrl" type="text" readonly :value="shareModal.url"
+              @focus="($event.target as HTMLInputElement).select()"
+              class="w-full px-4 py-2.5 rounded-xl border border-border text-sm text-navy bg-surface/60 focus:outline-none focus:border-navy" />
+            <button @click="copyShareUrl" title="Copiar link"
+              class="shrink-0 grid h-10 w-10 place-items-center rounded-xl border border-border text-text-secondary hover:bg-surface hover:text-navy transition-colors cursor-pointer">
+              <span class="h-4 w-4" v-html="ICON_LINK"></span>
+            </button>
+          </div>
+        </div>
+        <button @click="sendShareWhatsapp" type="button"
+          class="w-full flex items-center justify-center gap-2 bg-[#25D366] text-white font-extrabold text-sm px-5 py-3 rounded-xl hover:brightness-95 transition-all cursor-pointer">
+          <span class="h-4 w-4 shrink-0" v-html="ICON_CHAT"></span>
+          Enviar por WhatsApp
+        </button>
+        <p class="text-[11px] text-text-muted">
+          Se abre en otra pestaña con un mensaje ya redactado para el huésped, listo para enviar.
+        </p>
+      </div>
+
+      <template #footer>
+        <button @click="shareModal = null" class="text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">Cerrar</button>
+      </template>
+    </AppModal>
+
     <ConfirmModal v-if="confirmModal" :title="confirmModal.title" :message="confirmModal.message"
       :confirm-label="confirmModal.confirmLabel" :danger="confirmModal.danger" :loading="confirmBusy"
       @confirm="runConfirm" @close="confirmModal = null" />
@@ -342,8 +373,8 @@ async function createStripe(p: PaymentRequest) {
     const r = await PaymentsService.createStripeCheckout(p.id)
     p.stripePaymentUrl = r.url
     p.stripeSessionId = r.sessionId
-    // Abrir en nueva ventana
-    window.open(r.url, '_blank')
+    if (reservations.value.length === 0) await loadReservations()
+    openShareModal(p, r.url)
     toast.success('Sesión de pago Stripe creada')
   } catch (e: any) {
     toast.error(e.message || 'Error al crear sesión Stripe')
@@ -446,19 +477,93 @@ async function create() {
   }
   creating.value = true
   try {
-    await PaymentsService.create({
-      reservationId: newForm.value.reservationId,
-      amount: newForm.value.amount as number,
-      sentTo: newForm.value.sentTo,
-      sentVia: newForm.value.sentVia,
-    })
+    let paymentRequest: PaymentRequest
+    let url = ''
+    if (stripeConfigured.value) {
+      const result = await PaymentsService.createWithStripe(newForm.value.reservationId, newForm.value.amount as number, {
+        sentTo: newForm.value.sentTo || undefined,
+        sentVia: newForm.value.sentVia,
+      })
+      paymentRequest = result.paymentRequest
+      url = result.url
+    } else {
+      paymentRequest = await PaymentsService.create({
+        reservationId: newForm.value.reservationId,
+        amount: newForm.value.amount as number,
+        sentTo: newForm.value.sentTo,
+        sentVia: newForm.value.sentVia,
+      })
+    }
     toast.success('Link de pago creado')
     newModal.value.show = false
+    if (url) openShareModal(paymentRequest, url)
     await load()
   } catch (e: any) {
     toast.error(e.message || 'Error')
   } finally {
     creating.value = false
+  }
+}
+
+// Modal "compartir" — se abre justo después de crear un link con Stripe configurado.
+// Guarda un snapshot de los datos de la reserva porque `selectedReservation`
+// depende de `newForm`, que `openNew()` resetea en la próxima apertura.
+const shareModal = ref<{ url: string; guestName: string; roomNumber: string; checkIn?: string; amount: number; currency: string; sentTo: string } | null>(null)
+
+function openShareModal(pr: PaymentRequest, url: string) {
+  // Al crear desde "Nuevo Link" la reserva viene de `selectedReservation` (form recién enviado);
+  // al generar el Stripe checkout desde la fila de la tabla, se busca por id en la lista ya cargada.
+  const r = reservations.value.find(x => x.id === pr.reservationId) || selectedReservation.value
+  shareModal.value = {
+    url,
+    guestName: pr.guestName || r?.guestName || '',
+    roomNumber: r?.roomNumber || '',
+    checkIn: r?.checkIn,
+    amount: pr.amount,
+    currency: pr.currency || 'USD',
+    sentTo: pr.sentTo || '',
+  }
+}
+
+// Sin emojis: los code points de 4 bytes se corrompen en la cadena navegador→wa.me→WhatsApp
+// (mismo criterio documentado en ReservationCalendar.vue popupWaLink).
+const shareMessage = computed(() => {
+  const s = shareModal.value
+  if (!s) return ''
+  const hotelName = auth.currentHotel || 'nuestro hotel'
+  const lines = [
+    `Hola${s.guestName ? ' ' + s.guestName : ''},`,
+    '',
+    `Te compartimos el link de pago de tu reserva en ${hotelName}.`,
+    '',
+  ]
+  if (s.roomNumber) lines.push(`- Habitación: ${s.roomNumber}`)
+  if (s.checkIn) lines.push(`- Check-in: ${formatDate(s.checkIn)}`)
+  lines.push(`- Monto a pagar: ${formatMoney(s.amount)}`)
+  lines.push('', 'Podés completar el pago de forma segura en este link:', s.url)
+  lines.push('', 'Cualquier consulta, quedamos atentos.')
+  return lines.join('\n')
+})
+
+const shareWaLink = computed(() => {
+  const s = shareModal.value
+  if (!s) return '#'
+  const digits = (s.sentTo || '').replace(/\D/g, '')
+  const base = digits ? `https://wa.me/${digits}` : 'https://wa.me/'
+  return `${base}?text=${encodeURIComponent(shareMessage.value)}`
+})
+
+function sendShareWhatsapp() {
+  window.open(shareWaLink.value, '_blank')
+}
+
+async function copyShareUrl() {
+  if (!shareModal.value) return
+  try {
+    await navigator.clipboard.writeText(shareModal.value.url)
+    toast.success('Link copiado al portapapeles')
+  } catch {
+    toast.error('No se pudo copiar')
   }
 }
 
