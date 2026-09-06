@@ -13,12 +13,12 @@
 
 **Acceptance:** Toda factura del sistema nace por `facturas.create`, con enums válidos, impuestos del hotel y numerador correlativo.
 
-- [ ] 1.1 La IA emite facturas inválidas y sin autenticación
+- [x] 1.1 La IA emite facturas inválidas y sin autenticación
 > **Severidad:** crítica · **Tipo:** bug · **Módulos:** `ai-recepcionista`, `facturas`, `connectors`
 >
 > **Problema**
 > La tool `generate_invoice` del recepcionista IA escribe **directo contra el repositorio**
-> `Invoices` (`backend/src/modules/ai-recepcionista/usecases/llm-pipeline.ts:570-614`, repo
+> `Invoices` (`backend/src/modules/ai-recepcionista/usecases/llm-pipeline.ts:571-616`, repo
 > inyectado en `ai-recepcionista/index.ts:86,101`), salteándose el usecase de creación
 > `facturas/usecases/create-invoice.ts`. Lo que graba está mal en cinco puntos:
 >
@@ -38,7 +38,7 @@
 > 1. Crear `backend/src/connectors/ai-facturas.ts` que exponga a `ai-recepcionista` un puerto
 >    `createInvoice(dto, user)` delegando en `facturas.create`. **NO** importar `facturas` desde
 >    `ai-recepcionista` (regla: los módulos no se importan entre sí, solo por connector).
-> 2. Reemplazar el `invoiceRepo.create(...)` de `llm-pipeline.ts:570-614` por la llamada al puerto.
+> 2. Reemplazar el `invoiceRepo.create(...)` de la tool `generate_invoice` por la llamada al puerto.
 > 3. Quitar el repo `Invoices` de las dependencias de `ai-recepcionista` si no queda otro uso.
 > 4. **Gate de seguridad**: la tool solo está disponible si la conversación llegó por un canal
 >    autenticado. En el WebChat público debe responder que no puede emitir facturas y ofrecer
@@ -72,7 +72,7 @@
 
 **Acceptance:** Existe un solo sistema de links de pago en el código y es el que la UI usa.
 
-- [ ] 1.2 Eliminar el sistema muerto `payment_links`
+- [x] 1.2 Eliminar el sistema muerto `payment_links`
 > **Severidad:** crítica · **Tipo:** refactor · **Módulos:** `payments`
 >
 > **Problema**
@@ -119,21 +119,21 @@
 
 **Acceptance:** Dos facturas emitidas simultáneamente nunca comparten número.
 
-- [ ] 1.3 El numerador dice ser atómico y es read-modify-write
+- [x] 1.3 El numerador dice ser atómico y es read-modify-write
 > **Severidad:** alta · **Tipo:** bug · **Módulos:** `facturas`
 >
 > **Problema**
-> `backend/src/modules/facturas/usecases/invoice-number.ts:104-131`: el comentario promete
+> `backend/src/modules/facturas/usecases/invoice-number.ts:22-46` (antes del fix): el comentario promete
 > atomicidad, la implementación es `findOne` → `+1` → `update|create` **sin transacción, sin lock,
 > sin `UPDATE ... RETURNING`**. Dos emisiones concurrentes leen el mismo `currentSeq` y producen el
 > mismo `invoiceNumber`. No hay nada que lo frene: `facturas/model.ts:12` declara `invoiceNumber`
 > **sin unique y sin índice** (solo `hotelId` está `indexed`, `model.ts:10`).
 >
 > Segundo defecto en el mismo archivo: ante cualquier excepción cae a
-> `` `${prefix}-${year}-${Date.now()}` `` (`:127-130`), que rompe el formato de 4 dígitos y deja un
+> `` `${prefix}-${year}-${Date.now()}` `` (`:43-46`), que rompe el formato de 4 dígitos y deja un
 > agujero en la secuencia sin avisar.
 >
-> Tercero, menor: el parámetro `repo` de `nextInvoiceNumber` se recibe y nunca se usa (`:98`).
+> Tercero, menor: el parámetro `repo` de `nextInvoiceNumber` se recibe y nunca se usa (`:14`).
 >
 > **Qué hacer**
 > 1. Índice único compuesto sobre `(hotelId, invoiceNumber)` — con `CREATE UNIQUE INDEX` explícito
@@ -174,7 +174,7 @@
 
 **Acceptance:** Ninguna factura queda en `paid` sin su fila correspondiente en `payments`.
 
-- [ ] 1.4 El puerto de pagos devuelve null y la factura se marca pagada igual
+- [x] 1.4 El puerto de pagos devuelve null y la factura se marca pagada igual
 > **Severidad:** normal · **Tipo:** bug · **Módulos:** `facturas`, `connectors`
 >
 > **Problema**
@@ -248,6 +248,57 @@
 > **Verificación**
 > Consulta documentada en el comentario del issue, ejecutada contra la base de producción en modo
 > lectura.
+
+### 1.6 Link de pago de la IA
+
+**Acceptance:** La IA solo entrega links de pago que el huésped puede pagar de verdad.
+
+- [ ] 1.6 Cablear `generate_payment_link` de la IA a `payment-requests`
+> **Severidad:** crítica · **Tipo:** bug · **Módulos:** `ai-recepcionista`, `payment-requests`, `connectors`
+>
+> **Hallazgo posterior a la auditoría** (encontrado al implementar la tarea 1.2, 2026-09-06).
+>
+> **Problema**
+> La tool `generate_payment_link` fabricaba su propio token y le mandaba al huésped
+> `https://pay.hotel.com/{hotelId}/{token}` — **un dominio que no existe** — y persistía el link en
+> `payment_links`, la tabla muerta que la tarea 1.2 eliminó. O sea: el huésped recibía una URL que
+> no resuelve y el hotel un registro que nadie iba a cobrar nunca. Encima el bloque de tools
+> forzadas de `generateReply` la dispara sola ante las palabras "tarjeta" o "link de pago".
+>
+> **Estado actual**: la tool está **desactivada** (commit `373a1ea4`). Responde que no puede generar
+> el link y deriva a recepción. Es peor que tenerla bien y mejor que mandar una URL muerta.
+>
+> **Qué hacer**
+> 1. Connector `ai-payment-requests` que exponga un puerto `createPaymentLink(reservationId, amount)`
+>    delegando en `payment-requests` (`create` + `create-checkout.ts`), que sí abre Checkout Session
+>    de Stripe y cuyo webhook asienta en `payments` y acredita el folio.
+> 2. Reemplazar el cuerpo desactivado de la tool por la llamada al puerto.
+> 3. Aplicar el mismo gate de canal que `generate_invoice`: un link de cobro emitido desde un canal
+>    anónimo es una superficie de abuso.
+> 4. Respetar el techo de cobro (`payments/usecases/charge-ceiling`, RTC-8.1): la IA no puede emitir
+>    un link por encima del saldo de la reserva.
+>
+> **Criterios de aceptación**
+> - [ ] **Dado** una reserva con saldo de 300,
+>       **cuando** la IA genera el link por WhatsApp,
+>       **entonces** la URL devuelta es una `checkout.stripe.com` real y existe la fila en
+>       `payment_requests` con `stripeSessionId`.
+> - [ ] **Dado** ese link,
+>       **cuando** el huésped paga,
+>       **entonces** el webhook asienta en `payments`, acredita el folio y baja `pendingAmount`
+>       (mismo camino que un link creado desde el panel).
+> - [ ] **Dado** una reserva con saldo de 100,
+>       **cuando** la IA intenta un link de 500,
+>       **entonces** se rechaza por el techo de cobro y la IA lo dice, no emite el link.
+> - [ ] **Dado** el WebChat público,
+>       **cuando** el usuario pide un link,
+>       **entonces** no se crea ninguna fila y deriva a recepción.
+> - [ ] `rg "pay.hotel.com" backend/src` → 0 resultados.
+>
+> **Verificación**
+> ```bash
+> cd backend && bun test src/modules/ai-recepcionista src/modules/payment-requests
+> ```
 
 ## Phase 2 — Coser las islas
 
