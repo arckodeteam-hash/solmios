@@ -33,46 +33,51 @@
       <!-- Una tarjeta POR TIPO DE HABITACIÓN, con una sub-sección por ocupación -->
       <div v-else class="space-y-4">
         <div v-for="tc in typeCards" :key="tc.roomType" class="rounded-2xl border-2 border-navy overflow-hidden">
-          <div class="bg-navy px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
-            <h3 class="text-sm font-black text-white capitalize">{{ tc.roomType }}</h3>
+          <div class="bg-navy px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+            <div class="min-w-0">
+              <h3 class="text-base font-black text-white capitalize leading-tight">{{ tc.roomType }}</h3>
+              <p class="text-[10px] font-bold uppercase tracking-wide text-white/45 mt-0.5">
+                {{ tc.groups.length }} {{ tc.groups.length === 1 ? 'ocupación' : 'ocupaciones' }} · un solo precio para todas
+              </p>
+            </div>
             <!-- El precio base es UNO SOLO por tipo de habitación: las temporadas y los canales solo
-                 le aplican su porcentaje. Estaba repetido en cada bloque de ocupación, que hacía
-                 parecer que había un base por ocupación. -->
-            <div class="flex items-center gap-2 ml-auto">
-              <span class="text-[10px] font-black uppercase text-white/70">Tarifa base</span>
-              <span class="px-2.5 py-1 rounded-lg bg-white/10 text-sm font-black text-white">
-                {{ tc.basePrice }} <span class="text-[10px] font-bold text-white/60">{{ currency }}</span>
-              </span>
-              <router-link :to="{ name: 'tarifas' }"
-                class="text-[10px] font-bold text-white/80 underline underline-offset-2 hover:text-cyan">
-                Cambiar →
+                 le aplican su porcentaje. Se muestra grande y una sola vez — repetido en cada bloque
+                 de ocupación hacía parecer que había un base por ocupación, y de chiquito parecía un
+                 dato de relleno cuando es el número del que se deriva todo lo demás de la tarjeta. -->
+            <div class="flex items-center gap-3 rounded-2xl bg-white/10 ring-1 ring-white/15 px-4 py-2">
+              <div class="leading-none">
+                <span class="block text-[10px] font-bold uppercase tracking-wide text-white/55 mb-1.5">Tarifa base</span>
+                <span class="text-3xl font-black tabular-nums text-white">{{ tc.basePrice.toLocaleString() }}</span>
+                <span class="ml-1 text-xs font-bold text-white/60">{{ currency }}</span>
+              </div>
+              <router-link :to="{ name: 'tarifas' }" title="El precio base se edita en la grilla de tarifas: vale para todo el tipo de habitación"
+                class="shrink-0 rounded-full border-2 border-white/25 px-4 py-1.5 text-[11px] font-black text-white hover:bg-white/15 hover:border-white/50 transition-colors">
+                Cambiar
               </router-link>
-              <span class="text-[10px] font-black uppercase text-white/50 pl-1">
-                {{ tc.groups.length }} {{ tc.groups.length === 1 ? 'ocupación' : 'ocupaciones' }}
-              </span>
             </div>
           </div>
           <div v-for="g in tc.groups" :key="g.key" :class="g !== tc.groups[0] ? 'border-t-2 border-navy/10' : ''">
-          <div class="px-4 pt-2.5 pb-0.5 text-[11px] font-black text-text-muted uppercase">
-            {{ g.occupancy }} {{ g.occupancy === 1 ? 'persona' : 'personas' }}
-          </div>
-          <!-- Responsive: en móvil General arriba + temporadas 2×2; en desktop General a la izq + 4 temporadas en fila -->
-          <div class="p-3 grid grid-cols-1 lg:grid-cols-[190px_1fr] gap-3">
-            <!-- Solo lo que SÍ es por ocupación. El precio base está arriba, en el tipo. -->
-            <div class="rounded-xl border-2 border-navy bg-surface p-3">
-              <div class="text-[10px] font-black text-text-muted uppercase mb-2">Estadía</div>
-              <div class="grid grid-cols-2 gap-2">
-                <div title="Mínimo de noches para poder LLEGAR (min stay arrival): se exige el día del check-in">
-                  <div class="text-[10px] text-text-muted">Mín. al llegar</div>
-                  <input type="number" min="0" inputmode="numeric" v-model.number="g.minStay" class="w-full px-2 py-1 rounded-lg border-2 border-navy/30 text-xs text-right focus:border-navy outline-none" />
-                </div>
-                <div>
-                  <div class="text-[10px] text-text-muted">Días máx.</div>
-                  <input type="number" min="0" inputmode="numeric" v-model.number="g.maxStay" class="w-full px-2 py-1 rounded-lg border-2 border-navy/30 text-xs text-right focus:border-navy outline-none" />
-                </div>
-              </div>
+          <!-- Los límites de estadía son del par (tipo × ocupación), no de la temporada: van en el
+               encabezado de la fila, no en una tarjeta que competía de igual a igual con las cuatro
+               temporadas y se leía como si fuera una quinta. -->
+          <div class="px-4 pt-3 pb-1 flex items-center justify-between gap-3 flex-wrap">
+            <span class="text-[11px] font-black text-text-muted uppercase">
+              {{ g.occupancy }} {{ g.occupancy === 1 ? 'persona' : 'personas' }}
+            </span>
+            <div class="flex items-center gap-2">
+              <label class="flex items-center gap-1.5" title="Mínimo de noches para poder LLEGAR (min stay arrival): se exige el día del check-in">
+                <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Mín. al llegar</span>
+                <input type="number" min="0" inputmode="numeric" v-model.number="g.minStay"
+                  class="w-14 px-2 py-1 rounded-lg border-2 border-navy/20 text-xs font-bold text-navy text-right tabular-nums focus:border-navy outline-none" />
+              </label>
+              <label class="flex items-center gap-1.5" title="Tope de noches para una estadía que empieza en estos días">
+                <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Días máx.</span>
+                <input type="number" min="0" inputmode="numeric" v-model.number="g.maxStay"
+                  class="w-14 px-2 py-1 rounded-lg border-2 border-navy/20 text-xs font-bold text-navy text-right tabular-nums focus:border-navy outline-none" />
+              </label>
             </div>
-
+          </div>
+          <div class="p-3 pt-2">
             <!-- Temporadas: 2 columnas en móvil, 4 en desktop -->
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
               <div v-for="cell in g.cells" :key="cell.season"
@@ -100,7 +105,14 @@
                       class="w-full min-w-0 px-2 py-1.5 rounded-lg border-2 border-navy/30 text-sm font-black text-navy text-right focus:border-navy outline-none" />
                     <span class="text-xs text-text-muted">%</span>
                   </div>
-                  <div class="text-sm font-black text-teal">= {{ resultPrice(g.basePrice, cell.percentage) }} <span class="text-[10px] text-text-muted">{{ currency }}</span></div>
+                  <!-- El porcentaje del canal se aplica sobre el PRECIO DE ESA TEMPORADA, que se
+                       carga en Configuración → Temporadas y Tarifas y vale para todo el hotel. Acá
+                       se muestra sobre qué número está operando: sin eso, un +50% sobre 200 y uno
+                       sobre 120 se ven idénticos en pantalla. -->
+                  <div class="text-[9px] font-bold text-text-muted leading-tight">
+                    sobre {{ cell.seasonPrice.toLocaleString() }} {{ currency }} de la temporada
+                  </div>
+                  <div class="text-sm font-black text-teal">= {{ resultPrice(cell.seasonPrice, cell.percentage) }} <span class="text-[10px] text-text-muted">{{ currency }}</span></div>
                   <!-- Restricciones de la temporada: CTA/CTD + estadía mínima through (P4 certificación) -->
                   <div class="flex items-center gap-1">
                     <button @click="cell.cta = cell.cta ? 0 : 1" title="Cerrado a llegadas (CTA): no se puede llegar este día"
@@ -217,7 +229,9 @@ async function saveSeasons() {
   } catch { toast.error('Error al guardar temporadas') } finally { savingSeasons.value = false }
 }
 
-interface Cell { season: string; percentage: number; closed: number; cta: number; ctd: number; minStayThrough: number }
+/** `seasonPrice` es el precio de esa temporada en la grilla GLOBAL — el número sobre el que este
+ *  canal aplica su porcentaje. Lo manda el backend (`listChannelRates`); el canal no lo edita. */
+interface Cell { season: string; percentage: number; seasonPrice: number; closed: number; cta: number; ctd: number; minStayThrough: number }
 interface Group { key: string; roomType: string; occupancy: number; basePrice: number; minStay: number; maxStay: number; cells: Cell[] }
 const groups = ref<Group[]>([])
 
@@ -260,6 +274,16 @@ function resultPrice(base: number, pct: number): string {
 // la saltea y lo único que cubre esos días es la línea base, que va con `percentage: 0`. Sin esta
 // señal, escribir un % en una temporada muerta no hacía nada y la pantalla no lo decía.
 const assignedFuture = ref<Set<string>>(new Set())
+/**
+ * La temporada que RIGE HOY, resuelta por el backend con la misma regla que cobra el motor
+ * (`GET /api/season-calendar` → `buildSeasonByDate`: rango del catálogo, planning encima).
+ *
+ * Se pide en vez de deducirla acá para que las tres pantallas que hablan de temporadas —el planning,
+ * la grilla de tarifas y este editor— den siempre la misma respuesta. Deducirla del lado del cliente
+ * ya falló una vez: con dos rangos solapados, el motor toma el más corto y la pantalla marcaba las
+ * dos como vigentes.
+ */
+const assignedToday = ref('')
 const todayISO = new Date().toISOString().slice(0, 10)
 
 /**
@@ -269,7 +293,7 @@ const todayISO = new Date().toISOString().slice(0, 10)
  */
 const seasonStates = computed<Map<string, SeasonState>>(() => {
   const m = new Map<string, SeasonState>()
-  for (const s of seasons.value) m.set(s.name, computeSeasonState(s, todayISO, assignedFuture.value))
+  for (const s of seasons.value) m.set(s.name, computeSeasonState(s, todayISO, assignedFuture.value, assignedToday.value))
   return m
 })
 const UNKNOWN_SEASON: SeasonState = { publishes: false, live: false, badge: 'Sin fechas', reason: 'Sin fechas · no se publica' }
@@ -280,9 +304,15 @@ function seasonState(name: string): SeasonState {
 async function loadSeasonAssignments() {
   try {
     const to = new Date(Date.now() + 500 * 86400000).toISOString().slice(0, 10)
-    const r = await HotelService.seasonAssignments(todayISO, to)
-    assignedFuture.value = new Set((r.data || []).map((a) => a.season))
-  } catch { assignedFuture.value = new Set() }
+    // `assignedFuture` son los días PINTADOS (lo que hace publicable a una temporada sin fechas
+    // propias); `assignedToday` es la temporada EFECTIVA de hoy, que además resuelve por rango.
+    const [painted, today] = await Promise.all([
+      HotelService.seasonAssignments(todayISO, to),
+      HotelService.seasonCalendar(todayISO, todayISO).catch(() => ({ data: [] })),
+    ])
+    assignedFuture.value = new Set((painted.data || []).map((a) => a.season))
+    assignedToday.value = (today.data || [])[0]?.season || ''
+  } catch { assignedFuture.value = new Set(); assignedToday.value = '' }
 }
 
 // Agrupa las filas planas (una por roomType×occupancy×season) en tarjetas por habitación.
@@ -303,7 +333,9 @@ function buildGroups(rates: RoomRate[], restrictions: Array<{ roomType: string; 
     if (!g.maxStay && r.maxStay) g.maxStay = r.maxStay
     const restriction = restrictionBy.get(`${String(r.roomType).toLowerCase()}|${r.season}`)
     g.cells.push({
-      season: r.season, percentage: r.percentage ?? 0, closed: r.closed ? 1 : 0,
+      season: r.season, percentage: r.percentage ?? 0,
+      seasonPrice: Number((r as any).seasonPrice ?? r.price ?? 0),
+      closed: r.closed ? 1 : 0,
       cta: (restriction && (restriction.closedToArrival || restriction.cta)) ? 1 : 0,
       ctd: (restriction && (restriction.closedToDeparture || restriction.ctd)) ? 1 : 0,
       minStayThrough: restriction?.minStayThrough ?? 0,
@@ -339,6 +371,8 @@ async function save(): Promise<boolean> {
     const restrictions = new Map<string, { roomType: string; season: string; closedToArrival: number; closedToDeparture: number; minStayThrough: number }>()
     for (const g of groups.value) {
       for (const cell of g.cells) {
+        // El canal manda su PORCENTAJE; el precio lo resuelve el backend sobre el importe de la
+        // temporada. Mandar un precio desde acá le daría al canal una segunda fuente de verdad.
         rates.push({
           roomType: g.roomType, occupancy: g.occupancy, season: cell.season, channel: selectedChannel.value,
           basePrice: g.basePrice, percentage: cell.percentage, closed: cell.closed, minStay: g.minStay, maxStay: g.maxStay,

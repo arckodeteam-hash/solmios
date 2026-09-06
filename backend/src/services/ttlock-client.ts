@@ -365,6 +365,30 @@ export async function unlockLock(c: TTLockCreds, lockId: number): Promise<void> 
   assertOk(await readJson(res), 'abrir la cerradura en remoto')
 }
 
+/**
+ * CIERRA la cerradura física en remoto, por gateway. Mismo requisito que abrir (gateway online y en
+ * rango), más uno propio: la cerradura tiene que soportar cierre remoto.
+ *
+ * Muchos modelos NO lo soportan — son de resorte y cierran solas al cerrar la puerta, así que no
+ * tienen motor para echar el pestillo. En esas, Sciener responde con errcode y `assertOk` lanza; el
+ * controller lo devuelve como 400 con el texto de Sciener, para no inventar un éxito que la puerta
+ * no tuvo.
+ */
+export async function lockLock(c: TTLockCreds, lockId: number): Promise<void> {
+  if (!c.accessToken) throw new Error('Sin access_token de TTLock (conectá primero)')
+  const res = await fetchWithRetry(`${base(c.region)}/v3/lock/lock`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      clientId: c.clientId,
+      accessToken: c.accessToken,
+      lockId: String(lockId),
+      date: String(nowMs()),
+    }),
+  })
+  assertOk(await readJson(res), 'cerrar la cerradura en remoto')
+}
+
 /** Gateway(s) que alcanzan a UNA cerradura, con la señal (`rssi`, dBm; más cerca de 0 = mejor). */
 export interface TTLockLockGateway {
   gatewayId: number

@@ -446,6 +446,7 @@ import { cashAuditlogConnector } from './connectors/cash-auditlog'
 import { paymentRequestsAuditlogConnector } from './connectors/payment-requests-auditlog'
 import { pricingAuditlogConnector } from './connectors/pricing-auditlog'
 import { pricingHabitacionesConnector } from './connectors/pricing-habitaciones'
+import { habitacionesPricingConnector } from './connectors/habitaciones-pricing'
 import { payrollAuditlogConnector } from './connectors/payroll-auditlog'
 import { facturasPaymentsConnector } from './connectors/facturas-payments'
 import { foliosFacturasConnector } from './connectors/folios-facturas'
@@ -601,6 +602,10 @@ system.addConnector('cash-auditlog', cashAuditlogConnector)
 system.addConnector('payment-requests-auditlog', paymentRequestsAuditlogConnector)
 system.addConnector('pricing-auditlog', pricingAuditlogConnector)
 system.addConnector('pricing-habitaciones', pricingHabitacionesConnector)
+// El precio base vive en la habitación y `room_rates` lo espeja: cambiarlo desde /panel/habitaciones
+// no reescribía la tarifa, y el motor de reservas seguía cotizando la vieja mientras la OTA ya
+// publicaba la nueva (el push deriva). Ver pricing/usecases/resync-base-prices.ts.
+system.addConnector('habitaciones-pricing', habitacionesPricingConnector)
 system.addConnector('payroll-auditlog', payrollAuditlogConnector)
 // SC-05: borrados sensibles — credenciales, tenant entero, sesiones, RRHH y plata.
 system.addConnector('apikeys-auditlog', apikeysAuditlogConnector)

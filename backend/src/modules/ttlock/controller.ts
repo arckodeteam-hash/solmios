@@ -142,6 +142,20 @@ export class TtlockController {
     }
   }
 
+  async lock(req: HttpRequest) {
+    const id = await this.hotelOf(req)
+    if (!id) return { status: 401, body: { error: 'Hotel no encontrado' } }
+    try {
+      await this.service.lockLock(id, req.params.id)
+      return { status: 200, body: { success: true } }
+    } catch (e: any) {
+      if (e.message?.includes('no encontrada')) return { status: 404, body: { error: e.message } }
+      // El texto de Sciener llega tal cual: es lo que distingue "gateway fuera de rango" de
+      // "esta cerradura no cierra en remoto", y el usuario necesita saber cuál de las dos es.
+      return { status: 400, body: { error: e.message || 'No se pudo cerrar la cerradura' } }
+    }
+  }
+
   async deletePasscode(req: HttpRequest) {
     const id = await this.hotelOf(req)
     if (!id) return { status: 401, body: { error: 'Hotel no encontrado' } }

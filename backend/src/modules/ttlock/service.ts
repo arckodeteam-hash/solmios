@@ -93,6 +93,11 @@ export class TtlockService {
     return hw.openLock(this.hwDeps(), hotelId, lockDeviceId)
   }
 
+  /** Cierra la puerta en remoto (por gateway). No todas las cerraduras lo soportan. */
+  lockLock(hotelId: string, lockDeviceId: string): Promise<void> {
+    return hw.closeLock(this.hwDeps(), hotelId, lockDeviceId)
+  }
+
   /** Borra un PIN directo del hardware (tab "Activos") y sincroniza la fila de la BD. */
   deletePasscode(hotelId: string, lockDeviceId: string, keyboardPwdId: string): Promise<void> {
     return hw.removePasscode(this.hwDeps(), hotelId, lockDeviceId, keyboardPwdId)

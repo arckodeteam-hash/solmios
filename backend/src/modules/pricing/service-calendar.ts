@@ -15,6 +15,7 @@ import {
   listRateOverrides, upsertRateOverrides, deleteRateOverride,
   type RateOverrideRow, type RateOverrideInput, type SavedRateOverride,
 } from './usecases/rate-overrides'
+import { seasonCalendar, type SeasonCalendarDay } from './usecases/season-calendar'
 
 export class PricingCalendarService {
   constructor(
@@ -22,6 +23,9 @@ export class PricingCalendarService {
     private readonly seasonAssignmentsRepo: RepositoryAdapter<any>,
     private readonly logger: Logger,
     private readonly rateOverridesRepo?: RepositoryAdapter<any>,
+    /** Catálogo de temporadas. Lo necesita `seasonCalendar` para resolver por rango, no solo por
+     *  días pintados. Opcional en la firma para no romper a quien construya el service sin él. */
+    private readonly seasonsRepo?: RepositoryAdapter<any>,
   ) {}
 
   /** El repo es opcional en la firma para no romper a quien construya el service sin él (tests). */
@@ -42,6 +46,17 @@ export class PricingCalendarService {
   // ── Temporada por fecha ──
   listSeasonAssignments(hotelId: string, from?: string, to?: string): Promise<SeasonAssignmentRow[]> {
     return listSeasonAssignments(this.seasonAssignmentsRepo, hotelId, from, to)
+  }
+
+  /**
+   * Temporada EFECTIVA por día — la misma que cobra el motor. Ver usecases/season-calendar.ts:
+   * es la única respuesta a "en qué temporada estoy", y todas las pantallas la piden acá.
+   */
+  seasonCalendar(hotelId: string, from: string, to: string): Promise<SeasonCalendarDay[]> {
+    return seasonCalendar({
+      seasons: async (h) => (this.seasonsRepo ? await this.seasonsRepo.findMany({ hotelId: h }) : []) as any[],
+      assignments: async (h) => (await this.seasonAssignmentsRepo.findMany({ hotelId: h })) as any[],
+    }, hotelId, from, to)
   }
 
   assignSeason(hotelId: string, input: AssignSeasonInput): Promise<number> {

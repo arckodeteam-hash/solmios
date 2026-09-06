@@ -123,6 +123,28 @@
               </div>
             </div>
 
+            <!-- Temporada de cada día. Antes solo se insinuaba con un tinte en el encabezado y un
+                 tooltip: había que pasar el mouse día por día para saber en qué temporada estabas, y
+                 los días que la temporada cubre por su RANGO (sin pintar) no mostraban nada aunque el
+                 motor ya cobrara esa. Ahora dice el nombre, y sale de `GET /api/season-calendar`, que
+                 resuelve igual que el cobro. -->
+            <div class="flex border-b border-border bg-navy/[0.03]">
+              <div class="w-56 flex-shrink-0 px-4 py-2 border-r border-border flex items-center gap-1.5">
+                <Icon name="calendar" :size="13" class="text-navy" />
+                <span class="text-[10px] font-black text-navy uppercase tracking-wide">Temporada</span>
+                <button v-if="canEditMinStay" type="button" @click="openSeasonDialog"
+                  class="ml-auto text-[9px] font-bold text-cyan hover:underline cursor-pointer">Asignar</button>
+              </div>
+              <div v-for="day in visibleDays" :key="'sn-' + day.dateStr"
+                class="flex-1 min-w-[68px] px-1 py-1.5 text-center border-r border-navy/10 shrink-0"
+                :title="seasonLabelFor(day.dateStr) ? `Temporada ${seasonLabelFor(day.dateStr)}${seasonSourceFor(day.dateStr) === 'planning' ? ' · marcada en el planning' : ' · por el rango de fechas'}` : 'Sin temporada: esta noche cotiza el precio base, sin recargo'">
+                <span v-if="seasonLabelFor(day.dateStr)"
+                  class="inline-block w-full truncate rounded px-1 py-0.5 text-[9px] font-black uppercase leading-tight text-white"
+                  :style="{ backgroundColor: seasonColorFor(day.dateStr) }">{{ seasonLabelFor(day.dateStr) }}</span>
+                <span v-else class="text-[9px] font-bold text-text-muted/60">—</span>
+              </div>
+            </div>
+
             <!-- Días Mínimos: estadía mínima (noches) para reservas que ENTRAN cada día -->
             <div class="flex border-b border-border bg-amber-50/60">
               <div class="w-56 flex-shrink-0 px-4 py-2 border-r border-border flex items-center gap-1.5">
@@ -2066,13 +2088,16 @@ const WEEKDAYS_UI = [
   { label: 'Jueves', idx: 4 }, { label: 'Viernes', idx: 5 }, { label: 'Sábado', idx: 6 }, { label: 'Domingo', idx: 0 },
 ]
 const seasonsCatalog = ref<SeasonCat[]>([])
-const seasonByDate = ref<Record<string, string>>({})   // date → season.name
+const seasonByDate = ref<Record<string, string>>({})   // date → season.name (temporada EFECTIVA)
+/** date → 'planning' | 'catalog': si ese día lo decidió la pintura o el rango del catálogo. */
+const seasonSourceByDate = ref<Record<string, string>>({})
 const seasonDlg = ref<{ show: boolean; from: string; to: string; weekdays: boolean[] }>({
   show: false, from: '', to: '', weekdays: [true, true, true, true, true, true, true],
 })
 function seasonMeta(name: string) { return seasonsCatalog.value.find(s => s.name === name) }
 function seasonColorFor(dateStr: string) { const n = seasonByDate.value[dateStr]; return n ? (seasonMeta(n)?.color || '#94a3b8') : '' }
 function seasonLabelFor(dateStr: string) { const n = seasonByDate.value[dateStr]; return n ? (seasonMeta(n)?.label || n) : '' }
+function seasonSourceFor(dateStr: string) { return seasonSourceByDate.value[dateStr] || '' }
 // Tinta la columna de la fecha con el color de su temporada (fondo suave + barra sólida abajo).
 function seasonHeaderStyle(dateStr: string) {
   const c = seasonColorFor(dateStr)
@@ -2081,14 +2106,23 @@ function seasonHeaderStyle(dateStr: string) {
 async function loadSeasonsCatalog() {
   try { const r = await HotelService.seasons(); seasonsCatalog.value = (r.data || []).map((s: any) => ({ name: s.name, label: s.label || s.name, color: s.color || '#94a3b8' })) } catch { /* sin catálogo */ }
 }
+/**
+ * Temporada EFECTIVA por día — `GET /api/season-calendar`, la misma regla con la que se cobra.
+ *
+ * Antes pedía `season-assignments`, que devuelve SOLO los días pintados a mano: un día cubierto por
+ * el rango del catálogo salía en blanco, aunque el motor ya estuviera cotizando esa temporada. El
+ * planning es donde el hotel asigna temporadas y era la pantalla que menos sabía sobre ellas.
+ */
 async function loadSeasonAssignments() {
   const days = visibleDays.value
   if (!days.length) return
   try {
-    const r = await HotelService.seasonAssignments(days[0].dateStr, days[days.length - 1].dateStr)
+    const r = await HotelService.seasonCalendar(days[0].dateStr, days[days.length - 1].dateStr)
     const map: Record<string, string> = {}
-    for (const it of r.data || []) map[it.date] = it.season
+    const src: Record<string, string> = {}
+    for (const it of r.data || []) { map[it.date] = it.season; src[it.date] = it.source }
     seasonByDate.value = map
+    seasonSourceByDate.value = src
   } catch { /* sin permiso o error: la fila queda sin temporada */ }
 }
 function openSeasonDialog() {

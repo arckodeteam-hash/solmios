@@ -469,6 +469,54 @@ describe('TtlockService', () => {
       }
     })
 
+    it('lockLock llama al endpoint de CIERRE remoto, no al de apertura', async () => {
+      const orm = makeOrm({
+        findById: async (table: string) => table === 'LockDevices' ? { id: 'l1', hotelId: 'h1', ttlockLockId: '123' } : null,
+      })
+      const realFetch = globalThis.fetch
+      let calledUrl = ''
+      globalThis.fetch = (async (url: any) => { calledUrl = String(url); return new Response(JSON.stringify({ errcode: 0 })) }) as any
+      try {
+        const queries = new TtlockQueries(orm)
+        const auth = { assertOwnership: () => {} } as any
+        const svc = new TtlockService(repo(orm, 'LockDevices'), repo(orm, 'LockCodes'), log, queries, auth)
+        await svc.lockLock('h1', 'l1')
+        expect(calledUrl).toContain('/v3/lock/lock')
+        expect(calledUrl).not.toContain('/unlock')
+      } finally {
+        globalThis.fetch = realFetch
+      }
+    })
+
+    // Muchos modelos son de resorte y no tienen motor para echar el pestillo: Sciener responde con
+    // errcode. Tragarse ese error diría "puerta cerrada" con la puerta abierta.
+    it('lockLock propaga el error cuando la cerradura no soporta cierre remoto', async () => {
+      const orm = makeOrm({
+        findById: async (table: string) => table === 'LockDevices' ? { id: 'l1', hotelId: 'h1', ttlockLockId: '123' } : null,
+      })
+      const realFetch = globalThis.fetch
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ errcode: -3007, errmsg: 'Lock does not support remote locking' }))) as any
+      try {
+        const queries = new TtlockQueries(orm)
+        const auth = { assertOwnership: () => {} } as any
+        const svc = new TtlockService(repo(orm, 'LockDevices'), repo(orm, 'LockCodes'), log, queries, auth)
+        await expect(svc.lockLock('h1', 'l1')).rejects.toThrow(/remote locking/)
+      } finally {
+        globalThis.fetch = realFetch
+      }
+    })
+
+    it('lockLock de otro hotel: assertOwnership corta', async () => {
+      const orm = makeOrm({
+        findById: async (table: string) => table === 'LockDevices' ? { id: 'l1', hotelId: 'h1', ttlockLockId: '123' } : null,
+      })
+      const queries = new TtlockQueries(orm)
+      const auth = { assertOwnership: (a: string, b: string) => { if (a !== b) throw new Error('Forbidden') } } as any
+      const svc = new TtlockService(repo(orm, 'LockDevices'), repo(orm, 'LockCodes'), log, queries, auth)
+      await expect(svc.lockLock('h2', 'l1')).rejects.toThrow(/Forbidden/)
+    })
+
     it('unlockLock de otro hotel: assertOwnership corta', async () => {
       const orm = makeOrm({
         findById: async (table: string) => table === 'LockDevices' ? { id: 'l1', hotelId: 'h1', ttlockLockId: '123' } : null,

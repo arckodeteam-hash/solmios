@@ -455,8 +455,14 @@ export class ChannexUseCase {
       const bFixed = seasonByName.get(b[0]!.season)?.startDate ? 0 : 1
       return aFixed - bFixed
     })
-    const priceOf = (r: { basePrice: number; percentage: number }) =>
-      Math.round((r.basePrice || 0) * (1 + (r.percentage || 0) / 100) * 100)  // centavos
+    // Precio de temporada, en centavos. `price` viene ya resuelto de `push-rates.ts` (el importe de
+    // la grilla global, con el % del canal encima si lo hay): desde que las temporadas se cargan en
+    // pesos, `basePrice × (1 + %)` dejó de dar el precio real. El fallback recompone desde el base
+    // para las filas viejas que todavía no tengan `price` guardado.
+    const priceOf = (r: { basePrice: number; percentage: number; price?: number }) =>
+      Math.round((Number(r.price) || (r.basePrice || 0) * (1 + (r.percentage || 0) / 100)) * 100)
+    /** Tarifa del tipo SIN temporada: la línea base que cubre el horizonte donde no llega ninguna. */
+    const basePriceOf = (r: { basePrice: number }) => Math.round((r.basePrice || 0) * 100)
 
     // ── Línea base de 500 días (test 1 de la certificación) ────────────────────────────────
     // Las temporadas cubren solo sus rangos: fuera de ellos Channex se quedaba SIN tarifa, así que
@@ -475,7 +481,7 @@ export class ChannexUseCase {
       const rtId = lookupRoomTypeId(rtIdByTitle, roomType)
       const rtRps = rtId ? rpsByRt.get(rtId) : undefined
       if (!rtRps?.length) continue   // el motivo ya lo reporta el loop de temporadas de abajo
-      const flat = group.map((r) => ({ occupancy: Number(r.occupancy) || 0, rate: priceOf({ basePrice: r.basePrice, percentage: 0 }) }))
+      const flat = group.map((r) => ({ occupancy: Number(r.occupancy) || 0, rate: basePriceOf(r) }))
         .filter((x) => x.occupancy > 0)
       const head = group[0]!
       for (const plan of ratePlans) {
@@ -485,7 +491,7 @@ export class ChannexUseCase {
         if (flat.length > 0) {
           entry.rates = flat.map((o) => ({ occupancy: o.occupancy, rate: planPrice(o.rate, plan.markupPct) }))
         } else {
-          entry.rate = planPrice(priceOf({ basePrice: head.basePrice, percentage: 0 }), plan.markupPct)
+          entry.rate = planPrice(basePriceOf(head), plan.markupPct)
         }
         values.push(entry)
       }

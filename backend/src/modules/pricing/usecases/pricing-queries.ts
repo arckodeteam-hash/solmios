@@ -1,4 +1,5 @@
 import { readRatePlans, type RatePlanDef } from '../../../shared/utils/rate-plans'
+import { resolveSeasonPrice } from '../../../shared/utils/season-price'
 // El hotel tarifa SIEMPRE por persona (ocupación). Existió un modo 'per_room' (un precio por
 // habitación sin importar cuánta gente entre) con un switch en la UI, y se sacó: era la fuente de
 // una clase entera de confusiones — la grilla mostraba una sola fila por tipo, el precio de "1
@@ -22,6 +23,10 @@ const rateKey = (roomType: string, occupancy: number, season: string): string =>
 
 const effectivePrice = (basePrice: number, percentage: number): number =>
   Math.round(basePrice * (1 + percentage / 100) * 100) / 100
+
+/** El precio de una fila GLOBAL: el importe que el hotel cargó, con los fallbacks (fila vieja
+ *  guardada como porcentaje, celda nunca cargada) que documenta `resolveSeasonPrice`. */
+const seasonPriceOf = (row: any, typeBasePrice: number): number => resolveSeasonPrice(row, typeBasePrice)
 
 export class PricingQueries {
   /**
@@ -131,16 +136,24 @@ export class PricingQueries {
       // 120 cargado en la habitación. `c.basePrice` sale de `roomTypesFor`; si el tipo ya no
       // existe vale 0 y se respeta lo grabado, que es lo que se está publicando.
       if (real) {
+        // El PRECIO de una fila global es el importe que el hotel cargó para esa temporada, no
+        // `basePrice × porcentaje`: desde que la grilla se edita en pesos, derivarlo volvería a
+        // mostrar un número distinto del que se guardó (y del que se cobra).
         const base = c.basePrice || Number(real.basePrice) || 0
-        return { ...real, basePrice: base, price: effectivePrice(base, Number(real.percentage) || 0) }
+        return { ...real, basePrice: base, price: seasonPriceOf(real, base) }
       }
       const group = byGroup.get(`${c.roomType}|${c.occupancy}`) ?? byType.get(c.roomType)
       const sameSeason = bySeasonOfType.get(`${c.roomType}|${c.season}`)
       const basePrice = c.basePrice || Number(group?.basePrice) || 0
+      // Una celda que el hotel todavía no cargó arranca con el PRECIO que ya tiene esa temporada en
+      // el mismo tipo (otra ocupación), y recién si no hay ninguno cae al base del tipo. Antes se
+      // heredaba el porcentaje; con la grilla en pesos se hereda el importe, que es el mismo criterio
+      // traducido: la ocupación nueva no debería aparecer más barata que la que ya estaba cargada.
       const percentage = Number(sameSeason?.percentage) || 0
+      const price = Number(sameSeason?.price) || basePrice
       return {
         hotelId, roomType: c.roomType, occupancy: c.occupancy, season: c.season, channel,
-        basePrice, percentage, price: effectivePrice(basePrice, percentage),
+        basePrice, percentage, price,
         closed: Number(sameSeason?.closed) || 0,
         minStay: Number(group?.minStay) || 0,
         maxStay: Number(group?.maxStay) || 0,
@@ -186,12 +199,21 @@ export class PricingQueries {
       // mientras la habitación tenía 120 cargado.
       if (override) {
         const base = Number(b.basePrice) || Number(override.basePrice) || 0
-        return { ...override, basePrice: base, price: effectivePrice(base, Number(override.percentage) || 0) }
+        // El porcentaje del canal se aplica sobre el PRECIO DE LA TEMPORADA (`b.price`, la celda
+        // global de esta misma combinación), no sobre el precio base del tipo. Es lo que hace el
+        // guardado (`shared/utils/season-price.ts`) y lo que se publica: derivarlo del base acá hacía
+        // que el editor del canal anunciara un precio y la OTA vendiera otro.
+        const seasonPrice = Number(b.price) || base
+        return {
+          ...override, basePrice: base, seasonPrice,
+          price: effectivePrice(seasonPrice, Number(override.percentage) || 0),
+        }
       }
       // Sin `id`: es una celda del CANAL derivada de la base, no la fila base — devolver su id
       // invitaría a que un guardado la pisara.
       const { id: _id, ...cell } = b
-      return { ...cell, channel, _inherited: true }
+      // Sin override, el canal vende el precio de la temporada tal cual (0% de recargo).
+      return { ...cell, channel, seasonPrice: Number(b.price) || 0, percentage: 0, _inherited: true }
     })
     const inOut = new Set(out.map((r) => rateKey(r.roomType, r.occupancy, r.season)))
     return [...out, ...[...overrides.values()].filter((o) => !inOut.has(rateKey(o.roomType, o.occupancy, o.season)))]

@@ -139,6 +139,14 @@ export class PricingController {
     return { status: 200, body: { data: await this.calendar.listSeasonAssignments(id, from, to) } }
   }
 
+  /** La temporada que rige cada día del rango, resuelta como la resuelve el cobro. */
+  async seasonCalendar(req: HttpRequest) {
+    const id = await this.hotelOf(req); if (!id) return { status: 200, body: { data: [] } }
+    const { from, to } = (req.query || {}) as any
+    if (!from || !to) return { status: 400, body: { error: 'from y to requeridos' } }
+    return { status: 200, body: { data: await this.calendar.seasonCalendar(id, String(from), String(to)) } }
+  }
+
   async assignSeason(req: HttpRequest) {
     const id = await this.hotelOf(req); if (!id) return { status: 400, body: { error: 'hotelId requerido' } }
     validateSchema(AssignSeasonSchema, req.body)

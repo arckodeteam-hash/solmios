@@ -23,7 +23,7 @@ export interface PaymentGateway {
   hasWebhookSecret: boolean
   currency?: string
   capabilities: GatewayCapabilities
-  /** false = el sistema lo admite pero todavía no hay adapter (hoy solo PayPal). */
+  /** false = el sistema admite el proveedor pero todavía no hay adapter escrito. Hoy los cuatro lo tienen. */
   implemented: boolean
   /** MerchantId (Azul) / Comercio (CardNet) guardado. Nunca el valor, solo el flag. */
   hasMerchantId: boolean

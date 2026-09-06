@@ -1,3 +1,4 @@
+import { roomChargeRate } from '../../../shared/usecases/room-charge-rate'
 export async function postNightAuditRoomCharges(orm: any, listFolios: any, openFolio: any, postCharge: any, user: any, query?: any): Promise<any> {
   if (!orm) return { posted: 0, error: 'ORM no disponible' }
   // Multi-tenant: solo super_admin puede targetear otro hotel vía ?hotelId=.
@@ -37,7 +38,13 @@ export async function postNightAuditRoomCharges(orm: any, listFolios: any, openF
       skipped++
       continue
     }
-    await postCharge(folio.id, { description: `Habitación ${room.number} — ${t}`, category: 'room', amount: Number(room.basePrice) || 0, quantity: 1, source: 'night_audit' }, mockUser as any)
+    // Mismo precio que cotizó la reserva: temporada → room_rates → rooms.basePrice. Con
+    // `rooms.basePrice` a secas, cada noche de la estadía se facturaba fuera de temporada.
+    const nightRate = await roomChargeRate(orm, {
+      hotelId: folio.hotelId, date: t, roomType: String(room.type || ''),
+      guests: Number(folio.guests) || 1, fallbackPrice: Number(room.basePrice) || 0,
+    })
+    await postCharge(folio.id, { description: `Habitación ${room.number} — ${t}`, category: 'room', amount: nightRate, quantity: 1, source: 'night_audit' }, mockUser as any)
     posted++
   }
   return { posted, skipped, date: t }

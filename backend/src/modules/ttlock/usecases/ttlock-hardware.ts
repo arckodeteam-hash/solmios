@@ -2,7 +2,8 @@
 // (gateways, códigos activos, registros, apertura remota, borrado de PIN). Extraído del service
 // para no volverlo un God Object (>200 líneas). Todas validan ownership sobre la cerradura.
 
-import { listGateways, listLockPasscodes, listLockRecords, unlockLock, deleteKeyboardPassword, listLockGateways, addPermanentPasscode, randomPin } from '../../../services/ttlock-client'
+import { listGateways, listLockPasscodes, listLockRecords, unlockLock,
+  lockLock, deleteKeyboardPassword, listLockGateways, addPermanentPasscode, randomPin } from '../../../services/ttlock-client'
 
 const MS_PER_DAY = 86_400_000
 
@@ -81,6 +82,12 @@ export async function getRecords(deps: HardwareDeps, hotelId: string, lockDevice
 export async function openLock(deps: HardwareDeps, hotelId: string, lockDeviceId: string): Promise<void> {
   const { lock, cfg } = await resolveLock(deps, hotelId, lockDeviceId)
   await unlockLock(credsFrom(cfg), Number(lock.ttlockLockId))
+}
+
+/** Cierra la puerta en remoto. No todas las cerraduras lo soportan — ver `lockLock` en el cliente. */
+export async function closeLock(deps: HardwareDeps, hotelId: string, lockDeviceId: string): Promise<void> {
+  const { lock, cfg } = await resolveLock(deps, hotelId, lockDeviceId)
+  await lockLock(credsFrom(cfg), Number(lock.ttlockLockId))
 }
 
 /** Gateway(s) que alcanzan esta cerradura, con señal — "dónde está conectada". */

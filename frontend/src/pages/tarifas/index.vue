@@ -19,7 +19,7 @@
     <div v-else class="space-y-6">
       <div>
         <h2 class="text-xl font-black text-navy">Temporadas y Tarifas</h2>
-        <p class="text-sm text-text-muted mt-0.5">Precio base por tipo de habitación y ajuste porcentual por temporada</p>
+        <p class="text-sm text-text-muted mt-0.5">Un precio por temporada para cada tipo de habitación</p>
       </div>
 
       <!-- Sin un rango de fechas guardado el motor no sabe qué temporada aplicarle a una reserva:
@@ -39,14 +39,24 @@
         </template>
       </SetupAlert>
 
-      <SectionCard title="Temporadas" subtitle="Definí el rango de fechas de cada una y cuál está activa">
+      <SectionCard title="Temporadas"
+        :subtitle="currentSeasonLabel
+          ? `Hoy rige ${currentSeasonLabel} — la temporada sale de estas fechas y de los días marcados en el planning`
+          : 'Definí el rango de fechas de cada una. La que rige cada día sale de acá y del planning'">
         <div class="grid md:grid-cols-4 gap-4">
+          <!-- "Rige hoy" NO es un botón: sale de la fecha y del planning, la misma regla con la que
+               se cobra (`GET /api/season-calendar`). Antes había un botón "Activar temporada" que
+               escribía `seasons.active`, un campo que ningún cálculo de precio lee: la tarjeta podía
+               decir "Activa: Alta" mientras el motor y las OTAs cobraban Baja, y no había forma de
+               notarlo desde la pantalla. Una sola fuente, en las tres vistas. -->
           <div v-for="(s, i) in seasonsList" :key="i" class="bg-surface rounded-xl p-4"
-            :class="s.active ? 'ring-2 ring-cyan' : ''">
+            :class="s.name === currentSeason ? 'ring-2 ring-cyan' : ''">
             <div class="flex items-center gap-2 mb-3">
               <div class="w-4 h-4 rounded-full" :style="{ backgroundColor: s.color || '#3b82f6' }"></div>
               <span class="text-sm font-bold text-navy">{{ s.label || s.name }}</span>
-              <span v-if="s.active" class="ml-auto inline-flex items-center gap-1 rounded-full bg-[#DCFCE7] px-2 py-0.5 text-[9px] font-extrabold uppercase text-[#16A34A]">Activa</span>
+              <span v-if="s.name === currentSeason"
+                :title="currentSeasonSource === 'planning' ? 'Marcada para hoy en el planning' : 'Hoy cae dentro de su rango de fechas'"
+                class="ml-auto inline-flex items-center gap-1 rounded-full bg-[#DCFCE7] px-2 py-0.5 text-[9px] font-extrabold uppercase text-[#16A34A]">Rige hoy</span>
             </div>
             <div class="space-y-2">
               <div>
@@ -57,10 +67,10 @@
                 <label class="text-[10px] font-bold text-text-muted uppercase">Fin</label>
                 <input :id="`temporada-${i}-fin`" :aria-label="`Fin de la temporada ${s.name}`" v-model="s.endDate" type="date" class="w-full mt-1 px-3 py-2 rounded-full border border-border text-xs focus:outline-none focus:border-navy" />
               </div>
-              <button v-if="!s.active" @click="activateSeason(s.name)" :disabled="activatingSeason"
-                class="w-full mt-1 px-3 py-2 rounded-full bg-navy/5 hover:bg-navy text-navy hover:text-white text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-50">
-                Activar temporada
-              </button>
+              <router-link v-if="s.name !== currentSeason" :to="{ name: 'planning' }"
+                class="block w-full mt-1 px-3 py-2 rounded-full bg-navy/5 hover:bg-navy text-navy hover:text-white text-[11px] font-bold text-center transition-colors cursor-pointer">
+                Marcar días en el planning
+              </router-link>
             </div>
           </div>
         </div>
@@ -105,7 +115,7 @@
                       <span class="font-extrabold text-navy capitalize">{{ roomType }}</span>
                       <label class="flex items-center gap-2 ml-auto text-[10px] font-bold text-text-muted uppercase">
                         <span class="normal-case text-[11px] text-text-muted font-semibold">
-                          Precio base — uno solo; las temporadas y los canales le aplican su porcentaje
+                          Precio base — se cobra los días sin temporada asignada
                         </span>
                         $
                         <input :aria-label="`Precio base de ${roomType}`" :value="getBasePrice(roomType)" @input="setBasePrice(roomType, $event)" type="number" min="0"
@@ -122,15 +132,19 @@
                   <td v-for="s in seasonsList" :key="s.name" class="px-2 py-2 text-center align-top"
                     :class="isCellClosed(roomType, occ, s.name) ? 'opacity-60' : ''"
                     :style="!isCellClosed(roomType, occ, s.name) ? { backgroundColor: s.color + '0D' } : { backgroundColor: 'rgba(239,68,68,0.12)' }">
+                    <!-- El precio de la temporada es un IMPORTE, no un recargo: el hotel piensa en
+                         pesos. El porcentaje sigue existiendo, pero es cosa del CANAL, que lo aplica
+                         sobre este número (ver backend/src/shared/utils/season-price.ts). -->
                     <div class="flex flex-col items-center gap-1">
                       <div class="flex items-center gap-1">
-                        <span class="text-xs font-black" :style="{ color: s.color }">+</span>
-                        <input :aria-label="`Recargo % de ${roomType}, ${occ} huésped(es), temporada ${s.name}`" :value="getPercentage(roomType, occ, s.name)" @input="setPercentage(roomType, occ, s.name, $event)"
-                          type="number" min="0" max="500" step="0.5"
-                          class="w-14 px-2 py-1 rounded-full border border-border text-sm font-bold text-navy text-right focus:outline-none focus:border-cyan" />
-                        <span class="text-xs font-bold text-text-muted">%</span>
+                        <span class="text-xs font-black" :style="{ color: s.color }">$</span>
+                        <input :aria-label="`Precio de ${roomType}, ${occ} huésped(es), temporada ${s.name}`" :value="getSeasonPrice(roomType, occ, s.name)" @input="setSeasonPrice(roomType, occ, s.name, $event)"
+                          type="number" min="0" step="1"
+                          class="w-20 px-2 py-1 rounded-full border border-border text-sm font-bold text-navy text-right tabular-nums focus:outline-none focus:border-cyan" />
                       </div>
-                      <div class="text-xs font-extrabold text-navy">= ${{ getCalculatedPrice(roomType, occ, s.name) }}</div>
+                      <div v-if="priceDeltaLabel(roomType, occ, s.name)" class="text-[10px] font-bold text-text-muted">
+                        {{ priceDeltaLabel(roomType, occ, s.name) }}
+                      </div>
                       <button @click="toggleClosed(roomType, occ, s.name)"
                         class="text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors cursor-pointer"
                         :class="isCellClosed(roomType, occ, s.name) ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-surface text-text-muted hover:bg-surface-dark'">
@@ -156,7 +170,9 @@
         </div>
 
         <p class="px-5 pb-4 text-[11px] text-text-muted">
-          Cada celda aplica un % sobre el precio base del tipo de habitación. Precio final = base × (1 + % / 100).
+          Cada celda es el precio de esa temporada, en {{ '$' }}. Una celda sin precio propio cobra el precio base
+          del tipo. Los canales no fijan importes: le suman su porcentaje a este número, desde
+          <router-link :to="{ name: 'channel-manager' }" class="font-bold text-cyan hover:underline">Channel</router-link>.
         </p>
       </SectionCard>
     </div>
@@ -221,7 +237,7 @@ onMounted(async () => {
       seasonsList.value = seas.data
     }
 
-    await loadRates()
+    await Promise.all([loadRates(), loadCurrentSeason()])
   } catch {
     toast.error('Error al cargar tarifas')
   } finally {
@@ -275,37 +291,50 @@ function getBasePrice(roomType: string): number {
   return row.basePrices?.[seasonsList.value[0]?.name] ?? 0
 }
 
+/**
+ * Cambiar el precio base del TIPO no mueve los precios de temporada ya cargados: cada temporada
+ * tiene su importe propio, decidido por el hotel. Solo se arrastran las celdas que todavía valen lo
+ * mismo que la base (nunca se les puso un precio distinto) y las vacías.
+ */
 function setBasePrice(roomType: string, event: Event) {
   const val = Number((event.target as HTMLInputElement).value) || 0
   for (const row of ratesMatrix.value) {
-    if (row.roomType === roomType) {
-      for (const s of seasonsList.value) {
-        row.basePrices[s.name] = val
-        const pct = row.percentages[s.name] ?? 0
-        row.prices[s.name] = Math.round(val * (1 + pct / 100) * 100) / 100
-      }
+    if (row.roomType !== roomType) continue
+    for (const s of seasonsList.value) {
+      const previousBase = row.basePrices[s.name] ?? 0
+      const price = row.prices[s.name] ?? 0
+      row.basePrices[s.name] = val
+      if (!price || price === previousBase) row.prices[s.name] = val
     }
   }
 }
 
-function getPercentage(roomType: string, occupancy: number, season: string): number {
-  const row = ratesMatrix.value.find(r => r.roomType === roomType && r.occupancy === occupancy)
-  return row?.percentages?.[season] ?? 0
-}
-
-function setPercentage(roomType: string, occupancy: number, season: string, event: Event) {
-  const val = Number((event.target as HTMLInputElement).value) || 0
-  const row = ratesMatrix.value.find(r => r.roomType === roomType && r.occupancy === occupancy)
-  if (row) {
-    row.percentages[season] = val
-    const base = row.basePrices[season] ?? 0
-    row.prices[season] = Math.round(base * (1 + val / 100) * 100) / 100
-  }
-}
-
-function getCalculatedPrice(roomType: string, occupancy: number, season: string): number {
+/** El precio de esa temporada, en pesos. Es el dato que el hotel escribe. */
+function getSeasonPrice(roomType: string, occupancy: number, season: string): number {
   const row = ratesMatrix.value.find(r => r.roomType === roomType && r.occupancy === occupancy)
   return row?.prices?.[season] ?? 0
+}
+
+function setSeasonPrice(roomType: string, occupancy: number, season: string, event: Event) {
+  const val = Number((event.target as HTMLInputElement).value) || 0
+  const row = ratesMatrix.value.find(r => r.roomType === roomType && r.occupancy === occupancy)
+  if (!row) return
+  row.prices[season] = val
+  // El porcentaje pasa a ser informativo: cuánto se aparta del precio base del tipo. Se sigue
+  // mandando para que el backend lo guarde como espejo, pero ya no decide nada.
+  const base = row.basePrices[season] ?? 0
+  row.percentages[season] = base > 0 ? Math.round((val / base - 1) * 10000) / 100 : 0
+}
+
+/** "= precio base" o "+25% sobre la base": ubica el importe sin obligar a hacer la cuenta. */
+function priceDeltaLabel(roomType: string, occupancy: number, season: string): string {
+  const row = ratesMatrix.value.find(r => r.roomType === roomType && r.occupancy === occupancy)
+  const base = row?.basePrices?.[season] ?? 0
+  const price = row?.prices?.[season] ?? 0
+  if (!base || !price) return ''
+  if (price === base) return '= precio base'
+  const pct = Math.round((price / base - 1) * 1000) / 10
+  return `${pct > 0 ? '+' : ''}${pct}% sobre la base`
 }
 
 function isCellClosed(roomType: string, occupancy: number, season: string): boolean {
@@ -392,20 +421,29 @@ async function saveRates() {
   }
 }
 
-const activatingSeason = ref(false)
-async function activateSeason(name: string) {
-  if (activatingSeason.value) return
-  activatingSeason.value = true
+/**
+ * La temporada que RIGE HOY. No es una elección: sale de `GET /api/season-calendar`, que resuelve el
+ * rango del catálogo con los días del planning encima — la misma regla con la que cobra el motor y
+ * con la que se publica a las OTAs. Ver `backend/src/modules/pricing/usecases/season-calendar.ts`.
+ *
+ * Reemplaza al viejo botón "Activar temporada", que escribía `seasons.active`: un campo que ningún
+ * cálculo de precio lee. Medido en producción el 2026-09-05, esta pantalla decía "Activa: Alta"
+ * mientras el motor y el editor de canal cobraban Baja.
+ */
+const currentSeason = ref('')
+const currentSeasonSource = ref('')
+const currentSeasonLabel = computed(() => {
+  const s = seasonsList.value.find((x) => x.name === currentSeason.value)
+  return s ? (s.label || s.name) : ''
+})
+
+async function loadCurrentSeason() {
+  const today = new Date().toISOString().slice(0, 10)
   try {
-    const res = await HotelService.activateSeason(name)
-    // Reflejar la nueva activa (el backend deja una sola). Fallback: marcar localmente.
-    if (res?.data?.length) seasonsList.value = res.data
-    else seasonsList.value.forEach((s) => (s.active = s.name === name ? 1 : 0))
-    toast.success(`Temporada activa: ${name}`)
-  } catch {
-    toast.error('No se pudo cambiar la temporada activa')
-  } finally {
-    activatingSeason.value = false
-  }
+    const r = await HotelService.seasonCalendar(today, today)
+    const day = (r.data || [])[0]
+    currentSeason.value = day?.season || ''
+    currentSeasonSource.value = day?.source || ''
+  } catch { currentSeason.value = ''; currentSeasonSource.value = '' }
 }
 </script>

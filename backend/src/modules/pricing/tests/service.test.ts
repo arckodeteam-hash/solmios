@@ -219,13 +219,17 @@ describe('PricingService', () => {
   }
 
   describe('updateRates', () => {
-    it('calculates price = basePrice * (1 + percentage/100) and updates existing', async () => {
+    // La grilla global guarda el IMPORTE de la temporada; el porcentaje del canal se aplica sobre
+    // ese importe (shared/utils/season-price.ts). Antes esta capa también era porcentual.
+    it('guarda el importe de la temporada y actualiza la fila existente', async () => {
       const { orm, updated } = makeRatesStoreOrm([
         { id: 'r1', hotelId: 'h1', roomType: 'standard', occupancy: 2, season: 'Summer', basePrice: 100, percentage: 0, price: 100, closed: 0 },
       ])
       const svc = makeServiceFromOrm(orm)
       const count = await svc.updateRates('h1', [
-        { roomType: 'standard', occupancy: 2, season: 'Summer', basePrice: 100, percentage: 20, closed: false },
+        // `basePrice` viaja para el caso huérfano (este ORM mock no tiene habitaciones, así que el
+        // espejo del tipo sale del payload); lo que decide el precio es `price`.
+        { roomType: 'standard', occupancy: 2, season: 'Summer', basePrice: 100, price: 120, closed: false },
       ])
       expect(count).toBe(1)
       expect(updated).toHaveLength(1)
@@ -377,8 +381,8 @@ describe('PricingService — tenancy (SEC-2.2)', () => {
       const svc = makeService()
       let calls = 0
       svc.setSockets({ onRatesUpdated: async () => { calls++ } })
-      // basePrice 100 + 20% → price 120 == existing.price 120 → sin cambio.
-      await svc.updateRates('h1', [{ roomType: 'standard', season: 'Summer', occupancy: 2, basePrice: 100, percentage: 20 }])
+      // El importe mandado coincide con el guardado → sin cambio.
+      await svc.updateRates('h1', [{ roomType: 'standard', season: 'Summer', occupancy: 2, price: 120 }])
       expect(calls).toBe(0)
     })
 
@@ -389,7 +393,7 @@ describe('PricingService — tenancy (SEC-2.2)', () => {
       const svc = makeService()
       let emitted: { hotelId: string; channels?: string[] } | null = null
       svc.setSockets({ onRatesUpdated: async (hotelId, _count, channels) => { emitted = { hotelId, channels } } })
-      await svc.updateRates('h1', [{ roomType: 'standard', season: 'Summer', occupancy: 2, basePrice: 110, percentage: 0, channel: 'OpenChannel' }])
+      await svc.updateRates('h1', [{ roomType: 'standard', season: 'Summer', occupancy: 2, percentage: 10, channel: 'OpenChannel' }])
       expect(emitted).not.toBeNull()
       expect(emitted!.channels).toEqual(['OpenChannel'])
     })

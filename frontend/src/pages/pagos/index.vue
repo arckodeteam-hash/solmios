@@ -266,8 +266,9 @@ function secretPlaceholder(provider: PaymentProvider): string {
 
 /**
  * Catálogo de proveedores. Las capacidades reales las manda el backend por cada pasarela ya
- * configurada; esto describe lo que el sistema ofrece hoy. `implemented: false` = el puerto lo
- * admite pero falta el adapter, así que no se puede configurar todavía.
+ * configurada; esto describe lo que el sistema ofrece hoy. `implemented` = hay adapter escrito
+ * detrás (si fuera falso, el puerto lo admite pero todavía no se puede configurar). Los cuatro
+ * proveedores del catálogo ya tienen el suyo.
  */
 const CATALOG = [
   {
@@ -302,7 +303,7 @@ const CATALOG = [
     name: 'PayPal',
     icon: '🅿️',
     description: 'Wallet y tarjetas. El huésped paga en PayPal y vuelve.',
-    implemented: false,
+    implemented: true,
     confirmation: 'push' as ConfirmationMode,
     capabilities: { refund: true, void: true, paymentLinks: false, confirmation: 'push' as ConfirmationMode },
   },

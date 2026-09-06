@@ -1,9 +1,13 @@
-// pricing/tests/update-rates-base.test.ts — Guardar tarifas deriva el precio base de la HABITACIÓN.
+// pricing/tests/update-rates-base.test.ts — Qué precio se guarda en cada una de las dos capas.
 //
-// El bug que fija este archivo: `updateRates` tomaba `basePrice` del payload y lo grababa tal cual en
-// cada fila (tipo × ocupación × temporada × canal). El editor del canal mandaba el suyo, la grilla
-// base mandaba otro, y ninguno tenía que ver con el precio de la habitación. En producción la misma
-// suite terminó con 120 / 250 / 220 según por dónde se mirara, sin ninguna señal de error.
+// El bug original: `updateRates` tomaba `basePrice` del payload y lo grababa tal cual en cada fila
+// (tipo × ocupación × temporada × canal). El editor del canal mandaba el suyo, la grilla base
+// mandaba otro, y ninguno tenía que ver con el precio de la habitación. En producción la misma suite
+// terminó con 120 / 250 / 220 según por dónde se mirara, sin ninguna señal de error.
+//
+// Encima de eso, las dos capas guardan cosas distintas (ver shared/utils/season-price.ts):
+// la grilla GLOBAL lleva el IMPORTE de cada temporada, y la de CANAL un porcentaje sobre ese
+// importe. `basePrice` sigue siendo, en las dos, el precio del tipo — un espejo.
 
 import { describe, it, expect } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
@@ -71,40 +75,78 @@ describe('updateRates — el base sale de la habitación, no del payload', () =>
     expect(orm.saved[0]!.basePrice).toBe(120)
   })
 
-  it('el precio guardado se deriva del base del tipo y el porcentaje', async () => {
+  // ── Capa GLOBAL: el importe manda ──────────────────────────────────────────
+  it('la grilla global guarda el IMPORTE que escribió el hotel', async () => {
     const orm = makeOrm(120)
     await makeService(orm).updateRates('h1', [
-      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '', basePrice: 220, percentage: 70 },
+      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '', price: 200 },
     ])
-    expect(orm.saved[0]!.price).toBe(204)   // 120 × 1,70 — NO 374 (que sería 220 × 1,70)
+    expect(orm.saved[0]!.price).toBe(200)
+    expect(orm.saved[0]!.basePrice).toBe(120)   // el espejo del tipo, no el precio de la temporada
   })
 
-  it('base y canal comparten el MISMO base: solo cambia el porcentaje', async () => {
+  it('el porcentaje del payload NO decide el precio global', async () => {
+    // Antes esta misma fila guardaba 204 (120 × 1,70). Ahora el % de la grilla global es un espejo:
+    // el hotel escribe pesos, no porcentajes.
     const orm = makeOrm(120)
-    const svc = makeService(orm)
-    await svc.updateRates('h1', [
-      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '', basePrice: 100, percentage: 0 },
-      { roomType: 'suite', occupancy: 2, season: 'alta', channel: 'OpenChannel', basePrice: 220, percentage: 50 },
+    await makeService(orm).updateRates('h1', [
+      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '', price: 200, percentage: 70 },
     ])
-    const bases = orm.saved.map((r) => r.basePrice)
-    expect(bases).toEqual([120, 120])
-    expect(orm.saved.map((r) => r.price)).toEqual([120, 180])
+    expect(orm.saved[0]!.price).toBe(200)
   })
 
-  it('un porcentaje negativo BAJA el precio respecto del base', async () => {
+  it('el porcentaje que se guarda en la fila global es el que representa ese importe', async () => {
+    // Espejo para los lectores que recomponen desde basePrice + percentage cuando `price` es 0
+    // (shared/utils/rate-resolution.ts:ratePrice).
+    const orm = makeOrm(120)
+    await makeService(orm).updateRates('h1', [
+      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '', price: 180 },
+    ])
+    expect(orm.saved[0]!.percentage).toBe(50)   // 180 = 120 × 1,50
+  })
+
+  it('una celda global sin importe cae al precio base del tipo', async () => {
+    const orm = makeOrm(120)
+    await makeService(orm).updateRates('h1', [
+      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '' },
+    ])
+    expect(orm.saved[0]!.price).toBe(120)
+  })
+
+  // ── Capa CANAL: el porcentaje manda, sobre el precio de la temporada ────────
+  it('el canal aplica su porcentaje sobre el PRECIO DE LA TEMPORADA, no sobre el base del tipo', async () => {
+    const orm = makeOrm(120)
+    await makeService(orm).updateRates('h1', [
+      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '', price: 200 },
+      { roomType: 'suite', occupancy: 2, season: 'alta', channel: 'OpenChannel', percentage: 50 },
+    ])
+    expect(orm.saved.map((r) => r.price)).toEqual([200, 300])   // 300 = 200 × 1,50 — NO 180
+    expect(orm.saved.map((r) => r.basePrice)).toEqual([120, 120])
+  })
+
+  it('el orden de las filas del payload no cambia el resultado del canal', async () => {
+    const orm = makeOrm(120)
+    await makeService(orm).updateRates('h1', [
+      { roomType: 'suite', occupancy: 2, season: 'alta', channel: 'OpenChannel', percentage: 50 },
+      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '', price: 200 },
+    ])
+    expect(orm.saved.find((r) => r.channel === 'OpenChannel')!.price).toBe(300)
+  })
+
+  it('un porcentaje negativo del canal BAJA el precio de la temporada', async () => {
     const orm = makeOrm(200)
     await makeService(orm).updateRates('h1', [
-      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '', percentage: -25 },
+      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '', price: 200 },
+      { roomType: 'suite', occupancy: 2, season: 'alta', channel: 'OpenChannel', percentage: -25 },
     ])
-    expect(orm.saved[0]!.price).toBe(150)
+    expect(orm.saved.find((r) => r.channel === 'OpenChannel')!.price).toBe(150)
   })
 
-  it('sin basePrice en el payload guarda igual, derivando del tipo', async () => {
+  it('un canal sobre una temporada que el hotel no cargó usa el precio base del tipo', async () => {
     const orm = makeOrm(120)
     await makeService(orm).updateRates('h1', [
-      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '', percentage: 10 },
+      { roomType: 'suite', occupancy: 2, season: 'alta', channel: 'OpenChannel', percentage: 10 },
     ])
-    expect(orm.saved[0]!.basePrice).toBe(120)
     expect(orm.saved[0]!.price).toBe(132)
   })
 
@@ -134,10 +176,10 @@ describe('updateRates — el base sale de la habitación, no del payload', () =>
     }
     const svc = makeService(orm, port)
     await svc.updateRates('h1', [
-      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '', percentage: 0 },
+      { roomType: 'suite', occupancy: 2, season: 'alta', channel: '' },
     ], undefined, [{ roomType: 'suite', basePrice: 150 }])
     expect(roomPrice).toBe(150)
     expect(orm.saved[0]!.basePrice).toBe(150)
-    expect(orm.saved[0]!.price).toBe(150)
+    expect(orm.saved[0]!.price).toBe(150)   // celda vacía → el base nuevo, no el viejo
   })
 })

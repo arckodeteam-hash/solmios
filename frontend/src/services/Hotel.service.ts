@@ -176,6 +176,16 @@ export const HotelService = {
     const qs = from && to ? `?from=${from}&to=${to}` : ''
     return http.get(`/season-assignments${qs}`)
   },
+  /**
+   * Temporada EFECTIVA de cada día del rango: el catálogo de temporadas resuelto por fecha, con los
+   * días pintados en el planning encima. Es la MISMA regla con la que se cobra
+   * (`backend/src/modules/pricing/usecases/season-calendar.ts` → `buildSeasonByDate`), y por eso es
+   * la que tienen que usar todas las pantallas — `seasonAssignments` devuelve solo lo pintado y deja
+   * afuera los días que la temporada cubre por su rango.
+   */
+  async seasonCalendar(from: string, to: string): Promise<{ data: { date: string; season: string; source: 'planning' | 'catalog' }[] }> {
+    return http.get(`/season-calendar?from=${from}&to=${to}`)
+  },
   /** Asigna (o borra, con season vacío) una temporada a un rango filtrado por día de la semana (0=Dom..6=Sáb). */
   async assignSeason(input: { from: string; to: string; weekdays?: number[]; season: string }): Promise<{ success: boolean; count: number }> {
     return http.post('/season-assignments', input)
