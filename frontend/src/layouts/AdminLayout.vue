@@ -415,7 +415,11 @@ const nonavItems = [
       { label: 'Habitaciones', path: '/panel/config/habitaciones', roles: ['hotel_admin', 'receptionist'] },
       { label: 'Temporadas y Tarifas', path: '/panel/config/tarifas', roles: ['hotel_admin'] },
       { label: 'Tarifas por fecha', path: '/panel/config/tarifas-fecha', roles: ['hotel_admin'] },
-      { label: 'Promociones', path: '/panel/config/promociones', roles: ['hotel_admin'] },
+      // Las dos mitades de la venta con descuento, juntas y con nombres que las distinguen:
+      // "Promociones" a secas no dejaba claro que eran paquetes, y los códigos vivían en otra
+      // sección del menú (Página pública).
+      { label: 'Paquetes y promociones', path: '/panel/config/promociones', roles: ['hotel_admin'] },
+      { label: 'Códigos de descuento', path: '/panel/config/codigos-descuento', roles: ['hotel_admin'] },
       // `anyOf`: /panel/config/mensajeria es CORE (no está en module-map), así que la
       // entrada se gatea por sus tabs — si el hotel no tiene habilitado ningún
       // módulo de mensajería, no se muestra.

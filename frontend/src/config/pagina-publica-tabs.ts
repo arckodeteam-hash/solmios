@@ -26,7 +26,9 @@ export const PAGINA_PUBLICA_TABS: PaginaPublicaTab[] = [
   { value: 'media', label: 'Media', path: '/panel/pagina-publica/media', roles: ['hotel_admin'], group: 'Contenido' },
   { value: 'apariencia', label: 'Apariencia', path: '/panel/pagina-publica/apariencia', roles: ['hotel_admin'], group: 'Contenido' },
   { value: 'booking-engine', label: 'Motor de reservas', path: '/panel/booking-engine', roles: ['hotel_admin'], group: 'Reservas' },
-  { value: 'promo-codes', label: 'Códigos de descuento', path: '/panel/promociones/codigos', roles: ['hotel_admin'], group: 'Reservas' },
+  // "Códigos de descuento" se mudó a Configuración, al lado de Paquetes y promociones: es
+  // configuración comercial (se define una vez y rige todos los canales), no contenido de la
+  // landing. Tenerlo acá lo dejaba lejos de los paquetes, que son la otra mitad de lo mismo.
   { value: 'reputacion', label: 'Reputación', path: '/panel/pagina-publica/reputacion', roles: ['hotel_admin'], group: 'Marketing' },
   { value: 'tracking', label: 'Tracking', path: '/panel/pagina-publica/tracking', roles: ['hotel_admin'], group: 'Marketing' },
 ]

@@ -127,7 +127,7 @@
         <p class="mt-3 text-[10px] text-text-muted">
           {{ selectedHotelAmenities.length }} seleccionado{{ selectedHotelAmenities.length === 1 ? '' : 's' }}.
           Las amenities a nivel habitación (TV, WiFi en cuarto, etc.) se configuran en
-          <strong>Configuración → Amenities</strong>.
+          <strong>Configuración → Amenities de habitación</strong>.
         </p>
       </SectionCard>
 

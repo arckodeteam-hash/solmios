@@ -470,6 +470,16 @@ const router = createRouter({
           name: 'settings',
           component: () => import('@/pages/settings/index.vue'),
           meta: { requiresHotelAdmin: true },
+          // Dos pestañas se mudaron de acá: `hr` (días laborables) a Asistencia y `room-types`
+          // (capacidad por tipo) a Habitaciones. Sin esto el link viejo abre Configuración en la
+          // primera pestaña, sin decir que lo que buscaba está en otro lado.
+          beforeEnter: (to) => {
+            const raw = to.query.tab
+            const tab = Array.isArray(raw) ? raw[raw.length - 1] : raw
+            if (tab === 'hr') return { path: '/panel/rrhh/attendance', query: { tab: 'schedules' } }
+            if (tab === 'room-types') return { path: '/panel/config/habitaciones', query: { tab: 'tipos' } }
+            return true
+          },
         },
         // Página pública: General/Landing/Media/Apariencia/Motor de reservas/Códigos de
         // descuento/Reputación/Tracking eran 8 items sueltos del menú (6 acá + 2 aparte,
@@ -482,6 +492,18 @@ const router = createRouter({
           name: 'pagina-publica',
           component: () => import('@/pages/pagina-publica/index.vue'),
           meta: { requiresHotelAdmin: true },
+          // `?tab=promo-codes` quedó huérfano al mudarse los códigos a Configuración. Sin esto la
+          // vista cae a la primera tab (General) y el link guardado aterriza en otra pantalla sin
+          // decir por qué.
+          beforeEnter: (to) => {
+            const raw = to.query.tab
+            const tab = Array.isArray(raw) ? raw[raw.length - 1] : raw
+            if (tab === 'promo-codes') {
+              const { tab: _drop, ...rest } = to.query
+              return { path: '/panel/config/codigos-descuento', query: rest }
+            }
+            return true
+          },
         },
         {
           path: 'pagina-publica/landing',
@@ -531,10 +553,18 @@ const router = createRouter({
           meta: { requiresHotelAdmin: true },
         },
         {
-          // Ahora es la tab "Códigos de descuento" de Página pública (ver arriba).
-          path: 'promociones/codigos',
+          // Vive en Configuración, al lado de Paquetes y promociones: es configuración comercial
+          // que rige todos los canales, no contenido de la landing.
+          path: 'config/codigos-descuento',
           name: 'promo-codes',
-          redirect: (to) => ({ path: '/panel/pagina-publica', query: { ...to.query, tab: 'promo-codes' } }),
+          component: () => import('@/pages/promo-codes/index.vue'),
+          meta: { requiresHotelAdmin: true },
+        },
+        {
+          // Legacy: la ruta original y, después, el paso por la tab de Página pública. Se mantienen
+          // para no romper links guardados de ninguna de las dos etapas.
+          path: 'promociones/codigos',
+          redirect: (to) => ({ path: '/panel/config/codigos-descuento', query: to.query }),
         },
         {
           path: 'ia/recepcionista',

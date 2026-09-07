@@ -82,7 +82,6 @@ const tabComponents: Record<string, Component> = {
   media: defineAsyncComponent(() => import('./media.vue')),
   apariencia: defineAsyncComponent(() => import('./apariencia.vue')),
   'booking-engine': defineAsyncComponent(() => import('@/pages/booking-engine/index.vue')),
-  'promo-codes': defineAsyncComponent(() => import('@/pages/promo-codes/index.vue')),
   reputacion: defineAsyncComponent(() => import('./reputation.vue')),
   tracking: defineAsyncComponent(() => import('./tracking.vue')),
 }
@@ -93,7 +92,6 @@ const TAB_ICONS: Record<string, string> = {
   media: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" class="w-full h-full"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m3 16 5-5 4 4 3-3 6 6"/></svg>',
   apariencia: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3a9 9 0 1 0 0 18c1.4 0 2-.6 2-1.8 0-.5-.2-.9-.5-1.3-.3-.4-.4-.7-.4-1.1 0-.9.7-1.6 1.6-1.6H16.5a4.5 4.5 0 0 0 4.5-4.5C21 6 17 3 12 3Z"/><circle cx="7.5" cy="10.5" r="1" fill="currentColor" stroke="none"/><circle cx="10.5" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="7.5" r="1" fill="currentColor" stroke="none"/></svg>',
   'booking-engine': '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" class="w-full h-full"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18"/><circle cx="6" cy="6" r=".6" fill="currentColor" stroke="none"/><circle cx="8.5" cy="6" r=".6" fill="currentColor" stroke="none"/></svg>',
-  'promo-codes': '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6Z"/></svg>',
   reputacion: '<svg fill="currentColor" viewBox="0 0 24 24" class="w-full h-full"><path d="M12 2.5l2.9 6.3 6.9.7-5.2 4.7 1.5 6.8L12 17.7l-6.1 3.3 1.5-6.8-5.2-4.7 6.9-.7Z"/></svg>',
   tracking: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M3 21h18M6 21V10M12 21V4M18 21v-7"/></svg>',
 }

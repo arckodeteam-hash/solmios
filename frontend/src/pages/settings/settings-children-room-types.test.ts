@@ -1,14 +1,12 @@
-// settings-children-room-types.test.ts — Requerimiento 1 (política de niños) y Requerimiento 2
-// (capacidad por tipo de habitación), pestañas nuevas de Configuración (2026-09-03).
+// settings-children-room-types.test.ts — Requerimiento 1 (política de niños), pestaña de
+// Configuración (2026-09-03).
 //
-// Qué se protege:
-//   1. Política de niños: valores por defecto, validación "sin plaza ≤ niño" (RFC del pedido),
-//      guardado como configuration('child_policy'), el stepper de niños del wizard depende de
-//      `acceptChildren` — acá solo se cubre lo que esta pantalla controla.
-//   2. Tipos de habitación: solo lista los tipos que el hotel YA usa (no los 9 del enum), carga
-//      valores previos de configuration('room_type_capacity'), valida maxAdults/maxChildren ≤
-//      capacidad, y al guardar omite los tipos sin capacidad configurada (no debe empezar a
-//      limitar reservas por accidente).
+// Qué se protege: valores por defecto, validación "sin plaza ≤ niño" (RFC del pedido), guardado
+// como configuration('child_policy'). El stepper de niños del wizard depende de `acceptChildren`
+// — acá solo se cubre lo que esta pantalla controla.
+//
+// El Requerimiento 2 (capacidad por tipo de habitación) se mudó con su pestaña a Habitaciones:
+// ver `pages/rooms/rooms-type-capacity.test.ts`.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
@@ -120,59 +118,5 @@ describe('Requerimiento 1 — Política de niños', () => {
     await flushPromises()
     expect(configSet).toHaveBeenCalledWith('child_policy', { acceptChildren: true, maxChildAge: 17, maxFreeAge: 0 })
     expect(toastSuccess).toHaveBeenCalled()
-  })
-})
-
-describe('Requerimiento 2 — Tipos de habitación y capacidad', () => {
-  it('sin habitaciones cargadas: estado vacío, no ofrece configurar nada', async () => {
-    const w = await mountSettings()
-    await setTab(w, 'Tipos de habitación')?.trigger('click')
-    expect(w.text()).toContain('Todavía no cargaste habitaciones')
-  })
-
-  it('solo lista los tipos que el hotel YA usa, con su etiqueta en español', async () => {
-    roomsImpl = async () => ({
-      rooms: [{ id: 'r1', type: 'double' }, { id: 'r2', type: 'double' }, { id: 'r3', type: 'family' }] as any,
-      total: 3,
-    })
-    const w = await mountSettings()
-    await setTab(w, 'Tipos de habitación')?.trigger('click')
-    expect(w.text()).toContain('Doble')
-    expect(w.text()).toContain('Familiar')
-    expect(w.text()).not.toContain('Presidencial') // tipo no usado por este hotel
-  })
-
-  it('carga la capacidad ya configurada por tipo', async () => {
-    roomsImpl = async () => ({ rooms: [{ id: 'r1', type: 'double' }] as any, total: 1 })
-    configGetImpl = async (key) => (key === 'room_type_capacity' ? { double: { capacity: 2, maxAdults: 2, maxChildren: 1 } } : null)
-    const w = await mountSettings()
-    await setTab(w, 'Tipos de habitación')?.trigger('click')
-    const inputs = w.findAll('input[type="number"]').map(i => (i.element as HTMLInputElement).value)
-    expect(inputs).toEqual(['2', '2', '1'])
-  })
-
-  it('maxAdults > capacidad: error, botón guardar deshabilitado', async () => {
-    roomsImpl = async () => ({ rooms: [{ id: 'r1', type: 'double' }] as any, total: 1 })
-    configGetImpl = async (key) => (key === 'room_type_capacity' ? { double: { capacity: 2, maxAdults: 5, maxChildren: 0 } } : null)
-    const w = await mountSettings()
-    await setTab(w, 'Tipos de habitación')?.trigger('click')
-    expect(w.text()).toContain('Máx. adultos no puede superar la capacidad')
-    const card = w.findAll('h3').find(h => h.text() === 'Tipos de habitación y capacidad')!.element.closest('div.rounded-\\[20px\\]')!
-    const saveBtn = card.querySelector('button') as HTMLButtonElement
-    expect(saveBtn.disabled).toBe(true)
-  })
-
-  it('guarda solo los tipos con capacidad configurada — no persiste un tipo sin tocar', async () => {
-    roomsImpl = async () => ({ rooms: [{ id: 'r1', type: 'double' }, { id: 'r2', type: 'suite' }] as any, total: 2 })
-    const w = await mountSettings()
-    await setTab(w, 'Tipos de habitación')?.trigger('click')
-    // Solo cargamos capacidad para "double" (primer input de capacidad de la lista).
-    const capacityInput = w.findAll('input[type="number"]')[0]!
-    await capacityInput.setValue(2)
-    const card = w.findAll('h3').find(h => h.text() === 'Tipos de habitación y capacidad')!.element.closest('div.rounded-\\[20px\\]')!
-    const saveBtn = card.querySelector('button') as HTMLButtonElement
-    saveBtn.click()
-    await flushPromises()
-    expect(configSet).toHaveBeenCalledWith('room_type_capacity', { double: { capacity: 2, maxAdults: null, maxChildren: null } })
   })
 })

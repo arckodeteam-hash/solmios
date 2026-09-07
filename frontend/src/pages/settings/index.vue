@@ -615,53 +615,6 @@
     </div>
 
     <!-- ========== TIPOS DE HABITACIÓN Y CAPACIDAD (Requerimiento 2) ========== -->
-    <div v-if="(activeTab as string) === 'room-types'" class="grid grid-cols-1 gap-6">
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <div class="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <h3 class="font-extrabold text-navy">Tipos de habitación y capacidad</h3>
-            <p class="text-[11px] text-text-muted mt-1 leading-relaxed">
-              Capacidad máxima de ocupantes, adultos y niños por TIPO — se aplica a todas las habitaciones de ese tipo
-              y reemplaza lo que tenga cargado cada habitación física. Un tipo sin capacidad configurada acá sigue
-              usando la capacidad de cada habitación, como hasta ahora.
-            </p>
-          </div>
-          <button @click="saveRoomTypeCapacity" :disabled="roomTypeCapacitySaving || roomTypeCapacityHasErrors"
-            class="shrink-0 px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg cursor-pointer disabled:opacity-50">
-            {{ roomTypeCapacitySaving ? 'Guardando...' : 'Guardar' }}
-          </button>
-        </div>
-
-        <div v-if="roomTypeCapacityLoading" class="p-6 text-center text-xs text-text-muted">Cargando tipos de habitación...</div>
-        <div v-else-if="roomTypeCapacityRows.length === 0" class="p-6 bg-surface rounded-xl text-center">
-          <p class="text-xs text-text-muted">Todavía no cargaste habitaciones. Configurá esto después de crear tus tipos en Habitaciones.</p>
-        </div>
-        <div v-else class="space-y-3">
-          <div v-for="row in roomTypeCapacityRows" :key="row.type"
-            class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_repeat(3,140px)] items-start p-3 bg-surface rounded-xl">
-            <div class="pt-2 text-sm font-bold text-navy">{{ ROOM_TYPE_LABEL[row.type] || row.type }}</div>
-            <div>
-              <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Capacidad</label>
-              <input v-model.number="row.capacity" type="number" min="1" max="20" placeholder="sin configurar"
-                class="w-full rounded-xl border px-3 py-2 text-sm font-bold text-navy text-right" :class="roomTypeCapacityErrorOf(row) ? 'border-danger' : 'border-border'">
-            </div>
-            <div>
-              <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Máx. adultos</label>
-              <input v-model.number="row.maxAdults" type="number" min="1" max="20" placeholder="sin límite"
-                class="w-full rounded-xl border border-border px-3 py-2 text-sm text-right">
-            </div>
-            <div>
-              <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Máx. niños</label>
-              <input v-model.number="row.maxChildren" type="number" min="0" max="20" placeholder="sin límite"
-                class="w-full rounded-xl border border-border px-3 py-2 text-sm text-right">
-            </div>
-            <p v-if="roomTypeCapacityErrorOf(row)" class="md:col-span-4 text-[10px] font-bold text-danger">{{ roomTypeCapacityErrorOf(row) }}</p>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ========== INTEGRACIONES ========== -->
     <div v-if="(activeTab as string) === 'integrations'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <!-- Channel Manager NO va acá: lo configura y gestiona el admin de la PLATAFORMA (/admin),
            no el hotel. Esta card mostraba un "Conectado" hardcodeado (mentía el estado real) y
@@ -830,32 +783,6 @@
       </div>
     </div>
 
-    <!-- RRHH — Días laborables (feedback #602) -->
-    <div v-if="(activeTab as string) === 'hr'" class="space-y-6">
-      <SectionCard title="Días laborables"
-        subtitle="Define qué días de la semana cuenta el sistema al calcular ausencias y vacaciones. Por defecto todos los días (un hotel opera fines de semana).">
-        <template #actions>
-          <button @click="saveWorkingDays" :disabled="workingDaysSaving"
-            class="rounded-full bg-cyan px-4 py-2 text-xs font-bold text-navy transition-all hover:shadow-lg cursor-pointer disabled:opacity-50">
-            {{ workingDaysSaving ? 'Guardando…' : 'Guardar días laborables' }}
-          </button>
-        </template>
-        <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-          <label v-for="day in WEEKDAYS" :key="day.value"
-            class="flex flex-col items-center gap-2 rounded-xl bg-surface p-3 cursor-pointer transition-all"
-            :class="workingDaysDraft.includes(day.value) ? 'ring-2 ring-cyan bg-cyan/5' : 'opacity-60 hover:opacity-100'">
-            <input type="checkbox" :value="day.value" v-model="workingDaysDraft"
-              class="h-5 w-5 rounded text-cyan cursor-pointer" />
-            <span class="text-xs font-bold text-navy">{{ day.label }}</span>
-          </label>
-        </div>
-        <p class="mt-3 text-[11px] text-text-muted leading-relaxed">
-          Los días desmarcados se descuentan automáticamente al crear una solicitud de ausencia.
-          Los días festivos configurados en Time Off siempre se descuentan, independientemente de esta selección.
-        </p>
-      </SectionCard>
-    </div>
-
     </div>
 
     <!-- L6 (qa-ui config-2026-08-22): confirmación para quitar un contacto de emergencia,
@@ -887,7 +814,6 @@ import {
 } from '@/utils/address-components'
 import { validateField, validateAll, warnOnUnsavedChanges, HOTEL_RULES } from '@/composables/useFieldValidation'
 import { HotelService } from '@/services/Hotel.service'
-import { RoomService } from '@/services/Room.service'
 import { SettingsService, type HotelFull } from '@/services/Settings.service'
 import { ConfigService, EmergencyContactsService } from '@/services/Platform.service'
 import { GuaranteeService } from '@/services/Guarantee.service'
@@ -1153,69 +1079,6 @@ async function saveChildPolicy() {
   }
 }
 
-// ─── Tipos de habitación y capacidad (Requerimiento 2, 2026-09-03) ─────────────────────────
-// configuration('room_type_capacity') = { [type]: {capacity, maxAdults, maxChildren} }. Solo se
-// listan los tipos que el hotel ya usa en `/rooms` (no los 9 posibles del enum): configurar un
-// tipo sin ninguna habitación cargada no tiene con qué aplicarse. `resolveRoomTypeCapacityMap`
-// (backend) prioriza esto sobre los campos de la habitación física — ver room-type-capacity.ts.
-const ROOM_TYPE_LABEL: Record<string, string> = {
-  single: 'Individual', double: 'Doble', twin: 'Twin', triple: 'Triple', quad: 'Cuádruple',
-  suite: 'Suite', deluxe: 'Deluxe', presidential: 'Presidencial', family: 'Familiar',
-}
-interface RoomTypeCapacityRow { type: string; capacity: number | null; maxAdults: number | null; maxChildren: number | null }
-const roomTypeCapacityRows = ref<RoomTypeCapacityRow[]>([])
-const roomTypeCapacitySaving = ref(false)
-const roomTypeCapacityLoading = ref(false)
-function roomTypeCapacityErrorOf(row: RoomTypeCapacityRow): string {
-  if (row.capacity == null || row.capacity <= 0) return 'La capacidad es obligatoria'
-  if (row.maxAdults != null && row.maxAdults > row.capacity) return 'Máx. adultos no puede superar la capacidad'
-  if (row.maxChildren != null && row.maxChildren > row.capacity) return 'Máx. niños no puede superar la capacidad'
-  return ''
-}
-async function loadRoomTypeCapacity() {
-  roomTypeCapacityLoading.value = true
-  try {
-    const [{ rooms }, saved] = await Promise.all([
-      RoomService.list({ limit: 500 }),
-      ConfigService.get('room_type_capacity') as Promise<Record<string, { capacity?: number; maxAdults?: number; maxChildren?: number }> | null>,
-    ])
-    const typesInUse = Array.from(new Set(rooms.map(r => r.type as string).filter(Boolean)))
-    roomTypeCapacityRows.value = typesInUse.map(type => {
-      const s = saved?.[type]
-      return {
-        type,
-        capacity: s?.capacity ?? null,
-        maxAdults: s?.maxAdults ?? null,
-        maxChildren: s?.maxChildren ?? null,
-      }
-    })
-  } catch { /* sin habitaciones cargadas todavía: lista vacía */ }
-  finally { roomTypeCapacityLoading.value = false }
-}
-const roomTypeCapacityHasErrors = computed(() =>
-  roomTypeCapacityRows.value.some(r => (r.capacity != null || r.maxAdults != null || r.maxChildren != null) && roomTypeCapacityErrorOf(r)))
-async function saveRoomTypeCapacity() {
-  if (roomTypeCapacityHasErrors.value) { toast.error('Revisá los tipos marcados en rojo antes de guardar'); return }
-  roomTypeCapacitySaving.value = true
-  try {
-    // Solo se persisten los tipos con capacidad configurada — un tipo que el admin no tocó no
-    // debe empezar a limitar reservas por accidente.
-    const value: Record<string, { capacity: number; maxAdults: number | null; maxChildren: number | null }> = {}
-    for (const row of roomTypeCapacityRows.value) {
-      if (row.capacity == null || row.capacity <= 0) continue
-      value[row.type] = { capacity: row.capacity, maxAdults: row.maxAdults, maxChildren: row.maxChildren }
-    }
-    await ConfigService.set('room_type_capacity', value)
-    await nextTick()
-    markClean()
-    toast.success('Capacidad por tipo de habitación guardada')
-  } catch (e) {
-    toast.error((e as Error).message || 'No se pudo guardar')
-  } finally {
-    roomTypeCapacitySaving.value = false
-  }
-}
-
 // Políticas de cancelación y reembolso para factura (configuration['invoice_policy_text']).
 // Texto libre que se imprime al pie de cada factura A4 emitida. Vacío = no se imprime el bloque.
 const invoicePolicyText = ref('')
@@ -1237,46 +1100,6 @@ async function saveInvoicePolicy() {
     toast.error((e as Error).message || 'No se pudo guardar')
   } finally {
     invoicePolicySaving.value = false
-  }
-}
-
-// Días laborables del hotel (feedback #602). Define qué días de la semana se cuentan al
-// calcular ausencias/vacaciones. Default: todos marcados (un hotel opera fines de semana).
-// Se persisten como array [0..6] en configuration('leave_working_days'), convenio getUTCDay: 0=Dom..6=Sáb.
-const WEEKDAYS = [
-  { value: 0, label: 'Domingo' },
-  { value: 1, label: 'Lunes' },
-  { value: 2, label: 'Martes' },
-  { value: 3, label: 'Miércoles' },
-  { value: 4, label: 'Jueves' },
-  { value: 5, label: 'Viernes' },
-  { value: 6, label: 'Sábado' },
-]
-const workingDaysDraft = ref<number[]>([0, 1, 2, 3, 4, 5, 6])
-const workingDaysSaving = ref(false)
-async function loadWorkingDays() {
-  try {
-    const c = await ConfigService.get('leave_working_days') as number[] | null
-    if (Array.isArray(c) && c.length) {
-      workingDaysDraft.value = c.filter((d) => typeof d === 'number' && d >= 0 && d <= 6)
-    }
-  } catch { /* default: todos los días */ }
-}
-async function saveWorkingDays() {
-  if (workingDaysDraft.value.length === 0) {
-    toast.error('Debe seleccionar al menos un día laborable')
-    return
-  }
-  workingDaysSaving.value = true
-  try {
-    await ConfigService.set('leave_working_days', [...workingDaysDraft.value].sort())
-    await nextTick()
-    markClean()
-    toast.success('Días laborables guardados')
-  } catch (e) {
-    toast.error((e as Error).message || 'No se pudo guardar')
-  } finally {
-    workingDaysSaving.value = false
   }
 }
 
@@ -1304,9 +1127,11 @@ const tabGroups: SettingsTabGroup[] = [
       { value: 'location', label: 'Ubicación' },
       { value: 'conditions', label: 'Condiciones' },
       { value: 'children', label: 'Niños' },
-      { value: 'room-types', label: 'Tipos de habitación' },
+      // "Tipos de habitación" se mudó a Habitaciones (pestaña "Tipos y capacidad"): definir el
+      // inventario estaba partido entre dos entradas distintas del mismo menú.
       { value: 'emergency', label: 'Emergencias' },
-      { value: 'hr', label: 'RRHH' },
+      // "RRHH" (días laborables) se mudó a RRHH → Asistencia → Horarios: es lo único que
+      // configuraba y estaba a dos secciones de distancia de ahí.
     ],
   },
   {
@@ -1314,7 +1139,11 @@ const tabGroups: SettingsTabGroup[] = [
     tabs: [
       // Página pública / Landing / Reputación externa / Tracking se mudaron a su propia
       // sección del menú lateral (Página pública). Acá queda solo config operativa.
-      { value: 'amenities', label: 'Amenities' },
+      // "Amenities de habitación", no "Amenities" a secas: las del HOTEL (piscina, gimnasio —
+      // las que salen en la landing) se editan en Página pública → General. Dos catálogos
+      // distintos que se llamaban igual, al punto que la otra vista necesitaba una nota
+      // aclaratoria para que no se confundieran.
+      { value: 'amenities', label: 'Amenities de habitación' },
       { value: 'integrations', label: 'Integraciones' },
     ],
   },
@@ -1381,9 +1210,10 @@ function snapshot(): string {
     form: form.value,
     selectedAmenities: selectedAmenities.value, emergencyContacts: emergencyContacts.value,
     currencyConfig, guaranteePinDraft: guaranteePinDraft.value, automation, fiscalConfig,
-    childPolicy, roomTypeCapacityRows: roomTypeCapacityRows.value,
+    childPolicy,
     // Slug, amenities hotel-level, traducciones públicas y flags de reseñas públicas
-    // se gestionan y persisten desde la sección "Página pública" del menú.
+    // se gestionan y persisten desde la sección "Página pública" del menú. Capacidad por tipo
+    // de habitación y días laborables, desde Habitaciones y Asistencia respectivamente.
   })
 }
 function markClean() {
@@ -1610,15 +1440,13 @@ onMounted(async () => {
     await loadAutomation()
     await loadFiscalConfig()
     await loadChildPolicy()
-    await loadRoomTypeCapacity()
     await loadInvoicePolicy()
-    await loadWorkingDays()
   } catch (e) {
     toast.error('Error al cargar datos')
   } finally {
     // COR-4: la tarjeta "Plan" NO puede depender de que los siete loaders de arriba hayan salido
     // bien. Cuando `loadPlan()` era el último `await` del `try`, cualquier fallo previo (amenities,
-    // moneda, PIN, automatización, fiscal, política de facturas, días hábiles) lo salteaba,
+    // moneda, PIN, automatización, fiscal, política de facturas) lo salteaba,
     // `planLoading` se quedaba en `true` para siempre y la tarjeta mostraba el skeleton eterno: el
     // fallback "No pudimos leer tu plan" era inalcanzable. Va en el `finally` y trae su propio
     // try/finally, así el indicador siempre se apaga.
