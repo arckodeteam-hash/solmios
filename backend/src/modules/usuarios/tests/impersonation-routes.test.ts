@@ -24,6 +24,7 @@ const rutas: Ruta[] = []
 
 beforeAll(async () => {
   const { UsuariosModule } = await import('../index')
+  const { RolesModule } = await import('../../roles/index')
   const router: any = {}
   for (const m of ['get', 'post', 'put', 'delete', 'patch']) {
     router[m] = (path: string, mws: any, handler?: any) => {
@@ -34,7 +35,11 @@ beforeAll(async () => {
   const orm: any = { define() {}, findMany: async () => [], findOne: async () => null }
   // `authenticate` ya validó el token: acá interesa lo que viene DESPUÉS de él.
   const auth: any = { authenticate: () => async (_req: any, next: any) => next(), assertOwnership() {} }
-  ;(UsuariosModule() as any).create({ logger, orm, cache: undefined, router, auth })
+  const deps = { logger, orm, cache: undefined, router, auth }
+  ;(UsuariosModule() as any).create(deps)
+  // `roles` entra al mismo barrido: escribir un rol es otra forma de escalar privilegios y
+  // depende de los mismos bypasses por `role === 'super_admin'` que el ABM de usuarios.
+  ;(RolesModule() as any).create(deps)
 })
 
 /** Corre la cadena de una ruta con el `req` dado. Devuelve el error si alguna la cortó. */
@@ -64,6 +69,13 @@ const SENSIBLES: Array<[string, string]> = [
   ['post', '/api/usuarios'],
   ['put', '/api/usuarios/:id'],
   ['delete', '/api/usuarios/:id'],
+  // Escribir roles: `service.update/delete/restore` no ancla por hotelId cuando el rol es
+  // super_admin (o sea, cross-tenant desde una sesión de impersonación) y
+  // `assertGrantablePermissions` deja otorgar cualquier permiso con ['*:*'].
+  ['post', '/api/roles'],
+  ['put', '/api/roles/:id'],
+  ['post', '/api/roles/:id/restore'],
+  ['delete', '/api/roles/:id'],
 ]
 
 const usuarioImpersonando = () => ({ id: 'u-cliente', role: 'super_admin', hotelId: 'h1', userType: 'merchant', impersonatedBy: 'u-super' })
@@ -86,7 +98,7 @@ describe('rutas cerradas a una sesión de impersonación', () => {
   it('la impersonación NO cierra las rutas que el admin sí necesita dentro de la cuenta del cliente', async () => {
     // Criterio 3 del issue: adentro tiene todos los permisos. Leer el perfil y listar los
     // usuarios del hotel son justo lo que se va a ver, así que no pueden quedar bloqueadas.
-    for (const [metodo, path] of [['get', '/api/auth/me'], ['get', '/api/usuarios']] as Array<[string, string]>) {
+    for (const [metodo, path] of [['get', '/api/auth/me'], ['get', '/api/usuarios'], ['get', '/api/roles']] as Array<[string, string]>) {
       const err = await correrCadena(buscar(metodo, path), { user: usuarioImpersonando(), params: {}, body: {} })
       expect(err).toBeNull()
     }

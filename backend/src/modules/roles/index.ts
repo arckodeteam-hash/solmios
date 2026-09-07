@@ -5,6 +5,7 @@ import { RolesController } from './controller'
 import type { RolesDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { createModuleGuard } from '../../infrastructure/auth/require-module'
+import { denyImpersonation } from '../../infrastructure/auth/deny-impersonation'
 
 export { RolesService }
 export type { RolesDTO, CreateRolesDTO, UpdateRolesDTO, RolesQuery, RolesPaginated } from './types'
@@ -44,10 +45,17 @@ export function RolesModule() {
       // /catalog ANTES de /:id o la ruta con param lo captura como id='catalog'.
       router.get('/api/roles/catalog', guard('users', 'view'), (req) => controller.catalog(req))
       router.get('/api/roles/:id', guard('users', 'view'), (req) => controller.show(req))
-      router.post('/api/roles', guard('users', 'create'), (req) => controller.store(req))
-      router.put('/api/roles/:id', guard('users', 'edit'), (req) => controller.update(req))
-      router.post('/api/roles/:id/restore', guard('users', 'edit'), (req) => controller.restore(req))
-      router.delete('/api/roles/:id', guard('users', 'delete'), (req) => controller.destroy(req))
+      // Escribir roles queda fuera de la impersonación, igual que el ABM de usuarios. El token de
+      // impersonación lleva `role: 'super_admin'` (para que el admin no pierda permisos DENTRO de
+      // la cuenta del cliente), y de ese rol dependen tres bypasses de este módulo: requirePermission,
+      // el anclaje por hotelId de service.update/delete/restore (que sin esto deja tocar roles de
+      // CUALQUIER hotel, ni siquiera el del cliente que se está viendo) y assertGrantablePermissions,
+      // que con permissions ['*:*'] deja otorgar cualquier permiso. Todo eso se escribe en la tabla y
+      // sobrevive a las 2h de la sesión: la misma escalada permanente que ya se cerró en /api/usuarios.
+      router.post('/api/roles', [...guard('users', 'create'), denyImpersonation()], (req) => controller.store(req))
+      router.put('/api/roles/:id', [...guard('users', 'edit'), denyImpersonation()], (req) => controller.update(req))
+      router.post('/api/roles/:id/restore', [...guard('users', 'edit'), denyImpersonation()], (req) => controller.restore(req))
+      router.delete('/api/roles/:id', [...guard('users', 'delete'), denyImpersonation()], (req) => controller.destroy(req))
 
       log.info('Módulo roles v2 listo')
       return service
