@@ -9,6 +9,9 @@ vi.mock('@/services/Auth.service', () => ({
     me: vi.fn(),
     impersonate: vi.fn(),
   },
+  // El store la llama al salir de la impersonación (la lista de propiedades del cliente no
+  // puede sobrevivir a la vuelta a la cuenta del admin).
+  clearHotelsCache: vi.fn(),
 }))
 
 // auth.store importa modules.store (logout lo resetea) → mockear su service también.
@@ -20,7 +23,7 @@ vi.mock('@/services/Platform.service', () => ({
 
 import { useAuthStore } from './auth.store'
 import { useModulesStore } from './modules.store'
-import { AuthService } from '@/services/Auth.service'
+import { AuthService, clearHotelsCache } from '@/services/Auth.service'
 import type { User } from '@/types'
 
 const makeUser = (role: string): User =>
@@ -176,26 +179,94 @@ describe('auth.store', () => {
     expect(store.canAccessSuperAdmin).toBe(false)
   })
 
-  it('restoreSession mantiene impersonating aunque /auth/me falle (un blip de red no apaga la franja)', async () => {
-    // Camino real tras un F5 con la red con hipo: el cache de `user` es el que dejó loginAs y
-    // AuthService.me() rechaza. Antes, `user.value` se quedaba con el cache sin `impersonatedBy`
-    // e `impersonating` caía a false con el token de impersonación todavía instalado: sin franja
-    // ni botón de salir, el admin quedaba operando la cuenta del cliente sin saberlo.
-    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
-    const seed = useAuthStore()
-    seedSuperAdminSession(seed)
-    await seed.loginAs('u-target')
-
-    // Nueva pestaña/recarga: store limpio leyendo el mismo localStorage.
-    setActivePinia(createPinia())
+  it('restoreSession mantiene impersonating aunque /auth/me falle y el user cacheado no traiga impersonatedBy', async () => {
+    // Camino real tras un F5 con la red con hipo. El cache de `user` es el perfil PELADO del
+    // cliente —lo que dejaba una sesión vieja, sin `impersonatedBy`— y AuthService.me() rechaza:
+    // la ÚNICA señal viva de que hay una impersonación en curso es la sesión del admin aparcada
+    // en `imp.adminToken`. Sin la cláusula `!!localStorage.getItem(IMP_TOKEN)`, `impersonating`
+    // cae a false con el token de impersonación todavía instalado: sin franja ni botón de salir,
+    // el admin queda operando la cuenta del cliente sin saberlo ni poder volver.
     vi.mocked(AuthService.me).mockRejectedValue(new Error('network'))
     const store = useAuthStore()
+    store.setTokens('imp-tok', 'x')
+    localStorage.setItem('user', JSON.stringify(makeTarget()))
+    localStorage.setItem('imp.adminToken', 'admin-tok')
+    localStorage.setItem('imp.adminRefreshToken', 'admin-ref')
+    localStorage.setItem('imp.adminUser', JSON.stringify(makeUser('super_admin')))
 
     await store.restoreSession()
 
+    expect(store.user?.impersonatedBy).toBeUndefined()
     expect(store.impersonating).toBe(true)
     expect(store.canAccessSuperAdmin).toBe(false)
     expect(store.userRole).toBe('hotel_admin')
+  })
+
+  it('stopImpersonation sin imp.adminUser vuelve al perfil del admin en memoria, no al del cliente', async () => {
+    // /auth/me caído + snapshot del admin ausente: si se dejara `user.value` como estaba, la UI
+    // mostraría al CLIENTE con el token del ADMIN. `originalUser` (lo que guardó loginAs) es el respaldo.
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    const store = useAuthStore()
+    seedSuperAdminSession(store)
+    await store.loginAs('u-target')
+    localStorage.removeItem('imp.adminUser')
+    vi.mocked(AuthService.me).mockRejectedValue(new Error('network'))
+
+    await store.stopImpersonation()
+
+    expect(store.impersonating).toBe(false)
+    expect(store.userRole).toBe('super_admin')
+    expect(store.token).toBe('admin-tok')
+    expect(JSON.parse(localStorage.getItem('user')!).role).toBe('super_admin')
+  })
+
+  it('stopImpersonation desloguea si no hay perfil de admin reconstruible y /auth/me falla', async () => {
+    // Store recién hidratado tras un F5 (sin `originalUser` en memoria), sin snapshot del admin y
+    // con la red caída: no hay forma honesta de saber quién es el dueño del token → sesión desde cero.
+    vi.mocked(AuthService.me).mockRejectedValue(new Error('network'))
+    const store = useAuthStore()
+    store.setTokens('imp-tok', 'x')
+    store.user = makeTarget()
+    store.impersonating = true
+    localStorage.setItem('imp.adminToken', 'admin-tok')
+
+    await store.stopImpersonation()
+
+    expect(AuthService.logout).toHaveBeenCalled()
+    expect(store.user).toBeNull()
+    expect(store.isAuthenticated).toBe(false)
+    expect(store.impersonating).toBe(false)
+    expect(localStorage.getItem('user')).toBeNull()
+  })
+
+  it('stopImpersonation no persiste un imp.adminUser corrupto (no rompe el restoreSession siguiente)', async () => {
+    // Antes se escribía el string crudo en localStorage['user']: el `JSON.parse` de restoreSession
+    // reventaba y forzaba un logout() completo, o sea el admin perdía la sesión por un dato de más.
+    vi.mocked(AuthService.me).mockResolvedValue(makeUser('super_admin'))
+    const store = useAuthStore()
+    store.setTokens('imp-tok', 'x')
+    store.user = makeTarget()
+    store.impersonating = true
+    localStorage.setItem('imp.adminToken', 'admin-tok')
+    localStorage.setItem('imp.adminUser', '{ esto no es json')
+
+    await store.stopImpersonation()
+
+    expect(store.userRole).toBe('super_admin')
+    expect(() => JSON.parse(localStorage.getItem('user')!)).not.toThrow()
+    expect(JSON.parse(localStorage.getItem('user')!).role).toBe('super_admin')
+  })
+
+  it('stopImpersonation limpia el cache de hoteles (el admin no vuelve viendo las propiedades del cliente)', async () => {
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    vi.mocked(AuthService.me).mockResolvedValue(makeUser('super_admin'))
+    const store = useAuthStore()
+    seedSuperAdminSession(store)
+    await store.loginAs('u-target')
+
+    await store.stopImpersonation()
+
+    expect(clearHotelsCache).toHaveBeenCalled()
   })
 
   it('restoreSession deja impersonating en false en una sesión normal', async () => {

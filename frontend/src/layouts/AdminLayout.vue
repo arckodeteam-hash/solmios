@@ -464,7 +464,13 @@ const visibleItems = computed(() => {
   // Roles de SISTEMA: se muestran por nombre de rol (comportamiento histórico, intacto).
   // Roles CUSTOM (los que crea el dueño): por permiso granular — no matchean ningún nombre
   // de rol del literal, así que sin esto verían el menú vacío. `visibleLeaf` unifica ambos.
-  const custom = !isSystemRole(role)
+  //
+  // Impersonando va SIEMPRE por permisos, aunque el rol sea de sistema: el rol que se ve es el del
+  // CLIENTE (la franja de arriba muestra a quién se está viendo), pero quien mira el menú es el
+  // super admin, con permisos efectivos ['*:*'] (los que el backend le da con el token de
+  // impersonación). Filtrar por `item.roles` le escondía Finanzas, Contabilidad, Tesorería,
+  // Compras, Inventario u Operaciones cada vez que el cliente no era hotel_admin.
+  const custom = !isSystemRole(role) || auth.impersonating
   const visibleLeaf = (item: { path: string; roles: string[]; anyOf?: string[] }) =>
     (custom ? canRoute(item.path) : item.roles.includes(role)) && navEnabled(item)
   // El literal nonavItems mezcla padres (con children, sin path) y hojas (con path);

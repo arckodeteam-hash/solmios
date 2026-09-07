@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { User, UserRole } from '@/types'
-import { AuthService } from '@/services/Auth.service'
+import { AuthService, clearHotelsCache } from '@/services/Auth.service'
 import { useModulesStore } from './modules.store'
 
 // Claves donde se aparca la sesión del SUPER ADMIN mientras dura la impersonación: es lo único
@@ -128,20 +128,30 @@ export const useAuthStore = defineStore('auth', () => {
       return
     }
     const adminRefresh = localStorage.getItem(IMP_REFRESH)
-    const adminUser = localStorage.getItem(IMP_USER)
+    // El snapshot del admin se PARSEA antes de persistirlo: guardarlo crudo en localStorage['user']
+    // dejaba un JSON inválido si venía corrupto, y el restoreSession() siguiente lo castigaba con un
+    // logout() completo (el admin perdía la sesión por un dato que ni hacía falta).
+    const savedAdmin = localStorage.getItem(IMP_USER)
+    let parsedAdmin: User | null = null
+    if (savedAdmin) {
+      try {
+        parsedAdmin = JSON.parse(savedAdmin) as User
+      } catch {
+        parsedAdmin = null
+      }
+    }
+    // Respaldo en memoria de lo que guardó loginAs. Lo único inaceptable es quedarse con el perfil
+    // del CLIENTE bajo el token del ADMIN: la UI mostraría una cuenta que ya no es la de la sesión.
+    const restoredAdmin = parsedAdmin ?? originalUser.value
 
     token.value = adminToken
     localStorage.setItem('token', adminToken)
     refreshToken.value = adminRefresh
     if (adminRefresh) localStorage.setItem('refreshToken', adminRefresh)
     else localStorage.removeItem('refreshToken')
-    if (adminUser) {
-      try {
-        user.value = JSON.parse(adminUser)
-      } catch {
-        // JSON corrupto: el /auth/me de abajo repone el perfil real.
-      }
-      localStorage.setItem('user', adminUser)
+    if (restoredAdmin) {
+      user.value = restoredAdmin
+      localStorage.setItem('user', JSON.stringify(restoredAdmin))
     }
 
     localStorage.removeItem(IMP_TOKEN)
@@ -150,6 +160,9 @@ export const useAuthStore = defineStore('auth', () => {
     originalUser.value = null
     impersonating.value = false
     useModulesStore().reset()
+    // Las propiedades cacheadas son las del CLIENTE: sin esto el admin volvía a su cuenta con el
+    // switcher mostrando los hoteles ajenos hasta la próxima recarga.
+    clearHotelsCache()
 
     // Revalidar contra el backend con el token del admin ya restaurado: confirma que la sesión
     // sigue viva y devuelve los permisos reales (si el token venció, http.ts renueva con el refresh).
@@ -157,7 +170,9 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = await AuthService.me()
       localStorage.setItem('user', JSON.stringify(user.value))
     } catch {
-      // El user cacheado alcanza para seguir operando.
+      // Con perfil del admin restaurado, el cacheado alcanza para seguir operando. Sin él, la
+      // sesión quedaría con el usuario del cliente y el token del admin: se sale desde cero.
+      if (!restoredAdmin) await logout()
     }
   }
 

@@ -9,6 +9,7 @@ import { UsuariosController } from './controller'
 import { rateLimit, resetAttempts, getClientIp } from '../../shared/middlewares/rate-limit'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
+import { denyImpersonation } from '../../infrastructure/auth/deny-impersonation'
 import { impersonateUser } from './usecases/impersonate'
 
 export { UsuariosService }
@@ -69,10 +70,12 @@ export function UsuariosModule(opts: { storage?: StorageService } = {}) {
       // rutas, una camarera no podía ni cambiarse el nombre ni ponerse una foto.
       router.put('/api/auth/me', [auth.authenticate()], (req) => controller.updateMe(req))
       router.post('/api/auth/avatar', [auth.authenticate(), bodyLimit(AVATAR_UPLOAD_LIMIT)], (req) => controller.uploadAvatar(req))
-      router.post('/api/auth/logout', [auth.authenticate()], (req) => controller.logout(req))
+      // Sin denyImpersonation, un admin impersonando pondría `users.token = null` del CLIENTE y le cortaría su sesión real.
+      router.post('/api/auth/logout', [auth.authenticate(), denyImpersonation()], (req) => controller.logout(req))
       // Cambia la contraseña del `req.user.id` del token y exige la actual:
       // `users:edit` es el permiso para editar a OTROS, no a uno mismo.
-      router.post('/api/auth/change-password', [auth.authenticate()], (req) => controller.changePassword(req))
+      // Y denyImpersonation porque cambiarle la contraseña al cliente desde su propia sesión no es soporte, es tomarle la cuenta.
+      router.post('/api/auth/change-password', [auth.authenticate(), denyImpersonation()], (req) => controller.changePassword(req))
 
       // Verificación de email (#421). El GET es público (llega desde el link del correo) con
       // rate-limit por IP; el reenvío es autenticado y limitado para no ser un cañón de spam.
@@ -115,7 +118,9 @@ export function UsuariosModule(opts: { storage?: StorageService } = {}) {
       router.post('/api/auth/refresh', (req) => controller.refresh(req))
 
       router.get('/api/auth/hotels', guard('users', 'view'), (req) => controller.hotels(req))
-      router.post('/api/auth/switch-hotel/:id', guard('users', 'edit'), (req) => controller.switchHotel(req))
+      // `guard` hace bypass por role 'super_admin' y el token de impersonación lo lleva: sin denyImpersonation, switch-hotel
+      // saltaría al hotel de cualquier otro cliente y emitiría un token nuevo SIN `impersonatedBy` y CON refresh token.
+      router.post('/api/auth/switch-hotel/:id', [...guard('users', 'edit'), denyImpersonation()], (req) => controller.switchHotel(req))
       // Impersonación: se cablea inline contra el usecase (no pasa por el service, que
       // ya roza el límite de tamaño del analyzer). Doble candado: rol super_admin Y
       // userType 'admin' — un token de impersonación (userType 'merchant') no puede
