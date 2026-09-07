@@ -336,8 +336,14 @@ const enteringId = ref<string | null>(null)
 const loginAsUser = async (user: any) => {
   enteringId.value = user.id
   try {
-    await auth.loginAs(user.id)
-    router.push('/panel')
+    // Sólo se navega si el store DE VERDAD impersonó. El botón se deshabilita por fila, no
+    // globalmente: con dos clicks seguidos en filas distintas la segunda llamada se descarta
+    // (hay una impersonación en curso) y devuelve false — navegar igual dejaba al admin en el
+    // panel del PRIMER usuario creyendo que había entrado al segundo. No es un error: el
+    // usuario clickeó dos veces, así que el aviso es informativo.
+    const entro = await auth.loginAs(user.id)
+    if (entro) router.push('/panel')
+    else toast.info('Ya se está entrando a otra cuenta')
   } catch (e: any) {
     toast.error(e?.message || 'No se pudo entrar a la cuenta de este usuario')
   } finally {

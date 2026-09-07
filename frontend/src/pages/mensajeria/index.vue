@@ -69,9 +69,17 @@ const TAB_ICONS: Record<string, string> = {
 
 // Mismo criterio que el menú: rol + módulo habilitado, evaluado sobre la ruta
 // ORIGINAL de cada vista (ver comentario en config/messaging-tabs.ts).
+// El rol se resuelve con `canActAsHotelAdmin`, no con el nombre crudo: el super admin que está
+// DENTRO de la cuenta de un cliente conserva permisos ['*:*'] y el backend le autoriza estas
+// pantallas igual, pero el rol VISIBLE es el del cliente (recepción, mesero…) y las tabs de
+// nivel hotel_admin desaparecían. El gateo por módulo se mantiene tal cual: eso es del plan
+// del hotel, no del rol de quien mira.
 const visibleTabs = computed(() => {
   const role = auth.userRole ?? ''
-  return MESSAGING_TABS.filter(t => t.roles.includes(role) && modules.routeEnabled(t.path))
+  return MESSAGING_TABS.filter(
+    t => (t.roles.includes(role) || (auth.canActAsHotelAdmin && t.roles.includes('hotel_admin')))
+      && modules.routeEnabled(t.path)
+  )
 })
 
 // La tab vive en la URL (?tab=) para que sea linkeable y el back del navegador

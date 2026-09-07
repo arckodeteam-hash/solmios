@@ -68,6 +68,28 @@ describe('auth.store', () => {
     expect(localStorage.getItem('refreshToken')).toBe('ref')
   })
 
+  it('login cierra una impersonación vieja que quedó en el navegador', async () => {
+    // `impersonating` arranca leyendo `imp.adminToken`, así que unas claves `imp.*` sobrevivientes
+    // de una sesión de soporte mal cerrada le pegaban la franja de supervisión —y el acceso de
+    // `canActAsHotelAdmin`— al usuario que se acaba de loguear, que no tiene nada que ver con ella.
+    localStorage.setItem('imp.adminToken', 'admin-tok-viejo')
+    localStorage.setItem('imp.adminRefreshToken', 'admin-ref-viejo')
+    localStorage.setItem('imp.adminUser', JSON.stringify(makeUser('super_admin')))
+    vi.mocked(AuthService.login).mockResolvedValue({
+      token: 'tok', refreshToken: 'ref', user: makeUser('receptionist'),
+    } as any)
+    const store = useAuthStore()
+    expect(store.impersonating).toBe(true)
+
+    await store.login('r@h.com', 'pw')
+
+    expect(store.impersonating).toBe(false)
+    expect(store.canActAsHotelAdmin).toBe(false)
+    expect(localStorage.getItem('imp.adminToken')).toBeNull()
+    expect(localStorage.getItem('imp.adminRefreshToken')).toBeNull()
+    expect(localStorage.getItem('imp.adminUser')).toBeNull()
+  })
+
   it('getters de rol reflejan el usuario actual', () => {
     const store = useAuthStore()
     store.user = makeUser('super_admin')
@@ -170,6 +192,31 @@ describe('auth.store', () => {
     expect(localStorage.getItem('imp.adminRefreshToken')).toBe('admin-ref')
     expect(JSON.parse(localStorage.getItem('imp.adminUser')!).role).toBe('super_admin')
     expect(store.impersonating).toBe(true)
+  })
+
+  it('dos loginAs concurrentes: la segunda devuelve false (la pantalla no puede leerla como éxito)', async () => {
+    // El botón "Entrar" se deshabilita por FILA, no globalmente: dos clicks en filas distintas
+    // llaman dos veces. La segunda se descarta por el cerrojo, y si `loginAs` no lo dijera, la
+    // pantalla navegaba igual a /panel y el admin terminaba en la cuenta del PRIMER usuario
+    // creyendo que había entrado al segundo.
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    const store = useAuthStore()
+    seedSuperAdminSession(store)
+
+    const [first, second] = await Promise.all([store.loginAs('u-target'), store.loginAs('u-otro')])
+
+    expect(first).toBe(true)
+    expect(second).toBe(false)
+    expect(AuthService.impersonate).toHaveBeenCalledTimes(1)
+    expect(AuthService.impersonate).toHaveBeenCalledWith('u-target')
+  })
+
+  it('loginAs devuelve false si el usuario no es super admin (tampoco ahí hay que navegar)', async () => {
+    const store = useAuthStore()
+    store.user = makeUser('hotel_admin')
+
+    expect(await store.loginAs('u-target')).toBe(false)
+    expect(AuthService.impersonate).not.toHaveBeenCalled()
   })
 
   it('un loginAs que falla deja el cerrojo abajo (el botón no queda muerto hasta recargar)', async () => {

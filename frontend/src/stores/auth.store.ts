@@ -39,6 +39,19 @@ export const useAuthStore = defineStore('auth', () => {
   // Cerrojo NO reactivo de `loginAs`: sólo coordina llamadas concurrentes, no lo mira ninguna vista.
   let loginAsInFlight = false
 
+  /** Borra TODO rastro de una impersonación: la bandera, el perfil del admin en memoria y las
+   *  tres claves `imp.*`. Lo necesitan el logout, la salida ordenada y también el login: como
+   *  `impersonating` arranca leyendo `imp.adminToken`, unas claves viejas que quedaron de una
+   *  sesión de soporte mal cerrada le pegaban la franja de supervisión —y el acceso de
+   *  `canActAsHotelAdmin`— al usuario que se acaba de loguear, que no tiene nada que ver. */
+  function limpiarImpersonacion() {
+    impersonating.value = false
+    originalUser.value = null
+    localStorage.removeItem(IMP_TOKEN)
+    localStorage.removeItem(IMP_REFRESH)
+    localStorage.removeItem(IMP_USER)
+  }
+
   const isAuthenticated = computed(() => !!token.value)
   const userRole = computed(() => user.value?.role ?? null)
   const isSuperAdmin = computed(() => user.value?.role === 'super_admin')
@@ -63,6 +76,8 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem('token', tkn)
       localStorage.setItem('refreshToken', rt)
       localStorage.setItem('user', JSON.stringify(usr))
+      // Una sesión nueva NO hereda la impersonación de la anterior (ver `limpiarImpersonacion`).
+      limpiarImpersonacion()
     } finally {
       loading.value = false
     }
@@ -113,8 +128,13 @@ export const useAuthStore = defineStore('auth', () => {
    * Entra a la cuenta de un cliente pidiendo al backend un token de impersonación real: sin esto
    * el JWT seguía siendo el del super admin y la API nunca devolvía los datos del cliente.
    * El error de la API se propaga a propósito para que la pantalla pueda mostrar un toast.
+   *
+   * @returns `true` si la impersonación se completó; `false` si la llamada se descartó sin hacer
+   * nada (usuario no autorizado, o una impersonación ya en curso). La pantalla NO puede leer un
+   * `false` como éxito: navegar igual dejaba al admin en el panel del PRIMER usuario creyendo
+   * que había entrado al segundo.
    */
-  async function loginAs(targetUserId: string) {
+  async function loginAs(targetUserId: string): Promise<boolean> {
     // `impersonating` recién se pone en true DESPUÉS del await, así que no sirve de cerrojo: dos
     // clicks seguidos (el botón de la pantalla se deshabilita por fila, no globalmente) pasaban
     // los dos y la segunda llamada pisaba `imp.adminToken` con el token de impersonación de la
@@ -122,11 +142,12 @@ export const useAuthStore = defineStore('auth', () => {
     // se levanta SINCRÓNICAMENTE, antes de cualquier await, así la segunda llamada sale sin hacer
     // nada: encadenarla no tendría sentido —entrar a dos cuentas a la vez no existe— y descartarla
     // deja al usuario en la primera que pidió, que es la que ya está cargando.
-    if (loginAsInFlight) return
-    if (!isSuperAdmin.value || impersonating.value) return
+    if (loginAsInFlight) return false
+    if (!isSuperAdmin.value || impersonating.value) return false
     loginAsInFlight = true
     try {
       await doLoginAs(targetUserId)
+      return true
     } finally {
       // También cuando la API falla: si no, un error dejaba el botón muerto hasta recargar.
       loginAsInFlight = false
@@ -199,11 +220,7 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem('user', JSON.stringify(restoredAdmin))
     }
 
-    localStorage.removeItem(IMP_TOKEN)
-    localStorage.removeItem(IMP_REFRESH)
-    localStorage.removeItem(IMP_USER)
-    originalUser.value = null
-    impersonating.value = false
+    limpiarImpersonacion()
     useModulesStore().reset()
     // Las propiedades cacheadas son las del CLIENTE: sin esto el admin volvía a su cuenta con el
     // switcher mostrando los hoteles ajenos hasta la próxima recarga.
@@ -230,18 +247,14 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = null
     refreshToken.value = null
     user.value = null
-    originalUser.value = null
-    impersonating.value = false
+    // Sin esto, la sesión del super admin quedaba tirada en el navegador después de salir.
+    limpiarImpersonacion()
     // El menú/rutas gateadas del hotel ANTERIOR no sobrevive al logout: sin esto, un login
     // en otro hotel (o plan distinto) heredaba el estado stale de módulos hasta recargar.
     useModulesStore().reset()
     localStorage.removeItem('token')
     localStorage.removeItem('refreshToken')
     localStorage.removeItem('user')
-    // Sin esto, la sesión del super admin quedaba tirada en el navegador después de salir.
-    localStorage.removeItem(IMP_TOKEN)
-    localStorage.removeItem(IMP_REFRESH)
-    localStorage.removeItem(IMP_USER)
   }
 
   return {
