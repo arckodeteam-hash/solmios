@@ -48,6 +48,20 @@ const WhatsappTemplateModel: ModelDefinition = {
     name: { type: 'string', required: true },
     body: { type: 'string' },
     category: { type: 'string', default: 'general' },
+    // ─── Sincronización con Meta (WhatsApp Business Platform) ───────────────────
+    // Una plantilla vive en DOS lados: acá y en la cuenta de WhatsApp del hotel. Meta es
+    // dueño del estado (aprueba o rechaza), nosotros del texto. Estos campos son la copia
+    // local de lo que Meta contesta — se escriben SOLO desde el servidor, nunca desde el form.
+    language: { type: 'string', default: 'es' },
+    /** Nombres de las variables en el orden en que Meta las numeró: [0] es {{1}}. */
+    metaVariableOrder: { type: 'json', default: [] },
+    /** Categoría de META (MARKETING/UTILITY/AUTHENTICATION), distinta de la nuestra. */
+    metaCategory: { type: 'string', default: 'UTILITY' },
+    metaTemplateId: { type: 'string' },
+    /** 'none' (nunca se envió) · 'pending' · 'approved' · 'rejected' */
+    approvalStatus: { type: 'string', default: 'none' },
+    metaRejectedReason: { type: 'string' },
+    metaSyncedAt: { type: 'string' },
     isActive: { type: 'boolean', default: 1 },
   },
   timestamps: true,

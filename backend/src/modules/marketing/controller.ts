@@ -75,4 +75,19 @@ export class MarketingController {
     const user = (req as any).user as MarketingUser | undefined
     await this.service.deleteTemplate(req.params.id, user); return { status: 200, body: { success: true } }
   }
+
+  /** Manda la plantilla a Meta para que la revise. Devuelve la plantilla ya en estado PENDING. */
+  async submitTemplate(req: HttpRequest) {
+    const user = (req as any).user as MarketingUser | undefined
+    return { status: 200, body: await this.service.submitTemplateToMeta(req.params.id, user) }
+  }
+
+  /**
+   * Trae de Meta el estado de aprobación de una plantilla.
+   * Es un POST y no un GET porque escribe: actualiza la copia local con lo que contesta Meta.
+   */
+  async syncTemplateStatus(req: HttpRequest) {
+    const user = (req as any).user as MarketingUser | undefined
+    return { status: 200, body: await this.service.syncTemplateStatus(req.params.id, user) }
+  }
 }

@@ -1,70 +1,77 @@
 # whatsapp-meta-templates — Tasks
 
 ## 1. Modelo + migración (`backend/src/modules/marketing/model.ts`)
-- [ ] 1.1 Agregar campos a `WhatsappTemplateModel`: `language` (string, default `'es'`), `metaCategory`
+- [x] 1.1 Agregar campos a `WhatsappTemplateModel`: `language` (string, default `'es'`), `metaCategory`
       (string, default `'UTILITY'`), `metaTemplateId` (string, nullable), `approvalStatus` (string,
       default `'none'`), `metaRejectedReason` (string, nullable), `metaVariableOrder` (json, nullable),
       `metaSyncedAt` (string, nullable).
-- [ ] 1.2 `RUN_MIGRATE=1 bun run src/composition-root.ts` en dev (SQLite) para aplicar `ADD COLUMN`.
-- [ ] 1.3 Actualizar `WhatsappTemplateDTO`/`CreateWhatsappTemplateDTO` (`types.ts`) con los campos nuevos.
+- [x] 1.2 `RUN_MIGRATE=1 bun run src/composition-root.ts` en dev (SQLite) para aplicar `ADD COLUMN`.
+- [x] 1.3 Actualizar `WhatsappTemplateDTO`/`CreateWhatsappTemplateDTO` (`types.ts`) con los campos nuevos.
 
 ## 2. Connector — credenciales Meta desde `ai-recepcionista`
-- [ ] 2.1 `marketing/service.ts`: declarar `MetaWhatsappCredentialsPort` + `setMetaCredsDeps()` (mismo
+- [x] 2.1 `marketing/service.ts`: declarar `MetaWhatsappCredentialsPort` + `setMetaCredsDeps()` (mismo
       patrón que `setAuditDeps`).
-- [ ] 2.2 Verificar que `ai-recepcionista` expone `getWhatsappConfig(hotelId)` en el objeto que retorna
+- [x] 2.2 Verificar que `ai-recepcionista` expone `getWhatsappConfig(hotelId)` en el objeto que retorna
       su `create()` (contrato del módulo) — si no está expuesto, agregarlo sin romper lo existente.
-- [ ] 2.3 Nuevo `backend/src/connectors/marketing-whatsapp-meta.ts`: resuelve ambos módulos, inyecta el
+- [x] 2.3 Nuevo `backend/src/connectors/marketing-whatsapp-meta.ts`: resuelve ambos módulos, inyecta el
       puerto. Registrar en `composition-root.ts`.
-- [ ] 2.4 Test del connector: credenciales presentes → `{wabaId, accessToken}`; ausentes → `null`.
+- [x] 2.4 Test del connector: credenciales presentes → `{wabaId, accessToken}`; ausentes → `null`.
 
 ## 3. Cliente Graph API de plantillas
-- [ ] 3.1 `backend/src/modules/marketing/usecases/whatsapp-meta-template-client.ts`:
+
+> **Desviación del design (2026-09-07)**: el cliente quedó en `backend/src/services/whatsapp-cloud-client.ts`,
+> no dentro de `marketing/usecases/`. Motivo: `whatsapp-meta-onboarding` necesita el MISMO cliente para el
+> canje del código y la lectura del número; tenerlo en el módulo obligaría a duplicarlo o a que
+> onboarding importe de marketing. Sigue el patrón de `stripe-service.ts` y `ttlock-client.ts`.
+> El método de estado es `getMetaTemplateStatus(creds, metaTemplateId)`.
+
+- [x] 3.1 `backend/src/services/whatsapp-cloud-client.ts`:
       `createTemplate(wabaId, accessToken, payload)` → `POST /{wabaId}/message_templates`.
       `getTemplateStatus(accessToken, metaTemplateId)` → `GET /{metaTemplateId}?fields=status,rejected_reason`.
-- [ ] 3.2 Versión de API desde constante (`v26.0`, dato del documento) — no hardcodear en múltiples lugares.
-- [ ] 3.3 Manejo de errores: mapear `401`/credencial inválida y nombre duplicado a mensajes claros (ver
+- [x] 3.2 Versión de API desde constante (`v26.0`, dato del documento) — no hardcodear en múltiples lugares.
+- [x] 3.3 Manejo de errores: mapear `401`/credencial inválida y nombre duplicado a mensajes claros (ver
       design.md "Manejo de errores Graph API"); timeout/red → error genérico sin marcar `pending`.
-- [ ] 3.4 Tests del cliente con `fetch` mockeado (éxito, 401, nombre duplicado, timeout).
+- [x] 3.4 Tests del cliente con `fetch` mockeado (éxito, 401, nombre duplicado, timeout).
 
 ## 4. Conversión de variables nombradas → posicionales
-- [ ] 4.1 `backend/src/modules/marketing/usecases/meta-variable-mapping.ts`: `toMetaBody(localBody)` →
+- [x] 4.1 `backend/src/modules/marketing/usecases/meta-variable-mapping.ts`: `toMetaBody(localBody)` →
       `{ metaBody, variableOrder }` (ver algoritmo en design.md).
-- [ ] 4.2 Diccionario de valores demo para `example.body_text` — mismo set que
+- [x] 4.2 Diccionario de valores demo para `example.body_text` — mismo set que
       `frontend/.../whatsapp-templates/index.vue:266-280`, replicado server-side.
-- [ ] 4.3 Tests: body sin variables, con variables repetidas (`{guest_name}` dos veces → misma posición),
+- [x] 4.3 Tests: body sin variables, con variables repetidas (`{guest_name}` dos veces → misma posición),
       con variables desconocidas (fuera de la lista demo → placeholder genérico "valor" en el example).
 
 ## 5. Endpoints + servicio
-- [ ] 5.1 `marketing/service.ts`: `submitTemplateToMeta(id, user)` — orquesta credenciales → conversión →
+- [x] 5.1 `marketing/service.ts`: `submitTemplateToMeta(id, user)` — orquesta credenciales → conversión →
       cliente Graph API → persistencia (`approvalStatus='pending'`, `metaTemplateId`, `metaVariableOrder`).
       `ValidationError` 409 si no hay credenciales.
-- [ ] 5.2 `marketing/service.ts`: `syncTemplateStatus(id, user)` — llama `getTemplateStatus`, mapea
+- [x] 5.2 `marketing/service.ts`: `syncTemplateStatus(id, user)` — llama `getTemplateStatus`, mapea
       status Meta → local, persiste. 409 si `metaTemplateId` es null.
-- [ ] 5.3 `updateTemplate()`: si el patch toca `body`/`metaCategory`/`language` Y `approvalStatus !==
+- [x] 5.3 `updateTemplate()`: si el patch toca `body`/`metaCategory`/`language` Y `approvalStatus !==
       'none'` → resetear `approvalStatus='none'`, `metaTemplateId=null`, `metaRejectedReason=null` (REQ-3).
-- [ ] 5.4 `marketing/controller.ts`: `submitTemplate(req)`, `syncTemplateStatus(req)` — mismo patrón
+- [x] 5.4 `marketing/controller.ts`: `submitTemplate(req)`, `syncTemplateStatus(req)` — mismo patrón
       ownership que `updateTemplate`/`deleteTemplate` (`auth.assertOwnership` vía service).
-- [ ] 5.5 `marketing/index.ts`: rutas `POST /api/whatsapp-templates/:id/submit` y
+- [x] 5.5 `marketing/index.ts`: rutas `POST /api/whatsapp-templates/:id/submit` y
       `POST /api/whatsapp-templates/:id/sync-status`, `guard('settings','edit')`.
-- [ ] 5.6 Tests de servicio: submit exitoso, submit sin credenciales, sync approved/rejected, edit
+- [x] 5.6 Tests de servicio: submit exitoso, submit sin credenciales, sync approved/rejected, edit
       invalida aprobación, ownership cross-hotel (403/404).
 
 ## 6. Frontend
-- [ ] 6.1 `frontend/src/services/Whatsapp.service.ts`: extender `WhatsappTemplate`/`WhatsappTemplateInput`
+- [x] 6.1 `frontend/src/services/Whatsapp.service.ts`: extender `WhatsappTemplate`/`WhatsappTemplateInput`
       con los campos nuevos; agregar `submit(id)` y `syncStatus(id)`.
-- [ ] 6.2 `frontend/src/pages/whatsapp-templates/index.vue`: select Idioma + select Categoría Meta en el
+- [x] 6.2 `frontend/src/pages/whatsapp-templates/index.vue`: select Idioma + select Categoría Meta en el
       modal; columna/badge "Estado Meta" en la tabla; botones "Enviar a Meta"/"Sincronizar estado";
       mostrar `metaRejectedReason` cuando `rejected`.
-- [ ] 6.3 Estados de loading independientes para submit/sync (no reusar `saving` del guardado normal, para
+- [x] 6.3 Estados de loading independientes para submit/sync (no reusar `saving` del guardado normal, para
       no bloquear el modal si el submit tarda).
-- [ ] 6.4 Mensaje explícito cuando el submit falla por "no conectado" — link a
+- [x] 6.4 Mensaje explícito cuando el submit falla por "no conectado" — link a
       Configuración → Integraciones (REQ-META-01, aunque esa pantalla siga sin terminar, el mensaje debe
       decir dónde ir).
 
 ## 7. Verificación (antes de cerrar el change)
-- [ ] 7.1 `cd backend && bun run node_modules/arckode-framework/bin/arckode.js analyze` → 0 violaciones.
-- [ ] 7.2 `cd backend && bun run typecheck && bun test` (marketing + connector nuevo).
-- [ ] 7.3 `cd frontend && bun run typecheck && bun run build`.
+- [x] 7.1 `cd backend && bun run node_modules/arckode-framework/bin/arckode.js analyze` → 0 violaciones.
+- [x] 7.2 `cd backend && bun run typecheck && bun test` (marketing + connector nuevo).
+- [x] 7.3 `cd frontend && bun run typecheck && bun run build`.
 - [ ] 7.4 QA manual con un WABA de prueba real (requiere `wabaId`/`accessToken` de prueba cargados a
       mano vía `PUT /api/ai/whatsapp/config`): crear plantilla → enviar → ver "Pendiente" → sincronizar
       → ver estado real de Meta.
@@ -74,3 +81,27 @@
   REQ-META-01) — sin esto, solo se puede probar el camino de error "no conectado" (tarea 5.1/6.4).
 - Ninguna variable de entorno nueva obligatoria — la versión de API (`v26.0`) es una constante de código,
   no config por hotel.
+
+---
+
+## Estado (2026-09-07, rama `meta-config`)
+
+**26 de 27 tareas hechas.** Falta 7.4: la prueba contra una cuenta real de Meta, **bloqueada** porque
+todavía no tenemos el `wabaId` ni el `accessToken` de la cuenta de prueba (los saca el equipo del panel
+de Meta — ver `whatsapp-meta-certificacion`, tareas 1.2 y 1.3). Todo lo demás se probó con el cliente
+HTTP simulado.
+
+Gates ejecutados en esta rama:
+
+| Gate | Resultado |
+|---|---|
+| `arckode analyze` | ✅ VÁLIDO, 0 violaciones |
+| `bun test` (backend, completo) | ✅ 4816 pass, 0 fail |
+| `bun run typecheck` (backend) | ✅ limpio |
+| `vitest` (plantillas + a11y) | ✅ 336 pass |
+| `vue-tsc -b` + `vite build` | ✅ limpio, `✓ built` |
+
+Deuda que dejó este change, no prevista en el plan original: `marketing/service.ts` había quedado en
+249 líneas (el analyzer corta en 200). Se extrajeron a `usecases/` el CRUD de plantillas
+(`templates-crud.ts`) y el disparador de auto-mensajes (`trigger-auto-messages.ts`, movido tal cual,
+sin cambiar la lógica). El service quedó en 139 líneas.

@@ -437,6 +437,7 @@ import { crmAuditlogConnector } from './connectors/crm-auditlog'
 import { crmPromocodesConnector } from './connectors/crm-promocodes'
 import { feedbackAuditlogConnector } from './connectors/feedback-auditlog'
 import { marketingAuditlogConnector } from './connectors/marketing-auditlog'
+import { marketingWhatsappMetaConnector } from './connectors/marketing-whatsapp-meta'
 import { notificacionesAuditlogConnector } from './connectors/notificaciones-auditlog'
 import { opinionesAuditlogConnector } from './connectors/opiniones-auditlog'
 import { reclutamientoAuditlogConnector } from './connectors/reclutamiento-auditlog'
@@ -640,6 +641,8 @@ system.addConnector('crm-auditlog', crmAuditlogConnector)
 system.addConnector('crm-promocodes', crmPromocodesConnector)
 system.addConnector('feedback-auditlog', feedbackAuditlogConnector)
 system.addConnector('marketing-auditlog', marketingAuditlogConnector)
+// Plantillas de WhatsApp <-> Meta: marketing necesita las credenciales que guarda ai-recepcionista.
+system.addConnector('marketing-whatsapp-meta', marketingWhatsappMetaConnector)
 system.addConnector('notificaciones-auditlog', notificacionesAuditlogConnector)
 system.addConnector('opiniones-auditlog', opinionesAuditlogConnector)
 system.addConnector('reclutamiento-auditlog', reclutamientoAuditlogConnector)

@@ -2,7 +2,11 @@
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
 import { logsForDedupe, alreadySentToday } from './usecases/auto-message-dedupe'
 import { activeFlag } from './usecases/active-flag'
-import { NotFoundError } from 'arckode-framework'
+import { NotFoundError, ConflictError } from 'arckode-framework'
+import { submitTemplateToMeta, syncTemplateStatus } from './usecases/meta-templates'
+import type { MetaTemplateDeps } from './usecases/meta-templates'
+import { createTemplate, updateTemplate, deleteTemplate, loadOwnedTemplate } from './usecases/templates-crud'
+import type { TemplateCrudDeps } from './usecases/templates-crud'
 import type {
   AutoMessageDTO, CreateAutoMessageDTO,
   MessageLogDTO, CreateMessageLogDTO,
@@ -10,6 +14,7 @@ import type {
   MarketingUser,
 } from './types'
 import type { MarketingSockets } from './sockets'
+import { triggerAutoMessages } from './usecases/trigger-auto-messages'
 import type { EmailSender } from '../../services/email-sender'
 import type { NotificationEvent, NotificationLanguage } from '../../services/notification-defaults'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
@@ -84,116 +89,50 @@ export class MarketingService {
   async createMessageLog(dto: CreateMessageLogDTO): Promise<MessageLogDTO> { return this.logRepo.create(dto as any) }
 
   // ─── WhatsApp Templates ────────────────────────────────
+  // El grueso vive en usecases/: la edición dejó de ser un patch plano (decide qué pasa con la
+  // aprobación de Meta) y el service ya estaba en el límite de tamaño del analyzer.
+  private crudDeps(): TemplateCrudDeps {
+    return { templateRepo: this.templateRepo, auth: this.auth, auditPort: this.auditPort, logger: this.logger }
+  }
+
   async listTemplates(hotelId: string): Promise<WhatsappTemplateDTO[]> { return this.templateRepo.findMany({ hotelId }) }
-  async createTemplate(dto: CreateWhatsappTemplateDTO): Promise<WhatsappTemplateDTO> {
-    return this.templateRepo.create({ ...dto, isActive: activeFlag(dto.isActive) } as any)
-  }
+  async createTemplate(dto: CreateWhatsappTemplateDTO): Promise<WhatsappTemplateDTO> { return createTemplate(this.templateRepo, dto) }
   async updateTemplate(id: string, data: Partial<CreateWhatsappTemplateDTO>, user?: MarketingUser): Promise<WhatsappTemplateDTO> {
-    const existing = await this.templateRepo.findById(id)
-    if (!existing) throw new NotFoundError('Plantilla no encontrada')
-    if (this.auth) this.auth.assertOwnership(existing.hotelId, user?.hotelId ?? '', user?.role, 'super_admin')
-    const patch: Record<string, any> = {}
-    for (const k of ['name','body','category']) if ((data as any)[k] !== undefined) patch[k] = (data as any)[k]
-    if (data.isActive !== undefined) patch.isActive = activeFlag(data.isActive)
-    await this.templateRepo.update(id, patch as any)
-    // @ignore IDOR_RISK — reload post-write, ownership ya validado arriba (mismo id)
-    return this.templateRepo.findById(id) as Promise<WhatsappTemplateDTO>
+    return updateTemplate(this.crudDeps(), id, data, user)
   }
-  async deleteTemplate(id: string, user?: MarketingUser): Promise<void> {
-    const existing = await this.templateRepo.findById(id)
-    if (!existing) throw new NotFoundError('Plantilla no encontrada')
-    if (this.auth) this.auth.assertOwnership(existing.hotelId, user?.hotelId ?? '', user?.role, 'super_admin')
-    await this.templateRepo.delete(id)
-    await auditSafely(this.auditPort, this.logger, { hotelId: existing.hotelId, userId: user?.id, action: 'whatsapp_template.delete',
-      entity: 'whatsapp_template', entityId: id, detail: `Plantilla de WhatsApp "${existing.name}" eliminada` })
+  async deleteTemplate(id: string, user?: MarketingUser): Promise<void> { return deleteTemplate(this.crudDeps(), id, user) }
+
+  // ─── Plantillas ↔ Meta ─────────────────────────────────
+  /** Puente con la cuenta de WhatsApp del hotel. Lo inyecta el connector `marketing-whatsapp-meta`. */
+  private metaTemplateDeps: Pick<MetaTemplateDeps, 'credentials' | 'client'> | null = null
+  setMetaCredsDeps(deps: Pick<MetaTemplateDeps, 'credentials' | 'client'>): void { this.metaTemplateDeps = deps }
+
+  private metaDeps(): MetaTemplateDeps {
+    if (!this.metaTemplateDeps) throw new ConflictError('La integración con WhatsApp de Meta no está disponible en este servidor.')
+    return { templateRepo: this.templateRepo, ...this.metaTemplateDeps }
+  }
+
+  /** Manda la plantilla a Meta para aprobación. Valida pertenencia antes de salir a la red. */
+  async submitTemplateToMeta(id: string, user?: MarketingUser): Promise<WhatsappTemplateDTO> {
+    const existing = await loadOwnedTemplate(this.crudDeps(), id, user)
+    const updated = await submitTemplateToMeta(this.metaDeps(), existing)
+    await auditSafely(this.auditPort, this.logger, { hotelId: existing.hotelId, userId: user?.id, action: 'whatsapp_template.submit',
+      entity: 'whatsapp_template', entityId: id, detail: `Plantilla "${existing.name}" enviada a Meta para aprobación` })
+    return updated
+  }
+
+  /** Trae de Meta el estado de UNA plantilla ya enviada. */
+  async syncTemplateStatus(id: string, user?: MarketingUser): Promise<WhatsappTemplateDTO> {
+    return syncTemplateStatus(this.metaDeps(), await loadOwnedTemplate(this.crudDeps(), id, user))
   }
 
   // ─── Trigger Auto-Messages ────────────────────────────
-  /**
-   * Dispara auto-messages activos para un evento dado.
-   * Resuelve variables desde la reserva/huésped/hotel y encola emails via EmailSender.
-   */
-  async triggerAutoMessages(params: {
-    hotelId: string
-    event: string
-    /** Triggers de huésped (birthday/win-back) no tienen reserva: deduplican por guestId. */
-    reservationId?: string
-    guestId?: string
-    roomId?: string
-    variables?: Record<string, string | number>
-  }): Promise<void> {
-    if (!this.triggerDeps?.emailSender) {
-      this.logger.warn('triggerAutoMessages: emailSender no configurado')
-      return
-    }
-
-    const { hotelId, event, reservationId, guestId, roomId, variables: extraVars } = params
-
-    // Buscar auto-messages activos para este evento
-    const allMsgs = await this.autoMsgRepo.findMany({ hotelId, isActive: 1 } as any)
-    const matching = allMsgs.filter(m => m.triggerEvent === event)
-    if (matching.length === 0) return
-
-    // Resolver variables del contexto
-    const guest = guestId ? await this.triggerDeps.guestRepo.findById(guestId) : null
-    const room = roomId ? await this.triggerDeps.roomRepo.findById(roomId) : null
-    const hotel = await this.triggerDeps.hotelRepo.findById(hotelId)
-
-    const baseVars: Record<string, string | number> = {
-      guest_name: guest?.name || guest?.firstName || 'Huésped',
-      hotel_name: hotel?.name || 'Hotel',
-      hotel_phone: hotel?.phone || '',
-      hotel_address: hotel?.address || '',
-      room_number: room?.number || '',
-      room_type: room?.type || '',
-      logo_url: (hotel as any)?.logo || '',
-      ...extraVars,
-    }
-
-    // Dedup (spec 11.3.1): el cron corre cada 1h y la condición (checkIn=today AND status=confirmed)
-    // se mantiene hasta el check-in real, así que sin este corte cada tick duplicaría el email.
-    // message_logs no guarda templateId/channel/metadata (solo response/sentAt/status), por eso
-    // usamos `response` como clave de dedup estable: `auto:{event}:{autoMessageId}`.
-    // Dedupe mismo-día (usecases/auto-message-dedupe): por reserva o, sin reserva,
-    // por huésped (birthday/win-back). Clave: response = `auto:{event}:{msgId}` + sentAt hoy.
-    const sentLogs = await logsForDedupe(this.logRepo, { hotelId, reservationId, guestId })
-    const already = (msgId: string) => alreadySentToday(sentLogs as any[], event, msgId)
-
-    for (const msg of matching) {
-      try {
-        if (already(msg.id || '')) {
-          this.logger.info('Auto-message dedup: ya enviado hoy', { hotelId, event, reservationId, autoMessageId: msg.id })
-          continue
-        }
-        const language = (msg.language || 'es') as any
-        const templateEvent = msg.event || 'checkin_welcome'
-
-        const queueId = await this.triggerDeps.emailSender.enqueueNotification({
-          to: guest?.email || '',
-          hotelId,
-          event: templateEvent as NotificationEvent,
-          language: language as NotificationLanguage,
-          variables: baseVars,
-          relatedType: 'auto_message',
-          relatedId: msg.id,
-        })
-
-        // Log del envío. response = clave de dedup (event×autoMessage) — persiste en message_logs.
-        await this.createMessageLog({
-          hotelId,
-          reservationId: reservationId || null,
-          guestId: guestId || null,
-          messageType: 'email',
-          status: queueId ? 'sent' : 'failed',
-          recipient: guest?.email || null,
-          response: `auto:${event}:${msg.id || ''}`,
-          sentAt: new Date().toISOString(),
-        } as any)
-
-        this.logger.info('Auto-message encolado', { hotelId, event, guest: guest?.email, queueId })
-      } catch (e) {
-        this.logger.warn('Error en auto-message', { hotelId, event, error: (e as Error).message })
-      }
-    }
+  /** Dispara los auto-mensajes activos de un evento. La lógica vive en usecases/. */
+  async triggerAutoMessages(params: Parameters<typeof triggerAutoMessages>[1]): Promise<void> {
+    return triggerAutoMessages({
+      triggerDeps: this.triggerDeps, autoMsgRepo: this.autoMsgRepo, logRepo: this.logRepo,
+      logger: this.logger, sockets: this.sockets,
+      createMessageLog: (dto) => this.createMessageLog(dto),
+    }, params)
   }
 }

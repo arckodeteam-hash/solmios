@@ -1,6 +1,17 @@
 // marketing/validators/schema.ts
 import type { ValidationRule } from 'arckode-framework'
 
+/**
+ * Categorías de META, que NO son las nuestras ('reservation', 'checkin'…). Meta usa la suya
+ * para decidir el precio del mensaje y qué tan estricta es la revisión: UTILITY es para algo
+ * que el huésped espera (su confirmación), MARKETING para promoción — y esa se rechaza mucho más.
+ * Docs: https://developers.facebook.com/docs/whatsapp/updates-to-pricing
+ */
+export const META_CATEGORIES = ['MARKETING', 'UTILITY', 'AUTHENTICATION'] as const
+
+/** Idiomas del panel (spec UI). Meta acepta muchos más; se agregan cuando hagan falta. */
+export const META_LANGUAGES = ['es', 'en', 'pt'] as const
+
 export const CreateAutoMessageSchema: Record<string, ValidationRule> = {
   hotelId: { type: 'string' as const, required: true },
   title: { type: 'string' as const, required: true, min: 2 },
@@ -29,6 +40,12 @@ export const CreateTemplateSchema: Record<string, ValidationRule> = {
   // INT-1/EST-2: ídem CreateAutoMessageSchema — sin declaración, el toggle "Pausado"
   // del alta de plantillas se descartaba en la validación.
   isActive: { type: 'number' as const },
+  // Meta: idioma y categoría con los que la plantilla se registra en WhatsApp.
+  // metaTemplateId/approvalStatus/metaRejectedReason NO se declaran a propósito: los escribe SOLO
+  // el servidor con lo que contesta Meta, y validateSchema descarta lo no declarado — así un
+  // cliente no puede pintar de "aprobada" una plantilla que Meta nunca vio.
+  language: { type: 'string' as const, enum: [...META_LANGUAGES] },
+  metaCategory: { type: 'string' as const, enum: [...META_CATEGORIES] },
 }
 
 export const UpdateAutoMessageSchema: Record<string, ValidationRule> = {
@@ -62,4 +79,6 @@ export const UpdateTemplateSchema: Record<string, ValidationRule> = {
   // BUG FIX: faltaba isActive → el toggle "activar/desactivar plantilla" del frontend se descartaba
   // silenciosamente (validateSchema dropea campos no declarados).
   isActive: { type: 'number' as const },
+  language: { type: 'string' as const, enum: [...META_LANGUAGES] },
+  metaCategory: { type: 'string' as const, enum: [...META_CATEGORIES] },
 }

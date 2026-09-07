@@ -23,7 +23,8 @@ import {
 import { listTemplates, createTemplate, updateTemplate } from './usecases/templates'
 import { conversationChannel } from './usecases/conversation-channel'
 import type { ReservationCancelPort, InvoiceIssuePort } from './usecases/llm-pipeline'
-import { getWhatsappConfig, updateWhatsappConfig } from './usecases/whatsapp-config'
+import { getWhatsappConfig, updateWhatsappConfig, getWhatsappCredentials } from './usecases/whatsapp-config'
+import type { WhatsappCredentials } from './usecases/whatsapp-config'
 import { getMetrics, getDashboardMetrics } from './usecases/metrics'
 import { deleteIntentAudited, deleteTemplateAudited } from './usecases/audit-deletes'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
@@ -137,12 +138,10 @@ export class AiRecepcionistaService {
   }
   async deleteTemplate(id: string, u: any) { return deleteTemplateAudited({ repo: this.templateRepo, logger: this.logger, auditPort: this.auditPort }, id, u, this.userHotel(u), this.userRole(u)) }
 
-  async getWhatsappConfig(hotelId: string, u: any): Promise<AiWhatsappConfigDTO | null> {
-    return getWhatsappConfig(this.whatsappConfigRepo, await this.resolveHotelId(u, hotelId))
-  }
-  async updateWhatsappConfig(dto: CreateAiWhatsappConfigDTO, u: any): Promise<AiWhatsappConfigDTO> {
-    return updateWhatsappConfig(this.whatsappConfigRepo, await this.resolveHotelId(u, dto.hotelId), dto)
-  }
+  async getWhatsappConfig(hotelId: string, u: any): Promise<AiWhatsappConfigDTO | null> { return getWhatsappConfig(this.whatsappConfigRepo, await this.resolveHotelId(u, hotelId)) }
+  async updateWhatsappConfig(dto: CreateAiWhatsappConfigDTO, u: any): Promise<AiWhatsappConfigDTO> { return updateWhatsappConfig(this.whatsappConfigRepo, await this.resolveHotelId(u, dto.hotelId), dto) }
+  /** Credenciales en claro para uso INTERNO del servidor (connector `marketing-whatsapp`). */
+  async getWhatsappCredentials(hotelId: string): Promise<WhatsappCredentials | null> { return getWhatsappCredentials(this.whatsappConfigRepo, hotelId) }
 
   async getMetrics(hotelId: string, _period: string, u: any): Promise<AiMetricsDTO[]> {
     return getMetrics(this.metricsRepo, await this.resolveHotelId(u, hotelId))

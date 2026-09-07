@@ -18,8 +18,8 @@ export function MarketingModule(opts?: { triggerDeps?: TriggerDeps }) {
     description: 'Marketing Automatizado — auto-mensajes, logs, plantillas WhatsApp',
 
     contract: {
-      name: 'marketing', version: '1.0.0', description: 'Auto-messages + WhatsApp templates + delivery logs',
-      actions: ['listAutoMessages','createAutoMessage','updateAutoMessage','deleteAutoMessage','listMessageLogs','listTemplates','createTemplate','updateTemplate','deleteTemplate','triggerAutoMessages'],
+      name: 'marketing', version: '1.0.0', description: 'Auto-messages + WhatsApp templates (sync con Meta) + delivery logs',
+      actions: ['listAutoMessages','createAutoMessage','updateAutoMessage','deleteAutoMessage','listMessageLogs','listTemplates','createTemplate','updateTemplate','deleteTemplate','triggerAutoMessages','submitTemplateToMeta','syncTemplateStatus'],
       events: ['onAutoMessageSent'],
       tables: ['auto_messages','message_logs','whatsapp_templates'],
       dependencies: [],
@@ -50,10 +50,14 @@ export function MarketingModule(opts?: { triggerDeps?: TriggerDeps }) {
       router.post('/api/whatsapp-templates', guard('settings', 'create'), (req) => controller.createTemplate(req))
       router.put('/api/whatsapp-templates/:id', guard('settings', 'edit'), (req) => controller.updateTemplate(req))
       router.delete('/api/whatsapp-templates/:id', guard('settings', 'delete'), (req) => controller.deleteTemplate(req))
+      // Meta: enviar a aprobación y traer el estado. Ambas ESCRIBEN (la segunda actualiza la
+      // copia local con lo que contesta Meta), por eso las dos piden permiso de edición.
+      router.post('/api/whatsapp-templates/:id/submit', guard('settings', 'edit'), (req) => controller.submitTemplate(req))
+      router.post('/api/whatsapp-templates/:id/sync-status', guard('settings', 'edit'), (req) => controller.syncTemplateStatus(req))
 
       router.get('/api/message-logs', guard('settings', 'view'), (req) => controller.listMessageLogs(req))
 
-      log.info('Módulo marketing listo — 3 tablas, 9 endpoints + trigger')
+      log.info('Módulo marketing listo — 3 tablas, 11 endpoints + trigger')
       return service
     },
   })
