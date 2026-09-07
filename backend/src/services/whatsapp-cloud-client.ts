@@ -168,3 +168,168 @@ export async function deleteMetaTemplate(
     method: 'DELETE',
   })
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Conexión de un hotel (Embedded Signup)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Credenciales de la APP, no del hotel. Viven en el entorno del servidor, nunca en la base. */
+export interface MetaAppCredentials {
+  appId: string
+  appSecret: string
+  graphVersion?: string
+}
+
+/**
+ * Lee las credenciales de la app del entorno.
+ * Devuelve `null` si falta alguna: es un problema de despliegue, no del hotel, y quien llama
+ * tiene que poder distinguirlo para responder 503 en vez de culpar al usuario.
+ */
+export function appCredentialsFromEnv(): MetaAppCredentials | null {
+  const appId = process.env.META_APP_ID
+  const appSecret = process.env.META_APP_SECRET
+  if (!appId || !appSecret) return null
+  return { appId, appSecret, graphVersion: process.env.META_GRAPH_VERSION }
+}
+
+/**
+ * Canjea el código de un solo uso que devuelve la ventana de Meta por el token permanente del
+ * negocio del hotel.
+ *
+ * Este paso EXIGE el `app_secret`, y por eso vive en el servidor: si el navegador pidiera el token
+ * directo (`response_type: 'token'`), esa credencial —que puede escribirle a todos los huéspedes del
+ * hotel— quedaría en el JavaScript de la página, al alcance de cualquiera con la consola abierta.
+ *
+ * El código vence en segundos y es de un solo uso: un reintento con el mismo código SIEMPRE falla.
+ */
+export async function exchangeCode(
+  app: MetaAppCredentials,
+  code: string,
+): Promise<{ accessToken: string }> {
+  const version = app.graphVersion || DEFAULT_GRAPH_VERSION
+  const url = new URL(`${GRAPH_BASE}/${version}/oauth/access_token`)
+  url.searchParams.set('client_id', app.appId)
+  url.searchParams.set('client_secret', app.appSecret)
+  url.searchParams.set('code', code)
+
+  let res: Response
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) })
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err)
+    throw new WhatsappCloudError(`No se pudo contactar a Meta: ${reason}`, 503)
+  }
+
+  const raw = await res.text()
+  let parsed: any = null
+  try { parsed = raw ? JSON.parse(raw) : null } catch { /* no vino JSON */ }
+
+  if (!res.ok || !parsed?.access_token) {
+    const e = parsed?.error ?? {}
+    const msg = e.error_user_msg || e.message || `HTTP ${res.status}`
+    throw new WhatsappCloudError(msg, res.ok ? 502 : res.status, e.code, e.error_subcode, e.fbtrace_id)
+  }
+  return { accessToken: String(parsed.access_token) }
+}
+
+/**
+ * Suscribe NUESTRA app a la cuenta de WhatsApp del hotel.
+ * Sin esto los webhooks de ese hotel nunca llegan: el hotel queda "conectado" pero sordo.
+ */
+export async function subscribeApp(creds: WhatsappCloudCredentials): Promise<void> {
+  await graphFetch(creds, `/${creds.wabaId}/subscribed_apps`, { method: 'POST' })
+}
+
+/** Da de baja la suscripción. Se hace ANTES de borrar los datos locales de la conexión. */
+export async function unsubscribeApp(creds: WhatsappCloudCredentials): Promise<void> {
+  await graphFetch(creds, `/${creds.wabaId}/subscribed_apps`, { method: 'DELETE' })
+}
+
+export interface MetaPhoneNumberInfo {
+  displayPhoneNumber: string
+  verifiedName: string
+  qualityRating?: string
+  messagingLimit?: string
+  codeVerificationStatus?: string
+}
+
+/** Datos del número conectado: lo que el hotel mira en la tarjeta para saber que es el suyo. */
+export async function getPhoneNumber(creds: WhatsappCloudCredentials): Promise<MetaPhoneNumberInfo> {
+  const fields = 'display_phone_number,verified_name,quality_rating,messaging_limit_tier,code_verification_status'
+  const body = await graphFetch<any>(creds, `/${creds.phoneNumberId}?fields=${fields}`)
+  return {
+    displayPhoneNumber: String(body?.display_phone_number ?? ''),
+    verifiedName: String(body?.verified_name ?? ''),
+    qualityRating: body?.quality_rating ? String(body.quality_rating) : undefined,
+    messagingLimit: body?.messaging_limit_tier ? String(body.messaging_limit_tier) : undefined,
+    codeVerificationStatus: body?.code_verification_status ? String(body.code_verification_status) : undefined,
+  }
+}
+
+export interface MetaWabaInfo {
+  name: string
+  currency?: string
+  accountReviewStatus?: string
+}
+
+/** Datos de la cuenta: a qué negocio pertenece el número y si Meta ya lo verificó. */
+export async function getWabaInfo(creds: WhatsappCloudCredentials): Promise<MetaWabaInfo> {
+  const body = await graphFetch<any>(creds, `/${creds.wabaId}?fields=name,currency,account_review_status`)
+  return {
+    name: String(body?.name ?? ''),
+    currency: body?.currency ? String(body.currency) : undefined,
+    accountReviewStatus: body?.account_review_status ? String(body.account_review_status) : undefined,
+  }
+}
+
+/**
+ * Activa el número en la nube de Meta con un PIN de dos pasos.
+ *
+ * Un número ya registrado devuelve error y eso NO es un fallo de la conexión: el hotel que
+ * reconecta pasa por acá con el número ya activo. Se devuelve `false` en vez de tirar, para que
+ * el flujo siga.
+ */
+export async function registerPhoneNumber(
+  creds: WhatsappCloudCredentials,
+  pin: string,
+): Promise<boolean> {
+  try {
+    await graphFetch(creds, `/${creds.phoneNumberId}/register`, {
+      method: 'POST',
+      body: { messaging_product: 'whatsapp', pin },
+    })
+    return true
+  } catch (err) {
+    // 133005/133010: ya registrado, o registrado con otro PIN. El resto sí es un problema real.
+    if (err instanceof WhatsappCloudError && (err.metaCode === 133005 || err.metaCode === 133010)) return false
+    throw err
+  }
+}
+
+/**
+ * Pasa un error de Meta a algo que el hotel pueda leer y accionar.
+ *
+ * Los mensajes crudos de Meta son para desarrolladores ("(#100) Invalid parameter") y no dicen qué
+ * hacer. Esta tabla cubre los casos que aparecen de verdad al conectar; el resto cae al mensaje
+ * original, que es mejor que un texto genérico.
+ */
+export function explicarErrorDeConexion(err: unknown): string {
+  if (!(err instanceof WhatsappCloudError)) {
+    return err instanceof Error ? err.message : String(err)
+  }
+  switch (err.metaCode) {
+    case 190:
+      return 'El permiso de Meta venció o fue revocado. Volvé a pulsar "Conectar WhatsApp".'
+    case 100:
+      // El código de un solo uso ya usado o vencido cae acá: es lo más frecuente al reintentar.
+      return 'El permiso de Meta venció. Volvé a pulsar "Conectar WhatsApp" y completá la ventana sin cerrarla.'
+    case 200:
+    case 10:
+      return 'Meta no le dio a SOLMI OS permiso sobre esa cuenta de WhatsApp. Revisá que hayas autorizado la cuenta correcta.'
+    case 133005:
+      return 'Ese número ya está registrado en la nube de Meta con otro PIN de verificación.'
+    default:
+      if (err.httpStatus >= 500) return `Meta no respondió: ${err.message}. Probá de nuevo en unos minutos.`
+      return err.message
+  }
+}

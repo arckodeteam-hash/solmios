@@ -226,11 +226,18 @@ const settings = ref<any>({
 
 const emailTemplates = ref<any[]>([])
 const securityOptions = ref<any[]>([])
+// WhatsApp SALIÓ de acá (2026-09-07). Estaba en el lugar equivocado del sistema: no existe un
+// WhatsApp "de la plataforma" que sirva a todos los hoteles — cada hotel conecta su propio número y
+// su propia cuenta de Meta. Ahora se conecta desde el panel del hotel (Configuración →
+// Integraciones), con el flujo oficial de Meta, y el estado vive en `ai_whatsapp_config`.
+//
+// Además la tarjeta nunca guardó nada: los inputs de abajo usan `:value` sin `v-model`, así que lo
+// que se escribe no vuelve al modelo, y nadie lee la clave `configuration('integraciones')` que se
+// persiste. Eso sigue siendo cierto para Stripe, que se configura de verdad en
+// /panel/config/pasarelas — esta tarjeta queda como resto a limpiar aparte.
 const integrations = ref<any[]>([
   { name: 'Stripe', icon: '💳', description: 'Pasarela de pagos con tarjeta', connected: false,
     fields: [{ name: 'Publishable Key', value: '', type: 'text' }, { name: 'Secret Key', value: '', type: 'password' }] },
-  { name: 'WhatsApp Business', icon: '💬', description: 'API de WhatsApp para mensajes', connected: false,
-    fields: [{ name: 'Phone Number ID', value: '', type: 'text' }, { name: 'Access Token', value: '', type: 'password' }] },
 ])
 
 onMounted(async () => {

@@ -78,6 +78,25 @@ export interface AiWhatsappConfig {
   botName?: string
 }
 
+/** Estados que puede mostrar la tarjeta de conexión. */
+export type EstadoConexionWhatsapp = 'disconnected' | 'connected' | 'error' | 'legacy_baileys'
+
+/**
+ * Proyección segura de la conexión: lo que el hotel necesita ver para reconocer su cuenta.
+ * El token del hotel NUNCA viaja al navegador.
+ */
+export interface WhatsappConnection {
+  estado: EstadoConexionWhatsapp
+  displayPhoneNumber: string | null
+  verifiedName: string | null
+  businessName: string | null
+  qualityRating: string | null
+  messagingLimit: string | null
+  accountReviewStatus: string | null
+  connectedAt: string | null
+  connectionError: string | null
+}
+
 export const AiReceptionistService = {
   async listConversations(params?: Record<string, any>) {
     const qs = params ? '?' + new URLSearchParams(params).toString() : ''
@@ -150,6 +169,19 @@ export const AiReceptionistService = {
   },
   async getWhatsappStatus(hotelId: string) {
     return http.get<{ status: string; phone: string | null; mode: string }>(`/ai/whatsapp/status/${hotelId}`)
+  },
+
+  // ─── Conexión oficial con Meta (Embedded Signup) ───────────────────────────
+  /** Canjea, en el servidor, el código que devolvió la ventana de Meta. */
+  async connectWhatsapp(payload: { code: string; phoneNumberId: string; wabaId: string }) {
+    return http.post<WhatsappConnection>('/ai/whatsapp/connect', payload)
+  },
+  /** Estado de la conexión para la tarjeta. Nunca trae el token. */
+  async getWhatsappConnection() {
+    return http.get<WhatsappConnection>('/ai/whatsapp/connection')
+  },
+  async disconnectWhatsapp() {
+    return http.delete<{ success: boolean }>('/ai/whatsapp/connection')
   },
 
   async getMetrics(period = 'today') {

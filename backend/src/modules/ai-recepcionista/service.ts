@@ -25,6 +25,9 @@ import { conversationChannel } from './usecases/conversation-channel'
 import type { ReservationCancelPort, InvoiceIssuePort } from './usecases/llm-pipeline'
 import { getWhatsappConfig, updateWhatsappConfig, getWhatsappCredentials } from './usecases/whatsapp-config'
 import type { WhatsappCredentials } from './usecases/whatsapp-config'
+import { connectWhatsapp, disconnectWhatsapp, proyectarConexion } from './usecases/whatsapp-connection'
+import { connectionDepsFor } from './usecases/whatsapp-connection-deps'
+import type { ConnectInput } from './usecases/whatsapp-connection'
 import { getMetrics, getDashboardMetrics } from './usecases/metrics'
 import { deleteIntentAudited, deleteTemplateAudited } from './usecases/audit-deletes'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
@@ -78,24 +81,12 @@ export class AiRecepcionistaService {
   private userHotel(user: { hotelId?: string }): string { return user.hotelId || '' }
   private userRole(user: { role?: string }): string { return user.role || '' }
 
-  async listConversations(q: ConversationQuery, u: any) {
-    return listConversations(this.conversationRepo, q, await this.resolveHotelId(u, q.hotelId))
-  }
-  async getConversation(id: string, u: any) {
-    return getConversationWithMessages(this.conversationRepo, this.messageRepo, id, this.userHotel(u), this.userRole(u))
-  }
-  async findOrCreateConversation(dto: CreateAiConversationDTO) {
-    return findOrCreateConversation(this.conversationRepo, this.sockets, dto)
-  }
-  async closeConversation(id: string, resolvedBy: string, score?: number, u?: any) {
-    return closeConversation(this.conversationRepo, this.sockets, this.cache, id, resolvedBy, score, this.userHotel(u!), this.userRole(u!))
-  }
-  async transferConversation(id: string, agentId: string | null, reason?: string, u?: any) {
-    return transferConversation(this.conversationRepo, this.sockets, id, agentId, reason, this.userHotel(u!), this.userRole(u!))
-  }
-  async sendMessage(conversationId: string, dto: any, u: any) {
-    return sendMessage(this.conversationRepo, this.messageRepo, this.sockets, this.cache, { ...dto, conversationId }, this.userHotel(u), this.userRole(u))
-  }
+  async listConversations(q: ConversationQuery, u: any) { return listConversations(this.conversationRepo, q, await this.resolveHotelId(u, q.hotelId)) }
+  async getConversation(id: string, u: any) { return getConversationWithMessages(this.conversationRepo, this.messageRepo, id, this.userHotel(u), this.userRole(u)) }
+  async findOrCreateConversation(dto: CreateAiConversationDTO) { return findOrCreateConversation(this.conversationRepo, this.sockets, dto) }
+  async closeConversation(id: string, resolvedBy: string, score?: number, u?: any) { return closeConversation(this.conversationRepo, this.sockets, this.cache, id, resolvedBy, score, this.userHotel(u!), this.userRole(u!)) }
+  async transferConversation(id: string, agentId: string | null, reason?: string, u?: any) { return transferConversation(this.conversationRepo, this.sockets, id, agentId, reason, this.userHotel(u!), this.userRole(u!)) }
+  async sendMessage(conversationId: string, dto: any, u: any) { return sendMessage(this.conversationRepo, this.messageRepo, this.sockets, this.cache, { ...dto, conversationId }, this.userHotel(u), this.userRole(u)) }
   async processIncomingMessage(conversationId: string, content: string, hotelId: string) {
     let hotelName = 'Hotel' // nombre real del hotel, para personalizar la respuesta
     try {
@@ -108,17 +99,11 @@ export class AiRecepcionistaService {
     return processIncomingMessage(this.conversationRepo, this.messageRepo, this.intentRepo, this.whatsappConfigRepo, this.sockets, this.cache, this.logger, conversationId, content, hotelId, hotelName, { roomRepo: this.roomRepo, reservationRepo: this.reservationRepo, hotelRepo: this.hotelRepo, guestRepo: this.guestRepo, configRepo: this.configRepo, issueInvoice: this.invoicingPort ?? undefined, channel, logger: this.logger, onReservationCreated: this.onReservationCreated, cancelReservation: this.cancelReservationPort ?? undefined })
   }
 
-  async listIntents(q: IntentQuery, u: any) {
-    return listIntents(this.intentRepo, await this.resolveHotelId(u, q.hotelId), q.category, q.isActive, q.page, q.limit)
-  }
+  async listIntents(q: IntentQuery, u: any) { return listIntents(this.intentRepo, await this.resolveHotelId(u, q.hotelId), q.category, q.isActive, q.page, q.limit) }
   async seedSystemIntents(hotelId: string) { const { seedHotelIntents } = await import('./usecases/seed'); return seedHotelIntents(this.intentRepo, hotelId) }
   async getIntent(id: string, u: any) { return getIntent(this.intentRepo, id, this.userHotel(u), this.userRole(u)) }
-  async createIntent(dto: CreateAiIntentDTO, u: any) {
-    return createIntent(this.intentRepo, this.cache, dto, await this.resolveHotelId(u, dto.hotelId))
-  }
-  async updateIntent(id: string, dto: UpdateAiIntentDTO, u: any) {
-    return updateIntent(this.intentRepo, this.cache, id, dto, this.userHotel(u), this.userRole(u))
-  }
+  async createIntent(dto: CreateAiIntentDTO, u: any) { return createIntent(this.intentRepo, this.cache, dto, await this.resolveHotelId(u, dto.hotelId)) }
+  async updateIntent(id: string, dto: UpdateAiIntentDTO, u: any) { return updateIntent(this.intentRepo, this.cache, id, dto, this.userHotel(u), this.userRole(u)) }
   async deleteIntent(id: string, u: any) { return deleteIntentAudited({ repo: this.intentRepo, cache: this.cache, logger: this.logger, auditPort: this.auditPort }, id, u, this.userHotel(u), this.userRole(u)) }
   async testIntent(id: string, message: string, u: any): Promise<NlpResult> {
     const { getIntent } = await import('./usecases/intents')
@@ -140,7 +125,15 @@ export class AiRecepcionistaService {
 
   async getWhatsappConfig(hotelId: string, u: any): Promise<AiWhatsappConfigDTO | null> { return getWhatsappConfig(this.whatsappConfigRepo, await this.resolveHotelId(u, hotelId)) }
   async updateWhatsappConfig(dto: CreateAiWhatsappConfigDTO, u: any): Promise<AiWhatsappConfigDTO> { return updateWhatsappConfig(this.whatsappConfigRepo, await this.resolveHotelId(u, dto.hotelId), dto) }
-  /** Credenciales en claro para uso INTERNO del servidor (connector `marketing-whatsapp`). */
+  // ─── Conexión oficial con Meta (Embedded Signup) ───────────────────────────
+  /** Canjea el código de la ventana de Meta y deja el WhatsApp del hotel conectado. */
+  async connectWhatsapp(input: ConnectInput, u: any) { return connectWhatsapp(connectionDepsFor(this.whatsappConfigRepo, this.logger), input, await this.resolveHotelId(u, (input as any).hotelId), u?.id) }
+  /** Da de baja la conexión: primero en Meta, después acá. */
+  async disconnectWhatsapp(u: any, hotelId?: string) { return disconnectWhatsapp(connectionDepsFor(this.whatsappConfigRepo, this.logger), await this.resolveHotelId(u, hotelId)) }
+  /** Estado de la conexión para la tarjeta del panel. Sin secretos. */
+  async getWhatsappConnection(hotelId: string, u: any) { return proyectarConexion(await getWhatsappConfig(this.whatsappConfigRepo, await this.resolveHotelId(u, hotelId))) }
+
+  /** Credenciales en claro para uso INTERNO del servidor (connector `marketing-whatsapp-meta`). */
   async getWhatsappCredentials(hotelId: string): Promise<WhatsappCredentials | null> { return getWhatsappCredentials(this.whatsappConfigRepo, hotelId) }
 
   async getMetrics(hotelId: string, _period: string, u: any): Promise<AiMetricsDTO[]> {

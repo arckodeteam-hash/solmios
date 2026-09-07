@@ -44,7 +44,7 @@ export function AiRecepcionistaModule() {
         'sendMessage', 'getMessages', 'processIncomingMessage',
         'listIntents', 'createIntent', 'updateIntent', 'deleteIntent', 'testIntent',
         'listTemplates', 'createTemplate', 'updateTemplate', 'deleteTemplate',
-        'getWhatsappConfig', 'updateWhatsappConfig',
+        'getWhatsappConfig', 'updateWhatsappConfig', 'connectWhatsapp', 'getWhatsappConnection', 'disconnectWhatsapp',
         'getMetrics', 'getDashboardMetrics',
         'getBookingFlow', 'createBookingFlow', 'updateBookingFlow',
         'getVoiceConfig',
@@ -130,6 +130,11 @@ export function AiRecepcionistaModule() {
       router.post('/api/ai/whatsapp/stop', guard('ai', 'edit'), (req) => controller.stopWhatsapp(req))
       router.get('/api/ai/whatsapp/qr/:hotelId?', guard('ai', 'edit'), (req) => controller.getWhatsappQR(req))
       router.get('/api/ai/whatsapp/status/:hotelId?', guard('ai', 'edit'), (req) => controller.getWhatsappStatus(req))
+      // Conexión oficial con Meta. `settings` y no `ai`: conectar el WhatsApp del hotel es una
+      // decisión de configuración del negocio, no del recepcionista automático.
+      router.post('/api/ai/whatsapp/connect', guard('settings', 'edit'), (req) => controller.connectWhatsapp(req))
+      router.get('/api/ai/whatsapp/connection', guard('settings', 'view'), (req) => controller.getWhatsappConnection(req))
+      router.delete('/api/ai/whatsapp/connection', guard('settings', 'edit'), (req) => controller.disconnectWhatsapp(req))
 
       // Endpoints públicos (sin auth): cada mensaje dispara una llamada a la LLM, que cuesta plata.
       // El rate-limit global (200/min/IP) es compartido con toda la API; sin un límite propio, un

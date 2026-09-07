@@ -1,7 +1,7 @@
 import type { Logger } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import type { AiRecepcionistaService } from './service'
-import { AiRecepcionistaValidator, CloseConversationSchema, TransferConversationSchema, TestIntentSchema, WebChatMessageSchema, StartWhatsappSchema, StopWhatsappSchema } from './validators/schema'
+import { AiRecepcionistaValidator, CloseConversationSchema, TransferConversationSchema, TestIntentSchema, WebChatMessageSchema, StartWhatsappSchema, StopWhatsappSchema, ConnectWhatsappSchema } from './validators/schema'
 import { redactWhatsappConfig } from './usecases/whatsapp-config'
 
 export class AiRecepcionistaController {
@@ -141,6 +141,31 @@ export class AiRecepcionistaController {
     validateSchema(AiRecepcionistaValidator.createWhatsappConfig as any, body)
     const result = await this.service.updateWhatsappConfig(body, user)
     return { status: 200, body: redactWhatsappConfig(result) }
+  }
+
+  // ─── Conexión oficial con Meta (Embedded Signup) ────────────────────────
+
+  /**
+   * Recibe el código de un solo uso que devolvió la ventana de Meta y lo canjea server-side.
+   * El `hotelId` sale del token, nunca del body: un merchant no puede conectar el hotel de otro.
+   */
+  async connectWhatsapp(req: any) {
+    const user = req.user
+    const body = validateSchema(ConnectWhatsappSchema, req.body || {}) as any
+    return { status: 200, body: await this.service.connectWhatsapp(body, user) }
+  }
+
+  /** Estado de la conexión para la tarjeta del panel. Nunca incluye el token. */
+  async getWhatsappConnection(req: any) {
+    const user = req.user
+    return { status: 200, body: await this.service.getWhatsappConnection(req.query?.hotelId || '', user) }
+  }
+
+  /** Da de baja la conexión. Primero en Meta; si Meta falla, no se toca nada local. */
+  async disconnectWhatsapp(req: any) {
+    const user = req.user
+    await this.service.disconnectWhatsapp(user, req.query?.hotelId || undefined)
+    return { status: 200, body: { success: true } }
   }
 
   // ─── WhatsApp Webhook ───────────────────────────────────────────────────
