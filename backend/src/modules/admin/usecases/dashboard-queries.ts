@@ -9,9 +9,30 @@ export class DashboardQueries {
     return { data, total: data.length }
   }
 
+  /**
+   * Usuarios para el listado del super-admin. Dos correcciones sobre la versión anterior:
+   *
+   * 1. `hotelName`: antes se devolvía la fila cruda, sin el nombre del hotel, y la pantalla
+   *    `/super-admin/users` cae a `u.hotelName ?? 'Plataforma'` — o sea que la columna
+   *    "Hotel / Propiedad" decía "Plataforma" para TODOS, incluso para el usuario de un hotel.
+   *    Se resuelve con un `Map` de hoteles cargado UNA vez (mismo patrón que `listSubscriptions`);
+   *    una consulta por usuario adentro del loop sería N+1. Sin `hotelId` (o con uno que ya no
+   *    existe) queda `''` y el frontend muestra "Plataforma", que ahí sí es la verdad.
+   *
+   * 2. Campos sensibles: además de `password` se sacan `token`, `resetToken` y `resetExpires`.
+   *    `resetToken` es el token de recuperación de contraseña: filtrarlo permite tomar la cuenta
+   *    de cualquier usuario. Que solo lo vea un super admin no es motivo para que viaje.
+   */
   async listUsers(): Promise<{ data: any[]; total: number }> {
-    const data = await this.orm.findMany('Users', {})
-    return { data: data.map((u: any) => { const { password, ...rest } = u; return rest }), total: data.length }
+    const users = await this.orm.findMany('Users', {}) as any[]
+    const hotels = await this.orm.findMany('Hotels', {}) as any[]
+    const hotelNameById = new Map(hotels.map((h: any) => [h.id, h.name]))
+
+    const data = users.map((u: any) => {
+      const { password, token, resetToken, resetExpires, ...rest } = u
+      return { ...rest, hotelName: (u.hotelId && hotelNameById.get(u.hotelId)) || '' }
+    })
+    return { data, total: data.length }
   }
 
   /**
