@@ -265,6 +265,8 @@ import { ref, computed, onMounted } from 'vue'
 import { PaymentsService } from '@/services/Payments.service'
 import type { PaymentRequest } from '@/services/Payments.service'
 import { ReservationService } from '@/services/Reservation.service'
+import { RoomService } from '@/services/Room.service'
+import { GuestService } from '@/services/Guest.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
@@ -447,17 +449,31 @@ async function load() {
   }
 }
 
+// `GET /reservas` (ReservationService.list) NO trae guestName/roomNumber: la tabla
+// `reservations` solo guarda guestId/roomId. Hay que cruzar con Guest/RoomService por id
+// (mismo patrón que `pages/reservations/index.vue load()`) — sin esto, el nombre y la
+// habitación siempre salían "Sin nombre"/"s/n" aunque la reserva sí tuviera huésped y cuarto.
 async function loadReservations() {
   try {
-    const r = await ReservationService.list({ hotelId: hotelId.value })
-    reservations.value = (r.reservations || []).map((x: any) => ({
-      id: x.id,
-      guestName: x.guestName || 'Sin nombre',
-      roomNumber: x.roomNumber || 's/n',
-      checkIn: x.checkIn,
-      totalAmount: x.totalAmount,
-      deposit: x.deposit,
-    }))
+    const [r, rom, gst] = await Promise.all([
+      ReservationService.list({ hotelId: hotelId.value }),
+      RoomService.list({ hotelId: hotelId.value }).catch(() => ({ rooms: [], total: 0 })),
+      GuestService.list({ hotelId: hotelId.value }).catch(() => ({ guests: [], total: 0 })),
+    ])
+    const roomById = new Map((rom.rooms || []).map((room: any) => [room.id, room]))
+    const guestById = new Map((gst.guests || []).map((guest: any) => [guest.id, guest]))
+    reservations.value = (r.reservations || []).map((x: any) => {
+      const guest = guestById.get(x.guestId)
+      const room = roomById.get(x.roomId)
+      return {
+        id: x.id,
+        guestName: guest?.name || x.guestName || 'Sin nombre',
+        roomNumber: room?.number || x.roomNumber || 's/n',
+        checkIn: x.checkIn,
+        totalAmount: x.totalAmount,
+        deposit: x.deposit,
+      }
+    })
   } catch { reservations.value = [] }
 }
 
@@ -514,10 +530,14 @@ function openShareModal(pr: PaymentRequest, url: string) {
   // Al crear desde "Nuevo Link" la reserva viene de `selectedReservation` (form recién enviado);
   // al generar el Stripe checkout desde la fila de la tabla, se busca por id en la lista ya cargada.
   const r = reservations.value.find(x => x.id === pr.reservationId) || selectedReservation.value
+  // 'Sin nombre'/'s/n' son placeholders para el <select> del form — no deben filtrarse
+  // al mensaje que lee el huésped si el cruce con Guest/RoomService no encontró el registro.
+  const rawGuestName = pr.guestName || r?.guestName || ''
+  const rawRoomNumber = r?.roomNumber || ''
   shareModal.value = {
     url,
-    guestName: pr.guestName || r?.guestName || '',
-    roomNumber: r?.roomNumber || '',
+    guestName: rawGuestName === 'Sin nombre' ? '' : rawGuestName,
+    roomNumber: rawRoomNumber === 's/n' ? '' : rawRoomNumber,
     checkIn: r?.checkIn,
     amount: pr.amount,
     currency: pr.currency || 'USD',
@@ -525,8 +545,9 @@ function openShareModal(pr: PaymentRequest, url: string) {
   }
 }
 
-// Sin emojis: los code points de 4 bytes se corrompen en la cadena navegador→wa.me→WhatsApp
-// (mismo criterio documentado en ReservationCalendar.vue popupWaLink).
+// Español neutro (forma "usted", sin voseo) — mismo criterio que el resto de los mensajes
+// al huésped en ReservationCalendar.vue (popupWaLink: "Nos complace darle la bienvenida...").
+// Sin emojis: los code points de 4 bytes se corrompen en la cadena navegador→wa.me→WhatsApp.
 const shareMessage = computed(() => {
   const s = shareModal.value
   if (!s) return ''
@@ -534,14 +555,14 @@ const shareMessage = computed(() => {
   const lines = [
     `Hola${s.guestName ? ' ' + s.guestName : ''},`,
     '',
-    `Te compartimos el link de pago de tu reserva en ${hotelName}.`,
+    `Le compartimos el enlace de pago de su reserva en ${hotelName}.`,
     '',
   ]
   if (s.roomNumber) lines.push(`- Habitación: ${s.roomNumber}`)
   if (s.checkIn) lines.push(`- Check-in: ${formatDate(s.checkIn)}`)
   lines.push(`- Monto a pagar: ${formatMoney(s.amount)}`)
-  lines.push('', 'Podés completar el pago de forma segura en este link:', s.url)
-  lines.push('', 'Cualquier consulta, quedamos atentos.')
+  lines.push('', 'Puede completar el pago de forma segura en este enlace:', s.url)
+  lines.push('', 'Ante cualquier consulta, quedamos atentos.')
   return lines.join('\n')
 })
 
