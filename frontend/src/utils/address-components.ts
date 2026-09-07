@@ -195,3 +195,34 @@ export async function reverseGeocodeNominatim(lat: number, lng: number): Promise
   const data = await res.json() as NominatimResponse
   return mapNominatimAddress(data.address)
 }
+
+/** Una sugerencia de dirección, del autocompletado por texto (Nominatim) o de Google Places. */
+export interface AddressSuggestion {
+  label: string
+  lat: number
+  lng: number
+  mapped: MappedAddress
+}
+
+/**
+ * Autocompletado de dirección por texto (fallback sin API key de Google — Nominatim `/search`).
+ * `countryCode` (ISO 3166-1 alpha-2) restringe la búsqueda al país elegido, mismo criterio que
+ * `componentRestrictions.country` del lado de Google Places — sin esto, buscar "Piantini" desde
+ * un hotel en RD puede devolver un resultado en otro país con el mismo nombre de barrio.
+ */
+export async function searchNominatim(query: string, countryCode?: string): Promise<AddressSuggestion[]> {
+  const trimmed = query.trim()
+  if (trimmed.length < 3) return []   // menos de 3 caracteres: ni Nominatim da resultados útiles
+  const params = new URLSearchParams({
+    q: trimmed, format: 'json', addressdetails: '1', limit: '5', 'accept-language': 'es',
+  })
+  if (countryCode) params.set('countrycodes', countryCode.toLowerCase())
+  const res = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+    headers: { 'User-Agent': 'SOLMIOS-ConfigPanel/1.0 (https://solmios.com)' },
+  })
+  if (!res.ok) throw new Error(`Nominatim respondió ${res.status}`)
+  const data = await res.json() as Array<{ display_name: string; lat: string; lon: string; address?: NominatimAddress }>
+  return data
+    .map((r) => ({ label: r.display_name, lat: Number(r.lat), lng: Number(r.lon), mapped: mapNominatimAddress(r.address) }))
+    .filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lng))
+}

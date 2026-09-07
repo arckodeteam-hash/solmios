@@ -85,12 +85,14 @@ export function loadGoogleMaps(explicitKey?: string): Promise<typeof google.maps
       const s = document.createElement('script')
       s.id = SCRIPT_ID
       s.async = true
-      // `libraries=geocoding` (GH-33): el reverse geocoding de la pantalla de Configuración usa
-      // `google.maps.Geocoder`. Pedir la librería explícitamente evita depender de qué trae por
-      // defecto el bundle del bootstrap, que cambia entre versiones del SDK. OJO: esto solo carga
-      // el CÓDIGO cliente — la "Geocoding API" sigue siendo un producto aparte que hay que
-      // habilitar para la key en Google Cloud, si no las consultas vuelven REQUEST_DENIED.
-      s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=geocoding&language=es`
+      // `libraries=geocoding,places` (GH-33 + wizard-refactor tarea "autocompletado de
+      // dirección"): geocoding para el reverse geocoding (`google.maps.Geocoder`), places para
+      // el autocompletado del campo Dirección (`google.maps.places.Autocomplete`). Pedirlas
+      // explícitamente evita depender de qué trae por defecto el bundle del bootstrap. OJO: esto
+      // solo carga el CÓDIGO cliente — Geocoding API y Places API siguen siendo productos aparte
+      // que hay que habilitar para la key en Google Cloud, si no las consultas vuelven
+      // REQUEST_DENIED.
+      s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=geocoding,places&language=es`
       s.onerror = () => settle(null) // fallo de red/carga del script en sí (dominio inalcanzable, etc.)
       s.onload = () => settle(window.google?.maps ?? null)
       document.head.appendChild(s)

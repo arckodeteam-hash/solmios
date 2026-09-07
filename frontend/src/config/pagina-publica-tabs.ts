@@ -22,6 +22,7 @@ export const PAGINA_PUBLICA_PATH = '/panel/pagina-publica'
 
 export const PAGINA_PUBLICA_TABS: PaginaPublicaTab[] = [
   { value: 'general', label: 'General', path: '/panel/pagina-publica', roles: ['hotel_admin'], group: 'Contenido' },
+  { value: 'ubicacion', label: 'Ubicación', path: '/panel/pagina-publica/ubicacion', roles: ['hotel_admin'], group: 'Contenido' },
   { value: 'landing', label: 'Landing', path: '/panel/pagina-publica/landing', roles: ['hotel_admin'], group: 'Contenido' },
   { value: 'media', label: 'Media', path: '/panel/pagina-publica/media', roles: ['hotel_admin'], group: 'Contenido' },
   { value: 'apariencia', label: 'Apariencia', path: '/panel/pagina-publica/apariencia', roles: ['hotel_admin'], group: 'Contenido' },

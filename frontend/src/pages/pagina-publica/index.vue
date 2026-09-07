@@ -78,6 +78,7 @@ const publicUrl = computed(() => `/h/${encodeURIComponent(publicSlug.value)}`)
 // Lazy: cada vista sigue siendo su propio chunk, igual que cuando eran rutas.
 const tabComponents: Record<string, Component> = {
   general: defineAsyncComponent(() => import('./general.vue')),
+  ubicacion: defineAsyncComponent(() => import('./ubicacion.vue')),
   landing: defineAsyncComponent(() => import('./landing.vue')),
   media: defineAsyncComponent(() => import('./media.vue')),
   apariencia: defineAsyncComponent(() => import('./apariencia.vue')),
@@ -89,6 +90,7 @@ const tabComponents: Record<string, Component> = {
 
 const TAB_ICONS: Record<string, string> = {
   general: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM3.75 6H7.5m9 12h3.75M10.5 18a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM3.75 18H7.5m9-6h3.75M13.5 12a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM3.75 12H7.5"/></svg>',
+  ubicacion: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z"/></svg>',
   landing: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" class="w-full h-full"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 9v11"/></svg>',
   media: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" class="w-full h-full"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m3 16 5-5 4 4 3-3 6 6"/></svg>',
   apariencia: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3a9 9 0 1 0 0 18c1.4 0 2-.6 2-1.8 0-.5-.2-.9-.5-1.3-.3-.4-.4-.7-.4-1.1 0-.9.7-1.6 1.6-1.6H16.5a4.5 4.5 0 0 0 4.5-4.5C21 6 17 3 12 3Z"/><circle cx="7.5" cy="10.5" r="1" fill="currentColor" stroke="none"/><circle cx="10.5" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="7.5" r="1" fill="currentColor" stroke="none"/></svg>',

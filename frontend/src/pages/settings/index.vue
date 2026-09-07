@@ -103,6 +103,14 @@
                 <option value="5">5 Estrellas</option>
               </select>
             </div>
+            <div>
+              <!-- País: identidad administrativa/fiscal del hotel (moneda, impuestos por defecto,
+                   facturación) — se queda en Configuración aunque el resto de Ubicación (dirección,
+                   mapa, provincia/municipio/CP) se mudó a Página pública. Página pública muestra
+                   este valor de solo lectura con un link "Cambiar" que apunta acá. -->
+              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">País *</label>
+              <SearchSelect v-model="form.country" :options="COUNTRIES" placeholder="Buscar país..." />
+            </div>
           </div>
         </SectionCard>
 
@@ -310,110 +318,6 @@
           <span class="mx-auto mb-2 block h-8 w-8 text-navy/40" v-html="ICON_BUILDING"></span>
           <div class="text-sm font-bold text-navy">{{ form.name || 'Hotel' }}</div>
           <div v-if="form.country" class="mt-1 text-[10px] font-bold uppercase tracking-wide text-text-muted">{{ form.country }}</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ========== LOCATION (mapa de Google) ========== -->
-    <div v-if="activeTab === 'location'" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div class="lg:col-span-2 space-y-6">
-        <!-- País y Dirección viven en Ubicación (unificación UX): todo lo geográfico en esta
-             pestaña, "Datos del hotel" queda solo identidad. Mismos v-model/validaciones que
-             cuando vivían en la pestaña Hotel — solo cambió el lugar del template. -->
-        <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-          <h3 class="font-extrabold text-navy mb-1">País y dirección</h3>
-          <p class="text-[11px] text-text-muted mb-4">
-            La dirección, junto a provincia, municipio y código postal, forma la dirección completa
-            del hotel en facturas, emails, OTAs y la página pública. No mueve el pin: para eso usá
-            el mapa o las coordenadas de abajo.
-          </p>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">País *</label>
-              <SearchSelect v-model="form.country" :options="COUNTRIES" placeholder="Buscar país..." />
-            </div>
-            <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Dirección</label>
-              <input v-model="form.address" type="text" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" :class="fieldClass('address')" data-field="address" @blur="touchField('address')">
-              <p v-if="errorOf('address')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('address') }}</p>
-            </div>
-          </div>
-        </div>
-        <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <h3 class="font-extrabold text-navy mb-4">Mapa Interactivo</h3>
-        <!-- Con API key: mapa interactivo (clic y arrastre). Sin key: iframe embed. -->
-        <div v-show="mapsInteractive" ref="mapEl" class="w-full h-96 rounded-xl border border-border overflow-hidden"></div>
-        <iframe v-if="!mapsInteractive" :src="googleMapsEmbedUrl" class="w-full h-96 rounded-xl border border-border"
-          style="border:0" loading="lazy" referrerpolicy="no-referrer-when-downgrade"
-          title="Ubicación del hotel en Google Maps"></iframe>
-        <div class="mt-2 flex items-center justify-between gap-3">
-          <p class="text-[11px] text-text-muted">
-            <template v-if="mapsInteractive">Hacé clic en el mapa o arrastrá el pin para ajustar la ubicación.</template>
-            <template v-else>Para mover el pin: pegá abajo el enlace de Google Maps del lugar, o escribí las coordenadas.</template>
-          </p>
-          <a :href="googleMapsLinkUrl" target="_blank" rel="noopener"
-            class="shrink-0 text-[11px] font-bold text-teal hover:underline">Abrir en Google Maps</a>
-        </div>
-        </div>
-      </div>
-      <div class="space-y-4">
-        <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-          <h3 class="font-extrabold text-navy mb-4">Coordenadas</h3>
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Latitud</label>
-              <input v-model.number="form.latitude" type="number" step="0.000001" @change="syncMarkerFromForm"
-                class="w-full px-3 py-2 rounded-full border text-sm font-bold text-navy" :class="fieldClass('latitude')" data-field="latitude" @blur="touchField('latitude')">
-              <p v-if="errorOf('latitude')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('latitude') }}</p>
-            </div>
-            <div>
-              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Longitud</label>
-              <input v-model.number="form.longitude" type="number" step="0.000001" @change="syncMarkerFromForm"
-                class="w-full px-3 py-2 rounded-full border text-sm font-bold text-navy" :class="fieldClass('longitude')" data-field="longitude" @blur="touchField('longitude')">
-              <p v-if="errorOf('longitude')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('longitude') }}</p>
-            </div>
-          </div>
-          <div class="mt-3">
-            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Pegar enlace de Google Maps</label>
-            <input v-model="mapsPaste" @input="applyMapsPaste" type="text"
-              placeholder="https://maps.google.com/… o 18.4861, -69.9312"
-              class="w-full px-3 py-2 rounded-full border border-border text-sm">
-            <p class="text-[10px] text-text-muted mt-1">
-              En Google Maps, clic derecho sobre el punto → copiar coordenadas, y pegalas acá.
-            </p>
-          </div>
-          <button @click="useMyLocation" class="mt-3 w-full text-xs font-bold text-teal hover:underline cursor-pointer">
-            Usar mi ubicación actual
-          </button>
-        </div>
-        <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-          <h3 class="font-extrabold text-navy mb-1">Provincia, Municipio y Código Postal</h3>
-          <p class="text-[11px] text-text-muted mb-4">
-            <template v-if="mapsInteractive">Se completan solos al mover el pin — revisalos y corregí si hace falta.</template>
-            <template v-else>Sin mapa interactivo (falta la key de Google) se completan a mano.</template>
-          </p>
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Provincia</label>
-              <input v-model="form.province" class="w-full px-3 py-2 rounded-full border text-sm" :class="fieldClass('province')" data-field="province" @blur="touchField('province')">
-              <p v-if="errorOf('province')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('province') }}</p>
-            </div>
-            <div>
-              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Municipio</label>
-              <input v-model="form.municipality" class="w-full px-3 py-2 rounded-full border text-sm" :class="fieldClass('municipality')" data-field="municipality" @blur="touchField('municipality')">
-              <p v-if="errorOf('municipality')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('municipality') }}</p>
-            </div>
-            <div>
-              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Localidad</label>
-              <input v-model="form.locality" class="w-full px-3 py-2 rounded-full border text-sm" :class="fieldClass('locality')" data-field="locality" @blur="touchField('locality')">
-              <p v-if="errorOf('locality')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('locality') }}</p>
-            </div>
-            <div>
-              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Código Postal</label>
-              <input v-model="form.postalCode" class="w-full px-3 py-2 rounded-full border text-sm" :class="fieldClass('postalCode')" data-field="postalCode" @blur="touchField('postalCode')">
-              <p v-if="errorOf('postalCode')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('postalCode') }}</p>
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -878,13 +782,6 @@ import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES, countryName } from '@/data/locales'
 import { TIMEZONES, CURRENCIES } from '@/data/intl-catalogs'
 import { CurrencyCode } from '@/types/currency'
-import { parseLatLng } from '@/composables/useLatLngParse'
-import { loadGoogleMaps } from '@/composables/useGoogleMaps'
-import {
-  mapAddressComponents, unresolvedFields, geocodeErrorMessage,
-  reverseGeocodeNominatim,
-  ADDRESS_FIELD_LABELS, type AddressField,
-} from '@/utils/address-components'
 import { validateField, validateAll, warnOnUnsavedChanges, HOTEL_RULES } from '@/composables/useFieldValidation'
 import { HotelService } from '@/services/Hotel.service'
 import { RoomService } from '@/services/Room.service'
@@ -1301,7 +1198,6 @@ const tabGroups: SettingsTabGroup[] = [
     label: 'Config. administrativo',
     tabs: [
       { value: 'hotel', label: 'Hotel' },
-      { value: 'location', label: 'Ubicación' },
       { value: 'conditions', label: 'Condiciones' },
       { value: 'children', label: 'Niños' },
       { value: 'room-types', label: 'Tipos de habitación' },
@@ -1331,11 +1227,10 @@ const FIELD_TAB: Record<string, string> = {
   name: 'hotel', phone: 'hotel', phone2: 'hotel',
   email: 'hotel', website: 'hotel', timezone: 'hotel', currency: 'hotel',
   checkIn: 'hotel', checkOut: 'hotel', ownerName: 'hotel', ownerTaxId: 'hotel', logo: 'hotel',
-  // País y Dirección se mudaron a Ubicación: si el guardado falla por ellos, el salto
-  // automático al error tiene que aterrizar en la pestaña donde ahora viven.
-  country: 'location', address: 'location',
-  province: 'location', municipality: 'location', locality: 'location',
-  postalCode: 'location', latitude: 'location', longitude: 'location',
+  // País: Dirección/mapa/provincia/municipio/CP se mudaron a Página pública (tarea 1.8,
+  // docs/wizard-refactor) — país se queda acá porque es identidad administrativa/fiscal
+  // (doc 03), ahora vive en la pestaña Hotel junto al resto de la identidad.
+  country: 'hotel',
   wifiNetwork: 'hotel', wifiPassword: 'hotel',
   depositPercent: 'conditions', weekendSurcharge: 'conditions', depositFixed: 'conditions',
   advanceAmount: 'conditions', releaseHours: 'conditions', taxName: 'conditions', taxRate: 'conditions',
@@ -1657,10 +1552,13 @@ async function saveAll() {
 
   const saveField = (k: string, v: any) => v !== undefined && v !== null ? v : undefined
   const patch: Record<string, any> = {}
-  const keys = ['name','country','address','phone','email','timezone','currency','checkIn','checkOut',
+  // address/province/municipality/locality/postalCode/latitude/longitude ya NO se guardan
+  // desde acá (tarea 1.8, docs/wizard-refactor) — los persiste Página pública → Ubicación con
+  // su propio guardado aislado. Incluirlos acá pisaría ese guardado con lo que haya quedado
+  // cargado en este formulario al abrir Configuración.
+  const keys = ['name','country','phone','email','timezone','currency','checkIn','checkOut',
     'freeCancellation','depositRequired','depositPercent','weekendSurcharge',
     'accommodationType','starRating','ownerName','ownerTaxId','phone2','website',
-    'province','municipality','locality','postalCode','latitude','longitude',
     'cleaningType',
     'depositType','depositFixed','advanceType','advanceAmount','releaseHours','defaultPaymentMethod',
     'requestReviews','taxName','taxRate',
@@ -1706,231 +1604,9 @@ async function saveAll() {
   }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Mapa de ubicación (Google Maps embed)
-// ════════════════════════════════════════════════════════════════════════════
-// Google Maps por iframe embed (`output=embed`): no requiere API key ni facturación.
-//
-// Contrapartida asumida: un iframe es de otro origen, así que NO puede avisarnos dónde hizo clic
-// el usuario — se pierden el marcador arrastrable y el clic-para-fijar que tenía Leaflet. Para
-// compensar, la posición se fija por tres vías sin salir de la pantalla: pegar el enlace/coordenadas
-// de Google Maps, escribir lat/long a mano, o "usar mi ubicación".
-//
-// Si algún día se carga una Maps JavaScript API key, conviene volver al mapa interactivo real:
-// ahí sí se recupera el clic sobre el mapa.
-
-/** Centro por defecto cuando el hotel todavía no tiene coordenadas. */
-const DEFAULT_LAT = 18.4861
-const DEFAULT_LNG = -69.9312
-
-const mapLat = computed(() => Number(form.value.latitude) || DEFAULT_LAT)
-const mapLng = computed(() => Number(form.value.longitude) || DEFAULT_LNG)
-
-const googleMapsEmbedUrl = computed(
-  () => `https://www.google.com/maps?q=${mapLat.value},${mapLng.value}&z=16&output=embed`,
-)
-const googleMapsLinkUrl = computed(
-  () => `https://www.google.com/maps/search/?api=1&query=${mapLat.value},${mapLng.value}`,
-)
-
-const mapsPaste = ref('')
-
-function applyMapsPaste() {
-  const parsed = parseLatLng(mapsPaste.value)
-  if (!parsed) return          // se escribe de a poco: no molestar hasta que haya un par válido
-  form.value.latitude = parsed.lat
-  form.value.longitude = parsed.lng
-  mapsPaste.value = ''
-  syncMarkerFromForm()
-  toast.success('Ubicación actualizada desde Google Maps')
-  reverseGeocode(parsed.lat, parsed.lng)
-}
-
-// ─── Mapa interactivo (sólo si hay API key configurada en Admin → Integraciones) ─────
-const mapEl = ref<HTMLElement | null>(null)
-const mapsInteractive = ref(false)
-let gmap: google.maps.Map | null = null
-let gmarker: google.maps.Marker | null = null
-let geocoder: google.maps.Geocoder | null = null
-
-function setCoords(lat: number, lng: number) {
-  form.value.latitude = Number(lat.toFixed(6))
-  form.value.longitude = Number(lng.toFixed(6))
-}
-
-/**
- * Último valor que el autocompletado escribió en cada campo. Sirve para NO pisar lo que el usuario
- * tipeó a mano: solo se sobrescribe un campo vacío o uno cuyo contenido lo puso el geocoding
- * anterior. Si el usuario corrigió "Municipio" y después mueve el pin, su corrección se respeta.
- */
-const geocodedValues = ref<Partial<Record<AddressField, string>>>({})
-
-/** Descarta respuestas viejas: si el usuario arrastra el pin dos veces seguidas, la primera
- *  respuesta puede llegar después de la segunda y dejaría una dirección que no corresponde. */
-let geocodeSeq = 0
-
-/**
- * Reverse geocoding: dado un punto, pregunta qué dirección hay ahí y completa
- * Provincia/Municipio/Localidad/Código Postal.
- *
- * GH-33 — cadena de proveedores Google → Nominatim (OpenStreetMap):
- *
- *  1. La "Geocoding API" es un producto SEPARADO de la "Maps JavaScript API" en Google Cloud:
- *     la key que dibuja el mapa NO habilita el geocoding, y la request vuelve `REQUEST_DENIED`.
- *     Ese es el escenario reportado: el mapa interactivo funciona, el pin se mueve, lat/lng se
- *     actualizan… y los cuatro campos quedaban vacíos (en `main` además con un catch mudo, sin
- *     ningún mensaje). Por eso NINGUNA falla de Google termina el flujo: cae a Nominatim
- *     (gratis, sin key) antes de rendirse.
- *  2. Sin key de Google directamente no hay SDK ni Geocoder: mismo fallback de Nominatim para
- *     las otras vías de coordenadas (pegar enlace de Maps, "usar mi ubicación").
- *  3. Si los DOS proveedores fallan, recién ahí el aviso visible (`geocodeErrorMessage`) —
- *     nunca silencio, nunca bloquea: los campos siguen editables a mano.
- *
- * El mapeo de componentes vive en `utils/address-components.ts` (con sus cadenas de fallback,
- * porque el esquema de Google no calza 1:1 con ninguna división administrativa nacional).
- * Es MEJOR ESFUERZO y los campos siguen siendo editables.
- */
-async function reverseGeocode(lat: number, lng: number) {
-  const seq = ++geocodeSeq
-  const maps = await loadGoogleMaps()
-
-  // 1) Google Geocoding (si hay SDK cargado).
-  if (maps) {
-    try {
-      geocoder ??= new maps.Geocoder()
-      const { results } = await geocoder.geocode({ location: { lat, lng } })
-      if (seq !== geocodeSeq) return       // llegó tarde: el pin ya está en otro lado
-      const result = results?.[0]
-      if (!result) throw new Error('ZERO_RESULTS')
-
-      const mapped = mapAddressComponents(result.address_components)
-      if (unresolvedFields(mapped).length === Object.keys(ADDRESS_FIELD_LABELS).length) {
-        // Google respondió, pero sin NINGÚN componente aprovechable para estos cuatro campos.
-        // Antes de rendirse, probar el fallback: a veces OSM tiene lo que Google no trae.
-        throw new Error('ZERO_RESULTS')
-      }
-      applyGeocodedValues(mapped, 'Google')
-      return
-    } catch {
-      if (seq !== geocodeSeq) return       // respuesta vieja: ni fallback ni aviso
-      // Google caído (REQUEST_DENIED, librería sin cargar, red): sigue al fallback.
-    }
-  }
-
-  // 2) Nominatim (OpenStreetMap): gratis, sin API key. Se llama UNA vez por dragend/click/
-  //    pegado (no por frame), así el rate limit del proveedor (1 req/s) no se satura arrastrando.
-  try {
-    const mapped = await reverseGeocodeNominatim(lat, lng)
-    if (seq !== geocodeSeq) return
-    applyGeocodedValues(mapped, 'OpenStreetMap')
-  } catch (err) {
-    if (seq !== geocodeSeq) return
-    // Nada de silencio: el usuario tiene que saber por qué los campos siguen vacíos y qué hacer.
-    const { variant, title, detail } = geocodeErrorMessage(err)
-    if (variant === 'warning') toast.warning(title, detail)
-    else toast.error(title, detail)
-  }
-}
-
-/**
- * Aplica los valores geocodificados (de Google o Nominatim) a los campos del formulario.
- * Respeta lo que el usuario escribió a mano: solo pisa campos vacíos o los que puso
- * el propio autocompletado previo.
- */
-function applyGeocodedValues(mapped: { province: string; municipality: string; locality: string; postalCode: string }, source: string) {
-  const pending = unresolvedFields(mapped)
-  const kept: string[] = []
-
-  for (const field of Object.keys(ADDRESS_FIELD_LABELS) as AddressField[]) {
-    const value = mapped[field]
-    if (!value) continue
-    const current = String(form.value[field] ?? '').trim()
-    // Solo se pisa lo vacío o lo que puso el propio autocompletado.
-    if (current && current !== (geocodedValues.value[field] ?? '')) {
-      kept.push(ADDRESS_FIELD_LABELS[field])
-      continue
-    }
-    form.value[field] = value
-    geocodedValues.value[field] = value
-  }
-
-  if (pending.length === Object.keys(ADDRESS_FIELD_LABELS).length) {
-    toast.warning(
-      `${source} no devolvió datos de dirección para ese punto`,
-      'Completá Provincia, Municipio, Localidad y Código Postal a mano.',
-    )
-    return
-  }
-
-  const notas = [
-    pending.length ? `${source} no devolvió: ${pending.map((f) => ADDRESS_FIELD_LABELS[f]).join(', ')}.` : '',
-    kept.length ? `Se respetó lo que escribiste en: ${kept.join(', ')}.` : '',
-  ].filter(Boolean).join(' ')
-
-  if (pending.length) {
-    toast.warning('Dirección completada parcialmente', `${notas} Revisá y completá a mano.`)
-  } else {
-    toast.success('Dirección completada automáticamente', notas || 'Revisá los campos antes de guardar.')
-  }
-}
-
-async function initInteractiveMap() {
-  if (gmap || !mapEl.value) return
-  const maps = await loadGoogleMaps()
-  if (!maps) return                      // sin key o key inválida → queda el iframe
-  mapsInteractive.value = true
-  await nextTick()                       // el div estaba en v-show: necesita estar medido
-  const center = { lat: mapLat.value, lng: mapLng.value }
-  gmap = new maps.Map(mapEl.value, { center, zoom: 16, mapTypeControl: true, streetViewControl: false })
-  gmarker = new maps.Marker({ position: center, map: gmap, draggable: true })
-  gmarker.addListener('dragend', () => {
-    const p = gmarker!.getPosition()
-    if (p) {
-      setCoords(p.lat(), p.lng())
-      reverseGeocode(p.lat(), p.lng())
-    }
-  })
-  gmap.addListener('click', (e: google.maps.MapMouseEvent) => {
-    if (!e.latLng) return
-    setCoords(e.latLng.lat(), e.latLng.lng())
-    gmarker!.setPosition(e.latLng)
-    reverseGeocode(e.latLng.lat(), e.latLng.lng())
-  })
-}
-
-/** Recentra el mapa cuando las coordenadas cambian por otra vía (pegar enlace, geolocalización). */
-function syncMarkerFromForm() {
-  if (!gmap || !gmarker) return
-  const pos = { lat: mapLat.value, lng: mapLng.value }
-  gmarker.setPosition(pos)
-  gmap.setCenter(pos)
-}
-
-// El mapa se crea al entrar a la pestaña: antes el contenedor no tiene tamaño y Google lo
-// renderiza en gris.
-watch(activeTab, async (val) => {
-  if (val === 'location') {
-    await nextTick()
-    await initInteractiveMap()
-  }
-})
-
-function useMyLocation() {
-  if (!navigator.geolocation) {
-    toast.error('Geolocalización no disponible')
-    return
-  }
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      form.value.latitude = pos.coords.latitude
-      form.value.longitude = pos.coords.longitude
-      syncMarkerFromForm()
-      toast.success('Ubicación actualizada')
-      reverseGeocode(pos.coords.latitude, pos.coords.longitude)
-    },
-    () => toast.error('No se pudo obtener tu ubicación'),
-  )
-}
+// El mapa de ubicación (composables/useHotelLocationMap.ts) ya NO se usa acá — Ubicación
+// completa (dirección, mapa, coordenadas, provincia/municipio/CP) se mudó a Página pública
+// (tarea 1.8, docs/wizard-refactor). Sigue viviendo en pagina-publica/ubicacion.vue.
 
 // Temporadas y tarifas se mudaron a su propia página: pages/tarifas/index.vue (config/tarifas).
 </script>
