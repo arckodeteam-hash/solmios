@@ -176,6 +176,29 @@ describe('/panel/config/tarifas — aplicar temporada sin salir de la pantalla',
     expect(w.find('[role="dialog"]').exists()).toBe(true)
   })
 
+  // Cancelar y reabrir con otra temporada mientras la primera llamada sigue en vuelo: al resolver,
+  // esa llamada vieja no tiene que cerrar el diálogo nuevo ni borrar el rango que se está escribiendo.
+  it('una llamada en vuelo no cierra el diálogo que se reabrió después', async () => {
+    let resolvePrimera: (v: unknown) => void = () => {}
+    svc.assignSeason.mockImplementationOnce(() => new Promise((res) => { resolvePrimera = res }))
+
+    const w = mount(Tarifas, MOUNT_OPTS)
+    await flushPromises()
+
+    await applyButtons(w)[0].trigger('click')
+    await w.find('#aplicar-confirmar').trigger('click')   // queda en vuelo
+    await w.find('[role="dialog"] button').trigger('click') // Cancelar
+    await applyButtons(w)[0].trigger('click')              // se reabre
+    await w.find('#aplicar-hasta').setValue(`${NEXT_YEAR}-12-15`)
+
+    resolvePrimera({ success: true, count: 31 })
+    await flushPromises()
+
+    // El diálogo reabierto sigue en pantalla, con lo que el hotel había escrito.
+    expect(w.find('[role="dialog"]').exists()).toBe(true)
+    expect((w.find('#aplicar-hasta').element as HTMLInputElement).value).toBe(`${NEXT_YEAR}-12-15`)
+  })
+
   it('sin settings:edit no se ofrece aplicar (el endpoint lo exige: sería un 403)', async () => {
     granted = ['settings:view']
     const w = mount(Tarifas, MOUNT_OPTS)

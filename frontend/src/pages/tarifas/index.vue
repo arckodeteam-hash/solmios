@@ -533,7 +533,11 @@ async function confirmApplySeason() {
   applying.value = true
   try {
     const r = await HotelService.assignSeason({ from: d.from, to: d.to, season: d.season })
-    applyDlg.value.show = false
+    // Cerrar SOLO si sigue abierto el mismo diálogo que se confirmó. `openApplyDialog` reemplaza el
+    // objeto entero, así que si el hotel canceló y reabrió con otra temporada mientras la llamada
+    // estaba en vuelo, este `false` le cerraría el diálogo nuevo en la cara y le borraría el rango
+    // que estaba escribiendo.
+    if (applyDlg.value === d) applyDlg.value.show = false
     // Releer la temporada vigente: "Rige hoy" tiene que salir de la misma fuente con la que se
     // cobra, no de lo que acabamos de mandar.
     await loadCurrentSeason()
