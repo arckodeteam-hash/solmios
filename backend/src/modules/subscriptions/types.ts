@@ -65,3 +65,45 @@ export interface PublicPlanDTO {
   description: string
   features: string[]
 }
+
+/**
+ * `GET /api/subscriptions/upgrade/preview` — cuánto le sale HOY al hotel mejorar su plan (#46).
+ * Cotiza el prorrateo de Stripe sin cobrar ni cambiar nada.
+ */
+export interface UpgradePreviewDTO {
+  /** Plan destino. */
+  planId: string
+  planName: string
+  /**
+   * Lo que se cobra AHORA por el prorrateo, en la MENOR unidad de la moneda (centavos), tal cual
+   * lo devuelve Stripe (`invoice.amount_due`) — NO en la unidad de `plans.price`, que es mayor.
+   * El frontend divide por 100 para mostrarlo.
+   */
+  amountDue: number
+  /** ISO 4217 en minúsculas ('usd'), como la maneja Stripe. */
+  currency: string
+  currentPlanId: string
+  currentPlanName: string
+  /** Fin del ciclo de facturación vigente (ISO) — hasta cuándo cubre lo ya pagado. `null` si Stripe no lo informa. */
+  periodEnd: string | null
+}
+
+/** `POST /api/subscriptions/upgrade` — resultado de mejorar el plan cobrando la diferencia (#46). */
+export interface UpgradeResultDTO {
+  /** El plan nuevo ya rige en Stripe (el ítem cambió de precio). NO implica que se haya cobrado: ver `paid`. */
+  applied: boolean
+  /** `true` SOLO si la factura del prorrateo quedó `paid`. En `false` el cobro falló o quedó pendiente. */
+  paid: boolean
+  planId: string
+  planName: string
+  /** Plan que tenía la suscripción antes (`null` si no tenía ninguno). */
+  previousPlanId: string | null
+  /**
+   * Monto de la factura del prorrateo, en la MENOR unidad de la moneda (centavos), misma unidad
+   * que `UpgradePreviewDTO.amountDue`. Con `paid: false` es lo que quedó PENDIENTE de cobro.
+   */
+  amountCharged: number
+  currency: string
+  /** Estado real de la factura del prorrateo ('paid' | 'open' | ...). `null` si Stripe no emitió ninguna. */
+  invoiceStatus: string | null
+}
