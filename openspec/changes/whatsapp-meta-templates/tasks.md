@@ -72,9 +72,11 @@
 - [x] 7.1 `cd backend && bun run node_modules/arckode-framework/bin/arckode.js analyze` → 0 violaciones.
 - [x] 7.2 `cd backend && bun run typecheck && bun test` (marketing + connector nuevo).
 - [x] 7.3 `cd frontend && bun run typecheck && bun run build`.
-- [ ] 7.4 QA manual con un WABA de prueba real (requiere `wabaId`/`accessToken` de prueba cargados a
+- [x] 7.4 QA manual con un WABA de prueba real (requiere `wabaId`/`accessToken` de prueba cargados a
       mano vía `PUT /api/ai/whatsapp/config`): crear plantilla → enviar → ver "Pendiente" → sincronizar
-      → ver estado real de Meta.
+      → ver estado real de Meta. **Hecho 2026-09-07** contra la cuenta de prueba
+      (WABA `2631160424009333`, número `+1 555-678-1103`): dos plantillas creadas y aceptadas por Meta,
+      `sync-status` devolviendo el estado real. Encontró dos bugs, ver abajo.
 
 ## Dependencias externas
 - `wabaId` + `accessToken` de una cuenta de WhatsApp Business de prueba (mismo dato que necesita
@@ -86,20 +88,45 @@
 
 ## Estado (2026-09-07, rama `meta-config`)
 
-**26 de 27 tareas hechas.** Falta 7.4: la prueba contra una cuenta real de Meta, **bloqueada** porque
-todavía no tenemos el `wabaId` ni el `accessToken` de la cuenta de prueba (los saca el equipo del panel
-de Meta — ver `whatsapp-meta-certificacion`, tareas 1.2 y 1.3). Todo lo demás se probó con el cliente
-HTTP simulado.
+**27 de 27 tareas hechas.** La 7.4 se completó contra la cuenta de prueba real de Meta.
+
+### Datos de la cuenta de prueba (no son secretos; el token sí y no va acá)
+
+| Dato | Valor |
+|---|---|
+| WABA ID | `2631160424009333` ("Test WhatsApp Business Account") |
+| Phone Number ID | `1194399700434439` |
+| Número | `+1 555-678-1103` — calidad GREEN, revisión APPROVED |
+
+El usuario del sistema `SOL` necesitó **Full access** sobre la WABA: con el "Partial access (Phone
+numbers view only + Messages)" que traía, Meta responde `(#200) Need either permission on WhatsApp
+Business Account or owner business to view templates` y no se puede ni listar ni crear plantillas.
+
+### Dos bugs que solo aparecieron con la API real
+
+1. **La validación de "no termina con variable" era demasiado permisiva.** Un cuerpo como
+   `"…tu habitación es la {room_number}."` pasaba nuestro chequeo (mira el final literal) y Meta lo
+   rechazaba igual: la puntuación posterior no salva la regla. Corregido en `meta-variable-mapping.ts`
+   con test de regresión.
+2. **El error de Meta llegaba al panel como 500 "Error interno del servidor".** `WhatsappCloudError`
+   no es un tipo que el framework reconozca, así que el handler global lo trataba como excepción no
+   controlada y el hotel perdía lo único accionable: qué le molestó a Meta. Ahora se traduce a
+   `ValidationError` (contenido) o `ConflictError` (credenciales / Meta caído) en `meta-templates.ts`,
+   con tests de los tres casos.
+
+Los tests con `fetch` simulado NO encontraron ninguno de los dos: el primero porque yo elegía los
+cuerpos de prueba, el segundo porque nunca pasaba por el handler HTTP.
 
 Gates ejecutados en esta rama:
 
 | Gate | Resultado |
 |---|---|
 | `arckode analyze` | ✅ VÁLIDO, 0 violaciones |
-| `bun test` (backend, completo) | ✅ 4816 pass, 0 fail |
+| `bun test` (backend, completo) | ✅ 4822 pass, 0 fail |
 | `bun run typecheck` (backend) | ✅ limpio |
 | `vitest` (plantillas + a11y) | ✅ 336 pass |
 | `vue-tsc -b` + `vite build` | ✅ limpio, `✓ built` |
+| Prueba end-to-end contra Meta | ✅ crear → enviar → estado, por HTTP |
 
 Deuda que dejó este change, no prevista en el plan original: `marketing/service.ts` había quedado en
 249 líneas (el analyzer corta en 200). Se extrajeron a `usecases/` el CRUD de plantillas

@@ -4,6 +4,7 @@ import type { RepositoryAdapter, CacheAdapter } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { MarketingService } from '../service'
 import { mapMetaStatus } from '../usecases/meta-templates'
+import { WhatsappCloudError } from '../../../services/whatsapp-cloud-client'
 
 const log = silentLogger()
 const silentCache: CacheAdapter = { get: async () => null, set: async () => {}, delete: async () => {}, flush: async () => {} }
@@ -134,6 +135,32 @@ describe('submitTemplateToMeta', () => {
       .rejects.toThrow(/Forbidden/)
     await Promise.resolve()
     expect(calls.create.length).toBe(0)
+  })
+})
+
+// Regresión (2026-09-07): `WhatsappCloudError` no es un tipo que el framework reconozca, así que el
+// handler global lo convertía en un 500 "Error interno del servidor" y el hotel no veía el motivo
+// del rechazo de Meta — que es lo único accionable.
+describe('el error de Meta llega con su mensaje, no como 500', () => {
+  it('un rechazo de contenido se propaga con el texto de Meta', async () => {
+    const { svc } = makeService({
+      create: async () => { throw new WhatsappCloudError('Las variables no pueden estar al final.', 400, 100) },
+    })
+    expect(svc.submitTemplateToMeta('t1', user)).rejects.toThrow(/no pueden estar al final/)
+  })
+
+  it('un token vencido se reporta como problema de credenciales', async () => {
+    const { svc } = makeService({
+      create: async () => { throw new WhatsappCloudError('Invalid OAuth access token', 401, 190) },
+    })
+    expect(svc.submitTemplateToMeta('t1', user)).rejects.toThrow(/credenciales de este hotel/)
+  })
+
+  it('si Meta no responde, el mensaje invita a reintentar', async () => {
+    const { svc } = makeService({
+      create: async () => { throw new WhatsappCloudError('No se pudo contactar a Meta: timeout', 503) },
+    })
+    expect(svc.submitTemplateToMeta('t1', user)).rejects.toThrow(/unos minutos/)
   })
 })
 

@@ -89,8 +89,20 @@ export function metaBodyProblem(metaText: string): string | null {
   const t = (metaText || '').trim()
   if (!t) return 'El cuerpo del mensaje está vacío.'
   if (t.length > MAX_BODY) return `El cuerpo supera los ${MAX_BODY} caracteres que permite WhatsApp.`
-  if (/^\{\{\d+\}\}/.test(t)) return 'Meta no acepta que el mensaje EMPIECE con una variable. Escribí algo antes, por ejemplo "Hola {guest_name}".'
-  if (/\{\{\d+\}\}$/.test(t)) return 'Meta no acepta que el mensaje TERMINE con una variable. Agregá texto después.'
+
+  // La puntuación NO salva la regla: Meta rechaza "…tu habitación es la {{3}}." igual que sin el
+  // punto (probado contra la API 2026-09-07: "Las variables no pueden estar al principio ni al
+  // final de la plantilla"). Por eso se recorta la puntuación de los extremos antes de mirar.
+  // La apertura se recorta con una lista explícita y NO con \p{P}: las llaves de `{{1}}` también
+  // son puntuación, y borrarlas haría que el chequeo nunca encontrara nada.
+  const sinApertura = t.replace(/^[\s"'“‘(\[\u00A1\u00BF]+/u, '')
+
+  if (/^\{\{\d+\}\}/.test(sinApertura)) {
+    return 'Meta no acepta que el mensaje EMPIECE con una variable. Escribí algo antes, por ejemplo "Hola {guest_name}".'
+  }
+  if (/\{\{\d+\}\}[\s.,;:!?"\u2019\u201D)\]]*$/u.test(t)) {
+    return 'Meta no acepta que el mensaje TERMINE con una variable, ni siquiera seguida de un punto. Agregá texto después, por ejemplo "…{room_number}. Te esperamos."'
+  }
   if (/\{\{\d+\}\}\s*\{\{\d+\}\}/.test(t)) return 'Meta no acepta dos variables seguidas. Poné algún texto entre ellas.'
   return null
 }

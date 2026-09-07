@@ -12,6 +12,7 @@
 
 import { ValidationError, ConflictError, NotFoundError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
+import { WhatsappCloudError } from '../../../services/whatsapp-cloud-client'
 import type {
   WhatsappCloudCredentials, CreateMetaTemplateInput, MetaTemplateCategory, MetaTemplateStatus,
 } from '../../../services/whatsapp-cloud-client'
@@ -60,6 +61,26 @@ export function mapMetaStatus(status: MetaTemplateStatus | string): TemplateAppr
   }
 }
 
+/**
+ * Traduce un error de Meta a un error HTTP con mensaje.
+ *
+ * Sin esto, `WhatsappCloudError` no es ninguno de los tipos que el framework reconoce y el handler
+ * global lo convierte en un 500 "Error interno del servidor": el hotel ve un error genérico y pierde
+ * lo único útil, que es qué le molestó a Meta. Verificado contra la API real el 2026-09-07.
+ */
+function comoErrorHttp(err: unknown): Error {
+  if (!(err instanceof WhatsappCloudError)) return err as Error
+  // 401/403: el token del hotel dejó de servir. No es culpa del texto, no tiene sentido reintentar.
+  if (err.httpStatus === 401 || err.httpStatus === 403) {
+    return new ConflictError(`Meta rechazó las credenciales de este hotel: ${err.message}`)
+  }
+  // 5xx o red caída: no llegamos a preguntar. Reintentar más tarde sí tiene sentido.
+  if (err.httpStatus >= 500) {
+    return new ConflictError(`${err.message}. Probá de nuevo en unos minutos.`)
+  }
+  return new ValidationError(err.message)
+}
+
 async function credentialsOrFail(deps: MetaTemplateDeps, hotelId: string): Promise<WhatsappCloudCredentials> {
   const creds = await deps.credentials.getMetaCredentials(hotelId)
   if (!creds?.wabaId || !creds?.accessToken) throw new ConflictError(NOT_CONNECTED)
@@ -92,12 +113,17 @@ export async function submitTemplateToMeta(
   const language = template.language || 'es'
   const category = (template.metaCategory || 'UTILITY') as MetaTemplateCategory
 
-  const created = await deps.client.create(creds, {
-    name: metaTemplateName(template.name),
-    language,
-    category,
-    components: buildTemplateComponents(mapped),
-  })
+  let created: { id: string; status: string; category?: string }
+  try {
+    created = await deps.client.create(creds, {
+      name: metaTemplateName(template.name),
+      language,
+      category,
+      components: buildTemplateComponents(mapped),
+    })
+  } catch (err) {
+    throw comoErrorHttp(err)
+  }
 
   await deps.templateRepo.update(template.id, {
     metaTemplateId: created.id,
@@ -128,7 +154,12 @@ export async function syncTemplateStatus(
   }
 
   const creds = await credentialsOrFail(deps, template.hotelId)
-  const remote = await deps.client.getStatus(creds, template.metaTemplateId)
+  let remote: { status: MetaTemplateStatus; rejectedReason?: string; category?: string }
+  try {
+    remote = await deps.client.getStatus(creds, template.metaTemplateId)
+  } catch (err) {
+    throw comoErrorHttp(err)
+  }
 
   await deps.templateRepo.update(template.id, {
     approvalStatus: mapMetaStatus(remote.status),

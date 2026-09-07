@@ -70,6 +70,23 @@ describe('metaBodyProblem', () => {
     expect(metaBodyProblem('Tu código es {{1}}')).toContain('TERMINE')
   })
 
+  // Regresión (2026-09-07): la primera versión miraba el final literal, así que un punto detrás de
+  // la variable la dejaba pasar y Meta la rechazaba igual — con un 500 genérico del lado del panel.
+  // Probado contra la API real: "Las variables no pueden estar al principio ni al final".
+  it('rechaza terminar con una variable AUNQUE haya un punto después', () => {
+    expect(metaBodyProblem('Tu habitación es la {{3}}.')).toContain('TERMINE')
+    expect(metaBodyProblem('Tu habitación es la {{3}}!')).toContain('TERMINE')
+    expect(metaBodyProblem('Tu habitación es la {{3}} ')).toContain('TERMINE')
+  })
+
+  it('acepta una variable al final si hay texto después del punto', () => {
+    expect(metaBodyProblem('Tu habitación es la {{3}}. Te esperamos.')).toBeNull()
+  })
+
+  it('rechaza empezar con una variable después de un signo de apertura', () => {
+    expect(metaBodyProblem('¡{{1}} bienvenido!')).toContain('EMPIECE')
+  })
+
   it('rechaza dos variables seguidas', () => {
     expect(metaBodyProblem('Hola {{1}} {{2}} gracias')).toContain('dos variables seguidas')
   })
