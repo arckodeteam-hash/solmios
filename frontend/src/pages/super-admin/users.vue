@@ -104,7 +104,7 @@
               <div class="flex gap-1 justify-end">
                 <button @click="openViewUser(user)" class="px-2 py-1 bg-cyan/10 text-cyan rounded-lg text-[10px] font-bold hover:bg-cyan/20 transition-colors cursor-pointer">Ver</button>
                 <button @click="openEditUser(user)" class="px-2 py-1 bg-navy/10 text-navy rounded-lg text-[10px] font-bold hover:bg-navy/20 transition-colors cursor-pointer">Editar</button>
-                <button v-if="user.status === 'Activo' && user.role !== 'Super Admin'" @click="loginAsUser(user)" class="px-2 py-1 bg-orange/10 text-orange rounded-lg text-[10px] font-bold hover:bg-orange/20 transition-colors cursor-pointer">Entrar</button>
+                <button v-if="user.status === 'Activo' && user.role !== 'Super Admin'" @click="loginAsUser(user)" :disabled="enteringId === user.id" class="px-2 py-1 bg-blue text-white rounded-lg text-[10px] font-bold hover:bg-blue/90 transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-wait">{{ enteringId === user.id ? 'Entrando…' : 'Entrar' }}</button>
                 <button @click="openActivityLog(user)" class="px-2 py-1 bg-purple/10 text-purple rounded-lg text-[10px] font-bold hover:bg-purple/20 transition-colors cursor-pointer">Log</button>
                 <button @click="toggleUserStatus(user)" class="px-2 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer" :class="user.status === 'Activo' ? 'bg-red/10 text-red hover:bg-red/20' : 'bg-teal/10 text-teal hover:bg-teal/20'">{{ user.status === 'Activo' ? 'Desactivar' : 'Activar' }}</button>
               </div>
@@ -328,20 +328,21 @@ const roleClass = (r: string) => ({ 'Super Admin': 'bg-red/10 text-red', 'Hotel 
 const planClass = (p: string) => ({ 'Enterprise': 'bg-navy/10 text-navy', 'Professional': 'bg-cyan/10 text-cyan', 'Starter': 'bg-teal/10 text-teal' }[p] || '')
 const statusClass = (s: string) => ({ 'Activo': 'bg-teal/10 text-teal', 'Inactivo': 'bg-surface text-text-muted', 'Pendiente': 'bg-orange/10 text-orange' }[s] || '')
 
-const loginAsUser = (user: any) => {
-  const targetUser = {
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    role: user.role === 'Hotel Admin' ? 'hotel_admin' as const : 'receptionist' as const,
-    hotelId: user.hotel.toLowerCase().replace(/\s+/g, '-'),
-    hotelName: user.hotel,
-    plan: user.plan,
-    rooms: user.rooms,
-    permissions: user.permissionsList || []
+const enteringId = ref<string | null>(null)
+
+// Solo mandamos el id: la identidad del usuario impersonado (incluido el hotelId real)
+// la resuelve el backend y viaja en el token que emite. El hotelId que se armaba aca
+// era un slug del nombre del hotel y no existia en la base.
+const loginAsUser = async (user: any) => {
+  enteringId.value = user.id
+  try {
+    await auth.loginAs(user.id)
+    router.push('/panel')
+  } catch (e: any) {
+    toast.error(e?.message || 'No se pudo entrar a la cuenta de este usuario')
+  } finally {
+    enteringId.value = null
   }
-  auth.loginAs(targetUser)
-  router.push('/')
 }
 
 const openViewUser = (user: any) => { selectedUser.value = { ...user }; showViewModal.value = true }
