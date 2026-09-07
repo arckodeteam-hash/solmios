@@ -8,6 +8,8 @@ import { UsuariosService } from './service'
 import { UsuariosController } from './controller'
 import { rateLimit, resetAttempts, getClientIp } from '../../shared/middlewares/rate-limit'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
+import { requireUserType } from '../../infrastructure/auth/require-user-type'
+import { impersonateUser } from './usecases/impersonate'
 
 export { UsuariosService }
 export type { UsuarioDTO } from './types'
@@ -18,12 +20,13 @@ const AVATAR_UPLOAD_LIMIT = 5 * 1024 * 1024
 export function UsuariosModule(opts: { storage?: StorageService } = {}) {
   return createModule({
     name: 'usuarios',
-    version: '1.0.0',
+    // 1.1.0: + POST /api/auth/impersonate/:id (el super admin entra como un usuario cliente).
+    version: '1.1.0',
     description: 'Autenticación y gestión de usuarios del hotel',
     contract: {
-      name: 'usuarios', version: '1.0.0',
+      name: 'usuarios', version: '1.1.0',
       description: 'Login JWT + CRUD de empleados del hotel',
-      actions: ['login', 'me', 'updateMe', 'uploadAvatar', 'logout', 'list', 'create', 'update', 'delete', 'changePassword', 'getHotels', 'switchHotel', 'verifyOwnerCredentials'],
+      actions: ['login', 'me', 'updateMe', 'uploadAvatar', 'logout', 'list', 'create', 'update', 'delete', 'changePassword', 'getHotels', 'switchHotel', 'verifyOwnerCredentials', 'impersonate'],
       events: ['user.created', 'user.disabled'],
       tables: ['users'],
       dependencies: [],
@@ -113,6 +116,16 @@ export function UsuariosModule(opts: { storage?: StorageService } = {}) {
 
       router.get('/api/auth/hotels', guard('users', 'view'), (req) => controller.hotels(req))
       router.post('/api/auth/switch-hotel/:id', guard('users', 'edit'), (req) => controller.switchHotel(req))
+      // Impersonación: se cablea inline contra el usecase (no pasa por el service, que
+      // ya roza el límite de tamaño del analyzer). Doble candado: rol super_admin Y
+      // userType 'admin' — un token de impersonación (userType 'merchant') no puede
+      // encadenar otra impersonación.
+      router.post('/api/auth/impersonate/:id', [auth.authenticate('super_admin'), requireUserType('admin')], async (req: any) => {
+        const result = await impersonateUser({ repo, hotelRepo, auth }, { id: req.user.id, role: req.user.role }, req.params.id)
+        // Que un admin entre a la cuenta de un cliente no puede pasar en silencio.
+        log.warn('impersonación', { adminId: req.user.id, targetId: result.user.id, hotelId: result.user.hotelId })
+        return { status: 200, body: result }
+      })
 
       router.get('/api/usuarios', guard('users', 'view'), (req) => controller.index(req))
       // Creación de usuarios: además del permiso `users:create`, rate limit por IP

@@ -16,6 +16,13 @@ export interface HotelTokenPayload {
   hotelId?: string
   /** Tipo de usuario: 'admin' (plataforma) | 'merchant' (hotel) */
   userType?: string
+  /**
+   * Id del super admin que está impersonando a este usuario. Presente SOLO en los
+   * tokens de impersonación (usuarios/usecases/impersonate.ts); en un token normal
+   * es undefined. Sirve para que la UI muestre la franja de aviso y para auditar
+   * quién actuó "en nombre de" quién.
+   */
+  impersonatedBy?: string
 }
 
 export class HotelAuth extends Auth {
@@ -50,7 +57,9 @@ export class HotelAuth extends Auth {
   createToken(payload: HotelTokenPayload, expiresIn?: string): string {
     const ttl = expiresIn ?? this.accessExpiresIn
     const token = this.jwtAdapter.sign(
-      { id: payload.id, role: payload.role, hotelId: payload.hotelId, userType: payload.userType || 'merchant', type: 'access' },
+      // `impersonatedBy` viaja firmado dentro del access token: es el único lugar donde
+      // el dato sobrevive a un F5 sin guardar estado en el servidor.
+      { id: payload.id, role: payload.role, hotelId: payload.hotelId, userType: payload.userType || 'merchant', impersonatedBy: payload.impersonatedBy, type: 'access' },
       this.accessSecret,
       ttl,
     )
@@ -98,6 +107,9 @@ export class HotelAuth extends Auth {
         hotelId: payload.hotelId as string | undefined,
         // userType opcional: tokens legacy (pre-deploy, sin userType) default a 'merchant'
         userType: (payload.userType as string) || 'merchant',
+        // Sin esto el claim se perdía acá (este método arma el payload campo por campo)
+        // y nunca llegaba a req.user, dejando la impersonación invisible para las rutas.
+        impersonatedBy: payload.impersonatedBy as string | undefined,
       }
     } catch (e) {
       if (e instanceof AuthError) throw e
