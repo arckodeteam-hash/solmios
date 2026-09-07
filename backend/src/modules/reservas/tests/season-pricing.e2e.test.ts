@@ -68,7 +68,13 @@ beforeAll(async () => {
   // Siembra el catálogo default (baja/media/alta/especial con labels) — mismo efecto que la
   // 1ª visita a Ajustes › Tarifas en la app real.
   await pricing.listSeasons(HOTEL_ID)
-})
+// Timeout EXPLÍCITO: este `beforeAll` levanta una SQLite de verdad y corre `orm.migrate()` sobre
+// TODOS los modelos compartidos, lo que en una máquina lenta (CI, contenedor) tarda entre 3 y 9
+// segundos — por encima de los 5s que bun le da a un hook por defecto. Sin esto el test es un
+// flake: pasa en la máquina del que lo escribió y se cae en CI con un
+// "beforeEach/afterEach hook timed out" que no dice nada del código que prueba. El número es un
+// techo generoso a propósito: no acelera nada, solo evita que el reloj decida el resultado.
+}, 60_000)
 
 afterAll(() => {
   try { require('node:fs').unlinkSync(dbPath) } catch { /* tmp, best-effort */ }
