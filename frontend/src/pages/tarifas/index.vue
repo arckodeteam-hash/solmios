@@ -48,7 +48,13 @@
                se cobra (`GET /api/season-calendar`). Antes había un botón "Activar temporada" que
                escribía `seasons.active`, un campo que ningún cálculo de precio lee: la tarjeta podía
                decir "Activa: Alta" mientras el motor y las OTAs cobraban Baja, y no había forma de
-               notarlo desde la pantalla. Una sola fuente, en las tres vistas. -->
+               notarlo desde la pantalla. Una sola fuente, en las tres vistas. Por eso sigue sin
+               haber un botón "activar": no existe un interruptor que cambie la temporada.
+               Lo que SÍ cambia la temporada es "Aplicar temporada", que pinta el rango elegido en
+               `season_assignments` (`POST /api/season-assignments`). Esa es la tabla que lee
+               `buildSeasonByDate` y con ella cotizan el motor público, el reprice, los cargos, la
+               disponibilidad y el push a canales: el cambio es real y se ve acá mismo, porque al
+               volver se relee `GET /api/season-calendar` y el badge "Rige hoy" se recalcula. -->
           <div v-for="(s, i) in seasonsList" :key="i" class="bg-surface rounded-xl p-4"
             :class="s.name === currentSeason ? 'ring-2 ring-cyan' : ''">
             <div class="flex items-center gap-2 mb-3">
@@ -67,14 +73,59 @@
                 <label class="text-[10px] font-bold text-text-muted uppercase">Fin</label>
                 <input :id="`temporada-${i}-fin`" :aria-label="`Fin de la temporada ${s.name}`" v-model="s.endDate" type="date" class="w-full mt-1 px-3 py-2 rounded-full border border-border text-xs focus:outline-none focus:border-navy" />
               </div>
-              <router-link v-if="s.name !== currentSeason" :to="{ name: 'planning' }"
-                class="block w-full mt-1 px-3 py-2 rounded-full bg-navy/5 hover:bg-navy text-navy hover:text-white text-[11px] font-bold text-center transition-colors cursor-pointer">
-                Marcar días en el planning
-              </router-link>
+              <div v-if="s.name !== currentSeason" class="pt-1 space-y-1.5">
+                <!-- Acción principal: aplica la temporada acá mismo, sin salir de la pantalla.
+                     Pide `settings:edit` porque es el permiso del endpoint (ratesGuard): ofrecerlo
+                     sin permiso termina en 403. -->
+                <button v-if="canEditRates" type="button" @click="openApplyDialog(s)"
+                  class="block w-full px-3 py-2 rounded-full bg-navy/5 hover:bg-navy text-navy hover:text-white text-[11px] font-bold text-center transition-colors cursor-pointer">
+                  Aplicar temporada
+                </button>
+                <!-- El planning no se va: el diálogo pinta un rango corrido, y para días sueltos
+                     (fines de semana, feriados) hace falta el calendario. -->
+                <router-link :to="{ name: 'planning' }"
+                  class="block text-center text-[10px] font-bold text-text-muted hover:text-navy underline transition-colors">
+                  Marcar días sueltos en el planning
+                </router-link>
+              </div>
             </div>
           </div>
         </div>
       </SectionCard>
+
+      <!-- Diálogo "Aplicar temporada". Va en esta misma pantalla (no es un AppModal teleportado)
+           para que aplicar la temporada no obligue a irse a otra vista y volver a buscar la tarjeta:
+           el hotel confirma el rango y ve el badge "Rige hoy" moverse en el acto. -->
+      <div v-if="applyDlg.show" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-navy/50" @click="applyDlg.show = false"></div>
+        <div role="dialog" aria-modal="true" :aria-label="`Aplicar temporada ${applyDlg.label}`"
+          class="relative w-full max-w-md rounded-2xl border border-border bg-white p-5 shadow-(--shadow-card)">
+          <h3 class="text-base font-black text-navy">Aplicar {{ applyDlg.label }}</h3>
+          <p class="mt-1 text-[11px] text-text-muted">
+            Los días del rango pasan a cobrarse con esta temporada, en el panel y en todos los canales.
+          </p>
+          <div class="grid grid-cols-2 gap-3 mt-4">
+            <div>
+              <label for="aplicar-desde" class="text-[10px] font-bold text-text-muted uppercase">Desde</label>
+              <input id="aplicar-desde" v-model="applyDlg.from" type="date"
+                class="w-full mt-1 px-3 py-2 rounded-full border border-border text-xs focus:outline-none focus:border-navy" />
+            </div>
+            <div>
+              <label for="aplicar-hasta" class="text-[10px] font-bold text-text-muted uppercase">Hasta</label>
+              <input id="aplicar-hasta" v-model="applyDlg.to" type="date"
+                class="w-full mt-1 px-3 py-2 rounded-full border border-border text-xs focus:outline-none focus:border-navy" />
+            </div>
+          </div>
+          <div class="flex items-center justify-end gap-3 mt-5">
+            <button type="button" @click="applyDlg.show = false"
+              class="text-xs font-bold text-text-muted hover:text-navy cursor-pointer">Cancelar</button>
+            <button id="aplicar-confirmar" type="button" :disabled="applying" @click="confirmApplySeason"
+              class="rounded-full bg-cyan px-4 py-2 text-xs font-bold text-navy hover:shadow-lg transition-all cursor-pointer disabled:opacity-50">
+              {{ applying ? 'Aplicando...' : 'Aplicar temporada' }}
+            </button>
+          </div>
+        </div>
+      </div>
 
       <!-- Matriz de Tarifas: filas roomType × occupancy, columnas seasons -->
       <SectionCard title="Matriz de Tarifas" :subtitle="`${roomTypes.length} tipo(s) de habitación`" body-class="p-0">
@@ -187,6 +238,7 @@ import SetupAlert from '@/components/ui/SetupAlert.vue'
 import { HotelService } from '@/services/Hotel.service'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
+import { proposedApplyRange, applyRangeError } from '@/utils/season-apply'
 
 const toast = useToast()
 const { can } = usePermissions()
@@ -445,5 +497,48 @@ async function loadCurrentSeason() {
     currentSeason.value = day?.season || ''
     currentSeasonSource.value = day?.source || ''
   } catch { currentSeason.value = ''; currentSeasonSource.value = '' }
+}
+
+/**
+ * Aplicar una temporada desde acá = pintar un rango de días en `season_assignments`
+ * (`POST /api/season-assignments`), que es lo que el motor lee para cobrar. NO se toca
+ * `seasons.active` (`activateSeason`): ese flag no lo mira ningún cálculo de precio y por eso el
+ * botón que lo escribía se sacó de esta pantalla.
+ *
+ * El rango que se propone y su validación viven en `@/utils/season-apply` — el mismo criterio que
+ * usa el planning: nunca repintar días pasados, y frenar un rango invertido ANTES del backend
+ * (pinta cero días y devuelve OK, así que el hotel se quedaría creyendo que aplicó).
+ */
+const applyDlg = ref<{ show: boolean; season: string; label: string; from: string; to: string }>({
+  show: false, season: '', label: '', from: '', to: '',
+})
+const applying = ref(false)
+
+function openApplyDialog(s: any) {
+  const today = new Date().toISOString().slice(0, 10)
+  // Se propone lo que la tarjeta tiene EN PANTALLA (el hotel puede haber editado las fechas sin
+  // guardar todavía), recortado contra hoy por `proposedApplyRange`.
+  const { from, to } = proposedApplyRange({ startDate: s.startDate, endDate: s.endDate }, today)
+  applyDlg.value = { show: true, season: s.name, label: s.label || s.name, from, to }
+}
+
+async function confirmApplySeason() {
+  if (applying.value) return
+  const d = applyDlg.value
+  const err = applyRangeError(d.from, d.to)
+  if (err) { toast.error(err); return }
+  applying.value = true
+  try {
+    const r = await HotelService.assignSeason({ from: d.from, to: d.to, season: d.season })
+    applyDlg.value.show = false
+    // Releer la temporada vigente: "Rige hoy" tiene que salir de la misma fuente con la que se
+    // cobra, no de lo que acabamos de mandar.
+    await loadCurrentSeason()
+    toast.success(`Temporada ${d.label} aplicada (${r.count} día/s)`)
+  } catch (e: any) {
+    toast.error(e?.message || 'No se pudo aplicar la temporada')
+  } finally {
+    applying.value = false
+  }
 }
 </script>
