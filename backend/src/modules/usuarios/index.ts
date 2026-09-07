@@ -136,7 +136,7 @@ export function UsuariosModule(opts: { storage?: StorageService } = {}) {
       // Creación de usuarios: además del permiso `users:create`, rate limit por IP
       // contra spam/abuso de alta de cuentas. `store()` puede "fallar" sin lanzar
       // (403 por rol no asignable), así que el reset solo dispara con status < 400.
-      router.post('/api/usuarios', guard('users', 'create'), async (req) => {
+      router.post('/api/usuarios', [...guard('users', 'create'), denyImpersonation()], async (req) => {
         const key = `create-user:${getClientIp(req)}`
         const { allowed, retryAfter } = await rateLimit(key)
         if (!allowed) {
@@ -146,8 +146,14 @@ export function UsuariosModule(opts: { storage?: StorageService } = {}) {
         if (result.status < 400) await resetAttempts(key)
         return result
       })
-      router.put('/api/usuarios/:id', guard('users', 'edit'), (req) => controller.update(req))
-      router.delete('/api/usuarios/:id', guard('users', 'delete'), (req) => controller.destroy(req))
+      // El ABM de usuarios queda fuera de la impersonación por la misma razón que change-password:
+      // `controller.store`/`update` saltean el anclaje por hotelId y `canAssignRole` cuando el rol
+      // es super_admin — y el token de impersonación SIEMPRE lo es. Sin este candado, una sesión de
+      // soporte de 2h podía escribir `role: 'super_admin'` en la tabla o cambiarle la contraseña a
+      // cualquiera sin pedir la actual: una escalada permanente. La gestión de usuarios se hace
+      // desde el panel de super admin de verdad, no desde adentro de la cuenta de un cliente.
+      router.put('/api/usuarios/:id', [...guard('users', 'edit'), denyImpersonation()], (req) => controller.update(req))
+      router.delete('/api/usuarios/:id', [...guard('users', 'delete'), denyImpersonation()], (req) => controller.destroy(req))
 
       log.info('Módulo usuarios listo')
       return service
