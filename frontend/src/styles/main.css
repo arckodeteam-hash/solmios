@@ -29,6 +29,12 @@
   --color-warning: #F59E0B;
   --color-danger: #EF4444;
 
+  /* `orange` se usaba en 12 lugares (franja de supervisión del panel, badges "Pendiente" de las
+     vistas de super-admin) sin estar definido acá: Tailwind no generaba la clase y esos elementos
+     quedaban SIN color — la franja de impersonación se veía blanca sobre fondo blanco. */
+  --color-orange: #F59E0B;
+  --color-orange-dark: #B45309;
+
   --font-sans: 'DM Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
   --shadow-card: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.06);

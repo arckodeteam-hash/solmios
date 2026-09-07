@@ -1,10 +1,10 @@
 <template>
-  <div class="flex min-h-screen bg-surface">
+  <div class="flex min-h-screen bg-surface" :style="{ '--imp-h': bannerHeight + 'px' }">
     <!-- Offline banner (PWA) -->
     <OfflineBanner />
 
     <!-- Impersonation Banner -->
-    <div v-if="auth.impersonating" class="fixed top-0 left-0 right-0 z-50 bg-orange border-b-2 border-orange-dark px-4 py-2.5 flex items-center justify-between">
+    <div v-if="auth.impersonating" ref="bannerRef" class="fixed top-0 left-0 right-0 z-50 bg-orange border-b-2 border-orange-dark px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
       <div class="flex items-center gap-3">
         <span class="text-sm font-extrabold text-navy">👁️ Modo supervisión: <span class="underline">{{ auth.user?.name || 'Usuario' }}</span> — {{ auth.user?.hotelName || 'Sin hotel' }}</span>
         <span class="text-[10px] font-bold bg-navy/10 text-navy px-2 py-0.5 rounded-full uppercase">{{ auth.user?.role || '—' }}</span>
@@ -16,8 +16,9 @@
     <div v-if="mobileMenuOpen" class="fixed inset-0 bg-navy/50 z-20 lg:hidden" @click="mobileMenuOpen = false"></div>
 
     <!-- Sidebar -->
-    <aside class="cc-sidebar w-64 text-[#C4C8D0] flex flex-col shrink-0 fixed h-full z-30 border-r border-white/8 transition-transform duration-300 lg:translate-x-0"
-      :class="[auth.impersonating ? 'top-10' : '', mobileMenuOpen ? 'translate-x-0' : '-translate-x-full']">
+    <aside class="cc-sidebar w-64 text-[#C4C8D0] flex flex-col shrink-0 fixed z-30 border-r border-white/8 transition-transform duration-300 lg:translate-x-0"
+      :style="{ top: 'var(--imp-h, 0px)', height: 'calc(100dvh - var(--imp-h, 0px))' }"
+      :class="mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'">
       <!-- Logo -->
       <div class="h-16 flex flex-col items-start justify-center gap-0.5 px-5 border-b border-white/8 shrink-0">
         <img :src="logoWhite" alt="SolmiOS" class="h-8 w-auto shrink-0">
@@ -130,7 +131,7 @@
     </aside>
 
     <!-- Main Content -->
-    <div class="flex-1 min-w-0 lg:ml-64 flex flex-col" :class="auth.impersonating ? 'mt-10' : ''">
+    <div class="flex-1 min-w-0 lg:ml-64 flex flex-col" :style="{ marginTop: 'var(--imp-h, 0px)' }">
       <!-- Verificación de email pendiente (#421): banner persistente para merchants sin email verificado -->
       <div v-if="showVerifyEmailBanner"
         class="bg-warning/12 border-b border-warning/30 px-4 md:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2">
@@ -152,7 +153,7 @@
         <AppHeader />
       </div>
       <!-- Toggle del menú en móvil (todas las páginas) -->
-      <button @click="mobileMenuOpen = true" class="lg:hidden fixed top-3 left-3 z-30 w-9 h-9 flex items-center justify-center rounded-lg border border-border bg-white text-navy shadow-(--shadow-card) hover:bg-surface cursor-pointer">
+      <button @click="mobileMenuOpen = true" :style="{ top: 'calc(var(--imp-h, 0px) + 0.75rem)' }" class="lg:hidden fixed left-3 z-30 w-9 h-9 flex items-center justify-center rounded-lg border border-border bg-white text-navy shadow-(--shadow-card) hover:bg-surface cursor-pointer">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
         </svg>
@@ -202,6 +203,36 @@ const dashboard = useDashboardStore()
 const roomStore = useRoomStore()
 const { canRoute } = usePermissions()
 const mobileMenuOpen = ref(false)
+
+/**
+ * Altura REAL de la franja de supervisión, publicada como `--imp-h` en el nodo raíz.
+ *
+ * La franja es `fixed`: no ocupa lugar en el flujo, así que el sidebar y el contenido tienen que
+ * correrse exactamente lo que ella mide. Antes eran `top-10` / `mt-10` — 40px fijos — y la franja
+ * mide ~54px en escritorio (padding + botón + borde): esos ~14px de diferencia eran los que le
+ * comían la cabecera al sidebar y dejaban el logo cortado por debajo de la franja.
+ *
+ * Se mide en vivo en lugar de hardcodear un número porque la altura no es una sola: en pantallas
+ * angostas el texto ("Modo supervisión: <nombre> — <hotel>" + rol + botón) envuelve a dos líneas y
+ * cualquier constante vuelve a quedar corta. Con `0px` de fallback, sin impersonación nada se mueve.
+ */
+const bannerRef = ref<HTMLElement | null>(null)
+const bannerHeight = ref(0)
+let bannerObserver: ResizeObserver | null = null
+
+watch(bannerRef, (el) => {
+  bannerObserver?.disconnect()
+  bannerObserver = null
+  if (!el) { bannerHeight.value = 0; return }
+  bannerHeight.value = el.getBoundingClientRect().height
+  // `ResizeObserver` y no un cálculo único: la altura cambia al rotar el teléfono o al
+  // achicar la ventana, no solo al montar.
+  if (typeof ResizeObserver === 'undefined') return
+  bannerObserver = new ResizeObserver(() => { bannerHeight.value = el.getBoundingClientRect().height })
+  bannerObserver.observe(el)
+}, { flush: 'post', immediate: true })
+
+onUnmounted(() => bannerObserver?.disconnect())
 
 /**
  * Salir de la impersonación. `stopImpersonation` es async (restaura los tokens del admin y
