@@ -1,9 +1,10 @@
 // impersonation-routes.test.ts — Qué rutas NO acepta un token de impersonación.
 //
-// El token de impersonación lleva `role: 'super_admin'` a propósito, para que el admin conserve
-// los permisos DENTRO de la cuenta del cliente. El efecto colateral es que `requirePermission`
-// le hace bypass a TODO, y varios handlers (`controller.store`/`update`, `switchHotel`) además
-// saltean el anclaje por hotelId y `canAssignRole` cuando el rol es super_admin. Sin un candado
+// La sesión de impersonación tiene permisos totales a propósito (['*:*'], que le da
+// `loadPermissions` por el claim `impersonatedBy`), para que el admin no choque con el rol del
+// cliente. El efecto colateral es que `requirePermission` la deja pasar a TODO. Y mientras el
+// token todavía llevaba `role: 'super_admin'`, varios handlers (`controller.store`/`update`,
+// `switchHotel`) además salteaban el anclaje por hotelId y `canAssignRole`. Sin un candado
 // explícito, una sesión de soporte de 2h podía:
 //   · emitir por switch-hotel un token nuevo SIN la marca `impersonatedBy` y CON refresh token,
 //     pisando de paso `users.token` del cliente y desloguéandolo;
@@ -38,7 +39,7 @@ beforeAll(async () => {
   const deps = { logger, orm, cache: undefined, router, auth }
   ;(UsuariosModule() as any).create(deps)
   // `roles` entra al mismo barrido: escribir un rol es otra forma de escalar privilegios y
-  // depende de los mismos bypasses por `role === 'super_admin'` que el ABM de usuarios.
+  // depende de los mismos permisos totales de la sesión que el ABM de usuarios.
   ;(RolesModule() as any).create(deps)
 })
 
@@ -69,9 +70,8 @@ const SENSIBLES: Array<[string, string]> = [
   ['post', '/api/usuarios'],
   ['put', '/api/usuarios/:id'],
   ['delete', '/api/usuarios/:id'],
-  // Escribir roles: `service.update/delete/restore` no ancla por hotelId cuando el rol es
-  // super_admin (o sea, cross-tenant desde una sesión de impersonación) y
-  // `assertGrantablePermissions` deja otorgar cualquier permiso con ['*:*'].
+  // Escribir roles: `assertGrantablePermissions` deja otorgar cualquier permiso con ['*:*'],
+  // y definir quién puede qué no es parte de mirar la cuenta de un cliente.
   ['post', '/api/roles'],
   ['put', '/api/roles/:id'],
   ['post', '/api/roles/:id/restore'],

@@ -1,11 +1,12 @@
 // deny-impersonation.test.ts — El candado que le saca al token de impersonación el poder
 // que la impersonación deliberadamente le quitó al admin.
 //
-// EL AGUJERO QUE CIERRA: el token que emite `usecases/impersonate.ts` lleva `role: 'super_admin'`
-// (para que el admin no pierda permisos dentro de la cuenta del cliente). `requirePermission`
-// hace bypass total con ese rol, así que con el token de impersonación se llegaba a
-// POST /api/auth/switch-hotel/:id, donde `currentRole === 'super_admin'` anula el chequeo de
-// pertenencia: el admin saltaba al hotel de CUALQUIER otro cliente y recibía un token nuevo
+// EL AGUJERO QUE CIERRA: la sesión de impersonación tiene permisos totales (['*:*'], que le da
+// `loadPermissions` por el claim `impersonatedBy`, para que el admin no choque con el rol del
+// cliente). Con eso `requirePermission` la deja pasar a cualquier lado, así que llegaba a
+// POST /api/auth/switch-hotel/:id, donde además —mientras el token todavía llevaba
+// `role: 'super_admin'`— se anulaba el chequeo de pertenencia: el admin saltaba al hotel de
+// CUALQUIER otro cliente y recibía un token nuevo
 // SIN el claim `impersonatedBy` (se perdía la marca de auditoría) y CON refresh token de verdad
 // (la impersonación no tiene refresh a propósito: dura 2h y muere sola), y de paso `users.token`
 // del cliente quedaba pisado, deslogueándolo. Lo mismo valía para /api/auth/logout (cortarle la
