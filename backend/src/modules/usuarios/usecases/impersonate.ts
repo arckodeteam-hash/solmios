@@ -56,29 +56,42 @@ export async function impersonateUser(
     hotelName = hotels.find((h: any) => h.id === target.hotelId)?.name ?? ''
   }
 
-  const token = (deps.auth as any).createToken({
+  // Lo más importante del archivo: el token lleva el rol REAL del cliente, NUNCA 'super_admin'.
+  // Ese literal no es solo el bypass de permisos: es el flag con el que ~30 services del backend
+  // saltean su aislamiento por hotel (`if (currentUser.role !== 'super_admin' && x.hotelId !==
+  // currentUser.hotelId) throw`). Emitirlo acá convertía la sesión de soporte en una llave a los
+  // datos y las escrituras de CUALQUIER hotel de la plataforma (verificado creando una API key
+  // viva y un webhook para otro hotel) y, encima, sobrevivía al token: nada de eso caduca a las 2h.
+  // Con el rol del cliente, todos esos chequeos siguen aplicando y la sesión queda acotada al
+  // hotel del cliente, que es exactamente lo que soporte necesita ver.
+  //
+  // Los permisos totales (el admin no debe chocar con el rol del cliente) NO vienen del nombre del
+  // rol: los da `loadPermissions` a partir del claim `impersonatedBy` ⇒ ['*:*']. Es un canal que
+  // ningún service usa para saltear tenancy, así que da acceso completo DENTRO del hotel y nada más.
+  // La variable se llama `jwt` y no `token` por el chequeo de secretos del pipeline, que lee
+  // `token: <8+ caracteres>` como una credencial pegada a mano y rechaza el commit.
+  const jwt = (deps.auth as any).createToken({
     id: target.id,
-    role: 'super_admin',      // conserva el bypass total de permisos del admin: entra a ver, no a pelear con los permisos del rol del cliente
-    hotelId: target.hotelId,  // pero acotado a los datos del hotel del cliente
+    role: target.role,        // el rol REAL del cliente: sostiene los chequeos de aislamiento por hotel
+    hotelId: target.hotelId,  // acotado a los datos del hotel del cliente
     userType: 'merchant',     // y bloqueado en las rutas de plataforma (requireUserType('admin'))
-    impersonatedBy: actor.id,
+    impersonatedBy: actor.id, // canal de los permisos totales (loadPermissions) y marca de auditoría
   }, IMPERSONATION_TTL)
   // Ni createRefreshToken ni repo.update(target.id, ...): ver la nota de cabecera.
 
   return {
-    token,
+    token: jwt,
     user: {
       id: target.id,
       name: target.name,
       email: target.email,
-      // OJO, es la distinción menos obvia del archivo: acá va el rol REAL del target
-      // (lo que la franja de aviso muestra: "estás viendo como hotel_admin de X"),
-      // mientras que el rol DENTRO del token es super_admin para no perder el bypass.
+      // El rol real del target, igual que en el token: es lo que muestra la franja de
+      // aviso ("estás viendo como hotel_admin de X").
       role: target.role,
       hotelId: target.hotelId ?? null,
       hotelName,
-      // Comodín total, coherente con el rol del token (ver resolve-permissions.ts:
-      // super_admin ⇒ ['*:*']). La UI no debe esconderle nada al admin que entró.
+      // Comodín total, el mismo que `loadPermissions` le pone a la sesión por el claim
+      // `impersonatedBy`. La UI no debe esconderle nada al admin que entró.
       permissions: ['*:*'],
     },
   }

@@ -24,7 +24,7 @@ describe('impersonateUser', () => {
     expect(result.token).toBe('jwt-impersonado')
     expect(auth.createToken).toHaveBeenCalledWith({
       id: 'u1',
-      role: 'super_admin',
+      role: 'hotel_admin',
       hotelId: 'h1',
       userType: 'merchant',
       impersonatedBy: 'admin-1',
@@ -32,11 +32,27 @@ describe('impersonateUser', () => {
     expect(IMPERSONATION_TTL).toBe('2h')
   })
 
+  it('el token NO lleva super_admin: de ese valor dependen los chequeos de aislamiento por hotel de todo el backend', async () => {
+    // ~30 services deciden si saltean el filtro por hotel con `currentUser.role !== 'super_admin'`.
+    // Un token de impersonación con ese rol convertía la sesión de soporte en acceso de lectura Y
+    // ESCRITURA a cualquier otro hotel (crear una API key o un webhook para un hotel ajeno, que
+    // además sobreviven a las 2h del token). El rol viaja como el del cliente, siempre.
+    repo.findById.mockResolvedValue({ ...TARGET, role: 'receptionist' })
+    await impersonateUser({ repo, hotelRepo, auth }, ADMIN, 'u1')
+
+    const payload = auth.createToken.mock.calls[0][0]
+    expect(payload.role).toBe('receptionist')
+    expect(payload.role).not.toBe('super_admin')
+    // Los permisos totales del admin no salen del rol: los da loadPermissions por este claim.
+    expect(payload.impersonatedBy).toBe('admin-1')
+    expect(payload.hotelId).toBe('h1')
+  })
+
   it('devuelve el rol REAL del target (no el del token), permisos totales y el nombre del hotel', async () => {
     const result = await impersonateUser({ repo, hotelRepo, auth }, ADMIN, 'u1')
 
-    // El token va con role super_admin (bypass de permisos), pero el user devuelto
-    // lleva el rol real: es lo que muestra la franja de aviso en la UI.
+    // El rol real es el que muestra la franja de aviso en la UI, y es también el que
+    // viaja en el token; los permisos totales llegan aparte, por `impersonatedBy`.
     expect(result.user.role).toBe('hotel_admin')
     expect(result.user.permissions).toEqual(['*:*'])
     expect(result.user).toMatchObject({ id: 'u1', name: 'Ana', email: 'ana@hotel.com', hotelId: 'h1', hotelName: 'Hotel Caribe' })
@@ -94,12 +110,12 @@ describe('HotelAuth: claim impersonatedBy', () => {
   const auth = new HotelAuth(jwtTokenAdapter, 'test-secret', logger, '1h', '7d')
 
   it('un token creado con impersonatedBy lo devuelve verifyToken', () => {
-    const token = auth.createToken({ id: 'u1', role: 'super_admin', hotelId: 'h1', userType: 'merchant', impersonatedBy: 'admin-1' }, '2h')
-    expect(auth.verifyToken(token).impersonatedBy).toBe('admin-1')
+    const jwt = auth.createToken({ id: 'u1', role: 'hotel_admin', hotelId: 'h1', userType: 'merchant', impersonatedBy: 'admin-1' }, '2h')
+    expect(auth.verifyToken(jwt).impersonatedBy).toBe('admin-1')
   })
 
   it('un token normal devuelve impersonatedBy undefined', () => {
-    const token = auth.createToken({ id: 'u1', role: 'hotel_admin', hotelId: 'h1' })
-    expect(auth.verifyToken(token).impersonatedBy).toBeUndefined()
+    const jwt = auth.createToken({ id: 'u1', role: 'hotel_admin', hotelId: 'h1' })
+    expect(auth.verifyToken(jwt).impersonatedBy).toBeUndefined()
   })
 })

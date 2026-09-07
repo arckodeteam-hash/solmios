@@ -78,7 +78,11 @@ const SENSIBLES: Array<[string, string]> = [
   ['delete', '/api/roles/:id'],
 ]
 
-const usuarioImpersonando = () => ({ id: 'u-cliente', role: 'super_admin', hotelId: 'h1', userType: 'merchant', impersonatedBy: 'u-super' })
+// El token de impersonación lleva el rol REAL del cliente (no 'super_admin': de ese valor
+// dependen los chequeos de aislamiento por hotel de todo el backend). Los permisos totales
+// se los da `loadPermissions` a partir del claim `impersonatedBy`, así que la cadena llega
+// hasta `denyImpersonation` en vez de cortarse antes por falta de permiso.
+const usuarioImpersonando = () => ({ id: 'u-cliente', role: 'receptionist', hotelId: 'h1', userType: 'merchant', impersonatedBy: 'u-super' })
 const superAdminDeVerdad = () => ({ id: 'u-super', role: 'super_admin', hotelId: 'platform', userType: 'admin' })
 
 describe('rutas cerradas a una sesión de impersonación', () => {
