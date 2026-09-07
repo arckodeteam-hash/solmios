@@ -37,6 +37,18 @@ const MessageLogModel: ModelDefinition = {
     recipient: { type: 'string' },
     response: { type: 'string' },
     sentAt: { type: 'string' },
+    // ─── Envío real por WhatsApp ────────────────────────────────────────────
+    /** El `wamid` que devuelve Meta. Es la ÚNICA forma de emparejar el webhook de estado con
+     *  esta fila, por eso va indexado: el webhook busca por acá. */
+    providerMessageId: { type: 'string', indexed: true },
+    /** whatsapp_api | whatsapp_manual | email. `messageType` mezclaba el canal con el modo y no
+     *  dejaba contar cuántos envíos fueron reales y cuántos un enlace abierto a mano. */
+    channel: { type: 'string', default: 'email' },
+    /** Qué plantilla se usó. Sin esto no se puede saber qué texto recibió el huésped: la
+     *  plantilla local puede editarse después del envío. */
+    templateId: { type: 'string' },
+    /** Motivo del fallo, ya traducido. */
+    errorMessage: { type: 'string' },
   },
   timestamps: true,
 }

@@ -88,6 +88,17 @@ export class MarketingService {
   }
   async createMessageLog(dto: CreateMessageLogDTO): Promise<MessageLogDTO> { return this.logRepo.create(dto as any) }
 
+  // El acuse de entrega lo recibe el webhook de `ai-recepcionista`, pero `message_logs` es de acá.
+  // Estos dos métodos son lo único que ese módulo necesita, vía el connector `whatsapp-delivery-status`.
+  /** Busca el envío por el `wamid` que devolvió Meta. */
+  async findLogByProviderMessageId(wamid: string): Promise<MessageLogDTO | null> {
+    return (await this.logRepo.findMany({ providerMessageId: wamid } as any))[0] ?? null
+  }
+  /** Anota el estado que informó Meta. No decide nada: la regla de avance vive en el usecase. */
+  async updateLogStatus(id: string, patch: { status: string; errorMessage?: string }): Promise<void> {
+    await this.logRepo.update(id, patch as any)
+  }
+
   // ─── WhatsApp Templates ────────────────────────────────
   // El grueso vive en usecases/: la edición dejó de ser un patch plano (decide qué pasa con la
   // aprobación de Meta) y el service ya estaba en el límite de tamaño del analyzer.

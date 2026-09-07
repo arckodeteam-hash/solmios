@@ -45,7 +45,7 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // STR-F: `setGuaranteePin`/`getGuaranteeHasPin`/`unlockGuaranteeCard` tienen rutas HTTP
       // vivas en este archivo y métodos públicos en el service — estaban fuera de la lista que se
       // declaraba como la superficie completa.
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard'],
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'sendWhatsapp', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard'],
       events: ['onReservasCreated', 'onReservasUpdated', 'onReservasDeleted', 'onReservationCancelled'],
       // `message_logs` es del módulo marketing: reservas ESCRIBE la traza de los envíos manuales
       // con el repo que le inyecta email-bootstrap (mismo camino que checkin-email/lifecycle-email).
@@ -159,6 +159,8 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // bajo `/api/reservas/:id/...` (el prefijo `/api/reservations/:id/...` es el de las
       // sub-colecciones: companions y addons). QA10-2.
       router.post('/api/reservas/:id/message-log', guard('reservations', 'edit'), (req) => controller.logManualMessage(req))
+      // Envío REAL por la Cloud API de Meta (distinto del enlace wa.me, que solo deja rastro).
+      router.post('/api/reservas/:id/whatsapp', guard('reservations', 'edit'), (req) => controller.sendWhatsapp(req))
 
       // ── Pre-checkin (público) ──
       router.get('/api/public/pre-checkin/:hash', (req) => controller.getPreCheckinData(req))

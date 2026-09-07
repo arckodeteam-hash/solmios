@@ -1,6 +1,6 @@
 {
   "_arckode": "1.0.0",
-  "_generated": "2026-09-07T22:41:40.350Z",
+  "_generated": "2026-09-07T22:54:41.874Z",
   "_instructions": "Lee este archivo ANTES de escribir código. Contiene el estado completo del sistema: módulos, conectores, violaciones. Si está desactualizado, corré: bun run analyze --json",
   "system": {
     "healthy": true,
@@ -968,6 +968,7 @@
     "reclutamiento-empleados.ts",
     "marketing-auditlog.ts",
     "empleados-capacitacion.ts",
+    "whatsapp-delivery-status.ts",
     "bookingengine-tracking.ts",
     "reservas-promocodes.ts",
     "amenities-habitaciones.ts",
@@ -1062,6 +1063,7 @@
     "payments-auditlog.ts",
     "housekeeping-notificaciones.ts",
     "cash-accounting.ts",
+    "reservas-whatsapp.ts",
     "grupos-auditlog.ts",
     "usuarios-auditlog.ts",
     "payroll-auditlog.ts",

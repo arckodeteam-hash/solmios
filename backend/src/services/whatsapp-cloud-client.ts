@@ -333,3 +333,88 @@ export function explicarErrorDeConexion(err: unknown): string {
       return err.message
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Envío de mensajes (Cloud API)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Manda una plantilla APROBADA. Es el único modo de iniciar una conversación: fuera de la ventana
+ * de 24 h desde el último mensaje del huésped, Meta rechaza cualquier otra cosa.
+ *
+ * `parameters` va en el MISMO orden en que se registró la plantilla (`metaVariableOrder`): Meta las
+ * numera por posición, así que un orden distinto le pone el nombre del hotel donde va el del huésped.
+ */
+export async function sendTemplateMessage(
+  creds: WhatsappCloudCredentials,
+  input: { to: string; name: string; language: string; parameters?: string[] },
+): Promise<{ messageId: string }> {
+  const components = input.parameters?.length
+    ? [{ type: 'body', parameters: input.parameters.map((text) => ({ type: 'text', text })) }]
+    : undefined
+
+  const body = await graphFetch<any>(creds, `/${creds.phoneNumberId}/messages`, {
+    method: 'POST',
+    body: {
+      messaging_product: 'whatsapp',
+      to: input.to,
+      type: 'template',
+      template: { name: input.name, language: { code: input.language }, ...(components ? { components } : {}) },
+    },
+  })
+  return { messageId: String(body?.messages?.[0]?.id ?? '') }
+}
+
+/** Texto libre. Solo funciona con la ventana de 24 h abierta; si no, Meta responde 131047. */
+export async function sendTextMessage(
+  creds: WhatsappCloudCredentials,
+  input: { to: string; text: string },
+): Promise<{ messageId: string }> {
+  const body = await graphFetch<any>(creds, `/${creds.phoneNumberId}/messages`, {
+    method: 'POST',
+    body: {
+      messaging_product: 'whatsapp',
+      to: input.to,
+      type: 'text',
+      // `preview_url: false` evita que WhatsApp expanda un link de la reserva en una tarjeta que
+      // muestre datos del huésped en la vista previa del chat.
+      text: { body: input.text, preview_url: false },
+    },
+  })
+  return { messageId: String(body?.messages?.[0]?.id ?? '') }
+}
+
+/**
+ * Traduce los fallos de envío más comunes a algo que el recepcionista pueda entender y accionar.
+ * "El número no tiene WhatsApp" y "el huésped bloqueó al hotel" son cosas distintas para quien
+ * está atendiendo, aunque Meta las devuelva con la misma cara.
+ */
+export function explicarErrorDeEnvio(err: unknown): string {
+  if (!(err instanceof WhatsappCloudError)) {
+    return err instanceof Error ? err.message : String(err)
+  }
+  switch (err.metaCode) {
+    // El más frecuente mientras la app está en modo desarrollo: Meta solo entrega a los números
+    // que se registraron a mano en la consola. Sin este texto, la prueba parece un bug del PMS.
+    case 131030:
+      return 'Ese número no está en la lista de prueba de Meta. Mientras la app esté en modo desarrollo, solo se puede escribir a los teléfonos registrados en la consola de WhatsApp.'
+    case 131047:
+      return 'Pasaron más de 24 horas desde el último mensaje del huésped: solo se le puede escribir con una plantilla aprobada.'
+    case 131026:
+      return 'Ese número no tiene WhatsApp, o no puede recibir mensajes del hotel.'
+    case 131049:
+    case 131050:
+      return 'WhatsApp no entregó el mensaje para cuidar la experiencia del huésped (recibió demasiados mensajes parecidos).'
+    case 132000:
+      return 'La plantilla no coincide con la que Meta aprobó: cambió la cantidad de variables.'
+    case 132001:
+      return 'Esa plantilla no existe o todavía no está aprobada en la cuenta del hotel.'
+    case 131031:
+      return 'Meta suspendió la cuenta de WhatsApp del hotel.'
+    case 130429:
+      return 'Se alcanzó el límite de mensajes por hora de la cuenta. Probá más tarde.'
+    default:
+      if (err.httpStatus >= 500) return `Meta no respondió: ${err.message}. El mensaje no se envió.`
+      return err.message
+  }
+}

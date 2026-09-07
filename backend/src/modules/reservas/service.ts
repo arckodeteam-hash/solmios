@@ -5,6 +5,7 @@ import type { StorageService, FileUpload } from 'arckode-framework/modules/stora
 import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from './types'
 import type { ReservasSockets } from './sockets'
 import { checkinValidation, checkoutValidation, executeCheckin } from './usecases/checkin'
+import type { WhatsappSendPort } from './usecases/send-whatsapp'
 import { executeCheckout as executeCheckoutUsecase } from './usecases/checkout'
 import { sendLockCodeEmail as sendLockCodeEmailUsecase } from './usecases/lock-code-email'
 import { NullEmailSender, type EmailSender } from '../../services/email-sender'
@@ -36,6 +37,10 @@ import { openFolioBalance, type OpenFolioBalance as OpenFolioBalanceResult } fro
 import type { ReservasOrchestrationDeps } from './usecases/orchestration-deps'
 
 export class ReservasService {
+  /** Envío por Meta. Lo inyecta el connector `reservas-whatsapp`. `null` = sin cablear en este servidor. */
+  whatsappPort: WhatsappSendPort | null = null
+  setWhatsappPort(port: WhatsappSendPort): void { this.whatsappPort = port }
+
   private sockets: ReservasSockets = {}
   private auditPort: AuditPort | null = null
   setAuditDeps(port: AuditPort): void { this.auditPort = port }
@@ -107,24 +112,15 @@ export class ReservasService {
 
   // ── CHECK-IN ─────────────────────────────────────────────────────────────
   async checkin(id: string, user: any): Promise<any> { return checkinValidation(this.repo, id, user, this.auth) }
-  async executeCheckin(r: any, user: any, deps: { orm: any; pushAvailabilityToChannex?: any; sendCheckinEmail?: any; logger?: any }): Promise<any> {
-    return executeCheckin(r, user, { orm: deps.orm, logger: deps.logger || this.logger, repo: this.repo, queries: this.queries })
-  }
+  async executeCheckin(r: any, user: any, deps: { orm: any; pushAvailabilityToChannex?: any; sendCheckinEmail?: any; logger?: any }): Promise<any> { return executeCheckin(r, user, { orm: deps.orm, logger: deps.logger || this.logger, repo: this.repo, queries: this.queries }) }
 
   // ── CHECK-OUT ──────────────────────────────────────────────────────────
-  async checkout(id: string, user: any): Promise<any> {
-    return checkoutValidation(this.repo, id, user, this.auth)
-  }
+  async checkout(id: string, user: any): Promise<any> { return checkoutValidation(this.repo, id, user, this.auth) }
 
   async executeCheckout(r: any, user: any, deps: { orm: any; invalidateHousekeepingCache?: () => Promise<void>; pushAvailabilityToChannex?: any; dispatchLifecycleEmail?: any; logger?: any }): Promise<any> {
     // R-1 (2026-08-19): flujo con guard de carrera extraído a usecases/checkout.ts
     // (mismo lugar que executeCheckin; el service delega y queda bajo las 200 líneas).
-    return executeCheckoutUsecase(r, user, {
-      orm: deps.orm,
-      queries: this.queries,
-      sockets: this.sockets,
-      logger: deps.logger || this.logger,
-    })
+    return executeCheckoutUsecase(r, user, { orm: deps.orm, queries: this.queries, sockets: this.sockets, logger: deps.logger || this.logger })
   }
 
   // ── SETTLEMENT (folio → invoice → payment) — ver usecases/settle-port.ts ────────────────

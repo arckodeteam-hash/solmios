@@ -74,6 +74,16 @@ interface ReservationsResponse {
 }
 
 export const ReservationService = {
+  /**
+   * Envío REAL por WhatsApp al huésped, por la Cloud API de Meta.
+   * Distinto del enlace `wa.me`, que solo abre WhatsApp en el navegador del recepcionista y no
+   * puede confirmar si el mensaje llegó.
+   */
+  sendWhatsapp: (reservationId: string, payload: { templateId?: string; text?: string }) =>
+    http.post<{ id: string; status: string; providerMessageId?: string; errorMessage?: string }>(
+      `/reservas/${reservationId}/whatsapp`, payload,
+    ),
+
   async list(params?: { hotelId?: string; status?: string; limit?: number; guestId?: string; groupId?: string }): Promise<{ reservations: Reservation[]; total: number }> {
     const qs = new URLSearchParams()
     if (params?.hotelId) qs.set('hotelId', params.hotelId)

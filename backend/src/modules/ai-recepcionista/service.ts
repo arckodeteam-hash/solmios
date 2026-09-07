@@ -32,6 +32,7 @@ import { getMetrics, getDashboardMetrics } from './usecases/metrics'
 import { deleteIntentAudited, deleteTemplateAudited } from './usecases/audit-deletes'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
 import type { AuditPort } from '../../shared/usecases/audit'
+import type { DeliveryStatusPort } from './usecases/whatsapp-delivery-status'
 
 export class AiRecepcionistaService {
   private sockets: AiRecepcionistaSockets = {}
@@ -42,6 +43,10 @@ export class AiRecepcionistaService {
   cancelReservationPort: ReservationCancelPort | null = null
   /** Emisión de factura vía el módulo `facturas`. Lo inyecta el connector `ai-facturas`. */
   invoicingPort: InvoiceIssuePort | null = null
+
+  /** Escribe el acuse de entrega en `message_logs` (tabla de marketing). Lo inyecta un connector. */
+  deliveryStatusPort: DeliveryStatusPort | null = null
+  setDeliveryStatusPort(p: DeliveryStatusPort): void { this.deliveryStatusPort = p }
 
   /** Conecta el audit log. Lo inyecta el connector `ai-recepcionista-auditlog`. */
   setAuditDeps(port: AuditPort): void { this.auditPort = port }

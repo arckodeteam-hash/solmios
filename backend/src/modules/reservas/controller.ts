@@ -3,10 +3,11 @@ import type { HttpRequest, Logger, Auth, RepositoryAdapter } from 'arckode-frame
 import { validateSchema, OrmRepository } from 'arckode-framework'
 import type { FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasService } from './service'
-import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, StayQuoteSchema, ManualMessageLogSchema } from './validators/schema'
+import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, StayQuoteSchema, ManualMessageLogSchema , SendWhatsappSchema } from './validators/schema'
 import { listCompanions, createCompanion, updateCompanion, deleteCompanion } from './usecases/companions'
 import { listAddons, createAddon, deleteAddon } from './usecases/addons'
 import { logManualMessage } from './usecases/message-log'
+import { sendWhatsappForReservation } from './usecases/send-whatsapp'
 import { hashGuaranteePin, verifyGuaranteePin } from '../../services/guarantee-pin'
 import { sendCheckinEmail } from './usecases/checkin-email'
 import { dispatchLifecycleEmail } from './usecases/lifecycle-email'
@@ -441,6 +442,30 @@ export class ReservasController {
       if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
       return { status: 500, body: { error: e.message } }
     }
+  }
+
+  /**
+   * Envío REAL por WhatsApp al huésped de la reserva (Cloud API de Meta).
+   * Distinto de `logManualMessage`, que solo deja rastro de un enlace `wa.me` abierto a mano.
+   */
+  async sendWhatsapp(req: HttpRequest) {
+    const repo = this.messageLogRepo ?? (this.orm ? new OrmRepository<any>(this.orm, 'MessageLogs') : null)
+    if (!repo) return { status: 503, body: { error: 'El registro de envíos no está disponible' } }
+    const whatsapp = this.service.whatsappPort
+    if (!whatsapp) {
+      return { status: 503, body: { error: 'El envío por WhatsApp no está disponible en este servidor' } }
+    }
+    const dto = validateSchema(SendWhatsappSchema, req.body || {}) as any
+    const out = await sendWhatsappForReservation(
+      {
+        reservationRepo: this.reservationRepo, userRepo: this.userRepo,
+        guestRepo: this.guestRepoForEmail, hotelRepo: this.hotelRepoForEmail,
+        templateRepo: new OrmRepository<any>(this.orm, 'WhatsappTemplates'),
+        messageLogRepo: repo, whatsapp, auth: this.auth, logger: this.logger,
+      },
+      req.params.id, dto, req.user as any,
+    )
+    return { status: 200, body: out }
   }
 
   async sendLockCodeEmail(req: HttpRequest) {

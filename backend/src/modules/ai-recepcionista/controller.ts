@@ -3,6 +3,7 @@ import { validateSchema } from 'arckode-framework'
 import type { AiRecepcionistaService } from './service'
 import { AiRecepcionistaValidator, CloseConversationSchema, TransferConversationSchema, TestIntentSchema, WebChatMessageSchema, StartWhatsappSchema, StopWhatsappSchema, ConnectWhatsappSchema } from './validators/schema'
 import { redactWhatsappConfig } from './usecases/whatsapp-config'
+import { aplicarEstadosDeEntrega } from './usecases/whatsapp-delivery-status'
 
 export class AiRecepcionistaController {
   constructor(
@@ -213,6 +214,21 @@ export class AiRecepcionistaController {
       const changes = entry?.changes?.[0]
       const value = changes?.value
       const messages = value?.messages
+
+      // Meta manda por el MISMO webhook los acuses de entrega de lo que enviamos nosotros.
+      // Sin esto, un mensaje se quedaba en "enviado" para siempre y el hotel no sabía si llegó.
+      const statuses = value?.statuses
+      if (Array.isArray(statuses) && statuses.length > 0) {
+        const port = (this.service as any).deliveryStatusPort
+        if (port) {
+          const out = await aplicarEstadosDeEntrega({ port, logger: this.logger }, statuses)
+          return { status: 200, body: { status: 'statuses_processed', ...out } }
+        }
+        // Sin el puerto cableado no hay dónde anotarlo, pero se responde 200: un error haría que
+        // Meta reintente este webhook indefinidamente.
+        this.logger.warn('Webhook con acuses de entrega y sin puerto para registrarlos', { hotelId })
+        return { status: 200, body: { status: 'statuses_ignored' } }
+      }
 
       if (!messages || messages.length === 0) {
         return { status: 200, body: { status: 'no_messages' } }

@@ -32,6 +32,12 @@ export interface MessageLogDTO {
   messageId: string | null; messageType: string; status: string
   recipient: string | null; response: string | null; sentAt: string | null
   createdAt: string
+  /** `wamid` de Meta; empareja el webhook de estado con esta fila. */
+  providerMessageId?: string
+  /** whatsapp_api | whatsapp_manual | email */
+  channel?: string
+  templateId?: string
+  errorMessage?: string
 }
 
 export interface CreateMessageLogDTO {
