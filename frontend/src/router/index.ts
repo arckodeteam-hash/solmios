@@ -291,7 +291,12 @@ const router = createRouter({
           // dashboard general (que no pueden usar) sería confuso. Van directo a su pantalla.
           path: '',
           redirect: () => {
-            const role = useAuthStore().userRole
+            const auth = useAuthStore()
+            // Impersonando NO: el rol que se ve es el del CLIENTE (para que la franja diga a quién
+            // se está viendo), pero quien navega es el super admin, con permisos efectivos ['*:*'].
+            // Mandarlo al KDS porque el cliente es cocinero le esconde el panel que vino a mirar.
+            if (auth.impersonating) return '/panel/dashboard'
+            const role = auth.userRole
             if (role === 'waiter') return '/panel/restaurante/salon'
             if (role === 'kitchen') return '/panel/restaurante/cocina'
             return '/panel/dashboard'
@@ -805,7 +810,12 @@ router.beforeEach(async (to) => {
     // super_admin y hotel_admin pasan siempre. Un rol CUSTOM pasa si su permiso cubre la ruta
     // (mismo criterio que el menú: <module>:view, CORE siempre accesible). Roles de sistema
     // no-admin (recepción, limpieza…) → a su panel, como antes. El backend igual valida 403.
-    if (!auth.isSuperAdmin && !auth.isHotelAdmin) {
+    // Un admin IMPERSONANDO también pasa siempre: el rol que se ve es el del CLIENTE (la franja
+    // muestra a quién se está viendo), pero quien está sentado adelante es el super admin y sus
+    // permisos efectivos son ['*:*'] — lo que el token de impersonación autoriza en el backend.
+    // Sin esto, entrar como recepcionista/mesero/cocina rebotaba a /panel toda ruta de admin
+    // (Finanzas, Contabilidad, Tesorería, Compras…) por el NOMBRE del rol del cliente.
+    if (!auth.canActAsHotelAdmin) {
       const role = auth.userRole ?? ''
       const mod = permissionModuleForPath(to.path)
       const allowed = !isSystemRole(role) && (!mod || hasPermission(auth.user?.permissions, mod, 'view'))
@@ -819,7 +829,9 @@ router.beforeEach(async (to) => {
   // facturación…) no rebotaba — quedaba en una pantalla que no es la suya (el backend igual le
   // niega los datos con 403, esto es UX, no el gate de seguridad). Rutas CORE (sin mapeo, ej.
   // dashboard) siguen accesibles a cualquiera con sesión, a propósito.
-  if (to.path.startsWith('/panel/') && auth.isAuthenticated && !auth.isSuperAdmin && !auth.isHotelAdmin) {
+  // Mismo criterio que arriba con la impersonación: el rol visible es el del cliente, los permisos
+  // efectivos son los del admin, así que este bloqueo de UX no aplica mientras dura la sesión de soporte.
+  if (to.path.startsWith('/panel/') && auth.isAuthenticated && !auth.canActAsHotelAdmin) {
     const mod = permissionModuleForPath(to.path)
     if (mod && !hasPermission(auth.user?.permissions, mod, 'view')) return '/panel'
   }

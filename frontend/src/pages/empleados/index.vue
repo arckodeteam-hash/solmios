@@ -519,8 +519,11 @@ const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'pla
  * además le oculta los salarios a recepción, pero la UI seguía mostrando los botones: recepción
  * podía abrirlos y solo se enteraba del rechazo al guardar. Acá se espeja esa regla del servidor.
  * La lectura del listado sigue habilitada — es deliberado que recepción vea a sus compañeros.
+ * El criterio sale del store (`canActAsHotelAdmin`) para que incluya al super admin que está
+ * DENTRO de la cuenta del cliente: su token autoriza igual, gatear por el nombre del rol del
+ * cliente le escondía la gestión de personal cuando entraba como, por ejemplo, recepción.
  */
-const canManageStaff = computed(() => auth.isHotelAdmin || auth.isSuperAdmin)
+const canManageStaff = computed(() => auth.canActAsHotelAdmin)
 const toast = useToast()
 const activeTab = ref('profiles')
 const loading = ref(true)

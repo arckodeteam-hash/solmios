@@ -6,10 +6,10 @@
     <!-- Impersonation Banner -->
     <div v-if="auth.impersonating" class="fixed top-0 left-0 right-0 z-50 bg-orange border-b-2 border-orange-dark px-4 py-2.5 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <span class="text-sm font-extrabold text-navy">👁️ Modo supervisión: <span class="underline">{{ auth.user?.name }}</span> — {{ auth.user?.hotelName }}</span>
-        <span class="text-[10px] font-bold bg-navy/10 text-navy px-2 py-0.5 rounded-full uppercase">{{ auth.user?.role }}</span>
+        <span class="text-sm font-extrabold text-navy">👁️ Modo supervisión: <span class="underline">{{ auth.user?.name || 'Usuario' }}</span> — {{ auth.user?.hotelName || 'Sin hotel' }}</span>
+        <span class="text-[10px] font-bold bg-navy/10 text-navy px-2 py-0.5 rounded-full uppercase">{{ auth.user?.role || '—' }}</span>
       </div>
-      <button @click="auth.stopImpersonation(); router.push('/admin')" class="text-sm font-extrabold text-navy bg-white px-4 py-1.5 rounded-lg hover:bg-surface transition-colors cursor-pointer">✕ Volver a Super Admin</button>
+      <button @click="salirDeImpersonacion" class="text-sm font-extrabold text-navy bg-white px-4 py-1.5 rounded-lg hover:bg-surface transition-colors cursor-pointer">✕ Volver a Super Admin</button>
     </div>
 
     <!-- Mobile backdrop -->
@@ -202,6 +202,16 @@ const dashboard = useDashboardStore()
 const roomStore = useRoomStore()
 const { canRoute } = usePermissions()
 const mobileMenuOpen = ref(false)
+
+/**
+ * Salir de la impersonación. `stopImpersonation` es async (restaura los tokens del admin y
+ * revalida contra /auth/me): hay que ESPERARLA antes de navegar, si no se navega con la sesión
+ * a medio restaurar. Vuelve al listado desde donde entró, no a /admin a secas.
+ */
+async function salirDeImpersonacion() {
+  await auth.stopImpersonation()
+  router.push('/admin/users')
+}
 
 // Cierra el drawer mobile al navegar a otra ruta
 watch(() => route.path, () => { mobileMenuOpen.value = false })
@@ -454,7 +464,13 @@ const visibleItems = computed(() => {
   // Roles de SISTEMA: se muestran por nombre de rol (comportamiento histórico, intacto).
   // Roles CUSTOM (los que crea el dueño): por permiso granular — no matchean ningún nombre
   // de rol del literal, así que sin esto verían el menú vacío. `visibleLeaf` unifica ambos.
-  const custom = !isSystemRole(role)
+  //
+  // Impersonando va SIEMPRE por permisos, aunque el rol sea de sistema: el rol que se ve es el del
+  // CLIENTE (la franja de arriba muestra a quién se está viendo), pero quien mira el menú es el
+  // super admin, con permisos efectivos ['*:*'] (los que el backend le da con el token de
+  // impersonación). Filtrar por `item.roles` le escondía Finanzas, Contabilidad, Tesorería,
+  // Compras, Inventario u Operaciones cada vez que el cliente no era hotel_admin.
+  const custom = !isSystemRole(role) || auth.impersonating
   const visibleLeaf = (item: { path: string; roles: string[]; anyOf?: string[] }) =>
     (custom ? canRoute(item.path) : item.roles.includes(role)) && navEnabled(item)
   // El literal nonavItems mezcla padres (con children, sin path) y hojas (con path);

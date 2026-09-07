@@ -98,9 +98,15 @@ const TAB_ICONS: Record<string, string> = {
   tracking: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M3 21h18M6 21V10M12 21V4M18 21v-7"/></svg>',
 }
 
+// Una tab de nivel hotel_admin la ve también el super admin que está DENTRO de la cuenta de un
+// cliente: su token conserva permisos ['*:*'] y el backend se la autoriza igual, así que gatear
+// por el NOMBRE del rol del cliente (recepción, mesero…) le escondía pantallas que sí puede usar.
+// Mismo criterio que el router, el menú de AdminLayout, `canEditMinStay` y `canManageStaff`.
 const visibleTabs = computed(() => {
   const role = auth.userRole ?? ''
-  return PAGINA_PUBLICA_TABS.filter(t => t.roles.includes(role))
+  return PAGINA_PUBLICA_TABS.filter(
+    t => t.roles.includes(role) || (auth.canActAsHotelAdmin && t.roles.includes('hotel_admin'))
+  )
 })
 
 const visibleGroups = computed(() => {
