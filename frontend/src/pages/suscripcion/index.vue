@@ -329,8 +329,13 @@ function closeUpgrade() {
 /**
  * Deja la pantalla consistente sin F5: el estado de la suscripción (badge, "Tu plan", CTAs) y el
  * cache de módulos, que es lo que decide qué muestra el menú lateral — el plan nuevo habilita
- * módulos que el cache viejo sigue dando por apagados. `reset()` es imprescindible: `ensure()`
- * solo refetchea si cambió el hotel, y acá el hotel es el mismo.
+ * módulos que el cache viejo sigue dando por apagados.
+ *
+ * `refresh()` y NO `reset()` + `ensure()`: `reset()` vacía el estado, y con el estado vacío el
+ * store falla ABIERTO (todo visible), así que el menú parpadea mostrando módulos que el hotel
+ * quizá no tiene hasta que llega la respuesta. `refresh()` fuerza el refetch conservando el
+ * estado bueno mientras tanto. (`ensure()` solo no alcanza: refetchea si cambió el hotel, y acá
+ * el hotel es el mismo.)
  * Los stores se resuelven acá y no en el setup porque solo hacen falta después de un upgrade.
  */
 async function refreshAfterUpgrade() {
@@ -338,9 +343,7 @@ async function refreshAfterUpgrade() {
   // Best-effort: la mejora ya está cobrada y aplicada; un fallo refrescando el menú no es un
   // error que mostrarle a nadie (el próximo ensure() lo resuelve).
   try {
-    const modules = useModulesStore()
-    modules.reset()
-    await modules.ensure(useAuthStore().user?.hotelId)
+    await useModulesStore().refresh(useAuthStore().user?.hotelId)
   } catch { /* el menú se rehidrata en la próxima navegación */ }
 }
 

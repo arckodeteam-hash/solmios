@@ -79,6 +79,22 @@ export async function changeHotelPlan(
   const subs = ((await subscriptionsRepo.findMany({ hotelId })) as any[]) ?? []
   const active = subs.filter((s) => WORKING_STATUSES.has(s?.status)).sort(compareSubscriptions)[0]
 
+  // `plans.slug` es nullable (scripts/create-plans-table.ts). Sin slug, el único soporte posible
+  // del plan es `subscriptions.planId`: el espejo guarda SLUGS, así que no hay dónde escribirlo.
+  // Si además el hotel no tiene fila activa, este cambio no puede tocar NADA — y devolver
+  // `changed:false` lo haría indistinguible de un "ya estaba en ese plan", dejando al llamador
+  // (el select de /admin/hotels) mostrando un éxito que no ocurrió. Es un error, no un no-op.
+  if (!planSlug && !active) {
+    throw new ValidationError(
+      'Ese plan no tiene slug y el hotel no tiene una suscripción activa: no hay dónde registrar el cambio',
+    )
+  }
+  // Con fila activa el cambio sí se aplica (planId es la fuente de verdad), pero el espejo queda
+  // viejo para los lectores legacy y eso no puede pasar en silencio.
+  if (!planSlug) {
+    logger.warn('Plan sin slug: se movió la suscripción pero hotels.plan queda desincronizado', { hotelId, planId })
+  }
+
   const previousPlanId = active?.planId ? String(active.planId) : null
   // Dos mutaciones posibles e INDEPENDIENTES: la suscripción y el espejo. `changed` tiene que
   // cubrir las dos o miente: con la suscripción ya en el plan pedido pero `hotels.plan` atrasado

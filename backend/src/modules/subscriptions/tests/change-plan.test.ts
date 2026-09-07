@@ -41,6 +41,8 @@ function plansTable() {
     { id: 'plan-host', slug: 'host', modules: HOST_MODULES, isActive: 1 },
     { id: 'plan-essential', slug: 'essential', modules: ESSENTIAL_MODULES, isActive: 1 },
     { id: 'plan-baja', slug: 'baja', modules: [], isActive: 0 },
+    // `plans.slug` es nullable (scripts/create-plans-table.ts): sin slug no hay espejo posible.
+    { id: 'plan-sinslug', slug: null, modules: [], isActive: 1 },
   ]
 }
 
@@ -175,6 +177,28 @@ describe('changeHotelPlan — mueve el planId de la suscripción activa', () => 
     expect(res.changed).toBe(true)
     // Y tiene que quedar rastro de la escritura.
     expect(infos.some((l) => /espejo/i.test(l.msg))).toBe(true)
+  })
+
+  // Re-revisión #46: `plans.slug` es nullable. Sin slug no hay dónde escribir el espejo (guarda
+  // slugs), así que si el hotel TAMPOCO tiene fila activa el cambio no puede tocar nada. Antes
+  // devolvía `changed:false`, indistinguible de "ya estaba en ese plan": el select de
+  // /admin/hotels mostraba un éxito que nunca ocurrió.
+  it('plan sin slug y hotel sin suscripción activa: falla en vez de fingir un no-op', async () => {
+    const { deps, hotelUpdates } = setup([{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'canceled' }])
+
+    await expect(changeHotelPlan(deps, 'h1', 'plan-sinslug')).rejects.toThrow(/slug/i)
+    expect(hotelUpdates).toHaveLength(0)
+  })
+
+  it('plan sin slug PERO con suscripción activa: mueve el planId y avisa que el espejo queda viejo', async () => {
+    const { logger, warns } = recordingLogger()
+    const { deps, subUpdates } = setup([{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'active' }])
+
+    const res = await changeHotelPlan({ ...deps, logger }, 'h1', 'plan-sinslug')
+
+    expect(res.changed).toBe(true)
+    expect(subUpdates).toEqual([{ id: 's1', patch: { planId: 'plan-sinslug' } }])
+    expect(warns.some((w) => /slug/i.test(w))).toBe(true)
   })
 
   it('un fallo del espejo hotels.plan NO tumba el cambio (best-effort, warn)', async () => {

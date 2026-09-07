@@ -46,8 +46,8 @@ function fakeStripe() {
         retrieves.push(id)
         return { id, items: { data: [{ id: 'si_1', current_period_end: PERIOD_END, price: { id: 'price_ess_99' } }] } }
       },
-      update: async (id: string, params: any) => {
-        updates.push({ id, params })
+      update: async (id: string, params: any, options?: any) => {
+        updates.push({ id, params, options })
         return { id, items: { data: [{ id: 'si_1', current_period_end: PERIOD_END }] }, latest_invoice: invoiceOnUpdate }
       },
     },
@@ -148,6 +148,21 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     // En Stripe el plan nuevo YA rige aunque no se haya cobrado: la fila local dice la verdad
     // de Stripe y del impago se ocupa el dunning.
     expect(subRows[0].planId).toBe('plan-pro')
+  })
+
+  // Re-revisión #46: sin clave de idempotencia, dos pedidos concurrentes del mismo hotel (dos
+  // pestañas, doble clic, un reintento superpuesto) leen los dos el estado local viejo, los dos
+  // pasan el chequeo de "ya estás en ese plan" y los dos facturan su prorrateo: doble cobro real.
+  it('manda una clave de idempotencia que describe la transición, para que dos pedidos concurrentes no cobren dos veces', async () => {
+    const { deps } = setup([activeSub()])
+
+    await applyUpgrade(deps, 'h1', 'plan-pro')
+
+    expect(updates).toHaveLength(1)
+    const clave = updates[0].options?.idempotencyKey
+    expect(typeof clave).toBe('string')
+    // Misma transición ⇒ misma clave: hotel, suscripción de Stripe, plan de origen y de destino.
+    expect(clave).toBe('upgrade:h1:sub_1:plan-ess:plan-pro')
   })
 
   it('con latest_invoice sin expandir (solo el id) va a buscarla antes de decir que se cobró', async () => {

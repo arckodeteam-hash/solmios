@@ -89,12 +89,25 @@ export async function applyUpgrade(
   // `error_if_incomplete` —que revierte el ítem y tira un card error— para no perder la factura
   // emitida ni el reintento del dunning de Stripe. Contrapartida: NO se puede asumir éxito, por
   // eso abajo se lee la factura de verdad en vez de devolver un "listo" a ciegas.
+  //
+  // CLAVE DE IDEMPOTENCIA: sin ella, dos pedidos CONCURRENTES del mismo hotel (doble clic, dos
+  // pestañas, un reintento que se superpone) leen los dos el mismo estado local viejo, los dos
+  // pasan el chequeo de "ya estás en ese plan" —que todavía no se escribió— y los dos facturan
+  // su propio prorrateo: dos cobros reales en la tarjeta. El flag de loading de la UI no alcanza,
+  // porque no cruza pestañas. Con la clave, Stripe colapsa el segundo pedido idéntico en la misma
+  // operación y devuelve el mismo resultado, sin cobrar de nuevo.
+  //
+  // La clave describe LA TRANSICIÓN, no el intento: mismo hotel, misma suscripción, mismo plan de
+  // origen y de destino. No bloquea una mejora legítima posterior (sería otro plan de origen), y
+  // repetir exactamente esta transición no es un caso real: apenas la primera termina, `planId`
+  // ya apunta al destino y `loadUpgrade` corta con "Ya estás en ese plan".
+  const claveIdempotencia = `upgrade:${hotelId}:${active.stripeSubscriptionId}:${active.planId ?? ''}:${plan.id}`
   const updated = await stripe.subscriptions.update(String(active.stripeSubscriptionId), {
     items: [{ id: itemId, price: String(plan.stripePriceId) }],
     proration_behavior: 'always_invoice',
     payment_behavior: 'allow_incomplete',
     expand: ['latest_invoice'],
-  })
+  }, { idempotencyKey: claveIdempotencia })
 
   // A PARTIR DE ACÁ LA TARJETA YA SE COBRÓ: nada de lo que sigue puede lanzar. Leer la factura
   // es una llamada de RED más (`latest_invoice` puede venir sin expandir y obligar a un

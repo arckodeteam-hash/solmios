@@ -48,10 +48,9 @@ vi.mock('@/composables/useToast', () => ({
 
 // El menú lateral lee el cache de módulos: tras el upgrade hay que revalidarlo o sigue mostrando
 // lo del plan viejo. Se mockean los stores para no necesitar una pinia activa en el test.
-const modulesReset = vi.fn()
-const modulesEnsure = vi.fn()
+const modulesRefresh = vi.fn()
 vi.mock('@/stores/modules.store', () => ({
-  useModulesStore: () => ({ reset: modulesReset, ensure: modulesEnsure }),
+  useModulesStore: () => ({ refresh: modulesRefresh }),
 }))
 vi.mock('@/stores/auth.store', () => ({
   useAuthStore: () => ({ user: { hotelId: 'hotel-1' } }),
@@ -201,9 +200,10 @@ describe('/panel/suscripcion — mejora de plan con la suscripción viva', () =>
     expect(toastWarning).not.toHaveBeenCalled()
     expect(w.find('.modal').exists()).toBe(false)
     // Sin recargar a mano: el estado de la página y el menú lateral quedan al día.
+    // `refresh()` y no `reset()`+`ensure()`: reset vacía el estado y el store falla ABIERTO,
+    // así que el menú parpadearía mostrando módulos que el hotel quizá no tiene.
     expect(mySubscription).toHaveBeenCalledTimes(2)
-    expect(modulesReset).toHaveBeenCalled()
-    expect(modulesEnsure).toHaveBeenCalledWith('hotel-1')
+    expect(modulesRefresh).toHaveBeenCalledWith('hotel-1')
   })
 
   it('con el cobro rechazado (paid:false) avisa que el pago quedó pendiente y manda al portal', async () => {
