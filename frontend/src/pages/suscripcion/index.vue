@@ -84,7 +84,7 @@
           </ul>
           <button
             @click="choose(p)"
-            :disabled="checkoutLoading !== null || isPlanLocked(p)"
+            :disabled="checkoutLoading !== null || previewLoading !== null || isPlanLocked(p)"
             class="mt-auto w-full py-2.5 rounded-xl text-sm font-bold transition-colors disabled:opacity-60"
             :class="isPlanLocked(p)
               ? 'bg-surface text-navy cursor-default'
@@ -93,16 +93,81 @@
         </div>
       </div>
     </div>
+
+    <!-- Mejora de plan (#46). Dos momentos, un solo modal:
+         a) confirmación — el monto prorrateado SIEMPRE se muestra ANTES de tocar la tarjeta;
+         b) cobro rechazado — el plan quedó aplicado pero la factura no se pagó, y la única
+            salida es arreglar el método de pago en el portal. -->
+    <AppModal
+      v-if="upgradePreview || pendingUpgrade"
+      :title="pendingUpgrade ? 'Plan actualizado, pago pendiente' : 'Confirmar mejora de plan'"
+      size="sm"
+      @close="closeUpgrade"
+    >
+      <div v-if="pendingUpgrade" class="space-y-3">
+        <p class="text-sm text-text-secondary">
+          Ya estás en <strong class="text-navy">{{ pendingUpgrade.planName }}</strong>, pero no pudimos
+          cobrar <strong class="text-navy tabular-nums">{{ money(pendingUpgrade.amountCharged, pendingUpgrade.currency) }}</strong>:
+          el pago quedó pendiente.
+        </p>
+        <p class="text-sm text-warning font-bold">
+          Actualizá tu método de pago para que no se corte el acceso — vamos a reintentar el cobro.
+        </p>
+      </div>
+      <div v-else-if="upgradePreview" class="space-y-3">
+        <p class="text-sm text-text-secondary">
+          Vas a pasar de <strong class="text-navy">{{ upgradePreview.currentPlanName }}</strong>
+          a <strong class="text-navy">{{ upgradePreview.planName }}</strong>.
+        </p>
+        <div class="rounded-xl bg-teal/10 p-4">
+          <div class="text-[10px] font-bold text-text-muted uppercase tracking-wide">Se te cobra ahora</div>
+          <div class="text-2xl font-black text-navy tabular-nums">{{ money(upgradePreview.amountDue, upgradePreview.currency) }}</div>
+          <p class="text-xs text-text-secondary mt-1">
+            Es solo la diferencia por lo que falta del ciclo{{ periodEndLabel }}. Desde la próxima
+            renovación pagás el precio completo del plan nuevo.
+          </p>
+        </div>
+      </div>
+      <template #footer>
+        <template v-if="pendingUpgrade">
+          <button
+            @click="closeUpgrade"
+            class="px-4 py-2 rounded-xl text-sm font-bold bg-surface text-navy hover:bg-surface-dark transition-colors cursor-pointer"
+          >Cerrar</button>
+          <button
+            @click="openPortal"
+            :disabled="portalLoading"
+            class="px-4 py-2 rounded-xl text-sm font-bold bg-navy text-white hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-wait"
+          >{{ portalLoading ? 'Abriendo…' : 'Gestionar método de pago' }}</button>
+        </template>
+        <template v-else>
+          <button
+            @click="closeUpgrade"
+            :disabled="upgradeLoading"
+            class="px-4 py-2 rounded-xl text-sm font-bold bg-surface text-navy hover:bg-surface-dark transition-colors cursor-pointer disabled:opacity-60"
+          >Cancelar</button>
+          <button
+            @click="confirmUpgrade"
+            :disabled="upgradeLoading"
+            class="px-4 py-2 rounded-xl text-sm font-bold bg-navy text-white hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-wait"
+          >{{ upgradeLoading ? 'Cobrando…' : 'Confirmar y pagar' }}</button>
+        </template>
+      </template>
+    </AppModal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { SignupService, type PublicPlan, type MySubscription } from '@/services/Signup.service'
-import { SubscriptionsService } from '@/services/Subscriptions.service'
+import { SubscriptionsService, type UpgradePreview, type UpgradeResult } from '@/services/Subscriptions.service'
 import { useToast } from '@/composables/useToast'
+import { formatCurrency } from '@/types/currency'
+import { useModulesStore } from '@/stores/modules.store'
+import { useAuthStore } from '@/stores/auth.store'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import AppModal from '@/components/ui/AppModal.vue'
 
 const toast = useToast()
 
@@ -112,6 +177,13 @@ const plans = ref<PublicPlan[]>([])
 /** id del plan cuyo checkout está en curso — null cuando no hay ninguno en vuelo. */
 const checkoutLoading = ref<string | null>(null)
 const portalLoading = ref(false)
+/** id del plan cuyo preview de mejora se está cotizando — null cuando no hay ninguno en vuelo. */
+const previewLoading = ref<string | null>(null)
+/** Cotización del prorrateo esperando confirmación. Mientras esto vale algo, NO se cobró nada. */
+const upgradePreview = ref<UpgradePreview | null>(null)
+/** Mejora aplicada cuyo cobro quedó pendiente (`paid: false`). */
+const pendingUpgrade = ref<UpgradeResult | null>(null)
+const upgradeLoading = ref(false)
 
 const STATUS_LABELS: Record<string, string> = {
   trialing: 'En prueba', active: 'Activa', past_due: 'Pago pendiente',
@@ -134,12 +206,14 @@ const stateSubtitle = computed(() =>
 )
 
 /**
- * Estados en los que YA existe una suscripción viva en Stripe. Ahí se bloquean TODOS los
- * planes, no solo el actual: lanzar el Checkout con CUALQUIER plan crea una SEGUNDA
+ * Estados en los que YA existe una suscripción viva en Stripe. Ahí NINGÚN plan se contrata por
+ * Checkout, ni siquiera uno distinto: lanzar el Checkout con CUALQUIER plan crea una SEGUNDA
  * suscripción (y un segundo cobro mensual) y huérfana la vieja — el webhook pisa
- * `stripeSubscriptionId` y la anterior sigue activa en Stripe sin rastro local. El camino
- * correcto es cancelar la actual o esperar el fin del ciclo desde el Billing Portal
- * ("Gestionar método de pago"); la migración de plan con proration es otro feature.
+ * `stripeSubscriptionId` y la anterior sigue activa en Stripe sin rastro local (BUG-9).
+ * Eso NO cambió. Lo que cambió (#46) es que ahora hay una salida propia para subir de plan sin
+ * pasar por el Checkout: `/subscriptions/upgrade` mueve el ítem de la suscripción que ya existe
+ * y cobra SOLO el prorrateo (ver `isUpgradeTarget`). Bajar de plan sigue siendo del Billing
+ * Portal ("Gestionar método de pago"): un downgrade genera crédito, no cobro.
  * `trialing` NO entra: la prueba no tiene suscripción en Stripe todavía, y el Checkout es la
  * única vía para convertirla en plan pago (ver `subscriptions/usecases/create-checkout-session.ts`).
  */
@@ -147,11 +221,27 @@ const LIVE_STRIPE_STATUSES = ['active', 'past_due']
 
 /** El badge "Tu plan" y el CTA miran lo MISMO: el plan, no el estado (issue #29). */
 const isCurrentPlan = (p: PublicPlan) => !!sub.value?.planId && p.id === sub.value.planId
-/** Con una suscripción viva no se contrata NADA nuevo — el plan da igual (BUG-9, doble cobro). */
-const isPlanLocked = (_p: PublicPlan) => LIVE_STRIPE_STATUSES.includes(sub.value?.status ?? '')
+/** Hay una suscripción cobrando en Stripe ahora mismo. */
+const hasLiveSubscription = computed(() => LIVE_STRIPE_STATUSES.includes(sub.value?.status ?? ''))
+/** Precio del plan que el hotel paga hoy. `null` si no se puede identificar en el catálogo
+ * público (plan retirado): sin él no se sabe qué es "mejorar", así que no se ofrece ninguno. */
+const currentPlanPrice = computed(() => {
+  const current = plans.value.find((p) => isCurrentPlan(p))
+  return current ? Number(current.price) : null
+})
+/** Plan al que SÍ se puede saltar con la suscripción viva: MISMO criterio que el backend
+ * (`upgrade-plan.ts`), precio mayor al actual. Un plan más barato no entra: con prorrateo un
+ * downgrade genera crédito en vez de cobro y se gestiona desde el portal. */
+const isUpgradeTarget = (p: PublicPlan) =>
+  hasLiveSubscription.value && !isCurrentPlan(p) &&
+  currentPlanPrice.value !== null && Number(p.price) > currentPlanPrice.value
+/** Con una suscripción viva no se contrata nada nuevo, salvo que sea una mejora (#46). */
+const isPlanLocked = (p: PublicPlan) => hasLiveSubscription.value && !isUpgradeTarget(p)
 
 function ctaLabel(p: PublicPlan): string {
   if (checkoutLoading.value === p.id) return 'Redirigiendo…'
+  if (previewLoading.value === p.id) return 'Calculando…'
+  if (isUpgradeTarget(p)) return `Mejorar a ${p.name}`
   if (isPlanLocked(p)) {
     return isCurrentPlan(p)
       ? (sub.value?.status === 'past_due' ? 'Tu plan actual · pago pendiente' : 'Tu plan actual')
@@ -165,7 +255,9 @@ function ctaLabel(p: PublicPlan): string {
 /** Elige un plan: crea la Checkout Session de Stripe y redirige el navegador ahí mismo
  * (no una pestaña nueva — el hotel tiene que volver a `/panel/suscripcion` al terminar). */
 async function choose(p: PublicPlan) {
-  if (checkoutLoading.value || isPlanLocked(p)) return
+  if (checkoutLoading.value || previewLoading.value || isPlanLocked(p)) return
+  // Con la suscripción viva el Checkout duplicaría el cobro: la mejora va por su propio flujo.
+  if (isUpgradeTarget(p)) return startUpgrade(p)
   checkoutLoading.value = p.id
   try {
     const { url } = await SubscriptionsService.checkout(p.id)
@@ -174,6 +266,82 @@ async function choose(p: PublicPlan) {
     toast.error('No se pudo iniciar el pago', e.message)
     checkoutLoading.value = null
   }
+}
+
+/** Los montos de Stripe vienen en CENTAVOS (la menor unidad de la moneda): sin dividir por 100,
+ * un prorrateo de 12,34 se leería como 1234. */
+const money = (cents: number, currency: string) => formatCurrency(cents / 100, currency)
+
+/** " , hasta el 12/10/2026" — hasta cuándo cubre el ciclo que el hotel ya pagó. */
+const periodEndLabel = computed(() => {
+  const end = upgradePreview.value?.periodEnd
+  return end ? `, hasta el ${new Date(end).toLocaleDateString('es-DO')}` : ''
+})
+
+/** Paso 1 de la mejora: cotiza el prorrateo y abre la confirmación. NO cobra nada — la persona
+ * tiene que ver cuánto le sale antes de que le toquemos la tarjeta. */
+async function startUpgrade(p: PublicPlan) {
+  previewLoading.value = p.id
+  try {
+    upgradePreview.value = await SubscriptionsService.upgradePreview(p.id)
+  } catch (e: any) {
+    // El backend redacta estos motivos para el usuario final (plan que no es mejora, sin
+    // suscripción viva, plan sin precio en Stripe): se muestran tal cual vienen.
+    toast.error('No pudimos calcular la mejora', e.message)
+  } finally {
+    previewLoading.value = null // nunca dejar el botón colgado en "Calculando…"
+  }
+}
+
+/** Paso 2: cobra la diferencia y aplica el plan. */
+async function confirmUpgrade() {
+  const preview = upgradePreview.value
+  if (!preview || upgradeLoading.value) return
+  upgradeLoading.value = true
+  try {
+    const result = await SubscriptionsService.upgrade(preview.planId)
+    upgradePreview.value = null
+    if (result.paid) {
+      toast.success(`Ya estás en ${result.planName}`,
+        `Te cobramos ${money(result.amountCharged, result.currency)} por lo que falta del ciclo.`)
+    } else {
+      // `applied: true` con `paid: false`: en Stripe el plan nuevo YA rige, pero la factura del
+      // prorrateo quedó ABIERTA y el dunning la va a reintentar. Decir "listo" acá sería mentir:
+      // se avisa y se lo manda al portal a arreglar la tarjeta.
+      pendingUpgrade.value = result
+      toast.warning(`${result.planName} quedó activo, pero el pago está pendiente`,
+        `No pudimos cobrar ${money(result.amountCharged, result.currency)}. Actualizá tu método de pago.`)
+    }
+    await refreshAfterUpgrade()
+  } catch (e: any) {
+    toast.error('No se pudo aplicar la mejora', e.message)
+  } finally {
+    upgradeLoading.value = false
+  }
+}
+
+function closeUpgrade() {
+  if (upgradeLoading.value) return // no cerrar sobre un cobro en vuelo
+  upgradePreview.value = null
+  pendingUpgrade.value = null
+}
+
+/**
+ * Deja la pantalla consistente sin F5: el estado de la suscripción (badge, "Tu plan", CTAs) y el
+ * cache de módulos, que es lo que decide qué muestra el menú lateral — el plan nuevo habilita
+ * módulos que el cache viejo sigue dando por apagados. `reset()` es imprescindible: `ensure()`
+ * solo refetchea si cambió el hotel, y acá el hotel es el mismo.
+ * Los stores se resuelven acá y no en el setup porque solo hacen falta después de un upgrade.
+ */
+async function refreshAfterUpgrade() {
+  sub.value = await SignupService.mySubscription().catch(() => sub.value)
+  // Best-effort: la mejora ya está cobrada y aplicada; un fallo refrescando el menú no es un
+  // error que mostrarle a nadie (el próximo ensure() lo resuelve).
+  try {
+    const modules = useModulesStore()
+    modules.reset()
+    await modules.ensure(useAuthStore().user?.hotelId)
+  } catch { /* el menú se rehidrata en la próxima navegación */ }
 }
 
 async function openPortal() {
