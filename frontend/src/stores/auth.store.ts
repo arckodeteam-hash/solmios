@@ -4,6 +4,12 @@ import type { User, UserRole } from '@/types'
 import { AuthService } from '@/services/Auth.service'
 import { useModulesStore } from './modules.store'
 
+// Claves donde se aparca la sesión del SUPER ADMIN mientras dura la impersonación: es lo único
+// que permite volver a su cuenta sin re-loguearse, y sobrevive a un F5.
+const IMP_TOKEN = 'imp.adminToken'
+const IMP_REFRESH = 'imp.adminRefreshToken'
+const IMP_USER = 'imp.adminUser'
+
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const token = ref<string | null>(localStorage.getItem('token'))
@@ -59,20 +65,91 @@ export const useAuthStore = defineStore('auth', () => {
     } catch {
       // token invalid — keep cached user but don't force logout on transient errors
     }
+    // El claim viene firmado en el token, así que el backend es la fuente de verdad de si esto
+    // es una impersonación: una bandera del navegador podría estar stale tras un F5.
+    impersonating.value = !!user.value?.impersonatedBy
+    if (impersonating.value && !originalUser.value) {
+      const savedAdmin = localStorage.getItem(IMP_USER)
+      if (savedAdmin) {
+        try {
+          originalUser.value = JSON.parse(savedAdmin)
+        } catch {
+          originalUser.value = null
+        }
+      }
+    }
   }
 
-  function loginAs(targetUser: User) {
-    if (!isSuperAdmin.value) return
-    originalUser.value = { ...user.value! }
+  /**
+   * Entra a la cuenta de un cliente pidiendo al backend un token de impersonación real: sin esto
+   * el JWT seguía siendo el del super admin y la API nunca devolvía los datos del cliente.
+   * El error de la API se propaga a propósito para que la pantalla pueda mostrar un toast.
+   */
+  async function loginAs(targetUserId: string) {
+    if (!isSuperAdmin.value || impersonating.value) return
+    const { token: tkn, user: usr } = await AuthService.impersonate(targetUserId)
+    // Guardar la sesión del admin ANTES de pisarla: es lo único que permite volver sin re-loguearse.
+    if (token.value) localStorage.setItem(IMP_TOKEN, token.value)
+    if (refreshToken.value) localStorage.setItem(IMP_REFRESH, refreshToken.value)
+    if (user.value) localStorage.setItem(IMP_USER, JSON.stringify(user.value))
+    originalUser.value = user.value ? { ...user.value } : null
+
+    token.value = tkn
+    localStorage.setItem('token', tkn)
+    // El token de impersonación no tiene refresh. Dejar el refresh del ADMIN en su lugar sería peor
+    // que no tener ninguno: al vencer el access token, http.ts renovaría con él y la sesión volvería
+    // a ser la del super admin en silencio, con la franja todavía diciendo que es la del cliente.
+    refreshToken.value = null
+    localStorage.removeItem('refreshToken')
+    user.value = usr
+    localStorage.setItem('user', JSON.stringify(usr))
     impersonating.value = true
-    user.value = { ...targetUser }
+    // El menú/módulos del admin no valen para el hotel del cliente.
+    useModulesStore().reset()
   }
 
-  function stopImpersonation() {
-    if (!impersonating.value || !originalUser.value) return
-    user.value = { ...originalUser.value }
+  /** Vuelve a la sesión del super admin guardada en las claves `imp.*`. */
+  async function stopImpersonation() {
+    if (!impersonating.value) return
+    const adminToken = localStorage.getItem(IMP_TOKEN)
+    // Sin a dónde volver, la salida honesta es desloguear: dejar al admin atrapado en la cuenta
+    // del cliente es el bug que estamos arreglando.
+    if (!adminToken) {
+      await logout()
+      return
+    }
+    const adminRefresh = localStorage.getItem(IMP_REFRESH)
+    const adminUser = localStorage.getItem(IMP_USER)
+
+    token.value = adminToken
+    localStorage.setItem('token', adminToken)
+    refreshToken.value = adminRefresh
+    if (adminRefresh) localStorage.setItem('refreshToken', adminRefresh)
+    else localStorage.removeItem('refreshToken')
+    if (adminUser) {
+      try {
+        user.value = JSON.parse(adminUser)
+      } catch {
+        // JSON corrupto: el /auth/me de abajo repone el perfil real.
+      }
+      localStorage.setItem('user', adminUser)
+    }
+
+    localStorage.removeItem(IMP_TOKEN)
+    localStorage.removeItem(IMP_REFRESH)
+    localStorage.removeItem(IMP_USER)
     originalUser.value = null
     impersonating.value = false
+    useModulesStore().reset()
+
+    // Revalidar contra el backend con el token del admin ya restaurado: confirma que la sesión
+    // sigue viva y devuelve los permisos reales (si el token venció, http.ts renueva con el refresh).
+    try {
+      user.value = await AuthService.me()
+      localStorage.setItem('user', JSON.stringify(user.value))
+    } catch {
+      // El user cacheado alcanza para seguir operando.
+    }
   }
 
   async function logout() {
@@ -92,6 +169,10 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('token')
     localStorage.removeItem('refreshToken')
     localStorage.removeItem('user')
+    // Sin esto, la sesión del super admin quedaba tirada en el navegador después de salir.
+    localStorage.removeItem(IMP_TOKEN)
+    localStorage.removeItem(IMP_REFRESH)
+    localStorage.removeItem(IMP_USER)
   }
 
   return {

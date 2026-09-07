@@ -24,6 +24,8 @@ interface MeResponse {
   hotelName: string
   emailVerified?: boolean
   permissions?: string[]
+  /** Sólo cuando el token es de impersonación: id del super admin que abrió la sesión. */
+  impersonatedBy?: string
 }
 
 function mapUser(raw: LoginResponse['user'] | MeResponse): User {
@@ -40,6 +42,8 @@ function mapUser(raw: LoginResponse['user'] | MeResponse): User {
     // Permisos granulares `module:action` resueltos por el backend (login + /auth/me).
     // Ya NO se hardcodean por rol: los roles custom no tenían permisos y la UI no podía gatear.
     permissions: Array.isArray(raw.permissions) ? raw.permissions : [],
+    // Sólo se propaga si el backend lo mandó: la ausencia de la clave es la señal de "sesión normal".
+    ...('impersonatedBy' in raw && raw.impersonatedBy ? { impersonatedBy: raw.impersonatedBy } : {}),
   }
 }
 
@@ -52,6 +56,17 @@ export const AuthService = {
     hotelsCache = null
     const data = await http.post<LoginResponse>('/auth/login', { email, password })
     return { token: data.token, refreshToken: data.refreshToken, user: mapUser(data.user) }
+  },
+
+  /**
+   * Abre una sesión de impersonación (sólo super admin). La respuesta trae un ACCESS TOKEN SOLO:
+   * el refresh es single-session y emitir uno acá desloguearía al cliente real.
+   */
+  async impersonate(userId: string): Promise<{ token: string; user: User }> {
+    // La lista de propiedades del admin no puede arrastrarse a la sesión del cliente.
+    hotelsCache = null
+    const data = await http.post<{ token: string; user: LoginResponse['user'] }>(`/auth/impersonate/${userId}`)
+    return { token: data.token, user: mapUser(data.user) }
   },
 
   async me(): Promise<User> {
