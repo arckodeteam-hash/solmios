@@ -153,6 +153,30 @@ describe('changeHotelPlan — mueve el planId de la suscripción activa', () => 
     expect(hotelUpdates).toHaveLength(0)
   })
 
+  // Revisión #46: `changed:false` prometía "no se escribió nada", pero el bloque del espejo era
+  // independiente de esa bandera. Con la suscripción ya en el plan pedido y `hotels.plan`
+  // atrasado, se reescribía la fila del hotel en producción devolviendo `changed:false` y sin
+  // dejar UN SOLO log. El espejo desincronizado no es hipotético: es el estado que dejaba el bug
+  // original, cuando el super admin escribía el espejo y nadie tocaba la suscripción.
+  it('espejo atrasado con la suscripción ya en el plan: repara, lo dice en changed y lo loguea', async () => {
+    const { logger, infos } = recordingLogger()
+    const subs = [{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'active' }]
+    // La suscripción ya está en host; el espejo quedó en 'essential' (desincronizado).
+    const { deps, hotels, subUpdates, hotelUpdates } = setup(subs, { id: 'h1', name: 'Hotel Sol', plan: 'essential' })
+
+    const res = await changeHotelPlan({ ...deps, logger }, 'h1', 'plan-host')
+
+    // La suscripción NO se toca: ya estaba bien.
+    expect(subUpdates).toHaveLength(0)
+    // Pero el espejo SÍ se repara, y eso es una escritura real.
+    expect(hotelUpdates).toEqual([{ id: 'h1', patch: { plan: 'host' } }])
+    expect(hotels[0].plan).toBe('host')
+    // `changed` tiene que reflejarla, no decir que no pasó nada.
+    expect(res.changed).toBe(true)
+    // Y tiene que quedar rastro de la escritura.
+    expect(infos.some((l) => /espejo/i.test(l.msg))).toBe(true)
+  })
+
   it('un fallo del espejo hotels.plan NO tumba el cambio (best-effort, warn)', async () => {
     const { logger, warns } = recordingLogger()
     const subs = [{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'active' }]

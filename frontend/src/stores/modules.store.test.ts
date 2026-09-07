@@ -234,4 +234,90 @@ describe('modules.store', () => {
     expect(store.routeEnabled('/panel/dashboard')).toBe(true) // CORE: sin clave en module-map
     expect(store.routeEnabled('/panel/referidos')).toBe(true) // CORE (growth): sin clave
   })
+
+  // ── Revisión #46: dos carreras reales encontradas al revisar la revalidación ──────────────
+
+  // Una revalidación de fondo del hotel A que resuelve DESPUÉS de haber cambiado al hotel B
+  // pisaba el estado bueno de B con los módulos de A, y dejaba `loadedHotel` en el hotel viejo:
+  // el dueño del hotel B terminaba viendo el menú de otro hotel. Pasa en impersonación.
+  it('una respuesta vieja del hotel A NO pisa el estado ya cargado del hotel B', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const store = useModulesStore()
+
+    // 1) h1 cargado.
+    vi.mocked(ModulesService.enabled).mockResolvedValueOnce({ state: { crm: false } })
+    await store.ensure('h1')
+    expect(store.state).toEqual({ crm: false })
+
+    // 2) el estado envejece y una navegación dispara la revalidación de h1, que queda colgada.
+    envejecerEstado()
+    let resolverViejo: (v: any) => void = () => {}
+    vi.mocked(ModulesService.enabled).mockReturnValueOnce(
+      new Promise((r) => { resolverViejo = r }) as any,
+    )
+    await store.ensure('h1')
+
+    // 3) el super admin pasa a impersonar h2, que responde primero.
+    vi.mocked(ModulesService.enabled).mockResolvedValueOnce({ state: { crm: true, reservations: false } })
+    await store.ensure('h2')
+    await flush()
+    expect(store.state).toEqual({ crm: true, reservations: false })
+
+    // 4) recién ahora aterriza la respuesta vieja de h1: hay que DESCARTARLA.
+    resolverViejo({ state: { crm: false } })
+    await flush()
+
+    expect(store.state).toEqual({ crm: true, reservations: false })
+    expect(store.enabled('reservations')).toBe(false)
+  })
+
+  // `loadedHotel` arrancaba en null y `ensure(undefined)` (super admin sin impersonar, que el
+  // guard de rutas llama en CADA navegación de /panel/*) entraba al branch de "ya cargado";
+  // como `loadedAt` arranca en 0, el chequeo de antigüedad daba siempre verdadero y disparaba
+  // un fetch fantasma por navegación, algo que antes de la revalidación no ocurría nunca.
+  it('un store recién creado NO confunde "nunca cargado" con "cargado sin hotel"', async () => {
+    // El guard de rutas hace `await modules.ensure(...)` y acto seguido decide si deja pasar.
+    // Con `loadedHotel` arrancando en null, `ensure(undefined)` (super admin sin impersonar)
+    // creía que YA había estado cargado: volvía al instante sin esperar el fetch —dejando al
+    // guard resolver con `state` vacío— y encima lo disparaba en segundo plano en CADA
+    // navegación, porque `loadedAt` en 0 hace que el chequeo de antigüedad dé siempre verdadero.
+    let resolverFetch: (v: any) => void = () => {}
+    vi.mocked(ModulesService.enabled).mockReturnValueOnce(
+      new Promise((r) => { resolverFetch = r }) as any,
+    )
+    const store = useModulesStore()
+
+    let resuelto = false
+    const enCurso = store.ensure(undefined).then(() => { resuelto = true })
+
+    // La primera carga tiene que ESPERAR al fetch, no volver al toque con el estado vacío.
+    await flush()
+    expect(resuelto).toBe(false)
+
+    resolverFetch({ state: { crm: false } })
+    await enCurso
+    expect(resuelto).toBe(true)
+    expect(store.state).toEqual({ crm: false })
+
+    // Y recién cargado no revalida de gusto.
+    await store.ensure(undefined)
+    await flush()
+    expect(ModulesService.enabled).toHaveBeenCalledTimes(1)
+  })
+
+  it('reset() invalida lo que está en vuelo: una respuesta posterior no revive el estado viejo', async () => {
+    const store = useModulesStore()
+    let resolverViejo: (v: any) => void = () => {}
+    vi.mocked(ModulesService.enabled).mockReturnValueOnce(
+      new Promise((r) => { resolverViejo = r }) as any,
+    )
+    void store.ensure('h1')
+
+    store.reset() // logout / cambio de sesión con el fetch todavía en vuelo
+
+    resolverViejo({ state: { crm: false } })
+    await flush()
+
+    expect(store.state).toEqual({})
+  })
 })

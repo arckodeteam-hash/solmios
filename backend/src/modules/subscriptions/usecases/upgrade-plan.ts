@@ -96,7 +96,20 @@ export async function applyUpgrade(
     expand: ['latest_invoice'],
   })
 
-  const invoice = await latestInvoiceOf(stripe, updated)
+  // A PARTIR DE ACÁ LA TARJETA YA SE COBRÓ: nada de lo que sigue puede lanzar. Leer la factura
+  // es una llamada de RED más (`latest_invoice` puede venir sin expandir y obligar a un
+  // `invoices.retrieve`), y si fallara, la excepción dejaría al hotel cobrado mirando un error,
+  // sin reflejo del plan y sin un solo log del cobro. Se degrada a "no pude determinarlo": el
+  // resultado sale con `paid:false`, que la UI ya traduce en "el plan quedó aplicado, revisá el
+  // estado del pago en el portal" — y el portal muestra la verdad de Stripe.
+  let invoice: Stripe.Invoice | null = null
+  try {
+    invoice = await latestInvoiceOf(stripe, updated)
+  } catch (e) {
+    logger.error('Upgrade cobrado pero no se pudo leer la factura del prorrateo', {
+      hotelId, planId: String(plan.id), error: (e as Error).message,
+    })
+  }
   const invoiceStatus = invoice?.status ? String(invoice.status) : null
   const amountCharged = Number(invoice?.amount_due ?? 0)
   const currency = currencyOf(invoice?.currency, plan)

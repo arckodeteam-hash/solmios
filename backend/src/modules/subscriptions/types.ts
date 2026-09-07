@@ -104,6 +104,11 @@ export interface UpgradeResultDTO {
    */
   amountCharged: number
   currency: string
-  /** Estado real de la factura del prorrateo ('paid' | 'open' | ...). `null` si Stripe no emitió ninguna. */
+  /**
+   * Estado real de la factura del prorrateo ('paid' | 'open' | ...). `null` = NO SE PUDO
+   * DETERMINAR: o Stripe no emitió factura, o el cobro ya ocurrió y la lectura de la factura
+   * falló. En ambos casos `paid` sale en false y la verdad está en el portal de facturación —
+   * nunca se afirma un cobro exitoso que no se pudo confirmar.
+   */
   invoiceStatus: string | null
 }

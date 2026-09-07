@@ -163,6 +163,26 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     expect(invoiceRetrieves).toEqual(['in_3'])
     expect(res.paid).toBe(true)
   })
+
+  // Revisión #46: la tarjeta ya se cobró en `subscriptions.update`. Leer la factura es una
+  // llamada de RED más y, si fallaba, la excepción subía: el hotel quedaba cobrado mirando un
+  // error, sin reflejo del plan nuevo y sin un solo log del cobro. Justo el escenario que el
+  // archivo dice evitar, pero blindado sólo para el fallo de escritura local.
+  it('si falla la lectura de la factura DESPUÉS del cobro, no lanza: aplica el plan y no afirma pago', async () => {
+    invoiceOnUpdate = 'in_4'
+    const { deps, subRows, hotelRows } = setup([activeSub()])
+    stripeClient.invoices.retrieve = async () => { throw new Error('Stripe timeout') }
+
+    const res = await applyUpgrade(deps, 'h1', 'plan-pro')
+
+    // No se pierde el cambio: el plan quedó aplicado local y en el espejo.
+    expect(res.applied).toBe(true)
+    expect(subRows[0].planId).toBe('plan-pro')
+    expect(hotelRows[0].plan).toBe('pro')
+    // Y NO se afirma un cobro que no se pudo confirmar.
+    expect(res.paid).toBe(false)
+    expect(res.invoiceStatus).toBeNull()
+  })
 })
 
 describe('previewUpgrade — cuánto va a pagar, sin cobrar', () => {

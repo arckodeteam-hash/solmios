@@ -31,7 +31,7 @@ export interface ChangePlanOptions {
 }
 
 export interface ChangePlanResult {
-  /** `false` cuando el hotel YA estaba en ese plan: no se escribió nada (idempotente). */
+  /** `false` sólo cuando NO se escribió nada: ni la suscripción ni el espejo (idempotente). */
   changed: boolean
   hotelId: string
   planId: string
@@ -80,11 +80,23 @@ export async function changeHotelPlan(
   const active = subs.filter((s) => WORKING_STATUSES.has(s?.status)).sort(compareSubscriptions)[0]
 
   const previousPlanId = active?.planId ? String(active.planId) : null
-  const changed = active ? previousPlanId !== planId : String(hotel.plan ?? '') !== planSlug
+  // Dos mutaciones posibles e INDEPENDIENTES: la suscripción y el espejo. `changed` tiene que
+  // cubrir las dos o miente: con la suscripción ya en el plan pedido pero `hotels.plan` atrasado
+  // (el desfasaje que este mismo bug dejó en producción antes del arreglo), el espejo SÍ se
+  // reescribe y devolver `changed:false` afirmaría que no se tocó nada.
+  const subStale = !!active && previousPlanId !== planId
+  const mirrorStale = !!planSlug && String(hotel.plan ?? '') !== planSlug
+  const changed = subStale || mirrorStale
 
-  if (active && changed) {
+  if (active && subStale) {
     await subscriptionsRepo.update(active.id, { planId })
     logger.info('Plan del hotel cambiado', { hotelId, previousPlanId, planId, planSlug, subscriptionId: active.id })
+  } else if (active && mirrorStale) {
+    // La suscripción ya estaba bien y sólo se reparó el espejo. Es una escritura real en
+    // producción: sin este log no quedaba ningún rastro de que se tocó la fila del hotel.
+    logger.info('Espejo hotels.plan reparado (la suscripción ya estaba en ese plan)', {
+      hotelId, planId, planSlug, espejoAnterior: String(hotel.plan ?? ''),
+    })
   } else if (!active && changed) {
     // Hotel SIN suscripción activa (fila cancelada/vencida, o alta previa a este módulo). No se
     // inventa una suscripción: crear una fila `active` sin nada en Stripe le daría acceso pago
@@ -96,7 +108,7 @@ export async function changeHotelPlan(
   // Espejo legacy, BEST-EFFORT — mismo criterio que handle-stripe-event.ts: la fuente de verdad
   // (la suscripción) ya quedó bien y un fallo acá no puede tumbar la operación; a lo sumo el
   // espejo queda viejo para los lectores legacy.
-  if (planSlug && String(hotel.plan ?? '') !== planSlug) {
+  if (mirrorStale) {
     try {
       await hotelsRepo.update(hotelId, { plan: planSlug })
     } catch (e) {

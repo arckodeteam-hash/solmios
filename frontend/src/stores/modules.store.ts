@@ -15,21 +15,33 @@ export const MODULES_STALE_MS = 60_000
 // Lo consumen el menú (AdminLayout) y el guard de rutas (router). Fuente: GET /api/modules.
 export const useModulesStore = defineStore('modules', () => {
   const state = ref<ModuleState>({})
-  const loadedHotel = ref<string | null>(null)
+  /** `undefined` = NUNCA se cargó · `null` = cargado para "sin hotel" (super admin sin impersonar).
+   *  Distinguir los dos es necesario: con `null` para ambos, un store recién creado creía tener
+   *  estado cargado para `ensure(undefined)` y, como `loadedAt` arranca en 0, disparaba una
+   *  revalidación fantasma en CADA navegación del panel. */
+  const loadedHotel = ref<string | null | undefined>(undefined)
   const loadedAt = ref(0)
   const loading = ref<Promise<void> | null>(null)
   const loadingHotel = ref<string | null>(null)
+  /** Generación de la petición vigente. Toda respuesta que llega con una generación vieja se
+   *  DESCARTA: sin esto, una revalidación en vuelo del hotel A que resuelve después de haber
+   *  cambiado al hotel B (impersonación) pisaba el estado bueno de B con los módulos de A —
+   *  y encima dejaba `loadedHotel` apuntando al hotel viejo. */
+  let vigente = 0
 
   /**
-   * Trae el estado. Devuelve false si el fetch falló (sin throw: el caller no se rompe).
-   * `keepOnError`: al revalidar, el estado que YA está cargado es bueno — vaciarlo por un
-   * error de red pasajero dejaría al hotel viendo TODO el panel, peor que el menú viejo.
+   * Trae el estado. Devuelve false si el fetch falló o si quedó obsoleto (sin throw: el caller
+   * no se rompe). `keepOnError`: al revalidar, el estado que YA está cargado es bueno — vaciarlo
+   * por un error de red pasajero dejaría al hotel viendo TODO el panel, peor que el menú viejo.
    */
-  async function fetchState(keepOnError: boolean): Promise<boolean> {
+  async function fetchState(keepOnError: boolean, generacion: number): Promise<boolean> {
     try {
-      state.value = (await ModulesService.enabled()).state || {}
+      const nuevo = (await ModulesService.enabled()).state || {}
+      if (generacion !== vigente) return false // llegó tarde: ya hay otra petición vigente
+      state.value = nuevo
       return true
     } catch {
+      if (generacion !== vigente) return false
       if (!keepOnError) state.value = {} // sin datos: no bloquear nada (todo visible)
       return false
     }
@@ -37,10 +49,11 @@ export const useModulesStore = defineStore('modules', () => {
 
   /** Lanza el fetch y lo publica como "en curso" para que todos los callers lo compartan. */
   function startFetch(hid: string | null, keepOnError: boolean): Promise<void> {
-    // `loadedHotel` SOLO se setea si el fetch tuvo éxito: si no, un fallo puntual dejaba el
-    // hotel "cargado" con estado vacío y el fail-open quedaba congelado TODA la sesión —
+    const generacion = ++vigente
+    // `loadedHotel` SOLO se setea si el fetch tuvo éxito Y sigue vigente: si no, un fallo puntual
+    // dejaba el hotel "cargado" con estado vacío y el fail-open quedaba congelado TODA la sesión —
     // el siguiente ensure() tiene que poder reintentar.
-    const p: Promise<void> = fetchState(keepOnError)
+    const p: Promise<void> = fetchState(keepOnError, generacion)
       .then((ok) => { if (ok) { loadedHotel.value = hid; loadedAt.value = Date.now() } })
       .finally(() => { if (loading.value === p) { loading.value = null; loadingHotel.value = null } })
     loadingHotel.value = hid
@@ -51,7 +64,7 @@ export const useModulesStore = defineStore('modules', () => {
   /** Carga el estado una vez por hotel. Si cambió el hotel (login/impersonación), recarga. */
   async function ensure(hotelId?: string | null): Promise<void> {
     const hid = hotelId ?? null
-    if (loadedHotel.value === hid) {
+    if (loadedHotel.value !== undefined && loadedHotel.value === hid) {
       // Ya hay estado usable: devolver AL TOQUE (el guard no puede esperar un fetch por clic).
       // Si quedó viejo y no hay otro fetch en curso, revalidar en segundo plano: así el menú
       // toma el plan nuevo sin que el dueño tenga que cerrar sesión. Si esa revalidación
@@ -72,7 +85,7 @@ export const useModulesStore = defineStore('modules', () => {
    * esperar al umbral de revalidación, el menú tiene que estar al día al volver.
    */
   async function refresh(hotelId?: string | null): Promise<void> {
-    const hid = hotelId === undefined ? loadedHotel.value : (hotelId ?? null)
+    const hid = hotelId === undefined ? (loadedHotel.value ?? null) : (hotelId ?? null)
     // Si justo hay un fetch en curso del mismo hotel, esperar ese en vez de duplicarlo.
     if (loading.value && loadingHotel.value === hid) return loading.value
     return startFetch(hid, true)
@@ -80,10 +93,13 @@ export const useModulesStore = defineStore('modules', () => {
 
   function reset(): void {
     state.value = {}
-    loadedHotel.value = null
+    loadedHotel.value = undefined
     loadedAt.value = 0
     loading.value = null
     loadingHotel.value = null
+    // Invalida lo que esté en vuelo: tras un logout / cambio de sesión, una respuesta vieja no
+    // puede aterrizar sobre el estado del usuario nuevo.
+    vigente++
   }
 
   function enabled(key?: string): boolean {
