@@ -27,8 +27,19 @@ export class UsuariosController {
   }
 
   async me(req: HttpRequest) {
-    const user = await this.service.me((req.user as any).id)
-    return { status: 200, body: user }
+    const token = req.user as any
+    const user = await this.service.me(token.id)
+    // Sesión normal: sin cambios.
+    if (!token.impersonatedBy) return { status: 200, body: user }
+    // Sesión de impersonación (el claim viaja firmado en el token, ver hotel-auth.ts):
+    // el perfil sale de la fila del usuario IMPERSONADO, así que sus permisos son los del
+    // CLIENTE; pero quien está sentado adelante es el super admin y el token conserva
+    // `role: 'super_admin'`, o sea que `requirePermission` ya le da bypass total. Devolver los
+    // permisos del cliente dejaría a la UI escondiendo botones que el backend sí permite usar.
+    // `['*:*']` es justo lo que `resolveUserPermissions` devuelve para un super_admin.
+    // Además `impersonatedBy` deja que el front reconstruya el estado tras un F5 sin
+    // confiar en localStorage.
+    return { status: 200, body: { ...user, impersonatedBy: token.impersonatedBy, permissions: ['*:*'] } }
   }
 
   /** GET público: verifica el email y redirige a la página del panel con el resultado (#421). */
