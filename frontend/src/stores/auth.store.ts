@@ -17,6 +17,8 @@ export const useAuthStore = defineStore('auth', () => {
   const loading = ref(false)
   const impersonating = ref(false)
   const originalUser = ref<User | null>(null)
+  // Cerrojo NO reactivo de `loginAs`: sólo coordina llamadas concurrentes, no lo mira ninguna vista.
+  let loginAsInFlight = false
 
   const isAuthenticated = computed(() => !!token.value)
   const userRole = computed(() => user.value?.role ?? null)
@@ -24,6 +26,12 @@ export const useAuthStore = defineStore('auth', () => {
   const isHotelAdmin = computed(() => user.value?.role === 'hotel_admin')
   const isReceptionist = computed(() => user.value?.role === 'receptionist')
   const canAccessSuperAdmin = computed(() => user.value?.role === 'super_admin' && !impersonating.value)
+  /** Acceso de nivel hotel_admin: los dos roles que lo tienen, más el super admin que está
+   *  DENTRO de la cuenta de un cliente (su token conserva role super_admin y permisos ['*:*'],
+   *  así que el backend se lo autoriza igual — gatearlo por el nombre del rol del cliente le
+   *  escondería lo que sí puede hacer). Único criterio para todas las pantallas y el router:
+   *  antes estaba reescrito a mano en cada una y se olvidaba la impersonación en la mitad. */
+  const canActAsHotelAdmin = computed(() => isSuperAdmin.value || isHotelAdmin.value || impersonating.value)
   const currentHotel = computed(() => user.value?.hotelName ?? '')
 
   async function login(email: string, password: string) {
@@ -88,7 +96,25 @@ export const useAuthStore = defineStore('auth', () => {
    * El error de la API se propaga a propósito para que la pantalla pueda mostrar un toast.
    */
   async function loginAs(targetUserId: string) {
+    // `impersonating` recién se pone en true DESPUÉS del await, así que no sirve de cerrojo: dos
+    // clicks seguidos (el botón de la pantalla se deshabilita por fila, no globalmente) pasaban
+    // los dos y la segunda llamada pisaba `imp.adminToken` con el token de impersonación de la
+    // primera → la sesión real del super admin se perdía y no había forma de volver. Esta marca
+    // se levanta SINCRÓNICAMENTE, antes de cualquier await, así la segunda llamada sale sin hacer
+    // nada: encadenarla no tendría sentido —entrar a dos cuentas a la vez no existe— y descartarla
+    // deja al usuario en la primera que pidió, que es la que ya está cargando.
+    if (loginAsInFlight) return
     if (!isSuperAdmin.value || impersonating.value) return
+    loginAsInFlight = true
+    try {
+      await doLoginAs(targetUserId)
+    } finally {
+      // También cuando la API falla: si no, un error dejaba el botón muerto hasta recargar.
+      loginAsInFlight = false
+    }
+  }
+
+  async function doLoginAs(targetUserId: string) {
     const { token: tkn, user: usr } = await AuthService.impersonate(targetUserId)
     // El id del admin, antes de pisar `user.value`: es lo que marca el perfil cacheado como
     // impersonado (ver más abajo).
@@ -202,7 +228,7 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     user, token, refreshToken, loading, impersonating,
     isAuthenticated, userRole, isSuperAdmin, isHotelAdmin, isReceptionist,
-    canAccessSuperAdmin, currentHotel,
+    canAccessSuperAdmin, canActAsHotelAdmin, currentHotel,
     login, loginAs, stopImpersonation, logout, restoreSession, setTokens
   }
 })

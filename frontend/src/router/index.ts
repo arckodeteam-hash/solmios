@@ -815,7 +815,7 @@ router.beforeEach(async (to) => {
     // permisos efectivos son ['*:*'] — lo que el token de impersonación autoriza en el backend.
     // Sin esto, entrar como recepcionista/mesero/cocina rebotaba a /panel toda ruta de admin
     // (Finanzas, Contabilidad, Tesorería, Compras…) por el NOMBRE del rol del cliente.
-    if (!auth.isSuperAdmin && !auth.isHotelAdmin && !auth.impersonating) {
+    if (!auth.canActAsHotelAdmin) {
       const role = auth.userRole ?? ''
       const mod = permissionModuleForPath(to.path)
       const allowed = !isSystemRole(role) && (!mod || hasPermission(auth.user?.permissions, mod, 'view'))
@@ -831,7 +831,7 @@ router.beforeEach(async (to) => {
   // dashboard) siguen accesibles a cualquiera con sesión, a propósito.
   // Mismo criterio que arriba con la impersonación: el rol visible es el del cliente, los permisos
   // efectivos son los del admin, así que este bloqueo de UX no aplica mientras dura la sesión de soporte.
-  if (to.path.startsWith('/panel/') && auth.isAuthenticated && !auth.isSuperAdmin && !auth.isHotelAdmin && !auth.impersonating) {
+  if (to.path.startsWith('/panel/') && auth.isAuthenticated && !auth.canActAsHotelAdmin) {
     const mod = permissionModuleForPath(to.path)
     if (mod && !hasPermission(auth.user?.permissions, mod, 'view')) return '/panel'
   }

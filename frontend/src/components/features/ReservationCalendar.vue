@@ -2040,11 +2040,13 @@ async function doUnblock() {
 // ── Días Mínimos por fecha (estadía mínima de una reserva que ENTRA ese día) ──
 // La fila del planning muestra las noches mínimas por columna. Default 1; solo se guardan
 // overrides (>1). Editable por admin del hotel — el backend valida (settings:edit) y la reserva
-// se rechaza si dura menos que el mínimo de su fecha de entrada.
+// se rechaza si dura menos que el mínimo de su fecha de entrada. El permiso sale del store
+// (`canActAsHotelAdmin`): incluye al super admin que está dentro de la cuenta de un cliente,
+// que gateado por el nombre del rol impersonado se quedaba sin poder editar los mínimos.
 const minStayByDate = ref<Record<string, number>>({})
 const minStayEditDate = ref<string | null>(null)
 const minStayDraft = ref<number>(1)
-const canEditMinStay = computed(() => auth.isHotelAdmin || auth.isSuperAdmin)
+const canEditMinStay = computed(() => auth.canActAsHotelAdmin)
 function minStayFor(dateStr: string) { return minStayByDate.value[dateStr] || 1 }
 // Function-ref: enfoca el input al montarse (confiable dentro de v-for, a diferencia de un ref plano).
 function setMinStayInput(el: any) { if (el) { el.focus?.(); el.select?.() } }

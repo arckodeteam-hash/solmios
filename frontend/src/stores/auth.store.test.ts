@@ -120,6 +120,26 @@ describe('auth.store', () => {
     expect(JSON.parse(localStorage.getItem('imp.adminUser')!).role).toBe('super_admin')
   })
 
+  it('canActAsHotelAdmin: true para super_admin y hotel_admin, false para recepción', () => {
+    const store = useAuthStore()
+    store.user = makeUser('super_admin')
+    expect(store.canActAsHotelAdmin).toBe(true)
+    store.user = makeUser('hotel_admin')
+    expect(store.canActAsHotelAdmin).toBe(true)
+    store.user = makeUser('receptionist')
+    expect(store.canActAsHotelAdmin).toBe(false)
+  })
+
+  it('canActAsHotelAdmin: true para recepción MIENTRAS se la impersona (el token es del admin)', () => {
+    // El rol visible es el del cliente, pero quien está sentado adelante es el super admin y sus
+    // permisos efectivos son ['*:*']. Gatear por el nombre del rol le escondía la edición de
+    // mínimos de estadía y la gestión de personal sobre cuentas que el backend sí le autoriza.
+    const store = useAuthStore()
+    store.user = makeUser('receptionist')
+    store.impersonating = true
+    expect(store.canActAsHotelAdmin).toBe(true)
+  })
+
   it('loginAs es no-op si el usuario no es super_admin (regla de negocio)', async () => {
     const store = useAuthStore()
     store.user = makeUser('hotel_admin')
@@ -129,6 +149,41 @@ describe('auth.store', () => {
     expect(AuthService.impersonate).not.toHaveBeenCalled()
     expect(store.impersonating).toBe(false)
     expect(store.userRole).toBe('hotel_admin')
+  })
+
+  it('dos loginAs concurrentes: sólo entra el primero y no se pierde el token del super admin', async () => {
+    // El guard `impersonating` se evalúa ANTES del único await y la bandera recién sube al final,
+    // así que sin cerrojo síncrono las dos llamadas pasaban: la segunda pisaba `imp.adminToken`
+    // con el token de impersonación de la primera y la sesión real del super admin se perdía.
+    // Es alcanzable desde la UI: el botón "Entrar" se deshabilita por FILA, no globalmente.
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    const store = useAuthStore()
+    seedSuperAdminSession(store)
+
+    const first = store.loginAs('u-target')
+    const second = store.loginAs('u-otro')
+    await Promise.all([first, second])
+
+    expect(AuthService.impersonate).toHaveBeenCalledTimes(1)
+    expect(AuthService.impersonate).toHaveBeenCalledWith('u-target')
+    expect(localStorage.getItem('imp.adminToken')).toBe('admin-tok')
+    expect(localStorage.getItem('imp.adminRefreshToken')).toBe('admin-ref')
+    expect(JSON.parse(localStorage.getItem('imp.adminUser')!).role).toBe('super_admin')
+    expect(store.impersonating).toBe(true)
+  })
+
+  it('un loginAs que falla deja el cerrojo abajo (el botón no queda muerto hasta recargar)', async () => {
+    vi.mocked(AuthService.impersonate).mockRejectedValueOnce(new Error('network'))
+    const store = useAuthStore()
+    seedSuperAdminSession(store)
+
+    await expect(store.loginAs('u-target')).rejects.toThrow('network')
+
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    await store.loginAs('u-target')
+
+    expect(store.token).toBe('imp-tok')
+    expect(store.impersonating).toBe(true)
   })
 
   it('stopImpersonation restaura la sesión del admin y limpia las claves imp.*', async () => {
