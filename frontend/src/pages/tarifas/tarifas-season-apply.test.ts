@@ -156,6 +156,26 @@ describe('/panel/config/tarifas — aplicar temporada sin salir de la pantalla',
     expect(w.find('[role="dialog"]').exists()).toBe(true)
   })
 
+  // El `min` de los inputs es una ayuda del navegador: la fecha se tipea igual, y jsdom ni siquiera
+  // la aplica. Aplicar el pasado repinta `season_assignments` de noches ya vendidas y facturadas.
+  it('un rango en el pasado no llega al backend, aunque se escriba a mano', async () => {
+    const w = mount(Tarifas, MOUNT_OPTS)
+    await flushPromises()
+
+    await applyButtons(w)[0].trigger('click')
+    // Los dos inputs anuncian hoy como mínimo, pero la validación no confía en eso.
+    expect(w.find('#aplicar-desde').attributes('min')).toBe(TODAY)
+    expect(w.find('#aplicar-hasta').attributes('min')).toBe(TODAY)
+
+    await w.find('#aplicar-desde').setValue('2020-01-01')
+    await w.find('#aplicar-hasta').setValue('2020-01-31')
+    await w.find('#aplicar-confirmar').trigger('click')
+    await flushPromises()
+
+    expect(svc.assignSeason).not.toHaveBeenCalled()
+    expect(w.find('[role="dialog"]').exists()).toBe(true)
+  })
+
   it('sin settings:edit no se ofrece aplicar (el endpoint lo exige: sería un 403)', async () => {
     granted = ['settings:view']
     const w = mount(Tarifas, MOUNT_OPTS)

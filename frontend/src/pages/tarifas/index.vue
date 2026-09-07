@@ -107,12 +107,12 @@
           <div class="grid grid-cols-2 gap-3 mt-4">
             <div>
               <label for="aplicar-desde" class="text-[10px] font-bold text-text-muted uppercase">Desde</label>
-              <input id="aplicar-desde" v-model="applyDlg.from" type="date"
+              <input id="aplicar-desde" v-model="applyDlg.from" type="date" :min="applyDlg.minDate"
                 class="w-full mt-1 px-3 py-2 rounded-full border border-border text-xs focus:outline-none focus:border-navy" />
             </div>
             <div>
               <label for="aplicar-hasta" class="text-[10px] font-bold text-text-muted uppercase">Hasta</label>
-              <input id="aplicar-hasta" v-model="applyDlg.to" type="date"
+              <input id="aplicar-hasta" v-model="applyDlg.to" type="date" :min="applyDlg.minDate"
                 class="w-full mt-1 px-3 py-2 rounded-full border border-border text-xs focus:outline-none focus:border-navy" />
             </div>
           </div>
@@ -509,8 +509,8 @@ async function loadCurrentSeason() {
  * usa el planning: nunca repintar días pasados, y frenar un rango invertido ANTES del backend
  * (pinta cero días y devuelve OK, así que el hotel se quedaría creyendo que aplicó).
  */
-const applyDlg = ref<{ show: boolean; season: string; label: string; from: string; to: string }>({
-  show: false, season: '', label: '', from: '', to: '',
+const applyDlg = ref<{ show: boolean; season: string; label: string; from: string; to: string; minDate: string }>({
+  show: false, season: '', label: '', from: '', to: '', minDate: '',
 })
 const applying = ref(false)
 
@@ -519,13 +519,16 @@ function openApplyDialog(s: any) {
   // Se propone lo que la tarjeta tiene EN PANTALLA (el hotel puede haber editado las fechas sin
   // guardar todavía), recortado contra hoy por `proposedApplyRange`.
   const { from, to } = proposedApplyRange({ startDate: s.startDate, endDate: s.endDate }, today)
-  applyDlg.value = { show: true, season: s.name, label: s.label || s.name, from, to }
+  applyDlg.value = { show: true, season: s.name, label: s.label || s.name, from, to, minDate: today }
 }
 
 async function confirmApplySeason() {
   if (applying.value) return
   const d = applyDlg.value
-  const err = applyRangeError(d.from, d.to)
+  // `todayISO` va sí o sí: el `min` de los inputs es una ayuda del navegador, no una garantía —
+  // la fecha se puede tipear igual. Sin este chequeo, confirmar con un rango pasado repinta
+  // `season_assignments` de noches ya vendidas y facturadas.
+  const err = applyRangeError(d.from, d.to, new Date().toISOString().slice(0, 10))
   if (err) { toast.error(err); return }
   applying.value = true
   try {

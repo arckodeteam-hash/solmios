@@ -75,4 +75,34 @@ describe('applyRangeError', () => {
       'La fecha de fin no puede ser anterior a la de inicio',
     )
   })
+
+  // Con `todayISO` la validación tapa el agujero que deja el `min` de los inputs: se puede tipear
+  // una fecha anterior, y aplicar el pasado repinta noches ya vendidas.
+  it('con todayISO rechaza un inicio anterior a hoy', () => {
+    expect(applyRangeError('2026-08-01', '2026-11-30', TODAY)).toBe(
+      'No se pueden aplicar días pasados: elegí desde hoy en adelante',
+    )
+    expect(applyRangeError('2026-08-01', '2026-08-20', TODAY)).toBe(
+      'No se pueden aplicar días pasados: elegí desde hoy en adelante',
+    )
+  })
+
+  it('con todayISO acepta desde hoy en adelante', () => {
+    expect(applyRangeError(TODAY, TODAY, TODAY)).toBe('')
+    expect(applyRangeError(TODAY, '2026-11-30', TODAY)).toBe('')
+    expect(applyRangeError('2027-04-16', '2027-08-31', TODAY)).toBe('')
+  })
+
+  // El orden importa: un rango pasado E invertido tiene que avisar del invertido primero, que es el
+  // error que el hotel puede ver en pantalla sin pensar en fechas.
+  it('el rango invertido gana sobre el pasado', () => {
+    expect(applyRangeError('2026-08-20', '2026-08-01', TODAY)).toBe(
+      'La fecha de fin no puede ser anterior a la de inicio',
+    )
+  })
+
+  // Sin `todayISO` sigue valiendo lo de antes: nadie que ya la use se rompe.
+  it('sin todayISO no mira el pasado', () => {
+    expect(applyRangeError('2020-01-01', '2020-01-31')).toBe('')
+  })
 })

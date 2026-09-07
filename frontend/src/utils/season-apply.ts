@@ -50,9 +50,16 @@ export function proposedApplyRange(
  *
  * Se valida antes de llamar al backend porque un rango invertido no falla: pinta cero días y
  * devuelve OK, así que el hotel se queda creyendo que aplicó la temporada.
+ *
+ * Con `todayISO` se rechaza además el pasado. `proposedApplyRange` ya recorta contra hoy al abrir el
+ * diálogo, pero eso es solo la propuesta: los inputs son editables y su `min` es una ayuda del
+ * navegador que se saltea tipeando. Sin este chequeo, confirmar un rango pasado repinta
+ * `season_assignments` de noches ya vendidas y facturadas — el precio de una reserva pasada deja de
+ * coincidir con lo que se cobró. Para corregir historia está el planning, que pinta día por día.
  */
-export function applyRangeError(from: string, to: string): string {
+export function applyRangeError(from: string, to: string, todayISO?: string): string {
   if (!from || !to) return 'Elegí las dos fechas'
   if (to < from) return 'La fecha de fin no puede ser anterior a la de inicio'
+  if (todayISO && from < todayISO) return 'No se pueden aplicar días pasados: elegí desde hoy en adelante'
   return ''
 }
