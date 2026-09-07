@@ -512,7 +512,14 @@ async function loadCurrentSeason() {
 const applyDlg = ref<{ show: boolean; season: string; label: string; from: string; to: string; minDate: string }>({
   show: false, season: '', label: '', from: '', to: '', minDate: '',
 })
-const applying = ref(false)
+/**
+ * Qué diálogo tiene una llamada en vuelo — no un booleano suelto. Con un `applying` global, cancelar
+ * y reabrir con otra temporada dejaba el botón de confirmar deshabilitado por una llamada que ya no
+ * era la de este diálogo: el hotel veía un diálogo limpio que no podía confirmar, sin ningún motivo
+ * en pantalla, hasta que la llamada vieja terminara.
+ */
+const applyingFor = ref<object | null>(null)
+const applying = computed(() => applyingFor.value !== null && applyingFor.value === applyDlg.value)
 
 function openApplyDialog(s: any) {
   const today = new Date().toISOString().slice(0, 10)
@@ -523,14 +530,14 @@ function openApplyDialog(s: any) {
 }
 
 async function confirmApplySeason() {
-  if (applying.value) return
   const d = applyDlg.value
+  if (applyingFor.value === d) return   // doble click sobre ESTE diálogo
   // `todayISO` va sí o sí: el `min` de los inputs es una ayuda del navegador, no una garantía —
   // la fecha se puede tipear igual. Sin este chequeo, confirmar con un rango pasado repinta
   // `season_assignments` de noches ya vendidas y facturadas.
   const err = applyRangeError(d.from, d.to, new Date().toISOString().slice(0, 10))
   if (err) { toast.error(err); return }
-  applying.value = true
+  applyingFor.value = d
   try {
     const r = await HotelService.assignSeason({ from: d.from, to: d.to, season: d.season })
     // Cerrar SOLO si sigue abierto el mismo diálogo que se confirmó. `openApplyDialog` reemplaza el
@@ -543,9 +550,13 @@ async function confirmApplySeason() {
     await loadCurrentSeason()
     toast.success(`Temporada ${d.label} aplicada (${r.count} día/s)`)
   } catch (e: any) {
-    toast.error(e?.message || 'No se pudo aplicar la temporada')
+    // El error nombra la temporada: si el hotel ya cerró este diálogo y abrió otro, un
+    // "No se pudo aplicar" pelado se lee como si hubiera fallado lo que tiene en pantalla.
+    toast.error(`No se pudo aplicar ${d.label}: ${e?.message || 'error al guardar'}`)
   } finally {
-    applying.value = false
+    // Solo si sigue siendo esta llamada la que manda: una anterior que llega tarde no destraba el
+    // diálogo que el hotel acaba de confirmar.
+    if (applyingFor.value === d) applyingFor.value = null
   }
 }
 </script>

@@ -36,8 +36,15 @@ vi.mock('@/services/Hotel.service', () => ({
   },
 }))
 
+// Los mensajes de error se leen en un test: importa QUÉ dice, no sólo que se avisó.
+let toastErrors: string[] = []
 vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }),
+  useToast: () => ({
+    success: vi.fn(),
+    error: (m: string) => { toastErrors.push(m) },
+    info: vi.fn(),
+    warning: vi.fn(),
+  }),
 }))
 
 let granted: string[] = []
@@ -79,6 +86,7 @@ function applyButtons(w: ReturnType<typeof mount>) {
 }
 
 beforeEach(() => {
+  toastErrors = []
   seasonsData = [BAJA, ALTA]
   granted = ['settings:edit', 'rooms:create']
   svc.assignSeason.mockReset().mockResolvedValue({ success: true, count: 31 })
@@ -197,6 +205,42 @@ describe('/panel/config/tarifas — aplicar temporada sin salir de la pantalla',
     // El diálogo reabierto sigue en pantalla, con lo que el hotel había escrito.
     expect(w.find('[role="dialog"]').exists()).toBe(true)
     expect((w.find('#aplicar-hasta').element as HTMLInputElement).value).toBe(`${NEXT_YEAR}-12-15`)
+  })
+
+  // El diálogo reabierto tiene que poder confirmarse aunque la llamada anterior siga colgada: con un
+  // flag global de "aplicando", el botón quedaba deshabilitado por una llamada que ya no es de este
+  // diálogo, y el hotel no tenía forma de saber por qué.
+  it('el diálogo reabierto se puede confirmar aunque la llamada anterior siga en vuelo', async () => {
+    svc.assignSeason.mockImplementationOnce(() => new Promise(() => {}))   // nunca resuelve
+
+    const w = mount(Tarifas, MOUNT_OPTS)
+    await flushPromises()
+
+    await applyButtons(w)[0].trigger('click')
+    await w.find('#aplicar-confirmar').trigger('click')     // queda colgada
+    await w.find('[role="dialog"] button').trigger('click') // Cancelar
+    await applyButtons(w)[0].trigger('click')               // se reabre
+
+    expect(w.find('#aplicar-confirmar').attributes('disabled')).toBeUndefined()
+
+    await w.find('#aplicar-confirmar').trigger('click')
+    await flushPromises()
+
+    expect(svc.assignSeason).toHaveBeenCalledTimes(2)
+    expect(w.find('[role="dialog"]').exists()).toBe(false)
+  })
+
+  it('el error nombra la temporada que falló, no la que está en pantalla', async () => {
+    svc.assignSeason.mockRejectedValueOnce(new Error('403'))
+
+    const w = mount(Tarifas, MOUNT_OPTS)
+    await flushPromises()
+
+    await applyButtons(w)[0].trigger('click')
+    await w.find('#aplicar-confirmar').trigger('click')
+    await flushPromises()
+
+    expect(toastErrors.some((m) => m.includes('Alta'))).toBe(true)
   })
 
   it('sin settings:edit no se ofrece aplicar (el endpoint lo exige: sería un 403)', async () => {
