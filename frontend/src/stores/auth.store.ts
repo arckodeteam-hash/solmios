@@ -10,13 +10,32 @@ const IMP_TOKEN = 'imp.adminToken'
 const IMP_REFRESH = 'imp.adminRefreshToken'
 const IMP_USER = 'imp.adminUser'
 
+/** Lee el perfil del admin aparcado durante la impersonación. Un JSON corrupto no puede
+ *  tumbar el arranque del store: vale lo mismo que no tener nada guardado. */
+function readAdminUser(): User | null {
+  const saved = localStorage.getItem(IMP_USER)
+  if (!saved) return null
+  try {
+    return JSON.parse(saved) as User
+  } catch {
+    return null
+  }
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const token = ref<string | null>(localStorage.getItem('token'))
   const refreshToken = ref<string | null>(localStorage.getItem('refreshToken'))
   const loading = ref(false)
-  const impersonating = ref(false)
-  const originalUser = ref<User | null>(null)
+  // Arrancan leyendo localStorage, NO en false/null: el guard del router corre en la primera
+  // navegación, ANTES de que `restoreSession` resuelva su `await`. Con el flag todavía en false,
+  // `canActAsHotelAdmin` daba false y `requiresHotelAdmin` volvía a gatear por el nombre del rol
+  // del CLIENTE. Comprobado en navegador: impersonando a una recepcionista, entrar por URL directa
+  // (o un F5) a /panel/contabilidad/libro-diario terminaba en /panel/dashboard, aunque el mismo
+  // destino por el menú —donde el store ya está hidratado— funcionaba. La clave existe exactamente
+  // mientras dura la impersonación, así que es la señal correcta y es síncrona.
+  const impersonating = ref(!!localStorage.getItem(IMP_TOKEN))
+  const originalUser = ref<User | null>(readAdminUser())
   // Cerrojo NO reactivo de `loginAs`: sólo coordina llamadas concurrentes, no lo mira ninguna vista.
   let loginAsInFlight = false
 
