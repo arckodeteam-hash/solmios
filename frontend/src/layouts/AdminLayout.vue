@@ -6,10 +6,10 @@
     <!-- Impersonation Banner -->
     <div v-if="auth.impersonating" class="fixed top-0 left-0 right-0 z-50 bg-orange border-b-2 border-orange-dark px-4 py-2.5 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <span class="text-sm font-extrabold text-navy">👁️ Modo supervisión: <span class="underline">{{ auth.user?.name }}</span> — {{ auth.user?.hotelName }}</span>
-        <span class="text-[10px] font-bold bg-navy/10 text-navy px-2 py-0.5 rounded-full uppercase">{{ auth.user?.role }}</span>
+        <span class="text-sm font-extrabold text-navy">👁️ Modo supervisión: <span class="underline">{{ auth.user?.name || 'Usuario' }}</span> — {{ auth.user?.hotelName || 'Sin hotel' }}</span>
+        <span class="text-[10px] font-bold bg-navy/10 text-navy px-2 py-0.5 rounded-full uppercase">{{ auth.user?.role || '—' }}</span>
       </div>
-      <button @click="auth.stopImpersonation(); router.push('/admin')" class="text-sm font-extrabold text-navy bg-white px-4 py-1.5 rounded-lg hover:bg-surface transition-colors cursor-pointer">✕ Volver a Super Admin</button>
+      <button @click="salirDeImpersonacion" class="text-sm font-extrabold text-navy bg-white px-4 py-1.5 rounded-lg hover:bg-surface transition-colors cursor-pointer">✕ Volver a Super Admin</button>
     </div>
 
     <!-- Mobile backdrop -->
@@ -202,6 +202,16 @@ const dashboard = useDashboardStore()
 const roomStore = useRoomStore()
 const { canRoute } = usePermissions()
 const mobileMenuOpen = ref(false)
+
+/**
+ * Salir de la impersonación. `stopImpersonation` es async (restaura los tokens del admin y
+ * revalida contra /auth/me): hay que ESPERARLA antes de navegar, si no se navega con la sesión
+ * a medio restaurar. Vuelve al listado desde donde entró, no a /admin a secas.
+ */
+async function salirDeImpersonacion() {
+  await auth.stopImpersonation()
+  router.push('/admin/users')
+}
 
 // Cierra el drawer mobile al navegar a otra ruta
 watch(() => route.path, () => { mobileMenuOpen.value = false })
