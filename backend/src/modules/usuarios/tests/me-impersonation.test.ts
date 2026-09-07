@@ -40,7 +40,9 @@ describe('UsuariosController.me', () => {
 
     expect(res.status).toBe(200)
     expect((res.body as any).impersonatedBy).toBe('admin-1')
-    // El token conserva role super_admin → el backend ya da bypass total; la UI debe verlo igual.
+    // Los permisos totales NO salen del rol del token (que es el REAL del cliente): los da
+    // loadPermissions por el claim impersonatedBy. `/auth/me` no pasa por ese middleware, así
+    // que los devuelve acá para que la UI no esconda botones que el backend sí permite usar.
     expect((res.body as any).permissions).toEqual(['*:*'])
     expect(res.body).toMatchObject({
       id: 'u1',

@@ -59,10 +59,11 @@ export const useAuthStore = defineStore('auth', () => {
   const isReceptionist = computed(() => user.value?.role === 'receptionist')
   const canAccessSuperAdmin = computed(() => user.value?.role === 'super_admin' && !impersonating.value)
   /** Acceso de nivel hotel_admin: los dos roles que lo tienen, más el super admin que está
-   *  DENTRO de la cuenta de un cliente (su token conserva role super_admin y permisos ['*:*'],
-   *  así que el backend se lo autoriza igual — gatearlo por el nombre del rol del cliente le
-   *  escondería lo que sí puede hacer). Único criterio para todas las pantallas y el router:
-   *  antes estaba reescrito a mano en cada una y se olvidaba la impersonación en la mitad. */
+   *  DENTRO de la cuenta de un cliente. El rol que se ve durante la impersonación es el del
+   *  CLIENTE (el token lleva ese, no super_admin), pero los permisos efectivos son ['*:*'], o sea
+   *  que el backend se lo autoriza igual: gatear por el nombre del rol del cliente le escondería
+   *  lo que sí puede hacer. Único criterio para todas las pantallas y el router: antes estaba
+   *  reescrito a mano en cada una y se olvidaba la impersonación en la mitad. */
   const canActAsHotelAdmin = computed(() => isSuperAdmin.value || isHotelAdmin.value || impersonating.value)
   const currentHotel = computed(() => user.value?.hotelName ?? '')
 

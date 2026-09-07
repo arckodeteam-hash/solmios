@@ -118,8 +118,9 @@ export function UsuariosModule(opts: { storage?: StorageService } = {}) {
       router.post('/api/auth/refresh', (req) => controller.refresh(req))
 
       router.get('/api/auth/hotels', guard('users', 'view'), (req) => controller.hotels(req))
-      // `guard` hace bypass por role 'super_admin' y el token de impersonación lo lleva: sin denyImpersonation, switch-hotel
-      // saltaría al hotel de cualquier otro cliente y emitiría un token nuevo SIN `impersonatedBy` y CON refresh token.
+      // La sesión de impersonación pasa `guard` (tiene permisos ['*:*'] por el claim), así que sin
+      // denyImpersonation switch-hotel le emitiría un token nuevo SIN `impersonatedBy` —perdiendo la
+      // marca de auditoría— y CON refresh token, cuando la impersonación no tiene refresh a propósito.
       router.post('/api/auth/switch-hotel/:id', [...guard('users', 'edit'), denyImpersonation()], (req) => controller.switchHotel(req))
       // Impersonación: se cablea inline contra el usecase (no pasa por el service, que
       // ya roza el límite de tamaño del analyzer). Doble candado: rol super_admin Y
@@ -147,11 +148,11 @@ export function UsuariosModule(opts: { storage?: StorageService } = {}) {
         return result
       })
       // El ABM de usuarios queda fuera de la impersonación por la misma razón que change-password:
-      // `controller.store`/`update` saltean el anclaje por hotelId y `canAssignRole` cuando el rol
-      // es super_admin — y el token de impersonación SIEMPRE lo es. Sin este candado, una sesión de
-      // soporte de 2h podía escribir `role: 'super_admin'` en la tabla o cambiarle la contraseña a
-      // cualquiera sin pedir la actual: una escalada permanente. La gestión de usuarios se hace
-      // desde el panel de super admin de verdad, no desde adentro de la cuenta de un cliente.
+      // la sesión tiene permisos ['*:*'] (se los da loadPermissions por el claim), así que `guard`
+      // la deja pasar a escribir usuarios. Sin este candado, una sesión de soporte de 2h podía
+      // cambiarle la contraseña a alguien sin pedir la actual o moverle el rol: cambios que quedan
+      // escritos mucho después de que la sesión caduque. Definir quién es quién no es parte de
+      // mirar la cuenta de un cliente: se hace desde el panel de super admin, con identidad propia.
       router.put('/api/usuarios/:id', [...guard('users', 'edit'), denyImpersonation()], (req) => controller.update(req))
       router.delete('/api/usuarios/:id', [...guard('users', 'delete'), denyImpersonation()], (req) => controller.destroy(req))
 
