@@ -29,7 +29,11 @@ export class DashboardQueries {
     const hotelNameById = new Map(hotels.map((h: any) => [h.id, h.name]))
 
     const data = users.map((u: any) => {
-      const { password, token, resetToken, resetExpires, ...rest } = u
+      // Fuera todo lo que sirve para AUTENTICARSE como el usuario: la contraseña, el jti de
+      // sesión, el token de recuperación (permite resetear la clave y tomar la cuenta), y el
+      // `pinHash` del PIN de staff — son 6 dígitos, o sea 10^6 combinaciones: un hash filtrado
+      // se crackea offline en segundos y habilita el login por PIN de esa persona.
+      const { password, token, resetToken, resetExpires, pinHash, emailVerificationToken, emailVerificationExpires, ...rest } = u
       return { ...rest, hotelName: (u.hotelId && hotelNameById.get(u.hotelId)) || '' }
     })
     return { data, total: data.length }

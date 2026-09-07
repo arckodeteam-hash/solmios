@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'bun:test'
 import { DashboardQueries } from '../usecases/dashboard-queries'
 
 const USERS = [
-  { id: 'u1', name: 'Ana', email: 'ana@hotel.com', role: 'hotel_admin', hotelId: 'h1', password: 'hash', token: 'jwt', resetToken: 'reset-abc', resetExpires: 123 },
+  { id: 'u1', name: 'Ana', email: 'ana@hotel.com', role: 'hotel_admin', hotelId: 'h1', password: 'hash', token: 'jwt', resetToken: 'reset-abc', resetExpires: 123, pinHash: '$2b$10$hashdelpin', pinEnabled: 1, emailVerificationToken: 'sha256-del-token', emailVerificationExpires: 456 },
   { id: 'u2', name: 'Root', email: 'root@solmios.com', role: 'super_admin', password: 'hash' },
   { id: 'u3', name: 'Huerfano', email: 'huerfano@hotel.com', role: 'staff', hotelId: 'borrado' },
 ]
@@ -46,6 +46,11 @@ describe('DashboardQueries.listUsers', () => {
       // cualquiera que la lea puede resetear la clave y tomar la cuenta.
       expect(row).not.toHaveProperty('resetToken')
       expect(row).not.toHaveProperty('resetExpires')
+      // `pinHash` es el hash del PIN de 6 dígitos con el que el staff entra desde el móvil
+      // (staff-auth): 10^6 combinaciones se crackean offline en segundos.
+      expect(row).not.toHaveProperty('pinHash')
+      expect(row).not.toHaveProperty('emailVerificationToken')
+      expect(row).not.toHaveProperty('emailVerificationExpires')
     }
   })
 

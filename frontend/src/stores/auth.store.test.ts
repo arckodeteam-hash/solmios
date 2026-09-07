@@ -176,6 +176,28 @@ describe('auth.store', () => {
     expect(store.canAccessSuperAdmin).toBe(false)
   })
 
+  it('restoreSession mantiene impersonating aunque /auth/me falle (un blip de red no apaga la franja)', async () => {
+    // Camino real tras un F5 con la red con hipo: el cache de `user` es el que dejó loginAs y
+    // AuthService.me() rechaza. Antes, `user.value` se quedaba con el cache sin `impersonatedBy`
+    // e `impersonating` caía a false con el token de impersonación todavía instalado: sin franja
+    // ni botón de salir, el admin quedaba operando la cuenta del cliente sin saberlo.
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    const seed = useAuthStore()
+    seedSuperAdminSession(seed)
+    await seed.loginAs('u-target')
+
+    // Nueva pestaña/recarga: store limpio leyendo el mismo localStorage.
+    setActivePinia(createPinia())
+    vi.mocked(AuthService.me).mockRejectedValue(new Error('network'))
+    const store = useAuthStore()
+
+    await store.restoreSession()
+
+    expect(store.impersonating).toBe(true)
+    expect(store.canAccessSuperAdmin).toBe(false)
+    expect(store.userRole).toBe('hotel_admin')
+  })
+
   it('restoreSession deja impersonating en false en una sesión normal', async () => {
     vi.mocked(AuthService.me).mockResolvedValue(makeUser('super_admin'))
     const store = useAuthStore()

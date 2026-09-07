@@ -65,9 +65,11 @@ export const useAuthStore = defineStore('auth', () => {
     } catch {
       // token invalid — keep cached user but don't force logout on transient errors
     }
-    // El claim viene firmado en el token, así que el backend es la fuente de verdad de si esto
-    // es una impersonación: una bandera del navegador podría estar stale tras un F5.
-    impersonating.value = !!user.value?.impersonatedBy
+    // La sesión guardada del admin existe exactamente mientras dura la impersonación; el claim
+    // de /auth/me la confirma cuando la red responde, pero no puede ser la ÚNICA fuente: si esa
+    // llamada falla, `user.value` queda con el cache y la franja y el botón de salir tienen que
+    // seguir ahí igual — si no, el admin opera la cuenta del cliente sin saberlo ni poder volver.
+    impersonating.value = !!localStorage.getItem(IMP_TOKEN) || !!user.value?.impersonatedBy
     if (impersonating.value && !originalUser.value) {
       const savedAdmin = localStorage.getItem(IMP_USER)
       if (savedAdmin) {
@@ -88,6 +90,9 @@ export const useAuthStore = defineStore('auth', () => {
   async function loginAs(targetUserId: string) {
     if (!isSuperAdmin.value || impersonating.value) return
     const { token: tkn, user: usr } = await AuthService.impersonate(targetUserId)
+    // El id del admin, antes de pisar `user.value`: es lo que marca el perfil cacheado como
+    // impersonado (ver más abajo).
+    const adminId = user.value?.id
     // Guardar la sesión del admin ANTES de pisarla: es lo único que permite volver sin re-loguearse.
     if (token.value) localStorage.setItem(IMP_TOKEN, token.value)
     if (refreshToken.value) localStorage.setItem(IMP_REFRESH, refreshToken.value)
@@ -101,8 +106,12 @@ export const useAuthStore = defineStore('auth', () => {
     // a ser la del super admin en silencio, con la franja todavía diciendo que es la del cliente.
     refreshToken.value = null
     localStorage.removeItem('refreshToken')
-    user.value = usr
-    localStorage.setItem('user', JSON.stringify(usr))
+    // El body de /auth/impersonate/:id trae sólo el perfil del cliente: el claim vive en el JWT.
+    // Cachear el perfil pelado hacía que restoreSession hidratara un user SIN `impersonatedBy`, así
+    // que un /auth/me caído apagaba la franja con el token de impersonación todavía activo.
+    const impersonatedProfile: User = adminId ? { ...usr, impersonatedBy: adminId } : usr
+    user.value = impersonatedProfile
+    localStorage.setItem('user', JSON.stringify(impersonatedProfile))
     impersonating.value = true
     // El menú/módulos del admin no valen para el hotel del cliente.
     useModulesStore().reset()
