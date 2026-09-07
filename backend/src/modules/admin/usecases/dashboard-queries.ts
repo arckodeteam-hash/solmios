@@ -4,8 +4,56 @@ const BYTES_PER_MB = 1024 * 1024
 export class DashboardQueries {
   constructor(private readonly orm: any) {}
 
+  /**
+   * Hoteles para el listado del super-admin, con el usuario al que se impersona desde la fila
+   * (botón "Entrar" de `/admin/hotels`).
+   *
+   * El botón necesita un `userId`: la impersonación es SIEMPRE contra un usuario, nunca contra un
+   * hotel (`usuarios/usecases/impersonate.ts` emite el token con el rol REAL de esa persona, que es
+   * lo que sostiene el aislamiento por hotel). Así que acá se resuelve, por hotel, a quién entrar.
+   *
+   * Criterio de elección, en orden:
+   *  1. Un `hotel_admin` activo — es el dueño de la cuenta y ve todo el panel.
+   *  2. Si no hay, cualquier otro usuario activo del hotel: es preferible entrar como recepcionista
+   *     a no poder entrar. La UI muestra el rol, así que el admin sabe con qué ojos está mirando.
+   *  3. Nadie activo → `ownerUserId: null` y el frontend deshabilita el botón.
+   *
+   * Nunca un `super_admin`: `impersonateUser` lo rechaza con 403, así que ofrecerlo sería un botón
+   * que falla al clickearlo.
+   *
+   * Desempate por `id` (no por `createdAt`, que puede faltar en filas viejas): con dos hotel_admin
+   * el resultado tiene que ser el MISMO en cada request, o el botón entra a una cuenta distinta
+   * según el orden que devuelva la base.
+   *
+   * Los usuarios se cargan UNA vez y se agrupan en un Map — una consulta por hotel adentro del loop
+   * sería N+1 (mismo patrón que `listUsers`).
+   */
   async listHotels(): Promise<{ data: any[]; total: number }> {
-    const data = await this.orm.findMany('Hotels', {})
+    const hotels = await this.orm.findMany('Hotels', {}) as any[]
+    const users = await this.orm.findMany('Users', {}) as any[]
+
+    const candidatesByHotel = new Map<string, any[]>()
+    for (const u of users) {
+      // `active` puede venir 1/0 (INTEGER en la base) o true/false: solo se descarta lo que es
+      // explícitamente inactivo. Una fila vieja sin la columna se considera activa.
+      if (!u.hotelId || u.role === 'super_admin' || u.active === 0 || u.active === false) continue
+      const list = candidatesByHotel.get(u.hotelId)
+      if (list) list.push(u)
+      else candidatesByHotel.set(u.hotelId, [u])
+    }
+
+    const data = hotels.map((h: any) => {
+      const candidates = candidatesByHotel.get(h.id) ?? []
+      const sorted = [...candidates].sort((a, b) => String(a.id).localeCompare(String(b.id)))
+      const owner = sorted.find((u) => u.role === 'hotel_admin') ?? sorted[0] ?? null
+      return {
+        ...h,
+        ownerUserId: owner?.id ?? null,
+        ownerName: owner?.name ?? '',
+        ownerRole: owner?.role ?? '',
+      }
+    })
+
     return { data, total: data.length }
   }
 

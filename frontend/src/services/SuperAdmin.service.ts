@@ -37,6 +37,14 @@ export interface AdminAnalytics {
 
 export interface AdminHotel extends HotelData {
   roomCount: number
+  /**
+   * Usuario al que impersona el botón "Entrar" de la fila. La impersonación es contra un USUARIO,
+   * no contra un hotel, así que el backend resuelve quién es (hotel_admin activo, o el que haya).
+   * `null` = no hay a quién entrar y el botón queda deshabilitado.
+   */
+  ownerUserId: string | null
+  ownerName: string
+  ownerRole: string
 }
 
 export const SuperAdminService = {
@@ -48,6 +56,9 @@ export const SuperAdminService = {
         name: h.name,
         location: h.address || h.location,
         roomCount: h.roomCount ?? 0,
+        ownerUserId: h.ownerUserId ?? null,
+        ownerName: h.ownerName ?? '',
+        ownerRole: h.ownerRole ?? '',
       })),
       total: data.total,
     }
