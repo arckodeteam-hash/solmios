@@ -15,6 +15,10 @@ export { AriOutboxModel, registerAriOutboxModels } from './model'
 export type { AriOutboxRow, AriOutboxStatus, AriOutboxKind } from './types'
 export type { AriPublisher, AriPushFn, AriOutboxPort } from './usecases/outbox-queue'
 export type { AriOutboxList, AriOutboxListQuery, AriOutboxStore } from './service'
+// Hooks opcionales del módulo: sin este export ningún conector podría cablear setSockets()
+// con tipos (misma línea que email-queue/index.ts:10).
+export type { AriOutboxSockets } from './sockets'
+export { AriOutboxValidator, ListAriOutboxSchema } from './validators/schema'
 
 /**
  * Cada cuánto tickea el drain desde composition-root. CORTO a propósito: el debounce de la ráfaga

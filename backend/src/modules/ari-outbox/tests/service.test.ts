@@ -3,14 +3,18 @@
 // La lógica de agrupación/backoff/publicación ya está probada en outbox-queue.test.ts y la forma
 // del endpoint en list.test.ts. Acá se prueba la capa delgada de service.ts, que igual tiene dos
 // responsabilidades propias: (a) los defaults y topes del listado —límite, tope duro, offset y
-// orden— que el controller NO calcula, y (b) que schedule/drain/registerPublisher delegan de
-// verdad en la cola y no son métodos huecos.
+// orden— que el controller NO calcula, (b) que schedule/drain/registerPublisher delegan de
+// verdad en la cola y no son métodos huecos, (c) que los sockets se emiten cuando una fila se
+// cierra y que un hook roto no corta el drenado, y (d) que el controller RECHAZA un query
+// inválido con 400 en vez de bajar el filtro crudo al repositorio y devolver una lista vacía.
 //
 // El puerto es un array en memoria con la semántica de OrmRepository (igualdad exacta + orderBy +
 // offset/limit): sin DB ni reloj real, como el resto de los tests del módulo.
 
 import { describe, it, expect } from 'bun:test'
+import { ErrorContract } from 'arckode-framework'
 import type { Logger } from 'arckode-framework'
+import { AriOutboxController } from '../controller'
 import {
   AriOutboxService,
   DEFAULT_LIST_LIMIT,
@@ -34,6 +38,12 @@ function fila(over: Partial<AriOutboxRow> & { id: string }): AriOutboxRow {
     ...over,
   }
 }
+
+/** Dos filas de dos estados: alcanza para ver que el filtro válido filtra y no devuelve todo. */
+const SEMBRADO: AriOutboxRow[] = [
+  fila({ id: 'f1', status: 'failed', lastError: 'Channex 422' }),
+  fila({ id: 'p1', status: 'pending' }),
+]
 
 interface PaginateCall {
   filters: Record<string, unknown>
@@ -185,5 +195,140 @@ describe('AriOutboxService: delegación en la cola', () => {
 
     expect(rows.find((r) => r.id === 'colgada')!.status).toBe('pending')
     expect(rows.find((r) => r.id === 'reciente')!.status).toBe('processing')
+  })
+})
+
+describe('AriOutboxService: sockets (hooks opcionales hacia otros módulos)', () => {
+  /** Fila ya vencida: el drain la toma en la primera pasada. */
+  const vencida = (over: Partial<AriOutboxRow> & { id: string }) =>
+    fila({ scheduledAt: '2020-01-01T00:00:00.000Z', ...over })
+
+  it('onAriOutboxSent se emite con la fila cerrada cuando el push sale bien', async () => {
+    const { store, rows } = makeStore([vencida({ id: 'r1' })])
+    const svc = new AriOutboxService(store, LOG)
+    svc.registerPublisher('rates', { push: async () => {} })
+    const enviadas: AriOutboxRow[] = []
+    const fallidas: AriOutboxRow[] = []
+    svc.setSockets({
+      onAriOutboxSent: async (row) => { enviadas.push(row) },
+      onAriOutboxFailed: async (row) => { fallidas.push(row) },
+    })
+
+    expect(await svc.drain()).toBe(1)
+
+    expect(enviadas.map((r) => r.id)).toEqual(['r1'])
+    expect(enviadas[0]).toMatchObject({ id: 'r1', hotelId: 'h1', kind: 'rates', status: 'sent' })
+    expect(fallidas).toEqual([])
+    expect(rows[0]!.status).toBe('sent')
+  })
+
+  it('onAriOutboxFailed se emite SOLO en el fallo definitivo, no en cada reintento', async () => {
+    const { store, rows } = makeStore([vencida({ id: 'r1', maxAttempts: 2 })])
+    const svc = new AriOutboxService(store, LOG)
+    svc.registerPublisher('rates', { push: async () => { throw new Error('channex caído') } })
+    const fallidas: AriOutboxRow[] = []
+    svc.setSockets({ onAriOutboxFailed: async (row) => { fallidas.push(row) } })
+
+    await svc.drain()
+    // Primer intento: vuelve a pending con backoff → todavía NO se avisa.
+    expect(rows[0]!.status).toBe('pending')
+    expect(fallidas).toEqual([])
+
+    rows[0]!.scheduledAt = '2020-01-01T00:00:00.000Z' // vence el backoff
+    await svc.drain()
+
+    expect(rows[0]!.status).toBe('failed')
+    expect(fallidas.map((r) => r.id)).toEqual(['r1'])
+    expect(fallidas[0]).toMatchObject({ status: 'failed', attempts: 2, lastError: 'channex caído' })
+  })
+
+  it('sin sockets cableados el drain publica igual: los hooks son OPCIONALES', async () => {
+    const { store, rows } = makeStore([vencida({ id: 'r1' })])
+    const svc = new AriOutboxService(store, LOG)
+    svc.registerPublisher('rates', { push: async () => {} })
+
+    expect(await svc.drain()).toBe(1)
+    expect(rows[0]!.status).toBe('sent')
+  })
+
+  it('un hook que tira NO rompe el drenado: se loguea y las filas siguientes se publican', async () => {
+    const { store, rows } = makeStore([
+      vencida({ id: 'r1', hotelId: 'h1' }),
+      vencida({ id: 'r2', hotelId: 'h2' }),
+    ])
+    const avisos: unknown[] = []
+    const log = { ...LOG, warn: (...a: unknown[]) => { avisos.push(a) }, child: () => log } as unknown as Logger
+    const svc = new AriOutboxService(store, log)
+    const pushes: string[] = []
+    svc.registerPublisher('rates', { push: async (hotelId) => { pushes.push(hotelId) } })
+    svc.setSockets({ onAriOutboxSent: async () => { throw new Error('el conector explotó') } })
+
+    expect(await svc.drain()).toBe(2)
+
+    expect(pushes).toEqual(['h1', 'h2'])                      // el drenado siguió
+    expect(rows.map((r) => r.status)).toEqual(['sent', 'sent']) // y las filas quedaron cerradas
+    expect(avisos).toHaveLength(2)                             // pero se logueó cada vez
+  })
+
+  it('setSockets ACUMULA: dos conectores enganchados al mismo evento reciben los dos', async () => {
+    const { store } = makeStore([vencida({ id: 'r1' })])
+    const svc = new AriOutboxService(store, LOG)
+    svc.registerPublisher('rates', { push: async () => {} })
+    const vistos: string[] = []
+    svc.setSockets({ onAriOutboxSent: async () => { vistos.push('a') } })
+    svc.setSockets({ onAriOutboxSent: async () => { vistos.push('b') } })
+
+    await svc.drain()
+
+    expect(vistos).toEqual(['a', 'b'])
+  })
+})
+
+describe('GET /api/admin/ari-outbox — el query se valida antes de bajar al repositorio', () => {
+  const handler = () => new AriOutboxController(new AriOutboxService(makeStore(SEMBRADO).store, LOG), LOG)
+  const req = (query: Record<string, string>) => ({ query }) as any
+
+  /**
+   * Lo mismo que hace el router con lo que tira un handler (router.ts:104-107): un ErrorContract
+   * se convierte en su httpStatus + toJSON(). Se replica acá porque el repo no tiene tests HTTP
+   * (issue #50): así el caso afirma el 400 REAL que ve el cliente, no solo que algo tiró.
+   */
+  async function responder(query: Record<string, string>) {
+    try {
+      return await handler().index(req(query))
+    } catch (err: unknown) {
+      if (err instanceof ErrorContract) return { status: err.httpStatus, body: err.toJSON() as any }
+      throw err
+    }
+  }
+
+  it('un status fuera del conjunto válido da 400, no una lista vacía en silencio', async () => {
+    const res = await responder({ status: 'basura' })
+
+    expect(res.status).toBe(400)
+    expect(JSON.stringify(res.body)).toContain('status')
+  })
+
+  it('un kind fuera del conjunto válido da 400', async () => {
+    const res = await responder({ kind: 'precios' })
+
+    expect(res.status).toBe(400)
+    expect(JSON.stringify(res.body)).toContain('kind')
+  })
+
+  it('los filtros válidos siguen pasando con 200 y filtran de verdad', async () => {
+    const res = await responder({ status: 'failed', kind: 'rates', hotelId: 'h1' })
+
+    expect(res.status).toBe(200)
+    expect(res.body.total).toBe(1)
+    expect(res.body.items.map((r: AriOutboxRow) => r.id)).toEqual(['f1'])
+  })
+
+  it('page/limit basura NO son 400: el service los normaliza (el listado no se rompe)', async () => {
+    const res = await responder({ limit: 'todas', page: '-3' })
+
+    expect(res.status).toBe(200)
+    expect(res.body.limit).toBe(DEFAULT_LIST_LIMIT)
+    expect(res.body.page).toBe(1)
   })
 })

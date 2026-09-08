@@ -81,7 +81,32 @@ describe('ari_outbox — el modelo declara todos los campos que usa la cola', ()
     expect(saved!.status).toBe('pending')
     expect(saved!.attempts).toBe(0)
     expect(saved!.maxAttempts).toBe(3)
-    expect(saved!.channels ?? []).toEqual([]) // [] = cambio global: base + canales con override
+    // SIN `?? []`: el fallback taparía exactamente lo que este archivo vigila. Si el default `[]`
+    // del campo json no se aplicara y la columna volviera null/undefined, `?? []` haría pasar el
+    // test y schedule() crearía filas con `channels` nulo, que el drain lee como cambio global.
+    expect(saved!.channels).toEqual([]) // [] = cambio global: base + canales con override
+  })
+
+  it('el update refresca `updatedAt`: es con lo que reclaimStale() detecta una fila colgada', async () => {
+    // outbox-queue.ts::reclaimStale() compara `updatedAt` contra el corte de STALE_MS para devolver
+    // a pending las filas que un proceso caído dejó en `processing`. Si el ORM no persistiera el
+    // campo o volviera con otro formato, esas filas no se reclamarían NUNCA y el push se perdería
+    // igual que antes de la outbox — el bug que el módulo existe para evitar.
+    const antes = await repo.findById('e2e-outbox-2') as AriOutboxRow
+    expect(antes.updatedAt).toBeTruthy()
+
+    await repo.update('e2e-outbox-2', { status: 'processing' } as any)
+    const saved = await repo.findById('e2e-outbox-2') as AriOutboxRow
+
+    expect(saved.status).toBe('processing')
+    expect(typeof saved.updatedAt).toBe('string')
+    expect(isNaN(Date.parse(saved.updatedAt!))).toBe(false)         // ISO parseable, no un blob
+    expect(saved.updatedAt).toBe(new Date(saved.updatedAt!).toISOString())
+    expect(Date.parse(saved.updatedAt!)).toBeGreaterThanOrEqual(Date.parse(saved.createdAt!))
+    expect(Date.parse(saved.updatedAt!)).toBeGreaterThanOrEqual(Date.parse(antes.updatedAt!))
+
+    // Se deja como estaba: el caso de abajo consulta por status='pending'.
+    await repo.update('e2e-outbox-2', { status: 'pending' } as any)
   })
 
   it('consulta por hotel y estado — el filtro que usan el drain y el listado admin', async () => {

@@ -40,6 +40,10 @@ export interface AriOutboxDeps {
   debounceMs?: number
   newId?: () => string
   onError?: (hotelId: string, channel: string | undefined, err: unknown) => void
+  /** La fila se cerró bien. OPCIONAL: el drain no depende de esto (ver `notify`). */
+  onSent?: (row: AriOutboxRow) => void | Promise<void>
+  /** La fila agotó los intentos y quedó en `failed` DEFINITIVO (un reintento no avisa). */
+  onFailed?: (row: AriOutboxRow) => void | Promise<void>
 }
 
 export class AriOutbox {
@@ -51,6 +55,14 @@ export class AriOutbox {
   private readonly debounceMs: number
   private readonly newId: () => string
   private readonly onError: (hotelId: string, channel: string | undefined, err: unknown) => void
+  private readonly onSent?: (row: AriOutboxRow) => void | Promise<void>
+  private readonly onFailed?: (row: AriOutboxRow) => void | Promise<void>
+  /**
+   * Última operación encolada por clave `${hotelId}|${kind}`: serializa `schedule` (ver su doc).
+   * Se limpia cuando la cadena termina y sigue siendo la última, así un hotel que agenda todo el
+   * día no deja una entrada por (hotel, kind) viva para siempre.
+   */
+  private readonly scheduleChains = new Map<string, Promise<void>>()
 
   constructor(deps: AriOutboxDeps) {
     this.repo = deps.repo
@@ -58,6 +70,8 @@ export class AriOutbox {
     this.debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS
     this.newId = deps.newId ?? (() => crypto.randomUUID())
     this.onError = deps.onError ?? (() => {})
+    this.onSent = deps.onSent
+    this.onFailed = deps.onFailed
   }
 
   registerPublisher(kind: string, publisher: AriPublisher): void {
@@ -69,8 +83,37 @@ export class AriOutbox {
    * si ya hay una fila pendiente del mismo (hotel, kind) se le fusionan los canales y se le corre
    * el vencimiento; si no, se crea. La fila queda escrita ANTES del vencimiento — el punto entero
    * de la outbox.
+   *
+   * SERIALIZADO por `${hotelId}|${kind}` con una cadena de promesas: el trabajo real
+   * (`scheduleOne`) es un check-then-act —buscar la fila pendiente, y recién después update o
+   * create— con un `await` en el medio. Los conectores llaman sin awaitear (`void
+   * outbox.schedule(...)` en pricing-canales.ts) y un solo guardado de la UI dispara
+   * `onRatesUpdated` y `onRateRestrictionsUpdated` a milésimas de distancia (push-coalescing.ts:1-8):
+   * sin la cadena, las dos llamadas leen "no hay fila pendiente" antes de que ninguna escriba,
+   * se crean DOS filas y salen DOS pushes, que es justo lo que CA-3 prohíbe. El coalescer en
+   * memoria no tenía este hueco porque era 100% síncrono; esta cadena es su equivalente acá.
+   *
+   * OJO: la serialización es POR PROCESO. Entre varios procesos haría falta un UPDATE condicional
+   * (o un índice único parcial) que el puerto del repositorio no expresa hoy; está diferido en el
+   * issue #58, y el #51 declara el escenario multi-proceso como hipotético porque hoy corre un
+   * solo systemd.
    */
-  async schedule(hotelId: string, kind: string, channels: Array<string | undefined> = [undefined]): Promise<void> {
+  schedule(hotelId: string, kind: string, channels: Array<string | undefined> = [undefined]): Promise<void> {
+    const key = `${hotelId}|${kind}`
+    const previa = this.scheduleChains.get(key) ?? Promise.resolve()
+    const corrida = previa.then(() => this.scheduleOne(hotelId, kind, channels))
+    // La cadena GUARDADA nunca rechaza: un schedule que falla no puede envenenar a los siguientes
+    // ni dejar una unhandled rejection (los conectores no awaitean). El error igual le llega a
+    // quien sí awaitea, por `corrida`.
+    const cadena = corrida.catch(() => {})
+    this.scheduleChains.set(key, cadena)
+    void cadena.then(() => {
+      if (this.scheduleChains.get(key) === cadena) this.scheduleChains.delete(key)
+    })
+    return corrida
+  }
+
+  private async scheduleOne(hotelId: string, kind: string, channels: Array<string | undefined>): Promise<void> {
     const explicit = channels.filter((c): c is string => !!c)
     const scheduledAt = this.iso(this.now() + this.debounceMs)
     const [row] = await this.repo.findMany({ hotelId, kind, status: 'pending' })
@@ -154,6 +197,21 @@ export class AriOutbox {
     }
     if (firstError) return this.handleFailure(row, firstError)
     await this.repo.update(row.id, { status: 'sent', lastError: null })
+    await this.notify(this.onSent, { ...row, status: 'sent', lastError: null })
+  }
+
+  /**
+   * Avisa el cierre de una fila. Los hooks son OPCIONALES y de otro módulo: si uno tira, se
+   * reporta por onError y el drain SIGUE. La fila ya está cerrada en la tabla; un hook roto no
+   * puede dejar el resto de la cola sin publicar.
+   */
+  private async notify(hook: ((row: AriOutboxRow) => void | Promise<void>) | undefined, row: AriOutboxRow): Promise<void> {
+    if (!hook) return
+    try {
+      await hook(row)
+    } catch (err: unknown) {
+      this.onError(row.hotelId, undefined, err)
+    }
   }
 
   /** Sin resolver (o si falla) se publica solo la base: mejor eso que un precio elegido al azar. */
@@ -174,6 +232,8 @@ export class AriOutbox {
     const maxAttempts = Number(row.maxAttempts || BACKOFF_MS.length)
     if (attempts >= maxAttempts) {
       await this.repo.update(row.id, { status: 'failed', attempts, lastError })
+      // Definitivo: no hay más reintentos. El reintento con backoff NO avisa (la fila sigue viva).
+      await this.notify(this.onFailed, { ...row, status: 'failed', attempts, lastError })
       return
     }
     const backoff = BACKOFF_MS[Math.min(attempts - 1, BACKOFF_MS.length - 1)]

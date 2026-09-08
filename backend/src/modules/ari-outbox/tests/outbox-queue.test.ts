@@ -112,6 +112,49 @@ describe('CA-3 — agrupación: la ráfaga entera sale como UN push', () => {
   })
 })
 
+describe('CA-3 — ráfaga CONCURRENTE: schedule() sin await no duplica la fila', () => {
+  // Así llaman los conectores: `void outbox.schedule(...)` (pricing-canales.ts), y un solo
+  // guardado de la UI dispara onRatesUpdated y onRateRestrictionsUpdated a milésimas de distancia
+  // (push-coalescing.ts:1-8). Sin serializar por (hotel, kind), las dos llamadas leen "no hay fila
+  // pendiente" antes de que ninguna escriba y se crean DOS filas → DOS pushes, que es justo lo que
+  // CA-3 prohíbe. El coalescer en memoria no tenía el hueco porque era 100% síncrono.
+  it('dos schedule() del mismo hotel/kind sin awaitear el primero dejan UNA fila y UN push', async () => {
+    const { outbox, rows, pushed, avanzar } = makeOutbox()
+    const a = outbox.schedule(HOTEL, 'inventory')
+    const b = outbox.schedule(HOTEL, 'inventory')
+    await Promise.all([a, b])
+
+    expect(rows).toHaveLength(1)
+    avanzar(1500)
+    expect(await outbox.drain()).toBe(1)
+    expect(pushed).toEqual([undefined])
+  })
+
+  it('la unión de canales sobrevive a la concurrencia: global + canal publica SOLO el canal', async () => {
+    const { outbox, rows, pushed, avanzar } = makeOutbox({ overrides: ['booking'] })
+    const a = outbox.schedule(HOTEL, 'inventory')
+    const b = outbox.schedule(HOTEL, 'inventory', ['OpenChannel'])
+    await Promise.all([a, b])
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.channels).toEqual(['OpenChannel'])
+    avanzar(1500)
+    await outbox.drain()
+    expect(pushed).toEqual(['OpenChannel'])
+  })
+
+  it('la cadena de serialización no se acumula en memoria: la entrada se limpia al terminar', async () => {
+    const { outbox } = makeOutbox()
+    await Promise.all([outbox.schedule(HOTEL, 'inventory'), outbox.schedule('h2', 'rates')])
+    // Un macrotask: alcanza para que corran los microtasks de limpieza de las dos cadenas.
+    await new Promise((r) => setTimeout(r, 0))
+
+    // Blanco a propósito: es la única forma de ver que un hotel que agenda todo el día no deja
+    // una entrada viva por (hotel, kind) para siempre.
+    expect((outbox as unknown as { scheduleChains: Map<string, unknown> }).scheduleChains.size).toBe(0)
+  })
+})
+
 describe('CA-4 — cambio global: base primero, canales con tarifa propia después', () => {
   it('ráfaga sin canal publica [undefined, "OpenChannel"] en ese orden', async () => {
     const { outbox, pushed, avanzar } = makeOutbox({ overrides: ['OpenChannel'] })

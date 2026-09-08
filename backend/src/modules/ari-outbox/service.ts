@@ -8,6 +8,7 @@
 import type { Logger, PageResult, FindOptions } from 'arckode-framework'
 import { AriOutbox, type AriOutboxPort, type AriPublisher } from './usecases/outbox-queue'
 import type { AriOutboxRow, AriOutboxStatus } from './types'
+import type { AriOutboxSockets } from './sockets'
 
 /** Página del listado admin. 50 entra en una pantalla sin scrollear al infinito. */
 export const DEFAULT_LIST_LIMIT = 50
@@ -42,6 +43,8 @@ export interface AriOutboxList {
 
 export class AriOutboxService {
   private readonly queue: AriOutbox
+  /** Hooks opcionales hacia otros módulos. Vacío = el módulo funciona igual (email-queue:15). */
+  private sockets: AriOutboxSockets = {}
 
   constructor(
     private readonly repo: AriOutboxStore,
@@ -58,7 +61,42 @@ export class AriOutboxService {
           error: err instanceof Error ? err.message : String(err),
         })
       },
+      // El cierre de una fila se avisa por sockets. Van envueltos acá y no en el usecase porque
+      // este es el lado que tiene el logger: un hook de otro módulo que tira se loguea y el drain
+      // sigue publicando el resto de la cola.
+      onSent: (row) => this.emit('onAriOutboxSent', row),
+      onFailed: (row) => this.emit('onAriOutboxFailed', row),
     })
+  }
+
+  /**
+   * Registra hooks. Se ACUMULAN (varios conectores pueden engancharse al mismo evento), igual que
+   * en email-queue/service.ts:25.
+   */
+  setSockets(s: Partial<AriOutboxSockets>): void {
+    const next = s as Record<string, any>
+    const cur = this.sockets as Record<string, any>
+    for (const key of Object.keys(next)) {
+      const h = next[key]
+      if (!h) continue
+      const prev = cur[key]
+      cur[key] = prev ? async (...a: any[]) => { await prev(...a); await h(...a) } : h
+    }
+  }
+
+  /** Dispara un hook si está cableado. Un hook que falla se loguea y NO corta el drenado. */
+  private async emit(event: keyof AriOutboxSockets, row: AriOutboxRow): Promise<void> {
+    const hook = this.sockets[event]
+    if (!hook) return
+    try {
+      await hook(row)
+    } catch (err: unknown) {
+      this.logger.warn('AriOutbox: falló un hook de sockets', {
+        event,
+        id: row.id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
 
   /** Quién publica cada `kind`. Lo cablea el conector (los pushes viven en canales, no acá). */
