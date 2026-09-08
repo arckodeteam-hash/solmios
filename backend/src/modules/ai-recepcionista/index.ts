@@ -45,7 +45,7 @@ export function AiRecepcionistaModule() {
         'sendMessage', 'getMessages', 'processIncomingMessage',
         'listIntents', 'createIntent', 'updateIntent', 'deleteIntent', 'testIntent',
         'listTemplates', 'createTemplate', 'updateTemplate', 'deleteTemplate',
-        'getWhatsappConfig', 'updateWhatsappConfig', 'connectWhatsapp', 'getWhatsappConnection', 'disconnectWhatsapp', 'listarBandeja', 'abrirConversacion', 'tomarConversacion', 'soltarConversacion', 'responderConversacion',
+        'getWhatsappConfig', 'updateWhatsappConfig', 'connectWhatsapp', 'getWhatsappConnection', 'disconnectWhatsapp', 'consumoDeWhatsapp', 'sincronizarConsumo', 'assertPuedeIniciar', 'listarBandeja', 'abrirConversacion', 'tomarConversacion', 'soltarConversacion', 'responderConversacion',
         'getMetrics', 'getDashboardMetrics',
         'getBookingFlow', 'createBookingFlow', 'updateBookingFlow',
         'getVoiceConfig',
@@ -58,7 +58,7 @@ export function AiRecepcionistaModule() {
       ],
       tables: [
         'ai_conversations', 'ai_messages', 'ai_intents', 'ai_templates',
-        'ai_whatsapp_config', 'ai_metrics_daily', 'ai_booking_flows', 'ai_voice_config',
+        'ai_whatsapp_config', 'whatsapp_usage_daily', 'ai_metrics_daily', 'ai_booking_flows', 'ai_voice_config',
       ],
       dependencies: [],
       rules: ['No importar de otros módulos', 'RepositoryAdapter<T>', 'Validación en controller'],
@@ -138,6 +138,9 @@ export function AiRecepcionistaModule() {
       router.delete('/api/ai/whatsapp/connection', guard('settings', 'edit'), (req) => controller.disconnectWhatsapp(req))
       // Solo lectura, solo plataforma: para soporte, no para configurar.
       router.get('/api/ai/whatsapp/connections', [auth.authenticate('super_admin'), requireUserType('admin')], () => controller.listConnections())
+      // Consumo: el hotel paga esto, así que lo puede ver quien administra la configuración.
+      router.get('/api/ai/whatsapp/consumo', guard('settings', 'view'), (req) => controller.consumoWhatsapp(req))
+      router.post('/api/ai/whatsapp/consumo/sync', guard('settings', 'view'), (req) => controller.sincronizarConsumoWhatsapp(req))
       // Bandeja: conversaciones con el huésped. Permiso `ai` porque es atención, no configuración.
       router.get('/api/ai/inbox', guard('ai', 'view'), (req) => controller.inbox(req))
       router.get('/api/ai/inbox/:id', guard('ai', 'view'), (req) => controller.getInboxConversation(req))

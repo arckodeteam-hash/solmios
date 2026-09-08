@@ -142,6 +142,32 @@ export const AiWhatsappConfigModel: ModelDefinition = {
   timestamps: true,
 }
 
+/**
+ * Consumo de WhatsApp por hotel y por día, tal como lo informa Meta.
+ *
+ * NO se calcula acá: se TRAE de Meta. Meta cobra por conversación de 24 h y el precio cambia según
+ * la categoría, así que contar los mensajes de `message_logs` daría un número distinto al de su
+ * factura — y esa diferencia termina en una discusión con el hotel. La fuente de verdad es Meta.
+ */
+export const WhatsappUsageDailyModel: ModelDefinition = {
+  table: 'whatsapp_usage_daily',
+  fields: {
+    id: { type: 'string', required: true },
+    hotelId: { type: 'string', required: true, indexed: true },
+    /** YYYY-MM-DD en UTC, como lo agrupa Meta. */
+    date: { type: 'string', required: true, indexed: true },
+    /** MARKETING | UTILITY | AUTHENTICATION | SERVICE — el precio depende de esto. */
+    category: { type: 'string', required: true },
+    /** Conversaciones de 24 h. Es la unidad que Meta factura. */
+    conversations: { type: 'number', default: 0 },
+    /** Lo que Meta informa como costo, en su moneda. 0 cuando no lo informa. */
+    cost: { type: 'number', default: 0 },
+    currency: { type: 'string' },
+    syncedAt: { type: 'string' },
+  },
+  timestamps: true,
+}
+
 export const AiMetricsDailyModel: ModelDefinition = {
   table: 'ai_metrics_daily',
   fields: {
@@ -226,6 +252,7 @@ export function registerAiRecepcionistaModels(orm: ORM): void {
   orm.define('AiTemplates', AiTemplatesModel)
   orm.define('AiWhatsappConfig', AiWhatsappConfigModel)
   orm.define('AiMetricsDaily', AiMetricsDailyModel)
+  orm.define('WhatsappUsageDaily', WhatsappUsageDailyModel)
   orm.define('AiBookingFlows', AiBookingFlowsModel)
   orm.define('AiVoiceConfig', AiVoiceConfigModel)
   // Register Configuration model if not already registered

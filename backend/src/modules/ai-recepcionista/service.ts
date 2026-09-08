@@ -1,5 +1,5 @@
 import type { Logger, CacheAdapter, Auth } from 'arckode-framework'
-import { AuthError } from 'arckode-framework'
+import { AuthError, ConflictError } from 'arckode-framework'
 import type {
   AiConversationDTO, CreateAiConversationDTO,
   AiMessageDTO,
@@ -35,6 +35,10 @@ import type { AuditPort } from '../../shared/usecases/audit'
 import type { DeliveryStatusPort } from './usecases/whatsapp-delivery-status'
 import { listarBandeja, abrirConversacion, tomarConversacion, soltarConversacion, responderConversacion, registrarEntrante } from './usecases/inbox'
 import type { InboxDeps } from './usecases/inbox'
+import { consumoDelMes, sincronizarConsumo, assertPuedeIniciarConversacion } from './usecases/whatsapp-usage'
+import type { UsageDeps } from './usecases/whatsapp-usage'
+import { usageDepsDe } from './usecases/whatsapp-usage-deps'
+import { autoReconnectSessions } from './usecases/whatsapp-sessions-auto'
 
 export class AiRecepcionistaService {
   private sockets: AiRecepcionistaSockets = {}
@@ -124,6 +128,19 @@ export class AiRecepcionistaService {
 
   async getWhatsappConfig(hotelId: string, u: any): Promise<AiWhatsappConfigDTO | null> { return getWhatsappConfig(this.whatsappConfigRepo, await this.resolveHotelId(u, hotelId)) }
   async updateWhatsappConfig(dto: CreateAiWhatsappConfigDTO, u: any): Promise<AiWhatsappConfigDTO> { return updateWhatsappConfig(this.whatsappConfigRepo, await this.resolveHotelId(u, dto.hotelId), dto) }
+  // ─── Consumo de WhatsApp ───────────────────────────────────────────────────
+  /** Cuánto lleva consumido el hotel este mes, y contra qué tope. */
+  async consumoDeWhatsapp(u: any, hotelId?: string, mes?: string) { return consumoDelMes(this.usageDeps(), await this.resolveHotelId(u, hotelId), mes) }
+  /** Trae de Meta el consumo real y lo guarda. Lo llama el panel y el cron. */
+  async sincronizarConsumo(hotelId: string, mes?: string) { return sincronizarConsumo(this.usageDeps(), hotelId, mes) }
+  /** Guarda del corte: la usa el envío antes de iniciar una conversación nueva. */
+  async assertPuedeIniciar(hotelId: string) { return assertPuedeIniciarConversacion(this.usageDeps(), hotelId) }
+
+  /** Repo, cliente de Meta y cupo: los trae el connector `ai-recepcionista-consumo`. */
+  usagePorts: Omit<UsageDeps, 'logger'> | null = null
+  setUsageDeps(p: Omit<UsageDeps, 'logger'>): void { this.usagePorts = p }
+  private usageDeps(): UsageDeps { return usageDepsDe(this.usagePorts, this.logger) }
+
   // ─── Bandeja de WhatsApp ───────────────────────────────────────────────────
   /** Anota el entrante (ventana + no leídos) y dice si el bot debe callarse. */
   async registrarEntrante(conversationId: string, hotelId: string) { return registrarEntrante(this.inboxDeps(), conversationId, hotelId) }
@@ -151,44 +168,29 @@ export class AiRecepcionistaService {
   /** Credenciales en claro para uso INTERNO del servidor (connector `marketing-whatsapp-meta`). */
   async getWhatsappCredentials(hotelId: string): Promise<WhatsappCredentials | null> { return getWhatsappCredentials(this.whatsappConfigRepo, hotelId) }
 
-  async getMetrics(hotelId: string, _period: string, u: any): Promise<AiMetricsDTO[]> {
-    return getMetrics(this.metricsRepo, await this.resolveHotelId(u, hotelId))
-  }
-
-  async getDashboardMetrics(hotelId: string, u: any): Promise<Record<string, unknown>> {
-    return getDashboardMetrics(this.conversationRepo, this.metricsRepo, await this.resolveHotelId(u, hotelId))
-  }
+  async getMetrics(hotelId: string, _period: string, u: any): Promise<AiMetricsDTO[]> { return getMetrics(this.metricsRepo, await this.resolveHotelId(u, hotelId)) }
+  async getDashboardMetrics(hotelId: string, u: any): Promise<Record<string, unknown>> { return getDashboardMetrics(this.conversationRepo, this.metricsRepo, await this.resolveHotelId(u, hotelId)) }
 
   async getBookingFlow(conversationId: string) { return getBookingFlow(this.bookingFlowRepo, conversationId) }
   async createBookingFlow(conversationId: string, hotelId: string) { return createBookingFlow(this.bookingFlowRepo, conversationId, hotelId) }
   async updateBookingFlow(id: string, data: Partial<AiBookingFlowRecord>) { return this.bookingFlowRepo.update(id, data as any) }
 
   async getVoiceConfig(hotelId: string, u: any): Promise<AiVoiceConfigRecord | null> {
-    const hid = await this.resolveHotelId(u, hotelId)
-    const configs = await this.voiceConfigRepo.findMany({ hotelId: hid })
-    return configs[0] || null
+    return (await this.voiceConfigRepo.findMany({ hotelId: await this.resolveHotelId(u, hotelId) }))[0] || null
   }
 
   async startWhatsappSession(hotelId: string) {
     const { beginSession } = await import('./usecases/whatsapp-sessions')
-    const configs = await this.whatsappConfigRepo.findMany({ hotelId })
-    return beginSession(hotelId, configs[0] || null, this.whatsappConfigRepo, this.conversationRepo, this.messageRepo, this.intentRepo, this.sockets, this.cache, this.logger, (cid: string, txt: string, hid: string) => this.processIncomingMessage(cid, txt, hid), (dto: any) => this.findOrCreateConversation(dto))
+    return beginSession(hotelId, (await this.whatsappConfigRepo.findMany({ hotelId }))[0] || null, this.whatsappConfigRepo, this.conversationRepo, this.messageRepo, this.intentRepo, this.sockets, this.cache, this.logger, (cid: string, txt: string, hid: string) => this.processIncomingMessage(cid, txt, hid), (dto: any) => this.findOrCreateConversation(dto))
   }
 
-  async autoReconnectSessions() {
-    const { beginSession } = await import('./usecases/whatsapp-sessions')
-    // Find all hotels with active Baileys config and saved credentials
-    const allConfigs = await this.whatsappConfigRepo.findMany({})
-    for (const cfg of allConfigs) {
-      if (cfg.connectionMode === 'baileys' && cfg.baileysCredentials) {
-        console.log(`[WA] Auto-reconnecting hotel ${cfg.hotelId}`)
-        try {
-          await beginSession(cfg.hotelId, cfg, this.whatsappConfigRepo, this.conversationRepo, this.messageRepo, this.intentRepo, this.sockets, this.cache, this.logger, (cid: string, txt: string, hid: string) => this.processIncomingMessage(cid, txt, hid), (dto: any) => this.findOrCreateConversation(dto))
-        } catch (e: any) {
-          console.log(`[WA] Auto-reconnect failed for ${cfg.hotelId}: ${e?.message}`)
-        }
-      }
-    }
+  /** Reconecta las sesiones legacy (QR) que estaban activas antes del reinicio. */
+  async autoReconnectSessions() { return autoReconnectSessions(this.sesionDeps()) }
+  private sesionDeps() {
+    return { configRepo: this.whatsappConfigRepo, conversationRepo: this.conversationRepo, messageRepo: this.messageRepo,
+      intentRepo: this.intentRepo, sockets: this.sockets, cache: this.cache, logger: this.logger,
+      procesar: (cid: string, txt: string, hid: string) => this.processIncomingMessage(cid, txt, hid),
+      conversacion: (dto: any) => this.findOrCreateConversation(dto) }
   }
   // Sesión legacy por QR (Baileys). Se conserva para los hoteles que todavía la usan.
   async stopWhatsappSession(hotelId: string) { return (await import('./usecases/whatsapp-sessions')).endSession(hotelId, this.whatsappConfigRepo) }

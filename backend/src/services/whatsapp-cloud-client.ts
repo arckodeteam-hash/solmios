@@ -418,3 +418,51 @@ export function explicarErrorDeEnvio(err: unknown): string {
       return err.message
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Consumo (lo que Meta factura)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ConsumoPorCategoria {
+  /** YYYY-MM-DD */
+  date: string
+  /** MARKETING | UTILITY | AUTHENTICATION | SERVICE */
+  category: string
+  /** Conversaciones de 24 h: la unidad que Meta cobra. */
+  conversations: number
+  cost: number
+  currency?: string
+}
+
+/**
+ * Trae de Meta el consumo real de la cuenta, por día y categoría.
+ *
+ * Se pregunta a Meta en vez de contar nuestros `message_logs` porque Meta no cobra por mensaje sino
+ * por conversación de 24 h, con precio distinto según la categoría. Un número calculado por
+ * nosotros no coincidiría con su factura, y esa diferencia la termina discutiendo el hotel.
+ *
+ * Devuelve `[]` cuando la cuenta no tuvo conversaciones facturables en el período: es un resultado
+ * válido, no un error.
+ */
+export async function getConversationUsage(
+  creds: WhatsappCloudCredentials,
+  desde: Date,
+  hasta: Date,
+): Promise<ConsumoPorCategoria[]> {
+  const start = Math.floor(desde.getTime() / 1000)
+  const end = Math.floor(hasta.getTime() / 1000)
+  // La sintaxis de campo anidado es de Meta: los parámetros van DENTRO del nombre del campo.
+  const campo = `conversation_analytics.start(${start}).end(${end}).granularity(DAILY)` +
+    `.dimensions(["CONVERSATION_CATEGORY"])`
+
+  const body = await graphFetch<any>(creds, `/${creds.wabaId}?fields=${encodeURIComponent(campo)}`)
+  const puntos = body?.conversation_analytics?.data?.[0]?.data_points ?? []
+
+  return puntos.map((p: any) => ({
+    date: new Date((p.start ?? 0) * 1000).toISOString().slice(0, 10),
+    category: String(p.conversation_category ?? 'UNKNOWN'),
+    conversations: Number(p.conversation ?? 0),
+    cost: Number(p.cost ?? 0),
+    currency: p.currency ? String(p.currency) : undefined,
+  }))
+}

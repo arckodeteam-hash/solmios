@@ -174,6 +174,25 @@ export class AiRecepcionistaController {
     return { status: 200, body: { data: await this.service.listarConexiones() } }
   }
 
+  // ─── Consumo de WhatsApp ────────────────────────────────────────────────
+
+  /** Lo que el hotel lleva consumido este mes y contra qué tope. */
+  async consumoWhatsapp(req: any) {
+    const mes = typeof req.query?.mes === 'string' ? req.query.mes : undefined
+    return { status: 200, body: await this.service.consumoDeWhatsapp(req.user, req.query?.hotelId || undefined, mes) }
+  }
+
+  /**
+   * Trae de Meta el consumo real. Es POST porque escribe: guarda lo que Meta informa.
+   * El hotel puede pedirlo para ver el número al día sin esperar al cron.
+   */
+  async sincronizarConsumoWhatsapp(req: any) {
+    const hotelId = req.user?.role === 'super_admin' && req.query?.hotelId ? req.query.hotelId : req.user?.hotelId
+    if (!hotelId) return { status: 400, body: { error: 'No se pudo determinar el hotel' } }
+    const mes = typeof req.query?.mes === 'string' ? req.query.mes : undefined
+    return { status: 200, body: await this.service.sincronizarConsumo(hotelId, mes) }
+  }
+
   // ─── Bandeja de WhatsApp ────────────────────────────────────────────────
 
   /** Conversaciones de WhatsApp del hotel, la más movida primero. */

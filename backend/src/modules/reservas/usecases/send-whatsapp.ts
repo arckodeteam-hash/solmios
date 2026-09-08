@@ -17,6 +17,12 @@ import { assertReservationOwned, type SimpleUser } from './reservation-ownership
 export interface WhatsappSendPort {
   /** `null` si el hotel no conectó su WhatsApp. */
   credentialsFor(hotelId: string): Promise<{ wabaId: string; phoneNumberId: string; accessToken: string } | null>
+  /**
+   * Frena si el hotel agotó su cupo del mes. Solo se llama para lo que INICIA una conversación:
+   * responder dentro de la ventana de 24 h no se corta nunca — esa conversación ya está pagada y
+   * dejar a un huésped sin respuesta a mitad de una charla es peor que el sobrecosto.
+   */
+  assertPuedeIniciar?(hotelId: string): Promise<void>
   sendTemplate(
     creds: { wabaId: string; phoneNumberId: string; accessToken: string },
     input: { to: string; name: string; language: string; parameters?: string[] },
@@ -114,6 +120,11 @@ export async function sendWhatsappForReservation(
     throw new ValidationError(
       'El huésped no tiene un teléfono válido. Cargalo con el prefijo del país (por ejemplo +1 809 555 0000) y volvé a intentar.',
     )
+  }
+
+  // Una plantilla ARRANCA una conversación, y eso es lo que Meta cobra: acá va el tope.
+  if (input.templateId && deps.whatsapp.assertPuedeIniciar) {
+    await deps.whatsapp.assertPuedeIniciar(reserva.hotelId)
   }
 
   const plantilla = input.templateId ? await deps.templateRepo.findById(input.templateId) : null

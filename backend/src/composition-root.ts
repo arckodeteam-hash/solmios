@@ -22,6 +22,7 @@ import { createAutoMessagesCron } from './modules/marketing/usecases/auto-messag
 import { createNightAuditCron } from './shared/usecases/night-audit-cron'
 import { createEvidenceRetentionCron } from './shared/usecases/evidence-retention-cron'
 import { createTrialReminderCron } from './shared/usecases/trial-reminder-cron'
+import { createWhatsappUsageCron } from './shared/usecases/whatsapp-usage-cron'
 import { createPrearrivalPassCron } from './shared/usecases/prearrival-pass-cron'
 import { createSubscriptionSuspensionCron } from './shared/usecases/subscription-suspension-cron'
 import { createReferralCreditsCron } from './shared/usecases/referral-credits-cron'
@@ -441,6 +442,7 @@ import { marketingWhatsappMetaConnector } from './connectors/marketing-whatsapp-
 import { reservasWhatsappConnector } from './connectors/reservas-whatsapp'
 import { whatsappDeliveryStatusConnector } from './connectors/whatsapp-delivery-status'
 import { aiRecepcionistaWhatsappConnector } from './connectors/ai-recepcionista-whatsapp'
+import { aiRecepcionistaConsumoConnector } from './connectors/ai-recepcionista-consumo'
 import { notificacionesAuditlogConnector } from './connectors/notificaciones-auditlog'
 import { opinionesAuditlogConnector } from './connectors/opiniones-auditlog'
 import { reclutamientoAuditlogConnector } from './connectors/reclutamiento-auditlog'
@@ -652,6 +654,8 @@ system.addConnector('reservas-whatsapp', reservasWhatsappConnector)
 system.addConnector('whatsapp-delivery-status', whatsappDeliveryStatusConnector)
 // La bandeja responde al huésped: necesita el cliente de Meta y el historial de envíos.
 system.addConnector('ai-recepcionista-whatsapp', aiRecepcionistaWhatsappConnector)
+// Consumo de WhatsApp: el hotel lo ve y el tope corta. Necesita el ORM para su propio repo.
+system.addConnector('ai-recepcionista-consumo', (ctx) => aiRecepcionistaConsumoConnector(ctx, orm))
 system.addConnector('notificaciones-auditlog', notificacionesAuditlogConnector)
 system.addConnector('opiniones-auditlog', opinionesAuditlogConnector)
 system.addConnector('reclutamiento-auditlog', reclutamientoAuditlogConnector)
@@ -873,6 +877,16 @@ logger.info('Prearrival-pass cron listo', { tickMs: PREARRIVAL_TICK_MS })
 const SAAS_TICK_MS = 60_000 * 60 * 6 // cada 6h
 // Aviso de trial por vencer/vencido: manda el correo (vía platform-emails) a las suscripciones
 // `trialing` a <=2 días del fin o ya vencidas. Dedup con trialReminderSentAt/trialExpiredEmailSentAt.
+// Consumo de WhatsApp: el hotel lo ve en su panel y el tope corta sobre estos números, así que
+// tienen que estar al día. Cada 6 h alcanza — Meta agrupa por día y corrige con retraso.
+const whatsappUsageCron = createWhatsappUsageCron((name) => system.resolveModule(name), logger)
+setTimeout(() => {
+  whatsappUsageCron().catch((e) => logger.warn('whatsapp-usage initial run failed', { error: (e as Error).message }))
+}, 25_000)
+setInterval(() => {
+  whatsappUsageCron().catch((e) => logger.warn('whatsapp-usage cron failed', { error: (e as Error).message }))
+}, 6 * 60 * 60 * 1000)
+
 const trialReminderCron = createTrialReminderCron(orm, (name) => system.resolveModule(name), logger)
 setTimeout(() => {
   trialReminderCron().catch((e) => logger.warn('trial-reminder initial run failed', { error: (e as Error).message }))

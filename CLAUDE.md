@@ -299,6 +299,33 @@ TODO** (puerta cerrada) y ningún mensaje de huésped entra.
   aprobada. La ventana se calcula con el último mensaje ENTRANTE (`ai_conversations.lastInboundAt`);
   una respuesta del hotel no la reabre.
 
+### Consumo y cobro — el modelo es "SOLMI OS paga y factura al hotel"
+
+Meta le cobra a la **plataforma**, y la plataforma se lo cobra al hotel dentro de su plan. Eso
+obliga a dos cosas que no serían necesarias si cada hotel pagara directo:
+
+| Pieza | Dónde |
+|---|---|
+| Consumo por hotel/día/categoría | tabla `whatsapp_usage_daily` |
+| Sincronía desde Meta | `ai-recepcionista/usecases/whatsapp-usage.ts` + cron cada 6 h |
+| Cupo del plan | `plans.limits.whatsappConversations` |
+| Corte al agotarse | `assertPuedeIniciarConversacion`, llamado desde `reservas/usecases/send-whatsapp.ts` |
+| Pantalla del hotel | `components/features/WhatsappUsageCard.vue` |
+
+Reglas que están en el código y conviene no romper:
+
+- **El consumo se TRAE de Meta, no se calcula.** Meta cobra por conversación de 24 h con precio por
+  categoría; contar `message_logs` daría otro número y la diferencia la discutiría el hotel con su
+  factura en la mano.
+- **La sincronía reemplaza el día, no suma.** Meta corrige sus propios números durante las horas
+  siguientes; acumular convertiría una corrección en un cobro doble.
+- **El corte solo frena lo que INICIA una conversación** (una plantilla). Responder dentro de la
+  ventana de 24 h nunca se corta: esa conversación ya está pagada, y dejar a un huésped sin
+  respuesta a mitad de una charla es peor que el sobrecosto.
+- **Un plan sin `whatsappConversations` cae al default (1000), no a ilimitado.** El que paga es la
+  plataforma: ante la duda, tope. `null` explícito sí es sin tope; `0` es "este plan no incluye
+  WhatsApp".
+
 ### ⚠️ Baileys es LEGACY — no construir nada nuevo sobre él
 
 `ai-recepcionista/usecases/whatsapp-baileys-client.ts` vincula WhatsApp escaneando un código QR

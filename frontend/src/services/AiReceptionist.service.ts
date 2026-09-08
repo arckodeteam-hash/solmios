@@ -138,6 +138,27 @@ export interface InboxThread {
   mensajes: InboxMessage[]
 }
 
+/**
+ * Consumo de WhatsApp del hotel. Los números son los que informa META, no una cuenta nuestra:
+ * Meta cobra por conversación de 24 h y con precio distinto por categoría, así que contar mensajes
+ * daría otro número y la diferencia la discutiría el hotel con su factura en la mano.
+ */
+export interface ConsumoWhatsapp {
+  /** YYYY-MM */
+  mes: string
+  conversaciones: number
+  /** Lo que informó Meta. 0 no significa gratis: significa que Meta no lo informó. */
+  costo: number
+  moneda: string | null
+  porCategoria: Array<{ category: string; conversations: number; cost: number }>
+  /** Conversaciones incluidas en el plan. `null` = sin tope. */
+  cupo: number | null
+  usoDelCupo: number | null
+  cerca: boolean
+  agotado: boolean
+  ultimaSync: string | null
+}
+
 export const AiReceptionistService = {
   async listConversations(params?: Record<string, any>) {
     const qs = params ? '?' + new URLSearchParams(params).toString() : ''
@@ -210,6 +231,15 @@ export const AiReceptionistService = {
   },
   async getWhatsappStatus(hotelId: string) {
     return http.get<{ status: string; phone: string | null; mode: string }>(`/ai/whatsapp/status/${hotelId}`)
+  },
+
+  // ─── Consumo ───────────────────────────────────────────────────────────────
+  async consumoWhatsapp(mes?: string) {
+    return http.get<ConsumoWhatsapp>(`/ai/whatsapp/consumo${mes ? `?mes=${mes}` : ''}`)
+  },
+  /** Trae de Meta el número al día, sin esperar al cron. */
+  async sincronizarConsumo(mes?: string) {
+    return http.post<{ guardados: number }>(`/ai/whatsapp/consumo/sync${mes ? `?mes=${mes}` : ''}`, {})
   },
 
   // ─── Bandeja de WhatsApp ───────────────────────────────────────────────────
