@@ -268,8 +268,8 @@ Deuda resuelta con posterioridad a la primer versión de este spec:
   el timeout explícito (`beforeAll(fn, 60_000)`). No cambió ningún comportamiento de
   reservas — los 6 escenarios que cubre el test son los mismos — pero el fallo engañaba
   (`a beforeEach/afterEach hook timed out`, que no nombra ni el hook ni el código lento) y
-  se leía como un bug de precios. El mismo patrón sigue vivo en los e2e de `ari-outbox`
-  (#62).
+  se leía como un bug de precios. Los e2e de `ari-outbox` ya habían recibido el mismo
+  timeout en `6d2d9adf`, citando justamente a este test; era el último que faltaba.
 - ~~**CORS sin headers en 401**~~: resuelto con `corsWithErrorHeaders`
   (`shared/middlewares/cors-error-headers.ts`) — el ErrorContract lanzado se convierte a
   respuesta ANTES de que el cors la decore, así el 401/403/409/429 llega con
