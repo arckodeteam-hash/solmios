@@ -97,6 +97,8 @@ export async function resendVerificationEmail(
   userId: string,
   // El correo identifica la CUENTA: el header lleva el nombre del hotel, no el del usuario.
   hotelRepo?: RepositoryAdapter<any>,
+  // Para que un `hotelRepo` caído no degrade el correo en silencio (mismo criterio que el #27).
+  logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void },
 ): Promise<{ sent: boolean }> {
   const u = await repo.findById(userId)
   if (!u) return { sent: false }
@@ -106,21 +108,31 @@ export async function resendVerificationEmail(
   if (!sender || !u.email) return { sent: false }
   const link = `${appUrl.replace(/\/$/, '')}/api/public/verify-email?token=${v.token}`
   // Sin `trialDays`: en el reenvío no se sabe si hay una prueba vigente.
-  const mail = welcomeVerificationEmail(link, await resolveHotelName(hotelRepo, u))
+  const mail = welcomeVerificationEmail(link, await resolveHotelName(hotelRepo, u, logger))
   await sender.enqueue({ to: u.email, subject: mail.subject, html: mail.html, hotelId: u.hotelId || '', relatedType: 'email_verification' })
   return { sent: true }
 }
 
-/** Nombre del hotel para el header; cae al nombre del usuario si no se puede resolver. */
-async function resolveHotelName(hotelRepo: RepositoryAdapter<any> | undefined, u: { name?: string; hotelId?: string }): Promise<string> {
+/**
+ * Nombre del hotel para el header; cae al nombre del usuario si no se puede resolver.
+ * El fallo NO se traga: el correo sale igual (best-effort), pero una caída del repo de hoteles
+ * degrada el correo a un nombre equivocado y sin esta línea nadie se enteraría — mismo criterio
+ * que el logueo de los envíos del alta (#27).
+ */
+async function resolveHotelName(
+  hotelRepo: RepositoryAdapter<any> | undefined,
+  u: { name?: string; hotelId?: string },
+  logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void },
+): Promise<string> {
   if (u.hotelId && hotelRepo) {
     try {
       // @ignore IDOR_RISK — `hotelId` sale del registro propio del usuario.
       const hotel = await hotelRepo.findById(u.hotelId)
       const name = (hotel as any)?.name
       if (name) return name
-    } catch {
-      // El correo sirve igual con el nombre de respaldo.
+      logger?.warn('Reenvío de verificación: el hotel no tiene nombre — el correo sale con el del usuario', { hotelId: u.hotelId })
+    } catch (e) {
+      logger?.warn('Reenvío de verificación: no se pudo resolver el hotel — el correo sale con el nombre del usuario', { hotelId: u.hotelId, error: (e as Error).message })
     }
   }
   return u.name || ''
