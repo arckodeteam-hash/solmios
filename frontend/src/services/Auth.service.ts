@@ -59,6 +59,13 @@ export const AuthService = {
     return mapUser(data)
   },
 
+  /** Perfil propio — `users:edit` es el permiso para editar a OTROS (F2 wizard-refactor,
+   *  `StepBienvenida.vue`: acá se guarda el nombre del dueño/gerente, `ownerNameResuelto`). */
+  async updateMe(patch: { name?: string; phone?: string }): Promise<User> {
+    const data = await http.put<MeResponse>('/auth/me', patch)
+    return mapUser(data)
+  },
+
   async logout() {
     hotelsCache = null
     return http.post('/auth/logout')

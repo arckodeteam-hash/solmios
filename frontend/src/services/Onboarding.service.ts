@@ -16,6 +16,9 @@ export interface OnboardingStep {
   done: boolean
   required: boolean
   count?: number
+  /** F2 (wizard-refactor) — 'profile' se completa inline en el Centro de configuración
+   *  (`useOnboardingStep.ts`); 'external' navega a su pantalla real. */
+  kind: 'profile' | 'external'
 }
 
 export interface OnboardingStatus {

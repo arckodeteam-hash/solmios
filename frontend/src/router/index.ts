@@ -349,6 +349,15 @@ const router = createRouter({
         { path: 'dashboard/general', redirect: '/panel/dashboard' },
         { path: 'dashboard/administrativo', redirect: '/panel/dashboard' },
         {
+          // Centro de configuración (wizard-refactor F3, doc 05/08 D6) — acordeón de pasos de
+          // perfil + operativos, reemplaza el flujo lineal que proponía la primera versión del
+          // plan. Se llega acá desde ProfileProgressBar.vue en el dashboard (F4).
+          path: 'configuracion-inicial',
+          name: 'configuracion-inicial',
+          component: () => import('@/pages/configuracion-inicial/index.vue'),
+          meta: { requiresHotelAdmin: true },
+        },
+        {
           path: 'reservas',
           name: 'reservations',
           component: () => import('@/pages/reservations/index.vue'),
