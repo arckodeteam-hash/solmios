@@ -70,10 +70,8 @@ export class CanalesService {
     this.bookings = new BookingsUseCase(this.channex)
     // Sync GLOBAL de bookings (cron #564): feed por cuenta de plataforma → deriva por propertyId.
     // El orm se obtiene de queries (escape hatch) para no inyectar ORM directo en el service.
-    this.bookingSync = new BookingSyncUseCase({
-      channex: this.channex, queries: this.queries, orm: this.queries.getOrm(),
-      logger: this.logger, syncLogRepo: this.syncLogRepo,
-    })
+    this.bookingSync = new BookingSyncUseCase({ channex: this.channex, queries: this.queries,
+      orm: this.queries.getOrm(), logger: this.logger, syncLogRepo: this.syncLogRepo })
   }
 
   /** Conecta el audit log. Lo inyecta el connector `canales-auditlog`. */
@@ -147,6 +145,8 @@ export class CanalesService {
   async getBookings(hotelId: string): Promise<BookingRevisionDTO[]> { return this.bookings.getBookings(await this.getConfig(hotelId)) }
   /** Ingesta GLOBAL del feed de bookings OTA (deriva por propertyId). Cron #564 + botón manual. */
   async syncAllBookingRevisions(): Promise<BookingSyncResult> { return this.bookingSync.run() }
+  /** Ingesta UNA revisión disparada por el webhook de Channex (#50). Mismo camino que el cron. */
+  async syncOneBookingRevision(revisionId: string): Promise<BookingSyncResult> { return this.bookingSync.runOne(revisionId) }
   /** Token de un solo uso para el iframe de Channex, acotado a la property Y AL GRUPO del hotel. */
   async getIframeToken(hotelId: string, username: string): Promise<string | null> { return this.channex.generateIframeToken(await this.getConfig(hotelId), username) }
   /** Devuelve el channexPropertyId configurado para el hotel (null si no sincronizó). */

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 // Mock del service: el store no debe pegarle a la API real en tests.
@@ -8,13 +8,26 @@ vi.mock('@/services/Platform.service', () => ({
   },
 }))
 
-import { useModulesStore } from './modules.store'
+import { useModulesStore, MODULES_STALE_MS } from './modules.store'
 import { ModulesService } from '@/services/Platform.service'
+
+// Sólo se falsea Date (no setTimeout): así se puede envejecer el estado cacheado y a la vez
+// vaciar la cola de microtareas con un setTimeout real para ver terminar la revalidación.
+function envejecerEstado(): void {
+  vi.setSystemTime(Date.now() + MODULES_STALE_MS + 1)
+}
+function flush(): Promise<void> {
+  return new Promise((r) => { setTimeout(r, 0) })
+}
 
 describe('modules.store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('ensure exitoso cachea por hotel: dos llamadas al mismo hotel = un fetch', async () => {
@@ -83,6 +96,134 @@ describe('modules.store', () => {
     expect(ModulesService.enabled).toHaveBeenCalledTimes(2)
   })
 
+
+  it('estado fresco: dos ensure() seguidos NO revalidan de gusto (un solo fetch)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.mocked(ModulesService.enabled).mockResolvedValue({ state: { crm: false } })
+    const store = useModulesStore()
+
+    await store.ensure('h1')
+    vi.setSystemTime(Date.now() + MODULES_STALE_MS - 1) // todavía dentro del umbral
+    await store.ensure('h1')
+    await flush()
+
+    expect(ModulesService.enabled).toHaveBeenCalledTimes(1)
+  })
+
+  it('estado viejo: ensure devuelve al toque con lo cacheado y revalida en segundo plano', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.mocked(ModulesService.enabled).mockResolvedValue({ state: { crm: false } })
+    const store = useModulesStore()
+    await store.ensure('h1')
+
+    // Revalidación que queda EN VUELO: si ensure esperara el fetch, el await de abajo no
+    // volvería nunca (el guard de rutas lo llama en cada navegación y no puede bloquearse).
+    let resolverRevalidacion: (v: { state: Record<string, boolean> }) => void = () => {}
+    vi.mocked(ModulesService.enabled).mockImplementationOnce(
+      () => new Promise((r) => { resolverRevalidacion = r }),
+    )
+    envejecerEstado()
+    await store.ensure('h1')
+
+    expect(ModulesService.enabled).toHaveBeenCalledTimes(2) // arrancó la revalidación
+    expect(store.enabled('crm')).toBe(false) // mientras tanto sigue el estado cacheado
+
+    resolverRevalidacion({ state: { crm: true } })
+    await flush()
+    expect(store.enabled('crm')).toBe(true) // al llegar, el estado se actualiza solo
+  })
+
+  it('#46: tras la revalidación el menú refleja la matriz del plan NUEVO sin cerrar sesión', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    // Plan viejo: CRM apagado, canales encendido.
+    vi.mocked(ModulesService.enabled).mockResolvedValue({ state: { crm: false, channel: true } })
+    const store = useModulesStore()
+    await store.ensure('h1')
+    expect(store.routeEnabled('/panel/crm')).toBe(false)
+
+    // El super admin le cambia el plan al hotel mientras su dueño trabaja: la API ya devuelve
+    // la matriz nueva (CRM incluido, canales fuera) y el menú tiene que seguirla.
+    vi.mocked(ModulesService.enabled).mockResolvedValue({ state: { crm: true, channel: false } })
+    envejecerEstado()
+    await store.ensure('h1')
+    await flush()
+
+    expect(ModulesService.enabled).toHaveBeenCalledTimes(2)
+    expect(store.enabled('crm')).toBe(true)
+    expect(store.enabled('channel')).toBe(false)
+    expect(store.routeEnabled('/panel/crm')).toBe(true)
+  })
+
+  it('revalidación en segundo plano FALLIDA conserva el estado bueno (no lo vacía)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.mocked(ModulesService.enabled).mockResolvedValue({ state: { crm: false } })
+    const store = useModulesStore()
+    await store.ensure('h1')
+
+    // Caída de red pasajera al revalidar: vaciar el estado dejaría al hotel viendo TODO el
+    // panel, un fallo peor que el menú desactualizado que la revalidación venía a arreglar.
+    vi.mocked(ModulesService.enabled).mockRejectedValueOnce(new Error('network'))
+    envejecerEstado()
+    await store.ensure('h1')
+    await flush()
+
+    expect(store.enabled('crm')).toBe(false) // se conserva la matriz que ya estaba
+  })
+
+  it('revalidación en curso: un ensure concurrente no dispara un segundo fetch', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.mocked(ModulesService.enabled).mockResolvedValue({ state: { crm: false } })
+    const store = useModulesStore()
+    await store.ensure('h1')
+
+    let resolverRevalidacion: (v: { state: Record<string, boolean> }) => void = () => {}
+    vi.mocked(ModulesService.enabled).mockImplementationOnce(
+      () => new Promise((r) => { resolverRevalidacion = r }),
+    )
+    envejecerEstado()
+    await store.ensure('h1') // menú
+    await store.ensure('h1') // guard de rutas, en la misma navegación
+
+    expect(ModulesService.enabled).toHaveBeenCalledTimes(2)
+    resolverRevalidacion({ state: {} })
+    await flush()
+  })
+
+  it('refresh fuerza el refetch aunque el estado esté fresco, y espera al resultado', async () => {
+    vi.mocked(ModulesService.enabled).mockResolvedValue({ state: { crm: false } })
+    const store = useModulesStore()
+    await store.ensure('h1')
+
+    vi.mocked(ModulesService.enabled).mockResolvedValue({ state: { crm: true } })
+    await store.refresh('h1')
+
+    expect(ModulesService.enabled).toHaveBeenCalledTimes(2)
+    expect(store.enabled('crm')).toBe(true) // ya actualizado al volver del await
+  })
+
+  it('refresh fallido conserva el estado bueno (mismo fail-safe que la revalidación)', async () => {
+    vi.mocked(ModulesService.enabled).mockResolvedValue({ state: { crm: false } })
+    const store = useModulesStore()
+    await store.ensure('h1')
+
+    vi.mocked(ModulesService.enabled).mockRejectedValueOnce(new Error('network'))
+    await store.refresh('h1')
+    expect(store.enabled('crm')).toBe(false)
+  })
+
+  it('cambiar de hotel recarga aunque el estado del anterior esté fresco (impersonación)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.mocked(ModulesService.enabled).mockResolvedValue({ state: { crm: false } })
+    const store = useModulesStore()
+    await store.ensure('h1')
+
+    vi.mocked(ModulesService.enabled).mockResolvedValue({ state: { crm: true } })
+    await store.ensure('h2')
+
+    expect(ModulesService.enabled).toHaveBeenCalledTimes(2)
+    expect(store.enabled('crm')).toBe(true)
+  })
+
   it('routeEnabled usa module-map: ruta gateada OFF vs ruta CORE siempre ON', async () => {
     vi.mocked(ModulesService.enabled).mockResolvedValue({ state: { crm: false, 'settings.rates': false } })
     const store = useModulesStore()
@@ -92,5 +233,91 @@ describe('modules.store', () => {
     expect(store.routeEnabled('/panel/config/tarifas')).toBe(false)
     expect(store.routeEnabled('/panel/dashboard')).toBe(true) // CORE: sin clave en module-map
     expect(store.routeEnabled('/panel/referidos')).toBe(true) // CORE (growth): sin clave
+  })
+
+  // ── Revisión #46: dos carreras reales encontradas al revisar la revalidación ──────────────
+
+  // Una revalidación de fondo del hotel A que resuelve DESPUÉS de haber cambiado al hotel B
+  // pisaba el estado bueno de B con los módulos de A, y dejaba `loadedHotel` en el hotel viejo:
+  // el dueño del hotel B terminaba viendo el menú de otro hotel. Pasa en impersonación.
+  it('una respuesta vieja del hotel A NO pisa el estado ya cargado del hotel B', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const store = useModulesStore()
+
+    // 1) h1 cargado.
+    vi.mocked(ModulesService.enabled).mockResolvedValueOnce({ state: { crm: false } })
+    await store.ensure('h1')
+    expect(store.state).toEqual({ crm: false })
+
+    // 2) el estado envejece y una navegación dispara la revalidación de h1, que queda colgada.
+    envejecerEstado()
+    let resolverViejo: (v: any) => void = () => {}
+    vi.mocked(ModulesService.enabled).mockReturnValueOnce(
+      new Promise((r) => { resolverViejo = r }) as any,
+    )
+    await store.ensure('h1')
+
+    // 3) el super admin pasa a impersonar h2, que responde primero.
+    vi.mocked(ModulesService.enabled).mockResolvedValueOnce({ state: { crm: true, reservations: false } })
+    await store.ensure('h2')
+    await flush()
+    expect(store.state).toEqual({ crm: true, reservations: false })
+
+    // 4) recién ahora aterriza la respuesta vieja de h1: hay que DESCARTARLA.
+    resolverViejo({ state: { crm: false } })
+    await flush()
+
+    expect(store.state).toEqual({ crm: true, reservations: false })
+    expect(store.enabled('reservations')).toBe(false)
+  })
+
+  // `loadedHotel` arrancaba en null y `ensure(undefined)` (super admin sin impersonar, que el
+  // guard de rutas llama en CADA navegación de /panel/*) entraba al branch de "ya cargado";
+  // como `loadedAt` arranca en 0, el chequeo de antigüedad daba siempre verdadero y disparaba
+  // un fetch fantasma por navegación, algo que antes de la revalidación no ocurría nunca.
+  it('un store recién creado NO confunde "nunca cargado" con "cargado sin hotel"', async () => {
+    // El guard de rutas hace `await modules.ensure(...)` y acto seguido decide si deja pasar.
+    // Con `loadedHotel` arrancando en null, `ensure(undefined)` (super admin sin impersonar)
+    // creía que YA había estado cargado: volvía al instante sin esperar el fetch —dejando al
+    // guard resolver con `state` vacío— y encima lo disparaba en segundo plano en CADA
+    // navegación, porque `loadedAt` en 0 hace que el chequeo de antigüedad dé siempre verdadero.
+    let resolverFetch: (v: any) => void = () => {}
+    vi.mocked(ModulesService.enabled).mockReturnValueOnce(
+      new Promise((r) => { resolverFetch = r }) as any,
+    )
+    const store = useModulesStore()
+
+    let resuelto = false
+    const enCurso = store.ensure(undefined).then(() => { resuelto = true })
+
+    // La primera carga tiene que ESPERAR al fetch, no volver al toque con el estado vacío.
+    await flush()
+    expect(resuelto).toBe(false)
+
+    resolverFetch({ state: { crm: false } })
+    await enCurso
+    expect(resuelto).toBe(true)
+    expect(store.state).toEqual({ crm: false })
+
+    // Y recién cargado no revalida de gusto.
+    await store.ensure(undefined)
+    await flush()
+    expect(ModulesService.enabled).toHaveBeenCalledTimes(1)
+  })
+
+  it('reset() invalida lo que está en vuelo: una respuesta posterior no revive el estado viejo', async () => {
+    const store = useModulesStore()
+    let resolverViejo: (v: any) => void = () => {}
+    vi.mocked(ModulesService.enabled).mockReturnValueOnce(
+      new Promise((r) => { resolverViejo = r }) as any,
+    )
+    void store.ensure('h1')
+
+    store.reset() // logout / cambio de sesión con el fetch todavía en vuelo
+
+    resolverViejo({ state: { crm: false } })
+    await flush()
+
+    expect(store.state).toEqual({})
   })
 })

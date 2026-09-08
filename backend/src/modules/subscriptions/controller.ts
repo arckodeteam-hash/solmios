@@ -85,6 +85,24 @@ export class SubscriptionsController {
     return { status: 200, body: result }
   }
 
+  /**
+   * #46 — cuánto le sale mejorar el plan (prorrateo de Stripe). No cobra nada: es la cifra que el
+   * panel muestra antes de confirmar. Reusa `CheckoutSchema` porque la entrada es la misma
+   * (`planId`), acá sobre la query en vez del body.
+   */
+  async upgradePreview(req: HttpRequest) {
+    const hotelId = (req.user as any)?.hotelId
+    const data = validateSchema(CheckoutSchema, req.query ?? {}) as { planId: string }
+    return { status: 200, body: await this.service.upgradePreview(hotelId, data.planId) }
+  }
+
+  /** #46 — mejora el plan y cobra la diferencia en el acto. El resultado dice si la factura quedó paga. */
+  async upgrade(req: HttpRequest) {
+    const hotelId = (req.user as any)?.hotelId
+    const data = validateSchema(CheckoutSchema, req.body ?? {}) as { planId: string }
+    return { status: 200, body: await this.service.upgradePlan(hotelId, data.planId) }
+  }
+
   /** El hotel gestiona su método de pago / ve facturas: Billing Portal de Stripe. */
   async portal(req: HttpRequest) {
     const hotelId = (req.user as any)?.hotelId
