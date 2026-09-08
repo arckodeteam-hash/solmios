@@ -7,12 +7,24 @@
 // backoff de 15 minutos se prueba en milisegundos y sin flakes.
 
 import { describe, it, expect } from 'bun:test'
-import { AriOutbox, BACKOFF_MS, type AriOutboxPort } from '../usecases/outbox-queue'
+import { AriOutbox, BACKOFF_MS, STALE_MS, type AriOutboxPort } from '../usecases/outbox-queue'
 import type { AriOutboxRow } from '../types'
 
 const HOTEL = 'h1'
 
-/** Puerto en memoria: el mínimo que usa la cola (create/update/findMany por igualdad exacta). */
+/**
+ * Igualdad del CAS: matchea si TODOS los pares de `where` coinciden, tratando `undefined` y `null`
+ * como el mismo "sin valor" (una fila vieja trae `claimedBy` ausente donde la tabla guarda NULL).
+ */
+function matchea(row: AriOutboxRow, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([k, v]) => {
+    const actual = (row as unknown as Record<string, unknown>)[k]
+    if (v === null || v === undefined) return actual === null || actual === undefined
+    return actual === v
+  })
+}
+
+/** Puerto en memoria: el mínimo que usa la cola (create/update/updateWhere/findMany). */
 function makePort(clock: { ms: number }) {
   const rows: AriOutboxRow[] = []
   const port: AriOutboxPort = {
@@ -25,6 +37,13 @@ function makePort(clock: { ms: number }) {
       const row = rows.find((r) => r.id === id)
       if (row) Object.assign(row, patch, { updatedAt: new Date(clock.ms).toISOString() })
       return row ?? null
+    },
+    // El CAS: actualiza SOLO lo que matchea y devuelve el conteo, igual que orm.updateMany
+    // (que además pisa `updatedAt` aunque el patch venga vacío — de eso vive el latido).
+    async updateWhere(where, patch) {
+      const match = rows.filter((r) => matchea(r, where))
+      for (const row of match) Object.assign(row, patch, { updatedAt: new Date(clock.ms).toISOString() })
+      return match.length
     },
     async findMany(query) {
       return rows.filter((r) => Object.entries(query).every(([k, v]) => (r as unknown as Record<string, unknown>)[k] === v))
@@ -241,5 +260,229 @@ describe('CA-6 — reintentos con backoff y fallo permanente', () => {
     expect(rates.lastError).toContain("kind 'rates'")
     expect(rows.find((r) => r.kind === 'inventory')!.status).toBe('sent')
     expect(pushed).toEqual([undefined])
+  })
+})
+
+describe('#58 — la fila es de UN proceso a la vez: reclamo con compare-and-swap', () => {
+  const T0 = Date.parse('2026-09-07T10:00:00.000Z')
+
+  /** Puerto compartido con UNA fila pending ya vencida: el punto de partida de la carrera. */
+  async function puertoConFilaVencida() {
+    const clock = { ms: T0 }
+    const { port, rows } = makePort(clock)
+    await port.create({
+      id: 'r1',
+      hotelId: HOTEL,
+      kind: 'inventory',
+      channels: [],
+      status: 'pending',
+      scheduledAt: new Date(T0 - 1000).toISOString(),
+      attempts: 0,
+      maxAttempts: 3,
+      lastError: null,
+    })
+    return { clock, port, rows }
+  }
+
+  it('dos drains concurrentes sobre la MISMA fila publican una sola vez', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    let pushCalls = 0
+    const proceso = (owner: string) => {
+      const o = new AriOutbox({ repo: port, now: () => clock.ms, owner, heartbeatMs: 0 })
+      o.registerPublisher('inventory', {
+        // El push CEDE el control: sin un await real el drain sería atómico y la carrera no existiría.
+        push: async () => { pushCalls++; await new Promise((r) => setTimeout(r, 5)) },
+      })
+      return o
+    }
+    const a = proceso('proceso-a')
+    const b = proceso('proceso-b')
+
+    await Promise.all([a.drain(), b.drain()])
+
+    expect(pushCalls).toBe(1)
+    expect(rows[0]!.status).toBe('sent')
+    expect(rows[0]!.claimedBy).toBeNull() // cerrada = libre
+  })
+
+  /**
+   * Un push que tarda más que STALE_MS con un segundo proceso mirando. Los dos relojes son el
+   * MISMO `clock.ms` a propósito: el `updatedAt` que escribe el puerto tiene que salir de donde
+   * lee reclaimStale, o el test no prueba nada.
+   */
+  async function escenarioPushLargo(heartbeatMs: number) {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    const trabajador = new AriOutbox({ repo: port, now: () => clock.ms, owner: 'el-que-publica', heartbeatMs })
+    trabajador.registerPublisher('inventory', { push: async () => { await new Promise((r) => setTimeout(r, 40)) } })
+    const vigilante = new AriOutbox({ repo: port, now: () => clock.ms, owner: 'el-que-vigila', heartbeatMs: 0 })
+
+    const enVuelo = trabajador.drain()
+    await new Promise((r) => setTimeout(r, 10)) // ya reclamó la fila y está en el push
+    clock.ms += STALE_MS + 60_000 // el push "tardó" de sobra más que la ventana de colgado
+    await new Promise((r) => setTimeout(r, 15)) // margen para varios latidos con el reloj corrido
+    const reclamadas = await vigilante.reclaimStale()
+    await enVuelo
+    return { reclamadas, rows }
+  }
+
+  it('el latido evita que un push más largo que STALE_MS sea declarado colgado', async () => {
+    const { reclamadas, rows } = await escenarioPushLargo(5)
+
+    expect(reclamadas).toBe(0)
+    expect(rows[0]!.status).toBe('sent')
+  })
+
+  it('sin latido el MISMO push largo se lo lleva el otro proceso, y el zombi no cierra la fila', async () => {
+    const { reclamadas, rows } = await escenarioPushLargo(0)
+
+    expect(reclamadas).toBe(1)
+    // El que estaba publicando ya no es dueño: su cierre no aplica y la fila queda lista para que
+    // la republique quien la reclamó (en vez de quedar 'sent' sin que nadie la haya terminado).
+    expect(rows[0]!.status).toBe('pending')
+  })
+
+  it('una fila que perdió el reclamo entre la lectura y el push no se publica', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    let pushCalls = 0
+    // Espía: otro proceso se lleva la fila JUSTO después de que este la leyó, así la lista de
+    // vencidas que el drain tiene en la mano ya está vieja cuando llega a publicar.
+    const espia: AriOutboxPort = {
+      ...port,
+      async findMany(query) {
+        const res = await port.findMany(query)
+        if (query.status === 'pending' && res[0]) {
+          await port.updateWhere({ id: res[0].id, status: 'pending' }, { status: 'processing', claimedBy: 'otro-proceso' })
+        }
+        return res
+      },
+    }
+    const outbox = new AriOutbox({ repo: espia, now: () => clock.ms, owner: 'el-perdedor', heartbeatMs: 0 })
+    outbox.registerPublisher('inventory', { push: async () => { pushCalls++ } })
+
+    await outbox.drain()
+
+    expect(pushCalls).toBe(0)
+    expect(rows[0]).toMatchObject({ status: 'processing', claimedBy: 'otro-proceso' })
+  })
+
+  // ── El ZOMBI: la fila se la llevaron MIENTRAS publicábamos ──────────────────
+  //
+  // Los tres de arriba cubren al proceso que pierde el reclamo ANTES de publicar. Falta el caso
+  // feo: este proceso reclamó bien, se fue al push, y en el medio otro le declaró la fila colgada
+  // y se la quedó. Cuando vuelve ya es un zombi: no puede pisar la fila del dueño nuevo NI avisar
+  // por los hooks, porque un `onSent`/`onFailed` de más dispara los avisos a otros módulos por un
+  // trabajo que el dueño nuevo todavía está haciendo (y puede terminar bien). De eso vive el CAS
+  // guardado por `claimedBy` en las tres salidas del drain: el cierre a 'sent' y las DOS ramas de
+  // handleFailure (backoff y fallo permanente).
+
+  const OWNER = 'el-zombi'
+  const LADRON = 'el-dueno-nuevo'
+
+  /**
+   * Un proceso con los hooks de cierre espiados. Con `robarEnPush`, el push hace de dueño NUEVO:
+   * se lleva la fila justo mientras este publica —lo mismo que haría un reclaimStale de otro
+   * proceso—, así el CAS del cierre no encuentra nada suyo que actualizar. Es el mismo truco del
+   * espía de findMany de acá arriba, movido de la lectura al push.
+   */
+  function procesoZombi(
+    port: AriOutboxPort,
+    clock: { ms: number },
+    opts: { falla?: boolean; roban?: boolean } = {},
+  ) {
+    const enviadas: AriOutboxRow[] = []
+    const fallidas: AriOutboxRow[] = []
+    const errores: unknown[] = []
+    const pushes: Array<string | undefined> = []
+    const outbox = new AriOutbox({
+      repo: port,
+      now: () => clock.ms,
+      owner: OWNER,
+      heartbeatMs: 0, // el latido no es lo que se prueba acá y un intervalo vivo cuelga a `bun test`
+      onSent: (row) => { enviadas.push(row) },
+      onFailed: (row) => { fallidas.push(row) },
+      onError: (_hotelId, _channel, err) => { errores.push(err) },
+    })
+    outbox.registerPublisher('inventory', {
+      push: async (_hotelId, channel) => {
+        pushes.push(channel)
+        if (opts.roban) {
+          await port.updateWhere(
+            { id: 'r1', status: 'processing', claimedBy: OWNER },
+            { status: 'processing', claimedBy: LADRON },
+          )
+        }
+        if (opts.falla) throw new Error('channex caído')
+      },
+    })
+    return { outbox, enviadas, fallidas, errores, pushes }
+  }
+
+  it('push OK pero la fila ya no es nuestra: no se cierra en sent ni se avisa onSent', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    const { outbox, enviadas, fallidas, pushes } = procesoZombi(port, clock, { roban: true })
+
+    await outbox.drain()
+
+    expect(pushes).toEqual([undefined]) // publicó de verdad: el "no avisó" no es por no haber llegado
+    expect(enviadas).toEqual([]) // el push salió, pero el trabajo ya es de otro
+    expect(fallidas).toEqual([])
+    // La fila conserva lo que le puso el dueño nuevo: el zombi no la pisa.
+    expect(rows[0]).toMatchObject({ status: 'processing', claimedBy: LADRON })
+  })
+
+  it('push fallido con reintentos disponibles y la fila robada: no se pisa el backoff ni se avisa', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    const scheduledAtOriginal = rows[0]!.scheduledAt
+    const { outbox, enviadas, fallidas, errores } = procesoZombi(port, clock, { roban: true, falla: true })
+
+    await outbox.drain() // attempts 0 → 1, muy por debajo de maxAttempts 3: es la rama del backoff
+
+    expect(errores).toHaveLength(1) // el fallo del push SÍ se reporta: es un error real de este proceso
+    expect(fallidas).toEqual([]) // pero la rama del backoff no avisa, y menos por una fila ajena
+    expect(enviadas).toEqual([])
+    // Ni attempts, ni lastError, ni el scheduledAt del backoff: la fila es del dueño nuevo.
+    expect(rows[0]).toMatchObject({ status: 'processing', claimedBy: LADRON, attempts: 0, lastError: null })
+    expect(rows[0]!.scheduledAt).toBe(scheduledAtOriginal)
+  })
+
+  it('último intento fallido con la fila robada: NO se emite onFailed', async () => {
+    // El más caro de los tres: un onFailed de más manda el aviso de "este hotel no se pudo
+    // publicar" a otros módulos por una fila que el dueño nuevo puede terminar publicando bien.
+    const { clock, port, rows } = await puertoConFilaVencida()
+    await port.update('r1', { attempts: 2 }) // maxAttempts 3: este fallo la dejaría en 'failed' definitivo
+    const { outbox, enviadas, fallidas } = procesoZombi(port, clock, { roban: true, falla: true })
+
+    await outbox.drain()
+
+    expect(fallidas).toEqual([])
+    expect(enviadas).toEqual([])
+    expect(rows[0]).toMatchObject({ status: 'processing', claimedBy: LADRON, attempts: 2, lastError: null })
+  })
+
+  // El contraste: sin robo, los MISMOS caminos sí avisan. Sin esto, los tres de arriba pasarían
+  // igual con los hooks rotos del todo (o sin cablear), que es no probar nada.
+  it('sin robo, el mismo camino feliz avisa onSent UNA vez y deja la fila sent', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    const { outbox, enviadas, fallidas } = procesoZombi(port, clock)
+
+    await outbox.drain()
+
+    expect(enviadas).toHaveLength(1)
+    expect(enviadas[0]).toMatchObject({ id: 'r1', status: 'sent' })
+    expect(fallidas).toEqual([])
+    expect(rows[0]).toMatchObject({ status: 'sent', claimedBy: null })
+  })
+
+  it('sin robo, el mismo fallo terminal avisa onFailed UNA vez y deja la fila failed', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    await port.update('r1', { attempts: 2 })
+    const { outbox, enviadas, fallidas } = procesoZombi(port, clock, { falla: true })
+
+    await outbox.drain()
+
+    expect(fallidas).toHaveLength(1)
+    expect(fallidas[0]).toMatchObject({ id: 'r1', status: 'failed', attempts: 3, lastError: 'channex caído' })
+    expect(enviadas).toEqual([])
+    expect(rows[0]).toMatchObject({ status: 'failed', attempts: 3, claimedBy: null })
   })
 })

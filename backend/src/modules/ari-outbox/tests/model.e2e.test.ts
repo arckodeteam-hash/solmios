@@ -49,6 +49,10 @@ describe('ari_outbox — el modelo declara todos los campos que usa la cola', ()
       attempts: 2,
       maxAttempts: 5,
       lastError: 'Channex respondio 422: rate_plan_id desconocido',
+      // Dueño de la fila: es la mitad del compare-and-swap del drain, así que la columna tiene que
+      // existir DE VERDAD en la tabla migrada. Sin esto el ORM lo descartaría en silencio y el
+      // reclamo guardado por dueño no guardaría nada.
+      claimedBy: 'worker-e2e-1',
     }
     await repo.create(row as any)
 
@@ -63,6 +67,7 @@ describe('ari_outbox — el modelo declara todos los campos que usa la cola', ()
     expect(saved!.attempts).toBe(2)      // no el default 0
     expect(saved!.maxAttempts).toBe(5)   // no el default 3
     expect(saved!.lastError).toBe('Channex respondio 422: rate_plan_id desconocido')
+    expect(saved!.claimedBy).toBe('worker-e2e-1')
     // timestamps: true → el listado admin ordena por acá.
     expect(saved!.createdAt).toBeTruthy()
   })

@@ -18,12 +18,29 @@ export const DEFAULT_DEBOUNCE_MS = 1500
 export const BACKOFF_MS = [60_000, 300_000, 900_000]
 /** Filas en 'processing' más viejas que esto: el proceso que las tomó murió a mitad. */
 export const STALE_MS = 5 * 60_000
+/**
+ * Cada cuánto el proceso que está publicando renueva su lease (toca `updatedAt`) mientras dura el
+ * push. Bien por debajo de STALE_MS —un quinto— para que un latido perdido, o dos, no alcancen a
+ * que otro proceso declare colgada una fila que se está publicando de verdad: sin esto, entre el
+ * update a 'processing' y el cierre NO hay ninguna escritura, y un push más largo que STALE_MS se
+ * gana que lo reclamen por stale y lo republiquen en paralelo.
+ */
+export const HEARTBEAT_MS = 60_000
 
 /** Puerto de persistencia: lo implementa OrmRepository en el módulo, y un array en los tests. */
 export interface AriOutboxPort {
   create(row: AriOutboxRow): Promise<AriOutboxRow>
   update(id: string, patch: Partial<AriOutboxRow>): Promise<unknown>
   findMany(query: Record<string, unknown>): Promise<AriOutboxRow[]>
+  /**
+   * COMPARE-AND-SWAP del módulo: aplica `patch` a las filas que matchean TODOS los pares de
+   * `where` y devuelve cuántas cambió. Existe porque el puerto de repositorio del framework solo
+   * sabe hacer update POR ID —un write que no puede exigir "y que siga en pending"—, así que con
+   * él dos procesos que leyeron la misma fila la reclaman los dos. `orm.updateMany` sí genera el
+   * UPDATE ... WHERE sobre cualquier campo; el store del módulo lo expone por acá (mismo recurso
+   * que subscriptions/usecases/handle-stripe-event.ts › releaseCategorySlot).
+   */
+  updateWhere(where: Record<string, unknown>, patch: Partial<AriOutboxRow>): Promise<number>
 }
 
 export type AriPushFn = (hotelId: string, channel?: string) => Promise<unknown>
@@ -44,6 +61,13 @@ export interface AriOutboxDeps {
   onSent?: (row: AriOutboxRow) => void | Promise<void>
   /** La fila agotó los intentos y quedó en `failed` DEFINITIVO (un reintento no avisa). */
   onFailed?: (row: AriOutboxRow) => void | Promise<void>
+  /**
+   * Identidad de ESTE proceso en la tabla (`claimedBy`). Por default un uuid por instancia: dos
+   * procesos nunca comparten dueño, que es lo único que el CAS necesita.
+   */
+  owner?: string
+  /** Renovación del lease durante el push. Default HEARTBEAT_MS; `0` lo apaga. */
+  heartbeatMs?: number
 }
 
 export class AriOutbox {
@@ -57,6 +81,9 @@ export class AriOutbox {
   private readonly onError: (hotelId: string, channel: string | undefined, err: unknown) => void
   private readonly onSent?: (row: AriOutboxRow) => void | Promise<void>
   private readonly onFailed?: (row: AriOutboxRow) => void | Promise<void>
+  /** Quién es este proceso para la tabla. Se calcula UNA vez: es la identidad de la instancia. */
+  private readonly owner: string
+  private readonly heartbeatMs: number
   /**
    * Última operación encolada por clave `${hotelId}|${kind}`: serializa `schedule` (ver su doc).
    * Se limpia cuando la cadena termina y sigue siendo la última, así un hotel que agenda todo el
@@ -72,6 +99,8 @@ export class AriOutbox {
     this.onError = deps.onError ?? (() => {})
     this.onSent = deps.onSent
     this.onFailed = deps.onFailed
+    this.owner = deps.owner ?? crypto.randomUUID()
+    this.heartbeatMs = deps.heartbeatMs ?? HEARTBEAT_MS
   }
 
   registerPublisher(kind: string, publisher: AriPublisher): void {
@@ -93,10 +122,12 @@ export class AriOutbox {
    * se crean DOS filas y salen DOS pushes, que es justo lo que CA-3 prohíbe. El coalescer en
    * memoria no tenía este hueco porque era 100% síncrono; esta cadena es su equivalente acá.
    *
-   * OJO: la serialización es POR PROCESO. Entre varios procesos haría falta un UPDATE condicional
-   * (o un índice único parcial) que el puerto del repositorio no expresa hoy; está diferido en el
-   * issue #58, y el #51 declara el escenario multi-proceso como hipotético porque hoy corre un
-   * solo systemd.
+   * OJO: la serialización es POR PROCESO. El reclamo de la fila ya no depende de ella —lo resuelve
+   * el UPDATE condicional de `repo.updateWhere`, ver processOne—, pero la carrera de `scheduleOne`
+   * sigue abierta: dos procesos pueden leer los dos "no hay fila pendiente" y CREAR dos filas
+   * pending del mismo (hotel, kind), que después salen como dos pushes. Taparlo necesitaría un
+   * índice único PARCIAL (hotelId, kind) WHERE status='pending', que el ORM no expresa. Hoy corre
+   * un solo systemd, así que el escenario es hipotético (#51).
    */
   schedule(hotelId: string, kind: string, channels: Array<string | undefined> = [undefined]): Promise<void> {
     const key = `${hotelId}|${kind}`
@@ -158,15 +189,27 @@ export class AriOutbox {
     }
   }
 
-  /** Filas que otro proceso tomó y nunca cerró: vuelven a pending, vencidas ya. */
+  /**
+   * Filas que otro proceso tomó y nunca cerró: vuelven a pending, vencidas ya. La prueba de vida
+   * sigue siendo `updatedAt` contra el cutoff, pero ahora el dueño la renueva mientras publica
+   * (ver el latido de processOne), así que un push largo ya no cuenta como colgado.
+   *
+   * El reclamo va con CAS guardado por el dueño LEÍDO: si dos procesos corren reclaimStale a la
+   * vez, solo uno cambia la fila y solo ese suma; el otro ve 0 y la deja en paz.
+   */
   async reclaimStale(): Promise<number> {
     const cutoff = this.iso(this.now() - STALE_MS)
     const stuck = await this.repo.findMany({ status: 'processing' })
     let reclaimed = 0
     for (const row of stuck) {
       if (row.updatedAt && row.updatedAt >= cutoff) continue
-      await this.repo.update(row.id, { status: 'pending', scheduledAt: this.iso(this.now()) })
-      reclaimed++
+      // `?? null` y no `row.claimedBy` a secas: una fila anterior a este campo lo trae undefined, y
+      // un filtro por undefined no es un filtro por "sin dueño".
+      const won = await this.repo.updateWhere(
+        { id: row.id, status: 'processing', claimedBy: row.claimedBy ?? null },
+        { status: 'pending', scheduledAt: this.iso(this.now()), claimedBy: null },
+      )
+      if (won > 0) reclaimed++
     }
     return reclaimed
   }
@@ -174,30 +217,75 @@ export class AriOutbox {
   // ─── Internos ─────────────────────────────────────────────────────────────
 
   private async processOne(row: AriOutboxRow): Promise<void> {
-    // Se reclama primero para que un segundo proceso no la tome mientras se publica.
-    await this.repo.update(row.id, { status: 'processing' })
-    const publisher = this.publishers.get(row.kind)
-    // Un kind sin publicador es un fallo de la fila, no un throw: las demás filas se siguen drenando.
-    if (!publisher) return this.handleFailure(row, new Error(`sin publisher registrado para kind '${row.kind}'`))
+    // EL CORAZÓN DEL FIX. El reclamo es un compare-and-swap, no un write por id: la fila pasa a
+    // 'processing' SOLO si sigue en 'pending'. Los dos procesos que leyeron la misma fila vencida
+    // llegan hasta acá, pero uno cambia 1 fila y el otro 0 — y el que ve 0 se va sin publicar, que
+    // es exactamente el push duplicado que antes salía dos veces.
+    const won = await this.repo.updateWhere(
+      { id: row.id, status: 'pending' },
+      { status: 'processing', claimedBy: this.owner },
+    )
+    if (won === 0) return
 
-    // Ráfaga con canales → solo esos. Ráfaga vacía → cambio GLOBAL: la base y DESPUÉS los canales
-    // con tarifa propia (si solo saliera la base, borraría los precios por canal).
-    const targets: Array<string | undefined> = row.channels?.length
-      ? [...row.channels]
-      : [undefined, ...(await this.resolveOverrides(row.hotelId, publisher))]
+    // El lease se renueva mientras dura el push: `updatedAt` es la única prueba de vida que mira
+    // reclaimStale, y entre el reclamo y el cierre no hay ninguna otra escritura.
+    const heartbeat = this.startHeartbeat(row)
+    try {
+      const publisher = this.publishers.get(row.kind)
+      // Un kind sin publicador es un fallo de la fila, no un throw: las demás filas se siguen drenando.
+      if (!publisher) return await this.handleFailure(row, new Error(`sin publisher registrado para kind '${row.kind}'`))
 
-    let firstError: unknown = null
-    for (const channel of targets) {
-      try {
-        await publisher.push(row.hotelId, channel)
-      } catch (err: unknown) {
-        firstError ??= err // un canal caído no corta a los siguientes (como hoy), pero la fila reintenta
-        this.onError(row.hotelId, channel, err)
+      // Ráfaga con canales → solo esos. Ráfaga vacía → cambio GLOBAL: la base y DESPUÉS los canales
+      // con tarifa propia (si solo saliera la base, borraría los precios por canal).
+      const targets: Array<string | undefined> = row.channels?.length
+        ? [...row.channels]
+        : [undefined, ...(await this.resolveOverrides(row.hotelId, publisher))]
+
+      let firstError: unknown = null
+      for (const channel of targets) {
+        try {
+          await publisher.push(row.hotelId, channel)
+        } catch (err: unknown) {
+          firstError ??= err // un canal caído no corta a los siguientes (como hoy), pero la fila reintenta
+          this.onError(row.hotelId, channel, err)
+        }
       }
+      if (firstError) return await this.handleFailure(row, firstError)
+      // Mismo CAS, ahora guardado por dueño: si devuelve 0 la fila YA NO ES NUESTRA —se la llevó un
+      // reclamo por stale y otro proceso la está publicando— y este es el zombi. No la pisa ni
+      // avisa un `onSent` de un trabajo que ahora es de otro.
+      const cerrada = await this.repo.updateWhere(
+        { id: row.id, status: 'processing', claimedBy: this.owner },
+        { status: 'sent', lastError: null, claimedBy: null },
+      )
+      if (cerrada === 0) return
+      await this.notify(this.onSent, { ...row, status: 'sent', lastError: null })
+    } finally {
+      // OBLIGATORIO y cubriendo TODO lo de arriba (handleFailure incluido): un intervalo vivo
+      // retiene el loop de eventos y deja colgado al proceso —y a `bun test`.
+      if (heartbeat) clearInterval(heartbeat)
     }
-    if (firstError) return this.handleFailure(row, firstError)
-    await this.repo.update(row.id, { status: 'sent', lastError: null })
-    await this.notify(this.onSent, { ...row, status: 'sent', lastError: null })
+  }
+
+  /** Renueva el lease cada `heartbeatMs`. `null` si está apagado (heartbeatMs 0). */
+  private startHeartbeat(row: AriOutboxRow): ReturnType<typeof setInterval> | null {
+    if (this.heartbeatMs <= 0) return null
+    const timer = setInterval(() => {
+      void (async () => {
+        try {
+          // Patch vacío a propósito: updateMany igual pisa `updatedAt`, que es lo único que
+          // reclaimStale lee. Guardado por dueño para no revivir una fila que ya perdimos.
+          await this.repo.updateWhere({ id: row.id, status: 'processing', claimedBy: this.owner }, {})
+        } catch (err: unknown) {
+          // Un latido perdido no puede tumbar el drain: lo peor que pasa es que la fila se declare
+          // colgada y otro proceso la reclame, que es el comportamiento seguro de siempre.
+          this.onError(row.hotelId, undefined, err)
+        }
+      })()
+    }, this.heartbeatMs)
+    // El latido no puede ser el motivo de que el proceso no termine.
+    ;(timer as { unref?: () => void }).unref?.()
+    return timer
   }
 
   /**
@@ -230,18 +318,23 @@ export class AriOutbox {
     const attempts = Number(row.attempts || 0) + 1
     const lastError = err instanceof Error ? err.message || String(err) : String(err)
     const maxAttempts = Number(row.maxAttempts || BACKOFF_MS.length)
+    // Las dos salidas van con el mismo CAS guardado por dueño que el cierre bueno: si la fila ya
+    // no es nuestra, el fallo es de un push que otro proceso está rehaciendo — ni se pisa ni avisa.
+    const mia = { id: row.id, status: 'processing' as AriOutboxStatus, claimedBy: this.owner }
     if (attempts >= maxAttempts) {
-      await this.repo.update(row.id, { status: 'failed', attempts, lastError })
+      const cerrada = await this.repo.updateWhere(mia, { status: 'failed', attempts, lastError, claimedBy: null })
+      if (cerrada === 0) return
       // Definitivo: no hay más reintentos. El reintento con backoff NO avisa (la fila sigue viva).
       await this.notify(this.onFailed, { ...row, status: 'failed', attempts, lastError })
       return
     }
     const backoff = BACKOFF_MS[Math.min(attempts - 1, BACKOFF_MS.length - 1)]
-    await this.repo.update(row.id, {
+    await this.repo.updateWhere(mia, {
       status: 'pending',
       attempts,
       lastError,
       scheduledAt: this.iso(this.now() + backoff),
+      claimedBy: null,
     })
   }
 

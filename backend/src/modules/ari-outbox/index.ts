@@ -2,11 +2,11 @@
 // Solo esto es visible para otros módulos y conectores.
 // ⚠ REGLA: Append-only. No sacar ni modificar exports existentes.
 
-import { createModule, OrmRepository } from 'arckode-framework'
+import { createModule } from 'arckode-framework'
 import { registerAriOutboxModels } from './model'
 import { AriOutboxService } from './service'
 import { AriOutboxController } from './controller'
-import type { AriOutboxRow } from './types'
+import { createAriOutboxStore } from './usecases/outbox-store'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
 
 export { AriOutboxService }
@@ -19,6 +19,7 @@ export type { AriOutboxList, AriOutboxListQuery, AriOutboxStore } from './servic
 // con tipos (misma línea que email-queue/index.ts:10).
 export type { AriOutboxSockets } from './sockets'
 export { AriOutboxValidator, ListAriOutboxSchema } from './validators/schema'
+export { createAriOutboxStore } from './usecases/outbox-store'
 
 /**
  * Cada cuánto tickea el drain desde composition-root. CORTO a propósito: el debounce de la ráfaga
@@ -54,7 +55,10 @@ export function AriOutboxModule() {
       // Registrar modelo(s) — delegado a model.ts
       registerAriOutboxModels(orm)
 
-      const repo = new OrmRepository<AriOutboxRow>(orm, 'AriOutbox')
+      // El store del módulo, NO un OrmRepository pelado: el reclamo de fila del drain necesita
+      // el UPDATE condicional de orm.updateMany, que el repositorio del framework no expone
+      // (ver usecases/outbox-store.ts).
+      const repo = createAriOutboxStore(orm)
       const log = logger.child('ari-outbox')
       const service = new AriOutboxService(repo, log)
       const controller = new AriOutboxController(service, log)

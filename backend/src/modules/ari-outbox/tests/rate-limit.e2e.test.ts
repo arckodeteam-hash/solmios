@@ -29,6 +29,18 @@ function fakeClock(start = Date.parse('2026-09-07T10:00:00.000Z')) {
   return { now: () => t, advance: (ms: number) => { t += ms } }
 }
 
+/**
+ * Igualdad del CAS: matchea si TODOS los pares de `where` coinciden, tratando `undefined` y `null`
+ * como el mismo "sin valor" (una fila vieja trae `claimedBy` ausente donde la tabla guarda NULL).
+ */
+function matchea(row: AriOutboxRow, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([k, v]) => {
+    const actual = (row as unknown as Record<string, unknown>)[k]
+    if (v === null || v === undefined) return actual === null || actual === undefined
+    return actual === v
+  })
+}
+
 /** Puerto en memoria (el mismo de outbox-queue.test.ts): acá la tabla no aporta nada al criterio. */
 function makePort(clock: { now: () => number }) {
   const rows: AriOutboxRow[] = []
@@ -42,6 +54,12 @@ function makePort(clock: { now: () => number }) {
       const row = rows.find((r) => r.id === id)
       if (row) Object.assign(row, patch, { updatedAt: new Date(clock.now()).toISOString() })
       return row ?? null
+    },
+    /** El CAS del reclamo: actualiza lo que matchea y devuelve el conteo (orm.updateMany). */
+    async updateWhere(where, patch) {
+      const match = rows.filter((r) => matchea(r, where))
+      for (const row of match) Object.assign(row, patch, { updatedAt: new Date(clock.now()).toISOString() })
+      return match.length
     },
     async findMany(query) {
       return rows.filter((r) => Object.entries(query).every(([k, v]) => (r as unknown as Record<string, unknown>)[k] === v))

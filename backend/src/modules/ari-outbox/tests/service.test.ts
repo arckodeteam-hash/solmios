@@ -45,6 +45,18 @@ const SEMBRADO: AriOutboxRow[] = [
   fila({ id: 'p1', status: 'pending' }),
 ]
 
+/**
+ * Igualdad del CAS: matchea si TODOS los pares de `where` coinciden, tratando `undefined` y `null`
+ * como el mismo "sin valor" (una fila vieja trae `claimedBy` ausente donde la tabla guarda NULL).
+ */
+function matchea(row: AriOutboxRow, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([k, v]) => {
+    const actual = (row as unknown as Record<string, unknown>)[k]
+    if (v === null || v === undefined) return actual === null || actual === undefined
+    return actual === v
+  })
+}
+
 interface PaginateCall {
   filters: Record<string, unknown>
   options: { offset?: number; limit: number; orderBy?: unknown }
@@ -60,6 +72,12 @@ function makeStore(seed: AriOutboxRow[] = []) {
       const row = rows.find((r) => r.id === id)
       if (row) Object.assign(row, patch)
       return row ?? null
+    },
+    /** El CAS del reclamo: actualiza lo que matchea y devuelve el conteo (orm.updateMany). */
+    async updateWhere(where, patch) {
+      const match = rows.filter((r) => matchea(r, where))
+      for (const row of match) Object.assign(row, patch, { updatedAt: new Date().toISOString() })
+      return match.length
     },
     async findMany(query) {
       return rows.filter((r) => Object.entries(query).every(([k, v]) => (r as unknown as Record<string, unknown>)[k] === v))
