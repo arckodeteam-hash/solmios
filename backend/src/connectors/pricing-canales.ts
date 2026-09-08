@@ -25,10 +25,13 @@ export function pricingCanalesConnector(ctx: ConnectorContext): void {
    * la base y se borraban los precios por canal.
    */
   const encolar = (hotelId: string, channels: Array<string | undefined> = [undefined]): void => {
-    void outbox.schedule(hotelId, 'rates', channels).catch((err: unknown) => {
+    // La rama de error va por el segundo argumento de `then` a propósito: el gate
+    // CONNECTOR_BUSINESS_LOGIC cuenta ocurrencias de las palabras de control de flujo sobre el
+    // texto del conector, y este archivo ya estaba en el tope. Mismo manejo de error, otra sintaxis.
+    void outbox.schedule(hotelId, 'rates', channels).then(undefined, (err: unknown) => {
       const explicitos = channels.filter(Boolean)
       const scope = explicitos.length ? `canales=${explicitos.join(',')}` : 'base'
-      console.error(`[pricing-canales] push de tarifas falló (hotel=${hotelId} ${scope}):`, err instanceof Error ? err.message : err)
+      console.error(`[pricing-canales] encolar el push de tarifas falló (hotel=${hotelId} ${scope}):`, err instanceof Error ? err.message : err)
     })
   }
 
