@@ -94,7 +94,7 @@ export function CanalesModule() {
       // fila `configuration(hotelId='platform', key='channex')` que las credenciales.
       const webhookStore = {
         read: () => queries.getPlatformChannex(),
-        write: (patch: { webhookSecret?: string }) => queries.setPlatformChannex(patch),
+        write: (patch: { webhookSecret?: string; channexUserId?: string }) => queries.setPlatformChannex(patch),
       }
       // Origen público de esta instalación para armar el callback_url. Misma lógica de proto+host
       // que `buildEndpointUrl` (cf-visitor gana sobre x-forwarded-proto: Cloudflare en modo Flexible
