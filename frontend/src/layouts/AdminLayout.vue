@@ -185,6 +185,7 @@ import { usePermissions } from '@/composables/usePermissions'
 import { isSystemRole } from '@/config/permissions'
 import { AuthService } from '@/services/Auth.service'
 import { MESSAGING_PATH, MESSAGING_TABS } from '@/config/messaging-tabs'
+import { INTEGRATIONS_PATH } from '@/config/integration-tabs'
 import logoWhite from '@/assets/logo/logo-horizontal-white.png'
 import { PAGINA_PUBLICA_PATH } from '@/config/pagina-publica-tabs'
 import AppHeader from '@/components/features/core-pms/AppHeader.vue'
@@ -432,9 +433,13 @@ const nonavItems = [
         label: 'Mensajería', path: MESSAGING_PATH, roles: ['hotel_admin', 'receptionist'],
         anyOf: MESSAGING_TABS.map(t => t.path),
       },
-      { label: 'Pasarelas de Pago', path: '/panel/config/pasarelas', roles: ['hotel_admin'] },
-      { label: 'Cerraduras', path: '/panel/config/cerraduras', roles: ['hotel_admin'] },
-      { label: 'Dispositivos', path: '/panel/config/dispositivos', roles: ['hotel_admin'] },
+      // Las conexiones con servicios de afuera (WhatsApp, pasarelas, cerraduras, dispositivos,
+      // facturación) se colapsaron en una entrada con tabs (pages/integraciones). `anyOf`: las
+      // tabs con módulo propio gatean la entrada, pero WhatsApp y Facturación no dependen de
+      // ninguno, así que la entrada se muestra igual — por eso también va su propia ruta.
+      {
+        label: 'Integraciones', path: INTEGRATIONS_PATH, roles: ['hotel_admin'],
+      },
       // DT-17: solo hotel_admin (no receptionist/housekeeper) — es el log de acciones sensibles.
       { label: 'Auditoría', path: '/panel/config/auditoria', roles: ['hotel_admin'] },
     ]

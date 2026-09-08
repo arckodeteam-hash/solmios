@@ -15,6 +15,14 @@
 
     <!-- Conectado -->
     <div v-else-if="conexion?.estado === 'connected'" class="space-y-4">
+      <!-- Conectado pero sin ningún dato del perfil: pasa si Meta no devolvió la ficha del número
+           al conectar. Sin esto la tarjeta quedaba en un rectángulo vacío bajo un "Conectado", y
+           el hotel no tenía forma de saber con qué número está escribiendo. -->
+      <p v-if="!hayDatosDeMeta" class="rounded-xl bg-gold/10 px-4 py-3 text-[11px] text-navy">
+        La conexión está activa, pero no pudimos leer los datos del número desde Meta.
+        Volvé a conectar para que aparezcan acá.
+      </p>
+
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div v-if="conexion.displayPhoneNumber">
           <div class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Número conectado</div>
@@ -153,6 +161,13 @@ const ESTADO_LABEL: Record<string, string> = {
   connected: 'Conectado', disconnected: 'Sin conectar', error: 'Con error', legacy_baileys: 'Conexión anterior',
 }
 const badgeLabel = computed(() => ESTADO_LABEL[conexion.value?.estado || 'disconnected'])
+
+// Si Meta no devolvió nada del número, el bloque de datos queda entero vacío y la tarjeta se ve
+// rota. Se chequean los mismos campos que renderiza el grid, no uno solo.
+const hayDatosDeMeta = computed(() => {
+  const c = conexion.value
+  return !!(c?.displayPhoneNumber || c?.verifiedName || c?.businessName || c?.qualityRating || c?.messagingLimit)
+})
 const badgeClass = computed(() => ({
   connected: 'bg-teal/10 text-teal',
   error: 'bg-coral/10 text-coral',

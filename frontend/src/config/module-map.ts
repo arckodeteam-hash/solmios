@@ -160,6 +160,9 @@ export const ROUTE_TO_PERMISSION: Record<string, string> = {
   '/panel/config/habitaciones': 'rooms',
   '/panel/config/cerraduras': 'ttlock',
   '/panel/config': 'settings',       // base, tarifas, promociones, mensajería, pasarelas, dispositivos
+  // Integraciones (WhatsApp, pasarelas, cerraduras, dispositivos, facturación) — mismo permiso
+  // que Configuración: es config del hotel, solo que agrupada por "con qué se conecta".
+  '/panel/integraciones': 'settings',
   '/panel/contabilidad': 'accounting',
   '/panel/tesoreria': 'treasury',
   // Match por prefijo más largo: /panel/restaurante/carta gana sobre /panel/restaurante.

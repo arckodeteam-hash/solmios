@@ -562,6 +562,29 @@
                en la landing pública, no configuración operativa de reseñas. -->
         </div>
       </div>
+
+      <!-- Políticas para factura: el texto de cancelación y reembolso que se imprime al pie.
+           Estaba en la pestaña Integraciones, que ahora es solo conexiones con servicios de afuera. -->
+      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
+        <div class="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 class="font-extrabold text-navy">Políticas para factura</h3>
+            <p class="text-[11px] text-text-muted mt-1 leading-relaxed">
+              Texto que aparecerá al pie de cada factura emitida como “Políticas de cancelación y reembolso”.
+              Déjalo vacío para no mostrar la sección.
+            </p>
+          </div>
+        </div>
+        <div class="space-y-3">
+          <textarea v-model="invoicePolicyText" rows="4"
+            placeholder="Ej. Cancelación gratuita hasta 48 h antes de la entrada. Después de ese plazo, la primera noche no es reembolsable..."
+            class="w-full px-3 py-2 rounded-xl border border-border text-sm resize-y"></textarea>
+          <button @click="saveInvoicePolicy" :disabled="invoicePolicySaving"
+            class="w-full px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg transition-all cursor-pointer disabled:opacity-50">
+            {{ invoicePolicySaving ? 'Guardando...' : 'Guardar' }}
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- ========== NIÑOS (Requerimiento 1) ========== -->
@@ -615,119 +638,11 @@
     </div>
 
     <!-- ========== TIPOS DE HABITACIÓN Y CAPACIDAD (Requerimiento 2) ========== -->
-    <div v-if="(activeTab as string) === 'integrations'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <!-- WhatsApp es del HOTEL, no de la plataforma: cada uno conecta su propio número y su propia
-           cuenta de Meta. Por eso vive acá y no en /admin/settings. -->
-      <div class="md:col-span-2">
-        <WhatsappConnectionCard />
-      </div>
-      <!-- El hotel paga estas conversaciones: tiene que verlas antes de que llegue la factura. -->
-      <div class="md:col-span-2">
-        <WhatsappUsageCard />
-      </div>
-
-      <!-- Channel Manager NO va acá: lo configura y gestiona el admin de la PLATAFORMA (/admin),
-           no el hotel. Esta card mostraba un "Conectado" hardcodeado (mentía el estado real) y
-           linkeaba a /panel/channel-manager, que al merchant le da 403. -->
-
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <h3 class="font-extrabold text-navy mb-4">Pasarela de Pagos</h3>
-        <!-- Las pasarelas se configuran en /panel/config/pasarelas: acá había una segunda fuente de verdad
-             (configuration.stripe_config, sin cifrar) que solo la usaba uno de los tres flujos de cobro. -->
-        <div class="p-4 bg-surface rounded-xl">
-          <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-3">
-              <span class="w-5 h-5 text-navy/50" v-html="ICON_CARD"></span>
-              <div><div class="text-sm font-bold text-navy">Pasarelas de Pago</div><div class="text-[10px] text-text-muted">Stripe, Azul, CardNet, PayPal</div></div>
-            </div>
-          </div>
-          <p class="text-[11px] text-text-secondary mb-3 leading-relaxed">
-            Conectá la cuenta donde querés recibir el dinero de tus reservas. Las llaves se guardan cifradas.
-          </p>
-          <router-link to="/panel/config/pasarelas" class="block text-center w-full px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg cursor-pointer">
-            Configurar pasarelas
-          </router-link>
-        </div>
-      </div>
-
-      <!-- Acá había una segunda tarjeta "WhatsApp Business" con un "No configurado" fijo: sin botón
-           ni lógica, seguía diciendo lo mismo con el hotel ya conectado. Dos tarjetas del mismo
-           nombre en la misma pantalla, y la que mentía era la de abajo. El estado real y el botón
-           para conectar están en WhatsappConnectionCard, arriba. Mismo caso que Channel Manager. -->
-
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="font-extrabold text-navy">Facturación Electrónica</h3>
-          <span class="text-[10px] font-bold px-2 py-1 rounded-full"
-            :class="fiscalConfig.enabled ? 'bg-teal/10 text-teal' : 'bg-surface text-text-muted'">
-            {{ fiscalConfig.enabled ? 'Numeración activa' : 'Desactivada' }}
-          </span>
-        </div>
-        <div class="p-4 bg-surface rounded-xl space-y-3">
-          <div class="flex items-center gap-3">
-            <span class="w-5 h-5 text-navy/50 shrink-0" v-html="ICON_RECEIPT"></span>
-            <div class="min-w-0">
-              <div class="text-sm font-bold text-navy">NCF (Comprobante Fiscal)</div>
-              <div class="text-[10px] text-text-muted">Numera cada factura correlativamente según la autoridad fiscal de tu país</div>
-            </div>
-          </div>
-          <div class="flex items-center justify-between p-3 bg-white rounded-xl">
-            <div class="text-sm font-bold text-navy">Activar numeración fiscal</div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input v-model="fiscalConfig.enabled" type="checkbox" class="sr-only peer">
-              <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal"></div>
-            </label>
-          </div>
-          <div v-if="fiscalConfig.enabled" class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Autoridad</label>
-              <select v-model="fiscalConfig.authority" class="w-full px-3 py-2 rounded-full border border-border text-sm cursor-pointer">
-                <option value="DGII">DGII (Rep. Dominicana)</option>
-                <option value="DIAN">DIAN (Colombia)</option>
-                <option value="SAT">SAT (México)</option>
-                <option value="SUNAT">SUNAT (Perú)</option>
-                <option value="SII">SII (Chile)</option>
-                <option value="AFIP">AFIP (Argentina)</option>
-                <option value="none">Otra / Manual</option>
-              </select>
-            </div>
-            <div>
-              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Serie</label>
-              <input v-model="fiscalConfig.serie" placeholder="E31" class="w-full px-3 py-2 rounded-full border border-border text-sm">
-            </div>
-          </div>
-          <p v-if="fiscalConfig.enabled" class="text-[10px] text-text-muted">
-            Próximo NCF: {{ nextNcfPreview }}. El envío a {{ fiscalConfig.authority === 'none' ? 'la autoridad' : fiscalConfig.authority }} requiere credenciales del país — todavía no está conectado, así que el NCF queda local por ahora.
-          </p>
-          <button @click="saveFiscalConfig" :disabled="fiscalSaving"
-            class="w-full px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg transition-all cursor-pointer disabled:opacity-50">
-            {{ fiscalSaving ? 'Guardando...' : 'Guardar' }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Políticas para factura (cancelación y reembolso) -->
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <div class="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <h3 class="font-extrabold text-navy">Políticas para factura</h3>
-            <p class="text-[11px] text-text-muted mt-1 leading-relaxed">
-              Texto que aparecerá al pie de cada factura emitida como “Políticas de cancelación y reembolso”.
-              Déjalo vacío para no mostrar la sección.
-            </p>
-          </div>
-        </div>
-        <div class="space-y-3">
-          <textarea v-model="invoicePolicyText" rows="4"
-            placeholder="Ej. Cancelación gratuita hasta 48 h antes de la entrada. Después de ese plazo, la primera noche no es reembolsable..."
-            class="w-full px-3 py-2 rounded-xl border border-border text-sm resize-y"></textarea>
-          <button @click="saveInvoicePolicy" :disabled="invoicePolicySaving"
-            class="w-full px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg transition-all cursor-pointer disabled:opacity-50">
-            {{ invoicePolicySaving ? 'Guardando...' : 'Guardar' }}
-          </button>
-        </div>
-      </div>
-    </div>
+    <!-- La pestaña "Integraciones" se mudó a su propia sección del menú (/panel/integraciones,
+         pages/integraciones): WhatsApp, pasarelas, cerraduras, dispositivos y facturación
+         electrónica estaban partidos entre esta pestaña y tres entradas sueltas del menú, así que
+         "dónde conecto X" había que adivinarlo. "Políticas para factura" NO se fue con ellas: no
+         es una conexión con nadie, es texto al pie de la factura — vive en Condiciones. -->
 
     <!-- EMERGENCIAS -->
     <div v-if="(activeTab as string) === 'emergency'" class="space-y-6">
@@ -796,7 +711,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, reactive } from 'vue'
-import { useRoute, onBeforeRouteLeave } from 'vue-router'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
+import { INTEGRATIONS_PATH } from '@/config/integration-tabs'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import WhatsappConnectionCard from '@/components/features/WhatsappConnectionCard.vue'
 import WhatsappUsageCard from '@/components/features/WhatsappUsageCard.vue'
@@ -831,8 +747,6 @@ import type { HotelEmergencyContact } from '@/types'
 
 const ICON_X = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>'
 const ICON_BUILDING = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>'
-const ICON_CARD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>'
-const ICON_RECEIPT = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M8 7h8"/><path d="M8 11h8"/><path d="M8 15h5"/></svg>'
 const ICON_UPLOAD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>'
 
 const auth = useAuthStore()
@@ -1003,46 +917,9 @@ async function saveAutomation() {
   }
 }
 
-// Facturación electrónica / NCF (configuration['electronic_invoicing']) — antes esta tab solo
-// mostraba una card informativa sin ningún campo: no existía forma de setear `enabled`, así que
-// nextNcf() (fiscal.ts) siempre devolvía null aunque la UI insinuara "NCF automático".
-const fiscalConfig = reactive({ enabled: false, serie: 'E31', authority: 'DGII', sequence: 0 })
-const fiscalSaving = ref(false)
-async function loadFiscalConfig() {
-  try {
-    const c = await ConfigService.get('electronic_invoicing') as
-      { enabled?: boolean; serie?: string; authority?: string; sequence?: number } | null
-    if (c) {
-      fiscalConfig.enabled = !!c.enabled
-      fiscalConfig.serie = c.serie || 'E31'
-      fiscalConfig.authority = c.authority || 'DGII'
-      fiscalConfig.sequence = c.sequence ?? 0
-    }
-  } catch { /* default: desactivado */ }
-}
-// Mismo formato que buildNcf() en fiscal.ts — preview, la numeración real la arma el backend.
-const nextNcfPreview = computed(() => {
-  const seq = String((fiscalConfig.sequence || 0) + 1).padStart(11, '0')
-  const serie = fiscalConfig.serie || 'E31'
-  const auth = fiscalConfig.authority || 'MANUAL'
-  return `${serie}${auth === 'DGII' ? '' : '-'}${seq}`.replace('--', '-')
-})
-async function saveFiscalConfig() {
-  fiscalSaving.value = true
-  try {
-    await ConfigService.set('electronic_invoicing', {
-      enabled: fiscalConfig.enabled, serie: fiscalConfig.serie.trim() || 'E31',
-      authority: fiscalConfig.authority, sequence: fiscalConfig.sequence,
-    })
-    await nextTick()
-    markClean()
-    toast.success('Facturación electrónica guardada')
-  } catch (e) {
-    toast.error((e as Error).message || 'No se pudo guardar')
-  } finally {
-    fiscalSaving.value = false
-  }
-}
+// La facturación electrónica (NCF) se mudó a Integraciones → Facturación electrónica
+// (pages/integraciones/facturacion.vue), con su propio estado y su propio aviso de cambios
+// sin guardar.
 
 // ─── Política de niños (Requerimiento 1, 2026-09-03) ───────────────────────────────────────
 // configuration('child_policy'), mismo patrón que automation_config/electronic_invoicing.
@@ -1108,8 +985,15 @@ async function saveInvoicePolicy() {
 const activeTab = ref('hotel' as string)
 // Deep-link ?tab=... (el botón de Emergencia del header entra directo a su pestaña)
 const route = useRoute()
+const router = useRouter()
 onMounted(() => {
   const t = route.query.tab
+  // La pestaña "Integraciones" se mudó a /panel/integraciones. Un link guardado a ?tab=integrations
+  // no debe aterrizar en la pestaña Hotel sin explicación: se lo lleva a donde está ahora.
+  if (t === 'integrations') {
+    router.replace({ path: INTEGRATIONS_PATH })
+    return
+  }
   if (typeof t === 'string' && allTabs.value.some(tab => tab.value === t)) activeTab.value = t
 })
 const saving = ref(false)
@@ -1146,7 +1030,7 @@ const tabGroups: SettingsTabGroup[] = [
       // distintos que se llamaban igual, al punto que la otra vista necesitaba una nota
       // aclaratoria para que no se confundieran.
       { value: 'amenities', label: 'Amenities de habitación' },
-      { value: 'integrations', label: 'Integraciones' },
+      // "Integraciones" se fue a su propia sección del menú (/panel/integraciones).
     ],
   },
 ]
@@ -1211,7 +1095,7 @@ function snapshot(): string {
   return JSON.stringify({
     form: form.value,
     selectedAmenities: selectedAmenities.value, emergencyContacts: emergencyContacts.value,
-    currencyConfig, guaranteePinDraft: guaranteePinDraft.value, automation, fiscalConfig,
+    currencyConfig, guaranteePinDraft: guaranteePinDraft.value, automation,
     childPolicy,
     // Slug, amenities hotel-level, traducciones públicas y flags de reseñas públicas
     // se gestionan y persisten desde la sección "Página pública" del menú. Capacidad por tipo
@@ -1440,7 +1324,6 @@ onMounted(async () => {
     await loadCurrency()
     await loadGuaranteePin()
     await loadAutomation()
-    await loadFiscalConfig()
     await loadChildPolicy()
     await loadInvoicePolicy()
   } catch (e) {

@@ -57,6 +57,7 @@ export const ROUTE_LABELS: Record<string, string> = {
   roles: 'Roles y Permisos',
   settings: 'Configuración',
   mensajeria: 'Mensajería',
+  integraciones: 'Integraciones',
   'auto-messages': 'Envíos Auto',
   'message-logs': 'Historial Envíos',
   'email-queue': 'Cola de Emails',

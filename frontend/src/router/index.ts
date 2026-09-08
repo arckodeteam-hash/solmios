@@ -698,8 +698,7 @@ const router = createRouter({
         {
           path: 'config/dispositivos',
           name: 'devices',
-          component: () => import('@/pages/devices/index.vue'),
-          meta: { requiresHotelAdmin: true },
+          redirect: (to) => ({ path: '/panel/integraciones', query: { ...to.query, tab: 'dispositivos' } }),
         },
         {
           // DT-17: antes solo /admin/* (plataforma) podía leer el audit log. El backend YA
@@ -738,17 +737,27 @@ const router = createRouter({
           path: 'aliados',
           redirect: (to) => ({ path: '/panel', query: to.query }),
         },
+        // Integraciones: todo lo que el hotel conecta con un servicio de afuera, en una sola
+        // pantalla con tabs (pages/integraciones), mismo patrón que Mensajería. Estaba repartido
+        // entre una pestaña de Configuración Base (WhatsApp, facturación) y tres entradas sueltas
+        // del menú (pasarelas, cerraduras, dispositivos).
+        {
+          path: 'integraciones',
+          name: 'integraciones',
+          component: () => import('@/pages/integraciones/index.vue'),
+          meta: { requiresHotelAdmin: true },
+        },
+        // Rutas viejas → tab equivalente. Se conservan (con su `name`) para no romper links
+        // guardados, favoritos ni los router-link que quedan en otras vistas.
         {
           path: 'config/cerraduras',
           name: 'cerraduras',
-          component: () => import('@/pages/cerraduras/index.vue'),
-          meta: { requiresHotelAdmin: true },
+          redirect: (to) => ({ path: '/panel/integraciones', query: { ...to.query, tab: 'cerraduras' } }),
         },
         {
           path: 'config/pasarelas',
           name: 'pagos',
-          component: () => import('@/pages/pagos/index.vue'),
-          meta: { requiresHotelAdmin: true },
+          redirect: (to) => ({ path: '/panel/integraciones', query: { ...to.query, tab: 'pasarelas' } }),
         },
         {
           path: 'finanzas/caja',
