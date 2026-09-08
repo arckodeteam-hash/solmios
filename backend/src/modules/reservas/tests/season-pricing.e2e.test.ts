@@ -42,6 +42,10 @@ let reservationsRepo: any
 let roomsRepo: any
 let seasonAssignmentsRepo: any
 
+// El timeout explícito no es decorativo: este hook hace trabajo real —levanta una SQLite,
+// migra 4 juegos de modelos y siembra el catálogo— y tarda entre 2 y 9 s, por encima de los
+// 5 s que bun le da a un hook por defecto. Sin él el test es un flake, y el error que imprime
+// ('a beforeEach/afterEach hook timed out') no nombra ni este hook ni el código lento.
 beforeAll(async () => {
   dbPath = `/tmp/solmios-season-e2e-${crypto.randomUUID()}.db`
   const adapter = new SqliteAdapter({ path: dbPath, wal: false, foreignKeys: true }) as any
@@ -68,7 +72,7 @@ beforeAll(async () => {
   // Siembra el catálogo default (baja/media/alta/especial con labels) — mismo efecto que la
   // 1ª visita a Ajustes › Tarifas en la app real.
   await pricing.listSeasons(HOTEL_ID)
-})
+}, 60_000)
 
 afterAll(() => {
   try { require('node:fs').unlinkSync(dbPath) } catch { /* tmp, best-effort */ }
