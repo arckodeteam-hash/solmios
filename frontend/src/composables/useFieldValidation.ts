@@ -20,7 +20,13 @@ export interface FieldRule {
   maxValue?: number
   pattern?: RegExp
   patternHint?: string
-  type?: 'string' | 'number' | 'email' | 'url'
+  /**
+   * `image-src` es más ancho que `url` a propósito: el origen de una imagen puede ser una URL
+   * externa, una ruta servida por la propia app (`/uploads/...`, que es lo que devuelve el
+   * uploader) o un data URL de preview. Con `url` a secas, subir el logo desde la pantalla
+   * dejaba el campo en rojo y bloqueaba el Guardar de TODA la configuración.
+   */
+  type?: 'string' | 'number' | 'email' | 'url' | 'image-src'
 }
 
 /** Mensaje de error del campo, o '' si está bien. */
@@ -49,6 +55,11 @@ export function validateField(value: unknown, rule: FieldRule): string {
   }
   if (rule.type === 'url' && !/^https?:\/\/.+\..+/.test(s)) {
     return `${rule.label}: debe empezar con http:// o https://`
+  }
+  // Un origen de imagen válido es una de tres: URL http(s), ruta absoluta del propio sitio
+  // (lo que guarda el uploader) o data URL de imagen (lo que usa la previsualización).
+  if (rule.type === 'image-src' && !/^(https?:\/\/.+\..+|\/.+|data:image\/[\w.+-]+[;,].+)$/.test(s)) {
+    return `${rule.label}: usá una URL http(s) o una imagen subida desde acá`
   }
   if (rule.pattern && !rule.pattern.test(s)) {
     return rule.patternHint ? `${rule.label}: ${rule.patternHint}` : `${rule.label} tiene un formato inválido`
@@ -102,7 +113,7 @@ export const HOTEL_RULES: Record<string, FieldRule> = {
   phone2: { label: 'Teléfono 2', max: 20 },
   email: { label: 'Email', max: 200, type: 'email' },
   website: { label: 'Sitio web', max: 200, type: 'url' },
-  logo: { label: 'Logo', max: 500, type: 'url' },
+  logo: { label: 'Logo', max: 500, type: 'image-src' },   // el backend lo guarda como string libre; el uploader devuelve '/uploads/hotel-logos/...'
   timezone: { label: 'Zona horaria', max: 50 },
   currency: { label: 'Moneda', min: 3, max: 3 },
   checkIn: { label: 'Hora de check-in', pattern: HHMM, patternHint: 'usá el formato HH:MM (ej. 15:00)' },
