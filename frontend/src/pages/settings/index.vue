@@ -254,9 +254,11 @@
             <p v-if="autoRate.stale" class="mt-1 text-[10px] font-bold text-warning">
               La tasa está desactualizada: se sigue mostrando la última obtenida.
             </p>
+            <!-- Atribucion EXIGIDA por los terminos del plan Open Access del proveedor: el texto
+                 del enlace tiene que ser literalmente "Rates By Exchange Rate API" apuntando a su
+                 sitio. No es decorativo: sin esto el uso queda fuera de licencia. -->
             <p class="mt-2 text-[10px] text-text-muted">
-              Tasas provistas por
-              <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener" class="underline">Exchange Rate API</a>
+              <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener" class="underline">Rates By Exchange Rate API</a>
             </p>
           </div>
         </SectionCard>
