@@ -1,5 +1,14 @@
 // composables/useCurrency.ts — Utilidad de conversión de moneda para frontend.
-// Lee la config de moneda del hotel y proporciona funciones de conversión y formato.
+//
+// De dónde sale la tasa: de `GET /api/tasa-cambio` (hoteles/usecases/exchange-rate.ts), el MISMO
+// endpoint que resuelve la tasa del backend. Antes se leía `/configuracion/currency`, una key que
+// nadie escribe (la pantalla de ajustes guarda bajo `currency_config`): el 404 silencioso dejaba
+// `exchangeRate` en 0 para siempre y `convert()` devolvía el monto sin convertir. Además el número
+// que se mostraba —cuando se mostraba— era un 60 escrito a mano que nadie actualizaba.
+//
+// Acá NO hay ninguna tasa ni moneda por defecto: si el endpoint falla o todavía no hay tasas
+// (`available: false`, que el backend devuelve con 200, no como error), el estado queda en
+// `exchangeRate: 0` y `convert()` devuelve el monto original — degradación sin romper pantallas.
 
 import { ref, computed } from 'vue'
 import { http } from '@/services/http'
@@ -7,30 +16,57 @@ import { CurrencyCode } from '@/types/currency'
 
 export interface CurrencyConfig {
   secondaryCurrency: string
+  /** Tasa base → secundaria. `0` = no hay tasa utilizable (no se convierte). */
   exchangeRate: number
+  /** Cuándo se obtuvo la tasa (ISO), para que la UI pueda mostrar de cuándo es. */
+  fetchedAt: string | null
+  /** Proveedor de la tasa (`exchangerate-api`) o `manual` si el hotel cargó un override. */
+  source: string | null
+  /** La tasa existe pero está desactualizada: se usa igual, avisando. */
+  stale: boolean
 }
 
-const currencyConfig = ref<CurrencyConfig>({ secondaryCurrency: '', exchangeRate: 0 })
+/** Respuesta de `GET /api/tasa-cambio`. */
+interface ExchangeRateResponse {
+  from: string
+  to: string
+  rate: number | null
+  available: boolean
+  stale: boolean
+  fetchedAt: string | null
+  providerUpdatedAt: string | null
+  source: string | null
+  lastError: string | null
+}
+
+const EMPTY: CurrencyConfig = { secondaryCurrency: '', exchangeRate: 0, fetchedAt: null, source: null, stale: false }
+
+const currencyConfig = ref<CurrencyConfig>({ ...EMPTY })
 const loaded = ref(false)
 
 /**
- * Carga la configuración de moneda del hotel actual.
+ * Carga la tasa de cambio del hotel actual desde `GET /api/tasa-cambio`.
+ *
+ * Cachea a nivel de módulo (una sola petición por sesión de app). `force` la reemite: lo usa la
+ * pantalla de ajustes después de guardar, donde el override manual puede haber cambiado la tasa.
  */
-export async function loadCurrencyConfig(hotelId?: string): Promise<CurrencyConfig> {
-  if (loaded.value) return currencyConfig.value
+export async function loadCurrencyConfig(hotelId?: string, force = false): Promise<CurrencyConfig> {
+  if (loaded.value && !force) return currencyConfig.value
   try {
-    // `/settings/currency` nunca existió en el backend (404 silencioso). El endpoint genérico de
-    // config por key es `/configuracion/:key` (devuelve `{valor}`, no `{value}` — inconsistencia
-    // de nombres con otros endpoints, no se toca acá, solo se lee correctamente).
     const params = hotelId ? `?hotelId=${hotelId}` : ''
-    const config = await http.get<{ valor: CurrencyConfig | null }>(`/configuracion/currency${params}`)
-    if (config?.valor) {
-      currencyConfig.value = {
-        secondaryCurrency: config.valor.secondaryCurrency || '',
-        exchangeRate: Number(config.valor.exchangeRate) || 0,
-      }
+    const rate = await http.get<ExchangeRateResponse | null>(`/tasa-cambio${params}`)
+    currencyConfig.value = {
+      secondaryCurrency: rate?.to || '',
+      // `available: false` (todavía no hay tasas) llega como 200 con `rate: null` → 0, sin convertir.
+      exchangeRate: rate?.available ? Number(rate.rate) || 0 : 0,
+      fetchedAt: rate?.fetchedAt ?? null,
+      source: rate?.source ?? null,
+      stale: Boolean(rate?.stale),
     }
-  } catch { /* silent: sin config de moneda secundaria configurada, se usa el default vacío */ }
+  } catch {
+    // Sin tasa no se inventa ninguna: se deja el estado vacío y no se convierte.
+    currencyConfig.value = { ...EMPTY }
+  }
   loaded.value = true
   return currencyConfig.value
 }
@@ -76,6 +112,9 @@ export function useCurrency(hotelCurrency: string = CurrencyCode.USD) {
 
   const secondaryCurrency = computed(() => config.value.secondaryCurrency)
   const exchangeRate = computed(() => config.value.exchangeRate)
+  const fetchedAt = computed(() => config.value.fetchedAt)
+  const source = computed(() => config.value.source)
+  const stale = computed(() => config.value.stale)
 
   function convert(amount: number, toSecondary = true): number {
     if (!toSecondary || !secondaryCurrency.value || !exchangeRate.value) return amount
@@ -95,6 +134,9 @@ export function useCurrency(hotelCurrency: string = CurrencyCode.USD) {
     config,
     secondaryCurrency,
     exchangeRate,
+    fetchedAt,
+    source,
+    stale,
     convert,
     format,
     formatSecondary,

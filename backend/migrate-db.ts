@@ -1084,12 +1084,13 @@ async function createTablesBlock3(): Promise<void> {
 }
 
 // Seed idempotente: currency_config por defecto para todos los hoteles (F3 — conversión de moneda).
-// Secondary DOP @ 60. UNIQUE(hotelId,key) + ON CONFLICT DO NOTHING → no duplica.
+// Secondary DOP sin tasa manual (`exchangeRate: 0` = usar la automática de `GET /api/tasa-cambio`).
+// UNIQUE(hotelId,key) + ON CONFLICT DO NOTHING → no duplica.
 // Reemplaza al INSERT OR IGNORE ... SELECT randomblob()/datetime('now') (SQLite-only).
 async function seedCurrencyConfig(): Promise<void> {
   try {
     const hotels = (await db.query("SELECT id FROM hotels")) as Array<{ id: string }>
-    const value = JSON.stringify({ secondaryCurrency: "DOP", exchangeRate: 60 })
+    const value = JSON.stringify({ secondaryCurrency: "DOP", exchangeRate: 0 })
     for (const h of hotels) {
       await db.run(
         "INSERT INTO configuration (id, hotelId, key, value, updatedAt) VALUES (?,?,?,?,?) ON CONFLICT(hotelId, key) DO NOTHING",
