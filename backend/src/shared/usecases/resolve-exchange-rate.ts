@@ -94,14 +94,19 @@ export function crossRate(
   from: string,
   to: string,
 ): number | null {
-  // Un código vacío/ausente NO es una conversión válida: sin este guard, `from` y `to` vacíos
-  // caerían en el atajo `from === to` y devolverían 1, o sea una tasa 1:1 fantasma que el caller
-  // leería como `available:true` y mostraría como monto convertido en vez de degradar.
-  if (!from || !to) return null
-  if (from === to) return 1
+  // Un código vacío, ausente o en blanco NO es una conversión válida. Sin este guard caerían en el
+  // atajo `from === to` de abajo y devolverían 1, o sea una tasa 1:1 fantasma que el caller leería
+  // como `available:true` y mostraría como monto convertido en vez de degradar.
+  const a1 = typeof from === 'string' ? from.trim() : ''
+  const b1 = typeof to === 'string' ? to.trim() : ''
+  if (!a1 || !b1) return null
+  // Identidad: convertir una moneda a sí misma es 1 por definición, esté o no en la tabla. Es un
+  // caso normal acá — un hotel cuya moneda secundaria es la propia entra por acá — y devolver 1
+  // es la respuesta correcta, no una tasa inventada.
+  if (a1 === b1) return 1
   if (!rates || typeof rates !== 'object') return null
-  const a = rates[from]
-  const b = rates[to]
+  const a = rates[a1]
+  const b = rates[b1]
   if (!isPositiveNumber(a) || !isPositiveNumber(b)) return null
   return b / a
 }
@@ -131,8 +136,8 @@ export async function resolveExchangeRate(
   to: string,
   opts: ResolveExchangeRateOptions = {},
 ): Promise<ResolvedExchangeRate> {
-  const fromCode = String(from || '').toUpperCase()
-  const toCode = String(to || '').toUpperCase()
+  const fromCode = String(from || '').trim().toUpperCase()
+  const toCode = String(to || '').trim().toUpperCase()
   const maxAgeMs = opts.maxAgeMs ?? RATES_MAX_AGE_MS
   const now = opts.now ?? new Date()
 

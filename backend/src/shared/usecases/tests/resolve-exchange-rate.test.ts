@@ -65,6 +65,18 @@ describe('crossRate — tasa cruzada entre cualquier par', () => {
     expect(crossRate(RATES, undefined as any, undefined as any)).toBeNull()
   })
 
+  // Regresión: un código en blanco tampoco es una moneda. Antes del trim, ' ' y ' ' eran
+  // "iguales" y el atajo de identidad devolvía 1.
+  it('códigos en blanco → null', () => {
+    expect(crossRate(RATES, ' ', ' ')).toBeNull()
+    expect(crossRate(RATES, '  ', 'DOP')).toBeNull()
+    expect(crossRate(RATES, 'USD', '   ')).toBeNull()
+  })
+
+  it('espacios alrededor de un código válido no rompen la conversión', () => {
+    expect(crossRate(RATES, ' USD ', 'DOP')).toBeCloseTo(59.193349, 6)
+  })
+
   it('misma moneda → 1', () => {
     expect(crossRate(RATES, 'DOP', 'DOP')).toBe(1)
   })
@@ -182,6 +194,12 @@ describe('resolveExchangeRate', () => {
   // y sin el guard devolvía {rate:1, available:true} con una tabla de tasas real cargada.
   it('monedas ausentes → available:false, no una tasa 1:1', async () => {
     const res = await resolveExchangeRate(fakeRepo([configRow(CONFIG)]), undefined as any, undefined as any, { now })
+    expect(res.rate).toBeNull()
+    expect(res.available).toBe(false)
+  })
+
+  it('monedas en blanco → available:false, no una tasa 1:1', async () => {
+    const res = await resolveExchangeRate(fakeRepo([configRow(CONFIG)]), ' ', ' ', { now })
     expect(res.rate).toBeNull()
     expect(res.available).toBe(false)
   })
