@@ -135,6 +135,9 @@ import { AuditlogModule } from './modules/auditlog'
 import { TicketsModule } from './modules/tickets'
 import { NotificacionesModule } from './modules/notificaciones'
 import { CanalesModule } from './modules/canales'
+// CH-08 — Outbox persistente de ARI: la ráfaga de cambios se escribe ANTES de que venza el
+// debounce, así un reinicio dentro de la ventana ya no se come el push a Channex.
+import { AriOutboxModule, ARI_OUTBOX_TICK_MS } from './modules/ari-outbox'
 import { OpinionesModule } from './modules/opiniones'
 import { GastosModule } from './modules/gastos'
 import { FoliosModule } from './modules/folios'
@@ -258,7 +261,7 @@ const mods = [
   FacturasModule(), HousekeepingModule({ storage, videoStorage: s3Adapter }), MantenimientoModule({ storage }), PaquetesModule(),
   GruposModule(), HotelesModule({ storage }), RolesModule(), DispositivosModule(),
   AnunciosModule(), ApikeysModule(), AuditlogModule(), TicketsModule(), NotificacionesModule(),
-  CanalesModule(), OpinionesModule(), GastosModule(), FoliosModule(), PaymentsModule(),
+  CanalesModule(), AriOutboxModule(), OpinionesModule(), GastosModule(), FoliosModule(), PaymentsModule(),
   EmpleadosModule({ storage }), PayrollModule(), AttendanceModule(), ActivosModule(), CapacitacionModule(), CrmModule(), MarketingModule(),
   ReclutamientoModule(), ReembolsosModule(),
   AiRecepcionistaModule(), AiGerenteModule(), BookingengineModule({ pushAvailability }),
@@ -388,6 +391,7 @@ import { reservasWalletConnector } from './connectors/reservas-wallet'
 // Best-effort + fire-and-forget: no bloquea el webhook. Skip silencioso si faltan creds.
 import { bookingengineTrackingConnector } from './connectors/bookingengine-tracking'
 import { pricingCanalesConnector } from './connectors/pricing-canales'
+import { canalesAriOutboxConnector } from './connectors/canales-ari-outbox'
 import { reclutamientoEmpleadosConnector } from './connectors/reclutamiento-empleados'
 import { capacitacionEmpleadosConnector } from './connectors/capacitacion-empleados'
 import { amenitiesHabitacionesConnector } from './connectors/amenities-habitaciones'
@@ -544,6 +548,10 @@ system.addConnector('bookingengine-tracking', bookingengineTrackingConnector)
 // Auto-push de tarifas a OTAs: pricing emite onRatesUpdated al cambiar tarifas → canales las empuja
 // a Channex. Cierra el gap "push manual": editar tarifas ya no requiere apretar el botón. Fire-and-forget.
 system.addConnector('pricing-canales', pricingCanalesConnector)
+// CH-08 — Quién publica cada kind de la outbox: los pushes viven en `canales` y la cola en
+// `ari-outbox`, y un módulo no importa de otro. Sin este connector el drain deja las filas en
+// failed con 'sin publisher registrado'.
+system.addConnector('canales-ari-outbox', canalesAriOutboxConnector)
 // Postulante contratado → expediente de empleado, solo si ya existe la cuenta de usuario (match por
 // email en el hotel). No fabrica credenciales. Cierra el ciclo reclutamiento→empleados.
 system.addConnector('reclutamiento-empleados', reclutamientoEmpleadosConnector(orm))
@@ -812,6 +820,20 @@ const noShowCron = createNoShowCron(orm, emailService, logger, async (reservatio
 setTimeout(() => { noShowCron().catch((e) => logger.warn('markNoShows initial run failed', { error: (e as Error).message })) }, 10_000)
 setInterval(() => { noShowCron().catch((e) => logger.warn('markNoShows failed', { error: (e as Error).message })) }, ONE_DAY_MS)
 logger.info('No-show cron listo (con corrida inicial a los 10s)', { tickMs: ONE_DAY_MS })
+
+// CH-08 — Worker de la outbox de ARI. Tick CORTO (500ms): el debounce de la ráfaga ya son 1.5s y
+// el tick solo suma latencia encima; con esto un cambio de tarifa sale a Channex en ~2s, igual que
+// con el coalescer en memoria que reemplaza.
+const ariOutbox = system.resolveModule<{ drain: () => Promise<number>; reclaimStale: () => Promise<number> }>('ari-outbox')
+// Corrida al ARRANCAR: es lo que hace salir el push que un reinicio dentro de la ventana de
+// debounce se comía. Sin esto la fila queda pendiente hasta el próximo cambio del hotel.
+setTimeout(() => {
+  ariOutbox.drain().catch((e) => logger.warn('ari-outbox initial drain failed', { error: (e as Error).message }))
+}, 2_000)
+setInterval(() => {
+  ariOutbox.drain().catch((e) => logger.warn('ari-outbox drain failed', { error: (e as Error).message }))
+}, ARI_OUTBOX_TICK_MS)
+logger.info('ARI outbox worker listo', { tickMs: ARI_OUTBOX_TICK_MS })
 
 const AUTO_MESSAGES_TICK_MS = 60_000 * 60
 const autoMsgTrigger = system.resolveModule<{ triggerAutoMessages: (params: any) => Promise<void> }>('marketing')
