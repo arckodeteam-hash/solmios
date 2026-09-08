@@ -73,6 +73,66 @@
         </div>
       </SectionCard>
 
+      <!-- Identidad pública: tipo de alojamiento, estrellas, logo, sitio web — mudados desde
+           Configuración → Hotel (tarea 1.7, docs/wizard-refactor): son públicos según el
+           allow-list real de getPublicHotelInfo, no identidad administrativa. -->
+      <SectionCard title="Identidad pública"
+        subtitle="Lo primero que ve un huésped en tu página — tipo de alojamiento, estrellas, logo y sitio web">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo de alojamiento</label>
+            <select v-model="accommodationType" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none cursor-pointer">
+              <!-- value = enum del backend (ACCOMMODATION_TYPE_ENUM), label en español. -->
+              <option value="">Seleccionar</option>
+              <option value="hotel">Hotel</option>
+              <option value="apartment">Apartahotel / Apartamento</option>
+              <option value="hostel">Hostal</option>
+              <option value="villa">Villa / Casa</option>
+              <option value="bnb">Bed &amp; Breakfast</option>
+            </select>
+          </div>
+          <div>
+            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Clasificación</label>
+            <select v-model="starRating" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none cursor-pointer">
+              <option value="">N/A</option>
+              <option value="1">1 Estrella</option>
+              <option value="2">2 Estrellas</option>
+              <option value="3">3 Estrellas</option>
+              <option value="4">4 Estrellas</option>
+              <option value="5">5 Estrellas</option>
+            </select>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Sitio web</label>
+            <input v-model="website" type="url" placeholder="https://" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
+          </div>
+        </div>
+        <div class="mt-4 flex items-start gap-4">
+          <div
+            @dragover.prevent="logoDragging = true"
+            @dragleave.prevent="logoDragging = false"
+            @drop.prevent="onLogoDrop"
+            @click="logoFileInput?.click()"
+            class="relative w-28 h-28 rounded-xl border-2 border-dashed overflow-hidden bg-surface flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+            :class="logoDragging ? 'border-cyan bg-cyan/5' : 'border-border hover:border-navy/40'">
+            <img v-if="logo" :src="logo" alt="Logo" class="w-full h-full object-contain" />
+            <div v-else class="flex flex-col items-center gap-1 px-2 text-center pointer-events-none">
+              <span class="w-5 h-5 text-navy/40" v-html="ICON_UPLOAD"></span>
+              <span class="text-[9px] font-bold text-text-muted uppercase">Arrastrá o hacé clic</span>
+            </div>
+            <div v-if="logoUploading" class="absolute inset-0 bg-white/80 flex items-center justify-center">
+              <span class="text-[10px] font-bold text-navy">Subiendo…</span>
+            </div>
+          </div>
+          <input ref="logoFileInput" type="file" accept="image/*" class="hidden" @change="onLogoFileChange">
+          <div class="flex-1">
+            <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Logo</label>
+            <input v-model="logo" type="url" placeholder="https://ejemplo.com/logo.png" class="w-full px-3 py-2 rounded-lg border border-border text-sm">
+            <p class="text-[10px] text-text-muted mt-1">PNG o JPG, máximo 5MB — o pegá la URL de un logo que ya tengas alojado. Se sube apenas lo elegís, sin esperar a "Guardar".</p>
+          </div>
+        </div>
+      </SectionCard>
+
       <!-- Traducciones públicas (title + description) — ES/EN/PT -->
       <SectionCard title="Título y descripción por idioma"
         subtitle="Copy que ven los huéspedes en la landing pública y en el widget de reserva">
@@ -126,8 +186,9 @@
         </div>
         <p class="mt-3 text-[10px] text-text-muted">
           {{ selectedHotelAmenities.length }} seleccionado{{ selectedHotelAmenities.length === 1 ? '' : 's' }}.
-          Las amenities a nivel habitación (TV, WiFi en cuarto, etc.) se configuran en
-          <strong>Configuración → Amenities</strong>.
+          Este es un catálogo reducido para destacar en la landing — el catálogo completo
+          (35 opciones por categoría, más personalizadas) vive en
+          <strong>Configuración → Amenities</strong>; ambos guardan en el mismo lugar.
         </p>
       </SectionCard>
 
@@ -167,9 +228,12 @@ import { onBeforeRouteLeave } from 'vue-router'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import { SettingsService, type HotelFull } from '@/services/Settings.service'
 import { PublicHotelService } from '@/services/PublicHotel.service'
+import { HotelService } from '@/services/Hotel.service'
 import { useToast } from '@/composables/useToast'
 import { warnOnUnsavedChanges } from '@/composables/useFieldValidation'
 import { amenityIcon, HOTEL_AMENITY_CATALOG, ICON_CHECK, ICON_X_CIRCLE } from '@/components/landing/landing-icons'
+
+const ICON_UPLOAD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>'
 
 const publicLangs = [
   { code: 'es' },
@@ -200,8 +264,70 @@ const publicDesc = ref<PublicTranslations>({
 })
 
 const selectedHotelAmenities = ref<string[]>([])
+// Claves de `hotel_amenities` que NO pertenecen al catálogo de 20 keys de esta pantalla (las
+// pone Configuración → Amenities, catálogo de 35 keys con categorías). No las edita esta UI,
+// pero hay que reenviarlas en cada save (F1 1.7b) — `saveAmenitiesHotel` REEMPLAZA el set
+// completo, así que omitirlas las desactivaría silenciosamente cada vez que se guarda esta página.
+let foreignAmenityKeys: string[] = []
 
 const reviewFlags = reactive({ publishReviewScore: false, publishReviewComments: false })
+
+// ─── Identidad pública (tarea 1.7, docs/wizard-refactor) ────────────────────────────────────
+// accommodationType/starRating/logo/website son públicos (allow-list de getPublicHotelInfo) —
+// se mudaron acá desde Configuración → Hotel.
+const accommodationType = ref('')
+const starRating = ref('')
+const website = ref('')
+const logo = ref('')
+
+// Logo — arrastrar/soltar o elegir archivo, con preview. Sube DE UNA (endpoint dedicado, data
+// URL base64) en vez de esperar al botón "Guardar" general: mismo patrón que tenía Configuración
+// (y que el avatar de usuario). `markLogoClean()` actualiza SOLO la clave `logo` de la foto base
+// — un `markClean()` común marcaría como "guardado" cualquier otro cambio pendiente (slug,
+// amenities, traducciones) sin haberlo guardado en realidad.
+const logoFileInput = ref<HTMLInputElement | null>(null)
+const logoDragging = ref(false)
+const logoUploading = ref(false)
+const LOGO_MAX_BYTES = 5 * 1024 * 1024
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function uploadLogoFile(file: File) {
+  if (!file.type.startsWith('image/')) { toast.error('Solo se permiten imágenes'); return }
+  if (file.size > LOGO_MAX_BYTES) { toast.error('Máximo 5MB'); return }
+  logoUploading.value = true
+  try {
+    const dataUrl = await readFileAsDataUrl(file)
+    const result = await HotelService.uploadLogo(dataUrl, file.name)
+    logo.value = result.logo
+    markLogoClean()
+    toast.success('Logo actualizado')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo subir el logo')
+  } finally {
+    logoUploading.value = false
+  }
+}
+
+function onLogoFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''   // permite volver a elegir el mismo archivo si el usuario se arrepiente y reintenta
+  if (file) uploadLogoFile(file)
+}
+
+function onLogoDrop(e: DragEvent) {
+  logoDragging.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) uploadLogoFile(file)
+}
 
 function hasPublicTranslation(lang: string): boolean {
   const t = publicDesc.value[lang as PublicLangCode]
@@ -301,7 +427,23 @@ onMounted(async () => {
     originalSlug.value = (h.slug as string) || ''
     slugStatus.value = (h.slug as string) ? 'self' : 'idle'
 
-    selectedHotelAmenities.value = Array.isArray(h.amenities) ? [...(h.amenities as string[])] : []
+    // F1 1.7b (D3) — fuente real es `hotel_amenities` (GET /api/amenities/hotel), no la
+    // columna JSON `hotels.amenities` (nunca la leía la API pública, ver public-hotel-info.ts).
+    const knownKeys = new Set(HOTEL_AMENITY_CATALOG.map((a) => a.key))
+    try {
+      const { data } = await HotelService.amenitiesHotel()
+      const activeKeys = (data || []).map((a) => a.amenityKey)
+      selectedHotelAmenities.value = activeKeys.filter((k) => knownKeys.has(k))
+      foreignAmenityKeys = activeKeys.filter((k) => !knownKeys.has(k))
+    } catch {
+      selectedHotelAmenities.value = []
+      foreignAmenityKeys = []
+    }
+
+    accommodationType.value = (h.accommodationType as string) || ''
+    starRating.value = h.starRating != null ? String(h.starRating) : ''
+    website.value = (h.website as string) || ''
+    logo.value = (h.logo as string) || ''
 
     reviewFlags.publishReviewScore = h.publishReviewScore === 1 || h.publishReviewScore === true
     reviewFlags.publishReviewComments = h.publishReviewComments === 1 || h.publishReviewComments === true
@@ -347,9 +489,23 @@ function snapshot(): string {
   return JSON.stringify({
     slugDraft: slugDraft.value, selectedHotelAmenities: selectedHotelAmenities.value,
     publicDesc: publicDesc.value, reviewFlags,
+    accommodationType: accommodationType.value, starRating: starRating.value,
+    website: website.value, logo: logo.value,
   })
 }
 function markClean() { savedSnapshot.value = snapshot() }
+
+/** El logo se sube y persiste SOLO (endpoint dedicado, no pasa por `save()`) — ver comentario
+ *  arriba de `uploadLogoFile`. Actualiza únicamente `logo` dentro de la foto base, dejando el
+ *  resto del diff pendiente intacto (mismo patrón que tenía Configuración). */
+function markLogoClean() {
+  if (!savedSnapshot.value) return
+  try {
+    const baseline = JSON.parse(savedSnapshot.value)
+    baseline.logo = logo.value
+    savedSnapshot.value = JSON.stringify(baseline)
+  } catch { /* snapshot no parseable: no debería pasar, no rompe nada dejarlo como estaba */ }
+}
 const isDirty = computed(() => savedSnapshot.value !== '' && snapshot() !== savedSnapshot.value)
 
 onBeforeRouteLeave(() => {
@@ -393,13 +549,26 @@ async function save() {
       // silencioso — anti-patrón ORM documentado). Acá se persiste siempre.
       publishReviewScore: reviewFlags.publishReviewScore,
       publishReviewComments: reviewFlags.publishReviewComments,
-      amenities: selectedHotelAmenities.value,
       descriptionTranslations: dtOut,
       descriptionJson: JSON.stringify(esOut),
+      // Identidad pública (tarea 1.7): accommodationType/starRating/website — logo NO va acá,
+      // se sube y persiste solo (uploadLogoFile).
+      // Vacío se manda TAL CUAL (no `|| undefined`): `patchHotel` descarta claves `undefined`
+      // del patch, así que `|| undefined` nunca podría limpiar un valor ya guardado — probado
+      // en vivo: elegir "N/A" y guardar dejaba el `starRating` viejo en el backend para siempre.
+      accommodationType: accommodationType.value,
+      starRating: starRating.value,
+      website: website.value.trim(),
     }
     if (trimmedSlug) patch.slug = trimmedSlug
 
-    const updated = await SettingsService.patchHotel(patch)
+    // F1 1.7b — `hotel_amenities` (tabla real), no la columna JSON `hotels.amenities`. Reenvía
+    // `foreignAmenityKeys` (las de Configuración → Amenities) para no pisarlas: `saveAmenitiesHotel`
+    // reemplaza el set completo.
+    const [updated] = await Promise.all([
+      SettingsService.patchHotel(patch),
+      HotelService.saveAmenitiesHotel([...selectedHotelAmenities.value, ...foreignAmenityKeys]),
+    ])
     if (trimmedSlug) originalSlug.value = trimmedSlug
     // Refresca descriptionTranslations desde el backend (por si descartó keys vacías).
     if (updated?.descriptionTranslations && typeof updated.descriptionTranslations === 'object') {

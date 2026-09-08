@@ -1,6 +1,10 @@
-// settings-geocoding.test.ts — GH-33: al mover el pin del mapa interactivo solo se actualizaban
-// Latitud y Longitud; Provincia, Municipio, Localidad y Código Postal quedaban vacíos, sin ningún
-// aviso, aunque la pantalla promete "Se completan solos al mover el pin".
+// ubicacion-geocoding.test.ts — migrado de settings/settings-geocoding.test.ts (tarea 1.9,
+// docs/wizard-refactor). GH-33: al mover el pin del mapa interactivo solo se actualizaban Latitud
+// y Longitud; Provincia, Municipio, Localidad y Código Postal quedaban vacíos, sin ningún aviso.
+// Toda esta lógica vive en el composable compartido `useHotelLocationMap` (tarea 1.1) — desde la
+// tarea 1.8 el único consumidor con mapa interactivo es `pagina-publica/ubicacion.vue` (la
+// pestaña «Ubicación» de Configuración ya no existe), así que el test monta esa pantalla directo,
+// sin tener que navegar pestañas de Configuración primero.
 //
 // La reproducción simula el SDK de Google Maps (no hay red en tests) y dispara el `dragend` del
 // marcador, que es exactamente lo que hace el usuario al arrastrar el pin.
@@ -73,49 +77,21 @@ vi.mock('@/composables/useToast', () => ({
   }),
 }))
 
-// ── Resto de dependencias de la pantalla (idéntico criterio a settings-plan-pin.test.ts) ────
-vi.mock('@/services/Signup.service', () => ({
-  SignupService: {
-    publicPlans: async () => [],
-    mySubscription: async () => ({
-      status: 'active', trialEndsAt: null, currentPeriodEnd: null, planId: 'plan-x',
-      allowed: true, reason: null, daysLeft: null, hasStripeCustomer: true,
-    }),
-  },
-}))
 vi.mock('@/services/Settings.service', () => ({
   SettingsService: {
-    get: async () => ({ hotel: { id: 'h1', name: 'Hotel Test', country: 'República Dominicana' } }),
+    get: async () => ({ hotel: { id: 'h1', country: 'República Dominicana' } }),
     patchHotel: async () => ({}),
   },
-}))
-vi.mock('@/services/Hotel.service', () => ({
-  HotelService: {
-    amenitiesCatalog: async () => ({}),
-    amenitiesHotel: async () => ({ data: [] }),
-    saveAmenitiesHotel: async () => ({}),
-  },
-}))
-vi.mock('@/services/Room.service', () => ({
-  RoomService: { list: async () => ({ rooms: [], total: 0 }) },
-}))
-vi.mock('@/services/Platform.service', () => ({
-  ConfigService: { get: async () => null, set: async () => ({}) },
-  EmergencyContactsService: { get: async () => null, invalidate: () => {} },
-}))
-vi.mock('@/services/Guarantee.service', () => ({
-  GuaranteeService: { hasPin: async () => ({ hasPin: false }), setPin: async () => ({}) },
 }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {} }),
   useRouter: () => ({ push: () => {} }),
   onBeforeRouteLeave: () => {},
 }))
-vi.mock('@/stores/auth.store', () => ({ useAuthStore: () => ({ user: { hotelId: 'h1', name: 'Tester' } }) }))
 
-import Settings from './index.vue'
+import Ubicacion from './ubicacion.vue'
 
-const MOUNT_OPTS = { global: { stubs: { RouterLink: true, PhoneInput: true } } }
+const MOUNT_OPTS = { global: { stubs: { RouterLink: true } } }
 
 /** Componentes que Google devuelve para un punto en Santo Domingo, República Dominicana. */
 const DR_COMPONENTS: Comp[] = [
@@ -139,13 +115,10 @@ beforeEach(() => {
   })
 })
 
-/** Monta la pantalla, entra a la pestaña Ubicación y espera a que el mapa se inicialice. */
-async function mountOnLocationTab(): Promise<VueWrapper> {
-  const wrapper = mount(Settings, MOUNT_OPTS)
+/** Monta la pantalla de Ubicación y espera a que el mapa se inicialice. */
+async function mountUbicacion(): Promise<VueWrapper> {
+  const wrapper = mount(Ubicacion, MOUNT_OPTS)
   await flushPromises()
-  const tab = wrapper.findAll('button').find((b) => b.text().trim() === 'Ubicación')
-  expect(tab, 'la pestaña Ubicación tiene que existir').toBeTruthy()
-  await tab!.trigger('click')
   await flushPromises()
   return wrapper
 }
@@ -165,7 +138,7 @@ const valueOf = (w: VueWrapper, field: string) =>
 
 describe('GH-33 — autocompletado de dirección al mover el pin', () => {
   it('completa Provincia, Municipio, Localidad y Código Postal', async () => {
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
     await dragPinTo(18.4861, -69.9312)
 
     expect(valueOf(wrapper, 'latitude')).toBe('18.4861')
@@ -184,7 +157,7 @@ describe('GH-33 — autocompletado de dirección al mover el pin', () => {
   // quedaban vacíos. Ahora cualquier falla de Google cae a Nominatim antes de rendirse.
   it('REQUEST_DENIED de Google cae a Nominatim y completa los campos igual', async () => {
     geocodeImpl = async () => { throw new Error('REQUEST_DENIED') }
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
     await dragPinTo(18.4861, -69.9312)
 
     expect(valueOf(wrapper, 'latitude')).toBe('18.4861')
@@ -197,7 +170,7 @@ describe('GH-33 — autocompletado de dirección al mover el pin', () => {
   it('Google y Nominatim caídos: aviso visible, sin throw, campos editables', async () => {
     geocodeImpl = async () => { throw new Error('REQUEST_DENIED') }
     nominatimImpl = async () => { throw new TypeError('Failed to fetch') }
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
     await dragPinTo(18.4861, -69.9312)
 
     expect(valueOf(wrapper, 'latitude')).toBe('18.4861')
@@ -209,7 +182,7 @@ describe('GH-33 — autocompletado de dirección al mover el pin', () => {
   it('avisa cuando el SDK no expone Geocoder y el fallback también falla', async () => {
     geocoderCtorThrows = true
     nominatimImpl = async () => { throw new TypeError('Failed to fetch') }
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
     await dragPinTo(18.4861, -69.9312)
 
     expect(valueOf(wrapper, 'latitude')).toBe('18.4861')
@@ -219,20 +192,19 @@ describe('GH-33 — autocompletado de dirección al mover el pin', () => {
 })
 
 describe('GH-33 — caminos de fallo del autocompletado', () => {
-  it('no pisa lo que el usuario escribió a mano', async () => {
-    const wrapper = await mountOnLocationTab()
-    const municipio = wrapper.find('[data-field="municipality"]')
-    await municipio.setValue('Boca Chica')       // corrección manual del usuario
-
-    await dragPinTo(18.4861, -69.9312)
-
-    expect(valueOf(wrapper, 'municipality')).toBe('Boca Chica')
-    // El resto sí se completa: solo se respeta el campo tocado.
-    expect(valueOf(wrapper, 'province')).toBe('Distrito Nacional')
-  })
+  // NOTA (tarea 1.9, migración): la suite original de settings-geocoding.test.ts tenía acá un
+  // caso "no pisa lo que el usuario escribió a mano", tipeando directo en el input de Municipio.
+  // Desde la tarea 1.4b, Provincia/Municipio/Localidad/Código Postal son `disabled` con `:value`
+  // (no `v-model`) en `ubicacion.vue` — de solo lectura, ver el subtitle de la SectionCard
+  // "Provincia, Municipio y Código Postal". Ya no hay forma de tipear un valor a mano en la UI
+  // real, así que ese escenario quedó estructuralmente imposible y se retira (no se fuerza un
+  // `setValue()` sobre un input deshabilitado, que no dispara ningún v-model y solo daría un
+  // falso positivo). La lógica de "no pisar lo que ya puso el autocompletado anterior" sigue
+  // viva en `applyGeocodedValues` (useHotelLocationMap.ts) — la cubre el caso de abajo
+  // ("sí re-escribe un valor que había puesto el propio autocompletado").
 
   it('sí re-escribe un valor que había puesto el propio autocompletado', async () => {
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
     await dragPinTo(18.4861, -69.9312)
     expect(valueOf(wrapper, 'province')).toBe('Distrito Nacional')
 
@@ -254,7 +226,7 @@ describe('GH-33 — caminos de fallo del autocompletado', () => {
     // Con el fallback, un Google vacío prueba Nominatim: para ver el aviso de "sin datos"
     // los DOS proveedores tienen que venir vacíos.
     nominatimImpl = async () => ({ province: '', municipality: '', locality: '', postalCode: '' })
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
     await dragPinTo(19.0, -70.0)
 
     expect(valueOf(wrapper, 'province')).toBe('')
@@ -268,7 +240,7 @@ describe('GH-33 — caminos de fallo del autocompletado', () => {
         comp('La Altagracia', 'administrative_area_level_1', 'political'),
       ] }],
     })
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
     await dragPinTo(18.68, -68.42)
 
     expect(valueOf(wrapper, 'locality')).toBe('Bávaro')
@@ -281,7 +253,7 @@ describe('GH-33 — caminos de fallo del autocompletado', () => {
   it('sin red: el error de la promesa no queda mudo', async () => {
     geocodeImpl = async () => { throw new TypeError('Failed to fetch') }
     nominatimImpl = async () => { throw new TypeError('Failed to fetch') }   // sin red no hay fallback
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
     await dragPinTo(18.4861, -69.9312)
 
     expect(valueOf(wrapper, 'latitude')).toBe('18.4861')
@@ -300,7 +272,7 @@ describe('GH-33 — caminos de fallo del autocompletado', () => {
       }
       return { results: [{ address_components: [comp('Provincia Nueva', 'administrative_area_level_1')] }] }
     }
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
 
     const dragend = markerListeners.get('dragend')!
     markerPosSetter?.(18.4, -69.9); dragend()          // primer arrastre: queda colgado
@@ -326,9 +298,8 @@ describe('MAPGEO — Nominatim fallback cuando no hay Google Maps key', () => {
    * que llama a applyMapsPaste → reverseGeocode → Nominatim.
    */
   async function pasteCoordinates(wrapper: VueWrapper, lat: number, lng: number) {
-    // Buscar el input de pegado por su placeholder dentro del wrapper montado
     const pasteInput = wrapper.find('input[placeholder*="maps.google.com"]')
-    expect(pasteInput.exists(), 'el input de pegado tiene que existir en la pestaña Ubicación').toBeTruthy()
+    expect(pasteInput.exists(), 'el input de pegado tiene que existir en Ubicación').toBeTruthy()
     await pasteInput.setValue(`${lat}, ${lng}`)
     await flushPromises()
   }
@@ -340,7 +311,7 @@ describe('MAPGEO — Nominatim fallback cuando no hay Google Maps key', () => {
       locality: 'Villa Piantini',
       postalCode: '23000',
     })
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
     await pasteCoordinates(wrapper, 18.6, -68.7)
 
     expect(valueOf(wrapper, 'latitude')).toBe('18.6')
@@ -359,7 +330,7 @@ describe('MAPGEO — Nominatim fallback cuando no hay Google Maps key', () => {
       locality: 'San Francisco de Macoris',
       postalCode: '31000',
     })
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
     await pasteCoordinates(wrapper, 19.3, -70.25)
 
     expect(valueOf(wrapper, 'province')).toBe('Duarte')
@@ -370,7 +341,7 @@ describe('MAPGEO — Nominatim fallback cuando no hay Google Maps key', () => {
 
   it('avisa cuando Nominatim no devuelve direccion', async () => {
     nominatimImpl = async () => ({ province: '', municipality: '', locality: '', postalCode: '' })
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
     await pasteCoordinates(wrapper, 19.0, -70.0)
 
     expect(valueOf(wrapper, 'province')).toBe('')
@@ -380,7 +351,7 @@ describe('MAPGEO — Nominatim fallback cuando no hay Google Maps key', () => {
 
   it('avisa cuando Nominatim falla (sin red)', async () => {
     nominatimImpl = async () => { throw new TypeError('Failed to fetch') }
-    const wrapper = await mountOnLocationTab()
+    const wrapper = await mountUbicacion()
     await pasteCoordinates(wrapper, 18.4861, -69.9312)
 
     expect(valueOf(wrapper, 'latitude')).toBe('18.4861')
@@ -388,20 +359,7 @@ describe('MAPGEO — Nominatim fallback cuando no hay Google Maps key', () => {
     expect(avisos.length, 'el usuario tiene que enterarse del fallo').toBeGreaterThan(0)
   })
 
-  it('no pisa lo que el usuario escribio a mano (mismo comportamiento que Google)', async () => {
-    nominatimImpl = async () => ({
-      province: 'La Altagracia',
-      municipality: 'Higüey',
-      locality: 'Centro',
-      postalCode: '23000',
-    })
-    const wrapper = await mountOnLocationTab()
-    const municipio = wrapper.find('[data-field="municipality"]')
-    await municipio.setValue('Boca Chica')
-
-    await pasteCoordinates(wrapper, 18.6, -68.7)
-
-    expect(valueOf(wrapper, 'municipality')).toBe('Boca Chica')
-    expect(valueOf(wrapper, 'province')).toBe('La Altagracia')
-  })
+  // "no pisa lo que el usuario escribió a mano" (variante Nominatim) — retirado por el mismo
+  // motivo que su equivalente de Google arriba: desde 1.4b el campo Municipio es `disabled`,
+  // no hay forma real de tipear un valor a mano en `ubicacion.vue`.
 })

@@ -71,37 +71,12 @@
     <!-- ========== HOTEL ========== -->
     <div v-if="activeTab === 'hotel'" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div class="lg:col-span-2 space-y-6">
-        <SectionCard title="Datos del hotel" subtitle="Identidad y clasificación que aparece en facturas, emails y OTAs">
+        <SectionCard title="Datos del hotel" subtitle="Identidad que aparece en facturas, emails y OTAs. Tipo de alojamiento, estrellas y logo se editan en Página pública → General.">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nombre *</label>
               <input v-model="form.name" type="text" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" :class="fieldClass('name')" data-field="name" @blur="touchField('name')">
               <p v-if="errorOf('name')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('name') }}</p>
-            </div>
-            <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo de alojamiento</label>
-              <select v-model="form.accommodationType" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none cursor-pointer">
-                <!-- value = enum del backend (ACCOMMODATION_TYPE_ENUM), label en español.
-                     Antes había opciones inventadas (boutique, aparthotel, hostal, casa_rural,
-                     camping) que el schema rechazaba: elegirlas hacía fallar el guardado entero. -->
-                <option value="">Seleccionar</option>
-                <option value="hotel">Hotel</option>
-                <option value="apartment">Apartahotel / Apartamento</option>
-                <option value="hostel">Hostal</option>
-                <option value="villa">Villa / Casa</option>
-                <option value="bnb">Bed &amp; Breakfast</option>
-              </select>
-            </div>
-            <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Clasificación</label>
-              <select v-model="form.starRating" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none cursor-pointer">
-                <option value="">N/A</option>
-                <option value="1">1 Estrella</option>
-                <option value="2">2 Estrellas</option>
-                <option value="3">3 Estrellas</option>
-                <option value="4">4 Estrellas</option>
-                <option value="5">5 Estrellas</option>
-              </select>
             </div>
             <div>
               <!-- País: identidad administrativa/fiscal del hotel (moneda, impuestos por defecto,
@@ -110,34 +85,6 @@
                    este valor de solo lectura con un link "Cambiar" que apunta acá. -->
               <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">País *</label>
               <SearchSelect v-model="form.country" :options="COUNTRIES" placeholder="Buscar país..." />
-            </div>
-          </div>
-        </SectionCard>
-
-        <SectionCard title="Logo del Hotel" subtitle="Identidad visual — se muestra en facturas, pre-checkin y emails">
-          <div class="flex items-start gap-4">
-            <div
-              @dragover.prevent="logoDragging = true"
-              @dragleave.prevent="logoDragging = false"
-              @drop.prevent="onLogoDrop"
-              @click="logoFileInput?.click()"
-              class="relative w-28 h-28 rounded-xl border-2 border-dashed overflow-hidden bg-surface flex items-center justify-center shrink-0 cursor-pointer transition-colors"
-              :class="logoDragging ? 'border-cyan bg-cyan/5' : 'border-border hover:border-navy/40'">
-              <img v-if="form.logo" :src="form.logo" alt="Logo" class="w-full h-full object-contain" />
-              <div v-else class="flex flex-col items-center gap-1 px-2 text-center pointer-events-none">
-                <span class="w-5 h-5 text-navy/40" v-html="ICON_UPLOAD"></span>
-                <span class="text-[9px] font-bold text-text-muted uppercase">Arrastrá o hacé clic</span>
-              </div>
-              <div v-if="logoUploading" class="absolute inset-0 bg-white/80 flex items-center justify-center">
-                <span class="text-[10px] font-bold text-navy">Subiendo…</span>
-              </div>
-            </div>
-            <input ref="logoFileInput" type="file" accept="image/*" class="hidden" @change="onLogoFileChange">
-            <div class="flex-1">
-              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">URL del Logo</label>
-              <input v-model="form.logo" type="url" placeholder="https://ejemplo.com/logo.png" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('logo')" data-field="logo" @blur="touchField('logo')">
-              <p v-if="errorOf('logo')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('logo') }}</p>
-              <p class="text-[10px] text-text-muted mt-1">PNG o JPG, máximo 5MB — o pegá la URL de un logo que ya tengas alojado</p>
             </div>
           </div>
         </SectionCard>
@@ -156,11 +103,6 @@
               <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Email</label>
               <input v-model="form.email" type="email" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" :class="fieldClass('email')" data-field="email" @blur="touchField('email')">
               <p v-if="errorOf('email')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('email') }}</p>
-            </div>
-            <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Sitio web</label>
-              <input v-model="form.website" type="url" placeholder="https://" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" :class="fieldClass('website')" data-field="website" @blur="touchField('website')">
-              <p v-if="errorOf('website')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('website') }}</p>
             </div>
           </div>
         </SectionCard>
@@ -802,7 +744,6 @@ const ICON_BUILDING = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none
 const ICON_CARD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>'
 const ICON_MESSAGE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>'
 const ICON_RECEIPT = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M8 7h8"/><path d="M8 11h8"/><path d="M8 15h5"/></svg>'
-const ICON_UPLOAD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>'
 
 const auth = useAuthStore()
 const toast = useToast()
@@ -822,51 +763,9 @@ async function loadCurrency() {
     if (c) { currencyConfig.secondaryCurrency = c.secondaryCurrency || 'DOP'; currencyConfig.exchangeRate = c.exchangeRate ?? 60 }
   } catch { /* default */ }
 }
-// Logo del hotel — arrastrar/soltar o elegir archivo, con preview. Sube de una (endpoint dedicado,
-// data URL base64) en vez de esperar al "Guardar" general: mismo patrón que el avatar de usuario.
-const logoFileInput = ref<HTMLInputElement | null>(null)
-const logoDragging = ref(false)
-const logoUploading = ref(false)
-const LOGO_MAX_BYTES = 5 * 1024 * 1024
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(new Error('No se pudo leer el archivo'))
-    reader.readAsDataURL(file)
-  })
-}
-
-async function uploadLogoFile(file: File) {
-  if (!file.type.startsWith('image/')) { toast.error('Solo se permiten imágenes'); return }
-  if (file.size > LOGO_MAX_BYTES) { toast.error('Máximo 5MB'); return }
-  logoUploading.value = true
-  try {
-    const dataUrl = await readFileAsDataUrl(file)
-    const result = await HotelService.uploadLogo(dataUrl, file.name)
-    form.value.logo = result.logo
-    markLogoClean()
-    toast.success('Logo actualizado')
-  } catch (e) {
-    toast.error((e as Error).message || 'No se pudo subir el logo')
-  } finally {
-    logoUploading.value = false
-  }
-}
-
-function onLogoFileChange(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''   // permite volver a elegir el mismo archivo si el usuario se arrepiente y reintenta
-  if (file) uploadLogoFile(file)
-}
-
-function onLogoDrop(e: DragEvent) {
-  logoDragging.value = false
-  const file = e.dataTransfer?.files?.[0]
-  if (file) uploadLogoFile(file)
-}
+// El logo del hotel (subida arrastrar/soltar) se mudó a Página pública → General (tarea 1.7,
+// docs/wizard-refactor) — es público (allow-list de getPublicHotelInfo), no identidad
+// administrativa. Ver pagina-publica/general.vue.
 
 // Contactos de emergencia del hotel (feedback #414). Viven en configuration['contactos_emergencia'];
 // si el hotel no tiene los suyos, el backend cae al default global (hotelId='platform').
@@ -1225,8 +1124,9 @@ const touchedFields = ref<Set<string>>(new Set())
 /** En qué pestaña vive cada campo — para poder llevar al usuario hasta el error. */
 const FIELD_TAB: Record<string, string> = {
   name: 'hotel', phone: 'hotel', phone2: 'hotel',
-  email: 'hotel', website: 'hotel', timezone: 'hotel', currency: 'hotel',
-  checkIn: 'hotel', checkOut: 'hotel', ownerName: 'hotel', ownerTaxId: 'hotel', logo: 'hotel',
+  email: 'hotel', timezone: 'hotel', currency: 'hotel',
+  checkIn: 'hotel', checkOut: 'hotel', ownerName: 'hotel', ownerTaxId: 'hotel',
+  // website/logo/accommodationType/starRating se mudaron a Página pública (tarea 1.7).
   // País: Dirección/mapa/provincia/municipio/CP se mudaron a Página pública (tarea 1.8,
   // docs/wizard-refactor) — país se queda acá porque es identidad administrativa/fiscal
   // (doc 03), ahora vive en la pestaña Hotel junto al resto de la identidad.
@@ -1283,21 +1183,6 @@ function snapshot(): string {
 }
 function markClean() {
   savedSnapshot.value = snapshot()
-}
-
-/**
- * El logo se sube y persiste SOLO (endpoint dedicado, no pasa por saveAll): un `markClean()` común
- * marcaría como "guardado" cualquier otro campo del form que el usuario haya tocado sin apretar el
- * botón "Guardar" general — perdería ese aviso sin haber guardado nada de eso en realidad. Acá se
- * actualiza únicamente `form.logo` dentro de la foto base, dejando el resto del diff intacto.
- */
-function markLogoClean() {
-  if (!savedSnapshot.value) return
-  try {
-    const baseline = JSON.parse(savedSnapshot.value)
-    baseline.form = { ...(baseline.form ?? {}), logo: form.value.logo }
-    savedSnapshot.value = JSON.stringify(baseline)
-  } catch { /* snapshot no parseable: no debería pasar, no rompe nada dejarlo como estaba */ }
 }
 
 const isDirty = computed(() => savedSnapshot.value !== '' && snapshot() !== savedSnapshot.value)
@@ -1531,8 +1416,19 @@ async function saveAll() {
 
   // Se revalida todo y se marcan los campos: antes sólo se comprobaban nombre y país, y cualquier
   // otro problema aparecía como un 400 con un toast genérico que no decía cuál era el campo.
-  touchedFields.value = new Set(Object.keys(HOTEL_RULES))
-  fieldErrors.value = validateAll(form.value as Record<string, unknown>, HOTEL_RULES)
+  //
+  // Bug real encontrado en la revisión de F1 (tareas 1.7/1.8): `HOTEL_RULES` es compartido con
+  // `ubicacion.vue` y todavía declara `website`/`logo` (mudados a Página pública en 1.7) y
+  // `address`/`province`/`municipality`/`locality`/`postalCode`/`latitude`/`longitude` (mudados
+  // en 1.8) — `form.value` los sigue cargando desde `SettingsService.get()` aunque ya no tengan
+  // ningún input en esta pantalla. Validar el set COMPLETO de `HOTEL_RULES` contra esos valores
+  // viejos podía bloquear el guardado entero de Hotel/Condiciones por un campo que el usuario no
+  // puede ver ni corregir acá (el toast apuntaba a un `data-field` que ya no existe en el DOM).
+  // `FIELD_TAB` ya lista exactamente los campos que siguen activos en esta pantalla — se usa como
+  // filtro en vez de validar todo `HOTEL_RULES`.
+  const activeRules = Object.fromEntries(Object.entries(HOTEL_RULES).filter(([k]) => k in FIELD_TAB))
+  touchedFields.value = new Set(Object.keys(activeRules))
+  fieldErrors.value = validateAll(form.value as Record<string, unknown>, activeRules)
   const bad = Object.keys(fieldErrors.value)
   if (bad.length) {
     const first = bad[0]!
@@ -1556,13 +1452,15 @@ async function saveAll() {
   // desde acá (tarea 1.8, docs/wizard-refactor) — los persiste Página pública → Ubicación con
   // su propio guardado aislado. Incluirlos acá pisaría ese guardado con lo que haya quedado
   // cargado en este formulario al abrir Configuración.
+  // accommodationType/starRating/website/logo ya NO se guardan desde acá (tarea 1.7,
+  // docs/wizard-refactor) — los persiste Página pública → General con su propio guardado.
   const keys = ['name','country','phone','email','timezone','currency','checkIn','checkOut',
     'freeCancellation','depositRequired','depositPercent','weekendSurcharge',
-    'accommodationType','starRating','ownerName','ownerTaxId','phone2','website',
+    'ownerName','ownerTaxId','phone2',
     'cleaningType',
     'depositType','depositFixed','advanceType','advanceAmount','releaseHours','defaultPaymentMethod',
     'requestReviews','taxName','taxRate',
-    'wifiNetwork','wifiPassword','logo']
+    'wifiNetwork','wifiPassword']
   for (const k of keys) {
     const v = saveField(k, (form.value as Record<string, unknown>)[k])
     // Los booleanos viajan como booleanos. Antes se mandaban como 0/1 y el schema del backend
