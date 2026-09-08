@@ -115,7 +115,7 @@
               @click="logoFileInput?.click()"
               class="relative w-28 h-28 rounded-xl border-2 border-dashed overflow-hidden bg-surface flex items-center justify-center shrink-0 cursor-pointer transition-colors"
               :class="logoDragging ? 'border-cyan bg-cyan/5' : 'border-border hover:border-navy/40'">
-              <img v-if="form.logo" :src="form.logo" alt="Logo" class="w-full h-full object-contain" />
+              <img v-if="logoSrc" :src="logoSrc" alt="Logo" class="w-full h-full object-contain" @error="logoFailed = true" />
               <div v-else class="flex flex-col items-center gap-1 px-2 text-center pointer-events-none">
                 <span class="w-5 h-5 text-navy/40" v-html="ICON_UPLOAD"></span>
                 <span class="text-[9px] font-bold text-text-muted uppercase">Arrastrá o hacé clic</span>
@@ -127,7 +127,10 @@
             <input ref="logoFileInput" type="file" accept="image/*" class="hidden" @change="onLogoFileChange">
             <div class="flex-1">
               <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">URL del Logo</label>
-              <input v-model="form.logo" type="url" placeholder="https://ejemplo.com/logo.png" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('logo')" data-field="logo" @blur="touchField('logo')">
+              <!-- type="text" y no "url": el uploader guarda acá una ruta del propio sitio
+                   (/uploads/hotel-logos/…) que el validador ya acepta, pero el type="url" nativo
+                   la marcaba inválida en el navegador y bloqueaba Guardar. -->
+              <input v-model="form.logo" type="text" placeholder="https://ejemplo.com/logo.png" class="w-full px-3 py-2 rounded-lg border text-sm" :class="fieldClass('logo')" data-field="logo" @blur="touchField('logo')">
               <p v-if="errorOf('logo')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('logo') }}</p>
               <p class="text-[10px] text-text-muted mt-1">PNG o JPG, máximo 5MB — o pegá la URL de un logo que ya tengas alojado</p>
             </div>
@@ -1155,6 +1158,16 @@ const form = ref<HotelForm>({
   slug: '', amenities: [], descriptionTranslations: {},
   id: '',
 })
+
+/**
+ * Un logo que no resuelve (archivo borrado del storage, valor legacy, URL absoluta que no carga)
+ * no debe dejar el recuadro de imagen rota del navegador: se trata como "sin logo" y cae al
+ * placeholder de arrastrar/soltar. Mismo tratamiento que CommandCenterHeader.
+ */
+const logoFailed = ref(false)
+const logoSrc = computed(() => (logoFailed.value ? '' : form.value.logo || ''))
+// Un logo NUEVO (recién subido o pegado a mano) merece otra chance aunque el anterior fallara.
+watch(() => form.value.logo, () => { logoFailed.value = false })
 
 // Plan contratado: la suscripción manda (`planId`), y el precio/nombre salen de la tabla `plans`.
 // `hotels.plan` sólo se usa como último recurso para resolver el slug cuando todavía no hay
