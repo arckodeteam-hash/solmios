@@ -129,7 +129,6 @@ import StepIdentidad from './steps/StepIdentidad.vue'
 import StepContacto from './steps/StepContacto.vue'
 import StepUbicacion from './steps/StepUbicacion.vue'
 import StepPoliticas from './steps/StepPoliticas.vue'
-import StepAmenities from './steps/StepAmenities.vue'
 import StepExternal from './steps/StepExternal.vue'
 
 const router = useRouter()
@@ -159,14 +158,14 @@ const progress = computed(() => {
 
 const STEP_COMPONENTS: Record<string, unknown> = {
   bienvenida: StepBienvenida, identidad: StepIdentidad, contacto: StepContacto,
-  ubicacion: StepUbicacion, politicas: StepPoliticas, amenities: StepAmenities,
+  ubicacion: StepUbicacion, politicas: StepPoliticas,
   rooms: StepExternal, rates: StepExternal, channels: StepExternal,
 }
 function stepComponent(key: string) { return STEP_COMPONENTS[key] }
 
 const SHORT_LABEL: Record<string, string> = {
   bienvenida: 'Bienvenida', identidad: 'Identidad', contacto: 'Contacto', ubicacion: 'Ubicación',
-  politicas: 'Políticas', amenities: 'Amenities', rooms: 'Habitaciones', rates: 'Tarifas',
+  politicas: 'Políticas', rooms: 'Habitaciones', rates: 'Tarifas',
   channels: 'Canales',
 }
 
@@ -198,10 +197,6 @@ const STEP_META: Record<string, { color: string; icon: string }> = {
   politicas: {
     color: '#EF4444', // red-500
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7 7.5 3v5.25c0 4.5-3 7.409-7.5 8.75-4.5-1.341-7.5-4.25-7.5-8.75V5.75l7.5-3Z"/></svg>',
-  },
-  amenities: {
-    color: '#EC4899', // pink-500
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.035-.259a3.375 3.375 0 0 0 2.456-2.455L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>',
   },
   rooms: {
     color: '#22C55E', // green-500
