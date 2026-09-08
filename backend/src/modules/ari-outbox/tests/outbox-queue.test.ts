@@ -24,11 +24,25 @@ function matchea(row: AriOutboxRow, where: Record<string, unknown>): boolean {
   })
 }
 
-/** Puerto en memoria: el mínimo que usa la cola (create/update/updateWhere/findMany). */
+/**
+ * Puerto en memoria: el mínimo que usa la cola (create/update/updateWhere/findMany).
+ *
+ * `create` hace de índice ÚNICO sobre `pendingKey` (#65): si ya hay una fila con la misma clave
+ * NO nula, tira igual que la base. Los `null` no chocan entre sí —así es un único en SQL, y de eso
+ * vive el truco: la columna solo está poblada mientras la fila es pending—, así que el historial
+ * `sent`/`failed` del mismo (hotel, kind) sigue conviviendo acá adentro como en la tabla. `update`
+ * y `updateWhere` aplican `pendingKey` como cualquier otro campo, incluido cuando viene en `null`
+ * (el reclamo del drain la borra con eso).
+ */
 function makePort(clock: { ms: number }) {
   const rows: AriOutboxRow[] = []
   const port: AriOutboxPort = {
     async create(row) {
+      if (row.pendingKey != null && rows.some((r) => r.pendingKey === row.pendingKey)) {
+        // El texto imita a SQLite, pero la cola NO lo mira: cualquier fallo del create se resuelve
+        // releyendo la fila pendiente (ver scheduleOne), justamente para no atarse a un motor.
+        throw new Error(`UNIQUE constraint failed: ari_outbox.pendingKey (${row.pendingKey})`)
+      }
       const stored = { ...row, createdAt: new Date(clock.ms).toISOString(), updatedAt: new Date(clock.ms).toISOString() }
       rows.push(stored)
       return stored
@@ -42,6 +56,13 @@ function makePort(clock: { ms: number }) {
     // (que además pisa `updatedAt` aunque el patch venga vacío — de eso vive el latido).
     async updateWhere(where, patch) {
       const match = rows.filter((r) => matchea(r, where))
+      // El mismo único, ahora del lado del UPDATE: restaurar `pendingKey` en una fila que vuelve a
+      // pending choca si el turno se lo llevó OTRA fila mientras esta estaba en processing. Se
+      // compara contra las que NO se están actualizando, porque volver a escribir la clave que la
+      // propia fila ya tiene no es un choque (ni lo sería en la base).
+      if (patch.pendingKey != null && rows.some((r) => r.pendingKey === patch.pendingKey && !match.includes(r))) {
+        throw new Error(`UNIQUE constraint failed: ari_outbox.pendingKey (${patch.pendingKey})`)
+      }
       for (const row of match) Object.assign(row, patch, { updatedAt: new Date(clock.ms).toISOString() })
       return match.length
     },
@@ -484,5 +505,179 @@ describe('#58 — la fila es de UN proceso a la vez: reclamo con compare-and-swa
     expect(fallidas[0]).toMatchObject({ id: 'r1', status: 'failed', attempts: 3, lastError: 'channex caído' })
     expect(enviadas).toEqual([])
     expect(rows[0]).toMatchObject({ status: 'failed', attempts: 3, claimedBy: null })
+  })
+})
+
+
+describe('#65 — la carrera ENTRE procesos: el índice único de pendingKey cierra la ventana', () => {
+  // El Map de `scheduleChains` serializa lo que pasa DENTRO de un proceso; entre dos réplicas (o
+  // durante un deploy solapado) no serializa nada, y las dos pueden leer "no hay fila pendiente"
+  // antes de que ninguna escriba. Lo que las corta es la columna `pendingKey` con su índice único:
+  // el INSERT del segundo se rechaza y su ráfaga se fusiona en la fila que ganó, en vez de dejar
+  // dos filas pending del mismo (hotel, kind) y publicar dos pushes.
+  const T0 = Date.parse('2026-09-07T10:00:00.000Z')
+
+  /** El proceso perdedor: su primera lectura de la fila pendiente es CIEGA, como en la carrera real. */
+  function procesoCiego(port: AriOutboxPort, clock: { ms: number }) {
+    let lecturas = 0
+    const ciego: AriOutboxPort = {
+      ...port,
+      async findMany(query) {
+        // Solo la consulta de scheduleOne (hotel + kind + pending), y solo la PRIMERA: la relectura
+        // de después del rechazo tiene que ver la tabla de verdad.
+        if (query.hotelId && query.status === 'pending' && lecturas++ === 0) return []
+        return port.findMany(query)
+      },
+    }
+    return new AriOutbox({ repo: ciego, now: () => clock.ms, debounceMs: 1500, newId: () => 'row-b' })
+  }
+
+  it('el create rechazado por unicidad fusiona los canales en la fila pendiente, sin propagar', async () => {
+    const clock = { ms: T0 }
+    const { port, rows } = makePort(clock)
+    // El proceso A ya escribió su ráfaga y tiene el turno tomado.
+    await port.create({
+      id: 'row-a',
+      hotelId: HOTEL,
+      kind: 'inventory',
+      channels: ['booking'],
+      status: 'pending',
+      scheduledAt: new Date(T0).toISOString(),
+      attempts: 0,
+      maxAttempts: 3,
+      lastError: null,
+      pendingKey: `${HOTEL}|inventory`,
+    })
+
+    await procesoCiego(port, clock).schedule(HOTEL, 'inventory', ['OpenChannel'])
+
+    expect(rows).toHaveLength(1) // NO se creó la segunda fila pending: el índice la rechazó
+    expect(rows[0]!.channels).toEqual(['booking', 'OpenChannel']) // y la ráfaga perdedora no se perdió
+    expect(rows[0]!.scheduledAt).toBe(new Date(T0 + 1500).toISOString()) // con el vencimiento corrido
+    expect(rows[0]!.pendingKey).toBe(`${HOTEL}|inventory`)
+  })
+
+  it('si al releer la ganadora ya pasó a processing, el create se reintenta UNA vez y entra', async () => {
+    // El turno se libera en cuanto la fila deja de estar pending, así que entre el INSERT rechazado
+    // y la relectura puede no quedar ninguna fila pendiente donde fusionar: ahí corresponde crear.
+    const clock = { ms: T0 }
+    const { port, rows } = makePort(clock)
+    let creates = 0
+    const conUnRechazo: AriOutboxPort = {
+      ...port,
+      async create(row) {
+        if (creates++ === 0) throw new Error('UNIQUE constraint failed: ari_outbox.pendingKey')
+        return port.create(row)
+      },
+    }
+    const outbox = new AriOutbox({ repo: conUnRechazo, now: () => clock.ms, debounceMs: 1500, newId: () => 'row-b' })
+
+    await outbox.schedule(HOTEL, 'inventory', ['OpenChannel'])
+
+    expect(creates).toBe(2) // uno rechazado + UN reintento
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ id: 'row-b', status: 'pending', pendingKey: `${HOTEL}|inventory` })
+  })
+
+  it('si el create falla SIEMPRE, el error se propaga: un reintento, nunca un bucle', async () => {
+    const clock = { ms: T0 }
+    const { port, rows } = makePort(clock)
+    let creates = 0
+    const roto: AriOutboxPort = { ...port, async create() { creates++; throw new Error('base caída') } }
+    const outbox = new AriOutbox({ repo: roto, now: () => clock.ms, debounceMs: 1500 })
+
+    await expect(outbox.schedule(HOTEL, 'inventory')).rejects.toThrow('base caída')
+    expect(creates).toBe(2)
+    expect(rows).toHaveLength(0)
+  })
+
+  it('el reclamo libera el turno: la fila en processing deja pendingKey en NULL', async () => {
+    // Si el reclamo no la borrara, el índice bloquearía la próxima ráfaga del hotel hasta que este
+    // push termine — una regresión que la columna misma habría causado.
+    const { outbox, rows, avanzar } = makeOutbox({ pushDelayMs: 10 })
+    await outbox.schedule(HOTEL, 'inventory')
+    expect(rows[0]!.pendingKey).toBe(`${HOTEL}|inventory`)
+
+    avanzar(1500)
+    const enVuelo = outbox.drain()
+    await new Promise((r) => setTimeout(r, 2)) // ya reclamó la fila y está publicando
+    expect(rows[0]).toMatchObject({ status: 'processing', pendingKey: null })
+
+    // Y con el turno libre, una ráfaga nueva del MISMO (hotel, kind) puede encolarse.
+    await outbox.schedule(HOTEL, 'inventory', ['OpenChannel'])
+    await enVuelo
+
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.status).toBe('sent')
+    expect(rows[1]).toMatchObject({ status: 'pending', channels: ['OpenChannel'], pendingKey: `${HOTEL}|inventory` })
+  })
+
+  it('el reintento con backoff devuelve la fila a pending CON su clave', async () => {
+    const { outbox, rows, avanzar } = makeOutbox({ failPush: '*' })
+    await outbox.schedule(HOTEL, 'inventory')
+    avanzar(1500)
+    await outbox.drain()
+
+    expect(rows[0]).toMatchObject({ status: 'pending', attempts: 1, pendingKey: `${HOTEL}|inventory` })
+  })
+
+  it('si el turno lo tomó una ráfaga nueva, la fila vuelve a pending SIN clave y el drain no se cae', async () => {
+    // Best-effort: restaurar la clave violaría el índice. Volver a pending con `pendingKey` NULL es
+    // exactamente lo de antes de #65 (dos filas pending conviviendo), y muchísimo mejor que tirar
+    // desde handleFailure, que abortaría el resto del drain.
+    // El push tarda a propósito: mantiene la fila en 'processing' mientras entra la ráfaga nueva.
+    const { outbox, rows, pushed, errores, avanzar } = makeOutbox({ failPush: '*', pushDelayMs: 10 })
+    await outbox.schedule(HOTEL, 'inventory') // row-1: la que va a fallar
+    avanzar(1500)
+    const enVuelo = outbox.drain()
+    await new Promise((r) => setTimeout(r, 2)) // reclamada: el turno quedó libre
+    await outbox.schedule(HOTEL, 'inventory', ['OpenChannel']) // row-2 se queda con el turno
+    await enVuelo
+
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toMatchObject({ status: 'pending', attempts: 1, lastError: 'channex caído', pendingKey: null })
+    expect(rows[1]!.pendingKey).toBe(`${HOTEL}|inventory`)
+    expect(errores).toEqual([undefined]) // solo el fallo del push: el choque de la clave no es un error
+    expect(pushed).toEqual([])
+  })
+
+  it('reclaimStale devuelve la colgada a pending con su clave, y aguanta que el turno esté tomado', async () => {
+    const clock = { ms: T0 }
+    const { port, rows } = makePort(clock)
+    const colgada = (id: string, hotelId: string) => port.create({
+      id,
+      hotelId,
+      kind: 'inventory',
+      channels: [],
+      status: 'processing',
+      scheduledAt: new Date(T0).toISOString(),
+      attempts: 0,
+      maxAttempts: 3,
+      lastError: null,
+      claimedBy: 'proceso-muerto',
+    })
+    await colgada('row-a', HOTEL) // su turno está libre: la recupera con clave
+    await colgada('row-b', 'h2') // el turno de h2 ya lo tiene una ráfaga nueva
+    await port.create({
+      id: 'row-c',
+      hotelId: 'h2',
+      kind: 'inventory',
+      channels: [],
+      status: 'pending',
+      scheduledAt: new Date(T0).toISOString(),
+      attempts: 0,
+      maxAttempts: 3,
+      lastError: null,
+      pendingKey: 'h2|inventory',
+    })
+    clock.ms += STALE_MS + 1000
+    const outbox = new AriOutbox({ repo: port, now: () => clock.ms, heartbeatMs: 0 })
+
+    expect(await outbox.reclaimStale()).toBe(2) // las DOS vuelven: ninguna queda colgada por la clave
+
+    expect(rows[0]).toMatchObject({ status: 'pending', claimedBy: null, pendingKey: `${HOTEL}|inventory` })
+    expect(rows[1]).toMatchObject({ status: 'pending', claimedBy: null })
+    expect(rows[1]!.pendingKey ?? null).toBeNull() // volvió SIN clave: el turno es de la ráfaga nueva
+    expect(rows[2]!.pendingKey).toBe('h2|inventory') // la ráfaga nueva conserva su turno
   })
 })

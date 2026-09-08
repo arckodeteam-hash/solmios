@@ -12,6 +12,7 @@ import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
 import { PostgresAdapter } from 'arckode-framework/adapters/postgres'
 import type { DbAdapter } from 'arckode-framework'
 import { backfillPaymentsReservationId } from './scripts/backfill-payments-reservation'
+import { backfillAriOutboxPendingKey } from './scripts/backfill-ari-outbox-pending-key'
 import { LEGAL_PAGES_SEED } from './scripts/legal-pages-content'
 import { MARKETING_PAGES_SEED } from './scripts/marketing-pages-content'
 
@@ -184,6 +185,42 @@ async function createTablesBlock1(): Promise<void> {
   // uniques). Dureza de datos para el check-then-create del service (ConflictError 409) — si dos
   // admins crean el mismo slug a la vez, la carrera la frena el índice.
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_site_pages_slug ON site_pages (slug)`)
+
+  // Outbox de ARI (módulo ari-outbox): UNA sola fila `pending` por (hotelId, kind), garantizada
+  // por la BASE. `scheduleOne` es un check-then-act (leer la pendiente, si no hay crearla)
+  // serializado sólo por un Map en memoria del proceso: dos réplicas —o un deploy solapado—
+  // crean las dos su fila y Channex recibe el push duplicado.
+  //
+  // La garantía que hace falta es un índice único PARCIAL (hotelId, kind) WHERE status='pending'.
+  // El equivalente que usamos acá es un único PLANO sobre la columna nullable `pendingKey`, que
+  // vale 'hotelId|kind' MIENTRAS la fila está pending y NULL en cualquier otro estado: como en SQL
+  // los NULL de un índice único son DISTINTOS entre sí, el índice sólo puede chocar entre dos
+  // filas pendientes del mismo par, y todo el historial sent/failed convive sin problema. Es
+  // exactamente el mismo efecto que el WHERE, pero expresable por el ORM (`unique` por columna) y
+  // portable a SQLite, Postgres y MySQL. NO cambiarlo por un parcial: el modelo no lo emitiría y
+  // las bases nuevas quedarían sin la mitad de la garantía.
+  //
+  // Se garantiza acá y no sólo en el modelo porque ormMigrate emite el UNIQUE inline únicamente en
+  // el CREATE TABLE: sobre una tabla que YA existe hace ALTER TABLE ADD COLUMN sin el UNIQUE, así
+  // que las bases existentes se quedarían sin índice (mismo motivo que idx_configuration_hotel_key
+  // y idx_site_pages_slug). El addColumnIfMissing cubre las bases donde ormMigrate todavía no corrió
+  // con el modelo nuevo; si la tabla no existe aún, el índice entra en la próxima corrida.
+  // El try cubre TAMBIÉN el addColumnIfMissing: sobre una base donde `ari_outbox` todavía no
+  // existe, el ALTER TABLE tira "no such table", que NO es un error de "ya existe" y por lo tanto
+  // `isAlreadyExistsError` no lo silencia. Fuera del try se escapaba al único .catch() de main()
+  // y abortaba TODA la migración —los bloques de DDL y los seeds que siguen— en vez de degradar
+  // como promete el mensaje de abajo.
+  try {
+    await addColumnIfMissing('ari_outbox', 'pendingKey', 'TEXT')
+    // Backfill idempotente y SIN duplicados. La decisión de qué fila se lleva el turno se toma
+    // DENTRO de la sentencia y no en JS: ver el comentario del script, es lo que evita que la
+    // clave salga corrupta en Postgres.
+    const marcadas = await backfillAriOutboxPendingKey(db)
+    if (marcadas > 0) console.log(`  ari_outbox: ${marcadas} fila(s) pendiente(s) con pendingKey`)
+    await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ari_outbox_pending_key ON ari_outbox (pendingKey)`)
+  } catch (e: unknown) {
+    console.log("idx_ari_outbox_pending_key: tabla ari_outbox aún no migrada (correr RUN_MIGRATE) —", e instanceof Error ? e.message.slice(0, 90) : String(e))
+  }
 
   // Expedientes de digitalización (módulo digitalizacion). La tabla la crea ormMigrate (modelo
   // ORM, Paso 1); acá solo el índice de búsqueda por hotel, que es como se consulta siempre

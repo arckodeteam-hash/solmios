@@ -54,6 +54,24 @@ export const AriOutboxModel: ModelDefinition = {
     // una fila reclamada por stale a mitad de push no la cierra el proceso zombi. Declarado acá
     // porque el ORM descarta sin warning los campos que no están en `fields` (ver el aviso de arriba).
     claimedBy: { type: 'string' },
+    // Candado de la BASE contra la doble fila pendiente. El coalescing de scheduleOne es un
+    // check-then-act (leer la pending, si no hay crearla) serializado sólo por un Map EN MEMORIA:
+    // dos procesos —dos réplicas, un deploy solapado— hacen el leer al mismo tiempo, los dos ven
+    // "no hay" y los dos crean, así que el mismo (hotelId, kind) queda con DOS ráfagas pendientes
+    // y Channex recibe el push duplicado. Lo único que cierra esa ventana es que la unicidad viva
+    // en la tabla, no en el proceso.
+    //
+    // Lo que hace falta es un índice único PARCIAL —(hotelId, kind) WHERE status='pending'—, que
+    // el ORM no sabe expresar: FieldDefinition sólo tiene `unique?`/`indexed?` por columna, sin
+    // predicado. Esta columna es su equivalente EXACTO y sí expresable: vale `${hotelId}|${kind}`
+    // MIENTRAS la fila está pending y NULL en cualquier otro estado (processing/sent/failed), así
+    // que un único plano sobre ella sólo puede chocar entre dos filas pendientes del mismo par.
+    // La clave está en que SQL considera los NULL DISTINTOS entre sí dentro de un índice único
+    // (SQLite, Postgres y MySQL, los tres): por eso todo el historial `sent`/`failed` del mismo
+    // (hotelId, kind) —cientos de filas— convive sin chocar, y por eso esto es portable donde el
+    // `WHERE` del índice parcial no lo sería. Quien la escribe/limpia es el ciclo de vida de la
+    // cola (usecases/outbox-queue.ts): se pone al agendar y se borra al reclamar o al cerrar.
+    pendingKey: { type: 'string', unique: true },
   },
 }
 
