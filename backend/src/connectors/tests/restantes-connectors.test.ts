@@ -29,6 +29,9 @@ function makeCtx(hosts: string[], modules: Record<string, any> = {}) {
       captured.scheduled.push([hotelId, kind, channels])
     },
     registerPublisher: (kind: string, publisher: any) => { captured.publishers[kind] = publisher },
+    // El connector también cablea el hook de la config de la cola (el techo de peticiones/minuto
+    // contra Channex): sin este método el doble no es el módulo y el connector se cae al armarse.
+    setSockets: (sockets: any) => Object.assign(captured.sockets, sockets),
   }
   const hostStub = {
     setSockets: (s: any) => Object.assign(captured.sockets, s),
@@ -277,6 +280,21 @@ describe('canalesAriOutboxConnector', () => {
     // El inventario no se publica por canal: sin overrideChannels a propósito.
     expect(captured.publishers.inventory.overrideChannels).toBeUndefined()
     expect(await captured.publishers.inventory.push('h1')).toEqual({ synced: 'h1' })
+  })
+
+  it('cablea el techo de peticiones/minuto que el operador guarda en el Super Admin', async () => {
+    const { ctx, captured } = makeCtx([], {
+      canales: {
+        pushSeasonalRates: async () => ({ pushed: 0 }),
+        overrideChannels: async () => [],
+        syncHotel: async () => ({}),
+      },
+    })
+    canalesAriOutboxConnector(ctx)
+
+    // El hook existe: sin él, el límite guardado nunca llegaría al transporte HTTP de Channex.
+    expect(typeof captured.sockets.onQueueConfigChanged).toBe('function')
+    await captured.sockets.onQueueConfigChanged({ maxAttempts: 5, maxPerMinute: 7 })
   })
 })
 

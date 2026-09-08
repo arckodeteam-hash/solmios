@@ -1,9 +1,10 @@
 // ari-outbox/validators/schema.ts — Validación de entrada.
 // Schemas planos, sin dependencias externas (mismo estilo que canales/ y email-queue/).
 //
-// El módulo no expone escritura: `schedule`/`drain` los llama un conector con tipos, no HTTP.
-// El único input externo es el query del listado admin
-// (GET /api/admin/ari-outbox?hotelId=&status=&kind=&limit=&page=).
+// El módulo no expone escritura de FILAS: `schedule`/`drain` los llama un conector con tipos, no
+// HTTP. Los inputs externos son el query del listado admin
+// (GET /api/admin/ari-outbox?hotelId=&status=&kind=&limit=&page=) y el body de la config de la cola
+// (PUT /api/admin/ari-outbox/config).
 //
 // Sólo los filtros de TEXTO se validan acá. `page` y `limit` quedan fuera a propósito: los normaliza
 // el service (basura → default, tope duro de 200), así que una regla en este schema sería letra
@@ -20,4 +21,15 @@ export const ListAriOutboxSchema: Record<string, ValidationRule> = {
   kind: { type: 'string' as const, enum: ['rates', 'inventory'] },
 }
 
-export const AriOutboxValidator = { list: ListAriOutboxSchema }
+/**
+ * Body del PUT de config. Los dos campos son OPCIONALES porque el endpoint acepta un patch parcial
+ * (guardar solo `maxPerMinute` no puede pisar `maxAttempts` con el default). Acá sólo se rechaza lo
+ * que no es número —un `'muchas'` que llegue crudo terminaría en un techo NaN—: los rangos válidos
+ * los resuelve `sanearConfig` (usecases/outbox-admin.ts), que es donde viven los mínimos y máximos.
+ */
+export const QueueConfigSchema: Record<string, ValidationRule> = {
+  maxAttempts: { type: 'number' as const },
+  maxPerMinute: { type: 'number' as const },
+}
+
+export const AriOutboxValidator = { list: ListAriOutboxSchema, queueConfig: QueueConfigSchema }

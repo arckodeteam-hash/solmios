@@ -230,6 +230,11 @@ const router = createRouter({
           component: () => import('@/pages/super-admin/channels.vue'),
         },
         {
+          path: 'channex-queue',
+          name: 'super-admin-channex-queue',
+          component: () => import('@/pages/super-admin/channex-queue.vue'),
+        },
+        {
           path: 'settings',
           name: 'super-admin-settings',
           component: () => import('@/pages/super-admin/settings.vue'),

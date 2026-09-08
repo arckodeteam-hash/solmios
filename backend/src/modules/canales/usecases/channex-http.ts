@@ -40,8 +40,24 @@ const MS_PER_SECOND = 1000
 const isAriUpdate = (url: string, method?: string): boolean =>
   method === 'POST' && /\/(availability|restrictions)$/.test(String(url).split('?')[0] ?? '')
 
+/** Techo por default: margen bajo los ~20/min que exige Channex. */
+export const DEFAULT_MAX_PER_MINUTE = 18
+
+/**
+ * Saneo del techo: entero >= 1. Un 0 CONGELA la cola para siempre —`acquireSlot` no encontraría
+ * lugar nunca y el push se quedaría esperando— y un NaN rompe todas las comparaciones de la
+ * ventana, así que lo que no pasa este filtro se ignora y el límite vigente queda como está.
+ */
+const saneMaxPerMinute = (n: unknown): number | null => {
+  const v = Math.floor(Number(n))
+  return Number.isFinite(v) && v >= 1 ? v : null
+}
+
 export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOptions = {}) {
-  const maxPerMinute = opts.maxPerMinute ?? 18
+  // `let` y no `const`: el techo se configura desde el Super Admin y tiene que poder cambiar EN
+  // CALIENTE (ver setMaxPerMinute). `acquireSlot` lo lee adentro del loop, así que un push que ya
+  // está esperando su turno se entera del valor nuevo en la vuelta siguiente.
+  let maxPerMinute = saneMaxPerMinute(opts.maxPerMinute) ?? DEFAULT_MAX_PER_MINUTE
   const windowMs = opts.windowMs ?? 60_000
   const retries = opts.retries ?? 3
   const timeoutMs = opts.timeoutMs ?? 15_000
@@ -58,6 +74,17 @@ export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOpt
       // Ventana llena: esperar lo que le falta al request más viejo para expirar.
       await sleep(windowMs - (t - sentAt[0]!) + 5)
     }
+  }
+
+  /**
+   * Cambia el techo de peticiones por minuto sin reiniciar el proceso: es lo que el operador
+   * guarda en la config de la cola (`ari-outbox` › PUT /config), que llega hasta acá por el
+   * connector. Los valores que no pasan el saneo se ignoran en silencio: mejor seguir con el
+   * límite anterior que dejar la cola trabada.
+   */
+  function setMaxPerMinute(n: number): void {
+    const v = saneMaxPerMinute(n)
+    if (v !== null) maxPerMinute = v
   }
 
   /** Backoff exponencial (500ms·2^attempt, tope 30s); si Channex manda Retry-After, ese manda. */
@@ -98,11 +125,19 @@ export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOpt
     return last
   }
 
-  return { request, resetWindow: () => { sentAt.length = 0 } }
+  return { request, setMaxPerMinute, resetWindow: () => { sentAt.length = 0 } }
 }
 
 /** Instancia compartida por todo el módulo: un solo budget de rate limit contra Channex. */
 export const sharedChannexHttp = createChannexHttp()
+
+/**
+ * El techo configurado desde el Super Admin aplicado al transporte compartido. Existe como función
+ * de módulo (y no como algo que se le pase al constructor) porque quien tiene el valor guardado es
+ * `ari-outbox`, que no puede importar de `canales`: el connector canales-ari-outbox escucha el
+ * cambio de config y llama acá. Un valor inválido no cambia nada (ver saneMaxPerMinute).
+ */
+export const setChannexMaxPerMinute = (n: number): void => { sharedChannexHttp.setMaxPerMinute(n) }
 
 /**
  * SOLO TESTS: reinicia la ventana del limiter compartido. bun:test corre cada archivo en su

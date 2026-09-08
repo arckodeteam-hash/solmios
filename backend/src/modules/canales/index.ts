@@ -25,6 +25,10 @@ export { CanalesService }
 export type { CanalesDTO, CreateCanalesDTO, UpdateCanalesDTO, CanalesQuery, CanalesPaginated, ChannelsResultDTO, ChannelDTO, SyncResultDTO, RoomTypeSummary, TestConnectionDTO, TestConnectionResultDTO, MappingDetailDTO, MappingRateDTO, OTAChannelCreateDTO, OTAChannelMappingDTO, OTAChannelResultDTO, GroupDTO } from './types'
 export type { CanalesSockets } from './sockets'
 export { CanalesValidator, CreateCanalesSchema, UpdateCanalesSchema } from './validators/schema'
+// El techo de peticiones/minuto contra Channex vive en el transporte HTTP de este módulo, pero lo
+// configura el Super Admin sobre la cola de `ari-outbox`. Como un módulo no importa de otro, el
+// connector canales-ari-outbox toma el valor guardado y lo aplica por acá.
+export { setChannexMaxPerMinute } from './usecases/channex-http'
 
 export function CanalesModule() {
   return createModule({

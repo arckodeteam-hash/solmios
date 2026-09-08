@@ -4,6 +4,11 @@
 // solo DELEGA (CLAUDE #3): la lógica de agrupación y backoff está en ari-outbox/usecases.
 
 import type { ConnectorContext } from 'arckode-framework'
+// Un connector SÍ puede importar de los módulos: para eso existe. Acá se necesita porque el techo
+// de peticiones/minuto lo GUARDA `ari-outbox` (la config de la cola, en el Super Admin) pero lo
+// APLICA `canales`, que es dueño del transporte HTTP contra Channex — y un módulo no importa de
+// otro.
+import { setChannexMaxPerMinute } from '../modules/canales'
 
 interface AriOutboxModulePort {
   registerPublisher: (
@@ -13,6 +18,8 @@ interface AriOutboxModulePort {
       overrideChannels?: (hotelId: string) => Promise<string[]>
     },
   ) => void
+  /** Hooks opcionales del módulo (ari-outbox/sockets.ts). */
+  setSockets: (s: { onQueueConfigChanged?: (cfg: { maxAttempts: number; maxPerMinute: number }) => Promise<void> }) => void
 }
 
 interface CanalesPushPort {
@@ -39,5 +46,14 @@ export function canalesAriOutboxConnector(ctx: ConnectorContext): void {
   // `overrideChannels` a propósito: el inventario NO se publica por canal, es uno solo por hotel.
   outbox.registerPublisher('inventory', {
     push: (hotelId) => canales().syncHotel(hotelId),
+  })
+
+  // La config que el operador guarda sobre la cola, aplicada a quien la tiene que respetar. Se
+  // emite al guardar (PUT /api/admin/ari-outbox/config) y al arrancar (applyQueueConfig), así que
+  // el valor persistido rige desde el primer tick del worker y no recién tras el próximo PUT.
+  // El `maxAttempts` no pasa por acá: es la propia cola de `ari-outbox` y el módulo se lo aplica
+  // solo. Lo único que cruza el límite entre módulos es el techo de peticiones/minuto.
+  outbox.setSockets({
+    onQueueConfigChanged: async (cfg) => { setChannexMaxPerMinute(cfg.maxPerMinute) },
   })
 }
