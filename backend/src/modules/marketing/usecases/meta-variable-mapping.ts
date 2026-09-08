@@ -13,21 +13,36 @@ const MAX_NAME = 512
 /** Tope de cuerpo de una plantilla en Meta. */
 export const MAX_BODY = 1024
 
-/** Variables del PMS con un valor de muestra creíble para el revisor de Meta. */
+/**
+ * Variables del PMS con un valor de muestra creíble para el revisor de Meta.
+ *
+ * Es también la LISTA ÚNICA de lo que una plantilla puede usar. Debe mantenerse alineada con
+ * `resolverVariables` en `reservas/usecases/send-whatsapp.ts`, que es quien pone el valor real al
+ * enviar: una variable que esté acá y no allá se manda como guión, y una que esté allá y no acá se
+ * va sin ejemplo y Meta rechaza la plantilla.
+ */
 const SAMPLE_VALUES: Record<string, string> = {
   guest_name: 'María García',
   hotel_name: 'Hotel Paraíso',
+  hotel_address: 'Av. Principal 100, Punta Cana',
+  hotel_phone: '+1 809 555 0100',
   checkin_date: '15/07/2026',
   checkout_date: '18/07/2026',
+  checkin_time: '15:00',
+  checkout_time: '12:00',
   room_number: '204',
   nights: '3',
   total_amount: 'USD 360',
   pending_amount: 'USD 120',
   locator: 'HX-7842',
+  precheckin_link: 'https://solmios.com/pre-checkin/abc123',
   wifi_network: 'HotelParaiso-Guest',
   wifi_password: 'paraiso2026',
   lock_codes: '458219',
 }
+
+/** Lo que una plantilla puede usar. Se deriva de las muestras: sin muestra, Meta la rechaza. */
+export const VARIABLES_CONOCIDAS = Object.keys(SAMPLE_VALUES)
 
 /** Fallback cuando la plantilla usa una variable que no está en la tabla de muestras. */
 const GENERIC_SAMPLE = 'Ejemplo'

@@ -185,3 +185,33 @@ describe('resolverVariables', () => {
     expect(resolverVariables(['guest_name'], {})).toEqual(['Huésped'])
   })
 })
+
+// El catálogo de plantillas vive en `marketing` y el resolver acá. Si se desincronizan, una
+// plantilla se manda con guiones donde debería ir el dato — y Meta la aprobó con ese texto, así que
+// nadie se entera hasta que un huésped recibe "tu saldo es —".
+describe('las variables del catálogo y las que resuelve el envío son las mismas', () => {
+  it('todo lo que ofrece el catálogo, el envío lo sabe resolver', async () => {
+    const { VARIABLES_CONOCIDAS } = await import('../../marketing/usecases/meta-variable-mapping')
+
+    // Contexto completo: cada variable tiene que salir con valor, no con el guión de "sin dato".
+    const ctx = {
+      guest: { name: 'María', phone: '+18095550000' },
+      hotel: { name: 'Hotel Demo', address: 'Calle 1', phone: '+1809', currency: 'USD', checkIn: '15:00', checkOut: '12:00' },
+      reservation: {
+        checkIn: '2026-09-10', checkOut: '2026-09-12', nights: 2, totalAmount: 300,
+        pendingAmount: 100, code: 'HX-1', preCheckinHash: 'abc', checkInTime: '15:00',
+      },
+      room: { number: '204' },
+    }
+    process.env.PUBLIC_BASE_URL = 'https://solmios.com'
+
+    // Las de credenciales no las resuelve el envío a propósito: no van en plantillas (Meta las
+    // rechaza por categoría), se mandan por texto libre dentro de la ventana de 24 h.
+    const soloTextoLibre = new Set(['wifi_network', 'wifi_password', 'lock_codes'])
+    const aVerificar = VARIABLES_CONOCIDAS.filter((v) => !soloTextoLibre.has(v))
+
+    const valores = resolverVariables(aVerificar, ctx)
+    const sinResolver = aVerificar.filter((_, i) => valores[i] === '—')
+    expect(sinResolver, `sin resolver: ${sinResolver.join(', ')}`).toEqual([])
+  })
+})

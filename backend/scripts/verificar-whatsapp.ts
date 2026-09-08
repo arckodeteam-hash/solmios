@@ -10,7 +10,9 @@
 //
 // Es de SOLO LECTURA: no crea, no modifica, no envía nada.
 
-import { Database } from 'bun:sqlite'
+import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
+import { PostgresAdapter } from 'arckode-framework/adapters/postgres'
+import type { DbAdapter } from 'arckode-framework'
 
 const GRAPH = 'https://graph.facebook.com'
 const VERSION = process.env.META_GRAPH_VERSION || 'v26.0'
@@ -51,23 +53,34 @@ console.log(resultados.map(r => `${MARCA[r.estado]} ${r.texto}`).join('\n'))
 // ── 2. Base de datos ─────────────────────────────────────────────────────────
 titulo('2. Conexión de los hoteles')
 
-const dbPath = process.env.DB_PATH || 'data/managerhotel.db'
-let db: Database
+// Mismo criterio que composition-root y migrate-db: si hay DATABASE_URL es Postgres (producción),
+// si no, SQLite (desarrollo). Antes esto abría SQLite siempre y en producción reventaba contra una
+// base vieja con el schema de hace meses.
+const DATABASE_URL = process.env.DATABASE_URL
+const db: DbAdapter & { connect(): Promise<void> } = DATABASE_URL
+  ? new PostgresAdapter({ connectionString: DATABASE_URL })
+  : new SqliteAdapter({ path: process.env.DB_PATH || './data/managerhotel.db', wal: true })
+
 try {
-  db = new Database(dbPath, { readonly: true })
+  await db.connect()
 } catch (e) {
-  console.log(`  ❌ No se pudo abrir la base (${dbPath}): ${String(e)}`)
-  console.log('\n     Este script lee SQLite. En producción (Postgres) hay que consultar a mano.')
+  console.log(`  ❌ No se pudo abrir la base: ${String(e)}`)
   process.exit(1)
 }
+console.log(`  Motor: ${DATABASE_URL ? 'PostgreSQL' : 'SQLite'}\n`)
 
 const hotelIdArg = process.argv[2]
-const filtro = hotelIdArg ? ' WHERE c.hotelId = ?' : ''
-const conexiones = db.query(`
-  SELECT c.hotelId, h.name AS hotelName, c.connectionMode, c.wabaId, c.phoneNumberId,
-         c.accessToken, c.displayPhoneNumber, c.verifiedName, c.qualityRating, c.messagingLimit
-  FROM ai_whatsapp_config c LEFT JOIN hotels h ON h.id = c.hotelId${filtro}
-`).all(...(hotelIdArg ? [hotelIdArg] : [])) as any[]
+const filtro = hotelIdArg ? ' WHERE c.hotelid = ?' : ''
+// Los nombres de columna van SIN comillas y en minúsculas: Postgres pliega los identificadores no
+// entrecomillados, así que `c.displayPhoneNumber` no existe allá — es `displayphonenumber`. Se
+// piden con alias explícito para que la fila llegue igual en los dos motores.
+const conexiones = (await db.query(`
+  SELECT c.hotelid AS "hotelId", h.name AS "hotelName", c.connectionmode AS "connectionMode",
+         c.wabaid AS "wabaId", c.phonenumberid AS "phoneNumberId", c.accesstoken AS "accessToken",
+         c.displayphonenumber AS "displayPhoneNumber", c.verifiedname AS "verifiedName",
+         c.qualityrating AS "qualityRating", c.messaginglimit AS "messagingLimit"
+  FROM ai_whatsapp_config c LEFT JOIN hotels h ON h.id = c.hotelid${filtro}
+`, hotelIdArg ? [hotelIdArg] : [])) as any[]
 
 if (conexiones.length === 0) {
   console.log('  ❌ Ningún hotel tiene configuración de WhatsApp.')
@@ -95,10 +108,11 @@ if (legacy.length > 0) {
 // ── 3. Plantillas ────────────────────────────────────────────────────────────
 titulo('3. Plantillas')
 
-const plantillas = db.query(`
-  SELECT hotelId, name, approvalStatus, metaRejectedReason FROM whatsapp_templates
-  ${hotelIdArg ? 'WHERE hotelId = ?' : ''}
-`).all(...(hotelIdArg ? [hotelIdArg] : [])) as any[]
+const plantillas = (await db.query(`
+  SELECT hotelid AS "hotelId", name, approvalstatus AS "approvalStatus",
+         metarejectedreason AS "metaRejectedReason"
+  FROM whatsapp_templates ${hotelIdArg ? 'WHERE hotelid = ?' : ''}
+`, hotelIdArg ? [hotelIdArg] : [])) as any[]
 
 const porEstado = plantillas.reduce((acc: Record<string, number>, t: any) => {
   const k = t.approvalStatus || 'none'
@@ -177,3 +191,4 @@ if (faltantes.length === 0 && conectados.length > 0) {
   }
 }
 console.log()
+await db.close()

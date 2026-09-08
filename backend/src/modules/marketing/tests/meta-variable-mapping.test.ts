@@ -1,6 +1,6 @@
 // marketing/tests/meta-variable-mapping.test.ts — Traducción del cuerpo local al formato de Meta.
 import { describe, it, expect } from 'bun:test'
-import { toMetaBody, metaTemplateName, metaBodyProblem, buildTemplateComponents } from '../usecases/meta-variable-mapping'
+import { toMetaBody, metaTemplateName, metaBodyProblem, buildTemplateComponents, VARIABLES_CONOCIDAS } from '../usecases/meta-variable-mapping'
 import { PLANTILLAS_BASE } from '../usecases/plantillas-base'
 
 describe('toMetaBody', () => {
@@ -125,12 +125,10 @@ describe('PLANTILLAS_BASE', () => {
     }
   })
 
+  // La lista sale de VARIABLES_CONOCIDAS, no de una copia acá: una segunda lista se desincroniza
+  // y el test empieza a rebotar plantillas correctas (o a dejar pasar rotas).
   it('todas usan variables que el PMS sabe resolver', () => {
-    const conocidas = new Set([
-      'guest_name', 'hotel_name', 'checkin_date', 'checkout_date', 'room_number',
-      'nights', 'total_amount', 'pending_amount', 'locator', 'wifi_network',
-      'wifi_password', 'lock_codes',
-    ])
+    const conocidas = new Set(VARIABLES_CONOCIDAS)
     for (const p of PLANTILLAS_BASE) {
       for (const v of toMetaBody(p.body).variableOrder) {
         expect(conocidas.has(v), `"${p.name}" usa {${v}}, que nadie resuelve`).toBe(true)

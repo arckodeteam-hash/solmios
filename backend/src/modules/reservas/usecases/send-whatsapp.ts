@@ -69,15 +69,29 @@ export function resolverVariables(
   orden: string[],
   ctx: { guest?: any; hotel?: any; reservation?: any; room?: any },
 ): string[] {
+  const moneda = ctx.hotel?.currency || 'USD'
+  /** El dinero va con su moneda: "360" a secas no le dice nada al huésped. */
+  const plata = (v: unknown): string => (v == null || v === '' ? SIN_DATO : `${moneda} ${v}`)
+
   const valores: Record<string, string> = {
     guest_name: ctx.guest?.name || ctx.guest?.firstName || 'Huésped',
     hotel_name: ctx.hotel?.name || 'el hotel',
+    hotel_address: ctx.hotel?.address || SIN_DATO,
+    hotel_phone: ctx.hotel?.phone || SIN_DATO,
     checkin_date: ctx.reservation?.checkIn || SIN_DATO,
     checkout_date: ctx.reservation?.checkOut || SIN_DATO,
+    checkin_time: ctx.reservation?.checkInTime || ctx.hotel?.checkIn || SIN_DATO,
+    checkout_time: ctx.hotel?.checkOut || SIN_DATO,
     room_number: ctx.room?.number || ctx.reservation?.roomNumber || SIN_DATO,
     nights: String(ctx.reservation?.nights ?? SIN_DATO),
-    total_amount: ctx.reservation?.totalAmount != null ? String(ctx.reservation.totalAmount) : SIN_DATO,
+    total_amount: plata(ctx.reservation?.totalAmount),
+    pending_amount: plata(ctx.reservation?.pendingAmount),
     locator: ctx.reservation?.code || ctx.reservation?.locator || SIN_DATO,
+    // Link del check-in online. Sin `PUBLIC_BASE_URL` no se puede armar una URL que el huésped
+    // pueda abrir, así que se omite en vez de mandar una rota.
+    precheckin_link: ctx.reservation?.preCheckinHash && process.env.PUBLIC_BASE_URL
+      ? `${String(process.env.PUBLIC_BASE_URL).replace(/\/$/, '')}/pre-checkin/${ctx.reservation.preCheckinHash}`
+      : SIN_DATO,
   }
   // Meta rechaza un parámetro vacío, así que un dato que la reserva no tiene va como guión.
   return orden.map((nombre) => valores[nombre] || '—')

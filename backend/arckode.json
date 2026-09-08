@@ -1,6 +1,6 @@
 {
   "_arckode": "1.0.0",
-  "_generated": "2026-09-08T18:49:25.649Z",
+  "_generated": "2026-09-08T18:55:27.415Z",
   "_instructions": "Lee este archivo ANTES de escribir código. Contiene el estado completo del sistema: módulos, conectores, violaciones. Si está desactualizado, corré: bun run analyze --json",
   "system": {
     "healthy": true,
@@ -413,6 +413,19 @@
     },
     {
       "name": "feedback",
+      "structure": {
+        "index": true,
+        "types": true,
+        "sockets": true,
+        "service": true,
+        "controller": true,
+        "validators": true,
+        "tests": true
+      },
+      "complete": true
+    },
+    {
+      "name": "ari-outbox",
       "structure": {
         "index": true,
         "types": true,
@@ -1015,6 +1028,7 @@
     "empleados-housekeeping.ts",
     "reservas-housekeeping.ts",
     "attendance-dashboard.ts",
+    "canales-ari-outbox.ts",
     "caja-chica-gastos.ts",
     "folios-accounting.ts",
     "stayapi-ota-prices.ts",

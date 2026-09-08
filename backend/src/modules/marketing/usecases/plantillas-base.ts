@@ -41,22 +41,59 @@ export interface PlantillaBase {
  * y el dato se manda por texto libre, que dentro de la ventana de 24 h no necesita plantilla.
  */
 export const PLANTILLAS_BASE: PlantillaBase[] = [
+  // ── Al reservar ────────────────────────────────────────────────────────────
   {
     slug: 'confirmacion_reserva',
     name: 'Confirmación de reserva',
     category: 'reservation',
     metaCategory: 'UTILITY',
-    descripcion: 'Se manda apenas la reserva queda confirmada.',
-    body: 'Hola {guest_name}, tu reserva en {hotel_name} quedó confirmada. Llegada el {checkin_date} y salida el {checkout_date}. Tu código de reserva es {locator}. ¡Te esperamos!',
+    descripcion: 'Apenas la reserva queda confirmada. Es la más usada.',
+    body: 'Hola {guest_name}, tu reserva en {hotel_name} quedó confirmada. Llegada el {checkin_date} y salida el {checkout_date}, por un total de {total_amount}. Tu código de reserva es {locator}. ¡Te esperamos!',
+  },
+  {
+    slug: 'pago_recibido',
+    name: 'Pago recibido',
+    category: 'payment',
+    metaCategory: 'UTILITY',
+    descripcion: 'Confirma un cobro. Evita el "¿me llegó el pago?" por teléfono.',
+    body: 'Hola {guest_name}, recibimos tu pago para la reserva {locator} en {hotel_name}. Queda un saldo pendiente de {pending_amount}. Cualquier duda, respondé este mensaje.',
+  },
+  {
+    slug: 'saldo_pendiente',
+    name: 'Saldo pendiente',
+    category: 'payment',
+    metaCategory: 'UTILITY',
+    descripcion: 'Recordatorio de saldo antes de la llegada. Es la que más plata recupera.',
+    body: 'Hola {guest_name}, te queda un saldo pendiente de {pending_amount} por tu reserva en {hotel_name}. Podés abonarlo antes de tu llegada el {checkin_date} o directamente en recepción.',
+  },
+
+  // ── Antes de llegar ────────────────────────────────────────────────────────
+  {
+    slug: 'checkin_online',
+    name: 'Check-in online',
+    category: 'checkin',
+    metaCategory: 'UTILITY',
+    descripcion: 'Manda el enlace para completar los datos antes de llegar y evitar la fila.',
+    body: 'Hola {guest_name}, para agilizar tu llegada a {hotel_name} podés hacer el check-in online acá: {precheckin_link}. Te toma dos minutos y evitás la espera en recepción.',
   },
   {
     slug: 'recordatorio_llegada',
     name: 'Recordatorio de llegada',
     category: 'reservation',
     metaCategory: 'UTILITY',
-    descripcion: 'Un día antes del check-in, para que nadie se olvide.',
-    body: 'Hola {guest_name}, te esperamos mañana {checkin_date} en {hotel_name}. Si vas a llegar fuera del horario habitual, avisanos respondiendo este mensaje.',
+    descripcion: 'Un día antes. Baja los no-shows.',
+    body: 'Hola {guest_name}, te esperamos mañana {checkin_date} en {hotel_name} a partir de las {checkin_time}. Si vas a llegar más tarde, avisanos respondiendo este mensaje.',
   },
+  {
+    slug: 'como_llegar',
+    name: 'Cómo llegar',
+    category: 'checkin',
+    metaCategory: 'UTILITY',
+    descripcion: 'La dirección y el teléfono, para el que ya está viajando.',
+    body: 'Hola {guest_name}, te dejamos los datos de {hotel_name} para tu llegada del {checkin_date}. Dirección: {hotel_address}. Teléfono: {hotel_phone}. Cualquier cosa en el camino, escribinos por acá.',
+  },
+
+  // ── Durante la estadía ─────────────────────────────────────────────────────
   {
     slug: 'bienvenida_checkin',
     name: 'Bienvenida al llegar',
@@ -70,23 +107,25 @@ export const PLANTILLAS_BASE: PlantillaBase[] = [
     name: 'Habitación lista',
     category: 'checkin',
     metaCategory: 'UTILITY',
-    descripcion: 'Avisa que la habitación está lista y abre la conversación.',
+    descripcion: 'Para el huésped que llegó antes del horario de entrada.',
     body: 'Hola {guest_name}, tu habitación {room_number} en {hotel_name} ya está lista para tu llegada del {checkin_date}. Respondé este mensaje cuando estés en camino así te esperamos.',
   },
+
+  // ── Al irse ────────────────────────────────────────────────────────────────
   {
-    slug: 'pago_pendiente',
-    name: 'Saldo pendiente',
-    category: 'payment',
+    slug: 'recordatorio_salida',
+    name: 'Recordatorio de salida',
+    category: 'checkout',
     metaCategory: 'UTILITY',
-    descripcion: 'Recordatorio del saldo antes de la llegada.',
-    body: 'Hola {guest_name}, te queda un saldo pendiente de {pending_amount} por tu reserva en {hotel_name}. Podés abonarlo antes de tu llegada el {checkin_date} o directamente en recepción.',
+    descripcion: 'La noche anterior. Evita demoras y discusiones por el horario.',
+    body: 'Hola {guest_name}, te recordamos que mañana {checkout_date} es tu salida de {hotel_name}, hasta las {checkout_time}. Si necesitás salir más tarde, respondé este mensaje y vemos si hay disponibilidad.',
   },
   {
     slug: 'gracias_estadia',
     name: 'Gracias por la estadía',
     category: 'checkout',
     metaCategory: 'UTILITY',
-    descripcion: 'Después del check-out.',
+    descripcion: 'Después del check-out. Abre la puerta a la factura y a la reseña.',
     body: 'Gracias por elegir {hotel_name}, {guest_name}. Fue un gusto tenerte con nosotros. Si algo se te quedó o necesitás la factura, respondé este mensaje y lo resolvemos.',
   },
 ]
