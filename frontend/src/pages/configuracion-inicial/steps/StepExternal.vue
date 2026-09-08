@@ -1,7 +1,8 @@
 <template>
-  <!-- Paso operativo (rooms/rates/channels/team) — un solo componente genérico para los 4
-       (tarea 3.11, doc 06 sección 4): no se completa inline, manda a su pantalla real. Mismo
-       contenido (how/impact/cta) que ya calculaba `OnboardingUseCase`, sin reescribir copy. -->
+  <!-- Paso operativo (tarea 3.11, doc 06 sección 4): no se completa inline, manda a su pantalla
+       real. Mismo contenido (how/impact/cta) que ya calculaba `OnboardingUseCase`, sin reescribir
+       copy. Componente genérico — hoy solo lo usa `rooms` (rates/channels/team/amenities se
+       sacaron del wizard, 2026-09-08), queda listo por si se suma otro paso operativo. -->
   <div class="rounded-xl bg-surface/70 border border-border p-4">
     <p class="text-[11px] font-black uppercase tracking-wide text-navy mb-1">Cómo se hace</p>
     <p class="text-xs text-text-secondary leading-relaxed">{{ step.how }}</p>

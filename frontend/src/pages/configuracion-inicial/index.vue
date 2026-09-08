@@ -159,14 +159,13 @@ const progress = computed(() => {
 const STEP_COMPONENTS: Record<string, unknown> = {
   bienvenida: StepBienvenida, identidad: StepIdentidad, contacto: StepContacto,
   ubicacion: StepUbicacion, politicas: StepPoliticas,
-  rooms: StepExternal, rates: StepExternal, channels: StepExternal,
+  rooms: StepExternal,
 }
 function stepComponent(key: string) { return STEP_COMPONENTS[key] }
 
 const SHORT_LABEL: Record<string, string> = {
   bienvenida: 'Bienvenida', identidad: 'Identidad', contacto: 'Contacto', ubicacion: 'Ubicación',
-  politicas: 'Políticas', rooms: 'Habitaciones', rates: 'Tarifas',
-  channels: 'Canales',
+  politicas: 'Políticas', rooms: 'Habitaciones',
 }
 
 const ICON_ARROW_LEFT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"/></svg>'
@@ -176,7 +175,7 @@ const ICON_DOT = '<svg viewBox="0 0 24 24" fill="currentColor" class="w-full h-f
 // Un color e ícono bien distinto por paso — a propósito FUERA de la paleta navy/cyan del resto
 // del panel: el pedido explícito fue "que tengamos un wizard increíble", no otra pantalla más
 // del panel administrativo. `rooms` reusa el ícono de cama que ya usa AdminLayout.vue (mismo
-// path, ya verificado en producción); `channels` idem con el ícono de link.
+// path, ya verificado en producción).
 const STEP_META: Record<string, { color: string; icon: string }> = {
   bienvenida: {
     color: '#3B82F6', // blue-500
@@ -201,14 +200,6 @@ const STEP_META: Record<string, { color: string; icon: string }> = {
   rooms: {
     color: '#22C55E', // green-500
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M3 18v-7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v7M3 18v2M3 18h18M21 18v2M5 13V9a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v4"/></svg>',
-  },
-  rates: {
-    color: '#F59E0B', // amber-500
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.828 8.828a2 2 0 0 0 2.828 0l7.172-7.172a2 2 0 0 0 0-2.828l-8.828-8.828Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01"/></svg>',
-  },
-  channels: {
-    color: '#06B6D4', // cyan-500
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5 21 3M16.5 3H21v4.5M10.5 13.5 3 21M7.5 21H3v-4.5"/></svg>',
   },
 }
 
