@@ -4,10 +4,12 @@ Puntos que este documento **no resuelve por su cuenta** porque son decisiones de
 producto, no hallazgos técnicos — necesitan una respuesta del usuario antes de
 empezar Fase 1 (o al menos antes de las fases que dependen de cada una).
 
-> **Actualización 2026-09-07** — el usuario respondió D1, D2, D4 y D7
-> directamente. Quedan resueltas acá abajo (✅ RESUELTO) y el resto de los
-> documentos (00, 02, 04, 05, 06) ya están actualizados para reflejarlas. D3,
-> D5 y D6 siguen abiertas.
+> **Actualización 2026-09-07** — el usuario respondió D1, D2, D3, D4, D5, D6 y
+> D7 directamente. **Las 7 decisiones están RESUELTAS** — no queda ninguna
+> abierta. El resto de los documentos (00, 02, 04, 05, 06) ya reflejan D1/D2/D4/D7;
+> D3 se implementó en la tarea 1.7b (ver esa sección abajo); D5/D6 no requirieron
+> cambios de código, solo confirmaron el diseño ya documentado en doc 04 y el
+> nombre ya usado en `tareas.md`.
 
 ## D1 — ✅ RESUELTO: no hay "teléfono del dueño" nuevo, es `phone` (principal) vs `phone2` (secundario)
 
@@ -106,17 +108,33 @@ conceptos distintos. Confirmado:
 
 **Decisión**: `hotel_amenities` (tabla) se adopta como fuente única — es la
 más completa, ya tiene categorías, y ya soporta amenities personalizadas.
-Cambios necesarios (se agregan como tareas nuevas al paquete de F1, ver
-`tareas/tareas.md`):
-1. `getPublicHotelInfo` pasa a leer `hotel_amenities` (vía el mismo
-   `AmenitiesService.listHotelAmenities`) en vez de `hotel.amenities`.
-2. `pagina-publica/general.vue` deja de usar `SettingsService.patchHotel({amenities})`
-   y pasa a consumir `GET`/`PUT /api/amenities/hotel` (mismos endpoints que ya
-   usa Configuración → Amenities) — un solo catálogo, un solo lugar de
-   verdad, visible/editable desde los dos lados sin duplicar.
-3. La columna `hotels.amenities` queda huérfana — no se dropea en este
-   refactor (fuera de alcance tocar schema solo por esto), pero deja de
-   escribirse desde cualquier lado.
+
+**Implementado (1.7b, verificado en vivo)**:
+1. `getPublicHotelInfo` (`bookingengine/usecases/public-hotel-info.ts`) lee
+   `hotel_amenities` directo por repo (`hotelAmenities?: RepositoryAdapter<any>`,
+   dep opcional cableada en `bookingengine/index.ts` → `BookingengineController`,
+   cae a `hotel.amenities` sin la dep para no romper tests/callers viejos).
+2. `pagina-publica/general.vue` dejó de usar `patchHotel({amenities})` y
+   consume `GET`/`PUT /api/amenities/hotel` (mismos endpoints que Configuración
+   → Amenities) — mismo lugar de verdad en el backend.
+3. La columna `hotels.amenities` queda huérfana — no se dropea (fuera de
+   alcance), pero deja de escribirse desde cualquier lado.
+
+**Matiz no anticipado en la decisión original**: general.vue mantiene su propio
+catálogo reducido de 20 keys ("para destacar en la landing"), con vocabulario
+que NO es subconjunto exacto del catálogo de 35 keys de Configuración →
+Amenities (ej. `parking` vs `parking_free`/`parking_paid`, `wheelchair` vs
+`wheelchair_access`, y keys que no existen del otro lado como `breakfast`,
+`beach_access`, `airport_shuttle`). Unificar el vocabulario en un solo picker
+es un cambio de UX más grande que "repointear el storage" — no se hizo en
+1.7b. En su lugar, el save de general.vue hace merge: preserva las keys
+"ajenas" (`foreignAmenityKeys`, las que puso Configuración → Amenities y no
+están en su catálogo de 20) antes de llamar a `saveAmenitiesHotel`, que
+reemplaza el set completo — sin el merge, cada guardado desde Página pública
+habría apagado silenciosamente todo lo tildado desde Configuración → Amenities
+que no esté en las 20 keys reducidas. Ambas pantallas ahora leen/escriben la
+MISMA tabla, pero siguen siendo dos catálogos con dos vocabularios — unificarlos
+en una sola UI queda fuera de alcance de este refactor.
 
 El wizard (paso 6 de Amenities, F3.10) usa `hotel_amenities` directamente —
 ya no hay ambigüedad sobre qué catálogo mostrar.
@@ -138,19 +156,24 @@ y meterla dentro de un modal wizard puede quedar apretada para hoteles con
 muchas habitaciones desde el día uno. Se recomienda la opción del plan (CTA, no
 paso incluido) salvo que el usuario prefiera lo contrario.
 
-## D5 — ¿Se permite ocultar/descartar la franja del dashboard?
+## D5 — ✅ RESUELTO: la franja del dashboard NO se puede ocultar/descartar
 
-Ver doc 04. Recomendación: no ofrecer la opción de ocultar (la franja es tan
-discreta que no debería necesitar descarte) — pero si se prefiere mantenerla por
-consistencia con otros patrones del panel, el descarte debe persistir en backend,
-no solo en memoria de sesión como hoy (bug de UX menor pero real, doc 01.2).
+Decisión del usuario (2026-09-07): sin botón de descarte. Confirma la
+recomendación de doc 04 — la franja es tan discreta (una línea de progreso, no
+un banner invasivo) que no necesita esa opción, y evita mantener el bug de UX
+menor que tiene el `OnboardingGuide` actual (el descarte solo vive en memoria
+de sesión, reaparece al recargar). Doc 04 ya documentaba este comportamiento
+("Sin ✕ de descarte") — no requiere cambios, queda confirmado como diseño
+final, no como placeholder.
 
-## D6 — Copy definitivo
+## D6 — ✅ RESUELTO: nombre final "Centro de configuración"
 
-Todo el copy de doc 05 es un punto de partida razonable, no texto aprobado.
-Antes de Fase 3, revisar tono/wording con el usuario — en particular el nombre
-del wizard en sí ("Asistente de configuración", "Completar mi hotel", etc. — el
-plan usa "Completar configuración" como placeholder).
+Decisión del usuario (2026-09-07): se mantiene "Centro de configuración" —
+el nombre ya usado de forma consistente en toda la documentación de este
+refactor (`tareas.md`, doc 03, doc 07, etc.). No hace falta renombrar nada.
+El resto del copy de doc 05 (textos por paso, mensajes de error, etc.) sigue
+siendo un punto de partida razonable — se revisa en detalle en la tarea F3.14
+("Copy final de cada paso"), no bloquea el arranque de F2/F3.
 
 ## Riesgos técnicos a vigilar durante la implementación
 

@@ -122,13 +122,16 @@ transición definida.
 
 ## Fase 5 — Limpieza y documentación
 
-- [ ] Actualizar `CLAUDE.md` (sección de estado SDD) si corresponde marcar este
+- [x] Actualizar `CLAUDE.md` (sección de estado SDD) si corresponde marcar este
       cambio como resuelto/en progreso, siguiendo el patrón de otras entradas
       de deuda técnica documentadas ahí.
-- [ ] Revisar el hallazgo de "dos sistemas de amenities" (doc 01.6, doc 08 D3)
-      — al menos dejar documentada la resolución que se haya tomado, aunque sea
-      "se dejan separados a propósito, son cosas distintas".
-- [ ] `arckode analyze` + `typecheck` + `bun test` (backend) + `typecheck` +
+- [x] Revisar el hallazgo de "dos sistemas de amenities" (doc 01.6, doc 08 D3)
+      — resuelto en la tarea 1.7b: `getPublicHotelInfo` pasó a leer `hotel_amenities`
+      (la tabla real) en vez de `hotels.amenities` (columna JSON huérfana), y
+      `pagina-publica/general.vue` se repuntó al mismo endpoint que ya usaba
+      Configuración → Amenities. No quedan "dos sistemas" escribiendo en lugares
+      separados — ver doc 08 D3 y tareas.md 1.7b para el detalle completo.
+- [x] `arckode analyze` + `typecheck` + `bun test` (backend) + `typecheck` +
       `build` (frontend) — gate final antes de mergear.
 
 ## Orden recomendado de PRs

@@ -10,6 +10,7 @@ Bun (>=1.3) + Vue 3.5 + Vite 8 + Pinia 3 + Vue Router 5.1 + Tailwind CSS 4.3 + a
 - **match-misterplan**: base ✅ (rates grid, i18n). Pendiente 7.2.2/7.2.3 WhatsApp (**bloqueado** por creds Meta).
 - **pms-competitive-gaps**: mayoría ✅ + debt documentada (PC-4 SW desactivado, PC-3.1.2 Checkout Session cumple).
 - **frontend-coverage-gaps**: GATES automáticos ✅. GATES manuales (reports/switcher/PWA en prod) sin validar.
+- **wizard-refactor** (`docs/wizard-refactor/`): ✅ F0-F5 completas. Ubicación + identidad pública movidas de Configuración a Página pública (F1); `OnboardingStep[]` con 6 pasos de perfil granulares + `kind:'profile'|'external'` (F2); Centro de configuración nuevo en `/panel/configuracion-inicial` (F3); dashboard usa `ProfileProgressBar.vue` (franja fina, % solo sobre pasos requeridos) en vez de `OnboardingGuide.vue` (retirado, F4). Copy en registro "usted". Deuda residual menor: `pagina-publica/ubicacion.vue` (de F1, anterior a la decisión de tono) sigue en voseo — fuera del alcance acotado por el usuario para la conversión a "usted".
 - **mobile-app**: OTRO profesional (Flutter, repo `solmios-mobile`). **NO scope — no tocar.**
 
 ## Database — Migraciones y Seeders
