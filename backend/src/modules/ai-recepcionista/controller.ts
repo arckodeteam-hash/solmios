@@ -5,6 +5,7 @@ import { AiRecepcionistaValidator, CloseConversationSchema, TransferConversation
 import { redactWhatsappConfig } from './usecases/whatsapp-config'
 import { aplicarEstadosDeEntrega } from './usecases/whatsapp-delivery-status'
 import { resolverCredencialesApp } from '../../infrastructure/meta-app-config'
+import { resolverHotelDelEvento, resolverHotelDeVerificacion } from './usecases/webhook-routing'
 
 export class AiRecepcionistaController {
   constructor(
@@ -233,10 +234,15 @@ export class AiRecepcionistaController {
     const challenge = req.query?.['hub.challenge']
     const hotelId = req.params?.hotelId
 
-    if (mode === 'subscribe' && token && challenge && hotelId) {
-      const configs = await (this.service as any).whatsappConfigRepo.findMany({ hotelId })
-      const cfg = configs[0]
-      if (cfg && cfg.verifyToken === token) {
+    if (mode === 'subscribe' && token && challenge) {
+      // El hotelId del path es opcional: Meta da de alta UNA sola URL para toda la app, así que la
+      // ruta canónica no lo lleva y el hotel se identifica por su token.
+      const dueno = await resolverHotelDeVerificacion(
+        (this.service as any).whatsappConfigRepo,
+        typeof hotelId === 'string' ? hotelId : undefined,
+        String(token),
+      )
+      if (dueno) {
         return { status: 200, body: String(challenge), headers: { 'Content-Type': 'text/plain' } }
       }
     }
@@ -244,6 +250,8 @@ export class AiRecepcionistaController {
   }
 
   async whatsappWebhookReceive(req: any) {
+    // Sólo sirve para los avisos: el hotel real se resuelve más abajo, y por la cuenta de WhatsApp
+    // que viene en el evento, no por la URL (ver usecases/webhook-routing.ts).
     const hotelId = req.params?.hotelId
     const body: any = req.body || {}
 
@@ -294,6 +302,21 @@ export class AiRecepcionistaController {
         return { status: 200, body: { status: 'no_messages' } }
       }
 
+      // A quién le escribió el huésped. Sale del id de cuenta que Meta manda en el evento, porque
+      // la URL es una sola para toda la plataforma: creerle al path metería la conversación en el
+      // hotel equivocado apenas haya un segundo hotel conectado.
+      const hotelDueno = await resolverHotelDelEvento(
+        (this.service as any).whatsappConfigRepo,
+        typeof hotelId === 'string' ? hotelId : undefined,
+        body,
+      )
+      if (!hotelDueno) {
+        // 200 a propósito: un error hace que Meta reintente el mismo evento para siempre, y este
+        // no se va a poder resolver nunca.
+        this.logger.warn('Webhook sin hotel identificable', { hotelId, waba: body?.entry?.[0]?.id })
+        return { status: 200, body: { status: 'unknown_account' } }
+      }
+
       for (const msg of messages) {
         const from = msg.from
         const text = msg.text?.body || ''
@@ -301,7 +324,7 @@ export class AiRecepcionistaController {
         if (!text) continue
 
         const conv = await this.service.findOrCreateConversation({
-          hotelId,
+          hotelId: hotelDueno,
           channel: 'whatsapp',
           channelConversationId: from,
           guestPhone: from,
@@ -311,11 +334,11 @@ export class AiRecepcionistaController {
 
         // Reabre la ventana de 24 h y suma al contador de no leídos ANTES de que conteste nadie:
         // si el pipeline falla, el mensaje del huésped tiene que estar registrado igual.
-        const silenciado = await this.service.registrarEntrante(conv.id, hotelId)
+        const silenciado = await this.service.registrarEntrante(conv.id, hotelDueno)
 
         // Si una persona del hotel tomó la conversación, el bot NO responde: el huésped recibiría
         // dos respuestas distintas al mismo tiempo y el hotel quedaría como incoherente.
-        if (!silenciado) await this.service.processIncomingMessage(conv.id, text, hotelId)
+        if (!silenciado) await this.service.processIncomingMessage(conv.id, text, hotelDueno)
       }
 
       return { status: 200, body: { status: 'processed' } }

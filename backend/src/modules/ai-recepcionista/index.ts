@@ -158,6 +158,12 @@ export function AiRecepcionistaModule() {
       }
 
       // Public webhook endpoints. El verify (GET) no gasta LLM; el receive (POST) sí.
+      // URL CANÓNICA — la que se carga en el panel de Meta. Meta admite UNA sola por aplicación:
+      // el hotel se identifica por la cuenta de WhatsApp que viene en cada evento, no por la URL.
+      router.get('/api/ai/whatsapp/webhook', (req) => controller.whatsappWebhookVerify(req))
+      router.post('/api/ai/whatsapp/webhook', async (req) => aiRateLimited(req, (r) => controller.whatsappWebhookReceive(r)))
+      // Variante con el hotel en la ruta. Se mantiene por las conexiones dadas de alta antes de la
+      // URL única; enruta igual por la cuenta de WhatsApp, así que un path equivocado no cruza hoteles.
       router.get('/api/ai/whatsapp/webhook/:hotelId', (req) => controller.whatsappWebhookVerify(req))
       router.post('/api/ai/whatsapp/webhook/:hotelId', async (req) => aiRateLimited(req, (r) => controller.whatsappWebhookReceive(r)))
 
