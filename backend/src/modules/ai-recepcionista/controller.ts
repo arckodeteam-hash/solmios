@@ -235,8 +235,16 @@ export class AiRecepcionistaController {
     const hotelId = req.params?.hotelId
 
     if (mode === 'subscribe' && token && challenge) {
-      // El hotelId del path es opcional: Meta da de alta UNA sola URL para toda la app, así que la
-      // ruta canónica no lo lleva y el hotel se identifica por su token.
+      // Meta da de alta la URL UNA vez, para toda la aplicación y antes de que exista ningún hotel
+      // conectado. Ese alta se valida contra el token de la plataforma; el token por hotel de más
+      // abajo es para las conexiones que se dieron de alta con su propia URL.
+      const tokenPlataforma = process.env.META_WEBHOOK_VERIFY_TOKEN
+      if (tokenPlataforma && String(token) === tokenPlataforma) {
+        return { status: 200, body: String(challenge), headers: { 'Content-Type': 'text/plain' } }
+      }
+
+      // El hotelId del path es opcional: la ruta canónica no lo lleva y el hotel se identifica por
+      // su token.
       const dueno = await resolverHotelDeVerificacion(
         (this.service as any).whatsappConfigRepo,
         typeof hotelId === 'string' ? hotelId : undefined,
