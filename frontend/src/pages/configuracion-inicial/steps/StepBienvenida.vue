@@ -2,27 +2,28 @@
   <div class="rounded-xl bg-surface/70 border border-border p-4 space-y-3">
     <div v-if="loading" class="h-24 animate-pulse bg-surface rounded-lg"></div>
     <template v-else>
+      <p class="text-[10px] text-text-muted">Los campos marcados con <span class="text-danger font-bold">*</span> son obligatorios.</p>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Nombre del hotel</label>
-          <input v-model="form.name" type="text" class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none">
+          <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Nombre del hotel <span class="text-danger">*</span></label>
+          <input v-model="form.name" type="text" required aria-required="true" class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none">
         </div>
         <div>
-          <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">País</label>
+          <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">País <span class="text-danger">*</span></label>
           <SearchSelect v-model="form.country" :options="COUNTRIES" placeholder="Buscar país..." />
         </div>
         <div>
-          <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Teléfono principal</label>
-          <input v-model="form.phone" type="tel" class="w-full rounded-xl border px-3.5 py-2 text-sm focus:border-navy focus:outline-none"
+          <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Teléfono principal <span class="text-danger">*</span></label>
+          <input v-model="form.phone" type="tel" required aria-required="true" class="w-full rounded-xl border px-3.5 py-2 text-sm focus:border-navy focus:outline-none"
             :class="fieldError ? 'border-danger' : 'border-border'">
         </div>
         <div>
-          <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Email de contacto</label>
-          <input v-model="form.email" type="email" class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none">
+          <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Email de contacto <span class="text-danger">*</span></label>
+          <input v-model="form.email" type="email" required aria-required="true" class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none">
         </div>
         <div class="sm:col-span-2">
-          <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Tu nombre (dueño o gerente)</label>
-          <input v-model="ownerName" type="text" class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none">
+          <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Tu nombre (dueño o gerente) <span class="text-danger">*</span></label>
+          <input v-model="ownerName" type="text" required aria-required="true" class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none">
         </div>
       </div>
       <p v-if="fieldError || error" class="text-[11px] font-bold text-danger">{{ fieldError || error }}</p>

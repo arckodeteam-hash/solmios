@@ -4,9 +4,10 @@
   <div class="rounded-xl bg-surface/70 border border-border p-4 space-y-3">
     <div v-if="loading" class="h-40 animate-pulse bg-surface rounded-lg"></div>
     <template v-else>
+      <p class="text-[10px] text-text-muted">Los campos marcados con <span class="text-danger font-bold">*</span> son obligatorios.</p>
       <div>
-        <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Dirección</label>
-        <input ref="addressInputEl" v-model="form.address" type="text" autocomplete="off" placeholder="Busque la dirección…"
+        <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Dirección <span class="text-danger">*</span></label>
+        <input ref="addressInputEl" v-model="form.address" type="text" autocomplete="off" placeholder="Busque la dirección…" required aria-required="true"
           class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none" data-field="address">
         <ul v-if="addressSuggestions.length" class="mt-1 rounded-xl border border-border bg-white shadow-lg overflow-hidden">
           <li v-for="s in addressSuggestions" :key="`${s.lat},${s.lng}`">

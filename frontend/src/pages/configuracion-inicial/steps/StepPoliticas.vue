@@ -10,14 +10,15 @@
           <span class="w-3.5 h-3.5 shrink-0 mt-px" v-html="ICON_WARN"></span>
           <span>Estos valores son el default de República Dominicana (ITBIS 18%) — su hotel está en {{ country || 'otro país' }}. Confírmelos o cámbielos antes de guardar.</span>
         </p>
+        <p class="text-[10px] text-text-muted mb-2">Los campos marcados con <span class="text-danger font-bold">*</span> son obligatorios.</p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Nombre del impuesto</label>
-            <input v-model="taxName" type="text" class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none">
+            <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Nombre del impuesto <span class="text-danger">*</span></label>
+            <input v-model="taxName" type="text" required aria-required="true" class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none">
           </div>
           <div>
-            <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Tasa (%)</label>
-            <input v-model.number="taxRate" type="number" min="0" max="100" step="0.1" class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none">
+            <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Tasa (%) <span class="text-danger">*</span></label>
+            <input v-model.number="taxRate" type="number" min="0" max="100" step="0.1" required aria-required="true" class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none">
           </div>
         </div>
         <p v-if="error" class="text-[11px] font-bold text-danger mt-2">{{ error }}</p>
@@ -30,7 +31,7 @@
       </div>
 
       <div class="border-t border-border pt-4">
-        <p class="text-[11px] font-black uppercase tracking-wide text-navy mb-2">Política de cancelación</p>
+        <p class="text-[11px] font-black uppercase tracking-wide text-navy mb-2">Política de cancelación <span class="font-normal normal-case text-text-muted/70">(opcional)</span></p>
         <CancellationPolicyEditor :hotel-id="hotelId" />
       </div>
     </template>
