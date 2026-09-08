@@ -22,6 +22,38 @@ const CHANNEX_KEY = process.env.CHANNEX_API_KEY || ''
 /** Resolver de credenciales de PLATAFORMA (una cuenta Channex white-label para todos los hoteles). */
 export type PlatformCredsResolver = () => Promise<{ apiKey?: string; environment?: string } | null>
 
+/**
+ * Mapeo raw de Channex → BookingRevisionDTO. Vive a nivel de módulo (y no inline en
+ * `fetchBookingFeed`) porque lo comparten el feed del cron y el GET puntual del webhook:
+ * duplicarlo era la forma segura de que las dos vías produjeran reservas distintas.
+ */
+function mapRevisionRaw(r: any): BookingRevisionDTO {
+  const a = r.attributes || r
+  return {
+    id: r.id || a.id,
+    propertyId: a.property_id,
+    bookingId: a.booking_id,
+    uniqueId: a.unique_id,
+    otaReservationCode: a.ota_reservation_code,
+    otaName: a.ota_name,
+    status: a.status,
+    arrivalDate: a.arrival_date,
+    departureDate: a.departure_date,
+    amount: a.amount,
+    currency: a.currency,
+    customer: a.customer || {},
+    rooms: (a.rooms || []).map((rm: any) => ({
+      roomTypeId: rm.room_type_id || null,
+      ratePlanId: rm.rate_plan_id || null,
+      checkinDate: rm.checkin_date,
+      checkoutDate: rm.checkout_date,
+      amount: rm.amount,
+      occupancy: rm.occupancy || { adults: 1, children: 0, infants: 0 },
+    })),
+    insertedAt: a.inserted_at,
+  }
+}
+
 export class ChannexUseCase {
   constructor(
     private readonly logger: Logger,
@@ -1061,32 +1093,52 @@ export class ChannexUseCase {
     const res = await this.channexReq(key, 'GET', '/booking_revisions/feed?limit=50')
     const raw = res.data?.data || []
     if (!Array.isArray(raw)) return []
+    return raw.map(mapRevisionRaw)
+  }
+
+  /**
+   * Una revisión puntual por id — el camino del WEBHOOK. Usa el MISMO mapeo que el feed del
+   * cron (`mapRevisionRaw`), así la reserva que entra por webhook es idéntica a la del cron
+   * y hereda su dedupe. Si el request falla la excepción SUBE: el caller decide si reintenta.
+   */
+  async fetchBookingRevision(key: string, revisionId: string): Promise<BookingRevisionDTO | null> {
+    const res = await this.channexReq(key, 'GET', `/booking_revisions/${revisionId}`)
+    const raw = res.data?.data
+    if (!raw) return null
+    return mapRevisionRaw(raw)
+  }
+
+  // ─── Webhooks ─────────────────────────────────────────────────────────
+  /** Callbacks ya registrados en Channex. Se usa para no dar de alta el mismo dos veces. */
+  async listWebhooks(key: string): Promise<Array<{ id: string; callbackUrl: string; eventMask: string; propertyId: string | null }>> {
+    const res = await this.channexReq(key, 'GET', '/webhooks')
+    const raw = res.data?.data
+    if (!Array.isArray(raw)) return []
     return raw.map((r: any) => {
       const a = r.attributes || r
       return {
         id: r.id || a.id,
-        propertyId: a.property_id,
-        bookingId: a.booking_id,
-        uniqueId: a.unique_id,
-        otaReservationCode: a.ota_reservation_code,
-        otaName: a.ota_name,
-        status: a.status,
-        arrivalDate: a.arrival_date,
-        departureDate: a.departure_date,
-        amount: a.amount,
-        currency: a.currency,
-        customer: a.customer || {},
-        rooms: (a.rooms || []).map((rm: any) => ({
-          roomTypeId: rm.room_type_id || null,
-          ratePlanId: rm.rate_plan_id || null,
-          checkinDate: rm.checkin_date,
-          checkoutDate: rm.checkout_date,
-          amount: rm.amount,
-          occupancy: rm.occupancy || { adults: 1, children: 0, infants: 0 },
-        })),
-        insertedAt: a.inserted_at,
+        callbackUrl: a.callback_url,
+        eventMask: a.event_mask,
+        propertyId: a.property_id ?? null,
       }
     })
+  }
+
+  /** Alta del callback. `send_data: false` → Channex avisa el id y nosotros hacemos el GET. */
+  async createWebhook(key: string, input: { callbackUrl: string; eventMask: string; propertyId?: string | null }): Promise<{ id: string } | null> {
+    const res = await this.channexReq(key, 'POST', '/webhooks', {
+      webhook: {
+        property_id: input.propertyId ?? null,
+        callback_url: input.callbackUrl,
+        event_mask: input.eventMask,
+        is_active: true,
+        send_data: false,
+      },
+    })
+    if (!res.ok) return null
+    const created = res.data?.data
+    return { id: created?.id || created?.attributes?.id }
   }
 
   async ackBooking(key: string, revisionId: string): Promise<boolean> {

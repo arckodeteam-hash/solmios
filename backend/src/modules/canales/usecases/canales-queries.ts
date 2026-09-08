@@ -1,5 +1,18 @@
 function safeParse(v: any) { if (typeof v !== 'string') return v; try { return JSON.parse(v) } catch { return v } }
 
+/**
+ * La config Channex de PLATAFORMA. Es un solo objeto json: además de las credenciales guarda el
+ * secreto del webhook de reservas y el id del callback registrado (#50), que son de la cuenta
+ * entera y no de un hotel. `setPlatformChannex` mergea, así que cada campo se escribe por separado.
+ */
+export interface PlatformChannexConfig {
+  apiKey?: string
+  environment?: string
+  webhookSecret?: string
+  webhookId?: string
+  channexUserId?: string
+}
+
 export class CanalesQueries {
   constructor(private readonly orm: any) {}
 
@@ -33,8 +46,9 @@ export class CanalesQueries {
   }
 
   // ─── Credenciales Channex a nivel PLATAFORMA (white-label: una cuenta para todos los hoteles) ──
-  // Se guardan en configuration(hotelId='platform', key='channex') = { apiKey, environment }.
-  async getPlatformChannex(): Promise<{ apiKey?: string; environment?: string } | null> {
+  // Se guardan en configuration(hotelId='platform', key='channex') = { apiKey, environment }, más
+  // lo que el webhook de reservas necesita a nivel cuenta (#50): ver PlatformChannexConfig.
+  async getPlatformChannex(): Promise<PlatformChannexConfig | null> {
     try {
       const rows = await this.orm.findMany('Configuration', { hotelId: 'platform', key: 'channex' })
       const row = (rows as any[])?.[0]
@@ -44,7 +58,7 @@ export class CanalesQueries {
     } catch { return null }
   }
 
-  async setPlatformChannex(patch: { apiKey?: string; environment?: string }): Promise<void> {
+  async setPlatformChannex(patch: PlatformChannexConfig): Promise<void> {
     const rows = await this.orm.findMany('Configuration', { hotelId: 'platform', key: 'channex' })
     const row = (rows as any[])?.[0]
     const cur = row ? (typeof row.value === 'string' ? JSON.parse(row.value) : row.value) : {}
