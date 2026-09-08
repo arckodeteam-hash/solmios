@@ -47,14 +47,18 @@ interface TemplateSeed {
 }
 
 const TEMPLATES: TemplateSeed[] = [
+  // Desde el issue #69 el alta NO dispara esta plantilla: envía un único correo de bienvenida +
+  // verificación construido en código (usuarios/usecases/email-verification.ts → welcomeVerificationEmail).
+  // Esta entrada queda en el catálogo solo para envíos manuales desde el panel de super-admin, por eso
+  // no promete una duración de prueba concreta: los días reales los decide el alta, no esta plantilla.
   {
     event: 'welcome',
     subject: '¡Bienvenido a SolmiOS, {hotel_name}!',
     body: `<p>Hola,</p>
-<p>¡Gracias por registrar <strong>{hotel_name}</strong> en SolmiOS! Tu cuenta ya está lista y tenés
-7 días de prueba gratis para conocer el sistema: reservas, habitaciones, facturación y mucho más.</p>
+<p>¡Gracias por registrar <strong>{hotel_name}</strong> en SolmiOS! Su cuenta ya está lista y su prueba
+gratuita está activa para conocer el sistema: reservas, habitaciones, facturación y mucho más.</p>
 ${ctaButton('{link}', 'Ir a mi panel')}
-<p>Cualquier duda, respondé este correo y te ayudamos.</p>`,
+<p>Ante cualquier duda, responda este correo y le ayudamos.</p>`,
     variables: ['hotel_name', 'link'],
   },
   {
