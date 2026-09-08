@@ -19,6 +19,12 @@
           <option value="production">Producción (OTAs reales)</option>
         </select>
       </div>
+      <div class="md:col-span-2">
+        <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">User ID de Channex</label>
+        <input v-model="channex.channexUserId" type="text" placeholder="ID de usuario de nuestra cuenta Channex"
+          class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" />
+        <p class="text-[11px] text-text-muted mt-1">El webhook lo usa para ignorar los eventos que generamos nosotros y quedarse solo con los de la OTA. Vaciar el campo no lo borra: para cambiarlo, escribí el nuevo id.</p>
+      </div>
     </div>
     <div class="flex items-center gap-3 mt-4 flex-wrap">
       <button @click="save" class="px-5 py-2.5 bg-navy text-white rounded-xl text-sm font-black hover:bg-navy/90 cursor-pointer">Guardar credenciales</button>
@@ -39,7 +45,7 @@ import { ChannexAdminService, type ChannexStatus } from '@/services/Platform.ser
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
-const channex = ref<ChannexStatus>({ environment: 'staging', hasKey: false, keyMasked: '' })
+const channex = ref<ChannexStatus>({ environment: 'staging', hasKey: false, keyMasked: '', channexUserId: '' })
 const apiKey = ref('')   // solo se envía si el admin escribe algo (nunca se muestra la key guardada)
 const testing = ref(false)
 const testResult = ref<{ ok: boolean; msg: string } | null>(null)
@@ -61,7 +67,7 @@ async function load() {
 }
 async function save() {
   try {
-    channex.value = await ChannexAdminService.save({ environment: channex.value.environment, apiKey: apiKey.value.trim() || undefined })
+    channex.value = await ChannexAdminService.save({ environment: channex.value.environment, apiKey: apiKey.value.trim() || undefined, channexUserId: channex.value.channexUserId?.trim() || undefined })
     apiKey.value = ''
     testResult.value = null
     toast.success('Credenciales de Channex guardadas')

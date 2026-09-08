@@ -129,9 +129,9 @@ export const HotelModuleOverridesService = {
 }
 
 // Cuenta Channex a nivel PLATAFORMA (white-label). Solo super_admin. La API key nunca vuelve cruda.
-export interface ChannexStatus { environment: string; hasKey: boolean; keyMasked: string }
+export interface ChannexStatus { environment: string; hasKey: boolean; keyMasked: string; channexUserId: string }
 export const ChannexAdminService = {
   status: () => _http.get<ChannexStatus>('/admin/channex-config'),
-  save: (patch: { apiKey?: string; environment?: string }) => _http.put<ChannexStatus>('/admin/channex-config', patch),
+  save: (patch: { apiKey?: string; environment?: string; channexUserId?: string }) => _http.put<ChannexStatus>('/admin/channex-config', patch),
   test: () => _http.post<{ success: boolean; message: string; environment: string }>('/admin/channex-config/test'),
 }
