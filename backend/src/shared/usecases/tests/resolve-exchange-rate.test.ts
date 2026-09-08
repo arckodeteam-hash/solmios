@@ -56,6 +56,15 @@ describe('crossRate — tasa cruzada entre cualquier par', () => {
     expect(ida * vuelta).toBeCloseTo(1, 10)
   })
 
+  // Regresión: dos códigos vacíos NO son "la misma moneda". Sin el guard, el atajo `from === to`
+  // devolvía 1 y el caller lo leía como una conversión válida 1:1 en vez de degradar.
+  it('códigos vacíos → null (no una tasa 1:1 fantasma)', () => {
+    expect(crossRate(RATES, '', '')).toBeNull()
+    expect(crossRate(RATES, '', 'DOP')).toBeNull()
+    expect(crossRate(RATES, 'USD', '')).toBeNull()
+    expect(crossRate(RATES, undefined as any, undefined as any)).toBeNull()
+  })
+
   it('misma moneda → 1', () => {
     expect(crossRate(RATES, 'DOP', 'DOP')).toBe(1)
   })
@@ -167,6 +176,14 @@ describe('resolveExchangeRate', () => {
     const reciente = new Date(Date.parse(CONFIG.fetchedAt) + RATES_MAX_AGE_MS - 60_000)
     const res = await resolveExchangeRate(fakeRepo([configRow(CONFIG)]), 'USD', 'DOP', { now: reciente })
     expect(res.stale).toBe(false)
+  })
+
+  // Regresión del mismo bug, a nivel del caso de uso: resolveExchangeRate normaliza undefined a ''
+  // y sin el guard devolvía {rate:1, available:true} con una tabla de tasas real cargada.
+  it('monedas ausentes → available:false, no una tasa 1:1', async () => {
+    const res = await resolveExchangeRate(fakeRepo([configRow(CONFIG)]), undefined as any, undefined as any, { now })
+    expect(res.rate).toBeNull()
+    expect(res.available).toBe(false)
   })
 
   it('config con lastError del cron: lo expone en el resultado', async () => {

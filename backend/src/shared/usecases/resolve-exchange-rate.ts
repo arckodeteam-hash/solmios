@@ -94,6 +94,10 @@ export function crossRate(
   from: string,
   to: string,
 ): number | null {
+  // Un código vacío/ausente NO es una conversión válida: sin este guard, `from` y `to` vacíos
+  // caerían en el atajo `from === to` y devolverían 1, o sea una tasa 1:1 fantasma que el caller
+  // leería como `available:true` y mostraría como monto convertido en vez de degradar.
+  if (!from || !to) return null
   if (from === to) return 1
   if (!rates || typeof rates !== 'object') return null
   const a = rates[from]
