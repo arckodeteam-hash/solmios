@@ -2,7 +2,29 @@ import { http } from './http'
 
 interface List { data: any[]; total: number }
 
+/**
+ * Credenciales de la APP de Meta, a nivel plataforma. Distintas de las de cada hotel: este secreto
+ * firma los webhooks de TODOS los hoteles, por eso vive acá y nunca se devuelve en claro.
+ */
+export interface MetaAppEstado {
+  appId: string
+  graphVersion: string
+  configurado: boolean
+  /** De dónde sale el que se usa. El entorno gana sobre el panel. */
+  origen: 'entorno' | 'panel' | null
+  /** Últimos caracteres, para reconocer cuál está puesto sin revelarlo. */
+  pista: string | null
+  /** Sin cifrado configurado en el servidor, esta pantalla no puede guardar. */
+  puedeGuardar: boolean
+}
+
 export const PlatformService = {
+  /** Estado de las credenciales de la app de Meta. NUNCA devuelve el secreto. */
+  getMetaWhatsapp: () => http.get<MetaAppEstado>('/admin/meta-whatsapp'),
+  /** Guarda el secreto cifrado. El del servidor (.env) sigue teniendo prioridad. */
+  saveMetaWhatsapp: (data: { appId?: string; appSecret: string }) =>
+    http.put<MetaAppEstado>('/admin/meta-whatsapp', data),
+
   subscriptions: () => http.get<any>('/admin/subscriptions'),
   // Auditoría extraída a AuditLogService (services/AuditLog.service.ts) — M45 #313
   monitoring: () => http.get<any>('/admin/monitoring'),

@@ -4,6 +4,7 @@ import type { AiRecepcionistaService } from './service'
 import { AiRecepcionistaValidator, CloseConversationSchema, TransferConversationSchema, TestIntentSchema, WebChatMessageSchema, StartWhatsappSchema, StopWhatsappSchema, ConnectWhatsappSchema, ReplyConversationSchema } from './validators/schema'
 import { redactWhatsappConfig } from './usecases/whatsapp-config'
 import { aplicarEstadosDeEntrega } from './usecases/whatsapp-delivery-status'
+import { resolverCredencialesApp } from '../../infrastructure/meta-app-config'
 
 export class AiRecepcionistaController {
   constructor(
@@ -251,7 +252,11 @@ export class AiRecepcionistaController {
     // reservas / payment links / invoices reales. Fail-closed: sin appSecret (WHATSAPP_APP_SECRET)
     // o sin signature, se rechaza. La firma se calcula sobre los bytes crudos (req.rawBody si el
     // framework lo expone; fallback JSON.stringify).
+    // El entorno primero; si no está, el que el super_admin cargó por el panel. Sin ninguno de los
+    // dos se rechaza todo: es puerta cerrada a propósito — un webhook sin firma verificada permite
+    // inyectar mensajes falsos, y el bot podría crear reservas o links de pago con ellos.
     const appSecret = process.env.WHATSAPP_APP_SECRET
+      || (await resolverCredencialesApp((this.service as any).configRepo).catch(() => null))?.appSecret
     const signature = req.headers?.['x-hub-signature-256'] || req.headers?.['X-Hub-Signature-256']
     if (!appSecret || !signature) {
       this.logger.warn('WhatsApp webhook rechazado: falta appSecret o signature', { hotelId, hasAppSecret: !!appSecret, hasSignature: !!signature })

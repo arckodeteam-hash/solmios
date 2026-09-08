@@ -1,4 +1,7 @@
 import { createModule, OrmRepository } from 'arckode-framework'
+import { validateSchema } from 'arckode-framework'
+import { estadoMetaApp, guardarMetaApp } from '../../infrastructure/meta-app-config'
+import { MetaAppConfigSchema } from './validators/meta-app-schema'
 import type { PlanDTO, AmenityCatalogDTO } from './types'
 import { AdminService } from './service'
 import { AdminController } from './controller'
@@ -72,6 +75,14 @@ export function AdminModule() {
         // planSlug (hotels.plan) solo aplica si no hay suscripción activa (legacy).
         // `log` (E2): el WARN del resolver tiene que llegar a los logs, no morir en `undefined`.
         return { status: 200, body: { state: await getModuleStateForHotel(configRepo, plansRepo, subscriptionsRepo, hotelId, moduleOverridesRepo, planSlug, log) } }
+      })
+
+      // Credenciales de la APP de Meta (plataforma). El secreto firma los webhooks de TODOS los
+      // hoteles: no es configuración de ninguno en particular. El GET nunca devuelve el secreto.
+      router.get('/api/admin/meta-whatsapp', sa, async () => ({ status: 200, body: await estadoMetaApp(configRepo) }))
+      router.put('/api/admin/meta-whatsapp', sa, async (req: any) => {
+        const body = validateSchema(MetaAppConfigSchema, req.body || {}) as any
+        return { status: 200, body: await guardarMetaApp(configRepo, body) }
       })
 
       router.get('/api/admin/hoteles', sa, () => controller.listHotels())

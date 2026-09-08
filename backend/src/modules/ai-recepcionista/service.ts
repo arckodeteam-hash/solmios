@@ -157,9 +157,9 @@ export class AiRecepcionistaService {
 
   // ─── Conexión oficial con Meta (Embedded Signup) ───────────────────────────
   /** Canjea el código de la ventana de Meta y deja el WhatsApp del hotel conectado. */
-  async connectWhatsapp(input: ConnectInput, u: any) { return connectWhatsapp(connectionDepsFor(this.whatsappConfigRepo, this.logger), input, await this.resolveHotelId(u, (input as any).hotelId), u?.id) }
+  async connectWhatsapp(input: ConnectInput, u: any) { return connectWhatsapp(await connectionDepsFor(this.whatsappConfigRepo, this.logger, this.configRepo), input, await this.resolveHotelId(u, (input as any).hotelId), u?.id) }
   /** Da de baja la conexión: primero en Meta, después acá. */
-  async disconnectWhatsapp(u: any, hotelId?: string) { return disconnectWhatsapp(connectionDepsFor(this.whatsappConfigRepo, this.logger), await this.resolveHotelId(u, hotelId)) }
+  async disconnectWhatsapp(u: any, hotelId?: string) { return disconnectWhatsapp(await connectionDepsFor(this.whatsappConfigRepo, this.logger, this.configRepo), await this.resolveHotelId(u, hotelId)) }
   /** Todas las conexiones, para el soporte de la plataforma. Solo lectura, sin secretos. */
   async listarConexiones() { return listarConexiones(this.whatsappConfigRepo) }
   /** Estado de la conexión para la tarjeta del panel. Sin secretos. */
