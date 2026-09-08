@@ -185,6 +185,51 @@ async function createTablesBlock1(): Promise<void> {
   // admins crean el mismo slug a la vez, la carrera la frena el índice.
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_site_pages_slug ON site_pages (slug)`)
 
+  // Outbox de ARI (módulo ari-outbox): UNA sola fila `pending` por (hotelId, kind), garantizada
+  // por la BASE. `scheduleOne` es un check-then-act (leer la pendiente, si no hay crearla)
+  // serializado sólo por un Map en memoria del proceso: dos réplicas —o un deploy solapado—
+  // crean las dos su fila y Channex recibe el push duplicado.
+  //
+  // La garantía que hace falta es un índice único PARCIAL (hotelId, kind) WHERE status='pending'.
+  // El equivalente que usamos acá es un único PLANO sobre la columna nullable `pendingKey`, que
+  // vale 'hotelId|kind' MIENTRAS la fila está pending y NULL en cualquier otro estado: como en SQL
+  // los NULL de un índice único son DISTINTOS entre sí, el índice sólo puede chocar entre dos
+  // filas pendientes del mismo par, y todo el historial sent/failed convive sin problema. Es
+  // exactamente el mismo efecto que el WHERE, pero expresable por el ORM (`unique` por columna) y
+  // portable a SQLite, Postgres y MySQL. NO cambiarlo por un parcial: el modelo no lo emitiría y
+  // las bases nuevas quedarían sin la mitad de la garantía.
+  //
+  // Se garantiza acá y no sólo en el modelo porque ormMigrate emite el UNIQUE inline únicamente en
+  // el CREATE TABLE: sobre una tabla que YA existe hace ALTER TABLE ADD COLUMN sin el UNIQUE, así
+  // que las bases existentes se quedarían sin índice (mismo motivo que idx_configuration_hotel_key
+  // y idx_site_pages_slug). El addColumnIfMissing cubre las bases donde ormMigrate todavía no corrió
+  // con el modelo nuevo; si la tabla no existe aún, el índice entra en la próxima corrida.
+  await addColumnIfMissing('ari_outbox', 'pendingKey', 'TEXT')
+  try {
+    // Backfill idempotente y SIN duplicados: las filas ya pendientes necesitan su pendingKey, pero
+    // una base con el bug puede tener DOS pendientes del mismo par y marcarlas a las dos haría
+    // fallar el CREATE UNIQUE INDEX. Se marca UNA sola por grupo (la más vieja) y las demás quedan
+    // en NULL: se drenan como hasta hoy y el índice rige de ahí en adelante. La decisión se toma en
+    // JS con un UPDATE por id — SQL ANSI, sin PRAGMA ni funciones de un solo motor.
+    const pendientes = (await db.query(
+      `SELECT id, hotelId, kind, pendingKey FROM ari_outbox WHERE status = 'pending' ORDER BY createdAt, id`,
+    )) as Array<{ id: string; hotelId: string; kind: string; pendingKey: string | null }>
+    const tomadas = new Set(pendientes.map(r => r.pendingKey).filter(Boolean) as string[])
+    let marcadas = 0
+    for (const fila of pendientes) {
+      if (fila.pendingKey) continue // ya la marcó una corrida anterior o la cola nueva
+      const clave = `${fila.hotelId}|${fila.kind}`
+      if (tomadas.has(clave)) continue // el turno ya lo tiene otra fila del mismo par
+      tomadas.add(clave)
+      await run(`UPDATE ari_outbox SET pendingKey = ? WHERE id = ?`, [clave, fila.id])
+      marcadas++
+    }
+    if (marcadas > 0) console.log(`  ari_outbox: pendingKey backfilleado en ${marcadas} fila(s) pendiente(s)`)
+    await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ari_outbox_pending_key ON ari_outbox (pendingKey)`)
+  } catch (e: unknown) {
+    console.log("idx_ari_outbox_pending_key: tabla ari_outbox aún no migrada (correr RUN_MIGRATE) —", e instanceof Error ? e.message.slice(0, 90) : String(e))
+  }
+
   // Expedientes de digitalización (módulo digitalizacion). La tabla la crea ormMigrate (modelo
   // ORM, Paso 1); acá solo el índice de búsqueda por hotel, que es como se consulta siempre
   // (¿este hotel ya tiene expediente?) al abrir uno y al armar la lista de candidatos.

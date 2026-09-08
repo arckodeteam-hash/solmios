@@ -32,6 +32,16 @@ export interface AriOutboxRow {
    * dos y publican el mismo push dos veces.
    */
   claimedBy?: string | null
+  /**
+   * Candado de unicidad de la fila PENDIENTE, en la base y no en el proceso. Vale
+   * `${hotelId}|${kind}` mientras la fila está `pending` y `null` en cualquier otro estado, con
+   * un único plano encima (ver model.ts): así dos procesos que agendan el mismo (hotel, kind) a
+   * la vez no pueden dejar dos ráfagas pendientes —el perdedor recibe el error de unicidad y
+   * fusiona sus canales en la fila que ya existe— mientras que el historial `sent`/`failed` del
+   * mismo par convive sin chocar, porque en SQL los `null` de un índice único son distintos
+   * entre sí. `undefined`/`null` = la fila ya no compite por el turno.
+   */
+  pendingKey?: string | null
   createdAt?: string
   updatedAt?: string
 }
