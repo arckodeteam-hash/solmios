@@ -234,10 +234,32 @@
               </select>
             </div>
             <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo de cambio</label>
-              <input v-model.number="currencyConfig.exchangeRate" type="number" min="0" step="0.01"
+              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo de cambio manual (opcional)</label>
+              <input v-model.number="currencyConfig.exchangeRate" type="number" min="0" step="0.01" placeholder="Automático"
                 class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy text-right tabular-nums focus:border-navy focus:outline-none" />
+              <p class="mt-1 text-[10px] text-text-muted">Si lo dejás vacío se usa la tasa automática.</p>
             </div>
+          </div>
+          <!-- Tasa automática: la MISMA que usa el backend (GET /api/tasa-cambio). Antes acá había
+               un 60 escrito a mano que nadie actualizaba. -->
+          <div class="mt-4 rounded-xl border border-border bg-surface px-4 py-3">
+            <p class="text-[11px] font-bold uppercase tracking-wide text-text-muted">Tasa automática</p>
+            <p v-if="autoRate.exchangeRate" class="mt-1 text-base font-bold text-navy tabular-nums">
+              1 {{ form.currency }} = {{ autoRate.exchangeRate }} {{ autoRate.secondaryCurrency }}
+            </p>
+            <p v-else class="mt-1 text-sm font-bold text-text-muted">Sin tasa disponible todavía</p>
+            <p v-if="autoRate.exchangeRate" class="mt-1 text-[10px] text-text-muted">
+              Actualizada el {{ autoRateFetchedAt }}<span v-if="autoRate.source"> · origen: {{ autoRate.source }}</span>
+            </p>
+            <p v-if="autoRate.stale" class="mt-1 text-[10px] font-bold text-warning">
+              La tasa está desactualizada: se sigue mostrando la última obtenida.
+            </p>
+            <!-- Atribucion EXIGIDA por los terminos del plan Open Access del proveedor: el texto
+                 del enlace tiene que ser literalmente "Rates By Exchange Rate API" apuntando a su
+                 sitio. No es decorativo: sin esto el uso queda fuera de licencia. -->
+            <p class="mt-2 text-[10px] text-text-muted">
+              <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener" class="underline">Rates By Exchange Rate API</a>
+            </p>
           </div>
         </SectionCard>
 
@@ -727,6 +749,7 @@ import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES, countryName } from '@/data/locales'
 import { TIMEZONES, CURRENCIES } from '@/data/intl-catalogs'
 import { CurrencyCode } from '@/types/currency'
+import { loadCurrencyConfig, type CurrencyConfig } from '@/composables/useCurrency'
 import { parseLatLng } from '@/composables/useLatLngParse'
 import { loadGoogleMaps } from '@/composables/useGoogleMaps'
 import {
@@ -761,14 +784,36 @@ const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'pla
 // El bloque anterior leía configuration['stripe_config'] y traía la secretKey EN CLARO al
 // navegador: el endpoint genérico de configuración devuelve el JSON entero, secretos incluidos.
 
-// Conversión de moneda secundaria (F3 match-misterplan — totales convertidos en el detalle de reserva)
-const currencyConfig = reactive<{ secondaryCurrency: string; exchangeRate: number }>({ secondaryCurrency: CurrencyCode.DOP, exchangeRate: 60 })
+// Conversión de moneda secundaria (F3 match-misterplan — totales convertidos en el detalle de reserva).
+// `exchangeRate` es un OVERRIDE MANUAL opcional: vacío/null = usar la tasa automática que devuelve
+// `GET /api/tasa-cambio`, la misma que consume el backend. Acá no se hardcodea ninguna tasa.
+const currencyConfig = reactive<{ secondaryCurrency: string; exchangeRate: number | string | null }>({ secondaryCurrency: '', exchangeRate: null })
 const currencySaving = ref(false)
+const autoRate = ref<CurrencyConfig>({ secondaryCurrency: '', exchangeRate: 0, fetchedAt: null, source: null, stale: false })
+const autoRateFetchedAt = computed(() => {
+  const at = autoRate.value.fetchedAt
+  if (!at) return 'fecha desconocida'
+  const d = new Date(at)
+  return isNaN(d.getTime()) ? 'fecha desconocida' : d.toLocaleString('es-DO', { dateStyle: 'medium', timeStyle: 'short' })
+})
+// `force`: la tasa se cachea a nivel de módulo, y acá hace falta el valor de AHORA (un override
+// manual recién guardado cambia lo que devuelve el endpoint).
+async function loadAutoRate() {
+  try { autoRate.value = await loadCurrencyConfig(hotelId.value, true) } catch { /* sin tasa: la UI muestra "sin tasa disponible" */ }
+}
 async function loadCurrency() {
   try {
     const c = await ConfigService.get('currency_config') as { secondaryCurrency?: string; exchangeRate?: number } | null
-    if (c) { currencyConfig.secondaryCurrency = c.secondaryCurrency || 'DOP'; currencyConfig.exchangeRate = c.exchangeRate ?? 60 }
-  } catch { /* default */ }
+    if (c) {
+      currencyConfig.secondaryCurrency = c.secondaryCurrency || ''
+      // 0 es como el backend representa "sin override manual": el campo se muestra vacío.
+      currencyConfig.exchangeRate = Number(c.exchangeRate) > 0 ? Number(c.exchangeRate) : null
+    }
+  } catch { /* sin config guardada: queda la tasa automática */ }
+  // Sin await a propósito: la tasa automática es informativa (se muestra en su tarjeta) y el resto
+  // de la pantalla no depende de ella; encadenarla retrasaría toda la carga por una petición que
+  // puede tardar o no estar disponible.
+  void loadAutoRate()
 }
 // Logo del hotel — arrastrar/soltar o elegir archivo, con preview. Sube de una (endpoint dedicado,
 // data URL base64) en vez de esperar al "Guardar" general: mismo patrón que el avatar de usuario.
@@ -863,7 +908,9 @@ async function saveEmergencyContacts() {
 async function saveCurrency() {
   currencySaving.value = true
   try {
+    // Campo vacío → 0, que el backend interpreta como "sin override manual" y resuelve la automática.
     await ConfigService.set('currency_config', { secondaryCurrency: currencyConfig.secondaryCurrency, exchangeRate: Number(currencyConfig.exchangeRate) || 0 })
+    await loadAutoRate()
     toast.success('Conversión de moneda guardada')
   } catch (e) {
     toast.error((e as Error).message || 'No se pudo guardar')

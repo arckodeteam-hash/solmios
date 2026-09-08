@@ -47,7 +47,9 @@ export function HotelesModule(opts: { storage?: StorageService } = {}) {
       const settingsFull = new SettingsFullUseCase(orm)
       const queries = new HotelesQueries(orm)
       const service = new HotelesService(repo, log, cache, auth, settingsFull, queries)
-      const controller = new HotelesController(service, log, queries, opts.storage)
+      // Repo de Configuration: las tasas del cron (hotelId='platform') y el currency_config del hotel.
+      const configRepo = new OrmRepository<any>(orm, 'Configuration')
+      const controller = new HotelesController(service, log, queries, opts.storage, { configRepo, hotelRepo: repo })
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
       const guard = createPermissionGuard(auth, roleRepo)
@@ -77,7 +79,13 @@ export function HotelesModule(opts: { storage?: StorageService } = {}) {
       // sigue en POST /api/configuracion con `settings:edit`.
       router.get('/api/contactos-emergencia', [auth.authenticate()], (req) => controller.getEmergencyContacts(req))
 
-      log.info('Módulo hoteles v2 listo (5 settings endpoints + contactos de emergencia)')
+      // Tasa de cambio automática — lectura SOLO-LOGIN, mismo criterio que contactos de emergencia:
+      // la conversión se muestra en pantallas de operación (el detalle de reserva la usa) y
+      // recepción no tiene `settings:view`. La ESCRITURA de la tasa manual sigue en
+      // POST /api/configuracion (key `currency_config`) con `settings:edit`.
+      router.get('/api/tasa-cambio', [auth.authenticate()], (req) => controller.getExchangeRate(req))
+
+      log.info('Módulo hoteles v2 listo (5 settings endpoints + contactos de emergencia + tasa de cambio)')
       return service
     },
   })
