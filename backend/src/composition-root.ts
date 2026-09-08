@@ -824,7 +824,13 @@ logger.info('No-show cron listo (con corrida inicial a los 10s)', { tickMs: ONE_
 // CH-08 — Worker de la outbox de ARI. Tick CORTO (500ms): el debounce de la ráfaga ya son 1.5s y
 // el tick solo suma latencia encima; con esto un cambio de tarifa sale a Channex en ~2s, igual que
 // con el coalescer en memoria que reemplaza.
-const ariOutbox = system.resolveModule<{ drain: () => Promise<number>; reclaimStale: () => Promise<number> }>('ari-outbox')
+const ariOutbox = system.resolveModule<{ drain: () => Promise<number>; reclaimStale: () => Promise<number>; applyQueueConfig: () => Promise<unknown> }>('ari-outbox')
+// La config guardada de la cola (reintentos y peticiones/minuto contra Channex), aplicada al
+// arrancar: sin esto el techo que el operador guardó regiría recién después del próximo PUT.
+// Va ACÁ, después de `system.start()` —que es donde corren los connectors—, porque el efecto se
+// reparte por el hook `onQueueConfigChanged` que cablea canales-ari-outbox: si se llamara antes,
+// el hook todavía no existe y el valor persistido se pierde en silencio.
+ariOutbox.applyQueueConfig().catch((e) => logger.warn('ari-outbox applyQueueConfig failed', { error: (e as Error).message }))
 // Corrida al ARRANCAR: es lo que hace salir el push que un reinicio dentro de la ventana de
 // debounce se comía. Sin esto la fila queda pendiente hasta el próximo cambio del hotel.
 setTimeout(() => {

@@ -16,6 +16,13 @@ import type { AriOutboxRow, AriOutboxStatus } from '../types'
 export const DEFAULT_DEBOUNCE_MS = 1500
 /** Backoff tras cada fallo: 1min, 5min, 15min. Igual que la cola de emails. */
 export const BACKOFF_MS = [60_000, 300_000, 900_000]
+/**
+ * Intentos por fila cuando nadie configuró nada: uno por escalón de backoff. Es el valor que estaba
+ * hardcodeado al encolar, y sigue siendo el default para que la cola se comporte igual que antes si
+ * el operador nunca toca la config.
+ */
+export const DEFAULT_MAX_ATTEMPTS = BACKOFF_MS.length
+
 /** Filas en 'processing' más viejas que esto: el proceso que las tomó murió a mitad. */
 export const STALE_MS = 5 * 60_000
 /**
@@ -26,6 +33,17 @@ export const STALE_MS = 5 * 60_000
  * gana que lo reclamen por stale y lo republiquen en paralelo.
  */
 export const HEARTBEAT_MS = 60_000
+
+/**
+ * Saneo mínimo del tope de intentos: entero >= 1. `sanearConfig` (usecases/outbox-admin.ts) ya
+ * acota lo que entra por la API, pero `setMaxAttempts` es público y lo puede llamar cualquier
+ * conector, así que la cola no confía: un 0 o un NaN dejaría filas que se dan por fallidas sin
+ * haber intentado ni una vez.
+ */
+function saneMaxAttempts(n: unknown, fallback: number): number {
+  const v = Math.floor(Number(n))
+  return Number.isFinite(v) && v >= 1 ? v : fallback
+}
 
 /** Puerto de persistencia: lo implementa OrmRepository en el módulo, y un array en los tests. */
 export interface AriOutboxPort {
@@ -68,6 +86,11 @@ export interface AriOutboxDeps {
   owner?: string
   /** Renovación del lease durante el push. Default HEARTBEAT_MS; `0` lo apaga. */
   heartbeatMs?: number
+  /**
+   * Intentos que se le graban a cada fila al encolarla. Default DEFAULT_MAX_ATTEMPTS; el Super
+   * Admin lo cambia en caliente por `setMaxAttempts`.
+   */
+  maxAttempts?: number
 }
 
 export class AriOutbox {
@@ -84,6 +107,8 @@ export class AriOutbox {
   /** Quién es este proceso para la tabla. Se calcula UNA vez: es la identidad de la instancia. */
   private readonly owner: string
   private readonly heartbeatMs: number
+  /** NO readonly: es config de operación y se cambia en caliente (ver setMaxAttempts). */
+  private maxAttempts: number
   /**
    * Última operación encolada por clave `${hotelId}|${kind}`: serializa `schedule` (ver su doc).
    * Se limpia cuando la cadena termina y sigue siendo la última, así un hotel que agenda todo el
@@ -101,6 +126,20 @@ export class AriOutbox {
     this.onFailed = deps.onFailed
     this.owner = deps.owner ?? crypto.randomUUID()
     this.heartbeatMs = deps.heartbeatMs ?? HEARTBEAT_MS
+    this.maxAttempts = saneMaxAttempts(deps.maxAttempts, DEFAULT_MAX_ATTEMPTS)
+  }
+
+  /**
+   * Cambia el tope de intentos que llevarán las PRÓXIMAS filas. Es lo que el operador guarda en la
+   * config de la cola desde el Super Admin, aplicado sin reiniciar el proceso.
+   *
+   * DELIBERADO: no reescribe las filas que ya están en la cola. Cada fila se lleva su tope al
+   * momento de encolarse y `handleFailure` lee ESE (`row.maxAttempts`), así que subir el máximo no
+   * resucita nada que ya se haya dado por `failed` —para eso está el reintento manual del monitor,
+   * que es una acción explícita— ni bajarlo mata reintentos que una fila viva ya tenía prometidos.
+   */
+  setMaxAttempts(n: number): void {
+    this.maxAttempts = saneMaxAttempts(n, this.maxAttempts)
   }
 
   registerPublisher(kind: string, publisher: AriPublisher): void {
@@ -163,7 +202,8 @@ export class AriOutbox {
       status: 'pending' as AriOutboxStatus,
       scheduledAt,
       attempts: 0,
-      maxAttempts: 3,
+      // El tope viaja EN LA FILA: cambiar la config después no toca a las ya encoladas.
+      maxAttempts: this.maxAttempts,
       lastError: null,
     })
   }
@@ -317,7 +357,7 @@ export class AriOutbox {
   private async handleFailure(row: AriOutboxRow, err: unknown): Promise<void> {
     const attempts = Number(row.attempts || 0) + 1
     const lastError = err instanceof Error ? err.message || String(err) : String(err)
-    const maxAttempts = Number(row.maxAttempts || BACKOFF_MS.length)
+    const maxAttempts = Number(row.maxAttempts || DEFAULT_MAX_ATTEMPTS)
     // Las dos salidas van con el mismo CAS guardado por dueño que el cierre bueno: si la fila ya
     // no es nuestra, el fallo es de un push que otro proceso está rehaciendo — ni se pisa ni avisa.
     const mia = { id: row.id, status: 'processing' as AriOutboxStatus, claimedBy: this.owner }
