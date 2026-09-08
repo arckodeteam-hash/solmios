@@ -14,6 +14,7 @@ export const ROUTE_TO_KEY: Record<string, string> = {
   '/panel/operaciones/mantenimiento': 'operations.maintenance',
   '/panel/operaciones/proveedores': 'operations.providers',
   '/panel/operaciones/chats': 'operations.team-chat',
+  '/panel/operaciones/whatsapp': 'operations.whatsapp-inbox',
   '/panel/finanzas/facturacion': 'finance.billing',
   '/panel/finanzas/folios': 'finance.folios',
   '/panel/finanzas/links-pago': 'finance.payments',

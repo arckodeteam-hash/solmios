@@ -160,3 +160,8 @@ export const ConnectWhatsappSchema: Record<string, ValidationRule> = {
   wabaId: { type: 'string' as const, required: true, max: 100 },
   hotelId: { type: 'string' as const },
 }
+
+/** Respuesta con texto libre desde la bandeja. El tope es el de WhatsApp. */
+export const ReplyConversationSchema: Record<string, ValidationRule> = {
+  text: { type: 'string' as const, required: true, min: 1, max: 4096 },
+}

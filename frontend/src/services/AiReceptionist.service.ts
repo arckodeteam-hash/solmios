@@ -97,6 +97,47 @@ export interface WhatsappConnection {
   connectionError: string | null
 }
 
+/**
+ * Estado de la ventana de servicio de WhatsApp. Lo calcula el SERVIDOR: el reloj del navegador
+ * puede estar mal y haría intentar un envío que Meta rechaza y cobra igual.
+ */
+export interface VentanaConversacion {
+  abierta: boolean
+  minutosRestantes: number
+  expiraEn: string | null
+}
+
+export interface InboxConversation {
+  id: string
+  guestName: string | null
+  guestPhone: string | null
+  guestId: string | null
+  /** active = contesta el bot · human = la tomó una persona · closed */
+  status: 'active' | 'human' | 'closed'
+  assignedAgentId: string | null
+  lastMessageAt: string | null
+  unreadCount: number
+  ventana: VentanaConversacion
+}
+
+export interface InboxMessage {
+  id: string
+  sender: 'guest' | 'bot' | 'agent'
+  senderUserId: string | null
+  content: string
+  createdAt: string
+}
+
+export interface InboxThread {
+  id: string
+  guestName: string | null
+  guestPhone: string | null
+  status: 'active' | 'human' | 'closed'
+  assignedAgentId: string | null
+  ventana: VentanaConversacion
+  mensajes: InboxMessage[]
+}
+
 export const AiReceptionistService = {
   async listConversations(params?: Record<string, any>) {
     const qs = params ? '?' + new URLSearchParams(params).toString() : ''
@@ -169,6 +210,24 @@ export const AiReceptionistService = {
   },
   async getWhatsappStatus(hotelId: string) {
     return http.get<{ status: string; phone: string | null; mode: string }>(`/ai/whatsapp/status/${hotelId}`)
+  },
+
+  // ─── Bandeja de WhatsApp ───────────────────────────────────────────────────
+  async inbox(estado?: string) {
+    const qs = estado ? `?estado=${encodeURIComponent(estado)}` : ''
+    return http.get<{ data: InboxConversation[] }>(`/ai/inbox${qs}`)
+  },
+  async inboxConversation(id: string) {
+    return http.get<InboxThread>(`/ai/inbox/${id}`)
+  },
+  async takeConversation(id: string) {
+    return http.post<{ success: boolean }>(`/ai/inbox/${id}/take`, {})
+  },
+  async releaseConversation(id: string) {
+    return http.post<{ success: boolean }>(`/ai/inbox/${id}/release`, {})
+  },
+  async replyConversation(id: string, text: string) {
+    return http.post<{ id: string; providerMessageId: string; sentAt: string }>(`/ai/inbox/${id}/reply`, { text })
   },
 
   // ─── Conexión oficial con Meta (Embedded Signup) ───────────────────────────

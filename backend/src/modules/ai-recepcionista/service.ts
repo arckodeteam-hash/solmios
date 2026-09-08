@@ -33,6 +33,8 @@ import { deleteIntentAudited, deleteTemplateAudited } from './usecases/audit-del
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
 import type { AuditPort } from '../../shared/usecases/audit'
 import type { DeliveryStatusPort } from './usecases/whatsapp-delivery-status'
+import { listarBandeja, abrirConversacion, tomarConversacion, soltarConversacion, responderConversacion, registrarEntrante } from './usecases/inbox'
+import type { InboxDeps } from './usecases/inbox'
 
 export class AiRecepcionistaService {
   private sockets: AiRecepcionistaSockets = {}
@@ -117,19 +119,27 @@ export class AiRecepcionistaService {
     return detectIntent(message, [intent])
   }
 
-  async listTemplates(q: TemplateQuery, u: any) {
-    return listTemplates(this.templateRepo, await this.resolveHotelId(u, q.hotelId), q.category, q.isActive, q.page, q.limit)
-  }
-  async createTemplate(dto: CreateAiTemplateDTO, u: any) {
-    return createTemplate(this.templateRepo, dto, await this.resolveHotelId(u, dto.hotelId))
-  }
-  async updateTemplate(id: string, dto: UpdateAiTemplateDTO, u: any) {
-    return updateTemplate(this.templateRepo, id, dto, this.userHotel(u), this.userRole(u))
-  }
+  async listTemplates(q: TemplateQuery, u: any) { return listTemplates(this.templateRepo, await this.resolveHotelId(u, q.hotelId), q.category, q.isActive, q.page, q.limit) }
+  async createTemplate(dto: CreateAiTemplateDTO, u: any) { return createTemplate(this.templateRepo, dto, await this.resolveHotelId(u, dto.hotelId)) }
+  async updateTemplate(id: string, dto: UpdateAiTemplateDTO, u: any) { return updateTemplate(this.templateRepo, id, dto, this.userHotel(u), this.userRole(u)) }
   async deleteTemplate(id: string, u: any) { return deleteTemplateAudited({ repo: this.templateRepo, logger: this.logger, auditPort: this.auditPort }, id, u, this.userHotel(u), this.userRole(u)) }
 
   async getWhatsappConfig(hotelId: string, u: any): Promise<AiWhatsappConfigDTO | null> { return getWhatsappConfig(this.whatsappConfigRepo, await this.resolveHotelId(u, hotelId)) }
   async updateWhatsappConfig(dto: CreateAiWhatsappConfigDTO, u: any): Promise<AiWhatsappConfigDTO> { return updateWhatsappConfig(this.whatsappConfigRepo, await this.resolveHotelId(u, dto.hotelId), dto) }
+  // ─── Bandeja de WhatsApp ───────────────────────────────────────────────────
+  /** Anota el entrante (ventana + no leídos) y dice si el bot debe callarse. */
+  async registrarEntrante(conversationId: string, hotelId: string) { return registrarEntrante(this.inboxDeps(), conversationId, hotelId) }
+  async listarBandeja(u: any, hotelId?: string, estado?: any) { return listarBandeja(this.inboxDeps(), await this.resolveHotelId(u, hotelId), { estado }) }
+  async abrirConversacion(id: string, u: any) { return abrirConversacion(this.inboxDeps(), id, await this.resolveHotelId(u)) }
+  async tomarConversacion(id: string, u: any) { return tomarConversacion(this.inboxDeps(), id, await this.resolveHotelId(u), u.id) }
+  async soltarConversacion(id: string, u: any) { return soltarConversacion(this.inboxDeps(), id, await this.resolveHotelId(u)) }
+  async responderConversacion(id: string, texto: string, u: any) { return responderConversacion(this.inboxDeps(), id, await this.resolveHotelId(u), texto, u.id) }
+
+  /** Envío y registro de la bandeja. Los inyecta el connector `ai-recepcionista-whatsapp`. */
+  inboxPorts: { whatsapp: InboxDeps['whatsapp']; registrarEnvio?: InboxDeps['registrarEnvio'] } = { whatsapp: null }
+  setInboxDeps(p: { whatsapp: InboxDeps['whatsapp']; registrarEnvio?: InboxDeps['registrarEnvio'] }): void { this.inboxPorts = p }
+  private inboxDeps(): InboxDeps { return { conversationRepo: this.conversationRepo, messageRepo: this.messageRepo, logger: this.logger, ...this.inboxPorts } }
+
   // ─── Conexión oficial con Meta (Embedded Signup) ───────────────────────────
   /** Canjea el código de la ventana de Meta y deja el WhatsApp del hotel conectado. */
   async connectWhatsapp(input: ConnectInput, u: any) { return connectWhatsapp(connectionDepsFor(this.whatsappConfigRepo, this.logger), input, await this.resolveHotelId(u, (input as any).hotelId), u?.id) }
@@ -180,16 +190,8 @@ export class AiRecepcionistaService {
       }
     }
   }
-  async stopWhatsappSession(hotelId: string) {
-    const { endSession } = await import('./usecases/whatsapp-sessions')
-    return endSession(hotelId, this.whatsappConfigRepo)
-  }
-  async getWhatsappQR(hotelId: string) {
-    const { getQRSync } = await import('./usecases/whatsapp-sessions')
-    return getQRSync(hotelId)
-  }
-  async getWhatsappStatus(hotelId: string) {
-    const { getStatusSync } = await import('./usecases/whatsapp-sessions')
-    return getStatusSync(hotelId, this.whatsappConfigRepo)
-  }
+  // Sesión legacy por QR (Baileys). Se conserva para los hoteles que todavía la usan.
+  async stopWhatsappSession(hotelId: string) { return (await import('./usecases/whatsapp-sessions')).endSession(hotelId, this.whatsappConfigRepo) }
+  async getWhatsappQR(hotelId: string) { return (await import('./usecases/whatsapp-sessions')).getQRSync(hotelId) }
+  async getWhatsappStatus(hotelId: string) { return (await import('./usecases/whatsapp-sessions')).getStatusSync(hotelId, this.whatsappConfigRepo) }
 }

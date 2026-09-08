@@ -318,6 +318,7 @@ const nonavItems = [
       { label: 'Mantenimiento', path: '/panel/operaciones/mantenimiento', roles: ['hotel_admin'] },
       { label: 'Proveedores de servicios', path: '/panel/operaciones/proveedores', roles: ['hotel_admin'] },
       { label: 'Chats del equipo', path: '/panel/operaciones/chats', roles: ['hotel_admin'] },
+      { label: 'WhatsApp de huéspedes', path: '/panel/operaciones/whatsapp', roles: ['hotel_admin'] },
     ]
   },
   {

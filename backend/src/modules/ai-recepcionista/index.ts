@@ -44,7 +44,7 @@ export function AiRecepcionistaModule() {
         'sendMessage', 'getMessages', 'processIncomingMessage',
         'listIntents', 'createIntent', 'updateIntent', 'deleteIntent', 'testIntent',
         'listTemplates', 'createTemplate', 'updateTemplate', 'deleteTemplate',
-        'getWhatsappConfig', 'updateWhatsappConfig', 'connectWhatsapp', 'getWhatsappConnection', 'disconnectWhatsapp',
+        'getWhatsappConfig', 'updateWhatsappConfig', 'connectWhatsapp', 'getWhatsappConnection', 'disconnectWhatsapp', 'listarBandeja', 'abrirConversacion', 'tomarConversacion', 'soltarConversacion', 'responderConversacion',
         'getMetrics', 'getDashboardMetrics',
         'getBookingFlow', 'createBookingFlow', 'updateBookingFlow',
         'getVoiceConfig',
@@ -135,6 +135,12 @@ export function AiRecepcionistaModule() {
       router.post('/api/ai/whatsapp/connect', guard('settings', 'edit'), (req) => controller.connectWhatsapp(req))
       router.get('/api/ai/whatsapp/connection', guard('settings', 'view'), (req) => controller.getWhatsappConnection(req))
       router.delete('/api/ai/whatsapp/connection', guard('settings', 'edit'), (req) => controller.disconnectWhatsapp(req))
+      // Bandeja: conversaciones con el huésped. Permiso `ai` porque es atención, no configuración.
+      router.get('/api/ai/inbox', guard('ai', 'view'), (req) => controller.inbox(req))
+      router.get('/api/ai/inbox/:id', guard('ai', 'view'), (req) => controller.getInboxConversation(req))
+      router.post('/api/ai/inbox/:id/take', guard('ai', 'edit'), (req) => controller.takeConversation(req))
+      router.post('/api/ai/inbox/:id/release', guard('ai', 'edit'), (req) => controller.releaseConversation(req))
+      router.post('/api/ai/inbox/:id/reply', guard('ai', 'edit'), (req) => controller.replyConversation(req))
 
       // Endpoints públicos (sin auth): cada mensaje dispara una llamada a la LLM, que cuesta plata.
       // El rate-limit global (200/min/IP) es compartido con toda la API; sin un límite propio, un

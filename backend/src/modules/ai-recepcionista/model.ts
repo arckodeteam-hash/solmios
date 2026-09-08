@@ -19,6 +19,11 @@ export const AiConversationsModel: ModelDefinition = {
     startedAt: { type: 'string', required: true },
     endedAt: { type: 'string' },
     lastMessageAt: { type: 'string' },
+    /** Último mensaje DEL HUÉSPED. Base de la ventana de 24 h de Meta: una respuesta del hotel no
+     *  la reabre, así que `lastMessageAt` (que se mueve con cualquier mensaje) no sirve para esto. */
+    lastInboundAt: { type: 'string' },
+    /** Entrantes que el hotel todavía no abrió. */
+    unreadCount: { type: 'number', default: 0 },
     intentSummary: { type: 'string' },
     tags: { type: 'json', default: [] },
   },
@@ -32,6 +37,8 @@ export const AiMessagesModel: ModelDefinition = {
     conversationId: { type: 'string', required: true, indexed: true },
     hotelId: { type: 'string', required: true, indexed: true },
     sender: { type: 'string', required: true },
+    /** `users.id` cuando `sender='agent'`. El nombre se resuelve contra /api/usuarios. */
+    senderUserId: { type: 'string' },
     content: { type: 'text', required: true },
     contentType: { type: 'string', default: 'text' },
     mediaUrl: { type: 'string' },
