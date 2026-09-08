@@ -89,11 +89,6 @@ export function welcomeVerificationEmail(link: string, hotelName: string, trialD
   }
 }
 
-/** @deprecated Reemplazado por `welcomeVerificationEmail`: el alta manda un solo correo. */
-export function verificationEmail(link: string, hotelName: string): { subject: string; html: string } {
-  return welcomeVerificationEmail(link, hotelName)
-}
-
 /** Regenera el token y reenvía el correo. Devuelve {sent:false} si ya está verificado o sin sender. */
 export async function resendVerificationEmail(
   repo: RepositoryAdapter<VerificationUser & { name?: string; hotelId?: string }>,
