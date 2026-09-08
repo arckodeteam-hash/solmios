@@ -132,3 +132,36 @@ Deuda que dejó este change, no prevista en el plan original: `marketing/service
 249 líneas (el analyzer corta en 200). Se extrajeron a `usecases/` el CRUD de plantillas
 (`templates-crud.ts`) y el disparador de auto-mensajes (`trigger-auto-messages.ts`, movido tal cual,
 sin cambiar la lógica). El service quedó en 139 líneas.
+
+---
+
+## Plantillas recomendadas (agregado 2026-09-07)
+
+Escribir una plantilla que Meta apruebe tiene trampas que un recepcionista no tiene por qué conocer.
+Se agregó un catálogo de 6 plantillas ya redactadas (`usecases/plantillas-base.ts`) y el endpoint
+`POST /api/whatsapp-templates/recomendadas`, idempotente por nombre. En el panel es un botón:
+**"Usar plantillas recomendadas"**.
+
+### Lo que enseñó probarlas contra Meta
+
+| Plantilla | Resultado |
+|---|---|
+| Confirmación de reserva | ✅ PENDING |
+| Recordatorio de llegada | ✅ PENDING |
+| Saldo pendiente | ✅ PENDING |
+| Gracias por la estadía | ✅ PENDING |
+| Bienvenida al llegar (con clave de wifi) | ❌ `INCORRECT_CATEGORY` |
+| Código de la puerta | ❌ `INCORRECT_CATEGORY` |
+
+**Una plantilla UTILITY que entrega una credencial se rechaza al instante.** Meta la quiere
+`AUTHENTICATION`, y esa categoría solo admite un formato fijo de código de verificación que no sirve
+para "el código de tu habitación es X".
+
+Y no alcanza con no mandar el dato: **mencionarlo basta**. La versión corregida que decía
+*"respondé y te pasamos el código de acceso"* fue rechazada igual.
+
+La regla es sobre credenciales de ACCESO, no sobre la palabra "código": *"tu código de reserva es
+{locator}"* pasó sin problema. Hay dos tests que fijan exactamente eso, ni más ni menos.
+
+**Corolario operativo**: borrar una plantilla en Meta NO libera el nombre enseguida. Para corregir
+una rechazada conviene mandarla con otro nombre, no borrar y recrear.

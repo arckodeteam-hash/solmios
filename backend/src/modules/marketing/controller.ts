@@ -76,6 +76,15 @@ export class MarketingController {
     await this.service.deleteTemplate(req.params.id, user); return { status: 200, body: { success: true } }
   }
 
+  /**
+   * Crea las plantillas recomendadas para el hotel. Es el atajo para no tener que escribir cada
+   * texto a mano y aprenderse las reglas de forma de Meta.
+   */
+  async seedTemplates(req: HttpRequest) {
+    const h = this.hotelIdFor(req)
+    return { status: 200, body: await this.service.crearPlantillasBase(h) }
+  }
+
   /** Manda la plantilla a Meta para que la revise. Devuelve la plantilla ya en estado PENDING. */
   async submitTemplate(req: HttpRequest) {
     const user = (req as any).user as MarketingUser | undefined

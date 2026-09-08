@@ -9,6 +9,7 @@ import type { RepositoryAdapter, Auth, Logger } from 'arckode-framework'
 import type { WhatsappTemplateDTO, CreateWhatsappTemplateDTO, MarketingUser } from '../types'
 import { activeFlag } from './active-flag'
 import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
+import { PLANTILLAS_BASE } from './plantillas-base'
 
 export interface TemplateCrudDeps {
   templateRepo: RepositoryAdapter<WhatsappTemplateDTO>
@@ -89,4 +90,38 @@ export async function loadOwnedTemplate(
   user?: MarketingUser,
 ): Promise<WhatsappTemplateDTO> {
   return ownedTemplate(deps, id, user)
+}
+
+/**
+ * Crea de una vez las plantillas recomendadas que le falten al hotel.
+ *
+ * Idempotente por NOMBRE: tocar el botón dos veces no duplica nada, y una plantilla que el hotel
+ * ya editó o mandó a Meta no se pisa. Las crea inactivas de texto listo — el hotel revisa, ajusta
+ * si quiere, y recién ahí las manda a aprobar.
+ */
+export async function crearPlantillasBase(
+  deps: TemplateCrudDeps,
+  hotelId: string,
+): Promise<{ creadas: string[]; yaExistian: string[] }> {
+  const existentes = await deps.templateRepo.findMany({ hotelId })
+  const nombres = new Set(existentes.map((t) => String(t.name).trim().toLowerCase()))
+
+  const creadas: string[] = []
+  const yaExistian: string[] = []
+
+  for (const base of PLANTILLAS_BASE) {
+    if (nombres.has(base.name.toLowerCase())) { yaExistian.push(base.name); continue }
+    await deps.templateRepo.create({
+      hotelId,
+      name: base.name,
+      body: base.body,
+      category: base.category,
+      metaCategory: base.metaCategory,
+      language: 'es',
+      isActive: 1,
+      approvalStatus: 'none',
+    } as any)
+    creadas.push(base.name)
+  }
+  return { creadas, yaExistian }
 }

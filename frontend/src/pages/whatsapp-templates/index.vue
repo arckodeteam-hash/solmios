@@ -5,7 +5,13 @@
         <h2 class="text-xl font-black text-navy">Plantillas WhatsApp</h2>
         <p class="text-sm text-text-muted mt-0.5">Textos predefinidos reutilizables al comunicarte con huéspedes</p>
       </div>
-      <button @click="openNew" class="bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">+ Nueva Plantilla</button>
+      <div class="flex flex-wrap items-center gap-2">
+        <button @click="crearRecomendadas" :disabled="sembrando"
+          class="rounded-full border border-border px-4 py-2.5 text-sm font-bold text-navy transition-colors hover:border-navy disabled:opacity-50 disabled:cursor-wait">
+          {{ sembrando ? 'Creando…' : 'Usar plantillas recomendadas' }}
+        </button>
+        <button @click="openNew" class="bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">+ Nueva Plantilla</button>
+      </div>
     </div>
 
     <!-- Estadísticas rápidas -->
@@ -39,12 +45,18 @@
         v-else-if="!templates.length"
         :icon="ICON_MESSAGE"
         title="Todavía no hay plantillas"
-        message="Creá tu primera plantilla para responder más rápido a tus huéspedes por WhatsApp."
+        message="Podés partir de las plantillas recomendadas, ya redactadas y listas para mandar a aprobar, o escribir la tuya."
       >
         <template #action>
-          <button @click="openNew" class="px-5 py-2.5 bg-navy text-white rounded-full text-sm font-bold hover:bg-navy-light transition-colors cursor-pointer">
-            Crear plantilla
-          </button>
+          <div class="flex flex-wrap items-center justify-center gap-2">
+            <button @click="crearRecomendadas" :disabled="sembrando"
+              class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-navy-light disabled:opacity-50">
+              {{ sembrando ? 'Creando…' : 'Usar las recomendadas' }}
+            </button>
+            <button @click="openNew" class="rounded-full border border-border px-5 py-2.5 text-sm font-bold text-navy transition-colors hover:border-navy cursor-pointer">
+              Escribir una
+            </button>
+          </div>
         </template>
       </EmptyState>
 
@@ -437,6 +449,30 @@ function deleteTemplate() {
       await load()
     },
   })
+}
+
+const sembrando = ref(false)
+
+/**
+ * Crea las plantillas recomendadas que falten.
+ *
+ * Escribir una plantilla que Meta apruebe tiene trampas (no puede empezar ni terminar con una
+ * variable, la categoría cambia el precio): esto evita que el hotel tenga que aprenderse esas reglas.
+ */
+async function crearRecomendadas() {
+  if (sembrando.value) return
+  sembrando.value = true
+  try {
+    const r = await WhatsappService.seedRecomendadas()
+    const n = r.creadas?.length ?? 0
+    if (n === 0) toast.success('Ya tenés todas las recomendadas', 'No se creó ninguna nueva')
+    else toast.success(`${n} plantilla(s) creada(s)`, 'Revisá el texto y mandalas a Meta cuando estés listo')
+    await load()
+  } catch (e: any) {
+    toast.error('No se pudieron crear', e?.message || 'Intentá de nuevo')
+  } finally {
+    sembrando.value = false
+  }
 }
 
 /**

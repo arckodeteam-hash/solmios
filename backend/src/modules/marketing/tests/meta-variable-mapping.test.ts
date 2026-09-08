@@ -1,6 +1,7 @@
 // marketing/tests/meta-variable-mapping.test.ts — Traducción del cuerpo local al formato de Meta.
 import { describe, it, expect } from 'bun:test'
 import { toMetaBody, metaTemplateName, metaBodyProblem, buildTemplateComponents } from '../usecases/meta-variable-mapping'
+import { PLANTILLAS_BASE } from '../usecases/plantillas-base'
 
 describe('toMetaBody', () => {
   it('renumera las variables por orden de aparición', () => {
@@ -107,5 +108,72 @@ describe('buildTemplateComponents', () => {
   it('omite los ejemplos cuando no hay variables', () => {
     const c = buildTemplateComponents(toMetaBody('Gracias por tu reserva.'))
     expect(c[0].example).toBeUndefined()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plantillas recomendadas
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('PLANTILLAS_BASE', () => {
+  // El sentido de estas plantillas es que el hotel no tenga que aprenderse las reglas de Meta.
+  // Si una del catálogo saliera rechazada, el atajo sería peor que escribirlas a mano.
+  it('todas pasan las reglas de forma de Meta', () => {
+    for (const p of PLANTILLAS_BASE) {
+      const problema = metaBodyProblem(toMetaBody(p.body).metaBody)
+      expect(problema, `"${p.name}": ${problema}`).toBeNull()
+    }
+  })
+
+  it('todas usan variables que el PMS sabe resolver', () => {
+    const conocidas = new Set([
+      'guest_name', 'hotel_name', 'checkin_date', 'checkout_date', 'room_number',
+      'nights', 'total_amount', 'pending_amount', 'locator', 'wifi_network',
+      'wifi_password', 'lock_codes',
+    ])
+    for (const p of PLANTILLAS_BASE) {
+      for (const v of toMetaBody(p.body).variableOrder) {
+        expect(conocidas.has(v), `"${p.name}" usa {${v}}, que nadie resuelve`).toBe(true)
+      }
+    }
+  })
+
+  it('los nombres se convierten en identificadores válidos y distintos', () => {
+    const slugs = PLANTILLAS_BASE.map(p => metaTemplateName(p.name))
+    expect(new Set(slugs).size).toBe(PLANTILLAS_BASE.length)
+    for (const s of slugs) expect(s).toMatch(/^[a-z0-9_]+$/)
+  })
+
+  // MARKETING cuesta más y se rechaza mucho más seguido: solo donde de verdad corresponde.
+  it('ninguna se declara MARKETING sin necesidad', () => {
+    for (const p of PLANTILLAS_BASE) {
+      expect(['UTILITY', 'MARKETING']).toContain(p.metaCategory)
+    }
+  })
+
+  // Regresión (2026-09-07, probado contra Meta): una plantilla UTILITY que entrega una credencial
+  // se rechaza al instante con INCORRECT_CATEGORY — Meta la quiere AUTHENTICATION, y esa categoría
+  // solo admite el formato fijo de código de verificación. El código se manda por texto libre
+  // dentro de la ventana de 24 h, no por plantilla.
+  it('ninguna entrega credenciales: Meta las rechaza por categoría', () => {
+    const credenciales = ['wifi_password', 'lock_codes']
+    for (const p of PLANTILLAS_BASE) {
+      for (const v of toMetaBody(p.body).variableOrder) {
+        expect(credenciales.includes(v), `"${p.name}" entrega {${v}}: Meta la va a rechazar`).toBe(false)
+      }
+    }
+  })
+
+  // Y no alcanza con no mandar el dato: MENCIONARLO basta. "te pasamos el código de acceso" fue
+  // rechazada con INCORRECT_CATEGORY igual que la que lo entregaba (probado 2026-09-07).
+  //
+  // La regla es sobre credenciales de ACCESO, no sobre la palabra "código": "tu código de reserva
+  // es {locator}" pasó sin problema — es un localizador, no una llave. Este test cubre lo que la
+  // evidencia sostiene, ni más ni menos.
+  it('ninguna menciona claves ni códigos de acceso', () => {
+    const credencial = /\b(clave|contrase[nñ]a|pin)\b|c[oó]digo\s+(de\s+)?(acceso|la\s+puerta|entrada|wifi)/i
+    for (const p of PLANTILLAS_BASE) {
+      expect(credencial.test(p.body), `"${p.name}" menciona una credencial de acceso`).toBe(false)
+    }
   })
 })

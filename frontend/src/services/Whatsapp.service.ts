@@ -44,6 +44,13 @@ export const WhatsappService = {
     http.put<WhatsappTemplate>(`/whatsapp-templates/${id}`, data),
   remove: (id: string) => http.delete<{ success: boolean }>(`/whatsapp-templates/${id}`),
 
+  /**
+   * Crea de una vez las plantillas recomendadas que le falten al hotel, ya redactadas y validadas
+   * contra las reglas de forma de Meta. Idempotente: tocarlo dos veces no duplica nada.
+   */
+  seedRecomendadas: () =>
+    http.post<{ creadas: string[]; yaExistian: string[] }>('/whatsapp-templates/recomendadas', {}),
+
   /** Manda la plantilla a Meta para que la revise. Devuelve la plantilla ya en 'pending'. */
   submitToMeta: (id: string) =>
     http.post<WhatsappTemplate>(`/whatsapp-templates/${id}/submit`, {}),

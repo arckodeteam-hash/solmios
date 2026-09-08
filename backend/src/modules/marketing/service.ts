@@ -5,7 +5,7 @@ import { activeFlag } from './usecases/active-flag'
 import { NotFoundError, ConflictError } from 'arckode-framework'
 import { submitTemplateToMeta, syncTemplateStatus } from './usecases/meta-templates'
 import type { MetaTemplateDeps } from './usecases/meta-templates'
-import { createTemplate, updateTemplate, deleteTemplate, loadOwnedTemplate } from './usecases/templates-crud'
+import { createTemplate, updateTemplate, deleteTemplate, loadOwnedTemplate, crearPlantillasBase } from './usecases/templates-crud'
 import type { TemplateCrudDeps } from './usecases/templates-crud'
 import type {
   AutoMessageDTO, CreateAutoMessageDTO,
@@ -112,6 +112,8 @@ export class MarketingService {
     return updateTemplate(this.crudDeps(), id, data, user)
   }
   async deleteTemplate(id: string, user?: MarketingUser): Promise<void> { return deleteTemplate(this.crudDeps(), id, user) }
+  /** Crea de una vez las plantillas recomendadas que le falten al hotel. Idempotente por nombre. */
+  async crearPlantillasBase(hotelId: string) { return crearPlantillasBase(this.crudDeps(), hotelId) }
 
   // ─── Plantillas ↔ Meta ─────────────────────────────────
   /** Puente con la cuenta de WhatsApp del hotel. Lo inyecta el connector `marketing-whatsapp-meta`. */

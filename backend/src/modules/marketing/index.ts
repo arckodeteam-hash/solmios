@@ -19,7 +19,7 @@ export function MarketingModule(opts?: { triggerDeps?: TriggerDeps }) {
 
     contract: {
       name: 'marketing', version: '1.0.0', description: 'Auto-messages + WhatsApp templates (sync con Meta) + delivery logs',
-      actions: ['listAutoMessages','createAutoMessage','updateAutoMessage','deleteAutoMessage','listMessageLogs','listTemplates','createTemplate','updateTemplate','deleteTemplate','triggerAutoMessages','submitTemplateToMeta','syncTemplateStatus'],
+      actions: ['listAutoMessages','createAutoMessage','updateAutoMessage','deleteAutoMessage','listMessageLogs','listTemplates','createTemplate','updateTemplate','deleteTemplate','triggerAutoMessages','submitTemplateToMeta','syncTemplateStatus','crearPlantillasBase'],
       events: ['onAutoMessageSent'],
       tables: ['auto_messages','message_logs','whatsapp_templates'],
       dependencies: [],
@@ -52,12 +52,14 @@ export function MarketingModule(opts?: { triggerDeps?: TriggerDeps }) {
       router.delete('/api/whatsapp-templates/:id', guard('settings', 'delete'), (req) => controller.deleteTemplate(req))
       // Meta: enviar a aprobación y traer el estado. Ambas ESCRIBEN (la segunda actualiza la
       // copia local con lo que contesta Meta), por eso las dos piden permiso de edición.
+      // Va ANTES de las rutas con :id para que 'recomendadas' no se lea como un id.
+      router.post('/api/whatsapp-templates/recomendadas', guard('settings', 'create'), (req) => controller.seedTemplates(req))
       router.post('/api/whatsapp-templates/:id/submit', guard('settings', 'edit'), (req) => controller.submitTemplate(req))
       router.post('/api/whatsapp-templates/:id/sync-status', guard('settings', 'edit'), (req) => controller.syncTemplateStatus(req))
 
       router.get('/api/message-logs', guard('settings', 'view'), (req) => controller.listMessageLogs(req))
 
-      log.info('Módulo marketing listo — 3 tablas, 11 endpoints + trigger')
+      log.info('Módulo marketing listo — 3 tablas, 12 endpoints + trigger')
       return service
     },
   })
