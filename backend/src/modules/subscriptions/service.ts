@@ -21,8 +21,9 @@ export class SubscriptionsService {
   private readonly signupUc: SignupUseCase
   private readonly onboardingUc: OnboardingUseCase
   private readonly accessUc: SubscriptionAccess
-  /** `platform-emails.sendEvent()` — welcome (signup) + payment_succeeded/failed/subscription_canceled
-   *  (webhook de Stripe). Opcional: sin cablear, el correo simplemente no sale (best-effort). */
+  /** `platform-emails.sendEvent()` — trial_ending + payment_succeeded/failed/subscription_canceled
+   *  (webhook de Stripe). El alta NO pasa por acá desde #69: manda su propio correo único.
+   *  Opcional: sin cablear, el correo simplemente no sale (best-effort). */
   private sendPlatformEmail?: (event: string, to: string, hotelId: string, vars: Record<string, string>) => Promise<{ sent: boolean }>
   private sockets: SubscriptionSockets = {}
   private readPlatformSettings?: () => Promise<{ requireCardOnTrial: boolean } & FounderCountdownConfig>
@@ -77,11 +78,11 @@ export class SubscriptionsService {
     this.signupUc.setEmailDeps(sender, appUrl || '')
   }
 
-  /** Cablea `platform-emails.sendEvent()` — welcome (signup) + payment_succeeded/failed/
-   *  subscription_canceled (webhook de Stripe). Lo llama el bootstrap de email. */
+  /** Cablea `platform-emails.sendEvent()` — trial_ending + payment_succeeded/failed/
+   *  subscription_canceled (webhook de Stripe). Lo llama el bootstrap de email. El alta NO pasa
+   *  por acá desde #69: manda un solo correo propio (bienvenida + verificación). */
   setPlatformEmailSender(fn: NonNullable<typeof this.sendPlatformEmail>): void {
     this.sendPlatformEmail = fn
-    this.signupUc.setPlatformEmailSender(fn)
   }
 
   /** ACUMULA handlers — nunca pisa el anterior. Ver `shared/utils/compose-sockets.ts`. */
