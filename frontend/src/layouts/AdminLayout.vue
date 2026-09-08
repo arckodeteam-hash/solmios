@@ -161,7 +161,7 @@
 
       <!-- Anuncios internos del sistema (FC-B1) -->
       <AnnouncementBanner />
-      <TrialBanner />
+      <SubscriptionBanner />
 
       <!-- Page Content -->
       <main class="flex-1 p-6" data-feedback-content>
@@ -188,7 +188,7 @@ import { MESSAGING_PATH, MESSAGING_TABS } from '@/config/messaging-tabs'
 import logoWhite from '@/assets/logo/logo-horizontal-white.png'
 import { PAGINA_PUBLICA_PATH } from '@/config/pagina-publica-tabs'
 import AppHeader from '@/components/features/core-pms/AppHeader.vue'
-import TrialBanner from '@/components/features/TrialBanner.vue'
+import SubscriptionBanner from '@/components/features/SubscriptionBanner.vue'
 import AnnouncementBanner from '@/components/features/core-pms/AnnouncementBanner.vue'
 import OfflineBanner from '@/components/features/core-pms/OfflineBanner.vue'
 import HotelSwitcher from '@/components/features/core-pms/HotelSwitcher.vue'
@@ -268,6 +268,7 @@ const ICONS = {
   wallet: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M16 12h.01M3 10h18"/></svg>',
   utensils: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3v7a2 2 0 0 0 2 2v9M9 3v7M7 3v7M18 3c-1.5 0-3 1.5-3 5s1.5 4 3 4v9"/></svg>',
   link: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5 21 3M16.5 3H21v4.5M10.5 13.5 3 21M7.5 21H3v-4.5"/></svg>',
+  card: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Z"/></svg>',
   sparkles: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.035-.259a3.375 3.375 0 0 0 2.456-2.455L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>',
   heart: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z"/></svg>',
   usergroup: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72M18 18.72a9.094 9.094 0 0 1-3.741-.479 3 3 0 0 1 4.682-2.72M18 18.72v-.235a3 3 0 0 0-3-3M6 18.72a9.094 9.094 0 0 1-3.741-.479 3 3 0 0 1 4.682-2.72M6 18.72v-.235a3 3 0 0 1 3-3m3.75-6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z"/></svg>',
@@ -442,6 +443,12 @@ const nonavItems = [
     // CORE como Dashboard/Soporte (growth): NO tiene clave en el catálogo de módulos —
     // se muestra para cualquier plan, no se gatea.
     label: 'Mis Referidos', icon: ICONS.link, path: '/panel/referidos', roles: ['hotel_admin'],
+  },
+  {
+    // La suscripción del hotel. Va al final, con Soporte y Referidos: son los ítems de CUENTA,
+    // no de operación. Solo `hotel_admin` — es la plata del dueño. CORE: no se gatea por plan
+    // (un plan no puede esconder la pantalla donde se cambia de plan).
+    label: 'Mi plan', icon: ICONS.card, path: '/panel/suscripcion', roles: ['hotel_admin'],
   },
 ]
 

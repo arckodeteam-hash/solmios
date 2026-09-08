@@ -98,6 +98,28 @@ describe('SubscriptionsService.statusOf', () => {
     expect(st.allowed).toBe(true)
     expect(st.status).toBe('none')
   })
+
+  // El nombre del plan viaja en ESTE estado y no se cruza contra el catálogo público: la barra
+  // superior y el menú lo muestran sin traerse la lista entera de planes.
+  it('nombra el plan contratado con su precio', async () => {
+    const st = await setup([{ id: 's1', hotelId: 'h1', status: 'active', planId: 'p2' }]).statusOf('h1')
+    expect(st.planName).toBe('Pro')
+    expect(st.planPrice).toBe(99)
+    expect(st.planCurrency).toBe('USD')
+  })
+
+  // `p9` está `isActive: 0`: fuera del catálogo público, pero el hotel que lo paga lo sigue
+  // teniendo. Antes el panel lo mostraba como "—" porque resolvía el nombre contra /public/plans.
+  it('nombra también un plan retirado del catálogo público', async () => {
+    const st = await setup([{ id: 's1', hotelId: 'h1', status: 'active', planId: 'p9' }]).statusOf('h1')
+    expect(st.planName).toBe('Viejo')
+  })
+
+  it('sin plan asignado no inventa nombre', async () => {
+    const st = await setup([{ id: 's1', hotelId: 'h1', status: 'trialing', planId: '' }]).statusOf('h1')
+    expect(st.planName).toBeNull()
+    expect(st.planPrice).toBeNull()
+  })
 })
 
 describe('SubscriptionsService.signup', () => {

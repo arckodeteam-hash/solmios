@@ -160,6 +160,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { SignupService, type PublicPlan, type MySubscription } from '@/services/Signup.service'
+import { useSubscriptionStore } from '@/stores/subscription.store'
 import { SubscriptionsService, type UpgradePreview, type UpgradeResult } from '@/services/Subscriptions.service'
 import { useToast } from '@/composables/useToast'
 import { formatCurrency } from '@/types/currency'
@@ -170,9 +171,16 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 
 const toast = useToast()
+const auth = useAuthStore()
+/**
+ * El estado de la suscripción es COMPARTIDO (barra superior, aviso, menú y esta página).
+ * Esta página lo lee del store en vez de tener su propia copia: si no, mejorar el plan acá
+ * dejaba a la pastilla del header y al aviso mostrando el plan viejo hasta el próximo F5.
+ */
+const subscription = useSubscriptionStore()
 
 const loading = ref(true)
-const sub = ref<MySubscription | null>(null)
+const sub = computed<MySubscription | null>(() => subscription.sub)
 const plans = ref<PublicPlan[]>([])
 /** id del plan cuyo checkout está en curso — null cuando no hay ninguno en vuelo. */
 const checkoutLoading = ref<string | null>(null)
@@ -346,7 +354,7 @@ function closeUpgrade() {
  * Los stores se resuelven acá y no en el setup porque solo hacen falta después de un upgrade.
  */
 async function refreshAfterUpgrade() {
-  sub.value = await SignupService.mySubscription().catch(() => sub.value)
+  await subscription.refresh(hotelIdActual()).catch(() => { /* el store conserva el estado bueno */ })
   // Best-effort: la mejora ya está cobrada y aplicada; un fallo refrescando el menú no es un
   // error que mostrarle a nadie (el próximo ensure() lo resuelve).
   try {
@@ -366,13 +374,18 @@ async function openPortal() {
   }
 }
 
+/** Mismo criterio que el resto del panel: 'platform' no es un hotel. */
+function hotelIdActual(): string | null {
+  const id = auth.user?.hotelId
+  return id && id !== 'platform' ? id : null
+}
+
 onMounted(async () => {
   try {
-    const [s, p] = await Promise.all([
-      SignupService.mySubscription().catch(() => null),
+    const [, p] = await Promise.all([
+      subscription.ensure(hotelIdActual()),
       SignupService.publicPlans().catch(() => []),
     ])
-    sub.value = s
     plans.value = p
   } finally {
     loading.value = false

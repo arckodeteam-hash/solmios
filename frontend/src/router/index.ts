@@ -713,9 +713,13 @@ const router = createRouter({
         {
           // Estado de la prueba/suscripción y planes. A esta página apunta el
           // aviso de "te quedan N días" y el corte por vencimiento.
+          // `requiresHotelAdmin`: acá se ven los precios que paga el hotel y se abre el Billing
+          // Portal de Stripe. Sin la meta entraba cualquier rol del panel por URL directa —
+          // recepción podía ver la facturación del dueño y llegar al portal de cobros.
           path: 'suscripcion',
           name: 'suscripcion',
           component: () => import('@/pages/suscripcion/index.vue'),
+          meta: { requiresHotelAdmin: true },
         },
         {
           path: 'referidos',

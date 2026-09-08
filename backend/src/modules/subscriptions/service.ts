@@ -142,7 +142,7 @@ export class SubscriptionsService {
   /** Estado para mostrarle al hotel cuánto le queda o qué tiene que pagar. Ver `usecases/status-of.ts`. */
   async statusOf(hotelId: string): Promise<SubscriptionStatus> {
     const access = await this.accessUc.check(hotelId)
-    return statusOf(this.subscriptionsRepo, this.discountsRepo, access, hotelId)
+    return statusOf({ subscriptionsRepo: this.subscriptionsRepo, discountsRepo: this.discountsRepo, plansRepo: this.plansRepo }, access, hotelId)
   }
 
   /** Cupón real de Stripe sobre la suscripción activa del hotel (F6 de PLAN-SUSCRIPCIONES.md,

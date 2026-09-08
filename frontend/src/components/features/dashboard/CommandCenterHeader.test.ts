@@ -11,10 +11,13 @@ import CommandCenterHeader from './CommandCenterHeader.vue'
 
 vi.mock('@/composables/usePageTitle', () => ({ usePageTitle: () => ({ value: 'Dashboard' }) }))
 
+// Los hijos que traen sus propias dependencias (stores, red). Este header es presentacional:
+// se prueba con props, y lo que consulta por su cuenta se stubea.
 const STUBS = {
   EmergencyButton: true,
   NotificationBell: true,
   UserMenu: true,
+  SubscriptionPill: true,
 }
 
 function render(props: Record<string, unknown> = {}) {

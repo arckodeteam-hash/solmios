@@ -17,6 +17,7 @@
 //      no cobra, un Checkout nuevo no duplica nada.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 
 const mySubscription = vi.fn()
 const publicPlans = vi.fn()
@@ -46,13 +47,25 @@ const PLANS = [
   { id: 'plan-pro', name: 'Professional', slug: 'professional', price: 349, currency: 'USD', description: '', features: [] },
 ]
 
-const MOUNT_OPTS = {
-  global: {
-    stubs: {
-      SectionCard: { template: '<section><slot /></section>' },
-      EmptyState: true,
+/**
+ * Pinia REAL y fresca por montaje. La página lee el estado de la suscripción del store
+ * compartido (la barra superior y el aviso muestran lo mismo), y el store pide el dato por
+ * `SignupService.mySubscription`, que ya está mockeado acá arriba: así el test recorre el
+ * camino completo (store → service) en vez de saltearlo.
+ *
+ * Fresca por montaje y no una sola global: el store cachea por hotel, y compartirla dejaría
+ * al segundo test leyendo la suscripción del primero.
+ */
+function mountOpts() {
+  return {
+    global: {
+      plugins: [createPinia()],
+      stubs: {
+        SectionCard: { template: '<section><slot /></section>' },
+        EmptyState: true,
+      },
     },
-  },
+  }
 }
 
 function subscription(over: Record<string, unknown> = {}) {
@@ -73,7 +86,7 @@ function subscription(over: Record<string, unknown> = {}) {
 async function mountWith(sub: Record<string, unknown>) {
   mySubscription.mockResolvedValue(sub)
   publicPlans.mockResolvedValue(PLANS)
-  const w = mount(Suscripcion, MOUNT_OPTS)
+  const w = mount(Suscripcion, mountOpts())
   await flushPromises()
   const cards = w.findAll('div.grid > div')
   expect(cards.length).toBe(PLANS.length)
@@ -181,7 +194,7 @@ describe('/panel/suscripcion — CTA del plan actual', () => {
   it('sin suscripción todos los planes se ofrecen igual', async () => {
     mySubscription.mockResolvedValue(subscription({ status: 'none', planId: '', allowed: false, hasStripeCustomer: false }))
     publicPlans.mockResolvedValue(PLANS)
-    const w = mount(Suscripcion, MOUNT_OPTS)
+    const w = mount(Suscripcion, mountOpts())
     await flushPromises()
     const texts = w.findAll('div.grid > div').map(c => c.find('button').text())
     expect(texts).toEqual(['Suscribirse a Essential', 'Suscribirse a Professional'])

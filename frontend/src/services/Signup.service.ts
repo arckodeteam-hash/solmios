@@ -80,6 +80,15 @@ export interface MySubscription {
   specialCategory?: 'founder_one' | 'founder_two' | 'pioneer' | null
   /** % de descuento activo (manual o de categoría), si tiene. */
   activeDiscountPct?: number | null
+  /**
+   * Identidad del plan contratado, ya resuelta por el backend (`status-of.ts`). No se cruza más
+   * contra `/public/plans` para nombrarlo: un plan retirado del catálogo público existe igual
+   * para el hotel que lo paga, y nombrarlo no puede costar traerse el catálogo entero.
+   * `null` cuando el hotel no tiene plan (prueba sin elegir) o el plan ya no está en la tabla.
+   */
+  planName?: string | null
+  planPrice?: number | null
+  planCurrency?: string | null
 }
 
 /**
