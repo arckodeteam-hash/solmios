@@ -102,7 +102,12 @@ export async function changeHotelPlan(
   // reescribe y devolver `changed:false` afirmaría que no se tocó nada.
   const subStale = !!active && previousPlanId !== planId
   const mirrorStale = !!planSlug && String(hotel.plan ?? '') !== planSlug
-  const changed = subStale || mirrorStale
+  // `changed` NO se decide acá: se decide con lo que EFECTIVAMENTE se escribió. El espejo es
+  // best-effort y puede fallar, así que anticipar `changed` a partir de la intención devolvería
+  // `true` sobre una llamada en la que no persistió nada — el mismo defecto de "afirmar lo que
+  // todavía no pasó" que ya se corrigió en los logs, corrido al valor de retorno.
+  let subEscrita = false
+  let espejoEscrito = false
 
   // REGLA DE ESTA FUNCIÓN: cada log va DESPUÉS de la escritura que describe, nunca antes. Un log
   // emitido por adelantado afirma algo que todavía puede fallar — y el espejo es best-effort, así
@@ -110,6 +115,7 @@ export async function changeHotelPlan(
   // en la misma llamada es el mismo defecto que se corrigió con `changed`, en otra rama.
   if (active && subStale) {
     await subscriptionsRepo.update(active.id, { planId })
+    subEscrita = true
     logger.info('Plan del hotel cambiado', { hotelId, previousPlanId, planId, planSlug, subscriptionId: active.id })
     if (!planSlug) {
       logger.warn('Plan sin slug: se movió la suscripción pero hotels.plan queda desincronizado', { hotelId, planId })
@@ -122,6 +128,7 @@ export async function changeHotelPlan(
   if (mirrorStale) {
     try {
       await hotelsRepo.update(hotelId, { plan: planSlug })
+      espejoEscrito = true
       if (!active) {
         // Hotel SIN suscripción activa (fila cancelada/vencida, o alta previa a este módulo). No se
         // inventa una suscripción: crear una fila `active` sin nada en Stripe le daría acceso pago
@@ -140,7 +147,11 @@ export async function changeHotelPlan(
     }
   }
 
-  return { changed, hotelId, planId, planSlug, previousPlanId, subscriptionId: active?.id ? String(active.id) : null }
+  return {
+    changed: subEscrita || espejoEscrito,
+    hotelId, planId, planSlug, previousPlanId,
+    subscriptionId: active?.id ? String(active.id) : null,
+  }
 }
 
 /** Por `plans.id` primero (clave real) y, si no existe, por `plans.slug` en minúsculas. */

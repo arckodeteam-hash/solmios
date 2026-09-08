@@ -225,9 +225,25 @@ describe('changeHotelPlan — mueve el planId de la suscripción activa', () => 
 
     const res = await changeHotelPlan({ ...deps, logger }, 'h1', 'plan-host')
 
-    // El cambio no se tumba (best-effort), pero nadie afirma que el espejo quedó reparado.
-    expect(res.changed).toBe(true)
+    // No se tumba (best-effort), pero NADA persistió: ni el log ni `changed` pueden decir
+    // lo contrario. `changed` sale de lo que se escribió, no de lo que se pensaba escribir.
+    expect(res.changed).toBe(false)
     expect(infos.some((l) => /reparado/i.test(l.msg))).toBe(false)
+    expect(warns.some((w) => /no se pudo sincronizar/i.test(w))).toBe(true)
+  })
+
+  // Si la suscripción SÍ se movió, un fallo posterior del espejo no puede borrar ese hecho:
+  // `changed` tiene que seguir siendo true porque una escritura sí persistió.
+  it('si la suscripción se movió y el espejo falla, changed sigue siendo true', async () => {
+    const { logger, warns } = recordingLogger()
+    const subs = [{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'active' }]
+    const { deps } = setup(subs, { id: 'h1', name: 'Hotel Sol', plan: 'host' })
+    deps.hotelsRepo.update = async () => { throw new Error('DB caída') }
+
+    const res = await changeHotelPlan({ ...deps, logger }, 'h1', 'plan-essential')
+
+    expect(res.changed).toBe(true)
+    expect(subs[0].planId).toBe('plan-essential')
     expect(warns.some((w) => /no se pudo sincronizar/i.test(w))).toBe(true)
   })
 
