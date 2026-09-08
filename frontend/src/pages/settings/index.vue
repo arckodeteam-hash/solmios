@@ -140,6 +140,22 @@
           </div>
         </SectionCard>
 
+        <!-- `users.name` del usuario logueado — DISTINTO del "Nombre del propietario" fiscal de
+             arriba (`hotels.ownerName`). Guardado propio (AuthService.updateMe), no entra en
+             saveAll() porque no es un campo de `hotels`. -->
+        <SectionCard title="Tu perfil" subtitle="El nombre con el que iniciaste sesión — no es el titular fiscal de arriba">
+          <template #actions>
+            <button @click="saveOwnerUserName" :disabled="ownerUserNameSaving"
+              class="rounded-full bg-cyan px-4 py-2 text-xs font-bold text-navy transition-all hover:shadow-lg cursor-pointer disabled:opacity-50">
+              {{ ownerUserNameSaving ? 'Guardando…' : 'Guardar' }}
+            </button>
+          </template>
+          <div class="max-w-sm">
+            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tu nombre (dueño o gerente)</label>
+            <input v-model="ownerUserName" type="text" class="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-navy focus:outline-none">
+          </div>
+        </SectionCard>
+
         <SectionCard title="Estadía y moneda" subtitle="Horarios de entrada/salida, zona horaria y moneda base de la operación">
           <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
@@ -728,6 +744,7 @@ import { validateField, validateAll, warnOnUnsavedChanges, HOTEL_RULES } from '@
 import { HotelService } from '@/services/Hotel.service'
 import { RoomService } from '@/services/Room.service'
 import { SettingsService, type HotelFull } from '@/services/Settings.service'
+import { AuthService } from '@/services/Auth.service'
 import { ConfigService, EmergencyContactsService } from '@/services/Platform.service'
 import { GuaranteeService } from '@/services/Guarantee.service'
 import { SignupService, type PublicPlan } from '@/services/Signup.service'
@@ -820,6 +837,34 @@ async function saveCurrency() {
     toast.error((e as Error).message || 'No se pudo guardar')
   } finally {
     currencySaving.value = false
+  }
+}
+
+// Nombre del usuario logueado (dueño/gerente) — `users.name`, DISTINTO del "Nombre del
+// propietario" fiscal de arriba (`hotels.ownerName`). Antes solo se podía editar desde el paso
+// Bienvenida del wizard de alta (`configuracion-inicial/steps/StepBienvenida.vue`): un hotel que
+// lo completó mal ahí no tenía forma de corregirlo después. Mismo mecanismo que ese paso
+// (`AuthService.updateMe`), con su propio guardado — no es un campo de `hotels`, así que no
+// puede ir en `saveAll()`.
+const ownerUserName = ref('')
+const ownerUserNameSaving = ref(false)
+async function saveOwnerUserName() {
+  const trimmed = ownerUserName.value.trim()
+  if (!trimmed) { toast.error('Tu nombre no puede quedar vacío'); return }
+  if (trimmed === auth.user?.name) { markClean(); toast.success('Nombre guardado'); return }
+  ownerUserNameSaving.value = true
+  try {
+    const updated = await AuthService.updateMe({ name: trimmed })
+    if (auth.user) {
+      auth.user.name = updated.name
+      localStorage.setItem('user', JSON.stringify(auth.user))
+    }
+    markClean()   // se guardó por afuera del botón global: la foto se renueva igual
+    toast.success('Nombre actualizado')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo actualizar el nombre')
+  } finally {
+    ownerUserNameSaving.value = false
   }
 }
 
@@ -1173,7 +1218,7 @@ function snapshot(): string {
   // afuera sin guardar no mostraba ningún aviso — ni el banner "Cambios sin guardar" ni la
   // confirmación al salir. Cada bloque que tiene su PROPIO botón "Guardar" entra acá.
   return JSON.stringify({
-    form: form.value,
+    form: form.value, ownerUserName: ownerUserName.value,
     selectedAmenities: selectedAmenities.value, emergencyContacts: emergencyContacts.value,
     currencyConfig, guaranteePinDraft: guaranteePinDraft.value, automation, fiscalConfig,
     childPolicy, roomTypeCapacityRows: roomTypeCapacityRows.value,
@@ -1362,6 +1407,7 @@ onMounted(async () => {
         : {},
       id: h.id || (h as any)._id,
     }
+    ownerUserName.value = auth.user?.name || ''
     // INT-3: los watchers de #34 son flush 'pre' (diferidos al scheduler), NO corren
     // sincrónico con la asignación de arriba. Si el flag se setea acá mismo, cuando los
     // callbacks corren (microtask posterior) ya ven true y el guard es INERTE: el dato
