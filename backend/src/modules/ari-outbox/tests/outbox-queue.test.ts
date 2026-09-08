@@ -7,12 +7,24 @@
 // backoff de 15 minutos se prueba en milisegundos y sin flakes.
 
 import { describe, it, expect } from 'bun:test'
-import { AriOutbox, BACKOFF_MS, type AriOutboxPort } from '../usecases/outbox-queue'
+import { AriOutbox, BACKOFF_MS, STALE_MS, type AriOutboxPort } from '../usecases/outbox-queue'
 import type { AriOutboxRow } from '../types'
 
 const HOTEL = 'h1'
 
-/** Puerto en memoria: el mínimo que usa la cola (create/update/findMany por igualdad exacta). */
+/**
+ * Igualdad del CAS: matchea si TODOS los pares de `where` coinciden, tratando `undefined` y `null`
+ * como el mismo "sin valor" (una fila vieja trae `claimedBy` ausente donde la tabla guarda NULL).
+ */
+function matchea(row: AriOutboxRow, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([k, v]) => {
+    const actual = (row as unknown as Record<string, unknown>)[k]
+    if (v === null || v === undefined) return actual === null || actual === undefined
+    return actual === v
+  })
+}
+
+/** Puerto en memoria: el mínimo que usa la cola (create/update/updateWhere/findMany). */
 function makePort(clock: { ms: number }) {
   const rows: AriOutboxRow[] = []
   const port: AriOutboxPort = {
@@ -25,6 +37,13 @@ function makePort(clock: { ms: number }) {
       const row = rows.find((r) => r.id === id)
       if (row) Object.assign(row, patch, { updatedAt: new Date(clock.ms).toISOString() })
       return row ?? null
+    },
+    // El CAS: actualiza SOLO lo que matchea y devuelve el conteo, igual que orm.updateMany
+    // (que además pisa `updatedAt` aunque el patch venga vacío — de eso vive el latido).
+    async updateWhere(where, patch) {
+      const match = rows.filter((r) => matchea(r, where))
+      for (const row of match) Object.assign(row, patch, { updatedAt: new Date(clock.ms).toISOString() })
+      return match.length
     },
     async findMany(query) {
       return rows.filter((r) => Object.entries(query).every(([k, v]) => (r as unknown as Record<string, unknown>)[k] === v))
@@ -241,5 +260,108 @@ describe('CA-6 — reintentos con backoff y fallo permanente', () => {
     expect(rates.lastError).toContain("kind 'rates'")
     expect(rows.find((r) => r.kind === 'inventory')!.status).toBe('sent')
     expect(pushed).toEqual([undefined])
+  })
+})
+
+describe('#58 — la fila es de UN proceso a la vez: reclamo con compare-and-swap', () => {
+  const T0 = Date.parse('2026-09-07T10:00:00.000Z')
+
+  /** Puerto compartido con UNA fila pending ya vencida: el punto de partida de la carrera. */
+  async function puertoConFilaVencida() {
+    const clock = { ms: T0 }
+    const { port, rows } = makePort(clock)
+    await port.create({
+      id: 'r1',
+      hotelId: HOTEL,
+      kind: 'inventory',
+      channels: [],
+      status: 'pending',
+      scheduledAt: new Date(T0 - 1000).toISOString(),
+      attempts: 0,
+      maxAttempts: 3,
+      lastError: null,
+    })
+    return { clock, port, rows }
+  }
+
+  it('dos drains concurrentes sobre la MISMA fila publican una sola vez', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    let pushCalls = 0
+    const proceso = (owner: string) => {
+      const o = new AriOutbox({ repo: port, now: () => clock.ms, owner, heartbeatMs: 0 })
+      o.registerPublisher('inventory', {
+        // El push CEDE el control: sin un await real el drain sería atómico y la carrera no existiría.
+        push: async () => { pushCalls++; await new Promise((r) => setTimeout(r, 5)) },
+      })
+      return o
+    }
+    const a = proceso('proceso-a')
+    const b = proceso('proceso-b')
+
+    await Promise.all([a.drain(), b.drain()])
+
+    expect(pushCalls).toBe(1)
+    expect(rows[0]!.status).toBe('sent')
+    expect(rows[0]!.claimedBy).toBeNull() // cerrada = libre
+  })
+
+  /**
+   * Un push que tarda más que STALE_MS con un segundo proceso mirando. Los dos relojes son el
+   * MISMO `clock.ms` a propósito: el `updatedAt` que escribe el puerto tiene que salir de donde
+   * lee reclaimStale, o el test no prueba nada.
+   */
+  async function escenarioPushLargo(heartbeatMs: number) {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    const trabajador = new AriOutbox({ repo: port, now: () => clock.ms, owner: 'el-que-publica', heartbeatMs })
+    trabajador.registerPublisher('inventory', { push: async () => { await new Promise((r) => setTimeout(r, 40)) } })
+    const vigilante = new AriOutbox({ repo: port, now: () => clock.ms, owner: 'el-que-vigila', heartbeatMs: 0 })
+
+    const enVuelo = trabajador.drain()
+    await new Promise((r) => setTimeout(r, 10)) // ya reclamó la fila y está en el push
+    clock.ms += STALE_MS + 60_000 // el push "tardó" de sobra más que la ventana de colgado
+    await new Promise((r) => setTimeout(r, 15)) // margen para varios latidos con el reloj corrido
+    const reclamadas = await vigilante.reclaimStale()
+    await enVuelo
+    return { reclamadas, rows }
+  }
+
+  it('el latido evita que un push más largo que STALE_MS sea declarado colgado', async () => {
+    const { reclamadas, rows } = await escenarioPushLargo(5)
+
+    expect(reclamadas).toBe(0)
+    expect(rows[0]!.status).toBe('sent')
+  })
+
+  it('sin latido el MISMO push largo se lo lleva el otro proceso, y el zombi no cierra la fila', async () => {
+    const { reclamadas, rows } = await escenarioPushLargo(0)
+
+    expect(reclamadas).toBe(1)
+    // El que estaba publicando ya no es dueño: su cierre no aplica y la fila queda lista para que
+    // la republique quien la reclamó (en vez de quedar 'sent' sin que nadie la haya terminado).
+    expect(rows[0]!.status).toBe('pending')
+  })
+
+  it('una fila que perdió el reclamo entre la lectura y el push no se publica', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    let pushCalls = 0
+    // Espía: otro proceso se lleva la fila JUSTO después de que este la leyó, así la lista de
+    // vencidas que el drain tiene en la mano ya está vieja cuando llega a publicar.
+    const espia: AriOutboxPort = {
+      ...port,
+      async findMany(query) {
+        const res = await port.findMany(query)
+        if (query.status === 'pending' && res[0]) {
+          await port.updateWhere({ id: res[0].id, status: 'pending' }, { status: 'processing', claimedBy: 'otro-proceso' })
+        }
+        return res
+      },
+    }
+    const outbox = new AriOutbox({ repo: espia, now: () => clock.ms, owner: 'el-perdedor', heartbeatMs: 0 })
+    outbox.registerPublisher('inventory', { push: async () => { pushCalls++ } })
+
+    await outbox.drain()
+
+    expect(pushCalls).toBe(0)
+    expect(rows[0]).toMatchObject({ status: 'processing', claimedBy: 'otro-proceso' })
   })
 })

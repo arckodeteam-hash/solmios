@@ -26,6 +26,12 @@ export interface AriOutboxRow {
   attempts: number
   maxAttempts: number
   lastError?: string | null
+  /**
+   * Qué proceso tiene la fila AHORA mismo (`null`/ausente = libre). Lo escribe el reclamo de la
+   * cola y lo limpia el cierre: sin él, dos procesos que leen la misma fila `pending` la toman los
+   * dos y publican el mismo push dos veces.
+   */
+  claimedBy?: string | null
   createdAt?: string
   updatedAt?: string
 }

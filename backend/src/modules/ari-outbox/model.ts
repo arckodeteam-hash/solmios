@@ -49,6 +49,11 @@ export const AriOutboxModel: ModelDefinition = {
     // Texto del último error, para que el listado admin diga POR QUÉ una fila quedó en failed sin
     // tener que ir a los logs del proceso que la intentó.
     lastError: { type: 'string' },
+    // Dueño actual de la fila (`null` = libre). Es la otra mitad del compare-and-swap del drain:
+    // el reclamo escribe acá su identidad y el cierre solo aplica si la fila SIGUE siendo suya, así
+    // una fila reclamada por stale a mitad de push no la cierra el proceso zombi. Declarado acá
+    // porque el ORM descarta sin warning los campos que no están en `fields` (ver el aviso de arriba).
+    claimedBy: { type: 'string' },
   },
 }
 
