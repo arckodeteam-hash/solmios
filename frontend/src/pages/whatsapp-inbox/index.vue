@@ -32,10 +32,15 @@
               </span>
               <span class="min-w-0 flex-1">
                 <span class="flex items-center gap-2">
-                  <span class="truncate text-sm font-bold text-navy">{{ c.guestName || c.guestPhone || 'Huésped' }}</span>
+                  <span class="truncate text-sm font-bold text-navy">{{ c.guestName || telefonoLegible(c.guestPhone) || 'Huésped' }}</span>
                   <span v-if="c.unreadCount" class="ml-auto shrink-0 rounded-full bg-cyan px-2 py-0.5 text-[10px] font-black tabular-nums text-navy">
                     {{ c.unreadCount }}
                   </span>
+                </span>
+                <!-- El número va SIEMPRE a la vista: el hotel necesita saber a quién le escribe, y
+                     un nombre repetido (dos "María") no alcanza para distinguir dos charlas. -->
+                <span v-if="c.guestPhone && c.guestName" class="block truncate text-[11px] tabular-nums text-text-muted">
+                  {{ telefonoLegible(c.guestPhone) }}
                 </span>
                 <span class="mt-1 flex flex-wrap items-center gap-1.5">
                   <span class="rounded-full px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide"
@@ -52,7 +57,7 @@
       </SectionCard>
 
       <!-- Hilo -->
-      <SectionCard :title="hilo?.guestName || hilo?.guestPhone || 'Conversación'"
+      <SectionCard :title="hilo?.guestName || telefonoLegible(hilo?.guestPhone) || 'Conversación'"
         :subtitle="hilo ? subtituloHilo : 'Elegí una conversación de la izquierda'">
         <template v-if="hilo" #actions>
           <button v-if="hilo.status !== 'human'" @click="tomar" :disabled="ocupado"
@@ -167,8 +172,23 @@ const subtituloHilo = computed(() => {
   const quien = hilo.value.status === 'human'
     ? `Atendida por ${nombres.value[hilo.value.assignedAgentId || ''] || 'alguien del equipo'}`
     : 'La responde el asistente automático'
-  return hilo.value.ventana.abierta ? quien : `${quien} · fuera de la ventana de 24 horas`
+  // El número primero: es lo que identifica la conversación de verdad.
+  const tel = telefonoLegible(hilo.value.guestPhone)
+  const base = tel ? `${tel} · ${quien}` : quien
+  return hilo.value.ventana.abierta ? base : `${base} · fuera de la ventana de 24 horas`
 })
+
+/**
+ * Meta guarda el número sin `+` ni separadores ("18298797748"). Así es ilegible para una persona:
+ * se le devuelve el formato internacional para que el recepcionista lo reconozca de un vistazo.
+ */
+function telefonoLegible(tel?: string | null): string {
+  const d = String(tel || '').replace(/\D/g, '')
+  if (!d) return ''
+  if (d.length === 11 && d.startsWith('1')) return `+1 ${d.slice(1, 4)} ${d.slice(4, 7)} ${d.slice(7)}`
+  if (d.length === 10) return `+1 ${d.slice(0, 3)} ${d.slice(3, 6)} ${d.slice(6)}`
+  return `+${d}`
+}
 
 const tiempoRestante = computed(() => {
   const m = hilo.value?.ventana.minutosRestantes ?? 0

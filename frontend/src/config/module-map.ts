@@ -138,6 +138,8 @@ export const ROUTE_TO_PERMISSION: Record<string, string> = {
   '/panel/channel': 'channel-manager',
   '/panel/reservas': 'reservations',
   '/panel/operaciones/limpieza': 'housekeeping',
+  // El chat con el huésped se gobierna con el permiso `ai`, que ya tienen el dueño y la recepción.
+  '/panel/operaciones/whatsapp': 'ai',
   '/panel/operaciones/mantenimiento': 'maintenance',
   '/panel/operaciones/proveedores': 'maintenance',
   '/panel/operaciones/chats': 'users',

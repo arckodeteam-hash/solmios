@@ -313,13 +313,16 @@ const nonavItems = [
     ]
   },
   {
-    label: 'Operaciones', icon: ICONS.tools, roles: ['hotel_admin'],
+    // Operaciones se abre también para recepción por el chat del huésped: es quien lo atiende.
+    // Los demás items siguen siendo del dueño, y el guard del router los cubre uno por uno.
+    label: 'Operaciones', icon: ICONS.tools, roles: ['hotel_admin', 'receptionist'],
     children: [
       { label: 'Limpieza', path: '/panel/operaciones/limpieza', roles: ['hotel_admin'] },
       { label: 'Mantenimiento', path: '/panel/operaciones/mantenimiento', roles: ['hotel_admin'] },
       { label: 'Proveedores de servicios', path: '/panel/operaciones/proveedores', roles: ['hotel_admin'] },
       { label: 'Chats del equipo', path: '/panel/operaciones/chats', roles: ['hotel_admin'] },
-      { label: 'WhatsApp de huéspedes', path: '/panel/operaciones/whatsapp', roles: ['hotel_admin'] },
+      // Quien atiende al huésped es la recepción, no el dueño. El backend ya le da `ai:view`.
+      { label: 'WhatsApp de huéspedes', path: '/panel/operaciones/whatsapp', roles: ['hotel_admin', 'receptionist'] },
     ]
   },
   {

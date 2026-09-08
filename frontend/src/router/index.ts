@@ -449,10 +449,15 @@ const router = createRouter({
         {
           // Conversaciones con el HUÉSPED por WhatsApp. Distinto de 'operaciones/chats', que es el
           // monitor de los chats internos del equipo.
+          //
+          // NO lleva `requiresHotelAdmin` a propósito: quien atiende al huésped es la RECEPCIÓN, y
+          // esa meta rebota a /panel a todos los roles de sistema no-admin. El backend ya deja
+          // entrar al recepcionista (`ai:view`/`ai:edit` en shared/permissions.ts); si el frontend
+          // lo bloqueara, el chat solo lo podría usar el dueño. El bloqueo genérico de más abajo
+          // igual exige el permiso `ai` vía ROUTE_TO_PERMISSION.
           path: 'operaciones/whatsapp',
           name: 'whatsapp-inbox',
           component: () => import('@/pages/whatsapp-inbox/index.vue'),
-          meta: { requiresHotelAdmin: true },
         },
         {
           path: 'finanzas/night-audit',
