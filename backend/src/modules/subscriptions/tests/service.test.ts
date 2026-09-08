@@ -41,7 +41,7 @@ const PLANS = [
 
 function setup(subs: any[] = [], hotels: any[] = [{ id: 'h1', status: 'active' }]) {
   return new SubscriptionsService(
-    repoOf(subs), repoOf(hotels), repoOf([]), repoOf([]), repoOf([...PLANS]), repoOf([]), undefined, log,
+    repoOf(subs), repoOf(hotels), repoOf([]), repoOf([]), repoOf([...PLANS]), repoOf([]), log,
   )
 }
 
@@ -68,7 +68,7 @@ describe('SubscriptionsService.publicPlans', () => {
         { id: 'p1', name: 'A', slug: 'a', price: 1, currency: 'USD', isActive: 1, sortOrder: 1, limits: '{"rooms":30,"users":2,"secreto":"x"}' },
         { id: 'p2', name: 'B', slug: 'b', price: 2, currency: 'USD', isActive: 1, sortOrder: 2, limits: 'no-es-json' },
       ]),
-      repoOf([]), undefined, log,
+      repoOf([]), log,
     )
     const plans = await svc.publicPlans()
     // `roomsUnlimited` lo resuelve el servidor contra `UNLIMITED_LIMIT_SENTINEL` (CFG-2).
@@ -123,7 +123,7 @@ describe('SubscriptionsService.publicPlans — orden por precio (#30)', () => {
   const active = (over: any) => ({ currency: 'USD', description: '', features: [], isActive: 1, ...over })
   const slugs = (plans: any[]) => plans.map((p: any) => p.slug)
   const serviceWith = (plans: any[]) => new SubscriptionsService(
-    repoOf([]), repoOf([{ id: 'h1' }]), repoOf([]), repoOf([]), repoOf(plans), repoOf([]), undefined, log,
+    repoOf([]), repoOf([{ id: 'h1' }]), repoOf([]), repoOf([]), repoOf(plans), repoOf([]), log,
   )
 
   it('(a) `sortOrder` ya NO manda: manda el precio, aunque el sortOrder diga otra cosa', async () => {

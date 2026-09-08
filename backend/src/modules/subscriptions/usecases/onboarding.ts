@@ -8,17 +8,21 @@
 // El orden importa (#35, actualizado F2 wizard-refactor tarea 2.8): perfil
 // primero (bienvenida→identidad→contacto→ubicacion→politicas, todos
 // `kind:'profile'`, se completan inline en el Centro de configuración) — son lo
-// que el huésped ve y lo que sale impreso, y no dependen de nada. Después los
-// operativos (`kind:'external'`, navegan a su pantalla real): habitaciones,
-// tarifas, canales.
+// que el huésped ve y lo que sale impreso, y no dependen de nada. Después el
+// único operativo que queda (`kind:'external'`, navega a su pantalla real):
+// habitaciones — sin inventario no hay nada que vender.
 //
-// Hubo dos pasos más que se sacaron (2026-09-08):
+// Hubo varios pasos más que se sacaron (2026-09-08), todos opcionales, ninguno
+// bloqueaba `completed` ni el %:
 //  - `team`/"Sume a su equipo": armar el equipo no es un requisito de
 //    onboarding, el dueño solo opera bien igual.
 //  - `amenities`/"Cuente qué ofrece su hotel": esa configuración es propia de
 //    Página pública (`pagina-publica/general.vue`, sección "Amenities del
 //    hotel") — el wizard de alta no es el lugar, evita una segunda superficie
 //    editando lo mismo.
+//  - `rates`/"Defina sus tarifas" y `channels`/"Conecte sus canales de venta":
+//    pedido explícito — se sacan del wizard de alta, quedan solo accesibles
+//    desde Configuración → Tarifas y Canales respectivamente.
 import type { RepositoryAdapter } from 'arckode-framework'
 
 export interface OnboardingStep {
@@ -44,8 +48,7 @@ export interface OnboardingStep {
   /** Cuántos ítems ya tiene cargados (para mostrar "3 habitaciones"). */
   count?: number
   /** F2 (wizard-refactor tarea 2.1) — 'profile' se completa inline en el Centro de
-   *  configuración (`useOnboardingStep.ts`); 'external' navega a su pantalla real
-   *  (comportamiento de siempre para rooms/rates/channels, sin cambios). */
+   *  configuración (`useOnboardingStep.ts`); 'external' navega a su pantalla real. */
   kind: 'profile' | 'external'
 }
 
@@ -61,22 +64,17 @@ export interface OnboardingStatus {
 export interface OnboardingDeps {
   roomsRepo: RepositoryAdapter<any>
   usersRepo: RepositoryAdapter<any>
-  ratesRepo?: RepositoryAdapter<any>
   hotelsRepo: RepositoryAdapter<any>
-  /** `channel_config` del hotel: si tiene propiedad asignada, está conectado. */
-  channelsRepo?: RepositoryAdapter<any>
 }
 
 export class OnboardingUseCase {
   constructor(private readonly deps: OnboardingDeps) {}
 
   async status(hotelId: string): Promise<OnboardingStatus> {
-    const [rooms, users, hotel, rates, channels] = await Promise.all([
+    const [rooms, users, hotel] = await Promise.all([
       this.deps.roomsRepo.findMany({ hotelId }).catch(() => []),
       this.deps.usersRepo.findMany({ hotelId }).catch(() => []),
       this.deps.hotelsRepo.findById(hotelId).catch(() => null),
-      this.deps.ratesRepo?.findMany({ hotelId }).catch(() => []) ?? [],
-      this.deps.channelsRepo?.findMany({ hotelId }).catch(() => []) ?? [],
     ])
 
     // El dueño/gerente que completó el alta — `users.name` (F2 tarea 2.2, doc 02
@@ -84,10 +82,6 @@ export class OnboardingUseCase {
     // `hotels.ownerName` (ese es un campo distinto, fiscal, de Configuración → Hotel).
     const owner = (users as any[]).find(u => u?.role === 'hotel_admin') ?? (users as any[])[0]
     const ownerNameResuelto = Boolean(owner?.name && String(owner.name).trim())
-
-    // Conectado = tiene una propiedad asignada en el channel manager. Que exista
-    // la fila de configuración no alcanza: se crea vacía al entrar a la vista.
-    const connected = (channels as any[]).some(c => String(c?.channexPropertyId ?? '').trim() !== '')
 
     const steps: OnboardingStep[] = [
       // ─── Perfil (F2, wizard-refactor) — se completan inline en el Centro de
@@ -177,7 +171,7 @@ export class OnboardingUseCase {
         required: true,
         kind: 'profile',
       },
-      // ─── Operativos (sin cambios de lógica, solo `kind: 'external'` nuevo) ──────
+      // ─── Operativo (sin cambios de lógica, solo `kind: 'external'` nuevo) ──────
       {
         key: 'rooms',
         title: 'Cargue sus habitaciones',
@@ -189,31 +183,6 @@ export class OnboardingUseCase {
         done: (rooms as any[]).length > 0,
         required: true,
         count: (rooms as any[]).length,
-        kind: 'external',
-      },
-      {
-        key: 'rates',
-        title: 'Defina sus tarifas',
-        description: 'Cuánto cuesta cada tipo de habitación por noche.',
-        how: 'En Configuración → Temporadas y Tarifas arma la grilla: por cada tipo de habitación y cantidad de personas, el precio por noche. Puede tener temporadas (alta, baja) con precios distintos.',
-        impact: 'Sin tarifas cada reserva hay que tarifarla a mano y el motor de reservas no puede cotizar.',
-        route: '/panel/config/tarifas',
-        cta: 'Definir tarifas',
-        done: (rates as any[]).length > 0,
-        required: false,
-        count: (rates as any[]).length,
-        kind: 'external',
-      },
-      {
-        key: 'channels',
-        title: 'Conecte sus canales de venta',
-        description: 'Booking, Airbnb, Expedia y las demás OTAs, sincronizadas con su disponibilidad.',
-        how: 'Ingrese a Canales y pida la conexión. Una vez vinculada su propiedad, mapee cada tipo de habitación y su tarifa con el canal. A partir de ahí la disponibilidad y los precios viajan solos, y las reservas de las OTAs entran a su calendario.',
-        impact: 'Sin conectar los canales tiene que cargar a mano cada reserva que llega de una OTA, y arriesga vender dos veces la misma noche.',
-        route: '/panel/channel-manager',
-        cta: 'Conectar canales',
-        done: connected,
-        required: false,
         kind: 'external',
       },
     ]

@@ -4,9 +4,10 @@
 // F2 (wizard-refactor, docs/wizard-refactor/tareas/tareas.md 2.1-2.9): el paso
 // único `hotel` (mal calibrado, `Boolean(phone || address)` nacía "hecho" con
 // datos que ya traía el registro) se reemplazó por pasos de perfil granulares
-// (`kind: 'profile'`) que van primero en `steps[]`; los operativos de siempre
-// (`kind: 'external'`) quedan sin cambios de lógica, después. (`team` y
-// `amenities` se sacaron después, 2026-09-08 — ver onboarding.ts.)
+// (`kind: 'profile'`) que van primero en `steps[]`; el operativo de siempre
+// (`kind: 'external'`) queda sin cambios de lógica, después. (`team`,
+// `amenities`, `rates` y `channels` se sacaron después, 2026-09-08 — ver
+// onboarding.ts: todos eran opcionales, ninguno bloqueaba `completed` ni el %.)
 import { describe, it, expect } from 'bun:test'
 import { OnboardingUseCase } from '../usecases/onboarding'
 import type { RepositoryAdapter } from 'arckode-framework'
@@ -24,8 +25,8 @@ const SIGNUP_HOTEL = {
 }
 
 /** Hotel con TODOS los pasos de perfil REQUERIDOS satisfechos (bienvenida/identidad/ubicacion/
- *  politicas) — deja contacto/amenities (opcionales) y los 4 operativos como único pendiente,
- *  para probar que `completed` no los necesita. */
+ *  politicas) — deja contacto (opcional) y rooms como único pendiente, para probar que
+ *  `completed` no necesita lo opcional. */
 const FULL_REQUIRED_HOTEL = {
   ...SIGNUP_HOTEL,
   email: 'hotel@test.com',
@@ -33,7 +34,7 @@ const FULL_REQUIRED_HOTEL = {
 }
 
 function setup(opts: {
-  rooms?: number; users?: number; rates?: number; hotel?: any; channels?: any[]
+  rooms?: number; users?: number; hotel?: any
   ownerName?: string
 } = {}) {
   const list = (n = 0) => Array.from({ length: n }, (_, i) => ({ id: `x${i}` }))
@@ -54,9 +55,7 @@ function setup(opts: {
   return new OnboardingUseCase({
     roomsRepo: repo(list(opts.rooms)),
     usersRepo: repo(users),
-    ratesRepo: repo(list(opts.rates)),
     hotelsRepo: repo([]),
-    channelsRepo: repo(opts.channels ?? []),
   })
 }
 
@@ -69,21 +68,19 @@ describe('OnboardingUseCase — orden y shape general', () => {
     expect(st.steps[0]!.required).toBe(true)
   })
 
-  it('tarea 2.8 — perfil primero (bienvenida→identidad→contacto→ubicacion→politicas), operativos después', async () => {
+  it('tarea 2.8 — perfil primero (bienvenida→identidad→contacto→ubicacion→politicas), operativo después', async () => {
     const st = await setup().status('h1')
     expect(st.steps.map(s => s.key)).toEqual([
-      'bienvenida', 'identidad', 'contacto', 'ubicacion', 'politicas',
-      'rooms', 'rates', 'channels',
+      'bienvenida', 'identidad', 'contacto', 'ubicacion', 'politicas', 'rooms',
     ])
-    expect(st.totalCount).toBe(8)
+    expect(st.totalCount).toBe(6)
   })
 
-  it('tarea 2.1 — cada paso trae `kind`: perfil para los 5 nuevos, external para los operativos', async () => {
+  it('tarea 2.1 — cada paso trae `kind`: perfil para los 5 nuevos, external para el operativo', async () => {
     const st = await setup().status('h1')
     const profileKeys = ['bienvenida', 'identidad', 'contacto', 'ubicacion', 'politicas']
-    const externalKeys = ['rooms', 'rates', 'channels']
     for (const key of profileKeys) expect(st.steps.find(s => s.key === key)!.kind).toBe('profile')
-    for (const key of externalKeys) expect(st.steps.find(s => s.key === key)!.kind).toBe('external')
+    expect(st.steps.find(s => s.key === 'rooms')!.kind).toBe('external')
   })
 
   it('cuenta lo que ya cargó', async () => {
@@ -183,42 +180,15 @@ describe('OnboardingUseCase — tarea 2.9, combinaciones', () => {
     expect(st.completed).toBe(false)
   })
 
-  it('perfil + operativo 100%: los 8 pasos hechos', async () => {
+  it('perfil + operativo 100%: los 6 pasos hechos', async () => {
     const st = await setup({
       hotel: { ...FULL_REQUIRED_HOTEL, phone2: '8095550001' },
-      rooms: 3, rates: 2,
-      channels: [{ id: 'c1', hotelId: 'h1', channexPropertyId: 'prop-123' }],
+      rooms: 3,
     }).status('h1')
-    expect(st.doneCount).toBe(8)
-    expect(st.totalCount).toBe(8)
+    expect(st.doneCount).toBe(6)
+    expect(st.totalCount).toBe(6)
     expect(st.completed).toBe(true)
     expect(st.steps.every(s => s.done)).toBe(true)
-  })
-})
-
-describe('OnboardingUseCase — conectar canales', () => {
-  it('incluye el paso de canales: es el valor central del producto', async () => {
-    const st = await setup().status('h1')
-    const ch = st.steps.find(s => s.key === 'channels')
-    expect(ch).toBeDefined()
-    expect(ch!.done).toBe(false)
-  })
-
-  it('se marca hecho solo con una propiedad asignada, no con la fila vacía', async () => {
-    // La fila de channel_config se crea al entrar a la vista de Canales, sin
-    // haber conectado nada: contarla como "conectado" haría desaparecer el paso
-    // justo cuando todavía falta hacerlo.
-    const vacio = await setup({ channels: [{ id: 'c1', hotelId: 'h1', channexPropertyId: '' }] }).status('h1')
-    expect(vacio.steps.find(s => s.key === 'channels')!.done).toBe(false)
-
-    const conectado = await setup({ channels: [{ id: 'c1', hotelId: 'h1', channexPropertyId: 'prop-123' }] }).status('h1')
-    expect(conectado.steps.find(s => s.key === 'channels')!.done).toBe(true)
-  })
-
-  it('no bloquea el alta: conectar canales es opcional', async () => {
-    const st = await setup({ hotel: FULL_REQUIRED_HOTEL, rooms: 3 }).status('h1')
-    expect(st.steps.find(s => s.key === 'channels')!.required).toBe(false)
-    expect(st.completed).toBe(true)
   })
 })
 
@@ -239,21 +209,12 @@ describe('OnboardingUseCase — la guía tiene que explicar', () => {
     // "Definí tus tarifas" mandaba a /panel/pricing, que no existe: el botón
     // sacaba al usuario del panel.
     const EXISTENTES = [
-      '/panel/configuracion-inicial', '/panel/config/habitaciones', '/panel/config/tarifas',
-      '/panel/channel-manager',
+      '/panel/configuracion-inicial', '/panel/config/habitaciones',
     ]
     const st = await setup().status('h1')
     for (const step of st.steps) {
       const base = step.route.split('?')[0]!
       expect(EXISTENTES).toContain(base)
     }
-  })
-
-  it('no nombra al proveedor del channel manager: es white-label', async () => {
-    // En el panel del hotel todo es "Canales/OTAs"; el proveedor solo se ve en
-    // el panel de administración de la plataforma.
-    const st = await setup().status('h1')
-    const texto = JSON.stringify(st.steps).toLowerCase()
-    expect(texto).not.toContain('channex')
   })
 })

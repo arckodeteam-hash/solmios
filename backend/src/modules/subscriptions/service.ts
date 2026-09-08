@@ -34,9 +34,7 @@ export class SubscriptionsService {
     rolesRepo: RepositoryAdapter<any>,
     private readonly plansRepo: RepositoryAdapter<any>,
     roomsRepo: RepositoryAdapter<any>,
-    ratesRepo: RepositoryAdapter<any> | undefined,
     private readonly logger: Logger,
-    channelsRepo?: RepositoryAdapter<any>,
     /** `subscription_discounts` — historial de condiciones especiales (admin). Opcional: sin cablear, `statusOf` no muestra descuento activo pero no rompe. */
     private readonly discountsRepo?: RepositoryAdapter<any>,
     /** ORM crudo — solo para el CAS de `SpecialCategoryConfig.occupiedCount` al liberar un cupo
@@ -57,7 +55,7 @@ export class SubscriptionsService {
       hotelsRepo,
       async () => (this.readPlatformSettings ? this.readPlatformSettings() : { requireCardOnTrial: false }),
     )
-    this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, ratesRepo, hotelsRepo, channelsRepo })
+    this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, hotelsRepo })
   }
 
   /** Puerto #28 + contador: `subscription_settings` vive en `admin`, una sola lectura para las dos (misma fila). */

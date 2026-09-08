@@ -50,13 +50,7 @@ export function SubscriptionsModule() {
         new OrmRepository<any>(orm, 'Roles'),
         new OrmRepository<any>(orm, 'Plans'),
         new OrmRepository<any>(orm, 'Rooms'),
-        // `RoomRates` es el modelo compartido de tarifas (shared/models.ts). Iba
-        // en `undefined`, así que el paso "Definí tus tarifas" de la guía de
-        // primeros pasos NUNCA se marcaba como hecho, por más tarifas cargadas.
-        new OrmRepository<any>(orm, 'RoomRates'),
         log,
-        // `Canales` = channel_config: dice si el hotel ya conectó sus OTAs.
-        new OrmRepository<any>(orm, 'Canales'),
         // Historial de condiciones especiales — statusOf() lo usa para mostrar el descuento activo.
         new OrmRepository<any>(orm, 'SubscriptionDiscounts'),
         // orm crudo — solo lo usa handle-stripe-event.ts para el CAS de cupos al cancelar.
