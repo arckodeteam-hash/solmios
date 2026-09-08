@@ -15,7 +15,9 @@
     "load:guests": "bun run scripts/e2e/load-guests.e2e.ts",
     "load:latency": "bun run scripts/e2e/latency.e2e.ts",
     "typecheck": "bun run tsc --noEmit",
-    "lint": "echo 'No linter configured — add eslint to package.json'"
+    "lint": "echo 'No linter configured — add eslint to package.json'",
+    "verificar-whatsapp": "bun run scripts/verificar-whatsapp.ts",
+    "seed-demo-meta": "bun run scripts/seed-hotel-demo-meta.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
