@@ -301,7 +301,14 @@ async function confirmUpgrade() {
   try {
     const result = await SubscriptionsService.upgrade(preview.planId)
     upgradePreview.value = null
-    if (result.paid) {
+    if (!result.applied) {
+      // El backend confirmó contra Stripe que el cambio NO quedó aplicado (no se cobró nada y el
+      // plan sigue siendo el viejo). Va antes que el chequeo de `paid` porque acá `paid` también
+      // es false, y el mensaje de "pago pendiente" diría dos cosas falsas: que el plan quedó
+      // activo y que hay un cobro que reintentar.
+      toast.error('No pudimos aplicar la mejora',
+        'Tu plan y tu facturación quedaron como estaban. Probá de nuevo en un momento.')
+    } else if (result.paid) {
       toast.success(`Ya estás en ${result.planName}`,
         `Te cobramos ${money(result.amountCharged, result.currency)} por lo que falta del ciclo.`)
     } else {

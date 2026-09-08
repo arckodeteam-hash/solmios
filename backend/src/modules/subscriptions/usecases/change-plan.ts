@@ -104,24 +104,16 @@ export async function changeHotelPlan(
   const mirrorStale = !!planSlug && String(hotel.plan ?? '') !== planSlug
   const changed = subStale || mirrorStale
 
+  // REGLA DE ESTA FUNCIÓN: cada log va DESPUÉS de la escritura que describe, nunca antes. Un log
+  // emitido por adelantado afirma algo que todavía puede fallar — y el espejo es best-effort, así
+  // que falla de verdad. Anunciar "espejo reparado" y a renglón seguido "no se pudo sincronizar"
+  // en la misma llamada es el mismo defecto que se corrigió con `changed`, en otra rama.
   if (active && subStale) {
     await subscriptionsRepo.update(active.id, { planId })
     logger.info('Plan del hotel cambiado', { hotelId, previousPlanId, planId, planSlug, subscriptionId: active.id })
     if (!planSlug) {
       logger.warn('Plan sin slug: se movió la suscripción pero hotels.plan queda desincronizado', { hotelId, planId })
     }
-  } else if (active && mirrorStale) {
-    // La suscripción ya estaba bien y sólo se reparó el espejo. Es una escritura real en
-    // producción: sin este log no quedaba ningún rastro de que se tocó la fila del hotel.
-    logger.info('Espejo hotels.plan reparado (la suscripción ya estaba en ese plan)', {
-      hotelId, planId, planSlug, espejoAnterior: String(hotel.plan ?? ''),
-    })
-  } else if (!active && changed) {
-    // Hotel SIN suscripción activa (fila cancelada/vencida, o alta previa a este módulo). No se
-    // inventa una suscripción: crear una fila `active` sin nada en Stripe le daría acceso pago
-    // gratis y ensuciaría el webhook. Ese hotel se resuelve por el camino legacy de
-    // resolveHotelPlan, y ahí el espejo `hotels.plan` SÍ es su fuente — con espejarlo alcanza.
-    logger.info('Plan del hotel cambiado (sin suscripción activa: solo espejo legacy)', { hotelId, planId, planSlug })
   }
 
   // Espejo legacy, BEST-EFFORT — mismo criterio que handle-stripe-event.ts: la fuente de verdad
@@ -130,6 +122,19 @@ export async function changeHotelPlan(
   if (mirrorStale) {
     try {
       await hotelsRepo.update(hotelId, { plan: planSlug })
+      if (!active) {
+        // Hotel SIN suscripción activa (fila cancelada/vencida, o alta previa a este módulo). No se
+        // inventa una suscripción: crear una fila `active` sin nada en Stripe le daría acceso pago
+        // gratis y ensuciaría el webhook. Ese hotel se resuelve por el camino legacy de
+        // resolveHotelPlan, y ahí el espejo `hotels.plan` SÍ es su fuente — con espejarlo alcanza.
+        logger.info('Plan del hotel cambiado (sin suscripción activa: solo espejo legacy)', { hotelId, planId, planSlug })
+      } else if (!subStale) {
+        // La suscripción ya estaba bien y sólo se reparó el espejo. Es una escritura real en
+        // producción: sin este log no quedaba ningún rastro de que se tocó la fila del hotel.
+        logger.info('Espejo hotels.plan reparado (la suscripción ya estaba en ese plan)', {
+          hotelId, planId, planSlug, espejoAnterior: String(hotel.plan ?? ''),
+        })
+      }
     } catch (e) {
       logger.warn('No se pudo sincronizar hotels.plan tras el cambio de plan', { hotelId, error: (e as Error).message })
     }

@@ -206,6 +206,25 @@ describe('/panel/suscripcion — mejora de plan con la suscripción viva', () =>
     expect(modulesRefresh).toHaveBeenCalledWith('hotel-1')
   })
 
+  // Cierre #46: con `applied:false` (el backend confirmó contra Stripe que el cambio NO quedó
+  // aplicado) el mensaje de "pago pendiente" afirmaba dos cosas falsas: que el plan quedó activo
+  // y que había un cobro para reintentar. `paid` también es false ahí, así que el orden importa.
+  it('con applied:false NO dice que el plan quedó activo ni que hay un pago pendiente', async () => {
+    upgrade.mockResolvedValue(result({ applied: false, paid: false, amountCharged: 0, invoiceStatus: null }))
+    const w = await openConfirm()
+
+    await w.find('footer').findAll('button')[1]!.trigger('click')
+    await flushPromises()
+
+    expect(toastSuccess).not.toHaveBeenCalled()
+    expect(toastWarning).not.toHaveBeenCalled()
+    expect(toastError).toHaveBeenCalled()
+    // Ni "quedó activo" ni un monto pendiente inventado.
+    const texto = toastError.mock.calls.map((c) => String(c[0]) + ' ' + String(c[1] ?? '')).join(' ')
+    expect(texto).not.toMatch(/pendiente/i)
+    expect(texto).not.toMatch(/quedó activo/i)
+  })
+
   it('con el cobro rechazado (paid:false) avisa que el pago quedó pendiente y manda al portal', async () => {
     upgrade.mockResolvedValue(result({ paid: false, invoiceStatus: 'open' }))
     const w = await openConfirm()

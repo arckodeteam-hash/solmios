@@ -214,6 +214,23 @@ describe('changeHotelPlan — mueve el planId de la suscripción activa', () => 
     expect(warns).toHaveLength(0)
   })
 
+  // Cierre #46: el log de "espejo reparado" se emitía ANTES de intentar la escritura, así que un
+  // fallo del espejo producía "reparado" y "no se pudo sincronizar" en la misma llamada. Esta es
+  // la rama que ningún test tocaba: sub al día (subStale=false) + espejo atrasado + update que falla.
+  it('si falla la escritura del espejo, NO afirma haberlo reparado', async () => {
+    const { logger, infos, warns } = recordingLogger()
+    const subs = [{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'active' }]
+    const { deps } = setup(subs, { id: 'h1', name: 'Hotel Sol', plan: 'essential' })
+    deps.hotelsRepo.update = async () => { throw new Error('DB caída') }
+
+    const res = await changeHotelPlan({ ...deps, logger }, 'h1', 'plan-host')
+
+    // El cambio no se tumba (best-effort), pero nadie afirma que el espejo quedó reparado.
+    expect(res.changed).toBe(true)
+    expect(infos.some((l) => /reparado/i.test(l.msg))).toBe(false)
+    expect(warns.some((w) => /no se pudo sincronizar/i.test(w))).toBe(true)
+  })
+
   it('un fallo del espejo hotels.plan NO tumba el cambio (best-effort, warn)', async () => {
     const { logger, warns } = recordingLogger()
     const subs = [{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'active' }]

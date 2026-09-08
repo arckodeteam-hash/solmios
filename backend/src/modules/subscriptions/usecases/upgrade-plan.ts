@@ -140,11 +140,16 @@ export async function applyUpgrade(
   const currency = currencyOf(invoice?.currency, plan)
 
   // ¿Stripe quedó DE VERDAD en el plan destino? Con `payment_behavior:'allow_incomplete'` el
-  // cambio de ítem se aplica aunque el cobro falle, así que normalmente sí. Pero si Stripe hubiera
-  // devuelto una respuesta cacheada por idempotencia, o si el ítem no fuera el que se mandó a
-  // cambiar, escribir el plan nuevo en local afirmaría algo falso: el hotel quedaría con el plan
-  // pago sin que Stripe lo haya cobrado. Se confirma contra el price que volvió, no contra la
-  // suposición de que el update hizo lo pedido.
+  // cambio de ítem se aplica aunque el cobro falle, así que normalmente sí. Pero reflejar el plan
+  // en local por el solo hecho de que el update no tiró es una suposición, y acá una suposición
+  // equivocada deja al hotel con un plan pago que Stripe nunca le cobró. Se confirma contra el
+  // price que volvió.
+  //
+  // OJO con el alcance: esto NO cubre la respuesta cacheada por idempotencia — una respuesta
+  // cacheada es la de la operación original, que traía el price nuevo, así que pasaría este
+  // chequeo. De ese caso se ocupa la clave, que incluye `updatedAt` y por eso no se repite entre
+  // intentos distintos. Esta guarda cubre lo otro: que el ítem devuelto no sea el que se mandó a
+  // cambiar (ítem inesperado, respuesta parcial).
   const priceAplicado = updated.items?.data?.find((i) => i.id === itemId)?.price?.id
   const aplicado = priceAplicado === String(plan.stripePriceId)
   if (!aplicado) {
