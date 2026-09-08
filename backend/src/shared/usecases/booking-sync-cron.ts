@@ -10,8 +10,22 @@
 import type { Logger } from 'arckode-framework'
 import type { BookingSyncResult } from '../../modules/canales/usecases/booking-sync'
 
-/** Tick por defecto: cada 15 min. Configurable vía env BOOKING_SYNC_INTERVAL_MS. */
-export const DEFAULT_BOOKING_SYNC_TICK_MS = 60_000 * 15
+/**
+ * Tick por defecto: 60 s. Configurable vía env BOOKING_SYNC_INTERVAL_MS.
+ *
+ * Por qué 1 min y no 15: el feed `GET /booking_revisions/feed` de Channex es una ventana de
+ * 30 minutos, no una cola durable — una revisión que no se ackea dentro de esos 30 min se cae
+ * del feed para siempre. Hoy la ingesta es feed-only (todavía no hay webhook), así que con
+ * 15 min quedaban apenas 2 ciclos de margen: un deploy o un reinicio podía perder una reserva
+ * sin dejar rastro.
+ *
+ * Los 15 min son el valor correcto SÓLO con el webhook como camino principal y el feed como
+ * red de contención: al cerrar #50 esto se revierte a `60_000 * 15`.
+ *
+ * Costo nulo: el feed no cuenta contra el rate limit de ARI (~20/min, que aplica a
+ * POST /availability y /restrictions) y es 1 request por tick, no 1 por hotel.
+ */
+export const DEFAULT_BOOKING_SYNC_TICK_MS = 60_000
 
 const ZERO_RESULT: BookingSyncResult = {
   success: false, feedSize: 0, ingested: 0, acknowledged: 0,
