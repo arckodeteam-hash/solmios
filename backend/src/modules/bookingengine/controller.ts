@@ -111,6 +111,9 @@ export class BookingengineController {
     private readonly rateOverridesRepo?: RepositoryAdapter<any>,
     /** Catálogo `Seasons` — el RANGO de cada temporada. Al final, mismo motivo. */
     private readonly seasonsCatalogRepo?: RepositoryAdapter<any>,
+    /** `HotelAmenities` (F1 1.7b, D3) — fuente real de amenities para /api/public/hotel/:slug.
+     *  Al final, mismo motivo que el resto de los deps nuevos. */
+    private readonly hotelAmenitiesRepo?: RepositoryAdapter<any>,
   ) {}
 
   /** Deps para los usecases de upsells. Tirar si no están cableadas (claramente un bug de wiring). */
@@ -171,7 +174,12 @@ export class BookingengineController {
       // Allow-list estricta en el usecase: el DTO devuelto SOLO contiene campos públicos
       // (ver spec public-hotel-info). Nunca spread del hotel.
       const dto = await getPublicHotelInfo(
-        { hotels: this.hotelsRepo!, config: this.configRepo, bookingConfig: this.bookingConfigRepo },
+        {
+          hotels: this.hotelsRepo!,
+          config: this.configRepo,
+          bookingConfig: this.bookingConfigRepo,
+          hotelAmenities: this.hotelAmenitiesRepo,
+        },
         String(req.params?.slug || ''),
         lang,
       )

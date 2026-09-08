@@ -24,6 +24,12 @@ export interface PublicHotelInfoDeps {
    *  criterio: sin él ambas quedan `null` (= sin límite declarado) y el cliente se comporta
    *  como antes. */
   bookingConfig?: RepositoryAdapter<any>
+  /** Tabla `hotel_amenities` (modelo compartido, F1 1.7b) — fuente real de las amenities que
+   *  el hotel marca en Configuración → Amenities. Reemplaza la lectura vieja de `hotel.amenities`
+   *  (columna JSON de 20 keys, escrita solo por `pagina-publica/general.vue`, nunca leída por
+   *  Configuración → Amenities). Opcional para no romper tests legacy: sin él, `amenities` cae
+   *  a `hotel.amenities ?? null` (mismo comportamiento previo). */
+  hotelAmenities?: RepositoryAdapter<any>
 }
 
 // Anti-enumeración: MISMO mensaje para "no existe" y "no activo" (no filtrar hoteles inactivos).
@@ -45,6 +51,7 @@ export async function getPublicHotelInfo(
   const googleMapsApiKey = await resolveGoogleMapsKey(deps.config, hotel.id)
   const stayLimits = await resolveStayLimits(deps.bookingConfig, hotel.id)
   const childPolicy = await resolveChildPolicy(deps.config, hotel.id)
+  const amenities = await resolveAmenities(deps.hotelAmenities, hotel.id, hotel.amenities)
 
   // Allow-list ESTRICTA: copia campo por campo. NUNCA `...hotel` — arrastraría ownerName,
   // taxId, wifiPassword, etc. al JSON de respuesta (ver spec, "Anti-patrón allow-list").
@@ -78,7 +85,7 @@ export async function getPublicHotelInfo(
     depositPercent: hotel.depositPercent ?? 30,
     releaseHours: hotel.releaseHours ?? 0,
     logo: hotel.logo ?? null,
-    amenities: hotel.amenities ?? null,
+    amenities,
     onlineBookingStatus: hotel.onlineBookingStatus,
     googleMapsApiKey,
     minNights: stayLimits.minNights,
@@ -129,6 +136,27 @@ async function resolveStayLimits(
   } catch {
     // La info del hotel no puede caerse porque falle una config secundaria.
     return empty
+  }
+}
+
+/**
+ * Amenities activas del hotel (F1 1.7b, D3). `hotel_amenities` es la tabla real que llena
+ * Configuración → Amenities (35 keys, 3 categorías) — `hotel.amenities` es una columna JSON
+ * vieja que solo escribe `pagina-publica/general.vue` (20 keys planas) y que Configuración
+ * nunca tocó, así que lo marcado ahí jamás aparecía acá. Devuelve solo `amenityKey` (mismo
+ * shape plano que consumía el frontend desde `hotel.amenities`).
+ */
+async function resolveAmenities(
+  hotelAmenities: RepositoryAdapter<any> | undefined,
+  hotelId: string,
+  legacyAmenities: unknown,
+): Promise<string[] | null> {
+  if (!hotelAmenities) return (legacyAmenities as string[] | null) ?? null
+  try {
+    const rows = await hotelAmenities.findMany({ hotelId, isActive: 1 }) as any[]
+    return rows.map((r) => r.amenityKey).filter((k): k is string => typeof k === 'string')
+  } catch {
+    return (legacyAmenities as string[] | null) ?? null
   }
 }
 

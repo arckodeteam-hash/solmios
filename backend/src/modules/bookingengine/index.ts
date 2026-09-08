@@ -96,6 +96,9 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       const rateOverridesRepo = new OrmRepository<any>(orm, 'RateOverrides')
       // Catálogo de temporadas: su RANGO asigna temporada, igual que los días pintados.
       const seasonsCatalogRepo = new OrmRepository<any>(orm, 'Seasons')
+      // F1 1.7b (D3) — `hotel_amenities` (modelo compartido, mismo que consume el módulo
+      // `amenities`), para que /api/public/hotel/:slug deje de leer la columna JSON vieja.
+      const hotelAmenitiesRepo = new OrmRepository<any>(orm, 'HotelAmenities')
 
       const service = new BookingengineService(
         configRepo, roomsRepo, reservationsRepo, hotelsRepo,
@@ -130,6 +133,7 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         mealPlanRepo,
         rateOverridesRepo,
         seasonsCatalogRepo,
+        hotelAmenitiesRepo,
       )
 
       // Admin routes (protegidas con auth)

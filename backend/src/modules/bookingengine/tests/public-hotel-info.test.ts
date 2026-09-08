@@ -148,6 +148,32 @@ describe('F0 0.4 — allow-list: NINGUNA clave prohibida se filtra, en ningún n
   })
 })
 
+describe('F1 1.7b — amenities: prioriza hotel_amenities sobre la columna JSON legacy', () => {
+  it('sin dep hotelAmenities (callers viejos) → cae a hotel.amenities (comportamiento previo)', async () => {
+    const hotels = backed<any>([hotelSeed()])
+    const dto = await getPublicHotelInfo({ hotels }, 'hotel-paraiso', undefined)
+    expect(dto.amenities).toEqual(['pool', 'gym', 'wifi', 'parking'])
+  })
+
+  it('con dep hotelAmenities → lee amenityKey activos de hotel_amenities, ignora hotel.amenities', async () => {
+    const hotels = backed<any>([hotelSeed({ amenities: ['stale', 'from-json-column'] })])
+    const hotelAmenities = backed<any>([
+      { id: 'a1', hotelId: 'h1', amenityKey: 'pool', isActive: 1 },
+      { id: 'a2', hotelId: 'h1', amenityKey: 'spa', isActive: 1 },
+      { id: 'a3', hotelId: 'h1', amenityKey: 'old_gym', isActive: 0 },
+    ])
+    const dto = await getPublicHotelInfo({ hotels, hotelAmenities }, 'hotel-paraiso', undefined)
+    expect(dto.amenities).toEqual(['pool', 'spa'])
+  })
+
+  it('hotel_amenities vacía (hotel sin ninguna activa) → array vacío, NO cae al legacy', async () => {
+    const hotels = backed<any>([hotelSeed()])
+    const hotelAmenities = backed<any>([])
+    const dto = await getPublicHotelInfo({ hotels, hotelAmenities }, 'hotel-paraiso', undefined)
+    expect(dto.amenities).toEqual([])
+  })
+})
+
 describe('F0 0.4 — 404 genérico: slug inexistente Y onlineBookingStatus!=active dan MISMA respuesta', () => {
   it('slug inexistente → NotFoundError con httpStatus=404', async () => {
     const hotels = backed<any>([hotelSeed()])
