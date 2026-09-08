@@ -3,9 +3,10 @@
 //
 // F2 (wizard-refactor, docs/wizard-refactor/tareas/tareas.md 2.1-2.9): el paso
 // único `hotel` (mal calibrado, `Boolean(phone || address)` nacía "hecho" con
-// datos que ya traía el registro) se reemplazó por 6 pasos de perfil granulares
-// (`kind: 'profile'`) que van primero en `steps[]`; los 4 operativos de siempre
-// (`kind: 'external'`) quedan sin cambios de lógica, después.
+// datos que ya traía el registro) se reemplazó por pasos de perfil granulares
+// (`kind: 'profile'`) que van primero en `steps[]`; los operativos de siempre
+// (`kind: 'external'`) quedan sin cambios de lógica, después. (`team` y
+// `amenities` se sacaron después, 2026-09-08 — ver onboarding.ts.)
 import { describe, it, expect } from 'bun:test'
 import { OnboardingUseCase } from '../usecases/onboarding'
 import type { RepositoryAdapter } from 'arckode-framework'
@@ -33,7 +34,7 @@ const FULL_REQUIRED_HOTEL = {
 
 function setup(opts: {
   rooms?: number; users?: number; rates?: number; hotel?: any; channels?: any[]
-  ownerName?: string; childPolicySet?: boolean; amenities?: number
+  ownerName?: string
 } = {}) {
   const list = (n = 0) => Array.from({ length: n }, (_, i) => ({ id: `x${i}` }))
   const repo = (rows: any[]): RepositoryAdapter<any> => ({
@@ -50,22 +51,12 @@ function setup(opts: {
     ...list(Math.max(0, (opts.users ?? 1) - 1)),
   ]
 
-  const configRepo: RepositoryAdapter<any> = {
-    findMany: async () => [],
-    findById: async () => null,
-    findOne: async () => (opts.childPolicySet
-      ? { value: { acceptChildren: true, maxChildAge: 12, maxFreeAge: 2 } }
-      : null),
-  } as unknown as RepositoryAdapter<any>
-
   return new OnboardingUseCase({
     roomsRepo: repo(list(opts.rooms)),
     usersRepo: repo(users),
     ratesRepo: repo(list(opts.rates)),
     hotelsRepo: repo([]),
     channelsRepo: repo(opts.channels ?? []),
-    configRepo,
-    hotelAmenitiesRepo: repo(list(opts.amenities)),
   })
 }
 
@@ -78,18 +69,18 @@ describe('OnboardingUseCase — orden y shape general', () => {
     expect(st.steps[0]!.required).toBe(true)
   })
 
-  it('tarea 2.8 — perfil primero (bienvenida→identidad→contacto→ubicacion→politicas→amenities), operativos después', async () => {
+  it('tarea 2.8 — perfil primero (bienvenida→identidad→contacto→ubicacion→politicas), operativos después', async () => {
     const st = await setup().status('h1')
     expect(st.steps.map(s => s.key)).toEqual([
-      'bienvenida', 'identidad', 'contacto', 'ubicacion', 'politicas', 'amenities',
+      'bienvenida', 'identidad', 'contacto', 'ubicacion', 'politicas',
       'rooms', 'rates', 'channels',
     ])
-    expect(st.totalCount).toBe(9)
+    expect(st.totalCount).toBe(8)
   })
 
-  it('tarea 2.1 — cada paso trae `kind`: perfil para los 6 nuevos, external para los operativos', async () => {
+  it('tarea 2.1 — cada paso trae `kind`: perfil para los 5 nuevos, external para los operativos', async () => {
     const st = await setup().status('h1')
-    const profileKeys = ['bienvenida', 'identidad', 'contacto', 'ubicacion', 'politicas', 'amenities']
+    const profileKeys = ['bienvenida', 'identidad', 'contacto', 'ubicacion', 'politicas']
     const externalKeys = ['rooms', 'rates', 'channels']
     for (const key of profileKeys) expect(st.steps.find(s => s.key === key)!.kind).toBe('profile')
     for (const key of externalKeys) expect(st.steps.find(s => s.key === key)!.kind).toBe('external')
@@ -171,26 +162,6 @@ describe('OnboardingUseCase — tarea 2.6, paso `politicas`', () => {
   })
 })
 
-describe('OnboardingUseCase — tarea 2.7, paso `amenities`', () => {
-  it('sin amenities ni política de niños tocada → done false, y NUNCA bloquea completed', async () => {
-    const st = await setup({ hotel: FULL_REQUIRED_HOTEL, rooms: 1 }).status('h1')
-    const amenities = st.steps.find(s => s.key === 'amenities')!
-    expect(amenities.done).toBe(false)
-    expect(amenities.required).toBe(false)
-    expect(st.completed).toBe(true)
-  })
-
-  it('con al menos una amenity cargada → done true', async () => {
-    const st = await setup({ hotel: FULL_REQUIRED_HOTEL, amenities: 1 }).status('h1')
-    expect(st.steps.find(s => s.key === 'amenities')!.done).toBe(true)
-  })
-
-  it('con la política de niños tocada (aunque sin amenities) → done true', async () => {
-    const st = await setup({ hotel: FULL_REQUIRED_HOTEL, childPolicySet: true }).status('h1')
-    expect(st.steps.find(s => s.key === 'amenities')!.done).toBe(true)
-  })
-})
-
 describe('OnboardingUseCase — tarea 2.9, combinaciones', () => {
   it('perfil 0% (hotel de signup, sin tocar nada más): bienvenida y ubicación bloquean completed', async () => {
     const st = await setup({ hotel: SIGNUP_HOTEL }).status('h1')
@@ -202,25 +173,24 @@ describe('OnboardingUseCase — tarea 2.9, combinaciones', () => {
     expect(st.completed).toBe(false)
   })
 
-  it('perfil 100% requerido con contacto/amenities pendientes (opcionales) → completed true igual', async () => {
+  it('perfil 100% requerido con contacto pendiente (opcional) → completed true igual', async () => {
     const st = await setup({ hotel: FULL_REQUIRED_HOTEL }).status('h1')
     for (const key of ['bienvenida', 'identidad', 'ubicacion', 'politicas']) {
       expect(st.steps.find(s => s.key === key)!.done).toBe(true)
     }
     expect(st.steps.find(s => s.key === 'contacto')!.done).toBe(false)
-    expect(st.steps.find(s => s.key === 'amenities')!.done).toBe(false)
     // rooms es operativo Y requerido: sin cargar, sigue bloqueando.
     expect(st.completed).toBe(false)
   })
 
-  it('perfil + operativo 100%: los 9 pasos hechos', async () => {
+  it('perfil + operativo 100%: los 8 pasos hechos', async () => {
     const st = await setup({
       hotel: { ...FULL_REQUIRED_HOTEL, phone2: '8095550001' },
-      rooms: 3, rates: 2, amenities: 1,
+      rooms: 3, rates: 2,
       channels: [{ id: 'c1', hotelId: 'h1', channexPropertyId: 'prop-123' }],
     }).status('h1')
-    expect(st.doneCount).toBe(9)
-    expect(st.totalCount).toBe(9)
+    expect(st.doneCount).toBe(8)
+    expect(st.totalCount).toBe(8)
     expect(st.completed).toBe(true)
     expect(st.steps.every(s => s.done)).toBe(true)
   })

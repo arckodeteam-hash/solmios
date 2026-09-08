@@ -63,10 +63,6 @@ export function SubscriptionsModule() {
         orm,
         // Config de Fundador/Pionero: el % que publica la landing sale de acá (CFG-1).
         new OrmRepository<any>(orm, 'SpecialCategoryConfig'),
-        // F2 (wizard-refactor tarea 2.7) — paso `amenities` del onboarding: política de niños
-        // (Configuration KV) + amenities reales del hotel (tabla, no la columna JSON vieja).
-        new OrmRepository<any>(orm, 'Configuration'),
-        new OrmRepository<any>(orm, 'HotelAmenities'),
       )
       const controller = new SubscriptionsController(service, log)
 

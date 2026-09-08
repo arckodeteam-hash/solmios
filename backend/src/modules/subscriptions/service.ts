@@ -46,9 +46,6 @@ export class SubscriptionsService {
     /** `special_category_config` — la verdad del % del programa Fundador (CFG-1). Opcional: sin
      *  cablear, el endpoint público devuelve `null` y la landing muestra su copy de reserva. */
     private readonly specialCategoriesRepo?: RepositoryAdapter<any>,
-    /** F2 (tarea 2.7) — política de niños + amenities reales, para el paso `amenities`. Opcionales. */
-    configRepo?: RepositoryAdapter<any>,
-    hotelAmenitiesRepo?: RepositoryAdapter<any>,
   ) {
     this.signupUc = new SignupUseCase({
       hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger,
@@ -60,7 +57,7 @@ export class SubscriptionsService {
       hotelsRepo,
       async () => (this.readPlatformSettings ? this.readPlatformSettings() : { requireCardOnTrial: false }),
     )
-    this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, ratesRepo, hotelsRepo, channelsRepo, configRepo, hotelAmenitiesRepo })
+    this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, ratesRepo, hotelsRepo, channelsRepo })
   }
 
   /** Puerto #28 + contador: `subscription_settings` vive en `admin`, una sola lectura para las dos (misma fila). */

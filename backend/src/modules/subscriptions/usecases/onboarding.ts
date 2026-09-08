@@ -6,13 +6,19 @@
 // el hotel borra lo que había cargado.
 //
 // El orden importa (#35, actualizado F2 wizard-refactor tarea 2.8): perfil
-// primero (bienvenida→identidad→contacto→ubicacion→politicas→amenities, todos
+// primero (bienvenida→identidad→contacto→ubicacion→politicas, todos
 // `kind:'profile'`, se completan inline en el Centro de configuración) — son lo
 // que el huésped ve y lo que sale impreso, y no dependen de nada. Después los
 // operativos (`kind:'external'`, navegan a su pantalla real): habitaciones,
-// tarifas, canales. (Hubo un cuarto paso, `team`/"Sume a su equipo" — se sacó
-// 2026-09-08: armar el equipo no es un requisito de onboarding, el dueño solo
-// opera bien igual.)
+// tarifas, canales.
+//
+// Hubo dos pasos más que se sacaron (2026-09-08):
+//  - `team`/"Sume a su equipo": armar el equipo no es un requisito de
+//    onboarding, el dueño solo opera bien igual.
+//  - `amenities`/"Cuente qué ofrece su hotel": esa configuración es propia de
+//    Página pública (`pagina-publica/general.vue`, sección "Amenities del
+//    hotel") — el wizard de alta no es el lugar, evita una segunda superficie
+//    editando lo mismo.
 import type { RepositoryAdapter } from 'arckode-framework'
 
 export interface OnboardingStep {
@@ -59,27 +65,18 @@ export interface OnboardingDeps {
   hotelsRepo: RepositoryAdapter<any>
   /** `channel_config` del hotel: si tiene propiedad asignada, está conectado. */
   channelsRepo?: RepositoryAdapter<any>
-  /** F2 (tarea 2.7) — `Configuration` KV, para leer `child_policy` (paso `amenities`).
-   *  Opcional: sin ella, `amenities.done` solo mira las amenities cargadas. */
-  configRepo?: RepositoryAdapter<any>
-  /** F2 (tarea 2.7, D3) — `hotel_amenities` (tabla real, no la columna JSON vieja de
-   *  `hotels.amenities` — ver fix de 1.7b en `public-hotel-info.ts`). Opcional: sin
-   *  ella, `amenities.done` solo mira si se tocó la política de niños. */
-  hotelAmenitiesRepo?: RepositoryAdapter<any>
 }
 
 export class OnboardingUseCase {
   constructor(private readonly deps: OnboardingDeps) {}
 
   async status(hotelId: string): Promise<OnboardingStatus> {
-    const [rooms, users, hotel, rates, channels, childPolicyRow, hotelAmenities] = await Promise.all([
+    const [rooms, users, hotel, rates, channels] = await Promise.all([
       this.deps.roomsRepo.findMany({ hotelId }).catch(() => []),
       this.deps.usersRepo.findMany({ hotelId }).catch(() => []),
       this.deps.hotelsRepo.findById(hotelId).catch(() => null),
       this.deps.ratesRepo?.findMany({ hotelId }).catch(() => []) ?? [],
       this.deps.channelsRepo?.findMany({ hotelId }).catch(() => []) ?? [],
-      this.deps.configRepo?.findOne({ hotelId, key: 'child_policy' } as Record<string, unknown>).catch(() => null) ?? null,
-      this.deps.hotelAmenitiesRepo?.findMany({ hotelId, isActive: 1 }).catch(() => []) ?? [],
     ])
 
     // El dueño/gerente que completó el alta — `users.name` (F2 tarea 2.2, doc 02
@@ -91,12 +88,6 @@ export class OnboardingUseCase {
     // Conectado = tiene una propiedad asignada en el channel manager. Que exista
     // la fila de configuración no alcanza: se crea vacía al entrar a la vista.
     const connected = (channels as any[]).some(c => String(c?.channexPropertyId ?? '').trim() !== '')
-
-    // Política de niños "tocada" = existe la fila en `configuration` (el hotel entró
-    // al menos una vez a guardarla) — DISTINTO de "resolveChildPolicy() no devolvió
-    // el default", que también sería true para una fila vacía. Acá interesa saber si
-    // el hotel pasó por el paso, no el valor resultante.
-    const childPolicyTocada = Boolean((childPolicyRow as any)?.value)
 
     const steps: OnboardingStep[] = [
       // ─── Perfil (F2, wizard-refactor) — se completan inline en el Centro de
@@ -184,21 +175,6 @@ export class OnboardingUseCase {
         // silencio, deuda conocida y aceptada (doc 08, riesgo R1).
         done: Boolean(hotel?.taxName && hotel?.taxRate),
         required: true,
-        kind: 'profile',
-      },
-      {
-        key: 'amenities',
-        title: 'Cuente qué ofrece su hotel',
-        description: 'Piscina, wifi, desayuno… lo que tiene en su propiedad, para mostrar en la página pública.',
-        how: 'En el paso Amenities marque los servicios e instalaciones que tiene, o al menos defina su política de niños.',
-        impact: 'No se bloquea nada sin esto, pero su página pública se ve más completa con algunas amenities cargadas.',
-        route: '/panel/configuracion-inicial',
-        cta: 'Cargar amenities',
-        // Fuente: `hotel_amenities` (tabla real, D3/tarea 0.4) — NO la columna JSON
-        // vieja `hotels.amenities`, que ya no es la fuente de verdad desde el fix
-        // de la tarea 1.7b (`getPublicHotelInfo` tenía el mismo bug).
-        done: Boolean((hotelAmenities as any[]).length > 0 || childPolicyTocada),
-        required: false,
         kind: 'profile',
       },
       // ─── Operativos (sin cambios de lógica, solo `kind: 'external'` nuevo) ──────
