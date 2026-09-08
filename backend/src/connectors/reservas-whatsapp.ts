@@ -9,11 +9,14 @@ import { sendTemplateMessage, sendTextMessage, explicarErrorDeEnvio } from '../s
 
 interface AiRecepcionistaModule {
   getWhatsappCredentials(hotelId: string): Promise<{ wabaId: string; accessToken: string; phoneNumberId: string } | null>
+  /** Tira si el hotel agotó su cupo mensual de conversaciones. */
+  assertPuedeIniciar(hotelId: string): Promise<void>
 }
 
 interface ReservasModuleWithWhatsapp {
   setWhatsappPort(port: {
     credentialsFor(hotelId: string): Promise<{ wabaId: string; phoneNumberId: string; accessToken: string } | null>
+    assertPuedeIniciar(hotelId: string): Promise<void>
     sendTemplate: typeof sendTemplateMessage
     sendText: typeof sendTextMessage
     explicarError: typeof explicarErrorDeEnvio
@@ -32,6 +35,8 @@ export function reservasWhatsappConnector(ctx: ConnectorContext): void {
         ? { wabaId: creds.wabaId, phoneNumberId: creds.phoneNumberId, accessToken: creds.accessToken }
         : null
     },
+    // El tope vive en ai-recepcionista, que es dueño del consumo. Reservas solo lo consulta.
+    assertPuedeIniciar: (hotelId: string) => ai.assertPuedeIniciar(hotelId),
     sendTemplate: sendTemplateMessage,
     sendText: sendTextMessage,
     explicarError: explicarErrorDeEnvio,

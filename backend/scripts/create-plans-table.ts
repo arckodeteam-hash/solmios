@@ -112,14 +112,19 @@ async function migrate() {
     // que hay que bajar para que la relación de inclusión tenga sentido comercial: Essential queda
     // entre Host y Starter, tanto en precio como en sortorder. Habitaciones y set de módulos quedan
     // intactos (eso sí es una decisión de producto que no me corresponde inventar).
+    // `whatsappConversations` es el cupo MENSUAL de conversaciones que incluye cada plan. Existe
+    // porque las conversaciones se las paga la plataforma a Meta: sin tope, un hotel que manda
+    // 5.000 las paga SOLMI OS. `null` en Ultra = sin tope (plan a medida, negociado aparte).
+    // Los números son un punto de partida razonable, no una tarifa cerrada: se ajustan cuando se
+    // conozca el consumo real de los primeros hoteles.
     const plans: [string, string, string, number, string, string, string, string, string, number, number][] = [
       // id, name, slug, price, currency, desc, features, limits, modules, isactive, sortorder
-      ['plan-host', 'Host', 'host', 29, 'USD', 'Plan de entrada — motor de reservas básico', JSON.stringify(['10 habitaciones', '1 usuario']), JSON.stringify({rooms:10,users:1}), JSON.stringify(['planning','reservations','reservations.checkin','guests','settings.rooms','site-pages','settings.rates','settings.audit']), 1, -1],
-      ['plan-essential', 'Essential', 'essential', 39, 'USD', 'PMS + Channel + Reservas + Pagos', JSON.stringify(['20 habitaciones', '2 usuarios']), JSON.stringify({rooms:20,users:2}), JSON.stringify(['planning','reservations','reservations.checkin','guests','settings.rooms','channel','finance.billing','finance.payments','operations.maintenance','site-pages','settings.rates','settings.audit']), 1, 0],
-      ['plan-starter', 'Starter', 'starter', 49, 'USD', 'Para hoteles pequeños', JSON.stringify(['30 habitaciones', '2 usuarios']), JSON.stringify({rooms:30,users:2}), JSON.stringify([]), 1, 1],
-      ['plan-professional', 'Professional', 'professional', 99, 'USD', 'Para hoteles en crecimiento', JSON.stringify(['100 habitaciones', '6 usuarios']), JSON.stringify({rooms:100,users:6}), JSON.stringify([]), 1, 2],
-      ['plan-enterprise', 'Enterprise', 'enterprise', 199, 'USD', 'Para hoteles grandes', JSON.stringify(['Habitaciones ilimitadas', 'Usuarios ilimitados']), JSON.stringify({rooms:9999,users:9999}), JSON.stringify([]), 1, 3],
-      ['plan-ultra', 'Ultra', 'ultra', 0, 'USD', 'Plan custom — todos los módulos', JSON.stringify(['Habitaciones ilimitadas', 'Usuarios ilimitados']), JSON.stringify({rooms:9999,users:9999}), JSON.stringify([]), 1, 4],
+      ['plan-host', 'Host', 'host', 29, 'USD', 'Plan de entrada — motor de reservas básico', JSON.stringify(['10 habitaciones', '1 usuario']), JSON.stringify({rooms:10,users:1,whatsappConversations:250}), JSON.stringify(['planning','reservations','reservations.checkin','guests','settings.rooms','site-pages','settings.rates','settings.audit']), 1, -1],
+      ['plan-essential', 'Essential', 'essential', 39, 'USD', 'PMS + Channel + Reservas + Pagos', JSON.stringify(['20 habitaciones', '2 usuarios']), JSON.stringify({rooms:20,users:2,whatsappConversations:500}), JSON.stringify(['planning','reservations','reservations.checkin','guests','settings.rooms','channel','finance.billing','finance.payments','operations.maintenance','site-pages','settings.rates','settings.audit']), 1, 0],
+      ['plan-starter', 'Starter', 'starter', 49, 'USD', 'Para hoteles pequeños', JSON.stringify(['30 habitaciones', '2 usuarios']), JSON.stringify({rooms:30,users:2,whatsappConversations:1000}), JSON.stringify([]), 1, 1],
+      ['plan-professional', 'Professional', 'professional', 99, 'USD', 'Para hoteles en crecimiento', JSON.stringify(['100 habitaciones', '6 usuarios']), JSON.stringify({rooms:100,users:6,whatsappConversations:5000}), JSON.stringify([]), 1, 2],
+      ['plan-enterprise', 'Enterprise', 'enterprise', 199, 'USD', 'Para hoteles grandes', JSON.stringify(['Habitaciones ilimitadas', 'Usuarios ilimitados']), JSON.stringify({rooms:9999,users:9999,whatsappConversations:20000}), JSON.stringify([]), 1, 3],
+      ['plan-ultra', 'Ultra', 'ultra', 0, 'USD', 'Plan custom — todos los módulos', JSON.stringify(['Habitaciones ilimitadas', 'Usuarios ilimitados']), JSON.stringify({rooms:9999,users:9999,whatsappConversations:null}), JSON.stringify([]), 1, 4],
     ]
 
     for (const [id, name, slug, price, currency, desc, features, limits, modules, active, sort] of plans) {

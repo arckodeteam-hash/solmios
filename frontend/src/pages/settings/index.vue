@@ -621,6 +621,10 @@
       <div class="md:col-span-2">
         <WhatsappConnectionCard />
       </div>
+      <!-- El hotel paga estas conversaciones: tiene que verlas antes de que llegue la factura. -->
+      <div class="md:col-span-2">
+        <WhatsappUsageCard />
+      </div>
 
       <!-- Channel Manager NO va acá: lo configura y gestiona el admin de la PLATAFORMA (/admin),
            no el hotel. Esta card mostraba un "Conectado" hardcodeado (mentía el estado real) y
@@ -804,6 +808,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch, reactive } from
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import WhatsappConnectionCard from '@/components/features/WhatsappConnectionCard.vue'
+import WhatsappUsageCard from '@/components/features/WhatsappUsageCard.vue'
 // Política de cancelación con tiers: el editor canónico (mismo componente que usa el Motor de
 // reservas). Vive acá desde la unificación de Condiciones — antes sólo en Página pública.
 import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
