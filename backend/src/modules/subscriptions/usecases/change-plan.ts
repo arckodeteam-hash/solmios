@@ -90,10 +90,10 @@ export async function changeHotelPlan(
     )
   }
   // Con fila activa el cambio sí se aplica (planId es la fuente de verdad), pero el espejo queda
-  // viejo para los lectores legacy y eso no puede pasar en silencio.
-  if (!planSlug) {
-    logger.warn('Plan sin slug: se movió la suscripción pero hotels.plan queda desincronizado', { hotelId, planId })
-  }
+  // viejo para los lectores legacy y eso no puede pasar en silencio. Va condicionado a que la
+  // suscripción se MUEVA de verdad: si ya estaba en ese plan no se movió nada, y un warning que
+  // afirma "se movió la suscripción" sería otro log que miente — el mismo defecto que se corrigió
+  // más arriba con `changed`.
 
   const previousPlanId = active?.planId ? String(active.planId) : null
   // Dos mutaciones posibles e INDEPENDIENTES: la suscripción y el espejo. `changed` tiene que
@@ -107,6 +107,9 @@ export async function changeHotelPlan(
   if (active && subStale) {
     await subscriptionsRepo.update(active.id, { planId })
     logger.info('Plan del hotel cambiado', { hotelId, previousPlanId, planId, planSlug, subscriptionId: active.id })
+    if (!planSlug) {
+      logger.warn('Plan sin slug: se movió la suscripción pero hotels.plan queda desincronizado', { hotelId, planId })
+    }
   } else if (active && mirrorStale) {
     // La suscripción ya estaba bien y sólo se reparó el espejo. Es una escritura real en
     // producción: sin este log no quedaba ningún rastro de que se tocó la fila del hotel.

@@ -21,6 +21,9 @@ let previews: any[] = []
 let invoiceRetrieves: string[] = []
 /** La factura que Stripe devuelve como `latest_invoice` del update: el cobro puede fallar. */
 let invoiceOnUpdate: any = { id: 'in_1', status: 'paid', amount_due: 25000, amount_paid: 25000, currency: 'usd' }
+/** Con un valor acá, el update de Stripe devuelve OTRO price: simula que no quedó aplicado
+ *  (por ejemplo, una respuesta cacheada por idempotencia). `null` = quedó aplicado. */
+let priceOnUpdate: string | null = null
 
 mock.module('../../../services/stripe-service', () => ({
   ...actualStripe,
@@ -48,7 +51,10 @@ function fakeStripe() {
       },
       update: async (id: string, params: any, options?: any) => {
         updates.push({ id, params, options })
-        return { id, items: { data: [{ id: 'si_1', current_period_end: PERIOD_END }] }, latest_invoice: invoiceOnUpdate }
+        // Stripe devuelve el ítem YA con el price nuevo: el usecase lo confirma antes de
+        // reflejar el plan en local. `priceOnUpdate` deja simular que NO quedó aplicado.
+        const price = { id: priceOnUpdate ?? params?.items?.[0]?.price }
+        return { id, items: { data: [{ id: 'si_1', current_period_end: PERIOD_END, price }] }, latest_invoice: invoiceOnUpdate }
       },
     },
     invoices: {
@@ -83,7 +89,10 @@ function activeSub(over: any = {}) {
   return {
     id: 's1', hotelId: 'h1', planId: 'plan-ess', status: 'active',
     stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1',
-    currentPeriodEnd: '2029-12-31T00:00:00.000Z', ...over,
+    currentPeriodEnd: '2029-12-31T00:00:00.000Z',
+    // El modelo declara `timestamps: true`: toda fila real trae `updatedAt`, y de ahí sale el
+    // token del intento en la clave de idempotencia.
+    updatedAt: '2026-09-01T00:00:00.000Z', ...over,
   }
 }
 
@@ -105,6 +114,7 @@ beforeEach(() => {
   previews = []
   invoiceRetrieves = []
   invoiceOnUpdate = { id: 'in_1', status: 'paid', amount_due: 25000, amount_paid: 25000, currency: 'usd' }
+  priceOnUpdate = null
   stripeClient = fakeStripe()
 })
 
@@ -161,8 +171,26 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     expect(updates).toHaveLength(1)
     const clave = updates[0].options?.idempotencyKey
     expect(typeof clave).toBe('string')
-    // Misma transición ⇒ misma clave: hotel, suscripción de Stripe, plan de origen y de destino.
-    expect(clave).toBe('upgrade:h1:sub_1:plan-ess:plan-pro')
+    // La clave identifica el INTENTO: incluye el `updatedAt` de la fila leída, así dos pedidos
+    // concurrentes (mismo snapshot) comparten clave, pero un intento posterior —tras cualquier
+    // escritura sobre la suscripción— estrena una. Atarla sólo a origen→destino haría que Stripe
+    // devolviera la respuesta CACHEADA de 24h en un A→B→A→B legítimo del mismo día.
+    expect(clave).toBe('upgrade:h1:sub_1:plan-pro:2026-09-01T00:00:00.000Z')
+  })
+
+  // Si Stripe devolviera una respuesta cacheada por idempotencia (o el ítem no fuera el que se
+  // mandó a cambiar), escribir el plan nuevo en local afirmaría algo falso: el hotel quedaría con
+  // el plan pago sin que Stripe lo haya cobrado.
+  it('si Stripe NO quedó en el plan destino, no refleja nada en local y lo dice', async () => {
+    priceOnUpdate = 'price_ess_99' // el ítem siguió en el plan viejo
+    const { deps, subRows, hotelRows } = setup([activeSub()])
+
+    const res = await applyUpgrade(deps, 'h1', 'plan-pro')
+
+    expect(res.applied).toBe(false)
+    expect(res.paid).toBe(false)
+    expect(subRows[0].planId).toBe('plan-ess')
+    expect(hotelRows[0].plan).not.toBe('pro')
   })
 
   it('con latest_invoice sin expandir (solo el id) va a buscarla antes de decir que se cobró', async () => {

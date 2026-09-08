@@ -201,6 +201,19 @@ describe('changeHotelPlan — mueve el planId de la suscripción activa', () => 
     expect(warns.some((w) => /slug/i.test(w))).toBe(true)
   })
 
+  // El warning tiene que describir lo que PASÓ: si la suscripción ya estaba en ese plan no se
+  // movió nada, y avisar "se movió la suscripción" sería otro log que miente.
+  it('plan sin slug que YA es el activo: no escribe ni avisa de un movimiento que no ocurrió', async () => {
+    const { logger, warns } = recordingLogger()
+    const { deps, subUpdates } = setup([{ id: 's1', hotelId: 'h1', planId: 'plan-sinslug', status: 'active' }])
+
+    const res = await changeHotelPlan({ ...deps, logger }, 'h1', 'plan-sinslug')
+
+    expect(res.changed).toBe(false)
+    expect(subUpdates).toHaveLength(0)
+    expect(warns).toHaveLength(0)
+  })
+
   it('un fallo del espejo hotels.plan NO tumba el cambio (best-effort, warn)', async () => {
     const { logger, warns } = recordingLogger()
     const subs = [{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'active' }]

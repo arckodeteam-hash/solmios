@@ -26,6 +26,10 @@ export interface UpgradePlanDeps {
 }
 
 const MS_PER_SECOND = 1000
+/** Ventana de deduplicación cuando la fila no trae `updatedAt`. Corta a propósito: sólo tiene que
+ *  cubrir la ráfaga de pedidos concurrentes (dos pestañas, un doble clic), no congelar la
+ *  operación — las claves de idempotencia de Stripe viven 24h y no queremos bloquear tanto. */
+const VENTANA_DEDUP_MS = 60_000
 
 /** Todo lo que las dos operaciones necesitan resolver ANTES de tocar plata. */
 interface UpgradeContext {
@@ -97,11 +101,19 @@ export async function applyUpgrade(
   // porque no cruza pestañas. Con la clave, Stripe colapsa el segundo pedido idéntico en la misma
   // operación y devuelve el mismo resultado, sin cobrar de nuevo.
   //
-  // La clave describe LA TRANSICIÓN, no el intento: mismo hotel, misma suscripción, mismo plan de
-  // origen y de destino. No bloquea una mejora legítima posterior (sería otro plan de origen), y
-  // repetir exactamente esta transición no es un caso real: apenas la primera termina, `planId`
-  // ya apunta al destino y `loadUpgrade` corta con "Ya estás en ese plan".
-  const claveIdempotencia = `upgrade:${hotelId}:${active.stripeSubscriptionId}:${active.planId ?? ''}:${plan.id}`
+  // La clave identifica EL INTENTO, no la transición, y por eso incluye `updatedAt` de la fila
+  // leída. Atarla sólo a origen→destino sería un bug: Stripe cachea la respuesta de una clave
+  // repetida durante 24h y la devuelve SIN re-ejecutar nada, así que un hotel que mejora A→B, baja
+  // a A desde el Billing Portal y vuelve a mejorar a B el mismo día recibiría el response viejo —
+  // sin cobro y sin cambio real en Stripe. `updatedAt` cambia con cada escritura sobre la fila
+  // (incluida la del webhook al bajar de plan), así que dos pedidos CONCURRENTES —que leen el
+  // mismo snapshot— comparten clave y se deduplican, mientras que un intento posterior legítimo
+  // —que lee un snapshot distinto— estrena clave. Sin `updatedAt` se cae a una ventana de tiempo
+  // corta, que conserva la deduplicación de la ráfaga concurrente sin congelar nada por 24h.
+  const tokenIntento = active.updatedAt
+    ? String(active.updatedAt)
+    : `t${Math.floor(Date.now() / VENTANA_DEDUP_MS)}`
+  const claveIdempotencia = `upgrade:${hotelId}:${active.stripeSubscriptionId}:${plan.id}:${tokenIntento}`
   const updated = await stripe.subscriptions.update(String(active.stripeSubscriptionId), {
     items: [{ id: itemId, price: String(plan.stripePriceId) }],
     proration_behavior: 'always_invoice',
@@ -126,6 +138,31 @@ export async function applyUpgrade(
   const invoiceStatus = invoice?.status ? String(invoice.status) : null
   const amountCharged = Number(invoice?.amount_due ?? 0)
   const currency = currencyOf(invoice?.currency, plan)
+
+  // ¿Stripe quedó DE VERDAD en el plan destino? Con `payment_behavior:'allow_incomplete'` el
+  // cambio de ítem se aplica aunque el cobro falle, así que normalmente sí. Pero si Stripe hubiera
+  // devuelto una respuesta cacheada por idempotencia, o si el ítem no fuera el que se mandó a
+  // cambiar, escribir el plan nuevo en local afirmaría algo falso: el hotel quedaría con el plan
+  // pago sin que Stripe lo haya cobrado. Se confirma contra el price que volvió, no contra la
+  // suposición de que el update hizo lo pedido.
+  const priceAplicado = updated.items?.data?.find((i) => i.id === itemId)?.price?.id
+  const aplicado = priceAplicado === String(plan.stripePriceId)
+  if (!aplicado) {
+    logger.error('El upgrade NO quedó aplicado en Stripe: no se refleja el plan local', {
+      hotelId, planId: String(plan.id), priceEsperado: String(plan.stripePriceId),
+      priceAplicado: priceAplicado ?? null, stripeSubscriptionId: String(active.stripeSubscriptionId),
+    })
+    return {
+      applied: false,
+      paid: false,
+      planId: String(plan.id),
+      planName: String(plan.name ?? ''),
+      previousPlanId: active.planId ? String(active.planId) : null,
+      amountCharged: 0,
+      currency: currencyOf(invoice?.currency, plan),
+      invoiceStatus,
+    }
+  }
 
   // Reflejo local inmediato para que el panel del hotel cambie sin esperar el webhook
   // `customer.subscription.updated`, que igual va a llegar y hace exactamente esto — es
