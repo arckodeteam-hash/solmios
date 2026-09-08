@@ -13,6 +13,7 @@ import type { StorageService } from 'arckode-framework/modules/storage'
 import type { HotelesService } from './service'
 import type { HotelesQueries } from './usecases/hoteles-queries'
 import { CreateHotelesSchema, UpdateHotelesSchema, SetConfigSchema } from './validators/schema'
+import { getExchangeRate, type ExchangeRateDeps } from './usecases/exchange-rate'
 import { parseDataUrl, isImage } from '../../shared/utils/data-url'
 
 export class HotelesController {
@@ -21,6 +22,8 @@ export class HotelesController {
     private readonly logger: Logger,
     private readonly queries?: HotelesQueries,
     private readonly storage?: StorageService,
+    /** Repos que necesita el usecase de tasa de cambio (Configuration + Hotels). Los arma index.ts. */
+    private readonly exchangeRateRepos?: Pick<ExchangeRateDeps, 'configRepo' | 'hotelRepo'>,
   ) {}
 
   async index(req: HttpRequest) {
@@ -129,6 +132,13 @@ export class HotelesController {
     if (!id) return { status: 404, body: { error: 'Sin hotel' } }
     const result = await this.service.getEmergencyContacts(id)
     return { status: 200, body: result }
+  }
+
+  // Tasa de cambio del hotel — lectura solo-login. La lógica vive en el usecase; acá solo se
+  // inyecta el mismo resolveHotel que usan getConfig/getEmergencyContacts.
+  async getExchangeRate(req: HttpRequest) {
+    if (!this.exchangeRateRepos) return { status: 500, body: { error: 'Tasa de cambio no configurada' } }
+    return getExchangeRate({ ...this.exchangeRateRepos, resolveHotelId: (r) => this.resolveHotel(r) }, req as any)
   }
 
   private async resolveHotel(req: any): Promise<string | undefined> {
