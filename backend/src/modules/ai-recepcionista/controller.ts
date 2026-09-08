@@ -228,6 +228,20 @@ export class AiRecepcionistaController {
 
   // ─── WhatsApp Webhook ───────────────────────────────────────────────────
 
+  /**
+   * La respuesta al alta tiene que ser el desafío PELADO: Meta lo compara letra por letra y
+   * descarta la URL si no coincide. El servidor envuelve toda respuesta en `{success,data,...}`
+   * salvo que el cuerpo ya sea un Buffer (kernel/http/server.ts: `Buffer.isBuffer(res.body)`),
+   * así que se manda como bytes para que llegue tal cual.
+   */
+  private respuestaDeAlta(challenge: unknown) {
+    return {
+      status: 200,
+      body: Buffer.from(String(challenge), 'utf8'),
+      headers: { 'Content-Type': 'text/plain' },
+    }
+  }
+
   async whatsappWebhookVerify(req: any) {
     const mode = req.query?.['hub.mode']
     const token = req.query?.['hub.verify_token']
@@ -240,7 +254,7 @@ export class AiRecepcionistaController {
       // abajo es para las conexiones que se dieron de alta con su propia URL.
       const tokenPlataforma = process.env.META_WEBHOOK_VERIFY_TOKEN
       if (tokenPlataforma && String(token) === tokenPlataforma) {
-        return { status: 200, body: String(challenge), headers: { 'Content-Type': 'text/plain' } }
+        return this.respuestaDeAlta(challenge)
       }
 
       // El hotelId del path es opcional: la ruta canónica no lo lleva y el hotel se identifica por
@@ -251,7 +265,7 @@ export class AiRecepcionistaController {
         String(token),
       )
       if (dueno) {
-        return { status: 200, body: String(challenge), headers: { 'Content-Type': 'text/plain' } }
+        return this.respuestaDeAlta(challenge)
       }
     }
     return { status: 403, body: 'Verification failed' }
