@@ -31,7 +31,7 @@ export interface ChannexWebhookLogger {
  */
 export interface ChannexWebhookConfigStore {
   read(): Promise<{ webhookSecret?: string; channexUserId?: string } | null>
-  write(patch: { webhookSecret?: string }): Promise<void>
+  write(patch: { webhookSecret?: string; channexUserId?: string }): Promise<void>
 }
 
 // ─── Secreto de plataforma ───────────────────────────────────────────────────────────────────
