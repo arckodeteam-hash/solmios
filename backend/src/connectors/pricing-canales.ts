@@ -1,45 +1,54 @@
 // connectors/pricing-canales.ts — Push automático de tarifas a las OTAs.
 // pricing emite onRatesUpdated/onRateRestrictionsUpdated; canales las empuja a Channex.
-// Fire-and-forget: nunca bloquea el guardado; la lógica de coalescing vive en
-// canales/usecases/push-coalescing.ts (CLAUDE #3: el conector solo wirea).
+// Fire-and-forget: nunca bloquea el guardado. La ráfaga se agrupa en la OUTBOX persistente
+// (`ari-outbox`), no en memoria: un reinicio dentro de la ventana de debounce se comía el push.
+// Quién publica cada kind lo cablea `canales-ari-outbox` (CLAUDE #3: el conector solo wirea).
 
 import type { ConnectorContext } from 'arckode-framework'
-import { PushCoalescer, dispatchOverridePush, type OverrideDispatchDeps } from '../modules/canales/usecases/push-coalescing'
+import { dispatchOverridePush, type OverrideDispatchDeps } from '../modules/canales/usecases/push-coalescing'
 
-export function pricingCanalesConnector(ctx: ConnectorContext, debounceMs?: number): void {
+interface AriOutboxPort {
+  schedule: (hotelId: string, kind: string, channels?: Array<string | undefined>) => Promise<void>
+}
+
+export function pricingCanalesConnector(ctx: ConnectorContext): void {
   const pricing = ctx.resolveModule<{ setSockets: (s: any) => void }>('pricing')
-  const coalescer = new PushCoalescer(
-    (hotelId, channel) => {
-      const canales = ctx.resolveModule<{ pushSeasonalRates: (hotelId: string, channel?: string) => Promise<unknown> }>('canales')
-      return canales.pushSeasonalRates(hotelId, channel)
-    },
-    debounceMs,
-    (hotelId, channel, err) => {
-      const scope = channel ? `canal=${channel}` : 'base'
+  const outbox = ctx.resolveModule<AriOutboxPort>('ari-outbox')
+
+  /**
+   * Encola la ráfaga y VUELVE. Los sockets de pricing son fire-and-forget: guardar una tarifa
+   * nunca espera a la cola ni se rompe si el encolado falla (la alternativa —un await— haría que
+   * un error de la DB de la outbox tirara el guardado del hotel, que ya está persistido).
+   *
+   * Sin canales = cambio GLOBAL: el drain publica la base Y DESPUÉS los canales con tarifa propia.
+   * Un cambio de temporada o del planning no dice a qué canal afecta: sin eso se publicaba solo
+   * la base y se borraban los precios por canal.
+   */
+  const encolar = (hotelId: string, channels: Array<string | undefined> = [undefined]): void => {
+    void outbox.schedule(hotelId, 'rates', channels).catch((err: unknown) => {
+      const explicitos = channels.filter(Boolean)
+      const scope = explicitos.length ? `canales=${explicitos.join(',')}` : 'base'
       console.error(`[pricing-canales] push de tarifas falló (hotel=${hotelId} ${scope}):`, err instanceof Error ? err.message : err)
-    },
-    // Un cambio de temporada o del planning no dice a qué canal afecta: sin esto se publicaba solo
-    // la base y se borraban los precios por canal.
-    (hotelId) => ctx.resolveModule<{ overrideChannels: (h: string) => Promise<string[]> }>('canales').overrideChannels(hotelId),
-  )
+    })
+  }
 
   const overrideDeps: OverrideDispatchDeps = {
     pushOverrides: (hotelId, items) =>
       ctx.resolveModule<{ pushRateOverrides: (h: string, i: any[]) => Promise<unknown> }>('canales')
         .pushRateOverrides(hotelId, items as any[]),
-    scheduleConsolidated: (hotelId) => coalescer.schedule(hotelId),
+    scheduleConsolidated: (hotelId) => encolar(hotelId),
     onError: (hotelId, err) =>
       console.error(`[pricing-canales] push de tarifas por fecha falló (hotel=${hotelId}):`, err instanceof Error ? err.message : err),
   }
 
   pricing.setSockets({
-    onRatesUpdated: async (hotelId: string, _count: number, channels?: string[]) => coalescer.schedule(hotelId, channels?.length ? channels : [undefined]),
-    onRateRestrictionsUpdated: async (hotelId: string) => coalescer.schedule(hotelId),
+    onRatesUpdated: async (hotelId: string, _count: number, channels?: string[]) => encolar(hotelId, channels?.length ? channels : [undefined]),
+    onRateRestrictionsUpdated: async (hotelId: string) => encolar(hotelId),
     // Cambiar fechas del catálogo de temporadas, copiar tarifas al año próximo o pintar días
     // en el planning cambian el precio publicado → mismo push consolidado.
-    onSeasonsUpdated: async (hotelId: string) => coalescer.schedule(hotelId),
-    onRatesCopied: async (hotelId: string) => coalescer.schedule(hotelId),
-    onSeasonAssignmentsUpdated: async (hotelId: string) => coalescer.schedule(hotelId),
+    onSeasonsUpdated: async (hotelId: string) => encolar(hotelId),
+    onRatesCopied: async (hotelId: string) => encolar(hotelId),
+    onSeasonAssignmentsUpdated: async (hotelId: string) => encolar(hotelId),
     // Grilla de tarifas por fecha → push delta / consolidado. La regla vive en el usecase.
     onRateOverridesUpdated: async (hotelId: string, saved: Array<Record<string, unknown>>, removed: number) =>
       dispatchOverridePush(overrideDeps, hotelId, saved, removed),
