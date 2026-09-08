@@ -349,15 +349,6 @@ const router = createRouter({
         { path: 'dashboard/general', redirect: '/panel/dashboard' },
         { path: 'dashboard/administrativo', redirect: '/panel/dashboard' },
         {
-          // Centro de configuración (wizard-refactor F3, doc 05/08 D6) — acordeón de pasos de
-          // perfil + operativos, reemplaza el flujo lineal que proponía la primera versión del
-          // plan. Se llega acá desde ProfileProgressBar.vue en el dashboard (F4).
-          path: 'configuracion-inicial',
-          name: 'configuracion-inicial',
-          component: () => import('@/pages/configuracion-inicial/index.vue'),
-          meta: { requiresHotelAdmin: true },
-        },
-        {
           path: 'reservas',
           name: 'reservations',
           component: () => import('@/pages/reservations/index.vue'),
@@ -766,6 +757,18 @@ const router = createRouter({
           redirect: (to) => ({ path: '/panel/config/mensajeria', query: { ...to.query, tab: 'push-tokens' } }),
         },
       ],
+    },
+    {
+      // Centro de configuración (wizard-refactor F3, refactor a wizard standalone) — pantalla
+      // PROPIA sin sidebar, a propósito FUERA del árbol de hijos de `/panel` (que comparten
+      // AdminLayout.vue): un top-level route con este mismo path renderiza su componente solo,
+      // sin heredar el layout del panel. `requiresHotelAdmin` va explícito acá porque un route
+      // top-level no hereda el meta de `/panel` (eso solo pasa por nesting). Se llega acá desde
+      // el botón "Completar" de ProfileProgressBar.vue en el dashboard.
+      path: '/panel/configuracion-inicial',
+      name: 'configuracion-inicial',
+      component: () => import('@/pages/configuracion-inicial/index.vue'),
+      meta: { requiresHotelAdmin: true },
     },
     {
       path: '/:pathMatch(.*)*',

@@ -1,104 +1,129 @@
 <template>
-  <!--
-    Centro de configuración (wizard-refactor F3, doc 05/08 D6) — acordeón de pasos, refactor de
-    OnboardingGuide.vue pero como pantalla propia (no franja del dashboard). Pasos de perfil
-    (`kind:'profile'`) se completan inline; operativos (`kind:'external'`) navegan a su pantalla
-    real — mismo comportamiento de siempre para esos 4, solo que ahora también viven acá.
+  <!-- Centro de configuración — wizard standalone (rediseño a pedido del usuario, 2026-09-08):
+       pantalla propia SIN sidebar (ver router/index.ts: top-level route, no hijo de /panel), solo
+       un botón de volver. Fondo blanco, un ícono a color distinto por paso (nada de la paleta
+       navy/cyan del resto del panel a propósito) y una barra de pasos navegable — reemplaza el
+       acordeón de la versión anterior (F3) por un stepper clásico: un paso activo a la vez, salto
+       directo a cualquiera desde la barra. Los Step*.vue internos (formularios + guardado
+       aislado) no cambiaron — solo cambió el contenedor que los muestra. -->
+  <div class="min-h-screen bg-white flex flex-col">
+    <!-- Top bar: volver + progreso -->
+    <header class="border-b border-border px-4 sm:px-6 py-4 flex items-center justify-between shrink-0 gap-3">
+      <button @click="goBack" type="button"
+        class="flex items-center gap-1.5 text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer shrink-0">
+        <span class="w-4 h-4" v-html="ICON_ARROW_LEFT"></span>
+        Volver
+      </button>
+      <div class="text-sm font-black text-navy shrink-0" v-if="status">{{ progress }}% completo</div>
+    </header>
 
-    Un solo paso abierto a la vez (tarea 3.4) — a diferencia de OnboardingGuide.vue, un paso YA
-    HECHO también se puede reabrir: acá el objetivo es completar/editar, no solo leer "cómo se
-    hace" (doc 05: "por si el usuario quiere repasar o editar algo opcional").
-  -->
-  <div class="max-w-4xl mx-auto space-y-6">
     <!-- Loading skeleton -->
-    <div v-if="loading" class="space-y-3">
-      <div class="h-24 bg-surface rounded-2xl animate-pulse"></div>
-      <div v-for="i in 6" :key="i" class="h-14 bg-surface rounded-xl animate-pulse"></div>
+    <div v-if="loading" class="flex-1 flex flex-col items-center justify-center gap-4 p-10">
+      <div class="w-14 h-14 rounded-full bg-surface animate-pulse"></div>
+      <div class="w-64 h-4 rounded bg-surface animate-pulse"></div>
     </div>
 
     <template v-else-if="status">
-      <!-- Cabecera: progreso combinado. Transición notoria una sola vez al llegar al 100%
-           (tarea 3.12) — el resto del tiempo es solo la barra que avanza. -->
-      <div
-        class="rounded-2xl border-2 border-navy bg-navy overflow-hidden px-6 py-5 transition-all duration-500"
-        :class="justCompleted ? 'celebrate' : ''"
-      >
-        <div class="flex items-center justify-between gap-4 flex-wrap">
-          <div class="min-w-0">
-            <h1 class="text-lg font-black text-white">
-              {{ status.completed ? 'Su hotel está listo' : 'Configuración inicial de su hotel' }}
-            </h1>
-            <p class="text-xs text-white/60 mt-0.5">
-              {{ status.completed
-                ? 'Completó todo lo necesario — puede repasar los pasos opcionales cuando quiera.'
-                : 'Complete esto para que su hotel se vea listo en la página pública y funcione sin baches.' }}
-            </p>
-          </div>
-          <div class="flex items-center gap-3 shrink-0">
-            <span class="text-2xl font-black text-cyan">{{ progress }}%</span>
-            <div class="w-28 h-2 rounded-full bg-white/15 overflow-hidden">
-              <div class="h-full bg-cyan transition-all duration-500" :style="{ width: progress + '%' }"></div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <!-- Barra de pasos — navegable: click en cualquier círculo salta directo a ese paso. -->
+      <nav class="border-b border-border px-4 sm:px-6 py-6 overflow-x-auto shrink-0" aria-label="Pasos de configuración">
+        <ol class="flex items-center min-w-max mx-auto max-w-5xl">
+          <li v-for="(s, i) in status.steps" :key="s.key" class="flex items-center">
+            <button @click="activeIndex = i" type="button"
+              class="flex flex-col items-center gap-1.5 cursor-pointer group px-1.5"
+              :aria-current="activeIndex === i ? 'step' : undefined">
+              <span class="relative w-11 h-11 rounded-full grid place-items-center shrink-0 transition-all duration-200 ring-offset-2"
+                :style="stepCircleStyle(s, i)">
+                <svg v-if="s.done" class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                <span v-else class="w-5 h-5 text-white" v-html="STEP_META[s.key]?.icon ?? ICON_DOT"></span>
+              </span>
+              <span class="text-[10px] font-bold whitespace-nowrap transition-colors"
+                :class="activeIndex === i ? 'text-navy' : 'text-text-muted group-hover:text-text-secondary'">
+                {{ SHORT_LABEL[s.key] ?? s.title }}
+              </span>
+            </button>
+            <div v-if="i < status.steps.length - 1" class="w-6 sm:w-10 h-0.5 mx-0.5 shrink-0 rounded-full transition-colors"
+              :class="s.done ? 'bg-teal' : 'bg-border'"></div>
+          </li>
+        </ol>
+      </nav>
 
-      <!-- Lista de pasos -->
-      <div class="rounded-2xl border border-border bg-white shadow-(--shadow-card) overflow-hidden divide-y divide-border">
-        <div v-for="(s, i) in status.steps" :key="s.key">
-          <!-- Cabecera del paso: toda la fila abre y cierra el contenido. -->
-          <div
-            class="flex items-center gap-3 px-5 py-4 cursor-pointer hover:bg-surface/40 transition-colors"
-            @click="toggle(s.key)"
-          >
-            <span
-              class="w-7 h-7 rounded-full grid place-items-center shrink-0 text-xs font-black"
-              :class="stepIconClass(s)"
-            >
-              <svg v-if="s.done" class="w-3.5 h-3.5 check-pop" :class="{ 'just-saved': justSavedKey === s.key }" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="4">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              <span v-else-if="s.kind === 'external'" class="w-3 h-3" v-html="ICON_HEX"></span>
-              <template v-else>{{ i + 1 }}</template>
-            </span>
-
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="text-sm font-bold text-navy">{{ s.title }}</span>
-                <span v-if="typeof s.count === 'number'" class="text-[10px] font-bold text-teal bg-teal/10 px-1.5 py-0.5 rounded-full">{{ s.count }}</span>
-                <span v-if="!s.required" class="text-[10px] font-bold text-text-muted bg-surface px-1.5 py-0.5 rounded-full">opcional</span>
-                <span v-if="s.done" class="text-[10px] font-bold text-teal">hecho</span>
+      <!-- Panel del paso activo -->
+      <main class="flex-1 overflow-y-auto px-4 sm:px-6 py-10">
+        <div class="max-w-2xl mx-auto">
+          <!-- Estado 100%: reemplaza el panel del paso por un cierre celebratorio. -->
+          <template v-if="status.completed && activeIndex === 0 && !userNavigated">
+            <div class="text-center py-10">
+              <div class="w-20 h-20 rounded-full bg-teal/10 text-teal grid place-items-center mx-auto mb-5">
+                <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
               </div>
-              <p v-if="!s.done" class="text-[11px] text-text-muted mt-0.5 truncate">{{ s.description }}</p>
+              <h1 class="text-2xl font-black text-navy mb-2">Su hotel está listo</h1>
+              <p class="text-sm text-text-muted max-w-md mx-auto">
+                Completó todo lo necesario. Puede repasar u optimizar los pasos opcionales desde la barra de arriba cuando quiera.
+              </p>
+              <button @click="goBack" type="button"
+                class="mt-6 bg-navy text-white font-bold text-sm px-6 py-3 rounded-full hover:bg-navy-light transition-colors cursor-pointer">
+                Volver al dashboard
+              </button>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="flex items-center gap-4 mb-7">
+              <span class="w-14 h-14 rounded-2xl grid place-items-center shrink-0 text-white"
+                :style="{ background: STEP_META[activeStep.key]?.color ?? '#0A1426' }">
+                <svg v-if="activeStep.done" class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                <span v-else class="w-7 h-7" v-html="STEP_META[activeStep.key]?.icon ?? ICON_DOT"></span>
+              </span>
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <h1 class="text-xl font-black text-navy">{{ activeStep.title }}</h1>
+                  <span v-if="!activeStep.required" class="text-[10px] font-bold text-text-muted bg-surface px-2 py-0.5 rounded-full shrink-0">opcional</span>
+                </div>
+                <p class="text-sm text-text-muted">{{ activeStep.description }}</p>
+              </div>
             </div>
 
-            <span
-              class="shrink-0 w-4 h-4 text-text-muted transition-transform duration-200"
-              :class="open === s.key ? 'rotate-180' : ''"
-              v-html="ICON_CHEVRON"
-            ></span>
-          </div>
+            <!-- SIN mode="out-in": con out-in, Vue espera el evento `transitionend` de la salida
+                 antes de montar el componente entrante — si ese evento no llega (foco de pestaña,
+                 throttling, navegación muy rápida) la transición queda TRABADA para siempre y el
+                 panel del paso se queda en blanco a partir de ahí (reproducido: 2da navegación en
+                 adelante). Sin out-in ambas fases corren en paralelo, sin esa espera. -->
+            <Transition name="step-fade">
+              <component :is="stepComponent(activeStep.key)" :key="activeStep.key" :step="activeStep"
+                @saved="onStepSaved" @skip="goNext" />
+            </Transition>
 
-          <!-- Contenido expandido: transición de alto + fade (tarea 3.4). -->
-          <Transition name="step-expand">
-            <div v-if="open === s.key" class="px-5 pb-5 pl-16 overflow-hidden">
-              <component
-                :is="stepComponent(s.key)"
-                :step="s"
-                @saved="(next: OnboardingStatus) => onStepSaved(next, s.key)"
-                @skip="open = null"
-              />
+            <!-- Navegación del wizard — además de la barra de arriba, prev/next lineales. -->
+            <div class="flex items-center justify-between mt-8">
+              <button v-if="activeIndex > 0" @click="goPrev" type="button"
+                class="flex items-center gap-1.5 text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">
+                <span class="w-4 h-4" v-html="ICON_ARROW_LEFT"></span>
+                Anterior
+              </button>
+              <div v-else></div>
+              <button v-if="activeIndex < status.steps.length - 1" @click="goNext" type="button"
+                class="flex items-center gap-1.5 text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">
+                Siguiente
+                <span class="w-4 h-4" v-html="ICON_ARROW_RIGHT"></span>
+              </button>
             </div>
-          </Transition>
+          </template>
         </div>
-      </div>
+      </main>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { OnboardingService, type OnboardingStatus, type OnboardingStep } from '@/services/Onboarding.service'
+import { useRouter } from 'vue-router'
+import { OnboardingService, type OnboardingStatus } from '@/services/Onboarding.service'
 import StepBienvenida from './steps/StepBienvenida.vue'
 import StepIdentidad from './steps/StepIdentidad.vue'
 import StepContacto from './steps/StepContacto.vue'
@@ -107,100 +132,119 @@ import StepPoliticas from './steps/StepPoliticas.vue'
 import StepAmenities from './steps/StepAmenities.vue'
 import StepExternal from './steps/StepExternal.vue'
 
+const router = useRouter()
 const loading = ref(true)
 const status = ref<OnboardingStatus | null>(null)
-/** Paso desplegado. Uno solo por vez (tarea 3.4, mismo patrón que OnboardingGuide.vue). */
-const open = ref<string | null>(null)
-/** Key del paso recién guardado — anima el check de vacío a tildado y colapsa después de un
- *  breve delay (doc 05, animaciones), para que el usuario vea que quedó guardado. */
-const justSavedKey = ref<string | null>(null)
-/** El 100% es un evento que pasa una sola vez en la vida del hotel — transición notoria solo
- *  la primera vez que se detecta acá (no cada vez que se reabre la pantalla ya completa). */
-const justCompleted = ref(false)
-let wasCompleted = false
+const activeIndex = ref(0)
+/** Distingue "está en el 0% de recorrido del wizard, casualmente en el paso 0" (no navegó
+ *  todavía) de "ya navegó" — sin esto, un hotel 100% completo que hace click en el paso 1 de la
+ *  barra volvería a ver la pantalla de cierre en vez del contenido de ese paso. */
+const userNavigated = ref(false)
 
-const ICON_CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>'
-// Rombo — refuerza que un paso operativo manda a otra pantalla, ANTES de abrirlo (doc 05).
-const ICON_HEX = '<svg viewBox="0 0 24 24" fill="currentColor" class="w-full h-full"><path d="M12 2 3 12l9 10 9-10-9-10z"/></svg>'
-
-// Mismo criterio que ProfileProgressBar.vue (doc 04, "Qué cuenta el porcentaje"): SOLO pasos
-// requeridos, opcionales afuera del numerador y el denominador. Antes esto usaba
-// `doneCount`/`totalCount` del backend (que sí incluye opcionales) — mostraba un % distinto al
-// de la franja del dashboard (ej. 80% ahí, 60% acá para el mismo hotel), que leía como un bug
-// aunque los dos números fueran "correctos" para lo que medían cada uno. Los pasos opcionales
-// se siguen viendo con su check individual en la lista de abajo, solo no cuentan acá arriba.
-const requiredSteps = computed(() => status.value?.steps.filter((s) => s.required) ?? [])
-const progress = computed(() => {
-  const total = requiredSteps.value.length
-  if (!total) return 0
-  const done = requiredSteps.value.filter((s) => s.done).length
-  return Math.round((done / total) * 100)
-})
-
-function stepIconClass(s: OnboardingStep): string {
-  if (s.done) return 'bg-teal text-white'
-  if (s.kind === 'external') return 'bg-navy/10 text-navy'
-  return 'border-2 border-border text-text-muted'
+function goBack() { router.push('/panel/dashboard') }
+function goPrev() { userNavigated.value = true; if (activeIndex.value > 0) activeIndex.value-- }
+function goNext() {
+  userNavigated.value = true
+  if (status.value && activeIndex.value < status.value.steps.length - 1) activeIndex.value++
 }
 
-// Import estático (no `defineAsyncComponent`): esta pantalla ya es su propio chunk lazy-cargado
-// por el router (`router/index.ts`), así que separar cada step en OTRO chunk async no ahorra
-// nada real acá — y con `defineAsyncComponent` dentro de un `<Transition>` la resolución async
-// se pisa mal con el auto-stubbing de `@vue/test-utils` (ver index.test.ts).
+const activeStep = computed(() => status.value!.steps[activeIndex.value]!)
+
+const progress = computed(() => {
+  if (!status.value) return 0
+  const required = status.value.steps.filter((s) => s.required)
+  if (!required.length) return 0
+  return Math.round((required.filter((s) => s.done).length / required.length) * 100)
+})
+
 const STEP_COMPONENTS: Record<string, unknown> = {
-  bienvenida: StepBienvenida,
-  identidad: StepIdentidad,
-  contacto: StepContacto,
-  ubicacion: StepUbicacion,
-  politicas: StepPoliticas,
-  amenities: StepAmenities,
-  // Un solo componente genérico para los 4 pasos operativos (doc 06 sección 4) — misma UI que
-  // ya usa OnboardingGuide.vue hoy para estos 4, no hace falta uno por paso.
-  rooms: StepExternal,
-  rates: StepExternal,
-  channels: StepExternal,
-  team: StepExternal,
+  bienvenida: StepBienvenida, identidad: StepIdentidad, contacto: StepContacto,
+  ubicacion: StepUbicacion, politicas: StepPoliticas, amenities: StepAmenities,
+  rooms: StepExternal, rates: StepExternal, channels: StepExternal,
 }
 function stepComponent(key: string) { return STEP_COMPONENTS[key] }
 
-function toggle(key: string) {
-  open.value = open.value === key ? null : key
+const SHORT_LABEL: Record<string, string> = {
+  bienvenida: 'Bienvenida', identidad: 'Identidad', contacto: 'Contacto', ubicacion: 'Ubicación',
+  politicas: 'Políticas', amenities: 'Amenities', rooms: 'Habitaciones', rates: 'Tarifas',
+  channels: 'Canales',
 }
 
-// `savedKey` viene del `s.key` capturado en el scope del v-for al momento de registrar el
-// listener (tarea 3.4/3.12) — NO de `open.value` al momento en que la promesa resuelve. Si el
-// usuario guarda el paso A y cambia a B ANTES de que el request de A termine, `open.value` ya
-// es B cuando este callback corre: usar `open.value` acá le atribuía la animación/auto-colapso
-// de "guardado" al paso B (que el usuario recién abrió, ni tocó el botón), cerrándoselo solo.
-function onStepSaved(next: OnboardingStatus, savedKey: string) {
-  status.value = next
-  justSavedKey.value = savedKey
-  // Breve delay antes de colapsar: tiempo para ver el check animado (doc 05). Solo colapsa si
-  // el paso guardado sigue siendo el que está abierto — si el usuario ya se movió a otro, no
-  // le toca la pantalla.
-  setTimeout(() => {
-    if (open.value === savedKey) open.value = null
-    if (justSavedKey.value === savedKey) justSavedKey.value = null
-  }, 700)
-  checkJustCompleted(next)
+const ICON_ARROW_LEFT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"/></svg>'
+const ICON_ARROW_RIGHT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>'
+const ICON_DOT = '<svg viewBox="0 0 24 24" fill="currentColor" class="w-full h-full"><circle cx="12" cy="12" r="4"/></svg>'
+
+// Un color e ícono bien distinto por paso — a propósito FUERA de la paleta navy/cyan del resto
+// del panel: el pedido explícito fue "que tengamos un wizard increíble", no otra pantalla más
+// del panel administrativo. `rooms` reusa el ícono de cama que ya usa AdminLayout.vue (mismo
+// path, ya verificado en producción); `channels` idem con el ícono de link.
+const STEP_META: Record<string, { color: string; icon: string }> = {
+  bienvenida: {
+    color: '#3B82F6', // blue-500
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12 11.204 3.045a1.125 1.125 0 0 1 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75"/></svg>',
+  },
+  identidad: {
+    color: '#8B5CF6', // violet-500
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.5a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z"/></svg>',
+  },
+  contacto: {
+    color: '#14B8A6', // teal-500
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a1.5 1.5 0 0 0 1.5-1.5v-3.108a1.5 1.5 0 0 0-1.06-1.435l-4.185-1.395a1.5 1.5 0 0 0-1.536.365l-1.146 1.146a11.25 11.25 0 0 1-5.11-5.11l1.146-1.147a1.5 1.5 0 0 0 .365-1.535L8.058 3.81A1.5 1.5 0 0 0 6.623 2.75H3.75a1.5 1.5 0 0 0-1.5 1.5v2.5Z"/></svg>',
+  },
+  ubicacion: {
+    color: '#F97316', // orange-500
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z"/></svg>',
+  },
+  politicas: {
+    color: '#EF4444', // red-500
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7 7.5 3v5.25c0 4.5-3 7.409-7.5 8.75-4.5-1.341-7.5-4.25-7.5-8.75V5.75l7.5-3Z"/></svg>',
+  },
+  amenities: {
+    color: '#EC4899', // pink-500
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.035-.259a3.375 3.375 0 0 0 2.456-2.455L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>',
+  },
+  rooms: {
+    color: '#22C55E', // green-500
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M3 18v-7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v7M3 18v2M3 18h18M21 18v2M5 13V9a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v4"/></svg>',
+  },
+  rates: {
+    color: '#F59E0B', // amber-500
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.828 8.828a2 2 0 0 0 2.828 0l7.172-7.172a2 2 0 0 0 0-2.828l-8.828-8.828Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01"/></svg>',
+  },
+  channels: {
+    color: '#06B6D4', // cyan-500
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5 21 3M16.5 3H21v4.5M10.5 13.5 3 21M7.5 21H3v-4.5"/></svg>',
+  },
 }
 
-function checkJustCompleted(next: OnboardingStatus) {
-  if (next.completed && !wasCompleted) {
-    justCompleted.value = true
-    setTimeout(() => { justCompleted.value = false }, 900)
+function stepCircleStyle(s: { key: string; done: boolean }, i: number): Record<string, string> {
+  const color = STEP_META[s.key]?.color ?? '#0A1426'
+  const isActive = activeIndex.value === i
+  return {
+    background: s.done ? '#0D9488' /* teal-600, mismo tono que el resto del panel para "hecho" */ : color,
+    boxShadow: isActive ? `0 0 0 3px white, 0 0 0 5px ${s.done ? '#0D9488' : color}` : 'none',
+    transform: isActive ? 'scale(1.08)' : 'scale(1)',
   }
-  wasCompleted = next.completed
+}
+
+function onStepSaved(next: OnboardingStatus) {
+  const savedIndex = activeIndex.value
+  status.value = next
+  // Breve pausa para que se vea el check tildarse en la barra antes de avanzar solo al
+  // siguiente paso — flujo de wizard, no un colapso de acordeón.
+  setTimeout(() => {
+    if (activeIndex.value === savedIndex) goNext()
+  }, 500)
 }
 
 onMounted(async () => {
   try {
     const s = await OnboardingService.status()
     status.value = s
-    wasCompleted = s.completed
-    // Arranca abierto el primer paso pendiente — igual criterio que OnboardingGuide.vue: si hay
-    // que tocar para ver el formulario, la mayoría no toca.
-    open.value = s.steps.find((x) => !x.done)?.key ?? null
+    // Arranca en el primer paso pendiente (si hay uno) — si ya está todo completo, arranca en 0
+    // y se muestra el cierre celebratorio en vez del contenido del paso.
+    const firstPending = s.steps.findIndex((x) => !x.done)
+    activeIndex.value = firstPending === -1 ? 0 : firstPending
   } finally {
     loading.value = false
   }
@@ -208,33 +252,17 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.step-expand-enter-active, .step-expand-leave-active {
-  transition: max-height .2s ease, opacity .2s ease;
-  max-height: 700px;
-  overflow: hidden;
+/* Solo el paso ENTRANTE hace fade — sin mode="out-in" el saliente y el entrante conviven un
+   instante en el DOM; si el saliente también transicionara (position estática) se vería un
+   salto de layout con los dos apilados. El saliente desaparece al instante (sin leave-active),
+   el entrante hace fade-in solo. */
+.step-fade-enter-active {
+  transition: opacity .15s ease;
 }
-.step-expand-enter-from, .step-expand-leave-to {
-  max-height: 0;
+.step-fade-enter-from {
   opacity: 0;
 }
-
-.check-pop { transition: transform .15s ease; }
-.check-pop.just-saved { animation: checkPop .25s ease; }
-@keyframes checkPop {
-  0% { transform: scale(0.4); opacity: 0; }
-  60% { transform: scale(1.25); opacity: 1; }
-  100% { transform: scale(1); }
-}
-
-.celebrate { animation: celebrateFade .5s ease; }
-@keyframes celebrateFade {
-  0% { transform: scale(0.98); opacity: .7; }
-  60% { transform: scale(1.01); }
-  100% { transform: scale(1); opacity: 1; }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .step-expand-enter-active, .step-expand-leave-active { transition: none; }
-  .check-pop.just-saved, .celebrate { animation: none; }
+  .step-fade-enter-active { transition: none; }
 }
 </style>
