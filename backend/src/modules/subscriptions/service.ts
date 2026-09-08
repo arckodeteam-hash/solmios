@@ -77,11 +77,11 @@ export class SubscriptionsService {
     this.signupUc.setEmailDeps(sender, appUrl || '')
   }
 
-  /** Cablea `platform-emails.sendEvent()` — welcome (signup) + payment_succeeded/failed/
-   *  subscription_canceled (webhook de Stripe). Lo llama el bootstrap de email. */
+  /** Cablea `platform-emails.sendEvent()` — trial_ending + payment_succeeded/failed/
+   *  subscription_canceled (webhook de Stripe). Lo llama el bootstrap de email. El alta NO pasa
+   *  por acá desde #69: manda un solo correo propio (bienvenida + verificación). */
   setPlatformEmailSender(fn: NonNullable<typeof this.sendPlatformEmail>): void {
     this.sendPlatformEmail = fn
-    this.signupUc.setPlatformEmailSender(fn)
   }
 
   /** ACUMULA handlers — nunca pisa el anterior. Ver `shared/utils/compose-sockets.ts`. */

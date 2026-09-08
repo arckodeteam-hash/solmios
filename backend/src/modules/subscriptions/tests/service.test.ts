@@ -2,6 +2,8 @@
 // todavía no es cliente, y qué ve el hotel sobre su propia suscripción.
 import { describe, it, expect } from 'bun:test'
 import { SubscriptionsService } from '../service'
+// La duración de la prueba se deriva de la constante: la promesa pública y el test se mueven juntos.
+import { TRIAL_DAYS } from '../usecases/signup'
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 
 const log = { info() {}, error() {}, warn() {}, child: () => log } as unknown as Logger
@@ -217,13 +219,13 @@ describe('SubscriptionsService — política de tarjeta en la prueba (#28)', () 
   it('sin el puerto cableado, el alta no exige tarjeta y la política pública lo dice', async () => {
     const svc = setup()
     expect(await svc.signupPolicy()).toEqual({ requireCardOnTrial: false })
-    expect(await svc.publicSignupPolicy()).toEqual({ requireCardOnTrial: false, trialDays: 7 })
+    expect(await svc.publicSignupPolicy()).toEqual({ requireCardOnTrial: false, trialDays: TRIAL_DAYS })
   })
 
   it('con la política prendida, la política pública la refleja junto con los días de prueba', async () => {
     const svc = setup()
     svc.setPlatformSettingsDeps(async () => ({ requireCardOnTrial: true, enabled: false, durationDays: 90 }))
-    expect(await svc.publicSignupPolicy()).toEqual({ requireCardOnTrial: true, trialDays: 7 })
+    expect(await svc.publicSignupPolicy()).toEqual({ requireCardOnTrial: true, trialDays: TRIAL_DAYS })
   })
 
   it('si la config explota, la política pública cae al camino conservador (no exige tarjeta)', async () => {

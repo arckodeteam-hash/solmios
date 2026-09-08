@@ -10,12 +10,12 @@ import { ValidationError } from 'arckode-framework'
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { passwordIssues } from '../../../shared/password-policy'
 import { isValidEmail } from '../../../shared/email'
-import { newVerificationToken, verificationEmail } from '../../usuarios/usecases/email-verification'
+import { newVerificationToken, welcomeVerificationEmail } from '../../usuarios/usecases/email-verification'
 import { DEFAULT_ROLE_PERMISSIONS } from '../../../shared/permissions'
 import { buildHotelSlug } from '../../../shared/utils/hotel-slug'
 
 /** Días de prueba gratis. Es la promesa de la landing: si cambia, cambia acá. */
-export const TRIAL_DAYS = 7
+export const TRIAL_DAYS = 15
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 
@@ -70,8 +70,6 @@ export interface SignupDeps {
   emailSender?: { enqueue: (input: { to: string; subject: string; html: string; hotelId: string; relatedType?: string }) => Promise<string> }
   /** Base pública para armar el link de verificación (ej. https://hotel.zx89.site). */
   appUrl?: string
-  /** `platform-emails.sendEvent('welcome', ...)`. Opcional y best-effort: igual criterio que emailSender. */
-  platformEmailSender?: (event: string, to: string, hotelId: string, vars: Record<string, string>) => Promise<{ sent: boolean }>
   /** Obligatorio: los envíos del alta son best-effort, y sin log un SMTP caído no deja rastro
    *  (el alta devuelve 201 y nadie se entera de que el correo nunca salió — issue #27). */
   logger: Logger
@@ -84,11 +82,6 @@ export class SignupUseCase {
   setEmailDeps(sender: SignupDeps['emailSender'], appUrl: string): void {
     this.deps.emailSender = sender
     this.deps.appUrl = appUrl
-  }
-
-  /** Inyecta `platform-emails.sendEvent()` para el correo de bienvenida (best-effort). */
-  setPlatformEmailSender(fn: SignupDeps['platformEmailSender']): void {
-    this.deps.platformEmailSender = fn
   }
 
   async signup(input: SignupInput, now: Date = new Date()): Promise<SignupResult> {
@@ -188,7 +181,9 @@ export class SignupUseCase {
       trialEndsAt: trialEnds.toISOString(),
     })
 
-    // Encolar el correo de verificación. BEST-EFFORT: un fallo acá NO tumba el alta (el hotel ya
+    // Encolar el ÚNICO correo del alta (#69): bienvenida y verificación en un solo mensaje —
+    // antes salían dos (este y la plantilla `welcome` de platform-emails) y la persona recibía
+    // lo mismo dos veces. BEST-EFFORT: un fallo acá NO tumba el alta (el hotel ya
     // está creado y entra igual; puede reenviar el correo desde el banner del panel —
     // `frontend/src/layouts/AdminLayout.vue:134-146` → `POST /api/auth/resend-verification`,
     // `backend/src/modules/usuarios/index.ts:81`. Verificado 2026-08-19: ambos existen).
@@ -198,7 +193,8 @@ export class SignupUseCase {
       try {
         const base = (this.deps.appUrl || '').replace(/\/$/, '')
         const link = `${base}/api/public/verify-email?token=${verification.token}`
-        const mail = verificationEmail(link, hotelName)
+        // El alta SIEMPRE arranca en prueba (`status: 'trialing'`), así que el correo la anuncia.
+        const mail = welcomeVerificationEmail(link, hotelName, TRIAL_DAYS)
         await this.deps.emailSender.enqueue({ to: email, subject: mail.subject, html: mail.html, hotelId, relatedType: 'email_verification' })
       } catch (e) {
         // SMTP caído no puede perder el hotel, pero tiene que quedar registrado.
@@ -210,18 +206,6 @@ export class SignupUseCase {
       // dejaba ni una línea: el correo nunca se encolaba y nadie se enteraba. Es literalmente el
       // síntoma del issue #27 — "no envía el correo de confirmación", sin rastro para diagnosticar.
       this.deps.logger.warn('Alta: sin emailSender configurado — el correo de verificación NO se encoló', { hotelId, email })
-    }
-
-    // Correo de bienvenida (platform-emails, plantilla `welcome`). BEST-EFFORT: el alta ya terminó
-    // (201 con la cuenta creada) — un fallo acá no puede deshacer nada de lo anterior.
-    if (this.deps.platformEmailSender) {
-      try {
-        const base = (this.deps.appUrl || '').replace(/\/$/, '')
-        await this.deps.platformEmailSender('welcome', email, hotelId, { hotel_name: hotelName, link: `${base}/panel/dashboard` })
-      } catch (e) {
-        // Un correo de bienvenida caído no puede perder el hotel, pero tiene que quedar registrado.
-        this.deps.logger.warn('Alta: no se pudo encolar el correo de bienvenida', { hotelId, email, error: (e as Error).message })
-      }
     }
 
     return {
