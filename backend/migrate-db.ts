@@ -12,6 +12,7 @@ import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
 import { PostgresAdapter } from 'arckode-framework/adapters/postgres'
 import type { DbAdapter } from 'arckode-framework'
 import { backfillPaymentsReservationId } from './scripts/backfill-payments-reservation'
+import { backfillAriOutboxPendingKey } from './scripts/backfill-ari-outbox-pending-key'
 import { LEGAL_PAGES_SEED } from './scripts/legal-pages-content'
 import { MARKETING_PAGES_SEED } from './scripts/marketing-pages-content'
 
@@ -204,27 +205,18 @@ async function createTablesBlock1(): Promise<void> {
   // que las bases existentes se quedarían sin índice (mismo motivo que idx_configuration_hotel_key
   // y idx_site_pages_slug). El addColumnIfMissing cubre las bases donde ormMigrate todavía no corrió
   // con el modelo nuevo; si la tabla no existe aún, el índice entra en la próxima corrida.
-  await addColumnIfMissing('ari_outbox', 'pendingKey', 'TEXT')
+  // El try cubre TAMBIÉN el addColumnIfMissing: sobre una base donde `ari_outbox` todavía no
+  // existe, el ALTER TABLE tira "no such table", que NO es un error de "ya existe" y por lo tanto
+  // `isAlreadyExistsError` no lo silencia. Fuera del try se escapaba al único .catch() de main()
+  // y abortaba TODA la migración —los bloques de DDL y los seeds que siguen— en vez de degradar
+  // como promete el mensaje de abajo.
   try {
-    // Backfill idempotente y SIN duplicados: las filas ya pendientes necesitan su pendingKey, pero
-    // una base con el bug puede tener DOS pendientes del mismo par y marcarlas a las dos haría
-    // fallar el CREATE UNIQUE INDEX. Se marca UNA sola por grupo (la más vieja) y las demás quedan
-    // en NULL: se drenan como hasta hoy y el índice rige de ahí en adelante. La decisión se toma en
-    // JS con un UPDATE por id — SQL ANSI, sin PRAGMA ni funciones de un solo motor.
-    const pendientes = (await db.query(
-      `SELECT id, hotelId, kind, pendingKey FROM ari_outbox WHERE status = 'pending' ORDER BY createdAt, id`,
-    )) as Array<{ id: string; hotelId: string; kind: string; pendingKey: string | null }>
-    const tomadas = new Set(pendientes.map(r => r.pendingKey).filter(Boolean) as string[])
-    let marcadas = 0
-    for (const fila of pendientes) {
-      if (fila.pendingKey) continue // ya la marcó una corrida anterior o la cola nueva
-      const clave = `${fila.hotelId}|${fila.kind}`
-      if (tomadas.has(clave)) continue // el turno ya lo tiene otra fila del mismo par
-      tomadas.add(clave)
-      await run(`UPDATE ari_outbox SET pendingKey = ? WHERE id = ?`, [clave, fila.id])
-      marcadas++
-    }
-    if (marcadas > 0) console.log(`  ari_outbox: pendingKey backfilleado en ${marcadas} fila(s) pendiente(s)`)
+    await addColumnIfMissing('ari_outbox', 'pendingKey', 'TEXT')
+    // Backfill idempotente y SIN duplicados. La decisión de qué fila se lleva el turno se toma
+    // DENTRO de la sentencia y no en JS: ver el comentario del script, es lo que evita que la
+    // clave salga corrupta en Postgres.
+    const marcadas = await backfillAriOutboxPendingKey(db)
+    if (marcadas > 0) console.log(`  ari_outbox: ${marcadas} fila(s) pendiente(s) con pendingKey`)
     await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ari_outbox_pending_key ON ari_outbox (pendingKey)`)
   } catch (e: unknown) {
     console.log("idx_ari_outbox_pending_key: tabla ari_outbox aún no migrada (correr RUN_MIGRATE) —", e instanceof Error ? e.message.slice(0, 90) : String(e))

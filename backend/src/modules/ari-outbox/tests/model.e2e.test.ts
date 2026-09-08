@@ -13,6 +13,7 @@ import { ORM, OrmRepository } from 'arckode-framework'
 import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
 import { registerAriOutboxModels } from '../model'
 import type { AriOutboxRow } from '../types'
+import { backfillAriOutboxPendingKey } from '../../../../scripts/backfill-ari-outbox-pending-key'
 
 const HOTEL_ID = 'e2e-outbox-hotel-1'
 
@@ -198,5 +199,95 @@ describe('ari_outbox — pendingKey: la base impide dos filas pendientes del mis
       const fila = await repo.findById(id) as AriOutboxRow
       expect(fila.pendingKey ?? null).toBeNull() // fuera de pending nadie ocupa el turno
     }
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// El backfill de las bases que ya existían (#65, hallazgo de revisión).
+//
+// `migrate-db.ts` corre en CADA deploy sobre bases con datos: las filas pendientes de antes de la
+// columna necesitan su pendingKey ANTES de que se cree el índice único, y una base con el bug de
+// #65 tiene DOS pendientes del mismo par — marcarlas a las dos haría fallar el CREATE UNIQUE INDEX
+// y dejaría la base sin la garantía justo donde más falta hace.
+//
+// Se prueba sobre una tabla creada A MANO con la DDL de una base VIEJA (sin pendingKey), como
+// payments/tests/reservation-link.test.ts, para ejercitar el ALTER + backfill + índice en ese
+// orden, que es el camino real del deploy y el que `orm.migrate()` NO recorre.
+describe('backfillAriOutboxPendingKey — bases que ya tenían filas pendientes (#65)', () => {
+  async function baseVieja(): Promise<any> {
+    const vieja = new SqliteAdapter({ path: ':memory:', wal: false, foreignKeys: false }) as any
+    await vieja.connect()
+    await vieja.run(`CREATE TABLE ari_outbox (
+      id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, kind TEXT NOT NULL, channels TEXT,
+      status TEXT DEFAULT 'pending', scheduledAt TEXT, attempts INTEGER DEFAULT 0,
+      maxAttempts INTEGER DEFAULT 3, lastError TEXT, claimedBy TEXT,
+      createdAt TEXT, updatedAt TEXT)`)
+    await vieja.run(`ALTER TABLE ari_outbox ADD COLUMN pendingKey TEXT`)
+    return vieja
+  }
+
+  const fila = (id: string, hotelId: string, kind: string, status = 'pending') =>
+    [id, hotelId, kind, status, '2026-09-07T10:00:00.000Z']
+
+  it('marca UNA sola fila por (hotelId,kind) y deja pasar el CREATE UNIQUE INDEX', async () => {
+    const db = await baseVieja()
+    // El bug de #65 en la base: DOS pendientes del mismo par (las creó cada proceso por su lado).
+    for (const f of [
+      fila('b-2', 'hotel-A', 'rates'),   // id mayor a propósito: gana la de MIN(id), no la primera insertada
+      fila('b-1', 'hotel-A', 'rates'),
+      fila('b-3', 'hotel-B', 'rates'),   // otro hotel, mismo kind: NO se puede agrupar por kind solo
+      fila('b-4', 'hotel-A', 'inventory'),
+      fila('b-5', 'hotel-A', 'rates', 'sent'), // historial: fuera de pending nadie ocupa el turno
+    ]) {
+      await db.run(
+        `INSERT INTO ari_outbox (id, hotelId, kind, status, scheduledAt) VALUES (?, ?, ?, ?, ?)`, f,
+      )
+    }
+
+    expect(await backfillAriOutboxPendingKey(db)).toBe(3) // A|rates, B|rates, A|inventory
+
+    const marcadas = (await db.query(
+      `SELECT id, pendingKey FROM ari_outbox WHERE pendingKey IS NOT NULL ORDER BY id`,
+    )) as Array<{ id: string; pendingKey: string }>
+    expect(marcadas.map(r => [r.id, r.pendingKey])).toEqual([
+      ['b-1', 'hotel-A|rates'],      // la de MIN(id) del grupo duplicado
+      ['b-3', 'hotel-B|rates'],      // hotel distinto → clave distinta (no se agrupa por kind)
+      ['b-4', 'hotel-A|inventory'],
+    ])
+    // b-2 (la duplicada que perdió) y b-5 (sent) quedan en NULL, y por eso el índice entra.
+    await db.run(`CREATE UNIQUE INDEX idx_ari_outbox_pending_key ON ari_outbox (pendingKey)`)
+    // `SqliteAdapter.run` declara Promise pero NO es async: bun:sqlite tira ANTES de que haya
+    // promesa, así que esto va con `expect(fn).toThrow()` y no con `.rejects`.
+    expect(() => db.run(
+      `INSERT INTO ari_outbox (id, hotelId, kind, status, scheduledAt, pendingKey)
+       VALUES ('b-9', 'hotel-A', 'rates', 'pending', '2026-09-07T12:00:00.000Z', 'hotel-A|rates')`,
+    )).toThrow()
+  })
+
+  it('es idempotente: la segunda corrida no re-marca ni rompe el índice', async () => {
+    const db = await baseVieja()
+    await db.run(
+      `INSERT INTO ari_outbox (id, hotelId, kind, status, scheduledAt) VALUES (?, ?, ?, ?, ?)`,
+      fila('c-1', 'hotel-A', 'rates'),
+    )
+    expect(await backfillAriOutboxPendingKey(db)).toBe(1)
+    await db.run(`CREATE UNIQUE INDEX idx_ari_outbox_pending_key ON ari_outbox (pendingKey)`)
+
+    // Llega una ráfaga nueva del mismo par mientras la vieja sigue pendiente: no puede quedar con
+    // la misma clave (la frena el índice), así que entra con pendingKey NULL. La 2ª corrida del
+    // backfill NO puede marcarla: el turno ya lo tiene c-1.
+    await db.run(
+      `INSERT INTO ari_outbox (id, hotelId, kind, status, scheduledAt) VALUES (?, ?, ?, ?, ?)`,
+      fila('c-0', 'hotel-A', 'rates'), // id MENOR que c-1: aunque MIN(id) la elija, c-1 ya tiene el turno
+    )
+    expect(await backfillAriOutboxPendingKey(db)).toBe(1) // sigue habiendo UNA sola marcada
+
+    const claves = (await db.query(
+      `SELECT id, pendingKey FROM ari_outbox ORDER BY id`,
+    )) as Array<{ id: string; pendingKey: string | null }>
+    expect(claves).toEqual([
+      { id: 'c-0', pendingKey: null },
+      { id: 'c-1', pendingKey: 'hotel-A|rates' },
+    ])
   })
 })
