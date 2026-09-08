@@ -45,6 +45,15 @@ function saneMaxAttempts(n: unknown, fallback: number): number {
   return Number.isFinite(v) && v >= 1 ? v : fallback
 }
 
+/**
+ * La clave del turno pendiente de un (hotel, kind). Un solo lugar arma el string porque los dos
+ * candados de `schedule` se apoyan en él: la cadena de promesas EN MEMORIA (serialización
+ * intra-proceso) y la columna `pendingKey` con su índice único EN LA BASE (unicidad entre
+ * procesos, ver model.ts). Si los dos dejaran de ser el mismo string, dos llamadas que la cadena
+ * cree serializadas competirían igual en la tabla.
+ */
+const claveDePendiente = (hotelId: string, kind: string): string => `${hotelId}|${kind}`
+
 /** Puerto de persistencia: lo implementa OrmRepository en el módulo, y un array en los tests. */
 export interface AriOutboxPort {
   create(row: AriOutboxRow): Promise<AriOutboxRow>
@@ -161,15 +170,30 @@ export class AriOutbox {
    * se crean DOS filas y salen DOS pushes, que es justo lo que CA-3 prohíbe. El coalescer en
    * memoria no tenía este hueco porque era 100% síncrono; esta cadena es su equivalente acá.
    *
-   * OJO: la serialización es POR PROCESO. El reclamo de la fila ya no depende de ella —lo resuelve
-   * el UPDATE condicional de `repo.updateWhere`, ver processOne—, pero la carrera de `scheduleOne`
-   * sigue abierta: dos procesos pueden leer los dos "no hay fila pendiente" y CREAR dos filas
-   * pending del mismo (hotel, kind), que después salen como dos pushes. Taparlo necesitaría un
-   * índice único PARCIAL (hotelId, kind) WHERE status='pending', que el ORM no expresa. Hoy corre
-   * un solo systemd, así que el escenario es hipotético (#51).
+   * DOS CANDADOS, uno por cada carrera, y ninguno reemplaza al otro:
+   *
+   * - INTRA-proceso: esta cadena, que se queda. Es el caso REAL y frecuente —los dos `void
+   *   schedule(...)` del mismo guardado, a milésimas— y lo resuelve sin ir a la base: las dos
+   *   llamadas se ordenan, la segunda ve la fila que escribió la primera y le fusiona los canales.
+   *   Camino barato, cero escrituras rechazadas, cero round-trips de más.
+   * - ENTRE procesos: el índice único sobre `pendingKey` (columna declarada en model.ts). El Map
+   *   vive en la memoria de ESTE proceso, así que dos réplicas —o un deploy solapado— pueden leer
+   *   las dos "no hay fila pendiente" y crear las dos. Ahí la base rechaza el segundo INSERT y
+   *   `scheduleOne` fusiona sus canales en la fila que ganó (#65), en vez de dejar DOS ráfagas
+   *   pendientes del mismo (hotel, kind) y publicar dos pushes.
+   *
+   * POR QUÉ `pendingKey` ES ASÍ, para el que venga a "limpiarla": lo que hace falta es unicidad de
+   * (hotelId, kind) SOLO entre las filas `pending`, o sea un índice único PARCIAL con
+   * `WHERE status='pending'`, y el ORM no sabe expresar predicados en un índice. La columna lo
+   * emula exacto: vale `${hotelId}|${kind}` MIENTRAS la fila está pending y NULL en cualquier otro
+   * estado, y como en SQL los NULL de un índice único son DISTINTOS entre sí, el historial
+   * `sent`/`failed` del mismo par —cientos de filas— convive sin chocar. Quien la mantiene es el
+   * ciclo de vida de acá abajo: la escribe `scheduleOne`, la borra el reclamo de `processOne`, y
+   * la restauran —best-effort, ver `volverAPending`— el reintento de `handleFailure` y
+   * `reclaimStale`. Sacarla, o dejarla poblada en una fila que ya no está pending, reabre el bug.
    */
   schedule(hotelId: string, kind: string, channels: Array<string | undefined> = [undefined]): Promise<void> {
-    const key = `${hotelId}|${kind}`
+    const key = claveDePendiente(hotelId, kind)
     const previa = this.scheduleChains.get(key) ?? Promise.resolve()
     const corrida = previa.then(() => this.scheduleOne(hotelId, kind, channels))
     // La cadena GUARDADA nunca rechaza: un schedule que falla no puede envenenar a los siguientes
@@ -187,13 +211,44 @@ export class AriOutbox {
     const explicit = channels.filter((c): c is string => !!c)
     const scheduledAt = this.iso(this.now() + this.debounceMs)
     const [row] = await this.repo.findMany({ hotelId, kind, status: 'pending' })
-    if (row) {
-      // UNIÓN, el mismo Set del coalescer: una ráfaga mixta "global + canal X" termina publicando
-      // SOLO X, porque el hotel editó la tarifa de X y la base la pisaría.
-      const merged = [...new Set([...(row.channels ?? []), ...explicit])]
-      await this.repo.update(row.id, { channels: merged, scheduledAt })
-      return
+    if (row) return await this.fusionar(row, explicit, scheduledAt)
+
+    try {
+      await this.crearPendiente(hotelId, kind, explicit, scheduledAt)
+    } catch (err: unknown) {
+      // PERDIMOS LA CARRERA ENTRE PROCESOS: otro proceso insertó la fila pendiente de este mismo
+      // (hotel, kind) entre nuestro findMany y nuestro create, y el índice único de `pendingKey`
+      // rechazó el nuestro. La ráfaga NO se pierde: se fusiona en la fila que ganó, exactamente el
+      // mismo merge que el camino de arriba.
+      //
+      // A PROPÓSITO no se mira el mensaje del error: cada motor escribe la violación de unicidad
+      // distinto ('UNIQUE constraint failed' en SQLite, 'duplicate key value' en Postgres,
+      // 'Duplicate entry' en MySQL) y un match por texto se rompe callado con el próximo motor o
+      // la próxima versión. La prueba de que era la carrera no es el mensaje: es que al releer HAY
+      // una fila pendiente del par. Si no la hay, este camino no la tapa —el create se rehace y su
+      // error, sea el que sea, se propaga.
+      const [ganadora] = await this.repo.findMany({ hotelId, kind, status: 'pending' })
+      if (ganadora) return await this.fusionar(ganadora, explicit, scheduledAt)
+      // Sin fila pendiente al releer: la ganadora ya pasó a 'processing' (el reclamo libera la
+      // clave), así que el turno está vacante otra vez. UN reintento, no un bucle: si el segundo
+      // create también falla, el error sube. Reintentar en loop contra una base que rechaza por
+      // otro motivo colgaría el schedule para siempre, que es peor que el bug que arregla.
+      await this.crearPendiente(hotelId, kind, explicit, scheduledAt)
     }
+  }
+
+  /**
+   * Fusión de la ráfaga nueva sobre la fila pendiente que ya existe. UNIÓN, el mismo Set del
+   * coalescer: una ráfaga mixta "global + canal X" termina publicando SOLO X, porque el hotel
+   * editó la tarifa de X y la base la pisaría. No toca `pendingKey`: la fila ya tiene su turno.
+   */
+  private async fusionar(row: AriOutboxRow, explicit: string[], scheduledAt: string): Promise<void> {
+    const merged = [...new Set([...(row.channels ?? []), ...explicit])]
+    await this.repo.update(row.id, { channels: merged, scheduledAt })
+  }
+
+  /** El INSERT de la fila pendiente, con la clave del turno puesta. Tira si el turno está tomado. */
+  private async crearPendiente(hotelId: string, kind: string, explicit: string[], scheduledAt: string): Promise<void> {
     await this.repo.create({
       id: this.newId(),
       hotelId,
@@ -205,6 +260,8 @@ export class AriOutbox {
       // El tope viaja EN LA FILA: cambiar la config después no toca a las ya encoladas.
       maxAttempts: this.maxAttempts,
       lastError: null,
+      // El candado: mientras esta fila esté pending, nadie más puede crear otra del mismo par.
+      pendingKey: claveDePendiente(hotelId, kind),
     })
   }
 
@@ -245,9 +302,12 @@ export class AriOutbox {
       if (row.updatedAt && row.updatedAt >= cutoff) continue
       // `?? null` y no `row.claimedBy` a secas: una fila anterior a este campo lo trae undefined, y
       // un filtro por undefined no es un filtro por "sin dueño".
-      const won = await this.repo.updateWhere(
+      // Vuelve a pending, así que le toca recuperar la clave del turno: por `volverAPending`, que
+      // aguanta que el turno ya esté tomado por una ráfaga nueva.
+      const won = await this.volverAPending(
         { id: row.id, status: 'processing', claimedBy: row.claimedBy ?? null },
         { status: 'pending', scheduledAt: this.iso(this.now()), claimedBy: null },
+        row,
       )
       if (won > 0) reclaimed++
     }
@@ -261,9 +321,15 @@ export class AriOutbox {
     // 'processing' SOLO si sigue en 'pending'. Los dos procesos que leyeron la misma fila vencida
     // llegan hasta acá, pero uno cambia 1 fila y el otro 0 — y el que ve 0 se va sin publicar, que
     // es exactamente el push duplicado que antes salía dos veces.
+    // `pendingKey: null` en el mismo patch: al dejar de estar pending la fila LIBERA su turno, y
+    // una ráfaga nueva del mismo (hotel, kind) puede crear su propia fila mientras esta se
+    // publica. No es un cambio de comportamiento —`scheduleOne` siempre buscó con
+    // `status: 'pending'`, así que una fila en 'processing' nunca frenó una ráfaga nueva—: es lo
+    // que mantiene la columna fiel a su invariante (poblada si y sólo si la fila está pending),
+    // sin la cual el índice único bloquearía el próximo push del hotel hasta que este termine.
     const won = await this.repo.updateWhere(
       { id: row.id, status: 'pending' },
-      { status: 'processing', claimedBy: this.owner },
+      { status: 'processing', claimedBy: this.owner, pendingKey: null },
     )
     if (won === 0) return
 
@@ -368,14 +434,58 @@ export class AriOutbox {
       await this.notify(this.onFailed, { ...row, status: 'failed', attempts, lastError })
       return
     }
+    // Reintento: la fila VUELVE a pending, así que vuelve a competir por el turno del par y le
+    // toca recuperar `pendingKey`. Best-effort (ver `volverAPending`): el turno puede haberlo
+    // tomado una ráfaga nueva mientras esta estaba en 'processing'.
+    // La OTRA rama —'failed' definitivo— y el cierre en 'sent' no tocan la columna a propósito:
+    // salen de 'processing', donde el reclamo ya la dejó en NULL, y escribirla de nuevo sería una
+    // escritura de más sin ningún invariante que sostener.
     const backoff = BACKOFF_MS[Math.min(attempts - 1, BACKOFF_MS.length - 1)]
-    await this.repo.updateWhere(mia, {
-      status: 'pending',
-      attempts,
-      lastError,
-      scheduledAt: this.iso(this.now() + backoff),
-      claimedBy: null,
-    })
+    await this.volverAPending(
+      mia,
+      {
+        status: 'pending',
+        attempts,
+        lastError,
+        scheduledAt: this.iso(this.now() + backoff),
+        claimedBy: null,
+      },
+      row,
+    )
+  }
+
+  /**
+   * Devuelve una fila a 'pending' restaurando su `pendingKey`, y si el turno ya está tomado la
+   * devuelve igual SIN la clave. Lo usan las dos vueltas atrás de la cola: el reintento con
+   * backoff de `handleFailure` y el reclamo de `reclaimStale`.
+   *
+   * BEST-EFFORT a propósito. Mientras la fila estaba en 'processing' su turno quedó libre, así que
+   * una ráfaga nueva del mismo (hotel, kind) pudo crear otra fila pending: restaurar la clave ahí
+   * viola el índice único. Ante eso, la fila vuelve a pending con `pendingKey` NULL — que es
+   * EXACTAMENTE el comportamiento anterior a #65 (dos filas pending del mismo par conviviendo, el
+   * drain publica las dos), o sea ninguna regresión, y muchísimo mejor que la alternativa: tirar
+   * desde acá aborta el `for` de `drain`/`reclaimStale` y deja sin procesar todas las filas que
+   * venían detrás. Por eso este método NUNCA propaga: devuelve 0 y sigue.
+   *
+   * El primer rechazo no se reporta por `onError`: es contención esperada, no una falla. El
+   * segundo sí, porque ya no se explica por el índice (la base está caída, la fila no existe) y un
+   * silencio ahí escondería una fila que se quedó en 'processing' para siempre.
+   */
+  private async volverAPending(
+    where: Record<string, unknown>,
+    patch: Partial<AriOutboxRow>,
+    row: AriOutboxRow,
+  ): Promise<number> {
+    try {
+      return await this.repo.updateWhere(where, { ...patch, pendingKey: claveDePendiente(row.hotelId, row.kind) })
+    } catch {
+      try {
+        return await this.repo.updateWhere(where, patch)
+      } catch (err: unknown) {
+        this.onError(row.hotelId, undefined, err)
+        return 0
+      }
+    }
   }
 
   private iso(ms: number): string {
