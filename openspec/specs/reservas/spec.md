@@ -261,6 +261,15 @@ Deuda resuelta con posterioridad a la primer versión de este spec:
   `available`/`unavailableReason`, `shared/usecases/habitaciones-availability.ts`) con
   debounce de 300ms; sin fechas completas o si el fetch falla, lista todo (comportamiento
   previo). El 409 del backend sigue siendo la barrera de sobrevendo.
+- ~~**E2E de precio por temporada intermitente** (#54)~~: resuelto en `194758d0` — el
+  `beforeAll` de `reservas/tests/season-pricing.e2e.test.ts` levanta una SQLite real, migra
+  los modelos de shared/hoteles/habitaciones/reservas y siembra el catálogo de temporadas:
+  entre 2 y 9 s de trabajo contra los 5 s que bun le da a un hook por defecto. Ahora lleva
+  el timeout explícito (`beforeAll(fn, 60_000)`). No cambió ningún comportamiento de
+  reservas — los 6 escenarios que cubre el test son los mismos — pero el fallo engañaba
+  (`a beforeEach/afterEach hook timed out`, que no nombra ni el hook ni el código lento) y
+  se leía como un bug de precios. El mismo patrón sigue vivo en los e2e de `ari-outbox`
+  (#62).
 - ~~**CORS sin headers en 401**~~: resuelto con `corsWithErrorHeaders`
   (`shared/middlewares/cors-error-headers.ts`) — el ErrorContract lanzado se convierte a
   respuesta ANTES de que el cors la decore, así el 401/403/409/429 llega con
