@@ -1,7 +1,9 @@
 <template>
   <div class="cc-dashboard -m-6 min-h-screen space-y-4 p-5">
-    <!-- Guía de configuración: solo aparece mientras falte algo obligatorio. -->
-    <OnboardingGuide />
+    <!-- Franja de progreso de configuración (wizard-refactor F4): solo aparece mientras falte
+         algo requerido. Reemplaza a OnboardingGuide.vue (tarjeta intrusiva de borde grueso) —
+         el detalle de pasos vive ahora en /panel/configuracion-inicial (doc 04, decisión D2). -->
+    <ProfileProgressBar />
 
     <!-- 1. Centro de operaciones -->
     <CommandCenterHeader
@@ -271,7 +273,7 @@ import { ChannelService } from '@/services/Channel.service'
 import { HotelService, type HotelData } from '@/services/Hotel.service'
 import { ReportsService, type FacturacionReport } from '@/services/Reports.service'
 import CommandCenterHeader from '@/components/features/dashboard/CommandCenterHeader.vue'
-import OnboardingGuide from '@/components/features/OnboardingGuide.vue'
+import ProfileProgressBar from '@/components/features/dashboard/ProfileProgressBar.vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import ReservationCalendar from '@/components/features/ReservationCalendar.vue'
 import LiveActivityFeed, { type FeedItem } from '@/components/features/dashboard/LiveActivityFeed.vue'
