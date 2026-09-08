@@ -24,13 +24,15 @@
 // Portable SQLite + Postgres (los dos motores del proyecto): `||` es la concatenación ANSI y las
 // subconsultas correlacionadas las soportan ambos.
 //
-// Las DOS condiciones del final hacen falta y no son redundantes. El `MIN(id)` mira SÓLO las filas
-// sin clave —elige la candidata dentro del grupo— y el `NOT EXISTS` comprueba que el turno del
-// grupo no esté YA tomado. Con el `MIN(id)` solo sobre todas las pendientes, una ráfaga que entra
-// después con un `id` menor que la que ya tiene la clave se elegía a sí misma y chocaba contra el
-// índice (pasa de verdad: los id son UUID, no un contador, así que "más nueva" no implica "id
-// mayor"). Está cubierto por el caso de idempotencia de model.e2e.test.ts, que falla si se saca
-// cualquiera de las dos. Idempotente: correrlo dos veces no cambia nada.
+// El `NOT EXISTS` es la condición que hace esto idempotente y NO se puede sacar: comprueba que el
+// turno del grupo no esté YA tomado. Con el `MIN(id)` solo, una fila pendiente que entra después
+// con un `id` MENOR que la que ya tiene la clave se elige a sí misma y choca contra el índice —y
+// pasa de verdad, porque los id son UUID y no un contador, así que "más nueva" no implica "id
+// mayor". El caso de idempotencia de model.e2e.test.ts falla si se saca.
+//
+// El `MIN(id)` no necesita filtrar por `pendingKey IS NULL` (cuando el `NOT EXISTS` se cumple,
+// NINGUNA pendiente del grupo tiene clave, así que el mínimo es el mismo con o sin el filtro):
+// se deja fuera a propósito para no sugerir una condición que ningún test puede sostener.
 
 import type { DbAdapter } from 'arckode-framework'
 
@@ -52,8 +54,7 @@ export async function backfillAriOutboxPendingKey(db: Pick<DbAdapter, 'query' | 
                    FROM ari_outbox otra
                   WHERE otra.hotelId = ari_outbox.hotelId
                     AND otra.kind = ari_outbox.kind
-                    AND otra.status = 'pending'
-                    AND otra.pendingKey IS NULL)
+                    AND otra.status = 'pending')
        AND NOT EXISTS (SELECT 1
                          FROM ari_outbox ya
                         WHERE ya.hotelId = ari_outbox.hotelId
