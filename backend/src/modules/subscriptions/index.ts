@@ -19,17 +19,20 @@ export function SubscriptionsModule() {
     // #30: el orden de la lista pasó de `sortOrder` a precio ASC — observable, 1.2.0.
     // Nuevo endpoint público `publicFounderCountdown` (contador cíclico de /hotel-fundador,
     // reemplaza la fecha límite hardcodeada del frontend) — observable, 1.3.0.
-    version: '1.3.0',
+    // #46: dos endpoints nuevos del hotel (`upgradePreview`/`upgrade`, mejora de plan con
+    // prorrateo cobrado por `subscriptions.update`) — contrato observable, 1.4.0.
+    version: '1.4.0',
     description: 'Suscripción del hotel a la plataforma: alta pública, prueba gratis y corte de servicio',
     contract: {
-      name: 'subscriptions', version: '1.3.0',
+      name: 'subscriptions', version: '1.4.0',
       description: 'SaaS subscription lifecycle',
-      actions: ['signup', 'publicPlans', 'publicFounderDiscount', 'publicFounderCountdown', 'myStatus', 'onboarding', 'checkout', 'portal', 'webhookPlatform', 'applyStripeDiscount', 'publicSignupPolicy', 'resumeCheckout'],
+      actions: ['signup', 'publicPlans', 'publicFounderDiscount', 'publicFounderCountdown', 'myStatus', 'onboarding', 'checkout', 'portal', 'upgradePreview', 'upgrade', 'webhookPlatform', 'applyStripeDiscount', 'publicSignupPolicy', 'resumeCheckout'],
       events: [],
       tables: ['subscriptions', 'subscription_discounts', 'special_category_config', 'founder_history'],
       dependencies: [],
       rules: [
-        'checkout/portal: hotelId forzado del JWT, cobro SIEMPRE contra la cuenta de PLATAFORMA (StripeService.getClient() sin hotelId)',
+        'checkout/portal/upgrade: hotelId forzado del JWT, cobro SIEMPRE contra la cuenta de PLATAFORMA (StripeService.getClient() sin hotelId)',
+        'upgrade: SOLO a un plan más caro y vía stripe.subscriptions.update() sobre el ítem existente (prorrateo cobrado en el acto). Un Checkout nuevo crearía una segunda suscripción que cobra en paralelo (BUG-9); un downgrade genera crédito, no cobro, y se gestiona desde el portal',
         'webhookPlatform: sin auth, la autoridad es la firma de Stripe verificada con STRIPE_WEBHOOK_SECRET_PLATFORM',
         'publicPlans: los límites (`rooms`/`users`) salen de `plans.limits`, nunca de un literal en el template del frontend (GH-31)',
         'publicPlans: la lista sale del más barato al más caro (price ASC, slug ASC — #30); el orden lo fija el backend, ninguna vista re-ordena',
@@ -135,6 +138,10 @@ export function SubscriptionsModule() {
       // El hotel paga a la plataforma: elegir plan (Checkout) y gestionar método de pago (Portal).
       router.post('/api/subscriptions/checkout', guard('settings', 'edit'), (req: any) => controller.checkout(req))
       router.post('/api/subscriptions/portal', guard('settings', 'edit'), (req: any) => controller.portal(req))
+      // #46 — mejora de plan self-service pagando el prorrateo. Mismo guard que checkout/portal:
+      // es la misma facultad (facturación del hotel), y el hotelId sale del JWT, nunca del body.
+      router.get('/api/subscriptions/upgrade/preview', guard('settings', 'edit'), (req: any) => controller.upgradePreview(req))
+      router.post('/api/subscriptions/upgrade', guard('settings', 'edit'), (req: any) => controller.upgrade(req))
       // Webhook de la cuenta de PLATAFORMA: sin auth, firma Stripe verificada en el service
       // (mismo patrón que payment-requests/index.ts:75, secret separado — ver contract.rules).
       router.post('/api/stripe/webhook/platform', (req: any) => controller.webhookPlatform(req))

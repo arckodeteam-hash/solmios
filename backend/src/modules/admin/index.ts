@@ -46,7 +46,9 @@ export function AdminModule() {
       const specialConditions = new SpecialConditionsUseCase(orm)
       const categories = new SubscriptionCategoriesUseCase(orm)
       const moduleOverrides = new ModuleOverridesUseCase(moduleOverridesRepo, auth, log)
-      const service = new AdminService(plansRepo, amenitiesRepo, log, auth, queries, hotelsRepo, specialConditions, categories, configRepo, moduleOverrides)
+      // `subscriptionsRepo` (último): sin él, el select de plan de /admin/hotels solo escribiría el
+      // espejo legacy `hotels.plan` y el hotel seguiría con los módulos del plan viejo (#46).
+      const service = new AdminService(plansRepo, amenitiesRepo, log, auth, queries, hotelsRepo, specialConditions, categories, configRepo, moduleOverrides, subscriptionsRepo)
       const controller = new AdminController(service, log)
 
       const sa = [auth.authenticate('super_admin'), requireUserType('admin')]
