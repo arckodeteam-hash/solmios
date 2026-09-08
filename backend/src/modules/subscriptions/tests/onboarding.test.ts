@@ -82,15 +82,15 @@ describe('OnboardingUseCase — orden y shape general', () => {
     const st = await setup().status('h1')
     expect(st.steps.map(s => s.key)).toEqual([
       'bienvenida', 'identidad', 'contacto', 'ubicacion', 'politicas', 'amenities',
-      'rooms', 'rates', 'channels', 'team',
+      'rooms', 'rates', 'channels',
     ])
-    expect(st.totalCount).toBe(10)
+    expect(st.totalCount).toBe(9)
   })
 
-  it('tarea 2.1 — cada paso trae `kind`: perfil para los 6 nuevos, external para los 4 de siempre', async () => {
+  it('tarea 2.1 — cada paso trae `kind`: perfil para los 6 nuevos, external para los operativos', async () => {
     const st = await setup().status('h1')
     const profileKeys = ['bienvenida', 'identidad', 'contacto', 'ubicacion', 'politicas', 'amenities']
-    const externalKeys = ['rooms', 'rates', 'channels', 'team']
+    const externalKeys = ['rooms', 'rates', 'channels']
     for (const key of profileKeys) expect(st.steps.find(s => s.key === key)!.kind).toBe('profile')
     for (const key of externalKeys) expect(st.steps.find(s => s.key === key)!.kind).toBe('external')
   })
@@ -100,15 +100,6 @@ describe('OnboardingUseCase — orden y shape general', () => {
     const rooms = st.steps.find(s => s.key === 'rooms')!
     expect(rooms.done).toBe(true)
     expect(rooms.count).toBe(12)
-  })
-
-  it('el dueño solo no cuenta como equipo armado', async () => {
-    const soloDueño = await setup({ users: 1 }).status('h1')
-    expect(soloDueño.steps.find(s => s.key === 'team')!.done).toBe(false)
-    const conEquipo = await setup({ users: 3 }).status('h1')
-    const team = conEquipo.steps.find(s => s.key === 'team')!
-    expect(team.done).toBe(true)
-    expect(team.count).toBe(2) // sin contar al dueño
   })
 })
 
@@ -222,14 +213,14 @@ describe('OnboardingUseCase — tarea 2.9, combinaciones', () => {
     expect(st.completed).toBe(false)
   })
 
-  it('perfil + operativo 100%: los 10 pasos hechos', async () => {
+  it('perfil + operativo 100%: los 9 pasos hechos', async () => {
     const st = await setup({
       hotel: { ...FULL_REQUIRED_HOTEL, phone2: '8095550001' },
-      rooms: 3, rates: 2, users: 2, amenities: 1,
+      rooms: 3, rates: 2, amenities: 1,
       channels: [{ id: 'c1', hotelId: 'h1', channexPropertyId: 'prop-123' }],
     }).status('h1')
-    expect(st.doneCount).toBe(10)
-    expect(st.totalCount).toBe(10)
+    expect(st.doneCount).toBe(9)
+    expect(st.totalCount).toBe(9)
     expect(st.completed).toBe(true)
     expect(st.steps.every(s => s.done)).toBe(true)
   })
@@ -279,7 +270,7 @@ describe('OnboardingUseCase — la guía tiene que explicar', () => {
     // sacaba al usuario del panel.
     const EXISTENTES = [
       '/panel/configuracion-inicial', '/panel/config/habitaciones', '/panel/config/tarifas',
-      '/panel/channel-manager', '/panel/rrhh/team',
+      '/panel/channel-manager',
     ]
     const st = await setup().status('h1')
     for (const step of st.steps) {

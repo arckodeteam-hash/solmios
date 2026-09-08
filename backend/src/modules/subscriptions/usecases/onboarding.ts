@@ -10,7 +10,9 @@
 // `kind:'profile'`, se completan inline en el Centro de configuración) — son lo
 // que el huésped ve y lo que sale impreso, y no dependen de nada. Después los
 // operativos (`kind:'external'`, navegan a su pantalla real): habitaciones,
-// tarifas, canales, equipo.
+// tarifas, canales. (Hubo un cuarto paso, `team`/"Sume a su equipo" — se sacó
+// 2026-09-08: armar el equipo no es un requisito de onboarding, el dueño solo
+// opera bien igual.)
 import type { RepositoryAdapter } from 'arckode-framework'
 
 export interface OnboardingStep {
@@ -37,7 +39,7 @@ export interface OnboardingStep {
   count?: number
   /** F2 (wizard-refactor tarea 2.1) — 'profile' se completa inline en el Centro de
    *  configuración (`useOnboardingStep.ts`); 'external' navega a su pantalla real
-   *  (comportamiento de siempre para rooms/rates/channels/team, sin cambios). */
+   *  (comportamiento de siempre para rooms/rates/channels, sin cambios). */
   kind: 'profile' | 'external'
 }
 
@@ -80,9 +82,6 @@ export class OnboardingUseCase {
       this.deps.hotelAmenitiesRepo?.findMany({ hotelId, isActive: 1 }).catch(() => []) ?? [],
     ])
 
-    // El dueño se creó solo en el alta: el paso se cumple cuando sumó a ALGUIEN
-    // más, que es lo que de verdad significa "armé mi equipo".
-    const team = (users as any[]).length
     // El dueño/gerente que completó el alta — `users.name` (F2 tarea 2.2, doc 02
     // sección B): el "nombre del propietario" del registro se guarda ahí, NO en
     // `hotels.ownerName` (ese es un campo distinto, fiscal, de Configuración → Hotel).
@@ -239,19 +238,6 @@ export class OnboardingUseCase {
         cta: 'Conectar canales',
         done: connected,
         required: false,
-        kind: 'external',
-      },
-      {
-        key: 'team',
-        title: 'Sume a su equipo',
-        description: 'Recepción, camareras y mantenimiento, cada uno viendo solo lo suyo.',
-        how: 'En Equipo invita por email y elige el rol: recepción toma reservas y cobra, limpieza ve sus tareas del día, mantenimiento sus tickets. Cada rol trae sus permisos ya armados.',
-        impact: 'Sin equipo cargado hace todo desde su usuario y nadie más puede operar el hotel.',
-        route: '/panel/rrhh/team',
-        cta: 'Invitar al equipo',
-        done: team > 1,
-        required: false,
-        count: Math.max(0, team - 1),
         kind: 'external',
       },
     ]
