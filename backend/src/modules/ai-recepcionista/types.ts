@@ -395,6 +395,16 @@ export interface AiWhatsappConfigDTO {
   dailyMessageLimit: number
   createdAt: string
   updatedAt: string
+  // Identidad de la conexión oficial con Meta (la escribe el servidor, ver model.ts)
+  displayPhoneNumber?: string
+  verifiedName?: string
+  businessName?: string
+  qualityRating?: string
+  messagingLimit?: string
+  accountReviewStatus?: string
+  connectedAt?: string
+  connectedByUserId?: string
+  connectionError?: string
 }
 
 export interface CreateAiWhatsappConfigDTO {

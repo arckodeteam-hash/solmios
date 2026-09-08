@@ -1,8 +1,9 @@
 import type { Logger } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import type { AiRecepcionistaService } from './service'
-import { AiRecepcionistaValidator, CloseConversationSchema, TransferConversationSchema, TestIntentSchema, WebChatMessageSchema, StartWhatsappSchema, StopWhatsappSchema } from './validators/schema'
+import { AiRecepcionistaValidator, CloseConversationSchema, TransferConversationSchema, TestIntentSchema, WebChatMessageSchema, StartWhatsappSchema, StopWhatsappSchema, ConnectWhatsappSchema, ReplyConversationSchema } from './validators/schema'
 import { redactWhatsappConfig } from './usecases/whatsapp-config'
+import { aplicarEstadosDeEntrega } from './usecases/whatsapp-delivery-status'
 
 export class AiRecepcionistaController {
   constructor(
@@ -143,6 +144,62 @@ export class AiRecepcionistaController {
     return { status: 200, body: redactWhatsappConfig(result) }
   }
 
+  // ─── Conexión oficial con Meta (Embedded Signup) ────────────────────────
+
+  /**
+   * Recibe el código de un solo uso que devolvió la ventana de Meta y lo canjea server-side.
+   * El `hotelId` sale del token, nunca del body: un merchant no puede conectar el hotel de otro.
+   */
+  async connectWhatsapp(req: any) {
+    const user = req.user
+    const body = validateSchema(ConnectWhatsappSchema, req.body || {}) as any
+    return { status: 200, body: await this.service.connectWhatsapp(body, user) }
+  }
+
+  /** Estado de la conexión para la tarjeta del panel. Nunca incluye el token. */
+  async getWhatsappConnection(req: any) {
+    const user = req.user
+    return { status: 200, body: await this.service.getWhatsappConnection(req.query?.hotelId || '', user) }
+  }
+
+  /** Da de baja la conexión. Primero en Meta; si Meta falla, no se toca nada local. */
+  async disconnectWhatsapp(req: any) {
+    const user = req.user
+    await this.service.disconnectWhatsapp(user, req.query?.hotelId || undefined)
+    return { status: 200, body: { success: true } }
+  }
+
+  // ─── Bandeja de WhatsApp ────────────────────────────────────────────────
+
+  /** Conversaciones de WhatsApp del hotel, la más movida primero. */
+  async inbox(req: any) {
+    const data = await this.service.listarBandeja(req.user, req.query?.hotelId || undefined, req.query?.estado)
+    return { status: 200, body: { data } }
+  }
+
+  /** Hilo completo. Abrirla la marca leída: abrir ES haber leído. */
+  async getInboxConversation(req: any) {
+    return { status: 200, body: await this.service.abrirConversacion(req.params.id, req.user) }
+  }
+
+  /** Toma la conversación: el recepcionista automático deja de responderla. */
+  async takeConversation(req: any) {
+    await this.service.tomarConversacion(req.params.id, req.user)
+    return { status: 200, body: { success: true } }
+  }
+
+  /** La suelta: el bot vuelve a hacerse cargo. */
+  async releaseConversation(req: any) {
+    await this.service.soltarConversacion(req.params.id, req.user)
+    return { status: 200, body: { success: true } }
+  }
+
+  /** Responde con texto libre. La ventana de 24 h la valida el servidor, no el navegador. */
+  async replyConversation(req: any) {
+    const data = validateSchema(ReplyConversationSchema, req.body || {}) as any
+    return { status: 200, body: await this.service.responderConversacion(req.params.id, data.text, req.user) }
+  }
+
   // ─── WhatsApp Webhook ───────────────────────────────────────────────────
 
   async whatsappWebhookVerify(req: any) {
@@ -189,6 +246,21 @@ export class AiRecepcionistaController {
       const value = changes?.value
       const messages = value?.messages
 
+      // Meta manda por el MISMO webhook los acuses de entrega de lo que enviamos nosotros.
+      // Sin esto, un mensaje se quedaba en "enviado" para siempre y el hotel no sabía si llegó.
+      const statuses = value?.statuses
+      if (Array.isArray(statuses) && statuses.length > 0) {
+        const port = (this.service as any).deliveryStatusPort
+        if (port) {
+          const out = await aplicarEstadosDeEntrega({ port, logger: this.logger }, statuses)
+          return { status: 200, body: { status: 'statuses_processed', ...out } }
+        }
+        // Sin el puerto cableado no hay dónde anotarlo, pero se responde 200: un error haría que
+        // Meta reintente este webhook indefinidamente.
+        this.logger.warn('Webhook con acuses de entrega y sin puerto para registrarlos', { hotelId })
+        return { status: 200, body: { status: 'statuses_ignored' } }
+      }
+
       if (!messages || messages.length === 0) {
         return { status: 200, body: { status: 'no_messages' } }
       }
@@ -208,7 +280,13 @@ export class AiRecepcionistaController {
           language: 'es',
         })
 
-        await this.service.processIncomingMessage(conv.id, text, hotelId)
+        // Reabre la ventana de 24 h y suma al contador de no leídos ANTES de que conteste nadie:
+        // si el pipeline falla, el mensaje del huésped tiene que estar registrado igual.
+        const silenciado = await this.service.registrarEntrante(conv.id, hotelId)
+
+        // Si una persona del hotel tomó la conversación, el bot NO responde: el huésped recibiría
+        // dos respuestas distintas al mismo tiempo y el hotel quedaría como incoherente.
+        if (!silenciado) await this.service.processIncomingMessage(conv.id, text, hotelId)
       }
 
       return { status: 200, body: { status: 'processed' } }

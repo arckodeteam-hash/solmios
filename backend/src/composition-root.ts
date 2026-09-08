@@ -437,6 +437,10 @@ import { crmAuditlogConnector } from './connectors/crm-auditlog'
 import { crmPromocodesConnector } from './connectors/crm-promocodes'
 import { feedbackAuditlogConnector } from './connectors/feedback-auditlog'
 import { marketingAuditlogConnector } from './connectors/marketing-auditlog'
+import { marketingWhatsappMetaConnector } from './connectors/marketing-whatsapp-meta'
+import { reservasWhatsappConnector } from './connectors/reservas-whatsapp'
+import { whatsappDeliveryStatusConnector } from './connectors/whatsapp-delivery-status'
+import { aiRecepcionistaWhatsappConnector } from './connectors/ai-recepcionista-whatsapp'
 import { notificacionesAuditlogConnector } from './connectors/notificaciones-auditlog'
 import { opinionesAuditlogConnector } from './connectors/opiniones-auditlog'
 import { reclutamientoAuditlogConnector } from './connectors/reclutamiento-auditlog'
@@ -640,6 +644,14 @@ system.addConnector('crm-auditlog', crmAuditlogConnector)
 system.addConnector('crm-promocodes', crmPromocodesConnector)
 system.addConnector('feedback-auditlog', feedbackAuditlogConnector)
 system.addConnector('marketing-auditlog', marketingAuditlogConnector)
+// Plantillas de WhatsApp <-> Meta: marketing necesita las credenciales que guarda ai-recepcionista.
+system.addConnector('marketing-whatsapp-meta', marketingWhatsappMetaConnector)
+// Envío al huésped por la Cloud API: reservas necesita las credenciales de ai-recepcionista.
+system.addConnector('reservas-whatsapp', reservasWhatsappConnector)
+// El acuse de entrega llega por el webhook de ai-recepcionista y se anota en message_logs (marketing).
+system.addConnector('whatsapp-delivery-status', whatsappDeliveryStatusConnector)
+// La bandeja responde al huésped: necesita el cliente de Meta y el historial de envíos.
+system.addConnector('ai-recepcionista-whatsapp', aiRecepcionistaWhatsappConnector)
 system.addConnector('notificaciones-auditlog', notificacionesAuditlogConnector)
 system.addConnector('opiniones-auditlog', opinionesAuditlogConnector)
 system.addConnector('reclutamiento-auditlog', reclutamientoAuditlogConnector)

@@ -442,6 +442,14 @@ const router = createRouter({
           meta: { requiresHotelAdmin: true },
         },
         {
+          // Conversaciones con el HUÉSPED por WhatsApp. Distinto de 'operaciones/chats', que es el
+          // monitor de los chats internos del equipo.
+          path: 'operaciones/whatsapp',
+          name: 'whatsapp-inbox',
+          component: () => import('@/pages/whatsapp-inbox/index.vue'),
+          meta: { requiresHotelAdmin: true },
+        },
+        {
           path: 'finanzas/night-audit',
           name: 'night-audit',
           component: () => import('@/pages/night-audit/index.vue'),

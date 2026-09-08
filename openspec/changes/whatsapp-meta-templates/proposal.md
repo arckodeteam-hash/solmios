@@ -77,6 +77,10 @@ esté implementado, va a poblar esos mismos dos campos automáticamente — sin 
 
 ## Out of scope (queda para otros changes)
 
+> Los tres primeros ya tienen change propio (creados 2026-09-07): `whatsapp-meta-onboarding`,
+> `whatsapp-meta-messaging` y `whatsapp-meta-inbox`. El trámite y el vídeo, en
+> `whatsapp-meta-certificacion`.
+
 - **REQ-META-01** Embedded Signup (flujo OAuth de conexión) — hoy el `accessToken`/`wabaId` se cargan a
   mano vía el endpoint ya existente `PUT /api/ai/whatsapp/config`.
 - **REQ-META-04** Envío real de un mensaje (plantilla aprobada) desde una reserva vía Cloud API —

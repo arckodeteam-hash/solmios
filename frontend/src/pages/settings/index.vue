@@ -616,6 +616,12 @@
 
     <!-- ========== TIPOS DE HABITACIÓN Y CAPACIDAD (Requerimiento 2) ========== -->
     <div v-if="(activeTab as string) === 'integrations'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- WhatsApp es del HOTEL, no de la plataforma: cada uno conecta su propio número y su propia
+           cuenta de Meta. Por eso vive acá y no en /admin/settings. -->
+      <div class="md:col-span-2">
+        <WhatsappConnectionCard />
+      </div>
+
       <!-- Channel Manager NO va acá: lo configura y gestiona el admin de la PLATAFORMA (/admin),
            no el hotel. Esta card mostraba un "Conectado" hardcodeado (mentía el estado real) y
            linkeaba a /panel/channel-manager, que al merchant le da 403. -->
@@ -797,6 +803,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, reactive } from 'vue'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import SectionCard from '@/components/ui/SectionCard.vue'
+import WhatsappConnectionCard from '@/components/features/WhatsappConnectionCard.vue'
 // Política de cancelación con tiers: el editor canónico (mismo componente que usa el Motor de
 // reservas). Vive acá desde la unificación de Condiciones — antes sólo en Página pública.
 import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
