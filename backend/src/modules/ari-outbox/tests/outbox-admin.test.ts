@@ -55,11 +55,22 @@ function makePort(rows: AriOutboxRow[]): OutboxCountPort & OutboxRetryPort {
   }
 }
 
+/** Lo que el ORM hace con una columna `json` al leerla: el texto valido vuelve como objeto. */
+function autoparse(v: unknown): unknown {
+  if (typeof v !== 'string') return v
+  try { return JSON.parse(v) } catch { return v }
+}
+
 /** Doble del `orm` crudo, solo con lo que usa el store de config sobre `Configuration`. */
 function makeOrm(rows: Array<Record<string, any>> = []) {
   const orm = {
     async findMany(model: string, where: Record<string, unknown>) {
-      return rows.filter((r) => r.__model === model && matchea(r as any, where))
+      // El ORM real DESERIALIZA las columnas `json` al leer (kernel/db/orm-utils.ts), asi que
+      // `Configuration.value` vuelve como objeto y no como el texto que se escribio. El doble
+      // tiene que hacer lo mismo: sin esto la suite daba verde con el store roto en produccion.
+      return rows
+        .filter((r) => r.__model === model && matchea(r as any, where))
+        .map((r) => (model === 'Configuration' ? { ...r, value: autoparse(r.value) } : r))
     },
     async update(model: string, id: string, patch: Record<string, unknown>) {
       const row = rows.find((r) => r.__model === model && r.id === id)
@@ -75,7 +86,7 @@ function makeOrm(rows: Array<Record<string, any>> = []) {
   return { orm, rows }
 }
 
-const configRow = (value: string) => ({ __model: 'Configuration', id: 'cfg-1', hotelId: 'platform', key: QUEUE_CONFIG_KEY, value })
+const configRow = (value: unknown) => ({ __model: 'Configuration', id: 'cfg-1', hotelId: 'platform', key: QUEUE_CONFIG_KEY, value })
 
 describe('contarPorEstado', () => {
   it('separa las pending que nunca fallaron de las que están en reintento', async () => {
@@ -251,5 +262,22 @@ describe('createQueueConfigStore', () => {
       maxAttempts: QUEUE_CONFIG_DEFAULTS.maxAttempts,
       maxPerMinute: 45,
     })
+  })
+  // Regresion: la columna `Configuration.value` es `json` y el ORM la devuelve YA parseada. Si el
+  // store solo aceptara texto, la config se guardaria bien y el `leer()` siguiente respondería los
+  // defaults para siempre — los criterios 3 y 4 del issue quedarían muertos sin que nada fallara.
+  it('leer entiende un value que el ORM ya deserializo (columna json)', async () => {
+    const { orm } = makeOrm([configRow({ maxAttempts: 7, maxPerMinute: 25 })])
+
+    expect(await createQueueConfigStore(orm).leer()).toEqual({ maxAttempts: 7, maxPerMinute: 25 })
+  })
+
+  it('lo guardado se puede releer: guardar y leer devuelven lo mismo', async () => {
+    const { orm } = makeOrm()
+    const store = createQueueConfigStore(orm)
+
+    const guardada = await store.guardar({ maxAttempts: 6, maxPerMinute: 30 })
+
+    expect(await store.leer()).toEqual(guardada)
   })
 })

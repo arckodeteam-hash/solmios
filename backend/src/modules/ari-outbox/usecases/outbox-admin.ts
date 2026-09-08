@@ -160,7 +160,8 @@ export interface QueueConfigStore {
 /** Fila de `Configuration` tal como vuelve del ORM (el `value` es texto, ver shared/models.ts). */
 interface ConfigurationRow {
   id: string
-  value?: string | null
+  /** `unknown` a proposito: la columna es `json` y el ORM la devuelve parseada (ver `parsear`). */
+  value?: unknown
 }
 
 /**
@@ -198,9 +199,17 @@ export function createQueueConfigStore(orm: any): QueueConfigStore {
 /**
  * El `value` guardado, parseado. Un JSON corrupto NO puede tirar el endpoint: se devuelve `null` y
  * `sanearConfig` responde los defaults, que es exactamente lo mismo que pasa cuando no hay fila.
+ *
+ * Puede llegar YA DESERIALIZADO: `Configuration.value` es una columna `type: 'json'`
+ * (shared/models.ts:19) y el ORM parsea esos campos solo en el read-path (kernel/db/orm-utils.ts),
+ * asi que `findMany` devuelve un objeto y no el texto que se escribio. Descartar lo que no sea
+ * string dejaba la config ilegible para siempre: se guardaba bien y el `leer()` siguiente volvia
+ * a los defaults. Por eso el objeto se devuelve TAL CUAL, igual que hace `safeParse` en
+ * hoteles/usecases/config-kv.ts:1.
  */
-function parsear(value: string | null | undefined): unknown {
-  if (typeof value !== 'string') return null
+function parsear(value: unknown): unknown {
+  if (value === null || value === undefined) return null
+  if (typeof value !== 'string') return value
   try {
     return JSON.parse(value)
   } catch {
