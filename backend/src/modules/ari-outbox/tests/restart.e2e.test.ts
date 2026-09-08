@@ -15,7 +15,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { ORM, OrmRepository } from 'arckode-framework'
 import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
 import { registerAriOutboxModels } from '../model'
-import { AriOutbox, STALE_MS, type AriOutboxPort } from '../usecases/outbox-queue'
+import { AriOutbox, STALE_MS } from '../usecases/outbox-queue'
+import { createAriOutboxStore } from '../usecases/outbox-store'
 import type { AriOutboxRow } from '../types'
 
 const DEBOUNCE_MS = 1500
@@ -29,7 +30,9 @@ const avanzar = (ms: number) => { clock.ms += ms }
 
 /** Cada instancia de AriOutbox se arma como en producción: su propio repo sobre el mismo ORM. */
 function nuevaInstancia() {
-  const repo = new OrmRepository<AriOutboxRow>(orm, 'AriOutbox') as unknown as AriOutboxPort
+  // El store real del módulo, el mismo que arma index.ts: un OrmRepository pelado no tiene
+  // `updateWhere` y el reclamo de fila del drain se cae en runtime.
+  const repo = createAriOutboxStore(orm)
   const pushed: Array<{ hotelId: string; channel: string | undefined }> = []
   const outbox = new AriOutbox({ repo, now: () => clock.ms, debounceMs: DEBOUNCE_MS })
   return { repo, outbox, pushed }
