@@ -115,35 +115,7 @@ export class BookingSyncUseCase {
     // 3. Por cada revisión, try/catch aislado.
     for (const rev of feed) {
       try {
-        const hotelId = propMap.get(rev.propertyId)
-        if (!hotelId) {
-          // Sin mapeo: no se procesa NI se ackea — la revisión queda para cuando el hotel sincronice.
-          result.unmapped++
-          logger.warn('booking-sync: propertyId sin hotel mapeado', { propertyId: rev.propertyId, revisionId: rev.id })
-          continue
-        }
-
-        // #542: hotel con la suscripción suspendida → no debe seguir recibiendo reservas
-        // nuevas por Channel Manager. NO se ackea: la revisión queda en el feed y se reintenta
-        // en el próximo tick (si el hotel se reactiva, se ingesta normalmente).
-        if (this.subscriptionCheck) {
-          const access = await this.subscriptionCheck(hotelId)
-          if (!access.allowed) {
-            result.suspended++
-            logger.warn('booking-sync: hotel con suscripción suspendida, revisión no ingresada', { hotelId, revisionId: rev.id })
-            continue
-          }
-        }
-
-        const dto = mapBookingRevision(rev, hotelId)
-        const applied = await applyBookingRevision({ orm, channex, hotelId, apiKey: '', cancelReservation: this.cancelReservation, logger }, dto)
-        if (applied.created) result.ingested++
-        else result.skipped++
-
-        // Ack siempre (incluso dedupe): drena el feed para que no vuelva a aparecer.
-        const acked = await channex.ackBooking('', rev.id)
-        if (acked) result.acknowledged++
-        else result.errors.push(`No se pudo ack booking ${rev.uniqueId}`)
+        await this.processRevision(rev, propMap, result)
       } catch (e: any) {
         result.errors.push(`${rev.uniqueId}: ${e?.message || String(e)}`)
       }
@@ -157,6 +129,93 @@ export class BookingSyncUseCase {
     result.success = result.errors.length === 0
     await this.logSync(result)
     return result
+  }
+
+  /**
+   * Ingesta UNA revisión puntual, disparada por el webhook de Channex (CH-07).
+   *
+   * Corre el MISMO `processRevision` que el cron: por eso la reserva que entra por webhook es
+   * idéntica a la que habría entrado por el feed, hereda el dedupe por `externalLocator` y
+   * respeta el mismo orden apply → ack (nunca se ackea algo que no se pudo aplicar).
+   *
+   * Si el GET falla o la revisión no existe, NO se ackea nada: la revisión sigue en el feed y
+   * el cron de 15 minutos la recupera. El webhook es un atajo de latencia, no la única vía.
+   */
+  async runOne(revisionId: string): Promise<BookingSyncResult> {
+    const { channex, logger } = this.deps
+    const result: BookingSyncResult = {
+      success: true, feedSize: 0, ingested: 0, acknowledged: 0,
+      skipped: 0, unmapped: 0, suspended: 0, errors: [],
+    }
+
+    const propMap = await this.buildPropertyMap()
+
+    // GET puntual (key vacía → credencial de plataforma, igual que el feed del cron).
+    // Un fallo acá corta la corrida SIN ackear: la revisión sigue en el feed para el cron.
+    let rev: BookingRevisionDTO | null = null
+    let error = 'no encontrada'
+    try {
+      rev = await channex.fetchBookingRevision('', revisionId)
+    } catch (e: any) {
+      error = e?.message || String(e)
+    }
+    if (!rev) {
+      logger.error('booking-sync: no se pudo traer la revisión del webhook', { revisionId, error })
+      result.success = false
+      result.errors.push(`revision ${revisionId}: ${error}`)
+      return result
+    }
+
+    result.feedSize = 1
+    try {
+      await this.processRevision(rev, propMap, result)
+    } catch (e: any) {
+      result.errors.push(`${rev.uniqueId}: ${e?.message || String(e)}`)
+    }
+
+    result.success = result.errors.length === 0
+    // Sin `logSync`: `sync_log` audita corridas del cron, no callbacks sueltos del webhook.
+    return result
+  }
+
+  /**
+   * Procesa UNA revisión: resuelve el hotel, chequea la suscripción, aplica y recién ahí ackea.
+   * Compartido por el cron (`run`) y por el webhook (`runOne`) — que sea el mismo cuerpo es lo
+   * que garantiza que ambos caminos produzcan exactamente la misma reserva.
+   * No atrapa nada: el try/catch por revisión vive en el caller.
+   */
+  private async processRevision(rev: BookingRevisionDTO, propMap: Map<string, string>, result: BookingSyncResult): Promise<void> {
+    const { channex, orm, logger } = this.deps
+
+    const hotelId = propMap.get(rev.propertyId)
+    if (!hotelId) {
+      // Sin mapeo: no se procesa NI se ackea — la revisión queda para cuando el hotel sincronice.
+      result.unmapped++
+      logger.warn('booking-sync: propertyId sin hotel mapeado', { propertyId: rev.propertyId, revisionId: rev.id })
+      return
+    }
+
+    // #542: hotel con la suscripción suspendida → no debe seguir recibiendo reservas
+    // nuevas por Channel Manager. NO se ackea: la revisión queda en el feed y se reintenta
+    // en el próximo tick (si el hotel se reactiva, se ingesta normalmente).
+    if (this.subscriptionCheck) {
+      const access = await this.subscriptionCheck(hotelId)
+      if (!access.allowed) {
+        result.suspended++
+        logger.warn('booking-sync: hotel con suscripción suspendida, revisión no ingresada', { hotelId, revisionId: rev.id })
+        return
+      }
+    }
+
+    const dto = mapBookingRevision(rev, hotelId)
+    const applied = await applyBookingRevision({ orm, channex, hotelId, apiKey: '', cancelReservation: this.cancelReservation, logger }, dto)
+    if (applied.created) result.ingested++
+    else result.skipped++
+
+    // Ack siempre (incluso dedupe): drena el feed para que no vuelva a aparecer.
+    const acked = await channex.ackBooking('', rev.id)
+    if (acked) result.acknowledged++
+    else result.errors.push(`No se pudo ack booking ${rev.uniqueId}`)
   }
 
   /** Construye el mapa channexPropertyId → hotelId desde las configs con sync habilitado. */
