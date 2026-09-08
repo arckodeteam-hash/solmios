@@ -1,9 +1,9 @@
 // ari-outbox/service.ts — Orquestador del módulo: envuelve la cola y expone la consulta (CA-9).
 //
-// Delgado A PROPÓSITO: toda la lógica de agrupación, backoff y publicación vive en
-// `usecases/outbox-queue.ts`. Acá solo se arma la instancia, se delegan sus métodos (los que el
-// conector de wiring necesita) y se resuelve el listado de operación. Mismo reparto que
-// email-queue/service.ts: el service opera la tabla, el worker la drena.
+// Delgado A PROPÓSITO: la agrupación, el backoff y la publicación viven en `usecases/outbox-queue.ts`
+// y la operación (contadores, reintento, config) en `usecases/outbox-admin.ts`. Acá solo se arma la
+// instancia, se delegan sus métodos y se resuelve el listado. Mismo reparto que email-queue/service.ts:
+// el service opera la tabla, el worker la drena.
 
 import { NotFoundError } from 'arckode-framework'
 import type { Logger, PageResult, FindOptions } from 'arckode-framework'
@@ -25,10 +25,7 @@ export const MAX_LIST_LIMIT = 200
  * `OrmRepository<AriOutboxRow>` lo satisface tal cual; en los tests lo cubre un array en memoria.
  */
 export interface AriOutboxStore extends AriOutboxPort {
-  paginate(
-    filters: Record<string, unknown>,
-    options: FindOptions & { limit: number },
-  ): Promise<Pick<PageResult<AriOutboxRow>, 'data' | 'total'>>
+  paginate(filters: Record<string, unknown>, options: FindOptions & { limit: number }): Promise<Pick<PageResult<AriOutboxRow>, 'data' | 'total'>>
   /** La fila YA escrita: el reintento manual la devuelve al cliente (el puerto de la cola no la pide). */
   update(id: string, patch: Partial<AriOutboxRow>): Promise<AriOutboxRow | null>
   /** COUNT por filtros para el monitor. Opcional: un store que no lo trae cuenta sobre findMany. */
@@ -154,17 +151,14 @@ export class AriOutboxService {
     return { items: result.data, total: result.total, page, limit }
   }
 
-  /** Contadores por estado del monitor. Toda la aritmética (qué es "en reintento") vive en el usecase. */
+  /** Contadores del monitor. La aritmética (qué es "en reintento") vive en el usecase. */
   stats(filtros: OutboxCountFilters = {}): Promise<OutboxCounts> {
     const findMany = (f: Record<string, unknown>) => this.repo.findMany(f)
     const count = (f: Record<string, unknown>) => this.repo.count?.(f) ?? findMany(f).then((r) => r.length)
     return contarPorEstado({ count, findMany }, filtros)
   }
 
-  /**
-   * Reintento manual desde el Super Admin. El log queda a propósito: es una acción de un operador
-   * sobre la cola, y sin él nadie puede explicar después por qué una fila `failed` volvió a salir.
-   */
+  /** Reintento manual del Super Admin. El log queda: sin él nadie explica por qué una `failed` volvió a salir. */
   async retry(id: string): Promise<AriOutboxRow> {
     const row = await reintentar(this.repo, id, new Date().toISOString())
     if (!row) throw new NotFoundError('Fila no encontrada en la outbox')
@@ -178,20 +172,28 @@ export class AriOutboxService {
   }
 
   /**
-   * Guarda un patch de config y la aplica EN EL ACTO: si solo se persistiera, el techo nuevo de
-   * peticiones/minuto regiría recién en el próximo reinicio y la pantalla diría una cosa mientras
-   * la cola hace otra.
+   * Guarda un patch y lo aplica EN EL ACTO: persistirlo solo haría que el techo nuevo rigiera
+   * recién en el próximo reinicio, con la pantalla diciendo una cosa y la cola haciendo otra.
    */
   async setQueueConfig(patch: Partial<QueueConfig>): Promise<QueueConfig> {
     const cfg = this.config ? await this.config.guardar(patch) : sanearConfig({ ...QUEUE_CONFIG_DEFAULTS, ...patch })
-    await this.emit('onQueueConfigChanged', cfg)
+    await this.aplicar(cfg)
     return cfg
   }
 
   /** Aplica la config guardada al arrancar (lo llama composition-root): mismo camino que un PUT. */
   async applyQueueConfig(): Promise<QueueConfig> {
     const cfg = await this.getQueueConfig()
-    await this.emit('onQueueConfigChanged', cfg)
+    await this.aplicar(cfg)
     return cfg
+  }
+
+  /**
+   * El tope de intentos lo aplica el módulo SOLO (es su cola); el techo de peticiones/minuto sale
+   * por el hook, porque el transporte a Channex vive en `canales` y un módulo no importa de otro.
+   */
+  private async aplicar(cfg: QueueConfig): Promise<void> {
+    this.queue.setMaxAttempts(cfg.maxAttempts)
+    await this.emit('onQueueConfigChanged', cfg)
   }
 }
