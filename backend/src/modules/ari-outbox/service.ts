@@ -5,8 +5,13 @@
 // conector de wiring necesita) y se resuelve el listado de operación. Mismo reparto que
 // email-queue/service.ts: el service opera la tabla, el worker la drena.
 
+import { NotFoundError } from 'arckode-framework'
 import type { Logger, PageResult, FindOptions } from 'arckode-framework'
 import { AriOutbox, type AriOutboxPort, type AriPublisher } from './usecases/outbox-queue'
+import {
+  contarPorEstado, reintentar, sanearConfig, QUEUE_CONFIG_DEFAULTS,
+  type OutboxCountFilters, type OutboxCounts, type QueueConfig, type QueueConfigStore,
+} from './usecases/outbox-admin'
 import type { AriOutboxRow, AriOutboxStatus } from './types'
 import type { AriOutboxSockets } from './sockets'
 
@@ -24,6 +29,10 @@ export interface AriOutboxStore extends AriOutboxPort {
     filters: Record<string, unknown>,
     options: FindOptions & { limit: number },
   ): Promise<Pick<PageResult<AriOutboxRow>, 'data' | 'total'>>
+  /** La fila YA escrita: el reintento manual la devuelve al cliente (el puerto de la cola no la pide). */
+  update(id: string, patch: Partial<AriOutboxRow>): Promise<AriOutboxRow | null>
+  /** COUNT por filtros para el monitor. Opcional: un store que no lo trae cuenta sobre findMany. */
+  count?(filters: Record<string, unknown>): Promise<number>
 }
 
 export interface AriOutboxListQuery {
@@ -49,6 +58,9 @@ export class AriOutboxService {
   constructor(
     private readonly repo: AriOutboxStore,
     private readonly logger: Logger,
+    // Config persistida de la cola. OPCIONAL: sin ella el módulo corre con los valores del código.
+    // Llega como puerto ya construido (index.ts) porque el service no puede recibir el `orm`.
+    private readonly config?: QueueConfigStore,
   ) {
     this.queue = new AriOutbox({
       repo,
@@ -85,15 +97,15 @@ export class AriOutboxService {
   }
 
   /** Dispara un hook si está cableado. Un hook que falla se loguea y NO corta el drenado. */
-  private async emit(event: keyof AriOutboxSockets, row: AriOutboxRow): Promise<void> {
+  private async emit(event: keyof AriOutboxSockets, payload: any): Promise<void> {
     const hook = this.sockets[event]
     if (!hook) return
     try {
-      await hook(row)
+      await hook(payload)
     } catch (err: unknown) {
       this.logger.warn('AriOutbox: falló un hook de sockets', {
         event,
-        id: row.id,
+        id: payload?.id,
         error: err instanceof Error ? err.message : String(err),
       })
     }
@@ -140,5 +152,46 @@ export class AriOutboxService {
       orderBy: { field: 'scheduledAt', dir: 'DESC' },
     })
     return { items: result.data, total: result.total, page, limit }
+  }
+
+  /** Contadores por estado del monitor. Toda la aritmética (qué es "en reintento") vive en el usecase. */
+  stats(filtros: OutboxCountFilters = {}): Promise<OutboxCounts> {
+    const findMany = (f: Record<string, unknown>) => this.repo.findMany(f)
+    const count = (f: Record<string, unknown>) => this.repo.count?.(f) ?? findMany(f).then((r) => r.length)
+    return contarPorEstado({ count, findMany }, filtros)
+  }
+
+  /**
+   * Reintento manual desde el Super Admin. El log queda a propósito: es una acción de un operador
+   * sobre la cola, y sin él nadie puede explicar después por qué una fila `failed` volvió a salir.
+   */
+  async retry(id: string): Promise<AriOutboxRow> {
+    const row = await reintentar(this.repo, id, new Date().toISOString())
+    if (!row) throw new NotFoundError('Fila no encontrada en la outbox')
+    this.logger.info('AriOutbox: reintento manual', { id })
+    return row
+  }
+
+  /** La config vigente de la cola; sin puerto cableado, la del código. */
+  getQueueConfig(): Promise<QueueConfig> {
+    return this.config ? this.config.leer() : Promise.resolve({ ...QUEUE_CONFIG_DEFAULTS })
+  }
+
+  /**
+   * Guarda un patch de config y la aplica EN EL ACTO: si solo se persistiera, el techo nuevo de
+   * peticiones/minuto regiría recién en el próximo reinicio y la pantalla diría una cosa mientras
+   * la cola hace otra.
+   */
+  async setQueueConfig(patch: Partial<QueueConfig>): Promise<QueueConfig> {
+    const cfg = this.config ? await this.config.guardar(patch) : sanearConfig({ ...QUEUE_CONFIG_DEFAULTS, ...patch })
+    await this.emit('onQueueConfigChanged', cfg)
+    return cfg
+  }
+
+  /** Aplica la config guardada al arrancar (lo llama composition-root): mismo camino que un PUT. */
+  async applyQueueConfig(): Promise<QueueConfig> {
+    const cfg = await this.getQueueConfig()
+    await this.emit('onQueueConfigChanged', cfg)
+    return cfg
   }
 }

@@ -27,6 +27,9 @@ export function createAriOutboxStore(orm: any): AriOutboxStore {
     create: (row) => repo.create(row as any),
     update: (id, patch) => repo.update(id, patch as any),
     findMany: (query) => repo.findMany(query),
+    // Los contadores de la vista de operación se resuelven con COUNT: traerse la tabla entera para
+    // medirla es lo que revienta con una outbox de miles de filas.
+    count: (filters) => repo.count(filters),
     paginate: (filters, options) => repo.paginate(filters, options),
     updateWhere: (where, patch) => updateWhere(orm, where, patch),
   }
