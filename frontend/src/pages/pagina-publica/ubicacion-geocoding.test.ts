@@ -68,12 +68,14 @@ vi.mock('@/utils/address-components', async (importOriginal) => {
 })
 
 const toastCalls: Array<{ kind: string; msg: string }> = []
+// `msg` junta título + detalle (2do arg opcional de `toast.warning/success(title, detail)`) — el
+// mensaje que compara "no devolvió: Código Postal" vive en el detalle, no en el título.
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({
-    success: (m: string) => { toastCalls.push({ kind: 'success', msg: m }) },
-    error: (m: string) => { toastCalls.push({ kind: 'error', msg: m }) },
-    info: (m: string) => { toastCalls.push({ kind: 'info', msg: m }) },
-    warning: (m: string) => { toastCalls.push({ kind: 'warning', msg: m }) },
+    success: (t: string, d?: string) => { toastCalls.push({ kind: 'success', msg: [t, d].filter(Boolean).join(' ') }) },
+    error: (t: string, d?: string) => { toastCalls.push({ kind: 'error', msg: [t, d].filter(Boolean).join(' ') }) },
+    info: (t: string, d?: string) => { toastCalls.push({ kind: 'info', msg: [t, d].filter(Boolean).join(' ') }) },
+    warning: (t: string, d?: string) => { toastCalls.push({ kind: 'warning', msg: [t, d].filter(Boolean).join(' ') }) },
   }),
 }))
 
@@ -233,7 +235,10 @@ describe('GH-33 — caminos de fallo del autocompletado', () => {
     expect(toastCalls.some((t) => t.kind === 'warning')).toBe(true)
   })
 
-  it('avisa cuando faltan solo algunos campos (RD casi nunca trae código postal)', async () => {
+  it('código postal faltante NO avisa (RD casi nunca lo trae, y no hace falta) — éxito igual', async () => {
+    // Pedido explícito del usuario (2026-09-08): el Código Postal no es un dato que se necesite,
+    // así que si es LO ÚNICO que el proveedor no devolvió, no hay ningún aviso de "faltan campos"
+    // — Provincia/Municipio/Localidad sí resolvieron, cuenta como éxito completo.
     geocodeImpl = async () => ({
       results: [{ address_components: [
         comp('Bávaro', 'locality', 'political'),
@@ -246,8 +251,25 @@ describe('GH-33 — caminos de fallo del autocompletado', () => {
     expect(valueOf(wrapper, 'locality')).toBe('Bávaro')
     expect(valueOf(wrapper, 'municipality')).toBe('Bávaro')   // fallback: sin admin_area_2
     expect(valueOf(wrapper, 'postalCode')).toBe('')
+    expect(toastCalls.some((t) => t.kind === 'warning')).toBe(false)
+    const aviso = toastCalls.find((t) => t.kind === 'success')
+    expect(aviso?.msg).toContain('automáticamente')
+  })
+
+  it('sin ningún dato de Provincia/Municipio/Localidad SÍ avisa, aunque el código postal venga', async () => {
+    geocodeImpl = async () => ({
+      results: [{ address_components: [comp('12345', 'postal_code')] }],
+    })
+    const wrapper = await mountUbicacion()
+    await dragPinTo(18.68, -68.42)
+
+    expect(valueOf(wrapper, 'postalCode')).toBe('12345')
+    expect(valueOf(wrapper, 'province')).toBe('')
     const aviso = toastCalls.find((t) => t.kind === 'warning')
-    expect(aviso?.msg).toContain('parcialmente')
+    // Los 3 campos que sí importan (Provincia/Municipio/Localidad) vinieron vacíos: cuenta como
+    // el fallo total, aunque el Código Postal sí haya resuelto — a ese no se le pide nada.
+    expect(aviso?.msg).toContain('no devolvió datos de dirección')
+    expect(aviso?.msg).not.toContain('Código Postal')
   })
 
   it('sin red: el error de la promesa no queda mudo', async () => {

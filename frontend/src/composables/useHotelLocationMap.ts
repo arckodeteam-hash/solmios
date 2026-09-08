@@ -223,7 +223,7 @@ export function useHotelLocationMap<T extends HotelLocationFormFields>(form: Ref
    */
   function applyGeocodedValues(mapped: { province: string; municipality: string; locality: string; postalCode: string }, source: string) {
     const pending = unresolvedFields(mapped)
-    const kept: string[] = []
+    const kept: AddressField[] = []
 
     for (const field of Object.keys(ADDRESS_FIELD_LABELS) as AddressField[]) {
       const value = mapped[field]
@@ -231,31 +231,44 @@ export function useHotelLocationMap<T extends HotelLocationFormFields>(form: Ref
       const current = String((form.value as Record<string, unknown>)[field] ?? '').trim()
       // Solo se pisa lo vacío o lo que puso el propio autocompletado.
       if (current && current !== (geocodedValues.value[field] ?? '')) {
-        kept.push(ADDRESS_FIELD_LABELS[field])
+        kept.push(field)
         continue
       }
       ;(form.value as Record<string, unknown>)[field] = value
       geocodedValues.value[field] = value
     }
 
-    if (pending.length === Object.keys(ADDRESS_FIELD_LABELS).length) {
+    // El Código Postal no hace falta (pedido explícito, 2026-09-08): igual se completa arriba
+    // cuando el proveedor lo trae, pero que falte NO dispara ningún aviso — ni cuenta para decidir
+    // si avisar, ni aparece en el texto. Provincia/Municipio/Localidad sí siguen avisando.
+    const notifiableFields = (Object.keys(ADDRESS_FIELD_LABELS) as AddressField[]).filter((f) => f !== 'postalCode')
+    const notifiablePending = pending.filter((f) => f !== 'postalCode')
+    const notifiableKept = kept.filter((f) => f !== 'postalCode').map((f) => ADDRESS_FIELD_LABELS[f])
+
+    if (notifiablePending.length === 0) {
+      // Provincia/Municipio/Localidad completos: éxito, sea cual sea el estado del Código
+      // Postal (se aplicó si vino, y no importa si no vino).
+      toast.success(
+        'Dirección completada automáticamente',
+        notifiableKept.length ? `Se respetó lo que escribiste en: ${notifiableKept.join(', ')}.` : 'Revisá los campos antes de guardar.',
+      )
+      return
+    }
+
+    if (notifiablePending.length === notifiableFields.length) {
       toast.warning(
         `${source} no devolvió datos de dirección para ese punto`,
-        'Completá Provincia, Municipio, Localidad y Código Postal a mano.',
+        'Completá Provincia, Municipio y Localidad a mano.',
       )
       return
     }
 
     const notas = [
-      pending.length ? `${source} no devolvió: ${pending.map((f) => ADDRESS_FIELD_LABELS[f]).join(', ')}.` : '',
-      kept.length ? `Se respetó lo que escribiste en: ${kept.join(', ')}.` : '',
+      `${source} no devolvió: ${notifiablePending.map((f) => ADDRESS_FIELD_LABELS[f]).join(', ')}.`,
+      notifiableKept.length ? `Se respetó lo que escribiste en: ${notifiableKept.join(', ')}.` : '',
     ].filter(Boolean).join(' ')
 
-    if (pending.length) {
-      toast.warning('Dirección completada parcialmente', `${notas} Revisá y completá a mano.`)
-    } else {
-      toast.success('Dirección completada automáticamente', notas || 'Revisá los campos antes de guardar.')
-    }
+    toast.warning('Dirección completada parcialmente', `${notas} Revisá y completá a mano.`)
   }
 
   async function initInteractiveMap() {
