@@ -63,7 +63,7 @@ describe('createBookingSyncCron — issue #564', () => {
     expect(warnCalls.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('exporta DEFAULT_BOOKING_SYNC_TICK_MS = 15 min', () => {
-    expect(DEFAULT_BOOKING_SYNC_TICK_MS).toBe(60_000 * 15)
+  it('exporta DEFAULT_BOOKING_SYNC_TICK_MS = 60 s', () => {
+    expect(DEFAULT_BOOKING_SYNC_TICK_MS).toBe(60_000)
   })
 })
