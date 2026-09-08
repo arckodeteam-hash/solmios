@@ -193,6 +193,7 @@ const navItems = computed(() => {
     { path: '/admin/feedback', label: 'Feedback', icon: ICONS.chat },
     { path: '/admin/announcements', label: 'Anuncios', icon: ICONS.megaphone },
     { path: '/admin/channels', label: 'Canales', icon: ICONS.channels },
+    { path: '/admin/channex-queue', label: 'Cola de Channex', icon: ICONS.channels },
     { path: '/admin/api-keys', label: 'API & Webhooks', icon: ICONS.key },
     { path: '/admin/email-templates', label: 'Plantillas de Email', icon: ICONS.mail },
     { path: '/admin/sitio', label: 'Sitio Público', icon: ICONS.document },
@@ -231,6 +232,7 @@ const pageTitle = computed(() => {
     'super-admin-digitalizacion': 'Digitalización',
     'super-admin-roles': 'Roles & Permisos',
     'super-admin-channels': 'Canales (Channel Manager)',
+    'super-admin-channex-queue': 'Cola de Channex',
     'super-admin-settings': 'Configuración',
   }
   return titles[route.name as string] ?? 'Super Admin'
