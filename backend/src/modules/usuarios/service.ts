@@ -118,7 +118,7 @@ export class UsuariosService {
 
   /** Regenera el token y reenvía el correo al usuario del token. */
   resendVerification(userId: string): Promise<{ sent: boolean }> {
-    return resendVerificationEmail(this.repo, this.emailSender, this.appUrl, userId)
+    return resendVerificationEmail(this.repo, this.emailSender, this.appUrl, userId, this.hotelRepo)
   }
 
   async updateProfile(userId: string, data: ProfilePatch): Promise<any> {
