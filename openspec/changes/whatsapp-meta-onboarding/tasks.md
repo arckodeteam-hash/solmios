@@ -63,7 +63,7 @@
 ## 5. Retirar la tarjeta muerta de super-admin
 - [x] 5.1 Sacar la tarjeta editable de WhatsApp de `super-admin/settings.vue` (array `integrations`,
       línea ~232). **Aceptación**: no queda ningún input de credenciales de WhatsApp en `/admin/settings`.
-- [ ] 5.2 (Opcional) Lista de solo lectura de hoteles con WhatsApp conectado.
+- [x] 5.2 (Opcional) Lista de solo lectura de hoteles con WhatsApp conectado.
       **Aceptación**: no permite editar nada; sale de los datos ya persistidos por hotel.
 - [x] 5.3 Revisar si `configuration('integraciones')` queda sin uso y documentarlo o limpiarlo.
       **Aceptación**: si se conserva para Stripe, se aclara en un comentario qué lo lee.
@@ -87,8 +87,9 @@
   panel de Meta (Configuración → Básica → Mostrar). Sin él, el canje del código no se puede probar
   contra Meta. Todo lo demás del flujo SÍ se probó contra la cuenta real: `getPhoneNumber`,
   `getWabaInfo` y `subscribeApp` funcionan (la app quedó suscrita al WABA `2631160424009333`).
-- **5.2 — lista de solo lectura en `/admin/settings`: no se hizo.** Estaba marcada opcional y no
-  aporta al vídeo de certificación. La tarjeta muerta sí se retiró (5.1).
+- **5.2 — hecha como endpoint de soporte**, no como pantalla: `GET /api/ai/whatsapp/connections`,
+  solo `super_admin`, solo lectura y sin tokens. Responde "¿este hotel puede mandar mensajes?" sin
+  darle a la plataforma un lugar para tocar credenciales ajenas.
 
 ### Lo que se probó contra Meta de verdad
 

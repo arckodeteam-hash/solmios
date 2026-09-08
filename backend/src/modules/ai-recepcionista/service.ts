@@ -25,7 +25,7 @@ import { conversationChannel } from './usecases/conversation-channel'
 import type { ReservationCancelPort, InvoiceIssuePort } from './usecases/llm-pipeline'
 import { getWhatsappConfig, updateWhatsappConfig, getWhatsappCredentials } from './usecases/whatsapp-config'
 import type { WhatsappCredentials } from './usecases/whatsapp-config'
-import { connectWhatsapp, disconnectWhatsapp, proyectarConexion } from './usecases/whatsapp-connection'
+import { connectWhatsapp, disconnectWhatsapp, proyectarConexion, listarConexiones } from './usecases/whatsapp-connection'
 import { connectionDepsFor } from './usecases/whatsapp-connection-deps'
 import type { ConnectInput } from './usecases/whatsapp-connection'
 import { getMetrics, getDashboardMetrics } from './usecases/metrics'
@@ -95,13 +95,11 @@ export class AiRecepcionistaService {
   async transferConversation(id: string, agentId: string | null, reason?: string, u?: any) { return transferConversation(this.conversationRepo, this.sockets, id, agentId, reason, this.userHotel(u!), this.userRole(u!)) }
   async sendMessage(conversationId: string, dto: any, u: any) { return sendMessage(this.conversationRepo, this.messageRepo, this.sockets, this.cache, { ...dto, conversationId }, this.userHotel(u), this.userRole(u)) }
   async processIncomingMessage(conversationId: string, content: string, hotelId: string) {
-    let hotelName = 'Hotel' // nombre real del hotel, para personalizar la respuesta
-    try {
-      // @ignore IDOR_RISK
-      hotelName = (await this.hotelRepo.findById(hotelId))?.name || 'Hotel'
-    } catch (e: any) {
-      this.logger?.warn?.('No se pudo leer el nombre del hotel', { hotelId, error: e?.message })
-    }
+    // Nombre real del hotel, para personalizar la respuesta. Si falla, se sigue con el genérico.
+    let hotelName = 'Hotel'
+    // @ignore IDOR_RISK
+    try { hotelName = (await this.hotelRepo.findById(hotelId))?.name || 'Hotel' }
+    catch (e: any) { this.logger?.warn?.('No se pudo leer el nombre del hotel', { hotelId, error: e?.message }) }
     const channel = await conversationChannel(this.conversationRepo, conversationId, hotelId)
     return processIncomingMessage(this.conversationRepo, this.messageRepo, this.intentRepo, this.whatsappConfigRepo, this.sockets, this.cache, this.logger, conversationId, content, hotelId, hotelName, { roomRepo: this.roomRepo, reservationRepo: this.reservationRepo, hotelRepo: this.hotelRepo, guestRepo: this.guestRepo, configRepo: this.configRepo, issueInvoice: this.invoicingPort ?? undefined, channel, logger: this.logger, onReservationCreated: this.onReservationCreated, cancelReservation: this.cancelReservationPort ?? undefined })
   }
@@ -145,6 +143,8 @@ export class AiRecepcionistaService {
   async connectWhatsapp(input: ConnectInput, u: any) { return connectWhatsapp(connectionDepsFor(this.whatsappConfigRepo, this.logger), input, await this.resolveHotelId(u, (input as any).hotelId), u?.id) }
   /** Da de baja la conexión: primero en Meta, después acá. */
   async disconnectWhatsapp(u: any, hotelId?: string) { return disconnectWhatsapp(connectionDepsFor(this.whatsappConfigRepo, this.logger), await this.resolveHotelId(u, hotelId)) }
+  /** Todas las conexiones, para el soporte de la plataforma. Solo lectura, sin secretos. */
+  async listarConexiones() { return listarConexiones(this.whatsappConfigRepo) }
   /** Estado de la conexión para la tarjeta del panel. Sin secretos. */
   async getWhatsappConnection(hotelId: string, u: any) { return proyectarConexion(await getWhatsappConfig(this.whatsappConfigRepo, await this.resolveHotelId(u, hotelId))) }
 

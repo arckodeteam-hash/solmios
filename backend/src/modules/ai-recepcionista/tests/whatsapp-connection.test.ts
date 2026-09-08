@@ -1,7 +1,7 @@
 // ai-recepcionista/tests/whatsapp-connection.test.ts — Conexión y baja del WhatsApp de un hotel.
 import { describe, it, expect } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
-import { connectWhatsapp, disconnectWhatsapp, proyectarConexion } from '../usecases/whatsapp-connection'
+import { connectWhatsapp, disconnectWhatsapp, proyectarConexion, listarConexiones } from '../usecases/whatsapp-connection'
 import type { ConnectionDeps } from '../usecases/whatsapp-connection'
 import { WhatsappCloudError } from '../../../services/whatsapp-cloud-client'
 
@@ -175,5 +175,37 @@ describe('proyectarConexion', () => {
 
   it('un intento fallido queda como error, no como "sin conectar"', () => {
     expect(proyectarConexion({ connectionMode: 'none', connectionError: 'El permiso venció' }).estado).toBe('error')
+  })
+})
+
+
+describe('listarConexiones (soporte de la plataforma)', () => {
+  const repo = (filas: any[]) => ({ findMany: async () => filas })
+
+  it('lista solo los hoteles que conectaron algo', async () => {
+    const out = await listarConexiones(repo([
+      { hotelId: 'h1', connectionMode: 'meta', accessToken: 'T', displayPhoneNumber: '+1 555' },
+      { hotelId: 'h2', connectionMode: 'none' },
+      { hotelId: 'h3', connectionMode: 'baileys', baileysCredentials: { x: 1 } },
+    ]))
+    expect(out.map((c: any) => c.hotelId)).toEqual(['h1', 'h3'])
+  })
+
+  // Es una vista de SOPORTE: sirve para responder "¿este hotel puede mandar mensajes?", no para
+  // manipular credenciales de nadie.
+  it('nunca expone tokens', async () => {
+    const out = await listarConexiones(repo([
+      { hotelId: 'h1', connectionMode: 'meta', accessToken: 'SECRETO', baileysCredentials: { y: 2 } },
+    ]))
+    expect(JSON.stringify(out)).not.toContain('SECRETO')
+    expect(JSON.stringify(out)).not.toContain('baileys')
+  })
+
+  it('ordena por conexión más reciente', async () => {
+    const out = await listarConexiones(repo([
+      { hotelId: 'viejo', connectionMode: 'meta', accessToken: 'T', connectedAt: '2026-01-01T00:00:00.000Z' },
+      { hotelId: 'nuevo', connectionMode: 'meta', accessToken: 'T', connectedAt: '2026-09-01T00:00:00.000Z' },
+    ]))
+    expect(out.map((c: any) => c.hotelId)).toEqual(['nuevo', 'viejo'])
   })
 })
