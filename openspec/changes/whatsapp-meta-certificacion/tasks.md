@@ -32,17 +32,17 @@
       **Aceptación**: una nota con el alcance y a quién habría que avisar.
 
 ## 3. Hotel y usuario de prueba
-- [ ] 3.1 Crear un hotel de prueba en producción con nombre y datos inventados.
+- [x] 3.1 Crear un hotel de prueba en producción con nombre y datos inventados.
       **Aceptación**: ninguna reserva ni huésped real.
-- [ ] 3.2 Cargar 3-4 habitaciones y 2 reservas con huéspedes ficticios, cuyos teléfonos sean los
+- [x] 3.2 Cargar 3-4 habitaciones y 2 reservas con huéspedes ficticios, cuyos teléfonos sean los
       números registrados en 1.4. **Aceptación**: se le puede enviar un WhatsApp a esas reservas.
-- [ ] 3.3 Crear el usuario del revisor con los permisos justos para recorrer el flujo.
+- [x] 3.3 Crear el usuario del revisor con los permisos justos para recorrer el flujo.
       **Aceptación**: entra, ve el hotel de prueba, no alcanza datos de otros hoteles.
-- [ ] 3.4 Guardar sus credenciales fuera del repositorio.
+- [x] 3.4 Guardar sus credenciales fuera del repositorio.
       **Aceptación**: `rg` de la contraseña en el repositorio no devuelve nada.
 
 ## 4. Formulario de Meta
-- [ ] 4.1 Completar la lista de proveedores externos con lo ya relevado: **Contabo GmbH** (VPS,
+- [x] 4.1 Completar la lista de proveedores externos con lo ya relevado: **Contabo GmbH** (VPS,
       datacenter en Lauterbourg, Francia) · **PostgreSQL 16 en ese mismo servidor** · **SMTP por hotel
       con respaldo en Resend** · terceros con acceso a datos: Stripe, Channex, TTLock,
       **DeepSeek/OpenAI**, Firebase, Google (Maps, Geocoding, Business Profile), Cloudflare Turnstile,
@@ -58,7 +58,7 @@
 ## 5. Vídeo y solicitud (LO ÚLTIMO)
 - [ ] 5.1 Verificar que los siete momentos se pueden hacer de corrido en producción.
       **Aceptación**: pasada completa sin errores. Si alguno falla, se arregla antes de grabar.
-- [ ] 5.2 Escribir el guion con los siete momentos y sus tiempos.
+- [x] 5.2 Escribir el guion con los siete momentos y sus tiempos.
       **Aceptación**: la pasada entra en 2-4 minutos.
 - [ ] 5.3 Ensayo grabado, descartable.
       **Aceptación**: se detectan los puntos donde se traba o donde aparece algo que no debería.
@@ -88,6 +88,16 @@ Lo que era **código** de este change está hecho:
   conexión oficial: la pestaña no se muestra y, si estaba abierta, la vista salta a otra. Mientras
   no haya conexión oficial sigue disponible con un aviso de que es la vía anterior. Los hoteles que
   hoy la usan NO se desconectan.
+
+### Agregado 2026-09-07
+
+- **3.x — el hotel de prueba ya es un comando**: `bun run seed-demo-meta`, idempotente, con la
+  contraseña por variable de entorno (no toca el repositorio). Probado: el usuario entra y ve solo
+  las dos reservas de su hotel.
+- **4.1 / 5.2 — el formulario y el guion del vídeo están escritos** en `entrega-a-meta.md`, listos
+  para copiar. Solo falta la fila de respaldos, que no se puede saber desde el código.
+- **Diagnóstico**: `bun run verificar-whatsapp` revisa entorno, base y la cuenta real en Meta, y
+  dice qué falta y cómo se arregla. Es lo primero que hay que correr después del deploy.
 
 Todo lo demás de este change **no es código y no lo puede hacer el sistema**:
 
