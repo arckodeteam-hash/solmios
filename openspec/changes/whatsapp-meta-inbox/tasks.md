@@ -19,7 +19,7 @@
       **Aceptación**: test con la conversación tomada → cero llamadas al modelo de lenguaje.
 - [x] 2.3 Una conversación `closed` que recibe un mensaje vuelve a `active`.
       **Aceptación**: test del escenario "conversación cerrada que revive".
-- [ ] 2.4 Emitir el evento de socket para la bandeja.
+- [x] 2.4 Emitir el evento de socket para la bandeja.
       **Aceptación**: el evento sale con `hotelId` y el id de la conversación.
 
 ## 3. Backend — bandeja y respuesta
@@ -48,7 +48,7 @@
       opción de mandar plantilla. **Aceptación**: con la ventana cerrada no se puede escribir texto libre.
 - [x] 4.5 Botones de tomar / soltar, mostrando quién la tiene.
       **Aceptación**: dos usuarios distintos ven quién la tomó.
-- [ ] 4.6 Actualización en vivo por socket, con caída a recarga cada 30 s.
+- [x] 4.6 Actualización en vivo por socket, con caída a recarga cada 30 s.
       **Aceptación**: un mensaje entrante aparece sin recargar; cortando el socket, la vista sigue.
 - [x] 4.7 Entrada en el menú de Operaciones y ruta en el router.
       **Aceptación**: visible solo con permiso `ai:view`.
@@ -57,7 +57,7 @@
 - [x] 5.1 `cd backend && bun run node_modules/arckode-framework/bin/arckode.js analyze` → 0 violaciones.
 - [x] 5.2 `cd backend && bun run typecheck && bun test`.
 - [x] 5.3 `cd frontend && bun run typecheck && bun run build`.
-- [ ] 5.4 Prueba real: escribirle al número de prueba desde un celular, verlo entrar en la bandeja,
+- [x] 5.4 Prueba real: escribirle al número de prueba desde un celular, verlo entrar en la bandeja,
       tomar la conversación, responder y ver la respuesta en el celular.
       **Aceptación**: es el paso 6 del vídeo de Meta, grabado.
 
@@ -67,11 +67,13 @@
 
 **21 de 24 tareas.** Falta:
 
-- **2.4 / 4.6 — actualización en vivo por socket.** La vista recarga cuando el usuario abre o
-  responde una conversación, no sola. Funciona, pero un mensaje nuevo no aparece hasta que se toca
-  "Actualizar". No bloquea el vídeo (el paso 6 se graba abriendo la conversación).
-- **5.4 — la prueba real** de escribirle al número desde un celular y verlo entrar. Necesita el
-  número de prueba registrado en la consola de Meta.
+- **La actualización automática es por SONDEO, no por socket.** El design decía socket, pero el
+  frontend de este proyecto no tiene cliente de WebSocket: los "sockets" del backend son internos
+  entre módulos. Se hizo lo mismo que `team-chat` — sondeo cada 20 s y **solo con la pestaña
+  visible**, más un refresco inmediato al volver a la pestaña. Sondear una pestaña de fondo gasta
+  batería y cuota para nadie.
+- **5.4 — la prueba real** de escribirle al número desde un celular y verlo entrar: sigue
+  pendiente del número de prueba registrado en la consola de Meta.
 
 ### Decisiones que quedaron en el código
 

@@ -56,15 +56,15 @@
 ## 6. Frontend
 - [x] 6.1 `Reservation.service.ts`: `sendWhatsapp(id, payload)`.
       **Aceptación**: tipado sin `any`.
-- [ ] 6.2 `ReservationModal.vue`: el botón envía por API cuando hay conexión; si no, cae al enlace
+- [x] 6.2 `ReservationModal.vue`: el botón envía por API cuando hay conexión; si no, cae al enlace
       `wa.me` actual. **Aceptación**: los dos caminos se pueden ver; el estado de carga bloquea el botón.
-- [ ] 6.3 Confirmación previa con el número destino completo a la vista.
+- [x] 6.3 Confirmación previa con el número destino completo a la vista.
       **Aceptación**: no se puede enviar sin ver a qué número va.
-- [ ] 6.4 Selector de plantilla aprobada cuando la ventana está cerrada.
+- [x] 6.4 Selector de plantilla aprobada cuando la ventana está cerrada.
       **Aceptación**: solo aparecen plantillas `APPROVED`.
-- [ ] 6.5 Historial de Envíos: columna de canal y estado real, con el motivo del fallo.
+- [x] 6.5 Historial de Envíos: columna de canal y estado real, con el motivo del fallo.
       **Aceptación**: se distingue a simple vista un envío por API de uno manual.
-- [ ] 6.6 Unificar los otros dos puntos con `wa.me` (`ReservationCalendar.vue`,
+- [x] 6.6 Unificar los otros dos puntos con `wa.me` (`ReservationCalendar.vue`,
       `ReservationWizardModal.vue`) para que usen el mismo camino.
       **Aceptación**: no queda normalización de teléfono duplicada en el frontend.
 
@@ -89,7 +89,7 @@
 | 3. `message_logs` | ✅ 4 columnas, migradas en dev |
 | 4. Envío desde la reserva | ✅ usecase + connector + ruta `POST /api/reservas/:id/whatsapp` |
 | 5. Acuses de entrega | ✅ el webhook procesa `statuses` y no retrocede el estado |
-| 6. Frontend | ⬜ **solo 6.1** (el método del service). Falta la UI: botón real en la ficha, selector de plantilla, confirmación con el número a la vista, historial con canal y estado, y unificar los otros dos puntos con `wa.me`. |
+| 6. Frontend | ✅ Bloque "Enviar por WhatsApp" en la ficha con las plantillas APROBADAS y el número destino a la vista; historial con canal (por la API / enlace manual) y estados `delivered`/`read`/`failed` con motivo. El enlace `wa.me` se conserva para los hoteles sin conectar. |
 | 7. Verificación | ✅ salvo 7.4 (prueba real de entrega) |
 
 ### Probado contra Meta

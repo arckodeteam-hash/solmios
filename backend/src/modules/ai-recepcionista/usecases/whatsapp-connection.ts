@@ -214,3 +214,19 @@ export function proyectarConexion(config: any): Record<string, unknown> {
     connectionError: config.connectionError || null,
   }
 }
+
+/**
+ * Qué hoteles tienen WhatsApp conectado. SOLO LECTURA y solo para el super_admin: es una
+ * herramienta de soporte ("¿este hotel puede mandar mensajes?"), no un lugar para configurar.
+ * Configurar sigue siendo del hotel, en su propio panel.
+ *
+ * Nunca incluye tokens: devuelve lo mismo que ve el hotel en su tarjeta.
+ */
+export async function listarConexiones(configRepo: any): Promise<Array<Record<string, unknown>>> {
+  const filas = await configRepo.findMany({})
+  return filas
+    .map((c: any) => ({ hotelId: c.hotelId, ...proyectarConexion(c) }))
+    // Los que nunca conectaron nada no aportan a la lista de soporte.
+    .filter((c: any) => c.estado !== 'disconnected')
+    .sort((a: any, b: any) => String(b.connectedAt ?? '').localeCompare(String(a.connectedAt ?? '')))
+}

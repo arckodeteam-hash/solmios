@@ -14,7 +14,7 @@
       documento del equipo**: los cuatro que figuran no incluyen éste.
 - [ ] 1.4 Registrar hasta 5 teléfonos de prueba en la consola (modo desarrollo solo entrega a esos).
       **Aceptación**: un mensaje de prueba desde la consola llega a un celular del equipo.
-- [ ] 1.5 Agregar `META_APP_ID`, `META_APP_SECRET`, `META_GRAPH_VERSION` y `WHATSAPP_APP_SECRET` a
+- [x] 1.5 Agregar `META_APP_ID`, `META_APP_SECRET`, `META_GRAPH_VERSION` y `WHATSAPP_APP_SECRET` a
       `backend/.env.example` con la nota de dónde se sacan.
       **Aceptación**: un despliegue limpio sabe qué le falta con solo leer el archivo.
 - [ ] 1.6 Cargar las variables en producción y reiniciar el servicio.
@@ -22,9 +22,9 @@
       rechazar por firma.
 
 ## 2. Retirar la vía no oficial del alcance del revisor
-- [ ] 2.1 Ocultar la pestaña de vinculación por QR cuando el hotel tiene `connectionMode='meta'`.
+- [x] 2.1 Ocultar la pestaña de vinculación por QR cuando el hotel tiene `connectionMode='meta'`.
       **Aceptación**: escenario "hotel con conexión oficial" del spec.
-- [ ] 2.2 Verificar que no queda ningún otro punto de entrada al QR desde el panel del hotel de prueba.
+- [x] 2.2 Verificar que no queda ningún otro punto de entrada al QR desde el panel del hotel de prueba.
       **Aceptación**: recorrido completo del panel sin encontrarlo.
 - [ ] 2.3 Documentar en `CLAUDE.md` que Baileys es legacy, por qué sigue existiendo y qué hoteles lo
       usan. **Aceptación**: queda escrito antes de que alguien lo "descubra" en un vídeo.
@@ -74,3 +74,28 @@
 - Fase 2: independiente del resto.
 - Fase 3: necesita `whatsapp-meta-onboarding` terminado para que el hotel de prueba pueda conectarse.
 - Fase 5: necesita los **cuatro** changes terminados y probados.
+
+---
+
+## Estado (2026-09-07)
+
+Lo que era **código** de este change está hecho:
+
+- **1.5** — `META_APP_ID`, `META_APP_SECRET`, `META_GRAPH_VERSION`, `META_REGISTRATION_PIN` y
+  `WHATSAPP_APP_SECRET` documentados en `backend/.env.example`, con dónde se sacan y qué se rompe
+  sin ellos.
+- **2.1 / 2.2** — la vinculación por código QR desaparece del panel en cuanto el hotel tiene la
+  conexión oficial: la pestaña no se muestra y, si estaba abierta, la vista salta a otra. Mientras
+  no haya conexión oficial sigue disponible con un aviso de que es la vía anterior. Los hoteles que
+  hoy la usan NO se desconectan.
+
+Todo lo demás de este change **no es código y no lo puede hacer el sistema**:
+
+| Tarea | Quién |
+|---|---|
+| 1.1-1.4 Credenciales (App Secret, WABA ID, números de prueba) | El equipo, en el panel de Meta |
+| 1.6 Cargar las variables en producción | Deploy, cuando estén las credenciales |
+| 2.3-2.4 Documentar Baileys como legacy y planear su baja | Decisión de producto |
+| 3.x Hotel y usuario de prueba en producción | El equipo |
+| 4.x Formulario de Meta | El equipo (los proveedores ya están relevados en el design) |
+| 5.x Vídeo y solicitud | Al final, con los cuatro changes terminados |

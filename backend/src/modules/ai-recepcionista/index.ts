@@ -14,6 +14,7 @@ import type {
   AiVoiceConfigRecord,
 } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
+import { requireUserType } from '../../infrastructure/auth/require-user-type'
 import { createModuleGuard } from '../../infrastructure/auth/require-module'
 
 export { AiRecepcionistaService }
@@ -135,6 +136,8 @@ export function AiRecepcionistaModule() {
       router.post('/api/ai/whatsapp/connect', guard('settings', 'edit'), (req) => controller.connectWhatsapp(req))
       router.get('/api/ai/whatsapp/connection', guard('settings', 'view'), (req) => controller.getWhatsappConnection(req))
       router.delete('/api/ai/whatsapp/connection', guard('settings', 'edit'), (req) => controller.disconnectWhatsapp(req))
+      // Solo lectura, solo plataforma: para soporte, no para configurar.
+      router.get('/api/ai/whatsapp/connections', [auth.authenticate('super_admin'), requireUserType('admin')], () => controller.listConnections())
       // Bandeja: conversaciones con el huésped. Permiso `ai` porque es atención, no configuración.
       router.get('/api/ai/inbox', guard('ai', 'view'), (req) => controller.inbox(req))
       router.get('/api/ai/inbox/:id', guard('ai', 'view'), (req) => controller.getInboxConversation(req))

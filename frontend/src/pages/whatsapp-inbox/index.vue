@@ -3,7 +3,7 @@
     <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
       <div>
         <h2 class="text-xl font-black text-navy">Conversaciones de WhatsApp</h2>
-        <p class="mt-0.5 text-sm text-text-muted">Lo que te escriben los huéspedes, y tus respuestas</p>
+        <p class="mt-0.5 text-sm text-text-muted">Lo que te escriben los huéspedes, y tus respuestas · se actualiza sola</p>
       </div>
       <button @click="cargarLista" :disabled="cargandoLista"
         class="rounded-full border border-border px-4 py-2 text-xs font-bold text-text-secondary transition-colors hover:border-navy hover:text-navy disabled:opacity-50">
@@ -127,7 +127,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { AiReceptionistService } from '@/services/AiReceptionist.service'
@@ -281,5 +281,53 @@ async function responder() {
   }
 }
 
-onMounted(() => { cargarLista(); cargarNombres() })
+/**
+ * Actualización automática por sondeo.
+ *
+ * El frontend de este proyecto NO tiene cliente de WebSocket (los "sockets" del backend son
+ * internos entre módulos), así que se hace lo mismo que `team-chat`: sondeo liviano y SOLO con la
+ * pestaña visible. Sondear una pestaña de fondo gasta batería y cuota para nadie.
+ */
+const INTERVALO_MS = 20_000
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+/** Sondeo silencioso: no toca los estados de carga para que la vista no parpadee cada 20 s. */
+async function sondear() {
+  if (document.visibilityState !== 'visible' || ocupado.value) return
+  try {
+    const r = await AiReceptionistService.inbox()
+    conversaciones.value = r.data || []
+    // El hilo abierto también se refresca: si el huésped contestó, aparece sin tocar nada.
+    if (abiertaId.value) {
+      const t = await AiReceptionistService.inboxConversation(abiertaId.value)
+      // Solo se pisa si llegó algo nuevo, para no interrumpir lo que se está escribiendo.
+      if (t.mensajes.length !== (hilo.value?.mensajes.length ?? 0)) hilo.value = t
+    }
+  } catch {
+    // Silencioso: el próximo ciclo reintenta. Un toast cada 20 s sería peor que el problema.
+  }
+}
+
+function arrancarSondeo() {
+  if (pollTimer) return
+  pollTimer = setInterval(sondear, INTERVALO_MS)
+}
+
+function alCambiarVisibilidad() {
+  // Al volver a la pestaña, refrescar ya: esperar 20 s la haría ver desactualizada.
+  if (document.visibilityState === 'visible') sondear()
+}
+
+onMounted(() => {
+  cargarLista()
+  cargarNombres()
+  arrancarSondeo()
+  document.addEventListener('visibilitychange', alCambiarVisibilidad)
+})
+
+onBeforeUnmount(() => {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = null
+  document.removeEventListener('visibilitychange', alCambiarVisibilidad)
+})
 </script>

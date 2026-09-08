@@ -36,6 +36,20 @@ function getHotelId() {
 
 const tab = ref<'whatsapp' | 'llm' | 'intents' | 'templates'>('whatsapp')
 
+/**
+ * ¿El hotel ya tiene la conexión OFICIAL de Meta?
+ *
+ * Si la tiene, la vinculación por código QR no se muestra: es una vía no oficial, contraria a las
+ * condiciones de Meta, y tenerla a mano al lado de la buena invita a usarla. También importa para
+ * la certificación: si el revisor de Meta la encuentra navegando, es rechazo directo.
+ */
+const conexionOficial = ref(false)
+
+const pestañas = computed(() => {
+  const base = [{ k: 'llm', l: 'Modelo IA' }, { k: 'intents', l: 'Intenciones' }, { k: 'templates', l: 'Plantillas' }]
+  return conexionOficial.value ? base : [{ k: 'whatsapp', l: 'WhatsApp' }, ...base]
+})
+
 // WhatsApp
 const wsConfig = ref<any>(null)
 const wsStatus = ref({ status: 'disconnected', phone: null as string | null, mode: 'baileys' })
@@ -201,7 +215,7 @@ onBeforeUnmount(() => { stopPolling() })
 
       <!-- Tabs -->
       <div class="mb-6 flex gap-2 overflow-x-auto pb-1">
-        <button v-for="t in [{k:'whatsapp',l:'WhatsApp'},{k:'llm',l:'Modelo IA'},{k:'intents',l:'Intenciones'},{k:'templates',l:'Plantillas'}]" :key="t.k"
+        <button v-for="t in pestañas" :key="t.k"
           @click="tab = t.k as any"
           class="flex shrink-0 items-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold transition-all cursor-pointer"
           :class="tab === t.k ? 'bg-navy text-white' : 'bg-white text-text-secondary border border-border hover:border-navy/30'">
@@ -209,8 +223,17 @@ onBeforeUnmount(() => { stopPolling() })
         </button>
       </div>
 
-      <!-- WhatsApp Tab -->
-      <div v-if="tab === 'whatsapp'" class="space-y-5">
+      <!-- WhatsApp Tab — vinculación por código QR (vía anterior, no oficial) -->
+      <div v-if="tab === 'whatsapp' && !conexionOficial" class="space-y-5">
+        <div class="rounded-2xl bg-gold/10 px-4 py-3">
+          <div class="text-sm font-bold text-navy">Esta es la conexión anterior</div>
+          <p class="mt-1 text-[11px] leading-relaxed text-text-secondary">
+            Vincula el WhatsApp escaneando un código QR. Funciona, pero es una vía no oficial:
+            WhatsApp puede cortarla sin aviso y no permite enviar plantillas ni saber si el mensaje
+            llegó. La conexión oficial se hace en <strong class="text-navy">Configuración →
+            Integraciones</strong>.
+          </p>
+        </div>
         <SectionCard title="Conexión de WhatsApp"
           subtitle="Vinculá el número del hotel para que la IA responda los mensajes entrantes">
           <!-- Skeleton mientras se resuelve el estado de la sesión -->

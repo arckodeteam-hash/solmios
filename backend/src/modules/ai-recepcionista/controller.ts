@@ -169,6 +169,11 @@ export class AiRecepcionistaController {
     return { status: 200, body: { success: true } }
   }
 
+  /** Lista de hoteles con WhatsApp conectado. Herramienta de soporte del super_admin. */
+  async listConnections() {
+    return { status: 200, body: { data: await this.service.listarConexiones() } }
+  }
+
   // ─── Bandeja de WhatsApp ────────────────────────────────────────────────
 
   /** Conversaciones de WhatsApp del hotel, la más movida primero. */

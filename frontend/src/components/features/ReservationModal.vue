@@ -8,6 +8,9 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { pushModal, popModal } from '@/composables/useModalStack'
 import { useRouter } from 'vue-router'
 import { ReservationService } from '@/services/Reservation.service'
+import { WhatsappService } from '@/services/Whatsapp.service'
+import type { WhatsappTemplate } from '@/services/Whatsapp.service'
+import { AiReceptionistService } from '@/services/AiReceptionist.service'
 import { PaymentsService } from '@/services/Payments.service'
 import { FoliosService } from '@/services/Folios.service'
 import { AutoMessagesService } from '@/services/AutoMessages.service'
@@ -48,6 +51,11 @@ const otherCharges = ref(0)
 const otherChargesDraft = ref('0')
 const currency = ref<CurrencyConfig | null>(null)
 const waTemplates = ref<{ id?: string; title?: string; channel?: string; whatsappBody?: string | null }[]>([])
+/** Plantillas APROBADAS por Meta: las únicas que se pueden mandar por la API. */
+const metaTemplates = ref<WhatsappTemplate[]>([])
+/** ¿El hotel conectó su WhatsApp? Sin conexión el envío real no existe y queda el enlace de siempre. */
+const waConectado = ref(false)
+const enviandoMeta = ref('')
 const addons = ref<ReservationDetailAddon[]>([])
 const auditLogs = ref<AuditLogEntry[]>([])
 const newAddon = ref({ description: '', amount: 0, kind: 'service' as 'service' | 'discount' })
@@ -357,7 +365,7 @@ watch(() => props.reservationId, (id) => { if (id) load() }, { immediate: true }
 // abierto, así que el bloqueo de scroll del body va en el ciclo de vida del componente
 // (mismo patrón que AppModal.vue) — sin esto, la rueda del mouse sobre el modal también
 // scrollea la página de atrás.
-onMounted(() => { document.body.style.overflow = 'hidden'; pushModal() })
+onMounted(() => { document.body.style.overflow = 'hidden'; pushModal(); cargarEnvioMeta() })
 onBeforeUnmount(() => { document.body.style.overflow = ''; popModal() })
 
 // ── Computed ──
@@ -827,6 +835,45 @@ async function waSend(body?: string | null, templateTitle?: string) {
     await load({ silent: true })
   } catch {
     toast.warning('WhatsApp abierto, pero no se pudo registrar el envío en el historial')
+  }
+}
+
+/**
+ * Envío REAL por la Cloud API de Meta, desde el servidor.
+ *
+ * Distinto de `waSend`, que abre WhatsApp en el navegador del recepcionista y no puede confirmar
+ * nada: acá el mensaje sale del hotel, vuelve con acuse, y el estado de entrega lo dicta Meta.
+ * Solo se ofrece con plantillas APROBADAS: fuera de la ventana de 24 h Meta rechaza cualquier otra
+ * cosa, y el intento se cobra igual.
+ */
+async function enviarPorMeta(t: WhatsappTemplate) {
+  if (!d.value || !t.id || enviandoMeta.value) return
+  enviandoMeta.value = t.id
+  try {
+    const out = await ReservationService.sendWhatsapp(d.value.id, { templateId: t.id })
+    toast.success('WhatsApp enviado', out.status === 'sent' ? 'Meta lo aceptó y lo está entregando' : undefined)
+    await load({ silent: true })
+  } catch (e: any) {
+    toast.error('No se pudo enviar', e?.message || 'Revisá la conexión de WhatsApp del hotel')
+  } finally {
+    enviandoMeta.value = ''
+  }
+}
+
+/** Carga lo que hace falta para ofrecer el envío real: conexión del hotel y plantillas aprobadas. */
+async function cargarEnvioMeta() {
+  try {
+    const conn = await AiReceptionistService.getWhatsappConnection()
+    waConectado.value = conn?.estado === 'connected'
+  } catch {
+    waConectado.value = false
+  }
+  if (!waConectado.value) return
+  try {
+    const r = await WhatsappService.list()
+    metaTemplates.value = (r.data || []).filter((t) => t.approvalStatus === 'approved' && t.isActive !== false)
+  } catch {
+    metaTemplates.value = []
   }
 }
 
@@ -1438,6 +1485,35 @@ function irAFacturacion() {
                     <span class="font-bold shrink-0" :class="log.status === 'sent' ? 'text-teal' : 'text-gold'">{{ log.status }}</span>
                   </div>
                 </div>
+              </div>
+            </details>
+
+            <!-- Envío REAL por Meta. Va antes que el enlace wa.me porque es el camino bueno: sale
+                 del servidor, vuelve con acuse y el estado de entrega lo dicta Meta. -->
+            <details v-if="waConectado && metaTemplates.length && can('reservations','edit')" open
+              class="rm-card overflow-hidden rounded-2xl border border-border/70 border-l-[3px] border-l-teal bg-white shadow-card">
+              <summary class="flex cursor-pointer list-none select-none items-center gap-2 p-4 text-sm font-black text-teal">
+                <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-teal/10 text-teal">
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m22 2-7 20-4-9-9-4Z"/></svg>
+                </span> Enviar por WhatsApp
+                <span class="ml-auto text-text-muted transition-transform duration-200"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg></span>
+              </summary>
+              <div class="space-y-2 px-4 pb-4 pt-1 text-sm">
+                <!-- El número destino, completo y a la vista: mandarle la reserva de un huésped a
+                     otro número no se deshace. -->
+                <p class="text-[11px] text-text-muted">
+                  Se envía a <strong class="text-navy tabular-nums">{{ d?.guest?.phone || 'sin teléfono cargado' }}</strong>
+                </p>
+                <button v-for="t in metaTemplates" :key="t.id" @click="enviarPorMeta(t)"
+                  :disabled="!!enviandoMeta || !d?.guest?.phone"
+                  class="flex w-full cursor-pointer items-center justify-between rounded-lg border border-teal/25 bg-surface px-3 py-2 transition-colors hover:border-teal disabled:cursor-not-allowed disabled:opacity-50">
+                  <span>{{ t.name }}</span>
+                  <span class="text-xs font-bold text-teal">{{ enviandoMeta === t.id ? 'Enviando…' : 'Enviar →' }}</span>
+                </button>
+                <p class="text-[10px] leading-relaxed text-text-muted">
+                  Solo aparecen las plantillas que Meta aprobó. El envío queda registrado en el
+                  historial con su estado de entrega real.
+                </p>
               </div>
             </details>
 
