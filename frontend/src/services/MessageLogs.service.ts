@@ -14,6 +14,12 @@ export interface MessageLog {
   response?: string
   sentAt?: string
   createdAt?: string
+  /** whatsapp_api = salió por Meta · whatsapp_manual = se abrió el enlace a mano · email */
+  channel?: string
+  /** `wamid` de Meta. Su presencia es la prueba de que el mensaje salió por la API. */
+  providerMessageId?: string
+  /** Motivo del fallo, ya traducido. */
+  errorMessage?: string
   /** Joined opcional desde el backend */
   guestName?: string
   subject?: string
@@ -42,11 +48,34 @@ export const ICON_MAIL = `${SVG_OPEN}<rect width="20" height="16" x="2" y="4" rx
 export const ICON_MESSAGE = `${SVG_OPEN}<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>`
 export const ICON_SMARTPHONE = `${SVG_OPEN}<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>`
 
+export const ICON_EYE = `${SVG_OPEN}<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>`
+
+/**
+ * Estados de un envío. `delivered` y `read` los informa Meta por webhook, minutos después: por eso
+ * un mensaje puede quedarse en "Enviado" para siempre y eso NO es un error — significa que Meta
+ * aceptó el mensaje pero todavía no confirmó la entrega. Inventar "Entregado" sería mentir.
+ */
 export const MSG_STATUS_META: Record<string, { icon: string; label: string; class: string }> = {
   pending: { icon: ICON_CLOCK, label: 'Pendiente', class: 'bg-gold/10 text-gold' },
   queued: { icon: ICON_INBOX, label: 'En cola', class: 'bg-blue-100 text-blue-700' },
   sent: { icon: ICON_CHECK, label: 'Enviado', class: 'bg-teal/10 text-teal' },
+  delivered: { icon: ICON_CHECK, label: 'Entregado', class: 'bg-teal/15 text-teal' },
+  read: { icon: ICON_EYE, label: 'Leído', class: 'bg-cyan/10 text-cyan' },
   failed: { icon: ICON_X_CIRCLE, label: 'Fallido', class: 'bg-coral/10 text-coral' },
+}
+
+/**
+ * Cómo salió el mensaje. Importa distinguirlo: un envío por la API tiene acuse de Meta, uno manual
+ * es un enlace que alguien abrió y el sistema no puede confirmar que se haya mandado.
+ */
+export const MSG_CHANNEL_META: Record<string, { label: string; class: string }> = {
+  whatsapp_api: { label: 'Por la API', class: 'bg-teal/10 text-teal' },
+  whatsapp_manual: { label: 'Enlace manual', class: 'bg-gold/10 text-gold' },
+  email: { label: 'Email', class: 'bg-navy/5 text-navy' },
+}
+
+export function msgChannelMeta(channel?: string) {
+  return channel ? MSG_CHANNEL_META[channel] ?? null : null
 }
 
 export function msgStatusMeta(status: string) {

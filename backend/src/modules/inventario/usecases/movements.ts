@@ -5,6 +5,7 @@
 import type { RepositoryAdapter, Auth } from 'arckode-framework'
 import { NotFoundError, ValidationError } from 'arckode-framework'
 import type { InventoryItemDTO, StockMovementDTO, MovementType, CurrentUser } from '../types'
+import { isUniqueViolation } from '../../../shared/utils/db-errors'
 
 export interface MovementDeps {
   items: RepositoryAdapter<InventoryItemDTO>
@@ -107,12 +108,6 @@ export async function applyMovement(deps: MovementDeps, input: ApplyMovementInpu
   } as Partial<Omit<InventoryItemDTO, 'id'>>)
   if (!updated) throw new NotFoundError('Insumo no encontrado')
   return updated
-}
-
-/** Detecta violación de unique constraint (SQLite y Postgres) para tratar la carrera como idempotente. */
-function isUniqueViolation(e: unknown): boolean {
-  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase()
-  return msg.includes('unique') || msg.includes('duplicate') || msg.includes('23505')
 }
 
 /** Historial de movimientos de un ítem (más reciente primero). Valida ownership. */

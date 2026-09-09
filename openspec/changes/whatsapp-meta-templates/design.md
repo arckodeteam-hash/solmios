@@ -42,6 +42,11 @@ credenciales estáticas por hotel, ya persistidas, leídas en el momento del sub
 (`ai-recepcionista/usecases/whatsapp-config.ts:45`): el connector lo lee server-side únicamente, el
 cliente HTTP de Graph API vive en el backend, el frontend solo ve `approvalStatus`/`metaRejectedReason`.
 
+> **Nota de implementación (2026-09-07)**: el cliente HTTP quedó en
+> `backend/src/services/whatsapp-cloud-client.ts` (compartido), no dentro del módulo, porque
+> `whatsapp-meta-onboarding` usa el mismo para el canje del código. El endpoint de estado es
+> `GET /{metaTemplateId}?fields=status,rejected_reason,category`, como describe este documento.
+
 ## Connector: `marketing-whatsapp-meta.ts`
 
 Mismo patrón que `marketing-auditlog.ts` (puerto declarado por `marketing`, implementación inyectada

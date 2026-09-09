@@ -1,8 +1,11 @@
 import type { Logger } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import type { AiRecepcionistaService } from './service'
-import { AiRecepcionistaValidator, CloseConversationSchema, TransferConversationSchema, TestIntentSchema, WebChatMessageSchema, StartWhatsappSchema, StopWhatsappSchema } from './validators/schema'
+import { AiRecepcionistaValidator, CloseConversationSchema, TransferConversationSchema, TestIntentSchema, WebChatMessageSchema, StartWhatsappSchema, StopWhatsappSchema, ConnectWhatsappSchema, ReplyConversationSchema } from './validators/schema'
 import { redactWhatsappConfig } from './usecases/whatsapp-config'
+import { aplicarEstadosDeEntrega } from './usecases/whatsapp-delivery-status'
+import { resolverCredencialesApp } from '../../infrastructure/meta-app-config'
+import { resolverHotelDelEvento, resolverHotelDeVerificacion } from './usecases/webhook-routing'
 
 export class AiRecepcionistaController {
   constructor(
@@ -143,7 +146,101 @@ export class AiRecepcionistaController {
     return { status: 200, body: redactWhatsappConfig(result) }
   }
 
+  // ─── Conexión oficial con Meta (Embedded Signup) ────────────────────────
+
+  /**
+   * Recibe el código de un solo uso que devolvió la ventana de Meta y lo canjea server-side.
+   * El `hotelId` sale del token, nunca del body: un merchant no puede conectar el hotel de otro.
+   */
+  async connectWhatsapp(req: any) {
+    const user = req.user
+    const body = validateSchema(ConnectWhatsappSchema, req.body || {}) as any
+    return { status: 200, body: await this.service.connectWhatsapp(body, user) }
+  }
+
+  /** Estado de la conexión para la tarjeta del panel. Nunca incluye el token. */
+  async getWhatsappConnection(req: any) {
+    const user = req.user
+    return { status: 200, body: await this.service.getWhatsappConnection(req.query?.hotelId || '', user) }
+  }
+
+  /** Da de baja la conexión. Primero en Meta; si Meta falla, no se toca nada local. */
+  async disconnectWhatsapp(req: any) {
+    const user = req.user
+    await this.service.disconnectWhatsapp(user, req.query?.hotelId || undefined)
+    return { status: 200, body: { success: true } }
+  }
+
+  /** Lista de hoteles con WhatsApp conectado. Herramienta de soporte del super_admin. */
+  async listConnections() {
+    return { status: 200, body: { data: await this.service.listarConexiones() } }
+  }
+
+  // ─── Consumo de WhatsApp ────────────────────────────────────────────────
+
+  /** Lo que el hotel lleva consumido este mes y contra qué tope. */
+  async consumoWhatsapp(req: any) {
+    const mes = typeof req.query?.mes === 'string' ? req.query.mes : undefined
+    return { status: 200, body: await this.service.consumoDeWhatsapp(req.user, req.query?.hotelId || undefined, mes) }
+  }
+
+  /**
+   * Trae de Meta el consumo real. Es POST porque escribe: guarda lo que Meta informa.
+   * El hotel puede pedirlo para ver el número al día sin esperar al cron.
+   */
+  async sincronizarConsumoWhatsapp(req: any) {
+    const hotelId = req.user?.role === 'super_admin' && req.query?.hotelId ? req.query.hotelId : req.user?.hotelId
+    if (!hotelId) return { status: 400, body: { error: 'No se pudo determinar el hotel' } }
+    const mes = typeof req.query?.mes === 'string' ? req.query.mes : undefined
+    return { status: 200, body: await this.service.sincronizarConsumo(hotelId, mes) }
+  }
+
+  // ─── Bandeja de WhatsApp ────────────────────────────────────────────────
+
+  /** Conversaciones de WhatsApp del hotel, la más movida primero. */
+  async inbox(req: any) {
+    const data = await this.service.listarBandeja(req.user, req.query?.hotelId || undefined, req.query?.estado)
+    return { status: 200, body: { data } }
+  }
+
+  /** Hilo completo. Abrirla la marca leída: abrir ES haber leído. */
+  async getInboxConversation(req: any) {
+    return { status: 200, body: await this.service.abrirConversacion(req.params.id, req.user) }
+  }
+
+  /** Toma la conversación: el recepcionista automático deja de responderla. */
+  async takeConversation(req: any) {
+    await this.service.tomarConversacion(req.params.id, req.user)
+    return { status: 200, body: { success: true } }
+  }
+
+  /** La suelta: el bot vuelve a hacerse cargo. */
+  async releaseConversation(req: any) {
+    await this.service.soltarConversacion(req.params.id, req.user)
+    return { status: 200, body: { success: true } }
+  }
+
+  /** Responde con texto libre. La ventana de 24 h la valida el servidor, no el navegador. */
+  async replyConversation(req: any) {
+    const data = validateSchema(ReplyConversationSchema, req.body || {}) as any
+    return { status: 200, body: await this.service.responderConversacion(req.params.id, data.text, req.user) }
+  }
+
   // ─── WhatsApp Webhook ───────────────────────────────────────────────────
+
+  /**
+   * La respuesta al alta tiene que ser el desafío PELADO: Meta lo compara letra por letra y
+   * descarta la URL si no coincide. El servidor envuelve toda respuesta en `{success,data,...}`
+   * salvo que el cuerpo ya sea un Buffer (kernel/http/server.ts: `Buffer.isBuffer(res.body)`),
+   * así que se manda como bytes para que llegue tal cual.
+   */
+  private respuestaDeAlta(challenge: unknown) {
+    return {
+      status: 200,
+      body: Buffer.from(String(challenge), 'utf8'),
+      headers: { 'Content-Type': 'text/plain' },
+    }
+  }
 
   async whatsappWebhookVerify(req: any) {
     const mode = req.query?.['hub.mode']
@@ -151,17 +248,32 @@ export class AiRecepcionistaController {
     const challenge = req.query?.['hub.challenge']
     const hotelId = req.params?.hotelId
 
-    if (mode === 'subscribe' && token && challenge && hotelId) {
-      const configs = await (this.service as any).whatsappConfigRepo.findMany({ hotelId })
-      const cfg = configs[0]
-      if (cfg && cfg.verifyToken === token) {
-        return { status: 200, body: String(challenge), headers: { 'Content-Type': 'text/plain' } }
+    if (mode === 'subscribe' && token && challenge) {
+      // Meta da de alta la URL UNA vez, para toda la aplicación y antes de que exista ningún hotel
+      // conectado. Ese alta se valida contra el token de la plataforma; el token por hotel de más
+      // abajo es para las conexiones que se dieron de alta con su propia URL.
+      const tokenPlataforma = process.env.META_WEBHOOK_VERIFY_TOKEN
+      if (tokenPlataforma && String(token) === tokenPlataforma) {
+        return this.respuestaDeAlta(challenge)
+      }
+
+      // El hotelId del path es opcional: la ruta canónica no lo lleva y el hotel se identifica por
+      // su token.
+      const dueno = await resolverHotelDeVerificacion(
+        (this.service as any).whatsappConfigRepo,
+        typeof hotelId === 'string' ? hotelId : undefined,
+        String(token),
+      )
+      if (dueno) {
+        return this.respuestaDeAlta(challenge)
       }
     }
     return { status: 403, body: 'Verification failed' }
   }
 
   async whatsappWebhookReceive(req: any) {
+    // Sólo sirve para los avisos: el hotel real se resuelve más abajo, y por la cuenta de WhatsApp
+    // que viene en el evento, no por la URL (ver usecases/webhook-routing.ts).
     const hotelId = req.params?.hotelId
     const body: any = req.body || {}
 
@@ -170,7 +282,11 @@ export class AiRecepcionistaController {
     // reservas / payment links / invoices reales. Fail-closed: sin appSecret (WHATSAPP_APP_SECRET)
     // o sin signature, se rechaza. La firma se calcula sobre los bytes crudos (req.rawBody si el
     // framework lo expone; fallback JSON.stringify).
+    // El entorno primero; si no está, el que el super_admin cargó por el panel. Sin ninguno de los
+    // dos se rechaza todo: es puerta cerrada a propósito — un webhook sin firma verificada permite
+    // inyectar mensajes falsos, y el bot podría crear reservas o links de pago con ellos.
     const appSecret = process.env.WHATSAPP_APP_SECRET
+      || (await resolverCredencialesApp((this.service as any).configRepo).catch(() => null))?.appSecret
     const signature = req.headers?.['x-hub-signature-256'] || req.headers?.['X-Hub-Signature-256']
     if (!appSecret || !signature) {
       this.logger.warn('WhatsApp webhook rechazado: falta appSecret o signature', { hotelId, hasAppSecret: !!appSecret, hasSignature: !!signature })
@@ -189,8 +305,38 @@ export class AiRecepcionistaController {
       const value = changes?.value
       const messages = value?.messages
 
+      // Meta manda por el MISMO webhook los acuses de entrega de lo que enviamos nosotros.
+      // Sin esto, un mensaje se quedaba en "enviado" para siempre y el hotel no sabía si llegó.
+      const statuses = value?.statuses
+      if (Array.isArray(statuses) && statuses.length > 0) {
+        const port = (this.service as any).deliveryStatusPort
+        if (port) {
+          const out = await aplicarEstadosDeEntrega({ port, logger: this.logger }, statuses)
+          return { status: 200, body: { status: 'statuses_processed', ...out } }
+        }
+        // Sin el puerto cableado no hay dónde anotarlo, pero se responde 200: un error haría que
+        // Meta reintente este webhook indefinidamente.
+        this.logger.warn('Webhook con acuses de entrega y sin puerto para registrarlos', { hotelId })
+        return { status: 200, body: { status: 'statuses_ignored' } }
+      }
+
       if (!messages || messages.length === 0) {
         return { status: 200, body: { status: 'no_messages' } }
+      }
+
+      // A quién le escribió el huésped. Sale del id de cuenta que Meta manda en el evento, porque
+      // la URL es una sola para toda la plataforma: creerle al path metería la conversación en el
+      // hotel equivocado apenas haya un segundo hotel conectado.
+      const hotelDueno = await resolverHotelDelEvento(
+        (this.service as any).whatsappConfigRepo,
+        typeof hotelId === 'string' ? hotelId : undefined,
+        body,
+      )
+      if (!hotelDueno) {
+        // 200 a propósito: un error hace que Meta reintente el mismo evento para siempre, y este
+        // no se va a poder resolver nunca.
+        this.logger.warn('Webhook sin hotel identificable', { hotelId, waba: body?.entry?.[0]?.id })
+        return { status: 200, body: { status: 'unknown_account' } }
       }
 
       for (const msg of messages) {
@@ -200,7 +346,7 @@ export class AiRecepcionistaController {
         if (!text) continue
 
         const conv = await this.service.findOrCreateConversation({
-          hotelId,
+          hotelId: hotelDueno,
           channel: 'whatsapp',
           channelConversationId: from,
           guestPhone: from,
@@ -208,7 +354,13 @@ export class AiRecepcionistaController {
           language: 'es',
         })
 
-        await this.service.processIncomingMessage(conv.id, text, hotelId)
+        // Reabre la ventana de 24 h y suma al contador de no leídos ANTES de que conteste nadie:
+        // si el pipeline falla, el mensaje del huésped tiene que estar registrado igual.
+        const silenciado = await this.service.registrarEntrante(conv.id, hotelDueno)
+
+        // Si una persona del hotel tomó la conversación, el bot NO responde: el huésped recibiría
+        // dos respuestas distintas al mismo tiempo y el hotel quedaría como incoherente.
+        if (!silenciado) await this.service.processIncomingMessage(conv.id, text, hotelDueno)
       }
 
       return { status: 200, body: { status: 'processed' } }

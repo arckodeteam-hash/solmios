@@ -1,6 +1,6 @@
 {
   "_arckode": "1.0.0",
-  "_generated": "2026-09-09T17:00:54.006Z",
+  "_generated": "2026-09-09T18:41:09.342Z",
   "_instructions": "Lee este archivo ANTES de escribir código. Contiene el estado completo del sistema: módulos, conectores, violaciones. Si está desactualizado, corré: bun run analyze --json",
   "system": {
     "healthy": true,
@@ -127,6 +127,19 @@
     },
     {
       "name": "apikeys",
+      "structure": {
+        "index": true,
+        "types": true,
+        "sockets": true,
+        "service": true,
+        "controller": true,
+        "validators": true,
+        "tests": true
+      },
+      "complete": true
+    },
+    {
+      "name": "ari-outbox",
       "structure": {
         "index": true,
         "types": true,
@@ -948,9 +961,12 @@
   "connectors": [
     "activos-auditlog.ts",
     "admin-auditlog.ts",
+    "ai-facturas.ts",
     "ai-gerente-reservas.ts",
     "ai-recepcionista-auditlog.ts",
+    "ai-recepcionista-consumo.ts",
     "ai-recepcionista-reservas.ts",
+    "ai-recepcionista-whatsapp.ts",
     "aliados-feedback.ts",
     "amenities-habitaciones.ts",
     "anuncios-auditlog.ts",
@@ -965,6 +981,7 @@
     "bookingengine-tracking.ts",
     "bookingengine-ttlock.ts",
     "caja-chica-gastos.ts",
+    "canales-ari-outbox.ts",
     "canales-auditlog.ts",
     "canales-reservas.ts",
     "canales-subscriptions.ts",
@@ -1010,6 +1027,7 @@
     "mantenimiento-habitaciones.ts",
     "mantenimiento-notificaciones.ts",
     "marketing-auditlog.ts",
+    "marketing-whatsapp-meta.ts",
     "messages-pushtokens.ts",
     "messages-usuarios.ts",
     "notificaciones-auditlog.ts",
@@ -1055,6 +1073,7 @@
     "reservas-ttlock.ts",
     "reservas-wallet.ts",
     "reservas-webhooks.ts",
+    "reservas-whatsapp.ts",
     "restaurante-accounting.ts",
     "restaurante-folios.ts",
     "restaurante-inventario.ts",
@@ -1068,7 +1087,8 @@
     "tickets-auditlog.ts",
     "tripadvisor-reviews.ts",
     "usuarios-auditlog.ts",
-    "usuarios-subscriptions.ts"
+    "usuarios-subscriptions.ts",
+    "whatsapp-delivery-status.ts"
   ],
   "violations": [],
   "warnings": [],

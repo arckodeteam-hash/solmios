@@ -14,6 +14,7 @@ import type {
   AiVoiceConfigRecord,
 } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
+import { requireUserType } from '../../infrastructure/auth/require-user-type'
 import { createModuleGuard } from '../../infrastructure/auth/require-module'
 
 export { AiRecepcionistaService }
@@ -44,7 +45,7 @@ export function AiRecepcionistaModule() {
         'sendMessage', 'getMessages', 'processIncomingMessage',
         'listIntents', 'createIntent', 'updateIntent', 'deleteIntent', 'testIntent',
         'listTemplates', 'createTemplate', 'updateTemplate', 'deleteTemplate',
-        'getWhatsappConfig', 'updateWhatsappConfig',
+        'getWhatsappConfig', 'updateWhatsappConfig', 'connectWhatsapp', 'getWhatsappConnection', 'disconnectWhatsapp', 'consumoDeWhatsapp', 'sincronizarConsumo', 'assertPuedeIniciar', 'listarBandeja', 'abrirConversacion', 'tomarConversacion', 'soltarConversacion', 'responderConversacion',
         'getMetrics', 'getDashboardMetrics',
         'getBookingFlow', 'createBookingFlow', 'updateBookingFlow',
         'getVoiceConfig',
@@ -57,7 +58,7 @@ export function AiRecepcionistaModule() {
       ],
       tables: [
         'ai_conversations', 'ai_messages', 'ai_intents', 'ai_templates',
-        'ai_whatsapp_config', 'ai_metrics_daily', 'ai_booking_flows', 'ai_voice_config',
+        'ai_whatsapp_config', 'whatsapp_usage_daily', 'ai_metrics_daily', 'ai_booking_flows', 'ai_voice_config',
       ],
       dependencies: [],
       rules: ['No importar de otros módulos', 'RepositoryAdapter<T>', 'Validación en controller'],
@@ -78,12 +79,9 @@ export function AiRecepcionistaModule() {
       const hotelRepo = new OrmRepository<any>(orm, 'Hotels')
       const roomRepo = new OrmRepository<any>(orm, 'Rooms')
       const reservationRepo = new OrmRepository<any>(orm, 'Reservations')
-      // El modelo se registra en singular (`orm.define('PaymentLink', ...)` en payments/model.ts).
-      // Con 'PaymentLinks' el ORM tiraba `Modelo no definido` y el `catch {}` del pipeline lo tragaba:
-      // la IA le mandaba al huésped un link de pago que nunca se guardaba.
-      const paymentLinkRepo = new OrmRepository<any>(orm, 'PaymentLink')
+      // Sin repo de links ni de facturas: la IA ya no escribe esas tablas a mano. Los links van a
+      // derivar a `payment-requests` y las facturas ya pasan por el connector `ai-facturas`.
       const configRepo = new OrmRepository<any>(orm, 'Configuration')
-      const invoiceRepo = new OrmRepository<any>(orm, 'Invoices')
       const guestRepo = new OrmRepository<any>(orm, 'Guests')
 
       const log = logger.child('ai-recepcionista')
@@ -98,7 +96,7 @@ export function AiRecepcionistaModule() {
       service = new AiRecepcionistaService(
         conversationRepo, messageRepo, intentRepo, templateRepo,
         whatsappConfigRepo, metricsRepo, bookingFlowRepo, voiceConfigRepo,
-        userRepo, hotelRepo, roomRepo, reservationRepo, paymentLinkRepo, configRepo, invoiceRepo,
+        userRepo, hotelRepo, roomRepo, reservationRepo, configRepo,
         guestRepo,
         log, cache, auth!, onReservationCreated,
       )
@@ -133,6 +131,22 @@ export function AiRecepcionistaModule() {
       router.post('/api/ai/whatsapp/stop', guard('ai', 'edit'), (req) => controller.stopWhatsapp(req))
       router.get('/api/ai/whatsapp/qr/:hotelId?', guard('ai', 'edit'), (req) => controller.getWhatsappQR(req))
       router.get('/api/ai/whatsapp/status/:hotelId?', guard('ai', 'edit'), (req) => controller.getWhatsappStatus(req))
+      // Conexión oficial con Meta. `settings` y no `ai`: conectar el WhatsApp del hotel es una
+      // decisión de configuración del negocio, no del recepcionista automático.
+      router.post('/api/ai/whatsapp/connect', guard('settings', 'edit'), (req) => controller.connectWhatsapp(req))
+      router.get('/api/ai/whatsapp/connection', guard('settings', 'view'), (req) => controller.getWhatsappConnection(req))
+      router.delete('/api/ai/whatsapp/connection', guard('settings', 'edit'), (req) => controller.disconnectWhatsapp(req))
+      // Solo lectura, solo plataforma: para soporte, no para configurar.
+      router.get('/api/ai/whatsapp/connections', [auth.authenticate('super_admin'), requireUserType('admin')], () => controller.listConnections())
+      // Consumo: el hotel paga esto, así que lo puede ver quien administra la configuración.
+      router.get('/api/ai/whatsapp/consumo', guard('settings', 'view'), (req) => controller.consumoWhatsapp(req))
+      router.post('/api/ai/whatsapp/consumo/sync', guard('settings', 'view'), (req) => controller.sincronizarConsumoWhatsapp(req))
+      // Bandeja: conversaciones con el huésped. Permiso `ai` porque es atención, no configuración.
+      router.get('/api/ai/inbox', guard('ai', 'view'), (req) => controller.inbox(req))
+      router.get('/api/ai/inbox/:id', guard('ai', 'view'), (req) => controller.getInboxConversation(req))
+      router.post('/api/ai/inbox/:id/take', guard('ai', 'edit'), (req) => controller.takeConversation(req))
+      router.post('/api/ai/inbox/:id/release', guard('ai', 'edit'), (req) => controller.releaseConversation(req))
+      router.post('/api/ai/inbox/:id/reply', guard('ai', 'edit'), (req) => controller.replyConversation(req))
 
       // Endpoints públicos (sin auth): cada mensaje dispara una llamada a la LLM, que cuesta plata.
       // El rate-limit global (200/min/IP) es compartido con toda la API; sin un límite propio, un
@@ -144,6 +158,12 @@ export function AiRecepcionistaModule() {
       }
 
       // Public webhook endpoints. El verify (GET) no gasta LLM; el receive (POST) sí.
+      // URL CANÓNICA — la que se carga en el panel de Meta. Meta admite UNA sola por aplicación:
+      // el hotel se identifica por la cuenta de WhatsApp que viene en cada evento, no por la URL.
+      router.get('/api/ai/whatsapp/webhook', (req) => controller.whatsappWebhookVerify(req))
+      router.post('/api/ai/whatsapp/webhook', async (req) => aiRateLimited(req, (r) => controller.whatsappWebhookReceive(r)))
+      // Variante con el hotel en la ruta. Se mantiene por las conexiones dadas de alta antes de la
+      // URL única; enruta igual por la cuenta de WhatsApp, así que un path equivocado no cruza hoteles.
       router.get('/api/ai/whatsapp/webhook/:hotelId', (req) => controller.whatsappWebhookVerify(req))
       router.post('/api/ai/whatsapp/webhook/:hotelId', async (req) => aiRateLimited(req, (r) => controller.whatsappWebhookReceive(r)))
 

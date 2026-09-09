@@ -99,6 +99,10 @@
             <div class="cc-pill-sub truncate">{{ alerts > 0 ? 'Requiere atención' : 'Todo Normal' }}</div>
           </div>
         </div>
+
+        <!-- Plan contratado. Componente propio: este header es presentacional (todo por props)
+             y lo que necesita stores va en hijos, igual que UserMenu/NotificationBell. -->
+        <SubscriptionPill />
       </div>
     </div>
 
@@ -119,6 +123,7 @@ import { usePageTitle } from '@/composables/usePageTitle'
 import EmergencyButton from '@/components/features/core-pms/EmergencyButton.vue'
 import NotificationBell from '@/components/features/core-pms/NotificationBell.vue'
 import UserMenu from '@/components/features/core-pms/UserMenu.vue'
+import SubscriptionPill from '@/components/features/core-pms/SubscriptionPill.vue'
 import type { WeatherInfo } from '@/services/Weather.service'
 
 // #654: el <h1> real es el módulo actual (Reservas, Gastos…), no el hotel — con lector de
@@ -156,6 +161,7 @@ const props = defineProps<{
 
 /** Un logo borrado del storage no debe dejar un recuadro roto: se trata como "sin logo". */
 const logoFailed = ref(false)
+
 const logo = computed(() => (logoFailed.value ? null : props.logoUrl || null))
 
 const { now } = useNow(1000)

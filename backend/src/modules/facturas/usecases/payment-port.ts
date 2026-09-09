@@ -11,6 +11,7 @@
 // la implementación.
 
 import type { Logger } from 'arckode-framework'
+import { ValidationError } from 'arckode-framework'
 
 export type CanonicalMethod = 'card' | 'cash' | 'transfer' | 'link' | 'deposit' | 'other'
 
@@ -57,17 +58,25 @@ export function normalizePaymentMethod(method: string | null | undefined): Canon
  * Registra el cobro. A diferencia del audit log, esto NO es best-effort: si el pago no se puede
  * registrar, el dinero quedaría fuera de caja y de la conciliación. Preferimos fallar el cobro
  * entero — la factura todavía no se tocó — a dejar plata sin asiento.
+ *
+ * Sin conector es exactamente el mismo daño: antes devolvía `null` con un warning y `payInvoice`
+ * seguía adelante marcando la factura `paid` sin fila en `payments`. Plata cobrada en el papel que
+ * no existe en la única fuente de verdad, que no entra al arqueo y que no se puede devolver. Ahora
+ * falla, y falla antes de tocar la factura.
  */
 export async function recordInvoicePayment(
   port: PaymentPort | null,
   logger: Logger,
   input: RecordPaymentInput,
-): Promise<RecordedPayment | null> {
+): Promise<RecordedPayment> {
   if (!port) {
-    logger.warn('Pago sin registrar: el conector facturas-payments no está registrado', {
+    logger.error('Cobro rechazado: el conector facturas-payments no está registrado', {
       invoiceId: input.invoiceId, amount: input.amount,
     })
-    return null
+    throw new ValidationError(
+      'No se puede registrar el cobro: el conector de pagos no está registrado. ' +
+      'La factura no fue modificada.',
+    )
   }
   const payment = await port.recordPayment(input)
   logger.info('Pago registrado en payments', {

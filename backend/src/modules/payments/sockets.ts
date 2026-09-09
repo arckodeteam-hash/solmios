@@ -1,6 +1,6 @@
 // payments/sockets.ts — Hooks hacia otros módulos
 
-import type { PaymentDTO, PaymentLinkDTO, DepositDTO } from './types'
+import type { PaymentDTO, DepositDTO } from './types'
 
 export interface PaymentsSockets {
   onPaymentCreated?: (data: PaymentDTO) => Promise<void>
@@ -14,7 +14,6 @@ export interface PaymentsSockets {
   /** Reembolso parcial/total del depósito (ver `DepositsUseCase.refund`) — distinto de `onDepositReleased`. */
   onDepositRefunded?: (data: DepositDTO) => Promise<void>
   onDepositReleased?: (data: DepositDTO) => Promise<void>
-  onLinkUsed?: (data: PaymentLinkDTO) => Promise<void>
 }
 
 /**

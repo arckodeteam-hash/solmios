@@ -20,16 +20,38 @@ export type ReservationCancelPort = (
   reason: string,
 ) => Promise<{ ok: boolean; error?: string; idempotent?: boolean; refundAmount?: number; cancellationFee?: number }>
 
+/**
+ * Emisión de factura vía el módulo `facturas` (connector `ai-facturas`). `amount` es la BASE
+ * imponible: el usecase de facturas aplica la tasa del hotel encima y devuelve el total.
+ */
+export type InvoiceIssuePort = (input: {
+  hotelId: string
+  reservationId?: string | null
+  guestId?: string | null
+  amount: number
+  currency?: string
+  notes?: string
+}) => Promise<{ id: string; invoiceNumber?: string; amount?: number; taxes?: number; currency?: string }>
+
 export interface ToolRepos {
   roomRepo: any
   reservationRepo: any
   hotelRepo: any
   /** Cancelación real vía el módulo reservas. Ausente = la tool no puede cancelar (falla explícito). */
   cancelReservation?: ReservationCancelPort
+  /**
+   * Emisión de factura vía connector. Ausente = la tool no puede facturar y lo dice; NO escribe
+   * contra el repo de invoices (ver connectors/ai-facturas.ts y el comentario de generate_invoice).
+   */
+  issueInvoice?: InvoiceIssuePort
+  /**
+   * Canal por el que llegó la conversación. `webchat` es PÚBLICO y anónimo (`/api/ai/chat/:slug`
+   * solo tiene rate-limit): desde ahí no se emiten facturas. `whatsapp` llega por webhook firmado
+   * por Meta, que sí autentica el origen.
+   */
+  channel?: string
   guestRepo?: any
-  paymentLinkRepo?: any
   configRepo?: any
-  invoiceRepo?: any
   logger?: { error?: (msg: string, meta?: Record<string, unknown>) => void }
   onReservationCreated?: (hotelId: string, roomId: string) => Promise<void>
 }
@@ -523,48 +545,20 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
     }
 
     case 'generate_payment_link': {
-      const reservationId = args.reservationId as string
-      const amount = (args.amount as number) || 0
-      const description = (args.description as string) || 'Reserva hotel'
-      const PAYMENT_LINK_EXPIRY_HOURS = 24
-      const MS_PER_HOUR = 3600000
-
-      if (!reservationId || !amount) return { error: 'Necesitás reservationId y amount' }
-
-      // Generate a payment token
-      const { randomBytes } = await import('crypto')
-      const token = randomBytes(16).toString('hex')
-      const paymentUrl = `https://pay.hotel.com/${hotelId}/${token}`
-
-      // Save to DB if repo available
-      if (repos.paymentLinkRepo) {
-        try {
-          await repos.paymentLinkRepo.create({
-            id: crypto.randomUUID(),
-            hotelId,
-            reservationId,
-            amount,
-            currency: 'USD',
-            description,
-            status: 'active',
-            token,
-            expiresAt: new Date(Date.now() + PAYMENT_LINK_EXPIRY_HOURS * MS_PER_HOUR).toISOString(),
-            maxUses: 1,
-            useCount: 0,
-          })
-        } catch (e: any) {
-          // No abortamos la respuesta al huésped, pero un link que no se persiste es un cobro perdido.
-          repos.logger?.error?.('No se pudo guardar el link de pago de la IA', { hotelId, reservationId, error: e?.message })
-        }
-      }
-
+      // DESACTIVADA. Esta tool fabricaba un token propio y le mandaba al huésped
+      // `https://pay.hotel.com/{hotelId}/{token}` — un dominio que NO EXISTE — y lo persistía en
+      // `payment_links`, la tabla muerta que se eliminó en la tarea 1.2 (sin endpoint para pagarla,
+      // `markUsed()` sin callers, 0 filas en producción). O sea: el huésped recibía una URL que no
+      // resuelve y el hotel un registro que nadie iba a cobrar nunca.
+      //
+      // El sistema vivo de links es `payment_requests` (checkout de Stripe + webhook que asienta en
+      // `payments` y acredita el folio). Cablearlo por connector es una tarea propia — hasta
+      // entonces la IA deriva a recepción en vez de inventar un cobro.
+      // Ver openspec/changes/finanzas-consolidacion (tarea 1.6).
+      repos.logger?.error?.('La IA intentó generar un link de pago: tool desactivada hasta cablear payment-requests', { hotelId })
       return {
-        paymentUrl,
-        amount,
-        currency: 'USD',
-        description,
-        expiresIn: '24 horas',
-        message: `Link de pago generado: $${amount} USD — ${paymentUrl}`,
+        error: 'Links de pago no disponibles por este canal',
+        message: 'Todavía no puedo generar el link de pago desde acá. Escribile a recepción y te lo envían al instante.',
       }
     }
 
@@ -574,61 +568,70 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
 
       if (!reservationId) return { error: 'Necesitás reservationId' }
 
+      // El WebChat (`/api/ai/chat/:slug`) es público y anónimo: solo lo protege un rate-limit por IP.
+      // Emitir una factura consume secuencia NCF, así que un anónimo que la dispara puede agotar el
+      // numerador fiscal del hotel. Solo se factura desde un canal cuyo origen esté autenticado —
+      // hoy WhatsApp, cuyo webhook viene firmado por Meta.
+      // Fail-closed: sin canal conocido tampoco se factura. Un canal que no se pudo leer no es
+      // prueba de origen autenticado, y acá el default seguro es no emitir el documento fiscal.
+      if (repos.channel !== 'whatsapp') {
+        return {
+          error: 'No puedo emitir facturas por este canal',
+          message: 'No puedo emitir la factura desde acá. Pedila en recepción y te la entregan al instante.',
+        }
+      }
+
+      // Emitir sin el connector `ai-facturas` significaría escribir contra el repo de invoices a
+      // mano: sin impuestos del hotel, sin correlativo, sin NCF y sin devengar en contabilidad.
+      // Antes se hacía exactamente eso. Ahora, sin puerto, no hay factura.
+      if (!repos.issueInvoice) {
+        repos.logger?.error?.('La IA no puede emitir facturas: falta el connector ai-facturas', { hotelId, reservationId })
+        return { error: 'No se pudo emitir la factura' }
+      }
+
       const reservation = await findOwnedReservation(repos.reservationRepo, reservationId, hotelId)
       if (!reservation) return { error: 'Reserva no encontrada' }
 
       const room = await repos.roomRepo.findById(reservation.roomId)
-      const hotel = await repos.hotelRepo.findById(hotelId)
       const nights = Math.ceil((new Date(reservation.checkOut).getTime() - new Date(reservation.checkIn).getTime()) / 86400000)
-      const roomTotal = (room?.basePrice || 0) * nights
-      const taxRate = 0.16
-      const taxes = Math.round(roomTotal * taxRate)
-      const total = roomTotal + taxes
+      const roomRate = room?.basePrice || 0
+      // BASE imponible. La tasa la pone el hotel (`configuration(key='taxes')`), no esta tool: antes
+      // había un 0.16 clavado acá que ignoraba la configuración real.
+      const roomTotal = roomRate * nights
 
-      const invoiceNumber = `INV-${Date.now().toString(36).toUpperCase()}`
-      const invoice: any = {
-        id: crypto.randomUUID(),
-        reservationId,
-        hotelId,
-        guestId: reservation.guestId || null,
-        invoiceNumber,
-        type: 'stay',
-        amount: roomTotal,
-        currency: 'USD',
-        taxes,
-        paymentMethod,
-        status: 'issued',
-        issueDate: new Date().toISOString(),
-        notes: `${nights} noches × $${room?.basePrice || 0} + ${taxRate * 100}% tax`,
-      }
-
-      // Sin factura persistida no hay factura: anunciarle el número al huésped inventa un comprobante.
-      if (!repos.invoiceRepo) {
-        repos.logger?.error?.('La IA no puede emitir facturas: falta invoiceRepo', { hotelId, reservationId })
-        return { error: 'No se pudo emitir la factura' }
-      }
+      let issued: { id: string; invoiceNumber?: string; amount?: number; taxes?: number; currency?: string }
       try {
-        await repos.invoiceRepo.create(invoice)
+        issued = await repos.issueInvoice({
+          hotelId,
+          reservationId,
+          guestId: reservation.guestId || null,
+          amount: roomTotal,
+          currency: 'USD',
+          notes: `${nights} noches × $${roomRate}`,
+        })
       } catch (e: any) {
-        repos.logger?.error?.('No se pudo guardar la factura de la IA', { hotelId, reservationId, invoiceNumber, error: e?.message })
+        repos.logger?.error?.('No se pudo emitir la factura de la IA', { hotelId, reservationId, error: e?.message })
         return { error: 'No se pudo emitir la factura' }
       }
+
+      const taxes = Number(issued.taxes) || 0
+      const total = Number(issued.amount) || roomTotal + taxes
+      const currency = issued.currency || 'USD'
 
       return {
-        invoiceNumber,
+        invoiceNumber: issued.invoiceNumber,
         guestName: reservation.guestName || 'Guest',
         roomType: room?.type || 'standard',
         checkIn: reservation.checkIn,
         checkOut: reservation.checkOut,
         nights,
-        roomRate: room?.basePrice || 0,
+        roomRate,
         roomTotal,
-        taxRate: `${taxRate * 100}%`,
         taxes,
         total,
+        currency,
         paymentMethod,
-        status: 'issued',
-        message: `Factura ${invoiceNumber} generada. Total: $${total} USD (${roomTotal} + ${taxes} tax)`,
+        message: `Factura ${issued.invoiceNumber} generada. Total: $${total} ${currency} (${roomTotal} + ${taxes} de impuestos)`,
       }
     }
 

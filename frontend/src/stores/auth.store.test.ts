@@ -7,7 +7,11 @@ vi.mock('@/services/Auth.service', () => ({
     login: vi.fn(),
     logout: vi.fn().mockResolvedValue(undefined),
     me: vi.fn(),
+    impersonate: vi.fn(),
   },
+  // El store la llama al salir de la impersonación (la lista de propiedades del cliente no
+  // puede sobrevivir a la vuelta a la cuenta del admin).
+  clearHotelsCache: vi.fn(),
 }))
 
 // auth.store importa modules.store (logout lo resetea) → mockear su service también.
@@ -19,11 +23,21 @@ vi.mock('@/services/Platform.service', () => ({
 
 import { useAuthStore } from './auth.store'
 import { useModulesStore } from './modules.store'
-import { AuthService } from '@/services/Auth.service'
+import { AuthService, clearHotelsCache } from '@/services/Auth.service'
 import type { User } from '@/types'
 
 const makeUser = (role: string): User =>
   ({ id: 'u1', name: 'Test', email: 't@h.com', role, hotelName: 'Hotel Demo' } as unknown as User)
+
+const makeTarget = (): User =>
+  ({ id: 'u-target', name: 'Cliente', email: 'c@h.com', role: 'hotel_admin', hotelName: 'Hotel Cliente', permissions: ['*:*'] } as unknown as User)
+
+/** Deja al store con una sesión de super admin viva (token + refresh + user en localStorage). */
+function seedSuperAdminSession(store: ReturnType<typeof useAuthStore>) {
+  store.setTokens('admin-tok', 'admin-ref')
+  store.user = makeUser('super_admin')
+  localStorage.setItem('user', JSON.stringify(store.user))
+}
 
 describe('auth.store', () => {
   beforeEach(() => {
@@ -54,6 +68,28 @@ describe('auth.store', () => {
     expect(localStorage.getItem('refreshToken')).toBe('ref')
   })
 
+  it('login cierra una impersonación vieja que quedó en el navegador', async () => {
+    // `impersonating` arranca leyendo `imp.adminToken`, así que unas claves `imp.*` sobrevivientes
+    // de una sesión de soporte mal cerrada le pegaban la franja de supervisión —y el acceso de
+    // `canActAsHotelAdmin`— al usuario que se acaba de loguear, que no tiene nada que ver con ella.
+    localStorage.setItem('imp.adminToken', 'admin-tok-viejo')
+    localStorage.setItem('imp.adminRefreshToken', 'admin-ref-viejo')
+    localStorage.setItem('imp.adminUser', JSON.stringify(makeUser('super_admin')))
+    vi.mocked(AuthService.login).mockResolvedValue({
+      token: 'tok', refreshToken: 'ref', user: makeUser('receptionist'),
+    } as any)
+    const store = useAuthStore()
+    expect(store.impersonating).toBe(true)
+
+    await store.login('r@h.com', 'pw')
+
+    expect(store.impersonating).toBe(false)
+    expect(store.canActAsHotelAdmin).toBe(false)
+    expect(localStorage.getItem('imp.adminToken')).toBeNull()
+    expect(localStorage.getItem('imp.adminRefreshToken')).toBeNull()
+    expect(localStorage.getItem('imp.adminUser')).toBeNull()
+  })
+
   it('getters de rol reflejan el usuario actual', () => {
     const store = useAuthStore()
     store.user = makeUser('super_admin')
@@ -62,32 +98,288 @@ describe('auth.store', () => {
     expect(store.currentHotel).toBe('Hotel Demo')
   })
 
-  it('canAccessSuperAdmin es false mientras se impersona', () => {
+  it('loginAs pide el token de impersonación al backend y pasa a la sesión del cliente', async () => {
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
     const store = useAuthStore()
-    store.user = makeUser('super_admin')
+    seedSuperAdminSession(store)
     expect(store.canAccessSuperAdmin).toBe(true)
 
-    store.loginAs(makeUser('hotel_admin'))
+    await store.loginAs('u-target')
+
+    // El JWT tiene que ser el NUEVO: antes se pisaba sólo user.value y el backend seguía
+    // respondiendo con los datos del super admin.
+    expect(AuthService.impersonate).toHaveBeenCalledWith('u-target')
+    expect(store.token).toBe('imp-tok')
+    expect(localStorage.getItem('token')).toBe('imp-tok')
     expect(store.impersonating).toBe(true)
     expect(store.userRole).toBe('hotel_admin')
     expect(store.canAccessSuperAdmin).toBe(false)
   })
 
-  it('loginAs es no-op si el usuario no es super_admin (regla de negocio)', () => {
+  it('loginAs borra el refreshToken del localStorage (el de impersonación no tiene refresh)', async () => {
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    const store = useAuthStore()
+    seedSuperAdminSession(store)
+
+    await store.loginAs('u-target')
+
+    // Si el refresh del ADMIN quedara en su lugar, al vencer el access token http.ts renovaría
+    // con él y la sesión volvería a ser la del super admin en silencio, con la franja todavía
+    // diciendo que es la del cliente.
+    expect(store.refreshToken).toBeNull()
+    expect(localStorage.getItem('refreshToken')).toBeNull()
+  })
+
+  it('loginAs guarda la sesión del admin en las claves imp.* (es la única forma de volver)', async () => {
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    const store = useAuthStore()
+    seedSuperAdminSession(store)
+
+    await store.loginAs('u-target')
+
+    expect(localStorage.getItem('imp.adminToken')).toBe('admin-tok')
+    expect(localStorage.getItem('imp.adminRefreshToken')).toBe('admin-ref')
+    expect(JSON.parse(localStorage.getItem('imp.adminUser')!).role).toBe('super_admin')
+  })
+
+  it('canActAsHotelAdmin: true para super_admin y hotel_admin, false para recepción', () => {
+    const store = useAuthStore()
+    store.user = makeUser('super_admin')
+    expect(store.canActAsHotelAdmin).toBe(true)
+    store.user = makeUser('hotel_admin')
+    expect(store.canActAsHotelAdmin).toBe(true)
+    store.user = makeUser('receptionist')
+    expect(store.canActAsHotelAdmin).toBe(false)
+  })
+
+  it('canActAsHotelAdmin: true para recepción MIENTRAS se la impersona (el token es del admin)', () => {
+    // El rol visible es el del cliente, pero quien está sentado adelante es el super admin y sus
+    // permisos efectivos son ['*:*']. Gatear por el nombre del rol le escondía la edición de
+    // mínimos de estadía y la gestión de personal sobre cuentas que el backend sí le autoriza.
+    const store = useAuthStore()
+    store.user = makeUser('receptionist')
+    store.impersonating = true
+    expect(store.canActAsHotelAdmin).toBe(true)
+  })
+
+  it('loginAs es no-op si el usuario no es super_admin (regla de negocio)', async () => {
     const store = useAuthStore()
     store.user = makeUser('hotel_admin')
-    store.loginAs(makeUser('receptionist'))
+
+    await store.loginAs('u-target')
+
+    expect(AuthService.impersonate).not.toHaveBeenCalled()
     expect(store.impersonating).toBe(false)
     expect(store.userRole).toBe('hotel_admin')
   })
 
-  it('stopImpersonation restaura el usuario original', () => {
+  it('dos loginAs concurrentes: sólo entra el primero y no se pierde el token del super admin', async () => {
+    // El guard `impersonating` se evalúa ANTES del único await y la bandera recién sube al final,
+    // así que sin cerrojo síncrono las dos llamadas pasaban: la segunda pisaba `imp.adminToken`
+    // con el token de impersonación de la primera y la sesión real del super admin se perdía.
+    // Es alcanzable desde la UI: el botón "Entrar" se deshabilita por FILA, no globalmente.
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
     const store = useAuthStore()
-    store.user = makeUser('super_admin')
-    store.loginAs(makeUser('hotel_admin'))
-    store.stopImpersonation()
+    seedSuperAdminSession(store)
+
+    const first = store.loginAs('u-target')
+    const second = store.loginAs('u-otro')
+    await Promise.all([first, second])
+
+    expect(AuthService.impersonate).toHaveBeenCalledTimes(1)
+    expect(AuthService.impersonate).toHaveBeenCalledWith('u-target')
+    expect(localStorage.getItem('imp.adminToken')).toBe('admin-tok')
+    expect(localStorage.getItem('imp.adminRefreshToken')).toBe('admin-ref')
+    expect(JSON.parse(localStorage.getItem('imp.adminUser')!).role).toBe('super_admin')
+    expect(store.impersonating).toBe(true)
+  })
+
+  it('dos loginAs concurrentes: la segunda devuelve false (la pantalla no puede leerla como éxito)', async () => {
+    // El botón "Entrar" se deshabilita por FILA, no globalmente: dos clicks en filas distintas
+    // llaman dos veces. La segunda se descarta por el cerrojo, y si `loginAs` no lo dijera, la
+    // pantalla navegaba igual a /panel y el admin terminaba en la cuenta del PRIMER usuario
+    // creyendo que había entrado al segundo.
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    const store = useAuthStore()
+    seedSuperAdminSession(store)
+
+    const [first, second] = await Promise.all([store.loginAs('u-target'), store.loginAs('u-otro')])
+
+    expect(first).toBe(true)
+    expect(second).toBe(false)
+    expect(AuthService.impersonate).toHaveBeenCalledTimes(1)
+    expect(AuthService.impersonate).toHaveBeenCalledWith('u-target')
+  })
+
+  it('loginAs devuelve false si el usuario no es super admin (tampoco ahí hay que navegar)', async () => {
+    const store = useAuthStore()
+    store.user = makeUser('hotel_admin')
+
+    expect(await store.loginAs('u-target')).toBe(false)
+    expect(AuthService.impersonate).not.toHaveBeenCalled()
+  })
+
+  it('un loginAs que falla deja el cerrojo abajo (el botón no queda muerto hasta recargar)', async () => {
+    vi.mocked(AuthService.impersonate).mockRejectedValueOnce(new Error('network'))
+    const store = useAuthStore()
+    seedSuperAdminSession(store)
+
+    await expect(store.loginAs('u-target')).rejects.toThrow('network')
+
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    await store.loginAs('u-target')
+
+    expect(store.token).toBe('imp-tok')
+    expect(store.impersonating).toBe(true)
+  })
+
+  it('stopImpersonation restaura la sesión del admin y limpia las claves imp.*', async () => {
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    vi.mocked(AuthService.me).mockResolvedValue(makeUser('super_admin'))
+    const store = useAuthStore()
+    seedSuperAdminSession(store)
+    await store.loginAs('u-target')
+
+    await store.stopImpersonation()
+
     expect(store.impersonating).toBe(false)
     expect(store.userRole).toBe('super_admin')
+    expect(store.token).toBe('admin-tok')
+    expect(localStorage.getItem('token')).toBe('admin-tok')
+    expect(store.refreshToken).toBe('admin-ref')
+    expect(localStorage.getItem('refreshToken')).toBe('admin-ref')
+    expect(localStorage.getItem('imp.adminToken')).toBeNull()
+    expect(localStorage.getItem('imp.adminRefreshToken')).toBeNull()
+    expect(localStorage.getItem('imp.adminUser')).toBeNull()
+  })
+
+  it('stopImpersonation sin sesión de admin guardada desloguea (no deja al usuario atrapado)', async () => {
+    const store = useAuthStore()
+    store.setTokens('imp-tok', 'x')
+    store.user = makeUser('hotel_admin')
+    store.impersonating = true
+    localStorage.removeItem('imp.adminToken')
+
+    await store.stopImpersonation()
+
+    expect(AuthService.logout).toHaveBeenCalled()
+    expect(store.isAuthenticated).toBe(false)
+    expect(store.user).toBeNull()
+    expect(store.impersonating).toBe(false)
+  })
+
+  it('restoreSession deja impersonating en true si /auth/me trae impersonatedBy (sobrevive al F5)', async () => {
+    vi.mocked(AuthService.me).mockResolvedValue({ ...makeTarget(), impersonatedBy: 'super-1' } as User)
+    const store = useAuthStore()
+    store.setTokens('imp-tok', 'x')
+    localStorage.setItem('imp.adminUser', JSON.stringify(makeUser('super_admin')))
+
+    await store.restoreSession()
+
+    // El claim viene firmado en el token: es la fuente de verdad, no una bandera del navegador.
+    expect(store.impersonating).toBe(true)
+    expect(store.canAccessSuperAdmin).toBe(false)
+  })
+
+  it('restoreSession mantiene impersonating aunque /auth/me falle y el user cacheado no traiga impersonatedBy', async () => {
+    // Camino real tras un F5 con la red con hipo. El cache de `user` es el perfil PELADO del
+    // cliente —lo que dejaba una sesión vieja, sin `impersonatedBy`— y AuthService.me() rechaza:
+    // la ÚNICA señal viva de que hay una impersonación en curso es la sesión del admin aparcada
+    // en `imp.adminToken`. Sin la cláusula `!!localStorage.getItem(IMP_TOKEN)`, `impersonating`
+    // cae a false con el token de impersonación todavía instalado: sin franja ni botón de salir,
+    // el admin queda operando la cuenta del cliente sin saberlo ni poder volver.
+    vi.mocked(AuthService.me).mockRejectedValue(new Error('network'))
+    const store = useAuthStore()
+    store.setTokens('imp-tok', 'x')
+    localStorage.setItem('user', JSON.stringify(makeTarget()))
+    localStorage.setItem('imp.adminToken', 'admin-tok')
+    localStorage.setItem('imp.adminRefreshToken', 'admin-ref')
+    localStorage.setItem('imp.adminUser', JSON.stringify(makeUser('super_admin')))
+
+    await store.restoreSession()
+
+    expect(store.user?.impersonatedBy).toBeUndefined()
+    expect(store.impersonating).toBe(true)
+    expect(store.canAccessSuperAdmin).toBe(false)
+    expect(store.userRole).toBe('hotel_admin')
+  })
+
+  it('stopImpersonation sin imp.adminUser vuelve al perfil del admin en memoria, no al del cliente', async () => {
+    // /auth/me caído + snapshot del admin ausente: si se dejara `user.value` como estaba, la UI
+    // mostraría al CLIENTE con el token del ADMIN. `originalUser` (lo que guardó loginAs) es el respaldo.
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    const store = useAuthStore()
+    seedSuperAdminSession(store)
+    await store.loginAs('u-target')
+    localStorage.removeItem('imp.adminUser')
+    vi.mocked(AuthService.me).mockRejectedValue(new Error('network'))
+
+    await store.stopImpersonation()
+
+    expect(store.impersonating).toBe(false)
+    expect(store.userRole).toBe('super_admin')
+    expect(store.token).toBe('admin-tok')
+    expect(JSON.parse(localStorage.getItem('user')!).role).toBe('super_admin')
+  })
+
+  it('stopImpersonation desloguea si no hay perfil de admin reconstruible y /auth/me falla', async () => {
+    // Store recién hidratado tras un F5 (sin `originalUser` en memoria), sin snapshot del admin y
+    // con la red caída: no hay forma honesta de saber quién es el dueño del token → sesión desde cero.
+    vi.mocked(AuthService.me).mockRejectedValue(new Error('network'))
+    const store = useAuthStore()
+    store.setTokens('imp-tok', 'x')
+    store.user = makeTarget()
+    store.impersonating = true
+    localStorage.setItem('imp.adminToken', 'admin-tok')
+
+    await store.stopImpersonation()
+
+    expect(AuthService.logout).toHaveBeenCalled()
+    expect(store.user).toBeNull()
+    expect(store.isAuthenticated).toBe(false)
+    expect(store.impersonating).toBe(false)
+    expect(localStorage.getItem('user')).toBeNull()
+  })
+
+  it('stopImpersonation no persiste un imp.adminUser corrupto (no rompe el restoreSession siguiente)', async () => {
+    // Antes se escribía el string crudo en localStorage['user']: el `JSON.parse` de restoreSession
+    // reventaba y forzaba un logout() completo, o sea el admin perdía la sesión por un dato de más.
+    vi.mocked(AuthService.me).mockResolvedValue(makeUser('super_admin'))
+    const store = useAuthStore()
+    store.setTokens('imp-tok', 'x')
+    store.user = makeTarget()
+    store.impersonating = true
+    localStorage.setItem('imp.adminToken', 'admin-tok')
+    localStorage.setItem('imp.adminUser', '{ esto no es json')
+
+    await store.stopImpersonation()
+
+    expect(store.userRole).toBe('super_admin')
+    expect(() => JSON.parse(localStorage.getItem('user')!)).not.toThrow()
+    expect(JSON.parse(localStorage.getItem('user')!).role).toBe('super_admin')
+  })
+
+  it('stopImpersonation limpia el cache de hoteles (el admin no vuelve viendo las propiedades del cliente)', async () => {
+    vi.mocked(AuthService.impersonate).mockResolvedValue({ token: 'imp-tok', user: makeTarget() })
+    vi.mocked(AuthService.me).mockResolvedValue(makeUser('super_admin'))
+    const store = useAuthStore()
+    seedSuperAdminSession(store)
+    await store.loginAs('u-target')
+
+    await store.stopImpersonation()
+
+    expect(clearHotelsCache).toHaveBeenCalled()
+  })
+
+  it('restoreSession deja impersonating en false en una sesión normal', async () => {
+    vi.mocked(AuthService.me).mockResolvedValue(makeUser('super_admin'))
+    const store = useAuthStore()
+    store.setTokens('tok', 'ref')
+
+    await store.restoreSession()
+
+    expect(store.impersonating).toBe(false)
+    expect(store.canAccessSuperAdmin).toBe(true)
   })
 
   it('setTokens actualiza token y autenticación', () => {
@@ -109,6 +401,19 @@ describe('auth.store', () => {
     expect(store.user).toBeNull()
     expect(localStorage.getItem('token')).toBeNull()
     expect(localStorage.getItem('user')).toBeNull()
+  })
+
+  it('logout borra también las claves imp.* (la sesión del admin no queda tirada en el navegador)', async () => {
+    const store = useAuthStore()
+    localStorage.setItem('imp.adminToken', 'admin-tok')
+    localStorage.setItem('imp.adminRefreshToken', 'admin-ref')
+    localStorage.setItem('imp.adminUser', JSON.stringify(makeUser('super_admin')))
+
+    await store.logout()
+
+    expect(localStorage.getItem('imp.adminToken')).toBeNull()
+    expect(localStorage.getItem('imp.adminRefreshToken')).toBeNull()
+    expect(localStorage.getItem('imp.adminUser')).toBeNull()
   })
 
   it('logout resetea el store de módulos (el menú del hotel viejo no sobrevive al login siguiente)', async () => {

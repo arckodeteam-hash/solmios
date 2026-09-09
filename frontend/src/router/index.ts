@@ -230,6 +230,11 @@ const router = createRouter({
           component: () => import('@/pages/super-admin/channels.vue'),
         },
         {
+          path: 'channex-queue',
+          name: 'super-admin-channex-queue',
+          component: () => import('@/pages/super-admin/channex-queue.vue'),
+        },
+        {
           path: 'settings',
           name: 'super-admin-settings',
           component: () => import('@/pages/super-admin/settings.vue'),
@@ -291,7 +296,12 @@ const router = createRouter({
           // dashboard general (que no pueden usar) sería confuso. Van directo a su pantalla.
           path: '',
           redirect: () => {
-            const role = useAuthStore().userRole
+            const auth = useAuthStore()
+            // Impersonando NO: el rol que se ve es el del CLIENTE (para que la franja diga a quién
+            // se está viendo), pero quien navega es el super admin, con permisos efectivos ['*:*'].
+            // Mandarlo al KDS porque el cliente es cocinero le esconde el panel que vino a mirar.
+            if (auth.impersonating) return '/panel/dashboard'
+            const role = auth.userRole
             if (role === 'waiter') return '/panel/restaurante/salon'
             if (role === 'kitchen') return '/panel/restaurante/cocina'
             return '/panel/dashboard'
@@ -437,6 +447,19 @@ const router = createRouter({
           meta: { requiresHotelAdmin: true },
         },
         {
+          // Conversaciones con el HUÉSPED por WhatsApp. Distinto de 'operaciones/chats', que es el
+          // monitor de los chats internos del equipo.
+          //
+          // NO lleva `requiresHotelAdmin` a propósito: quien atiende al huésped es la RECEPCIÓN, y
+          // esa meta rebota a /panel a todos los roles de sistema no-admin. El backend ya deja
+          // entrar al recepcionista (`ai:view`/`ai:edit` en shared/permissions.ts); si el frontend
+          // lo bloqueara, el chat solo lo podría usar el dueño. El bloqueo genérico de más abajo
+          // igual exige el permiso `ai` vía ROUTE_TO_PERMISSION.
+          path: 'operaciones/whatsapp',
+          name: 'whatsapp-inbox',
+          component: () => import('@/pages/whatsapp-inbox/index.vue'),
+        },
+        {
           path: 'finanzas/night-audit',
           name: 'night-audit',
           component: () => import('@/pages/night-audit/index.vue'),
@@ -465,6 +488,16 @@ const router = createRouter({
           name: 'settings',
           component: () => import('@/pages/settings/index.vue'),
           meta: { requiresHotelAdmin: true },
+          // Dos pestañas se mudaron de acá: `hr` (días laborables) a Asistencia y `room-types`
+          // (capacidad por tipo) a Habitaciones. Sin esto el link viejo abre Configuración en la
+          // primera pestaña, sin decir que lo que buscaba está en otro lado.
+          beforeEnter: (to) => {
+            const raw = to.query.tab
+            const tab = Array.isArray(raw) ? raw[raw.length - 1] : raw
+            if (tab === 'hr') return { path: '/panel/rrhh/attendance', query: { tab: 'schedules' } }
+            if (tab === 'room-types') return { path: '/panel/config/habitaciones', query: { tab: 'tipos' } }
+            return true
+          },
         },
         // Página pública: General/Landing/Media/Apariencia/Motor de reservas/Códigos de
         // descuento/Reputación/Tracking eran 8 items sueltos del menú (6 acá + 2 aparte,
@@ -477,6 +510,18 @@ const router = createRouter({
           name: 'pagina-publica',
           component: () => import('@/pages/pagina-publica/index.vue'),
           meta: { requiresHotelAdmin: true },
+          // `?tab=promo-codes` quedó huérfano al mudarse los códigos a Configuración. Sin esto la
+          // vista cae a la primera tab (General) y el link guardado aterriza en otra pantalla sin
+          // decir por qué.
+          beforeEnter: (to) => {
+            const raw = to.query.tab
+            const tab = Array.isArray(raw) ? raw[raw.length - 1] : raw
+            if (tab === 'promo-codes') {
+              const { tab: _drop, ...rest } = to.query
+              return { path: '/panel/config/codigos-descuento', query: rest }
+            }
+            return true
+          },
         },
         {
           path: 'pagina-publica/landing',
@@ -526,10 +571,18 @@ const router = createRouter({
           meta: { requiresHotelAdmin: true },
         },
         {
-          // Ahora es la tab "Códigos de descuento" de Página pública (ver arriba).
-          path: 'promociones/codigos',
+          // Vive en Configuración, al lado de Paquetes y promociones: es configuración comercial
+          // que rige todos los canales, no contenido de la landing.
+          path: 'config/codigos-descuento',
           name: 'promo-codes',
-          redirect: (to) => ({ path: '/panel/pagina-publica', query: { ...to.query, tab: 'promo-codes' } }),
+          component: () => import('@/pages/promo-codes/index.vue'),
+          meta: { requiresHotelAdmin: true },
+        },
+        {
+          // Legacy: la ruta original y, después, el paso por la tab de Página pública. Se mantienen
+          // para no romper links guardados de ninguna de las dos etapas.
+          path: 'promociones/codigos',
+          redirect: (to) => ({ path: '/panel/config/codigos-descuento', query: to.query }),
         },
         {
           path: 'ia/recepcionista',
@@ -645,8 +698,7 @@ const router = createRouter({
         {
           path: 'config/dispositivos',
           name: 'devices',
-          component: () => import('@/pages/devices/index.vue'),
-          meta: { requiresHotelAdmin: true },
+          redirect: (to) => ({ path: '/panel/integraciones', query: { ...to.query, tab: 'dispositivos' } }),
         },
         {
           // DT-17: antes solo /admin/* (plataforma) podía leer el audit log. El backend YA
@@ -665,9 +717,13 @@ const router = createRouter({
         {
           // Estado de la prueba/suscripción y planes. A esta página apunta el
           // aviso de "te quedan N días" y el corte por vencimiento.
+          // `requiresHotelAdmin`: acá se ven los precios que paga el hotel y se abre el Billing
+          // Portal de Stripe. Sin la meta entraba cualquier rol del panel por URL directa —
+          // recepción podía ver la facturación del dueño y llegar al portal de cobros.
           path: 'suscripcion',
           name: 'suscripcion',
           component: () => import('@/pages/suscripcion/index.vue'),
+          meta: { requiresHotelAdmin: true },
         },
         {
           path: 'referidos',
@@ -681,17 +737,27 @@ const router = createRouter({
           path: 'aliados',
           redirect: (to) => ({ path: '/panel', query: to.query }),
         },
+        // Integraciones: todo lo que el hotel conecta con un servicio de afuera, en una sola
+        // pantalla con tabs (pages/integraciones), mismo patrón que Mensajería. Estaba repartido
+        // entre una pestaña de Configuración Base (WhatsApp, facturación) y tres entradas sueltas
+        // del menú (pasarelas, cerraduras, dispositivos).
+        {
+          path: 'integraciones',
+          name: 'integraciones',
+          component: () => import('@/pages/integraciones/index.vue'),
+          meta: { requiresHotelAdmin: true },
+        },
+        // Rutas viejas → tab equivalente. Se conservan (con su `name`) para no romper links
+        // guardados, favoritos ni los router-link que quedan en otras vistas.
         {
           path: 'config/cerraduras',
           name: 'cerraduras',
-          component: () => import('@/pages/cerraduras/index.vue'),
-          meta: { requiresHotelAdmin: true },
+          redirect: (to) => ({ path: '/panel/integraciones', query: { ...to.query, tab: 'cerraduras' } }),
         },
         {
           path: 'config/pasarelas',
           name: 'pagos',
-          component: () => import('@/pages/pagos/index.vue'),
-          meta: { requiresHotelAdmin: true },
+          redirect: (to) => ({ path: '/panel/integraciones', query: { ...to.query, tab: 'pasarelas' } }),
         },
         {
           path: 'finanzas/caja',
@@ -817,7 +883,12 @@ router.beforeEach(async (to) => {
     // super_admin y hotel_admin pasan siempre. Un rol CUSTOM pasa si su permiso cubre la ruta
     // (mismo criterio que el menú: <module>:view, CORE siempre accesible). Roles de sistema
     // no-admin (recepción, limpieza…) → a su panel, como antes. El backend igual valida 403.
-    if (!auth.isSuperAdmin && !auth.isHotelAdmin) {
+    // Un admin IMPERSONANDO también pasa siempre: el rol que se ve es el del CLIENTE (la franja
+    // muestra a quién se está viendo), pero quien está sentado adelante es el super admin y sus
+    // permisos efectivos son ['*:*'] — lo que el token de impersonación autoriza en el backend.
+    // Sin esto, entrar como recepcionista/mesero/cocina rebotaba a /panel toda ruta de admin
+    // (Finanzas, Contabilidad, Tesorería, Compras…) por el NOMBRE del rol del cliente.
+    if (!auth.canActAsHotelAdmin) {
       const role = auth.userRole ?? ''
       const mod = permissionModuleForPath(to.path)
       const allowed = !isSystemRole(role) && (!mod || hasPermission(auth.user?.permissions, mod, 'view'))
@@ -831,7 +902,9 @@ router.beforeEach(async (to) => {
   // facturación…) no rebotaba — quedaba en una pantalla que no es la suya (el backend igual le
   // niega los datos con 403, esto es UX, no el gate de seguridad). Rutas CORE (sin mapeo, ej.
   // dashboard) siguen accesibles a cualquiera con sesión, a propósito.
-  if (to.path.startsWith('/panel/') && auth.isAuthenticated && !auth.isSuperAdmin && !auth.isHotelAdmin) {
+  // Mismo criterio que arriba con la impersonación: el rol visible es el del cliente, los permisos
+  // efectivos son los del admin, así que este bloqueo de UX no aplica mientras dura la sesión de soporte.
+  if (to.path.startsWith('/panel/') && auth.isAuthenticated && !auth.canActAsHotelAdmin) {
     const mod = permissionModuleForPath(to.path)
     if (mod && !hasPermission(auth.user?.permissions, mod, 'view')) return '/panel'
   }

@@ -19,6 +19,11 @@ export const AiConversationsModel: ModelDefinition = {
     startedAt: { type: 'string', required: true },
     endedAt: { type: 'string' },
     lastMessageAt: { type: 'string' },
+    /** Último mensaje DEL HUÉSPED. Base de la ventana de 24 h de Meta: una respuesta del hotel no
+     *  la reabre, así que `lastMessageAt` (que se mueve con cualquier mensaje) no sirve para esto. */
+    lastInboundAt: { type: 'string' },
+    /** Entrantes que el hotel todavía no abrió. */
+    unreadCount: { type: 'number', default: 0 },
     intentSummary: { type: 'string' },
     tags: { type: 'json', default: [] },
   },
@@ -32,6 +37,8 @@ export const AiMessagesModel: ModelDefinition = {
     conversationId: { type: 'string', required: true, indexed: true },
     hotelId: { type: 'string', required: true, indexed: true },
     sender: { type: 'string', required: true },
+    /** `users.id` cuando `sender='agent'`. El nombre se resuelve contra /api/usuarios. */
+    senderUserId: { type: 'string' },
     content: { type: 'text', required: true },
     contentType: { type: 'string', default: 'text' },
     mediaUrl: { type: 'string' },
@@ -111,6 +118,52 @@ export const AiWhatsappConfigModel: ModelDefinition = {
     llmModel: { type: 'string' },
     llmApiKey: { type: 'string' },
     botName: { type: 'string', default: 'Sofía' },
+    // ─── Identidad de la conexión oficial con Meta ──────────────────────────────
+    // Lo que el hotel necesita VER para confiar en que quedó conectado, más lo mínimo para
+    // diagnosticar cuando algo falle. Lo escribe SOLO el servidor, con lo que contesta Meta.
+    /** Número legible, como lo devuelve Meta: "+1 809 555 0000". */
+    displayPhoneNumber: { type: 'string' },
+    /** Nombre del negocio aprobado por Meta. Si dice otra cosa, se conectó la cuenta equivocada. */
+    verifiedName: { type: 'string' },
+    /** Portfolio comercial dueño de la cuenta de WhatsApp. */
+    businessName: { type: 'string' },
+    /** GREEN | YELLOW | RED. Si baja, Meta restringe el envío: hay que verlo antes del corte. */
+    qualityRating: { type: 'string' },
+    /** Tope de conversaciones/día que informa Meta. Explica un "no se envió" que no es un bug. */
+    messagingLimit: { type: 'string' },
+    /** Si el negocio del hotel está verificado ante Meta. */
+    accountReviewStatus: { type: 'string' },
+    connectedAt: { type: 'string' },
+    /** `users.id` de quien conectó. La conexión mueve el WhatsApp de un negocio real: se audita. */
+    connectedByUserId: { type: 'string' },
+    /** Último error de Meta, ya traducido, para que el panel diga QUÉ pasó y no "no conectado". */
+    connectionError: { type: 'string' },
+  },
+  timestamps: true,
+}
+
+/**
+ * Consumo de WhatsApp por hotel y por día, tal como lo informa Meta.
+ *
+ * NO se calcula acá: se TRAE de Meta. Meta cobra por conversación de 24 h y el precio cambia según
+ * la categoría, así que contar los mensajes de `message_logs` daría un número distinto al de su
+ * factura — y esa diferencia termina en una discusión con el hotel. La fuente de verdad es Meta.
+ */
+export const WhatsappUsageDailyModel: ModelDefinition = {
+  table: 'whatsapp_usage_daily',
+  fields: {
+    id: { type: 'string', required: true },
+    hotelId: { type: 'string', required: true, indexed: true },
+    /** YYYY-MM-DD en UTC, como lo agrupa Meta. */
+    date: { type: 'string', required: true, indexed: true },
+    /** MARKETING | UTILITY | AUTHENTICATION | SERVICE — el precio depende de esto. */
+    category: { type: 'string', required: true },
+    /** Conversaciones de 24 h. Es la unidad que Meta factura. */
+    conversations: { type: 'number', default: 0 },
+    /** Lo que Meta informa como costo, en su moneda. 0 cuando no lo informa. */
+    cost: { type: 'number', default: 0 },
+    currency: { type: 'string' },
+    syncedAt: { type: 'string' },
   },
   timestamps: true,
 }
@@ -199,6 +252,7 @@ export function registerAiRecepcionistaModels(orm: ORM): void {
   orm.define('AiTemplates', AiTemplatesModel)
   orm.define('AiWhatsappConfig', AiWhatsappConfigModel)
   orm.define('AiMetricsDaily', AiMetricsDailyModel)
+  orm.define('WhatsappUsageDaily', WhatsappUsageDailyModel)
   orm.define('AiBookingFlows', AiBookingFlowsModel)
   orm.define('AiVoiceConfig', AiVoiceConfigModel)
   // Register Configuration model if not already registered

@@ -732,6 +732,8 @@ export interface User {
   rooms?: number
   permissions?: string[]
   emailVerified?: boolean
+  /** Id del super admin que abrió esta sesión: presente sólo cuando la sesión es un super admin metido en la cuenta de un cliente. */
+  impersonatedBy?: string
 }
 
 // === CHECKIN ===

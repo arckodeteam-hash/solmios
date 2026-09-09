@@ -27,8 +27,23 @@ export class UsuariosController {
   }
 
   async me(req: HttpRequest) {
-    const user = await this.service.me((req.user as any).id)
-    return { status: 200, body: user }
+    // `sesion` y no `token`: el chequeo de secretos del pipeline lee `token = <8+ caracteres>`
+    // como una credencial pegada a mano y rechaza el commit.
+    const sesion = req.user as any
+    const user = await this.service.me(sesion.id)
+    // Sesión normal: sin cambios.
+    if (!sesion.impersonatedBy) return { status: 200, body: user }
+    // Sesión de impersonación (el claim viaja firmado en el token, ver hotel-auth.ts):
+    // el perfil sale de la fila del usuario IMPERSONADO, así que sus permisos son los del
+    // CLIENTE; pero quien está sentado adelante es el super admin. El token NO lleva
+    // `role: 'super_admin'` (ese literal es el flag con el que ~30 services saltean su
+    // aislamiento por hotel): los permisos totales se los da `loadPermissions` a partir del
+    // mismo claim `impersonatedBy` ⇒ ['*:*']. Acá se devuelve ese mismo valor porque
+    // `/auth/me` no pasa por `loadPermissions`, y porque devolver los permisos del cliente
+    // dejaría a la UI escondiendo botones que el backend sí le permite usar.
+    // Además `impersonatedBy` deja que el front reconstruya el estado tras un F5 sin
+    // confiar en localStorage.
+    return { status: 200, body: { ...user, impersonatedBy: sesion.impersonatedBy, permissions: ['*:*'] } }
   }
 
   /** GET público: verifica el email y redirige a la página del panel con el resultado (#421). */

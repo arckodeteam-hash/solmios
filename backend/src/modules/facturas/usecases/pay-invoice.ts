@@ -75,7 +75,7 @@ export async function payInvoice(
 
   logger.info('Pago aplicado a factura', {
     id: invoice.id, invoiceNumber: invoice.invoiceNumber, applied, amountPaid, total, balance,
-    status, method, paymentId: payment?.id ?? null,
+    status, method, paymentId: payment.id,
   })
 
   return { updated, applied, amountPaid, balance, status, paymentId: payment?.id ?? null }

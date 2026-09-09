@@ -101,11 +101,14 @@ describe('SignupUseCase', () => {
     expect(hotels[0].country).toBe('')
   })
 
-  it('la prueba vence a los 7 días exactos', async () => {
+  // El número sale de `TRIAL_DAYS`, no escrito a mano: la duración de la prueba es una decisión
+  // de producto que ya cambió (7 → 15) y un literal acá hace fallar el test por el motivo equivocado.
+  it(`la prueba vence a los ${TRIAL_DAYS} días exactos`, async () => {
     const { uc, subs } = setup()
     const res = await uc.signup(VALID, NOW)
     expect(subs[0].status).toBe('trialing')
-    expect(res.trialEndsAt).toBe('2026-07-26T12:00:00.000Z')
+    const esperado = new Date(NOW.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString()
+    expect(res.trialEndsAt).toBe(esperado)
     expect(subs[0].trialEndsAt).toBe(res.trialEndsAt)
   })
 
@@ -162,8 +165,8 @@ describe('SignupUseCase — el alta no puede quedar a medias', () => {
   })
 })
 
-// Issue #27 — el alta devolvía 201 y el correo nunca salía, sin dejar rastro: los dos envíos
-// best-effort tenían `catch {}` con el cuerpo vacío. Best-effort sigue siendo best-effort (el
+// Issue #27 — el alta devolvía 201 y el correo nunca salía, sin dejar rastro: el envío
+// best-effort tenía `catch {}` con el cuerpo vacío. Best-effort sigue siendo best-effort (el
 // alta NO se cae), pero el fallo tiene que quedar logueado con el hotelId para poder rastrearlo.
 describe('SignupUseCase — un envío caído se loguea, no se silencia', () => {
   function repos() {
@@ -195,25 +198,29 @@ describe('SignupUseCase — un envío caído se loguea, no se silencia', () => {
     expect(warns[0]!.meta).toMatchObject({ hotelId: res.hotelId, error: 'SMTP timeout' })
   })
 
-  it('bienvenida caída: se loguea aparte y tampoco tumba el alta', async () => {
+  // #69, criterio 1: el alta mandaba DOS correos (este y la plantilla `welcome` de
+  // platform-emails) y la persona recibía la bienvenida duplicada. Ahora sale uno solo, y ese
+  // único correo tiene que traer las dos cosas: la bienvenida y el botón de verificación.
+  it('encola UN solo correo, el unificado de bienvenida + verificación', async () => {
     const { hotels, users, roles, subs, repo } = repos()
-    const { logger, warns } = recordingLogger()
+    const sent: Array<{ to: string; subject: string; html: string; hotelId: string; relatedType?: string }> = []
     const uc = new SignupUseCase({
       hotelsRepo: repo(hotels), usersRepo: repo(users), rolesRepo: repo(roles), subscriptionsRepo: repo(subs),
       plansRepo: repo([]),
       hashPassword: async (p: string) => `hashed:${p}`,
-      logger,
+      logger: silentLogger(),
       appUrl: 'https://hotel.example.com',
-      emailSender: { enqueue: async () => 'queued-1' },
-      platformEmailSender: async () => { throw new Error('plantilla welcome rota') },
+      emailSender: { enqueue: async (i) => { sent.push(i); return `queued-${sent.length}` } },
     })
 
     const res = await uc.signup(VALID, NOW)
 
-    expect(hotels).toHaveLength(1)
-    expect(warns).toHaveLength(1)
-    expect(warns[0]!.msg).toContain('bienvenida')
-    expect(warns[0]!.meta).toMatchObject({ hotelId: res.hotelId, error: 'plantilla welcome rota' })
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.to).toBe('dueño@ejemplo.com')
+    expect(sent[0]!.hotelId).toBe(res.hotelId)
+    expect(sent[0]!.relatedType).toBe('email_verification')
+    expect(sent[0]!.html).toContain(VALID.hotelName)   // bienvenida al hotel del alta
+    expect(sent[0]!.html).toContain('Verificar mi correo')  // y la verificación, en el mismo correo
   })
 
   // El hueco que quedaba: los tests de arriba cubren un sender que TIRA. Un sender AUSENTE
@@ -240,7 +247,7 @@ describe('SignupUseCase — un envío caído se loguea, no se silencia', () => {
     expect(warns[0]!.meta).toMatchObject({ hotelId: res.hotelId })
   })
 
-  it('con los dos envíos OK no ensucia el log', async () => {
+  it('con el envío OK no ensucia el log', async () => {
     const { hotels, users, roles, subs, repo } = repos()
     const { logger, warns } = recordingLogger()
     const uc = new SignupUseCase({
@@ -250,7 +257,6 @@ describe('SignupUseCase — un envío caído se loguea, no se silencia', () => {
       logger,
       appUrl: 'https://hotel.example.com',
       emailSender: { enqueue: async () => 'queued-1' },
-      platformEmailSender: async () => ({ sent: true }),
     })
 
     await uc.signup(VALID, NOW)

@@ -9,6 +9,7 @@ import { OnboardingUseCase, type OnboardingStatus } from './usecases/onboarding'
 import { hashPassword } from '../usuarios/usecases/password'
 import { createCheckoutSession, type CreateCheckoutResult } from './usecases/create-checkout-session'
 import { createPortalSession, type CreatePortalResult } from './usecases/create-portal-session'
+import { previewUpgrade, applyUpgrade } from './usecases/upgrade-plan'
 import { processSubscriptionWebhook } from './usecases/handle-stripe-event'
 import { applyStripeDiscount, type ApplyStripeDiscountResult, type ApplyStripeDiscountMeta } from './usecases/apply-stripe-discount'
 import { listPublicPlans, type PublicPlan } from './usecases/public-plans'
@@ -20,8 +21,9 @@ export class SubscriptionsService {
   private readonly signupUc: SignupUseCase
   private readonly onboardingUc: OnboardingUseCase
   private readonly accessUc: SubscriptionAccess
-  /** `platform-emails.sendEvent()` — welcome (signup) + payment_succeeded/failed/subscription_canceled
-   *  (webhook de Stripe). Opcional: sin cablear, el correo simplemente no sale (best-effort). */
+  /** `platform-emails.sendEvent()` — trial_ending + payment_succeeded/failed/subscription_canceled
+   *  (webhook de Stripe). El alta NO pasa por acá desde #69: manda su propio correo único.
+   *  Opcional: sin cablear, el correo simplemente no sale (best-effort). */
   private sendPlatformEmail?: (event: string, to: string, hotelId: string, vars: Record<string, string>) => Promise<{ sent: boolean }>
   private sockets: SubscriptionSockets = {}
   private readPlatformSettings?: () => Promise<{ requireCardOnTrial: boolean } & FounderCountdownConfig>
@@ -74,11 +76,11 @@ export class SubscriptionsService {
     this.signupUc.setEmailDeps(sender, appUrl || '')
   }
 
-  /** Cablea `platform-emails.sendEvent()` — welcome (signup) + payment_succeeded/failed/
-   *  subscription_canceled (webhook de Stripe). Lo llama el bootstrap de email. */
+  /** Cablea `platform-emails.sendEvent()` — trial_ending + payment_succeeded/failed/
+   *  subscription_canceled (webhook de Stripe). Lo llama el bootstrap de email. El alta NO pasa
+   *  por acá desde #69: manda un solo correo propio (bienvenida + verificación). */
   setPlatformEmailSender(fn: NonNullable<typeof this.sendPlatformEmail>): void {
     this.sendPlatformEmail = fn
-    this.signupUc.setPlatformEmailSender(fn)
   }
 
   /** ACUMULA handlers — nunca pisa el anterior. Ver `shared/utils/compose-sockets.ts`. */
@@ -117,12 +119,10 @@ export class SubscriptionsService {
 
   /**
    * Planes para la landing y el registro. Solo lo público: precio, descripción, features y los
-   * `limits` recortados a `rooms`/`users` (`usecases/public-plans.ts` → `publicLimits`), que es lo
-   * que la landing necesita para no escribir "Hasta 30 habitaciones" a mano. `modules` y el resto
-   * de `limits` NO salen: son detalle interno de cómo se aplica el plan.
-   *
-   * El orden lo fija el backend y el frontend lo respeta tal cual (no re-ordena):
-   * del más barato al más caro (#30), ver `shared/utils/plans-order.ts`.
+   * `limits` recortados a `rooms`/`users` (`usecases/public-plans.ts` → `publicLimits`), para que la
+   * landing no escriba "Hasta 30 habitaciones" a mano; `modules` y el resto de `limits` NO salen:
+   * son detalle interno de cómo se aplica el plan. El orden lo fija el backend y el frontend lo
+   * respeta tal cual (no re-ordena): del más barato al más caro (#30), ver `shared/utils/plans-order.ts`.
    */
   publicPlans(): Promise<PublicPlan[]> {
     return listPublicPlans(this.plansRepo)
@@ -141,7 +141,7 @@ export class SubscriptionsService {
   /** Estado para mostrarle al hotel cuánto le queda o qué tiene que pagar. Ver `usecases/status-of.ts`. */
   async statusOf(hotelId: string): Promise<SubscriptionStatus> {
     const access = await this.accessUc.check(hotelId)
-    return statusOf(this.subscriptionsRepo, this.discountsRepo, access, hotelId)
+    return statusOf({ subscriptionsRepo: this.subscriptionsRepo, discountsRepo: this.discountsRepo, plansRepo: this.plansRepo }, access, hotelId)
   }
 
   /** Cupón real de Stripe sobre la suscripción activa del hotel (F6 de PLAN-SUSCRIPCIONES.md,
@@ -178,6 +178,10 @@ export class SubscriptionsService {
       logger: this.logger,
     }
   }
+
+  /** #46 — mejorar el plan pagando SOLO la diferencia: `upgradePreview` cotiza el prorrateo y `upgradePlan` lo cobra con `subscriptions.update` (un Checkout nuevo duplicaría la suscripción, BUG-9). */
+  upgradePreview(hotelId: string, planId: string) { return previewUpgrade({ subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo, logger: this.logger }, hotelId, planId) }
+  upgradePlan(hotelId: string, planId: string) { return applyUpgrade({ subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo, logger: this.logger }, hotelId, planId) }
 
   /** Gestionar método de pago / ver facturas: Billing Portal de Stripe. */
   createPortal(hotelId: string, origin: string): Promise<CreatePortalResult> {

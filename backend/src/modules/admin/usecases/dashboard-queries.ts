@@ -4,14 +4,87 @@ const BYTES_PER_MB = 1024 * 1024
 export class DashboardQueries {
   constructor(private readonly orm: any) {}
 
+  /**
+   * Hoteles para el listado del super-admin, con el usuario al que se impersona desde la fila
+   * (botón "Entrar" de `/admin/hotels`).
+   *
+   * El botón necesita un `userId`: la impersonación es SIEMPRE contra un usuario, nunca contra un
+   * hotel (`usuarios/usecases/impersonate.ts` emite el token con el rol REAL de esa persona, que es
+   * lo que sostiene el aislamiento por hotel). Así que acá se resuelve, por hotel, a quién entrar.
+   *
+   * Criterio de elección, en orden:
+   *  1. Un `hotel_admin` activo — es el dueño de la cuenta y ve todo el panel.
+   *  2. Si no hay, cualquier otro usuario activo del hotel: es preferible entrar como recepcionista
+   *     a no poder entrar. La UI muestra el rol, así que el admin sabe con qué ojos está mirando.
+   *  3. Nadie activo → `ownerUserId: null` y el frontend deshabilita el botón.
+   *
+   * Nunca un `super_admin`: `impersonateUser` lo rechaza con 403, así que ofrecerlo sería un botón
+   * que falla al clickearlo.
+   *
+   * Desempate por `id` (no por `createdAt`, que puede faltar en filas viejas): con dos hotel_admin
+   * el resultado tiene que ser el MISMO en cada request, o el botón entra a una cuenta distinta
+   * según el orden que devuelva la base.
+   *
+   * Los usuarios se cargan UNA vez y se agrupan en un Map — una consulta por hotel adentro del loop
+   * sería N+1 (mismo patrón que `listUsers`).
+   */
   async listHotels(): Promise<{ data: any[]; total: number }> {
-    const data = await this.orm.findMany('Hotels', {})
+    const hotels = await this.orm.findMany('Hotels', {}) as any[]
+    const users = await this.orm.findMany('Users', {}) as any[]
+
+    const candidatesByHotel = new Map<string, any[]>()
+    for (const u of users) {
+      // `active` puede venir 1/0 (INTEGER en la base) o true/false: solo se descarta lo que es
+      // explícitamente inactivo. Una fila vieja sin la columna se considera activa.
+      if (!u.hotelId || u.role === 'super_admin' || u.active === 0 || u.active === false) continue
+      const list = candidatesByHotel.get(u.hotelId)
+      if (list) list.push(u)
+      else candidatesByHotel.set(u.hotelId, [u])
+    }
+
+    const data = hotels.map((h: any) => {
+      const candidates = candidatesByHotel.get(h.id) ?? []
+      const sorted = [...candidates].sort((a, b) => String(a.id).localeCompare(String(b.id)))
+      const owner = sorted.find((u) => u.role === 'hotel_admin') ?? sorted[0] ?? null
+      return {
+        ...h,
+        ownerUserId: owner?.id ?? null,
+        ownerName: owner?.name ?? '',
+        ownerRole: owner?.role ?? '',
+      }
+    })
+
     return { data, total: data.length }
   }
 
+  /**
+   * Usuarios para el listado del super-admin. Dos correcciones sobre la versión anterior:
+   *
+   * 1. `hotelName`: antes se devolvía la fila cruda, sin el nombre del hotel, y la pantalla
+   *    `/super-admin/users` cae a `u.hotelName ?? 'Plataforma'` — o sea que la columna
+   *    "Hotel / Propiedad" decía "Plataforma" para TODOS, incluso para el usuario de un hotel.
+   *    Se resuelve con un `Map` de hoteles cargado UNA vez (mismo patrón que `listSubscriptions`);
+   *    una consulta por usuario adentro del loop sería N+1. Sin `hotelId` (o con uno que ya no
+   *    existe) queda `''` y el frontend muestra "Plataforma", que ahí sí es la verdad.
+   *
+   * 2. Campos sensibles: además de `password` se sacan `token`, `resetToken` y `resetExpires`.
+   *    `resetToken` es el token de recuperación de contraseña: filtrarlo permite tomar la cuenta
+   *    de cualquier usuario. Que solo lo vea un super admin no es motivo para que viaje.
+   */
   async listUsers(): Promise<{ data: any[]; total: number }> {
-    const data = await this.orm.findMany('Users', {})
-    return { data: data.map((u: any) => { const { password, ...rest } = u; return rest }), total: data.length }
+    const users = await this.orm.findMany('Users', {}) as any[]
+    const hotels = await this.orm.findMany('Hotels', {}) as any[]
+    const hotelNameById = new Map(hotels.map((h: any) => [h.id, h.name]))
+
+    const data = users.map((u: any) => {
+      // Fuera todo lo que sirve para AUTENTICARSE como el usuario: la contraseña, el jti de
+      // sesión, el token de recuperación (permite resetear la clave y tomar la cuenta), y el
+      // `pinHash` del PIN de staff — son 6 dígitos, o sea 10^6 combinaciones: un hash filtrado
+      // se crackea offline en segundos y habilita el login por PIN de esa persona.
+      const { password, token, resetToken, resetExpires, pinHash, emailVerificationToken, emailVerificationExpires, ...rest } = u
+      return { ...rest, hotelName: (u.hotelId && hotelNameById.get(u.hotelId)) || '' }
+    })
+    return { data, total: data.length }
   }
 
   /**

@@ -51,7 +51,7 @@ describe('payments — audit log (SC-05)', () => {
         findById: async () => ({ ...DEPOSIT }),
         update: async (id, data) => ({ ...DEPOSIT, id, ...data }),
       })
-      const service = new PaymentsService(makeRepo(), makeRepo(), depositRepo, log, silentCache, undefined, undefined, testRegistry)
+      const service = new PaymentsService(makeRepo(), depositRepo, log, silentCache, undefined, undefined, testRegistry)
       service.setAuditDeps(audit.port)
 
       await service.refundDeposit('dep-1', { refundAmount: 200 } as any, { id: 'u-9', role: 'hotel_admin' })
@@ -72,7 +72,7 @@ describe('payments — audit log (SC-05)', () => {
         findById: async () => ({ ...DEPOSIT }),
         update: async (id, data) => ({ ...DEPOSIT, id, ...data }),
       })
-      const service = new PaymentsService(makeRepo(), makeRepo(), depositRepo, log, silentCache, undefined, undefined, testRegistry)
+      const service = new PaymentsService(makeRepo(), depositRepo, log, silentCache, undefined, undefined, testRegistry)
       service.setAuditDeps(audit.port)
 
       await service.releaseDeposit('dep-1', { id: 'u-9', role: 'hotel_admin' })
@@ -88,7 +88,7 @@ describe('payments — audit log (SC-05)', () => {
         findById: async () => ({ ...DEPOSIT }),
         update: async (id, data) => ({ ...DEPOSIT, id, ...data }),
       })
-      const service = new PaymentsService(makeRepo(), makeRepo(), depositRepo, log, silentCache, undefined, undefined, testRegistry)
+      const service = new PaymentsService(makeRepo(), depositRepo, log, silentCache, undefined, undefined, testRegistry)
       service.setAuditDeps({ record: async () => { throw new Error('auditlog caído') } })
 
       // No debe propagar: un audit log roto no puede impedir devolverle la plata al huésped.
@@ -101,7 +101,7 @@ describe('payments — audit log (SC-05)', () => {
         findById: async () => ({ ...DEPOSIT }),
         update: async (id, data) => ({ ...DEPOSIT, id, ...data }),
       })
-      const service = new PaymentsService(makeRepo(), makeRepo(), depositRepo, log, silentCache, undefined, undefined, testRegistry)
+      const service = new PaymentsService(makeRepo(), depositRepo, log, silentCache, undefined, undefined, testRegistry)
       // sin setAuditDeps() a propósito
 
       const deposit = await service.releaseDeposit('dep-1', { id: 'u-9' })

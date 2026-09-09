@@ -4,12 +4,10 @@ import type { HttpRequest, Logger } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import type { PaymentsService } from './service'
 import type {
-  CreatePaymentDTO, ChargeCardDTO, CreatePaymentLinkDTO,
-  CreateDepositDTO, RefundDepositDTO, PaymentsQuery, ReconciliationEntry,
+  CreatePaymentDTO, ChargeCardDTO, CreateDepositDTO, RefundDepositDTO, PaymentsQuery, ReconciliationEntry,
 } from './types'
 import {
-  CreatePaymentSchema, ChargeCardSchema, CreatePaymentLinkSchema,
-  CreateDepositSchema, RefundDepositSchema, ReconcileSchema, RefundSchema,
+  CreatePaymentSchema, ChargeCardSchema, CreateDepositSchema, RefundDepositSchema, ReconcileSchema, RefundSchema,
 } from './validators/schema'
 
 export class PaymentsController {
@@ -98,36 +96,6 @@ export class PaymentsController {
       this.logger.error(`Webhook Stripe (hotel ${hotelId}): ${e?.message}`)
       return { status: 400, body: { error: e?.message || 'Webhook rechazado' } }
     }
-  }
-
-  // ─── Payment Links ───────────────────────────────────
-
-  async createLink(req: HttpRequest) {
-    this.logger.info('POST /api/payment-links')
-    const data = validateSchema(CreatePaymentLinkSchema, req.body) as unknown as CreatePaymentLinkDTO
-    data.hotelId = this.forceHotelId(data, req.user as any) // V3 IDOR: forzar del JWT
-    const link = await this.service.createPaymentLink(data)
-    return { status: 201, body: link }
-  }
-
-  async getLinkByToken(req: HttpRequest) {
-    this.logger.info('GET /api/payment-links/:token')
-    const link = await this.service.getPaymentLinkByToken(req.params.token)
-    return { status: 200, body: link }
-  }
-
-  async cancelLink(req: HttpRequest) {
-    this.logger.info('DELETE /api/payment-links/:id')
-    await this.service.cancelPaymentLink(req.params.id, this.userInfo(req.user))
-    return { status: 204, body: null }
-  }
-
-  async listLinks(req: HttpRequest) {
-    this.logger.info('GET /api/payment-links')
-    const userHotelId = this.userHotelId(req.user)
-    const hotelId = userHotelId || req.query.hotelId
-    const links = await this.service.listPaymentLinks(hotelId)
-    return { status: 200, body: links }
   }
 
   // ─── Deposits ────────────────────────────────────────

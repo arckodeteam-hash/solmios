@@ -158,6 +158,7 @@ SOLSSH "cd $REPO && git checkout main"
 | **nginx no está en systemd** | `systemctl is-active nginx` = inactive es normal (corre vía aaPanel). |
 | **Migración solo si cambiaron modelos** | Correr `RUN_MIGRATE` de más es idempotente pero innecesario. |
 | **PG prod sin seed financiero** | folios/facturas/gastos/caja = 0 registros; reports computan desde reservas. |
+| **`PUBLIC_URL` vacía = links de correo sin host** | De ahí sale el host de los links que van por email (verificación del alta, `/api/public/verify-email?token=…`). Si queda vacía el link sale relativo y no se puede clickear: el correo llega, pero inservible. Tiene que ser el origen que **sirve la app**, no una URL sólo de API — la verificación responde 302 con `Location` relativo a `/verificar-email`, que resuelve contra ese mismo origen. No confundir con `PUBLIC_BASE_URL`, que es la URL pública del sitio del hotel (Stripe success/cancel, sitemap). |
 
 ---
 

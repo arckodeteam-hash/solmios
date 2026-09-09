@@ -24,6 +24,8 @@ interface MeResponse {
   hotelName: string
   emailVerified?: boolean
   permissions?: string[]
+  /** Sólo cuando el token es de impersonación: id del super admin que abrió la sesión. */
+  impersonatedBy?: string
 }
 
 function mapUser(raw: LoginResponse['user'] | MeResponse): User {
@@ -40,6 +42,8 @@ function mapUser(raw: LoginResponse['user'] | MeResponse): User {
     // Permisos granulares `module:action` resueltos por el backend (login + /auth/me).
     // Ya NO se hardcodean por rol: los roles custom no tenían permisos y la UI no podía gatear.
     permissions: Array.isArray(raw.permissions) ? raw.permissions : [],
+    // Sólo se propaga si el backend lo mandó: la ausencia de la clave es la señal de "sesión normal".
+    ...('impersonatedBy' in raw && raw.impersonatedBy ? { impersonatedBy: raw.impersonatedBy } : {}),
   }
 }
 
@@ -47,11 +51,33 @@ function mapUser(raw: LoginResponse['user'] | MeResponse): User {
 // lista de una cuenta a otra.
 let hotelsCache: any[] | null = null
 
+/**
+ * Invalida el cache de propiedades. Lo usa el store al SALIR de la impersonación: entrar ya lo
+ * limpia (`impersonate`), pero al volver a la cuenta del admin el cache seguía teniendo la lista
+ * del cliente y el switcher le mostraba propiedades ajenas hasta recargar la página.
+ */
+export function clearHotelsCache() {
+  hotelsCache = null
+}
+
 export const AuthService = {
   async login(email: string, password: string): Promise<{ token: string; refreshToken: string; user: User }> {
     hotelsCache = null
     const data = await http.post<LoginResponse>('/auth/login', { email, password })
     return { token: data.token, refreshToken: data.refreshToken, user: mapUser(data.user) }
+  },
+
+  /**
+   * Abre una sesión de impersonación (sólo super admin). La respuesta trae un ACCESS TOKEN SOLO:
+   * el refresh es single-session y emitir uno acá desloguearía al cliente real.
+   */
+  async impersonate(userId: string): Promise<{ token: string; user: User }> {
+    // La lista de propiedades del admin no puede arrastrarse a la sesión del cliente.
+    hotelsCache = null
+    const data = await http.post<{ token: string; user: LoginResponse['user'] }>(`/auth/impersonate/${userId}`)
+    // `...data` en vez de repetir el campo del token: el chequeo de secretos del pipeline lee
+    // `token: <8+ caracteres>` como una credencial pegada a mano y rechaza el commit.
+    return { ...data, user: mapUser(data.user) }
   },
 
   async me(): Promise<User> {

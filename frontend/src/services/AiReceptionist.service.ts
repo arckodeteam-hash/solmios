@@ -78,6 +78,87 @@ export interface AiWhatsappConfig {
   botName?: string
 }
 
+/** Estados que puede mostrar la tarjeta de conexión. */
+export type EstadoConexionWhatsapp = 'disconnected' | 'connected' | 'error' | 'legacy_baileys'
+
+/**
+ * Proyección segura de la conexión: lo que el hotel necesita ver para reconocer su cuenta.
+ * El token del hotel NUNCA viaja al navegador.
+ */
+export interface WhatsappConnection {
+  estado: EstadoConexionWhatsapp
+  displayPhoneNumber: string | null
+  verifiedName: string | null
+  businessName: string | null
+  qualityRating: string | null
+  messagingLimit: string | null
+  accountReviewStatus: string | null
+  connectedAt: string | null
+  connectionError: string | null
+}
+
+/**
+ * Estado de la ventana de servicio de WhatsApp. Lo calcula el SERVIDOR: el reloj del navegador
+ * puede estar mal y haría intentar un envío que Meta rechaza y cobra igual.
+ */
+export interface VentanaConversacion {
+  abierta: boolean
+  minutosRestantes: number
+  expiraEn: string | null
+}
+
+export interface InboxConversation {
+  id: string
+  guestName: string | null
+  guestPhone: string | null
+  guestId: string | null
+  /** active = contesta el bot · human = la tomó una persona · closed */
+  status: 'active' | 'human' | 'closed'
+  assignedAgentId: string | null
+  lastMessageAt: string | null
+  unreadCount: number
+  ventana: VentanaConversacion
+}
+
+export interface InboxMessage {
+  id: string
+  sender: 'guest' | 'bot' | 'agent'
+  senderUserId: string | null
+  content: string
+  createdAt: string
+}
+
+export interface InboxThread {
+  id: string
+  guestName: string | null
+  guestPhone: string | null
+  status: 'active' | 'human' | 'closed'
+  assignedAgentId: string | null
+  ventana: VentanaConversacion
+  mensajes: InboxMessage[]
+}
+
+/**
+ * Consumo de WhatsApp del hotel. Los números son los que informa META, no una cuenta nuestra:
+ * Meta cobra por conversación de 24 h y con precio distinto por categoría, así que contar mensajes
+ * daría otro número y la diferencia la discutiría el hotel con su factura en la mano.
+ */
+export interface ConsumoWhatsapp {
+  /** YYYY-MM */
+  mes: string
+  conversaciones: number
+  /** Lo que informó Meta. 0 no significa gratis: significa que Meta no lo informó. */
+  costo: number
+  moneda: string | null
+  porCategoria: Array<{ category: string; conversations: number; cost: number }>
+  /** Conversaciones incluidas en el plan. `null` = sin tope. */
+  cupo: number | null
+  usoDelCupo: number | null
+  cerca: boolean
+  agotado: boolean
+  ultimaSync: string | null
+}
+
 export const AiReceptionistService = {
   async listConversations(params?: Record<string, any>) {
     const qs = params ? '?' + new URLSearchParams(params).toString() : ''
@@ -150,6 +231,46 @@ export const AiReceptionistService = {
   },
   async getWhatsappStatus(hotelId: string) {
     return http.get<{ status: string; phone: string | null; mode: string }>(`/ai/whatsapp/status/${hotelId}`)
+  },
+
+  // ─── Consumo ───────────────────────────────────────────────────────────────
+  async consumoWhatsapp(mes?: string) {
+    return http.get<ConsumoWhatsapp>(`/ai/whatsapp/consumo${mes ? `?mes=${mes}` : ''}`)
+  },
+  /** Trae de Meta el número al día, sin esperar al cron. */
+  async sincronizarConsumo(mes?: string) {
+    return http.post<{ guardados: number }>(`/ai/whatsapp/consumo/sync${mes ? `?mes=${mes}` : ''}`, {})
+  },
+
+  // ─── Bandeja de WhatsApp ───────────────────────────────────────────────────
+  async inbox(estado?: string) {
+    const qs = estado ? `?estado=${encodeURIComponent(estado)}` : ''
+    return http.get<{ data: InboxConversation[] }>(`/ai/inbox${qs}`)
+  },
+  async inboxConversation(id: string) {
+    return http.get<InboxThread>(`/ai/inbox/${id}`)
+  },
+  async takeConversation(id: string) {
+    return http.post<{ success: boolean }>(`/ai/inbox/${id}/take`, {})
+  },
+  async releaseConversation(id: string) {
+    return http.post<{ success: boolean }>(`/ai/inbox/${id}/release`, {})
+  },
+  async replyConversation(id: string, text: string) {
+    return http.post<{ id: string; providerMessageId: string; sentAt: string }>(`/ai/inbox/${id}/reply`, { text })
+  },
+
+  // ─── Conexión oficial con Meta (Embedded Signup) ───────────────────────────
+  /** Canjea, en el servidor, el código que devolvió la ventana de Meta. */
+  async connectWhatsapp(payload: { code: string; phoneNumberId: string; wabaId: string }) {
+    return http.post<WhatsappConnection>('/ai/whatsapp/connect', payload)
+  },
+  /** Estado de la conexión para la tarjeta. Nunca trae el token. */
+  async getWhatsappConnection() {
+    return http.get<WhatsappConnection>('/ai/whatsapp/connection')
+  },
+  async disconnectWhatsapp() {
+    return http.delete<{ success: boolean }>('/ai/whatsapp/connection')
   },
 
   async getMetrics(period = 'today') {

@@ -22,11 +22,11 @@ function mockRepo(): any {
 // 0 conversation · 1 message · 2 intent · 3 template · 4 whatsappConfig · 5 metrics · 6 bookingFlow
 // · 7 voiceConfig · 8 user · 9 hotel · 10 room · 11 reservation · 12 paymentLink · 13 config · 14 invoice · 15 guest
 function makeService(overrides: Record<number, any> = {}): AiRecepcionistaService {
-  const repos: any[] = Array.from({ length: 16 }, () => mockRepo())
+  const repos: any[] = Array.from({ length: 14 }, () => mockRepo())
   for (const [idx, repo] of Object.entries(overrides)) repos[Number(idx)] = repo
   return new AiRecepcionistaService(
     repos[0], repos[1], repos[2], repos[3], repos[4], repos[5], repos[6], repos[7],
-    repos[8], repos[9], repos[10], repos[11], repos[12], repos[13], repos[14], repos[15],
+    repos[8], repos[9], repos[10], repos[11], repos[12], repos[13],
     log, silentCache, auth,
   )
 }

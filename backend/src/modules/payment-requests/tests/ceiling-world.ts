@@ -187,8 +187,7 @@ const MODELS: Array<[string, any]> = [
 ]
 
 const TABLES = [
-  'reservations', 'reservation_addons', 'payment_requests', 'payments',
-  'payment_links', 'deposits', 'payment_gateways',
+  'reservations', 'reservation_addons', 'payment_requests', 'payments', 'deposits', 'payment_gateways',
   'folios', 'folio_charges', 'invoices', 'payment_events', 'users',
   'configuration', 'audit_log',
 ]
@@ -285,7 +284,7 @@ export async function makeWorld(): Promise<World> {
   // sin que nadie toque la reserva: cobrar en caja, por folio o por factura era la puerta que
   // ninguna operación del alfabeto podía ejercitar.
   const payments = new PaymentsService(
-    paymentRepo, new OrmRepository<any>(orm, 'PaymentLink'), new OrmRepository<any>(orm, 'Deposit'),
+    paymentRepo, new OrmRepository<any>(orm, 'Deposit'),
     logger, cache, auth, userRepo,
     new PaymentGatewayRegistry(new OrmRepository<any>(orm, 'PaymentGateways') as any, logger),
     new PaymentEventStore(eventRepo, logger),

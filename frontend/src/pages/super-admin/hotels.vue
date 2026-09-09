@@ -120,7 +120,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="hotel in filteredHotels" :key="hotel.id" class="border-b border-border last:border-0 hover:bg-surface/50 transition-colors">
+          <tr v-for="hotel in paginatedHotels" :key="hotel.id" class="border-b border-border last:border-0 hover:bg-surface/50 transition-colors">
             <td class="p-4">
               <div class="flex items-center gap-3 cursor-pointer" @click="openViewHotel(hotel)">
                 <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-navy to-cyan flex items-center justify-center text-white text-sm font-bold">{{ hotel.name[0] }}</div>
@@ -143,6 +143,12 @@
             <td class="p-4"><span class="text-[10px] font-bold px-2 py-1 rounded-full" :class="statusClass(hotel.status)">{{ hotel.status }}</span></td>
             <td class="p-4 text-right">
               <div class="flex gap-1 justify-end">
+                <button
+                  @click="loginAsHotel(hotel)"
+                  :disabled="!hotel.ownerUserId || enteringId === hotel.id"
+                  :title="hotel.ownerUserId ? `Entrar como ${hotel.ownerName} (${roleLabel(hotel.ownerRole)})` : 'Este hotel no tiene ningún usuario activo al que entrar'"
+                  class="px-2 py-1 bg-blue text-white rounded-lg text-[10px] font-bold hover:bg-blue/90 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >{{ enteringId === hotel.id ? 'Entrando…' : 'Entrar' }}</button>
                 <button @click="openViewHotel(hotel)" class="px-2 py-1 bg-cyan/10 text-cyan rounded-lg text-[10px] font-bold hover:bg-cyan/20 transition-colors cursor-pointer">Ver</button>
                 <button @click="openEditHotel(hotel)" class="px-2 py-1 bg-navy/10 text-navy rounded-lg text-[10px] font-bold hover:bg-navy/20 transition-colors cursor-pointer">Editar</button>
                 <button @click="openModulesModal(hotel)" class="px-2 py-1 bg-teal/10 text-teal rounded-lg text-[10px] font-bold hover:bg-teal/20 transition-colors cursor-pointer">Módulos</button>
@@ -153,6 +159,19 @@
         </tbody>
       </table>
       </div>
+      <!-- Paginación del listado (client-side, mismo patrón que /panel/guests) -->
+      <div v-if="totalFiltered > PAGE_SIZE" class="flex items-center justify-between px-4 py-3 border-t border-border">
+        <span class="text-[11px] text-text-muted font-bold">
+          {{ (currentPage - 1) * PAGE_SIZE + 1 }}–{{ Math.min(currentPage * PAGE_SIZE, totalFiltered) }} de {{ totalFiltered }}
+        </span>
+        <div class="flex items-center gap-1">
+          <button @click="goToPage(1)" :disabled="currentPage <= 1" class="px-2 py-1 rounded-lg text-xs font-bold text-navy hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">«</button>
+          <button @click="goToPage(currentPage - 1)" :disabled="currentPage <= 1" class="px-2 py-1 rounded-lg text-xs font-bold text-navy hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">‹</button>
+          <span class="px-2 text-xs font-bold text-navy">{{ currentPage }} / {{ totalPages }}</span>
+          <button @click="goToPage(currentPage + 1)" :disabled="currentPage >= totalPages" class="px-2 py-1 rounded-lg text-xs font-bold text-navy hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">›</button>
+          <button @click="goToPage(totalPages)" :disabled="currentPage >= totalPages" class="px-2 py-1 rounded-lg text-xs font-bold text-navy hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">»</button>
+        </div>
+      </div>
       <div v-if="filteredHotels.length === 0" class="p-12 text-center">
         <div class="text-4xl mb-3">🏨</div>
         <div class="text-sm font-bold text-text-muted">No se encontraron hoteles</div>
@@ -162,7 +181,7 @@
 
     <!-- Vista Grid -->
     <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      <div v-for="hotel in filteredHotels" :key="hotel.id" class="bg-white rounded-2xl border border-border card-shadow p-5 hover:shadow-lg transition-all">
+      <div v-for="hotel in paginatedHotels" :key="hotel.id" class="bg-white rounded-2xl border border-border card-shadow p-5 hover:shadow-lg transition-all">
         <div class="flex items-start justify-between mb-4">
           <div class="flex items-center gap-3">
             <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-navy to-cyan flex items-center justify-center text-white text-lg font-black">{{ hotel.name[0] }}</div>
@@ -182,6 +201,12 @@
           <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="planClass(hotel.plan)">{{ hotel.plan }}</span>
           <span class="text-[10px] text-text-muted">{{ hotel.users }} usuarios</span>
         </div>
+        <button
+          @click="loginAsHotel(hotel)"
+          :disabled="!hotel.ownerUserId || enteringId === hotel.id"
+          :title="hotel.ownerUserId ? `Entrar como ${hotel.ownerName} (${roleLabel(hotel.ownerRole)})` : 'Este hotel no tiene ningún usuario activo al que entrar'"
+          class="w-full py-2 mb-2 bg-blue text-white rounded-lg text-[10px] font-bold hover:bg-blue/90 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        >{{ enteringId === hotel.id ? 'Entrando…' : `Entrar${hotel.ownerName ? ` como ${hotel.ownerName}` : ''}` }}</button>
         <div class="flex gap-2">
           <button @click="openViewHotel(hotel)" class="flex-1 py-2 bg-surface rounded-lg text-[10px] font-bold text-text-secondary hover:bg-surface-dark transition-colors cursor-pointer">Ver</button>
           <button @click="openEditHotel(hotel)" class="flex-1 py-2 bg-navy/10 rounded-lg text-[10px] font-bold text-navy hover:bg-navy/20 transition-colors cursor-pointer">Editar</button>
@@ -195,6 +220,19 @@
         <div class="text-4xl mb-3">🏨</div>
         <div class="text-sm font-bold text-text-muted">No se encontraron hoteles</div>
         <div class="text-[10px] text-text-muted">Intenta ajustar los filtros</div>
+      </div>
+      <!-- Misma paginación que la tabla: las dos vistas recorren el mismo listado. -->
+      <div v-if="totalFiltered > PAGE_SIZE" class="col-span-full flex items-center justify-between bg-white rounded-2xl border border-border card-shadow px-4 py-3">
+        <span class="text-[11px] text-text-muted font-bold">
+          {{ (currentPage - 1) * PAGE_SIZE + 1 }}–{{ Math.min(currentPage * PAGE_SIZE, totalFiltered) }} de {{ totalFiltered }}
+        </span>
+        <div class="flex items-center gap-1">
+          <button @click="goToPage(1)" :disabled="currentPage <= 1" class="px-2 py-1 rounded-lg text-xs font-bold text-navy hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">«</button>
+          <button @click="goToPage(currentPage - 1)" :disabled="currentPage <= 1" class="px-2 py-1 rounded-lg text-xs font-bold text-navy hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">‹</button>
+          <span class="px-2 text-xs font-bold text-navy">{{ currentPage }} / {{ totalPages }}</span>
+          <button @click="goToPage(currentPage + 1)" :disabled="currentPage >= totalPages" class="px-2 py-1 rounded-lg text-xs font-bold text-navy hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">›</button>
+          <button @click="goToPage(totalPages)" :disabled="currentPage >= totalPages" class="px-2 py-1 rounded-lg text-xs font-bold text-navy hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">»</button>
+        </div>
       </div>
     </div>
 
@@ -380,7 +418,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth.store'
 import AppModal from '@/components/ui/AppModal.vue'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
@@ -390,7 +430,18 @@ import { PlansService } from '@/services/Plans.service'
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
+const router = useRouter()
+const auth = useAuthStore()
 const cap = (s: string) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s
+
+// Paginación de la vista (client-side): el endpoint devuelve todos los hoteles de la plataforma
+// en una sola respuesta, así que no hay nada que pedirle al backend al cambiar de página.
+const PAGE_SIZE = 10
+const currentPage = ref(1)
+
+// Impersonación por hotel. Se guarda el id del HOTEL, no el del usuario: es lo que identifica la
+// fila clickeada, y así el botón se deshabilita solo en esa fila y no en toda la tabla.
+const enteringId = ref<string | null>(null)
 const plansList = ref<any[]>([])
 
 const activeFilter = ref('all')
@@ -443,6 +494,12 @@ onMounted(async () => {
       users: 0,
       status: h.status === 'pendiente' ? 'Pendiente' : h.status === 'suspendido' ? 'Suspendido' : 'Activo',
       registered: h.createdAt ? String(h.createdAt).slice(0, 10) : '',
+      // Usuario al que entra el botón "Entrar". Este map arma un objeto NUEVO campo por campo,
+      // así que lo que no se copie acá se pierde: sin estas tres líneas el botón sale siempre
+      // deshabilitado aunque el backend mande el owner.
+      ownerUserId: h.ownerUserId ?? null,
+      ownerName: h.ownerName ?? '',
+      ownerRole: h.ownerRole ?? '',
     }))
   } catch { toast.error('No se pudieron cargar los hoteles') } finally { loading.value = false }
 })
@@ -491,6 +548,51 @@ const filteredHotels = computed(() => {
 
   return result
 })
+
+// ── Paginación ────────────────────────────────────────────────────────────────────────────
+const totalFiltered = computed(() => filteredHotels.value.length)
+const totalPages = computed(() => Math.max(1, Math.ceil(totalFiltered.value / PAGE_SIZE)))
+const paginatedHotels = computed(() => {
+  const start = (currentPage.value - 1) * PAGE_SIZE
+  return filteredHotels.value.slice(start, start + PAGE_SIZE)
+})
+
+// Al filtrar, volver a la primera página: quedarse en la 4 con un filtro que deja 3 hoteles
+// muestra una tabla vacía sin explicación. Y clampear si el universo se achica (baja de un hotel).
+watch([searchQuery, activeFilter, planFilter, locationFilter, occupancyFilter, mrrFilter], () => { currentPage.value = 1 })
+watch(totalPages, (tp) => { if (currentPage.value > tp) currentPage.value = tp })
+
+function goToPage(n: number) {
+  currentPage.value = Math.min(Math.max(1, n), totalPages.value)
+}
+
+// ── Entrar a la cuenta del hotel (impersonación) ──────────────────────────────────────────
+// Mismo flujo que el botón de `/admin/users`: el hotel no se impersona, se impersona a una
+// PERSONA. El backend ya resolvió cuál en `ownerUserId` (ver dashboard-queries.listHotels).
+const ROLE_LABELS: Record<string, string> = {
+  hotel_admin: 'administrador',
+  receptionist: 'recepción',
+  housekeeper: 'limpieza',
+  maintenance: 'mantenimiento',
+}
+const roleLabel = (role: string) => ROLE_LABELS[role] || role || 'usuario'
+
+const loginAsHotel = async (hotel: any) => {
+  if (!hotel.ownerUserId) return
+  enteringId.value = hotel.id
+  try {
+    // Solo se navega si el store DE VERDAD impersonó: con dos clicks en filas distintas la segunda
+    // llamada se descarta (hay una impersonación en curso) y devuelve false — navegar igual dejaba
+    // al admin en el panel del PRIMER hotel creyendo que entró al segundo.
+    const entro = await auth.loginAs(hotel.ownerUserId)
+    if (entro) router.push('/panel')
+    else toast.info('Ya se está entrando a otra cuenta')
+  } catch (e: any) {
+    toast.error(e?.message || 'No se pudo entrar a la cuenta de este hotel')
+  } finally {
+    enteringId.value = null
+  }
+}
 
 const planClass = (plan: string) => ({ 'Enterprise': 'bg-navy/10 text-navy', 'Professional': 'bg-cyan/10 text-cyan', 'Starter': 'bg-teal/10 text-teal' }[plan] || 'bg-surface text-text-muted')
 const statusClass = (status: string) => ({ 'Activo': 'bg-teal/10 text-teal', 'Pendiente': 'bg-orange/10 text-orange', 'Suspendido': 'bg-red/10 text-red' }[status] || 'bg-surface text-text-muted')

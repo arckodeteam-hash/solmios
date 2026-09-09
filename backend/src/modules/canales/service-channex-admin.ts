@@ -6,7 +6,7 @@
 import type { ConfigUseCase } from './usecases/config'
 import type { ChannexUseCase } from './usecases/channex'
 
-export interface ChannexPlatformStatus { environment: string; hasKey: boolean; keyMasked: string }
+export interface ChannexPlatformStatus { environment: string; hasKey: boolean; keyMasked: string; channexUserId: string }
 
 /** Enmascara la API key para mostrarla sin filtrarla (4 primeros + 4 últimos). */
 function maskKey(k?: string): string {
@@ -22,17 +22,20 @@ export class ChannexAdminService {
 
   async getStatus(): Promise<ChannexPlatformStatus> {
     const p = await this.config.getPlatformChannex()
-    return { environment: p?.environment === 'production' ? 'production' : 'staging', hasKey: !!p?.apiKey, keyMasked: maskKey(p?.apiKey) }
+    return { environment: p?.environment === 'production' ? 'production' : 'staging', hasKey: !!p?.apiKey, keyMasked: maskKey(p?.apiKey), channexUserId: p?.channexUserId || '' }
   }
 
   /**
    * Guarda credenciales. apiKey vacío = NO se toca la existente (permite cambiar solo el entorno sin
-   * reescribir la key, y evita borrarla desde un form que nunca muestra la key cruda).
+   * reescribir la key, y evita borrarla desde un form que nunca muestra la key cruda). Misma
+   * disciplina para `channexUserId` (el id de nuestra propia cuenta Channex, que el webhook usa para
+   * descartar los eventos que originamos nosotros): vacío o ausente NO pisa el ya guardado.
    */
-  async save(patch: { apiKey?: string; environment?: string }): Promise<ChannexPlatformStatus> {
-    const toSave: { apiKey?: string; environment?: string } = {}
+  async save(patch: { apiKey?: string; environment?: string; channexUserId?: string }): Promise<ChannexPlatformStatus> {
+    const toSave: { apiKey?: string; environment?: string; channexUserId?: string } = {}
     if (patch.environment === 'production' || patch.environment === 'staging') toSave.environment = patch.environment
     if (typeof patch.apiKey === 'string' && patch.apiKey.trim()) toSave.apiKey = patch.apiKey.trim()
+    if (typeof patch.channexUserId === 'string' && patch.channexUserId.trim()) toSave.channexUserId = patch.channexUserId.trim()
     await this.config.setPlatformChannex(toSave)
     return this.getStatus()
   }

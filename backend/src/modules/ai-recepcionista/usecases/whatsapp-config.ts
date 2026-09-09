@@ -53,3 +53,29 @@ export function redactWhatsappConfig(config: any): any {
     hasLlmApiKey: !!llmApiKey,
   }
 }
+
+/** Credenciales de la cuenta de WhatsApp del hotel, tal como las guardó la conexión. */
+export interface WhatsappCredentials {
+  wabaId: string
+  accessToken: string
+  phoneNumberId: string
+}
+
+/**
+ * Devuelve las credenciales EN CLARO para uso interno del servidor (hoy: el módulo `marketing`,
+ * que las necesita para crear plantillas en Meta a nombre del hotel).
+ *
+ * Es lo contrario de `redactWhatsappConfig`, y a propósito: esta salida NUNCA va al navegador.
+ * Solo se alcanza desde un connector, nunca desde una ruta HTTP. `null` cuando el hotel todavía
+ * no conectó su WhatsApp — quien llama debe tratarlo como "no conectado", no como un error.
+ */
+export async function getWhatsappCredentials(repo: any, hotelId: string): Promise<WhatsappCredentials | null> {
+  if (!hotelId) return null
+  const config = await getWhatsappConfig(repo, hotelId)
+  if (!config?.accessToken || !config?.wabaId) return null
+  return {
+    wabaId: String(config.wabaId),
+    accessToken: String(config.accessToken),
+    phoneNumberId: String((config as any).phoneNumberId ?? ''),
+  }
+}

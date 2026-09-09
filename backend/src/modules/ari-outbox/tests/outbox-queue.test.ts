@@ -1,0 +1,683 @@
+// ari-outbox/tests/outbox-queue.test.ts — Qué hace la cola con una ráfaga de cambios de ARI.
+//
+// Los seis casos son el contrato que el coalescer en memoria ya cumplía (canales/tests/
+// push-coalescing.test.ts) más lo que la tabla agrega: la ráfaga QUEDA ESCRITA antes de que venza
+// el debounce, así un reinicio no se la come. Todo corre contra un puerto en memoria (un array y
+// closures, sin DB) y con `now`/`newId` inyectados: nada depende del reloj real, así que el
+// backoff de 15 minutos se prueba en milisegundos y sin flakes.
+
+import { describe, it, expect } from 'bun:test'
+import { AriOutbox, BACKOFF_MS, STALE_MS, type AriOutboxPort } from '../usecases/outbox-queue'
+import type { AriOutboxRow } from '../types'
+
+const HOTEL = 'h1'
+
+/**
+ * Igualdad del CAS: matchea si TODOS los pares de `where` coinciden, tratando `undefined` y `null`
+ * como el mismo "sin valor" (una fila vieja trae `claimedBy` ausente donde la tabla guarda NULL).
+ */
+function matchea(row: AriOutboxRow, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([k, v]) => {
+    const actual = (row as unknown as Record<string, unknown>)[k]
+    if (v === null || v === undefined) return actual === null || actual === undefined
+    return actual === v
+  })
+}
+
+/**
+ * Puerto en memoria: el mínimo que usa la cola (create/update/updateWhere/findMany).
+ *
+ * `create` hace de índice ÚNICO sobre `pendingKey` (#65): si ya hay una fila con la misma clave
+ * NO nula, tira igual que la base. Los `null` no chocan entre sí —así es un único en SQL, y de eso
+ * vive el truco: la columna solo está poblada mientras la fila es pending—, así que el historial
+ * `sent`/`failed` del mismo (hotel, kind) sigue conviviendo acá adentro como en la tabla. `update`
+ * y `updateWhere` aplican `pendingKey` como cualquier otro campo, incluido cuando viene en `null`
+ * (el reclamo del drain la borra con eso).
+ */
+function makePort(clock: { ms: number }) {
+  const rows: AriOutboxRow[] = []
+  const port: AriOutboxPort = {
+    async create(row) {
+      if (row.pendingKey != null && rows.some((r) => r.pendingKey === row.pendingKey)) {
+        // El texto imita a SQLite, pero la cola NO lo mira: cualquier fallo del create se resuelve
+        // releyendo la fila pendiente (ver scheduleOne), justamente para no atarse a un motor.
+        throw new Error(`UNIQUE constraint failed: ari_outbox.pendingKey (${row.pendingKey})`)
+      }
+      const stored = { ...row, createdAt: new Date(clock.ms).toISOString(), updatedAt: new Date(clock.ms).toISOString() }
+      rows.push(stored)
+      return stored
+    },
+    async update(id, patch) {
+      const row = rows.find((r) => r.id === id)
+      if (row) Object.assign(row, patch, { updatedAt: new Date(clock.ms).toISOString() })
+      return row ?? null
+    },
+    // El CAS: actualiza SOLO lo que matchea y devuelve el conteo, igual que orm.updateMany
+    // (que además pisa `updatedAt` aunque el patch venga vacío — de eso vive el latido).
+    async updateWhere(where, patch) {
+      const match = rows.filter((r) => matchea(r, where))
+      // El mismo único, ahora del lado del UPDATE: restaurar `pendingKey` en una fila que vuelve a
+      // pending choca si el turno se lo llevó OTRA fila mientras esta estaba en processing. Se
+      // compara contra las que NO se están actualizando, porque volver a escribir la clave que la
+      // propia fila ya tiene no es un choque (ni lo sería en la base).
+      if (patch.pendingKey != null && rows.some((r) => r.pendingKey === patch.pendingKey && !match.includes(r))) {
+        throw new Error(`UNIQUE constraint failed: ari_outbox.pendingKey (${patch.pendingKey})`)
+      }
+      for (const row of match) Object.assign(row, patch, { updatedAt: new Date(clock.ms).toISOString() })
+      return match.length
+    },
+    async findMany(query) {
+      return rows.filter((r) => Object.entries(query).every(([k, v]) => (r as unknown as Record<string, unknown>)[k] === v))
+    },
+  }
+  return { port, rows }
+}
+
+interface Escenario {
+  overrides?: string[]
+  failOverrides?: boolean
+  /** `'*'` falla siempre; un canal concreto falla solo ese target. */
+  failPush?: string
+  pushDelayMs?: number
+}
+
+function makeOutbox(esc: Escenario = {}) {
+  const clock = { ms: Date.parse('2026-09-07T10:00:00.000Z') }
+  const { port, rows } = makePort(clock)
+  const pushed: Array<string | undefined> = []
+  const errores: Array<string | undefined> = []
+  const traza: string[] = [] // start:<n> / end:<n> para ver si dos pushes se solapan
+  let n = 0
+  const outbox = new AriOutbox({
+    repo: port,
+    now: () => clock.ms,
+    debounceMs: 1500,
+    newId: () => `row-${rows.length + 1}`,
+    onError: (_hotelId, channel) => { errores.push(channel) },
+  })
+  outbox.registerPublisher('inventory', {
+    push: async (_hotelId, channel) => {
+      const i = ++n
+      traza.push(`start:${i}`)
+      if (esc.pushDelayMs) await new Promise((r) => setTimeout(r, esc.pushDelayMs))
+      traza.push(`end:${i}`)
+      if (esc.failPush === '*' || (esc.failPush !== undefined && esc.failPush === channel)) throw new Error('channex caído')
+      pushed.push(channel)
+    },
+    overrideChannels: esc.overrides || esc.failOverrides
+      ? async () => { if (esc.failOverrides) throw new Error('no se pudo listar'); return esc.overrides ?? [] }
+      : undefined,
+  })
+  /** Corre el reloj: es el equivalente determinista a esperar el debounce. */
+  const avanzar = (ms: number) => { clock.ms += ms }
+  return { outbox, rows, pushed, errores, traza, avanzar, clock }
+}
+
+describe('CA-1 — la ráfaga se persiste ANTES de que venza el debounce', () => {
+  it('schedule() deja la fila pending en la tabla sin haber drenado nada', async () => {
+    const { outbox, rows } = makeOutbox()
+    await outbox.schedule(HOTEL, 'inventory')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ hotelId: HOTEL, kind: 'inventory', status: 'pending', attempts: 0, channels: [] })
+  })
+
+  it('un drain antes del vencimiento no publica nada y la fila sigue pending', async () => {
+    const { outbox, rows, pushed } = makeOutbox()
+    await outbox.schedule(HOTEL, 'inventory')
+    expect(await outbox.drain()).toBe(0)
+    expect(pushed).toEqual([])
+    expect(rows[0]!.status).toBe('pending')
+  })
+})
+
+describe('CA-3 — agrupación: la ráfaga entera sale como UN push', () => {
+  it('12 schedule() del mismo hotel dejan una sola fila y un solo push', async () => {
+    const { outbox, rows, pushed, avanzar } = makeOutbox()
+    for (let i = 0; i < 12; i++) {
+      await outbox.schedule(HOTEL, 'inventory')
+      avanzar(50) // la ráfaga real llega en milésimas: cada alta corre el vencimiento
+    }
+    expect(rows).toHaveLength(1)
+    avanzar(1500)
+    expect(await outbox.drain()).toBe(1)
+    expect(pushed).toEqual([undefined])
+    expect(rows[0]!.status).toBe('sent')
+  })
+
+  it('otro kind del mismo hotel es su propia fila: son dos pushes distintos contra Channex', async () => {
+    const { outbox, rows } = makeOutbox()
+    await outbox.schedule(HOTEL, 'inventory')
+    await outbox.schedule(HOTEL, 'rates')
+    expect(rows).toHaveLength(2)
+  })
+})
+
+describe('CA-3 — ráfaga CONCURRENTE: schedule() sin await no duplica la fila', () => {
+  // Así llaman los conectores: `void outbox.schedule(...)` (pricing-canales.ts), y un solo
+  // guardado de la UI dispara onRatesUpdated y onRateRestrictionsUpdated a milésimas de distancia
+  // (push-coalescing.ts:1-8). Sin serializar por (hotel, kind), las dos llamadas leen "no hay fila
+  // pendiente" antes de que ninguna escriba y se crean DOS filas → DOS pushes, que es justo lo que
+  // CA-3 prohíbe. El coalescer en memoria no tenía el hueco porque era 100% síncrono.
+  it('dos schedule() del mismo hotel/kind sin awaitear el primero dejan UNA fila y UN push', async () => {
+    const { outbox, rows, pushed, avanzar } = makeOutbox()
+    const a = outbox.schedule(HOTEL, 'inventory')
+    const b = outbox.schedule(HOTEL, 'inventory')
+    await Promise.all([a, b])
+
+    expect(rows).toHaveLength(1)
+    avanzar(1500)
+    expect(await outbox.drain()).toBe(1)
+    expect(pushed).toEqual([undefined])
+  })
+
+  it('la unión de canales sobrevive a la concurrencia: global + canal publica SOLO el canal', async () => {
+    const { outbox, rows, pushed, avanzar } = makeOutbox({ overrides: ['booking'] })
+    const a = outbox.schedule(HOTEL, 'inventory')
+    const b = outbox.schedule(HOTEL, 'inventory', ['OpenChannel'])
+    await Promise.all([a, b])
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.channels).toEqual(['OpenChannel'])
+    avanzar(1500)
+    await outbox.drain()
+    expect(pushed).toEqual(['OpenChannel'])
+  })
+
+  it('la cadena de serialización no se acumula en memoria: la entrada se limpia al terminar', async () => {
+    const { outbox } = makeOutbox()
+    await Promise.all([outbox.schedule(HOTEL, 'inventory'), outbox.schedule('h2', 'rates')])
+    // Un macrotask: alcanza para que corran los microtasks de limpieza de las dos cadenas.
+    await new Promise((r) => setTimeout(r, 0))
+
+    // Blanco a propósito: es la única forma de ver que un hotel que agenda todo el día no deja
+    // una entrada viva por (hotel, kind) para siempre.
+    expect((outbox as unknown as { scheduleChains: Map<string, unknown> }).scheduleChains.size).toBe(0)
+  })
+})
+
+describe('CA-4 — cambio global: base primero, canales con tarifa propia después', () => {
+  it('ráfaga sin canal publica [undefined, "OpenChannel"] en ese orden', async () => {
+    const { outbox, pushed, avanzar } = makeOutbox({ overrides: ['OpenChannel'] })
+    await outbox.schedule(HOTEL, 'inventory')
+    avanzar(1500)
+    await outbox.drain()
+    expect(pushed).toEqual([undefined, 'OpenChannel'])
+  })
+
+  it('si resolver los overrides falla se publica solo la base y se avisa por onError', async () => {
+    const { outbox, pushed, errores, rows, avanzar } = makeOutbox({ failOverrides: true })
+    await outbox.schedule(HOTEL, 'inventory')
+    avanzar(1500)
+    await outbox.drain()
+    expect(pushed).toEqual([undefined])
+    expect(errores).toEqual([undefined])
+    expect(rows[0]!.status).toBe('sent') // el push base nunca se bloquea por los overrides
+  })
+})
+
+describe('CA-4 — cambio por canal: la base NO se publica', () => {
+  it('ráfaga con ["OpenChannel"] publica exactamente ese canal', async () => {
+    const { outbox, pushed, avanzar } = makeOutbox({ overrides: ['booking'] })
+    await outbox.schedule(HOTEL, 'inventory', ['OpenChannel'])
+    avanzar(1500)
+    await outbox.drain()
+    expect(pushed).toEqual(['OpenChannel'])
+  })
+
+  it('ráfaga mixta (global + canal) publica SOLO el canal: la base pisaría su tarifa', async () => {
+    const { outbox, rows, pushed, avanzar } = makeOutbox({ overrides: ['booking'] })
+    await outbox.schedule(HOTEL, 'inventory')
+    await outbox.schedule(HOTEL, 'inventory', ['OpenChannel'])
+    expect(rows).toHaveLength(1)
+    avanzar(1500)
+    await outbox.drain()
+    expect(pushed).toEqual(['OpenChannel'])
+  })
+})
+
+describe('CA-5 — los pushes NO se solapan', () => {
+  it('con varias filas vencidas la traza alterna start/end (secuencial, nunca en paralelo)', async () => {
+    const { outbox, traza, avanzar } = makeOutbox({ pushDelayMs: 5 })
+    await outbox.schedule('hotel-a', 'inventory')
+    await outbox.schedule('hotel-b', 'inventory')
+    await outbox.schedule('hotel-c', 'inventory')
+    avanzar(1500)
+    expect(await outbox.drain()).toBe(3)
+    expect(traza).toEqual(['start:1', 'end:1', 'start:2', 'end:2', 'start:3', 'end:3'])
+  })
+})
+
+describe('CA-6 — reintentos con backoff y fallo permanente', () => {
+  it('reintenta con el backoff y termina en failed con un lastError legible', async () => {
+    const { outbox, rows, avanzar, clock } = makeOutbox({ failPush: '*' })
+    await outbox.schedule(HOTEL, 'inventory')
+    avanzar(1500)
+
+    await outbox.drain()
+    expect(rows[0]).toMatchObject({ status: 'pending', attempts: 1, lastError: 'channex caído' })
+    expect(rows[0]!.scheduledAt).toBe(new Date(clock.ms + BACKOFF_MS[0]!).toISOString())
+
+    avanzar(BACKOFF_MS[0]!)
+    await outbox.drain()
+    expect(rows[0]).toMatchObject({ status: 'pending', attempts: 2 })
+    expect(rows[0]!.scheduledAt).toBe(new Date(clock.ms + BACKOFF_MS[1]!).toISOString())
+
+    avanzar(BACKOFF_MS[1]!)
+    await outbox.drain()
+    expect(rows[0]).toMatchObject({ status: 'failed', attempts: 3, lastError: 'channex caído' })
+
+    avanzar(BACKOFF_MS[2]!)
+    expect(await outbox.drain()).toBe(0) // failed es definitivo: no se reintenta más
+  })
+
+  it('un kind sin publicador registrado falla esa fila sin romper el drain de las demás', async () => {
+    const { outbox, rows, pushed, avanzar } = makeOutbox()
+    await outbox.schedule(HOTEL, 'rates') // no hay publisher de 'rates' en este escenario
+    await outbox.schedule(HOTEL, 'inventory')
+    avanzar(1500)
+    expect(await outbox.drain()).toBe(2)
+    const rates = rows.find((r) => r.kind === 'rates')!
+    expect(rates).toMatchObject({ status: 'pending', attempts: 1 })
+    expect(rates.lastError).toContain("kind 'rates'")
+    expect(rows.find((r) => r.kind === 'inventory')!.status).toBe('sent')
+    expect(pushed).toEqual([undefined])
+  })
+})
+
+describe('#58 — la fila es de UN proceso a la vez: reclamo con compare-and-swap', () => {
+  const T0 = Date.parse('2026-09-07T10:00:00.000Z')
+
+  /** Puerto compartido con UNA fila pending ya vencida: el punto de partida de la carrera. */
+  async function puertoConFilaVencida() {
+    const clock = { ms: T0 }
+    const { port, rows } = makePort(clock)
+    await port.create({
+      id: 'r1',
+      hotelId: HOTEL,
+      kind: 'inventory',
+      channels: [],
+      status: 'pending',
+      scheduledAt: new Date(T0 - 1000).toISOString(),
+      attempts: 0,
+      maxAttempts: 3,
+      lastError: null,
+    })
+    return { clock, port, rows }
+  }
+
+  it('dos drains concurrentes sobre la MISMA fila publican una sola vez', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    let pushCalls = 0
+    const proceso = (owner: string) => {
+      const o = new AriOutbox({ repo: port, now: () => clock.ms, owner, heartbeatMs: 0 })
+      o.registerPublisher('inventory', {
+        // El push CEDE el control: sin un await real el drain sería atómico y la carrera no existiría.
+        push: async () => { pushCalls++; await new Promise((r) => setTimeout(r, 5)) },
+      })
+      return o
+    }
+    const a = proceso('proceso-a')
+    const b = proceso('proceso-b')
+
+    await Promise.all([a.drain(), b.drain()])
+
+    expect(pushCalls).toBe(1)
+    expect(rows[0]!.status).toBe('sent')
+    expect(rows[0]!.claimedBy).toBeNull() // cerrada = libre
+  })
+
+  /**
+   * Un push que tarda más que STALE_MS con un segundo proceso mirando. Los dos relojes son el
+   * MISMO `clock.ms` a propósito: el `updatedAt` que escribe el puerto tiene que salir de donde
+   * lee reclaimStale, o el test no prueba nada.
+   */
+  async function escenarioPushLargo(heartbeatMs: number) {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    const trabajador = new AriOutbox({ repo: port, now: () => clock.ms, owner: 'el-que-publica', heartbeatMs })
+    trabajador.registerPublisher('inventory', { push: async () => { await new Promise((r) => setTimeout(r, 40)) } })
+    const vigilante = new AriOutbox({ repo: port, now: () => clock.ms, owner: 'el-que-vigila', heartbeatMs: 0 })
+
+    const enVuelo = trabajador.drain()
+    await new Promise((r) => setTimeout(r, 10)) // ya reclamó la fila y está en el push
+    clock.ms += STALE_MS + 60_000 // el push "tardó" de sobra más que la ventana de colgado
+    await new Promise((r) => setTimeout(r, 15)) // margen para varios latidos con el reloj corrido
+    const reclamadas = await vigilante.reclaimStale()
+    await enVuelo
+    return { reclamadas, rows }
+  }
+
+  it('el latido evita que un push más largo que STALE_MS sea declarado colgado', async () => {
+    const { reclamadas, rows } = await escenarioPushLargo(5)
+
+    expect(reclamadas).toBe(0)
+    expect(rows[0]!.status).toBe('sent')
+  })
+
+  it('sin latido el MISMO push largo se lo lleva el otro proceso, y el zombi no cierra la fila', async () => {
+    const { reclamadas, rows } = await escenarioPushLargo(0)
+
+    expect(reclamadas).toBe(1)
+    // El que estaba publicando ya no es dueño: su cierre no aplica y la fila queda lista para que
+    // la republique quien la reclamó (en vez de quedar 'sent' sin que nadie la haya terminado).
+    expect(rows[0]!.status).toBe('pending')
+  })
+
+  it('una fila que perdió el reclamo entre la lectura y el push no se publica', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    let pushCalls = 0
+    // Espía: otro proceso se lleva la fila JUSTO después de que este la leyó, así la lista de
+    // vencidas que el drain tiene en la mano ya está vieja cuando llega a publicar.
+    const espia: AriOutboxPort = {
+      ...port,
+      async findMany(query) {
+        const res = await port.findMany(query)
+        if (query.status === 'pending' && res[0]) {
+          await port.updateWhere({ id: res[0].id, status: 'pending' }, { status: 'processing', claimedBy: 'otro-proceso' })
+        }
+        return res
+      },
+    }
+    const outbox = new AriOutbox({ repo: espia, now: () => clock.ms, owner: 'el-perdedor', heartbeatMs: 0 })
+    outbox.registerPublisher('inventory', { push: async () => { pushCalls++ } })
+
+    await outbox.drain()
+
+    expect(pushCalls).toBe(0)
+    expect(rows[0]).toMatchObject({ status: 'processing', claimedBy: 'otro-proceso' })
+  })
+
+  // ── El ZOMBI: la fila se la llevaron MIENTRAS publicábamos ──────────────────
+  //
+  // Los tres de arriba cubren al proceso que pierde el reclamo ANTES de publicar. Falta el caso
+  // feo: este proceso reclamó bien, se fue al push, y en el medio otro le declaró la fila colgada
+  // y se la quedó. Cuando vuelve ya es un zombi: no puede pisar la fila del dueño nuevo NI avisar
+  // por los hooks, porque un `onSent`/`onFailed` de más dispara los avisos a otros módulos por un
+  // trabajo que el dueño nuevo todavía está haciendo (y puede terminar bien). De eso vive el CAS
+  // guardado por `claimedBy` en las tres salidas del drain: el cierre a 'sent' y las DOS ramas de
+  // handleFailure (backoff y fallo permanente).
+
+  const OWNER = 'el-zombi'
+  const LADRON = 'el-dueno-nuevo'
+
+  /**
+   * Un proceso con los hooks de cierre espiados. Con `robarEnPush`, el push hace de dueño NUEVO:
+   * se lleva la fila justo mientras este publica —lo mismo que haría un reclaimStale de otro
+   * proceso—, así el CAS del cierre no encuentra nada suyo que actualizar. Es el mismo truco del
+   * espía de findMany de acá arriba, movido de la lectura al push.
+   */
+  function procesoZombi(
+    port: AriOutboxPort,
+    clock: { ms: number },
+    opts: { falla?: boolean; roban?: boolean } = {},
+  ) {
+    const enviadas: AriOutboxRow[] = []
+    const fallidas: AriOutboxRow[] = []
+    const errores: unknown[] = []
+    const pushes: Array<string | undefined> = []
+    const outbox = new AriOutbox({
+      repo: port,
+      now: () => clock.ms,
+      owner: OWNER,
+      heartbeatMs: 0, // el latido no es lo que se prueba acá y un intervalo vivo cuelga a `bun test`
+      onSent: (row) => { enviadas.push(row) },
+      onFailed: (row) => { fallidas.push(row) },
+      onError: (_hotelId, _channel, err) => { errores.push(err) },
+    })
+    outbox.registerPublisher('inventory', {
+      push: async (_hotelId, channel) => {
+        pushes.push(channel)
+        if (opts.roban) {
+          await port.updateWhere(
+            { id: 'r1', status: 'processing', claimedBy: OWNER },
+            { status: 'processing', claimedBy: LADRON },
+          )
+        }
+        if (opts.falla) throw new Error('channex caído')
+      },
+    })
+    return { outbox, enviadas, fallidas, errores, pushes }
+  }
+
+  it('push OK pero la fila ya no es nuestra: no se cierra en sent ni se avisa onSent', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    const { outbox, enviadas, fallidas, pushes } = procesoZombi(port, clock, { roban: true })
+
+    await outbox.drain()
+
+    expect(pushes).toEqual([undefined]) // publicó de verdad: el "no avisó" no es por no haber llegado
+    expect(enviadas).toEqual([]) // el push salió, pero el trabajo ya es de otro
+    expect(fallidas).toEqual([])
+    // La fila conserva lo que le puso el dueño nuevo: el zombi no la pisa.
+    expect(rows[0]).toMatchObject({ status: 'processing', claimedBy: LADRON })
+  })
+
+  it('push fallido con reintentos disponibles y la fila robada: no se pisa el backoff ni se avisa', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    const scheduledAtOriginal = rows[0]!.scheduledAt
+    const { outbox, enviadas, fallidas, errores } = procesoZombi(port, clock, { roban: true, falla: true })
+
+    await outbox.drain() // attempts 0 → 1, muy por debajo de maxAttempts 3: es la rama del backoff
+
+    expect(errores).toHaveLength(1) // el fallo del push SÍ se reporta: es un error real de este proceso
+    expect(fallidas).toEqual([]) // pero la rama del backoff no avisa, y menos por una fila ajena
+    expect(enviadas).toEqual([])
+    // Ni attempts, ni lastError, ni el scheduledAt del backoff: la fila es del dueño nuevo.
+    expect(rows[0]).toMatchObject({ status: 'processing', claimedBy: LADRON, attempts: 0, lastError: null })
+    expect(rows[0]!.scheduledAt).toBe(scheduledAtOriginal)
+  })
+
+  it('último intento fallido con la fila robada: NO se emite onFailed', async () => {
+    // El más caro de los tres: un onFailed de más manda el aviso de "este hotel no se pudo
+    // publicar" a otros módulos por una fila que el dueño nuevo puede terminar publicando bien.
+    const { clock, port, rows } = await puertoConFilaVencida()
+    await port.update('r1', { attempts: 2 }) // maxAttempts 3: este fallo la dejaría en 'failed' definitivo
+    const { outbox, enviadas, fallidas } = procesoZombi(port, clock, { roban: true, falla: true })
+
+    await outbox.drain()
+
+    expect(fallidas).toEqual([])
+    expect(enviadas).toEqual([])
+    expect(rows[0]).toMatchObject({ status: 'processing', claimedBy: LADRON, attempts: 2, lastError: null })
+  })
+
+  // El contraste: sin robo, los MISMOS caminos sí avisan. Sin esto, los tres de arriba pasarían
+  // igual con los hooks rotos del todo (o sin cablear), que es no probar nada.
+  it('sin robo, el mismo camino feliz avisa onSent UNA vez y deja la fila sent', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    const { outbox, enviadas, fallidas } = procesoZombi(port, clock)
+
+    await outbox.drain()
+
+    expect(enviadas).toHaveLength(1)
+    expect(enviadas[0]).toMatchObject({ id: 'r1', status: 'sent' })
+    expect(fallidas).toEqual([])
+    expect(rows[0]).toMatchObject({ status: 'sent', claimedBy: null })
+  })
+
+  it('sin robo, el mismo fallo terminal avisa onFailed UNA vez y deja la fila failed', async () => {
+    const { clock, port, rows } = await puertoConFilaVencida()
+    await port.update('r1', { attempts: 2 })
+    const { outbox, enviadas, fallidas } = procesoZombi(port, clock, { falla: true })
+
+    await outbox.drain()
+
+    expect(fallidas).toHaveLength(1)
+    expect(fallidas[0]).toMatchObject({ id: 'r1', status: 'failed', attempts: 3, lastError: 'channex caído' })
+    expect(enviadas).toEqual([])
+    expect(rows[0]).toMatchObject({ status: 'failed', attempts: 3, claimedBy: null })
+  })
+})
+
+
+describe('#65 — la carrera ENTRE procesos: el índice único de pendingKey cierra la ventana', () => {
+  // El Map de `scheduleChains` serializa lo que pasa DENTRO de un proceso; entre dos réplicas (o
+  // durante un deploy solapado) no serializa nada, y las dos pueden leer "no hay fila pendiente"
+  // antes de que ninguna escriba. Lo que las corta es la columna `pendingKey` con su índice único:
+  // el INSERT del segundo se rechaza y su ráfaga se fusiona en la fila que ganó, en vez de dejar
+  // dos filas pending del mismo (hotel, kind) y publicar dos pushes.
+  const T0 = Date.parse('2026-09-07T10:00:00.000Z')
+
+  /** El proceso perdedor: su primera lectura de la fila pendiente es CIEGA, como en la carrera real. */
+  function procesoCiego(port: AriOutboxPort, clock: { ms: number }) {
+    let lecturas = 0
+    const ciego: AriOutboxPort = {
+      ...port,
+      async findMany(query) {
+        // Solo la consulta de scheduleOne (hotel + kind + pending), y solo la PRIMERA: la relectura
+        // de después del rechazo tiene que ver la tabla de verdad.
+        if (query.hotelId && query.status === 'pending' && lecturas++ === 0) return []
+        return port.findMany(query)
+      },
+    }
+    return new AriOutbox({ repo: ciego, now: () => clock.ms, debounceMs: 1500, newId: () => 'row-b' })
+  }
+
+  it('el create rechazado por unicidad fusiona los canales en la fila pendiente, sin propagar', async () => {
+    const clock = { ms: T0 }
+    const { port, rows } = makePort(clock)
+    // El proceso A ya escribió su ráfaga y tiene el turno tomado.
+    await port.create({
+      id: 'row-a',
+      hotelId: HOTEL,
+      kind: 'inventory',
+      channels: ['booking'],
+      status: 'pending',
+      scheduledAt: new Date(T0).toISOString(),
+      attempts: 0,
+      maxAttempts: 3,
+      lastError: null,
+      pendingKey: `${HOTEL}|inventory`,
+    })
+
+    await procesoCiego(port, clock).schedule(HOTEL, 'inventory', ['OpenChannel'])
+
+    expect(rows).toHaveLength(1) // NO se creó la segunda fila pending: el índice la rechazó
+    expect(rows[0]!.channels).toEqual(['booking', 'OpenChannel']) // y la ráfaga perdedora no se perdió
+    expect(rows[0]!.scheduledAt).toBe(new Date(T0 + 1500).toISOString()) // con el vencimiento corrido
+    expect(rows[0]!.pendingKey).toBe(`${HOTEL}|inventory`)
+  })
+
+  it('si al releer la ganadora ya pasó a processing, el create se reintenta UNA vez y entra', async () => {
+    // El turno se libera en cuanto la fila deja de estar pending, así que entre el INSERT rechazado
+    // y la relectura puede no quedar ninguna fila pendiente donde fusionar: ahí corresponde crear.
+    const clock = { ms: T0 }
+    const { port, rows } = makePort(clock)
+    let creates = 0
+    const conUnRechazo: AriOutboxPort = {
+      ...port,
+      async create(row) {
+        if (creates++ === 0) throw new Error('UNIQUE constraint failed: ari_outbox.pendingKey')
+        return port.create(row)
+      },
+    }
+    const outbox = new AriOutbox({ repo: conUnRechazo, now: () => clock.ms, debounceMs: 1500, newId: () => 'row-b' })
+
+    await outbox.schedule(HOTEL, 'inventory', ['OpenChannel'])
+
+    expect(creates).toBe(2) // uno rechazado + UN reintento
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ id: 'row-b', status: 'pending', pendingKey: `${HOTEL}|inventory` })
+  })
+
+  it('si el create falla SIEMPRE, el error se propaga: un reintento, nunca un bucle', async () => {
+    const clock = { ms: T0 }
+    const { port, rows } = makePort(clock)
+    let creates = 0
+    const roto: AriOutboxPort = { ...port, async create() { creates++; throw new Error('base caída') } }
+    const outbox = new AriOutbox({ repo: roto, now: () => clock.ms, debounceMs: 1500 })
+
+    await expect(outbox.schedule(HOTEL, 'inventory')).rejects.toThrow('base caída')
+    expect(creates).toBe(2)
+    expect(rows).toHaveLength(0)
+  })
+
+  it('el reclamo libera el turno: la fila en processing deja pendingKey en NULL', async () => {
+    // Si el reclamo no la borrara, el índice bloquearía la próxima ráfaga del hotel hasta que este
+    // push termine — una regresión que la columna misma habría causado.
+    const { outbox, rows, avanzar } = makeOutbox({ pushDelayMs: 10 })
+    await outbox.schedule(HOTEL, 'inventory')
+    expect(rows[0]!.pendingKey).toBe(`${HOTEL}|inventory`)
+
+    avanzar(1500)
+    const enVuelo = outbox.drain()
+    await new Promise((r) => setTimeout(r, 2)) // ya reclamó la fila y está publicando
+    expect(rows[0]).toMatchObject({ status: 'processing', pendingKey: null })
+
+    // Y con el turno libre, una ráfaga nueva del MISMO (hotel, kind) puede encolarse.
+    await outbox.schedule(HOTEL, 'inventory', ['OpenChannel'])
+    await enVuelo
+
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.status).toBe('sent')
+    expect(rows[1]).toMatchObject({ status: 'pending', channels: ['OpenChannel'], pendingKey: `${HOTEL}|inventory` })
+  })
+
+  it('el reintento con backoff devuelve la fila a pending CON su clave', async () => {
+    const { outbox, rows, avanzar } = makeOutbox({ failPush: '*' })
+    await outbox.schedule(HOTEL, 'inventory')
+    avanzar(1500)
+    await outbox.drain()
+
+    expect(rows[0]).toMatchObject({ status: 'pending', attempts: 1, pendingKey: `${HOTEL}|inventory` })
+  })
+
+  it('si el turno lo tomó una ráfaga nueva, la fila vuelve a pending SIN clave y el drain no se cae', async () => {
+    // Best-effort: restaurar la clave violaría el índice. Volver a pending con `pendingKey` NULL es
+    // exactamente lo de antes de #65 (dos filas pending conviviendo), y muchísimo mejor que tirar
+    // desde handleFailure, que abortaría el resto del drain.
+    // El push tarda a propósito: mantiene la fila en 'processing' mientras entra la ráfaga nueva.
+    const { outbox, rows, pushed, errores, avanzar } = makeOutbox({ failPush: '*', pushDelayMs: 10 })
+    await outbox.schedule(HOTEL, 'inventory') // row-1: la que va a fallar
+    avanzar(1500)
+    const enVuelo = outbox.drain()
+    await new Promise((r) => setTimeout(r, 2)) // reclamada: el turno quedó libre
+    await outbox.schedule(HOTEL, 'inventory', ['OpenChannel']) // row-2 se queda con el turno
+    await enVuelo
+
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toMatchObject({ status: 'pending', attempts: 1, lastError: 'channex caído', pendingKey: null })
+    expect(rows[1]!.pendingKey).toBe(`${HOTEL}|inventory`)
+    expect(errores).toEqual([undefined]) // solo el fallo del push: el choque de la clave no es un error
+    expect(pushed).toEqual([])
+  })
+
+  it('reclaimStale devuelve la colgada a pending con su clave, y aguanta que el turno esté tomado', async () => {
+    const clock = { ms: T0 }
+    const { port, rows } = makePort(clock)
+    const colgada = (id: string, hotelId: string) => port.create({
+      id,
+      hotelId,
+      kind: 'inventory',
+      channels: [],
+      status: 'processing',
+      scheduledAt: new Date(T0).toISOString(),
+      attempts: 0,
+      maxAttempts: 3,
+      lastError: null,
+      claimedBy: 'proceso-muerto',
+    })
+    await colgada('row-a', HOTEL) // su turno está libre: la recupera con clave
+    await colgada('row-b', 'h2') // el turno de h2 ya lo tiene una ráfaga nueva
+    await port.create({
+      id: 'row-c',
+      hotelId: 'h2',
+      kind: 'inventory',
+      channels: [],
+      status: 'pending',
+      scheduledAt: new Date(T0).toISOString(),
+      attempts: 0,
+      maxAttempts: 3,
+      lastError: null,
+      pendingKey: 'h2|inventory',
+    })
+    clock.ms += STALE_MS + 1000
+    const outbox = new AriOutbox({ repo: port, now: () => clock.ms, heartbeatMs: 0 })
+
+    expect(await outbox.reclaimStale()).toBe(2) // las DOS vuelven: ninguna queda colgada por la clave
+
+    expect(rows[0]).toMatchObject({ status: 'pending', claimedBy: null, pendingKey: `${HOTEL}|inventory` })
+    expect(rows[1]).toMatchObject({ status: 'pending', claimedBy: null })
+    expect(rows[1]!.pendingKey ?? null).toBeNull() // volvió SIN clave: el turno es de la ráfaga nueva
+    expect(rows[2]!.pendingKey).toBe('h2|inventory') // la ráfaga nueva conserva su turno
+  })
+})

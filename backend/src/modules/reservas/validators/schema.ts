@@ -250,3 +250,12 @@ export const PreCheckinPhotoSchema: Record<string, ValidationRule> = {
   photo: { type: 'string' as const, required: true },
   fileName: { type: 'string' as const },
 }
+
+/**
+ * Envío real por WhatsApp desde la ficha de la reserva.
+ * `templateId` o `text`: el usecase decide cuál se acepta según la ventana de 24 h de Meta.
+ */
+export const SendWhatsappSchema: Record<string, ValidationRule> = {
+  templateId: { type: 'string' as const, max: 100 },
+  text: { type: 'string' as const, max: 4096 },
+}

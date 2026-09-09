@@ -1,23 +1,24 @@
 <template>
-  <div class="flex min-h-screen bg-surface">
+  <div class="flex min-h-screen bg-surface" :style="{ '--imp-h': bannerHeight + 'px' }">
     <!-- Offline banner (PWA) -->
     <OfflineBanner />
 
     <!-- Impersonation Banner -->
-    <div v-if="auth.impersonating" class="fixed top-0 left-0 right-0 z-50 bg-orange border-b-2 border-orange-dark px-4 py-2.5 flex items-center justify-between">
+    <div v-if="auth.impersonating" ref="bannerRef" class="fixed top-0 left-0 right-0 z-50 bg-orange border-b-2 border-orange-dark px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
       <div class="flex items-center gap-3">
-        <span class="text-sm font-extrabold text-navy">👁️ Modo supervisión: <span class="underline">{{ auth.user?.name }}</span> — {{ auth.user?.hotelName }}</span>
-        <span class="text-[10px] font-bold bg-navy/10 text-navy px-2 py-0.5 rounded-full uppercase">{{ auth.user?.role }}</span>
+        <span class="text-sm font-extrabold text-navy">👁️ Modo supervisión: <span class="underline">{{ auth.user?.name || 'Usuario' }}</span> — {{ auth.user?.hotelName || 'Sin hotel' }}</span>
+        <span class="text-[10px] font-bold bg-navy/10 text-navy px-2 py-0.5 rounded-full uppercase">{{ auth.user?.role || '—' }}</span>
       </div>
-      <button @click="auth.stopImpersonation(); router.push('/admin')" class="text-sm font-extrabold text-navy bg-white px-4 py-1.5 rounded-lg hover:bg-surface transition-colors cursor-pointer">✕ Volver a Super Admin</button>
+      <button @click="salirDeImpersonacion" class="text-sm font-extrabold text-navy bg-white px-4 py-1.5 rounded-lg hover:bg-surface transition-colors cursor-pointer">✕ Volver a Super Admin</button>
     </div>
 
     <!-- Mobile backdrop -->
     <div v-if="mobileMenuOpen" class="fixed inset-0 bg-navy/50 z-20 lg:hidden" @click="mobileMenuOpen = false"></div>
 
     <!-- Sidebar -->
-    <aside class="cc-sidebar w-64 text-[#C4C8D0] flex flex-col shrink-0 fixed h-full z-30 border-r border-white/8 transition-transform duration-300 lg:translate-x-0"
-      :class="[auth.impersonating ? 'top-10' : '', mobileMenuOpen ? 'translate-x-0' : '-translate-x-full']">
+    <aside class="cc-sidebar w-64 text-[#C4C8D0] flex flex-col shrink-0 fixed z-30 border-r border-white/8 transition-transform duration-300 lg:translate-x-0"
+      :style="{ top: 'var(--imp-h, 0px)', height: 'calc(100dvh - var(--imp-h, 0px))' }"
+      :class="mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'">
       <!-- Logo -->
       <div class="h-16 flex flex-col items-start justify-center gap-0.5 px-5 border-b border-white/8 shrink-0">
         <img :src="logoWhite" alt="SolmiOS" class="h-8 w-auto shrink-0">
@@ -130,7 +131,7 @@
     </aside>
 
     <!-- Main Content -->
-    <div class="flex-1 min-w-0 lg:ml-64 flex flex-col" :class="auth.impersonating ? 'mt-10' : ''">
+    <div class="flex-1 min-w-0 lg:ml-64 flex flex-col" :style="{ marginTop: 'var(--imp-h, 0px)' }">
       <!-- Verificación de email pendiente (#421): banner persistente para merchants sin email verificado -->
       <div v-if="showVerifyEmailBanner"
         class="bg-warning/12 border-b border-warning/30 px-4 md:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2">
@@ -152,7 +153,7 @@
         <AppHeader />
       </div>
       <!-- Toggle del menú en móvil (todas las páginas) -->
-      <button @click="mobileMenuOpen = true" class="lg:hidden fixed top-3 left-3 z-30 w-9 h-9 flex items-center justify-center rounded-lg border border-border bg-white text-navy shadow-(--shadow-card) hover:bg-surface cursor-pointer">
+      <button @click="mobileMenuOpen = true" :style="{ top: 'calc(var(--imp-h, 0px) + 0.75rem)' }" class="lg:hidden fixed left-3 z-30 w-9 h-9 flex items-center justify-center rounded-lg border border-border bg-white text-navy shadow-(--shadow-card) hover:bg-surface cursor-pointer">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
         </svg>
@@ -160,7 +161,7 @@
 
       <!-- Anuncios internos del sistema (FC-B1) -->
       <AnnouncementBanner />
-      <TrialBanner />
+      <SubscriptionBanner />
 
       <!-- Page Content -->
       <main class="flex-1 p-6" data-feedback-content>
@@ -184,10 +185,11 @@ import { usePermissions } from '@/composables/usePermissions'
 import { isSystemRole } from '@/config/permissions'
 import { AuthService } from '@/services/Auth.service'
 import { MESSAGING_PATH, MESSAGING_TABS } from '@/config/messaging-tabs'
+import { INTEGRATIONS_PATH } from '@/config/integration-tabs'
 import logoWhite from '@/assets/logo/logo-horizontal-white.png'
 import { PAGINA_PUBLICA_PATH } from '@/config/pagina-publica-tabs'
 import AppHeader from '@/components/features/core-pms/AppHeader.vue'
-import TrialBanner from '@/components/features/TrialBanner.vue'
+import SubscriptionBanner from '@/components/features/SubscriptionBanner.vue'
 import AnnouncementBanner from '@/components/features/core-pms/AnnouncementBanner.vue'
 import OfflineBanner from '@/components/features/core-pms/OfflineBanner.vue'
 import HotelSwitcher from '@/components/features/core-pms/HotelSwitcher.vue'
@@ -202,6 +204,46 @@ const dashboard = useDashboardStore()
 const roomStore = useRoomStore()
 const { canRoute } = usePermissions()
 const mobileMenuOpen = ref(false)
+
+/**
+ * Altura REAL de la franja de supervisión, publicada como `--imp-h` en el nodo raíz.
+ *
+ * La franja es `fixed`: no ocupa lugar en el flujo, así que el sidebar y el contenido tienen que
+ * correrse exactamente lo que ella mide. Antes eran `top-10` / `mt-10` — 40px fijos — y la franja
+ * mide ~54px en escritorio (padding + botón + borde): esos ~14px de diferencia eran los que le
+ * comían la cabecera al sidebar y dejaban el logo cortado por debajo de la franja.
+ *
+ * Se mide en vivo en lugar de hardcodear un número porque la altura no es una sola: en pantallas
+ * angostas el texto ("Modo supervisión: <nombre> — <hotel>" + rol + botón) envuelve a dos líneas y
+ * cualquier constante vuelve a quedar corta. Con `0px` de fallback, sin impersonación nada se mueve.
+ */
+const bannerRef = ref<HTMLElement | null>(null)
+const bannerHeight = ref(0)
+let bannerObserver: ResizeObserver | null = null
+
+watch(bannerRef, (el) => {
+  bannerObserver?.disconnect()
+  bannerObserver = null
+  if (!el) { bannerHeight.value = 0; return }
+  bannerHeight.value = el.getBoundingClientRect().height
+  // `ResizeObserver` y no un cálculo único: la altura cambia al rotar el teléfono o al
+  // achicar la ventana, no solo al montar.
+  if (typeof ResizeObserver === 'undefined') return
+  bannerObserver = new ResizeObserver(() => { bannerHeight.value = el.getBoundingClientRect().height })
+  bannerObserver.observe(el)
+}, { flush: 'post', immediate: true })
+
+onUnmounted(() => bannerObserver?.disconnect())
+
+/**
+ * Salir de la impersonación. `stopImpersonation` es async (restaura los tokens del admin y
+ * revalida contra /auth/me): hay que ESPERARLA antes de navegar, si no se navega con la sesión
+ * a medio restaurar. Vuelve al listado desde donde entró, no a /admin a secas.
+ */
+async function salirDeImpersonacion() {
+  await auth.stopImpersonation()
+  router.push('/admin/users')
+}
 
 // Cierra el drawer mobile al navegar a otra ruta
 watch(() => route.path, () => { mobileMenuOpen.value = false })
@@ -227,6 +269,7 @@ const ICONS = {
   wallet: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M16 12h.01M3 10h18"/></svg>',
   utensils: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3v7a2 2 0 0 0 2 2v9M9 3v7M7 3v7M18 3c-1.5 0-3 1.5-3 5s1.5 4 3 4v9"/></svg>',
   link: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5 21 3M16.5 3H21v4.5M10.5 13.5 3 21M7.5 21H3v-4.5"/></svg>',
+  card: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Z"/></svg>',
   sparkles: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.035-.259a3.375 3.375 0 0 0 2.456-2.455L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>',
   heart: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z"/></svg>',
   usergroup: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72M18 18.72a9.094 9.094 0 0 1-3.741-.479 3 3 0 0 1 4.682-2.72M18 18.72v-.235a3 3 0 0 0-3-3M6 18.72a9.094 9.094 0 0 1-3.741-.479 3 3 0 0 1 4.682-2.72M6 18.72v-.235a3 3 0 0 1 3-3m3.75-6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z"/></svg>',
@@ -271,12 +314,16 @@ const nonavItems = [
     ]
   },
   {
-    label: 'Operaciones', icon: ICONS.tools, roles: ['hotel_admin'],
+    // Operaciones se abre también para recepción por el chat del huésped: es quien lo atiende.
+    // Los demás items siguen siendo del dueño, y el guard del router los cubre uno por uno.
+    label: 'Operaciones', icon: ICONS.tools, roles: ['hotel_admin', 'receptionist'],
     children: [
       { label: 'Limpieza', path: '/panel/operaciones/limpieza', roles: ['hotel_admin'] },
       { label: 'Mantenimiento', path: '/panel/operaciones/mantenimiento', roles: ['hotel_admin'] },
       { label: 'Proveedores de servicios', path: '/panel/operaciones/proveedores', roles: ['hotel_admin'] },
       { label: 'Chats del equipo', path: '/panel/operaciones/chats', roles: ['hotel_admin'] },
+      // Quien atiende al huésped es la recepción, no el dueño. El backend ya le da `ai:view`.
+      { label: 'WhatsApp de huéspedes', path: '/panel/operaciones/whatsapp', roles: ['hotel_admin', 'receptionist'] },
     ]
   },
   {
@@ -374,7 +421,11 @@ const nonavItems = [
       { label: 'Habitaciones', path: '/panel/config/habitaciones', roles: ['hotel_admin', 'receptionist'] },
       { label: 'Temporadas y Tarifas', path: '/panel/config/tarifas', roles: ['hotel_admin'] },
       { label: 'Tarifas por fecha', path: '/panel/config/tarifas-fecha', roles: ['hotel_admin'] },
-      { label: 'Promociones', path: '/panel/config/promociones', roles: ['hotel_admin'] },
+      // Las dos mitades de la venta con descuento, juntas y con nombres que las distinguen:
+      // "Promociones" a secas no dejaba claro que eran paquetes, y los códigos vivían en otra
+      // sección del menú (Página pública).
+      { label: 'Paquetes y promociones', path: '/panel/config/promociones', roles: ['hotel_admin'] },
+      { label: 'Códigos de descuento', path: '/panel/config/codigos-descuento', roles: ['hotel_admin'] },
       // `anyOf`: /panel/config/mensajeria es CORE (no está en module-map), así que la
       // entrada se gatea por sus tabs — si el hotel no tiene habilitado ningún
       // módulo de mensajería, no se muestra.
@@ -382,9 +433,13 @@ const nonavItems = [
         label: 'Mensajería', path: MESSAGING_PATH, roles: ['hotel_admin', 'receptionist'],
         anyOf: MESSAGING_TABS.map(t => t.path),
       },
-      { label: 'Pasarelas de Pago', path: '/panel/config/pasarelas', roles: ['hotel_admin'] },
-      { label: 'Cerraduras', path: '/panel/config/cerraduras', roles: ['hotel_admin'] },
-      { label: 'Dispositivos', path: '/panel/config/dispositivos', roles: ['hotel_admin'] },
+      // Las conexiones con servicios de afuera (WhatsApp, pasarelas, cerraduras, dispositivos,
+      // facturación) se colapsaron en una entrada con tabs (pages/integraciones). `anyOf`: las
+      // tabs con módulo propio gatean la entrada, pero WhatsApp y Facturación no dependen de
+      // ninguno, así que la entrada se muestra igual — por eso también va su propia ruta.
+      {
+        label: 'Integraciones', path: INTEGRATIONS_PATH, roles: ['hotel_admin'],
+      },
       // DT-17: solo hotel_admin (no receptionist/housekeeper) — es el log de acciones sensibles.
       { label: 'Auditoría', path: '/panel/config/auditoria', roles: ['hotel_admin'] },
     ]
@@ -396,6 +451,12 @@ const nonavItems = [
     // CORE como Dashboard/Soporte (growth): NO tiene clave en el catálogo de módulos —
     // se muestra para cualquier plan, no se gatea.
     label: 'Mis Referidos', icon: ICONS.link, path: '/panel/referidos', roles: ['hotel_admin'],
+  },
+  {
+    // La suscripción del hotel. Va al final, con Soporte y Referidos: son los ítems de CUENTA,
+    // no de operación. Solo `hotel_admin` — es la plata del dueño. CORE: no se gatea por plan
+    // (un plan no puede esconder la pantalla donde se cambia de plan).
+    label: 'Mi plan', icon: ICONS.card, path: '/panel/suscripcion', roles: ['hotel_admin'],
   },
 ]
 
@@ -454,7 +515,13 @@ const visibleItems = computed(() => {
   // Roles de SISTEMA: se muestran por nombre de rol (comportamiento histórico, intacto).
   // Roles CUSTOM (los que crea el dueño): por permiso granular — no matchean ningún nombre
   // de rol del literal, así que sin esto verían el menú vacío. `visibleLeaf` unifica ambos.
-  const custom = !isSystemRole(role)
+  //
+  // Impersonando va SIEMPRE por permisos, aunque el rol sea de sistema: el rol que se ve es el del
+  // CLIENTE (la franja de arriba muestra a quién se está viendo), pero quien mira el menú es el
+  // super admin, con permisos efectivos ['*:*'] (los que el backend le da con el token de
+  // impersonación). Filtrar por `item.roles` le escondía Finanzas, Contabilidad, Tesorería,
+  // Compras, Inventario u Operaciones cada vez que el cliente no era hotel_admin.
+  const custom = !isSystemRole(role) || auth.impersonating
   const visibleLeaf = (item: { path: string; roles: string[]; anyOf?: string[] }) =>
     (custom ? canRoute(item.path) : item.roles.includes(role)) && navEnabled(item)
   // El literal nonavItems mezcla padres (con children, sin path) y hojas (con path);

@@ -190,9 +190,8 @@
         </div>
         <p class="mt-3 text-[10px] text-text-muted">
           {{ selectedHotelAmenities.length }} seleccionado{{ selectedHotelAmenities.length === 1 ? '' : 's' }}.
-          Este es un catálogo reducido para destacar en la landing — el catálogo completo
-          (35 opciones por categoría, más personalizadas) vive en
-          <strong>Configuración → Amenities</strong>; ambos guardan en el mismo lugar.
+          Las amenities a nivel habitación (TV, WiFi en cuarto, etc.) se configuran en
+          <strong>Configuración → Amenities de habitación</strong>.
         </p>
       </SectionCard>
 

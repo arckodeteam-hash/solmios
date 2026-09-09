@@ -15,13 +15,58 @@ function getRefreshToken(): string | null {
   return localStorage.getItem('refreshToken')
 }
 
+// Claves donde auth.store aparca la sesión del super admin mientras impersona.
+// (duplicadas acá a propósito: services/ no puede importar stores/ sin ciclo)
+const IMP_TOKEN = 'imp.adminToken'
+const IMP_REFRESH = 'imp.adminRefreshToken'
+const IMP_USER = 'imp.adminUser'
+
+// Ruta real del listado de usuarios del super admin (router: '/admin' + 'users').
+const SUPER_ADMIN_USERS_PATH = '/admin/users'
+
+/**
+ * Vuelve a la sesión del super admin. Se usa cuando el token de impersonación (que dura 2h y a
+ * propósito NO tiene refresh) vence: la salida correcta es devolverlo a su propia cuenta, no
+ * desloguearlo. Sin esto, dos horas dentro de la cuenta de un cliente terminaban en un logout sin
+ * aviso —el admin perdía su sesión original, que seguía válida, tirada en el navegador—.
+ * Devuelve true si había una sesión de admin que restaurar.
+ */
+function restoreAdminSession(): boolean {
+  const adminToken = localStorage.getItem(IMP_TOKEN)
+  if (!adminToken) return false
+  const adminRefresh = localStorage.getItem(IMP_REFRESH)
+  const adminUser = localStorage.getItem(IMP_USER)
+
+  localStorage.setItem('token', adminToken)
+  if (adminRefresh) localStorage.setItem('refreshToken', adminRefresh)
+  else localStorage.removeItem('refreshToken')
+  if (adminUser) localStorage.setItem('user', adminUser)
+  else localStorage.removeItem('user')
+
+  localStorage.removeItem(IMP_TOKEN)
+  localStorage.removeItem(IMP_REFRESH)
+  localStorage.removeItem(IMP_USER)
+  return true
+}
+
 let _redirecting = false
 function forceLogout() {
   if (_redirecting) return
   _redirecting = true
+  // Si esto es una impersonación vencida, el 401 no es "se cayó la sesión": es "se acabó el rato
+  // en la cuenta del cliente". Devolverlo a su propia cuenta con una carga completa, así el store
+  // se rehidrata solo con el token del admin y no queda estado a medias.
+  if (restoreAdminSession()) {
+    location.href = SUPER_ADMIN_USERS_PATH
+    return
+  }
   localStorage.removeItem('token')
   localStorage.removeItem('refreshToken')
   localStorage.removeItem('user')
+  // Sin esto quedaría una sesión de admin huérfana en el navegador después del logout.
+  localStorage.removeItem(IMP_TOKEN)
+  localStorage.removeItem(IMP_REFRESH)
+  localStorage.removeItem(IMP_USER)
   // Evitar loop: no redirigir si ya estamos en /login
   if (!location.pathname.startsWith('/login')) {
     location.href = '/login'

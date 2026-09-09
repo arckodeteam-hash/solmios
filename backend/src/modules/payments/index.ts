@@ -5,16 +5,16 @@ import { createModule, OrmRepository } from 'arckode-framework'
 import { registerPaymentsModels } from './model'
 import { PaymentsService } from './service'
 import { PaymentsController } from './controller'
-import type { PaymentDTO, PaymentLinkDTO, DepositDTO } from './types'
+import type { PaymentDTO, DepositDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { createModuleGuard } from '../../infrastructure/auth/require-module'
 import { PaymentGatewayRegistry } from '../../services/payment-gateway/registry'
 import { PaymentEventStore } from '../../services/payment-gateway/payment-events'
 
 export { PaymentsService }
-export type { PaymentDTO, CreatePaymentDTO, ChargeCardDTO, PaymentLinkDTO, CreatePaymentLinkDTO, DepositDTO, CreateDepositDTO, RefundDepositDTO, PaymentsQuery, PaymentsPaginated, ReconciliationEntry, ReconciliationResult } from './types'
+export type { PaymentDTO, CreatePaymentDTO, ChargeCardDTO, CreateDepositDTO, RefundDepositDTO, PaymentsQuery, PaymentsPaginated, ReconciliationEntry, ReconciliationResult } from './types'
 export type { PaymentsSockets } from './sockets'
-export { PaymentsValidator, CreatePaymentSchema, ChargeCardSchema, CreatePaymentLinkSchema, CreateDepositSchema, RefundDepositSchema, ReconcileSchema } from './validators/schema'
+export { PaymentsValidator, CreatePaymentSchema, ChargeCardSchema, CreateDepositSchema, RefundDepositSchema, ReconcileSchema } from './validators/schema'
 
 export function PaymentsModule() {
   return createModule({
@@ -25,15 +25,15 @@ export function PaymentsModule() {
     //         Lo consume `payment-requests` para decidir si una reserva se puede borrar; antes lo
     //         resolvía leyendo `payments` con el shim `paidRepos` y un `as any`.
     version: '1.2.0',
-    description: 'Payments: card charging, payment links, deposits, reconciliation',
+    description: 'Payments: card charging, deposits, reconciliation',
 
     contract: {
       name: 'payments',
       version: '1.2.0',
-      description: 'Payments: card charging, payment links, deposits, reconciliation',
-      actions: ['createPayment', 'chargeCard', 'refund', 'listPayments', 'createLink', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo', 'settledNetOfReservation'],
+      description: 'Payments: card charging, deposits, reconciliation',
+      actions: ['createPayment', 'chargeCard', 'refund', 'listPayments', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo', 'settledNetOfReservation'],
       events: ['onPaymentCreated', 'onPaymentCompleted', 'onPaymentExpired', 'onPaymentFailed', 'onRefundProcessed', 'onDepositCreated', 'onDepositReleased'],
-      tables: ['payments', 'payment_links', 'deposits'],
+      tables: ['payments', 'deposits'],
       dependencies: ['folios', 'facturas'],
       rules: ['No importar de otros módulos directamente'],
     },
@@ -42,7 +42,6 @@ export function PaymentsModule() {
       registerPaymentsModels(orm)
 
       const paymentRepo = new OrmRepository<PaymentDTO>(orm, 'Payment')
-      const linkRepo = new OrmRepository<PaymentLinkDTO>(orm, 'PaymentLink')
       const depositRepo = new OrmRepository<DepositDTO>(orm, 'Deposit')
 
       const log = logger.child('payments')
@@ -64,7 +63,7 @@ export function PaymentsModule() {
       const guestRefRepo = new OrmRepository<any>(orm, 'Guests')
       // SEC3-5: la reserva referenciada por `payments.reservationId` se verifica igual que folio/factura/huésped.
       const reservationRefRepo = new OrmRepository<any>(orm, 'Reservations')
-      const service = new PaymentsService(paymentRepo, linkRepo, depositRepo, log, cache, auth, userRepo, registry, events, folioRefRepo, invoiceRefRepo, guestRefRepo, reservationRefRepo)
+      const service = new PaymentsService(paymentRepo, depositRepo, log, cache, auth, userRepo, registry, events, folioRefRepo, invoiceRefRepo, guestRefRepo, reservationRefRepo)
       const controller = new PaymentsController(service, log)
 
       // Admin routes (protegidas con auth)
@@ -81,10 +80,6 @@ export function PaymentsModule() {
         router.post('/api/payments/charge', guard('billing', 'create'), (req: any) => controller.chargeCard(req))
         router.post('/api/payments/:id/refund', guard('billing', 'create'), (req: any) => controller.refund(req))
 
-        // Payment Links
-        router.get('/api/payment-links', guard('billing', 'view'), (req: any) => controller.listLinks(req))
-        router.post('/api/payment-links', guard('billing', 'create'), (req: any) => controller.createLink(req))
-        router.delete('/api/payment-links/:id', guard('billing', 'create'), (req: any) => controller.cancelLink(req))
 
         // Deposits
         router.get('/api/deposits', guard('billing', 'view'), (req: any) => controller.listDeposits(req))
@@ -98,7 +93,6 @@ export function PaymentsModule() {
       }
 
       // Public routes
-      router.get('/api/public/payment-links/:token', (req: any) => controller.getLinkByToken(req))
       // El hotel va en la RUTA: su secreto de firma es lo que autentica el webhook, y hay que
       // saber de quién es ANTES de creerle al body. Su auth ES la firma (el proveedor no tiene JWT).
       router.post('/api/webhooks/stripe/:hotelId', (req: any) => controller.handleWebhook(req))

@@ -22,6 +22,7 @@ import { createAutoMessagesCron } from './modules/marketing/usecases/auto-messag
 import { createNightAuditCron } from './shared/usecases/night-audit-cron'
 import { createEvidenceRetentionCron } from './shared/usecases/evidence-retention-cron'
 import { createTrialReminderCron } from './shared/usecases/trial-reminder-cron'
+import { createWhatsappUsageCron } from './shared/usecases/whatsapp-usage-cron'
 import { createPrearrivalPassCron } from './shared/usecases/prearrival-pass-cron'
 import { createSubscriptionSuspensionCron } from './shared/usecases/subscription-suspension-cron'
 import { createReferralCreditsCron } from './shared/usecases/referral-credits-cron'
@@ -134,6 +135,9 @@ import { AuditlogModule } from './modules/auditlog'
 import { TicketsModule } from './modules/tickets'
 import { NotificacionesModule } from './modules/notificaciones'
 import { CanalesModule } from './modules/canales'
+// CH-08 — Outbox persistente de ARI: la ráfaga de cambios se escribe ANTES de que venza el
+// debounce, así un reinicio dentro de la ventana ya no se come el push a Channex.
+import { AriOutboxModule, ARI_OUTBOX_TICK_MS } from './modules/ari-outbox'
 import { OpinionesModule } from './modules/opiniones'
 import { GastosModule } from './modules/gastos'
 import { FoliosModule } from './modules/folios'
@@ -257,7 +261,7 @@ const mods = [
   FacturasModule(), HousekeepingModule({ storage, videoStorage: s3Adapter }), MantenimientoModule({ storage }), PaquetesModule(),
   GruposModule(), HotelesModule({ storage }), RolesModule(), DispositivosModule(),
   AnunciosModule(), ApikeysModule(), AuditlogModule(), TicketsModule(), NotificacionesModule(),
-  CanalesModule(), OpinionesModule(), GastosModule(), FoliosModule(), PaymentsModule(),
+  CanalesModule(), AriOutboxModule(), OpinionesModule(), GastosModule(), FoliosModule(), PaymentsModule(),
   EmpleadosModule({ storage }), PayrollModule(), AttendanceModule(), ActivosModule(), CapacitacionModule(), CrmModule(), MarketingModule(),
   ReclutamientoModule(), ReembolsosModule(),
   AiRecepcionistaModule(), AiGerenteModule(), BookingengineModule({ pushAvailability }),
@@ -387,6 +391,7 @@ import { reservasWalletConnector } from './connectors/reservas-wallet'
 // Best-effort + fire-and-forget: no bloquea el webhook. Skip silencioso si faltan creds.
 import { bookingengineTrackingConnector } from './connectors/bookingengine-tracking'
 import { pricingCanalesConnector } from './connectors/pricing-canales'
+import { canalesAriOutboxConnector } from './connectors/canales-ari-outbox'
 import { reclutamientoEmpleadosConnector } from './connectors/reclutamiento-empleados'
 import { capacitacionEmpleadosConnector } from './connectors/capacitacion-empleados'
 import { amenitiesHabitacionesConnector } from './connectors/amenities-habitaciones'
@@ -437,6 +442,11 @@ import { crmAuditlogConnector } from './connectors/crm-auditlog'
 import { crmPromocodesConnector } from './connectors/crm-promocodes'
 import { feedbackAuditlogConnector } from './connectors/feedback-auditlog'
 import { marketingAuditlogConnector } from './connectors/marketing-auditlog'
+import { marketingWhatsappMetaConnector } from './connectors/marketing-whatsapp-meta'
+import { reservasWhatsappConnector } from './connectors/reservas-whatsapp'
+import { whatsappDeliveryStatusConnector } from './connectors/whatsapp-delivery-status'
+import { aiRecepcionistaWhatsappConnector } from './connectors/ai-recepcionista-whatsapp'
+import { aiRecepcionistaConsumoConnector } from './connectors/ai-recepcionista-consumo'
 import { notificacionesAuditlogConnector } from './connectors/notificaciones-auditlog'
 import { opinionesAuditlogConnector } from './connectors/opiniones-auditlog'
 import { reclutamientoAuditlogConnector } from './connectors/reclutamiento-auditlog'
@@ -485,6 +495,7 @@ import { usuariosSubscriptionsConnector } from './connectors/usuarios-subscripti
 import { canalesSubscriptionsConnector } from './connectors/canales-subscriptions'
 import { canalesReservasConnector } from './connectors/canales-reservas'
 import { aiRecepcionistaReservasConnector } from './connectors/ai-recepcionista-reservas'
+import { aiFacturasConnector } from './connectors/ai-facturas'
 import { aiGerenteReservasConnector } from './connectors/ai-gerente-reservas'
 import { aliadosFeedbackConnector } from './connectors/aliados-feedback'
 import { publicapiReservasConnector } from './connectors/publicapi-reservas'
@@ -537,6 +548,10 @@ system.addConnector('bookingengine-tracking', bookingengineTrackingConnector)
 // Auto-push de tarifas a OTAs: pricing emite onRatesUpdated al cambiar tarifas → canales las empuja
 // a Channex. Cierra el gap "push manual": editar tarifas ya no requiere apretar el botón. Fire-and-forget.
 system.addConnector('pricing-canales', pricingCanalesConnector)
+// CH-08 — Quién publica cada kind de la outbox: los pushes viven en `canales` y la cola en
+// `ari-outbox`, y un módulo no importa de otro. Sin este connector el drain deja las filas en
+// failed con 'sin publisher registrado'.
+system.addConnector('canales-ari-outbox', canalesAriOutboxConnector)
 // Postulante contratado → expediente de empleado, solo si ya existe la cuenta de usuario (match por
 // email en el hotel). No fabrica credenciales. Cierra el ciclo reclutamiento→empleados.
 system.addConnector('reclutamiento-empleados', reclutamientoEmpleadosConnector(orm))
@@ -639,6 +654,16 @@ system.addConnector('crm-auditlog', crmAuditlogConnector)
 system.addConnector('crm-promocodes', crmPromocodesConnector)
 system.addConnector('feedback-auditlog', feedbackAuditlogConnector)
 system.addConnector('marketing-auditlog', marketingAuditlogConnector)
+// Plantillas de WhatsApp <-> Meta: marketing necesita las credenciales que guarda ai-recepcionista.
+system.addConnector('marketing-whatsapp-meta', marketingWhatsappMetaConnector)
+// Envío al huésped por la Cloud API: reservas necesita las credenciales de ai-recepcionista.
+system.addConnector('reservas-whatsapp', reservasWhatsappConnector)
+// El acuse de entrega llega por el webhook de ai-recepcionista y se anota en message_logs (marketing).
+system.addConnector('whatsapp-delivery-status', whatsappDeliveryStatusConnector)
+// La bandeja responde al huésped: necesita el cliente de Meta y el historial de envíos.
+system.addConnector('ai-recepcionista-whatsapp', aiRecepcionistaWhatsappConnector)
+// Consumo de WhatsApp: el hotel lo ve y el tope corta. Necesita el ORM para su propio repo.
+system.addConnector('ai-recepcionista-consumo', (ctx) => aiRecepcionistaConsumoConnector(ctx, orm))
 system.addConnector('notificaciones-auditlog', notificacionesAuditlogConnector)
 system.addConnector('opiniones-auditlog', opinionesAuditlogConnector)
 system.addConnector('reclutamiento-auditlog', reclutamientoAuditlogConnector)
@@ -705,6 +730,8 @@ system.addConnector('canales-subscriptions', canalesSubscriptionsConnector)
 // depósito retenido (reservas-deposits). Ahora delegan en `reservas.cancelBySystem()`.
 system.addConnector('canales-reservas', canalesReservasConnector)
 system.addConnector('ai-recepcionista-reservas', aiRecepcionistaReservasConnector)
+// La IA emite facturas por el usecase real de `facturas`, no escribiendo el repo a mano.
+system.addConnector('ai-facturas', aiFacturasConnector)
 system.addConnector('ai-gerente-reservas', aiGerenteReservasConnector)
 // "Escalar a SOLMI OS" de un Aliado Certificado reusa el pipeline de feedback pins (#559).
 system.addConnector('aliados-feedback', aliadosFeedbackConnector)
@@ -794,6 +821,26 @@ setTimeout(() => { noShowCron().catch((e) => logger.warn('markNoShows initial ru
 setInterval(() => { noShowCron().catch((e) => logger.warn('markNoShows failed', { error: (e as Error).message })) }, ONE_DAY_MS)
 logger.info('No-show cron listo (con corrida inicial a los 10s)', { tickMs: ONE_DAY_MS })
 
+// CH-08 — Worker de la outbox de ARI. Tick CORTO (500ms): el debounce de la ráfaga ya son 1.5s y
+// el tick solo suma latencia encima; con esto un cambio de tarifa sale a Channex en ~2s, igual que
+// con el coalescer en memoria que reemplaza.
+const ariOutbox = system.resolveModule<{ drain: () => Promise<number>; reclaimStale: () => Promise<number>; applyQueueConfig: () => Promise<unknown> }>('ari-outbox')
+// La config guardada de la cola (reintentos y peticiones/minuto contra Channex), aplicada al
+// arrancar: sin esto el techo que el operador guardó regiría recién después del próximo PUT.
+// Va ACÁ, después de `system.start()` —que es donde corren los connectors—, porque el efecto se
+// reparte por el hook `onQueueConfigChanged` que cablea canales-ari-outbox: si se llamara antes,
+// el hook todavía no existe y el valor persistido se pierde en silencio.
+ariOutbox.applyQueueConfig().catch((e) => logger.warn('ari-outbox applyQueueConfig failed', { error: (e as Error).message }))
+// Corrida al ARRANCAR: es lo que hace salir el push que un reinicio dentro de la ventana de
+// debounce se comía. Sin esto la fila queda pendiente hasta el próximo cambio del hotel.
+setTimeout(() => {
+  ariOutbox.drain().catch((e) => logger.warn('ari-outbox initial drain failed', { error: (e as Error).message }))
+}, 2_000)
+setInterval(() => {
+  ariOutbox.drain().catch((e) => logger.warn('ari-outbox drain failed', { error: (e as Error).message }))
+}, ARI_OUTBOX_TICK_MS)
+logger.info('ARI outbox worker listo', { tickMs: ARI_OUTBOX_TICK_MS })
+
 const AUTO_MESSAGES_TICK_MS = 60_000 * 60
 const autoMsgTrigger = system.resolveModule<{ triggerAutoMessages: (params: any) => Promise<void> }>('marketing')
 if (autoMsgTrigger) {
@@ -858,6 +905,16 @@ logger.info('Prearrival-pass cron listo', { tickMs: PREARRIVAL_TICK_MS })
 const SAAS_TICK_MS = 60_000 * 60 * 6 // cada 6h
 // Aviso de trial por vencer/vencido: manda el correo (vía platform-emails) a las suscripciones
 // `trialing` a <=2 días del fin o ya vencidas. Dedup con trialReminderSentAt/trialExpiredEmailSentAt.
+// Consumo de WhatsApp: el hotel lo ve en su panel y el tope corta sobre estos números, así que
+// tienen que estar al día. Cada 6 h alcanza — Meta agrupa por día y corrige con retraso.
+const whatsappUsageCron = createWhatsappUsageCron((name) => system.resolveModule(name), logger)
+setTimeout(() => {
+  whatsappUsageCron().catch((e) => logger.warn('whatsapp-usage initial run failed', { error: (e as Error).message }))
+}, 25_000)
+setInterval(() => {
+  whatsappUsageCron().catch((e) => logger.warn('whatsapp-usage cron failed', { error: (e as Error).message }))
+}, 6 * 60 * 60 * 1000)
+
 const trialReminderCron = createTrialReminderCron(orm, (name) => system.resolveModule(name), logger)
 setTimeout(() => {
   trialReminderCron().catch((e) => logger.warn('trial-reminder initial run failed', { error: (e as Error).message }))

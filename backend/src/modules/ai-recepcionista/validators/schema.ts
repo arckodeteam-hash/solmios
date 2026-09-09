@@ -149,3 +149,19 @@ export const StartWhatsappSchema: Record<string, ValidationRule> = {
 export const StopWhatsappSchema: Record<string, ValidationRule> = {
   hotelId: { type: 'string' as const },
 }
+
+/**
+ * Lo que devuelve la ventana de Meta al terminar el Embedded Signup.
+ * `hotelId` solo lo usa un super_admin para apuntar a otro hotel; para el resto sale del token.
+ */
+export const ConnectWhatsappSchema: Record<string, ValidationRule> = {
+  code: { type: 'string' as const, required: true, min: 8, max: 500 },
+  phoneNumberId: { type: 'string' as const, required: true, max: 100 },
+  wabaId: { type: 'string' as const, required: true, max: 100 },
+  hotelId: { type: 'string' as const },
+}
+
+/** Respuesta con texto libre desde la bandeja. El tope es el de WhatsApp. */
+export const ReplyConversationSchema: Record<string, ValidationRule> = {
+  text: { type: 'string' as const, required: true, min: 1, max: 4096 },
+}

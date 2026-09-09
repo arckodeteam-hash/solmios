@@ -5,7 +5,13 @@
         <h2 class="text-xl font-black text-navy">Plantillas WhatsApp</h2>
         <p class="text-sm text-text-muted mt-0.5">Textos predefinidos reutilizables al comunicarte con huéspedes</p>
       </div>
-      <button @click="openNew" class="bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">+ Nueva Plantilla</button>
+      <div class="flex flex-wrap items-center gap-2">
+        <button @click="crearRecomendadas" :disabled="sembrando"
+          class="rounded-full border border-border px-4 py-2.5 text-sm font-bold text-navy transition-colors hover:border-navy disabled:opacity-50 disabled:cursor-wait">
+          {{ sembrando ? 'Creando…' : 'Usar plantillas recomendadas' }}
+        </button>
+        <button @click="openNew" class="bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">+ Nueva Plantilla</button>
+      </div>
     </div>
 
     <!-- Estadísticas rápidas -->
@@ -39,12 +45,18 @@
         v-else-if="!templates.length"
         :icon="ICON_MESSAGE"
         title="Todavía no hay plantillas"
-        message="Creá tu primera plantilla para responder más rápido a tus huéspedes por WhatsApp."
+        message="Podés partir de las plantillas recomendadas, ya redactadas y listas para mandar a aprobar, o escribir la tuya."
       >
         <template #action>
-          <button @click="openNew" class="px-5 py-2.5 bg-navy text-white rounded-full text-sm font-bold hover:bg-navy-light transition-colors cursor-pointer">
-            Crear plantilla
-          </button>
+          <div class="flex flex-wrap items-center justify-center gap-2">
+            <button @click="crearRecomendadas" :disabled="sembrando"
+              class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-navy-light disabled:opacity-50">
+              {{ sembrando ? 'Creando…' : 'Usar las recomendadas' }}
+            </button>
+            <button @click="openNew" class="rounded-full border border-border px-5 py-2.5 text-sm font-bold text-navy transition-colors hover:border-navy cursor-pointer">
+              Escribir una
+            </button>
+          </div>
         </template>
       </EmptyState>
 
@@ -56,6 +68,7 @@
               <th class="text-left px-4 py-3 text-[10px]">Mensaje</th>
               <th class="text-right px-4 py-3 text-[10px] hidden lg:table-cell">Variables</th>
               <th class="text-left px-4 py-3 text-[10px]">Estado</th>
+              <th class="text-left px-4 py-3 text-[10px]">Estado Meta</th>
               <th class="text-right px-4 py-3 text-[10px]">Acciones</th>
             </tr>
           </thead>
@@ -95,8 +108,32 @@
                   {{ t.isActive ? 'Activa' : 'Inactiva' }}
                 </span>
               </td>
+              <td class="px-4 py-3">
+                <span class="inline-flex rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide"
+                  :class="metaStatusClass(t.approvalStatus)">
+                  {{ metaStatusLabel(t.approvalStatus) }}
+                </span>
+                <!-- El motivo va VISIBLE, no en un tooltip: es lo que el staff tiene que corregir
+                     para volver a enviarla. -->
+                <p v-if="t.approvalStatus === 'rejected' && t.metaRejectedReason"
+                  class="mt-1 max-w-[200px] text-[10px] font-bold text-coral">
+                  {{ t.metaRejectedReason }}
+                </p>
+              </td>
               <td class="px-4 py-3 text-right">
                 <div class="flex items-center justify-end gap-1.5">
+                  <button v-if="!t.approvalStatus || t.approvalStatus === 'none'"
+                    @click.stop="submitToMeta(t)" :disabled="busyId === t.id"
+                    title="Enviar a Meta para aprobación"
+                    class="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-navy hover:border-navy transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait">
+                    {{ busyId === t.id ? 'Enviando…' : 'Enviar a Meta' }}
+                  </button>
+                  <button v-else-if="t.approvalStatus !== 'approved'"
+                    @click.stop="syncStatus(t)" :disabled="busyId === t.id"
+                    title="Consultar el estado en Meta"
+                    class="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-navy hover:border-navy transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait">
+                    {{ busyId === t.id ? 'Consultando…' : 'Sincronizar' }}
+                  </button>
                   <button v-if="t.body" @click.stop="testTemplate(t)" title="Probar en WhatsApp"
                     class="grid h-8 w-8 place-items-center rounded-lg text-text-muted hover:bg-navy/10 hover:text-navy transition-colors cursor-pointer">
                     <span class="h-4 w-4" v-html="ICON_SEND"></span>
@@ -142,6 +179,29 @@
               <option value="payment">Pago</option>
               <option value="marketing">Marketing</option>
             </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-2">Idioma</label>
+            <select v-model="form.language" class="w-full px-4 py-2.5 rounded-full border border-border text-sm cursor-pointer focus:outline-none focus:border-cyan transition-colors">
+              <option value="es">Español</option>
+              <option value="en">Inglés</option>
+              <option value="pt">Portugués</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-2">Categoría de Meta</label>
+            <select v-model="form.metaCategory" class="w-full px-4 py-2.5 rounded-full border border-border text-sm cursor-pointer focus:outline-none focus:border-cyan transition-colors">
+              <option value="UTILITY">Utilidad — algo que el huésped espera</option>
+              <option value="MARKETING">Marketing — promoción</option>
+              <option value="AUTHENTICATION">Autenticación — códigos</option>
+            </select>
+            <p class="mt-1 text-[10px] text-text-muted">
+              No es la categoría de arriba: ésta la usa Meta para decidir el precio del mensaje y qué
+              tan estricta es la revisión. Marketing se rechaza mucho más seguido.
+            </p>
           </div>
         </div>
 
@@ -233,9 +293,26 @@ const saving = ref(false)
 const editId = ref('')
 const modal = ref({ show: false, edit: false })
 
-const form = ref<{ name: string; body: string; category: string; isActive: boolean }>({
-  name: '', body: '', category: 'general', isActive: true,
+const form = ref<{ name: string; body: string; category: string; isActive: boolean; language: string; metaCategory: string }>({
+  name: '', body: '', category: 'general', isActive: true, language: 'es', metaCategory: 'UTILITY',
 })
+/** Id de la plantilla con una operación contra Meta en curso (una por vez, no bloquea el modal). */
+const busyId = ref('')
+
+const META_STATUS_LABELS: Record<string, string> = {
+  none: 'Sin enviar', pending: 'Pendiente', approved: 'Aprobada', rejected: 'Rechazada',
+}
+const META_STATUS_CLASSES: Record<string, string> = {
+  none: 'bg-surface text-text-muted',
+  pending: 'bg-gold/10 text-gold',
+  approved: 'bg-teal/10 text-teal',
+  rejected: 'bg-coral/10 text-coral',
+}
+const metaStatusLabel = (s?: string): string => META_STATUS_LABELS[s || 'none'] ?? 'Sin enviar'
+const metaStatusClass = (s?: string): string => META_STATUS_CLASSES[s || 'none'] ?? META_STATUS_CLASSES.none
+
+/** La categoría de Meta que corresponde por defecto a nuestra categoría interna. */
+const defaultMetaCategory = (category: string): string => (category === 'marketing' ? 'MARKETING' : 'UTILITY')
 const nameError = ref('')
 const bodyError = ref('')
 
@@ -304,7 +381,7 @@ function openNew() {
   editId.value = ''
   nameError.value = ''; bodyError.value = ''
   modal.value = { show: true, edit: false }
-  form.value = { name: '', body: '', category: 'general', isActive: true }
+  form.value = { name: '', body: '', category: 'general', isActive: true, language: 'es', metaCategory: 'UTILITY' }
 }
 
 function openEdit(t: WhatsappTemplate) {
@@ -316,6 +393,8 @@ function openEdit(t: WhatsappTemplate) {
     body: t.body || '',
     category: t.category || 'general',
     isActive: t.isActive !== false,
+    language: t.language || 'es',
+    metaCategory: t.metaCategory || defaultMetaCategory(t.category || 'general'),
   }
 }
 
@@ -337,7 +416,10 @@ async function save() {
     // isActive como 1/0: el schema del backend (UpdateTemplateSchema) lo declara `number`
     // y un boolean revienta el PUT con 400. SIN hotelId: lo inyecta el controller del token.
     const active: 0 | 1 = form.value.isActive ? 1 : 0
-    const data = { name: form.value.name.trim(), body: form.value.body, category: form.value.category, isActive: active }
+    const data = {
+      name: form.value.name.trim(), body: form.value.body, category: form.value.category, isActive: active,
+      language: form.value.language, metaCategory: form.value.metaCategory,
+    }
     if (editId.value) {
       await WhatsappService.update(editId.value, data)
       toast.success('Plantilla actualizada')
@@ -367,6 +449,65 @@ function deleteTemplate() {
       await load()
     },
   })
+}
+
+const sembrando = ref(false)
+
+/**
+ * Crea las plantillas recomendadas que falten.
+ *
+ * Escribir una plantilla que Meta apruebe tiene trampas (no puede empezar ni terminar con una
+ * variable, la categoría cambia el precio): esto evita que el hotel tenga que aprenderse esas reglas.
+ */
+async function crearRecomendadas() {
+  if (sembrando.value) return
+  sembrando.value = true
+  try {
+    const r = await WhatsappService.seedRecomendadas()
+    const n = r.creadas?.length ?? 0
+    if (n === 0) toast.success('Ya tenés todas las recomendadas', 'No se creó ninguna nueva')
+    else toast.success(`${n} plantilla(s) creada(s)`, 'Revisá el texto y mandalas a Meta cuando estés listo')
+    await load()
+  } catch (e: any) {
+    toast.error('No se pudieron crear', e?.message || 'Intentá de nuevo')
+  } finally {
+    sembrando.value = false
+  }
+}
+
+/**
+ * Manda la plantilla a Meta para aprobación.
+ *
+ * El error más frecuente no es un fallo técnico sino "este hotel no conectó WhatsApp": se muestra
+ * tal cual lo manda el backend, que ya indica adónde ir a conectarlo.
+ */
+async function submitToMeta(t: WhatsappTemplate) {
+  if (!t.id || busyId.value) return
+  busyId.value = t.id
+  try {
+    await WhatsappService.submitToMeta(t.id)
+    toast.success('Enviada a Meta', 'Queda pendiente de aprobación: puede tardar hasta 24 horas')
+    await load()
+  } catch (e: any) {
+    toast.error('No se pudo enviar', e?.message || 'Revisá el texto y la conexión de WhatsApp')
+  } finally {
+    busyId.value = ''
+  }
+}
+
+/** Pregunta a Meta cómo quedó la plantilla y refresca el listado. */
+async function syncStatus(t: WhatsappTemplate) {
+  if (!t.id || busyId.value) return
+  busyId.value = t.id
+  try {
+    const updated = await WhatsappService.syncStatus(t.id)
+    toast.success(`Estado en Meta: ${metaStatusLabel(updated?.approvalStatus)}`)
+    await load()
+  } catch (e: any) {
+    toast.error('No se pudo consultar el estado', e?.message || 'Intentá de nuevo en un momento')
+  } finally {
+    busyId.value = ''
+  }
 }
 
 /** Abre WhatsApp Web con datos demo */

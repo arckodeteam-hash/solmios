@@ -1,7 +1,7 @@
 // canales/usecases/config.ts — Config management for channel manager
 import type { RepositoryAdapter } from 'arckode-framework'
 import type { CanalesDTO } from '../types'
-import type { CanalesQueries } from './canales-queries'
+import type { CanalesQueries, PlatformChannexConfig } from './canales-queries'
 
 export class ConfigUseCase {
   constructor(
@@ -25,10 +25,10 @@ export class ConfigUseCase {
   }
 
   // Credenciales Channex de PLATAFORMA (una cuenta white-label para todos los hoteles).
-  getPlatformChannex(): Promise<{ apiKey?: string; environment?: string } | null> {
+  getPlatformChannex(): Promise<PlatformChannexConfig | null> {
     return this.queries.getPlatformChannex()
   }
-  setPlatformChannex(patch: { apiKey?: string; environment?: string }): Promise<void> {
+  setPlatformChannex(patch: PlatformChannexConfig): Promise<void> {
     return this.queries.setPlatformChannex(patch)
   }
 }

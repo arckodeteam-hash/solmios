@@ -24,6 +24,18 @@
       </div>
     </div>
 
+    <!-- Definir el inventario estaba partido en dos secciones del menú: las habitaciones acá y
+         "Tipos de habitación y capacidad" en Configuración → Base. Ahora son dos pestañas del
+         mismo lugar. -->
+    <div class="flex gap-2 mb-6 flex-wrap">
+      <button v-for="tab in TABS" :key="tab.value" @click="activeTab = tab.value"
+        class="px-4 py-2 rounded-full text-xs font-extrabold transition-colors cursor-pointer"
+        :class="activeTab === tab.value ? 'bg-navy text-white' : 'bg-white text-text-secondary border border-border hover:border-navy/30'">
+        {{ tab.label }}
+      </button>
+    </div>
+
+    <template v-if="activeTab === 'rooms'">
     <!-- Stats — KpiHeroCard (mismo lenguaje visual que dashboard/guests) -->
     <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
       <KpiHeroCard label="Total" :value="totalCount" icon="bed" accent="blue"
@@ -169,6 +181,59 @@
         </div>
       </div>
     </SectionCard>
+
+    </template>
+
+    <div v-if="activeTab === 'tipos'" class="grid grid-cols-1 gap-6">
+      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
+        <div class="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 class="font-extrabold text-navy">Tipos de habitación y capacidad</h3>
+            <p class="text-[11px] text-text-muted mt-1 leading-relaxed">
+              Capacidad máxima de ocupantes, adultos y niños por TIPO — se aplica a todas las habitaciones de ese tipo
+              y reemplaza lo que tenga cargado cada habitación física. Un tipo sin capacidad configurada acá sigue
+              usando la capacidad de cada habitación, como hasta ahora.
+            </p>
+          </div>
+          <button @click="saveRoomTypeCapacity" :disabled="roomTypeCapacitySaving || roomTypeCapacityHasErrors"
+            class="shrink-0 px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg cursor-pointer disabled:opacity-50">
+            {{ roomTypeCapacitySaving ? 'Guardando...' : 'Guardar' }}
+          </button>
+        </div>
+
+        <div v-if="roomTypeCapacityLoading" class="p-6 text-center text-xs text-text-muted">Cargando tipos de habitación...</div>
+        <div v-else-if="roomTypeCapacityRows.length === 0" class="p-6 bg-surface rounded-xl text-center">
+          <p class="text-xs text-text-muted">Todavía no cargaste habitaciones. Configurá esto después de crear tus tipos en Habitaciones.</p>
+        </div>
+        <div v-else class="space-y-3">
+          <div v-for="row in roomTypeCapacityRows" :key="row.type"
+            class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_repeat(3,140px)] items-start p-3 bg-surface rounded-xl">
+            <div class="pt-2 text-sm font-bold text-navy">{{ ROOM_TYPE_LABEL[row.type] || row.type }}</div>
+            <div>
+              <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Capacidad</label>
+              <input v-model.number="row.capacity" type="number" min="1" max="20" placeholder="sin configurar"
+                :aria-label="`Capacidad de ${ROOM_TYPE_LABEL[row.type] || row.type}`"
+                class="w-full rounded-xl border px-3 py-2 text-sm font-bold text-navy text-right" :class="roomTypeCapacityErrorOf(row) ? 'border-danger' : 'border-border'">
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Máx. adultos</label>
+              <input v-model.number="row.maxAdults" type="number" min="1" max="20" placeholder="sin límite"
+                :aria-label="`Máximo de adultos de ${ROOM_TYPE_LABEL[row.type] || row.type}`"
+                class="w-full rounded-xl border border-border px-3 py-2 text-sm text-right">
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Máx. niños</label>
+              <input v-model.number="row.maxChildren" type="number" min="0" max="20" placeholder="sin límite"
+                :aria-label="`Máximo de niños de ${ROOM_TYPE_LABEL[row.type] || row.type}`"
+                class="w-full rounded-xl border border-border px-3 py-2 text-sm text-right">
+            </div>
+            <p v-if="roomTypeCapacityErrorOf(row)" class="md:col-span-4 text-[10px] font-bold text-danger">{{ roomTypeCapacityErrorOf(row) }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== INTEGRACIONES ========== -->
 
     <!-- ====================== DETAIL MODAL ====================== -->
     <AppModal v-if="detailModal.show" size="lg" @close="detailModal.show=false">
@@ -421,6 +486,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import AppModal from '@/components/ui/AppModal.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -485,6 +551,95 @@ interface EditForm {
 
 const auth = useAuthStore()
 const toast = useToast()
+
+const TABS = [
+  { value: 'rooms', label: 'Habitaciones' },
+  { value: 'tipos', label: 'Tipos y capacidad' },
+]
+// Deep-link `?tab=`: lo usa el redirect de `/panel/config?tab=room-types`, la ubicación anterior
+// de esta configuración. Una tab desconocida cae en el listado de siempre.
+// `?.` a propósito: los tests montan esta vista sin router y `useRoute()` devuelve undefined.
+// Sin router no hay deep-link que leer, así que la pestaña inicial es la de siempre.
+const roomsRoute = useRoute()
+const activeTab = ref((() => {
+  const raw = roomsRoute?.query?.tab
+  const value = Array.isArray(raw) ? raw[raw.length - 1] : raw
+  return typeof value === 'string' && TABS.some(t => t.value === value) ? value : 'rooms'
+})())
+
+// ─── Tipos de habitación y capacidad (Requerimiento 2, 2026-09-03) ─────────────────────────
+// Vivía en Configuración → Base, a una sección de distancia del inventario que configura.
+// configuration('room_type_capacity') = { [type]: {capacity, maxAdults, maxChildren} }. Solo se
+// listan los tipos que el hotel ya usa en `/rooms` (no los 9 posibles del enum): configurar un
+// tipo sin ninguna habitación cargada no tiene con qué aplicarse. `resolveRoomTypeCapacityMap`
+// (backend) prioriza esto sobre los campos de la habitación física — ver room-type-capacity.ts.
+const ROOM_TYPE_LABEL: Record<string, string> = {
+  single: 'Individual', double: 'Doble', twin: 'Twin', triple: 'Triple', quad: 'Cuádruple',
+  suite: 'Suite', deluxe: 'Deluxe', presidential: 'Presidencial', family: 'Familiar',
+}
+interface RoomTypeCapacityRow { type: string; capacity: number | null; maxAdults: number | null; maxChildren: number | null }
+const roomTypeCapacityRows = ref<RoomTypeCapacityRow[]>([])
+const roomTypeCapacitySaving = ref(false)
+const roomTypeCapacityLoading = ref(false)
+
+function roomTypeCapacityErrorOf(row: RoomTypeCapacityRow): string {
+  if (row.capacity == null || row.capacity <= 0) return 'La capacidad es obligatoria'
+  if (row.maxAdults != null && row.maxAdults > row.capacity) return 'Máx. adultos no puede superar la capacidad'
+  if (row.maxChildren != null && row.maxChildren > row.capacity) return 'Máx. niños no puede superar la capacidad'
+  return ''
+}
+
+async function loadRoomTypeCapacity() {
+  roomTypeCapacityLoading.value = true
+  try {
+    const [{ RoomService }, { ConfigService }] = await Promise.all([
+      import('@/services/Room.service'),
+      import('@/services/Platform.service'),
+    ])
+    const [{ rooms }, saved] = await Promise.all([
+      RoomService.list({ limit: 500 }),
+      ConfigService.get('room_type_capacity') as Promise<Record<string, { capacity?: number; maxAdults?: number; maxChildren?: number }> | null>,
+    ])
+    const typesInUse = Array.from(new Set(rooms.map(r => r.type as string).filter(Boolean)))
+    roomTypeCapacityRows.value = typesInUse.map(type => {
+      const s = saved?.[type]
+      return {
+        type,
+        capacity: s?.capacity ?? null,
+        maxAdults: s?.maxAdults ?? null,
+        maxChildren: s?.maxChildren ?? null,
+      }
+    })
+  } catch { /* sin habitaciones cargadas todavía: lista vacía */ }
+  finally { roomTypeCapacityLoading.value = false }
+}
+
+const roomTypeCapacityHasErrors = computed(() =>
+  roomTypeCapacityRows.value.some(r => (r.capacity != null || r.maxAdults != null || r.maxChildren != null) && roomTypeCapacityErrorOf(r)))
+
+async function saveRoomTypeCapacity() {
+  if (roomTypeCapacityHasErrors.value) { toast.error('Revisá los tipos marcados en rojo antes de guardar'); return }
+  roomTypeCapacitySaving.value = true
+  try {
+    // Solo se persisten los tipos con capacidad configurada — un tipo que el admin no tocó no
+    // debe empezar a limitar reservas por accidente.
+    const value: Record<string, { capacity: number; maxAdults: number | null; maxChildren: number | null }> = {}
+    for (const row of roomTypeCapacityRows.value) {
+      if (row.capacity == null || row.capacity <= 0) continue
+      value[row.type] = { capacity: row.capacity, maxAdults: row.maxAdults, maxChildren: row.maxChildren }
+    }
+    const { ConfigService } = await import('@/services/Platform.service')
+    await ConfigService.set('room_type_capacity', value)
+    toast.success('Capacidad por tipo de habitación guardada')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo guardar')
+  } finally {
+    roomTypeCapacitySaving.value = false
+  }
+}
+
+// Se carga al abrir la pestaña, no al montar: quien entra a ver el listado no paga el pedido.
+watch(activeTab, (t) => { if (t === 'tipos' && roomTypeCapacityRows.value.length === 0) loadRoomTypeCapacity() }, { immediate: true })
 const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm({
   onError: () => toast.error('Error al eliminar'),
 })

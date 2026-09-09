@@ -32,6 +32,12 @@ export interface MessageLogDTO {
   messageId: string | null; messageType: string; status: string
   recipient: string | null; response: string | null; sentAt: string | null
   createdAt: string
+  /** `wamid` de Meta; empareja el webhook de estado con esta fila. */
+  providerMessageId?: string
+  /** whatsapp_api | whatsapp_manual | email */
+  channel?: string
+  templateId?: string
+  errorMessage?: string
 }
 
 export interface CreateMessageLogDTO {
@@ -39,10 +45,23 @@ export interface CreateMessageLogDTO {
   messageType?: string; status?: string; recipient?: string; response?: string
 }
 
+/** Estado de aprobación local. Espeja el de Meta, en minúsculas y reducido a lo que la UI muestra. */
+export type TemplateApprovalStatus = 'none' | 'pending' | 'approved' | 'rejected'
+
 export interface WhatsappTemplateDTO {
   id: string; hotelId: string; name: string; body: string
   /** COR-7: idem AutoMessageDTO — respuesta boolean; 0|1 es sólo el formato de escritura. */
   category: string; isActive: boolean
+  /** Idioma con el que la plantilla quedó registrada en Meta. */
+  language?: string
+  /** Nombres de variables en el orden que Meta les asignó: [0] es {{1}}. Lo escribe el submit. */
+  metaVariableOrder?: string[]
+  metaCategory?: string
+  metaTemplateId?: string
+  /** 'none' = nunca se envió a Meta. El resto lo dicta Meta. */
+  approvalStatus?: TemplateApprovalStatus
+  metaRejectedReason?: string
+  metaSyncedAt?: string
   createdAt: string; updatedAt: string
 }
 
@@ -50,4 +69,6 @@ export interface CreateWhatsappTemplateDTO {
   hotelId: string; name: string; body?: string; category?: string
   /** Wire: 0/1 (CreateTemplateSchema `type:'number'`); boolean legacy tolerado. El service normaliza. */
   isActive?: boolean | number
+  language?: string
+  metaCategory?: string
 }

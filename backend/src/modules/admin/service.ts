@@ -11,6 +11,7 @@ import {
 } from './usecases/subscription-settings'
 import type { ModuleOverridesUseCase } from './usecases/module-overrides'
 import * as plans from './usecases/plans'
+import { changeHotelPlan } from '../subscriptions/usecases/change-plan'
 import {
   listAmenitiesCatalog, createAmenityCatalog, updateAmenityCatalog, deleteAmenityCatalog,
   type AmenitiesCatalogDeps,
@@ -63,6 +64,9 @@ export class AdminService {
     private readonly categories?: SubscriptionCategoriesUseCase,
     private readonly configRepo?: RepositoryAdapter<any>,
     private readonly moduleOverrides?: ModuleOverridesUseCase,
+    /** #46: `subscriptions.planId`, fuente de verdad del plan para el gate. OPCIONAL como el resto
+     *  de los deps: sin cablear, `updateHotel` solo espeja `hotels.plan` (como antes) y no rompe. */
+    private readonly subscriptionsRepo?: RepositoryAdapter<any>,
   ) {}
 
   async listHotels(): Promise<{ data: any[]; total: number }> { return this.queries!.listHotels() }
@@ -117,6 +121,14 @@ export class AdminService {
       const plan = (await this.plansRepo.findMany({ slug }))[0]
       if (!plan) throw new Error(`El plan '${body.plan}' no existe en el catálogo de planes`)
       patch.plan = slug
+      // #46: el gate IGNORA este espejo si el hotel tiene suscripción activa (resolve-plan.ts) —
+      // escribir solo `hotels.plan` "guardaba" y el panel seguía con los módulos viejos. Va ANTES
+      // del espejo y el error se PROPAGA: si falla no se escribe NADA, en vez de prometer un plan
+      // que el hotel no tiene. `allowInactive`: la plataforma sí asigna planes fuera de catálogo.
+      if (this.subscriptionsRepo) {
+        const deps = { subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo as RepositoryAdapter<any>, logger: this.logger }
+        await changeHotelPlan(deps, id, String((plan as any).id), { allowInactive: true })
+      }
     }
     if (body.status !== undefined) patch.status = String(body.status).toLowerCase()
     if (body.name !== undefined) patch.name = body.name

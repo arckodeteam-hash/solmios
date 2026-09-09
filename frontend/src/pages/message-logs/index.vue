@@ -101,6 +101,11 @@
                 <span class="inline-flex items-center gap-1.5 rounded-full bg-navy/5 px-2.5 py-1 text-[10px] font-extrabold uppercase text-navy">
                   <span class="h-3.5 w-3.5 shrink-0" v-html="msgTypeMeta(log.messageType).icon"></span>
                   {{ msgTypeMeta(log.messageType).label }}
+                  <!-- Un envío por la API tiene acuse de Meta; uno manual es un enlace que alguien
+                       abrió y que el sistema no puede confirmar. No es lo mismo. -->
+                  <span v-if="msgChannelMeta(log.channel)"
+                    class="ml-1 rounded-full px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide"
+                    :class="msgChannelMeta(log.channel)!.class">{{ msgChannelMeta(log.channel)!.label }}</span>
                 </span>
               </td>
               <td class="px-4 py-3">
@@ -122,6 +127,10 @@
                   <span class="h-3 w-3 shrink-0" v-html="msgStatusMeta(log.status).icon"></span>
                   {{ msgStatusMeta(log.status).label }}
                 </span>
+                <!-- El motivo va visible: es lo único accionable cuando un envío falla. -->
+                <p v-if="log.errorMessage" class="mt-1 max-w-[240px] text-[10px] font-bold text-coral">
+                  {{ log.errorMessage }}
+                </p>
               </td>
               <td class="px-4 py-3 hidden xl:table-cell">
                 <div v-if="log.response" class="max-w-[220px] truncate text-[11px] text-text-muted">{{ log.response }}</div>
@@ -207,7 +216,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { MessageLogsService, msgStatusMeta, msgTypeMeta, ICON_INBOX } from '@/services/MessageLogs.service'
+import { MessageLogsService, msgStatusMeta, msgTypeMeta, ICON_INBOX , msgChannelMeta } from '@/services/MessageLogs.service'
 import type { MessageLog } from '@/services/MessageLogs.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'

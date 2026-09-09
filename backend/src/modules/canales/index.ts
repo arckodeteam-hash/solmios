@@ -12,6 +12,7 @@ import { ChannexUseCase } from './usecases/channex'
 import { ChannexAdminService } from './service-channex-admin'
 import { getOrCreateOpenChannelKey, verifyOpenChannelKey, buildMappingDetails, applyChanges, logOpenChannelCall, buildEndpointUrl } from './usecases/open-channel-api'
 import { buildOpenChannelMappings, roomTypesFromRooms } from './usecases/open-channel-connect'
+import { CHANNEX_WEBHOOK_PATH, handleChannexWebhook, registerChannexWebhook, buildCallbackUrl, getOrCreateWebhookSecret } from './usecases/channex-webhook'
 import { requestChannel, updateChannelRequest, forHotel, type ChannelRequestRow } from './usecases/channel-requests'
 import { readRatePlans } from '../../shared/utils/rate-plans'
 import type { RoomTypeSummary, CanalesDTO } from './types'
@@ -24,6 +25,10 @@ export { CanalesService }
 export type { CanalesDTO, CreateCanalesDTO, UpdateCanalesDTO, CanalesQuery, CanalesPaginated, ChannelsResultDTO, ChannelDTO, SyncResultDTO, RoomTypeSummary, TestConnectionDTO, TestConnectionResultDTO, MappingDetailDTO, MappingRateDTO, OTAChannelCreateDTO, OTAChannelMappingDTO, OTAChannelResultDTO, GroupDTO } from './types'
 export type { CanalesSockets } from './sockets'
 export { CanalesValidator, CreateCanalesSchema, UpdateCanalesSchema } from './validators/schema'
+// El techo de peticiones/minuto contra Channex vive en el transporte HTTP de este módulo, pero lo
+// configura el Super Admin sobre la cola de `ari-outbox`. Como un módulo no importa de otro, el
+// connector canales-ari-outbox toma el valor guardado y lo aplica por acá.
+export { setChannexMaxPerMinute } from './usecases/channex-http'
 
 export function CanalesModule() {
   return createModule({
@@ -87,6 +92,52 @@ export function CanalesModule() {
       router.get('/api/admin/channex-config', adminOnly, async () => ({ status: 200, body: await channexAdmin.getStatus() }))
       router.put('/api/admin/channex-config', adminOnly, async (req: any) => ({ status: 200, body: await channexAdmin.save(req.body || {}) }))
       router.post('/api/admin/channex-config/test', adminOnly, async () => ({ status: 200, body: await channexAdmin.test() }))
+
+      // ── Webhook de reservas de Channex (#50) ──────────────────────────────────────────────
+      // El secreto y el callback son de la CUENTA de plataforma (no de un hotel): viven en la misma
+      // fila `configuration(hotelId='platform', key='channex')` que las credenciales.
+      const webhookStore = {
+        read: () => queries.getPlatformChannex(),
+        write: (patch: { webhookSecret?: string; channexUserId?: string }) => queries.setPlatformChannex(patch),
+      }
+      // Origen público de esta instalación para armar el callback_url. Misma lógica de proto+host
+      // que `buildEndpointUrl` (cf-visitor gana sobre x-forwarded-proto: Cloudflare en modo Flexible
+      // habla HTTP con el origen y el x-forwarded-proto queda mintiendo). CHANNEX_WEBHOOK_BASE_URL
+      // es un override OPCIONAL, para cuando el host del request no es el alcanzable desde afuera.
+      const webhookBaseUrl = (req: any): string => {
+        const override = String(process.env.CHANNEX_WEBHOOK_BASE_URL || '').trim()
+        if (override) return override.replace(/\/+$/, '')
+        const cfVisitor = req?.headers?.['cf-visitor']
+        let proto: string | undefined
+        if (typeof cfVisitor === 'string') {
+          try { proto = JSON.parse(cfVisitor)?.scheme } catch { /* header malformado, se ignora */ }
+        }
+        proto = proto || (req?.headers?.['x-forwarded-proto'] as string) || 'https'
+        return `${proto}://${(req?.headers?.host as string) || 'localhost'}`
+      }
+
+      // Estado del registro: qué callbacks tiene hoy la cuenta y cuál usaríamos nosotros. Si Channex
+      // no responde el panel igual tiene que abrir, así que el error viaja en el body, no como 5xx.
+      router.get('/api/admin/channex-webhook', adminOnly, async (req: any) => {
+        const callbackUrl = buildCallbackUrl(webhookBaseUrl(req), await getOrCreateWebhookSecret(webhookStore))
+        try {
+          return { status: 200, body: { success: true, callbackUrl, webhooks: await adminChannex.listWebhooks('') } }
+        } catch (e: any) {
+          log.warn('No se pudieron listar los webhooks de Channex', { error: e?.message || String(e) })
+          return { status: 200, body: { success: false, callbackUrl, webhooks: [], error: e?.message || String(e) } }
+        }
+      })
+
+      // Alta idempotente del callback: si el endpoint ya está registrado no crea otro (ver usecase).
+      router.post('/api/admin/channex-webhook', adminOnly, async (req: any) => {
+        try {
+          const result = await registerChannexWebhook({ store: webhookStore, channex: adminChannex, logger: log }, webhookBaseUrl(req))
+          return { status: 200, body: { success: Boolean(result.id), ...result } }
+        } catch (e: any) {
+          log.error('No se pudo registrar el webhook de Channex', { error: e?.message || String(e) })
+          return { status: 200, body: { success: false, created: false, id: null, error: e?.message || String(e) } }
+        }
+      })
 
       // Bandeja del admin: todas las solicitudes de todos los hoteles, la más nueva primero.
       router.get('/api/admin/channel-requests', adminOnly, async () => {
@@ -211,6 +262,19 @@ export function CanalesModule() {
         const { recorded } = await applyChanges(ocDeps, hotelId, entry.changes)
         return { status: 200, body: { success: true, unique_id: crypto.randomUUID(), recorded } }
       })
+
+      // POST /api/channels/channex/webhook (CHANNEX_WEBHOOK_PATH, compartido con el callback_url
+      // que registramos). La llama CHANNEX cuando entra o cambia una reserva. Igual que las 3 de
+      // arriba va SIN auth.authenticate(): no hay usuario logueado del otro lado. Se verifica
+      // adentro del handler contra el secreto de plataforma (header `api-key` o el `api_key` que
+      // el callback_url registrado lleva en el query string). La ingesta es el MISMO camino del
+      // cron (`runOne`), así la reserva del webhook es idéntica a la del cron.
+      const webhookDeps = {
+        store: webhookStore,
+        ingestRevision: (revisionId: string) => service.syncOneBookingRevision(revisionId),
+        logger: log,
+      }
+      router.post(CHANNEX_WEBHOOK_PATH, async (req: any) => handleChannexWebhook(webhookDeps, req))
 
       // Conectar SolmiOS como canal EN UN CLICK. El servidor ya conoce las tres credenciales
       // (endpoint, api key, hotel code) y el mapeo sale del sync: pedirle al hotelero que las

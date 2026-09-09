@@ -197,10 +197,32 @@
               </select>
             </div>
             <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo de cambio</label>
-              <input v-model.number="currencyConfig.exchangeRate" type="number" min="0" step="0.01"
+              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo de cambio manual (opcional)</label>
+              <input v-model.number="currencyConfig.exchangeRate" type="number" min="0" step="0.01" placeholder="Automático"
                 class="w-full rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-navy text-right tabular-nums focus:border-navy focus:outline-none" />
+              <p class="mt-1 text-[10px] text-text-muted">Si lo dejás vacío se usa la tasa automática.</p>
             </div>
+          </div>
+          <!-- Tasa automática: la MISMA que usa el backend (GET /api/tasa-cambio). Antes acá había
+               un 60 escrito a mano que nadie actualizaba. -->
+          <div class="mt-4 rounded-xl border border-border bg-surface px-4 py-3">
+            <p class="text-[11px] font-bold uppercase tracking-wide text-text-muted">Tasa automática</p>
+            <p v-if="autoRate.exchangeRate" class="mt-1 text-base font-bold text-navy tabular-nums">
+              1 {{ form.currency }} = {{ autoRate.exchangeRate }} {{ autoRate.secondaryCurrency }}
+            </p>
+            <p v-else class="mt-1 text-sm font-bold text-text-muted">Sin tasa disponible todavía</p>
+            <p v-if="autoRate.exchangeRate" class="mt-1 text-[10px] text-text-muted">
+              Actualizada el {{ autoRateFetchedAt }}<span v-if="autoRate.source"> · origen: {{ autoRate.source }}</span>
+            </p>
+            <p v-if="autoRate.stale" class="mt-1 text-[10px] font-bold text-warning">
+              La tasa está desactualizada: se sigue mostrando la última obtenida.
+            </p>
+            <!-- Atribucion EXIGIDA por los terminos del plan Open Access del proveedor: el texto
+                 del enlace tiene que ser literalmente "Rates By Exchange Rate API" apuntando a su
+                 sitio. No es decorativo: sin esto el uso queda fuera de licencia. -->
+            <p class="mt-2 text-[10px] text-text-muted">
+              <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener" class="underline">Rates By Exchange Rate API</a>
+            </p>
           </div>
         </SectionCard>
 
@@ -424,6 +446,29 @@
                en la landing pública, no configuración operativa de reseñas. -->
         </div>
       </div>
+
+      <!-- Políticas para factura: el texto de cancelación y reembolso que se imprime al pie.
+           Estaba en la pestaña Integraciones, que ahora es solo conexiones con servicios de afuera. -->
+      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
+        <div class="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 class="font-extrabold text-navy">Políticas para factura</h3>
+            <p class="text-[11px] text-text-muted mt-1 leading-relaxed">
+              Texto que aparecerá al pie de cada factura emitida como “Políticas de cancelación y reembolso”.
+              Déjalo vacío para no mostrar la sección.
+            </p>
+          </div>
+        </div>
+        <div class="space-y-3">
+          <textarea v-model="invoicePolicyText" rows="4"
+            placeholder="Ej. Cancelación gratuita hasta 48 h antes de la entrada. Después de ese plazo, la primera noche no es reembolsable..."
+            class="w-full px-3 py-2 rounded-xl border border-border text-sm resize-y"></textarea>
+          <button @click="saveInvoicePolicy" :disabled="invoicePolicySaving"
+            class="w-full px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg transition-all cursor-pointer disabled:opacity-50">
+            {{ invoicePolicySaving ? 'Guardando...' : 'Guardar' }}
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- ========== NIÑOS (Requerimiento 1) ========== -->
@@ -477,165 +522,11 @@
     </div>
 
     <!-- ========== TIPOS DE HABITACIÓN Y CAPACIDAD (Requerimiento 2) ========== -->
-    <div v-if="(activeTab as string) === 'room-types'" class="grid grid-cols-1 gap-6">
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <div class="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <h3 class="font-extrabold text-navy">Tipos de habitación y capacidad</h3>
-            <p class="text-[11px] text-text-muted mt-1 leading-relaxed">
-              Capacidad máxima de ocupantes, adultos y niños por TIPO — se aplica a todas las habitaciones de ese tipo
-              y reemplaza lo que tenga cargado cada habitación física. Un tipo sin capacidad configurada acá sigue
-              usando la capacidad de cada habitación, como hasta ahora.
-            </p>
-          </div>
-          <button @click="saveRoomTypeCapacity" :disabled="roomTypeCapacitySaving || roomTypeCapacityHasErrors"
-            class="shrink-0 px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg cursor-pointer disabled:opacity-50">
-            {{ roomTypeCapacitySaving ? 'Guardando...' : 'Guardar' }}
-          </button>
-        </div>
-
-        <div v-if="roomTypeCapacityLoading" class="p-6 text-center text-xs text-text-muted">Cargando tipos de habitación...</div>
-        <div v-else-if="roomTypeCapacityRows.length === 0" class="p-6 bg-surface rounded-xl text-center">
-          <p class="text-xs text-text-muted">Todavía no cargaste habitaciones. Configurá esto después de crear tus tipos en Habitaciones.</p>
-        </div>
-        <div v-else class="space-y-3">
-          <div v-for="row in roomTypeCapacityRows" :key="row.type"
-            class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_repeat(3,140px)] items-start p-3 bg-surface rounded-xl">
-            <div class="pt-2 text-sm font-bold text-navy">{{ ROOM_TYPE_LABEL[row.type] || row.type }}</div>
-            <div>
-              <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Capacidad</label>
-              <input v-model.number="row.capacity" type="number" min="1" max="20" placeholder="sin configurar"
-                class="w-full rounded-xl border px-3 py-2 text-sm font-bold text-navy text-right" :class="roomTypeCapacityErrorOf(row) ? 'border-danger' : 'border-border'">
-            </div>
-            <div>
-              <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Máx. adultos</label>
-              <input v-model.number="row.maxAdults" type="number" min="1" max="20" placeholder="sin límite"
-                class="w-full rounded-xl border border-border px-3 py-2 text-sm text-right">
-            </div>
-            <div>
-              <label class="block text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Máx. niños</label>
-              <input v-model.number="row.maxChildren" type="number" min="0" max="20" placeholder="sin límite"
-                class="w-full rounded-xl border border-border px-3 py-2 text-sm text-right">
-            </div>
-            <p v-if="roomTypeCapacityErrorOf(row)" class="md:col-span-4 text-[10px] font-bold text-danger">{{ roomTypeCapacityErrorOf(row) }}</p>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ========== INTEGRACIONES ========== -->
-    <div v-if="(activeTab as string) === 'integrations'" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <!-- Channel Manager NO va acá: lo configura y gestiona el admin de la PLATAFORMA (/admin),
-           no el hotel. Esta card mostraba un "Conectado" hardcodeado (mentía el estado real) y
-           linkeaba a /panel/channel-manager, que al merchant le da 403. -->
-
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <h3 class="font-extrabold text-navy mb-4">Pasarela de Pagos</h3>
-        <!-- Las pasarelas se configuran en /panel/config/pasarelas: acá había una segunda fuente de verdad
-             (configuration.stripe_config, sin cifrar) que solo la usaba uno de los tres flujos de cobro. -->
-        <div class="p-4 bg-surface rounded-xl">
-          <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-3">
-              <span class="w-5 h-5 text-navy/50" v-html="ICON_CARD"></span>
-              <div><div class="text-sm font-bold text-navy">Pasarelas de Pago</div><div class="text-[10px] text-text-muted">Stripe, Azul, CardNet, PayPal</div></div>
-            </div>
-          </div>
-          <p class="text-[11px] text-text-secondary mb-3 leading-relaxed">
-            Conectá la cuenta donde querés recibir el dinero de tus reservas. Las llaves se guardan cifradas.
-          </p>
-          <router-link to="/panel/config/pasarelas" class="block text-center w-full px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg cursor-pointer">
-            Configurar pasarelas
-          </router-link>
-        </div>
-      </div>
-
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <h3 class="font-extrabold text-navy mb-4">WhatsApp Business</h3>
-        <div class="p-4 bg-surface rounded-xl">
-          <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-3">
-              <span class="w-5 h-5 text-navy/50" v-html="ICON_MESSAGE"></span>
-              <div><div class="text-sm font-bold text-navy">WhatsApp</div><div class="text-[10px] text-text-muted">Mensajes automatizados</div></div>
-            </div>
-            <span class="text-[10px] font-bold px-2 py-1 rounded-full bg-gold/10 text-gold">No configurado</span>
-          </div>
-          <p class="text-xs text-text-muted">Requiere cuenta de Meta Business.</p>
-        </div>
-      </div>
-
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="font-extrabold text-navy">Facturación Electrónica</h3>
-          <span class="text-[10px] font-bold px-2 py-1 rounded-full"
-            :class="fiscalConfig.enabled ? 'bg-teal/10 text-teal' : 'bg-surface text-text-muted'">
-            {{ fiscalConfig.enabled ? 'Numeración activa' : 'Desactivada' }}
-          </span>
-        </div>
-        <div class="p-4 bg-surface rounded-xl space-y-3">
-          <div class="flex items-center gap-3">
-            <span class="w-5 h-5 text-navy/50 shrink-0" v-html="ICON_RECEIPT"></span>
-            <div class="min-w-0">
-              <div class="text-sm font-bold text-navy">NCF (Comprobante Fiscal)</div>
-              <div class="text-[10px] text-text-muted">Numera cada factura correlativamente según la autoridad fiscal de tu país</div>
-            </div>
-          </div>
-          <div class="flex items-center justify-between p-3 bg-white rounded-xl">
-            <div class="text-sm font-bold text-navy">Activar numeración fiscal</div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input v-model="fiscalConfig.enabled" type="checkbox" class="sr-only peer">
-              <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal"></div>
-            </label>
-          </div>
-          <div v-if="fiscalConfig.enabled" class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Autoridad</label>
-              <select v-model="fiscalConfig.authority" class="w-full px-3 py-2 rounded-full border border-border text-sm cursor-pointer">
-                <option value="DGII">DGII (Rep. Dominicana)</option>
-                <option value="DIAN">DIAN (Colombia)</option>
-                <option value="SAT">SAT (México)</option>
-                <option value="SUNAT">SUNAT (Perú)</option>
-                <option value="SII">SII (Chile)</option>
-                <option value="AFIP">AFIP (Argentina)</option>
-                <option value="none">Otra / Manual</option>
-              </select>
-            </div>
-            <div>
-              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Serie</label>
-              <input v-model="fiscalConfig.serie" placeholder="E31" class="w-full px-3 py-2 rounded-full border border-border text-sm">
-            </div>
-          </div>
-          <p v-if="fiscalConfig.enabled" class="text-[10px] text-text-muted">
-            Próximo NCF: {{ nextNcfPreview }}. El envío a {{ fiscalConfig.authority === 'none' ? 'la autoridad' : fiscalConfig.authority }} requiere credenciales del país — todavía no está conectado, así que el NCF queda local por ahora.
-          </p>
-          <button @click="saveFiscalConfig" :disabled="fiscalSaving"
-            class="w-full px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg transition-all cursor-pointer disabled:opacity-50">
-            {{ fiscalSaving ? 'Guardando...' : 'Guardar' }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Políticas para factura (cancelación y reembolso) -->
-      <div class="rounded-[20px] border border-border bg-white shadow-(--shadow-card) p-6">
-        <div class="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <h3 class="font-extrabold text-navy">Políticas para factura</h3>
-            <p class="text-[11px] text-text-muted mt-1 leading-relaxed">
-              Texto que aparecerá al pie de cada factura emitida como “Políticas de cancelación y reembolso”.
-              Déjalo vacío para no mostrar la sección.
-            </p>
-          </div>
-        </div>
-        <div class="space-y-3">
-          <textarea v-model="invoicePolicyText" rows="4"
-            placeholder="Ej. Cancelación gratuita hasta 48 h antes de la entrada. Después de ese plazo, la primera noche no es reembolsable..."
-            class="w-full px-3 py-2 rounded-xl border border-border text-sm resize-y"></textarea>
-          <button @click="saveInvoicePolicy" :disabled="invoicePolicySaving"
-            class="w-full px-4 py-2 bg-navy text-white rounded-full text-sm font-bold hover:shadow-lg transition-all cursor-pointer disabled:opacity-50">
-            {{ invoicePolicySaving ? 'Guardando...' : 'Guardar' }}
-          </button>
-        </div>
-      </div>
-    </div>
+    <!-- La pestaña "Integraciones" se mudó a su propia sección del menú (/panel/integraciones,
+         pages/integraciones): WhatsApp, pasarelas, cerraduras, dispositivos y facturación
+         electrónica estaban partidos entre esta pestaña y tres entradas sueltas del menú, así que
+         "dónde conecto X" había que adivinarlo. "Políticas para factura" NO se fue con ellas: no
+         es una conexión con nadie, es texto al pie de la factura — vive en Condiciones. -->
 
     <!-- EMERGENCIAS -->
     <div v-if="(activeTab as string) === 'emergency'" class="space-y-6">
@@ -692,32 +583,6 @@
       </div>
     </div>
 
-    <!-- RRHH — Días laborables (feedback #602) -->
-    <div v-if="(activeTab as string) === 'hr'" class="space-y-6">
-      <SectionCard title="Días laborables"
-        subtitle="Define qué días de la semana cuenta el sistema al calcular ausencias y vacaciones. Por defecto todos los días (un hotel opera fines de semana).">
-        <template #actions>
-          <button @click="saveWorkingDays" :disabled="workingDaysSaving"
-            class="rounded-full bg-cyan px-4 py-2 text-xs font-bold text-navy transition-all hover:shadow-lg cursor-pointer disabled:opacity-50">
-            {{ workingDaysSaving ? 'Guardando…' : 'Guardar días laborables' }}
-          </button>
-        </template>
-        <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-          <label v-for="day in WEEKDAYS" :key="day.value"
-            class="flex flex-col items-center gap-2 rounded-xl bg-surface p-3 cursor-pointer transition-all"
-            :class="workingDaysDraft.includes(day.value) ? 'ring-2 ring-cyan bg-cyan/5' : 'opacity-60 hover:opacity-100'">
-            <input type="checkbox" :value="day.value" v-model="workingDaysDraft"
-              class="h-5 w-5 rounded text-cyan cursor-pointer" />
-            <span class="text-xs font-bold text-navy">{{ day.label }}</span>
-          </label>
-        </div>
-        <p class="mt-3 text-[11px] text-text-muted leading-relaxed">
-          Los días desmarcados se descuentan automáticamente al crear una solicitud de ausencia.
-          Los días festivos configurados en Time Off siempre se descuentan, independientemente de esta selección.
-        </p>
-      </SectionCard>
-    </div>
-
     </div>
 
     <!-- L6 (qa-ui config-2026-08-22): confirmación para quitar un contacto de emergencia,
@@ -730,8 +595,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, reactive } from 'vue'
-import { useRoute, onBeforeRouteLeave } from 'vue-router'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
+import { INTEGRATIONS_PATH } from '@/config/integration-tabs'
 import SectionCard from '@/components/ui/SectionCard.vue'
+import WhatsappConnectionCard from '@/components/features/WhatsappConnectionCard.vue'
+import WhatsappUsageCard from '@/components/features/WhatsappUsageCard.vue'
 // Política de cancelación con tiers: el editor canónico (mismo componente que usa el Motor de
 // reservas). Vive acá desde la unificación de Condiciones — antes sólo en Página pública.
 import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
@@ -740,9 +608,9 @@ import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES, countryName } from '@/data/locales'
 import { TIMEZONES, CURRENCIES } from '@/data/intl-catalogs'
 import { CurrencyCode } from '@/types/currency'
+import { loadCurrencyConfig, type CurrencyConfig } from '@/composables/useCurrency'
 import { validateField, validateAll, warnOnUnsavedChanges, HOTEL_RULES } from '@/composables/useFieldValidation'
 import { HotelService } from '@/services/Hotel.service'
-import { RoomService } from '@/services/Room.service'
 import { SettingsService, type HotelFull } from '@/services/Settings.service'
 import { AuthService } from '@/services/Auth.service'
 import { ConfigService, EmergencyContactsService } from '@/services/Platform.service'
@@ -771,14 +639,36 @@ const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'pla
 // El bloque anterior leía configuration['stripe_config'] y traía la secretKey EN CLARO al
 // navegador: el endpoint genérico de configuración devuelve el JSON entero, secretos incluidos.
 
-// Conversión de moneda secundaria (F3 match-misterplan — totales convertidos en el detalle de reserva)
-const currencyConfig = reactive<{ secondaryCurrency: string; exchangeRate: number }>({ secondaryCurrency: CurrencyCode.DOP, exchangeRate: 60 })
+// Conversión de moneda secundaria (F3 match-misterplan — totales convertidos en el detalle de reserva).
+// `exchangeRate` es un OVERRIDE MANUAL opcional: vacío/null = usar la tasa automática que devuelve
+// `GET /api/tasa-cambio`, la misma que consume el backend. Acá no se hardcodea ninguna tasa.
+const currencyConfig = reactive<{ secondaryCurrency: string; exchangeRate: number | string | null }>({ secondaryCurrency: '', exchangeRate: null })
 const currencySaving = ref(false)
+const autoRate = ref<CurrencyConfig>({ secondaryCurrency: '', exchangeRate: 0, fetchedAt: null, source: null, stale: false })
+const autoRateFetchedAt = computed(() => {
+  const at = autoRate.value.fetchedAt
+  if (!at) return 'fecha desconocida'
+  const d = new Date(at)
+  return isNaN(d.getTime()) ? 'fecha desconocida' : d.toLocaleString('es-DO', { dateStyle: 'medium', timeStyle: 'short' })
+})
+// `force`: la tasa se cachea a nivel de módulo, y acá hace falta el valor de AHORA (un override
+// manual recién guardado cambia lo que devuelve el endpoint).
+async function loadAutoRate() {
+  try { autoRate.value = await loadCurrencyConfig(hotelId.value, true) } catch { /* sin tasa: la UI muestra "sin tasa disponible" */ }
+}
 async function loadCurrency() {
   try {
     const c = await ConfigService.get('currency_config') as { secondaryCurrency?: string; exchangeRate?: number } | null
-    if (c) { currencyConfig.secondaryCurrency = c.secondaryCurrency || 'DOP'; currencyConfig.exchangeRate = c.exchangeRate ?? 60 }
-  } catch { /* default */ }
+    if (c) {
+      currencyConfig.secondaryCurrency = c.secondaryCurrency || ''
+      // 0 es como el backend representa "sin override manual": el campo se muestra vacío.
+      currencyConfig.exchangeRate = Number(c.exchangeRate) > 0 ? Number(c.exchangeRate) : null
+    }
+  } catch { /* sin config guardada: queda la tasa automática */ }
+  // Sin await a propósito: la tasa automática es informativa (se muestra en su tarjeta) y el resto
+  // de la pantalla no depende de ella; encadenarla retrasaría toda la carga por una petición que
+  // puede tardar o no estar disponible.
+  void loadAutoRate()
 }
 // El logo del hotel (subida arrastrar/soltar) se mudó a Página pública → General (tarea 1.7,
 // docs/wizard-refactor) — es público (allow-list de getPublicHotelInfo), no identidad
@@ -831,7 +721,9 @@ async function saveEmergencyContacts() {
 async function saveCurrency() {
   currencySaving.value = true
   try {
+    // Campo vacío → 0, que el backend interpreta como "sin override manual" y resuelve la automática.
     await ConfigService.set('currency_config', { secondaryCurrency: currencyConfig.secondaryCurrency, exchangeRate: Number(currencyConfig.exchangeRate) || 0 })
+    await loadAutoRate()
     toast.success('Conversión de moneda guardada')
   } catch (e) {
     toast.error((e as Error).message || 'No se pudo guardar')
@@ -916,46 +808,9 @@ async function saveAutomation() {
   }
 }
 
-// Facturación electrónica / NCF (configuration['electronic_invoicing']) — antes esta tab solo
-// mostraba una card informativa sin ningún campo: no existía forma de setear `enabled`, así que
-// nextNcf() (fiscal.ts) siempre devolvía null aunque la UI insinuara "NCF automático".
-const fiscalConfig = reactive({ enabled: false, serie: 'E31', authority: 'DGII', sequence: 0 })
-const fiscalSaving = ref(false)
-async function loadFiscalConfig() {
-  try {
-    const c = await ConfigService.get('electronic_invoicing') as
-      { enabled?: boolean; serie?: string; authority?: string; sequence?: number } | null
-    if (c) {
-      fiscalConfig.enabled = !!c.enabled
-      fiscalConfig.serie = c.serie || 'E31'
-      fiscalConfig.authority = c.authority || 'DGII'
-      fiscalConfig.sequence = c.sequence ?? 0
-    }
-  } catch { /* default: desactivado */ }
-}
-// Mismo formato que buildNcf() en fiscal.ts — preview, la numeración real la arma el backend.
-const nextNcfPreview = computed(() => {
-  const seq = String((fiscalConfig.sequence || 0) + 1).padStart(11, '0')
-  const serie = fiscalConfig.serie || 'E31'
-  const auth = fiscalConfig.authority || 'MANUAL'
-  return `${serie}${auth === 'DGII' ? '' : '-'}${seq}`.replace('--', '-')
-})
-async function saveFiscalConfig() {
-  fiscalSaving.value = true
-  try {
-    await ConfigService.set('electronic_invoicing', {
-      enabled: fiscalConfig.enabled, serie: fiscalConfig.serie.trim() || 'E31',
-      authority: fiscalConfig.authority, sequence: fiscalConfig.sequence,
-    })
-    await nextTick()
-    markClean()
-    toast.success('Facturación electrónica guardada')
-  } catch (e) {
-    toast.error((e as Error).message || 'No se pudo guardar')
-  } finally {
-    fiscalSaving.value = false
-  }
-}
+// La facturación electrónica (NCF) se mudó a Integraciones → Facturación electrónica
+// (pages/integraciones/facturacion.vue), con su propio estado y su propio aviso de cambios
+// sin guardar.
 
 // ─── Política de niños (Requerimiento 1, 2026-09-03) ───────────────────────────────────────
 // configuration('child_policy'), mismo patrón que automation_config/electronic_invoicing.
@@ -994,69 +849,6 @@ async function saveChildPolicy() {
   }
 }
 
-// ─── Tipos de habitación y capacidad (Requerimiento 2, 2026-09-03) ─────────────────────────
-// configuration('room_type_capacity') = { [type]: {capacity, maxAdults, maxChildren} }. Solo se
-// listan los tipos que el hotel ya usa en `/rooms` (no los 9 posibles del enum): configurar un
-// tipo sin ninguna habitación cargada no tiene con qué aplicarse. `resolveRoomTypeCapacityMap`
-// (backend) prioriza esto sobre los campos de la habitación física — ver room-type-capacity.ts.
-const ROOM_TYPE_LABEL: Record<string, string> = {
-  single: 'Individual', double: 'Doble', twin: 'Twin', triple: 'Triple', quad: 'Cuádruple',
-  suite: 'Suite', deluxe: 'Deluxe', presidential: 'Presidencial', family: 'Familiar',
-}
-interface RoomTypeCapacityRow { type: string; capacity: number | null; maxAdults: number | null; maxChildren: number | null }
-const roomTypeCapacityRows = ref<RoomTypeCapacityRow[]>([])
-const roomTypeCapacitySaving = ref(false)
-const roomTypeCapacityLoading = ref(false)
-function roomTypeCapacityErrorOf(row: RoomTypeCapacityRow): string {
-  if (row.capacity == null || row.capacity <= 0) return 'La capacidad es obligatoria'
-  if (row.maxAdults != null && row.maxAdults > row.capacity) return 'Máx. adultos no puede superar la capacidad'
-  if (row.maxChildren != null && row.maxChildren > row.capacity) return 'Máx. niños no puede superar la capacidad'
-  return ''
-}
-async function loadRoomTypeCapacity() {
-  roomTypeCapacityLoading.value = true
-  try {
-    const [{ rooms }, saved] = await Promise.all([
-      RoomService.list({ limit: 500 }),
-      ConfigService.get('room_type_capacity') as Promise<Record<string, { capacity?: number; maxAdults?: number; maxChildren?: number }> | null>,
-    ])
-    const typesInUse = Array.from(new Set(rooms.map(r => r.type as string).filter(Boolean)))
-    roomTypeCapacityRows.value = typesInUse.map(type => {
-      const s = saved?.[type]
-      return {
-        type,
-        capacity: s?.capacity ?? null,
-        maxAdults: s?.maxAdults ?? null,
-        maxChildren: s?.maxChildren ?? null,
-      }
-    })
-  } catch { /* sin habitaciones cargadas todavía: lista vacía */ }
-  finally { roomTypeCapacityLoading.value = false }
-}
-const roomTypeCapacityHasErrors = computed(() =>
-  roomTypeCapacityRows.value.some(r => (r.capacity != null || r.maxAdults != null || r.maxChildren != null) && roomTypeCapacityErrorOf(r)))
-async function saveRoomTypeCapacity() {
-  if (roomTypeCapacityHasErrors.value) { toast.error('Revisá los tipos marcados en rojo antes de guardar'); return }
-  roomTypeCapacitySaving.value = true
-  try {
-    // Solo se persisten los tipos con capacidad configurada — un tipo que el admin no tocó no
-    // debe empezar a limitar reservas por accidente.
-    const value: Record<string, { capacity: number; maxAdults: number | null; maxChildren: number | null }> = {}
-    for (const row of roomTypeCapacityRows.value) {
-      if (row.capacity == null || row.capacity <= 0) continue
-      value[row.type] = { capacity: row.capacity, maxAdults: row.maxAdults, maxChildren: row.maxChildren }
-    }
-    await ConfigService.set('room_type_capacity', value)
-    await nextTick()
-    markClean()
-    toast.success('Capacidad por tipo de habitación guardada')
-  } catch (e) {
-    toast.error((e as Error).message || 'No se pudo guardar')
-  } finally {
-    roomTypeCapacitySaving.value = false
-  }
-}
-
 // Políticas de cancelación y reembolso para factura (configuration['invoice_policy_text']).
 // Texto libre que se imprime al pie de cada factura A4 emitida. Vacío = no se imprime el bloque.
 const invoicePolicyText = ref('')
@@ -1081,51 +873,18 @@ async function saveInvoicePolicy() {
   }
 }
 
-// Días laborables del hotel (feedback #602). Define qué días de la semana se cuentan al
-// calcular ausencias/vacaciones. Default: todos marcados (un hotel opera fines de semana).
-// Se persisten como array [0..6] en configuration('leave_working_days'), convenio getUTCDay: 0=Dom..6=Sáb.
-const WEEKDAYS = [
-  { value: 0, label: 'Domingo' },
-  { value: 1, label: 'Lunes' },
-  { value: 2, label: 'Martes' },
-  { value: 3, label: 'Miércoles' },
-  { value: 4, label: 'Jueves' },
-  { value: 5, label: 'Viernes' },
-  { value: 6, label: 'Sábado' },
-]
-const workingDaysDraft = ref<number[]>([0, 1, 2, 3, 4, 5, 6])
-const workingDaysSaving = ref(false)
-async function loadWorkingDays() {
-  try {
-    const c = await ConfigService.get('leave_working_days') as number[] | null
-    if (Array.isArray(c) && c.length) {
-      workingDaysDraft.value = c.filter((d) => typeof d === 'number' && d >= 0 && d <= 6)
-    }
-  } catch { /* default: todos los días */ }
-}
-async function saveWorkingDays() {
-  if (workingDaysDraft.value.length === 0) {
-    toast.error('Debe seleccionar al menos un día laborable')
-    return
-  }
-  workingDaysSaving.value = true
-  try {
-    await ConfigService.set('leave_working_days', [...workingDaysDraft.value].sort())
-    await nextTick()
-    markClean()
-    toast.success('Días laborables guardados')
-  } catch (e) {
-    toast.error((e as Error).message || 'No se pudo guardar')
-  } finally {
-    workingDaysSaving.value = false
-  }
-}
-
 const activeTab = ref('hotel' as string)
 // Deep-link ?tab=... (el botón de Emergencia del header entra directo a su pestaña)
 const route = useRoute()
+const router = useRouter()
 onMounted(() => {
   const t = route.query.tab
+  // La pestaña "Integraciones" se mudó a /panel/integraciones. Un link guardado a ?tab=integrations
+  // no debe aterrizar en la pestaña Hotel sin explicación: se lo lleva a donde está ahora.
+  if (t === 'integrations') {
+    router.replace({ path: INTEGRATIONS_PATH })
+    return
+  }
   if (typeof t === 'string' && allTabs.value.some(tab => tab.value === t)) activeTab.value = t
 })
 const saving = ref(false)
@@ -1144,9 +903,11 @@ const tabGroups: SettingsTabGroup[] = [
       { value: 'hotel', label: 'Hotel' },
       { value: 'conditions', label: 'Condiciones' },
       { value: 'children', label: 'Niños' },
-      { value: 'room-types', label: 'Tipos de habitación' },
+      // "Tipos de habitación" se mudó a Habitaciones (pestaña "Tipos y capacidad"): definir el
+      // inventario estaba partido entre dos entradas distintas del mismo menú.
       { value: 'emergency', label: 'Emergencias' },
-      { value: 'hr', label: 'RRHH' },
+      // "RRHH" (días laborables) se mudó a RRHH → Asistencia → Horarios: es lo único que
+      // configuraba y estaba a dos secciones de distancia de ahí.
     ],
   },
   {
@@ -1154,8 +915,12 @@ const tabGroups: SettingsTabGroup[] = [
     tabs: [
       // Página pública / Landing / Reputación externa / Tracking se mudaron a su propia
       // sección del menú lateral (Página pública). Acá queda solo config operativa.
-      { value: 'amenities', label: 'Amenities' },
-      { value: 'integrations', label: 'Integraciones' },
+      // "Amenities de habitación", no "Amenities" a secas: las del HOTEL (piscina, gimnasio —
+      // las que salen en la landing) se editan en Página pública → General. Dos catálogos
+      // distintos que se llamaban igual, al punto que la otra vista necesitaba una nota
+      // aclaratoria para que no se confundieran.
+      { value: 'amenities', label: 'Amenities de habitación' },
+      // "Integraciones" se fue a su propia sección del menú (/panel/integraciones).
     ],
   },
 ]
@@ -1220,10 +985,11 @@ function snapshot(): string {
   return JSON.stringify({
     form: form.value, ownerUserName: ownerUserName.value,
     selectedAmenities: selectedAmenities.value, emergencyContacts: emergencyContacts.value,
-    currencyConfig, guaranteePinDraft: guaranteePinDraft.value, automation, fiscalConfig,
-    childPolicy, roomTypeCapacityRows: roomTypeCapacityRows.value,
+    currencyConfig, guaranteePinDraft: guaranteePinDraft.value, automation,
+    childPolicy,
     // Slug, amenities hotel-level, traducciones públicas y flags de reseñas públicas
-    // se gestionan y persisten desde la sección "Página pública" del menú.
+    // se gestionan y persisten desde la sección "Página pública" del menú. Capacidad por tipo
+    // de habitación y días laborables, desde Habitaciones y Asistencia respectivamente.
   })
 }
 function markClean() {
@@ -1264,6 +1030,16 @@ const form = ref<HotelForm>({
   slug: '', amenities: [], descriptionTranslations: {},
   id: '',
 })
+
+/**
+ * Un logo que no resuelve (archivo borrado del storage, valor legacy, URL absoluta que no carga)
+ * no debe dejar el recuadro de imagen rota del navegador: se trata como "sin logo" y cae al
+ * placeholder de arrastrar/soltar. Mismo tratamiento que CommandCenterHeader.
+ */
+const logoFailed = ref(false)
+const logoSrc = computed(() => (logoFailed.value ? '' : form.value.logo || ''))
+// Un logo NUEVO (recién subido o pegado a mano) merece otra chance aunque el anterior fallara.
+watch(() => form.value.logo, () => { logoFailed.value = false })
 
 // Plan contratado: la suscripción manda (`planId`), y el precio/nombre salen de la tabla `plans`.
 // `hotels.plan` sólo se usa como último recurso para resolver el slug cuando todavía no hay
@@ -1434,17 +1210,14 @@ onMounted(async () => {
     await loadCurrency()
     await loadGuaranteePin()
     await loadAutomation()
-    await loadFiscalConfig()
     await loadChildPolicy()
-    await loadRoomTypeCapacity()
     await loadInvoicePolicy()
-    await loadWorkingDays()
   } catch (e) {
     toast.error('Error al cargar datos')
   } finally {
     // COR-4: la tarjeta "Plan" NO puede depender de que los siete loaders de arriba hayan salido
     // bien. Cuando `loadPlan()` era el último `await` del `try`, cualquier fallo previo (amenities,
-    // moneda, PIN, automatización, fiscal, política de facturas, días hábiles) lo salteaba,
+    // moneda, PIN, automatización, fiscal, política de facturas) lo salteaba,
     // `planLoading` se quedaba en `true` para siempre y la tarjeta mostraba el skeleton eterno: el
     // fallback "No pudimos leer tu plan" era inalcanzable. Va en el `finally` y trae su propio
     // try/finally, así el indicador siempre se apaga.

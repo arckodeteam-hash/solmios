@@ -14,6 +14,7 @@ export const ROUTE_TO_KEY: Record<string, string> = {
   '/panel/operaciones/mantenimiento': 'operations.maintenance',
   '/panel/operaciones/proveedores': 'operations.providers',
   '/panel/operaciones/chats': 'operations.team-chat',
+  '/panel/operaciones/whatsapp': 'operations.whatsapp-inbox',
   '/panel/finanzas/facturacion': 'finance.billing',
   '/panel/finanzas/folios': 'finance.folios',
   '/panel/finanzas/links-pago': 'finance.payments',
@@ -137,6 +138,8 @@ export const ROUTE_TO_PERMISSION: Record<string, string> = {
   '/panel/channel': 'channel-manager',
   '/panel/reservas': 'reservations',
   '/panel/operaciones/limpieza': 'housekeeping',
+  // El chat con el huésped se gobierna con el permiso `ai`, que ya tienen el dueño y la recepción.
+  '/panel/operaciones/whatsapp': 'ai',
   '/panel/operaciones/mantenimiento': 'maintenance',
   '/panel/operaciones/proveedores': 'maintenance',
   '/panel/operaciones/chats': 'users',
@@ -157,6 +160,9 @@ export const ROUTE_TO_PERMISSION: Record<string, string> = {
   '/panel/config/habitaciones': 'rooms',
   '/panel/config/cerraduras': 'ttlock',
   '/panel/config': 'settings',       // base, tarifas, promociones, mensajería, pasarelas, dispositivos
+  // Integraciones (WhatsApp, pasarelas, cerraduras, dispositivos, facturación) — mismo permiso
+  // que Configuración: es config del hotel, solo que agrupada por "con qué se conecta".
+  '/panel/integraciones': 'settings',
   '/panel/contabilidad': 'accounting',
   '/panel/tesoreria': 'treasury',
   // Match por prefijo más largo: /panel/restaurante/carta gana sobre /panel/restaurante.

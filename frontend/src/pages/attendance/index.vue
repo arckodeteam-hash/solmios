@@ -128,6 +128,34 @@
     </div>
 
     <!-- ─── Horarios ───────────────────────────────────── -->
+    <!-- Días laborables: vivía en Configuración → pestaña "RRHH", lejos de las ausencias y las
+         vacaciones que son lo único que configura. Es el marco de los turnos, así que va acá
+         arriba, antes del detalle. -->
+    <SectionCard v-if="activeTab === 'schedules' && !loading" class="mb-4"
+      title="Días laborables"
+      subtitle="Define qué días de la semana cuenta el sistema al calcular ausencias y vacaciones. Por defecto todos los días (un hotel opera fines de semana).">
+      <template #actions>
+        <button @click="saveWorkingDays" :disabled="workingDaysSaving"
+          class="rounded-full bg-cyan px-4 py-2 text-xs font-bold text-navy transition-all hover:shadow-lg cursor-pointer disabled:opacity-50">
+          {{ workingDaysSaving ? 'Guardando…' : 'Guardar días laborables' }}
+        </button>
+      </template>
+      <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+        <label v-for="day in WEEKDAYS" :key="day.value"
+          class="flex flex-col items-center gap-2 rounded-xl bg-surface p-3 cursor-pointer transition-all"
+          :class="workingDaysDraft.includes(day.value) ? 'ring-2 ring-cyan bg-cyan/5' : 'opacity-60 hover:opacity-100'">
+          <input type="checkbox" :value="day.value" v-model="workingDaysDraft"
+            :aria-label="`${day.label} es día laborable`"
+            class="h-5 w-5 rounded text-cyan cursor-pointer" />
+          <span class="text-xs font-bold text-navy">{{ day.label }}</span>
+        </label>
+      </div>
+      <p class="mt-3 text-[11px] text-text-muted leading-relaxed">
+        Los días desmarcados se descuentan automáticamente al crear una solicitud de ausencia.
+        Los días festivos configurados en Time Off siempre se descuentan, independientemente de esta selección.
+      </p>
+    </SectionCard>
+
     <SectionCard v-if="activeTab === 'schedules' && !loading"
       title="Horarios y Turnos" :subtitle="`${schedules.length} turno(s) configurado(s)`" body-class="p-0">
       <template #actions>
@@ -376,6 +404,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { AttendanceService, type AttendanceRecord, type AttendanceSchedule, type AttendanceReportRow, type ShiftAssignment } from '@/services/Attendance.service'
 import { EmpleadosService, type EmployeeProfile } from '@/services/Empleados.service'
 import { useToast } from '@/composables/useToast'
@@ -386,6 +415,7 @@ import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { ConfigService } from '@/services/Platform.service'
 
 const ICON_CLOCK = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>'
 const ICON_CHECK_CIRCLE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="m9 12.75 1.5 1.5 3.75-3.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>'
@@ -406,7 +436,23 @@ const ICON_ALARM = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" s
 
 const toast = useToast()
 const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm({ onDone: () => loadData(), onError: (e) => toast.error(e instanceof Error ? e.message : 'La acción falló') })
-const activeTab = ref('clock')
+const tabs = [
+  { value: 'clock', label: 'Ponche Digital', icon: ICON_CLOCK },
+  { value: 'calendar', label: 'Calendario', icon: ICON_CALENDAR },
+  { value: 'schedules', label: 'Horarios', icon: ICON_CALENDAR },
+  { value: 'reports', label: 'Reportes', icon: ICON_CHART },
+]
+
+// Deep-link `?tab=`: lo usa el redirect de `/panel/config?tab=hr` (días laborables) para
+// aterrizar directo en Horarios, que es donde quedó esa configuración. Una tab desconocida
+// cae en la de siempre.
+const route = useRoute()
+const requestedTab = (() => {
+  const raw = route.query.tab
+  const value = Array.isArray(raw) ? raw[raw.length - 1] : raw
+  return typeof value === 'string' && tabs.some(t => t.value === value) ? value : 'clock'
+})()
+const activeTab = ref(requestedTab)
 const loading = ref(true)
 const now = ref(''); const today = ref('')
 
@@ -429,12 +475,6 @@ const methods = [
   { value: 'mobile_gps', label: 'Móvil', icon: ICON_PHONE },
 ]
 
-const tabs = [
-  { value: 'clock', label: 'Ponche Digital', icon: ICON_CLOCK },
-  { value: 'calendar', label: 'Calendario', icon: ICON_CALENDAR },
-  { value: 'schedules', label: 'Horarios', icon: ICON_CALENDAR },
-  { value: 'reports', label: 'Reportes', icon: ICON_CHART },
-]
 
 const reportTotals = computed(() => ({
   days: report.value.reduce((s, r) => s + (r.daysWorked || 0), 0),
@@ -479,7 +519,48 @@ async function loadData() {
   finally { loading.value = false }
 }
 
-onMounted(() => { updateClock(); setInterval(updateClock, 10000); loadData() })
+// Días laborables del hotel (feedback #602, movido acá desde Configuración → RRHH).
+// Define qué días de la semana se cuentan al calcular ausencias/vacaciones. Default: todos
+// marcados (un hotel opera fines de semana). Se persisten como array [0..6] en
+// configuration('leave_working_days'), convenio getUTCDay: 0=Dom..6=Sáb.
+const WEEKDAYS = [
+  { value: 0, label: 'Domingo' },
+  { value: 1, label: 'Lunes' },
+  { value: 2, label: 'Martes' },
+  { value: 3, label: 'Miércoles' },
+  { value: 4, label: 'Jueves' },
+  { value: 5, label: 'Viernes' },
+  { value: 6, label: 'Sábado' },
+]
+const workingDaysDraft = ref<number[]>([0, 1, 2, 3, 4, 5, 6])
+const workingDaysSaving = ref(false)
+
+async function loadWorkingDays() {
+  try {
+    const c = await ConfigService.get('leave_working_days') as number[] | null
+    if (Array.isArray(c) && c.length) {
+      workingDaysDraft.value = c.filter((d) => typeof d === 'number' && d >= 0 && d <= 6)
+    }
+  } catch { /* default: todos los días */ }
+}
+
+async function saveWorkingDays() {
+  if (workingDaysDraft.value.length === 0) {
+    toast.error('Debe seleccionar al menos un día laborable')
+    return
+  }
+  workingDaysSaving.value = true
+  try {
+    await ConfigService.set('leave_working_days', [...workingDaysDraft.value].sort())
+    toast.success('Días laborables guardados')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo guardar')
+  } finally {
+    workingDaysSaving.value = false
+  }
+}
+
+onMounted(() => { updateClock(); setInterval(updateClock, 10000); loadData(); loadWorkingDays() })
 
 // Clock actions
 function getEmpId() { return JSON.parse(localStorage.getItem('user') || '{}').id || 'e1' }

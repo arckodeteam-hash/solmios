@@ -133,6 +133,71 @@
         </p>
       </SectionCard>
 
+      <!-- WhatsApp: acá va SOLO el secreto de la APP, que firma los webhooks de todos los hoteles.
+           El número y el token de cada hotel NO se cargan a mano: los obtiene el propio hotel desde
+           su panel con el botón "Conectar WhatsApp". -->
+      <SectionCard title="💬 WhatsApp Business (Meta)"
+        subtitle="Clave secreta de la app. Cada hotel conecta su propio número desde su panel.">
+        <template #actions>
+          <span class="text-[10px] font-bold px-3 py-1 rounded-full"
+            :class="meta?.configurado ? 'bg-teal/10 text-teal' : 'bg-coral/10 text-coral'">
+            {{ meta?.configurado ? (meta.origen === 'entorno' ? 'En el servidor' : 'Configurado') : 'Sin configurar' }}
+          </span>
+        </template>
+
+        <div v-if="metaCargando" class="h-10 animate-pulse rounded-xl bg-surface"></div>
+
+        <div v-else class="space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">App ID</label>
+              <input v-model="metaAppId" type="text" placeholder="1727869705161184"
+                class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Versión de la API</label>
+              <input :value="meta?.graphVersion" type="text" disabled
+                class="w-full px-4 py-2.5 bg-surface/60 border border-border rounded-xl text-sm text-text-muted">
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">
+              Clave secreta de la app
+            </label>
+            <input v-model="metaAppSecret" type="password" autocomplete="new-password" name="meta-app-secret"
+              :placeholder="meta?.pista ? `Guardada (${meta.pista}) — escribí para reemplazar` : 'Pegala acá'"
+              class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+          </div>
+
+          <!-- El entorno gana: decirlo evita que alguien cambie el valor acá y no entienda por qué
+               el sistema sigue usando otro. -->
+          <p v-if="meta?.origen === 'entorno'" class="rounded-xl bg-gold/10 px-4 py-3 text-[11px] leading-relaxed text-navy">
+            Hay una clave cargada en el <strong>servidor</strong> (variable <code>META_APP_SECRET</code>),
+            y esa es la que se usa. Lo que guardes acá queda de respaldo, pero no toma efecto mientras
+            exista la del servidor.
+          </p>
+          <p v-else-if="!meta?.puedeGuardar" class="rounded-xl bg-coral/10 px-4 py-3 text-[11px] leading-relaxed text-navy">
+            Falta <code>PAYMENTS_ENCRYPTION_KEY</code> en el servidor. Sin eso no se puede guardar la
+            clave cifrada, y no se guarda en claro a propósito: firma los webhooks de todos los hoteles.
+          </p>
+
+          <div class="flex flex-wrap items-center gap-3">
+            <button @click="guardarMeta" :disabled="metaGuardando || !metaAppSecret || !meta?.puedeGuardar"
+              class="rounded-xl bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
+              {{ metaGuardando ? 'Guardando…' : 'Guardar clave' }}
+            </button>
+            <a href="https://developers.facebook.com/apps/1727869705161184/settings/basic/" target="_blank" rel="noopener noreferrer"
+              class="text-[11px] font-bold text-navy underline">Sacarla del panel de Meta →</a>
+          </div>
+
+          <p class="text-[11px] leading-relaxed text-text-muted">
+            Sin esta clave el botón "Conectar WhatsApp" del panel del hotel no funciona, y el buzón
+            que recibe los mensajes de los huéspedes rechaza todo.
+          </p>
+        </div>
+      </SectionCard>
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <SectionCard v-for="integration in integrations" :key="integration.name" :title="`${integration.icon} ${integration.name}`" :subtitle="integration.description">
         <template #actions>
@@ -188,6 +253,7 @@
 import { ref, onMounted } from 'vue'
 import logoIconColor from '@/assets/logo/logo-icon-color.png'
 import { ConfigService, PlatformService } from '@/services/Platform.service'
+import type { MetaAppEstado } from '@/services/Platform.service'
 import { useToast } from '@/composables/useToast'
 import ChannexPlatformConfig from '@/components/features/ChannexPlatformConfig.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
@@ -200,6 +266,43 @@ const activeTab = ref('platform')
 // Key de Google Maps — se guarda en configuration(hotelId:'platform', key:'google_maps').
 // Cada hotel la hereda por el fallback a 'platform' de getConfig.
 const mapsKey = ref('')
+
+/** Credenciales de la APP de Meta. El secreto nunca vuelve del servidor: solo su estado. */
+const meta = ref<MetaAppEstado | null>(null)
+const metaCargando = ref(true)
+const metaGuardando = ref(false)
+const metaAppId = ref('')
+const metaAppSecret = ref('')
+
+async function cargarMeta() {
+  metaCargando.value = true
+  try {
+    meta.value = await PlatformService.getMetaWhatsapp()
+    metaAppId.value = meta.value?.appId || ''
+  } catch {
+    meta.value = null
+  } finally {
+    metaCargando.value = false
+  }
+}
+
+async function guardarMeta() {
+  if (!metaAppSecret.value) return
+  metaGuardando.value = true
+  try {
+    meta.value = await PlatformService.saveMetaWhatsapp({
+      appId: metaAppId.value.trim() || undefined,
+      appSecret: metaAppSecret.value.trim(),
+    })
+    // No se conserva en el formulario: el secreto no tiene por qué quedar en memoria del navegador.
+    metaAppSecret.value = ''
+    toast.success('Clave guardada', 'Los hoteles ya pueden conectar su WhatsApp')
+  } catch (e: any) {
+    toast.error('No se pudo guardar', e?.message || 'Revisá la clave e intentá de nuevo')
+  } finally {
+    metaGuardando.value = false
+  }
+}
 const selectedTemplate = ref<any>(null)
 const showSaved = ref(false)
 
@@ -226,14 +329,22 @@ const settings = ref<any>({
 
 const emailTemplates = ref<any[]>([])
 const securityOptions = ref<any[]>([])
+// WhatsApp SALIÓ de acá (2026-09-07). Estaba en el lugar equivocado del sistema: no existe un
+// WhatsApp "de la plataforma" que sirva a todos los hoteles — cada hotel conecta su propio número y
+// su propia cuenta de Meta. Ahora se conecta desde el panel del hotel (Configuración →
+// Integraciones), con el flujo oficial de Meta, y el estado vive en `ai_whatsapp_config`.
+//
+// Además la tarjeta nunca guardó nada: los inputs de abajo usan `:value` sin `v-model`, así que lo
+// que se escribe no vuelve al modelo, y nadie lee la clave `configuration('integraciones')` que se
+// persiste. Eso sigue siendo cierto para Stripe, que se configura de verdad en
+// /panel/config/pasarelas — esta tarjeta queda como resto a limpiar aparte.
 const integrations = ref<any[]>([
   { name: 'Stripe', icon: '💳', description: 'Pasarela de pagos con tarjeta', connected: false,
     fields: [{ name: 'Publishable Key', value: '', type: 'text' }, { name: 'Secret Key', value: '', type: 'password' }] },
-  { name: 'WhatsApp Business', icon: '💬', description: 'API de WhatsApp para mensajes', connected: false,
-    fields: [{ name: 'Phone Number ID', value: '', type: 'text' }, { name: 'Access Token', value: '', type: 'password' }] },
 ])
 
 onMounted(async () => {
+  cargarMeta()
   try {
     // SMTP-UI (2026-08-19): se lee el CANÓNICO ('email_config', host/pass) con fallback al
     // legacy ('smtp', server/password) que guardaba esta misma página — antes el load ni

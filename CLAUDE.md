@@ -266,6 +266,80 @@ visible en toda la app (web + móvil). Solo texto de UI; código/rutas/endpoints
 Aprobar limpieza desde el web exige `supOnSiteTime` (presencia) — el backend lo pide; el admin la
 marca en el mismo paso (`presence` no exige foto; la foto es solo la regla del móvil).
 
+## WhatsApp con Meta — cómo está armado
+
+**El modelo es una cuenta de WhatsApp POR HOTEL**, no una de la plataforma. SOLMI OS es el
+"proveedor de tecnología": una sola app de Meta (`1727869705161184`) que opera **en nombre de**
+muchas cuentas. Cada hotel conecta su número, tiene su WABA y paga sus conversaciones.
+
+| Pieza | Dónde |
+|---|---|
+| Cliente HTTP de Meta (plantillas, conexión, envío) | `services/whatsapp-cloud-client.ts` |
+| Conexión del hotel (Embedded Signup) | `ai-recepcionista/usecases/whatsapp-connection.ts` |
+| Plantillas ↔ Meta | `marketing/usecases/meta-templates.ts` + `meta-variable-mapping.ts` |
+| Plantillas listas para usar | `marketing/usecases/plantillas-base.ts` |
+| Envío desde la reserva | `reservas/usecases/send-whatsapp.ts` |
+| Bandeja del huésped | `ai-recepcionista/usecases/inbox.ts` |
+| Acuse de entrega | `ai-recepcionista/usecases/whatsapp-delivery-status.ts` |
+| Diagnóstico | `bun run verificar-whatsapp` |
+| Hotel de prueba para Meta | `bun run seed-demo-meta` (pide `DEMO_PASSWORD`) |
+
+Variables (`backend/.env.example`): `META_APP_ID`, `META_APP_SECRET`, `META_GRAPH_VERSION`,
+`META_REGISTRATION_PIN`, `WHATSAPP_APP_SECRET`. **Sin `WHATSAPP_APP_SECRET` el webhook rechaza
+TODO** (puerta cerrada) y ningún mensaje de huésped entra.
+
+### Reglas de Meta que ya nos costaron un rechazo
+
+- Una plantilla **no puede terminar con una variable, ni siquiera seguida de un punto**.
+- Una plantilla `UTILITY` que **entrega o menciona una credencial** (clave de wifi, código de
+  puerta) se rechaza con `INCORRECT_CATEGORY`. El dato se manda por texto libre dentro de la
+  ventana de 24 h, no por plantilla.
+- **Borrar una plantilla no libera el nombre** enseguida: para corregir una rechazada, mandarla con
+  otro nombre.
+- Fuera de las **24 h** desde el último mensaje del huésped, solo se puede escribir con plantilla
+  aprobada. La ventana se calcula con el último mensaje ENTRANTE (`ai_conversations.lastInboundAt`);
+  una respuesta del hotel no la reabre.
+
+### Consumo y cobro — el modelo es "SOLMI OS paga y factura al hotel"
+
+Meta le cobra a la **plataforma**, y la plataforma se lo cobra al hotel dentro de su plan. Eso
+obliga a dos cosas que no serían necesarias si cada hotel pagara directo:
+
+| Pieza | Dónde |
+|---|---|
+| Consumo por hotel/día/categoría | tabla `whatsapp_usage_daily` |
+| Sincronía desde Meta | `ai-recepcionista/usecases/whatsapp-usage.ts` + cron cada 6 h |
+| Cupo del plan | `plans.limits.whatsappConversations` |
+| Corte al agotarse | `assertPuedeIniciarConversacion`, llamado desde `reservas/usecases/send-whatsapp.ts` |
+| Pantalla del hotel | `components/features/WhatsappUsageCard.vue` |
+
+Reglas que están en el código y conviene no romper:
+
+- **El consumo se TRAE de Meta, no se calcula.** Meta cobra por conversación de 24 h con precio por
+  categoría; contar `message_logs` daría otro número y la diferencia la discutiría el hotel con su
+  factura en la mano.
+- **La sincronía reemplaza el día, no suma.** Meta corrige sus propios números durante las horas
+  siguientes; acumular convertiría una corrección en un cobro doble.
+- **El corte solo frena lo que INICIA una conversación** (una plantilla). Responder dentro de la
+  ventana de 24 h nunca se corta: esa conversación ya está pagada, y dejar a un huésped sin
+  respuesta a mitad de una charla es peor que el sobrecosto.
+- **Un plan sin `whatsappConversations` cae al default (1000), no a ilimitado.** El que paga es la
+  plataforma: ante la duda, tope. `null` explícito sí es sin tope; `0` es "este plan no incluye
+  WhatsApp".
+
+### ⚠️ Baileys es LEGACY — no construir nada nuevo sobre él
+
+`ai-recepcionista/usecases/whatsapp-baileys-client.ts` vincula WhatsApp escaneando un código QR
+(WhatsApp Web no oficial). **Va contra las condiciones de Meta** y es un riesgo de rechazo de la app:
+si el revisor la encuentra, rechaza.
+
+Sigue en el código porque hay hoteles usándolo y apagarlo los desconecta sin aviso. Mitigación
+vigente: la pestaña **desaparece del panel en cuanto el hotel tiene `connectionMode='meta'`**
+(`pages/ai-receptionist/config.vue`). Pendiente, como decisión de producto: avisar a esos hoteles,
+migrarlos a la conexión oficial y sacar el código.
+
+Para saber quién lo usa: `bun run verificar-whatsapp` los lista.
+
 ## Multi-tenancy
 - Single DB con columna `hotelId` en cada tabla
 - Cada query filtra por `hotelId` (token o query param)
@@ -279,7 +353,7 @@ marca en el mismo paso (`presence` no exige foto; la foto es solo la regla del m
 | Stripe (pagos) | ✅ Links + deposits + checkout sessions · ⚠️ **webhooks rotos en prod** (firma, ver deudas) |
 | TTLock (cerraduras) | ✅ Auto-generate/send/delete codes |
 | Email (SMTP/Resend) | ✅ Auto-messages |
-| WhatsApp Business API | ⚠️ Requiere creds Meta |
+| WhatsApp Business API | ✅ Código completo (ver abajo) · ⚠️ falta `META_APP_SECRET` en prod |
 | Facturación electrónica | ⚠️ Stub (`fiscal.ts`), sin conector |
 
 ## Módulos — madurez
