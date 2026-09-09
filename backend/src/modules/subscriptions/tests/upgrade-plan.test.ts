@@ -7,7 +7,7 @@
 // distinto del actual, incluido uno más barato (CA 2/25), y el plan sólo se aplica si el prorrateo
 // se pudo cobrar: con `payment_behavior:'error_if_incomplete'` un rechazo lanza y no toca nada
 // (CA 4/5).
-import { describe, it, expect, mock, beforeEach, afterAll } from 'bun:test'
+import { describe, it, expect, mock, beforeEach, afterAll, setSystemTime } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { ConflictError, ValidationError } from 'arckode-framework'
@@ -99,6 +99,12 @@ function activeSub(over: any = {}) {
     // token del intento en la clave de idempotencia.
     updatedAt: '2026-09-01T00:00:00.000Z', ...over,
   }
+}
+
+/** Un error como los que tira stripe-node: lo que lo distingue es `type`, igual que en
+ *  `payment-requests/usecases/live-session.ts`. */
+function errorDeStripe(type: string, message: string): Error {
+  return Object.assign(new Error(message), { type })
 }
 
 function setup(subs: any[]) {
@@ -216,7 +222,7 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     }) as any
     stripeClient.subscriptions.update = async (id: string, params: any, options?: any) => {
       updates.push({ id, params, options })
-      throw new Error('Your card was declined.')
+      throw errorDeStripe('StripeCardError', 'Your card was declined.')
     }
 
     let err: any
@@ -243,11 +249,87 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     expect(updates).toHaveLength(1)
     const clave = updates[0].options?.idempotencyKey
     expect(typeof clave).toBe('string')
-    // La clave identifica el INTENTO: incluye el `updatedAt` de la fila leída, así dos pedidos
-    // concurrentes (mismo snapshot) comparten clave, pero un intento posterior —tras cualquier
-    // escritura sobre la suscripción— estrena una. Atarla sólo a origen→destino haría que Stripe
-    // devolviera la respuesta CACHEADA de 24h en un A→B→A→B legítimo del mismo día.
-    expect(clave).toBe('upgrade:h1:sub_1:plan-pro:2026-09-01T00:00:00.000Z')
+    // La clave identifica el INTENTO: hotel, suscripción de Stripe, plan destino y el `updatedAt`
+    // de la fila leída. Atarla sólo a origen→destino haría que Stripe devolviera la respuesta
+    // CACHEADA de 24h en un A→B→A→B legítimo del mismo día.
+    expect(clave.startsWith('upgrade:h1:sub_1:plan-pro:')).toBe(true)
+    expect(clave).toContain('2026-09-01T00:00:00.000Z')
+  })
+
+  // Revisión #84: con `error_if_incomplete` un cobro RECHAZADO no escribe la fila, así que
+  // `updatedAt` no se mueve. Si la clave dependiera sólo de él, el reintento reusaría la misma y
+  // Stripe devolvería el ERROR cacheado por hasta 24h — el hotel arregla su tarjeta y sigue
+  // recibiendo el mismo rechazo, justo contra el "intentá de nuevo" que el propio código muestra.
+  // La clave tiene que deduplicar la RÁFAGA y dejar pasar el reintento posterior.
+  it('la clave deduplica dos pedidos del MISMO instante y cambia cuando pasa la ventana', async () => {
+    // Cada llamada estrena `setup`: aplicar el plan escribe la fila y un segundo intento sobre el
+    // mismo `deps` cortaría con "Ya estás en ese plan". El snapshot leído es idéntico en las tres.
+    const claveDe = async () => {
+      const { deps } = setup([activeSub()])
+      updates = []
+      await applyUpgrade(deps, 'h1', 'plan-pro')
+      return updates[0].options?.idempotencyKey as string
+    }
+
+    try {
+      setSystemTime(new Date('2026-09-08T12:00:30.000Z'))
+      const primera = await claveDe()
+      // Doble clic / dos pestañas: mismo instante, misma fila → MISMA clave, Stripe cobra una vez.
+      const concurrente = await claveDe()
+      expect(concurrente).toBe(primera)
+
+      // Un minuto después (la tarjeta ya corregida) el bucket cambió: clave nueva, Stripe
+      // re-ejecuta de verdad en vez de devolver la respuesta cacheada.
+      setSystemTime(new Date('2026-09-08T12:01:30.000Z'))
+      const reintento = await claveDe()
+      expect(reintento).not.toBe(primera)
+      // Y sigue siendo la misma clave conceptual: mismo prefijo y mismo snapshot.
+      expect(reintento.startsWith('upgrade:h1:sub_1:plan-pro:')).toBe(true)
+      expect(reintento).toContain('2026-09-01T00:00:00.000Z')
+    } finally {
+      setSystemTime()
+    }
+  })
+
+  // Revisión #84: el `catch` del update envolvía CUALQUIER error de Stripe en "revisá tu método de
+  // pago". Un price inválido, un timeout o una caída de la API salían disfrazados de problema de
+  // la tarjeta del hotel: la persona revisa una tarjeta que está bien y el log no grita lo que es
+  // un fallo de infraestructura. Sólo el `StripeCardError` se traduce; el resto sube tal cual.
+  it('un error de Stripe que NO es de tarjeta sube TAL CUAL, sin disfrazarse de método de pago', async () => {
+    const { deps, subRows, hotelRows } = setup([activeSub()])
+    const patches: any[] = []
+    const updateOriginal = deps.subscriptionsRepo.update.bind(deps.subscriptionsRepo)
+    deps.subscriptionsRepo.update = (async (id: string, patch: any) => {
+      patches.push(patch)
+      return updateOriginal(id, patch)
+    }) as any
+    const original = errorDeStripe('StripeAPIError', 'An error occurred with our connection to Stripe.')
+    stripeClient.subscriptions.update = async () => { throw original }
+
+    let err: any
+    try { await applyUpgrade(deps, 'h1', 'plan-pro') } catch (e) { err = e }
+
+    // La MISMA instancia: no se envuelve, no se pierde el tipo ni el stack.
+    expect(err).toBe(original)
+    expect(err).not.toBeInstanceOf(ValidationError)
+    expect(err.message).not.toMatch(/método de pago/i)
+    // Y tampoco toca el plan: el cobro no ocurrió.
+    expect(patches.some(p => 'planId' in p)).toBe(false)
+    expect(subRows[0].planId).toBe('plan-ess')
+    expect(hotelRows[0].plan).toBe('esencial')
+  })
+
+  it('un StripeInvalidRequestError (price mal configurado) tampoco se traduce como tarjeta', async () => {
+    const { deps, subRows } = setup([activeSub()])
+    const original = errorDeStripe('StripeInvalidRequestError', 'No such price: price_pro_349')
+    stripeClient.subscriptions.update = async () => { throw original }
+
+    let err: any
+    try { await applyUpgrade(deps, 'h1', 'plan-pro') } catch (e) { err = e }
+
+    expect(err).toBe(original)
+    expect(err.message).not.toMatch(/revisá tu método de pago/i)
+    expect(subRows[0].planId).toBe('plan-ess')
   })
 
   // Si Stripe devolviera una respuesta cacheada por idempotencia (o el ítem no fuera el que se

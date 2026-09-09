@@ -31,9 +31,9 @@ export interface UpgradePlanDeps {
 }
 
 const MS_PER_SECOND = 1000
-/** Ventana de deduplicación cuando la fila no trae `updatedAt`. Corta a propósito: sólo tiene que
- *  cubrir la ráfaga de pedidos concurrentes (dos pestañas, un doble clic), no congelar la
- *  operación — las claves de idempotencia de Stripe viven 24h y no queremos bloquear tanto. */
+/** Bucket de tiempo de la clave de idempotencia. Corta a propósito: sólo tiene que cubrir la
+ *  ráfaga de pedidos concurrentes (dos pestañas, un doble clic), no congelar la operación — las
+ *  claves de idempotencia de Stripe viven 24h y un reintento legítimo no puede esperar tanto. */
 const VENTANA_DEDUP_MS = 60_000
 
 /** Todo lo que las dos operaciones necesitan resolver ANTES de tocar plata. */
@@ -107,22 +107,37 @@ export async function applyUpgrade(
   // porque no cruza pestañas. Con la clave, Stripe colapsa el segundo pedido idéntico en la misma
   // operación y devuelve el mismo resultado, sin cobrar de nuevo.
   //
-  // La clave identifica EL INTENTO, no la transición, y por eso incluye `updatedAt` de la fila
-  // leída. Atarla sólo a origen→destino sería un bug: Stripe cachea la respuesta de una clave
-  // repetida durante 24h y la devuelve SIN re-ejecutar nada, así que un hotel que mejora A→B, baja
-  // a A desde el Billing Portal y vuelve a mejorar a B el mismo día recibiría el response viejo —
-  // sin cobro y sin cambio real en Stripe. `updatedAt` cambia con cada escritura sobre la fila
-  // (incluida la del webhook al bajar de plan), así que dos pedidos CONCURRENTES —que leen el
-  // mismo snapshot— comparten clave y se deduplican, mientras que un intento posterior legítimo
-  // —que lee un snapshot distinto— estrena clave. Sin `updatedAt` se cae a una ventana de tiempo
-  // corta, que conserva la deduplicación de la ráfaga concurrente sin congelar nada por 24h.
-  const tokenIntento = active.updatedAt
-    ? String(active.updatedAt)
-    : `t${Math.floor(Date.now() / VENTANA_DEDUP_MS)}`
+  // La clave identifica EL INTENTO, no la transición. Atarla sólo a origen→destino sería un bug:
+  // Stripe cachea la respuesta de una clave repetida durante 24h y la devuelve SIN re-ejecutar
+  // nada, así que un hotel que mejora A→B, baja a A desde el Billing Portal y vuelve a mejorar a B
+  // el mismo día recibiría el response viejo — sin cobro y sin cambio real en Stripe.
+  //
+  // Y `updatedAt` de la fila SOLO tampoco alcanza, justamente por `error_if_incomplete`: un cobro
+  // RECHAZADO ya no escribe nada en local —Stripe revierte el ítem y esta llamada lanza antes del
+  // reflejo—, así que `updatedAt` queda igual y el reintento reusaría la MISMA clave. Como el
+  // caché de Stripe también guarda los ERRORES, el hotel corregiría su tarjeta y recibiría el
+  // mismo rechazo cacheado hasta 24h: exactamente lo contrario del "intentá de nuevo" que este
+  // mismo código le muestra. Con `allow_incomplete` no se notaba porque todo intento escribía la
+  // fila y movía el `updatedAt`.
+  //
+  // Por eso el token combina las DOS cosas: el `updatedAt` del snapshot leído y el bucket de
+  // tiempo de `VENTANA_DEDUP_MS`. Dos pedidos CONCURRENTES comparten los dos componentes —mismo
+  // snapshot, mismo bucket— y Stripe los colapsa en una sola operación; un reintento hecho un
+  // minuto después estrena bucket y por lo tanto clave, y se ejecuta de verdad. El fallback queda
+  // para la fila sin `updatedAt`, donde el bucket va solo.
+  const bucketTiempo = `t${Math.floor(Date.now() / VENTANA_DEDUP_MS)}`
+  const tokenIntento = active.updatedAt ? `${String(active.updatedAt)}|${bucketTiempo}` : bucketTiempo
   const claveIdempotencia = `upgrade:${hotelId}:${active.stripeSubscriptionId}:${plan.id}:${tokenIntento}`
   // El rechazo de la tarjeta llega acá como error de Stripe. Sube traducido (#84, CA 29): un
   // "card_declined" crudo no le dice a nadie que su plan siguió intacto. El motivo de Stripe NO se
   // tapa —es lo único que explica QUÉ falló— y queda además en el log con hotel y plan.
+  //
+  // SÓLO el error de cobro se traduce. Un price inválido, un timeout, un rate limit o una caída de
+  // la API no son problemas de la tarjeta del hotel: disfrazarlos de "revisá tu método de pago"
+  // manda a la persona a revisar una tarjeta que está bien y esconde un fallo de infraestructura
+  // detrás de un `warn`. Esos suben TAL CUAL —sin envolver, conservando tipo y stack— y se loguean
+  // en `error`. Mismo criterio de detección que `payment-requests/usecases/live-session.ts`: el
+  // `type` del error de Stripe; acá el caso de cobro es `StripeCardError`.
   let updated: Stripe.Subscription
   try {
     updated = await stripe.subscriptions.update(String(active.stripeSubscriptionId), {
@@ -133,10 +148,15 @@ export async function applyUpgrade(
     }, { idempotencyKey: claveIdempotencia })
   } catch (e) {
     const motivo = (e as Error)?.message ?? 'error desconocido'
-    logger.warn('No se pudo cobrar el prorrateo del cambio de plan: el plan actual queda intacto', {
+    const contexto = {
       hotelId, planId: String(plan.id), currentPlanId: active.planId ? String(active.planId) : null,
       stripeSubscriptionId: String(active.stripeSubscriptionId), error: motivo,
-    })
+    }
+    if (!isStripeCardError(e)) {
+      logger.error('El cambio de plan falló por un error del sistema, no del método de pago', contexto)
+      throw e
+    }
+    logger.warn('No se pudo cobrar el prorrateo del cambio de plan: el plan actual queda intacto', contexto)
     throw new ValidationError(
       `No pudimos cobrar el cambio de plan: ${motivo}. `
       + 'Tu plan actual no cambió — revisá tu método de pago e intentá de nuevo.',
@@ -281,6 +301,13 @@ async function loadUpgrade(deps: UpgradePlanDeps, hotelId: string, planId: strin
   if (!itemId) throw new ConflictError('Tu suscripción en Stripe no tiene ítems: escribinos para migrarla')
 
   return { stripe, active, stripeSub, itemId: String(itemId), plan, currentPlan }
+}
+
+/** El único error de Stripe que SÍ es del método de pago del hotel (tarjeta rechazada, expirada,
+ *  fondos insuficientes). El resto —`StripeInvalidRequestError`, `StripeAPIError`,
+ *  `StripeConnectionError`, `StripeRateLimitError`— es un fallo del sistema. */
+function isStripeCardError(e: unknown): boolean {
+  return (e as { type?: string } | null)?.type === 'StripeCardError'
 }
 
 /** La factura del prorrateo. `expand` normalmente la trae entera; el retrieve es el defensivo. */
