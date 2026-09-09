@@ -115,7 +115,7 @@
             @click="logoFileInput?.click()"
             class="relative w-28 h-28 rounded-xl border-2 border-dashed overflow-hidden bg-surface flex items-center justify-center shrink-0 cursor-pointer transition-colors"
             :class="logoDragging ? 'border-cyan bg-cyan/5' : 'border-border hover:border-navy/40'">
-            <img v-if="logo" :src="logo" alt="Logo" class="w-full h-full object-contain" />
+            <img v-if="logo" :src="logo" alt="Logo" class="w-full h-full object-contain" @error="onLogoImgError" />
             <div v-else class="flex flex-col items-center gap-1 px-2 text-center pointer-events-none">
               <span class="w-5 h-5 text-navy/40" v-html="ICON_UPLOAD"></span>
               <span class="text-[9px] font-bold text-text-muted uppercase">Arrastrá o hacé clic</span>
@@ -297,6 +297,14 @@ function readFileAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error('No se pudo leer el archivo'))
     reader.readAsDataURL(file)
   })
+}
+
+/** Si la URL guardada no carga (archivo borrado del storage, caché vieja, hipo de red) el
+ *  recuadro NO se queda mostrando el ícono de imagen rota con "Logo" superpuesto — vuelve al
+ *  estado vacío (ícono de subir) para que el usuario sepa que tiene que volver a cargarlo. */
+function onLogoImgError() {
+  logo.value = ''
+  toast.error('No se pudo cargar el logo guardado — volvé a subirlo')
 }
 
 async function uploadLogoFile(file: File) {
