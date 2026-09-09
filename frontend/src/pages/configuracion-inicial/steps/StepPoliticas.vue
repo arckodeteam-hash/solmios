@@ -1,37 +1,37 @@
 <template>
-  <div class="space-y-5">
+  <div class="space-y-4">
     <div v-if="loading" class="h-24 animate-pulse bg-surface rounded-lg"></div>
     <template v-else>
       <div>
-        <p class="text-[11px] font-black uppercase tracking-wide text-navy mb-2">Impuesto</p>
+        <p class="text-xs font-black uppercase tracking-wide text-navy mb-1.5">Impuesto</p>
         <!-- R1 (doc 08): el default 'ITBIS'/18% está sesgado a RD — nunca dejarlo pasar en
              silencio. Si el país no es RD y los valores siguen siendo el default, aviso explícito. -->
-        <p v-if="showTaxWarning" class="text-[11px] font-bold text-warning bg-warning/10 rounded-lg px-3 py-2 mb-2 flex gap-1.5">
+        <p v-if="showTaxWarning" class="text-xs font-bold text-warning bg-warning/10 rounded-lg px-3 py-2 mb-2 flex gap-1.5">
           <span class="w-3.5 h-3.5 shrink-0 mt-px" v-html="ICON_WARN"></span>
           <span>Estos valores son el default de República Dominicana (ITBIS 18%) — su hotel está en {{ country || 'otro país' }}. Confírmelos o cámbielos antes de guardar.</span>
         </p>
-        <p class="text-[11px] text-text-muted mb-3">Los campos marcados con <span class="text-danger font-bold">*</span> son obligatorios.</p>
+        <p class="text-xs text-text-muted mb-2.5">Los campos marcados con <span class="text-danger font-bold">*</span> son obligatorios.</p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nombre del impuesto <span class="text-danger">*</span></label>
+            <label class="mb-1.5 block text-xs font-bold uppercase tracking-wide text-text-muted">Nombre del impuesto <span class="text-danger">*</span></label>
             <div class="wizard-field">
               <span class="wizard-field-icon" v-html="ICON_TAG"></span>
               <input v-model="taxName" type="text" required aria-required="true" class="wizard-input">
             </div>
           </div>
           <div>
-            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tasa (%) <span class="text-danger">*</span></label>
+            <label class="mb-1.5 block text-xs font-bold uppercase tracking-wide text-text-muted">Tasa (%) <span class="text-danger">*</span></label>
             <div class="wizard-field">
               <span class="wizard-field-icon" v-html="ICON_PERCENT"></span>
               <input v-model.number="taxRate" type="number" min="0" max="100" step="0.1" required aria-required="true" class="wizard-input">
             </div>
           </div>
         </div>
-        <p v-if="error" class="text-[11px] font-bold text-danger mt-2">{{ error }}</p>
+        <p v-if="error" class="text-xs font-bold text-danger mt-2">{{ error }}</p>
       </div>
 
-      <div class="border-t border-border pt-5">
-        <p class="text-[11px] font-black uppercase tracking-wide text-navy mb-2">Política de cancelación <span class="font-normal normal-case text-text-muted/70">(opcional)</span></p>
+      <div class="border-t border-border pt-4">
+        <p class="text-xs font-black uppercase tracking-wide text-navy mb-2">Política de cancelación <span class="font-normal normal-case text-text-muted/70">(opcional)</span></p>
         <CancellationPolicyEditor :hotel-id="hotelId" />
       </div>
     </template>

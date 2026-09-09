@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-5">
+  <div class="space-y-4">
     <!-- Estado de carga / error -->
     <div v-if="loading" class="text-sm text-text-muted py-4">Cargando políticas…</div>
     <div v-else-if="loadError" class="text-sm text-rose py-4">
@@ -10,75 +10,75 @@
     <template v-else>
       <!-- Presets: aplicación rápida de una plantilla conocida -->
       <div>
-        <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Plantillas rápidas</label>
+        <label class="text-xs font-bold text-text-muted uppercase mb-1.5 block">Plantillas rápidas</label>
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <button
             v-for="opt in PRESET_OPTIONS"
             :key="opt.key"
             type="button"
-            class="p-3 rounded-xl border-2 text-left transition-all cursor-pointer"
+            class="p-2.5 rounded-xl border-2 text-left transition-all cursor-pointer"
             :class="selectedPreset === opt.key ? 'border-cyan bg-cyan/5' : 'border-border hover:border-gray-300'"
             @click="applyPreset(opt.key)"
           >
-            <div class="text-xs font-black text-navy">{{ opt.label }}</div>
-            <div class="text-[10px] text-text-muted mt-0.5 leading-tight">{{ opt.desc }}</div>
+            <div class="text-sm font-black text-navy">{{ opt.label }}</div>
+            <div class="text-xs text-text-muted mt-0.5 leading-tight">{{ opt.desc }}</div>
           </button>
         </div>
-        <p v-if="selectedPreset" class="mt-1.5 text-[10px] text-text-muted">
+        <p v-if="selectedPreset" class="mt-1.5 text-xs text-text-muted">
           Plantilla aplicada. Podés ajustar los niveles abajo antes de guardar.
         </p>
       </div>
 
       <!-- Editor de la política BASE -->
-      <div class="pt-4 border-t border-border">
-        <div class="flex items-center justify-between mb-3">
+      <div class="pt-3 border-t border-border">
+        <div class="flex items-center justify-between mb-2">
           <div>
-            <div class="text-xs font-black text-navy">Política base</div>
-            <div class="text-[10px] text-text-muted">Se aplica a todos los canales sin excepción propia.</div>
+            <div class="text-sm font-black text-navy">Política base</div>
+            <div class="text-xs text-text-muted">Se aplica a todos los canales sin excepción propia.</div>
           </div>
-          <button type="button" class="text-[11px] font-bold text-cyan hover:text-navy cursor-pointer" @click="addTier(baseTiers)">
+          <button type="button" class="text-xs font-bold text-cyan hover:text-navy cursor-pointer" @click="addTier(baseTiers)">
             + Nivel
           </button>
         </div>
 
-        <div v-if="baseTiers.length === 0" class="text-[11px] text-text-muted italic py-2">
+        <div v-if="baseTiers.length === 0" class="text-xs text-text-muted italic py-2">
           Sin niveles. Elegí una plantilla o agregá un nivel con “+ Nivel”.
         </div>
 
         <div v-for="(tier, idx) in baseTiers" :key="idx" class="grid grid-cols-12 gap-2 items-center mb-2">
           <div class="col-span-3">
-            <label class="text-[9px] font-bold text-text-muted uppercase block">Horas antes</label>
+            <label class="text-[11px] font-bold text-text-muted uppercase block">Horas antes</label>
             <input
               v-model.number="tier.deadlineHours"
               type="number"
               min="0"
-              class="w-full h-9 px-2 rounded-lg border border-border text-xs focus:outline-none focus:border-cyan"
+              class="w-full h-9 px-2 rounded-lg border border-border text-sm focus:outline-none focus:border-cyan"
             />
           </div>
           <div class="col-span-3">
-            <label class="text-[9px] font-bold text-text-muted uppercase block">% Penalidad</label>
+            <label class="text-[11px] font-bold text-text-muted uppercase block">% Penalidad</label>
             <input
               v-model.number="tier.penaltyPercent"
               type="number"
               min="0"
               max="100"
-              class="w-full h-9 px-2 rounded-lg border border-border text-xs focus:outline-none focus:border-cyan"
+              class="w-full h-9 px-2 rounded-lg border border-border text-sm focus:outline-none focus:border-cyan"
             />
           </div>
           <div class="col-span-3 flex items-end h-9">
-            <label class="flex items-center gap-1.5 text-[10px] font-bold text-navy cursor-pointer">
+            <label class="flex items-center gap-1.5 text-xs font-bold text-navy cursor-pointer">
               <input v-model="tier.refundable" type="checkbox" class="w-3.5 h-3.5 rounded text-cyan" />
               Reembolsable
             </label>
           </div>
           <div class="col-span-2">
-            <label class="text-[9px] font-bold text-text-muted uppercase block">Etiqueta</label>
+            <label class="text-[11px] font-bold text-text-muted uppercase block">Etiqueta</label>
             <input
               v-model="tier.label"
               type="text"
               maxlength="60"
               placeholder="Ej: Cancelación gratis"
-              class="w-full h-9 px-2 rounded-lg border border-border text-xs focus:outline-none focus:border-cyan"
+              class="w-full h-9 px-2 rounded-lg border border-border text-sm focus:outline-none focus:border-cyan"
             />
           </div>
           <div class="col-span-1 flex items-end justify-center h-9">
@@ -93,27 +93,27 @@
 
         <!-- Texto explicativo de cada tier, en orden humano -->
         <ul v-if="baseTiers.length" class="mt-1 space-y-0.5">
-          <li v-for="(t, i) in tierSummary(baseTiers)" :key="i" class="text-[10px] text-text-muted">• {{ t }}</li>
+          <li v-for="(t, i) in tierSummary(baseTiers)" :key="i" class="text-xs text-text-muted">• {{ t }}</li>
         </ul>
       </div>
 
       <!-- OVERRIDES por canal -->
-      <div class="pt-4 border-t border-border">
-        <div class="flex items-center justify-between mb-3">
+      <div class="pt-3 border-t border-border">
+        <div class="flex items-center justify-between mb-2">
           <div>
-            <div class="text-xs font-black text-navy">Excepciones por canal</div>
-            <div class="text-[10px] text-text-muted">Anulan la política base para un canal concreto (ej: Booking, Airbnb).</div>
+            <div class="text-sm font-black text-navy">Excepciones por canal</div>
+            <div class="text-xs text-text-muted">Anulan la política base para un canal concreto (ej: Booking, Airbnb).</div>
           </div>
           <button
             type="button"
-            class="text-[11px] font-bold text-cyan hover:text-navy cursor-pointer"
+            class="text-xs font-bold text-cyan hover:text-navy cursor-pointer"
             :disabled="!canAddOverride"
             :class="{ 'opacity-40 cursor-not-allowed': !canAddOverride }"
             @click="addOverride"
           >+ Excepción</button>
         </div>
 
-        <div v-if="overrides.length === 0" class="text-[11px] text-text-muted italic py-1">
+        <div v-if="overrides.length === 0" class="text-xs text-text-muted italic py-1">
           Sin excepciones. La política base aplica a todos los canales.
         </div>
 
@@ -122,13 +122,13 @@
             <div class="flex items-center gap-2 flex-1">
               <select
                 v-model="ov.scopeId"
-                class="h-8 px-2 rounded-lg border border-border text-xs focus:outline-none focus:border-cyan cursor-pointer"
+                class="h-8 px-2 rounded-lg border border-border text-sm focus:outline-none focus:border-cyan cursor-pointer"
                 :class="{ 'text-text-muted': !ov.scopeId }"
               >
                 <option value="" disabled>Elegí un canal…</option>
                 <option v-for="ch in channelOptions" :key="ch.value" :value="ch.value">{{ ch.label }}</option>
               </select>
-              <span v-if="ov.id" class="text-[9px] font-bold text-teal uppercase">Guardado</span>
+              <span v-if="ov.id" class="text-[11px] font-bold text-teal uppercase">Guardado</span>
             </div>
             <button
               type="button"
@@ -140,23 +140,23 @@
 
           <!-- Tiers del override (compacto, mismo patrón que la base) -->
           <div class="flex items-center gap-2 mb-1">
-            <span class="text-[9px] font-bold text-text-muted uppercase">Niveles</span>
-            <button type="button" class="text-[10px] font-bold text-cyan hover:text-navy cursor-pointer ml-auto" @click="addTier(ov.tiers)">+ Nivel</button>
+            <span class="text-[11px] font-bold text-text-muted uppercase">Niveles</span>
+            <button type="button" class="text-xs font-bold text-cyan hover:text-navy cursor-pointer ml-auto" @click="addTier(ov.tiers)">+ Nivel</button>
           </div>
           <div v-for="(tier, ti) in ov.tiers" :key="ti" class="grid grid-cols-12 gap-2 items-center mb-1.5">
             <div class="col-span-3">
-              <input v-model.number="tier.deadlineHours" type="number" min="0" class="w-full h-8 px-2 rounded-lg border border-border text-xs focus:outline-none focus:border-cyan" />
+              <input v-model.number="tier.deadlineHours" type="number" min="0" class="w-full h-8 px-2 rounded-lg border border-border text-sm focus:outline-none focus:border-cyan" />
             </div>
             <div class="col-span-3">
-              <input v-model.number="tier.penaltyPercent" type="number" min="0" max="100" class="w-full h-8 px-2 rounded-lg border border-border text-xs focus:outline-none focus:border-cyan" />
+              <input v-model.number="tier.penaltyPercent" type="number" min="0" max="100" class="w-full h-8 px-2 rounded-lg border border-border text-sm focus:outline-none focus:border-cyan" />
             </div>
             <div class="col-span-3 flex items-center">
-              <label class="flex items-center gap-1 text-[10px] font-bold text-navy cursor-pointer">
+              <label class="flex items-center gap-1 text-xs font-bold text-navy cursor-pointer">
                 <input v-model="tier.refundable" type="checkbox" class="w-3 h-3 rounded text-cyan" /> Reembolso
               </label>
             </div>
             <div class="col-span-2">
-              <input v-model="tier.label" type="text" maxlength="60" placeholder="Etiqueta" class="w-full h-8 px-2 rounded-lg border border-border text-xs focus:outline-none focus:border-cyan" />
+              <input v-model="tier.label" type="text" maxlength="60" placeholder="Etiqueta" class="w-full h-8 px-2 rounded-lg border border-border text-sm focus:outline-none focus:border-cyan" />
             </div>
             <div class="col-span-1 flex justify-center">
               <button type="button" class="text-rose/70 hover:text-rose text-xs font-bold cursor-pointer" @click="ov.tiers.splice(ti, 1)">✕</button>
@@ -166,8 +166,8 @@
       </div>
 
       <!-- Acciones -->
-      <div class="flex items-center justify-between gap-3 pt-4 border-t border-border">
-        <p class="text-[10px] text-text-muted">
+      <div class="flex items-center justify-between gap-3 pt-3 border-t border-border">
+        <p class="text-xs text-text-muted">
           Los cambios acá no afectan el “texto display” opcional de abajo.
         </p>
         <button
