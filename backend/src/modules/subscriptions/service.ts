@@ -46,6 +46,7 @@ export class SubscriptionsService {
     /** `special_category_config` — la verdad del % del programa Fundador (CFG-1). Opcional: sin
      *  cablear, el endpoint público devuelve `null` y la landing muestra su copy de reserva. */
     private readonly specialCategoriesRepo?: RepositoryAdapter<any>,
+    private readonly configurationRepo?: RepositoryAdapter<any>, // KV `configuration` (onboarding.ts, ONBOARDING_CONFIRM_KEYS)
   ) {
     this.signupUc = new SignupUseCase({
       hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger,
@@ -57,7 +58,7 @@ export class SubscriptionsService {
       hotelsRepo,
       async () => (this.readPlatformSettings ? this.readPlatformSettings() : { requireCardOnTrial: false }),
     )
-    this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, hotelsRepo })
+    this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, hotelsRepo, configRepo: configurationRepo })
   }
 
   /** Puerto #28 + contador: `subscription_settings` vive en `admin`, una sola lectura para las dos (misma fila). */

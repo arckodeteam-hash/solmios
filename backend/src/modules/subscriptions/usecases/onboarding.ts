@@ -77,17 +77,34 @@ export interface OnboardingDeps {
   roomsRepo: RepositoryAdapter<any>
   usersRepo: RepositoryAdapter<any>
   hotelsRepo: RepositoryAdapter<any>
+  /** KV `configuration` — guarda que el usuario guardó el paso de perfil explícitamente
+   *  (ver `ONBOARDING_CONFIRM_KEYS`), aunque haya dejado el valor en su default. Opcional:
+   *  sin cablear, `usingDefaults` se calcula solo con el heurístico de valores (como antes). */
+  configRepo?: RepositoryAdapter<any>
+}
+
+/** Claves KV (`configuration`, por hotel) que marca cada Step*.vue al guardar — ver
+ *  `StepIdentidad.vue`/`StepPoliticas.vue`. Guardar "apaga" `usingDefaults` para siempre en
+ *  ese paso, sin importar si el valor sigue siendo el default: el usuario ya lo confirmó a
+ *  propósito, dejar de avisarle es lo correcto (pedido explícito del usuario). */
+export const ONBOARDING_CONFIRM_KEYS: Record<'identidad' | 'politicas', string> = {
+  identidad: 'onboarding_identidad_confirmed',
+  politicas: 'onboarding_politicas_confirmed',
 }
 
 export class OnboardingUseCase {
   constructor(private readonly deps: OnboardingDeps) {}
 
   async status(hotelId: string): Promise<OnboardingStatus> {
-    const [rooms, users, hotel] = await Promise.all([
+    const [rooms, users, hotel, confirmedRows] = await Promise.all([
       this.deps.roomsRepo.findMany({ hotelId }).catch(() => []),
       this.deps.usersRepo.findMany({ hotelId }).catch(() => []),
       this.deps.hotelsRepo.findById(hotelId).catch(() => null),
+      this.deps.configRepo?.findMany({ hotelId }).catch(() => []) ?? Promise.resolve([]),
     ])
+    const confirmedKeys = new Set((confirmedRows as any[]).map((r) => r?.key))
+    const identidadConfirmed = confirmedKeys.has(ONBOARDING_CONFIRM_KEYS.identidad)
+    const politicasConfirmed = confirmedKeys.has(ONBOARDING_CONFIRM_KEYS.politicas)
 
     // El dueño/gerente que completó el alta — `users.name` (F2 tarea 2.2, doc 02
     // sección B): el "nombre del propietario" del registro se guarda ahí, NO en
@@ -133,7 +150,7 @@ export class OnboardingUseCase {
         // usuario tras ver un alta nueva "completa" sin haber tocado nada): amarillo
         // + nota en vez de verde silencioso, sin bloquear ni descontar del %.
         done: Boolean(hotel?.accommodationType && hotel?.currency),
-        usingDefaults: hotel?.accommodationType === 'hotel' && hotel?.currency === 'USD',
+        usingDefaults: !identidadConfirmed && hotel?.accommodationType === 'hotel' && hotel?.currency === 'USD',
         required: true,
         kind: 'profile',
       },
@@ -185,7 +202,7 @@ export class OnboardingUseCase {
         // (pedido explícito del usuario) refuerza esa mitigación en el wizard mismo:
         // amarillo + nota en vez de verde, sin bloquear ni descontar del %.
         done: Boolean(hotel?.taxName && hotel?.taxRate),
-        usingDefaults: hotel?.taxName === 'ITBIS' && Number(hotel?.taxRate) === 18,
+        usingDefaults: !politicasConfirmed && hotel?.taxName === 'ITBIS' && Number(hotel?.taxRate) === 18,
         required: true,
         kind: 'profile',
       },

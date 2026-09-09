@@ -36,6 +36,9 @@ const FULL_REQUIRED_HOTEL = {
 function setup(opts: {
   rooms?: number; users?: number; hotel?: any
   ownerName?: string
+  /** Claves ya guardadas en `configuration` (`ONBOARDING_CONFIRM_KEYS`) — simula que el
+   *  usuario ya pasó por "Guardar y continuar" en ese paso, sin importar los valores. */
+  confirmedKeys?: string[]
 } = {}) {
   const list = (n = 0) => Array.from({ length: n }, (_, i) => ({ id: `x${i}` }))
   const repo = (rows: any[]): RepositoryAdapter<any> => ({
@@ -56,6 +59,7 @@ function setup(opts: {
     roomsRepo: repo(list(opts.rooms)),
     usersRepo: repo(users),
     hotelsRepo: repo([]),
+    configRepo: repo((opts.confirmedKeys ?? []).map((key) => ({ key }))),
   })
 }
 
@@ -128,6 +132,18 @@ describe('OnboardingUseCase — tarea 2.3, paso `identidad`', () => {
     const st = await setup({ hotel: { ...SIGNUP_HOTEL, accommodationType: 'villa', currency: 'EUR' } }).status('h1')
     expect(st.steps.find(s => s.key === 'identidad')!.usingDefaults).toBe(false)
   })
+
+  it('confirmado por el usuario (guardó el paso) → usingDefaults false aunque el valor siga siendo el default', async () => {
+    const st = await setup({ hotel: SIGNUP_HOTEL, confirmedKeys: ['onboarding_identidad_confirmed'] }).status('h1')
+    const identidad = st.steps.find(s => s.key === 'identidad')!
+    expect(identidad.done).toBe(true) // confirmar no cambia `done`, sigue contando igual
+    expect(identidad.usingDefaults).toBe(false)
+  })
+
+  it('confirmar identidad NO afecta a políticas (flags independientes)', async () => {
+    const st = await setup({ hotel: SIGNUP_HOTEL, confirmedKeys: ['onboarding_identidad_confirmed'] }).status('h1')
+    expect(st.steps.find(s => s.key === 'politicas')!.usingDefaults).toBe(true)
+  })
 })
 
 describe('OnboardingUseCase — tarea 2.4, paso `contacto`', () => {
@@ -176,6 +192,13 @@ describe('OnboardingUseCase — tarea 2.6, paso `politicas`', () => {
   it('con un impuesto distinto al default → usingDefaults false', async () => {
     const st = await setup({ hotel: { ...SIGNUP_HOTEL, taxName: 'IVA', taxRate: 16 } }).status('h1')
     expect(st.steps.find(s => s.key === 'politicas')!.usingDefaults).toBe(false)
+  })
+
+  it('confirmado por el usuario (guardó el paso) → usingDefaults false aunque siga en ITBIS/18', async () => {
+    const st = await setup({ hotel: SIGNUP_HOTEL, confirmedKeys: ['onboarding_politicas_confirmed'] }).status('h1')
+    const politicas = st.steps.find(s => s.key === 'politicas')!
+    expect(politicas.done).toBe(true)
+    expect(politicas.usingDefaults).toBe(false)
   })
 })
 

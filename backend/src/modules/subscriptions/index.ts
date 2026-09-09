@@ -60,6 +60,9 @@ export function SubscriptionsModule() {
         orm,
         // Config de Fundador/Pionero: el % que publica la landing sale de acá (CFG-1).
         new OrmRepository<any>(orm, 'SpecialCategoryConfig'),
+        // KV compartido — onboarding.ts la lee para saber si Identidad/Políticas ya se
+        // guardaron explícitamente (ver ONBOARDING_CONFIRM_KEYS).
+        new OrmRepository<any>(orm, 'Configuration'),
       )
       const controller = new SubscriptionsController(service, log)
 
