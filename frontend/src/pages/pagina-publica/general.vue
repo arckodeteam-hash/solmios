@@ -299,10 +299,26 @@ function readFileAsDataUrl(file: File): Promise<string> {
   })
 }
 
-/** Si la URL guardada no carga (archivo borrado del storage, caché vieja, hipo de red) el
- *  recuadro NO se queda mostrando el ícono de imagen rota con "Logo" superpuesto — vuelve al
- *  estado vacío (ícono de subir) para que el usuario sepa que tiene que volver a cargarlo. */
+/** El error visto en producción (reportado 2026-09-09): justo después de subir, el archivo
+ *  existe en el storage con los bytes correctos pero el `<img>` lo carga con 404/502 durante un
+ *  rato (confirmado: hasta ~1 minuto en dev con `bun --hot`, probablemente el server
+ *  reiniciándose o el filesystem local con el archivo recién escrito todavía no disponible para
+ *  otro proceso) — a los pocos segundos el mismo archivo ya sirve 200 sin que nadie lo toque. En
+ *  vez de rendirse en el primer error, reintenta con backoff (1s/2s/4s) antes de mostrar el
+ *  estado vacío — el cache-bust (`?retry=`) evita que el navegador reuse la respuesta fallida. */
+const logoRetries = ref(0)
+const MAX_LOGO_RETRIES = 3
 function onLogoImgError() {
+  if (logoRetries.value < MAX_LOGO_RETRIES) {
+    const delay = 1000 * 2 ** logoRetries.value
+    logoRetries.value++
+    const base = logo.value.split('?')[0]
+    // markLogoClean(): el cache-bust del reintento no es un cambio real del usuario — sin esto,
+    // `isDirty` se dispara solo (y con él el aviso de "cambios sin guardar" al navegar) mientras
+    // el logo todavía se está recuperando.
+    setTimeout(() => { logo.value = `${base}?retry=${Date.now()}`; markLogoClean() }, delay)
+    return
+  }
   logo.value = ''
   toast.error('No se pudo cargar el logo guardado — volvé a subirlo')
 }
@@ -314,6 +330,7 @@ async function uploadLogoFile(file: File) {
   try {
     const dataUrl = await readFileAsDataUrl(file)
     const result = await HotelService.uploadLogo(dataUrl, file.name)
+    logoRetries.value = 0
     logo.value = result.logo
     markLogoClean()
     toast.success('Logo actualizado')
