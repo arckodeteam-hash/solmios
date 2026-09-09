@@ -78,19 +78,20 @@
           <div class="max-w-5xl mx-auto bg-white rounded-[28px] shadow-lg shadow-slate-200/60 overflow-hidden grid grid-cols-1 lg:grid-cols-[300px_1fr]">
             <!-- Panel decorativo — cambia de foto/copy por paso, estático dentro del paso (no
                  forma parte del formulario). Oculto en mobile para no empujar el form abajo del
-                 todo en pantallas chicas. -->
-            <div class="hidden lg:flex flex-col" style="background: var(--color-surface)">
-              <div class="h-56 overflow-hidden shrink-0">
-                <img :src="marketing.image" :alt="marketing.heading" class="w-full h-full object-cover">
-              </div>
-              <div class="p-7 flex-1 flex flex-col">
-                <span class="w-11 h-11 rounded-xl grid place-items-center mb-4 shrink-0 bg-teal/10 text-teal">
+                 todo en pantallas chicas. La foto ocupa TODO el alto de la columna (grid stretch
+                 por default) con el texto superpuesto abajo — degradado oscuro de abajo hacia
+                 arriba para que el texto blanco quede legible sobre cualquier foto. -->
+            <div class="hidden lg:block relative">
+              <img :src="marketing.image" :alt="marketing.heading" class="absolute inset-0 w-full h-full object-cover">
+              <div class="absolute inset-0 bg-linear-to-t from-black/85 via-black/35 to-black/0"></div>
+              <div class="relative h-full flex flex-col justify-end p-7">
+                <span class="w-11 h-11 rounded-xl grid place-items-center mb-4 shrink-0 bg-white/15 backdrop-blur-sm ring-1 ring-white/25 text-white">
                   <span class="w-5 h-5" v-html="STEP_META[activeStep.key]?.icon ?? ICON_DOT"></span>
                 </span>
-                <h3 class="text-lg font-black text-navy leading-snug mb-2">{{ marketing.heading }}</h3>
-                <p class="text-[13px] text-text-secondary leading-relaxed">{{ marketing.description }}</p>
-                <div class="w-8 h-0.5 bg-teal rounded-full my-4"></div>
-                <p class="text-[13px] font-serif italic text-teal leading-snug">{{ marketing.tagline }}</p>
+                <h3 class="text-lg font-black text-white leading-snug mb-2 [text-shadow:0_1px_4px_rgba(0,0,0,0.4)]">{{ marketing.heading }}</h3>
+                <p class="text-[13px] text-white/90 leading-relaxed [text-shadow:0_1px_3px_rgba(0,0,0,0.4)]">{{ marketing.description }}</p>
+                <div class="w-8 h-0.5 bg-teal-light rounded-full my-4"></div>
+                <p class="text-[13px] font-serif italic text-teal-light leading-snug [text-shadow:0_1px_3px_rgba(0,0,0,0.4)]">{{ marketing.tagline }}</p>
               </div>
             </div>
 
