@@ -26,7 +26,7 @@
     <template v-else-if="status">
       <!-- Barra de pasos — navegable: click en cualquier círculo salta directo a ese paso. -->
       <nav class="border-b border-border px-4 sm:px-6 py-6 overflow-x-auto shrink-0" aria-label="Pasos de configuración">
-        <ol class="flex items-center min-w-max mx-auto max-w-5xl">
+        <ol class="flex items-center justify-center min-w-max mx-auto max-w-5xl">
           <li v-for="(s, i) in status.steps" :key="s.key" class="flex items-center">
             <button @click="activeIndex = i" type="button"
               class="flex flex-col items-center gap-1.5 cursor-pointer group px-1.5"
