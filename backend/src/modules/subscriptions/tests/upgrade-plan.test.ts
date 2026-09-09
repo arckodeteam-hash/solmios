@@ -115,6 +115,11 @@ function conTarjetaRechazada(client: any, mensaje = 'Your card was declined.'): 
 const ESSENTIAL = { id: 'plan-ess', name: 'Esencial', slug: 'esencial', price: 99, currency: 'USD', stripePriceId: 'price_ess_99', isActive: 1 }
 const PRO = { id: 'plan-pro', name: 'Professional', slug: 'pro', price: 349, currency: 'USD', stripePriceId: 'price_pro_349', isActive: 1 }
 const SIN_PRECIO = { id: 'plan-enterprise', name: 'Enterprise', slug: 'enterprise', price: 999, currency: 'USD', isActive: 1 }
+/** Planes RETIRADOS del catálogo, con su price bien configurado: lo único que los descalifica es
+ *  el flag. Van los DOS porque el flag viaja en dos formas —`false` y `0`— y `loadUpgrade` chequea
+ *  las dos: cubrir una sola dejaría media guarda sin probar. */
+const RETIRADO_FALSE = { id: 'plan-retirado-false', name: 'Legacy Boutique', slug: 'legacy-boutique', price: 149, currency: 'USD', stripePriceId: 'price_legacy_149', isActive: false }
+const RETIRADO_CERO = { id: 'plan-retirado-cero', name: 'Legacy Starter', slug: 'legacy-starter', price: 49, currency: 'USD', stripePriceId: 'price_legacy_49', isActive: 0 }
 
 /** Hotel pagando el plan barato: la fila que el gate elegiría (active + stripeSubscriptionId). */
 function activeSub(over: any = {}) {
@@ -140,7 +145,7 @@ function setup(subs: any[]) {
   const deps = {
     subscriptionsRepo: repoOf(subRows),
     hotelsRepo: repoOf(hotelRows),
-    plansRepo: repoOf([ESSENTIAL, PRO, SIN_PRECIO]),
+    plansRepo: repoOf([ESSENTIAL, PRO, SIN_PRECIO, RETIRADO_FALSE, RETIRADO_CERO]),
     logger: silentLogger(),
   }
   return { deps, subRows, hotelRows }
@@ -574,6 +579,48 @@ describe('upgrade — lo que NO se deja hacer', () => {
     expect(err.message).toMatch(/sin precio configurado en Stripe/i)
     expect(updates).toHaveLength(0)
   })
+
+  // CA 28 en negativo: "los planes PERMITIDOS". Un plan retirado del catálogo no se vende, y la
+  // guarda tiene que cortar ANTES de tocar plata: si cortara después del `update`, el hotel se
+  // comería una factura de prorrateo por una operación que el backend igual iba a rechazar.
+  // Se prueban las DOS formas del flag porque el código chequea las dos (`false` y `0`): la base
+  // guarda el booleano como entero en SQLite y como booleano en Postgres, así que cubrir una sola
+  // dejaría media guarda sin ejercitar.
+  for (const retirado of [RETIRADO_FALSE, RETIRADO_CERO]) {
+    const forma = JSON.stringify(retirado.isActive)
+
+    it(`plan destino desactivado (isActive: ${forma}) → ValidationError, sin llamar a Stripe ni escribir la fila`, async () => {
+      const { deps, subRows, hotelRows } = setup([activeSub()])
+      const antes = { ...subRows[0] }
+      const escritas = espiarEscrituras(deps)
+
+      let err: any
+      try { await applyUpgrade(deps, 'h1', retirado.id) } catch (e) { err = e }
+
+      expect(err).toBeInstanceOf(ValidationError)
+      expect(err.message).toBe('Ese plan está desactivado')
+      // Ni una sola llamada a Stripe: ni la lectura de la suscripción ni el update que factura.
+      expect(retrieves).toHaveLength(0)
+      expect(updates).toHaveLength(0)
+      // Y la fila local intacta, `updatedAt` incluido: no hubo NINGUNA escritura.
+      expect(escritas).toHaveLength(0)
+      expect(subRows[0]).toEqual(antes)
+      expect(hotelRows[0].plan).toBe('esencial')
+    })
+
+    it(`previewUpgrade tampoco cotiza un plan desactivado (isActive: ${forma})`, async () => {
+      const { deps } = setup([activeSub()])
+
+      let err: any
+      try { await previewUpgrade(deps, 'h1', retirado.id) } catch (e) { err = e }
+
+      expect(err).toBeInstanceOf(ValidationError)
+      expect(err.message).toBe('Ese plan está desactivado')
+      // Mostrar un precio de algo que no se puede contratar sería ofrecerlo.
+      expect(previews).toHaveLength(0)
+      expect(retrieves).toHaveLength(0)
+    })
+  }
 
   it('plan destino inexistente → NotFoundError (404)', async () => {
     const { deps } = setup([activeSub()])
