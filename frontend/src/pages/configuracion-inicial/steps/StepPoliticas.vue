@@ -1,5 +1,5 @@
 <template>
-  <div class="rounded-xl bg-surface/70 border border-border p-4 space-y-4">
+  <div class="space-y-5">
     <div v-if="loading" class="h-24 animate-pulse bg-surface rounded-lg"></div>
     <template v-else>
       <div>
@@ -10,27 +10,27 @@
           <span class="w-3.5 h-3.5 shrink-0 mt-px" v-html="ICON_WARN"></span>
           <span>Estos valores son el default de República Dominicana (ITBIS 18%) — su hotel está en {{ country || 'otro país' }}. Confírmelos o cámbielos antes de guardar.</span>
         </p>
-        <p class="text-[10px] text-text-muted mb-2">Los campos marcados con <span class="text-danger font-bold">*</span> son obligatorios.</p>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <p class="text-[11px] text-text-muted mb-3">Los campos marcados con <span class="text-danger font-bold">*</span> son obligatorios.</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Nombre del impuesto <span class="text-danger">*</span></label>
-            <input v-model="taxName" type="text" required aria-required="true" class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none">
+            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nombre del impuesto <span class="text-danger">*</span></label>
+            <div class="wizard-field">
+              <span class="wizard-field-icon" v-html="ICON_TAG"></span>
+              <input v-model="taxName" type="text" required aria-required="true" class="wizard-input">
+            </div>
           </div>
           <div>
-            <label class="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-text-muted">Tasa (%) <span class="text-danger">*</span></label>
-            <input v-model.number="taxRate" type="number" min="0" max="100" step="0.1" required aria-required="true" class="w-full rounded-xl border border-border px-3.5 py-2 text-sm focus:border-navy focus:outline-none">
+            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tasa (%) <span class="text-danger">*</span></label>
+            <div class="wizard-field">
+              <span class="wizard-field-icon" v-html="ICON_PERCENT"></span>
+              <input v-model.number="taxRate" type="number" min="0" max="100" step="0.1" required aria-required="true" class="wizard-input">
+            </div>
           </div>
         </div>
         <p v-if="error" class="text-[11px] font-bold text-danger mt-2">{{ error }}</p>
-        <div class="flex justify-end mt-2">
-          <button @click="onSaveTaxes" :disabled="saving"
-            class="bg-navy text-white font-bold text-xs px-4 py-2 rounded-full hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-            {{ saving ? 'Guardando...' : 'Guardar impuesto' }}
-          </button>
-        </div>
       </div>
 
-      <div class="border-t border-border pt-4">
+      <div class="border-t border-border pt-5">
         <p class="text-[11px] font-black uppercase tracking-wide text-navy mb-2">Política de cancelación <span class="font-normal normal-case text-text-muted/70">(opcional)</span></p>
         <CancellationPolicyEditor :hotel-id="hotelId" />
       </div>
@@ -51,6 +51,8 @@ defineProps<{ step: OnboardingStep }>()
 const emit = defineEmits<{ saved: [status: OnboardingStatus] }>()
 
 const ICON_WARN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>'
+const ICON_TAG = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.83.699 2.53 0l7.163-7.163a1.79 1.79 0 0 0 0-2.53L13.352 3.659A2.25 2.25 0 0 0 11.762 3H9.568Z"/><path d="M6 6h.008v.008H6V6Z"/></svg>'
+const ICON_PERCENT = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 5 5 19M7 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM17 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg>'
 
 const toast = useToast()
 const loading = ref(true)
@@ -78,7 +80,7 @@ onMounted(async () => {
   }
 })
 
-const { saving, error, save } = useOnboardingStep(async () => {
+const { error, save } = useOnboardingStep(async () => {
   await SettingsService.patchHotel({ taxName: taxName.value, taxRate: taxRate.value })
 }, (status) => emit('saved', status))
 
@@ -86,4 +88,6 @@ async function onSaveTaxes() {
   await save()
   if (!error.value) toast.success('Impuesto guardado')
 }
+
+defineExpose({ save: onSaveTaxes })
 </script>

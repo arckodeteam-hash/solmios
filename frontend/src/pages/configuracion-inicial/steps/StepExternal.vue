@@ -3,22 +3,18 @@
        real. Mismo contenido (how/impact/cta) que ya calculaba `OnboardingUseCase`, sin reescribir
        copy. Componente genérico — hoy solo lo usa `rooms` (rates/channels/team/amenities se
        sacaron del wizard, 2026-09-08), queda listo por si se suma otro paso operativo. -->
-  <div class="rounded-xl bg-surface/70 border border-border p-4">
+  <div class="rounded-2xl p-5" style="background: var(--color-surface)">
     <p class="text-[11px] font-black uppercase tracking-wide text-navy mb-1">Cómo se hace</p>
-    <p class="text-xs text-text-secondary leading-relaxed">{{ step.how }}</p>
+    <p class="text-sm text-text-secondary leading-relaxed">{{ step.how }}</p>
 
-    <p v-if="step.impact" class="text-[11px] text-text-muted leading-relaxed mt-2.5 flex gap-1.5">
-      <span class="w-3.5 h-3.5 shrink-0 mt-px text-warning" v-html="ICON_WARN"></span>
+    <p v-if="step.impact" class="text-[13px] text-text-muted leading-relaxed mt-3 flex gap-1.5">
+      <span class="w-4 h-4 shrink-0 mt-px text-warning" v-html="ICON_WARN"></span>
       <span>{{ step.impact }}</span>
     </p>
 
-    <router-link
-      :to="step.route"
-      class="mt-3 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[11px] font-bold transition-colors"
-      :class="step.required ? 'bg-navy text-white hover:bg-navy-light' : 'border border-border text-text-secondary hover:border-navy/30'"
-    >
+    <router-link :to="step.route" class="mt-4 wizard-btn-primary">
       {{ step.cta }}
-      <span class="w-3 h-3" v-html="ICON_ARROW"></span>
+      <span class="w-4 h-4" v-html="ICON_ARROW"></span>
     </router-link>
   </div>
 </template>

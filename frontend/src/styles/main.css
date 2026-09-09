@@ -210,6 +210,112 @@
   .input::placeholder {
     color: var(--color-text-muted);
   }
+
+  /* Centro de configuración — wizard standalone (rediseño 2026-09-09, réplica de mockup del
+     usuario). Pill inputs con ícono a la izquierda: `.wizard-field` es el wrapper relative,
+     `.wizard-field-icon` posiciona el ícono, y el input/select suma `padding-left` para no
+     superponerse. Solo para los pasos del wizard — el resto del panel sigue con `.input`. */
+  .wizard-field {
+    position: relative;
+  }
+
+  .wizard-field-icon {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    color: var(--color-teal);
+    pointer-events: none;
+  }
+
+  .wizard-input,
+  .wizard-select {
+    width: 100%;
+    height: 48px;
+    padding: 0 18px;
+    border: 1px solid var(--color-border);
+    border-radius: 9999px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-text);
+    background: white;
+    transition: all 0.15s ease;
+  }
+
+  .wizard-field .wizard-input,
+  .wizard-field .wizard-select {
+    padding-left: 46px;
+  }
+
+  .wizard-select {
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+    background-size: 16px;
+    padding-right: 42px;
+  }
+
+  .wizard-input:focus,
+  .wizard-select:focus {
+    outline: none;
+    border-color: var(--color-teal);
+    box-shadow: 0 0 0 3px rgba(17, 122, 101, 0.12);
+  }
+
+  .wizard-input::placeholder {
+    color: var(--color-text-muted);
+    font-weight: 500;
+  }
+
+  .wizard-btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--color-navy);
+    color: white;
+    font-weight: 800;
+    font-size: 14px;
+    padding: 13px 26px;
+    border-radius: 9999px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .wizard-btn-primary:hover {
+    background: var(--color-navy-light);
+    box-shadow: 0 6px 18px rgba(13, 43, 78, 0.25);
+  }
+
+  .wizard-btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .wizard-btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: white;
+    color: var(--color-navy);
+    font-weight: 700;
+    font-size: 14px;
+    padding: 13px 24px;
+    border-radius: 9999px;
+    border: 1px solid var(--color-border);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .wizard-btn-secondary:hover {
+    border-color: var(--color-navy);
+  }
 }
 
 @layer utilities {
