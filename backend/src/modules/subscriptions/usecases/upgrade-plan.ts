@@ -31,9 +31,12 @@ export interface UpgradePlanDeps {
 }
 
 const MS_PER_SECOND = 1000
-/** Bucket de tiempo de la clave de idempotencia. Corta a propósito: sólo tiene que cubrir la
- *  ráfaga de pedidos concurrentes (dos pestañas, un doble clic), no congelar la operación — las
- *  claves de idempotencia de Stripe viven 24h y un reintento legítimo no puede esperar tanto. */
+/** Bucket de tiempo de la clave de idempotencia, usado SÓLO como fallback cuando la fila no trae
+ *  `updatedAt`. Cubre la ráfaga de pedidos concurrentes (dos pestañas, un doble clic) sin congelar
+ *  la operación: las claves de idempotencia de Stripe viven 24h y un reintento legítimo no puede
+ *  esperar tanto. Achicarlo NO arregla nada y abre el doble cobro (dos pestañas separadas por
+ *  segundos estrenarían clave y facturarían dos prorrateos); el reintento lo resuelve el
+ *  `updatedAt`, que todo intento —cobrado o rechazado— deja movido. */
 const VENTANA_DEDUP_MS = 60_000
 
 /** Todo lo que las dos operaciones necesitan resolver ANTES de tocar plata. */
@@ -88,7 +91,7 @@ export async function previewUpgrade(
 export async function applyUpgrade(
   deps: UpgradePlanDeps, hotelId: string, planId: string,
 ): Promise<UpgradeResultDTO> {
-  const { logger } = deps
+  const { logger, subscriptionsRepo } = deps
   const { stripe, active, itemId, plan } = await loadUpgrade(deps, hotelId, planId)
 
   // `proration_behavior: 'always_invoice'` emite la factura del prorrateo YA y la cobra con el
@@ -112,21 +115,24 @@ export async function applyUpgrade(
   // nada, así que un hotel que mejora A→B, baja a A desde el Billing Portal y vuelve a mejorar a B
   // el mismo día recibiría el response viejo — sin cobro y sin cambio real en Stripe.
   //
-  // Y `updatedAt` de la fila SOLO tampoco alcanza, justamente por `error_if_incomplete`: un cobro
-  // RECHAZADO ya no escribe nada en local —Stripe revierte el ítem y esta llamada lanza antes del
-  // reflejo—, así que `updatedAt` queda igual y el reintento reusaría la MISMA clave. Como el
-  // caché de Stripe también guarda los ERRORES, el hotel corregiría su tarjeta y recibiría el
-  // mismo rechazo cacheado hasta 24h: exactamente lo contrario del "intentá de nuevo" que este
-  // mismo código le muestra. Con `allow_incomplete` no se notaba porque todo intento escribía la
-  // fila y movía el `updatedAt`.
+  // Lo que distingue un intento del siguiente es el `updatedAt` del snapshot leído, y alcanza
+  // porque TODO intento deja escrita la fila: el que cobra, con el reflejo del plan nuevo; el que
+  // la tarjeta rechaza, con la escritura no-op del `catch` de acá abajo (el ORM pisa `updatedAt`
+  // en cada escritura). Sin esa marca, un cobro rechazado —que con `error_if_incomplete` no
+  // escribe nada— dejaba el `updatedAt` quieto: el reintento reusaba la MISMA clave y Stripe le
+  // devolvía el ERROR cacheado por hasta 24h, así que el hotel corregía su tarjeta y seguía
+  // recibiendo el mismo rechazo, justo lo contrario del "intentá de nuevo" que este código muestra.
   //
-  // Por eso el token combina las DOS cosas: el `updatedAt` del snapshot leído y el bucket de
-  // tiempo de `VENTANA_DEDUP_MS`. Dos pedidos CONCURRENTES comparten los dos componentes —mismo
-  // snapshot, mismo bucket— y Stripe los colapsa en una sola operación; un reintento hecho un
-  // minuto después estrena bucket y por lo tanto clave, y se ejecuta de verdad. El fallback queda
-  // para la fila sin `updatedAt`, donde el bucket va solo.
-  const bucketTiempo = `t${Math.floor(Date.now() / VENTANA_DEDUP_MS)}`
-  const tokenIntento = active.updatedAt ? `${String(active.updatedAt)}|${bucketTiempo}` : bucketTiempo
+  // La ráfaga CONCURRENTE sigue deduplicada sin ayuda del reloj: los pedidos simultáneos leyeron
+  // el MISMO snapshot antes de que ninguno tocara la fila, comparten `updatedAt` y Stripe los
+  // colapsa en una sola operación.
+  //
+  // El bucket de `VENTANA_DEDUP_MS` queda SÓLO de fallback para la fila que no trae `updatedAt`
+  // (base vieja, doble de test): ahí no hay nada que distinga un intento de otro y lo único que se
+  // puede sostener es la dedup de la ráfaga.
+  const tokenIntento = active.updatedAt
+    ? String(active.updatedAt)
+    : `t${Math.floor(Date.now() / VENTANA_DEDUP_MS)}`
   const claveIdempotencia = `upgrade:${hotelId}:${active.stripeSubscriptionId}:${plan.id}:${tokenIntento}`
   // El rechazo de la tarjeta llega acá como error de Stripe. Sube traducido (#84, CA 29): un
   // "card_declined" crudo no le dice a nadie que su plan siguió intacto. El motivo de Stripe NO se
@@ -157,6 +163,22 @@ export async function applyUpgrade(
       throw e
     }
     logger.warn('No se pudo cobrar el prorrateo del cambio de plan: el plan actual queda intacto', contexto)
+    // El intento RECHAZADO tiene que dejar rastro en la fila. Se reescribe `status` con el valor
+    // que ya tiene: no cambia un solo dato del negocio, pero el ORM pisa `updatedAt` en toda
+    // escritura y eso es lo que hace que el reintento estrene clave de idempotencia y Stripe lo
+    // ejecute de verdad, en vez de devolverle el error cacheado de este intento. Es lo que
+    // `allow_incomplete` daba gratis, cuando todo intento escribía la fila.
+    //
+    // BEST-EFFORT, mismo criterio que el reflejo local de más abajo: si esta escritura falla NO
+    // puede tapar el rechazo del cobro, que es lo único que la persona necesita leer. Se avisa
+    // fuerte y se sigue lanzando el motivo real.
+    try {
+      await subscriptionsRepo.update(String(active.id), { status: active.status })
+    } catch (errorAlMarcar) {
+      logger.warn('No se pudo marcar el intento rechazado: el reintento podría chocar con el caché de Stripe', {
+        ...contexto, errorAlMarcar: (errorAlMarcar as Error)?.message ?? 'error desconocido',
+      })
+    }
     throw new ValidationError(
       `No pudimos cobrar el cambio de plan: ${motivo}. `
       + 'Tu plan actual no cambió — revisá tu método de pago e intentá de nuevo.',

@@ -72,17 +72,44 @@ function fakeStripe() {
   }
 }
 
+/** Escrituras hechas por los dobles: sirve para que el `updatedAt` sellado sea estrictamente
+ *  creciente aunque el reloj esté congelado con `setSystemTime`. */
+let escrituras = 0
+
 function repoOf(rows: any[]): RepositoryAdapter<any> {
   return {
     findMany: async (f: any = {}) => rows.filter(r => Object.entries(f).every(([k, v]) => r[k] === v)),
     findById: async (id: string) => rows.find(r => r.id === id) ?? null,
     create: async (r: any) => { rows.push(r); return r },
+    // El ORM pisa `updatedAt` en TODA escritura cuando el modelo declara `timestamps: true`
+    // (kernel/db/orm.ts: `if (def.timestamps) record.updatedAt = now`), y `SubscriptionsModel` lo
+    // declara. El doble lo replica porque de ese sello depende la clave de idempotencia: un doble
+    // que no lo moviera daría verde con el bug puesto.
     update: async (id: string, patch: any) => {
       const r = rows.find(x => x.id === id)
-      if (r) Object.assign(r, patch)
+      if (r) Object.assign(r, patch, { updatedAt: new Date(Date.now() + (++escrituras)).toISOString() })
       return r
     },
   } as unknown as RepositoryAdapter<any>
+}
+
+/** Registra CADA escritura sobre la fila de suscripción (id + patch), sin sacarle el efecto real. */
+function espiarEscrituras(deps: any): Array<{ id: string, patch: any }> {
+  const vistas: Array<{ id: string, patch: any }> = []
+  const original = deps.subscriptionsRepo.update.bind(deps.subscriptionsRepo)
+  deps.subscriptionsRepo.update = (async (id: string, patch: any) => {
+    vistas.push({ id, patch })
+    return original(id, patch)
+  }) as any
+  return vistas
+}
+
+/** El rechazo de tarjeta tal como lo tira stripe-node desde `subscriptions.update`. */
+function conTarjetaRechazada(client: any, mensaje = 'Your card was declined.'): void {
+  client.subscriptions.update = async (id: string, params: any, options?: any) => {
+    updates.push({ id, params, options })
+    throw errorDeStripe('StripeCardError', mensaje)
+  }
 }
 
 const ESSENTIAL = { id: 'plan-ess', name: 'Esencial', slug: 'esencial', price: 99, currency: 'USD', stripePriceId: 'price_ess_99', isActive: 1 }
@@ -214,16 +241,8 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     const { deps, subRows, hotelRows } = setup([activeSub()])
     // Todo update sobre la fila de suscripción queda registrado: el criterio es que NINGUNO traiga
     // `planId` (el plan actual quedó intacto).
-    const patches: any[] = []
-    const updateOriginal = deps.subscriptionsRepo.update.bind(deps.subscriptionsRepo)
-    deps.subscriptionsRepo.update = (async (id: string, patch: any) => {
-      patches.push(patch)
-      return updateOriginal(id, patch)
-    }) as any
-    stripeClient.subscriptions.update = async (id: string, params: any, options?: any) => {
-      updates.push({ id, params, options })
-      throw errorDeStripe('StripeCardError', 'Your card was declined.')
-    }
+    const escritas = espiarEscrituras(deps)
+    conTarjetaRechazada(stripeClient)
 
     let err: any
     try { await applyUpgrade(deps, 'h1', 'plan-pro') } catch (e) { err = e }
@@ -233,9 +252,48 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     expect(err.message).toContain('Your card was declined.')
     expect(err.message).toMatch(/no cambió/i)
     // Y el plan actual quedó intacto, en la fila y en el espejo del hotel.
-    expect(patches.some(p => 'planId' in p)).toBe(false)
+    expect(escritas.some(e => 'planId' in e.patch)).toBe(false)
     expect(subRows[0].planId).toBe('plan-ess')
     expect(hotelRows[0].plan).toBe('esencial')
+  })
+
+  // Revisión #84: el intento RECHAZADO tiene que dejar rastro en la fila. Con
+  // `error_if_incomplete` no se escribe nada del negocio, así que `updatedAt` quedaba quieto y el
+  // reintento reusaba la clave de idempotencia: Stripe le devolvía el error cacheado hasta 24h.
+  // El toque no-op (reescribir `status` con su valor actual) es lo que mueve la marca de tiempo.
+  it('TARJETA RECHAZADA: toca la fila activa para mover updatedAt, sin cambiar un solo dato', async () => {
+    const { deps, subRows } = setup([activeSub()])
+    const antes = { ...subRows[0] }
+    const escritas = espiarEscrituras(deps)
+    conTarjetaRechazada(stripeClient)
+
+    await expect(applyUpgrade(deps, 'h1', 'plan-pro')).rejects.toBeInstanceOf(ValidationError)
+
+    // Hubo escritura sobre la fila ACTIVA (la que el gate elige), y no trae `planId`.
+    expect(escritas).toHaveLength(1)
+    expect(escritas[0].id).toBe('s1')
+    expect('planId' in escritas[0].patch).toBe(false)
+    // Es un no-op de negocio: el `status` vuelve a escribirse con el valor que ya tenía.
+    expect(escritas[0].patch).toEqual({ status: 'active' })
+    // Lo ÚNICO que se movió es `updatedAt` (lo sella el ORM en toda escritura).
+    expect(subRows[0].updatedAt).not.toBe(antes.updatedAt)
+    expect({ ...subRows[0], updatedAt: antes.updatedAt }).toEqual(antes)
+  })
+
+  // BEST-EFFORT, mismo criterio que el reflejo local post-cobro: si la marca del intento fallara,
+  // el error que la persona tiene que leer es el RECHAZO de la tarjeta, no el de una escritura
+  // interna. Tapárselo la dejaría sin saber qué arreglar.
+  it('si la marca del intento rechazado falla, igual sube el motivo del rechazo', async () => {
+    const { deps } = setup([activeSub()])
+    conTarjetaRechazada(stripeClient)
+    deps.subscriptionsRepo.update = (async () => { throw new Error('DB caída') }) as any
+
+    let err: any
+    try { await applyUpgrade(deps, 'h1', 'plan-pro') } catch (e) { err = e }
+
+    expect(err).toBeInstanceOf(ValidationError)
+    expect(err.message).toContain('Your card was declined.')
+    expect(err.message).not.toContain('DB caída')
   })
 
   // Re-revisión #46: sin clave de idempotencia, dos pedidos concurrentes del mismo hotel (dos
@@ -252,18 +310,17 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     // La clave identifica el INTENTO: hotel, suscripción de Stripe, plan destino y el `updatedAt`
     // de la fila leída. Atarla sólo a origen→destino haría que Stripe devolviera la respuesta
     // CACHEADA de 24h en un A→B→A→B legítimo del mismo día.
-    expect(clave.startsWith('upgrade:h1:sub_1:plan-pro:')).toBe(true)
-    expect(clave).toContain('2026-09-01T00:00:00.000Z')
+    // La clave es EXACTAMENTE el intento: prefijo + el `updatedAt` del snapshot leído, sin ningún
+    // componente de reloj. Si volviera a colgarse de un bucket de tiempo, esta igualdad cae.
+    expect(clave).toBe('upgrade:h1:sub_1:plan-pro:2026-09-01T00:00:00.000Z')
   })
 
-  // Revisión #84: con `error_if_incomplete` un cobro RECHAZADO no escribe la fila, así que
-  // `updatedAt` no se mueve. Si la clave dependiera sólo de él, el reintento reusaría la misma y
-  // Stripe devolvería el ERROR cacheado por hasta 24h — el hotel arregla su tarjeta y sigue
-  // recibiendo el mismo rechazo, justo contra el "intentá de nuevo" que el propio código muestra.
-  // La clave tiene que deduplicar la RÁFAGA y dejar pasar el reintento posterior.
-  it('la clave deduplica dos pedidos del MISMO instante y cambia cuando pasa la ventana', async () => {
+  // Revisión #84: la ráfaga concurrente (doble clic, dos pestañas) es lo ÚNICO que la clave tiene
+  // que colapsar. Los dos pedidos leyeron el MISMO snapshot antes de que ninguno tocara la fila,
+  // así que comparten `updatedAt` y Stripe los resuelve como una sola operación: un solo cobro.
+  it('dos pedidos con el MISMO snapshot y en el mismo instante comparten clave: la ráfaga se dedupe', async () => {
     // Cada llamada estrena `setup`: aplicar el plan escribe la fila y un segundo intento sobre el
-    // mismo `deps` cortaría con "Ya estás en ese plan". El snapshot leído es idéntico en las tres.
+    // mismo `deps` cortaría con "Ya estás en ese plan". El snapshot leído es idéntico en las dos.
     const claveDe = async () => {
       const { deps } = setup([activeSub()])
       updates = []
@@ -272,20 +329,76 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     }
 
     try {
-      setSystemTime(new Date('2026-09-08T12:00:30.000Z'))
+      setSystemTime(new Date('2026-09-08T12:00:00.000Z'))
       const primera = await claveDe()
-      // Doble clic / dos pestañas: mismo instante, misma fila → MISMA clave, Stripe cobra una vez.
       const concurrente = await claveDe()
       expect(concurrente).toBe(primera)
+    } finally {
+      setSystemTime()
+    }
+  })
 
-      // Un minuto después (la tarjeta ya corregida) el bucket cambió: clave nueva, Stripe
-      // re-ejecuta de verdad en vez de devolver la respuesta cacheada.
+  // EL BUG QUE ESTE FIX ELIMINA (revisión #84): con `error_if_incomplete` un cobro rechazado no
+  // escribe nada del negocio, así que antes `updatedAt` no se movía y el reintento reusaba la
+  // clave; Stripe devolvía el ERROR CACHEADO (viven 24h) sin volver a intentar el cobro. El hotel
+  // corregía su tarjeta, reintentaba a los 10 segundos y recibía el mismo rechazo, contra el
+  // "intentá de nuevo" que el propio código le muestra. Ahora el rechazo TOCA la fila, así que el
+  // reintento estrena clave SIN esperar ninguna ventana de tiempo.
+  it('el reintento tras un rechazo estrena clave en el acto, sin que pase un solo segundo del reloj', async () => {
+    try {
+      // El reloj queda CONGELADO en los dos intentos: cualquier bucket de tiempo daría el mismo
+      // valor, así que lo único que puede distinguir las claves es el rastro que dejó el rechazo.
+      setSystemTime(new Date('2026-09-08T12:00:00.000Z'))
+      const { deps, subRows } = setup([activeSub()])
+      conTarjetaRechazada(stripeClient)
+
+      await expect(applyUpgrade(deps, 'h1', 'plan-pro')).rejects.toBeInstanceOf(ValidationError)
+      const rechazada = updates[0].options?.idempotencyKey as string
+      expect(rechazada).toBe('upgrade:h1:sub_1:plan-pro:2026-09-01T00:00:00.000Z')
+      // El rechazo dejó rastro: éste es el snapshot que va a leer el reintento.
+      const trasElRechazo = subRows[0].updatedAt as string
+      expect(trasElRechazo).not.toBe('2026-09-01T00:00:00.000Z')
+
+      // Tarjeta corregida, mismo instante: Stripe ya cobra.
+      stripeClient.subscriptions.update = fakeStripe().subscriptions.update
+      updates = []
+      const res = await applyUpgrade(deps, 'h1', 'plan-pro')
+
+      const reintento = updates[0].options?.idempotencyKey as string
+      expect(reintento).not.toBe(rechazada)
+      // Y la clave nueva es exactamente el intento nuevo: el `updatedAt` que dejó el rechazo, sin
+      // ningún componente de reloj. Si la clave volviera a colgarse del bucket, esto cae.
+      expect(reintento).toBe(`upgrade:h1:sub_1:plan-pro:${trasElRechazo}`)
+      expect(res.applied).toBe(true)
+      expect(subRows[0].planId).toBe('plan-pro')
+    } finally {
+      setSystemTime()
+    }
+  })
+
+  // FALLBACK: una fila sin `updatedAt` (base vieja, doble incompleto) no tiene con qué distinguir
+  // un intento de otro. Ahí y sólo ahí entra el bucket de `VENTANA_DEDUP_MS`: sigue colapsando la
+  // ráfaga y estrena clave a la ventana siguiente. Con `updatedAt` el reloj no participa.
+  it('sin updatedAt cae al bucket de tiempo: dedupea la ráfaga y estrena clave en la ventana siguiente', async () => {
+    const claveDe = async () => {
+      const { deps } = setup([activeSub({ updatedAt: undefined })])
+      updates = []
+      await applyUpgrade(deps, 'h1', 'plan-pro')
+      return updates[0].options?.idempotencyKey as string
+    }
+
+    try {
+      setSystemTime(new Date('2026-09-08T12:00:30.000Z'))
+      const primera = await claveDe()
+      // El token es el bucket de 60s del reloj (VENTANA_DEDUP_MS), nada más: no hay snapshot que
+      // mirar.
+      const bucket = Math.floor(Date.parse('2026-09-08T12:00:30.000Z') / 60_000)
+      expect(primera).toBe(`upgrade:h1:sub_1:plan-pro:t${bucket}`)
+      // Doble clic / dos pestañas: mismo instante, misma fila → MISMA clave, Stripe cobra una vez.
+      expect(await claveDe()).toBe(primera)
+
       setSystemTime(new Date('2026-09-08T12:01:30.000Z'))
-      const reintento = await claveDe()
-      expect(reintento).not.toBe(primera)
-      // Y sigue siendo la misma clave conceptual: mismo prefijo y mismo snapshot.
-      expect(reintento.startsWith('upgrade:h1:sub_1:plan-pro:')).toBe(true)
-      expect(reintento).toContain('2026-09-01T00:00:00.000Z')
+      expect(await claveDe()).not.toBe(primera)
     } finally {
       setSystemTime()
     }
@@ -297,12 +410,7 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
   // un fallo de infraestructura. Sólo el `StripeCardError` se traduce; el resto sube tal cual.
   it('un error de Stripe que NO es de tarjeta sube TAL CUAL, sin disfrazarse de método de pago', async () => {
     const { deps, subRows, hotelRows } = setup([activeSub()])
-    const patches: any[] = []
-    const updateOriginal = deps.subscriptionsRepo.update.bind(deps.subscriptionsRepo)
-    deps.subscriptionsRepo.update = (async (id: string, patch: any) => {
-      patches.push(patch)
-      return updateOriginal(id, patch)
-    }) as any
+    const escritas = espiarEscrituras(deps)
     const original = errorDeStripe('StripeAPIError', 'An error occurred with our connection to Stripe.')
     stripeClient.subscriptions.update = async () => { throw original }
 
@@ -313,8 +421,10 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     expect(err).toBe(original)
     expect(err).not.toBeInstanceOf(ValidationError)
     expect(err.message).not.toMatch(/método de pago/i)
-    // Y tampoco toca el plan: el cobro no ocurrió.
-    expect(patches.some(p => 'planId' in p)).toBe(false)
+    // Y la fila no se toca NI PARA MARCAR EL INTENTO: no hubo cobro atribuible al hotel, así que
+    // tampoco hay un intento suyo que distinguir. El rastro es sólo del rechazo de tarjeta.
+    expect(escritas).toHaveLength(0)
+    expect(subRows[0].updatedAt).toBe('2026-09-01T00:00:00.000Z')
     expect(subRows[0].planId).toBe('plan-ess')
     expect(hotelRows[0].plan).toBe('esencial')
   })
