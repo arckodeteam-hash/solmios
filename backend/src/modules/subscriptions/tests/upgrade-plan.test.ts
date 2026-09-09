@@ -1,7 +1,12 @@
-// #46 — el hotel mejora su plan por su cuenta "pagando lo que falta de su suscripción".
+// #46 — el hotel cambia su plan por su cuenta "pagando lo que falta de su suscripción".
 // El Checkout no sirve para esto: con una suscripción viva corta con 409 a propósito (BUG-9, ver
 // create-checkout-session.test.ts). El camino es `stripe.subscriptions.update()` sobre el ítem que
 // ya existe con `proration_behavior:'always_invoice'`, que factura y cobra EXACTAMENTE la diferencia.
+//
+// #84 — dos cambios de comportamiento cubiertos acá: el destino puede ser CUALQUIER plan activo
+// distinto del actual, incluido uno más barato (CA 2/25), y el plan sólo se aplica si el prorrateo
+// se pudo cobrar: con `payment_behavior:'error_if_incomplete'` un rechazo lanza y no toca nada
+// (CA 4/5).
 import { describe, it, expect, mock, beforeEach, afterAll } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
 import type { RepositoryAdapter } from 'arckode-framework'
@@ -144,9 +149,12 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     expect(hotelRows[0].plan).toBe('pro')
   })
 
-  it('si la factura del prorrateo queda IMPAGA el resultado lo refleja (no canta victoria)', async () => {
-    // `always_invoice` emite y cobra en el acto: si la tarjeta rechaza, la factura queda abierta
-    // y Stripe manda invoice.payment_failed (el webhook mueve la fila a past_due).
+  it('si la factura del prorrateo NO quedó paga el resultado lo refleja (no canta victoria)', async () => {
+    // #84 (CA 4/5): un RECHAZO de tarjeta ya no llega hasta acá — con `error_if_incomplete` Stripe
+    // revierte el ítem y el update lanza (ver el test de la tarjeta rechazada). Este caso es el
+    // otro: el update SÍ volvió —o sea el ítem quedó movido en Stripe— pero la factura todavía no
+    // figura `paid` (pago en curso, lectura eventual). Ahí no se canta victoria, pero el plan local
+    // tiene que decir lo que Stripe ya aplicó.
     invoiceOnUpdate = { id: 'in_2', status: 'open', amount_due: 25000, amount_paid: 0, currency: 'usd' }
     const { deps, subRows } = setup([activeSub()])
 
@@ -155,9 +163,73 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     expect(res.paid).toBe(false)
     expect(res.invoiceStatus).toBe('open')
     expect(res.amountCharged).toBe(25000)
-    // En Stripe el plan nuevo YA rige aunque no se haya cobrado: la fila local dice la verdad
-    // de Stripe y del impago se ocupa el dunning.
+    // El update volvió con el price nuevo: en Stripe el plan destino YA rige, así que la fila
+    // local dice la verdad de Stripe.
     expect(subRows[0].planId).toBe('plan-pro')
+  })
+
+  // #84 (CA 4 y 5): un pago fallido NO puede cambiar el plan. `error_if_incomplete` hace que Stripe
+  // revierta el ítem y devuelva error en vez de dejar el plan nuevo con la factura colgada, que es
+  // lo que hacía `allow_incomplete`.
+  it('pide error_if_incomplete: sin cobro no hay cambio de plan', async () => {
+    const { deps } = setup([activeSub()])
+
+    await applyUpgrade(deps, 'h1', 'plan-pro')
+
+    expect(updates[0].params.payment_behavior).toBe('error_if_incomplete')
+  })
+
+  // #84 (CA 2/25): "Suscribirse a [plan]" tiene que iniciar el cambio para CUALQUIER plan que no
+  // sea el actual. Con `always_invoice` un downgrade no cobra: genera crédito (amount_due 0) y la
+  // factura sale paga, así que el mismo camino sirve en las dos direcciones.
+  it('BAJA de plan: no lanza, manda el price del plan barato y deja el plan local ahí', async () => {
+    invoiceOnUpdate = { id: 'in_credit', status: 'paid', amount_due: 0, amount_paid: 0, currency: 'usd' }
+    const { deps, subRows, hotelRows } = setup([activeSub({ planId: 'plan-pro' })])
+
+    const res = await applyUpgrade(deps, 'h1', 'plan-ess')
+
+    expect(updates).toHaveLength(1)
+    expect(updates[0].params.items).toEqual([{ id: 'si_1', price: 'price_ess_99' }])
+    expect(updates[0].params.proration_behavior).toBe('always_invoice')
+    expect(res.applied).toBe(true)
+    expect(res.paid).toBe(true)
+    expect(res.planId).toBe('plan-ess')
+    expect(res.previousPlanId).toBe('plan-pro')
+    // El crédito no se cobra: el monto es 0 y aun así el cambio queda hecho.
+    expect(res.amountCharged).toBe(0)
+    expect(subRows[0].planId).toBe('plan-ess')
+    expect(hotelRows[0].plan).toBe('esencial')
+  })
+
+  // #84 (CA 5 y 29): con la tarjeta rechazada Stripe revierte el ítem y lanza. El plan actual del
+  // hotel tiene que quedar EXACTAMENTE como estaba, y el motivo de Stripe tiene que llegar al
+  // usuario: un error genérico no le dice qué arreglar.
+  it('TARJETA RECHAZADA: lanza con el motivo de Stripe y no escribe el plan en local', async () => {
+    const { deps, subRows, hotelRows } = setup([activeSub()])
+    // Todo update sobre la fila de suscripción queda registrado: el criterio es que NINGUNO traiga
+    // `planId` (el plan actual quedó intacto).
+    const patches: any[] = []
+    const updateOriginal = deps.subscriptionsRepo.update.bind(deps.subscriptionsRepo)
+    deps.subscriptionsRepo.update = (async (id: string, patch: any) => {
+      patches.push(patch)
+      return updateOriginal(id, patch)
+    }) as any
+    stripeClient.subscriptions.update = async (id: string, params: any, options?: any) => {
+      updates.push({ id, params, options })
+      throw new Error('Your card was declined.')
+    }
+
+    let err: any
+    try { await applyUpgrade(deps, 'h1', 'plan-pro') } catch (e) { err = e }
+
+    expect(err).toBeInstanceOf(ValidationError)
+    // El motivo de Stripe NO se tapa: es lo único que explica QUÉ falló.
+    expect(err.message).toContain('Your card was declined.')
+    expect(err.message).toMatch(/no cambió/i)
+    // Y el plan actual quedó intacto, en la fila y en el espejo del hotel.
+    expect(patches.some(p => 'planId' in p)).toBe(false)
+    expect(subRows[0].planId).toBe('plan-ess')
+    expect(hotelRows[0].plan).toBe('esencial')
   })
 
   // Re-revisión #46: sin clave de idempotencia, dos pedidos concurrentes del mismo hotel (dos
@@ -257,25 +329,24 @@ describe('previewUpgrade — cuánto va a pagar, sin cobrar', () => {
     expect(previews[0].subscription_details.items).toEqual([{ id: 'si_1', price: 'price_pro_349' }])
     expect(previews[0].subscription_details.proration_behavior).toBe('always_invoice')
   })
+
+  // #84 (CA 2/25): ANTES esto era "downgrade → ValidationError que manda al portal". El criterio
+  // cambió: bajar de plan es un destino válido y se cotiza igual que subir, así que el test que
+  // afirmaba el rechazo ahora afirma lo contrario. El Billing Portal sigue existiendo, sólo dejó
+  // de ser el único camino. (El cobro del downgrade se cubre arriba, en el caso que BAJA de plan.)
+  it('el preview de un plan MÁS BARATO cotiza en vez de cortar', async () => {
+    const { deps } = setup([activeSub({ planId: 'plan-pro' })])
+
+    const res = await previewUpgrade(deps, 'h1', 'plan-ess')
+
+    expect(previews).toHaveLength(1)
+    expect(previews[0].subscription_details.items).toEqual([{ id: 'si_1', price: 'price_ess_99' }])
+    expect(res.planId).toBe('plan-ess')
+    expect(res.currentPlanId).toBe('plan-pro')
+  })
 })
 
 describe('upgrade — lo que NO se deja hacer', () => {
-  it('downgrade (plan más barato) → ValidationError que manda al portal, sin tocar Stripe', async () => {
-    // Con always_invoice un downgrade genera CRÉDITO, no cobro: no es "pagar lo que falta".
-    const { deps } = setup([activeSub({ planId: 'plan-pro' })])
-    let err: any
-    try { await applyUpgrade(deps, 'h1', 'plan-ess') } catch (e) { err = e }
-    expect(err).toBeInstanceOf(ValidationError)
-    expect(err.message).toMatch(/portal de facturación/i)
-    expect(updates).toHaveLength(0)
-  })
-
-  it('el preview del downgrade también corta antes de pedirle la cotización a Stripe', async () => {
-    const { deps } = setup([activeSub({ planId: 'plan-pro' })])
-    await expect(previewUpgrade(deps, 'h1', 'plan-ess')).rejects.toBeInstanceOf(ValidationError)
-    expect(previews).toHaveLength(0)
-  })
-
   it('el mismo plan → ValidationError "Ya estás en ese plan", sin tocar Stripe', async () => {
     const { deps } = setup([activeSub({ planId: 'plan-pro' })])
     let err: any
