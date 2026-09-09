@@ -8,14 +8,20 @@
        los invoca desde el botón único "Guardar y continuar" para que quede en una sola fila con
        "Anterior", como en el mockup. -->
   <div class="min-h-screen flex flex-col" style="background: var(--color-surface)">
-    <!-- Header: logo + contexto, "Paso X de N" -->
-    <header class="px-4 sm:px-8 py-5 flex items-center justify-between shrink-0 gap-3">
+    <!-- Header: logo + contexto, % + "Paso X de N". flex-wrap + border-b: si el contenido no
+         entra en una fila (viewport angosto, zoom alto) pasa a una 2da línea en vez de comprimirse
+         contra la barra de pasos de abajo — antes se veían "pisados" entre sí. -->
+    <header class="px-4 sm:px-8 py-6 flex flex-wrap items-center justify-between gap-3 shrink-0 border-b border-border/60">
       <button @click="goBack" type="button" class="flex items-center gap-3 cursor-pointer group">
         <img src="@/assets/logo/logo-horizontal-color.png" alt="SolmiOS" class="h-6 sm:h-7 w-auto">
         <span class="hidden sm:inline text-border">|</span>
         <span class="hidden sm:inline text-sm font-bold text-text-secondary group-hover:text-navy transition-colors">Configura tu propiedad</span>
       </button>
-      <div v-if="status" class="text-sm font-bold text-text-muted shrink-0">Paso {{ activeIndex + 1 }} de {{ status.steps.length }}</div>
+      <div v-if="status" class="flex items-center gap-3 shrink-0">
+        <span class="text-sm font-black text-teal">{{ progress }}% completo</span>
+        <span class="text-border">|</span>
+        <span class="text-sm font-bold text-text-muted">Paso {{ activeIndex + 1 }} de {{ status.steps.length }}</span>
+      </div>
     </header>
 
     <!-- Loading skeleton -->
@@ -26,7 +32,7 @@
 
     <template v-else-if="status">
       <!-- Barra de pasos — numerada, navegable: click en cualquier círculo salta directo a ese paso. -->
-      <nav class="px-4 sm:px-8 pb-6 overflow-x-auto shrink-0" aria-label="Pasos de configuración">
+      <nav class="px-4 sm:px-8 pt-6 pb-6 overflow-x-auto shrink-0" aria-label="Pasos de configuración">
         <ol class="flex items-center justify-center min-w-max mx-auto max-w-5xl">
           <li v-for="(s, i) in status.steps" :key="s.key" class="flex items-center">
             <button @click="activeIndex = i" type="button"
@@ -147,10 +153,10 @@
               <p class="text-sm font-bold text-navy">¿Necesita ayuda?</p>
               <p class="text-[13px] text-text-muted">Estamos acá para ayudarlo en cada paso.</p>
             </div>
-            <router-link to="/panel/support" class="wizard-btn-secondary shrink-0">
-              Ver guía
-              <span class="w-4 h-4" v-html="ICON_EXTERNAL"></span>
-            </router-link>
+            <a :href="`mailto:${SUPPORT_EMAIL}`" class="wizard-btn-secondary shrink-0">
+              <span class="w-4 h-4" v-html="ICON_MAIL"></span>
+              {{ SUPPORT_EMAIL }}
+            </a>
           </div>
         </template>
       </main>
@@ -203,6 +209,15 @@ function handleSkip() { stepRef.value?.skip?.() }
 
 const activeStep = computed(() => status.value!.steps[activeIndex.value]!)
 
+// Mismo criterio que ProfileProgressBar.vue del dashboard (doc 04): SOLO pasos requeridos, los
+// opcionales (Contacto, etc.) no cuentan ni para el numerador ni el denominador.
+const progress = computed(() => {
+  if (!status.value) return 0
+  const required = status.value.steps.filter((s) => s.required)
+  if (!required.length) return 0
+  return Math.round((required.filter((s) => s.done).length / required.length) * 100)
+})
+
 const STEP_COMPONENTS: Record<string, unknown> = {
   bienvenida: StepBienvenida, identidad: StepIdentidad, contacto: StepContacto,
   ubicacion: StepUbicacion, politicas: StepPoliticas,
@@ -217,8 +232,9 @@ const SHORT_LABEL: Record<string, string> = {
 
 const ICON_ARROW_LEFT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"/></svg>'
 const ICON_ARROW_RIGHT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>'
-const ICON_EXTERNAL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H18m0 0v4.5M18 6l-7.5 7.5M8.25 6H6a1.5 1.5 0 0 0-1.5 1.5v10.5A1.5 1.5 0 0 0 6 19.5h10.5a1.5 1.5 0 0 0 1.5-1.5v-2.25"/></svg>'
+const ICON_MAIL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75"/></svg>'
 const ICON_DOT = '<svg viewBox="0 0 24 24" fill="currentColor" class="w-full h-full"><circle cx="12" cy="12" r="4"/></svg>'
+const SUPPORT_EMAIL = 'soporte@solmios.com'
 
 // Réplica del mockup del usuario (2026-09-09): un solo acento (teal, `--color-teal` del design
 // system) en vez de un color distinto por paso — el ícono es lo único que cambia entre pasos,
