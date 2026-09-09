@@ -48,7 +48,7 @@
         </p>
       </div>
 
-      <p v-if="error" class="text-[11px] font-bold text-danger">{{ error }}</p>
+      <p v-if="fieldError || error" class="text-[11px] font-bold text-danger">{{ fieldError || error }}</p>
     </template>
   </div>
 </template>
@@ -70,6 +70,13 @@ const ICON_GLOBE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" s
 
 const toast = useToast()
 const loading = ref(true)
+/** Mismo criterio que `done` del paso en el backend (`onboarding.ts`: `address && latitude &&
+ *  longitude`) — validación de campo ANTES de tocar la red, mismo patrón que `fieldError` de
+ *  StepBienvenida.vue. Sin esto, "Guardar y continuar" persistía una dirección vacía sin avisar
+ *  (el backend no la rechaza, solo no marca el paso como hecho) y el usuario podía pasar de paso
+ *  con la ubicación requerida sin completar — reportado explícitamente tras el fix que limpia
+ *  address/lat/lng al cambiar de país (quedan vacíos hasta que el usuario los vuelve a marcar). */
+const fieldError = ref('')
 
 type LocationForm = Pick<Partial<HotelFull>, 'country' | 'address' | 'latitude' | 'longitude' | 'province' | 'municipality' | 'locality' | 'postalCode'>
 const form = ref<LocationForm>({ country: '', address: '', latitude: undefined, longitude: undefined, province: '', municipality: '', locality: '', postalCode: '' })
@@ -121,6 +128,12 @@ const { error, save } = useOnboardingStep(async () => {
 }, (status) => emit('saved', status))
 
 async function onSave() {
+  const hasAddress = Boolean(form.value.address?.trim())
+  const hasCoords = Boolean(form.value.latitude) && Boolean(form.value.longitude)
+  fieldError.value = hasAddress && hasCoords
+    ? ''
+    : 'Marque la ubicación exacta: busque la dirección o mueva el pin en el mapa antes de continuar'
+  if (fieldError.value) return
   await save()
   if (!error.value) { toast.success('Ubicación guardada'); markClean() }
 }
