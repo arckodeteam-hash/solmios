@@ -158,14 +158,13 @@ export async function applyUpgrade(
       hotelId, planId: String(plan.id), currentPlanId: active.planId ? String(active.planId) : null,
       stripeSubscriptionId: String(active.stripeSubscriptionId), error: motivo,
     }
-    if (!isStripeCardError(e)) {
-      logger.error('El cambio de plan falló por un error del sistema, no del método de pago', contexto)
-      throw e
-    }
-    logger.warn('No se pudo cobrar el prorrateo del cambio de plan: el plan actual queda intacto', contexto)
-    // El intento RECHAZADO tiene que dejar rastro en la fila: es lo que hace que el reintento
-    // estrene clave de idempotencia y Stripe lo ejecute de verdad, en vez de devolverle el error
-    // cacheado de este intento. Es lo que `allow_incomplete` daba gratis, cuando todo intento
+    // Todo intento que llegó a Stripe tiene que dejar rastro en la fila, haya fallado por la
+    // tarjeta o por el sistema: es lo que hace que el reintento estrene clave de idempotencia y
+    // Stripe lo ejecute de verdad, en vez de devolverle el error cacheado de este intento. Stripe
+    // guarda la respuesta de CUALQUIER error una vez que el endpoint empezó a ejecutarse, así que
+    // un `StripeAPIError` transitorio o un `stripePriceId` mal configurado envenenan la clave
+    // igual que un rechazo: sin la marca, el hotel corrige el problema y sigue recibiendo el mismo
+    // error cacheado por hasta 24h. Es lo que `allow_incomplete` daba gratis, cuando todo intento
     // escribía la fila.
     //
     // El patch va VACÍO a propósito. Reescribir un campo leído antes del `await` a Stripe —que es
@@ -184,10 +183,17 @@ export async function applyUpgrade(
     try {
       await subscriptionsRepo.update(String(active.id), {})
     } catch (errorAlMarcar) {
-      logger.warn('No se pudo marcar el intento rechazado: el reintento podría chocar con el caché de Stripe', {
+      logger.warn('No se pudo marcar el intento fallido: el reintento podría chocar con el caché de Stripe', {
         ...contexto, errorAlMarcar: (errorAlMarcar as Error)?.message ?? 'error desconocido',
       })
     }
+    // Sólo el error de COBRO se traduce; el del sistema sube tal cual (ver el comentario de
+    // arriba). La marca de más arriba ya se hizo para los dos.
+    if (!isStripeCardError(e)) {
+      logger.error('El cambio de plan falló por un error del sistema, no del método de pago', contexto)
+      throw e
+    }
+    logger.warn('No se pudo cobrar el prorrateo del cambio de plan: el plan actual queda intacto', contexto)
     throw new ValidationError(
       `No pudimos cobrar el cambio de plan: ${motivo}. `
       + 'Tu plan actual no cambió — revisá tu método de pago e intentá de nuevo.',

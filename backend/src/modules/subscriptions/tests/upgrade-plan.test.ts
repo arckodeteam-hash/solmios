@@ -429,16 +429,21 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     expect(err).toBe(original)
     expect(err).not.toBeInstanceOf(ValidationError)
     expect(err.message).not.toMatch(/método de pago/i)
-    // Y la fila no se toca NI PARA MARCAR EL INTENTO: no hubo cobro atribuible al hotel, así que
-    // tampoco hay un intento suyo que distinguir. El rastro es sólo del rechazo de tarjeta.
-    expect(escritas).toHaveLength(0)
-    expect(subRows[0].updatedAt).toBe('2026-09-01T00:00:00.000Z')
+    // Pero la fila SÍ se marca: Stripe cachea la respuesta de cualquier error una vez que el
+    // endpoint empezó a ejecutarse, así que sin el rastro el reintento —tras un error transitorio
+    // ya resuelto— reusaría la clave y recibiría el mismo error cacheado por hasta 24h.
+    expect(escritas).toHaveLength(1)
+    expect(escritas[0].id).toBe('s1')
+    expect(escritas[0].patch).toEqual({})   // sólo mueve `updatedAt`, ni un dato del negocio
+    expect(subRows[0].updatedAt).not.toBe('2026-09-01T00:00:00.000Z')  // la marca del intento
+    // Y nada del negocio se movió: el plan sigue siendo el que el hotel paga.
     expect(subRows[0].planId).toBe('plan-ess')
     expect(hotelRows[0].plan).toBe('esencial')
   })
 
-  it('un StripeInvalidRequestError (price mal configurado) tampoco se traduce como tarjeta', async () => {
+  it('un StripeInvalidRequestError (price mal configurado) tampoco se traduce como tarjeta, pero igual marca el intento', async () => {
     const { deps, subRows } = setup([activeSub()])
+    const escritas = espiarEscrituras(deps)
     const original = errorDeStripe('StripeInvalidRequestError', 'No such price: price_pro_349')
     stripeClient.subscriptions.update = async () => { throw original }
 
@@ -448,6 +453,10 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     expect(err).toBe(original)
     expect(err.message).not.toMatch(/revisá tu método de pago/i)
     expect(subRows[0].planId).toBe('plan-ess')
+    // Corregido el `stripePriceId` del plan, el reintento tiene que EJECUTARSE: sin la marca
+    // chocaría con el mismo error cacheado bajo la clave de idempotencia.
+    expect(escritas).toHaveLength(1)
+    expect(escritas[0].patch).toEqual({})
   })
 
   // Si Stripe devolviera una respuesta cacheada por idempotencia (o el ítem no fuera el que se
