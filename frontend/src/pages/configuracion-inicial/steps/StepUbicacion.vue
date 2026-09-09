@@ -5,14 +5,17 @@
     <div v-if="loading" class="h-40 animate-pulse bg-surface rounded-lg"></div>
     <template v-else>
       <p class="text-[11px] text-text-muted">Los campos marcados con <span class="text-danger font-bold">*</span> son obligatorios.</p>
-      <div>
+      <div class="relative">
         <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Dirección <span class="text-danger">*</span></label>
         <div class="wizard-field">
           <span class="wizard-field-icon" v-html="ICON_PIN"></span>
           <input ref="addressInputEl" v-model="form.address" type="text" autocomplete="off" placeholder="Busque la dirección…" required aria-required="true"
             maxlength="200" class="wizard-input" data-field="address">
         </div>
-        <ul v-if="addressSuggestions.length" class="mt-1 rounded-xl border border-border bg-white shadow-lg overflow-hidden">
+        <!-- absolute: las sugerencias flotan sobre el contenido de abajo (mapa, provincia,
+             municipio) en vez de empujarlo — sin esto la tarjeta cambiaba de alto/ancho cada
+             vez que aparecía el dropdown (mismo fix que ya tiene pagina-publica/ubicacion.vue). -->
+        <ul v-if="addressSuggestions.length" class="absolute z-10 mt-1 w-full rounded-xl border border-border bg-white shadow-lg overflow-hidden">
           <li v-for="s in addressSuggestions" :key="`${s.lat},${s.lng}`">
             <button type="button" @click="selectAddressSuggestion(s)"
               class="w-full px-3.5 py-2 text-left text-xs text-navy hover:bg-surface cursor-pointer truncate">{{ s.label }}</button>
