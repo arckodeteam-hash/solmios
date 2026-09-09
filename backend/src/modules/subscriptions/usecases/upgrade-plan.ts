@@ -1,11 +1,16 @@
-// subscriptions/usecases/upgrade-plan.ts — El HOTEL mejora su plan pagando SOLO la diferencia.
+// subscriptions/usecases/upgrade-plan.ts — El HOTEL cambia su plan pagando SOLO la diferencia.
 //
-// #46: hasta acá el hotel no podía mejorar su plan por su cuenta. Con una suscripción viva,
+// #46: hasta acá el hotel no podía cambiar su plan por su cuenta. Con una suscripción viva,
 // `create-checkout-session.ts` corta con 409 a propósito (BUG-9: un Checkout `mode:'subscription'`
 // nuevo crea una SEGUNDA suscripción en Stripe que cobra en paralelo y huérfana la vieja), y el
 // Billing Portal cambia el plan pero no es el flujo que pide el issue. El camino correcto es
 // `stripe.subscriptions.update()` sobre el ÍTEM que ya existe: es la API que prorratea y factura
 // exactamente la diferencia — "pagando lo que falta de su suscripción", textual del issue.
+//
+// #84: el destino es CUALQUIER plan activo distinto del actual, más caro o más barato (CA 2/25), y
+// el plan sólo se activa si el prorrateo quedó cobrado (CA 4/5). Los nombres `previewUpgrade` /
+// `applyUpgrade` / `UpgradePlanDeps` se conservan a propósito: renombrarlos arrastraría controller,
+// index, types y frontend sin cambiar una sola regla.
 //
 // Cuenta de PLATAFORMA: `StripeService.getClient()` SIN hotelId, mismo criterio que el checkout —
 // con hotelId resolvería las keys DEL HOTEL, que son las que cobran a sus huéspedes.
@@ -26,9 +31,12 @@ export interface UpgradePlanDeps {
 }
 
 const MS_PER_SECOND = 1000
-/** Ventana de deduplicación cuando la fila no trae `updatedAt`. Corta a propósito: sólo tiene que
- *  cubrir la ráfaga de pedidos concurrentes (dos pestañas, un doble clic), no congelar la
- *  operación — las claves de idempotencia de Stripe viven 24h y no queremos bloquear tanto. */
+/** Bucket de tiempo de la clave de idempotencia, usado SÓLO como fallback cuando la fila no trae
+ *  `updatedAt`. Cubre la ráfaga de pedidos concurrentes (dos pestañas, un doble clic) sin congelar
+ *  la operación: las claves de idempotencia de Stripe viven 24h y un reintento legítimo no puede
+ *  esperar tanto. Achicarlo NO arregla nada y abre el doble cobro (dos pestañas separadas por
+ *  segundos estrenarían clave y facturarían dos prorrateos); el reintento lo resuelve el
+ *  `updatedAt`, que todo intento —cobrado o rechazado— deja movido. */
 const VENTANA_DEDUP_MS = 60_000
 
 /** Todo lo que las dos operaciones necesitan resolver ANTES de tocar plata. */
@@ -44,8 +52,9 @@ interface UpgradeContext {
 }
 
 /**
- * Cuánto pagaría HOY el hotel por mejorar su plan. No cobra ni cambia nada: es la cifra que el
- * panel muestra antes de que la persona confirme.
+ * Cuánto pagaría HOY el hotel por cambiar de plan. No cobra ni cambia nada: es la cifra que el
+ * panel muestra antes de que la persona confirme. Al bajar de plan el prorrateo va a favor del
+ * hotel y el monto sale 0: no se cobra nada y queda crédito para la próxima factura.
  */
 export async function previewUpgrade(
   deps: UpgradePlanDeps, hotelId: string, planId: string,
@@ -76,23 +85,23 @@ export async function previewUpgrade(
 }
 
 /**
- * Aplica la mejora y cobra la diferencia en el acto. Devuelve el estado REAL de la factura: el
- * cobro puede fallar y este resultado no lo tapa (ver el comentario del `payment_behavior`).
+ * Aplica el cambio de plan y cobra la diferencia en el acto. Si el cobro no se completa, LANZA y no
+ * cambia nada: el plan sólo rige cuando el prorrateo se pudo cobrar (ver `payment_behavior`).
  */
 export async function applyUpgrade(
   deps: UpgradePlanDeps, hotelId: string, planId: string,
 ): Promise<UpgradeResultDTO> {
-  const { logger } = deps
+  const { logger, subscriptionsRepo } = deps
   const { stripe, active, itemId, plan } = await loadUpgrade(deps, hotelId, planId)
 
   // `proration_behavior: 'always_invoice'` emite la factura del prorrateo YA y la cobra con el
   // método guardado: es lo que hace que el hotel pague "lo que falta" hoy y no en la próxima
-  // renovación. `payment_behavior: 'allow_incomplete'`: si la tarjeta rechaza, el cambio de plan
-  // queda hecho, la factura queda ABIERTA y Stripe manda `invoice.payment_failed` → el webhook ya
-  // mueve la fila a `past_due` y arranca la gracia (handle-stripe-event.ts). Se prefiere a
-  // `error_if_incomplete` —que revierte el ítem y tira un card error— para no perder la factura
-  // emitida ni el reintento del dunning de Stripe. Contrapartida: NO se puede asumir éxito, por
-  // eso abajo se lee la factura de verdad en vez de devolver un "listo" a ciegas.
+  // renovación. `payment_behavior: 'error_if_incomplete'` (#84, CA 4 y 5): el plan nuevo se activa
+  // SÓLO si esa factura quedó pagada. Si la tarjeta rechaza, Stripe REVIERTE el ítem al plan viejo
+  // y esta llamada LANZA, así que nada de lo que sigue corre —ni el reflejo local de
+  // `changeHotelPlan`— y el hotel se queda con el plan que sí está pagando. Antes iba
+  // `allow_incomplete`, que aplicaba el cambio igual y dejaba al hotel con un plan que nunca se le
+  // cobró, esperando al dunning: un pago fallido NO puede cambiar el plan actual.
   //
   // CLAVE DE IDEMPOTENCIA: sin ella, dos pedidos CONCURRENTES del mismo hotel (doble clic, dos
   // pestañas, un reintento que se superpone) leen los dos el mismo estado local viejo, los dos
@@ -101,25 +110,95 @@ export async function applyUpgrade(
   // porque no cruza pestañas. Con la clave, Stripe colapsa el segundo pedido idéntico en la misma
   // operación y devuelve el mismo resultado, sin cobrar de nuevo.
   //
-  // La clave identifica EL INTENTO, no la transición, y por eso incluye `updatedAt` de la fila
-  // leída. Atarla sólo a origen→destino sería un bug: Stripe cachea la respuesta de una clave
-  // repetida durante 24h y la devuelve SIN re-ejecutar nada, así que un hotel que mejora A→B, baja
-  // a A desde el Billing Portal y vuelve a mejorar a B el mismo día recibiría el response viejo —
-  // sin cobro y sin cambio real en Stripe. `updatedAt` cambia con cada escritura sobre la fila
-  // (incluida la del webhook al bajar de plan), así que dos pedidos CONCURRENTES —que leen el
-  // mismo snapshot— comparten clave y se deduplican, mientras que un intento posterior legítimo
-  // —que lee un snapshot distinto— estrena clave. Sin `updatedAt` se cae a una ventana de tiempo
-  // corta, que conserva la deduplicación de la ráfaga concurrente sin congelar nada por 24h.
+  // La clave identifica EL INTENTO, no la transición. Atarla sólo a origen→destino sería un bug:
+  // Stripe cachea la respuesta de una clave repetida durante 24h y la devuelve SIN re-ejecutar
+  // nada, así que un hotel que mejora A→B, baja a A desde el Billing Portal y vuelve a mejorar a B
+  // el mismo día recibiría el response viejo — sin cobro y sin cambio real en Stripe.
+  //
+  // Lo que distingue un intento del siguiente es el `updatedAt` del snapshot leído, y alcanza
+  // porque TODO intento deja escrita la fila: el que cobra, con el reflejo del plan nuevo; el que
+  // la tarjeta rechaza, con la escritura no-op del `catch` de acá abajo (el ORM pisa `updatedAt`
+  // en cada escritura). Sin esa marca, un cobro rechazado —que con `error_if_incomplete` no
+  // escribe nada— dejaba el `updatedAt` quieto: el reintento reusaba la MISMA clave y Stripe le
+  // devolvía el ERROR cacheado por hasta 24h, así que el hotel corregía su tarjeta y seguía
+  // recibiendo el mismo rechazo, justo lo contrario del "intentá de nuevo" que este código muestra.
+  //
+  // La ráfaga CONCURRENTE sigue deduplicada sin ayuda del reloj: los pedidos simultáneos leyeron
+  // el MISMO snapshot antes de que ninguno tocara la fila, comparten `updatedAt` y Stripe los
+  // colapsa en una sola operación.
+  //
+  // El bucket de `VENTANA_DEDUP_MS` queda SÓLO de fallback para la fila que no trae `updatedAt`
+  // (base vieja, doble de test): ahí no hay nada que distinga un intento de otro y lo único que se
+  // puede sostener es la dedup de la ráfaga.
   const tokenIntento = active.updatedAt
     ? String(active.updatedAt)
     : `t${Math.floor(Date.now() / VENTANA_DEDUP_MS)}`
   const claveIdempotencia = `upgrade:${hotelId}:${active.stripeSubscriptionId}:${plan.id}:${tokenIntento}`
-  const updated = await stripe.subscriptions.update(String(active.stripeSubscriptionId), {
-    items: [{ id: itemId, price: String(plan.stripePriceId) }],
-    proration_behavior: 'always_invoice',
-    payment_behavior: 'allow_incomplete',
-    expand: ['latest_invoice'],
-  }, { idempotencyKey: claveIdempotencia })
+  // El rechazo de la tarjeta llega acá como error de Stripe. Sube traducido (#84, CA 29): un
+  // "card_declined" crudo no le dice a nadie que su plan siguió intacto. El motivo de Stripe NO se
+  // tapa —es lo único que explica QUÉ falló— y queda además en el log con hotel y plan.
+  //
+  // SÓLO el error de cobro se traduce. Un price inválido, un timeout, un rate limit o una caída de
+  // la API no son problemas de la tarjeta del hotel: disfrazarlos de "revisá tu método de pago"
+  // manda a la persona a revisar una tarjeta que está bien y esconde un fallo de infraestructura
+  // detrás de un `warn`. Esos suben TAL CUAL —sin envolver, conservando tipo y stack— y se loguean
+  // en `error`. Mismo criterio de detección que `payment-requests/usecases/live-session.ts`: el
+  // `type` del error de Stripe; acá el caso de cobro es `StripeCardError`.
+  let updated: Stripe.Subscription
+  try {
+    updated = await stripe.subscriptions.update(String(active.stripeSubscriptionId), {
+      items: [{ id: itemId, price: String(plan.stripePriceId) }],
+      proration_behavior: 'always_invoice',
+      payment_behavior: 'error_if_incomplete',
+      expand: ['latest_invoice'],
+    }, { idempotencyKey: claveIdempotencia })
+  } catch (e) {
+    const motivo = (e as Error)?.message ?? 'error desconocido'
+    const contexto = {
+      hotelId, planId: String(plan.id), currentPlanId: active.planId ? String(active.planId) : null,
+      stripeSubscriptionId: String(active.stripeSubscriptionId), error: motivo,
+    }
+    // Todo intento que llegó a Stripe tiene que dejar rastro en la fila, haya fallado por la
+    // tarjeta o por el sistema: es lo que hace que el reintento estrene clave de idempotencia y
+    // Stripe lo ejecute de verdad, en vez de devolverle el error cacheado de este intento. Stripe
+    // guarda la respuesta de CUALQUIER error una vez que el endpoint empezó a ejecutarse, así que
+    // un `StripeAPIError` transitorio o un `stripePriceId` mal configurado envenenan la clave
+    // igual que un rechazo: sin la marca, el hotel corrige el problema y sigue recibiendo el mismo
+    // error cacheado por hasta 24h. Es lo que `allow_incomplete` daba gratis, cuando todo intento
+    // escribía la fila.
+    //
+    // El patch va VACÍO a propósito. Reescribir un campo leído antes del `await` a Stripe —que es
+    // una llamada de red que puede tardar (3DS, reintentos de la red de tarjetas)— sería un
+    // leer-modificar-escribir sin CAS: si en esa ventana el webhook movió la fila a `past_due` o a
+    // `canceled` (handle-stripe-event.ts), este `catch` la devolvería al valor viejo, y una
+    // suscripción recién cancelada volvería a figurar activa por un cobro que ni siquiera pasó.
+    // Con el patch vacío el ORM emite `UPDATE subscriptions SET updatedAt = ? WHERE id = ?`
+    // (orm.ts: filtra el patch contra los campos del modelo y agrega `updatedAt` si el modelo
+    // lleva timestamps, que `SubscriptionsModel` sí lleva): mueve la marca de tiempo y no pisa un
+    // solo dato del negocio.
+    //
+    // BEST-EFFORT, mismo criterio que el reflejo local de más abajo: si esta escritura falla NO
+    // puede tapar el rechazo del cobro, que es lo único que la persona necesita leer. Se avisa
+    // fuerte y se sigue lanzando el motivo real.
+    try {
+      await subscriptionsRepo.update(String(active.id), {})
+    } catch (errorAlMarcar) {
+      logger.warn('No se pudo marcar el intento fallido: el reintento podría chocar con el caché de Stripe', {
+        ...contexto, errorAlMarcar: (errorAlMarcar as Error)?.message ?? 'error desconocido',
+      })
+    }
+    // Sólo el error de COBRO se traduce; el del sistema sube tal cual (ver el comentario de
+    // arriba). La marca de más arriba ya se hizo para los dos.
+    if (!isStripeCardError(e)) {
+      logger.error('El cambio de plan falló por un error del sistema, no del método de pago', contexto)
+      throw e
+    }
+    logger.warn('No se pudo cobrar el prorrateo del cambio de plan: el plan actual queda intacto', contexto)
+    throw new ValidationError(
+      `No pudimos cobrar el cambio de plan: ${motivo}. `
+      + 'Tu plan actual no cambió — revisá tu método de pago e intentá de nuevo.',
+    )
+  }
 
   // A PARTIR DE ACÁ LA TARJETA YA SE COBRÓ: nada de lo que sigue puede lanzar. Leer la factura
   // es una llamada de RED más (`latest_invoice` puede venir sin expandir y obligar a un
@@ -139,11 +218,11 @@ export async function applyUpgrade(
   const amountCharged = Number(invoice?.amount_due ?? 0)
   const currency = currencyOf(invoice?.currency, plan)
 
-  // ¿Stripe quedó DE VERDAD en el plan destino? Con `payment_behavior:'allow_incomplete'` el
-  // cambio de ítem se aplica aunque el cobro falle, así que normalmente sí. Pero reflejar el plan
-  // en local por el solo hecho de que el update no tiró es una suposición, y acá una suposición
-  // equivocada deja al hotel con un plan pago que Stripe nunca le cobró. Se confirma contra el
-  // price que volvió.
+  // ¿Stripe quedó DE VERDAD en el plan destino? Con `payment_behavior:'error_if_incomplete'` un
+  // cobro fallido ya no llega hasta acá —lanza arriba y revierte el ítem—, así que normalmente sí.
+  // Pero reflejar el plan en local por el solo hecho de que el update no tiró es una suposición, y
+  // acá una suposición equivocada deja al hotel con un plan pago que Stripe nunca le cobró. Se
+  // confirma contra el price que volvió.
   //
   // OJO con el alcance: esto NO cubre la respuesta cacheada por idempotencia — una respuesta
   // cacheada es la de la operación original, que traía el price nuevo, así que pasaría este
@@ -171,9 +250,9 @@ export async function applyUpgrade(
 
   // Reflejo local inmediato para que el panel del hotel cambie sin esperar el webhook
   // `customer.subscription.updated`, que igual va a llegar y hace exactamente esto — es
-  // idempotente: si `planId` ya apunta al plan nuevo, corta sin escribir. Se espeja también
-  // cuando la factura quedó impaga, porque en Stripe el plan nuevo YA rige: la fila local tiene
-  // que decir la verdad de Stripe, y del impago se ocupa el dunning.
+  // idempotente: si `planId` ya apunta al plan nuevo, corta sin escribir. Si el update volvió, el
+  // ítem quedó en el plan destino en Stripe: la fila local tiene que decir esa verdad. Un cobro
+  // rechazado no llega hasta acá.
   //
   // BEST-EFFORT A PROPÓSITO: acá la tarjeta YA se cobró. Si esta escritura fallara y el error
   // subiera, el hotel vería un 500 sobre un cobro que sí ocurrió — el peor final posible. El
@@ -241,13 +320,13 @@ async function loadUpgrade(deps: UpgradePlanDeps, hotelId: string, planId: strin
   if (!currentPlan) {
     throw new ValidationError('No pudimos identificar tu plan actual: escribinos para migrar tu suscripción')
   }
-  // SOLO UPGRADES. Con `always_invoice` un downgrade NO cobra: genera CRÉDITO a favor del hotel
-  // para las próximas facturas, y el issue pide explícitamente "pagando lo que falta". Bajar de
-  // plan (y el prorrateo a favor, que es una decisión comercial) se gestiona desde el Billing
-  // Portal, que ya está cableado en `/api/subscriptions/portal`.
-  if (!(Number(plan.price) > Number(currentPlan.price))) {
-    throw new ValidationError('Ese plan no es una mejora del actual. Para bajar de plan usá el portal de facturación.')
-  }
+  // CUALQUIER DIRECCIÓN (#84, CA 2/25): antes acá se cortaba todo lo que no fuera un plan más caro
+  // y se mandaba a la persona al Billing Portal. No hacía falta: con `always_invoice` un downgrade
+  // no cobra, genera CRÉDITO a favor del hotel para las próximas facturas —`amount_due` 0— y la
+  // factura sale `paid`, así que este mismo camino sirve para las dos direcciones y devuelve un
+  // resultado honesto en ambas. El Billing Portal sigue disponible en `/api/subscriptions/portal`
+  // para quien prefiera gestionarlo ahí; sólo dejó de ser el ÚNICO camino para bajar de plan.
+  // `currentPlan` se sigue resolviendo porque el preview muestra de qué plan se sale.
 
   const stripe = await StripeService.getClient()
   if (!stripe) throw new ValidationError('Stripe no está configurado en la plataforma')
@@ -259,6 +338,13 @@ async function loadUpgrade(deps: UpgradePlanDeps, hotelId: string, planId: strin
   if (!itemId) throw new ConflictError('Tu suscripción en Stripe no tiene ítems: escribinos para migrarla')
 
   return { stripe, active, stripeSub, itemId: String(itemId), plan, currentPlan }
+}
+
+/** El único error de Stripe que SÍ es del método de pago del hotel (tarjeta rechazada, expirada,
+ *  fondos insuficientes). El resto —`StripeInvalidRequestError`, `StripeAPIError`,
+ *  `StripeConnectionError`, `StripeRateLimitError`— es un fallo del sistema. */
+function isStripeCardError(e: unknown): boolean {
+  return (e as { type?: string } | null)?.type === 'StripeCardError'
 }
 
 /** La factura del prorrateo. `expand` normalmente la trae entera; el retrieve es el defensivo. */
