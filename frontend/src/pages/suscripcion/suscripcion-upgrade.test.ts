@@ -278,7 +278,31 @@ describe('/panel/suscripcion — cambio de plan con la suscripción viva', () =>
     expect(texto).not.toMatch(/quedó activo/i)
   })
 
-  it('con el cobro rechazado (paid:false) avisa que el pago quedó pendiente y manda al portal', async () => {
+  // #84: bajar de plan liquida el prorrateo como CRÉDITO, así que no hay cobro y puede no quedar
+  // factura que leer: `paid` vuelve en false con `amountCharged` 0. Avisar de un "pago pendiente"
+  // de $0 asustaría por un cargo que no existe — se informa como lo que es, un cambio sin cobro.
+  it('sin cobro (paid:false con monto 0) lo informa como cambio aplicado, sin aviso de pago pendiente', async () => {
+    upgrade.mockResolvedValue(result({ paid: false, amountCharged: 0, invoiceStatus: null }))
+    const w = await openConfirm()
+
+    await w.find('footer').findAll('button')[1]!.trigger('click')
+    await flushPromises()
+
+    expect(toastWarning).not.toHaveBeenCalled()
+    expect(toastError).not.toHaveBeenCalled()
+    expect(toastSuccess).toHaveBeenCalled()
+    const texto = String(toastSuccess.mock.calls[0]![0]) + ' ' + String(toastSuccess.mock.calls[0]![1] ?? '')
+    expect(texto).toMatch(/Ya estás en Professional/i)
+    expect(texto).not.toMatch(/pendiente/i)
+    // Y no se abre el modal de "pago sin confirmar".
+    expect(w.text()).not.toMatch(/pago sin confirmar/i)
+  })
+
+  // #84: con `error_if_incomplete` en el backend, una tarjeta rechazada REVIERTE en Stripe y sube
+  // como error (lo cubre el test de arriba). `paid:false` con un monto > 0 pasó a significar otra
+  // cosa: el plan quedó aplicado pero el backend no pudo CONFIRMAR el cobro. El aviso manda a
+  // mirar el pago, no da el cobro por fallido.
+  it('con el cobro sin confirmar (paid:false) avisa que no se pudo confirmar y manda al portal', async () => {
     upgrade.mockResolvedValue(result({ paid: false, invoiceStatus: 'open' }))
     const w = await openConfirm()
 
@@ -287,7 +311,7 @@ describe('/panel/suscripcion — cambio de plan con la suscripción viva', () =>
 
     expect(toastSuccess).not.toHaveBeenCalled()
     expect(toastWarning).toHaveBeenCalled()
-    expect(String(toastWarning.mock.calls[0]![0])).toMatch(/pendiente/i)
+    expect(String(toastWarning.mock.calls[0]![0])).toMatch(/no pudimos confirmar el pago/i)
 
     const modal = w.find('.modal')
     expect(modal.text()).toMatch(/pendiente/i)

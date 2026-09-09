@@ -103,22 +103,25 @@
     <!-- Cambio de plan (#46, ampliado en #84 a las dos direcciones). Dos momentos, un solo modal:
          a) confirmación — el prorrateo SIEMPRE se muestra ANTES de tocar la tarjeta, sea un cobro
             (plan más caro) o un crédito a favor (plan más barato: no se cobra nada ahora);
-         b) cobro rechazado — el plan quedó aplicado pero la factura no se pagó, y la única
-            salida es arreglar el método de pago en el portal. -->
+         b) cobro sin confirmar — el plan quedó aplicado pero el backend no pudo leer la factura
+            del prorrateo, así que no afirma que se cobró. Desde #84 esto YA NO es "la tarjeta
+            rechazó": con `error_if_incomplete` un rechazo revierte en Stripe y sube como error,
+            sin cambiar el plan. La única salida sigue siendo mirar el pago en el portal. -->
     <AppModal
       v-if="upgradePreview || pendingUpgrade"
-      :title="pendingUpgrade ? 'Plan actualizado, pago pendiente' : 'Confirmar cambio de plan'"
+      :title="pendingUpgrade ? 'Plan actualizado, pago sin confirmar' : 'Confirmar cambio de plan'"
       size="sm"
       @close="closeUpgrade"
     >
       <div v-if="pendingUpgrade" class="space-y-3">
         <p class="text-sm text-text-secondary">
           Ya estás en <strong class="text-navy">{{ pendingUpgrade.planName }}</strong>, pero no pudimos
-          cobrar <strong class="text-navy tabular-nums">{{ money(pendingUpgrade.amountCharged, pendingUpgrade.currency) }}</strong>:
-          el pago quedó pendiente.
+          confirmar el cobro de <strong class="text-navy tabular-nums">{{ money(pendingUpgrade.amountCharged, pendingUpgrade.currency) }}</strong>
+          por lo que falta del ciclo.
         </p>
         <p class="text-sm text-warning font-bold">
-          Actualizá tu método de pago para que no se corte el acceso — vamos a reintentar el cobro.
+          Revisá el estado del pago en «Gestionar método de pago»: si quedó pendiente, actualizá tu
+          tarjeta para que no se corte el acceso.
         </p>
       </div>
       <div v-else-if="upgradePreview" class="space-y-3">
@@ -337,13 +340,20 @@ async function confirmUpgrade() {
         result.amountCharged > 0
           ? `Te cobramos ${money(result.amountCharged, result.currency)} por lo que falta del ciclo.`
           : 'No te cobramos nada ahora: el saldo a favor se aplica a tu próxima factura.')
+    } else if (result.amountCharged <= 0) {
+      // Bajar de plan no emite cobro: el prorrateo es crédito y puede no dejar factura que leer,
+      // así que `paid` viene en false sin que haya nada pendiente. Avisar de un "pago pendiente"
+      // de $0 asustaría por un cobro que no existe (#84).
+      toast.success(`Ya estás en ${result.planName}`,
+        'No te cobramos nada ahora: el saldo a favor se aplica a tu próxima factura.')
     } else {
-      // `applied: true` con `paid: false`: en Stripe el plan nuevo YA rige, pero la factura del
-      // prorrateo quedó ABIERTA y el dunning la va a reintentar. Decir "listo" acá sería mentir:
-      // se avisa y se lo manda al portal a arreglar la tarjeta.
+      // `applied: true` con `paid: false` y un monto > 0: en Stripe el plan nuevo YA rige, pero el
+      // backend no pudo leer la factura del prorrateo y no afirma que se cobró. Desde #84 esto ya
+      // NO es la tarjeta rechazada —un rechazo revierte en Stripe y sube por el `catch`—, así que
+      // el aviso manda a MIRAR el pago en el portal en vez de dar el cobro por fallido.
       pendingUpgrade.value = result
-      toast.warning(`${result.planName} quedó activo, pero el pago está pendiente`,
-        `No pudimos cobrar ${money(result.amountCharged, result.currency)}. Actualizá tu método de pago.`)
+      toast.warning(`${result.planName} quedó activo, pero no pudimos confirmar el pago`,
+        `Revisá en el portal si se cobraron ${money(result.amountCharged, result.currency)}.`)
     }
     await refreshAfterUpgrade()
   } catch (e: any) {
