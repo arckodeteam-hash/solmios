@@ -16,6 +16,15 @@ export function assertCancellationCompatible(freeCancellation: unknown, cancella
   }
 }
 
+/** Campos derivados de una dirección concreta — dejan de tener sentido cuando el país cambia
+ *  (un pin/provincia de OTRO país queda mezclado con el nuevo). `latitude`/`longitude` usan `0`
+ *  como "sin coordenadas propias" (mismo criterio que ya usa el default del modelo y
+ *  `useHotelLocationMap.ts` en el frontend: `Number(latitude) || defaultCenter` cae al centro
+ *  del país cuando vale 0), el resto usa string vacío. */
+const LOCATION_FIELDS_ON_COUNTRY_CHANGE: Record<string, string | number> = {
+  address: '', latitude: 0, longitude: 0, province: '', municipality: '', locality: '', postalCode: '',
+}
+
 export class HotelesQueries {
   constructor(private readonly orm: any) {}
 
@@ -35,6 +44,19 @@ export class HotelesQueries {
     const safePatch: Record<string, any> = {}
     const allowed = ['name', 'country', 'address', 'phone', 'email', 'timezone', 'currency', 'checkIn', 'checkOut', 'plan', 'cancellationType', 'freeCancellation', 'depositRequired', 'depositPercent', 'weekendSurcharge', 'ownerName', 'ownerTaxId', 'deviceEmail', 'accommodationType', 'registrationNumber', 'website', 'bookingEngineUrl', 'phone2', 'warningPhone', 'secondaryCurrency', 'youtubeUrl', 'starRating', 'onlineBookingStatus', 'motorVersion', 'latitude', 'longitude', 'province', 'municipality', 'locality', 'postalCode', 'cleaningType', 'depositType', 'depositFixed', 'advanceType', 'advanceAmount', 'releaseHours', 'defaultPaymentMethod', 'requestReviews', 'publishReviewScore', 'publishReviewComments', 'taxName', 'taxRate', 'descriptionJson', 'wifiNetwork', 'wifiPassword', 'logo', 'slug', 'amenities', 'descriptionTranslations']
     for (const k of allowed) { if (body[k] !== undefined) safePatch[k] = body[k] }
+    // Cambiar de país invalida la dirección/pin/provincia vieja — reportado como "cambié el país
+    // en el paso 1 del wizard y el mapa de Ubicación sigue mostrando lo que guardé al principio,
+    // en el registro". `useHotelLocationMap.ts` ya limpia esto en el frontend, pero SOLO cuando
+    // país y mapa viven en la misma pantalla montada (`settings/index.vue`) — país se edita en
+    // Bienvenida/Configuración→Hotel y la dirección en Ubicación/Página pública, pantallas
+    // separadas que no comparten esa instancia de Vue, así que ese watch nunca ve el cambio.
+    // Acá, centralizado, se limpia siempre que el país efectivamente cambia — salvo que el mismo
+    // patch ya traiga también la dirección nueva (nadie lo hace hoy, pero no pisar si pasara).
+    if (safePatch.country !== undefined && safePatch.country !== existing.country) {
+      for (const [field, clearedValue] of Object.entries(LOCATION_FIELDS_ON_COUNTRY_CHANGE)) {
+        if (safePatch[field] === undefined) safePatch[field] = clearedValue
+      }
+    }
     // #34: exclusividad evaluada sobre el estado efectivo (patch + DB), no sólo el patch.
     assertCancellationCompatible(safePatch.freeCancellation ?? existing.freeCancellation, safePatch.cancellationType ?? existing.cancellationType)
     await this.orm.update('Hotels', id, safePatch)
