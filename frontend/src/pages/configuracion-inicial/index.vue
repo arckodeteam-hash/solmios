@@ -74,8 +74,13 @@
         </div>
 
         <template v-else>
-          <!-- Tarjeta principal: panel de foto+copy (izquierda) + formulario (derecha) -->
-          <div class="max-w-5xl mx-auto bg-white rounded-[28px] shadow-lg shadow-slate-200/60 overflow-hidden grid grid-cols-1 lg:grid-cols-[300px_1fr]">
+          <!-- Tarjeta principal: panel de foto+copy (izquierda) + formulario (derecha). Bienvenida/
+               Contacto/Habitaciones (1, 3 y 6 — pasos cortos) comparten el alto medido de
+               Bienvenida (542px) para no "saltar" de tamaño entre ellos; Identidad/Ubicación/
+               Políticas quedan con su alto natural (contenido bien distinto: logo, mapa, política
+               de cancelación completa) — pedido explícito del usuario. -->
+          <div class="max-w-5xl mx-auto bg-white rounded-[28px] shadow-lg shadow-slate-200/60 overflow-hidden grid grid-cols-1 lg:grid-cols-[300px_1fr]"
+            :class="FIXED_HEIGHT_STEPS.has(activeStep.key) ? 'lg:h-136' : ''">
             <!-- Panel decorativo — cambia de foto/copy por paso, estático dentro del paso (no
                  forma parte del formulario). Oculto en mobile para no empujar el form abajo del
                  todo en pantallas chicas. La foto ocupa TODO el alto de la columna (grid stretch
@@ -209,6 +214,11 @@ async function handlePrimaryAction() {
 function handleSkip() { stepRef.value?.skip?.() }
 
 const activeStep = computed(() => status.value!.steps[activeIndex.value]!)
+
+/** Pasos 1, 3 y 6 (Bienvenida/Contacto/Habitaciones) comparten un alto fijo — pedido explícito
+ *  del usuario, "ponlo del alto de paso 1". Identidad/Ubicación/Políticas (2, 4, 5) quedan con
+ *  su alto natural. */
+const FIXED_HEIGHT_STEPS = new Set(['bienvenida', 'contacto', 'rooms'])
 
 // Mismo criterio que ProfileProgressBar.vue del dashboard (doc 04): SOLO pasos requeridos, los
 // opcionales (Contacto, etc.) no cuentan ni para el numerador ni el denominador.
