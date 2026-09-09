@@ -115,13 +115,17 @@
             @click="logoFileInput?.click()"
             class="relative w-28 h-28 rounded-xl border-2 border-dashed overflow-hidden bg-surface flex items-center justify-center shrink-0 cursor-pointer transition-colors"
             :class="logoDragging ? 'border-cyan bg-cyan/5' : 'border-border hover:border-navy/40'">
-            <img v-if="logo" :src="logo" alt="Logo" class="w-full h-full object-contain" @error="onLogoImgError" />
+            <img v-if="logo" :src="logoDisplaySrc" alt="Logo" class="w-full h-full object-contain transition-opacity"
+              :class="logoRecovering ? 'opacity-0' : 'opacity-100'" @error="onLogoImgError" @load="onLogoImgLoad" />
             <div v-else class="flex flex-col items-center gap-1 px-2 text-center pointer-events-none">
               <span class="w-5 h-5 text-navy/40" v-html="ICON_UPLOAD"></span>
               <span class="text-[9px] font-bold text-text-muted uppercase">Arrastrá o hacé clic</span>
             </div>
             <div v-if="logoUploading" class="absolute inset-0 bg-white/80 flex items-center justify-center">
               <span class="text-[10px] font-bold text-navy">Subiendo…</span>
+            </div>
+            <div v-else-if="logoRecovering" class="absolute inset-0 bg-white/90 flex items-center justify-center px-1">
+              <span class="text-[10px] font-bold text-navy text-center leading-tight">Verificando…</span>
             </div>
           </div>
           <input ref="logoFileInput" type="file" accept="image/*" class="hidden" @change="onLogoFileChange">
@@ -301,26 +305,36 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 /** El error visto en producción (reportado 2026-09-09): justo después de subir, el archivo
  *  existe en el storage con los bytes correctos pero el `<img>` lo carga con 404/502 durante un
- *  rato (confirmado: hasta ~1 minuto en dev con `bun --hot`, probablemente el server
- *  reiniciándose o el filesystem local con el archivo recién escrito todavía no disponible para
- *  otro proceso) — a los pocos segundos el mismo archivo ya sirve 200 sin que nadie lo toque. En
- *  vez de rendirse en el primer error, reintenta con backoff (1s/2s/4s) antes de mostrar el
- *  estado vacío — el cache-bust (`?retry=`) evita que el navegador reuse la respuesta fallida. */
+ *  rato — confirmado en vivo que la ventana puede pasar los 7s (3 reintentos con backoff
+ *  1s/2s/4s NO alcanzaron) y llegar a ~1 minuto, probablemente el server de dev (`bun --hot`)
+ *  reiniciando entero (composition-root.ts registra ~40 módulos, no es instantáneo). Intervalo
+ *  fijo de 4s por 20 intentos = 80s de margen.
+ *  `logoCacheBust`/`logoDisplaySrc` viven SEPARADOS de `logo`: el reintento nunca toca el valor
+ *  canónico (el que se guarda y el que se muestra en el input de URL pegada más abajo), solo el
+ *  query param que fuerza al navegador a no reusar la respuesta fallida — así no hace falta
+ *  `markLogoClean()` (antes se necesitaba porque el reintento mutaba `logo` directo). */
 const logoRetries = ref(0)
-const MAX_LOGO_RETRIES = 3
+const logoRecovering = ref(false)
+const logoCacheBust = ref(0)
+const logoDisplaySrc = computed(() => logo.value ? `${logo.value}${logoCacheBust.value ? `?retry=${logoCacheBust.value}` : ''}` : '')
+const MAX_LOGO_RETRIES = 20
+const LOGO_RETRY_INTERVAL_MS = 4000
 function onLogoImgError() {
   if (logoRetries.value < MAX_LOGO_RETRIES) {
-    const delay = 1000 * 2 ** logoRetries.value
     logoRetries.value++
-    const base = logo.value.split('?')[0]
-    // markLogoClean(): el cache-bust del reintento no es un cambio real del usuario — sin esto,
-    // `isDirty` se dispara solo (y con él el aviso de "cambios sin guardar" al navegar) mientras
-    // el logo todavía se está recuperando.
-    setTimeout(() => { logo.value = `${base}?retry=${Date.now()}`; markLogoClean() }, delay)
+    logoRecovering.value = true
+    setTimeout(() => { logoCacheBust.value = Date.now() }, LOGO_RETRY_INTERVAL_MS)
     return
   }
+  logoRecovering.value = false
   logo.value = ''
   toast.error('No se pudo cargar el logo guardado — volvé a subirlo')
+}
+/** Corta la racha de reintentos apenas la imagen carga bien — sin esto, un reintento tardío que
+ *  llega después de que otro ya funcionó seguiría sumando al contador. */
+function onLogoImgLoad() {
+  logoRecovering.value = false
+  logoRetries.value = 0
 }
 
 async function uploadLogoFile(file: File) {
@@ -331,6 +345,8 @@ async function uploadLogoFile(file: File) {
     const dataUrl = await readFileAsDataUrl(file)
     const result = await HotelService.uploadLogo(dataUrl, file.name)
     logoRetries.value = 0
+    logoRecovering.value = false
+    logoCacheBust.value = 0
     logo.value = result.logo
     markLogoClean()
     toast.success('Logo actualizado')

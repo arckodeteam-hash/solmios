@@ -46,10 +46,14 @@
           @drop.prevent="onLogoDrop"
           @click="logoFileInput?.click()"
           class="relative w-16 h-16 rounded-xl overflow-hidden bg-white border border-border flex items-center justify-center shrink-0 cursor-pointer">
-          <img v-if="logo" :src="logo" alt="Logo" class="w-full h-full object-contain" @error="onLogoImgError">
+          <img v-if="logo" :src="logoDisplaySrc" alt="Logo" class="w-full h-full object-contain transition-opacity"
+            :class="logoRecovering ? 'opacity-0' : 'opacity-100'" @error="onLogoImgError" @load="onLogoImgLoad">
           <span v-else class="w-6 h-6 text-teal" v-html="ICON_UPLOAD"></span>
           <div v-if="logoUploading" class="absolute inset-0 bg-white/80 flex items-center justify-center">
             <span class="text-[9px] font-bold text-navy">Subiendo…</span>
+          </div>
+          <div v-else-if="logoRecovering" class="absolute inset-0 bg-white/90 flex items-center justify-center px-1">
+            <span class="text-[9px] font-bold text-navy text-center leading-tight">Verificando…</span>
           </div>
         </div>
         <input ref="logoFileInput" type="file" accept="image/*" class="hidden" @change="onLogoFileChange">
@@ -80,7 +84,7 @@
 // escalar vía PATCH parcial (`patchHotel` solo manda las claves presentes) y el logo se sube por
 // su endpoint dedicado (`HotelService.uploadLogo`, ni siquiera pasa por el patch): ninguna de las
 // dos superficies puede pisar un cambio hecho en la otra. Sitio web queda solo en Página pública.
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import { SettingsService } from '@/services/Settings.service'
 import { HotelService } from '@/services/Hotel.service'
@@ -125,23 +129,37 @@ const LOGO_MAX_BYTES = 5 * 1024 * 1024
 
 /** El error visto en producción (reportado 2026-09-09): justo después de subir, el archivo
  *  existe en el storage con los bytes correctos pero el `<img>` lo carga con 404/502 durante un
- *  rato (confirmado: hasta ~1 minuto en dev con `bun --hot`, probablemente el server
- *  reiniciándose o el filesystem local con el archivo recién escrito todavía no disponible para
- *  otro proceso) — a los pocos segundos el mismo archivo ya sirve 200 sin que nadie lo toque. En
- *  vez de rendirse en el primer error, reintenta con backoff (1s/2s/4s) antes de mostrar el
- *  estado vacío — el cache-bust (`?retry=`) evita que el navegador reuse la respuesta fallida. */
+ *  rato — confirmado en vivo que la ventana puede pasar los 7s (3 reintentos con backoff
+ *  1s/2s/4s NO alcanzaron, ver DevTools del usuario) y llegar a ~1 minuto, probablemente el
+ *  server de dev (`bun --hot`) reiniciando entero (composition-root.ts registra ~40 módulos, no
+ *  es instantáneo). Intervalo fijo de 4s por 20 intentos = 80s de margen, con margen de sobra
+ *  sobre el peor caso visto.
+ *  `logoCacheBust`/`logoDisplaySrc` viven SEPARADOS de `logo`: el reintento nunca toca el valor
+ *  canónico (el que se guarda), solo el query param que fuerza al navegador a no reusar la
+ *  respuesta fallida — así `logo` sigue siendo la URL limpia en todo momento.
+ *  `logoRecovering` muestra un estado neutral (no el ícono roto) mientras reintenta. */
 const logoRetries = ref(0)
-const MAX_LOGO_RETRIES = 3
+const logoRecovering = ref(false)
+const logoCacheBust = ref(0)
+const logoDisplaySrc = computed(() => logo.value ? `${logo.value}${logoCacheBust.value ? `?retry=${logoCacheBust.value}` : ''}` : '')
+const MAX_LOGO_RETRIES = 20
+const LOGO_RETRY_INTERVAL_MS = 4000
 function onLogoImgError() {
   if (logoRetries.value < MAX_LOGO_RETRIES) {
-    const delay = 1000 * 2 ** logoRetries.value
     logoRetries.value++
-    const base = logo.value.split('?')[0]
-    setTimeout(() => { logo.value = `${base}?retry=${Date.now()}` }, delay)
+    logoRecovering.value = true
+    setTimeout(() => { logoCacheBust.value = Date.now() }, LOGO_RETRY_INTERVAL_MS)
     return
   }
+  logoRecovering.value = false
   logo.value = ''
   toast.error('No se pudo cargar el logo guardado — volvé a subirlo')
+}
+/** Corta la racha de reintentos apenas la imagen carga bien — sin esto, un reintento tardío que
+ *  llega después de que otro ya funcionó seguiría sumando al contador. */
+function onLogoImgLoad() {
+  logoRecovering.value = false
+  logoRetries.value = 0
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -161,6 +179,8 @@ async function uploadLogoFile(file: File) {
     const dataUrl = await readFileAsDataUrl(file)
     const result = await HotelService.uploadLogo(dataUrl, file.name)
     logoRetries.value = 0
+    logoRecovering.value = false
+    logoCacheBust.value = 0
     logo.value = result.logo
     toast.success('Logo actualizado')
   } catch (e) {
