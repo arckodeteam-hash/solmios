@@ -16,7 +16,7 @@
             <label class="mb-1.5 block text-xs font-bold uppercase tracking-wide text-text-muted">Nombre del impuesto <span class="text-danger">*</span></label>
             <div class="wizard-field">
               <span class="wizard-field-icon" v-html="ICON_TAG"></span>
-              <input v-model="taxName" type="text" required aria-required="true" class="wizard-input">
+              <input v-model="taxName" type="text" required aria-required="true" maxlength="50" class="wizard-input">
             </div>
           </div>
           <div>

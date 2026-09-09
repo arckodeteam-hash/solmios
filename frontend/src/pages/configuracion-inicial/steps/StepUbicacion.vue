@@ -10,7 +10,7 @@
         <div class="wizard-field">
           <span class="wizard-field-icon" v-html="ICON_PIN"></span>
           <input ref="addressInputEl" v-model="form.address" type="text" autocomplete="off" placeholder="Busque la dirección…" required aria-required="true"
-            class="wizard-input" data-field="address">
+            maxlength="200" class="wizard-input" data-field="address">
         </div>
         <ul v-if="addressSuggestions.length" class="mt-1 rounded-xl border border-border bg-white shadow-lg overflow-hidden">
           <li v-for="s in addressSuggestions" :key="`${s.lat},${s.lng}`">

@@ -8,7 +8,7 @@
           <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nombre del hotel <span class="text-danger">*</span></label>
           <div class="wizard-field">
             <span class="wizard-field-icon" v-html="ICON_BUILDING"></span>
-            <input v-model="form.name" type="text" required aria-required="true" class="wizard-input">
+            <input v-model="form.name" type="text" required aria-required="true" maxlength="100" class="wizard-input">
           </div>
         </div>
         <div>
@@ -19,7 +19,7 @@
           <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Teléfono principal <span class="text-danger">*</span></label>
           <div class="wizard-field">
             <span class="wizard-field-icon" v-html="ICON_PHONE"></span>
-            <input v-model="form.phone" type="tel" required aria-required="true" class="wizard-input"
+            <input v-model="form.phone" type="tel" required aria-required="true" maxlength="20" class="wizard-input"
               :style="fieldError ? 'border-color: var(--color-danger)' : ''">
           </div>
         </div>
@@ -27,14 +27,14 @@
           <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Email de contacto <span class="text-danger">*</span></label>
           <div class="wizard-field">
             <span class="wizard-field-icon" v-html="ICON_MAIL"></span>
-            <input v-model="form.email" type="email" required aria-required="true" class="wizard-input">
+            <input v-model="form.email" type="email" required aria-required="true" maxlength="200" class="wizard-input">
           </div>
         </div>
         <div class="sm:col-span-2">
           <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tu nombre (dueño o gerente) <span class="text-danger">*</span></label>
           <div class="wizard-field">
             <span class="wizard-field-icon" v-html="ICON_USER"></span>
-            <input v-model="ownerName" type="text" required aria-required="true" class="wizard-input">
+            <input v-model="ownerName" type="text" required aria-required="true" maxlength="100" class="wizard-input">
           </div>
         </div>
       </div>

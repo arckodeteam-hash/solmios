@@ -7,21 +7,21 @@
           <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Teléfono 2</label>
           <div class="wizard-field">
             <span class="wizard-field-icon" v-html="ICON_PHONE"></span>
-            <input v-model="form.phone2" type="tel" class="wizard-input">
+            <input v-model="form.phone2" type="tel" maxlength="20" class="wizard-input">
           </div>
         </div>
         <div>
           <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Sitio web</label>
           <div class="wizard-field">
             <span class="wizard-field-icon" v-html="ICON_GLOBE"></span>
-            <input v-model="form.website" type="url" placeholder="https://" class="wizard-input">
+            <input v-model="form.website" type="url" placeholder="https://" maxlength="200" class="wizard-input">
           </div>
         </div>
         <div class="sm:col-span-2">
           <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">CIF / NIF / RNC</label>
           <div class="wizard-field">
             <span class="wizard-field-icon" v-html="ICON_ID"></span>
-            <input v-model="form.ownerTaxId" type="text" class="wizard-input">
+            <input v-model="form.ownerTaxId" type="text" maxlength="50" class="wizard-input">
           </div>
         </div>
       </div>
