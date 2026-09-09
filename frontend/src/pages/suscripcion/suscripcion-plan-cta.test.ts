@@ -6,15 +6,23 @@
 // plan que ya tenía: apretarlo relanzaba el Checkout de una suscripción viva (segundo cobro).
 //
 // Lo que se protege acá:
-//   1. El CTA mira el PLAN, no el estado: la tarjeta del plan actual jamás dice "Suscribirse a X".
-//   2. Con una suscripción viva en Stripe (`active` / `past_due`) TODOS los botones están
-//      deshabilitados y NO llaman a checkout — el plan actual y también cualquier OTRO plan:
+//   1. El CTA mira el PLAN, no el estado: la tarjeta del plan actual jamás dice "Suscribirse a X",
+//      y esa tarjeta se identifica con el badge "Plan actual" (#84, CA 23).
+//   2. Con una suscripción viva en Stripe (`active` / `past_due`) NINGÚN plan llama a checkout:
 //      relanzar el Checkout crea una SEGUNDA suscripción (doble cobro) y huérfana la vieja
 //      (BUG-9; el backend espeja la regla en create-checkout-session.ts con 409).
 //   3. En `trialing` NO hay suscripción de Stripe todavía: el Checkout es la ÚNICA vía de
 //      conversión, así que el botón sigue vivo — con texto propio, no con el de un plan ajeno.
 //   4. Con `canceled`/`expired` (o sin suscripción) cambiar de plan SÍ se puede: la vieja ya
 //      no cobra, un Checkout nuevo no duplica nada.
+//   5. La sección "Estado" nombra el plan del hotel, también con la suscripción vencida
+//      (#84, CA 9/10/22).
+//
+// Cambió en #84 (CA 2/25/26): antes, con la suscripción viva, los OTROS planes quedaban
+// deshabilitados con "Ya tenés una suscripción activa" y no había forma de cambiarse desde acá.
+// Ahora TODO plan que no sea el actual dice "Suscribirse a [nombre]" y funciona — sale por el
+// flujo de cambio de plan (preview + confirmación), nunca por el Checkout, así que la protección
+// de BUG-9 sigue en pie: lo que se asserta es que `checkout` NO se llama.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
@@ -29,10 +37,14 @@ vi.mock('@/services/Signup.service', () => ({
 }))
 
 const checkout = vi.fn()
+const upgradePreview = vi.fn()
+const upgrade = vi.fn()
 vi.mock('@/services/Subscriptions.service', () => ({
   SubscriptionsService: {
     checkout: (...a: unknown[]) => checkout(...a),
     portal: vi.fn(() => Promise.resolve({ url: 'https://portal.test' })),
+    upgradePreview: (...a: unknown[]) => upgradePreview(...a),
+    upgrade: (...a: unknown[]) => upgrade(...a),
   },
 }))
 
@@ -63,6 +75,8 @@ function mountOpts() {
       stubs: {
         SectionCard: { template: '<section><slot /></section>' },
         EmptyState: true,
+        // Sin Teleport: el modal de confirmación del cambio de plan queda dentro del wrapper.
+        AppModal: { template: '<div class="modal"><slot /></div>' },
       },
     },
   }
@@ -74,6 +88,7 @@ function subscription(over: Record<string, unknown> = {}) {
     trialEndsAt: null,
     currentPeriodEnd: null,
     planId: 'plan-pro',
+    planName: 'Professional',
     allowed: true,
     reason: null,
     daysLeft: null,
@@ -97,6 +112,10 @@ async function mountWith(sub: Record<string, unknown>) {
 beforeEach(() => {
   vi.clearAllMocks()
   checkout.mockResolvedValue({ url: 'https://checkout.test' })
+  upgradePreview.mockResolvedValue({
+    planId: 'plan-ess', planName: 'Essential', amountDue: 0, currency: 'usd',
+    currentPlanId: 'plan-pro', currentPlanName: 'Professional', periodEnd: null,
+  })
 })
 
 describe('/panel/suscripcion — CTA del plan actual', () => {
@@ -128,28 +147,44 @@ describe('/panel/suscripcion — CTA del plan actual', () => {
     expect(checkout).toHaveBeenCalledWith('plan-pro')
   })
 
-  // BUG-9 — con status vivo, un plan DISTINTO tampoco puede relanzar el Checkout: antes este
-  // era exactamente el camino del doble cobro ("Suscribirse a Essential" clickable con la
-  // suscripción Professional activa).
-  it('con suscripción activa un plan DISTINTO también queda bloqueado (no crea una segunda suscripción)', async () => {
+  // BUG-9 — con status vivo, un plan DISTINTO sigue sin poder relanzar el Checkout: ese era
+  // exactamente el camino del doble cobro. Lo que cambió (#84, CA 2/25/26) es que ya no queda
+  // BLOQUEADO con "Ya tenés una suscripción activa": se ofrece y sale por el cambio de plan.
+  it('con suscripción activa un plan DISTINTO se ofrece pero NO por Checkout (no crea una segunda suscripción)', async () => {
     const { ctas } = await mountWith(subscription({ status: 'active' }))
     const other = ctas.get('plan-ess')!
 
-    expect(other.text()).not.toMatch(/Suscribirse/i)
-    expect(other.text()).toMatch(/suscripción activa/i)
-    expect(other.attributes('disabled')).toBeDefined()
+    expect(other.text()).toBe('Suscribirse a Essential')
+    expect(other.text()).not.toMatch(/suscripción activa/i)
+    expect(other.attributes('disabled')).toBeUndefined()
 
     await other.trigger('click')
     await flushPromises()
     expect(checkout).not.toHaveBeenCalled()
+    expect(upgradePreview).toHaveBeenCalledWith('plan-ess')
   })
 
-  it('con el pago pendiente un plan distinto también queda bloqueado', async () => {
+  // #84 CA 2/25/26 — el plan MÁS BARATO que el actual también se ofrece: el backend acepta el
+  // cambio en las dos direcciones. Antes decía "Ya tenés una suscripción activa" deshabilitado.
+  it('con suscripción activa un plan MÁS BARATO se ofrece y su botón NO está deshabilitado', async () => {
+    const { ctas } = await mountWith(subscription({ status: 'active', planId: 'plan-pro' }))
+    const cheaper = ctas.get('plan-ess')! // 99 contra los 349 del plan actual
+
+    expect(cheaper.text()).toBe('Suscribirse a Essential')
+    expect(cheaper.attributes('disabled')).toBeUndefined()
+
+    await cheaper.trigger('click')
+    await flushPromises()
+    expect(checkout).not.toHaveBeenCalled()
+    expect(upgradePreview).toHaveBeenCalledWith('plan-ess')
+  })
+
+  it('con el pago pendiente un plan distinto también se ofrece, y tampoco por Checkout', async () => {
     const { ctas } = await mountWith(subscription({ status: 'past_due' }))
     const other = ctas.get('plan-ess')!
 
-    expect(other.attributes('disabled')).toBeDefined()
-    expect(other.text()).not.toMatch(/Suscribirse/i)
+    expect(other.attributes('disabled')).toBeUndefined()
+    expect(other.text()).toBe('Suscribirse a Essential')
 
     await other.trigger('click')
     await flushPromises()
@@ -179,6 +214,29 @@ describe('/panel/suscripcion — CTA del plan actual', () => {
     expect(checkout).toHaveBeenCalledWith('plan-ess')
   })
 
+  // #84 CA 9/10/22 y CA 23 — el nombre del plan tiene que estar a la vista SIN abrir nada, y
+  // también con la suscripción caída: "Vencida" sola no dice de qué plan se habla.
+  it('con la suscripción vencida el Estado nombra el plan y la tarjeta dice "Plan actual"', async () => {
+    const { w } = await mountWith(subscription({ status: 'expired', planName: 'Professional' }))
+
+    const estado = w.find('section') // la primera SectionCard es "Estado"
+    expect(estado.text()).toMatch(/Plan actual:\s*Professional/)
+    expect(estado.text()).toContain('Vencida')
+
+    const cards = w.findAll('div.grid > div')
+    expect(cards[1]!.text()).toContain('Plan actual') // badge de la tarjeta del plan del hotel
+    expect(cards[0]!.text()).not.toContain('Plan actual')
+  })
+
+  // El plan puede haber sido retirado del catálogo: sin nombre no se inventa un "Plan actual: —".
+  it('sin nombre de plan el Estado no muestra la línea del plan, pero sí el estado', async () => {
+    const { w } = await mountWith(subscription({ status: 'active', planName: null }))
+
+    const estado = w.find('section')
+    expect(estado.text()).not.toMatch(/Plan actual:/)
+    expect(estado.text()).toContain('Activa')
+  })
+
   it('con el pago pendiente el plan actual tampoco relanza el Checkout (se regulariza por el portal)', async () => {
     const { ctas } = await mountWith(subscription({ status: 'past_due' }))
     const current = ctas.get('plan-pro')!
@@ -192,7 +250,7 @@ describe('/panel/suscripcion — CTA del plan actual', () => {
   })
 
   it('sin suscripción todos los planes se ofrecen igual', async () => {
-    mySubscription.mockResolvedValue(subscription({ status: 'none', planId: '', allowed: false, hasStripeCustomer: false }))
+    mySubscription.mockResolvedValue(subscription({ status: 'none', planId: '', planName: null, allowed: false, hasStripeCustomer: false }))
     publicPlans.mockResolvedValue(PLANS)
     const w = mount(Suscripcion, mountOpts())
     await flushPromises()

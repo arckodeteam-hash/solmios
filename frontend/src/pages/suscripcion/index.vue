@@ -9,6 +9,12 @@
     <SectionCard title="Estado" :subtitle="stateSubtitle">
       <div v-if="loading" class="h-16 animate-pulse rounded-xl bg-surface"></div>
       <div v-else class="flex items-center gap-4 flex-wrap">
+        <!-- El plan se nombra SIEMPRE que se sepa cuál es, también con la suscripción vencida: el
+             badge solo dice cómo está, no de qué plan (CA 9/10/22). Sin `planName` (plan retirado
+             del catálogo) el bloque no se pinta en vez de mostrar "Plan actual: —". -->
+        <div v-if="sub?.planName" class="text-sm text-text-secondary">
+          Plan actual: <strong class="text-navy">{{ sub.planName }}</strong>
+        </div>
         <span class="text-[11px] font-bold px-3 py-1.5 rounded-full" :class="statusClass">{{ statusLabel }}</span>
         <span v-if="sub?.specialCategory" class="text-[11px] font-bold px-3 py-1.5 rounded-full bg-warning/10 text-warning">{{ categoryLabel(sub.specialCategory) }}</span>
         <span v-if="sub?.activeDiscountPct" class="text-[11px] font-bold px-3 py-1.5 rounded-full bg-teal/10 text-teal">{{ sub.activeDiscountPct }}% de descuento activo</span>
@@ -67,7 +73,7 @@
         >
           <div class="flex items-start justify-between gap-2">
             <div class="text-sm font-black text-navy">{{ p.name }}</div>
-            <span v-if="isCurrentPlan(p)" class="text-[9px] font-bold text-navy bg-navy/10 px-2 py-0.5 rounded-full shrink-0">Tu plan</span>
+            <span v-if="isCurrentPlan(p)" class="text-[9px] font-bold text-navy bg-navy/10 px-2 py-0.5 rounded-full shrink-0">Plan actual</span>
           </div>
           <div class="mt-2 mb-1">
             <span class="text-3xl font-black text-navy tabular-nums">${{ p.price }}</span>
@@ -94,13 +100,14 @@
       </div>
     </div>
 
-    <!-- Mejora de plan (#46). Dos momentos, un solo modal:
-         a) confirmación — el monto prorrateado SIEMPRE se muestra ANTES de tocar la tarjeta;
+    <!-- Cambio de plan (#46, ampliado en #84 a las dos direcciones). Dos momentos, un solo modal:
+         a) confirmación — el prorrateo SIEMPRE se muestra ANTES de tocar la tarjeta, sea un cobro
+            (plan más caro) o un crédito a favor (plan más barato: no se cobra nada ahora);
          b) cobro rechazado — el plan quedó aplicado pero la factura no se pagó, y la única
             salida es arreglar el método de pago en el portal. -->
     <AppModal
       v-if="upgradePreview || pendingUpgrade"
-      :title="pendingUpgrade ? 'Plan actualizado, pago pendiente' : 'Confirmar mejora de plan'"
+      :title="pendingUpgrade ? 'Plan actualizado, pago pendiente' : 'Confirmar cambio de plan'"
       size="sm"
       @close="closeUpgrade"
     >
@@ -120,12 +127,23 @@
           a <strong class="text-navy">{{ upgradePreview.planName }}</strong>.
         </p>
         <div class="rounded-xl bg-teal/10 p-4">
-          <div class="text-[10px] font-bold text-text-muted uppercase tracking-wide">Se te cobra ahora</div>
-          <div class="text-2xl font-black text-navy tabular-nums">{{ money(upgradePreview.amountDue, upgradePreview.currency) }}</div>
-          <p class="text-xs text-text-secondary mt-1">
-            Es solo la diferencia por lo que falta del ciclo{{ periodEndLabel }}. Desde la próxima
-            renovación pagás el precio completo del plan nuevo.
-          </p>
+          <template v-if="upgradePreview.amountDue > 0">
+            <div class="text-[10px] font-bold text-text-muted uppercase tracking-wide">Se te cobra ahora</div>
+            <div class="text-2xl font-black text-navy tabular-nums">{{ money(upgradePreview.amountDue, upgradePreview.currency) }}</div>
+            <p class="text-xs text-text-secondary mt-1">
+              Es solo la diferencia por lo que falta del ciclo{{ periodEndLabel }}. Desde la próxima
+              renovación pagás el precio completo del plan nuevo.
+            </p>
+          </template>
+          <template v-else>
+            <!-- Bajar de plan con prorrateo genera CRÉDITO, no cobro: decir "se te cobra 0" acá
+                 haría dudar de si hay un cargo (#84). -->
+            <div class="text-[10px] font-bold text-text-muted uppercase tracking-wide">No se te cobra nada ahora</div>
+            <p class="text-xs text-text-secondary mt-1">
+              El saldo a favor por lo que falta del ciclo{{ periodEndLabel }} se aplica a tu próxima
+              factura. Desde la próxima renovación pagás el precio completo del plan nuevo.
+            </p>
+          </template>
         </div>
       </div>
       <template #footer>
@@ -150,7 +168,7 @@
             @click="confirmUpgrade"
             :disabled="upgradeLoading"
             class="px-4 py-2 rounded-xl text-sm font-bold bg-navy text-white hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-wait"
-          >{{ upgradeLoading ? 'Cobrando…' : 'Confirmar y pagar' }}</button>
+          >{{ upgradeChargesNow ? (upgradeLoading ? 'Cobrando…' : 'Confirmar y pagar') : (upgradeLoading ? 'Aplicando…' : 'Confirmar cambio') }}</button>
         </template>
       </template>
     </AppModal>
@@ -185,11 +203,11 @@ const plans = ref<PublicPlan[]>([])
 /** id del plan cuyo checkout está en curso — null cuando no hay ninguno en vuelo. */
 const checkoutLoading = ref<string | null>(null)
 const portalLoading = ref(false)
-/** id del plan cuyo preview de mejora se está cotizando — null cuando no hay ninguno en vuelo. */
+/** id del plan cuyo cambio se está cotizando — null cuando no hay ninguno en vuelo. */
 const previewLoading = ref<string | null>(null)
 /** Cotización del prorrateo esperando confirmación. Mientras esto vale algo, NO se cobró nada. */
 const upgradePreview = ref<UpgradePreview | null>(null)
-/** Mejora aplicada cuyo cobro quedó pendiente (`paid: false`). */
+/** Cambio de plan aplicado cuyo cobro quedó pendiente (`paid: false`). */
 const pendingUpgrade = ref<UpgradeResult | null>(null)
 const upgradeLoading = ref(false)
 
@@ -218,44 +236,39 @@ const stateSubtitle = computed(() =>
  * Checkout, ni siquiera uno distinto: lanzar el Checkout con CUALQUIER plan crea una SEGUNDA
  * suscripción (y un segundo cobro mensual) y huérfana la vieja — el webhook pisa
  * `stripeSubscriptionId` y la anterior sigue activa en Stripe sin rastro local (BUG-9).
- * Eso NO cambió. Lo que cambió (#46) es que ahora hay una salida propia para subir de plan sin
- * pasar por el Checkout: `/subscriptions/upgrade` mueve el ítem de la suscripción que ya existe
- * y cobra SOLO el prorrateo (ver `isUpgradeTarget`). Bajar de plan sigue siendo del Billing
- * Portal ("Gestionar método de pago"): un downgrade genera crédito, no cobro.
+ * Eso NO cambió. Lo que cambió (#46, ampliado en #84) es que hay una salida propia para cambiar
+ * de plan sin pasar por el Checkout: `/subscriptions/upgrade` mueve el ítem de la suscripción que
+ * ya existe y liquida SOLO el prorrateo (ver `isPlanChangeTarget`). Va en las DOS direcciones:
+ * el backend acepta cualquier plan activo distinto del actual, más caro o más barato. El Billing
+ * Portal ("Gestionar método de pago") queda para el método de pago, no para bajar de plan.
  * `trialing` NO entra: la prueba no tiene suscripción en Stripe todavía, y el Checkout es la
  * única vía para convertirla en plan pago (ver `subscriptions/usecases/create-checkout-session.ts`).
  */
 const LIVE_STRIPE_STATUSES = ['active', 'past_due']
 
-/** El badge "Tu plan" y el CTA miran lo MISMO: el plan, no el estado (issue #29). */
+/** El badge "Plan actual" y el CTA miran lo MISMO: el plan, no el estado (issue #29). */
 const isCurrentPlan = (p: PublicPlan) => !!sub.value?.planId && p.id === sub.value.planId
 /** Hay una suscripción cobrando en Stripe ahora mismo. */
 const hasLiveSubscription = computed(() => LIVE_STRIPE_STATUSES.includes(sub.value?.status ?? ''))
-/** Precio del plan que el hotel paga hoy. `null` si no se puede identificar en el catálogo
- * público (plan retirado): sin él no se sabe qué es "mejorar", así que no se ofrece ninguno. */
-const currentPlanPrice = computed(() => {
-  const current = plans.value.find((p) => isCurrentPlan(p))
-  return current ? Number(current.price) : null
-})
-/** Plan al que SÍ se puede saltar con la suscripción viva: MISMO criterio que el backend
- * (`upgrade-plan.ts`), precio mayor al actual. Un plan más barato no entra: con prorrateo un
- * downgrade genera crédito en vez de cobro y se gestiona desde el portal. */
-const isUpgradeTarget = (p: PublicPlan) =>
-  hasLiveSubscription.value && !isCurrentPlan(p) &&
-  currentPlanPrice.value !== null && Number(p.price) > currentPlanPrice.value
-/** Con una suscripción viva no se contrata nada nuevo, salvo que sea una mejora (#46). */
-const isPlanLocked = (p: PublicPlan) => hasLiveSubscription.value && !isUpgradeTarget(p)
+/** Plan al que se puede saltar con la suscripción viva: MISMO criterio que el backend
+ * (`upgrade-plan.ts`), cualquier plan activo que no sea el actual — más caro o más barato (#84).
+ * No mira el precio a propósito: si el plan actual fue retirado del catálogo público no se puede
+ * comparar contra nada, y el backend igual resuelve el cambio. */
+const isPlanChangeTarget = (p: PublicPlan) => hasLiveSubscription.value && !isCurrentPlan(p)
+/** Lo único que no se re-contrata con la suscripción viva es el plan que ya se está pagando. */
+const isPlanLocked = (p: PublicPlan) => hasLiveSubscription.value && isCurrentPlan(p)
 
 function ctaLabel(p: PublicPlan): string {
   if (checkoutLoading.value === p.id) return 'Redirigiendo…'
   if (previewLoading.value === p.id) return 'Calculando…'
-  if (isUpgradeTarget(p)) return `Mejorar a ${p.name}`
-  if (isPlanLocked(p)) {
-    return isCurrentPlan(p)
-      ? (sub.value?.status === 'past_due' ? 'Tu plan actual · pago pendiente' : 'Tu plan actual')
-      : 'Ya tenés una suscripción activa'
-  }
+  // CA 2/25/26: TODO plan que no sea el actual se ofrece igual, sin etiquetar la dirección del
+  // cambio ("Mejorar a X" / "Ya tenés una suscripción activa"). Lo que cambia por debajo es la
+  // vía (cambio de plan con la suscripción viva, Checkout sin ella), no lo que se lee.
   if (!isCurrentPlan(p)) return `Suscribirse a ${p.name}`
+  // CA 23/24: el plan del hotel se identifica como el actual y no se vuelve a contratar.
+  if (isPlanLocked(p)) {
+    return sub.value?.status === 'past_due' ? 'Tu plan actual · pago pendiente' : 'Tu plan actual'
+  }
   if (sub.value?.status === 'trialing') return 'Activar tu plan actual'
   return `Reactivar ${p.name}` // expired / canceled: el plan sigue siendo el suyo, pero sin acceso
 }
@@ -264,8 +277,8 @@ function ctaLabel(p: PublicPlan): string {
  * (no una pestaña nueva — el hotel tiene que volver a `/panel/suscripcion` al terminar). */
 async function choose(p: PublicPlan) {
   if (checkoutLoading.value || previewLoading.value || isPlanLocked(p)) return
-  // Con la suscripción viva el Checkout duplicaría el cobro: la mejora va por su propio flujo.
-  if (isUpgradeTarget(p)) return startUpgrade(p)
+  // Con la suscripción viva el Checkout duplicaría el cobro: el cambio va por su propio flujo.
+  if (isPlanChangeTarget(p)) return startUpgrade(p)
   checkoutLoading.value = p.id
   try {
     const { url } = await SubscriptionsService.checkout(p.id)
@@ -280,22 +293,25 @@ async function choose(p: PublicPlan) {
  * un prorrateo de 12,34 se leería como 1234. */
 const money = (cents: number, currency: string) => formatCurrency(cents / 100, currency)
 
+/** Un prorrateo de 0 o menos no es un cobro: es crédito a favor (bajar de plan). */
+const upgradeChargesNow = computed(() => (upgradePreview.value?.amountDue ?? 0) > 0)
+
 /** " , hasta el 12/10/2026" — hasta cuándo cubre el ciclo que el hotel ya pagó. */
 const periodEndLabel = computed(() => {
   const end = upgradePreview.value?.periodEnd
   return end ? `, hasta el ${new Date(end).toLocaleDateString('es-DO')}` : ''
 })
 
-/** Paso 1 de la mejora: cotiza el prorrateo y abre la confirmación. NO cobra nada — la persona
- * tiene que ver cuánto le sale antes de que le toquemos la tarjeta. */
+/** Paso 1 del cambio de plan: cotiza el prorrateo y abre la confirmación. NO cobra nada — la
+ * persona tiene que ver cuánto le sale antes de que le toquemos la tarjeta. */
 async function startUpgrade(p: PublicPlan) {
   previewLoading.value = p.id
   try {
     upgradePreview.value = await SubscriptionsService.upgradePreview(p.id)
   } catch (e: any) {
-    // El backend redacta estos motivos para el usuario final (plan que no es mejora, sin
+    // El backend redacta estos motivos para el usuario final (plan inexistente o inactivo, sin
     // suscripción viva, plan sin precio en Stripe): se muestran tal cual vienen.
-    toast.error('No pudimos calcular la mejora', e.message)
+    toast.error('No pudimos calcular el cambio de plan', e.message)
   } finally {
     previewLoading.value = null // nunca dejar el botón colgado en "Calculando…"
   }
@@ -314,11 +330,13 @@ async function confirmUpgrade() {
       // plan sigue siendo el viejo). Va antes que el chequeo de `paid` porque acá `paid` también
       // es false, y el mensaje de "pago pendiente" diría dos cosas falsas: que el plan quedó
       // activo y que hay un cobro que reintentar.
-      toast.error('No pudimos aplicar la mejora',
+      toast.error('No pudimos aplicar el cambio de plan',
         'Tu plan y tu facturación quedaron como estaban. Probá de nuevo en un momento.')
     } else if (result.paid) {
       toast.success(`Ya estás en ${result.planName}`,
-        `Te cobramos ${money(result.amountCharged, result.currency)} por lo que falta del ciclo.`)
+        result.amountCharged > 0
+          ? `Te cobramos ${money(result.amountCharged, result.currency)} por lo que falta del ciclo.`
+          : 'No te cobramos nada ahora: el saldo a favor se aplica a tu próxima factura.')
     } else {
       // `applied: true` con `paid: false`: en Stripe el plan nuevo YA rige, pero la factura del
       // prorrateo quedó ABIERTA y el dunning la va a reintentar. Decir "listo" acá sería mentir:
@@ -329,7 +347,7 @@ async function confirmUpgrade() {
     }
     await refreshAfterUpgrade()
   } catch (e: any) {
-    toast.error('No se pudo aplicar la mejora', e.message)
+    toast.error('No se pudo aplicar el cambio de plan', e.message)
   } finally {
     upgradeLoading.value = false
   }
@@ -342,7 +360,7 @@ function closeUpgrade() {
 }
 
 /**
- * Deja la pantalla consistente sin F5: el estado de la suscripción (badge, "Tu plan", CTAs) y el
+ * Deja la pantalla consistente sin F5: el estado de la suscripción (badge, "Plan actual", CTAs) y el
  * cache de módulos, que es lo que decide qué muestra el menú lateral — el plan nuevo habilita
  * módulos que el cache viejo sigue dando por apagados.
  *
@@ -351,11 +369,11 @@ function closeUpgrade() {
  * quizá no tiene hasta que llega la respuesta. `refresh()` fuerza el refetch conservando el
  * estado bueno mientras tanto. (`ensure()` solo no alcanza: refetchea si cambió el hotel, y acá
  * el hotel es el mismo.)
- * Los stores se resuelven acá y no en el setup porque solo hacen falta después de un upgrade.
+ * Los stores se resuelven acá y no en el setup porque solo hacen falta después del cambio.
  */
 async function refreshAfterUpgrade() {
   await subscription.refresh(hotelIdActual()).catch(() => { /* el store conserva el estado bueno */ })
-  // Best-effort: la mejora ya está cobrada y aplicada; un fallo refrescando el menú no es un
+  // Best-effort: el cambio ya está liquidado y aplicado; un fallo refrescando el menú no es un
   // error que mostrarle a nadie (el próximo ensure() lo resuelve).
   try {
     await useModulesStore().refresh(useAuthStore().user?.hotelId)
