@@ -12,7 +12,7 @@
          entra en una fila (viewport angosto, zoom alto) pasa a una 2da línea en vez de comprimirse
          contra la barra de pasos de abajo — antes se veían "pisados" entre sí. -->
     <header class="px-4 sm:px-8 py-6 flex flex-wrap items-center justify-between gap-3 shrink-0 border-b border-border/60">
-      <button @click="goBack" type="button" class="flex items-center gap-3 cursor-pointer group">
+      <button @click="guardedNavigate(goBack)" type="button" class="flex items-center gap-3 cursor-pointer group">
         <img src="@/assets/logo/logo-horizontal-color.png" alt="SolmiOS" class="h-6 sm:h-7 w-auto">
         <span class="hidden sm:inline text-border">|</span>
         <span class="hidden sm:inline text-sm font-bold text-text-secondary group-hover:text-navy transition-colors">Configura tu propiedad</span>
@@ -35,7 +35,7 @@
       <nav class="px-4 sm:px-8 pt-6 pb-6 overflow-x-auto shrink-0" aria-label="Pasos de configuración">
         <ol class="flex items-center justify-center min-w-max mx-auto max-w-5xl">
           <li v-for="(s, i) in status.steps" :key="s.key" class="flex items-center">
-            <button @click="activeIndex = i" type="button"
+            <button @click="guardedNavigate(() => activeIndex = i)" type="button"
               class="flex flex-col items-center gap-2 cursor-pointer group px-1.5"
               :aria-current="activeIndex === i ? 'step' : undefined">
               <span class="w-10 h-10 rounded-full grid place-items-center shrink-0 font-black text-sm transition-all duration-200"
@@ -68,7 +68,7 @@
           <p class="text-sm text-text-muted max-w-md mx-auto">
             Completó todo lo necesario. Puede repasar u optimizar los pasos opcionales desde la barra de arriba cuando quiera.
           </p>
-          <button @click="goBack" type="button" class="wizard-btn-primary mt-6">
+          <button @click="guardedNavigate(goBack)" type="button" class="wizard-btn-primary mt-6">
             Volver al dashboard
           </button>
         </div>
@@ -133,7 +133,7 @@
                    pasos operativos (kind:'external', ej. Habitaciones) no tienen "guardado
                    inline" — su acción real es el CTA que ya renderiza el propio componente. -->
               <div class="flex flex-wrap items-center justify-between gap-3 mt-8 pt-6 border-t border-border">
-                <button v-if="activeIndex > 0" @click="goPrev" type="button" class="wizard-btn-secondary shrink-0">
+                <button v-if="activeIndex > 0" @click="guardedNavigate(goPrev)" type="button" class="wizard-btn-secondary shrink-0">
                   <span class="w-4 h-4" v-html="ICON_ARROW_LEFT"></span>
                   Anterior
                 </button>
@@ -167,6 +167,10 @@
         </template>
       </main>
     </template>
+
+    <ConfirmModal v-if="confirmModal" :title="confirmModal.title" :message="confirmModal.message"
+      :confirm-label="confirmModal.confirmLabel" :danger="confirmModal.danger" :loading="confirmBusy"
+      @confirm="runConfirm" @close="confirmModal = null" />
   </div>
 </template>
 
@@ -174,6 +178,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { OnboardingService, type OnboardingStatus } from '@/services/Onboarding.service'
+import { useConfirm } from '@/composables/useConfirm'
+import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import StepBienvenida from './steps/StepBienvenida.vue'
 import StepIdentidad from './steps/StepIdentidad.vue'
 import StepContacto from './steps/StepContacto.vue'
@@ -189,7 +195,7 @@ const submitting = ref(false)
 /** Instancia del step activo — cada Step*.vue expone `save()` (y `skip()` cuando aplica) vía
  *  `defineExpose`; el shell los invoca desde acá en vez de que cada componente dibuje su propio
  *  botón, así "Anterior"/"Guardar y continuar" quedan en una sola fila (mockup del usuario). */
-const stepRef = ref<{ save?: () => Promise<void>; skip?: () => void } | null>(null)
+const stepRef = ref<{ save?: () => Promise<void>; skip?: () => void; isDirty?: boolean } | null>(null)
 /** Distingue "está en el 0% de recorrido del wizard, casualmente en el paso 0" (no navegó
  *  todavía) de "ya navegó" — sin esto, un hotel 100% completo que hace click en el paso 1 de la
  *  barra volvería a ver la pantalla de cierre en vez del contenido de ese paso. */
@@ -202,6 +208,24 @@ function goNext() {
   if (status.value && activeIndex.value < status.value.steps.length - 1) activeIndex.value++
 }
 
+/** Cambios sin guardar: cada Step*.vue expone `isDirty` (mismo patrón que
+ *  `pagina-publica/general.vue`) y ESTE shell decide qué hacer con eso, ya que es quien controla
+ *  la navegación entre pasos (barra de pasos, "Anterior", volver al dashboard). Sin esto, saltar
+ *  de paso sin guardar descarta en silencio lo tipeado — reportado con el país del paso 1: se
+ *  cambiaba y, si no se guardaba antes de saltar a Ubicación, el mapa seguía centrado en el país
+ *  viejo porque Ubicación recarga los datos del hotel desde el backend al montar. */
+const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm()
+function guardedNavigate(action: () => void) {
+  if (!stepRef.value?.isDirty) { action(); return }
+  askConfirm({
+    title: 'Cambios sin guardar',
+    message: 'Este paso tiene cambios sin guardar. Si cambia de paso ahora, se van a perder.',
+    confirmLabel: 'Cambiar sin guardar',
+    danger: true,
+    run: async () => action(),
+  })
+}
+
 async function handlePrimaryAction() {
   if (!stepRef.value?.save || submitting.value) return
   submitting.value = true
@@ -211,7 +235,7 @@ async function handlePrimaryAction() {
     submitting.value = false
   }
 }
-function handleSkip() { stepRef.value?.skip?.() }
+function handleSkip() { guardedNavigate(() => stepRef.value?.skip?.()) }
 
 const activeStep = computed(() => status.value!.steps[activeIndex.value]!)
 

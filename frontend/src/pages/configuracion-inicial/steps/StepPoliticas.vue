@@ -77,8 +77,18 @@ onMounted(async () => {
     taxRate.value = h.taxRate ?? null
   } finally {
     loading.value = false
+    markClean()
   }
 })
+
+// Ver comentario en StepBienvenida.vue — mismo patrón de detección de cambios sin guardar.
+// Solo Impuesto: la Política de cancelación (`CancellationPolicyEditor`) tiene su propio botón
+// de guardado independiente, fuera de "Guardar y continuar" — mismo alcance documentado en
+// CLAUDE.md para este paso.
+const savedSnapshot = ref('')
+function snapshot(): string { return JSON.stringify({ taxName: taxName.value, taxRate: taxRate.value }) }
+function markClean() { savedSnapshot.value = snapshot() }
+const isDirty = computed(() => savedSnapshot.value !== '' && snapshot() !== savedSnapshot.value)
 
 const { error, save } = useOnboardingStep(async () => {
   await SettingsService.patchHotel({ taxName: taxName.value, taxRate: taxRate.value })
@@ -86,8 +96,8 @@ const { error, save } = useOnboardingStep(async () => {
 
 async function onSaveTaxes() {
   await save()
-  if (!error.value) toast.success('Impuesto guardado')
+  if (!error.value) { toast.success('Impuesto guardado'); markClean() }
 }
 
-defineExpose({ save: onSaveTaxes })
+defineExpose({ save: onSaveTaxes, isDirty })
 </script>

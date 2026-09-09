@@ -44,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import { SettingsService } from '@/services/Settings.service'
 import { AuthService } from '@/services/Auth.service'
@@ -81,8 +81,17 @@ onMounted(async () => {
     ownerName.value = useAuthStore().user?.name || ''
   } finally {
     loading.value = false
+    markClean()
   }
 })
+
+// ─── Cambios sin guardar — el shell (index.vue) lee `isDirty` antes de cambiar de paso, para
+// avisar con un modal estilizado en vez de perder en silencio lo que no se guardó (mismo patrón
+// que `pagina-publica/general.vue`). */
+const savedSnapshot = ref('')
+function snapshot(): string { return JSON.stringify({ form: form.value, ownerName: ownerName.value }) }
+function markClean() { savedSnapshot.value = snapshot() }
+const isDirty = computed(() => savedSnapshot.value !== '' && snapshot() !== savedSnapshot.value)
 
 const { error, save } = useOnboardingStep(async () => {
   await SettingsService.patchHotel({
@@ -105,10 +114,11 @@ async function onSave() {
   fieldError.value = form.value.phone.trim() ? '' : 'El teléfono principal es obligatorio'
   if (fieldError.value) return
   await save()
-  if (!error.value) toast.success('Bienvenida guardada')
+  if (!error.value) { toast.success('Bienvenida guardada'); markClean() }
 }
 
 // El botón "Guardar y continuar" vive en el shell (index.vue) — expone `save` para que lo invoque
 // desde ahí, así "Anterior"/"Guardar y continuar" quedan en una sola fila (mockup del usuario).
-defineExpose({ save: onSave })
+// `isDirty` la lee el shell antes de cambiar de paso (ver comentario arriba).
+defineExpose({ save: onSave, isDirty })
 </script>

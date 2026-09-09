@@ -117,8 +117,17 @@ onMounted(async () => {
     logo.value = s.hotel.logo || ''
   } finally {
     loading.value = false
+    markClean()
   }
 })
+
+// Ver comentario en StepBienvenida.vue — mismo patrón de detección de cambios sin guardar.
+// El logo queda afuera del snapshot: se sube y persiste solo, apenas se elige el archivo (ver
+// `uploadLogoFile` abajo), no forma parte de lo que guarda el botón "Guardar y continuar".
+const savedSnapshot = ref('')
+function snapshot(): string { return JSON.stringify({ accommodationType: accommodationType.value, currency: currency.value, starRating: starRating.value }) }
+function markClean() { savedSnapshot.value = snapshot() }
+const isDirty = computed(() => savedSnapshot.value !== '' && snapshot() !== savedSnapshot.value)
 
 // Logo — mismo patrón que pagina-publica/general.vue: sube DE UNA (endpoint dedicado, data URL
 // base64) apenas se elige el archivo, sin esperar al botón "Guardar" general.
@@ -213,8 +222,8 @@ const { error, save } = useOnboardingStep(async () => {
 
 async function onSave() {
   await save()
-  if (!error.value) toast.success('Identidad guardada')
+  if (!error.value) { toast.success('Identidad guardada'); markClean() }
 }
 
-defineExpose({ save: onSave })
+defineExpose({ save: onSave, isDirty })
 </script>

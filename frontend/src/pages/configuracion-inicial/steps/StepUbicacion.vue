@@ -54,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { SettingsService, type HotelFull } from '@/services/Settings.service'
 import { useToast } from '@/composables/useToast'
 import { useOnboardingStep } from '@/composables/useOnboardingStep'
@@ -97,8 +97,20 @@ onMounted(async () => {
     await initInteractiveMap()
     await initAddressAutocomplete()
     markLocationLoaded()
+    markClean()
   }
 })
+
+// Ver comentario en StepBienvenida.vue — mismo patrón de detección de cambios sin guardar.
+// `country` queda afuera del snapshot: este paso no lo guarda (se edita en Bienvenida) y acá
+// solo se lee para centrar el mapa.
+const savedSnapshot = ref('')
+function snapshot(): string {
+  const { address, latitude, longitude, province, municipality, locality, postalCode } = form.value
+  return JSON.stringify({ address, latitude, longitude, province, municipality, locality, postalCode })
+}
+function markClean() { savedSnapshot.value = snapshot() }
+const isDirty = computed(() => savedSnapshot.value !== '' && snapshot() !== savedSnapshot.value)
 
 const { error, save } = useOnboardingStep(async () => {
   await SettingsService.patchHotel({
@@ -110,8 +122,8 @@ const { error, save } = useOnboardingStep(async () => {
 
 async function onSave() {
   await save()
-  if (!error.value) toast.success('Ubicación guardada')
+  if (!error.value) { toast.success('Ubicación guardada'); markClean() }
 }
 
-defineExpose({ save: onSave })
+defineExpose({ save: onSave, isDirty })
 </script>

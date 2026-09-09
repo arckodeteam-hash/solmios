@@ -31,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { SettingsService } from '@/services/Settings.service'
 import { useToast } from '@/composables/useToast'
 import { useOnboardingStep } from '@/composables/useOnboardingStep'
@@ -54,8 +54,15 @@ onMounted(async () => {
     form.value = { phone2: h.phone2 || '', website: h.website || '', ownerTaxId: h.ownerTaxId || '' }
   } finally {
     loading.value = false
+    markClean()
   }
 })
+
+// Ver comentario en StepBienvenida.vue — mismo patrón de detección de cambios sin guardar.
+const savedSnapshot = ref('')
+function snapshot(): string { return JSON.stringify(form.value) }
+function markClean() { savedSnapshot.value = snapshot() }
+const isDirty = computed(() => savedSnapshot.value !== '' && snapshot() !== savedSnapshot.value)
 
 const { error, save } = useOnboardingStep(async () => {
   await SettingsService.patchHotel({ ...form.value })
@@ -63,8 +70,8 @@ const { error, save } = useOnboardingStep(async () => {
 
 async function onSave() {
   await save()
-  if (!error.value) toast.success('Contacto guardado')
+  if (!error.value) { toast.success('Contacto guardado'); markClean() }
 }
 
-defineExpose({ save: onSave, skip: () => emit('skip') })
+defineExpose({ save: onSave, skip: () => emit('skip'), isDirty })
 </script>
