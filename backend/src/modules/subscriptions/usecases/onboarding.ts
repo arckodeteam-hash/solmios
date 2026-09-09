@@ -45,6 +45,18 @@ export interface OnboardingStep {
   done: boolean
   /** Sin esto el hotel no puede operar; lo demás mejora la operación. */
   required: boolean
+  /**
+   * `true` cuando `done` es `true` únicamente porque el campo trae el default de columna
+   * (`hotel`/`USD` en `identidad`, `ITBIS`/18 en `politicas`) — nadie confirmó que ese valor
+   * sea correcto para ESTE hotel. No hay columna que distinga "confirmado" de "nunca tocado"
+   * (doc 06 sección 7, riesgo R1 aceptado), así que esto es un heurístico: compara contra el
+   * default conocido, no contra "el usuario lo guardó a propósito". Un hotel que genuinamente
+   * opera en USD/Hotel o paga ITBIS 18% también da `true` acá — el costo de un falso positivo
+   * (nota de más) es mucho más barato que el de un falso negativo (factura con el impuesto de
+   * otro país, en silencio). El frontend lo usa para pintar el paso en amarillo con una nota,
+   * NUNCA para bloquear el guardado ni excluirlo de `completed`/el % — sigue siendo `done`.
+   */
+  usingDefaults?: boolean
   /** Cuántos ítems ya tiene cargados (para mostrar "3 habitaciones"). */
   count?: number
   /** F2 (wizard-refactor tarea 2.1) — 'profile' se completa inline en el Centro de
@@ -117,8 +129,11 @@ export class OnboardingUseCase {
         // el default como hecho a propósito: a diferencia de los impuestos (ver
         // paso `politicas` más abajo, riesgo R1), un tipo "Hotel" en USD no es un
         // dato fiscal sesgado que pueda generarle un problema real al hotelero si
-        // queda sin tocar.
+        // queda sin tocar. Igual se avisa (`usingDefaults`, pedido explícito del
+        // usuario tras ver un alta nueva "completa" sin haber tocado nada): amarillo
+        // + nota en vez de verde silencioso, sin bloquear ni descontar del %.
         done: Boolean(hotel?.accommodationType && hotel?.currency),
+        usingDefaults: hotel?.accommodationType === 'hotel' && hotel?.currency === 'USD',
         required: true,
         kind: 'profile',
       },
@@ -166,8 +181,11 @@ export class OnboardingUseCase {
         // acá: vive en `StepPoliticas.vue` (F3.9), que SIEMPRE muestra el campo de
         // impuestos y obliga a un guardado explícito del paso, con o sin cambios —
         // un hotel que jamás pasa por el wizard sigue expuesto al default en
-        // silencio, deuda conocida y aceptada (doc 08, riesgo R1).
+        // silencio, deuda conocida y aceptada (doc 08, riesgo R1). `usingDefaults`
+        // (pedido explícito del usuario) refuerza esa mitigación en el wizard mismo:
+        // amarillo + nota en vez de verde, sin bloquear ni descontar del %.
         done: Boolean(hotel?.taxName && hotel?.taxRate),
+        usingDefaults: hotel?.taxName === 'ITBIS' && Number(hotel?.taxRate) === 18,
         required: true,
         kind: 'profile',
       },

@@ -118,6 +118,16 @@ describe('OnboardingUseCase — tarea 2.3, paso `identidad`', () => {
     const st = await setup({ hotel: { ...SIGNUP_HOTEL, accommodationType: '', currency: '' } }).status('h1')
     expect(st.steps.find(s => s.key === 'identidad')!.done).toBe(false)
   })
+
+  it('hotel de signup (default hotel/USD sin tocar) → usingDefaults true', async () => {
+    const st = await setup({ hotel: SIGNUP_HOTEL }).status('h1')
+    expect(st.steps.find(s => s.key === 'identidad')!.usingDefaults).toBe(true)
+  })
+
+  it('con un tipo/moneda distintos al default → usingDefaults false', async () => {
+    const st = await setup({ hotel: { ...SIGNUP_HOTEL, accommodationType: 'villa', currency: 'EUR' } }).status('h1')
+    expect(st.steps.find(s => s.key === 'identidad')!.usingDefaults).toBe(false)
+  })
 })
 
 describe('OnboardingUseCase — tarea 2.4, paso `contacto`', () => {
@@ -156,6 +166,16 @@ describe('OnboardingUseCase — tarea 2.6, paso `politicas`', () => {
   it('sin taxName ni taxRate → done false', async () => {
     const st = await setup({ hotel: { ...SIGNUP_HOTEL, taxName: '', taxRate: 0 } }).status('h1')
     expect(st.steps.find(s => s.key === 'politicas')!.done).toBe(false)
+  })
+
+  it('hotel de signup (default ITBIS/18 sin tocar) → usingDefaults true', async () => {
+    const st = await setup({ hotel: SIGNUP_HOTEL }).status('h1')
+    expect(st.steps.find(s => s.key === 'politicas')!.usingDefaults).toBe(true)
+  })
+
+  it('con un impuesto distinto al default → usingDefaults false', async () => {
+    const st = await setup({ hotel: { ...SIGNUP_HOTEL, taxName: 'IVA', taxRate: 16 } }).status('h1')
+    expect(st.steps.find(s => s.key === 'politicas')!.usingDefaults).toBe(false)
   })
 })
 
