@@ -260,7 +260,8 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
   // Revisión #84: el intento RECHAZADO tiene que dejar rastro en la fila. Con
   // `error_if_incomplete` no se escribe nada del negocio, así que `updatedAt` quedaba quieto y el
   // reintento reusaba la clave de idempotencia: Stripe le devolvía el error cacheado hasta 24h.
-  // El toque no-op (reescribir `status` con su valor actual) es lo que mueve la marca de tiempo.
+  // El toque va con el patch VACÍO: el ORM le agrega `updatedAt` igual, y así no puede pisar un
+  // `status` que el webhook haya movido mientras Stripe respondía.
   it('TARJETA RECHAZADA: toca la fila activa para mover updatedAt, sin cambiar un solo dato', async () => {
     const { deps, subRows } = setup([activeSub()])
     const antes = { ...subRows[0] }
@@ -273,8 +274,10 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     expect(escritas).toHaveLength(1)
     expect(escritas[0].id).toBe('s1')
     expect('planId' in escritas[0].patch).toBe(false)
-    // Es un no-op de negocio: el `status` vuelve a escribirse con el valor que ya tenía.
-    expect(escritas[0].patch).toEqual({ status: 'active' })
+    // No escribe NINGÚN campo de negocio: el patch va vacío y `updatedAt` lo pone el ORM. Si acá
+    // volviera a aparecer un campo, sería un leer-modificar-escribir capaz de revertir el `status`
+    // que el webhook cambió mientras Stripe respondía.
+    expect(escritas[0].patch).toEqual({})
     // Lo ÚNICO que se movió es `updatedAt` (lo sella el ORM en toda escritura).
     expect(subRows[0].updatedAt).not.toBe(antes.updatedAt)
     expect({ ...subRows[0], updatedAt: antes.updatedAt }).toEqual(antes)

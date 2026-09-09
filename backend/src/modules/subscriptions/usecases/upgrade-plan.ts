@@ -163,17 +163,26 @@ export async function applyUpgrade(
       throw e
     }
     logger.warn('No se pudo cobrar el prorrateo del cambio de plan: el plan actual queda intacto', contexto)
-    // El intento RECHAZADO tiene que dejar rastro en la fila. Se reescribe `status` con el valor
-    // que ya tiene: no cambia un solo dato del negocio, pero el ORM pisa `updatedAt` en toda
-    // escritura y eso es lo que hace que el reintento estrene clave de idempotencia y Stripe lo
-    // ejecute de verdad, en vez de devolverle el error cacheado de este intento. Es lo que
-    // `allow_incomplete` daba gratis, cuando todo intento escribía la fila.
+    // El intento RECHAZADO tiene que dejar rastro en la fila: es lo que hace que el reintento
+    // estrene clave de idempotencia y Stripe lo ejecute de verdad, en vez de devolverle el error
+    // cacheado de este intento. Es lo que `allow_incomplete` daba gratis, cuando todo intento
+    // escribía la fila.
+    //
+    // El patch va VACÍO a propósito. Reescribir un campo leído antes del `await` a Stripe —que es
+    // una llamada de red que puede tardar (3DS, reintentos de la red de tarjetas)— sería un
+    // leer-modificar-escribir sin CAS: si en esa ventana el webhook movió la fila a `past_due` o a
+    // `canceled` (handle-stripe-event.ts), este `catch` la devolvería al valor viejo, y una
+    // suscripción recién cancelada volvería a figurar activa por un cobro que ni siquiera pasó.
+    // Con el patch vacío el ORM emite `UPDATE subscriptions SET updatedAt = ? WHERE id = ?`
+    // (orm.ts: filtra el patch contra los campos del modelo y agrega `updatedAt` si el modelo
+    // lleva timestamps, que `SubscriptionsModel` sí lleva): mueve la marca de tiempo y no pisa un
+    // solo dato del negocio.
     //
     // BEST-EFFORT, mismo criterio que el reflejo local de más abajo: si esta escritura falla NO
     // puede tapar el rechazo del cobro, que es lo único que la persona necesita leer. Se avisa
     // fuerte y se sigue lanzando el motivo real.
     try {
-      await subscriptionsRepo.update(String(active.id), { status: active.status })
+      await subscriptionsRepo.update(String(active.id), {})
     } catch (errorAlMarcar) {
       logger.warn('No se pudo marcar el intento rechazado: el reintento podría chocar con el caché de Stripe', {
         ...contexto, errorAlMarcar: (errorAlMarcar as Error)?.message ?? 'error desconocido',
