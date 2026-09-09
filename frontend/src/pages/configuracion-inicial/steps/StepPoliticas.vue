@@ -47,6 +47,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { SettingsService } from '@/services/Settings.service'
+import { ConfigService } from '@/services/Platform.service'
 import { countryName } from '@/data/locales'
 import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
 import { useToast } from '@/composables/useToast'
@@ -98,6 +99,10 @@ const isDirty = computed(() => savedSnapshot.value !== '' && snapshot() !== save
 
 const { error, save } = useOnboardingStep(async () => {
   await SettingsService.patchHotel({ taxName: taxName.value, taxRate: taxRate.value })
+  // Ver comentario equivalente en StepIdentidad.vue — marca el paso como confirmado (KV
+  // `configuration`) ANTES de que useOnboardingStep pida el status nuevo, para que el wizard
+  // ya lea `usingDefaults: false` en ese mismo guardado.
+  await ConfigService.set('onboarding_politicas_confirmed', true).catch(() => {})
 }, (status) => emit('saved', status))
 
 async function onSaveTaxes() {

@@ -95,6 +95,7 @@ import { ref, computed, onMounted } from 'vue'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import { SettingsService } from '@/services/Settings.service'
 import { HotelService } from '@/services/Hotel.service'
+import { ConfigService } from '@/services/Platform.service'
 import { CURRENCIES } from '@/data/intl-catalogs'
 import { useToast } from '@/composables/useToast'
 import { useOnboardingStep } from '@/composables/useOnboardingStep'
@@ -226,6 +227,12 @@ const { error, save } = useOnboardingStep(async () => {
     currency: currency.value,
     starRating: starRating.value,
   })
+  // Marca el paso como confirmado por el usuario (KV `configuration`, `onboarding.ts`) — a
+  // partir de acá `usingDefaults` da false SIEMPRE, aunque el valor siga siendo el default:
+  // guardar a propósito ya es la confirmación, pedido explícito del usuario. Va ANTES de que
+  // `useOnboardingStep` pida el status nuevo (mismo await), si no el wizard seguiría pintando
+  // amarillo un tick más — hasta el próximo refresh — con el flag ya escrito pero sin leer.
+  await ConfigService.set('onboarding_identidad_confirmed', true).catch(() => {})
 }, (status) => emit('saved', status))
 
 async function onSave() {
