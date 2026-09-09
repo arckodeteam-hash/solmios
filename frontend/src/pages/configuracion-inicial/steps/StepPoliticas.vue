@@ -10,6 +10,12 @@
           <span class="w-3.5 h-3.5 shrink-0 mt-px" v-html="ICON_WARN"></span>
           <span>Estos valores son el default de República Dominicana (ITBIS 18%) — su hotel está en {{ country || 'otro país' }}. Confírmelos o cámbielos antes de guardar.</span>
         </p>
+        <!-- Genérico (onboarding.ts `usingDefaults`): ITBIS/18% sin confirmar, pero el país SÍ es
+             RD (si no lo fuera, ya se muestra el aviso de arriba, más específico — no duplicar). -->
+        <p v-else-if="step.usingDefaults" class="text-xs font-bold text-warning bg-warning/10 rounded-lg px-3 py-2 mb-2 flex gap-1.5">
+          <span class="w-3.5 h-3.5 shrink-0 mt-px" v-html="ICON_WARN"></span>
+          <span>El impuesto quedó en su valor por defecto (ITBIS 18%). Confírmelo o cámbielo si no corresponde.</span>
+        </p>
         <p class="text-xs text-text-muted mb-2.5">Los campos marcados con <span class="text-danger font-bold">*</span> son obligatorios.</p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>

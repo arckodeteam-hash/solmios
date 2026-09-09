@@ -3,6 +3,13 @@
     <div v-if="loading" class="h-16 animate-pulse bg-surface rounded-lg"></div>
     <template v-else>
       <p class="text-[11px] text-text-muted">Los campos marcados con <span class="text-danger font-bold">*</span> son obligatorios.</p>
+      <!-- `usingDefaults` (onboarding.ts): tipo de alojamiento y moneda quedaron en "Hotel"/USD
+           sin que nadie los confirmara — nota, no bloqueo (pedido explícito del usuario: mejor
+           amarillo con aviso que verde silencioso en un alta nueva sin tocar). -->
+      <p v-if="step.usingDefaults" class="text-xs font-bold text-warning bg-warning/10 rounded-lg px-3 py-2 flex gap-1.5">
+        <span class="w-3.5 h-3.5 shrink-0 mt-px" v-html="ICON_WARN"></span>
+        <span>Tipo de alojamiento y moneda quedaron en sus valores por defecto. Personalícelos si no corresponden a su alojamiento.</span>
+      </p>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo de alojamiento <span class="text-danger">*</span></label>
@@ -100,6 +107,7 @@ const ICON_UPLOAD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" 
 const ICON_BUILDING = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4M10 10h4M10 14h4M10 18h4"/></svg>'
 const ICON_STAR = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.48 3.5a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z"/></svg>'
 const ICON_GLOBE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"/><path d="M3.6 9h16.8M3.6 15h16.8"/><path d="M12 3a14.5 14.5 0 0 1 0 18M12 3a14.5 14.5 0 0 0 0 18"/></svg>'
+const ICON_WARN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>'
 
 const toast = useToast()
 const loading = ref(true)

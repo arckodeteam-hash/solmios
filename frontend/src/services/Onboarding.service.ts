@@ -15,6 +15,10 @@ export interface OnboardingStep {
   cta?: string
   done: boolean
   required: boolean
+  /** `true` cuando `done` es `true` solo porque el valor quedó en su default de columna
+   *  (`hotel`/`USD` en identidad, `ITBIS`/18 en políticas) — nadie lo confirmó todavía.
+   *  El wizard lo pinta en amarillo con una nota, en vez de verde silencioso. */
+  usingDefaults?: boolean
   count?: number
   /** F2 (wizard-refactor) — 'profile' se completa inline en el Centro de configuración
    *  (`useOnboardingStep.ts`); 'external' navega a su pantalla real. */

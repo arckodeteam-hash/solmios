@@ -39,7 +39,8 @@
               class="flex flex-col items-center gap-2 cursor-pointer group px-1.5"
               :aria-current="activeIndex === i ? 'step' : undefined">
               <span class="w-10 h-10 rounded-full grid place-items-center shrink-0 font-black text-sm transition-all duration-200"
-                :class="stepCircleClass(s, i)">
+                :class="stepCircleClass(s, i)"
+                :title="s.usingDefaults ? 'Completado con valores por defecto — revíselo' : undefined">
                 <svg v-if="s.done" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
@@ -103,7 +104,8 @@
             <!-- Formulario del paso activo -->
             <div class="p-6 sm:p-10 flex flex-col">
               <div class="flex items-center gap-4 mb-7">
-                <span class="w-12 h-12 rounded-xl grid place-items-center shrink-0 bg-teal/10 text-teal">
+                <span class="w-12 h-12 rounded-xl grid place-items-center shrink-0"
+                  :class="activeStep.usingDefaults ? 'bg-warning/10 text-warning' : 'bg-teal/10 text-teal'">
                   <svg v-if="activeStep.done" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
@@ -113,6 +115,7 @@
                   <div class="flex items-center gap-2 flex-wrap">
                     <h1 class="text-xl font-black text-navy">{{ activeStep.title }}</h1>
                     <span v-if="!activeStep.required" class="text-[10px] font-bold text-text-muted bg-surface px-2 py-0.5 rounded-full shrink-0">opcional</span>
+                    <span v-if="activeStep.usingDefaults" class="text-[10px] font-bold text-warning bg-warning/10 px-2 py-0.5 rounded-full shrink-0">valores por defecto</span>
                   </div>
                   <p class="text-sm text-text-muted">{{ activeStep.description }}</p>
                 </div>
@@ -342,8 +345,12 @@ const STEP_MARKETING: Record<string, { image: string; heading: string; descripti
 }
 const marketing = computed(() => STEP_MARKETING[activeStep.value.key] ?? STEP_MARKETING.bienvenida!)
 
-function stepCircleClass(s: { done: boolean }, i: number): string {
+function stepCircleClass(s: { done: boolean; usingDefaults?: boolean }, i: number): string {
   const isActive = activeIndex.value === i
+  // `usingDefaults`: "hecho" solo porque quedó el valor por defecto (hotel/USD, ITBIS 18%) —
+  // amarillo en vez de teal para que se note que conviene revisarlo, sin dejar de contar como
+  // hecho (no bloquea el % ni `completed`, pedido explícito del usuario).
+  if (s.done && s.usingDefaults) return isActive ? 'bg-warning text-white ring-2 ring-offset-2 ring-warning' : 'bg-warning text-white'
   if (s.done) return isActive ? 'bg-teal text-white ring-2 ring-offset-2 ring-teal' : 'bg-teal text-white'
   if (isActive) return 'bg-white border-2 text-navy scale-110' + ' border-teal'
   return 'bg-white border-2 border-border text-text-muted'
