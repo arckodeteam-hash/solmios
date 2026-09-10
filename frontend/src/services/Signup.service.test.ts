@@ -7,7 +7,7 @@ vi.mock('./http', () => ({
   http: { post: vi.fn(), get: vi.fn() },
 }))
 
-import { SignupService, DEFAULT_TRIAL_DAYS } from './Signup.service'
+import { SignupService, DEFAULT_TRIAL_DAYS, trialEligiblePlans, type PublicPlan } from './Signup.service'
 import { http } from './http'
 
 describe('Signup.service — signupPolicy (#94)', () => {
@@ -37,5 +37,33 @@ describe('Signup.service — signupPolicy (#94)', () => {
     const p = await SignupService.signupPolicy()
     expect(p).toEqual({ requireCardOnTrial: true, trialDays: days })
     expect(http.get).toHaveBeenCalledWith('/public/signup-policy')
+  })
+})
+
+// ── #71: el registro sólo ofrece planes con `plans.trialEligible` ─────────────────────────────
+describe('Signup.service — trialEligiblePlans (#71)', () => {
+  const plan = (over: Partial<PublicPlan>): PublicPlan => ({
+    id: 'plan-x', name: 'X', slug: 'x', price: 10, currency: 'USD', description: '', features: [], ...over,
+  })
+
+  it('deja afuera los planes con trialEligible=false', () => {
+    const out = trialEligiblePlans([
+      plan({ id: 'a', trialEligible: true }),
+      plan({ id: 'b', trialEligible: false }),
+      plan({ id: 'c', trialEligible: true }),
+    ])
+    expect(out.map(p => p.id)).toEqual(['a', 'c'])
+  })
+
+  it('sin el campo (backend viejo / NULL en la fila) el plan sigue siendo elegible', () => {
+    const out = trialEligiblePlans([plan({ id: 'a' }), plan({ id: 'b', trialEligible: undefined })])
+    expect(out.map(p => p.id)).toEqual(['a', 'b'])
+  })
+
+  it('lista vacía → lista vacía, y no muta la entrada', () => {
+    expect(trialEligiblePlans([])).toEqual([])
+    const input = [plan({ id: 'a', trialEligible: false })]
+    trialEligiblePlans(input)
+    expect(input).toHaveLength(1)
   })
 })
