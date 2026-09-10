@@ -44,6 +44,45 @@ Actividad: 5 hoteles cargaron 7–14 habitaciones y 0 reservas, 1–12 acciones,
 
 Recomendación: **A ahora, B después**. Decisiones previas: quién responde en < 1 h; tarjeta en el trial (no todavía).
 
+## Línea base — 2026-09-10 (día 0, Fases A y B recién desplegadas)
+
+Fuente: `GET /api/admin/sales-pipeline/funnel?weeks=8` en prod (issue #181). Semanas ISO; "activados" =
+cargaron su primera habitación dentro de los 7 días del alta; "pagando" = primer cobro de plataforma en
+esa semana; "perdidos" por semana de `lostAt`.
+
+| Semana | Registrados | Activados | Pagando | Perdidos |
+|---|---|---|---|---|
+| 2026-W30 | 3 | 1 | 0 | 0 |
+| 2026-W31 | 0 | 0 | 0 | 0 |
+| 2026-W32 | 0 | 0 | 0 | 0 |
+| 2026-W33 | 0 | 0 | 0 | 0 |
+| 2026-W34 | 3 | 2 | 0 | 0 |
+| 2026-W35 | 1 | 0 | 0 | 0 |
+| 2026-W36 | 6 | 6 | 0 | 0 |
+| 2026-W37 | 2 | 0 | 2 | 2 |
+| **Total 8 sem** | **15** | **9 (60%)** | **2 (13.3%)** | **2** (`no_response`, marcados por el cron a +14 d) |
+
+Contexto del día 0: pipeline con 16 hoteles (expired 9 · paying 2 · activated 1 · registered 2 · lost 2);
+primer tick del cron mandó `trial_rescue_1` ×3, `trial_offer` ×1, `activation_no_rooms` ×1. El 13.3%
+"pagando" son los 2 hoteles que ya pagaban antes de todo esto (uno es "Test Property"): la tasa real de
+partida sigue siendo el 5–10% del análisis, no 13.3%.
+
+## Resultado a 4 semanas — pendiente (≈ 2026-10-08, issue #181)
+
+Repetir la misma consulta y completar:
+
+| | Día 0 (2026-09-10) | +4 semanas | Δ |
+|---|---|---|---|
+| Registrados (8 sem) | 15 | | |
+| Activados / tasa | 9 / 60% | | |
+| Pagando / tasa | 2 / 13.3% | | |
+| Perdidos por motivo | 2 `no_response` | | |
+| Correos de secuencia enviados (`email_queue` `platform_email:activation_*`/`trial_*`) | 5 | | |
+| Trials vencidos contactados por una persona (`contactedAt`) | 0 | | |
+
+Pregunta a responder: ¿la secuencia automática (#149/#150) movió `payingRate` por encima del 5–10% de
+partida, o lo que falta sigue siendo la llamada humana en < 1 h?
+
 ## Fuentes
 - https://www.shno.co/marketing-statistics/free-trial-conversion-statistics
 - https://userpilot.com/blog/saas-average-conversion-rate/
