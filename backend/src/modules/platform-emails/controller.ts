@@ -8,7 +8,11 @@ import { validateSchema } from '../../shared/validators/validate-body'
 import type { PlatformEmailsService } from './service'
 import { UpdatePlatformEmailTemplateSchema, SendTestEmailSchema } from './validators/schema'
 
-/** Variables de ejemplo por evento — solo para el botón "Enviar prueba" del admin. */
+/**
+ * Variables de ejemplo por evento — solo para el botón "Enviar prueba" del admin. Un set por cada
+ * `PlatformEmailEvent` (10). `{platform_name}`, `{support_email}` y `{support_phone}` no van acá:
+ * las inyecta el service en cada envío desde configuration('plataforma').
+ */
 const SAMPLE_VARIABLES: Record<string, Record<string, string>> = {
   welcome: { hotel_name: 'Hotel de Prueba', link: 'https://ejemplo.com/panel/dashboard' },
   trial_ending: { hotel_name: 'Hotel de Prueba', days_left: '2', link: 'https://ejemplo.com/panel/suscripcion' },
@@ -16,6 +20,10 @@ const SAMPLE_VARIABLES: Record<string, Record<string, string>> = {
   payment_succeeded: { hotel_name: 'Hotel de Prueba', plan_name: 'Professional', amount: '$123', link: 'https://ejemplo.com/panel/suscripcion' },
   payment_failed: { hotel_name: 'Hotel de Prueba', plan_name: 'Professional', amount: '$123', link: 'https://ejemplo.com/panel/suscripcion' },
   subscription_canceled: { hotel_name: 'Hotel de Prueba', link: 'https://ejemplo.com/panel/suscripcion' },
+  subscription_renewal_auto: { hotel_name: 'Hotel de Prueba', days_left: '5', link: 'https://ejemplo.com/panel/suscripcion' },
+  subscription_renewal_manual: { hotel_name: 'Hotel de Prueba', days_left: '5', link: 'https://ejemplo.com/panel/suscripcion' },
+  subscription_suspended: { hotel_name: 'Hotel de Prueba', link: 'https://ejemplo.com/panel/suscripcion' },
+  subscription_reactivated: { hotel_name: 'Hotel de Prueba', link: 'https://ejemplo.com/panel/dashboard' },
 }
 
 export class PlatformEmailsController {

@@ -2,9 +2,11 @@
 // Solo esto es visible para otros módulos y conectores.
 // ⚠ REGLA: Append-only. No sacar ni modificar exports existentes.
 //
-// Plantillas editables de los 6 correos del ciclo de vida de la suscripción SaaS
+// Plantillas editables de los 10 correos del ciclo de vida de la suscripción SaaS
 // (welcome, trial_ending, trial_expired, payment_succeeded, payment_failed,
-// subscription_canceled). Son de PLATAFORMA, no de hotel — solo `super_admin` las administra.
+// subscription_canceled, subscription_renewal_auto, subscription_renewal_manual,
+// subscription_suspended, subscription_reactivated). Son de PLATAFORMA, no de hotel — solo
+// `super_admin` las administra.
 // `sendEvent()` lo consumen subscriptions (webhook Stripe + signup) y el cron de trial vía
 // `resolveModule('platform-emails')` — no hay connector porque no hay lógica de dominio cruzada,
 // solo un puerto de envío (mismo criterio que webhooks.dispatch()).
@@ -43,8 +45,11 @@ export function PlatformEmailsModule() {
       registerPlatformEmailsModels(orm)
 
       const repo = new OrmRepository<PlatformEmailTemplateDTO>(orm, 'PlatformEmailTemplate')
+      // configuration('plataforma'): nombre/email/teléfono de soporte que cada envío inyecta
+      // como {platform_name}/{support_email}/{support_phone}. Mismo repo que admin/index.ts.
+      const configRepo = new OrmRepository<Record<string, unknown>>(orm, 'Configuration')
       const log = logger.child('platform-emails')
-      const service = new PlatformEmailsService(repo)
+      const service = new PlatformEmailsService(repo, configRepo)
       const controller = new PlatformEmailsController(service, log)
 
       // Plantillas de PLATAFORMA, no de hotel: solo el dueño de la plataforma (super_admin +

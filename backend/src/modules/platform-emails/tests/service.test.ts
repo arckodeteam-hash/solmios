@@ -105,6 +105,92 @@ describe('PlatformEmailsService.sendEvent', () => {
   })
 })
 
+function makeConfigRepo(value: unknown): RepositoryAdapter<Record<string, unknown>> {
+  const row = value === undefined ? null : { id: 'cfg-1', hotelId: 'platform', key: 'plataforma', value }
+  return {
+    findMany: async () => (row ? [row] : []),
+    findById: async () => row,
+    findOne: async (filters: Record<string, unknown>) =>
+      row && filters.key === 'plataforma' && filters.hotelId === 'platform' ? row : null,
+    create: async (d: any) => d,
+    update: async () => row,
+    delete: async () => true,
+    count: async () => (row ? 1 : 0),
+    paginate: async () => ({ data: row ? [row] : [], total: row ? 1 : 0, limit: 20, offset: 0, pages: 1 }),
+  } as unknown as RepositoryAdapter<Record<string, unknown>>
+}
+
+describe('PlatformEmailsService.sendEvent — identidad de la plataforma (CFG-1)', () => {
+  const brandedTemplate = () => makeTemplate({
+    subject: 'Bienvenido a {platform_name}, {hotel_name}',
+    body: '<p>Hola {hotel_name}. Dudas: {support_email} / {support_phone}. Entrá: {link}</p>',
+    variables: '["hotel_name","link","platform_name","support_email","support_phone"]',
+  })
+  const platformCfg = JSON.stringify({ platformName: 'HotelPro', supportEmail: 'help@hotelpro.com', supportPhone: '+54 11 5555' })
+
+  it('inyecta {platform_name}/{support_email}/{support_phone} desde configuration(plataforma)', async () => {
+    const { repo } = makeRepo([brandedTemplate()])
+    const svc = new PlatformEmailsService(repo, makeConfigRepo(platformCfg))
+    const { sender, sent } = makeSender()
+    svc.setEmailDeps(sender)
+
+    const result = await svc.sendEvent('welcome', 'dueno@hotel.com', 'h1', { hotel_name: 'Hotel X', link: 'https://x.com/panel' })
+
+    expect(result).toEqual({ sent: true })
+    expect(sent[0]!.subject).toBe('Bienvenido a HotelPro, Hotel X')
+    expect(sent[0]!.html).toContain('help@hotelpro.com')
+    expect(sent[0]!.html).toContain('+54 11 5555')
+    expect(sent[0]!.html).not.toContain('{support_email}')
+  })
+
+  it('el caller gana si manda su propia platform_name', async () => {
+    const { repo } = makeRepo([brandedTemplate()])
+    const svc = new PlatformEmailsService(repo, makeConfigRepo(platformCfg))
+    const { sender, sent } = makeSender()
+    svc.setEmailDeps(sender)
+
+    await svc.sendEvent('welcome', 'dueno@hotel.com', 'h1', { hotel_name: 'Hotel X', link: 'https://x.com/panel', platform_name: 'Custom' })
+
+    expect(sent[0]!.subject).toBe('Bienvenido a Custom, Hotel X')
+    expect(sent[0]!.html).toContain('help@hotelpro.com')
+  })
+
+  it('sin configRepo: usa los defaults (SolmiOS) y no explota', async () => {
+    const { repo } = makeRepo([brandedTemplate()])
+    const svc = new PlatformEmailsService(repo)
+    const { sender, sent } = makeSender()
+    svc.setEmailDeps(sender)
+
+    const result = await svc.sendEvent('welcome', 'dueno@hotel.com', 'h1', { hotel_name: 'Hotel X', link: 'https://x.com/panel' })
+
+    expect(result).toEqual({ sent: true })
+    expect(sent[0]!.subject).toBe('Bienvenido a SolmiOS, Hotel X')
+    expect(sent[0]!.html).toContain('soporte@solmios.com')
+  })
+
+  it('configRepo sin fila de plataforma: defaults', async () => {
+    const { repo } = makeRepo([brandedTemplate()])
+    const svc = new PlatformEmailsService(repo, makeConfigRepo(undefined))
+    const { sender, sent } = makeSender()
+    svc.setEmailDeps(sender)
+
+    await svc.sendEvent('welcome', 'dueno@hotel.com', 'h1', { hotel_name: 'Hotel X', link: 'https://x.com/panel' })
+    expect(sent[0]!.subject).toBe('Bienvenido a SolmiOS, Hotel X')
+  })
+
+  it('configRepo que rechaza: defaults, el envío sale igual', async () => {
+    const { repo } = makeRepo([brandedTemplate()])
+    const broken = { findOne: async () => { throw new Error('db down') } } as unknown as RepositoryAdapter<Record<string, unknown>>
+    const svc = new PlatformEmailsService(repo, broken)
+    const { sender, sent } = makeSender()
+    svc.setEmailDeps(sender)
+
+    const result = await svc.sendEvent('welcome', 'dueno@hotel.com', 'h1', { hotel_name: 'Hotel X', link: 'https://x.com/panel' })
+    expect(result).toEqual({ sent: true })
+    expect(sent[0]!.subject).toBe('Bienvenido a SolmiOS, Hotel X')
+  })
+})
+
 describe('PlatformEmailsService.update', () => {
   it('actualiza la plantilla existente por evento', async () => {
     const { repo, updates } = makeRepo([makeTemplate()])

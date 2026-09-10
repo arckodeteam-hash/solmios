@@ -1,19 +1,29 @@
-// platform-emails/service.ts — Plantillas editables de los 6 correos de PLATAFORMA.
+// platform-emails/service.ts — Plantillas editables de los 10 correos de PLATAFORMA
+// (los `PlatformEmailEvent` de ./types.ts).
 //
 // El service recibe `RepositoryAdapter<T>`, nunca el ORM (regla cardinal de services). El sender
 // de email se inyecta post-construcción (`setEmailDeps`), mismo patrón que
 // `usuarios/service.ts:setEmailVerificationDeps` — el bootstrap de email lo cablea después de
 // crear todos los módulos, así que no puede ir en el constructor.
+//
+// CFG-1: cada envío inyecta `{platform_name}`, `{support_email}` y `{support_phone}` leídos de
+// configuration('plataforma') vía `shared/utils/platform-identity`, así las plantillas no llevan
+// el nombre de la plataforma escrito a mano. `configRepo` es opcional: sin él (tests, bootstrap
+// parcial) se usan los defaults y el envío nunca falla por eso.
 
 import { NotFoundError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { renderTemplate } from '../../services/notification-renderer'
+import { readPlatformIdentity, platformVariables } from '../../shared/utils/platform-identity'
 import type { PlatformEmailTemplateDTO, UpdatePlatformEmailTemplateDTO, PlatformEmailSender, PlatformEmailEvent } from './types'
 
 export class PlatformEmailsService {
   private sender?: PlatformEmailSender
 
-  constructor(private readonly repo: RepositoryAdapter<PlatformEmailTemplateDTO>) {}
+  constructor(
+    private readonly repo: RepositoryAdapter<PlatformEmailTemplateDTO>,
+    private readonly configRepo?: RepositoryAdapter<Record<string, unknown>>,
+  ) {}
 
   /** Cablea el envío. Lo llama el bootstrap de email (best-effort, puede no estar seteado nunca). */
   setEmailDeps(sender: PlatformEmailSender): void {
@@ -51,10 +61,14 @@ export class PlatformEmailsService {
     const template = await this.repo.findOne({ event })
     if (!template || !template.isActive) return { sent: false }
 
+    // Identidad de la plataforma como variables base; las del caller ganan si repiten clave.
+    const identity = await readPlatformIdentity((q) => (this.configRepo ? this.configRepo.findOne(q) : Promise.resolve(null)))
+    const allVariables = { ...platformVariables(identity), ...variables }
+
     // El subject NO es HTML (fix H2, mismo criterio que NotificationRenderer.resolveAndRender):
     // 'Bed & Breakfast' no debe llegar como 'Bed &amp; Breakfast'.
-    const subject = renderTemplate(template.subject, variables, false)
-    const html = renderTemplate(template.body, variables, true)
+    const subject = renderTemplate(template.subject, allVariables, false)
+    const html = renderTemplate(template.body, allVariables, true)
 
     await this.sender.enqueue({
       to, subject, html, hotelId,
