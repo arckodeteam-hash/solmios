@@ -6,6 +6,8 @@
 //   - super_admin: POST {audience:'all'} → 201 con audience persistida.
 //   - audience:'hotel' sin hotelId → 400 y el error NOMBRA `hotelId` (el panel marca ese campo).
 //   - hotel_admin que pide 'all' → 403 y NINGUNA fila escrita; el mismo usuario con 'hotel' → 201.
+//   - PUT: hotel_admin no escala un aviso propio a 'all'/'admins' (403, la fila no cambia);
+//     super_admin sí; un aviso global no pasa a 'hotel' sin hotelId (400 nombrando hotelId).
 //   - list: un 'admins' del hotel lo ve el hotel_admin y NO lo ve el receptionist.
 import { describe, it, expect } from 'bun:test'
 import { Router } from 'arckode-framework'
@@ -164,5 +166,61 @@ describe('GET /api/anuncios — "admins" sólo lo ven los administradores (#106)
     const ids = (res.body as any).data.map((a: any) => a.id)
     expect(ids).toContain(hotelId)
     expect(ids).toContain(adminsId)
+  })
+})
+
+describe('PUT /api/anuncios/:id — audience no se escala por update (#106)', () => {
+  // La ruta PUT va con guard('dashboard','edit'); hotel_admin lo tiene en el mapa por defecto
+  // (src/shared/permissions.ts), así que el 403 que se afirma acá es el del service, no el del guard.
+  async function seedHotelAnnouncement(router: Router, superAdmin: Record<string, string>) {
+    const res = await router.resolve('POST', URL, { body: { title: 'Del hotel', hotelId: 'h1', audience: 'hotel' }, headers: superAdmin })
+    expect(res.status).toBe(201)
+    return (res.body as any).id as string
+  }
+
+  it('hotel_admin sobre un aviso propio con {audience:"all"} → 403 y la fila sigue en "hotel"', async () => {
+    const { router, rows, superAdmin, merchant } = mount()
+    const id = await seedHotelAnnouncement(router, superAdmin)
+    const res = await router.resolve('PUT', `${URL}/${id}`, { body: { audience: 'all' }, headers: merchant })
+    expect(res.status).toBe(403)
+    expect(rows('Announcements').find((r) => r.id === id)!.audience).toBe('hotel')
+  })
+
+  it('hotel_admin sobre un aviso propio con {audience:"admins"} → 403 y la fila sigue en "hotel"', async () => {
+    const { router, rows, superAdmin, merchant } = mount()
+    const id = await seedHotelAnnouncement(router, superAdmin)
+    const res = await router.resolve('PUT', `${URL}/${id}`, { body: { audience: 'admins' }, headers: merchant })
+    expect(res.status).toBe(403)
+    expect(rows('Announcements').find((r) => r.id === id)!.audience).toBe('hotel')
+  })
+
+  it('hotel_admin sobre un aviso propio con {title} sin audience → 200 (el update normal sigue andando)', async () => {
+    const { router, rows, superAdmin, merchant } = mount()
+    const id = await seedHotelAnnouncement(router, superAdmin)
+    const res = await router.resolve('PUT', `${URL}/${id}`, { body: { title: 'Editado' }, headers: merchant })
+    expect(res.status).toBe(200)
+    const row = rows('Announcements').find((r) => r.id === id)!
+    expect(row.title).toBe('Editado')
+    expect(row.audience).toBe('hotel')
+  })
+
+  it('super_admin sobre ese aviso con {audience:"admins"} → 200 y la fila queda en "admins"', async () => {
+    const { router, rows, superAdmin } = mount()
+    const id = await seedHotelAnnouncement(router, superAdmin)
+    const res = await router.resolve('PUT', `${URL}/${id}`, { body: { audience: 'admins' }, headers: superAdmin })
+    expect(res.status).toBe(200)
+    expect((res.body as any).audience).toBe('admins')
+    expect(rows('Announcements').find((r) => r.id === id)!.audience).toBe('admins')
+  })
+
+  it('super_admin sobre un aviso global (sin hotelId) con {audience:"hotel"} → 400 nombrando hotelId', async () => {
+    const { router, rows, superAdmin } = mount()
+    const created = await router.resolve('POST', URL, { body: { title: 'Global', audience: 'all' }, headers: superAdmin })
+    expect(created.status).toBe(201)
+    const id = (created.body as any).id as string
+    const res = await router.resolve('PUT', `${URL}/${id}`, { body: { audience: 'hotel' }, headers: superAdmin })
+    expect(res.status).toBe(400)
+    expect((res.body as any).details?.fields?.hotelId).toBeDefined()
+    expect(rows('Announcements').find((r) => r.id === id)!.audience).toBe('all')
   })
 })

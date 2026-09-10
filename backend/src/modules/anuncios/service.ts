@@ -5,6 +5,7 @@ import type { AnunciosSockets } from './sockets'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 import * as reads from './usecases/announcement-reads'
 import { anunciosListCacheKey, invalidateAnunciosCaches } from './usecases/cache'
+import { assertAudienceConsistent } from './validators/schema'
 
 // Las lecturas por usuario (ANN-4) viven en `usecases/announcement-reads.ts` desde que el service
 // pasó las 200 líneas del gate. Los tipos se re-exportan para no romper a quien los importa de acá.
@@ -22,6 +23,17 @@ function hideAdminOnly(page: AnunciosPaginated, role: string): AnunciosPaginated
   const data = page.data.filter((a) => a.audience !== 'admins')
   if (data.length === page.data.length) return page
   return { ...page, data, total: Math.max(page.total - (page.data.length - data.length), 0) }
+}
+
+/**
+ * Regla de rol de la audiencia (#106), compartida por create y update: sólo la plataforma publica
+ * para 'all' o 'admins'. 403 (ForbiddenError) y no 401: el usuario está autenticado, lo que no
+ * tiene es permiso. Va SIEMPRE antes de escribir.
+ */
+function assertAudienceAllowed(role: string, audience: string | undefined): void {
+  if (audience && audience !== 'hotel' && role !== 'super_admin') {
+    throw new ForbiddenError("Solo la plataforma puede publicar anuncios para 'all' o 'admins'")
+  }
 }
 
 export class AnunciosService {
@@ -100,11 +112,7 @@ export class AnunciosService {
   async create(dto: CreateAnunciosDTO, currentUser: { id: string; role: string; hotelId?: string }): Promise<AnunciosDTO> {
     // Sin audience explícita (callers legacy) se infiere: con hotel es del hotel, sin hotel es global.
     const audience = dto.audience ?? (dto.hotelId ? 'hotel' : 'all')
-    // 403 (ForbiddenError) y no AuthError (401): el usuario está autenticado y es quien dice ser,
-    // lo que no tiene es permiso para esta audiencia. Va ANTES de cualquier escritura (#106).
-    if (currentUser.role !== 'super_admin' && audience !== 'hotel') {
-      throw new ForbiddenError("Solo la plataforma puede publicar anuncios para 'all' o 'admins'")
-    }
+    assertAudienceAllowed(currentUser.role, audience)
     if (currentUser.role !== 'super_admin' && dto.hotelId !== currentUser.hotelId) {
       throw new AuthError('No autorizado para crear en otro hotel')
     }
@@ -127,6 +135,10 @@ export class AnunciosService {
     if (currentUser.role !== 'super_admin' && existing.hotelId !== currentUser.hotelId) {
       throw new AuthError('No autorizado')
     }
+    // Misma regla que en create (#106): update acepta `audience` y sin esto un hotel_admin escalaba
+    // un aviso propio a 'all'/'admins'. Y un aviso global no pasa a 'hotel' sin hotel (400).
+    assertAudienceAllowed(currentUser.role, dto.audience)
+    assertAudienceConsistent({ audience: dto.audience, hotelId: existing.hotelId })
     // El hotel ANTERIOR se guarda antes de escribir: después del update, `existing` puede ser la
     // misma instancia que acaba de mutar y el hotel viejo ya no estaría por ningún lado — su
     // listado quedaría cacheado con un aviso que se mudó.
