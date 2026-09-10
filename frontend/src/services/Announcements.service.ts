@@ -1,7 +1,17 @@
 import { http } from './http'
 
-export type AnnouncementType = 'info' | 'success' | 'warning' | 'critical' | 'maintenance' | string
+export type AnnouncementType = 'info' | 'warning' | 'urgent' | 'maintenance' | 'feature' | 'promo'
 export type AnnouncementPriority = 'low' | 'medium' | 'high' | 'urgent'
+
+/**
+ * A quién va dirigido:
+ *  - `hotel`  → solo el `hotelId` indicado.
+ *  - `all`    → todos los hoteles de la plataforma.
+ *  - `admins` → todos los hoteles, pero solo los usuarios administradores.
+ *
+ * `all` y `admins` los publica únicamente el dueño de la plataforma.
+ */
+export type AnnouncementAudience = 'hotel' | 'all' | 'admins'
 
 export interface Announcement {
   id: string
@@ -13,21 +23,33 @@ export interface Announcement {
   priority: AnnouncementPriority
   active: boolean | number
   date?: string
+  audience?: AnnouncementAudience
+  /** Ventana de vigencia. Sin `startsAt` se publica ya; sin `endsAt` no vence. */
+  startsAt?: string
+  endsAt?: string
   createdAt?: string
 }
 
 export const AnnouncementsService = {
-  /** Lista anuncios activos (filtra por hotel del usuario o global) */
-  list: (params?: { hotelId?: string; activeOnly?: boolean }) => {
+  /**
+   * Lista los anuncios que le corresponden al usuario del token: los de su hotel MÁS los de
+   * plataforma. `scope: 'all'` (solo super_admin) agrega los programados y los vencidos.
+   */
+  list: (params?: { hotelId?: string; activeOnly?: boolean; scope?: 'active' | 'all' }) => {
     const qs = new URLSearchParams()
     if (params?.hotelId) qs.set('hotelId', params.hotelId)
     if (params?.activeOnly) qs.set('active', '1')
+    if (params?.scope) qs.set('scope', params.scope)
     const query = qs.toString()
     return http.get<{ data: Announcement[] }>(`/anuncios${query ? `?${query}` : ''}`)
   },
-  create: (data: Omit<Announcement, 'id'>) => http.post<Announcement>('/anuncios', data),
+  create: (data: Partial<Announcement> & { title: string }) => http.post<Announcement>('/anuncios', data),
   update: (id: string, data: Partial<Announcement>) => http.put<Announcement>(`/anuncios/${id}`, data),
   remove: (id: string) => http.delete<{ success: boolean }>(`/anuncios/${id}`),
+  /** Marca el anuncio como visto por el usuario del token (idempotente, sin body). */
+  seen: (id: string) => http.post<void>(`/anuncios/${id}/seen`),
+  /** Descarta el anuncio para el usuario del token (el ✕ del banner, sin body). */
+  dismiss: (id: string) => http.post<void>(`/anuncios/${id}/dismiss`),
 }
 
 const ICON_INFO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z"/></svg>'

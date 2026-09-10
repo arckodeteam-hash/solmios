@@ -62,3 +62,12 @@ export interface PublicSitePage {
   category: SitePageCategory
   updatedAt: string
 }
+
+/**
+ * REQ-PIPE-07 (#148) — `GET /api/public/platform-contact`. `whatsappUrl` ya viene armado
+ * (`https://wa.me/<E.164>?text=...`) o es `null` cuando la plataforma no cargó un teléfono de
+ * soporte válido: en ese caso el botón flotante de la landing NO se renderiza.
+ */
+export interface PlatformContact {
+  whatsappUrl: string | null
+}

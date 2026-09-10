@@ -111,6 +111,27 @@ describe('fallback — la landing nunca queda en blanco ni inventa un precio', (
   })
 })
 
+// ── #71: elegibilidad de la prueba gratuita — la decide `plans.trialEligible` ────────────────
+describe('toDisplayPlan — trialEligible (#71)', () => {
+  it('propaga el `false` del backend: ese plan no va a /registro', () => {
+    expect(toDisplayPlan(dbPlan({ trialEligible: false })).trialEligible).toBe(false)
+  })
+
+  it('propaga el `true` del backend', () => {
+    expect(toDisplayPlan(dbPlan({ trialEligible: true })).trialEligible).toBe(true)
+  })
+
+  it('sin el campo (backend viejo / fila NULL) el plan sigue siendo elegible', () => {
+    expect(toDisplayPlan(dbPlan()).trialEligible).toBe(true)
+    expect(toDisplayPlan(dbPlan({ trialEligible: undefined })).trialEligible).toBe(true)
+    expect(toDisplayPlan(dbPlan({ trialEligible: null as unknown as boolean })).trialEligible).toBe(true)
+  })
+
+  it('el fallback (API caída) no niega la prueba a nadie: el backend es el que rechaza', () => {
+    for (const p of fallbackPlans()) expect(p.trialEligible).toBe(true)
+  })
+})
+
 describe('formatPlanPrice', () => {
   it('moneda vacía cae a USD antes que imprimir " 99"', () => {
     expect(formatPlanPrice(99, '')).toBe('USD 99')

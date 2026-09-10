@@ -23,6 +23,21 @@ export interface PublicPlan {
   features: string[]
   /** CFG-1: el tope de habitaciones sale de la tabla `plans`, no de un literal en el frontend. */
   limits?: PublicPlanLimits
+  /**
+   * #71: si el plan admite la prueba gratuita (`plans.trialEligible`). Lo resuelve el backend
+   * (`public-plans.ts`) a boolean; ausente en una respuesta vieja = elegible.
+   */
+  trialEligible?: boolean
+}
+
+/**
+ * #71: planes que el alta puede ofrecer. El backend rechaza con 400 un plan con
+ * `trialEligible=0`; el registro no debe ni listarlo — el que no es elegible va a ventas
+ * (landing) y no a la prueba. Sólo el `false` explícito niega: `undefined` (backend viejo) sigue
+ * siendo elegible, igual que el NULL de una fila vieja en el servidor.
+ */
+export function trialEligiblePlans<T extends Pick<PublicPlan, 'trialEligible'>>(plans: T[]): T[] {
+  return plans.filter((p) => p.trialEligible !== false)
 }
 
 export interface SignupPayload {
@@ -99,6 +114,13 @@ function unwrap<T>(res: any): T {
   return (res?.data ?? res) as T
 }
 
+/**
+ * Espejo de `TRIAL_DAYS` del backend (`subscriptions/usecases/signup.ts`). Es SÓLO el valor
+ * inicial/fallback del copy mientras responde —o si falla— `GET /public/signup-policy`; la verdad
+ * la da siempre ese endpoint.
+ */
+export const DEFAULT_TRIAL_DAYS = 15
+
 export const SignupService = {
   async publicPlans(): Promise<PublicPlan[]> {
     const res = await http.get<any>('/public/plans')
@@ -132,7 +154,7 @@ export const SignupService = {
   },
 
   /**
-   * Política del alta. Ante cualquier fallo devuelve el camino conservador —sin tarjeta, 7 días—
+   * Política del alta. Ante cualquier fallo devuelve el camino conservador —sin tarjeta, 15 días—
    * para que la pantalla de registro se pueda dibujar aunque el endpoint no responda; el backend
    * es igual el que decide de verdad, esto solo elige el texto.
    */
@@ -143,10 +165,10 @@ export const SignupService = {
       const days = Number(p?.trialDays)
       return {
         requireCardOnTrial: p?.requireCardOnTrial === true,
-        trialDays: Number.isFinite(days) && days > 0 ? days : 7,
+        trialDays: Number.isFinite(days) && days > 0 ? days : DEFAULT_TRIAL_DAYS,
       }
     } catch {
-      return { requireCardOnTrial: false, trialDays: 7 }
+      return { requireCardOnTrial: false, trialDays: DEFAULT_TRIAL_DAYS }
     }
   },
 

@@ -1,4 +1,5 @@
 import type { ValidationRule } from 'arckode-framework'
+import type { BodySchema } from '../../../shared/validators/validate-body'
 
 const arrayType = 'array' as any
 const objectType = 'object' as any
@@ -13,6 +14,7 @@ export const CreatePlanSchema: Record<string, ValidationRule> = {
   limits: { type: objectType },
   isActive: { type: 'boolean' as const },
   sortOrder: { type: 'number' as const, min: 0 },
+  trialEligible: { type: 'boolean' as const },
 }
 
 export const UpdatePlanSchema: Record<string, ValidationRule> = {
@@ -25,6 +27,7 @@ export const UpdatePlanSchema: Record<string, ValidationRule> = {
   limits: { type: objectType },
   isActive: { type: 'boolean' as const },
   sortOrder: { type: 'number' as const, min: 0 },
+  trialEligible: { type: 'boolean' as const },
 }
 
 export const CreateAmenityCatalogSchema: Record<string, ValidationRule> = {
@@ -102,4 +105,30 @@ export const AdminValidator = {
   applySpecialConditions: ApplySpecialConditionsSchema,
   updateSpecialCategory: UpdateSpecialCategorySchema,
   updateSubscriptionSettings: UpdateSubscriptionSettingsSchema,
+}
+
+/**
+ * REQ-PIPE-05 (#146): días extra de prueba. El tope (30) evita "extender" un trial hasta el
+ * infinito por accidente. `integer` (shared/validators/validate-body) y no `number`: el `number`
+ * del framework coerciona `"7"` → 7 (SEC-2); el contrato es un entero JSON.
+ */
+export const ExtendTrialSchema: BodySchema = {
+  days: { type: 'integer' as const, required: true, min: 1, max: 30 },
+}
+
+/**
+ * Pago manual de la suscripción de un hotel (REQ-BIL-06). `amount` con `min: 0.01` para que un 0
+ * rebote en el validador y no llegue al usecase; las reglas que el validador NO puede expresar
+ * (fecha ISO real, pago no futuro, factura del mismo hotel) viven en `usecases/billing-actions.ts`.
+ */
+export const ManualPaymentSchema: Record<string, ValidationRule> = {
+  hotelId: { type: 'string' as const, required: true, min: 1, max: 100 },
+  /** Opcional: si viene, se marca PAGADA esa factura pendiente en vez de crear una nueva. */
+  invoiceId: { type: 'string' as const, max: 100 },
+  amount: { type: 'number' as const, required: true, min: 0.01 },
+  currency: { type: 'string' as const, required: true, min: 3, max: 3 },
+  paidAt: { type: 'string' as const, required: true, min: 10, max: 40 },
+  reference: { type: 'string' as const, required: true, min: 1, max: 120 },
+  periodEnd: { type: 'string' as const, required: true, min: 10, max: 40 },
+  notes: { type: 'string' as const, max: 1000 },
 }

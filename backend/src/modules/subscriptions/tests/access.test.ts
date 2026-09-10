@@ -97,7 +97,7 @@ describe('SubscriptionAccess — quién puede trabajar', () => {
 })
 
 // #28 — cuando la plataforma exige tarjeta para arrancar la prueba, el trial no corre solo:
-// abandonar el Checkout tiene que dejar al hotel afuera, no adentro con 7 días gratis.
+// abandonar el Checkout tiene que dejar al hotel afuera, no adentro con 15 días gratis.
 describe('SubscriptionAccess — tarjeta obligatoria para la prueba (#28)', () => {
   it('mandado al Checkout y sin cargar la tarjeta: no entra, y el motivo es la tarjeta (no el vencimiento)', async () => {
     const { access, updates } = setup(

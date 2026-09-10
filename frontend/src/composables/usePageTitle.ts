@@ -27,6 +27,7 @@ export const ROUTE_LABELS: Record<string, string> = {
   'channel-manager': 'Channel',
   'booking-engine': 'Booking Engine',
   'pagina-publica': 'Página pública',
+  'configuracion-inicial': 'Centro de configuración',
   billing: 'Facturación',
   folios: 'Folios',
   payments: 'Links de Pago',

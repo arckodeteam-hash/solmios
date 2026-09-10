@@ -49,8 +49,15 @@ export interface BookingSyncDeps {
   syncLogRepo?: RepositoryAdapter<any>
 }
 
-/** Límite que devuelve el feed de Channex; si se alcanza, el feed sigue saturado. */
+/** Límite que devuelve el feed de Channex; si se alcanza, quedan revisiones esperando. */
 const FEED_PAGE_LIMIT = 50
+
+/**
+ * Tope de vueltas al feed por corrida: 20 × 50 = 1000 revisiones. Existe para que una corrida no
+ * se quede girando indefinidamente y monopolice el proceso — lo que sobre lo levanta el tick
+ * siguiente, que con el cron de 1 minuto llega mucho antes de los 30 de la ventana.
+ */
+const MAX_FEED_ROUNDS = 20
 
 /**
  * Ingesta el feed GLOBAL de bookings de Channex derivando cada revisión a su hotel.
@@ -95,35 +102,59 @@ export class BookingSyncUseCase {
     // 1. Mapa channexPropertyId → hotelId: una fila por hotel con sync habilitado.
     const propMap = await this.buildPropertyMap()
 
-    // 2. Feed global una sola vez (key vacía → channexReq usa la credencial de plataforma).
-    let feed: BookingRevisionDTO[]
-    try {
-      feed = await channex.fetchBookingFeed('')
-    } catch (e: any) {
-      result.success = false
-      result.errors.push(`feed: ${e?.message || String(e)}`)
-      await this.logSync(result)
-      return result
-    }
-    result.feedSize = feed.length
-
-    if (feed.length === 0) {
-      await this.logSync(result)
-      return result
-    }
-
-    // 3. Por cada revisión, try/catch aislado.
-    for (const rev of feed) {
+    // 2. Feed global, DRENADO HASTA VACIARLO (key vacía → channexReq usa la credencial de
+    //    plataforma). El feed no es una cola durable: devuelve lo no ackeado dentro de una ventana
+    //    de 30 minutos y después la revisión desaparece para siempre. Devuelve hasta
+    //    FEED_PAGE_LIMIT por llamada, así que quedarse con una página y esperar al próximo tick
+    //    ponía un techo de 50 reservas por corrida: una tanda grande (un canal reconectando y
+    //    volcando su backlog) empujaba las últimas contra el corte de los 30 minutos.
+    //    No se pagina por offset: al ackear, esas revisiones salen del feed y la llamada
+    //    siguiente trae las que siguen.
+    for (let vuelta = 0; vuelta < MAX_FEED_ROUNDS; vuelta++) {
+      let feed: BookingRevisionDTO[]
       try {
-        await this.processRevision(rev, propMap, result)
+        feed = await channex.fetchBookingFeed('')
       } catch (e: any) {
-        result.errors.push(`${rev.uniqueId}: ${e?.message || String(e)}`)
+        result.success = false
+        result.errors.push(`feed: ${e?.message || String(e)}`)
+        await this.logSync(result)
+        return result
+      }
+      if (feed.length === 0) break
+      result.feedSize += feed.length
+
+      // 3. Por cada revisión, try/catch aislado.
+      const ackeadasAntes = result.acknowledged
+      for (const rev of feed) {
+        try {
+          await this.processRevision(rev, propMap, result)
+        } catch (e: any) {
+          result.errors.push(`${rev.uniqueId}: ${e?.message || String(e)}`)
+        }
+      }
+
+      if (feed.length < FEED_PAGE_LIMIT) break // el feed se vació
+
+      // Freno de seguridad: una página llena en la que no se ackeó NADA devuelve exactamente las
+      // mismas revisiones en la vuelta siguiente (pasa cuando todas son de una property sin
+      // mapeo, que a propósito no se ackea). Sin esto el drenado giraría para siempre.
+      if (result.acknowledged === ackeadasAntes) {
+        logger.warn('booking-sync: el feed no avanza — página llena sin ninguna revisión ackeada', {
+          feedSize: result.feedSize, unmapped: result.unmapped, suspended: result.suspended,
+        })
+        break
+      }
+
+      if (vuelta === MAX_FEED_ROUNDS - 1) {
+        logger.warn('booking-sync: tope de vueltas alcanzado, quedan revisiones para el próximo tick', {
+          procesadas: result.feedSize,
+        })
       }
     }
 
-    // 5. Feed saturado: avisa que quedan pendientes para el próximo tick.
-    if (result.feedSize >= FEED_PAGE_LIMIT) {
-      logger.info('booking-sync: feed saturado (50 revisiones) — quedan pendientes para el próximo tick')
+    if (result.feedSize === 0) {
+      await this.logSync(result)
+      return result
     }
 
     result.success = result.errors.length === 0
@@ -163,6 +194,7 @@ export class BookingSyncUseCase {
       logger.error('booking-sync: no se pudo traer la revisión del webhook', { revisionId, error })
       result.success = false
       result.errors.push(`revision ${revisionId}: ${error}`)
+      await this.logSync(result, 'ingest_booking_webhook', { revisionId })
       return result
     }
 
@@ -174,7 +206,60 @@ export class BookingSyncUseCase {
     }
 
     result.success = result.errors.length === 0
-    // Sin `logSync`: `sync_log` audita corridas del cron, no callbacks sueltos del webhook.
+    // Deja fila: el webhook es el camino PRINCIPAL de las reservas desde que se registró el
+    // callback, y una reserva que entra (o falla) por acá no puede ser invisible en el panel.
+    await this.logSync(result, 'ingest_booking_webhook', { revisionId })
+    return result
+  }
+
+  /**
+   * Recupera las reservas que el feed ya no puede entregar, a partir de `sinceIso`.
+   *
+   * Cuándo se usa: DESPUÉS de una caída de más de 30 minutos (deploy largo, server abajo, poller
+   * trabado). Pasado ese rato la revisión desaparece del feed y no vuelve nunca — el huésped
+   * tiene su confirmación de la OTA y en el PMS no hay nada. `GET /bookings` no caduca, así que
+   * es la única red que queda.
+   *
+   * Es MANUAL y acotada por fecha a propósito: como cron periódico re-traería los mismos bookings
+   * indefinidamente, caro de los dos lados y sin ningún beneficio mientras el poller está sano.
+   * Se apoya en el mismo `processRevision` que el cron y el webhook, así que hereda el dedupe por
+   * `externalLocator`: pedir un rango de más no duplica nada.
+   */
+  async recoverSince(sinceIso: string): Promise<BookingSyncResult> {
+    const { channex, logger } = this.deps
+    const result: BookingSyncResult = {
+      success: true, feedSize: 0, ingested: 0, acknowledged: 0,
+      skipped: 0, unmapped: 0, suspended: 0, errors: [],
+    }
+
+    const propMap = await this.buildPropertyMap()
+
+    let bookings: BookingRevisionDTO[]
+    try {
+      bookings = await channex.fetchBookingsSince('', sinceIso)
+    } catch (e: any) {
+      result.success = false
+      result.errors.push(`bookings desde ${sinceIso}: ${e?.message || String(e)}`)
+      await this.logSync(result, 'recover_bookings', { desde: sinceIso })
+      return result
+    }
+    result.feedSize = bookings.length
+
+    for (const rev of bookings) {
+      try {
+        await this.processRevision(rev, propMap, result, { ack: false })
+      } catch (e: any) {
+        result.errors.push(`${rev.uniqueId}: ${e?.message || String(e)}`)
+      }
+    }
+
+    result.success = result.errors.length === 0
+    logger.info('booking-sync: recuperación manual completada', {
+      desde: sinceIso, encontradas: result.feedSize, creadas: result.ingested,
+      yaExistian: result.skipped, sinMapeo: result.unmapped, errores: result.errors.length,
+    })
+    // La fila con el `desde` es lo único que después permite reconstruir qué ventana se rescató.
+    await this.logSync(result, 'recover_bookings', { desde: sinceIso })
     return result
   }
 
@@ -184,7 +269,12 @@ export class BookingSyncUseCase {
    * que garantiza que ambos caminos produzcan exactamente la misma reserva.
    * No atrapa nada: el try/catch por revisión vive en el caller.
    */
-  private async processRevision(rev: BookingRevisionDTO, propMap: Map<string, string>, result: BookingSyncResult): Promise<void> {
+  private async processRevision(
+    rev: BookingRevisionDTO,
+    propMap: Map<string, string>,
+    result: BookingSyncResult,
+    opciones: { ack?: boolean } = {},
+  ): Promise<void> {
     const { channex, orm, logger } = this.deps
 
     const hotelId = propMap.get(rev.propertyId)
@@ -212,7 +302,10 @@ export class BookingSyncUseCase {
     if (applied.created) result.ingested++
     else result.skipped++
 
-    // Ack siempre (incluso dedupe): drena el feed para que no vuelva a aparecer.
+    // Ack siempre (incluso dedupe): drena el feed para que no vuelva a aparecer. La recuperación
+    // (`recoverSince`) lo apaga: sus bookings NO salen del feed —su revisión ya expiró, que es
+    // justo el motivo por el que hubo que recuperarlos— así que el ack sólo sumaría un fallo.
+    if (opciones.ack === false) return
     const acked = await channex.ackBooking('', rev.id)
     if (acked) result.acknowledged++
     else result.errors.push(`No se pudo ack booking ${rev.uniqueId}`)
@@ -229,15 +322,22 @@ export class BookingSyncUseCase {
     return map
   }
 
-  /** Fila agregada en sync_log (guard `if syncLogRepo`). Molde: service.ingestBookings:137-144. */
-  private async logSync(result: BookingSyncResult): Promise<void> {
+  /**
+   * Fila agregada en sync_log (guard `if syncLogRepo`). Molde: service.ingestBookings:137-144.
+   *
+   * `action` distingue la VÍA (cron, webhook, rescate) porque las tres terminan en la misma tabla
+   * y es lo que se ve en el Historial de Sincronización del panel. Cuando algo sale mal, saber por
+   * dónde entró —o por dónde NO entró— es la mitad del diagnóstico; el resto está en `journalctl`,
+   * que se rota y que nadie mira.
+   */
+  private async logSync(result: BookingSyncResult, action = 'ingest_bookings_cron', extra: Record<string, unknown> = {}): Promise<void> {
     if (!this.deps.syncLogRepo) return
     try {
       await this.deps.syncLogRepo.create({
         id: crypto.randomUUID(),
-        hotelId: 'platform',   // cron global: abarca múltiples hoteles
+        hotelId: 'platform',   // feed y bookings son de CUENTA: una corrida abarca varios hoteles
         channel: 'channex',
-        action: 'ingest_bookings_cron',
+        action,
         status: result.success ? 'success' : 'error',
         details: {
           feedSize: result.feedSize,
@@ -247,6 +347,7 @@ export class BookingSyncUseCase {
           unmapped: result.unmapped,
           suspended: result.suspended,
           errors: result.errors,
+          ...extra,
         },
         createdAt: new Date().toISOString(),
       })

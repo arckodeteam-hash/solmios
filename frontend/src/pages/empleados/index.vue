@@ -480,6 +480,7 @@ import { TeamService } from '@/services/Team.service'
 import { RolesService, type Role } from '@/services/Roles.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
+import { usePasswordPolicy } from '@/composables/usePasswordPolicy'
 import FormModal, { type FormField } from '@/components/features/FormModal.vue'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
@@ -525,6 +526,8 @@ const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'pla
  */
 const canManageStaff = computed(() => auth.canActAsHotelAdmin)
 const toast = useToast()
+// Política de contraseñas del admin (REQ-CFG-05): placeholder y minLength del alta de cuenta.
+const { policy: passwordPolicy, hint: passwordHint, check: checkPolicy, loaded: policyLoaded, ready: policyReady } = usePasswordPolicy()
 const activeTab = ref('profiles')
 const loading = ref(true)
 
@@ -710,14 +713,16 @@ const departmentOptions = () => departments.value.map((d) => ({ value: d.id, lab
  * Si el expediente falla tras crear la cuenta, se borra la cuenta para no dejarla huérfana
  * (así el admin puede reintentar sin chocar con "email ya existe").
  */
-function openNewEmployee(prefill?: { name?: string; email?: string }) {
+async function openNewEmployee(prefill?: { name?: string; email?: string }) {
+  // Los fields se fijan al abrir: si la política todavía no llegó, se la espera.
+  if (!policyLoaded.value) await policyReady
   formModal.value = {
     title: 'Nuevo Empleado', submitLabel: 'Registrar Empleado',
     fields: [
       { key: 'name', label: 'Nombre', required: true, maxLength: 80, placeholder: 'María Pérez', default: prefill?.name },
       { key: 'email', label: 'Email', type: 'email', required: true, maxLength: 120, placeholder: 'maria@hotel.com', default: prefill?.email },
       { key: 'phone', label: 'Teléfono', type: 'tel', maxLength: 20, placeholder: '809-555-0000' },
-      { key: 'password', label: 'Contraseña temporal', type: 'password', required: true, minLength: 6, maxLength: 72, placeholder: 'Mínimo 6 caracteres' },
+      { key: 'password', label: 'Contraseña temporal', type: 'password', required: true, minLength: passwordPolicy.value.minLength, maxLength: 72, placeholder: passwordHint.value, hint: passwordHint.value },
       // El puesto lo define el Rol (feedback #169): un solo lugar para la función del empleado.
       { key: 'role', label: 'Rol', type: 'select', required: true, default: 'receptionist', options: roleOptions() },
       // #656: sin estos 3, el legajo queda inservible para nómina/reportes de costos y nadie
@@ -727,6 +732,10 @@ function openNewEmployee(prefill?: { name?: string; email?: string }) {
       { key: 'hireDate', label: 'Fecha de ingreso', type: 'date', required: true, default: new Date().toISOString().slice(0, 10) },
     ],
     onSubmit: async (v) => {
+      // Misma validación que team/index.vue (sendInvite): FormModal sólo chequea minLength.
+      // Se lanza (no return) porque submitForm interpreta un retorno normal como éxito.
+      const policyError = checkPolicy(String(v.password ?? ''))
+      if (policyError) throw new Error(policyError)
       const newUser = await TeamService.create({
         name: String(v.name).trim(), email: String(v.email).trim(),
         phone: String(v.phone || '').trim() || undefined,

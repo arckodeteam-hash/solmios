@@ -1,4 +1,16 @@
-// scripts/seed-platform-email-templates.ts — Seed de las 10 plantillas de PLATAFORMA.
+// scripts/seed-platform-email-templates.ts — Seed de las 20 plantillas de PLATAFORMA (17 de suscripción/activación + 3 del pedido de conexión de OTA).
+//
+// Uso:
+//   bun run scripts/seed-platform-email-templates.ts            # inserta las que faltan, no pisa
+//   bun run scripts/seed-platform-email-templates.ts --refresh  # REEMPLAZA subject/body/variables
+//                                                                # de las 10 con este texto (pisa
+//                                                                # ediciones del admin; conserva
+//                                                                # isActive). Correr en prod tras
+//                                                                # cambiar el texto de acá.
+//
+// El nombre de la plataforma NO va escrito: es `{platform_name}` y se resuelve al enviar desde
+// Configuración → Plataforma (shared/utils/platform-identity.ts). Lo mismo `{support_email}` y
+// `{support_phone}`.
 //
 // La TABLA la crea el ORM (modelo `PlatformEmailTemplate`, registrado por el módulo
 // platform-emails vía RUN_MIGRATE=1, igual que cualquier otro modelo del framework — ver
@@ -16,6 +28,9 @@
 import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
 import { PostgresAdapter } from 'arckode-framework/adapters/postgres'
 import type { DbAdapter } from 'arckode-framework'
+// Los 3 correos del pedido de conexión de una OTA viven en src/ porque los comparte un test que
+// verifica que renderizan sin dejar un {placeholder} colgado (ver el archivo).
+import { CHANNEL_REQUEST_EMAIL_TEMPLATES } from '../src/shared/usecases/channel-request-email-templates'
 
 const DATABASE_URL = process.env.DATABASE_URL
 const db: DbAdapter & { connect(): Promise<void> } = DATABASE_URL
@@ -53,113 +68,211 @@ const TEMPLATES: TemplateSeed[] = [
   // no promete una duración de prueba concreta: los días reales los decide el alta, no esta plantilla.
   {
     event: 'welcome',
-    subject: '¡Bienvenido a SolmiOS, {hotel_name}!',
+    subject: '¡Bienvenido a {platform_name}, {hotel_name}!',
     body: `<p>Hola,</p>
-<p>¡Gracias por registrar <strong>{hotel_name}</strong> en SolmiOS! Su cuenta ya está lista y su prueba
+<p>¡Gracias por registrar <strong>{hotel_name}</strong> en {platform_name}! Su cuenta ya está lista y su prueba
 gratuita está activa para conocer el sistema: reservas, habitaciones, facturación y mucho más.</p>
 ${ctaButton('{link}', 'Ir a mi panel')}
 <p>Ante cualquier duda, responda este correo y le ayudamos.</p>`,
-    variables: ['hotel_name', 'link'],
+    variables: ['hotel_name', 'link', 'platform_name'],
   },
   {
     event: 'trial_ending',
-    subject: 'Tu prueba gratis en SolmiOS termina en {days_left} días',
+    subject: 'Tu prueba gratis en {platform_name} termina en {days_left} días',
     body: `<p>Hola,</p>
-<p>Tu prueba gratis de <strong>{hotel_name}</strong> en SolmiOS termina en <strong>{days_left} días</strong>.
+<p>Tu prueba gratis de <strong>{hotel_name}</strong> en {platform_name} termina en <strong>{days_left} días</strong>.
 Para no perder acceso a tus reservas y datos, elegí un plan antes de que venza.</p>
 ${ctaButton('{link}', 'Elegir mi plan')}
 <p>Si ya elegiste un plan, ignorá este correo.</p>`,
-    variables: ['hotel_name', 'days_left', 'link'],
+    variables: ['hotel_name', 'days_left', 'link', 'platform_name'],
   },
   {
     event: 'trial_expired',
-    subject: 'Tu prueba gratis en SolmiOS terminó',
+    subject: 'Tu prueba gratis en {platform_name} terminó',
     body: `<p>Hola,</p>
-<p>La prueba gratis de <strong>{hotel_name}</strong> en SolmiOS terminó. Tu cuenta y tus datos siguen
+<p>La prueba gratis de <strong>{hotel_name}</strong> en {platform_name} terminó. Tu cuenta y tus datos siguen
 guardados, pero necesitás activar un plan para volver a operar.</p>
 ${ctaButton('{link}', 'Activar mi plan')}
 <p>Cualquier duda, respondé este correo y te ayudamos.</p>`,
-    variables: ['hotel_name', 'link'],
+    variables: ['hotel_name', 'link', 'platform_name'],
+  },
+  // REQ-PIPE-05 (#146): la encola `subscriptions/usecases/extend-trial.ts` cuando el super-admin
+  // le da más días a un hotel. `{platform_name}` lo resuelve el envío desde configuration('plataforma')
+  // (shared/utils/platform-identity.ts) — el nombre de la plataforma NO va escrito acá.
+  {
+    event: 'trial_extended',
+    subject: 'Extendimos su prueba gratis en {platform_name}: {days_left} días más',
+    body: `<p>Hola,</p>
+<p>Buenas noticias: extendimos la prueba gratis de <strong>{hotel_name}</strong> en {platform_name}.
+Tiene <strong>{days_left} días</strong> más para cargar sus habitaciones, tarifas y reservas, y ver
+cómo el sistema le ordena la operación del hotel.</p>
+${ctaButton('{link}', 'Ir a mi panel')}
+<p>Si tiene alguna duda o quiere que le mostremos el sistema, responda este correo y lo ayudamos.</p>`,
+    variables: ['hotel_name', 'days_left', 'platform_name', 'link'],
+  },
+  // REQ-PIPE-08 (#149): secuencia de activación por comportamiento. Las manda el cron diario
+  // `shared/usecases/activation-sequence-cron.ts` según lo que el hotel hizo (o no) en el producto:
+  // máximo un correo por corrida, dedup en `sales_prospects.sequenceSent`. `{platform_name}`,
+  // `{support_email}` y `{support_phone}` los resuelve el envío desde configuration('plataforma').
+  {
+    event: 'activation_no_rooms',
+    subject: '{hotel_name}: el primer paso en {platform_name} son sus habitaciones',
+    body: `<p>Hola,</p>
+<p>Vimos que <strong>{hotel_name}</strong> ya tiene su cuenta en {platform_name} pero todavía no cargó
+ninguna habitación. Sin habitaciones no hay calendario, tarifas ni reservas: es el primer paso y toma
+menos de cinco minutos.</p>
+${ctaButton('{link}', 'Cargar mis habitaciones')}
+<p>Si prefiere que lo hagamos juntos, escríbanos a {support_email} o al {support_phone}.</p>`,
+    variables: ['hotel_name', 'link', 'platform_name', 'support_email', 'support_phone'],
+  },
+  {
+    event: 'activation_no_rates',
+    subject: '{hotel_name}: sus habitaciones ya están, faltan las tarifas',
+    body: `<p>Hola,</p>
+<p><strong>{hotel_name}</strong> ya tiene sus habitaciones en {platform_name}. Lo que falta para poder
+vender es una tarifa por tipo de habitación: con eso el motor de reservas y el calendario quedan
+listos para recibir huéspedes.</p>
+${ctaButton('{link}', 'Cargar mis tarifas')}
+<p>¿Dudas con temporadas o descuentos? Escríbanos a {support_email} o al {support_phone}.</p>`,
+    variables: ['hotel_name', 'link', 'platform_name', 'support_email', 'support_phone'],
+  },
+  {
+    event: 'activation_no_channel',
+    subject: '{hotel_name}: conecte Booking y Airbnb para no cargar reservas a mano',
+    body: `<p>Hola,</p>
+<p><strong>{hotel_name}</strong> ya tiene habitaciones y tarifas en {platform_name}. El siguiente paso es
+conectar sus canales (Booking.com, Airbnb, Expedia): las reservas entran solas y la disponibilidad se
+actualiza en todos a la vez, sin sobreventas.</p>
+${ctaButton('{link}', 'Conectar mis canales')}
+<p>La conexión la hacemos con usted en una llamada corta: {support_email} · {support_phone}.</p>`,
+    variables: ['hotel_name', 'link', 'platform_name', 'support_email', 'support_phone'],
+  },
+  {
+    event: 'trial_offer',
+    subject: '{hotel_name}: le quedan {days_left} días de prueba en {platform_name}',
+    body: `<p>Hola,</p>
+<p>La prueba gratis de <strong>{hotel_name}</strong> en {platform_name} termina en <strong>{days_left} días</strong>.
+Ya tiene el hotel cargado: al activar su plan no pierde nada de lo que hizo y sigue operando sin cortes.</p>
+${ctaButton('{link}', 'Activar mi plan')}
+<p>Si quiere que revisemos juntos qué plan le conviene, escríbanos a {support_email} o al {support_phone}.</p>`,
+    variables: ['hotel_name', 'days_left', 'link', 'platform_name', 'support_email', 'support_phone'],
+  },
+  // REQ-PIPE-09 (#150): rescate de trial vencido. Mismo cron: +2 días y +7 días desde el vencimiento.
+  {
+    event: 'trial_rescue_1',
+    subject: '{hotel_name}: su prueba en {platform_name} venció, ¿le damos más tiempo?',
+    body: `<p>Hola,</p>
+<p>La prueba gratis de <strong>{hotel_name}</strong> en {platform_name} venció hace unos días. Todo lo que
+cargó sigue guardado. Si le faltó tiempo para probarlo, responda este correo y le extendemos la prueba
+sin costo.</p>
+${ctaButton('{link}', 'Ver mi cuenta')}
+<p>También puede escribirnos a {support_email} o al {support_phone}.</p>`,
+    variables: ['hotel_name', 'link', 'platform_name', 'support_email', 'support_phone'],
+  },
+  {
+    event: 'trial_rescue_2',
+    subject: '{hotel_name}: última oportunidad de retomar {platform_name}',
+    body: `<p>Hola,</p>
+<p>Hace una semana venció la prueba de <strong>{hotel_name}</strong> en {platform_name}. Es el último aviso
+que le mandamos: si quiere retomarla, un mensaje alcanza y la reactivamos. Si el sistema no era para su
+hotel, nos ayudaría mucho saber por qué.</p>
+${ctaButton('{link}', 'Retomar mi prueba')}
+<p>{support_email} · {support_phone}</p>`,
+    variables: ['hotel_name', 'link', 'platform_name', 'support_email', 'support_phone'],
   },
   {
     event: 'payment_succeeded',
-    subject: 'Pago confirmado — tu suscripción a SolmiOS sigue activa',
+    subject: 'Pago confirmado — tu suscripción a {platform_name} sigue activa',
     body: `<p>Hola,</p>
-<p>Recibimos el pago de tu suscripción a SolmiOS para <strong>{hotel_name}</strong>. Todo sigue
+<p>Recibimos el pago de tu suscripción a {platform_name} para <strong>{hotel_name}</strong>. Todo sigue
 funcionando normalmente.</p>
 ${ctaButton('{link}', 'Ver mi suscripción')}
 <p>Gracias por confiar en nosotros.</p>`,
-    variables: ['hotel_name', 'plan_name', 'amount', 'link'],
+    variables: ['hotel_name', 'plan_name', 'amount', 'link', 'platform_name'],
   },
   {
     event: 'payment_failed',
-    subject: 'No pudimos procesar el pago de tu suscripción a SolmiOS',
+    subject: 'No pudimos procesar el pago de tu suscripción a {platform_name}',
     body: `<p>Hola,</p>
-<p>No pudimos procesar el cobro de la suscripción de <strong>{hotel_name}</strong> a SolmiOS. Revisá
+<p>No pudimos procesar el cobro de la suscripción de <strong>{hotel_name}</strong> a {platform_name}. Revisá
 tu método de pago para evitar que se interrumpa el servicio.</p>
 ${ctaButton('{link}', 'Actualizar método de pago')}
 <p>Si ya lo resolviste, ignorá este correo.</p>`,
-    variables: ['hotel_name', 'plan_name', 'amount', 'link'],
+    variables: ['hotel_name', 'plan_name', 'amount', 'link', 'platform_name'],
   },
   {
     event: 'subscription_canceled',
-    subject: 'Tu suscripción a SolmiOS fue cancelada',
+    subject: 'Tu suscripción a {platform_name} fue cancelada',
     body: `<p>Hola,</p>
-<p>Tu suscripción a SolmiOS para <strong>{hotel_name}</strong> fue cancelada. Tus datos se conservan
+<p>Tu suscripción a {platform_name} para <strong>{hotel_name}</strong> fue cancelada. Tus datos se conservan
 por si querés reactivarla más adelante.</p>
 ${ctaButton('{link}', 'Reactivar mi suscripción')}
 <p>Si esto fue un error, escribinos y lo resolvemos.</p>`,
-    variables: ['hotel_name', 'link'],
+    variables: ['hotel_name', 'link', 'platform_name'],
   },
   {
     event: 'subscription_renewal_auto',
-    subject: 'Tu suscripción a SolmiOS se renueva en {days_left} días',
+    subject: 'Tu suscripción a {platform_name} se renueva en {days_left} días',
     body: `<p>Hola,</p>
 <p>En <strong>{days_left} días</strong> se cobrará automáticamente la renovación de la suscripción de
-<strong>{hotel_name}</strong> a SolmiOS con la tarjeta que tenés registrada. No tenés que hacer nada.</p>
+<strong>{hotel_name}</strong> a {platform_name} con la tarjeta que tenés registrada. No tenés que hacer nada.</p>
 ${ctaButton('{link}', 'Ver mi suscripción')}
 <p>Si querés cambiar el método de pago, podés hacerlo antes de esa fecha.</p>`,
-    variables: ['hotel_name', 'days_left', 'link'],
+    variables: ['hotel_name', 'days_left', 'link', 'platform_name'],
   },
   {
     event: 'subscription_renewal_manual',
-    subject: 'Tu suscripción a SolmiOS vence en {days_left} días',
+    subject: 'Tu suscripción a {platform_name} vence en {days_left} días',
     body: `<p>Hola,</p>
-<p>La suscripción de <strong>{hotel_name}</strong> a SolmiOS vence en <strong>{days_left} días</strong>.
+<p>La suscripción de <strong>{hotel_name}</strong> a {platform_name} vence en <strong>{days_left} días</strong>.
 Como no tenés el pago automático activado, necesitás renovarla vos para no perder el acceso.</p>
 ${ctaButton('{link}', 'Renovar mi suscripción')}
 <p>Si no renovás, el servicio se suspende cinco días después del vencimiento.</p>`,
-    variables: ['hotel_name', 'days_left', 'link'],
+    variables: ['hotel_name', 'days_left', 'link', 'platform_name'],
   },
   {
     event: 'subscription_suspended',
-    subject: 'Tu suscripción a SolmiOS fue suspendida',
+    subject: 'Tu suscripción a {platform_name} fue suspendida',
     body: `<p>Hola,</p>
-<p>La suscripción de <strong>{hotel_name}</strong> a SolmiOS fue suspendida por falta de pago. El panel
+<p>La suscripción de <strong>{hotel_name}</strong> a {platform_name} fue suspendida por falta de pago. El panel
 y las reservas no están disponibles hasta que regularices el pago.</p>
 ${ctaButton('{link}', 'Regularizar el pago')}
 <p>Apenas se confirme el pago, el servicio se reactiva automáticamente.</p>`,
-    variables: ['hotel_name', 'link'],
+    variables: ['hotel_name', 'link', 'platform_name'],
   },
   {
     event: 'subscription_reactivated',
-    subject: '¡Tu suscripción a SolmiOS está activa de nuevo!',
+    subject: '¡Tu suscripción a {platform_name} está activa de nuevo!',
     body: `<p>Hola,</p>
-<p>Recibimos el pago y la suscripción de <strong>{hotel_name}</strong> a SolmiOS está activa de nuevo.
+<p>Recibimos el pago y la suscripción de <strong>{hotel_name}</strong> a {platform_name} está activa de nuevo.
 Ya podés volver a operar con normalidad.</p>
 ${ctaButton('{link}', 'Ir a mi panel')}
 <p>Gracias por seguir confiando en nosotros.</p>`,
-    variables: ['hotel_name', 'link'],
+    variables: ['hotel_name', 'link', 'platform_name'],
   },
+  // Pedido de conexión de una OTA (REQ-CAN-07): cita agendada, canal conectado, pedido rechazado.
+  ...CHANNEL_REQUEST_EMAIL_TEMPLATES,
 ]
+
+const REFRESH = process.argv.includes('--refresh') || process.env.PLATFORM_EMAILS_REFRESH === '1'
 
 async function seed(): Promise<void> {
   await db.connect()
   let inserted = 0
+  let refreshed = 0
   for (const t of TEMPLATES) {
     const c = await countByEvent(t.event)
     if (c > 0) {
-      console.log(`platform_email_templates: "${t.event}" ya existe, skip`)
+      if (REFRESH) {
+        await db.run(
+          'UPDATE platform_email_templates SET subject=?, body=?, variables=?, updatedAt=? WHERE event=?',
+          [t.subject, t.body, JSON.stringify(t.variables), now(), t.event],
+        )
+        console.log(`platform_email_templates: "${t.event}" reemplazada`)
+        refreshed++
+      } else {
+        console.log(`platform_email_templates: "${t.event}" ya existe, skip`)
+      }
       continue
     }
     await db.run(
@@ -170,7 +283,7 @@ async function seed(): Promise<void> {
     console.log(`platform_email_templates: "${t.event}" insertado`)
     inserted++
   }
-  console.log(`✅ Seed completado (${inserted}/${TEMPLATES.length} insertados, resto ya existía)`)
+  console.log(`✅ Seed completado (${inserted} insertadas, ${refreshed} reemplazadas, ${TEMPLATES.length - inserted - refreshed} ya existían)`)
   await db.close()
 }
 

@@ -46,7 +46,7 @@ import { isRoomSellable } from '../../../shared/usecases/room-status'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-validate'
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
-import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from './rate-resolution'
+import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
@@ -81,11 +81,11 @@ export interface PublicBookingExtraDeps {
  * Todos los importes en `hotels.currency` (multi-moneda es display only — el cobro es en base).
  */
 export interface TotalBreakdown {
-  /** room.basePrice × nights + upsellsTotal (antes de promo y antes de impuestos). */
+  /** room.basePrice × nights + upsellsTotal (antes de promo e impuestos). */
   subtotal: number
   /** Descuento del promo (0 si no hay promo). Siempre >= 0. */
   promoDiscount: number
-  /** Σ upsell.price × quantity. */
+  /** Σ upsell.price × quantity (extras genéricos). */
   upsellsTotal: number
   /** Σ impuestos (ITBIS + otros) sobre (subtotal - promoDiscount). */
   taxes: number
@@ -214,6 +214,10 @@ export async function createPublicBookingDirect(
     // F2 2.5 — promoCode + upsells ahora se PROCESAN (F0 0.16 solo los persistía).
     promoCode,
     upsells,
+    // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09) — Sí/No únicamente; solo tiene efecto
+    // si la composición tiene al menos un bebé (Tarea 21) Y el hotel habilitó la cuna; ver el
+    // gateo más abajo, después de calcular `childComposition`.
+    needsCrib: rawNeedsCrib,
     // Tarea 3.1 — hora de llegada estructurada + pedidos especiales en texto libre. Antes
     // de este cambio ninguno de los dos llegaba acá: el schema no los declaraba y
     // validateSchema los descartaba en el controller en silencio.
@@ -296,6 +300,7 @@ export async function createPublicBookingDirect(
         effectiveAdults: Math.max(1, Number(adults) || 1),
         payingChildren: Math.max(0, Number(kids) || 0),
         freeChildren: 0,
+        babies: 0,
         chargeableOccupancy: Math.max(1, Number(adults) || 1) + Math.max(0, Number(kids) || 0),
       }
   // Ocupación para CAPACIDAD (cuántas plazas físicas ocupa): adultos + niños con plaza + niños
@@ -307,6 +312,19 @@ export async function createPublicBookingDirect(
   // Ocupación para PRECIO: adultos + niños que consumen plaza (el niño libre no cotiza). Legacy:
   // solo adultos, igual que el `occupancy` de siempre — el niño nunca movió el precio.
   const pricingOccupancy = hasChildrenAges ? childComposition.chargeableOccupancy : childComposition.effectiveAdults
+
+  // ─── Cuna (Tarea 22, simplificada 2026-09-09) — gateo por bebé Y por config del hotel ───────
+  // El composer del frontend ya oculta "¿Necesita cuna?" sin un bebé en la composición o sin que
+  // el hotel la haya habilitado, pero el servidor NUNCA confía en lo que mande el cliente (mismo
+  // criterio que cualquier otro campo de esta reserva): sin al menos un bebé clasificado
+  // (Tarea 21) Y `childPolicy.cribAvailable`, se fuerza a "no pedida" sin importar el body.
+  // Simplificación (2026-09-09): "¿Necesita cuna?" es SOLO Sí/No — no existe cantidad de cunas
+  // configurable (antes se podía pedir hasta 1 por bebé; el pedido corrigió eso explícitamente:
+  // "no preguntar si desea una, dos o más cunas"). `cribCount` queda como 1/0 espejo de
+  // `needsCrib`, no como un valor independiente que el cliente pueda variar.
+  const babiesCount = childComposition.babies
+  const needsCrib = babiesCount > 0 && childPolicy?.cribAvailable === true && rawNeedsCrib === true
+  const cribCount = needsCrib ? 1 : 0
 
   // Requerimiento 2 (2026-09-03) — capacidad/maxAdults/maxChildren por TIPO de habitación,
   // configurable en Configuración (`room_type_capacity`). Se resuelve SIEMPRE (no solo cuando hay
@@ -414,12 +432,29 @@ export async function createPublicBookingDirect(
   const seasonByDate = buildSeasonByDate(rawAssignments ?? [], rawSeasons ?? [], stayNightDates)
   // Misma ocupación que el `closedRoomTypes` de arriba (`pricingOccupancy` — adultos solo si es
   // un caller legacy sin `childrenAges`, o adultos+niños-con-plaza si mandó edades).
-  const occupancy = pricingOccupancy
   const fallbackNightly = Number(room.basePrice) || 0
+  // Tarea "Cobro % niños" (2026-09-09) — solo aplica con edades reales declaradas (un caller
+  // legacy sin `childrenAges` no tiene forma de saber si su `children` plano son de verdad niños
+  // según la política de edades del hotel, así que sigue cotizando exactamente como siempre).
+  const childrenDiscountEnabled = hasChildrenAges && childPolicy?.childrenDiscountEnabled === true
+  // Auditoría (AC "el porcentaje utilizado debe conservarse... para mantener consistencia con el
+  // precio calculado"): el % vigente en `configuration` puede cambiar después — sin anclar el que
+  // REALMENTE se usó en esta reserva, un repricing futuro (o solo mirar la reserva) no podría
+  // reproducir el total ya cobrado. `null` cuando la regla no aplicó a esta reserva (deshabilitada
+  // o sin niños con plaza), nunca un valor "por si acaso".
+  const childrenRatePercentApplied = childrenDiscountEnabled && childComposition.payingChildren > 0
+    ? childPolicy!.childrenRatePercent
+    : null
   const roomSubtotal = stayNightDates.length > 0
-    ? sumStayPrice(stayNightDates, baseRates, String(room.type ?? ''), seasonByDate, occupancy, fallbackNightly, rawOverrides ?? [])
+    ? sumStayPriceForComposition(
+        stayNightDates, baseRates, String(room.type ?? ''), seasonByDate,
+        childComposition.effectiveAdults, childComposition.payingChildren,
+        childrenDiscountEnabled, childPolicy?.childrenRatePercent ?? 0,
+        fallbackNightly, rawOverrides ?? [],
+      )
     // Defensa: `checkOut > checkIn` ya se validó, pero si las fechas no se pudieran parsear no se
-    // puede cobrar 0 en silencio (mismo criterio que `public-rates.ts`).
+    // puede cobrar 0 en silencio (mismo criterio que `public-rates.ts`). Caso borde no alcanzable
+    // en uso normal — no vale la pena replicar el split de niños acá.
     : round2(fallbackNightly * nights)
 
   // ─── F2 2.5 — Upsells: validar ids contra el hotel y computar upsellsTotal ──────────
@@ -513,6 +548,11 @@ export async function createPublicBookingDirect(
   }
   if (promoCode) notesParts.push(`Promo: ${promoCode}${promoReason ? ` (${promoReason})` : ''}`)
   if (upsellSummary.length > 0) notesParts.push(`Upsells: ${upsellSummary.join(', ')}`)
+  // Tarea 22 — el detalle estructurado vive en needsCrib/cribCount (columnas propias, ver
+  // reservas/model.ts), pero también queda acá para que el recepcionista lo vea de un vistazo en
+  // las notas, igual que el resto de los extras de esta reserva. Sí/No únicamente (2026-09-09) —
+  // sin cantidad, `cribCount` es siempre 1 cuando `needsCrib` es true.
+  if (needsCrib) notesParts.push('Cuna: solicitada')
   notesParts.push(`Total: ${totalAmount.toFixed(2)} (subtotal ${subtotalBeforeDiscount.toFixed(2)}` +
     `${promoDiscount > 0 ? ` - promo ${promoDiscount.toFixed(2)}` : ''} + tax ${taxes.toFixed(2)})`)
 
@@ -572,6 +612,12 @@ export async function createPublicBookingDirect(
         // el check-in VIGENTE al declarar las edades. Sin esto no hay forma de proyectar la edad
         // a un check-in futuro tras un reagendado (ver `child-composition.ts#projectAge`).
         childrenAgesAsOf: hasChildrenAges ? checkIn : undefined,
+        // Tarea "Cobro % niños" — el % REALMENTE usado para cotizar esta reserva (o `null` si la
+        // regla no aplicó), independiente de lo que diga `configuration` de acá en más.
+        childrenRatePercentApplied,
+        // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — ya gateados/validados
+        // arriba contra `childComposition.babies` y `childPolicy.cribAvailable`; acá solo persisten.
+        needsCrib, cribCount,
         totalAmount, deposit: 0,
         notes: notesParts.join(' | '),
         accessToken: crypto.randomUUID(),

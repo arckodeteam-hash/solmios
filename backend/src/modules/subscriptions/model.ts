@@ -130,9 +130,70 @@ export const FounderHistoryModel: ModelDefinition = {
   },
 }
 
+/**
+ * `platform_invoices` — lo que la PLATAFORMA le cobró al hotel. Fuente de verdad de
+ * `/admin/billing` (REQ-BIL-01).
+ *
+ * Antes no existía: la pantalla fabricaba "facturas" desde `listSubscriptions` con campos que
+ * no eran de ninguna tabla (fecha vacía, "Ver" en blanco, todo "Pagado"), y el webhook
+ * `invoice.paid` leía el monto, el número y el PDF de Stripe para tirarlos a la basura. Sin
+ * una fila por cobro no hay historial, ni recordatorio, ni conciliación posible.
+ *
+ * Dos orígenes conviven en la misma tabla y se distinguen por `method`:
+ *   - `card`   — la creó Stripe (webhook o backfill). Tiene `stripeInvoiceId`.
+ *   - `manual` — la cargó un super-admin (transferencia, efectivo). NO tiene `stripeInvoiceId`
+ *                y NINGÚN proceso automático la pisa (ver `upsert-platform-invoice.ts`).
+ *
+ * ⚠️ `stripeInvoiceId` va con UNIQUE INDEX explícito (`migrate-db.ts`), que el ORM no crea. La
+ * regla que lo hace funcionar: una fila manual guarda `null`, NUNCA `''` — varios NULL conviven
+ * bajo un unique en SQLite y en Postgres, varios `''` no.
+ */
+export const PlatformInvoicesModel: ModelDefinition = {
+  table: 'platform_invoices',
+  timestamps: true,
+  fields: {
+    id: { type: 'string', required: true },
+    hotelId: { type: 'string', required: true, indexed: true },
+    subscriptionId: { type: 'string' },
+    /** `in_...` de Stripe. Null en las manuales — ver el UNIQUE INDEX de arriba. Sin `indexed`
+     *  a propósito: el UNIQUE INDEX de `migrate-db.ts` ya cubre la búsqueda, y declararlo acá
+     *  además crearía un segundo índice sobre la misma columna. */
+    stripeInvoiceId: { type: 'string' },
+    /** Número que imprime Stripe (`ABC123-0001`). Las manuales no tienen: la UI muestra la referencia. */
+    number: { type: 'string' },
+    /** open | paid | void | uncollectible | failed. `failed` no es de Stripe: es el cobro rechazado (`invoice.payment_failed`), que en Stripe deja la factura `open`. */
+    status: { type: 'string', required: true, default: 'open' },
+    amountDue: { type: 'number', required: true, default: 0 },
+    amountPaid: { type: 'number', required: true, default: 0 },
+    currency: { type: 'string', required: true, default: 'USD' },
+    /** Plan cobrado, resuelto desde el price del `line_items[0]`. `planName` se guarda copiado: el plan puede renombrarse y la factura vieja tiene que seguir diciendo qué se cobró. */
+    planId: { type: 'string' },
+    planName: { type: 'string' },
+    /** Período facturado (ISO). Es lo que el hotel pagó, no cuándo lo pagó. */
+    periodStart: { type: 'string' },
+    periodEnd: { type: 'string' },
+    /** Emisión (ISO): `finalized_at` de Stripe, o su `created` si todavía no se finalizó. */
+    issuedAt: { type: 'string', required: true },
+    dueAt: { type: 'string' },
+    paidAt: { type: 'string' },
+    /** card | manual — ver el comentario del modelo. */
+    method: { type: 'string', required: true, default: 'card' },
+    /** Comprobante del pago manual (nº de transferencia, recibo). Obligatoria en las manuales (REQ-BIL-06). */
+    reference: { type: 'string' },
+    hostedInvoiceUrl: { type: 'string' },
+    invoicePdfUrl: { type: 'string' },
+    /** Quién registró el pago manual (`users.id`). Null en las de Stripe. */
+    recordedByUserId: { type: 'string' },
+    notes: { type: 'text' },
+    /** Último recordatorio enviado (ISO) — dedup de 24 h de REQ-BIL-05. */
+    lastReminderAt: { type: 'string' },
+  },
+}
+
 export function registerSubscriptionModels(orm: ORM): void {
   orm.define('Subscriptions', SubscriptionsModel)
   orm.define('SubscriptionDiscounts', SubscriptionDiscountsModel)
   orm.define('SpecialCategoryConfig', SpecialCategoryConfigModel)
   orm.define('FounderHistory', FounderHistoryModel)
+  orm.define('PlatformInvoices', PlatformInvoicesModel)
 }

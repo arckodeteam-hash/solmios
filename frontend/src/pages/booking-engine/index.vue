@@ -358,8 +358,62 @@
                     {{ childPolicyAgeError || 'Un niño hasta esta edad no genera cargo de alojamiento.' }}
                   </p>
                 </div>
+                <!-- Tarea 21 (Identificar bebés, 2026-09-08) — subconjunto de "sin consumir plaza". -->
+                <div>
+                  <label for="booking-engine-edad-maxima-bebe" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Edad máxima considerada bebé</label>
+                  <input id="booking-engine-edad-maxima-bebe" name="maxBabyAge"
+                    v-model.number="childPolicy.maxBabyAge"
+                    type="number" min="0" :max="childPolicy.maxFreeAge"
+                    class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan"
+                    :class="childPolicyBabyAgeError ? 'border-warning' : ''"
+                  />
+                  <p class="mt-1 text-[10px]" :class="childPolicyBabyAgeError ? 'text-warning font-bold' : 'text-text-muted'">
+                    {{ childPolicyBabyAgeError || 'Un niño hasta esta edad se muestra como "bebé" (no genera cargo, no consume plaza).' }}
+                  </p>
+                </div>
               </div>
+
+              <!-- Tarea "Cobro % niños" (2026-09-09) — cada niño CON PLAZA (nunca bebés ni niños
+                   libres) paga este % del "valor de un adulto" en vez del precio completo de
+                   ocupante. Apagado por default: nada cambia hasta que el hotel lo habilite. -->
+              <div v-if="childPolicy.acceptChildren" class="mt-4">
+                <label class="flex items-center gap-3 p-3 bg-surface rounded-xl cursor-pointer w-fit">
+                  <input id="booking-engine-cobro-reducido" name="childrenDiscountEnabled" type="checkbox" v-model="childPolicy.childrenDiscountEnabled" class="w-4 h-4 text-cyan rounded" />
+                  <div>
+                    <div class="text-sm font-bold text-navy">Cobro reducido para niños</div>
+                    <div class="text-[10px] text-text-muted">Si está prendido, cada niño que consume plaza paga un % del valor de un adulto, en vez del precio completo de ocupante</div>
+                  </div>
+                </label>
+                <div v-if="childPolicy.childrenDiscountEnabled" class="mt-3 max-w-xs">
+                  <label for="booking-engine-porcentaje-nino" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Porcentaje de tarifa para niños</label>
+                  <div class="flex items-center gap-2">
+                    <input id="booking-engine-porcentaje-nino" name="childrenRatePercent"
+                      v-model.number="childPolicy.childrenRatePercent"
+                      type="number" min="1" max="100"
+                      class="w-24 h-10 px-4 rounded-xl border text-sm focus:outline-none focus:border-cyan"
+                      :class="childPolicyRateError ? 'border-warning' : 'border-border'"
+                    />
+                    <span class="text-sm font-bold text-text-muted">%</span>
+                  </div>
+                  <p class="mt-1 text-[10px]" :class="childPolicyRateError ? 'text-warning font-bold' : 'text-text-muted'">
+                    {{ childPolicyRateError || `Ejemplo: si el valor de un adulto es $100, cada niño con plaza paga $${childPolicy.childrenRatePercent || 0}.` }}
+                  </p>
+                </div>
+              </div>
+
+              <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — reemplaza el viejo
+                   checklist de "amenidades para bebé" por un único toggle: ¿el hotel ofrece
+                   cuna? Sin esto habilitado, "¿Necesita cuna?" ni se pregunta en el motor
+                   público, aunque la reserva tenga un bebé. -->
+              <label v-if="childPolicy.acceptChildren" class="flex items-center gap-3 p-3 bg-surface rounded-xl cursor-pointer w-fit mt-4">
+                <input id="booking-engine-ofrece-cuna" name="cribAvailable" type="checkbox" v-model="childPolicy.cribAvailable" class="w-4 h-4 text-cyan rounded" />
+                <div>
+                  <div class="text-sm font-bold text-navy">Ofrece cuna para bebés</div>
+                  <div class="text-[10px] text-text-muted">Si está prendido, el motor público pregunta "¿Necesita cuna?" (Sí/No) cuando la reserva tiene un bebé</div>
+                </div>
+              </label>
             </div>
+
 
             <div class="mt-6 pt-6 border-t border-border">
               <label class="text-[10px] font-bold text-text-muted uppercase mb-3 block">Opciones de Reserva</label>
@@ -508,12 +562,33 @@ const form = reactive<BookingConfig>(defaultConfig())
 // NO es parte de BookingConfig. Mismos defaults que `DEFAULT_CHILD_POLICY` del backend
 // (shared/usecases/child-composition.ts): acepta niños, nadie es gratis — así un hotel que
 // nunca abrió esta sección no ve cambiar el comportamiento de su motor de reservas.
-const childPolicy = reactive({ acceptChildren: true, maxChildAge: 17, maxFreeAge: 0 })
+// Tarea 21 (Identificar bebés, 2026-09-08) — `maxBabyAge` es subconjunto de "sin plaza".
+// Tarea "Cobro % niños" (2026-09-09) — `childrenDiscountEnabled`+`childrenRatePercent` (1-100,
+// NUNCA hardcodeado a 50): cada niño con plaza paga ese % del "valor de un adulto".
+// Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — `cribAvailable`: ¿el hotel ofrece cuna?
+const childPolicy = reactive({
+  acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
+  childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+})
 const childPolicyAgeError = computed(() =>
   childPolicy.maxFreeAge > childPolicy.maxChildAge
     ? 'La edad sin plaza no puede ser mayor a la edad máxima de niño.'
     : '',
 )
+const childPolicyBabyAgeError = computed(() =>
+  childPolicy.maxBabyAge > childPolicy.maxFreeAge
+    ? 'La edad de bebé no puede ser mayor a la edad sin plaza.'
+    : '',
+)
+// Tarea "Cobro % niños" — el % solo se valida mientras la regla está prendida (apagada, cualquier
+// valor guardado antes queda inerte, no hace falta bloquear el guardado por él).
+const childPolicyRateError = computed(() => {
+  if (!childPolicy.childrenDiscountEnabled) return ''
+  const pct = childPolicy.childrenRatePercent
+  return !Number.isFinite(pct) || pct < 1 || pct > 100
+    ? 'El porcentaje de tarifa para niños debe estar entre 1% y 100%.'
+    : ''
+})
 
 const analytics = ref<BookingAnalytics | null>(null)
 
@@ -574,6 +649,14 @@ async function saveConfig() {
   if (!configLoaded.value) return
   if (childPolicyAgeError.value) {
     toast.error(childPolicyAgeError.value)
+    return
+  }
+  if (childPolicyBabyAgeError.value) {
+    toast.error(childPolicyBabyAgeError.value)
+    return
+  }
+  if (childPolicyRateError.value) {
+    toast.error(childPolicyRateError.value)
     return
   }
   saving.value = true

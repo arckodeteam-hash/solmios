@@ -10,10 +10,11 @@ import type { PublicPlan } from '@/services/Signup.service'
 
 let publicPlansImpl: () => Promise<PublicPlan[]>
 vi.mock('@/services/Signup.service', () => ({
+  DEFAULT_TRIAL_DAYS: 15,
   SignupService: {
     publicPlans: () => publicPlansImpl(),
     // #28: la landing consulta la política del alta para decidir si promete "sin tarjeta".
-    signupPolicy: async () => ({ requireCardOnTrial: false, trialDays: 7 }),
+    signupPolicy: async () => ({ requireCardOnTrial: false, trialDays: 15 }),
   },
 }))
 

@@ -1,5 +1,47 @@
-const PLAN_PRICE: Record<string, number> = { enterprise: 199, professional: 99, starter: 49, essential: 49 }
+import { computePlatformMetrics, type PlatformMetrics } from './platform-metrics'
+import { ADMIN_ROLES, byRecencyDesc, effectiveAudience } from '../../../shared/usecases/announcement-visibility'
+
+/**
+ * Cuántos usuarios podían recibir este anuncio.
+ *
+ * - `hotel`  → los usuarios de ese hotel.
+ * - `all`    → todos (o los de su hotel, si la fila trae uno).
+ * - `admins` → solo los roles administradores del alcance anterior.
+ */
+function countRecipients(a: { hotelId?: string | null; audience?: string | null }, users: any[]): number {
+  const audience = effectiveAudience(a)
+  const scoped = a.hotelId ? users.filter((u: any) => u.hotelId === a.hotelId) : users
+  if (audience === 'admins') return scoped.filter((u: any) => ADMIN_ROLES.has(String(u.role))).length
+  return scoped.length
+}
+
+/**
+ * Precio de respaldo por plan, SOLO para hoteles cuyo `hotels.plan` de texto libre no matchea
+ * ninguna fila de `plans`. La fuente de verdad es la tabla `plans` (ver `planPriceResolver`):
+ * este mapa quedaba desactualizado contra el catálogo real (tenía Professional en 99 cuando
+ * cuesta 349) y por eso el MRR del panel mostraba un número que no existía.
+ */
+const PLAN_PRICE_FALLBACK: Record<string, number> = { enterprise: 199, professional: 99, starter: 49, essential: 49 }
 const BYTES_PER_MB = 1024 * 1024
+
+/** Página del audit log del super-admin (#142). El techo evita que un `?limit=100000` traiga la tabla. */
+const DEFAULT_AUDIT_LIMIT = 25
+const MAX_AUDIT_LIMIT = 200
+/** Barrido por rango de fechas: bloques y tope duro, para que un rango enorme no lea sin fin. */
+const AUDIT_SCAN_CHUNK = 500
+const MAX_AUDIT_SCAN = 20_000
+
+export interface AuditLogQuery {
+  hotelId?: string
+  userId?: string
+  action?: string
+  entity?: string
+  /** `YYYY-MM-DD`, límites inclusive, sobre `createdAt`. */
+  from?: string
+  to?: string
+  page?: number
+  limit?: number
+}
 
 export class DashboardQueries {
   constructor(private readonly orm: any) {}
@@ -123,14 +165,141 @@ export class DashboardQueries {
     return { data, total: data.length, mrrTotal: data.reduce((s: number, r: any) => s + r.mrr, 0) }
   }
 
-  async listAuditLogs(): Promise<{ data: any[]; total: number }> {
-    const data = await this.orm.findMany('Auditlog', {})
+  /**
+   * Audit log ORDENADO por fecha descendente. `findMany` no garantiza orden, así que cualquier
+   * consumidor que corte con `.slice(0, N)` para mostrar "lo último" se llevaba las filas más
+   * VIEJAS de la tabla — que es lo que pasaba en la card "Actividad Reciente" del dashboard.
+   *
+   * `hotelName`: antes se devolvía la fila cruda, sin el nombre del hotel, y la columna y el
+   * filtro "Hotel" de /admin/audit salían vacíos aunque el registro tuviera `hotelId`. Se
+   * resuelve con un `Map` de hoteles cargado UNA vez (mismo patrón que `listUsers`); una
+   * consulta por fila adentro del loop sería N+1. Sin `hotelId` (o con uno huérfano — hotel
+   * borrado) queda ''.
+   */
+  async listAuditLogs(query: AuditLogQuery = {}): Promise<{ data: any[]; total: number }> {
+    const limit = Math.min(Math.max(Number(query.limit) || DEFAULT_AUDIT_LIMIT, 1), MAX_AUDIT_LIMIT)
+    const page = Math.max(Number(query.page) || 1, 1)
+    const offset = (page - 1) * limit
+
+    // Igualdades → WHERE. `buildWhere` del framework sólo compara por igualdad, así que el rango
+    // de fechas se resuelve aparte (abajo).
+    const filters: Record<string, unknown> = {}
+    if (query.hotelId) filters.hotelId = query.hotelId
+    if (query.userId) filters.userId = query.userId
+    if (query.action) filters.action = query.action
+    if (query.entity) filters.entity = query.entity
+
+    // Orden en la BASE, no en memoria: `ORDER BY createdAt DESC` + LIMIT/OFFSET. Sin ORDER BY la
+    // paginación es orden indefinido (en Postgres cambia entre consultas) y la página 2 puede
+    // repetir filas de la 1.
+    const orderBy = [{ field: 'createdAt', dir: 'DESC' as const }]
+
+    const hotels = await this.orm.findMany('Hotels', {}) as any[]
+    const hotelNameById = new Map(hotels.map((h: any) => [h.id, h.name]))
+    const withHotelName = (r: any) => ({ ...r, hotelName: (r.hotelId && hotelNameById.get(r.hotelId)) || '' })
+
+    if (!query.from && !query.to) {
+      const result = await this.orm.paginate('Auditlog', filters, { limit, offset, orderBy }) as any
+      return { data: (result.data as any[]).map(withHotelName), total: result.total }
+    }
+
+    // Rango de fechas: como el ORM no sabe decir `>=`, se BARRE en bloques ordenados por fecha
+    // descendente y se corta al pasarse del límite inferior. El costo queda atado al rango pedido
+    // (y a lo más nuevo que él), no al tamaño de la tabla: pedir "hoy" no lee un año de historia.
+    const from = query.from ? `${query.from}T00:00:00.000Z` : ''
+    const to = query.to ? `${query.to}T23:59:59.999Z` : ''
+    const matched: any[] = []
+    for (let scanned = 0; scanned < MAX_AUDIT_SCAN; scanned += AUDIT_SCAN_CHUNK) {
+      const chunk = await this.orm.findMany('Auditlog', filters, { limit: AUDIT_SCAN_CHUNK, offset: scanned, orderBy }) as any[]
+      if (chunk.length === 0) break
+      let older = false
+      for (const row of chunk) {
+        const ts = String(row.createdAt || '')
+        if (from && ts < from) { older = true; break } // ordenado DESC: de acá para abajo, todo queda fuera
+        if (to && ts > to) continue
+        matched.push(row)
+      }
+      if (older || chunk.length < AUDIT_SCAN_CHUNK) break
+    }
+    return { data: matched.slice(offset, offset + limit).map(withHotelName), total: matched.length }
+  }
+
+  /**
+   * Anuncios del panel de la plataforma, con su alcance MEDIDO.
+   *
+   * `recipients` no es "cuántos usuarios hay": es cuántos usuarios podían recibir ESE anuncio,
+   * que es el único denominador con el que la tasa de apertura significa algo. Un anuncio dirigido
+   * a administradores de un solo hotel no se compara contra los 89 usuarios de la plataforma.
+   *
+   * Usuarios y lecturas se traen UNA vez y se agrupan en memoria: una consulta por anuncio sería
+   * N+1 (mismo criterio que `listHotels`).
+   */
+  async listAnnouncements(): Promise<{ data: any[]; total: number }> {
+    const [rows, users, reads] = await Promise.all([
+      this.orm.findMany('Announcements', {}) as Promise<any[]>,
+      this.orm.findMany('Users', { active: 1 }) as Promise<any[]>,
+      this.orm.findMany('AnnouncementReads', {}) as Promise<any[]>,
+    ])
+
+    const readsByAnnouncement = new Map<string, any[]>()
+    for (const r of reads) {
+      const list = readsByAnnouncement.get(String(r.announcementId)) ?? []
+      list.push(r)
+      readsByAnnouncement.set(String(r.announcementId), list)
+    }
+
+    const data = rows.map((a: any) => {
+      const mine = readsByAnnouncement.get(String(a.id)) ?? []
+      return {
+        ...a,
+        recipients: countRecipients(a, users),
+        // `reads` = filas de announcement_reads (misma semántica que el módulo anuncios para
+        // super_admin); `seenCount` cuenta solo las que tienen seenAt.
+        reads: mine.length,
+        seenCount: mine.filter((r: any) => !!r.seenAt).length,
+        dismissedCount: mine.filter((r: any) => !!r.dismissedAt).length,
+      }
+    })
     return { data, total: data.length }
   }
 
-  async listAnnouncements(): Promise<{ data: any[]; total: number }> {
-    const data = await this.orm.findMany('Announcements', {})
-    return { data, total: data.length }
+  /**
+   * Alcance de la plataforma para la tarjeta "Alcance".
+   *
+   * `openRate` es `null`, no `0`, cuando todavía no hay lecturas: un cero se lee como "lo mandé y
+   * no lo abrió nadie", que es una conclusión distinta —y falsa— de "todavía no hay datos".
+   */
+  async getAnnouncementsReach(): Promise<{
+    hotels: number; users: number
+    lastAnnouncement: { id: string; title: string; recipients: number; seenCount: number; openRate: number | null } | null
+  }> {
+    const [hotels, users, rows, reads] = await Promise.all([
+      this.orm.findMany('Hotels', {}) as Promise<any[]>,
+      this.orm.findMany('Users', { active: 1 }) as Promise<any[]>,
+      this.orm.findMany('Announcements', {}) as Promise<any[]>,
+      this.orm.findMany('AnnouncementReads', {}) as Promise<any[]>,
+    ])
+
+    const difundidos = rows
+      .filter((a: any) => effectiveAudience(a) !== 'hotel')
+      .sort(byRecencyDesc)
+
+    const last = difundidos[0]
+    if (!last) return { hotels: hotels.length, users: users.length, lastAnnouncement: null }
+
+    const seenCount = reads.filter((r: any) => String(r.announcementId) === String(last.id) && !!r.seenAt).length
+    const recipients = countRecipients(last, users)
+    return {
+      hotels: hotels.length,
+      users: users.length,
+      lastAnnouncement: {
+        id: String(last.id),
+        title: String(last.title ?? ''),
+        recipients,
+        seenCount,
+        openRate: recipients > 0 && reads.length > 0 ? Math.round((seenCount / recipients) * 100) : null,
+      },
+    }
   }
 
   async getPublicUsers(): Promise<any[]> {
@@ -166,6 +335,14 @@ export class DashboardQueries {
 
   async getAnalytics(): Promise<any> {
     const hs = await this.orm.findMany('Hotels', {})
+    // El precio sale del catálogo real (`plans`), no de un mapa hardcodeado que quedó viejo:
+    // Professional figuraba en 99 cuando cuesta 349 y "Cumbre" en 199 cuando cuesta 549.
+    const planRows = await this.orm.findMany('Plans', {}) as any[]
+    const priceOf = (raw: any): number => {
+      const key = String(raw ?? '').trim().toLowerCase()
+      const hit = planRows.find((p: any) => [p.id, p.slug, p.name].some((v: any) => String(v ?? '').trim().toLowerCase() === key))
+      return Number(hit?.price ?? PLAN_PRICE_FALLBACK[key] ?? 49)
+    }
     const us = await this.orm.findMany('Users', {})
     const rs = await this.orm.findMany('Reservations', {})
     const rooms = await this.orm.findMany('Rooms', {})
@@ -193,7 +370,7 @@ export class DashboardQueries {
       const gastos = exps.filter((e: any) => e.hotelId === h.id).reduce((s: number, e: any) => s + Number(e.amount || 0), 0)
       return {
         id: h.id, name: h.name, plan: h.plan || 'essential', status: h.status || 'active',
-        mrr: PLAN_PRICE[String(h.plan).toLowerCase()] ?? 49,
+        mrr: priceOf(h.plan),
         rooms: hRooms.length, reservations: hRes.length,
         occupancy: hRooms.length > 0 ? Math.min(100, Math.round((hRes.length / hRooms.length) * 100)) : 0,
         adr: nightsSold > 0 ? Math.round(revenue / nightsSold) : 0,
@@ -225,7 +402,7 @@ export class DashboardQueries {
     const byPlanRevenue: Record<string, number> = {}
     for (const h of hs) {
       const plan = String(h.plan || 'essential')
-      byPlanRevenue[plan] = (byPlanRevenue[plan] || 0) + (PLAN_PRICE[plan.toLowerCase()] ?? 49)
+      byPlanRevenue[plan] = (byPlanRevenue[plan] || 0) + priceOf(plan)
     }
 
     // Trends reales: altas de este mes vs el anterior (crecimiento del período).
@@ -251,7 +428,7 @@ export class DashboardQueries {
     }
 
     return {
-      mrr: hs.reduce((s: number, h: any) => s + (PLAN_PRICE[String(h.plan).toLowerCase()] ?? 49), 0),
+      mrr: hs.reduce((s: number, h: any) => s + priceOf(h.plan), 0),
       totalHoteles: hs.length, totalUsuarios: us.length, totalReservas: rs.length,
       activeHotels: hs.filter((h: any) => h.status === 'active').length,
       byPlan: hs.reduce((a: any, h: any) => ((a[h.plan] = (a[h.plan] || 0) + 1), a), {}),
@@ -261,6 +438,29 @@ export class DashboardQueries {
       topByOccupancy: [...hotelsBreakdown].sort((a: any, b: any) => b.occupancy - a.occupancy).slice(0, 5),
       npsScore: 0, ticketPromedio: 0, monthlyRevenue, trends,
     }
+  }
+
+  /**
+   * Métricas del negocio SaaS para el dashboard del super-admin. Es una consulta aparte de
+   * `getAnalytics()` a propósito: aquella responde "cómo le va a los hoteles" (ocupación, ADR,
+   * P&L) y esta responde "cómo le va a la plataforma" (MRR, trials, churn). Mezclarlas fue lo
+   * que llevó a mostrar un MRR que en realidad era revenue de reservas.
+   */
+  async getPlatformMetrics(): Promise<PlatformMetrics> {
+    const [hotels, subscriptions, plans, users, reservations, tickets, audit] = await Promise.all([
+      this.orm.findMany('Hotels', {}),
+      this.orm.findMany('Subscriptions', {}),
+      this.orm.findMany('Plans', {}),
+      this.orm.findMany('Users', {}),
+      this.orm.findMany('Reservations', {}),
+      this.orm.findMany('Tickets', {}),
+      this.orm.findMany('Auditlog', {}),
+    ])
+    return computePlatformMetrics({
+      hotels: hotels as any[], subscriptions: subscriptions as any[], plans: plans as any[],
+      users: users as any[], reservations: reservations as any[], tickets: tickets as any[],
+      audit: audit as any[],
+    })
   }
 
   async getMonitoring(): Promise<any> {

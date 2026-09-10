@@ -23,7 +23,15 @@ export const UpdateTicketsSchema: Record<string, ValidationRule> = {
   status: { type: 'string' as const, enum: STATUS_ENUM },
   description: { type: 'string' as const, max: 5000 },
   assignedTo: { type: 'string' as const, max: 100 },
-  messages: { type: 'array' as const },
+  // REQ-SOP-02: messages NO es escribible por PUT — se agrega solo vía
+  // POST /api/tickets/:id/messages (AddMessageSchema, más abajo).
+}
+
+// REQ-SOP-02: `type: 'text'` trimea antes de medir longitud (shared/validators/validate-body.ts)
+// — cubre "1..4000 tras trim" a nivel schema; el usecase (add-message.ts) repite el chequeo
+// porque es lógica pura testeada sin pasar por el controller.
+export const AddMessageSchema: Record<string, ValidationRule> = {
+  message: { type: 'text' as const, required: true, min: 1, max: 4000 },
 }
 
 export const TicketsValidator = { create: CreateTicketsSchema, update: UpdateTicketsSchema }

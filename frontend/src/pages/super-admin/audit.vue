@@ -7,7 +7,8 @@
         <p class="text-sm text-text-muted mt-0.5">Log de actividad global · Todas las acciones en la plataforma</p>
       </div>
       <div class="flex gap-2">
-        <button class="px-4 py-2 bg-navy text-white text-sm font-bold rounded-xl hover:bg-navy-light transition-colors cursor-pointer">
+        <button type="button" :disabled="!filteredLogs.length" @click="exportarCsv"
+          class="px-4 py-2 bg-navy text-white text-sm font-bold rounded-xl hover:bg-navy-light transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default">
           Exportar CSV
         </button>
       </div>
@@ -39,13 +40,7 @@
         <input v-model="searchQuery" type="text" placeholder="Buscar por usuario, hotel, acción..." class="px-4 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan min-w-[280px]" />
         <select v-model="filterAction" class="px-4 py-2 rounded-xl border border-border text-sm font-bold cursor-pointer">
           <option value="all">Todas las acciones</option>
-          <option value="login">Login / Logout</option>
-          <option value="reservation">Reservas</option>
-          <option value="billing">Facturación</option>
-          <option value="settings">Configuración</option>
-          <option value="user">Usuarios</option>
-          <option value="hotel">Hoteles</option>
-          <option value="system">Sistema</option>
+          <option v-for="o in actionOptions" :key="o.value" :value="o.value">{{ o.label }} ({{ o.count }})</option>
         </select>
         <select v-model="filterHotel" class="px-4 py-2 rounded-xl border border-border text-sm font-bold cursor-pointer">
           <option value="all">Todos los hoteles</option>
@@ -78,7 +73,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="log in filteredLogs" :key="log.id" class="border-b border-border/50 hover:bg-surface/50 transition-colors">
+            <tr v-for="log in pagina" :key="log.id" class="border-b border-border/50 hover:bg-surface/50 transition-colors">
               <td class="py-3 px-4">
                 <div class="text-xs font-bold text-navy">{{ log.date }}</div>
                 <div class="text-[10px] text-text-muted">{{ log.time }}</div>
@@ -113,12 +108,17 @@
       </div>
       <!-- Pagination -->
       <div class="flex items-center justify-between p-4 border-t border-border">
-        <span class="text-xs text-text-muted">Mostrando 1-{{ filteredLogs.length }} de {{ logs.length }}</span>
-        <div class="flex gap-1">
-          <button class="w-8 h-8 rounded-lg border border-border text-xs font-bold hover:bg-surface transition-colors cursor-pointer">1</button>
-          <button class="w-8 h-8 rounded-lg bg-navy text-white text-xs font-bold cursor-pointer">2</button>
-          <button class="w-8 h-8 rounded-lg border border-border text-xs font-bold hover:bg-surface transition-colors cursor-pointer">3</button>
-          <button class="w-8 h-8 rounded-lg border border-border text-xs font-bold hover:bg-surface transition-colors cursor-pointer">→</button>
+        <span class="text-xs text-text-muted">{{ rangoLabel }}</span>
+        <div v-if="totalPaginas > 1" class="flex items-center gap-1">
+          <button type="button" :disabled="paginaActual === 1" @click="paginaActual--"
+            class="h-8 px-2.5 rounded-lg border border-border text-xs font-bold hover:bg-surface transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default">←</button>
+          <button
+            v-for="n in paginasVisibles" :key="n" type="button" @click="paginaActual = n"
+            class="w-8 h-8 rounded-lg text-xs font-bold cursor-pointer transition-colors"
+            :class="n === paginaActual ? 'bg-navy text-white' : 'border border-border hover:bg-surface'"
+          >{{ n }}</button>
+          <button type="button" :disabled="paginaActual === totalPaginas" @click="paginaActual++"
+            class="h-8 px-2.5 rounded-lg border border-border text-xs font-bold hover:bg-surface transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default">→</button>
         </div>
       </div>
     </SectionCard>
@@ -126,11 +126,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useToast } from '@/composables/useToast'
 import { AuditLogService } from '@/services/AuditLog.service'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
+import { auditFilterOptions, entityGroup } from '@/utils/audit-entity'
 
 const toast = useToast()
 const loading = ref(true)
@@ -146,8 +147,19 @@ const logs = ref<any[]>([])
 onMounted(async () => {
   loading.value = true
   try {
-    const { data } = await AuditLogService.list()
-    logs.value = data.map((l: any) => {
+    // #140: cargar el log COMPLETO, no la primera página. Sin parámetros el backend devuelve
+    // DEFAULT_LIMIT (20) filas, pero esta página pagina client-side (POR_PAGINA=25) y promete
+    // "Mostrando X de Y"; peor aún, el desplegable de hoteles tiene que listar los hoteles CON
+    // ACTIVIDAD de todo el log. Se pide de a 100 (MAX_LIMIT backend) hasta juntar `total`.
+    const MAX_PAGINAS = 20 // Tope de seguridad: 20×100 = 2000 filas; si se alcanza, quedan las primeras.
+    const acumulado: any[] = []
+    let total = Infinity
+    for (let page = 1; page <= MAX_PAGINAS && acumulado.length < total; page++) {
+      const resp = await AuditLogService.list({ page, limit: 100 })
+      total = resp.total
+      acumulado.push(...resp.data)
+    }
+    logs.value = acumulado.map((l: any) => {
       const dt = String(l.createdAt || '').replace('T', ' ')
       return {
         id: l.id,
@@ -156,11 +168,18 @@ onMounted(async () => {
         user: l.userName ?? 'Sistema',
         initials: (l.userName ?? 'S').split(' ').map((p: string) => p[0]).slice(0, 2).join(''),
         role: '', roleColor: 'bg-cyan/20 text-cyan',
-        hotel: '',
+        // #140: hotelName viene resuelto por el backend ('' si no tiene hotelId o es huérfano);
+        // con el fallback columna, desplegable, filtro, buscador y CSV quedan arreglados por el
+        // mismo campo (patrón users.vue).
+        hotel: l.hotelName || 'Plataforma',
         // Bug corregido (2026-07-29): leía l.accion/l.entidad/l.detalle (español) — el DTO real
         // (AuditlogDTO) usa action/entity/detail (inglés). Las columnas Acción/Categoría/Detalle
         // quedaban en blanco/undefined en silencio.
         action: ACTION_LABEL[l.action] ?? l.action,
+        // #139: el filtro y el buscador necesitan los valores crudos — `action` ya queda
+        // traducido por ACTION_LABEL y `category` capitalizado, y contra eso no se puede comparar.
+        actionKey: String(l.action ?? ''),
+        entity: l.entity ?? '',
         actionClass: 'bg-teal/10 text-teal',
         category: l.entity ? (l.entity.charAt(0).toUpperCase() + l.entity.slice(1)) : 'Sistema',
         categoryClass: 'bg-navy/5 text-navy',
@@ -172,11 +191,69 @@ onMounted(async () => {
 })
 
 const hotelList = computed(() => [...new Set(logs.value.map((l: any) => l.hotel).filter(Boolean))])
+// #139: las opciones del select salen de los grupos de entidad presentes en los logs (con conteo),
+// no de una lista fija: 5 de 7 opciones viejas no matcheaban ninguna entidad real y daban tabla vacía.
+const actionOptions = computed(() => auditFilterOptions(logs.value))
+
+// ── Paginación REAL. Los botones "1 2 3 →" eran fijos, con el "2" pintado como activo y sin
+// ningún handler: la tabla mostraba SIEMPRE el listado completo mientras el pie sugería que
+// estaba paginado.
+const POR_PAGINA = 25
+const paginaActual = ref(1)
+const totalPaginas = computed(() => Math.max(1, Math.ceil(filteredLogs.value.length / POR_PAGINA)))
+const pagina = computed(() => {
+  const desde = (paginaActual.value - 1) * POR_PAGINA
+  return filteredLogs.value.slice(desde, desde + POR_PAGINA)
+})
+const rangoLabel = computed(() => {
+  const total = filteredLogs.value.length
+  if (!total) return 'Sin registros'
+  const desde = (paginaActual.value - 1) * POR_PAGINA + 1
+  return `Mostrando ${desde}-${Math.min(desde + POR_PAGINA - 1, total)} de ${total}`
+})
+/** Ventana de 5 páginas alrededor de la actual: con miles de entradas no se pueden listar todas. */
+const paginasVisibles = computed(() => {
+  const total = totalPaginas.value
+  const desde = Math.max(1, Math.min(paginaActual.value - 2, total - 4))
+  return Array.from({ length: Math.min(5, total) }, (_, i) => desde + i)
+})
+// Cambiar un filtro con la página 4 abierta dejaba la tabla vacía sin explicación.
+watch([filterAction, filterHotel, filterDate, searchQuery], () => { paginaActual.value = 1 })
+
+/**
+ * Exporta lo que el usuario está viendo (con los filtros puestos), no la tabla entera: si filtró
+ * por "delete" y exporta, espera ese recorte.
+ *
+ * Cada campo va entrecomillado y con las comillas internas duplicadas — un detalle de auditoría
+ * con una coma partiría la fila en columnas y correría todo el resto.
+ */
+function exportarCsv(): void {
+  const COLUMNAS = ['Fecha', 'Hora', 'Usuario', 'Hotel', 'Acción', 'Categoría', 'Detalle', 'IP']
+  const esc = (v: unknown): string => `"${String(v ?? '').replace(/"/g, '""')}"`
+  const filas = filteredLogs.value.map((l: any) =>
+    [l.date, l.time, l.user, l.hotel, l.action, l.category, l.detail, l.ip].map(esc).join(','),
+  )
+  // BOM para que Excel abra los acentos bien (sin esto, "Sesión" sale "SesiÃ³n").
+  const csv = '\uFEFF' + [COLUMNAS.join(','), ...filas].join('\r\n')
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `auditoria-${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+  toast.success(`${filas.length} registros exportados`)
+}
 
 const filteredLogs = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
   return logs.value.filter((log: any) => {
-    if (searchQuery.value && !log.user.toLowerCase().includes(searchQuery.value.toLowerCase()) && !log.detail.toLowerCase().includes(searchQuery.value.toLowerCase())) return false
-    if (filterAction.value !== 'all' && log.category.toLowerCase() !== filterAction.value) return false
+    // #139: el placeholder promete "usuario, hotel, acción" pero sólo se miraba user y detail;
+    // buscar "delete" no encontraba nada si el detalle no repetía la palabra.
+    if (q && ![log.user, log.detail, log.actionKey, log.action, log.hotel, log.category]
+      .some((v) => String(v ?? '').toLowerCase().includes(q))) return false
+    // #139: se compara el GRUPO de la entidad normalizada ('Reservations' y 'reservation' → 'reservation'),
+    // no `category` (entidad cruda capitalizada), que dejaba a 'Reservas' sin sus 226 entradas.
+    if (filterAction.value !== 'all' && entityGroup(log.entity) !== filterAction.value) return false
     if (filterHotel.value !== 'all' && log.hotel !== filterHotel.value) return false
     return true
   })

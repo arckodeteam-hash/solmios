@@ -6,10 +6,19 @@
         <h1 class="text-xl font-black text-navy">Cola de Channex</h1>
         <p class="text-sm text-text-muted">{{ total }} ráfaga(s) de tarifas e inventario en la outbox</p>
       </div>
-      <button @click="recargar" :disabled="loading"
-        class="bg-white text-text-secondary border border-border font-bold text-sm px-5 py-2.5 rounded-xl hover:border-navy/30 hover:text-navy transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-        {{ loading ? 'Cargando…' : 'Refrescar' }}
-      </button>
+      <div class="flex items-center gap-2">
+        <!-- La configuración vivía DEBAJO de la tabla, que pagina de a 50 filas: con la cola
+             cargada quedaba a ~3.600px de scroll — justo cuando más se la necesita. Ahora se abre
+             desde acá, a un clic, sin importar cuánto crezca el listado. -->
+        <button type="button" :disabled="loadingConfig" @click="showConfig = true"
+          class="bg-white text-text-secondary border border-border font-bold text-sm px-5 py-2.5 rounded-xl hover:border-navy/30 hover:text-navy transition-all cursor-pointer disabled:opacity-50">
+          Configuración
+        </button>
+        <button @click="recargar" :disabled="loading"
+          class="bg-white text-text-secondary border border-border font-bold text-sm px-5 py-2.5 rounded-xl hover:border-navy/30 hover:text-navy transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+          {{ loading ? 'Cargando…' : 'Refrescar' }}
+        </button>
+      </div>
     </div>
 
     <!-- Contadores por estado. `pending` y `retrying` son DISJUNTOS (ver AriOutboxStats): las
@@ -54,9 +63,9 @@
     </div>
 
     <!-- Error de carga: la pantalla no se queda vacía sin explicación -->
-    <div v-if="loadError" class="mb-6 rounded-2xl border border-red/30 bg-red/10 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
-      <span class="text-sm font-bold text-red">{{ loadError }}</span>
-      <button @click="recargar" class="px-4 py-2 rounded-xl border border-red/40 text-xs font-bold text-red hover:bg-red/10 transition-colors cursor-pointer">Reintentar</button>
+    <div v-if="loadError" class="mb-6 rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+      <span class="text-sm font-bold text-danger">{{ loadError }}</span>
+      <button @click="recargar" class="px-4 py-2 rounded-xl border border-danger/40 text-xs font-bold text-danger hover:bg-danger/10 transition-colors cursor-pointer">Reintentar</button>
     </div>
 
     <!-- Cargando -->
@@ -109,7 +118,7 @@
                   {{ ariOutboxStatusMeta(ariOutboxViewStatus(row)).label }}
                 </span>
               </td>
-              <td class="p-4 text-sm font-bold" :class="row.attempts >= row.maxAttempts ? 'text-red' : 'text-navy'">
+              <td class="p-4 text-sm font-bold" :class="row.attempts >= row.maxAttempts ? 'text-danger' : 'text-navy'">
                 {{ row.attempts }}<span class="text-[10px] text-text-muted font-bold"> / {{ row.maxAttempts }}</span>
               </td>
               <td class="p-4 text-xs text-text-muted whitespace-nowrap">{{ fecha(row.scheduledAt) }}</td>
@@ -117,7 +126,7 @@
                 <!-- El error entero puede ser un cuerpo de respuesta de Channex: acá va cortado y
                      el detalle completo se abre en un modal (CA-2: visualizar los errores). -->
                 <button v-if="row.lastError" @click="errorDetalle = row" :title="row.lastError"
-                  class="max-w-[220px] truncate block text-left text-xs text-red font-bold hover:underline cursor-pointer">
+                  class="max-w-[220px] truncate block text-left text-xs text-danger font-bold hover:underline cursor-pointer">
                   {{ row.lastError }}
                 </button>
                 <span v-else class="text-xs text-text-muted">Sin errores</span>
@@ -151,9 +160,11 @@
     </SectionCard>
 
     <!-- Configuración de la cola -->
-    <SectionCard class="mt-6" title="Configuración de la cola"
-      subtitle="Aplica a todos los hoteles: reintentos automáticos y ritmo de publicación a Channex">
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <AppModal v-if="showConfig" size="md" title="Configuración de la cola"
+      subtitle="Aplica a todos los hoteles: reintentos automáticos y ritmo de publicación a Channex"
+      @close="showConfig = false">
+      <SkeletonLoader v-if="loadingConfig" variant="text" :rows="2" />
+      <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label for="config-max-attempts" class="block text-[10px] font-bold text-text-muted uppercase mb-1">Reintentos automáticos</label>
           <input id="config-max-attempts" name="maxAttempts" aria-label="Máximo de reintentos automáticos"
@@ -169,14 +180,15 @@
           <p class="text-[10px] text-text-muted mt-1">Techo de llamadas a la API de Channex ({{ MIN_PER_MINUTE }} a {{ MAX_PER_MINUTE }}).</p>
         </div>
       </div>
-      <div class="flex items-center justify-end gap-3 mt-4">
-        <span v-if="configError" class="text-xs font-bold text-red">{{ configError }}</span>
+      <template #footer>
+        <span v-if="configError" class="mr-auto text-xs font-bold text-danger">{{ configError }}</span>
+        <button type="button" class="px-4 py-2.5 rounded-xl bg-surface text-sm font-bold text-text-secondary" @click="showConfig = false">Cancelar</button>
         <button @click="guardarConfig" :disabled="savingConfig || loadingConfig || !configValida"
           class="bg-coral text-white font-extrabold text-sm px-5 py-2.5 rounded-xl hover:shadow-lg transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
           {{ savingConfig ? 'Guardando…' : 'Guardar' }}
         </button>
-      </div>
-    </SectionCard>
+      </template>
+    </AppModal>
 
     <!-- Error completo de una fila -->
     <AppModal v-if="errorDetalle" size="lg" title="Último error de la ráfaga"
@@ -226,6 +238,7 @@ const toast = useToast()
 
 const rows = ref<AriOutboxRow[]>([])
 const total = ref(0)
+const showConfig = ref(false)
 const page = ref(1)
 const limit = ref(50)
 const loading = ref(false)
@@ -245,7 +258,7 @@ const statCards = computed(() => [
   { label: 'En reintento', value: stats.value.retrying, color: 'text-orange' },
   { label: 'Procesándose', value: stats.value.processing, color: 'text-cyan' },
   { label: 'Enviadas', value: stats.value.sent, color: 'text-teal' },
-  { label: 'Fallidas', value: stats.value.failed, color: 'text-red' },
+  { label: 'Fallidas', value: stats.value.failed, color: 'text-danger' },
 ])
 
 const activeFiltersCount = computed(() =>
@@ -394,6 +407,7 @@ async function guardarConfig() {
   configError.value = ''
   try {
     configForm.value = { ...(await AriOutboxService.saveConfig({ ...configForm.value })) }
+    showConfig.value = false
     toast.success('Configuración guardada', 'La cola ya usa los nuevos valores.')
   } catch (e: unknown) {
     toast.error((e as Error)?.message || 'No se pudo guardar la configuración')

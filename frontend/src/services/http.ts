@@ -193,6 +193,16 @@ function isPublicAuthPath(path: string): boolean {
 // una subida de archivo grande (foto/firma/video) en una conexión lenta pero viva.
 const REQUEST_TIMEOUT_MS = 30_000
 
+/**
+ * Prefija `/api` salvo que la ruta ya lo lleve. El chequeo es por SEGMENTO (`/api/` o `/api`
+ * exacto), no por prefijo de texto: `'/apikeys'.startsWith('/api')` es true, y con eso
+ * `ApikeysService` pedía `GET /apikeys` (sin `/api/`) → 404 → "No se pudieron cargar las API keys"
+ * en /admin/api-keys, y crear/revocar tampoco llegaban al backend.
+ */
+export function toApiUrl(path: string): string {
+  return path === '/api' || path.startsWith('/api/') || path.startsWith('/api?') ? path : `/api${path}`
+}
+
 async function request<T>(method: string, path: string, body?: unknown, _isRetry = false): Promise<T> {
   // FormData (multipart): el browser setea el boundary; NO forzar Content-Type ni stringificar.
   const isFormData = typeof FormData !== 'undefined' && body instanceof FormData
@@ -200,7 +210,7 @@ async function request<T>(method: string, path: string, body?: unknown, _isRetry
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const url = path.startsWith('/api') ? path : `/api${path}`
+  const url = toApiUrl(path)
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   let res: Response
@@ -350,7 +360,7 @@ export const http = {
     const headers: Record<string, string> = {}
     const token = getToken()
     if (token) headers['Authorization'] = `Bearer ${token}`
-    const url = path.startsWith('/api') ? path : `/api${path}`
+    const url = toApiUrl(path)
     const res = await fetch(url, { method: 'GET', headers })
     if (res.status === 401) { forceLogout(); throw new ApiError(401, 'Sesión expirada') }
     if (!res.ok) throw new ApiError(res.status, `Error ${res.status} al descargar`)

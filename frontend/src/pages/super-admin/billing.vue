@@ -1,354 +1,545 @@
 <template>
   <div>
-    <!-- Métricas -->
-    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mb-6">
-      <div v-for="stat in stats" :key="stat.label" class="bg-white rounded-xl p-4 border border-border text-center card-shadow">
-        <div class="text-xl font-black" :class="stat.color">{{ stat.value }}</div>
-        <div class="text-[10px] text-text-muted font-bold uppercase">{{ stat.label }}</div>
-      </div>
+    <!-- ─── Analítica del cobro (REQ-BIL-04) ──────────────────────────────── -->
+    <div v-if="loadingStats" class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div v-for="i in 4" :key="i" class="h-[132px] animate-pulse rounded-[16px] border border-border bg-surface"></div>
+    </div>
+    <div v-else-if="stats" class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <KpiHeroCard
+        label="Cobrado" :value="stats.collected" prefix="$" icon="money" accent="green"
+        :progress="stats.collectionRate" :unit="`${stats.collectionRate}% de lo facturado en el período`"
+      />
+      <KpiHeroCard
+        label="Pendiente" :value="stats.open" prefix="$" icon="bookings" accent="amber"
+        :unit="stats.overdue ? `$${fmt(stats.overdue)} ya vencido` : 'Nada vencido todavía'"
+      />
+      <KpiHeroCard
+        label="Cobros fallidos" :value="stats.failed" prefix="$" icon="money" accent="rose"
+        unit="Tarjetas rechazadas por Stripe"
+      />
+      <KpiHeroCard
+        label="MRR" :value="stats.mrr" prefix="$" icon="building" accent="blue"
+        unit="Suscripciones activas, igual que en Suscripciones"
+      />
     </div>
 
-    <!-- Filtros -->
-    <div class="bg-white rounded-2xl border border-border card-shadow p-4 mb-6">
-      <div class="flex items-center justify-between mb-3">
-        <div class="flex items-center gap-2">
-          <span class="text-[10px] font-bold text-text-muted uppercase">Filtros</span>
-          <span v-if="activeFiltersCount > 0" class="bg-cyan/20 text-cyan text-[10px] font-bold px-2 py-0.5 rounded-full">{{ activeFiltersCount }} activos</span>
+    <!-- ─── Listado ────────────────────────────────────────────────────────── -->
+    <SectionCard title="Facturación de la plataforma" :subtitle="listSubtitle" body-class="p-0">
+      <template #actions>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="relative">
+            <input
+              v-model="filters.q" type="search" placeholder="Número, hotel o referencia..."
+              class="h-9 w-56 rounded-lg border border-white/15 bg-white/10 pl-9 pr-4 text-sm text-white placeholder:text-white/45 focus:border-cyan focus:outline-none"
+            >
+            <svg class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          </div>
+          <select v-model="filters.status" class="h-9 cursor-pointer rounded-lg border border-white/15 bg-white/10 px-3 text-sm text-white focus:border-cyan focus:outline-none">
+            <option value="" class="text-navy">Todos los estados</option>
+            <option v-for="s in STATUS_OPTIONS" :key="s" :value="s" class="text-navy">{{ statusLabel(s) }}</option>
+          </select>
+          <!-- Los planes salen del catálogo real (`/admin/plans`), no de una lista escrita a mano
+               que se desactualiza cada vez que se crea un plan. -->
+          <select v-model="filters.planId" class="h-9 cursor-pointer rounded-lg border border-white/15 bg-white/10 px-3 text-sm text-white focus:border-cyan focus:outline-none">
+            <option value="" class="text-navy">Todos los planes</option>
+            <option v-for="p in plans" :key="p.id" :value="p.id" class="text-navy">{{ p.name }}</option>
+          </select>
+          <label class="flex items-center gap-1.5 text-[11px] font-bold text-white/70">
+            Desde
+            <input v-model="filters.from" type="date" class="h-9 cursor-pointer rounded-lg border border-white/15 bg-white/10 px-2 text-xs text-white focus:border-cyan focus:outline-none">
+          </label>
+          <label class="flex items-center gap-1.5 text-[11px] font-bold text-white/70">
+            Hasta
+            <input v-model="filters.to" type="date" class="h-9 cursor-pointer rounded-lg border border-white/15 bg-white/10 px-2 text-xs text-white focus:border-cyan focus:outline-none">
+          </label>
+          <button
+            type="button" :disabled="exporting || !total" @click="exportCsv"
+            class="h-9 cursor-pointer rounded-lg bg-cyan px-4 text-xs font-extrabold text-navy transition-all hover:shadow-lg disabled:cursor-default disabled:opacity-50"
+          >{{ exporting ? 'Exportando...' : 'Exportar CSV' }}</button>
         </div>
-        <button v-if="activeFiltersCount > 0" @click="clearAllFilters" class="text-[10px] font-bold text-red hover:text-red/80 transition-colors cursor-pointer">Limpiar todo</button>
-      </div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-        <div class="relative">
-          <input v-model="searchQuery" type="text" placeholder="Buscar factura, hotel..." class="w-full h-10 pl-9 pr-4 rounded-lg border border-border text-sm bg-surface focus:outline-none focus:border-cyan">
-          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-        </div>
-        <select v-model="statusFilter" class="h-10 px-4 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
-          <option value="all">Todos los estados</option>
-          <option value="Pagado">Pagado</option>
-          <option value="Pendiente">Pendiente</option>
-          <option value="Vencido">Vencido</option>
-        </select>
-        <select v-model="planFilter" class="h-10 px-4 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
-          <option value="all">Todos los planes</option>
-          <option value="Enterprise">Enterprise</option>
-          <option value="Professional">Professional</option>
-          <option value="Starter">Starter</option>
-        </select>
-        <select v-model="dateFilter" class="h-10 px-4 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
-          <option value="all">Todo el tiempo</option>
-          <option value="today">Hoy</option>
-          <option value="week">Esta semana</option>
-          <option value="month">Este mes</option>
-          <option value="quarter">Este trimestre</option>
-        </select>
-        <button @click="exportInvoices" class="h-10 px-4 bg-surface border border-border rounded-xl text-sm font-bold text-text-secondary hover:bg-surface-dark transition-colors cursor-pointer flex items-center justify-center gap-2">📥 Exportar</button>
-      </div>
-    </div>
+      </template>
 
-    <!-- Tabs -->
-    <div class="flex gap-2 mb-4 flex-wrap">
-      <button v-for="tab in tabs" :key="tab.value" @click="activeTab = tab.value" class="px-5 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer" :class="activeTab === tab.value ? 'bg-navy text-white' : 'bg-white text-text-secondary border border-border hover:border-navy/30'">
-        {{ tab.label }}
-        <span v-if="tab.count" class="ml-2 bg-white/20 text-[10px] px-1.5 py-0.5 rounded-full">{{ tab.count }}</span>
-      </button>
-    </div>
-
-    <!-- Tabla -->
-    <SkeletonLoader v-if="loading" variant="table" :rows="6" />
-    <SectionCard v-else title="Facturación" :subtitle="`${filteredInvoices.length} facturas`" body-class="p-0">
-      <div class="overflow-x-auto">
-      <table class="w-full tbl-head">
-        <thead>
-          <tr class="border-b border-border">
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase cursor-pointer hover:text-navy" @click="toggleSort('id')">
-              <div class="flex items-center gap-1">Factura <span v-if="sortBy.startsWith('id')" class="text-cyan">{{ sortBy.endsWith('asc') ? '↑' : '↓' }}</span></div>
-            </th>
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase cursor-pointer hover:text-navy" @click="toggleSort('hotel')">
-              <div class="flex items-center gap-1">Hotel <span v-if="sortBy.startsWith('hotel')" class="text-cyan">{{ sortBy.endsWith('asc') ? '↑' : '↓' }}</span></div>
-            </th>
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Concepto</th>
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase cursor-pointer hover:text-navy" @click="toggleSort('amount')">
-              <div class="flex items-center gap-1">Monto <span v-if="sortBy.startsWith('amount')" class="text-cyan">{{ sortBy.endsWith('asc') ? '↑' : '↓' }}</span></div>
-            </th>
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Método</th>
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Estado</th>
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase cursor-pointer hover:text-navy" @click="toggleSort('date')">
-              <div class="flex items-center gap-1">Fecha <span v-if="sortBy.startsWith('date')" class="text-cyan">{{ sortBy.endsWith('asc') ? '↑' : '↓' }}</span></div>
-            </th>
-            <th class="text-right p-4 text-[10px] font-bold text-text-muted uppercase">Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="invoice in filteredInvoices" :key="invoice.id" class="border-b border-border last:border-0 hover:bg-surface/50 transition-colors">
-            <td class="p-4 text-sm font-mono text-text-muted cursor-pointer hover:text-cyan" @click="openInvoice(invoice)">#{{ invoice.id }}</td>
-            <td class="p-4">
-              <div class="flex items-center gap-2">
-                <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-navy to-cyan flex items-center justify-center text-white text-[10px] font-bold">{{ invoice.hotel?.[0] || '?' }}</div>
-                <div>
-                  <div class="text-sm font-bold text-navy">{{ invoice.hotel }}</div>
-                  <div class="text-[10px] text-text-muted">{{ invoice.plan }}</div>
+      <div v-if="error" class="flex flex-col items-center gap-3 px-6 py-14 text-center">
+        <div class="text-sm font-bold text-danger">{{ error }}</div>
+        <button type="button" class="cursor-pointer rounded-full border border-border bg-surface px-4 py-2 text-xs font-bold text-navy hover:bg-surface-dark" @click="load()">Reintentar</button>
+      </div>
+      <SkeletonLoader v-else-if="loading" variant="table" :rows="6" class="p-4" />
+      <EmptyState
+        v-else-if="!invoices.length"
+        :title="hasFilters ? 'Sin resultados' : 'Todavía no hay cobros'"
+        :message="hasFilters
+          ? 'Ninguna factura coincide con los filtros aplicados.'
+          : 'Cuando Stripe cobre la primera suscripción, la factura aparece acá. Si ya cobraste antes de conectar esta pantalla, corré el backfill.'"
+      >
+        <template v-if="hasFilters" #action>
+          <button type="button" class="cursor-pointer rounded-full border border-border bg-surface px-4 py-2 text-xs font-bold text-navy transition-colors hover:bg-surface-dark" @click="clearFilters">
+            Limpiar filtros
+          </button>
+        </template>
+      </EmptyState>
+      <div v-else class="overflow-x-auto">
+        <table class="tbl-head w-full min-w-[940px]">
+          <thead>
+            <tr class="border-b border-border">
+              <th class="p-4 text-left text-[10px] font-bold uppercase text-text-muted">Factura</th>
+              <th class="p-4 text-left text-[10px] font-bold uppercase text-text-muted">Hotel</th>
+              <th class="hidden p-4 text-left text-[10px] font-bold uppercase text-text-muted lg:table-cell">Plan</th>
+              <th class="p-4 text-left text-[10px] font-bold uppercase text-text-muted">Estado</th>
+              <th class="hidden p-4 text-left text-[10px] font-bold uppercase text-text-muted lg:table-cell">Método</th>
+              <th class="p-4 text-left text-[10px] font-bold uppercase text-text-muted">Emisión</th>
+              <th class="p-4 text-left text-[10px] font-bold uppercase text-text-muted">Vencimiento</th>
+              <th class="p-4 text-right text-[10px] font-bold uppercase text-text-muted">Monto</th>
+              <th class="p-4 text-right text-[10px] font-bold uppercase text-text-muted">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in invoices" :key="row.id" class="border-b border-border transition-colors last:border-0 hover:bg-surface/50">
+              <td class="p-4">
+                <button type="button" class="cursor-pointer text-sm font-bold text-navy hover:text-cyan" @click="openDetail(row)">{{ invoiceLabel(row) }}</button>
+                <div v-if="row.periodStart || row.periodEnd" class="text-[10px] text-text-muted">{{ periodLabel(row) }}</div>
+              </td>
+              <td class="p-4">
+                <div class="text-sm font-bold text-navy">{{ row.hotelName }}</div>
+                <div class="text-[10px] text-text-muted lg:hidden">{{ row.planName }}</div>
+              </td>
+              <td class="hidden p-4 lg:table-cell">
+                <span v-if="row.planName" class="rounded-full bg-navy/10 px-2 py-0.5 text-[10px] font-bold text-navy">{{ row.planName }}</span>
+              </td>
+              <td class="p-4">
+                <span class="rounded-full px-2 py-1 text-[10px] font-bold" :class="statusBadge(row.status)">{{ statusLabel(row.status) }}</span>
+                <div v-if="row.overdue" class="mt-0.5 text-[10px] font-bold text-danger">Vencida</div>
+              </td>
+              <td class="hidden p-4 text-sm text-text-secondary lg:table-cell">{{ methodLabel(row.method) }}</td>
+              <td class="p-4 text-sm text-text-secondary">{{ shortDate(row.issuedAt) }}</td>
+              <td class="p-4 text-sm" :class="row.overdue ? 'font-bold text-danger' : 'text-text-secondary'">{{ shortDate(row.dueAt) }}</td>
+              <td class="p-4 text-right">
+                <div class="text-sm font-black tabular-nums text-navy">{{ money(row.amountDue, row.currency) }}</div>
+                <div v-if="row.status === 'paid' && row.amountPaid !== row.amountDue" class="text-[10px] tabular-nums text-text-muted">Pagado {{ money(row.amountPaid, row.currency) }}</div>
+              </td>
+              <td class="p-4">
+                <div class="flex justify-end gap-1">
+                  <button
+                    type="button" :aria-label="`Ver la factura ${invoiceLabel(row)}`"
+                    class="grid h-8 w-8 cursor-pointer place-items-center rounded-lg text-text-muted transition-colors hover:bg-navy/10 hover:text-navy"
+                    @click="openDetail(row)"
+                  ><Icon name="document" :size="15" /></button>
+                  <button
+                    v-if="isClaimable(row)" type="button" :aria-label="`Recordar el cobro a ${row.hotelName}`"
+                    class="grid h-8 w-8 cursor-pointer place-items-center rounded-lg text-text-muted transition-colors hover:bg-navy/10 hover:text-navy"
+                    @click="openRemind(row)"
+                  ><Icon name="mail" :size="15" /></button>
+                  <button
+                    v-if="isClaimable(row)" type="button" :aria-label="`Registrar un pago manual de ${row.hotelName}`"
+                    class="grid h-8 w-8 cursor-pointer place-items-center rounded-lg text-text-muted transition-colors hover:bg-teal/10 hover:text-teal"
+                    @click="openManualPayment(row)"
+                  ><Icon name="money" :size="15" /></button>
                 </div>
-              </div>
-            </td>
-            <td class="p-4 text-sm">{{ invoice.concept }}</td>
-            <td class="p-4 text-sm font-black text-navy">${{ invoice.amount }}</td>
-            <td class="p-4"><span class="text-[10px] font-bold">{{ invoice.method }}</span></td>
-            <td class="p-4"><span class="text-[10px] font-bold px-2 py-1 rounded-full" :class="statusClass(invoice.status)">{{ invoice.status }}</span></td>
-            <td class="p-4 text-sm text-text-muted">{{ invoice.date }}</td>
-            <td class="p-4 text-right">
-              <div class="flex gap-1 justify-end">
-                <button @click="openInvoice(invoice)" class="px-2 py-1 bg-cyan/10 text-cyan rounded-lg text-[10px] font-bold hover:bg-cyan/20 transition-colors cursor-pointer">Ver</button>
-                <button v-if="invoice.status === 'Pendiente' || invoice.status === 'Vencido'" @click="sendReminder(invoice)" class="px-2 py-1 bg-navy/10 text-navy rounded-lg text-[10px] font-bold hover:bg-navy/20 transition-colors cursor-pointer">Recordar</button>
-                <button v-if="invoice.status !== 'Pagado'" @click="markAsPaid(invoice)" class="px-2 py-1 bg-teal/10 text-teal rounded-lg text-[10px] font-bold hover:bg-teal/20 transition-colors cursor-pointer">Pagado</button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-      <div v-if="filteredInvoices.length === 0" class="p-12 text-center">
-        <div class="text-4xl mb-3">📄</div>
-        <div class="text-sm font-bold text-text-muted">No se encontraron facturas</div>
+
+      <div v-if="!loading && !error && invoices.length" class="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
+        <span class="text-xs text-text-muted">{{ rangeLabel }}</span>
+        <div v-if="totalPages > 1" class="flex items-center gap-1.5">
+          <button type="button" :disabled="page === 1" class="h-8 cursor-pointer rounded-lg border border-border px-3 text-xs font-bold text-navy transition-colors hover:bg-surface disabled:cursor-default disabled:opacity-40" @click="page--">Anterior</button>
+          <span class="px-2 text-xs font-bold tabular-nums text-text-secondary">{{ page }} / {{ totalPages }}</span>
+          <button type="button" :disabled="page === totalPages" class="h-8 cursor-pointer rounded-lg border border-border px-3 text-xs font-bold text-navy transition-colors hover:bg-surface disabled:cursor-default disabled:opacity-40" @click="page++">Siguiente</button>
+        </div>
       </div>
     </SectionCard>
 
-    <!-- Modal: Detalle Factura -->
-    <AppModal v-if="showDetailModal" size="lg" :title="`Factura #${selectedInvoice.id}`" body-class="p-6" @close="showDetailModal = false">
-      <div class="flex items-center gap-4 mb-6">
-        <div class="w-14 h-14 rounded-xl bg-gradient-to-br from-navy to-cyan flex items-center justify-center text-white text-xl font-black">{{ selectedInvoice.hotel[0] }}</div>
-        <div>
-          <div class="text-lg font-bold text-navy">{{ selectedInvoice.hotel }}</div>
-          <div class="text-sm text-text-muted">{{ selectedInvoice.plan }}</div>
+    <!-- ─── Detalle (REQ-BIL-08) ───────────────────────────────────────────── -->
+    <AppModal v-if="detailOpen" size="lg" :title="detail ? invoiceLabel(detail) : 'Factura'" :subtitle="detail?.hotelName" @close="detailOpen = false">
+      <div v-if="detailLoading" class="space-y-3">
+        <div v-for="i in 4" :key="i" class="h-14 animate-pulse rounded-xl bg-surface"></div>
+      </div>
+      <div v-else-if="detail" class="space-y-4">
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="rounded-full px-3 py-1 text-[11px] font-bold" :class="statusBadge(detail.status)">{{ statusLabel(detail.status) }}</span>
+          <span class="text-2xl font-black tabular-nums text-navy">{{ money(detail.amountDue, detail.currency) }}</span>
+          <router-link :to="`/admin/subscriptions?hotel=${detail.hotelId}`" class="ml-auto text-xs font-bold text-cyan hover:underline">
+            Ver la suscripción de {{ detail.hotelName }} →
+          </router-link>
         </div>
-        <div class="ml-auto">
-          <span class="text-[10px] font-bold px-3 py-1 rounded-full" :class="statusClass(selectedInvoice.status)">{{ selectedInvoice.status }}</span>
+
+        <!-- Los campos sin dato NO se pintan: una ficha llena de "—" no es información. -->
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div v-for="field in detailFields" :key="field.label" class="rounded-xl bg-surface p-4">
+            <div class="text-[10px] font-bold uppercase tracking-wide text-text-muted">{{ field.label }}</div>
+            <div class="mt-0.5 text-sm font-bold text-navy">{{ field.value }}</div>
+          </div>
+        </div>
+
+        <div v-if="detail.notes" class="rounded-xl bg-surface p-4">
+          <div class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Notas</div>
+          <div class="mt-0.5 text-sm text-text-secondary">{{ detail.notes }}</div>
+        </div>
+
+        <div v-if="detail.lastReminderAt" class="text-[11px] text-text-muted">
+          Último recordatorio: {{ shortDate(detail.lastReminderAt) }} {{ timeOf(detail.lastReminderAt) }}
         </div>
       </div>
-      <div class="bg-surface rounded-xl p-4 mb-4">
-        <div class="text-[10px] font-bold text-text-muted uppercase mb-1">Concepto</div>
-        <div class="text-sm font-bold">{{ selectedInvoice.concept }}</div>
-      </div>
-      <div class="grid grid-cols-2 gap-4 mb-4">
-        <div class="bg-surface rounded-xl p-4"><div class="text-[10px] font-bold text-text-muted uppercase mb-1">Monto</div><div class="text-2xl font-black text-navy">${{ selectedInvoice.amount }}</div></div>
-        <div class="bg-surface rounded-xl p-4"><div class="text-[10px] font-bold text-text-muted uppercase mb-1">Método de Pago</div><div class="text-sm font-bold">{{ selectedInvoice.method }}</div></div>
-      </div>
-      <div class="grid grid-cols-2 gap-4 mb-4">
-        <div class="bg-surface rounded-xl p-4"><div class="text-[10px] font-bold text-text-muted uppercase mb-1">Fecha de Emisión</div><div class="text-sm">{{ selectedInvoice.date }}</div></div>
-        <div class="bg-surface rounded-xl p-4"><div class="text-[10px] font-bold text-text-muted uppercase mb-1">Fecha de Vencimiento</div><div class="text-sm">{{ selectedInvoice.dueDate }}</div></div>
-      </div>
-      <div v-if="selectedInvoice.notes" class="bg-surface rounded-xl p-4 mb-4">
-        <div class="text-[10px] font-bold text-text-muted uppercase mb-1">Notas</div>
-        <div class="text-sm text-text-secondary">{{ selectedInvoice.notes }}</div>
-      </div>
+
       <template #footer>
-        <button @click="showDetailModal = false" class="px-4 py-2.5 bg-surface text-text-secondary rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer">Cerrar</button>
-        <button v-if="selectedInvoice.status === 'Pendiente' || selectedInvoice.status === 'Vencido'" @click="sendReminder(selectedInvoice)" class="px-4 py-2.5 bg-navy/10 text-navy rounded-xl text-sm font-bold hover:bg-navy/20 transition-colors cursor-pointer">Enviar Recordatorio</button>
-        <button class="px-4 py-2.5 bg-surface text-text-secondary rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer">📄 Descargar PDF</button>
+        <button type="button" class="cursor-pointer px-4 py-2.5 text-sm font-bold text-text-secondary" @click="detailOpen = false">Cerrar</button>
+        <!-- Los links de Stripe solo existen si la factura vino de Stripe: una manual no tiene PDF. -->
+        <a v-if="detail?.hostedInvoiceUrl" :href="detail.hostedInvoiceUrl" target="_blank" rel="noopener"
+          class="rounded-full border border-border px-4 py-2.5 text-sm font-bold text-navy transition-colors hover:bg-surface">Ver en Stripe</a>
+        <a v-if="detail?.invoicePdfUrl" :href="detail.invoicePdfUrl" target="_blank" rel="noopener"
+          class="rounded-full border border-border px-4 py-2.5 text-sm font-bold text-navy transition-colors hover:bg-surface">PDF</a>
+        <button v-if="detail && isClaimable(detail)" type="button"
+          class="cursor-pointer rounded-full bg-navy/10 px-4 py-2.5 text-sm font-bold text-navy transition-colors hover:bg-navy/20"
+          @click="openRemind(detail)">Recordar</button>
+        <button v-if="detail && isClaimable(detail)" type="button"
+          class="cursor-pointer rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:shadow-lg"
+          @click="openManualPayment(detail)">Registrar pago</button>
       </template>
     </AppModal>
 
-    <!-- Modal: Recordatorio -->
-    <AppModal v-if="showReminderModal" size="md" title="Enviar Recordatorio" body-class="p-6" @close="showReminderModal = false">
-      <div class="bg-surface rounded-xl p-3 mb-4">
-        <div class="text-sm font-bold text-navy">{{ reminderInvoice.hotel }}</div>
-        <div class="text-[10px] text-text-muted">Factura #{{ reminderInvoice.id }} — ${{ reminderInvoice.amount }}</div>
+    <!-- ─── Recordar (REQ-BIL-05) ──────────────────────────────────────────── -->
+    <AppModal v-if="remindTarget" size="md" title="Enviar recordatorio" :subtitle="remindTarget.hotelName" @close="remindTarget = null">
+      <div class="space-y-3">
+        <div class="rounded-xl bg-surface p-4">
+          <div class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Se va a enviar</div>
+          <div class="mt-0.5 text-sm font-bold text-navy">{{ templateLabel(expectedTemplate(remindTarget)) }}</div>
+          <p class="mt-1 text-[11px] text-text-muted">
+            La plantilla la elige el estado de la factura y si el hotel tiene cobro automático. Se
+            edita en Plantillas de correo; desde acá no se escribe el texto.
+          </p>
+        </div>
+        <div class="rounded-xl bg-surface p-4">
+          <div class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Destinatario</div>
+          <div class="mt-0.5 text-sm font-bold text-navy">{{ remindTarget.hotelEmail || 'El hotel no tiene correo cargado' }}</div>
+        </div>
+        <p class="text-[11px] text-text-muted">No se puede enviar más de un recordatorio cada 24 horas.</p>
       </div>
-      <div class="mb-4"><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Tipo de Recordatorio</label>
-        <select v-model="reminderType" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
-          <option value="gentle">Amable — Primer recordatorio</option>
-          <option value="firm">Firme — Segundo recordatorio</option>
-          <option value="urgent">Urgente — Último aviso antes de suspensión</option>
-        </select>
-      </div>
-      <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Mensaje Personalizado</label><textarea v-model="reminderMessage" rows="4" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy resize-none" placeholder="Escriba un mensaje adicional..."></textarea></div>
       <template #footer>
-        <button @click="showReminderModal = false" class="px-4 py-2.5 bg-surface text-text-secondary rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer">Cancelar</button>
-        <button @click="confirmReminder" class="px-4 py-2.5 bg-navy text-white rounded-xl text-sm font-extrabold hover:shadow-lg transition-colors cursor-pointer">Enviar</button>
+        <button type="button" class="cursor-pointer px-4 py-2.5 text-sm font-bold text-text-secondary" @click="remindTarget = null">Cancelar</button>
+        <button type="button" :disabled="remindSending || !remindTarget.hotelEmail"
+          class="cursor-pointer rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:shadow-lg disabled:cursor-default disabled:opacity-50"
+          @click="confirmRemind">{{ remindSending ? 'Enviando...' : 'Enviar' }}</button>
       </template>
     </AppModal>
 
-    <!-- Modal: Confirmar Pago -->
-    <AppModal v-if="showConfirmModal" size="md" title="Confirmar Pago" body-class="p-6 text-center" @close="showConfirmModal = false">
-      <div class="w-16 h-16 bg-teal/10 rounded-full flex items-center justify-center mx-auto mb-4">
-        <span class="text-3xl">✅</span>
-      </div>
-      <div class="text-sm font-bold text-navy mb-1">¿Marcar como pagado?</div>
-      <div class="text-[10px] text-text-muted">Factura #{{ confirmInvoice.id }} — {{ confirmInvoice.hotel }} — ${{ confirmInvoice.amount }}</div>
+    <!-- ─── Registrar pago manual (REQ-BIL-06) ─────────────────────────────── -->
+    <AppModal v-if="payTarget" size="md" title="Registrar pago manual" :subtitle="payTarget.hotelName" @close="payTarget = null">
+      <form class="space-y-3" @submit.prevent="confirmManualPayment">
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Monto</span>
+            <input v-model.number="payForm.amount" type="number" step="0.01" min="0.01" required
+              class="mt-1 h-10 w-full rounded-xl border border-border bg-surface px-3 text-sm tabular-nums focus:border-navy focus:outline-none">
+          </label>
+          <label class="block">
+            <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Moneda</span>
+            <input v-model="payForm.currency" type="text" maxlength="3" required
+              class="mt-1 h-10 w-full rounded-xl border border-border bg-surface px-3 text-sm uppercase focus:border-navy focus:outline-none">
+          </label>
+        </div>
+        <label class="block">
+          <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Fecha del pago</span>
+          <input v-model="payForm.paidAt" type="date" required :max="today"
+            class="mt-1 h-10 w-full rounded-xl border border-border bg-surface px-3 text-sm focus:border-navy focus:outline-none">
+        </label>
+        <label class="block">
+          <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Referencia</span>
+          <input v-model="payForm.reference" type="text" required placeholder="N° de transferencia, recibo..."
+            class="mt-1 h-10 w-full rounded-xl border border-border bg-surface px-3 text-sm focus:border-navy focus:outline-none">
+        </label>
+        <label class="block">
+          <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Servicio pagado hasta</span>
+          <input v-model="payForm.periodEnd" type="date" required
+            class="mt-1 h-10 w-full rounded-xl border border-border bg-surface px-3 text-sm focus:border-navy focus:outline-none">
+          <span class="mt-1 block text-[11px] text-text-muted">La suscripción queda activa hasta esta fecha.</span>
+        </label>
+        <label class="block">
+          <span class="text-[10px] font-bold uppercase tracking-wide text-text-muted">Notas</span>
+          <textarea v-model="payForm.notes" rows="2" class="mt-1 w-full resize-none rounded-xl border border-border bg-surface px-3 py-2 text-sm focus:border-navy focus:outline-none"></textarea>
+        </label>
+        <p class="rounded-xl bg-gold/10 px-3 py-2 text-[11px] font-bold text-gold">
+          Esto marca la factura como pagada y reactiva el servicio del hotel. No se puede deshacer desde acá.
+        </p>
+      </form>
       <template #footer>
-        <button @click="showConfirmModal = false" class="px-4 py-2.5 bg-surface text-text-secondary rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer">Cancelar</button>
-        <button @click="confirmMarkAsPaid" class="px-4 py-2.5 bg-teal text-white rounded-xl text-sm font-extrabold hover:shadow-lg transition-colors cursor-pointer">Confirmar Pago</button>
+        <button type="button" class="cursor-pointer px-4 py-2.5 text-sm font-bold text-text-secondary" @click="payTarget = null">Cancelar</button>
+        <button type="button" :disabled="paySaving || !payFormValid"
+          class="cursor-pointer rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:shadow-lg disabled:cursor-default disabled:opacity-50"
+          @click="confirmManualPayment">{{ paySaving ? 'Registrando...' : 'Registrar pago' }}</button>
       </template>
     </AppModal>
-
-    <!-- Toast -->
-    <div v-if="showToast" class="fixed bottom-6 right-6 bg-navy text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3 z-50 animate-fade-in">
-      <span class="text-lg">{{ toastIcon }}</span>
-      <span class="text-sm font-bold">{{ toastMessage }}</span>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+// /admin/billing — lo que los hoteles le pagan a la plataforma.
+//
+// La versión anterior no leía facturas: las FABRICABA desde `PlatformService.subscriptions()`
+// (una fila por hotel), con el precio del plan como monto, `hotels.createdAt` como fecha de
+// emisión —que ese endpoint no devuelve, por eso la columna salía vacía— y "Pagado" para todos.
+// "Ver" reventaba en `selectedInvoice.hotel[0]` y los botones no llamaban a ningún endpoint.
+//
+// Ahora todo sale de `platform_invoices` a través de `PlatformBilling.service.ts`, los filtros y
+// la paginación los resuelve el servidor, y las dos acciones (recordar, registrar pago) son
+// llamadas reales que además dejan audit log.
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useToast } from '@/composables/useToast'
-import { PlatformService } from '@/services/Platform.service'
+import { ApiError } from '@/services/http'
+import {
+  PlatformBillingService,
+  type PlatformInvoice, type PlatformInvoiceDetail, type PlatformBillingStats,
+} from '@/services/PlatformBilling.service'
+import { PlansService, type Plan } from '@/services/Plans.service'
+import {
+  statusLabel, statusBadge, methodLabel, templateLabel, expectedTemplate,
+  subscriptionStatusLabel, invoiceLabel, shortDate, money, isoFromDayInput,
+} from '@/utils/platform-billing-labels'
 import AppModal from '@/components/ui/AppModal.vue'
-import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
+import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
+import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
+import Icon from '@/components/ui/Icon.vue'
 
 const toast = useToast()
+
+const STATUS_OPTIONS = ['open', 'paid', 'failed', 'void', 'uncollectible'] as const
+const PAGE_SIZE = 20
+/** Días de servicio que se asumen al registrar un pago suelto (sin período en la factura). */
+const DEFAULT_PERIOD_DAYS = 30
+const MS_PER_DAY = 86_400_000
+
 const loading = ref(true)
-const searchQuery = ref('')
-const statusFilter = ref('all')
-const planFilter = ref('all')
-const dateFilter = ref('all')
-const sortBy = ref('date-desc')
-const activeTab = ref('all')
-const showDetailModal = ref(false)
-const showReminderModal = ref(false)
-const showConfirmModal = ref(false)
-const selectedInvoice = ref<any>({})
-const reminderInvoice = ref<any>({})
-const confirmInvoice = ref<any>({})
-const reminderType = ref('gentle')
-const reminderMessage = ref('')
-const showToast = ref(false)
-const toastMessage = ref('')
-const toastIcon = ref('')
+const loadingStats = ref(true)
+const error = ref('')
+const exporting = ref(false)
 
-const EST_EN: Record<string, string> = { paid: 'Pagado', pendiente: 'Pendiente', vencido: 'Vencido' }
-const PLAN_PRICE: Record<string, number> = { enterprise: 199, professional: 99, starter: 49, essential: 49 }
+const invoices = ref<PlatformInvoice[]>([])
+const total = ref(0)
+const page = ref(1)
+const stats = ref<PlatformBillingStats | null>(null)
+const plans = ref<Plan[]>([])
 
-const invoices = ref<any[]>([])
+const filters = reactive({ q: '', status: '', planId: '', from: '', to: '' })
+
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+const rangeLabel = computed(() => {
+  const desde = (page.value - 1) * PAGE_SIZE + 1
+  return `${desde}–${Math.min(desde + PAGE_SIZE - 1, total.value)} de ${total.value}`
+})
+const hasFilters = computed(() => Boolean(filters.q.trim() || filters.status || filters.planId || filters.from || filters.to))
+const listSubtitle = computed(() => (loading.value ? 'Cargando...' : `${total.value} factura${total.value === 1 ? '' : 's'}${hasFilters.value ? ' (filtradas)' : ''}`))
+
+const fmt = (n: number): string => Number(n ?? 0).toLocaleString('es-DO', { maximumFractionDigits: 0 })
+const isClaimable = (i: { status: string }): boolean => i.status === 'open' || i.status === 'failed'
+const timeOf = (iso: string): string => {
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })
+}
+const periodLabel = (i: PlatformInvoice): string => {
+  const desde = shortDate(i.periodStart)
+  const hasta = shortDate(i.periodEnd)
+  if (desde && hasta) return `${desde} → ${hasta}`
+  return desde || hasta
+}
+
+async function load(): Promise<void> {
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await PlatformBillingService.list({ ...activeFilters(), page: page.value, limit: PAGE_SIZE })
+    invoices.value = res.data
+    total.value = res.total
+  } catch (e) {
+    // El error se muestra EN la tarjeta, no solo como un toast que se va a los 3 segundos: si la
+    // lista está vacía por un fallo, el admin tiene que poder distinguirlo de "no hay facturas".
+    error.value = e instanceof ApiError ? e.message : 'No se pudo cargar la facturación'
+    invoices.value = []
+    total.value = 0
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadStats(): Promise<void> {
+  loadingStats.value = true
+  try {
+    stats.value = await PlatformBillingService.stats({ from: filters.from, to: filters.to })
+  } catch {
+    stats.value = null // sin números inventados: si no se pudieron traer, no se muestran
+  } finally {
+    loadingStats.value = false
+  }
+}
+
+function activeFilters() {
+  return { q: filters.q.trim(), status: filters.status, planId: filters.planId, from: filters.from, to: filters.to }
+}
+
+function clearFilters(): void {
+  filters.q = ''
+  filters.status = ''
+  filters.planId = ''
+  filters.from = ''
+  filters.to = ''
+}
+
+// El texto se debouncea (cada tecla sería un request); los selects y las fechas van directo.
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+watch(() => filters.q, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => { page.value === 1 ? load() : (page.value = 1) }, 350)
+})
+watch([() => filters.status, () => filters.planId], () => { page.value === 1 ? load() : (page.value = 1) })
+// El rango de fechas también mueve las stats: los totales son del período que se está mirando.
+watch([() => filters.from, () => filters.to], () => {
+  loadStats()
+  page.value === 1 ? load() : (page.value = 1)
+})
+watch(page, load)
 
 onMounted(async () => {
-  loading.value = true
+  await Promise.all([load(), loadStats()])
   try {
-    const d = await PlatformService.subscriptions()
-    invoices.value = (d.data ?? []).map((h: any, i: number) => {
-      const plan = String(h.plan || 'starter').toLowerCase()
-      const price = PLAN_PRICE[plan] ?? 49
-      const estado = h.status === 'pendiente' ? 'Pendiente' : h.status === 'suspendido' ? 'Vencido' : 'Pagado'
-      return {
-        id: `INV-${String(i + 1).padStart(3, '0')}`,
-        hotel: h.name,
-        plan: plan.charAt(0).toUpperCase() + plan.slice(1),
-        concept: `Plan ${plan} — Junio 2026`,
-        amount: price, method: 'Tarjeta', status: estado,
-        date: h.createdAt ? String(h.createdAt).slice(0, 10) : '',
-        dueDate: '', notes: '',
-      }
+    plans.value = (await PlansService.list()).data ?? []
+  } catch {
+    plans.value = [] // el filtro de plan se queda en "Todos"; el listado funciona igual
+  }
+})
+
+async function exportCsv(): Promise<void> {
+  exporting.value = true
+  try {
+    await PlatformBillingService.exportCsv(activeFilters())
+    toast.success('CSV descargado', 'Se exportó lo que está filtrado, no solo esta página')
+  } catch (e) {
+    toast.error('No se pudo exportar', e instanceof ApiError ? e.message : undefined)
+  } finally {
+    exporting.value = false
+  }
+}
+
+// ─── Detalle ──────────────────────────────────────────────────────────────────
+const detailOpen = ref(false)
+const detailLoading = ref(false)
+const detail = ref<PlatformInvoiceDetail | null>(null)
+
+async function openDetail(row: PlatformInvoice | PlatformInvoiceDetail): Promise<void> {
+  detailOpen.value = true
+  detailLoading.value = true
+  detail.value = null
+  try {
+    detail.value = await PlatformBillingService.detail(row.id)
+  } catch (e) {
+    detailOpen.value = false
+    toast.error('No se pudo abrir la factura', e instanceof ApiError ? e.message : undefined)
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+/** La ficha se declara como DATOS y se filtran los vacíos: sin filas de "—". */
+const detailFields = computed(() => {
+  const d = detail.value
+  if (!d) return []
+  return [
+    { label: 'Hotel', value: d.hotelName },
+    { label: 'Correo', value: d.hotelEmail },
+    { label: 'Plan', value: d.planName },
+    { label: 'Período', value: periodLabel(d) },
+    { label: 'Método', value: methodLabel(d.method) },
+    { label: 'Referencia', value: d.reference },
+    { label: 'Emisión', value: shortDate(d.issuedAt) },
+    { label: 'Vencimiento', value: shortDate(d.dueAt) },
+    { label: 'Fecha de pago', value: shortDate(d.paidAt) },
+    { label: 'Pagado', value: d.amountPaid ? money(d.amountPaid, d.currency) : '' },
+    { label: 'Suscripción', value: d.subscriptionStatus ? subscriptionStatusLabel(d.subscriptionStatus) : '' },
+    { label: 'Cobro', value: d.subscriptionStatus ? (d.isRecurring ? 'Automático con tarjeta' : 'Manual') : '' },
+  ].filter((f) => Boolean(f.value))
+})
+
+// ─── Recordar ─────────────────────────────────────────────────────────────────
+const remindTarget = ref<PlatformInvoiceDetail | null>(null)
+const remindSending = ref(false)
+
+async function openRemind(row: PlatformInvoice | PlatformInvoiceDetail): Promise<void> {
+  // Hace falta el detalle: `isRecurring` y el correo del hotel no vienen en la fila del listado.
+  const full = 'hotelEmail' in row ? row : await PlatformBillingService.detail(row.id).catch(() => null)
+  if (!full) { toast.error('No se pudo abrir el recordatorio'); return }
+  remindTarget.value = full
+}
+
+async function confirmRemind(): Promise<void> {
+  const target = remindTarget.value
+  if (!target) return
+  remindSending.value = true
+  try {
+    const res = await PlatformBillingService.remind(target.id)
+    toast.success('Recordatorio enviado', `${templateLabel(res.template)} → ${res.to}`)
+    remindTarget.value = null
+    if (detail.value?.id === target.id) detail.value = { ...detail.value, lastReminderAt: res.sentAt }
+    await load()
+  } catch (e) {
+    // El 409 del backend trae el motivo REAL ("Ya se envió un recordatorio hoy a las 14:05"):
+    // se muestra tal cual, no se reemplaza por un mensaje genérico.
+    toast.error('No se envió', e instanceof ApiError ? e.message : 'Error inesperado')
+  } finally {
+    remindSending.value = false
+  }
+}
+
+// ─── Pago manual ──────────────────────────────────────────────────────────────
+const payTarget = ref<PlatformInvoiceDetail | null>(null)
+const paySaving = ref(false)
+const today = new Date().toISOString().slice(0, 10)
+const payForm = reactive({ amount: 0, currency: 'USD', paidAt: today, reference: '', periodEnd: '', notes: '' })
+
+const payFormValid = computed(() =>
+  payForm.amount > 0 && payForm.currency.trim().length === 3 && !!payForm.paidAt && !!payForm.reference.trim() && !!payForm.periodEnd)
+
+async function openManualPayment(row: PlatformInvoice | PlatformInvoiceDetail): Promise<void> {
+  const full = 'hotelEmail' in row ? row : await PlatformBillingService.detail(row.id).catch(() => null)
+  if (!full) { toast.error('No se pudo abrir el registro de pago'); return }
+  payTarget.value = full
+  payForm.amount = full.amountDue
+  payForm.currency = full.currency || 'USD'
+  payForm.paidAt = today
+  payForm.reference = ''
+  payForm.notes = ''
+  // El período que ya trae la factura manda; si no tiene, un mes desde hoy (el ciclo habitual).
+  payForm.periodEnd = full.periodEnd
+    ? full.periodEnd.slice(0, 10)
+    : new Date(Date.now() + DEFAULT_PERIOD_DAYS * MS_PER_DAY).toISOString().slice(0, 10)
+}
+
+async function confirmManualPayment(): Promise<void> {
+  const target = payTarget.value
+  if (!target || !payFormValid.value) return
+  paySaving.value = true
+  try {
+    const res = await PlatformBillingService.manualPayment({
+      hotelId: target.hotelId,
+      invoiceId: target.id,
+      amount: payForm.amount,
+      currency: payForm.currency.trim().toUpperCase(),
+      // Las fechas del formulario son `YYYY-MM-DD`; el backend espera ISO. Ver `isoFromDayInput`:
+      // hoy viaja como el instante actual, o el backend lo lee como futuro y rechaza el pago.
+      paidAt: isoFromDayInput(payForm.paidAt),
+      periodEnd: isoFromDayInput(payForm.periodEnd),
+      reference: payForm.reference.trim(),
+      ...(payForm.notes.trim() ? { notes: payForm.notes.trim() } : {}),
     })
-  } catch { toast.error('No se pudo cargar la facturación') } finally { loading.value = false }
-})
-
-const tabs = computed(() => {
-  const inv = invoices.value
-  return [
-    { label: 'Todas', value: 'all', count: inv.length },
-    { label: 'Pagadas', value: 'Pagado', count: inv.filter(i => i.status === 'Pagado').length },
-    { label: 'Pendientes', value: 'Pendiente', count: inv.filter(i => i.status === 'Pendiente').length },
-    { label: 'Vencidas', value: 'Vencido', count: inv.filter(i => i.status === 'Vencido').length },
-  ]
-})
-
-const stats = computed(() => {
-  const inv = invoices.value
-  const total = inv.reduce((s, i) => s + i.amount, 0)
-  const pagado = inv.filter(i => i.status === 'Pagado').reduce((s, i) => s + i.amount, 0)
-  const pend = inv.filter(i => i.status === 'Pendiente').reduce((s, i) => s + i.amount, 0)
-  const venc = inv.filter(i => i.status === 'Vencido').reduce((s, i) => s + i.amount, 0)
-  const tasa = total > 0 ? Math.round((pagado / total) * 1000) / 10 : 0
-  return [
-    { label: 'Ingresos Totales', value: `$${total.toLocaleString()}`, color: 'text-navy' },
-    { label: 'Pagados', value: `$${pagado.toLocaleString()}`, color: 'text-teal' },
-    { label: 'Pendientes', value: `$${pend.toLocaleString()}`, color: 'text-orange' },
-    { label: 'Vencidos', value: `$${venc.toLocaleString()}`, color: 'text-red' },
-    { label: 'Tasa de Cobro', value: `${tasa}%`, color: 'text-teal' },
-  ]
-})
-
-const activeFiltersCount = computed(() => {
-  let count = 0
-  if (statusFilter.value !== 'all') count++
-  if (planFilter.value !== 'all') count++
-  if (dateFilter.value !== 'all') count++
-  if (searchQuery.value) count++
-  return count
-})
-
-const filteredInvoices = computed(() => {
-  let result = [...invoices.value]
-
-  if (activeTab.value !== 'all') result = result.filter(i => i.status === activeTab.value)
-  if (statusFilter.value !== 'all') result = result.filter(i => i.status === statusFilter.value)
-  if (planFilter.value !== 'all') result = result.filter(i => i.plan === planFilter.value)
-  if (searchQuery.value) {
-    const q = searchQuery.value.toLowerCase()
-    result = result.filter(i => i.id.toLowerCase().includes(q) || i.hotel.toLowerCase().includes(q) || i.concept.toLowerCase().includes(q))
+    if (res.warning) toast.warning('Pago registrado', res.warning)
+    else toast.success('Pago registrado', `${target.hotelName} queda activo hasta ${shortDate(res.invoice.periodEnd || payForm.periodEnd)}`)
+    payTarget.value = null
+    // La fila se actualiza sin recargar la página: el estado sale del servidor, no de un parche local.
+    if (detail.value?.id === res.invoice.id) detail.value = res.invoice
+    await Promise.all([load(), loadStats()])
+  } catch (e) {
+    toast.error('No se pudo registrar el pago', e instanceof ApiError ? e.message : 'Error inesperado')
+  } finally {
+    paySaving.value = false
   }
-
-  const [field, dir] = sortBy.value.split('-')
-  result.sort((a: any, b: any) => {
-    const aVal = a[field]
-    const bVal = b[field]
-    const cmp = typeof aVal === 'string' ? aVal.localeCompare(bVal) : aVal - bVal
-    return dir === 'desc' ? -cmp : cmp
-  })
-
-  return result
-})
-
-const toggleSort = (field: string) => {
-  if (sortBy.value.startsWith(field)) {
-    sortBy.value = sortBy.value.endsWith('asc') ? `${field}-desc` : `${field}-asc`
-  } else {
-    sortBy.value = `${field}-desc`
-  }
-}
-
-const clearAllFilters = () => {
-  searchQuery.value = ''
-  statusFilter.value = 'all'
-  planFilter.value = 'all'
-  dateFilter.value = 'all'
-}
-
-const statusClass = (s: string) => ({ 'Pagado': 'bg-teal/10 text-teal', 'Pendiente': 'bg-orange/10 text-orange', 'Vencido': 'bg-red/10 text-red' }[s] || '')
-
-const openInvoice = (invoice: any) => { selectedInvoice.value = { ...invoice }; showDetailModal.value = true }
-
-const sendReminder = (invoice: any) => { reminderInvoice.value = { ...invoice }; reminderType.value = 'gentle'; reminderMessage.value = ''; showReminderModal.value = true }
-
-const confirmReminder = () => { showReminderModal.value = false; showToastMessage('📧', `Recordatorio enviado a ${reminderInvoice.value.hotel}`) }
-
-const markAsPaid = (invoice: any) => { confirmInvoice.value = { ...invoice }; showConfirmModal.value = true }
-
-const confirmMarkAsPaid = () => {
-  const idx = invoices.value.findIndex(i => i.id === confirmInvoice.value.id)
-  if (idx !== -1) { invoices.value[idx].status = 'Pagado'; invoices.value[idx].method = 'Manual' }
-  showConfirmModal.value = false
-  showToastMessage('✅', `Factura #${confirmInvoice.value.id} marcada como pagada`)
-}
-
-const exportInvoices = () => {
-  const headers = ['Factura', 'Hotel', 'Plan', 'Concepto', 'Monto', 'Método', 'Estado', 'Fecha']
-  const rows = filteredInvoices.value.map(i => [i.id, i.hotel, i.plan, i.concept, `$${i.amount}`, i.method, i.status, i.date])
-  const csv = [headers, ...rows].map(r => r.join(',')).join('\n')
-  const blob = new Blob([csv], { type: 'text/csv' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `facturas-${new Date().toISOString().slice(0,10)}.csv`
-  a.click()
-  URL.revokeObjectURL(url)
-  showToastMessage('📥', 'Facturas exportadas correctamente')
-}
-
-const showToastMessage = (icon: string, message: string) => {
-  toastIcon.value = icon
-  toastMessage.value = message
-  showToast.value = true
-  setTimeout(() => { showToast.value = false }, 3000)
 }
 </script>

@@ -34,7 +34,7 @@ export async function readSignupPolicy(
  * Checkout tiene que cobrar de una (política apagada, tarjeta ya cargada, o prueba vencida).
  *
  * Se redondea hacia arriba y sale de `trialEndsAt`, no de `TRIAL_DAYS`: si alguien abandona el
- * Checkout el día 5 de 7, al volver le quedan 2 — no se le regalan 7 nuevos por reintentar.
+ * Checkout el día 5 de 15, al volver le quedan 10 — no se le regalan 15 nuevos por reintentar.
  */
 export async function pendingTrialDays(
   subscriptionsRepo: RepositoryAdapter<any>,

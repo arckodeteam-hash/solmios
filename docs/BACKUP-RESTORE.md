@@ -75,7 +75,9 @@ sudo -u postgres pg_dump -Fc -d solmios -f /var/backups/solmios/solmios-$(date +
 ```
 
 > Ajustar el directorio `/var/backups/solmios/` según lo que exista en el server (crear con
-> `mkdir -p` y permisos para el user `postgres`). **(completar: confirmar path definitivo en prod).**
+> `mkdir -p` y permisos para el user `postgres`). Los backups que crea la pantalla (§2b) van a
+> `/www/wwwroot/hotel.zx89.site/solmios/backend/data/backups/` (default de `BACKUP_DIR`, prod no lo
+> sobreescribe) — restore verificado en prod el 2026-09-10, ver `openspec/changes/monitoreo-plataforma-real/tasks.md` §7.4.
 
 Backup en texto plano (SQL, más portable pero sin restore selectivo), como alternativa:
 
@@ -120,6 +122,25 @@ sudo -u postgres psql -d solmios -f /var/backups/solmios/solmios-YYYYMMDD-HHMMSS
 periódicamente los dumps a almacenamiento externo/offsite **(completar: definir destino offsite)**.
 
 ---
+
+## 2b. Backups desde la pantalla `/admin/monitoring` (solo `super_admin`)
+
+La pantalla de monitoreo crea, lista, descarga y borra volcados completos de la base
+(`GET/POST /api/admin/backups`, `GET /api/admin/backups/:id/download`, `DELETE /api/admin/backups/:id`).
+Usa `pg_dump` si hay `DATABASE_URL` (el binario tiene que estar en el `PATH` del servicio; la
+contraseña viaja por `PGPASSWORD`, nunca por argv) y una copia consistente (`VACUUM INTO`) si es
+SQLite (`DB_PATH`). Crear y descargar quedan en el audit log.
+
+Variables de entorno (van en `backend/.env`, todas opcionales):
+
+| Variable | Default | Qué hace |
+|---|---|---|
+| `BACKUP_DIR` | `backend/data/backups` (se crea si falta) | Directorio de los volcados. Tiene que quedar FUERA de `frontend/dist` y de `uploads/`: un backup nunca se sirve como estático. |
+| `BACKUP_RETENTION_COUNT` | `10` | Cuántos se conservan: al crear el N+1 se borra el más viejo. |
+| `ERROR_LOG_RETENTION_DAYS` | `30` | Días que se conservan las filas de `error_logs` (5xx/429 agrupados por ruta+mensaje); el cron de retención corre una vez por día. |
+
+Riesgo residual: el archivo queda sin cifrar en disco. El id de descarga se resuelve por coincidencia
+exacta contra el listado real del directorio, nunca concatenando el id del cliente a una ruta.
 
 ## 3. Portabilidad — recrear el schema desde cero
 

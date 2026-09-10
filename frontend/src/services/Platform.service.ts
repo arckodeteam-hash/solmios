@@ -1,6 +1,21 @@
 import { http } from './http'
+import type {
+  BackupCreated,
+  BackupsListResponse,
+  ErrorLogsResponse,
+  HttpMetricsSnapshot,
+  QueuesSnapshot,
+  SystemSnapshot,
+} from '@/types/monitoring'
 
 interface List { data: any[]; total: number }
+
+export interface AnnouncementsReach {
+  hotels: number
+  users: number
+  /** `openRate: null` = todavía no hay lecturas. NO es lo mismo que 0%. */
+  lastAnnouncement: { id: string; title: string; recipients: number; seenCount: number; openRate: number | null } | null
+}
 
 /**
  * Credenciales de la APP de Meta, a nivel plataforma. Distintas de las de cada hotel: este secreto
@@ -18,6 +33,19 @@ export interface MetaAppEstado {
   puedeGuardar: boolean
 }
 
+/** Estado de la API key de Resend. `last4` sirve para reconocer cuál está cargada sin revelarla. */
+export interface ResendEstado { configured: boolean; last4: string | null }
+
+/**
+ * #102: estado de un servicio de plataforma. `source` null ⇔ `configured` false. El backend
+ * NUNCA manda el valor ni una pista (ni últimos 4, ni máscara): solo si está y de dónde sale.
+ */
+export interface ServicioEstado { configured: boolean; source: 'env' | 'configuration' | null }
+export type ServicioClave =
+  | 'stripe' | 'stripeWebhook' | 'turnstile' | 'publicUrl' | 'metaApp'
+  | 'resend' | 'smtp' | 'googleMaps' | 'channex'
+export type SettingsStatus = Record<ServicioClave, ServicioEstado>
+
 export const PlatformService = {
   /** Estado de las credenciales de la app de Meta. NUNCA devuelve el secreto. */
   getMetaWhatsapp: () => http.get<MetaAppEstado>('/admin/meta-whatsapp'),
@@ -25,10 +53,37 @@ export const PlatformService = {
   saveMetaWhatsapp: (data: { appId?: string; appSecret: string }) =>
     http.put<MetaAppEstado>('/admin/meta-whatsapp', data),
 
+  // #100: API key de Resend (respaldo cuando no hay SMTP). Solo estado: la key nunca vuelve.
+  getResend: () => http.get<ResendEstado>('/admin/settings/resend'),
+  saveResend: (apiKey: string) => http.put<ResendEstado>('/admin/settings/resend', { apiKey }),
+  deleteResend: () => http.delete<ResendEstado>('/admin/settings/resend'),
+  // #102: qué servicios están configurados y desde dónde (env | panel). Solo lectura, sin secretos.
+  getSettingsStatus: () => http.get<SettingsStatus>('/admin/settings/status'),
+
   subscriptions: () => http.get<any>('/admin/subscriptions'),
   // Auditoría extraída a AuditLogService (services/AuditLog.service.ts) — M45 #313
   monitoring: () => http.get<any>('/admin/monitoring'),
+
+  // Monitoreo real de la plataforma (#96): métricas HTTP en memoria, errores persistidos,
+  // salud de sistema/BD, colas y backups. Todas las rutas son super_admin.
+  monitoringApi: () => http.get<HttpMetricsSnapshot>('/admin/monitoring/api'),
+  monitoringErrors: (limit?: number) =>
+    http.get<ErrorLogsResponse>(`/admin/monitoring/errors${limit ? `?limit=${limit}` : ''}`),
+  monitoringErrorRemove: (id: string) => http.delete<void>(`/admin/monitoring/errors/${encodeURIComponent(id)}`),
+  monitoringSystem: () => http.get<SystemSnapshot>('/admin/monitoring/system'),
+  monitoringQueues: () => http.get<QueuesSnapshot>('/admin/monitoring/queues'),
+  backupsList: () => http.get<BackupsListResponse>('/admin/backups'),
+  /** Sin body a propósito: el motor y el destino los decide el servidor. */
+  backupCreate: () => http.post<BackupCreated>('/admin/backups', {}),
+  /** Binario con el mismo JWT: Blob para bajarlo con un <a download>. */
+  backupDownload: (id: string) => http.getBlob(`/admin/backups/${encodeURIComponent(id)}/download`),
+  backupDelete: (id: string) => http.delete<void>(`/admin/backups/${encodeURIComponent(id)}`),
   announcements: () => http.get<List>('/admin/announcements'),
+  /**
+   * Alcance MEDIDO de los anuncios. Antes la tarjeta "Alcance" del panel tenía los cuatro números
+   * escritos en el HTML (24 hoteles, 89 usuarios, 72% de apertura, 18% de clicks).
+   */
+  announcementsReach: () => http.get<AnnouncementsReach>('/admin/announcements/reach'),
   apiKeys: (hotelId?: string) => http.get<List>(`/api-keys${hotelId ? `?hotelId=${hotelId}` : ''}`),
   anuncios: () => http.get<List>('/anuncios'),
   users: (hotelId?: string) => http.get<List>(`/users${hotelId ? `?hotelId=${hotelId}` : ''}`),
@@ -129,9 +184,28 @@ export const HotelModuleOverridesService = {
 }
 
 // Cuenta Channex a nivel PLATAFORMA (white-label). Solo super_admin. La API key nunca vuelve cruda.
-export interface ChannexStatus { environment: string; hasKey: boolean; keyMasked: string; channexUserId: string }
+/** Una property que está en la cuenta de Channex y ningún hotel referencia (REQ-CAN-09). */
+export interface ChannexOrphanProperty { id: string; title: string }
+
+export interface ChannexStatus {
+  environment: string
+  hasKey: boolean
+  keyMasked: string
+  channexUserId: string
+  /** Raíz del dashboard del entorno configurado: staging y producción son cuentas distintas. */
+  dashboardUrl: string
+  webhook: { registered: boolean; callbackUrl: string; error?: string }
+  properties: { inAccount: number; hotelsWithProperty: number; orphans: ChannexOrphanProperty[]; error?: string }
+  /** Vencimiento del plan, cargado a mano: Channex no lo expone por API. */
+  planExpiresAt: string
+  /** Días que faltan (negativo = vencido). `null` si no está cargado. */
+  planDaysLeft: number | null
+  planExpired: boolean
+}
+
 export const ChannexAdminService = {
   status: () => _http.get<ChannexStatus>('/admin/channex-config'),
-  save: (patch: { apiKey?: string; environment?: string; channexUserId?: string }) => _http.put<ChannexStatus>('/admin/channex-config', patch),
+  save: (patch: { apiKey?: string; environment?: string; channexUserId?: string; planExpiresAt?: string }) =>
+    _http.put<ChannexStatus>('/admin/channex-config', patch),
   test: () => _http.post<{ success: boolean; message: string; environment: string }>('/admin/channex-config/test'),
 }

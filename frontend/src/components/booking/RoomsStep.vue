@@ -182,7 +182,36 @@
                 >
                   <option v-for="a in maxChildAgeOptions" :key="a" :value="a - 1">{{ a - 1 }}</option>
                 </select>
+                <!-- Tarea 21 (Identificar bebés, 2026-09-08) — la política del hotel puede marcar
+                     esta edad como bebé (subconjunto de "no consume plaza"): se lo decimos acá
+                     mismo, apenas elige la edad, sin esperar a agregar la habitación al carrito. -->
+                <span v-if="childAgeClassification(rt, i) === 'baby'" data-testid="baby-badge"
+                  class="mt-1 inline-flex items-center gap-1 rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-700">
+                  {{ t('rooms.guests.babyBadge') }}
+                </span>
               </label>
+            </div>
+
+            <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 a Sí/No — solo aparece si
+                 HAY un bebé en la composición de ESTA tarjeta (asociado a la habitación, no al
+                 carrito) Y el hotel habilitó la cuna (Página pública → Motor de Reservas). Sin cantidad: el
+                 pedido es explícito en que NO se pregunta cuántas cunas, solo Sí/No. -->
+            <div v-if="shouldOfferCrib(rt)" class="space-y-2.5 rounded-lg bg-cyan-50/60 p-2.5" data-testid="baby-extras">
+              <div class="flex items-center justify-between gap-3">
+                <span class="text-sm font-bold text-navy">{{ t('rooms.guests.needsCrib') }}</span>
+                <div class="flex overflow-hidden rounded-full border border-slate-200 text-xs font-bold">
+                  <button type="button" data-testid="crib-yes"
+                    class="px-3 py-1.5 transition"
+                    :class="composer(rt).needsCrib ? 'bg-cyan text-white' : 'bg-white text-navy hover:bg-slate-50'"
+                    @click="setNeedsCrib(rt, true)"
+                  >{{ t('common.yes') }}</button>
+                  <button type="button" data-testid="crib-no"
+                    class="px-3 py-1.5 transition"
+                    :class="!composer(rt).needsCrib ? 'bg-cyan text-white' : 'bg-white text-navy hover:bg-slate-50'"
+                    @click="setNeedsCrib(rt, false)"
+                  >{{ t('common.no') }}</button>
+                </div>
+              </div>
             </div>
 
             <div class="flex items-center justify-between gap-3 border-t border-slate-200 pt-3">
@@ -243,7 +272,7 @@
     <div v-if="store.cart.length > 0" class="rounded-2xl border-2 border-cyan/30 bg-cyan/5 p-4 space-y-3">
       <h3 class="text-sm font-black text-navy">{{ t('rooms.cartTitle') }}</h3>
       <ul class="space-y-2">
-        <li v-for="line in store.cart" :key="line.key" class="flex items-center justify-between gap-2 text-sm">
+        <li v-for="line in store.cart" :key="line.key" class="flex items-center justify-between gap-2 text-sm" data-testid="cart-line">
           <div class="min-w-0">
             <p class="truncate font-bold text-navy">{{ prettify(line.roomName) }} · {{ cartLineGuestsLabel(line) }}</p>
             <p class="text-xs text-text-muted">{{ line.quantity }} × {{ formatPrice(line.unitPrice, store.displayCurrency) }}</p>
@@ -409,6 +438,7 @@ const {
   composer, setAdults, setChildrenCount, setChildAge,
   composition, matchedRow, composedPrice, composedPricePerNight,
   canAddComposition, addComposedRoom, maxChildAgeOptions, capacityBlockReason,
+  childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib,
 } = useGuestComposer()
 
 /** Requerimiento 6 (2026-09-03) — texto del motivo cuando `capacityBlockReason` bloquea por
@@ -421,16 +451,21 @@ function maxLabel(reason: 'max_adults' | 'max_children' | 'capacity'): string {
 }
 
 /** Composición de una línea YA en el carrito, para el resumen al pie del step. Líneas legacy
- *  (sin `adults`/`childrenAges` — ej. BookingModal.vue de la landing) siguen mostrando "para N". */
+ *  (sin `adults`/`childrenAges` — ej. BookingModal.vue de la landing) siguen mostrando "para N".
+ *  Tarea 22 (Cuna, corrección 2026-09-09) — la cuna solicitada se suma acá: antes esta línea NO
+ *  aparecía en NINGÚN resumen ya agregado, así que "guardaba" el dato pero no lo mostraba (el
+ *  huésped no tenía forma de confirmar que la cuna quedó pedida en ESA habitación). */
 function cartLineGuestsLabel(line: CartLine): string {
   if (line.adults === undefined || line.childrenAges === undefined) {
     return t('rooms.occupancyFor', { count: line.occupancy })
   }
-  if (line.childrenAges.length === 0) return t('rooms.guests.adultsCount', { count: line.adults })
-  return t('rooms.guests.summary', {
-    adults: line.adults,
-    children: line.childrenAges.length,
-    ages: line.childrenAges.join(', '),
-  })
+  const base = line.childrenAges.length === 0
+    ? t('rooms.guests.adultsCount', { count: line.adults })
+    : t('rooms.guests.summary', {
+        adults: line.adults,
+        children: line.childrenAges.length,
+        ages: line.childrenAges.join(', '),
+      })
+  return line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
 }
 </script>

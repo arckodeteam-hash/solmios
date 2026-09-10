@@ -18,7 +18,7 @@ import {
 } from './usecases/conversations'
 import {
   listIntents, getIntent, createIntent, updateIntent,
-  processIncomingMessage,
+  processIncomingMessage, probarIntent,
 } from './usecases/intents'
 import { listTemplates, createTemplate, updateTemplate } from './usecases/templates'
 import { conversationChannel } from './usecases/conversation-channel'
@@ -33,12 +33,16 @@ import { deleteIntentAudited, deleteTemplateAudited } from './usecases/audit-del
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
 import type { AuditPort } from '../../shared/usecases/audit'
 import type { DeliveryStatusPort } from './usecases/whatsapp-delivery-status'
+import type { TemplateStatusPort } from './usecases/whatsapp-template-status'
 import { listarBandeja, abrirConversacion, tomarConversacion, soltarConversacion, responderConversacion, registrarEntrante } from './usecases/inbox'
 import type { InboxDeps } from './usecases/inbox'
 import { consumoDelMes, sincronizarConsumo, assertPuedeIniciarConversacion } from './usecases/whatsapp-usage'
 import type { UsageDeps } from './usecases/whatsapp-usage'
 import { usageDepsDe } from './usecases/whatsapp-usage-deps'
-import { autoReconnectSessions } from './usecases/whatsapp-sessions-auto'
+import {
+  iniciarSesionLegacy, reconectarSesionesLegacy, detenerSesionLegacy, qrSesionLegacy, estadoSesionLegacy,
+  type SesionLegacyDeps,
+} from './usecases/whatsapp-sessions-facade'
 
 export class AiRecepcionistaService {
   private sockets: AiRecepcionistaSockets = {}
@@ -53,6 +57,10 @@ export class AiRecepcionistaService {
   /** Escribe el acuse de entrega en `message_logs` (tabla de marketing). Lo inyecta un connector. */
   deliveryStatusPort: DeliveryStatusPort | null = null
   setDeliveryStatusPort(p: DeliveryStatusPort): void { this.deliveryStatusPort = p }
+
+  /** Anota en `whatsapp_templates` lo que Meta decidió sobre una plantilla. Lo inyecta un connector. */
+  templateStatusPort: TemplateStatusPort | null = null
+  setTemplateStatusPort(p: TemplateStatusPort): void { this.templateStatusPort = p }
 
   /** Conecta el audit log. Lo inyecta el connector `ai-recepcionista-auditlog`. */
   setAuditDeps(port: AuditPort): void { this.auditPort = port }
@@ -114,12 +122,7 @@ export class AiRecepcionistaService {
   async createIntent(dto: CreateAiIntentDTO, u: any) { return createIntent(this.intentRepo, this.cache, dto, await this.resolveHotelId(u, dto.hotelId)) }
   async updateIntent(id: string, dto: UpdateAiIntentDTO, u: any) { return updateIntent(this.intentRepo, this.cache, id, dto, this.userHotel(u), this.userRole(u)) }
   async deleteIntent(id: string, u: any) { return deleteIntentAudited({ repo: this.intentRepo, cache: this.cache, logger: this.logger, auditPort: this.auditPort }, id, u, this.userHotel(u), this.userRole(u)) }
-  async testIntent(id: string, message: string, u: any): Promise<NlpResult> {
-    const { getIntent } = await import('./usecases/intents')
-    const intent = await getIntent(this.intentRepo, id, this.userHotel(u), this.userRole(u))
-    const { detectIntent } = await import('./usecases/nlp-engine')
-    return detectIntent(message, [intent])
-  }
+  async testIntent(id: string, message: string, u: any): Promise<NlpResult> { return probarIntent(this.intentRepo, id, message, this.userHotel(u), this.userRole(u)) }
 
   async listTemplates(q: TemplateQuery, u: any) { return listTemplates(this.templateRepo, await this.resolveHotelId(u, q.hotelId), q.category, q.isActive, q.page, q.limit) }
   async createTemplate(dto: CreateAiTemplateDTO, u: any) { return createTemplate(this.templateRepo, dto, await this.resolveHotelId(u, dto.hotelId)) }
@@ -179,21 +182,16 @@ export class AiRecepcionistaService {
     return (await this.voiceConfigRepo.findMany({ hotelId: await this.resolveHotelId(u, hotelId) }))[0] || null
   }
 
-  async startWhatsappSession(hotelId: string) {
-    const { beginSession } = await import('./usecases/whatsapp-sessions')
-    return beginSession(hotelId, (await this.whatsappConfigRepo.findMany({ hotelId }))[0] || null, this.whatsappConfigRepo, this.conversationRepo, this.messageRepo, this.intentRepo, this.sockets, this.cache, this.logger, (cid: string, txt: string, hid: string) => this.processIncomingMessage(cid, txt, hid), (dto: any) => this.findOrCreateConversation(dto))
-  }
-
-  /** Reconecta las sesiones legacy (QR) que estaban activas antes del reinicio. */
-  async autoReconnectSessions() { return autoReconnectSessions(this.sesionDeps()) }
-  private sesionDeps() {
+  // ─── Sesión legacy por QR (Baileys) — se conserva para los hoteles que todavía la usan ─────
+  private sesionDeps(): SesionLegacyDeps {
     return { configRepo: this.whatsappConfigRepo, conversationRepo: this.conversationRepo, messageRepo: this.messageRepo,
       intentRepo: this.intentRepo, sockets: this.sockets, cache: this.cache, logger: this.logger,
       procesar: (cid: string, txt: string, hid: string) => this.processIncomingMessage(cid, txt, hid),
       conversacion: (dto: any) => this.findOrCreateConversation(dto) }
   }
-  // Sesión legacy por QR (Baileys). Se conserva para los hoteles que todavía la usan.
-  async stopWhatsappSession(hotelId: string) { return (await import('./usecases/whatsapp-sessions')).endSession(hotelId, this.whatsappConfigRepo) }
-  async getWhatsappQR(hotelId: string) { return (await import('./usecases/whatsapp-sessions')).getQRSync(hotelId) }
-  async getWhatsappStatus(hotelId: string) { return (await import('./usecases/whatsapp-sessions')).getStatusSync(hotelId, this.whatsappConfigRepo) }
+  async startWhatsappSession(hotelId: string) { return iniciarSesionLegacy(this.sesionDeps(), hotelId) }
+  async autoReconnectSessions() { return reconectarSesionesLegacy(this.sesionDeps()) }
+  async stopWhatsappSession(hotelId: string) { return detenerSesionLegacy(this.whatsappConfigRepo, hotelId) }
+  async getWhatsappQR(hotelId: string) { return qrSesionLegacy(hotelId) }
+  async getWhatsappStatus(hotelId: string) { return estadoSesionLegacy(this.whatsappConfigRepo, hotelId) }
 }

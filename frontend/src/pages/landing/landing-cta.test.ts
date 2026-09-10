@@ -5,8 +5,10 @@
 // "Comenzar Gratis" aterrizaba en un formulario pidiéndole email y contraseña de una cuenta que
 // todavía no tenía. El embudo de captación entero moría ahí: /registro existía y funcionaba,
 // pero era inalcanzable navegando.
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth.store'
 
 // La landing pide datos públicos al montarse; sin backend el fetch falla y ensucia la salida.
 vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve([]) })))
@@ -58,12 +60,41 @@ describe('landing — el embudo termina en el alta, no en el login', () => {
 })
 
 describe('SiteHeader — separa "ya soy cliente" de "quiero probarlo"', () => {
-  it('"Prueba Gratis" va al alta y "Iniciar Sesión" sigue yendo al login', () => {
-    const w = mount(SiteHeader, { global: { stubs: { RouterLink: RouterLinkStub } } })
-    const byText = (re: RegExp) => w.findAll('a').find(a => re.test(a.text()))
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+  })
 
-    expect(byText(/Prueba Gratis/i)?.attributes('href')).toBe('/registro')
+  const mountHeader = () => mount(SiteHeader, { global: { stubs: { RouterLink: RouterLinkStub } } })
+  const byText = (w: ReturnType<typeof mount>, re: RegExp) => w.findAll('a').find(a => re.test(a.text()))
+
+  it('sin sesión: "Prueba Gratis" va al alta y "Iniciar Sesión" sigue yendo al login', () => {
+    const w = mountHeader()
+
+    expect(byText(w, /Prueba Gratis/i)?.attributes('href')).toBe('/registro')
     // Regresión a evitar: mandar TODO al registro dejaría sin puerta a quien ya es cliente.
-    expect(byText(/Iniciar Sesión/i)?.attributes('href')).toBe('/login')
+    expect(byText(w, /Iniciar Sesión/i)?.attributes('href')).toBe('/login')
+    expect(byText(w, /^Dashboard$/i)).toBeUndefined()
+  })
+
+  it('con sesión de hotel: aparece "Dashboard" al panel y desaparecen login y alta', () => {
+    const auth = useAuthStore()
+    auth.token = 'tkn'
+    auth.user = { id: 'u1', name: 'Ana', email: 'ana@hotel.com', role: 'hotel_admin' } as never
+
+    const w = mountHeader()
+
+    expect(byText(w, /Dashboard/i)?.attributes('href')).toBe('/panel')
+    // Los dos CTA de invitado rebotan contra el guard del router cuando ya hay sesión.
+    expect(byText(w, /Iniciar Sesión/i)).toBeUndefined()
+    expect(byText(w, /Prueba Gratis/i)).toBeUndefined()
+  })
+
+  it('con sesión de super admin: el "Dashboard" apunta a /admin, no al panel del hotel', () => {
+    const auth = useAuthStore()
+    auth.token = 'tkn'
+    auth.user = { id: 'u0', name: 'Root', email: 'admin@solmios.com', role: 'super_admin' } as never
+
+    expect(byText(mountHeader(), /Dashboard/i)?.attributes('href')).toBe('/admin')
   })
 })

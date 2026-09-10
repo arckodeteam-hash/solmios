@@ -2,7 +2,7 @@
 // Solo esto es visible para otros módulos y conectores.
 // ⚠ REGLA: Append-only. No sacar ni modificar exports existentes.
 
-import { createModule, OrmRepository } from 'arckode-framework'
+import { createModule, OrmRepository, validateSchema, NotFoundError } from 'arckode-framework'
 import { registerCanalesModels } from './model'
 import { CanalesService } from './service'
 import { CanalesController } from './controller'
@@ -13,7 +13,18 @@ import { ChannexAdminService } from './service-channex-admin'
 import { getOrCreateOpenChannelKey, verifyOpenChannelKey, buildMappingDetails, applyChanges, logOpenChannelCall, buildEndpointUrl } from './usecases/open-channel-api'
 import { buildOpenChannelMappings, roomTypesFromRooms } from './usecases/open-channel-connect'
 import { CHANNEX_WEBHOOK_PATH, handleChannexWebhook, registerChannexWebhook, buildCallbackUrl, getOrCreateWebhookSecret } from './usecases/channex-webhook'
-import { requestChannel, updateChannelRequest, forHotel, type ChannelRequestRow } from './usecases/channel-requests'
+import {
+  requestChannel, updateChannelRequest, scheduleAppointment, addChannelRequestNote, forHotel,
+  CHANNEL_REQUEST_TRANSITIONS,
+  type ChannelRequestRow, type ChannelRequestActivityRow, type ChannelRequestDeps, type ChannelRequestActor,
+} from './usecases/channel-requests'
+import { listChannelRequestsForAdmin, getChannelRequestForAdmin, CHANNEL_REQUEST_FILTER_LABELS } from './usecases/channel-requests-admin'
+import { makeChannelRequestNotifyDeps } from './usecases/channel-request-notify-deps'
+import { notifyAdminOfChannelRequest, notifyHotelOfChannelRequest } from '../../shared/usecases/notify-channel-request'
+import {
+  CreateChannelRequestSchema, UpdateChannelRequestSchema, ScheduleAppointmentSchema,
+  AddChannelRequestNoteSchema, ChannexAccountSchema,
+} from './validators/schema'
 import { readRatePlans } from '../../shared/utils/rate-plans'
 import type { RoomTypeSummary, CanalesDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
@@ -72,25 +83,44 @@ export function CanalesModule() {
       // ── Solicitudes de conexión de una OTA ────────────────────────────────────────────────
       // El hotel las pide desde su panel; las atiende el admin de la plataforma. Ver
       // `usecases/channel-requests.ts` (por qué el botón dejó de abrir el asistente de Channex).
+      // Los puertos (correo, campanita) los inyectan email-bootstrap y el connector
+      // canales-notificaciones sobre el service; el resto de las deps se resuelve por `queries`.
+      const notifyDeps = () => makeChannelRequestNotifyDeps(queries, log, service.channelRequestNotifyPorts)
       const requestsRepo = new OrmRepository<ChannelRequestRow>(orm, 'ChannelRequests')
-      const requestDeps = {
+      const activitiesRepo = new OrmRepository<ChannelRequestActivityRow>(orm, 'ChannelRequestActivities')
+      const requestDeps: ChannelRequestDeps = {
         findMany: (q: any) => requestsRepo.findMany(q) as Promise<ChannelRequestRow[]>,
         create: (row: ChannelRequestRow) => requestsRepo.create(row as any) as Promise<ChannelRequestRow>,
         update: (id: string, patch: Partial<ChannelRequestRow>) => requestsRepo.update(id, patch as any) as Promise<ChannelRequestRow>,
+        createActivity: (row: ChannelRequestActivityRow) => activitiesRepo.create(row as any),
+        listActivities: (requestId: string) => activitiesRepo.findMany({ requestId } as any) as Promise<ChannelRequestActivityRow[]>,
+        // El aviso al admin dejó de ser una línea de log: correo al soporte + campanita (REQ-CAN-07).
+        // Sigue siendo best-effort — `requestChannel` lo envuelve en un catch.
         notify: async (row: ChannelRequestRow) => {
           log.info('Solicitud de conexión de canal', {
             hotelId: row.hotelId, hotel: row.hotelName, canal: row.channelName, pidio: row.requestedByEmail,
           })
+          await notifyAdminOfChannelRequest(notifyDeps(), row)
         },
+        notifyHotel: (row, event) => notifyHotelOfChannelRequest(notifyDeps(), row, event),
+      }
+
+      /**
+       * Quién hace el cambio, para el historial. El JWT trae id/role/hotelId pero NO el nombre:
+       * sin leer el usuario, el timeline diría "alguien cambió el estado".
+       */
+      const resolveActor = async (req: any): Promise<ChannelRequestActor> => {
+        const id = req?.user?.id
+        if (!id) return {}
+        const user = (await queries.findMany('Users', { id }))[0] as any
+        return { id, name: user?.name ?? req.user?.name ?? '' }
       }
 
       // ── Config Channex a nivel PLATAFORMA (super_admin) — white-label: una cuenta para todos ──
       const adminConfig = new ConfigUseCase(repo, queries)
       const adminChannex = new ChannexUseCase(log, () => adminConfig.getPlatformChannex())
-      const channexAdmin = new ChannexAdminService(adminConfig, adminChannex)
+      const channexAdmin = new ChannexAdminService(adminConfig, adminChannex, queries)
       const adminOnly = [auth.authenticate('super_admin'), requireUserType('admin')]
-      router.get('/api/admin/channex-config', adminOnly, async () => ({ status: 200, body: await channexAdmin.getStatus() }))
-      router.put('/api/admin/channex-config', adminOnly, async (req: any) => ({ status: 200, body: await channexAdmin.save(req.body || {}) }))
       router.post('/api/admin/channex-config/test', adminOnly, async () => ({ status: 200, body: await channexAdmin.test() }))
 
       // ── Webhook de reservas de Channex (#50) ──────────────────────────────────────────────
@@ -116,6 +146,21 @@ export function CanalesModule() {
         return `${proto}://${(req?.headers?.host as string) || 'localhost'}`
       }
 
+      // Estado de la CUENTA: credenciales + webhook + properties vs hoteles + vencimiento del plan
+      // (REQ-CAN-09). El `callbackUrl` sale del request porque depende del host público de esta
+      // instalación, igual que el alta del webhook de acá abajo.
+      router.get('/api/admin/channex-config', adminOnly, async (req: any) => {
+        const callbackUrl = buildCallbackUrl(webhookBaseUrl(req), await getOrCreateWebhookSecret(webhookStore))
+        return { status: 200, body: await channexAdmin.getStatus(callbackUrl) }
+      })
+      // `planExpiresAt` es el único campo que se puede vaciar (dato manual, se puede haber cargado
+      // mal); el resto de las credenciales conservan lo guardado cuando llegan vacías.
+      router.put('/api/admin/channex-config', adminOnly, async (req: any) => {
+        const body = (req.body || {}) as Record<string, unknown>
+        if (body.planExpiresAt !== undefined) validateSchema(ChannexAccountSchema, { planExpiresAt: body.planExpiresAt })
+        return { status: 200, body: await channexAdmin.save(body) }
+      })
+
       // Estado del registro: qué callbacks tiene hoy la cuenta y cuál usaríamos nosotros. Si Channex
       // no responde el panel igual tiene que abrir, así que el error viaja en el body, no como 5xx.
       router.get('/api/admin/channex-webhook', adminOnly, async (req: any) => {
@@ -126,6 +171,24 @@ export function CanalesModule() {
           log.warn('No se pudieron listar los webhooks de Channex', { error: e?.message || String(e) })
           return { status: 200, body: { success: false, callbackUrl, webhooks: [], error: e?.message || String(e) } }
         }
+      })
+
+      // Rescate manual de reservas que el feed ya no puede entregar (ventana de 30 min vencida).
+      // Es de la PLATAFORMA, no de un hotel: `/bookings` es de cuenta y la corrida deriva cada
+      // booking a su hotel por `propertyId`, igual que el cron. Se dispara a mano después de una
+      // caída conocida — como cron periódico re-traería lo mismo para siempre.
+      router.post('/api/admin/channex/recover-bookings', adminOnly, async (req: any) => {
+        const desde = String(req.body?.since ?? '').trim()
+        // Fecha Y HORA: Channex rechaza `2026-09-01` con 422. Se valida acá para devolver un
+        // mensaje que se entienda, en vez del error crudo de Channex.
+        if (!desde || Number.isNaN(Date.parse(desde))) {
+          return { status: 400, body: { error: 'Falta "since" con fecha y hora ISO (ej. 2026-09-09T18:00:00Z)' } }
+        }
+        const r = await service.recoverBookingsSince(new Date(desde).toISOString())
+        const message = r.feedSize === 0
+          ? 'No hay reservas en Channex desde esa fecha'
+          : `${r.feedSize} encontradas · ${r.ingested} creadas · ${r.skipped} ya existían · ${r.unmapped} sin hotel mapeado`
+        return { status: r.success ? 200 : 422, body: { ...r, message } }
       })
 
       // Alta idempotente del callback: si el endpoint ya está registrado no crea otro (ver usecase).
@@ -139,15 +202,50 @@ export function CanalesModule() {
         }
       })
 
-      // Bandeja del admin: todas las solicitudes de todos los hoteles, la más nueva primero.
-      router.get('/api/admin/channel-requests', adminOnly, async () => {
-        const rows = await requestsRepo.findMany({} as any) as ChannelRequestRow[]
-        const data = [...rows].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-        return { status: 200, body: { data, total: data.length } }
+      // ── Bandeja del admin (REQ-CAN-08) ────────────────────────────────────────────────────
+      // Enriquecida en el usecase (`channel-requests-admin`), no acá: la fila trae el teléfono del
+      // hotel, su property de Channex y si la cita está vencida, que es lo que el admin necesita
+      // para hacer el alta manual sin abrir cuatro pantallas.
+      const adminRequestDeps = async () => ({
+        findMany: (model: string, q: Record<string, unknown>) => queries.findMany(model, q),
+        environment: (await adminConfig.getPlatformChannex())?.environment,
       })
+
+      router.get('/api/admin/channel-requests', adminOnly, async (req: any) => {
+        const result = await listChannelRequestsForAdmin(await adminRequestDeps(), { filter: String(req.query?.filter || 'all') })
+        return { status: 200, body: { ...result, filters: CHANNEL_REQUEST_FILTER_LABELS, transitions: CHANNEL_REQUEST_TRANSITIONS } }
+      })
+
+      router.get('/api/admin/channel-requests/:id', adminOnly, async (req: any) => {
+        const row = await getChannelRequestForAdmin({
+          ...(await adminRequestDeps()),
+          listActivities: (requestId: string) => activitiesRepo.findMany({ requestId } as any) as Promise<ChannelRequestActivityRow[]>,
+        }, req.params.id)
+        if (!row) throw new NotFoundError('La solicitud no existe')
+        return { status: 200, body: row }
+      })
+
+      // Cambio de estado. La máquina de estados vive en el usecase: acá solo se valida la FORMA
+      // del body (antes no se validaba nada y `{status:'lo-que-sea'}` llegaba hasta el repo).
       router.put('/api/admin/channel-requests/:id', adminOnly, async (req: any) => {
-        const updated = await updateChannelRequest(requestDeps, req.params.id, req.body || {})
-        if (!updated) return { status: 400, body: { error: 'Estado inválido' } }
+        const body = validateSchema(UpdateChannelRequestSchema, req.body || {}) as Record<string, string>
+        const updated = await updateChannelRequest(requestDeps, req.params.id, body, await resolveActor(req))
+        return { status: 200, body: updated }
+      })
+
+      // Agendar o reprogramar la cita. Es el ÚNICO camino a `scheduled` (REQ-CAN-03).
+      router.post('/api/admin/channel-requests/:id/appointment', adminOnly, async (req: any) => {
+        const body = validateSchema(ScheduleAppointmentSchema, req.body || {}) as any
+        const updated = await scheduleAppointment(requestDeps, req.params.id, body, await resolveActor(req))
+        return { status: 200, body: updated }
+      })
+
+      // Nota interna. Se valida por schema (tipo y largo) pero se PERSISTE el texto crudo: el
+      // sanitizador de strings del framework colapsa los espacios y le comería los saltos de línea.
+      router.post('/api/admin/channel-requests/:id/notes', adminOnly, async (req: any) => {
+        validateSchema(AddChannelRequestNoteSchema, req.body || {})
+        const note = String(req.body?.note ?? '').slice(0, 2000)
+        const updated = await addChannelRequestNote(requestDeps, req.params.id, note, await resolveActor(req))
         return { status: 200, body: updated }
       })
 
@@ -292,8 +390,8 @@ export function CanalesModule() {
       router.post('/api/channels/requests', guard('channel-manager', 'edit'), async (req: any) => {
         const hotelId = resolveTenant(req)
         if (!hotelId) return { status: 404, body: { error: 'Hotel no encontrado' } }
-        const channel = String(req.body?.channel || '').trim()
-        if (!channel) return { status: 400, body: { error: 'Falta el canal' } }
+        const body = validateSchema(CreateChannelRequestSchema, req.body || {}) as Record<string, string>
+        const channel = body.channel!
         // El JWT lleva id/role/hotelId, NO nombre ni correo: sin leer el usuario, el admin recibe
         // la solicitud sin saber a quién contestarle.
         const [hotel, user] = await Promise.all([
@@ -304,10 +402,14 @@ export function CanalesModule() {
           hotelId,
           hotelName: hotel?.name,
           channel,
-          channelName: String(req.body?.channelName || channel),
+          channelName: body.channelName || channel,
           requestedByName: user?.name ?? req.user?.name,
           requestedByEmail: user?.email ?? req.user?.email ?? hotel?.email,
-          message: String(req.body?.message || '').slice(0, 500),
+          // El mensaje se toma CRUDO del body (validado arriba por forma y largo): el sanitizador
+          // del framework colapsa los saltos de línea y el hotel escribe en párrafos.
+          message: String(req.body?.message ?? '').slice(0, 500),
+          // Teléfono al que quiere que lo llamen; si no puso nada, el del hotel.
+          contactPhone: (body.contactPhone || hotel?.phone || '').slice(0, 40),
         })
         return {
           status: 200,

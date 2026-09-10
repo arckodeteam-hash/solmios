@@ -2,11 +2,23 @@ export type TicketCategory = 'technical' | 'billing' | 'reservation' | 'housekee
 export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent'
 export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed'
 
+// Forma persistida de un mensaje (REQ-SOP-02). authorName es SNAPSHOT del nombre al momento de
+// escribir — el historial no se reescribe si el usuario cambia de nombre después.
 export interface TicketMessage {
-  userId: string
+  id: string
+  authorId: string
+  authorName: string
+  authorKind: 'support' | 'hotel'
   message: string
   createdAt: string
 }
+
+// Resueltos por el SERVIDOR en list/getById (REQ-SOP-01/03, ver usecases/enrich.ts) — el hotel
+// no puede resolver estos nombres por su cuenta (el agente puede no pertenecer a su hotel, fuera
+// de su propio /api/usuarios). Ausentes en create/update (solo list/getById los completan).
+export interface TicketRequester { id: string; name: string; email: string; role: string; active: boolean }
+export interface TicketHotelSummary { id: string; name: string }
+export interface TicketAssignee { id: string; name: string }
 
 export interface TicketsDTO {
   id: string
@@ -21,6 +33,9 @@ export interface TicketsDTO {
   messages?: TicketMessage[]
   createdAt: string
   updatedAt: string
+  requester?: TicketRequester
+  hotel?: TicketHotelSummary
+  assignee?: TicketAssignee | null
 }
 
 export interface CreateTicketsDTO {
@@ -38,13 +53,14 @@ export interface CreateTicketsDTO {
 export interface UpdateTicketsDTO {
   // NOTE: hotelId intentionally NOT here
   // NOTE: userId intentionally NOT here — creator cannot be changed
+  // NOTE: messages intentionally NOT here (REQ-SOP-02) — se escriben SOLO vía
+  // POST /api/tickets/:id/messages (usecases/add-message.ts), nunca por PUT del cliente.
   subject?: string
   category?: TicketCategory
   priority?: TicketPriority
   status?: TicketStatus
   description?: string
   assignedTo?: string
-  messages?: TicketMessage[]
 }
 
 export interface TicketsQuery {

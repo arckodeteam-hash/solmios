@@ -1,0 +1,40 @@
+# SDD State: admin-facturacion-real
+
+change_name: admin-facturacion-real
+created: 2026-09-10
+status: implemented
+current_phase: tasks
+
+source: reporte del usuario en prod 2026-09-10 ("no muestra la fecha y en Ver no muestra nada") — la vista fabrica facturas desde listSubscriptions con campos inexistentes
+
+sprints:
+  1-fuente-de-verdad:
+    title: Tabla platform_invoices + webhooks + backfill
+    status: done
+    tasks_total: 4
+    tasks_done: 4
+    priority: critical
+  2-endpoints:
+    title: Listado, detalle, stats, export
+    status: done
+    tasks_total: 4
+    tasks_done: 4
+    priority: high
+  3-acciones:
+    title: Recordar + pago manual reales
+    status: done
+    tasks_total: 3
+    tasks_done: 3
+    priority: high
+  4-pantalla:
+    title: billing.vue sin datos inventados
+    status: done
+    tasks_total: 5
+    tasks_done: 5
+    priority: high
+  5-cierre:
+    title: Verificación + deploy + backfill prod
+    status: done
+    tasks_total: 2
+    tasks_done: 2
+    priority: medium

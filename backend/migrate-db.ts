@@ -102,10 +102,22 @@ async function createTablesBlock1(): Promise<void> {
     device TEXT, icon TEXT DEFAULT '🖥️', browser TEXT, os TEXT,
     ip TEXT, isMobile INTEGER DEFAULT 0, lastActivity TEXT, createdAt TEXT)`)
 
+  // `audience` discrimina el anuncio de plataforma del anuncio de un hotel. Existe porque el ORM
+  // solo filtra por igualdad: `hotelId IS NULL` no es expresable, así que sin esta columna un
+  // anuncio "para todos los hoteles" no le llegaba a ninguno.
   await exec(`CREATE TABLE IF NOT EXISTS announcements (
     id TEXT PRIMARY KEY, hotelId TEXT, authorId TEXT, title TEXT NOT NULL, message TEXT,
     type TEXT DEFAULT 'info', priority TEXT DEFAULT 'medium', active INTEGER DEFAULT 1,
-    date TEXT, createdAt TEXT)`)
+    date TEXT, audience TEXT DEFAULT 'hotel', startsAt TEXT, endsAt TEXT, createdAt TEXT)`)
+
+  // Lectura POR USUARIO. El único compuesto va por índice explícito: el ORM no crea únicos
+  // compuestos, y sin él un doble clic o dos pestañas dejan dos filas para la misma persona y la
+  // tasa de apertura pasa de 100%.
+  await exec(`CREATE TABLE IF NOT EXISTS announcement_reads (
+    id TEXT PRIMARY KEY, announcementId TEXT NOT NULL, userId TEXT NOT NULL, hotelId TEXT,
+    seenAt TEXT, dismissedAt TEXT, createdAt TEXT, updatedAt TEXT)`)
+  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_announcement_reads_ann_user
+    ON announcement_reads (announcementId, userId)`)
 
   await exec(`CREATE TABLE IF NOT EXISTS api_keys (
     id TEXT PRIMARY KEY, hotelId TEXT, name TEXT NOT NULL, scope TEXT,
@@ -299,6 +311,17 @@ async function createTablesBlock1(): Promise<void> {
     channel TEXT NOT NULL, lastReadAt TEXT, createdAt TEXT, updatedAt TEXT)`)
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_message_reads_user_channel
     ON message_reads (hotelId, userId, channel)`)
+
+  // Lectura de un aviso por usuario (ANN-4): el ✕ del banner deja de ocultar el aviso a TODO el
+  // hotel — cada usuario marca su propio seenAt/dismissedAt sobre su propia fila. La tabla la crea
+  // ormMigrate (modelo AnnouncementReads del módulo anuncios); el UNIQUE (announcementId, userId)
+  // va explícito acá porque el ORM no emite únicos compuestos (CLAUDE.md), como el
+  // idx_message_reads de arriba: un aviso leído por N usuarios del hotel son N filas.
+  await exec(`CREATE TABLE IF NOT EXISTS announcement_reads (
+    id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, userId TEXT NOT NULL, announcementId TEXT NOT NULL,
+    seenAt TEXT, dismissedAt TEXT, createdAt TEXT, updatedAt TEXT)`)
+  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_announcement_reads_announcement_user
+    ON announcement_reads (announcementId, userId)`)
 
   // ─── AI Receptionist tables ─────────────────────────────────────
   await exec(`CREATE TABLE IF NOT EXISTS ai_conversations (
@@ -957,6 +980,36 @@ async function createWalletPassUniqueIndex(): Promise<void> {
   }
 }
 
+// ─── BIL-1 (admin-facturacion-real) — UNIQUE index (stripeInvoiceId) para platform_invoices ──
+// Garantiza que una factura de Stripe entre UNA sola vez, aunque el webhook llegue repetido
+// (Stripe reintenta) o el backfill se corra de nuevo (REQ-BIL-02/03). El upsert de la app hace
+// pre-fetch + create/update, pero eso es application-layer: si dos webhooks del mismo `in_...`
+// entran a la vez, el index es la única red que queda.
+//
+// Las facturas MANUALES no tienen `stripeInvoiceId` y guardan NULL: varios NULL conviven bajo un
+// UNIQUE tanto en SQLite como en Postgres. Guardar `''` en vez de NULL rompería eso a la segunda
+// manual — la regla vive en `upsert-platform-invoice.ts` y en el modelo.
+//
+// La tabla la crea el ORM (RUN_MIGRATE): si todavía no existe, se ignora con try/catch (mismo
+// molde que createWalletPassUniqueIndex). Pre-check de dupes legacy: con datos sucios previos el
+// CREATE fallaría, así que se loguea para reconciliar y NO se crea el índice esta corrida.
+async function createPlatformInvoicesUniqueIndex(): Promise<void> {
+  try {
+    const dupes = (await db.query(
+      `SELECT stripeInvoiceId, COUNT(*) c FROM platform_invoices
+       WHERE stripeInvoiceId IS NOT NULL AND stripeInvoiceId <> ''
+       GROUP BY stripeInvoiceId HAVING COUNT(*) > 1`,
+    )) as Array<{ stripeInvoiceId: string; c: number }>
+    if (dupes.length > 0) {
+      console.warn(`⚠ platform_invoices: ${dupes.length} stripeInvoiceId duplicado(s) — platform_invoices_stripe_id NO se crea hasta reconciliar.`, dupes)
+    } else {
+      await exec(`CREATE UNIQUE INDEX IF NOT EXISTS platform_invoices_stripe_id ON platform_invoices(stripeInvoiceId)`)
+    }
+  } catch (e: unknown) {
+    console.log("platform_invoices_stripe_id: tabla platform_invoices aún no migrada (correr RUN_MIGRATE) —", e instanceof Error ? e.message.slice(0, 90) : String(e))
+  }
+}
+
 // ─── CRM / Marketing / Mensajería DDL + ALTERs portables ──────────────────
 async function createTablesBlock3(): Promise<void> {
   await exec(`CREATE TABLE IF NOT EXISTS loyalty_transactions (
@@ -1276,6 +1329,10 @@ async function main(): Promise<void> {
   // F3 3.6 (solmi-direct-booking): UNIQUE (reservationId) para wallet_passes — 1 pass vigente
   // por reserva. El service captura el duplicate error y lo traduce a idempotente return.
   await createWalletPassUniqueIndex()
+
+  // BIL-1 (admin-facturacion-real): UNIQUE (stripeInvoiceId) para platform_invoices — una
+  // factura de Stripe entra una sola vez aunque el webhook se repita. Tabla creada por el ORM.
+  await createPlatformInvoicesUniqueIndex()
 
   // currency_config para todos los hoteles (idempotente)
   await seedCurrencyConfig()

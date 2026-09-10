@@ -338,3 +338,167 @@ describe('handleStripeEvent — correos de platform-emails (best-effort)', () =>
     expect(updates[0]!.patch.status).toBe('canceled')
   })
 })
+
+// ─── REQ-BIL-02 — el webhook deja la factura en `platform_invoices` ──────────────────────────
+// Cuatro eventos, cuatro estados. Lo que se verifica acá es que el historial se escriba SIN
+// cambiar lo que el webhook ya hacía (status de la suscripción y correos).
+
+/** Repo en memoria con create/update reales — la idempotencia no se testea con un mock mudo. */
+function makeInvoicesRepo(rows: any[] = []): { repo: RepositoryAdapter<any>; rows: any[] } {
+  const store = [...rows]
+  const repo = {
+    findMany: async (filter: Record<string, unknown> = {}) =>
+      store.filter((r) => Object.entries(filter).every(([k, v]) => r[k] === v)),
+    findById: async (id: string) => store.find((r) => r.id === id) ?? null,
+    findOne: async () => null,
+    create: async (d: any) => { store.push({ ...d }); return { ...d } },
+    update: async (id: string, patch: any) => {
+      const row = store.find((r) => r.id === id)
+      if (row) Object.assign(row, patch)
+      return row ?? null
+    },
+    delete: async () => true,
+    count: async () => store.length,
+    paginate: async () => ({ data: store, total: store.length, limit: 20, offset: 0, pages: 1 }),
+  } as unknown as RepositoryAdapter<any>
+  return { repo, rows: store }
+}
+
+const INVOICE_PERIOD_START = 1_767_225_600
+const INVOICE_PERIOD_END = 1_769_904_000
+
+/** Payload mínimo pero con la forma REAL: el vínculo con la suscripción vive en `parent`. */
+function invoicePayload(overrides: Record<string, any> = {}): any {
+  return {
+    id: 'in_1',
+    number: 'SOLM-0001',
+    amount_due: 4900,
+    amount_paid: 4900,
+    currency: 'usd',
+    created: INVOICE_PERIOD_START,
+    period_start: INVOICE_PERIOD_START,
+    period_end: INVOICE_PERIOD_END,
+    invoice_pdf: 'https://pay.stripe.com/invoice/in_1/pdf',
+    status_transitions: { finalized_at: INVOICE_PERIOD_START, paid_at: INVOICE_PERIOD_START },
+    lines: { data: [{ description: 'Professional (mensual)' }] },
+    parent: { subscription_details: { subscription: 'sub_stripe_1' } },
+    ...overrides,
+  }
+}
+
+describe('handleStripeEvent — historial de facturas de la plataforma (REQ-BIL-02)', () => {
+  const activeSub = () => [{ id: 'sub1', hotelId: 'h1', status: 'active', stripeSubscriptionId: 'sub_stripe_1' }]
+
+  it('invoice.finalized: crea la fila en `open` y NO toca el status de la suscripción', async () => {
+    const { repo, updates } = makeRepo(activeSub())
+    const invoices = makeInvoicesRepo()
+    const event = { type: 'invoice.finalized', data: { object: invoicePayload({ amount_paid: 0 }) } } as any
+
+    await handleStripeEvent(
+      { subscriptionsRepo: repo, hotelsRepo: makeHotelsRepo(), platformInvoicesRepo: invoices.repo, logger: silentLogger(), stripe: fakeStripe() },
+      event,
+    )
+
+    expect(updates).toHaveLength(0) // finalized no mueve la suscripción
+    expect(invoices.rows).toHaveLength(1)
+    expect(invoices.rows[0]).toMatchObject({
+      stripeInvoiceId: 'in_1', status: 'open', hotelId: 'h1', subscriptionId: 'sub1',
+      amountDue: 49, currency: 'USD', number: 'SOLM-0001', method: 'card',
+    })
+    expect(invoices.rows[0].issuedAt).toBe(new Date(INVOICE_PERIOD_START * 1000).toISOString())
+  })
+
+  it('invoice.paid SIN finalized previo: crea la fila directamente en `paid` (el evento puede no estar habilitado)', async () => {
+    const { repo, updates } = makeRepo(activeSub())
+    const invoices = makeInvoicesRepo()
+    const event = { type: 'invoice.paid', data: { object: invoicePayload() } } as any
+
+    await handleStripeEvent(
+      { subscriptionsRepo: repo, hotelsRepo: makeHotelsRepo(), platformInvoicesRepo: invoices.repo, logger: silentLogger(), stripe: fakeStripe() },
+      event,
+    )
+
+    expect(updates[0]!.patch.status).toBe('active') // el comportamiento de siempre, intacto
+    expect(invoices.rows).toHaveLength(1)
+    expect(invoices.rows[0]).toMatchObject({ status: 'paid', amountPaid: 49, invoicePdfUrl: 'https://pay.stripe.com/invoice/in_1/pdf' })
+    expect(invoices.rows[0].paidAt).toBe(new Date(INVOICE_PERIOD_START * 1000).toISOString())
+  })
+
+  it('invoice.paid dos veces (Stripe reintenta): UNA sola fila', async () => {
+    const { repo } = makeRepo(activeSub())
+    const invoices = makeInvoicesRepo()
+    const event = { type: 'invoice.paid', data: { object: invoicePayload() } } as any
+    const deps = { subscriptionsRepo: repo, hotelsRepo: makeHotelsRepo(), platformInvoicesRepo: invoices.repo, logger: silentLogger(), stripe: fakeStripe() }
+
+    await handleStripeEvent(deps, event)
+    await handleStripeEvent(deps, event)
+
+    expect(invoices.rows).toHaveLength(1)
+    expect(invoices.rows[0].status).toBe('paid')
+  })
+
+  it('invoice.payment_failed: la fila queda `failed` (en Stripe la factura sigue `open`) y la suscripción `past_due`', async () => {
+    const { repo, updates } = makeRepo(activeSub())
+    const invoices = makeInvoicesRepo()
+    const event = { type: 'invoice.payment_failed', data: { object: invoicePayload({ amount_paid: 0 }) } } as any
+
+    await handleStripeEvent(
+      { subscriptionsRepo: repo, hotelsRepo: makeHotelsRepo(), platformInvoicesRepo: invoices.repo, logger: silentLogger(), stripe: fakeStripe() },
+      event,
+    )
+
+    expect(updates[0]!.patch.status).toBe('past_due')
+    expect(invoices.rows).toHaveLength(1)
+    expect(invoices.rows[0]).toMatchObject({ status: 'failed', amountPaid: 0 })
+  })
+
+  it('invoice.voided: la factura emitida pasa a `void` y deja de figurar como pendiente', async () => {
+    const { repo, updates } = makeRepo(activeSub())
+    const invoices = makeInvoicesRepo()
+    const deps = { subscriptionsRepo: repo, hotelsRepo: makeHotelsRepo(), platformInvoicesRepo: invoices.repo, logger: silentLogger(), stripe: fakeStripe() }
+
+    await handleStripeEvent(deps, { type: 'invoice.finalized', data: { object: invoicePayload({ amount_paid: 0 }) } } as any)
+    await handleStripeEvent(deps, { type: 'invoice.voided', data: { object: invoicePayload({ amount_paid: 0 }) } } as any)
+
+    expect(updates).toHaveLength(0) // voided tampoco mueve la suscripción
+    expect(invoices.rows).toHaveLength(1)
+    expect(invoices.rows[0].status).toBe('void')
+  })
+
+  it('sin platformInvoicesRepo cableado: el webhook sigue funcionando (best-effort)', async () => {
+    const { repo, updates } = makeRepo(activeSub())
+    const event = { type: 'invoice.paid', data: { object: invoicePayload() } } as any
+
+    await handleStripeEvent({ subscriptionsRepo: repo, hotelsRepo: makeHotelsRepo(), logger: silentLogger(), stripe: fakeStripe() }, event)
+
+    expect(updates[0]!.patch.status).toBe('active')
+  })
+
+  it('un repo de facturas roto NO tumba el webhook: el status y el correo igual salen', async () => {
+    const { repo, updates } = makeRepo(activeSub())
+    const broken = { findMany: async () => { throw new Error('DB caída') } } as unknown as RepositoryAdapter<any>
+    const calls: string[] = []
+    const sendPlatformEmail = async (ev: string) => { calls.push(ev); return { sent: true } }
+    const event = { type: 'invoice.paid', data: { object: invoicePayload() } } as any
+
+    await handleStripeEvent(
+      { subscriptionsRepo: repo, hotelsRepo: makeHotelsRepo(), platformInvoicesRepo: broken, logger: silentLogger(), stripe: fakeStripe(), sendPlatformEmail },
+      event,
+    )
+
+    expect(updates[0]!.patch.status).toBe('active')
+    expect(calls).toEqual(['payment_succeeded'])
+  })
+
+  it('invoice.finalized sin Subscription local: no explota ni escribe (no se sabe de qué hotel es)', async () => {
+    const { repo } = makeRepo([])
+    const invoices = makeInvoicesRepo()
+    const event = { type: 'invoice.finalized', data: { object: invoicePayload() } } as any
+
+    await handleStripeEvent(
+      { subscriptionsRepo: repo, hotelsRepo: makeHotelsRepo(), platformInvoicesRepo: invoices.repo, logger: silentLogger(), stripe: fakeStripe() },
+      event,
+    )
+    expect(invoices.rows).toHaveLength(0)
+  })
+})

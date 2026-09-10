@@ -27,5 +27,23 @@ export interface ReservationRef {
  */
 export async function onReservationRoomChanged(deps: ReservationEventDeps, ref: ReservationRef | undefined): Promise<void> {
   if (!ref?.hotelId || !ref.roomId) return
-  await deps.pushAvailabilityByRoom(ref.hotelId, ref.roomId).catch(() => {})
+  // `void`, NO `await`: el push tiene que salir DESPUÉS de responderle al usuario.
+  //
+  // Hasta el 2026-09-09 esto era un `await` con un `.catch(() => {})`. El catch tapaba el error,
+  // pero el await seguía esperando, y el push no es instantáneo: `channex-http.ts:114` frena el
+  // request contra el techo de ~18 ARI/minuto de Channex. Con la ventana llena, `acquireSlot()`
+  // espera hasta que se libere — y esa espera ocurría adentro del `POST /api/reservas`
+  // (crud.ts:233 → safe-emit.ts:23 → acá), así que el timeout de 30s del framework cortaba el
+  // request: 500 en la cara del usuario, con la reserva YA creada en la base. Reproducido en
+  // producción durante la certificación: el minuto tenía exactamente 18 llamadas ARI y la
+  // reserva siguiente murió a los 30.015 ms. Mismo patrón que `connectors/pricing-canales.ts:63`.
+  //
+  // El error se loguea, no se traga: un push perdido deja a la OTA vendiendo noches ocupadas y
+  // sin rastro sería imposible de descubrir.
+  void deps.pushAvailabilityByRoom(ref.hotelId, ref.roomId).catch((err: unknown) => {
+    console.error(
+      `[reservation-events] push de availability falló (hotel=${ref.hotelId} room=${ref.roomId}):`,
+      err instanceof Error ? err.message : err,
+    )
+  })
 }

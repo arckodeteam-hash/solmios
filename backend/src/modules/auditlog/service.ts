@@ -5,6 +5,7 @@ import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-fram
 import { NotFoundError } from 'arckode-framework'
 import type { AuditlogDTO, CreateAuditlogDTO, AuditlogQuery, AuditlogPaginated } from './types'
 import type { AuditlogSockets } from './sockets'
+import { currentRequestContext } from '../../shared/request-context'
 
 export interface AuditlogUser { id: string; hotelId?: string | null; role?: string }
 
@@ -17,6 +18,7 @@ export class AuditlogService {
   constructor(
     private readonly repo: RepositoryAdapter<AuditlogDTO>,
     private readonly userRepo: RepositoryAdapter<any>,
+    private readonly hotelRepo: RepositoryAdapter<any>,
     private readonly logger: Logger,
     private readonly cache: CacheAdapter,
     private readonly auth: Auth,
@@ -63,6 +65,16 @@ export class AuditlogService {
     // cambia entre queries) — página 1 = lo más reciente, como todo listado del panel.
     const orderBy = [{ field: 'createdAt', dir: 'DESC' as const }]
 
+    // `hotelName`: antes se devolvía la fila cruda, sin el nombre del hotel, y la columna y el
+    // filtro "Hotel" de /admin/audit salían vacíos aunque el registro tuviera `hotelId`. Se
+    // resuelve con un `Map` de hoteles cargado UNA vez (mismo patrón que `listUsers` de admin);
+    // una consulta por fila adentro del loop sería N+1. Sin `hotelId` (o con uno huérfano —
+    // hotel borrado) queda ''.
+    const hotels = await this.hotelRepo.findMany({})
+    const hotelNameById = new Map(hotels.map((h: any) => [h.id, h.name]))
+    const withHotelName = (r: AuditlogDTO): AuditlogDTO =>
+      ({ ...r, hotelName: (r.hotelId && hotelNameById.get(r.hotelId)) || '' })
+
     // Rango de fechas: buildWhere solo hace igualdad (RepositoryAdapter no soporta >=/<=, mismo
     // límite que DT-07 de facturas) → traer las filas del hotel, filtrar en memoria y paginar acá.
     // Es O(n) sobre el log del hotel, correcto y aceptable para el volumen actual (2k filas dev).
@@ -74,11 +86,11 @@ export class AuditlogService {
         const ts = String(r.createdAt || '')
         return (!from || ts >= from) && (!to || ts <= to)
       })
-      return { data: rows.slice(offset, offset + limit), total: rows.length }
+      return { data: rows.slice(offset, offset + limit).map(withHotelName), total: rows.length }
     }
 
     const result = await this.repo.paginate(filters, { limit, offset, orderBy })
-    return { data: result.data, total: result.total }
+    return { data: result.data.map(withHotelName), total: result.total }
   }
 
   async getById(id: string, user: AuditlogUser): Promise<AuditlogDTO> {
@@ -91,9 +103,39 @@ export class AuditlogService {
     return item
   }
 
+  /**
+   * Escribe la entrada. Es el ÚNICO camino de escritura del log (no hay POST HTTP), así que acá
+   * se completa lo que el llamador no puede saber (#141):
+   *
+   * - `ip`: la del request en curso (`shared/request-context.ts`). El service que audita está
+   *   tres capas debajo del handler y no tiene `req`; pasarla a mano obligaría a tocar los ~30
+   *   connectors `*-auditlog` y a que nadie se olvide nunca. Medido en producción antes de esto:
+   *   5 de 414 filas tenían IP.
+   * - `userName`: el nombre de `users`, resuelto por `userId`. 243 de 414 filas salían sin
+   *   nombre y la pantalla las mostraba como "Sistema" — que es mentira cuando hubo una persona.
+   *
+   * Las dos son best-effort y el llamador manda: si la entrada ya trae el dato, no se toca. Un
+   * cron o un script corren fuera de un request y quedan sin IP ni usuario — ahí "Sistema" sí es
+   * la verdad. Un fallo resolviendo el nombre NO puede tumbar la escritura del log.
+   */
   async create(dto: CreateAuditlogDTO): Promise<AuditlogDTO> {
     this.logger.info('Creando auditlog')
-    const item = await this.repo.create(dto as Omit<AuditlogDTO, 'id'>)
+    const enriched: CreateAuditlogDTO = { ...dto }
+    if (!enriched.ip) {
+      const ip = currentRequestContext().ip
+      if (ip && ip !== 'unknown') enriched.ip = ip
+    }
+    if (!enriched.userName && enriched.userId) {
+      try {
+        // @ignore IDOR_RISK — se resuelve el nombre del usuario que EJECUTÓ la acción, que ya
+        // viene del token del request; no es un id elegido por el cliente.
+        const user = await this.userRepo.findById(enriched.userId)
+        if (user?.name) enriched.userName = String(user.name)
+      } catch (e) {
+        this.logger.warn('No se pudo resolver el nombre para el audit log', { userId: enriched.userId, error: String(e) })
+      }
+    }
+    const item = await this.repo.create(enriched as Omit<AuditlogDTO, 'id'>)
     await this.sockets.onAuditlogCreated?.(item)
     return item
   }

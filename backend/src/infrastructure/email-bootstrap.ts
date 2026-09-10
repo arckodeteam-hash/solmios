@@ -80,6 +80,33 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
     (subsForEmail as any).setPlatformEmailSender((event: string, to: string, hotelId: string, vars: Record<string, string>) =>
       platformEmailsMod.sendEvent(event, to, hotelId, vars))
   }
+  // Solicitudes de conexión de OTA (REQ-CAN-07): el correo al soporte cuando entra un pedido, y
+  // las 3 plantillas que recibe el hotel (cita, conectado, rechazado). Va acá y no en un connector
+  // porque el EmailService se construye DESPUÉS de los módulos — un connector reventaría por TDZ.
+  const canalesForEmail = resolveModule<{
+    setChannelRequestNotifyPorts(p: {
+      emailSender?: EmailSender
+      sendPlatformEvent?: (event: string, to: string, hotelId: string, vars: Record<string, string>) => Promise<{ sent: boolean }>
+    }): void
+  }>('canales')
+  if (canalesForEmail && typeof canalesForEmail.setChannelRequestNotifyPorts === 'function') {
+    canalesForEmail.setChannelRequestNotifyPorts({
+      emailSender: emailService,
+      ...(platformEmailsMod
+        ? {
+          sendPlatformEvent: (event: string, to: string, hotelId: string, vars: Record<string, string>) =>
+            platformEmailsMod.sendEvent(event, to, hotelId, vars),
+        }
+        : {}),
+    })
+  }
+
+  // BIL-3: el botón "Recordar" de /admin/billing manda la MISMA plantilla de plataforma
+  // (payment_failed / subscription_renewal_*) que el cron y el webhook — un solo texto editable.
+  if (adminForEmail && platformEmailsMod && typeof (adminForEmail as any).setPlatformEmailSender === 'function') {
+    (adminForEmail as any).setPlatformEmailSender((event: string, to: string, hotelId: string, vars: Record<string, string>) =>
+      platformEmailsMod.sendEvent(event, to, hotelId, vars))
+  }
   const usuariosForEmail = resolveModule<{ setEmailVerificationDeps(es: EmailSender, url: string): void }>('usuarios')
   if (usuariosForEmail && typeof usuariosForEmail.setEmailVerificationDeps === 'function') {
     usuariosForEmail.setEmailVerificationDeps(emailService, process.env.PUBLIC_URL || '')
@@ -123,9 +150,10 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
   // Leads de ventas: acuse de recibo al lead + aviso al equipo de ventas, best-effort desde
   // el service — sin esto el lead igual queda guardado, solo no avisa por correo (degrada a
   // "hay que mirar Panel › Leads de Ventas a mano").
-  const salesLeadsForEmail = resolveModule<{ setEmailDeps(es: EmailSender): void }>('sales-leads')
+  // #145: también el aviso "hotel nuevo registrado" del alta; PUBLIC_URL arma el link al pipeline.
+  const salesLeadsForEmail = resolveModule<{ setEmailDeps(es: EmailSender, appUrl?: string): void }>('sales-leads')
   if (salesLeadsForEmail && typeof salesLeadsForEmail.setEmailDeps === 'function') {
-    salesLeadsForEmail.setEmailDeps(emailService)
+    salesLeadsForEmail.setEmailDeps(emailService, process.env.PUBLIC_URL || '')
   }
 
   // Correo de confirmación de PAGO del motor público (pedido del cliente 2026-08-29). Va acá y

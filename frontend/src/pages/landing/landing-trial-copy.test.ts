@@ -10,6 +10,7 @@ import type { PublicPlan } from '@/services/Signup.service'
 
 let policyImpl: () => Promise<{ requireCardOnTrial: boolean; trialDays: number }>
 vi.mock('@/services/Signup.service', () => ({
+  DEFAULT_TRIAL_DAYS: 15,
   SignupService: {
     publicPlans: async (): Promise<PublicPlan[]> => [],
     signupPolicy: () => policyImpl(),
@@ -22,7 +23,7 @@ const RouterLinkStub = { props: ['to'], template: '<a><slot /></a>' }
 const MOUNT_OPTS = { global: { stubs: { RouterLink: RouterLinkStub, SiteHeader: true, SiteFooter: true } } }
 
 beforeEach(() => {
-  policyImpl = async () => ({ requireCardOnTrial: false, trialDays: 7 })
+  policyImpl = async () => ({ requireCardOnTrial: false, trialDays: 15 })
 })
 
 describe('landing — la promesa de la prueba sale del servidor (#28)', () => {
@@ -33,11 +34,11 @@ describe('landing — la promesa de la prueba sale del servidor (#28)', () => {
   })
 
   it('con la política que SÍ exige tarjeta, deja de prometer que no hace falta', async () => {
-    policyImpl = async () => ({ requireCardOnTrial: true, trialDays: 7 })
+    policyImpl = async () => ({ requireCardOnTrial: true, trialDays: 15 })
     const w = mount(Landing, MOUNT_OPTS)
     await flushPromises()
     expect(w.text()).not.toContain('Sin tarjeta de crédito')
-    expect(w.text()).toContain('7 días sin cargo')
+    expect(w.text()).toContain('15 días sin cargo')
   })
 
   it('los días de prueba salen del servidor, no de un 7 escrito a mano', async () => {

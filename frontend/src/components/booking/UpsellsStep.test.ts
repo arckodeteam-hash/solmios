@@ -67,7 +67,7 @@ describe('UpsellsStep — cantidad por defecto de "por persona"', () => {
 
   it('niño LIBRE (no consume plaza): NO cuenta en cartTotalGuests, pero SÍ desayuna — se suma aparte', async () => {
     const store = useBookingStore()
-    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 } // 2 años → libre
+    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }  // 2 años → libre
     store.upsells = [upsell()]
     // occupancy=2 (el niño libre no sube la ocupación chargeable) + 1 niño en childrenAges.
     store.cart = [cartLine({ occupancy: 2, adults: 2, childrenAges: [2] })]
@@ -82,7 +82,7 @@ describe('UpsellsStep — cantidad por defecto de "por persona"', () => {
 
   it('niño con plaza NO se duplica: ya está en cartTotalGuests, cartTotalFreeChildren no lo vuelve a sumar', async () => {
     const store = useBookingStore()
-    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
     store.upsells = [upsell()]
     // occupancy=3 = 2 adultos + 1 niño de 8 (>maxFreeAge=3 → con plaza, YA incluido en occupancy).
     store.cart = [cartLine({ occupancy: 3, adults: 2, childrenAges: [8] })]
@@ -97,7 +97,7 @@ describe('UpsellsStep — cantidad por defecto de "por persona"', () => {
 
   it('varias habitaciones: suma la ocupación de TODO el carrito, no de una sola línea', async () => {
     const store = useBookingStore()
-    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
     store.upsells = [upsell()]
     store.cart = [
       cartLine({ key: 'a', occupancy: 2, adults: 2, childrenAges: [] }),

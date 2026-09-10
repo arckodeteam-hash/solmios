@@ -312,5 +312,45 @@ export function sumStayPrice(
   return round2(total)
 }
 
+/**
+ * Tarea "Cobro % niños" (2026-09-09, generalizada desde "Cobro 50% niños") — total de la estadía
+ * para una composición adultos+niños-con-plaza, con la regla de descuento infantil OPCIONAL y
+ * PORCENTUAL del hotel.
+ *
+ * Sin la regla habilitada (o sin niños que paguen), es EXACTAMENTE `sumStayPrice` de siempre:
+ * un precio plano según el headcount total (`effectiveAdults + payingChildren`) contra la grilla
+ * de `room_rates` — ningún hotel existente cambia de comportamiento hasta que habilite el flag.
+ *
+ * Con la regla habilitada: "el valor de un adulto" es el precio TOTAL de la estadía para
+ * `effectiveAdults` (la misma fila/grilla que ya se usaría sin niños) DIVIDIDO entre esa cantidad
+ * de adultos — no la fila de ocupación=1, porque el precio de este sistema no es lineal por
+ * persona (se arma por grilla de ocupación total, pensado para permitir descuentos de grupo) y
+ * dividir el total real de N adultos es la única forma de no inventar una tarifa que el hotel
+ * nunca cargó. Cada niño con plaza cuesta `childrenRatePercent`% de ese valor — NUNCA hardcodeado
+ * a 50, cada hotel elige el suyo (1-100, clampeado en `resolveChildPolicy`). Los niños libres y
+ * los bebés NUNCA entran acá — ya llegan con `payingChildren` sin contarlos (ver
+ * `resolveChildComposition`).
+ */
+export function sumStayPriceForComposition(
+  nightDates: string[],
+  baseRates: any[],
+  roomType: string,
+  seasonByDate: Map<string, string>,
+  effectiveAdults: number,
+  payingChildren: number,
+  childrenDiscountEnabled: boolean,
+  childrenRatePercent: number,
+  fallbackPrice: number,
+  overrides: NightlyRateOverride[] = [],
+): number {
+  if (!childrenDiscountEnabled || payingChildren <= 0) {
+    return sumStayPrice(nightDates, baseRates, roomType, seasonByDate, effectiveAdults + payingChildren, fallbackPrice, overrides)
+  }
+  const adultsTotal = sumStayPrice(nightDates, baseRates, roomType, seasonByDate, effectiveAdults, fallbackPrice, overrides)
+  const perAdultTotal = adultsTotal / Math.max(1, effectiveAdults)
+  const pct = Math.min(100, Math.max(1, childrenRatePercent)) / 100
+  return round2(adultsTotal + payingChildren * pct * perAdultTotal)
+}
+
 // STR-1: `round2` NO se re-exporta desde acá — se importa de `shared/utils/money.ts`, su único
 // origen. Ver la nota equivalente en `reservation-balance.ts`.

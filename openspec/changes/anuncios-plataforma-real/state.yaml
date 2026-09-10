@@ -1,0 +1,58 @@
+# SDD State: anuncios-plataforma-real
+
+change_name: anuncios-plataforma-real
+created: 2026-09-09
+status: implemented
+current_phase: verify
+
+source: auditoría de /admin/announcements 2026-09-09 (pregunta del usuario "¿para qué sirve esto?")
+
+sprints:
+  1-difusion:
+    title: Un anuncio global llega a todos los hoteles
+    status: done
+    tasks_total: 4
+    tasks_done: 4
+    priority: critical
+  2-audiencia:
+    title: Audiencia elegible (todos / un hotel / solo administradores)
+    status: done
+    tasks_total: 5
+    tasks_done: 5
+    priority: high
+  3-vigencia:
+    title: Vigencia y publicación programada
+    status: done
+    tasks_total: 5
+    tasks_done: 5
+    priority: medium
+  4-lecturas:
+    title: Lecturas por usuario (y el ✕ deja de ser del hotel entero)
+    status: done
+    tasks_total: 7
+    tasks_done: 7
+    priority: high
+  5-alcance:
+    title: Alcance y tasa de apertura medidos
+    status: done
+    tasks_total: 5
+    tasks_done: 5
+    priority: medium
+  6-cache-higiene:
+    title: Invalidación de caché correcta + tipos coherentes
+    status: done
+    tasks_total: 4
+    tasks_done: 4
+    priority: high
+  7-plantillas:
+    title: Plantillas guardadas reales (o se borran)
+    status: done
+    tasks_total: 3
+    tasks_done: 3
+    priority: low
+  8-cierre:
+    title: Revisión de datos en prod + gates + docs
+    status: partial   # 8.1 (SELECT en prod) no se puede hacer desde local
+    tasks_total: 3
+    tasks_done: 2
+    priority: high

@@ -17,6 +17,7 @@
           <h3 class="text-lg font-black text-navy mb-2">{{ plan.name }}</h3>
           <div class="text-3xl font-black text-teal mb-2">${{ plan.price }}<span class="text-sm text-text-muted">/mes</span></div>
           <div class="text-sm text-text-secondary mb-4">{{ plan.description }}</div>
+          <div v-if="plan.trialEligible === 0 || plan.trialEligible === false" class="inline-flex mb-4 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">Sin prueba gratuita</div>
           <div class="space-y-2 mb-6">
             <div v-for="(feature, i) in (plan.features || [])" :key="i" class="flex items-center gap-2 text-sm">
               <span class="text-teal">✓</span><span>{{ feature }}</span>
@@ -86,6 +87,18 @@
                 <label class="block text-[10px] font-bold text-text-muted uppercase mb-1">Máx. Propiedades</label>
                 <input v-model.number="form.limits.properties" type="number" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm" />
               </div>
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Prueba gratuita</label>
+              <label class="flex items-center gap-2 p-2 bg-surface rounded-lg cursor-pointer">
+                <input type="checkbox" v-model="form.trialEligible" class="w-4 h-4 text-cyan rounded" data-testid="plan-trial-eligible" />
+                <span class="text-xs font-bold text-navy">Elegible para prueba gratuita</span>
+              </label>
+              <!-- #71: `plans.trialEligible`. Destildado, el plan no aparece en /registro, la landing
+                   manda a ventas y el alta lo rechaza (400). -->
+              <p class="text-[11px] text-text-muted mt-1">
+                Si lo destildás, el plan no se ofrece en el registro: sólo se contrata hablando con ventas.
+              </p>
             </div>
             <div>
               <div class="flex items-center justify-between mb-1">
@@ -177,7 +190,7 @@ const saving = ref(false)
 const moduleCatalog = ref<CatalogModuleDTO[]>([])
 const search = ref('')
 
-const emptyForm = () => ({ name: '', price: 0, currency: CurrencyCode.USD, description: '', features: [] as string[], modules: [] as string[], limits: { rooms: 30, users: 2, properties: 1 } })
+const emptyForm = () => ({ name: '', price: 0, currency: CurrencyCode.USD, description: '', features: [] as string[], modules: [] as string[], limits: { rooms: 30, users: 2, properties: 1 }, trialEligible: true })
 const form = ref(emptyForm())
 const featuresText = ref('')
 
@@ -230,7 +243,9 @@ function openEdit(plan: any) {
   editing.value = plan
   // La matriz se carga TAL CUAL está persistida: un plan con el padre listado se muestra como
   // módulo completo (los hijos van por el padre) — no se expande ni se re-escribe al abrir.
-  form.value = { name: plan.name, price: plan.price, currency: plan.currency || 'USD', description: plan.description || '', features: plan.features || [], modules: [...(plan.modules || [])], limits: plan.limits || { rooms: 30, users: 2, properties: 1 } }
+  // #71: la DB guarda `trialEligible` como 1/0 (NULL en filas viejas = elegible); sólo el 0/false
+  // explícito destilda la casilla.
+  form.value = { name: plan.name, price: plan.price, currency: plan.currency || 'USD', description: plan.description || '', features: plan.features || [], modules: [...(plan.modules || [])], limits: plan.limits || { rooms: 30, users: 2, properties: 1 }, trialEligible: plan.trialEligible !== 0 && plan.trialEligible !== false }
   featuresText.value = (plan.features || []).join('\n')
   search.value = ''
   showModal.value = true

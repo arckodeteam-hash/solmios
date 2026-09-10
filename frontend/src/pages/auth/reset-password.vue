@@ -45,6 +45,7 @@
               <input v-model="password" type="password" placeholder="Nueva contraseña"
                 autocomplete="new-password" name="new-password"
                 class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30" required />
+              <p class="text-xs text-text-muted mt-1">{{ policyHint }}</p>
             </div>
 
             <div>
@@ -77,9 +78,13 @@ import { useRoute, useRouter } from 'vue-router'
 import logoStackedColor from '@/assets/logo/logo-stacked-color.png'
 import { AuthService } from '@/services/Auth.service'
 import { usePageMeta } from '@/composables/usePageMeta'
+import { usePasswordPolicy } from '@/composables/usePasswordPolicy'
 import { AUTH_PAGE_META } from './auth-meta'
 
 usePageMeta(AUTH_PAGE_META.resetPassword)
+
+// Política configurable del admin (REQ-CFG-05): se muestra antes de fallar.
+const { hint: policyHint, check: checkPolicy } = usePasswordPolicy()
 
 const route = useRoute()
 const router = useRouter()
@@ -102,8 +107,9 @@ onMounted(() => {
 async function handleReset() {
   error.value = ''
 
-  if (password.value.length < 6) {
-    error.value = 'La contraseña debe tener al menos 6 caracteres'
+  const issue = checkPolicy(password.value)
+  if (issue) {
+    error.value = issue
     return
   }
   if (password.value !== confirmPassword.value) {
