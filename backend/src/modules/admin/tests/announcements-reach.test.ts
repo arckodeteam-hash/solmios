@@ -91,6 +91,28 @@ describe('getAnnouncementsReach', () => {
     expect(reach.lastAnnouncement!.openRate).toBe(50)
   })
 
+  it('anuncio nuevo con lecturas de anuncios viejos → null', async () => {
+    // Las lecturas de anuncios anteriores no son "datos" del último: recién difundido y sin
+    // lecturas propias tiene que dar `null` (sin datos), no `0%` (nadie lo abrió).
+    const orm = makeOrm({
+      Hotels: [{ id: 'h1' }, { id: 'h2' }, { id: 'h3' }],
+      Users: usuarios,
+      Announcements: [
+        { id: 'viejo', title: 'Viejo', audience: 'all', hotelId: null, date: '2026-01-01T00:00:00Z' },
+        { id: 'nuevo', title: 'Nuevo', audience: 'all', hotelId: null, date: '2026-06-01T00:00:00Z' },
+      ],
+      AnnouncementReads: [
+        { announcementId: 'viejo', userId: 'u1', seenAt: '2026-01-02T00:00:00Z' },
+        { announcementId: 'viejo', userId: 'u2', seenAt: '2026-01-02T00:00:00Z' },
+      ],
+    })
+    const reach = await new DashboardQueries(orm).getAnnouncementsReach()
+
+    expect(reach.lastAnnouncement!.id).toBe('nuevo')
+    expect(reach.lastAnnouncement!.seenCount).toBe(0)
+    expect(reach.lastAnnouncement!.openRate).toBeNull()
+  })
+
   it('10 destinatarios y 4 lecturas → recipients 10, seenCount 4, openRate 40', async () => {
     // El caso de aceptación de ANN-5: los cuatro números salen de la base, no del HTML.
     const diezActivos = Array.from({ length: 10 }, (_, i) => ({
