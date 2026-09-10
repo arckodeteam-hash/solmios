@@ -63,12 +63,15 @@ Conclusión: el anuncio global creado desde la pantalla de super admin se lista 
 "Todos los hoteles", ambos hoteles lo reciben en `GET /api/anuncios` y lo muestran en el banner de
 `/panel`; cada hotel sólo ve sus propios anuncios más los globales (sin fugas entre hoteles).
 
-## Capturas (fuera del repo, en el directorio temporal del job)
+## Capturas (en este directorio)
 
-- `/data/home/.claude/jobs/4fffe381/tmp/105-admin.png` — tabla de `/admin/announcements` con la fila del global (Audiencia "Todos los hoteles").
-- `/data/home/.claude/jobs/4fffe381/tmp/105-hotel-palma.png` — `/panel` de Hotel Boutique Palma con el banner del global.
-- `/data/home/.claude/jobs/4fffe381/tmp/105-hotel-solmios.png` — `/panel` de SolmiOS Corp con el banner del global junto a sus anuncios propios.
-- `/data/home/.claude/jobs/4fffe381/tmp/manual-105.mjs` / `manual-105.out` — script y salida completa (JSON).
+- `105-admin.png` — tabla de `/admin/announcements` con la fila del global (Audiencia "Todos los hoteles").
+- `105-hotel-palma.png` — `/panel` de Hotel Boutique Palma con el banner del global.
+- `105-hotel-solmios.png` — `/panel` de SolmiOS Corp con el banner del global junto a sus anuncios propios.
+
+El script Playwright (`manual-105.mjs`) queda fuera del repo porque contiene la contraseña de las
+cuentas de demo; su salida completa es el bloque "Resultado del script" de arriba (la lista
+`banner /panel: [...]` es el `textContent` de los títulos del `AnnouncementBanner` en cada sesión).
 
 ## Nota
 
