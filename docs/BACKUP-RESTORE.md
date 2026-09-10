@@ -75,7 +75,9 @@ sudo -u postgres pg_dump -Fc -d solmios -f /var/backups/solmios/solmios-$(date +
 ```
 
 > Ajustar el directorio `/var/backups/solmios/` según lo que exista en el server (crear con
-> `mkdir -p` y permisos para el user `postgres`). **(completar: confirmar path definitivo en prod).**
+> `mkdir -p` y permisos para el user `postgres`). Los backups que crea la pantalla (§2b) van a
+> `/www/wwwroot/hotel.zx89.site/solmios/backend/data/backups/` (default de `BACKUP_DIR`, prod no lo
+> sobreescribe) — restore verificado en prod el 2026-09-10, ver `openspec/changes/monitoreo-plataforma-real/tasks.md` §7.4.
 
 Backup en texto plano (SQL, más portable pero sin restore selectivo), como alternativa:
 
