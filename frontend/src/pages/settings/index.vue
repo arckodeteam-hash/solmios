@@ -71,7 +71,7 @@
     <!-- ========== HOTEL ========== -->
     <div v-if="activeTab === 'hotel'" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div class="lg:col-span-2 space-y-6">
-        <SectionCard title="Datos del hotel" subtitle="Identidad que aparece en facturas, emails y OTAs. Tipo de alojamiento, estrellas y logo se editan en Página pública → General.">
+        <SectionCard title="Datos del hotel" subtitle="Identidad que aparece en facturas, emails y OTAs. Tipo de alojamiento, estrellas, logo, teléfono principal y email se editan en Página pública → General.">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nombre *</label>
@@ -89,20 +89,14 @@
           </div>
         </SectionCard>
 
-        <SectionCard title="Contacto" subtitle="Datos visibles para huéspedes y en las comunicaciones automáticas">
+        <!-- Teléfono principal y email se mudaron a Página pública → General (issue #79): son
+             contacto PÚBLICO (doc 02 sección B) y se editan/guardan desde allá. Acá queda sólo
+             phone2, que es contacto interno/operativo y no se publica. -->
+        <SectionCard title="Contacto interno" subtitle="No se publica: teléfono secundario para uso operativo. El teléfono principal y el email públicos se editan en Página pública → General.">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Teléfono principal</label>
-              <PhoneInput v-model="form.phone" :country="form.country" />
-            </div>
             <div>
               <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Teléfono 2</label>
               <PhoneInput v-model="form.phone2" :country="form.country" />
-            </div>
-            <div>
-              <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Email</label>
-              <input v-model="form.email" type="email" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:border-navy focus:outline-none" :class="fieldClass('email')" data-field="email" @blur="touchField('email')">
-              <p v-if="errorOf('email')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('email') }}</p>
             </div>
           </div>
         </SectionCard>
@@ -1019,10 +1013,12 @@ const touchedFields = ref<Set<string>>(new Set())
 
 /** En qué pestaña vive cada campo — para poder llevar al usuario hasta el error. */
 const FIELD_TAB: Record<string, string> = {
-  name: 'hotel', phone: 'hotel', phone2: 'hotel',
-  email: 'hotel', timezone: 'hotel', currency: 'hotel',
+  name: 'hotel', phone2: 'hotel',
+  timezone: 'hotel', currency: 'hotel',
   checkIn: 'hotel', checkOut: 'hotel', ownerName: 'hotel', ownerTaxId: 'hotel',
   // website/logo/accommodationType/starRating se mudaron a Página pública (tarea 1.7).
+  // phone/email (contacto público) se mudaron a Página pública → General (issue #79); acá
+  // queda sólo phone2 como contacto interno. Al no estar acá tampoco entran en `activeRules`.
   // País: Dirección/mapa/provincia/municipio/CP se mudaron a Página pública (tarea 1.8,
   // docs/wizard-refactor) — país se queda acá porque es identidad administrativa/fiscal
   // (doc 03), ahora vive en la pestaña Hotel junto al resto de la identidad.
@@ -1359,7 +1355,10 @@ async function saveAll() {
   // cargado en este formulario al abrir Configuración.
   // accommodationType/starRating/website/logo ya NO se guardan desde acá (tarea 1.7,
   // docs/wizard-refactor) — los persiste Página pública → General con su propio guardado.
-  const keys = ['name','country','phone','email','timezone','currency','checkIn','checkOut',
+  // phone/email ya NO se guardan desde acá (issue #79) — los persiste Página pública → General
+  // (Contacto público); incluirlos pisaría ese guardado con lo cargado al abrir Configuración
+  // (mismo motivo que address en 1.8). phone2 sí se queda: es contacto interno.
+  const keys = ['name','country','timezone','currency','checkIn','checkOut',
     'freeCancellation','depositRequired','depositPercent','weekendSurcharge',
     'ownerName','ownerTaxId','phone2',
     'cleaningType',
