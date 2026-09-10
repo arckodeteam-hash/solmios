@@ -64,12 +64,58 @@ export const ChannelRequestModel: ModelDefinition = {
     // Quién la pidió, para que el admin sepa a quién contestarle.
     requestedByName: { type: 'string' },
     requestedByEmail: { type: 'string' },
-    // pending → in_progress → connected | rejected.
+    // Ciclo de vida del caso (REQ-CAN-02): pending → scheduled → in_progress → waiting_hotel →
+    // connected | rejected. Las transiciones válidas las impone `usecases/channel-requests.ts`:
+    // antes cualquier estado se podía escribir sobre cualquier otro y un `pending` saltaba a
+    // `connected` sin que nadie hubiera hablado con el hotel.
     status: { type: 'string', default: 'pending' },
     // Lo que escribe el hotelero (número de propiedad en la OTA, dudas).
     message: { type: 'string' },
-    // Notas del admin. NUNCA se le muestran al hotel.
-    notes: { type: 'string' },
+    // Teléfono que dejó el hotel para que lo contacten (default: `hotels.phone`).
+    contactPhone: { type: 'string' },
+    // Notas del admin. NUNCA se le muestran al hotel. `text` (no `string`): son multilínea, y
+    // como `string` el motor las guardaba en una columna corta de una sola línea.
+    notes: { type: 'text' },
+    // ── La cita (REQ-CAN-03) ───────────────────────────────────────────────────────────────
+    // Conectar una OTA arranca con una llamada al hotel, no con un cambio de estado. La cita es
+    // lo que convierte "alguien lo va a ver" en "el martes a las 10 lo llama Fulano".
+    appointmentAt: { type: 'string' },
+    // 'call' | 'whatsapp' | 'video'.
+    appointmentMedium: { type: 'string' },
+    contactName: { type: 'string' },
+    contactEmail: { type: 'string' },
+    // `users.id` del admin que agendó / atiende el caso (ver la regla de resolver nombres por
+    // /api/usuarios en el CLAUDE.md: acá se guarda el id, el nombre se resuelve al mostrar).
+    assignedTo: { type: 'string' },
+    // Por qué se rechazó. Obligatorio para pasar a `rejected` — un caso cerrado sin motivo deja
+    // al hotel sin saber qué le falta y al próximo admin sin saber qué pasó.
+    resolutionReason: { type: 'text' },
+    closedAt: { type: 'string' },
+    // Dedup del recordatorio diario de citas: la marca es la `appointmentAt` ya recordada, así
+    // reprogramar vuelve a habilitar el aviso y el cron no manda dos por la misma cita.
+    reminderSentFor: { type: 'string' },
+  },
+}
+
+// Historial del caso (REQ-CAN-04). Cada cambio de estado, cita, nota y aviso deja su fila: sin
+// esto, "¿quién le dijo que sí a este hotel y cuándo?" no tiene respuesta — la tabla anterior solo
+// guardaba el ÚLTIMO estado, y el `updatedAt` no dice quién lo tocó.
+export const ChannelRequestActivityModel: ModelDefinition = {
+  table: 'channel_request_activities',
+  timestamps: true,
+  fields: {
+    id: { type: 'string', required: true },
+    requestId: { type: 'string', required: true, indexed: true },
+    hotelId: { type: 'string', required: true, indexed: true },
+    // created | status_changed | appointment_scheduled | appointment_rescheduled | note_added |
+    // notified_hotel | notified_admin | reminder_sent.
+    kind: { type: 'string', required: true },
+    actorId: { type: 'string' },
+    actorName: { type: 'string' },
+    fromStatus: { type: 'string' },
+    toStatus: { type: 'string' },
+    note: { type: 'text' },
+    payload: { type: 'json', default: {} },
   },
 }
 
@@ -77,4 +123,5 @@ export function registerCanalesModels(orm: ORM): void {
   orm.define('Canales', CanalesModel)
   orm.define('ChannelMapping', ChannelMappingModel)
   orm.define('ChannelRequests', ChannelRequestModel)
+  orm.define('ChannelRequestActivities', ChannelRequestActivityModel)
 }

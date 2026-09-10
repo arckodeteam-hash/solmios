@@ -4,7 +4,7 @@
 // channexUserId se guarda con la misma disciplina que la key pero sale tal cual (no es un secreto).
 
 import { describe, it, expect } from 'bun:test'
-import { ChannexAdminService } from '../service-channex-admin'
+import { ChannexAdminService, planDaysLeft } from '../service-channex-admin'
 
 /** ConfigUseCase falso con estado en memoria para getPlatformChannex/setPlatformChannex. */
 function fakeConfig(initial: { apiKey?: string; environment?: string; channexUserId?: string } | null = null) {
@@ -16,7 +16,22 @@ function fakeConfig(initial: { apiKey?: string; environment?: string; channexUse
   } as any
 }
 
-const fakeChannex = { testApiKey: async () => ({ success: true, message: 'ok', environment: 'staging' }) } as any
+const fakeChannex = {
+  testApiKey: async () => ({ success: true, message: 'ok', environment: 'staging' }),
+  listWebhooks: async () => [],
+  listProperties: async () => [],
+} as any
+
+/** CanalesQueries falso: solo lo que la tarjeta de cuenta lee (properties de hoteles + plan). */
+function fakeQueries(configs: Array<{ channexPropertyId?: string }> = [], account: { planExpiresAt?: string } = {}) {
+  let cuenta = { ...account }
+  return {
+    findMany: async (model: string) => (model === 'Canales' ? configs : []),
+    getChannexAccount: async () => cuenta,
+    setChannexAccount: async (patch: any) => { cuenta = { ...cuenta, ...patch } },
+    _account: () => cuenta,
+  } as any
+}
 
 describe('ChannexAdminService', () => {
   it('getStatus enmascara la key y nunca la devuelve cruda', async () => {
@@ -30,7 +45,10 @@ describe('ChannexAdminService', () => {
   it('sin config: hasKey=false y entorno por defecto staging', async () => {
     const svc = new ChannexAdminService(fakeConfig(null), fakeChannex)
     const st = await svc.getStatus()
-    expect(st).toEqual({ environment: 'staging', hasKey: false, keyMasked: '', channexUserId: '' })
+    expect(st).toMatchObject({ environment: 'staging', hasKey: false, keyMasked: '', channexUserId: '' })
+    // Sin credencial no se consulta Channex: la tarjeta tiene que abrir para poder CARGAR la key.
+    expect(st.properties).toEqual({ inAccount: 0, hotelsWithProperty: 0, orphans: [] })
+    expect(st.dashboardUrl).toBe('https://staging.channex.io')
   })
 
   it('save con apiKey vacío NO borra la key existente (solo cambia entorno)', async () => {
@@ -93,5 +111,87 @@ describe('ChannexAdminService', () => {
     const svc = new ChannexAdminService(fakeConfig(null), fakeChannex)
     const r = await svc.test()
     expect(r.success).toBe(true)
+  })
+})
+
+
+// ── REQ-CAN-09: la tarjeta tiene que decir lo que hace falta para operar ─────────────────────
+describe('ChannexAdminService — salud de la cuenta (REQ-CAN-09)', () => {
+  const conKey = () => fakeConfig({ apiKey: 'abcd1234efgh5678', environment: 'production' })
+
+  it('cruza las properties de la cuenta contra los hoteles y marca las huérfanas', async () => {
+    const channex = {
+      ...fakeChannex,
+      listProperties: async () => [
+        { id: 'p1', title: 'Hotel Uno' },
+        { id: 'p2', title: 'Hotel Dos' },
+        { id: 'p3', title: 'Prueba vieja' },
+      ],
+    } as any
+    const svc = new ChannexAdminService(conKey(), channex, fakeQueries([{ channexPropertyId: 'p1' }, { channexPropertyId: 'p2' }]))
+    const st = await svc.getStatus()
+    expect(st.properties.inAccount).toBe(3)
+    expect(st.properties.hotelsWithProperty).toBe(2)
+    expect(st.properties.orphans).toEqual([{ id: 'p3', title: 'Prueba vieja' }])
+  })
+
+  it('el dashboard depende del entorno (staging y producción son cuentas distintas)', async () => {
+    const svc = new ChannexAdminService(conKey(), fakeChannex, fakeQueries())
+    expect((await svc.getStatus()).dashboardUrl).toBe('https://app.channex.io')
+  })
+
+  it('reconoce el webhook cuando la cuenta tiene registrado NUESTRO callback', async () => {
+    const callback = 'https://hotel.example/api/channels/channex/webhook?api_key=xyz'
+    const channex = {
+      ...fakeChannex,
+      listWebhooks: async () => [{ id: 'w1', callbackUrl: 'https://hotel.example/api/channels/channex/webhook?api_key=xyz', eventMask: '*', propertyId: null }],
+    } as any
+    const svc = new ChannexAdminService(conKey(), channex, fakeQueries())
+    expect((await svc.getStatus(callback)).webhook.registered).toBe(true)
+  })
+
+  it('webhook sin registrar cuando el callback de la cuenta apunta a otro lado', async () => {
+    const channex = {
+      ...fakeChannex,
+      listWebhooks: async () => [{ id: 'w1', callbackUrl: 'https://otro-pms.com/hook', eventMask: '*', propertyId: null }],
+    } as any
+    const svc = new ChannexAdminService(conKey(), channex, fakeQueries())
+    const st = await svc.getStatus('https://hotel.example/api/channels/channex/webhook')
+    expect(st.webhook.registered).toBe(false)
+  })
+
+  it('un error de Channex no tumba la tarjeta: viaja en el body', async () => {
+    const channex = {
+      ...fakeChannex,
+      listProperties: async () => { throw new Error('401 Unauthorized') },
+      listWebhooks: async () => { throw new Error('401 Unauthorized') },
+    } as any
+    const svc = new ChannexAdminService(conKey(), channex, fakeQueries())
+    const st = await svc.getStatus()
+    expect(st.properties.error).toContain('401')
+    expect(st.webhook.error).toContain('401')
+    expect(st.hasKey).toBe(true)
+  })
+
+  it('planExpiresAt se guarda y vuelve, con los días que faltan', async () => {
+    const q = fakeQueries([], {})
+    const svc = new ChannexAdminService(conKey(), fakeChannex, q)
+    await svc.save({ planExpiresAt: '2026-09-09' })
+    expect(q._account().planExpiresAt).toBe('2026-09-09')
+    expect((await svc.getStatus()).planExpiresAt).toBe('2026-09-09')
+  })
+
+  it('un plan vencido queda marcado (el caso real: venció el 2026-09-09 y nadie se enteró)', async () => {
+    const svc = new ChannexAdminService(conKey(), fakeChannex, fakeQueries([], { planExpiresAt: '2026-09-09' }))
+    const st = await svc.getStatus('', new Date('2026-09-10T12:00:00Z'))
+    expect(st.planExpired).toBe(true)
+    expect(st.planDaysLeft).toBe(-1)
+  })
+
+  it('planDaysLeft cuenta por día calendario: el día del vencimiento da 0, no -1', () => {
+    expect(planDaysLeft('2026-09-09', new Date('2026-09-09T23:00:00'))).toBe(0)
+    expect(planDaysLeft('2026-09-24', new Date('2026-09-09T00:00:00'))).toBe(15)
+    expect(planDaysLeft('', new Date())).toBeNull()
+    expect(planDaysLeft('no-es-fecha', new Date())).toBeNull()
   })
 })

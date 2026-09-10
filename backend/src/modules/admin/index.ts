@@ -113,6 +113,7 @@ export function AdminModule() {
       router.get('/api/admin/subscriptions', sa, () => controller.listSubscriptions())
       router.get('/api/admin/audit', sa, () => controller.listAuditLogs())
       router.get('/api/admin/announcements', sa, () => controller.listAnnouncements())
+      router.get('/api/admin/announcements/reach', sa, () => controller.getAnnouncementsReach())
       router.get('/api/admin/monitoring', sa, () => controller.getMonitoring())
       router.get('/api/admin/plans', sa, () => controller.listPlans())
       router.post('/api/admin/plans', sa, (req: any) => controller.createPlan(req))

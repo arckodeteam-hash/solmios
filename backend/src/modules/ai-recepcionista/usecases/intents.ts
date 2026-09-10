@@ -44,6 +44,17 @@ export async function getIntent(
   return intent
 }
 
+/**
+ * Corre el motor de NLP contra UNA sola intención: es el botón "Probar" del panel, que sirve para
+ * ver si las frases de entrenamiento de esa intención matchean un mensaje. Va acá y no en el
+ * service porque es la misma pareja buscar-intención + `detectIntent` que ya usa el pipeline.
+ */
+export async function probarIntent(
+  repo: any, id: string, message: string, userHotelId?: string, userRole?: string,
+): Promise<NlpResult> {
+  return detectIntent(message, [await getIntent(repo, id, userHotelId, userRole)])
+}
+
 export async function createIntent(
   repo: any, cache: CacheAdapter,
   dto: CreateAiIntentDTO, hotelId: string,

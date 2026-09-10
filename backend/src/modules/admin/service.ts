@@ -78,6 +78,7 @@ export class AdminService {
   async listSubscriptions(): Promise<{ data: any[]; total: number; mrrTotal: number }> { return this.queries!.listSubscriptions() }
   async listAuditLogs(): Promise<{ data: any[]; total: number }> { return this.queries!.listAuditLogs() }
   async listAnnouncements(): Promise<{ data: any[]; total: number }> { return this.queries!.listAnnouncements() }
+  async getAnnouncementsReach() { return this.queries!.getAnnouncementsReach() }
   async getMonitoring(): Promise<MonitoringDTO> { return this.queries!.getMonitoring() }
   async getPublicUsers(): Promise<any[]> { return this.queries!.getPublicUsers() }
 

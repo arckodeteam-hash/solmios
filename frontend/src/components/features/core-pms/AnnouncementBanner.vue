@@ -30,18 +30,20 @@
 import { ref, computed, onMounted } from 'vue'
 import { AnnouncementsService, announcementMeta } from '@/services/Announcements.service'
 import type { Announcement } from '@/services/Announcements.service'
-import { ConfigService } from '@/services/Platform.service'
-import { useAuthStore } from '@/stores/auth.store'
 
-const auth = useAuthStore()
-const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
-
+/**
+ * Qué anuncios ve este usuario lo decide el BACKEND: los de su hotel más los de la plataforma,
+ * ya filtrados por audiencia y por vigencia. Acá no se filtra por hotel — hacerlo escondía los
+ * anuncios de plataforma, que es de dónde venía el bug original.
+ */
 const all = ref<Announcement[]>([])
-const dismissedIds = ref<Set<string>>(new Set())
+
+/** Cerrados en esta sesión, para que el aviso desaparezca sin esperar al servidor. */
+const justDismissed = ref<Set<string>>(new Set())
 
 const visibleAnnouncements = computed(() =>
   all.value
-    .filter(a => a.active && !dismissedIds.value.has(a.id))
+    .filter((a) => a.active && !a.dismissed && !justDismissed.value.has(a.id))
     // Prioridad: urgent > high > medium > low
     .sort((a, b) => {
       const order = { urgent: 0, high: 1, medium: 2, low: 3 } as Record<string, number>
@@ -54,28 +56,34 @@ async function load() {
   try {
     const r = await AnnouncementsService.list({ activeOnly: true })
     all.value = r.data || []
-  } catch { all.value = [] }
+  } catch {
+    all.value = []
+    return
+  }
 
-  // Cargar dismissedIds del usuario (Configuration KV)
-  try {
-    const dismissed = await ConfigService.get('dismissed_announcements', hotelId.value)
-    if (Array.isArray(dismissed)) {
-      dismissedIds.value = new Set(dismissed.filter((x: any): x is string => typeof x === 'string'))
-    } else if (typeof dismissed === 'string') {
-      try {
-        const parsed = JSON.parse(dismissed)
-        if (Array.isArray(parsed)) dismissedIds.value = new Set(parsed.filter((x: any): x is string => typeof x === 'string'))
-      } catch { /* ignore */ }
-    }
-  } catch { /* ignore */ }
+  // El acuse de lectura es una métrica, no una condición para mostrar el aviso: si falla, el
+  // banner ya está en pantalla y no pasa nada. Por eso va después del render y se traga el error.
+  for (const a of visibleAnnouncements.value) {
+    if (a.seen) continue
+    AnnouncementsService.markSeen(a.id).catch(() => { /* métrica perdida, aviso entregado */ })
+  }
 }
 
+/**
+ * Cerrar es POR USUARIO.
+ *
+ * Antes se guardaba como una clave de `configuration` por HOTEL: el primer empleado que cerraba
+ * el aviso se lo ocultaba a todos sus compañeros, dueño incluido.
+ */
 async function dismiss(id: string) {
-  dismissedIds.value = new Set([...dismissedIds.value, id])
-  // Persistir para no mostrar de nuevo
+  justDismissed.value = new Set([...justDismissed.value, id])
   try {
-    await ConfigService.set('dismissed_announcements', JSON.stringify([...dismissedIds.value]), hotelId.value)
-  } catch { /* silent */ }
+    await AnnouncementsService.dismiss(id)
+  } catch {
+    // Se vuelve a mostrar en la próxima carga: es preferible a tragarse el error y que el usuario
+    // crea que lo silenció para siempre.
+    justDismissed.value = new Set([...justDismissed.value].filter((x) => x !== id))
+  }
 }
 
 onMounted(load)

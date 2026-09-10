@@ -157,7 +157,7 @@ export async function handleChannexWebhook(
 
 export interface ChannexWebhookRegistrar {
   listWebhooks: (key: string) => Promise<Array<{ id: string; callbackUrl: string; eventMask: string; propertyId: string | null }>>
-  createWebhook: (key: string, input: { callbackUrl: string; eventMask: string; propertyId?: string | null }) => Promise<{ id: string } | null>
+  createWebhook: (key: string, input: { callbackUrl: string; eventMask: string; propertyId?: string | null }) => Promise<{ id: string | null; error?: string }>
 }
 
 /** `<base sin barra final>/api/channels/channex/webhook?api_key=<secreto>`. */
@@ -187,7 +187,7 @@ function endpointDe(url: string): string {
 export async function registerChannexWebhook(
   deps: { store: ChannexWebhookConfigStore; channex: ChannexWebhookRegistrar; logger: ChannexWebhookLogger },
   baseUrl: string,
-): Promise<{ created: boolean; id: string | null; callbackUrl: string }> {
+): Promise<{ created: boolean; id: string | null; callbackUrl: string; error?: string }> {
   const secreto = await getOrCreateWebhookSecret(deps.store)
   const callbackUrl = buildCallbackUrl(baseUrl, secreto)
   const objetivo = endpointDe(callbackUrl)
@@ -205,8 +205,11 @@ export async function registerChannexWebhook(
     propertyId: null,                              // de cuenta: aplica a todas las properties
   })
   if (!creado?.id) {
-    deps.logger.error('channex-webhook: Channex rechazó el alta del callback', { callbackUrl: objetivo })
-    return { created: false, id: null, callbackUrl }
+    // El motivo VIAJA hasta el operador (log y respuesta del endpoint): un "rechazó el alta" pelado
+    // obligaba a reproducir el POST a mano contra Channex para enterarse de qué campo faltaba.
+    const error = creado?.error || 'Channex rechazó el alta del callback'
+    deps.logger.error('channex-webhook: Channex rechazó el alta del callback', { callbackUrl: objetivo, error })
+    return { created: false, id: null, callbackUrl, error }
   }
   deps.logger.info('channex-webhook: callback registrado', { id: creado.id, callbackUrl: objetivo })
   return { created: true, id: creado.id, callbackUrl }

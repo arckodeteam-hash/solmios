@@ -4,12 +4,14 @@ import type { ApikeysDTO, CreateApikeysDTO, UpdateApikeysDTO, ApikeysQuery, Apik
 import type { ApikeysSockets } from './sockets'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 import { generateApiKey, stripSecret } from './usecases/secret'
+import { versionedListCache, type VersionedListCache } from '../../shared/usecases/versioned-list-cache'
 
 const CACHE_TTL = 300
 
 export class ApikeysService {
   private sockets: ApikeysSockets = {}
   private auditPort: AuditPort | null = null
+  private readonly listCache: VersionedListCache
 
   /** Conecta el audit log. Lo inyecta el connector `apikeys-auditlog`. */
   setAuditDeps(port: AuditPort): void {
@@ -21,7 +23,9 @@ export class ApikeysService {
     private readonly logger: Logger,
     private readonly cache: CacheAdapter,
     private readonly auth: Auth,
-  ) {}
+  ) {
+    this.listCache = versionedListCache(cache, 'apikeys')
+  }
 
   setSockets(s: Partial<ApikeysSockets>): void {
     const next = s as Record<string, any>
@@ -49,8 +53,10 @@ export class ApikeysService {
     const limit = Math.min(Math.max(query.limit || 20, 1), 100)
     const offset = (page - 1) * limit
 
-    // La clave incluye filtros y paginación: sin eso, distintas páginas/filtros compartían entrada.
-    const cacheKey = `apikeys:list:${JSON.stringify(filters)}:${page}:${limit}`
+    // Clave versionada (ver shared/usecases/versioned-list-cache.ts): incluye filtros y paginación
+    // Y un token que las mutaciones bumpean. Antes se borraba `apikeys:list:{hotelId}`, que nunca
+    // coincidía con esta clave → la clave recién creada no aparecía hasta vencer el TTL.
+    const cacheKey = await this.listCache.key(filters.hotelId as string | undefined, { filters, page, limit })
     const cached = await this.cache.get(cacheKey)
     if (cached) return cached as ApikeysPaginated
 
@@ -81,7 +87,7 @@ export class ApikeysService {
       ...dto, secretHash, masked, active: 1, requests: 0,
     } as any)
     await this.sockets.onApikeysCreated?.(item)
-    await this.cache.delete(`apikeys:list:${dto.hotelId}`)
+    await this.listCache.invalidate(dto.hotelId)
     // plainKey solo acá: es la única vez que se ve el secreto.
     return { ...stripSecret(item), plainKey }
   }
@@ -95,7 +101,7 @@ export class ApikeysService {
     const item = await this.repo.update(id, dto as any)
     if (!item) throw new NotFoundError('API Key no encontrada')
     await this.sockets.onApikeysUpdated?.(item)
-    await this.cache.delete(`apikeys:list:${existing.hotelId}`)
+    await this.listCache.invalidate(existing.hotelId)
     return item
   }
 
@@ -108,7 +114,7 @@ export class ApikeysService {
     const deleted = await this.repo.delete(id)
     if (!deleted) throw new NotFoundError('API Key no encontrada')
     await this.sockets.onApikeysDeleted?.(id)
-    await this.cache.delete(`apikeys:list:${existing.hotelId}`)
+    await this.listCache.invalidate(existing.hotelId)
     // SC-05: revocar una credencial deja rastro. NUNCA se loguea el secreto (secretHash/token):
     // solo el nombre y el alcance, que es lo que un auditor necesita para saber QUÉ se revocó.
     await auditSafely(this.auditPort, this.logger, {

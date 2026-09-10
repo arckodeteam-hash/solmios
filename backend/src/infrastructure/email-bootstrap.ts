@@ -80,6 +80,27 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
     (subsForEmail as any).setPlatformEmailSender((event: string, to: string, hotelId: string, vars: Record<string, string>) =>
       platformEmailsMod.sendEvent(event, to, hotelId, vars))
   }
+  // Solicitudes de conexión de OTA (REQ-CAN-07): el correo al soporte cuando entra un pedido, y
+  // las 3 plantillas que recibe el hotel (cita, conectado, rechazado). Va acá y no en un connector
+  // porque el EmailService se construye DESPUÉS de los módulos — un connector reventaría por TDZ.
+  const canalesForEmail = resolveModule<{
+    setChannelRequestNotifyPorts(p: {
+      emailSender?: EmailSender
+      sendPlatformEvent?: (event: string, to: string, hotelId: string, vars: Record<string, string>) => Promise<{ sent: boolean }>
+    }): void
+  }>('canales')
+  if (canalesForEmail && typeof canalesForEmail.setChannelRequestNotifyPorts === 'function') {
+    canalesForEmail.setChannelRequestNotifyPorts({
+      emailSender: emailService,
+      ...(platformEmailsMod
+        ? {
+          sendPlatformEvent: (event: string, to: string, hotelId: string, vars: Record<string, string>) =>
+            platformEmailsMod.sendEvent(event, to, hotelId, vars),
+        }
+        : {}),
+    })
+  }
+
   const usuariosForEmail = resolveModule<{ setEmailVerificationDeps(es: EmailSender, url: string): void }>('usuarios')
   if (usuariosForEmail && typeof usuariosForEmail.setEmailVerificationDeps === 'function') {
     usuariosForEmail.setEmailVerificationDeps(emailService, process.env.PUBLIC_URL || '')

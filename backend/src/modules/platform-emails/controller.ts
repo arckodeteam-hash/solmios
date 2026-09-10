@@ -16,7 +16,13 @@ const SAMPLE_VARIABLES: Record<string, Record<string, string>> = {
   payment_succeeded: { hotel_name: 'Hotel de Prueba', plan_name: 'Professional', amount: '$123', link: 'https://ejemplo.com/panel/suscripcion' },
   payment_failed: { hotel_name: 'Hotel de Prueba', plan_name: 'Professional', amount: '$123', link: 'https://ejemplo.com/panel/suscripcion' },
   subscription_canceled: { hotel_name: 'Hotel de Prueba', link: 'https://ejemplo.com/panel/suscripcion' },
+  subscription_renewal_auto: { hotel_name: 'Hotel de Prueba', days_left: '3', link: 'https://ejemplo.com/panel/suscripcion' },
+  subscription_renewal_manual: { hotel_name: 'Hotel de Prueba', days_left: '3', link: 'https://ejemplo.com/panel/suscripcion' },
+  subscription_suspended: { hotel_name: 'Hotel de Prueba', link: 'https://ejemplo.com/panel/suscripcion' },
+  subscription_reactivated: { hotel_name: 'Hotel de Prueba', link: 'https://ejemplo.com/panel/dashboard' },
 }
+// `platform_name`/`support_email`/`support_phone` NO van acá: las agrega el service desde
+// Configuración → Plataforma, así la prueba muestra exactamente lo que va a salir.
 
 export class PlatformEmailsController {
   constructor(

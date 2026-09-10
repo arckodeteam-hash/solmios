@@ -8,24 +8,50 @@
 import { NotFoundError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { renderTemplate } from '../../services/notification-renderer'
+import {
+  PLATFORM_EMAIL_VARIABLES,
+  DEFAULT_PLATFORM_IDENTITY,
+  platformEmailVariables,
+  resolvePlatformIdentity,
+} from '../../shared/utils/platform-identity'
 import type { PlatformEmailTemplateDTO, UpdatePlatformEmailTemplateDTO, PlatformEmailSender, PlatformEmailEvent } from './types'
+
+type ConfigRepo = Pick<RepositoryAdapter<Record<string, unknown>>, 'findOne'>
 
 export class PlatformEmailsService {
   private sender?: PlatformEmailSender
 
-  constructor(private readonly repo: RepositoryAdapter<PlatformEmailTemplateDTO>) {}
+  /**
+   * `configRepo` es la tabla `configuration`: de ahí sale el nombre de la plataforma y el contacto
+   * de soporte que el super-admin carga en Configuración → Plataforma. Opcional para no romper a
+   * quien construye el service sin config (tests): sin él se usan los defaults.
+   */
+  constructor(
+    private readonly repo: RepositoryAdapter<PlatformEmailTemplateDTO>,
+    private readonly configRepo?: ConfigRepo,
+  ) {}
 
   /** Cablea el envío. Lo llama el bootstrap de email (best-effort, puede no estar seteado nunca). */
   setEmailDeps(sender: PlatformEmailSender): void {
     this.sender = sender
   }
 
-  list(): Promise<PlatformEmailTemplateDTO[]> {
-    return this.repo.findMany()
+  async list(): Promise<PlatformEmailTemplateDTO[]> {
+    const rows = await this.repo.findMany()
+    return rows.map(withPlatformVariables)
   }
 
-  get(event: string): Promise<PlatformEmailTemplateDTO | null> {
-    return this.repo.findOne({ event })
+  async get(event: string): Promise<PlatformEmailTemplateDTO | null> {
+    const row = await this.repo.findOne({ event })
+    return row ? withPlatformVariables(row) : null
+  }
+
+  /** Variables globales (`platform_name`, `support_email`, `support_phone`) para cualquier envío. */
+  async platformVariables(): Promise<Record<string, string>> {
+    const identity = this.configRepo
+      ? await resolvePlatformIdentity(this.configRepo)
+      : { ...DEFAULT_PLATFORM_IDENTITY }
+    return platformEmailVariables(identity)
   }
 
   async update(event: string, patch: UpdatePlatformEmailTemplateDTO): Promise<PlatformEmailTemplateDTO> {
@@ -51,10 +77,14 @@ export class PlatformEmailsService {
     const template = await this.repo.findOne({ event })
     if (!template || !template.isActive) return { sent: false }
 
+    // Las variables de plataforma van debajo de las del evento: quien dispara el envío puede
+    // pisarlas, pero nunca queda un `{platform_name}` sin resolver en el correo.
+    const vars = { ...(await this.platformVariables()), ...variables }
+
     // El subject NO es HTML (fix H2, mismo criterio que NotificationRenderer.resolveAndRender):
     // 'Bed & Breakfast' no debe llegar como 'Bed &amp; Breakfast'.
-    const subject = renderTemplate(template.subject, variables, false)
-    const html = renderTemplate(template.body, variables, true)
+    const subject = renderTemplate(template.subject, vars, false)
+    const html = renderTemplate(template.body, vars, true)
 
     await this.sender.enqueue({
       to, subject, html, hotelId,
@@ -62,4 +92,19 @@ export class PlatformEmailsService {
     })
     return { sent: true }
   }
+}
+
+/**
+ * `variables` es el hint que la UI muestra como "variables disponibles". Las globales se agregan
+ * en la respuesta y no en la fila: así una plantilla sembrada antes de que existieran (o editada
+ * a mano) también las ofrece, sin migrar datos.
+ */
+function withPlatformVariables(row: PlatformEmailTemplateDTO): PlatformEmailTemplateDTO {
+  let own: string[] = []
+  try {
+    const parsed = JSON.parse(row.variables || '[]')
+    own = Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : []
+  } catch { own = [] }
+  const merged = [...own, ...PLATFORM_EMAIL_VARIABLES.filter((v) => !own.includes(v))]
+  return { ...row, variables: JSON.stringify(merged) }
 }

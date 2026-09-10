@@ -1,0 +1,52 @@
+# SDD State: canales-admin-gestion-real
+
+change_name: canales-admin-gestion-real
+created: 2026-09-10
+status: proposed
+current_phase: tasks
+
+source: auditoría de /admin/channels 2026-09-10 (captura del usuario en prod: columna angosta, tabla achicada, solicitudes sin cita ni contacto)
+
+sprints:
+  1-layout-y-datos:
+    title: Ancho completo + mensaje/teléfono/property que ya existen
+    status: pending
+    tasks_total: 5
+    tasks_done: 0
+    priority: critical
+  2-modelo-caso:
+    title: Estados, cita obligatoria, transiciones y actividades
+    status: pending
+    tasks_total: 6
+    tasks_done: 0
+    priority: high
+  3-avisos:
+    title: Correos admin/hotel + cron de citas
+    status: pending
+    tasks_total: 4
+    tasks_done: 0
+    priority: high
+  4-pantalla-admin:
+    title: Bandeja con filtros + detalle con timeline
+    status: pending
+    tasks_total: 5
+    tasks_done: 0
+    priority: high
+  5-panel-hotel:
+    title: Pedir con contexto y ver la cita
+    status: pending
+    tasks_total: 3
+    tasks_done: 0
+    priority: medium
+  6-cuenta-channex:
+    title: Tarjeta con datos operativos y alertas
+    status: pending
+    tasks_total: 4
+    tasks_done: 0
+    priority: high
+  7-cierre:
+    title: Verificación + deploy
+    status: pending
+    tasks_total: 3
+    tasks_done: 0
+    priority: low
