@@ -1,17 +1,17 @@
 // announcements.test.ts — Regresión ANN-4 (#108) del panel super-admin: la columna
 // "Vistas / N leídos" mostraba `reads: 0` LITERAL (hardcodeado en el map del listado),
-// así que no se sabía quién leyó nada. Ahora la página lista del módulo anuncios
-// (AnnouncementsService.list → GET /anuncios), que para super_admin agrega a cada aviso
-// su `reads` real (COUNT de announcement_reads), y el 0 sólo queda como default vacío.
+// así que no se sabía quién leyó nada. La página lista del endpoint de plataforma
+// (PlatformService.announcements → GET /admin/announcements), que devuelve TODOS los
+// anuncios sin paginar y con su `reads` real (COUNT de announcement_reads), y el 0 sólo
+// queda como default vacío. El mock devuelve lo que devuelve el endpoint: sin límites
+// escondidos — si la página volviera a un source paginado, este doble no lo taparía.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
 const listMock = vi.fn()
-vi.mock('@/services/Announcements.service', () => ({
-  AnnouncementsService: {
-    list: (...a: unknown[]) => listMock(...a),
-    create: vi.fn(),
-    remove: vi.fn(),
+vi.mock('@/services/Platform.service', () => ({
+  PlatformService: {
+    announcements: (...a: unknown[]) => listMock(...a),
   },
 }))
 // Singleton: el componente y el test tienen que ver LOS MISMOS vi.fn() (patrón audit.test.ts).
@@ -37,7 +37,7 @@ async function render() {
   return wrapper
 }
 
-/** Un anuncio tal como lo devuelve GET /anuncios a un super_admin (AnunciosDTO + reads). */
+/** Un anuncio tal como lo devuelve GET /admin/announcements (fila cruda + reads del backend). */
 function annuncio(overrides: Record<string, unknown> = {}) {
   return {
     id: 'a1',

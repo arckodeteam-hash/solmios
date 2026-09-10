@@ -144,8 +144,26 @@ export class DashboardQueries {
     return { data, total: data.length }
   }
 
+  /**
+   * Anuncios para el panel del super-admin (GET /api/admin/announcements): TODA la tabla, sin
+   * paginar y sin cache. El listado del módulo anuncios (GET /anuncios) no sirve acá: pagina con
+   * limit=20 que la página no controla (el panel perdería avisos) y responde de un cache de 300s
+   * que create/delete no invalidan bien (#160), así que "Enviar Ahora" no se reflejaba.
+   *
+   * Cada aviso lleva `reads` = sus lecturas reales, con la MISMA semántica que el módulo anuncios
+   * para super_admin (`readsRepo.count({ announcementId })`): las filas de `announcement_reads`
+   * se cargan UNA vez y se agrupan en un Map — una consulta por anuncio adentro del loop sería
+   * N+1 (mismo patrón que `listHotels`).
+   */
   async listAnnouncements(): Promise<{ data: any[]; total: number }> {
-    const data = await this.orm.findMany('Announcements', {})
+    const announcements = await this.orm.findMany('Announcements', {}) as any[]
+    const reads = await this.orm.findMany('AnnouncementReads', {}) as any[]
+    const readsByAnnouncement = new Map<string, number>()
+    for (const r of reads) {
+      const key = String(r.announcementId)
+      readsByAnnouncement.set(key, (readsByAnnouncement.get(key) ?? 0) + 1)
+    }
+    const data = announcements.map((a: any) => ({ ...a, reads: readsByAnnouncement.get(String(a.id)) ?? 0 }))
     return { data, total: data.length }
   }
 

@@ -191,6 +191,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useToast } from '@/composables/useToast'
+import { PlatformService } from '@/services/Platform.service'
 import { AnnouncementsService } from '@/services/Announcements.service'
 import AppModal from '@/components/ui/AppModal.vue'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
@@ -222,10 +223,13 @@ const scheduled = ref<any[]>([])
 async function cargarAnuncios(): Promise<void> {
   loading.value = true
   try {
-    // #108 (ANN-4): el listado sale del módulo anuncios (GET /anuncios), que para super_admin
-    // agrega a cada aviso su `reads` real (COUNT de announcement_reads por anuncio). El endpoint
-    // /admin/announcements del módulo admin devuelve la tabla cruda, sin lecturas.
-    const { data } = await AnnouncementsService.list()
+    // #108 (ANN-4): TODOS los anuncios del endpoint de plataforma (GET /admin/announcements), que
+    // ahora agrega a cada aviso su `reads` real (COUNT de announcement_reads). El listado del
+    // módulo anuncios (GET /anuncios) no sirve para este panel: pagina con limit=20 sin UI de
+    // paginación (se perdían avisos) y sirve de un cache de 300s que create/delete no invalidan
+    // bien (#160), así que "Enviar Ahora" no se reflejaba. Crear/eliminar sí van por ahí: son los
+    // únicos endpoints de escritura de anuncios.
+    const { data } = await PlatformService.announcements()
     announcements.value = data.map((a: any) => ({
       id: a.id,
       title: a.title,
