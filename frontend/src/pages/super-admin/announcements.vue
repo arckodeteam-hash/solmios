@@ -191,7 +191,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useToast } from '@/composables/useToast'
-import { PlatformService } from '@/services/Platform.service'
 import { AnnouncementsService } from '@/services/Announcements.service'
 import AppModal from '@/components/ui/AppModal.vue'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
@@ -223,7 +222,10 @@ const scheduled = ref<any[]>([])
 async function cargarAnuncios(): Promise<void> {
   loading.value = true
   try {
-    const { data } = await PlatformService.announcements()
+    // #108 (ANN-4): el listado sale del módulo anuncios (GET /anuncios), que para super_admin
+    // agrega a cada aviso su `reads` real (COUNT de announcement_reads por anuncio). El endpoint
+    // /admin/announcements del módulo admin devuelve la tabla cruda, sin lecturas.
+    const { data } = await AnnouncementsService.list()
     announcements.value = data.map((a: any) => ({
       id: a.id,
       title: a.title,
@@ -234,7 +236,9 @@ async function cargarAnuncios(): Promise<void> {
       typeClass: TYPE_CLASS[a.type] ?? 'bg-cyan/10 text-cyan',
       audience: a.hotelId ? 'Hotel específico' : 'Todos los hoteles',
       date: a.fecha ? String(a.fecha).slice(0, 10) : '',
-      views: 0, reads: 0,
+      views: 0,
+      // Lecturas reales de la API; 0 queda sólo como default vacío cuando no viene, nunca como dato falso.
+      reads: a.reads ?? 0,
       status: a.active === 1 ? 'Enviado' : 'Borrador',
     }))
   } catch { toast.error('No se pudieron cargar los anuncios') } finally { loading.value = false }
