@@ -11,6 +11,8 @@ Bun (>=1.3) + Vue 3.5 + Vite 8 + Pinia 3 + Vue Router 5.1 + Tailwind CSS 4.3 + a
 - **pms-competitive-gaps**: mayoría ✅ + debt documentada (PC-4 SW desactivado, PC-3.1.2 Checkout Session cumple).
 - **frontend-coverage-gaps**: GATES automáticos ✅. GATES manuales (reports/switcher/PWA en prod) sin validar.
 - **wizard-refactor** (`docs/wizard-refactor/`): ✅ F0-F5 completas. Ubicación + identidad pública movidas de Configuración a Página pública (F1); `OnboardingStep[]` con 6 pasos de perfil granulares + `kind:'profile'|'external'` (F2); Centro de configuración nuevo en `/panel/configuracion-inicial` (F3); dashboard usa `ProfileProgressBar.vue` (franja fina, % solo sobre pasos requeridos) en vez de `OnboardingGuide.vue` (retirado, F4). Copy en registro "usted". Deuda residual menor: `pagina-publica/ubicacion.vue` (de F1, anterior a la decisión de tono) sigue en voseo — fuera del alcance acotado por el usuario para la conversión a "usted".
+- **admin-facturacion-real** (`openspec/changes/admin-facturacion-real/`, epic #152, issues #153-#157): ✅ COMPLETO y en producción (2026-09-10). `/admin/billing` ya no fabrica facturas desde `listSubscriptions`: existe `platform_invoices` (la llenan los webhooks de Stripe + `scripts/backfill-platform-invoices.ts`), endpoints `/api/admin/billing/*` con filtros server-side, recordatorio con dedup de 24 h y pago manual que reactiva la suscripción vía el connector `admin-subscriptions-billing`. En prod: tabla + índice único creados, backfill corrido (2 facturas históricas) y `invoice.finalized`/`invoice.voided` habilitados en el endpoint de webhook de Stripe (`we_1UDo3YAmbL9UHRkUtNJOA12j`) — si se recrea el endpoint, hay que volver a tildarlos.
+- **pipeline-ventas-trials** (`openspec/changes/pipeline-ventas-trials/`, epic #143, issues #144-#151): Fases A y B ✅ en prod 2026-09-10. Epic cerrado; pendiente solo §10.2 → issue #181 (medir `paying/registered` a las 4 semanas, dato de partida 2026-09-10: embudo 8 sem = 15 registrados / 60% activan / 13.3% pagan). Screenshots de QA en `docs/evidencia/pipeline-ventas/`.
 - **mobile-app**: OTRO profesional (Flutter, repo `solmios-mobile`). **NO scope — no tocar.**
 
 ## Database — Migraciones y Seeders
@@ -41,7 +43,7 @@ bun run migrate-db.ts
 | `scripts/add-user-type-{pg,}.ts` | ALTER `users.userType` | ✅ `addColumnIfMissing` |
 | `scripts/drop-users-role-check.ts` | Elimina el CHECK vestigial de `users.role` (bloqueaba roles custom y 'housekeeper'/'supervisor' → 500). SQLite recrea la tabla sin el CHECK; PG imprime el `ALTER DROP CONSTRAINT`. **Correr en prod PG.** | ✅ (no-op si no hay CHECK) |
 | `scripts/seed-legal-pages.ts` | Crea o **reemplaza** (UPSERT por slug) las 3 páginas legales (`terminos`, `privacidad`, `eliminacion-datos`) en `site_pages` con el contenido de `scripts/legal-pages-content.ts` (transcripto de los .docx fuente). A diferencia de `migrate-db.ts` (insert-only, nunca pisa CMS), este script siempre sincroniza estas 3 con el texto legal vigente — correr tras editar `legal-pages-content.ts` o para empujar el texto actualizado a un entorno (prod) donde ya existían con contenido viejo. | ✅ (UPSERT) |
-| `scripts/seed-platform-email-templates.ts` | Inserta las 10 plantillas de correo de PLATAFORMA (`platform_email_templates`: welcome, trial_*, renewal_*, payment_*, suspended, reactivated, canceled). Insert-only por defecto. Con `--refresh` **reemplaza** subject/body/variables de las 10 con el texto del script (conserva `isActive`). El nombre de la plataforma NO va escrito: es `{platform_name}` y lo resuelve el envío desde `configuration('plataforma')` (`shared/utils/platform-identity.ts`), igual que `{support_email}`/`{support_phone}`. **Correr en prod con `--refresh` tras el deploy 2026-09-09**: las filas viejas tienen "SolmiOS" hardcodeado. | ✅ (COUNT por evento; `--refresh` = UPDATE por evento) |
+| `scripts/seed-platform-email-templates.ts` | Inserta las 17 plantillas de correo de PLATAFORMA (`platform_email_templates`: welcome, trial_* — incl. `trial_extended`, la que encola `POST /api/admin/subscriptions/:hotelId/extend-trial` (#146) —, renewal_*, payment_*, suspended, reactivated, canceled, más las 6 de la secuencia de activación/rescate `activation_*`, `trial_offer`, `trial_rescue_*` que manda `shared/usecases/activation-sequence-cron.ts` (#149/#150)). Insert-only por defecto. Con `--refresh` **reemplaza** subject/body/variables de las 17 con el texto del script (conserva `isActive`). El nombre de la plataforma NO va escrito: es `{platform_name}` y lo resuelve el envío desde `configuration('plataforma')` (`shared/utils/platform-identity.ts`), igual que `{support_email}`/`{support_phone}`. **Correr en prod con `--refresh` tras el deploy 2026-09-09**: las filas viejas tienen "SolmiOS" hardcodeado. | ✅ (COUNT por evento; `--refresh` = UPDATE por evento) |
 | `scripts/seed-marketing-pages.ts` | Mismo patrón que `seed-legal-pages.ts` pero para las páginas "producto"/"empresa" (`que-es-solmios`, `integraciones`, `sobre-nosotros`, `contacto`) — contenido en `scripts/marketing-pages-content.ts`. Correr tras editarlo o para empujar correcciones (auditoría Meta 2026-08-26: voseo, correo/teléfono de contacto ausentes) a un entorno donde ya existían. | ✅ (UPSERT) |
 | `scripts/backfill-announcement-audience.ts` (`bun run backfill:announcement-audience`) | Rellena `announcements.audience` en las filas anteriores a esa columna (`hotel` si tienen `hotelId`, `all` si no). **Obligatorio tras el deploy**: el listado busca los anuncios de plataforma por `audience`, así que una fila con `audience` nulo no la devuelve ninguna consulta y el anuncio deja de verse. Lista los anuncios sin hotel antes de tocarlos — al correrlo **empiezan a verse en todos los hoteles**. | ✅ (solo escribe donde está nulo/vacío) |
 | `scripts/backfill-platform-invoices.ts` (`bun run backfill:platform-invoices`) | Trae de Stripe las facturas de la PLATAFORMA anteriores a `platform_invoices` (REQ-BIL-03): recorre las suscripciones con `stripeCustomerId`, pagina `invoices.list` y hace UPSERT por `stripeInvoiceId` reusando el mismo camino que el webhook. NO pisa filas `method='manual'` ni trae borradores. `--dry` cuenta sin escribir, `--hotel <id>` limita a un hotel. **Correr en prod tras el deploy**: sin esto `/admin/billing` arranca vacío para hoteles que ya venían pagando. Además hay que habilitar `invoice.finalized` e `invoice.voided` en el endpoint de webhook de Stripe (dashboard) — sin eso la factura recién aparece cuando se paga. | ✅ (UPSERT por `stripeInvoiceId`) |
@@ -342,6 +344,53 @@ vigente: la pestaña **desaparece del panel en cuanto el hotel tiene `connection
 migrarlos a la conexión oficial y sacar el código.
 
 Para saber quién lo usa: `bun run verificar-whatsapp` los lista.
+
+## Pipeline de ventas — cómo está armado (epic #143, Fases A y B en prod desde 2026-09-10)
+
+**El pipeline se CALCULA, no se guarda.** Una fila por hotel con suscripción (`subscriptions ⋈
+hotels`, inner join: el demo sin suscripción no está) más una por `sales_leads` sin hotel. Lo único
+persistido es lo que una persona anota (`sales_prospects`). Vista: `/admin/leads-ventas`
+("Pipeline de ventas"); embudo en el dashboard del super-admin.
+
+| Pieza | Dónde |
+|---|---|
+| Etapa, señales, calor, orden | `sales-leads/usecases/pipeline.ts` (`buildPipeline`) |
+| Lo que ventas anota (próximo paso, responsable, contactado, perdido) | `sales-leads/usecases/prospect-upsert.ts` → `sales_prospects` |
+| Responsables (`assignedTo` = `users.id` con `userType='admin'`) | `sales-leads/usecases/assignees.ts` |
+| Embudo semanal | `sales-leads/usecases/funnel.ts` (`GET /api/admin/sales-pipeline/funnel?weeks=1..26`) |
+| Aviso a ventas al registrarse | socket `subscriptions.onHotelSignedUp` → `connectors/subscriptions-sales-alert.ts` → `sales-leads/usecases/signup-alert.ts` (`SALES_LEADS_ADMIN_EMAIL`, cae a `ventas@solmios.com`) |
+| Extender trial | `POST /api/admin/subscriptions/:hotelId/extend-trial` → `connectors/admin-subscriptions-trial.ts` → `subscriptions/usecases/extend-trial.ts` |
+| Secuencia de activación + rescate + perdido automático | `shared/usecases/activation-sequence-cron.ts` (diario) |
+| WhatsApp en la landing | `site-pages/usecases/platform-contact.ts` (`GET /api/public/platform-contact`) |
+| Frontend | `pages/super-admin/leads-ventas.vue`, `components/features/super-admin/SalesFunnelCard.vue`, `services/SalesPipeline.service.ts`, `types/sales-pipeline.ts` (espejo exacto de `sales-leads/types.ts`) |
+
+**Etapa** (`stageOfHotel`): `lost` manda (alguien decidió) → `active` = `paying` → `trialing` vencido =
+`expired` → `trialing` con habitaciones = `activated`, sin = `registered`. `canceled`/`suspended`/
+`past_due` sin `lostAt` caen en `expired` (no paga, hay que rescatarlo). Leads sin hotel: `contact`,
+o `lost` si `sales_leads.status='lost'`.
+
+**Calor**: rooms>0 +2 · rates>0 +2 · channels>0 +3 · reservations>0 +3 · actividad ≤3 d +2 →
+`hot ≥6`, `warm 3–5`, `cold <3`. **Orden**: `nextStepAt` vencido primero → calor desc → `daysLeft` asc.
+
+Reglas que están en el código y conviene no romper:
+
+- **Las señales se piden POR HOTEL y acotadas** (`count({hotelId})`, `findMany({hotelId},{limit:1})`),
+  nunca `reservations`/`audit_log` enteros en memoria: son las dos tablas más grandes de la base.
+- **Extender trial solo aplica a `trialing`/`expired` sin Stripe vivo** — sobre `active`/`suspended`/
+  `canceled` da 409. Pisar a `trialing` una suscripción paga la bloquea al vencer y reabre el doble
+  Checkout.
+- **El cron manda como máximo UN correo por hotel por corrida**, primera regla que aplique; `contactedAt`
+  en los últimos 2 días = silencio (hay un humano encima). Dedup en `sales_prospects.sequenceSent`
+  `{evento: fechaISO}` y **solo se marca si `sendEvent` devolvió `sent:true`**: el primer tick corre 20 s
+  después del restart y si el seed de plantillas todavía no corrió, sin este guard el hotel se queda sin
+  ese correo para siempre (pasó en prod el 2026-09-10).
+- **Un rescate (`trial_rescue_*`) cuenta como enviado solo si salió después del vencimiento vigente**:
+  extender el trial mueve `trialEndsAt` y la secuencia arranca de cero sin que `extend-trial` conozca
+  esta tabla.
+- **Perdido automático** (+14 d vencido) solo si no hay NI actividad NI contacto desde el vencimiento;
+  con cualquiera de los dos sigue en `expired` y lo decide una persona.
+- Un lead de contacto que se registra con el mismo email pasa a ser la fila del hotel; **su prospecto
+  (notas, próximo paso) no se traslada** — deuda conocida (INT-2 del scorecard PIPE-A), sin issue.
 
 ## Multi-tenancy
 - Single DB con columna `hotelId` en cada tabla

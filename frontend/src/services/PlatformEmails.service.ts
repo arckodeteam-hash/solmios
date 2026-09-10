@@ -2,13 +2,27 @@ import { http } from './http'
 
 // Plantillas de email de la plataforma (super-admin) — 6 eventos fijos, sin alta ni baja.
 // GET /admin/platform-emails devuelve las 6 filas; PUT solo edita subject/body/isActive.
-export type PlatformEmailEvent =
-  | 'welcome'
-  | 'trial_ending'
-  | 'trial_expired'
-  | 'payment_succeeded'
-  | 'payment_failed'
-  | 'subscription_canceled'
+/** Espejo de `backend/src/modules/platform-emails/types.ts` — un evento nuevo se agrega en los dos. */
+export const PLATFORM_EMAIL_EVENTS = [
+  'welcome',
+  'trial_ending',
+  'trial_expired',
+  'trial_extended',
+  'activation_no_rooms',
+  'activation_no_rates',
+  'activation_no_channel',
+  'trial_offer',
+  'trial_rescue_1',
+  'trial_rescue_2',
+  'payment_succeeded',
+  'payment_failed',
+  'subscription_canceled',
+  'subscription_renewal_auto',
+  'subscription_renewal_manual',
+  'subscription_suspended',
+  'subscription_reactivated',
+] as const
+export type PlatformEmailEvent = (typeof PLATFORM_EMAIL_EVENTS)[number]
 
 export interface PlatformEmailTemplate {
   id: string

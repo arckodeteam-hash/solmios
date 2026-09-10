@@ -264,7 +264,7 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
   // adultos + niño de 2), Habitación 2 (1 adulto + niños de 6 y 10).
   describe('varias habitaciones — composición independiente por línea', () => {
     it('seguir tocando el composer DESPUÉS de agregar no muta la línea ya agregada (snapshot exacto)', async () => {
-      const w = render(true, 'es', { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 })
+      const w = render(true, 'es', { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } )
       const store = useBookingStore()
 
       await bumpAdults(w, 1) // 2 adultos
@@ -286,7 +286,7 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     })
 
     it('ejemplo del pedido: Habitación 1 (2 adultos + niño de 2) y Habitación 2 (1 adulto + niños de 6 y 10) mantienen edades separadas', async () => {
-      const w = render(true, 'es', { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 })
+      const w = render(true, 'es', { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } )
       const store = useBookingStore()
       // Habitación 2 cotiza "para 3" (1 adulto + 2 niños con plaza) — el fixture de este archivo
       // solo trae 1 y 2 vendibles por defecto; se habilita 3 acá para poder agregarla.
@@ -318,7 +318,7 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     })
 
     it('mismos adultos, EDADES distintas: no se agrupan en una sola línea con quantity — son habitaciones distintas', async () => {
-      const w = render(true, 'es', { acceptChildren: true, maxChildAge: 12, maxFreeAge: 0 })
+      const w = render(true, 'es', { acceptChildren: true, maxChildAge: 12, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } )
       const store = useBookingStore()
 
       await bumpChildren(w, 1) // 1 adulto (default) + 1 niño
@@ -387,7 +387,7 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
 
   // ─── Niños: libres vs. con plaza (política del hotel) ────────────────────────────────────
   describe('niños según la política del hotel', () => {
-    const POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+    const POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
 
     it('un niño que NO consume plaza no sube el precio (sigue en "para 2")', async () => {
       const w = render(true, 'es', POLICY)
@@ -428,7 +428,7 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     })
 
     it('sin política de niños activada (acceptChildren: false) no ofrece agregar niños', () => {
-      const w = render(true, 'es', { acceptChildren: false, maxChildAge: 12, maxFreeAge: 3 })
+      const w = render(true, 'es', { acceptChildren: false, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } )
       expect(w.text()).not.toContain('Niños')
       w.unmount()
     })
@@ -445,7 +445,7 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     })
 
     it('maxChildAge=0 (caso borde): el desplegable ofrece una sola opción, "0"', async () => {
-      const w = render(true, 'es', { acceptChildren: true, maxChildAge: 0, maxFreeAge: 0 })
+      const w = render(true, 'es', { acceptChildren: true, maxChildAge: 0, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } )
       await bumpChildren(w, 1)
 
       const options = w.get('select').findAll('option').map((o) => o.attributes('value'))
@@ -478,6 +478,49 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
       // Ninguna línea heredó las edades de la otra (dato huérfano entre habitaciones) — dos
       // líneas separadas, no una sola "×2" con la composición mezclada.
       expect(store.cart[0]!.childrenAges).not.toEqual(store.cart[1]!.childrenAges)
+      w.unmount()
+    })
+  })
+
+  // ─── Tarea 21 (Identificar bebés, 2026-09-08) — criterio 158: "mostrar claramente cuando el
+  // menor se considera bebé". El badge sale de `classifyAge` (edad ≤ maxBabyAge → 'baby'), por
+  // niño y en vivo, y es SOLO informativo: la ocupación chargeable no cambia por mostrarlo.
+  describe('Tarea 21 — badge de bebé ("Bebé — no consume plaza")', () => {
+    const BABY_POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+
+    it('edad ≤ maxBabyAge muestra el badge; subir la edad a "libre pero no bebé" lo saca', async () => {
+      const w = render(true, 'es', BABY_POLICY) // maxBabyAge: 1, maxFreeAge: 3
+      await bumpChildren(w, 1) // 1 niño, edad default 0 → bebé
+
+      expect(w.find('[data-testid="baby-badge"]').exists()).toBe(true)
+      expect(w.get('[data-testid="baby-badge"]').text()).toContain('Bebé — no consume plaza')
+
+      await w.get('select').setValue('2') // 2 > maxBabyAge=1 pero ≤ maxFreeAge=3: libre, NO bebé
+      expect(w.find('[data-testid="baby-badge"]').exists()).toBe(false)
+      w.unmount()
+    })
+
+    it('con dos niños (1 y 8) hay UN solo badge y la ocupación no lo cuenta (1 adulto + niño de 8 → "para 2")', async () => {
+      const w = render(true, 'es', BABY_POLICY)
+      await bumpChildren(w, 2)
+      const selects = w.findAll('select')
+      await selects[0]!.setValue('1') // ≤ maxBabyAge=1 → bebé
+      await selects[1]!.setValue('8') // > maxFreeAge=3 → con plaza
+
+      expect(w.findAll('[data-testid="baby-badge"]')).toHaveLength(1)
+      expect(w.get('[data-occupancy]').attributes('data-occupancy')).toBe('2')
+      expect(w.text()).toContain('300')
+      w.unmount()
+    })
+
+    it('maxBabyAge=0 (default de la política): edad 0 es bebé, edad 1 ya no', async () => {
+      const w = render(true, 'es', { ...BABY_POLICY, maxBabyAge: 0 })
+      await bumpChildren(w, 1) // edad default 0
+
+      expect(w.find('[data-testid="baby-badge"]').exists()).toBe(true)
+
+      await w.get('select').setValue('1')
+      expect(w.find('[data-testid="baby-badge"]').exists()).toBe(false)
       w.unmount()
     })
   })
@@ -528,7 +571,7 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     })
 
     it('excede maxChildren en una ocupación que la matriz SÍ marca disponible: motivo, no precio', async () => {
-      const w = render(true, 'es', { acceptChildren: true, maxChildAge: 12, maxFreeAge: 0 })
+      const w = render(true, 'es', { acceptChildren: true, maxChildAge: 12, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } )
       const store = useBookingStore()
       store.ratesResponse!.roomTypes[0]!.maxChildren = 0
       await bumpChildren(w, 1)

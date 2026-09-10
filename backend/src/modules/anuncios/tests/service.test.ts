@@ -174,17 +174,23 @@ describe('AnunciosService', () => {
       expect(capturedOpts.limit).toBe(100)
     })
 
-    it('reads from cache on second call', async () => {
-      let cacheHits = 0
-      const cached: AnunciosPaginated = { data: [makeAnuncio()], total: 1, page: 1, limit: 20, pages: 1 }
-      const cache = makeCache({
-        get: (async (key: string) => { cacheHits++; return cacheHits > 1 ? cached : null }) as CacheAdapter['get'],
+    it('la segunda consulta idéntica NO vuelve a pegarle a la base', async () => {
+      // Se cuenta el acceso al REPO, no las llamadas a cache.get: desde #160 la clave del listado
+      // incluye un token de versión, así que una lectura de página son varias lecturas de caché.
+      // Lo que importa es que la base se consulte una sola vez.
+      let paginates = 0
+      const repo = makeRepo({
+        paginate: (async () => {
+          paginates++
+          return { data: [makeAnuncio()], total: 1, limit: 20, offset: 0, pages: 1 }
+        }) as RepositoryAdapter<AnunciosDTO>['paginate'],
       })
-      const svc = new AnunciosService(makeRepo(), log, cache, makeUserRepo(), makeReadsRepo(), fakeAuth)
+      const svc = new AnunciosService(repo, log, makeRealCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
+
       await svc.list({}, hotelAdmin)
-      const result = await svc.list({}, hotelAdmin)
-      expect(result.data).toHaveLength(1)
-      expect(cacheHits).toBe(2)
+      await svc.list({}, hotelAdmin)
+
+      expect(paginates).toBe(1)
     })
 
     it('super_admin can filter by hotelId', async () => {
@@ -260,12 +266,18 @@ describe('AnunciosService', () => {
       expect(firedWith!.id).toBe(result.id)
     })
 
-    it('invalidates hotel-scoped cache on create', async () => {
-      let deletedKey = ''
-      const cache = makeCache({ delete: async (key) => { deletedKey = key } })
+    it('invalida el listado del hotel al crear (#160)', async () => {
+      // Antes se borraba `anuncios:list:h1`, una clave que NUNCA existió (la real lleva página,
+      // límite y filtros) y el listado quedaba viejo hasta 5 minutos. Ahora sube el token de
+      // versión del hotel, que es lo que hace caer TODAS sus entradas.
+      const cache = makeRealCache()
       const svc = new AnunciosService(makeRepo(), log, cache, makeUserRepo(), makeReadsRepo(), fakeAuth)
+      await svc.list({}, hotelAdmin) // siembra el token
+      const antes = await cache.get('anuncios:ver:h1')
+
       await svc.create({ title: 'Cache bust', hotelId: 'h1' }, hotelAdmin)
-      expect(deletedKey).toBe('anuncios:list:h1')
+
+      expect(await cache.get('anuncios:ver:h1')).not.toBe(antes)
     })
   })
 
@@ -293,14 +305,17 @@ describe('AnunciosService', () => {
       await expect(svc.update('ghost', { title: 'X' }, adminUser)).rejects.toThrow('Anuncio no encontrado')
     })
 
-    it('invalidates hotel-scoped cache on update', async () => {
+    it('invalida el listado del hotel al editar (#160)', async () => {
       const ann = makeAnuncio({ id: 'a1', hotelId: 'h1' })
-      let deletedKey = ''
-      const cache = makeCache({ delete: async (key) => { deletedKey = key } })
+      const cache = makeRealCache()
       const repo = makeRepo({ findById: async () => ann })
       const svc = new AnunciosService(repo, log, cache, makeUserRepo(), makeReadsRepo(), fakeAuth)
+      await svc.list({}, hotelAdmin)
+      const antes = await cache.get('anuncios:ver:h1')
+
       await svc.update('a1', { title: 'Cached' }, hotelAdmin)
-      expect(deletedKey).toBe('anuncios:list:h1')
+
+      expect(await cache.get('anuncios:ver:h1')).not.toBe(antes)
     })
   })
 
@@ -343,14 +358,17 @@ describe('AnunciosService', () => {
       expect(firedId).toBe('a1')
     })
 
-    it('invalidates hotel-scoped cache on delete', async () => {
+    it('invalida el listado del hotel al borrar (#160)', async () => {
       const ann = makeAnuncio({ id: 'a1', hotelId: 'h1' })
-      let deletedKey = ''
-      const cache = makeCache({ delete: async (key) => { deletedKey = key } })
+      const cache = makeRealCache()
       const repo = makeRepo({ findById: async () => ann })
       const svc = new AnunciosService(repo, log, cache, makeUserRepo(), makeReadsRepo(), fakeAuth)
+      await svc.list({}, hotelAdmin)
+      const antes = await cache.get('anuncios:ver:h1')
+
       await svc.delete('a1', hotelAdmin)
-      expect(deletedKey).toBe('anuncios:list:h1')
+
+      expect(await cache.get('anuncios:ver:h1')).not.toBe(antes)
     })
   })
 

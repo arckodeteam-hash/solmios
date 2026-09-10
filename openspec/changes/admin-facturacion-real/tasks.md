@@ -50,26 +50,26 @@
 
 ## 4. Pantalla (REQ-BIL-07, REQ-BIL-08)
 
-- [ ] 4.1 `PlatformBilling.service.ts` tipado (sin `any`).
+- [x] 4.1 `PlatformBilling.service.ts` tipado (sin `any`).
       **Aceptación**: `vue-tsc -b` limpio.
-- [ ] 4.2 Reescribir `billing.vue`: tabla con datos reales, fecha de emisión y vencimiento, planes
+- [x] 4.2 Reescribir `billing.vue`: tabla con datos reales, fecha de emisión y vencimiento, planes
       desde `plans`, filtro de fecha aplicado, paginación, stats reales, loading/vacío/error.
       **Aceptación**: `grep -n "PLAN_PRICE\|Junio 2026\|'Tarjeta'\|INV-\|showToastMessage\|: any"
       billing.vue` → vacío; captura en prod con fechas visibles en todas las filas.
-- [ ] 4.3 Modal "Ver" con todos los campos, links Stripe/PDF, link al detalle de suscripción.
+- [x] 4.3 Modal "Ver" con todos los campos, links Stripe/PDF, link al detalle de suscripción.
       **Aceptación**: abre sin error en consola para `paid`, `open`, `failed` y `manual`.
-- [ ] 4.4 Modal Recordar (muestra qué plantilla va a salir; respeta el 409 con la hora) y modal
+- [x] 4.4 Modal Recordar (muestra qué plantilla va a salir; respeta el 409 con la hora) y modal
       Registrar pago manual (monto, moneda, fecha, referencia, período, notas; confirmación).
       **Aceptación**: verificado en navegador: tras registrar, la fila pasa a `paid` sin recargar y
       `/admin/subscriptions` muestra la suscripción `active`.
-- [ ] 4.5 Exportar llama al endpoint CSV con los filtros activos.
+- [x] 4.5 Exportar llama al endpoint CSV con los filtros activos.
       **Aceptación**: archivo abre en LibreOffice con acentos correctos.
 
 ## 5. Verificación + deploy
 
-- [ ] 5.1 `arckode analyze` 0 violaciones; `bun run typecheck && bun test`; frontend
+- [x] 5.1 `arckode analyze` 0 violaciones; `bun run typecheck && bun test`; frontend
       `bun run typecheck && bun run build`.
-- [ ] 5.2 Deploy: `RUN_MIGRATE=1`, correr `backfill-platform-invoices.ts` en prod, habilitar
+- [x] 5.2 Deploy: `RUN_MIGRATE=1`, correr `backfill-platform-invoices.ts` en prod, habilitar
       `invoice.finalized` e `invoice.voided` en el endpoint de webhook de Stripe (dashboard).
       **Aceptación**: en prod, `/admin/billing` lista las facturas históricas de Stripe con fecha y
       "Ver" muestra el PDF.

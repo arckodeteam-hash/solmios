@@ -150,6 +150,11 @@
       </SectionCard>
     </div>
 
+    <!-- ─── 2b. Embudo de ventas (#151): registrados → activados → pagando → perdidos ───── -->
+    <div class="mb-6">
+      <SalesFunnelCard />
+    </div>
+
     <!-- ─── 3. Crecimiento y uso real del producto ──────────────────────────── -->
     <div class="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
       <SectionCard class="flex flex-col xl:col-span-2" body-class="flex flex-1 flex-col p-4 sm:p-5" title="Altas por mes" subtitle="Hoteles nuevos en los últimos 6 meses">
@@ -300,6 +305,7 @@ import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
+import SalesFunnelCard from '@/components/features/super-admin/SalesFunnelCard.vue'
 import { SuperAdminService, type PlatformMetrics, type PipelineItem, type PlatformActivityItem } from '@/services/SuperAdmin.service'
 import { PlatformService } from '@/services/Platform.service'
 

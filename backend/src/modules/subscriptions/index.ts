@@ -23,12 +23,14 @@ export function SubscriptionsModule() {
     // prorrateo cobrado por `subscriptions.update`) — contrato observable, 1.4.0.
     // BIL-1 (#153): el módulo pasa a ser dueño de `platform_invoices` y el webhook de plataforma
     // atiende dos eventos más (`invoice.finalized`, `invoice.voided`) — contrato observable, 1.5.0.
-    version: '1.5.0',
+    // REQ-PIPE-05 (#146): acción `extendTrial` (la invoca `admin` vía connector
+    // admin-subscriptions-trial; sin ruta HTTP propia) — contrato observable, 1.5.1.
+    version: '1.5.1',
     description: 'Suscripción del hotel a la plataforma: alta pública, prueba gratis y corte de servicio',
     contract: {
-      name: 'subscriptions', version: '1.5.0',
+      name: 'subscriptions', version: '1.5.1',
       description: 'SaaS subscription lifecycle',
-      actions: ['signup', 'publicPlans', 'publicFounderDiscount', 'publicFounderCountdown', 'myStatus', 'onboarding', 'checkout', 'portal', 'upgradePreview', 'upgrade', 'webhookPlatform', 'applyStripeDiscount', 'publicSignupPolicy', 'resumeCheckout'],
+      actions: ['signup', 'publicPlans', 'publicFounderDiscount', 'publicFounderCountdown', 'myStatus', 'onboarding', 'checkout', 'portal', 'upgradePreview', 'upgrade', 'webhookPlatform', 'applyStripeDiscount', 'publicSignupPolicy', 'resumeCheckout', 'extendTrial'],
       events: [],
       tables: ['subscriptions', 'subscription_discounts', 'special_category_config', 'founder_history', 'platform_invoices'],
       dependencies: [],

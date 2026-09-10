@@ -97,6 +97,34 @@ describe('validateBody — text', () => {
   })
 })
 
+describe('validateBody — integer (sin coerción)', () => {
+  const schema: BodySchema = { days: { type: 'integer', required: true, min: 1, max: 30 } }
+
+  it('acepta un entero JSON dentro del rango', () => {
+    expect(validateBody(schema, { days: 7 }).days).toBe(7)
+    expect(validateBody(schema, { days: 1 }).days).toBe(1)
+    expect(validateBody(schema, { days: 30 }).days).toBe(30)
+  })
+
+  it('el `number` del framework coerciona "7" → 7; `integer` lo rechaza', () => {
+    expect(validateSchema({ days: { type: 'number', required: true } }, { days: '7' }).days).toBe(7)
+    expect(() => validateBody(schema, { days: '7' })).toThrow('Validation error')
+  })
+
+  it('rechaza decimales, NaN, booleanos y null requerido', () => {
+    expect(() => validateBody(schema, { days: 7.5 })).toThrow('Validation error')
+    expect(() => validateBody(schema, { days: Number.NaN })).toThrow('Validation error')
+    expect(() => validateBody(schema, { days: true })).toThrow('Validation error')
+    expect(() => validateBody(schema, { days: null })).toThrow('Validation error')
+    expect(() => validateBody(schema, {})).toThrow('Validation error')
+  })
+
+  it('respeta min/max', () => {
+    expect(() => validateBody(schema, { days: 0 })).toThrow('Validation error')
+    expect(() => validateBody(schema, { days: 31 })).toThrow('Validation error')
+  })
+})
+
 describe('validateBody — convive con los tipos del framework', () => {
   const schema: BodySchema = {
     concept: { type: 'string', required: true },

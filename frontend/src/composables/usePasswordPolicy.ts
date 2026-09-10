@@ -96,8 +96,13 @@ const UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
 const DIGITS = '23456789'
 const ALNUM = LOWER + UPPER + DIGITS
 
+// Es una clave temporal que viaja al empleado: sale del CSPRNG, no de Math.random.
+function randomBelow(n: number): number {
+  return crypto.getRandomValues(new Uint32Array(1))[0]! % n
+}
+
 function pick(chars: string): string {
-  return chars.charAt(Math.floor(Math.random() * chars.length)) || 'a'
+  return chars.charAt(randomBelow(chars.length)) || 'a'
 }
 
 /**
@@ -113,7 +118,7 @@ export function generateCompliantPassword(p: PasswordPolicy, len = Math.max(8, p
   if (p.requireSpecial) chars.push('!')
   while (chars.length < length) chars.push(pick(ALNUM))
   for (let i = chars.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
+    const j = randomBelow(i + 1)
     ;[chars[i], chars[j]] = [chars[j] as string, chars[i] as string]
   }
   return chars.join('')

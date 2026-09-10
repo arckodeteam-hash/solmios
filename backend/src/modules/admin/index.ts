@@ -1,6 +1,8 @@
 import { createModule, OrmRepository } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import { estadoMetaApp, guardarMetaApp } from '../../infrastructure/meta-app-config'
+import { estadoResend, guardarResend, borrarResend } from '../../infrastructure/resend-config'
+import { estadoServicios } from '../../infrastructure/settings-status'
 import { MetaAppConfigSchema } from './validators/meta-app-schema'
 import type { PlanDTO, AmenityCatalogDTO } from './types'
 import { AdminService } from './service'
@@ -26,12 +28,13 @@ export function AdminModule() {
     // export CSV sobre `platform_invoices`. Contrato observable nuevo.
     // 1.4.0 (BIL-3, #155): + recordatorio de cobro (plantilla por estado, dedup 24 h) y registro de
     // pago manual (reactiva la suscripción vía connector). Las dos dejan audit log.
-    version: '1.4.0',
+    // 1.4.1: + POST /api/admin/subscriptions/:hotelId/extend-trial (REQ-PIPE-05, #146).
+    version: '1.4.1',
     description: 'Super admin platform management',
     contract: {
-      name: 'admin', version: '1.4.0',
+      name: 'admin', version: '1.4.1',
       description: 'Platform-level management: hotels, users, plans, analytics',
-      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv', 'remindBillingInvoice', 'registerManualPayment'],
+      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv', 'remindBillingInvoice', 'registerManualPayment', 'extendTrial'],
       events: [],
       tables: [],
       dependencies: [],
@@ -105,6 +108,16 @@ export function AdminModule() {
         return { status: 200, body: await guardarMetaApp(configRepo, body) }
       })
 
+      // API key de Resend (plataforma): respaldo de correo cuando no hay SMTP. El GET devuelve
+      // solo estado + últimos 4; la key nunca vuelve al navegador. Vacía en el PUT → 400.
+      router.get('/api/admin/settings/resend', sa, async () => ({ status: 200, body: await estadoResend(configRepo) }))
+      router.put('/api/admin/settings/resend', sa, async (req: any) => ({ status: 200, body: await guardarResend(configRepo, String(req.body?.apiKey ?? '')) }))
+      router.delete('/api/admin/settings/resend', sa, async () => ({ status: 200, body: await borrarResend(configRepo) }))
+
+      // Estado por servicio (Stripe, captcha, Meta, Resend, SMTP, Maps, Channex...): solo `configured`
+      // + `source` (env | configuration). Nunca devuelve valores ni pistas: para eso están las pantallas.
+      router.get('/api/admin/settings/status', sa, async () => ({ status: 200, body: await estadoServicios(configRepo) }))
+
       router.get('/api/admin/hoteles', sa, () => controller.listHotels())
       // ── SMTP-UI (2026-08-19): test REAL de la config de correo de la plataforma ──
       // El botón de settings.vue era un toast falso — ocultó meses de desconexión entre
@@ -131,7 +144,7 @@ export function AdminModule() {
       router.get('/api/admin/analytics', sa, () => controller.getAnalytics())
       router.get('/api/admin/platform-metrics', sa, () => controller.getPlatformMetrics())
       router.get('/api/admin/subscriptions', sa, () => controller.listSubscriptions())
-      router.get('/api/admin/audit', sa, () => controller.listAuditLogs())
+      router.get('/api/admin/audit', sa, (req: any) => controller.listAuditLogs(req))
       router.get('/api/admin/announcements', sa, () => controller.listAnnouncements())
       router.get('/api/admin/monitoring', sa, () => controller.getMonitoring())
       router.get('/api/admin/plans', sa, () => controller.listPlans())
@@ -154,6 +167,9 @@ export function AdminModule() {
       router.post('/api/admin/subscriptions/:hotelId/special-conditions', sa, (req: any) => controller.applySpecialConditions(req))
       router.post('/api/admin/subscriptions/:hotelId/suspend', sa, (req: any) => controller.suspendSubscription(req))
       router.post('/api/admin/subscriptions/:hotelId/reactivate', sa, (req: any) => controller.reactivateSubscription(req))
+      // REQ-PIPE-05 (#146): más días de prueba. La lógica vive en `subscriptions` (connector
+      // admin-subscriptions-trial); acá solo validación, guard de super-admin y audit_log.
+      router.post('/api/admin/subscriptions/:hotelId/extend-trial', sa, (req: any) => controller.extendTrial(req))
 
       // ── Overrides de módulos por hotel (3ra capa de entitlement) ──────────────────────
       router.get('/api/admin/hotels/:hotelId/module-overrides', sa, (req: any) => controller.listModuleOverrides(req))
@@ -170,7 +186,7 @@ export function AdminModule() {
       router.post('/api/admin/billing/invoices/:id/remind', sa, (req: any) => controller.remindBillingInvoice(req))
       router.post('/api/admin/billing/manual-payment', sa, (req: any) => controller.registerManualPayment(req))
 
-      log.info('Módulo admin listo (43 endpoints)')
+      log.info('Módulo admin listo (48 endpoints)')
       return service
     },
   })

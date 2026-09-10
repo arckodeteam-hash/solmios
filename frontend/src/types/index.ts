@@ -590,7 +590,12 @@ export interface ReservationDetail {
    * `childrenAges`. Reemplaza la heurística vieja del modal (`childrenAges.length > children` para
    * inferir "alguno se reclasificó") por el dato explícito: ahora se sabe CUÁL.
    */
-  childrenAgesDetail?: { declaredAge: number; effectiveAge: number; classification: 'free' | 'paying' | 'adult' }[]
+  childrenAgesDetail?: { declaredAge: number; effectiveAge: number; classification: 'baby' | 'free' | 'paying' | 'adult' }[]
+  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — lo que el huésped pidió al
+   *  reservar online, asociado a ESTA habitación. Ausente/false en reservas sin bebé o cargadas
+   *  a mano en el panel (que no tienen este composer). */
+  needsCrib?: boolean
+  cribCount?: number
   /** Presente si esta reserva es una habitación de una reserva de varias (mismo `groupId` en sus
    *  hermanas). El modal lo usa para pedir las demás y mostrar la composición de cada una. */
   groupId?: string | null
@@ -956,3 +961,9 @@ export * from './landing'
 // que necesiten la lista de monedas o un CurrencyCode deben importar de acá o de
 // `@/data/intl-catalogs` (que re-exporta la lista runtime-derived).
 export * from './currency'
+
+// #148 (pipeline-ventas-trials) — Contacto público de la plataforma (WhatsApp de la landing).
+export type { PlatformContact } from './site-pages'
+
+// #147 (pipeline-ventas-trials) — Pipeline de ventas del super admin (espejo de sales-leads/types.ts).
+export * from './sales-pipeline'

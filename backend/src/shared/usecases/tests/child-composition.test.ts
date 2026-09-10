@@ -6,11 +6,11 @@ import { describe, it, expect } from 'bun:test'
 import {
   resolveChildComposition, fitsRoomCapacity, DEFAULT_CHILD_POLICY, type ChildPolicy,
   projectAge, projectChildrenAges, recoverRawAdults, composeFromPersistedReservation,
-  classifyAge, describeChildrenAges, resolveAdminCapacityComposition,
+  classifyAge, describeChildrenAges, resolveAdminCapacityComposition, resolveChildPolicy,
 } from '../child-composition'
 
 // Ejemplo textual del pedido: "Aceptar niños: Sí, edad máxima niño: 12, edad máxima sin plaza: 3"
-const POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+const POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
 
 describe('resolveChildComposition', () => {
   it('0-3 años → no consume plaza (ejemplo del pedido)', () => {
@@ -199,7 +199,7 @@ describe('recoverRawAdults', () => {
 })
 
 describe('composeFromPersistedReservation — con targetCheckIn (proyección al reagendar)', () => {
-  const POLICY_REQ12: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+  const POLICY_REQ12: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
 
   it('sin targetCheckIn: comportamiento previo al Requerimiento 12, sin proyectar', () => {
     const c = composeFromPersistedReservation({ adults: 2, children: 1, childrenAges: [8], childrenAgesAsOf: '2030-01-10' }, POLICY_REQ12)
@@ -258,7 +258,7 @@ describe('composeFromPersistedReservation — con targetCheckIn (proyección al 
 
 // ─── Requerimiento 13 (Administración | Composición de huéspedes, 2026-09-03) ──────────────────
 describe('classifyAge', () => {
-  const POLICY_REQ12: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+  const POLICY_REQ12: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
 
   it('clasifica los tres baldes con los mismos límites que resolveChildComposition', () => {
     expect(classifyAge(2, POLICY_REQ12)).toBe('free')
@@ -274,8 +274,134 @@ describe('classifyAge', () => {
   })
 })
 
+// ─── Tarea 21 (Identificar bebés en la reserva pública, 2026-09-08) ────────────────────────────
+// "Bebé" es un SUBCONJUNTO de "no consume plaza": 0 ≤ maxBabyAge ≤ maxFreeAge. Para toda la
+// aritmética de precio/capacidad se comporta IDÉNTICO a un niño libre — lo único que cambia es la
+// etiqueta (`classification: 'baby'`) y el contador informativo `babies` (subconjunto de
+// `freeChildren`, no una cifra aparte).
+describe('classifyAge — bebé', () => {
+  const POLICY_BABY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+
+  it('0-1 años → bebé (maxBabyAge=1)', () => {
+    expect(classifyAge(0, POLICY_BABY)).toBe('baby')
+    expect(classifyAge(1, POLICY_BABY)).toBe('baby')
+  })
+
+  it('frontera: maxBabyAge es inclusive, maxBabyAge+1 ya es "libre" (niño, no bebé)', () => {
+    expect(classifyAge(1, POLICY_BABY)).toBe('baby')
+    expect(classifyAge(2, POLICY_BABY)).toBe('free')
+  })
+
+  it('maxBabyAge=0 (default): solo la edad 0 es bebé', () => {
+    const policy: ChildPolicy = { ...POLICY_BABY, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+    expect(classifyAge(0, policy)).toBe('baby')
+    expect(classifyAge(1, policy)).toBe('free')
+  })
+
+  it('un bebé sigue clasificando como adulto si superara maxChildAge (caso degenerado, política mal configurada)', () => {
+    // maxBabyAge nunca debería superar maxChildAge en una política válida, pero classifyAge no lo
+    // asume: el chequeo de "adulto" va PRIMERO, mismo orden que protege cualquier otra frontera.
+    const policy: ChildPolicy = { acceptChildren: true, maxChildAge: 0, maxFreeAge: 3, maxBabyAge: 3, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+    expect(classifyAge(1, policy)).toBe('adult')
+  })
+})
+
+describe('resolveChildComposition — bebé', () => {
+  const POLICY_BABY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+
+  it('un bebé no consume plaza — mismo comportamiento que un niño libre para precio/capacidad', () => {
+    const c = resolveChildComposition(2, [1], POLICY_BABY)
+    expect(c.babies).toBe(1)
+    expect(c.freeChildren).toBe(1) // el bebé SIGUE contando acá (subconjunto, no aparte)
+    expect(c.payingChildren).toBe(0)
+    expect(c.chargeableOccupancy).toBe(2) // "para 2", el bebé no infla el precio — no se asume que ocupa plaza
+  })
+
+  it('mezcla bebé + niño libre (no bebé) + niño con plaza: babies solo cuenta al bebé', () => {
+    const c = resolveChildComposition(2, [1, 3, 8], POLICY_BABY) // 1=bebé, 3=libre no-bebé, 8=con plaza
+    expect(c.babies).toBe(1)
+    expect(c.freeChildren).toBe(2) // el bebé (1) + el libre no-bebé (3)
+    expect(c.payingChildren).toBe(1)
+    expect(c.chargeableOccupancy).toBe(3)
+  })
+
+  it('varios bebés: babies cuenta a todos, siguen sin ocupar plaza', () => {
+    const c = resolveChildComposition(2, [0, 1], POLICY_BABY)
+    expect(c.babies).toBe(2)
+    expect(c.freeChildren).toBe(2)
+    expect(c.chargeableOccupancy).toBe(2)
+  })
+
+  it('maxBabyAge=0 (default, ningún hotel configuró bebés): nadie clasifica como bebé salvo edad 0', () => {
+    const c = resolveChildComposition(2, [1, 2], DEFAULT_CHILD_POLICY)
+    expect(c.babies).toBe(0)
+  })
+})
+
+describe('fitsRoomCapacity — bebé NUNCA cuenta contra ningún límite', () => {
+  const POLICY_BABY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+
+  it('un bebé no cuenta contra la capacidad total (mismo criterio que un niño libre)', () => {
+    const c = resolveChildComposition(2, [1], POLICY_BABY) // 2 adultos + 1 bebé
+    expect(fitsRoomCapacity({ capacity: 2 }, c)).toBe(true)
+  })
+
+  it('maxChildren no bloquea por bebés, aunque haya más bebés que el máximo', () => {
+    const c = resolveChildComposition(2, [0, 1], POLICY_BABY) // 2 bebés, 0 con plaza
+    expect(fitsRoomCapacity({ capacity: 10, maxAdults: 4, maxChildren: 0 }, c)).toBe(true)
+  })
+})
+
+describe('describeChildrenAges — bebé', () => {
+  const POLICY_BABY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+
+  it('un bebé aparece con su propia clasificación, distinta de "free"', () => {
+    const d = describeChildrenAges({ childrenAges: [1, 3, 8] }, POLICY_BABY)
+    expect(d).toEqual([
+      { declaredAge: 1, effectiveAge: 1, classification: 'baby' },
+      { declaredAge: 3, effectiveAge: 3, classification: 'free' },
+      { declaredAge: 8, effectiveAge: 8, classification: 'paying' },
+    ])
+  })
+
+  it('con proyección de edad (Requerimiento 12): un bebé puede dejar de serlo al reagendar', () => {
+    // Declarado 1 (bebé, maxBabyAge=1) en 2030-01-10; checkIn 2032-01-10 (~2 años, floor conservador
+    // de projectAge da +1) → proyecta a 2 → supera maxBabyAge=1 → libre, ya no bebé.
+    const d = describeChildrenAges({ childrenAges: [1], childrenAgesAsOf: '2030-01-10', checkIn: '2032-01-10' }, POLICY_BABY)
+    expect(d).toEqual([{ declaredAge: 1, effectiveAge: 2, classification: 'free' }])
+  })
+})
+
+describe('resolveChildPolicy — parseo de maxBabyAge', () => {
+  function repoWith(value: unknown) {
+    return { findOne: async () => (value === undefined ? null : { hotelId: 'h1', key: 'child_policy', value }) } as any
+  }
+
+  it('sin fila de configuración: DEFAULT_CHILD_POLICY (maxBabyAge=0)', async () => {
+    const p = await resolveChildPolicy(repoWith(undefined), 'h1')
+    expect(p.maxBabyAge).toBe(0)
+  })
+
+  it('maxBabyAge configurado dentro de rango: se respeta tal cual', async () => {
+    const p = await resolveChildPolicy(repoWith({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 5, maxBabyAge: 2 }), 'h1')
+    expect(p.maxBabyAge).toBe(2)
+  })
+
+  it('maxBabyAge mayor a maxFreeAge (config corrupta/manual): se clampea a maxFreeAge — defensa en profundidad', () => {
+    return resolveChildPolicy(repoWith({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 10 }), 'h1')
+      .then((p) => expect(p.maxBabyAge).toBe(3))
+  })
+
+  it('maxBabyAge negativo/no numérico: cae al default (0), no reviente ni deje un valor inválido', async () => {
+    const p1 = await resolveChildPolicy(repoWith({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 5, maxBabyAge: -1 }), 'h1')
+    expect(p1.maxBabyAge).toBe(0)
+    const p2 = await resolveChildPolicy(repoWith({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 5 }), 'h1')
+    expect(p2.maxBabyAge).toBe(0)
+  })
+})
+
 describe('describeChildrenAges', () => {
-  const POLICY_REQ12: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+  const POLICY_REQ12: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
 
   it('reserva solo con adultos (sin childrenAges): array vacío', () => {
     expect(describeChildrenAges({ childrenAges: [] }, POLICY_REQ12)).toEqual([])
@@ -310,7 +436,7 @@ describe('describeChildrenAges', () => {
 
 // ─── Auditoría de integridad (cierre, 2026-09-04) — validación de capacidad en Administración ──
 describe('resolveAdminCapacityComposition', () => {
-  const POLICY_REQ12: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+  const POLICY_REQ12: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
 
   it('sin childrenAges (reserva de panel legacy): cada niño declarado consume plaza — conservador, nunca libre', () => {
     const c = resolveAdminCapacityComposition(2, 2, [], POLICY_REQ12)

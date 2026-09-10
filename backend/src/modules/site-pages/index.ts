@@ -14,6 +14,7 @@
 //   DELETE /api/site-pages/:id                admin
 //   GET    /api/public/site-pages             pública (sin auth, rate-limited 30/min/IP)
 //   GET    /api/public/site-pages/:slug       pública (sin auth, rate-limited 30/min/IP)
+//   GET    /api/public/platform-contact       pública (sin auth, rate-limited 30/min/IP) — #148
 import { createModule, OrmRepository } from 'arckode-framework'
 import { registerSitePagesModels } from './model'
 import { SitePagesService } from './service'
@@ -22,6 +23,7 @@ import type { SitePageDTO, PublicSitePage, PublicSitePageSummary } from './types
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
 import { createModuleGuard } from '../../infrastructure/auth/require-module'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
+import { resolvePlatformContact } from './usecases/platform-contact'
 
 export { SitePagesService }
 export type {
@@ -31,6 +33,8 @@ export type {
 export { SITE_PAGE_CATEGORIES, SITE_PAGE_STATUSES, CATEGORY_LABELS } from './types'
 export { SitePagesValidator, CreateSitePageSchema, UpdateSitePageSchema } from './validators/schema'
 export { registerSitePagesModels } from './model'
+export { resolvePlatformContact, buildPlatformWhatsappUrl } from './usecases/platform-contact'
+export type { PlatformContact } from './usecases/platform-contact'
 
 export function SitePagesModule() {
   return createModule({
@@ -42,15 +46,16 @@ export function SitePagesModule() {
       name: 'site-pages',
       version: '1.0.0',
       description: 'Páginas públicas del sitio de SolmiOS, editables desde el panel admin',
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'listPublic', 'getPublicBySlug'],
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'listPublic', 'getPublicBySlug', 'platformContact'],
       events: ['onSitePageCreated', 'onSitePageUpdated', 'onSitePageDeleted'],
-      tables: ['site_pages'],
+      tables: ['site_pages', 'configuration'],
       dependencies: [],
       rules: [
         'Scope plataforma: hotelId siempre "platform" — no es contenido por hotel',
         'CRUD solo super_admin (userType admin); sin guard de permisos por rol de hotel',
         'Endpoint público solo expone status=published; draft y inexistente responden igual (404)',
         'slug único (ConflictError 409) + índice idx_site_pages_slug en migrate-db.ts',
+        '/api/public/platform-contact: whatsappUrl sale de configuration(plataforma).supportPhone en E.164 o es null — sin número no hay botón',
       ],
     },
 
@@ -61,7 +66,9 @@ export function SitePagesModule() {
       const repo = new OrmRepository<SitePageDTO>(orm, 'SitePages')
       const log = logger.child('site-pages')
       const service = new SitePagesService(repo, log)
-      const controller = new SitePagesController(service, log)
+      // #148: el contacto público lee `configuration('plataforma')` (scope platform, sin hotel).
+      const configRepo = new OrmRepository<Record<string, unknown>>(orm, 'Configuration')
+      const controller = new SitePagesController(service, log, () => resolvePlatformContact(configRepo))
 
       // Guard de plataforma (patrón admin module): solo el dueño del SaaS toca el sitio.
       // El moduleGuard('site-pages') es no-op HOY (super_admin se saltea el gate de plan),
@@ -93,6 +100,16 @@ export function SitePagesModule() {
         })
         if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
         return controller.publicShow(req)
+      })
+
+      // #148 (REQ-PIPE-07): WhatsApp de la plataforma para el botón flotante de la landing.
+      router.get('/api/public/platform-contact', async (req: any) => {
+        const { allowed, retryAfter } = await rateLimit(`public-platform-contact:${getClientIp(req)}`, {
+          maxAttempts: 30,
+          windowMs: 60_000,
+        })
+        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
+        return controller.publicPlatformContact()
       })
 
       log.info('Módulo site-pages listo')

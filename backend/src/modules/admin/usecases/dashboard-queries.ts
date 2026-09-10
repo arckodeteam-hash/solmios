@@ -9,6 +9,25 @@ import { computePlatformMetrics, type PlatformMetrics } from './platform-metrics
 const PLAN_PRICE_FALLBACK: Record<string, number> = { enterprise: 199, professional: 99, starter: 49, essential: 49 }
 const BYTES_PER_MB = 1024 * 1024
 
+/** Página del audit log del super-admin (#142). El techo evita que un `?limit=100000` traiga la tabla. */
+const DEFAULT_AUDIT_LIMIT = 25
+const MAX_AUDIT_LIMIT = 200
+/** Barrido por rango de fechas: bloques y tope duro, para que un rango enorme no lea sin fin. */
+const AUDIT_SCAN_CHUNK = 500
+const MAX_AUDIT_SCAN = 20_000
+
+export interface AuditLogQuery {
+  hotelId?: string
+  userId?: string
+  action?: string
+  entity?: string
+  /** `YYYY-MM-DD`, límites inclusive, sobre `createdAt`. */
+  from?: string
+  to?: string
+  page?: number
+  limit?: number
+}
+
 export class DashboardQueries {
   constructor(private readonly orm: any) {}
 
@@ -142,16 +161,52 @@ export class DashboardQueries {
    * consulta por fila adentro del loop sería N+1. Sin `hotelId` (o con uno huérfano — hotel
    * borrado) queda ''.
    */
-  async listAuditLogs(): Promise<{ data: any[]; total: number }> {
-    const rows = await this.orm.findMany('Auditlog', {}) as any[]
+  async listAuditLogs(query: AuditLogQuery = {}): Promise<{ data: any[]; total: number }> {
+    const limit = Math.min(Math.max(Number(query.limit) || DEFAULT_AUDIT_LIMIT, 1), MAX_AUDIT_LIMIT)
+    const page = Math.max(Number(query.page) || 1, 1)
+    const offset = (page - 1) * limit
+
+    // Igualdades → WHERE. `buildWhere` del framework sólo compara por igualdad, así que el rango
+    // de fechas se resuelve aparte (abajo).
+    const filters: Record<string, unknown> = {}
+    if (query.hotelId) filters.hotelId = query.hotelId
+    if (query.userId) filters.userId = query.userId
+    if (query.action) filters.action = query.action
+    if (query.entity) filters.entity = query.entity
+
+    // Orden en la BASE, no en memoria: `ORDER BY createdAt DESC` + LIMIT/OFFSET. Sin ORDER BY la
+    // paginación es orden indefinido (en Postgres cambia entre consultas) y la página 2 puede
+    // repetir filas de la 1.
+    const orderBy = [{ field: 'createdAt', dir: 'DESC' as const }]
+
     const hotels = await this.orm.findMany('Hotels', {}) as any[]
     const hotelNameById = new Map(hotels.map((h: any) => [h.id, h.name]))
-    const data = [...rows]
-      .sort(
-        (a: any, b: any) => new Date(String(b.createdAt ?? 0)).getTime() - new Date(String(a.createdAt ?? 0)).getTime(),
-      )
-      .map((r: any) => ({ ...r, hotelName: (r.hotelId && hotelNameById.get(r.hotelId)) || '' }))
-    return { data, total: data.length }
+    const withHotelName = (r: any) => ({ ...r, hotelName: (r.hotelId && hotelNameById.get(r.hotelId)) || '' })
+
+    if (!query.from && !query.to) {
+      const result = await this.orm.paginate('Auditlog', filters, { limit, offset, orderBy }) as any
+      return { data: (result.data as any[]).map(withHotelName), total: result.total }
+    }
+
+    // Rango de fechas: como el ORM no sabe decir `>=`, se BARRE en bloques ordenados por fecha
+    // descendente y se corta al pasarse del límite inferior. El costo queda atado al rango pedido
+    // (y a lo más nuevo que él), no al tamaño de la tabla: pedir "hoy" no lee un año de historia.
+    const from = query.from ? `${query.from}T00:00:00.000Z` : ''
+    const to = query.to ? `${query.to}T23:59:59.999Z` : ''
+    const matched: any[] = []
+    for (let scanned = 0; scanned < MAX_AUDIT_SCAN; scanned += AUDIT_SCAN_CHUNK) {
+      const chunk = await this.orm.findMany('Auditlog', filters, { limit: AUDIT_SCAN_CHUNK, offset: scanned, orderBy }) as any[]
+      if (chunk.length === 0) break
+      let older = false
+      for (const row of chunk) {
+        const ts = String(row.createdAt || '')
+        if (from && ts < from) { older = true; break } // ordenado DESC: de acá para abajo, todo queda fuera
+        if (to && ts > to) continue
+        matched.push(row)
+      }
+      if (older || chunk.length < AUDIT_SCAN_CHUNK) break
+    }
+    return { data: matched.slice(offset, offset + limit).map(withHotelName), total: matched.length }
   }
 
   /**

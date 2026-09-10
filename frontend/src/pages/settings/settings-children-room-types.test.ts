@@ -82,9 +82,20 @@ describe('Requerimiento 1 — Política de niños', () => {
     configGetImpl = async (key) => (key === 'child_policy' ? { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 } : null)
     const w = await mountSettings()
     await setTab(w, 'Niños')?.trigger('click')
-    expect(w.text()).toContain('0–3 años no consume plaza')
+    // Sin maxBabyAge guardado (hotel que configuró la política antes de la Tarea 21): cae al
+    // default 0 — solo la edad exacta 0 se considera "bebé", el resto del rango sigue igual.
+    expect(w.text()).toContain('0–0 años se considera BEBÉ')
+    expect(w.text()).toContain('1–3 años no consume plaza')
     expect(w.text()).toContain('4–12 años consume plaza')
     expect(w.text()).toContain('mayor de 12 años se trata como adulto')
+  })
+
+  it('Tarea 21 — carga maxBabyAge ya guardado y lo usa en el texto explicativo', async () => {
+    configGetImpl = async (key) => (key === 'child_policy' ? { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1 } : null)
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    expect(w.text()).toContain('0–1 años se considera BEBÉ')
+    expect(w.text()).toContain('2–3 años no consume plaza')
   })
 
   it('si "Aceptar niños" está apagado, no muestra los campos de edad', async () => {
@@ -109,6 +120,18 @@ describe('Requerimiento 1 — Política de niños', () => {
     expect(configSet).not.toHaveBeenCalledWith('child_policy', expect.anything())
   })
 
+  it('Tarea 21 — "edad bebé" > "edad sin plaza" bloquea el guardado con su propio error', async () => {
+    configGetImpl = async (key) => (key === 'child_policy' ? { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 5 } : null)
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    expect(w.text()).toContain('no puede ser mayor que la edad sin consumir plaza')
+
+    const childCard = w.findAll('h3').find(h => h.text() === 'Política de niños')!.element.closest('div.rounded-\\[20px\\]')!
+    const saveBtn = childCard.querySelector('button')!
+    expect(saveBtn.disabled).toBe(true)
+    expect(configSet).not.toHaveBeenCalledWith('child_policy', expect.anything())
+  })
+
   it('guarda la política vía configuration(child_policy)', async () => {
     const w = await mountSettings()
     await setTab(w, 'Niños')?.trigger('click')
@@ -116,7 +139,101 @@ describe('Requerimiento 1 — Política de niños', () => {
     const saveBtn = childCard.querySelector('button') as HTMLButtonElement
     saveBtn.click()
     await flushPromises()
-    expect(configSet).toHaveBeenCalledWith('child_policy', { acceptChildren: true, maxChildAge: 17, maxFreeAge: 0 })
+    expect(configSet).toHaveBeenCalledWith('child_policy', {
+      acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
+      childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+    })
     expect(toastSuccess).toHaveBeenCalled()
   })
 })
+
+// ─── Tarea "Cobro % niños" (2026-09-09) ─────────────────────────────────────────────────────────
+describe('Tarea "Cobro % niños" — porcentaje de tarifa para niños', () => {
+  function childCardOf(w: Awaited<ReturnType<typeof mountSettings>>) {
+    return w.findAll('h3').find(h => h.text() === 'Política de niños')!.element.closest('div.rounded-\\[20px\\]')!
+  }
+
+  it('por default: el toggle está apagado y el campo de porcentaje NO se muestra', async () => {
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    const toggles = w.findAll('input[type="checkbox"]')
+    // "Aceptar niños" + "Cobro reducido para niños" + "Ofrece cuna para bebés" (Tarea 22, 2026-09-09).
+    expect(toggles).toHaveLength(3)
+    expect((toggles[1]!.element as HTMLInputElement).checked).toBe(false)
+    expect(w.text()).not.toContain('Porcentaje de tarifa para niños')
+  })
+
+  it('prender el toggle muestra el campo de porcentaje, precargado en 50 (solo como default visual)', async () => {
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    await w.findAll('input[type="checkbox"]')[1]!.setValue(true)
+    expect(w.text()).toContain('Porcentaje de tarifa para niños')
+    const numberInputs = w.findAll('input[type="number"]')
+    const pctInput = numberInputs.find(i => (i.element as HTMLInputElement).min === '1' && (i.element as HTMLInputElement).max === '100')!
+    expect((pctInput.element as HTMLInputElement).value).toBe('50')
+  })
+
+  it.each([1, 50, 100])('guarda correctamente con %i%% (mínimo, medio y máximo del rango del pedido)', async (pct) => {
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    await w.findAll('input[type="checkbox"]')[1]!.setValue(true)
+    const numberInputs = w.findAll('input[type="number"]')
+    const pctInput = numberInputs.find(i => (i.element as HTMLInputElement).min === '1' && (i.element as HTMLInputElement).max === '100')!
+    await pctInput.setValue(pct)
+    const saveBtn = childCardOf(w).querySelector('button') as HTMLButtonElement
+    saveBtn.click()
+    await flushPromises()
+    expect(configSet).toHaveBeenCalledWith('child_policy', expect.objectContaining({
+      childrenDiscountEnabled: true, childrenRatePercent: pct,
+    }))
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
+  it('carga una política ya guardada con el descuento habilitado y su porcentaje', async () => {
+    configGetImpl = async (key) => (key === 'child_policy'
+      ? { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: true, childrenRatePercent: 75 }
+      : null)
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    expect((w.findAll('input[type="checkbox"]')[1]!.element as HTMLInputElement).checked).toBe(true)
+    const numberInputs = w.findAll('input[type="number"]')
+    const pctInput = numberInputs.find(i => (i.element as HTMLInputElement).min === '1' && (i.element as HTMLInputElement).max === '100')!
+    expect((pctInput.element as HTMLInputElement).value).toBe('75')
+  })
+
+  it('un porcentaje menor a 1 bloquea el guardado (no permite valores fuera de [1,100])', async () => {
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    await w.findAll('input[type="checkbox"]')[1]!.setValue(true)
+    const numberInputs = w.findAll('input[type="number"]')
+    const pctInput = numberInputs.find(i => (i.element as HTMLInputElement).min === '1' && (i.element as HTMLInputElement).max === '100')!
+    await pctInput.setValue(0)
+    expect(w.text()).toContain('debe estar entre 1% y 100%')
+    const saveBtn = childCardOf(w).querySelector('button') as HTMLButtonElement
+    expect(saveBtn.disabled).toBe(true)
+    expect(configSet).not.toHaveBeenCalled()
+  })
+
+  it('un porcentaje mayor a 100 bloquea el guardado', async () => {
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    await w.findAll('input[type="checkbox"]')[1]!.setValue(true)
+    const numberInputs = w.findAll('input[type="number"]')
+    const pctInput = numberInputs.find(i => (i.element as HTMLInputElement).min === '1' && (i.element as HTMLInputElement).max === '100')!
+    await pctInput.setValue(101)
+    expect(w.text()).toContain('debe estar entre 1% y 100%')
+    const saveBtn = childCardOf(w).querySelector('button') as HTMLButtonElement
+    expect(saveBtn.disabled).toBe(true)
+  })
+
+  it('con el toggle apagado, un porcentaje guardado inválido de antes NO bloquea el guardado (queda inerte)', async () => {
+    configGetImpl = async (key) => (key === 'child_policy'
+      ? { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 999 }
+      : null)
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    const saveBtn = childCardOf(w).querySelector('button') as HTMLButtonElement
+    expect(saveBtn.disabled).toBe(false)
+  })
+})
+

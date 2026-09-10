@@ -1,4 +1,5 @@
 import type { ValidationRule } from 'arckode-framework'
+import type { BodySchema } from '../../../shared/validators/validate-body'
 
 const arrayType = 'array' as any
 const objectType = 'object' as any
@@ -104,6 +105,15 @@ export const AdminValidator = {
   applySpecialConditions: ApplySpecialConditionsSchema,
   updateSpecialCategory: UpdateSpecialCategorySchema,
   updateSubscriptionSettings: UpdateSubscriptionSettingsSchema,
+}
+
+/**
+ * REQ-PIPE-05 (#146): días extra de prueba. El tope (30) evita "extender" un trial hasta el
+ * infinito por accidente. `integer` (shared/validators/validate-body) y no `number`: el `number`
+ * del framework coerciona `"7"` → 7 (SEC-2); el contrato es un entero JSON.
+ */
+export const ExtendTrialSchema: BodySchema = {
+  days: { type: 'integer' as const, required: true, min: 1, max: 30 },
 }
 
 /**

@@ -20,6 +20,7 @@ export {
   ratePrice,
   resolveNightlyPrice,
   sumStayPrice,
+  sumStayPriceForComposition,
   overrideRateFor,
 } from '../../../shared/utils/rate-resolution'
 

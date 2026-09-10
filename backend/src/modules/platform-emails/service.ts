@@ -59,6 +59,8 @@ export class PlatformEmailsService {
     await this.sender.enqueue({
       to, subject, html, hotelId,
       relatedType: `platform_email:${event as PlatformEmailEvent}`,
+      // `relatedId` = hotel destinatario (REQ-PIPE-08): la cola queda consultable por hotel.
+      relatedId: hotelId,
     })
     return { sent: true }
   }

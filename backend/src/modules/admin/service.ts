@@ -1,24 +1,19 @@
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import type { AdminAnalyticsDTO, MonitoringDTO, PlanDTO, AmenityCatalogDTO, ModuleOverrideDTO } from './types'
 import { PLANS_PRICE_ORDER } from '../../shared/utils/plans-order'
-import type { DashboardQueries } from './usecases/dashboard-queries'
+import type { DashboardQueries, AuditLogQuery } from './usecases/dashboard-queries'
 import type { PlatformMetrics } from './usecases/platform-metrics'
-import { type AuditPort } from './usecases/audit'
+import { type AuditPort, type Actor } from './usecases/audit'
+import { extendTrialAudited, type TrialPort, type ExtendTrialOutcome } from './usecases/extend-trial'
 import type { ApplySpecialConditionsInput, SpecialConditionsUseCase } from './usecases/special-conditions'
 import type { SubscriptionCategoriesUseCase } from './usecases/subscription-categories'
-import {
-  getSubscriptionSettings, setSubscriptionSettings,
-  type SubscriptionSettings,
-} from './usecases/subscription-settings'
+import { getSubscriptionSettings, setSubscriptionSettings, type SubscriptionSettings } from './usecases/subscription-settings'
 import type { ModuleOverridesUseCase } from './usecases/module-overrides'
 import type { PlatformBillingUseCase } from './usecases/billing'
 import type { BillingSubscriptionPort, PlatformEmailSender } from './usecases/billing-actions'
 import * as plans from './usecases/plans'
 import { updateHotel } from './usecases/update-hotel'
-import {
-  listAmenitiesCatalog, createAmenityCatalog, updateAmenityCatalog, deleteAmenityCatalog,
-  type AmenitiesCatalogDeps,
-} from './usecases/amenities-catalog'
+import { listAmenitiesCatalog, createAmenityCatalog, updateAmenityCatalog, deleteAmenityCatalog, type AmenitiesCatalogDeps } from './usecases/amenities-catalog'
 
 /**
  * Planes y catálogo de amenities son recursos de la plataforma: no pertenecen a ningún hotel ni
@@ -58,6 +53,13 @@ export class AdminService {
 
   get emailReady(): boolean { return this.emailPort !== null }
 
+  /** REQ-PIPE-05 (#146): la extensión vive en `subscriptions`; lo inyecta el connector `admin-subscriptions-trial`. Ver usecases/extend-trial.ts. */
+  private trialPort: TrialPort | null = null
+  setTrialDeps(port: TrialPort): void { this.trialPort = port }
+  extendTrial(hotelId: string, days: number, user?: Actor): Promise<ExtendTrialOutcome> {
+    return extendTrialAudited({ trialPort: this.trialPort, auditPort: this.auditPort, logger: this.logger }, hotelId, days, user)
+  }
+
   async sendTestEmail(to: string): Promise<'smtp' | 'resend'> {
     if (!this.emailPort) throw new Error('EmailService no cableado (email-bootstrap)')
     return this.emailPort.sendTestEmail(to)
@@ -93,7 +95,8 @@ export class AdminService {
 
   async getPlatformMetrics(): Promise<PlatformMetrics> { return this.queries!.getPlatformMetrics() }
   async listSubscriptions(): Promise<{ data: any[]; total: number; mrrTotal: number }> { return this.queries!.listSubscriptions() }
-  async listAuditLogs(): Promise<{ data: any[]; total: number }> { return this.queries!.listAuditLogs() }
+  /** #142: pagina, filtra y ordena en la CONSULTA — antes devolvía la tabla entera y ordenaba en memoria. */
+  async listAuditLogs(query: AuditLogQuery = {}): Promise<{ data: any[]; total: number }> { return this.queries!.listAuditLogs(query) }
   async listAnnouncements(): Promise<{ data: any[]; total: number }> { return this.queries!.listAnnouncements() }
   async getMonitoring(): Promise<MonitoringDTO> { return this.queries!.getMonitoring() }
   async getPublicUsers(): Promise<any[]> { return this.queries!.getPublicUsers() }

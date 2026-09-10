@@ -21,6 +21,14 @@ export interface ReservasDTO {
   // `listReservations` (crud.ts) devuelven la fila ORM tal cual, sin allow-list.
   childrenAges?: number[]
   childrenAgesAsOf?: string
+  // Tarea "Cobro % niños" (2026-09-09) — ver `reservas/model.ts`. Solo la escribe la creación
+  // pública, mismo criterio que `childrenAges`/Tarea 22.
+  childrenRatePercentApplied?: number | null
+  // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — ver `reservas/model.ts`. Solo
+  // los escribe la creación pública (bookingengine/usecases/public-booking{,-group}.ts); el panel
+  // no tiene UI propia para esto, mismo criterio que `childrenAges`.
+  needsCrib?: boolean
+  cribCount?: number
   notes?: string
   // OTA + payments
   source?: string

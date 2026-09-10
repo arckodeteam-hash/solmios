@@ -281,8 +281,14 @@ export interface PublicHotelInfoDTO {
   /** Política de niños del hotel (feature adultos+niños+edades, 2026-09-02) — le dice al widget
    *  si mostrar la opción de agregar niños y con qué rango de edades. Siempre presente (nunca
    *  null): hoteles sin configurar reciben `DEFAULT_CHILD_POLICY` (acepta niños, todos consumen
-   *  plaza — cero cambio de comportamiento hasta que el hotel configure lo contrario). */
-  childPolicy: { acceptChildren: boolean; maxChildAge: number; maxFreeAge: number }
+   *  plaza — cero cambio de comportamiento hasta que el hotel configure lo contrario).
+   *  ⚠️ Copia literal de `ChildPolicy` (`shared/usecases/child-composition.ts`), no un import —
+   *  `types.ts` no importa de `usecases/` por convención de este módulo (DTO aislado del
+   *  dominio). Ya se quedó afuera de sincro TRES veces al agregarle/renombrarle un campo a
+   *  `ChildPolicy` (Tarea 21 `maxBabyAge`, Tarea "Cobro % niños" `childrenDiscountEnabled`+
+   *  `childrenRatePercent`) sin actualizar acá: revisar este literal cada vez que `ChildPolicy`
+   *  cambie — el error de TS es "Property missing", fácil de pasar por alto en un diff grande. */
+  childPolicy: { acceptChildren: boolean; maxChildAge: number; maxFreeAge: number; maxBabyAge: number; childrenDiscountEnabled: boolean; childrenRatePercent: number; cribAvailable: boolean }
 }
 
 // ─── Upsells (F2 2.3 — sub-dominio de bookingengine) ────────────

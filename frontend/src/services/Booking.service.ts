@@ -106,6 +106,13 @@ export const BookingService = {
     if (dto.guest.specialRequests) body.specialRequests = dto.guest.specialRequests
     if (dto.promoCode) body.promoCode = dto.promoCode
     if (dto.upsells && dto.upsells.length > 0) body.upsells = dto.upsells
+    // Tarea 22 (Cuna, 2026-09-09) — se habían agregado a `CreateBookingDTO` pero se quedaron
+    // afuera de este mapeo manual campo-por-campo: el backend nunca los recibía, aunque el
+    // composer/carrito los armaba bien.
+    if (dto.needsCrib) {
+      body.needsCrib = true
+      body.cribCount = dto.cribCount ?? 0
+    }
     if (dto.successUrl) body.successUrl = dto.successUrl
     if (dto.cancelUrl) body.cancelUrl = dto.cancelUrl
     if (dto.idempotencyKey) body.idempotencyKey = dto.idempotencyKey
