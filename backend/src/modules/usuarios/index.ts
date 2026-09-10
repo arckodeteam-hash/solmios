@@ -11,6 +11,7 @@ import { createPermissionGuard } from '../../infrastructure/auth/create-permissi
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
 import { denyImpersonation } from '../../infrastructure/auth/deny-impersonation'
 import { impersonateUser } from './usecases/impersonate'
+import { passwordPolicyHandler } from '../../shared/usecases/password-policy'
 import { auditSafely } from '../../shared/usecases/audit'
 
 export { UsuariosService }
@@ -117,6 +118,8 @@ export function UsuariosModule(opts: { storage?: StorageService } = {}) {
       })
       // Refresh token — pública (el access token ya expiró)
       router.post('/api/auth/refresh', (req) => controller.refresh(req))
+      // Política de contraseñas (REQ-CFG-05): pública para que los formularios la muestren antes de fallar; no expone secretos.
+      router.get('/api/auth/password-policy', () => passwordPolicyHandler(configRepo))
 
       router.get('/api/auth/hotels', guard('users', 'view'), (req) => controller.hotels(req))
       // La sesión de impersonación pasa `guard` (tiene permisos ['*:*'] por el claim), así que sin

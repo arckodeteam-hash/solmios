@@ -12,6 +12,7 @@ import {
   hashPassword, verifyPassword, forgotPassword, resetPassword, changePassword,
 } from './usecases/password'
 import { assertOwnership, pickDefined } from './usecases/ownership'
+import { assertPasswordPolicy } from '../../shared/usecases/password-policy'
 import { jtiOf, refreshSession } from './usecases/token-session'
 import { assertHotelCanOperate, type AccessCheck } from './usecases/subscription-gate'
 import { switchHotel } from './usecases/switch-hotel'
@@ -134,6 +135,7 @@ export class UsuariosService {
 
   async create(data: any): Promise<any> {
     if (!data.password) throw new Error('Password is required')
+    await assertPasswordPolicy(this.configRepo, data.password)
     const password = await hashPassword(data.password)
     const phone = toStoredPhone(data.phone)
     const created = await this.repo.create({ ...data, ...phone, id: crypto.randomUUID(), password, active: 1 })
@@ -146,7 +148,7 @@ export class UsuariosService {
     // llegaba al ORM con name/password en undefined y los escribía como NULL → NOT NULL violado.
     // Se descartan las ausentes: un campo que no vino no es un campo que se quiere borrar.
     const allowed = pickDefined(data, ['name', 'email', 'password', 'phone', 'avatar', 'role'])
-    if (allowed.password) allowed.password = await hashPassword(allowed.password)
+    if (allowed.password) { await assertPasswordPolicy(this.configRepo, allowed.password); allowed.password = await hashPassword(allowed.password) }
     Object.assign(allowed, toStoredPhone(allowed.phone))
     // El estado anterior se lee ANTES del update por dos razones: valida que el usuario sea del
     // hotel de quien lo edita (IDOR), y sin el rol viejo la auditoría diría "cambió el rol" sin
@@ -185,15 +187,11 @@ export class UsuariosService {
     }, (user) => assertHotelCanOperate(user, this.checkSubscription))
   }
 
-  async forgotPassword(email: string): Promise<void> {
-    return forgotPassword(this.repo, email)
-  }
+  async forgotPassword(email: string): Promise<void> { return forgotPassword(this.repo, email) }
 
-  async resetPassword(token: string, newPassword: string): Promise<void> {
-    return resetPassword(this.repo, token, newPassword)
-  }
+  async resetPassword(token: string, newPassword: string): Promise<void> { return resetPassword(this.repo, token, newPassword, this.configRepo) }
 
   async changePassword(id: string, currentPassword: string, newPassword: string): Promise<void> {
-    return changePassword(this.repo, id, currentPassword, newPassword)
+    return changePassword(this.repo, id, currentPassword, newPassword, this.configRepo)
   }
 }

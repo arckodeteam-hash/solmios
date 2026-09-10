@@ -133,6 +133,27 @@
           </div>
         </div>
       </SectionCard>
+      <!-- CFG-4 (#101): esta tarjeta volvió porque ahora SÍ tiene lector: el backend aplica
+           `security_policy` en alta de usuarios, cambio y restablecimiento de clave y registro
+           público (`shared/usecases/password-policy.ts`). Guardar propio, como el resto (CFG-2). -->
+      <SectionCard title="Políticas de Contraseña">
+        <div class="space-y-4">
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Longitud Mínima</label>
+            <input v-model.number="securityPolicy.minLength" type="number" min="6" max="32" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+            <p class="text-[10px] text-text-muted mt-1">Se aplica a alta de usuarios, cambio y restablecimiento de contraseña y registro público. El registro público exige además 10 caracteres como mínimo.</p>
+          </div>
+          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir mayúsculas</div><button @click="securityPolicy.requireUppercase = !securityPolicy.requireUppercase" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="securityPolicy.requireUppercase ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="securityPolicy.requireUppercase ? 'right-0.5' : 'left-0.5'"></div></button></div>
+          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir números</div><button @click="securityPolicy.requireNumbers = !securityPolicy.requireNumbers" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="securityPolicy.requireNumbers ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="securityPolicy.requireNumbers ? 'right-0.5' : 'left-0.5'"></div></button></div>
+          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir caracteres especiales</div><button @click="securityPolicy.requireSpecial = !securityPolicy.requireSpecial" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="securityPolicy.requireSpecial ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="securityPolicy.requireSpecial ? 'right-0.5' : 'left-0.5'"></div></button></div>
+          <div class="flex flex-wrap items-center gap-3 pt-2">
+            <button @click="guardarSeguridad" :disabled="guardandoSeguridad"
+              class="rounded-xl bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:shadow-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+              {{ guardandoSeguridad ? 'Guardando…' : 'Guardar' }}
+            </button>
+          </div>
+        </div>
+      </SectionCard>
     </div>
 
     <!-- Tab: Integraciones -->
@@ -337,6 +358,10 @@ const settings = ref<any>({
   smtpServer: '', smtpPort: '587', smtpUser: '', smtpPassword: '', fromEmail: '', fromName: '', smtpSecure: false,
 })
 
+// REQ-CFG-05: política de contraseña real (`configuration('security_policy')`), la lee el backend
+// en alta/cambio/reset/registro. Default {6,false,false,false}; minLength acotada a 6..32.
+const securityPolicy = ref({ minLength: 6, requireUppercase: false, requireNumbers: false, requireSpecial: false })
+const clampMin = (n: any) => Math.min(32, Math.max(6, Math.round(Number(n) || 6)))
 const emailTemplates = ref<any[]>([])
 // #102: estado de captcha / verificación / servicios. null = no se pudo leer (las filas lo dicen).
 const settingsStatus = ref<SettingsStatus | null>(null)
@@ -352,11 +377,13 @@ onMounted(async () => {
     // SMTP-UI (2026-08-19): se lee el CANÓNICO ('email_config', host/pass) con fallback al
     // legacy ('smtp', server/password) que guardaba esta misma página — antes el load ni
     // siquiera matcheaba los nombres (server ≠ smtpServer), así el form arrancaba vacío.
-    const [plataforma, emailCfg, tmpl, maps] = await Promise.all([
+    const [plataforma, emailCfg, tmpl, maps, secPol] = await Promise.all([
       ConfigService.get('plataforma', 'platform'),
       ConfigService.get('email_config', 'platform').catch(() => null),
       ConfigService.get('email_templates', 'platform'),
       ConfigService.get('google_maps', 'platform'),
+      ConfigService.get('security_policy', 'platform').catch(() => null),
+      ConfigService.get('security_policy', 'platform').catch(() => null),
     ])
     // CFG-2 (#99): de la fila 'plataforma' sólo entran al formulario los tres campos que esta
     // pantalla vuelve a guardar; claves viejas que traiga la fila no se copian ni se re-guardan.
@@ -382,6 +409,7 @@ onMounted(async () => {
     }
     if (Array.isArray(tmpl)) emailTemplates.value = tmpl
     if (maps?.apiKey) mapsKey.value = String(maps.apiKey)
+    if (secPol && typeof secPol === 'object') Object.assign(securityPolicy.value, { minLength: clampMin(secPol.minLength), requireUppercase: !!secPol.requireUppercase, requireNumbers: !!secPol.requireNumbers, requireSpecial: !!secPol.requireSpecial })
     testEmailTo.value = destinoPruebaPorDefecto(settings.value.supportEmail, settings.value.fromEmail)
   } catch { toast.error('No se pudo cargar la configuración de la plataforma') }
 })
@@ -442,6 +470,26 @@ async function guardarMaps() {
     toast.error('No se pudo guardar', 'Revisá la clave de Maps e intentá de nuevo')
   } finally {
     guardandoMaps.value = false
+  }
+}
+
+// CFG-4 (#101): la política de contraseña se guarda sola. La lee el backend en cada validación
+// (`readPasswordPolicy`), así que el cambio aplica al siguiente alta/cambio sin reiniciar nada.
+const guardandoSeguridad = ref(false)
+async function guardarSeguridad() {
+  guardandoSeguridad.value = true
+  try {
+    await ConfigService.set('security_policy', {
+      minLength: clampMin(securityPolicy.value.minLength),
+      requireUppercase: !!securityPolicy.value.requireUppercase,
+      requireNumbers: !!securityPolicy.value.requireNumbers,
+      requireSpecial: !!securityPolicy.value.requireSpecial,
+    }, 'platform')
+    toast.success('Política de contraseña guardada')
+  } catch {
+    toast.error('No se pudo guardar', 'Revisá la política de contraseña e intentá de nuevo')
+  } finally {
+    guardandoSeguridad.value = false
   }
 }
 
