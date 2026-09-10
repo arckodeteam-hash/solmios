@@ -55,13 +55,57 @@
         <div class="space-y-4">
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">SMTP Server</label><input v-model="settings.smtpServer" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Puerto</label><input v-model="settings.smtpPort" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
+          <!-- #100: TLS implícito (465) vs STARTTLS (587). Se persiste como `secure` en email_config. -->
+          <div>
+            <label class="flex items-center gap-2 text-sm cursor-pointer">
+              <input v-model="settings.smtpSecure" type="checkbox" class="w-4 h-4 accent-cyan rounded">
+              <span class="font-bold">Conexión segura (465/TLS)</span>
+            </label>
+            <p class="mt-1 text-[11px] text-text-muted">Activalo para puerto 465; con 587 se usa STARTTLS</p>
+          </div>
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Usuario</label><input v-model="settings.smtpUser" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
           <!-- autocomplete="new-password": credencial del servidor SMTP de la plataforma, no la del
                admin. Sin esto Chrome la autorrellenaba con la contraseña guardada (GH-32). -->
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Contraseña</label><input v-model="settings.smtpPassword" type="password" autocomplete="new-password" name="smtp-password" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Email Remitente</label><input v-model="settings.fromEmail" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Nombre Remitente</label><input v-model="settings.fromName" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
+          <!-- #100: destino explícito de la prueba, con validación y resultado inline (no solo toast). -->
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Destino de la prueba</label>
+            <input v-model="testEmailTo" type="email" placeholder="soporte@tuhotel.com" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" :class="testEmailError ? 'border-coral' : ''" @input="testEmailError = ''">
+          </div>
           <button @click="testEmail" :disabled="testingEmail" class="w-full py-2.5 bg-surface text-navy rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait">{{ testingEmail ? 'Enviando…' : 'Enviar Email de Prueba' }}</button>
+          <p v-if="testEmailError" class="text-[11px] font-bold text-coral">{{ testEmailError }}</p>
+          <p v-else-if="testEmailResult" class="text-[11px] font-bold text-teal">{{ testEmailResult }}</p>
+        </div>
+      </SectionCard>
+      <!-- #100: Resend como respaldo cuando no hay SMTP. La key se guarda por su propio endpoint
+           (no viaja en email_config) y nunca vuelve completa del servidor. -->
+      <SectionCard title="Resend (respaldo sin SMTP)">
+        <template #actions>
+          <span class="text-[10px] font-bold px-3 py-1 rounded-full"
+            :class="resend?.configured ? 'bg-teal/10 text-teal' : 'bg-coral/10 text-coral'">
+            {{ resend?.configured ? 'Configurada · termina en ' + resend.last4 : 'No configurada' }}
+          </span>
+        </template>
+        <div class="space-y-4">
+          <p class="text-[11px] leading-relaxed text-text-muted">
+            Se usa cuando no hay servidor SMTP cargado. La key nunca se muestra completa.
+          </p>
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">{{ resend?.configured ? 'Reemplazar API key' : 'Nueva API key' }}</label>
+            <input v-model="resendApiKey" type="password" autocomplete="new-password" name="resend-api-key" placeholder="re_…" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <button @click="guardarResend" :disabled="resendGuardando || !resendApiKey.trim()"
+              class="rounded-xl bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
+              {{ resendGuardando ? 'Guardando…' : 'Guardar key' }}
+            </button>
+            <button v-if="resend?.configured" @click="quitarResend" :disabled="resendGuardando"
+              class="rounded-xl bg-coral/10 px-5 py-2.5 text-sm font-bold text-coral transition-colors hover:bg-coral/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+              Quitar
+            </button>
+          </div>
         </div>
       </SectionCard>
       <SectionCard title="Plantillas de Email">
@@ -253,7 +297,8 @@
 import { ref, onMounted } from 'vue'
 import logoIconColor from '@/assets/logo/logo-icon-color.png'
 import { ConfigService, PlatformService } from '@/services/Platform.service'
-import type { MetaAppEstado } from '@/services/Platform.service'
+import type { MetaAppEstado, ResendEstado } from '@/services/Platform.service'
+import { validarDestinoPrueba, destinoPruebaPorDefecto, mensajeResultadoPrueba } from './settings-email'
 import { useToast } from '@/composables/useToast'
 import ChannexPlatformConfig from '@/components/features/ChannexPlatformConfig.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
@@ -321,7 +366,7 @@ const brandColors = [
 const settings = ref<any>({
   platformName: '', supportEmail: '', supportPhone: '', currency: CurrencyCode.USD,
   timezone: 'America/Santo_Domingo', brandColor: '#0D2B4E', customDomain: '',
-  smtpServer: '', smtpPort: '587', smtpUser: '', smtpPassword: '', fromEmail: '', fromName: '',
+  smtpServer: '', smtpPort: '587', smtpUser: '', smtpPassword: '', fromEmail: '', fromName: '', smtpSecure: false,
   minPasswordLength: 8, requireUppercase: true, requireNumbers: true, requireSpecial: false, passwordExpiry: 90,
   billingMethod: 'stripe', billingCycle: 'monthly', graceDays: 7, billingDay: 1,
   allowCreditNotes: true, allowVolumeDiscounts: false, annualDiscount: 15, taxRate: 18,
@@ -345,6 +390,8 @@ const integrations = ref<any[]>([
 
 onMounted(async () => {
   cargarMeta()
+  // #100: estado de Resend por su propio endpoint; si falla no rompe la carga del resto.
+  PlatformService.getResend().catch(() => null).then((r) => { resend.value = r })
   try {
     // SMTP-UI (2026-08-19): se lee el CANÓNICO ('email_config', host/pass) con fallback al
     // legacy ('smtp', server/password) que guardaba esta misma página — antes el load ni
@@ -366,6 +413,8 @@ onMounted(async () => {
       const fromMatch = /^"?([^"<]*)"?\s*<([^>]+)>$/.exec(String(smtp.from ?? ''))
       settings.value.smtpServer = String(smtp.host ?? smtp.server ?? '')
       settings.value.smtpPort = String(smtp.port ?? 587)
+      // #100: configs viejas no traen `secure` — se infiere del puerto 465.
+      settings.value.smtpSecure = smtp.secure === true || Number(smtp.port) === 465
       settings.value.smtpUser = String(smtp.user ?? '')
       settings.value.smtpPassword = String(smtp.pass ?? smtp.password ?? '')
       settings.value.fromEmail = String(smtp.fromEmail ?? fromMatch?.[2] ?? (typeof smtp.from === 'string' && !smtp.from.includes('<') ? smtp.from : ''))
@@ -375,6 +424,7 @@ onMounted(async () => {
     if (Array.isArray(seg)) securityOptions.value = seg
     if (Array.isArray(integ)) integrations.value = integ
     if (maps?.apiKey) mapsKey.value = String(maps.apiKey)
+    testEmailTo.value = destinoPruebaPorDefecto(settings.value.supportEmail, settings.value.fromEmail)
   } catch { toast.error('No se pudo cargar la configuración de la plataforma') }
 })
 
@@ -387,6 +437,7 @@ const saveSettings = async () => {
       // guardaba 'smtp'/{server,password} y el EmailService nunca la encontraba.
       ConfigService.set('email_config', {
         host: toSave.smtpServer, port: Number(toSave.smtpPort) || 587,
+        secure: toSave.smtpSecure === true,
         user: toSave.smtpUser, pass: toSave.smtpPassword,
         fromEmail: toSave.fromEmail, fromName: toSave.fromName,
       }, 'platform'),
@@ -399,23 +450,70 @@ const saveSettings = async () => {
 }
 
 // SMTP-UI (2026-08-19): test REAL — antes era un toast falso que "confirmaba" envíos que
-// nunca salieron (por eso la desconexión de config pasó inadvertida). Prueba contra el
-// destino que se quiera verificar; por default el usuario SMTP cargado si es un email.
+// nunca salieron (por eso la desconexión de config pasó inadvertida).
+// #100: el destino lo elige el usuario (default: soporte, si no remitente); si es inválido
+// se muestra el error inline y NO se llama al backend. El resultado (proveedor usado o el
+// error real de SMTP/Resend) queda inline además del toast.
 const testingEmail = ref(false)
+const testEmailTo = ref('')
+const testEmailError = ref('')
+const testEmailResult = ref('')
 const testEmail = async () => {
-  const to = (settings.value.fromEmail || settings.value.supportEmail || '').trim()
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
-    toast.error('Cargá un "Email Remitente" válido para probar (o el email de soporte)')
+  testEmailResult.value = ''
+  // Si al montar no había default (sin soporte ni remitente) y el usuario tampoco escribió, se reintenta.
+  if (!testEmailTo.value.trim()) {
+    testEmailTo.value = destinoPruebaPorDefecto(settings.value.supportEmail, settings.value.fromEmail)
+  }
+  const to = testEmailTo.value.trim()
+  const err = validarDestinoPrueba(to)
+  if (err) {
+    testEmailError.value = err
     return
   }
+  testEmailError.value = ''
   testingEmail.value = true
   try {
     const r = await PlatformService.testEmail(to)
-    toast.success(r.message || `Enviado vía ${r.provider} a ${to}`)
+    testEmailResult.value = mensajeResultadoPrueba(r.provider, to)
+    toast.success(testEmailResult.value)
   } catch (e: any) {
-    toast.error(`Falló el envío: ${e?.message || 'error de SMTP/Resend — revisá la config'}`)
+    testEmailError.value = `Falló el envío: ${e?.message || 'error de SMTP/Resend — revisá la config'}`
+    toast.error(testEmailError.value)
   } finally {
     testingEmail.value = false
+  }
+}
+
+// #100: API key de Resend. Solo se conoce el estado (configurada + últimos 4); la key no queda
+// en memoria del navegador después de guardarla.
+const resend = ref<ResendEstado | null>(null)
+const resendApiKey = ref('')
+const resendGuardando = ref(false)
+
+async function guardarResend() {
+  const apiKey = resendApiKey.value.trim()
+  if (!apiKey) return
+  resendGuardando.value = true
+  try {
+    resend.value = await PlatformService.saveResend(apiKey)
+    resendApiKey.value = ''
+    toast.success('API key de Resend guardada')
+  } catch (e: any) {
+    toast.error('No se pudo guardar', e?.message || 'Revisá la key e intentá de nuevo')
+  } finally {
+    resendGuardando.value = false
+  }
+}
+
+async function quitarResend() {
+  resendGuardando.value = true
+  try {
+    resend.value = await PlatformService.deleteResend()
+    toast.success('API key de Resend quitada')
+  } catch (e: any) {
+    toast.error('No se pudo quitar', e?.message || 'Intentá de nuevo')
+  } finally {
+    resendGuardando.value = false
   }
 }
 </script>
