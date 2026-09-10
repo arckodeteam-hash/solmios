@@ -364,7 +364,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { SignupService } from '@/services/Signup.service'
+import { SignupService, DEFAULT_TRIAL_DAYS } from '@/services/Signup.service'
 import heroImage from '@/assets/hero.png'
 import SiteHeader from '@/components/site/SiteHeader.vue'
 import SiteFooter from '@/components/site/SiteFooter.vue'
@@ -500,7 +500,7 @@ function scrollPlansBy(dir: 1 | -1) {
  * registro; el valor inicial es el conservador por si el endpoint no responde.
  */
 const requireCard = ref(false)
-const trialDays = ref(7)
+const trialDays = ref(DEFAULT_TRIAL_DAYS)
 const trialPromise = computed(() =>
   requireCard.value
     ? `Empiezas con ${trialDays.value} días sin cargo, cancela cuando quieras.`

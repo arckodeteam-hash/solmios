@@ -99,6 +99,13 @@ function unwrap<T>(res: any): T {
   return (res?.data ?? res) as T
 }
 
+/**
+ * Espejo de `TRIAL_DAYS` del backend (`subscriptions/usecases/signup.ts`). Es SÓLO el valor
+ * inicial/fallback del copy mientras responde —o si falla— `GET /public/signup-policy`; la verdad
+ * la da siempre ese endpoint.
+ */
+export const DEFAULT_TRIAL_DAYS = 15
+
 export const SignupService = {
   async publicPlans(): Promise<PublicPlan[]> {
     const res = await http.get<any>('/public/plans')
@@ -132,7 +139,7 @@ export const SignupService = {
   },
 
   /**
-   * Política del alta. Ante cualquier fallo devuelve el camino conservador —sin tarjeta, 7 días—
+   * Política del alta. Ante cualquier fallo devuelve el camino conservador —sin tarjeta, 15 días—
    * para que la pantalla de registro se pueda dibujar aunque el endpoint no responda; el backend
    * es igual el que decide de verdad, esto solo elige el texto.
    */
@@ -143,10 +150,10 @@ export const SignupService = {
       const days = Number(p?.trialDays)
       return {
         requireCardOnTrial: p?.requireCardOnTrial === true,
-        trialDays: Number.isFinite(days) && days > 0 ? days : 7,
+        trialDays: Number.isFinite(days) && days > 0 ? days : DEFAULT_TRIAL_DAYS,
       }
     } catch {
-      return { requireCardOnTrial: false, trialDays: 7 }
+      return { requireCardOnTrial: false, trialDays: DEFAULT_TRIAL_DAYS }
     }
   },
 
