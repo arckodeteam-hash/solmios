@@ -21,19 +21,23 @@ export function SubscriptionsModule() {
     // reemplaza la fecha límite hardcodeada del frontend) — observable, 1.3.0.
     // #46: dos endpoints nuevos del hotel (`upgradePreview`/`upgrade`, mejora de plan con
     // prorrateo cobrado por `subscriptions.update`) — contrato observable, 1.4.0.
-    version: '1.4.0',
+    // BIL-1 (#153): el módulo pasa a ser dueño de `platform_invoices` y el webhook de plataforma
+    // atiende dos eventos más (`invoice.finalized`, `invoice.voided`) — contrato observable, 1.5.0.
+    version: '1.5.0',
     description: 'Suscripción del hotel a la plataforma: alta pública, prueba gratis y corte de servicio',
     contract: {
-      name: 'subscriptions', version: '1.4.0',
+      name: 'subscriptions', version: '1.5.0',
       description: 'SaaS subscription lifecycle',
       actions: ['signup', 'publicPlans', 'publicFounderDiscount', 'publicFounderCountdown', 'myStatus', 'onboarding', 'checkout', 'portal', 'upgradePreview', 'upgrade', 'webhookPlatform', 'applyStripeDiscount', 'publicSignupPolicy', 'resumeCheckout'],
       events: [],
-      tables: ['subscriptions', 'subscription_discounts', 'special_category_config', 'founder_history'],
+      tables: ['subscriptions', 'subscription_discounts', 'special_category_config', 'founder_history', 'platform_invoices'],
       dependencies: [],
       rules: [
         'checkout/portal/upgrade: hotelId forzado del JWT, cobro SIEMPRE contra la cuenta de PLATAFORMA (StripeService.getClient() sin hotelId)',
         'upgrade: SOLO a un plan más caro y vía stripe.subscriptions.update() sobre el ítem existente (prorrateo cobrado en el acto). Un Checkout nuevo crearía una segunda suscripción que cobra en paralelo (BUG-9); un downgrade genera crédito, no cobro, y se gestiona desde el portal',
         'webhookPlatform: sin auth, la autoridad es la firma de Stripe verificada con STRIPE_WEBHOOK_SECRET_PLATFORM',
+        'webhookPlatform: cada factura de Stripe se persiste en `platform_invoices` con UPSERT por `stripeInvoiceId` (Stripe reintenta) y NUNCA pisa una fila `method:\'manual\'` — REQ-BIL-02/03',
+        'webhookPlatform: escribir el historial es best-effort — un fallo ahí no puede devolver 500, o Stripe reintenta y el hotel recibe el correo de cobro dos veces',
         'publicPlans: los límites (`rooms`/`users`) salen de `plans.limits`, nunca de un literal en el template del frontend (GH-31)',
         'publicPlans: la lista sale del más barato al más caro (price ASC, slug ASC — #30); el orden lo fija el backend, ninguna vista re-ordena',
         'publicFounderDiscount: el % del programa Fundador sale de `special_category_config`, no de una variable de build del frontend (CFG-1)',
@@ -63,6 +67,8 @@ export function SubscriptionsModule() {
         // KV compartido — onboarding.ts la lee para saber si Identidad/Políticas ya se
         // guardaron explícitamente (ver ONBOARDING_CONFIRM_KEYS).
         new OrmRepository<any>(orm, 'Configuration'),
+        // `platform_invoices` — el webhook de plataforma deja acá cada cobro (REQ-BIL-02).
+        new OrmRepository<any>(orm, 'PlatformInvoices'),
       )
       const controller = new SubscriptionsController(service, log)
 

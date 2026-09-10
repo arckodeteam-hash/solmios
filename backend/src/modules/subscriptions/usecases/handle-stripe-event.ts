@@ -11,6 +11,7 @@ import type Stripe from 'stripe'
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { StripeService } from '../../../services/stripe-service'
 import { compareSubscriptions } from './resolve-plan'
+import { upsertPlatformInvoice, type PlatformInvoiceStatus } from './upsert-platform-invoice'
 
 /** Stripe expresa los epochs en SEGUNDOS; `Date` los quiere en milisegundos. */
 const MS_PER_SECOND = 1000
@@ -25,6 +26,13 @@ export interface HandleStripeEventDeps {
    * SIEMPRE con el planId pagado); sin esto solo queda desactualizado el espejo legacy.
    */
   plansRepo?: RepositoryAdapter<any>
+  /**
+   * `platform_invoices` — el historial de cobros de la plataforma (REQ-BIL-02). Opcional y
+   * best-effort a propósito: lo que no puede fallar acá es el status de la suscripción y el
+   * correo. Si la escritura del historial rompe, se loguea y el webhook igual devuelve 200 —
+   * un 500 haría que Stripe reintente y el hotel reciba el mismo correo de cobro otra vez.
+   */
+  platformInvoicesRepo?: RepositoryAdapter<any>
   logger: Logger
   /** Cliente Stripe ya resuelto (cuenta de plataforma) — usado para retrieve() de la subscription. */
   stripe: Stripe
@@ -78,6 +86,29 @@ async function releaseSpecialCategoryOnCancel(
   })) as any[]
   for (const d of activeDiscounts) {
     await orm.update('SubscriptionDiscounts', d.id, { status: 'revoked', endsAt: d.endsAt ?? now.toISOString() })
+  }
+}
+
+/**
+ * Guarda/actualiza la fila de `platform_invoices` de esta factura. Best-effort: ver el comentario
+ * de `platformInvoicesRepo`. El dueño (hotel/suscripción) sale de la fila local ya resuelta por
+ * `stripeSubscriptionId`, nunca del payload de Stripe.
+ */
+async function persistPlatformInvoice(
+  deps: HandleStripeEventDeps, invoice: Stripe.Invoice, sub: any, status: PlatformInvoiceStatus,
+): Promise<void> {
+  if (!deps.platformInvoicesRepo) return
+  try {
+    await upsertPlatformInvoice(
+      { platformInvoicesRepo: deps.platformInvoicesRepo, plansRepo: deps.plansRepo, logger: deps.logger },
+      invoice,
+      { hotelId: sub.hotelId, subscriptionId: sub.id },
+      status,
+    )
+  } catch (e) {
+    deps.logger.warn('platform_invoices: no se pudo registrar la factura', {
+      stripeInvoiceId: invoice.id, status, error: (e as Error).message,
+    })
   }
 }
 
@@ -247,6 +278,9 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
       }
       await subscriptionsRepo.update(sub.id, patch)
       logger.info('Suscripción renovada', { stripeSubscriptionId })
+      // REQ-BIL-02: el cobro queda en el historial. Si `invoice.finalized` no llegó (o el endpoint
+      // de Stripe no lo tiene habilitado), el UPSERT crea la fila directamente en `paid`.
+      await persistPlatformInvoice(deps, invoice, sub, 'paid')
       // plan_name/amount no tienen dato fácil acá sin otro fetch a Stripe (line_items del invoice):
       // se dejan vacíos a propósito, sin agregar complejidad (ver instrucciones de la tarea).
       await notifyPlatformEmail(deps, 'payment_succeeded', sub.hotelId, { plan_name: '', amount: '', link: subscriptionLink() })
@@ -266,7 +300,28 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
       }
       await subscriptionsRepo.update(sub.id, { status: 'past_due' })
       logger.warn('Cobro de suscripción falló', { stripeSubscriptionId })
+      // `failed` es nuestro, no de Stripe (allá la factura sigue `open`): es lo que el super-admin
+      // necesita ver para poder reclamarlo (REQ-BIL-05).
+      await persistPlatformInvoice(deps, invoice, sub, 'failed')
       await notifyPlatformEmail(deps, 'payment_failed', sub.hotelId, { plan_name: '', amount: '', link: subscriptionLink() })
+      break
+    }
+
+    case 'invoice.finalized':
+    case 'invoice.voided': {
+      // Estos dos eventos NO mueven el status de la suscripción ni mandan correos: existen solo
+      // para que el historial de `/admin/billing` tenga la factura desde que se emite (y no
+      // recién cuando se paga) y para que una anulada deje de figurar como pendiente.
+      const invoice = event.data.object as Stripe.Invoice
+      const stripeSubscriptionId = subscriptionIdOfInvoice(invoice)
+      if (!stripeSubscriptionId) break
+
+      const sub = (await subscriptionsRepo.findMany({ stripeSubscriptionId }))[0] as any
+      if (!sub) {
+        logger.warn(`${event.type}: no hay Subscription local para ${stripeSubscriptionId}`)
+        break
+      }
+      await persistPlatformInvoice(deps, invoice, sub, event.type === 'invoice.voided' ? 'void' : 'open')
       break
     }
 

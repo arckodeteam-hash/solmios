@@ -968,6 +968,36 @@ async function createWalletPassUniqueIndex(): Promise<void> {
   }
 }
 
+// ─── BIL-1 (admin-facturacion-real) — UNIQUE index (stripeInvoiceId) para platform_invoices ──
+// Garantiza que una factura de Stripe entre UNA sola vez, aunque el webhook llegue repetido
+// (Stripe reintenta) o el backfill se corra de nuevo (REQ-BIL-02/03). El upsert de la app hace
+// pre-fetch + create/update, pero eso es application-layer: si dos webhooks del mismo `in_...`
+// entran a la vez, el index es la única red que queda.
+//
+// Las facturas MANUALES no tienen `stripeInvoiceId` y guardan NULL: varios NULL conviven bajo un
+// UNIQUE tanto en SQLite como en Postgres. Guardar `''` en vez de NULL rompería eso a la segunda
+// manual — la regla vive en `upsert-platform-invoice.ts` y en el modelo.
+//
+// La tabla la crea el ORM (RUN_MIGRATE): si todavía no existe, se ignora con try/catch (mismo
+// molde que createWalletPassUniqueIndex). Pre-check de dupes legacy: con datos sucios previos el
+// CREATE fallaría, así que se loguea para reconciliar y NO se crea el índice esta corrida.
+async function createPlatformInvoicesUniqueIndex(): Promise<void> {
+  try {
+    const dupes = (await db.query(
+      `SELECT stripeInvoiceId, COUNT(*) c FROM platform_invoices
+       WHERE stripeInvoiceId IS NOT NULL AND stripeInvoiceId <> ''
+       GROUP BY stripeInvoiceId HAVING COUNT(*) > 1`,
+    )) as Array<{ stripeInvoiceId: string; c: number }>
+    if (dupes.length > 0) {
+      console.warn(`⚠ platform_invoices: ${dupes.length} stripeInvoiceId duplicado(s) — platform_invoices_stripe_id NO se crea hasta reconciliar.`, dupes)
+    } else {
+      await exec(`CREATE UNIQUE INDEX IF NOT EXISTS platform_invoices_stripe_id ON platform_invoices(stripeInvoiceId)`)
+    }
+  } catch (e: unknown) {
+    console.log("platform_invoices_stripe_id: tabla platform_invoices aún no migrada (correr RUN_MIGRATE) —", e instanceof Error ? e.message.slice(0, 90) : String(e))
+  }
+}
+
 // ─── CRM / Marketing / Mensajería DDL + ALTERs portables ──────────────────
 async function createTablesBlock3(): Promise<void> {
   await exec(`CREATE TABLE IF NOT EXISTS loyalty_transactions (
@@ -1287,6 +1317,10 @@ async function main(): Promise<void> {
   // F3 3.6 (solmi-direct-booking): UNIQUE (reservationId) para wallet_passes — 1 pass vigente
   // por reserva. El service captura el duplicate error y lo traduce a idempotente return.
   await createWalletPassUniqueIndex()
+
+  // BIL-1 (admin-facturacion-real): UNIQUE (stripeInvoiceId) para platform_invoices — una
+  // factura de Stripe entra una sola vez aunque el webhook se repita. Tabla creada por el ORM.
+  await createPlatformInvoicesUniqueIndex()
 
   // currency_config para todos los hoteles (idempotente)
   await seedCurrencyConfig()

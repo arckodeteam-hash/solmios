@@ -47,6 +47,7 @@ export class SubscriptionsService {
      *  cablear, el endpoint público devuelve `null` y la landing muestra su copy de reserva. */
     private readonly specialCategoriesRepo?: RepositoryAdapter<any>,
     private readonly configurationRepo?: RepositoryAdapter<any>, // KV `configuration` (onboarding.ts, ONBOARDING_CONFIRM_KEYS)
+    private readonly platformInvoicesRepo?: RepositoryAdapter<any>, // `platform_invoices` — historial de cobros de la plataforma (REQ-BIL-02). Opcional: sin cablear el webhook sigue igual, solo no deja rastro del cobro.
   ) {
     this.signupUc = new SignupUseCase({
       hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger,
@@ -172,12 +173,7 @@ export class SubscriptionsService {
 
   /** Lo que el flujo de alta con tarjeta necesita del módulo (`usecases/signup-policy.ts`). */
   private cardFlowDeps() {
-    return {
-      subscriptionsRepo: this.subscriptionsRepo,
-      createCheckout: (h: string, p: string, o: string) => this.createCheckout(h, p, o),
-      verifyOwner: this.verifyOwner,
-      logger: this.logger,
-    }
+    return { subscriptionsRepo: this.subscriptionsRepo, createCheckout: (h: string, p: string, o: string) => this.createCheckout(h, p, o), verifyOwner: this.verifyOwner, logger: this.logger }
   }
 
   /** #46 — mejorar el plan pagando SOLO la diferencia: `upgradePreview` cotiza el prorrateo y `upgradePlan` lo cobra con `subscriptions.update` (un Checkout nuevo duplicaría la suscripción, BUG-9). */
@@ -193,7 +189,7 @@ export class SubscriptionsService {
   handlePlatformWebhook(rawBody: string | Buffer, signature: string) {
     return processSubscriptionWebhook({
       subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo,
-      logger: this.logger, sendPlatformEmail: this.sendPlatformEmail, orm: this.orm,
+      logger: this.logger, sendPlatformEmail: this.sendPlatformEmail, orm: this.orm, platformInvoicesRepo: this.platformInvoicesRepo,
     }, rawBody, signature)
   }
 }
