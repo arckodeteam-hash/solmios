@@ -42,6 +42,7 @@
               class="w-full h-11 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan focus:ring-1 focus:ring-cyan/30"
               required
             />
+            <p class="text-xs text-text-muted mt-1">{{ policyHint }}</p>
           </div>
 
           <!-- Confirm Password -->
@@ -89,9 +90,13 @@ import { ref } from 'vue'
 import logoStackedColor from '@/assets/logo/logo-stacked-color.png'
 import { AuthService } from '@/services/Auth.service'
 import { usePageMeta } from '@/composables/usePageMeta'
+import { usePasswordPolicy } from '@/composables/usePasswordPolicy'
 import { AUTH_PAGE_META } from './auth-meta'
 
 usePageMeta(AUTH_PAGE_META.changePassword)
+
+// Política configurable del admin (REQ-CFG-05): se muestra antes de fallar.
+const { hint: policyHint, check: checkPolicy } = usePasswordPolicy()
 
 const currentPassword = ref('')
 const newPassword = ref('')
@@ -101,9 +106,8 @@ const success = ref('')
 const loading = ref(false)
 
 function validate(): string | null {
-  if (newPassword.value.length < 6) {
-    return 'La nueva contraseña debe tener al menos 6 caracteres'
-  }
+  const issue = checkPolicy(newPassword.value)
+  if (issue) return issue
   if (newPassword.value === currentPassword.value) {
     return 'La nueva contraseña debe ser diferente a la actual'
   }

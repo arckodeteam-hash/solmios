@@ -236,6 +236,7 @@
         <div>
           <label for="team-contrasena-temporal" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2">Contraseña temporal</label>
           <input id="team-contrasena-temporal" name="password" v-model="inviteForm.password" type="text" placeholder="auto-generada si vacío" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-mono focus:outline-none focus:border-navy" />
+          <p class="text-[10px] text-text-muted mt-1">{{ passwordHint }}</p>
         </div>
       </div>
 
@@ -259,6 +260,7 @@ import type { TeamMember, Role } from '@/services/Team.service'
 import { EmpleadosService } from '@/services/Empleados.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
+import { usePasswordPolicy, generateCompliantPassword } from '@/composables/usePasswordPolicy'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
@@ -274,6 +276,9 @@ const ICON_USERS_EMPTY = '<svg viewBox="0 0 24 24" class="h-8 w-8" fill="none" s
 
 const auth = useAuthStore()
 const toast = useToast()
+// Política de contraseñas del admin (REQ-CFG-05): se muestra, se chequea antes de enviar
+// y la clave auto-generada la cumple.
+const { policy: passwordPolicy, hint: passwordHint, check: checkPolicy } = usePasswordPolicy()
 
 const currentUser = computed(() => auth.user?.id || '')
 const members = ref<TeamMember[]>([])
@@ -455,7 +460,7 @@ const inviteForm = ref<{ name: string; email: string; role: string; password: st
 const inviting = ref(false)
 
 function openInvite() {
-  inviteForm.value = { name: '', email: '', role: 'receptionist', password: Math.random().toString(36).slice(2, 10) }
+  inviteForm.value = { name: '', email: '', role: 'receptionist', password: generateCompliantPassword(passwordPolicy.value) }
   inviteModal.value = true
 }
 
@@ -463,6 +468,13 @@ async function sendInvite() {
   if (!inviteForm.value.name || !inviteForm.value.email) {
     toast.error('Nombre y email son obligatorios')
     return
+  }
+  if (inviteForm.value.password) {
+    const issue = checkPolicy(inviteForm.value.password)
+    if (issue) {
+      toast.error(issue)
+      return
+    }
   }
   inviting.value = true
   try {

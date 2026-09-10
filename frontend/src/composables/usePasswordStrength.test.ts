@@ -4,10 +4,11 @@
 import { describe, it, expect } from 'vitest'
 import { ref } from 'vue'
 import { usePasswordStrength, PASSWORD_MIN } from './usePasswordStrength'
+import type { PasswordPolicy } from './usePasswordPolicy'
 
-function check(pwd: string, ctx: { email?: string; name?: string } = {}) {
+function check(pwd: string, ctx: { email?: string; name?: string } = {}, policy?: Partial<PasswordPolicy>) {
   const password = ref(pwd)
-  return usePasswordStrength(password, () => ctx)
+  return usePasswordStrength(password, () => ctx, () => policy)
 }
 
 describe('usePasswordStrength', () => {
@@ -66,5 +67,32 @@ describe('usePasswordStrength', () => {
     expect(isValid.value).toBe(false)
     password.value = 'MiHotel2026'
     expect(isValid.value).toBe(true)
+  })
+
+  describe('política configurable (REQ-CFG-05)', () => {
+    it('sube el largo mínimo y el label lo dice', () => {
+      const { isValid, requirements } = check('Abcdefghij1', {}, { minLength: 12 }) // 11
+      expect(isValid.value).toBe(false)
+      const largo = requirements.value[0]
+      expect(largo?.label).toBe('Al menos 12 caracteres')
+      expect(largo?.met).toBe(false)
+      expect(check('Abcdefghij12', {}, { minLength: 12 }).isValid.value).toBe(true)
+    })
+
+    it('nunca baja del piso estático del registro', () => {
+      const { isValid, requirements } = check('Abc123456', {}, { minLength: 6 }) // 9
+      expect(isValid.value).toBe(false)
+      expect(requirements.value[0]?.label).toBe(`Al menos ${PASSWORD_MIN} caracteres`)
+    })
+
+    it('con requireSpecial aparece el requisito y se exige', () => {
+      const sin = check('Abcdefghij1', {}, { requireSpecial: true })
+      const especial = sin.requirements.value.find((r) => r.label === 'Un carácter especial')
+      expect(especial?.met).toBe(false)
+      expect(sin.isValid.value).toBe(false)
+      expect(check('Abcdefghij1!', {}, { requireSpecial: true }).isValid.value).toBe(true)
+      // Sin la política, el requisito no está en el checklist.
+      expect(check('Abcdefghij1').requirements.value.some((r) => r.label === 'Un carácter especial')).toBe(false)
+    })
   })
 })
