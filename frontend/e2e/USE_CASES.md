@@ -162,7 +162,7 @@ del hotel), ADM-12 (programa Aliados).
   `expired` y `already_verified`.
 
 ### AUTH-03 — Acceso bloqueado por trial/suscripción vencida
-- **Actor(es):** Merchant de un hotel cuyo trial (7 días) o suscripción venció.
+- **Actor(es):** Merchant de un hotel cuyo trial (15 días) o suscripción venció.
 - **Precondición:** `subscriptions.status='trialing'` con `trialEndsAt` pasado, o `status` vencido, o `hotels.status` suspendido/inactivo.
 - **Permiso requerido:** N/A — el bloqueo ocurre en el login mismo, antes de cualquier permiso.
 - **Flujo:**

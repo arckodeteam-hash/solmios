@@ -245,7 +245,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth.store'
-import { SignupService, type PublicPlan } from '@/services/Signup.service'
+import { SignupService, DEFAULT_TRIAL_DAYS, type PublicPlan } from '@/services/Signup.service'
 import { ReferralsService } from '@/services/Referrals.service'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import PhoneInput from '@/components/ui/PhoneInput.vue'
@@ -260,10 +260,10 @@ usePageMeta(AUTH_PAGE_META.register)
 /**
  * #28: la política del alta la fija el super-admin, no el build. `trialDays` y "¿pide tarjeta?"
  * vienen de `GET /api/public/signup-policy`; los valores de acá son solo el estado inicial hasta
- * que responde (antes `trialDays` era un 7 escrito a mano en paralelo a `TRIAL_DAYS` del backend,
+ * que responde (antes `trialDays` era un número escrito a mano en paralelo a `TRIAL_DAYS` del backend,
  * y el "sin tarjeta" del copy contradecía lo que el servidor realmente hacía).
  */
-const trialDays = ref(7)
+const trialDays = ref(DEFAULT_TRIAL_DAYS)
 const requireCard = ref(false)
 
 /** Lo que la pantalla promete sobre la tarjeta. Un solo lugar: se usa en el hero y en el subtítulo. */
