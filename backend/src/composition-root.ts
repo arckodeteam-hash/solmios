@@ -31,6 +31,15 @@ import { createBookingSyncCron, DEFAULT_BOOKING_SYNC_TICK_MS } from './shared/us
 import { HousekeepingSettingsUseCase } from './modules/housekeeping/usecases/settings'
 import { reservasPaymentRequestsConnector } from './connectors/reservas-payment-requests'
 import { RedisCache } from './infrastructure/cache/redis-cache'
+// Monitoreo real de la plataforma (#96): lo que mide shared/observability se cablea acá y le llega
+// al módulo `monitoring` por puertos — el módulo no importa infraestructura ni lee env.
+import { HttpMetricsStore } from './shared/observability/metrics'
+import { httpMetrics, type ErrorEvent } from './shared/observability/http-metrics'
+import { dbHealth } from './shared/observability/db-health'
+import { SystemHealth } from './shared/observability/system-health'
+import { UploadsSize } from './shared/observability/uploads-size'
+import { BackupsStore } from './shared/observability/backups'
+import { backupDumpFromEnv } from './shared/observability/backup-dump'
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const config = new ConfigStore()
@@ -50,9 +59,10 @@ const PORT = config.get<number>('PORT')
 const logger = new Logger('solmios', 'info')
 // Multi-motor: DATABASE_URL -> Postgres, sino SQLite (DB_PATH). Migración SQLite→Postgres.
 const DATABASE_URL = process.env.DATABASE_URL
+const DB_PATH = process.env.DB_PATH || './data/managerhotel.db'
 const db = DATABASE_URL
   ? new PostgresAdapter({ connectionString: DATABASE_URL })
-  : new SqliteAdapter({ path: process.env.DB_PATH || './data/managerhotel.db', wal: true, foreignKeys: true })
+  : new SqliteAdapter({ path: DB_PATH, wal: true, foreignKeys: true })
 await db.connect()
 const orm = new ORM(db)
 registerSharedModels(orm)
@@ -74,6 +84,14 @@ router.use(corsWithErrorHeaders({ origins: CORS_ORIGINS }))
 router.use(securityHeaders())
 router.use(bodyLimit(5 * 1024 * 1024))
 router.use(requestLogger(logger))
+// Monitoreo (#96): mide TODA petición (count, p95, status por ruta normalizada) y avisa de los
+// 5xx/429 al módulo `monitoring`, que los persiste en error_logs. Va ANTES del rate-limit y del
+// timeout para que sus 429/503 también cuenten. El sink se conecta post-start (el módulo todavía
+// no existe acá); hasta entonces los errores solo se cuentan, no se persisten. Siempre devuelve
+// la respuesta de next(): si el store o el sink fallan, el cliente no lo nota.
+const httpMetricsStore = new HttpMetricsStore()
+let monitoringErrorSink: ((e: ErrorEvent) => void) | null = null
+router.use(httpMetrics(httpMetricsStore, { onError: (e) => monitoringErrorSink?.(e) }))
 // SEC-4.2: keyBy getClientIp (CF-Connecting-IP / última-XFF). Sin esto el limiter keyeaba por
 // remoteAddress = 127.0.0.1 detrás de nginx → un solo bucket para TODOS (inútil o bloquea a todos).
 // #658: separado en dos — /api/auth/* (fuerza bruta) queda agresivo; el resto del panel (lectura
@@ -106,11 +124,12 @@ const s3Config = s3ConfigFromEnv()
 // Se guarda la referencia al adapter S3: housekeeping la necesita para FIRMAR la
 // subida del video directo al bucket (un video no entra en el body del backend).
 const s3Adapter = s3Config ? new S3StorageAdapter(s3Config) : undefined
+const UPLOADS_DIR = './uploads'
 const storage = new StorageService(
-  s3Adapter ?? new LocalStorageAdapter('./uploads', '/uploads'),
+  s3Adapter ?? new LocalStorageAdapter(UPLOADS_DIR, '/uploads'),
 )
 // El estático local sigue sirviendo lo ya subido a disco aunque se active B2.
-serveStatic(router, './uploads', { prefix: '/uploads' })
+serveStatic(router, UPLOADS_DIR, { prefix: '/uploads' })
 
 // DEP-05: endpoint público de salud (/api/health) para monitoreo externo.
 import { registerHealthRoute } from './infrastructure/health'
@@ -229,6 +248,10 @@ import { AbandonRecoveryModule } from './modules/abandon-recovery'
 // penalidad. F1 = fundación: solo modelo + funciones puras (shared/usecases/cancellation-math).
 // Las rutas CRUD y la integración con reservas/bookingengine llegan en F2-F5.
 import { CancellationModule } from './modules/cancellation'
+// Monitoreo real de la plataforma (#96): métricas HTTP, error_logs, salud de base/sistema, colas y
+// backups de la base — todo super_admin. Los puertos se arman acá (ver `monitoringOptions`); el
+// sink de errores y el cron de retención se cablean post-start.
+import { MonitoringModule, ERROR_LOG_PURGE_TICK_MS, type MonitoringService } from './modules/monitoring'
 // F3 3.5 (solmi-direct-booking): los fetchers se declaran acá (antes de modules[]) para que
 // tanto el módulo (ruta admin /api/external-reviews/sync-now) como el cron nightly compartan
 // la MISMA configuración de clients HTTP externos. Los connectors viven en src/connectors/.
@@ -254,6 +277,19 @@ const externalReviewsFetchers: ExternalReviewsFetchers = {
 }
 
 const pushAvailability = createPushAvailability((name) => system.resolveModule(name), logger)
+
+// Puertos de medición del módulo `monitoring` (#96). Mismo criterio de motor que `db` arriba:
+// DATABASE_URL → Postgres (pg_dump), si no SQLite (copia consistente de DB_PATH). El directorio
+// de backups y la retención salen de BACKUP_DIR / BACKUP_RETENTION_COUNT (ver .env.example).
+const monitoringOptions = {
+  metrics: httpMetricsStore,
+  systemHealth: new SystemHealth({ appDir: process.cwd() }),
+  uploads: new UploadsSize(UPLOADS_DIR),
+  dbHealth: () => dbHealth(DATABASE_URL
+    ? { engine: 'postgres', adapter: db }
+    : { engine: 'sqlite', adapter: db, sqlitePath: DB_PATH }),
+  backups: { store: new BackupsStore(), dump: backupDumpFromEnv() },
+}
 
 const mods = [
   PaymentGatewaysModule(),
@@ -364,6 +400,9 @@ const mods = [
   // F1 plan #627 (políticas de cancelación) — Modelo cancellation_policies + funciones
   // puras de cálculo (shared/usecases/cancellation-math). Sin rutas HTTP en F1 (F3 las agrega).
   CancellationModule(),
+  // Monitoreo real de la plataforma (#96): /api/admin/monitoring/{api,errors,system,queues} y
+  // /api/admin/backups. Registra el modelo ErrorLogs (tabla error_logs) — RUN_MIGRATE la crea.
+  MonitoringModule(monitoringOptions),
 ]
 for (const m of mods) system.addModule(m as any)
 
@@ -505,6 +544,10 @@ import { subscriptionsReferralsConnector } from './connectors/subscriptions-refe
 import { subscriptionsAdminPolicyConnector } from './connectors/subscriptions-admin-policy'
 import { subscriptionsUsuariosOwnerConnector } from './connectors/subscriptions-usuarios-owner'
 import { paymentRequestsBookingengineWebhookConnector } from './connectors/payment-requests-bookingengine-webhook'
+// Monitoreo (#96): la pantalla muestra la cola de Channex con los contadores que ya expone
+// ari-outbox, y crear/descargar un backup deja rastro en el audit log.
+import { monitoringAriOutboxConnector } from './connectors/monitoring-ari-outbox'
+import { monitoringAuditlogConnector } from './connectors/monitoring-auditlog'
 // F3 3.2 (solmi-direct-booking) — Adaptadores HTTP externos de reviews. NO son conectores
 // inter-módulo (los que wirean sockets): son clientes de APIs externas. Imports y factory
 // `externalReviewsFetchers` viven arriba (cerca de ExternalReviewsModule) para que el módulo
@@ -752,6 +795,10 @@ system.addConnector('subscriptions-usuarios-owner', subscriptionsUsuariosOwnerCo
 // Una sola URL de webhook para el hotel: cada handler reenvía al otro el evento que no es suyo.
 // Sin esto, todo cobro del motor de reservas moría en el handler de los links de pago (200 mudo).
 system.addConnector('payment-requests-bookingengine-webhook', paymentRequestsBookingengineWebhookConnector)
+// Monitoreo (#96): sin el primero, /api/admin/monitoring/queues responde `ariOutbox: null` (la
+// pantalla dice "sin datos", nunca ceros); sin el segundo, un backup no deja rastro de quién lo hizo.
+system.addConnector('monitoring-ari-outbox', monitoringAriOutboxConnector)
+system.addConnector('monitoring-auditlog', monitoringAuditlogConnector)
 
 // ─── Infraestructura transversal ────────────────────────────────────────────
 configureStripe(orm, logger)
@@ -774,6 +821,11 @@ if (process.env.RUN_MIGRATE === '1') {
 await system.start()
 
 const { emailService, startWorker } = bootstrapEmail(orm, logger, (name) => system.resolveModule(name))
+
+// Post-init: los 5xx/429 que ve el middleware httpMetrics se persisten en error_logs. Recién acá
+// existe el módulo; `recordError` es fire-and-forget y nunca lanza.
+const monitoring = system.resolveModule<MonitoringService>('monitoring')
+monitoringErrorSink = (e) => monitoring.recordError(e)
 
 // Post-init: ai-recepcionista usa pushAvailability (reservas IA bypassan el módulo reservas).
 const aiRecepcionista = system.resolveModule<{ channexPusher: ((hotelId: string, roomId: string) => void) | null }>('ai-recepcionista')
@@ -862,6 +914,16 @@ const evidenceRetentionCron = createEvidenceRetentionCron(
 setInterval(() => {
   evidenceRetentionCron().catch((e) => logger.warn('evidence-retention cron failed', { error: (e as Error).message }))
 }, ONE_DAY_MS)
+
+// Retención de error_logs (#96): borra las filas más viejas que ERROR_LOG_RETENTION_DAYS (default
+// 30). Corrida inicial a los 10s (anti-restart, igual que night-audit) y después una vez por día.
+setTimeout(() => {
+  monitoring.purgeErrors().catch((e) => logger.warn('error-logs purge initial run failed', { error: (e as Error).message }))
+}, 10_000)
+setInterval(() => {
+  monitoring.purgeErrors().catch((e) => logger.warn('error-logs purge failed', { error: (e as Error).message }))
+}, ERROR_LOG_PURGE_TICK_MS)
+logger.info('Error-logs purge cron listo', { tickMs: ERROR_LOG_PURGE_TICK_MS })
 
 const NIGHT_AUDIT_TICK_MS = 60_000 * 60 * 3 // cada 3h (postea si hay nuevas reservas in-house)
 const nightAuditCron = createNightAuditCron(orm, (name) => system.resolveModule(name), logger)
