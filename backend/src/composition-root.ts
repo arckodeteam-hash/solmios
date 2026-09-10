@@ -548,6 +548,8 @@ import { paymentsWebhooksConnector } from './connectors/payments-webhooks'
 import { subscriptionsReferralsConnector } from './connectors/subscriptions-referrals'
 import { subscriptionsAdminPolicyConnector } from './connectors/subscriptions-admin-policy'
 import { subscriptionsUsuariosOwnerConnector } from './connectors/subscriptions-usuarios-owner'
+import { subscriptionsSalesAlertConnector } from './connectors/subscriptions-sales-alert'
+import { adminSubscriptionsTrialConnector } from './connectors/admin-subscriptions-trial'
 import { paymentRequestsBookingengineWebhookConnector } from './connectors/payment-requests-bookingengine-webhook'
 // Monitoreo (#96): la pantalla muestra la cola de Channex con los contadores que ya expone
 // ari-outbox, y crear/descargar un backup deja rastro en el audit log.
@@ -799,6 +801,12 @@ system.addConnector('subscriptions-referrals', subscriptionsReferralsConnector)
 system.addConnector('subscriptions-admin-policy', subscriptionsAdminPolicyConnector)
 // #28 — quien abandonó el Checkout del alta no puede loguearse: prueba quién es con su clave.
 system.addConnector('subscriptions-usuarios-owner', subscriptionsUsuariosOwnerConnector)
+// #145 — ventas se entera del alta en el acto: subscriptions.onHotelSignedUp → sales-leads.notifySignup()
+// (email a SALES_LEADS_ADMIN_EMAIL con wa.me prellenado). Best-effort, nunca rompe el alta.
+system.addConnector('subscriptions-sales-alert', subscriptionsSalesAlertConnector)
+// #146 — el super-admin extiende un trial: admin.setTrialDeps → subscriptions.extendTrial()
+// (vuelve a `trialing`, limpia los dedup del cron y encola `trial_extended` al hotel).
+system.addConnector('admin-subscriptions-trial', adminSubscriptionsTrialConnector)
 // Una sola URL de webhook para el hotel: cada handler reenvía al otro el evento que no es suyo.
 // Sin esto, todo cobro del motor de reservas moría en el handler de los links de pago (200 mudo).
 system.addConnector('payment-requests-bookingengine-webhook', paymentRequestsBookingengineWebhookConnector)

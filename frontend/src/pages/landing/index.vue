@@ -361,6 +361,32 @@
 
     <!-- ═══ Modal "Hablar con Ventas" — formulario público, llega a Panel › Leads de Ventas ═══ -->
     <SalesContactModal v-model:open="salesModalOpen" :plan-interest="salesModalPlan" />
+
+    <!-- ═══ WhatsApp flotante (#148, REQ-PIPE-07) — SOLO si la plataforma cargó un teléfono de
+         soporte válido; sin URL no existe en el DOM. Abre el chat y nada más: no crea un lead
+         (no hay datos del visitante). "Hablar con Ventas" sigue siendo el formulario.
+         Abajo-derecha, APILADO sobre el widget global de feedback (App.vue → FeedbackToolbar:
+         fixed bottom-6 right-6, 56px, z-9999): `bottom` = 24 + 56 + 12 px. Con `bottom-6` los dos
+         quedaban uno encima del otro. A 375px va con `right-3`: el CTA de cada plan del carrusel
+         termina en x=292 y con `right-6` el botón arrancaba en 295 (3px de aire, se rozaban);
+         con `right-3` arranca en 307 (15px). En md+ vuelve a `right-6`, alineado con el widget de
+         feedback. No pisa "Prueba Gratis" (header, arriba) ni los CTAs centrados del cierre.
+         z-40 < z-50 del header/modal: el modal lo tapa. ═══ -->
+    <a
+      v-if="whatsappUrl"
+      :href="whatsappUrl"
+      target="_blank"
+      rel="noopener noreferrer"
+      data-testid="wa-float"
+      aria-label="Escribir por WhatsApp"
+      title="Escribir por WhatsApp"
+      class="wa-float group fixed bottom-[5.75rem] right-3 md:right-6 z-40 inline-flex items-center gap-2.5 h-14 w-14 md:w-auto md:pl-4 md:pr-5 justify-center rounded-full bg-[#25D366] text-white shadow-xl shadow-emerald-900/25 hover:bg-[#1ebe5b] hover:-translate-y-0.5 transition-all duration-300 focus:outline-none focus-visible:ring-4 focus-visible:ring-emerald-300"
+    >
+      <span class="h-7 w-7 shrink-0" aria-hidden="true">
+        <svg class="h-full w-full" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38c1.45.79 3.08 1.21 4.79 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2m0 1.67c4.55 0 8.24 3.7 8.24 8.24 0 4.55-3.7 8.24-8.24 8.24-1.52 0-3.01-.41-4.3-1.2l-.31-.18-3.12.82.83-3.04-.2-.32a8.2 8.2 0 0 1-1.26-4.32c0-4.54 3.7-8.24 8.36-8.24M8.53 7.33c-.16 0-.43.06-.66.31-.22.25-.87.86-.87 2.07 0 1.22.89 2.39 1 2.56.14.17 1.76 2.67 4.25 3.73.59.27 1.05.42 1.41.53.59.19 1.13.16 1.56.1.48-.07 1.46-.6 1.67-1.18.21-.58.21-1.07.15-1.18-.07-.1-.23-.16-.48-.27-.25-.14-1.47-.74-1.69-.82-.23-.08-.37-.12-.56.12-.16.25-.64.81-.78.97-.15.17-.29.19-.53.07-.26-.13-1.06-.39-2-1.23-.74-.66-1.23-1.47-1.38-1.72-.12-.24-.01-.39.11-.5.11-.11.27-.29.37-.44.13-.14.17-.25.25-.41.08-.17.04-.31-.02-.43-.06-.11-.56-1.35-.77-1.84-.2-.48-.4-.42-.56-.43-.14 0-.3-.01-.47-.01"/></svg>
+      </span>
+      <span class="hidden md:inline text-sm font-bold whitespace-nowrap">WhatsApp</span>
+    </a>
   </div>
 </template>
 
@@ -374,6 +400,14 @@ import SalesContactModal from '@/components/site/SalesContactModal.vue'
 import { usePageMeta } from '@/composables/usePageMeta'
 import { PUBLIC_PAGE_META } from '@/pages/public-meta'
 import { PlanCatalogService, type DisplayPlan } from '@/services/PlanCatalog.service'
+import { PlatformContactService } from '@/services/PlatformContact.service'
+
+// #148 — enlace wa.me del teléfono de soporte de la plataforma. `null` = sin botón.
+const whatsappUrl = ref<string | null>(null)
+onMounted(async () => {
+  const contact = await PlatformContactService.get()
+  whatsappUrl.value = contact.whatsappUrl
+})
 
 const salesModalOpen = ref(false)
 const salesModalPlan = ref<string | undefined>(undefined)

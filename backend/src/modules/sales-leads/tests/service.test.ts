@@ -5,9 +5,9 @@ import { NotFoundError, ValidationError } from 'arckode-framework'
 import { SalesLeadsService } from '../service'
 import type { SalesLeadDTO } from '../types'
 
-function makeRepo(seed: SalesLeadDTO[] = []) {
-  const rows = new Map<string, SalesLeadDTO>(seed.map((r) => [r.id, { ...r }]))
-  const repo: RepositoryAdapter<SalesLeadDTO> = {
+function makeRepo<T extends { id: string } = SalesLeadDTO>(seed: T[] = []) {
+  const rows = new Map<string, T>(seed.map((r) => [r.id, { ...r }]))
+  const repo: RepositoryAdapter<T> = {
     async findMany(filters: any = {}, opts: any = {}) {
       let out = [...rows.values()].filter((r) =>
         Object.entries(filters).every(([k, v]) => (r as any)[k] === v),
@@ -40,7 +40,7 @@ function makeRepo(seed: SalesLeadDTO[] = []) {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         ...data,
-      } as SalesLeadDTO
+      } as T
       rows.set(row.id, row)
       return row
     },
@@ -179,5 +179,20 @@ describe('sales-leads — gestión admin', () => {
     const svc = new SalesLeadsService(repo, log)
     await svc.remove('1')
     expect(rows.has('1')).toBe(false)
+  })
+
+  // FE-15: lo que ventas anotó sobre un lead (`sales_prospects.leadId`) no puede quedar huérfano.
+  it('al eliminar un lead borra también su sales_prospect (por leadId) y deja los demás', async () => {
+    const { repo, rows } = makeRepo([lead({ id: '1' }), lead({ id: '2' })])
+    const prospects = makeRepo<any>([
+      { id: 'p1', hotelId: null, leadId: '1', notes: 'del lead 1' } as any,
+      { id: 'p2', hotelId: null, leadId: '2', notes: 'del lead 2' } as any,
+      { id: 'p3', hotelId: 'h1', leadId: null, notes: 'de un hotel' } as any,
+    ])
+    const svc = new SalesLeadsService(repo, log)
+    svc.setPipelineDeps({ salesProspects: prospects.repo } as any)
+    await svc.remove('1')
+    expect(rows.has('1')).toBe(false)
+    expect([...prospects.rows.keys()].sort()).toEqual(['p2', 'p3'])
   })
 })

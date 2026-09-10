@@ -6,7 +6,7 @@
       <p class="text-sm text-text-muted mt-0.5">Editá el contenido y activá o desactivá los emails automáticos de la plataforma (bienvenida, trial, pagos, cancelación)</p>
     </div>
 
-    <SectionCard title="Eventos de la plataforma" :subtitle="`${orderedTemplates.length} de 6 plantilla(s)`" body-class="p-0">
+    <SectionCard title="Eventos de la plataforma" :subtitle="`${orderedTemplates.length} de ${EVENT_ORDER.length} plantilla(s)`" body-class="p-0">
       <!-- Skeleton -->
       <div v-if="loading" class="space-y-3 p-5">
         <div v-for="i in 6" :key="i" class="h-12 animate-pulse rounded-xl bg-surface"></div>
@@ -145,6 +145,7 @@ import AppModal from '@/components/ui/AppModal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import {
   PlatformEmailsService,
+  PLATFORM_EMAIL_EVENTS,
   parsePlatformEmailVariables,
   type PlatformEmailEvent,
   type PlatformEmailTemplate,
@@ -153,17 +154,21 @@ import {
 const ICON_EDIT = '<svg viewBox="0 0 24 24" class="h-full w-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>'
 const ICON_MAIL = '<svg viewBox="0 0 24 24" class="h-8 w-8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>'
 
-// Los 6 eventos son fijos: no se crean ni se borran filas, solo se editan.
-const EVENT_ORDER: PlatformEmailEvent[] = [
-  'welcome', 'trial_ending', 'trial_expired', 'payment_succeeded', 'payment_failed', 'subscription_canceled',
-]
+// Los eventos son fijos (los define el backend): no se crean ni se borran filas, solo se editan.
+// El total del subtítulo sale de esta lista, no de un número escrito a mano (FE-14).
+const EVENT_ORDER: readonly PlatformEmailEvent[] = PLATFORM_EMAIL_EVENTS
 const EVENT_LABELS: Record<PlatformEmailEvent, string> = {
   welcome: 'Bienvenida',
   trial_ending: 'Aviso: trial por vencer',
   trial_expired: 'Trial vencido',
+  trial_extended: 'Trial extendido',
   payment_succeeded: 'Pago exitoso',
   payment_failed: 'Pago fallido',
   subscription_canceled: 'Suscripción cancelada',
+  subscription_renewal_auto: 'Aviso: renovación automática',
+  subscription_renewal_manual: 'Aviso: renovación manual',
+  subscription_suspended: 'Suscripción suspendida',
+  subscription_reactivated: 'Suscripción reactivada',
 }
 function eventLabel(event: PlatformEmailEvent | string): string {
   return EVENT_LABELS[event as PlatformEmailEvent] || event
