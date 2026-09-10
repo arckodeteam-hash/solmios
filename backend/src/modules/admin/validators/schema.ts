@@ -13,6 +13,7 @@ export const CreatePlanSchema: Record<string, ValidationRule> = {
   limits: { type: objectType },
   isActive: { type: 'boolean' as const },
   sortOrder: { type: 'number' as const, min: 0 },
+  trialEligible: { type: 'boolean' as const },
 }
 
 export const UpdatePlanSchema: Record<string, ValidationRule> = {
@@ -25,6 +26,7 @@ export const UpdatePlanSchema: Record<string, ValidationRule> = {
   limits: { type: objectType },
   isActive: { type: 'boolean' as const },
   sortOrder: { type: 'number' as const, min: 0 },
+  trialEligible: { type: 'boolean' as const },
 }
 
 export const CreateAmenityCatalogSchema: Record<string, ValidationRule> = {

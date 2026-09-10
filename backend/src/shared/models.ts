@@ -36,6 +36,9 @@ export function registerSharedModels(orm: ORM): void {
       limits: { type: 'json', default: { rooms: 30, users: 2, properties: 1 } },
       isActive: { type: 'number', default: 1 },
       sortOrder: { type: 'number', default: 0 },
+      // 1 = el plan permite iniciar la prueba gratuita (TRIAL_DAYS en subscriptions/usecases/signup.ts); 0 = no.
+      // Filas previas quedan NULL tras el ALTER TABLE de ormMigrate (sin DEFAULT): NULL se lee como elegible, solo 0 bloquea.
+      trialEligible: { type: 'number', default: 1 },
       /** Price ID de Stripe (cuenta de PLATAFORMA) para el Checkout de suscripción del hotel a este plan. */
       stripePriceId: { type: 'string' },
     },

@@ -295,9 +295,11 @@
               </div>
               <div class="p-6 flex flex-col flex-1">
                 <p class="text-xs text-slate-500 mb-5 min-h-10">{{ plan.desc }}</p>
-                <button v-if="plan.quote" type="button" @click="openSalesModal(plan.slug)"
+                <!-- A cotización o sin prueba gratuita (#71, `plans.trialEligible`): el CTA va a
+                     ventas, no a /registro — el alta rechazaría ese plan con 400. -->
+                <button v-if="plan.quote || !plan.trialEligible" type="button" @click="openSalesModal(plan.slug)"
                   class="block w-full py-2.5 rounded-xl text-center text-xs font-bold mb-6 border transition-colors cursor-pointer"
-                  :class="planColor(plan.color).cta">
+                  :class="planColor(plan.color).cta" data-testid="plan-sales-cta">
                   Contactar ventas
                 </button>
                 <!-- `?plan=` preselecciona el plan en el alta: elegir "Professional" acá y que el

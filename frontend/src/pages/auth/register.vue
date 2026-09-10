@@ -245,7 +245,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth.store'
-import { SignupService, DEFAULT_TRIAL_DAYS, type PublicPlan } from '@/services/Signup.service'
+import { SignupService, DEFAULT_TRIAL_DAYS, trialEligiblePlans, type PublicPlan } from '@/services/Signup.service'
 import { ReferralsService } from '@/services/Referrals.service'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import PhoneInput from '@/components/ui/PhoneInput.vue'
@@ -447,7 +447,10 @@ onMounted(async () => {
 
   try {
     const res = await SignupService.publicPlans()
-    plans.value = res ?? []
+    // #71: sólo se ofrecen los planes con `plans.trialEligible`. El backend rechaza con 400 un
+    // alta con un plan no elegible; listarlo acá sería invitar a un error. Esos planes se
+    // contratan por ventas (CTA de la landing), no probando gratis.
+    plans.value = trialEligiblePlans(res ?? [])
     // El plan que el visitante eligió en la tabla de precios de la landing viaja como
     // `?plan=<slug>`. Se resuelve contra los planes REALES que devolvió la API: un slug
     // desconocido (plan dado de baja, link viejo, URL manipulada) se ignora y cae al default,
