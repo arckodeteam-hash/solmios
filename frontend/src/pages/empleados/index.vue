@@ -527,7 +527,7 @@ const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'pla
 const canManageStaff = computed(() => auth.canActAsHotelAdmin)
 const toast = useToast()
 // Política de contraseñas del admin (REQ-CFG-05): placeholder y minLength del alta de cuenta.
-const { policy: passwordPolicy, hint: passwordHint, loaded: policyLoaded, ready: policyReady } = usePasswordPolicy()
+const { policy: passwordPolicy, hint: passwordHint, check: checkPolicy, loaded: policyLoaded, ready: policyReady } = usePasswordPolicy()
 const activeTab = ref('profiles')
 const loading = ref(true)
 
@@ -732,6 +732,10 @@ async function openNewEmployee(prefill?: { name?: string; email?: string }) {
       { key: 'hireDate', label: 'Fecha de ingreso', type: 'date', required: true, default: new Date().toISOString().slice(0, 10) },
     ],
     onSubmit: async (v) => {
+      // Misma validación que team/index.vue (sendInvite): FormModal sólo chequea minLength.
+      // Se lanza (no return) porque submitForm interpreta un retorno normal como éxito.
+      const policyError = checkPolicy(String(v.password ?? ''))
+      if (policyError) throw new Error(policyError)
       const newUser = await TeamService.create({
         name: String(v.name).trim(), email: String(v.email).trim(),
         phone: String(v.phone || '').trim() || undefined,
