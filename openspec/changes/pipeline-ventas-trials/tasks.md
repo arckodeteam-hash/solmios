@@ -69,8 +69,8 @@
       **Aceptación**: `bun run typecheck`; QA en navegador con la SQLite local (seed de 3 hoteles en
       etapas distintas); "Perdido" sin motivo no dispara petición (Network); `nextStepAt` ayer →
       aparece en "Vencen hoy".
-      - [ ] 4.2.1 Screenshot de la vista adjunto al issue (screenshots en evidencia LoopKit,
-            pendiente adjuntar a #147/#148).
+      - [ ] 4.2.1 Screenshot de la vista adjunto al issue — NO adjuntado: `gh` no sube imágenes; las
+            capturas viven en el estado LoopKit (`state/evidence/screenshots/147-*.png`). Manual.
 - [x] 4.3 Menú: "Leads de Ventas" pasa a llamarse "Pipeline de ventas" (`SuperAdminLayout.vue`, ruta
       igual).
 
@@ -82,17 +82,20 @@
       **Aceptación**: test: `809-555-0000` → `https://wa.me/18095550000?text=...`; vacío → `null`.
 - [x] 5.2 Botón flotante en `pages/landing/index.vue` solo si hay URL.
       **Aceptación**: sin número el DOM no tiene el botón.
-      - [ ] 5.2.1 Screenshot con y sin número adjunto al issue (screenshots en evidencia LoopKit,
-            pendiente adjuntar a #147/#148).
+      - [ ] 5.2.1 Screenshot con y sin número adjunto al issue — NO adjuntado: ídem 4.2.1
+            (`148-{con,sin}-numero*.png`). Manual.
 
 ### 6. Cierre de A
 
-- [ ] 6.1 `cd backend && bun run typecheck && bun test && arckode analyze` (0) ·
+- [x] 6.1 `cd backend && bun run typecheck && bun test && arckode analyze` (0) ·
       `cd frontend && bun run typecheck && bun run build`.
-- [ ] 6.2 Deploy + en prod: los 15 trials vencidos aparecen en etapa `expired`; el equipo marca los 5
+- [x] 6.2 Deploy + en prod: los 15 trials vencidos aparecen en etapa `expired`; el equipo marca los 5
       con habitaciones como "contactado" o los extiende. **Aceptación**: `GET /api/admin/sales-pipeline`
       en prod devuelve ≥ 17 filas con `signals` no nulos.
-- [ ] 6.3 `CLAUDE.md`: sección "Pipeline de ventas" (etapas, calor, dónde vive cada cosa).
+      **Resultado 2026-09-10**: 16 filas (17 hoteles − el demo sin suscripción; inner join según spec),
+      `signals` 0 nulos, etapas: expired 9 · paying 2 · activated 1 · registered 2 · lost 2 (los 2 `lost`
+      los marcó el cron a +14 d). Marcar "contactado"/extender es trabajo del equipo, no del deploy.
+- [x] 6.3 `CLAUDE.md`: sección "Pipeline de ventas" (etapas, calor, dónde vive cada cosa).
 
 ## Fase B
 
@@ -123,6 +126,8 @@
 
 ### 10. Cierre de B
 
-- [ ] 10.1 Gates (mismos que 6.1) + deploy.
+- [x] 10.1 Gates (mismos que 6.1) + deploy.
 - [ ] 10.2 Tras 4 semanas en prod: comparar `paying/registered` contra el 5–10% de partida
       (dato 2026-09-10: 1–2 de 19). Registrar en `docs/analisis-leads-ventas-2026-09-10.md`.
+      Línea base del embudo (8 semanas, `GET /funnel?weeks=8`, 2026-09-10): registrados 15 ·
+      activados 9 (60%) · pagando 2 (13.3%) · perdidos 2 (`no_response`). Revisar ≈ 2026-10-08.
