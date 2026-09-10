@@ -131,7 +131,7 @@
       <SectionCard class="flex flex-col" body-class="flex flex-1 flex-col p-4 sm:p-5" title="Ingresos por plan" :subtitle="`$${fmt(ingresos.mrr)} de MRR cobrado`">
         <SkeletonLoader v-if="loading" variant="text" :rows="4" />
         <EmptyState v-else-if="!planMix.length" class="flex-1" title="Sin planes asignados" message="Ningún hotel tiene un plan del catálogo." />
-        <div v-else class="space-y-4">
+        <div v-else class="flex flex-1 flex-col justify-between gap-4">
           <div v-for="p in planMix" :key="p.id">
             <div class="mb-1.5 flex items-baseline justify-between gap-2">
               <span class="text-sm font-bold text-navy">{{ p.name }}</span>
