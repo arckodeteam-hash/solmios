@@ -35,28 +35,30 @@
       </div>
 
       <div class="overflow-x-auto">
-        <table class="w-full tbl-head">
+        <!-- min-w + overflow-x-auto (mismo patrón que subscriptions/email-templates): en móvil scrollea, no parte letras.
+             La ruta es la única columna ancha (w-full); las numéricas van nowrap y toman sólo lo que necesitan. -->
+        <table class="w-full min-w-[560px] tbl-head">
           <thead>
             <tr class="border-b border-border">
-              <th class="text-left p-3 text-[10px] font-bold text-text-muted uppercase">Ruta</th>
-              <th class="text-right p-3 text-[10px] font-bold text-text-muted uppercase">Peticiones</th>
-              <th class="text-right p-3 text-[10px] font-bold text-text-muted uppercase">Prom.</th>
-              <th class="text-right p-3 text-[10px] font-bold text-text-muted uppercase">p95</th>
-              <th class="text-right p-3 text-[10px] font-bold text-text-muted uppercase">Máx.</th>
-              <th class="text-right p-3 text-[10px] font-bold text-text-muted uppercase">Errores</th>
+              <th class="text-left p-3 text-[10px] font-bold text-text-muted uppercase w-full">Ruta</th>
+              <th class="text-right p-3 text-[10px] font-bold text-text-muted uppercase whitespace-nowrap">Peticiones</th>
+              <th class="text-right p-3 text-[10px] font-bold text-text-muted uppercase whitespace-nowrap">Prom.</th>
+              <th class="text-right p-3 text-[10px] font-bold text-text-muted uppercase whitespace-nowrap">p95</th>
+              <th class="text-right p-3 text-[10px] font-bold text-text-muted uppercase whitespace-nowrap">Máx.</th>
+              <th class="text-right p-3 text-[10px] font-bold text-text-muted uppercase whitespace-nowrap">Errores</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="r in rutasVisibles" :key="`${r.metodo} ${r.ruta}`" class="border-b border-border/50 last:border-0 hover:bg-surface/50 transition-colors">
-              <td class="p-3">
+              <td class="p-3 whitespace-nowrap">
                 <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-navy/10 text-navy mr-2">{{ r.metodo }}</span>
-                <span class="text-xs font-bold text-navy font-mono break-all">{{ r.ruta }}</span>
+                <span class="text-xs font-bold text-navy font-mono">{{ r.ruta }}</span>
               </td>
-              <td class="p-3 text-right text-xs font-bold text-navy">{{ r.count.toLocaleString('es-AR') }}</td>
+              <td class="p-3 text-right text-xs font-bold text-navy whitespace-nowrap">{{ r.count.toLocaleString('es-AR') }}</td>
               <td class="p-3 text-right text-xs text-text-secondary whitespace-nowrap">{{ r.avgMs }} ms</td>
               <td class="p-3 text-right text-xs font-bold whitespace-nowrap" :class="latenciaClase(r.p95Ms)">{{ r.p95Ms }} ms</td>
               <td class="p-3 text-right text-xs text-text-secondary whitespace-nowrap">{{ r.maxMs }} ms</td>
-              <td class="p-3 text-right text-xs font-bold" :class="r.errors > 0 ? 'text-danger' : 'text-text-muted'">{{ r.errors }}</td>
+              <td class="p-3 text-right text-xs font-bold whitespace-nowrap" :class="r.errors > 0 ? 'text-danger' : 'text-text-muted'">{{ r.errors }}</td>
             </tr>
           </tbody>
         </table>
