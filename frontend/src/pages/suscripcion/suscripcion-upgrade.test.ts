@@ -300,9 +300,11 @@ describe('/panel/suscripcion — cambio de plan con la suscripción viva', () =>
 
   // #84: con `error_if_incomplete` en el backend, una tarjeta rechazada REVIERTE en Stripe y sube
   // como error (lo cubre el test de arriba). `paid:false` con un monto > 0 pasó a significar otra
-  // cosa: el plan quedó aplicado pero el backend no pudo CONFIRMAR el cobro. El aviso manda a
-  // mirar el pago, no da el cobro por fallido.
-  it('con el cobro sin confirmar (paid:false) avisa que no se pudo confirmar y manda al portal', async () => {
+  // cosa: el cambio quedó pedido pero el backend no pudo CONFIRMAR el cobro (débito bancario en
+  // curso, #92). Desde #92 el plan del panel NO cambia hasta que el cobro entre: la UI no puede
+  // decir "ya estás en" ni "quedó activo" — dice pendiente y que sigue el plan actual. El aviso
+  // manda a mirar el pago, no da el cobro por fallido.
+  it('con el cobro sin confirmar (paid:false) avisa que está pendiente, que sigue el plan actual, y manda al portal', async () => {
     upgrade.mockResolvedValue(result({ paid: false, invoiceStatus: 'open' }))
     const w = await openConfirm()
 
@@ -311,11 +313,16 @@ describe('/panel/suscripcion — cambio de plan con la suscripción viva', () =>
 
     expect(toastSuccess).not.toHaveBeenCalled()
     expect(toastWarning).toHaveBeenCalled()
-    expect(String(toastWarning.mock.calls[0]![0])).toMatch(/no pudimos confirmar el pago/i)
+    const aviso = String(toastWarning.mock.calls[0]![0]) + ' ' + String(toastWarning.mock.calls[0]![1] ?? '')
+    expect(aviso).toMatch(/no pudimos confirmar el pago/i)
+    expect(aviso).toMatch(/plan actual/i)
+    expect(aviso).not.toMatch(/quedó activo|ya estás en/i)
 
     const modal = w.find('.modal')
     expect(modal.text()).toMatch(/pendiente/i)
-    expect(modal.text()).not.toMatch(/Ya estás en Professional\./i)
+    expect(modal.text()).toMatch(/seguís con tu plan actual/i)
+    expect(modal.text()).not.toMatch(/Ya estás en Professional/i)
+    expect(modal.text()).not.toMatch(/quedó activo/i)
 
     const portalBtn = w.find('footer').findAll('button').find(b => /método de pago/i.test(b.text()))!
     expect(portalBtn).toBeTruthy()

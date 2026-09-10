@@ -161,6 +161,96 @@ function subscriptionIdOfInvoice(invoice: Stripe.Invoice): string | undefined {
   return typeof sub === 'string' ? sub : sub.id
 }
 
+/**
+ * El plan local sigue al price del ítem de Stripe SOLO cuando ese ítem está PAGADO (#92).
+ *
+ * Con un método de pago de confirmación diferida (ACH/SEPA Direct Debit) `subscriptions.update`
+ * con `error_if_incomplete` vuelve con el ítem ya movido y el PaymentIntent en `processing`: la
+ * factura del prorrateo queda `open` durante días. Si ese cobro después falla, Stripe anula la
+ * factura pero NO devuelve el ítem al price viejo. Sincronizar `planId` desde el ítem sin mirar
+ * la factura —lo que hacía `customer.subscription.updated` hasta #92— le daba al hotel el plan
+ * caro sin haberlo pagado, y `invoice.payment_failed` sólo movía el status a `past_due`.
+ *
+ * `pending_if_incomplete` (los "pending updates" de Stripe) NO resuelve este caso: Stripe los
+ * soporta sólo para tarjeta, Link y billeteras — ACH y SEPA quedan explícitamente afuera
+ * (docs.stripe.com/billing/subscriptions/pending-updates, "Before you begin"). Por eso el
+ * modelo es el otro que proponía #92: el ítem se mueve en Stripe, pero **el plan local recién
+ * cambia cuando la factura que lo paga está `paid`**. Tres escritores, una sola regla:
+ *
+ *  - `upgrade-plan.ts` refleja el plan sólo si `latest_invoice.status === 'paid'`.
+ *  - `customer.subscription.updated` sincroniza sólo si `latest_invoice` está paga (o no hay
+ *    factura que pagar: un cambio desde el Billing Portal con `create_prorations` no emite
+ *    factura y la última sigue siendo la renovación ya cobrada).
+ *  - `invoice.paid` sincroniza el plan del ítem cuando la factura pagada es la última de la
+ *    suscripción: es la puerta por la que entra el ACH/SEPA que se confirmó días después.
+ *
+ * Un cobro que falla deja el ítem donde Stripe lo dejó y el plan local donde estaba (el hotel
+ * sigue gateado con lo que pagó). No se revierte el ítem en Stripe desde el webhook: Stripe
+ * reintenta esa factura con su dunning y, si al final entra, `invoice.paid` aplica el plan; si
+ * la próxima renovación sale al price nuevo y se paga, también. Devolver el ítem a mano
+ * competiría con esos reintentos y podría dejar un cobro sin plan. Queda un WARN con la
+ * divergencia para que el super-admin la vea (`invoice.payment_failed`).
+ */
+async function planOfStripeItem(
+  deps: HandleStripeEventDeps, stripeSub: Stripe.Subscription, origin: string,
+): Promise<any | null> {
+  const priceId = stripeSub.items?.data?.[0]?.price?.id
+  // R3-4b: ítem sin price (o price sin id) no se puede mapear a plan — antes cortaba en
+  // silencio y el plan local dejaba de sincronizarse sin que quede rastro. WARN antes de cortar.
+  if (typeof priceId !== 'string') {
+    deps.logger.warn(`${origin}: el ítem no trae price — no se puede sincronizar el plan local`, {
+      stripeSubscriptionId: stripeSub.id, priceId: priceId ?? null,
+    })
+    return null
+  }
+  if (!deps.plansRepo) return null
+  const plan = ((await deps.plansRepo.findMany({ stripePriceId: priceId })) as any[])?.[0]
+  if (!plan) {
+    deps.logger.warn(`${origin}: el price de Stripe no matchea ningún plan local`, {
+      stripeSubscriptionId: stripeSub.id, priceId,
+    })
+    return null
+  }
+  return plan
+}
+
+/** Escribe `planId` (fuente de verdad) y el espejo legacy `hotels.plan`. Idempotente. */
+async function reflectPaidPlan(
+  deps: HandleStripeEventDeps, sub: any, plan: any, origin: string,
+): Promise<void> {
+  if (String(plan.id) === sub.planId) return // ya apunta al plan pagado: nada que sincronizar
+  await deps.subscriptionsRepo.update(sub.id, { planId: String(plan.id) })
+  deps.logger.info('Plan de la suscripción actualizado desde Stripe', { hotelId: sub.hotelId, planId: plan.id, origin })
+  // Espejo legacy, mismo best-effort que checkout.session.completed: la fuente de verdad
+  // (la suscripción) ya quedó bien; si esto falla solo el espejo queda viejo.
+  try {
+    if (plan.slug) await deps.hotelsRepo.update(sub.hotelId, { plan: String(plan.slug) })
+  } catch (e) {
+    deps.logger.warn(`No se pudo sincronizar hotels.plan tras ${origin}`, { hotelId: sub.hotelId, error: (e as Error).message })
+  }
+}
+
+/** Id de `latest_invoice` tal como viene (string en los webhooks, objeto si se expandió). */
+function latestInvoiceIdOf(stripeSub: Stripe.Subscription): string | null {
+  const latest = stripeSub.latest_invoice
+  if (!latest) return null
+  return typeof latest === 'string' ? latest : latest.id
+}
+
+/**
+ * ¿La última factura de la suscripción está paga? Sin factura no hay nada que pagar (`true`).
+ * Lee la factura de Stripe: en los webhooks `latest_invoice` viene como id. Si la lectura falla
+ * LANZA — el handler devuelve 500 y Stripe reintenta el evento; dar el plan por pagado ante un
+ * timeout sería justo el hueco que #92 cierra, y dar por no pagado lo dejaría sin sincronizar
+ * hasta la próxima factura.
+ */
+async function latestInvoiceIsPaid(stripe: Stripe, stripeSub: Stripe.Subscription): Promise<boolean> {
+  const latest = stripeSub.latest_invoice
+  if (!latest) return true
+  const invoice = typeof latest === 'string' ? await stripe.invoices.retrieve(latest) : latest
+  return invoice.status === 'paid'
+}
+
 /** Procesa UN evento ya verificado. No lanza para eventos desconocidos: los ignora (200 OK). */
 export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stripe.Event): Promise<void> {
   const { subscriptionsRepo, logger, stripe } = deps
@@ -269,15 +359,29 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
         status: 'active',
         ...(wasBlocked ? { graceEndsAt: null, suspendedAt: null, suspendedReason: null } : {}),
       }
+      let stripeSub: Stripe.Subscription | null = null
       try {
-        const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId)
+        stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId)
         const periodEnd = currentPeriodEndOf(stripeSub)
         if (periodEnd) patch.currentPeriodEnd = periodEnd
       } catch (e) {
-        logger.warn('No se pudo leer current_period_end tras invoice.paid', { error: (e as Error).message })
+        logger.warn('No se pudo leer la Subscription de Stripe tras invoice.paid: sin currentPeriodEnd ni sincronía del plan', { error: (e as Error).message })
       }
       await subscriptionsRepo.update(sub.id, patch)
       logger.info('Suscripción renovada', { stripeSubscriptionId })
+      // #92: la factura pagada es la que habilita el plan del ítem. Es la puerta por la que entra
+      // un cambio de plan cobrado por ACH/SEPA (confirmado días después del update) y el cambio
+      // desde el portal de un hotel que estaba `past_due`. Sólo si esta factura es la ÚLTIMA de la
+      // suscripción: pagar una factura vieja mientras el prorrateo nuevo sigue `open` no confirma
+      // nada. Va ANTES del correo: si la escritura falla, el 500 hace que Stripe reintente el
+      // evento sin haber mandado el mail de cobro dos veces.
+      if (stripeSub) {
+        const latestId = latestInvoiceIdOf(stripeSub)
+        if (!latestId || latestId === invoice.id) {
+          const plan = await planOfStripeItem(deps, stripeSub, event.type)
+          if (plan) await reflectPaidPlan(deps, sub, plan, event.type)
+        }
+      }
       // REQ-BIL-02: el cobro queda en el historial. Si `invoice.finalized` no llegó (o el endpoint
       // de Stripe no lo tiene habilitado), el UPSERT crea la fila directamente en `paid`.
       await persistPlatformInvoice(deps, invoice, sub, 'paid')
@@ -300,6 +404,22 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
       }
       await subscriptionsRepo.update(sub.id, { status: 'past_due' })
       logger.warn('Cobro de suscripción falló', { stripeSubscriptionId })
+      // #92: si lo que falló fue el prorrateo de un cambio de plan (ACH/SEPA que rebotó días
+      // después), Stripe dejó el ítem en el price nuevo y el plan local sigue en el pagado. No se
+      // revierte nada acá (ver planOfStripeItem): se deja la divergencia a la vista. Best-effort,
+      // una lectura más a Stripe que no puede tumbar el webhook.
+      try {
+        const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId)
+        const plan = await planOfStripeItem(deps, stripeSub, event.type)
+        if (plan && String(plan.id) !== sub.planId) {
+          logger.warn('invoice.payment_failed: el cobro del cambio de plan falló — Stripe quedó en el plan nuevo y el hotel sigue con el que pagó', {
+            hotelId: sub.hotelId, stripeSubscriptionId, stripePlanId: String(plan.id), localPlanId: sub.planId ?? null,
+            invoiceId: invoice.id,
+          })
+        }
+      } catch (e) {
+        logger.warn('invoice.payment_failed: no se pudo comparar el plan de Stripe con el local', { stripeSubscriptionId, error: (e as Error).message })
+      }
       // `failed` es nuestro, no de Stripe (allá la factura sigue `open`): es lo que el super-admin
       // necesita ver para poder reclamarlo (REQ-BIL-05).
       await persistPlatformInvoice(deps, invoice, sub, 'failed')
@@ -337,33 +457,20 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
       // viejo para siempre (nadie más vuelve a tocar planId). Los cambios de ESTADO no se
       // sincronizan acá: trialing/active/past_due/canceled llegan por invoice.paid /
       // invoice.payment_failed / customer.subscription.deleted, que además mandan los mails.
-      const priceId = stripeSub.items?.data?.[0]?.price?.id
-      // R3-4b: ítem sin price (o price sin id) no se puede mapear a plan — antes cortaba en
-      // silencio y el plan local dejaba de sincronizarse sin que quede rastro. WARN antes de cortar.
-      if (typeof priceId !== 'string') {
-        logger.warn('customer.subscription.updated: el ítem no trae price — no se puede sincronizar el plan local', {
-          stripeSubscriptionId: stripeSub.id, priceId: priceId ?? null,
-        })
-        break
-      }
-      if (!deps.plansRepo) break
-      const plan = ((await deps.plansRepo.findMany({ stripePriceId: priceId })) as any[])?.[0]
-      if (!plan) {
-        logger.warn('customer.subscription.updated: el price de Stripe no matchea ningún plan local', {
-          stripeSubscriptionId: stripeSub.id, priceId,
-        })
-        break
-      }
+      const plan = await planOfStripeItem(deps, stripeSub, event.type)
+      if (!plan) break
       if (String(plan.id) === sub.planId) break // ya apunta al plan pagado: nada que sincronizar
-      await subscriptionsRepo.update(sub.id, { planId: String(plan.id) })
-      logger.info('Plan de la suscripción actualizado desde Stripe', { hotelId: sub.hotelId, planId: plan.id })
-      // Espejo legacy, mismo best-effort que checkout.session.completed: la fuente de verdad
-      // (la suscripción) ya quedó bien; si esto falla solo el espejo queda viejo.
-      try {
-        if (plan.slug) await deps.hotelsRepo.update(sub.hotelId, { plan: String(plan.slug) })
-      } catch (e) {
-        logger.warn('No se pudo sincronizar hotels.plan tras customer.subscription.updated', { hotelId: sub.hotelId, error: (e as Error).message })
+      // #92: el ítem movido no alcanza — la factura que lo paga tiene que estar `paid`. Con
+      // ACH/SEPA el prorrateo queda `open` días; hasta que entre (`invoice.paid`) el hotel sigue
+      // con el plan que sí pagó. Se lee la factura SÓLO cuando hay un cambio de plan que aplicar.
+      if (!(await latestInvoiceIsPaid(stripe, stripeSub))) {
+        logger.info('customer.subscription.updated: cambio de plan con cobro sin confirmar — el plan local espera invoice.paid', {
+          hotelId: sub.hotelId, planId: String(plan.id), currentPlanId: sub.planId ?? null,
+          stripeSubscriptionId: stripeSub.id, latestInvoiceId: latestInvoiceIdOf(stripeSub),
+        })
+        break
       }
+      await reflectPaidPlan(deps, sub, plan, event.type)
       break
     }
 
