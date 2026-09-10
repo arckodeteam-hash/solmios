@@ -144,3 +144,27 @@ export interface SalesAssignee {
 export interface SalesAssigneesResult {
   data: SalesAssignee[]
 }
+
+// ─── Embudo semanal (#151) — espejo de `backend/src/modules/sales-leads/types.ts` ─────────────
+
+export interface SalesFunnelWeek {
+  /** Semana ISO, p.ej. `2026-W37`. */
+  week: string
+  start: string
+  end: string
+  registered: number
+  activated: number
+  paying: number
+  lost: Record<SalesLostReason, number>
+  lostTotal: number
+  /** % con un decimal; 0 sin registrados. */
+  activationRate: number
+  payingRate: number
+}
+
+export interface SalesFunnelResult {
+  weeks: SalesFunnelWeek[]
+  totals: Omit<SalesFunnelWeek, 'week' | 'start' | 'end'>
+  weeksCount: number
+  generatedAt: string
+}

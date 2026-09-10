@@ -51,12 +51,12 @@ export function SalesLeadsModule() {
   return createModule({
     name: 'sales-leads',
     // 1.1.0: + GET /api/admin/sales-pipeline/assignees y `assignedTo` validado contra users admin (SEC-3).
-    version: '1.1.0',
+    version: '1.2.0',
     description: 'Leads de ventas (formulario público "Hablar con Ventas" de la landing)',
 
     contract: {
       name: 'sales-leads',
-      version: '1.1.0',
+      version: '1.2.0',
       description: 'Formulario público de contacto de ventas + gestión admin del flujo new→contacted→won/lost',
       actions: ['list', 'getById', 'create', 'updateStatus', 'delete', 'getPipeline', 'updateProspect', 'notifySignup', 'listAssignees'],
       events: ['onSalesLeadCreated', 'onSalesLeadUpdated'],
@@ -100,6 +100,8 @@ export function SalesLeadsModule() {
         plans: new OrmRepository<any>(orm, 'Plans'),
         // `configuration('plataforma')`: el nombre de la plataforma en el WhatsApp del alta (CFG-1).
         configuration: new OrmRepository<any>(orm, 'Configuration'),
+        // Primer cobro por hotel → columna "pagando" del embudo (#151).
+        platformInvoices: new OrmRepository<any>(orm, 'PlatformInvoices'),
       })
 
       // Guard de plataforma (mismo patrón que deletion-requests): solo el dueño del SaaS gestiona.
@@ -115,6 +117,8 @@ export function SalesLeadsModule() {
       router.get('/api/admin/sales-pipeline', sa, () => controller.pipeline())
       // Antes de `/:key` por si el router llegara a confundir `assignees` con una key (es GET vs PUT, pero el orden no cuesta nada).
       router.get('/api/admin/sales-pipeline/assignees', sa, () => controller.assignees())
+      // REQ-PIPE-10 (#151): embudo semanal. También antes de `/:key`.
+      router.get('/api/admin/sales-pipeline/funnel', sa, (req) => controller.funnel(req))
       router.put('/api/admin/sales-pipeline/:key', sa, (req) => controller.updateProspect(req))
 
       // ─── Ruta pública ─────────────────────────────────────────────────────

@@ -17,9 +17,10 @@ import type { SalesLeadsSockets } from './sockets'
 import { notifyLead } from './usecases/lead-notify'
 import { buildPipeline, type PipelineDeps } from './usecases/pipeline'
 import { notifySignup, type SignedUpHotelInput, type SignedUpOwnerInput } from './usecases/signup-alert'
-import { parseProspectKey, upsertProspect, type ProspectActor, type UpsertProspectDeps } from './usecases/prospect-upsert'
+import { parseProspectKey, removeProspectOfLead, upsertProspect, type ProspectActor, type UpsertProspectDeps } from './usecases/prospect-upsert'
 import { listAssignees, type AssigneesResult } from './usecases/assignees'
-import type { SalesPipelineResult, SalesProspectDTO, UpdateSalesProspectDTO } from './types'
+import { buildFunnel, funnelDepsFrom } from './usecases/funnel'
+import type { SalesFunnelResult, SalesPipelineResult, SalesProspectDTO, UpdateSalesProspectDTO } from './types'
 
 /** Puerto de email mínimo (lo cablea email-bootstrap con setEmailDeps) — mismo patrón que deletion-requests. */
 export interface EmailPort {
@@ -44,6 +45,7 @@ export class SalesLeadsService {
   private pipelineDeps?: PipelineDeps
   private plansRepo?: RepositoryAdapter<any> // solo para el NOMBRE del plan en el aviso del alta (#145)
   private configRepo?: RepositoryAdapter<any> // configuration('plataforma') → nombre de la plataforma en el WhatsApp del alta
+  private platformInvoicesRepo?: RepositoryAdapter<any> // primer cobro por hotel → columna "pagando" del embudo (#151)
 
   constructor(
     private readonly repo: RepositoryAdapter<SalesLeadDTO>,
@@ -60,11 +62,14 @@ export class SalesLeadsService {
     salesLeads?: RepositoryAdapter<SalesLeadDTO>
     plans?: RepositoryAdapter<any>
     configuration?: RepositoryAdapter<any>
+    /** `platform_invoices`: primer cobro por hotel para la columna "pagando" del embudo (#151). */
+    platformInvoices?: RepositoryAdapter<any>
   }): void {
-    const { plans, configuration, ...rest } = deps
+    const { plans, configuration, platformInvoices, ...rest } = deps
     this.pipelineDeps = { ...rest, salesLeads: rest.salesLeads ?? this.repo }
     if (plans) this.plansRepo = plans
     if (configuration) this.configRepo = configuration
+    if (platformInvoices) this.platformInvoicesRepo = platformInvoices
   }
 
   /** REQ-PIPE-04 (#145): hotel recién registrado (socket `subscriptions.onHotelSignedUp` vía
@@ -86,6 +91,11 @@ export class SalesLeadsService {
   /** Admin: una fila por hotel registrado + una por lead sin hotel, con etapa/calor calculados. */
   async getPipeline(): Promise<SalesPipelineResult> {
     return buildPipeline(this.requirePipelineDeps())
+  }
+
+  /** Admin: embudo semanal registrados → activados → pagando → perdidos (REQ-PIPE-10). `weeks` ya validado (1..26). */
+  async getFunnel(weeks: number): Promise<SalesFunnelResult> {
+    return buildFunnel(funnelDepsFrom(this.requirePipelineDeps(), this.platformInvoicesRepo), weeks)
   }
 
   /** Admin: admins activos de la plataforma a los que se puede asignar un prospecto — solo id/name/email. */
@@ -181,19 +191,7 @@ export class SalesLeadsService {
     await this.getById(id)
     await this.repo.delete(id)
     this.logger.info('sales-leads: eliminado', { id })
-    await this.removeProspectOf(id)
-  }
-
-  /** FE-15: lo que ventas anotó sobre el lead (`sales_prospects.leadId`) se va con él. Best-effort
-   *  (el módulo no usa transacciones): el lead ya no existe; un prospecto huérfano solo se loguea. */
-  private async removeProspectOf(leadId: string): Promise<void> {
-    const prospects = this.pipelineDeps?.salesProspects
-    if (!prospects) return
-    try {
-      const orphans = await prospects.findMany({ leadId })
-      for (const p of orphans) await prospects.delete(p.id)
-    } catch (e) {
-      this.logger.warn('sales-leads: no se pudo borrar el prospecto del lead eliminado', { leadId, error: String(e) })
-    }
+    // FE-15: lo que ventas anotó sobre el lead (`sales_prospects.leadId`) se va con él.
+    await removeProspectOfLead(this.pipelineDeps?.salesProspects, this.logger, id)
   }
 }

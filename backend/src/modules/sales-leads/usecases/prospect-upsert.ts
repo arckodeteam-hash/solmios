@@ -146,3 +146,21 @@ async function auditProspectChange(
     deps.logger.error('sales-pipeline: no se pudo registrar la auditoría', { entityId, error: (e as Error).message })
   }
 }
+
+/**
+ * FE-15: al borrar un `sales_lead`, su prospecto (`sales_prospects.leadId`) se va con él. Best-effort
+ * (el módulo no usa transacciones): el lead ya no existe; un prospecto huérfano solo se loguea.
+ */
+export async function removeProspectOfLead(
+  prospects: RepositoryAdapter<SalesProspectDTO> | undefined,
+  logger: Logger,
+  leadId: string,
+): Promise<void> {
+  if (!prospects) return
+  try {
+    const orphans = await prospects.findMany({ leadId })
+    for (const p of orphans) await prospects.delete(p.id)
+  } catch (e) {
+    logger.warn('sales-leads: no se pudo borrar el prospecto del lead eliminado', { leadId, error: String(e) })
+  }
+}

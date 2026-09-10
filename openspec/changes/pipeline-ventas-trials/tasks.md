@@ -98,27 +98,27 @@
 
 ### 7. Secuencia de activación (REQ-PIPE-08)
 
-- [ ] 7.1 4 plantillas nuevas en el seed (`activation_no_rooms`, `activation_no_rates`,
+- [x] 7.1 4 plantillas nuevas en el seed (`activation_no_rooms`, `activation_no_rates`,
       `activation_no_channel`, `trial_offer`) + tipos + etiquetas.
       **Aceptación**: seed idempotente; las 4 visibles en `/admin/email-templates`.
-- [ ] 7.2 `shared/usecases/activation-sequence-cron.ts` (diario) con dedup en
+- [x] 7.2 `shared/usecases/activation-sequence-cron.ts` (diario) con dedup en
       `sales_prospects.sequenceSent` y pausa si `contactedAt` < 2 días.
       **Aceptación**: tests: cada regla dispara su evento; máximo 1 correo por hotel por corrida;
       dedup por evento; hotel contactado ayer → 0 correos.
-- [ ] 7.3 Registro del cron en `composition-root.ts`.
+- [x] 7.3 Registro del cron en `composition-root.ts`.
 
 ### 8. Rescate de trial vencido (REQ-PIPE-09)
 
-- [ ] 8.1 Plantillas `trial_rescue_1`, `trial_rescue_2`.
-- [ ] 8.2 En el mismo cron: +2 d y +7 d correos; +14 d sin actividad ni contacto → `lostAt`,
+- [x] 8.1 Plantillas `trial_rescue_1`, `trial_rescue_2`.
+- [x] 8.2 En el mismo cron: +2 d y +7 d correos; +14 d sin actividad ni contacto → `lostAt`,
       `lostReason='no_response'`. Extender trial reinicia (`sequenceSent` se limpia de los `rescue`).
       **Aceptación**: tests de los 3 umbrales y del reinicio.
 
 ### 9. Embudo (REQ-PIPE-10)
 
-- [ ] 9.1 `GET /api/admin/sales-pipeline/funnel?weeks=8`.
+- [x] 9.1 `GET /api/admin/sales-pipeline/funnel?weeks=8`.
       **Aceptación**: test con fixture (10 altas, 4 activadas, 1 pagando) → `40%` / `10%`.
-- [ ] 9.2 Tarjeta "Embudo (8 semanas)" en el dashboard del super-admin (cargar `dataviz` antes).
+- [x] 9.2 Tarjeta "Embudo (8 semanas)" en el dashboard del super-admin (cargar `dataviz` antes).
       **Aceptación**: screenshot; los números coinciden con el endpoint.
 
 ### 10. Cierre de B
