@@ -22,9 +22,9 @@ sprints:
     priority: high
   3-acciones:
     title: Recordar + pago manual reales
-    status: pending
+    status: done
     tasks_total: 3
-    tasks_done: 0
+    tasks_done: 3
     priority: high
   4-pantalla:
     title: billing.vue sin datos inventados

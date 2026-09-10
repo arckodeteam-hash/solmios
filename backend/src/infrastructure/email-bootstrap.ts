@@ -80,6 +80,12 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
     (subsForEmail as any).setPlatformEmailSender((event: string, to: string, hotelId: string, vars: Record<string, string>) =>
       platformEmailsMod.sendEvent(event, to, hotelId, vars))
   }
+  // BIL-3: el botón "Recordar" de /admin/billing manda la MISMA plantilla de plataforma
+  // (payment_failed / subscription_renewal_*) que el cron y el webhook — un solo texto editable.
+  if (adminForEmail && platformEmailsMod && typeof (adminForEmail as any).setPlatformEmailSender === 'function') {
+    (adminForEmail as any).setPlatformEmailSender((event: string, to: string, hotelId: string, vars: Record<string, string>) =>
+      platformEmailsMod.sendEvent(event, to, hotelId, vars))
+  }
   const usuariosForEmail = resolveModule<{ setEmailVerificationDeps(es: EmailSender, url: string): void }>('usuarios')
   if (usuariosForEmail && typeof usuariosForEmail.setEmailVerificationDeps === 'function') {
     usuariosForEmail.setEmailVerificationDeps(emailService, process.env.PUBLIC_URL || '')

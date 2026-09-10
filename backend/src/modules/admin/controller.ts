@@ -4,6 +4,7 @@ import type { AdminService } from './service'
 import {
   CreatePlanSchema, UpdatePlanSchema, CreateAmenityCatalogSchema, UpdateAmenityCatalogSchema, UpdateHotelAdminSchema,
   ApplySpecialConditionsSchema, UpdateSpecialCategorySchema, UpdateSubscriptionSettingsSchema, ModuleOverrideSchema,
+  ManualPaymentSchema,
 } from './validators/schema'
 
 /**
@@ -26,6 +27,8 @@ const ERROR_STATUS_BY_TYPE: Record<string, number> = {
   NotFoundError: 404,
   ConflictError: 409,
   ValidationError: 400,
+  // BIL-3: el correo de plataforma sin cablear no es culpa del pedido — 503, no 400.
+  ServiceUnavailableError: 503,
 }
 
 function httpStatusOfError(e: unknown): number {
@@ -316,6 +319,24 @@ export class AdminController {
         headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"` },
         body: Buffer.from(csv, 'utf-8'),
       }
+    } catch (e: any) {
+      return { status: httpStatusOfError(e), body: { error: e.message } }
+    }
+  }
+  /** REQ-BIL-05 — 409 si ya no se reclama o si se recordó hace menos de 24 h (con la hora). */
+  async remindBillingInvoice(req: HttpRequest) {
+    try {
+      return { status: 200, body: await this.service.billing.remind(String(req.params.id), req.user as any) }
+    } catch (e: any) {
+      return { status: httpStatusOfError(e), body: { error: e.message } }
+    }
+  }
+
+  /** REQ-BIL-06 — pago fuera de Stripe: deja la fila `manual`/`paid` y reactiva la suscripción. */
+  async registerManualPayment(req: HttpRequest) {
+    try {
+      const data = validateSchema(ManualPaymentSchema, req.body) as any
+      return { status: 201, body: await this.service.billing.manualPayment(data, req.user as any) }
     } catch (e: any) {
       return { status: httpStatusOfError(e), body: { error: e.message } }
     }

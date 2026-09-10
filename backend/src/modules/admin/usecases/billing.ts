@@ -15,6 +15,10 @@
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { NotFoundError } from 'arckode-framework'
 import { round2 } from '../../../shared/utils/money'
+import {
+  remindInvoice, registerManualPayment,
+  type Actor, type BillingActionDeps, type ManualPaymentInput, type ManualPaymentResult, type RemindResult,
+} from './billing-actions'
 
 /** Página por defecto y techo: el super-admin puede pedir más, pero no la tabla entera. */
 const DEFAULT_LIMIT = 20
@@ -317,10 +321,26 @@ export async function exportPlatformInvoicesCsv(
  * inyecta el service/connector después con `setActionDeps`.
  */
 export class PlatformBillingUseCase {
+  /** Puertos que llegan después del arranque (audit log, correo, suscripciones) — ver `setActionDeps`. */
+  private actionDeps: Partial<BillingActionDeps> = {}
+
   constructor(private readonly deps: PlatformBillingDeps) {}
+
+  /**
+   * Inyecta los puertos tardíos. Se llama más de una vez (uno por cada cableado: el connector de
+   * audit log, el bootstrap de correo, el connector de suscripciones), así que MERGEA en vez de
+   * pisar — si reemplazara, el último en cablear dejaría a los otros sin puerto.
+   */
+  setActionDeps(deps: Partial<BillingActionDeps>): void {
+    this.actionDeps = { ...this.actionDeps, ...deps }
+  }
+
+  private get fullDeps(): BillingActionDeps { return { ...this.deps, ...this.actionDeps } }
 
   list(query: InvoiceQuery): Promise<PlatformInvoicePage> { return listPlatformInvoices(this.deps, query) }
   detail(id: string): Promise<PlatformInvoiceDetailDTO> { return getPlatformInvoice(this.deps, id) }
   stats(query: InvoiceQuery): Promise<PlatformBillingStats> { return platformBillingStats(this.deps, query) }
   csv(query: InvoiceQuery): Promise<string> { return exportPlatformInvoicesCsv(this.deps, query) }
+  remind(id: string, actor: Actor): Promise<RemindResult> { return remindInvoice(this.fullDeps, id, actor) }
+  manualPayment(input: ManualPaymentInput, actor: Actor): Promise<ManualPaymentResult> { return registerManualPayment(this.fullDeps, input, actor) }
 }

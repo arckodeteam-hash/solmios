@@ -24,12 +24,14 @@ export function AdminModule() {
     // y `plans.modules` se valida contra el catálogo (400 con las claves inválidas).
     // 1.3.0 (BIL-2, #154): + facturación de la plataforma — listado con filtros, detalle, stats y
     // export CSV sobre `platform_invoices`. Contrato observable nuevo.
-    version: '1.3.0',
+    // 1.4.0 (BIL-3, #155): + recordatorio de cobro (plantilla por estado, dedup 24 h) y registro de
+    // pago manual (reactiva la suscripción vía connector). Las dos dejan audit log.
+    version: '1.4.0',
     description: 'Super admin platform management',
     contract: {
-      name: 'admin', version: '1.3.0',
+      name: 'admin', version: '1.4.0',
       description: 'Platform-level management: hotels, users, plans, analytics',
-      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv'],
+      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv', 'remindBillingInvoice', 'registerManualPayment'],
       events: [],
       tables: [],
       dependencies: [],
@@ -37,6 +39,8 @@ export function AdminModule() {
         'Super_admin only',
         'billing/*: la verdad es `platform_invoices` (la llena el webhook de Stripe, BIL-1). NUNCA derivar una factura de `listSubscriptions` ni calcular el monto desde el precio del plan',
         'billing/*: los filtros (estado, plan, rango de fechas, texto) se aplican en el usecase, no en el navegador sobre el set completo',
+        'billing/remind: una factura no se recuerda dos veces en 24 h (409) — el reintento de Stripe ya genera varios eventos del mismo cobro',
+        'billing/manual-payment: PRIMERO la fila del cobro, DESPUÉS la activación. La suscripción se toca SOLO vía el connector admin-subscriptions-billing',
       ],
     },
     create({ logger, orm, cache, router, auth }) {
@@ -163,8 +167,10 @@ export function AdminModule() {
       router.get('/api/admin/billing/stats', sa, (req: any) => controller.getBillingStats(req))
       router.get('/api/admin/billing/export.csv', sa, (req: any) => controller.exportBillingCsv(req))
       router.get('/api/admin/billing/invoices/:id', sa, (req: any) => controller.getBillingInvoice(req))
+      router.post('/api/admin/billing/invoices/:id/remind', sa, (req: any) => controller.remindBillingInvoice(req))
+      router.post('/api/admin/billing/manual-payment', sa, (req: any) => controller.registerManualPayment(req))
 
-      log.info('Módulo admin listo (32 endpoints)')
+      log.info('Módulo admin listo (43 endpoints)')
       return service
     },
   })

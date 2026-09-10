@@ -36,14 +36,14 @@
 
 ## 3. Acciones (REQ-BIL-05, REQ-BIL-06)
 
-- [ ] 3.1 `POST /:id/remind`: plantilla por estado/`isRecurring`, dedup 24 h, `lastReminderAt`,
+- [x] 3.1 `POST /:id/remind`: plantilla por estado/`isRecurring`, dedup 24 h, `lastReminderAt`,
       `Auditlog`.
       **Aceptación**: tests: `paid` → 409; segundo envío en 2 h → 409; `failed` usa
       `payment_failed`; `open` + `isRecurring=false` usa `subscription_renewal_manual`.
-- [ ] 3.2 Connector `admin-subscriptions-billing.ts` (activar + `currentPeriodEnd` + limpiar
+- [x] 3.2 Connector `admin-subscriptions-billing.ts` (activar + `currentPeriodEnd` + limpiar
       gracia) sin import directo del módulo.
       **Aceptación**: `arckode analyze` 0 violaciones.
-- [ ] 3.3 `POST /api/admin/billing/manual-payment` con `validateSchema()`: crea/actualiza fila,
+- [x] 3.3 `POST /api/admin/billing/manual-payment` con `validateSchema()`: crea/actualiza fila,
       activa suscripción, `Auditlog`.
       **Aceptación**: tests: monto 0 → 400; `paidAt` futuro → 400; sin `reference` → 400; caso
       feliz deja `active` + fila `manual`/`paid` + audit.

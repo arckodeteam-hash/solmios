@@ -105,3 +105,20 @@ export const AdminValidator = {
   updateSpecialCategory: UpdateSpecialCategorySchema,
   updateSubscriptionSettings: UpdateSubscriptionSettingsSchema,
 }
+
+/**
+ * Pago manual de la suscripción de un hotel (REQ-BIL-06). `amount` con `min: 0.01` para que un 0
+ * rebote en el validador y no llegue al usecase; las reglas que el validador NO puede expresar
+ * (fecha ISO real, pago no futuro, factura del mismo hotel) viven en `usecases/billing-actions.ts`.
+ */
+export const ManualPaymentSchema: Record<string, ValidationRule> = {
+  hotelId: { type: 'string' as const, required: true, min: 1, max: 100 },
+  /** Opcional: si viene, se marca PAGADA esa factura pendiente en vez de crear una nueva. */
+  invoiceId: { type: 'string' as const, max: 100 },
+  amount: { type: 'number' as const, required: true, min: 0.01 },
+  currency: { type: 'string' as const, required: true, min: 3, max: 3 },
+  paidAt: { type: 'string' as const, required: true, min: 10, max: 40 },
+  reference: { type: 'string' as const, required: true, min: 1, max: 120 },
+  periodEnd: { type: 'string' as const, required: true, min: 10, max: 40 },
+  notes: { type: 'string' as const, max: 1000 },
+}
