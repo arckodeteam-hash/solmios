@@ -33,6 +33,21 @@ export const ReservasModel: ModelDefinition = {
     // la misma base (proyectar en cadena acumularía redondeo). null = reserva sin niños o de
     // antes de este campo — cae al comportamiento sin proyección (edad tal cual, como hoy).
     childrenAgesAsOf: { type: 'string' },
+    // Tarea "Cobro % niños" (2026-09-09) — % del "valor de un adulto" REALMENTE usado para
+    // cotizar a los niños con plaza de ESTA reserva, congelado al momento de crearla (auditoría:
+    // si el hotel cambia el % en Configuración después, esta reserva sigue mostrando y cobrando
+    // lo que se acordó). `null` = la regla no aplicó (deshabilitada, sin niños con plaza, o
+    // reserva anterior a este campo).
+    childrenRatePercentApplied: { type: 'number' },
+    // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — asociada a ESTA habitación
+    // (cada room-line de un grupo multi-habitación es su propia fila acá, ver
+    // public-booking-group.ts): solo tiene sentido si esta reserva tiene al menos un bebé
+    // (Tarea 21, `childrenAges` clasificado 'baby') Y el hotel habilitó la cuna
+    // (`childPolicy.cribAvailable`); el backend lo re-valida al crear, nunca confía en lo que
+    // mande el cliente. `cribCount` es 1/0 espejo de `needsCrib` — no existe un checklist de
+    // amenidades adicionales, solo esta pregunta binaria.
+    needsCrib: { type: 'boolean', default: false },
+    cribCount: { type: 'number', default: 0 },
     notes: { type: 'text' },
     // Campos OTA + pagos (Fase 1)
     source: { type: 'string', default: 'direct' },

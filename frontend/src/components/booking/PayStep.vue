@@ -45,8 +45,8 @@
       <button type="button" class="w-full flex items-start justify-between gap-3 text-left" @click="store.goToStep(1)">
         <span class="text-xs font-bold uppercase tracking-wide text-text-muted shrink-0">{{ store.cart.length === 1 ? t('pay.room') : t('rooms.title') }}</span>
         <span class="text-base font-black text-navy underline decoration-dotted text-right">
-          <span v-for="line in store.cart" :key="line.key" class="block capitalize">
-            {{ prettify(line.roomName) }} · {{ t('rooms.occupancyFor', { count: line.occupancy }) }}{{ line.quantity > 1 ? ` × ${line.quantity}` : '' }}
+          <span v-for="line in store.cart" :key="line.key" class="block capitalize" data-testid="cart-line">
+            {{ prettify(line.roomName) }} · {{ cartLineGuestsLabel(line) }}{{ line.quantity > 1 ? ` × ${line.quantity}` : '' }}
           </span>
         </span>
       </button>
@@ -204,7 +204,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useBookingStore } from '@/composables/useBooking'
+import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { PromoValidationReason } from '@/types/booking'
 
@@ -329,5 +329,24 @@ function promoReasonLabel(reason?: PromoValidationReason): string {
 function prettify(name: string): string {
   if (!name) return '—'
   return name.charAt(0).toUpperCase() + name.slice(1)
+}
+
+/** Corrección (Tarea 22, 2026-09-09) — este resumen usaba `rooms.occupancyFor` sin condición,
+ *  ignorando `adults`/`childrenAges`/`needsCrib` de la línea aunque estuvieran guardados
+ *  correctamente en el carrito: el huésped veía "para 2" en el paso de pago después de haber
+ *  compuesto "1 adulto + 1 bebé, cuna" en el paso de habitaciones. Mismo criterio EXACTO que
+ *  `RoomsStep.vue` (`cartLineGuestsLabel`) — las dos vistas del mismo carrito no pueden divergir. */
+function cartLineGuestsLabel(line: CartLine): string {
+  if (line.adults === undefined || line.childrenAges === undefined) {
+    return t('rooms.occupancyFor', { count: line.occupancy })
+  }
+  const base = line.childrenAges.length === 0
+    ? t('rooms.guests.adultsCount', { count: line.adults })
+    : t('rooms.guests.summary', {
+        adults: line.adults,
+        children: line.childrenAges.length,
+        ages: line.childrenAges.join(', '),
+      })
+  return line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
 }
 </script>
