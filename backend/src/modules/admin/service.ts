@@ -98,6 +98,7 @@ export class AdminService {
   /** #142: pagina, filtra y ordena en la CONSULTA — antes devolvía la tabla entera y ordenaba en memoria. */
   async listAuditLogs(query: AuditLogQuery = {}): Promise<{ data: any[]; total: number }> { return this.queries!.listAuditLogs(query) }
   async listAnnouncements(): Promise<{ data: any[]; total: number }> { return this.queries!.listAnnouncements() }
+  async getAnnouncementsReach() { return this.queries!.getAnnouncementsReach() }
   async getMonitoring(): Promise<MonitoringDTO> { return this.queries!.getMonitoring() }
   async getPublicUsers(): Promise<any[]> { return this.queries!.getPublicUsers() }
 

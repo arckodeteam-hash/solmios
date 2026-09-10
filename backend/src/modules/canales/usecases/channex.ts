@@ -54,6 +54,24 @@ function mapRevisionRaw(r: any): BookingRevisionDTO {
   }
 }
 
+/**
+ * El motivo de un rechazo de Channex, en una línea legible.
+ *
+ * El cuerpo del error es `{errors: {code, title, details}}`, y lo ÚTIL casi siempre está en
+ * `details` — un objeto campo → motivos (`{property_id: ["is required when is_global is false"]}`).
+ * Quedarse con `title` deja "Validation Error", que no dice qué corregir.
+ */
+function describirErrorChannex(data: any): string {
+  const err = data?.errors
+  if (!err) return 'Channex rechazó la petición'
+  const detalles = err.details && typeof err.details === 'object'
+    ? Object.entries(err.details as Record<string, unknown>)
+        .map(([campo, motivos]) => `${campo}: ${Array.isArray(motivos) ? motivos.join(', ') : String(motivos)}`)
+        .join(' · ')
+    : ''
+  return [err.title || err.code || 'Channex rechazó la petición', detalles].filter(Boolean).join(' — ')
+}
+
 export class ChannexUseCase {
   constructor(
     private readonly logger: Logger,
@@ -1097,6 +1115,29 @@ export class ChannexUseCase {
   }
 
   /**
+   * Bookings de la cuenta creados a partir de `sinceIso` — la fuente de RECUPERACIÓN cuando el
+   * feed ya no los tiene. A diferencia del feed (ventana de 30 minutos), `/bookings` no caduca.
+   *
+   * Dos cosas verificadas contra staging.channex.io el 2026-09-09:
+   *  - El filtro exige fecha-Y-HORA: `2026-09-01` devuelve
+   *    `422 invalid value for "inserted_at" filter`; `2026-09-01T00:00:00Z` va bien.
+   *  - Un booking trae los MISMOS atributos que una revisión (property_id, unique_id, customer,
+   *    rooms, amount…) más `revision_id`. Por eso reusa `mapRevisionRaw`: la reserva recuperada
+   *    es idéntica a la que habría entrado por el feed, con el mismo dedupe.
+   *
+   * `id` se sobreescribe con `revision_id` porque el `id` del booking NO es el de la revisión, y
+   * el resto del código trata este DTO como una revisión.
+   */
+  async fetchBookingsSince(key: string, sinceIso: string): Promise<BookingRevisionDTO[]> {
+    const raw = await this.channexList(key, `/bookings?filter[inserted_at][gte]=${encodeURIComponent(sinceIso)}`)
+    return raw.map((b: any) => {
+      const dto = mapRevisionRaw(b)
+      const revisionId = b.attributes?.revision_id || b.revision_id
+      return revisionId ? { ...dto, id: String(revisionId) } : dto
+    })
+  }
+
+  /**
    * Una revisión puntual por id — el camino del WEBHOOK. Usa el MISMO mapeo que el feed del
    * cron (`mapRevisionRaw`), así la reserva que entra por webhook es idéntica a la del cron
    * y hereda su dedupe. Si el request falla la excepción SUBE: el caller decide si reintenta.
@@ -1125,20 +1166,43 @@ export class ChannexUseCase {
     })
   }
 
-  /** Alta del callback. `send_data: false` → Channex avisa el id y nosotros hacemos el GET. */
-  async createWebhook(key: string, input: { callbackUrl: string; eventMask: string; propertyId?: string | null }): Promise<{ id: string } | null> {
+  /**
+   * Alta del callback. `send_data: false` → Channex avisa el id y nosotros hacemos el GET.
+   *
+   * Un callback SIN `propertyId` es de CUENTA (vale para todas las properties), y Channex lo
+   * expresa con `is_global: true` — no con `property_id: null`. Mandar el null pelado devuelve
+   * `422 {"property_id": ["is required when is_global is false"]}` y el webhook nunca se crea.
+   * Los dos campos son excluyentes: con property_id NO va `is_global`.
+   *
+   * Devuelve el motivo del rechazo en vez de un null pelado: sin eso, el operador ve
+   * "Channex rechazó el alta" y tiene que reproducir el POST a mano para saber por qué.
+   */
+  async createWebhook(key: string, input: { callbackUrl: string; eventMask: string; propertyId?: string | null }): Promise<{ id: string | null; error?: string }> {
+    const alcance = input.propertyId ? { property_id: input.propertyId } : { is_global: true }
     const res = await this.channexReq(key, 'POST', '/webhooks', {
       webhook: {
-        property_id: input.propertyId ?? null,
+        ...alcance,
         callback_url: input.callbackUrl,
         event_mask: input.eventMask,
         is_active: true,
         send_data: false,
       },
     })
-    if (!res.ok) return null
+    if (!res.ok) return { id: null, error: describirErrorChannex(res.data) }
     const created = res.data?.data
-    return { id: created?.id || created?.attributes?.id }
+    return { id: created?.id || created?.attributes?.id || null }
+  }
+
+  /**
+   * Las properties de la CUENTA (no de un hotel). La tarjeta de cuenta del admin las cruza contra
+   * los hoteles que tienen `channexPropertyId` para detectar huérfanas: una property que quedó de
+   * una prueba, de un hotel borrado o de un alta a medias sigue ocupando lugar (y plata) en el
+   * plan de Channex, y desde el panel no había forma de enterarse.
+   */
+  async listProperties(): Promise<Array<{ id: string; title: string }>> {
+    const raw = await this.channexList('', '/properties')
+    return raw.map((r: any) => ({ id: String(r.id ?? r.attributes?.id ?? ''), title: String(r.attributes?.title ?? r.title ?? '') }))
+      .filter((p: { id: string }) => !!p.id)
   }
 
   async ackBooking(key: string, revisionId: string): Promise<boolean> {

@@ -1,5 +1,7 @@
 # pipeline-ventas-trials — Tasks
 
+> GitHub: epic #143 · A: #144 #145 #146 #147 #148 · B: #149 #150 #151
+
 > Prod 2026-09-10: 0 leads del formulario, 19 trials (15 vencidos en `trialing`), 5 hoteles que
 > cargaron habitaciones y nadie llamó, 7 que nunca entraron. Sin aviso interno al registrarse, sin
 > extender trial, sin WhatsApp en la landing. Evidencia en `proposal.md` y

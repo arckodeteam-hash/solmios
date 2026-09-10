@@ -22,11 +22,12 @@ import { ConfigUseCase } from './usecases/config'
 import type { CanalesQueries } from './usecases/canales-queries'
 import { auditSafely, channelDeleteEntry, type AuditPort } from './usecases/audit'
 import { getSyncLog as getSyncLogFromTable } from './usecases/sync-log'
-import { withAvailabilityTrail, withRatesTrail } from './usecases/ari-tasks'
-import { pushSeasonalRatesToChannex } from './usecases/push-rates'
+import { withAvailabilityTrail } from './usecases/ari-tasks'
 import { listOverrideChannels } from './usecases/override-channels'
 import { readRatePlans } from './usecases/rate-plans'
-import { pushRateOverridesFor, type OverridePushItem, type OverridePushResult } from './usecases/push-overrides'
+import type { OverridePushItem, OverridePushResult } from './usecases/push-overrides'
+import { pushSeasonalRates as pushSeasonalRatesFor, pushRateOverrides as pushRateOverridesFor, type RatePushDeps } from './usecases/push-facade'
+import type { ChannelRequestNotifyPorts } from './usecases/channel-request-notify-deps'
 
 export class CanalesService {
   private sockets: CanalesSockets = {}
@@ -74,6 +75,12 @@ export class CanalesService {
       orm: this.queries.getOrm(), logger: this.logger, syncLogRepo: this.syncLogRepo })
   }
 
+  // Puertos de aviso de las solicitudes de conexión de OTA (REQ-CAN-07): el correo lo cablea
+  // `email-bootstrap` y la campanita el connector `canales-notificaciones` (un módulo no importa a
+  // otro). Solo viven acá: las deps las arma `makeChannelRequestNotifyDeps` en el wiring HTTP.
+  readonly channelRequestNotifyPorts: ChannelRequestNotifyPorts = {}
+  setChannelRequestNotifyPorts(ports: ChannelRequestNotifyPorts): void { Object.assign(this.channelRequestNotifyPorts, ports) }
+
   /** Conecta el audit log. Lo inyecta el connector `canales-auditlog`. */
   setAuditDeps(port: AuditPort): void { this.auditPort = port }
 
@@ -101,10 +108,7 @@ export class CanalesService {
   private async upsertConfig(hotelId: string, patch: Partial<CanalesDTO>): Promise<CanalesDTO> { return this.config.upsertConfig(hotelId, patch) }
 
   // ─── Operaciones Channex (delegan al usecase) ────────────────────────
-  async listChannels(hotelId: string): Promise<ChannelsResultDTO> {
-    const catalog = await this.config.getOTACatalog()
-    return this.channex.listChannels(await this.getConfig(hotelId), catalog)
-  }
+  async listChannels(hotelId: string): Promise<ChannelsResultDTO> { return this.channex.listChannels(await this.getConfig(hotelId), await this.config.getOTACatalog()) }
 
   async getFeed(): Promise<{ pendingBookings: number }> { return this.channex.getFeed() }
 
@@ -147,6 +151,8 @@ export class CanalesService {
   async syncAllBookingRevisions(): Promise<BookingSyncResult> { return this.bookingSync.run() }
   /** Ingesta UNA revisión disparada por el webhook de Channex (#50). Mismo camino que el cron. */
   async syncOneBookingRevision(revisionId: string): Promise<BookingSyncResult> { return this.bookingSync.runOne(revisionId) }
+  /** Rescate manual tras una caída de más de 30 min: trae de `/bookings` lo que el feed ya perdió. */
+  async recoverBookingsSince(sinceIso: string): Promise<BookingSyncResult> { return this.bookingSync.recoverSince(sinceIso) }
   /** Token de un solo uso para el iframe de Channex, acotado a la property Y AL GRUPO del hotel. */
   async getIframeToken(hotelId: string, username: string): Promise<string | null> { return this.channex.generateIframeToken(await this.getConfig(hotelId), username) }
   /** Devuelve el channexPropertyId configurado para el hotel (null si no sincronizó). */
@@ -155,22 +161,12 @@ export class CanalesService {
 
   async getSyncLog(hotelId?: string): Promise<any[]> { return getSyncLogFromTable(this.syncLogRepo, hotelId) }
 
-  /** Etapa 2 — empuja las tarifas por temporada a Channex (todos los planes del hotel). getPricingMode: per_person → OBP (#404). */
-  async pushSeasonalRates(hotelId: string, channel?: string): Promise<PushRatesResultDTO> {
-    return withRatesTrail(this.syncLogRepo, hotelId, 'push_rates', () => pushSeasonalRatesToChannex({
-      getConfig: (h) => this.getConfig(h), findMany: (m, q) => this.queries.findMany(m, q),
-      pushSeasonalRates: (c, r, s, a, plans, restrictions, overrides) => this.channex.pushSeasonalRates(c, r, s, a, plans, restrictions, overrides),
-    }, hotelId, channel))
-  }
-
-  /** Push DELTA de la grilla de tarifas por fecha (una llamada, solo lo tocado). Ver push-overrides.ts. */
-  async pushRateOverrides(hotelId: string, items: OverridePushItem[]): Promise<OverridePushResult> {
-    return withRatesTrail(this.syncLogRepo, hotelId, 'push_rate_overrides', () => pushRateOverridesFor({
-      getConfig: (h) => this.getConfig(h),
-      getRatePlans: (h) => readRatePlans((m, q) => this.queries.findMany(m, q), h),
-      push: (cfg, i, plans) => this.channex.pushRateOverrides(cfg, i, plans),
-    }, hotelId, items))
-  }
+  // ─── Pushes de tarifas (armado de deps en usecases/push-facade.ts) ───
+  private ratePushDeps(): RatePushDeps { return { getConfig: (h) => this.getConfig(h), findMany: (m, q) => this.queries.findMany(m, q), channex: this.channex, syncLogRepo: this.syncLogRepo } }
+  /** Etapa 2 — tarifas por temporada de todo el hotel (o de un canal). */
+  pushSeasonalRates(hotelId: string, channel?: string): Promise<PushRatesResultDTO> { return pushSeasonalRatesFor(this.ratePushDeps(), hotelId, channel) }
+  /** Push DELTA de la grilla de tarifas por fecha (una llamada, solo lo tocado). */
+  pushRateOverrides(hotelId: string, items: OverridePushItem[]): Promise<OverridePushResult> { return pushRateOverridesFor(this.ratePushDeps(), hotelId, items) }
 
   // ─── CRUD delegado a usecase ─────────────────────────────────────────
   async list(query?: CanalesQuery, user?: CurrentUser): Promise<CanalesPaginated> {

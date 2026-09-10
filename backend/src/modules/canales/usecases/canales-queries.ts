@@ -67,6 +67,30 @@ export class CanalesQueries {
     else await this.orm.create('Configuration', { id: crypto.randomUUID(), hotelId: 'platform', key: 'channex', value })
   }
 
+  // ─── Datos de la CUENTA Channex que NO vienen de la API ───────────────
+  // El vencimiento del plan es el ejemplo: Channex no lo expone, y cuando se vence deja de
+  // entrar el feed de reservas. Vivía solo en la cabeza de quien contrató la cuenta. Va en su
+  // propia clave (`channex_account`) y no en `channex` para no mezclar dato operativo con
+  // credenciales: esta la lee y la escribe la tarjeta del panel, la otra el cliente HTTP.
+  async getChannexAccount(): Promise<{ planExpiresAt?: string }> {
+    try {
+      const rows = await this.orm.findMany('Configuration', { hotelId: 'platform', key: 'channex_account' })
+      const row = (rows as any[])?.[0]
+      if (!row) return {}
+      const v = typeof row.value === 'string' ? JSON.parse(row.value) : row.value
+      return v && typeof v === 'object' && !Array.isArray(v) ? v : {}
+    } catch { return {} }
+  }
+
+  async setChannexAccount(patch: { planExpiresAt?: string }): Promise<void> {
+    const rows = await this.orm.findMany('Configuration', { hotelId: 'platform', key: 'channex_account' })
+    const row = (rows as any[])?.[0]
+    const cur = row ? (typeof row.value === 'string' ? JSON.parse(row.value) : row.value) : {}
+    const value = { ...(cur && typeof cur === 'object' ? cur : {}), ...patch }
+    if (row) await this.orm.update('Configuration', row.id, { value })
+    else await this.orm.create('Configuration', { id: crypto.randomUUID(), hotelId: 'platform', key: 'channex_account', value })
+  }
+
   // ─── Mapping persistente local↔Channex (P6) ──────────────────────────
   // Mismo patrón que setPlatformChannex: el queries encapsula el orm, el service no lo toca.
 

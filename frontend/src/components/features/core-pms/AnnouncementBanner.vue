@@ -31,6 +31,11 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { AnnouncementsService, announcementMeta } from '@/services/Announcements.service'
 import type { Announcement } from '@/services/Announcements.service'
 
+/**
+ * Qué anuncios ve este usuario lo decide el BACKEND: los de su hotel más los de la plataforma,
+ * ya filtrados por audiencia y por vigencia. Acá no se filtra por hotel — hacerlo escondía los
+ * anuncios de plataforma, que es de dónde venía el bug original.
+ */
 const all = ref<Announcement[]>([])
 // Descartes de ESTA sesión: sólo ocultan el aviso localmente (optimista). El registro
 // persistente es por usuario y vive en el backend (announcement_reads), así que el ✕
@@ -39,7 +44,7 @@ const dismissedIds = ref<Set<string>>(new Set())
 
 const visibleAnnouncements = computed(() =>
   all.value
-    .filter(a => a.active && !dismissedIds.value.has(a.id))
+    .filter((a) => a.active && !dismissedIds.value.has(a.id))
     // Prioridad: urgent > high > medium > low
     .sort((a, b) => {
       const order = { urgent: 0, high: 1, medium: 2, low: 3 } as Record<string, number>

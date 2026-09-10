@@ -1,4 +1,19 @@
 import { computePlatformMetrics, type PlatformMetrics } from './platform-metrics'
+import { ADMIN_ROLES, byRecencyDesc, effectiveAudience } from '../../../shared/usecases/announcement-visibility'
+
+/**
+ * Cuántos usuarios podían recibir este anuncio.
+ *
+ * - `hotel`  → los usuarios de ese hotel.
+ * - `all`    → todos (o los de su hotel, si la fila trae uno).
+ * - `admins` → solo los roles administradores del alcance anterior.
+ */
+function countRecipients(a: { hotelId?: string | null; audience?: string | null }, users: any[]): number {
+  const audience = effectiveAudience(a)
+  const scoped = a.hotelId ? users.filter((u: any) => u.hotelId === a.hotelId) : users
+  if (audience === 'admins') return scoped.filter((u: any) => ADMIN_ROLES.has(String(u.role))).length
+  return scoped.length
+}
 
 /**
  * Precio de respaldo por plan, SOLO para hoteles cuyo `hotels.plan` de texto libre no matchea
@@ -210,26 +225,81 @@ export class DashboardQueries {
   }
 
   /**
-   * Anuncios para el panel del super-admin (GET /api/admin/announcements): TODA la tabla, sin
-   * paginar y sin cache. El listado del módulo anuncios (GET /anuncios) no sirve acá: pagina con
-   * limit=20 que la página no controla (el panel perdería avisos) y responde de un cache de 300s
-   * que create/delete no invalidan bien (#160), así que "Enviar Ahora" no se reflejaba.
+   * Anuncios del panel de la plataforma, con su alcance MEDIDO.
    *
-   * Cada aviso lleva `reads` = sus lecturas reales, con la MISMA semántica que el módulo anuncios
-   * para super_admin (`readsRepo.count({ announcementId })`): las filas de `announcement_reads`
-   * se cargan UNA vez y se agrupan en un Map — una consulta por anuncio adentro del loop sería
-   * N+1 (mismo patrón que `listHotels`).
+   * `recipients` no es "cuántos usuarios hay": es cuántos usuarios podían recibir ESE anuncio,
+   * que es el único denominador con el que la tasa de apertura significa algo. Un anuncio dirigido
+   * a administradores de un solo hotel no se compara contra los 89 usuarios de la plataforma.
+   *
+   * Usuarios y lecturas se traen UNA vez y se agrupan en memoria: una consulta por anuncio sería
+   * N+1 (mismo criterio que `listHotels`).
    */
   async listAnnouncements(): Promise<{ data: any[]; total: number }> {
-    const announcements = await this.orm.findMany('Announcements', {}) as any[]
-    const reads = await this.orm.findMany('AnnouncementReads', {}) as any[]
-    const readsByAnnouncement = new Map<string, number>()
+    const [rows, users, reads] = await Promise.all([
+      this.orm.findMany('Announcements', {}) as Promise<any[]>,
+      this.orm.findMany('Users', { active: 1 }) as Promise<any[]>,
+      this.orm.findMany('AnnouncementReads', {}) as Promise<any[]>,
+    ])
+
+    const readsByAnnouncement = new Map<string, any[]>()
     for (const r of reads) {
-      const key = String(r.announcementId)
-      readsByAnnouncement.set(key, (readsByAnnouncement.get(key) ?? 0) + 1)
+      const list = readsByAnnouncement.get(String(r.announcementId)) ?? []
+      list.push(r)
+      readsByAnnouncement.set(String(r.announcementId), list)
     }
-    const data = announcements.map((a: any) => ({ ...a, reads: readsByAnnouncement.get(String(a.id)) ?? 0 }))
+
+    const data = rows.map((a: any) => {
+      const mine = readsByAnnouncement.get(String(a.id)) ?? []
+      return {
+        ...a,
+        recipients: countRecipients(a, users),
+        // `reads` = filas de announcement_reads (misma semántica que el módulo anuncios para
+        // super_admin); `seenCount` cuenta solo las que tienen seenAt.
+        reads: mine.length,
+        seenCount: mine.filter((r: any) => !!r.seenAt).length,
+        dismissedCount: mine.filter((r: any) => !!r.dismissedAt).length,
+      }
+    })
     return { data, total: data.length }
+  }
+
+  /**
+   * Alcance de la plataforma para la tarjeta "Alcance".
+   *
+   * `openRate` es `null`, no `0`, cuando todavía no hay lecturas: un cero se lee como "lo mandé y
+   * no lo abrió nadie", que es una conclusión distinta —y falsa— de "todavía no hay datos".
+   */
+  async getAnnouncementsReach(): Promise<{
+    hotels: number; users: number
+    lastAnnouncement: { id: string; title: string; recipients: number; seenCount: number; openRate: number | null } | null
+  }> {
+    const [hotels, users, rows, reads] = await Promise.all([
+      this.orm.findMany('Hotels', {}) as Promise<any[]>,
+      this.orm.findMany('Users', { active: 1 }) as Promise<any[]>,
+      this.orm.findMany('Announcements', {}) as Promise<any[]>,
+      this.orm.findMany('AnnouncementReads', {}) as Promise<any[]>,
+    ])
+
+    const difundidos = rows
+      .filter((a: any) => effectiveAudience(a) !== 'hotel')
+      .sort(byRecencyDesc)
+
+    const last = difundidos[0]
+    if (!last) return { hotels: hotels.length, users: users.length, lastAnnouncement: null }
+
+    const seenCount = reads.filter((r: any) => String(r.announcementId) === String(last.id) && !!r.seenAt).length
+    const recipients = countRecipients(last, users)
+    return {
+      hotels: hotels.length,
+      users: users.length,
+      lastAnnouncement: {
+        id: String(last.id),
+        title: String(last.title ?? ''),
+        recipients,
+        seenCount,
+        openRate: recipients > 0 && reads.length > 0 ? Math.round((seenCount / recipients) * 100) : null,
+      },
+    }
   }
 
   async getPublicUsers(): Promise<any[]> {

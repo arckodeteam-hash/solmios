@@ -10,6 +10,13 @@ import type {
 
 interface List { data: any[]; total: number }
 
+export interface AnnouncementsReach {
+  hotels: number
+  users: number
+  /** `openRate: null` = todavía no hay lecturas. NO es lo mismo que 0%. */
+  lastAnnouncement: { id: string; title: string; recipients: number; seenCount: number; openRate: number | null } | null
+}
+
 /**
  * Credenciales de la APP de Meta, a nivel plataforma. Distintas de las de cada hotel: este secreto
  * firma los webhooks de TODOS los hoteles, por eso vive acá y nunca se devuelve en claro.
@@ -72,6 +79,11 @@ export const PlatformService = {
   backupDownload: (id: string) => http.getBlob(`/admin/backups/${encodeURIComponent(id)}/download`),
   backupDelete: (id: string) => http.delete<void>(`/admin/backups/${encodeURIComponent(id)}`),
   announcements: () => http.get<List>('/admin/announcements'),
+  /**
+   * Alcance MEDIDO de los anuncios. Antes la tarjeta "Alcance" del panel tenía los cuatro números
+   * escritos en el HTML (24 hoteles, 89 usuarios, 72% de apertura, 18% de clicks).
+   */
+  announcementsReach: () => http.get<AnnouncementsReach>('/admin/announcements/reach'),
   apiKeys: (hotelId?: string) => http.get<List>(`/api-keys${hotelId ? `?hotelId=${hotelId}` : ''}`),
   anuncios: () => http.get<List>('/anuncios'),
   users: (hotelId?: string) => http.get<List>(`/users${hotelId ? `?hotelId=${hotelId}` : ''}`),
@@ -172,9 +184,28 @@ export const HotelModuleOverridesService = {
 }
 
 // Cuenta Channex a nivel PLATAFORMA (white-label). Solo super_admin. La API key nunca vuelve cruda.
-export interface ChannexStatus { environment: string; hasKey: boolean; keyMasked: string; channexUserId: string }
+/** Una property que está en la cuenta de Channex y ningún hotel referencia (REQ-CAN-09). */
+export interface ChannexOrphanProperty { id: string; title: string }
+
+export interface ChannexStatus {
+  environment: string
+  hasKey: boolean
+  keyMasked: string
+  channexUserId: string
+  /** Raíz del dashboard del entorno configurado: staging y producción son cuentas distintas. */
+  dashboardUrl: string
+  webhook: { registered: boolean; callbackUrl: string; error?: string }
+  properties: { inAccount: number; hotelsWithProperty: number; orphans: ChannexOrphanProperty[]; error?: string }
+  /** Vencimiento del plan, cargado a mano: Channex no lo expone por API. */
+  planExpiresAt: string
+  /** Días que faltan (negativo = vencido). `null` si no está cargado. */
+  planDaysLeft: number | null
+  planExpired: boolean
+}
+
 export const ChannexAdminService = {
   status: () => _http.get<ChannexStatus>('/admin/channex-config'),
-  save: (patch: { apiKey?: string; environment?: string; channexUserId?: string }) => _http.put<ChannexStatus>('/admin/channex-config', patch),
+  save: (patch: { apiKey?: string; environment?: string; channexUserId?: string; planExpiresAt?: string }) =>
+    _http.put<ChannexStatus>('/admin/channex-config', patch),
   test: () => _http.post<{ success: boolean; message: string; environment: string }>('/admin/channex-config/test'),
 }

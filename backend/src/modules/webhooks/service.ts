@@ -12,6 +12,7 @@ import type {
 import { generateWebhookSecret, maskWebhookSecret } from './usecases/secret'
 import { dispatchWebhookEvent, testWebhookSubscription, type DispatchDeps } from './usecases/dispatch'
 import { assertPublicWebhookUrl, type DnsLookupFn } from './usecases/validate-url'
+import { versionedListCache, type VersionedListCache } from '../../shared/usecases/versioned-list-cache'
 
 const CACHE_TTL = 300
 
@@ -23,7 +24,11 @@ export class WebhooksService {
     private readonly cache: CacheAdapter,
     /** Inyectable en tests para no depender de DNS real (ver usecases/validate-url.ts). */
     private readonly lookupImpl?: DnsLookupFn,
-  ) {}
+  ) {
+    this.listCache = versionedListCache(cache, 'webhooks')
+  }
+
+  private readonly listCache: VersionedListCache
 
   private dispatchDeps(): DispatchDeps {
     return { subscriptionRepo: this.repo, deliveryRepo: this.deliveryRepo, logger: this.logger, lookupImpl: this.lookupImpl }
@@ -69,7 +74,10 @@ export class WebhooksService {
     const limit = Math.min(Math.max(query.limit || 20, 1), 100)
     const offset = (page - 1) * limit
 
-    const cacheKey = `webhooks:list:${JSON.stringify(filters)}:${page}:${limit}`
+    // Clave versionada (shared/usecases/versioned-list-cache.ts). Antes las mutaciones borraban
+    // `webhooks:list:{hotelId}`, que nunca coincidía con esta clave: el webhook recién creado y
+    // los contadores tras "Probar" no se veían hasta vencer el TTL.
+    const cacheKey = await this.listCache.key(filters.hotelId as string | undefined, { filters, page, limit })
     const cached = await this.cache.get(cacheKey)
     if (cached) return cached as WebhookSubscriptionsPaginated
 
@@ -99,7 +107,7 @@ export class WebhooksService {
     const item = await this.repo.create({
       hotelId: dto.hotelId, url: dto.url, events: dto.events, secret, active: dto.active ?? 1,
     } as Omit<WebhookSubscriptionDTO, 'id'>)
-    await this.cache.delete(`webhooks:list:${dto.hotelId}`)
+    await this.listCache.invalidate(dto.hotelId)
     // El secreto en claro SOLO viaja acá (una vez, para que el hotel configure la verificación HMAC
     // en su servidor) — igual que `plainKey` en apikeys. Nunca se vuelve a exponer completo.
     return { ...(await this.withCounts(item)), secret } as WebhookSubscriptionView & { secret: string }
@@ -114,7 +122,7 @@ export class WebhooksService {
     if (dto.url) await assertPublicWebhookUrl(dto.url, this.lookupImpl)
     const item = await this.repo.update(id, dto as Partial<Omit<WebhookSubscriptionDTO, 'id'>>)
     if (!item) throw new NotFoundError('Webhook no encontrado')
-    await this.cache.delete(`webhooks:list:${existing.hotelId}`)
+    await this.listCache.invalidate(existing.hotelId)
     return this.withCounts(item)
   }
 
@@ -126,7 +134,7 @@ export class WebhooksService {
     }
     const deleted = await this.repo.delete(id)
     if (!deleted) throw new NotFoundError('Webhook no encontrado')
-    await this.cache.delete(`webhooks:list:${existing.hotelId}`)
+    await this.listCache.invalidate(existing.hotelId)
   }
 
   /** POST /webhooks/:id/test — dispara un evento sintético "ping" SOLO a esta subscription. */
@@ -139,6 +147,9 @@ export class WebhooksService {
     const before = await this.deliveryRepo.count({ webhookId: id, success: 1 })
     await testWebhookSubscription(this.dispatchDeps(), existing)
     const after = await this.deliveryRepo.count({ webhookId: id, success: 1 })
+    // Los contadores delivered/failed viajan dentro del listado cacheado: sin esto, "Probar" no
+    // movía los números en pantalla hasta vencer el TTL.
+    await this.listCache.invalidate(existing.hotelId)
     return { delivered: after > before }
   }
 }
