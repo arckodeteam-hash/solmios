@@ -136,3 +136,76 @@ describe('PlatformEmailsService.list/get', () => {
     expect(await svc.get('payment_failed')).toBeNull()
   })
 })
+
+// ─── Identidad de la plataforma en los correos ───────────────────────────────
+// El "Nombre de la Plataforma" de Configuración → Plataforma se guardaba pero ningún correo lo
+// usaba: "SolmiOS" estaba escrito a mano en las 10 plantillas.
+
+function makeConfigRepo(plataforma: Record<string, unknown> | null, asString = false) {
+  return {
+    findOne: async (f: Record<string, unknown>) =>
+      f.hotelId === 'platform' && f.key === 'plataforma' && plataforma
+        ? { id: 'c1', hotelId: 'platform', key: 'plataforma', value: asString ? JSON.stringify(plataforma) : plataforma }
+        : null,
+  }
+}
+
+describe('PlatformEmailsService — variables de plataforma', () => {
+  const tpl = makeTemplate({
+    subject: '{platform_name}: bienvenido {hotel_name}',
+    body: '<p>{hotel_name} · soporte {support_email} / {support_phone}</p>',
+  })
+
+  it('resuelve {platform_name}/{support_*} desde configuration(platform, plataforma)', async () => {
+    const { repo } = makeRepo([tpl])
+    const svc = new PlatformEmailsService(repo, makeConfigRepo({ platformName: 'HotelPro', supportEmail: 'ayuda@hotelpro.com', supportPhone: '809-555-0000' }))
+    const { sender, sent } = makeSender()
+    svc.setEmailDeps(sender)
+
+    await svc.sendEvent('welcome', 'dueno@hotel.com', 'h1', { hotel_name: 'Hotel Sol' })
+    expect(sent[0]!.subject).toBe('HotelPro: bienvenido Hotel Sol')
+    expect(sent[0]!.html).toBe('<p>Hotel Sol · soporte ayuda@hotelpro.com / 809-555-0000</p>')
+  })
+
+  it('value guardado como JSON string también se lee', async () => {
+    const { repo } = makeRepo([tpl])
+    const svc = new PlatformEmailsService(repo, makeConfigRepo({ platformName: 'HotelPro' }, true))
+    const { sender, sent } = makeSender()
+    svc.setEmailDeps(sender)
+    await svc.sendEvent('welcome', 'dueno@hotel.com', 'h1', { hotel_name: 'X' })
+    expect(sent[0]!.subject).toBe('HotelPro: bienvenido X')
+  })
+
+  it('sin config o sin configRepo: default "SolmiOS" y soporte vacío, nunca queda {platform_name} crudo', async () => {
+    const { repo } = makeRepo([tpl])
+    for (const svc of [new PlatformEmailsService(repo), new PlatformEmailsService(repo, makeConfigRepo(null))]) {
+      const { sender, sent } = makeSender()
+      svc.setEmailDeps(sender)
+      await svc.sendEvent('welcome', 'dueno@hotel.com', 'h1', { hotel_name: 'X' })
+      expect(sent[0]!.subject).toBe('SolmiOS: bienvenido X')
+      expect(sent[0]!.html).not.toContain('{')
+    }
+  })
+
+  it('las variables del evento pisan a las de plataforma', async () => {
+    const { repo } = makeRepo([tpl])
+    const svc = new PlatformEmailsService(repo, makeConfigRepo({ platformName: 'HotelPro' }))
+    const { sender, sent } = makeSender()
+    svc.setEmailDeps(sender)
+    await svc.sendEvent('welcome', 'dueno@hotel.com', 'h1', { hotel_name: 'X', platform_name: 'Override' })
+    expect(sent[0]!.subject).toBe('Override: bienvenido X')
+  })
+
+  it('list()/get() agregan las variables globales al hint sin duplicar ni tocar la fila', async () => {
+    const rows = [makeTemplate(), makeTemplate({ id: 'tpl-2', event: 'trial_ending', variables: '["hotel_name","platform_name"]' })]
+    const { repo } = makeRepo(rows)
+    const svc = new PlatformEmailsService(repo)
+
+    const list = await svc.list()
+    expect(JSON.parse(list[0]!.variables)).toEqual(['hotel_name', 'link', 'platform_name', 'support_email', 'support_phone'])
+    expect(JSON.parse(list[1]!.variables)).toEqual(['hotel_name', 'platform_name', 'support_email', 'support_phone'])
+    expect(JSON.parse((await svc.get('welcome'))!.variables)).toContain('support_email')
+    // La fila en el repo no cambia: el hint se arma en la respuesta.
+    expect(rows[0]!.variables).toBe('["hotel_name","link"]')
+  })
+})

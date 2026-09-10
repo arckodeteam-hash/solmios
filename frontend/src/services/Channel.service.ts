@@ -48,21 +48,61 @@ export interface TestConnectionResult {
   details?: unknown
 }
 
+/**
+ * Los 6 estados del caso, en el mismo orden que el backend
+ * (`canales/usecases/channel-requests.ts`). Espejo a propósito: el hotel ve el mismo ciclo de vida
+ * que el admin, con otras palabras. Un estado sin etiqueta acá dejaba la tarjeta de la OTA en
+ * blanco — por eso hay un test que los recorre todos.
+ */
+export const CHANNEL_REQUEST_STATUSES = [
+  'pending', 'scheduled', 'in_progress', 'waiting_hotel', 'connected', 'rejected',
+] as const
+export type ChannelRequestStatus = (typeof CHANNEL_REQUEST_STATUSES)[number]
+
+/** Medio por el que la plataforma va a contactar al hotel. */
+export const CHANNEL_REQUEST_MEDIUM_LABELS: Record<string, string> = {
+  call: 'Llamada',
+  whatsapp: 'WhatsApp',
+  video: 'Videollamada',
+}
+
 /** Estado de una solicitud de conexión de OTA, tal como lo ve el hotel (sin notas internas). */
 export interface ChannelRequest {
   id: string
   channel: string
   channelName?: string | null
-  status: 'pending' | 'in_progress' | 'connected' | 'rejected'
+  status: ChannelRequestStatus
   message?: string | null
+  contactPhone?: string | null
+  /** Cuándo lo van a contactar (ISO). El hotel lo ve en la tarjeta de la OTA. */
+  appointmentAt?: string | null
+  appointmentMedium?: string | null
+  /** Por qué se rechazó, cuando corresponde. */
+  resolutionReason?: string | null
   createdAt?: string
 }
 
-export const CHANNEL_REQUEST_LABELS: Record<ChannelRequest['status'], string> = {
+export const CHANNEL_REQUEST_LABELS: Record<ChannelRequestStatus, string> = {
   pending: 'Solicitada',
-  in_progress: 'En gestión',
+  scheduled: 'Cita agendada',
+  in_progress: 'En configuración',
+  waiting_hotel: 'Esperando tu respuesta',
   connected: 'Conectada',
   rejected: 'Rechazada',
+}
+
+/**
+ * Clases del badge por estado. Viven en el service y no en la vista para que el test las pueda
+ * recorrer junto con las etiquetas: cuando se agregaron `scheduled` y `waiting_hotel`, un
+ * `REQUEST_CLASSES` incompleto dejaba la tarjeta sin color y sin borde.
+ */
+export const CHANNEL_REQUEST_CLASSES: Record<ChannelRequestStatus, string> = {
+  pending: 'bg-amber/10 text-amber border-2 border-amber/30',
+  scheduled: 'bg-cyan/10 text-cyan border-2 border-cyan/30',
+  in_progress: 'bg-navy/5 text-navy border-2 border-navy/20',
+  waiting_hotel: 'bg-gold/10 text-gold border-2 border-gold/30',
+  connected: 'bg-teal/10 text-teal border-2 border-teal/30',
+  rejected: 'bg-coral/10 text-coral border-2 border-coral/30',
 }
 
 export interface OpenChannelCredentials {
@@ -160,8 +200,16 @@ export const ChannelService = {
     return http.post('/channels/open-channel/connect', {})
   },
 
+  /**
+   * Lo mismo, pero apuntando a OTRO hotel: lo usa el super-admin desde la bandeja de solicitudes.
+   * El endpoint es admin-only y `resolveTenant` deja targetear otro hotel solo a `super_admin`.
+   */
+  async connectOpenChannelFor(hotelId: string): Promise<{ success: boolean; message: string; channelId?: string }> {
+    return http.post(`/channels/open-channel/connect?hotelId=${encodeURIComponent(hotelId)}`, {})
+  },
+
   async setSyncEnabled(hotelId: string | undefined, enabled: boolean): Promise<void> {
-    const list = await http.get<any>(`/canales${hotelId ? `?hotelId=${hotelId}` : ''}`)
+    const list = await http.get<{ data?: Array<{ id?: string }> } | Array<{ id?: string }>>(`/canales${hotelId ? `?hotelId=${hotelId}` : ''}`)
     const rows = Array.isArray(list) ? list : (list?.data ?? [])
     const id = rows[0]?.id
     if (!id) throw new Error('El hotel no tiene configuración de canales')
@@ -194,12 +242,12 @@ export const ChannelService = {
     return http.post(`/channels/${channelId}/deactivate`, { hotelId })
   },
 
-  async bookings(hotelId?: string): Promise<{ data: any[]; total: number }> {
+  async bookings(hotelId?: string): Promise<{ data: unknown[]; total: number }> {
     const query = hotelId ? `?hotelId=${hotelId}` : ''
     return http.get(`/channels/bookings${query}`)
   },
 
-  async ingestBookings(hotelId?: string): Promise<any> {
+  async ingestBookings(hotelId?: string): Promise<{ message?: string }> {
     return http.post('/channels/bookings/ingest', hotelId ? { hotelId } : {})
   },
 
@@ -210,7 +258,7 @@ export const ChannelService = {
     return http.get(`/channels/iframe-token?${q.toString()}`)
   },
 
-  async detail(channelId: string): Promise<any> {
+  async detail(channelId: string): Promise<unknown> {
     return http.get(`/channels/${channelId}/detail`)
   },
 
@@ -232,7 +280,7 @@ export const ChannelService = {
     return http.post(`/channels/${channelId}/activate`, {})
   },
 
-  async syncLog(hotelId?: string): Promise<any> {
+  async syncLog(hotelId?: string): Promise<{ data?: unknown[] } | unknown[]> {
     return http.get(`/channels/sync-log${hotelId ? `?hotelId=${hotelId}` : ''}`)
   },
 
@@ -251,13 +299,18 @@ export const ChannelService = {
    * gestiona la plataforma: el hotel lo pide, y lo atiende el admin. Antes este botón abría el
    * asistente embebido de Channex y nadie del lado nuestro se enteraba del pedido.
    */
-  async requestChannel(channel: string, channelName: string, message?: string): Promise<{ success: boolean; created: boolean; message: string; request: ChannelRequest }> {
-    return http.post('/channels/requests', { channel, channelName, message })
+  async requestChannel(
+    channel: string, channelName: string, message?: string, contactPhone?: string,
+  ): Promise<{ success: boolean; created: boolean; message: string; request: ChannelRequest }> {
+    return http.post('/channels/requests', { channel, channelName, message, contactPhone })
   },
 
   /** Las solicitudes del hotel, para mostrar en qué anda cada una. */
   async listRequests(): Promise<ChannelRequest[]> {
-    const res = await http.get<{ data: ChannelRequest[] }>('/channels/requests')
-    return (res as any)?.data ?? (res as any) ?? []
+    // El backend responde `{data,total}`, pero una respuesta comprimida puede llegar sin envolver
+    // (deuda documentada en el CLAUDE.md): se aceptan las dos formas sin castear a `any`.
+    const res = await http.get<{ data?: ChannelRequest[] } | ChannelRequest[]>('/channels/requests')
+    if (Array.isArray(res)) return res
+    return res?.data ?? []
   },
 }

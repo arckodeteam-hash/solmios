@@ -5,6 +5,7 @@ export const AnunciosModel: ModelDefinition = {
   table: 'announcements',
   fields: {
     id: { type: 'string', required: true },
+    // Vacío/nulo = anuncio de plataforma (no pertenece a ningún hotel).
     hotelId: { type: 'string' },
     authorId: { type: 'string' },
     title: { type: 'string', required: true },
@@ -13,36 +14,39 @@ export const AnunciosModel: ModelDefinition = {
     priority: { type: 'string', default: "medium" },
     active: { type: 'number', default: 1 },
     date: { type: 'string' },
-    // Audiencia (#106): 'all' | 'hotel' | 'admins'. Tiene que estar declarada acá: el ORM
-    // descarta en silencio cualquier campo que no figure en `fields`.
+    // A quién va dirigido: 'hotel' (solo `hotelId`) | 'all' (todos los hoteles) |
+    // 'admins' (todos los hoteles, solo usuarios administradores).
+    //
+    // Existe porque el ORM solo sabe filtrar por IGUALDAD (`orm-utils.ts:buildWhere`): no hay
+    // forma de pedirle `hotelId IS NULL`, así que un anuncio de plataforma era imposible de
+    // encontrar desde el listado de un hotel. Esta columna SIEMPRE tiene valor, y por eso sí es
+    // consultable. Ver `usecases/visibility.ts`.
     audience: { type: 'string', default: 'hotel' },
+    // Ventana de vigencia (ISO 8601). Nulas = visible desde siempre y para siempre.
+    startsAt: { type: 'string' },
+    endsAt: { type: 'string' },
   },
   timestamps: true,
 }
 
 /**
- * Lectura de un aviso por usuario (ANN-4). El ✕ del banner ya no oculta el aviso
- * a todo el hotel: la marca pasa de una por hotel (configuration) a una por
- * usuario, y cada uno setea sus propios momentos sobre SU fila.
+ * Lectura de un anuncio POR USUARIO.
  *
- * `seenAt` y `dismissedAt` arrancan null y se escriben por uso — un aviso puede
- * verse hoy (seenAt al mostrarse el banner) y cerrarse recién días después
- * (dismissedAt en el ✕), sin pisar lo que marcaron los demás. La unicidad del
- * par (announcementId, userId) no la declara el modelo porque el ORM no emite
- * UNIQUE compuesto: la garantiza `idx_announcement_reads_announcement_user`,
- * el CREATE UNIQUE INDEX explícito de migrate-db.ts.
+ * Antes el "no volver a mostrar" del banner se guardaba en
+ * `configuration('dismissed_announcements', hotelId)`: era del HOTEL, así que el primer empleado
+ * que cerraba el aviso se lo ocultaba a todos sus compañeros, dueño incluido.
+ *
+ * El único compuesto `(announcementId, userId)` NO se declara acá: el ORM no crea índices únicos
+ * compuestos. Se crea con `CREATE UNIQUE INDEX` explícito en `migrate-db.ts`.
  */
 export const AnnouncementReadsModel: ModelDefinition = {
   table: 'announcement_reads',
   fields: {
     id: { type: 'string', required: true },
-    hotelId: { type: 'string', required: true, indexed: true },
-    userId: { type: 'string', required: true, indexed: true },
-    /** El aviso leído. */
     announcementId: { type: 'string', required: true },
-    /** ISO del primer momento en que este usuario vio el aviso. */
+    userId: { type: 'string', required: true },
+    hotelId: { type: 'string' },
     seenAt: { type: 'string' },
-    /** ISO del momento en que este usuario lo cerró con el ✕. */
     dismissedAt: { type: 'string' },
   },
   timestamps: true,

@@ -1,8 +1,8 @@
-// announcements.test.ts — Regresión ANN-4 (#108) del panel super-admin: la columna
-// "Vistas / N leídos" mostraba `reads: 0` LITERAL (hardcodeado en el map del listado),
-// así que no se sabía quién leyó nada. La página lista del endpoint de plataforma
+// announcements.test.ts — Regresión ANN-4 (#108) del panel super-admin: la columna de
+// alcance mostraba `reads: 0` LITERAL (hardcodeado en el map del listado), así que no se
+// sabía quién leyó nada. La página lista del endpoint de plataforma
 // (PlatformService.announcements → GET /admin/announcements), que devuelve TODOS los
-// anuncios sin paginar y con su `reads` real (COUNT de announcement_reads), y el 0 sólo
+// anuncios sin paginar y con su alcance MEDIDO (`seenCount` / `recipients`), y el 0 sólo
 // queda como default vacío. El mock devuelve lo que devuelve el endpoint: sin límites
 // escondidos — si la página volviera a un source paginado, este doble no lo taparía.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -12,6 +12,7 @@ const listMock = vi.fn()
 vi.mock('@/services/Platform.service', () => ({
   PlatformService: {
     announcements: (...a: unknown[]) => listMock(...a),
+    announcementsReach: async () => null,
   },
 }))
 // Singleton: el componente y el test tienen que ver LOS MISMOS vi.fn() (patrón audit.test.ts).
@@ -58,33 +59,38 @@ describe('super-admin/announcements — lecturas reales en la columna (#108)', (
     listMock.mockReset()
   })
 
-  it('muestra "3 leídos" cuando el listado trae reads: 3 (COUNT real del backend)', async () => {
-    listMock.mockResolvedValue({ data: [annuncio({ reads: 3 })], total: 1 })
+  it('muestra "3 / 10" cuando el listado trae seenCount: 3 sobre recipients: 10 (COUNT real del backend)', async () => {
+    listMock.mockResolvedValue({ data: [annuncio({ seenCount: 3, recipients: 10 })], total: 1 })
 
     const w = await render()
 
     expect(listMock).toHaveBeenCalledTimes(1)
     expect(w.text()).toContain('Nueva función de pagos')
-    expect(w.text()).toContain('3 leídos')
+    expect(w.text()).toContain('3 / 10')
+    expect(w.text()).toContain('30%')
   })
 
   it('dos avisos con lecturas distintas muestran cada uno la suya, no un número repetido', async () => {
     listMock.mockResolvedValue({
-      data: [annuncio({ id: 'a1', title: 'Uno', reads: 3 }), annuncio({ id: 'a2', title: 'Dos', reads: 7 })],
+      data: [
+        annuncio({ id: 'a1', title: 'Uno', seenCount: 3, recipients: 10 }),
+        annuncio({ id: 'a2', title: 'Dos', seenCount: 7, recipients: 10 }),
+      ],
       total: 2,
     })
 
     const w = await render()
 
-    expect(w.text()).toContain('3 leídos')
-    expect(w.text()).toContain('7 leídos')
+    expect(w.text()).toContain('3 / 10')
+    expect(w.text()).toContain('7 / 10')
   })
 
-  it('sin reads en la respuesta muestra 0 como default vacío, no como dato inventado', async () => {
+  it('sin lecturas en la respuesta muestra 0 / 0 y "sin datos", no un porcentaje inventado', async () => {
     listMock.mockResolvedValue({ data: [annuncio()], total: 1 })
 
     const w = await render()
 
-    expect(w.text()).toContain('0 leídos')
+    expect(w.text()).toContain('0 / 0')
+    expect(w.text()).toContain('sin datos')
   })
 })

@@ -1,7 +1,7 @@
 import type { HttpRequest, Logger } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import type { AnunciosService } from './service'
-import { CreateAnunciosSchema, UpdateAnunciosSchema, assertAudienceConsistent } from './validators/schema'
+import { CreateAnunciosSchema, UpdateAnunciosSchema } from './validators/schema'
 
 export class AnunciosController {
   constructor(
@@ -24,7 +24,6 @@ export class AnunciosController {
   async store(req: HttpRequest) {
     const currentUser = req.user as any
     const data = validateSchema(CreateAnunciosSchema, req.body)
-    assertAudienceConsistent(data as any)
     const item = await this.service.create(data as any, currentUser)
     return { status: 201, body: item }
   }

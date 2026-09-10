@@ -80,6 +80,27 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
     (subsForEmail as any).setPlatformEmailSender((event: string, to: string, hotelId: string, vars: Record<string, string>) =>
       platformEmailsMod.sendEvent(event, to, hotelId, vars))
   }
+  // Solicitudes de conexión de OTA (REQ-CAN-07): el correo al soporte cuando entra un pedido, y
+  // las 3 plantillas que recibe el hotel (cita, conectado, rechazado). Va acá y no en un connector
+  // porque el EmailService se construye DESPUÉS de los módulos — un connector reventaría por TDZ.
+  const canalesForEmail = resolveModule<{
+    setChannelRequestNotifyPorts(p: {
+      emailSender?: EmailSender
+      sendPlatformEvent?: (event: string, to: string, hotelId: string, vars: Record<string, string>) => Promise<{ sent: boolean }>
+    }): void
+  }>('canales')
+  if (canalesForEmail && typeof canalesForEmail.setChannelRequestNotifyPorts === 'function') {
+    canalesForEmail.setChannelRequestNotifyPorts({
+      emailSender: emailService,
+      ...(platformEmailsMod
+        ? {
+          sendPlatformEvent: (event: string, to: string, hotelId: string, vars: Record<string, string>) =>
+            platformEmailsMod.sendEvent(event, to, hotelId, vars),
+        }
+        : {}),
+    })
+  }
+
   // BIL-3: el botón "Recordar" de /admin/billing manda la MISMA plantilla de plataforma
   // (payment_failed / subscription_renewal_*) que el cron y el webhook — un solo texto editable.
   if (adminForEmail && platformEmailsMod && typeof (adminForEmail as any).setPlatformEmailSender === 'function') {

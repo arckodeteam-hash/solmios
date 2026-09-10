@@ -34,20 +34,33 @@
               <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
               Programa Hotel Fundador
             </router-link>
+            <!-- Con sesión abierta, el sitio público NO vuelve a ofrecer "Iniciar Sesión" ni
+                 "Prueba Gratis": el que ya entró viene a volver a su panel, y los dos CTA de
+                 invitado terminaban rebotando contra el guard del router (/login y /registro
+                 redirigen al panel si hay sesión). -->
             <router-link
-              to="/login"
-              class="text-sm font-semibold text-slate-600 hover:text-navy transition-colors duration-200 hidden sm:inline-block"
-            >Iniciar Sesión</router-link>
-            <!-- CTA de conversión: va al ALTA, no al login. Apuntaba a /login, así que un
-                 visitante sin cuenta terminaba en un formulario que le pedía credenciales que
-                 no tenía. "Iniciar Sesión" (arriba) sigue siendo la puerta de los que ya son
-                 clientes. -->
-            <router-link
-              to="/registro"
+              v-if="auth.isAuthenticated"
+              :to="dashboardPath"
               class="inline-flex items-center gap-1.5 font-bold text-sm px-5 py-2.5 rounded-xl bg-blue text-white hover:bg-navy transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg"
-            >Prueba Gratis
+            >Dashboard
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
             </router-link>
+            <template v-else>
+              <router-link
+                to="/login"
+                class="text-sm font-semibold text-slate-600 hover:text-navy transition-colors duration-200 hidden sm:inline-block"
+              >Iniciar Sesión</router-link>
+              <!-- CTA de conversión: va al ALTA, no al login. Apuntaba a /login, así que un
+                   visitante sin cuenta terminaba en un formulario que le pedía credenciales que
+                   no tenía. "Iniciar Sesión" (arriba) sigue siendo la puerta de los que ya son
+                   clientes. -->
+              <router-link
+                to="/registro"
+                class="inline-flex items-center gap-1.5 font-bold text-sm px-5 py-2.5 rounded-xl bg-blue text-white hover:bg-navy transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg"
+              >Prueba Gratis
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
+              </router-link>
+            </template>
           </div>
         </div>
       </div>
@@ -56,8 +69,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import logoColor from '@/assets/logo/logo-horizontal-color.png'
+import { useAuthStore } from '@/stores/auth.store'
+
+const auth = useAuthStore()
+
+/** Destino del botón "Dashboard": el super admin (fuera de una impersonación) va a /admin, el
+ *  resto al panel del hotel. Mismo criterio que el guard del router para /login y /registro; si
+ *  el perfil todavía no está hidratado (el `restoreSession` de App.vue resuelve después del
+ *  primer render) el fallback /panel es seguro: el guard lo reencamina a /admin solo. */
+const dashboardPath = computed(() => (auth.isSuperAdmin && !auth.impersonating ? '/admin' : '/panel'))
 
 /** Sección activa del scroll-spy — la pasa SOLO la landing (en el resto no aplica). */
 const props = defineProps<{ activeSection?: string }>()

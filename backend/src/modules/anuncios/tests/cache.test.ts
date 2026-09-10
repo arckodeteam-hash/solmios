@@ -21,19 +21,19 @@ function makeCache(): CacheAdapter {
   }
 }
 
-/** Repo con filas mutables y contador de `paginate`: cada consulta real se nota. */
+/**
+ * Repo con filas mutables y contador de consultas: cada consulta real se nota.
+ * El listado arma "lo del hotel" + "lo de plataforma" con varios `findMany` por ejecución; se
+ * cuenta UNA por listado (la consulta sin `audience`, que es la del hotel o la del super_admin).
+ */
 function makeRepo(rows: AnunciosDTO[] = []) {
   const state = { rows: [...rows], paginates: 0 }
   const repo = {
-    paginate: async (filters: Record<string, unknown> = {}, opts: any = {}) => {
-      state.paginates++
-      const data = state.rows.filter((r) => Object.entries(filters).every(([k, v]) => (r as any)[k] === v))
-      const offset = opts.offset ?? 0
-      const limit = opts.limit ?? 20
-      return { data: data.slice(offset, offset + limit), total: data.length, limit, offset, pages: 1 }
+    findMany: async (filters: Record<string, unknown> = {}) => {
+      if (!('audience' in filters)) state.paginates++
+      return state.rows.filter((r) => Object.entries(filters).every(([k, v]) => (r as any)[k] === v))
     },
     findById: async (id: string) => state.rows.find((r) => r.id === id) ?? null,
-    findMany: async () => [],
     findOne: async () => null,
     create: async (d: any) => { const row = { id: `a${state.rows.length + 1}`, ...d }; state.rows.push(row); return row },
     update: async (id: string, patch: any) => {

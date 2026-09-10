@@ -3,10 +3,10 @@
     <!-- Header -->
     <div class="mb-6">
       <h2 class="text-xl font-black text-navy">Plantillas de Email</h2>
-      <p class="text-sm text-text-muted mt-0.5">Editá el contenido y activá o desactivá los emails automáticos de la plataforma (bienvenida, trial, pagos, cancelación)</p>
+      <p class="text-sm text-text-muted mt-0.5">Editá el contenido y activá o desactivá los emails automáticos de la plataforma (bienvenida, trial, renovaciones, pagos, suspensión y cancelación)</p>
     </div>
 
-    <SectionCard title="Eventos de la plataforma" :subtitle="`${orderedTemplates.length} de ${EVENT_ORDER.length} plantilla(s)`" body-class="p-0">
+    <SectionCard title="Eventos de la plataforma" :subtitle="`${orderedTemplates.length} de ${TOTAL_EVENTS} plantilla(s)`" body-class="p-0">
       <!-- Skeleton -->
       <div v-if="loading" class="space-y-3 p-5">
         <div v-for="i in 6" :key="i" class="h-12 animate-pulse rounded-xl bg-surface"></div>
@@ -99,6 +99,10 @@
               class="px-2.5 py-1 bg-navy/5 text-navy rounded-full text-[10px] font-bold font-mono cursor-pointer hover:bg-navy/10 transition-colors">{{ variableToken(v) }}</span>
           </div>
           <p class="mt-1 text-[10px] text-text-muted">Click en una variable para insertarla en el asunto o el cuerpo (según el campo que tengas enfocado).</p>
+          <p class="mt-1 text-[10px] text-text-muted">
+            <span v-for="(g, i) in PLATFORM_EMAIL_GLOBAL_VARIABLES" :key="g.name"><code class="font-mono">{{ variableToken(g.name) }}</code> = {{ g.description.toLowerCase() }}<span v-if="i < PLATFORM_EMAIL_GLOBAL_VARIABLES.length - 1"> · </span></span>
+            — se toman de <router-link to="/admin/settings" class="text-cyan font-bold hover:underline">Configuración → Plataforma</router-link>.
+          </p>
         </div>
 
         <div>
@@ -139,14 +143,18 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import {
   PlatformEmailsService,
-  PLATFORM_EMAIL_EVENTS,
   parsePlatformEmailVariables,
+  platformEmailEventLabel,
+  sortPlatformEmailTemplates,
+  PLATFORM_EMAIL_EVENTS,
+  PLATFORM_EMAIL_GLOBAL_VARIABLES,
   type PlatformEmailEvent,
   type PlatformEmailTemplate,
 } from '@/services/PlatformEmails.service'
@@ -154,47 +162,22 @@ import {
 const ICON_EDIT = '<svg viewBox="0 0 24 24" class="h-full w-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>'
 const ICON_MAIL = '<svg viewBox="0 0 24 24" class="h-8 w-8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>'
 
-// Los eventos son fijos (los define el backend): no se crean ni se borran filas, solo se editan.
-// El total del subtítulo sale de esta lista, no de un número escrito a mano (FE-14).
-const EVENT_ORDER: readonly PlatformEmailEvent[] = PLATFORM_EMAIL_EVENTS
-const EVENT_LABELS: Record<PlatformEmailEvent, string> = {
-  welcome: 'Bienvenida',
-  trial_ending: 'Aviso: trial por vencer',
-  trial_expired: 'Trial vencido',
-  trial_extended: 'Trial extendido',
-  activation_no_rooms: 'Activación: sin habitaciones',
-  activation_no_rates: 'Activación: sin tarifas',
-  activation_no_channel: 'Activación: sin canales',
-  trial_offer: 'Oferta: trial por vencer',
-  trial_rescue_1: 'Rescate 1: trial vencido (+2 d)',
-  trial_rescue_2: 'Rescate 2: trial vencido (+7 d)',
-  payment_succeeded: 'Pago exitoso',
-  payment_failed: 'Pago fallido',
-  subscription_canceled: 'Suscripción cancelada',
-  subscription_renewal_auto: 'Aviso: renovación automática',
-  subscription_renewal_manual: 'Aviso: renovación manual',
-  subscription_suspended: 'Suscripción suspendida',
-  subscription_reactivated: 'Suscripción reactivada',
-}
-function eventLabel(event: PlatformEmailEvent | string): string {
-  return EVENT_LABELS[event as PlatformEmailEvent] || event
-}
+// Los 10 eventos son fijos: no se crean ni se borran filas, solo se editan. Orden y etiquetas
+// viven en el service para compartirlos con Configuración → Email.
+const eventLabel = platformEmailEventLabel
+const TOTAL_EVENTS = PLATFORM_EMAIL_EVENTS.length
 function variableToken(v: string): string {
   return '{' + v + '}'
 }
 
 const toast = useToast()
+const route = useRoute()
 
 const templates = ref<PlatformEmailTemplate[]>([])
 const loading = ref(true)
 
-// Orden estable por EVENT_ORDER, sin importar el orden en que responda el backend.
-const orderedTemplates = computed(() => {
-  const byEvent = new Map(templates.value.map(t => [t.event, t]))
-  const known = EVENT_ORDER.map(ev => byEvent.get(ev)).filter((t): t is PlatformEmailTemplate => !!t)
-  const rest = templates.value.filter(t => !EVENT_ORDER.includes(t.event))
-  return [...known, ...rest]
-})
+// Orden estable, sin importar el orden en que responda el backend.
+const orderedTemplates = computed(() => sortPlatformEmailTemplates(templates.value))
 
 async function load() {
   loading.value = true
@@ -202,6 +185,10 @@ async function load() {
     const r = await PlatformEmailsService.list()
     // Contrato: array directo. Defensivo por si el envelope lo anida en { data: [...] }.
     templates.value = Array.isArray(r) ? r : ((r as { data?: PlatformEmailTemplate[] })?.data ?? [])
+    // `?event=welcome` (desde Configuración → Email) abre el editor de esa plantilla directo.
+    const wanted = typeof route.query.event === 'string' ? route.query.event : ''
+    const target = wanted ? templates.value.find(t => t.event === wanted) : undefined
+    if (target && !modal.value.show) openEdit(target)
   } catch (e) {
     templates.value = []
     toast.error(e instanceof Error ? e.message : 'No se pudieron cargar las plantillas de email')

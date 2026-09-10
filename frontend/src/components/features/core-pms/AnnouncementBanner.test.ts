@@ -37,7 +37,7 @@ const INFO: Announcement = {
 }
 const URGENT: Announcement = {
   id: 'a-urgent', title: 'Corte de agua programado', message: 'Mañana 9 a 12',
-  type: 'critical', priority: 'urgent', active: true,
+  type: 'urgent', priority: 'urgent', active: true,
 }
 const INACTIVE: Announcement = {
   id: 'a-off', title: 'Anuncio inactivo', type: 'info', priority: 'low', active: false,

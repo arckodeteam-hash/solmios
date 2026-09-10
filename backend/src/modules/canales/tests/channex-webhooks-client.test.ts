@@ -99,7 +99,11 @@ describe('listWebhooks', () => {
 })
 
 describe('createWebhook', () => {
-  it('hace POST a /webhooks con el event_mask pedido y property_id null si no se pasa', async () => {
+  // Sin propertyId el callback es DE CUENTA (todas las properties). Channex no lo expresa con
+  // `property_id: null` sino con `is_global: true`: mandar el null pelado devuelve
+  // `422 {"property_id": ["is required when is_global is false"]}`. Verificado contra
+  // staging.channex.io el 2026-09-09 — el alta del webhook fallaba en silencio por esto.
+  it('un callback de cuenta va con is_global true, NO con property_id null', async () => {
     const calls: Call[] = []
     restore = installFetch(calls, () => ({ data: { id: 'wh-nuevo' } }))
 
@@ -113,12 +117,50 @@ describe('createWebhook', () => {
     expect(calls[0]!.url.endsWith('/webhooks')).toBe(true)
     expect(calls[0]!.body).toEqual({
       webhook: {
-        property_id: null,
+        is_global: true,
         callback_url: 'https://app/api/channels/channex/webhook',
         event_mask: 'booking_new;booking_modification;booking_cancellation',
         is_active: true,
         send_data: false,
       },
     })
+  })
+
+  it('con propertyId va acotado a esa property, sin is_global', async () => {
+    const calls: Call[] = []
+    restore = installFetch(calls, () => ({ data: { id: 'wh-prop' } }))
+
+    const out = await uc().createWebhook('k', {
+      callbackUrl: 'https://app/api/channels/channex/webhook',
+      eventMask: 'booking_new',
+      propertyId: 'prop-1',
+    })
+
+    expect(out).toEqual({ id: 'wh-prop' })
+    expect(calls[0]!.body).toEqual({
+      webhook: {
+        property_id: 'prop-1',
+        callback_url: 'https://app/api/channels/channex/webhook',
+        event_mask: 'booking_new',
+        is_active: true,
+        send_data: false,
+      },
+    })
+  })
+
+  // El rechazo tiene que llegar LEGIBLE hasta el operador: el alta fallaba con un log que sólo
+  // decía "Channex rechazó el alta" y había que reproducir el POST a mano para ver el motivo.
+  it('un rechazo de Channex devuelve el motivo, no un null pelado', async () => {
+    const orig = globalThis.fetch
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ errors: { code: 'validation_error', title: 'Validation Error', details: { property_id: ['is required when is_global is false'] } } }),
+      { status: 422, headers: { 'content-type': 'application/json' } },
+    )) as any
+    restore = () => { globalThis.fetch = orig }
+
+    const out = await uc().createWebhook('k', { callbackUrl: 'https://app/x', eventMask: 'booking_new' })
+
+    expect(out.id).toBeNull()
+    expect(out.error).toContain('property_id')
   })
 })

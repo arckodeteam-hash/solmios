@@ -18,6 +18,7 @@
     "lint": "echo 'No linter configured — add eslint to package.json'",
     "verificar-whatsapp": "bun run scripts/verificar-whatsapp.ts",
     "seed-demo-meta": "bun run scripts/seed-hotel-demo-meta.ts",
+    "backfill:announcement-audience": "bun run scripts/backfill-announcement-audience.ts",
     "backfill:platform-invoices": "bun run scripts/backfill-platform-invoices.ts"
   },
   "devDependencies": {
