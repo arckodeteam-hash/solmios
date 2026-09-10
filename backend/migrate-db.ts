@@ -105,7 +105,11 @@ async function createTablesBlock1(): Promise<void> {
   await exec(`CREATE TABLE IF NOT EXISTS announcements (
     id TEXT PRIMARY KEY, hotelId TEXT, authorId TEXT, title TEXT NOT NULL, message TEXT,
     type TEXT DEFAULT 'info', priority TEXT DEFAULT 'medium', active INTEGER DEFAULT 1,
-    date TEXT, createdAt TEXT)`)
+    date TEXT, audience TEXT DEFAULT 'hotel', createdAt TEXT)`)
+  // Audiencia (#106). ormMigrate (RUN_MIGRATE=1) agrega la columna SIN default → las filas
+  // anteriores quedarían NULL; el backfill las deja en 'hotel', que es lo que son. Idempotente.
+  await addColumnIfMissing('announcements', 'audience', "TEXT DEFAULT 'hotel'")
+  await run("UPDATE announcements SET audience = 'hotel' WHERE audience IS NULL")
 
   await exec(`CREATE TABLE IF NOT EXISTS api_keys (
     id TEXT PRIMARY KEY, hotelId TEXT, name TEXT NOT NULL, scope TEXT,

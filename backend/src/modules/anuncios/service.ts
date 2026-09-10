@@ -1,5 +1,5 @@
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
-import { NotFoundError, AuthError } from 'arckode-framework'
+import { NotFoundError, AuthError, ForbiddenError } from 'arckode-framework'
 import type { AnunciosDTO, CreateAnunciosDTO, UpdateAnunciosDTO, AnunciosQuery, AnunciosPaginated } from './types'
 import type { AnunciosSockets } from './sockets'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
@@ -11,6 +11,18 @@ import { anunciosListCacheKey, invalidateAnunciosCaches } from './usecases/cache
 export type { AnnouncementReadDTO, AnnouncementWithReads } from './usecases/announcement-reads'
 
 const CACHE_TTL = 300
+
+/**
+ * Oculta los anuncios 'admins' a quien no es administrador (#106). Va en memoria y DESPUÉS del
+ * cache: buildWhere del ORM sólo hace igualdad (no hay `!=` ni `IN`), y la página cacheada es la
+ * del hotel, compartida por todos sus roles. `audience` null/undefined (filas viejas) es 'hotel'.
+ */
+function hideAdminOnly(page: AnunciosPaginated, role: string): AnunciosPaginated {
+  if (role === 'super_admin' || role === 'hotel_admin') return page
+  const data = page.data.filter((a) => a.audience !== 'admins')
+  if (data.length === page.data.length) return page
+  return { ...page, data, total: Math.max(page.total - (page.data.length - data.length), 0) }
+}
 
 export class AnunciosService {
   private sockets: AnunciosSockets = {}
@@ -73,7 +85,7 @@ export class AnunciosService {
     }
     // La vista por usuario va SIEMPRE después del cache: la página cacheada es la del hotel
     // (compartida), lo que cada usuario deja de ver es sólo suyo y no se cachea.
-    return reads.applyUserView(this.readsDeps, response, currentUser, hotelId)
+    return reads.applyUserView(this.readsDeps, hideAdminOnly(response, currentUser.role), currentUser, hotelId)
   }
 
   async getById(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<AnunciosDTO> {
@@ -86,6 +98,13 @@ export class AnunciosService {
   }
 
   async create(dto: CreateAnunciosDTO, currentUser: { id: string; role: string; hotelId?: string }): Promise<AnunciosDTO> {
+    // Sin audience explícita (callers legacy) se infiere: con hotel es del hotel, sin hotel es global.
+    const audience = dto.audience ?? (dto.hotelId ? 'hotel' : 'all')
+    // 403 (ForbiddenError) y no AuthError (401): el usuario está autenticado y es quien dice ser,
+    // lo que no tiene es permiso para esta audiencia. Va ANTES de cualquier escritura (#106).
+    if (currentUser.role !== 'super_admin' && audience !== 'hotel') {
+      throw new ForbiddenError("Solo la plataforma puede publicar anuncios para 'all' o 'admins'")
+    }
     if (currentUser.role !== 'super_admin' && dto.hotelId !== currentUser.hotelId) {
       throw new AuthError('No autorizado para crear en otro hotel')
     }
@@ -94,6 +113,7 @@ export class AnunciosService {
     // en Postgres guardaba el string literal). Ver CLAUDE.md, reglas de migración.
     const item = await this.repo.create({
       ...dto,
+      audience,
       date: dto.date ?? new Date().toISOString(),
     } as any)
     await this.sockets.onAnunciosCreated?.(item)

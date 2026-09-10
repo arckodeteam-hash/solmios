@@ -1,5 +1,7 @@
 export type AnnouncementType = 'info' | 'warning' | 'urgent' | 'maintenance'
 export type AnnouncementPriority = 'low' | 'medium' | 'high'
+/** A quién va dirigido el anuncio (#106): todos los hoteles, un hotel o sólo administradores. */
+export type AnnouncementAudience = 'all' | 'hotel' | 'admins'
 
 export interface AnunciosDTO {
   id: string
@@ -11,6 +13,7 @@ export interface AnunciosDTO {
   priority?: AnnouncementPriority
   active?: number
   date?: string
+  audience?: AnnouncementAudience
   createdAt: string
   updatedAt: string
 }
@@ -24,6 +27,7 @@ export interface CreateAnunciosDTO {
   priority?: AnnouncementPriority
   active?: number
   date?: string
+  audience?: AnnouncementAudience
 }
 
 export interface UpdateAnunciosDTO {
@@ -35,6 +39,7 @@ export interface UpdateAnunciosDTO {
   priority?: AnnouncementPriority
   active?: number
   date?: string
+  audience?: AnnouncementAudience
 }
 
 export interface AnunciosQuery {

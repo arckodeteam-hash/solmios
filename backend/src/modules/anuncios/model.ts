@@ -13,6 +13,9 @@ export const AnunciosModel: ModelDefinition = {
     priority: { type: 'string', default: "medium" },
     active: { type: 'number', default: 1 },
     date: { type: 'string' },
+    // Audiencia (#106): 'all' | 'hotel' | 'admins'. Tiene que estar declarada acá: el ORM
+    // descarta en silencio cualquier campo que no figure en `fields`.
+    audience: { type: 'string', default: 'hotel' },
   },
   timestamps: true,
 }
