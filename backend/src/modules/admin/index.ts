@@ -29,12 +29,14 @@ export function AdminModule() {
     // 1.4.0 (BIL-3, #155): + recordatorio de cobro (plantilla por estado, dedup 24 h) y registro de
     // pago manual (reactiva la suscripción vía connector). Las dos dejan audit log.
     // 1.4.1: + POST /api/admin/subscriptions/:hotelId/extend-trial (REQ-PIPE-05, #146).
-    version: '1.4.1',
+    // 1.5.0 (CFG-6, #103): + GET/PUT /api/admin/subscriptions/trial-days — la key `trial_days`
+    // de configuration(platform) fija la duración del trial para los hoteles nuevos.
+    version: '1.5.0',
     description: 'Super admin platform management',
     contract: {
-      name: 'admin', version: '1.4.1',
+      name: 'admin', version: '1.5.0',
       description: 'Platform-level management: hotels, users, plans, analytics',
-      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv', 'remindBillingInvoice', 'registerManualPayment', 'extendTrial'],
+      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'getTrialDays', 'updateTrialDays', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv', 'remindBillingInvoice', 'registerManualPayment', 'extendTrial'],
       events: [],
       tables: [],
       dependencies: [],
@@ -75,7 +77,9 @@ export function AdminModule() {
         readMrr: async () => (await queries.listSubscriptions()).mrrTotal,
       })
       const service = new AdminService(plansRepo, amenitiesRepo, log, auth, queries, hotelsRepo, specialConditions, categories, configRepo, moduleOverrides, subscriptionsRepo, platformBilling)
-      const controller = new AdminController(service, log)
+      // `configRepo` (3º): los handlers de /subscriptions/trial-days (#103) operan directo con
+      // usecases/trial-days sobre `configuration`, sin agrandar AdminService.
+      const controller = new AdminController(service, log, configRepo)
 
       const sa = [auth.authenticate('super_admin'), requireUserType('admin')]
       const ar = [auth.authenticate('hotel_admin', 'receptionist', 'super_admin'), requireUserType('merchant')]
@@ -164,6 +168,11 @@ export function AdminModule() {
       router.put('/api/admin/subscriptions/categories/:key', sa, (req: any) => controller.updateSubscriptionCategory(req))
       router.get('/api/admin/subscriptions/settings', sa, () => controller.getSubscriptionSettings())
       router.put('/api/admin/subscriptions/settings', sa, (req: any) => controller.updateSubscriptionSettings(req))
+      // #103 (CFG-6): duración global del trial — key `trial_days` de configuration(platform).
+      // Va ANTES de /:hotelId por orden de registro (mismo motivo que billing/export.csv):
+      // `trial-days` entraría como un hotelId que no existe.
+      router.get('/api/admin/subscriptions/trial-days', sa, () => controller.getTrialDays())
+      router.put('/api/admin/subscriptions/trial-days', sa, (req: any) => controller.updateTrialDays(req))
       router.get('/api/admin/subscriptions/:hotelId', sa, (req: any) => controller.subscriptionDetail(req))
       router.post('/api/admin/subscriptions/:hotelId/special-conditions', sa, (req: any) => controller.applySpecialConditions(req))
       router.post('/api/admin/subscriptions/:hotelId/suspend', sa, (req: any) => controller.suspendSubscription(req))
@@ -187,7 +196,7 @@ export function AdminModule() {
       router.post('/api/admin/billing/invoices/:id/remind', sa, (req: any) => controller.remindBillingInvoice(req))
       router.post('/api/admin/billing/manual-payment', sa, (req: any) => controller.registerManualPayment(req))
 
-      log.info('Módulo admin listo (48 endpoints)')
+      log.info('Módulo admin listo (50 endpoints)')
       return service
     },
   })

@@ -1,4 +1,4 @@
-import type { HttpRequest, Logger } from 'arckode-framework'
+import type { HttpRequest, Logger, RepositoryAdapter } from 'arckode-framework'
 import { validateSchema } from '../../shared/validators/validate-body'
 import type { AdminService } from './service'
 import {
@@ -6,6 +6,9 @@ import {
   ApplySpecialConditionsSchema, UpdateSpecialCategorySchema, UpdateSubscriptionSettingsSchema, ModuleOverrideSchema,
   ExtendTrialSchema, ManualPaymentSchema,
 } from './validators/schema'
+// #103: la key global `trial_days` es de UN campo — el schema vive junto a su usecase, no en
+// validators/schema.ts (los de allá son bodies multirubro). Mismo repo de `configuration`.
+import { getTrialDays, setTrialDays, UpdateTrialDaysSchema } from './usecases/trial-days'
 
 /**
  * Mapeo de error → HTTP. Nació para el catálogo de amenities y lo comparte la facturación de
@@ -46,6 +49,9 @@ export class AdminController {
   constructor(
     private readonly service: AdminService,
     private readonly logger: Logger,
+    /** #103 (CFG-6): config global `trial_days` — los handlers de /subscriptions/trial-days
+     *  operan directo con el usecase sobre este repo (el mismo `Configuration` del service). */
+    private readonly configRepo?: RepositoryAdapter<any>,
   ) {}
 
   async listHotels() {
@@ -270,6 +276,22 @@ export class AdminController {
       return { status: 200, body: await this.service.updateSubscriptionSettings(data) }
     } catch (e: any) {
       return { status: 400, body: { error: e.message } }
+    }
+  }
+
+  // ── Duración global del trial (#103, CFG-6) — key `trial_days` de configuration ─────────
+
+  async getTrialDays() {
+    return { status: 200, body: await getTrialDays(this.configRepo!) }
+  }
+
+  /** `{days: 1..365}` entero → 400 fuera de rango o no entero (mismo contrato que extend-trial). */
+  async updateTrialDays(req: HttpRequest) {
+    try {
+      const data = validateSchema(UpdateTrialDaysSchema, req.body || {}) as { days: number }
+      return { status: 200, body: await setTrialDays(this.configRepo!, data.days) }
+    } catch (e: any) {
+      return { status: httpStatusOfError(e), body: { error: e.message } }
     }
   }
 

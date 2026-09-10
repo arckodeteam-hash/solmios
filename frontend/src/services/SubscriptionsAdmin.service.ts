@@ -69,6 +69,11 @@ export interface SubscriptionSettings {
   founderCountdownDurationDays: number
 }
 
+/** #103 (CFG-6): duración global del trial — key `trial_days`, endpoint propio (1..365, default 15). */
+export interface TrialDays {
+  days: number
+}
+
 export const SubscriptionsAdminService = {
   search: (email: string) =>
     http.get<SubscriptionSearchResult>(`/admin/subscriptions/search?email=${encodeURIComponent(email)}`),
@@ -83,4 +88,8 @@ export const SubscriptionsAdminService = {
   getSettings: () => http.get<SubscriptionSettings>('/admin/subscriptions/settings'),
   updateSettings: (patch: Partial<SubscriptionSettings>) =>
     http.put<SubscriptionSettings>('/admin/subscriptions/settings', patch),
+  // #103 (CFG-6): NO viaja en subscription_settings — es otra fila de `configuration`,
+  // la leen el alta de hotel y la política pública de signup.
+  getTrialDays: () => http.get<TrialDays>('/admin/subscriptions/trial-days'),
+  setTrialDays: (days: number) => http.put<TrialDays>('/admin/subscriptions/trial-days', { days }),
 }

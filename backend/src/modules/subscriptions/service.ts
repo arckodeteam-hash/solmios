@@ -1,5 +1,6 @@
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
-import { SignupUseCase, TRIAL_DAYS, type SignupInput, type SignupResult } from './usecases/signup'
+import { SignupUseCase, type SignupInput, type SignupResult } from './usecases/signup'
+import { safeTrialDays } from './usecases/trial-days'
 import { SubscriptionAccess, type AccessResult } from './usecases/access'
 import { statusOf, type SubscriptionStatus } from './usecases/status-of'
 import { composeSockets } from '../../shared/utils/compose-sockets'
@@ -29,6 +30,7 @@ export class SubscriptionsService {
   private sendPlatformEmail?: (event: string, to: string, hotelId: string, vars: Record<string, string>) => Promise<{ sent: boolean }>
   private sockets: SubscriptionSockets = {}
   private readPlatformSettings?: () => Promise<{ requireCardOnTrial: boolean } & FounderCountdownConfig>
+  private readTrialDays?: () => Promise<number> // #103: `configuration.trial_days`, lo inyecta el wiring; sin cablear rige TRIAL_DAYS
   private verifyOwner?: (email: string, password: string) => Promise<{ hotelId?: string } | null>
 
   constructor(
@@ -51,7 +53,11 @@ export class SubscriptionsService {
     private readonly configurationRepo?: RepositoryAdapter<any>, // KV `configuration` (onboarding.ts, ONBOARDING_CONFIRM_KEYS)
     private readonly platformInvoicesRepo?: RepositoryAdapter<any>, // `platform_invoices` — historial de cobros de la plataforma (REQ-BIL-02). Opcional: sin cablear el webhook sigue igual, solo no deja rastro del cobro.
   ) {
-    this.signupUc = new SignupUseCase({ hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger, configRepo: configurationRepo })
+    this.signupUc = new SignupUseCase({
+      hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger,
+      configRepo: configurationRepo, // CFG-2: política de contraseña configurable en el alta pública
+      getTrialDays: () => this.trialDays(), // #103: resuelto por alta, no acá — el wiring inyecta el lector DESPUÉS de registrar el módulo
+    })
     // El lector se resuelve en cada llamada, no en el constructor: el connector inyecta el
     // puerto DESPUÉS de que el módulo se registró (mismo momento que setEmailDeps).
     this.accessUc = new SubscriptionAccess(subscriptionsRepo, hotelsRepo,
@@ -63,6 +69,10 @@ export class SubscriptionsService {
   setPlatformSettingsDeps(read: () => Promise<{ requireCardOnTrial: boolean } & FounderCountdownConfig>): void {
     this.readPlatformSettings = read
   }
+
+  /** Puerto #103: duración del trial. Ver `usecases/trial-days.ts`. */
+  setTrialDaysDeps(read: () => Promise<number>): void { this.readTrialDays = read }
+  private trialDays(): Promise<number> { return safeTrialDays(this.readTrialDays, this.logger) }
 
   /** Política de alta vigente. La usa el alta para decidir si manda al Checkout antes del trial. */
   signupPolicy(): Promise<SignupPolicy> { return readSignupPolicy(this.readPlatformSettings) }
@@ -98,7 +108,7 @@ export class SubscriptionsService {
   /** #28 — de acá derivan su copy la landing y el registro, en vez de prometer "sin tarjeta" en duro. */
   async publicSignupPolicy(): Promise<{ requireCardOnTrial: boolean; trialDays: number }> {
     const { requireCardOnTrial } = await this.signupPolicy()
-    return { requireCardOnTrial, trialDays: TRIAL_DAYS }
+    return { requireCardOnTrial, trialDays: await this.trialDays() }
   }
 
   /** #28 — retomar el pago del alta sin poder loguearse. Ver `usecases/signup-policy.ts`. */
@@ -107,14 +117,10 @@ export class SubscriptionsService {
   }
 
   /** Puerto #28: identidad sin sesión. Lo inyecta `subscriptions-usuarios-owner`. */
-  setOwnerVerifier(fn: (email: string, password: string) => Promise<{ hotelId?: string } | null>): void {
-    this.verifyOwner = fn
-  }
+  setOwnerVerifier(fn: (email: string, password: string) => Promise<{ hotelId?: string } | null>): void { this.verifyOwner = fn }
 
   /** ¿Este hotel puede trabajar hoy? Lo usan el login y el guard de las rutas. */
-  checkAccess(hotelId: string): Promise<AccessResult> {
-    return this.accessUc.check(hotelId)
-  }
+  checkAccess(hotelId: string): Promise<AccessResult> { return this.accessUc.check(hotelId) }
 
   /**
    * Planes para la landing y el registro. Solo lo público: precio, descripción, features y los
@@ -123,19 +129,13 @@ export class SubscriptionsService {
    * son detalle interno de cómo se aplica el plan. El orden lo fija el backend y el frontend lo
    * respeta tal cual (no re-ordena): del más barato al más caro (#30), ver `shared/utils/plans-order.ts`.
    */
-  publicPlans(): Promise<PublicPlan[]> {
-    return listPublicPlans(this.plansRepo)
-  }
+  publicPlans(): Promise<PublicPlan[]> { return listPublicPlans(this.plansRepo) }
 
   /** % del programa Hotel Fundador para la landing (CFG-1). `null` = sin config usable. */
-  publicFounderDiscount(): Promise<number | null> {
-    return publicFounderDiscount(this.specialCategoriesRepo)
-  }
+  publicFounderDiscount(): Promise<number | null> { return publicFounderDiscount(this.specialCategoriesRepo) }
 
   /** Qué le falta configurar al hotel para poder trabajar. */
-  onboarding(hotelId: string): Promise<OnboardingStatus> {
-    return this.onboardingUc.status(hotelId)
-  }
+  onboarding(hotelId: string): Promise<OnboardingStatus> { return this.onboardingUc.status(hotelId) }
 
   /** Estado para mostrarle al hotel cuánto le queda o qué tiene que pagar. Ver `usecases/status-of.ts`. */
   async statusOf(hotelId: string): Promise<SubscriptionStatus> {
@@ -162,10 +162,12 @@ export class SubscriptionsService {
    */
   async createCheckout(hotelId: string, planId: string, origin: string): Promise<CreateCheckoutResult> {
     const trialDays = await pendingTrialDays(this.subscriptionsRepo, await this.signupPolicy(), hotelId)
-    return createCheckoutSession(
-      { subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo, logger: this.logger },
-      hotelId, planId, origin, trialDays,
-    )
+    return createCheckoutSession(this.stripeDeps(), hotelId, planId, origin, trialDays)
+  }
+
+  /** Lo que comparten Checkout, upgrade y webhook: repos de suscripción/hotel/plan + logger. */
+  private stripeDeps() {
+    return { subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo, logger: this.logger }
   }
 
   /** Lo que el flujo de alta con tarjeta necesita del módulo (`usecases/signup-policy.ts`). */
@@ -174,8 +176,8 @@ export class SubscriptionsService {
   }
 
   /** #46 — mejorar el plan pagando SOLO la diferencia: `upgradePreview` cotiza el prorrateo y `upgradePlan` lo cobra con `subscriptions.update` (un Checkout nuevo duplicaría la suscripción, BUG-9). */
-  upgradePreview(hotelId: string, planId: string) { return previewUpgrade({ subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo, logger: this.logger }, hotelId, planId) }
-  upgradePlan(hotelId: string, planId: string) { return applyUpgrade({ subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo, logger: this.logger }, hotelId, planId) }
+  upgradePreview(hotelId: string, planId: string) { return previewUpgrade(this.stripeDeps(), hotelId, planId) }
+  upgradePlan(hotelId: string, planId: string) { return applyUpgrade(this.stripeDeps(), hotelId, planId) }
 
   /** Gestionar método de pago / ver facturas: Billing Portal de Stripe. */
   createPortal(hotelId: string, origin: string): Promise<CreatePortalResult> {
@@ -187,10 +189,9 @@ export class SubscriptionsService {
 
   /** Webhook de la cuenta de PLATAFORMA (checkout/renovación/cancelación de la suscripción SaaS). */
   handlePlatformWebhook(rawBody: string | Buffer, signature: string) {
-    return processSubscriptionWebhook({
-      subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo,
-      logger: this.logger, sendPlatformEmail: this.sendPlatformEmail, orm: this.orm, platformInvoicesRepo: this.platformInvoicesRepo,
-    }, rawBody, signature)
+    return processSubscriptionWebhook(
+      { ...this.stripeDeps(), sendPlatformEmail: this.sendPlatformEmail, orm: this.orm, platformInvoicesRepo: this.platformInvoicesRepo },
+      rawBody, signature)
   }
 
   /** REQ-PIPE-05 (#146) — más días de prueba (super-admin vía connector `admin-subscriptions-trial`). `{link}` sale de PUBLIC_URL como en handle-stripe-event.ts. Ver `usecases/extend-trial.ts`. */

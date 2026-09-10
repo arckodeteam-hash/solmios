@@ -1,12 +1,36 @@
-import { createModule, OrmRepository } from 'arckode-framework'
+import { createModule, OrmRepository, type RepositoryAdapter } from 'arckode-framework'
 import { registerSubscriptionModels } from './model'
 import { SubscriptionsService } from './service'
 import { SubscriptionsController } from './controller'
+import { TRIAL_DAYS } from './usecases/signup'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
 import { verifyCaptcha, isCaptchaEnabled } from '../../infrastructure/captcha'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 
 export { SubscriptionsService }
+
+// #103 (CFG-6) — duración del trial: misma fila `configuration` (platform/trial_days) que
+// administra /admin/subscriptions/trial-days. Lectura PROPIA sobre el KV que este módulo ya
+// recibe, porque los módulos no se importan entre sí y el conector subscriptions-admin-policy
+// sólo puede inyectar lo que `admin` expone como acción (trial-days salió por ruta, no por
+// servicio). Mismo contrato que admin/usecases/trial-days.ts: `{days}` entero 1..365; fila
+// ausente, malformada o driver caído → TRIAL_DAYS, el histórico de la landing.
+const TRIAL_DAYS_KEY = 'trial_days'
+const PLATFORM = 'platform'
+
+async function readPlatformTrialDays(configRepo: RepositoryAdapter<any>): Promise<number> {
+  const rows = (await configRepo.findMany({ hotelId: PLATFORM, key: TRIAL_DAYS_KEY })) as any[]
+  const raw = (rows as any[])?.[0]?.value
+  // Según el driver, `value` llega serializado o como objeto (mismo manejo que
+  // subscription-settings). Un JSON roto cae al default: una fila vieja mal escrita no puede
+  // cambiarle la promesa de la prueba al alta.
+  let value: any = {}
+  if (raw !== undefined && raw !== null) {
+    try { value = typeof raw === 'string' ? JSON.parse(raw) : raw } catch { value = {} }
+  }
+  const days = value && typeof value === 'object' ? (value as any).days : undefined
+  return typeof days === 'number' && Number.isInteger(days) && days >= 1 && days <= 365 ? days : TRIAL_DAYS
+}
 
 export function SubscriptionsModule() {
   return createModule({
@@ -25,10 +49,12 @@ export function SubscriptionsModule() {
     // atiende dos eventos más (`invoice.finalized`, `invoice.voided`) — contrato observable, 1.5.0.
     // REQ-PIPE-05 (#146): acción `extendTrial` (la invoca `admin` vía connector
     // admin-subscriptions-trial; sin ruta HTTP propia) — contrato observable, 1.5.1.
-    version: '1.5.1',
+    // #103 (CFG-6): la duración del trial (signup y publicSignupPolicy) sale de
+    // `configuration.trial_days` en vez del literal TRIAL_DAYS — observable, 1.5.2.
+    version: '1.5.2',
     description: 'Suscripción del hotel a la plataforma: alta pública, prueba gratis y corte de servicio',
     contract: {
-      name: 'subscriptions', version: '1.5.1',
+      name: 'subscriptions', version: '1.5.2',
       description: 'SaaS subscription lifecycle',
       actions: ['signup', 'publicPlans', 'publicFounderDiscount', 'publicFounderCountdown', 'myStatus', 'onboarding', 'checkout', 'portal', 'upgradePreview', 'upgrade', 'webhookPlatform', 'applyStripeDiscount', 'publicSignupPolicy', 'resumeCheckout', 'extendTrial'],
       events: [],
@@ -44,6 +70,7 @@ export function SubscriptionsModule() {
         'publicPlans: la lista sale del más barato al más caro (price ASC, slug ASC — #30); el orden lo fija el backend, ninguna vista re-ordena',
         'publicFounderDiscount: el % del programa Fundador sale de `special_category_config`, no de una variable de build del frontend (CFG-1)',
         'publicFounderCountdown: se calcula siempre contra un ancla fija (durationDays desde subscription_settings) — nunca una fecha límite guardada que haya que reiniciar a mano',
+        'signup/publicSignupPolicy: la duración del trial sale de configuration(platform, trial_days), nunca de un literal; sin fila o con la config caída rige TRIAL_DAYS (15) — vencimiento, correo y política dicen el MISMO número (#103)',
         'Toda ruta pública (sin auth) va rate-limitada por IP a 30 req/min antes del controller, como landing y opiniones',
       ],
     },
@@ -51,6 +78,10 @@ export function SubscriptionsModule() {
       if (!auth) throw new Error('subscriptions: auth dependency required')
       registerSubscriptionModels(orm)
       const log = logger.child('subscriptions')
+
+      // KV compartido `configuration` — además del onboarding, de acá sale la duración del
+      // trial (#103): se declara aparte para cablearle el lector al service.
+      const configurationRepo = new OrmRepository<any>(orm, 'Configuration')
 
       const service = new SubscriptionsService(
         new OrmRepository<any>(orm, 'Subscriptions'),
@@ -67,11 +98,14 @@ export function SubscriptionsModule() {
         // Config de Fundador/Pionero: el % que publica la landing sale de acá (CFG-1).
         new OrmRepository<any>(orm, 'SpecialCategoryConfig'),
         // KV compartido — onboarding.ts la lee para saber si Identidad/Políticas ya se
-        // guardaron explícitamente (ver ONBOARDING_CONFIRM_KEYS).
-        new OrmRepository<any>(orm, 'Configuration'),
+        // guardaron explícitamente (ver ONBOARDING_CONFIRM_KEYS), y #103 lee acá `trial_days`.
+        configurationRepo,
         // `platform_invoices` — el webhook de plataforma deja acá cada cobro (REQ-BIL-02).
         new OrmRepository<any>(orm, 'PlatformInvoices'),
       )
+      // #103 (CFG-6): el alta y la política pública leen la duración del trial de la misma fila
+      // `configuration` que edita el super-admin. Sin fila → TRIAL_DAYS (15), igual que antes.
+      service.setTrialDaysDeps(() => readPlatformTrialDays(configurationRepo))
       const controller = new SubscriptionsController(service, log)
 
       // Igual patrón que hoteles/index.ts para escritura de configuración del hotel:
