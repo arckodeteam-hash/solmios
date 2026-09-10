@@ -13,23 +13,28 @@
       </div>
 
       <!-- Navigation -->
-      <nav class="flex-1 py-4 px-3 space-y-1 overflow-y-auto scrollbar-hide">
-        <router-link
-          v-for="item in navItems"
-          :key="item.path"
-          :to="item.path"
-          class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-base font-semibold transition-all cursor-pointer"
-          :class="isActive(item.path) ? 'bg-white/15 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-white'"
-        >
-          <span class="w-5 h-5 shrink-0" v-html="item.icon"></span>
-          <span>{{ item.label }}</span>
-          <span
-            v-if="item.badge"
-            class="ml-auto bg-coral/20 text-coral text-[10px] font-bold px-2 py-0.5 rounded-full"
-          >
-            {{ item.badge }}
-          </span>
-        </router-link>
+      <nav class="flex-1 overflow-y-auto scrollbar-hide px-3 py-4">
+        <div v-for="section in navSections" :key="section.label" class="mb-5 last:mb-0">
+          <div class="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[1.5px] text-gray-500">{{ section.label }}</div>
+          <div class="space-y-1">
+            <router-link
+              v-for="item in section.items"
+              :key="item.path"
+              :to="item.path"
+              class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-base font-semibold transition-all cursor-pointer"
+              :class="isActive(item.path) ? 'bg-white/15 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-white'"
+            >
+              <span class="w-5 h-5 shrink-0" v-html="item.icon"></span>
+              <span>{{ item.label }}</span>
+              <span
+                v-if="item.badge"
+                class="ml-auto bg-coral/20 text-coral text-[10px] font-bold px-2 py-0.5 rounded-full"
+              >
+                {{ item.badge }}
+              </span>
+            </router-link>
+          </div>
+        </div>
       </nav>
 
       <!-- PC-2 Multi-property: Hotel Switcher (contexto de hotel activo para super_admin) -->
@@ -170,38 +175,91 @@ const ICONS = {
   modules: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
   mail: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path stroke-linecap="round" stroke-linejoin="round" d="m3 7 9 6 9-6"/></svg>',
   trash: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"/></svg>',
+  share: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path stroke-linecap="round" d="m8.6 10.6 6.8-4M8.6 13.4l6.8 4"/></svg>',
+  handshake: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m11 17-2.5-2.5M14 20l-6-6M3 10l4-4 3 1 4-1 3 1 4-2v8l-3 1-3 4-3-3-3 2-3-3z"/></svg>',
+  queue: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2.5"/></svg>',
+  globe: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M3.5 9h17M3.5 15h17M12 3c2.5 2.5 3.5 5.6 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.6-3.5-9s1-6.5 3.5-9Z"/></svg>',
   briefcase: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 14.15v4.25c0 1.094-.787 2.036-1.872 2.18-2.087.277-4.216.42-6.378.42s-4.291-.143-6.378-.42c-1.085-.144-1.872-1.086-1.872-2.18v-4.25m16.5 0a2.18 2.18 0 0 0 .75-1.661V8.706c0-1.081-.768-2.015-1.837-2.175a48.114 48.114 0 0 0-3.413-.387m4.5 8.006c-.194.165-.42.295-.673.38A23.978 23.978 0 0 1 12 15.75c-2.648 0-5.195-.429-7.577-1.22a2.016 2.016 0 0 1-.673-.38m0 0A2.18 2.18 0 0 1 3 12.489V8.706c0-1.081.768-2.015 1.837-2.175a48.111 48.111 0 0 1 3.413-.387m7.5 0V5.25A2.25 2.25 0 0 0 13.5 3h-3a2.25 2.25 0 0 0-2.25 2.25v.894m7.5 0a48.667 48.667 0 0 0-7.5 0"/></svg>',
 }
 
-const navItems = computed(() => {
+/**
+ * Menú agrupado por afinidad. Antes eran 26 links planos y lo relacionado quedaba disperso:
+ * Planes, Suscripciones y Facturación separados entre sí por Módulos/Referidos/Aliados/Soporte,
+ * Roles & Permisos a 14 posiciones de Usuarios, y las cuatro pantallas que responden "qué está
+ * pasando en el sistema" (Monitoreo, Auditoría, Cola de Channex, API & Webhooks) partidas en
+ * dos bloques distintos. Con 26 destinos, encontrar uno obligaba a leer la lista entera.
+ *
+ * El orden de las secciones sigue la frecuencia de uso del dueño de la plataforma: primero el
+ * estado del negocio, después los clientes y la plata, y al final lo que se toca de vez en
+ * cuando (integraciones, sistema, configuración).
+ */
+const navSections = computed(() => {
   const s = stats.value
   return [
-    { path: '/admin', label: 'Dashboard', icon: ICONS.dashboard },
-    { path: '/admin/hotels', label: 'Hoteles', icon: ICONS.hotel, badge: s.hoteles || undefined },
-    { path: '/admin/plans', label: 'Planes', icon: ICONS.card },
-    { path: '/admin/modules', label: 'Módulos', icon: ICONS.modules },
-    { path: '/admin/subscriptions', label: 'Suscripciones', icon: ICONS.clipboard },
-    { path: '/admin/referrals', label: 'Referidos', icon: ICONS.megaphone },
-    { path: '/admin/aliados', label: 'Aliados', icon: ICONS.megaphone },
-    { path: '/admin/support', label: 'Soporte', icon: ICONS.ticket, badge: s.ticketsAbiertos || undefined },
-    { path: '/admin/billing', label: 'Facturación', icon: ICONS.wallet },
-    { path: '/admin/analytics', label: 'Analytics', icon: ICONS.chart },
-    { path: '/admin/users', label: 'Usuarios', icon: ICONS.user },
-    { path: '/admin/empleados', label: 'Empleados', icon: ICONS.usergroup },
-    { path: '/admin/monitoring', label: 'Monitoreo', icon: ICONS.monitor },
-    { path: '/admin/audit', label: 'Auditoría', icon: ICONS.document },
-    { path: '/admin/feedback', label: 'Feedback', icon: ICONS.chat },
-    { path: '/admin/announcements', label: 'Anuncios', icon: ICONS.megaphone },
-    { path: '/admin/channels', label: 'Canales', icon: ICONS.channels },
-    { path: '/admin/channex-queue', label: 'Cola de Channex', icon: ICONS.channels },
-    { path: '/admin/api-keys', label: 'API & Webhooks', icon: ICONS.key },
-    { path: '/admin/email-templates', label: 'Plantillas de Email', icon: ICONS.mail },
-    { path: '/admin/sitio', label: 'Sitio Público', icon: ICONS.document },
-    { path: '/admin/eliminacion-datos', label: 'Eliminación de Datos', icon: ICONS.trash, badge: s.solicitudesEliminacion || undefined },
-    { path: '/admin/leads-ventas', label: 'Leads de Ventas', icon: ICONS.briefcase, badge: s.leadsVentas || undefined },
-    { path: '/admin/digitalizacion', label: 'Digitalización', icon: ICONS.sparkles },
-    { path: '/admin/roles', label: 'Roles & Permisos', icon: ICONS.shield },
-    { path: '/admin/settings', label: 'Configuración', icon: ICONS.cog },
+    {
+      label: 'Resumen',
+      items: [
+        { path: '/admin', label: 'Dashboard', icon: ICONS.dashboard },
+        { path: '/admin/analytics', label: 'Analytics', icon: ICONS.chart },
+      ],
+    },
+    {
+      label: 'Clientes',
+      items: [
+        { path: '/admin/hotels', label: 'Hoteles', icon: ICONS.hotel, badge: s.hoteles || undefined },
+        { path: '/admin/users', label: 'Usuarios', icon: ICONS.user },
+        { path: '/admin/empleados', label: 'Empleados', icon: ICONS.usergroup },
+      ],
+    },
+    {
+      label: 'Negocio',
+      items: [
+        { path: '/admin/subscriptions', label: 'Suscripciones', icon: ICONS.clipboard },
+        { path: '/admin/plans', label: 'Planes', icon: ICONS.card },
+        { path: '/admin/modules', label: 'Módulos', icon: ICONS.modules },
+        { path: '/admin/billing', label: 'Facturación', icon: ICONS.wallet },
+      ],
+    },
+    {
+      label: 'Crecimiento',
+      items: [
+        { path: '/admin/leads-ventas', label: 'Leads de Ventas', icon: ICONS.briefcase, badge: s.leadsVentas || undefined },
+        { path: '/admin/referrals', label: 'Referidos', icon: ICONS.share },
+        { path: '/admin/aliados', label: 'Aliados', icon: ICONS.handshake },
+        { path: '/admin/digitalizacion', label: 'Digitalización', icon: ICONS.sparkles },
+      ],
+    },
+    {
+      label: 'Atención al cliente',
+      items: [
+        { path: '/admin/support', label: 'Soporte', icon: ICONS.ticket, badge: s.ticketsAbiertos || undefined },
+        { path: '/admin/feedback', label: 'Feedback', icon: ICONS.chat },
+        { path: '/admin/eliminacion-datos', label: 'Eliminación de Datos', icon: ICONS.trash, badge: s.solicitudesEliminacion || undefined },
+      ],
+    },
+    {
+      label: 'Comunicación',
+      items: [
+        { path: '/admin/announcements', label: 'Anuncios', icon: ICONS.megaphone },
+        { path: '/admin/email-templates', label: 'Plantillas de Email', icon: ICONS.mail },
+        { path: '/admin/sitio', label: 'Sitio Público', icon: ICONS.globe },
+      ],
+    },
+    {
+      // Lo que responde "qué está pasando en el sistema", todo junto: el estado del proceso,
+      // el registro de quién hizo qué, los trabajos que fallaron y reintentan, y las
+      // integraciones salientes.
+      label: 'Sistema',
+      items: [
+        { path: '/admin/monitoring', label: 'Monitoreo', icon: ICONS.monitor },
+        { path: '/admin/audit', label: 'Auditoría', icon: ICONS.document },
+        { path: '/admin/channex-queue', label: 'Cola de Channex', icon: ICONS.queue },
+        { path: '/admin/api-keys', label: 'API & Webhooks', icon: ICONS.key },
+        { path: '/admin/channels', label: 'Canales', icon: ICONS.channels },
+        { path: '/admin/roles', label: 'Roles & Permisos', icon: ICONS.shield },
+        { path: '/admin/settings', label: 'Configuración', icon: ICONS.cog },
+      ],
+    },
   ]
 })
 
