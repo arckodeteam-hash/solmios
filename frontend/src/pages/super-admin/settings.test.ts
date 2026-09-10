@@ -108,7 +108,10 @@ describe('settings (super-admin) — un Guardar por pestaña', () => {
     vi.mocked(PlatformService.getResend).mockReset().mockResolvedValue({ configured: false, last4: null })
     vi.mocked(PlatformService.getSettingsStatus).mockReset().mockResolvedValue(STATUS_APAGADO)
     vi.mocked(ChannexAdminService.status).mockReset().mockResolvedValue({
-      environment: 'staging', hasKey: false, keyMasked: '', channexUserId: '',
+      environment: 'staging', hasKey: false, keyMasked: '', channexUserId: '', dashboardUrl: '',
+      webhook: { registered: false, callbackUrl: '' },
+      properties: { inAccount: 0, hotelsWithProperty: 0, orphans: [] },
+      planExpiresAt: '', planDaysLeft: null, planExpired: false,
     })
     vi.mocked(ChannexAdminService.test).mockReset()
     // #103: los valores que devuelve "el backend" para la pestaña Suscripciones.

@@ -87,6 +87,10 @@ export class AdminController {
     }
   }
 
+  async getAnnouncementsReach() {
+    return { status: 200, body: await this.service.getAnnouncementsReach() }
+  }
+
   async listAnnouncements() {
     return { status: 200, body: await this.service.listAnnouncements() }
   }

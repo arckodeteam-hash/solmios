@@ -8,7 +8,9 @@ import { mapBookingRevision } from '../usecases/booking-ingestion'
 import { BookingSyncUseCase } from '../usecases/booking-sync'
 import type { BookingRevisionDTO } from '../types'
 
-const fakeLogger = { info: () => {}, warn: () => {} }
+// `error` incluido: el camino del webhook que no encuentra la revisión lo usa, y sin él el stub
+// rompía con "logger.error is not a function" en vez de ejercitar el caso.
+const fakeLogger = { info: () => {}, warn: () => {}, error: () => {} }
 
 // ─── Builders de fixtures ───────────────────────────────────────────────
 function makeRevision(over: Partial<BookingRevisionDTO> = {}): BookingRevisionDTO {
@@ -264,5 +266,210 @@ describe('BookingSyncUseCase — path global (issue #564)', () => {
     expect(res.ingested).toBe(1)
     expect(res.unmapped).toBe(0)
     expect(ackCalls).toHaveLength(1)
+  })
+})
+
+// ─── Drenado del feed: no dejar revisiones esperando al próximo tick ─────
+//
+// El feed de Channex es una VENTANA DE 30 MINUTOS, no una cola durable: lo que no se ackea
+// dentro de ese rato desaparece y no vuelve nunca. Devuelve hasta 50 por llamada, así que una
+// tanda grande (un canal que reconecta y vuelca su backlog) no entra en una sola vuelta.
+// Antes se procesaban 50 y se dejaba el resto "para el próximo tick": con el cron cada minuto,
+// el techo real era 50 reservas/minuto y una tanda de más de ~1500 perdía las últimas.
+describe('BookingSyncUseCase.run — drenado del feed', () => {
+  /** Devuelve páginas sucesivas del feed, como Channex después de cada ack. */
+  function makeChannexPaginado(paginas: BookingRevisionDTO[][]) {
+    let vuelta = 0
+    const ackCalls: string[] = []
+    const channex: any = {
+      fetchBookingFeed: async () => paginas[vuelta++] ?? [],
+      ackBooking: async (_k: string, revId: string) => { ackCalls.push(revId); return true },
+      getRoomTypeById: async () => ({ id: 'rt-1', title: 'Double' }),
+    }
+    return { channex, ackCalls, vueltas: () => vuelta }
+  }
+
+  const lote = (n: number, prefijo: string) =>
+    Array.from({ length: n }, (_, i) => makeRevision({ id: `${prefijo}-${i}`, uniqueId: `${prefijo}-U-${i}` }))
+
+  const configs = [{ hotelId: 'hotelA', channexPropertyId: 'propA', syncEnabled: 1 }]
+
+  it('feed lleno → sigue pidiendo hasta vaciarlo, sin esperar al próximo tick', async () => {
+    const { channex, vueltas } = makeChannexPaginado([lote(50, 'a'), lote(50, 'b'), lote(3, 'c')])
+    const { orm } = makeOrm({ configs })
+
+    const res = await new BookingSyncUseCase(deps(channex, orm)).run()
+
+    expect(vueltas()).toBe(3)        // pidió de nuevo tras cada página llena
+    expect(res.feedSize).toBe(103)   // procesó las 103, no sólo las primeras 50
+    expect(res.ingested).toBe(103)
+  })
+
+  it('una sola página incompleta → una sola llamada al feed', async () => {
+    const { channex, vueltas } = makeChannexPaginado([lote(3, 'a')])
+    const { orm } = makeOrm({ configs })
+
+    const res = await new BookingSyncUseCase(deps(channex, orm)).run()
+
+    expect(vueltas()).toBe(1)
+    expect(res.feedSize).toBe(3)
+  })
+
+  // El corte de seguridad: las revisiones sin mapeo NO se ackean a propósito (ackear sería tirar
+  // la reserva), así que el feed devuelve exactamente las mismas 50 en cada vuelta. Sin este
+  // freno, el drenado giraría para siempre y colgaría el cron.
+  it('página llena que no ackea nada → corta en vez de girar para siempre', async () => {
+    const paginaFija = lote(50, 'x')
+    let vuelta = 0
+    const channex: any = {
+      fetchBookingFeed: async () => { vuelta++; return paginaFija },
+      ackBooking: async () => true,
+      getRoomTypeById: async () => ({ id: 'rt-1', title: 'Double' }),
+    }
+    const { orm } = makeOrm({ configs: [] }) // sin mapeo → todas unmapped, ninguna se ackea
+
+    const res = await new BookingSyncUseCase(deps(channex, orm)).run()
+
+    expect(vuelta).toBeLessThanOrEqual(2)  // detecta que no hay progreso y para
+    expect(res.unmapped).toBeGreaterThan(0)
+  })
+})
+
+// ─── Recuperación después de una caída ──────────────────────────────────
+//
+// El feed sólo re-sirve lo no ackeado durante 30 minutos. Si el backend estuvo caído más que eso
+// —un deploy largo, el server abajo— esas reservas DESAPARECEN del feed y no vuelven nunca: el
+// huésped tiene su confirmación de Booking.com y en el PMS no existe. La única fuente que queda
+// es `GET /bookings?filter[inserted_at][gte]=`, que no caduca.
+//
+// Es MANUAL y acotada por fecha a propósito: como cron periódico re-traería los mismos bookings
+// para siempre, caro de los dos lados y sin ningún beneficio mientras el poller está sano.
+describe('BookingSyncUseCase.recoverSince — reservas perdidas del feed', () => {
+  const configs = [{ hotelId: 'hotelA', channexPropertyId: 'propA', syncEnabled: 1 }]
+
+  function makeChannexRecover(bookings: BookingRevisionDTO[]) {
+    const pedidos: string[] = []
+    const ackCalls: string[] = []
+    const channex: any = {
+      fetchBookingsSince: async (_k: string, desde: string) => { pedidos.push(desde); return bookings },
+      fetchBookingFeed: async () => [],
+      ackBooking: async (_k: string, id: string) => { ackCalls.push(id); return true },
+      getRoomTypeById: async () => ({ id: 'rt-1', title: 'Double' }),
+    }
+    return { channex, pedidos, ackCalls }
+  }
+
+  it('crea en el PMS las reservas que quedaron afuera', async () => {
+    const { channex, pedidos } = makeChannexRecover([
+      makeRevision({ id: 'rev-a', uniqueId: 'U-A' }),
+      makeRevision({ id: 'rev-b', uniqueId: 'U-B' }),
+    ])
+    const { orm, created } = makeOrm({ configs })
+
+    const res = await new BookingSyncUseCase(deps(channex, orm)).recoverSince('2026-09-09T18:00:00Z')
+
+    expect(pedidos).toEqual(['2026-09-09T18:00:00Z'])
+    expect(res.ingested).toBe(2)
+    expect(created).toHaveLength(2)
+  })
+
+  // Lo normal en una recuperación es que la mayoría YA esté: se pide un rango generoso y se
+  // confía en el dedupe. Si duplicara, el remedio sería peor que la enfermedad.
+  it('lo que ya existe no se duplica', async () => {
+    const { channex } = makeChannexRecover([makeRevision({ uniqueId: 'U-A' })])
+    const { orm, created } = makeOrm({
+      configs,
+      existingRes: [{ id: 'r1', hotelId: 'hotelA', externalLocator: 'U-A' }],
+    })
+
+    const res = await new BookingSyncUseCase(deps(channex, orm)).recoverSince('2026-09-09T18:00:00Z')
+
+    expect(res.ingested).toBe(0)
+    expect(res.skipped).toBe(1)
+    expect(created).toHaveLength(0)
+  })
+
+  // No se ackea: estos bookings vienen de /bookings, no del feed. Su revisión ya expiró (por eso
+  // hubo que recuperarlos), así que el ack sólo sumaría una llamada que falla.
+  it('no ackea nada', async () => {
+    const { channex, ackCalls } = makeChannexRecover([makeRevision({ uniqueId: 'U-A' })])
+    const { orm } = makeOrm({ configs })
+
+    await new BookingSyncUseCase(deps(channex, orm)).recoverSince('2026-09-09T18:00:00Z')
+
+    expect(ackCalls).toHaveLength(0)
+  })
+
+  it('una property sin mapeo se cuenta pero no rompe la corrida', async () => {
+    const { channex } = makeChannexRecover([makeRevision({ propertyId: 'propDesconocida' })])
+    const { orm, created } = makeOrm({ configs })
+
+    const res = await new BookingSyncUseCase(deps(channex, orm)).recoverSince('2026-09-09T18:00:00Z')
+
+    expect(res.unmapped).toBe(1)
+    expect(created).toHaveLength(0)
+    expect(res.success).toBe(true)
+  })
+})
+
+// ─── Rastro auditable: las tres vías dejan fila en sync_log ──────────────
+//
+// `sync_log` es lo que se ve en el Historial de Sincronización del panel; `journalctl` no lo mira
+// nadie y se rota (en prod arranca ~25 días atrás). Cuando el webhook no existía, auditar sólo el
+// cron alcanzaba. Con el webhook como camino PRINCIPAL de las reservas, una que entre mal por ahí
+// no puede ser invisible — ni el rescate manual, que es la operación más delicada de todas.
+describe('BookingSyncUseCase — rastro en sync_log', () => {
+  const configs = [{ hotelId: 'hotelA', channexPropertyId: 'propA', syncEnabled: 1 }]
+
+  function conRastro(channexExtra: any = {}) {
+    const filas: any[] = []
+    const syncLogRepo: any = { create: async (row: any) => { filas.push(row); return row } }
+    const channex: any = {
+      fetchBookingFeed: async () => [],
+      fetchBookingRevision: async () => makeRevision({ uniqueId: 'U-WH' }),
+      fetchBookingsSince: async () => [makeRevision({ uniqueId: 'U-REC' })],
+      ackBooking: async () => true,
+      getRoomTypeById: async () => ({ id: 'rt-1', title: 'Double' }),
+      ...channexExtra,
+    }
+    return { filas, syncLogRepo, channex }
+  }
+
+  const depsCon = (channex: any, orm: any, syncLogRepo: any) => ({
+    channex, queries: {} as any, orm, logger: fakeLogger as any, syncLogRepo,
+  })
+
+  it('la ingesta por WEBHOOK queda registrada', async () => {
+    const { filas, syncLogRepo, channex } = conRastro()
+    const { orm } = makeOrm({ configs })
+
+    await new BookingSyncUseCase(depsCon(channex, orm, syncLogRepo)).runOne('rev-webhook-1')
+
+    expect(filas).toHaveLength(1)
+    expect(filas[0].action).toBe('ingest_booking_webhook')
+    expect(filas[0].status).toBe('success')
+    expect(filas[0].details.ingested).toBe(1)
+  })
+
+  it('un webhook que no pudo traer la revisión queda registrado como error', async () => {
+    const { filas, syncLogRepo, channex } = conRastro({ fetchBookingRevision: async () => null })
+    const { orm } = makeOrm({ configs })
+
+    await new BookingSyncUseCase(depsCon(channex, orm, syncLogRepo)).runOne('rev-fantasma')
+
+    expect(filas).toHaveLength(1)
+    expect(filas[0].status).toBe('error')
+  })
+
+  it('el rescate manual queda registrado', async () => {
+    const { filas, syncLogRepo, channex } = conRastro()
+    const { orm } = makeOrm({ configs })
+
+    await new BookingSyncUseCase(depsCon(channex, orm, syncLogRepo)).recoverSince('2026-09-09T18:00:00Z')
+
+    expect(filas).toHaveLength(1)
+    expect(filas[0].action).toBe('recover_bookings')
+    // Sin el "desde", la fila no sirve para reconstruir qué se rescató y qué no.
+    expect(filas[0].details.desde).toBe('2026-09-09T18:00:00Z')
   })
 })

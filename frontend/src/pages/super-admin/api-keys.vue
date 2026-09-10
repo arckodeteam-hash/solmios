@@ -1,130 +1,153 @@
 <template>
   <div>
     <!-- Header -->
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex items-center justify-between flex-wrap gap-3 mb-6">
       <div>
         <h2 class="text-xl font-black text-navy">API Keys & Webhooks</h2>
-        <p class="text-sm text-text-muted mt-0.5">Gestiona claves API, webhooks y accesos externos</p>
+        <p class="text-sm text-text-muted mt-0.5">Accesos de sistemas externos a la plataforma, y avisos de la plataforma hacia ellos</p>
       </div>
-      <button @click="showCreateKey = true" class="px-4 py-2 bg-navy text-white text-sm font-bold rounded-xl hover:bg-navy-light transition-colors cursor-pointer">
+      <button v-if="activeTab === 'keys'" @click="showCreateKey = true" class="px-4 py-2 bg-navy text-white text-sm font-bold rounded-xl hover:bg-navy-light transition-colors cursor-pointer">
         + Nueva API Key
+      </button>
+      <button v-else @click="openCreateWebhook" class="px-4 py-2 bg-navy text-white text-sm font-bold rounded-xl hover:bg-navy-light transition-colors cursor-pointer">
+        + Nuevo Webhook
       </button>
     </div>
 
-    <!-- API Keys -->
-    <div class="bg-white rounded-2xl border border-border overflow-hidden mb-6">
-      <div class="px-5 py-4 bg-navy">
-        <h3 class="font-extrabold text-white">API Keys Activas</h3>
-      </div>
-      <div class="p-6">
-      <SkeletonLoader v-if="loading" variant="table" :rows="4" />
-      <div v-else class="overflow-x-auto">
-        <table class="w-full tbl-head">
-          <thead>
-            <tr class="border-b border-border">
-              <th class="text-left py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Nombre</th>
-              <th class="text-left py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Clave</th>
-              <th class="text-left py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Hotel</th>
-              <th class="text-center py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Peticiones</th>
-              <th class="text-left py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Último Uso</th>
-              <th class="text-left py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Estado</th>
-              <th class="text-right py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Acción</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="key in apiKeys" :key="key.id" class="border-b border-border/50 hover:bg-surface/50 transition-colors">
-              <td class="py-3 px-3">
-                <div class="text-xs font-bold text-navy">{{ key.name }}</div>
-                <div class="text-[9px] text-text-muted">{{ key.scope }}</div>
-              </td>
-              <td class="py-3 px-3">
-                <div class="flex items-center gap-2">
-                  <code class="text-[10px] font-mono text-text-muted bg-surface px-2 py-0.5 rounded">{{ key.masked }}</code>
-                  <button @click="copyKey(key)" class="text-text-muted hover:text-cyan transition-colors cursor-pointer">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
-                  </button>
-                </div>
-              </td>
-              <td class="py-3 px-3 text-xs text-navy">{{ key.hotel }}</td>
-              <td class="py-3 px-3 text-center text-xs font-bold text-navy">{{ key.requests.toLocaleString() }}</td>
-              <td class="py-3 px-3 text-xs text-text-muted">{{ key.lastUsed }}</td>
-              <td class="py-3 px-3">
-                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="key.active ? 'bg-teal/10 text-teal' : 'bg-coral/10 text-coral'">
-                  {{ key.active ? 'Activa' : 'Revocada' }}
-                </span>
-              </td>
-              <td class="py-3 px-3 text-right">
-                <button @click="revokeKey(key.id)" class="text-[10px] font-bold text-coral hover:underline cursor-pointer">
-                  {{ key.active ? 'Revocar' : 'Reactivar' }}
-                </button>
-              </td>
-            </tr>
-            <tr v-if="!apiKeys.length">
-              <td colspan="7">
-                <EmptyState title="Sin API keys" message="Todavía no generaste ninguna clave. Creá una para conectar servicios externos." />
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      </div>
+    <!-- Tabs: dos cosas distintas (entrar vs. avisar), una a la vez -->
+    <div class="flex gap-2 flex-wrap mb-5" role="tablist">
+      <button v-for="tab in tabs" :key="tab.value" role="tab" :aria-selected="activeTab === tab.value" @click="activeTab = tab.value"
+        class="px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer"
+        :class="activeTab === tab.value ? 'bg-navy text-white' : 'bg-white text-text-secondary border border-border hover:border-navy/30'">
+        {{ tab.label }}
+        <span v-if="tab.count !== null" class="ml-1.5 text-[10px] font-black px-1.5 py-0.5 rounded-full" :class="activeTab === tab.value ? 'bg-white/20' : 'bg-surface text-text-muted'">{{ tab.count }}</span>
+      </button>
     </div>
 
-    <!-- Webhooks -->
-    <div class="bg-white rounded-2xl border border-border overflow-hidden">
-      <div class="flex items-center justify-between px-5 py-4 bg-navy">
-        <h3 class="font-extrabold text-white">Webhooks Configurados</h3>
-        <button @click="openCreateWebhook" class="px-3 py-2 bg-white/10 text-white text-xs font-bold rounded-xl cursor-pointer">
-          + Nuevo Webhook
-        </button>
-      </div>
-      <div class="p-6">
-      <SkeletonLoader v-if="loadingWebhooks" variant="table" :rows="3" />
-      <div v-else class="overflow-x-auto">
-        <table class="w-full tbl-head">
-          <thead>
-            <tr class="border-b border-border">
-              <th class="text-left py-3 px-3 text-[10px] font-bold text-text-muted uppercase">URL</th>
-              <th class="text-left py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Eventos</th>
-              <th class="text-left py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Hotel</th>
-              <th class="text-center py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Entregados</th>
-              <th class="text-center py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Fallidos</th>
-              <th class="text-left py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Estado</th>
-              <th class="text-right py-3 px-3 text-[10px] font-bold text-text-muted uppercase">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="wh in webhooks" :key="wh.id" class="border-b border-border/50 hover:bg-surface/50 transition-colors">
-              <td class="py-3 px-3 text-[10px] text-text-muted font-mono truncate max-w-[250px]">{{ wh.url }}</td>
-              <td class="py-3 px-3">
-                <div class="flex flex-wrap gap-1">
-                  <span v-for="ev in wh.events" :key="ev" class="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-surface text-text-muted">{{ ev }}</span>
-                </div>
-              </td>
-              <td class="py-3 px-3 text-xs text-navy">{{ wh.hotel }}</td>
-              <td class="py-3 px-3 text-center text-xs font-bold text-teal">{{ wh.delivered }}</td>
-              <td class="py-3 px-3 text-center text-xs" :class="wh.failed > 0 ? 'font-bold text-coral' : 'text-text-muted'">{{ wh.failed }}</td>
-              <td class="py-3 px-3">
-                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="wh.failed > 5 ? 'bg-coral/10 text-coral' : 'bg-teal/10 text-teal'">
-                  {{ wh.failed > 5 ? 'Degradado' : 'Saludable' }}
-                </span>
-              </td>
-              <td class="py-3 px-3 text-right">
-                <button @click="testWebhook(wh.id)" :disabled="testingId === wh.id" class="text-[10px] font-bold text-cyan hover:underline cursor-pointer mr-2 disabled:opacity-50">
-                  {{ testingId === wh.id ? 'Probando...' : 'Probar' }}
-                </button>
-                <button @click="deleteWebhook(wh.id)" class="text-[10px] font-bold text-coral hover:underline cursor-pointer">Eliminar</button>
-              </td>
-            </tr>
-            <tr v-if="!webhooks.length">
-              <td colspan="7">
-                <EmptyState title="Sin webhooks" message="Configurá un webhook para recibir eventos de la plataforma en tu servidor." />
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      </div>
+    <!-- ===== Tab: Claves API ===== -->
+    <div v-if="activeTab === 'keys'" class="space-y-5">
+      <InfoNotice title="¿Para qué sirve una API Key?" storage-key="apikeys">
+        <p>Es la credencial con la que <strong>un sistema externo</strong> (un motor de reservas propio, un PMS, un script del hotel) entra a la <strong>API pública</strong> de SOLMI OS sin usuario ni contraseña. Va en el header <code>x-api-key</code> de cada petición a <code>/api/public/v1/*</code>.</p>
+        <p>Cada clave tiene un <strong>alcance</strong>: <code>read:rooms</code> lista habitaciones, <code>read:reservations</code> consulta una reserva, <code>write:reservations</code> crea reservas. Sin el alcance, la API responde 403. Si la clave es de un hotel, solo ve los datos de ese hotel; "Global" ve todos.</p>
+        <p>El valor completo <strong>se muestra una sola vez</strong> al crearla (acá se guarda un hash). <strong>Revocar</strong> la corta al instante y se puede reactivar; <strong>eliminar</strong> es definitivo y queda en la auditoría. "Peticiones" y "Último uso" los cuenta el servidor cada vez que la clave entra.</p>
+      </InfoNotice>
+
+      <SectionCard title="Claves API" :subtitle="`${apiKeys.length} clave${apiKeys.length === 1 ? '' : 's'}`" body-class="p-0">
+        <SkeletonLoader v-if="loading" variant="table" :rows="4" class="p-5" />
+        <div v-else class="overflow-x-auto">
+          <table class="w-full min-w-[840px] tbl-head">
+            <thead>
+              <tr>
+                <th class="text-left py-3 px-4 text-[10px] font-bold uppercase">Nombre / alcance</th>
+                <th class="text-left py-3 px-4 text-[10px] font-bold uppercase">Clave</th>
+                <th class="text-left py-3 px-4 text-[10px] font-bold uppercase">Hotel</th>
+                <th class="text-right py-3 px-4 text-[10px] font-bold uppercase">Peticiones</th>
+                <th class="text-left py-3 px-4 text-[10px] font-bold uppercase">Último uso</th>
+                <th class="text-left py-3 px-4 text-[10px] font-bold uppercase">Estado</th>
+                <th class="text-right py-3 px-4 text-[10px] font-bold uppercase">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="key in apiKeys" :key="key.id" class="border-b border-border/50 hover:bg-surface/50 transition-colors">
+                <td class="py-3 px-4">
+                  <div class="text-xs font-bold text-navy">{{ key.name }}</div>
+                  <div v-if="key.scopes.length" class="flex flex-wrap gap-1 mt-1">
+                    <span v-for="s in key.scopes" :key="s" class="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-surface text-text-muted">{{ s }}</span>
+                  </div>
+                  <div v-else class="text-[10px] text-coral mt-0.5">Sin alcance: no puede llamar a nada</div>
+                </td>
+                <td class="py-3 px-4">
+                  <code class="text-[10px] font-mono text-text-muted bg-surface px-2 py-0.5 rounded" title="Solo se guarda el hash; el valor completo se mostró al crearla">{{ key.masked }}</code>
+                </td>
+                <td class="py-3 px-4 text-xs text-navy">{{ key.hotel }}</td>
+                <td class="py-3 px-4 text-right text-xs font-bold text-navy tabular-nums">{{ key.requests.toLocaleString('es') }}</td>
+                <td class="py-3 px-4 text-xs text-text-muted">{{ key.lastUsed }}</td>
+                <td class="py-3 px-4">
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="key.active ? 'bg-teal/10 text-teal' : 'bg-coral/10 text-coral'">
+                    {{ key.active ? 'Activa' : 'Revocada' }}
+                  </span>
+                </td>
+                <td class="py-3 px-4 text-right whitespace-nowrap">
+                  <button @click="revokeKey(key.id)" class="text-[10px] font-bold hover:underline cursor-pointer" :class="key.active ? 'text-coral' : 'text-teal'">
+                    {{ key.active ? 'Revocar' : 'Reactivar' }}
+                  </button>
+                  <button v-if="!key.active" @click="deleteKey(key.id)" class="ml-3 text-[10px] font-bold text-text-muted hover:text-coral hover:underline cursor-pointer">Eliminar</button>
+                </td>
+              </tr>
+              <tr v-if="!apiKeys.length">
+                <td colspan="7">
+                  <EmptyState title="Sin API keys" message="Todavía no generaste ninguna clave. Creá una para que un sistema externo pueda consultar o crear reservas.">
+                    <template #action>
+                      <button @click="showCreateKey = true" class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white cursor-pointer">+ Nueva API Key</button>
+                    </template>
+                  </EmptyState>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+    </div>
+
+    <!-- ===== Tab: Webhooks ===== -->
+    <div v-else class="space-y-5">
+      <InfoNotice title="¿Para qué sirve un webhook?" storage-key="webhooks">
+        <p>Es el camino inverso a la API Key: acá <strong>SOLMI OS le avisa al servidor del hotel</strong> cuando pasa algo. Cada vez que ocurre uno de los eventos suscritos (<code>reservation.created</code>, <code>payment.completed</code>…), la plataforma hace un <code>POST</code> con el dato en JSON a la URL configurada.</p>
+        <p>Cada envío va <strong>firmado</strong> con HMAC-SHA256 en el header <code>x-solmios-signature</code>, usando el secreto que se muestra <strong>una sola vez</strong> al crearlo: así el servidor del hotel verifica que el aviso es nuestro y no de cualquiera. La URL tiene que ser <strong>pública</strong> (no vale <code>localhost</code> ni una IP privada).</p>
+        <p>Si el destino no responde 2xx, se <strong>reintenta 3 veces</strong> (1 s, 3 s, 9 s) y recién ahí cuenta como fallido. "Probar" manda un evento <code>ping</code> real a ese webhook; "Entregados" y "Fallidos" son entregas reales, no estimaciones. Más de 5 fallos marca el webhook como <strong>degradado</strong>.</p>
+      </InfoNotice>
+
+      <SectionCard title="Webhooks" :subtitle="`${webhooks.length} suscripci${webhooks.length === 1 ? 'ón' : 'ones'}`" body-class="p-0">
+        <SkeletonLoader v-if="loadingWebhooks" variant="table" :rows="3" class="p-5" />
+        <div v-else class="overflow-x-auto">
+          <table class="w-full min-w-[840px] tbl-head">
+            <thead>
+              <tr>
+                <th class="text-left py-3 px-4 text-[10px] font-bold uppercase">URL</th>
+                <th class="text-left py-3 px-4 text-[10px] font-bold uppercase">Eventos</th>
+                <th class="text-left py-3 px-4 text-[10px] font-bold uppercase">Hotel</th>
+                <th class="text-right py-3 px-4 text-[10px] font-bold uppercase">Entregados</th>
+                <th class="text-right py-3 px-4 text-[10px] font-bold uppercase">Fallidos</th>
+                <th class="text-left py-3 px-4 text-[10px] font-bold uppercase">Estado</th>
+                <th class="text-right py-3 px-4 text-[10px] font-bold uppercase">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="wh in webhooks" :key="wh.id" class="border-b border-border/50 hover:bg-surface/50 transition-colors">
+                <td class="py-3 px-4 text-[10px] text-text-muted font-mono truncate max-w-[250px]" :title="wh.url">{{ wh.url }}</td>
+                <td class="py-3 px-4">
+                  <div class="flex flex-wrap gap-1">
+                    <span v-for="ev in wh.events" :key="ev" class="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-surface text-text-muted">{{ ev }}</span>
+                  </div>
+                </td>
+                <td class="py-3 px-4 text-xs text-navy">{{ wh.hotel }}</td>
+                <td class="py-3 px-4 text-right text-xs font-bold text-teal tabular-nums">{{ wh.delivered }}</td>
+                <td class="py-3 px-4 text-right text-xs tabular-nums" :class="wh.failed > 0 ? 'font-bold text-coral' : 'text-text-muted'">{{ wh.failed }}</td>
+                <td class="py-3 px-4">
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="wh.failed > 5 ? 'bg-coral/10 text-coral' : 'bg-teal/10 text-teal'">
+                    {{ wh.failed > 5 ? 'Degradado' : 'Saludable' }}
+                  </span>
+                </td>
+                <td class="py-3 px-4 text-right whitespace-nowrap">
+                  <button @click="testWebhook(wh.id)" :disabled="testingId === wh.id" class="text-[10px] font-bold text-cyan hover:underline cursor-pointer mr-3 disabled:opacity-50 disabled:cursor-wait">
+                    {{ testingId === wh.id ? 'Probando…' : 'Probar' }}
+                  </button>
+                  <button @click="deleteWebhook(wh.id)" class="text-[10px] font-bold text-coral hover:underline cursor-pointer">Eliminar</button>
+                </td>
+              </tr>
+              <tr v-if="!webhooks.length">
+                <td colspan="7">
+                  <EmptyState title="Sin webhooks" message="Configurá un webhook para que el servidor de un hotel reciba los eventos de la plataforma.">
+                    <template #action>
+                      <button @click="openCreateWebhook" class="rounded-full bg-navy px-5 py-2.5 text-sm font-bold text-white cursor-pointer">+ Nuevo Webhook</button>
+                    </template>
+                  </EmptyState>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
     </div>
 
     <!-- Create Webhook Modal -->
@@ -187,12 +210,13 @@
           </select>
         </div>
         <div>
-          <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Scope / Permisos</label>
+          <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Alcance</label>
+          <p class="text-[10px] text-text-muted mb-1.5">Solo lo que la API pública sabe hacer. Sin alcance, la clave no puede llamar a nada.</p>
           <div class="flex flex-wrap gap-1.5">
-            <button v-for="s in scopes" :key="s" @click="toggleScope(s)"
+            <button v-for="s in scopes" :key="s.value" @click="toggleScope(s.value)" :title="s.label"
               class="text-[10px] font-bold px-2 py-1 rounded-full border transition-all cursor-pointer"
-              :class="newKey.scopes.includes(s) ? 'bg-cyan border-cyan text-navy' : 'bg-surface border-border text-text-muted hover:border-cyan'">
-              {{ s }}
+              :class="newKey.scopes.includes(s.value) ? 'bg-cyan border-cyan text-navy' : 'bg-surface border-border text-text-muted hover:border-cyan'">
+              {{ s.value }}
             </button>
           </div>
         </div>
@@ -228,6 +252,8 @@ import { ref, computed, onMounted } from 'vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
+import SectionCard from '@/components/ui/SectionCard.vue'
+import InfoNotice from '@/components/ui/InfoNotice.vue'
 import { ApikeysService } from '@/services/Apikeys.service'
 import { WebhooksService } from '@/services/Webhooks.service'
 import { SuperAdminService } from '@/services/SuperAdmin.service'
@@ -245,7 +271,21 @@ const loading = ref(true)
 const revealKey = ref<string | null>(null)
 const hotels = ref<Array<{ id: string; name: string }>>([])
 
-const scopes = ['read:reservations', 'write:reservations', 'read:rooms', 'write:rooms', 'read:billing', 'write:billing', 'read:guests', 'write:guests']
+// Solo los alcances que la API pública chequea de verdad (backend publicapi/controller.ts:
+// assertScope). Antes se ofrecían 8, de los que 5 no abrían ninguna ruta.
+const scopes = [
+  { value: 'read:rooms', label: 'GET /api/public/v1/rooms — listar habitaciones' },
+  { value: 'read:reservations', label: 'GET /api/public/v1/reservations/:id — consultar una reserva' },
+  { value: 'write:reservations', label: 'POST /api/public/v1/reservations — crear reservas' },
+]
+
+/** `lastUsed` llega ISO del servidor (validate-key.ts) o vacío si la clave nunca entró. */
+function formatLastUsed(iso: string | null | undefined): string {
+  if (!iso) return 'Nunca'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
 
 const newKey = ref<{ name: string; hotel: string; scopes: string[] }>({ name: '', hotel: '', scopes: [] })
 
@@ -265,6 +305,13 @@ const newWebhook = ref<{ url: string; hotel: string; events: string[] }>({ url: 
 
 const webhooks = ref<any[]>([])
 
+type TabValue = 'keys' | 'webhooks'
+const activeTab = ref<TabValue>('keys')
+const tabs = computed<Array<{ value: TabValue; label: string; count: number | null }>>(() => [
+  { value: 'keys', label: 'Claves API', count: loading.value ? null : apiKeys.value.length },
+  { value: 'webhooks', label: 'Webhooks', count: loadingWebhooks.value ? null : webhooks.value.length },
+])
+
 async function loadHotels() {
   try {
     const r = await SuperAdminService.hotels()
@@ -280,11 +327,11 @@ async function loadKeys() {
     apiKeys.value = (r.data || []).map((k: any) => ({
       id: k.id,
       name: k.name,
-      scope: k.scope || '—',
+      scopes: String(k.scope || '').split(',').map((x: string) => x.trim()).filter(Boolean),
       masked: k.masked || '••••••••',
       hotel: k.hotelId ? (hotels.value.find(h => h.id === k.hotelId)?.name || k.hotelId) : 'Global',
       requests: k.requests || 0,
-      lastUsed: k.lastUsed || 'Nunca',
+      lastUsed: formatLastUsed(k.lastUsed),
       active: k.active === 1 || k.active === true,
     }))
   } catch {
@@ -374,13 +421,6 @@ async function reactivateKey(id: string, key: any) {
     key.active = true
     toast.success('Reactivada')
   } catch (e: unknown) { toast.error(e instanceof Error ? e.message : 'Error') }
-}
-
-async function copyKey(key: any) {
-  try {
-    await navigator.clipboard.writeText(key.masked)
-    toast.success('Clave copiada')
-  } catch { toast.error('No se pudo copiar') }
 }
 
 async function copyPlainKey() {

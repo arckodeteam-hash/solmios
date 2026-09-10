@@ -203,6 +203,13 @@ describe('hotel_media — upload', () => {
     ).rejects.toThrow('imágenes')
   })
 
+  it('data-URL de imagen que supera 5MB → ValidationError (media.vue no validaba tamaño)', async () => {
+    const bigBuffer = Buffer.alloc(5 * 1024 * 1024 + 1, 1)
+    await expect(
+      svc({ storage: {} }).upload('h1', { type: 'hero', url: `data:image/png;base64,${bigBuffer.toString('base64')}` }, user),
+    ).rejects.toThrow('5MB')
+  })
+
   it('type=room SIN roomId → ValidationError', async () => {
     await expect(
       svc().upload('h1', { type: 'room', url: 'https://cdn/x.jpg' }, user),

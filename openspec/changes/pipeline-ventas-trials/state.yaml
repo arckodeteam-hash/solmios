@@ -4,7 +4,7 @@ change_name: pipeline-ventas-trials
 created: 2026-09-10
 implemented: 2026-09-10
 deployed: 2026-09-10
-status: implemented
+status: deployed
 current_phase: verify
 
 source: análisis /admin/leads-ventas (docs/analisis-leads-ventas-2026-09-10.md). Decisión 2026-09-10 — Fase A ahora, Fase B después, CRM externo descartado, sin tarjeta en trial.

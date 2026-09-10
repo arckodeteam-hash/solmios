@@ -102,10 +102,22 @@ async function createTablesBlock1(): Promise<void> {
     device TEXT, icon TEXT DEFAULT '🖥️', browser TEXT, os TEXT,
     ip TEXT, isMobile INTEGER DEFAULT 0, lastActivity TEXT, createdAt TEXT)`)
 
+  // `audience` discrimina el anuncio de plataforma del anuncio de un hotel. Existe porque el ORM
+  // solo filtra por igualdad: `hotelId IS NULL` no es expresable, así que sin esta columna un
+  // anuncio "para todos los hoteles" no le llegaba a ninguno.
   await exec(`CREATE TABLE IF NOT EXISTS announcements (
     id TEXT PRIMARY KEY, hotelId TEXT, authorId TEXT, title TEXT NOT NULL, message TEXT,
     type TEXT DEFAULT 'info', priority TEXT DEFAULT 'medium', active INTEGER DEFAULT 1,
-    date TEXT, createdAt TEXT)`)
+    date TEXT, audience TEXT DEFAULT 'hotel', startsAt TEXT, endsAt TEXT, createdAt TEXT)`)
+
+  // Lectura POR USUARIO. El único compuesto va por índice explícito: el ORM no crea únicos
+  // compuestos, y sin él un doble clic o dos pestañas dejan dos filas para la misma persona y la
+  // tasa de apertura pasa de 100%.
+  await exec(`CREATE TABLE IF NOT EXISTS announcement_reads (
+    id TEXT PRIMARY KEY, announcementId TEXT NOT NULL, userId TEXT NOT NULL, hotelId TEXT,
+    seenAt TEXT, dismissedAt TEXT, createdAt TEXT, updatedAt TEXT)`)
+  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_announcement_reads_ann_user
+    ON announcement_reads (announcementId, userId)`)
 
   await exec(`CREATE TABLE IF NOT EXISTS api_keys (
     id TEXT PRIMARY KEY, hotelId TEXT, name TEXT NOT NULL, scope TEXT,

@@ -43,8 +43,11 @@ export function PlatformEmailsModule() {
       registerPlatformEmailsModels(orm)
 
       const repo = new OrmRepository<PlatformEmailTemplateDTO>(orm, 'PlatformEmailTemplate')
+      // `Configuration` (modelo compartido): nombre de la plataforma y contacto de soporte que
+      // el super-admin carga en Configuración → Plataforma, para `{platform_name}` y compañía.
+      const configRepo = new OrmRepository<Record<string, unknown>>(orm, 'Configuration')
       const log = logger.child('platform-emails')
-      const service = new PlatformEmailsService(repo)
+      const service = new PlatformEmailsService(repo, configRepo)
       const controller = new PlatformEmailsController(service, log)
 
       // Plantillas de PLATAFORMA, no de hotel: solo el dueño de la plataforma (super_admin +

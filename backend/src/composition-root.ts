@@ -31,6 +31,7 @@ import { createSubscriptionSuspensionCron } from './shared/usecases/subscription
 import { createReferralCreditsCron } from './shared/usecases/referral-credits-cron'
 import { createCurrencyRatesCron, CURRENCY_RATES_TICK_MS } from './shared/usecases/currency-rates-cron'
 import { createBookingSyncCron, DEFAULT_BOOKING_SYNC_TICK_MS } from './shared/usecases/booking-sync-cron'
+import { createChannelAppointmentsCron, CHANNEL_APPOINTMENT_REMINDER_HOUR } from './shared/usecases/channel-appointments-cron'
 import { HousekeepingSettingsUseCase } from './modules/housekeeping/usecases/settings'
 import { reservasPaymentRequestsConnector } from './connectors/reservas-payment-requests'
 import { RedisCache } from './infrastructure/cache/redis-cache'
@@ -480,6 +481,8 @@ import { gastosAuditlogConnector } from './connectors/gastos-auditlog'
 import { paquetesAuditlogConnector } from './connectors/paquetes-auditlog'
 import { paquetesBookingengineConnector } from './connectors/paquetes-bookingengine'
 import { canalesAuditlogConnector } from './connectors/canales-auditlog'
+// Los pedidos de conexión de OTA aparecen en la campanita del super-admin (REQ-CAN-07).
+import { canalesNotificacionesConnector } from './connectors/canales-notificaciones'
 import { gruposAuditlogConnector } from './connectors/grupos-auditlog'
 import { housekeepingAuditlogConnector } from './connectors/housekeeping-auditlog'
 import { mantenimientoAuditlogConnector } from './connectors/mantenimiento-auditlog'
@@ -697,6 +700,7 @@ system.addConnector('paquetes-bookingengine', paquetesBookingengineConnector)
 // SC-05: borrados que rompen operación. Un canal borrado corta la distribución a las OTAs (el hotel
 // se sigue vendiendo con inventario viejo → overbooking) y un fichaje/turno borrado cambia la nómina.
 system.addConnector('canales-auditlog', canalesAuditlogConnector)
+system.addConnector('canales-notificaciones', canalesNotificacionesConnector)
 system.addConnector('grupos-auditlog', gruposAuditlogConnector)
 system.addConnector('housekeeping-auditlog', housekeepingAuditlogConnector)
 system.addConnector('mantenimiento-auditlog', mantenimientoAuditlogConnector)
@@ -980,6 +984,17 @@ setInterval(() => {
   prearrivalPassCron().catch((e) => logger.warn('prearrival-pass cron failed', { error: (e as Error).message }))
 }, PREARRIVAL_TICK_MS)
 logger.info('Prearrival-pass cron listo', { tickMs: PREARRIVAL_TICK_MS })
+
+// Recordatorio de las citas de conexión de canales (REQ-CAN-07). Tick HORARIO con gate de reloj:
+// el aviso sale una vez por día a las 8 del servidor, pero si el proceso reinició a las 8:05 el
+// próximo tick lo alcanza. Correrlo de más es inofensivo — la dedup vive en `reminderSentFor`.
+const CHANNEL_APPOINTMENTS_TICK_MS = 60 * 60 * 1000
+const channelAppointmentsCron = createChannelAppointmentsCron(orm, emailService, logger, process.env.PUBLIC_URL || '')
+setInterval(() => {
+  if (new Date().getHours() !== CHANNEL_APPOINTMENT_REMINDER_HOUR) return
+  channelAppointmentsCron().catch((e) => logger.warn('channel-appointments cron failed', { error: (e as Error).message }))
+}, CHANNEL_APPOINTMENTS_TICK_MS)
+logger.info('Channel-appointments cron listo', { tickMs: CHANNEL_APPOINTMENTS_TICK_MS, hora: CHANNEL_APPOINTMENT_REMINDER_HOUR })
 
 // Crones del ciclo SaaS (PLAN-SUSCRIPCIONES.md). Mismo molde que night-audit: factory, corrida
 // inicial a los 10s (anti-restart), setInterval con catch que no tira. Los tres son idempotentes

@@ -4,6 +4,7 @@ import { logsForDedupe, alreadySentToday } from './usecases/auto-message-dedupe'
 import { activeFlag } from './usecases/active-flag'
 import { NotFoundError, ConflictError } from 'arckode-framework'
 import { submitTemplateToMeta, syncTemplateStatus } from './usecases/meta-templates'
+import { aplicarEventoDeEstado, sincronizarPendientes, type EventoDeEstado } from './usecases/template-status-events'
 import type { MetaTemplateDeps } from './usecases/meta-templates'
 import { createTemplate, updateTemplate, deleteTemplate, loadOwnedTemplate, crearPlantillasBase } from './usecases/templates-crud'
 import type { TemplateCrudDeps } from './usecases/templates-crud'
@@ -137,6 +138,24 @@ export class MarketingService {
   /** Trae de Meta el estado de UNA plantilla ya enviada. */
   async syncTemplateStatus(id: string, user?: MarketingUser): Promise<WhatsappTemplateDTO> {
     return syncTemplateStatus(this.metaDeps(), await loadOwnedTemplate(this.crudDeps(), id, user))
+  }
+
+  // Mantener al día el estado de aprobación sin depender de que alguien apriete el botón. Los dos
+  // los usa otro módulo: el aviso de Meta entra por el webhook de `ai-recepcionista` (connector
+  // `whatsapp-template-status`) y el barrido lo dispara el cron.
+  /** Aplica un `message_template_status_update` de Meta. `null` si no es una plantilla nuestra. */
+  async aplicarEstadoDePlantilla(evento: EventoDeEstado): Promise<{ id: string; estado: string } | null> {
+    return aplicarEventoDeEstado(this.templateRepo, evento)
+  }
+  /** Le pregunta a Meta por las plantillas de un hotel que siguen esperando respuesta. */
+  async sincronizarPlantillasPendientes(hotelId: string): Promise<{ revisadas: number; actualizadas: number }> {
+    const deps = this.metaDeps()
+    return sincronizarPendientes(
+      this.templateRepo,
+      hotelId,
+      (plantilla) => syncTemplateStatus(deps, plantilla),
+      (plantillaId, error) => this.logger.warn('Plantilla sin sincronizar', { plantillaId, error: String(error) }),
+    )
   }
 
   // ─── Trigger Auto-Messages ────────────────────────────

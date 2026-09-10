@@ -21,6 +21,11 @@ export type PlatformEmailEvent =
   | 'subscription_renewal_manual'
   | 'subscription_suspended'
   | 'subscription_reactivated'
+  // Pedido de conexión de una OTA (REQ-CAN-07). Los dispara `canales` vía el puerto que cablea
+  // email-bootstrap; el hotel los recibe al agendarse la cita, al conectarse y al rechazarse.
+  | 'channel_request_scheduled'
+  | 'channel_request_connected'
+  | 'channel_request_rejected'
 
 export interface PlatformEmailTemplateDTO {
   id: string

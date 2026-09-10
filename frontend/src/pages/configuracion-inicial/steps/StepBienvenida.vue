@@ -17,11 +17,7 @@
         </div>
         <div>
           <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Teléfono principal <span class="text-danger">*</span></label>
-          <div class="wizard-field">
-            <span class="wizard-field-icon" v-html="ICON_PHONE"></span>
-            <input v-model="form.phone" type="tel" required aria-required="true" maxlength="20" class="wizard-input"
-              :style="fieldError ? 'border-color: var(--color-danger)' : ''">
-          </div>
+          <PhoneInput v-model="form.phone" :country="form.country" pill :maxlength="20" :invalid="!!fieldError" />
         </div>
         <div>
           <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Email de contacto <span class="text-danger">*</span></label>
@@ -46,6 +42,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
+import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { SettingsService } from '@/services/Settings.service'
 import { AuthService } from '@/services/Auth.service'
 import { useAuthStore } from '@/stores/auth.store'
@@ -58,7 +55,6 @@ defineProps<{ step: OnboardingStep }>()
 const emit = defineEmits<{ saved: [status: OnboardingStatus] }>()
 
 const ICON_BUILDING = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4M10 10h4M10 14h4M10 18h4"/></svg>'
-const ICON_PHONE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a1.5 1.5 0 0 0 1.5-1.5v-3.108a1.5 1.5 0 0 0-1.06-1.435l-4.185-1.395a1.5 1.5 0 0 0-1.536.365l-1.146 1.146a11.25 11.25 0 0 1-5.11-5.11l1.146-1.147a1.5 1.5 0 0 0 .365-1.535L8.058 3.81A1.5 1.5 0 0 0 6.623 2.75H3.75a1.5 1.5 0 0 0-1.5 1.5v2.5Z"/></svg>'
 const ICON_MAIL = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75"/></svg>'
 const ICON_USER = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.964 0a9 9 0 1 0-11.964 0m11.964 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></svg>'
 

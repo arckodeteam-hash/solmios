@@ -53,7 +53,20 @@
                admin. Sin esto Chrome la autorrellenaba con la contraseña guardada (GH-32). -->
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Contraseña</label><input v-model="settings.smtpPassword" type="password" autocomplete="new-password" name="smtp-password" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Email Remitente</label><input v-model="settings.fromEmail" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Nombre Remitente</label><input v-model="settings.fromName" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Nombre Remitente</label>
+            <input v-model="settings.fromName" :placeholder="settings.platformName || 'SolmiOS'" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+            <p class="mt-1.5 text-[11px] text-text-muted">Vacío → se usa el nombre de la plataforma (<strong class="text-navy">{{ settings.platformName || 'SolmiOS' }}</strong>, pestaña Plataforma).</p>
+          </div>
+          <!-- Cómo va a verse el remitente en la bandeja del hotel: es la misma regla que aplica el
+               backend (formatFromAddress), para que el admin no descubra el resultado recién en prod. -->
+          <div class="flex items-center gap-3 rounded-xl border border-dashed border-border bg-surface/60 px-4 py-3">
+            <span class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-navy/10 text-navy font-black text-xs">{{ senderInitials }}</span>
+            <div class="min-w-0">
+              <div class="text-[10px] font-bold text-text-muted uppercase">Los correos salen como</div>
+              <div class="truncate text-sm font-bold text-navy">{{ senderPreview }}</div>
+            </div>
+          </div>
           <!-- CFG-2 (#99): el Guardar de la pestaña persiste SOLO email_config, en la key y shape
                que lee el motor de envío (antes esto viajaba en un POST global de cuatro claves). -->
           <button @click="guardarEmail" :disabled="guardandoEmail"
@@ -99,16 +112,53 @@
           </div>
         </div>
       </SectionCard>
-      <SectionCard title="Plantillas de Email">
-        <div class="space-y-3">
-          <div v-for="template in emailTemplates" :key="template.name" class="flex items-center justify-between p-3 bg-surface rounded-xl cursor-pointer hover:bg-surface-dark transition-colors" @click="selectedTemplate = template">
-            <div class="flex items-center gap-3"><span class="text-xl">{{ template.icon }}</span><div><div class="text-sm font-bold">{{ template.name }}</div><div class="text-[10px] text-text-muted">{{ template.description }}</div></div></div>
-            <div class="flex items-center gap-2">
-              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="template.active ? 'bg-teal/10 text-teal' : 'bg-surface text-text-muted'">{{ template.active ? 'Activa' : 'Inactiva' }}</span>
-              <button @click.stop="template.active = !template.active" class="w-10 h-5 rounded-full relative transition-colors cursor-pointer" :class="template.active ? 'bg-teal' : 'bg-gray-300'"><div class="w-4 h-4 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="template.active ? 'right-0.5' : 'left-0.5'"></div></button>
+      <SectionCard title="Plantillas de Email" :subtitle="templatesSubtitle" body-class="p-0">
+        <template #actions>
+          <router-link to="/admin/email-templates" class="text-[11px] font-bold text-cyan hover:underline whitespace-nowrap">Administrar →</router-link>
+        </template>
+
+        <!-- Cargando -->
+        <div v-if="templatesLoading" class="space-y-2 p-5">
+          <div v-for="i in 6" :key="i" class="h-12 animate-pulse rounded-xl bg-surface"></div>
+        </div>
+
+        <!-- Sin datos: el backend no respondió o la tabla está sin sembrar -->
+        <div v-else-if="!emailTemplates.length" class="p-8 text-center">
+          <div class="text-3xl mb-2">📭</div>
+          <div class="text-sm font-bold text-navy">{{ templatesError || 'No hay plantillas cargadas' }}</div>
+          <p class="mt-1 text-[11px] text-text-muted">Las plantillas se crean con <code class="font-mono">bun run scripts/seed-platform-email-templates.ts</code> en el backend.</p>
+          <button @click="loadTemplates" class="mt-4 rounded-full bg-navy px-5 py-2 text-xs font-bold text-white hover:bg-navy-light transition-colors cursor-pointer">Reintentar</button>
+        </div>
+
+        <template v-else>
+          <div class="divide-y divide-border">
+            <div v-for="tpl in emailTemplates" :key="tpl.event"
+              class="flex items-center gap-3 px-5 py-3 hover:bg-surface/60 transition-colors">
+              <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-surface text-lg">{{ eventIcon(tpl.event) }}</span>
+              <button @click="editTemplate(tpl.event)" class="min-w-0 flex-1 text-left cursor-pointer" :title="`Editar «${platformEmailEventLabel(tpl.event)}»`">
+                <div class="text-sm font-bold text-navy truncate">{{ platformEmailEventLabel(tpl.event) }}</div>
+                <div class="text-[11px] text-text-muted truncate">{{ previewSubject(tpl.subject) || 'Sin asunto' }}</div>
+              </button>
+              <span class="hidden sm:inline text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" :class="tpl.isActive ? 'bg-teal/10 text-teal' : 'bg-surface text-text-muted'">{{ tpl.isActive ? 'Activa' : 'Inactiva' }}</span>
+              <button @click="toggleTemplate(tpl)" :disabled="togglingEvent === tpl.event"
+                :aria-label="tpl.isActive ? 'Desactivar plantilla' : 'Activar plantilla'"
+                class="w-10 h-5 rounded-full relative transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait shrink-0" :class="tpl.isActive ? 'bg-teal' : 'bg-gray-300'">
+                <div class="w-4 h-4 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="tpl.isActive ? 'right-0.5' : 'left-0.5'"></div>
+              </button>
             </div>
           </div>
-        </div>
+          <!-- Variables globales: todas las plantillas las tienen; salen de la pestaña Plataforma. -->
+          <div class="border-t border-border bg-surface/40 px-5 py-3">
+            <div class="text-[10px] font-bold text-text-muted uppercase mb-1.5">En todas las plantillas podés usar</div>
+            <div class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-secondary">
+              <span v-for="g in PLATFORM_EMAIL_GLOBAL_VARIABLES" :key="g.name">
+                <code class="font-mono font-bold text-navy">{{ '{' + g.name + '}' }}</code>
+                → {{ globalVariableValue(g.name) || 'sin configurar' }}
+              </span>
+            </div>
+            <p class="mt-1.5 text-[10px] text-text-muted">Se toman de la pestaña <button @click="activeTab = 'platform'" class="font-bold text-cyan hover:underline cursor-pointer">Plataforma</button>. El interruptor guarda al instante; el texto se edita desde <router-link to="/admin/email-templates" class="font-bold text-cyan hover:underline">Plantillas de Email</router-link>.</p>
+          </div>
+        </template>
       </SectionCard>
     </div>
 
@@ -130,6 +180,27 @@
               </span>
             </div>
             <div class="text-[10px] text-text-muted mt-1">{{ fila.detalle }}</div>
+          </div>
+        </div>
+      </SectionCard>
+      <!-- CFG-4 (#101): esta tarjeta volvió porque ahora SÍ tiene lector: el backend aplica
+           `security_policy` en alta de usuarios, cambio y restablecimiento de clave y registro
+           público (`shared/usecases/password-policy.ts`). Guardar propio, como el resto (CFG-2). -->
+      <SectionCard title="Políticas de Contraseña">
+        <div class="space-y-4">
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Longitud Mínima</label>
+            <input v-model.number="securityPolicy.minLength" type="number" min="6" max="32" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+            <p class="text-[10px] text-text-muted mt-1">Se aplica a alta de usuarios, cambio y restablecimiento de contraseña y registro público. El registro público exige además 10 caracteres como mínimo.</p>
+          </div>
+          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir mayúsculas</div><button @click="securityPolicy.requireUppercase = !securityPolicy.requireUppercase" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="securityPolicy.requireUppercase ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="securityPolicy.requireUppercase ? 'right-0.5' : 'left-0.5'"></div></button></div>
+          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir números</div><button @click="securityPolicy.requireNumbers = !securityPolicy.requireNumbers" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="securityPolicy.requireNumbers ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="securityPolicy.requireNumbers ? 'right-0.5' : 'left-0.5'"></div></button></div>
+          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir caracteres especiales</div><button @click="securityPolicy.requireSpecial = !securityPolicy.requireSpecial" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="securityPolicy.requireSpecial ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="securityPolicy.requireSpecial ? 'right-0.5' : 'left-0.5'"></div></button></div>
+          <div class="flex flex-wrap items-center gap-3 pt-2">
+            <button @click="guardarSeguridad" :disabled="guardandoSeguridad"
+              class="rounded-xl bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:shadow-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+              {{ guardandoSeguridad ? 'Guardando…' : 'Guardar' }}
+            </button>
           </div>
         </div>
       </SectionCard>
@@ -325,11 +396,22 @@ import type { MetaAppEstado, ResendEstado, SettingsStatus } from '@/services/Pla
 import { SubscriptionsAdminService } from '@/services/SubscriptionsAdmin.service'
 import { filasProteccionAlta, filasIntegraciones } from './settings-status'
 import { validarDestinoPrueba, destinoPruebaPorDefecto, mensajeResultadoPrueba } from './settings-email'
+import { useRouter } from 'vue-router'
+import {
+  PlatformEmailsService,
+  platformEmailEventLabel,
+  sortPlatformEmailTemplates,
+  PLATFORM_EMAIL_EVENTS,
+  PLATFORM_EMAIL_GLOBAL_VARIABLES,
+  type PlatformEmailEvent,
+  type PlatformEmailTemplate,
+} from '@/services/PlatformEmails.service'
 import { useToast } from '@/composables/useToast'
 import ChannexPlatformConfig from '@/components/features/ChannexPlatformConfig.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 
 const toast = useToast()
+const router = useRouter()
 
 const activeTab = ref('platform')
 
@@ -373,7 +455,6 @@ async function guardarMeta() {
     metaGuardando.value = false
   }
 }
-const selectedTemplate = ref<any>(null)
 
 // CFG-2 (#99): sin pestaña de facturación — sus controles (método de cobro, ciclo, gracia,
 // impuestos) no tenían lector en el backend: se mostraban, "se guardaban" y nadie los leía.
@@ -394,7 +475,109 @@ const settings = ref<any>({
   smtpServer: '', smtpPort: '587', smtpUser: '', smtpPassword: '', fromEmail: '', fromName: '', smtpSecure: false,
 })
 
-const emailTemplates = ref<any[]>([])
+// ── Plantillas de email de la plataforma ──
+// Son las mismas 10 filas que administra /admin/email-templates (`platform_email_templates`), no
+// una config aparte: antes esta tarjeta leía `configuration('email_templates')`, una clave que
+// nadie escribía, y quedaba vacía para siempre. El interruptor persiste al toque (PUT isActive);
+// el texto se edita en la página de plantillas.
+const emailTemplates = ref<PlatformEmailTemplate[]>([])
+const templatesLoading = ref(true)
+const templatesError = ref('')
+const togglingEvent = ref<string | null>(null)
+
+const templatesSubtitle = computed(() => {
+  if (templatesLoading.value) return 'Cargando…'
+  const activas = emailTemplates.value.filter(t => t.isActive).length
+  return `${activas} activa(s) de ${emailTemplates.value.length || PLATFORM_EMAIL_EVENTS.length}`
+})
+
+const EVENT_ICONS: Partial<Record<PlatformEmailEvent, string>> = {
+  welcome: '👋',
+  trial_ending: '⏳',
+  trial_expired: '⌛',
+  subscription_renewal_auto: '🔁',
+  subscription_renewal_manual: '🗓️',
+  payment_succeeded: '✅',
+  payment_failed: '⚠️',
+  subscription_suspended: '⛔',
+  subscription_reactivated: '🔓',
+  subscription_canceled: '🚫',
+  trial_extended: '➕',
+  activation_no_rooms: '🛏️',
+  activation_no_rates: '💲',
+  activation_no_channel: '🔗',
+  trial_offer: '🎁',
+  trial_rescue_1: '🛟',
+  trial_rescue_2: '🛟',
+  channel_request_scheduled: '📅',
+  channel_request_connected: '🔌',
+  channel_request_rejected: '🚫',
+}
+function eventIcon(event: string): string {
+  return EVENT_ICONS[event as PlatformEmailEvent] || '✉️'
+}
+
+async function loadTemplates() {
+  templatesLoading.value = true
+  templatesError.value = ''
+  try {
+    const r = await PlatformEmailsService.list()
+    const rows = Array.isArray(r) ? r : ((r as { data?: PlatformEmailTemplate[] })?.data ?? [])
+    emailTemplates.value = sortPlatformEmailTemplates(rows)
+  } catch (e) {
+    emailTemplates.value = []
+    templatesError.value = e instanceof Error ? e.message : 'No se pudieron cargar las plantillas'
+  } finally {
+    templatesLoading.value = false
+  }
+}
+
+async function toggleTemplate(tpl: PlatformEmailTemplate) {
+  const next = !tpl.isActive
+  togglingEvent.value = tpl.event
+  try {
+    const updated = await PlatformEmailsService.update(tpl.event, { isActive: next })
+    tpl.isActive = updated?.isActive ?? next
+    toast.success(`«${platformEmailEventLabel(tpl.event)}» ${tpl.isActive ? 'activada' : 'desactivada'}`)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'No se pudo cambiar el estado de la plantilla')
+  } finally {
+    togglingEvent.value = null
+  }
+}
+
+function editTemplate(event: PlatformEmailEvent) {
+  router.push({ path: '/admin/email-templates', query: { event } })
+}
+
+/** Asunto con las variables globales ya resueltas (las del evento quedan como `{hotel_name}`). */
+function previewSubject(subject: string): string {
+  return (subject || '').replace(/\{(platform_name|support_email|support_phone)\}/g, (m, k: string) => globalVariableValue(k) || m)
+}
+
+/** Valor actual (sin guardar todavía) que va a tomar cada variable global. */
+function globalVariableValue(name: string): string {
+  if (name === 'platform_name') return settings.value.platformName || 'SolmiOS'
+  if (name === 'support_email') return settings.value.supportEmail || ''
+  if (name === 'support_phone') return settings.value.supportPhone || ''
+  return ''
+}
+
+// Vista previa del remitente — espejo de `formatFromAddress` del backend.
+const senderPreview = computed(() => {
+  const email = (settings.value.fromEmail || '').trim() || 'noreply@solmios.com'
+  const name = (settings.value.fromName || '').trim() || (settings.value.platformName || '').trim() || 'SolmiOS'
+  return `${name} <${email}>`
+})
+const senderInitials = computed(() => {
+  const name: string = String(settings.value.fromName || settings.value.platformName || 'SolmiOS').trim()
+  return name.split(/\s+/).map((w: string) => w.replace(/[^\p{L}\p{N}]/gu, '')).filter(Boolean).slice(0, 2).map((w: string) => w[0]!.toUpperCase()).join('') || 'S'
+})
+
+// REQ-CFG-05: política de contraseña real (`configuration('security_policy')`), la lee el backend
+// en alta/cambio/reset/registro. Default {6,false,false,false}; minLength acotada a 6..32.
+const securityPolicy = ref({ minLength: 6, requireUppercase: false, requireNumbers: false, requireSpecial: false })
+const clampMin = (n: any) => Math.min(32, Math.max(6, Math.round(Number(n) || 6)))
 // #102: estado de captcha / verificación / servicios. null = no se pudo leer (las filas lo dicen).
 const settingsStatus = ref<SettingsStatus | null>(null)
 const proteccionAlta = computed(() => filasProteccionAlta(settingsStatus.value))
@@ -409,11 +592,12 @@ onMounted(async () => {
     // SMTP-UI (2026-08-19): se lee el CANÓNICO ('email_config', host/pass) con fallback al
     // legacy ('smtp', server/password) que guardaba esta misma página — antes el load ni
     // siquiera matcheaba los nombres (server ≠ smtpServer), así el form arrancaba vacío.
-    const [plataforma, emailCfg, tmpl, maps] = await Promise.all([
+    const [plataforma, emailCfg, maps, secPol] = await Promise.all([
       ConfigService.get('plataforma', 'platform'),
       ConfigService.get('email_config', 'platform').catch(() => null),
-      ConfigService.get('email_templates', 'platform'),
       ConfigService.get('google_maps', 'platform'),
+      ConfigService.get('security_policy', 'platform').catch(() => null),
+      ConfigService.get('security_policy', 'platform').catch(() => null),
     ])
     // CFG-2 (#99): de la fila 'plataforma' sólo entran al formulario los tres campos que esta
     // pantalla vuelve a guardar; claves viejas que traiga la fila no se copian ni se re-guardan.
@@ -437,10 +621,12 @@ onMounted(async () => {
       settings.value.fromEmail = String(smtp.fromEmail ?? fromMatch?.[2] ?? (typeof smtp.from === 'string' && !smtp.from.includes('<') ? smtp.from : ''))
       settings.value.fromName = String(smtp.fromName ?? fromMatch?.[1] ?? '')
     }
-    if (Array.isArray(tmpl)) emailTemplates.value = tmpl
     if (maps?.apiKey) mapsKey.value = String(maps.apiKey)
+    if (secPol && typeof secPol === 'object') Object.assign(securityPolicy.value, { minLength: clampMin(secPol.minLength), requireUppercase: !!secPol.requireUppercase, requireNumbers: !!secPol.requireNumbers, requireSpecial: !!secPol.requireSpecial })
     testEmailTo.value = destinoPruebaPorDefecto(settings.value.supportEmail, settings.value.fromEmail)
   } catch { toast.error('No se pudo cargar la configuración de la plataforma') }
+  // Aparte del Promise.all: si falla no tiene por qué tirar abajo el resto del formulario.
+  loadTemplates()
 })
 
 // ── CFG-2 (#99): un Guardar por pestaña ─────────────────────────────────────────────────────
@@ -499,6 +685,26 @@ async function guardarMaps() {
     toast.error('No se pudo guardar', 'Revisá la clave de Maps e intentá de nuevo')
   } finally {
     guardandoMaps.value = false
+  }
+}
+
+// CFG-4 (#101): la política de contraseña se guarda sola. La lee el backend en cada validación
+// (`readPasswordPolicy`), así que el cambio aplica al siguiente alta/cambio sin reiniciar nada.
+const guardandoSeguridad = ref(false)
+async function guardarSeguridad() {
+  guardandoSeguridad.value = true
+  try {
+    await ConfigService.set('security_policy', {
+      minLength: clampMin(securityPolicy.value.minLength),
+      requireUppercase: !!securityPolicy.value.requireUppercase,
+      requireNumbers: !!securityPolicy.value.requireNumbers,
+      requireSpecial: !!securityPolicy.value.requireSpecial,
+    }, 'platform')
+    toast.success('Política de contraseña guardada')
+  } catch {
+    toast.error('No se pudo guardar', 'Revisá la política de contraseña e intentá de nuevo')
+  } finally {
+    guardandoSeguridad.value = false
   }
 }
 

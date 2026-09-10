@@ -110,13 +110,29 @@
       </template>
     </AppModal>
 
-    <!-- Un click de más acá le arma trabajo al equipo por nada: confirmar antes de mandarla. -->
-    <AppModal v-if="confirmRequest" title="¿Pedir esta conexión?" size="sm" @close="confirmRequest = null">
-      <p class="text-sm text-text-secondary">
-        Vamos a pedirle al equipo de SolmiOS que conecte
-        <strong class="text-navy">{{ confirmRequest.name }}</strong>.
-        Te van a contactar para coordinarlo.
-      </p>
+    <!-- Un click de más acá le arma trabajo al equipo por nada: confirmar antes de mandarla.
+         Y el mensaje y el teléfono no son opcionales de adorno: sin ellos, del otro lado queda una
+         fila que dice "el hotel X quiere Booking" y nadie sabe a quién llamar ni para qué. -->
+    <AppModal v-if="confirmRequest" title="Pedir esta conexión" size="md" @close="confirmRequest = null">
+      <div class="space-y-4">
+        <p class="text-sm text-text-secondary">
+          Le pedimos al equipo que conecte <strong class="text-navy">{{ confirmRequest.name }}</strong>.
+          Te van a contactar para coordinar una llamada y hacerlo juntos.
+        </p>
+        <label class="block">
+          <span class="mb-1.5 block text-[10px] font-bold uppercase text-text-muted">Contanos algo que nos sirva (opcional)</span>
+          <textarea id="channel-request-message" name="channelRequestMessage" v-model="confirmRequest.message" rows="3" maxlength="500"
+            placeholder="Ej: ya tengo cuenta en Booking, el ID de la propiedad es 123456."
+            class="w-full rounded-xl border border-border bg-surface px-4 py-2.5 text-sm focus:border-navy focus:outline-none"></textarea>
+          <span class="mt-1 block text-right text-[10px] text-text-muted">{{ confirmRequest.message.length }}/500</span>
+        </label>
+        <label class="block">
+          <span class="mb-1.5 block text-[10px] font-bold uppercase text-text-muted">¿A qué teléfono te llamamos?</span>
+          <input id="channel-request-phone" name="channelRequestPhone" v-model="confirmRequest.contactPhone" maxlength="40" placeholder="809-000-0000"
+            class="w-full rounded-xl border border-border bg-surface px-4 py-2.5 text-sm focus:border-navy focus:outline-none" />
+          <span class="mt-1 block text-[10px] text-text-muted">Si lo dejás vacío usamos el teléfono del hotel.</span>
+        </label>
+      </div>
       <template #footer>
         <button @click="confirmRequest = null" class="text-sm font-bold text-text-secondary hover:text-navy cursor-pointer transition-colors">Cancelar</button>
         <button @click="confirmAskChannel" :disabled="requestingChannel === confirmRequest.code"
@@ -274,11 +290,19 @@
           </div>
           <!-- Pedir la conexión NO abre el asistente de Channex: deja la solicitud registrada para
                que la atienda el equipo. El hotelero no tiene las credenciales de la OTA. -->
-          <div v-if="requestOf(channel.id)" class="mt-auto w-full py-2.5 text-sm font-extrabold rounded-xl text-center"
-            :class="requestStatusClass(requestOf(channel.id)!.status)">
-            {{ CHANNEL_REQUEST_LABELS[requestOf(channel.id)!.status] }}
+          <div v-if="requestOf(channel.id)" class="mt-auto w-full space-y-1.5">
+            <div class="w-full py-2.5 text-sm font-extrabold rounded-xl text-center"
+              :class="requestStatusClass(requestOf(channel.id)!.status)">
+              {{ CHANNEL_REQUEST_LABELS[requestOf(channel.id)!.status] }}
+            </div>
+            <!-- La cita es la respuesta a "¿y esto en qué quedó?": sin ella, "Solicitada" es un
+                 cartel que no dice nada durante días. -->
+            <p v-if="citaDe(channel.id)" class="text-center text-[11px] leading-snug text-text-secondary">{{ citaDe(channel.id) }}</p>
+            <p v-else-if="requestOf(channel.id)!.resolutionReason" class="text-center text-[11px] leading-snug text-text-muted">
+              {{ requestOf(channel.id)!.resolutionReason }}
+            </p>
           </div>
-          <button v-else @click="confirmRequest = { code: channel.id, name: channel.name }" :disabled="requestingChannel === channel.id"
+          <button v-else @click="pedirConexion(channel.id, channel.name)" :disabled="requestingChannel === channel.id"
             class="mt-auto w-full py-2.5 text-sm font-extrabold rounded-xl border-2 border-navy text-navy hover:bg-navy hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
             {{ requestingChannel === channel.id ? 'Enviando…' : 'Solicitar Conexión' }}
           </button>
@@ -346,7 +370,7 @@ import SectionCard from '@/components/ui/SectionCard.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Icon from '@/components/ui/Icon.vue'
-import { CHANNEL_REQUEST_LABELS, type ChannelRequest } from '@/services/Channel.service'
+import { CHANNEL_REQUEST_LABELS, CHANNEL_REQUEST_CLASSES, CHANNEL_REQUEST_MEDIUM_LABELS, type ChannelRequest } from '@/services/Channel.service'
 
 const ICON_REFRESH = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>'
 const ICON_DOWNLOAD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>'
@@ -466,27 +490,37 @@ function requestOf(channelCode: string): ChannelRequest | undefined {
   return requests.value.find((r) => r.channel === channelCode)
 }
 
-const REQUEST_CLASSES: Record<ChannelRequest['status'], string> = {
-  pending: 'bg-amber/10 text-amber border-2 border-amber/30',
-  in_progress: 'bg-navy/5 text-navy border-2 border-navy/20',
-  connected: 'bg-teal/10 text-teal border-2 border-teal/30',
-  rejected: 'bg-coral/10 text-coral border-2 border-coral/30',
+/** "Te contactamos el 12 sept 10:00 por WhatsApp". Vacío si todavía no hay cita agendada. */
+function citaDe(channelCode: string): string {
+  const r = requestOf(channelCode)
+  if (!r?.appointmentAt || r.status !== 'scheduled') return ''
+  const cuando = new Date(r.appointmentAt).toLocaleString('es-DO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+  const medio = r.appointmentMedium ? CHANNEL_REQUEST_MEDIUM_LABELS[r.appointmentMedium] : ''
+  return `Te contactamos el ${cuando}${medio ? ` por ${medio}` : ''}`
 }
-const requestStatusClass = (s: ChannelRequest['status']) => REQUEST_CLASSES[s]
+
+// Las clases viven en el service, al lado de las etiquetas: cuando se agregaron `scheduled` y
+// `waiting_hotel`, tenerlas acá sueltas era la forma segura de que una tarjeta quedara sin color.
+const requestStatusClass = (s: ChannelRequest['status']) => CHANNEL_REQUEST_CLASSES[s]
 
 async function loadRequests() {
   try { requests.value = await ChannelService.listRequests() } catch { requests.value = [] }
 }
 
 /** El click abre la confirmación; el envío real es `confirmAskChannel`. */
-const confirmRequest = ref<{ code: string; name: string } | null>(null)
+const confirmRequest = ref<{ code: string; name: string; message: string; contactPhone: string } | null>(null)
+
+/** Vacío a propósito: si el hotelero no escribe nada, el backend usa el teléfono del hotel. */
+function pedirConexion(code: string, name: string) {
+  confirmRequest.value = { code, name, message: '', contactPhone: '' }
+}
 
 async function confirmAskChannel() {
   if (!confirmRequest.value) return
-  const { code, name } = confirmRequest.value
+  const { code, name, message, contactPhone } = confirmRequest.value
   requestingChannel.value = code
   try {
-    const r = await ChannelService.requestChannel(code, name)
+    const r = await ChannelService.requestChannel(code, name, message.trim() || undefined, contactPhone.trim() || undefined)
     await loadRequests()
     toast.success(r.message)
     confirmRequest.value = null
@@ -553,7 +587,7 @@ async function loadStatus() {
     // `logData.data` daba siempre `undefined` y la tabla mostraba "Sin sincronizaciones" aunque
     // el backend tuviera las filas (verificado en producción el 2026-09-01). Se aceptan las dos
     // formas por si alguna respuesta viniera sin envolver (ver la deuda de compresión en CLAUDE.md).
-    const rows = Array.isArray(logData) ? logData : (logData?.data ?? [])
+    const rows = Array.isArray(logData) ? logData : (logData.data ?? [])
     syncLog.value = rows.slice(0, 20)
   } catch {}
   loadingStatus.value = false

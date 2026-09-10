@@ -7,7 +7,10 @@ import type { AnunciosDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 
 export { AnunciosService }
-export type { AnunciosDTO, CreateAnunciosDTO, UpdateAnunciosDTO, AnunciosQuery, AnunciosPaginated } from './types'
+export type {
+  AnunciosDTO, CreateAnunciosDTO, UpdateAnunciosDTO, AnunciosQuery, AnunciosPaginated,
+  AnnouncementAudience, AnunciosScope,
+} from './types'
 export type { AnnouncementReadDTO, AnnouncementWithReads } from './service'
 export type { AnunciosSockets } from './sockets'
 export { AnunciosValidator, CreateAnunciosSchema, UpdateAnunciosSchema } from './validators/schema'
@@ -19,13 +22,20 @@ export function AnunciosModule() {
     description: 'Modulo de anuncios — comunicados del hotel',
     contract: {
       name: 'anuncios',
-      version: '2.1.0',
-      description: 'Announcements with ownership, pagination and per-user reads',
+      // 2.2.0: + audience (hotel|all|admins) y ventana startsAt/endsAt — los anuncios de
+      // plataforma se buscan por audiencia, no por hotelId nulo (el ORM no sabe IS NULL).
+      version: '2.2.0',
+      description: 'Announcements with ownership, audience, pagination and per-user reads',
       actions: ['list', 'getById', 'create', 'update', 'delete', 'seen', 'dismiss'],
       events: ['onAnunciosCreated', 'onAnunciosUpdated', 'onAnunciosDeleted'],
       tables: ['announcements', 'announcement_reads'],
       dependencies: [],
-      rules: ['Ownership check required', 'hotelId not updatable', 'Reads are per user, never from body'],
+      rules: [
+        'Ownership check required',
+        'hotelId not updatable',
+        'Platform-wide audience (all/admins) is super_admin only',
+        'Reads are per user, never from body',
+      ],
     },
     create({ logger, orm, cache, router, auth }) {
       if (!auth) throw new Error('anuncios: auth dependency required')
@@ -49,7 +59,7 @@ export function AnunciosModule() {
       router.put('/api/anuncios/:id', guard('dashboard', 'edit'), (req) => controller.update(req))
       router.delete('/api/anuncios/:id', guard('dashboard', 'delete'), (req) => controller.destroy(req))
 
-      log.info('Modulo anuncios v2.1 listo')
+      log.info('Modulo anuncios v2.2 listo')
       return service
     },
   })

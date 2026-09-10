@@ -9,6 +9,7 @@
 import { ValidationError } from 'arckode-framework'
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { passwordIssues } from '../../../shared/password-policy'
+import { assertPasswordPolicy } from '../../../shared/usecases/password-policy'
 import { isValidEmail } from '../../../shared/email'
 import { newVerificationToken, welcomeVerificationEmail } from '../../usuarios/usecases/email-verification'
 import { DEFAULT_ROLE_PERMISSIONS } from '../../../shared/permissions'
@@ -65,6 +66,8 @@ export interface SignupDeps {
   /** `plans` — para sincronizar el espejo `hotels.plan` con el plan elegido en el trial. */
   plansRepo: RepositoryAdapter<any>
   hashPassword: (plain: string) => Promise<string>
+  /** KV `configuration` — política de contraseña del admin (REQ-CFG-05). Opcional: sin cablear rige el default. */
+  configRepo?: RepositoryAdapter<any>
   /** Envío del correo de verificación (#421). Opcional y best-effort: si falta o falla, el alta
    *  igual funciona — no se pierde el hotel porque el SMTP esté caído. */
   emailSender?: { enqueue: (input: { to: string; subject: string; html: string; hotelId: string; relatedType?: string }) => Promise<string> }
@@ -102,6 +105,9 @@ export class SignupUseCase {
     // Se nombra el campo: "Debe tener al menos 10 caracteres" a secas no dice
     // cuál de los campos del formulario está mal.
     if (issues.length) throw new ValidationError(`La contraseña no es segura: ${issues.join('. ')}`)
+    // La política configurable del admin (REQ-CFG-05) se SUMA al piso estático de arriba: puede
+    // exigir más (minLength 12, símbolos), nunca relajar los 10 caracteres del alta pública.
+    await assertPasswordPolicy(this.deps.configRepo, input.password ?? '')
 
     // El email es la llave con la que después inicia sesión: si ya existe, el
     // alta no puede seguir o quedarían dos cuentas peleando por el mismo login.

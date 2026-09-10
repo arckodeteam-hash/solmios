@@ -320,10 +320,15 @@ describe('registerChannexWebhook — CA-8: el alta es idempotente', () => {
   it('si Channex rechaza el alta devuelve created:false sin id y lo loguea', async () => {
     const s = fakeStore({ webhookSecret: SECRETO })
     const logger = fakeLogger()
-    const channex = { listWebhooks: async () => [], createWebhook: async () => null }
+    const channex = {
+      listWebhooks: async () => [],
+      createWebhook: async () => ({ id: null, error: 'Validation Error — property_id: is required when is_global is false' }),
+    }
     const res = await registerChannexWebhook({ store: s.store, channex, logger }, 'https://app.solmios.com')
 
     expect(res).toMatchObject({ created: false, id: null })
+    // El motivo llega al operador por las dos vías: la respuesta del endpoint y el log.
+    expect(res.error).toContain('property_id')
     expect(logger.lines.some((l) => l.level === 'error')).toBe(true)
   })
 })

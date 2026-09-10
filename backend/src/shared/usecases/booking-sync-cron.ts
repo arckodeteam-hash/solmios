@@ -33,6 +33,14 @@ const ZERO_RESULT: BookingSyncResult = {
 }
 
 /**
+ * Cuánto puede pasar sin contacto con el feed antes de gritar. Por debajo de los 30 minutos de la
+ * ventana a propósito: la alerta tiene que llegar mientras las reservas TODAVÍA se pueden ackear,
+ * no cuando ya se cayeron del feed. Con el tick de 1 minuto son ~25 fallos seguidos, así que un
+ * hipo de red no la dispara.
+ */
+export const STALL_ALERT_MS = 25 * 60_000
+
+/**
  * Crea el cron de sync global de bookings OTA.
  * `_orm` se mantiene en la firma por simetría con night-audit-cron (el usecase ya recibe el orm
  * del service; acá no se necesita). Retorna siempre un BookingSyncResult (nunca throws).
@@ -41,20 +49,58 @@ export function createBookingSyncCron(
   _orm: any,
   resolveModule: (name: string) => any,
   logger: Logger,
+  opts: { now?: () => number } = {},
 ): () => Promise<BookingSyncResult> {
+  const now = opts.now ?? Date.now
+  // Última vez que se pudo HABLAR con el feed. Arranca en el boot: si el cron nunca llega a
+  // conectar, la alerta salta igual a los 25 minutos de haber levantado.
+  let ultimoContacto = now()
+  let yaAvisado = false
+
+  /**
+   * Hubo contacto si el feed se pudo leer — aunque después alguna revisión fallara al aplicarse.
+   * Esa distinción importa: una revisión rota es un problema puntual y las demás sí se ackearon,
+   * mientras que "no pude leer el feed" es el que hace desaparecer reservas en silencio. Mezclarlos
+   * llenaría el log de alertas y enseñaría a ignorar la única que importa.
+   */
+  const huboContacto = (r: BookingSyncResult): boolean => r.success || r.feedSize > 0
+
   return async (): Promise<BookingSyncResult> => {
     try {
       const canales = resolveModule('canales')
       if (!canales || !canales.syncAllBookingRevisions) {
         logger.warn('booking-sync-cron: módulo canales no disponible')
-        return { ...ZERO_RESULT }
+        return avisarSiEstancado({ ...ZERO_RESULT })
       }
       const result = await canales.syncAllBookingRevisions()
       logger.info('booking-sync-cron completado', result)
-      return result
+      return avisarSiEstancado(result)
     } catch (e: any) {
       logger.warn('booking-sync-cron falló', { error: e?.message || String(e) })
-      return { ...ZERO_RESULT }
+      return avisarSiEstancado({ ...ZERO_RESULT })
     }
+  }
+
+  function avisarSiEstancado(result: BookingSyncResult): BookingSyncResult {
+    if (huboContacto(result)) {
+      ultimoContacto = now()
+      yaAvisado = false
+      return result
+    }
+    const sinContactoMs = now() - ultimoContacto
+    // Una sola alerta por episodio: repetirla cada minuto la vuelve ruido y esconde el resto del log.
+    if (sinContactoMs < STALL_ALERT_MS || yaAvisado) return result
+    yaAvisado = true
+    logger.error(
+      'booking-sync-cron: sin contacto con el feed de Channex — hay reservas en riesgo de perderse',
+      {
+        minutosSinContacto: Math.round(sinContactoMs / 60_000),
+        // El feed sólo re-sirve 30 minutos: pasado eso, la recuperación es por `/bookings`.
+        recuperarDesde: new Date(ultimoContacto).toISOString(),
+        comoRecuperar: 'POST /api/admin/channex/recover-bookings {"since":"<recuperarDesde>"}',
+        ultimoError: result.errors[0],
+      },
+    )
+    return result
   }
 }

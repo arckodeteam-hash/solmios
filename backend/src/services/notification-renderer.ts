@@ -20,7 +20,7 @@ export interface AutoMessageTemplateRow {
 const PLACEHOLDER_RE = /\{(\w+)\}/g
 
 /** Escapa HTML en valores interpolados (defensa XSS si el HTML se re-muestra en una vista web). */
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 

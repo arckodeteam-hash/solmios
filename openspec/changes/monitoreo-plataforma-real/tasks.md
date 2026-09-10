@@ -99,13 +99,26 @@
 ## 7. Verificación
 
 - [x] 7.1 `cd backend && bun run typecheck && bun test`.
-- [ ] 7.2 `cd backend && bun run node_modules/arckode-framework/bin/arckode.js analyze` → 0
-      violaciones. (Queda 1 preexistente ajena a este cambio: `anuncios/service.ts` 262 líneas; monitoring no agrega ninguna.)
+- [x] 7.2 `cd backend && bun run node_modules/arckode-framework/bin/arckode.js analyze` → 0
+      violaciones. (La preexistente de `anuncios/service.ts` se fue con #184; verificado ✅ VÁLIDO el 2026-09-10 sobre `be014acb`.)
 - [x] 7.3 `cd frontend && bun run typecheck && bun run build`.
-- [ ] 7.4 Prueba manual en producción: crear un backup, descargarlo y comprobar que restaura en una
+- [x] 7.4 Prueba manual en producción: crear un backup, descargarlo y comprobar que restaura en una
       base vacía.
       **Aceptación**: un `pg_restore`/`psql` sobre base limpia levanta el esquema y los datos.
       **Hecho en local (SQLite)**: `frontend/scripts/monitoring-e2e.ts` crea, descarga y borra un backup
       desde el navegador contra el backend real; la descarga es byte a byte igual al archivo de
-      `BACKUP_DIR` y arranca con `SQLite format 3`. Falta la vuelta sobre Postgres en producción.
+      `BACKUP_DIR` y arranca con `SQLite format 3`.
+      **Hecho en prod (Postgres 16.15) el 2026-09-10 (#119)**: `POST /api/admin/backups` → 201,
+      `backup-20260910-222923-578.sql` (70.719.591 bytes, `pg_dump --format=plain`) en
+      `backend/data/backups/` (default de `BACKUP_DIR`, fuera de `frontend/dist` y de `uploads/`);
+      la descarga por `GET /:id/download` da el mismo sha256 (`8110276f…dc408e`) que el archivo del
+      server; `createdb solmios_restore_test` + `psql -v ON_ERROR_STOP=1 -f` → rc=0, 0 ERROR,
+      175 tablas (la 176.ª de la base viva, `channel_request_activities`, la creó el deploy de #184
+      que corrió después del volcado), hoteles 17 · usuarios 29 · reservas 59 · suscripciones 23 ·
+      sales_prospects 7 idénticos a la base viva, índice `idx_configuration_hotel_key` presente.
+      `audit_log`: `backup.create` y `backup.download` con el `userId` del super admin. Traversal
+      `..%2F..%2Fetc%2Fpasswd` → 400, id inexistente → 404, `DELETE /:id` → 204 y directorio vacío.
+      Base de prueba dropeada.
 - [x] 7.5 Confirmar que un `merchant` autenticado recibe 403 en los cinco endpoints nuevos.
+      **Prod 2026-09-10**: `hotel@solmios.com` → 403 en `GET monitoring/{api,errors,system,queues}`,
+      `GET backups` y `POST backups`.

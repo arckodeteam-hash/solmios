@@ -367,11 +367,12 @@ const sendReply = async () => {
   if (!replyMessage.value.trim()) return
   const idx = tickets.value.findIndex(t => t.id === selectedTicket.value.id)
   if (idx !== -1) {
-    const newReply = { author: 'Hotel Admin', date: new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }), message: replyMessage.value }
-    const updatedReplies = [...tickets.value[idx].replies, newReply]
     try {
-      await OperationsService.tickets.update(selectedTicket.value.id, { messages: updatedReplies })
-      tickets.value[idx].replies = updatedReplies
+      // REQ-SOP-02: el PUT ya no acepta `messages` (el autor lo arma el server) — un mensaje
+      // se agrega SOLO por este endpoint. Antes esto escribía `messages` por PUT, que el
+      // backend descarta en silencio: la respuesta nunca se guardaba.
+      const updated = await OperationsService.tickets.addMessage(selectedTicket.value.id, replyMessage.value)
+      tickets.value[idx].replies = updated.messages ?? []
       toast.success('Respuesta enviada')
     } catch { toast.error('Error al enviar respuesta') }
     replyMessage.value = ''

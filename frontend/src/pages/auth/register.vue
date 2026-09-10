@@ -250,7 +250,8 @@ import { ReferralsService } from '@/services/Referrals.service'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES } from '@/data/locales'
-import { usePasswordStrength, PASSWORD_MAX } from '@/composables/usePasswordStrength'
+import { usePasswordStrength, PASSWORD_MIN, PASSWORD_MAX } from '@/composables/usePasswordStrength'
+import { usePasswordPolicy } from '@/composables/usePasswordPolicy'
 import { usePageMeta } from '@/composables/usePageMeta'
 import { AUTH_PAGE_META } from './auth-meta'
 import logoWhite from '@/assets/logo/logo-horizontal-white.png'
@@ -344,7 +345,9 @@ const acceptedTerms = ref(false)
 
 // Espejo de shared/password-policy.ts del backend. La validación que decide es
 // la del servidor; esto es para no tener que apretar "Continuar" para saber qué
-// falta.
+// falta. A ese piso estático se le suma la política configurable del admin
+// (REQ-CFG-05), que puede subir el largo o exigir un carácter especial.
+const { policy: passwordPolicy } = usePasswordPolicy(PASSWORD_MIN)
 const {
   requirements: passwordRequirements,
   isValid: passwordValid,
@@ -354,6 +357,7 @@ const {
 } = usePasswordStrength(
   computed(() => form.value.password),
   () => ({ email: form.value.email, name: form.value.hotelName }),
+  () => passwordPolicy.value,
 )
 
 /**
