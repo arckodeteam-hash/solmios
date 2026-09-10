@@ -40,13 +40,7 @@
         <input v-model="searchQuery" type="text" placeholder="Buscar por usuario, hotel, acción..." class="px-4 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan min-w-[280px]" />
         <select v-model="filterAction" class="px-4 py-2 rounded-xl border border-border text-sm font-bold cursor-pointer">
           <option value="all">Todas las acciones</option>
-          <option value="login">Login / Logout</option>
-          <option value="reservation">Reservas</option>
-          <option value="billing">Facturación</option>
-          <option value="settings">Configuración</option>
-          <option value="user">Usuarios</option>
-          <option value="hotel">Hoteles</option>
-          <option value="system">Sistema</option>
+          <option v-for="o in actionOptions" :key="o.value" :value="o.value">{{ o.label }} ({{ o.count }})</option>
         </select>
         <select v-model="filterHotel" class="px-4 py-2 rounded-xl border border-border text-sm font-bold cursor-pointer">
           <option value="all">Todos los hoteles</option>
@@ -137,6 +131,7 @@ import { useToast } from '@/composables/useToast'
 import { AuditLogService } from '@/services/AuditLog.service'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
+import { auditFilterOptions, entityGroup } from '@/utils/audit-entity'
 
 const toast = useToast()
 const loading = ref(true)
@@ -167,6 +162,10 @@ onMounted(async () => {
         // (AuditlogDTO) usa action/entity/detail (inglés). Las columnas Acción/Categoría/Detalle
         // quedaban en blanco/undefined en silencio.
         action: ACTION_LABEL[l.action] ?? l.action,
+        // #139: el filtro y el buscador necesitan los valores crudos — `action` ya queda
+        // traducido por ACTION_LABEL y `category` capitalizado, y contra eso no se puede comparar.
+        actionKey: String(l.action ?? ''),
+        entity: l.entity ?? '',
         actionClass: 'bg-teal/10 text-teal',
         category: l.entity ? (l.entity.charAt(0).toUpperCase() + l.entity.slice(1)) : 'Sistema',
         categoryClass: 'bg-navy/5 text-navy',
@@ -178,6 +177,9 @@ onMounted(async () => {
 })
 
 const hotelList = computed(() => [...new Set(logs.value.map((l: any) => l.hotel).filter(Boolean))])
+// #139: las opciones del select salen de los grupos de entidad presentes en los logs (con conteo),
+// no de una lista fija: 5 de 7 opciones viejas no matcheaban ninguna entidad real y daban tabla vacía.
+const actionOptions = computed(() => auditFilterOptions(logs.value))
 
 // ── Paginación REAL. Los botones "1 2 3 →" eran fijos, con el "2" pintado como activo y sin
 // ningún handler: la tabla mostraba SIEMPRE el listado completo mientras el pie sugería que
@@ -229,9 +231,15 @@ function exportarCsv(): void {
 }
 
 const filteredLogs = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
   return logs.value.filter((log: any) => {
-    if (searchQuery.value && !log.user.toLowerCase().includes(searchQuery.value.toLowerCase()) && !log.detail.toLowerCase().includes(searchQuery.value.toLowerCase())) return false
-    if (filterAction.value !== 'all' && log.category.toLowerCase() !== filterAction.value) return false
+    // #139: el placeholder promete "usuario, hotel, acción" pero sólo se miraba user y detail;
+    // buscar "delete" no encontraba nada si el detalle no repetía la palabra.
+    if (q && ![log.user, log.detail, log.actionKey, log.action, log.hotel, log.category]
+      .some((v) => String(v ?? '').toLowerCase().includes(q))) return false
+    // #139: se compara el GRUPO de la entidad normalizada ('Reservations' y 'reservation' → 'reservation'),
+    // no `category` (entidad cruda capitalizada), que dejaba a 'Reservas' sin sus 226 entradas.
+    if (filterAction.value !== 'all' && entityGroup(log.entity) !== filterAction.value) return false
     if (filterHotel.value !== 'all' && log.hotel !== filterHotel.value) return false
     return true
   })
