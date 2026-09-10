@@ -3,21 +3,25 @@
 // Recorre los DOS caminos por los que la columna llega a una base, como reads.e2e.test.ts:
 //
 //   1. Base VIEJA (tabla `announcements` sin `audience`, con filas): `orm.migrate()` (RUN_MIGRATE=1)
-//      agrega la columna sin romper las filas; después el backfill de migrate-db.ts — el SQL
-//      textual LEÍDO DEL FUENTE, no una copia — deja esas filas en 'hotel', que es lo que eran.
-//   2. Base NUEVA: el CREATE TABLE actual de migrate-db.ts trae `DEFAULT 'hotel'`, así que una
-//      fila insertada sin audience vuelve 'hotel'.
+//      agrega la columna sin tocar las filas (quedan con `audience` NULL); después el backfill
+//      REAL —`scripts/backfill-announcement-audience.ts`, corrido como subproceso contra esa
+//      base— deja la fila con hotel en 'hotel' y la fila sin hotel en 'all', y es idempotente.
+//   2. Base NUEVA: el CREATE TABLE actual de migrate-db.ts (leído del fuente, no una copia) trae
+//      `DEFAULT 'hotel'`, así que una fila insertada sin audience vuelve 'hotel'.
 //
 // Y en el medio, lo que el ORM descarta en silencio si el modelo no lo declara: un create con
 // audience:'admins' tiene que releerse con 'admins'.
 
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { readFileSync, unlinkSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { ORM, OrmRepository } from 'arckode-framework'
 import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
 import { registerAnunciosModels } from '../model'
 
-const MIGRATE_DB_SOURCE = readFileSync(new URL('../../../../migrate-db.ts', import.meta.url), 'utf8')
+const BACKEND_DIR = fileURLToPath(new URL('../../../../', import.meta.url))
+const MIGRATE_DB_SOURCE = readFileSync(`${BACKEND_DIR}migrate-db.ts`, 'utf8')
+const BACKFILL_SCRIPT = 'scripts/backfill-announcement-audience.ts'
 
 /** El CREATE TABLE de announcements que corre en cada deploy, extraído del fuente. */
 function currentAnnouncementsCreateSql(): string {
@@ -26,28 +30,19 @@ function currentAnnouncementsCreateSql(): string {
   return match[0]
 }
 
-/** El ADD COLUMN del deploy (addColumnIfMissing → `ALTER TABLE ... ADD COLUMN ...`), extraído del fuente. */
-function audienceAddColumnSql(): string {
-  const match = MIGRATE_DB_SOURCE.match(/addColumnIfMissing\('announcements',\s*'audience',\s*"([^"]+)"\)/)
-  if (!match) throw new Error("migrate-db.ts ya no agrega la columna `audience` a announcements")
-  return `ALTER TABLE announcements ADD COLUMN audience ${match[1]}`
-}
-
-/** El backfill del deploy, textual: las filas anteriores a #106 son del hotel. */
-function audienceBackfillSql(): string {
-  const match = MIGRATE_DB_SOURCE.match(/UPDATE announcements SET audience = 'hotel' WHERE audience IS NULL/)
-  if (!match) throw new Error("migrate-db.ts ya no hace el backfill de `audience` a 'hotel'")
-  return match[0]
-}
-
-// Mismo criterio que isAlreadyExistsError de migrate-db.ts: el ALTER es idempotente.
-async function addColumnIfMissing(adapter: any, sql: string): Promise<void> {
-  try {
-    await adapter.run(sql)
-  } catch (e) {
-    const msg = String((e as Error).message).toLowerCase()
-    if (!msg.includes('duplicate column') && !msg.includes('already exists')) throw e
-  }
+/**
+ * El backfill de producción, tal cual se corre en el deploy (`DB_PATH=... bun run scripts/...`).
+ * Va como subproceso porque el script abre su propia conexión y termina con `db.close()`.
+ * `DATABASE_URL` se saca del env: si estuviera puesta, el script iría a Postgres.
+ */
+function runBackfill(dbPath: string): { stdout: string; stderr: string } {
+  const env: Record<string, string | undefined> = { ...process.env, DB_PATH: dbPath }
+  delete env.DATABASE_URL
+  const proc = Bun.spawnSync(['bun', 'run', BACKFILL_SCRIPT], { cwd: BACKEND_DIR, env })
+  const stdout = proc.stdout.toString()
+  const stderr = proc.stderr.toString()
+  expect(proc.exitCode, `backfill falló:\n${stdout}\n${stderr}`).toBe(0)
+  return { stdout, stderr }
 }
 
 async function columnNames(adapter: any, table: string): Promise<string[]> {
@@ -88,16 +83,19 @@ const tmpPaths: string[] = []
 
 afterAll(() => {
   for (const p of tmpPaths) {
-    try { unlinkSync(p) } catch { /* tmp, best-effort */ }
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      try { unlinkSync(p + suffix) } catch { /* tmp, best-effort */ }
+    }
   }
 })
 
-describe('announcements.audience — base VIEJA: orm.migrate + backfill de migrate-db.ts', () => {
+describe('announcements.audience — base VIEJA: orm.migrate + scripts/backfill-announcement-audience.ts', () => {
   let adapter: any
   let orm: any
+  let dbPath: string
 
   beforeAll(async () => {
-    const dbPath = `/tmp/solmios-anuncios-audience-old-${crypto.randomUUID()}.db`
+    dbPath = `/tmp/solmios-anuncios-audience-old-${crypto.randomUUID()}.db`
     tmpPaths.push(dbPath)
     adapter = await openDb(dbPath)
     // (1) La tabla como estaba antes de #106, con filas de producción.
@@ -116,34 +114,36 @@ describe('announcements.audience — base VIEJA: orm.migrate + backfill de migra
     await orm.migrate()
   }, 60_000) // migrate() sobre SQLite tarda varios segundos en CI/sandbox
 
-  it('orm.migrate() agrega la columna audience y deja las filas viejas intactas', async () => {
+  it('orm.migrate() agrega la columna audience y deja las filas viejas intactas (audience NULL)', async () => {
     expect(await columnNames(adapter, 'announcements')).toContain('audience')
     const rows = (await adapter.query('SELECT id, audience FROM announcements ORDER BY id')) as Array<{ id: string; audience: unknown }>
     expect(rows.map((r) => r.id)).toEqual(['old-1', 'old-2'])
+    // El ALTER no rellena: eso es trabajo del backfill, que se prueba abajo.
+    expect(rows.map((r) => r.audience)).toEqual([null, null])
     expectOldFieldsIntact(await selectOld(adapter, 'old-1'), OLD_ROWS[0]!)
     expectOldFieldsIntact(await selectOld(adapter, 'old-2'), OLD_ROWS[1]!)
   })
 
-  it('el backfill de migrate-db.ts deja las filas viejas en "hotel" sin tocar el resto', async () => {
-    // (3) El ALTER (idempotente: la columna ya la puso orm.migrate) y el UPDATE del deploy.
-    await addColumnIfMissing(adapter, audienceAddColumnSql())
-    await adapter.run(audienceBackfillSql())
+  it('el backfill real: con hotelId → "hotel", sin hotelId → "all", sin tocar el resto', async () => {
+    // (3) El script de deploy, como subproceso, contra ESTA base.
+    const { stdout } = runBackfill(dbPath)
+    expect(stdout).toContain("1 → 'hotel', 1 → 'all'")
 
     const old1 = await selectOld(adapter, 'old-1')
     const old2 = await selectOld(adapter, 'old-2')
     expect(old1.audience).toBe('hotel')
-    expect(old2.audience).toBe('hotel')
+    expect(old2.audience).toBe('all')
     expectOldFieldsIntact(old1, OLD_ROWS[0]!)
     expectOldFieldsIntact(old2, OLD_ROWS[1]!)
     expect((await adapter.query('SELECT COUNT(*) as c FROM announcements'))[0].c).toBe(2)
-  })
+  }, 30_000)
 
   it('el backfill es idempotente: correrlo de nuevo no cambia nada', async () => {
-    await addColumnIfMissing(adapter, audienceAddColumnSql())
-    await adapter.run(audienceBackfillSql())
-    const rows = (await adapter.query("SELECT COUNT(*) as c FROM announcements WHERE audience = 'hotel'")) as Array<{ c: number }>
-    expect(rows[0]!.c).toBe(2)
-  })
+    const { stdout } = runBackfill(dbPath)
+    expect(stdout).toContain('nada pendiente')
+    const rows = (await adapter.query('SELECT id, audience FROM announcements ORDER BY id')) as Array<{ id: string; audience: string }>
+    expect(rows).toEqual([{ id: 'old-1', audience: 'hotel' }, { id: 'old-2', audience: 'all' }])
+  }, 30_000)
 
   it('un create con audience:"admins" persiste y findById lo devuelve con "admins"', async () => {
     // (4) Si el modelo no declarara `audience`, el ORM la descartaría en silencio.
@@ -155,8 +155,9 @@ describe('announcements.audience — base VIEJA: orm.migrate + backfill de migra
     expect(saved!.audience).toBe('admins')
     const raw = (await adapter.query('SELECT audience FROM announcements WHERE id = ?', ['new-admins'])) as Array<{ audience: string }>
     expect(raw[0]!.audience).toBe('admins')
-    // Y las viejas siguen siendo del hotel.
+    // Y las viejas siguen como las dejó el backfill.
     expect((await selectOld(adapter, 'old-1')).audience).toBe('hotel')
+    expect((await selectOld(adapter, 'old-2')).audience).toBe('all')
   })
 })
 
@@ -177,13 +178,6 @@ describe('announcements.audience — base NUEVA: el CREATE TABLE actual de migra
 
   it('una fila insertada sin audience vuelve "hotel" por el DEFAULT', async () => {
     await adapter.run('INSERT INTO announcements (id, hotelId, title) VALUES (?,?,?)', ['fresh-1', 'h-new', 'Sin audience'])
-    const rows = (await adapter.query('SELECT audience FROM announcements WHERE id = ?', ['fresh-1'])) as Array<{ audience: string }>
-    expect(rows[0]!.audience).toBe('hotel')
-  })
-
-  it('el backfill del deploy sobre la base nueva es un no-op', async () => {
-    await addColumnIfMissing(adapter, audienceAddColumnSql())
-    await adapter.run(audienceBackfillSql())
     const rows = (await adapter.query('SELECT audience FROM announcements WHERE id = ?', ['fresh-1'])) as Array<{ audience: string }>
     expect(rows[0]!.audience).toBe('hotel')
   })

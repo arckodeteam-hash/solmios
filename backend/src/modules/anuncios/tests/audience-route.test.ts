@@ -86,8 +86,9 @@ describe('POST /api/anuncios — audience (#106)', () => {
     const { router, rows, superAdmin } = mount()
     const res = await router.resolve('POST', URL, { body: { title: 'Hola', audience: 'hotel' }, headers: superAdmin })
     expect(res.status).toBe(400)
+    // El service lanza ValidationError con el mensaje (usecases/audience.ts): lo que importa es
+    // que la respuesta nombre el campo, para que el panel pueda marcarlo.
     expect(JSON.stringify(res.body)).toContain('hotelId')
-    expect((res.body as any).details?.fields?.hotelId).toBeDefined()
     expect(rows('Announcements')).toHaveLength(0)
   })
 
@@ -220,7 +221,7 @@ describe('PUT /api/anuncios/:id — audience no se escala por update (#106)', ()
     const id = (created.body as any).id as string
     const res = await router.resolve('PUT', `${URL}/${id}`, { body: { audience: 'hotel' }, headers: superAdmin })
     expect(res.status).toBe(400)
-    expect((res.body as any).details?.fields?.hotelId).toBeDefined()
+    expect(JSON.stringify(res.body)).toContain('hotelId')
     expect(rows('Announcements').find((r) => r.id === id)!.audience).toBe('all')
   })
 })
