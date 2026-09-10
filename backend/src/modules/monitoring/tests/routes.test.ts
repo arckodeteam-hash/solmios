@@ -8,10 +8,12 @@
 
 import { describe, it, expect, afterAll } from 'bun:test'
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 import { Router } from 'arckode-framework'
+import { jsonOnlyCompression } from '../../../shared/middlewares/compression'
 import { makeAuth, fakeLogger } from '../../../infrastructure/auth/tests/route-permission-helpers'
 import { HttpMetricsStore } from '../../../shared/observability/metrics'
 import { BackupsStore } from '../../../shared/observability/backups'
@@ -85,6 +87,8 @@ function mount(dumpOverride?: BackupDump) {
   metrics.record({ method: 'GET', route: '/api/hoteles', status: 200, durationMs: 12 })
 
   const router = new Router()
+  // Misma compresión global que composition-root: es la que corrompía la descarga (#96).
+  router.use(jsonOnlyCompression({ threshold: 1024 }))
   const auth = makeAuth()
   const orm = ormWith({ ErrorLogs: ERRORS, EmailQueue: EMAILS, WebhookDelivery: DELIVERIES })
   const cache = { get: async () => null, set: async () => {}, delete: async () => {}, flush: async () => {} }
@@ -213,6 +217,24 @@ describe('/api/admin/backups — crear, listar, descargar, borrar', () => {
     expect(res.headers?.['Content-Disposition']).toBe(`attachment; filename="${creado.id}"`)
     expect(auditadas.map((a) => a.action)).toEqual(['backup.create', 'backup.download'])
     expect(auditadas[1]).toMatchObject({ userId: 'user-super_admin', entityId: creado.id })
+  })
+
+  it('descarga con Accept-Encoding: gzip de un backup ≥ 1KB → los bytes recibidos son idénticos al archivo', async () => {
+    // Bytes binarios (no texto) y > umbral de compresión: así se reproducía el `{"type":"Buffer",…}`.
+    const bytes = Buffer.from(Array.from({ length: 8192 }, (_, i) => (i * 7919) % 256))
+    const dump: BackupDump = { motor: 'sqlite', extension: 'sqlite', run: async ({ destino }) => { await writeFile(destino, bytes) } }
+    const { call, admin, dir } = mount(dump)
+    const creado = ((await call('POST', '/api/admin/backups', admin, {})).body as any).archivo
+    const enDisco = await readFile(join(dir, creado.id))
+    expect(enDisco.equals(bytes)).toBe(true)
+
+    const res = await call('GET', `/api/admin/backups/${creado.id}/download`, { ...admin, 'accept-encoding': 'gzip, deflate, br' })
+    expect(res.status).toBe(200)
+    expect(Buffer.isBuffer(res.body)).toBe(true)
+    const recibido = res.headers?.['Content-Encoding'] === 'gzip' ? gunzipSync(res.body as Buffer) : (res.body as Buffer)
+    expect(recibido.equals(enDisco)).toBe(true)
+    expect(res.headers?.['Content-Type']).toBe('application/octet-stream')
+    expect(res.headers?.['Content-Length']).toBe(String(recibido.length))
   })
 
   it('descarga con id inexistente → 404 y sin audit; con traversal en el id → 400/404', async () => {

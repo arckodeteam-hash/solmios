@@ -4,9 +4,10 @@
 import {
   System, ConfigStore, Logger, Router, MemoryCache, ORM, Container, NodeServer, OrmRepository,
 } from 'arckode-framework'
-import { cors, requestLogger, bodyLimit, timeout, compression } from 'arckode-framework/middlewares'
+import { cors, requestLogger, bodyLimit, timeout } from 'arckode-framework/middlewares'
 import { securityHeaders } from './shared/middlewares/security-headers'
 import { corsWithErrorHeaders } from './shared/middlewares/cors-error-headers'
+import { jsonOnlyCompression } from './shared/middlewares/compression'
 import { getClientIp } from './shared/middlewares/rate-limit'
 import { scopedRateLimit } from './shared/middlewares/scoped-rate-limit'
 import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
@@ -108,7 +109,10 @@ const apiMax = isDev ? 3000 : 600
 router.use(scopedRateLimit((path) => path.startsWith('/api/auth'), { windowMs: 60_000, max: authMax, keyBy: getClientIp }))
 router.use(scopedRateLimit((path) => !path.startsWith('/api/auth'), { windowMs: 60_000, max: apiMax, keyBy: getClientIp }))
 router.use(timeout(30000))
-router.use(compression({ threshold: 1024 }))
+// #96: el compression() del framework hace JSON.stringify de TODO cuerpo, Buffers incluidos —
+// un backup/PDF/CSV descargado desde el navegador (Accept-Encoding: gzip) llegaba corrupto.
+// El wrapper deja pasar los Buffer tal cual y comprime sólo JSON.
+router.use(jsonOnlyCompression({ threshold: 1024 }))
 
 const http = new NodeServer(PORT, logger)
 const system = new System({ config, container, logger, orm, router, http, cache, auth })

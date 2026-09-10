@@ -70,7 +70,13 @@ export class MonitoringController {
     }
   }
 
-  /** Buffer como body: el server lo manda crudo (server.ts:138), sin el envelope JSON. */
+  /**
+   * Buffer como body: el server lo manda crudo (server.ts:138), sin el envelope JSON. Es el ÚNICO
+   * mecanismo de binario del framework (`res.stream` es SSE y enmarca cada chunk en `data:`), por
+   * eso el archivo entra entero en memoria. Desde un navegador (Accept-Encoding: gzip) el
+   * `compression()` del framework lo serializaba como `{"type":"Buffer",…}` — lo evita el wrapper
+   * `shared/middlewares/compression.ts` (jsonOnlyCompression) registrado en composition-root.
+   */
   async downloadBackup(req: HttpRequest) {
     const { archivo, path } = await this.service.backupDownload(idOf(req), actorOf(req))
     const body = await readFile(path)
