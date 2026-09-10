@@ -47,7 +47,7 @@ const TIMEOUT_MS = 30_000
  * "1,892 enviados", proveedores). Se buscan con su unidad porque un número suelto (68.9, 24.5, 45 ms) puede ser
  * una medición real; el grep sin unidad sobre el código fuente lo cubre la tarea 5 (`grep -ciE … → 0`).
  */
-const LITERALES_MAQUETA = /99\.99 ?%|8\.2 ?GB|34\/100|1[.,]240 (?:archivos|imágenes)|24\.5 ?GB|1[.,]892 enviados|42 días|AWS|\bS3\b|CloudFront|SendGrid/i
+const LITERALES_MAQUETA = /99\.99 ?%|8\.2 ?GB|34\/100|Consultas\/s\s*1[.,]240|24\.5 ?GB|1[.,]892 enviados|42 días|AWS|\bS3\b|CloudFront|SendGrid/i
 /** Endpoints nuevos que un merchant no puede tocar (REQ-MON tasks 1.5, 2.5, 3.4, 4.4, 5.1). */
 const ENDPOINTS_SUPER_ADMIN = [
   '/api/admin/backups',

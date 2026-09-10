@@ -98,10 +98,10 @@
 
 ## 7. Verificación
 
-- [ ] 7.1 `cd backend && bun run typecheck && bun test`.
+- [x] 7.1 `cd backend && bun run typecheck && bun test`.
 - [ ] 7.2 `cd backend && bun run node_modules/arckode-framework/bin/arckode.js analyze` → 0
-      violaciones.
-- [ ] 7.3 `cd frontend && bun run typecheck && bun run build`.
+      violaciones. (Queda 1 preexistente ajena a este cambio: `anuncios/service.ts` 262 líneas; monitoring no agrega ninguna.)
+- [x] 7.3 `cd frontend && bun run typecheck && bun run build`.
 - [ ] 7.4 Prueba manual en producción: crear un backup, descargarlo y comprobar que restaura en una
       base vacía.
       **Aceptación**: un `pg_restore`/`psql` sobre base limpia levanta el esquema y los datos.
