@@ -13,6 +13,10 @@ export const AnunciosModel: ModelDefinition = {
     priority: { type: 'string', default: "medium" },
     active: { type: 'number', default: 1 },
     date: { type: 'string' },
+    /** ISO 8601 desde cuándo se publica; null = se publica ya. */
+    startsAt: { type: 'string' },
+    /** ISO 8601 hasta cuándo se muestra; null = sin vencimiento. */
+    endsAt: { type: 'string' },
   },
   timestamps: true,
 }

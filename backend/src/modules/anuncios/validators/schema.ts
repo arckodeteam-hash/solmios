@@ -18,6 +18,10 @@ export const CreateAnunciosSchema: Record<string, ValidationRule> = {
   priority: { type: 'string' as const, enum: PRIORITY_ENUM },
   active: { type: 'number' as const },
   date: { type: 'string' as const },
+  // Vigencia (ANN-3). El validador del framework no hace reglas cross-field: que sean ISO
+  // parseables y que endsAt > startsAt lo decide `usecases/visibility-window.ts`.
+  startsAt: { type: 'string' as const },
+  endsAt: { type: 'string' as const },
 }
 
 export const UpdateAnunciosSchema: Record<string, ValidationRule> = {
@@ -28,6 +32,10 @@ export const UpdateAnunciosSchema: Record<string, ValidationRule> = {
   priority: { type: 'string' as const, enum: PRIORITY_ENUM },
   active: { type: 'number' as const },
   date: { type: 'string' as const },
+  // Vigencia (ANN-3). El validador del framework no hace reglas cross-field: que sean ISO
+  // parseables y que endsAt > startsAt lo decide `usecases/visibility-window.ts`.
+  startsAt: { type: 'string' as const },
+  endsAt: { type: 'string' as const },
 }
 
 export const AnunciosValidator = { create: CreateAnunciosSchema, update: UpdateAnunciosSchema }
