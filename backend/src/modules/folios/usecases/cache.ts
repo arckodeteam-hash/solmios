@@ -26,6 +26,18 @@ async function currentVersion(cache: CacheAdapter, hotelId?: HotelKey): Promise<
   return seed
 }
 
+/**
+ * Sube el token. `Math.max(ahora, anterior + 1)` y no `Date.now()` a secas (#174): dos
+ * invalidaciones en el MISMO milisegundo (pagar y emitir la nota de crédito, o el bump del hotel
+ * seguido del de 'all') escribirían el mismo número y la segunda no invalidaría nada — el listado
+ * seguiría sirviendo la copia vieja hasta que venza el TTL. Con el `+1` el token siempre avanza.
+ */
+async function bumpVersion(cache: CacheAdapter, hotelId?: HotelKey): Promise<void> {
+  const key = versionKey(hotelId)
+  const prev = (await cache.get<number>(key)) ?? 0
+  await cache.set(key, Math.max(Date.now(), prev + 1), VERSION_TTL_SECONDS)
+}
+
 /** Clave del listado: versión + query serializada. */
 export async function foliosListCacheKey(
   cache: CacheAdapter,
@@ -39,6 +51,6 @@ export async function foliosListCacheKey(
 /** Bump de versión → invalida todas las entradas cacheadas del hotel (y las del super_admin). */
 export async function invalidateFoliosCaches(cache: CacheAdapter, hotelId?: HotelKey): Promise<void> {
   const s = hotelId || 'all'
-  await cache.set(versionKey(s), Date.now(), VERSION_TTL_SECONDS)
-  if (s !== 'all') await cache.set(versionKey('all'), Date.now(), VERSION_TTL_SECONDS)
+  await bumpVersion(cache, s)
+  if (s !== 'all') await bumpVersion(cache, 'all')
 }
