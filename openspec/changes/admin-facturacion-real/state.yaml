@@ -28,9 +28,9 @@ sprints:
     priority: high
   4-pantalla:
     title: billing.vue sin datos inventados
-    status: pending
+    status: done
     tasks_total: 5
-    tasks_done: 0
+    tasks_done: 5
     priority: high
   5-cierre:
     title: Verificación + deploy + backfill prod
