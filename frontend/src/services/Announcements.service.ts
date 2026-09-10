@@ -13,15 +13,22 @@ export interface Announcement {
   priority: AnnouncementPriority
   active: boolean | number
   date?: string
+  /** Vigencia (#107): ISO o null. null/ausente = se publica ya / no vence. */
+  startsAt?: string | null
+  endsAt?: string | null
   createdAt?: string
 }
 
 export const AnnouncementsService = {
-  /** Lista anuncios activos (filtra por hotel del usuario o global) */
-  list: (params?: { hotelId?: string; activeOnly?: boolean }) => {
+  /**
+   * Lista anuncios activos (filtra por hotel del usuario o global).
+   * `scope`: 'active' (default, sólo los vigentes hoy) | 'all' (también programados y vencidos; sólo super_admin).
+   */
+  list: (params?: { hotelId?: string; activeOnly?: boolean; scope?: 'active' | 'all' }) => {
     const qs = new URLSearchParams()
     if (params?.hotelId) qs.set('hotelId', params.hotelId)
     if (params?.activeOnly) qs.set('active', '1')
+    if (params?.scope) qs.set('scope', params.scope)
     const query = qs.toString()
     return http.get<{ data: Announcement[] }>(`/anuncios${query ? `?${query}` : ''}`)
   },

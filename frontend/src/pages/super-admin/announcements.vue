@@ -98,11 +98,11 @@
       </SectionCard>
       <SectionCard title="Programación">
         <div class="space-y-3">
-          <div v-for="sched in scheduled" :key="sched.id" class="bg-surface rounded-xl p-3">
+          <div v-for="sched in scheduled" :key="sched.id" class="bg-surface rounded-xl p-3" data-testid="scheduled-item">
             <div class="text-xs font-bold text-navy">{{ sched.title }}</div>
             <div class="flex justify-between text-[10px] mt-1">
-              <span class="text-text-muted">{{ sched.date }}</span>
-              <span class="text-teal font-bold">{{ sched.audience }}</span>
+              <span class="text-text-muted">{{ formatFecha(sched.startsAt) }}</span>
+              <span class="text-teal font-bold">{{ sched.endsAt ? `Hasta ${formatFecha(sched.endsAt)}` : 'Programado' }}</span>
             </div>
           </div>
           <div v-if="scheduled.length === 0" class="text-center text-sm text-text-muted py-4">No hay anuncios programados</div>
@@ -140,6 +140,29 @@
             </label>
           </div>
         </div>
+        <!-- #107 (ANN-3): vigencia. Sin tocar nada se publica ya y no vence (el body no lleva startsAt/endsAt). -->
+        <div>
+          <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Publicación</label>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="flex items-center gap-2 p-2 bg-surface rounded-lg cursor-pointer">
+              <input id="announcement-publish-now" name="publishMode" type="radio" value="now" v-model="newAnnouncement.publishMode" class="w-4 h-4 text-cyan" />
+              <span class="text-xs font-bold text-navy">Publicar ahora</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 bg-surface rounded-lg cursor-pointer">
+              <input id="announcement-publish-scheduled" name="publishMode" type="radio" value="scheduled" v-model="newAnnouncement.publishMode" class="w-4 h-4 text-cyan" />
+              <span class="text-xs font-bold text-navy">Programar</span>
+            </label>
+          </div>
+          <div v-if="newAnnouncement.publishMode === 'scheduled'" class="mt-2">
+            <label for="announcement-starts-at" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Fecha de publicación</label>
+            <input id="announcement-starts-at" name="startsAt" v-model="newAnnouncement.startsAt" type="datetime-local" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
+          </div>
+        </div>
+        <div>
+          <label for="announcement-ends-at" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Fecha de fin <span class="normal-case font-normal text-text-muted/70">(opcional)</span></label>
+          <input id="announcement-ends-at" name="endsAt" v-model="newAnnouncement.endsAt" type="datetime-local" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
+          <p class="text-[10px] text-text-muted mt-1">Vacío = sin vencimiento.</p>
+        </div>
         <div>
           <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Mensaje</label>
           <textarea v-model="newAnnouncement.message" rows="4" class="w-full px-4 py-3 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan resize-none" placeholder="Escribe el mensaje del anuncio..."></textarea>
@@ -147,7 +170,7 @@
       </div>
       <template #footer>
         <button @click="showCreateModal = false" class="px-4 py-2.5 bg-surface text-navy text-sm font-bold rounded-xl cursor-pointer">Cancelar</button>
-        <button type="button" :disabled="enviando || !newAnnouncement.title.trim()" @click="sendAnnouncement" class="px-4 py-2.5 bg-navy text-white text-sm font-bold rounded-xl cursor-pointer disabled:opacity-50 disabled:cursor-default">{{ enviando ? 'Publicando…' : 'Enviar Ahora' }}</button>
+        <button type="button" :disabled="enviando || !newAnnouncement.title.trim()" @click="sendAnnouncement" class="px-4 py-2.5 bg-navy text-white text-sm font-bold rounded-xl cursor-pointer disabled:opacity-50 disabled:cursor-default">{{ enviando ? 'Publicando…' : (newAnnouncement.publishMode === 'scheduled' ? 'Programar' : 'Enviar Ahora') }}</button>
       </template>
     </AppModal>
 
@@ -189,7 +212,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useToast } from '@/composables/useToast'
 import { PlatformService } from '@/services/Platform.service'
 import { AnnouncementsService } from '@/services/Announcements.service'
@@ -202,9 +225,16 @@ const toast = useToast()
 const loading = ref(true)
 const showCreateModal = ref(false)
 
-const newAnnouncement = ref({
-  title: '', type: 'feature', allHotels: true, adminsOnly: false, message: ''
-})
+type PublishMode = 'now' | 'scheduled'
+interface NewAnnouncement {
+  title: string; type: string; allHotels: boolean; adminsOnly: boolean; message: string
+  /** #107: 'now' publica ya (sin startsAt); 'scheduled' exige startsAt. endsAt siempre opcional. */
+  publishMode: PublishMode; startsAt: string; endsAt: string
+}
+function draftVacio(): NewAnnouncement {
+  return { title: '', type: 'feature', allHotels: true, adminsOnly: false, message: '', publishMode: 'now', startsAt: '', endsAt: '' }
+}
+const newAnnouncement = ref<NewAnnouncement>(draftVacio())
 
 const TYPE_LABEL: Record<string, string> = { feature: 'Nueva función', maintenance: 'Mantenimiento', warning: 'Aviso', urgent: 'Urgente', promo: 'Promoción', success: 'Informativo', info: 'Informativo' }
 const TYPE_CLASS: Record<string, string> = { feature: 'bg-teal/10 text-teal', maintenance: 'bg-gold/10 text-gold', warning: 'bg-gold/10 text-gold', urgent: 'bg-danger/10 text-danger', promo: 'bg-navy/10 text-navy', success: 'bg-cyan/10 text-cyan', info: 'bg-cyan/10 text-cyan' }
@@ -218,7 +248,14 @@ const templates = [
   { name: 'Recordatorio pago', icon: '💰', description: 'Aviso de facturación pendiente' },
 ]
 
-const scheduled = ref<any[]>([])
+/** #107: programados = startsAt en el futuro. Sale de la misma lista (GET /admin/announcements trae todas las filas). */
+const scheduled = computed(() =>
+  announcements.value.filter((a: any) => a.startsAt && new Date(a.startsAt).getTime() > Date.now()),
+)
+
+function formatFecha(iso: string): string {
+  return new Date(iso).toLocaleString('es', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
 
 async function cargarAnuncios(): Promise<void> {
   loading.value = true
@@ -244,6 +281,8 @@ async function cargarAnuncios(): Promise<void> {
       // Lecturas reales de la API; 0 queda sólo como default vacío cuando no viene, nunca como dato falso.
       reads: a.reads ?? 0,
       status: a.active === 1 ? 'Enviado' : 'Borrador',
+      startsAt: a.startsAt ?? null,
+      endsAt: a.endsAt ?? null,
     }))
   } catch { toast.error('No se pudieron cargar los anuncios') } finally { loading.value = false }
 }
@@ -261,8 +300,14 @@ const enviando = ref(false)
 async function sendAnnouncement(): Promise<void> {
   const draft = newAnnouncement.value
   if (!draft.title.trim()) { toast.error('El anuncio necesita un título'); return }
+  const programado = draft.publishMode === 'scheduled'
+  if (programado && !draft.startsAt) { toast.error('Elegí la fecha de publicación'); return }
+  const startsAt = programado ? new Date(draft.startsAt).toISOString() : undefined
+  const endsAt = draft.endsAt ? new Date(draft.endsAt).toISOString() : undefined
+  if (startsAt && endsAt && endsAt <= startsAt) { toast.error('La fecha de fin tiene que ser posterior al inicio'); return }
   enviando.value = true
   try {
+    // Sólo se mandan startsAt/endsAt si el usuario los cargó: sin tocar nada el body es el de siempre.
     await AnnouncementsService.create({
       title: draft.title.trim(),
       message: draft.message.trim(),
@@ -270,10 +315,12 @@ async function sendAnnouncement(): Promise<void> {
       priority: draft.type === 'maintenance' ? 'high' : 'medium',
       active: 1,
       date: new Date().toISOString(),
+      ...(startsAt ? { startsAt } : {}),
+      ...(endsAt ? { endsAt } : {}),
     } as any)
     showCreateModal.value = false
-    newAnnouncement.value = { title: '', type: 'feature', allHotels: true, adminsOnly: false, message: '' }
-    toast.success('Anuncio publicado')
+    newAnnouncement.value = draftVacio()
+    toast.success(programado ? 'Anuncio programado' : 'Anuncio publicado')
     await cargarAnuncios()
   } catch (e: any) {
     toast.error(e?.message || 'No se pudo publicar el anuncio')
