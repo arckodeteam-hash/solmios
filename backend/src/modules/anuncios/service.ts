@@ -1,21 +1,19 @@
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
 import { NotFoundError, AuthError, ForbiddenError } from 'arckode-framework'
-import type {
-  AnunciosDTO, CreateAnunciosDTO, UpdateAnunciosDTO, AnunciosQuery, AnunciosPaginated,
-  AnnouncementReadDTO, AnunciosScope,
-} from './types'
+import type { AnunciosDTO, CreateAnunciosDTO, UpdateAnunciosDTO, AnunciosQuery, AnunciosPaginated, AnunciosScope } from './types'
 import type { AnunciosSockets } from './sockets'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
-import { isVisibleFor } from '../../shared/usecases/announcement-visibility'
+import { ADMIN_ROLES, isVisibleFor } from '../../shared/usecases/announcement-visibility'
 import { listVisibleAnuncios } from './usecases/list-visible'
 import { resolveAudience, assertWindow } from './usecases/audience'
-import { annotateReads, upsertRead, type ReadField } from './usecases/reads'
+import * as reads from './usecases/announcement-reads'
 import { anunciosListCacheKey, invalidateAnunciosCaches } from './usecases/cache'
 
-const CACHE_TTL = 300
+// Las lecturas por usuario (ANN-4) viven en `usecases/announcement-reads.ts` desde que el service
+// pasó las 200 líneas del gate. Los tipos se re-exportan para no romper a quien los importa de acá.
+export type { AnnouncementReadDTO, AnnouncementWithReads } from './usecases/announcement-reads'
 
-/** Usuario del token, tal como lo deja `auth.authenticate()`. */
-interface CurrentUser { id: string; role: string; hotelId?: string }
+const CACHE_TTL = 300
 
 export class AnunciosService {
   private sockets: AnunciosSockets = {}
@@ -29,9 +27,8 @@ export class AnunciosService {
     private readonly logger: Logger,
     private readonly cache: CacheAdapter,
     private readonly userRepo: RepositoryAdapter<any>,
+    private readonly readsRepo: RepositoryAdapter<reads.AnnouncementReadDTO>,
     private readonly auth: Auth,
-    /** Lecturas por usuario. Opcional para no romper a quien construya el service sin ella. */
-    private readonly readsRepo?: RepositoryAdapter<AnnouncementReadDTO>,
   ) {}
 
   setSockets(s: Partial<AnunciosSockets>): void {
@@ -45,17 +42,9 @@ export class AnunciosService {
     }
   }
 
-  /** Hotel del usuario, resolviéndolo contra la base si el token no lo trae. */
-  private async resolveHotelId(currentUser: CurrentUser): Promise<string | undefined> {
-    if (currentUser.hotelId) return currentUser.hotelId
-    if (currentUser.role === 'super_admin') return undefined
-    const user = await this.userRepo.findById(currentUser.id)
-    return user?.hotelId
-  }
-
-  async list(query: AnunciosQuery, currentUser: CurrentUser): Promise<AnunciosPaginated> {
+  async list(query: AnunciosQuery, currentUser: reads.CurrentUser): Promise<AnunciosPaginated> {
     const isSuper = currentUser.role === 'super_admin'
-    const hotelId = await this.resolveHotelId(currentUser)
+    const hotelId = await reads.resolveHotelId(this.readsDeps, currentUser)
     if (!isSuper && !hotelId) throw new AuthError('No hotel assigned')
 
     // Ver lo programado y lo vencido es una vista de administración de la plataforma. Un hotel
@@ -70,43 +59,41 @@ export class AnunciosService {
     const page = Math.max(query.page || 1, 1)
     const limit = Math.min(Math.max(query.limit || 20, 1), 100)
 
-    const cacheKey = await anunciosListCacheKey(this.cache, {
-      hotelId: isSuper ? (query.hotelId ?? null) : hotelId,
-      role: currentUser.role,
-      filters: base,
-      scope,
+    // La clave lleva filtros, paginación y el token de VERSIÓN del caché (#160). Además del hotel,
+    // el resultado depende de si el rol recibe la audiencia `admins` y del scope: dos usuarios del
+    // mismo hotel con distinto rol NO pueden compartir entrada.
+    const listHotel = isSuper ? query.hotelId : hotelId
+    const cacheKey = await anunciosListCacheKey(this.cache, listHotel, {
+      filters: { ...base, scope, tier: ADMIN_ROLES.has(currentUser.role) ? 'admins' : 'all' },
       page,
       limit,
     })
-
-    // También el cache hit pasa por `annotateReads`: la entrada cacheada es la parte COMÚN a
-    // todos los usuarios del mismo rol y hotel, y `seen`/`dismissed` se le agregan encima a cada
-    // uno. Devolverla tal cual sería servirle a una persona las marcas de otra.
     const cached = await this.cache.get(cacheKey)
-    if (cached) return this.annotate(cached as AnunciosPaginated, currentUser)
-
-    const response = await listVisibleAnuncios(this.repo, base, {
-      isSuper, hotelId, queryHotelId: query.hotelId, role: currentUser.role, scope, page, limit,
-    })
-    await this.cache.set(cacheKey, response, CACHE_TTL)
-    return this.annotate(response, currentUser)
+    let response: AnunciosPaginated
+    if (cached) {
+      response = cached as AnunciosPaginated
+    } else {
+      response = await listVisibleAnuncios(this.repo, base, {
+        isSuper, hotelId, queryHotelId: query.hotelId, role: currentUser.role, scope, page, limit,
+      })
+      await this.cache.set(cacheKey, response, CACHE_TTL)
+    }
+    // La vista por usuario va SIEMPRE después del cache: la página cacheada es la del hotel
+    // (compartida), lo que cada usuario deja de ver es sólo suyo y no se cachea.
+    return reads.applyUserView(this.readsDeps, response, currentUser, hotelId)
   }
 
-  private annotate(page: AnunciosPaginated, currentUser: CurrentUser): Promise<AnunciosPaginated> {
-    return annotateReads(this.readsRepo, this.logger, page, currentUser.id)
-  }
-
-  async getById(id: string, currentUser: CurrentUser): Promise<AnunciosDTO> {
+  async getById(id: string, currentUser: reads.CurrentUser): Promise<AnunciosDTO> {
     const item = await this.repo.findById(id)
     if (!item) throw new NotFoundError('Anuncio no encontrado')
     if (currentUser.role !== 'super_admin') {
-      const hotelId = await this.resolveHotelId(currentUser)
+      const hotelId = await reads.resolveHotelId(this.readsDeps, currentUser)
       if (!isVisibleFor(item, { role: currentUser.role, hotelId })) throw new AuthError('No autorizado')
     }
     return item
   }
 
-  async create(dto: CreateAnunciosDTO, currentUser: CurrentUser): Promise<AnunciosDTO> {
+  async create(dto: CreateAnunciosDTO, currentUser: reads.CurrentUser): Promise<AnunciosDTO> {
     const { audience, hotelId } = resolveAudience(dto, currentUser)
     assertWindow(dto)
 
@@ -121,11 +108,12 @@ export class AnunciosService {
       date: dto.date ?? new Date().toISOString(),
     } as any)
     await this.sockets.onAnunciosCreated?.(item)
-    await invalidateAnunciosCaches(this.cache)
+    // Sin hotel = anuncio de plataforma: bumpea el token global y caen TODAS las listas.
+    await invalidateAnunciosCaches(this.cache, item.hotelId ?? hotelId)
     return item
   }
 
-  async update(id: string, dto: UpdateAnunciosDTO, currentUser: CurrentUser): Promise<AnunciosDTO> {
+  async update(id: string, dto: UpdateAnunciosDTO, currentUser: reads.CurrentUser): Promise<AnunciosDTO> {
     const existing = await this.repo.findById(id)
     if (!existing) throw new NotFoundError('Anuncio no encontrado')
     if (currentUser.role !== 'super_admin' && existing.hotelId !== currentUser.hotelId) {
@@ -136,14 +124,20 @@ export class AnunciosService {
     }
     assertWindow({ startsAt: dto.startsAt ?? existing.startsAt, endsAt: dto.endsAt ?? existing.endsAt })
 
+    // El hotel ANTERIOR se guarda antes de escribir: después del update, `existing` puede ser la
+    // misma instancia que acaba de mutar y el hotel viejo ya no estaría por ningún lado — su
+    // listado quedaría cacheado con un aviso que se mudó.
+    const previousHotelId = existing.hotelId
     const item = await this.repo.update(id, dto as any)
     if (!item) throw new NotFoundError('Anuncio no encontrado')
     await this.sockets.onAnunciosUpdated?.(item)
-    await invalidateAnunciosCaches(this.cache)
+    await invalidateAnunciosCaches(this.cache, previousHotelId)
+    // Si el aviso cambió de hotel, la lista del destino también dejó de ser cierta.
+    if (item.hotelId && item.hotelId !== previousHotelId) await invalidateAnunciosCaches(this.cache, item.hotelId)
     return item
   }
 
-  async delete(id: string, currentUser: CurrentUser): Promise<void> {
+  async delete(id: string, currentUser: reads.CurrentUser): Promise<void> {
     const existing = await this.repo.findById(id)
     if (!existing) throw new NotFoundError('Anuncio no encontrado')
     if (currentUser.role !== 'super_admin' && existing.hotelId !== currentUser.hotelId) {
@@ -152,31 +146,23 @@ export class AnunciosService {
     const deleted = await this.repo.delete(id)
     if (!deleted) throw new NotFoundError('Anuncio no encontrado')
     await this.sockets.onAnunciosDeleted?.(id)
-    await invalidateAnunciosCaches(this.cache)
+    await invalidateAnunciosCaches(this.cache, existing.hotelId)
     await auditSafely(this.auditPort, this.logger, {
       hotelId: existing.hotelId, userId: currentUser.id, action: 'announcement.delete',
       entity: 'announcement', entityId: id, detail: `Anuncio "${existing.title}" eliminado`,
     })
   }
 
-  /** Marca el anuncio como visto por ESTE usuario. */
-  markSeen(id: string, currentUser: CurrentUser): Promise<AnnouncementReadDTO | null> {
-    return this.mark(id, currentUser, 'seenAt')
+  // ── Lecturas por usuario (ANN-4) — la lógica vive en `usecases/announcement-reads.ts` ──
+
+  /** Deps de las lecturas: el usecase no conoce al service, sólo sus repos. */
+  private get readsDeps(): reads.AnnouncementReadsDeps {
+    return { repo: this.repo, readsRepo: this.readsRepo, userRepo: this.userRepo }
   }
 
-  /** Marca el anuncio como cerrado por ESTE usuario. No lo oculta para sus compañeros. */
-  markDismissed(id: string, currentUser: CurrentUser): Promise<AnnouncementReadDTO | null> {
-    return this.mark(id, currentUser, 'dismissedAt')
-  }
+  /** Marca el aviso como VISTO por ESTE usuario. Idempotente (ver el usecase). */
+  markSeen(id: string, currentUser: reads.CurrentUser): Promise<void> { return reads.markSeen(this.readsDeps, id, currentUser) }
 
-  private async mark(id: string, currentUser: CurrentUser, field: ReadField): Promise<AnnouncementReadDTO | null> {
-    if (!this.readsRepo) return null
-    const hotelId = await this.resolveHotelId(currentUser)
-    return upsertRead(
-      { readsRepo: this.readsRepo, anunciosRepo: this.repo },
-      id,
-      { id: currentUser.id, hotelId },
-      field,
-    )
-  }
+  /** El ✕ del banner: ESTE usuario deja de ver el aviso, el resto del hotel lo sigue viendo. */
+  dismiss(id: string, currentUser: reads.CurrentUser): Promise<void> { return reads.dismiss(this.readsDeps, id, currentUser) }
 }

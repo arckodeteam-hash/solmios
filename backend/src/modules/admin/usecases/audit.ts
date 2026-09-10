@@ -31,3 +31,22 @@ export function amenityCatalogDeleteEntry(amenity: { id: string; name?: string }
     detail: `Amenity del catálogo "${amenity.name ?? amenity.id}" eliminada`,
   }
 }
+
+/**
+ * REQ-PIPE-05 (#146): el super-admin le dio más días de prueba a un hotel. Va CON `hotelId`
+ * (a diferencia de los borrados de plataforma): la extensión es de ESE hotel y tiene que
+ * aparecer en su historial, además del `userId` del admin que la concedió.
+ */
+export function trialExtendEntry(
+  input: { hotelId: string; days: number; previousTrialEndsAt: string | null; trialEndsAt: string },
+  actor: Actor,
+): AuditEntry {
+  return {
+    hotelId: input.hotelId,
+    userId: actor?.id,
+    action: 'subscription.extend_trial',
+    entity: 'subscription',
+    entityId: input.hotelId,
+    detail: `Trial extendido ${input.days} día${input.days === 1 ? '' : 's'}: ${input.previousTrialEndsAt ?? 'sin fecha'} → ${input.trialEndsAt}`,
+  }
+}

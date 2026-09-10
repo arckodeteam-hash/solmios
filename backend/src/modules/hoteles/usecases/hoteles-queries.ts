@@ -16,6 +16,26 @@ export function assertCancellationCompatible(freeCancellation: unknown, cancella
   }
 }
 
+/**
+ * #95 ("Cobro % niños"): con la regla prendida, `childrenRatePercent` es lo que paga cada niño
+ * que consume plaza en el motor público. El form de settings/index.vue ya bloquea el guardado
+ * fuera de 1-100, pero eso no es validación: un cliente directo (curl, datos legacy) podía
+ * persistir cualquier % y el motor cobraba de más o de menos. Con la regla APAGADA el % NO se
+ * valida — queda inerte (el motor lo ignora) y los forms guardan un % a medias sin bloquearse;
+ * ese flujo no se rompe. El clamp al LEER (rate-resolution.ts) queda como defensa en
+ * profundidad para datos ya guardados. `valor` llega como objeto desde el frontend, pero un
+ * cliente crudo puede mandar string JSON: `safeParse` cubre ambos.
+ */
+function assertChildPolicyRate(clave: string, valor: any): void {
+  if (clave !== 'child_policy') return
+  const policy = safeParse(valor) as any
+  if (!policy?.childrenDiscountEnabled) return
+  const pct = policy.childrenRatePercent
+  if (typeof pct !== 'number' || !Number.isFinite(pct) || pct < 1 || pct > 100) {
+    throw new ValidationError('El porcentaje de tarifa para niños debe estar entre 1% y 100%')
+  }
+}
+
 /** Campos derivados de una dirección concreta — dejan de tener sentido cuando el país cambia
  *  (un pin/provincia de OTRO país queda mezclado con el nuevo). `latitude`/`longitude` usan `0`
  *  como "sin coordenadas propias" (mismo criterio que ya usa el default del modelo y
@@ -85,6 +105,8 @@ export class HotelesQueries {
   async setConfig(body: { clave: string; valor: any; hotelId?: string }, user?: any): Promise<any> {
     const { clave, valor } = body
     if (!clave || valor === undefined) throw new Error('clave y valor requeridos')
+    // #95: se valida ANTES del write — un rechazo después dejaría la fila a medio actualizar.
+    assertChildPolicyRate(clave, valor)
     // Multi-tenant: el hotelId sale del token. Solo super_admin puede targetear otro
     // hotel (o 'platform') vía body.hotelId — un merchant queda forzado a su propio hotel.
     const isSuper = user?.role === 'super_admin'

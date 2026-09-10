@@ -1,6 +1,8 @@
 import { createModule, OrmRepository } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import { estadoMetaApp, guardarMetaApp } from '../../infrastructure/meta-app-config'
+import { estadoResend, guardarResend, borrarResend } from '../../infrastructure/resend-config'
+import { estadoServicios } from '../../infrastructure/settings-status'
 import { MetaAppConfigSchema } from './validators/meta-app-schema'
 import type { PlanDTO, AmenityCatalogDTO } from './types'
 import { AdminService } from './service'
@@ -10,6 +12,7 @@ import { MODULE_CATALOG, getModuleState, setModuleState, getModuleStateForHotel,
 import { SpecialConditionsUseCase } from './usecases/special-conditions'
 import { SubscriptionCategoriesUseCase } from './usecases/subscription-categories'
 import { ModuleOverridesUseCase } from './usecases/module-overrides'
+import { PlatformBillingUseCase } from './usecases/billing'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
 
 export { AdminService }
@@ -21,16 +24,27 @@ export function AdminModule() {
     // 400/403/404/409, por TIPO de error). Un cambio observable del contrato bumpea la versión.
     // 1.2.0: + GET /api/admin/modules/catalog (árbol módulo→sub-módulos para el editor de planes)
     // y `plans.modules` se valida contra el catálogo (400 con las claves inválidas).
-    version: '1.2.0',
+    // 1.3.0 (BIL-2, #154): + facturación de la plataforma — listado con filtros, detalle, stats y
+    // export CSV sobre `platform_invoices`. Contrato observable nuevo.
+    // 1.4.0 (BIL-3, #155): + recordatorio de cobro (plantilla por estado, dedup 24 h) y registro de
+    // pago manual (reactiva la suscripción vía connector). Las dos dejan audit log.
+    // 1.4.1: + POST /api/admin/subscriptions/:hotelId/extend-trial (REQ-PIPE-05, #146).
+    version: '1.4.1',
     description: 'Super admin platform management',
     contract: {
-      name: 'admin', version: '1.2.0',
+      name: 'admin', version: '1.4.1',
       description: 'Platform-level management: hotels, users, plans, analytics',
-      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride'],
+      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv', 'remindBillingInvoice', 'registerManualPayment', 'extendTrial'],
       events: [],
       tables: [],
       dependencies: [],
-      rules: ['Super_admin only'],
+      rules: [
+        'Super_admin only',
+        'billing/*: la verdad es `platform_invoices` (la llena el webhook de Stripe, BIL-1). NUNCA derivar una factura de `listSubscriptions` ni calcular el monto desde el precio del plan',
+        'billing/*: los filtros (estado, plan, rango de fechas, texto) se aplican en el usecase, no en el navegador sobre el set completo',
+        'billing/remind: una factura no se recuerda dos veces en 24 h (409) — el reintento de Stripe ya genera varios eventos del mismo cobro',
+        'billing/manual-payment: PRIMERO la fila del cobro, DESPUÉS la activación. La suscripción se toca SOLO vía el connector admin-subscriptions-billing',
+      ],
     },
     create({ logger, orm, cache, router, auth }) {
       if (!auth) throw new Error('admin: auth dependency required')
@@ -51,7 +65,16 @@ export function AdminModule() {
       const moduleOverrides = new ModuleOverridesUseCase(moduleOverridesRepo, auth, log)
       // `subscriptionsRepo` (último): sin él, el select de plan de /admin/hotels solo escribiría el
       // espejo legacy `hotels.plan` y el hotel seguiría con los módulos del plan viejo (#46).
-      const service = new AdminService(plansRepo, amenitiesRepo, log, auth, queries, hotelsRepo, specialConditions, categories, configRepo, moduleOverrides, subscriptionsRepo)
+      // Facturación de la PLATAFORMA (BIL-1..3): `platform_invoices` la define el módulo
+      // `subscriptions` (es su tabla); acá solo se LEE/escribe vía repo, igual que `Subscriptions`
+      // más arriba — los módulos no se importan entre sí, el modelo es compartido por el ORM.
+      const platformBilling = new PlatformBillingUseCase({
+        invoicesRepo: new OrmRepository<any>(orm, 'PlatformInvoices'),
+        hotelsRepo, subscriptionsRepo, logger: log,
+        // MRR real (solo `active`), misma cuenta que /admin/subscriptions — no se recalcula acá.
+        readMrr: async () => (await queries.listSubscriptions()).mrrTotal,
+      })
+      const service = new AdminService(plansRepo, amenitiesRepo, log, auth, queries, hotelsRepo, specialConditions, categories, configRepo, moduleOverrides, subscriptionsRepo, platformBilling)
       const controller = new AdminController(service, log)
 
       const sa = [auth.authenticate('super_admin'), requireUserType('admin')]
@@ -85,6 +108,16 @@ export function AdminModule() {
         return { status: 200, body: await guardarMetaApp(configRepo, body) }
       })
 
+      // API key de Resend (plataforma): respaldo de correo cuando no hay SMTP. El GET devuelve
+      // solo estado + últimos 4; la key nunca vuelve al navegador. Vacía en el PUT → 400.
+      router.get('/api/admin/settings/resend', sa, async () => ({ status: 200, body: await estadoResend(configRepo) }))
+      router.put('/api/admin/settings/resend', sa, async (req: any) => ({ status: 200, body: await guardarResend(configRepo, String(req.body?.apiKey ?? '')) }))
+      router.delete('/api/admin/settings/resend', sa, async () => ({ status: 200, body: await borrarResend(configRepo) }))
+
+      // Estado por servicio (Stripe, captcha, Meta, Resend, SMTP, Maps, Channex...): solo `configured`
+      // + `source` (env | configuration). Nunca devuelve valores ni pistas: para eso están las pantallas.
+      router.get('/api/admin/settings/status', sa, async () => ({ status: 200, body: await estadoServicios(configRepo) }))
+
       router.get('/api/admin/hoteles', sa, () => controller.listHotels())
       // ── SMTP-UI (2026-08-19): test REAL de la config de correo de la plataforma ──
       // El botón de settings.vue era un toast falso — ocultó meses de desconexión entre
@@ -111,7 +144,7 @@ export function AdminModule() {
       router.get('/api/admin/analytics', sa, () => controller.getAnalytics())
       router.get('/api/admin/platform-metrics', sa, () => controller.getPlatformMetrics())
       router.get('/api/admin/subscriptions', sa, () => controller.listSubscriptions())
-      router.get('/api/admin/audit', sa, () => controller.listAuditLogs())
+      router.get('/api/admin/audit', sa, (req: any) => controller.listAuditLogs(req))
       router.get('/api/admin/announcements', sa, () => controller.listAnnouncements())
       router.get('/api/admin/announcements/reach', sa, () => controller.getAnnouncementsReach())
       router.get('/api/admin/monitoring', sa, () => controller.getMonitoring())
@@ -135,13 +168,26 @@ export function AdminModule() {
       router.post('/api/admin/subscriptions/:hotelId/special-conditions', sa, (req: any) => controller.applySpecialConditions(req))
       router.post('/api/admin/subscriptions/:hotelId/suspend', sa, (req: any) => controller.suspendSubscription(req))
       router.post('/api/admin/subscriptions/:hotelId/reactivate', sa, (req: any) => controller.reactivateSubscription(req))
+      // REQ-PIPE-05 (#146): más días de prueba. La lógica vive en `subscriptions` (connector
+      // admin-subscriptions-trial); acá solo validación, guard de super-admin y audit_log.
+      router.post('/api/admin/subscriptions/:hotelId/extend-trial', sa, (req: any) => controller.extendTrial(req))
 
       // ── Overrides de módulos por hotel (3ra capa de entitlement) ──────────────────────
       router.get('/api/admin/hotels/:hotelId/module-overrides', sa, (req: any) => controller.listModuleOverrides(req))
       router.post('/api/admin/hotels/:hotelId/module-overrides', sa, (req: any) => controller.upsertModuleOverride(req))
       router.delete('/api/admin/hotels/:hotelId/module-overrides/:id', sa, (req: any) => controller.deleteModuleOverride(req))
 
-      log.info('Módulo admin listo (32 endpoints)')
+      // ── Facturación de la PLATAFORMA (lo que los hoteles le pagan a SOLMI OS) ──────────────
+      // `export.csv` va ANTES de `/:id`: el router matchea por orden y `export.csv` entraría
+      // como un `:id` que no existe (404 con el archivo vacío).
+      router.get('/api/admin/billing/invoices', sa, (req: any) => controller.listBillingInvoices(req))
+      router.get('/api/admin/billing/stats', sa, (req: any) => controller.getBillingStats(req))
+      router.get('/api/admin/billing/export.csv', sa, (req: any) => controller.exportBillingCsv(req))
+      router.get('/api/admin/billing/invoices/:id', sa, (req: any) => controller.getBillingInvoice(req))
+      router.post('/api/admin/billing/invoices/:id/remind', sa, (req: any) => controller.remindBillingInvoice(req))
+      router.post('/api/admin/billing/manual-payment', sa, (req: any) => controller.registerManualPayment(req))
+
+      log.info('Módulo admin listo (48 endpoints)')
       return service
     },
   })

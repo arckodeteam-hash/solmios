@@ -1,8 +1,11 @@
 // impersonate.test.ts — Impersonación real del super admin.
 import { describe, it, expect, vi, beforeEach } from 'bun:test'
+import { Router } from 'arckode-framework'
 import { jwtTokenAdapter } from 'arckode-framework/adapters/jwt'
 import { impersonateUser, IMPERSONATION_TTL } from '../usecases/impersonate'
 import { HotelAuth } from '../../../infrastructure/auth/hotel-auth'
+import { UsuariosModule } from '../index'
+import { fakeLogger, makeAuth } from '../../../infrastructure/auth/tests/route-permission-helpers'
 
 const ADMIN = { id: 'admin-1', role: 'super_admin' }
 const TARGET = { id: 'u1', name: 'Ana', email: 'ana@hotel.com', role: 'hotel_admin', hotelId: 'h1', active: 1 }
@@ -117,5 +120,88 @@ describe('HotelAuth: claim impersonatedBy', () => {
   it('un token normal devuelve impersonatedBy undefined', () => {
     const jwt = auth.createToken({ id: 'u1', role: 'hotel_admin', hotelId: 'h1' })
     expect(auth.verifyToken(jwt).impersonatedBy).toBeUndefined()
+  })
+})
+
+// REQ-SOP-04: POST /api/auth/impersonate/:id deja rastro de auditoría (auth.impersonate).
+// A nivel de RUTA REAL (router.resolve) — el audit se cablea inline en index.ts, no en el
+// usecase puro de arriba. Módulo REAL montado sobre Router/HotelAuth reales con un ORM fake.
+describe('POST /api/auth/impersonate/:id — auditoría (REQ-SOP-04)', () => {
+  const ADMIN_ROW = { id: 'admin-1', name: 'Super Admin', email: 'sa@x.com', role: 'super_admin', userType: 'admin', hotelId: null, active: 1 }
+  const TARGET_ROW = { id: 'u1', name: 'Ana', email: 'ana@hotel.com', role: 'hotel_admin', userType: 'merchant', hotelId: 'h1', active: 1 }
+
+  /** ORM fake con una tabla Users real (findById) — impersonateUser depende de eso. */
+  function ormWithUsers(users: any[], hotels: any[] = []): any {
+    const orm: any = {
+      define() { return orm },
+      findMany: async (table: string, filters?: any) => {
+        const rows = table === 'Hotels' ? hotels : table === 'Users' ? users : []
+        return rows.filter((r: any) => Object.entries(filters ?? {}).every(([k, v]) => r[k] === v))
+      },
+      findById: async (table: string, id: string) => (table === 'Users' ? users.find((u: any) => u.id === id) ?? null : null),
+      findOne: async () => null,
+      create: async (_t: string, d: any) => d,
+      update: async (_t: string, id: string, d: any) => ({ id, ...d }),
+      delete: async () => true,
+      count: async () => 0,
+      paginate: async () => ({ data: [], total: 0, page: 1, limit: 20 }),
+      transaction: async (fn: any) => fn(orm),
+    }
+    return orm
+  }
+
+  function mount() {
+    const router = new Router()
+    const auth = makeAuth()
+    const orm = ormWithUsers([ADMIN_ROW, TARGET_ROW], [{ id: 'h1', name: 'Hotel Caribe' }])
+    const cache = { get: async () => null, set: async () => {}, delete: async () => {} }
+    const mod = UsuariosModule() as any
+    const service = mod.create({ logger: fakeLogger(), orm, router, auth, cache })
+    return { router, auth, service }
+  }
+
+  const adminHeaders = (auth: any) => ({
+    authorization: `Bearer ${auth.createToken({ id: 'admin-1', role: 'super_admin', hotelId: null, userType: 'admin' })}`,
+  })
+
+  it('con ticketId en el body → fila de auditoría con el ticket en detail', async () => {
+    const { router, auth, service } = mount()
+    const records: any[] = []
+    service.setAuditDeps({ record: async (entry: any) => { records.push(entry) } })
+
+    const res = await router.resolve('POST', '/api/auth/impersonate/u1', { headers: adminHeaders(auth), body: { ticketId: 'tk-42' } })
+
+    expect(res.status).toBe(200)
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({ userId: 'admin-1', hotelId: 'h1', action: 'auth.impersonate', entity: 'user', entityId: 'u1' })
+    expect(records[0].detail).toContain('tk-42')
+  })
+
+  it('sin body → fila de auditoría sin ticket', async () => {
+    const { router, auth, service } = mount()
+    const records: any[] = []
+    service.setAuditDeps({ record: async (entry: any) => { records.push(entry) } })
+
+    const res = await router.resolve('POST', '/api/auth/impersonate/u1', { headers: adminHeaders(auth) })
+
+    expect(res.status).toBe(200)
+    expect(records).toHaveLength(1)
+    expect(records[0].detail).toBe('Impersonación')
+  })
+
+  it('si el audit log lanza, la impersonación igual responde 200', async () => {
+    const { router, auth, service } = mount()
+    service.setAuditDeps({ record: async () => { throw new Error('audit log caído') } })
+
+    const res = await router.resolve('POST', '/api/auth/impersonate/u1', { headers: adminHeaders(auth), body: { ticketId: 'tk-1' } })
+
+    expect(res.status).toBe(200)
+    expect((res.body as any).token).toBeDefined()
+  })
+
+  it('sin conectar el audit port (nadie llamó setAuditDeps) igual responde 200', async () => {
+    const { router, auth } = mount()
+    const res = await router.resolve('POST', '/api/auth/impersonate/u1', { headers: adminHeaders(auth) })
+    expect(res.status).toBe(200)
   })
 })

@@ -33,6 +33,18 @@ export interface PublicPlan {
   description: string
   features: unknown[]
   limits: PublicPlanLimits
+  /**
+   * #71: si el plan se puede elegir en el registro (arranca con la prueba gratis de 15 días).
+   * `false` = se contrata por ventas: la landing manda a contacto y el registro no lo ofrece.
+   * Es la MISMA lectura que hace el alta (`signup.ts:assertPlanAvailable`): NULL/ausente (filas
+   * anteriores a la columna) cuenta como elegible.
+   */
+  trialEligible: boolean
+}
+
+/** `plans.trialEligible` (1/0, NULL en filas viejas) → boolean. Sólo el 0/false explícito niega. */
+export function isTrialEligible(raw: unknown): boolean {
+  return raw !== 0 && raw !== false
 }
 
 /**
@@ -90,6 +102,7 @@ export async function listPublicPlans(plansRepo: RepositoryAdapter<any>): Promis
     id: p.id, name: p.name, slug: p.slug, price: p.price,
     currency: p.currency, description: p.description, features: p.features ?? [],
     limits: publicLimits(p.limits),
+    trialEligible: isTrialEligible(p.trialEligible),
   }))
   const priced = mapped.filter((p) => p.price > 0)
   const quoted = mapped.filter((p) => p.price <= 0)

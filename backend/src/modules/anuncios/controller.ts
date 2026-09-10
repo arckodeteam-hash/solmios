@@ -35,36 +35,25 @@ export class AnunciosController {
     return { status: 200, body: item }
   }
 
-  /**
-   * Registrar la lectura NO puede costar la entrega del mensaje: si algo falla, se responde 200
-   * con `recorded: false` y el banner sigue mostrando el anuncio. Un error acá es un dato de
-   * métrica perdido; un error propagado sería un aviso que el hotel no ve.
-   */
-  async seen(req: HttpRequest) {
-    const currentUser = req.user as any
-    try {
-      await this.service.markSeen(req.params.id, currentUser)
-      return { status: 200, body: { recorded: true } }
-    } catch (e: any) {
-      this.logger.warn('No se pudo registrar la vista del anuncio', { id: req.params.id, error: String(e?.message ?? e) })
-      return { status: 200, body: { recorded: false } }
-    }
-  }
-
-  async dismiss(req: HttpRequest) {
-    const currentUser = req.user as any
-    try {
-      await this.service.markDismissed(req.params.id, currentUser)
-      return { status: 200, body: { recorded: true } }
-    } catch (e: any) {
-      this.logger.warn('No se pudo registrar el cierre del anuncio', { id: req.params.id, error: String(e?.message ?? e) })
-      return { status: 200, body: { recorded: false } }
-    }
-  }
-
   async destroy(req: HttpRequest) {
     const currentUser = req.user as any
     await this.service.delete(req.params.id, currentUser)
+    return { status: 204, body: null }
+  }
+
+  // ── Lecturas por usuario (ANN-4): userId/hotelId salen del token, NUNCA del body ──
+
+  /** POST /api/anuncios/:id/seen — marca el aviso como visto por el usuario del token. */
+  async seen(req: HttpRequest) {
+    const currentUser = req.user as any
+    await this.service.markSeen(req.params.id, currentUser)
+    return { status: 204, body: null }
+  }
+
+  /** POST /api/anuncios/:id/dismiss — el ✕ del banner, sólo para el usuario del token. */
+  async dismiss(req: HttpRequest) {
+    const currentUser = req.user as any
+    await this.service.dismiss(req.params.id, currentUser)
     return { status: 204, body: null }
   }
 }

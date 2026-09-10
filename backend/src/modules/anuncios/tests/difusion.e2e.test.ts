@@ -26,7 +26,7 @@ function memoryCache(): CacheAdapter {
   }
 }
 
-async function withService(fn: (svc: AnunciosService, repo: OrmRepository<AnunciosDTO>) => Promise<void>): Promise<void> {
+async function withService(fn: (svc: AnunciosService, repo: OrmRepository<AnunciosDTO>, readsRepo: OrmRepository<AnnouncementReadDTO>) => Promise<void>): Promise<void> {
   const db = new SqliteAdapter({ path: ':memory:', wal: false, foreignKeys: false })
   await db.connect()
   const orm = new ORM(db)
@@ -38,9 +38,9 @@ async function withService(fn: (svc: AnunciosService, repo: OrmRepository<Anunci
   const repo = new OrmRepository<AnunciosDTO>(orm, 'Announcements')
   const usersRepo = new OrmRepository<any>(orm, 'Users')
   const readsRepo = new OrmRepository<AnnouncementReadDTO>(orm, 'AnnouncementReads')
-  const svc = new AnunciosService(repo, silentLogger(), memoryCache(), usersRepo, fakeAuth, readsRepo)
+  const svc = new AnunciosService(repo, silentLogger(), memoryCache(), usersRepo, readsRepo, fakeAuth)
   try {
-    await fn(svc, repo)
+    await fn(svc, repo, readsRepo)
   } finally {
     await db.close?.()
   }
@@ -97,20 +97,21 @@ describe('difusión con el ORM real', () => {
     })
   })
 
-  it('el índice único no está, pero el upsert igual no duplica lecturas', async () => {
-    // `orm.migrate()` no crea únicos compuestos (el índice lo pone `migrate-db.ts`). Que el
-    // service no duplique tiene que sostenerse por sí solo, sin depender de la constraint.
-    await withService(async (svc) => {
+  it('un anuncio de plataforma se puede marcar visto/cerrado desde un hotel, sin duplicar filas', async () => {
+    // El anuncio no tiene hotelId: la pertenencia en seen/dismiss se decide por audiencia, no por
+    // `item.hotelId === hotelId` (eso tiraba AuthError y el ✕ del banner no hacía nada).
+    // `orm.migrate()` no crea únicos compuestos (el índice lo pone `migrate-db.ts`): que el
+    // upsert no duplique tiene que sostenerse por sí solo, sin depender de la constraint.
+    await withService(async (svc, _repo, readsRepo) => {
       const creado = await svc.create({ title: 'Aviso', audience: 'all' }, superAdmin)
       await svc.markSeen(creado.id, duenoH1)
       await svc.markSeen(creado.id, duenoH1)
-      await svc.markDismissed(creado.id, duenoH1)
+      await svc.dismiss(creado.id, duenoH1)
 
-      const lista = await svc.list({}, duenoH1)
-      expect(lista.data[0].seen).toBe(true)
-      expect(lista.data[0].dismissed).toBe(true)
-      // Y el compañero no hereda nada.
-      expect((await svc.list({}, recepcionH1)).data[0].dismissed).toBe(false)
+      expect(await readsRepo.count({ announcementId: creado.id, userId: duenoH1.id })).toBe(1)
+      // El que lo cerró deja de verlo; el compañero no hereda nada.
+      expect((await svc.list({}, duenoH1)).data.map((a) => a.id)).not.toContain(creado.id)
+      expect((await svc.list({}, recepcionH1)).data.map((a) => a.id)).toContain(creado.id)
     })
   })
 

@@ -22,10 +22,20 @@ const emptyRepo = (): RepositoryAdapter<any> => ({
   paginate: async () => ({ data: [], total: 0, limit: 20, offset: 0, pages: 0 }),
 })
 
-function makeService(repoOver: Partial<RepositoryAdapter<AuditlogDTO>> = {}, userHotel = 'h1') {
+function makeService(
+  repoOver: Partial<RepositoryAdapter<AuditlogDTO>> = {},
+  userHotel = 'h1',
+  hotelOver: Partial<RepositoryAdapter<any>> = {},
+) {
   const repo = { ...emptyRepo(), ...repoOver } as RepositoryAdapter<AuditlogDTO>
   const userRepo = { ...emptyRepo(), findById: async () => ({ id: 'u1', hotelId: userHotel }) } as RepositoryAdapter<any>
-  return new AuditlogService(repo, userRepo, log, silentCache, mockAuth)
+  // Hoteles falsos para resolver `hotelName` en list() (columna "Hotel" de /admin/audit).
+  const hotelRepo = {
+    ...emptyRepo(),
+    findMany: async () => [{ id: 'h1', name: 'Hotel Alpha' }, { id: 'h2', name: 'Hotel Beta' }],
+    ...hotelOver,
+  } as RepositoryAdapter<any>
+  return new AuditlogService(repo, userRepo, hotelRepo, log, silentCache, mockAuth)
 }
 
 describe('AuditlogService', () => {
@@ -56,28 +66,29 @@ describe('AuditlogService', () => {
 
 // ─── Filtros del panel (M3 qa-ui config-2026-08-22) ────
 
-describe('AuditlogService.list — filtros userId/action/rango de fechas', () => {
-  const entry = (id: string, over: Partial<AuditlogDTO> = {}): AuditlogDTO =>
-    ({ id, hotelId: 'h1', action: 'room.delete', createdAt: '2026-08-10T12:00:00.000Z', ...over } as AuditlogDTO)
+const entry = (id: string, over: Partial<AuditlogDTO> = {}): AuditlogDTO =>
+  ({ id, hotelId: 'h1', action: 'room.delete', createdAt: '2026-08-10T12:00:00.000Z', ...over } as AuditlogDTO)
 
-  /** Repo que graba los filtros/options con los que fue llamado y devuelve `rows`
-   *  aplicando igualdad simple (como buildWhere real, para userId/action). */
-  function spyRepo(rows: AuditlogDTO[]) {
-    const seen: Array<{ filters: any; options: any }> = []
-    const eq = (list: AuditlogDTO[], filters: any) =>
-      list.filter((r) => Object.entries(filters).every(([k, v]) => (r as any)[k] === v))
-    const repo = {
-      ...emptyRepo(),
-      findMany: async (filters: any, options?: any) => { seen.push({ filters, options }); return eq(rows, filters) },
-      paginate: async (filters: any, options: any) => {
-        seen.push({ filters, options })
-        const data = eq(rows, filters)
-        return { data: data.slice(options.offset, options.offset + options.limit), total: data.length, limit: options.limit, offset: options.offset, pages: 1 }
-      },
-      count: async (filters: any) => eq(rows, filters).length,
-    } as any
-    return { repo, seen }
-  }
+/** Repo que graba los filtros/options con los que fue llamado y devuelve `rows`
+ *  aplicando igualdad simple (como buildWhere real, para userId/action). */
+function spyRepo(rows: AuditlogDTO[]) {
+  const seen: Array<{ filters: any; options: any }> = []
+  const eq = (list: AuditlogDTO[], filters: any) =>
+    list.filter((r) => Object.entries(filters).every(([k, v]) => (r as any)[k] === v))
+  const repo = {
+    ...emptyRepo(),
+    findMany: async (filters: any, options?: any) => { seen.push({ filters, options }); return eq(rows, filters) },
+    paginate: async (filters: any, options: any) => {
+      seen.push({ filters, options })
+      const data = eq(rows, filters)
+      return { data: data.slice(options.offset, options.offset + options.limit), total: data.length, limit: options.limit, offset: options.offset, pages: 1 }
+    },
+    count: async (filters: any) => eq(rows, filters).length,
+  } as any
+  return { repo, seen }
+}
+
+describe('AuditlogService.list — filtros userId/action/rango de fechas', () => {
 
   it('userId y action viajan como filtros de igualdad al repo', async () => {
     const { repo, seen } = spyRepo([])
@@ -131,5 +142,54 @@ describe('AuditlogService.list — filtros userId/action/rango de fechas', () =>
     expect(seen[0].filters.userId).toBe('u9') // el filtro de usuario viajó al WHERE
     expect(res.total).toBe(1)
     expect(res.data[0].id).toBe('mine')
+  })
+})
+
+// ─── Resolución de hotelName (columna "Hotel" de /admin/audit) ────
+
+describe('AuditlogService.list — hotelName resuelto desde Hotels', () => {
+  it('devuelve hotelName del hotel de la fila (rama paginate)', async () => {
+    const { repo } = spyRepo([entry('a'), entry('b')])
+    const service = makeService(repo)
+    const res = await service.list({ hotelId: 'h1' } as any)
+    expect(res.data.map((r) => r.hotelName)).toEqual(['Hotel Alpha', 'Hotel Alpha'])
+  })
+
+  it('deja hotelName vacío para una fila sin hotelId', async () => {
+    const { repo } = spyRepo([entry('a', { hotelId: undefined })])
+    const service = makeService(repo)
+    const res = await service.list({} as any)
+    expect(res.data[0].hotelName).toBe('')
+  })
+
+  it('no rompe si el hotelId es huérfano (hotel borrado): hotelName vacío', async () => {
+    const { repo } = spyRepo([entry('a', { hotelId: 'borrado' })])
+    const service = makeService(repo)
+    const res = await service.list({} as any)
+    expect(res.data[0].hotelName).toBe('')
+  })
+
+  it('consulta hoteles UNA sola vez por list() aunque haya varias filas (sin N+1)', async () => {
+    const { repo } = spyRepo([entry('a'), entry('b'), entry('c'), entry('d')])
+    let hotelCalls = 0
+    const service = makeService(repo, 'h1', {
+      findMany: async () => { hotelCalls++; return [{ id: 'h1', name: 'Hotel Alpha' }] },
+    })
+    await service.list({ hotelId: 'h1' } as any)
+    expect(hotelCalls).toBe(1)
+  })
+
+  it('resuelve hotelName también en la rama de rango de fechas (from/to)', async () => {
+    const rows = [
+      entry('a', { createdAt: '2026-08-02T00:00:00.000Z' }),
+      entry('b', { hotelId: undefined, createdAt: '2026-08-03T00:00:00.000Z' }),
+    ]
+    const { repo } = spyRepo(rows)
+    const service = makeService(repo)
+    // Sin filtro hotelId: el fake aplica igualdad como buildWhere y la fila sin hotelId
+    // quedaría afuera del WHERE — acá lo que se prueba es el mapeo de la rama from/to.
+    const res = await service.list({ from: '2026-08-01', to: '2026-08-31' } as any)
+    expect(res.data.find((r) => r.id === 'a')?.hotelName).toBe('Hotel Alpha')
+    expect(res.data.find((r) => r.id === 'b')?.hotelName).toBe('')
   })
 })

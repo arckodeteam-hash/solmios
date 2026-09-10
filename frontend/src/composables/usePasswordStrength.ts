@@ -4,9 +4,12 @@
 // la del servidor (el cliente se puede saltear); esto existe para que no haya
 // que apretar "Crear cuenta" para enterarse de qué falta.
 //
-// Si cambian las reglas del backend, cambian acá. Mantener las dos listas
-// alineadas es el precio de no exponer la política por API.
+// Si cambian las reglas del backend, cambian acá. A este piso estático se le
+// suma la política configurable por el admin (REQ-CFG-05), que llega por
+// GET /api/auth/password-policy (ver usePasswordPolicy.ts) y puede subir el
+// largo mínimo o exigir un carácter especial.
 import { computed, type Ref } from 'vue'
+import type { PasswordPolicy } from './usePasswordPolicy'
 
 export const PASSWORD_MIN = 10
 export const PASSWORD_MAX = 128
@@ -43,20 +46,31 @@ export interface PasswordContext {
  * mostrarlos como checklist: saber qué falta desde el principio es mejor que
  * descubrirlo de a un error por intento.
  */
-export function usePasswordStrength(password: Ref<string>, ctx: () => PasswordContext = () => ({})) {
+export function usePasswordStrength(
+  password: Ref<string>,
+  ctx: () => PasswordContext = () => ({}),
+  policy: () => Partial<PasswordPolicy> | undefined = () => undefined,
+) {
   const requirements = computed<PasswordRequirement[]>(() => {
     const pwd = password.value ?? ''
     const n = norm(pwd)
     const c = ctx()
+    const p = policy() ?? {}
+    // La política del admin puede subir el largo, nunca bajarlo del piso estático.
+    const min = Math.max(PASSWORD_MIN, p.minLength ?? 0)
 
     const local = norm(String(c.email ?? '').split('@')[0] ?? '')
     const name = norm(String(c.name ?? ''))
 
     return [
-      { label: `Al menos ${PASSWORD_MIN} caracteres`, met: pwd.length >= PASSWORD_MIN && pwd.length <= PASSWORD_MAX },
+      { label: `Al menos ${min} caracteres`, met: pwd.length >= min && pwd.length <= PASSWORD_MAX },
       { label: 'Una letra minúscula', met: /[a-záéíóúñ]/.test(pwd) },
       { label: 'Una letra mayúscula', met: /[A-ZÁÉÍÓÚÑ]/.test(pwd) },
       { label: 'Un número', met: /[0-9]/.test(pwd) },
+      // Mayúscula y número ya son fijos del registro; lo único que la política suma es el especial.
+      ...(p.requireSpecial
+        ? [{ label: 'Un carácter especial', met: /[^A-Za-z0-9ÁÉÍÓÚÑáéíóúñ]/.test(pwd) }]
+        : []),
       {
         label: 'No es una contraseña común ni tus datos',
         // Con la contraseña vacía este requisito daría "cumplido" y el checklist

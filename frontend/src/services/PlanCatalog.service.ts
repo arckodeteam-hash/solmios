@@ -134,6 +134,8 @@ export interface DisplayPlan {
   priceKnown: boolean
   /** Plan a cotización: no se contrata online, va a ventas. */
   quote: boolean
+  /** #71: `false` = sin prueba gratuita; el CTA va a ventas, no a /registro. */
+  trialEligible: boolean
   color: string
   rooms: string
   desc: string
@@ -161,6 +163,10 @@ export function toDisplayPlan(p: PublicPlan): DisplayPlan {
     priceLabel: !known ? PRICE_UNKNOWN_LABEL : quote ? PRICE_QUOTE_LABEL : formatPlanPrice(price, p.currency),
     priceKnown: known,
     quote,
+    // #71: sólo el `false` explícito del backend niega la prueba (respuesta vieja sin el campo =
+    // elegible). Misma regla que `trialEligiblePlans()` en Signup.service; se repite acá y no se
+    // importa porque las vistas que mockean `./Signup.service` sólo doblan `SignupService`.
+    trialEligible: p.trialEligible !== false,
     color: pres?.color ?? 'navy',
     // CFG-1: el tope viene de `plans.limits`; `pres.rooms` es sólo el texto de reserva.
     rooms: roomsLabel(p.limits, pres?.rooms ?? ''),
@@ -192,6 +198,8 @@ export function fallbackPlans(): DisplayPlan[] {
       priceKnown: false,
       // `ultra` es a cotización por definición del producto, no por el precio de la DB.
       quote: slug === 'ultra',
+      // Sin API no hay dato: se asume elegible y el backend rechaza el alta si no lo es.
+      trialEligible: true,
       color: pres.color,
       rooms: pres.rooms,
       desc: pres.desc,

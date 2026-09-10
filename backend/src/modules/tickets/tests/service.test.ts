@@ -2,6 +2,7 @@
 // Usa RepositoryAdapter mock — sin dependencia de SQLite ni Postgres.
 
 import { describe, it, expect } from 'bun:test'
+import { MemoryCache } from 'arckode-framework'
 import type { RepositoryAdapter, CacheAdapter, Auth } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { TicketsService } from '../service'
@@ -30,7 +31,14 @@ function makeRepo(overrides: Partial<RepositoryAdapter<TicketsDTO>> = {}): Repos
 }
 
 function makeUserRepo() {
-  return { findById: async () => ({ id: 'user-1', hotelId: 'hotel-1', role: 'hotel_admin' }) } as unknown as RepositoryAdapter<any>
+  return {
+    findById: async () => ({ id: 'user-1', hotelId: 'hotel-1', role: 'hotel_admin' }),
+    findMany: async () => [],
+  } as unknown as RepositoryAdapter<any>
+}
+
+function makeHotelRepo() {
+  return { findMany: async () => [] } as unknown as RepositoryAdapter<any>
 }
 
 const mockUser = { id: 'user-1', hotelId: 'hotel-1', role: 'hotel_admin' }
@@ -40,13 +48,13 @@ describe('TicketsService', () => {
     it('returns paginated tickets', async () => {
       const tickets = [{ id: 't1', hotelId: 'h1', subject: 'Issue' }] as TicketsDTO[]
       const repo = makeRepo({ paginate: async () => ({ data: tickets, total: 1, limit: 20, offset: 0, pages: 1 }) })
-      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       const result = await svc.list({}, adminUser)
       expect(result.data).toHaveLength(1)
     })
 
     it('returns empty list when no tickets exist', async () => {
-      const svc = new TicketsService(makeRepo(), log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(makeRepo(), log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       const result = await svc.list({}, adminUser)
       expect(result.data).toHaveLength(0)
       expect(result.total).toBe(0)
@@ -55,7 +63,7 @@ describe('TicketsService', () => {
     it('filters by hotelId for hotel_admin', async () => {
       const tickets = [{ id: 't1', hotelId: 'h1', subject: 'Issue' }] as TicketsDTO[]
       const repo = makeRepo({ paginate: async () => ({ data: tickets, total: 1, limit: 20, offset: 0, pages: 1 }) })
-      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       const result = await svc.list({}, hotelAdmin)
       expect(result.data).toHaveLength(1)
     })
@@ -63,17 +71,75 @@ describe('TicketsService', () => {
     it('throws when no hotelId assigned', async () => {
       const noHotel = { id: 'u1', role: 'hotel_admin', hotelId: undefined }
       const userRepoNoHotel = { findById: async () => ({ id: 'u1', hotelId: undefined, role: 'hotel_admin' }) } as unknown as RepositoryAdapter<any>
-      const svc = new TicketsService(makeRepo(), log, silentCache, userRepoNoHotel, fakeAuth)
+      const svc = new TicketsService(makeRepo(), log, silentCache, userRepoNoHotel, fakeAuth, makeHotelRepo())
       await expect(svc.list({}, noHotel)).rejects.toThrow('No hotel assigned')
     })
 
     it('security: hotel_admin only sees own hotel', async () => {
       const tickets = [{ id: 't1', hotelId: 'h1', subject: 'Own hotel issue' }] as TicketsDTO[]
       const repo = makeRepo({ paginate: async () => ({ data: tickets, total: 1, limit: 20, offset: 0, pages: 1 }) })
-      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       const result = await svc.list({}, hotelAdmin)
       expect(result.data).toHaveLength(1)
       expect(result.data[0].hotelId).toBe('h1')
+    })
+  })
+
+  // REQ-SOP-05: caché versionada, con MemoryCache REAL (no el silentCache que siempre miss/no-op
+  // — acá lo que se prueba es justamente si una entrada vieja queda huérfana o no).
+  describe('cache (REQ-SOP-05)', () => {
+    it('super_admin: crear un ticket en el hotel X aparece en list() sin esperar el TTL', async () => {
+      const store: TicketsDTO[] = []
+      const repo = makeRepo({
+        create: async (data) => { const t = { id: 'new-1', ...data } as TicketsDTO; store.push(t); return t },
+        paginate: async () => ({ data: [...store], total: store.length, limit: 20, offset: 0, pages: 1 }),
+      })
+      const cache = new MemoryCache()
+      const svc = new TicketsService(repo, log, cache, makeUserRepo(), fakeAuth, makeHotelRepo())
+
+      const before = await svc.list({}, adminUser)
+      expect(before.data).toHaveLength(0)
+
+      await svc.create({ hotelId: 'hX', userId: 'u1', subject: 'Issue' }, adminUser)
+
+      const after = await svc.list({}, adminUser)
+      expect(after.data).toHaveLength(1)
+    })
+
+    it('dos consultas con filtros distintos no comparten entrada', async () => {
+      const repo = makeRepo({
+        paginate: async (filters: any) => ({
+          data: filters?.status === 'open'
+            ? [{ id: 'o1', hotelId: 'h1', subject: 'Open one', status: 'open' } as TicketsDTO]
+            : [{ id: 'c1', hotelId: 'h1', subject: 'Closed one', status: 'closed' } as TicketsDTO],
+          total: 1, limit: 20, offset: 0, pages: 1,
+        }),
+      })
+      const cache = new MemoryCache()
+      const svc = new TicketsService(repo, log, cache, makeUserRepo(), fakeAuth, makeHotelRepo())
+
+      const openList = await svc.list({ status: 'open' }, adminUser)
+      const closedList = await svc.list({ status: 'closed' }, adminUser)
+
+      expect(openList.data[0].id).toBe('o1')
+      expect(closedList.data[0].id).toBe('c1')
+    })
+
+    it('dos páginas distintas no comparten entrada', async () => {
+      const repo = makeRepo({
+        paginate: async (_filters: any, options: any) => ({
+          data: [{ id: options?.offset ? 'p2' : 'p1', hotelId: 'h1', subject: 'x' } as TicketsDTO],
+          total: 40, limit: 20, offset: options?.offset ?? 0, pages: 2,
+        }),
+      })
+      const cache = new MemoryCache()
+      const svc = new TicketsService(repo, log, cache, makeUserRepo(), fakeAuth, makeHotelRepo())
+
+      const page1 = await svc.list({ page: 1, limit: 20 }, adminUser)
+      const page2 = await svc.list({ page: 2, limit: 20 }, adminUser)
+
+      expect(page1.data[0].id).toBe('p1')
+      expect(page2.data[0].id).toBe('p2')
     })
   })
 
@@ -81,7 +147,7 @@ describe('TicketsService', () => {
     it('returns ticket for super_admin', async () => {
       const ticket = { id: 't1', hotelId: 'h1', subject: 'Issue' } as TicketsDTO
       const repo = makeRepo({ findById: async () => ticket })
-      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       const result = await svc.getById('t1', adminUser)
       expect(result.subject).toBe('Issue')
     })
@@ -89,7 +155,7 @@ describe('TicketsService', () => {
     it('hotel_admin can access own hotel ticket', async () => {
       const ticket = { id: 't1', hotelId: 'h1', subject: 'Issue' } as TicketsDTO
       const repo = makeRepo({ findById: async () => ticket })
-      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       const result = await svc.getById('t1', hotelAdmin)
       expect(result.id).toBe('t1')
     })
@@ -97,31 +163,31 @@ describe('TicketsService', () => {
     it('rejects other hotel ticket', async () => {
       const ticket = { id: 't1', hotelId: 'h2', subject: 'Issue' } as TicketsDTO
       const repo = makeRepo({ findById: async () => ticket })
-      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       await expect(svc.getById('t1', hotelAdmin)).rejects.toThrow('No autorizado')
     })
 
     it('throws when ticket not found', async () => {
-      const svc = new TicketsService(makeRepo(), log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(makeRepo(), log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       await expect(svc.getById('nonexistent', adminUser)).rejects.toThrow('Ticket no encontrado')
     })
   })
 
   describe('create', () => {
     it('creates ticket in own hotel', async () => {
-      const svc = new TicketsService(makeRepo(), log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(makeRepo(), log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       const result = await svc.create({ hotelId: 'h1', userId: 'u1', subject: 'Issue' }, hotelAdmin)
       expect(result.id).toBe('ticket-1')
     })
 
     it('super_admin can create ticket in any hotel', async () => {
-      const svc = new TicketsService(makeRepo(), log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(makeRepo(), log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       const result = await svc.create({ hotelId: 'h99', userId: 'u1', subject: 'Admin issue' }, adminUser)
       expect(result.id).toBe('ticket-1')
     })
 
     it('rejects ticket in other hotel', async () => {
-      const svc = new TicketsService(makeRepo(), log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(makeRepo(), log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       await expect(svc.create({ hotelId: 'h2', userId: 'u1', subject: 'Issue' }, hotelAdmin)).rejects.toThrow('No autorizado')
     })
   })
@@ -130,7 +196,7 @@ describe('TicketsService', () => {
     it('updates own hotel ticket', async () => {
       const ticket = { id: 't1', hotelId: 'h1', subject: 'Issue' } as TicketsDTO
       const repo = makeRepo({ findById: async () => ticket, update: async (id, data) => ({ id, ...data } as TicketsDTO) })
-      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       const result = await svc.update('t1', { status: 'resolved' }, hotelAdmin)
       expect(result.status).toBe('resolved')
     })
@@ -138,7 +204,7 @@ describe('TicketsService', () => {
     it('super_admin can update any hotel ticket', async () => {
       const ticket = { id: 't1', hotelId: 'h2', subject: 'Issue' } as TicketsDTO
       const repo = makeRepo({ findById: async () => ticket, update: async (id, data) => ({ id, ...data } as TicketsDTO) })
-      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       const result = await svc.update('t1', { status: 'resolved' }, adminUser)
       expect(result.status).toBe('resolved')
     })
@@ -146,13 +212,122 @@ describe('TicketsService', () => {
     it('rejects update to other hotel ticket', async () => {
       const ticket = { id: 't1', hotelId: 'h2', subject: 'Issue' } as TicketsDTO
       const repo = makeRepo({ findById: async () => ticket })
-      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       await expect(svc.update('t1', { status: 'resolved' }, hotelAdmin)).rejects.toThrow('No autorizado')
     })
 
     it('throws when ticket not found on update', async () => {
-      const svc = new TicketsService(makeRepo({ findById: async () => null }), log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(makeRepo({ findById: async () => null }), log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       await expect(svc.update('nonexistent', { status: 'resolved' }, adminUser)).rejects.toThrow('Ticket no encontrado')
+    })
+
+    // REQ-SOP-03: assignedTo solo escribible por userType 'admin' (plataforma).
+    it('merchant con assignedTo en PUT → 400', async () => {
+      const ticket = { id: 't1', hotelId: 'h1', subject: 'Issue' } as TicketsDTO
+      const repo = makeRepo({ findById: async () => ticket })
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
+      const merchant = { id: 'm1', role: 'hotel_admin', hotelId: 'h1', userType: 'merchant' }
+      await expect(svc.update('t1', { assignedTo: 'agent-1' }, merchant)).rejects.toMatchObject({ httpStatus: 400 })
+    })
+
+    it('admin (plataforma) con assignedTo en PUT → 200 y persiste', async () => {
+      const ticket = { id: 't1', hotelId: 'h1', subject: 'Issue' } as TicketsDTO
+      const repo = makeRepo({
+        findById: async () => ticket,
+        update: async (id, data) => ({ id, hotelId: 'h1', subject: 'Issue', ...data } as TicketsDTO),
+      })
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
+      const admin = { id: 'admin1', role: 'super_admin', hotelId: undefined, userType: 'admin' }
+      const result = await svc.update('t1', { assignedTo: 'agent-1' }, admin)
+      expect(result.assignedTo).toBe('agent-1')
+    })
+
+    // REQ-SOP-04: PUT { status: 'in_progress' } desde admin auto-asigna si assignedTo está vacío.
+    it('admin pasa a in_progress sin agente → se auto-asigna', async () => {
+      const ticket = { id: 't1', hotelId: 'h1', subject: 'Issue', status: 'open' } as TicketsDTO
+      const repo = makeRepo({
+        findById: async () => ticket,
+        update: async (id, data) => ({ id, hotelId: 'h1', subject: 'Issue', ...data } as TicketsDTO),
+      })
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
+      const admin = { id: 'admin1', role: 'super_admin', hotelId: undefined, userType: 'admin' }
+      const result = await svc.update('t1', { status: 'in_progress' }, admin)
+      expect(result.assignedTo).toBe('admin1')
+    })
+
+    it('admin pasa a in_progress con agente ya asignado → no cambia', async () => {
+      const ticket = { id: 't1', hotelId: 'h1', subject: 'Issue', status: 'open', assignedTo: 'agent-existing' } as TicketsDTO
+      const repo = makeRepo({
+        findById: async () => ticket,
+        update: async (id, data) => ({ id, hotelId: 'h1', subject: 'Issue', assignedTo: 'agent-existing', ...data } as TicketsDTO),
+      })
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
+      const admin = { id: 'admin1', role: 'super_admin', hotelId: undefined, userType: 'admin' }
+      const result = await svc.update('t1', { status: 'in_progress' }, admin)
+      expect(result.assignedTo).toBe('agent-existing')
+    })
+
+    // REQ-SOP-01/03: el hotel no puede resolver por su cuenta el nombre de un agente que no
+    // pertenece a su hotel (no aparece en su propio /api/usuarios) — lo resuelve el servidor.
+    it('hotel_admin ve assignee.name de un agente que no pertenece a su hotel', async () => {
+      const ticket = { id: 't1', hotelId: 'h1', userId: 'user1', subject: 'Issue', assignedTo: 'agent-99' } as TicketsDTO
+      const repo = makeRepo({ findById: async () => ticket })
+      const userRepo = {
+        findById: async () => ({ id: 'user-1', hotelId: 'hotel-1', role: 'hotel_admin' }),
+        findMany: async () => [{ id: 'agent-99', name: 'Agente Plataforma', email: 'a@solmios.com', role: 'admin', hotelId: 'platform', active: 1 }],
+      } as unknown as RepositoryAdapter<any>
+      const svc = new TicketsService(repo, log, silentCache, userRepo, fakeAuth, makeHotelRepo())
+      const result = await svc.getById('t1', hotelAdmin)
+      expect(result.assignee?.name).toBe('Agente Plataforma')
+    })
+  })
+
+  describe('addMessage', () => {
+    it('agrega el mensaje, invoca el socket con el ticket y el mensaje YA persistidos, e invalida cache', async () => {
+      const ticket = { id: 't1', hotelId: 'h1', userId: 'u1', subject: 'Issue', status: 'open', messages: [] } as unknown as TicketsDTO
+      let updateCalledWith: any = null
+      const repo = makeRepo({
+        findById: async () => ticket,
+        update: async (id, data) => { updateCalledWith = data; return { ...ticket, id, ...data } as TicketsDTO },
+      })
+      // REQ-SOP-05: la invalidación ahora bumpea el token de versión (`tickets:ver:h1`), no un
+      // delete de clave fija — ver usecases/cache.test.ts para la cobertura de "aparece sin
+      // esperar TTL" end-to-end.
+      const setKeys: string[] = []
+      const cache = { ...silentCache, set: async (k: string) => { setKeys.push(k) } }
+      const svc = new TicketsService(repo, log, cache, makeUserRepo(), fakeAuth, makeHotelRepo())
+
+      let socketTicket: any = null
+      let socketMessage: any = null
+      svc.setSockets({ onTicketsMessageAdded: async (t, m) => { socketTicket = t; socketMessage = m } })
+
+      const result = await svc.addMessage('t1', 'Hola equipo', hotelAdmin)
+
+      expect(updateCalledWith.messages).toHaveLength(1)
+      expect(updateCalledWith.messages[0].message).toBe('Hola equipo')
+      expect(socketMessage?.message).toBe('Hola equipo')
+      expect(socketTicket?.messages).toHaveLength(1)
+      expect(setKeys).toContain('tickets:ver:h1')
+      expect(result?.messages).toHaveLength(1)
+    })
+
+    it('rejects message on other hotel ticket (403)', async () => {
+      const ticket = { id: 't1', hotelId: 'h2', userId: 'u1', subject: 'Issue', status: 'open', messages: [] } as unknown as TicketsDTO
+      const repo = makeRepo({ findById: async () => ticket })
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
+      await expect(svc.addMessage('t1', 'Hola', hotelAdmin)).rejects.toMatchObject({ httpStatus: 403 })
+    })
+
+    it('rejects message on closed ticket (409)', async () => {
+      const ticket = { id: 't1', hotelId: 'h1', userId: 'u1', subject: 'Issue', status: 'closed', messages: [] } as unknown as TicketsDTO
+      const repo = makeRepo({ findById: async () => ticket })
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
+      await expect(svc.addMessage('t1', 'Hola', hotelAdmin)).rejects.toMatchObject({ httpStatus: 409 })
+    })
+
+    it('throws when ticket not found', async () => {
+      const svc = new TicketsService(makeRepo({ findById: async () => null }), log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
+      await expect(svc.addMessage('nonexistent', 'Hola', adminUser)).rejects.toThrow('Ticket no encontrado')
     })
   })
 
@@ -160,26 +335,26 @@ describe('TicketsService', () => {
     it('super_admin can delete', async () => {
       const ticket = { id: 't1', hotelId: 'h1', subject: 'Issue' } as TicketsDTO
       const repo = makeRepo({ findById: async () => ticket })
-      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       await expect(svc.delete('t1', adminUser)).resolves.toBeUndefined()
     })
 
     it('hotel_admin can delete own hotel ticket', async () => {
       const ticket = { id: 't1', hotelId: 'h1', subject: 'Issue' } as TicketsDTO
       const repo = makeRepo({ findById: async () => ticket })
-      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       await expect(svc.delete('t1', hotelAdmin)).resolves.toBeUndefined()
     })
 
     it('rejects delete of other hotel ticket', async () => {
       const ticket = { id: 't1', hotelId: 'h2', subject: 'Issue' } as TicketsDTO
       const repo = makeRepo({ findById: async () => ticket })
-      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       await expect(svc.delete('t1', hotelAdmin)).rejects.toThrow('No autorizado')
     })
 
     it('throws when ticket not found on delete', async () => {
-      const svc = new TicketsService(makeRepo({ findById: async () => null }), log, silentCache, makeUserRepo(), fakeAuth)
+      const svc = new TicketsService(makeRepo({ findById: async () => null }), log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
       await expect(svc.delete('nonexistent', adminUser)).rejects.toThrow('Ticket no encontrado')
     })
   })

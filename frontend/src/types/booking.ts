@@ -60,6 +60,12 @@ export interface CreateBookingDTO {
   guest: CreateBookingGuest
   promoCode?: string
   upsells?: CreateBookingUpsell[]
+  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — solo tiene efecto si la
+   *  composición de ESTA habitación tiene al menos un bebé Y el hotel habilitó la cuna; el
+   *  backend re-valida, nunca confía en esto. `cribCount` es siempre 1 cuando `needsCrib` es
+   *  true — no existe cantidad configurable. */
+  needsCrib?: boolean
+  cribCount?: number
   /** URLs de vuelta desde Stripe. Si se omiten, el backend deriva de PUBLIC_BASE_URL/Referer.
    *  Pattern: `/h/:slug?booking=:id&token=:token` (spec booking-unification R2). */
   successUrl?: string
@@ -109,6 +115,11 @@ export interface CreateBookingRoomLine {
   childrenAges?: number[]
   /** Unidades de este tipo+ocupación a reservar (ej. "Deluxe × 2" → quantity: 2). */
   quantity: number
+  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — a diferencia de `upsells`
+   *  (global al carrito), esto es POR LÍNEA: cada habitación del grupo pide lo suyo para su
+   *  propio bebé. Sí/No únicamente — `cribCount` es siempre 1 cuando `needsCrib` es true. */
+  needsCrib?: boolean
+  cribCount?: number
 }
 
 export interface CreateBookingGroupDTO {
@@ -465,6 +476,10 @@ export interface PublicReservation {
   /** Edad de cada niño declarada al reservar (Requerimiento 4, 2026-09-03). Ausente/`[]` en
    *  reservas viejas o sin niños. */
   childrenAges?: number[]
+  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — lo que EL HUÉSPED pidió,
+   *  para que la pantalla de confirmación pueda mostrárselo (no un dato interno del hotel). */
+  needsCrib?: boolean
+  cribCount?: number
   totalAmount?: number
   /** Moneda del cobro. Sin esto la confirmación mostraba el importe pelado ("613.6"). */
   currency?: string

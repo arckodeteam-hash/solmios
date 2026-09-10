@@ -27,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { AnnouncementsService, announcementMeta } from '@/services/Announcements.service'
 import type { Announcement } from '@/services/Announcements.service'
 
@@ -37,13 +37,14 @@ import type { Announcement } from '@/services/Announcements.service'
  * anuncios de plataforma, que es de dónde venía el bug original.
  */
 const all = ref<Announcement[]>([])
-
-/** Cerrados en esta sesión, para que el aviso desaparezca sin esperar al servidor. */
-const justDismissed = ref<Set<string>>(new Set())
+// Descartes de ESTA sesión: sólo ocultan el aviso localmente (optimista). El registro
+// persistente es por usuario y vive en el backend (announcement_reads), así que el ✕
+// de un recepcionista ya no le esconde el aviso al resto del hotel.
+const dismissedIds = ref<Set<string>>(new Set())
 
 const visibleAnnouncements = computed(() =>
   all.value
-    .filter((a) => a.active && !a.dismissed && !justDismissed.value.has(a.id))
+    .filter((a) => a.active && !dismissedIds.value.has(a.id))
     // Prioridad: urgent > high > medium > low
     .sort((a, b) => {
       const order = { urgent: 0, high: 1, medium: 2, low: 3 } as Record<string, number>
@@ -52,38 +53,33 @@ const visibleAnnouncements = computed(() =>
     .slice(0, 3) // Mostrar máximo 3 a la vez
 )
 
+// Los que el usuario ya descartó no llegan siquiera: el listado los excluye por token.
+
 async function load() {
   try {
     const r = await AnnouncementsService.list({ activeOnly: true })
     all.value = r.data || []
-  } catch {
-    all.value = []
-    return
-  }
-
-  // El acuse de lectura es una métrica, no una condición para mostrar el aviso: si falla, el
-  // banner ya está en pantalla y no pasa nada. Por eso va después del render y se traga el error.
-  for (const a of visibleAnnouncements.value) {
-    if (a.seen) continue
-    AnnouncementsService.markSeen(a.id).catch(() => { /* métrica perdida, aviso entregado */ })
-  }
+  } catch { all.value = [] }
 }
 
-/**
- * Cerrar es POR USUARIO.
- *
- * Antes se guardaba como una clave de `configuration` por HOTEL: el primer empleado que cerraba
- * el aviso se lo ocultaba a todos sus compañeros, dueño incluido.
- */
+// Registrar la lectura de cada aviso que se muestra, UNA vez por aviso. El registro
+// es telemetría: si seen falla (500, red caída), el aviso se muestra igual y en
+// silencio — no hay toast ni estado de error que rompa el banner.
+const seenIds = new Set<string>()
+watch(visibleAnnouncements, (visible) => {
+  for (const a of visible) {
+    if (seenIds.has(a.id)) continue
+    seenIds.add(a.id)
+    AnnouncementsService.seen(a.id).catch(() => { /* silent: registrar no puede romper el banner */ })
+  }
+})
+
 async function dismiss(id: string) {
-  justDismissed.value = new Set([...justDismissed.value, id])
+  // Optimista: ocultar YA, el backend sólo registra para la próxima carga.
+  dismissedIds.value = new Set([...dismissedIds.value, id])
   try {
     await AnnouncementsService.dismiss(id)
-  } catch {
-    // Se vuelve a mostrar en la próxima carga: es preferible a tragarse el error y que el usuario
-    // crea que lo silenció para siempre.
-    justDismissed.value = new Set([...justDismissed.value].filter((x) => x !== id))
-  }
+  } catch { /* silent: el aviso igual desaparece de esta vista */ }
 }
 
 onMounted(load)

@@ -93,6 +93,21 @@ describe('admin/usecases/plans — createPlan', () => {
     expect(item.description).toBe('Incluye Planning.')
     expect(item.features).toEqual(['Feature manual'])
   })
+
+  it('sin trialEligible → guarda 1 (elegible para la prueba gratuita por default)', async () => {
+    const item = await createPlan(deps(), { name: 'Default trial', price: 10 })
+    expect(item.trialEligible).toBe(1)
+  })
+
+  it('trialEligible:false → guarda 0', async () => {
+    const item = await createPlan(deps(), { name: 'Sin trial', price: 10, trialEligible: false })
+    expect(item.trialEligible).toBe(0)
+  })
+
+  it('trialEligible:true → guarda 1', async () => {
+    const item = await createPlan(deps(), { name: 'Con trial', price: 10, trialEligible: true })
+    expect(item.trialEligible).toBe(1)
+  })
 })
 
 // ─── updatePlan ────────────────────────────────────────────────────────────
@@ -125,5 +140,20 @@ describe('admin/usecases/plans — updatePlan', () => {
 
   it('404 si el plan no existe', async () => {
     await expect(updatePlan(deps(), 'nope', { modules: ['planning'] })).rejects.toThrow('no encontrado')
+  })
+
+  it('trialEligible:true guarda 1 y trialEligible:false guarda 0 (mapeo booleano → 1/0 como isActive)', async () => {
+    const store = [{ id: 'p1', name: 'Plan', description: '', features: [], modules: [], trialEligible: 1 }]
+    const off = await updatePlan(deps(store), 'p1', { trialEligible: false })
+    expect(off.trialEligible).toBe(0)
+    const on = await updatePlan(deps(store), 'p1', { trialEligible: true })
+    expect(on.trialEligible).toBe(1)
+  })
+
+  it('patch sin trialEligible → no pisa el valor guardado', async () => {
+    const store = [{ id: 'p1', name: 'Plan', description: '', features: [], modules: [], trialEligible: 0 }]
+    const item = await updatePlan(deps(store), 'p1', { name: 'Renombrado', isActive: true })
+    expect(item.trialEligible).toBe(0)
+    expect(item.name).toBe('Renombrado')
   })
 })

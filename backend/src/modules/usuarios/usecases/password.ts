@@ -8,6 +8,7 @@
 
 import type { RepositoryAdapter } from 'arckode-framework'
 import { AuthError, NotFoundError } from 'arckode-framework'
+import { assertPasswordPolicy } from '../../../shared/usecases/password-policy'
 
 const RESET_TTL_MS = 60 * 60 * 1000 // 1 hora
 
@@ -37,9 +38,12 @@ export async function resetPassword(
   repo: RepositoryAdapter<any>,
   token: string,
   newPassword: string,
+  configRepo?: RepositoryAdapter<any>,
 ): Promise<void> {
   const user = await repo.findOne({ resetToken: token })
   if (!user || user.resetExpires < Date.now()) throw new AuthError('Token inválido o expirado')
+  // La política configurable (REQ-CFG-05) se aplica DESPUÉS de validar el token: sin él no hay flujo.
+  await assertPasswordPolicy(configRepo, newPassword)
   const hashed = await hashPassword(newPassword)
   await repo.update(user.id, { password: hashed, token: null, resetToken: null, resetExpires: null })
 }
@@ -49,6 +53,7 @@ export async function changePassword(
   id: string,
   currentPassword: string,
   newPassword: string,
+  configRepo?: RepositoryAdapter<any>,
 ): Promise<void> {
   // Ownership: callerUserId === id se valida en el controller vía auth.assertOwnership().
   // Acá además se re-autentica con currentPassword.
@@ -58,6 +63,7 @@ export async function changePassword(
   if (!(await verifyPassword(currentPassword, user.password))) {
     throw new AuthError('Contraseña actual incorrecta')
   }
+  await assertPasswordPolicy(configRepo, newPassword)
   const hashed = await hashPassword(newPassword)
   await repo.update(id, { password: hashed, token: null })
 }

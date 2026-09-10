@@ -62,6 +62,9 @@ export const CreatePublicBookingSchema: Record<string, ValidationRule> = {
   // ExtendedPublicBookingSchema).
   estimatedArrival: { type: 'string' as const, max: 100 },
   specialRequests: { type: 'string' as const, max: 500 },
+  // Tarea 22 (Cuna, 2026-09-09) — escalares simples, el framework los valida sin problema.
+  needsCrib: { type: 'boolean' as const },
+  cribCount: { type: 'number' as const, min: 0 },
 }
 
 // ─── Eventos ────────────────────────────────────────────

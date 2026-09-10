@@ -20,6 +20,14 @@ const SAMPLE_VARIABLES: Record<string, Record<string, string>> = {
   subscription_renewal_manual: { hotel_name: 'Hotel de Prueba', days_left: '3', link: 'https://ejemplo.com/panel/suscripcion' },
   subscription_suspended: { hotel_name: 'Hotel de Prueba', link: 'https://ejemplo.com/panel/suscripcion' },
   subscription_reactivated: { hotel_name: 'Hotel de Prueba', link: 'https://ejemplo.com/panel/dashboard' },
+  trial_extended: { hotel_name: 'Hotel de Prueba', days_left: '7', platform_name: 'SolmiOS', link: 'https://ejemplo.com/panel/dashboard' },
+  // REQ-PIPE-08/09 (#149/#150): secuencia de activación y rescate.
+  activation_no_rooms: { hotel_name: 'Hotel de Prueba', platform_name: 'SolmiOS', support_email: 'soporte@ejemplo.com', support_phone: '809-555-0000', link: 'https://ejemplo.com/panel/habitaciones' },
+  activation_no_rates: { hotel_name: 'Hotel de Prueba', platform_name: 'SolmiOS', support_email: 'soporte@ejemplo.com', support_phone: '809-555-0000', link: 'https://ejemplo.com/panel/tarifas' },
+  activation_no_channel: { hotel_name: 'Hotel de Prueba', platform_name: 'SolmiOS', support_email: 'soporte@ejemplo.com', support_phone: '809-555-0000', link: 'https://ejemplo.com/panel/canales' },
+  trial_offer: { hotel_name: 'Hotel de Prueba', days_left: '3', platform_name: 'SolmiOS', support_email: 'soporte@ejemplo.com', support_phone: '809-555-0000', link: 'https://ejemplo.com/panel/suscripcion' },
+  trial_rescue_1: { hotel_name: 'Hotel de Prueba', platform_name: 'SolmiOS', support_email: 'soporte@ejemplo.com', support_phone: '809-555-0000', link: 'https://ejemplo.com/panel/suscripcion' },
+  trial_rescue_2: { hotel_name: 'Hotel de Prueba', platform_name: 'SolmiOS', support_email: 'soporte@ejemplo.com', support_phone: '809-555-0000', link: 'https://ejemplo.com/panel/suscripcion' },
 }
 // `platform_name`/`support_email`/`support_phone` NO van acá: las agrega el service desde
 // Configuración → Plataforma, así la prueba muestra exactamente lo que va a salir.

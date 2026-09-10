@@ -4,6 +4,9 @@
 export interface AuditlogDTO {
   id: string
   hotelId?: string
+  /** Nombre del hotel resuelto desde la tabla `Hotels` (la fila del log solo trae `hotelId`):
+   *  lo muestra la columna "Hotel" de /admin/audit. '' si falta el hotelId o es huérfano. */
+  hotelName?: string
   userId?: string
   userName?: string
   action: string

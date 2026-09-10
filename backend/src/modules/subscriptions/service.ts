@@ -11,10 +11,12 @@ import { createCheckoutSession, type CreateCheckoutResult } from './usecases/cre
 import { createPortalSession, type CreatePortalResult } from './usecases/create-portal-session'
 import { previewUpgrade, applyUpgrade } from './usecases/upgrade-plan'
 import { processSubscriptionWebhook } from './usecases/handle-stripe-event'
+import { activateAfterManualPayment, type ActivateManualPaymentResult } from './usecases/activate-manual-payment'
 import { applyStripeDiscount, type ApplyStripeDiscountResult, type ApplyStripeDiscountMeta } from './usecases/apply-stripe-discount'
 import { listPublicPlans, type PublicPlan } from './usecases/public-plans'
 import { publicFounderDiscount } from './usecases/public-founder-discount'
 import { readFounderCountdown, type FounderCountdownConfig, type PublicFounderCountdown } from './usecases/founder-countdown'
+import { extendTrial, type ExtendTrialResult } from './usecases/extend-trial'
 import type { SubscriptionSockets } from './sockets'
 
 export class SubscriptionsService {
@@ -49,16 +51,11 @@ export class SubscriptionsService {
     private readonly configurationRepo?: RepositoryAdapter<any>, // KV `configuration` (onboarding.ts, ONBOARDING_CONFIRM_KEYS)
     private readonly platformInvoicesRepo?: RepositoryAdapter<any>, // `platform_invoices` — historial de cobros de la plataforma (REQ-BIL-02). Opcional: sin cablear el webhook sigue igual, solo no deja rastro del cobro.
   ) {
-    this.signupUc = new SignupUseCase({
-      hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger,
-    })
+    this.signupUc = new SignupUseCase({ hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger, configRepo: configurationRepo })
     // El lector se resuelve en cada llamada, no en el constructor: el connector inyecta el
     // puerto DESPUÉS de que el módulo se registró (mismo momento que setEmailDeps).
-    this.accessUc = new SubscriptionAccess(
-      subscriptionsRepo,
-      hotelsRepo,
-      async () => (this.readPlatformSettings ? this.readPlatformSettings() : { requireCardOnTrial: false }),
-    )
+    this.accessUc = new SubscriptionAccess(subscriptionsRepo, hotelsRepo,
+      async () => (this.readPlatformSettings ? this.readPlatformSettings() : { requireCardOnTrial: false }))
     this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, hotelsRepo, configRepo: configurationRepo })
   }
 
@@ -93,7 +90,7 @@ export class SubscriptionsService {
   async signup(input: SignupInput, origin?: string): Promise<SignupResult> {
     const created = await this.signupUc.signup(input)
     return completeSignup(
-      { ...this.cardFlowDeps(), notifyTrialStarted: this.sockets.onTrialStarted },
+      { ...this.cardFlowDeps(), notifyTrialStarted: this.sockets.onTrialStarted, notifyHotelSignedUp: this.sockets.onHotelSignedUp },
       await this.signupPolicy(), created, input, origin,
     )
   }
@@ -185,6 +182,9 @@ export class SubscriptionsService {
     return createPortalSession({ subscriptionsRepo: this.subscriptionsRepo, logger: this.logger }, hotelId, origin)
   }
 
+  /** REQ-BIL-06 — el super-admin registró una transferencia: la suscripción queda como la deja un cobro de Stripe. Lo invoca el connector `admin-subscriptions-billing`, nunca un import directo. */
+  activateAfterManualPayment(hotelId: string, periodEnd: string): Promise<ActivateManualPaymentResult> { return activateAfterManualPayment({ subscriptionsRepo: this.subscriptionsRepo, logger: this.logger }, hotelId, periodEnd) }
+
   /** Webhook de la cuenta de PLATAFORMA (checkout/renovación/cancelación de la suscripción SaaS). */
   handlePlatformWebhook(rawBody: string | Buffer, signature: string) {
     return processSubscriptionWebhook({
@@ -192,4 +192,7 @@ export class SubscriptionsService {
       logger: this.logger, sendPlatformEmail: this.sendPlatformEmail, orm: this.orm, platformInvoicesRepo: this.platformInvoicesRepo,
     }, rawBody, signature)
   }
+
+  /** REQ-PIPE-05 (#146) — más días de prueba (super-admin vía connector `admin-subscriptions-trial`). `{link}` sale de PUBLIC_URL como en handle-stripe-event.ts. Ver `usecases/extend-trial.ts`. */
+  extendTrial(hotelId: string, days: number, now?: Date): Promise<ExtendTrialResult> { return extendTrial({ subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, configRepo: this.configurationRepo, sendPlatformEmail: this.sendPlatformEmail, publicUrl: process.env.PUBLIC_URL, logger: this.logger }, hotelId, days, now) }
 }
