@@ -89,11 +89,14 @@
       </SectionCard>
       <SectionCard title="Políticas de Contraseña">
         <div class="space-y-4">
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Longitud Mínima</label><input v-model.number="settings.minPasswordLength" type="number" min="6" max="32" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
-          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir mayúsculas</div><button @click="settings.requireUppercase = !settings.requireUppercase" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="settings.requireUppercase ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="settings.requireUppercase ? 'right-0.5' : 'left-0.5'"></div></button></div>
-          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir números</div><button @click="settings.requireNumbers = !settings.requireNumbers" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="settings.requireNumbers ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="settings.requireNumbers ? 'right-0.5' : 'left-0.5'"></div></button></div>
-          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir caracteres especiales</div><button @click="settings.requireSpecial = !settings.requireSpecial" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="settings.requireSpecial ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="settings.requireSpecial ? 'right-0.5' : 'left-0.5'"></div></button></div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Expiración de Contraseña (días)</label><input v-model.number="settings.passwordExpiry" type="number" min="0" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="0 = nunca expira"></div>
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Longitud Mínima</label>
+            <input v-model.number="securityPolicy.minLength" type="number" min="6" max="32" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+            <p class="text-[10px] text-text-muted mt-1">Se aplica a alta de usuarios, cambio y restablecimiento de contraseña y registro público. El registro público exige además 10 caracteres como mínimo.</p>
+          </div>
+          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir mayúsculas</div><button @click="securityPolicy.requireUppercase = !securityPolicy.requireUppercase" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="securityPolicy.requireUppercase ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="securityPolicy.requireUppercase ? 'right-0.5' : 'left-0.5'"></div></button></div>
+          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir números</div><button @click="securityPolicy.requireNumbers = !securityPolicy.requireNumbers" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="securityPolicy.requireNumbers ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="securityPolicy.requireNumbers ? 'right-0.5' : 'left-0.5'"></div></button></div>
+          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir caracteres especiales</div><button @click="securityPolicy.requireSpecial = !securityPolicy.requireSpecial" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="securityPolicy.requireSpecial ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="securityPolicy.requireSpecial ? 'right-0.5' : 'left-0.5'"></div></button></div>
         </div>
       </SectionCard>
     </div>
@@ -322,11 +325,14 @@ const settings = ref<any>({
   platformName: '', supportEmail: '', supportPhone: '', currency: CurrencyCode.USD,
   timezone: 'America/Santo_Domingo', brandColor: '#0D2B4E', customDomain: '',
   smtpServer: '', smtpPort: '587', smtpUser: '', smtpPassword: '', fromEmail: '', fromName: '',
-  minPasswordLength: 8, requireUppercase: true, requireNumbers: true, requireSpecial: false, passwordExpiry: 90,
   billingMethod: 'stripe', billingCycle: 'monthly', graceDays: 7, billingDay: 1,
   allowCreditNotes: true, allowVolumeDiscounts: false, annualDiscount: 15, taxRate: 18,
 })
 
+// REQ-CFG-05: política de contraseña real (`configuration('security_policy')`), la lee el backend
+// en alta/cambio/reset/registro. Default {6,false,false,false}; minLength acotada a 6..32.
+const securityPolicy = ref({ minLength: 6, requireUppercase: false, requireNumbers: false, requireSpecial: false })
+const clampMin = (n: any) => Math.min(32, Math.max(6, Math.round(Number(n) || 6)))
 const emailTemplates = ref<any[]>([])
 const securityOptions = ref<any[]>([])
 // WhatsApp SALIÓ de acá (2026-09-07). Estaba en el lugar equivocado del sistema: no existe un
@@ -349,13 +355,14 @@ onMounted(async () => {
     // SMTP-UI (2026-08-19): se lee el CANÓNICO ('email_config', host/pass) con fallback al
     // legacy ('smtp', server/password) que guardaba esta misma página — antes el load ni
     // siquiera matcheaba los nombres (server ≠ smtpServer), así el form arrancaba vacío.
-    const [plataforma, emailCfg, tmpl, seg, integ, maps] = await Promise.all([
+    const [plataforma, emailCfg, tmpl, seg, integ, maps, secPol] = await Promise.all([
       ConfigService.get('plataforma', 'platform'),
       ConfigService.get('email_config', 'platform').catch(() => null),
       ConfigService.get('email_templates', 'platform'),
       ConfigService.get('seguridad', 'platform'),
       ConfigService.get('integraciones', 'platform'),
       ConfigService.get('google_maps', 'platform'),
+      ConfigService.get('security_policy', 'platform').catch(() => null),
     ])
     if (plataforma) Object.assign(settings.value, plataforma)
     const smtp = emailCfg?.host || emailCfg?.user
@@ -375,6 +382,7 @@ onMounted(async () => {
     if (Array.isArray(seg)) securityOptions.value = seg
     if (Array.isArray(integ)) integrations.value = integ
     if (maps?.apiKey) mapsKey.value = String(maps.apiKey)
+    if (secPol && typeof secPol === 'object') Object.assign(securityPolicy.value, { minLength: clampMin(secPol.minLength), requireUppercase: !!secPol.requireUppercase, requireNumbers: !!secPol.requireNumbers, requireSpecial: !!secPol.requireSpecial })
   } catch { toast.error('No se pudo cargar la configuración de la plataforma') }
 })
 
@@ -392,6 +400,7 @@ const saveSettings = async () => {
       }, 'platform'),
       ConfigService.set('integraciones', integrations.value, 'platform'),
       ConfigService.set('google_maps', { apiKey: mapsKey.value.trim() }, 'platform'),
+      ConfigService.set('security_policy', { minLength: clampMin(securityPolicy.value.minLength), requireUppercase: !!securityPolicy.value.requireUppercase, requireNumbers: !!securityPolicy.value.requireNumbers, requireSpecial: !!securityPolicy.value.requireSpecial }, 'platform'),
     ])
     showSaved.value = true
     setTimeout(() => showSaved.value = false, 2000)
