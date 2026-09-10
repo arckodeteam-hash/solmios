@@ -333,3 +333,30 @@ describe('GET /api/admin/sales-pipeline/assignees', () => {
     expect(JSON.stringify(res.body)).not.toContain('NO-DEBE-SALIR')
   })
 })
+
+describe('GET /api/admin/sales-pipeline/funnel (#151)', () => {
+  const { router, headersFor } = mount(SEED)
+
+  it('merchant → 403; sin token → 401', async () => {
+    expect((await router.resolve('GET', '/api/admin/sales-pipeline/funnel', { headers: headersFor('hotel_admin', 'merchant') })).status).toBe(403)
+    expect((await router.resolve('GET', '/api/admin/sales-pipeline/funnel')).status).toBe(401)
+  })
+
+  it('weeks fuera de 1..26 → 400 (0, 27, abc)', async () => {
+    for (const w of ['0', '27', 'abc']) {
+      const res = await router.resolve('GET', '/api/admin/sales-pipeline/funnel', { headers: headersFor('super_admin', 'admin'), query: { weeks: w } })
+      expect(res.status).toBe(400)
+    }
+  })
+
+  it('admin → 200 con N semanas ISO, totales y tasas numéricas', async () => {
+    const res = await router.resolve('GET', '/api/admin/sales-pipeline/funnel', { headers: headersFor('super_admin', 'admin'), query: { weeks: '4' } })
+    expect(res.status).toBe(200)
+    const body = res.body as any
+    expect(body.weeksCount).toBe(4)
+    expect(body.weeks).toHaveLength(4)
+    expect(body.weeks[0].week).toMatch(/^\d{4}-W\d{2}$/)
+    expect(typeof body.totals.activationRate).toBe('number')
+    expect(body.totals.registered).toBeGreaterThanOrEqual(0)
+  })
+})

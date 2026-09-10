@@ -144,3 +144,32 @@ export interface SalesPipelineResult {
   data: SalesPipelineRow[]
   total: number
 }
+
+// ─── Embudo semanal (REQ-PIPE-10, #151) ───────────────────────────────────────────────────
+
+export interface SalesFunnelWeek {
+  /** Semana ISO 8601, p.ej. `2026-W37`. */
+  week: string
+  /** Lunes 00:00 UTC (ISO). */
+  start: string
+  /** Domingo 23:59:59.999 UTC (ISO). */
+  end: string
+  registered: number
+  /** Registrados esa semana que cargaron su primera habitación dentro de los 7 días del alta. */
+  activated: number
+  /** Hoteles cuyo primer cobro de plataforma cayó esa semana. */
+  paying: number
+  lost: Record<SalesLostReason, number>
+  lostTotal: number
+  /** `activated / registered` en %, un decimal. 0 sin registrados. */
+  activationRate: number
+  /** `paying / registered` en %, un decimal. 0 sin registrados. */
+  payingRate: number
+}
+
+export interface SalesFunnelResult {
+  weeks: SalesFunnelWeek[]
+  totals: Omit<SalesFunnelWeek, 'week' | 'start' | 'end'>
+  weeksCount: number
+  generatedAt: string
+}

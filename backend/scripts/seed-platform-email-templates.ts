@@ -1,4 +1,4 @@
-// scripts/seed-platform-email-templates.ts — Seed de las 11 plantillas de PLATAFORMA.
+// scripts/seed-platform-email-templates.ts — Seed de las 17 plantillas de PLATAFORMA.
 //
 // La TABLA la crea el ORM (modelo `PlatformEmailTemplate`, registrado por el módulo
 // platform-emails vía RUN_MIGRATE=1, igual que cualquier otro modelo del framework — ver
@@ -94,6 +94,76 @@ cómo el sistema le ordena la operación del hotel.</p>
 ${ctaButton('{link}', 'Ir a mi panel')}
 <p>Si tiene alguna duda o quiere que le mostremos el sistema, responda este correo y lo ayudamos.</p>`,
     variables: ['hotel_name', 'days_left', 'platform_name', 'link'],
+  },
+  // REQ-PIPE-08 (#149): secuencia de activación por comportamiento. Las manda el cron diario
+  // `shared/usecases/activation-sequence-cron.ts` según lo que el hotel hizo (o no) en el producto:
+  // máximo un correo por corrida, dedup en `sales_prospects.sequenceSent`. `{platform_name}`,
+  // `{support_email}` y `{support_phone}` los resuelve el envío desde configuration('plataforma').
+  {
+    event: 'activation_no_rooms',
+    subject: '{hotel_name}: el primer paso en {platform_name} son sus habitaciones',
+    body: `<p>Hola,</p>
+<p>Vimos que <strong>{hotel_name}</strong> ya tiene su cuenta en {platform_name} pero todavía no cargó
+ninguna habitación. Sin habitaciones no hay calendario, tarifas ni reservas: es el primer paso y toma
+menos de cinco minutos.</p>
+${ctaButton('{link}', 'Cargar mis habitaciones')}
+<p>Si prefiere que lo hagamos juntos, escríbanos a {support_email} o al {support_phone}.</p>`,
+    variables: ['hotel_name', 'link', 'platform_name', 'support_email', 'support_phone'],
+  },
+  {
+    event: 'activation_no_rates',
+    subject: '{hotel_name}: sus habitaciones ya están, faltan las tarifas',
+    body: `<p>Hola,</p>
+<p><strong>{hotel_name}</strong> ya tiene sus habitaciones en {platform_name}. Lo que falta para poder
+vender es una tarifa por tipo de habitación: con eso el motor de reservas y el calendario quedan
+listos para recibir huéspedes.</p>
+${ctaButton('{link}', 'Cargar mis tarifas')}
+<p>¿Dudas con temporadas o descuentos? Escríbanos a {support_email} o al {support_phone}.</p>`,
+    variables: ['hotel_name', 'link', 'platform_name', 'support_email', 'support_phone'],
+  },
+  {
+    event: 'activation_no_channel',
+    subject: '{hotel_name}: conecte Booking y Airbnb para no cargar reservas a mano',
+    body: `<p>Hola,</p>
+<p><strong>{hotel_name}</strong> ya tiene habitaciones y tarifas en {platform_name}. El siguiente paso es
+conectar sus canales (Booking.com, Airbnb, Expedia): las reservas entran solas y la disponibilidad se
+actualiza en todos a la vez, sin sobreventas.</p>
+${ctaButton('{link}', 'Conectar mis canales')}
+<p>La conexión la hacemos con usted en una llamada corta: {support_email} · {support_phone}.</p>`,
+    variables: ['hotel_name', 'link', 'platform_name', 'support_email', 'support_phone'],
+  },
+  {
+    event: 'trial_offer',
+    subject: '{hotel_name}: le quedan {days_left} días de prueba en {platform_name}',
+    body: `<p>Hola,</p>
+<p>La prueba gratis de <strong>{hotel_name}</strong> en {platform_name} termina en <strong>{days_left} días</strong>.
+Ya tiene el hotel cargado: al activar su plan no pierde nada de lo que hizo y sigue operando sin cortes.</p>
+${ctaButton('{link}', 'Activar mi plan')}
+<p>Si quiere que revisemos juntos qué plan le conviene, escríbanos a {support_email} o al {support_phone}.</p>`,
+    variables: ['hotel_name', 'days_left', 'link', 'platform_name', 'support_email', 'support_phone'],
+  },
+  // REQ-PIPE-09 (#150): rescate de trial vencido. Mismo cron: +2 días y +7 días desde el vencimiento.
+  {
+    event: 'trial_rescue_1',
+    subject: '{hotel_name}: su prueba en {platform_name} venció, ¿le damos más tiempo?',
+    body: `<p>Hola,</p>
+<p>La prueba gratis de <strong>{hotel_name}</strong> en {platform_name} venció hace unos días. Todo lo que
+cargó sigue guardado. Si le faltó tiempo para probarlo, responda este correo y le extendemos la prueba
+sin costo.</p>
+${ctaButton('{link}', 'Ver mi cuenta')}
+<p>También puede escribirnos a {support_email} o al {support_phone}.</p>`,
+    variables: ['hotel_name', 'link', 'platform_name', 'support_email', 'support_phone'],
+  },
+  {
+    event: 'trial_rescue_2',
+    subject: '{hotel_name}: última oportunidad de retomar {platform_name}',
+    body: `<p>Hola,</p>
+<p>Hace una semana venció la prueba de <strong>{hotel_name}</strong> en {platform_name}. Es el último aviso
+que le mandamos: si quiere retomarla, un mensaje alcanza y la reactivamos. Si el sistema no era para su
+hotel, nos ayudaría mucho saber por qué.</p>
+${ctaButton('{link}', 'Retomar mi prueba')}
+<p>{support_email} · {support_phone}</p>`,
+    variables: ['hotel_name', 'link', 'platform_name', 'support_email', 'support_phone'],
   },
   {
     event: 'payment_succeeded',

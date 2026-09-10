@@ -1,6 +1,7 @@
 // services/SalesPipeline.service.ts — Cliente API del pipeline de ventas (super admin, #147):
 //   GET  /api/admin/sales-pipeline                          → {data, total} (SalesPipelineRow[])
 //   GET  /api/admin/sales-pipeline/assignees                → {data} (usuarios admin: id, name, email)
+//   GET  /api/admin/sales-pipeline/funnel?weeks=8           → SalesFunnelResult (embudo semanal, #151)
 //   PUT  /api/admin/sales-pipeline/:key                     → SalesProspect (key = hotel:<id> | lead:<id>)
 //   POST /api/admin/subscriptions/:hotelId/extend-trial     → ExtendTrialResult ({days} 1..30)
 //
@@ -11,6 +12,7 @@ import { http } from './http'
 import type {
   ExtendTrialResult,
   SalesAssigneesResult,
+  SalesFunnelResult,
   SalesPipelineResult,
   SalesProspect,
   UpdateSalesProspectInput,
@@ -24,6 +26,11 @@ export const SalesPipelineService = {
   /** Responsables posibles: `assignedTo` guarda `users.id`, no texto libre. */
   assignees(): Promise<SalesAssigneesResult> {
     return http.get<SalesAssigneesResult>('/admin/sales-pipeline/assignees')
+  },
+
+  /** Embudo semanal (#151): `weeks` 1..26, default 8 en el backend. */
+  funnel(weeks = 8): Promise<SalesFunnelResult> {
+    return http.get<SalesFunnelResult>(`/admin/sales-pipeline/funnel?weeks=${weeks}`)
   },
 
   updateProspect(key: string, input: UpdateSalesProspectInput): Promise<SalesProspect> {

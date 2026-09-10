@@ -23,6 +23,7 @@ import { createAutoMessagesCron } from './modules/marketing/usecases/auto-messag
 import { createNightAuditCron } from './shared/usecases/night-audit-cron'
 import { createEvidenceRetentionCron } from './shared/usecases/evidence-retention-cron'
 import { createTrialReminderCron } from './shared/usecases/trial-reminder-cron'
+import { createActivationSequenceCron } from './shared/usecases/activation-sequence-cron'
 import { createWhatsappUsageCron } from './shared/usecases/whatsapp-usage-cron'
 import { createPrearrivalPassCron } from './shared/usecases/prearrival-pass-cron'
 import { createSubscriptionSuspensionCron } from './shared/usecases/subscription-suspension-cron'
@@ -1000,6 +1001,19 @@ setInterval(() => {
   trialReminderCron().catch((e) => logger.warn('trial-reminder cron failed', { error: (e as Error).message }))
 }, SAAS_TICK_MS)
 logger.info('Trial-reminder cron listo', { tickMs: SAAS_TICK_MS })
+
+// REQ-PIPE-08/09 (#149/#150): secuencia de activación por comportamiento + rescate de trial vencido
+// + perdido automático a +14 días. Diario (el dedup está en sales_prospects.sequenceSent, así que
+// un tick más corto no manda de más, pero tampoco aporta). Lee el pipeline de sales-leads.
+const ACTIVATION_SEQUENCE_TICK_MS = 24 * 60 * 60 * 1000
+const activationSequenceCron = createActivationSequenceCron(orm, (name) => system.resolveModule(name), logger)
+setTimeout(() => {
+  activationSequenceCron().catch((e) => logger.warn('activation-sequence initial run failed', { error: (e as Error).message }))
+}, 20_000)
+setInterval(() => {
+  activationSequenceCron().catch((e) => logger.warn('activation-sequence cron failed', { error: (e as Error).message }))
+}, ACTIVATION_SEQUENCE_TICK_MS)
+logger.info('Activation-sequence cron listo', { tickMs: ACTIVATION_SEQUENCE_TICK_MS })
 
 // Recordatorio → gracia → suspensión para suscripciones active/past_due (el hermano post-trial del
 // anterior). Reactivación NO vive acá: es efecto del pago real (handle-stripe-event invoice.paid).

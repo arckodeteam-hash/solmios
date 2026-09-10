@@ -1,6 +1,7 @@
 // sales-leads/controller.ts — Adaptador HTTP del módulo.
 import type { HttpRequest, Logger } from 'arckode-framework'
 import { validateSchema } from '../../shared/validators/validate-body'
+import { parseWeeks } from './usecases/funnel'
 import type { SalesLeadsService } from './service'
 import { CreateSalesLeadSchema, UpdateSalesLeadSchema, UpdateProspectSchema, PROSPECT_CLEARABLE_FIELDS } from './validators/schema'
 import type { UpdateSalesProspectDTO } from './types'
@@ -35,6 +36,12 @@ export class SalesLeadsController {
   async pipeline() {
     this.logger.info('GET /admin/sales-pipeline')
     return { status: 200, body: await this.service.getPipeline() }
+  }
+
+  /** GET /admin/sales-pipeline/funnel?weeks=8 — embudo semanal (REQ-PIPE-10). `weeks` fuera de 1..26 → 400. */
+  async funnel(req: HttpRequest) {
+    const weeks = parseWeeks((req.query as Record<string, unknown> | undefined)?.weeks)
+    return { status: 200, body: await this.service.getFunnel(weeks) }
   }
 
   async assignees() {
