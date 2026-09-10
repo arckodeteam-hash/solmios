@@ -55,13 +55,6 @@ function hayString(v: unknown): boolean {
   return typeof v === 'string' && v.trim().length > 0
 }
 
-/** Legacy `configuration.stripe_config` con `secretKey` (mismo parseo que `stripe-config.ts`). */
-async function estadoStripe(configRepo: any): Promise<EstadoServicio> {
-  if (process.env.STRIPE_SECRET_KEY) return ENV
-  const cfg = await leerPlataforma(configRepo, 'stripe_config')
-  return hayString(cfg?.secretKey) ? PANEL : NO
-}
-
 /** Mismo criterio que `EmailService.resolveSmtpConfig` (platform, keys `email_config` y `smtp`). */
 async function estadoSmtp(configRepo: any): Promise<EstadoServicio> {
   for (const key of ['email_config', 'smtp']) {
@@ -89,8 +82,7 @@ async function estadoChannex(configRepo: any): Promise<EstadoServicio> {
 
 /** Estado para la pantalla. Se llama en cada carga: no cachea, para no mentir tras un cambio. */
 export async function estadoServicios(configRepo: any): Promise<EstadoServicios> {
-  const [stripe, meta, resend, smtp, googleMaps, channex] = await Promise.all([
-    estadoStripe(configRepo),
+  const [meta, resend, smtp, googleMaps, channex] = await Promise.all([
     estadoMetaApp(configRepo),
     estadoResend(configRepo),
     estadoSmtp(configRepo),
@@ -99,7 +91,11 @@ export async function estadoServicios(configRepo: any): Promise<EstadoServicios>
   ])
 
   return {
-    stripe,
+    // Stripe de PLATAFORMA (suscripciones SaaS: create-checkout-session, upgrade-plan,
+    // handle-stripe-event) llama `StripeService.getConfig()` SIN hotelId, y sin hotelId
+    // `stripe-service.ts` cae directo a `envConfig()` = solo STRIPE_SECRET_KEY. La fila
+    // `configuration.stripe_config` es legacy POR HOTEL y nunca se consulta acá: mirarla sería un falso positivo.
+    stripe: process.env.STRIPE_SECRET_KEY ? ENV : NO,
     stripeWebhook: process.env.STRIPE_WEBHOOK_SECRET_PLATFORM ? ENV : NO,
     turnstile: isCaptchaEnabled() ? ENV : NO,
     publicUrl: process.env.PUBLIC_URL ? ENV : NO,

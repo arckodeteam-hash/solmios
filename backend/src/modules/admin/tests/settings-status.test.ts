@@ -6,7 +6,8 @@
 //   (a) el guard de plataforma: solo super_admin con userType admin;
 //   (b) la forma: exactamente las 9 claves, cada una `{configured, source}`;
 //   (c) que no se filtra nada: ningún string del body supera 20 caracteres;
-//   (d) que lee la misma fuente que el código que consume el servicio (stripe_config legacy).
+//   (d) que lee la misma fuente que el código que consume el servicio (p. ej. stripe SOLO env:
+//       `StripeService.getConfig()` sin hotelId ignora `configuration.stripe_config`).
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { Router } from 'arckode-framework'
 import { makeAuth, fakeOrm, fakeLogger } from '../../../infrastructure/auth/tests/route-permission-helpers'
@@ -126,16 +127,18 @@ describe('/api/admin/settings/status — forma de la respuesta', () => {
   })
 
   it('no filtra nada: ningún string del body (claves o valores) supera 20 caracteres', async () => {
-    // Se siembran secretos largos en todas las fuentes de panel: si alguno viajara, se nota.
+    // Se siembran secretos largos en todas las fuentes de panel (stripe_config incluida, aunque la
+    // plataforma no la use: el punto es que nada de lo que hay en la tabla viaje). Si alguno viajara, se nota.
+    const LARGO = 'VALOR_FALSO_LARGUISIMO_1234567890' // > 20 chars, no es una credencial real
     filas.push(
-      { id: 's', hotelId: 'platform', key: 'stripe_config', value: JSON.stringify({ secretKey: 'sk_live_SECRETO_LARGUISIMO_1234567890' }) },
-      { id: 'r', hotelId: 'platform', key: 'resend_api_key', value: 're_SECRETO_LARGUISIMO_1234567890' },
-      { id: 'e', hotelId: 'platform', key: 'email_config', value: { host: 'smtp.example.com', user: 'usuario@example.com', pass: 'PASSWORD_LARGUISIMA_1234567890' } },
-      { id: 'g', hotelId: 'platform', key: 'google_maps', value: { apiKey: 'AIza_SECRETO_LARGUISIMO_1234567890' } },
-      { id: 'c', hotelId: 'platform', key: 'channex', value: { apiKey: 'chx_SECRETO_LARGUISIMO_1234567890', environment: 'staging' } },
+      { id: 's', hotelId: 'platform', key: 'stripe_config', value: JSON.stringify({ secretKey: LARGO }) },
+      { id: 'r', hotelId: 'platform', key: 'resend_api_key', value: LARGO },
+      { id: 'e', hotelId: 'platform', key: 'email_config', value: { host: 'smtp.example.com', user: 'usuario@example.com', pass: LARGO } },
+      { id: 'g', hotelId: 'platform', key: 'google_maps', value: { apiKey: LARGO } },
+      { id: 'c', hotelId: 'platform', key: 'channex', value: { apiKey: LARGO, environment: 'staging' } },
     )
-    process.env.STRIPE_WEBHOOK_SECRET_PLATFORM = 'whsec_SECRETO_LARGUISIMO_1234567890'
-    process.env.TURNSTILE_SECRET = '0x_SECRETO_LARGUISIMO_1234567890'
+    process.env.STRIPE_WEBHOOK_SECRET_PLATFORM = LARGO
+    process.env.TURNSTILE_SECRET = LARGO
     process.env.PUBLIC_URL = 'https://solmios.example.com/una/url/larga'
     const res = await router.resolve('GET', '/api/admin/settings/status', { headers: sa })
     expect(res.status).toBe(200)
@@ -154,21 +157,14 @@ describe('/api/admin/settings/status — fuentes', () => {
     for (const clave of CLAVES) expect(body[clave]).toEqual({ configured: false, source: null })
   })
 
-  it('fila stripe_config {secretKey} sin STRIPE_SECRET_KEY → stripe: configuration', async () => {
-    filas.push({ id: 's', hotelId: 'platform', key: 'stripe_config', value: { secretKey: 'sk_test_x' } })
+  it('fila stripe_config en configuration NO cuenta para la plataforma (StripeService.getConfig() sin hotelId → solo env)', async () => {
+    filas.push({ id: 's', hotelId: 'platform', key: 'stripe_config', value: { secretKey: 'FAKE_STRIPE_x' } })
     const res = await router.resolve('GET', '/api/admin/settings/status', { headers: sa })
-    expect((res.body as any).stripe).toEqual({ configured: true, source: 'configuration' })
+    expect((res.body as any).stripe).toEqual({ configured: false, source: null })
   })
 
-  it('stripe_config guardado como string JSON también cuenta (mismo parseo que stripe-config.ts)', async () => {
-    filas.push({ id: 's', hotelId: 'platform', key: 'stripe_config', value: JSON.stringify({ secretKey: 'sk_test_x' }) })
-    const res = await router.resolve('GET', '/api/admin/settings/status', { headers: sa })
-    expect((res.body as any).stripe).toEqual({ configured: true, source: 'configuration' })
-  })
-
-  it('STRIPE_SECRET_KEY en env gana sobre la fila → stripe: env', async () => {
-    process.env.STRIPE_SECRET_KEY = 'sk_test_env'
-    filas.push({ id: 's', hotelId: 'platform', key: 'stripe_config', value: { secretKey: 'sk_test_x' } })
+  it('STRIPE_SECRET_KEY en env → stripe: env', async () => {
+    process.env.STRIPE_SECRET_KEY = 'FAKE_STRIPE_env'
     const res = await router.resolve('GET', '/api/admin/settings/status', { headers: sa })
     expect((res.body as any).stripe).toEqual({ configured: true, source: 'env' })
   })
