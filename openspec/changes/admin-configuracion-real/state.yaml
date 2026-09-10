@@ -1,0 +1,52 @@
+# SDD State: admin-configuracion-real
+
+change_name: admin-configuracion-real
+created: 2026-09-09
+status: proposed
+current_phase: tasks
+
+source: auditoría de /admin/settings 2026-09-09 (captura del usuario en prod: "Plantillas de Email" vacía)
+
+sprints:
+  1-deploy-email-fix:
+    title: Desplegar fix de Plantillas + {platform_name} (hecho en local, sin commit)
+    status: implemented-local
+    tasks_total: 2
+    tasks_done: 0
+    priority: critical
+  2-quitar-decorado:
+    title: Sacar campos sin backend y guardar por pestaña
+    status: pending
+    tasks_total: 4
+    tasks_done: 0
+    priority: high
+  3-email-completo:
+    title: Resend + TLS + prueba con destino
+    status: pending
+    tasks_total: 3
+    tasks_done: 0
+    priority: medium
+  4-password-policy:
+    title: Política de contraseña persistida y aplicada
+    status: pending
+    tasks_total: 5
+    tasks_done: 0
+    priority: high
+  5-estado-servicios:
+    title: Estado real de captcha/servicios (solo lectura)
+    status: pending
+    tasks_total: 3
+    tasks_done: 0
+    priority: medium
+  6-suscripciones:
+    title: trial_days + subscription_settings en vez de Facturación
+    status: pending
+    tasks_total: 3
+    tasks_done: 0
+    priority: high
+  7-cierre:
+    title: Docs + verificación
+    status: pending
+    tasks_total: 2
+    tasks_done: 0
+    priority: low
