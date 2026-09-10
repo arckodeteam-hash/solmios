@@ -143,7 +143,10 @@
       <template #footer>
         <button @click="showDetailModal = false" class="px-4 py-2.5 bg-surface text-text-secondary rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer">Cerrar</button>
         <button v-if="selectedInvoice.status === 'Pendiente' || selectedInvoice.status === 'Vencido'" @click="sendReminder(selectedInvoice)" class="px-4 py-2.5 bg-navy/10 text-navy rounded-xl text-sm font-bold hover:bg-navy/20 transition-colors cursor-pointer">Enviar Recordatorio</button>
-        <button class="px-4 py-2.5 bg-surface text-text-secondary rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer">📄 Descargar PDF</button>
+        <!-- "📄 Descargar PDF" vivía acá sin handler. No hay PDF que descargar: estas filas son
+             SUSCRIPCIONES (`PlatformService.subscriptions()`), no facturas emitidas — la
+             plataforma todavía no emite comprobantes propios. Se quita en vez de dejar un botón
+             que no puede funcionar. -->
       </template>
     </AppModal>
 

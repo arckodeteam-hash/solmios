@@ -11,7 +11,7 @@
           <span class="w-2 h-2 bg-teal rounded-full animate-pulse"></span>
           Todos los sistemas operativos
         </span>
-        <button class="px-4 py-2 bg-navy text-white text-sm font-bold rounded-xl cursor-pointer">Refrescar</button>
+        <button type="button" :disabled="cargando" class="px-4 py-2 bg-navy text-white text-sm font-bold rounded-xl cursor-pointer disabled:opacity-50" @click="cargar">{{ cargando ? 'Actualizando…' : 'Refrescar' }}</button>
       </div>
     </div>
 
@@ -190,7 +190,14 @@
             </div>
           </div>
         </div>
-        <button class="w-full mt-4 py-2 bg-navy text-white text-xs font-bold rounded-xl cursor-pointer">Forzar Backup Ahora</button>
+        <!-- Todavía no hay endpoint de backup (REQ-MON-05 del change `monitoreo-plataforma-real`).
+             Queda deshabilitado y dicho: un botón habilitado que no hace nada es peor que uno que
+             explica por qué no puede. -->
+        <button type="button" disabled
+          title="Pendiente: el endpoint de backup todavía no existe"
+          class="mt-4 w-full cursor-not-allowed rounded-xl bg-surface py-2 text-xs font-bold text-text-muted">
+          Backup manual — no disponible todavía
+        </button>
       </SectionCard>
 
       <!-- Connected Hotels -->
@@ -243,7 +250,17 @@ const stats = computed(() => ({
   memoria: (monData.value as any)?.memoria ?? 0,
 }))
 
-onMounted(async () => {
-  try { monData.value = await PlatformService.monitoring() } catch { toast.error('No se pudo cargar el monitoreo del sistema') }
-})
+const cargando = ref(false)
+async function cargar(): Promise<void> {
+  cargando.value = true
+  try {
+    monData.value = await PlatformService.monitoring()
+  } catch {
+    toast.error('No se pudo cargar el monitoreo del sistema')
+  } finally {
+    cargando.value = false
+  }
+}
+
+onMounted(cargar)
 </script>

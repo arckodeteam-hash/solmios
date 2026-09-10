@@ -52,8 +52,10 @@
                 <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="ann.status === 'Enviado' ? 'bg-teal/10 text-teal' : 'bg-gold/10 text-gold'">{{ ann.status }}</span>
               </td>
               <td class="py-3 px-4 text-right">
-                <button class="text-[10px] font-bold text-cyan hover:underline cursor-pointer mr-2">Ver</button>
-                <button class="text-[10px] font-bold text-coral hover:underline cursor-pointer">Eliminar</button>
+                <button type="button" class="text-[10px] font-bold text-cyan hover:underline cursor-pointer mr-2" @click="verAnuncio(ann)">Ver</button>
+                <button type="button" :disabled="borrandoId === ann.id"
+                  class="text-[10px] font-bold text-coral hover:underline cursor-pointer disabled:opacity-40"
+                  @click="pedirBorrado(ann)">{{ borrandoId === ann.id ? 'Borrando…' : 'Eliminar' }}</button>
               </td>
             </tr>
           </tbody>
@@ -145,9 +147,44 @@
       </div>
       <template #footer>
         <button @click="showCreateModal = false" class="px-4 py-2.5 bg-surface text-navy text-sm font-bold rounded-xl cursor-pointer">Cancelar</button>
-        <button @click="sendAnnouncement" class="px-4 py-2.5 bg-navy text-white text-sm font-bold rounded-xl cursor-pointer">Enviar Ahora</button>
+        <button type="button" :disabled="enviando || !newAnnouncement.title.trim()" @click="sendAnnouncement" class="px-4 py-2.5 bg-navy text-white text-sm font-bold rounded-xl cursor-pointer disabled:opacity-50 disabled:cursor-default">{{ enviando ? 'Publicando…' : 'Enviar Ahora' }}</button>
       </template>
     </AppModal>
+
+    <!-- Detalle: el botón "Ver" no hacía nada -->
+    <AppModal v-if="detalle" size="md" :title="detalle.title" :subtitle="detalle.type" @close="detalle = null">
+      <div class="space-y-4">
+        <p class="whitespace-pre-line text-sm text-text-secondary">{{ detalle.message || 'Este anuncio no tiene mensaje.' }}</p>
+        <div class="grid grid-cols-2 gap-3 border-t border-border pt-4 text-xs">
+          <div>
+            <div class="text-[10px] font-bold uppercase text-text-muted">Destinatarios</div>
+            <div class="font-bold text-navy">{{ detalle.audience }}</div>
+          </div>
+          <div>
+            <div class="text-[10px] font-bold uppercase text-text-muted">Estado</div>
+            <div class="font-bold text-navy">{{ detalle.status }}</div>
+          </div>
+          <div v-if="detalle.date">
+            <div class="text-[10px] font-bold uppercase text-text-muted">Fecha</div>
+            <div class="font-bold text-navy">{{ detalle.date }}</div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="rounded-xl bg-surface px-4 py-2.5 text-sm font-bold text-text-secondary" @click="detalle = null">Cerrar</button>
+      </template>
+    </AppModal>
+
+    <!-- Borrar es destructivo: se confirma, no se ejecuta al primer clic -->
+    <ConfirmModal
+      v-if="aBorrar"
+      title="Eliminar anuncio"
+      :message="`¿Eliminar «${aBorrar.title}»? Los hoteles dejarán de verlo. No se puede deshacer.`"
+      confirm-label="Eliminar"
+      danger
+      @confirm="confirmarBorrado"
+      @close="aBorrar = null"
+    />
   </div>
 </template>
 
@@ -155,7 +192,9 @@
 import { ref, onMounted } from 'vue'
 import { useToast } from '@/composables/useToast'
 import { PlatformService } from '@/services/Platform.service'
+import { AnnouncementsService } from '@/services/Announcements.service'
 import AppModal from '@/components/ui/AppModal.vue'
+import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 
@@ -167,8 +206,8 @@ const newAnnouncement = ref({
   title: '', type: 'feature', allHotels: true, adminsOnly: false, message: ''
 })
 
-const TYPE_LABEL: Record<string, string> = { feature: 'Nueva función', warning: 'Mantenimiento', success: 'Informativo', info: 'Informativo' }
-const TYPE_CLASS: Record<string, string> = { feature: 'bg-teal/10 text-teal', warning: 'bg-gold/10 text-gold', success: 'bg-cyan/10 text-cyan', info: 'bg-cyan/10 text-cyan' }
+const TYPE_LABEL: Record<string, string> = { feature: 'Nueva función', maintenance: 'Mantenimiento', warning: 'Aviso', urgent: 'Urgente', promo: 'Promoción', success: 'Informativo', info: 'Informativo' }
+const TYPE_CLASS: Record<string, string> = { feature: 'bg-teal/10 text-teal', maintenance: 'bg-gold/10 text-gold', warning: 'bg-gold/10 text-gold', urgent: 'bg-danger/10 text-danger', promo: 'bg-navy/10 text-navy', success: 'bg-cyan/10 text-cyan', info: 'bg-cyan/10 text-cyan' }
 
 const announcements = ref<any[]>([])
 
@@ -181,7 +220,7 @@ const templates = [
 
 const scheduled = ref<any[]>([])
 
-onMounted(async () => {
+async function cargarAnuncios(): Promise<void> {
   loading.value = true
   try {
     const { data } = await PlatformService.announcements()
@@ -189,6 +228,8 @@ onMounted(async () => {
       id: a.id,
       title: a.title,
       excerpt: (a.message ?? '').slice(0, 80),
+      rawType: a.type,
+      message: a.message ?? '',
       type: TYPE_LABEL[a.type] ?? 'Informativo',
       typeClass: TYPE_CLASS[a.type] ?? 'bg-cyan/10 text-cyan',
       audience: a.hotelId ? 'Hotel específico' : 'Todos los hoteles',
@@ -197,20 +238,62 @@ onMounted(async () => {
       status: a.active === 1 ? 'Enviado' : 'Borrador',
     }))
   } catch { toast.error('No se pudieron cargar los anuncios') } finally { loading.value = false }
-})
+}
 
-function sendAnnouncement() {
-  announcements.value.unshift({
-    id: Date.now(),
-    title: newAnnouncement.value.title,
-    excerpt: newAnnouncement.value.message.substring(0, 80) + '...',
-    type: newAnnouncement.value.type === 'feature' ? 'Nueva función' : newAnnouncement.value.type === 'maintenance' ? 'Mantenimiento' : newAnnouncement.value.type === 'promo' ? 'Promoción' : 'Informativo',
-    typeClass: newAnnouncement.value.type === 'feature' ? 'bg-teal/10 text-teal' : newAnnouncement.value.type === 'maintenance' ? 'bg-gold/10 text-gold' : newAnnouncement.value.type === 'promo' ? 'bg-purple/10 text-purple' : 'bg-cyan/10 text-cyan',
-    audience: newAnnouncement.value.allHotels ? 'Todos los hoteles' : 'Admins',
-    date: 'Ahora',
-    views: 0, reads: 0, status: 'Enviado',
-  })
-  showCreateModal.value = false
-  newAnnouncement.value = { title: '', type: 'feature', allHotels: true, adminsOnly: false, message: '' }
+onMounted(cargarAnuncios)
+
+/**
+ * BUG: esto era `announcements.value.unshift(...)` y nada más — el anuncio se veía aparecer en la
+ * lista, pero NO se guardaba en ningún lado ni llegaba a ningún hotel. Al recargar desaparecía.
+ * Mismo patrón que ya se había corregido en `roles.vue:savePermissions`.
+ *
+ * `hotelId` ausente = anuncio global (el backend lo trata así, ver `anuncios/service.ts`).
+ */
+const enviando = ref(false)
+async function sendAnnouncement(): Promise<void> {
+  const draft = newAnnouncement.value
+  if (!draft.title.trim()) { toast.error('El anuncio necesita un título'); return }
+  enviando.value = true
+  try {
+    await AnnouncementsService.create({
+      title: draft.title.trim(),
+      message: draft.message.trim(),
+      type: draft.type,
+      priority: draft.type === 'maintenance' ? 'high' : 'medium',
+      active: 1,
+      date: new Date().toISOString(),
+    } as any)
+    showCreateModal.value = false
+    newAnnouncement.value = { title: '', type: 'feature', allHotels: true, adminsOnly: false, message: '' }
+    toast.success('Anuncio publicado')
+    await cargarAnuncios()
+  } catch (e: any) {
+    toast.error(e?.message || 'No se pudo publicar el anuncio')
+  } finally {
+    enviando.value = false
+  }
+}
+
+const detalle = ref<any | null>(null)
+function verAnuncio(ann: any): void { detalle.value = ann }
+
+const borrandoId = ref<string | null>(null)
+const aBorrar = ref<any | null>(null)
+function pedirBorrado(ann: any): void { aBorrar.value = ann }
+
+async function confirmarBorrado(): Promise<void> {
+  const ann = aBorrar.value
+  if (!ann) return
+  borrandoId.value = ann.id
+  aBorrar.value = null
+  try {
+    await AnnouncementsService.remove(String(ann.id))
+    announcements.value = announcements.value.filter((a: any) => a.id !== ann.id)
+    toast.success('Anuncio eliminado')
+  } catch (e: any) {
+    toast.error(e?.message || 'No se pudo eliminar el anuncio')
+  } finally {
+    borrandoId.value = null
+  }
 }
 </script>

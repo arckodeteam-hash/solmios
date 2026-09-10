@@ -1,6 +1,9 @@
 import type { ValidationRule } from 'arckode-framework'
 
-const TYPE_ENUM = ['info', 'warning', 'urgent', 'maintenance']
+// 'feature' y 'promo' los ofrece el panel de la plataforma (/admin/announcements) desde
+// siempre; al no estar en el enum, crear un anuncio de esos tipos devolvía 400. El panel es
+// el único que los usa, así que se amplía el enum en vez de recortar la UI.
+const TYPE_ENUM = ['info', 'warning', 'urgent', 'maintenance', 'feature', 'promo']
 const PRIORITY_ENUM = ['low', 'medium', 'high']
 const MAX_MESSAGE_LENGTH = 5000
 const MIN_TITLE_LENGTH = 2

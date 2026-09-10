@@ -111,49 +111,33 @@
       </div>
     </div>
 
-    <!-- Feature Flags by Plan -->
-    <div class="bg-white rounded-2xl border border-border mt-6 overflow-hidden">
-      <div class="flex items-center justify-between bg-navy px-5 py-4">
-        <h3 class="font-extrabold text-white">Control de Features por Plan</h3>
-        <span class="text-[10px] font-bold text-white/60">Define qué módulos están disponibles en cada plan</span>
-      </div>
-      <div class="p-6">
-      <div class="overflow-x-auto">
-        <table class="w-full tbl-head">
-          <thead>
-            <tr class="border-b border-border bg-surface/50">
-              <th class="text-left py-3 px-4 text-[10px] font-bold text-text-muted uppercase">Feature / Módulo</th>
-              <th class="text-center py-3 px-4 text-[10px] font-bold text-text-muted uppercase">Starter ($49)</th>
-              <th class="text-center py-3 px-4 text-[10px] font-bold text-cyan uppercase">Professional ($99)</th>
-              <th class="text-center py-3 px-4 text-[10px] font-bold text-gold uppercase">Enterprise ($199)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="feature in featureFlags" :key="feature.name" class="border-b border-border/50 hover:bg-surface/30 transition-colors">
-              <td class="py-3 px-4">
-                <div class="text-sm font-bold text-navy">{{ feature.name }}</div>
-                <div class="text-[9px] text-text-muted">{{ feature.description }}</div>
-              </td>
-              <td class="py-3 px-4 text-center">
-                <div class="w-10 h-6 rounded-full relative cursor-pointer mx-auto" :class="feature.starter ? 'bg-teal' : 'bg-gray-200'" @click="feature.starter = !feature.starter">
-                  <div class="absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all" :class="feature.starter ? 'right-1' : 'left-1'"></div>
-                </div>
-              </td>
-              <td class="py-3 px-4 text-center">
-                <div class="w-10 h-6 rounded-full relative cursor-pointer mx-auto" :class="feature.professional ? 'bg-teal' : 'bg-gray-200'" @click="feature.professional = !feature.professional">
-                  <div class="absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all" :class="feature.professional ? 'right-1' : 'left-1'"></div>
-                </div>
-              </td>
-              <td class="py-3 px-4 text-center">
-                <div class="w-10 h-6 rounded-full relative cursor-pointer mx-auto" :class="feature.enterprise ? 'bg-teal' : 'bg-gray-200'" @click="feature.enterprise = !feature.enterprise">
-                  <div class="absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all" :class="feature.enterprise ? 'right-1' : 'left-1'"></div>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <button class="mt-4 px-4 py-2 bg-navy text-white text-xs font-bold rounded-xl cursor-pointer">Guardar Features</button>
+    <!-- "Control de Features por Plan" estaba acá como una tabla con toggles y un botón
+         "Guardar Features" SIN handler: se podían mover los switches, pero nada se guardaba y al
+         recargar volvía todo. Encima la tabla venía vacía (leía una config `feature_flags` que no
+         existe) y sus columnas anunciaban planes que no son los reales (Starter $49 /
+         Professional $99 / Enterprise $199, cuando el catálogo tiene Host $65, Ecencial $129,
+         Professional $349, Boutique $199 y Cumbre $549).
+
+         Qué módulos incluye cada plan SÍ se administra, y de verdad, en /admin/plans (campo
+         `modules` del plan) y el catálogo global en /admin/modules. Hacer "funcionar" esta tabla
+         habría creado una segunda fuente de verdad para lo mismo. -->
+    <div class="mt-6 rounded-2xl border border-border bg-white p-5">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="min-w-0">
+          <h3 class="text-sm font-black text-navy">¿Qué módulos incluye cada plan?</h3>
+          <p class="mt-0.5 text-xs text-text-muted">
+            Esta pantalla define los permisos de cada <strong>rol</strong> dentro de un hotel. Lo que
+            incluye cada <strong>plan</strong> se configura por separado.
+          </p>
+        </div>
+        <div class="flex shrink-0 gap-2">
+          <router-link to="/admin/plans" class="rounded-full bg-navy px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-navy-light">
+            Módulos por plan
+          </router-link>
+          <router-link to="/admin/modules" class="rounded-full border border-border px-4 py-2 text-xs font-bold text-navy transition-colors hover:border-navy">
+            Catálogo global
+          </router-link>
+        </div>
       </div>
     </div>
 
@@ -233,8 +217,6 @@ const permissionCategories = [
   { name: 'Soporte', icon: '🎫', permissions: [{ key: 'support', label: 'Soporte' }] },
 ]
 
-const featureFlags = ref<any[]>([])
-
 onMounted(async () => {
   try {
     const { data } = await TeamService.listRoles()
@@ -248,11 +230,6 @@ onMounted(async () => {
       permissions: (() => { try { return JSON.parse(r.permissions || '[]') } catch { return [] } })(),
     }))
   } catch { toast.error('No se pudieron cargar los roles') }
-  try {
-    const { ConfigService } = await import('@/services/Platform.service')
-    const flags = await ConfigService.get('feature_flags', 'platform')
-    if (Array.isArray(flags)) featureFlags.value = flags
-  } catch { /* silent */ }
 })
 
 const totalPermissions = computed(() => permissionCategories.reduce((sum, cat) => sum + cat.permissions.length * 6, 0))
