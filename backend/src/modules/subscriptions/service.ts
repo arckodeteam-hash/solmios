@@ -11,6 +11,7 @@ import { createCheckoutSession, type CreateCheckoutResult } from './usecases/cre
 import { createPortalSession, type CreatePortalResult } from './usecases/create-portal-session'
 import { previewUpgrade, applyUpgrade } from './usecases/upgrade-plan'
 import { processSubscriptionWebhook } from './usecases/handle-stripe-event'
+import { activateAfterManualPayment, type ActivateManualPaymentResult } from './usecases/activate-manual-payment'
 import { applyStripeDiscount, type ApplyStripeDiscountResult, type ApplyStripeDiscountMeta } from './usecases/apply-stripe-discount'
 import { listPublicPlans, type PublicPlan } from './usecases/public-plans'
 import { publicFounderDiscount } from './usecases/public-founder-discount'
@@ -184,6 +185,9 @@ export class SubscriptionsService {
   createPortal(hotelId: string, origin: string): Promise<CreatePortalResult> {
     return createPortalSession({ subscriptionsRepo: this.subscriptionsRepo, logger: this.logger }, hotelId, origin)
   }
+
+  /** REQ-BIL-06 — el super-admin registró una transferencia: la suscripción queda como la deja un cobro de Stripe. Lo invoca el connector `admin-subscriptions-billing`, nunca un import directo. */
+  activateAfterManualPayment(hotelId: string, periodEnd: string): Promise<ActivateManualPaymentResult> { return activateAfterManualPayment({ subscriptionsRepo: this.subscriptionsRepo, logger: this.logger }, hotelId, periodEnd) }
 
   /** Webhook de la cuenta de PLATAFORMA (checkout/renovación/cancelación de la suscripción SaaS). */
   handlePlatformWebhook(rawBody: string | Buffer, signature: string) {

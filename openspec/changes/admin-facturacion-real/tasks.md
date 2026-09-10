@@ -24,26 +24,26 @@
 
 ## 2. Endpoints admin (REQ-BIL-04, REQ-BIL-09)
 
-- [ ] 2.1 `GET /api/admin/billing/invoices` con filtros y paginación en el usecase.
+- [x] 2.1 `GET /api/admin/billing/invoices` con filtros y paginación en el usecase.
       **Aceptación**: test de `status`, `planId`, `from/to`, `q` por número/hotel/referencia; 403
       con `merchant`.
-- [ ] 2.2 `GET /api/admin/billing/invoices/:id` enriquecido (hotel, suscripción).
+- [x] 2.2 `GET /api/admin/billing/invoices/:id` enriquecido (hotel, suscripción).
       **Aceptación**: test de forma del payload; 404 si no existe.
-- [ ] 2.3 `GET /api/admin/billing/stats` desde `platform_invoices` + `mrr`.
+- [x] 2.3 `GET /api/admin/billing/stats` desde `platform_invoices` + `mrr`.
       **Aceptación**: test del escenario del spec (148/49/49/99/50).
-- [ ] 2.4 `GET /api/admin/billing/export.csv` (BOM, `;`, mismos filtros).
+- [x] 2.4 `GET /api/admin/billing/export.csv` (BOM, `;`, mismos filtros).
       **Aceptación**: test que abre el CSV y verifica encabezados y una fila.
 
 ## 3. Acciones (REQ-BIL-05, REQ-BIL-06)
 
-- [ ] 3.1 `POST /:id/remind`: plantilla por estado/`isRecurring`, dedup 24 h, `lastReminderAt`,
+- [x] 3.1 `POST /:id/remind`: plantilla por estado/`isRecurring`, dedup 24 h, `lastReminderAt`,
       `Auditlog`.
       **Aceptación**: tests: `paid` → 409; segundo envío en 2 h → 409; `failed` usa
       `payment_failed`; `open` + `isRecurring=false` usa `subscription_renewal_manual`.
-- [ ] 3.2 Connector `admin-subscriptions-billing.ts` (activar + `currentPeriodEnd` + limpiar
+- [x] 3.2 Connector `admin-subscriptions-billing.ts` (activar + `currentPeriodEnd` + limpiar
       gracia) sin import directo del módulo.
       **Aceptación**: `arckode analyze` 0 violaciones.
-- [ ] 3.3 `POST /api/admin/billing/manual-payment` con `validateSchema()`: crea/actualiza fila,
+- [x] 3.3 `POST /api/admin/billing/manual-payment` con `validateSchema()`: crea/actualiza fila,
       activa suscripción, `Auditlog`.
       **Aceptación**: tests: monto 0 → 400; `paidAt` futuro → 400; sin `reference` → 400; caso
       feliz deja `active` + fila `manual`/`paid` + audit.

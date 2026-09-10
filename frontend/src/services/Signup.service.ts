@@ -23,6 +23,21 @@ export interface PublicPlan {
   features: string[]
   /** CFG-1: el tope de habitaciones sale de la tabla `plans`, no de un literal en el frontend. */
   limits?: PublicPlanLimits
+  /**
+   * #71: si el plan admite la prueba gratuita (`plans.trialEligible`). Lo resuelve el backend
+   * (`public-plans.ts`) a boolean; ausente en una respuesta vieja = elegible.
+   */
+  trialEligible?: boolean
+}
+
+/**
+ * #71: planes que el alta puede ofrecer. El backend rechaza con 400 un plan con
+ * `trialEligible=0`; el registro no debe ni listarlo — el que no es elegible va a ventas
+ * (landing) y no a la prueba. Sólo el `false` explícito niega: `undefined` (backend viejo) sigue
+ * siendo elegible, igual que el NULL de una fila vieja en el servidor.
+ */
+export function trialEligiblePlans<T extends Pick<PublicPlan, 'trialEligible'>>(plans: T[]): T[] {
+  return plans.filter((p) => p.trialEligible !== false)
 }
 
 export interface SignupPayload {

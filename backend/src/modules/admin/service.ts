@@ -11,6 +11,8 @@ import {
   type SubscriptionSettings,
 } from './usecases/subscription-settings'
 import type { ModuleOverridesUseCase } from './usecases/module-overrides'
+import type { PlatformBillingUseCase } from './usecases/billing'
+import type { BillingSubscriptionPort, PlatformEmailSender } from './usecases/billing-actions'
 import * as plans from './usecases/plans'
 import { updateHotel } from './usecases/update-hotel'
 import {
@@ -35,7 +37,14 @@ export class AdminService {
   /** Conecta el audit log. Lo inyecta el connector `admin-auditlog`. */
   setAuditDeps(port: AuditPort): void {
     this.auditPort = port
+    this.platformBilling?.setActionDeps({ auditPort: port }) // BIL-3: recordar y pago manual también auditan
   }
+
+  /** Correo de PLATAFORMA para el recordatorio de cobro (BIL-3). Lo cablea email-bootstrap. */
+  setPlatformEmailSender(fn: PlatformEmailSender): void { this.platformBilling?.setActionDeps({ sendPlatformEmail: fn }) }
+
+  /** Puerto a `subscriptions` para reactivar tras un pago manual. Lo inyecta `admin-subscriptions-billing`. */
+  setBillingSubscriptionDeps(port: BillingSubscriptionPort): void { this.platformBilling?.setActionDeps({ subscriptions: port }) }
 
   /**
    * SMTP-UI (2026-08-19): EmailService para el botón "Email de prueba" de settings del
@@ -68,7 +77,15 @@ export class AdminService {
     /** #46: `subscriptions.planId`, fuente de verdad del plan para el gate. OPCIONAL como el resto
      *  de los deps: sin cablear, `updateHotel` solo espeja `hotels.plan` (como antes) y no rompe. */
     private readonly subscriptionsRepo?: RepositoryAdapter<any>,
+    /** BIL-2: facturación de la plataforma. El service solo la EXPONE — toda la lógica vive en `usecases/billing*.ts`, que es lo que pide la regla del God Object. */
+    private readonly platformBilling?: PlatformBillingUseCase,
   ) {}
+
+  /** `platform_invoices` para /admin/billing. Sin cablear (tabla no migrada) tira y el controller responde 503 — nunca una pantalla que miente. */
+  get billing(): PlatformBillingUseCase {
+    if (!this.platformBilling) throw new Error('admin: facturación de plataforma no cableada')
+    return this.platformBilling
+  }
 
   async listHotels(): Promise<{ data: any[]; total: number }> { return this.queries!.listHotels() }
   async listUsers(): Promise<{ data: any[]; total: number }> { return this.queries!.listUsers() }

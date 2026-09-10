@@ -4,10 +4,12 @@ import type { AdminService } from './service'
 import {
   CreatePlanSchema, UpdatePlanSchema, CreateAmenityCatalogSchema, UpdateAmenityCatalogSchema, UpdateHotelAdminSchema,
   ApplySpecialConditionsSchema, UpdateSpecialCategorySchema, UpdateSubscriptionSettingsSchema, ModuleOverrideSchema,
+  ManualPaymentSchema,
 } from './validators/schema'
 
 /**
- * Mapeo de error → HTTP del catálogo de amenities.
+ * Mapeo de error → HTTP. Nació para el catálogo de amenities y lo comparte la facturación de
+ * plataforma (BIL-2/BIL-3): el criterio es el mismo, el status sale del TIPO de error.
  *
  * COR-3/SEC-5: los tres handlers tenían un `catch` con un status FIJO — el alta devolvía 409
  * "Amenity ya existe" para CUALQUIER excepción, incluido el `ForbiddenError` que tira
@@ -20,16 +22,18 @@ import {
  * `usecases/subscription-categories.ts`). El único match por texto que queda es el `Forbidden` que
  * `Auth.assertOwnership` tira como `Error` pelado desde el kernel: ese string no es de UI.
  */
-const AMENITY_ERROR_STATUS: Record<string, number> = {
+const ERROR_STATUS_BY_TYPE: Record<string, number> = {
   AuthError: 403, ForbiddenError: 403,
   NotFoundError: 404,
   ConflictError: 409,
   ValidationError: 400,
+  // BIL-3: el correo de plataforma sin cablear no es culpa del pedido — 503, no 400.
+  ServiceUnavailableError: 503,
 }
 
-function amenityErrorStatus(e: unknown): number {
+function httpStatusOfError(e: unknown): number {
   const err = e as { name?: string; message?: string }
-  const byType = AMENITY_ERROR_STATUS[String(err?.name ?? '')]
+  const byType = ERROR_STATUS_BY_TYPE[String(err?.name ?? '')]
   if (byType) return byType
   // `kernel/auth.ts` tira un Error sin subclase para el fallo de ownership.
   if (String(err?.message ?? '').startsWith('Forbidden')) return 403
@@ -136,7 +140,7 @@ export class AdminController {
       const data = validateSchema(CreateAmenityCatalogSchema, req.body) as any
       return { status: 201, body: await this.service.createAmenityCatalog(data, req.user as any) }
     } catch (e: any) {
-      return { status: amenityErrorStatus(e), body: { error: e.message } }
+      return { status: httpStatusOfError(e), body: { error: e.message } }
     }
   }
 
@@ -145,7 +149,7 @@ export class AdminController {
       const data = validateSchema(UpdateAmenityCatalogSchema, req.body) as any
       return { status: 200, body: await this.service.updateAmenityCatalog(req.params.id, data, req.user as any) }
     } catch (e: any) {
-      return { status: amenityErrorStatus(e), body: { error: e.message } }
+      return { status: httpStatusOfError(e), body: { error: e.message } }
     }
   }
 
@@ -154,7 +158,7 @@ export class AdminController {
       await this.service.deleteAmenityCatalog(req.params.id, req.user as any)
       return { status: 200, body: { success: true } }
     } catch (e: any) {
-      return { status: amenityErrorStatus(e), body: { error: e.message } }
+      return { status: httpStatusOfError(e), body: { error: e.message } }
     }
   }
 
@@ -264,6 +268,77 @@ export class AdminController {
       return { status: 200, body: { success: true } }
     } catch (e: any) {
       return { status: 404, body: { error: e.message } }
+    }
+  }
+  // ── Facturación de la PLATAFORMA (/admin/billing, REQ-BIL-04) ─────────────────────────────
+  // Los filtros viajan como query y se aplican en el usecase (server-side): la pantalla del
+  // super-admin cruza todos los hoteles, mandarle el historial entero al navegador no escala.
+
+  private billingQuery(req: HttpRequest) {
+    const q = (req.query ?? {}) as Record<string, string>
+    const nonEmpty = (v?: string) => (v && v !== 'all' ? String(v) : undefined)
+    return {
+      status: nonEmpty(q.status), planId: nonEmpty(q.planId),
+      from: nonEmpty(q.from), to: nonEmpty(q.to), q: nonEmpty(q.q),
+      page: Number(q.page) || undefined, limit: Number(q.limit) || undefined,
+    }
+  }
+
+  async listBillingInvoices(req: HttpRequest) {
+    try {
+      return { status: 200, body: await this.service.billing.list(this.billingQuery(req)) }
+    } catch (e: any) {
+      return { status: httpStatusOfError(e), body: { error: e.message } }
+    }
+  }
+
+  async getBillingInvoice(req: HttpRequest) {
+    try {
+      return { status: 200, body: await this.service.billing.detail(String(req.params.id)) }
+    } catch (e: any) {
+      return { status: httpStatusOfError(e), body: { error: e.message } }
+    }
+  }
+
+  async getBillingStats(req: HttpRequest) {
+    try {
+      return { status: 200, body: await this.service.billing.stats(this.billingQuery(req)) }
+    } catch (e: any) {
+      return { status: httpStatusOfError(e), body: { error: e.message } }
+    }
+  }
+
+  /** CSV como Buffer, NO string: el framework envuelve cualquier body no-Buffer en el envelope
+   *  JSON y el .csv saldría como un blob con `\n` literales (mismo motivo que reports). */
+  async exportBillingCsv(req: HttpRequest) {
+    try {
+      const csv = await this.service.billing.csv(this.billingQuery(req))
+      const filename = `facturacion-plataforma-${new Date().toISOString().slice(0, 10)}.csv`
+      return {
+        status: 200,
+        headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"` },
+        body: Buffer.from(csv, 'utf-8'),
+      }
+    } catch (e: any) {
+      return { status: httpStatusOfError(e), body: { error: e.message } }
+    }
+  }
+  /** REQ-BIL-05 — 409 si ya no se reclama o si se recordó hace menos de 24 h (con la hora). */
+  async remindBillingInvoice(req: HttpRequest) {
+    try {
+      return { status: 200, body: await this.service.billing.remind(String(req.params.id), req.user as any) }
+    } catch (e: any) {
+      return { status: httpStatusOfError(e), body: { error: e.message } }
+    }
+  }
+
+  /** REQ-BIL-06 — pago fuera de Stripe: deja la fila `manual`/`paid` y reactiva la suscripción. */
+  async registerManualPayment(req: HttpRequest) {
+    try {
+      const data = validateSchema(ManualPaymentSchema, req.body) as any
+      return { status: 201, body: await this.service.billing.manualPayment(data, req.user as any) }
+    } catch (e: any) {
+      return { status: httpStatusOfError(e), body: { error: e.message } }
     }
   }
 }

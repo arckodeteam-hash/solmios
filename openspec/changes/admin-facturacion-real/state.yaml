@@ -16,15 +16,15 @@ sprints:
     priority: critical
   2-endpoints:
     title: Listado, detalle, stats, export
-    status: pending
+    status: done
     tasks_total: 4
-    tasks_done: 0
+    tasks_done: 4
     priority: high
   3-acciones:
     title: Recordar + pago manual reales
-    status: pending
+    status: done
     tasks_total: 3
-    tasks_done: 0
+    tasks_done: 3
     priority: high
   4-pantalla:
     title: billing.vue sin datos inventados

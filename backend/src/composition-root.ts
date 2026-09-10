@@ -419,6 +419,7 @@ import { rolesAuditlogConnector } from './connectors/roles-auditlog'
 import { paymentsAuditlogConnector } from './connectors/payments-auditlog'
 import { usuariosAuditlogConnector } from './connectors/usuarios-auditlog'
 import { adminAuditlogConnector } from './connectors/admin-auditlog'
+import { adminSubscriptionsBillingConnector } from './connectors/admin-subscriptions-billing'
 import { apikeysAuditlogConnector } from './connectors/apikeys-auditlog'
 import { hotelesAuditlogConnector } from './connectors/hoteles-auditlog'
 import { dispositivosAuditlogConnector } from './connectors/dispositivos-auditlog'
@@ -612,6 +613,8 @@ system.addConnector('roles-auditlog', rolesAuditlogConnector)
 system.addConnector('payments-auditlog', paymentsAuditlogConnector)
 system.addConnector('usuarios-auditlog', usuariosAuditlogConnector)
 system.addConnector('admin-auditlog', adminAuditlogConnector)
+// BIL-3: el pago manual de /admin/billing reactiva la suscripción (sin import cross-módulo).
+system.addConnector('admin-subscriptions-billing', adminSubscriptionsBillingConnector)
 // SC-05 (plata): efectivo del cajón, solicitudes de pago, tarifario y nómina.
 system.addConnector('cash-auditlog', cashAuditlogConnector)
 system.addConnector('payment-requests-auditlog', paymentRequestsAuditlogConnector)
