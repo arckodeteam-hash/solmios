@@ -1,6 +1,6 @@
 {
   "_arckode": "1.0.0",
-  "_generated": "2026-09-10T17:29:56.668Z",
+  "_generated": "2026-09-10T19:47:50.843Z",
   "_instructions": "Lee este archivo ANTES de escribir código. Contiene el estado completo del sistema: módulos, conectores, violaciones. Si está desactualizado, corré: bun run analyze --json",
   "system": {
     "healthy": true,
@@ -568,6 +568,19 @@
       "complete": true
     },
     {
+      "name": "monitoring",
+      "structure": {
+        "index": true,
+        "types": true,
+        "sockets": true,
+        "service": true,
+        "controller": true,
+        "validators": true,
+        "tests": true
+      },
+      "complete": true
+    },
+    {
       "name": "marketing",
       "structure": {
         "index": true,
@@ -981,6 +994,7 @@
     "payments-ceiling.ts",
     "subscriptions-admin-policy.ts",
     "reclutamiento-empleados.ts",
+    "admin-subscriptions-billing.ts",
     "marketing-auditlog.ts",
     "empleados-capacitacion.ts",
     "whatsapp-delivery-status.ts",
@@ -988,6 +1002,7 @@
     "reservas-promocodes.ts",
     "amenities-habitaciones.ts",
     "folios-payments.ts",
+    "monitoring-auditlog.ts",
     "gastos-accounting.ts",
     "payments-webhooks.ts",
     "reports-ttlock.ts",
@@ -1015,6 +1030,7 @@
     "gastos-caja.ts",
     "bookingengine-deposits.ts",
     "subscriptions-usuarios-owner.ts",
+    "monitoring-ari-outbox.ts",
     "gbp-reviews.ts",
     "compras-gastos.ts",
     "crm-promocodes.ts",

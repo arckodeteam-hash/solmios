@@ -1,50 +1,35 @@
 <template>
   <div>
-    <div class="flex items-center justify-between flex-wrap gap-3 mb-6">
-      <div class="flex gap-2 flex-wrap">
-        <button v-for="tab in tabs" :key="tab.value" @click="activeTab = tab.value" class="px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer" :class="activeTab === tab.value ? 'bg-navy text-white' : 'bg-white text-text-secondary border border-border hover:border-navy/30'">{{ tab.label }}</button>
-      </div>
-      <button @click="saveSettings" class="bg-cyan text-navy font-extrabold text-sm px-5 py-2.5 rounded-xl hover:shadow-lg transition-all cursor-pointer">Guardar Cambios</button>
+    <!-- CFG-2 (#99): sin botón global de guardado. Cada pestaña guarda lo suyo con UN POST,
+         así el toast dice qué se guardó (y qué falló) en lugar de disparar cuatro claves de una. -->
+    <div class="flex gap-2 flex-wrap mb-6">
+      <button v-for="tab in tabs" :key="tab.value" @click="activeTab = tab.value" class="px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer" :class="activeTab === tab.value ? 'bg-navy text-white' : 'bg-white text-text-secondary border border-border hover:border-navy/30'">{{ tab.label }}</button>
     </div>
 
     <!-- Tab: Plataforma -->
     <div v-if="activeTab === 'platform'" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <SectionCard title="Información de la Plataforma">
         <div class="space-y-4">
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Nombre de la Plataforma</label><input v-model="settings.platformName" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Email de Soporte</label><input v-model="settings.supportEmail" type="email" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Teléfono de Soporte</label><input v-model="settings.supportPhone" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Moneda por Defecto</label>
-            <select v-model="settings.currency" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
-              <option value="USD">USD — Dólar Americano</option>
-              <option value="DOP">DOP — Peso Dominicano</option>
-              <option value="EUR">EUR — Euro</option>
-            </select>
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Nombre de la Plataforma</label>
+            <input v-model="settings.platformName" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+            <!-- CFG-2 (#99): texto honesto — hoy nada del sistema lee este valor. -->
+            <p class="mt-1 text-[11px] text-text-muted">Se guarda en la configuración de la plataforma; hoy no hay lectores.</p>
           </div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Zona Horaria</label>
-            <select v-model="settings.timezone" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
-              <option value="America/Santo_Domingo">Santo Domingo (GMT-4)</option>
-              <option value="America/Bogota">Bogotá (GMT-5)</option>
-              <option value="America/Mexico_City">Ciudad de México (GMT-6)</option>
-            </select>
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Email de Soporte</label>
+            <input v-model="settings.supportEmail" type="email" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+            <p class="mt-1 text-[11px] text-text-muted">Destino por defecto del correo de prueba de la pestaña Email.</p>
           </div>
-        </div>
-      </SectionCard>
-      <SectionCard title="Logo y Apariencia">
-        <div class="space-y-4">
-          <div class="flex items-center gap-4 p-4 bg-surface rounded-xl">
-            <img :src="logoIconColor" alt="SolmiOS" class="w-20 h-20 rounded-xl bg-white border border-border object-contain p-2">
-            <div>
-              <div class="text-sm font-bold text-navy mb-2">Logo Actual</div>
-              <button class="px-3 py-1.5 bg-white border border-border rounded-lg text-[10px] font-bold hover:border-navy transition-colors cursor-pointer">Cambiar Logo</button>
-            </div>
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Teléfono de Soporte</label>
+            <input v-model="settings.supportPhone" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+            <p class="mt-1 text-[11px] text-text-muted">Se guarda en la configuración de la plataforma; hoy no hay lectores.</p>
           </div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Color Primario</label>
-            <div class="flex gap-2">
-              <div v-for="color in brandColors" :key="color.value" @click="settings.brandColor = color.value" class="w-10 h-10 rounded-lg cursor-pointer border-2 transition-all" :class="settings.brandColor === color.value ? 'border-navy scale-110' : 'border-transparent'" :style="{ background: color.value }"></div>
-            </div>
-          </div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Dominio Personalizado</label><input v-model="settings.customDomain" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="app.solmios.com"></div>
+          <button @click="guardarPlataforma" :disabled="guardandoPlataforma"
+            class="rounded-xl bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:shadow-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            {{ guardandoPlataforma ? 'Guardando…' : 'Guardar' }}
+          </button>
         </div>
       </SectionCard>
     </div>
@@ -55,13 +40,63 @@
         <div class="space-y-4">
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">SMTP Server</label><input v-model="settings.smtpServer" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Puerto</label><input v-model="settings.smtpPort" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
+          <!-- #100: TLS implícito (465) vs STARTTLS (587). Se persiste como `secure` en email_config. -->
+          <div>
+            <label class="flex items-center gap-2 text-sm cursor-pointer">
+              <input v-model="settings.smtpSecure" type="checkbox" class="w-4 h-4 accent-cyan rounded">
+              <span class="font-bold">Conexión segura (465/TLS)</span>
+            </label>
+            <p class="mt-1 text-[11px] text-text-muted">Activalo para puerto 465; con 587 se usa STARTTLS</p>
+          </div>
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Usuario</label><input v-model="settings.smtpUser" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
           <!-- autocomplete="new-password": credencial del servidor SMTP de la plataforma, no la del
                admin. Sin esto Chrome la autorrellenaba con la contraseña guardada (GH-32). -->
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Contraseña</label><input v-model="settings.smtpPassword" type="password" autocomplete="new-password" name="smtp-password" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Email Remitente</label><input v-model="settings.fromEmail" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
           <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Nombre Remitente</label><input v-model="settings.fromName" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
+          <!-- CFG-2 (#99): el Guardar de la pestaña persiste SOLO email_config, en la key y shape
+               que lee el motor de envío (antes esto viajaba en un POST global de cuatro claves). -->
+          <button @click="guardarEmail" :disabled="guardandoEmail"
+            class="w-full py-2.5 bg-navy text-white rounded-xl text-sm font-bold hover:shadow-lg transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            {{ guardandoEmail ? 'Guardando…' : 'Guardar' }}
+          </button>
+          <!-- #100: destino explícito de la prueba, con validación y resultado inline (no solo toast). -->
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Destino de la prueba</label>
+            <input v-model="testEmailTo" type="email" placeholder="soporte@tuhotel.com" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" :class="testEmailError ? 'border-coral' : ''" @input="testEmailError = ''">
+          </div>
           <button @click="testEmail" :disabled="testingEmail" class="w-full py-2.5 bg-surface text-navy rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait">{{ testingEmail ? 'Enviando…' : 'Enviar Email de Prueba' }}</button>
+          <p v-if="testEmailError" class="text-[11px] font-bold text-coral">{{ testEmailError }}</p>
+          <p v-else-if="testEmailResult" class="text-[11px] font-bold text-teal">{{ testEmailResult }}</p>
+        </div>
+      </SectionCard>
+      <!-- #100: Resend como respaldo cuando no hay SMTP. La key se guarda por su propio endpoint
+           (no viaja en email_config) y nunca vuelve completa del servidor. -->
+      <SectionCard title="Resend (respaldo sin SMTP)">
+        <template #actions>
+          <span class="text-[10px] font-bold px-3 py-1 rounded-full"
+            :class="resend?.configured ? 'bg-teal/10 text-teal' : 'bg-coral/10 text-coral'">
+            {{ resend?.configured ? 'Configurada · termina en ' + resend.last4 : 'No configurada' }}
+          </span>
+        </template>
+        <div class="space-y-4">
+          <p class="text-[11px] leading-relaxed text-text-muted">
+            Se usa cuando no hay servidor SMTP cargado. La key nunca se muestra completa.
+          </p>
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">{{ resend?.configured ? 'Reemplazar API key' : 'Nueva API key' }}</label>
+            <input v-model="resendApiKey" type="password" autocomplete="new-password" name="resend-api-key" placeholder="re_…" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <button @click="guardarResend" :disabled="resendGuardando || !resendApiKey.trim()"
+              class="rounded-xl bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
+              {{ resendGuardando ? 'Guardando…' : 'Guardar key' }}
+            </button>
+            <button v-if="resend?.configured" @click="quitarResend" :disabled="resendGuardando"
+              class="rounded-xl bg-coral/10 px-5 py-2.5 text-sm font-bold text-coral transition-colors hover:bg-coral/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+              Quitar
+            </button>
+          </div>
         </div>
       </SectionCard>
       <SectionCard title="Plantillas de Email">
@@ -77,23 +112,25 @@
       </SectionCard>
     </div>
 
-    <!-- Tab: Seguridad -->
+    <!-- Tab: Seguridad — SOLO LECTURA (#102). Todo lo que se ve sale de /api/admin/settings/status;
+         no hay botón Guardar porque no hay nada editable. La tarjeta de políticas de contraseña
+         que había acá se sacó en CFG-2 (#99): sus inputs nunca se persistieron (cero lectores
+         en el backend), así que pintar switches que no cambiaban nada sólo confundía. -->
     <div v-if="activeTab === 'security'" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <SectionCard title="Autenticación">
+      <SectionCard title="Protección del alta">
+        <p class="text-[11px] text-text-muted mb-3">Solo lectura: son variables del servidor, no se cambian desde acá.</p>
         <div class="space-y-3">
-          <div v-for="option in securityOptions" :key="option.name" class="flex items-center justify-between p-3 bg-surface rounded-xl">
-            <div><div class="text-sm font-bold">{{ option.name }}</div><div class="text-[10px] text-text-muted">{{ option.description }}</div></div>
-            <button @click="option.enabled = !option.enabled" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="option.enabled ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="option.enabled ? 'right-0.5' : 'left-0.5'"></div></button>
+          <div v-for="fila in proteccionAlta" :key="fila.clave" class="p-3 bg-surface rounded-xl">
+            <div class="flex items-center justify-between gap-3">
+              <div class="text-sm font-bold">{{ fila.nombre }}</div>
+              <span class="text-[10px] font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shrink-0"
+                :class="fila.activo ? 'bg-teal/15 text-teal' : 'bg-gold/15 text-gold'">
+                <span class="w-1.5 h-1.5 rounded-full" :class="fila.activo ? 'bg-teal' : 'bg-gold'"></span>
+                {{ fila.activo ? 'Activo' : 'Desactivado' }}
+              </span>
+            </div>
+            <div class="text-[10px] text-text-muted mt-1">{{ fila.detalle }}</div>
           </div>
-        </div>
-      </SectionCard>
-      <SectionCard title="Políticas de Contraseña">
-        <div class="space-y-4">
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Longitud Mínima</label><input v-model.number="settings.minPasswordLength" type="number" min="6" max="32" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
-          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir mayúsculas</div><button @click="settings.requireUppercase = !settings.requireUppercase" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="settings.requireUppercase ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="settings.requireUppercase ? 'right-0.5' : 'left-0.5'"></div></button></div>
-          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir números</div><button @click="settings.requireNumbers = !settings.requireNumbers" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="settings.requireNumbers ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="settings.requireNumbers ? 'right-0.5' : 'left-0.5'"></div></button></div>
-          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Requerir caracteres especiales</div><button @click="settings.requireSpecial = !settings.requireSpecial" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="settings.requireSpecial ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="settings.requireSpecial ? 'right-0.5' : 'left-0.5'"></div></button></div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Expiración de Contraseña (días)</label><input v-model.number="settings.passwordExpiry" type="number" min="0" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" placeholder="0 = nunca expira"></div>
         </div>
       </SectionCard>
     </div>
@@ -131,6 +168,14 @@
           Provincia, Municipio, Localidad y Código Postal al mover el pin. Si además restringís la
           key por API, incluí las dos o el autocompletado va a fallar con el mapa funcionando.
         </p>
+        <!-- CFG-2 (#99): el Guardar de esta pestaña persiste SOLO la key de Maps (la tarjeta de la
+             pasarela de pagos que había acá se sacó: nadie leía la clave que guardaba). -->
+        <div class="flex flex-wrap items-center gap-3 mt-4">
+          <button @click="guardarMaps" :disabled="guardandoMaps"
+            class="rounded-xl bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:shadow-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            {{ guardandoMaps ? 'Guardando…' : 'Guardar' }}
+          </button>
+        </div>
       </SectionCard>
 
       <!-- WhatsApp: acá va SOLO el secreto de la APP, que firma los webhooks de todos los hoteles.
@@ -198,51 +243,22 @@
         </div>
       </SectionCard>
 
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <SectionCard v-for="integration in integrations" :key="integration.name" :title="`${integration.icon} ${integration.name}`" :subtitle="integration.description">
-        <template #actions>
-          <button @click="integration.connected = !integration.connected" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="integration.connected ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="integration.connected ? 'right-0.5' : 'left-0.5'"></div></button>
-        </template>
-        <div v-if="integration.connected" class="space-y-3">
-          <div v-for="field in integration.fields" :key="field.name"><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">{{ field.name }}</label><input :value="field.value" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy" :type="field.type || 'text'"></div>
-          <button class="w-full py-2.5 bg-surface text-navy rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer">Probar Conexión</button>
-        </div>
-        <div v-else class="bg-surface rounded-xl p-4 text-center">
-          <div class="text-sm text-text-muted">No conectado</div>
-          <button @click="integration.connected = true" class="mt-2 px-4 py-1.5 bg-navy text-white rounded-lg text-[10px] font-bold hover:shadow-lg transition-colors cursor-pointer">Conectar</button>
-        </div>
-      </SectionCard>
-      </div>
-    </div>
-
-    <!-- Tab: Facturación -->
-    <div v-if="activeTab === 'billing'" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <SectionCard title="Configuración de Facturación">
-        <div class="space-y-4">
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Método de Cobro</label>
-            <select v-model="settings.billingMethod" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
-              <option value="stripe">Stripe</option>
-              <option value="paypal">PayPal</option>
-              <option value="transfer">Transferencia Bancaria</option>
-            </select>
+      <!-- #102: qué servicio está configurado y de dónde sale (env o panel). El endpoint nunca
+           devuelve valores, solo booleanos; los nombres de las variables viven en settings-status.ts. -->
+      <SectionCard title="Estado por servicio">
+        <p class="text-[11px] text-text-muted mb-3">Qué está configurado y de dónde sale. Nunca muestra valores.</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div v-for="fila in integracionesEstado" :key="fila.clave" class="p-3 bg-surface rounded-xl">
+            <div class="flex items-center justify-between gap-3">
+              <div class="text-sm font-bold">{{ fila.nombre }}</div>
+              <span class="text-[10px] font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shrink-0"
+                :class="fila.configurado ? 'bg-teal/15 text-teal' : 'bg-gold/15 text-gold'">
+                <span class="w-1.5 h-1.5 rounded-full" :class="fila.configurado ? 'bg-teal' : 'bg-gold'"></span>
+                {{ fila.configurado ? 'Configurado' : 'Falta' }}
+              </span>
+            </div>
+            <div class="text-[10px] text-text-muted mt-1">{{ fila.detalle }}</div>
           </div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Ciclo de Facturación</label>
-            <select v-model="settings.billingCycle" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
-              <option value="monthly">Mensual</option>
-              <option value="quarterly">Trimestral</option>
-              <option value="annual">Anual (con descuento)</option>
-            </select>
-          </div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Días de Gracia</label><input v-model.number="settings.graceDays" type="number" min="0" max="30" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Día de Cobro</label><input v-model.number="settings.billingDay" type="number" min="1" max="28" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
-        </div>
-      </SectionCard>
-      <SectionCard title="Notas de Crédito y Descuentos">
-        <div class="space-y-4">
-          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Permitir notas de crédito</div><button @click="settings.allowCreditNotes = !settings.allowCreditNotes" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="settings.allowCreditNotes ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="settings.allowCreditNotes ? 'right-0.5' : 'left-0.5'"></div></button></div>
-          <div class="flex items-center justify-between p-3 bg-surface rounded-xl"><div class="text-sm font-bold">Permitir descuentos por volumen</div><button @click="settings.allowVolumeDiscounts = !settings.allowVolumeDiscounts" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="settings.allowVolumeDiscounts ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="settings.allowVolumeDiscounts ? 'right-0.5' : 'left-0.5'"></div></button></div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Descuento por Pago Anual (%)</label><input v-model.number="settings.annualDiscount" type="number" min="0" max="50" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
-          <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Impuesto (%)</label><input v-model.number="settings.taxRate" type="number" min="0" max="30" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
         </div>
       </SectionCard>
     </div>
@@ -250,14 +266,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import logoIconColor from '@/assets/logo/logo-icon-color.png'
+import { ref, computed, onMounted } from 'vue'
 import { ConfigService, PlatformService } from '@/services/Platform.service'
-import type { MetaAppEstado } from '@/services/Platform.service'
+import type { MetaAppEstado, ResendEstado, SettingsStatus } from '@/services/Platform.service'
+import { filasProteccionAlta, filasIntegraciones } from './settings-status'
+import { validarDestinoPrueba, destinoPruebaPorDefecto, mensajeResultadoPrueba } from './settings-email'
 import { useToast } from '@/composables/useToast'
 import ChannexPlatformConfig from '@/components/features/ChannexPlatformConfig.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
-import { CurrencyCode } from '@/types/currency'
 
 const toast = useToast()
 
@@ -304,60 +320,51 @@ async function guardarMeta() {
   }
 }
 const selectedTemplate = ref<any>(null)
-const showSaved = ref(false)
 
+// CFG-2 (#99): sin pestaña de facturación — sus controles (método de cobro, ciclo, gracia,
+// impuestos) no tenían lector en el backend: se mostraban, "se guardaban" y nadie los leía.
 const tabs = [
   { label: 'Plataforma', value: 'platform' },
   { label: 'Email', value: 'email' },
   { label: 'Seguridad', value: 'security' },
   { label: 'Integraciones', value: 'integrations' },
-  { label: 'Facturación', value: 'billing' }
 ]
 
-const brandColors = [
-  { value: '#0D2B4E' }, { value: '#00B4D8' }, { value: '#117A65' }, { value: '#6C3483' }, { value: '#E74C3C' }, { value: '#B7950B' }
-]
-
+// CFG-2 (#99): sólo campos con lector real al otro lado. Moneda, zona horaria, dominio, color de
+// marca y políticas de contraseña se sacaron de acá (cero lectores en backend/src).
 const settings = ref<any>({
-  platformName: '', supportEmail: '', supportPhone: '', currency: CurrencyCode.USD,
-  timezone: 'America/Santo_Domingo', brandColor: '#0D2B4E', customDomain: '',
-  smtpServer: '', smtpPort: '587', smtpUser: '', smtpPassword: '', fromEmail: '', fromName: '',
-  minPasswordLength: 8, requireUppercase: true, requireNumbers: true, requireSpecial: false, passwordExpiry: 90,
-  billingMethod: 'stripe', billingCycle: 'monthly', graceDays: 7, billingDay: 1,
-  allowCreditNotes: true, allowVolumeDiscounts: false, annualDiscount: 15, taxRate: 18,
+  platformName: '', supportEmail: '', supportPhone: '',
+  smtpServer: '', smtpPort: '587', smtpUser: '', smtpPassword: '', fromEmail: '', fromName: '', smtpSecure: false,
 })
 
 const emailTemplates = ref<any[]>([])
-const securityOptions = ref<any[]>([])
-// WhatsApp SALIÓ de acá (2026-09-07). Estaba en el lugar equivocado del sistema: no existe un
-// WhatsApp "de la plataforma" que sirva a todos los hoteles — cada hotel conecta su propio número y
-// su propia cuenta de Meta. Ahora se conecta desde el panel del hotel (Configuración →
-// Integraciones), con el flujo oficial de Meta, y el estado vive en `ai_whatsapp_config`.
-//
-// Además la tarjeta nunca guardó nada: los inputs de abajo usan `:value` sin `v-model`, así que lo
-// que se escribe no vuelve al modelo, y nadie lee la clave `configuration('integraciones')` que se
-// persiste. Eso sigue siendo cierto para Stripe, que se configura de verdad en
-// /panel/config/pasarelas — esta tarjeta queda como resto a limpiar aparte.
-const integrations = ref<any[]>([
-  { name: 'Stripe', icon: '💳', description: 'Pasarela de pagos con tarjeta', connected: false,
-    fields: [{ name: 'Publishable Key', value: '', type: 'text' }, { name: 'Secret Key', value: '', type: 'password' }] },
-])
+// #102: estado de captcha / verificación / servicios. null = no se pudo leer (las filas lo dicen).
+const settingsStatus = ref<SettingsStatus | null>(null)
+const proteccionAlta = computed(() => filasProteccionAlta(settingsStatus.value))
+const integracionesEstado = computed(() => filasIntegraciones(settingsStatus.value))
 
 onMounted(async () => {
   cargarMeta()
+  // #100: estado de Resend por su propio endpoint; si falla no rompe la carga del resto.
+  PlatformService.getResend().catch(() => null).then((r) => { resend.value = r })
+  PlatformService.getSettingsStatus().catch(() => null).then((s) => { settingsStatus.value = s })
   try {
     // SMTP-UI (2026-08-19): se lee el CANÓNICO ('email_config', host/pass) con fallback al
     // legacy ('smtp', server/password) que guardaba esta misma página — antes el load ni
     // siquiera matcheaba los nombres (server ≠ smtpServer), así el form arrancaba vacío.
-    const [plataforma, emailCfg, tmpl, seg, integ, maps] = await Promise.all([
+    const [plataforma, emailCfg, tmpl, maps] = await Promise.all([
       ConfigService.get('plataforma', 'platform'),
       ConfigService.get('email_config', 'platform').catch(() => null),
       ConfigService.get('email_templates', 'platform'),
-      ConfigService.get('seguridad', 'platform'),
-      ConfigService.get('integraciones', 'platform'),
       ConfigService.get('google_maps', 'platform'),
     ])
-    if (plataforma) Object.assign(settings.value, plataforma)
+    // CFG-2 (#99): de la fila 'plataforma' sólo entran al formulario los tres campos que esta
+    // pantalla vuelve a guardar; claves viejas que traiga la fila no se copian ni se re-guardan.
+    if (plataforma) {
+      settings.value.platformName = String(plataforma.platformName ?? '')
+      settings.value.supportEmail = String(plataforma.supportEmail ?? '')
+      settings.value.supportPhone = String(plataforma.supportPhone ?? '')
+    }
     const smtp = emailCfg?.host || emailCfg?.user
       ? emailCfg
       : await ConfigService.get('smtp', 'platform').catch(() => null)
@@ -366,56 +373,143 @@ onMounted(async () => {
       const fromMatch = /^"?([^"<]*)"?\s*<([^>]+)>$/.exec(String(smtp.from ?? ''))
       settings.value.smtpServer = String(smtp.host ?? smtp.server ?? '')
       settings.value.smtpPort = String(smtp.port ?? 587)
+      // #100: configs viejas no traen `secure` — se infiere del puerto 465.
+      settings.value.smtpSecure = smtp.secure === true || Number(smtp.port) === 465
       settings.value.smtpUser = String(smtp.user ?? '')
       settings.value.smtpPassword = String(smtp.pass ?? smtp.password ?? '')
       settings.value.fromEmail = String(smtp.fromEmail ?? fromMatch?.[2] ?? (typeof smtp.from === 'string' && !smtp.from.includes('<') ? smtp.from : ''))
       settings.value.fromName = String(smtp.fromName ?? fromMatch?.[1] ?? '')
     }
     if (Array.isArray(tmpl)) emailTemplates.value = tmpl
-    if (Array.isArray(seg)) securityOptions.value = seg
-    if (Array.isArray(integ)) integrations.value = integ
     if (maps?.apiKey) mapsKey.value = String(maps.apiKey)
+    testEmailTo.value = destinoPruebaPorDefecto(settings.value.supportEmail, settings.value.fromEmail)
   } catch { toast.error('No se pudo cargar la configuración de la plataforma') }
 })
 
-const saveSettings = async () => {
+// ── CFG-2 (#99): un Guardar por pestaña ─────────────────────────────────────────────────────
+// Cada botón hace UN solo POST a /api/configuracion y tiene su toast específico, así el
+// operador sabe qué se guardó (antes un botón global disparaba cuatro claves de una y el
+// "Error al guardar" no decía cuál había fallado).
+
+const guardandoPlataforma = ref(false)
+async function guardarPlataforma() {
+  guardandoPlataforma.value = true
   try {
-    const toSave = settings.value
-    await Promise.all([
-      ConfigService.set('plataforma', { platformName: toSave.platformName, supportEmail: toSave.supportEmail, supportPhone: toSave.supportPhone, currency: toSave.currency, timezone: toSave.timezone, customDomain: toSave.customDomain }, 'platform'),
-      // SMTP-UI (2026-08-19): key y shape CANÓNICOS que lee el motor de envío — antes
-      // guardaba 'smtp'/{server,password} y el EmailService nunca la encontraba.
-      ConfigService.set('email_config', {
-        host: toSave.smtpServer, port: Number(toSave.smtpPort) || 587,
-        user: toSave.smtpUser, pass: toSave.smtpPassword,
-        fromEmail: toSave.fromEmail, fromName: toSave.fromName,
-      }, 'platform'),
-      ConfigService.set('integraciones', integrations.value, 'platform'),
-      ConfigService.set('google_maps', { apiKey: mapsKey.value.trim() }, 'platform'),
-    ])
-    showSaved.value = true
-    setTimeout(() => showSaved.value = false, 2000)
-  } catch { toast.error('Error al guardar') }
+    // EXACTAMENTE los tres campos que existen; nada más viaja en la clave 'plataforma'.
+    await ConfigService.set('plataforma', {
+      platformName: settings.value.platformName,
+      supportEmail: settings.value.supportEmail,
+      supportPhone: settings.value.supportPhone,
+    }, 'platform')
+    toast.success('Datos de plataforma guardados')
+  } catch {
+    toast.error('No se pudo guardar', 'Revisá los datos de la plataforma e intentá de nuevo')
+  } finally {
+    guardandoPlataforma.value = false
+  }
+}
+
+const guardandoEmail = ref(false)
+async function guardarEmail() {
+  guardandoEmail.value = true
+  try {
+    // SMTP-UI (2026-08-19): key y shape CANÓNICOS que lee el motor de envío — antes
+    // guardaba 'smtp'/{server,password} y el EmailService nunca la encontraba.
+    await ConfigService.set('email_config', {
+      host: settings.value.smtpServer,
+      port: Number(settings.value.smtpPort) || 587,
+      secure: settings.value.smtpSecure === true,
+      user: settings.value.smtpUser,
+      pass: settings.value.smtpPassword,
+      fromEmail: settings.value.fromEmail,
+      fromName: settings.value.fromName,
+    }, 'platform')
+    toast.success('Configuración de correo guardada')
+  } catch {
+    toast.error('No se pudo guardar', 'Revisá la configuración SMTP e intentá de nuevo')
+  } finally {
+    guardandoEmail.value = false
+  }
+}
+
+const guardandoMaps = ref(false)
+async function guardarMaps() {
+  guardandoMaps.value = true
+  try {
+    await ConfigService.set('google_maps', { apiKey: mapsKey.value.trim() }, 'platform')
+    toast.success('Clave de Google Maps guardada')
+  } catch {
+    toast.error('No se pudo guardar', 'Revisá la clave de Maps e intentá de nuevo')
+  } finally {
+    guardandoMaps.value = false
+  }
 }
 
 // SMTP-UI (2026-08-19): test REAL — antes era un toast falso que "confirmaba" envíos que
-// nunca salieron (por eso la desconexión de config pasó inadvertida). Prueba contra el
-// destino que se quiera verificar; por default el usuario SMTP cargado si es un email.
+// nunca salieron (por eso la desconexión de config pasó inadvertida).
+// #100: el destino lo elige el usuario (default: soporte, si no remitente); si es inválido
+// se muestra el error inline y NO se llama al backend. El resultado (proveedor usado o el
+// error real de SMTP/Resend) queda inline además del toast.
 const testingEmail = ref(false)
+const testEmailTo = ref('')
+const testEmailError = ref('')
+const testEmailResult = ref('')
 const testEmail = async () => {
-  const to = (settings.value.fromEmail || settings.value.supportEmail || '').trim()
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
-    toast.error('Cargá un "Email Remitente" válido para probar (o el email de soporte)')
+  testEmailResult.value = ''
+  // Si al montar no había default (sin soporte ni remitente) y el usuario tampoco escribió, se reintenta.
+  if (!testEmailTo.value.trim()) {
+    testEmailTo.value = destinoPruebaPorDefecto(settings.value.supportEmail, settings.value.fromEmail)
+  }
+  const to = testEmailTo.value.trim()
+  const err = validarDestinoPrueba(to)
+  if (err) {
+    testEmailError.value = err
     return
   }
+  testEmailError.value = ''
   testingEmail.value = true
   try {
     const r = await PlatformService.testEmail(to)
-    toast.success(r.message || `Enviado vía ${r.provider} a ${to}`)
+    testEmailResult.value = mensajeResultadoPrueba(r.provider, to)
+    toast.success(testEmailResult.value)
   } catch (e: any) {
-    toast.error(`Falló el envío: ${e?.message || 'error de SMTP/Resend — revisá la config'}`)
+    testEmailError.value = `Falló el envío: ${e?.message || 'error de SMTP/Resend — revisá la config'}`
+    toast.error(testEmailError.value)
   } finally {
     testingEmail.value = false
+  }
+}
+
+// #100: API key de Resend. Solo se conoce el estado (configurada + últimos 4); la key no queda
+// en memoria del navegador después de guardarla.
+const resend = ref<ResendEstado | null>(null)
+const resendApiKey = ref('')
+const resendGuardando = ref(false)
+
+async function guardarResend() {
+  const apiKey = resendApiKey.value.trim()
+  if (!apiKey) return
+  resendGuardando.value = true
+  try {
+    resend.value = await PlatformService.saveResend(apiKey)
+    resendApiKey.value = ''
+    toast.success('API key de Resend guardada')
+  } catch (e: any) {
+    toast.error('No se pudo guardar', e?.message || 'Revisá la key e intentá de nuevo')
+  } finally {
+    resendGuardando.value = false
+  }
+}
+
+async function quitarResend() {
+  resendGuardando.value = true
+  try {
+    resend.value = await PlatformService.deleteResend()
+    toast.success('API key de Resend quitada')
+  } catch (e: any) {
+    toast.error('No se pudo quitar', e?.message || 'Intentá de nuevo')
+  } finally {
+    resendGuardando.value = false
   }
 }
 </script>

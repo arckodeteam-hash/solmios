@@ -11,6 +11,7 @@ import { createCheckoutSession, type CreateCheckoutResult } from './usecases/cre
 import { createPortalSession, type CreatePortalResult } from './usecases/create-portal-session'
 import { previewUpgrade, applyUpgrade } from './usecases/upgrade-plan'
 import { processSubscriptionWebhook } from './usecases/handle-stripe-event'
+import { activateAfterManualPayment, type ActivateManualPaymentResult } from './usecases/activate-manual-payment'
 import { applyStripeDiscount, type ApplyStripeDiscountResult, type ApplyStripeDiscountMeta } from './usecases/apply-stripe-discount'
 import { listPublicPlans, type PublicPlan } from './usecases/public-plans'
 import { publicFounderDiscount } from './usecases/public-founder-discount'
@@ -50,16 +51,11 @@ export class SubscriptionsService {
     private readonly configurationRepo?: RepositoryAdapter<any>, // KV `configuration` (onboarding.ts, ONBOARDING_CONFIRM_KEYS)
     private readonly platformInvoicesRepo?: RepositoryAdapter<any>, // `platform_invoices` — historial de cobros de la plataforma (REQ-BIL-02). Opcional: sin cablear el webhook sigue igual, solo no deja rastro del cobro.
   ) {
-    this.signupUc = new SignupUseCase({
-      hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger,
-    })
+    this.signupUc = new SignupUseCase({ hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger })
     // El lector se resuelve en cada llamada, no en el constructor: el connector inyecta el
     // puerto DESPUÉS de que el módulo se registró (mismo momento que setEmailDeps).
-    this.accessUc = new SubscriptionAccess(
-      subscriptionsRepo,
-      hotelsRepo,
-      async () => (this.readPlatformSettings ? this.readPlatformSettings() : { requireCardOnTrial: false }),
-    )
+    this.accessUc = new SubscriptionAccess(subscriptionsRepo, hotelsRepo,
+      async () => (this.readPlatformSettings ? this.readPlatformSettings() : { requireCardOnTrial: false }))
     this.onboardingUc = new OnboardingUseCase({ roomsRepo, usersRepo, hotelsRepo, configRepo: configurationRepo })
   }
 
@@ -185,6 +181,9 @@ export class SubscriptionsService {
   createPortal(hotelId: string, origin: string): Promise<CreatePortalResult> {
     return createPortalSession({ subscriptionsRepo: this.subscriptionsRepo, logger: this.logger }, hotelId, origin)
   }
+
+  /** REQ-BIL-06 — el super-admin registró una transferencia: la suscripción queda como la deja un cobro de Stripe. Lo invoca el connector `admin-subscriptions-billing`, nunca un import directo. */
+  activateAfterManualPayment(hotelId: string, periodEnd: string): Promise<ActivateManualPaymentResult> { return activateAfterManualPayment({ subscriptionsRepo: this.subscriptionsRepo, logger: this.logger }, hotelId, periodEnd) }
 
   /** Webhook de la cuenta de PLATAFORMA (checkout/renovación/cancelación de la suscripción SaaS). */
   handlePlatformWebhook(rawBody: string | Buffer, signature: string) {

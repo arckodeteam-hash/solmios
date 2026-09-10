@@ -223,6 +223,12 @@ const scheduled = ref<any[]>([])
 async function cargarAnuncios(): Promise<void> {
   loading.value = true
   try {
+    // #108 (ANN-4): TODOS los anuncios del endpoint de plataforma (GET /admin/announcements), que
+    // ahora agrega a cada aviso su `reads` real (COUNT de announcement_reads). El listado del
+    // módulo anuncios (GET /anuncios) no sirve para este panel: pagina con limit=20 sin UI de
+    // paginación (se perdían avisos) y sirve de un cache de 300s que create/delete no invalidan
+    // bien (#160), así que "Enviar Ahora" no se reflejaba. Crear/eliminar sí van por ahí: son los
+    // únicos endpoints de escritura de anuncios.
     const { data } = await PlatformService.announcements()
     announcements.value = data.map((a: any) => ({
       id: a.id,
@@ -234,7 +240,9 @@ async function cargarAnuncios(): Promise<void> {
       typeClass: TYPE_CLASS[a.type] ?? 'bg-cyan/10 text-cyan',
       audience: a.hotelId ? 'Hotel específico' : 'Todos los hoteles',
       date: a.fecha ? String(a.fecha).slice(0, 10) : '',
-      views: 0, reads: 0,
+      views: 0,
+      // Lecturas reales de la API; 0 queda sólo como default vacío cuando no viene, nunca como dato falso.
+      reads: a.reads ?? 0,
       status: a.active === 1 ? 'Enviado' : 'Borrador',
     }))
   } catch { toast.error('No se pudieron cargar los anuncios') } finally { loading.value = false }

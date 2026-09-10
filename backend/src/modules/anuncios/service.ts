@@ -3,6 +3,11 @@ import { NotFoundError, AuthError } from 'arckode-framework'
 import type { AnunciosDTO, CreateAnunciosDTO, UpdateAnunciosDTO, AnunciosQuery, AnunciosPaginated } from './types'
 import type { AnunciosSockets } from './sockets'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
+import * as reads from './usecases/announcement-reads'
+
+// Las lecturas por usuario (ANN-4) viven en `usecases/announcement-reads.ts` desde que el service
+// pasó las 200 líneas del gate. Los tipos se re-exportan para no romper a quien los importa de acá.
+export type { AnnouncementReadDTO, AnnouncementWithReads } from './usecases/announcement-reads'
 
 const CACHE_TTL = 300
 
@@ -18,6 +23,7 @@ export class AnunciosService {
     private readonly logger: Logger,
     private readonly cache: CacheAdapter,
     private readonly userRepo: RepositoryAdapter<any>,
+    private readonly readsRepo: RepositoryAdapter<reads.AnnouncementReadDTO>,
     private readonly auth: Auth,
   ) {}
 
@@ -38,12 +44,7 @@ export class AnunciosService {
     if (query.priority) filters.priority = query.priority
     if (query.active !== undefined) filters.active = query.active
 
-    // Resolve hotelId from DB if not provided in token
-    let hotelId = currentUser.hotelId
-    if (!hotelId && currentUser.role !== 'super_admin') {
-      const user = await this.userRepo.findById(currentUser.id)
-      hotelId = user?.hotelId
-    }
+    const hotelId = await reads.resolveHotelId(this.readsDeps, currentUser)
 
     if (currentUser.role !== 'super_admin') {
       if (!hotelId) throw new AuthError('No hotel assigned')
@@ -61,12 +62,17 @@ export class AnunciosService {
     const filterKey = JSON.stringify(filters)
     const cacheKey = `anuncios:list:${hotelId || 'all'}:p${page}:l${limit}:${filterKey}`
     const cached = await this.cache.get(cacheKey)
-    if (cached) return cached as AnunciosPaginated
-
-    const result = await this.repo.paginate(filters, { offset, limit })
-    const response = { data: result.data, total: result.total, page, limit, pages: Math.ceil(result.total / limit) }
-    await this.cache.set(cacheKey, response, CACHE_TTL)
-    return response
+    let response: AnunciosPaginated
+    if (cached) {
+      response = cached as AnunciosPaginated
+    } else {
+      const result = await this.repo.paginate(filters, { offset, limit })
+      response = { data: result.data, total: result.total, page, limit, pages: Math.ceil(result.total / limit) }
+      await this.cache.set(cacheKey, response, CACHE_TTL)
+    }
+    // La vista por usuario va SIEMPRE después del cache: la página cacheada es la del hotel
+    // (compartida), lo que cada usuario deja de ver es sólo suyo y no se cachea.
+    return reads.applyUserView(this.readsDeps, response, currentUser, hotelId)
   }
 
   async getById(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<AnunciosDTO> {
@@ -122,4 +128,17 @@ export class AnunciosService {
       entity: 'announcement', entityId: id, detail: `Anuncio "${existing.title}" eliminado`,
     })
   }
+
+  // ── Lecturas por usuario (ANN-4) — la lógica vive en `usecases/announcement-reads.ts` ──
+
+  /** Deps de las lecturas: el usecase no conoce al service, sólo sus repos. */
+  private get readsDeps(): reads.AnnouncementReadsDeps {
+    return { repo: this.repo, readsRepo: this.readsRepo, userRepo: this.userRepo }
+  }
+
+  /** Marca el aviso como VISTO por ESTE usuario. Idempotente (ver el usecase). */
+  markSeen(id: string, currentUser: reads.CurrentUser): Promise<void> { return reads.markSeen(this.readsDeps, id, currentUser) }
+
+  /** El ✕ del banner: ESTE usuario deja de ver el aviso, el resto del hotel lo sigue viendo. */
+  dismiss(id: string, currentUser: reads.CurrentUser): Promise<void> { return reads.dismiss(this.readsDeps, id, currentUser) }
 }

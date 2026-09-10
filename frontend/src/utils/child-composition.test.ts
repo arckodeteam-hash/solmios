@@ -2,9 +2,9 @@
 // Misma fórmula, mismos casos — si el frontend y el backend alguna vez calculan distinto, el
 // huésped ve un precio en el widget y le cobran otro al crear la reserva.
 import { describe, it, expect } from 'vitest'
-import { resolveChildComposition, fitsRoomCapacity, DEFAULT_CHILD_POLICY, type ChildPolicy } from './child-composition'
+import { resolveChildComposition, fitsRoomCapacity, classifyAge, DEFAULT_CHILD_POLICY, type ChildPolicy } from './child-composition'
 
-const POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+const POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
 
 describe('resolveChildComposition', () => {
   it('0-3 años → no consume plaza (ejemplo del pedido)', () => {
@@ -88,5 +88,42 @@ describe('DEFAULT_CHILD_POLICY', () => {
     const c = resolveChildComposition(2, [5], DEFAULT_CHILD_POLICY)
     expect(c.freeChildren).toBe(0)
     expect(c.payingChildren).toBe(1)
+  })
+})
+
+// ─── Tarea 21 (Identificar bebés en la reserva pública, 2026-09-08) ────────────────────────────
+describe('classifyAge / resolveChildComposition — bebé', () => {
+  const POLICY_BABY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
+
+  it('0-1 años → bebé (maxBabyAge=1), frontera inclusive', () => {
+    expect(classifyAge(0, POLICY_BABY)).toBe('baby')
+    expect(classifyAge(1, POLICY_BABY)).toBe('baby')
+    expect(classifyAge(2, POLICY_BABY)).toBe('free')
+  })
+
+  it('un bebé no consume plaza — mismo comportamiento que un niño libre para precio/capacidad', () => {
+    const c = resolveChildComposition(2, [1], POLICY_BABY)
+    expect(c.babies).toBe(1)
+    expect(c.freeChildren).toBe(1) // subconjunto, no aparte
+    expect(c.chargeableOccupancy).toBe(2) // no se asume que el bebé ocupa plaza
+  })
+
+  it('mezcla bebé + niño libre (no bebé) + niño con plaza', () => {
+    const c = resolveChildComposition(2, [1, 3, 8], POLICY_BABY)
+    expect(c.babies).toBe(1)
+    expect(c.freeChildren).toBe(2)
+    expect(c.payingChildren).toBe(1)
+    expect(c.chargeableOccupancy).toBe(3)
+  })
+
+  it('un bebé no cuenta contra la capacidad total ni contra maxChildren', () => {
+    const c = resolveChildComposition(2, [0, 1], POLICY_BABY) // 2 bebés
+    expect(fitsRoomCapacity({ capacity: 2 }, c)).toBe(true)
+    expect(fitsRoomCapacity({ capacity: 10, maxAdults: 4, maxChildren: 0 }, c)).toBe(true)
+  })
+
+  it('maxBabyAge=0 (default): nadie clasifica como bebé salvo edad exactamente 0', () => {
+    const c = resolveChildComposition(2, [1, 2], DEFAULT_CHILD_POLICY)
+    expect(c.babies).toBe(0)
   })
 })

@@ -187,6 +187,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { PlatformService } from '@/services/Platform.service'
 import { SubscriptionsAdminService, type SpecialCategoryKey } from '@/services/SubscriptionsAdmin.service'
@@ -218,6 +219,10 @@ interface SubscriptionRow {
 
 const toast = useToast()
 const searchQuery = ref('')
+// BIL-4: /admin/billing enlaza a `?hotel=<id>` desde el detalle de una factura. Sin esto el link
+// aterrizaba en la lista completa y había que buscar el hotel a mano.
+const route = useRoute()
+const hotelIdFilter = ref(String(route.query.hotel ?? ''))
 const statusFilter = ref('')
 const emailQuery = ref('')
 const searchingByEmail = ref(false)
@@ -360,6 +365,7 @@ const filteredSubscriptions = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
   return subscriptions.value
     .filter((s) => {
+      if (hotelIdFilter.value && s.hotelId !== hotelIdFilter.value) return false
       if (statusFilter.value && estadoEfectivo(s) !== statusFilter.value) return false
       if (q && !s.hotelName?.toLowerCase().includes(q)) return false
       return true
@@ -388,9 +394,9 @@ const rangoLabel = computed(() => {
   return `${desde}–${Math.min(desde + POR_PAGINA - 1, total)} de ${total}`
 })
 // Filtrar con la página 3 abierta dejaba la tabla vacía sin decir por qué.
-watch([searchQuery, statusFilter], () => { paginaActual.value = 1 })
+watch([searchQuery, statusFilter, hotelIdFilter], () => { paginaActual.value = 1 })
 
-const hasFilters = computed(() => Boolean(searchQuery.value.trim() || statusFilter.value))
+const hasFilters = computed(() => Boolean(searchQuery.value.trim() || statusFilter.value || hotelIdFilter.value))
 
 const listSubtitle = computed(() => {
   const total = subscriptions.value.length
@@ -402,6 +408,7 @@ const listSubtitle = computed(() => {
 function clearFilters(): void {
   searchQuery.value = ''
   statusFilter.value = ''
+  hotelIdFilter.value = '' // incluye el que llegó por `?hotel=`: si no, no habría forma de sacarlo
 }
 
 async function cargar(): Promise<void> {

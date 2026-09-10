@@ -40,4 +40,20 @@ export class AnunciosController {
     await this.service.delete(req.params.id, currentUser)
     return { status: 204, body: null }
   }
+
+  // ── Lecturas por usuario (ANN-4): userId/hotelId salen del token, NUNCA del body ──
+
+  /** POST /api/anuncios/:id/seen — marca el aviso como visto por el usuario del token. */
+  async seen(req: HttpRequest) {
+    const currentUser = req.user as any
+    await this.service.markSeen(req.params.id, currentUser)
+    return { status: 204, body: null }
+  }
+
+  /** POST /api/anuncios/:id/dismiss — el ✕ del banner, sólo para el usuario del token. */
+  async dismiss(req: HttpRequest) {
+    const currentUser = req.user as any
+    await this.service.dismiss(req.params.id, currentUser)
+    return { status: 204, body: null }
+  }
 }

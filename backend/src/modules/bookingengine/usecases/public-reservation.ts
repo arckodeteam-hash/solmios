@@ -147,6 +147,15 @@ export async function getPublicReservation(
         // reservar: mismo criterio que `adults`/`children` de arriba, no un dato interno del
         // hotel. Ausente/`[]` en reservas viejas (antes de esta feature) o sin niños.
         childrenAges: reservation.childrenAges ?? [],
+        // Tarea "Cobro % niños" (2026-09-09) — % REALMENTE cobrado a los niños de esta reserva
+        // (o `null` si la regla no aplicó): es la cuenta que el huésped ya vio y pagó, no un dato
+        // interno del hotel.
+        childrenRatePercentApplied: reservation.childrenRatePercentApplied ?? null,
+        // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — mismo criterio que
+        // `childrenAges` de arriba: es lo que EL HUÉSPED pidió, no un dato interno del hotel.
+        // Ausente/default en reservas de antes de esta feature.
+        needsCrib: reservation.needsCrib ?? false,
+        cribCount: reservation.cribCount ?? 0,
         totalAmount: reservation.totalAmount,
         currency: reservation.currency,
         // `reservations` NO tiene columna `paymentStatus`: leerla devolvía SIEMPRE 'unpaid',

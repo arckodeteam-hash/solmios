@@ -135,17 +135,45 @@ export class DashboardQueries {
    * Audit log ORDENADO por fecha descendente. `findMany` no garantiza orden, así que cualquier
    * consumidor que corte con `.slice(0, N)` para mostrar "lo último" se llevaba las filas más
    * VIEJAS de la tabla — que es lo que pasaba en la card "Actividad Reciente" del dashboard.
+   *
+   * `hotelName`: antes se devolvía la fila cruda, sin el nombre del hotel, y la columna y el
+   * filtro "Hotel" de /admin/audit salían vacíos aunque el registro tuviera `hotelId`. Se
+   * resuelve con un `Map` de hoteles cargado UNA vez (mismo patrón que `listUsers`); una
+   * consulta por fila adentro del loop sería N+1. Sin `hotelId` (o con uno huérfano — hotel
+   * borrado) queda ''.
    */
   async listAuditLogs(): Promise<{ data: any[]; total: number }> {
     const rows = await this.orm.findMany('Auditlog', {}) as any[]
-    const data = [...rows].sort(
-      (a: any, b: any) => new Date(String(b.createdAt ?? 0)).getTime() - new Date(String(a.createdAt ?? 0)).getTime(),
-    )
+    const hotels = await this.orm.findMany('Hotels', {}) as any[]
+    const hotelNameById = new Map(hotels.map((h: any) => [h.id, h.name]))
+    const data = [...rows]
+      .sort(
+        (a: any, b: any) => new Date(String(b.createdAt ?? 0)).getTime() - new Date(String(a.createdAt ?? 0)).getTime(),
+      )
+      .map((r: any) => ({ ...r, hotelName: (r.hotelId && hotelNameById.get(r.hotelId)) || '' }))
     return { data, total: data.length }
   }
 
+  /**
+   * Anuncios para el panel del super-admin (GET /api/admin/announcements): TODA la tabla, sin
+   * paginar y sin cache. El listado del módulo anuncios (GET /anuncios) no sirve acá: pagina con
+   * limit=20 que la página no controla (el panel perdería avisos) y responde de un cache de 300s
+   * que create/delete no invalidan bien (#160), así que "Enviar Ahora" no se reflejaba.
+   *
+   * Cada aviso lleva `reads` = sus lecturas reales, con la MISMA semántica que el módulo anuncios
+   * para super_admin (`readsRepo.count({ announcementId })`): las filas de `announcement_reads`
+   * se cargan UNA vez y se agrupan en un Map — una consulta por anuncio adentro del loop sería
+   * N+1 (mismo patrón que `listHotels`).
+   */
   async listAnnouncements(): Promise<{ data: any[]; total: number }> {
-    const data = await this.orm.findMany('Announcements', {})
+    const announcements = await this.orm.findMany('Announcements', {}) as any[]
+    const reads = await this.orm.findMany('AnnouncementReads', {}) as any[]
+    const readsByAnnouncement = new Map<string, number>()
+    for (const r of reads) {
+      const key = String(r.announcementId)
+      readsByAnnouncement.set(key, (readsByAnnouncement.get(key) ?? 0) + 1)
+    }
+    const data = announcements.map((a: any) => ({ ...a, reads: readsByAnnouncement.get(String(a.id)) ?? 0 }))
     return { data, total: data.length }
   }
 
