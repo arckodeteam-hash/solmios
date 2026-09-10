@@ -581,6 +581,11 @@ function openFilePicker() {
   fileInputRef.value?.click()
 }
 
+// Mismo tope que el logo (StepIdentidad.vue/general.vue) — acá faltaba por completo: se podía
+// subir cualquier foto sin importar el peso. El backend (media-crud.ts) también lo rechaza
+// ahora, esto es solo para avisar antes de gastar tiempo leyendo/subiendo el archivo.
+const MEDIA_MAX_BYTES = 5 * 1024 * 1024
+
 async function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
@@ -597,6 +602,7 @@ async function onFileChange(e: Event) {
     for (let i = 0; i < files.length; i++) {
       uploadProgress.value = { current: i + 1, total: files.length }
       const file = files[i]
+      if (file.size > MEDIA_MAX_BYTES) { failed.push(`${file.name}: supera el máximo de 5MB`); continue }
       try {
         const dataUrl = await readAsDataUrl(file)
         const created = await HotelMediaService.upload({
