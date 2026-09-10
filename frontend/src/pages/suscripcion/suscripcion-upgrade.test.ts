@@ -281,9 +281,16 @@ describe('/panel/suscripcion — cambio de plan con la suscripción viva', () =>
   // #84: bajar de plan liquida el prorrateo como CRÉDITO, así que no hay cobro y puede no quedar
   // factura que leer: `paid` vuelve en false con `amountCharged` 0. Avisar de un "pago pendiente"
   // de $0 asustaría por un cargo que no existe — se informa como lo que es, un cambio sin cobro.
-  it('sin cobro (paid:false con monto 0) lo informa como cambio aplicado, sin aviso de pago pendiente', async () => {
-    upgrade.mockResolvedValue(result({ paid: false, amountCharged: 0, invoiceStatus: null }))
-    const w = await openConfirm()
+  it('sin cobro (paid:false con monto 0 y preview en $0) lo informa como cambio aplicado, sin aviso de pago pendiente', async () => {
+    // Un downgrade de verdad: el preview YA dijo $0. Es la única forma legítima de un monto 0.
+    upgradePreview.mockResolvedValue(preview({
+      planId: 'plan-ess', planName: 'Essential', amountDue: 0,
+      currentPlanId: 'plan-pro', currentPlanName: 'Professional',
+    }))
+    upgrade.mockResolvedValue(result({ paid: false, amountCharged: 0, invoiceStatus: null, planId: 'plan-ess', planName: 'Essential', previousPlanId: 'plan-pro' }))
+    const { w, ctas } = await mountWith(subscription({ status: 'active', planId: 'plan-pro', planName: 'Professional' }))
+    await ctas.get('plan-ess')!.trigger('click')
+    await flushPromises()
 
     await w.find('footer').findAll('button')[1]!.trigger('click')
     await flushPromises()
@@ -292,10 +299,35 @@ describe('/panel/suscripcion — cambio de plan con la suscripción viva', () =>
     expect(toastError).not.toHaveBeenCalled()
     expect(toastSuccess).toHaveBeenCalled()
     const texto = String(toastSuccess.mock.calls[0]![0]) + ' ' + String(toastSuccess.mock.calls[0]![1] ?? '')
-    expect(texto).toMatch(/Ya estás en Professional/i)
+    expect(texto).toMatch(/Ya estás en Essential/i)
     expect(texto).not.toMatch(/pendiente/i)
-    // Y no se abre el modal de "pago sin confirmar".
-    expect(w.text()).not.toMatch(/pago sin confirmar/i)
+    // Y no se abre el modal de cobro pendiente.
+    expect(w.text()).not.toMatch(/pendiente de cobro/i)
+  })
+
+  // #92: un UPGRADE cuya factura el backend no pudo leer vuelve igual que el downgrade de arriba
+  // (`amountCharged: 0`, `invoiceStatus: null`), pero el preview cotizó un cobro real y el backend
+  // NO cambió el plan. Decirle "Ya estás en Professional / no te cobramos nada" afirma dos cosas
+  // falsas. Se distingue por el preview: con monto cotizado > 0 es un cobro sin confirmar.
+  it('upgrade con factura ilegible (monto 0, invoiceStatus null, preview > 0): es pendiente, con el monto del preview', async () => {
+    upgrade.mockResolvedValue(result({ paid: false, amountCharged: 0, invoiceStatus: null }))
+    const w = await openConfirm() // preview() cotiza 1234
+
+    await w.find('footer').findAll('button')[1]!.trigger('click')
+    await flushPromises()
+
+    expect(toastSuccess).not.toHaveBeenCalled()
+    expect(toastWarning).toHaveBeenCalled()
+    const aviso = String(toastWarning.mock.calls[0]![0]) + ' ' + String(toastWarning.mock.calls[0]![1] ?? '')
+    expect(aviso).toMatch(/pendiente/i)
+    expect(aviso).toMatch(/12[.,]34/) // el monto que se cotizó, no $0
+    expect(aviso).not.toMatch(/ya estás en|quedó activo|no te cobramos nada/i)
+
+    // El stub de AppModal no renderiza `title`: se verifica el cuerpo del modal de pendiente.
+    const modal = w.find('.modal')
+    expect(modal.text()).toMatch(/quedó pedido/i)
+    expect(modal.text()).toMatch(/12[.,]34/)
+    expect(modal.text()).toMatch(/seguís con tu plan actual/i)
   })
 
   // #84: con `error_if_incomplete` en el backend, una tarjeta rechazada REVIERTE en Stripe y sube

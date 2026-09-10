@@ -359,14 +359,22 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
         status: 'active',
         ...(wasBlocked ? { graceEndsAt: null, suspendedAt: null, suspendedReason: null } : {}),
       }
-      let stripeSub: Stripe.Subscription | null = null
+      // Si Stripe no responde, se LANZA antes de escribir nada: el 500 hace que Stripe reintente
+      // el evento (misma política que `latestInvoiceIsPaid`). Antes se tragaba con un WARN y
+      // seguía — con #92 eso dejaba sin plan a un ACH confirmado días después: no hay ningún
+      // evento posterior que lo repare hasta la próxima renovación. Reintentar es seguro: todo lo
+      // de abajo es idempotente y todavía no salió ningún correo.
+      let stripeSub: Stripe.Subscription
       try {
         stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId)
-        const periodEnd = currentPeriodEndOf(stripeSub)
-        if (periodEnd) patch.currentPeriodEnd = periodEnd
       } catch (e) {
-        logger.warn('No se pudo leer la Subscription de Stripe tras invoice.paid: sin currentPeriodEnd ni sincronía del plan', { error: (e as Error).message })
+        logger.warn('invoice.paid: no se pudo leer la Subscription de Stripe — se devuelve error para que Stripe reintente', {
+          stripeSubscriptionId, error: (e as Error).message,
+        })
+        throw e
       }
+      const periodEnd = currentPeriodEndOf(stripeSub)
+      if (periodEnd) patch.currentPeriodEnd = periodEnd
       await subscriptionsRepo.update(sub.id, patch)
       logger.info('Suscripción renovada', { stripeSubscriptionId })
       // #92: la factura pagada es la que habilita el plan del ítem. Es la puerta por la que entra
@@ -375,12 +383,10 @@ export async function handleStripeEvent(deps: HandleStripeEventDeps, event: Stri
       // suscripción: pagar una factura vieja mientras el prorrateo nuevo sigue `open` no confirma
       // nada. Va ANTES del correo: si la escritura falla, el 500 hace que Stripe reintente el
       // evento sin haber mandado el mail de cobro dos veces.
-      if (stripeSub) {
-        const latestId = latestInvoiceIdOf(stripeSub)
-        if (!latestId || latestId === invoice.id) {
-          const plan = await planOfStripeItem(deps, stripeSub, event.type)
-          if (plan) await reflectPaidPlan(deps, sub, plan, event.type)
-        }
+      const latestId = latestInvoiceIdOf(stripeSub)
+      if (!latestId || latestId === invoice.id) {
+        const plan = await planOfStripeItem(deps, stripeSub, event.type)
+        if (plan) await reflectPaidPlan(deps, sub, plan, event.type)
       }
       // REQ-BIL-02: el cobro queda en el historial. Si `invoice.finalized` no llegó (o el endpoint
       // de Stripe no lo tiene habilitado), el UPSERT crea la fila directamente en `paid`.

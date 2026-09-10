@@ -341,23 +341,28 @@ async function confirmUpgrade() {
         result.amountCharged > 0
           ? `Te cobramos ${money(result.amountCharged, result.currency)} por lo que falta del ciclo.`
           : 'No te cobramos nada ahora: el saldo a favor se aplica a tu próxima factura.')
-    } else if (result.amountCharged <= 0) {
+    } else if (result.amountCharged <= 0 && preview.amountDue <= 0) {
       // Bajar de plan no emite cobro: el prorrateo es crédito y puede no dejar factura que leer,
       // así que `paid` viene en false sin que haya nada pendiente. Avisar de un "pago pendiente"
-      // de $0 asustaría por un cobro que no existe (#84). El panel lo refleja en cuanto llega el
-      // webhook (segundos): `refreshAfterUpgrade` suele traerlo ya aplicado.
+      // de $0 asustaría por un cobro que no existe (#84). Se exige que el PREVIEW también haya
+      // dicho $0: un upgrade cuya factura no se pudo leer vuelve con `amountCharged: 0` e
+      // `invoiceStatus: null`, y ese no es "sin cobro", es "cobro sin confirmar" (#92, abajo).
+      // El panel lo refleja en cuanto llega el webhook (segundos): `refreshAfterUpgrade` suele
+      // traerlo ya aplicado.
       toast.success(`Ya estás en ${result.planName}`,
         'No te cobramos nada ahora: el saldo a favor se aplica a tu próxima factura.')
     } else {
-      // `applied: true` con `paid: false` y un monto > 0: en Stripe el ítem ya se movió, pero la
-      // factura del prorrateo no figura paga (débito bancario en curso, o lectura fallida). Desde
-      // #92 el backend NO cambia el plan local hasta que el cobro se confirme (`invoice.paid`), así
-      // que acá no se dice "quedó activo": se dice que está pendiente y que seguís con el actual.
+      // `applied: true` con `paid: false` y un cobro por delante: en Stripe el ítem ya se movió,
+      // pero la factura del prorrateo no figura paga (débito bancario en curso, o lectura fallida).
+      // Desde #92 el backend NO cambia el plan local hasta que el cobro se confirme (`invoice.paid`),
+      // así que acá no se dice "quedó activo": se dice que está pendiente y que seguís con el actual.
       // Desde #84 esto ya NO es la tarjeta rechazada —un rechazo revierte en Stripe y sube por el
-      // `catch`—, así que tampoco se da el cobro por fallido.
-      pendingUpgrade.value = result
+      // `catch`—, así que tampoco se da el cobro por fallido. Si el backend no pudo leer la
+      // factura, el monto que se muestra es el que el preview cotizó (misma unidad: centavos).
+      const amountPending = result.amountCharged > 0 ? result.amountCharged : preview.amountDue
+      pendingUpgrade.value = { ...result, amountCharged: amountPending }
       toast.warning(`Tu cambio a ${result.planName} está pendiente: no pudimos confirmar el pago`,
-        `Seguís con tu plan actual hasta que se confirmen ${money(result.amountCharged, result.currency)}.`)
+        `Seguís con tu plan actual hasta que se confirmen ${money(amountPending, result.currency)}.`)
     }
     await refreshAfterUpgrade()
   } catch (e: any) {

@@ -821,6 +821,27 @@ describe('webhooks — el plan local sigue al ítem de Stripe SÓLO cuando está
     expect(hotels[0].plan).toBe('host')
   })
 
+  it('invoice.paid: si Stripe no responde la suscripción, LANZA antes de escribir (500 → reintento) — el ACH confirmado no puede quedar sin plan', async () => {
+    const subsRows = [{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'past_due', stripeSubscriptionId: 'sub_stripe_1' }]
+    const updates: Array<{ id: string; patch: any }> = []
+    const emails: string[] = []
+    const { client } = stripeWith({ id: 'in_prorrateo', status: 'paid' })
+    client.subscriptions.retrieve = async () => { throw new Error('Stripe timeout') }
+
+    await expect(handleStripeEvent(
+      {
+        subscriptionsRepo: repo(subsRows, updates), hotelsRepo: repo(HOTEL()), plansRepo: PLANS(), logger: silentLogger(), stripe: client,
+        sendPlatformEmail: async (event: string) => { emails.push(event); return { sent: true } },
+      },
+      paidEvent('in_prorrateo'),
+    )).rejects.toThrow('Stripe timeout')
+
+    // Nada a medias: ni status, ni plan, ni correo. El reintento de Stripe hace todo de una.
+    expect(updates).toHaveLength(0)
+    expect(subsRows[0].planId).toBe('plan-host')
+    expect(emails).toHaveLength(0)
+  })
+
   it('invoice.payment_failed con el ítem de Stripe en un plan que el hotel no pagó: past_due + WARN con la divergencia, sin tocar planId', async () => {
     const warns: Array<{ msg: string; meta: any }> = []
     const base = silentLogger()
