@@ -123,11 +123,23 @@
 
     <!-- Tab: Seguridad -->
     <div v-if="activeTab === 'security'" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <SectionCard title="Autenticación">
+      <!-- #102: estado REAL de lo que protege el alta pública. Solo lectura, sin toggles: captcha y
+           verificación de email son variables del servidor (ver CLAUDE.md "Captcha del registro
+           APAGADO") y el rate-limit es código. La tarjeta "Autenticación" que había acá pintaba
+           switches que no cambiaban nada. -->
+      <SectionCard title="Protección del alta">
+        <p class="text-[11px] text-text-muted mb-3">Solo lectura: son variables del servidor, no se cambian desde acá.</p>
         <div class="space-y-3">
-          <div v-for="option in securityOptions" :key="option.name" class="flex items-center justify-between p-3 bg-surface rounded-xl">
-            <div><div class="text-sm font-bold">{{ option.name }}</div><div class="text-[10px] text-text-muted">{{ option.description }}</div></div>
-            <button @click="option.enabled = !option.enabled" class="w-12 h-6 rounded-full relative transition-colors cursor-pointer" :class="option.enabled ? 'bg-teal' : 'bg-gray-300'"><div class="w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="option.enabled ? 'right-0.5' : 'left-0.5'"></div></button>
+          <div v-for="fila in proteccionAlta" :key="fila.clave" class="p-3 bg-surface rounded-xl">
+            <div class="flex items-center justify-between gap-3">
+              <div class="text-sm font-bold">{{ fila.nombre }}</div>
+              <span class="text-[10px] font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shrink-0"
+                :class="fila.activo ? 'bg-teal/15 text-teal' : 'bg-gold/15 text-gold'">
+                <span class="w-1.5 h-1.5 rounded-full" :class="fila.activo ? 'bg-teal' : 'bg-gold'"></span>
+                {{ fila.activo ? 'Activo' : 'Desactivado' }}
+              </span>
+            </div>
+            <div class="text-[10px] text-text-muted mt-1">{{ fila.detalle }}</div>
           </div>
         </div>
       </SectionCard>
@@ -242,6 +254,25 @@
         </div>
       </SectionCard>
 
+      <!-- #102: qué servicio está configurado y de dónde sale (env o panel). El endpoint nunca
+           devuelve valores, solo booleanos; los nombres de las variables viven en settings-status.ts. -->
+      <SectionCard title="Estado por servicio">
+        <p class="text-[11px] text-text-muted mb-3">Qué está configurado y de dónde sale. Nunca muestra valores.</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div v-for="fila in integracionesEstado" :key="fila.clave" class="p-3 bg-surface rounded-xl">
+            <div class="flex items-center justify-between gap-3">
+              <div class="text-sm font-bold">{{ fila.nombre }}</div>
+              <span class="text-[10px] font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shrink-0"
+                :class="fila.configurado ? 'bg-teal/15 text-teal' : 'bg-gold/15 text-gold'">
+                <span class="w-1.5 h-1.5 rounded-full" :class="fila.configurado ? 'bg-teal' : 'bg-gold'"></span>
+                {{ fila.configurado ? 'Configurado' : 'Falta' }}
+              </span>
+            </div>
+            <div class="text-[10px] text-text-muted mt-1">{{ fila.detalle }}</div>
+          </div>
+        </div>
+      </SectionCard>
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <SectionCard v-for="integration in integrations" :key="integration.name" :title="`${integration.icon} ${integration.name}`" :subtitle="integration.description">
         <template #actions>
@@ -294,10 +325,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import logoIconColor from '@/assets/logo/logo-icon-color.png'
 import { ConfigService, PlatformService } from '@/services/Platform.service'
-import type { MetaAppEstado, ResendEstado } from '@/services/Platform.service'
+import type { MetaAppEstado, ResendEstado, SettingsStatus } from '@/services/Platform.service'
+import { filasProteccionAlta, filasIntegraciones } from './settings-status'
 import { validarDestinoPrueba, destinoPruebaPorDefecto, mensajeResultadoPrueba } from './settings-email'
 import { useToast } from '@/composables/useToast'
 import ChannexPlatformConfig from '@/components/features/ChannexPlatformConfig.vue'
@@ -373,7 +405,10 @@ const settings = ref<any>({
 })
 
 const emailTemplates = ref<any[]>([])
-const securityOptions = ref<any[]>([])
+// #102: estado de captcha / verificación / servicios. null = no se pudo leer (las filas lo dicen).
+const settingsStatus = ref<SettingsStatus | null>(null)
+const proteccionAlta = computed(() => filasProteccionAlta(settingsStatus.value))
+const integracionesEstado = computed(() => filasIntegraciones(settingsStatus.value))
 // WhatsApp SALIÓ de acá (2026-09-07). Estaba en el lugar equivocado del sistema: no existe un
 // WhatsApp "de la plataforma" que sirva a todos los hoteles — cada hotel conecta su propio número y
 // su propia cuenta de Meta. Ahora se conecta desde el panel del hotel (Configuración →
@@ -392,15 +427,15 @@ onMounted(async () => {
   cargarMeta()
   // #100: estado de Resend por su propio endpoint; si falla no rompe la carga del resto.
   PlatformService.getResend().catch(() => null).then((r) => { resend.value = r })
+  PlatformService.getSettingsStatus().catch(() => null).then((s) => { settingsStatus.value = s })
   try {
     // SMTP-UI (2026-08-19): se lee el CANÓNICO ('email_config', host/pass) con fallback al
     // legacy ('smtp', server/password) que guardaba esta misma página — antes el load ni
     // siquiera matcheaba los nombres (server ≠ smtpServer), así el form arrancaba vacío.
-    const [plataforma, emailCfg, tmpl, seg, integ, maps] = await Promise.all([
+    const [plataforma, emailCfg, tmpl, integ, maps] = await Promise.all([
       ConfigService.get('plataforma', 'platform'),
       ConfigService.get('email_config', 'platform').catch(() => null),
       ConfigService.get('email_templates', 'platform'),
-      ConfigService.get('seguridad', 'platform'),
       ConfigService.get('integraciones', 'platform'),
       ConfigService.get('google_maps', 'platform'),
     ])
@@ -421,7 +456,6 @@ onMounted(async () => {
       settings.value.fromName = String(smtp.fromName ?? fromMatch?.[1] ?? '')
     }
     if (Array.isArray(tmpl)) emailTemplates.value = tmpl
-    if (Array.isArray(seg)) securityOptions.value = seg
     if (Array.isArray(integ)) integrations.value = integ
     if (maps?.apiKey) mapsKey.value = String(maps.apiKey)
     testEmailTo.value = destinoPruebaPorDefecto(settings.value.supportEmail, settings.value.fromEmail)
