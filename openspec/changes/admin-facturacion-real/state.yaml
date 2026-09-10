@@ -2,7 +2,7 @@
 
 change_name: admin-facturacion-real
 created: 2026-09-10
-status: in_progress
+status: implemented
 current_phase: tasks
 
 source: reporte del usuario en prod 2026-09-10 ("no muestra la fecha y en Ver no muestra nada") — la vista fabrica facturas desde listSubscriptions con campos inexistentes
@@ -34,7 +34,7 @@ sprints:
     priority: high
   5-cierre:
     title: Verificación + deploy + backfill prod
-    status: pending
+    status: done
     tasks_total: 2
-    tasks_done: 0
+    tasks_done: 2
     priority: medium

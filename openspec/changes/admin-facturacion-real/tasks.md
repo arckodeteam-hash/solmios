@@ -69,7 +69,7 @@
 
 - [x] 5.1 `arckode analyze` 0 violaciones; `bun run typecheck && bun test`; frontend
       `bun run typecheck && bun run build`.
-- [ ] 5.2 Deploy: `RUN_MIGRATE=1`, correr `backfill-platform-invoices.ts` en prod, habilitar
+- [x] 5.2 Deploy: `RUN_MIGRATE=1`, correr `backfill-platform-invoices.ts` en prod, habilitar
       `invoice.finalized` e `invoice.voided` en el endpoint de webhook de Stripe (dashboard).
       **Aceptación**: en prod, `/admin/billing` lista las facturas históricas de Stripe con fecha y
       "Ver" muestra el PDF.
