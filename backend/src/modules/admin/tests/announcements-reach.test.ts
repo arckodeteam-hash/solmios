@@ -91,6 +91,40 @@ describe('getAnnouncementsReach', () => {
     expect(reach.lastAnnouncement!.openRate).toBe(50)
   })
 
+  it('10 destinatarios y 4 lecturas → recipients 10, seenCount 4, openRate 40', async () => {
+    // El caso de aceptación de ANN-5: los cuatro números salen de la base, no del HTML.
+    const diezActivos = Array.from({ length: 10 }, (_, i) => ({
+      id: `d${i + 1}`, hotelId: i < 5 ? 'h1' : 'h2', role: i % 5 === 0 ? 'hotel_admin' : 'receptionist', active: 1,
+    }))
+    const orm = makeOrm({
+      Hotels: [{ id: 'h1' }, { id: 'h2' }],
+      Users: [...diezActivos, { id: 'baja', hotelId: 'h1', role: 'receptionist', active: 0 }],
+      Announcements: [
+        { id: 'difundido', title: 'Difundido a todos', audience: 'all', hotelId: null, createdAt: '2026-06-01T00:00:00Z', sentAt: '2026-06-01T00:00:00Z' },
+      ],
+      AnnouncementReads: [
+        { announcementId: 'difundido', userId: 'd1', seenAt: '2026-06-02T00:00:00Z', dismissedAt: null },
+        { announcementId: 'difundido', userId: 'd2', seenAt: '2026-06-02T00:01:00Z', dismissedAt: null },
+        { announcementId: 'difundido', userId: 'd3', seenAt: '2026-06-02T00:02:00Z', dismissedAt: '2026-06-02T00:03:00Z' },
+        { announcementId: 'difundido', userId: 'd4', seenAt: '2026-06-02T00:04:00Z', dismissedAt: null },
+      ],
+    })
+    const queries = new DashboardQueries(orm)
+
+    const { data } = await queries.listAnnouncements()
+    expect(data).toHaveLength(1)
+    expect(data[0].recipients).toBe(10)
+    expect(data[0].seenCount).toBe(4)
+
+    const reach = await queries.getAnnouncementsReach()
+    expect(reach.hotels).toBe(2)
+    expect(reach.users).toBe(10)
+    expect(reach.lastAnnouncement!.id).toBe('difundido')
+    expect(reach.lastAnnouncement!.recipients).toBe(10)
+    expect(reach.lastAnnouncement!.seenCount).toBe(4)
+    expect(reach.lastAnnouncement!.openRate).toBe(40)
+  })
+
   it('sin lecturas todavía la tasa es null, NO cero', async () => {
     // Un 0% se lee como "lo mandé y no lo abrió nadie". Es una conclusión distinta —y falsa—
     // de "todavía no hay datos".
