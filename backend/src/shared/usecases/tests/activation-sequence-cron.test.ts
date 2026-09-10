@@ -173,3 +173,24 @@ describe('activation-sequence-cron — rescate y perdido automático (#150)', ()
     expect(h.calls).toHaveLength(0)
   })
 })
+
+describe('activation-sequence-cron — sendEvent sin plantilla', () => {
+  it('sent:false (plantilla ausente) → NO marca sequenceSent ni cuenta como enviado', async () => {
+    const rows = [row({ registeredAt: daysAgo(3) })]
+    const creates: any[] = []
+    const orm = {
+      findMany: async () => [],
+      update: async () => null,
+      create: async (_t: string, data: any) => { creates.push(data); return data },
+    }
+    const resolve = (name: string) => {
+      if (name === 'platform-emails') return { sendEvent: async () => ({ sent: false }) }
+      if (name === 'sales-leads') return { getPipeline: async () => ({ data: rows, total: 1 }) }
+      return null
+    }
+    const r = await createActivationSequenceCron(orm, resolve, silentLogger())(NOW)
+    expect(r.sent).toEqual({})
+    expect(r.skipped).toBe(1)
+    expect(creates).toHaveLength(0)
+  })
+})

@@ -169,10 +169,17 @@ export function createActivationSequenceCron(
             ...commonVars, hotel_name: row.hotelName ?? '', link,
             days_left: String(Math.max(row.daysLeft ?? 0, 0)),
           }
-          await platformEmails.sendEvent(event, row.email, row.hotelId, vars)
-          sent[event] = now.toISOString()
-          patch = { sequenceSent: sent }
-          result.sent[event] = (result.sent[event] ?? 0) + 1
+          // Solo cuenta como enviado si la cola lo tomó: sin plantilla (o inactiva) `sendEvent`
+          // devuelve `sent:false` y NO se marca — si no, un seed que corre después del primer
+          // tick dejaría a esos hoteles sin el correo para siempre.
+          const outcome = await platformEmails.sendEvent(event, row.email, row.hotelId, vars)
+          if (outcome?.sent) {
+            sent[event] = now.toISOString()
+            patch = { sequenceSent: sent }
+            result.sent[event] = (result.sent[event] ?? 0) + 1
+          } else {
+            result.skipped++
+          }
         }
 
         if (patch) {
