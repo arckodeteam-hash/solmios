@@ -1,5 +1,5 @@
 // referrals/model.ts — Programa de referidos B2B: un hotel recomienda SOLMI OS a otro hotel.
-// Ver PLAN-REFERIDOS.md. Doble incentivo: el referido arranca su trial normal (7 días, ya
+// Ver PLAN-REFERIDOS.md. Doble incentivo: el referido arranca su trial normal (15 días, ya
 // existente), el referidor gana meses gratis de SU propia suscripción cuando el referido
 // completa `activeMonthsRequired` meses pagando (config `referral_program`, ver program-settings.ts).
 import type { ORM, ModelDefinition } from 'arckode-framework'
@@ -27,7 +27,7 @@ export const ReferralsModel: ModelDefinition = {
     /** Código usado al momento del alta — snapshot, aunque el hotel referidor cambie el suyo después. */
     code: { type: 'string', required: true },
     /**
-     * trial      — el referido está en su prueba gratis (7 días, mecanismo normal de signup)
+     * trial      — el referido está en su prueba gratis (15 días, mecanismo normal de signup)
      * active     — el referido ya paga (Subscription.status='active')
      * validated  — cumplió activeMonthsRequired meses pagando → generó (o va a generar) el crédito
      * churned    — el referido se dio de baja/quedó suspendido antes de validar → no genera crédito
