@@ -13,18 +13,21 @@
     <!-- ── Alertas: lo que corta la operación va arriba de todo ──────────────────────────────
          El plan de Channex venció el 2026-09-09 y ninguna pantalla lo decía: el síntoma que se
          ve es "no entran reservas", tres capas más abajo. -->
-    <div v-if="alertaPlan" class="mb-4 rounded-xl border-2 px-4 py-3 text-sm font-bold"
+    <div v-if="alertaPlan && !cargando" class="mb-4 rounded-xl border-2 px-4 py-3 text-sm font-bold"
       :class="alertaPlan.grave ? 'border-coral/40 bg-coral/10 text-coral' : 'border-gold/40 bg-gold/10 text-gold'">
       {{ alertaPlan.texto }}
     </div>
-    <div v-if="channex.hasKey && !channex.webhook.registered" class="mb-4 rounded-xl border-2 border-gold/40 bg-gold/10 px-4 py-3 text-sm text-gold">
+    <div v-if="!cargando && channex.hasKey && !channex.webhook.registered" class="mb-4 rounded-xl border-2 border-gold/40 bg-gold/10 px-4 py-3 text-sm text-gold">
       <span class="font-bold">El webhook de reservas no está registrado en Channex.</span>
       Las reservas de las OTAs entran solo cuando pasa el cron, con retraso.
       <span v-if="channex.webhook.error" class="block text-[11px] opacity-80">Channex respondió: {{ channex.webhook.error }}</span>
     </div>
 
     <!-- ── Salud de la cuenta ───────────────────────────────────────────────────────────── -->
-    <div v-if="channex.hasKey" class="mb-5 grid gap-3 sm:grid-cols-3">
+    <div v-if="cargando" class="mb-5 grid gap-3 sm:grid-cols-3">
+      <div v-for="i in 3" :key="i" class="h-[68px] animate-pulse rounded-2xl bg-surface"></div>
+    </div>
+    <div v-else-if="channex.hasKey" class="mb-5 grid gap-3 sm:grid-cols-3">
       <div v-for="m in metricas" :key="m.label" class="rounded-2xl border border-border bg-surface px-4 py-3">
         <div class="text-[10px] font-bold uppercase tracking-wide text-text-muted">{{ m.label }}</div>
         <div class="mt-0.5 text-lg font-black tabular-nums" :class="m.tone">{{ m.value }}</div>
@@ -112,12 +115,15 @@ const channex = ref<ChannexStatus>({
   planExpiresAt: '', planDaysLeft: null, planExpired: false,
 })
 const apiKey = ref('')   // solo se envía si el admin escribe algo (nunca se muestra la key guardada)
+const cargando = ref(true)
 const testing = ref(false)
 const guardando = ref(false)
 const testResult = ref<{ ok: boolean; msg: string } | null>(null)
 
 // Badge de estado en vivo: Sin configurar / Verificando / Conectado / Sin conexión.
 const badge = computed(() => {
+  // Mientras no llegó la respuesta no se afirma nada: "Sin configurar" antes de saberlo es mentira.
+  if (cargando.value) return { label: 'Cargando…', cls: 'bg-navy/10 text-navy', dot: 'bg-navy animate-pulse' }
   if (!channex.value.hasKey) return { label: 'Sin configurar', cls: 'bg-gold/15 text-gold', dot: 'bg-gold' }
   if (testing.value) return { label: 'Verificando…', cls: 'bg-navy/10 text-navy', dot: 'bg-navy animate-pulse' }
   if (testResult.value?.ok) return { label: 'Conectado', cls: 'bg-teal/15 text-teal', dot: 'bg-teal' }
@@ -165,11 +171,12 @@ const metricas = computed(() => {
 })
 
 async function load() {
+  cargando.value = true
   try {
     channex.value = await ChannexAdminService.status()
     emit('loaded', channex.value)
     if (channex.value.hasKey) test()   // auto-verifica al abrir: el estado se ve sin tocar nada
-  } catch { /* sin permiso / no seteado */ }
+  } catch { /* sin permiso / no seteado */ } finally { cargando.value = false }
 }
 
 async function save() {
