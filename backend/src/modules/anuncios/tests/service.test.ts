@@ -5,6 +5,7 @@
 
 import { describe, it, expect, setSystemTime, afterEach } from 'bun:test'
 import type { RepositoryAdapter, CacheAdapter, Auth } from 'arckode-framework'
+import { AuthError } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { AnunciosService } from '../service'
 import type { AnnouncementReadDTO, AnnouncementWithReads } from '../service'
@@ -25,9 +26,12 @@ function makeCache(overrides: Partial<CacheAdapter> = {}): CacheAdapter {
   return { get: async () => null, set: async () => {}, delete: async () => {}, flush: async () => {}, ...overrides }
 }
 
-function makeRepo(overrides: Partial<RepositoryAdapter<AnunciosDTO>> = {}): RepositoryAdapter<AnunciosDTO> {
+// `rows` es la "tabla" del mock: `findMany` la devuelve entera (ignora filtros, como `paginate`).
+// El listado por hotel (ANN-1) mezcla globales + propios en memoria a partir de `findMany`,
+// así que los tests de audiencia pueblan `rows` con anuncios de varios hoteles.
+function makeRepo(overrides: Partial<RepositoryAdapter<AnunciosDTO>> = {}, rows: AnunciosDTO[] = []): RepositoryAdapter<AnunciosDTO> {
   return {
-    findMany: async () => [],
+    findMany: async () => rows,
     findById: async () => null,
     findOne: async () => null,
     create: async (data) => ({
@@ -135,14 +139,52 @@ describe('AnunciosService', () => {
     })
 
     it('enforces hotel scope for hotel_admin', async () => {
-      let capturedFilters: any = {}
-      const items = [makeAnuncio()]
+      // ANN-1: el hotel NO va en el filtro del repo (igualdad exacta dejaría afuera a los
+      // globales); la mezcla hotel+global se filtra en memoria sobre `findMany`.
+      let capturedFilters: any = null
+      let paginateCalls = 0
+      const rows = [makeAnuncio({ id: 'a1', hotelId: 'h1' }), makeAnuncio({ id: 'a2', hotelId: 'h2' })]
       const repo = makeRepo({
-        paginate: async (filters) => { capturedFilters = filters; return { data: items, total: 1, limit: 20, offset: 0, pages: 1 } },
+        findMany: async (filters) => { capturedFilters = filters; return rows },
+        paginate: async () => { paginateCalls++; return { data: [], total: 0, limit: 20, offset: 0, pages: 0 } },
       })
       const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
-      await svc.list({}, hotelAdmin)
-      expect(capturedFilters.hotelId).toBe('h1')
+      const result = await svc.list({ type: 'maintenance' }, hotelAdmin)
+      expect(capturedFilters).toEqual({ type: 'maintenance' })
+      expect(paginateCalls).toBe(0)
+      expect(result.data.map((a) => a.id)).toEqual(['a1'])
+      expect(result.total).toBe(1)
+    })
+
+    it('hotel_admin recibe globales y los suyos, nunca otro hotel', async () => {
+      const rows = [
+        makeAnuncio({ id: 'g-null', hotelId: null as any }),
+        makeAnuncio({ id: 'g-empty', hotelId: '' }),
+        makeAnuncio({ id: 'own', hotelId: 'h1' }),
+        makeAnuncio({ id: 'other', hotelId: 'h2' }),
+      ]
+      const svc = new AnunciosService(makeRepo({}, rows), log, makeCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
+      const result = await svc.list({}, hotelAdmin)
+      const ids = result.data.map((a) => a.id)
+      expect(ids).toEqual(['g-null', 'g-empty', 'own'])
+      expect(ids).not.toContain('other')
+      expect(result.total).toBe(3)
+      expect(result.pages).toBe(1)
+    })
+
+    it('la paginación en memoria del hotel respeta page/limit y el total es el de la audiencia', async () => {
+      const rows = [
+        makeAnuncio({ id: 'g1', hotelId: '' }),
+        makeAnuncio({ id: 'o1', hotelId: 'h1' }),
+        makeAnuncio({ id: 'x1', hotelId: 'h2' }),
+        makeAnuncio({ id: 'o2', hotelId: 'h1' }),
+        makeAnuncio({ id: 'x2', hotelId: 'h2' }),
+      ]
+      const svc = new AnunciosService(makeRepo({}, rows), log, makeCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
+      const p2 = await svc.list({ page: 2, limit: 2 }, hotelAdmin)
+      expect(p2.data.map((a) => a.id)).toEqual(['o2'])
+      expect(p2.total).toBe(3)
+      expect(p2.pages).toBe(2)
     })
 
     it('throws AuthError when hotel_admin has no hotelId', async () => {
@@ -187,14 +229,52 @@ describe('AnunciosService', () => {
       expect(cacheHits).toBe(2)
     })
 
-    it('super_admin can filter by hotelId', async () => {
-      let capturedFilters: any = {}
+    it('super_admin sin hotelId ve todo', async () => {
+      // Sin hotel de audiencia no hay nada que mezclar: la página sale de `paginate` tal cual.
+      let capturedFilters: any = null
+      let findManyCalls = 0
+      const rows = [
+        makeAnuncio({ id: 'g', hotelId: '' }),
+        makeAnuncio({ id: 'h1a', hotelId: 'h1' }),
+        makeAnuncio({ id: 'h2a', hotelId: 'h2' }),
+      ]
       const repo = makeRepo({
-        paginate: async (filters) => { capturedFilters = filters; return { data: [], total: 0, limit: 20, offset: 0, pages: 0 } },
+        findMany: async () => { findManyCalls++; return rows },
+        paginate: async (filters) => { capturedFilters = filters; return { data: rows, total: 3, limit: 20, offset: 0, pages: 1 } },
       })
       const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
+      const result = await svc.list({}, adminUser)
+      expect(capturedFilters).toEqual({})
+      expect(findManyCalls).toBe(0)
+      expect(result.data.map((a) => a.id)).toEqual(['g', 'h1a', 'h2a'])
+      expect(result.total).toBe(3)
+    })
+
+    it('super_admin con hotelId ve ese hotel más los globales', async () => {
+      let capturedFilters: any = null
+      const rows = [
+        makeAnuncio({ id: 'g', hotelId: '' }),
+        makeAnuncio({ id: 'h5a', hotelId: 'h5' }),
+        makeAnuncio({ id: 'h1a', hotelId: 'h1' }),
+      ]
+      const repo = makeRepo({ findMany: async (filters) => { capturedFilters = filters; return rows } })
+      const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
+      const result = await svc.list({ hotelId: 'h5' }, adminUser)
+      expect(capturedFilters).toEqual({})
+      expect(result.data.map((a) => a.id)).toEqual(['g', 'h5a'])
+      expect(result.total).toBe(2)
+    })
+
+    it('la cache key distingue el hotel de audiencia del super_admin', async () => {
+      const keys: string[] = []
+      const cache = makeCache({ set: (async (key: string) => { keys.push(key) }) as CacheAdapter['set'] })
+      const svc = new AnunciosService(makeRepo(), log, cache, makeUserRepo(), makeReadsRepo(), fakeAuth)
+      await svc.list({}, adminUser)
       await svc.list({ hotelId: 'h5' }, adminUser)
-      expect(capturedFilters.hotelId).toBe('h5')
+      await svc.list({}, hotelAdmin)
+      expect(keys[0]).toContain(':all:')
+      expect(keys[1]).toContain(':h5:')
+      expect(keys[2]).toContain(':h1:')
     })
   })
 
@@ -222,6 +302,24 @@ describe('AnunciosService', () => {
       const repo = makeRepo({ findById: async () => ann })
       const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
       await expect(svc.getById('a1', hotelAdmin)).rejects.toThrow('No autorizado')
+    })
+
+    it('getById de global con hotel_admin devuelve', async () => {
+      // ANN-1: un global (hotelId NULL o '') se lee desde cualquier hotel.
+      for (const hotelId of [null as any, '']) {
+        const ann = makeAnuncio({ id: 'g1', hotelId })
+        const repo = makeRepo({ findById: async () => ann })
+        const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
+        const result = await svc.getById('g1', hotelAdmin)
+        expect(result.id).toBe('g1')
+      }
+    })
+
+    it('getById de otro hotel con hotel_admin lanza AuthError', async () => {
+      const ann = makeAnuncio({ id: 'a1', hotelId: 'h2' })
+      const repo = makeRepo({ findById: async () => ann })
+      const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
+      await expect(svc.getById('a1', hotelAdmin)).rejects.toBeInstanceOf(AuthError)
     })
 
     it('throws NotFoundError for missing announcement', async () => {
@@ -429,6 +527,21 @@ describe('AnunciosService', () => {
       expect(reads.rows).toHaveLength(0)
     })
 
+    it('anuncio global (sin hotel): se marca desde el hotel con el hotelId del usuario', async () => {
+      // ANN-1: el global le llega al hotel, así que su visto/cierre también se registra;
+      // la fila queda con el hotel del USUARIO (el aviso no tiene).
+      const ann = makeAnuncio({ id: 'g1', hotelId: '' })
+      const repo = makeRepo({ findById: async () => ann })
+      const reads = makeReadsRepo()
+      const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), reads, fakeAuth)
+      await svc.markSeen('g1', hotelAdmin)
+      await svc.dismiss('g1', hotelAdmin)
+      expect(reads.rows).toHaveLength(1)
+      expect(reads.rows[0].hotelId).toBe('h1')
+      expect(reads.rows[0].seenAt).toBeTruthy()
+      expect(reads.rows[0].dismissedAt).toBeTruthy()
+    })
+
     it('pierde la carrera de insert y devuelve la existente en vez de reventar', async () => {
       // El SELECT no vio la fila que otro request del mismo par ya insertó: el create
       // choca contra el UNIQUE (announcementId, userId). Es la carrera de reads.e2e.test.ts.
@@ -516,7 +629,7 @@ describe('AnunciosService', () => {
       return makeRepo({
         findById: async () => items[0],
         paginate: async () => ({ data: items, total: items.length, limit: 20, offset: 0, pages: 1 }),
-      })
+      }, items)
     }
 
     it('A descarta y deja de verlo; B del MISMO hotel lo sigue recibiendo', async () => {

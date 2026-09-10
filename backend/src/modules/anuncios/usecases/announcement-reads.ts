@@ -9,6 +9,7 @@
 import { NotFoundError, AuthError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
 import type { AnunciosDTO, AnunciosPaginated } from '../types'
+import { canSeeAnnouncement } from './announcement-audience'
 
 /**
  * Lectura de UN aviso por UN usuario — fila de `announcement_reads`. El par
@@ -57,7 +58,8 @@ async function visibleAnnouncementOrThrow(
   // @ignore IDOR_RISK — la verificación de pertenencia es la línea siguiente.
   const item = await deps.repo.findById(id)
   if (!item) throw new NotFoundError('Anuncio no encontrado')
-  if (currentUser.role !== 'super_admin' && item.hotelId !== hotelId) {
+  // Global (sin hotel) o del hotel del usuario (ANN-1): un global se marca desde cualquier hotel.
+  if (currentUser.role !== 'super_admin' && !canSeeAnnouncement(item, hotelId)) {
     throw new AuthError('No autorizado')
   }
   return item

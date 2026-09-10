@@ -4,6 +4,7 @@ import type { AnunciosDTO, CreateAnunciosDTO, UpdateAnunciosDTO, AnunciosQuery, 
 import type { AnunciosSockets } from './sockets'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 import * as reads from './usecases/announcement-reads'
+import { canSeeAnnouncement, listForHotelAudience } from './usecases/announcement-audience'
 
 // Las lecturas por usuario (ANN-4) viven en `usecases/announcement-reads.ts` desde que el service
 // pasó las 200 líneas del gate. Los tipos se re-exportan para no romper a quien los importa de acá.
@@ -45,13 +46,12 @@ export class AnunciosService {
     if (query.active !== undefined) filters.active = query.active
 
     const hotelId = await reads.resolveHotelId(this.readsDeps, currentUser)
+    if (currentUser.role !== 'super_admin' && !hotelId) throw new AuthError('No hotel assigned')
 
-    if (currentUser.role !== 'super_admin') {
-      if (!hotelId) throw new AuthError('No hotel assigned')
-      filters.hotelId = hotelId
-    } else if (query.hotelId) {
-      filters.hotelId = query.hotelId
-    }
+    // Hotel de AUDIENCIA (ANN-1): el del usuario, o el que pide el super_admin por query.
+    // NO va en `filters`: el ORM filtra por igualdad y dejaría afuera a los globales; la
+    // mezcla hotel+global la hace `listForHotelAudience`. Sin hotel (super_admin) → todo.
+    const audienceHotelId = currentUser.role === 'super_admin' ? query.hotelId : hotelId
 
     const page = Math.max(query.page || 1, 1)
     const limit = Math.min(Math.max(query.limit || 20, 1), 100)
@@ -60,13 +60,15 @@ export class AnunciosService {
     // BUG FIX: la key omitía page/limit/filtros → la primera query puebla la clave y todas las demás
     // combinaciones recibían esa misma respuesta por CACHE_TTL (mismo bug que opiniones).
     const filterKey = JSON.stringify(filters)
-    const cacheKey = `anuncios:list:${hotelId || 'all'}:p${page}:l${limit}:${filterKey}`
+    const cacheKey = `anuncios:list:${audienceHotelId || 'all'}:p${page}:l${limit}:${filterKey}`
     const cached = await this.cache.get(cacheKey)
     let response: AnunciosPaginated
     if (cached) {
       response = cached as AnunciosPaginated
     } else {
-      const result = await this.repo.paginate(filters, { offset, limit })
+      const result = audienceHotelId
+        ? await listForHotelAudience(this.repo, filters, audienceHotelId, { offset, limit })
+        : await this.repo.paginate(filters, { offset, limit })
       response = { data: result.data, total: result.total, page, limit, pages: Math.ceil(result.total / limit) }
       await this.cache.set(cacheKey, response, CACHE_TTL)
     }
@@ -78,7 +80,8 @@ export class AnunciosService {
   async getById(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<AnunciosDTO> {
     const item = await this.repo.findById(id)
     if (!item) throw new NotFoundError('Anuncio no encontrado')
-    if (currentUser.role !== 'super_admin' && item.hotelId !== currentUser.hotelId) {
+    // Un global (sin hotel) se puede LEER desde cualquier hotel; escribirlo (update/delete) no.
+    if (currentUser.role !== 'super_admin' && !canSeeAnnouncement(item, currentUser.hotelId)) {
       throw new AuthError('No autorizado')
     }
     return item
