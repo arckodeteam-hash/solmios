@@ -300,6 +300,17 @@ async function createTablesBlock1(): Promise<void> {
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_message_reads_user_channel
     ON message_reads (hotelId, userId, channel)`)
 
+  // Lectura de un aviso por usuario (ANN-4): el ✕ del banner deja de ocultar el aviso a TODO el
+  // hotel — cada usuario marca su propio seenAt/dismissedAt sobre su propia fila. La tabla la crea
+  // ormMigrate (modelo AnnouncementReads del módulo anuncios); el UNIQUE (announcementId, userId)
+  // va explícito acá porque el ORM no emite únicos compuestos (CLAUDE.md), como el
+  // idx_message_reads de arriba: un aviso leído por N usuarios del hotel son N filas.
+  await exec(`CREATE TABLE IF NOT EXISTS announcement_reads (
+    id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, userId TEXT NOT NULL, announcementId TEXT NOT NULL,
+    seenAt TEXT, dismissedAt TEXT, createdAt TEXT, updatedAt TEXT)`)
+  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_announcement_reads_announcement_user
+    ON announcement_reads (announcementId, userId)`)
+
   // ─── AI Receptionist tables ─────────────────────────────────────
   await exec(`CREATE TABLE IF NOT EXISTS ai_conversations (
     id TEXT PRIMARY KEY, hotelId TEXT NOT NULL, guestId TEXT, reservationId TEXT,

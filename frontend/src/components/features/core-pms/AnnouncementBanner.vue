@@ -27,16 +27,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { AnnouncementsService, announcementMeta } from '@/services/Announcements.service'
 import type { Announcement } from '@/services/Announcements.service'
-import { ConfigService } from '@/services/Platform.service'
-import { useAuthStore } from '@/stores/auth.store'
-
-const auth = useAuthStore()
-const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'platform' ? auth.user.hotelId : undefined))
 
 const all = ref<Announcement[]>([])
+// Descartes de ESTA sesión: sólo ocultan el aviso localmente (optimista). El registro
+// persistente es por usuario y vive en el backend (announcement_reads), así que el ✕
+// de un recepcionista ya no le esconde el aviso al resto del hotel.
 const dismissedIds = ref<Set<string>>(new Set())
 
 const visibleAnnouncements = computed(() =>
@@ -50,32 +48,33 @@ const visibleAnnouncements = computed(() =>
     .slice(0, 3) // Mostrar máximo 3 a la vez
 )
 
+// Los que el usuario ya descartó no llegan siquiera: el listado los excluye por token.
+
 async function load() {
   try {
     const r = await AnnouncementsService.list({ activeOnly: true })
     all.value = r.data || []
   } catch { all.value = [] }
-
-  // Cargar dismissedIds del usuario (Configuration KV)
-  try {
-    const dismissed = await ConfigService.get('dismissed_announcements', hotelId.value)
-    if (Array.isArray(dismissed)) {
-      dismissedIds.value = new Set(dismissed.filter((x: any): x is string => typeof x === 'string'))
-    } else if (typeof dismissed === 'string') {
-      try {
-        const parsed = JSON.parse(dismissed)
-        if (Array.isArray(parsed)) dismissedIds.value = new Set(parsed.filter((x: any): x is string => typeof x === 'string'))
-      } catch { /* ignore */ }
-    }
-  } catch { /* ignore */ }
 }
 
+// Registrar la lectura de cada aviso que se muestra, UNA vez por aviso. El registro
+// es telemetría: si seen falla (500, red caída), el aviso se muestra igual y en
+// silencio — no hay toast ni estado de error que rompa el banner.
+const seenIds = new Set<string>()
+watch(visibleAnnouncements, (visible) => {
+  for (const a of visible) {
+    if (seenIds.has(a.id)) continue
+    seenIds.add(a.id)
+    AnnouncementsService.seen(a.id).catch(() => { /* silent: registrar no puede romper el banner */ })
+  }
+})
+
 async function dismiss(id: string) {
+  // Optimista: ocultar YA, el backend sólo registra para la próxima carga.
   dismissedIds.value = new Set([...dismissedIds.value, id])
-  // Persistir para no mostrar de nuevo
   try {
-    await ConfigService.set('dismissed_announcements', JSON.stringify([...dismissedIds.value]), hotelId.value)
-  } catch { /* silent */ }
+    await AnnouncementsService.dismiss(id)
+  } catch { /* silent: el aviso igual desaparece de esta vista */ }
 }
 
 onMounted(load)
