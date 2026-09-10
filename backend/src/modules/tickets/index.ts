@@ -4,7 +4,6 @@ import { TicketsService } from './service'
 import { TicketsController } from './controller'
 import type { TicketsDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
-import { createModuleGuard } from '../../infrastructure/auth/require-module'
 import { denyImpersonation } from '../../infrastructure/auth/deny-impersonation'
 
 export { TicketsService }
@@ -38,12 +37,12 @@ export function TicketsModule() {
       const controller = new TicketsController(service, log)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
-      // Feature-gating por plan: los tickets son incidencias de mantenimiento → misma clave
-      // que /api/mantenimiento y el menú ('operations.maintenance'). Antes solo reports:view:
-      // 200 para cualquier plan. Corta a host (sin módulo mantenimiento) — correcto.
+      // REQ-SOP-07: sin gate por plan. Antes exigía 'operations.maintenance' (misma clave que
+      // /api/mantenimiento) — un hotel sin ese módulo en su plan veía "Error al cargar tickets"
+      // en la pantalla de ayuda, que es CORE (soporte de la plataforma, no una feature vendible).
+      // Deuda anotada: falta un permiso propio 'support:*' — hoy sigue prestado de 'reports'.
       const guard = (m: 'reports', a: 'view' | 'create' | 'edit' | 'delete') => [
         ...createPermissionGuard(auth, roleRepo)(m, a),
-        createModuleGuard(orm)('operations.maintenance'),
       ]
 
       router.get('/api/tickets', guard('reports', 'view'), (req) => controller.index(req))

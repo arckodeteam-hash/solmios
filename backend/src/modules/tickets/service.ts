@@ -5,6 +5,7 @@ import type { TicketsSockets } from './sockets'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 import { enrichTickets } from './usecases/enrich'
 import { buildAddMessage } from './usecases/add-message'
+import { ticketsListCacheKey, invalidateTicketsCaches } from './usecases/cache'
 
 const CACHE_TTL = 300
 
@@ -63,7 +64,8 @@ export class TicketsService {
     const limit = Math.min(Math.max(query.limit || 20, 1), 100)
     const offset = (page - 1) * limit
 
-    const cacheKey = `tickets:list:${hotelId || 'all'}`
+    // REQ-SOP-05: clave versionada (filtros + paginación incluidos) — ver usecases/cache.ts.
+    const cacheKey = await ticketsListCacheKey(this.cache, hotelId, { filters, page, limit })
     const cached = await this.cache.get(cacheKey)
     if (cached) return cached as TicketsPaginated
 
@@ -92,7 +94,7 @@ export class TicketsService {
     }
     const item = await this.repo.create(dto as any)
     await this.sockets.onTicketsCreated?.(item)
-    await this.cache.delete(`tickets:list:${dto.hotelId}`)
+    await invalidateTicketsCaches(this.cache, dto.hotelId)
     return item
   }
 
@@ -116,7 +118,7 @@ export class TicketsService {
     const item = await this.repo.update(id, patch as any)
     if (!item) throw new NotFoundError('Ticket no encontrado')
     await this.sockets.onTicketsUpdated?.(item)
-    await this.cache.delete(`tickets:list:${existing.hotelId}`)
+    await invalidateTicketsCaches(this.cache, existing.hotelId)
     return item
   }
 
@@ -138,7 +140,7 @@ export class TicketsService {
     const item = await this.repo.update(id, patch as any)
     if (!item) throw new NotFoundError('Ticket no encontrado')
     await this.sockets.onTicketsMessageAdded?.(item, message)
-    await this.cache.delete(`tickets:list:${existing.hotelId}`)
+    await invalidateTicketsCaches(this.cache, existing.hotelId)
     const [enriched] = await enrichTickets([item], { userRepo: this.userRepo, hotelRepo: this.hotelRepo })
     return enriched
   }
@@ -152,7 +154,7 @@ export class TicketsService {
     const deleted = await this.repo.delete(id)
     if (!deleted) throw new NotFoundError('Ticket no encontrado')
     await this.sockets.onTicketsDeleted?.(id)
-    await this.cache.delete(`tickets:list:${existing.hotelId}`)
+    await invalidateTicketsCaches(this.cache, existing.hotelId)
     await auditSafely(this.auditPort, this.logger, {
       hotelId: existing.hotelId, userId: currentUser.id, action: 'ticket.delete',
       entity: 'ticket', entityId: id, detail: `Ticket "${existing.subject}" eliminado`,
