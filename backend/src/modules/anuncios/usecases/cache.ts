@@ -49,21 +49,29 @@ async function bumpVersion(cache: CacheAdapter, key: string): Promise<void> {
   await cache.set(key, Math.max(Date.now(), prev + 1), VERSION_TTL_SECONDS)
 }
 
-/** Clave del listado: las dos versiones + filtros + paginación. Dos consultas distintas, dos entradas. */
+/**
+ * Clave del listado: las dos versiones + filtros + paginación. Dos consultas distintas, dos entradas.
+ *
+ * Con `scope: 'active'` (ANN-3) lo que se cachea NO es una página sino la lista CRUDA de la
+ * consulta (la ventana de vigencia se aplica después, con el reloj del request), así que la
+ * clave termina en `:active` y no lleva página ni límite: todas las páginas salen de la misma
+ * entrada. La página de `scope: 'all'` (o sin scope) conserva la clave de siempre.
+ */
 export async function anunciosListCacheKey(
   cache: CacheAdapter,
   hotelId: HotelKey,
-  query: { filters: Record<string, unknown>; page: number; limit: number },
+  query: { filters: Record<string, unknown>; page: number; limit: number; scope?: 'active' | 'all' },
 ): Promise<string> {
   const [global, hotel] = await Promise.all([
     currentVersion(cache, GLOBAL_VERSION_KEY),
     currentVersion(cache, hotelVersionKey(hotelId)),
   ])
-  const { filters, page, limit } = query
+  const { filters, page, limit, scope } = query
   // Filtros ordenados: `{type,priority}` y `{priority,type}` son la MISMA consulta y tienen que
   // compartir entrada (con `JSON.stringify` crudo dependía del orden de inserción).
   const f = Object.keys(filters).sort().map((k) => `${k}=${String(filters[k])}`).join(',')
-  return `anuncios:list:${hotelId || 'all'}:g${global}:v${hotel}:${f}:p${page}:l${limit}`
+  const tail = scope === 'active' ? 'active' : `p${page}:l${limit}`
+  return `anuncios:list:${hotelId || 'all'}:g${global}:v${hotel}:${f}:${tail}`
 }
 
 /**

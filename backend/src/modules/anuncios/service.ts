@@ -5,6 +5,7 @@ import type { AnunciosSockets } from './sockets'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 import * as reads from './usecases/announcement-reads'
 import { anunciosListCacheKey, invalidateAnunciosCaches } from './usecases/cache'
+import { normalizeWindow, applyWindow, resolveScope, paginateInMemory } from './usecases/visibility-window'
 
 // Las lecturas por usuario (ANN-4) viven en `usecases/announcement-reads.ts` desde que el service
 // pasó las 200 líneas del gate. Los tipos se re-exportan para no romper a quien los importa de acá.
@@ -40,6 +41,8 @@ export class AnunciosService {
   }
 
   async list(query: AnunciosQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<AnunciosPaginated> {
+    // 'all' (sin ventana de vigencia) es sólo para super_admin: AuthError si lo pide otro.
+    const scope = resolveScope(query.scope, currentUser.role)
     const filters: Record<string, unknown> = {}
     if (query.type) filters.type = query.type
     if (query.priority) filters.priority = query.priority
@@ -56,24 +59,38 @@ export class AnunciosService {
 
     const page = Math.max(query.page || 1, 1)
     const limit = Math.min(Math.max(query.limit || 20, 1), 100)
-    const offset = (page - 1) * limit
 
-    // La clave lleva filtros, paginación y el token de VERSIÓN del caché (#160): sin la versión
-    // no había forma de invalidar (CacheAdapter sólo borra claves exactas) y el listado seguía
-    // viejo hasta 5 minutos después de publicar o borrar un aviso. Ver `usecases/cache.ts`.
-    const cacheKey = await anunciosListCacheKey(this.cache, hotelId, { filters, page, limit })
-    const cached = await this.cache.get(cacheKey)
+    // La clave lleva filtros, alcance, paginación y el token de VERSIÓN del caché (#160): sin la
+    // versión no había forma de invalidar (CacheAdapter sólo borra claves exactas) y el listado
+    // seguía viejo hasta 5 minutos después de publicar o borrar un aviso. Ver `usecases/cache.ts`.
+    const cacheKey = await anunciosListCacheKey(this.cache, hotelId, { filters, page, limit, scope })
     let response: AnunciosPaginated
-    if (cached) {
-      response = cached as AnunciosPaginated
+    if (scope === 'all') {
+      // La página tal cual sale de la base: programados y vencidos incluidos (panel del super_admin).
+      response = await this.cachedOr(cacheKey, async () => {
+        const r = await this.repo.paginate(filters, { offset: (page - 1) * limit, limit })
+        return { data: r.data, total: r.total, page, limit, pages: Math.ceil(r.total / limit) }
+      })
     } else {
-      const result = await this.repo.paginate(filters, { offset, limit })
-      response = { data: result.data, total: result.total, page, limit, pages: Math.ceil(result.total / limit) }
-      await this.cache.set(cacheKey, response, CACHE_TTL)
+      // Vigencia (ANN-3): se cachea la lista CRUDA de la consulta y la ventana se aplica DESPUÉS
+      // del cache, con el reloj de este request — si se cacheara ya filtrada, un aviso se
+      // publicaría o vencería hasta 5 minutos tarde (el TTL). Y ANTES de paginar, porque total
+      // y pages tienen que salir de las filas vigentes, no del COUNT de la tabla.
+      const rows = await this.cachedOr(cacheKey, () => this.repo.findMany(filters))
+      response = paginateInMemory(applyWindow(rows, new Date()), page, limit)
     }
     // La vista por usuario va SIEMPRE después del cache: la página cacheada es la del hotel
     // (compartida), lo que cada usuario deja de ver es sólo suyo y no se cachea.
     return reads.applyUserView(this.readsDeps, response, currentUser, hotelId)
+  }
+
+  /** Lo cacheado bajo `key`, o lo que devuelve `load` (guardado con el TTL del listado). */
+  private async cachedOr<T>(key: string, load: () => Promise<T>): Promise<T> {
+    const hit = await this.cache.get<T>(key)
+    if (hit) return hit
+    const value = await load()
+    await this.cache.set(key, value, CACHE_TTL)
+    return value
   }
 
   async getById(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<AnunciosDTO> {
@@ -92,8 +109,10 @@ export class AnunciosService {
     // La fecha se pone acá, por parámetro, no por default de columna: el default
     // portable de "ahora" es este, no `DEFAULT datetime('now')` (SQLite-only, que
     // en Postgres guardaba el string literal). Ver CLAUDE.md, reglas de migración.
+    // Vigencia (ANN-3): startsAt/endsAt normalizados a ISO (null si no vienen); endsAt <= startsAt → 400.
     const item = await this.repo.create({
       ...dto,
+      ...normalizeWindow(dto),
       date: dto.date ?? new Date().toISOString(),
     } as any)
     await this.sockets.onAnunciosCreated?.(item)
@@ -111,7 +130,8 @@ export class AnunciosService {
     // misma instancia que acaba de mutar y el hotel viejo ya no estaría por ningún lado — su
     // listado quedaría cacheado con un aviso que se mudó.
     const previousHotelId = existing.hotelId
-    const item = await this.repo.update(id, dto as any)
+    // La ventana se valida contra la fila actual: un body sin fechas conserva las que ya están.
+    const item = await this.repo.update(id, { ...dto, ...normalizeWindow(dto, existing) } as any)
     if (!item) throw new NotFoundError('Anuncio no encontrado')
     await this.sockets.onAnunciosUpdated?.(item)
     await invalidateAnunciosCaches(this.cache, previousHotelId)

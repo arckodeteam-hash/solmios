@@ -1,10 +1,12 @@
 // anuncios/tests/service.test.ts — Tests del servicio con ownership, paginacion y seguridad
 // Usa RepositoryAdapter mock — sin dependencia de SQLite ni Postgres.
-// list, getById, create, update, delete, setSockets, cache, sockets, auth y lecturas por
-// usuario (ANN-4): seen/dismiss idempotentes, listado del banner por usuario y reads reales.
+// list, getById, create, update, delete, setSockets, cache, sockets, auth, lecturas por
+// usuario (ANN-4): seen/dismiss idempotentes, listado del banner por usuario y reads reales,
+// y vigencia (ANN-3): la ventana startsAt/endsAt sobre el payload que sale de list().
 
 import { describe, it, expect, setSystemTime, afterEach } from 'bun:test'
 import type { RepositoryAdapter, CacheAdapter, Auth } from 'arckode-framework'
+import { AuthError, ValidationError } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { AnunciosService } from '../service'
 import type { AnnouncementReadDTO, AnnouncementWithReads } from '../service'
@@ -25,9 +27,14 @@ function makeCache(overrides: Partial<CacheAdapter> = {}): CacheAdapter {
   return { get: async () => null, set: async () => {}, delete: async () => {}, flush: async () => {}, ...overrides }
 }
 
+/**
+ * Doble del repo. `list()` con scope=active (el default, ANN-3) lee con `findMany` y con
+ * scope=all pagina con `paginate`: si el test no configura `findMany`, se deriva de `paginate`
+ * para que las filas y los filtros capturados en uno valgan para los dos caminos.
+ */
 function makeRepo(overrides: Partial<RepositoryAdapter<AnunciosDTO>> = {}): RepositoryAdapter<AnunciosDTO> {
-  return {
-    findMany: async () => [],
+  const repo: RepositoryAdapter<AnunciosDTO> = {
+    findMany: async (filters) => (await repo.paginate(filters, { offset: 0, limit: 100 })).data,
     findById: async () => null,
     findOne: async () => null,
     create: async (data) => ({
@@ -42,6 +49,7 @@ function makeRepo(overrides: Partial<RepositoryAdapter<AnunciosDTO>> = {}): Repo
     paginate: async () => ({ data: [], total: 0, limit: 20, offset: 0, pages: 0 }),
     ...overrides,
   }
+  return repo
 }
 
 function makeAnuncio(overrides: Partial<AnunciosDTO> = {}): AnunciosDTO {
@@ -152,13 +160,13 @@ describe('AnunciosService', () => {
       await expect(svc.list({}, noHotel)).rejects.toThrow('No hotel assigned')
     })
 
-    it('applies pagination bounds correctly', async () => {
+    it('applies pagination bounds correctly (scope=all pagina en la base)', async () => {
       let capturedOpts: any = {}
       const repo = makeRepo({
         paginate: async (filters, opts) => { capturedOpts = opts; return { data: [], total: 50, limit: 10, offset: 20, pages: 5 } },
       })
       const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
-      const result = await svc.list({ page: 3, limit: 10 }, adminUser)
+      const result = await svc.list({ page: 3, limit: 10, scope: 'all' }, adminUser)
       expect(capturedOpts.offset).toBe(20)
       expect(capturedOpts.limit).toBe(10)
       expect(result.pages).toBe(5)
@@ -170,8 +178,11 @@ describe('AnunciosService', () => {
         paginate: async (filters, opts) => { capturedOpts = opts; return { data: [], total: 0, limit: opts?.limit ?? 0, offset: 0, pages: 0 } },
       })
       const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
-      await svc.list({ limit: 999 }, adminUser)
+      await svc.list({ limit: 999, scope: 'all' }, adminUser)
       expect(capturedOpts.limit).toBe(100)
+      // El camino en memoria (scope=active) recorta igual.
+      const active = await svc.list({ limit: 999 }, hotelAdmin)
+      expect(active.limit).toBe(100)
     })
 
     it('la segunda consulta idéntica NO vuelve a pegarle a la base', async () => {
@@ -598,6 +609,112 @@ describe('AnunciosService', () => {
       expect(byId('a1').reads).toBe(3) // 2 usuarios + el propio admin
       expect(byId('a2').reads).toBe(1)
       expect(byId('a3').reads).toBe(0)
+    })
+  })
+
+  // ==================== vigencia (ANN-3) ====================
+
+  describe('vigencia (ANN-3)', () => {
+    const NOW = new Date('2026-09-10T12:00:00.000Z')
+    const TOMORROW = '2026-09-11T12:00:00.000Z'
+    const YESTERDAY = '2026-09-09T12:00:00.000Z'
+
+    function makeSvc(items: AnunciosDTO[], cache: CacheAdapter = makeCache()) {
+      const repo = makeRepo({
+        findById: async (id) => items.find((a) => a.id === id) ?? null,
+        paginate: async (filters = {}) => {
+          const data = items.filter((r) => Object.entries(filters).every(([k, v]) => (r as any)[k] === v))
+          return { data, total: data.length, limit: 20, offset: 0, pages: 1 }
+        },
+      })
+      return new AnunciosService(repo, log, cache, makeUserRepo(), makeReadsRepo(), fakeAuth)
+    }
+
+    // Se afirma sobre el payload SERIALIZADO: es lo que viaja al banner, no un array filtrado
+    // a mano en el test.
+    const payload = async (svc: AnunciosService, query: Record<string, unknown>, user: { id: string; role: string; hotelId?: string }) =>
+      JSON.stringify(await svc.list(query as any, user))
+
+    it('programado para mañana (active 1): NO se entrega al hotel y total no lo cuenta', async () => {
+      setSystemTime(NOW)
+      const svc = makeSvc([
+        makeAnuncio({ id: 'a1', title: 'Programado mañana', startsAt: TOMORROW, active: 1 }),
+        makeAnuncio({ id: 'a2', title: 'Vigente hoy' }),
+      ])
+      const body = await payload(svc, {}, hotelAdmin)
+      expect(body).not.toContain('Programado mañana')
+      expect(body).toContain('Vigente hoy')
+      expect(JSON.parse(body).total).toBe(1)
+    })
+
+    it('endsAt ayer + active 1: vencido, no se entrega', async () => {
+      setSystemTime(NOW)
+      const svc = makeSvc([makeAnuncio({ id: 'a1', title: 'Ya vencido', endsAt: YESTERDAY, active: 1 })])
+      const body = await payload(svc, {}, hotelAdmin)
+      expect(body).not.toContain('Ya vencido')
+      expect(JSON.parse(body).total).toBe(0)
+    })
+
+    it('sin startsAt ni endsAt: se entrega (los avisos de antes no cambian)', async () => {
+      setSystemTime(NOW)
+      const svc = makeSvc([makeAnuncio({ id: 'a1', title: 'Sin fechas', startsAt: null, endsAt: null })])
+      const body = await payload(svc, {}, hotelAdmin)
+      expect(body).toContain('Sin fechas')
+      expect(JSON.parse(body).total).toBe(1)
+    })
+
+    it('super_admin con scope=all SÍ recibe el programado', async () => {
+      setSystemTime(NOW)
+      const svc = makeSvc([makeAnuncio({ id: 'a1', title: 'Programado mañana', startsAt: TOMORROW, active: 1 })])
+      expect(await payload(svc, {}, adminUser)).not.toContain('Programado mañana')
+      expect(await payload(svc, { scope: 'all' }, adminUser)).toContain('Programado mañana')
+    })
+
+    it('hotel_admin con scope=all: AuthError, no un active silencioso', async () => {
+      const svc = makeSvc([makeAnuncio()])
+      await expect(svc.list({ scope: 'all' }, hotelAdmin)).rejects.toBeInstanceOf(AuthError)
+    })
+
+    it('la ventana se resuelve con el reloj del request, no con el TTL: el cache guarda la lista cruda', async () => {
+      setSystemTime(NOW)
+      const svc = makeSvc([makeAnuncio({ id: 'a1', title: 'Programado mañana', startsAt: TOMORROW })], makeRealCache())
+      expect(await payload(svc, {}, hotelAdmin)).not.toContain('Programado mañana')
+      // Pasa la hora de publicación sin que nadie invalide el cache: se entrega igual.
+      setSystemTime(new Date('2026-09-11T12:00:01.000Z'))
+      expect(await payload(svc, {}, hotelAdmin)).toContain('Programado mañana')
+    })
+
+    it('create con fechas invertidas → ValidationError httpStatus 400', async () => {
+      const svc = makeSvc([])
+      const err = await svc.create({ title: 'Mal', hotelId: 'h1', startsAt: TOMORROW, endsAt: YESTERDAY }, hotelAdmin).catch((e) => e)
+      expect(err).toBeInstanceOf(ValidationError)
+      expect((err as ValidationError).httpStatus).toBe(400)
+    })
+
+    it('create sin fechas persiste startsAt null y endsAt null', async () => {
+      let persisted: any = null
+      const repo = makeRepo({ create: async (data) => { persisted = data; return { id: 'ann-1', ...data } as AnunciosDTO } })
+      const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
+      await svc.create({ title: 'Publicar ahora', hotelId: 'h1' }, hotelAdmin)
+      expect(persisted.startsAt).toBeNull()
+      expect(persisted.endsAt).toBeNull()
+    })
+
+    it('update que sólo trae endsAt anterior al startsAt existente → 400', async () => {
+      const svc = makeSvc([makeAnuncio({ id: 'a1', startsAt: TOMORROW, endsAt: null })])
+      const err = await svc.update('a1', { endsAt: YESTERDAY }, hotelAdmin).catch((e) => e)
+      expect(err).toBeInstanceOf(ValidationError)
+      expect((err as ValidationError).httpStatus).toBe(400)
+    })
+
+    it('update sin fechas conserva las que ya estaban', async () => {
+      let patch: any = null
+      const ann = makeAnuncio({ id: 'a1', startsAt: YESTERDAY, endsAt: TOMORROW })
+      const repo = makeRepo({ findById: async () => ann, update: async (id, data) => { patch = data; return { ...ann, ...data } } })
+      const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), makeReadsRepo(), fakeAuth)
+      await svc.update('a1', { title: 'Sólo el título' }, hotelAdmin)
+      expect(patch.startsAt).toBe(YESTERDAY)
+      expect(patch.endsAt).toBe(TOMORROW)
     })
   })
 })
