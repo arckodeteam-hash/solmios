@@ -891,6 +891,8 @@ export interface MarketingMessageLog {
 export interface AuditLogRecord {
   id: string
   hotelId?: string
+  // #140: nombre resuelto por el backend ('' si no tiene hotelId o el hotel es huérfano).
+  hotelName?: string
   userId?: string
   userName?: string
   action: string
