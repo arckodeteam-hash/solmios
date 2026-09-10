@@ -32,7 +32,8 @@ export function TicketsModule() {
       const repo = new OrmRepository<TicketsDTO>(orm, 'Tickets')
       const log = logger.child('tickets')
       const userRepo = new OrmRepository<any>(orm, 'Users')
-      const service = new TicketsService(repo, log, cache, userRepo, auth)
+      const hotelRepo = new OrmRepository<any>(orm, 'Hotels')
+      const service = new TicketsService(repo, log, cache, userRepo, auth, hotelRepo)
       const controller = new TicketsController(service, log)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')

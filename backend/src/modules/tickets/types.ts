@@ -8,6 +8,13 @@ export interface TicketMessage {
   createdAt: string
 }
 
+// Resueltos por el SERVIDOR en list/getById (REQ-SOP-01/03, ver usecases/enrich.ts) — el hotel
+// no puede resolver estos nombres por su cuenta (el agente puede no pertenecer a su hotel, fuera
+// de su propio /api/usuarios). Ausentes en create/update (solo list/getById los completan).
+export interface TicketRequester { id: string; name: string; email: string; role: string; active: boolean }
+export interface TicketHotelSummary { id: string; name: string }
+export interface TicketAssignee { id: string; name: string }
+
 export interface TicketsDTO {
   id: string
   hotelId: string
@@ -21,6 +28,9 @@ export interface TicketsDTO {
   messages?: TicketMessage[]
   createdAt: string
   updatedAt: string
+  requester?: TicketRequester
+  hotel?: TicketHotelSummary
+  assignee?: TicketAssignee | null
 }
 
 export interface CreateTicketsDTO {
