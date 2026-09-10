@@ -2,10 +2,13 @@ import { http } from './http'
 
 export type AnnouncementType = 'info' | 'success' | 'warning' | 'critical' | 'maintenance' | string
 export type AnnouncementPriority = 'low' | 'medium' | 'high' | 'urgent'
+/** Alcance del anuncio (#106): todos los hoteles, un hotel (exige hotelId) o sólo administradores. */
+export type AnnouncementAudience = 'all' | 'hotel' | 'admins'
 
 export interface Announcement {
   id: string
   hotelId?: string
+  audience?: AnnouncementAudience
   authorId?: string
   title: string
   message?: string

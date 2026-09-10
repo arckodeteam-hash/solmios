@@ -129,16 +129,25 @@
         </div>
         <div>
           <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Audiencia</label>
-          <div class="grid grid-cols-2 gap-2">
+          <!-- #106 (ANN-2): audiencia excluyente; antes eran dos checkboxes que no viajaban al backend -->
+          <div class="grid grid-cols-3 gap-2">
             <label class="flex items-center gap-2 p-2 bg-surface rounded-lg cursor-pointer">
-              <input type="checkbox" v-model="newAnnouncement.allHotels" class="w-4 h-4 text-cyan rounded" />
+              <input type="radio" name="audience" value="all" v-model="newAnnouncement.audience" class="w-4 h-4 text-cyan" />
               <span class="text-xs font-bold text-navy">Todos los hoteles</span>
             </label>
             <label class="flex items-center gap-2 p-2 bg-surface rounded-lg cursor-pointer">
-              <input type="checkbox" v-model="newAnnouncement.adminsOnly" class="w-4 h-4 text-cyan rounded" />
-              <span class="text-xs font-bold text-navy">Solo admins</span>
+              <input type="radio" name="audience" value="hotel" v-model="newAnnouncement.audience" class="w-4 h-4 text-cyan" />
+              <span class="text-xs font-bold text-navy">Un hotel</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 bg-surface rounded-lg cursor-pointer">
+              <input type="radio" name="audience" value="admins" v-model="newAnnouncement.audience" class="w-4 h-4 text-cyan" />
+              <span class="text-xs font-bold text-navy">Solo administradores</span>
             </label>
           </div>
+          <select v-if="newAnnouncement.audience === 'hotel'" v-model="newAnnouncement.hotelId" class="w-full h-10 px-4 mt-2 rounded-xl border border-border text-sm cursor-pointer">
+            <option value="" disabled>Elegí un hotel</option>
+            <option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option>
+          </select>
         </div>
         <div>
           <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Mensaje</label>
@@ -147,7 +156,7 @@
       </div>
       <template #footer>
         <button @click="showCreateModal = false" class="px-4 py-2.5 bg-surface text-navy text-sm font-bold rounded-xl cursor-pointer">Cancelar</button>
-        <button type="button" :disabled="enviando || !newAnnouncement.title.trim()" @click="sendAnnouncement" class="px-4 py-2.5 bg-navy text-white text-sm font-bold rounded-xl cursor-pointer disabled:opacity-50 disabled:cursor-default">{{ enviando ? 'Publicando…' : 'Enviar Ahora' }}</button>
+        <button type="button" :disabled="enviando || !newAnnouncement.title.trim() || (newAnnouncement.audience === 'hotel' && !newAnnouncement.hotelId)" @click="sendAnnouncement" class="px-4 py-2.5 bg-navy text-white text-sm font-bold rounded-xl cursor-pointer disabled:opacity-50 disabled:cursor-default">{{ enviando ? 'Publicando…' : 'Enviar Ahora' }}</button>
       </template>
     </AppModal>
 
@@ -192,7 +201,8 @@
 import { ref, onMounted } from 'vue'
 import { useToast } from '@/composables/useToast'
 import { PlatformService } from '@/services/Platform.service'
-import { AnnouncementsService } from '@/services/Announcements.service'
+import { AnnouncementsService, type AnnouncementAudience } from '@/services/Announcements.service'
+import { SuperAdminService } from '@/services/SuperAdmin.service'
 import AppModal from '@/components/ui/AppModal.vue'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
@@ -202,14 +212,17 @@ const toast = useToast()
 const loading = ref(true)
 const showCreateModal = ref(false)
 
-const newAnnouncement = ref({
-  title: '', type: 'feature', allHotels: true, adminsOnly: false, message: ''
+const newAnnouncement = ref<{ title: string; type: string; audience: AnnouncementAudience; hotelId: string; message: string }>({
+  title: '', type: 'feature', audience: 'all', hotelId: '', message: ''
 })
+
+const AUDIENCE_LABEL: Record<string, string> = { all: 'Todos los hoteles', hotel: 'Hotel específico', admins: 'Solo administradores' }
 
 const TYPE_LABEL: Record<string, string> = { feature: 'Nueva función', maintenance: 'Mantenimiento', warning: 'Aviso', urgent: 'Urgente', promo: 'Promoción', success: 'Informativo', info: 'Informativo' }
 const TYPE_CLASS: Record<string, string> = { feature: 'bg-teal/10 text-teal', maintenance: 'bg-gold/10 text-gold', warning: 'bg-gold/10 text-gold', urgent: 'bg-danger/10 text-danger', promo: 'bg-navy/10 text-navy', success: 'bg-cyan/10 text-cyan', info: 'bg-cyan/10 text-cyan' }
 
 const announcements = ref<any[]>([])
+const hotels = ref<{ id: string; name: string }[]>([])
 
 const templates = [
   { name: 'Bienvenida', icon: '👋', description: 'Mensaje de bienvenida a nuevo hotel' },
@@ -238,7 +251,8 @@ async function cargarAnuncios(): Promise<void> {
       message: a.message ?? '',
       type: TYPE_LABEL[a.type] ?? 'Informativo',
       typeClass: TYPE_CLASS[a.type] ?? 'bg-cyan/10 text-cyan',
-      audience: a.hotelId ? 'Hotel específico' : 'Todos los hoteles',
+      // Filas anteriores a #106 pueden venir sin `audience`: se cae al criterio viejo por hotelId.
+      audience: AUDIENCE_LABEL[a.audience] ?? (a.hotelId ? 'Hotel específico' : 'Todos los hoteles'),
       date: a.fecha ? String(a.fecha).slice(0, 10) : '',
       views: 0,
       // Lecturas reales de la API; 0 queda sólo como default vacío cuando no viene, nunca como dato falso.
@@ -248,31 +262,42 @@ async function cargarAnuncios(): Promise<void> {
   } catch { toast.error('No se pudieron cargar los anuncios') } finally { loading.value = false }
 }
 
-onMounted(cargarAnuncios)
+async function cargarHoteles(): Promise<void> {
+  try {
+    const r = await SuperAdminService.hotels()
+    const list = (r as any)?.data || (r as any)?.hotels || []
+    hotels.value = list.map((h: any) => ({ id: h.id, name: h.name }))
+  } catch { hotels.value = [] }
+}
+
+onMounted(() => { void Promise.all([cargarAnuncios(), cargarHoteles()]) })
 
 /**
  * BUG: esto era `announcements.value.unshift(...)` y nada más — el anuncio se veía aparecer en la
  * lista, pero NO se guardaba en ningún lado ni llegaba a ningún hotel. Al recargar desaparecía.
  * Mismo patrón que ya se había corregido en `roles.vue:savePermissions`.
  *
- * `hotelId` ausente = anuncio global (el backend lo trata así, ver `anuncios/service.ts`).
+ * `audience` decide el alcance (#106): 'hotel' exige `hotelId`, el backend responde 400 si falta.
  */
 const enviando = ref(false)
 async function sendAnnouncement(): Promise<void> {
   const draft = newAnnouncement.value
   if (!draft.title.trim()) { toast.error('El anuncio necesita un título'); return }
+  if (draft.audience === 'hotel' && !draft.hotelId) { toast.error('Elegí el hotel del anuncio'); return }
   enviando.value = true
   try {
     await AnnouncementsService.create({
       title: draft.title.trim(),
       message: draft.message.trim(),
       type: draft.type,
+      audience: draft.audience,
+      ...(draft.audience === 'hotel' ? { hotelId: draft.hotelId } : {}),
       priority: draft.type === 'maintenance' ? 'high' : 'medium',
       active: 1,
       date: new Date().toISOString(),
     } as any)
     showCreateModal.value = false
-    newAnnouncement.value = { title: '', type: 'feature', allHotels: true, adminsOnly: false, message: '' }
+    newAnnouncement.value = { title: '', type: 'feature', audience: 'all', hotelId: '', message: '' }
     toast.success('Anuncio publicado')
     await cargarAnuncios()
   } catch (e: any) {
