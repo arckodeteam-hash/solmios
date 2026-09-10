@@ -290,7 +290,34 @@
                       >
                         <option v-for="a in maxChildAgeOptions" :key="a" :value="a - 1">{{ a - 1 }}</option>
                       </select>
+                      <!-- Tarea 21 (Identificar bebés, 2026-09-08) — mismo badge que RoomsStep.vue
+                           (/book/:slug), las dos entradas públicas no deben divergir. -->
+                      <span v-if="childAgeClassification(rt, i) === 'baby'" data-testid="baby-badge"
+                        class="mt-1 inline-flex items-center gap-1 rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-700">
+                        Bebé — no consume plaza
+                      </span>
                     </label>
+                  </div>
+
+                  <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 a Sí/No — mismo bloque
+                       que RoomsStep.vue (/book/:slug): solo aparece con un bebé en ESTA tarjeta Y
+                       el hotel habilitó la cuna (Página pública → Motor de Reservas). Sin cantidad. -->
+                  <div v-if="shouldOfferCrib(rt)" class="space-y-2.5 rounded-lg bg-cyan-50/60 p-2.5" data-testid="baby-extras">
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="text-sm font-bold text-navy">¿Necesita cuna?</span>
+                      <div class="flex overflow-hidden rounded-full border border-border text-xs font-bold">
+                        <button type="button" data-testid="crib-yes"
+                          class="px-3 py-1.5 transition"
+                          :class="composer(rt).needsCrib ? 'bg-cyan text-white' : 'bg-white text-navy hover:bg-slate-50'"
+                          @click="setNeedsCrib(rt, true)"
+                        >Sí</button>
+                        <button type="button" data-testid="crib-no"
+                          class="px-3 py-1.5 transition"
+                          :class="!composer(rt).needsCrib ? 'bg-cyan text-white' : 'bg-white text-navy hover:bg-slate-50'"
+                          @click="setNeedsCrib(rt, false)"
+                        >No</button>
+                      </div>
+                    </div>
                   </div>
 
                   <div class="flex items-center justify-between gap-3 border-t border-border pt-3">
@@ -352,7 +379,7 @@
           <div v-if="store.cart.length > 0" class="rounded-2xl border-2 border-cyan/30 bg-cyan/5 p-4 space-y-3">
             <h4 class="text-sm font-black text-navy">Tu selección</h4>
             <ul class="space-y-2">
-              <li v-for="line in store.cart" :key="line.key" class="flex items-center justify-between gap-2 text-sm">
+              <li v-for="line in store.cart" :key="line.key" class="flex items-center justify-between gap-2 text-sm" data-testid="cart-line">
                 <div class="min-w-0">
                   <p class="truncate font-bold text-navy">{{ prettify(line.roomName) }} · {{ cartLineGuestsLabel(line) }}</p>
                   <p class="text-xs text-text-muted">{{ line.quantity }} × {{ money(line.unitPrice) }}</p>
@@ -785,6 +812,7 @@ const {
   composer, setAdults, setChildrenCount, setChildAge,
   composition, matchedRow, composedPrice, composedPricePerNight,
   canAddComposition, addComposedRoom, maxChildAgeOptions, capacityBlockReason,
+  childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib,
 } = useGuestComposer()
 
 /** Requerimiento 6 (2026-09-03) — mismo criterio que RoomsStep.vue: texto del motivo cuando
@@ -1036,8 +1064,12 @@ function cartHasType(roomTypeId: string): boolean {
  *  viejas en el mismo carrito (no debería pasar en un carrito recién armado). */
 function cartLineGuestsLabel(line: CartLine): string {
   if (line.adults === undefined || line.childrenAges === undefined) return `para ${line.occupancy}`
-  if (line.childrenAges.length === 0) return plural(line.adults, 'adulto', 'adultos')
-  return `${plural(line.adults, 'adulto', 'adultos')} · ${plural(line.childrenAges.length, 'niño', 'niños')} (${line.childrenAges.join(', ')} años)`
+  const base = line.childrenAges.length === 0
+    ? plural(line.adults, 'adulto', 'adultos')
+    : `${plural(line.adults, 'adulto', 'adultos')} · ${plural(line.childrenAges.length, 'niño', 'niños')} (${line.childrenAges.join(', ')} años)`
+  // Tarea 22 (Cuna, corrección 2026-09-09) — antes esta línea no mostraba la cuna en NINGÚN
+  // resumen ya agregado (el dato se guardaba bien, pero no se veía).
+  return line.needsCrib ? `${base} · Cuna` : base
 }
 
 /** Ícono de persona(s) de la fila (single/dos siluetas), sin emoji — mismo trazo que

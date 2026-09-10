@@ -346,7 +346,7 @@ describe('childPolicy — política de niños del hotel en el DTO público (2026
   it('sin dep `config` ni fila cargada → DEFAULT_CHILD_POLICY (acepta, todo niño consume plaza)', async () => {
     const hotels = backed<any>([hotelSeed()])
     const dto = await getPublicHotelInfo({ hotels }, 'hotel-paraiso', undefined)
-    expect(dto.childPolicy).toEqual({ acceptChildren: true, maxChildAge: 17, maxFreeAge: 0 })
+    expect(dto.childPolicy).toEqual({ acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false })
   })
 
   it('con política configurada del hotel, se usa tal cual (ejemplo del pedido)', async () => {
@@ -355,7 +355,7 @@ describe('childPolicy — política de niños del hotel en el DTO público (2026
       { hotelId: 'h1', key: 'child_policy', value: JSON.stringify({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }) },
     ])
     const dto = await getPublicHotelInfo({ hotels, config }, 'hotel-paraiso', undefined)
-    expect(dto.childPolicy).toEqual({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 })
+    expect(dto.childPolicy).toEqual({ acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false })
   })
 
   it('NO cae a la política de "platform" — es una decisión de cada hotel, a diferencia de google_maps', async () => {
@@ -364,7 +364,7 @@ describe('childPolicy — política de niños del hotel en el DTO público (2026
       { hotelId: 'platform', key: 'child_policy', value: JSON.stringify({ acceptChildren: false, maxChildAge: 5, maxFreeAge: 5 }) },
     ])
     const dto = await getPublicHotelInfo({ hotels, config }, 'hotel-paraiso', undefined)
-    expect(dto.childPolicy).toEqual({ acceptChildren: true, maxChildAge: 17, maxFreeAge: 0 })
+    expect(dto.childPolicy).toEqual({ acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false })
   })
 
   it('acceptChildren: false → el widget no debe ofrecer agregar niños', async () => {

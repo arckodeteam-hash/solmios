@@ -253,3 +253,241 @@ describe('createPublicBookingDirect — Requerimiento 5: ocupación efectiva usa
     expect(tables.Reservations).toHaveLength(0)
   })
 })
+
+// ─── Tarea 22 (Cuna y amenidades infantiles, 2026-09-08) ───────────────────────────────────────
+describe('createPublicBookingDirect — Tarea 22: cuna (simplificada 2026-09-09 a Sí/No)', () => {
+  // maxBabyAge=1: edades 0-1 son bebé, 2-3 libre (no bebé), 4-12 con plaza.
+  const BABY_POLICY_CRIB_ON = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, cribAvailable: true }
+  const BABY_POLICY_CRIB_OFF = { ...BABY_POLICY_CRIB_ON, cribAvailable: false }
+  function childPolicyRepo(value: unknown = BABY_POLICY_CRIB_ON) {
+    return { findOne: async (f: any) => (f.key === 'child_policy' ? { hotelId: HOTEL_ID, key: 'child_policy', value } : null) } as any
+  }
+
+  function dbWithRoom() {
+    return makeDb({
+      rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'double', capacity: 6, basePrice: 100, status: 'available' }],
+    })
+  }
+
+  it('sin bebé en la composición: needsCrib se ignora aunque el body lo pida (defensa en profundidad)', async () => {
+    const { orm, tables } = dbWithRoom()
+    const res = await createPublicBookingDirect(
+      orm, {
+        ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [8], // 8 > maxBabyAge=1, no es bebé
+        needsCrib: true,
+      },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo() },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].needsCrib).toBe(false)
+    expect(tables.Reservations[0].cribCount).toBe(0)
+  })
+
+  it('hotel con cuna DESHABILITADA (cribAvailable:false): needsCrib se ignora aunque haya bebé y el body lo pida', async () => {
+    const { orm, tables } = dbWithRoom()
+    const res = await createPublicBookingDirect(
+      orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1], needsCrib: true },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(BABY_POLICY_CRIB_OFF) },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].needsCrib).toBe(false)
+    expect(tables.Reservations[0].cribCount).toBe(0)
+  })
+
+  it('con un bebé y cuna habilitada por el hotel: needsCrib true se persiste, cribCount siempre 1', async () => {
+    const { orm, tables } = dbWithRoom()
+    const res = await createPublicBookingDirect(
+      orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1], needsCrib: true },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo() },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].needsCrib).toBe(true)
+    expect(tables.Reservations[0].cribCount).toBe(1)
+  })
+
+  // Simplificación del pedido: "no preguntar si desea una, dos o más cunas" — aunque el body
+  // mande un cribCount explícito (cliente viejo/manipulado), el servidor lo ignora por completo.
+  it('Sí/No únicamente: un cribCount enviado en el body NUNCA se usa — siempre queda en 1', async () => {
+    const { orm, tables } = dbWithRoom()
+    const res = await createPublicBookingDirect(
+      orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1], needsCrib: true, cribCount: 9 },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo() },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].cribCount).toBe(1)
+  })
+
+  it('múltiples bebés: sigue siendo Sí/No — cribCount no escala con la cantidad de bebés', async () => {
+    const { orm, tables } = dbWithRoom()
+    const res = await createPublicBookingDirect(
+      orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [0, 1], needsCrib: true },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo() },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].cribCount).toBe(1)
+  })
+
+  it('needsCrib false (o ausente): cribCount siempre 0, sin importar cribCount del body', async () => {
+    const { orm, tables } = dbWithRoom()
+    const res = await createPublicBookingDirect(
+      orm, { ...BASE_BODY, roomType: 'double', adults: 2, childrenAges: [1], cribCount: 3 }, // sin needsCrib
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo() },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].needsCrib).toBe(false)
+    expect(tables.Reservations[0].cribCount).toBe(0)
+  })
+})
+
+// ─── Tarea "Cobro % niños" (2026-09-09, generalizada desde "Cobro 50% niños") ───────────────────
+describe('createPublicBookingDirect — Tarea "Cobro % niños"', () => {
+  // 1 noche, misma grilla que el describe de Requerimiento 5 (occupancy 1/2/3 = 100/200/300) —
+  // reutilizada acá porque es exactamente lo que necesita el ejemplo del pedido ("1 adulto = $100").
+  const ONE_NIGHT = { ...BASE_BODY, checkIn: '2026-10-01', checkOut: '2026-10-02' }
+  function dbWithOccupancyRates() {
+    return makeDb({
+      rooms: [{ id: 'r1', hotelId: HOTEL_ID, type: 'double', capacity: 6, basePrice: 999, status: 'available' }],
+      assignments: [{ hotelId: HOTEL_ID, date: '2026-10-01', season: 'alta' }],
+      rates: [
+        { hotelId: HOTEL_ID, roomType: 'double', occupancy: 1, season: 'alta', channel: '', price: 100 },
+        { hotelId: HOTEL_ID, roomType: 'double', occupancy: 2, season: 'alta', channel: '', price: 200 },
+        { hotelId: HOTEL_ID, roomType: 'double', occupancy: 3, season: 'alta', channel: '', price: 300 },
+      ],
+    })
+  }
+  function childPolicyRepo(value: unknown) {
+    return { findOne: async (f: any) => (f.key === 'child_policy' ? { hotelId: HOTEL_ID, key: 'child_policy', value } : null) } as any
+  }
+  // maxFreeAge=3, maxBabyAge=1: edad 0-1 bebé, 2-3 libre (no bebé), 4-12 con plaza.
+  const BASE_POLICY = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1 }
+  const POLICY_OFF = { ...BASE_POLICY, childrenDiscountEnabled: false, childrenRatePercent: 50 }
+  const policyOn = (childrenRatePercent: number) => ({ ...BASE_POLICY, childrenDiscountEnabled: true, childrenRatePercent })
+
+  it('regla deshabilitada (default): un niño con plaza sigue cotizando como siempre — CERO regresión', async () => {
+    const { orm, tables } = dbWithOccupancyRates()
+    const res = await createPublicBookingDirect(
+      orm, { ...ONE_NIGHT, roomType: 'double', adults: 1, childrenAges: [8] },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(POLICY_OFF) },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(200) // fila de ocupación=2 tal cual
+    expect(tables.Reservations[0].childrenRatePercentApplied).toBeNull()
+  })
+
+  it('ejemplo LITERAL del pedido: tarifa 2 adultos $200 → $100/adulto, hotel configura 60% → niño paga $60', async () => {
+    const { orm, tables } = dbWithOccupancyRates()
+    const res = await createPublicBookingDirect(
+      orm, { ...ONE_NIGHT, roomType: 'double', adults: 2, childrenAges: [8] },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(60)) },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(260) // 200 + 60
+    expect(tables.Reservations[0].childrenRatePercentApplied).toBe(60)
+  })
+
+  it('borde 1%: 1 adulto ($100) + 1 niño con plaza al 1% → niño $1, total $101', async () => {
+    const { orm, tables } = dbWithOccupancyRates()
+    const res = await createPublicBookingDirect(
+      orm, { ...ONE_NIGHT, roomType: 'double', adults: 1, childrenAges: [8] },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(1)) },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(101)
+    expect(tables.Reservations[0].childrenRatePercentApplied).toBe(1)
+  })
+
+  it('50%: 1 adulto ($100) + 1 niño con plaza → niño $50, total $150', async () => {
+    const { orm, tables } = dbWithOccupancyRates()
+    const res = await createPublicBookingDirect(
+      orm, { ...ONE_NIGHT, roomType: 'double', adults: 1, childrenAges: [8] },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(150)
+  })
+
+  it('borde 100%: 1 adulto ($100) + 1 niño con plaza al 100% → niño paga igual que el adulto, total $200', async () => {
+    const { orm, tables } = dbWithOccupancyRates()
+    const res = await createPublicBookingDirect(
+      orm, { ...ONE_NIGHT, roomType: 'double', adults: 1, childrenAges: [8] },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(100)) },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(200)
+    expect(tables.Reservations[0].childrenRatePercentApplied).toBe(100)
+  })
+
+  it('2 adultos ($200, tarifa de grupo) + 1 niño con plaza al 50% → niño = 50% de $100 (200/2) = $50, total $250', async () => {
+    const { orm, tables } = dbWithOccupancyRates()
+    const res = await createPublicBookingDirect(
+      orm, { ...ONE_NIGHT, roomType: 'double', adults: 2, childrenAges: [8] },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(250)
+  })
+
+  it('bebé (edad 1, ≤ maxBabyAge): NO recibe la regla — no consume plaza, sigue sin cargo', async () => {
+    const { orm, tables } = dbWithOccupancyRates()
+    const res = await createPublicBookingDirect(
+      orm, { ...ONE_NIGHT, roomType: 'double', adults: 1, childrenAges: [1] },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(100) // solo el adulto, occupancy=1
+    expect(tables.Reservations[0].childrenRatePercentApplied).toBeNull() // ningún niño con plaza
+  })
+
+  it('niño libre (edad 3, ≤ maxFreeAge pero NO bebé): tampoco recibe la regla — sigue gratis', async () => {
+    const { orm, tables } = dbWithOccupancyRates()
+    const res = await createPublicBookingDirect(
+      orm, { ...ONE_NIGHT, roomType: 'double', adults: 1, childrenAges: [3] },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(100)
+  })
+
+  it('mezcla: 1 adulto + 1 bebé (gratis) + 1 niño con plaza (50%) → solo el que paga se descuenta', async () => {
+    const { orm, tables } = dbWithOccupancyRates()
+    const res = await createPublicBookingDirect(
+      orm, { ...ONE_NIGHT, roomType: 'double', adults: 1, childrenAges: [1, 8] },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) },
+    )
+    expect(res.status).toBe(201)
+    // adultsTotal=100 (occupancy=1, el bebé no cuenta para ocupación de precio) + 1 niño×50% de 100 = 150.
+    expect(tables.Reservations[0].totalAmount).toBe(150)
+  })
+
+  it('caller legacy (contador `children` plano, sin edades): la regla NO aplica — no hay forma de saber la edad real', async () => {
+    const { orm, tables } = dbWithOccupancyRates()
+    const res = await createPublicBookingDirect(
+      orm, { ...ONE_NIGHT, roomType: 'double', adults: 1, children: 1 },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(200) // fila de ocupación=2 plana, sin split
+  })
+
+  it('el resumen (totalBreakdown) usa el MISMO importe que queda persistido en la reserva', async () => {
+    const { orm, tables } = dbWithOccupancyRates()
+    const res = await createPublicBookingDirect(
+      orm, { ...ONE_NIGHT, roomType: 'double', adults: 1, childrenAges: [8] },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) },
+    )
+    expect(res.status).toBe(201)
+    expect(res.body.totalBreakdown.total).toBe(tables.Reservations[0].totalAmount)
+    expect(res.body.totalBreakdown.total).toBe(150)
+  })
+
+  it('un % fuera de [1,100] guardado en config (dato corrupto) se clampea, nunca rompe la reserva', async () => {
+    const { orm, tables } = dbWithOccupancyRates()
+    const res = await createPublicBookingDirect(
+      orm, { ...ONE_NIGHT, roomType: 'double', adults: 1, childrenAges: [8] },
+      undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo({ ...policyOn(500) }) },
+    )
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(200) // clampeado a 100%
+    expect(tables.Reservations[0].childrenRatePercentApplied).toBe(100)
+  })
+})

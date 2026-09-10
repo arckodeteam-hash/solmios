@@ -603,12 +603,69 @@
                 <input v-model.number="childPolicy.maxFreeAge" type="number" min="0" max="17" class="w-full px-3 py-2 rounded-full border text-sm font-bold text-navy text-right" :class="childPolicyError ? 'border-danger' : 'border-border'">
               </div>
             </div>
+            <!-- Tarea 21 (Identificar bebés, 2026-09-08) — subconjunto de "sin consumir plaza": el
+                 huésped y Administración ven "Bebé" en vez de "Niño" hasta esta edad. -->
+            <div>
+              <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Edad máxima considerada bebé</label>
+              <input v-model.number="childPolicy.maxBabyAge" type="number" min="0" :max="childPolicy.maxFreeAge" class="w-full px-3 py-2 rounded-full border text-sm font-bold text-navy text-right" :class="childPolicyError ? 'border-danger' : 'border-border'">
+            </div>
             <p v-if="childPolicyError" class="text-[10px] font-bold text-danger">{{ childPolicyError }}</p>
             <p class="text-[11px] text-text-muted leading-relaxed bg-surface rounded-xl p-3">
-              Con estos valores: 0–{{ childPolicy.maxFreeAge }} años no consume plaza (no genera cargo de alojamiento) ·
+              Con estos valores: 0–{{ childPolicy.maxBabyAge }} años se considera BEBÉ (no consume plaza, no genera cargo) ·
+              {{ childPolicy.maxBabyAge + 1 }}–{{ childPolicy.maxFreeAge }} años no consume plaza (no genera cargo de alojamiento) ·
               {{ childPolicy.maxFreeAge + 1 }}–{{ childPolicy.maxChildAge }} años consume plaza y se cobra como un ocupante más ·
               mayor de {{ childPolicy.maxChildAge }} años se trata como adulto.
             </p>
+
+            <!-- Tarea "Cobro % niños" (2026-09-09) — solo afecta a quien YA consume plaza (el
+                 rango de arriba); bebés y niños libres nunca reciben esta regla. -->
+            <div class="pt-2 border-t border-border">
+              <div class="flex items-center justify-between p-3 bg-surface rounded-xl">
+                <div>
+                  <div class="text-sm font-bold text-navy">Cobro reducido para niños</div>
+                  <div class="text-[10px] text-text-muted">
+                    Si está prendido, cada niño que consume plaza paga un % del valor de un adulto, en vez del precio completo de ocupante
+                  </div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0 ml-3">
+                  <input v-model="childPolicy.childrenDiscountEnabled" type="checkbox" class="sr-only peer">
+                  <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal"></div>
+                </label>
+              </div>
+
+              <div v-if="childPolicy.childrenDiscountEnabled" class="mt-3">
+                <label class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Porcentaje de tarifa para niños</label>
+                <div class="flex items-center gap-2">
+                  <input v-model.number="childPolicy.childrenRatePercent" type="number" min="1" max="100"
+                    class="w-24 px-3 py-2 rounded-full border text-sm font-bold text-navy text-right"
+                    :class="childPolicyError ? 'border-danger' : 'border-border'">
+                  <span class="text-sm font-bold text-text-muted">%</span>
+                </div>
+                <p class="text-[11px] text-text-muted leading-relaxed bg-surface rounded-xl p-3 mt-2">
+                  Ejemplo: si el valor de un adulto en la reserva es $100 y configurás {{ childPolicy.childrenRatePercent || 0 }}%,
+                  cada niño con plaza paga ${{ childPolicy.childrenRatePercent || 0 }}.
+                  No aplica a bebés ni a niños que no consumen plaza — esos siguen las reglas de arriba.
+                </p>
+              </div>
+            </div>
+
+            <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — reemplaza el checklist de
+                 "amenidades para bebé" por un único toggle: ¿el hotel ofrece cuna? Sin esto, el
+                 composer público ni pregunta "¿Necesita cuna?" aunque la reserva tenga un bebé. -->
+            <div class="pt-2 border-t border-border">
+              <div class="flex items-center justify-between p-3 bg-surface rounded-xl">
+                <div>
+                  <div class="text-sm font-bold text-navy">Ofrece cuna para bebés</div>
+                  <div class="text-[10px] text-text-muted">
+                    Si está prendido, el motor público pregunta "¿Necesita cuna?" (Sí/No) cuando la reserva tiene un bebé
+                  </div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0 ml-3">
+                  <input v-model="childPolicy.cribAvailable" type="checkbox" class="sr-only peer">
+                  <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal"></div>
+                </label>
+              </div>
+            </div>
           </template>
         </div>
       </div>
@@ -1120,29 +1177,58 @@ async function saveFiscalConfig() {
 // configuration('child_policy'), mismo patrón que automation_config/electronic_invoicing.
 // Consumida por el motor público (backend `resolveChildPolicy`) y por el wizard `/book/:slug`
 // (`childPolicy` de `GET /public/hotel/:slug`) para decidir si ofrece el stepper de niños.
-const childPolicy = reactive({ acceptChildren: true, maxChildAge: 17, maxFreeAge: 0 })
+// Tarea 21 (Identificar bebés, 2026-09-08) — `maxBabyAge` es un SUBCONJUNTO de "no consume
+// plaza": 0 ≤ maxBabyAge ≤ maxFreeAge (ver backend/src/shared/usecases/child-composition.ts).
+// Tarea "Cobro % niños" (2026-09-09) — `childrenDiscountEnabled`+`childrenRatePercent` (1-100,
+// NUNCA hardcodeado a 50): cada niño que consume plaza paga ese % del "valor de un adulto" en vez
+// del precio completo de ocupante, SOLO si el hotel lo habilita.
+// Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — `cribAvailable` reemplaza el checklist
+// de "amenidades para bebé" (isChildAmenity sobre upsells) por un único toggle a nivel hotel.
+const childPolicy = reactive({
+  acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
+  childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+})
 const childPolicySaving = ref(false)
 async function loadChildPolicy() {
   try {
-    const c = await ConfigService.get('child_policy') as { acceptChildren?: boolean; maxChildAge?: number; maxFreeAge?: number } | null
+    const c = await ConfigService.get('child_policy') as {
+      acceptChildren?: boolean; maxChildAge?: number; maxFreeAge?: number; maxBabyAge?: number
+      childrenDiscountEnabled?: boolean; childrenRatePercent?: number; cribAvailable?: boolean
+    } | null
     if (c) {
       childPolicy.acceptChildren = c.acceptChildren !== false
       childPolicy.maxChildAge = Number.isFinite(c.maxChildAge) ? Number(c.maxChildAge) : 17
       childPolicy.maxFreeAge = Number.isFinite(c.maxFreeAge) ? Number(c.maxFreeAge) : 0
+      childPolicy.maxBabyAge = Number.isFinite(c.maxBabyAge) ? Number(c.maxBabyAge) : 0
+      childPolicy.childrenDiscountEnabled = c.childrenDiscountEnabled === true
+      childPolicy.childrenRatePercent = Number.isFinite(c.childrenRatePercent) ? Number(c.childrenRatePercent) : 50
+      childPolicy.cribAvailable = c.cribAvailable === true
     }
-  } catch { /* default: acepta niños, sin plaza gratis hasta 0 años */ }
+  } catch { /* default: acepta niños, sin plaza gratis hasta 0 años, nadie es "bebé", sin descuento ni cuna */ }
 }
 // "La edad máxima sin consumir plaza no puede ser superior a la edad máxima considerada niño."
-const childPolicyError = computed(() => (
-  childPolicy.maxFreeAge > childPolicy.maxChildAge
-    ? 'La edad sin consumir plaza no puede ser mayor que la edad máxima de niño'
-    : ''
-))
+// Tarea 21 — mismo criterio para maxBabyAge, pero contra maxFreeAge (del cual es subconjunto).
+// Tarea "Cobro % niños" — el % solo se valida mientras la regla está prendida (apagada, cualquier
+// valor guardado antes queda inerte, no hace falta bloquear el guardado por él).
+const childPolicyError = computed(() => {
+  if (childPolicy.maxFreeAge > childPolicy.maxChildAge) return 'La edad sin consumir plaza no puede ser mayor que la edad máxima de niño'
+  if (childPolicy.maxBabyAge > childPolicy.maxFreeAge) return 'La edad máxima de bebé no puede ser mayor que la edad sin consumir plaza'
+  if (childPolicy.childrenDiscountEnabled) {
+    const pct = childPolicy.childrenRatePercent
+    if (!Number.isFinite(pct) || pct < 1 || pct > 100) return 'El porcentaje de tarifa para niños debe estar entre 1% y 100%'
+  }
+  return ''
+})
 async function saveChildPolicy() {
   if (childPolicyError.value) { toast.error(childPolicyError.value); return }
   childPolicySaving.value = true
   try {
-    await ConfigService.set('child_policy', { acceptChildren: childPolicy.acceptChildren, maxChildAge: childPolicy.maxChildAge, maxFreeAge: childPolicy.maxFreeAge })
+    await ConfigService.set('child_policy', {
+      acceptChildren: childPolicy.acceptChildren, maxChildAge: childPolicy.maxChildAge,
+      maxFreeAge: childPolicy.maxFreeAge, maxBabyAge: childPolicy.maxBabyAge,
+      childrenDiscountEnabled: childPolicy.childrenDiscountEnabled, childrenRatePercent: childPolicy.childrenRatePercent,
+      cribAvailable: childPolicy.cribAvailable,
+    })
     await nextTick()
     markClean()
     toast.success('Política de niños guardada')

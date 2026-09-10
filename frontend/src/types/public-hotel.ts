@@ -9,6 +9,8 @@
 // hotelero, sin token interno). Re-exportados desde `@/types` para que el resto del frontend
 // siga importando de un solo lugar.
 
+import type { ChildPolicy } from '@/utils/child-composition'
+
 // ─── PublicHotelInfo ───────────────────────────────────
 // Espejo EXACTO de backend/src/modules/bookingengine/types.ts PublicHotelInfoDTO.
 // NUNCA debe contener: taxId, ownerName, ownerTaxId, deviceEmail, wifiNetwork, wifiPassword,
@@ -66,8 +68,10 @@ export interface PublicHotelInfo {
   widgetAccentPreset?: string | null
   /** Política de niños del hotel (feature adultos+niños+edades, 2026-09-02). Opcional en el tipo
    *  por si un backend viejo/caché todavía no la manda — el widget cae a "acepta, nadie gratis"
-   *  (mismo default que `DEFAULT_CHILD_POLICY` del backend). */
-  childPolicy?: { acceptChildren: boolean; maxChildAge: number; maxFreeAge: number }
+   *  (mismo default que `DEFAULT_CHILD_POLICY` del backend). Tipo importado (no retipeado a mano):
+   *  esta línea ya se quedó afuera de sincro dos veces (Tarea 21 `maxBabyAge`, Tarea "Cobro 50%
+   *  niños" `childrenPayHalfRate`) por ser una copia literal en vez de una referencia al tipo real. */
+  childPolicy?: ChildPolicy
 }
 
 // ─── Media (GET /api/public/hotels/:slug/media) ────────
