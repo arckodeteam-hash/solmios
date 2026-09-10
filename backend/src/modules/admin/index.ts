@@ -1,6 +1,7 @@
 import { createModule, OrmRepository } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import { estadoMetaApp, guardarMetaApp } from '../../infrastructure/meta-app-config'
+import { estadoResend, guardarResend, borrarResend } from '../../infrastructure/resend-config'
 import { MetaAppConfigSchema } from './validators/meta-app-schema'
 import type { PlanDTO, AmenityCatalogDTO } from './types'
 import { AdminService } from './service'
@@ -104,6 +105,12 @@ export function AdminModule() {
         const body = validateSchema(MetaAppConfigSchema, req.body || {}) as any
         return { status: 200, body: await guardarMetaApp(configRepo, body) }
       })
+
+      // API key de Resend (plataforma): respaldo de correo cuando no hay SMTP. El GET devuelve
+      // solo estado + últimos 4; la key nunca vuelve al navegador. Vacía en el PUT → 400.
+      router.get('/api/admin/settings/resend', sa, async () => ({ status: 200, body: await estadoResend(configRepo) }))
+      router.put('/api/admin/settings/resend', sa, async (req: any) => ({ status: 200, body: await guardarResend(configRepo, String(req.body?.apiKey ?? '')) }))
+      router.delete('/api/admin/settings/resend', sa, async () => ({ status: 200, body: await borrarResend(configRepo) }))
 
       router.get('/api/admin/hoteles', sa, () => controller.listHotels())
       // ── SMTP-UI (2026-08-19): test REAL de la config de correo de la plataforma ──
