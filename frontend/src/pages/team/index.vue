@@ -278,7 +278,7 @@ const auth = useAuthStore()
 const toast = useToast()
 // Política de contraseñas del admin (REQ-CFG-05): se muestra, se chequea antes de enviar
 // y la clave auto-generada la cumple.
-const { policy: passwordPolicy, hint: passwordHint, check: checkPolicy } = usePasswordPolicy()
+const { policy: passwordPolicy, hint: passwordHint, check: checkPolicy, loaded: policyLoaded, ready: policyReady } = usePasswordPolicy()
 
 const currentUser = computed(() => auth.user?.id || '')
 const members = ref<TeamMember[]>([])
@@ -459,8 +459,11 @@ const inviteForm = ref<{ name: string; email: string; role: string; password: st
 })
 const inviting = ref(false)
 
-function openInvite() {
-  inviteForm.value = { name: '', email: '', role: 'receptionist', password: generateCompliantPassword(passwordPolicy.value) }
+async function openInvite() {
+  // La clave auto-generada tiene que cumplir la política REAL, no el default de antes del fetch.
+  if (!policyLoaded.value) await policyReady
+  const pwd = generateCompliantPassword(passwordPolicy.value)
+  inviteForm.value = { name: '', email: '', role: 'receptionist', password: pwd }
   inviteModal.value = true
 }
 

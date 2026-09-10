@@ -81,13 +81,13 @@ export function describePasswordPolicy(p: PasswordPolicy, floor = 0): string {
 
 /** Primer motivo por el que la clave viola la política, o null si cumple. Mismos mensajes que el backend. */
 export function checkPasswordPolicy(pwd: string, p: PasswordPolicy, floor = 0): string | null {
-  const password = String(pwd ?? '')
+  const value = String(pwd ?? '')
   const min = Math.max(p.minLength, floor)
-  if (password.length < min) return `La contraseña debe tener al menos ${min} caracteres`
-  if (password.length > PASSWORD_MAX) return `La contraseña no puede superar los ${PASSWORD_MAX} caracteres`
-  if (p.requireUppercase && !UPPER_RE.test(password)) return 'La contraseña debe tener al menos una mayúscula'
-  if (p.requireNumbers && !DIGIT_RE.test(password)) return 'La contraseña debe tener al menos un número'
-  if (p.requireSpecial && !SPECIAL_RE.test(password)) return 'La contraseña debe tener al menos un carácter especial'
+  if (value.length < min) return `La contraseña debe tener al menos ${min} caracteres`
+  if (value.length > PASSWORD_MAX) return `La contraseña no puede superar los ${PASSWORD_MAX} caracteres`
+  if (p.requireUppercase && !UPPER_RE.test(value)) return 'La contraseña debe tener al menos una mayúscula'
+  if (p.requireNumbers && !DIGIT_RE.test(value)) return 'La contraseña debe tener al menos un número'
+  if (p.requireSpecial && !SPECIAL_RE.test(value)) return 'La contraseña debe tener al menos un carácter especial'
   return null
 }
 
@@ -126,14 +126,21 @@ export function generateCompliantPassword(p: PasswordPolicy, len = Math.max(8, p
 export function usePasswordPolicy(floor = 0) {
   const policy = ref<PasswordPolicy>({ ...DEFAULT_PASSWORD_POLICY })
   const loaded = ref(false)
+  // `ready` es para quien arma un formulario en un instante, como los fields de
+  // un modal o una clave auto-generada. Sin esperarlo, un clic antes de que
+  // llegue el fetch usaría el default y el backend rechazaría lo que la pantalla
+  // dio por bueno.
+  let resolveReady: () => void = () => {}
+  const ready = new Promise<void>((resolve) => { resolveReady = resolve })
 
   onMounted(async () => {
     policy.value = await fetchPasswordPolicy()
     loaded.value = true
+    resolveReady()
   })
 
   const hint = computed(() => describePasswordPolicy(policy.value, floor))
   const check = (pwd: string) => checkPasswordPolicy(pwd, policy.value, floor)
 
-  return { policy, loaded, hint, check }
+  return { policy, loaded, ready, hint, check }
 }

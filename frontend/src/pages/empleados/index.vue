@@ -527,7 +527,7 @@ const hotelId = computed(() => (auth.user?.hotelId && auth.user.hotelId !== 'pla
 const canManageStaff = computed(() => auth.canActAsHotelAdmin)
 const toast = useToast()
 // Política de contraseñas del admin (REQ-CFG-05): placeholder y minLength del alta de cuenta.
-const { policy: passwordPolicy, hint: passwordHint } = usePasswordPolicy()
+const { policy: passwordPolicy, hint: passwordHint, loaded: policyLoaded, ready: policyReady } = usePasswordPolicy()
 const activeTab = ref('profiles')
 const loading = ref(true)
 
@@ -713,14 +713,15 @@ const departmentOptions = () => departments.value.map((d) => ({ value: d.id, lab
  * Si el expediente falla tras crear la cuenta, se borra la cuenta para no dejarla huérfana
  * (así el admin puede reintentar sin chocar con "email ya existe").
  */
-function openNewEmployee(prefill?: { name?: string; email?: string }) {
+async function openNewEmployee(prefill?: { name?: string; email?: string }) {
+  // Los fields se fijan al abrir: si la política todavía no llegó, se la espera.
+  if (!policyLoaded.value) await policyReady
   formModal.value = {
     title: 'Nuevo Empleado', submitLabel: 'Registrar Empleado',
     fields: [
       { key: 'name', label: 'Nombre', required: true, maxLength: 80, placeholder: 'María Pérez', default: prefill?.name },
       { key: 'email', label: 'Email', type: 'email', required: true, maxLength: 120, placeholder: 'maria@hotel.com', default: prefill?.email },
       { key: 'phone', label: 'Teléfono', type: 'tel', maxLength: 20, placeholder: '809-555-0000' },
-      // Los fields se arman al abrir el modal, así que ya está la política cargada (REQ-CFG-05).
       { key: 'password', label: 'Contraseña temporal', type: 'password', required: true, minLength: passwordPolicy.value.minLength, maxLength: 72, placeholder: passwordHint.value, hint: passwordHint.value },
       // El puesto lo define el Rol (feedback #169): un solo lugar para la función del empleado.
       { key: 'role', label: 'Rol', type: 'select', required: true, default: 'receptionist', options: roleOptions() },
