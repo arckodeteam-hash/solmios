@@ -41,7 +41,10 @@ export interface UpdateAnunciosDTO {
   priority?: AnnouncementPriority
   active?: number
   date?: string
-  /** undefined conserva el actual; null o '' lo borra. */
+  /**
+   * undefined conserva el actual; '' lo borra. Por HTTP mandá '' y no null: `validateSchema` del
+   * framework descarta los campos en null antes de llegar al service (equivale a no mandarlo).
+   */
   startsAt?: string | null
   endsAt?: string | null
 }

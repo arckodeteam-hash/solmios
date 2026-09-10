@@ -66,6 +66,7 @@ describe('normalizeWindow — validación del par startsAt/endsAt', () => {
     })
   })
 
+  // Por HTTP sólo llega '' (validateSchema descarta null); null cubre a quien llame al usecase directo.
   it("update: null o '' borran el valor actual", () => {
     const current = { startsAt: TOMORROW, endsAt: '2026-09-12T12:00:00.000Z' }
     expect(normalizeWindow({ startsAt: null }, current)).toEqual({

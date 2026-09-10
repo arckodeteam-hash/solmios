@@ -50,6 +50,8 @@ function normalizeDate(field: keyof NormalizedWindow, value: unknown): string | 
  * - create: `current` es undefined; lo que no viene queda null.
  * - update: `current` es la fila actual; un campo ausente (undefined) la conserva, `null`/''
  *   lo borra. Así un PATCH que sólo trae `endsAt` se valida contra el `startsAt` que ya está.
+ *   Ojo: por HTTP el `null` nunca llega — `validateSchema` (kernel/validator.ts:32-38) descarta
+ *   los campos en null antes del service — así que el cliente borra mandando ''.
  *
  * Fecha no parseable o `endsAt <= startsAt` → ValidationError (400).
  */
