@@ -489,6 +489,128 @@ describe('createPublicBookingGroup — childrenAges por línea', () => {
   })
 })
 
+// ─── Tarea "Cobro % niños" (2026-09-09, generalizada desde "Cobro 50% niños"), POR LÍNEA ────────
+describe('createPublicBookingGroup — Tarea "Cobro % niños", POR LÍNEA', () => {
+  function childPolicyRepo(value: unknown) {
+    return { findOne: async (f: any) => (f.key === 'child_policy' ? { hotelId: HOTEL_ID, key: 'child_policy', value } : null) }
+  }
+  const BASE_POLICY = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1 }
+  const POLICY_OFF = { ...BASE_POLICY, childrenDiscountEnabled: false, childrenRatePercent: 50 }
+  const policyOn = (childrenRatePercent: number) => ({ ...BASE_POLICY, childrenDiscountEnabled: true, childrenRatePercent })
+  // BASE_BODY son 2 noches (09-10, 09-11) — $50/noche a ocupación=1 → $100 la estadía;
+  // $90/noche a ocupación=2 → $180 la estadía.
+  function dbWithRates() {
+    return makeDb({
+      rooms: [
+        { id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 999, status: 'available' },
+        { id: 'r-b', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 999, status: 'available' },
+      ],
+      assignments: [
+        { hotelId: HOTEL_ID, date: '2026-09-10', season: 'alta' },
+        { hotelId: HOTEL_ID, date: '2026-09-11', season: 'alta' },
+      ],
+      rates: [
+        { hotelId: HOTEL_ID, roomType: 'familiar', occupancy: 1, season: 'alta', channel: '', price: 50 },
+        { hotelId: HOTEL_ID, roomType: 'familiar', occupancy: 2, season: 'alta', channel: '', price: 90 },
+      ],
+    })
+  }
+
+  it('regla deshabilitada: cada línea sigue cotizando plano por headcount total — CERO regresión', async () => {
+    const { orm, tables } = dbWithRates()
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 1, quantity: 1, childrenAges: [8] }], // 1 adulto + 1 niño con plaza
+    }, undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(POLICY_OFF) } as any)
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(180) // fila de ocupación=2 tal cual, sin split
+    expect(tables.Reservations[0].childrenRatePercentApplied).toBeNull()
+  })
+
+  it('borde 1%: 1 adulto ($100) + 1 niño con plaza al 1% → niño $1, total $101', async () => {
+    const { orm, tables } = dbWithRates()
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 1, quantity: 1, childrenAges: [8] }],
+    }, undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(1)) } as any)
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(101)
+    expect(tables.Reservations[0].childrenRatePercentApplied).toBe(1)
+  })
+
+  it('borde 100%: 1 adulto ($100) + 1 niño con plaza al 100% → paga igual que el adulto, total $200', async () => {
+    const { orm, tables } = dbWithRates()
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 1, quantity: 1, childrenAges: [8] }],
+    }, undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(100)) } as any)
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].totalAmount).toBe(200)
+    expect(tables.Reservations[0].childrenRatePercentApplied).toBe(100)
+  })
+
+  it('50%, dos líneas del mismo grupo con distinta cantidad de adultos: cada una calcula SU propio "valor de adulto"', async () => {
+    const { orm, tables } = dbWithRates()
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [
+        { roomType: 'familiar', adults: 1, quantity: 1, childrenAges: [8] }, // línea A: 1 adulto + 1 niño con plaza
+        { roomType: 'familiar', adults: 2, quantity: 1, childrenAges: [8] }, // línea B: 2 adultos + 1 niño con plaza
+      ],
+    }, undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) } as any)
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(2)
+    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
+    // Línea A: adultsTotal=100 (occ=1), niño = 50% de 100 = 50 → total 150.
+    expect(byRoom['r-a'].totalAmount).toBe(150)
+    // Línea B: adultsTotal=180 (occ=2), "valor de un adulto" = 180/2 = 90, niño = 45 → total 225.
+    expect(byRoom['r-b'].totalAmount).toBe(225)
+    expect(byRoom['r-a'].childrenRatePercentApplied).toBe(50)
+    expect(byRoom['r-b'].childrenRatePercentApplied).toBe(50)
+  })
+
+  it('bebé en una línea no recibe la regla, aunque otra línea del MISMO grupo sí tenga un niño con plaza', async () => {
+    const { orm, tables } = dbWithRates()
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [
+        { roomType: 'familiar', adults: 1, quantity: 1, childrenAges: [1] }, // línea A: solo bebé, sin plaza
+        { roomType: 'familiar', adults: 1, quantity: 1, childrenAges: [8] }, // línea B: niño con plaza
+      ],
+    }, undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) } as any)
+    expect(res.status).toBe(201)
+    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
+    expect(byRoom['r-a'].totalAmount).toBe(100) // solo el adulto (occ=1), el bebé no se cobra
+    expect(byRoom['r-a'].childrenRatePercentApplied).toBeNull()
+    expect(byRoom['r-b'].totalAmount).toBe(150) // 100 + 50% de 100
+    expect(byRoom['r-b'].childrenRatePercentApplied).toBe(50)
+  })
+
+  it('quantity=2 (misma línea expandida a 2 unidades físicas): AMBAS aplican el mismo split de precio', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [
+        { id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 999, status: 'available' },
+        { id: 'r-b', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 999, status: 'available' },
+      ],
+      assignments: [
+        { hotelId: HOTEL_ID, date: '2026-09-10', season: 'alta' },
+        { hotelId: HOTEL_ID, date: '2026-09-11', season: 'alta' },
+      ],
+      rates: [{ hotelId: HOTEL_ID, roomType: 'familiar', occupancy: 1, season: 'alta', channel: '', price: 50 }],
+    })
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 1, quantity: 2, childrenAges: [8] }],
+    }, undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(policyOn(50)) } as any)
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(2)
+    for (const r of tables.Reservations) {
+      expect(r.totalAmount).toBe(150) // 100 + 50% de 100, cada unidad
+      expect(r.childrenRatePercentApplied).toBe(50)
+    }
+  })
+})
+
 // ─── Requerimiento 10 (Varias habitaciones, 2026-09-03) ─────────────────────────────────────
 // Una línea inválida NO puede reservar silenciosamente las demás líneas válidas del mismo
 // pedido: la resolución de TODAS las líneas ocurre ANTES de crear ninguna reserva (el loop de
@@ -671,5 +793,87 @@ describe('createPublicBookingGroup — Requerimiento 5: ocupación efectiva por 
     expect(byRoom['r-a'].totalAmount).toBe(300)
     expect(byRoom['r-b'].adults).toBe(2)
     expect(byRoom['r-b'].totalAmount).toBe(200)
+  })
+})
+
+// ─── Tarea 22 (Cuna y amenidades infantiles, 2026-09-08) ───────────────────────────────────────
+describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a Sí/No), POR LÍNEA', () => {
+  // maxBabyAge=1: edades 0-1 son bebé, 2-3 libre (no bebé), 4-12 con plaza.
+  const BABY_POLICY_CRIB_ON = { hotelId: HOTEL_ID, key: 'child_policy', value: { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, cribAvailable: true } }
+  const BABY_POLICY_CRIB_OFF = { ...BABY_POLICY_CRIB_ON, value: { ...BABY_POLICY_CRIB_ON.value, cribAvailable: false } }
+  function configRepo(row: unknown = BABY_POLICY_CRIB_ON) {
+    return { findOne: async (f: any) => (f.key === 'child_policy' ? row : null) } as any
+  }
+
+  it('solo la línea con bebé recibe cuna — la otra línea del mismo grupo queda en 0 aunque el body se lo pida', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [
+        { id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' },
+        { id: 'r-b', hotelId: HOTEL_ID, type: 'standard', capacity: 6, basePrice: 100, status: 'available' },
+      ],
+    })
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [
+        // Línea A: bebé (edad 1) + pide cuna.
+        { roomType: 'familiar', adults: 2, quantity: 1, childrenAges: [1], needsCrib: true },
+        // Línea B: sin niños, pero el body igual manda needsCrib (cliente manipulado/bug) — se ignora.
+        { roomType: 'standard', adults: 2, quantity: 1, needsCrib: true },
+      ],
+    }, undefined, undefined, undefined, undefined, undefined, { config: configRepo() })
+
+    expect(res.status).toBe(201)
+    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
+    expect(byRoom['r-a'].needsCrib).toBe(true)
+    expect(byRoom['r-a'].cribCount).toBe(1)
+    expect(byRoom['r-b'].needsCrib).toBe(false)
+    expect(byRoom['r-b'].cribCount).toBe(0)
+  })
+
+  it('hotel con cuna DESHABILITADA: ninguna línea recibe cuna, aunque tenga bebé y lo pida', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [{ id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' }],
+    })
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 2, quantity: 1, childrenAges: [1], needsCrib: true }],
+    }, undefined, undefined, undefined, undefined, undefined, { config: configRepo(BABY_POLICY_CRIB_OFF) })
+
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].needsCrib).toBe(false)
+    expect(tables.Reservations[0].cribCount).toBe(0)
+  })
+
+  it('Sí/No únicamente: un cribCount enviado en el body NUNCA se usa — siempre queda en 1, sin importar la cantidad de bebés de la línea', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [{ id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' }],
+    })
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 2, quantity: 1, childrenAges: [0, 1], needsCrib: true, cribCount: 9 }],
+    }, undefined, undefined, undefined, undefined, undefined, { config: configRepo() })
+
+    expect(res.status).toBe(201)
+    expect(tables.Reservations[0].cribCount).toBe(1)
+  })
+
+  it('quantity>1: cada unidad física de la línea recibe la MISMA solicitud de cuna', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [
+        { id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' },
+        { id: 'r-b', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' },
+      ],
+    })
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 2, quantity: 2, childrenAges: [1], needsCrib: true }],
+    }, undefined, undefined, undefined, undefined, undefined, { config: configRepo() })
+
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(2)
+    for (const r of tables.Reservations) {
+      expect(r.needsCrib).toBe(true)
+      expect(r.cribCount).toBe(1)
+    }
   })
 })

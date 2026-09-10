@@ -528,6 +528,16 @@ function payMethodLabel(p?: string | null): string {
   const m: Record<string, string> = { transfer: 'Transferencia', card: 'Tarjeta', cash: 'Efectivo', link: 'Link de pago', deposit: 'Depósito' }
   return m[p || ''] || (p || 'No especificado')
 }
+// Tarea 21 (Identificar bebés, 2026-09-08) — `childrenAgesDetail[].classification` del backend
+// (shared/usecases/child-composition.ts) suma un cuarto balde ('baby') a los tres que ya había
+// (free/paying/adult). Se saca a función aparte porque el ternario anidado de 3 ramas ya era el
+// límite de lo legible en el template; una rama más ahí adentro hubiera sido ilegible.
+function childClassificationLabel(c: string): string {
+  const m: Record<string, string> = {
+    baby: 'bebé, no consume plaza', free: 'no consume plaza', paying: 'consume plaza', adult: 'cuenta como adulto por edad',
+  }
+  return m[c] || c
+}
 // ── Historial de cobros (2026-08-30, pedido del cliente) ────────────────────
 // La tarjeta mostraba un total "Pagado" y recepción no podía responder "¿por dónde pagó?".
 // El backend lo arma en `shared/usecases/reservation-payment-history.ts`, desde la MISMA
@@ -1034,8 +1044,15 @@ function irAFacturacion() {
                          adulto" por CUÁL edad puntual, para que el panel nunca muestre 0 niños +
                          edades sin explicar por qué. -->
                     <div v-if="d.childrenAgesDetail?.length" class="mt-0.5 space-y-0.5">
-                      <span v-for="(c, i) in d.childrenAgesDetail" :key="i" class="block text-[11px] font-normal" :class="c.classification === 'adult' ? 'text-amber-700' : 'text-text-muted'">{{ c.declaredAge }} año(s) declarado(s)<template v-if="c.effectiveAge !== c.declaredAge"> (hoy {{ c.effectiveAge }}, reagendada)</template> — {{ c.classification === 'free' ? 'no consume plaza' : c.classification === 'paying' ? 'consume plaza' : 'cuenta como adulto por edad' }}</span>
+                      <span v-for="(c, i) in d.childrenAgesDetail" :key="i" class="block text-[11px] font-normal" :class="c.classification === 'adult' ? 'text-amber-700' : c.classification === 'baby' ? 'text-cyan-700' : 'text-text-muted'">{{ c.declaredAge }} año(s) declarado(s)<template v-if="c.effectiveAge !== c.declaredAge"> (hoy {{ c.effectiveAge }}, reagendada)</template> — {{ childClassificationLabel(c.classification) }}</span>
                     </div>
+                  </div>
+                  <!-- Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — lo que el
+                       huésped pidió al reservar online (solo aparece si pidió cuna; nada nuevo
+                       para reservas cargadas a mano en el panel, que no tienen este composer). -->
+                  <div v-if="d.needsCrib" class="col-span-2">
+                    <span class="text-text-muted">Bebé:</span>
+                    <span class="font-bold" data-testid="reservation-crib">Cuna</span>
                   </div>
                   <div><span class="text-text-muted">Noches:</span> <span class="font-bold">{{ nights }}</span></div>
                   <div><span class="text-text-muted">Precio/noche:</span> <span class="font-bold">{{ money(pricePerNight) }}</span></div>

@@ -190,6 +190,12 @@ export interface CartLine {
    *  paridad wizard/landing, 2026-09-04). */
   adults?: number
   childrenAges?: number[]
+  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — asociada a ESTA
+   *  línea/habitación, igual criterio que `childrenAges` (a diferencia de `selectedUpsells`, que
+   *  es global al carrito). `undefined`/`false` en líneas sin bebé o del flujo legacy.
+   *  `cribCount` es siempre 1 cuando `needsCrib` es true — no existe cantidad configurable. */
+  needsCrib?: boolean
+  cribCount?: number
   /** Precio de UNA unidad a esta ocupación, la estadía completa (no por noche). */
   unitPrice: number
   unitTaxBreakdown: RoomTypeTaxItem[]
@@ -254,10 +260,18 @@ export const useBookingStore = defineStore('booking-widget', () => {
    *  pero niños de edades distintas no deben mezclarse en una sola línea "×2" (el huésped
    *  espera ver cada habitación con SUS edades). Misma composición exacta (mismos adultos,
    *  mismas edades) sí se agrupa — mismo criterio de "identidad = misma línea" que ya usa el
-   *  formato legacy para ocupación repetida. */
-  function cartLineKeyForComposition(roomType: string, adults: number, childrenAges: number[]): string {
+   *  formato legacy para ocupación repetida.
+   *
+   *  Tarea 22 (Cuna, 2026-09-08) — la cuna entra en la key por el MISMO motivo: dos habitaciones
+   *  con la misma composición pero UNA pide cuna y la otra no son pedidos DISTINTOS ("asociar la
+   *  solicitud a la habitación correspondiente"). Sin esto, agregar la segunda solo incrementaría
+   *  `quantity` de la primera línea y la cuna de la primera "contagiaría" a la segunda en
+   *  silencio. */
+  function cartLineKeyForComposition(
+    roomType: string, adults: number, childrenAges: number[], needsCrib = false,
+  ): string {
     const sortedAges = [...childrenAges].sort((a, b) => a - b).join('.')
-    return `${roomType}|a${adults}|c${sortedAges}`
+    return `${roomType}|a${adults}|c${sortedAges}|crib${needsCrib ? 1 : 0}`
   }
 
   // ─── Upsells (step 2) ─────────────────────────────────────────────────────────
@@ -266,11 +280,15 @@ export const useBookingStore = defineStore('booking-widget', () => {
   const selectedUpsells = ref<SelectedUpsell[]>([])
 
   // ─── Regímenes de alimentación (step 1, tasks.md 2.2/2.4) ──────────────────────
-  // A diferencia de `upsells` (se cargan recién al agregar la primera línea al carrito),
-  // los regímenes se muestran DESDE que aparece la lista de habitaciones (RoomsStep) —
+  // Los regímenes se muestran DESDE que aparece la lista de habitaciones (RoomsStep) —
   // se cargan junto con `search()`. Solo informativo esta fase: "Solo alojamiento" es la
   // base implícita (no viene del backend); `priceMode:'per_person_per_night'` se muestra
   // con precio pero NO es seleccionable todavía (ver alcance en el plan aprobado).
+  //
+  // `upsells` también se precarga junto con `search()` (igual que mealPlans, ver mismo
+  // motivo abajo): un composer que necesite mostrar el catálogo de extras ANTES de
+  // "Agregar esta habitación" (no recién al llegar a UpsellsStep) puede confiar en que ya
+  // está disponible, sin ida y vuelta adicional al backend en ese momento.
   const mealPlans = ref<PublicMealPlan[]>([])
   const mealPlansLoading = ref(false)
 
@@ -529,8 +547,18 @@ export const useBookingStore = defineStore('booking-widget', () => {
       }
     }
     const mealPlansPromise = needsMealPlans ? fetchMealPlansSafe() : Promise.resolve(mealPlans.value)
+    const needsUpsells = upsells.value.length === 0
+    if (needsUpsells) upsellsLoading.value = true
+    const fetchUpsellsSafe = async (): Promise<Upsell[]> => {
+      try {
+        return await BookingService.getUpsells(slug.value)
+      } catch {
+        return []
+      }
+    }
+    const upsellsPromise = needsUpsells ? fetchUpsellsSafe() : Promise.resolve(upsells.value)
     try {
-      const [res, mp] = await Promise.all([
+      const [res, mp, ups] = await Promise.all([
         BookingService.getRates(slug.value, {
           checkIn: checkIn.value,
           checkOut: checkOut.value,
@@ -540,9 +568,11 @@ export const useBookingStore = defineStore('booking-widget', () => {
           ...(currencyPreference.value ? { currency: currencyPreference.value } : {}),
         }),
         mealPlansPromise,
+        upsellsPromise,
       ])
       ratesResponse.value = res
       if (needsMealPlans) mealPlans.value = mp
+      if (needsUpsells) upsells.value = ups
       // Llenamos el switcher de monedas: la del cobro (base del hotel) + la última display
       // elegada + un puñado de monedas comunes para turistas. Dedupe + orden estable.
       availableCurrencies.value = buildCurrencyOptions(res.chargeCurrency, res.currency, currencyPreference.value)
@@ -557,6 +587,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     } finally {
       ratesLoading.value = false
       mealPlansLoading.value = false
+      upsellsLoading.value = false
     }
   }
 
@@ -631,7 +662,11 @@ export const useBookingStore = defineStore('booking-widget', () => {
    */
   async function addToCart(
     room: RoomTypeRate,
-    occupancy?: number | { adults: number; childrenAges: number[] },
+    occupancy?: number | {
+      adults: number; childrenAges: number[]
+      // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No).
+      needsCrib?: boolean; cribCount?: number
+    },
   ): Promise<void> {
     const isComposition = typeof occupancy === 'object' && occupancy !== null
     const composition = isComposition
@@ -646,14 +681,32 @@ export const useBookingStore = defineStore('booking-widget', () => {
     // esto cubre un estado viejo: deep-link, fechas cambiadas sin refrescar la matriz).
     if (row && !row.available) return
 
-    const unitPrice = row?.price ?? room.fromPrice
-    const unitTaxBreakdown = row?.taxBreakdown ?? room.taxBreakdown
+    let unitPrice = row?.price ?? room.fromPrice
+    let unitTaxBreakdown = row?.taxBreakdown ?? room.taxBreakdown
+    // Tarea "Cobro % niños" (2026-09-09) — el precio que SE MUESTRA en la tarjeta al componer
+    // (`useGuestComposer.composedPrice`, MISMA fórmula) tiene que ser el que queda en el carrito:
+    // sin esto, `roomsSubtotal`/el resumen/el pago seguían leyendo la fila plana de
+    // `chargeableOccupancy` (la tarifa SIN descontar), aunque el composer ya mostraba el precio
+    // correcto — el huésped vería un número al elegir y otro distinto al pagar. El impuesto se
+    // reescala PROPORCIONALMENTE (mismo mecanismo que `taxOnBase` usa para promo): la fila
+    // original trae el impuesto calculado sobre el precio plano, no sobre el descontado.
+    if (isComposition && childPolicy.value.childrenDiscountEnabled && composition!.payingChildren > 0) {
+      const adultsRow = room.occupancies?.find((o) => o.occupancy === composition!.effectiveAdults)
+      if (adultsRow) {
+        const perAdult = adultsRow.price / Math.max(1, composition!.effectiveAdults)
+        const pct = Math.min(100, Math.max(1, childPolicy.value.childrenRatePercent)) / 100
+        const discounted = round2(adultsRow.price + composition!.payingChildren * pct * perAdult)
+        const ratio = unitPrice > 0 ? discounted / unitPrice : 1
+        unitPrice = discounted
+        unitTaxBreakdown = unitTaxBreakdown.map((t) => ({ ...t, amount: round2(t.amount * ratio) }))
+      }
+    }
     // Sin fila de ocupación explícita (fallback sin matriz): la ocupación real sigue siendo la
     // buscada (`physicalGuests` = adultos + niños), no un default fijo — si no, una búsqueda
     // "2 adultos, 2 niños" terminaría grabando la reserva para 1 sola persona.
     const effectiveOccupancy = occ ?? physicalGuests.value
     const key = isComposition
-      ? cartLineKeyForComposition(room.id, occupancy.adults, occupancy.childrenAges)
+      ? cartLineKeyForComposition(room.id, occupancy.adults, occupancy.childrenAges, occupancy.needsCrib)
       : cartLineKey(room.id, effectiveOccupancy)
     const cap = Math.max(1, room.availableCount)
     const existing = cart.value.find((l) => l.key === key)
@@ -664,6 +717,10 @@ export const useBookingStore = defineStore('booking-widget', () => {
         key, roomType: room.id, roomName: room.name, occupancy: effectiveOccupancy, quantity: 1,
         unitPrice, unitTaxBreakdown, maxAvailable: cap, photoUrl: room.photoUrl ?? null,
         ...(isComposition ? { adults: occupancy.adults, childrenAges: [...occupancy.childrenAges] } : {}),
+        // Tarea 22 — solo en líneas con composición; el flujo legacy (ocupación plana) no tiene
+        // edades, así que tampoco puede tener bebé. Sí/No únicamente: cribCount siempre 1 cuando
+        // needsCrib es true.
+        ...(isComposition && occupancy.needsCrib ? { needsCrib: true, cribCount: 1 } : {}),
       })
     }
 
@@ -865,6 +922,10 @@ export const useBookingStore = defineStore('booking-widget', () => {
           ...(hasComposition
             ? (line.childrenAges!.length > 0 ? { childrenAges: line.childrenAges } : {})
             : (children.value > 0 ? { children: children.value } : {})),
+          // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — el backend re-gatea
+          // contra la composición real (nunca confía en esto), pero de este lado ya viene limpio:
+          // el composer solo lo setea cuando la línea tiene un bebé (ver useGuestComposer.ts).
+          ...(line.needsCrib ? { needsCrib: true, cribCount: 1 } : {}),
           guest: guestPayload,
           ...promoPayload,
           ...upsellsPayload,
@@ -886,6 +947,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
             adults: l.adults !== undefined ? l.adults : l.occupancy,
             quantity: l.quantity,
             ...(l.childrenAges && l.childrenAges.length > 0 ? { childrenAges: l.childrenAges } : {}),
+            // Tarea 22 — POR LÍNEA, no global al carrito (a diferencia de `upsellsPayload`).
+            ...(l.needsCrib ? { needsCrib: true, cribCount: 1 } : {}),
           })),
           guest: guestPayload,
           ...promoPayload,

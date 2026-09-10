@@ -298,7 +298,7 @@ describe('BookingModal', () => {
   it('toggleUpsell "por persona": ocupación física del carrito, sin duplicar al niño con plaza', async () => {
     await open(FROM_HERO)
     const store = useBookingStore()
-    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 }
+    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
     // 2 adultos + niño de 8 (con plaza, ya en occupancy=3) + otra línea con 1 niño de 2 (libre).
     await store.addToCart(ratesResponse().roomTypes[0]!, { adults: 2, childrenAges: [8] })
     await store.addToCart(ratesResponse().roomTypes[1]!, { adults: 1, childrenAges: [2] })

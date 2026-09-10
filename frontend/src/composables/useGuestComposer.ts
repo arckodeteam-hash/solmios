@@ -9,10 +9,29 @@
 // componentes comparten `childPolicy`/`nights`/`cart` sin necesidad de pasarlos por parámetro.
 import { computed, reactive } from 'vue'
 import { useBookingStore } from './useBooking'
-import { resolveChildComposition, fitsRoomCapacity } from '@/utils/child-composition'
+import { resolveChildComposition, fitsRoomCapacity, classifyAge, type ChildAgeClassification } from '@/utils/child-composition'
 import type { RoomOccupancyRate, RoomTypeRate } from '@/types/booking'
 
-interface ComposerState { adults: number; ages: number[] }
+/** Mismo criterio que el `round2` local de `useBooking.ts` (no exportado desde ahí) — evita un
+ *  import cruzado solo por esto. Espejo de `shared/utils/money.ts` del backend. */
+function round2(n: number): number {
+  if (!Number.isFinite(n)) return 0
+  return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+interface ComposerState {
+  adults: number
+  ages: number[]
+  // Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — por TARJETA, igual que adults/ages:
+  // cada habitación pide su propia cuna para SU bebé, no la del carrito entero. Sí/No únicamente
+  // (el pedido de corrección es explícito: "no preguntar si desea una, dos o más cunas") — no
+  // existe una cantidad en el estado, `addComposedRoom` la deriva SIEMPRE en 1/0 al enviar.
+  needsCrib: boolean
+}
+
+function freshComposerState(): ComposerState {
+  return { adults: 1, ages: [], needsCrib: false }
+}
 
 export function useGuestComposer() {
   const store = useBookingStore()
@@ -27,7 +46,7 @@ export function useGuestComposer() {
 
   /** Estado del composer de una tarjeta — se crea con 1 adulto / 0 niños la primera vez que se lee. */
   function composer(rt: RoomTypeRate): ComposerState {
-    if (!composerState[rt.id]) composerState[rt.id] = { adults: 1, ages: [] }
+    if (!composerState[rt.id]) composerState[rt.id] = freshComposerState()
     return composerState[rt.id]!
   }
 
@@ -42,17 +61,56 @@ export function useGuestComposer() {
     const n = Math.max(0, Math.floor(count))
     if (n > c.ages.length) c.ages.push(...Array(n - c.ages.length).fill(0))
     else c.ages.length = n
+    syncCribToBabies(rt)
   }
 
   function setChildAge(rt: RoomTypeRate, index: number, age: number): void {
     const c = composer(rt)
     if (index >= 0 && index < c.ages.length) c.ages[index] = age
+    syncCribToBabies(rt)
+  }
+
+  /** Tarea 21 — cuántos bebés hay AHORA MISMO en esta composición (subconjunto de "sin plaza"). */
+  function babiesCount(rt: RoomTypeRate): number {
+    return composition(rt).babies
+  }
+
+  /** Tarea 22 — si el último cambio de edad/cantidad de niños dejó la composición sin bebés, la
+   *  cuna queda "pedida" para algo que ya no corresponde: se limpia sola, en vez de depender solo
+   *  del gateo silencioso al enviar (defensa en profundidad, mismo criterio que el backend). */
+  function syncCribToBabies(rt: RoomTypeRate): void {
+    const c = composer(rt)
+    if (babiesCount(rt) === 0) c.needsCrib = false
+  }
+
+  /** Tarea 21 (Identificar bebés, 2026-09-08) — clasificación EN VIVO de un niño puntual, con la
+   *  misma política del hotel y la misma regla (`classifyAge`) que resuelve la composición
+   *  agregada. Lo usa el composer para mostrar "Bebé" junto al selector de edad apenas se elige,
+   *  sin esperar a agregar la habitación al carrito. */
+  function childAgeClassification(rt: RoomTypeRate, index: number): ChildAgeClassification | null {
+    const c = composer(rt)
+    if (index < 0 || index >= c.ages.length) return null
+    return classifyAge(c.ages[index]!, store.childPolicy)
   }
 
   /** Composición resuelta contra la política del hotel — mismo cálculo que hace el backend al
    *  crear la reserva (utils/child-composition.ts, espejo de shared/usecases/child-composition.ts). */
   function composition(rt: RoomTypeRate) {
     return resolveChildComposition(composer(rt).adults, composer(rt).ages, store.childPolicy)
+  }
+
+  /** Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — ¿corresponde ofrecer "¿Necesita
+   *  cuna?" para ESTA tarjeta ahora mismo? Sí solo si hay al menos un bebé en la composición Y el
+   *  hotel habilitó la cuna (`childPolicy.cribAvailable`, Página pública → Motor de Reservas). Centralizado acá
+   *  para que RoomsStep.vue y BookingModal.vue nunca puedan mostrar la pregunta en un caso y
+   *  ocultarla en el otro. */
+  function shouldOfferCrib(rt: RoomTypeRate): boolean {
+    return store.childPolicy.cribAvailable && babiesCount(rt) > 0
+  }
+
+  /** Sí/No — sin cantidad. "No" limpia el estado por si se reactiva sin querer. */
+  function setNeedsCrib(rt: RoomTypeRate, value: boolean): void {
+    composer(rt).needsCrib = value
   }
 
   /** Fila de la matriz para la ocupación chargeable actual. `null` = sin matriz (fallback al
@@ -67,14 +125,41 @@ export function useGuestComposer() {
     }
   }
 
+  /** Tarea "Cobro % niños" (2026-09-09, generalizada desde "Cobro 50% niños") — precio de la
+   *  composición actual CON el descuento infantil opcional Y PORCENTUAL del hotel, o `null` si no
+   *  aplica (regla apagada, o sin niños con plaza en esta composición) para que el caller caiga al
+   *  precio plano de siempre.
+   *
+   *  Mismo criterio EXACTO que el backend (`sumStayPriceForComposition` en
+   *  `shared/utils/rate-resolution.ts`): "el valor de un adulto" es el precio TOTAL de la estadía
+   *  para SOLO los adultos de esta composición — la fila de la matriz que YA trae `/rates` para
+   *  `effectiveAdults` (nunca una fila de ocupación=1 inventada, la grilla de este sistema no es
+   *  lineal por persona) — dividido entre esa cantidad de adultos. Cada niño con plaza cuesta
+   *  `childrenRatePercent`% de eso — NUNCA hardcodeado a 50. Reutiliza la MISMA matriz
+   *  `rt.occupancies` que ya usa `matchedRow` — no hace falta ida y vuelta al backend para cotizar
+   *  en vivo mientras se compone. */
+  function composedPriceWithChildDiscount(rt: RoomTypeRate): number | null {
+    const c = composition(rt)
+    if (!store.childPolicy.childrenDiscountEnabled || c.payingChildren <= 0) return null
+    const rows = rt.occupancies
+    if (!Array.isArray(rows) || rows.length === 0) return null
+    const adultsRow = rows.find((o) => o.occupancy === c.effectiveAdults)
+    if (!adultsRow) return null
+    const perAdult = adultsRow.price / Math.max(1, c.effectiveAdults)
+    const pct = Math.min(100, Math.max(1, store.childPolicy.childrenRatePercent)) / 100
+    return round2(adultsRow.price + c.payingChildren * pct * perAdult)
+  }
+
   function composedPrice(rt: RoomTypeRate): number {
-    return matchedRow(rt)?.price ?? rt.fromPrice
+    return composedPriceWithChildDiscount(rt) ?? matchedRow(rt)?.price ?? rt.fromPrice
   }
 
   function composedPricePerNight(rt: RoomTypeRate): number {
+    const discounted = composedPriceWithChildDiscount(rt)
+    const n = store.nights > 0 ? store.nights : 1
+    if (discounted !== null) return round2(discounted / n)
     const row = matchedRow(rt)
     if (row) return row.pricePerNight
-    const n = store.nights > 0 ? store.nights : 1
     return rt.fromPrice / n
   }
 
@@ -112,14 +197,23 @@ export function useGuestComposer() {
   async function addComposedRoom(rt: RoomTypeRate): Promise<void> {
     if (!canAddComposition(rt)) return
     const c = composer(rt)
-    await store.addToCart(rt, { adults: c.adults, childrenAges: [...c.ages] })
+    // Tarea 22 — mismo gateo que el backend (defensa en profundidad EN LOS DOS LADOS): sin bebé
+    // en la composición final, o sin que el hotel haya habilitado la cuna, no se manda nada, sin
+    // importar qué haya quedado tildado. Sí/No únicamente: `cribCount` es siempre 1 o 0, nunca
+    // una cantidad elegida por el huésped.
+    const needsCrib = shouldOfferCrib(rt) && c.needsCrib
+    await store.addToCart(rt, {
+      adults: c.adults, childrenAges: [...c.ages],
+      needsCrib, cribCount: needsCrib ? 1 : 0,
+    })
     // Reset: la próxima habitación (misma tarjeta u otra) arranca de nuevo en 1 adulto/0 niños.
-    composerState[rt.id] = { adults: 1, ages: [] }
+    composerState[rt.id] = freshComposerState()
   }
 
   return {
     composer, setAdults, setChildrenCount, setChildAge,
     composition, matchedRow, composedPrice, composedPricePerNight,
     canAddComposition, addComposedRoom, maxChildAgeOptions, capacityBlockReason,
+    childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib,
   }
 }

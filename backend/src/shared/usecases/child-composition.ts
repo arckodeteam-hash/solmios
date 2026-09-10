@@ -1,4 +1,5 @@
 // shared/usecases/child-composition.ts — feature "adultos+niños+edades" (2026-09-02).
+// Tarea 21 (Identificar bebés en la reserva pública, 2026-09-08) — sub-clasificación "bebé".
 //
 // Reemplaza el modelo "Para N" (ocupación total fija) por adultos + edades de niños declaradas
 // por el huésped. Cada hotel define su propia política en Configuration(hotelId, key:
@@ -8,8 +9,18 @@
 //   - edad > maxChildAge          → se trata como adulto (ocupa plaza, cuenta para precio y capacidad)
 //   - maxFreeAge < edad ≤ maxChildAge → niño que consume plaza (cuenta para precio y capacidad,
 //                                        mismo criterio que un adulto más)
-//   - 0 ≤ edad ≤ maxFreeAge       → niño que NO consume plaza (no genera cargo, no cuenta para
-//                                    ningún límite de capacidad — ver ejemplo del pedido)
+//   - maxBabyAge < edad ≤ maxFreeAge  → niño que NO consume plaza (no genera cargo, no cuenta para
+//                                        ningún límite de capacidad — ver ejemplo del pedido)
+//   - 0 ≤ edad ≤ maxBabyAge       → BEBÉ (Tarea 21). Es un SUBCONJUNTO de "no consume plaza"
+//                                    (0 ≤ maxBabyAge ≤ maxFreeAge por definición, ver
+//                                    `resolveChildPolicy`) — para toda la aritmética de precio y
+//                                    capacidad se comporta EXACTAMENTE igual que un niño libre (no
+//                                    se asume que ocupa plaza, tal como pide la tarea); lo único
+//                                    nuevo es la ETIQUETA, para que el huésped y Administración vean
+//                                    "bebé" en vez de "niño" cuando corresponde. `babies` en
+//                                    `ChildComposition` es informativo — ya está incluido dentro de
+//                                    `freeChildren`, ningún consumidor existente de esa suma
+//                                    (capacidad, `children` persistido, reagendado) cambia de valor.
 import type { RepositoryAdapter } from 'arckode-framework'
 
 export interface ChildPolicy {
@@ -18,31 +29,65 @@ export interface ChildPolicy {
   maxChildAge: number
   /** Hasta esta edad (inclusive) el niño no consume plaza (no se cobra, no cuenta para capacidad). */
   maxFreeAge: number
+  /** Hasta esta edad (inclusive) el niño se clasifica como BEBÉ (Tarea 21) — subconjunto de "no
+   *  consume plaza": `0 ≤ maxBabyAge ≤ maxFreeAge`. Mismo comportamiento de precio/capacidad que un
+   *  niño libre, solo cambia la etiqueta mostrada. */
+  maxBabyAge: number
+  /** Tarea "Cobro % niños" (2026-09-09, generalizada desde "Cobro 50% niños") — si está
+   *  habilitado, cada niño que CONSUME PLAZA (`payingChildren`, nunca bebés ni niños libres — esos
+   *  ya no pagan nada por otra regla) se cobra a `childrenRatePercent`% del "valor de un adulto":
+   *  el precio total de la estadía para SOLO los adultos de la reserva, dividido entre esa
+   *  cantidad de adultos (ver `sumStayPriceForComposition` en `rate-resolution.ts`). Apagado por
+   *  default — ningún hotel existente cambia de comportamiento hasta que lo habilite a mano (mismo
+   *  criterio que `maxBabyAge` en Tarea 21). */
+  childrenDiscountEnabled: boolean
+  /** Porcentaje (1-100) del "valor de un adulto" que paga cada niño con plaza, SOLO cuando
+   *  `childrenDiscountEnabled` está prendido. 50 es apenas un valor default/ejemplo — el pedido es
+   *  explícito en que NO debe quedar hardcodeado: cada hotel elige el suyo entre 1 y 100. */
+  childrenRatePercent: number
+  /** Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — reemplaza el checklist de
+   *  "amenidades para bebé" (isChildAmenity sobre upsells) por un único toggle a nivel hotel:
+   *  ¿el hotel ofrece cuna? Sin esto en `true`, "¿Necesita cuna?" ni se pregunta, sin importar si
+   *  hay un bebé en la composición. Apagado por default — mismo criterio que el resto de esta
+   *  política (nada cambia hasta que el hotel lo habilite a mano). */
+  cribAvailable: boolean
 }
 
 /** Default para hoteles que todavía no configuraron su política — mismo comportamiento que
- *  tenían antes de este feature (todo niño cuenta como ocupante, nada es gratis). */
-export const DEFAULT_CHILD_POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 17, maxFreeAge: 0 }
+ *  tenían antes de este feature (todo niño cuenta como ocupante, nada es gratis, nadie es "bebé"
+ *  hasta que el hotel lo configure explícitamente). `childrenRatePercent: 50` es solo el valor que
+ *  se ve pre-cargado en el form la primera vez — inerte mientras `childrenDiscountEnabled` sea
+ *  `false`, que es el estado real por default. */
+export const DEFAULT_CHILD_POLICY: ChildPolicy = {
+  acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
+  childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+}
 
 export interface ChildComposition {
   /** Adultos declarados + niños que superaron `maxChildAge` (se tratan como adulto). */
   effectiveAdults: number
   /** Niños que consumen plaza (edad en `(maxFreeAge, maxChildAge]`). */
   payingChildren: number
-  /** Niños que NO consumen plaza — informativos, no suman a ningún cargo ni límite. */
+  /** Niños que NO consumen plaza — informativos, no suman a ningún cargo ni límite. Incluye a los
+   *  bebés (`babies` es un subconjunto de este número, no una cifra aparte). */
   freeChildren: number
+  /** Tarea 21 — cuántos de `freeChildren` son específicamente BEBÉS (edad ≤ `maxBabyAge`).
+   *  Puramente informativo/de despliegue: no participa en `chargeableOccupancy` ni en ningún tope
+   *  de capacidad (ya están contados dentro de `freeChildren`, que sí participa igual que siempre). */
+  babies: number
   /** `effectiveAdults + payingChildren` — la cifra real a cotizar Y a validar contra capacidad
    *  (mismo número que antes representaba "Para N", ahora derivado en vez de elegido a mano). */
   chargeableOccupancy: number
 }
 
-export type ChildAgeClassification = 'free' | 'paying' | 'adult'
+export type ChildAgeClassification = 'baby' | 'free' | 'paying' | 'adult'
 
 /** La ÚNICA regla que decide el balde de una edad — la usan `resolveChildComposition` (agregados)
  *  y `describeChildrenAges` (desglose para Administración, Requerimiento 13) por igual, para que
  *  nunca puedan divergir en qué cuenta como qué. */
 export function classifyAge(age: number, policy: ChildPolicy): ChildAgeClassification {
   if (age > policy.maxChildAge) return 'adult'
+  if (age <= policy.maxBabyAge) return 'baby'
   if (age <= policy.maxFreeAge) return 'free'
   return 'paying'
 }
@@ -53,15 +98,17 @@ export function resolveChildComposition(adults: number, childrenAges: readonly u
   let effectiveAdults = Math.max(1, Math.floor(Number(adults)) || 0)
   let payingChildren = 0
   let freeChildren = 0
+  let babies = 0
   for (const raw of childrenAges) {
     const age = Number(raw)
     if (!Number.isFinite(age) || age < 0) continue
     const c = classifyAge(age, policy)
     if (c === 'adult') effectiveAdults += 1
+    else if (c === 'baby') { freeChildren += 1; babies += 1 }
     else if (c === 'free') freeChildren += 1
     else payingChildren += 1
   }
-  return { effectiveAdults, payingChildren, freeChildren, chargeableOccupancy: effectiveAdults + payingChildren }
+  return { effectiveAdults, payingChildren, freeChildren, babies, chargeableOccupancy: effectiveAdults + payingChildren }
 }
 
 /**
@@ -99,7 +146,7 @@ export function resolveAdminCapacityComposition(
   }
   const effectiveAdults = Math.max(1, Math.floor(Number(adults)) || 0)
   const payingChildren = Math.max(0, Math.floor(Number(children)) || 0)
-  return { effectiveAdults, payingChildren, freeChildren: 0, chargeableOccupancy: effectiveAdults + payingChildren }
+  return { effectiveAdults, payingChildren, freeChildren: 0, babies: 0, chargeableOccupancy: effectiveAdults + payingChildren }
 }
 
 /** ¿Esta composición entra en la habitación? `capacity` es el total de plazas (siempre presente);
@@ -202,12 +249,13 @@ export function composeFromPersistedReservation(
   }
 
   const adults = Math.max(1, Math.floor(Number(reservation.adults)) || 1)
-  if (ages.length === 0) return { effectiveAdults: adults, payingChildren: 0, freeChildren: 0, chargeableOccupancy: adults }
+  if (ages.length === 0) return { effectiveAdults: adults, payingChildren: 0, freeChildren: 0, babies: 0, chargeableOccupancy: adults }
   const fromAges = resolveChildComposition(1, ages, policy)
   return {
     effectiveAdults: adults,
     payingChildren: fromAges.payingChildren,
     freeChildren: fromAges.freeChildren,
+    babies: fromAges.babies,
     chargeableOccupancy: adults + fromAges.payingChildren,
   }
 }
@@ -264,10 +312,28 @@ export async function resolveChildPolicy(
     const raw = (typeof row.value === 'string' ? JSON.parse(row.value) : row.value) as Partial<ChildPolicy>
     const maxChildAge = Number(raw.maxChildAge)
     const maxFreeAge = Number(raw.maxFreeAge)
+    const resolvedMaxFreeAge = Number.isFinite(maxFreeAge) && maxFreeAge >= 0 ? maxFreeAge : DEFAULT_CHILD_POLICY.maxFreeAge
+    const maxBabyAge = Number(raw.maxBabyAge)
+    // Tarea 21 — `maxBabyAge` es un SUBCONJUNTO de "no consume plaza": clampeado a
+    // [0, maxFreeAge] acá (defensa en profundidad, además de la validación del formulario de
+    // Configuración) para que un valor corrupto/manual en la config nunca pueda dejar "bebés" con
+    // una edad mayor a la que el propio hotel definió como límite de "sin plaza".
+    const childrenRatePercent = Number(raw.childrenRatePercent)
+    // Tarea "Cobro % niños" — clampeado a [1, 100] acá (defensa en profundidad, además de la
+    // validación del form): un valor corrupto/manual (0, negativo, >100, no numérico) nunca puede
+    // dejar pasar un porcentaje sin sentido a la fórmula de precio.
     return {
       acceptChildren: raw.acceptChildren !== false,
       maxChildAge: Number.isFinite(maxChildAge) && maxChildAge >= 0 ? maxChildAge : DEFAULT_CHILD_POLICY.maxChildAge,
-      maxFreeAge: Number.isFinite(maxFreeAge) && maxFreeAge >= 0 ? maxFreeAge : DEFAULT_CHILD_POLICY.maxFreeAge,
+      maxFreeAge: resolvedMaxFreeAge,
+      maxBabyAge: Number.isFinite(maxBabyAge) && maxBabyAge >= 0
+        ? Math.min(maxBabyAge, resolvedMaxFreeAge)
+        : DEFAULT_CHILD_POLICY.maxBabyAge,
+      childrenDiscountEnabled: raw.childrenDiscountEnabled === true,
+      childrenRatePercent: Number.isFinite(childrenRatePercent)
+        ? Math.min(100, Math.max(1, Math.round(childrenRatePercent)))
+        : DEFAULT_CHILD_POLICY.childrenRatePercent,
+      cribAvailable: raw.cribAvailable === true,
     }
   } catch {
     return DEFAULT_CHILD_POLICY
