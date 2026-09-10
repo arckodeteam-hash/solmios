@@ -223,11 +223,20 @@ export class SignupUseCase {
    * (o `false`) = dado de baja del catálogo → 400 "Plan no disponible". `isActive` ausente
    * se trata como activo: el default físico del modelo es 1 y el resolutor de plan igual
    * es fail-closed si el plan no estuviera.
+   *
+   * #71: además tiene que ser ELEGIBLE para la prueba (`plans.trialEligible`). El alta pública
+   * SIEMPRE arranca en trial, así que un plan con `trialEligible = 0` (se contrata por ventas, no
+   * se prueba) no puede elegirse acá → 400 con un mensaje distinto al de "no disponible": el plan
+   * existe y se vende, sólo que no por esta puerta. NULL/ausente cuenta como elegible: las filas
+   * anteriores a la columna no tienen el valor y el default del modelo es 1.
    */
   private async assertPlanAvailable(planId: string): Promise<void> {
     const plan = ((await this.deps.plansRepo.findMany({ id: planId })) as any[])?.[0]
     if (!plan || plan.isActive === 0 || plan.isActive === false) {
       throw new ValidationError('Plan no disponible')
+    }
+    if (plan.trialEligible === 0 || plan.trialEligible === false) {
+      throw new ValidationError('Este plan no incluye prueba gratuita: contactá a ventas para contratarlo')
     }
   }
 

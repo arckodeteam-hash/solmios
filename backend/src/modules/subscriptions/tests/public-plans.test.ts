@@ -15,7 +15,7 @@ import { ORM, OrmRepository } from 'arckode-framework'
 import { SqliteAdapter } from 'arckode-framework/adapters/sqlite'
 import type { DbAdapter, RepositoryAdapter } from 'arckode-framework'
 import { registerSharedModels } from '../../../shared/models'
-import { listPublicPlans } from '../usecases/public-plans'
+import { listPublicPlans, isTrialEligible } from '../usecases/public-plans'
 import { PLANS_PRICE_ORDER } from '../../../shared/utils/plans-order'
 
 interface TestDb extends DbAdapter { connect(): Promise<void> }
@@ -100,6 +100,32 @@ describe('listPublicPlans — #30: precio ASC, del más barato al más caro, cot
       const plans = await listPublicPlans(repo)
       expect(plans.some((p) => p.slug === 'oculto')).toBe(false)
     })
+  })
+
+  // #71: el registro sólo ofrece los planes elegibles para la prueba y la landing manda a ventas
+  // los que no. Ese dato sale de acá, como el precio y los topes — nunca de un literal en la vista.
+  it('publicPlans trae trialEligible true/false según plans.trialEligible (#71)', async () => {
+    await withPlansRepo(async (repo) => {
+      await repo.create({
+        id: 'plan-ventas', name: 'Ventas', slug: 'ventas', price: 500, currency: 'USD',
+        isActive: 1, sortOrder: 9, trialEligible: 0,
+      } as any)
+      const plans = await listPublicPlans(repo)
+      const ventas = plans.find((p) => p.slug === 'ventas')
+      const host = plans.find((p) => p.slug === 'host')
+      expect(ventas?.trialEligible).toBe(false)
+      // el seed no manda la columna: el default del modelo (1) la deja elegible
+      expect(host?.trialEligible).toBe(true)
+      expect(plans.every((p) => typeof p.trialEligible === 'boolean')).toBe(true)
+    })
+  })
+
+  it('trialEligible NULL (fila anterior a la columna) se expone como true — misma lectura que el alta (#71)', () => {
+    expect(isTrialEligible(null)).toBe(true)
+    expect(isTrialEligible(undefined)).toBe(true)
+    expect(isTrialEligible(1)).toBe(true)
+    expect(isTrialEligible(0)).toBe(false)
+    expect(isTrialEligible(false)).toBe(false)
   })
 
   it('el orden se pide en la query: findMany recibe PLANS_PRICE_ORDER (price ASC, slug ASC)', async () => {

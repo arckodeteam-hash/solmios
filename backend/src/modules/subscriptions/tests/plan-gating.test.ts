@@ -18,6 +18,7 @@
 //   starter/professional/enterprise/ultra = [] (todos — retrocompat planes top).
 import { describe, it, expect } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
+import { ValidationError } from 'arckode-framework'
 import type { Logger, RepositoryAdapter } from 'arckode-framework'
 import { SignupUseCase } from '../usecases/signup'
 import { handleStripeEvent } from '../usecases/handle-stripe-event'
@@ -123,6 +124,70 @@ describe('signup — el trial aplica el plan elegido al hotel', () => {
     await expect(uc.signup({ ...VALID, planId: 'plan-baja' }, new Date('2026-08-18T12:00:00Z')))
       .rejects.toThrow('Plan no disponible')
     expect(hotels).toHaveLength(0)
+  })
+
+  // #71: el alta pública SIEMPRE arranca en trial, así que un plan que NO es elegible para la
+  // prueba (se contrata por ventas) no se puede elegir acá. Corta ANTES de crear nada: cero
+  // filas en hotels/subscriptions, para que el email quede libre y el alta se pueda reintentar.
+  it('plan trialEligible=0 → ValidationError y hotels/subs en 0 (#71)', async () => {
+    const hotels: any[] = []
+    const subs: any[] = []
+    const users: any[] = []
+    const uc = new SignupUseCase({
+      hotelsRepo: repo(hotels),
+      usersRepo: repo(users),
+      rolesRepo: repo([]),
+      subscriptionsRepo: repo(subs),
+      plansRepo: repo([{ id: 'plan-ventas', slug: 'ventas', modules: [], isActive: 1, trialEligible: 0 }]),
+      hashPassword: async (p: string) => `hashed:${p}`,
+      logger: silentLogger(),
+    })
+    await expect(uc.signup({ ...VALID, planId: 'plan-ventas' }, new Date('2026-08-18T12:00:00Z')))
+      .rejects.toBeInstanceOf(ValidationError)
+    await expect(uc.signup({ ...VALID, planId: 'plan-ventas' }, new Date('2026-08-18T12:00:00Z')))
+      .rejects.toThrow('no incluye prueba gratuita')
+    expect(hotels).toHaveLength(0)
+    expect(subs).toHaveLength(0)
+    expect(users).toHaveLength(0)
+  })
+
+  // #71: la columna es nueva; las filas anteriores la traen NULL y el default del modelo es 1.
+  // NULL/ausente = elegible, o el deploy dejaría sin alta a todos los planes existentes.
+  it('trialEligible NULL → alta OK (compatibilidad con filas anteriores a la columna) (#71)', async () => {
+    const hotels: any[] = []
+    const subs: any[] = []
+    const uc = new SignupUseCase({
+      hotelsRepo: repo(hotels),
+      usersRepo: repo([]),
+      rolesRepo: repo([]),
+      subscriptionsRepo: repo(subs),
+      plansRepo: repo([{ id: 'plan-viejo', slug: 'viejo', modules: [], isActive: 1, trialEligible: null }]),
+      hashPassword: async (p: string) => `hashed:${p}`,
+      logger: silentLogger(),
+    })
+    const out = await uc.signup({ ...VALID, planId: 'plan-viejo' }, new Date('2026-08-18T12:00:00Z'))
+    expect(hotels).toHaveLength(1)
+    expect(subs[0]).toMatchObject({ planId: 'plan-viejo', status: 'trialing' })
+    expect(hotels[0].plan).toBe('viejo')
+    expect(out.trialDays).toBe(15)
+  })
+
+  it('trialEligible=1 explícito → alta OK con trial de 15 días exactos (#71)', async () => {
+    const hotels: any[] = []
+    const subs: any[] = []
+    const uc = new SignupUseCase({
+      hotelsRepo: repo(hotels),
+      usersRepo: repo([]),
+      rolesRepo: repo([]),
+      subscriptionsRepo: repo(subs),
+      plansRepo: repo([{ id: 'plan-host', slug: 'host', modules: HOST_MODULES, isActive: 1, trialEligible: 1 }]),
+      hashPassword: async (p: string) => `hashed:${p}`,
+      logger: silentLogger(),
+    })
+    const out = await uc.signup({ ...VALID, planId: 'plan-host' }, new Date('2026-08-18T12:00:00Z'))
+    expect(out.trialDays).toBe(15)
+    expect(out.trialEndsAt).toBe('2026-09-02T12:00:00.000Z')
+    expect(subs[0].trialEndsAt).toBe('2026-09-02T12:00:00.000Z')
   })
 
   // E4: el ORM retiene `plan: undefined` en el INSERT → la columna viaja NULL y el default
