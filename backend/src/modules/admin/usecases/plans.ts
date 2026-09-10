@@ -64,6 +64,8 @@ export async function createPlan(deps: PlansDeps, body: any): Promise<any> {
     modules,
     limits: body.limits || { rooms: 30, users: 2, properties: 1 },
     isActive: body.isActive !== false ? 1 : 0, sortOrder: body.sortOrder || 0,
+    // Elegibilidad para la prueba gratuita (TRIAL_DAYS). Default 1, mismo patrón que isActive.
+    trialEligible: body.trialEligible !== false ? 1 : 0,
   })
 }
 
@@ -73,8 +75,8 @@ export async function updatePlan(deps: PlansDeps, id: string, body: any, user?: 
   if (deps.auth) deps.auth.assertOwnership(deps.platformResource, user?.id ?? '', user?.role, 'super_admin')
   if (body.modules !== undefined) assertValidPlanModules(body.modules)
   const patch: Record<string, any> = {}
-  for (const k of ['name', 'price', 'currency', 'description', 'features', 'modules', 'limits', 'isActive', 'sortOrder']) {
-    if (body[k] !== undefined) patch[k] = k === 'isActive' ? (body[k] ? 1 : 0) : body[k]
+  for (const k of ['name', 'price', 'currency', 'description', 'features', 'modules', 'limits', 'isActive', 'sortOrder', 'trialEligible']) {
+    if (body[k] !== undefined) patch[k] = (k === 'isActive' || k === 'trialEligible') ? (body[k] ? 1 : 0) : body[k]
   }
   if (body.modules !== undefined) {
     const copy = withSuggestedCopy(body, body.modules)
