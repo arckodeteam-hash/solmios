@@ -2,6 +2,7 @@
 // Usa RepositoryAdapter mock — sin dependencia de SQLite ni Postgres.
 
 import { describe, it, expect } from 'bun:test'
+import { MemoryCache } from 'arckode-framework'
 import type { RepositoryAdapter, CacheAdapter, Auth } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { TicketsService } from '../service'
@@ -81,6 +82,64 @@ describe('TicketsService', () => {
       const result = await svc.list({}, hotelAdmin)
       expect(result.data).toHaveLength(1)
       expect(result.data[0].hotelId).toBe('h1')
+    })
+  })
+
+  // REQ-SOP-05: caché versionada, con MemoryCache REAL (no el silentCache que siempre miss/no-op
+  // — acá lo que se prueba es justamente si una entrada vieja queda huérfana o no).
+  describe('cache (REQ-SOP-05)', () => {
+    it('super_admin: crear un ticket en el hotel X aparece en list() sin esperar el TTL', async () => {
+      const store: TicketsDTO[] = []
+      const repo = makeRepo({
+        create: async (data) => { const t = { id: 'new-1', ...data } as TicketsDTO; store.push(t); return t },
+        paginate: async () => ({ data: [...store], total: store.length, limit: 20, offset: 0, pages: 1 }),
+      })
+      const cache = new MemoryCache()
+      const svc = new TicketsService(repo, log, cache, makeUserRepo(), fakeAuth, makeHotelRepo())
+
+      const before = await svc.list({}, adminUser)
+      expect(before.data).toHaveLength(0)
+
+      await svc.create({ hotelId: 'hX', userId: 'u1', subject: 'Issue' }, adminUser)
+
+      const after = await svc.list({}, adminUser)
+      expect(after.data).toHaveLength(1)
+    })
+
+    it('dos consultas con filtros distintos no comparten entrada', async () => {
+      const repo = makeRepo({
+        paginate: async (filters: any) => ({
+          data: filters?.status === 'open'
+            ? [{ id: 'o1', hotelId: 'h1', subject: 'Open one', status: 'open' } as TicketsDTO]
+            : [{ id: 'c1', hotelId: 'h1', subject: 'Closed one', status: 'closed' } as TicketsDTO],
+          total: 1, limit: 20, offset: 0, pages: 1,
+        }),
+      })
+      const cache = new MemoryCache()
+      const svc = new TicketsService(repo, log, cache, makeUserRepo(), fakeAuth, makeHotelRepo())
+
+      const openList = await svc.list({ status: 'open' }, adminUser)
+      const closedList = await svc.list({ status: 'closed' }, adminUser)
+
+      expect(openList.data[0].id).toBe('o1')
+      expect(closedList.data[0].id).toBe('c1')
+    })
+
+    it('dos páginas distintas no comparten entrada', async () => {
+      const repo = makeRepo({
+        paginate: async (_filters: any, options: any) => ({
+          data: [{ id: options?.offset ? 'p2' : 'p1', hotelId: 'h1', subject: 'x' } as TicketsDTO],
+          total: 40, limit: 20, offset: options?.offset ?? 0, pages: 2,
+        }),
+      })
+      const cache = new MemoryCache()
+      const svc = new TicketsService(repo, log, cache, makeUserRepo(), fakeAuth, makeHotelRepo())
+
+      const page1 = await svc.list({ page: 1, limit: 20 }, adminUser)
+      const page2 = await svc.list({ page: 2, limit: 20 }, adminUser)
+
+      expect(page1.data[0].id).toBe('p1')
+      expect(page2.data[0].id).toBe('p2')
     })
   })
 
@@ -231,8 +290,11 @@ describe('TicketsService', () => {
         findById: async () => ticket,
         update: async (id, data) => { updateCalledWith = data; return { ...ticket, id, ...data } as TicketsDTO },
       })
-      let deletedKey: string | null = null
-      const cache = { ...silentCache, delete: async (k: string) => { deletedKey = k } }
+      // REQ-SOP-05: la invalidación ahora bumpea el token de versión (`tickets:ver:h1`), no un
+      // delete de clave fija — ver usecases/cache.test.ts para la cobertura de "aparece sin
+      // esperar TTL" end-to-end.
+      const setKeys: string[] = []
+      const cache = { ...silentCache, set: async (k: string) => { setKeys.push(k) } }
       const svc = new TicketsService(repo, log, cache, makeUserRepo(), fakeAuth, makeHotelRepo())
 
       let socketTicket: any = null
@@ -245,7 +307,7 @@ describe('TicketsService', () => {
       expect(updateCalledWith.messages[0].message).toBe('Hola equipo')
       expect(socketMessage?.message).toBe('Hola equipo')
       expect(socketTicket?.messages).toHaveLength(1)
-      expect(deletedKey).toBe('tickets:list:h1')
+      expect(setKeys).toContain('tickets:ver:h1')
       expect(result?.messages).toHaveLength(1)
     })
 
