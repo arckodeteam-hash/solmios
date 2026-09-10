@@ -21,6 +21,16 @@ export interface MetaAppEstado {
 /** Estado de la API key de Resend. `last4` sirve para reconocer cuál está cargada sin revelarla. */
 export interface ResendEstado { configured: boolean; last4: string | null }
 
+/**
+ * #102: estado de un servicio de plataforma. `source` null ⇔ `configured` false. El backend
+ * NUNCA manda el valor ni una pista (ni últimos 4, ni máscara): solo si está y de dónde sale.
+ */
+export interface ServicioEstado { configured: boolean; source: 'env' | 'configuration' | null }
+export type ServicioClave =
+  | 'stripe' | 'stripeWebhook' | 'turnstile' | 'publicUrl' | 'metaApp'
+  | 'resend' | 'smtp' | 'googleMaps' | 'channex'
+export type SettingsStatus = Record<ServicioClave, ServicioEstado>
+
 export const PlatformService = {
   /** Estado de las credenciales de la app de Meta. NUNCA devuelve el secreto. */
   getMetaWhatsapp: () => http.get<MetaAppEstado>('/admin/meta-whatsapp'),
@@ -32,6 +42,8 @@ export const PlatformService = {
   getResend: () => http.get<ResendEstado>('/admin/settings/resend'),
   saveResend: (apiKey: string) => http.put<ResendEstado>('/admin/settings/resend', { apiKey }),
   deleteResend: () => http.delete<ResendEstado>('/admin/settings/resend'),
+  // #102: qué servicios están configurados y desde dónde (env | panel). Solo lectura, sin secretos.
+  getSettingsStatus: () => http.get<SettingsStatus>('/admin/settings/status'),
 
   subscriptions: () => http.get<any>('/admin/subscriptions'),
   // Auditoría extraída a AuditLogService (services/AuditLog.service.ts) — M45 #313
