@@ -56,4 +56,34 @@ test.describe('registro público', () => {
     // Sigue en paso 1: el campo del hotel (paso 2) todavía no existe en el DOM.
     await expect(page.getByTestId('register-hotel-name')).toHaveCount(0)
   })
+
+  // #94: la prueba gratis es de 15 días (TRIAL_DAYS del backend + DEFAULT_TRIAL_DAYS del frontend).
+  // Cubre el copy visible en /registro: badge de la columna de marca, subtítulo del paso 1,
+  // bullets de la columna de marca y CTA del paso 2 — y que no quede ningún "7 días" viejo.
+  test('muestra 15 días de prueba en badge, CTA y bullets, sin "7 días"', async ({ page }) => {
+    await page.goto('/registro')
+
+    // — Badge (columna de marca, visible en el viewport desktop del proyecto chromium) —
+    await expect(page.getByText('15 días gratis', { exact: true })).toBeVisible()
+
+    // — Subtítulo del paso 1 —
+    await expect(page.getByText(/Empiezas con 15 días gratis/)).toBeVisible()
+
+    // — Bullets: el último dice la política vigente (con tarjeta → "15 días sin cargo…";
+    //   sin tarjeta → "Sin tarjeta de crédito"). En ningún caso puede decir "7 días".
+    const perks = page.locator('ul li', { hasText: 'Reservas, habitaciones y huéspedes' }).locator('..')
+    await expect(perks.locator('li')).toHaveCount(4)
+    await expect(perks.locator('li').last()).toHaveText(/15 días sin cargo|Sin tarjeta de crédito/)
+    await expect(perks).not.toContainText('7 días')
+
+    // — CTA del paso 2: hay que pasar el paso 1 (no crea nada hasta el submit final) —
+    await page.getByTestId('register-owner-name').fill('QA Automatizada')
+    await page.getByTestId('register-email').fill(uniqueEmail())
+    await page.getByTestId('register-password').fill(VALID_PASSWORD)
+    await page.getByTestId('register-step1-submit').click()
+    await expect(page.getByTestId('register-submit')).toHaveText('Empezar mis 15 días gratis')
+
+    // — Nada de "7 días" en toda la página (ni en el paso 2 ni en la columna de marca) —
+    await expect(page.locator('body')).not.toContainText('7 días')
+  })
 })
