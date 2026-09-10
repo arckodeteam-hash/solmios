@@ -2,6 +2,7 @@ import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import type { AdminAnalyticsDTO, MonitoringDTO, PlanDTO, AmenityCatalogDTO, ModuleOverrideDTO } from './types'
 import { PLANS_PRICE_ORDER } from '../../shared/utils/plans-order'
 import type { DashboardQueries } from './usecases/dashboard-queries'
+import type { PlatformMetrics } from './usecases/platform-metrics'
 import { type AuditPort } from './usecases/audit'
 import type { ApplySpecialConditionsInput, SpecialConditionsUseCase } from './usecases/special-conditions'
 import type { SubscriptionCategoriesUseCase } from './usecases/subscription-categories'
@@ -11,7 +12,7 @@ import {
 } from './usecases/subscription-settings'
 import type { ModuleOverridesUseCase } from './usecases/module-overrides'
 import * as plans from './usecases/plans'
-import { changeHotelPlan } from '../subscriptions/usecases/change-plan'
+import { updateHotel } from './usecases/update-hotel'
 import {
   listAmenitiesCatalog, createAmenityCatalog, updateAmenityCatalog, deleteAmenityCatalog,
   type AmenitiesCatalogDeps,
@@ -72,6 +73,8 @@ export class AdminService {
   async listHotels(): Promise<{ data: any[]; total: number }> { return this.queries!.listHotels() }
   async listUsers(): Promise<{ data: any[]; total: number }> { return this.queries!.listUsers() }
   async getAnalytics(): Promise<AdminAnalyticsDTO> { return this.queries!.getAnalytics() }
+
+  async getPlatformMetrics(): Promise<PlatformMetrics> { return this.queries!.getPlatformMetrics() }
   async listSubscriptions(): Promise<{ data: any[]; total: number; mrrTotal: number }> { return this.queries!.listSubscriptions() }
   async listAuditLogs(): Promise<{ data: any[]; total: number }> { return this.queries!.listAuditLogs() }
   async listAnnouncements(): Promise<{ data: any[]; total: number }> { return this.queries!.listAnnouncements() }
@@ -105,37 +108,13 @@ export class AdminService {
 
   async deletePlan(id: string, user?: any): Promise<void> { return plans.deletePlan(this.plansDeps, id, user) }
 
-  /**
-   * Actualiza plan/estado/datos de CUALQUIER hotel (operación de plataforma, solo super_admin).
-   * El `plan` se valida contra la tabla `plans` (no un enum): un plan inexistente → error. Así se puede
-   * asignar cualquier plan que exista en la tabla y no quedan planes fantasma.
-   */
+  /** Ver `usecases/update-hotel.ts`: valida el plan contra el catálogo y espeja la suscripción. */
   async updateHotel(id: string, body: any, user?: any): Promise<any> {
-    if (!this.hotelsRepo) throw new Error('hotelsRepo no disponible')
-    const existing = await this.hotelsRepo.findById(id) as any
-    if (!existing) throw new Error('Hotel no encontrado')
-    if (this.auth) this.auth.assertOwnership(PLATFORM_RESOURCE, user?.id ?? '', user?.role, 'super_admin')
-    const patch: Record<string, any> = {}
-    if (body.plan !== undefined) {
-      const slug = String(body.plan).toLowerCase()
-      const plan = (await this.plansRepo.findMany({ slug }))[0]
-      if (!plan) throw new Error(`El plan '${body.plan}' no existe en el catálogo de planes`)
-      patch.plan = slug
-      // #46: el gate IGNORA este espejo si el hotel tiene suscripción activa (resolve-plan.ts) —
-      // escribir solo `hotels.plan` "guardaba" y el panel seguía con los módulos viejos. Va ANTES
-      // del espejo y el error se PROPAGA: si falla no se escribe NADA, en vez de prometer un plan
-      // que el hotel no tiene. `allowInactive`: la plataforma sí asigna planes fuera de catálogo.
-      if (this.subscriptionsRepo) {
-        const deps = { subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo as RepositoryAdapter<any>, logger: this.logger }
-        await changeHotelPlan(deps, id, String((plan as any).id), { allowInactive: true })
-      }
-    }
-    if (body.status !== undefined) patch.status = String(body.status).toLowerCase()
-    if (body.name !== undefined) patch.name = body.name
-    if (body.email !== undefined) patch.email = body.email
-    if (body.phone !== undefined) patch.phone = body.phone
-    if (body.location !== undefined) patch.address = body.location
-    return await this.hotelsRepo.update(id, patch)
+    return updateHotel({
+      hotelsRepo: this.hotelsRepo, plansRepo: this.plansRepo as RepositoryAdapter<any>,
+      subscriptionsRepo: this.subscriptionsRepo, logger: this.logger, auth: this.auth,
+      platformResource: PLATFORM_RESOURCE,
+    }, id, body, user)
   }
 
   /** Deps del CRUD de amenities. `auth` OBLIGATORIO: es un recurso de plataforma (QA7-3). */

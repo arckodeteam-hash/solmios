@@ -1,4 +1,12 @@
-const PLAN_PRICE: Record<string, number> = { enterprise: 199, professional: 99, starter: 49, essential: 49 }
+import { computePlatformMetrics, type PlatformMetrics } from './platform-metrics'
+
+/**
+ * Precio de respaldo por plan, SOLO para hoteles cuyo `hotels.plan` de texto libre no matchea
+ * ninguna fila de `plans`. La fuente de verdad es la tabla `plans` (ver `planPriceResolver`):
+ * este mapa quedaba desactualizado contra el catálogo real (tenía Professional en 99 cuando
+ * cuesta 349) y por eso el MRR del panel mostraba un número que no existía.
+ */
+const PLAN_PRICE_FALLBACK: Record<string, number> = { enterprise: 199, professional: 99, starter: 49, essential: 49 }
 const BYTES_PER_MB = 1024 * 1024
 
 export class DashboardQueries {
@@ -123,8 +131,16 @@ export class DashboardQueries {
     return { data, total: data.length, mrrTotal: data.reduce((s: number, r: any) => s + r.mrr, 0) }
   }
 
+  /**
+   * Audit log ORDENADO por fecha descendente. `findMany` no garantiza orden, así que cualquier
+   * consumidor que corte con `.slice(0, N)` para mostrar "lo último" se llevaba las filas más
+   * VIEJAS de la tabla — que es lo que pasaba en la card "Actividad Reciente" del dashboard.
+   */
   async listAuditLogs(): Promise<{ data: any[]; total: number }> {
-    const data = await this.orm.findMany('Auditlog', {})
+    const rows = await this.orm.findMany('Auditlog', {}) as any[]
+    const data = [...rows].sort(
+      (a: any, b: any) => new Date(String(b.createdAt ?? 0)).getTime() - new Date(String(a.createdAt ?? 0)).getTime(),
+    )
     return { data, total: data.length }
   }
 
@@ -166,6 +182,14 @@ export class DashboardQueries {
 
   async getAnalytics(): Promise<any> {
     const hs = await this.orm.findMany('Hotels', {})
+    // El precio sale del catálogo real (`plans`), no de un mapa hardcodeado que quedó viejo:
+    // Professional figuraba en 99 cuando cuesta 349 y "Cumbre" en 199 cuando cuesta 549.
+    const planRows = await this.orm.findMany('Plans', {}) as any[]
+    const priceOf = (raw: any): number => {
+      const key = String(raw ?? '').trim().toLowerCase()
+      const hit = planRows.find((p: any) => [p.id, p.slug, p.name].some((v: any) => String(v ?? '').trim().toLowerCase() === key))
+      return Number(hit?.price ?? PLAN_PRICE_FALLBACK[key] ?? 49)
+    }
     const us = await this.orm.findMany('Users', {})
     const rs = await this.orm.findMany('Reservations', {})
     const rooms = await this.orm.findMany('Rooms', {})
@@ -193,7 +217,7 @@ export class DashboardQueries {
       const gastos = exps.filter((e: any) => e.hotelId === h.id).reduce((s: number, e: any) => s + Number(e.amount || 0), 0)
       return {
         id: h.id, name: h.name, plan: h.plan || 'essential', status: h.status || 'active',
-        mrr: PLAN_PRICE[String(h.plan).toLowerCase()] ?? 49,
+        mrr: priceOf(h.plan),
         rooms: hRooms.length, reservations: hRes.length,
         occupancy: hRooms.length > 0 ? Math.min(100, Math.round((hRes.length / hRooms.length) * 100)) : 0,
         adr: nightsSold > 0 ? Math.round(revenue / nightsSold) : 0,
@@ -225,7 +249,7 @@ export class DashboardQueries {
     const byPlanRevenue: Record<string, number> = {}
     for (const h of hs) {
       const plan = String(h.plan || 'essential')
-      byPlanRevenue[plan] = (byPlanRevenue[plan] || 0) + (PLAN_PRICE[plan.toLowerCase()] ?? 49)
+      byPlanRevenue[plan] = (byPlanRevenue[plan] || 0) + priceOf(plan)
     }
 
     // Trends reales: altas de este mes vs el anterior (crecimiento del período).
@@ -251,7 +275,7 @@ export class DashboardQueries {
     }
 
     return {
-      mrr: hs.reduce((s: number, h: any) => s + (PLAN_PRICE[String(h.plan).toLowerCase()] ?? 49), 0),
+      mrr: hs.reduce((s: number, h: any) => s + priceOf(h.plan), 0),
       totalHoteles: hs.length, totalUsuarios: us.length, totalReservas: rs.length,
       activeHotels: hs.filter((h: any) => h.status === 'active').length,
       byPlan: hs.reduce((a: any, h: any) => ((a[h.plan] = (a[h.plan] || 0) + 1), a), {}),
@@ -261,6 +285,29 @@ export class DashboardQueries {
       topByOccupancy: [...hotelsBreakdown].sort((a: any, b: any) => b.occupancy - a.occupancy).slice(0, 5),
       npsScore: 0, ticketPromedio: 0, monthlyRevenue, trends,
     }
+  }
+
+  /**
+   * Métricas del negocio SaaS para el dashboard del super-admin. Es una consulta aparte de
+   * `getAnalytics()` a propósito: aquella responde "cómo le va a los hoteles" (ocupación, ADR,
+   * P&L) y esta responde "cómo le va a la plataforma" (MRR, trials, churn). Mezclarlas fue lo
+   * que llevó a mostrar un MRR que en realidad era revenue de reservas.
+   */
+  async getPlatformMetrics(): Promise<PlatformMetrics> {
+    const [hotels, subscriptions, plans, users, reservations, tickets, audit] = await Promise.all([
+      this.orm.findMany('Hotels', {}),
+      this.orm.findMany('Subscriptions', {}),
+      this.orm.findMany('Plans', {}),
+      this.orm.findMany('Users', {}),
+      this.orm.findMany('Reservations', {}),
+      this.orm.findMany('Tickets', {}),
+      this.orm.findMany('Auditlog', {}),
+    ])
+    return computePlatformMetrics({
+      hotels: hotels as any[], subscriptions: subscriptions as any[], plans: plans as any[],
+      users: users as any[], reservations: reservations as any[], tickets: tickets as any[],
+      audit: audit as any[],
+    })
   }
 
   async getMonitoring(): Promise<any> {

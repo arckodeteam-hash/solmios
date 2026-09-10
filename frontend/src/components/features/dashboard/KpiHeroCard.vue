@@ -19,7 +19,7 @@
             class="flex shrink-0 items-center gap-1 text-[10px] font-extrabold tabular-nums"
             :class="trend >= 0 ? 'text-[#16A34A]' : 'text-[#DC2626]'">
             {{ trend >= 0 ? '▲' : '▼' }} {{ trend >= 0 ? '+' : '' }}{{ trend }}%
-            <span class="font-semibold text-text-muted">vs ayer</span>
+            <span class="font-semibold text-text-muted">{{ trendLabel }}</span>
           </span>
         </div>
         <div v-if="unit" class="mt-0.5 text-[11px] font-semibold text-text-secondary">{{ unit }}</div>
@@ -84,11 +84,15 @@ const props = withDefaults(defineProps<{
   showBar?: boolean
   /** serie para sparkline */
   spark?: number[] | null
-  /** variación vs ayer en % */
+  /** variación en % respecto del período de comparación */
   trend?: number | null
+  /** Qué período compara el `trend`. Explícito porque no toda métrica se compara contra ayer:
+   *  el dashboard de plataforma compara meses, y rotular eso "vs ayer" es dar un dato falso. */
+  trendLabel?: string
   subStats?: { label: string; value: string | number; tone?: string }[]
 }>(), {
   showBar: true,
+  trendLabel: 'vs ayer',
 })
 
 const ICONS: Record<KpiIcon, string> = {

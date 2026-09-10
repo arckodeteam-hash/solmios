@@ -109,6 +109,7 @@ export function AdminModule() {
       router.put('/api/admin/hoteles/:id', sa, (req: any) => controller.updateHotel(req))
       router.get('/api/admin/users', sa, () => controller.listUsers())
       router.get('/api/admin/analytics', sa, () => controller.getAnalytics())
+      router.get('/api/admin/platform-metrics', sa, () => controller.getPlatformMetrics())
       router.get('/api/admin/subscriptions', sa, () => controller.listSubscriptions())
       router.get('/api/admin/audit', sa, () => controller.listAuditLogs())
       router.get('/api/admin/announcements', sa, () => controller.listAnnouncements())

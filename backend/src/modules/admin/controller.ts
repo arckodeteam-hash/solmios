@@ -54,6 +54,10 @@ export class AdminController {
     return { status: 200, body: await this.service.getAnalytics() }
   }
 
+  async getPlatformMetrics() {
+    return { status: 200, body: await this.service.getPlatformMetrics() }
+  }
+
   async listSubscriptions() {
     return { status: 200, body: await this.service.listSubscriptions() }
   }
