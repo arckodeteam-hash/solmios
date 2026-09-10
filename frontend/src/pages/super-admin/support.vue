@@ -95,6 +95,13 @@
           </div>
           <p class="text-[11px] text-white/60 mt-0.5">{{ selectedTicket.hotel?.name || 'Hotel desconocido' }} · {{ selectedTicket.requester?.name || 'Solicitante desconocido' }}</p>
         </div>
+        <!-- REQ-SOP-04: reproducir lo que ve el solicitante, desde el mismo ticket. -->
+        <button v-if="selectedTicket.requester" type="button" @click="enterAsRequester"
+          :disabled="!canImpersonateRequester || enteringTicket"
+          :title="canImpersonateRequester ? undefined : impersonateDisabledReason"
+          class="shrink-0 px-3 py-1.5 bg-blue text-white rounded-lg text-[11px] font-bold hover:bg-blue/90 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+          {{ enteringTicket ? 'Entrando…' : `Entrar como ${selectedTicket.requester.name}` }}
+        </button>
       </template>
 
       <div class="flex flex-col h-[70vh]">
@@ -165,7 +172,9 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
+import { useAuthStore } from '@/stores/auth.store'
 import { OperationsService } from '@/services/Operations.service'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
@@ -179,6 +188,8 @@ const ICON_TICKET = `${SVG_OPEN}<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2
 const ICON_ALERT = `${SVG_OPEN}<path d="M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.29 2.25h17.78A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`
 
 const toast = useToast()
+const auth = useAuthStore()
+const router = useRouter()
 
 const loading = ref(true)
 const loadError = ref(false)
@@ -307,6 +318,44 @@ async function changeStatus(status: TicketStatus): Promise<void> {
     toast.error('No se pudo cambiar el estado')
   } finally {
     changingStatus.value = false
+  }
+}
+
+// REQ-SOP-04: "Entrar como {solicitante}" — reproducir el panel tal como lo ve quien reportó el
+// ticket. No se puede impersonar a un usuario inactivo ni a otro super admin (el token de
+// impersonación nunca lleva ese rol, ver usuarios/usecases/impersonate.ts).
+const canImpersonateRequester = computed(() => {
+  const r = selectedTicket.value?.requester
+  return !!r && r.active !== false && r.role !== 'super_admin'
+})
+const impersonateDisabledReason = computed(() => {
+  const r = selectedTicket.value?.requester
+  if (!r) return ''
+  if (r.active === false) return 'Usuario inactivo'
+  if (r.role === 'super_admin') return 'No se puede impersonar a otro super admin'
+  return ''
+})
+
+const enteringTicket = ref(false)
+async function enterAsRequester(): Promise<void> {
+  const ticket = selectedTicket.value
+  if (!ticket?.requester || !canImpersonateRequester.value || enteringTicket.value) return
+  enteringTicket.value = true
+  try {
+    // ticketId viaja al servidor para la auditoría (auth.impersonate) — deja rastro de POR QUÉ
+    // soporte entró a esta cuenta. Solo se navega si el store DE VERDAD impersonó: un `false`
+    // (impersonación ya en curso) dejaría al admin creyendo que entró sin haberlo hecho.
+    const entro = await auth.loginAs(ticket.requester.id, { ticketId: ticket.id })
+    if (entro) {
+      router.push(`/panel/support?ticket=${ticket.id}`)
+    } else {
+      toast.info('Ya se está entrando a otra cuenta')
+    }
+  } catch (e: any) {
+    // El request rechazado (403/404) deja al admin en /admin/support — no se navega ni se cierra el modal.
+    toast.error(e?.message || 'No se pudo entrar a la cuenta de este solicitante')
+  } finally {
+    enteringTicket.value = false
   }
 }
 </script>

@@ -242,6 +242,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { OperationsService } from '@/services/Operations.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
@@ -311,7 +312,19 @@ const tickets = ref<any[]>([])
 const PRI_EN: Record<string, string> = { low: 'Baja', medium: 'Normal', high: 'Alta', urgent: 'Urgente' }
 const EST_EN: Record<string, string> = { open: 'Abierto', in_progress: 'En Progreso', resolved: 'Resuelto', closed: 'Cerrado' }
 
-onMounted(loadData)
+const route = useRoute()
+
+// REQ-SOP-04: llegar desde "Entrar como {solicitante}" del ticket (super-admin/support.vue)
+// abre directo ese ticket. Un id que no está en la lista (ticket de otro hotel, borrado, o un
+// query param inventado a mano) no debe romper nada — simplemente no abre ningún modal.
+onMounted(async () => {
+  await loadData()
+  const ticketId = route.query.ticket
+  if (typeof ticketId === 'string') {
+    const found = tickets.value.find((t) => t.id === ticketId)
+    if (found) openTicket(found)
+  }
+})
 
 async function loadData() {
   loading.value = true

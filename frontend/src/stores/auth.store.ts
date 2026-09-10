@@ -135,7 +135,7 @@ export const useAuthStore = defineStore('auth', () => {
    * `false` como éxito: navegar igual dejaba al admin en el panel del PRIMER usuario creyendo
    * que había entrado al segundo.
    */
-  async function loginAs(targetUserId: string): Promise<boolean> {
+  async function loginAs(targetUserId: string, opts?: { ticketId?: string }): Promise<boolean> {
     // `impersonating` recién se pone en true DESPUÉS del await, así que no sirve de cerrojo: dos
     // clicks seguidos (el botón de la pantalla se deshabilita por fila, no globalmente) pasaban
     // los dos y la segunda llamada pisaba `imp.adminToken` con el token de impersonación de la
@@ -147,7 +147,7 @@ export const useAuthStore = defineStore('auth', () => {
     if (!isSuperAdmin.value || impersonating.value) return false
     loginAsInFlight = true
     try {
-      await doLoginAs(targetUserId)
+      await doLoginAs(targetUserId, opts)
       return true
     } finally {
       // También cuando la API falla: si no, un error dejaba el botón muerto hasta recargar.
@@ -155,8 +155,8 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function doLoginAs(targetUserId: string) {
-    const { token: tkn, user: usr } = await AuthService.impersonate(targetUserId)
+  async function doLoginAs(targetUserId: string, opts?: { ticketId?: string }) {
+    const { token: tkn, user: usr } = await AuthService.impersonate(targetUserId, opts)
     // El id del admin, antes de pisar `user.value`: es lo que marca el perfil cacheado como
     // impersonado (ver más abajo).
     const adminId = user.value?.id

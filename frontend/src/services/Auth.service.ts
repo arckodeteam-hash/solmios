@@ -70,11 +70,16 @@ export const AuthService = {
   /**
    * Abre una sesión de impersonación (sólo super admin). La respuesta trae un ACCESS TOKEN SOLO:
    * el refresh es single-session y emitir uno acá desloguearía al cliente real.
+   * `ticketId` (REQ-SOP-04): cuando se entra desde un ticket de soporte, queda en la auditoría
+   * del servidor (`auth.impersonate`) para saber POR QUÉ soporte entró a esa cuenta.
    */
-  async impersonate(userId: string): Promise<{ token: string; user: User }> {
+  async impersonate(userId: string, opts?: { ticketId?: string }): Promise<{ token: string; user: User }> {
     // La lista de propiedades del admin no puede arrastrarse a la sesión del cliente.
     hotelsCache = null
-    const data = await http.post<{ token: string; user: LoginResponse['user'] }>(`/auth/impersonate/${userId}`)
+    const data = await http.post<{ token: string; user: LoginResponse['user'] }>(
+      `/auth/impersonate/${userId}`,
+      opts?.ticketId ? { ticketId: opts.ticketId } : undefined,
+    )
     // `...data` en vez de repetir el campo del token: el chequeo de secretos del pipeline lee
     // `token: <8+ caracteres>` como una credencial pegada a mano y rechaza el commit.
     return { ...data, user: mapUser(data.user) }
