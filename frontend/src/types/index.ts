@@ -954,3 +954,9 @@ export * from './landing'
 // que necesiten la lista de monedas o un CurrencyCode deben importar de acá o de
 // `@/data/intl-catalogs` (que re-exporta la lista runtime-derived).
 export * from './currency'
+
+// #148 (pipeline-ventas-trials) — Contacto público de la plataforma (WhatsApp de la landing).
+export type { PlatformContact } from './site-pages'
+
+// #147 (pipeline-ventas-trials) — Pipeline de ventas del super admin (espejo de sales-leads/types.ts).
+export * from './sales-pipeline'

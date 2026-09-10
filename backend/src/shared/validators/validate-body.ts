@@ -15,13 +15,17 @@
 import { validateSchema as validateFrameworkSchema, ValidationError } from 'arckode-framework'
 import type { ValidationRule } from 'arckode-framework'
 
-/** Tipos que el framework no valida y resolvemos acá. */
-export type StructuredType = 'array' | 'object' | 'json' | 'text'
+/**
+ * Tipos que el framework no valida y resolvemos acá. `integer` existe porque el `number` del
+ * framework hace `Number(value)` sobre strings: `days:"7"` pasaba como 7 y `7.5` como 7.5. Un
+ * campo que es una CANTIDAD (días, unidades) exige un entero JSON, sin coerción.
+ */
+export type StructuredType = 'array' | 'object' | 'json' | 'text' | 'integer'
 
 export interface StructuredRule {
   type: StructuredType
   required?: boolean
-  /** array: cantidad de elementos. text: longitud del string. */
+  /** array: cantidad de elementos. text: longitud del string. integer: valor. */
   min?: number
   max?: number
   message?: string
@@ -30,7 +34,7 @@ export interface StructuredRule {
 export type BodyRule = ValidationRule | StructuredRule
 export type BodySchema = Record<string, BodyRule>
 
-const STRUCTURED: ReadonlySet<string> = new Set<StructuredType>(['array', 'object', 'json', 'text'])
+const STRUCTURED: ReadonlySet<string> = new Set<StructuredType>(['array', 'object', 'json', 'text', 'integer'])
 
 const isStructured = (rule: BodyRule): rule is StructuredRule => STRUCTURED.has(rule.type)
 
@@ -66,6 +70,15 @@ function validateStructured(field: string, rule: StructuredRule, value: unknown)
       if (rule.min !== undefined && trimmed.length < rule.min) return { errors: [`Minimum ${rule.min} characters`] }
       if (rule.max !== undefined && trimmed.length > rule.max) return { errors: [`Maximum ${rule.max} characters`] }
       return { value: trimmed, errors: [] }
+    }
+    // Estricto: número JSON entero. `"7"` (string) y `7.5` se rechazan — nada de `Number(value)`.
+    case 'integer': {
+      if (typeof value !== 'number' || !Number.isInteger(value)) {
+        return { errors: [rule.message ?? `${field} must be an integer`] }
+      }
+      if (rule.min !== undefined && value < rule.min) return { errors: [`Minimum ${rule.min}`] }
+      if (rule.max !== undefined && value > rule.max) return { errors: [`Maximum ${rule.max}`] }
+      return { value, errors: [] }
     }
   }
 }

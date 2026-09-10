@@ -223,7 +223,7 @@ const navSections = computed(() => {
     {
       label: 'Crecimiento',
       items: [
-        { path: '/admin/leads-ventas', label: 'Leads de Ventas', icon: ICONS.briefcase, badge: s.leadsVentas || undefined },
+        { path: '/admin/leads-ventas', label: 'Pipeline de ventas', icon: ICONS.briefcase, badge: s.leadsVentas || undefined },
         { path: '/admin/referrals', label: 'Referidos', icon: ICONS.share },
         { path: '/admin/aliados', label: 'Aliados', icon: ICONS.handshake },
         { path: '/admin/digitalizacion', label: 'Digitalización', icon: ICONS.sparkles },
@@ -286,7 +286,7 @@ const pageTitle = computed(() => {
     'super-admin-email-templates': 'Plantillas de Email',
     'super-admin-sitio': 'Sitio Público (solmios.com)',
     'super-admin-eliminacion-datos': 'Eliminación de Datos',
-    'super-admin-leads-ventas': 'Leads de Ventas',
+    'super-admin-leads-ventas': 'Pipeline de ventas',
     'super-admin-digitalizacion': 'Digitalización',
     'super-admin-roles': 'Roles & Permisos',
     'super-admin-channels': 'Canales (Channel Manager)',

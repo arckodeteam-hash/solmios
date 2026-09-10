@@ -3,11 +3,14 @@ import type { HttpRequest, Logger } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import type { SitePagesService } from './service'
 import { CreateSitePageSchema, UpdateSitePageSchema } from './validators/schema'
+import type { PlatformContact } from './usecases/platform-contact'
 
 export class SitePagesController {
   constructor(
     private readonly service: SitePagesService,
     private readonly logger: Logger,
+    /** REQ-PIPE-07 (#148): contacto público de la plataforma (WhatsApp de soporte). */
+    private readonly platformContact: () => Promise<PlatformContact> = async () => ({ whatsappUrl: null }),
   ) {}
 
   async index() {
@@ -42,5 +45,10 @@ export class SitePagesController {
     // Item directo (mismo shape que apikeys show): el envelope del framework
     // lo termina exponiendo como { success, data: página }.
     return { status: 200, body: await this.service.getPublicBySlug(req.params.slug) }
+  }
+
+  /** GET /api/public/platform-contact — `{ whatsappUrl | null }` (REQ-PIPE-07, #148). */
+  async publicPlatformContact() {
+    return { status: 200, body: await this.platformContact() }
   }
 }

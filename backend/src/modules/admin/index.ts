@@ -21,12 +21,13 @@ export function AdminModule() {
     // 400/403/404/409, por TIPO de error). Un cambio observable del contrato bumpea la versión.
     // 1.2.0: + GET /api/admin/modules/catalog (árbol módulo→sub-módulos para el editor de planes)
     // y `plans.modules` se valida contra el catálogo (400 con las claves inválidas).
-    version: '1.2.0',
+    // 1.3.0: + POST /api/admin/subscriptions/:hotelId/extend-trial (REQ-PIPE-05, #146).
+    version: '1.3.0',
     description: 'Super admin platform management',
     contract: {
-      name: 'admin', version: '1.2.0',
+      name: 'admin', version: '1.3.0',
       description: 'Platform-level management: hotels, users, plans, analytics',
-      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride'],
+      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'extendTrial'],
       events: [],
       tables: [],
       dependencies: [],
@@ -134,13 +135,16 @@ export function AdminModule() {
       router.post('/api/admin/subscriptions/:hotelId/special-conditions', sa, (req: any) => controller.applySpecialConditions(req))
       router.post('/api/admin/subscriptions/:hotelId/suspend', sa, (req: any) => controller.suspendSubscription(req))
       router.post('/api/admin/subscriptions/:hotelId/reactivate', sa, (req: any) => controller.reactivateSubscription(req))
+      // REQ-PIPE-05 (#146): más días de prueba. La lógica vive en `subscriptions` (connector
+      // admin-subscriptions-trial); acá solo validación, guard de super-admin y audit_log.
+      router.post('/api/admin/subscriptions/:hotelId/extend-trial', sa, (req: any) => controller.extendTrial(req))
 
       // ── Overrides de módulos por hotel (3ra capa de entitlement) ──────────────────────
       router.get('/api/admin/hotels/:hotelId/module-overrides', sa, (req: any) => controller.listModuleOverrides(req))
       router.post('/api/admin/hotels/:hotelId/module-overrides', sa, (req: any) => controller.upsertModuleOverride(req))
       router.delete('/api/admin/hotels/:hotelId/module-overrides/:id', sa, (req: any) => controller.deleteModuleOverride(req))
 
-      log.info('Módulo admin listo (32 endpoints)')
+      log.info('Módulo admin listo (33 endpoints)')
       return service
     },
   })

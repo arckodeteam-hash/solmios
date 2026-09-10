@@ -1,9 +1,11 @@
 import type { HttpRequest, Logger } from 'arckode-framework'
-import { validateSchema } from 'arckode-framework'
+import { validateSchema } from '../../shared/validators/validate-body'
 import type { AdminService } from './service'
+import { TrialPortUnavailableError } from './usecases/extend-trial'
 import {
   CreatePlanSchema, UpdatePlanSchema, CreateAmenityCatalogSchema, UpdateAmenityCatalogSchema, UpdateHotelAdminSchema,
   ApplySpecialConditionsSchema, UpdateSpecialCategorySchema, UpdateSubscriptionSettingsSchema, ModuleOverrideSchema,
+  ExtendTrialSchema,
 } from './validators/schema'
 
 /**
@@ -211,6 +213,21 @@ export class AdminController {
       return { status: 200, body: await this.service.reactivateSubscriptionManual(req.params.hotelId) }
     } catch (e: any) {
       return { status: 404, body: { error: e.message } }
+    }
+  }
+
+  /**
+   * REQ-PIPE-05 (#146): `{ days: 1..30 }` entero → 400 fuera de rango o no entero, 404 sin
+   * suscripción, 409 si la suscripción no es una prueba (active/past_due/suspended/canceled o con
+   * Stripe), 503 sin connector. Todo por TIPO de error: nada de regex sobre el mensaje.
+   */
+  async extendTrial(req: HttpRequest) {
+    try {
+      const data = validateSchema(ExtendTrialSchema, req.body || {}) as { days: number }
+      return { status: 200, body: await this.service.extendTrial(req.params.hotelId, data.days, req.user as any) }
+    } catch (e: any) {
+      if (e instanceof TrialPortUnavailableError) return { status: e.httpStatus, body: { error: e.message } }
+      return { status: amenityErrorStatus(e), body: { error: e.message } }
     }
   }
 

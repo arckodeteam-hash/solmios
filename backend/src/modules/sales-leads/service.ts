@@ -14,7 +14,12 @@ import type {
 } from './types'
 import { SALES_LEAD_STATUSES } from './types'
 import type { SalesLeadsSockets } from './sockets'
-import { buildAckEmail, buildAdminAlertEmail } from './usecases/emails'
+import { notifyLead } from './usecases/lead-notify'
+import { buildPipeline, type PipelineDeps } from './usecases/pipeline'
+import { notifySignup, type SignedUpHotelInput, type SignedUpOwnerInput } from './usecases/signup-alert'
+import { parseProspectKey, upsertProspect, type ProspectActor, type UpsertProspectDeps } from './usecases/prospect-upsert'
+import { listAssignees, type AssigneesResult } from './usecases/assignees'
+import type { SalesPipelineResult, SalesProspectDTO, UpdateSalesProspectDTO } from './types'
 
 /** Puerto de email mínimo (lo cablea email-bootstrap con setEmailDeps) — mismo patrón que deletion-requests. */
 export interface EmailPort {
@@ -35,14 +40,79 @@ function assertStatus(status: string): asserts status is SalesLeadStatus {
 export class SalesLeadsService {
   private sockets: SalesLeadsSockets = {}
   private emailSender?: EmailPort
+  private appUrl = '' // PUBLIC_URL: base de los links absolutos en los correos a ventas
+  private pipelineDeps?: PipelineDeps
+  private plansRepo?: RepositoryAdapter<any> // solo para el NOMBRE del plan en el aviso del alta (#145)
+  private configRepo?: RepositoryAdapter<any> // configuration('plataforma') → nombre de la plataforma en el WhatsApp del alta
 
   constructor(
     private readonly repo: RepositoryAdapter<SalesLeadDTO>,
     private readonly logger: Logger,
   ) {}
 
-  setEmailDeps(emailSender: EmailPort): void {
+  setEmailDeps(emailSender: EmailPort, appUrl?: string): void {
     this.emailSender = emailSender
+    if (appUrl !== undefined) this.appUrl = appUrl
+  }
+
+  /** Repos de las tablas que el pipeline lee (los cablea index.ts; el service nunca ve el ORM). */
+  setPipelineDeps(deps: Omit<PipelineDeps, 'salesLeads'> & {
+    salesLeads?: RepositoryAdapter<SalesLeadDTO>
+    plans?: RepositoryAdapter<any>
+    configuration?: RepositoryAdapter<any>
+  }): void {
+    const { plans, configuration, ...rest } = deps
+    this.pipelineDeps = { ...rest, salesLeads: rest.salesLeads ?? this.repo }
+    if (plans) this.plansRepo = plans
+    if (configuration) this.configRepo = configuration
+  }
+
+  /** REQ-PIPE-04 (#145): hotel recién registrado (socket `subscriptions.onHotelSignedUp` vía
+   *  connector). Encola el aviso a ventas en ESTA MISMA petición. Best-effort: nunca tira. */
+  notifySignup(hotel: SignedUpHotelInput, owner: SignedUpOwnerInput, planId: string): Promise<void> {
+    return notifySignup({
+      emailSender: this.emailSender, plansRepo: this.plansRepo, configRepo: this.configRepo, to: SALES_ADMIN_EMAIL,
+      platformHotelId: PLATFORM_HOTEL_ID, appUrl: this.appUrl, logger: this.logger,
+    }, hotel, owner, planId)
+  }
+
+  private requirePipelineDeps(): PipelineDeps {
+    if (!this.pipelineDeps) throw new Error('sales-leads: pipeline deps no cableadas (setPipelineDeps)')
+    return this.pipelineDeps
+  }
+
+  // ─── Pipeline de ventas (REQ-PIPE-01..03) ─────────────────────────────────
+
+  /** Admin: una fila por hotel registrado + una por lead sin hotel, con etapa/calor calculados. */
+  async getPipeline(): Promise<SalesPipelineResult> {
+    return buildPipeline(this.requirePipelineDeps())
+  }
+
+  /** Admin: admins activos de la plataforma a los que se puede asignar un prospecto — solo id/name/email. */
+  async listAssignees(): Promise<AssigneesResult> {
+    return listAssignees(this.requirePipelineDeps().users)
+  }
+
+  /**
+   * Admin: upsert de lo que ventas anota sobre `hotel:<id>` | `lead:<id>`. Parcial: solo pisa lo
+   * que viene en el body (`null` explícito limpia). `lostReason` sin `lostAt` sella `lostAt = now`.
+   * Deja rastro en `audit_log` con `hotelId='platform'`.
+   */
+  async updateProspect(key: string, input: UpdateSalesProspectDTO, actor: ProspectActor): Promise<SalesProspectDTO> {
+    const deps = this.requirePipelineDeps()
+    const target = parseProspectKey(key)
+    const upsertDeps: UpsertProspectDeps = {
+      salesProspects: deps.salesProspects,
+      hotels: deps.hotels,
+      salesLeads: deps.salesLeads,
+      auditlog: deps.auditlog,
+      users: deps.users,
+      logger: this.logger,
+      now: deps.now,
+    }
+    const saved = await upsertProspect(upsertDeps, target, input, actor)
+    this.logger.info('sales-pipeline: prospecto actualizado', { key, fields: Object.keys(input) })
+    return saved
   }
 
   setSockets(s: Partial<SalesLeadsSockets>): void {
@@ -87,33 +157,9 @@ export class SalesLeadsService {
     return { received: true }
   }
 
-  /**
-   * Best-effort: acuse de recibo al lead + aviso a ventas (siempre). Un fallo de email
-   * NUNCA debe romper el envío del formulario — el lead ya quedó guardado en DB.
-   */
-  private async notifyLead(item: SalesLeadDTO): Promise<void> {
-    if (!this.emailSender) return
-    try {
-      const ack = buildAckEmail({ fullName: item.fullName })
-      await this.emailSender.enqueue({
-        to: item.email, subject: ack.subject, html: ack.html,
-        hotelId: PLATFORM_HOTEL_ID, relatedType: 'sales-lead', relatedId: item.id,
-      })
-    } catch (e) {
-      this.logger.error('sales-leads: falló el acuse de recibo por email', { error: (e as Error).message, id: item.id })
-    }
-    try {
-      const alert = buildAdminAlertEmail({
-        fullName: item.fullName, email: item.email, phone: item.phone, hotelName: item.hotelName,
-        roomsRange: item.roomsRange, message: item.message, planInterest: item.planInterest,
-      })
-      await this.emailSender.enqueue({
-        to: SALES_ADMIN_EMAIL, subject: alert.subject, html: alert.html,
-        hotelId: PLATFORM_HOTEL_ID, relatedType: 'sales-lead', relatedId: item.id,
-      })
-    } catch (e) {
-      this.logger.error('sales-leads: falló el aviso a ventas por email', { error: (e as Error).message, id: item.id })
-    }
+  /** Acuse al lead + aviso a ventas (usecases/lead-notify.ts). Best-effort: nunca rompe el formulario. */
+  private notifyLead(item: SalesLeadDTO): Promise<void> {
+    return notifyLead({ emailSender: this.emailSender, to: SALES_ADMIN_EMAIL, platformHotelId: PLATFORM_HOTEL_ID, logger: this.logger }, item)
   }
 
   /** Admin: avanza el flujo (status) y/o deja notas internas. Nunca toca los datos del lead. */
@@ -135,5 +181,19 @@ export class SalesLeadsService {
     await this.getById(id)
     await this.repo.delete(id)
     this.logger.info('sales-leads: eliminado', { id })
+    await this.removeProspectOf(id)
+  }
+
+  /** FE-15: lo que ventas anotó sobre el lead (`sales_prospects.leadId`) se va con él. Best-effort
+   *  (el módulo no usa transacciones): el lead ya no existe; un prospecto huérfano solo se loguea. */
+  private async removeProspectOf(leadId: string): Promise<void> {
+    const prospects = this.pipelineDeps?.salesProspects
+    if (!prospects) return
+    try {
+      const orphans = await prospects.findMany({ leadId })
+      for (const p of orphans) await prospects.delete(p.id)
+    } catch (e) {
+      this.logger.warn('sales-leads: no se pudo borrar el prospecto del lead eliminado', { leadId, error: String(e) })
+    }
   }
 }

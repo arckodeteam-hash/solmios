@@ -15,6 +15,7 @@ import { applyStripeDiscount, type ApplyStripeDiscountResult, type ApplyStripeDi
 import { listPublicPlans, type PublicPlan } from './usecases/public-plans'
 import { publicFounderDiscount } from './usecases/public-founder-discount'
 import { readFounderCountdown, type FounderCountdownConfig, type PublicFounderCountdown } from './usecases/founder-countdown'
+import { extendTrial, type ExtendTrialResult } from './usecases/extend-trial'
 import type { SubscriptionSockets } from './sockets'
 
 export class SubscriptionsService {
@@ -93,7 +94,7 @@ export class SubscriptionsService {
   async signup(input: SignupInput, origin?: string): Promise<SignupResult> {
     const created = await this.signupUc.signup(input)
     return completeSignup(
-      { ...this.cardFlowDeps(), notifyTrialStarted: this.sockets.onTrialStarted },
+      { ...this.cardFlowDeps(), notifyTrialStarted: this.sockets.onTrialStarted, notifyHotelSignedUp: this.sockets.onHotelSignedUp },
       await this.signupPolicy(), created, input, origin,
     )
   }
@@ -192,4 +193,7 @@ export class SubscriptionsService {
       logger: this.logger, sendPlatformEmail: this.sendPlatformEmail, orm: this.orm, platformInvoicesRepo: this.platformInvoicesRepo,
     }, rawBody, signature)
   }
+
+  /** REQ-PIPE-05 (#146) — más días de prueba (super-admin vía connector `admin-subscriptions-trial`). `{link}` sale de PUBLIC_URL como en handle-stripe-event.ts. Ver `usecases/extend-trial.ts`. */
+  extendTrial(hotelId: string, days: number, now?: Date): Promise<ExtendTrialResult> { return extendTrial({ subscriptionsRepo: this.subscriptionsRepo, hotelsRepo: this.hotelsRepo, configRepo: this.configurationRepo, sendPlatformEmail: this.sendPlatformEmail, publicUrl: process.env.PUBLIC_URL, logger: this.logger }, hotelId, days, now) }
 }

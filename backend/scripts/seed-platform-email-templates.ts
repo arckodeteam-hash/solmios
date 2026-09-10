@@ -1,4 +1,4 @@
-// scripts/seed-platform-email-templates.ts — Seed de las 10 plantillas de PLATAFORMA.
+// scripts/seed-platform-email-templates.ts — Seed de las 11 plantillas de PLATAFORMA.
 //
 // La TABLA la crea el ORM (modelo `PlatformEmailTemplate`, registrado por el módulo
 // platform-emails vía RUN_MIGRATE=1, igual que cualquier otro modelo del framework — ver
@@ -80,6 +80,20 @@ guardados, pero necesitás activar un plan para volver a operar.</p>
 ${ctaButton('{link}', 'Activar mi plan')}
 <p>Cualquier duda, respondé este correo y te ayudamos.</p>`,
     variables: ['hotel_name', 'link'],
+  },
+  // REQ-PIPE-05 (#146): la encola `subscriptions/usecases/extend-trial.ts` cuando el super-admin
+  // le da más días a un hotel. `{platform_name}` lo resuelve el envío desde configuration('plataforma')
+  // (shared/utils/platform-identity.ts) — el nombre de la plataforma NO va escrito acá.
+  {
+    event: 'trial_extended',
+    subject: 'Extendimos su prueba gratis en {platform_name}: {days_left} días más',
+    body: `<p>Hola,</p>
+<p>Buenas noticias: extendimos la prueba gratis de <strong>{hotel_name}</strong> en {platform_name}.
+Tiene <strong>{days_left} días</strong> más para cargar sus habitaciones, tarifas y reservas, y ver
+cómo el sistema le ordena la operación del hotel.</p>
+${ctaButton('{link}', 'Ir a mi panel')}
+<p>Si tiene alguna duda o quiere que le mostremos el sistema, responda este correo y lo ayudamos.</p>`,
+    variables: ['hotel_name', 'days_left', 'platform_name', 'link'],
   },
   {
     event: 'payment_succeeded',

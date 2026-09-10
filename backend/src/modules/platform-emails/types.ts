@@ -4,6 +4,8 @@ export type PlatformEmailEvent =
   | 'welcome'
   | 'trial_ending'
   | 'trial_expired'
+  /** REQ-PIPE-05 (#146): el super-admin le dio más días de prueba al hotel. */
+  | 'trial_extended'
   | 'payment_succeeded'
   | 'payment_failed'
   | 'subscription_canceled'
