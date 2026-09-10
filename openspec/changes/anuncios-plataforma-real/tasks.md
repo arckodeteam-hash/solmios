@@ -57,6 +57,12 @@
       el `POST`.
       **Aceptación**: `grep -n "allHotels\|adminsOnly" announcements.vue` → 0 resultados. En Network,
       el `POST /api/anuncios` lleva `audience` con el valor elegido.
+- [x] 2.6 Evidencia ejecutable de la aceptación de §2 (#106): `tests/audience-route.test.ts` (ruta
+      real con roles: 201 · 400 que nombra `hotelId` · 403 con `COUNT` sin cambios · `receptionist`
+      no recibe `admins` y `hotel_admin` sí · `PUT` no escala audiencia) y
+      `tests/audience-migration.e2e.test.ts` (tabla vieja → `orm.migrate()` → backfill real →
+      filas viejas intactas con `hotel`/`all`). `update()` rechaza `audience = 'hotel'` sobre un
+      anuncio sin `hotelId` (400).
 
 ## 3. Vigencia y programación (REQ-ANN-03) — GitHub #107
 
