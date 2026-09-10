@@ -262,13 +262,67 @@
         </div>
       </SectionCard>
     </div>
+
+    <!-- Tab: Suscripciones — #103 (CFG-6). La duración del trial va por su propio endpoint
+         (/admin/subscriptions/trial-days); recordatorio y gracia por /admin/subscriptions/settings,
+         la MISMA fila que lee el cron de cobro y que edita la pantalla de cupos. La tarjeta
+         obligatoria en el alta y la cuenta regresiva del fundador se editan allá, no acá. -->
+    <div v-if="activeTab === 'suscripciones'" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <SectionCard title="Prueba y ciclo de cobro" subtitle="Valores globales de las suscripciones de la plataforma">
+        <div class="space-y-4">
+          <div>
+            <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Días de prueba</label>
+            <input v-model.number="trialDays" type="number" min="1" max="365"
+              class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+            <p class="mt-1 text-[11px] text-text-muted">
+              Cuántos días dura la prueba de un hotel nuevo (1 a 365; sin configurar, 15). Las pruebas
+              ya empezadas no cambian.
+            </p>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Recordatorio (días antes)</label>
+              <input v-model.number="reglasCobro.reminderDaysBefore" type="number" min="0" max="60"
+                class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Días de gracia</label>
+              <input v-model.number="reglasCobro.gracePeriodDays" type="number" min="0" max="60"
+                class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
+            </div>
+          </div>
+          <p class="text-[11px] text-text-muted">
+            Se guardan en la misma fila que lee el recordatorio de cobro (cron): lo que cambia acá es
+            lo que ve el hotel en su vencimiento.
+          </p>
+          <button @click="guardarSuscripciones" :disabled="guardandoSuscripciones"
+            class="rounded-xl bg-navy px-5 py-2.5 text-sm font-bold text-white transition-all hover:shadow-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            {{ guardandoSuscripciones ? 'Guardando…' : 'Guardar' }}
+          </button>
+        </div>
+      </SectionCard>
+      <SectionCard title="Tarjeta obligatoria y cuenta regresiva" subtitle="Se configuran en la pantalla de cupos">
+        <div class="space-y-4">
+          <p class="text-[11px] leading-relaxed text-text-muted">
+            Pedir la tarjeta antes de empezar la prueba (y cobrar sola al vencer) y el contador de la
+            landing <code>/hotel-fundador</code> viven en la misma fila de reglas, pero se editan en
+            la pantalla de cupos para no duplicar el formulario.
+          </p>
+          <router-link to="/admin/subscriptions/founders-pioneers"
+            class="inline-block rounded-xl bg-surface border border-border px-5 py-2.5 text-sm font-bold text-navy transition-colors hover:border-navy/30">
+            Configurar tarjeta y contador en Cupos Fundador / Pionero →
+          </router-link>
+        </div>
+      </SectionCard>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ConfigService, PlatformService } from '@/services/Platform.service'
 import type { MetaAppEstado, ResendEstado, SettingsStatus } from '@/services/Platform.service'
+import { SubscriptionsAdminService } from '@/services/SubscriptionsAdmin.service'
 import { filasProteccionAlta, filasIntegraciones } from './settings-status'
 import { validarDestinoPrueba, destinoPruebaPorDefecto, mensajeResultadoPrueba } from './settings-email'
 import { useToast } from '@/composables/useToast'
@@ -323,11 +377,14 @@ const selectedTemplate = ref<any>(null)
 
 // CFG-2 (#99): sin pestaña de facturación — sus controles (método de cobro, ciclo, gracia,
 // impuestos) no tenían lector en el backend: se mostraban, "se guardaban" y nadie los leía.
+// #103 (CFG-6): sí hay pestaña Suscripciones, pero sólo con campos de lector real: trial_days
+// y los dos campos del cron (recordatorio/gracia). "Facturación" sigue sin existir.
 const tabs = [
   { label: 'Plataforma', value: 'platform' },
   { label: 'Email', value: 'email' },
   { label: 'Seguridad', value: 'security' },
   { label: 'Integraciones', value: 'integrations' },
+  { label: 'Suscripciones', value: 'suscripciones' },
 ]
 
 // CFG-2 (#99): sólo campos con lector real al otro lado. Moneda, zona horaria, dominio, color de
@@ -510,6 +567,72 @@ async function quitarResend() {
     toast.error('No se pudo quitar', e?.message || 'Intentá de nuevo')
   } finally {
     resendGuardando.value = false
+  }
+}
+
+// ── #103 (CFG-6): pestaña Suscripciones ────────────────────────────────────────────────────
+// Dos fuentes: `trial_days` por su propio endpoint y recordatorio/gracia por
+// /admin/subscriptions/settings — el MISMO servicio/fila que usa la pantalla de cupos
+// (subscriptions-founders.vue) y que lee el cron, no un endpoint paralelo.
+
+// Mismos límites que UpdateTrialDaysSchema del backend: menos de 1 día es invisible,
+// más de 365 ya no es una prueba.
+const TRIAL_DAYS_MIN = 1
+const TRIAL_DAYS_MAX = 365
+// Default del backend (sin fila en configuration): mantenerlo acá evita que el form
+// arranque en 0 y mande a guardar un valor que el alta nunca usó.
+const trialDays = ref(15)
+const reglasCobro = ref({ reminderDaysBefore: 5, gracePeriodDays: 5 })
+const suscripcionesCargadas = ref(false)
+const guardandoSuscripciones = ref(false)
+
+async function cargarSuscripciones() {
+  try {
+    const [trial, settings] = await Promise.all([
+      SubscriptionsAdminService.getTrialDays(),
+      SubscriptionsAdminService.getSettings(),
+    ])
+    trialDays.value = trial.days
+    reglasCobro.value = {
+      reminderDaysBefore: settings.reminderDaysBefore,
+      gracePeriodDays: settings.gracePeriodDays,
+    }
+    suscripcionesCargadas.value = true
+  } catch {
+    // Sin flag de "cargada": volver a entrar a la pestaña reintenta la carga.
+    toast.error('No se pudo cargar la configuración de suscripciones')
+  }
+}
+
+// Se carga al activar la pestaña (no en el mount: las otras cuatro no necesitan estos GET).
+watch(activeTab, (tab) => {
+  if (tab === 'suscripciones' && !suscripcionesCargadas.value) void cargarSuscripciones()
+})
+
+async function guardarSuscripciones() {
+  const days = Number(trialDays.value)
+  if (!Number.isInteger(days) || days < TRIAL_DAYS_MIN || days > TRIAL_DAYS_MAX) {
+    toast.error('Días de prueba fuera de rango', `Tiene que ser un número entero entre ${TRIAL_DAYS_MIN} y ${TRIAL_DAYS_MAX}`)
+    return
+  }
+  guardandoSuscripciones.value = true
+  try {
+    // Dos filas en una salva: `trial_days` por su endpoint y `subscription_settings` con un
+    // PATCH de SOLO los dos campos que acá se editan — el resto de la fila (tarjeta al alta,
+    // contador del fundador) lo sigue administrando la pantalla de cupos.
+    await Promise.all([
+      SubscriptionsAdminService.setTrialDays(days),
+      SubscriptionsAdminService.updateSettings({
+        reminderDaysBefore: reglasCobro.value.reminderDaysBefore,
+        gracePeriodDays: reglasCobro.value.gracePeriodDays,
+      }),
+    ])
+    suscripcionesCargadas.value = true
+    toast.success('Suscripciones guardadas', 'Los hoteles nuevos ya usan estos valores')
+  } catch (e: any) {
+    toast.error('No se pudo guardar', e?.message || 'Revisá los valores e intentá de nuevo')
+  } finally {
+    guardandoSuscripciones.value = false
   }
 }
 </script>

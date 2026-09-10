@@ -8,9 +8,12 @@
 //      supportPhone}: los campos sin lector en el backend (moneda, zona, dominio) ya no viajan.
 //   3. El botón global "Guardar Cambios" no existe en ninguna pestaña.
 //   4. El Guardar de Integraciones persiste sólo la clave de Google Maps.
+//   5. #103 (CFG-6): la 5ª pestaña Suscripciones carga trial_days y recordatorio/gracia de SUS
+//      endpoints, guarda por el MISMO servicio que la pantalla de cupos (no por /api/configuracion)
+//      y linkea ahí para la tarjeta obligatoria y la cuenta regresiva.
 //
-// Platform.service se mockea entero: la página (y ChannexPlatformConfig, que monta adentro)
-// no tocan la red, y los POST a /api/configuracion se cuentan sobre el mock.
+// Platform.service y SubscriptionsAdmin.service se mockean enteros: la página (y
+// ChannexPlatformConfig, que monta adentro) no tocan la red, y los POST se cuentan sobre el mock.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 
@@ -27,9 +30,18 @@ vi.mock('@/services/Platform.service', () => ({
   },
   ChannexAdminService: { status: vi.fn(), save: vi.fn(), test: vi.fn() },
 }))
+vi.mock('@/services/SubscriptionsAdmin.service', () => ({
+  SubscriptionsAdminService: {
+    getTrialDays: vi.fn(),
+    setTrialDays: vi.fn(),
+    getSettings: vi.fn(),
+    updateSettings: vi.fn(),
+  },
+}))
 
 import Settings from './settings.vue'
 import { ConfigService, PlatformService, ChannexAdminService } from '@/services/Platform.service'
+import { SubscriptionsAdminService } from '@/services/SubscriptionsAdmin.service'
 import type { SettingsStatus } from '@/services/Platform.service'
 
 const PLATAFORMA = { platformName: 'SolmiOS', supportEmail: 'soporte@solmios.com', supportPhone: '+1 809 555 0000' }
@@ -42,8 +54,11 @@ const STATUS_APAGADO = Object.fromEntries(
 
 let wrapper: VueWrapper | null = null
 
+/** router-link como <a href>: deja afirmar el destino del link de la pestaña Suscripciones. */
+const RouterLinkStub = { props: ['to'], template: '<a :href="to"><slot /></a>' }
+
 async function montar() {
-  wrapper = mount(Settings)
+  wrapper = mount(Settings, { global: { stubs: { RouterLink: RouterLinkStub } } })
   await flushPromises()
   return wrapper
 }
@@ -72,6 +87,13 @@ function clavesGuardadas(): string[] {
   return vi.mocked(ConfigService.set).mock.calls.map((c) => c[0])
 }
 
+/** El valor del input numérico cuyo label matchea — no depende del orden del DOM. */
+function numeroDe(label: RegExp): string {
+  const el = wrapper!.findAll('label').find((l) => label.test(l.text()))?.element
+  const input = el?.parentElement?.querySelector('input[type="number"]')
+  return input ? String((input as HTMLInputElement).value) : ''
+}
+
 describe('settings (super-admin) — un Guardar por pestaña', () => {
   beforeEach(() => {
     vi.mocked(ConfigService.get).mockReset().mockImplementation(async (key: string) => {
@@ -89,6 +111,19 @@ describe('settings (super-admin) — un Guardar por pestaña', () => {
       environment: 'staging', hasKey: false, keyMasked: '', channexUserId: '',
     })
     vi.mocked(ChannexAdminService.test).mockReset()
+    // #103: los valores que devuelve "el backend" para la pestaña Suscripciones.
+    vi.mocked(SubscriptionsAdminService.getTrialDays).mockReset().mockResolvedValue({ days: 30 })
+    vi.mocked(SubscriptionsAdminService.setTrialDays).mockReset().mockResolvedValue({ days: 30 })
+    vi.mocked(SubscriptionsAdminService.getSettings).mockReset().mockResolvedValue({
+      reminderDaysBefore: 5, gracePeriodDays: 3, founderChurnBlocksReturn: true,
+      maxManualDiscountPct: 100, requireCardOnTrial: true,
+      founderCountdownEnabled: true, founderCountdownDurationDays: 90,
+    })
+    vi.mocked(SubscriptionsAdminService.updateSettings).mockReset().mockResolvedValue({
+      reminderDaysBefore: 5, gracePeriodDays: 3, founderChurnBlocksReturn: true,
+      maxManualDiscountPct: 100, requireCardOnTrial: true,
+      founderCountdownEnabled: true, founderCountdownDurationDays: 90,
+    })
   })
 
   afterEach(() => {
@@ -96,14 +131,17 @@ describe('settings (super-admin) — un Guardar por pestaña', () => {
     wrapper = null
   })
 
-  it('monta con las cuatro pestañas (sin facturación) y sin tocar ConfigService.set', async () => {
+  it('monta con las cinco pestañas (sin facturación) y sin tocar ConfigService.set', async () => {
     await montar()
 
-    for (const label of ['Plataforma', 'Email', 'Seguridad', 'Integraciones']) {
+    for (const label of ['Plataforma', 'Email', 'Seguridad', 'Integraciones', 'Suscripciones']) {
       expect(botones(label), `falta la pestaña ${label}`).toHaveLength(1)
     }
     expect(botones('Facturación')).toHaveLength(0)
     expect(ConfigService.set).not.toHaveBeenCalled()
+    // La pestaña Suscripciones es lazy: montar la página solo no dispara sus GET.
+    expect(SubscriptionsAdminService.getTrialDays).not.toHaveBeenCalled()
+    expect(SubscriptionsAdminService.getSettings).not.toHaveBeenCalled()
   })
 
   it('el Guardar de la pestaña Email hace UN solo POST y es a email_config', async () => {
@@ -151,10 +189,47 @@ describe('settings (super-admin) — un Guardar por pestaña', () => {
   it('no existe el botón global "Guardar Cambios" en ninguna pestaña', async () => {
     await montar()
 
-    for (const label of ['Plataforma', 'Email', 'Seguridad', 'Integraciones']) {
+    for (const label of ['Plataforma', 'Email', 'Seguridad', 'Integraciones', 'Suscripciones']) {
       await irATab(label)
       const globales = wrapper!.findAll('button').filter((b) => b.text().includes('Guardar Cambios'))
       expect(globales, `la pestaña ${label} no puede tener botón global de guardado`).toHaveLength(0)
     }
+  })
+
+  it('al activarse, Suscripciones carga trial_days y las reglas de cobro de SUS endpoints', async () => {
+    await montar()
+    await irATab('Suscripciones')
+
+    // Dos GET, uno por fila: trial_days (propio) y subscription_settings (el del cron).
+    expect(SubscriptionsAdminService.getTrialDays).toHaveBeenCalledTimes(1)
+    expect(SubscriptionsAdminService.getSettings).toHaveBeenCalledTimes(1)
+    expect(numeroDe(/^Días de prueba$/)).toBe('30')
+    expect(numeroDe(/Recordatorio/)).toBe('5')
+    expect(numeroDe(/Días de gracia/)).toBe('3')
+  })
+
+  it('el Guardar de Suscripciones persiste trial_days y parchea el mismo settings de la pantalla de cupos', async () => {
+    await montar()
+    await irATab('Suscripciones')
+
+    await clickUnico('Guardar')
+
+    expect(SubscriptionsAdminService.setTrialDays).toHaveBeenCalledWith(30)
+    // El MISMO método que usa subscriptions-founders.vue — no un endpoint paralelo — y con un
+    // PATCH de sólo los dos campos que esta pestaña edita.
+    expect(SubscriptionsAdminService.updateSettings).toHaveBeenCalledWith({
+      reminderDaysBefore: 5, gracePeriodDays: 3,
+    })
+    // Nada de /api/configuracion: esta pestaña no inventa claves sueltas.
+    expect(ConfigService.set).not.toHaveBeenCalled()
+  })
+
+  it('Suscripciones linkea a la pantalla de cupos para la tarjeta obligatoria y la cuenta regresiva', async () => {
+    await montar()
+    await irATab('Suscripciones')
+
+    // Ruta real registrada en el router (super-admin-subscriptions-founders).
+    const hrefs = wrapper!.findAll('a').map((a) => a.attributes('href') ?? '')
+    expect(hrefs).toContain('/admin/subscriptions/founders-pioneers')
   })
 })
