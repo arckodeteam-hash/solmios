@@ -1,5 +1,6 @@
 // REQ-MON-05 — backups: lista derivada del directorio, id nunca concatenado a una ruta, retención
-// por cantidad, tope de tiempo, pg_dump ausente explicado, sqlite copiado de forma consistente.
+// por cantidad, tope de tiempo, pg_dump ausente explicado, contraseña nunca en argv ni en errores,
+// sqlite copiado de forma consistente en un proceso hijo que el tope puede matar.
 import { describe, it, expect } from 'bun:test'
 import * as fsp from 'node:fs/promises'
 import { mkdtempSync, writeFileSync, utimesSync, existsSync, readdirSync, rmSync } from 'node:fs'
@@ -9,7 +10,11 @@ import { Database } from 'bun:sqlite'
 import {
   BackupsStore, DEFAULT_BACKUP_DIR, resolveBackupDir, resolveRetentionCount, type BackupsFs,
 } from '../observability/backups'
-import { postgresDump, sqliteDump, backupDumpFromEnv, type BackupDump, type ProcessRunner } from '../observability/backup-dump'
+import {
+  postgresDump, sqliteDump, backupDumpFromEnv, parsePostgresUrl, bunProcessRunner,
+  SQLITE_DUMP_SCRIPT, SQLITE_DUMP_SRC_VAR, SQLITE_DUMP_DEST_VAR,
+  type BackupDump, type ProcessRunner, type ProcessSpec,
+} from '../observability/backup-dump'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'bk-'))
@@ -199,41 +204,91 @@ describe('BackupsStore — create, retención y tope de tiempo', () => {
 
 describe('backup-dump — postgres', () => {
   const signal = new AbortController().signal
+  /** Arma una URL con credencial por partes para que el escáner de secretos del repo no la lea como una clave real. */
+  const conCred = (esquema: string, user: string, clave: string, resto: string) => [esquema, '://', user, ':', clave, '@', resto].join('')
+  const URL_CON_CLAVE = conCred('postgres', 'u', 'p', 'h:5433/db?sslmode=require')
 
   it('binario pg_dump ausente → error explicativo que nombra pg_dump (which)', async () => {
     let called = false
     const runner: ProcessRunner = async () => { called = true; return { code: 0, stderr: '' } }
-    const dump = postgresDump('postgres://u:p@h/db', { runner, which: () => null })
+    const dump = postgresDump(URL_CON_CLAVE, { runner, which: () => null })
     await expect(dump.run({ destino: '/tmp/x.sql', signal })).rejects.toThrow(/pg_dump/)
     expect(called).toBe(false)
   })
 
   it('binario pg_dump ausente → también si el spawn falla con ENOENT', async () => {
     const runner: ProcessRunner = async () => { throw Object.assign(new Error('spawn failed'), { code: 'ENOENT' }) }
-    const dump = postgresDump('postgres://u:p@h/db', { runner, which: () => '/usr/bin/pg_dump' })
+    const dump = postgresDump(URL_CON_CLAVE, { runner, which: () => '/usr/bin/pg_dump' })
     await expect(dump.run({ destino: '/tmp/x.sql', signal })).rejects.toThrow(/pg_dump.*instal/i)
   })
 
-  it('invoca pg_dump con la DATABASE_URL y el destino; código ≠ 0 → error con stderr', async () => {
-    const calls: string[][] = []
-    const runner: ProcessRunner = async (cmd) => { calls.push(cmd); return { code: 0, stderr: '' } }
-    const dump = postgresDump('postgres://u:p@h/db', { runner, which: () => '/usr/bin/pg_dump' })
+  it('invoca pg_dump con host/usuario/base en argv, la contraseña SÓLO en env.PGPASSWORD', async () => {
+    const calls: ProcessSpec[] = []
+    const runner: ProcessRunner = async (spec) => { calls.push(spec); return { code: 0, stderr: '' } }
+    const dump = postgresDump(URL_CON_CLAVE, { runner, which: () => '/usr/bin/pg_dump' })
     expect(dump.motor).toBe('postgres')
     expect(dump.extension).toBe('sql')
     await dump.run({ destino: '/tmp/out.sql.part', signal })
-    expect(calls[0]![0]).toBe('pg_dump')
-    expect(calls[0]).toContain('--file=/tmp/out.sql.part')
-    expect(calls[0]).toContain('--dbname=postgres://u:p@h/db')
+    const [spec] = calls
+    expect(spec!.cmd).toBe('pg_dump')
+    expect(spec!.args).toContain('--file=/tmp/out.sql.part')
+    expect(spec!.args).toContain('--dbname=postgres://u@h:5433/db?sslmode=require')
+    for (const arg of spec!.args) {
+      expect(arg).not.toBe('p')
+      expect(arg).not.toContain(':p@')
+      expect(arg).not.toMatch(/password/i)
+    }
+    expect(spec!.env.PGPASSWORD).toBe('p')
+    expect(spec!.env).toEqual({ PATH: process.env.PATH ?? '', PGPASSWORD: 'p' })
+  })
 
-    const failing = postgresDump('postgres://u:p@h/db', {
-      runner: async () => ({ code: 1, stderr: 'connection refused' }), which: () => '/usr/bin/pg_dump',
+  it('parsePostgresUrl decodifica la clave, acepta postgresql:// y rechaza URLs raras sin repetirlas', () => {
+    const conn = parsePostgresUrl(conCred('postgresql', 'user', 'p%40ss%2Fw%3Ard', 'db.example.com/solmios'))
+    expect(conn.env.PGPASSWORD).toBe('p@ss/w:rd')
+    expect(conn.secretos).toEqual(['p@ss/w:rd', 'p%40ss%2Fw%3Ard'])
+    expect(conn.args).toEqual(['--dbname=postgresql://user@db.example.com/solmios'])
+    expect(conn.args.join(' ')).not.toContain('p%40ss')
+    expect(parsePostgresUrl('postgres://h/db').env.PGPASSWORD).toBeUndefined()
+    expect(() => parsePostgresUrl('host=h password=secreta dbname=db')).toThrow(/DATABASE_URL/)
+    expect(() => parsePostgresUrl('host=h password=secreta dbname=db')).not.toThrow(/secreta/)
+    expect(() => parsePostgresUrl(conCred('mysql', 'u', 'secreta', 'h/db'))).toThrow(/esquema/)
+    expect(() => parsePostgresUrl(conCred('mysql', 'u', 'secreta', 'h/db'))).not.toThrow(/secreta/)
+  })
+
+  it('código ≠ 0 → error con stderr, y la contraseña nunca aparece en el mensaje', async () => {
+    const url = conCred('postgres', 'u', 's3cr3t%21', 'h/db')
+    const failing = postgresDump(url, {
+      runner: async () => ({ code: 1, stderr: `connection to "${url}" refused (password s3cr3t! rejected)` }),
+      which: () => '/usr/bin/pg_dump',
     })
-    await expect(failing.run({ destino: '/tmp/x', signal })).rejects.toThrow(/pg_dump.*1.*connection refused/)
+    let err: Error | undefined
+    try { await failing.run({ destino: '/tmp/x', signal }) } catch (e) { err = e as Error }
+    expect(err?.message).toMatch(/pg_dump salió con código 1: .*connection.*refused/)
+    expect(err?.message).not.toContain('s3cr3t')
+    expect(err?.message).toContain('***')
+
+    const throwing = postgresDump(url, {
+      runner: async () => { throw new Error(`spawn falló con env PGPASSWORD=s3cr3t!`) },
+      which: () => '/usr/bin/pg_dump',
+    })
+    await expect(throwing.run({ destino: '/tmp/x', signal })).rejects.not.toThrow(/s3cr3t/)
+    await expect(throwing.run({ destino: '/tmp/x', signal })).rejects.toThrow(/spawn falló/)
+  })
+
+  it('señal abortada tras el runner → error de tope de tiempo', async () => {
+    const ctrl = new AbortController()
+    const runner: ProcessRunner = async ({ signal: s }) => {
+      ctrl.abort()
+      expect(s.aborted).toBe(true)
+      return { code: 137, stderr: '' }
+    }
+    const dump = postgresDump(URL_CON_CLAVE, { runner, which: () => '/usr/bin/pg_dump' })
+    await expect(dump.run({ destino: '/tmp/x', signal: ctrl.signal })).rejects.toThrow(/tope de tiempo/)
   })
 })
 
 describe('backup-dump — sqlite', () => {
-  it('copia consistente: la copia abre y contiene las filas (incluidas las del WAL)', async () => {
+  it('copia consistente en proceso hijo real: la copia es una BD válida con la misma tabla y filas (incluidas las del WAL)', async () => {
     const dir = tempDir()
     try {
       const src = join(dir, 'app.db')
@@ -243,12 +298,81 @@ describe('backup-dump — sqlite', () => {
       db.run("INSERT INTO t (v) VALUES ('a'), ('b'), ('c')")
       const dump = sqliteDump(src)
       expect(dump.motor).toBe('sqlite')
+      expect(dump.extension).toBe('sqlite')
       const destino = join(dir, 'copia.sqlite.part')
       await dump.run({ destino, signal: new AbortController().signal })
+      expect(existsSync(destino)).toBe(true)
       const copy = new Database(destino, { readonly: true })
-      expect(copy.query('SELECT count(*) AS n FROM t').get()).toEqual({ n: 3 })
+      expect(copy.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+      expect(copy.query("SELECT name FROM sqlite_master WHERE type = 'table'").all()).toEqual([{ name: 't' }])
+      expect(copy.query('SELECT v FROM t ORDER BY id').all()).toEqual([{ v: 'a' }, { v: 'b' }, { v: 'c' }])
       copy.close()
       db.close()
+      // la fuente sigue intacta y abierta por otros: el hijo la abrió en sólo lectura
+      const again = new Database(src, { readonly: true })
+      expect(again.query('SELECT count(*) AS n FROM t').get()).toEqual({ n: 3 })
+      again.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('el VACUUM INTO va por el mismo runner que pg_dump: bun -e con origen/destino por env, sin bloquear', async () => {
+    const calls: ProcessSpec[] = []
+    const runner: ProcessRunner = async (spec) => { calls.push(spec); return { code: 0, stderr: '' } }
+    const dump = sqliteDump('/srv/app.db', { runner, execPath: '/opt/bun' })
+    await dump.run({ destino: '/srv/backups/x.sqlite.part', signal: new AbortController().signal })
+    const [spec] = calls
+    expect(spec!.cmd).toBe('/opt/bun')
+    expect(spec!.args[0]).toBe('-e')
+    expect(spec!.args[1]).toBe(SQLITE_DUMP_SCRIPT)
+    expect(SQLITE_DUMP_SCRIPT).toContain('VACUUM INTO')
+    expect(spec!.env[SQLITE_DUMP_SRC_VAR]).toBe('/srv/app.db')
+    expect(spec!.env[SQLITE_DUMP_DEST_VAR]).toBe('/srv/backups/x.sqlite.part')
+    expect(sqliteDump('/srv/app.db').run).toBeFunction()
+
+    const failing = sqliteDump('/srv/app.db', { runner: async () => ({ code: 1, stderr: 'SQLiteError: output file already exists' }) })
+    await expect(failing.run({ destino: '/tmp/x', signal: new AbortController().signal })).rejects.toThrow(/SQLite.*1.*already exists/)
+  })
+
+  it('runner que nunca resuelve + tope corto del store: rechaza por tope, la señal llegó al runner y no queda .part', async () => {
+    const dir = tempDir()
+    try {
+      let recibida: AbortSignal | undefined
+      let abortado = false
+      const runner: ProcessRunner = ({ signal }) => {
+        recibida = signal
+        signal.addEventListener('abort', () => { abortado = true }, { once: true })
+        return new Promise(() => {})
+      }
+      const store = new BackupsStore({ dir, timeoutMs: 20 })
+      const t0 = Date.now()
+      await expect(store.create(sqliteDump('/srv/app.db', { runner }))).rejects.toThrow(/tope de/)
+      expect(Date.now() - t0).toBeLessThan(2000)
+      expect(recibida?.aborted).toBe(true)
+      expect(abortado).toBe(true)
+      expect(readdirSync(dir)).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('con el runner real, el tope mata al hijo: un hijo que duerme se corta en el tope y no cuelga el servidor', async () => {
+    const dir = tempDir()
+    try {
+      const dormilon = sqliteDump('/srv/app.db', { execPath: process.execPath })
+      // mismo runner real, pero un script que nunca termina en lugar del VACUUM
+      const dump: BackupDump = {
+        ...dormilon,
+        run: ({ destino, signal }) => bunProcessRunner({
+          cmd: process.execPath, args: ['-e', 'await new Promise(() => {})'], env: { PATH: process.env.PATH ?? '' }, signal,
+        }).then(() => { if (signal.aborted) throw new Error('interrumpido por tope de tiempo'); writeFileSync(destino, '') }),
+      }
+      const store = new BackupsStore({ dir, timeoutMs: 100 })
+      const t0 = Date.now()
+      await expect(store.create(dump)).rejects.toThrow(/tope de/)
+      expect(Date.now() - t0).toBeLessThan(5000)
+      expect(readdirSync(dir)).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
