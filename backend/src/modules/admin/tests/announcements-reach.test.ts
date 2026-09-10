@@ -113,6 +113,21 @@ describe('getAnnouncementsReach', () => {
     expect(reach.lastAnnouncement!.openRate).toBeNull()
   })
 
+  it('una fila sólo con dismissedAt (sin seenAt) tampoco es una lectura → null', async () => {
+    // upsertRead puede dejar una fila con `dismissedAt` y sin `seenAt` si /seen falló en silencio
+    // y /dismiss sí llegó. Nadie lo VIO todavía: sigue siendo "sin datos", no "0%".
+    const orm = makeOrm({
+      Hotels: [{ id: 'h1' }],
+      Users: usuarios,
+      Announcements: [{ id: 'a', title: 'A', audience: 'all', hotelId: null, date: '2026-06-01T00:00:00Z' }],
+      AnnouncementReads: [{ announcementId: 'a', userId: 'u1', seenAt: null, dismissedAt: '2026-06-02T00:00:00Z' }],
+    })
+    const reach = await new DashboardQueries(orm).getAnnouncementsReach()
+
+    expect(reach.lastAnnouncement!.seenCount).toBe(0)
+    expect(reach.lastAnnouncement!.openRate).toBeNull()
+  })
+
   it('10 destinatarios y 4 lecturas → recipients 10, seenCount 4, openRate 40', async () => {
     // El caso de aceptación de ANN-5: los cuatro números salen de la base, no del HTML.
     const diezActivos = Array.from({ length: 10 }, (_, i) => ({

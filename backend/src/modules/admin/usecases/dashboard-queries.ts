@@ -266,9 +266,9 @@ export class DashboardQueries {
   /**
    * Alcance de la plataforma para la tarjeta "Alcance".
    *
-   * `openRate` es `null`, no `0`, cuando el último anuncio todavía no tiene lecturas propias (las de
-   * anuncios anteriores no cuentan): un cero se lee como "lo mandé y no lo abrió nadie", que es una
-   * conclusión distinta —y falsa— de "todavía no hay datos".
+   * `openRate` es `null`, no `0`, mientras nadie haya VISTO el último anuncio (las lecturas de
+   * anuncios anteriores no cuentan, y una fila sólo con `dismissedAt` tampoco): un cero se lee como
+   * "lo mandé y no lo abrió nadie", que es una conclusión distinta —y falsa— de "todavía no hay datos".
    */
   async getAnnouncementsReach(): Promise<{
     hotels: number; users: number
@@ -288,8 +288,7 @@ export class DashboardQueries {
     const last = difundidos[0]
     if (!last) return { hotels: hotels.length, users: users.length, lastAnnouncement: null }
 
-    const readsOfLast = reads.filter((r: any) => String(r.announcementId) === String(last.id))
-    const seenCount = readsOfLast.filter((r: any) => !!r.seenAt).length
+    const seenCount = reads.filter((r: any) => String(r.announcementId) === String(last.id) && !!r.seenAt).length
     const recipients = countRecipients(last, users)
     return {
       hotels: hotels.length,
@@ -299,7 +298,7 @@ export class DashboardQueries {
         title: String(last.title ?? ''),
         recipients,
         seenCount,
-        openRate: recipients > 0 && readsOfLast.length > 0 ? Math.round((seenCount / recipients) * 100) : null,
+        openRate: recipients > 0 && seenCount > 0 ? Math.round((seenCount / recipients) * 100) : null,
       },
     }
   }
