@@ -228,6 +228,27 @@ describe('EmailService', () => {
       const [payload] = sendMailMock.mock.calls[0] as unknown as [{ from: string }]
       expect(payload.from).toBe('HotelPro <a@b.com>')
     })
+
+    it('la SMTP propia de un hotel sin fromName NO lleva el nombre de la plataforma', async () => {
+      // El correo de un hotel (reservas, cobros…) no puede salir firmado por el SaaS.
+      const repo = makeConfigRepo({ plataforma: { platformName: 'HotelPro' } })
+      repo.findOne = async (f: Record<string, unknown>) => {
+        if (f.key === 'email_config' && f.hotelId === 'hotel-1') {
+          return { value: { host: 'smtp.hotel', user: 'u', pass: 'p', fromEmail: 'reservas@hotelx.com' } }
+        }
+        if (f.key === 'plataforma') return { value: { platformName: 'HotelPro' } }
+        return null
+      }
+      const queue = makeQueueRepo({ forceDue: true })
+      const svc = new EmailService(repo, queue, log)
+      await queue.create({ hotelId: 'hotel-1', recipient: 'guest@test.com', subject: 'Reserva', html: '<p>ok</p>', status: 'pending', maxAttempts: 3 } as any)
+
+      await svc.processQueue()
+
+      expect(sendMailMock).toHaveBeenCalledTimes(1)
+      const [payload] = sendMailMock.mock.calls[0] as unknown as [{ from: string }]
+      expect(payload.from).toBe('reservas@hotelx.com')
+    })
   })
 })
 

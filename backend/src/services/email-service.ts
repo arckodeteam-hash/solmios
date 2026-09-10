@@ -298,8 +298,11 @@ export class EmailService implements EmailSender {
    * hotel → platform) y se normaliza cualquier shape al canónico. El frontend nuevo ya
    * guarda el canónico; el fallback rescata filas ya persistidas con el shape viejo.
    *
-   * CFG-1: si la config no trae `fromName`, el remitente lleva el nombre de la plataforma
-   * (`identity.platformName`); se lee de configuration('plataforma') salvo que el caller ya la tenga.
+   * CFG-1: si la config de PLATAFORMA no trae `fromName`, el remitente lleva el nombre de la
+   * plataforma (`identity.platformName`, leído de configuration('plataforma') salvo que el caller
+   * ya la tenga). Sólo para el scope 'platform': la SMTP propia de un hotel sin `fromName` sigue
+   * saliendo con la dirección sola — este servicio también manda los correos de reservas,
+   * opiniones y cobros de cada hotel, y ahí la marca del SaaS no tiene que aparecer.
    */
   private async resolveSmtpConfig(hotelId: string, identity?: PlatformIdentity): Promise<SmtpConfig | null> {
     const platform = identity ?? (await this.resolvePlatformIdentity())
@@ -317,7 +320,8 @@ export class EmailService implements EmailSender {
     }
     for (const key of ['email_config', 'smtp']) {
       for (const scope of [hotelId, 'platform']) {
-        const normalized = normalizeSmtpConfig(await readCfg(key, scope), platform.platformName)
+        const defaultFromName = scope === 'platform' ? platform.platformName : undefined
+        const normalized = normalizeSmtpConfig(await readCfg(key, scope), defaultFromName)
         if (normalized) return normalized
       }
     }
