@@ -4,6 +4,7 @@ import type { TicketsDTO, CreateTicketsDTO, UpdateTicketsDTO, TicketsQuery, Tick
 import type { TicketsSockets } from './sockets'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 import { enrichTickets } from './usecases/enrich'
+import { buildAddMessage } from './usecases/add-message'
 
 const CACHE_TTL = 300
 
@@ -117,6 +118,29 @@ export class TicketsService {
     await this.sockets.onTicketsUpdated?.(item)
     await this.cache.delete(`tickets:list:${existing.hotelId}`)
     return item
+  }
+
+  /** REQ-SOP-02/03: agrega un mensaje con el autor resuelto por el server (nunca el del body). */
+  async addMessage(id: string, rawMessage: string, currentUser: CurrentUser): Promise<TicketsDTO> {
+    const existing = await this.repo.findById(id)
+    if (!existing) throw new NotFoundError('Ticket no encontrado')
+
+    // authorName es snapshot: se resuelve el nombre REAL acá, el JWT no lo trae.
+    const actorUser = await this.userRepo.findById(currentUser.id)
+    const { message, patch } = buildAddMessage(existing, rawMessage, {
+      id: currentUser.id,
+      name: actorUser?.name ?? '',
+      role: currentUser.role,
+      hotelId: currentUser.hotelId,
+      userType: currentUser.userType,
+    })
+
+    const item = await this.repo.update(id, patch as any)
+    if (!item) throw new NotFoundError('Ticket no encontrado')
+    await this.sockets.onTicketsMessageAdded?.(item, message)
+    await this.cache.delete(`tickets:list:${existing.hotelId}`)
+    const [enriched] = await enrichTickets([item], { userRepo: this.userRepo, hotelRepo: this.hotelRepo })
+    return enriched
   }
 
   async delete(id: string, currentUser: CurrentUser): Promise<void> {

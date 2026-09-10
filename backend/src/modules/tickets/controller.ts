@@ -1,7 +1,7 @@
 import type { HttpRequest, Logger } from 'arckode-framework'
 import { validateSchema } from '../../shared/validators/validate-body'
 import type { TicketsService } from './service'
-import { CreateTicketsSchema, UpdateTicketsSchema } from './validators/schema'
+import { CreateTicketsSchema, UpdateTicketsSchema, AddMessageSchema } from './validators/schema'
 
 export class TicketsController {
   constructor(
@@ -33,6 +33,13 @@ export class TicketsController {
     const data = validateSchema(UpdateTicketsSchema, req.body)
     const item = await this.service.update(req.params.id, data as any, currentUser)
     return { status: 200, body: item }
+  }
+
+  async addMessage(req: HttpRequest) {
+    const currentUser = req.user as any
+    const data = validateSchema(AddMessageSchema, req.body)
+    const item = await this.service.addMessage(req.params.id, data.message as string, currentUser)
+    return { status: 201, body: item }
   }
 
   async destroy(req: HttpRequest) {

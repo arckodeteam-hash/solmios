@@ -3,6 +3,7 @@
 // pertenecer a otro hotel/a la plataforma y por lo tanto no aparece en su propio /api/usuarios.
 import type { RepositoryAdapter } from 'arckode-framework'
 import type { TicketsDTO, TicketRequester, TicketHotelSummary, TicketAssignee } from '../types'
+import { normalizeMessages } from './normalize-message'
 
 export interface EnrichTicketsDeps {
   userRepo: RepositoryAdapter<any>
@@ -43,7 +44,9 @@ export async function enrichTickets(tickets: TicketsDTO[], deps: EnrichTicketsDe
     }
     const hotel: TicketHotelSummary = { id: t.hotelId, name: hotelRow?.name ?? '' }
     const assignee: TicketAssignee | null = t.assignedTo ? { id: t.assignedTo, name: assigneeUser?.name ?? '' } : null
+    // REQ-SOP-02/04: normaliza la forma vieja { author, date, message } en lectura.
+    const messages = normalizeMessages(t.messages)
 
-    return { ...t, requester, hotel, assignee }
+    return { ...t, requester, hotel, assignee, messages }
   })
 }

@@ -223,6 +223,52 @@ describe('TicketsService', () => {
     })
   })
 
+  describe('addMessage', () => {
+    it('agrega el mensaje, invoca el socket con el ticket y el mensaje YA persistidos, e invalida cache', async () => {
+      const ticket = { id: 't1', hotelId: 'h1', userId: 'u1', subject: 'Issue', status: 'open', messages: [] } as unknown as TicketsDTO
+      let updateCalledWith: any = null
+      const repo = makeRepo({
+        findById: async () => ticket,
+        update: async (id, data) => { updateCalledWith = data; return { ...ticket, id, ...data } as TicketsDTO },
+      })
+      let deletedKey: string | null = null
+      const cache = { ...silentCache, delete: async (k: string) => { deletedKey = k } }
+      const svc = new TicketsService(repo, log, cache, makeUserRepo(), fakeAuth, makeHotelRepo())
+
+      let socketTicket: any = null
+      let socketMessage: any = null
+      svc.setSockets({ onTicketsMessageAdded: async (t, m) => { socketTicket = t; socketMessage = m } })
+
+      const result = await svc.addMessage('t1', 'Hola equipo', hotelAdmin)
+
+      expect(updateCalledWith.messages).toHaveLength(1)
+      expect(updateCalledWith.messages[0].message).toBe('Hola equipo')
+      expect(socketMessage?.message).toBe('Hola equipo')
+      expect(socketTicket?.messages).toHaveLength(1)
+      expect(deletedKey).toBe('tickets:list:h1')
+      expect(result?.messages).toHaveLength(1)
+    })
+
+    it('rejects message on other hotel ticket (403)', async () => {
+      const ticket = { id: 't1', hotelId: 'h2', userId: 'u1', subject: 'Issue', status: 'open', messages: [] } as unknown as TicketsDTO
+      const repo = makeRepo({ findById: async () => ticket })
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
+      await expect(svc.addMessage('t1', 'Hola', hotelAdmin)).rejects.toMatchObject({ httpStatus: 403 })
+    })
+
+    it('rejects message on closed ticket (409)', async () => {
+      const ticket = { id: 't1', hotelId: 'h1', userId: 'u1', subject: 'Issue', status: 'closed', messages: [] } as unknown as TicketsDTO
+      const repo = makeRepo({ findById: async () => ticket })
+      const svc = new TicketsService(repo, log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
+      await expect(svc.addMessage('t1', 'Hola', hotelAdmin)).rejects.toMatchObject({ httpStatus: 409 })
+    })
+
+    it('throws when ticket not found', async () => {
+      const svc = new TicketsService(makeRepo({ findById: async () => null }), log, silentCache, makeUserRepo(), fakeAuth, makeHotelRepo())
+      await expect(svc.addMessage('nonexistent', 'Hola', adminUser)).rejects.toThrow('Ticket no encontrado')
+    })
+  })
+
   describe('delete', () => {
     it('super_admin can delete', async () => {
       const ticket = { id: 't1', hotelId: 'h1', subject: 'Issue' } as TicketsDTO
