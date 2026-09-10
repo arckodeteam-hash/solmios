@@ -14,7 +14,7 @@ import type { HotelesService } from './service'
 import type { HotelesQueries } from './usecases/hoteles-queries'
 import { CreateHotelesSchema, UpdateHotelesSchema, SetConfigSchema } from './validators/schema'
 import { getExchangeRate, type ExchangeRateDeps } from './usecases/exchange-rate'
-import { parseDataUrl, isImage } from '../../shared/utils/data-url'
+import { parseDataUrl, isImage, exceedsMaxImageSize } from '../../shared/utils/data-url'
 
 export class HotelesController {
   constructor(
@@ -95,6 +95,9 @@ export class HotelesController {
     const parsed = parseDataUrl(body.logo)
     if (!parsed) return { status: 400, body: { error: 'Formato inválido (se espera data URL base64)' } }
     if (!isImage(parsed.mimeType)) return { status: 400, body: { error: 'Solo se permiten imágenes' } }
+    // El frontend ya corta en 5MB antes de armar el data URL (StepIdentidad.vue/general.vue),
+    // pero eso es solo UX — nada impedía mandar el data URL grande directo a la API.
+    if (exceedsMaxImageSize(parsed.buffer)) return { status: 400, body: { error: 'La imagen supera el máximo de 5MB' } }
 
     const stored = await this.storage.upload(
       {

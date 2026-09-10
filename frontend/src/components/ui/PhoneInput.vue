@@ -4,11 +4,12 @@
       <!-- Prefijo del país. Solo aparece cuando sabemos de qué país es: sin
            país elegido, mostrar un "+1" fijo haría escribir el número mal. -->
       <span v-if="dialCode"
-        class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 text-sm font-bold text-text-secondary">
+        class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 text-sm font-bold"
+        :class="pill ? 'text-teal' : 'text-text-secondary'">
         <span class="text-base leading-none">{{ flag }}</span>
         {{ dialCode }}
       </span>
-      <span v-else class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" v-html="ICON_PHONE"></span>
+      <span v-else class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" :class="pill ? 'text-teal' : 'text-text-muted'" v-html="ICON_PHONE"></span>
 
       <input
         :value="modelValue"
@@ -18,10 +19,11 @@
         :maxlength="maxlength"
         :disabled="disabled"
         :placeholder="placeholder || examplePlaceholder"
-        class="w-full py-2.5 pr-3 bg-white border rounded-xl text-sm focus:outline-none focus:border-navy disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-surface"
+        class="w-full bg-white border focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-surface"
         :class="[
-          dialCode ? prefixPadding : 'pl-9',
-          showError ? 'border-danger' : 'border-border',
+          pill ? 'h-12 rounded-full pr-4.5 text-sm font-semibold focus:border-teal' : 'py-2.5 pr-3 rounded-xl text-sm focus:border-navy',
+          dialCode ? prefixPadding : (pill ? 'pl-11' : 'pl-9'),
+          showError || invalid ? 'border-danger' : 'border-border',
         ]"
       />
     </div>
@@ -58,7 +60,16 @@ const props = withDefaults(defineProps<{
   hint?: string
   maxlength?: number
   disabled?: boolean
-}>(), { modelValue: '', country: '', placeholder: '', hint: '', maxlength: 25, disabled: false })
+  /** Variante pill (borde 9999px, 48px de alto, ícono teal) para el wizard de Centro de
+   *  configuración (`.wizard-input`, `styles/main.css`) — el resto de las pantallas
+   *  (Configuración, registro, huéspedes, ReservationWizardModal) sigue con el estilo
+   *  original (rounded-xl) sin tocar nada. */
+  pill?: boolean
+  /** Fuerza el borde rojo desde afuera (ej. "campo obligatorio" del formulario que lo
+   *  contiene) sin pisar el mensaje de formato inválido de acá adentro — son dos chequeos
+   *  distintos (obligatoriedad vs. forma del número), cada uno con su propio texto. */
+  invalid?: boolean
+}>(), { modelValue: '', country: '', placeholder: '', hint: '', maxlength: 25, disabled: false, pill: false, invalid: false })
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
