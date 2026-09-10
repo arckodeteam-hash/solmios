@@ -31,7 +31,8 @@ export interface UpgradePreview {
 export interface UpgradeResult {
   /** El plan nuevo YA rige en Stripe. No implica que se haya cobrado: eso lo dice `paid`. */
   applied: boolean
-  /** `true` SOLO si la factura del prorrateo quedó paga. En `false` el cobro quedó pendiente. */
+  /** `true` SOLO si la factura del prorrateo quedó paga. En `false` el cobro quedó pendiente y el
+   *  plan del panel NO cambió (#92): lo aplica el webhook cuando Stripe confirma el cobro. */
   paid: boolean
   planId: string
   planName: string

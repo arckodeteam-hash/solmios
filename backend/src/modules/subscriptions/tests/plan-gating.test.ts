@@ -689,3 +689,174 @@ describe('webhooks de suscripción — pagar/cambiar sincroniza la fuente de ver
     expect(warns[0]!.meta).toMatchObject({ stripeSubscriptionId: 'sub_stripe_1' })
   })
 })
+
+// #92: con ACH/SEPA Direct Debit el update del plan vuelve con el ítem movido y el cobro en
+// `processing` — la factura del prorrateo queda `open` días y, si rebota, Stripe la anula SIN
+// devolver el ítem. Sincronizar `planId` desde el ítem sin mirar la factura le daba al hotel un
+// plan que nunca pagó. Regla: el plan local sigue al ítem SÓLO con la factura que lo paga en
+// `paid`; `invoice.paid` es la puerta por la que entra el cobro diferido cuando se confirma.
+describe('webhooks — el plan local sigue al ítem de Stripe SÓLO cuando está pagado (#92)', () => {
+  const HOTEL = () => [{ id: 'h1', name: 'Hotel Sol', email: 'd@h.com', plan: 'host' }]
+  const SUB = () => [{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'active', stripeSubscriptionId: 'sub_stripe_1' }]
+  const PLANS = () => repo([
+    { id: 'plan-host', slug: 'host', modules: HOST_MODULES, stripePriceId: 'price_host' },
+    { id: 'plan-essential', slug: 'essential', modules: ESSENTIAL_MODULES, stripePriceId: 'price_essential' },
+  ])
+  /** Stripe con el ítem YA en el price nuevo y la factura del prorrateo en el estado que se pida. */
+  function stripeWith(invoice: any, latestInvoiceId = 'in_prorrateo') {
+    const invoiceRetrieves: string[] = []
+    const client = {
+      subscriptions: {
+        retrieve: async () => ({
+          id: 'sub_stripe_1', latest_invoice: latestInvoiceId,
+          items: { data: [{ current_period_end: 1_800_000_000, price: { id: 'price_essential' } }] },
+        }),
+      },
+      invoices: { retrieve: async (id: string) => { invoiceRetrieves.push(id); return invoice } },
+    } as any
+    return { client, invoiceRetrieves }
+  }
+  function updatedEvent(latestInvoice: any = 'in_prorrateo'): any {
+    return {
+      type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_stripe_1', latest_invoice: latestInvoice, items: { data: [{ price: { id: 'price_essential' } }] } } },
+    }
+  }
+  function paidEvent(invoiceId = 'in_prorrateo'): any {
+    return { type: 'invoice.paid', data: { object: { id: invoiceId, parent: { subscription_details: { subscription: 'sub_stripe_1' } } } } }
+  }
+
+  it('customer.subscription.updated con la factura del prorrateo `open` (ACH en processing): NO cambia el plan local', async () => {
+    const hotels = HOTEL(); const subsRows = SUB()
+    const { client, invoiceRetrieves } = stripeWith({ id: 'in_prorrateo', status: 'open' })
+
+    await handleStripeEvent(
+      { subscriptionsRepo: repo(subsRows), hotelsRepo: repo(hotels), plansRepo: PLANS(), logger: silentLogger(), stripe: client },
+      updatedEvent(),
+    )
+
+    expect(invoiceRetrieves).toEqual(['in_prorrateo']) // fue a mirar la factura, no se fió del ítem
+    expect(subsRows[0].planId).toBe('plan-host')       // el hotel sigue con lo que pagó
+    expect(hotels[0].plan).toBe('host')
+  })
+
+  it('customer.subscription.updated con la factura `paid` (tarjeta, o portal sin factura nueva): sincroniza', async () => {
+    const hotels = HOTEL(); const subsRows = SUB()
+    const { client } = stripeWith({ id: 'in_prorrateo', status: 'paid' })
+
+    await handleStripeEvent(
+      { subscriptionsRepo: repo(subsRows), hotelsRepo: repo(hotels), plansRepo: PLANS(), logger: silentLogger(), stripe: client },
+      updatedEvent(),
+    )
+
+    expect(subsRows[0].planId).toBe('plan-essential')
+    expect(hotels[0].plan).toBe('essential')
+  })
+
+  it('customer.subscription.updated con `latest_invoice` expandida en el payload: no vuelve a leerla', async () => {
+    const subsRows = SUB()
+    const { client, invoiceRetrieves } = stripeWith({ id: 'otra', status: 'open' })
+
+    await handleStripeEvent(
+      { subscriptionsRepo: repo(subsRows), hotelsRepo: repo(HOTEL()), plansRepo: PLANS(), logger: silentLogger(), stripe: client },
+      updatedEvent({ id: 'in_prorrateo', object: 'invoice', status: 'paid' }),
+    )
+
+    expect(invoiceRetrieves).toHaveLength(0)
+    expect(subsRows[0].planId).toBe('plan-essential')
+  })
+
+  it('customer.subscription.updated: si Stripe no responde la factura, LANZA (500 → Stripe reintenta) en vez de adivinar', async () => {
+    const subsRows = SUB()
+    const { client } = stripeWith(null)
+    client.invoices.retrieve = async () => { throw new Error('Stripe timeout') }
+
+    await expect(handleStripeEvent(
+      { subscriptionsRepo: repo(subsRows), hotelsRepo: repo(HOTEL()), plansRepo: PLANS(), logger: silentLogger(), stripe: client },
+      updatedEvent(),
+    )).rejects.toThrow('Stripe timeout')
+
+    expect(subsRows[0].planId).toBe('plan-host')
+  })
+
+  it('customer.subscription.updated con el MISMO plan y factura `open`: ni lee la factura ni escribe', async () => {
+    const subsRows = [{ id: 's1', hotelId: 'h1', planId: 'plan-essential', status: 'active', stripeSubscriptionId: 'sub_stripe_1' }]
+    const updates: Array<{ id: string; patch: any }> = []
+    const { client, invoiceRetrieves } = stripeWith({ id: 'in_prorrateo', status: 'open' })
+
+    await handleStripeEvent(
+      { subscriptionsRepo: repo(subsRows, updates), hotelsRepo: repo(HOTEL()), plansRepo: PLANS(), logger: silentLogger(), stripe: client },
+      updatedEvent(),
+    )
+
+    expect(invoiceRetrieves).toHaveLength(0)
+    expect(updates).toHaveLength(0)
+  })
+
+  it('invoice.paid de la ÚLTIMA factura (el ACH que se confirmó días después): aplica el plan del ítem', async () => {
+    const hotels = HOTEL(); const subsRows = SUB()
+    const { client } = stripeWith({ id: 'in_prorrateo', status: 'paid' })
+
+    await handleStripeEvent(
+      { subscriptionsRepo: repo(subsRows), hotelsRepo: repo(hotels), plansRepo: PLANS(), logger: silentLogger(), stripe: client },
+      paidEvent('in_prorrateo'),
+    )
+
+    expect(subsRows[0].status).toBe('active')
+    expect(subsRows[0].planId).toBe('plan-essential')
+    expect(hotels[0].plan).toBe('essential')
+  })
+
+  it('invoice.paid de una factura VIEJA mientras el prorrateo sigue `open`: no confirma nada, el plan no cambia', async () => {
+    const hotels = HOTEL(); const subsRows = SUB()
+    const { client } = stripeWith({ id: 'in_prorrateo', status: 'open' }, 'in_prorrateo')
+
+    await handleStripeEvent(
+      { subscriptionsRepo: repo(subsRows), hotelsRepo: repo(hotels), plansRepo: PLANS(), logger: silentLogger(), stripe: client },
+      paidEvent('in_vieja'),
+    )
+
+    expect(subsRows[0].status).toBe('active') // el pago igual reafirma el status
+    expect(subsRows[0].planId).toBe('plan-host')
+    expect(hotels[0].plan).toBe('host')
+  })
+
+  it('invoice.paid: si Stripe no responde la suscripción, LANZA antes de escribir (500 → reintento) — el ACH confirmado no puede quedar sin plan', async () => {
+    const subsRows = [{ id: 's1', hotelId: 'h1', planId: 'plan-host', status: 'past_due', stripeSubscriptionId: 'sub_stripe_1' }]
+    const updates: Array<{ id: string; patch: any }> = []
+    const emails: string[] = []
+    const { client } = stripeWith({ id: 'in_prorrateo', status: 'paid' })
+    client.subscriptions.retrieve = async () => { throw new Error('Stripe timeout') }
+
+    await expect(handleStripeEvent(
+      {
+        subscriptionsRepo: repo(subsRows, updates), hotelsRepo: repo(HOTEL()), plansRepo: PLANS(), logger: silentLogger(), stripe: client,
+        sendPlatformEmail: async (event: string) => { emails.push(event); return { sent: true } },
+      },
+      paidEvent('in_prorrateo'),
+    )).rejects.toThrow('Stripe timeout')
+
+    // Nada a medias: ni status, ni plan, ni correo. El reintento de Stripe hace todo de una.
+    expect(updates).toHaveLength(0)
+    expect(subsRows[0].planId).toBe('plan-host')
+    expect(emails).toHaveLength(0)
+  })
+
+  it('invoice.payment_failed con el ítem de Stripe en un plan que el hotel no pagó: past_due + WARN con la divergencia, sin tocar planId', async () => {
+    const warns: Array<{ msg: string; meta: any }> = []
+    const base = silentLogger()
+    const logger = { ...base, warn: (msg: string, meta?: any) => { warns.push({ msg, meta }) } } as unknown as Logger
+    const subsRows = SUB()
+    const { client } = stripeWith({ id: 'in_prorrateo', status: 'void' })
+
+    await handleStripeEvent(
+      { subscriptionsRepo: repo(subsRows), hotelsRepo: repo(HOTEL()), plansRepo: PLANS(), logger, stripe: client },
+      { type: 'invoice.payment_failed', data: { object: { id: 'in_prorrateo', parent: { subscription_details: { subscription: 'sub_stripe_1' } } } } } as any,
+    )
+
+    expect(subsRows[0].status).toBe('past_due')
+    expect(subsRows[0].planId).toBe('plan-host')
+    const divergencia = warns.find(w => /cambio de plan/i.test(w.msg))
+    expect(divergencia?.meta).toMatchObject({ hotelId: 'h1', stripePlanId: 'plan-essential', localPlanId: 'plan-host', invoiceId: 'in_prorrateo' })
+  })
+})

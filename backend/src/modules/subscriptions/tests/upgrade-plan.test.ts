@@ -187,23 +187,27 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
     expect(hotelRows[0].plan).toBe('pro')
   })
 
-  it('si la factura del prorrateo NO quedó paga el resultado lo refleja (no canta victoria)', async () => {
+  it('si la factura del prorrateo NO quedó paga: no canta victoria y NO cambia el plan local (#92)', async () => {
     // #84 (CA 4/5): un RECHAZO de tarjeta ya no llega hasta acá — con `error_if_incomplete` Stripe
     // revierte el ítem y el update lanza (ver el test de la tarjeta rechazada). Este caso es el
-    // otro: el update SÍ volvió —o sea el ítem quedó movido en Stripe— pero la factura todavía no
-    // figura `paid` (pago en curso, lectura eventual). Ahí no se canta victoria, pero el plan local
-    // tiene que decir lo que Stripe ya aplicó.
+    // otro: el update SÍ volvió —o sea el ítem quedó movido en Stripe— pero la factura sigue
+    // `open`. Es exactamente lo que pasa con ACH/SEPA (#92): el PaymentIntent queda `processing`
+    // días, y si después rebota Stripe anula la factura sin devolver el ítem. Reflejar el plan
+    // acá dejaba al hotel con un plan que nunca pagó — el plan local se queda donde está y lo
+    // aplica el webhook `invoice.paid` si el cobro entra.
     invoiceOnUpdate = { id: 'in_2', status: 'open', amount_due: 25000, amount_paid: 0, currency: 'usd' }
-    const { deps, subRows } = setup([activeSub()])
+    const { deps, subRows, hotelRows } = setup([activeSub()])
 
     const res = await applyUpgrade(deps, 'h1', 'plan-pro')
 
+    expect(res.applied).toBe(true) // en Stripe el ítem sí se movió: no se miente en ninguna dirección
     expect(res.paid).toBe(false)
     expect(res.invoiceStatus).toBe('open')
     expect(res.amountCharged).toBe(25000)
-    // El update volvió con el price nuevo: en Stripe el plan destino YA rige, así que la fila
-    // local dice la verdad de Stripe.
-    expect(subRows[0].planId).toBe('plan-pro')
+    expect(res.previousPlanId).toBe('plan-ess')
+    // Sin cobro confirmado, ni la fuente de verdad ni el espejo cambian.
+    expect(subRows[0].planId).toBe('plan-ess')
+    expect(hotelRows[0].plan).toBe('esencial')
   })
 
   // #84 (CA 4 y 5): un pago fallido NO puede cambiar el plan. `error_if_incomplete` hace que Stripe
@@ -492,20 +496,36 @@ describe('applyUpgrade — el criterio de aceptación de #46', () => {
   // llamada de RED más y, si fallaba, la excepción subía: el hotel quedaba cobrado mirando un
   // error, sin reflejo del plan nuevo y sin un solo log del cobro. Justo el escenario que el
   // archivo dice evitar, pero blindado sólo para el fallo de escritura local.
-  it('si falla la lectura de la factura DESPUÉS del cobro, no lanza: aplica el plan y no afirma pago', async () => {
+  it('si falla la lectura de la factura DESPUÉS del cobro, no lanza: no afirma pago y deja el plan al webhook (#92)', async () => {
     invoiceOnUpdate = 'in_4'
     const { deps, subRows, hotelRows } = setup([activeSub()])
     stripeClient.invoices.retrieve = async () => { throw new Error('Stripe timeout') }
 
     const res = await applyUpgrade(deps, 'h1', 'plan-pro')
 
-    // No se pierde el cambio: el plan quedó aplicado local y en el espejo.
+    // No se pierde el cambio (en Stripe el ítem se movió) ni se le tira un 500 al hotel.
     expect(res.applied).toBe(true)
-    expect(subRows[0].planId).toBe('plan-pro')
-    expect(hotelRows[0].plan).toBe('pro')
-    // Y NO se afirma un cobro que no se pudo confirmar.
+    // Y NO se afirma un cobro que no se pudo confirmar...
     expect(res.paid).toBe(false)
     expect(res.invoiceStatus).toBeNull()
+    // ...ni se refleja un plan cuyo cobro no se pudo confirmar: "no sé" entra por la misma
+    // puerta que "open". Lo aplica `invoice.paid` (handle-stripe-event.ts) cuando Stripe confirma.
+    expect(subRows[0].planId).toBe('plan-ess')
+    expect(hotelRows[0].plan).toBe('esencial')
+  })
+
+  // #92: el camino sincrónico de tarjeta no cambia — factura `paid` en la misma respuesta, plan
+  // local en el acto. Es lo que ya cubre el primer test del describe; este fija que el reflejo
+  // depende del status de la factura y no de que el update haya vuelto.
+  it('con la factura `paid` en la respuesta refleja el plan local en el acto (tarjeta, #92 no lo frena)', async () => {
+    invoiceOnUpdate = { id: 'in_5', status: 'paid', amount_due: 25000, amount_paid: 25000, currency: 'usd' }
+    const { deps, subRows, hotelRows } = setup([activeSub()])
+
+    const res = await applyUpgrade(deps, 'h1', 'plan-pro')
+
+    expect(res.paid).toBe(true)
+    expect(subRows[0].planId).toBe('plan-pro')
+    expect(hotelRows[0].plan).toBe('pro')
   })
 })
 

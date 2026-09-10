@@ -12,6 +12,11 @@
 // `applyUpgrade` / `UpgradePlanDeps` se conservan a propósito: renombrarlos arrastraría controller,
 // index, types y frontend sin cambiar una sola regla.
 //
+// #92: "cobrado" lo dice la FACTURA, no el update. `error_if_incomplete` cubre el rechazo
+// sincrónico de tarjeta (Stripe revierte y lanza), pero con ACH/SEPA el update vuelve con el ítem
+// movido y el cobro en `processing`. El plan local se refleja SÓLO con `latest_invoice` en `paid`;
+// si no, lo aplica el webhook `invoice.paid` cuando Stripe confirma (ver handle-stripe-event.ts).
+//
 // Cuenta de PLATAFORMA: `StripeService.getClient()` SIN hotelId, mismo criterio que el checkout —
 // con hotelId resolvería las keys DEL HOTEL, que son las que cobran a sus huéspedes.
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
@@ -200,12 +205,12 @@ export async function applyUpgrade(
     )
   }
 
-  // A PARTIR DE ACÁ LA TARJETA YA SE COBRÓ: nada de lo que sigue puede lanzar. Leer la factura
-  // es una llamada de RED más (`latest_invoice` puede venir sin expandir y obligar a un
+  // A PARTIR DE ACÁ EL ÍTEM YA SE MOVIÓ EN STRIPE: nada de lo que sigue puede lanzar. Leer la
+  // factura es una llamada de RED más (`latest_invoice` puede venir sin expandir y obligar a un
   // `invoices.retrieve`), y si fallara, la excepción dejaría al hotel cobrado mirando un error,
   // sin reflejo del plan y sin un solo log del cobro. Se degrada a "no pude determinarlo": el
-  // resultado sale con `paid:false`, que la UI ya traduce en "el plan quedó aplicado, revisá el
-  // estado del pago en el portal" — y el portal muestra la verdad de Stripe.
+  // resultado sale con `paid:false`, que la UI traduce en "el cambio queda pendiente hasta que
+  // se confirme el cobro" — y el webhook (`invoice.paid`) lo aplica cuando Stripe lo confirma.
   let invoice: Stripe.Invoice | null = null
   try {
     invoice = await latestInvoiceOf(stripe, updated)
@@ -248,26 +253,42 @@ export async function applyUpgrade(
     }
   }
 
+  const paid = invoiceStatus === 'paid'
+
   // Reflejo local inmediato para que el panel del hotel cambie sin esperar el webhook
   // `customer.subscription.updated`, que igual va a llegar y hace exactamente esto — es
-  // idempotente: si `planId` ya apunta al plan nuevo, corta sin escribir. Si el update volvió, el
-  // ítem quedó en el plan destino en Stripe: la fila local tiene que decir esa verdad. Un cobro
-  // rechazado no llega hasta acá.
+  // idempotente: si `planId` ya apunta al plan nuevo, corta sin escribir.
+  //
+  // SÓLO CON LA FACTURA PAGA (#92). Que el update haya vuelto dice que el ítem se movió en
+  // Stripe, no que se cobró: con un método de confirmación diferida (ACH/SEPA Direct Debit)
+  // `error_if_incomplete` no lanza —el PaymentIntent queda `processing`, no fallido— y la factura
+  // del prorrateo sigue `open` durante días. Si ese cobro después rebota, Stripe anula la factura
+  // y NO devuelve el ítem al price viejo. Reflejar acá por el solo hecho de que el update volvió
+  // dejaba al hotel con un plan que nunca pagó. Con `paid:false` el plan local se queda donde
+  // está y lo aplica el webhook `invoice.paid` cuando Stripe confirma el cobro (o nunca, si
+  // rebota) — misma regla en handle-stripe-event.ts. Una factura que no se pudo leer entra por
+  // la misma puerta: no se sabe, no se refleja, el webhook lo resuelve.
   //
   // BEST-EFFORT A PROPÓSITO: acá la tarjeta YA se cobró. Si esta escritura fallara y el error
   // subiera, el hotel vería un 500 sobre un cobro que sí ocurrió — el peor final posible. El
   // webhook de Stripe hace exactamente este mismo reflejo y es idempotente, así que ante un
   // fallo local se avisa fuerte y se devuelve el resultado real del cobro.
   let previousPlanId: string | null = active.planId ? String(active.planId) : null
-  try {
-    previousPlanId = (await changeHotelPlan(deps, hotelId, String(plan.id))).previousPlanId
-  } catch (e) {
-    logger.error('Upgrade cobrado pero no se pudo reflejar el plan local — lo sincroniza el webhook', {
-      hotelId, planId: String(plan.id), error: (e as Error).message,
+  if (paid) {
+    try {
+      previousPlanId = (await changeHotelPlan(deps, hotelId, String(plan.id))).previousPlanId
+    } catch (e) {
+      logger.error('Upgrade cobrado pero no se pudo reflejar el plan local — lo sincroniza el webhook', {
+        hotelId, planId: String(plan.id), error: (e as Error).message,
+      })
+    }
+  } else {
+    logger.warn('Cambio de plan aplicado en Stripe con cobro sin confirmar: el plan local espera invoice.paid', {
+      hotelId, planId: String(plan.id), currentPlanId: previousPlanId, invoiceId: invoice?.id ?? null,
+      invoiceStatus, amountCharged, stripeSubscriptionId: String(active.stripeSubscriptionId),
     })
   }
 
-  const paid = invoiceStatus === 'paid'
   logger.info('Upgrade de plan con prorrateo', {
     hotelId, previousPlanId, planId: String(plan.id),
     amountCharged, currency, invoiceStatus, paid,
