@@ -18,12 +18,20 @@ export interface MetaAppEstado {
   puedeGuardar: boolean
 }
 
+/** Estado de la API key de Resend. `last4` sirve para reconocer cuál está cargada sin revelarla. */
+export interface ResendEstado { configured: boolean; last4: string | null }
+
 export const PlatformService = {
   /** Estado de las credenciales de la app de Meta. NUNCA devuelve el secreto. */
   getMetaWhatsapp: () => http.get<MetaAppEstado>('/admin/meta-whatsapp'),
   /** Guarda el secreto cifrado. El del servidor (.env) sigue teniendo prioridad. */
   saveMetaWhatsapp: (data: { appId?: string; appSecret: string }) =>
     http.put<MetaAppEstado>('/admin/meta-whatsapp', data),
+
+  // #100: API key de Resend (respaldo cuando no hay SMTP). Solo estado: la key nunca vuelve.
+  getResend: () => http.get<ResendEstado>('/admin/settings/resend'),
+  saveResend: (apiKey: string) => http.put<ResendEstado>('/admin/settings/resend', { apiKey }),
+  deleteResend: () => http.delete<ResendEstado>('/admin/settings/resend'),
 
   subscriptions: () => http.get<any>('/admin/subscriptions'),
   // Auditoría extraída a AuditLogService (services/AuditLog.service.ts) — M45 #313
