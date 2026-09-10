@@ -18,7 +18,7 @@ mock.module('resend', () => ({
   },
 }))
 
-import { EmailService, renderTemplate } from './email-service'
+import { EmailService, renderTemplate, normalizeSmtpConfig } from './email-service'
 import type { EmailQueueDTO } from './email-service'
 
 const log = silentLogger()
@@ -179,5 +179,88 @@ describe('EmailService', () => {
       expect(resendSendMock).toHaveBeenCalledTimes(1)
       expect(sendMailMock).not.toHaveBeenCalled()
     })
+  })
+
+  describe('identidad de plataforma (CFG-1)', () => {
+    it('sendTestEmail vía Resend usa el nombre de configuration(plataforma) en From y asunto', async () => {
+      const svc = new EmailService(
+        makeConfigRepo({
+          resend_api_key: 'rk_test_123',
+          plataforma: JSON.stringify({ platformName: 'HotelPro', supportEmail: 'help@hotelpro.com', supportPhone: '+34 600 000 000' }),
+        }),
+        makeQueueRepo(),
+        log,
+      )
+
+      const provider = await svc.sendTestEmail('admin@hotelpro.com')
+
+      expect(provider).toBe('resend')
+      expect(resendSendMock).toHaveBeenCalledTimes(1)
+      const [payload] = resendSendMock.mock.calls[0] as unknown as [{ from: string; subject: string; to: string }]
+      expect(payload.from).toBe('HotelPro <noreply@solmios.com>')
+      expect(payload.subject.startsWith('HotelPro')).toBe(true)
+      expect(payload.to).toBe('admin@hotelpro.com')
+    })
+
+    it('sin fila plataforma cae al default SolmiOS', async () => {
+      const svc = new EmailService(makeConfigRepo({ resend_api_key: 'rk_test_123' }), makeQueueRepo(), log)
+
+      await svc.sendTestEmail('admin@test.com')
+
+      const [payload] = resendSendMock.mock.calls[0] as unknown as [{ from: string; subject: string }]
+      expect(payload.from).toBe('SolmiOS <noreply@solmios.com>')
+      expect(payload.subject.startsWith('SolmiOS')).toBe(true)
+    })
+
+    it('SMTP sin fromName usa el nombre de la plataforma como remitente', async () => {
+      const svc = new EmailService(
+        makeConfigRepo({
+          email_config: { host: 'smtp.test', user: 'u', pass: 'p', fromEmail: 'a@b.com' },
+          plataforma: { platformName: 'HotelPro' },
+        }),
+        makeQueueRepo(),
+        log,
+      )
+
+      await svc.sendTestEmail('admin@test.com')
+
+      expect(sendMailMock).toHaveBeenCalledTimes(1)
+      const [payload] = sendMailMock.mock.calls[0] as unknown as [{ from: string }]
+      expect(payload.from).toBe('HotelPro <a@b.com>')
+    })
+  })
+})
+
+// ─── Tests normalizeSmtpConfig (puro) ───────────────────────────────────────
+
+describe('normalizeSmtpConfig', () => {
+  const base = { host: 'smtp.test', user: 'u', pass: 'p', fromEmail: 'a@b.com' }
+
+  it('null si falta algo esencial', () => {
+    expect(normalizeSmtpConfig(null)).toBeNull()
+    expect(normalizeSmtpConfig({ host: 'h', user: 'u' })).toBeNull()
+  })
+
+  it('sin fromName ni defaultFromName → sólo la dirección (comportamiento previo)', () => {
+    expect(normalizeSmtpConfig(base)?.from).toBe('a@b.com')
+  })
+
+  it('sin fromName pero con defaultFromName → "Nombre <email>"', () => {
+    expect(normalizeSmtpConfig(base, 'HotelPro')?.from).toBe('HotelPro <a@b.com>')
+  })
+
+  it('fromName explícito gana sobre defaultFromName', () => {
+    expect(normalizeSmtpConfig({ ...base, fromName: 'Otro' }, 'HotelPro')?.from).toBe('Otro <a@b.com>')
+  })
+
+  it('sin fromEmail cae a noreply@solmios.com, con nombre si viene', () => {
+    const { fromEmail: _omit, ...noFrom } = base
+    expect(normalizeSmtpConfig(noFrom)?.from).toBe('noreply@solmios.com')
+    expect(normalizeSmtpConfig(noFrom, 'HotelPro')?.from).toBe('HotelPro <noreply@solmios.com>')
+  })
+
+  it('acepta el shape legacy {server,password} y secure por puerto 465', () => {
+    const out = normalizeSmtpConfig({ server: 'smtp.legacy', port: 465, user: 'u', password: 'p', from: 'x@y.com' }, 'HotelPro')
+    expect(out).toEqual({ host: 'smtp.legacy', port: 465, user: 'u', pass: 'p', from: 'HotelPro <x@y.com>', secure: true })
   })
 })

@@ -9,11 +9,17 @@
 // Análogo a StripeService. Las dependencias se inyectan en composition-root.
 //
 // REGLA: sin credenciales hardcodeadas. Todo SMTP/Resend se lee de Configuration.
+//
+// CFG-1 (REQ-CFG-03): el nombre de la plataforma NO va escrito a mano acá. Sale de
+// configuration('plataforma') vía `readPlatformIdentity` (el default vive allí, no acá) y se
+// usa como remitente de Resend, como fromName SMTP cuando el admin lo dejó vacío y en el
+// asunto del email de prueba.
 
 import nodemailer from 'nodemailer'
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { NotificationRenderer, renderTemplate } from './notification-renderer'
 import type { EmailSender, NotificationInput } from './email-sender'
+import { readPlatformIdentity, type PlatformIdentity } from '../shared/utils/platform-identity'
 
 // Re-exports backward-compat: renderTemplate y NotificationInput migraron a módulos propios (SRP).
 export { renderTemplate } from './notification-renderer'
@@ -63,22 +69,28 @@ interface SmtpConfig {
   secure: boolean
 }
 
+/** Dirección de remitente por defecto cuando la config no trae ninguna. */
+const DEFAULT_FROM_EMAIL = 'noreply@solmios.com'
+
 /**
  * Normaliza un objeto de config SMTP en cualquiera de sus dos shapes (SMTP-UI 2026-08-19):
  * canónico `{host,port,user,pass,from,secure}` o legacy de la UI `{server,port,user,password,
  * fromEmail,fromName}`. Null si falta algo esencial. Exportada para testear directo.
+ *
+ * `defaultFromName` (CFG-1): nombre a usar como display name del remitente cuando la config no
+ * trae `fromName` — el caller pasa el nombre de la plataforma leído de configuration('plataforma').
+ * Un `fromName` explícito del admin siempre gana; sin ninguno de los dos, va sólo la dirección.
  */
-export function normalizeSmtpConfig(cfg: Record<string, unknown> | null): SmtpConfig | null {
+export function normalizeSmtpConfig(cfg: Record<string, unknown> | null, defaultFromName?: string): SmtpConfig | null {
   if (!cfg) return null
   const host = cfg.host ?? cfg.server
   const user = cfg.user
   const pass = cfg.pass ?? cfg.password
   if (!host || !user || !pass) return null
   const port = Number(cfg.port) || 587
-  const fromEmail = cfg.from ?? cfg.fromEmail
-  const from = fromEmail
-    ? (cfg.fromName ? `${String(cfg.fromName)} <${String(fromEmail)}>` : String(fromEmail))
-    : 'noreply@solmios.com'
+  const fromEmail = String(cfg.from ?? cfg.fromEmail ?? '').trim() || DEFAULT_FROM_EMAIL
+  const fromName = String(cfg.fromName ?? '').trim() || (defaultFromName ?? '').trim()
+  const from = fromName ? `${fromName} <${fromEmail}>` : fromEmail
   return {
     host: String(host),
     port,
@@ -184,6 +196,11 @@ export class EmailService implements EmailSender {
     return !!(await this.resolveSmtpConfig(hotelId)) || !!(await this.resolveResendKey(hotelId))
   }
 
+  /** Identidad de la plataforma (nombre, soporte) desde configuration('plataforma'). Nunca tira. */
+  private resolvePlatformIdentity(): Promise<PlatformIdentity> {
+    return readPlatformIdentity((q) => this.configRepo.findOne(q as Record<string, unknown>))
+  }
+
   /**
    * Worker de la cola. Toma filas `pending` vencidas y las envía.
    * Reentrante-safe (guard `processing`). Una sola fila por proceso a la vez.
@@ -240,9 +257,17 @@ export class EmailService implements EmailSender {
     }
   }
 
-  /** Envía el email: SMTP desde Configuration, fallback Resend, o error si ninguno. */
-  private async sendNow(input: { to: string; subject: string; html: string; hotelId: string }): Promise<'smtp' | 'resend'> {
-    const smtp = await this.resolveSmtpConfig(input.hotelId)
+  /**
+   * Envía el email: SMTP desde Configuration, fallback Resend, o error si ninguno.
+   * La identidad de la plataforma se lee UNA vez por envío (si el caller no la pasa) y alimenta
+   * tanto el fromName SMTP por defecto como el From de Resend.
+   */
+  private async sendNow(
+    input: { to: string; subject: string; html: string; hotelId: string },
+    identity?: PlatformIdentity,
+  ): Promise<'smtp' | 'resend'> {
+    const platform = identity ?? (await this.resolvePlatformIdentity())
+    const smtp = await this.resolveSmtpConfig(input.hotelId, platform)
     if (smtp) {
       const transporter = this.getTransporter(smtp)
       await transporter.sendMail({ from: smtp.from, to: input.to, subject: input.subject, html: input.html })
@@ -251,7 +276,7 @@ export class EmailService implements EmailSender {
 
     const resendKey = await this.resolveResendKey(input.hotelId)
     if (resendKey) {
-      const fromAddress = 'SolmiOS <noreply@solmios.com>'
+      const fromAddress = `${platform.platformName} <${DEFAULT_FROM_EMAIL}>`
       const { Resend } = await import('resend')
       const resend = new Resend(resendKey)
       const { error } = await resend.emails.send({ from: fromAddress, to: input.to, subject: input.subject, html: input.html })
@@ -272,8 +297,12 @@ export class EmailService implements EmailSender {
    * botón "Email de prueba" (un toast falso) lo tapó. Se prueban ambas keys (cada una
    * hotel → platform) y se normaliza cualquier shape al canónico. El frontend nuevo ya
    * guarda el canónico; el fallback rescata filas ya persistidas con el shape viejo.
+   *
+   * CFG-1: si la config no trae `fromName`, el remitente lleva el nombre de la plataforma
+   * (`identity.platformName`); se lee de configuration('plataforma') salvo que el caller ya la tenga.
    */
-  private async resolveSmtpConfig(hotelId: string): Promise<SmtpConfig | null> {
+  private async resolveSmtpConfig(hotelId: string, identity?: PlatformIdentity): Promise<SmtpConfig | null> {
+    const platform = identity ?? (await this.resolvePlatformIdentity())
     const readCfg = async (key: string, scope: string): Promise<Record<string, unknown> | null> => {
       try {
         const row = await this.configRepo.findOne({ hotelId: scope, key } as Record<string, unknown>)
@@ -288,7 +317,7 @@ export class EmailService implements EmailSender {
     }
     for (const key of ['email_config', 'smtp']) {
       for (const scope of [hotelId, 'platform']) {
-        const normalized = normalizeSmtpConfig(await readCfg(key, scope))
+        const normalized = normalizeSmtpConfig(await readCfg(key, scope), platform.platformName)
         if (normalized) return normalized
       }
     }
@@ -299,14 +328,16 @@ export class EmailService implements EmailSender {
    * Envío DIRECTO (sin cola) para el botón "Email de prueba" del super-admin — reusa
    * `sendNow`, así prueba el pipeline real (SMTP o Resend) y deja escapar el error
    * verdadero en vez del toast falso que ocultaba la desconexión de config.
+   * El asunto lleva el nombre de la plataforma configurado (CFG-1), no uno fijo.
    */
   async sendTestEmail(to: string): Promise<'smtp' | 'resend'> {
+    const identity = await this.resolvePlatformIdentity()
     return this.sendNow({
       to,
-      subject: 'SolmiOS — email de prueba',
+      subject: `${identity.platformName} — email de prueba`,
       html: '<p>Si estás leyendo esto, la configuración de correo de la plataforma funciona. ✅</p>',
       hotelId: 'platform',
-    })
+    }, identity)
   }
 
   /** Lee la API key de Resend de Configuration key 'resend_api_key'. Null si vacío. */
