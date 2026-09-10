@@ -2,6 +2,7 @@ import { createModule, OrmRepository } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import { estadoMetaApp, guardarMetaApp } from '../../infrastructure/meta-app-config'
 import { estadoResend, guardarResend, borrarResend } from '../../infrastructure/resend-config'
+import { estadoServicios } from '../../infrastructure/settings-status'
 import { MetaAppConfigSchema } from './validators/meta-app-schema'
 import type { PlanDTO, AmenityCatalogDTO } from './types'
 import { AdminService } from './service'
@@ -111,6 +112,10 @@ export function AdminModule() {
       router.get('/api/admin/settings/resend', sa, async () => ({ status: 200, body: await estadoResend(configRepo) }))
       router.put('/api/admin/settings/resend', sa, async (req: any) => ({ status: 200, body: await guardarResend(configRepo, String(req.body?.apiKey ?? '')) }))
       router.delete('/api/admin/settings/resend', sa, async () => ({ status: 200, body: await borrarResend(configRepo) }))
+
+      // Estado por servicio (Stripe, captcha, Meta, Resend, SMTP, Maps, Channex...): solo `configured`
+      // + `source` (env | configuration). Nunca devuelve valores ni pistas: para eso están las pantallas.
+      router.get('/api/admin/settings/status', sa, async () => ({ status: 200, body: await estadoServicios(configRepo) }))
 
       router.get('/api/admin/hoteles', sa, () => controller.listHotels())
       // ── SMTP-UI (2026-08-19): test REAL de la config de correo de la plataforma ──
