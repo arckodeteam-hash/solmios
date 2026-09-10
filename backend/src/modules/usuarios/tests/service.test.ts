@@ -222,7 +222,7 @@ describe('UsuariosService', () => {
         cache,
         makeAuth(),
       )
-      await svc.changePassword('u1', 'secreto', 'nueva')
+      await svc.changePassword('u1', 'secreto', 'nueva123')
       expect(captured.id).toBe('u1')
       expect(captured.token).toBeNull()
       expect(captured.password).not.toBe('nueva') // hasheado
@@ -235,7 +235,7 @@ describe('UsuariosService', () => {
         cache,
         makeAuth(),
       )
-      await expect(svc.changePassword('u1', 'wrong', 'nueva')).rejects.toThrow()
+      await expect(svc.changePassword('u1', 'wrong', 'nueva123')).rejects.toThrow()
     })
 
     it('lanza NotFound si el usuario no existe', async () => {
@@ -371,7 +371,7 @@ describe('UsuariosService', () => {
         cache,
         makeAuth(),
       )
-      await svc.create({ name: 'Ana', email: 'a@t.com', password: 'x', phone: '+1 (809) 555-0001' })
+      await svc.create({ name: 'Ana', email: 'a@t.com', password: 'secreto', phone: '+1 (809) 555-0001' })
       expect(captured.phone).toBe('8095550001')
     })
   })
