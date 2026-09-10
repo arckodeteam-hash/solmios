@@ -1,4 +1,12 @@
 import { http } from './http'
+import type {
+  BackupCreated,
+  BackupsListResponse,
+  ErrorLogsResponse,
+  HttpMetricsSnapshot,
+  QueuesSnapshot,
+  SystemSnapshot,
+} from '@/types/monitoring'
 
 interface List { data: any[]; total: number }
 
@@ -48,6 +56,21 @@ export const PlatformService = {
   subscriptions: () => http.get<any>('/admin/subscriptions'),
   // Auditoría extraída a AuditLogService (services/AuditLog.service.ts) — M45 #313
   monitoring: () => http.get<any>('/admin/monitoring'),
+
+  // Monitoreo real de la plataforma (#96): métricas HTTP en memoria, errores persistidos,
+  // salud de sistema/BD, colas y backups. Todas las rutas son super_admin.
+  monitoringApi: () => http.get<HttpMetricsSnapshot>('/admin/monitoring/api'),
+  monitoringErrors: (limit?: number) =>
+    http.get<ErrorLogsResponse>(`/admin/monitoring/errors${limit ? `?limit=${limit}` : ''}`),
+  monitoringErrorRemove: (id: string) => http.delete<void>(`/admin/monitoring/errors/${encodeURIComponent(id)}`),
+  monitoringSystem: () => http.get<SystemSnapshot>('/admin/monitoring/system'),
+  monitoringQueues: () => http.get<QueuesSnapshot>('/admin/monitoring/queues'),
+  backupsList: () => http.get<BackupsListResponse>('/admin/backups'),
+  /** Sin body a propósito: el motor y el destino los decide el servidor. */
+  backupCreate: () => http.post<BackupCreated>('/admin/backups', {}),
+  /** Binario con el mismo JWT: Blob para bajarlo con un <a download>. */
+  backupDownload: (id: string) => http.getBlob(`/admin/backups/${encodeURIComponent(id)}/download`),
+  backupDelete: (id: string) => http.delete<void>(`/admin/backups/${encodeURIComponent(id)}`),
   announcements: () => http.get<List>('/admin/announcements'),
   apiKeys: (hotelId?: string) => http.get<List>(`/api-keys${hotelId ? `?hotelId=${hotelId}` : ''}`),
   anuncios: () => http.get<List>('/anuncios'),
