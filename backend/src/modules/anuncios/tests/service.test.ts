@@ -1,6 +1,6 @@
 // anuncios/tests/service.test.ts — Tests del servicio con ownership, paginacion y seguridad
 // Usa RepositoryAdapter mock — sin dependencia de SQLite ni Postgres.
-// 18 tests: list, getById, create, update, delete, setSockets, cache, sockets, auth.
+// list, getById (incl. audiencia `admins` — #188), create, update, delete, setSockets, cache, sockets, auth.
 
 import { describe, it, expect, setSystemTime, afterEach } from 'bun:test'
 import type { RepositoryAdapter, CacheAdapter, Auth } from 'arckode-framework'
@@ -19,6 +19,10 @@ const readsStub = {
 
 const adminUser = { id: 'admin1', role: 'super_admin', hotelId: undefined }
 const hotelAdmin = { id: 'user1', role: 'hotel_admin', hotelId: 'h1' }
+// Roles OPERATIVOS. Hasta ahora todos los usuarios de este archivo eran administradores, y por eso
+// ninguna prueba tocaba la audiencia `admins`: el agujero del #188 no tenía quién lo destapara.
+const recepcion = { id: 'u-recep', role: 'receptionist', hotelId: 'h1' }
+const camarera = { id: 'u-cam', role: 'housekeeper', hotelId: 'h1' }
 const userA = { id: 'user-a', role: 'hotel_admin', hotelId: 'h1' }
 const userB = { id: 'user-b', role: 'hotel_admin', hotelId: 'h1' }
 
@@ -328,6 +332,56 @@ describe('AnunciosService', () => {
     it('throws NotFoundError for missing announcement', async () => {
       const svc = new AnunciosService(makeRepo(), log, makeCache(), makeUserRepo(), readsStub, fakeAuth)
       await expect(svc.getById('nonexistent', adminUser)).rejects.toThrow('Anuncio no encontrado')
+    })
+
+    // ── #188: el id no puede ser la puerta de atrás de la audiencia ────────────────────────
+    // El listado ya filtraba `admins` por rol, pero pedir el anuncio POR ID es otra superficie:
+    // si sólo se comparara el hotel, un anuncio de plataforma (hotelId nulo, audiencia `admins`)
+    // se le entregaba a cualquiera que adivinara —o viera en un log— el uuid. Estos tests fijan
+    // que las dos puertas usen la misma regla (`isVisibleFor`), porque la regla ya existía y lo
+    // que faltaba era que alguien la sostuviera.
+    const soloAdmins = () => makeAnuncio({ id: 'a1', hotelId: undefined, audience: 'admins', title: 'Cambio de comisiones' })
+
+    it('#188 — recepción NO puede leer por id un anuncio dirigido a administradores', async () => {
+      const repo = makeRepo({ findById: async () => soloAdmins() })
+      const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), readsStub, fakeAuth)
+      await expect(svc.getById('a1', recepcion)).rejects.toThrow('No autorizado')
+    })
+
+    it('#188 — una camarera tampoco', async () => {
+      const repo = makeRepo({ findById: async () => soloAdmins() })
+      const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), readsStub, fakeAuth)
+      await expect(svc.getById('a1', camarera)).rejects.toThrow('No autorizado')
+    })
+
+    it('#188 — ni aunque el anuncio `admins` estuviera atado a su propio hotel', async () => {
+      // `resolveAudience` limpia el hotelId de un anuncio de plataforma, así que esta fila no
+      // debería existir; se prueba igual porque una fila vieja o cargada a mano sí puede tenerla.
+      const repo = makeRepo({ findById: async () => makeAnuncio({ id: 'a1', hotelId: 'h1', audience: 'admins' }) })
+      const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), readsStub, fakeAuth)
+      await expect(svc.getById('a1', recepcion)).rejects.toThrow('No autorizado')
+    })
+
+    it('#188 — pero el destinatario legítimo sí lo lee: hotel_admin y super_admin', async () => {
+      const svc = new AnunciosService(makeRepo({ findById: async () => soloAdmins() }), log, makeCache(), makeUserRepo(), readsStub, fakeAuth)
+      expect((await svc.getById('a1', hotelAdmin)).id).toBe('a1')
+      expect((await svc.getById('a1', adminUser)).id).toBe('a1')
+    })
+
+    it('#188 — un anuncio `all` sí llega a los roles operativos (no se pasa de restrictivo)', async () => {
+      const repo = makeRepo({ findById: async () => makeAnuncio({ id: 'a1', hotelId: undefined, audience: 'all' }) })
+      const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), readsStub, fakeAuth)
+      expect((await svc.getById('a1', recepcion)).id).toBe('a1')
+    })
+
+    // Marcar "visto" o descartar son las otras dos puertas que reciben un id suelto: si no
+    // compartieran la regla, confirmarían la existencia del anuncio y dejarían filas de lectura
+    // sobre algo que ese usuario no puede ver.
+    it('#188 — seen y dismiss sobre un anuncio `admins` se rechazan desde un rol operativo', async () => {
+      const repo = makeRepo({ findById: async () => soloAdmins() })
+      const svc = new AnunciosService(repo, log, makeCache(), makeUserRepo(), readsStub, fakeAuth)
+      await expect(svc.markSeen('a1', recepcion)).rejects.toThrow('No autorizado')
+      await expect(svc.dismiss('a1', recepcion)).rejects.toThrow('No autorizado')
     })
   })
 
