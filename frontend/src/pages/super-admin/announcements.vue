@@ -192,6 +192,7 @@
 import { ref, onMounted } from 'vue'
 import { useToast } from '@/composables/useToast'
 import { PlatformService } from '@/services/Platform.service'
+import { SuperAdminService } from '@/services/SuperAdmin.service'
 import { AnnouncementsService } from '@/services/Announcements.service'
 import AppModal from '@/components/ui/AppModal.vue'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
@@ -229,7 +230,15 @@ async function cargarAnuncios(): Promise<void> {
     // paginación (se perdían avisos) y sirve de un cache de 300s que create/delete no invalidan
     // bien (#160), así que "Enviar Ahora" no se reflejaba. Crear/eliminar sí van por ahí: son los
     // únicos endpoints de escritura de anuncios.
-    const { data } = await PlatformService.announcements()
+    // #105 (ANN-1): la columna "Audiencia" mostraba el texto genérico "Hotel específico" y no se
+    // sabía A QUÉ hotel iba el aviso. Se carga el catálogo de hoteles en paralelo y se resuelve el
+    // nombre por id. El catálogo se captura por separado: si GET /admin/hoteles falla, el listado
+    // igual se muestra (con el id como fallback) en vez de tirar abajo toda la página.
+    const [{ data }, hoteles] = await Promise.all([
+      PlatformService.announcements(),
+      SuperAdminService.hotels().then((r) => r.hotels).catch(() => []),
+    ])
+    const nombres = new Map<string, string>(hoteles.map((h) => [h.id, h.name]))
     announcements.value = data.map((a: any) => ({
       id: a.id,
       title: a.title,
@@ -238,7 +247,8 @@ async function cargarAnuncios(): Promise<void> {
       message: a.message ?? '',
       type: TYPE_LABEL[a.type] ?? 'Informativo',
       typeClass: TYPE_CLASS[a.type] ?? 'bg-cyan/10 text-cyan',
-      audience: a.hotelId ? 'Hotel específico' : 'Todos los hoteles',
+      // Nombre del hotel; si no está en el catálogo (borrado, o catálogo caído) queda el id antes que un texto genérico.
+      audience: a.hotelId ? (nombres.get(a.hotelId) ?? a.hotelId) : 'Todos los hoteles',
       date: a.fecha ? String(a.fecha).slice(0, 10) : '',
       views: 0,
       // Lecturas reales de la API; 0 queda sólo como default vacío cuando no viene, nunca como dato falso.

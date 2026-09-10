@@ -14,6 +14,13 @@ vi.mock('@/services/Platform.service', () => ({
     announcements: (...a: unknown[]) => listMock(...a),
   },
 }))
+// #105 (ANN-1): catálogo de hoteles para resolver el nombre en la columna "Audiencia".
+const hotelsMock = vi.fn()
+vi.mock('@/services/SuperAdmin.service', () => ({
+  SuperAdminService: {
+    hotels: (...a: unknown[]) => hotelsMock(...a),
+  },
+}))
 // Singleton: el componente y el test tienen que ver LOS MISMOS vi.fn() (patrón audit.test.ts).
 vi.mock('@/composables/useToast', () => {
   const fns = { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn(), toasts: [] }
@@ -56,6 +63,8 @@ function annuncio(overrides: Record<string, unknown> = {}) {
 describe('super-admin/announcements — lecturas reales en la columna (#108)', () => {
   beforeEach(() => {
     listMock.mockReset()
+    hotelsMock.mockReset()
+    hotelsMock.mockResolvedValue({ hotels: [{ id: 'h1', name: 'Hotel Sol' }], total: 1 })
   })
 
   it('muestra "3 leídos" cuando el listado trae reads: 3 (COUNT real del backend)', async () => {
@@ -86,5 +95,49 @@ describe('super-admin/announcements — lecturas reales en la columna (#108)', (
     const w = await render()
 
     expect(w.text()).toContain('0 leídos')
+  })
+})
+
+describe('super-admin/announcements — columna Audiencia con nombre del hotel (#105)', () => {
+  beforeEach(() => {
+    listMock.mockReset()
+    hotelsMock.mockReset()
+    hotelsMock.mockResolvedValue({ hotels: [{ id: 'h1', name: 'Hotel Sol' }], total: 1 })
+  })
+
+  /** Celda "Audiencia" de cada fila de la tabla (cabecera: Título · Tipo · Audiencia · ...). */
+  function audiencias(w: ReturnType<typeof mount>): string[] {
+    const headers = w.findAll('thead th').map((th) => th.text().trim())
+    const col = headers.indexOf('Audiencia')
+    expect(col).toBeGreaterThanOrEqual(0)
+    return w.findAll('tbody tr').map((tr) => tr.findAll('td')[col]!.text().trim())
+  }
+
+  it('la columna Audiencia muestra el nombre del hotel, no su id', async () => {
+    listMock.mockResolvedValue({ data: [annuncio({ hotelId: 'h1' })], total: 1 })
+
+    const w = await render()
+
+    expect(hotelsMock).toHaveBeenCalledTimes(1)
+    expect(audiencias(w)).toEqual(['Hotel Sol'])
+    expect(w.text()).not.toContain('Hotel específico')
+  })
+
+  it('un anuncio sin hotel muestra Todos los hoteles', async () => {
+    listMock.mockResolvedValue({ data: [annuncio({ hotelId: null })], total: 1 })
+
+    const w = await render()
+
+    expect(audiencias(w)).toEqual(['Todos los hoteles'])
+  })
+
+  it('si el catálogo de hoteles falla, el listado igual carga con el id', async () => {
+    hotelsMock.mockRejectedValue(new Error('boom'))
+    listMock.mockResolvedValue({ data: [annuncio({ hotelId: 'h2' })], total: 1 })
+
+    const w = await render()
+
+    expect(w.text()).toContain('Nueva función de pagos')
+    expect(audiencias(w)).toEqual(['h2'])
   })
 })
