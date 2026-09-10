@@ -15,7 +15,7 @@ import type { RepositoryAdapter, Auth } from 'arckode-framework'
 import { NotFoundError, ValidationError } from 'arckode-framework'
 import type { StorageService } from 'arckode-framework/modules/storage'
 import type { HotelMediaDTO, CreateHotelMediaDTO, UpdateHotelMediaDTO, MediaType, CurrentUser } from '../types'
-import { parseDataUrl, isImage } from '../../../shared/utils/data-url'
+import { parseDataUrl, isImage, exceedsMaxImageSize } from '../../../shared/utils/data-url'
 
 /**
  * Abstracción mínima del ORM para atomicidad: solo expone `transaction`. La define el módulo
@@ -131,6 +131,9 @@ export async function upload(
     const parsed = parseDataUrl(dto.url)
     if (!parsed) throw new ValidationError('Formato inválido (se espera data URL base64)')
     if (!isImage(parsed.mimeType)) throw new ValidationError('Solo se permiten imágenes')
+    // media.vue (frontend) no validaba tamaño en absoluto — cualquier foto, sin importar el
+    // peso, llegaba directo acá. Mismo tope que el logo del hotel (5MB).
+    if (exceedsMaxImageSize(parsed.buffer)) throw new ValidationError('La imagen supera el máximo de 5MB')
     const stored = await deps.storage.upload(
       {
         fieldName: 'file',

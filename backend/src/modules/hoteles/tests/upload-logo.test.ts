@@ -68,6 +68,13 @@ describe('POST /api/settings/logo', () => {
     expect(res.status).toBe(400)
   })
 
+  it('rechaza una imagen que supera 5MB — el frontend ya lo corta, pero un cliente directo (curl/Postman) podía saltearlo', async () => {
+    const bigBuffer = Buffer.alloc(5 * 1024 * 1024 + 1, 1)
+    const c = new HotelesController(fakeService(() => {}), noopLogger, fakeQueries('h1'), fakeStorage())
+    const res = await c.uploadLogo(req({ logo: `data:image/png;base64,${bigBuffer.toString('base64')}` }))
+    expect(res.status).toBe(400)
+  })
+
   it('imagen válida: sube al storage y guarda la URL devuelta en hotels.logo', async () => {
     let savedId = ''
     let savedPatch: any = null

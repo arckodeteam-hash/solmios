@@ -24,3 +24,16 @@ export function parseDataUrl(dataUrl: string): DecodedDataUrl | null {
 export function isImage(mimeType: string): boolean {
   return mimeType.startsWith('image/')
 }
+
+/** Tope por defecto para fotos de hotel (logo, galería) — mismo número que ya validaba el
+ *  frontend (`LOGO_MAX_BYTES` en StepIdentidad.vue/general.vue), pero SOLO del lado del
+ *  cliente: nada impedía mandar un data URL enorme directo a la API. Opt-in (no vive dentro
+ *  de `parseDataUrl`): avatares/adjuntos de otros módulos (usuarios, mantenimiento, messages,
+ *  housekeeping, empleados, reservas) también usan `parseDataUrl` y pueden necesitar otro
+ *  tope — no se les aplica este sin revisarlos primero. */
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+/** `true` si el buffer decodificado supera el tope — chequear ANTES de subir a storage. */
+export function exceedsMaxImageSize(buffer: Buffer, maxBytes: number = MAX_IMAGE_BYTES): boolean {
+  return buffer.length > maxBytes
+}
