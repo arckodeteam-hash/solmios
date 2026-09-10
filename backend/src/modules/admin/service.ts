@@ -11,6 +11,7 @@ import {
   type SubscriptionSettings,
 } from './usecases/subscription-settings'
 import type { ModuleOverridesUseCase } from './usecases/module-overrides'
+import type { PlatformBillingUseCase } from './usecases/billing'
 import * as plans from './usecases/plans'
 import { updateHotel } from './usecases/update-hotel'
 import {
@@ -68,7 +69,15 @@ export class AdminService {
     /** #46: `subscriptions.planId`, fuente de verdad del plan para el gate. OPCIONAL como el resto
      *  de los deps: sin cablear, `updateHotel` solo espeja `hotels.plan` (como antes) y no rompe. */
     private readonly subscriptionsRepo?: RepositoryAdapter<any>,
+    /** BIL-2: facturación de la plataforma. El service solo la EXPONE — toda la lógica vive en `usecases/billing*.ts`, que es lo que pide la regla del God Object. */
+    private readonly platformBilling?: PlatformBillingUseCase,
   ) {}
+
+  /** `platform_invoices` para /admin/billing. Sin cablear (tabla no migrada) tira y el controller responde 503 — nunca una pantalla que miente. */
+  get billing(): PlatformBillingUseCase {
+    if (!this.platformBilling) throw new Error('admin: facturación de plataforma no cableada')
+    return this.platformBilling
+  }
 
   async listHotels(): Promise<{ data: any[]; total: number }> { return this.queries!.listHotels() }
   async listUsers(): Promise<{ data: any[]; total: number }> { return this.queries!.listUsers() }

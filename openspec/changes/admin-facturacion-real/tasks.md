@@ -24,14 +24,14 @@
 
 ## 2. Endpoints admin (REQ-BIL-04, REQ-BIL-09)
 
-- [ ] 2.1 `GET /api/admin/billing/invoices` con filtros y paginación en el usecase.
+- [x] 2.1 `GET /api/admin/billing/invoices` con filtros y paginación en el usecase.
       **Aceptación**: test de `status`, `planId`, `from/to`, `q` por número/hotel/referencia; 403
       con `merchant`.
-- [ ] 2.2 `GET /api/admin/billing/invoices/:id` enriquecido (hotel, suscripción).
+- [x] 2.2 `GET /api/admin/billing/invoices/:id` enriquecido (hotel, suscripción).
       **Aceptación**: test de forma del payload; 404 si no existe.
-- [ ] 2.3 `GET /api/admin/billing/stats` desde `platform_invoices` + `mrr`.
+- [x] 2.3 `GET /api/admin/billing/stats` desde `platform_invoices` + `mrr`.
       **Aceptación**: test del escenario del spec (148/49/49/99/50).
-- [ ] 2.4 `GET /api/admin/billing/export.csv` (BOM, `;`, mismos filtros).
+- [x] 2.4 `GET /api/admin/billing/export.csv` (BOM, `;`, mismos filtros).
       **Aceptación**: test que abre el CSV y verifica encabezados y una fila.
 
 ## 3. Acciones (REQ-BIL-05, REQ-BIL-06)

@@ -10,6 +10,7 @@ import { MODULE_CATALOG, getModuleState, setModuleState, getModuleStateForHotel,
 import { SpecialConditionsUseCase } from './usecases/special-conditions'
 import { SubscriptionCategoriesUseCase } from './usecases/subscription-categories'
 import { ModuleOverridesUseCase } from './usecases/module-overrides'
+import { PlatformBillingUseCase } from './usecases/billing'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
 
 export { AdminService }
@@ -21,16 +22,22 @@ export function AdminModule() {
     // 400/403/404/409, por TIPO de error). Un cambio observable del contrato bumpea la versión.
     // 1.2.0: + GET /api/admin/modules/catalog (árbol módulo→sub-módulos para el editor de planes)
     // y `plans.modules` se valida contra el catálogo (400 con las claves inválidas).
-    version: '1.2.0',
+    // 1.3.0 (BIL-2, #154): + facturación de la plataforma — listado con filtros, detalle, stats y
+    // export CSV sobre `platform_invoices`. Contrato observable nuevo.
+    version: '1.3.0',
     description: 'Super admin platform management',
     contract: {
-      name: 'admin', version: '1.2.0',
+      name: 'admin', version: '1.3.0',
       description: 'Platform-level management: hotels, users, plans, analytics',
-      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride'],
+      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv'],
       events: [],
       tables: [],
       dependencies: [],
-      rules: ['Super_admin only'],
+      rules: [
+        'Super_admin only',
+        'billing/*: la verdad es `platform_invoices` (la llena el webhook de Stripe, BIL-1). NUNCA derivar una factura de `listSubscriptions` ni calcular el monto desde el precio del plan',
+        'billing/*: los filtros (estado, plan, rango de fechas, texto) se aplican en el usecase, no en el navegador sobre el set completo',
+      ],
     },
     create({ logger, orm, cache, router, auth }) {
       if (!auth) throw new Error('admin: auth dependency required')
@@ -51,7 +58,16 @@ export function AdminModule() {
       const moduleOverrides = new ModuleOverridesUseCase(moduleOverridesRepo, auth, log)
       // `subscriptionsRepo` (último): sin él, el select de plan de /admin/hotels solo escribiría el
       // espejo legacy `hotels.plan` y el hotel seguiría con los módulos del plan viejo (#46).
-      const service = new AdminService(plansRepo, amenitiesRepo, log, auth, queries, hotelsRepo, specialConditions, categories, configRepo, moduleOverrides, subscriptionsRepo)
+      // Facturación de la PLATAFORMA (BIL-1..3): `platform_invoices` la define el módulo
+      // `subscriptions` (es su tabla); acá solo se LEE/escribe vía repo, igual que `Subscriptions`
+      // más arriba — los módulos no se importan entre sí, el modelo es compartido por el ORM.
+      const platformBilling = new PlatformBillingUseCase({
+        invoicesRepo: new OrmRepository<any>(orm, 'PlatformInvoices'),
+        hotelsRepo, subscriptionsRepo, logger: log,
+        // MRR real (solo `active`), misma cuenta que /admin/subscriptions — no se recalcula acá.
+        readMrr: async () => (await queries.listSubscriptions()).mrrTotal,
+      })
+      const service = new AdminService(plansRepo, amenitiesRepo, log, auth, queries, hotelsRepo, specialConditions, categories, configRepo, moduleOverrides, subscriptionsRepo, platformBilling)
       const controller = new AdminController(service, log)
 
       const sa = [auth.authenticate('super_admin'), requireUserType('admin')]
@@ -139,6 +155,14 @@ export function AdminModule() {
       router.get('/api/admin/hotels/:hotelId/module-overrides', sa, (req: any) => controller.listModuleOverrides(req))
       router.post('/api/admin/hotels/:hotelId/module-overrides', sa, (req: any) => controller.upsertModuleOverride(req))
       router.delete('/api/admin/hotels/:hotelId/module-overrides/:id', sa, (req: any) => controller.deleteModuleOverride(req))
+
+      // ── Facturación de la PLATAFORMA (lo que los hoteles le pagan a SOLMI OS) ──────────────
+      // `export.csv` va ANTES de `/:id`: el router matchea por orden y `export.csv` entraría
+      // como un `:id` que no existe (404 con el archivo vacío).
+      router.get('/api/admin/billing/invoices', sa, (req: any) => controller.listBillingInvoices(req))
+      router.get('/api/admin/billing/stats', sa, (req: any) => controller.getBillingStats(req))
+      router.get('/api/admin/billing/export.csv', sa, (req: any) => controller.exportBillingCsv(req))
+      router.get('/api/admin/billing/invoices/:id', sa, (req: any) => controller.getBillingInvoice(req))
 
       log.info('Módulo admin listo (32 endpoints)')
       return service
