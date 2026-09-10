@@ -1,6 +1,8 @@
 // audit.test.ts — Regresión #139 de la auditoría global (super-admin):
 // el select de acciones se deriva de las entidades presentes (agrupadas y normalizadas), el filtro
 // compara contra el grupo y el buscador también mira la acción cruda.
+// #140: columna/desplegable/filtro/buscador/CSV de Hotel leen `hotelName` (resuelto por el backend)
+// y la carga recorre TODAS las páginas del log, no sólo la primera.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
@@ -118,5 +120,119 @@ describe('super-admin/audit — filtro de acciones y búsqueda (#139)', () => {
     expect(rows.length).toBe(DELETE_COUNT)
     expect(rows.every((r) => r.actionKey === 'delete')).toBe(true)
     expect(rows.some((r) => String(r.detail).toLowerCase().includes('delete'))).toBe(false)
+  })
+})
+
+// ── #140: hotel en columna, desplegable, filtro y CSV ─────────────────────────────────────────
+
+/** Segundo <select> de la barra de filtros = "Todos los hoteles". */
+const hotelSelect = (w: ReturnType<typeof mount>) => w.findAll('select')[1]
+
+/** 5 entradas cortas (la tabla pagina de a 25, así que todas quedan visibles sin pasar de página). */
+const LOGS_HOTEL = [
+  { id: 'a1', userName: 'Recepción', action: 'create', entity: 'reservation', detail: 'Detalle a1', ip: '10.0.0.1', createdAt: '2026-08-02T10:00:00.000Z', hotelName: 'Hotel Alpha' },
+  { id: 'a2', userName: 'Recepción', action: 'create', entity: 'reservation', detail: 'Detalle a2', ip: '10.0.0.1', createdAt: '2026-08-02T11:00:00.000Z', hotelName: 'Hotel Alpha' },
+  { id: 'b1', userName: 'Admin', action: 'update', entity: 'invoice', detail: 'Detalle b1', ip: '10.0.0.2', createdAt: '2026-08-03T10:00:00.000Z', hotelName: 'Hotel Beta' },
+  // #140: hotelName '' cuando el log no tiene hotelId (o el hotel es huérfano)...
+  { id: 'p1', userName: 'Sistema', action: 'update', entity: 'cash_shift', detail: 'Detalle p1', ip: '10.0.0.3', createdAt: '2026-08-04T10:00:00.000Z', hotelName: '' },
+  // ...y puede venir ausente en filas viejas: ambos casos caen al fallback 'Plataforma'.
+  { id: 'p2', userName: 'Sistema', action: 'delete', entity: 'expense', detail: 'Detalle p2', ip: '10.0.0.3', createdAt: '2026-08-05T10:00:00.000Z' },
+]
+
+describe('super-admin/audit — columna y filtro de hotel (#140)', () => {
+  beforeEach(() => {
+    listMock.mockResolvedValue({ data: LOGS_HOTEL, total: LOGS_HOTEL.length })
+  })
+
+  it('la columna Hotel renderiza el nombre real (hotelName del backend)', async () => {
+    const w = await render()
+    expect(w.find('tbody').text()).toContain('Hotel Alpha')
+    expect(w.find('tbody').text()).toContain('Hotel Beta')
+  })
+
+  it("'Plataforma' para los logs sin hotelName (vacío o ausente)", async () => {
+    const w = await render()
+    const rows = filtered(w) as any[]
+    expect(rows.filter((r) => r.hotel === 'Plataforma').length).toBe(2)
+    expect(w.find('tbody').text()).toContain('Plataforma')
+  })
+
+  it('el desplegable lista los hoteles presentes, sin repetidos', async () => {
+    const w = await render()
+    const values = hotelSelect(w).findAll('option').map((o) => o.attributes('value'))
+    expect(values[0]).toBe('all')
+    expect(values).toContain('Hotel Alpha')
+    expect(values).toContain('Hotel Beta')
+    expect(values).toContain('Plataforma')
+    expect(new Set(values).size).toBe(values.length)
+  })
+
+  it("elegir 'Hotel Alpha' en el desplegable deja sólo sus entradas", async () => {
+    const w = await render()
+    await hotelSelect(w).setValue('Hotel Alpha')
+    await nextTick()
+    const rows = filtered(w) as any[]
+    expect(rows.length).toBe(2)
+    expect(rows.every((r) => r.hotel === 'Hotel Alpha')).toBe(true)
+    expect(w.find('tbody').text()).toContain('Detalle a1')
+    expect(w.find('tbody').text()).not.toContain('Detalle b1')
+  })
+})
+
+describe('super-admin/audit — export CSV con hotel (#140)', () => {
+  let blobs: Blob[] = []
+
+  beforeEach(() => {
+    listMock.mockResolvedValue({ data: LOGS_HOTEL, total: LOGS_HOTEL.length })
+    blobs = []
+    // Patrón auditoria.test.ts: capturar el Blob que el export crea con URL.createObjectURL.
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((b: Blob | MediaSource) => {
+      blobs.push(b as Blob)
+      return 'blob:mock'
+    })
+  })
+
+  it('la columna Hotel del CSV trae el nombre real y "Plataforma" para las entradas sin hotel', async () => {
+    const w = await render()
+    const btn = w.findAll('button').find((b) => b.text() === 'Exportar CSV')!
+    await btn.trigger('click')
+    await flushPromises()
+
+    expect(blobs.length).toBe(1)
+    const csv = (await blobs[0].text()).replace(/^\uFEFF/, '') // BOM para Excel
+    const lines = csv.split('\r\n')
+    expect(lines[0]).toBe('Fecha,Hora,Usuario,Hotel,Acción,Categoría,Detalle,IP')
+    // Cada campo va entrecomillado (comillas internas duplicadas): se pelan los extremos y se parte.
+    const filas = lines.slice(1).map((l) => l.slice(1, -1).split('","'))
+    expect(filas.length).toBe(LOGS_HOTEL.length)
+    expect(filas.filter((f) => f[3] === 'Hotel Alpha').length).toBe(2)
+    expect(filas.filter((f) => f[3] === 'Hotel Beta').length).toBe(1)
+    expect(filas.filter((f) => f[3] === 'Plataforma').length).toBe(2)
+  })
+})
+
+describe('super-admin/audit — carga completa del log (#140)', () => {
+  it('recorre las páginas de 100 hasta total: los logs de la página 2 también quedan cargados', async () => {
+    // Página 1 llena (100 filas de 'Hotel Alpha'); el hotel de la página 2 SOLO existe ahí.
+    const pagina1 = Array.from({ length: 100 }, (_, i) => ({
+      id: `p1-${i}`, userName: 'Recepción', action: 'create', entity: 'reservation',
+      detail: `Detalle ${i}`, ip: '10.0.0.1', createdAt: '2026-08-02T10:00:00.000Z', hotelName: 'Hotel Alpha',
+    }))
+    const pagina2 = Array.from({ length: 5 }, (_, i) => ({
+      id: `p2-${i}`, userName: 'Admin', action: 'update', entity: 'invoice',
+      detail: `Detalle pagina dos ${i}`, ip: '10.0.0.2', createdAt: '2026-08-03T10:00:00.000Z', hotelName: 'Hotel Solo Pagina Dos',
+    }))
+    listMock.mockImplementation(async (params?: { page?: number }) =>
+      (params?.page ?? 1) === 1 ? { data: pagina1, total: 105 } : { data: pagina2, total: 105 })
+    // El historial de listMock acumula las llamadas de los tests anteriores: se limpia para contar
+    // sólo las de ESTA carga.
+    listMock.mockClear()
+
+    const w = await render()
+    expect(filtered(w).length).toBe(105)
+    expect(w.text()).toContain('de 105')
+    expect((w.vm as any).hotelList).toContain('Hotel Solo Pagina Dos')
+    expect(listMock).toHaveBeenCalledTimes(2) // 100 < 105 → pidió la 2; 105 ya no es < 105 → paró.
+    expect(listMock).toHaveBeenLastCalledWith({ page: 2, limit: 100 })
   })
 })

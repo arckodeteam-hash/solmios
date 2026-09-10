@@ -147,8 +147,19 @@ const logs = ref<any[]>([])
 onMounted(async () => {
   loading.value = true
   try {
-    const { data } = await AuditLogService.list()
-    logs.value = data.map((l: any) => {
+    // #140: cargar el log COMPLETO, no la primera página. Sin parámetros el backend devuelve
+    // DEFAULT_LIMIT (20) filas, pero esta página pagina client-side (POR_PAGINA=25) y promete
+    // "Mostrando X de Y"; peor aún, el desplegable de hoteles tiene que listar los hoteles CON
+    // ACTIVIDAD de todo el log. Se pide de a 100 (MAX_LIMIT backend) hasta juntar `total`.
+    const MAX_PAGINAS = 20 // Tope de seguridad: 20×100 = 2000 filas; si se alcanza, quedan las primeras.
+    const acumulado: any[] = []
+    let total = Infinity
+    for (let page = 1; page <= MAX_PAGINAS && acumulado.length < total; page++) {
+      const resp = await AuditLogService.list({ page, limit: 100 })
+      total = resp.total
+      acumulado.push(...resp.data)
+    }
+    logs.value = acumulado.map((l: any) => {
       const dt = String(l.createdAt || '').replace('T', ' ')
       return {
         id: l.id,
@@ -157,7 +168,10 @@ onMounted(async () => {
         user: l.userName ?? 'Sistema',
         initials: (l.userName ?? 'S').split(' ').map((p: string) => p[0]).slice(0, 2).join(''),
         role: '', roleColor: 'bg-cyan/20 text-cyan',
-        hotel: '',
+        // #140: hotelName viene resuelto por el backend ('' si no tiene hotelId o es huérfano);
+        // con el fallback columna, desplegable, filtro, buscador y CSV quedan arreglados por el
+        // mismo campo (patrón users.vue).
+        hotel: l.hotelName || 'Plataforma',
         // Bug corregido (2026-07-29): leía l.accion/l.entidad/l.detalle (español) — el DTO real
         // (AuditlogDTO) usa action/entity/detail (inglés). Las columnas Acción/Categoría/Detalle
         // quedaban en blanco/undefined en silencio.
