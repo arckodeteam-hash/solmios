@@ -64,14 +64,20 @@
           <button @click="testEmail" :disabled="testingEmail" class="w-full py-2.5 bg-surface text-navy rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait">{{ testingEmail ? 'Enviando…' : 'Enviar Email de Prueba' }}</button>
         </div>
       </SectionCard>
+      <!-- Plantillas de Email: lee el módulo real (GET /admin/platform-emails). El toggle persiste con
+           PUT /admin/platform-emails/:event y el click en la fila abre el editor de /admin/email-templates. -->
       <SectionCard title="Plantillas de Email">
         <div class="space-y-3">
-          <div v-for="template in emailTemplates" :key="template.name" class="flex items-center justify-between p-3 bg-surface rounded-xl cursor-pointer hover:bg-surface-dark transition-colors" @click="selectedTemplate = template">
-            <div class="flex items-center gap-3"><span class="text-xl">{{ template.icon }}</span><div><div class="text-sm font-bold">{{ template.name }}</div><div class="text-[10px] text-text-muted">{{ template.description }}</div></div></div>
-            <div class="flex items-center gap-2">
-              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="template.active ? 'bg-teal/10 text-teal' : 'bg-surface text-text-muted'">{{ template.active ? 'Activa' : 'Inactiva' }}</span>
-              <button @click.stop="template.active = !template.active" class="w-10 h-5 rounded-full relative transition-colors cursor-pointer" :class="template.active ? 'bg-teal' : 'bg-gray-300'"><div class="w-4 h-4 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="template.active ? 'right-0.5' : 'left-0.5'"></div></button>
+          <p v-if="!emailTemplates.length" class="text-sm text-text-muted text-center py-4">No hay plantillas cargadas</p>
+          <div v-for="template in emailTemplates" :key="template.event" class="flex items-center justify-between p-3 bg-surface rounded-xl cursor-pointer hover:bg-surface-dark transition-colors" @click="openEmailTemplate(template)">
+            <div class="min-w-0"><div class="text-sm font-bold">{{ eventLabel(template.event) }}</div><div class="text-[10px] text-text-muted truncate">{{ template.subject || 'Sin asunto' }}</div></div>
+            <div class="flex items-center gap-2 shrink-0">
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="template.isActive ? 'bg-teal/10 text-teal' : 'bg-surface text-text-muted'">{{ template.isActive ? 'Activa' : 'Inactiva' }}</span>
+              <button @click.stop="toggleEmailTemplate(template)" :disabled="savingEvent === template.event" class="w-10 h-5 rounded-full relative transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait" :class="template.isActive ? 'bg-teal' : 'bg-gray-300'"><div class="w-4 h-4 bg-white rounded-full absolute top-0.5 transition-all shadow" :class="template.isActive ? 'right-0.5' : 'left-0.5'"></div></button>
             </div>
+          </div>
+          <div class="pt-1 text-right">
+            <router-link :to="{ name: 'super-admin-email-templates' }" class="text-xs font-bold text-navy hover:underline">Ver todas →</router-link>
           </div>
         </div>
       </SectionCard>
@@ -251,15 +257,18 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import logoIconColor from '@/assets/logo/logo-icon-color.png'
 import { ConfigService, PlatformService } from '@/services/Platform.service'
 import type { MetaAppEstado } from '@/services/Platform.service'
 import { useToast } from '@/composables/useToast'
+import { PlatformEmailsService, eventLabel, type PlatformEmailTemplate } from '@/services/PlatformEmails.service'
 import ChannexPlatformConfig from '@/components/features/ChannexPlatformConfig.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import { CurrencyCode } from '@/types/currency'
 
 const toast = useToast()
+const router = useRouter()
 
 const activeTab = ref('platform')
 
@@ -303,7 +312,6 @@ async function guardarMeta() {
     metaGuardando.value = false
   }
 }
-const selectedTemplate = ref<any>(null)
 const showSaved = ref(false)
 
 const tabs = [
@@ -327,7 +335,43 @@ const settings = ref<any>({
   allowCreditNotes: true, allowVolumeDiscounts: false, annualDiscount: 15, taxRate: 18,
 })
 
-const emailTemplates = ref<any[]>([])
+// Plantillas de email de la plataforma: vienen del módulo real, no de configuration(). Se cargan
+// aparte del Promise.all de abajo para que un fallo acá no tumbe el resto de la configuración.
+const emailTemplates = ref<PlatformEmailTemplate[]>([])
+const savingEvent = ref<string | null>(null)
+
+async function loadEmailTemplates() {
+  try {
+    const r = await PlatformEmailsService.list()
+    // Contrato: array directo. Defensivo por si el envelope lo anida en { data: [...] }.
+    emailTemplates.value = Array.isArray(r) ? r : ((r as { data?: PlatformEmailTemplate[] })?.data ?? [])
+  } catch (e) {
+    emailTemplates.value = []
+    toast.error(e instanceof Error ? e.message : 'No se pudieron cargar las plantillas de email')
+  }
+}
+
+// Persiste el toggle en el backend; si falla, la fila queda como estaba.
+async function toggleEmailTemplate(t: PlatformEmailTemplate) {
+  if (savingEvent.value) return
+  savingEvent.value = t.event
+  try {
+    const updated = await PlatformEmailsService.update(t.event, { isActive: !t.isActive })
+    const idx = emailTemplates.value.findIndex(x => x.event === t.event)
+    if (idx >= 0) emailTemplates.value[idx] = { ...emailTemplates.value[idx], ...updated }
+    const nowActive = idx >= 0 ? emailTemplates.value[idx].isActive : !t.isActive
+    toast.success(`Plantilla "${eventLabel(t.event)}" ${nowActive ? 'activada' : 'desactivada'}`)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'No se pudo actualizar la plantilla')
+  } finally {
+    savingEvent.value = null
+  }
+}
+
+// Abre el editor completo de la plantilla en /admin/email-templates.
+function openEmailTemplate(t: PlatformEmailTemplate) {
+  router.push({ name: 'super-admin-email-templates', query: { event: t.event } })
+}
 const securityOptions = ref<any[]>([])
 // WhatsApp SALIÓ de acá (2026-09-07). Estaba en el lugar equivocado del sistema: no existe un
 // WhatsApp "de la plataforma" que sirva a todos los hoteles — cada hotel conecta su propio número y
@@ -345,14 +389,14 @@ const integrations = ref<any[]>([
 
 onMounted(async () => {
   cargarMeta()
+  loadEmailTemplates()
   try {
     // SMTP-UI (2026-08-19): se lee el CANÓNICO ('email_config', host/pass) con fallback al
     // legacy ('smtp', server/password) que guardaba esta misma página — antes el load ni
     // siquiera matcheaba los nombres (server ≠ smtpServer), así el form arrancaba vacío.
-    const [plataforma, emailCfg, tmpl, seg, integ, maps] = await Promise.all([
+    const [plataforma, emailCfg, seg, integ, maps] = await Promise.all([
       ConfigService.get('plataforma', 'platform'),
       ConfigService.get('email_config', 'platform').catch(() => null),
-      ConfigService.get('email_templates', 'platform'),
       ConfigService.get('seguridad', 'platform'),
       ConfigService.get('integraciones', 'platform'),
       ConfigService.get('google_maps', 'platform'),
@@ -371,7 +415,6 @@ onMounted(async () => {
       settings.value.fromEmail = String(smtp.fromEmail ?? fromMatch?.[2] ?? (typeof smtp.from === 'string' && !smtp.from.includes('<') ? smtp.from : ''))
       settings.value.fromName = String(smtp.fromName ?? fromMatch?.[1] ?? '')
     }
-    if (Array.isArray(tmpl)) emailTemplates.value = tmpl
     if (Array.isArray(seg)) securityOptions.value = seg
     if (Array.isArray(integ)) integrations.value = integ
     if (maps?.apiKey) mapsKey.value = String(maps.apiKey)
