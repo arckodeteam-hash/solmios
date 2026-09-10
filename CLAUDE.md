@@ -12,6 +12,7 @@ Bun (>=1.3) + Vue 3.5 + Vite 8 + Pinia 3 + Vue Router 5.1 + Tailwind CSS 4.3 + a
 - **frontend-coverage-gaps**: GATES automáticos ✅. GATES manuales (reports/switcher/PWA en prod) sin validar.
 - **wizard-refactor** (`docs/wizard-refactor/`): ✅ F0-F5 completas. Ubicación + identidad pública movidas de Configuración a Página pública (F1); `OnboardingStep[]` con 6 pasos de perfil granulares + `kind:'profile'|'external'` (F2); Centro de configuración nuevo en `/panel/configuracion-inicial` (F3); dashboard usa `ProfileProgressBar.vue` (franja fina, % solo sobre pasos requeridos) en vez de `OnboardingGuide.vue` (retirado, F4). Copy en registro "usted". Deuda residual menor: `pagina-publica/ubicacion.vue` (de F1, anterior a la decisión de tono) sigue en voseo — fuera del alcance acotado por el usuario para la conversión a "usted".
 - **admin-facturacion-real** (`openspec/changes/admin-facturacion-real/`, epic #152, issues #153-#157): ✅ COMPLETO y en producción (2026-09-10). `/admin/billing` ya no fabrica facturas desde `listSubscriptions`: existe `platform_invoices` (la llenan los webhooks de Stripe + `scripts/backfill-platform-invoices.ts`), endpoints `/api/admin/billing/*` con filtros server-side, recordatorio con dedup de 24 h y pago manual que reactiva la suscripción vía el connector `admin-subscriptions-billing`. En prod: tabla + índice único creados, backfill corrido (2 facturas históricas) y `invoice.finalized`/`invoice.voided` habilitados en el endpoint de webhook de Stripe (`we_1UDo3YAmbL9UHRkUtNJOA12j`) — si se recrea el endpoint, hay que volver a tildarlos.
+- **pipeline-ventas-trials** (`openspec/changes/pipeline-ventas-trials/`, epic #143, issues #144-#151): Fases A y B ✅ en prod 2026-09-10. Pendiente solo §10.2 (medir `paying/registered` a las 4 semanas, dato de partida 2026-09-10: embudo 8 sem = 15 registrados / 60% activan / 13.3% pagan). Screenshots de QA en el estado LoopKit, no adjuntos a los issues.
 - **mobile-app**: OTRO profesional (Flutter, repo `solmios-mobile`). **NO scope — no tocar.**
 
 ## Database — Migraciones y Seeders
@@ -343,6 +344,53 @@ vigente: la pestaña **desaparece del panel en cuanto el hotel tiene `connection
 migrarlos a la conexión oficial y sacar el código.
 
 Para saber quién lo usa: `bun run verificar-whatsapp` los lista.
+
+## Pipeline de ventas — cómo está armado (epic #143, Fases A y B en prod desde 2026-09-10)
+
+**El pipeline se CALCULA, no se guarda.** Una fila por hotel con suscripción (`subscriptions ⋈
+hotels`, inner join: el demo sin suscripción no está) más una por `sales_leads` sin hotel. Lo único
+persistido es lo que una persona anota (`sales_prospects`). Vista: `/admin/leads-ventas`
+("Pipeline de ventas"); embudo en el dashboard del super-admin.
+
+| Pieza | Dónde |
+|---|---|
+| Etapa, señales, calor, orden | `sales-leads/usecases/pipeline.ts` (`buildPipeline`) |
+| Lo que ventas anota (próximo paso, responsable, contactado, perdido) | `sales-leads/usecases/prospect-upsert.ts` → `sales_prospects` |
+| Responsables (`assignedTo` = `users.id` con `userType='admin'`) | `sales-leads/usecases/assignees.ts` |
+| Embudo semanal | `sales-leads/usecases/funnel.ts` (`GET /api/admin/sales-pipeline/funnel?weeks=1..26`) |
+| Aviso a ventas al registrarse | socket `subscriptions.onHotelSignedUp` → `connectors/subscriptions-sales-alert.ts` → `sales-leads/usecases/signup-alert.ts` (`SALES_LEADS_ADMIN_EMAIL`, cae a `ventas@solmios.com`) |
+| Extender trial | `POST /api/admin/subscriptions/:hotelId/extend-trial` → `connectors/admin-subscriptions-trial.ts` → `subscriptions/usecases/extend-trial.ts` |
+| Secuencia de activación + rescate + perdido automático | `shared/usecases/activation-sequence-cron.ts` (diario) |
+| WhatsApp en la landing | `site-pages/usecases/platform-contact.ts` (`GET /api/public/platform-contact`) |
+| Frontend | `pages/super-admin/leads-ventas.vue`, `components/features/super-admin/SalesFunnelCard.vue`, `services/SalesPipeline.service.ts`, `types/sales-pipeline.ts` (espejo exacto de `sales-leads/types.ts`) |
+
+**Etapa** (`stageOfHotel`): `lost` manda (alguien decidió) → `active` = `paying` → `trialing` vencido =
+`expired` → `trialing` con habitaciones = `activated`, sin = `registered`. `canceled`/`suspended`/
+`past_due` sin `lostAt` caen en `expired` (no paga, hay que rescatarlo). Leads sin hotel: `contact`,
+o `lost` si `sales_leads.status='lost'`.
+
+**Calor**: rooms>0 +2 · rates>0 +2 · channels>0 +3 · reservations>0 +3 · actividad ≤3 d +2 →
+`hot ≥6`, `warm 3–5`, `cold <3`. **Orden**: `nextStepAt` vencido primero → calor desc → `daysLeft` asc.
+
+Reglas que están en el código y conviene no romper:
+
+- **Las señales se piden POR HOTEL y acotadas** (`count({hotelId})`, `findMany({hotelId},{limit:1})`),
+  nunca `reservations`/`audit_log` enteros en memoria: son las dos tablas más grandes de la base.
+- **Extender trial solo aplica a `trialing`/`expired` sin Stripe vivo** — sobre `active`/`suspended`/
+  `canceled` da 409. Pisar a `trialing` una suscripción paga la bloquea al vencer y reabre el doble
+  Checkout.
+- **El cron manda como máximo UN correo por hotel por corrida**, primera regla que aplique; `contactedAt`
+  en los últimos 2 días = silencio (hay un humano encima). Dedup en `sales_prospects.sequenceSent`
+  `{evento: fechaISO}` y **solo se marca si `sendEvent` devolvió `sent:true`**: el primer tick corre 20 s
+  después del restart y si el seed de plantillas todavía no corrió, sin este guard el hotel se queda sin
+  ese correo para siempre (pasó en prod el 2026-09-10).
+- **Un rescate (`trial_rescue_*`) cuenta como enviado solo si salió después del vencimiento vigente**:
+  extender el trial mueve `trialEndsAt` y la secuencia arranca de cero sin que `extend-trial` conozca
+  esta tabla.
+- **Perdido automático** (+14 d vencido) solo si no hay NI actividad NI contacto desde el vencimiento;
+  con cualquiera de los dos sigue en `expired` y lo decide una persona.
+- Un lead de contacto que se registra con el mismo email pasa a ser la fila del hotel; **su prospecto
+  (notas, próximo paso) no se traslada** — deuda conocida (INT-2 del scorecard PIPE-A), sin issue.
 
 ## Multi-tenancy
 - Single DB con columna `hotelId` en cada tabla

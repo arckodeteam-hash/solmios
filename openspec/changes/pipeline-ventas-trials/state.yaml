@@ -2,69 +2,71 @@
 
 change_name: pipeline-ventas-trials
 created: 2026-09-10
-status: proposed
-current_phase: tasks
+implemented: 2026-09-10
+deployed: 2026-09-10
+status: implemented
+current_phase: verify
 
 source: análisis /admin/leads-ventas (docs/analisis-leads-ventas-2026-09-10.md). Decisión 2026-09-10 — Fase A ahora, Fase B después, CRM externo descartado, sin tarjeta en trial.
 
 sprints:
   A1-pipeline-modelo:
     title: sales_prospects + buildPipeline + GET/PUT
-    status: pending
+    status: completed
     tasks_total: 4
-    tasks_done: 0
+    tasks_done: 4
     priority: critical
   A2-aviso-alta:
     title: Aviso inmediato a ventas al registrarse un hotel
-    status: pending
+    status: completed
     tasks_total: 2
-    tasks_done: 0
+    tasks_done: 2
     priority: critical
   A3-extender-trial:
     title: Extender trial desde admin + plantilla trial_extended
-    status: pending
+    status: completed
     tasks_total: 2
-    tasks_done: 0
+    tasks_done: 2
     priority: high
   A4-vista:
     title: Reescribir /admin/leads-ventas como pipeline
-    status: pending
+    status: completed
     tasks_total: 3
-    tasks_done: 0
+    tasks_done: 3
     priority: high
   A5-whatsapp-landing:
     title: Botón WhatsApp en la landing desde supportPhone
-    status: pending
+    status: completed
     tasks_total: 2
-    tasks_done: 0
+    tasks_done: 2
     priority: medium
   A6-cierre:
     title: Gates + deploy + trabajar los 15 vencidos
-    status: pending
+    status: completed
     tasks_total: 3
-    tasks_done: 0
+    tasks_done: 3
     priority: high
   B7-secuencia:
     title: Secuencia de activación por comportamiento
-    status: pending
+    status: completed
     tasks_total: 3
-    tasks_done: 0
+    tasks_done: 3
     priority: medium
   B8-rescate:
     title: Rescate de trial vencido + perdido automático
-    status: pending
+    status: completed
     tasks_total: 2
-    tasks_done: 0
+    tasks_done: 2
     priority: medium
   B9-embudo:
     title: Embudo semanal en dashboard admin
-    status: pending
+    status: completed
     tasks_total: 2
-    tasks_done: 0
+    tasks_done: 2
     priority: low
   B10-cierre:
     title: Gates + deploy + medición a 4 semanas
-    status: pending
+    status: in_progress
     tasks_total: 2
-    tasks_done: 0
+    tasks_done: 1
     priority: low
