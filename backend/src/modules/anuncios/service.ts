@@ -4,6 +4,7 @@ import type { AnunciosDTO, CreateAnunciosDTO, UpdateAnunciosDTO, AnunciosQuery, 
 import type { AnunciosSockets } from './sockets'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 import * as reads from './usecases/announcement-reads'
+import { anunciosListCacheKey, invalidateAnunciosCaches } from './usecases/cache'
 
 // Las lecturas por usuario (ANN-4) viven en `usecases/announcement-reads.ts` desde que el service
 // pasó las 200 líneas del gate. Los tipos se re-exportan para no romper a quien los importa de acá.
@@ -57,10 +58,10 @@ export class AnunciosService {
     const limit = Math.min(Math.max(query.limit || 20, 1), 100)
     const offset = (page - 1) * limit
 
-    // BUG FIX: la key omitía page/limit/filtros → la primera query puebla la clave y todas las demás
-    // combinaciones recibían esa misma respuesta por CACHE_TTL (mismo bug que opiniones).
-    const filterKey = JSON.stringify(filters)
-    const cacheKey = `anuncios:list:${hotelId || 'all'}:p${page}:l${limit}:${filterKey}`
+    // La clave lleva filtros, paginación y el token de VERSIÓN del caché (#160): sin la versión
+    // no había forma de invalidar (CacheAdapter sólo borra claves exactas) y el listado seguía
+    // viejo hasta 5 minutos después de publicar o borrar un aviso. Ver `usecases/cache.ts`.
+    const cacheKey = await anunciosListCacheKey(this.cache, hotelId, { filters, page, limit })
     const cached = await this.cache.get(cacheKey)
     let response: AnunciosPaginated
     if (cached) {
@@ -96,7 +97,7 @@ export class AnunciosService {
       date: dto.date ?? new Date().toISOString(),
     } as any)
     await this.sockets.onAnunciosCreated?.(item)
-    await this.cache.delete(`anuncios:list:${dto.hotelId}`)
+    await invalidateAnunciosCaches(this.cache, item.hotelId ?? dto.hotelId)
     return item
   }
 
@@ -106,10 +107,16 @@ export class AnunciosService {
     if (currentUser.role !== 'super_admin' && existing.hotelId !== currentUser.hotelId) {
       throw new AuthError('No autorizado')
     }
+    // El hotel ANTERIOR se guarda antes de escribir: después del update, `existing` puede ser la
+    // misma instancia que acaba de mutar y el hotel viejo ya no estaría por ningún lado — su
+    // listado quedaría cacheado con un aviso que se mudó.
+    const previousHotelId = existing.hotelId
     const item = await this.repo.update(id, dto as any)
     if (!item) throw new NotFoundError('Anuncio no encontrado')
     await this.sockets.onAnunciosUpdated?.(item)
-    await this.cache.delete(`anuncios:list:${existing.hotelId}`)
+    await invalidateAnunciosCaches(this.cache, previousHotelId)
+    // Si el aviso cambió de hotel, la lista del destino también dejó de ser cierta.
+    if (item.hotelId && item.hotelId !== previousHotelId) await invalidateAnunciosCaches(this.cache, item.hotelId)
     return item
   }
 
@@ -122,7 +129,7 @@ export class AnunciosService {
     const deleted = await this.repo.delete(id)
     if (!deleted) throw new NotFoundError('Anuncio no encontrado')
     await this.sockets.onAnunciosDeleted?.(id)
-    await this.cache.delete(`anuncios:list:${existing.hotelId}`)
+    await invalidateAnunciosCaches(this.cache, existing.hotelId)
     await auditSafely(this.auditPort, this.logger, {
       hotelId: existing.hotelId, userId: currentUser.id, action: 'announcement.delete',
       entity: 'announcement', entityId: id, detail: `Anuncio "${existing.title}" eliminado`,
