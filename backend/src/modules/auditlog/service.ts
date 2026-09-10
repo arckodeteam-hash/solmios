@@ -17,6 +17,7 @@ export class AuditlogService {
   constructor(
     private readonly repo: RepositoryAdapter<AuditlogDTO>,
     private readonly userRepo: RepositoryAdapter<any>,
+    private readonly hotelRepo: RepositoryAdapter<any>,
     private readonly logger: Logger,
     private readonly cache: CacheAdapter,
     private readonly auth: Auth,
@@ -63,6 +64,16 @@ export class AuditlogService {
     // cambia entre queries) — página 1 = lo más reciente, como todo listado del panel.
     const orderBy = [{ field: 'createdAt', dir: 'DESC' as const }]
 
+    // `hotelName`: antes se devolvía la fila cruda, sin el nombre del hotel, y la columna y el
+    // filtro "Hotel" de /admin/audit salían vacíos aunque el registro tuviera `hotelId`. Se
+    // resuelve con un `Map` de hoteles cargado UNA vez (mismo patrón que `listUsers` de admin);
+    // una consulta por fila adentro del loop sería N+1. Sin `hotelId` (o con uno huérfano —
+    // hotel borrado) queda ''.
+    const hotels = await this.hotelRepo.findMany({})
+    const hotelNameById = new Map(hotels.map((h: any) => [h.id, h.name]))
+    const withHotelName = (r: AuditlogDTO): AuditlogDTO =>
+      ({ ...r, hotelName: (r.hotelId && hotelNameById.get(r.hotelId)) || '' })
+
     // Rango de fechas: buildWhere solo hace igualdad (RepositoryAdapter no soporta >=/<=, mismo
     // límite que DT-07 de facturas) → traer las filas del hotel, filtrar en memoria y paginar acá.
     // Es O(n) sobre el log del hotel, correcto y aceptable para el volumen actual (2k filas dev).
@@ -74,11 +85,11 @@ export class AuditlogService {
         const ts = String(r.createdAt || '')
         return (!from || ts >= from) && (!to || ts <= to)
       })
-      return { data: rows.slice(offset, offset + limit), total: rows.length }
+      return { data: rows.slice(offset, offset + limit).map(withHotelName), total: rows.length }
     }
 
     const result = await this.repo.paginate(filters, { limit, offset, orderBy })
-    return { data: result.data, total: result.total }
+    return { data: result.data.map(withHotelName), total: result.total }
   }
 
   async getById(id: string, user: AuditlogUser): Promise<AuditlogDTO> {

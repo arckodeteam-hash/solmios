@@ -39,8 +39,11 @@ export function AuditlogModule() {
 
       const repo = new OrmRepository<AuditlogDTO>(orm, 'Auditlog')
       const userRepo = new OrmRepository<any>(orm, 'Users')
+      // Para resolver `hotelName` en list(): la fila del log solo trae `hotelId` y la columna
+      // "Hotel" de /admin/audit salía vacía. Se carga UNA vez por listado (sin N+1).
+      const hotelRepo = new OrmRepository<any>(orm, 'Hotels')
       const log = logger.child('auditlog')
-      const service = new AuditlogService(repo, userRepo, log, cache, auth!)
+      const service = new AuditlogService(repo, userRepo, hotelRepo, log, cache, auth!)
       const controller = new AuditlogController(service, log)
 
       const roleRepo = new OrmRepository<any>(orm, 'Roles')
