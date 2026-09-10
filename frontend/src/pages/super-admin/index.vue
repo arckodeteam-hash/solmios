@@ -14,8 +14,8 @@
     </div>
 
     <!-- Error de carga: sin esto la pantalla mostraba ceros como si fueran datos reales. -->
-    <div v-if="loadError" class="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-red/30 bg-red/5 px-5 py-4">
-      <Icon name="alert" :size="18" class="text-red" />
+    <div v-if="loadError" class="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-danger/30 bg-danger/5 px-5 py-4">
+      <Icon name="alert" :size="18" class="text-danger" />
       <div class="min-w-0 flex-1">
         <div class="text-sm font-black text-navy">No se pudieron cargar las métricas de la plataforma</div>
         <div class="text-xs text-text-muted">{{ loadError }}</div>
@@ -56,8 +56,8 @@
         label="En riesgo" :value="riesgo.total" icon="money" accent="rose"
         :unit="`$${fmt(ingresos.mrrEnRiesgo)}/mes sin cobrar`"
         :sub-stats="[
-          { label: 'Prueba vencida', value: riesgo.vencidos, tone: riesgo.vencidos ? 'text-red' : 'text-navy' },
-          { label: 'Cobro fallido', value: riesgo.cobrosFallidos, tone: riesgo.cobrosFallidos ? 'text-red' : 'text-navy' },
+          { label: 'Prueba vencida', value: riesgo.vencidos, tone: riesgo.vencidos ? 'text-danger' : 'text-navy' },
+          { label: 'Cobro fallido', value: riesgo.cobrosFallidos, tone: riesgo.cobrosFallidos ? 'text-danger' : 'text-navy' },
         ]"
       />
     </div>
@@ -200,7 +200,7 @@
               <div class="truncate text-sm font-bold text-navy">{{ h.name }}</div>
               <div class="text-[10px] text-text-muted">{{ h.planName }}</div>
             </div>
-            <span class="shrink-0 text-[11px] font-bold" :class="h.diasSinActividad === null ? 'text-red' : 'text-gold'">
+            <span class="shrink-0 text-[11px] font-bold" :class="h.diasSinActividad === null ? 'text-danger' : 'text-gold'">
               {{ h.diasSinActividad === null ? 'Nunca usó' : `${h.diasSinActividad} d` }}
             </span>
           </div>
@@ -234,14 +234,14 @@
                "Operativo" incluso con el backend caído, porque estaba escrito en el HTML. -->
           <div class="flex items-center justify-between">
             <span class="text-sm text-text-secondary">Backend</span>
-            <span class="flex items-center gap-1.5 text-sm font-bold" :class="sistemaOk ? 'text-teal' : 'text-red'">
-              <span class="h-2 w-2 rounded-full" :class="sistemaOk ? 'bg-teal' : 'bg-red'"></span>
+            <span class="flex items-center gap-1.5 text-sm font-bold" :class="sistemaOk ? 'text-teal' : 'text-danger'">
+              <span class="h-2 w-2 rounded-full" :class="sistemaOk ? 'bg-teal' : 'bg-danger'"></span>
               {{ sistemaOk ? 'Operativo' : 'Sin respuesta' }}
             </span>
           </div>
           <div class="flex items-center justify-between">
             <span class="text-sm text-text-secondary">Base de datos</span>
-            <span class="text-sm font-bold" :class="sistemaOk ? 'text-teal' : 'text-red'">{{ sistemaOk ? 'Conectada' : 'Sin verificar' }}</span>
+            <span class="text-sm font-bold" :class="sistemaOk ? 'text-teal' : 'text-danger'">{{ sistemaOk ? 'Conectada' : 'Sin verificar' }}</span>
           </div>
           <div class="flex items-center justify-between">
             <span class="text-sm text-text-secondary">Uptime</span>
@@ -360,8 +360,8 @@ const PIPELINE_VISIBLE = 8
 const pipelineVisible = computed(() => pipeline.value.slice(0, PIPELINE_VISIBLE))
 
 const MOTIVO: Record<PipelineItem['motivo'], { texto: string; clase: string }> = {
-  cobro_fallido: { texto: 'Cobro fallido', clase: 'bg-red/10 text-red' },
-  vencido: { texto: 'Prueba vencida', clase: 'bg-red/10 text-red' },
+  cobro_fallido: { texto: 'Cobro fallido', clase: 'bg-danger/10 text-danger' },
+  vencido: { texto: 'Prueba vencida', clase: 'bg-danger/10 text-danger' },
   por_vencer: { texto: 'Vence pronto', clase: 'bg-gold/15 text-gold' },
   sin_plan: { texto: 'Sin plan', clase: 'bg-text-muted/15 text-text-secondary' },
 }
@@ -388,7 +388,7 @@ function alturaBarra(altas: number): number {
 }
 
 const soporteFilas = computed(() => [
-  { label: 'Urgentes', valor: soporte.value.urgentes, punto: 'bg-red', tono: 'text-red' },
+  { label: 'Urgentes', valor: soporte.value.urgentes, punto: 'bg-danger', tono: 'text-danger' },
   { label: 'Abiertos', valor: soporte.value.abiertos, punto: 'bg-gold', tono: 'text-gold' },
   { label: 'En progreso', valor: soporte.value.enProgreso, punto: 'bg-cyan', tono: 'text-cyan' },
   { label: 'Resueltos', valor: soporte.value.resueltos, punto: 'bg-teal', tono: 'text-teal' },
@@ -414,7 +414,7 @@ const horaActualizacion = computed(() =>
 const ACCION_META: { patron: RegExp; icono: string; tinte: string }[] = [
   { patron: /login|auth|sesi/i, icono: 'login', tinte: 'bg-cyan/10 text-cyan' },
   { patron: /creat|crea|add|alta|nuev/i, icono: 'plus', tinte: 'bg-teal/10 text-teal' },
-  { patron: /delet|elimin|remov|baja/i, icono: 'trash', tinte: 'bg-red/10 text-red' },
+  { patron: /delet|elimin|remov|baja/i, icono: 'trash', tinte: 'bg-danger/10 text-danger' },
   { patron: /updat|edit|modif|cambio/i, icono: 'edit', tinte: 'bg-gold/10 text-gold' },
   { patron: /pago|payment|cobro|factur|invoice/i, icono: 'money', tinte: 'bg-teal/10 text-teal' },
 ]
