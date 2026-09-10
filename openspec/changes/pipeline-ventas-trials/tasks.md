@@ -69,8 +69,7 @@
       **Aceptación**: `bun run typecheck`; QA en navegador con la SQLite local (seed de 3 hoteles en
       etapas distintas); "Perdido" sin motivo no dispara petición (Network); `nextStepAt` ayer →
       aparece en "Vencen hoy".
-      - [ ] 4.2.1 Screenshot de la vista adjunto al issue — NO adjuntado: `gh` no sube imágenes; las
-            capturas viven en el estado LoopKit (`state/evidence/screenshots/147-*.png`). Manual.
+      - [x] 4.2.1 Screenshots en `docs/evidencia/pipeline-ventas/147-*.png`, enlazados desde #147.
 - [x] 4.3 Menú: "Leads de Ventas" pasa a llamarse "Pipeline de ventas" (`SuperAdminLayout.vue`, ruta
       igual).
 
@@ -82,8 +81,7 @@
       **Aceptación**: test: `809-555-0000` → `https://wa.me/18095550000?text=...`; vacío → `null`.
 - [x] 5.2 Botón flotante en `pages/landing/index.vue` solo si hay URL.
       **Aceptación**: sin número el DOM no tiene el botón.
-      - [ ] 5.2.1 Screenshot con y sin número adjunto al issue — NO adjuntado: ídem 4.2.1
-            (`148-{con,sin}-numero*.png`). Manual.
+      - [x] 5.2.1 Screenshots con y sin número en `docs/evidencia/pipeline-ventas/148-*.png`, enlazados desde #148.
 
 ### 6. Cierre de A
 
@@ -127,7 +125,7 @@
 ### 10. Cierre de B
 
 - [x] 10.1 Gates (mismos que 6.1) + deploy.
-- [ ] 10.2 Tras 4 semanas en prod: comparar `paying/registered` contra el 5–10% de partida
+- [ ] 10.2 (→ issue #181, ≈ 2026-10-08) Tras 4 semanas en prod: comparar `paying/registered` contra el 5–10% de partida
       (dato 2026-09-10: 1–2 de 19). Registrar en `docs/analisis-leads-ventas-2026-09-10.md`.
       Línea base del embudo (8 semanas, `GET /funnel?weeks=8`, 2026-09-10): registrados 15 ·
       activados 9 (60%) · pagando 2 (13.3%) · perdidos 2 (`no_response`). Revisar ≈ 2026-10-08.
