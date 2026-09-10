@@ -482,6 +482,49 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     })
   })
 
+  // ─── Tarea 21 (Identificar bebés, 2026-09-08) — criterio 158: "mostrar claramente cuando el
+  // menor se considera bebé". El badge sale de `classifyAge` (edad ≤ maxBabyAge → 'baby'), por
+  // niño y en vivo, y es SOLO informativo: la ocupación chargeable no cambia por mostrarlo.
+  describe('Tarea 21 — badge de bebé ("Bebé — no consume plaza")', () => {
+    const BABY_POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+
+    it('edad ≤ maxBabyAge muestra el badge; subir la edad a "libre pero no bebé" lo saca', async () => {
+      const w = render(true, 'es', BABY_POLICY) // maxBabyAge: 1, maxFreeAge: 3
+      await bumpChildren(w, 1) // 1 niño, edad default 0 → bebé
+
+      expect(w.find('[data-testid="baby-badge"]').exists()).toBe(true)
+      expect(w.get('[data-testid="baby-badge"]').text()).toContain('Bebé — no consume plaza')
+
+      await w.get('select').setValue('2') // 2 > maxBabyAge=1 pero ≤ maxFreeAge=3: libre, NO bebé
+      expect(w.find('[data-testid="baby-badge"]').exists()).toBe(false)
+      w.unmount()
+    })
+
+    it('con dos niños (1 y 8) hay UN solo badge y la ocupación no lo cuenta (1 adulto + niño de 8 → "para 2")', async () => {
+      const w = render(true, 'es', BABY_POLICY)
+      await bumpChildren(w, 2)
+      const selects = w.findAll('select')
+      await selects[0]!.setValue('1') // ≤ maxBabyAge=1 → bebé
+      await selects[1]!.setValue('8') // > maxFreeAge=3 → con plaza
+
+      expect(w.findAll('[data-testid="baby-badge"]')).toHaveLength(1)
+      expect(w.get('[data-occupancy]').attributes('data-occupancy')).toBe('2')
+      expect(w.text()).toContain('300')
+      w.unmount()
+    })
+
+    it('maxBabyAge=0 (default de la política): edad 0 es bebé, edad 1 ya no', async () => {
+      const w = render(true, 'es', { ...BABY_POLICY, maxBabyAge: 0 })
+      await bumpChildren(w, 1) // edad default 0
+
+      expect(w.find('[data-testid="baby-badge"]').exists()).toBe(true)
+
+      await w.get('select').setValue('1')
+      expect(w.find('[data-testid="baby-badge"]').exists()).toBe(false)
+      w.unmount()
+    })
+  })
+
   it('sin regímenes configurados: "Sólo alojamiento" activo y los 3 códigos deshabilitados', () => {
     const w = render()
     const text = w.text()

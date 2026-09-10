@@ -369,6 +369,50 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
     expect(addRoomButton().disabled).toBe(true)
   })
 
+  // ── Tarea 21 (Identificar bebés, 2026-09-08) — criterio 158: "mostrar claramente cuando el
+  // menor se considera bebé". Mismo badge que RoomsStep.vue: las dos entradas públicas no deben
+  // divergir. Sale de `classifyAge` (edad ≤ maxBabyAge → 'baby'), por niño y en vivo.
+  it('edad ≤ maxBabyAge → badge "Bebé — no consume plaza"; edad > maxBabyAge → sin badge', async () => {
+    await open(FROM_HERO, { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false })
+    await bumpChildren(1) // 1 niño, edad default 0 → bebé (≤1)
+
+    const badge = document.body.querySelector<HTMLElement>('[data-testid="baby-badge"]')
+    expect(badge).not.toBeNull()
+    expect(badge!.textContent).toContain('Bebé — no consume plaza')
+
+    // 2 > maxBabyAge=1 pero ≤ maxFreeAge=3: sigue libre, pero ya NO es bebé → el badge se va.
+    document.body.querySelector<HTMLSelectElement>('select')!.value = '2'
+    document.body.querySelector<HTMLSelectElement>('select')!.dispatchEvent(new Event('change'))
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="baby-badge"]')).toBeNull()
+  })
+
+  it('bebé + niño con plaza: UN solo badge y la ocupación no cuenta al bebé (1 adulto + niño de 8 → "para 2")', async () => {
+    await open(FROM_HERO, { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false })
+    await bumpChildren(2)
+    const selects = document.body.querySelectorAll<HTMLSelectElement>('select')
+    selects[0]!.value = '1' // ≤ maxBabyAge=1 → bebé
+    selects[0]!.dispatchEvent(new Event('change'))
+    selects[1]!.value = '8' // > maxFreeAge=3 → con plaza
+    selects[1]!.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    expect(document.body.querySelectorAll('[data-testid="baby-badge"]')).toHaveLength(1)
+    expect(occupancyEl()!.dataset.occupancy).toBe('2')
+    expect(occupancyEl()!.textContent).toContain('300')
+  })
+
+  it('maxBabyAge=0 (default de la política): edad 0 es bebé, edad 1 ya no', async () => {
+    await open(FROM_HERO, { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false })
+    await bumpChildren(1) // edad default 0
+    expect(document.body.querySelector('[data-testid="baby-badge"]')).not.toBeNull()
+
+    document.body.querySelector<HTMLSelectElement>('select')!.value = '1'
+    document.body.querySelector<HTMLSelectElement>('select')!.dispatchEvent(new Event('change'))
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="baby-badge"]')).toBeNull()
+  })
+
   // ── Requerimiento 9 (Cantidad de habitaciones, 2026-09-03) — misma paridad que RoomsStep ──
   describe('huéspedes ≠ habitaciones', () => {
     it('subir adultos y niños NO agrega nada al carrito por sí solo', async () => {
