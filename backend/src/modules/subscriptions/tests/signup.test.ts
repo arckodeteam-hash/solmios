@@ -3,7 +3,7 @@
 // entrar (sin usuario) ni configurar permisos (sin roles).
 import { describe, it, expect } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
-import { SignupUseCase, TRIAL_DAYS } from '../usecases/signup'
+import { SignupUseCase, TRIAL_DAYS, type SignupDeps } from '../usecases/signup'
 import type { Logger, RepositoryAdapter } from 'arckode-framework'
 
 /** Logger que además guarda los `warn`: los envíos del alta son best-effort y lo único
@@ -17,7 +17,7 @@ function recordingLogger(): { logger: Logger; warns: Array<{ msg: string; meta: 
 
 const NOW = new Date('2026-07-19T12:00:00Z')
 
-function setup(existingUsers: any[] = []) {
+function setup(existingUsers: any[] = [], extra?: Partial<SignupDeps>) {
   const hotels: any[] = []
   const users: any[] = [...existingUsers]
   const roles: any[] = []
@@ -36,6 +36,7 @@ function setup(existingUsers: any[] = []) {
     plansRepo: repo([]), // sin planes cargados: signup sin planId no resuelve nada (OK)
     hashPassword: async (p: string) => `hashed:${p}`,
     logger: silentLogger(),
+    ...extra,
   })
   return { uc, hotels, users, roles, subs }
 }
@@ -261,5 +262,55 @@ describe('SignupUseCase — un envío caído se loguea, no se silencia', () => {
 
     await uc.signup(VALID, NOW)
     expect(warns).toHaveLength(0)
+  })
+})
+
+// #103 (CFG-6) — la duración de la prueba es config de plataforma (`configuration.trial_days`),
+// no un literal: el vencimiento, el ÚNICO correo del alta y el resultado tienen que decir el
+// MISMO número que resolvió el lector inyectado.
+describe('SignupUseCase — trial_days configurable (#103)', () => {
+  const enqueueFake = () => {
+    const sent: Array<{ to: string; subject: string; html: string; hotelId: string; relatedType?: string }> = []
+    return { sent, emailSender: { enqueue: async (i: any) => { sent.push(i); return `queued-${sent.length}` } } }
+  }
+
+  it('con getTrialDays=30: vence a now+30d, devuelve trialDays=30 y el correo anuncia 30 días', async () => {
+    const { sent, emailSender } = enqueueFake()
+    const { uc, subs } = setup([], {
+      getTrialDays: async () => 30,
+      appUrl: 'https://hotel.example.com',
+      emailSender,
+    })
+    const res = await uc.signup(VALID, NOW)
+
+    const esperado = new Date(NOW.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString()
+    expect(res.trialDays).toBe(30)
+    expect(res.trialEndsAt).toBe(esperado)
+    expect(subs[0]!.trialEndsAt).toBe(esperado)   // la fila vence lo mismo que anuncia el resultado
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.html).toContain('30 días')    // el correo promete la duración RESUELTA, no el literal
+  })
+
+  it('sin lector cableado: sigue siendo la prueba histórica de TRIAL_DAYS días', async () => {
+    const { sent, emailSender } = enqueueFake()
+    const { uc } = setup([], { appUrl: 'https://hotel.example.com', emailSender })
+    const res = await uc.signup(VALID, NOW)
+
+    expect(res.trialDays).toBe(TRIAL_DAYS)
+    expect(new Date(res.trialEndsAt).getTime()).toBe(NOW.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000)
+    expect(sent[0]!.html).toContain(`${TRIAL_DAYS} días`)
+  })
+
+  it('lector que arroja: el alta sigue con TRIAL_DAYS y el fallo queda logueado', async () => {
+    const { logger, warns } = recordingLogger()
+    const { uc, hotels } = setup([], {
+      getTrialDays: async () => { throw new Error('configuration caída') },
+      logger,
+    })
+    const res = await uc.signup(VALID, NOW)
+
+    expect(hotels).toHaveLength(1)                 // la config caída no puede tumbar el alta
+    expect(res.trialDays).toBe(TRIAL_DAYS)
+    expect(warns.some(w => w.msg.includes('trial_days'))).toBe(true)
   })
 })

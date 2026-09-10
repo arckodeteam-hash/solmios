@@ -265,3 +265,35 @@ describe('SubscriptionsService — política de tarjeta en la prueba (#28)', () 
     expect(svc.resumeCheckout('a@b.com', 'ok', 'https://app.test')).rejects.toThrow(/pago pendiente/i)
   })
 })
+
+// #103 (CFG-6) — la duración de la prueba también es config de plataforma: publicSignupPolicy la
+// lee del puerto `setTrialDaysDeps` (lo cablea el wiring del módulo sobre `configuration`), con
+// TRIAL_DAYS de fallback conservador. La promesa pública y el alta usan el mismo lector.
+describe('SubscriptionsService — trial_days configurable (#103)', () => {
+  it('con lector inyectado, la política pública refleja la config', async () => {
+    const svc = setup()
+    svc.setTrialDaysDeps(async () => 30)
+    expect(await svc.publicSignupPolicy()).toEqual({ requireCardOnTrial: false, trialDays: 30 })
+  })
+
+  it('si el lector explota, cae a TRIAL_DAYS sin tirar (la landing sigue mostrando algo)', async () => {
+    const svc = setup()
+    svc.setTrialDaysDeps(async () => { throw new Error('configuration caída') })
+    expect(await svc.publicSignupPolicy()).toEqual({ requireCardOnTrial: false, trialDays: TRIAL_DAYS })
+  })
+
+  it('sin lector cableado rige TRIAL_DAYS (mismo comportamiento de siempre)', async () => {
+    const svc = setup()
+    expect(await svc.publicSignupPolicy()).toEqual({ requireCardOnTrial: false, trialDays: TRIAL_DAYS })
+  })
+
+  // El lector no es sólo para la landing: el ALTA que pasa por el service usa el mismo puerto,
+  // así el vencimiento real de la suscripción coincide con lo que la política prometió.
+  it('el alta que pasa por el service también arranca con la duración configurada', async () => {
+    const svc = setup()
+    svc.setTrialDaysDeps(async () => 30)
+    const res = await svc.signup({ hotelName: 'Hotel Config', email: 'config@ejemplo.com', password: 'Clave12345' })
+    expect(res.trialDays).toBe(30)
+    expect(new Date(res.trialEndsAt).getTime()).toBeGreaterThan(Date.now() + 29 * 86_400_000)
+  })
+})

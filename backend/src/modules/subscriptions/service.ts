@@ -29,6 +29,9 @@ export class SubscriptionsService {
   private sendPlatformEmail?: (event: string, to: string, hotelId: string, vars: Record<string, string>) => Promise<{ sent: boolean }>
   private sockets: SubscriptionSockets = {}
   private readPlatformSettings?: () => Promise<{ requireCardOnTrial: boolean } & FounderCountdownConfig>
+  /** #103: lectura de `configuration` (fila platform `trial_days`) — la inyecta el wiring del
+   *  módulo. Sin cablear rige TRIAL_DAYS. */
+  private readTrialDays?: () => Promise<number>
   private verifyOwner?: (email: string, password: string) => Promise<{ hotelId?: string } | null>
 
   constructor(
@@ -51,7 +54,13 @@ export class SubscriptionsService {
     private readonly configurationRepo?: RepositoryAdapter<any>, // KV `configuration` (onboarding.ts, ONBOARDING_CONFIRM_KEYS)
     private readonly platformInvoicesRepo?: RepositoryAdapter<any>, // `platform_invoices` — historial de cobros de la plataforma (REQ-BIL-02). Opcional: sin cablear el webhook sigue igual, solo no deja rastro del cobro.
   ) {
-    this.signupUc = new SignupUseCase({ hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger })
+    this.signupUc = new SignupUseCase({
+      hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger,
+      // #103: mismo molde que readPlatformSettings — el lector se resuelve en cada alta, no acá,
+      // porque el wiring inyecta el puerto DESPUÉS de registrar el módulo. Con el catch de
+      // safeTrialDays el usecase nunca ve un lector que arroja.
+      getTrialDays: () => this.safeTrialDays(),
+    })
     // El lector se resuelve en cada llamada, no en el constructor: el connector inyecta el
     // puerto DESPUÉS de que el módulo se registró (mismo momento que setEmailDeps).
     this.accessUc = new SubscriptionAccess(subscriptionsRepo, hotelsRepo,
@@ -62,6 +71,12 @@ export class SubscriptionsService {
   /** Puerto #28 + contador: `subscription_settings` vive en `admin`, una sola lectura para las dos (misma fila). */
   setPlatformSettingsDeps(read: () => Promise<{ requireCardOnTrial: boolean } & FounderCountdownConfig>): void {
     this.readPlatformSettings = read
+  }
+
+  /** Puerto #103: duración del trial (`configuration.trial_days`). Alimenta al alta Y a la política
+   *  pública — las dos tienen que prometer los mismos días. Lo inyecta el wiring del módulo. */
+  setTrialDaysDeps(read: () => Promise<number>): void {
+    this.readTrialDays = read
   }
 
   /** Política de alta vigente. La usa el alta para decidir si manda al Checkout antes del trial. */
@@ -98,7 +113,22 @@ export class SubscriptionsService {
   /** #28 — de acá derivan su copy la landing y el registro, en vez de prometer "sin tarjeta" en duro. */
   async publicSignupPolicy(): Promise<{ requireCardOnTrial: boolean; trialDays: number }> {
     const { requireCardOnTrial } = await this.signupPolicy()
-    return { requireCardOnTrial, trialDays: TRIAL_DAYS }
+    return { requireCardOnTrial, trialDays: await this.safeTrialDays() }
+  }
+
+  /**
+   * Días de prueba vigentes (#103): la config de plataforma si hay lector, TRIAL_DAYS si no.
+   * Conservador a propósito — si el lector arroja (config caída) la landing sigue diciendo los
+   * 15 históricos antes que `/api/public/signup-policy` devuelva 500.
+   */
+  private async safeTrialDays(): Promise<number> {
+    if (!this.readTrialDays) return TRIAL_DAYS
+    try {
+      return await this.readTrialDays()
+    } catch (e) {
+      this.logger.warn('subscriptions: no se pudo leer trial_days — la política pública usa el default', { error: (e as Error).message })
+      return TRIAL_DAYS
+    }
   }
 
   /** #28 — retomar el pago del alta sin poder loguearse. Ver `usecases/signup-policy.ts`. */

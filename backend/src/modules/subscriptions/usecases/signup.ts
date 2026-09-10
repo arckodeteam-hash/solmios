@@ -73,6 +73,11 @@ export interface SignupDeps {
   /** Obligatorio: los envíos del alta son best-effort, y sin log un SMTP caído no deja rastro
    *  (el alta devuelve 201 y nadie se entera de que el correo nunca salió — issue #27). */
   logger: Logger
+  /** #103 (CFG-6): duración de la prueba leída de `configuration` (fila platform `trial_days`).
+   *  Opcional: sin lector cableado rige TRIAL_DAYS, el histórico de la landing. Si el lector
+   *  falla, el alta cae al mismo fallback y deja el warn — una lectura de config no puede tumbar
+   *  la puerta de entrada del negocio. */
+  getTrialDays?: () => Promise<number>
 }
 
 export class SignupUseCase {
@@ -110,17 +115,36 @@ export class SignupUseCase {
     if (input.planId) await this.assertPlanAvailable(input.planId)
 
     const hotelId = crypto.randomUUID()
-    const trialEnds = new Date(now.getTime() + TRIAL_DAYS * MS_PER_DAY)
+    // #103: la duración se resuelve UNA vez por alta — vencimiento, correo y resultado tienen
+    // que decir el MISMO número, no tres lecturas que podrían discrepar si la config cambia en
+    // el medio del request.
+    const trialDays = await this.resolveTrialDays()
+    const trialEnds = new Date(now.getTime() + trialDays * MS_PER_DAY)
 
     // El alta son cuatro inserciones y cualquiera puede fallar. Si se cae a
     // mitad, lo creado se borra: un hotel sin suscripción entraría gratis para
     // siempre, y un email a medio registrar impide reintentar el alta ("ya
     // existe una cuenta") sin que exista una cuenta usable.
     try {
-      return await this.createAll(hotelId, email, hotelName, input, trialEnds)
+      return await this.createAll(hotelId, email, hotelName, input, trialDays, trialEnds)
     } catch (err) {
       await this.rollback(hotelId)
       throw err
+    }
+  }
+
+  /**
+   * Duración real de esta prueba (#103): la config de plataforma si hay lector, TRIAL_DAYS si no.
+   * Conservador a propósito: el lector puede fallar (config caída) y el alta NO se cae por eso —
+   * cae al fallback histórico y queda el warn, para no repetir el "201 silencioso" del issue #27.
+   */
+  private async resolveTrialDays(): Promise<number> {
+    if (!this.deps.getTrialDays) return TRIAL_DAYS
+    try {
+      return await this.deps.getTrialDays()
+    } catch (e) {
+      this.deps.logger.warn('Alta: no se pudo leer trial_days — la prueba arranca con el default', { error: (e as Error).message })
+      return TRIAL_DAYS
     }
   }
 
@@ -129,6 +153,7 @@ export class SignupUseCase {
     email: string,
     hotelName: string,
     input: SignupInput,
+    trialDays: number,
     trialEnds: Date,
   ): Promise<SignupResult> {
     // El slug se calcula ACÁ, al crear. Sin él el hotel nace sin página pública
@@ -193,8 +218,10 @@ export class SignupUseCase {
       try {
         const base = (this.deps.appUrl || '').replace(/\/$/, '')
         const link = `${base}/api/public/verify-email?token=${verification.token}`
-        // El alta SIEMPRE arranca en prueba (`status: 'trialing'`), así que el correo la anuncia.
-        const mail = welcomeVerificationEmail(link, hotelName, TRIAL_DAYS)
+        // El alta SIEMPRE arranca en prueba (`status: 'trialing'`), así que el correo la anuncia
+        // con la duración RESUELTA de esta alta, no con el literal: si la config dice 30, el
+        // correo no puede seguir prometiendo 15 (#103).
+        const mail = welcomeVerificationEmail(link, hotelName, trialDays)
         await this.deps.emailSender.enqueue({ to: email, subject: mail.subject, html: mail.html, hotelId, relatedType: 'email_verification' })
       } catch (e) {
         // SMTP caído no puede perder el hotel, pero tiene que quedar registrado.
@@ -212,7 +239,7 @@ export class SignupUseCase {
       hotelId,
       userId,
       trialEndsAt: trialEnds.toISOString(),
-      trialDays: TRIAL_DAYS,
+      trialDays,
       // Lo resuelve el service, que es quien tiene el puerto de la política de plataforma.
       requiresPaymentMethod: false,
     }
