@@ -68,8 +68,17 @@ export class AdminController {
     return { status: 200, body: await this.service.listSubscriptions() }
   }
 
-  async listAuditLogs() {
-    return { status: 200, body: await this.service.listAuditLogs() }
+  /** #142: los filtros y la paginación viajan por query y se aplican en la consulta. */
+  async listAuditLogs(req: HttpRequest) {
+    const q = (req.query ?? {}) as Record<string, string>
+    return {
+      status: 200,
+      body: await this.service.listAuditLogs({
+        hotelId: q.hotelId, userId: q.userId, action: q.action, entity: q.entity,
+        from: q.from, to: q.to,
+        page: Number(q.page) || undefined, limit: Number(q.limit) || undefined,
+      }),
+    }
   }
 
   async listAnnouncements() {

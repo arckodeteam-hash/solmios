@@ -144,7 +144,7 @@ export function AdminModule() {
       router.get('/api/admin/analytics', sa, () => controller.getAnalytics())
       router.get('/api/admin/platform-metrics', sa, () => controller.getPlatformMetrics())
       router.get('/api/admin/subscriptions', sa, () => controller.listSubscriptions())
-      router.get('/api/admin/audit', sa, () => controller.listAuditLogs())
+      router.get('/api/admin/audit', sa, (req: any) => controller.listAuditLogs(req))
       router.get('/api/admin/announcements', sa, () => controller.listAnnouncements())
       router.get('/api/admin/monitoring', sa, () => controller.getMonitoring())
       router.get('/api/admin/plans', sa, () => controller.listPlans())

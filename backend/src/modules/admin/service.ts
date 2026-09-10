@@ -1,7 +1,7 @@
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import type { AdminAnalyticsDTO, MonitoringDTO, PlanDTO, AmenityCatalogDTO, ModuleOverrideDTO } from './types'
 import { PLANS_PRICE_ORDER } from '../../shared/utils/plans-order'
-import type { DashboardQueries } from './usecases/dashboard-queries'
+import type { DashboardQueries, AuditLogQuery } from './usecases/dashboard-queries'
 import type { PlatformMetrics } from './usecases/platform-metrics'
 import { type AuditPort, type Actor } from './usecases/audit'
 import { extendTrialAudited, type TrialPort, type ExtendTrialOutcome } from './usecases/extend-trial'
@@ -95,7 +95,8 @@ export class AdminService {
 
   async getPlatformMetrics(): Promise<PlatformMetrics> { return this.queries!.getPlatformMetrics() }
   async listSubscriptions(): Promise<{ data: any[]; total: number; mrrTotal: number }> { return this.queries!.listSubscriptions() }
-  async listAuditLogs(): Promise<{ data: any[]; total: number }> { return this.queries!.listAuditLogs() }
+  /** #142: pagina, filtra y ordena en la CONSULTA — antes devolvía la tabla entera y ordenaba en memoria. */
+  async listAuditLogs(query: AuditLogQuery = {}): Promise<{ data: any[]; total: number }> { return this.queries!.listAuditLogs(query) }
   async listAnnouncements(): Promise<{ data: any[]; total: number }> { return this.queries!.listAnnouncements() }
   async getMonitoring(): Promise<MonitoringDTO> { return this.queries!.getMonitoring() }
   async getPublicUsers(): Promise<any[]> { return this.queries!.getPublicUsers() }

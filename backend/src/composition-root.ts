@@ -6,6 +6,7 @@ import {
 } from 'arckode-framework'
 import { cors, requestLogger, bodyLimit, timeout } from 'arckode-framework/middlewares'
 import { securityHeaders } from './shared/middlewares/security-headers'
+import { requestContext } from './shared/middlewares/request-context'
 import { corsWithErrorHeaders } from './shared/middlewares/cors-error-headers'
 import { jsonOnlyCompression } from './shared/middlewares/compression'
 import { getClientIp } from './shared/middlewares/rate-limit'
@@ -86,6 +87,9 @@ router.use(corsWithErrorHeaders({ origins: CORS_ORIGINS }))
 router.use(securityHeaders())
 router.use(bodyLimit(5 * 1024 * 1024))
 router.use(requestLogger(logger))
+// #141: la IP del cliente queda disponible para todo lo que corra dentro del request — el audit
+// log la escribía vacía en el 99% de las filas porque el service no tiene el `req` a mano.
+router.use(requestContext())
 // Monitoreo (#96): mide TODA petición (count, p95, status por ruta normalizada) y avisa de los
 // 5xx/429 al módulo `monitoring`, que los persiste en error_logs. Va ANTES del rate-limit y del
 // timeout para que sus 429/503 también cuenten. El sink se conecta post-start (el módulo todavía

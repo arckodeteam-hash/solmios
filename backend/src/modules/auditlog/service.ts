@@ -5,6 +5,7 @@ import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-fram
 import { NotFoundError } from 'arckode-framework'
 import type { AuditlogDTO, CreateAuditlogDTO, AuditlogQuery, AuditlogPaginated } from './types'
 import type { AuditlogSockets } from './sockets'
+import { currentRequestContext } from '../../shared/request-context'
 
 export interface AuditlogUser { id: string; hotelId?: string | null; role?: string }
 
@@ -102,9 +103,39 @@ export class AuditlogService {
     return item
   }
 
+  /**
+   * Escribe la entrada. Es el ÚNICO camino de escritura del log (no hay POST HTTP), así que acá
+   * se completa lo que el llamador no puede saber (#141):
+   *
+   * - `ip`: la del request en curso (`shared/request-context.ts`). El service que audita está
+   *   tres capas debajo del handler y no tiene `req`; pasarla a mano obligaría a tocar los ~30
+   *   connectors `*-auditlog` y a que nadie se olvide nunca. Medido en producción antes de esto:
+   *   5 de 414 filas tenían IP.
+   * - `userName`: el nombre de `users`, resuelto por `userId`. 243 de 414 filas salían sin
+   *   nombre y la pantalla las mostraba como "Sistema" — que es mentira cuando hubo una persona.
+   *
+   * Las dos son best-effort y el llamador manda: si la entrada ya trae el dato, no se toca. Un
+   * cron o un script corren fuera de un request y quedan sin IP ni usuario — ahí "Sistema" sí es
+   * la verdad. Un fallo resolviendo el nombre NO puede tumbar la escritura del log.
+   */
   async create(dto: CreateAuditlogDTO): Promise<AuditlogDTO> {
     this.logger.info('Creando auditlog')
-    const item = await this.repo.create(dto as Omit<AuditlogDTO, 'id'>)
+    const enriched: CreateAuditlogDTO = { ...dto }
+    if (!enriched.ip) {
+      const ip = currentRequestContext().ip
+      if (ip && ip !== 'unknown') enriched.ip = ip
+    }
+    if (!enriched.userName && enriched.userId) {
+      try {
+        // @ignore IDOR_RISK — se resuelve el nombre del usuario que EJECUTÓ la acción, que ya
+        // viene del token del request; no es un id elegido por el cliente.
+        const user = await this.userRepo.findById(enriched.userId)
+        if (user?.name) enriched.userName = String(user.name)
+      } catch (e) {
+        this.logger.warn('No se pudo resolver el nombre para el audit log', { userId: enriched.userId, error: String(e) })
+      }
+    }
+    const item = await this.repo.create(enriched as Omit<AuditlogDTO, 'id'>)
     await this.sockets.onAuditlogCreated?.(item)
     return item
   }
