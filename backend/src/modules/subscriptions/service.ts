@@ -51,7 +51,7 @@ export class SubscriptionsService {
     private readonly platformInvoicesRepo?: RepositoryAdapter<any>, // `platform_invoices` — historial de cobros de la plataforma (REQ-BIL-02). Opcional: sin cablear el webhook sigue igual, solo no deja rastro del cobro.
   ) {
     this.signupUc = new SignupUseCase({
-      hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger,
+      hotelsRepo, usersRepo, rolesRepo, subscriptionsRepo, plansRepo, hashPassword, logger, configRepo: configurationRepo,
     })
     // El lector se resuelve en cada llamada, no en el constructor: el connector inyecta el
     // puerto DESPUÉS de que el módulo se registró (mismo momento que setEmailDeps).
