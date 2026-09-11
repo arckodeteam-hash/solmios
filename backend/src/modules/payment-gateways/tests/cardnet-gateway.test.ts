@@ -47,7 +47,7 @@ const chargeReq = {
 }
 
 const knownRow: CardnetSessionRow = {
-  id: SESSION, hotelId: 'h1', provider: 'cardnet', reference: 'FOLIO-42', secret: SK,
+  id: SESSION, hotelId: 'h1', provider: 'cardnet', reference: 'FOLIO-42', sessionKey: SK,
   amountMinor: 250000, currency: 'dop', mode: 'test',
 }
 
@@ -117,7 +117,7 @@ describe('CardnetGateway — createCharge (POST /sessions + fila persistida)', (
     expect(body.MerchantName).toBeUndefined() // opcionales sólo si están
 
     expect(store.rows.get(SESSION)).toEqual({
-      id: SESSION, hotelId: 'h1', provider: 'cardnet', reference: chargeReq.reference, secret: SK,
+      id: SESSION, hotelId: 'h1', provider: 'cardnet', reference: chargeReq.reference, sessionKey: SK,
       amountMinor: 250000, currency: 'dop', mode: 'test',
     })
   })
