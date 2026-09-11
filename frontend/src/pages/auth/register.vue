@@ -30,7 +30,7 @@
 
         <p class="text-[11px] text-white/40">
           ¿Ya tienes cuenta?
-          <router-link to="/login" class="text-cyan font-bold hover:underline">Iniciá sesión</router-link>
+          <router-link to="/login" class="text-cyan font-bold hover:underline">Inicia sesión</router-link>
         </p>
       </div>
     </div>
@@ -97,10 +97,10 @@
                 class="w-full pl-10 pr-4 py-2.5 bg-white border rounded-xl text-sm focus:outline-none focus:border-navy"
                 :class="emailTouched && !emailValid ? 'border-danger' : 'border-border'"
                 @blur="emailTouched = true"
-                placeholder="vos@tuhotel.com">
+                placeholder="tu@tuhotel.com">
             </div>
             <p v-if="emailTouched && !emailValid" class="text-[11px] text-danger mt-1">
-              Escribí un email válido, con dominio completo (ej: ana@tuhotel.com).
+              Escribe un email válido, con dominio completo (ej: ana@tuhotel.com).
             </p>
             <p v-else class="text-[11px] text-text-muted mt-1">Con este email vas a iniciar sesión.</p>
           </div>
@@ -114,7 +114,7 @@
                 autocomplete="new-password" :maxlength="PASSWORD_MAX"
                 data-testid="register-password"
                 class="w-full pl-10 pr-11 py-2.5 bg-white border border-border rounded-xl text-sm focus:outline-none focus:border-navy"
-                placeholder="Elegí una contraseña segura">
+                placeholder="Elige una contraseña segura">
               <button type="button" @click="showPassword = !showPassword"
                 :aria-label="showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
                 :title="showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
@@ -234,7 +234,7 @@
 
         <p class="text-[11px] text-text-muted text-center mt-6 lg:hidden">
           ¿Ya tienes cuenta?
-          <router-link to="/login" class="text-cyan font-bold hover:underline">Iniciá sesión</router-link>
+          <router-link to="/login" class="text-cyan font-bold hover:underline">Inicia sesión</router-link>
         </p>
       </div>
     </div>
@@ -423,11 +423,11 @@ async function mountCaptcha() {
       'expired-callback': () => { captchaToken.value = '' },
       'error-callback': () => {
         captchaToken.value = ''
-        captchaError.value = 'No se pudo cargar la verificación. Revisá tu conexión.'
+        captchaError.value = 'No se pudo cargar la verificación. Revisa tu conexión.'
       },
     })
   } catch {
-    captchaError.value = 'No se pudo cargar la verificación anti-robots. Recargá la página.'
+    captchaError.value = 'No se pudo cargar la verificación anti-robots. Recarga la página.'
   }
 }
 
@@ -478,7 +478,7 @@ function goToStep2() {
   error.value = ''
   emailTouched.value = true
   if (!emailValid.value) {
-    error.value = 'Revisá el email: falta el dominio o tiene un error de tipeo.'
+    error.value = 'Revisa el email: falta el dominio o tiene un error de tipeo.'
     return
   }
   if (!passwordValid.value) {
@@ -503,7 +503,7 @@ async function submit() {
   // Sin token no se manda: el backend lo rechazaría igual, pero el token se
   // consume en el intento y habría que resolver el captcha de nuevo por nada.
   if (captchaSiteKey && !captchaToken.value) {
-    captchaError.value = 'Completá la verificación anti-robots para continuar.'
+    captchaError.value = 'Completa la verificación anti-robots para continuar.'
     return
   }
   saving.value = true
@@ -530,7 +530,7 @@ async function submit() {
       }
       // Stripe no respondió: la cuenta existe pero no hay a dónde mandarlo. Se lo dice en vez de
       // dejarlo girando, y desde el login puede retomar el pago.
-      error.value = 'Tu cuenta quedó creada, pero no pudimos abrir el pago. Iniciá sesión para completarlo.'
+      error.value = 'Tu cuenta quedó creada, pero no pudimos abrir el pago. Inicia sesión para completarlo.'
       return
     }
 
@@ -538,7 +538,7 @@ async function submit() {
     router.push('/panel/dashboard')
   } catch (e: any) {
     // El email repetido se decide en el paso 1: se vuelve ahí para corregirlo.
-    error.value = e?.message || 'No se pudo crear la cuenta. Intentá de nuevo.'
+    error.value = e?.message || 'No se pudo crear la cuenta. Intenta de nuevo.'
     // El token de Turnstile es de un solo uso: sin resetear, todo reintento
     // vuelve a fallar por captcha aunque se corrija lo que estaba mal.
     captchaToken.value = ''

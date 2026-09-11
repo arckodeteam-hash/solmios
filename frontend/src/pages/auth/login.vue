@@ -292,7 +292,7 @@ async function resumeCheckout() {
     const { url } = await SignupService.resumeCheckout(email.value.trim(), password.value)
     window.location.href = url
   } catch (e) {
-    resumeError.value = e instanceof Error ? e.message : 'No pudimos abrir el pago. Probá de nuevo.'
+    resumeError.value = e instanceof Error ? e.message : 'No pudimos abrir el pago. Prueba de nuevo.'
   } finally {
     resuming.value = false
   }
