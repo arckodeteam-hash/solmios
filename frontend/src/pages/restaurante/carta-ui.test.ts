@@ -67,3 +67,37 @@ describe('carta — F8: las estaciones se reordenan por arrastre, no por número
     expect(carta()).not.toMatch(/key:\s*'sortOrder'/)
   })
 })
+
+describe('carta — #203: una sección por vez, con PillTabs', () => {
+  it('usa el componente compartido con sincronía ?tab= y sin tablist a mano', () => {
+    const src = carta()
+    expect(src).toMatch(/import PillTabs, \{ type PillTab \} from '@\/components\/ui\/PillTabs\.vue'/)
+    expect(templateOf(src)).toMatch(/<PillTabs v-model="tab" :tabs="cartaTabs" query-param="tab"/)
+    expect(templateOf(src)).not.toMatch(/role="tablist"/)
+  })
+
+  it('las 5 secciones están gateadas por su pestaña: ninguna cabecera se ve sin cambiar de pestaña', () => {
+    const tpl = templateOf(carta())
+    for (const [tab, title] of [
+      ['items', 'Ítems de la carta'], ['categories', 'Categorías'], ['stations', 'Estaciones (pantallas KDS)'], ['combos', 'Combos'],
+    ]) {
+      expect(tpl, `la sección "${title}" no está gateada por tab === '${tab}'`).toMatch(new RegExp(`<SectionCard v-if="tab === '${tab}'" title="${title.replace(/[()]/g, '\\$&')}"`))
+    }
+    expect(tpl).toMatch(/<SectionCard v-if="tab === 'foodcost' && editPerm" title="Food cost"/)
+  })
+
+  it('cada pestaña lleva su contador real y Food cost solo con permiso de catálogo', () => {
+    const src = carta()
+    expect(src).toMatch(/\{ value: 'items', label: 'Ítems', count: items\.value\.length \}/)
+    expect(src).toMatch(/\{ value: 'categories', label: 'Categorías', count: categories\.value\.length \}/)
+    expect(src).toMatch(/\{ value: 'stations', label: 'Estaciones', count: stations\.value\.length \}/)
+    expect(src).toMatch(/\{ value: 'combos', label: 'Combos', count: combos\.value\.length \}/)
+    expect(src).toMatch(/if \(editPerm\.value\) list\.push\(\{ value: 'foodcost', label: 'Food cost', count: foodCostRows\.value\.length \}\)/)
+    expect(src).toMatch(/const tab = ref<CartaTab>\('items'\)/)   // Ítems por defecto
+  })
+
+  it('el KDS enlaza a Carta → Estaciones abriendo esa pestaña (?tab=stations)', () => {
+    const cocina = RAW_PAGES['./cocina.vue']
+    expect(cocina).toMatch(/:to="\{ path: '\/panel\/restaurante\/carta', query: \{ tab: 'stations' \} \}"/)
+  })
+})

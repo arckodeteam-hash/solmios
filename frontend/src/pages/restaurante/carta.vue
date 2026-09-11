@@ -15,6 +15,7 @@ import { CurrencyCode } from '@/types/currency'
 import { supportedLangs } from '@/composables/useSupportedLangs'
 import FormModal, { type FormField } from '@/components/features/FormModal.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
+import PillTabs, { type PillTab } from '@/components/ui/PillTabs.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
@@ -49,6 +50,22 @@ const defaultTaxRate = ref(0)
 // La carta (estaciones/categorías/ítems/recetas) es config, no operación del POS — gateada por
 // 'restaurant-catalog' (QA-ALTO: separado de 'restaurant' para que mesero/cocina no la editen).
 const editPerm = computed(() => can('restaurant-catalog', 'edit'))
+
+// #203 — la carta se ve UNA sección por vez. Ítems por defecto (es lo que más se toca); `?tab=` en la
+// URL abre una pestaña puntual (el KDS enlaza a `?tab=stations`). Food cost solo con permiso de
+// catálogo, igual que el gate del reporte. Modificadores, recetas y traducciones siguen dentro del ítem.
+type CartaTab = 'items' | 'categories' | 'stations' | 'combos' | 'foodcost'
+const tab = ref<CartaTab>('items')
+const cartaTabs = computed<PillTab[]>(() => {
+  const list: PillTab[] = [
+    { value: 'items', label: 'Ítems', count: items.value.length },
+    { value: 'categories', label: 'Categorías', count: categories.value.length },
+    { value: 'stations', label: 'Estaciones', count: stations.value.length },
+    { value: 'combos', label: 'Combos', count: combos.value.length },
+  ]
+  if (editPerm.value) list.push({ value: 'foodcost', label: 'Food cost', count: foodCostRows.value.length })
+  return list
+})
 const createPerm = computed(() => can('restaurant-catalog', 'create'))
 const deletePerm = computed(() => can('restaurant-catalog', 'delete'))
 
@@ -777,15 +794,17 @@ async function saveTranslations() {
     <header class="flex items-center justify-between gap-3">
       <div>
         <h1 class="text-xl sm:text-2xl font-black text-navy">Carta del restaurante</h1>
-        <p class="text-sm text-text-muted mt-0.5">Estaciones, categorías e ítems del POS.</p>
+        <p class="text-sm text-text-muted mt-0.5">Ítems, categorías, estaciones y combos del POS.</p>
       </div>
     </header>
 
     <div v-if="loading" class="py-20 text-center text-text-muted">Cargando…</div>
 
     <template v-else>
+      <PillTabs v-model="tab" :tabs="cartaTabs" query-param="tab" aria-label="Secciones de la carta" />
+
       <!-- Estaciones -->
-      <SectionCard title="Estaciones (pantallas KDS)" subtitle="Cocina, Bar, etc. Cada categoría rutea a una estación.">
+      <SectionCard v-if="tab === 'stations'" title="Estaciones (pantallas KDS)" subtitle="Cocina, Bar, etc. Cada categoría rutea a una estación.">
         <template #actions>
           <button v-if="createPerm" @click="newStation" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 text-white text-xs font-bold hover:bg-white/25">
             <span class="w-3.5 h-3.5" v-html="ICON_PLUS" /> Nueva
@@ -816,7 +835,7 @@ async function saveTranslations() {
       </SectionCard>
 
       <!-- Categorías -->
-      <SectionCard title="Categorías" subtitle="Agrupan ítems y definen a qué estación llegan.">
+      <SectionCard v-if="tab === 'categories'" title="Categorías" subtitle="Agrupan ítems y definen a qué estación llegan.">
         <template #actions>
           <button v-if="createPerm" @click="newCategory" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 text-white text-xs font-bold hover:bg-white/25">
             <span class="w-3.5 h-3.5" v-html="ICON_PLUS" /> Nueva
@@ -848,7 +867,7 @@ async function saveTranslations() {
       </SectionCard>
 
       <!-- Ítems -->
-      <SectionCard title="Ítems de la carta" subtitle="Platos y bebidas con precio.">
+      <SectionCard v-if="tab === 'items'" title="Ítems de la carta" subtitle="Platos y bebidas con precio.">
         <template #actions>
           <button v-if="createPerm" @click="newItem" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 text-white text-xs font-bold hover:bg-white/25">
             <span class="w-3.5 h-3.5" v-html="ICON_PLUS" /> Nuevo
@@ -913,7 +932,7 @@ async function saveTranslations() {
       </SectionCard>
 
       <!-- Combos/paquetes (F2) -->
-      <SectionCard title="Combos" subtitle="Paquetes de ítems con precio propio (ej: Combo Familiar).">
+      <SectionCard v-if="tab === 'combos'" title="Combos" subtitle="Paquetes de ítems con precio propio (ej: Combo Familiar).">
         <template #actions>
           <button v-if="createPerm" @click="newCombo" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 text-white text-xs font-bold hover:bg-white/25">
             <span class="w-3.5 h-3.5" v-html="ICON_PLUS" /> Nuevo
@@ -955,7 +974,7 @@ async function saveTranslations() {
 
       <!-- Food cost (F3): margen real de la carta completa. Gate 'restaurant-catalog:view' — el mesero
            no llega ni a pedir el reporte (ver load()), esta condición es defensiva por si editPerm cambia. -->
-      <SectionCard v-if="editPerm" title="Food cost" subtitle="Precio de venta menos costo de receta, ordenado de menor a mayor margen.">
+      <SectionCard v-if="tab === 'foodcost' && editPerm" title="Food cost" subtitle="Precio de venta menos costo de receta, ordenado de menor a mayor margen.">
         <div class="flex flex-wrap gap-2 mb-3">
           <input id="restaurante-carta-food-cost-search" name="foodCostSearch" aria-label="Buscar por nombre" v-model="foodCostSearch" type="text" placeholder="Buscar por nombre…"
             class="flex-1 min-w-[160px] px-3 py-1.5 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
