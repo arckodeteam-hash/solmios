@@ -5,16 +5,46 @@ import type { RepositoryAdapter, Auth } from 'arckode-framework'
 import { NotFoundError, ValidationError, ConflictError } from 'arckode-framework'
 import type { OrderDTO, OrderItemDTO, TableDTO, OrderType, CurrentUser } from '../types'
 import type { RestaurantSockets } from '../sockets'
-import { nextOrderNumber } from './order-number'
+import { nextOrderNumber, type CounterCas } from './order-number'
+import { isUniqueViolation } from '../../../shared/utils/db-errors'
 
 export interface OrdersDeps {
   orders: RepositoryAdapter<OrderDTO>
   lines: RepositoryAdapter<OrderItemDTO>
   tables: RepositoryAdapter<TableDTO>
   config: RepositoryAdapter<any>
+  /** UPDATE condicional para el numerador (#206). Lo cablea index.ts con el orm; ver order-number.ts. */
+  counterCas?: CounterCas
   userRepo: RepositoryAdapter<any>
   auth: Auth
   sockets: RestaurantSockets
+}
+
+/** Reintentos cuando el UNIQUE (hotelId, number) rechaza la fila: el CAS ya evita casi todas las carreras. */
+const NUMBER_RETRIES = 5
+
+/**
+ * Reserva el correlativo y crea la comanda, reintentando con un número mayor si otra apertura se
+ * quedó con el mismo (mismo esquema que facturas/usecases/create-invoice.ts). Sin número de respaldo.
+ */
+async function createWithReservedNumber(
+  deps: OrdersDeps,
+  hotelId: string,
+  buildRecord: (number: string) => Omit<OrderDTO, 'id'>,
+): Promise<OrderDTO> {
+  let minSeq = 0
+  let lastError: unknown
+  for (let attempt = 0; attempt < NUMBER_RETRIES; attempt++) {
+    const { number, seq } = await nextOrderNumber({ config: deps.config, counterCas: deps.counterCas }, hotelId, minSeq)
+    try {
+      return await deps.orders.create(buildRecord(number))
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e
+      lastError = e
+      minSeq = seq
+    }
+  }
+  throw lastError
 }
 
 // Una comanda "ocupa" la mesa mientras no esté liquidada ni cancelada.
@@ -59,9 +89,9 @@ export async function openOrder(deps: OrdersDeps, dto: OpenOrderInput, user: Cur
   // takeaway: sin mesa ni reserva.
 
   const now = new Date().toISOString()
-  const order = await deps.orders.create({
+  const order = await createWithReservedNumber(deps, hotelId, (number) => ({
     hotelId,
-    number: await nextOrderNumber(deps.config, hotelId),
+    number,
     type: dto.type,
     tableId: dto.type === 'dine_in' ? dto.tableId : undefined,
     reservationId: dto.type === 'room_service' ? dto.reservationId : undefined,
@@ -71,7 +101,7 @@ export async function openOrder(deps: OrdersDeps, dto: OpenOrderInput, user: Cur
     status: 'open',
     subtotal: 0, tax: 0, tip: 0, total: 0,
     openedAt: now,
-  } as Omit<OrderDTO, 'id'>)
+  } as Omit<OrderDTO, 'id'>))
 
   if (order.type === 'dine_in' && order.tableId) {
     await deps.tables.update(order.tableId, { status: 'occupied' } as Partial<Omit<TableDTO, 'id'>>)

@@ -4,7 +4,7 @@
 import type { RepositoryAdapter, Auth } from 'arckode-framework'
 import { NotFoundError, ValidationError, ConflictError } from 'arckode-framework'
 import type { OrderDTO, OrderItemDTO, MenuItemDTO, CategoryDTO, StationDTO, CurrentUser, ModifierGroupDTO, ModifierDTO, OrderItemModifierSnapshot, ComboDTO, ComboItemDTO } from '../types'
-import { resolveStation, recomputeTotals, round2, isWithinAvailabilityWindow } from './order-totals'
+import { resolveStation, recomputeTotals, computeLineTotal, isWithinAvailabilityWindow } from './order-totals'
 import { getCombo } from './combos-crud'
 
 export interface OrderLinesDeps {
@@ -179,7 +179,7 @@ async function addComboLine(
     stationId: undefined,           // el header no rutea a ningún KDS
     stationName: undefined,
     status: 'new',
-    lineTotal: round2(unitPrice * quantity),
+    lineTotal: computeLineTotal(unitPrice, null, quantity),
     modifiers: null,                // F1: los combos NUNCA aceptan modificadores
   } as Omit<OrderItemDTO, 'id'>
   const header = (await deps.lines.create(headerData)) as OrderItemDTO
@@ -247,7 +247,7 @@ export async function addLine(deps: OrderLinesDeps, orderId: string, dto: AddLin
     stationId: station.stationId,
     stationName: station.stationName,
     status: 'new',
-    lineTotal: round2((unitPrice + priceDelta) * quantity),
+    lineTotal: computeLineTotal(unitPrice, snapshot, quantity),
     modifiers: snapshot.length ? snapshot : null,
   } as Omit<OrderItemDTO, 'id'>)
   await recomputeTotals(deps, order)
@@ -284,7 +284,9 @@ export async function updateLine(deps: OrderLinesDeps, orderId: string, lineId: 
   if (dto.quantity !== undefined) {
     const quantity = assertQuantity(dto.quantity)
     patch.quantity = quantity
-    patch.lineTotal = round2(Number(line.unitPrice || 0) * quantity)
+    // #206: mismo cálculo que addLine — el recargo de los modificadores snapshoteados en la línea
+    // se conserva al cambiar la cantidad. (Combos: modifiers=null, sigue siendo unitPrice × qty.)
+    patch.lineTotal = computeLineTotal(Number(line.unitPrice || 0), line.modifiers, quantity)
   }
   const updated = (await deps.lines.update(lineId, patch as Partial<Omit<OrderItemDTO, 'id'>>)) as OrderItemDTO
   if (line.kind === 'combo_header' && dto.quantity !== undefined) {

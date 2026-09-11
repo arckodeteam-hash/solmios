@@ -2,9 +2,26 @@
 // Puramente sobre repos del dominio. El impuesto sale de la tasa CONGELADA por línea (snapshot),
 // nunca hardcodeado. Ver design.md §Resolución de estación + specs/billing-payment.
 import type { RepositoryAdapter } from 'arckode-framework'
-import type { OrderDTO, OrderItemDTO, MenuItemDTO, CategoryDTO, StationDTO } from '../types'
+import type { OrderDTO, OrderItemDTO, MenuItemDTO, CategoryDTO, StationDTO, OrderItemModifierSnapshot } from '../types'
+import { round2 } from '../../../shared/utils/money'
 
-export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
+/**
+ * Total neto de una línea: (precio unitario + Σ priceDelta de los modificadores) × cantidad.
+ *
+ * ÚNICO cálculo de `lineTotal` — lo usan `addLine` y `updateLine`. #206: `updateLine` recalculaba
+ * `unitPrice × quantity` por su cuenta y perdía el recargo de los modificadores al cambiar la
+ * cantidad (una pizza "+ extra queso 50" pasaba de 1 a 2 y el hotel perdía los 50 de cada una).
+ * `unitPrice` es el snapshot NETO (sin modificadores); el ajuste vive en el snapshot `modifiers`
+ * de la línea, así que no hace falta releer el catálogo (que puede haber cambiado).
+ */
+export function computeLineTotal(
+  unitPrice: number,
+  modifiers: Pick<OrderItemModifierSnapshot, 'priceDelta'>[] | null | undefined,
+  quantity: number,
+): number {
+  const delta = (modifiers ?? []).reduce((sum, m) => sum + Number(m?.priceDelta || 0), 0)
+  return round2((Number(unitPrice || 0) + delta) * quantity)
+}
 
 /** "HH:mm" → minutos desde medianoche. */
 function toMinutes(hhmm: string): number {
