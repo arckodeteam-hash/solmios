@@ -1,11 +1,14 @@
 // services/payment-gateway/azul-gateway.ts — Adapter de Azul Payment Page (Banco Popular Dominicano).
 //
-// ⚠️ A SPEC — SIN VERIFICAR CONTRA SANDBOX REAL. No hay credenciales de comercio de Azul todavía.
-// Los NOMBRES DE CAMPO, el orden de concatenación del hash y las URLs de Payment Page de este
-// archivo son una implementación PLAUSIBLE a partir del patrón público conocido de "hosted payment
-// page" con firma HASH SHA-512 (MerchantId + AuthKey secreta, ida y vuelta). CONFIRMAR letra por
-// letra contra el manual de integración oficial de Azul Payment Page (Banco Popular Dominicano)
-// apenas lleguen credenciales de comercio — no se puede probar end-to-end sin ellas.
+// Fuente de verdad: manual oficial "Documento E-Commerce AZUL Página de Pagos (Español) 2023-08"
+//   https://dev.azul.com.do/Pages/developer/documentos/plugins/Documento-E-Commerce-AZUL-Pagina-Pagos-(Espanol)-2023-08.pdf
+// De ahí salen el algoritmo del AuthHash (HMAC-SHA512 sobre la cadena en Unicode/UTF-16LE, con la
+// AuthKey como clave y además concatenada al final — "Manejo de la Autenticación (AuthHash)",
+// pág. 65-66), el orden exacto de concatenación de ida y de vuelta (pág. 65), los nombres de los
+// campos del POST y del retorno (pág. 14-17) y las URLs de Payment Page (pág. 13).
+//
+// Única salvedad: no probado contra el sandbox de Azul — no hay credenciales de comercio todavía;
+// vectores de prueba independientes en azul-gateway.test.ts.
 //
 // Azul distingue dos productos:
 //   - Azul Payment Page: redirect hospedado, SIN webhook, confirma leyendo el retorno + hash
@@ -16,7 +19,7 @@
 // de Azul lo piden incluso para operaciones de soporte de Payment Page (verificación/consulta) —
 // dejar el campo listo, aunque createCharge()/confirm() de Payment Page en sí no lo necesiten.
 
-import { createHash } from 'node:crypto'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import type {
   ChargeRequest, ChargeResult, ConfirmContext, GatewayCapabilities, GatewayMode,
   PaymentGateway, PaymentOutcome, PaymentProvider,
@@ -52,14 +55,29 @@ export function toAzulCredentials(stored: Record<string, unknown>): AzulCredenti
   }
 }
 
-/** A SPEC — confirmar los hosts reales de Payment Page contra el manual de Azul. */
+/**
+ * Hosts de Payment Page según el manual (pág. 13). Producción tiene además un site alterno,
+ * `https://contpagos.azul.com.do/PaymentPage/Default.aspx`, para cuando el principal no responde
+ * — no se usa por ahora (no hay failover en este adapter).
+ */
 const AZUL_PAYMENT_PAGE_URL: Record<GatewayMode, string> = {
-  test: 'https://pruebas.azul.com.do/paymentpage/Default.aspx',
-  live: 'https://pagos.azul.com.do/paymentpage/Default.aspx',
+  test: 'https://pruebas.azul.com.do/PaymentPage/',
+  live: 'https://pagos.azul.com.do/PaymentPage/Default.aspx',
 }
 
 /**
- * Campos que viajan HACIA Azul Payment Page. Nombres y orden A SPEC (no verificados).
+ * HMAC-SHA512 tal como lo define Azul: la AuthKey es la CLAVE del HMAC y, además, va concatenada
+ * al final de `concat` (eso lo hace el caller). La cadena se codifica en Unicode (UTF-16LE,
+ * `Encoding.Unicode` en el ejemplo C# / `mb_convert_encoding(..., 'UTF-16LE')` en el PHP del
+ * manual). Hex en minúscula, como el `{0:x2}` del ejemplo oficial.
+ */
+function azulHash(concat: string, authKey: string, encoding: 'utf16le' | 'utf8' = 'utf16le'): string {
+  return createHmac('sha512', authKey).update(Buffer.from(concat, encoding)).digest('hex')
+}
+
+/**
+ * Campos que viajan HACIA Azul Payment Page (manual pág. 14-16). Todos son obligatorios en el
+ * POST, incluidos los custom fields aunque no se usen.
  */
 export interface AzulPaymentPageFields {
   MerchantId: string
@@ -74,54 +92,83 @@ export interface AzulPaymentPageFields {
   ApprovedUrl: string
   DeclinedUrl: string
   CancelUrl: string
+  /** '1' | '0'. Sin custom fields se manda '0' con label/value vacíos, pero el campo viaja igual. */
+  UseCustomField1: string
+  CustomField1Label: string
+  CustomField1Value: string
+  /** '1' | '0'. */
+  UseCustomField2: string
+  CustomField2Label: string
+  CustomField2Value: string
 }
 
 /**
- * Hash de ida (AuthHash): SHA-512 hex de la concatenación de los campos + AuthKey.
- * Función PURA y testeable a propósito, separada del resto del adapter.
- *
- * ⚠️ A SPEC: el orden real de concatenación de Azul Payment Page no está verificado contra
- * documentación oficial. Ajustar cuando llegue el manual real del comercio.
+ * Hash de ida (AuthHash): HMAC-SHA512 de la concatenación de los campos + AuthKey, en el orden
+ * exacto del manual (pág. 65). Función PURA y testeable a propósito, separada del resto del
+ * adapter. Para el requerimiento Azul acepta la cadena en UTF-8 o Unicode indistintamente; se
+ * usa Unicode (UTF-16LE), que el manual recomienda como más seguro.
  */
 export function buildAuthHash(fields: AzulPaymentPageFields, authKey: string): string {
   const concat = [
     fields.MerchantId, fields.MerchantName, fields.MerchantType, fields.CurrencyCode,
     fields.OrderNumber, fields.Amount, fields.ITBIS,
     fields.ApprovedUrl, fields.DeclinedUrl, fields.CancelUrl,
+    fields.UseCustomField1, fields.CustomField1Label, fields.CustomField1Value,
+    fields.UseCustomField2, fields.CustomField2Label, fields.CustomField2Value,
     authKey,
   ].join('')
-  return createHash('sha512').update(concat, 'utf8').digest('hex').toUpperCase()
+  return azulHash(concat, authKey)
 }
 
-/** Campos que Azul manda de VUELTA en el redirect de retorno (query string). A SPEC. */
+/**
+ * Campos que Azul manda de VUELTA en el redirect de retorno (query string) — tabla "Valores de
+ * Retorno" del manual (pág. 17). Los que entran en el hash son los marcados HASH=Si.
+ */
 export interface AzulReturnFields {
   OrderNumber: string
   Amount: string
   AuthorizationCode?: string
-  /** 'Approved' | 'Declined' | 'Cancel' (a spec — confirmar los valores reales). */
-  ResponseCode: string
+  /** Fecha/hora de la transacción tal como la manda Azul (p.ej. 'yyyyMMddHHmmss'). */
+  DateTime?: string
+  /** Texto del procesador (p.ej. 'ISO8583'). NO indica aprobación: para eso está IsoCode. */
+  ResponseCode?: string
+  /** Código ISO de respuesta: '00' = aprobada; cualquier otro valor = rechazada/error. */
   IsoCode?: string
+  /** 'APROBADA' cuando IsoCode es '00'; en otro caso el motivo del rechazo. */
+  ResponseMessage?: string
+  ErrorDescription?: string
   RRN?: string
+  /** Fuera del hash. Identificador interno de Azul para la transacción. */
   AzulOrderId?: string
   /** Hash que Azul calcula sobre el retorno; debemos poder reproducirlo con la misma fórmula. */
   AuthHash: string
 }
 
 /**
- * Verifica el hash de retorno recalculándolo con la MISMA fórmula (campos fijos + AuthKey) y
- * comparando contra el que mandó Azul. Es la única barrera contra un retorno falsificado: Payment
- * Page no tiene webhook de respaldo, así que si esto no autentica, no hay otra fuente de verdad.
+ * Verifica el hash de retorno recalculándolo con la fórmula oficial (orden pág. 65: OrderNumber +
+ * Amount + AuthorizationCode + DateTime + ResponseCode + IsoCode + ResponseMessage +
+ * ErrorDescription + RRN + AuthKey) y comparando contra el que mandó Azul. Es la única barrera
+ * contra un retorno falsificado: Payment Page no tiene webhook de respaldo, así que si esto no
+ * autentica, no hay otra fuente de verdad.
  *
- * ⚠️ A SPEC: mismo disclaimer que buildAuthHash — campos y orden del hash de vuelta sin verificar.
+ * El manual dice que el retorno se genera desde una cadena Unicode (UTF-16LE); se acepta también
+ * UTF-8 como fallback. Ambas variantes son HMAC con la AuthKey secreta, así que aceptar las dos
+ * no debilita la verificación. Comparación en tiempo constante.
  */
 export function verifyReturnHash(fields: AzulReturnFields, authKey: string): boolean {
+  if (!fields.AuthHash) return false
   const concat = [
-    fields.OrderNumber, fields.Amount, fields.ResponseCode,
-    fields.AuthorizationCode || '', fields.IsoCode || '', fields.RRN || '',
+    fields.OrderNumber, fields.Amount,
+    fields.AuthorizationCode ?? '', fields.DateTime ?? '', fields.ResponseCode ?? '',
+    fields.IsoCode ?? '', fields.ResponseMessage ?? '', fields.ErrorDescription ?? '',
+    fields.RRN ?? '',
     authKey,
   ].join('')
-  const expected = createHash('sha512').update(concat, 'utf8').digest('hex').toUpperCase()
-  return expected === (fields.AuthHash || '').toUpperCase()
+  const received = Buffer.from(fields.AuthHash.toLowerCase(), 'utf8')
+  return (['utf16le', 'utf8'] as const).some(encoding => {
+    const expected = Buffer.from(azulHash(concat, authKey, encoding), 'utf8')
+    return expected.length === received.length && timingSafeEqual(expected, received)
+  })
 }
 
 export class AzulGateway implements PaymentGateway {
@@ -164,6 +211,12 @@ export class AzulGateway implements PaymentGateway {
         ApprovedUrl: req.successUrl,
         DeclinedUrl: req.cancelUrl,
         CancelUrl: req.cancelUrl,
+        UseCustomField1: '0',
+        CustomField1Label: '',
+        CustomField1Value: '',
+        UseCustomField2: '0',
+        CustomField2Label: '',
+        CustomField2Value: '',
       }
       const authHash = buildAuthHash(fields, this.creds.authKey)
       const params = new URLSearchParams({ ...fields, AuthHash: authHash })
@@ -185,8 +238,11 @@ export class AzulGateway implements PaymentGateway {
       OrderNumber: q.OrderNumber || '',
       Amount: q.Amount || '',
       AuthorizationCode: q.AuthorizationCode,
-      ResponseCode: q.ResponseCode || '',
+      DateTime: q.DateTime,
+      ResponseCode: q.ResponseCode,
       IsoCode: q.IsoCode,
+      ResponseMessage: q.ResponseMessage,
+      ErrorDescription: q.ErrorDescription,
       RRN: q.RRN,
       AzulOrderId: q.AzulOrderId,
       AuthHash: q.AuthHash || '',
@@ -194,7 +250,7 @@ export class AzulGateway implements PaymentGateway {
     if (!fields.OrderNumber || !fields.AuthHash) return null
     if (!verifyReturnHash(fields, this.creds.authKey)) return null // hash inválido → impostor
 
-    const status = this.mapStatus(fields.ResponseCode)
+    const status = this.mapStatus(fields.IsoCode)
     if (!status) return null
 
     return {
@@ -208,11 +264,13 @@ export class AzulGateway implements PaymentGateway {
     }
   }
 
-  /** A SPEC: valores de ResponseCode sin confirmar contra el manual real. */
-  private mapStatus(responseCode: string): PaymentOutcome['status'] | null {
-    const code = (responseCode || '').toLowerCase()
-    if (code === 'approved' || code === '00' || code === '1') return 'paid'
-    if (code === 'declined' || code === 'cancel' || code === '0' || code === '2') return 'failed'
-    return null
+  /**
+   * La aprobación la dice IsoCode (manual pág. 17): '00' = aprobada; cualquier otro código no
+   * vacío = rechazada. ResponseCode es texto del procesador ('ISO8583'), no sirve para decidir.
+   */
+  private mapStatus(isoCode: string | undefined): PaymentOutcome['status'] | null {
+    const code = (isoCode || '').trim()
+    if (!code) return null
+    return code === '00' ? 'paid' : 'failed'
   }
 }
