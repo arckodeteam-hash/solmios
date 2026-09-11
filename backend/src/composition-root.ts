@@ -730,8 +730,8 @@ system.addConnector('notificaciones-auditlog', notificacionesAuditlogConnector)
 system.addConnector('opiniones-auditlog', opinionesAuditlogConnector)
 system.addConnector('reclutamiento-auditlog', reclutamientoAuditlogConnector)
 system.addConnector('tickets-auditlog', ticketsAuditlogConnector)
-// REQ-SOP-06: el hotel se entera de la respuesta del agente sin entrar a /panel/support.
-system.addConnector('tickets-notificaciones', ticketsNotificacionesConnector)
+// Soporte real (#120): cuando un agente responde o cambia el estado, el hotel lo ve en la campanita.
+system.addConnector('tickets-notificaciones', ticketsNotificacionesConnector(logger))
 system.addConnector('ai-recepcionista-auditlog', aiRecepcionistaAuditlogConnector)
 // El dinero se asienta en `payments` → payments-caja lo lleva al arqueo y a la conciliación.
 system.addConnector('facturas-payments', facturasPaymentsConnector)
@@ -871,6 +871,11 @@ if (walletPass && ttlockForWallet) walletPass.setTtlockPort(ttlockForWallet)
 // (patrón wallet-pass/abandon-recovery — EmailService inyectado post-init).
 const crmForEmail = system.resolveModule<{ setEmailDeps(es: unknown): void }>('crm')
 if (crmForEmail) crmForEmail.setEmailDeps(emailService)
+
+// Soporte real (#120): email al solicitante del ticket cuando soporte responde o cambia el estado.
+// Mismo patrón post-init que crm: solo se encola si el hotel tiene SMTP/Resend (isConfigured).
+const ticketsForEmail = system.resolveModule<{ setEmailDeps(es: unknown): void }>('tickets')
+if (ticketsForEmail) ticketsForEmail.setEmailDeps(emailService)
 
 // Post-init: los avisos al teléfono. Sin credenciales de Firebase `fromEnv`
 // devuelve null y el módulo se queda solo guardando tokens: la app sigue

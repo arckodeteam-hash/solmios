@@ -1,86 +1,110 @@
-// shared/usecases/notify-ticket.ts — Avisos al hotel sobre su ticket de soporte (REQ-SOP-06).
+// shared/usecases/notify-ticket.ts — Avisos de soporte (tickets) al hotel.
 //
-// La lógica de qué aviso mandar por cada evento vive acá; el connector
-// `tickets-notificaciones` solo delega (regla: connectors solo wirean).
-// Sin `userId` la notificación es broadcast al hotel: todo su staff se entera de la
-// respuesta del agente sin tener que entrar a /panel/support.
+// Texto y decisión de qué aviso mandar por cada evento viven acá; el connector
+// `tickets-notificaciones` solo delega (regla: connectors solo wirean). Mismo patrón que
+// notify-maintenance.ts: funciones puras sobre un puerto mínimo, sin import cross-módulo
+// (el ticket se describe estructuralmente, no se importa de modules/tickets/types).
 
-import type { TicketsDTO, TicketMessage } from '../../modules/tickets/types'
-import type { TicketsUpdateContext } from '../../modules/tickets/sockets'
-import type { NotificacionesPort } from './notify-maintenance'
+export interface NotificacionesPort {
+  create(dto: Record<string, unknown>, user: { id: string; role: string; hotelId: string }): Promise<unknown>
+}
 
-export type { NotificacionesPort }
+/** Forma mínima del ticket que necesita este usecase (estructural, ver TicketsDTO). */
+export interface TicketLike {
+  id: string
+  hotelId: string
+  subject: string
+  status?: string
+}
 
-/** El connector pasa el resolve del módulo diferido: si `notificaciones` no está montado, el error
- *  cae dentro del mismo try que el create y el aviso se pierde con log, no rompe la operación. */
-export type NotificacionesResolver = () => NotificacionesPort
+export interface TicketMessageLike {
+  authorName: string
+  authorKind: 'support' | 'hotel'
+  message: string
+}
 
-const sysUserFor = (hotelId: string) => ({ id: 'system', role: 'super_admin', hotelId })
+export interface TicketStatusChangeLike {
+  from?: string
+  to: string
+  actor: { id: string; name: string; userType?: string }
+}
 
-/** Estado legible para el título del aviso. */
-export const STATUS_LABELS: Record<string, string> = {
+export type TicketNotice = { title: string; message: string; link: string }
+
+const STATUS_LABELS: Record<string, string> = {
   open: 'Abierto',
   in_progress: 'En progreso',
   resolved: 'Resuelto',
   closed: 'Cerrado',
 }
 
-/** Ruta interna que abre el ticket en el panel del hotel (el frontend rutea `metadata.link`). */
-export const ticketLink = (id: string) => `/panel/support?ticket=${id}`
+const DEFAULT_AGENT = 'Soporte'
+const MESSAGE_PREVIEW_LEN = 140
 
-const PREVIEW_MAX = 140
+const sysUserFor = (hotelId: string) => ({ id: 'system', role: 'super_admin', hotelId })
 
-/** Recorte del cuerpo del mensaje para el aviso: una línea, no el mensaje entero. */
-function preview(text: string): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length > PREVIEW_MAX ? `${flat.slice(0, PREVIEW_MAX - 1).trimEnd()}…` : flat
+export function ticketStatusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status
 }
 
-// Los sockets se awaitean dentro de addMessage/update: si esto lanzara, el mensaje o el cambio
-// ya quedaron guardados pero el endpoint devolvería 500 (mismo criterio que auditSafely).
-// Un aviso que no sale se loguea, nunca rompe la operación principal.
-async function createSafely(
-  resolve: NotificacionesResolver,
-  ticketId: string,
-  event: 'message' | 'status',
-  dto: Record<string, unknown>,
-  hotelId: string,
-): Promise<void> {
-  try {
-    await resolve().create(dto, sysUserFor(hotelId))
-  } catch (err) {
-    console.error(`[tickets-notificaciones] no se pudo avisar al hotel (ticket=${ticketId} evento=${event}):`, err instanceof Error ? err.message : err)
+export function ticketLink(ticket: Pick<TicketLike, 'id'>): string {
+  return `/panel/support?ticket=${ticket.id}`
+}
+
+function agentLabel(agentName: string | undefined): string {
+  const name = (agentName ?? '').trim()
+  return name || DEFAULT_AGENT
+}
+
+function preview(text: string): string {
+  const flat = (text ?? '').replace(/\s+/g, ' ').trim()
+  return flat.length > MESSAGE_PREVIEW_LEN ? `${flat.slice(0, MESSAGE_PREVIEW_LEN - 1)}…` : flat
+}
+
+/** Un agente respondió el ticket. */
+export function buildTicketMessageNotice(ticket: TicketLike, agentName: string | undefined, text?: string): TicketNotice {
+  const agent = agentLabel(agentName)
+  return {
+    title: `${agent} respondió tu ticket «${ticket.subject}»`,
+    message: preview(text ?? '') || `${agent} dejó una respuesta en tu ticket.`,
+    link: ticketLink(ticket),
   }
 }
 
-/** Mensaje nuevo en el ticket: avisa al hotel SOLO si lo escribió soporte (lo suyo ya lo vio). */
-export async function notifyTicketMessageAdded(notificaciones: NotificacionesResolver, ticket: TicketsDTO, message: TicketMessage): Promise<void> {
-  if (message.authorKind !== 'support') return
-  const agente = message.authorName?.trim() || 'Soporte'
-  await createSafely(notificaciones, ticket.id, 'message', {
-    hotelId: ticket.hotelId,
-    type: 'system',
-    title: `${agente} respondió tu ticket «${ticket.subject}»`,
-    message: preview(message.message ?? ''),
-    read: 0,
-    date: new Date().toISOString(),
-    metadata: { ticketId: ticket.id, link: ticketLink(ticket.id), event: 'message', agentId: message.authorId },
-  }, ticket.hotelId)
+/** Un agente cambió el estado del ticket. */
+export function buildTicketStatusNotice(ticket: TicketLike, agentName: string | undefined, status: string): TicketNotice {
+  const agent = agentLabel(agentName)
+  const label = ticketStatusLabel(status)
+  return {
+    title: `${agent} marcó tu ticket «${ticket.subject}» como ${label}`,
+    message: `Tu ticket «${ticket.subject}» ahora está ${label}.`,
+    link: ticketLink(ticket),
+  }
 }
 
-/** Ticket actualizado: avisa al hotel SOLO si un admin (agente) le cambió el estado. */
-export async function notifyTicketUpdated(notificaciones: NotificacionesResolver, ticket: TicketsDTO, change?: TicketsUpdateContext): Promise<void> {
-  if (!change) return
-  if (change.actor.userType !== 'admin') return // cambio hecho por el propio hotel
-  if (ticket.status === change.previous.status) return // no cambió el estado
-  const agente = change.actor.name?.trim() || 'Soporte'
-  const status = ticket.status ?? ''
-  await createSafely(notificaciones, ticket.id, 'status', {
+async function createSupportNotice(port: NotificacionesPort, ticket: TicketLike, notice: TicketNotice, agentName: string): Promise<void> {
+  // Sin userId: broadcast al hotel (como notify-maintenance). Errores NO se tragan acá — el
+  // connector decide (los loguea y no propaga).
+  await port.create({
     hotelId: ticket.hotelId,
-    type: 'system',
-    title: `${agente} marcó tu ticket «${ticket.subject}» como ${STATUS_LABELS[status] ?? status}`,
+    type: 'support',
+    title: notice.title,
+    message: notice.message,
     read: 0,
     date: new Date().toISOString(),
-    metadata: { ticketId: ticket.id, link: ticketLink(ticket.id), event: 'status', status, agentId: change.actor.id },
-  }, ticket.hotelId)
+    metadata: { ticketId: ticket.id, link: notice.link, agentName },
+  }, sysUserFor(ticket.hotelId))
+}
+
+/** Mensaje nuevo: avisa al hotel SOLO si lo escribió soporte (authorKind 'support'). */
+export async function notifyTicketMessage(port: NotificacionesPort, ticket: TicketLike, message: TicketMessageLike): Promise<void> {
+  if (message.authorKind !== 'support') return
+  const agentName = agentLabel(message.authorName)
+  await createSupportNotice(port, ticket, buildTicketMessageNotice(ticket, agentName, message.message), agentName)
+}
+
+/** Cambio de estado hecho por soporte: avisa al hotel. */
+export async function notifyTicketStatus(port: NotificacionesPort, ticket: TicketLike, change: TicketStatusChangeLike): Promise<void> {
+  const agentName = agentLabel(change.actor.name)
+  await createSupportNotice(port, ticket, buildTicketStatusNotice(ticket, agentName, change.to), agentName)
 }

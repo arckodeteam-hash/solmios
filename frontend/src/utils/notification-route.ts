@@ -7,6 +7,7 @@
 import type { AppNotification } from '@/services/Notifications.service'
 
 const ROUTE_BY_TYPE: Record<string, string> = {
+  support: '/panel/support',
   payment: '/panel/finanzas/facturacion',
   housekeeping: '/panel/operaciones/limpieza',
   maintenance: '/panel/operaciones/mantenimiento',

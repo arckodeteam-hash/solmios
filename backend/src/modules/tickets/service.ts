@@ -6,6 +6,7 @@ import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
 import { enrichTickets } from './usecases/enrich'
 import { buildAddMessage } from './usecases/add-message'
 import { ticketsListCacheKey, invalidateTicketsCaches } from './usecases/cache'
+import { afterTicketUpdated, afterTicketMessageAdded, type TicketEmailPort } from './usecases/notify-requester'
 
 const CACHE_TTL = 300
 
@@ -14,9 +15,16 @@ type CurrentUser = { id: string; role: string; hotelId?: string; userType?: stri
 export class TicketsService {
   private sockets: TicketsSockets = {}
   private auditPort: AuditPort | null = null
+  private emailPort: TicketEmailPort | null = null
 
   /** Conecta el audit log. Lo inyecta el connector `tickets-auditlog`. */
   setAuditDeps(port: AuditPort): void { this.auditPort = port }
+
+  /** Conecta el email al solicitante (best-effort). Lo inyecta el connector `tickets-notificaciones`. */
+  setEmailDeps(port: TicketEmailPort): void { this.emailPort = port }
+
+  private get enrichDeps() { return { userRepo: this.userRepo, hotelRepo: this.hotelRepo } }
+  private get notifyDeps() { return { sockets: this.sockets, emailPort: this.emailPort, logger: this.logger } }
 
   constructor(
     private readonly repo: RepositoryAdapter<TicketsDTO>,
@@ -65,14 +73,19 @@ export class TicketsService {
     const offset = (page - 1) * limit
 
     // REQ-SOP-05: clave versionada (filtros + paginación incluidos) — ver usecases/cache.ts.
-    const cacheKey = await ticketsListCacheKey(this.cache, hotelId, { filters, page, limit })
+    // #197: el bucket de versión es el del HOTEL QUE SE LISTA, no el del usuario. Un super_admin
+    // con `hotelId` en el token (el seed de prod lo tiene) veía /admin/support desde el bucket de
+    // su propio hotel, y una respuesta en un ticket de OTRO hotel bumpea ese hotel + `all`, nunca
+    // el suyo: el listado quedaba viejo hasta los 300 s del TTL (F5 no alcanzaba).
+    const cacheHotel = currentUser.role === 'super_admin' ? (query.hotelId || undefined) : hotelId
+    const cacheKey = await ticketsListCacheKey(this.cache, cacheHotel, { filters, page, limit })
     const cached = await this.cache.get(cacheKey)
     if (cached) return cached as TicketsPaginated
 
     const result = await this.repo.paginate(filters, { offset, limit })
     // REQ-SOP-01/03: solicitante/hotel/agente resueltos acá — el hotel no puede resolver por
     // su cuenta el nombre de un agente que pertenece a otro hotel/a la plataforma.
-    const data = await enrichTickets(result.data, { userRepo: this.userRepo, hotelRepo: this.hotelRepo })
+    const data = await enrichTickets(result.data, this.enrichDeps)
     const response = { data, total: result.total, page, limit, pages: Math.ceil(result.total / limit) }
     await this.cache.set(cacheKey, response, CACHE_TTL)
     return response
@@ -84,7 +97,7 @@ export class TicketsService {
     if (currentUser.role !== 'super_admin' && item.hotelId !== currentUser.hotelId) {
       throw new AuthError('No autorizado')
     }
-    const [enriched] = await enrichTickets([item], { userRepo: this.userRepo, hotelRepo: this.hotelRepo })
+    const [enriched] = await enrichTickets([item], this.enrichDeps)
     return enriched
   }
 
@@ -115,17 +128,17 @@ export class TicketsService {
     if (patch.status === 'in_progress' && currentUser.userType === 'admin' && !existing.assignedTo && !patch.assignedTo) {
       patch.assignedTo = currentUser.id
     }
-    // REQ-SOP-06: el connector necesita saber desde qué estado y quién (nombre real, el JWT no lo
-    // trae). Se resuelve ANTES de escribir, como en addMessage: si falla, no queda nada a medias.
-    const actorUser = await this.userRepo.findById(currentUser.id)
     const item = await this.repo.update(id, patch as any)
     if (!item) throw new NotFoundError('Ticket no encontrado')
-    await this.sockets.onTicketsUpdated?.(item, {
-      previous: existing,
-      actor: { id: currentUser.id, name: actorUser?.name ?? '', role: currentUser.role, hotelId: currentUser.hotelId, userType: currentUser.userType },
+    // Los sockets reciben el ticket YA enriquecido (requester/hotel/assignee) — el connector de
+    // notificaciones/email necesita el email del solicitante y el nombre del hotel.
+    const [enriched] = await enrichTickets([item], this.enrichDeps)
+    const actorUser = currentUser.userType === 'admin' ? await this.userRepo.findById(currentUser.id) : null
+    await afterTicketUpdated(this.notifyDeps, enriched, existing.status, {
+      id: currentUser.id, name: actorUser?.name ?? '', userType: currentUser.userType,
     })
     await invalidateTicketsCaches(this.cache, existing.hotelId)
-    return item
+    return enriched
   }
 
   /** REQ-SOP-02/03: agrega un mensaje con el autor resuelto por el server (nunca el del body). */
@@ -145,9 +158,9 @@ export class TicketsService {
 
     const item = await this.repo.update(id, patch as any)
     if (!item) throw new NotFoundError('Ticket no encontrado')
-    await this.sockets.onTicketsMessageAdded?.(item, message)
+    const [enriched] = await enrichTickets([item], this.enrichDeps)
+    await afterTicketMessageAdded(this.notifyDeps, enriched, message)
     await invalidateTicketsCaches(this.cache, existing.hotelId)
-    const [enriched] = await enrichTickets([item], { userRepo: this.userRepo, hotelRepo: this.hotelRepo })
     return enriched
   }
 

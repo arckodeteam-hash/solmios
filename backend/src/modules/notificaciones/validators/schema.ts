@@ -1,6 +1,6 @@
 import type { BodyRule as ValidationRule } from '../../../shared/validators/validate-body'
 
-const TYPE_ENUM = ['system', 'reservation', 'payment', 'housekeeping', 'maintenance', 'announcement']
+const TYPE_ENUM = ['system', 'reservation', 'payment', 'housekeeping', 'maintenance', 'announcement', 'support']
 const CHANNEL_ENUM = ['in_app', 'email', 'sms', 'whatsapp']
 const TITLE_MAX = 200
 const MESSAGE_MAX = 2000

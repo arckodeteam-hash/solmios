@@ -925,23 +925,23 @@ function irAFacturacion() {
           <ChannelIcon :channel="d?.source || d?.channel || 'direct'" :size="14" class="ring-1 ring-white/40 rounded-[4px]" />
           {{ srcLabel(d?.source || d?.channel) }}
         </span>
-        <button v-if="d?.status === 'pending' && can('reservations','edit')" @click="setStatus('confirmed')" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 bg-teal text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50">
+        <button v-if="d?.status === 'pending' && can('reservations','edit')" @click="setStatus('confirmed')" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-teal text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
           Confirmar
         </button>
-        <button v-if="d?.status !== 'cancelled' && d?.status !== 'checked_out' && can('reservations','edit')" @click="showCancel = true" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 bg-coral/90 text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50">
+        <button v-if="d?.status !== 'cancelled' && d?.status !== 'checked_out' && can('reservations','edit')" @click="showCancel = true" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-coral/90 text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           Anular
         </button>
-        <button @click="printAs('charges')" class="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20" title="Imprime el detalle de cargos de la reserva. NO es una factura: no lleva numeración fiscal ni NCF.">
+        <button @click="printAs('charges')" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20" title="Imprime el detalle de cargos de la reserva. NO es una factura: no lleva numeración fiscal ni NCF.">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.83a42.5 42.5 0 0110.56 0M6.34 18l-.34 3.72a1.12 1.12 0 001.12 1.23h9.4a1.12 1.12 0 001.12-1.23L17.66 18M17.66 18h1.09c1.06 0 1.98-.72 2-1.78a72 72 0 000-3.45c-.02-1.06-.94-1.77-2-1.77H5.25c-1.06 0-1.98.71-2 1.77a72 72 0 000 3.45c.02 1.06.94 1.78 2 1.78h1.09M17.66 18H6.34M17.66 18v-4.5a2.25 2.25 0 00-2.25-2.25h-6.5a2.25 2.25 0 00-2.25 2.25V18"/></svg>
           Cargos
         </button>
-        <button v-if="can('billing','view')" @click="irAFacturacion" class="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20" title="Emitir la factura con numeración fiscal desde el módulo Facturación">
+        <button v-if="can('billing','view')" @click="irAFacturacion" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20" title="Emitir la factura con numeración fiscal desde el módulo Facturación">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M9 8h2M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg>
           Facturar
         </button>
-        <button v-if="can('reservations','edit')" @click="editar" class="flex items-center gap-1.5 px-3 py-1.5 bg-cyan text-navy rounded-lg text-xs font-black cursor-pointer hover:opacity-90">
+        <button v-if="can('reservations','edit')" @click="editar" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-cyan text-navy rounded-lg text-xs font-black cursor-pointer hover:opacity-90">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.932zM19.5 21H4.5a1.5 1.5 0 01-1.5-1.5V6a1.5 1.5 0 011.5-1.5h9"/></svg>
           Editar
         </button>

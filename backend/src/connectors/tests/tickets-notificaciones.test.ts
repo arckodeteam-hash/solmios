@@ -1,119 +1,120 @@
-// connectors/tests/tickets-notificaciones.test.ts — REQ-SOP-06: el hotel se entera de la
-// respuesta del agente (con su nombre y link al ticket) sin entrar a /panel/support.
+// connectors/tests/tickets-notificaciones.test.ts — Cableado tickets→notificaciones (#120).
 //
-// Un conector solo DELEGA: se verifica el cableado, el filtro (sólo soporte / sólo admin con
-// cambio de estado) y que un fallo del satélite nunca rompa el addMessage/update del ticket.
+// El conector solo DELEGA en shared/usecases/notify-ticket, pero es el que decide que un fallo
+// de la campanita no tumbe la respuesta del agente (ya persistida). Se verifica: quién dispara
+// el aviso (soporte sí, hotel no), qué lleva (agente, asunto, link al ticket) y que un
+// notificaciones.create roto se loguea y no propaga.
 
-import { describe, it, expect, spyOn } from 'bun:test'
-import type { ConnectorContext } from 'arckode-framework'
+import { describe, it, expect } from 'bun:test'
+import type { ConnectorContext, Logger } from 'arckode-framework'
 import { ticketsNotificacionesConnector } from '../tickets-notificaciones'
 
-function makeCtx(hosts: string[], modules: Record<string, any> = {}) {
-  const captured: any = { sockets: {} }
-  const hostStub = { setSockets: (s: any) => Object.assign(captured.sockets, s) }
+const ticket = (over: Record<string, unknown> = {}) => ({
+  id: 'tk1', hotelId: 'h1', userId: 'u-rosa', subject: 'No puedo emitir facturas', status: 'open',
+  createdAt: '', updatedAt: '', ...over,
+})
+
+const message = (over: Record<string, unknown> = {}) => ({
+  id: 'm1', authorId: 'u-agent', authorName: 'Ana Soporte', authorKind: 'support', message: 'Ya lo estamos viendo', createdAt: '',
+  ...over,
+})
+
+/** Monta el conector y devuelve los sockets que registró + lo que le pidió a notificaciones. */
+function mount(opts: { createThrows?: boolean; notificacionesAvailable?: boolean } = {}) {
+  const created: any[] = []
+  const errors: any[] = []
+  let sockets: any = {}
+
+  const notificaciones = {
+    create: async (dto: any, user: any) => {
+      if (opts.createThrows) throw new Error('db down')
+      created.push({ dto, user })
+      return { id: 'n1', ...dto }
+    },
+  }
+  const logger = {
+    error: (msg: string, meta?: any) => { errors.push({ msg, meta }) },
+    warn: () => {}, info: () => {}, debug: () => {},
+  } as unknown as Logger
+
   const ctx = {
     resolveModule: (name: string) => {
-      if (hosts.includes(name)) return { ...hostStub, ...(modules[name] ?? {}) }
-      if (name in modules) return modules[name]
-      throw new Error(`módulo desconocido: ${name}`) // simula un módulo no montado
+      if (name === 'tickets') return { setSockets: (s: any) => { sockets = s } }
+      if (name === 'notificaciones') {
+        if (opts.notificacionesAvailable === false) throw new Error('notificaciones no disponible')
+        return notificaciones
+      }
+      throw new Error(`módulo desconocido: ${name}`)
     },
   } as unknown as ConnectorContext
-  return { ctx, captured }
-}
 
-const ticket = (over: Record<string, unknown> = {}) => ({
-  id: 't1', hotelId: 'h1', userId: 'u1', subject: 'Wifi caído', status: 'open',
-  createdAt: '2026-09-10T00:00:00.000Z', updatedAt: '2026-09-10T00:00:00.000Z', ...over,
-})
-const msg = (over: Record<string, unknown> = {}) => ({
-  id: 'm1', authorId: 'a1', authorName: 'Ana', authorKind: 'support', message: 'Ya lo revisamos', createdAt: '2026-09-10T00:00:00.000Z', ...over,
-})
-const adminChange = (previousStatus = 'open') => ({
-  previous: ticket({ status: previousStatus }),
-  actor: { id: 'a1', name: 'Ana', role: 'super_admin', userType: 'admin' },
-})
-
-function setup(notificaciones: any = { create: async (dto: any) => { created.push(dto); return {} } }) {
-  const { ctx, captured } = makeCtx(['tickets'], { notificaciones })
-  ticketsNotificacionesConnector(ctx)
-  return captured
+  ticketsNotificacionesConnector(logger)(ctx)
+  return { sockets, created, errors }
 }
-let created: any[] = []
 
 describe('ticketsNotificacionesConnector', () => {
-  it('mensaje de soporte → 1 notificación al hotel con el nombre del agente y el link al ticket', async () => {
-    created = []
-    const captured = setup()
-    await captured.sockets.onTicketsMessageAdded(ticket(), msg())
-
-    expect(created).toHaveLength(1)
-    expect(created[0].hotelId).toBe('h1')
-    expect(created[0].userId).toBeUndefined() // broadcast al hotel
-    expect(created[0].type).toBe('system')
-    expect(created[0].title).toContain('Ana')
-    expect(created[0].title).toContain('respondió tu ticket «Wifi caído»')
-    expect(created[0].message).toBe('Ya lo revisamos')
-    expect(created[0].metadata.link).toBe('/panel/support?ticket=t1')
-    expect(created[0].metadata.ticketId).toBe('t1')
-    expect(created[0].metadata.agentId).toBe('a1')
+  it('registra los dos sockets (mensaje y cambio de estado)', () => {
+    const { sockets } = mount()
+    expect(typeof sockets.onTicketsMessageAdded).toBe('function')
+    expect(typeof sockets.onTicketsStatusChanged).toBe('function')
   })
 
-  it('mensaje del hotel → 0 notificaciones (lo escribió él mismo)', async () => {
-    created = []
-    const captured = setup()
-    await captured.sockets.onTicketsMessageAdded(ticket(), msg({ authorKind: 'hotel', authorName: 'Recepción' }))
+  it('mensaje de soporte → 1 notificación al hotel con el nombre del agente, el asunto y el link', async () => {
+    const { sockets, created } = mount()
+    await sockets.onTicketsMessageAdded(ticket(), message())
+
+    expect(created).toHaveLength(1)
+    const { dto, user } = created[0]
+    expect(dto.hotelId).toBe('h1')
+    expect(dto.type).toBe('support')
+    expect(dto.userId).toBeUndefined() // broadcast al hotel, no a un usuario puntual
+    expect(dto.title).toContain('Ana Soporte')
+    expect(dto.title).toContain('No puedo emitir facturas')
+    expect(dto.message).toContain('Ya lo estamos viendo')
+    expect(dto.metadata).toMatchObject({ ticketId: 'tk1', link: '/panel/support?ticket=tk1', agentName: 'Ana Soporte' })
+    expect(user.hotelId).toBe('h1')
+  })
+
+  it('mensaje del hotel → 0 notificaciones (el hotel no se avisa a sí mismo)', async () => {
+    const { sockets, created } = mount()
+    await sockets.onTicketsMessageAdded(ticket(), message({ authorKind: 'hotel', authorName: 'Rosa' }))
     expect(created).toHaveLength(0)
   })
 
-  it('notificaciones.create lanza → el socket resuelve sin lanzar (el mensaje ya está guardado)', async () => {
-    created = []
-    const spy = spyOn(console, 'error').mockImplementation(() => {})
-    try {
-      const captured = setup({ create: async () => { throw new Error('db down') } })
-      await expect(captured.sockets.onTicketsMessageAdded(ticket(), msg())).resolves.toBeUndefined()
-      await expect(captured.sockets.onTicketsUpdated(ticket({ status: 'resolved' }), adminChange('open'))).resolves.toBeUndefined()
-      expect(created).toHaveLength(0)
-      expect(spy).toHaveBeenCalledTimes(2)
-    } finally {
-      spy.mockRestore()
-    }
-  })
-
-  it('estado cambiado por admin → 1 notificación con nombre, estado legible y link', async () => {
-    created = []
-    const captured = setup()
-    await captured.sockets.onTicketsUpdated(ticket({ status: 'in_progress' }), adminChange('open'))
-
-    expect(created).toHaveLength(1)
-    expect(created[0].title).toBe('Ana marcó tu ticket «Wifi caído» como En progreso')
-    expect(created[0].type).toBe('system')
-    expect(created[0].metadata.link).toBe('/panel/support?ticket=t1')
-    expect(created[0].metadata.status).toBe('in_progress')
-    expect(created[0].metadata.agentId).toBe('a1')
-  })
-
-  it('sin cambio de estado, cambio hecho por el hotel o sin change → 0 notificaciones', async () => {
-    created = []
-    const captured = setup()
-    await captured.sockets.onTicketsUpdated(ticket({ status: 'open' }), adminChange('open'))
-    await captured.sockets.onTicketsUpdated(ticket({ status: 'closed' }), {
-      previous: ticket({ status: 'open' }),
-      actor: { id: 'u1', name: 'Recepción', role: 'admin', hotelId: 'h1', userType: 'merchant' },
+  it('cambio de estado → 1 notificación con el agente y el estado nuevo', async () => {
+    const { sockets, created } = mount()
+    await sockets.onTicketsStatusChanged(ticket({ status: 'resolved' }), {
+      from: 'open', to: 'resolved', actor: { id: 'u-agent', name: 'Ana Soporte', userType: 'admin' },
     })
-    await captured.sockets.onTicketsUpdated(ticket({ status: 'closed' }))
-    expect(created).toHaveLength(0)
+
+    expect(created).toHaveLength(1)
+    const { dto } = created[0]
+    expect(dto.type).toBe('support')
+    expect(dto.hotelId).toBe('h1')
+    expect(dto.title).toContain('Ana Soporte')
+    expect(dto.title).toContain('Resuelto')
+    expect(dto.message).toContain('Resuelto')
+    expect(dto.metadata.link).toBe('/panel/support?ticket=tk1')
   })
 
-  it('módulo notificaciones no montado → el socket resuelve sin lanzar', async () => {
-    const spy = spyOn(console, 'error').mockImplementation(() => {})
-    try {
-      const { ctx, captured } = makeCtx(['tickets'])
-      ticketsNotificacionesConnector(ctx)
-      await expect(captured.sockets.onTicketsMessageAdded(ticket(), msg())).resolves.toBeUndefined()
-      await expect(captured.sockets.onTicketsUpdated(ticket({ status: 'resolved' }), adminChange('open'))).resolves.toBeUndefined()
-      expect(spy).toHaveBeenCalledTimes(2)
-    } finally {
-      spy.mockRestore()
-    }
+  it('notificaciones.create lanza → se loguea y NO propaga', async () => {
+    const { sockets, created, errors } = mount({ createThrows: true })
+
+    await expect(sockets.onTicketsMessageAdded(ticket(), message())).resolves.toBeUndefined()
+    await expect(sockets.onTicketsStatusChanged(ticket(), {
+      to: 'in_progress', actor: { id: 'u-agent', name: 'Ana Soporte', userType: 'admin' },
+    })).resolves.toBeUndefined()
+
+    expect(created).toHaveLength(0)
+    expect(errors).toHaveLength(2)
+    expect(errors[0].meta).toMatchObject({ ticketId: 'tk1', hotelId: 'h1', event: 'message', error: 'db down' })
+    expect(errors[1].meta).toMatchObject({ ticketId: 'tk1', event: 'status', error: 'db down' })
+  })
+
+  it('notificaciones no montado → se loguea y NO propaga (satélite opcional)', async () => {
+    const { sockets, created, errors } = mount({ notificacionesAvailable: false })
+    await expect(sockets.onTicketsMessageAdded(ticket(), message())).resolves.toBeUndefined()
+    expect(created).toHaveLength(0)
+    expect(errors).toHaveLength(1)
   })
 })

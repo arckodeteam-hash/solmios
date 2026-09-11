@@ -195,22 +195,27 @@
             <div class="overflow-y-auto flex-1 p-6 space-y-4">
               <div><label for="support-categoria" class="block text-[10px] font-bold text-text-muted uppercase mb-2">Categoría *</label>
                 <select id="support-categoria" name="category" v-model="newTicket.category" class="w-full px-4 py-2.5 rounded-full border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
+                  <!-- Los `value` son los del backend (`TicketCategory`), NO el texto en español:
+                       mandaban "Técnico"/"Integraciones" contra un enum `technical|billing|…` y el
+                       alta del ticket moría en un 400 con un toast genérico. -->
                   <option value="">Seleccionar categoría</option>
-                  <option value="Técnico">Técnico</option>
-                  <option value="Integraciones">Integraciones (Canales, OTAs)</option>
-                  <option value="Facturación">Facturación Electrónica</option>
-                  <option value="Configuración">Configuración del Sistema</option>
-                  <option value="Capacitación">Capacitación / Ayuda</option>
-                  <option value="Sugerencia">Sugerencia de Mejora</option>
-                  <option value="Otro">Otro</option>
+                  <option value="technical">Técnico / Integraciones (Canales, OTAs)</option>
+                  <option value="billing">Facturación</option>
+                  <option value="reservation">Reservas</option>
+                  <option value="housekeeping">Limpieza</option>
+                  <option value="maintenance">Mantenimiento</option>
+                  <option value="general">Otro / Sugerencia de mejora</option>
                 </select>
               </div>
               <div><label for="support-prioridad" class="block text-[10px] font-bold text-text-muted uppercase mb-2">Prioridad *</label>
                 <select id="support-prioridad" name="priority" v-model="newTicket.priority" class="w-full px-4 py-2.5 rounded-full border border-border text-sm focus:outline-none focus:border-navy cursor-pointer">
-                  <option value="Baja">Baja — Sugerencia o mejora</option>
-                  <option value="Normal">Normal — Duda o configuración</option>
-                  <option value="Alta">Alta — Funcionalidad bloqueada</option>
-                  <option value="Urgente">Urgente — Sistema caído o overbooking</option>
+                  <!-- Ídem: `TicketPriority` es `low|medium|high|urgent`. Con "Baja"/"Normal" el
+                       campo se veía VACÍO (ningún option matcheaba el default `medium`) y elegir
+                       cualquiera daba 400. -->
+                  <option value="low">Baja — Sugerencia o mejora</option>
+                  <option value="medium">Normal — Duda o configuración</option>
+                  <option value="high">Alta — Funcionalidad bloqueada</option>
+                  <option value="urgent">Urgente — Sistema caído o overbooking</option>
                 </select>
               </div>
               <div><label for="support-asunto" class="block text-[10px] font-bold text-text-muted uppercase mb-2">Asunto *</label><input id="support-asunto" name="subject" required aria-required="true" v-model="newTicket.subject" type="text" class="w-full px-4 py-2.5 rounded-full border border-border text-sm focus:outline-none focus:border-navy" placeholder="Descripción corta del problema"></div>
@@ -314,6 +319,11 @@ const quickLinks = [
 const tickets = ref<any[]>([])
 
 const PRI_EN: Record<string, string> = { low: 'Baja', medium: 'Normal', high: 'Alta', urgent: 'Urgente' }
+/** Igual que PRI_EN/EST_EN: el backend guarda en inglés y el hotelero lee en español. */
+const CAT_ES: Record<string, string> = {
+  technical: 'Técnico', billing: 'Facturación', reservation: 'Reservas',
+  housekeeping: 'Limpieza', maintenance: 'Mantenimiento', general: 'Otro',
+}
 const EST_EN: Record<string, string> = { open: 'Abierto', in_progress: 'En Progreso', resolved: 'Resuelto', closed: 'Cerrado' }
 
 const route = useRoute()
@@ -344,7 +354,7 @@ async function loadData() {
         priority: PRI_EN[t.priority] ?? 'Normal',
         status: EST_EN[t.status] ?? 'Abierto',
         rawStatus: t.status,
-        category: t.category,
+        category: CAT_ES[t.category] ?? t.category,
         createdAt: t.createdAt ? String(t.createdAt).replace('T', ' ').slice(0, 16) : '',
         // REQ-SOP-03: assignee ya viene resuelto por el server (usecases/enrich.ts) — nunca se
         // muestra el id crudo de assignedTo.

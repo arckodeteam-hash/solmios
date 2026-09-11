@@ -106,6 +106,27 @@ describe('TicketsService', () => {
       expect(after.data).toHaveLength(1)
     })
 
+    it('#197: super_admin CON hotelId en el token ve al instante la respuesta en un ticket de OTRO hotel', async () => {
+      // El seed de prod le da hotelId al super admin. Antes la clave del listado usaba ESE hotel
+      // como bucket de versión; la mutación en h2 bumpeaba h2 + all, y /admin/support seguía
+      // sirviendo la página vieja hasta el TTL.
+      const adminConHotel = { id: 'admin1', role: 'super_admin', hotelId: 'hAdmin' }
+      const store: TicketsDTO[] = [{ id: 't2', hotelId: 'h2', userId: 'u2', subject: 'De h2', status: 'open' } as TicketsDTO]
+      const repo = makeRepo({
+        findById: async (id) => store.find((t) => t.id === id) ?? null,
+        update: async (id, patch) => { const t = store.find((x) => x.id === id)!; Object.assign(t, patch); return t },
+        paginate: async () => ({ data: [...store], total: store.length, limit: 20, offset: 0, pages: 1 }),
+      })
+      const cache = new MemoryCache()
+      const svc = new TicketsService(repo, log, cache, makeUserRepo(), fakeAuth, makeHotelRepo())
+
+      expect((await svc.list({}, adminConHotel)).data[0]!.status).toBe('open')
+      await svc.update('t2', { status: 'in_progress' }, adminConHotel)
+      expect((await svc.list({}, adminConHotel)).data[0]!.status).toBe('in_progress')
+      // Y filtrando por hotel usa el bucket de ESE hotel, que también se bumpeó.
+      expect((await svc.list({ hotelId: 'h2' }, adminConHotel)).data[0]!.status).toBe('in_progress')
+    })
+
     it('dos consultas con filtros distintos no comparten entrada', async () => {
       const repo = makeRepo({
         paginate: async (filters: any) => ({
@@ -265,32 +286,6 @@ describe('TicketsService', () => {
       const admin = { id: 'admin1', role: 'super_admin', hotelId: undefined, userType: 'admin' }
       const result = await svc.update('t1', { status: 'in_progress' }, admin)
       expect(result.assignedTo).toBe('agent-existing')
-    })
-
-    // REQ-SOP-06: el connector de notificaciones necesita el estado anterior y el nombre real
-    // del actor (el JWT no lo trae) — lo resuelve el servidor vía userRepo.
-    it('onTicketsUpdated recibe previous.status y actor.name', async () => {
-      const ticket = { id: 't1', hotelId: 'h1', subject: 'Issue', status: 'open' } as TicketsDTO
-      const repo = makeRepo({
-        findById: async () => ticket,
-        update: async (id, data) => ({ id, hotelId: 'h1', subject: 'Issue', ...data } as TicketsDTO),
-      })
-      const userRepo = {
-        findById: async () => ({ id: 'admin1', name: 'Agente Soporte', hotelId: 'platform', role: 'super_admin' }),
-        findMany: async () => [],
-      } as unknown as RepositoryAdapter<any>
-      const svc = new TicketsService(repo, log, silentCache, userRepo, fakeAuth, makeHotelRepo())
-      let socketItem: any = null
-      let socketChange: any = null
-      svc.setSockets({ onTicketsUpdated: async (t, c) => { socketItem = t; socketChange = c } })
-
-      const result = await svc.update('t1', { status: 'in_progress' }, adminUser)
-
-      expect(socketItem).toEqual(result)
-      expect(socketItem.status).toBe('in_progress')
-      expect(socketChange.previous.status).toBe('open')
-      expect(socketChange.actor.id).toBe('admin1')
-      expect(socketChange.actor.name).toBe('Agente Soporte')
     })
 
     // REQ-SOP-01/03: el hotel no puede resolver por su cuenta el nombre de un agente que no

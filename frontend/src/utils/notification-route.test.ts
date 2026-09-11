@@ -41,6 +41,7 @@ describe('resolveNotificationRoute — sin link, conserva el mapeo anterior', ()
     expect(resolveNotificationRoute({ type: 'housekeeping' })).toBe('/panel/operaciones/limpieza')
     expect(resolveNotificationRoute({ type: 'maintenance' })).toBe('/panel/operaciones/mantenimiento')
     expect(resolveNotificationRoute({ type: 'review' })).toBe('/panel/resenas')
+    expect(resolveNotificationRoute({ type: 'support' })).toBe('/panel/support') // sin link (aviso viejo) igual abre soporte
   })
 
   it('sin link, sin reservationId y con type no mapeado → null (no navega)', () => {
