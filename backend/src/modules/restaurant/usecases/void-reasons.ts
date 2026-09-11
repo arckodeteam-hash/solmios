@@ -39,30 +39,37 @@ export function normalizeReasons(input: unknown): string[] {
   return out
 }
 
+/** Qué lista de motivos: la clave en `configuration` y su default. #215 reusa esto para los descuentos. */
+export interface ReasonListSpec { key: string; defaults: readonly string[]; description: string }
+export const VOID_REASONS_SPEC: ReasonListSpec = { key: VOID_REASONS_KEY, defaults: DEFAULT_VOID_REASONS, description: 'Motivos de anulación del restaurante' }
+
 /** Lista del hotel o el default. Una fila corrupta (no-array) cae al default, no a 500. */
-export async function getVoidReasons(deps: VoidReasonsDeps, user: CurrentUser): Promise<{ reasons: string[]; isDefault: boolean }> {
+export async function getReasonList(deps: VoidReasonsDeps, user: CurrentUser, spec: ReasonListSpec): Promise<{ reasons: string[]; isDefault: boolean }> {
   const hotelId = hotelFor(user)
-  const row = await deps.config.findOne({ hotelId, key: VOID_REASONS_KEY })
+  const row = await deps.config.findOne({ hotelId, key: spec.key })
   const value = row?.value
   if (Array.isArray(value) && value.length && value.every((v) => typeof v === 'string' && v.trim())) {
     return { reasons: value.map((v: string) => v.trim()), isDefault: false }
   }
-  return { reasons: [...DEFAULT_VOID_REASONS], isDefault: true }
+  return { reasons: [...spec.defaults], isDefault: true }
 }
 
 /** Reemplaza la lista del hotel (UPSERT en configuration). */
-export async function setVoidReasons(deps: VoidReasonsDeps, input: unknown, user: CurrentUser): Promise<{ reasons: string[]; isDefault: boolean }> {
+export async function setReasonList(deps: VoidReasonsDeps, input: unknown, user: CurrentUser, spec: ReasonListSpec): Promise<{ reasons: string[]; isDefault: boolean }> {
   const hotelId = hotelFor(user)
   const reasons = normalizeReasons(input)
   const now = new Date().toISOString()
-  const row = await deps.config.findOne({ hotelId, key: VOID_REASONS_KEY })
+  const row = await deps.config.findOne({ hotelId, key: spec.key })
   if (row) {
     await deps.config.update(row.id, { value: reasons, updatedAt: now } as any)
   } else {
     await deps.config.create({
-      hotelId, key: VOID_REASONS_KEY, value: reasons,
-      description: 'Motivos de anulación del restaurante', createdAt: now, updatedAt: now,
+      hotelId, key: spec.key, value: reasons,
+      description: spec.description, createdAt: now, updatedAt: now,
     } as any)
   }
   return { reasons, isDefault: false }
 }
+
+export const getVoidReasons = (deps: VoidReasonsDeps, user: CurrentUser) => getReasonList(deps, user, VOID_REASONS_SPEC)
+export const setVoidReasons = (deps: VoidReasonsDeps, input: unknown, user: CurrentUser) => setReasonList(deps, input, user, VOID_REASONS_SPEC)

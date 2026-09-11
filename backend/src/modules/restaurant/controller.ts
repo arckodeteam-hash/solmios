@@ -12,6 +12,7 @@ import {
   BillSchema, ChargeToRoomSchema, PaySchema,
   KdsLineStatusSchema,
   VoidLineSchema, CancelOrderSchema, VoidReasonsSchema,
+  DiscountSchema, DiscountPolicySchema,
   CreateModifierGroupSchema, UpdateModifierGroupSchema,
   CreateModifierSchema, UpdateModifierSchema,
   CreateComboSchema, UpdateComboSchema,
@@ -208,6 +209,40 @@ export class RestaurantController {
     this.logger.info('PUT /restaurant/void-reasons')
     const data = validateSchema(VoidReasonsSchema, req.body) as { reasons: unknown }
     return { status: 200, body: await this.service.setVoidReasons(data.reasons, req.user as any) }
+  }
+
+  // ─── Descuentos y cortesías (#215) ───
+  async applyOrderDiscount(req: HttpRequest) {
+    this.logger.info('POST /restaurant/orders/:id/discount', { id: req.params.id })
+    const data = validateSchema(DiscountSchema, req.body)
+    const item = await this.service.applyOrderDiscount(req.params.id, data as any, req.user as any)
+    return { status: 200, body: item }
+  }
+  // Sin body (no hay nada que validar): quita el descuento de la comanda.
+  async removeOrderDiscount(req: HttpRequest) {
+    this.logger.info('DELETE /restaurant/orders/:id/discount', { id: req.params.id })
+    const item = await this.service.removeOrderDiscount(req.params.id, req.user as any)
+    return { status: 200, body: item }
+  }
+  async applyLineDiscount(req: HttpRequest) {
+    this.logger.info('POST /restaurant/orders/:id/items/:lineId/discount', { id: req.params.id, lineId: req.params.lineId })
+    const data = validateSchema(DiscountSchema, req.body)
+    const item = await this.service.applyLineDiscount(req.params.id, req.params.lineId, data as any, req.user as any)
+    return { status: 200, body: item }
+  }
+  async removeLineDiscount(req: HttpRequest) {
+    this.logger.info('DELETE /restaurant/orders/:id/items/:lineId/discount', { id: req.params.id, lineId: req.params.lineId })
+    const item = await this.service.removeLineDiscount(req.params.id, req.params.lineId, req.user as any)
+    return { status: 200, body: item }
+  }
+  async discountPolicy(req: HttpRequest) {
+    this.logger.info('GET /restaurant/discount-policy')
+    return { status: 200, body: await this.service.getDiscountPolicy(req.user as any) }
+  }
+  async setDiscountPolicy(req: HttpRequest) {
+    this.logger.info('PUT /restaurant/discount-policy')
+    const data = validateSchema(DiscountPolicySchema, req.body)
+    return { status: 200, body: await this.service.setDiscountPolicy(data as any, req.user as any) }
   }
 
   // ─── Cuenta + cobro (RES-5) ───

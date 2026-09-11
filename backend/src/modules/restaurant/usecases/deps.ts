@@ -19,6 +19,7 @@ import type * as stationsCrud from './stations-crud'
 import type * as combosCrud from './combos-crud'
 import type * as foodCost from './food-cost'
 import type * as voidReasons from './void-reasons'
+import type * as discounts from './discounts'
 import type * as inHouse from './in-house'
 import type * as publicMenuUsecase from './public-menu'
 import type { ReservationPort } from './reservation-port'
@@ -69,6 +70,11 @@ export function orderLinesDeps(w: RestaurantWiring): orderLines.OrderLinesDeps {
   return { orders: w.orders, lines: w.lines, items: w.items, categories: w.categories, stations: w.stations, config: w.config, hotels: w.hotels, userRepo: w.userRepo, auth: w.auth, modifierGroups: w.modifierGroups, modifiers: w.modifiers, combos: w.combos, comboItems: w.comboItems, audit: w.auditPort, logger: w.logger, sockets: w.sockets }
 }
 export function voidReasonsDeps(w: RestaurantWiring): voidReasons.VoidReasonsDeps { if (!w.config) throw new ValidationError(NO_ORDERS); return { config: w.config } }
+/** #215: descuentos/cortesías. Mismos repos que las líneas + config (tope y motivos) + audit. */
+export function discountsDeps(w: RestaurantWiring): discounts.DiscountsDeps {
+  if (!w.orders || !w.lines || !w.config) throw new ValidationError(NO_ORDERS)
+  return { orders: w.orders, lines: w.lines, config: w.config, userRepo: w.userRepo, auth: w.auth, audit: w.auditPort, logger: w.logger, sockets: w.sockets }
+}
 export function modifierDeps(w: RestaurantWiring): modifiersCrud.ModifiersCrudDeps {
   if (!w.modifierGroups || !w.modifiers) throw new ValidationError('Modificadores no configurados')
   return { modifierGroups: w.modifierGroups, modifiers: w.modifiers, items: w.items, userRepo: w.userRepo, auth: w.auth }

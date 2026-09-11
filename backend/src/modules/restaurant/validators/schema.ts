@@ -231,4 +231,19 @@ export const VoidReasonsSchema: Record<string, ValidationRule> = {
   reasons: { type: 'array' as const, required: true, min: 1 },
 }
 
+// ─── Descuentos y cortesías (#215) ───
+// `type` enum, `value` > 0 (y ≤ 100 si percent — lo valida el usecase, que también aplica el tope por
+// rol), `reason` obligatorio: sin motivo el descuento es un faltante de caja sin dueño.
+export const DISCOUNT_TYPES = ['percent', 'amount'] as const
+export const DiscountSchema: Record<string, ValidationRule> = {
+  type: { type: 'string' as const, required: true, enum: [...DISCOUNT_TYPES] },
+  value: { type: 'number' as const, required: true },
+  reason: { type: 'text' as const, required: true, min: 1, max: 500 },
+}
+// Política del hotel: tope (0..100, lo acota el usecase) y/o motivos predefinidos.
+export const DiscountPolicySchema: Record<string, ValidationRule> = {
+  maxDiscountPercent: { type: 'number' as const },
+  reasons: { type: 'array' as const, min: 1 },
+}
+
 export const RestaurantValidator = { createStation: CreateStationSchema, updateStation: UpdateStationSchema }

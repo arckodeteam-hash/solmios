@@ -157,3 +157,38 @@ describe('#210 — comensales', () => {
     expect(salon, 'el campo de comensales necesita id para el label').toMatch(/id="mesa-comensales"/)
   })
 })
+
+// ─── #215 (REST-13): descuentos y cortesías en la comanda ───
+describe('#215 — descuento por línea y de la comanda', () => {
+  it('hay botón de descuento por línea y de la comanda, gateados por `restaurant:discount` (no por edit ni pay)', () => {
+    const src = comanda()
+    const tpl = templateOf(src)
+    expect(src).toMatch(/const discountPerm = computed\(\(\) => can\('restaurant', 'discount'\)\)/)
+    const lineBtn = (tpl.match(/<button[^>]*openDiscount\(\{ kind: 'line', line: l \}\)[^>]*>/g) ?? [])[0]
+    expect(lineBtn, 'no hay botón de descuento por línea').toBeDefined()
+    expect(lineBtn).toMatch(/discountPerm/)
+    expect(lineBtn, 'una línea anulada no se descuenta').toMatch(/isLineActive\(l\)/)
+    const orderBtn = (tpl.match(/<button[^>]*openDiscount\(\{ kind: 'order' \}\)[^>]*>/g) ?? [])[0]
+    expect(orderBtn, 'no hay botón de descuento de la comanda').toBeDefined()
+    expect(orderBtn).toMatch(/discountPerm/)
+  })
+
+  it('el ticket muestra "Descuento (motivo) −X" de la comanda y el descuento/cortesía de cada línea; el modal es DiscountModal', () => {
+    const src = comanda()
+    const tpl = templateOf(src)
+    expect(tpl).toMatch(/data-testid="order-discount-row"/)
+    expect(tpl).toMatch(/order\.discountReason/)
+    expect(tpl).toMatch(/lineDiscountLabel\(l\)/)
+    expect(src).toMatch(/import DiscountModal from '@\/components\/features\/restaurante\/DiscountModal\.vue'/)
+    expect(tpl).toMatch(/<DiscountModal v-if="discountTarget"/)
+  })
+
+  it('confirmar llama al server (applyLineDiscount / applyOrderDiscount) y recarga: los totales NUNCA se calculan en el cliente', () => {
+    const src = comanda()
+    expect(src).toMatch(/RestaurantService\.applyLineDiscount\(orderId\.value, t\.line\.id, payload\)/)
+    expect(src).toMatch(/RestaurantService\.applyOrderDiscount\(orderId\.value, payload\)/)
+    expect(src).toMatch(/RestaurantService\.removeLineDiscount\(orderId\.value, t\.line\.id\)/)
+    expect(src).toMatch(/RestaurantService\.removeOrderDiscount\(orderId\.value\)/)
+    expect(src, 'subtotal/impuesto/total tienen que salir del server').not.toMatch(/order\.value\.subtotal\s*=/)
+  })
+})

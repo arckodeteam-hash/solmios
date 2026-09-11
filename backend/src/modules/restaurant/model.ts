@@ -118,6 +118,19 @@ export const RestaurantOrderModel: ModelDefinition = {
     // abrirla); en room_service/takeaway queda null. Lo consume el reporte del día (ticket promedio
     // por comensal). null en las filas anteriores a la columna = comanda sin dato, NO "cero comensales".
     covers: { type: 'number' },
+    // #215 — descuento a nivel COMANDA (sobre la suma de líneas ya descontadas): `discountType`
+    // 'percent' | 'amount', `discountValue` lo que se pidió (el % o el monto), `discountAmount` lo que
+    // efectivamente se restó (lo calcula recomputeTotals: un monto mayor que la base se recorta),
+    // `discountReason` obligatorio, `discountBy` users.id, `discountAt` ISO. null = sin descuento.
+    // `discountTotal` = Σ descuentos de línea + descuento de comanda: lo que el ticket muestra como
+    // "Descuentos" y lo que lee el cierre del día (#213) sin recorrer las líneas.
+    discountType: { type: 'string' },
+    discountValue: { type: 'number' },
+    discountAmount: { type: 'number', default: 0 },
+    discountReason: { type: 'text' },
+    discountBy: { type: 'string' },
+    discountAt: { type: 'string' },
+    discountTotal: { type: 'number', default: 0 },
   },
   timestamps: true,
 }
@@ -167,6 +180,16 @@ export const RestaurantOrderItemModel: ModelDefinition = {
     voidReason: { type: 'text' },
     voidedBy: { type: 'string' },   // users.id de quien anuló
     voidedAt: { type: 'string' },
+    // #215 — descuento a nivel LÍNEA. `lineTotal` sigue siendo el neto BRUTO (precio + modificadores ×
+    // cantidad, computeLineTotal); lo que se resta vive en `discountAmount` (recalculado por
+    // recomputeTotals al cambiar la cantidad: un % se mantiene, un monto se recorta al total de la
+    // línea). Cortesía = percent 100. La línea se mantiene en la venta (no es una anulación).
+    discountType: { type: 'string' },
+    discountValue: { type: 'number' },
+    discountAmount: { type: 'number', default: 0 },
+    discountReason: { type: 'text' },
+    discountBy: { type: 'string' },
+    discountAt: { type: 'string' },
   },
   timestamps: true,
 }

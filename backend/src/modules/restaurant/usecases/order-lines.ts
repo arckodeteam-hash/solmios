@@ -41,7 +41,7 @@ export interface OrderLinesDeps {
 // Una vez liquidada o cancelada, la comanda no acepta cambios de líneas. fix-refund-pos-card:
 // 'processing_payment' también bloquea — el monto ya viaja en una Checkout Session de Stripe abierta;
 // si se editara una línea acá, el total recalculado NO coincidiría con lo que Stripe va a confirmar.
-const LINES_LOCKED: OrderDTO['status'][] = ['charged', 'paid', 'cancelled', 'processing_payment']
+export const LINES_LOCKED: OrderDTO['status'][] = ['charged', 'paid', 'cancelled', 'processing_payment']
 // auditSafely exige un logger; si el service no inyectó uno (tests viejos), el fallo del audit se traga
 // igual que con el logger real — auditar nunca tumba la operación de negocio.
 const silentLogger = { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} } as unknown as Logger
@@ -130,7 +130,8 @@ async function hotelTaxRate(config: RepositoryAdapter<any>, hotels: RepositoryAd
   } catch { return 0 }
 }
 
-async function loadOrderForEdit(deps: OrderLinesDeps, orderId: string, user: CurrentUser): Promise<OrderDTO> {
+/** Comanda editable: existe, es del hotel del usuario y no está bloqueada (LINES_LOCKED → 409). #215 lo reusa para descuentos. */
+export async function loadOrderForEdit(deps: Pick<OrderLinesDeps, 'orders' | 'userRepo' | 'auth'>, orderId: string, user: CurrentUser): Promise<OrderDTO> {
   const order = await deps.orders.findById(orderId)
   if (!order) throw new NotFoundError('Comanda no encontrada')
   const me = await deps.userRepo.findById(user.id)

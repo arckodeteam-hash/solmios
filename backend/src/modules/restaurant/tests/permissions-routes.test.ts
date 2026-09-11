@@ -347,3 +347,91 @@ describe('mapa de permisos — restaurant:pay por rol', () => {
     expect(MODULE_ACTIONS.restaurant).toContain('pay')
   })
 })
+
+describe('#215 — POST /api/restaurant/orders/:id/discount y /items/:lineId/discount: permiso propio, tope, motivo, 409', () => {
+  const body = (value: number, reason = 'Promoción', type = 'percent') => ({ type, value, reason })
+
+  it('waiter (sin restaurant:discount) → 403 y la comanda no cambia; kitchen también', async () => {
+    const { router, auth, rows } = mount()
+    for (const role of ['waiter', 'kitchen']) {
+      const res = await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, role), body: body(10) })
+      expect(res.status).toBe(403)
+      const line = await router.resolve('POST', '/api/restaurant/orders/o-sent/items/l-sent/discount', { headers: headers(auth, role), body: body(10) })
+      expect(line.status).toBe(403)
+    }
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')).toMatchObject({ subtotal: 100, total: 100 })
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')?.discountType).toBeUndefined()
+  })
+
+  it('receptionist con 25 % y tope por defecto 20 → 403 "supera el máximo permitido (20 %)"; con 10 % → 200 y subtotal 90', async () => {
+    const { router, auth, rows } = mount()
+    const denied = await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'receptionist'), body: body(25) })
+    expect(denied.status).toBe(403)
+    expect(JSON.stringify(denied.body)).toContain('supera el máximo permitido (20 %)')
+    const ok = await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'receptionist'), body: body(10, 'Huésped del hotel') })
+    expect(ok.status).toBe(200)
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')).toMatchObject({ subtotal: 90, discountAmount: 10, discountReason: 'Huésped del hotel', discountBy: 'user-receptionist' })
+  })
+
+  it('hotel_admin: cortesía (100 %) de la línea → 200, la línea sigue new con discountAmount = lineTotal', async () => {
+    const { router, auth, rows } = mount()
+    const res = await router.resolve('POST', '/api/restaurant/orders/o-sent/items/l-sent/discount', { headers: headers(auth, 'hotel_admin'), body: body(100, 'Cortesía de la casa') })
+    expect(res.status).toBe(200)
+    const line = rows.RestaurantOrderItems.find((l) => l.id === 'l-sent')
+    expect(line).toMatchObject({ status: 'new', lineTotal: 100, discountAmount: 100, discountValue: 100, discountReason: 'Cortesía de la casa' })
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')).toMatchObject({ subtotal: 0, total: 0, discountTotal: 100 })
+  })
+
+  it('sin motivo → 400 de validación (el schema lo exige) y sin cambios; tipo "xyz" también 400', async () => {
+    const { router, auth, rows } = mount()
+    const noReason = await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'hotel_admin'), body: { type: 'percent', value: 10 } })
+    expect(noReason.status).toBe(400)
+    const badType = await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'hotel_admin'), body: body(10, 'x', 'xyz') })
+    expect(badType.status).toBe(400)
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')).toMatchObject({ subtotal: 100 })
+  })
+
+  it('comanda paid → 409 (bloqueada) aunque sea hotel_admin', async () => {
+    const { router, auth, rows } = mount()
+    rows.RestaurantOrders.find((o) => o.id === 'o-sent')!.status = 'paid'
+    const res = await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'hotel_admin'), body: body(10) })
+    expect(res.status).toBe(409)
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')).toMatchObject({ subtotal: 100 })
+  })
+
+  it('DELETE .../discount quita el descuento (200) y el waiter no puede (403); GET /discount-policy: waiter 403, receptionist tope 20, hotel_admin 100', async () => {
+    const { router, auth, rows } = mount()
+    await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'hotel_admin'), body: body(10) })
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')?.subtotal).toBe(90)
+    const denied = await router.resolve('DELETE', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'waiter') })
+    expect(denied.status).toBe(403)
+    const removed = await router.resolve('DELETE', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'hotel_admin') })
+    expect(removed.status).toBe(200)
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')).toMatchObject({ subtotal: 100, discountType: null })
+
+    expect((await router.resolve('GET', '/api/restaurant/discount-policy', { headers: headers(auth, 'waiter') })).status).toBe(403)
+    const recep = await router.resolve('GET', '/api/restaurant/discount-policy', { headers: headers(auth, 'receptionist') })
+    expect(recep.status).toBe(200)
+    expect(recep.body).toMatchObject({ maxDiscountPercent: 20, isDefault: true })
+    const admin = await router.resolve('GET', '/api/restaurant/discount-policy', { headers: headers(auth, 'hotel_admin') })
+    expect((admin.body as any).maxDiscountPercent).toBe(100)
+    // PUT es config de la carta: receptionist (sin restaurant-catalog:edit) 403; hotel_admin 200 y el tope cambia para recepción.
+    expect((await router.resolve('PUT', '/api/restaurant/discount-policy', { headers: headers(auth, 'receptionist'), body: { maxDiscountPercent: 50 } })).status).toBe(403)
+    expect((await router.resolve('PUT', '/api/restaurant/discount-policy', { headers: headers(auth, 'hotel_admin'), body: { maxDiscountPercent: 50 } })).status).toBe(200)
+    expect(((await router.resolve('GET', '/api/restaurant/discount-policy', { headers: headers(auth, 'receptionist') })).body as any).maxDiscountPercent).toBe(50)
+  })
+
+  it('fila de roles real de prod (receptionist sin discount): 403; pasada por discountPermissionsFor (migrate-db.ts) → 200', async () => {
+    const { discountPermissionsFor } = await import('../../../../scripts/backfill-restaurant-discount-permission')
+    const legacy = {
+      id: 'role-recep', hotelId: 'h1', name: 'receptionist', system: 1,
+      permissions: ['reservations:view', 'restaurant:view', 'restaurant:create', 'restaurant:edit', 'restaurant:pay'],
+    }
+    const before = mount([legacy])
+    expect((await before.router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(before.auth, 'receptionist'), body: body(10) })).status).toBe(403)
+    const next = discountPermissionsFor(legacy.name, JSON.stringify(legacy.permissions))
+    expect(next).toEqual([...legacy.permissions, 'restaurant:discount'])
+    const after = mount([{ ...legacy, permissions: next }])
+    expect((await after.router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(after.auth, 'receptionist'), body: body(10) })).status).toBe(200)
+  })
+})

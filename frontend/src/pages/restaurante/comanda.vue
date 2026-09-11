@@ -8,12 +8,15 @@
 // #207: quitar (✕) borra SOLO mientras la línea no llegó a cocina (comanda `open`, o agregada después
 // y sin confirmar); una vez enviada abre el modal de motivo y ANULA (queda tachada con el motivo, sale
 // del total). Cancelar la comanda también pide motivo. Cerrar el modal no cambia nada.
+// #215: "Descuento" por línea y de la comanda (permiso `restaurant:discount`, hotel_admin y recepción por
+// defecto): DiscountModal pide tipo, valor y motivo; el server recalcula y aplica el tope del rol. El
+// ticket muestra "Descuento (motivo) −X" y una cortesía (100 %) sigue en la comanda: no es una anulación.
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  RestaurantService, isLineActive, roomServiceLabel,
+  RestaurantService, isLineActive, roomServiceLabel, isCourtesy,
   type OrderWithLines, type MenuCategory, type MenuItem, type OrderLine, type ModifierGroup, type Combo,
-  type AllergenTag, type LineStatus,
+  type AllergenTag, type LineStatus, type DiscountPolicy, type DiscountPayload,
   ORDER_STATUS_LABELS, ORDER_TYPE_LABELS, LINE_STATUS_LABELS, LINE_STATUS_BADGE, ALLERGEN_LABELS,
 } from '@/services/Restaurant.service'
 import { SettingsService } from '@/services/Settings.service'
@@ -23,6 +26,7 @@ import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import VoidReasonModal from '@/components/features/restaurante/VoidReasonModal.vue'
+import DiscountModal from '@/components/features/restaurante/DiscountModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
 
@@ -56,6 +60,8 @@ const deletePerm = computed(() => can('restaurant', 'delete'))
 const canRemoveLine = computed(() => (order.value?.status === 'open' ? createPerm.value : createPerm.value && deletePerm.value))
 // Cobrar es `restaurant:pay` (#205): el botón lleva a /cobrar/:id, que el router gatea con ese permiso.
 const payPerm = computed(() => can('restaurant', 'pay'))
+// #215: descontar es un permiso propio; el mozo no lo tiene salvo que el hotel lo habilite en Roles.
+const discountPerm = computed(() => can('restaurant', 'discount'))
 
 // La comanda es editable solo antes de facturar/cobrar/cancelar. fix-refund-pos-card:
 // 'processing_payment' también bloquea (Cobrar/Cancelar) — el cobro con tarjeta ya abrió una Checkout
@@ -94,6 +100,61 @@ async function confirmVoid(reason: string) {
   finally { voidBusy.value = false }
 }
 const money = (n: number): string => `${currencySymbol(currency.value)}${Number(n || 0).toFixed(2)}`
+
+// ─── #215: descuentos y cortesías ─────────────────────────────────────────────────────────────────
+const discountPolicy = ref<DiscountPolicy | null>(null)
+const discountTarget = ref<{ kind: 'order' } | { kind: 'line'; line: OrderLine } | null>(null)
+const discountBusy = ref(false)
+// Base del descuento de comanda = suma de líneas vivas ya descontadas (lo mismo que usa el server).
+const orderDiscountBase = computed(() => Math.round(activeLines.value.reduce((s, l) => s + Number(l.lineTotal || 0) - Number(l.discountAmount || 0), 0) * 100) / 100)
+const discountTitle = computed(() => (discountTarget.value?.kind === 'line' ? 'Descuento en la línea' : 'Descuento de la comanda'))
+const discountSubtitle = computed(() => (discountTarget.value?.kind === 'line' ? `${discountTarget.value.line.quantity}× ${discountTarget.value.line.name}` : 'Sobre el total de la comanda, después de los descuentos por línea.'))
+const discountBase = computed(() => (discountTarget.value?.kind === 'line' ? Number(discountTarget.value.line.lineTotal || 0) : orderDiscountBase.value))
+const discountCurrent = computed(() => {
+  const t = discountTarget.value
+  const src = t?.kind === 'line' ? t.line : order.value
+  return src?.discountType ? { type: src.discountType, value: Number(src.discountValue || 0), reason: src.discountReason } : null
+})
+/** "Cortesía · motivo" o "Descuento 10 % · motivo" debajo de la línea. */
+function lineDiscountLabel(l: OrderLine): string {
+  if (!l.discountType || !Number(l.discountAmount)) return ''
+  const head = isCourtesy(l) ? 'Cortesía' : l.discountType === 'percent' ? `Descuento ${Number(l.discountValue)} %` : 'Descuento'
+  return l.discountReason ? `${head} · ${l.discountReason}` : head
+}
+function openDiscount(target: { kind: 'order' } | { kind: 'line'; line: OrderLine }) {
+  if (!editable.value || !discountPerm.value || sending.value) return
+  if (target.kind === 'line' && (!isLineActive(target.line) || target.line.kind === 'combo_component')) return
+  if (target.kind === 'order' && orderDiscountBase.value <= 0) { toast.warning('La comanda no tiene monto para descontar'); return }
+  discountTarget.value = target
+}
+function closeDiscount() { if (!discountBusy.value) discountTarget.value = null }
+async function confirmDiscount(payload: DiscountPayload) {
+  const t = discountTarget.value
+  if (!t || discountBusy.value) return
+  discountBusy.value = true
+  try {
+    if (t.kind === 'line') await RestaurantService.applyLineDiscount(orderId.value, t.line.id, payload)
+    else await RestaurantService.applyOrderDiscount(orderId.value, payload)
+    discountTarget.value = null
+    await reloadOrder()
+    toast.success(payload.type === 'percent' && payload.value === 100 ? 'Cortesía aplicada' : 'Descuento aplicado')
+  } catch (e: unknown) { toast.error(e instanceof Error ? e.message : 'No se pudo aplicar el descuento') }
+  finally { discountBusy.value = false }
+}
+async function removeDiscount() {
+  const t = discountTarget.value
+  if (!t || discountBusy.value) return
+  discountBusy.value = true
+  try {
+    if (t.kind === 'line') await RestaurantService.removeLineDiscount(orderId.value, t.line.id)
+    else await RestaurantService.removeOrderDiscount(orderId.value)
+    discountTarget.value = null
+    await reloadOrder()
+    toast.success('Descuento quitado')
+  } catch (e: unknown) { toast.error(e instanceof Error ? e.message : 'No se pudo quitar el descuento') }
+  finally { discountBusy.value = false }
+}
+
 // F5 — tags de alérgenos/info dietética: SOLO informativos, nunca bloquean addItem/addCombo.
 const allergenLabel = (tag: string): string => ALLERGEN_LABELS[tag as AllergenTag] ?? tag
 
@@ -124,14 +185,17 @@ async function reloadOrder() {
 async function load() {
   loading.value = true
   try {
-    const [cat, it, combosRes, settings, reasons] = await Promise.all([
+    const [cat, it, combosRes, settings, reasons, policy] = await Promise.all([
       RestaurantService.listCategories(),
       RestaurantService.listItems(),
       RestaurantService.listCombos(),
       SettingsService.get().catch(() => null),
       RestaurantService.voidReasons().catch(() => null),   // sin lista, el modal ofrece solo "Otro"
+      // #215: tope y motivos de descuento, solo si puede descontar. Sin política el modal igual abre (el server decide).
+      discountPerm.value ? RestaurantService.discountPolicy().catch(() => null) : Promise.resolve(null),
     ])
     voidReasons.value = reasons?.reasons ?? []
+    discountPolicy.value = policy
     categories.value = cat.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
     items.value = it.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
     combos.value = combosRes.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
@@ -485,7 +549,11 @@ function cancel() {
                       {{ lineBadges.get(l.id)!.label }}
                     </span>
                     <div class="text-[11px] text-text-muted tabular-nums">
-                      {{ money(l.unitPrice) }} c/u · {{ money(l.lineTotal) }}
+                      {{ money(l.unitPrice) }} c/u · <span :class="l.discountAmount ? 'line-through' : ''">{{ money(l.lineTotal) }}</span>
+                    </div>
+                    <!-- #215: descuento/cortesía de la línea con su motivo. La línea sigue viva (no es una anulación). -->
+                    <div v-if="lineDiscountLabel(l)" :data-testid="`line-discount-${l.id}`" class="text-[11px] font-bold text-coral">
+                      {{ lineDiscountLabel(l) }} <span class="tabular-nums">−{{ money(l.discountAmount ?? 0) }}</span>
                     </div>
                   </template>
                   <!-- #210 — nota de la línea ("sin cebolla"): viaja al KDS y se ve debajo del plato. -->
@@ -497,6 +565,10 @@ function cancel() {
                          cocina jamás ve. -->
                     <button v-if="editable && editPerm && l.kind !== 'combo_header' && isLineActive(l)" @click="openNotes(l)" class="text-[11px] font-bold text-navy hover:underline mt-0.5">
                       📝 {{ l.notes ? 'Editar nota' : 'Agregar nota' }}
+                    </button>
+                    <!-- #215: descuento por línea (permiso propio). -->
+                    <button v-if="editable && discountPerm && isLineActive(l)" :data-testid="`line-discount-btn-${l.id}`" @click="openDiscount({ kind: 'line', line: l })" class="text-[11px] font-bold text-navy hover:underline mt-0.5">
+                      {{ l.discountType ? '% Editar descuento' : '% Descuento' }}
                     </button>
                     <button v-if="l.kind === 'combo_header'" @click="toggleExpand(l.id)" class="text-[11px] font-bold text-teal hover:underline mt-0.5">
                       {{ expandedCombos.has(l.id) ? '▲ Ocultar componentes' : `▼ Ver ${componentsOf(l.id).length} componente(s)` }}
@@ -528,6 +600,11 @@ function cancel() {
 
           <!-- Totales -->
           <div class="mt-4 pt-3 border-t-2 border-navy/10 space-y-1.5 text-sm">
+            <!-- #215: descuento de la comanda con su motivo (subtotal/impuesto ya vienen descontados). -->
+            <div v-if="order.discountType && order.discountAmount" data-testid="order-discount-row" class="flex justify-between text-coral font-bold">
+              <span>Descuento{{ order.discountType === 'percent' ? ` ${Number(order.discountValue)} %` : '' }}<template v-if="order.discountReason"> ({{ order.discountReason }})</template></span>
+              <span class="tabular-nums">−{{ money(order.discountAmount) }}</span>
+            </div>
             <div class="flex justify-between text-text-muted"><span>Subtotal</span><span class="tabular-nums">{{ money(order.subtotal) }}</span></div>
             <div class="flex justify-between text-text-muted"><span>Impuesto</span><span class="tabular-nums">{{ money(order.tax) }}</span></div>
             <div v-if="order.tip" class="flex justify-between text-text-muted"><span>Propina</span><span class="tabular-nums">{{ money(order.tip) }}</span></div>
@@ -544,6 +621,8 @@ function cancel() {
               class="flex-1 min-w-[140px] py-2.5 rounded-xl bg-gold text-white font-bold hover:bg-gold/80 disabled:opacity-50">
               Enviar {{ unsentCount }} nueva(s) a cocina
             </button>
+            <button v-if="editable && discountPerm" data-testid="order-discount" @click="openDiscount({ kind: 'order' })" :disabled="sending || !activeLines.length"
+              class="px-4 py-2.5 rounded-xl border-2 border-navy/30 text-navy font-bold hover:bg-surface disabled:opacity-50">{{ order.discountType ? 'Editar descuento' : 'Descuento' }}</button>
             <button v-if="editable && payPerm" @click="goPay" :disabled="sending || !activeLines.length"
               class="flex-1 min-w-[140px] py-2.5 rounded-xl bg-teal text-white font-bold hover:bg-teal/80 disabled:opacity-50">Cobrar</button>
             <button v-if="editable && deletePerm" @click="cancel" :disabled="sending"
@@ -597,6 +676,11 @@ function cancel() {
         <button @click="saveNotes" :disabled="notesSaving" class="px-4 py-2 rounded-lg bg-navy text-white font-bold text-sm disabled:opacity-50">Guardar</button>
       </template>
     </AppModal>
+
+    <!-- #215: descuento o cortesía (línea o comanda). Cerrar sin confirmar no cambia nada. -->
+    <DiscountModal v-if="discountTarget" :title="discountTitle" :subtitle="discountSubtitle" :base="discountBase"
+      :currency="currencySymbol(currency)" :policy="discountPolicy" :current="discountCurrent" :loading="discountBusy"
+      @confirm="confirmDiscount" @remove="removeDiscount" @close="closeDiscount" />
 
     <VoidReasonModal v-if="voidTarget" :title="voidTitle" :subtitle="voidSubtitle"
       :reasons="voidReasons.length ? voidReasons : ['Otro']"

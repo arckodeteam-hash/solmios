@@ -18,6 +18,7 @@ let inHouseData: InHouseReservation[] = []
 let byId: (id: string) => Promise<InHouseReservation | null> = async (id) => inHouseData.find((r) => r.id === id) ?? null
 const byIdCalls: string[] = []
 const chargeCalls: unknown[] = []
+const discountCalls: unknown[] = []
 const toastWarning = vi.fn()
 const routerPush = vi.fn()
 
@@ -44,6 +45,10 @@ vi.mock('@/services/Restaurant.service', async (importOriginal) => {
       searchInHouse: vi.fn(async () => ({ data: inHouseData, total: inHouseData.length })),
       getInHouseById: vi.fn(async (id: string) => { byIdCalls.push(id); return byId(id) }),
       chargeToRoom: vi.fn(async (id: string, data: unknown) => { chargeCalls.push({ id, data }); return { ...orderData, status: 'charged' } }),
+      // #215
+      discountPolicy: vi.fn(async () => ({ maxDiscountPercent: 100, reasons: ['Cortesía de la casa', 'Huésped del hotel', 'Otro'], isDefault: true })),
+      applyOrderDiscount: vi.fn(async (id: string, data: unknown) => { discountCalls.push({ scope: 'order', id, data }); return orderData }),
+      applyLineDiscount: vi.fn(async (id: string, lineId: string, data: unknown) => { discountCalls.push({ scope: 'line', id, lineId, data }); return orderData.lines[0] }),
     },
   }
 })
@@ -64,7 +69,7 @@ async function mountCobrar() {
 const chargeBtn = (w: Awaited<ReturnType<typeof mountCobrar>>) => w.find('[data-testid="charge-room"]')
 
 describe('cobrar.vue — #209', () => {
-  beforeEach(() => { chargeCalls.length = 0; byIdCalls.length = 0; toastWarning.mockClear(); inHouseData = [perez]; byId = async (id) => inHouseData.find((r) => r.id === id) ?? null; orderData = baseOrder() })
+  beforeEach(() => { chargeCalls.length = 0; byIdCalls.length = 0; discountCalls.length = 0; toastWarning.mockClear(); inHouseData = [perez]; byId = async (id) => inHouseData.find((r) => r.id === id) ?? null; orderData = baseOrder() })
   afterEach(() => { document.body.innerHTML = '' })
 
   it('no existe ningún input para tipear un id; el cargo se elige con el buscador; sin alojado elegido "Cargar" está deshabilitado', async () => {
@@ -143,6 +148,74 @@ describe('cobrar.vue — #209', () => {
   it('los métodos de pago son los de Caja.service', async () => {
     const w = await mountCobrar()
     for (const m of POS_PAYMENT_METHODS) expect(w.text()).toContain(m.label)
+    w.unmount()
+  })
+})
+
+// ─── #215 (REST-13): descuentos y cortesías en Cobrar ───
+describe('cobrar.vue — #215 descuentos', () => {
+  beforeEach(() => { discountCalls.length = 0; orderData = baseOrder() })
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('el ticket muestra "Descuento 10 % (motivo) −X" de la comanda y la cortesía de la línea con su motivo; la anulada no va en la cuenta', async () => {
+    orderData = baseOrder({
+      subtotal: 90, tax: 16.2, total: 106.2, discountType: 'percent', discountValue: 10, discountAmount: 10, discountReason: 'Huésped del hotel', discountTotal: 110,
+      lines: [
+        { id: 'l1', orderId: 'o1', name: 'Pizza', quantity: 1, unitPrice: 100, lineTotal: 100, status: 'new' } as OrderWithLines['lines'][number],
+        { id: 'l2', orderId: 'o1', name: 'Postre', quantity: 1, unitPrice: 100, lineTotal: 100, status: 'new', discountType: 'percent', discountValue: 100, discountAmount: 100, discountReason: 'Cortesía de la casa' } as OrderWithLines['lines'][number],
+        { id: 'l3', orderId: 'o1', name: 'Anulada', quantity: 1, unitPrice: 50, lineTotal: 50, status: 'voided' } as OrderWithLines['lines'][number],
+      ],
+    })
+    const w = await mountCobrar()
+    const row = w.find('[data-testid="order-discount-row"]')
+    expect(row.exists()).toBe(true)
+    expect(row.text()).toContain('Descuento 10 % (Huésped del hotel)')
+    expect(row.text()).toContain('−RD$10.00')
+    const courtesy = w.find('[data-testid="line-discount-l2"]')
+    expect(courtesy.text()).toContain('Cortesía · Cortesía de la casa')
+    expect(courtesy.text()).toContain('−RD$100.00')
+    expect(w.find('[data-testid="line-discount-l1"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('Anulada')
+    // Subtotal/impuesto son los del server (ya descontados): no se recalculan acá.
+    expect(w.text()).toContain('RD$90.00')
+    expect(w.text()).toContain('RD$16.20')
+    w.unmount()
+  })
+
+  it('"Descuento" abre el modal y confirmar manda applyOrderDiscount con tipo/valor/motivo; luego recarga la comanda', async () => {
+    const w = await mountCobrar()
+    await w.find('[data-testid="order-discount"]').trigger('click')
+    await flushPromises()
+    const value = document.body.querySelector<HTMLInputElement>('[data-testid="discount-value"]')
+    expect(value, 'el modal de descuento no se abrió').not.toBeNull()
+    value!.value = '10'
+    value!.dispatchEvent(new Event('input'))
+    document.body.querySelector<HTMLButtonElement>('[data-testid="discount-reasons"] button:nth-child(2)')!.click()
+    await flushPromises()
+    document.body.querySelector<HTMLButtonElement>('[data-testid="discount-confirm"]')!.click()
+    await flushPromises()
+    expect(discountCalls).toEqual([{ scope: 'order', id: 'o1', data: { type: 'percent', value: 10, reason: 'Huésped del hotel' } }])
+    expect(document.body.querySelector('[data-testid="discount-confirm"]')).toBeNull()   // se cerró
+    w.unmount()
+  })
+
+  it('el botón de la línea abre el modal sobre esa línea y confirma con applyLineDiscount', async () => {
+    const w = await mountCobrar()
+    await w.find('[data-testid="line-discount-btn-l1"]').trigger('click')
+    await flushPromises()
+    document.body.querySelector<HTMLButtonElement>('[data-testid="discount-courtesy"]')!.click()
+    document.body.querySelector<HTMLButtonElement>('[data-testid="discount-reasons"] button:nth-child(1)')!.click()
+    await flushPromises()
+    document.body.querySelector<HTMLButtonElement>('[data-testid="discount-confirm"]')!.click()
+    await flushPromises()
+    expect(discountCalls).toEqual([{ scope: 'line', id: 'o1', lineId: 'l1', data: { type: 'percent', value: 100, reason: 'Cortesía de la casa' } }])
+    w.unmount()
+  })
+
+  it('comanda liquidada: no hay botón de descuento', async () => {
+    orderData = baseOrder({ status: 'paid', settlement: 'payment' })
+    const w = await mountCobrar()
+    expect(w.find('[data-testid="order-discount"]').exists()).toBe(false)
     w.unmount()
   })
 })

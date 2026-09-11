@@ -16,11 +16,12 @@ import * as combosCrud from './usecases/combos-crud'
 import * as foodCost from './usecases/food-cost'
 import * as publicMenuUsecase from './usecases/public-menu'
 import * as voidReasons from './usecases/void-reasons'
+import * as discounts from './usecases/discounts'
 import * as events from './usecases/events'
 import * as inHouse from './usecases/in-house'
 import { composeSockets } from './usecases/compose-sockets'
 import {
-  type RestaurantWiring, stationDeps, catDeps, itemDeps, tableDeps, ordersDeps, orderLinesDeps, voidReasonsDeps,
+  type RestaurantWiring, stationDeps, catDeps, itemDeps, tableDeps, ordersDeps, orderLinesDeps, voidReasonsDeps, discountsDeps,
   modifierDeps, comboDeps, foodCostDeps, settlementDeps, kdsDeps, inHouseDeps, publicMenuDeps,
 } from './usecases/deps'
 import type { AuditPort } from '../../shared/usecases/audit'
@@ -143,6 +144,13 @@ export class RestaurantService {
   voidLine(orderId: string, lineId: string, reason: string | undefined, user: CurrentUser) { return orderLines.voidLine(orderLinesDeps(this.w()), orderId, lineId, reason, user) }
   getVoidReasons(user: CurrentUser) { return voidReasons.getVoidReasons(voidReasonsDeps(this.w()), user) }
   setVoidReasons(reasons: unknown, user: CurrentUser) { return voidReasons.setVoidReasons(voidReasonsDeps(this.w()), reasons, user) }
+  // #215: descuentos y cortesías — usecases/discounts (ruta `restaurant:discount`; tope y motivos por hotel).
+  applyOrderDiscount(orderId: string, dto: discounts.DiscountInput, user: CurrentUser) { return discounts.applyOrderDiscount(discountsDeps(this.w()), orderId, dto, user) }
+  removeOrderDiscount(orderId: string, user: CurrentUser) { return discounts.removeOrderDiscount(discountsDeps(this.w()), orderId, user) }
+  applyLineDiscount(orderId: string, lineId: string, dto: discounts.DiscountInput, user: CurrentUser) { return discounts.applyLineDiscount(discountsDeps(this.w()), orderId, lineId, dto, user) }
+  removeLineDiscount(orderId: string, lineId: string, user: CurrentUser) { return discounts.removeLineDiscount(discountsDeps(this.w()), orderId, lineId, user) }
+  getDiscountPolicy(user: CurrentUser) { return discounts.getDiscountPolicy(discountsDeps(this.w()), user) }
+  setDiscountPolicy(input: discounts.DiscountPolicyInput, user: CurrentUser) { return discounts.setDiscountPolicy(discountsDeps(this.w()), input, user) }
 
   // ─── Cuenta + cobro (RES-5) — delegan a usecases/settlement ───
   billOrder(id: string, dto: { tip?: number }, user: CurrentUser) { return settlement.billOrder(settlementDeps(this.w()), id, dto, user) }
