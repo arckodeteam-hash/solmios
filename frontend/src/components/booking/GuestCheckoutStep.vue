@@ -98,6 +98,12 @@
         />
       </label>
 
+      <!-- #220: el desglose (subtotal · extras · impuestos · total estimado) acompaña al huésped
+           hasta el pago; misma moneda que usa PayStep (display si hay, si no la de cobro). -->
+      <div class="rounded-xl bg-slate-50 px-4 py-3">
+        <EstimatedTotals :format="formatTotalsPrice" />
+      </div>
+
       <button
         type="submit"
         :disabled="!store.guestValid"
@@ -113,9 +119,15 @@
 import { ref, computed } from 'vue'
 import { useBookingStore } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
+import EstimatedTotals from './EstimatedTotals.vue'
 
 const store = useBookingStore()
-const { t } = useBookingI18nStore()
+const { t, formatPrice } = useBookingI18nStore()
+
+/** #220: formateador para <EstimatedTotals>, con el mismo criterio de moneda que PayStep. */
+function formatTotalsPrice(amount: unknown): string {
+  return formatPrice(Number(amount), store.displayCurrency || store.chargeCurrency)
+}
 
 // `touched` se setea al primer blur. Evita gritar "error" antes de que el usuario escriba.
 const touched = ref(false)

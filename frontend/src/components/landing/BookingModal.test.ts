@@ -33,6 +33,7 @@ import { BookingService } from '@/services/Booking.service'
 import { PublicHotelService } from '@/services/PublicHotel.service'
 import { useBookingStore } from '@/composables/useBooking'
 import type { PublicHotelInfo, PublicRatesResponse, OpenBookingOptions } from '@/types'
+import { formatMoney } from '@/utils/rate-calendar'
 
 const HOTEL = {
   id: 'h1',
@@ -333,5 +334,55 @@ describe('BookingModal', () => {
 
     const text = modalText()
     expect(text).toContain('99,50') // NO "100" (redondeado) ni "99" (truncado)
+  })
+
+  // Issue #220 — el huésped elegía una habitación de 300 en "Tu selección" y recién en el paso
+  // de pago veía 354, sin saber de dónde salía la diferencia (el ITBIS). El cart muestra ahora
+  // el desglose estimado: subtotal · impuesto por impuesto · total estimado. Misma cuenta que el
+  // backend (taxLinesOn): 300 × 18% = 54 → 354.
+  it('"Tu selección" muestra Subtotal, la línea de ITBIS (18%) y el Total estimado (#220)', async () => {
+    await open({ ...FROM_HERO, roomTypeId: 'double' })
+    const store = useBookingStore()
+    expect(store.cart).toHaveLength(1)
+    expect(document.body.querySelectorAll('[data-testid="cart-line"]')).toHaveLength(1)
+
+    const fmt = (n: number) => formatMoney(n, 'USD', 'es', true)
+    const subtotal = 300
+    const tax = Math.round(subtotal * 0.18 * 100) / 100 // 54
+
+    const subtotalEl = document.body.querySelector('[data-testid="cart-subtotal"]')!
+    expect(subtotalEl.textContent).toContain(fmt(subtotal))
+
+    const taxLines = document.body.querySelectorAll('[data-testid="tax-line"]')
+    expect(taxLines).toHaveLength(1)
+    expect(taxLines[0]!.textContent).toContain('ITBIS (18%)')
+    expect(taxLines[0]!.textContent).toContain(fmt(tax))
+
+    const totalEl = document.body.querySelector('[data-testid="estimated-total"]')!
+    expect(totalEl.textContent).toContain(fmt(subtotal + tax))
+    expect(store.estimatedTotal).toBe(subtotal + tax)
+
+    // Los rótulos son los del modal (español fijo, sin i18n), no las keys del widget.
+    const txt = modalText()
+    expect(txt).toContain('Subtotal')
+    expect(txt).toContain('Total estimado')
+    expect(txt).not.toContain('rooms.cartSubtotal')
+  })
+
+  // #220: el desglose acompaña al huésped en extras y datos, no sólo en el cart.
+  it('el Total estimado sigue visible en los pasos de extras y de datos del huésped (#220)', async () => {
+    await open({ ...FROM_HERO, roomTypeId: 'double' })
+    const store = useBookingStore()
+    const fmt = (n: number) => formatMoney(n, 'USD', 'es', true)
+
+    store.status = 'upselling'
+    await flushPromises()
+    expect(modalText()).toContain('¿Querés sumar algo?')
+    expect(document.body.querySelector('[data-testid="estimated-total"]')?.textContent).toContain(fmt(354))
+
+    store.status = 'checkingout'
+    await flushPromises()
+    expect(modalText()).toContain('¿A nombre de quién?')
+    expect(document.body.querySelector('[data-testid="estimated-total"]')?.textContent).toContain(fmt(354))
   })
 })

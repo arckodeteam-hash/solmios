@@ -268,6 +268,8 @@
       Carrito — resumen visible de las líneas ya agregadas (Tarea 10: combinar distintos tipos/
       ocupaciones en una misma reserva). Muestra habitaciones totales, huéspedes totales y noches
       antes de avanzar, tal como se pidió: un paso con el detalle antes de pagar.
+      Issue #220: debajo del resumen va <EstimatedTotals> con subtotal · impuestos (ITBIS) · total
+      estimado, para que el huésped no descubra la diferencia recién en el paso de pago.
     -->
     <div v-if="store.cart.length > 0" class="rounded-2xl border-2 border-cyan/30 bg-cyan/5 p-4 space-y-3">
       <h3 class="text-sm font-black text-navy">{{ t('rooms.cartTitle') }}</h3>
@@ -288,10 +290,10 @@
           </div>
         </li>
       </ul>
-      <div class="flex items-center justify-between border-t border-cyan/20 pt-2 text-xs font-bold text-text-muted">
-        <span>{{ t('rooms.cartSummary', { rooms: store.cartTotalRooms, guests: store.cartTotalGuests, nights: store.nights || 1 }) }}</span>
-        <span class="text-sm text-navy">{{ formatPrice(store.roomsSubtotal, store.displayCurrency) }}</span>
+      <div class="border-t border-cyan/20 pt-2 text-xs font-bold text-text-muted" data-testid="cart-summary">
+        {{ t('rooms.cartSummary', { rooms: store.cartTotalRooms, guests: store.cartTotalGuests, nights: store.nights || 1 }) }}
       </div>
+      <EstimatedTotals :format="formatDisplayPrice" />
       <button
         type="button"
         class="w-full cursor-pointer rounded-full bg-cyan px-4 py-2.5 text-sm font-black text-white transition hover:bg-cyan/90"
@@ -313,10 +315,16 @@ import MultiChannelBadges from '@/components/reviews/MultiChannelBadges.vue'
 import AggregateScore from '@/components/reviews/AggregateScore.vue'
 import Icon from '@/components/ui/Icon.vue'
 import Stepper from './Stepper.vue'
+import EstimatedTotals from './EstimatedTotals.vue'
 
 const store = useBookingStore()
 const i18n = useBookingI18nStore()
 const { t, formatPrice } = i18n
+
+/** #220: formateador para <EstimatedTotals>, en la moneda que ya muestra el resto del cart. */
+function formatDisplayPrice(amount: unknown): string {
+  return formatPrice(Number(amount), store.displayCurrency)
+}
 
 /**
  * F3 3.16 — El widget puede recibir `reviews` por props (desde el wrapper que comparte el
