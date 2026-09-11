@@ -233,7 +233,9 @@ filtraba `hotelId = <hotel>`: `NULL` no matchea nunca, así que el mensaje del d
 (`announcements.audience` = `hotel` | `all` | `admins`), nunca la ausencia de la clave foránea. La
 unión "lo mío + lo de todos" se arma con dos `findMany` y se junta en memoria
 (`modules/anuncios/usecases/list-visible.ts`); las reglas puras de quién ve qué viven en
-`shared/usecases/announcement-visibility.ts` porque las usan dos módulos (`anuncios` y `admin`).
+`shared/usecases/announcement-visibility.ts` porque las usan dos módulos (`anuncios` y `admin`). En
+`modules/anuncios/service.ts` NO hay ningún `filters.hotelId = hotelId` sobre el listado, y no
+debe volver a haberlo: un filtro por igualdad ahí es exactamente el bug que esto corrigió (#105).
 
 Corolario al agregar una columna así: `ormMigrate` hace `ADD COLUMN` y **no rellena las filas
 viejas** (quedan en `NULL` → invisibles). Toda columna discriminadora nueva necesita su backfill
