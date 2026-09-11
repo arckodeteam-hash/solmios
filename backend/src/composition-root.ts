@@ -503,6 +503,7 @@ import { notificacionesAuditlogConnector } from './connectors/notificaciones-aud
 import { opinionesAuditlogConnector } from './connectors/opiniones-auditlog'
 import { reclutamientoAuditlogConnector } from './connectors/reclutamiento-auditlog'
 import { ticketsAuditlogConnector } from './connectors/tickets-auditlog'
+import { ticketsNotificacionesConnector } from './connectors/tickets-notificaciones'
 import { aiRecepcionistaAuditlogConnector } from './connectors/ai-recepcionista-auditlog'
 import { cashAuditlogConnector } from './connectors/cash-auditlog'
 import { paymentRequestsAuditlogConnector } from './connectors/payment-requests-auditlog'
@@ -729,6 +730,8 @@ system.addConnector('notificaciones-auditlog', notificacionesAuditlogConnector)
 system.addConnector('opiniones-auditlog', opinionesAuditlogConnector)
 system.addConnector('reclutamiento-auditlog', reclutamientoAuditlogConnector)
 system.addConnector('tickets-auditlog', ticketsAuditlogConnector)
+// REQ-SOP-06: el hotel se entera de la respuesta del agente sin entrar a /panel/support.
+system.addConnector('tickets-notificaciones', ticketsNotificacionesConnector)
 system.addConnector('ai-recepcionista-auditlog', aiRecepcionistaAuditlogConnector)
 // El dinero se asienta en `payments` → payments-caja lo lleva al arqueo y a la conciliación.
 system.addConnector('facturas-payments', facturasPaymentsConnector)
