@@ -325,17 +325,10 @@
 
   /* Área táctil mínima (44px) en móvil para los botones principales */
   @media (max-width: 639px) {
-    /* Botones escritos con utilidades sueltas (`px-4 py-2 rounded-*`, `bg-navy … py-2.5`, ej.
-       "Nueva Reserva", "Guardar") que no usan .btn-*. Se selecciona por el tamaño (py-2 … py-3)
-       y no por el color: los tabs/toggles llevan `bg-navy` condicional sólo en el activo, y una
-       regla por color agrandaría uno solo del grupo. Así crecen todos los hermanos por igual. */
     .btn-primary,
     .btn-accent,
     .btn-ghost,
     .wizard-btn-primary,
-    button.py-2,
-    button.py-2\.5,
-    button.py-3,
     a.bg-navy.py-2,
     a.bg-navy.py-2\.5,
     a.bg-navy.py-3 {
@@ -343,6 +336,18 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
+    }
+
+    /* Botones escritos con utilidades sueltas (`px-4 py-2 rounded-*`, `bg-navy … py-2.5`, ej.
+       "Nueva Reserva", "Guardar") que no usan .btn-*. Se selecciona por el tamaño (py-2 … py-3)
+       y no por el color: los tabs/toggles llevan `bg-navy` condicional sólo en el activo, y una
+       regla por color agrandaría uno solo del grupo. Así crecen todos los hermanos por igual.
+       Sólo min-height: un <button> ya centra su contenido en vertical, y forzar display/justify
+       rompería los ítems de menú `w-full text-left` (ej. reservations/index.vue). */
+    button.py-2,
+    button.py-2\.5,
+    button.py-3 {
+      min-height: 44px;
     }
   }
 }
