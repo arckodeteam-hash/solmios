@@ -5,6 +5,10 @@ import { describe, it, expect } from 'vitest'
 import { normalizeChannelKey, channelBrandOrDefault, getChannelBrand, CHANNEL_BRANDS } from './useChannelBrand'
 
 describe('normalizeChannelKey', () => {
+  it("REQ-RWP-04: 'web' (widget público) es un canal propio, no cae a 'other'", () => {
+    expect(normalizeChannelKey('web')).toBe('web')
+    expect(getChannelBrand('web')?.label).toBe('Web')
+  })
   it('resuelve los alias al mismo bucket (si no, Booking se cuenta dos veces)', () => {
     expect(normalizeChannelKey('booking.com')).toBe('booking')
     expect(normalizeChannelKey('bookingcom')).toBe('booking')
