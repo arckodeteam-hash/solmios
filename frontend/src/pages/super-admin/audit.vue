@@ -14,23 +14,27 @@
       </div>
     </div>
 
-    <!-- KPIs -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <!-- KPIs (#137): calculados sobre el log cargado. No hay "Errores" (el audit log no registra
+         errores) ni "Retención" (no existe ningún proceso de purga): en su lugar, lo que sí es
+         verdad — cuántos registros hay y desde cuándo. -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" data-testid="audit-kpis">
       <div class="bg-white rounded-xl p-4 border border-border">
         <div class="text-[10px] font-bold text-text-muted uppercase">Eventos Hoy</div>
-        <div class="text-2xl font-black text-navy mt-1">1,247</div>
+        <div class="text-2xl font-black text-navy mt-1 tabular-nums" data-testid="kpi-today">{{ loading ? '…' : kpis.eventsToday.toLocaleString('es') }}</div>
       </div>
       <div class="bg-white rounded-xl p-4 border border-border">
         <div class="text-[10px] font-bold text-text-muted uppercase">Logins</div>
-        <div class="text-2xl font-black text-navy mt-1">89</div>
+        <div class="text-2xl font-black text-navy mt-1 tabular-nums" data-testid="kpi-logins">{{ loading ? '…' : kpis.loginsToday.toLocaleString('es') }}</div>
+        <div class="text-[10px] text-text-muted">accesos auditados de hoy</div>
       </div>
       <div class="bg-white rounded-xl p-4 border border-border">
-        <div class="text-[10px] font-bold text-text-muted uppercase">Errores</div>
-        <div class="text-2xl font-black text-coral mt-1">3</div>
+        <div class="text-[10px] font-bold text-text-muted uppercase">Registros</div>
+        <div class="text-2xl font-black text-navy mt-1 tabular-nums" data-testid="kpi-total">{{ loading ? '…' : kpis.total.toLocaleString('es') }}</div>
       </div>
       <div class="bg-white rounded-xl p-4 border border-border">
-        <div class="text-[10px] font-bold text-text-muted uppercase">Retención</div>
-        <div class="text-2xl font-black text-teal mt-1">90 días</div>
+        <div class="text-[10px] font-bold text-text-muted uppercase">Desde</div>
+        <div class="text-2xl font-black text-teal mt-1 tabular-nums" data-testid="kpi-since">{{ loading ? '…' : (kpis.oldestDate || '—') }}</div>
+        <div class="text-[10px] text-text-muted">sin purga automática</div>
       </div>
     </div>
 
@@ -127,6 +131,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { auditKpis, todayUtc } from '@/utils/audit-kpis'
 import { useToast } from '@/composables/useToast'
 import { AuditLogService } from '@/services/AuditLog.service'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
@@ -190,6 +195,9 @@ onMounted(async () => {
   } catch { toast.error('No se pudo cargar el registro de auditoría') } finally { loading.value = false }
 })
 
+// #137: KPIs reales sobre el log cargado (hoy en UTC, como `createdAt`).
+const kpis = computed(() => auditKpis(logs.value, todayUtc()))
+
 const hotelList = computed(() => [...new Set(logs.value.map((l: any) => l.hotel).filter(Boolean))])
 // #139: las opciones del select salen de los grupos de entidad presentes en los logs (con conteo),
 // no de una lista fija: 5 de 7 opciones viejas no matcheaban ninguna entidad real y daban tabla vacía.
@@ -244,8 +252,36 @@ function exportarCsv(): void {
   toast.success(`${filas.length} registros exportados`)
 }
 
+// #138: rango de fechas del desplegable. `log.date` ya es `YYYY-MM-DD` (string), así que compara
+// lexicográficamente sin parsear `Date` — evita el lío de zona horaria del barrido del backend.
+const pad = (n: number) => String(n).padStart(2, '0')
+const localDateStr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+
+const dateRange = computed<{ desde: string; hasta: string } | null>(() => {
+  const hoy = new Date()
+  const hoyStr = localDateStr(hoy)
+  if (filterDate.value === 'today') return { desde: hoyStr, hasta: hoyStr }
+  if (filterDate.value === 'yesterday') {
+    const ayer = new Date(hoy)
+    ayer.setDate(ayer.getDate() - 1)
+    const s = localDateStr(ayer)
+    return { desde: s, hasta: s }
+  }
+  if (filterDate.value === 'week') {
+    const inicio = new Date(hoy)
+    inicio.setDate(inicio.getDate() - 6)
+    return { desde: localDateStr(inicio), hasta: hoyStr }
+  }
+  if (filterDate.value === 'month') {
+    const inicio = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
+    return { desde: localDateStr(inicio), hasta: hoyStr }
+  }
+  return null
+})
+
 const filteredLogs = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
+  const rango = dateRange.value
   return logs.value.filter((log: any) => {
     // #139: el placeholder promete "usuario, hotel, acción" pero sólo se miraba user y detail;
     // buscar "delete" no encontraba nada si el detalle no repetía la palabra.
@@ -255,6 +291,8 @@ const filteredLogs = computed(() => {
     // no `category` (entidad cruda capitalizada), que dejaba a 'Reservas' sin sus 226 entradas.
     if (filterAction.value !== 'all' && entityGroup(log.entity) !== filterAction.value) return false
     if (filterHotel.value !== 'all' && log.hotel !== filterHotel.value) return false
+    // #138: el desplegable de fecha (Hoy/Ayer/Esta semana/Este mes) no filtraba nada.
+    if (rango && (log.date < rango.desde || log.date > rango.hasta)) return false
     return true
   })
 })

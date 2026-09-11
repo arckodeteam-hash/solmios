@@ -35,6 +35,9 @@ export const UpdateProfileSchema: Record<string, ValidationRule> = {
 export const LoginSchema: Record<string, ValidationRule> = {
   email: { type: 'string' as const, required: true, max: 200 },
   password: { type: 'string' as const, required: true, max: 200 },
+  // Token del captcha: opcional en el schema porque se exige (o no) según lo que el super-admin
+  // haya prendido para el login — la ruta lo verifica antes de llegar acá.
+  captchaToken: { type: 'string' as const, max: 4096 },
 }
 
 export const ChangePasswordSchema: Record<string, ValidationRule> = {

@@ -46,17 +46,35 @@ vi.mock('@/composables/useToast', () => {
 import Audit from './audit.vue'
 
 let wrapper: ReturnType<typeof mount> | null = null
+
+// #138: el filtro de fecha ahora SÍ filtra, así que "hoy" pasa a depender del reloj real. Se fija
+// un "ahora" determinístico (mediodía UTC = mismo día en cualquier huso razonable) para que las
+// fixtures de agosto 2026 de los tests de acciones/hotel (que no prueban fecha) sigan siendo
+// visibles bajo el filtro "Este mes" en vez de reventar contra el día real de quien corre el test.
+const HOY_MOCK = new Date('2026-08-31T12:00:00.000Z')
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(HOY_MOCK)
+})
 afterEach(() => {
+  vi.useRealTimers()
   wrapper?.unmount()
   wrapper = null
   document.body.innerHTML = ''
   vi.restoreAllMocks()
 })
 
+/** Tercer <select> de la barra de filtros = el desplegable de fecha (Hoy/Ayer/Semana/Mes). */
+const dateSelect = (w: ReturnType<typeof mount>) => w.findAll('select')[2]
+
 async function render() {
   wrapper = mount(Audit)
   await flushPromises()
   await flushPromises()
+  // Los tests de esta sección no ejercitan el filtro de fecha (#138 tiene su propio describe):
+  // se amplía a "Este mes" para que las fixtures de agosto sigan visibles bajo el default 'today'.
+  await dateSelect(wrapper).setValue('month')
+  await nextTick()
   return wrapper
 }
 
@@ -234,5 +252,92 @@ describe('super-admin/audit — carga completa del log (#140)', () => {
     expect((w.vm as any).hotelList).toContain('Hotel Solo Pagina Dos')
     expect(listMock).toHaveBeenCalledTimes(2) // 100 < 105 → pidió la 2; 105 ya no es < 105 → paró.
     expect(listMock).toHaveBeenLastCalledWith({ page: 2, limit: 100 })
+  })
+})
+
+// ── #138: el desplegable de fecha (Hoy/Ayer/Esta semana/Este mes) no filtraba nada ───────────────
+describe('super-admin/audit — filtro de fecha (#138)', () => {
+  /** "Ahora" mockeado: 2026-08-31. Cada fila cae en un cajón distinto para poder distinguirlos. */
+  const LOGS_FECHA = [
+    { id: 'hoy1', userName: 'Recepción', action: 'create', entity: 'reservation', detail: 'Detalle hoy', ip: '10.0.0.1', createdAt: '2026-08-31T09:00:00.000Z' },
+    { id: 'ayer1', userName: 'Recepción', action: 'create', entity: 'reservation', detail: 'Detalle ayer', ip: '10.0.0.1', createdAt: '2026-08-30T09:00:00.000Z' },
+    { id: 'semana1', userName: 'Admin', action: 'update', entity: 'invoice', detail: 'Detalle semana', ip: '10.0.0.2', createdAt: '2026-08-27T09:00:00.000Z' },
+    { id: 'mes1', userName: 'Admin', action: 'update', entity: 'invoice', detail: 'Detalle mes viejo', ip: '10.0.0.2', createdAt: '2026-08-05T09:00:00.000Z' },
+    { id: 'viejo1', userName: 'Sistema', action: 'delete', entity: 'expense', detail: 'Detalle julio', ip: '10.0.0.3', createdAt: '2026-07-15T09:00:00.000Z' },
+  ]
+
+  beforeEach(() => {
+    listMock.mockResolvedValue({ data: LOGS_FECHA, total: LOGS_FECHA.length })
+  })
+
+  /** Monta SIN pasar por `render()`: ese helper fuerza 'month', y acá se prueba justo el default. */
+  async function montar() {
+    const w = mount(Audit)
+    await flushPromises()
+    await flushPromises()
+    return w
+  }
+
+  it('"Hoy" (el default de la página) sólo deja la fila de la fecha actual', async () => {
+    const w = await montar()
+    const rows = filtered(w) as any[]
+    expect(rows.map((r) => r.id)).toEqual(['hoy1'])
+  })
+
+  it('"Ayer" deja sólo la fila del día anterior', async () => {
+    const w = await montar()
+    await dateSelect(w).setValue('yesterday')
+    await nextTick()
+    const rows = filtered(w) as any[]
+    expect(rows.map((r) => r.id)).toEqual(['ayer1'])
+  })
+
+  it('"Esta semana" trae los últimos 7 días, pero no lo de hace más de una semana', async () => {
+    const w = await montar()
+    await dateSelect(w).setValue('week')
+    await nextTick()
+    const rows = filtered(w) as any[]
+    expect(rows.map((r) => r.id).sort()).toEqual(['ayer1', 'hoy1', 'semana1'])
+  })
+
+  it('"Este mes" trae todo agosto pero no julio', async () => {
+    const w = await montar()
+    await dateSelect(w).setValue('month')
+    await nextTick()
+    const rows = filtered(w) as any[]
+    expect(rows.map((r) => r.id).sort()).toEqual(['ayer1', 'hoy1', 'mes1', 'semana1'])
+  })
+
+  it('sin filas para "Hoy" muestra el estado vacío, no la tabla completa', async () => {
+    listMock.mockResolvedValue({ data: LOGS_FECHA.filter((l) => l.id !== 'hoy1'), total: LOGS_FECHA.length - 1 })
+    const w = await montar()
+    expect(filtered(w).length).toBe(0)
+    expect(w.text()).toContain('Sin registros')
+  })
+
+  it('el CSV exportado respeta el filtro de fecha aplicado, no el log completo', async () => {
+    const w = await montar()
+    await dateSelect(w).setValue('yesterday')
+    await nextTick()
+    const blobs: Blob[] = []
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((b: Blob | MediaSource) => { blobs.push(b as Blob); return 'blob:mock' })
+    const btn = w.findAll('button').find((b) => b.text() === 'Exportar CSV')!
+    await btn.trigger('click')
+    await flushPromises()
+    expect(blobs.length).toBe(1)
+    const csv = (await blobs[0].text()).replace(/^﻿/, '')
+    const filas = csv.split('\r\n').slice(1)
+    expect(filas.length).toBe(1)
+    expect(filas[0]).toContain('Detalle ayer')
+  })
+
+  it('cambiar el filtro de fecha vuelve la paginación a la página 1', async () => {
+    const w = await montar()
+    ;(w.vm as any).paginaActual = 2
+    await nextTick()
+    expect((w.vm as any).paginaActual).toBe(2)
+    await dateSelect(w).setValue('week')
+    await nextTick()
+    expect((w.vm as any).paginaActual).toBe(1)
   })
 })

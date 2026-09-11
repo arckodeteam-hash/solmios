@@ -4,7 +4,7 @@ import { SubscriptionsService } from './service'
 import { SubscriptionsController } from './controller'
 import { TRIAL_DAYS } from './usecases/signup'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
-import { verifyCaptcha, isCaptchaEnabled } from '../../infrastructure/captcha'
+import { verifyCaptcha, resolveCaptchaConfig, publicCaptchaConfig, captchaRequiredFor, CAPTCHA_PROVIDER_META } from '../../infrastructure/captcha'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 
 export { SubscriptionsService }
@@ -125,8 +125,11 @@ export function SubscriptionsModule() {
         // El captcha se verifica ANTES de validar el resto y antes de tocar la
         // base: es la barrera contra el bot, no tiene sentido gastar consultas
         // ni revelar si un email ya existe si del otro lado no hay una persona.
-        if (isCaptchaEnabled()) {
-          const captcha = await verifyCaptcha(String(req.body?.captchaToken ?? ''), ip)
+        // La config se lee EN CADA ALTA y no al arrancar: el super-admin puede prender el captcha
+        // desde Configuración y tiene que valer para el siguiente registro, sin reiniciar nada.
+        const captchaCfg = await resolveCaptchaConfig(configurationRepo)
+        if (captchaRequiredFor(captchaCfg, 'register')) {
+          const captcha = await verifyCaptcha(captchaCfg, String(req.body?.captchaToken ?? ''), ip)
           if (!captcha.ok) {
             log.warn(`Signup rechazado por captcha desde ${ip}: ${captcha.reason}`)
             return { status: 400, body: { error: 'No pudimos verificar que no seas un robot. Recargá la página y probá de nuevo.' } }
@@ -157,6 +160,13 @@ export function SubscriptionsModule() {
       // #28: política del alta (¿pide tarjeta? ¿cuántos días de prueba?). Pública y sin datos
       // sensibles: es exactamente lo que el visitante ve escrito en el botón de registro.
       router.get('/api/public/signup-policy', publicRead('public-signup-policy', (req) => controller.publicSignupPolicy(req)))
+      // #12 — qué captcha tiene que dibujar la página de registro. Público por necesidad: quien se
+      // registra no tiene sesión. Devuelve la site key (que es pública por diseño) y NUNCA el
+      // secreto. Antes esto era `VITE_TURNSTILE_SITE_KEY`, una variable de BUILD: activar el
+      // captcha obligaba a recompilar el frontend.
+      router.get('/api/public/captcha', publicRead('public-captcha', async () => ({
+        status: 200, body: await publicCaptchaConfig(configurationRepo),
+      })))
 
       // #28 — completar el pago del alta sin poder loguearse. Es un POST con contraseña, así que
       // NO va por `publicRead` (30/min es de lecturas): mismo tope que un login, 5 intentos por
@@ -187,11 +197,13 @@ export function SubscriptionsModule() {
 
       // Sin secret el alta queda sin captcha: se avisa fuerte porque el modo
       // "sin captcha" es indistinguible a simple vista del modo protegido.
-      if (isCaptchaEnabled()) {
-        log.info('Captcha del alta: ACTIVO (Turnstile)')
-      } else {
-        log.warn('Captcha del alta: DESACTIVADO — falta TURNSTILE_SECRET. El registro público solo está protegido por rate-limit por IP.')
-      }
+      resolveCaptchaConfig(configurationRepo).then((cfg) => {
+        if (cfg.enabled) {
+          log.info(`Captcha del alta: ACTIVO (${CAPTCHA_PROVIDER_META[cfg.provider].label}, configurado por ${cfg.origin})`)
+        } else {
+          log.warn('Captcha del alta: DESACTIVADO. El registro público solo está protegido por rate-limit por IP. Se activa en Admin → Configuración → Seguridad.')
+        }
+      }).catch(() => { /* el aviso no puede impedir que el módulo levante */ })
 
       log.info('Módulo subscriptions listo (7 endpoints)')
       return service

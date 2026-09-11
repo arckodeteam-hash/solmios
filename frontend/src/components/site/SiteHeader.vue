@@ -27,11 +27,16 @@
 
           <!-- Actions -->
           <div class="flex items-center gap-2.5">
+            <!-- Secundario A PROPÓSITO: outline, no relleno. Con bg-X sólido (mismo peso visual
+                 que "Prueba Gratis"/"Dashboard") quedaban dos pastillas sólidas del mismo tamaño
+                 compitiendo por ser "el botón principal" — el problema no era el color, era el
+                 tratamiento. Teal porque ya es el acento que usa esta misma landing (el punto de
+                 "Airbnb 20%", el blur de fondo, la tarjeta de plan teal), no un color nuevo. -->
             <router-link
               to="/hotel-fundador"
-              class="hidden md:inline-flex items-center gap-1.5 text-xs font-extrabold px-3.5 py-2 rounded-full bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 transition-colors"
+              class="group hidden md:inline-flex items-center gap-1.5 font-bold text-sm px-5 py-2.5 rounded-xl border-2 border-teal text-teal hover:bg-teal hover:text-white transition-colors duration-300"
             >
-              <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+              <span class="w-1.5 h-1.5 rounded-full bg-teal group-hover:bg-white animate-pulse"></span>
               Programa Hotel Fundador
             </router-link>
             <!-- Con sesión abierta, el sitio público NO vuelve a ofrecer "Iniciar Sesión" ni

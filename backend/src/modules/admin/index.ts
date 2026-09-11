@@ -1,9 +1,11 @@
 import { createModule, OrmRepository } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import { estadoMetaApp, guardarMetaApp } from '../../infrastructure/meta-app-config'
+import { estadoCaptcha, guardarCaptcha } from '../../infrastructure/captcha'
 import { estadoResend, guardarResend, borrarResend } from '../../infrastructure/resend-config'
 import { estadoServicios } from '../../infrastructure/settings-status'
 import { MetaAppConfigSchema } from './validators/meta-app-schema'
+import { CaptchaConfigSchema } from './validators/captcha-schema'
 import type { PlanDTO, AmenityCatalogDTO } from './types'
 import { AdminService } from './service'
 import { AdminController } from './controller'
@@ -31,12 +33,13 @@ export function AdminModule() {
     // 1.4.1: + POST /api/admin/subscriptions/:hotelId/extend-trial (REQ-PIPE-05, #146).
     // 1.5.0 (CFG-6, #103): + GET/PUT /api/admin/subscriptions/trial-days — la key `trial_days`
     // de configuration(platform) fija la duración del trial para los hoteles nuevos.
-    version: '1.5.0',
+    // 1.6.0 (ANN-7, #111): + GET/PUT /api/admin/announcement-templates — key announcement_templates de configuration(platform)
+    version: '1.6.0',
     description: 'Super admin platform management',
     contract: {
-      name: 'admin', version: '1.5.0',
+      name: 'admin', version: '1.6.0',
       description: 'Platform-level management: hotels, users, plans, analytics',
-      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'getTrialDays', 'updateTrialDays', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv', 'remindBillingInvoice', 'registerManualPayment', 'extendTrial'],
+      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'getTrialDays', 'updateTrialDays', 'getAnnouncementTemplates', 'updateAnnouncementTemplates', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv', 'remindBillingInvoice', 'registerManualPayment', 'extendTrial'],
       events: [],
       tables: [],
       dependencies: [],
@@ -122,6 +125,15 @@ export function AdminModule() {
       // + `source` (env | configuration). Nunca devuelve valores ni pistas: para eso están las pantallas.
       router.get('/api/admin/settings/status', sa, async () => ({ status: 200, body: await estadoServicios(configRepo) }))
 
+      // #12 — Captcha del alta pública. Se configura acá y no por variables de entorno porque la
+      // site key era una variable de BUILD: prenderlo obligaba a recompilar el frontend. El GET
+      // nunca devuelve el secreto, sólo una pista para reconocer cuál está puesto.
+      router.get('/api/admin/captcha', sa, async () => ({ status: 200, body: await estadoCaptcha(configRepo) }))
+      router.put('/api/admin/captcha', sa, async (req: any) => {
+        const body = validateSchema(CaptchaConfigSchema, req.body || {}) as any
+        return { status: 200, body: await guardarCaptcha(configRepo, body) }
+      })
+
       router.get('/api/admin/hoteles', sa, () => controller.listHotels())
       // ── SMTP-UI (2026-08-19): test REAL de la config de correo de la plataforma ──
       // El botón de settings.vue era un toast falso — ocultó meses de desconexión entre
@@ -150,6 +162,10 @@ export function AdminModule() {
       router.get('/api/admin/subscriptions', sa, () => controller.listSubscriptions())
       router.get('/api/admin/audit', sa, (req: any) => controller.listAuditLogs(req))
       router.get('/api/admin/announcements', sa, () => controller.listAnnouncements())
+      // #111 (ANN-7): plantillas de anuncios del super admin — key `announcement_templates` de
+      // configuration(platform), mismo patrón que trial-days.
+      router.get('/api/admin/announcement-templates', sa, () => controller.getAnnouncementTemplates())
+      router.put('/api/admin/announcement-templates', sa, (req: any) => controller.updateAnnouncementTemplates(req))
       router.get('/api/admin/announcements/reach', sa, () => controller.getAnnouncementsReach())
       router.get('/api/admin/monitoring', sa, () => controller.getMonitoring())
       router.get('/api/admin/plans', sa, () => controller.listPlans())

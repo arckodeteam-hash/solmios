@@ -66,4 +66,13 @@ describe('Signup.service — trialEligiblePlans (#71)', () => {
     trialEligiblePlans(input)
     expect(input).toHaveLength(1)
   })
+
+  it('deja afuera los planes "a cotización" (price <= 0), aunque trialEligible no sea false', () => {
+    const out = trialEligiblePlans([
+      plan({ id: 'a', price: 49 }),
+      plan({ id: 'ultra', price: 0 }),
+      plan({ id: 'negativo', price: -1 }),
+    ])
+    expect(out.map(p => p.id)).toEqual(['a'])
+  })
 })

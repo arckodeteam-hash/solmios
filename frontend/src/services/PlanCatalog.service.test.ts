@@ -72,11 +72,12 @@ describe('toDisplayPlan — el número que se pinta es el de la fila `plans`', (
 describe('fallback — la landing nunca queda en blanco ni inventa un precio', () => {
   it('devuelve los planes con el precio marcado como desconocido', () => {
     const plans = fallbackPlans()
-    // #30: mismo orden que decide el backend (precio ASC según el seed), con los planes a
-    // cotización al final (pedido del cliente sobre #30: ultra $0 ya no va primero).
+    // #30: mismo orden que decide el backend (precio ASC según el seed).
     // essential va antes que starter (auditoría Meta 2026-08-26): Starter dice "Todo lo del plan
     // Essential" en su copy, así que Essential tiene que ser el más barato de los dos.
-    expect(plans.map(p => p.slug)).toEqual(['host', 'essential', 'starter', 'professional', 'enterprise', 'ultra'])
+    // Tarea 4 (#74): `ultra` dejó de comercializarse — el fallback no lo ofrece.
+    expect(plans.map(p => p.slug)).toEqual(['host', 'essential', 'starter', 'professional', 'enterprise'])
+    expect(plans.some(p => p.slug === 'ultra')).toBe(false)
     for (const p of plans) {
       expect(p.priceKnown).toBe(false)
       expect(p.price).toBeNull()
@@ -197,10 +198,11 @@ describe('roomsLabel — el tope sale de `plans.limits`', () => {
     expect(toDisplayPlan(dbPlan({ slug: 'host', name: 'Host', limits: { rooms: 10 } })).rooms).toBe('Hasta 10 habitaciones')
   })
 
-  it('el fallback incluye TODOS los slugs sembrados y en orden de precio ASC con cotización al final (#30)', () => {
-    const seeded = ['host', 'essential', 'starter', 'professional', 'enterprise', 'ultra']
-    expect(fallbackPlans().map((p) => p.slug)).toEqual(seeded)
-    // Y ninguno queda sin copy: `PLAN_PRESENTATION[slug]!` reventaría en runtime.
-    for (const slug of seeded) expect(PLAN_PRESENTATION[slug]).toBeDefined()
+  it('el fallback incluye los slugs COMERCIALIZABLES en orden de precio ASC (#30) — sin ultra (#74)', () => {
+    const offered = ['host', 'essential', 'starter', 'professional', 'enterprise']
+    expect(fallbackPlans().map((p) => p.slug)).toEqual(offered)
+    // Y ninguno queda sin copy: `PLAN_PRESENTATION[slug]!` reventaría en runtime. `ultra` conserva
+    // su copy por si un entorno lo tiene activo en `plans`, pero el fallback no lo ofrece.
+    for (const slug of [...offered, 'ultra']) expect(PLAN_PRESENTATION[slug]).toBeDefined()
   })
 })

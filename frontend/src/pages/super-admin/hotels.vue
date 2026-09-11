@@ -277,7 +277,9 @@
             <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Habitaciones</label><input v-model.number="editingHotel.rooms" type="number" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy"></div>
             <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Plan *</label>
               <select v-model="editingHotel.plan" class="w-full px-4 py-2.5 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
-                <option v-for="p in plansList" :key="p.id" :value="cap(p.slug)">{{ p.name }} — ${{ p.price }}/mes</option>
+                <!-- Tarea 4 (#74): solo planes comercializables. Un plan dado de baja (Ultra) no se ofrece
+                     para cambiar, pero la cuenta que ya lo tiene lo conserva (su valor actual sigue arriba). -->
+                <option v-for="p in sellablePlans" :key="p.id" :value="cap(p.slug)">{{ p.name }} — ${{ p.price }}/mes</option>
               </select>
             </div>
             <div><label class="block text-[10px] font-bold text-text-muted uppercase mb-2">Estado</label>
@@ -443,6 +445,8 @@ const currentPage = ref(1)
 // fila clickeada, y así el botón se deshabilita solo en esa fila y no en toda la tabla.
 const enteringId = ref<string | null>(null)
 const plansList = ref<any[]>([])
+/** #74: `isActive` llega como 0/1 o boolean según el motor; solo lo activo se ofrece para cambiar. */
+const sellablePlans = computed(() => plansList.value.filter((p: any) => p.isActive !== 0 && p.isActive !== false))
 
 const activeFilter = ref('all')
 const planFilter = ref('all')

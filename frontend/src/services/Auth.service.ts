@@ -61,9 +61,10 @@ export function clearHotelsCache() {
 }
 
 export const AuthService = {
-  async login(email: string, password: string): Promise<{ token: string; refreshToken: string; user: User }> {
+  async login(email: string, password: string, captchaToken?: string): Promise<{ token: string; refreshToken: string; user: User }> {
     hotelsCache = null
-    const data = await http.post<LoginResponse>('/auth/login', { email, password })
+    // `captchaToken` solo viaja si la pantalla lo pidió (el super-admin prendió el captcha del login).
+    const data = await http.post<LoginResponse>('/auth/login', { email, password, ...(captchaToken ? { captchaToken } : {}) })
     return { token: data.token, refreshToken: data.refreshToken, user: mapUser(data.user) }
   },
 

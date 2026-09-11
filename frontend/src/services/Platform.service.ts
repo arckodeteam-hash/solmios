@@ -18,6 +18,19 @@ export interface AnnouncementsReach {
 }
 
 /**
+ * #111 (ANN-7): plantilla de anuncio del super admin. Mismo shape que valida el backend
+ * (`admin/usecases/announcement-templates.ts`): `name` y `type` no vacíos, nombres únicos
+ * (case-insensitive), hasta 50. `icon`/`description` los completa el servidor si faltan.
+ */
+export interface AnnouncementTemplate {
+  name: string
+  icon: string
+  description: string
+  type: string
+  message: string
+}
+
+/**
  * Credenciales de la APP de Meta, a nivel plataforma. Distintas de las de cada hotel: este secreto
  * firma los webhooks de TODOS los hoteles, por eso vive acá y nunca se devuelve en claro.
  */
@@ -84,6 +97,11 @@ export const PlatformService = {
    * escritos en el HTML (24 hoteles, 89 usuarios, 72% de apertura, 18% de clicks).
    */
   announcementsReach: () => http.get<AnnouncementsReach>('/admin/announcements/reach'),
+  // #111: plantillas de anuncios — endpoint dedicado super_admin (patrón trial-days #103), ya
+  // no viajan por /configuracion. El PUT reemplaza la lista entera y devuelve la normalizada.
+  getAnnouncementTemplates: () => http.get<{ templates: AnnouncementTemplate[] }>('/admin/announcement-templates'),
+  setAnnouncementTemplates: (templates: AnnouncementTemplate[]) =>
+    http.put<{ templates: AnnouncementTemplate[] }>('/admin/announcement-templates', { templates }),
   apiKeys: (hotelId?: string) => http.get<List>(`/api-keys${hotelId ? `?hotelId=${hotelId}` : ''}`),
   anuncios: () => http.get<List>('/anuncios'),
   users: (hotelId?: string) => http.get<List>(`/users${hotelId ? `?hotelId=${hotelId}` : ''}`),

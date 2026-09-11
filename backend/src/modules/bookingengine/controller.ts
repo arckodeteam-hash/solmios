@@ -218,6 +218,35 @@ export class BookingengineController {
   }
 
   /**
+   * #196 (PG-4.3) — `GET /api/pay/return/:provider/:hotelId?next=<url>&<campos del proveedor>`.
+   * Es el navegador del huésped volviendo de Azul/CardNet, no un servidor: la respuesta es un
+   * 302 a la página de confirmación del frontend (`next`), con `payment=` diciendo qué pasó.
+   * Nunca se responde JSON acá — el huésped vería una pantalla en blanco con un objeto.
+   *
+   * `next` viene de la URL que ESTE backend armó en `createCheckoutSession`, pero viaja por el
+   * proveedor y por el navegador: se valida contra el origen público para no ser un open
+   * redirect (un `next=https://impostor` mandaría al huésped recién cobrado a otro sitio).
+   */
+  async handleGatewayReturn(req: HttpRequest) {
+    const provider = String(req.params?.provider || '')
+    const hotelId = String(req.params?.hotelId || '')
+    const query = (req.query || {}) as Record<string, string>
+    const next = safeReturnTarget(query.next, process.env.PUBLIC_BASE_URL)
+    if (!provider || !hotelId) return redirectTo(next, 'invalid')
+
+    try {
+      const result = await this.service.handleGatewayReturn(hotelId, provider, query)
+      if (!result) return redirectTo(next, 'unverified')
+      if (result.type === 'reservation_confirmed') return redirectTo(next, 'confirmed')
+      if (result.type === 'already_processed') return redirectTo(next, 'confirmed')
+      return redirectTo(next, result.type === 'paid' ? 'confirmed' : result.type)
+    } catch (e: any) {
+      this.logger.error(`Retorno de pago por '${provider}' (hotel ${hotelId}): ${e?.message}`)
+      return redirectTo(next, 'error')
+    }
+  }
+
+  /**
    * F0 0.14 — Endpoint público SEGURO para consultar reserva por id + token.
    * Reemplaza al IDOR abierto `GET /api/public/bookings/:id`. Anti-enumeración:
    * mismo 404 para "no existe / sin token / token incorrecto / accessToken null".
@@ -636,4 +665,34 @@ function publicBaseFromRequest(req: HttpRequest): string {
     return `${proto}://${host}`
   }
   return ''
+}
+
+// ─── #196 helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Destino final del retorno. Se acepta un path relativo (`/h/slug/confirm?...`) o una URL
+ * absoluta del MISMO origen que `PUBLIC_BASE_URL`; cualquier otra cosa cae a `/`. Es la única
+ * defensa contra un open redirect: el `next` pasa por el proveedor y por la barra del navegador.
+ */
+export function safeReturnTarget(next: string | undefined, publicBaseUrl: string | undefined): string {
+  const raw = String(next || '').trim()
+  if (!raw) return '/'
+  if (raw.startsWith('/') && !raw.startsWith('//')) return raw
+  try {
+    const target = new URL(raw)
+    if (!/^https?:$/.test(target.protocol)) return '/'
+    if (publicBaseUrl) {
+      const base = new URL(publicBaseUrl)
+      return target.origin === base.origin ? target.toString() : '/'
+    }
+    return '/'
+  } catch {
+    return '/'
+  }
+}
+
+/** 302 a `next` con `payment=<estado>` agregado (sin pisar la query que ya traía). */
+export function redirectTo(next: string, payment: string) {
+  const sep = next.includes('?') ? '&' : '?'
+  return { status: 302, headers: { Location: `${next}${sep}payment=${encodeURIComponent(payment)}` }, body: '' }
 }

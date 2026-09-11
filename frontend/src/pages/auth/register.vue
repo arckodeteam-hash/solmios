@@ -30,7 +30,7 @@
 
         <p class="text-[11px] text-white/40">
           ¿Ya tienes cuenta?
-          <router-link to="/login" class="text-cyan font-bold hover:underline">Iniciá sesión</router-link>
+          <router-link to="/login" class="text-cyan font-bold hover:underline">Inicia sesión</router-link>
         </p>
       </div>
     </div>
@@ -97,10 +97,10 @@
                 class="w-full pl-10 pr-4 py-2.5 bg-white border rounded-xl text-sm focus:outline-none focus:border-navy"
                 :class="emailTouched && !emailValid ? 'border-danger' : 'border-border'"
                 @blur="emailTouched = true"
-                placeholder="vos@tuhotel.com">
+                placeholder="tu@tuhotel.com">
             </div>
             <p v-if="emailTouched && !emailValid" class="text-[11px] text-danger mt-1">
-              Escribí un email válido, con dominio completo (ej: ana@tuhotel.com).
+              Escribe un email válido, con dominio completo (ej: ana@tuhotel.com).
             </p>
             <p v-else class="text-[11px] text-text-muted mt-1">Con este email vas a iniciar sesión.</p>
           </div>
@@ -114,7 +114,7 @@
                 autocomplete="new-password" :maxlength="PASSWORD_MAX"
                 data-testid="register-password"
                 class="w-full pl-10 pr-11 py-2.5 bg-white border border-border rounded-xl text-sm focus:outline-none focus:border-navy"
-                placeholder="Elegí una contraseña segura">
+                placeholder="Elige una contraseña segura">
               <button type="button" @click="showPassword = !showPassword"
                 :aria-label="showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
                 :title="showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
@@ -186,7 +186,7 @@
             </div>
           </div>
           <div v-if="plans.length">
-            <label for="auth-register-plan-a-probar" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Plan a probar</label>
+            <label for="auth-register-plan-a-probar" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Elige tu plan</label>
             <select id="auth-register-plan-a-probar" name="planId" v-model="form.planId"
               class="w-full px-4 py-2.5 bg-white border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
               <option v-for="p in plans" :key="p.id" :value="p.id">
@@ -198,7 +198,7 @@
           <!-- Captcha. Solo aparece si hay site key configurada: sin ella el
                backend tampoco lo exige, y un hueco vacío confundiría. -->
           <div v-if="captchaSiteKey">
-            <div ref="captchaEl" class="cf-turnstile"></div>
+            <div ref="captchaEl"></div>
             <p v-if="captchaError" class="text-[11px] text-danger mt-1">{{ captchaError }}</p>
           </div>
 
@@ -234,7 +234,7 @@
 
         <p class="text-[11px] text-text-muted text-center mt-6 lg:hidden">
           ¿Ya tienes cuenta?
-          <router-link to="/login" class="text-cyan font-bold hover:underline">Iniciá sesión</router-link>
+          <router-link to="/login" class="text-cyan font-bold hover:underline">Inicia sesión</router-link>
         </p>
       </div>
     </div>
@@ -247,6 +247,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth.store'
 import { SignupService, DEFAULT_TRIAL_DAYS, trialEligiblePlans, type PublicPlan } from '@/services/Signup.service'
 import { ReferralsService } from '@/services/Referrals.service'
+import { CaptchaService, type PublicCaptchaConfig } from '@/services/Captcha.service'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES } from '@/data/locales'
@@ -297,11 +298,21 @@ const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 const ICON_DOT = '<svg viewBox="0 0 24 24" fill="currentColor" class="w-full h-full"><circle cx="12" cy="12" r="4"/></svg>'
 
 /**
- * Site key del captcha (Cloudflare Turnstile). Es pública por diseño. Si no
- * está definida en el build, el captcha no se muestra y el backend tampoco lo
- * exige: el registro sigue funcionando, protegido solo por rate-limit.
+ * Config del captcha, pedida al servidor al abrir la página (#12).
+ *
+ * Antes era `import.meta.env.VITE_TURNSTILE_SITE_KEY`, una variable de BUILD: prender el captcha
+ * obligaba a recompilar el frontend, y por eso estuvo apagado desde que se implementó. Ahora el
+ * super-admin lo activa desde Configuración y vale para el siguiente registro.
+ *
+ * Si esta consulta falla, `publicConfig()` devuelve "apagado" y el alta sigue funcionando: quien
+ * decide si exige el token es el backend, esto sólo dibuja.
  */
-const captchaSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY ?? ''
+const captchaCfg = ref<PublicCaptchaConfig>({
+  enabled: false, provider: 'turnstile', siteKey: '', scriptUrl: '', globalName: 'turnstile',
+  scopes: { register: true, login: false },
+})
+// Solo si el super-admin lo prendió PARA EL REGISTRO (el switch general y el de esta pantalla).
+const captchaSiteKey = computed(() => (captchaCfg.value.enabled && captchaCfg.value.scopes?.register !== false ? captchaCfg.value.siteKey : ''))
 
 const subtitleStep1 = computed(() =>
   requireCard.value
@@ -383,20 +394,28 @@ const captchaToken = ref('')
 const captchaError = ref('')
 let captchaWidgetId: string | undefined
 
-/** API que inyecta el script de Turnstile en `window`. */
-interface TurnstileApi {
+/**
+ * API que el script del proveedor deja en `window`.
+ *
+ * Turnstile, reCAPTCHA v2 y hCaptcha exponen la MISMA forma (`render`/`reset`/`remove` con
+ * `sitekey` + `callback`), que es lo que permite sostener los tres con un solo bloque de código.
+ * El nombre del objeto global lo dice el backend, así que agregar un cuarto proveedor no toca acá.
+ */
+interface CaptchaApi {
   render: (el: HTMLElement, opts: Record<string, unknown>) => string
   reset: (id?: string) => void
   remove: (id?: string) => void
 }
-function turnstile(): TurnstileApi | undefined {
-  return (window as unknown as { turnstile?: TurnstileApi }).turnstile
+function captchaApi(): CaptchaApi | undefined {
+  const name = captchaCfg.value.globalName
+  return (window as unknown as Record<string, CaptchaApi | undefined>)[name]
 }
 
 /** Carga el script una sola vez, aunque se entre y salga del paso 2. */
 function loadCaptchaScript(): Promise<void> {
-  const SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
-  if (turnstile()) return Promise.resolve()
+  const SRC = captchaCfg.value.scriptUrl
+  if (!SRC) return Promise.reject(new Error('sin script de captcha'))
+  if (captchaApi()) return Promise.resolve()
   const existing = document.querySelector(`script[src="${SRC}"]`)
   if (existing) return new Promise((res) => existing.addEventListener('load', () => res()))
   return new Promise((res, rej) => {
@@ -411,31 +430,41 @@ function loadCaptchaScript(): Promise<void> {
 }
 
 async function mountCaptcha() {
-  if (!captchaSiteKey || captchaWidgetId !== undefined) return
+  if (!captchaSiteKey.value || captchaWidgetId !== undefined) return
   try {
     await loadCaptchaScript()
     await nextTick()
-    const api = turnstile()
+    // reCAPTCHA deja el objeto antes de terminar de inicializarse: `render` existe recién dentro
+    // de su `ready()`. Los otros dos no tienen `ready`, así que se resuelve al toque.
+    const api = captchaApi()
     if (!api || !captchaEl.value) return
+    const ready = (api as unknown as { ready?: (cb: () => void) => void }).ready
+    if (typeof ready === 'function') await new Promise<void>((res) => ready.call(api, res))
     captchaWidgetId = api.render(captchaEl.value, {
-      sitekey: captchaSiteKey,
+      sitekey: captchaSiteKey.value,
       callback: (token: string) => { captchaToken.value = token; captchaError.value = '' },
       'expired-callback': () => { captchaToken.value = '' },
       'error-callback': () => {
         captchaToken.value = ''
-        captchaError.value = 'No se pudo cargar la verificación. Revisá tu conexión.'
+        captchaError.value = 'No se pudo cargar la verificación. Revisa tu conexión.'
       },
     })
   } catch {
-    captchaError.value = 'No se pudo cargar la verificación anti-robots. Recargá la página.'
+    captchaError.value = 'No se pudo cargar la verificación anti-robots. Recarga la página.'
   }
 }
 
-// El widget vive en el paso 2, que no está montado hasta que se llega.
+// El widget vive en el paso 2, que no está montado hasta que se llega. La config puede llegar
+// después de que el visitante ya avanzó, así que se mira también cuando responde el servidor.
 watch(step, (s) => { if (s === 2) void mountCaptcha() })
+watch(captchaSiteKey, (k) => { if (k && step.value === 2) void mountCaptcha() })
+
+onMounted(async () => {
+  captchaCfg.value = await CaptchaService.publicConfig()
+})
 
 onUnmounted(() => {
-  if (captchaWidgetId !== undefined) turnstile()?.remove(captchaWidgetId)
+  if (captchaWidgetId !== undefined) captchaApi()?.remove(captchaWidgetId)
 })
 
 onMounted(async () => {
@@ -478,7 +507,7 @@ function goToStep2() {
   error.value = ''
   emailTouched.value = true
   if (!emailValid.value) {
-    error.value = 'Revisá el email: falta el dominio o tiene un error de tipeo.'
+    error.value = 'Revisa el email: falta el dominio o tiene un error de tipeo.'
     return
   }
   if (!passwordValid.value) {
@@ -503,7 +532,7 @@ async function submit() {
   // Sin token no se manda: el backend lo rechazaría igual, pero el token se
   // consume en el intento y habría que resolver el captcha de nuevo por nada.
   if (captchaSiteKey && !captchaToken.value) {
-    captchaError.value = 'Completá la verificación anti-robots para continuar.'
+    captchaError.value = 'Completa la verificación anti-robots para continuar.'
     return
   }
   saving.value = true
@@ -530,7 +559,7 @@ async function submit() {
       }
       // Stripe no respondió: la cuenta existe pero no hay a dónde mandarlo. Se lo dice en vez de
       // dejarlo girando, y desde el login puede retomar el pago.
-      error.value = 'Tu cuenta quedó creada, pero no pudimos abrir el pago. Iniciá sesión para completarlo.'
+      error.value = 'Tu cuenta quedó creada, pero no pudimos abrir el pago. Inicia sesión para completarlo.'
       return
     }
 
@@ -538,11 +567,11 @@ async function submit() {
     router.push('/panel/dashboard')
   } catch (e: any) {
     // El email repetido se decide en el paso 1: se vuelve ahí para corregirlo.
-    error.value = e?.message || 'No se pudo crear la cuenta. Intentá de nuevo.'
-    // El token de Turnstile es de un solo uso: sin resetear, todo reintento
-    // vuelve a fallar por captcha aunque se corrija lo que estaba mal.
+    error.value = e?.message || 'No se pudo crear la cuenta. Intenta de nuevo.'
+    // El token del captcha es de un solo uso (en los tres proveedores): sin resetear, todo
+    // reintento vuelve a fallar por captcha aunque se corrija lo que estaba mal.
     captchaToken.value = ''
-    if (captchaWidgetId !== undefined) turnstile()?.reset(captchaWidgetId)
+    if (captchaWidgetId !== undefined) captchaApi()?.reset(captchaWidgetId)
     if (/email/i.test(error.value)) step.value = 1
   } finally {
     saving.value = false
