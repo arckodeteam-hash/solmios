@@ -99,8 +99,14 @@ export const ConfigService = {
     const r = await _http.get<{ valor: any }>(`/configuracion/${key}${q}`)
     return r.valor
   },
+  // #80: `hotelId` sólo viaja si el caller lo pasa. Antes defaulteaba a 'platform' y TODOS los
+  // guardados del panel del hotel (automation_config, contactos_emergencia, currency_config...)
+  // escribían la fila de plataforma cuando el usuario era super_admin con hotel: 200 + toast de
+  // éxito, pero al recargar `get` devolvía la fila del hotel y el valor "desaparecía" (y pisaba
+  // el default de todos los hoteles). Sin hotelId el backend resuelve el hotel del token. Los
+  // callers de plataforma (super-admin/settings, announcements) pasan 'platform' explícito.
   set: async (key: string, value: any, hotelId?: string): Promise<void> => {
-    await _http.post('/configuracion', { clave: key, valor: value, hotelId: hotelId || 'platform' })
+    await _http.post('/configuracion', { clave: key, valor: value, ...(hotelId ? { hotelId } : {}) })
   },
 }
 
