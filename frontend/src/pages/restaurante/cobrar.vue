@@ -10,6 +10,7 @@ import {
   ORDER_STATUS_LABELS, ORDER_TYPE_LABELS,
 } from '@/services/Restaurant.service'
 import { SettingsService } from '@/services/Settings.service'
+import { POS_PAYMENT_METHODS, type PosPaymentMethod } from '@/services/Caja.service'
 import { currencySymbol } from '@/composables/useCurrency'
 import { CurrencyCode } from '@/types/currency'
 import SectionCard from '@/components/ui/SectionCard.vue'
@@ -23,7 +24,8 @@ const router = useRouter()
 const toast = useToast()
 const { can } = usePermissions()
 const orderId = computed(() => String(route.params.id))
-const canPay = computed(() => can('restaurant', 'edit'))
+// #205: cobrar/cargar a habitación es `restaurant:pay` (no `edit`: cocina tiene `edit` para el KDS).
+const canPay = computed(() => can('restaurant', 'pay'))
 // Reembolso: solo órdenes pagadas con tarjeta (settlement='payment') y con permiso billing:create.
 const canRefund = computed(() => can('billing', 'create'))
 
@@ -38,14 +40,10 @@ const unknownState = ref(false)
 const order = ref<OrderWithLines | null>(null)
 const currency = ref<string>(CurrencyCode.USD)
 const tip = ref(0)
-const method = ref('cash')
+const method = ref<PosPaymentMethod>('cash')
 const reservationId = ref('')
 
-const PAYMENT_METHODS = [
-  { value: 'cash', label: 'Efectivo' },
-  { value: 'card', label: 'Tarjeta' },
-  { value: 'transfer', label: 'Transferencia' },
-]
+const PAYMENT_METHODS = POS_PAYMENT_METHODS
 const TIP_PRESETS = [0, 0.1, 0.15, 0.2]
 
 const SETTLED = ['charged', 'paid']
@@ -156,7 +154,7 @@ async function payDirect() {
 
     // fix-refund-pos-card: tarjeta abre una Stripe Checkout Session — successUrl/cancelUrl vuelven a
     // ESTA misma comanda con un query param que dispara el poll/aviso al volver (ver onMounted).
-    const payload: { method: string; successUrl?: string; cancelUrl?: string } = { method: method.value }
+    const payload: { method: PosPaymentMethod; successUrl?: string; cancelUrl?: string } = { method: method.value }
     if (method.value === 'card') {
       const base = `${window.location.origin}/panel/restaurante/cobrar/${orderId.value}`
       payload.successUrl = `${base}?paid=pending`

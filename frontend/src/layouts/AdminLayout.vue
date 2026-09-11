@@ -183,6 +183,7 @@ import { useModulesStore } from '@/stores/modules.store'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
 import { isSystemRole } from '@/config/permissions'
+import { RESTAURANT_ROUTES, restaurantRoutePath, splitPermission } from '@/config/restaurant-routes'
 import { AuthService } from '@/services/Auth.service'
 import { MESSAGING_PATH, MESSAGING_TABS } from '@/config/messaging-tabs'
 import { INTEGRATIONS_PATH } from '@/config/integration-tabs'
@@ -202,7 +203,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const dashboard = useDashboardStore()
 const roomStore = useRoomStore()
-const { canRoute } = usePermissions()
+const { canRoute, can } = usePermissions()
 const mobileMenuOpen = ref(false)
 
 /**
@@ -327,13 +328,13 @@ const nonavItems = [
     ]
   },
   {
+    // #205: las entradas del POS salen de config/restaurant-routes.ts, la MISMA tabla que pone
+    // `meta.permission` en el router. Se gatean por permiso (`permission`), no por nombre de rol:
+    // así el menú nunca muestra una vista a la que la URL rebota, ni esconde una que sí abre.
     label: 'Restaurante', icon: ICONS.utensils, roles: ['hotel_admin', 'receptionist', 'waiter', 'kitchen'],
-    children: [
-      { label: 'Salón', path: '/panel/restaurante/salon', roles: ['hotel_admin', 'receptionist', 'waiter'] },
-      { label: 'Cocina y Bar (KDS)', path: '/panel/restaurante/cocina', roles: ['hotel_admin', 'receptionist', 'kitchen'] },
-      { label: 'Caja', path: '/panel/restaurante/caja', roles: ['hotel_admin', 'receptionist', 'waiter'] },
-      { label: 'Carta', path: '/panel/restaurante/carta', roles: ['hotel_admin'] },
-    ]
+    children: RESTAURANT_ROUTES.filter((r) => r.menu).map((r) => ({
+      label: r.menu!.label, path: restaurantRoutePath(r), roles: [], permission: r.permission,
+    })),
   },
   {
     label: 'Inventario', icon: ICONS.box, path: '/panel/inventario', roles: ['hotel_admin'] },
@@ -495,6 +496,12 @@ interface NavItem {
    * propia ruta es CORE y por sí sola no gatea nada.
    */
   anyOf?: string[]
+  /**
+   * Permiso explícito `module:action` (#205). Cuando está, decide la visibilidad para TODOS los
+   * roles (sistema y custom) en lugar de `roles`: es el mismo permiso que el router exige en
+   * `meta.permission`, así menú y URL no divergen.
+   */
+  permission?: string
 }
 
 /** ¿El item pasa el gateo por módulo? `anyOf` gana sobre `path` cuando está. */
@@ -522,8 +529,16 @@ const visibleItems = computed(() => {
   // impersonación). Filtrar por `item.roles` le escondía Finanzas, Contabilidad, Tesorería,
   // Compras, Inventario u Operaciones cada vez que el cliente no era hotel_admin.
   const custom = !isSystemRole(role) || auth.impersonating
-  const visibleLeaf = (item: { path: string; roles: string[]; anyOf?: string[] }) =>
-    (custom ? canRoute(item.path) : item.roles.includes(role)) && navEnabled(item)
+  const allowed = (item: { path: string; roles: string[]; permission?: string }) => {
+    // Con `permission`, el menú exige LO MISMO que el router: el permiso de la vista Y el `view` del
+    // módulo de la ruta (el guard genérico de /panel/* lo pide antes que `meta.permission`). Sin el
+    // segundo, un rol custom con `restaurant-catalog:view` y sin `restaurant:view` veía Carta y
+    // rebotaba al entrar.
+    if (item.permission) return can(...splitPermission(item.permission)) && canRoute(item.path)
+    return custom ? canRoute(item.path) : item.roles.includes(role)
+  }
+  const visibleLeaf = (item: { path: string; roles: string[]; anyOf?: string[]; permission?: string }) =>
+    allowed(item) && navEnabled(item)
   // El literal nonavItems mezcla padres (con children, sin path) y hojas (con path);
   // unificamos a NavItem. El template usa path/expanded solo en la rama que corresponde.
   const items = nonavItems as unknown as NavItem[]

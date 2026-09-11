@@ -2,6 +2,18 @@
 // method SIEMPRE en inglés (cash|card|transfer|link|other) — el backend lo persiste así.
 import { http } from './http'
 
+/**
+ * Métodos con los que el POS del restaurante cobra una comanda (#205). ÚNICA lista del frontend:
+ * espejo del enum `POS_PAYMENT_METHODS` de `restaurant/validators/schema.ts` (el backend rechaza
+ * con 400 cualquier otro valor). `link`/`other` existen en caja pero no se cobran desde una mesa.
+ */
+export const POS_PAYMENT_METHODS = [
+  { value: 'cash', label: 'Efectivo' },
+  { value: 'card', label: 'Tarjeta' },
+  { value: 'transfer', label: 'Transferencia' },
+] as const
+export type PosPaymentMethod = (typeof POS_PAYMENT_METHODS)[number]['value']
+
 export interface CashMovement {
   id?: string
   type: 'income' | 'expense' | 'opening' | 'closing'

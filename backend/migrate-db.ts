@@ -13,6 +13,7 @@ import { PostgresAdapter } from 'arckode-framework/adapters/postgres'
 import type { DbAdapter } from 'arckode-framework'
 import { backfillPaymentsReservationId } from './scripts/backfill-payments-reservation'
 import { backfillAriOutboxPendingKey } from './scripts/backfill-ari-outbox-pending-key'
+import { backfillRestaurantPayPermission } from './scripts/backfill-restaurant-pay-permission'
 import { LEGAL_PAGES_SEED } from './scripts/legal-pages-content'
 import { MARKETING_PAGES_SEED } from './scripts/marketing-pages-content'
 
@@ -1363,6 +1364,19 @@ async function main(): Promise<void> {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     console.log("demo talento/finanzas: parcial —", msg.slice(0, 90))
+  }
+
+  // #205 (REST-03) — `restaurant:pay` a las filas de `roles` que ya cobraban con `restaurant:edit`.
+  // Va ACÁ y no en un script aparte: los permisos efectivos salen de la fila de `roles` (pisa el
+  // mapa estático), y sin esto el deploy dejaba sin cobro al POS de todo hotel existente hasta que
+  // alguien se acordara de correr algo a mano. Idempotente; no toca filas vacías/corruptas ni a
+  // `kitchen`. La tabla la crea el ORM (RUN_MIGRATE): si no existe todavía, se avisa y sigue.
+  try {
+    const paid = await backfillRestaurantPayPermission(db)
+    console.log(`roles.restaurant:pay: ${paid} fila(s) actualizada(s)`)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.log("roles.restaurant:pay: no se pudo aplicar (¿falta RUN_MIGRATE?) —", msg.slice(0, 120))
   }
 
   // M5 fix (audit solmi-direct-booking) — Poblar `hotels.slug` para los hoteles sin slug.
