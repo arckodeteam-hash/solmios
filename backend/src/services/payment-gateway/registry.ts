@@ -48,18 +48,19 @@ export class PaymentGatewaySessionStore implements CardnetSessionStore {
   constructor(private readonly repo: SessionsRepo) {}
 
   async save(row: CardnetSessionRow): Promise<void> {
-    await this.repo.create({ ...row, secret: encryptCredentials({ sk: row.secret }) })
+    await this.repo.create({ ...row, sessionKey: encryptCredentials({ sk: row.sessionKey }) })
   }
 
   async load(session: string): Promise<CardnetSessionRow | null> {
     const row = await this.repo.findOne({ id: session })
-    if (!row) return null
+    // Una fila de otro proveedor no es una sesión de CardNet: no se puede confirmar con ella.
+    if (!row || row.provider !== 'cardnet') return null
     return {
       id: String(row.id),
       hotelId: String(row.hotelId),
-      provider: 'cardnet',
+      provider: row.provider as 'cardnet',
       reference: String(row.reference || ''),
-      secret: String(decryptCredentials(String(row.secret)).sk || ''),
+      sessionKey: String(decryptCredentials(String(row.sessionKey)).sk || ''),
       amountMinor: Number(row.amountMinor || 0),
       currency: String(row.currency || ''),
       mode: row.mode === 'live' ? 'live' : 'test',
