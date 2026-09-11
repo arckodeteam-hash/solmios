@@ -3,7 +3,7 @@
 // automáticos de los conectores) siguen en auto-movements.ts — son un flujo distinto.
 
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
-import { NotFoundError } from 'arckode-framework'
+import { ConflictError, NotFoundError } from 'arckode-framework'
 import type {
   CashMovementDTO, CashRegister, CreateMovementDTO, UpdateMovementDTO,
   MovementQuery, CashPaginated, CurrentUser, MovementType,
@@ -78,6 +78,14 @@ export async function update(deps: MovementDeps, id: string, dto: UpdateMovement
   }
   if (existing.source === 'expense_connector') {
     throw new Error('Los movimientos automáticos (gasto) no se editan acá: modificá el gasto')
+  }
+  // #212: un movimiento de un turno ya CERRADO no se edita — el arqueo de ese turno quedó firmado
+  // con estos números; cambiarlos después deja el histórico diciendo otra cosa que la caja.
+  if (existing.shiftId) {
+    const shift = await deps.shiftDeps.shiftRepo.findById(existing.shiftId)
+    if (shift && shift.status === 'closed') {
+      throw new ConflictError('El turno de este movimiento ya está cerrado: no se puede editar')
+    }
   }
   const item = await deps.repo.update(id, dto as Partial<Omit<CashMovementDTO, 'id'>>)
   if (!item) throw new NotFoundError('Movimiento no encontrado')

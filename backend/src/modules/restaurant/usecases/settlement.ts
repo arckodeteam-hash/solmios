@@ -81,6 +81,24 @@ export async function loadOrder(deps: SettlementDeps, id: string, user: CurrentU
   return order
 }
 
+/**
+ * #212 — etiqueta con la que el cobro viaja a `payments` y, por el conector payments→caja, al
+ * concepto del movimiento de la caja del restaurante: "Comanda CMD-2026-0007 · Mesa 3". Antes el
+ * movimiento decía "Pago automático" y desde la caja no había forma de saber qué mesa fue. La mesa
+ * se lee acá (y no en caja) porque el módulo caja no conoce mesas ni comandas — el enlace lo arma
+ * el frontend con `reference: pos:<orderId>`.
+ */
+async function orderLabel(deps: SettlementDeps, order: OrderDTO): Promise<string> {
+  const head = `Comanda ${order.number ?? order.id}`
+  if (order.type === 'room_service') return `${head} · Room service`
+  if (order.type === 'takeaway') return `${head} · Para llevar`
+  if (!order.tableId) return head
+  const table = await deps.tables.findById(order.tableId)
+  if (!table?.name) return head
+  // El nombre de la mesa es texto libre ("3", "M1", "Mesa 3"): no duplicar el "Mesa" si ya lo trae.
+  return /^mesa\b/i.test(table.name) ? `${head} · ${table.name}` : `${head} · Mesa ${table.name}`
+}
+
 async function freeTable(deps: SettlementDeps, order: OrderDTO): Promise<void> {
   if (!order.tableId) return
   const table = await deps.tables.update(order.tableId, { status: 'free' } as Partial<Omit<TableDTO, 'id'>>)
@@ -169,7 +187,7 @@ export async function payOrder(
   // validado por loadOrder; solo releo ESE hotel para su moneda. Si el hotel no la define, payments defaultea.
   const hotel = await deps.hotels.findOne({ id: order.hotelId })
   const currency = (hotel as any)?.currency || undefined
-  const description = `Restaurante · comanda ${order.number ?? id}`
+  const description = await orderLabel(deps, order)
 
   if (dto.method === 'card') {
     if (!deps.ports.chargeCardPayment) throw new ValidationError('Cobro con tarjeta no disponible (payments no conectado)')

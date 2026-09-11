@@ -102,4 +102,38 @@ describe('CashService', () => {
     expect(created[0].source).toBe('payment_connector')
     expect(created[0].paymentId).toBe('p2')
   })
+
+  // #212: editar concepto/monto de un movimiento MANUAL mientras el turno está abierto; nunca los
+  // automáticos ni los de un turno ya cerrado (el arqueo de ese turno quedó firmado con esos números).
+  describe('update (#212)', () => {
+    const manual = { id: 'm1', hotelId: 'h1', shiftId: 's1', type: 'income', amount: 50, concept: 'Propina', source: 'manual' } as CashMovementDTO
+    const svc = (movement: CashMovementDTO, shiftStatus: 'open' | 'closed') => {
+      const updated: any[] = []
+      const repo = makeRepo<CashMovementDTO>({
+        findById: async () => movement,
+        update: async (id: any, d: any) => { updated.push(d); return { ...movement, ...d, id } as CashMovementDTO },
+      })
+      const shiftRepo = makeRepo<CashShiftDTO>({ findById: async () => ({ id: 's1', hotelId: 'h1', status: shiftStatus } as CashShiftDTO) })
+      return { s: new CashService(repo, shiftRepo, makeUserRepo(), log, silentCache, passAuth), updated }
+    }
+
+    it('con el turno abierto, un manual cambia concepto y monto', async () => {
+      const { s, updated } = svc(manual, 'open')
+      const res = await s.update('m1', { concept: 'Propina de la mesa 4', amount: 60 }, currentUser)
+      expect(updated[0]).toEqual({ concept: 'Propina de la mesa 4', amount: 60 })
+      expect(res.amount).toBe(60)
+    })
+
+    it('con el turno CERRADO → 409, no toca el repo', async () => {
+      const { s, updated } = svc(manual, 'closed')
+      await expect(s.update('m1', { amount: 60 }, currentUser)).rejects.toThrow('ya está cerrado')
+      expect(updated).toHaveLength(0)
+    })
+
+    it('un movimiento automático (cobro del POS) no se edita aunque el turno esté abierto', async () => {
+      const { s, updated } = svc({ ...manual, source: 'payment_connector', reference: 'pos:o1' }, 'open')
+      await expect(s.update('m1', { amount: 60 }, currentUser)).rejects.toThrow('automáticos')
+      expect(updated).toHaveLength(0)
+    })
+  })
 })
