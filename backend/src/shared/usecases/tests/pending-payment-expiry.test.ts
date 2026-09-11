@@ -20,7 +20,7 @@ interface World {
   paymentRequests: any[]
   cancelCalls: Array<{ id: string; hotelId: string }>
   audits: any[]
-  emails: Array<{ to: string; subject: string; html: string }>
+  emails: Array<{ to: string; subject: string; html: string; opts?: Record<string, unknown> }>
   deps: PendingPaymentExpiryDeps
 }
 
