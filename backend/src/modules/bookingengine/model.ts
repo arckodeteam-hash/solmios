@@ -25,6 +25,8 @@ export const BookingConfigModel: ModelDefinition = {
     instantConfirmation: { type: 'boolean', default: true },
     stripeAccountId: { type: 'string', default: '' },
     allowedCountries: { type: 'json', default: [] },
+    // #248 REQ-RWP-05 — Horas para pagar una reserva web (0 = nunca vence).
+    pendingPaymentTtlHours: { type: 'number', default: 24 },
   },
 }
 

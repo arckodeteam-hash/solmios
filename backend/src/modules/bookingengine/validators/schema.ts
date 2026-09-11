@@ -9,7 +9,9 @@ import type { BodyRule } from '../../../shared/validators/validate-body'
 
 // ─── Config (admin) ────────────────────────────────────
 
-export const UpdateBookingConfigSchema: Record<string, ValidationRule> = {
+// `BodyRule` (no `ValidationRule`): `pendingPaymentTtlHours` usa `integer` del shared, que
+// rechaza `7.5` y `"7"`. El controller valida este schema con el `validateSchema` del shared.
+export const UpdateBookingConfigSchema: Record<string, BodyRule> = {
   enabled: { type: 'boolean' as const },
   theme: { type: 'string' as const },
   position: { type: 'string' as const },
@@ -23,6 +25,8 @@ export const UpdateBookingConfigSchema: Record<string, ValidationRule> = {
   whatsappConfirmation: { type: 'boolean' as const },
   instantConfirmation: { type: 'boolean' as const },
   stripeAccountId: { type: 'string' as const },
+  // #248 REQ-RWP-05 — Horas para pagar una reserva web (0 = nunca vence).
+  pendingPaymentTtlHours: { type: 'integer' as const, min: 0, message: 'pendingPaymentTtlHours debe ser un entero ≥ 0 (0 = nunca vence)' },
 }
 
 // ─── Disponibilidad pública ─────────────────────────────
