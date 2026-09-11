@@ -202,9 +202,25 @@ export const PaySchema: Record<string, ValidationRule> = {
 }
 
 // ─── KDS (RES-4) ───
-const LINE_STATUSES = ['new', 'preparing', 'ready', 'served', 'cancelled']
+// #207: 'cancelled' ya no es un estado que cocina pueda fijar — sacar un plato enviado es
+// POST /orders/:id/items/:lineId/void con motivo (VoidLineSchema).
+const LINE_STATUSES = ['new', 'preparing', 'ready', 'served']
 export const KdsLineStatusSchema: Record<string, ValidationRule> = {
   status: { type: 'string' as const, required: true, enum: LINE_STATUSES },
+}
+
+// ─── Anulaciones con motivo (#207) ───
+// `text` (no `string`) para que un motivo "Otro" tipeado a mano no quede truncado por un límite de
+// VARCHAR; el usecase exige que no venga vacío.
+export const VoidLineSchema: Record<string, ValidationRule> = {
+  reason: { type: 'text' as const, required: true, min: 1, max: 500 },
+}
+export const CancelOrderSchema: Record<string, ValidationRule> = {
+  reason: { type: 'text' as const, required: true, min: 1, max: 500 },
+}
+// Motivos predefinidos del hotel (configuration('restaurant_void_reasons')). Array de strings.
+export const VoidReasonsSchema: Record<string, ValidationRule> = {
+  reasons: { type: 'array' as const, required: true, min: 1 },
 }
 
 export const RestaurantValidator = { createStation: CreateStationSchema, updateStation: UpdateStationSchema }

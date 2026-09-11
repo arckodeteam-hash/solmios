@@ -20,12 +20,15 @@ interface InventarioModule {
   recipeCost: (menuItemId: string, user: any) => Promise<{ cost: number; hasRecipe: boolean }>
 }
 
-/** Descuenta stock por cada línea no cancelada con menuItemId. Best-effort: no rompe la liquidación. */
+// #207: una línea `voided` (anulada con motivo) tampoco consume ni revierte stock — nunca se cobró.
+const isDeadLine = (l: any): boolean => l.status === 'cancelled' || l.status === 'voided'
+
+/** Descuenta stock por cada línea viva (ni cancelada ni anulada) con menuItemId. Best-effort: no rompe la liquidación. */
 async function consumeOrder(order: any, restaurant: RestaurantModule, inv: InventarioModule): Promise<void> {
   try {
     const sys = { id: 'system', hotelId: order.hotelId, role: 'super_admin' }
     const full = await restaurant.getOrder(order.id, sys)
-    const lines = ((full?.lines ?? []) as any[]).filter((l) => l.menuItemId && l.status !== 'cancelled')
+    const lines = ((full?.lines ?? []) as any[]).filter((l) => l.menuItemId && !isDeadLine(l))
     for (const l of lines) {
       await inv.consumeForSale({ hotelId: order.hotelId, menuItemId: l.menuItemId, soldQty: Number(l.quantity) || 0, lineId: l.id }, sys)
       // consumeForSaleWithModifiers ya no-opea sola si la línea no trae modifiers (sin `if` acá: el
@@ -41,7 +44,7 @@ async function revertOrder(order: any, restaurant: RestaurantModule, inv: Invent
     const sys = { id: 'system', hotelId: order.hotelId, role: 'super_admin' }
     const full = await restaurant.getOrder(order.id, sys)
     const lineIds = ((full?.lines ?? []) as any[])
-      .filter((l) => l.menuItemId && l.status !== 'cancelled')
+      .filter((l) => l.menuItemId && !isDeadLine(l))
       .map((l) => String(l.id))
     await inv.revertPosSale({ hotelId: order.hotelId, lineIds }, sys)
   } catch { /* best-effort: no rompe el reembolso del payment */ }

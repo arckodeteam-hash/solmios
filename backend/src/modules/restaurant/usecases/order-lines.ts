@@ -1,10 +1,15 @@
-// restaurant/usecases/order-lines.ts — Líneas de la comanda (RES-3): agregar, editar, quitar.
+// restaurant/usecases/order-lines.ts — Líneas de la comanda (RES-3): agregar, editar, quitar, anular.
 // Cada línea SNAPSHOTEA name/unitPrice/taxRate/estación al crearse (la comanda no muta si cambia la
 // carta después). Los totales se recalculan en el server tras cada cambio. hotelId SIEMPRE del JWT.
-import type { RepositoryAdapter, Auth } from 'arckode-framework'
+// #207: quitar (DELETE) solo vale mientras la comanda está `open` (error de toma). Una línea ya
+// enviada a cocina se ANULA con motivo (`voidLine`): queda en la comanda tachada y se audita.
+import type { RepositoryAdapter, Auth, Logger } from 'arckode-framework'
 import { NotFoundError, ValidationError, ConflictError } from 'arckode-framework'
 import type { OrderDTO, OrderItemDTO, MenuItemDTO, CategoryDTO, StationDTO, CurrentUser, ModifierGroupDTO, ModifierDTO, OrderItemModifierSnapshot, ComboDTO, ComboItemDTO } from '../types'
-import { resolveStation, recomputeTotals, round2, isWithinAvailabilityWindow } from './order-totals'
+import type { RestaurantSockets } from '../sockets'
+import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
+import { resolveStation, recomputeTotals, round2, isWithinAvailabilityWindow, isLineActive } from './order-totals'
+import { recomputeOrderStatus } from './kds'
 import { getCombo } from './combos-crud'
 
 export interface OrderLinesDeps {
@@ -24,12 +29,20 @@ export interface OrderLinesDeps {
   // service.ts (comboDeps/orderLinesDeps, tarea 2.6).
   combos?: RepositoryAdapter<ComboDTO>
   comboItems?: RepositoryAdapter<ComboItemDTO>
+  // #207: auditoría (puerto inyectado por connectors/restaurante-auditlog.ts) + sockets para que el
+  // KDS se entere de una anulación. Ambos opcionales: el módulo funciona sin conectores.
+  audit?: AuditPort | null
+  logger?: Logger
+  sockets?: RestaurantSockets
 }
 
 // Una vez liquidada o cancelada, la comanda no acepta cambios de líneas. fix-refund-pos-card:
 // 'processing_payment' también bloquea — el monto ya viaja en una Checkout Session de Stripe abierta;
 // si se editara una línea acá, el total recalculado NO coincidiría con lo que Stripe va a confirmar.
 const LINES_LOCKED: OrderDTO['status'][] = ['charged', 'paid', 'cancelled', 'processing_payment']
+// auditSafely exige un logger; si el service no inyectó uno (tests viejos), el fallo del audit se traga
+// igual que con el logger real — auditar nunca tumba la operación de negocio.
+const silentLogger = { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} } as unknown as Logger
 
 export interface AddLineInput {
   menuItemId?: string
@@ -296,6 +309,11 @@ export async function updateLine(deps: OrderLinesDeps, orderId: string, lineId: 
 
 export async function removeLine(deps: OrderLinesDeps, orderId: string, lineId: string, user: CurrentUser): Promise<void> {
   const order = await loadOrderForEdit(deps, orderId, user)
+  // #207: borrar es solo para un error de toma, antes de enviar. Una vez que la comanda salió a
+  // cocina (cualquier estado ≠ open) el plato ya se vio en el KDS: se anula con motivo, no se borra.
+  if (order.status !== 'open') {
+    throw new ConflictError('La línea ya fue enviada a cocina: anulala con motivo')
+  }
   const line = (await deps.lines.findOne({ id: lineId })) as OrderItemDTO | null
   if (!line || line.orderId !== orderId || line.hotelId !== order.hotelId) throw new NotFoundError('Línea no encontrada')
   if (line.kind === 'combo_component') {
@@ -308,4 +326,56 @@ export async function removeLine(deps: OrderLinesDeps, orderId: string, lineId: 
   }
   await deps.lines.delete(lineId)
   await recomputeTotals(deps, order)
+}
+
+/**
+ * #207 — Anula con motivo una línea ya enviada a cocina. La línea NO se borra: pasa a `voided` con
+ * `voidReason`/`voidedBy`/`voidedAt`, deja de contar en los totales y sale del KDS, pero sigue en la
+ * comanda (tachada) para que el dueño sepa quién anuló qué. Un combo se anula completo (header +
+ * componentes). Requiere `restaurant:delete` (ruta). Audita `restaurant.line.voided` con el monto.
+ * No toca stock: el inventario se descuenta recién al liquidar (connectors/restaurante-inventario.ts),
+ * y una comanda liquidada ya no llega acá (LINES_LOCKED).
+ */
+export async function voidLine(deps: OrderLinesDeps, orderId: string, lineId: string, reason: string | undefined, user: CurrentUser): Promise<OrderItemDTO> {
+  const reasonText = String(reason ?? '').trim()
+  if (!reasonText) throw new ValidationError('Indicá el motivo de la anulación')
+  const order = await loadOrderForEdit(deps, orderId, user)
+  if (order.status === 'open') {
+    throw new ConflictError('La línea todavía no fue enviada a cocina: quitala de la comanda')
+  }
+  const line = (await deps.lines.findOne({ id: lineId })) as OrderItemDTO | null
+  if (!line || line.orderId !== orderId || line.hotelId !== order.hotelId) throw new NotFoundError('Línea no encontrada')
+  if (line.kind === 'combo_component') {
+    throw new ValidationError('Esta línea pertenece a un combo; anulá el combo completo')
+  }
+  if (!isLineActive(line)) throw new ConflictError('La línea ya está anulada')
+  // Snapshot ANTES de escribir: un adapter puede devolver la misma referencia que después muta.
+  const previousStatus = line.status
+  const amount = round2(Number(line.lineTotal || 0))
+
+  const voidPatch = { status: 'voided', voidReason: reasonText, voidedBy: user.id, voidedAt: new Date().toISOString() } as Partial<Omit<OrderItemDTO, 'id'>>
+  if (line.kind === 'combo_header') {
+    const components = ((await deps.lines.findMany({ orderId })) as OrderItemDTO[])
+      .filter((l) => l.parentLineId === line.id && isLineActive(l))
+    for (const c of components) await deps.lines.update(c.id, voidPatch)
+  }
+  const updated = (await deps.lines.update(lineId, voidPatch)) as OrderItemDTO
+  await recomputeTotals(deps, order)
+  // Si la línea anulada era la única que frenaba la comanda (ej. las demás ya `ready`), el estado
+  // agregado tiene que avanzar — mismo criterio que una transición del KDS.
+  await recomputeOrderStatus(deps, order)
+
+  await auditSafely(deps.audit ?? null, deps.logger ?? silentLogger, {
+    hotelId: order.hotelId,
+    userId: user.id,
+    action: 'restaurant.line.voided',
+    entity: 'restaurant_order_item',
+    entityId: lineId,
+    detail: JSON.stringify({
+      orderId: order.id, orderNumber: order.number, lineId, name: line.name, quantity: line.quantity,
+      amount, reason: reasonText, previousStatus,
+    }),
+  })
+  await deps.sockets?.onLineStatusChanged?.(updated)
+  return updated
 }

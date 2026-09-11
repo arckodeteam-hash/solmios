@@ -2,10 +2,13 @@
 // pages/restaurante/comanda.vue — Toma de comanda (RES-7). Carta a la izquierda (tocar ítem = agregar
 // línea), ticket a la derecha con líneas + totales en vivo (recalculados por el backend). Enviar a cocina
 // (sendOrder), cobrar (→ cobrar/:id) o cancelar. Las líneas solo se editan si la comanda no cerró.
+// #207: quitar (✕) borra SOLO mientras la comanda está `open`; una vez enviada a cocina abre el modal de
+// motivo y ANULA (la línea queda tachada con el motivo, sale del total). Cancelar la comanda también
+// pide motivo. Cerrar el modal no cambia nada.
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  RestaurantService,
+  RestaurantService, isLineActive,
   type OrderWithLines, type MenuCategory, type MenuItem, type OrderLine, type ModifierGroup, type Combo,
   type AllergenTag,
   ORDER_STATUS_LABELS, ORDER_TYPE_LABELS, LINE_STATUS_LABELS, ALLERGEN_LABELS,
@@ -16,9 +19,8 @@ import { CurrencyCode } from '@/types/currency'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
-import ConfirmModal from '@/components/features/ConfirmModal.vue'
+import VoidReasonModal from '@/components/features/restaurante/VoidReasonModal.vue'
 import { useToast } from '@/composables/useToast'
-import { useConfirm } from '@/composables/useConfirm'
 import { usePermissions } from '@/composables/usePermissions'
 
 const route = useRoute()
@@ -26,10 +28,6 @@ const router = useRouter()
 const toast = useToast()
 const { can } = usePermissions()
 const orderId = computed(() => String(route.params.id))
-
-const { confirmModal, confirmBusy, askConfirm, runConfirm } = useConfirm({
-  onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo'),
-})
 
 const loading = ref(true)
 const busy = ref(false)
@@ -49,6 +47,37 @@ const deletePerm = computed(() => can('restaurant', 'delete'))
 // Session; el cajero espera la confirmación en cobrar.vue, no vuelve a tocar la comanda desde acá.
 const LOCKED = ['billed', 'charged', 'paid', 'cancelled', 'processing_payment']
 const editable = computed(() => !!order.value && !LOCKED.includes(order.value.status))
+// Líneas que cuentan (no anuladas): son las que habilitan Enviar/Cobrar.
+const activeLines = computed<OrderLine[]>(() => (order.value?.lines ?? []).filter(isLineActive))
+
+// #207: modal de motivo, compartido por "anular línea" y "cancelar comanda".
+const voidReasons = ref<string[]>([])
+const voidBusy = ref(false)
+const voidTarget = ref<{ kind: 'line'; line: OrderLine } | { kind: 'order' } | null>(null)
+const voidTitle = computed(() => voidTarget.value?.kind === 'order' ? 'Cancelar comanda' : 'Anular plato')
+const voidSubtitle = computed(() => {
+  if (!voidTarget.value) return undefined
+  if (voidTarget.value.kind === 'order') return 'Se libera la mesa. Lo ya enviado a cocina queda anulado con este motivo.'
+  return `${voidTarget.value.line.quantity}× ${voidTarget.value.line.name}`
+})
+function closeVoid() { if (!voidBusy.value) voidTarget.value = null }
+async function confirmVoid(reason: string) {
+  if (!voidTarget.value || voidBusy.value) return
+  voidBusy.value = true
+  try {
+    if (voidTarget.value.kind === 'order') {
+      await RestaurantService.cancelOrder(orderId.value, reason)
+      voidTarget.value = null
+      router.push('/panel/restaurante/salon')
+      return
+    }
+    await RestaurantService.voidLine(orderId.value, voidTarget.value.line.id, reason)
+    voidTarget.value = null
+    toast.success('Plato anulado')
+    await reloadOrder()
+  } catch (e: unknown) { toast.error(e instanceof Error ? e.message : 'No se pudo anular') }
+  finally { voidBusy.value = false }
+}
 const money = (n: number): string => `${currencySymbol(currency.value)}${Number(n || 0).toFixed(2)}`
 // F5 — tags de alérgenos/info dietética: SOLO informativos, nunca bloquean addItem/addCombo.
 const allergenLabel = (tag: string): string => ALLERGEN_LABELS[tag as AllergenTag] ?? tag
@@ -80,12 +109,14 @@ async function reloadOrder() {
 async function load() {
   loading.value = true
   try {
-    const [cat, it, combosRes, settings] = await Promise.all([
+    const [cat, it, combosRes, settings, reasons] = await Promise.all([
       RestaurantService.listCategories(),
       RestaurantService.listItems(),
       RestaurantService.listCombos(),
       SettingsService.get().catch(() => null),
+      RestaurantService.voidReasons().catch(() => null),   // sin lista, el modal ofrece solo "Otro"
     ])
+    voidReasons.value = reasons?.reasons ?? []
     categories.value = cat.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
     items.value = it.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
     combos.value = combosRes.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
@@ -182,8 +213,8 @@ function componentsOf(headerId: string): OrderLine[] {
 function comboAggregateStatus(headerId: string): string {
   const comps = componentsOf(headerId)
   if (!comps.length) return ''
+  if (comps.every((c) => !isLineActive(c))) return 'Anulado'
   if (comps.every((c) => c.status === 'served')) return 'Servido'
-  if (comps.every((c) => c.status === 'cancelled')) return 'Cancelado'
   if (comps.some((c) => c.status === 'ready')) return 'Listo'
   if (comps.some((c) => c.status === 'preparing')) return 'Preparando'
   return 'Nuevo'
@@ -195,7 +226,7 @@ function toggleExpand(headerId: string) {
 }
 
 async function setQty(line: OrderLine, qty: number) {
-  if (!editable.value || !editPerm.value || busy.value) return
+  if (!editable.value || !editPerm.value || busy.value || !isLineActive(line)) return
   if (qty < 1) { await remove(line); return }
   busy.value = true
   try {
@@ -206,9 +237,11 @@ async function setQty(line: OrderLine, qty: number) {
 }
 
 async function remove(line: OrderLine) {
-  if (!editable.value || busy.value) return
+  if (!editable.value || busy.value || !isLineActive(line)) return
   // Sin restaurant:delete (mesero/cocina), bajar a 0 quedaba en silencio — igual que 'cancel()'.
   if (!deletePerm.value) { toast.warning('Sin permiso para quitar ítems'); return }
+  // #207: ya enviada a cocina → no se borra, se anula con motivo (el backend devuelve 409 si se intenta).
+  if (order.value?.status !== 'open') { voidTarget.value = { kind: 'line', line }; return }
   busy.value = true
   try {
     await RestaurantService.removeLine(orderId.value, line.id)
@@ -229,16 +262,14 @@ async function send() {
 }
 
 function goPay() {
-  if (!order.value?.lines.length) { toast.warning('La comanda no tiene ítems'); return }
+  if (!activeLines.value.length) { toast.warning('La comanda no tiene ítems'); return }
   router.push(`/panel/restaurante/cobrar/${orderId.value}`)
 }
 
+// #207: cancelar pide motivo (obligatorio en el backend). El modal de motivo reemplaza al ConfirmModal.
 function cancel() {
   if (!deletePerm.value) { toast.warning('Sin permiso para cancelar'); return }
-  askConfirm({
-    title: 'Cancelar comanda', message: '¿Cancelar esta comanda? No se podrá cobrar.', confirmLabel: 'Cancelar comanda', danger: true,
-    run: async () => { await RestaurantService.cancelOrder(orderId.value); router.push('/panel/restaurante/salon') },
-  })
+  voidTarget.value = { kind: 'order' }
 }
 </script>
 
@@ -300,15 +331,19 @@ function cancel() {
         <SectionCard title="Comanda">
           <EmptyState v-if="!topLines.length" title="Comanda vacía" message="Tocá un ítem de la carta para agregarlo." />
           <div v-else class="divide-y divide-border">
-            <div v-for="l in topLines" :key="l.id" class="py-2.5">
+            <div v-for="l in topLines" :key="l.id" :class="['py-2.5', !isLineActive(l) && 'opacity-70']">
               <div class="flex items-center gap-3">
                 <div class="min-w-0 flex-1">
-                  <div class="font-bold text-navy text-sm truncate flex items-center gap-1.5">
+                  <div :class="['font-bold text-sm truncate flex items-center gap-1.5', isLineActive(l) ? 'text-navy' : 'text-text-muted line-through']">
                     <span v-if="l.kind === 'combo_header'" class="text-[9px] px-1.5 py-0.5 rounded bg-gold/20 text-gold font-bold uppercase shrink-0">Combo</span>
                     <span class="truncate">{{ l.name }} × {{ l.quantity }}</span>
                     <span v-if="modifiersLabel(l)" class="font-normal text-text-muted">{{ modifiersLabel(l) }}</span>
                   </div>
-                  <div class="text-[11px] text-text-muted tabular-nums">
+                  <!-- #207: una línea anulada se conserva tachada con su motivo; no suma al total. -->
+                  <div v-if="!isLineActive(l)" class="text-[11px] text-coral font-bold">
+                    Anulada<span v-if="l.voidReason"> · {{ l.voidReason }}</span>
+                  </div>
+                  <div v-else class="text-[11px] text-text-muted tabular-nums">
                     {{ money(l.unitPrice) }} c/u · {{ money(l.lineTotal) }}
                   </div>
                   <button v-if="l.kind === 'combo_header'" @click="toggleExpand(l.id)" class="text-[11px] font-bold text-teal hover:underline mt-0.5">
@@ -316,16 +351,17 @@ function cancel() {
                     <span v-if="comboAggregateStatus(l.id)" class="text-text-muted font-normal">· {{ comboAggregateStatus(l.id) }}</span>
                   </button>
                 </div>
-                <div v-if="editable && (editPerm || deletePerm)" class="flex items-center gap-1.5 shrink-0">
+                <div v-if="editable && isLineActive(l) && (editPerm || deletePerm)" class="flex items-center gap-1.5 shrink-0">
                   <template v-if="editPerm">
                     <button @click="setQty(l, l.quantity - 1)" :disabled="busy" class="w-7 h-7 rounded-lg border-2 border-border font-black text-navy hover:bg-surface disabled:opacity-40">−</button>
                     <span class="w-6 text-center font-black text-navy tabular-nums">{{ l.quantity }}</span>
                     <button @click="setQty(l, l.quantity + 1)" :disabled="busy" class="w-7 h-7 rounded-lg border-2 border-border font-black text-navy hover:bg-surface disabled:opacity-40">+</button>
                   </template>
                   <span v-else class="font-black text-navy tabular-nums">×{{ l.quantity }}</span>
-                  <button v-if="deletePerm" @click="remove(l)" :disabled="busy" class="ml-1 w-7 h-7 rounded-lg text-coral font-black hover:bg-coral/10 disabled:opacity-40">✕</button>
+                  <button v-if="deletePerm" @click="remove(l)" :disabled="busy" :title="order.status === 'open' ? 'Quitar' : 'Anular con motivo'"
+                    class="ml-1 w-7 h-7 rounded-lg text-coral font-black hover:bg-coral/10 disabled:opacity-40">✕</button>
                 </div>
-                <div v-else class="font-black text-navy tabular-nums shrink-0">×{{ l.quantity }}</div>
+                <div v-else-if="isLineActive(l)" class="font-black text-navy tabular-nums shrink-0">×{{ l.quantity }}</div>
               </div>
 
               <!-- Componentes del combo (F2): solo informativo, no editables por separado (se editan/quitan vía el header) -->
@@ -348,9 +384,9 @@ function cancel() {
 
           <!-- Acciones -->
           <div class="mt-4 flex flex-wrap gap-2">
-            <button v-if="editable && editPerm && order.status === 'open'" @click="send" :disabled="busy || !order.lines.length"
+            <button v-if="editable && editPerm && order.status === 'open'" @click="send" :disabled="busy || !activeLines.length"
               class="flex-1 min-w-[140px] py-2.5 rounded-xl bg-navy text-white font-bold hover:bg-navy-light disabled:opacity-50">Enviar a cocina</button>
-            <button v-if="editable && editPerm" @click="goPay" :disabled="busy || !order.lines.length"
+            <button v-if="editable && editPerm" @click="goPay" :disabled="busy || !activeLines.length"
               class="flex-1 min-w-[140px] py-2.5 rounded-xl bg-teal text-white font-bold hover:bg-teal/80 disabled:opacity-50">Cobrar</button>
             <button v-if="editable && deletePerm" @click="cancel" :disabled="busy"
               class="px-4 py-2.5 rounded-xl border-2 border-coral/40 text-coral font-bold hover:bg-coral/10 disabled:opacity-50">Cancelar</button>
@@ -389,6 +425,9 @@ function cancel() {
       </template>
     </AppModal>
 
-    <ConfirmModal v-if="confirmModal" v-bind="confirmModal" :loading="confirmBusy" @confirm="runConfirm" @close="confirmModal = null" />
+    <VoidReasonModal v-if="voidTarget" :title="voidTitle" :subtitle="voidSubtitle"
+      :reasons="voidReasons.length ? voidReasons : ['Otro']"
+      :confirm-label="voidTarget.kind === 'order' ? 'Cancelar comanda' : 'Anular plato'" :loading="voidBusy"
+      @confirm="confirmVoid" @close="closeVoid" />
   </div>
 </template>

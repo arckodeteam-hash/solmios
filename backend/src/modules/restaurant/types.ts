@@ -7,7 +7,9 @@ export type OrderType = 'dine_in' | 'room_service' | 'takeaway'
 export type OrderStatus =
   | 'open' | 'sent' | 'preparing' | 'ready' | 'served' | 'billed' | 'charged' | 'paid' | 'cancelled' | 'refunded'
   | 'processing_payment'
-export type LineStatus = 'new' | 'preparing' | 'ready' | 'served' | 'cancelled'
+// 'voided' (#207): anulada CON motivo después de enviada a cocina. Se conserva en la comanda (tachada)
+// pero no cuenta en totales ni en el KDS. 'cancelled' queda como estado legacy (filas anteriores a #207).
+export type LineStatus = 'new' | 'preparing' | 'ready' | 'served' | 'cancelled' | 'voided'
 export type TableStatus = 'free' | 'occupied' | 'reserved'
 export type Settlement = 'folio' | 'payment'
 
@@ -148,6 +150,10 @@ export interface OrderItemDTO {
   comboId?: string
   // F2 — solo en filas kind='combo_component': FK lógica (self) a la fila combo_header hermana.
   parentLineId?: string
+  // #207 — solo en filas status='voided': motivo, quién (users.id) y cuándo se anuló.
+  voidReason?: string
+  voidedBy?: string
+  voidedAt?: string
   createdAt: string
   updatedAt: string
 }

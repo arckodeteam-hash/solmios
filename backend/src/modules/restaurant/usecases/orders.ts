@@ -1,11 +1,13 @@
 // restaurant/usecases/orders.ts — Ciclo de la comanda: abrir, listar, ver, enviar a cocina, cancelar (RES-3).
 // Reglas: tipo↔tableId/reservationId; una mesa = una comanda abierta; cancelar libera la mesa.
 // Los totales viven en order-totals; las líneas en order-lines. hotelId SIEMPRE del JWT.
-import type { RepositoryAdapter, Auth } from 'arckode-framework'
+import type { RepositoryAdapter, Auth, Logger } from 'arckode-framework'
 import { NotFoundError, ValidationError, ConflictError } from 'arckode-framework'
 import type { OrderDTO, OrderItemDTO, TableDTO, OrderType, CurrentUser } from '../types'
 import type { RestaurantSockets } from '../sockets'
+import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
 import { nextOrderNumber } from './order-number'
+import { isLineActive, round2 } from './order-totals'
 
 export interface OrdersDeps {
   orders: RepositoryAdapter<OrderDTO>
@@ -15,7 +17,12 @@ export interface OrdersDeps {
   userRepo: RepositoryAdapter<any>
   auth: Auth
   sockets: RestaurantSockets
+  // #207: auditoría de cancelaciones (puerto inyectado por connectors/restaurante-auditlog.ts). Opcional.
+  audit?: AuditPort | null
+  logger?: Logger
 }
+
+const silentLogger = { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} } as unknown as Logger
 
 // Una comanda "ocupa" la mesa mientras no esté liquidada ni cancelada.
 // `refunded` también es terminal: una orden reembolsada fue cobrada con tarjeta (la mesa ya se liberó
@@ -105,14 +112,22 @@ export async function sendOrder(deps: OrdersDeps, id: string, user: CurrentUser)
   deps.auth.assertOwnership(order.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
   if (order.status !== 'open') throw new ConflictError(`La comanda ya fue enviada (estado ${order.status})`)
   const lines = (await deps.lines.findMany({ orderId: id })) as OrderItemDTO[]
-  if (!lines.some((l) => l.status !== 'cancelled')) throw new ValidationError('La comanda no tiene líneas para enviar')
+  if (!lines.some(isLineActive)) throw new ValidationError('La comanda no tiene líneas para enviar')
   const updated = (await deps.orders.update(id, { status: 'sent' } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
   await deps.sockets.onOrderSent?.(updated, lines)
   return updated
 }
 
-/** Cancela la comanda (si no está liquidada) y libera la mesa. Requiere restaurant:delete (ruta). */
-export async function cancelOrder(deps: OrdersDeps, id: string, user: CurrentUser): Promise<OrderDTO> {
+/**
+ * Cancela la comanda (si no está liquidada) y libera la mesa. Requiere restaurant:delete (ruta).
+ * #207: exige `reason`. Si la comanda ya había salido a cocina (estado ≠ open), sus líneas vivas pasan
+ * a `voided` con ese motivo — así el KDS y el reporte de anulaciones ven lo mismo que la comanda. Una
+ * comanda `open` nunca llegó a cocina: sus líneas quedan como estaban (fue un error de toma, no una
+ * anulación). Audita `restaurant.order.cancelled` con el monto que se dejó de cobrar.
+ */
+export async function cancelOrder(deps: OrdersDeps, id: string, reason: string | undefined, user: CurrentUser): Promise<OrderDTO> {
+  const reasonText = String(reason ?? '').trim()
+  if (!reasonText) throw new ValidationError('Indicá el motivo de la cancelación')
   const order = await deps.orders.findById(id)
   if (!order) throw new NotFoundError('Comanda no encontrada')
   const me = await deps.userRepo.findById(user.id)
@@ -128,7 +143,29 @@ export async function cancelOrder(deps: OrdersDeps, id: string, user: CurrentUse
     throw new ConflictError('La comanda tiene un cobro con tarjeta en curso — esperá a que se confirme o expire antes de cancelarla')
   }
   if (order.status === 'cancelled') return order
-  const updated = (await deps.orders.update(id, { status: 'cancelled', closedAt: new Date().toISOString() } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
+  const now = new Date().toISOString()
+  // Snapshot ANTES de escribir: un adapter puede devolver la misma referencia que después muta.
+  const previousStatus = order.status
+  const amount = round2(Number(order.total || 0))
+  let voidedLines = 0
+  if (order.status !== 'open') {
+    const lines = ((await deps.lines.findMany({ orderId: id })) as OrderItemDTO[]).filter(isLineActive)
+    const voidPatch = { status: 'voided', voidReason: reasonText, voidedBy: user.id, voidedAt: now } as Partial<Omit<OrderItemDTO, 'id'>>
+    for (const l of lines) await deps.lines.update(l.id, voidPatch)
+    voidedLines = lines.length
+  }
+  const updated = (await deps.orders.update(id, { status: 'cancelled', closedAt: now } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
   if (order.tableId) await deps.tables.update(order.tableId, { status: 'free' } as Partial<Omit<TableDTO, 'id'>>)
+  await auditSafely(deps.audit ?? null, deps.logger ?? silentLogger, {
+    hotelId: order.hotelId,
+    userId: user.id,
+    action: 'restaurant.order.cancelled',
+    entity: 'restaurant_order',
+    entityId: id,
+    detail: JSON.stringify({
+      orderId: id, orderNumber: order.number, tableId: order.tableId, previousStatus,
+      amount, voidedLines, reason: reasonText,
+    }),
+  })
   return updated
 }

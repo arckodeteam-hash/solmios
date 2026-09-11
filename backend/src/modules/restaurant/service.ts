@@ -16,6 +16,9 @@ import * as stationsCrud from './usecases/stations-crud'
 import * as combosCrud from './usecases/combos-crud'
 import * as foodCost from './usecases/food-cost'
 import * as publicMenuUsecase from './usecases/public-menu'
+import * as voidReasons from './usecases/void-reasons'
+import { composeSockets } from './usecases/compose-sockets'
+import type { AuditPort } from '../../shared/usecases/audit'
 import type { LineStatus } from './types'
 
 export class RestaurantService {
@@ -25,6 +28,8 @@ export class RestaurantService {
   // Puerto de recetas (inventario, conector restaurante-inventario.ts): hasRecipe (badge "Sin receta") +
   // F3 getRecipeCost (margen). `undefined` = inventario no montado → food-cost.ts degrada, nunca 500.
   private recipePorts: foodCost.RecipePorts = {}
+  // #207: auditoría (connectors/restaurante-auditlog.ts). null = sin auditlog montado: anular sigue funcionando, sin rastro.
+  private auditPort: AuditPort | null = null
 
   constructor(
     private readonly stations: RepositoryAdapter<StationDTO>,
@@ -48,47 +53,30 @@ export class RestaurantService {
     private readonly plans?: RepositoryAdapter<any>, private readonly subscriptions?: RepositoryAdapter<any>, // F7: gate del módulo restaurant — plan desde la suscripción activa (resolve-plan.ts)
   ) {}
 
-  // Acumula handlers, nunca pisa el anterior (composición de sockets).
-  setSockets(s: Partial<RestaurantSockets>): void {
-    const next = s as Record<string, any>
-    const cur = this.sockets as Record<string, any>
-    for (const key of Object.keys(next)) {
-      const h = next[key]
-      if (!h) continue
-      const prev = cur[key]
-      cur[key] = prev ? async (...a: any[]) => { await prev(...a); await h(...a) } : h
-    }
-  }
-
+  // Acumula handlers, nunca pisa el anterior (composición de sockets, usecases/compose-sockets.ts).
+  setSockets(s: Partial<RestaurantSockets>): void { composeSockets(this.sockets, s) }
+  /** #207: puerto de auditoría inyectado por conector (mismo patrón que reservas.setAuditDeps). */
+  setAuditDeps(port: AuditPort): void { this.auditPort = port }
   /** Puertos de liquidación (folios/payments) inyectados por conector. Acumula (no pisa). */
-  setSettlementDeps(p: Partial<settlement.SettlementPorts>): void {
-    this.settlementPorts = { ...this.settlementPorts, ...p }
-  }
-
+  setSettlementDeps(p: Partial<settlement.SettlementPorts>): void { this.settlementPorts = { ...this.settlementPorts, ...p } }
   /** Puerto de recetas (inventario) inyectado por conector. Acumula (no pisa). Best-effort + graceful. */
-  setRecipePorts(p: Partial<foodCost.RecipePorts>): void {
-    this.recipePorts = { ...this.recipePorts, ...p }
-  }
+  setRecipePorts(p: Partial<foodCost.RecipePorts>): void { this.recipePorts = { ...this.recipePorts, ...p } }
 
-  private stationDeps(): stationsCrud.StationsCrudDeps {
-    return { stations: this.stations, userRepo: this.userRepo, auth: this.auth }
-  }
-  private catDeps(): categoriesCrud.CategoriesCrudDeps {
-    return { categories: this.categories, items: this.items, stations: this.stations, userRepo: this.userRepo, auth: this.auth }
-  }
-  private itemDeps(): itemsCrud.ItemsCrudDeps {
-    return { items: this.items, categories: this.categories, stations: this.stations, userRepo: this.userRepo, auth: this.auth }
-  }
-  private tableDeps(): tablesCrud.TablesCrudDeps {
-    return { tables: this.tables, userRepo: this.userRepo, auth: this.auth }
-  }
+  private stationDeps(): stationsCrud.StationsCrudDeps { return { stations: this.stations, userRepo: this.userRepo, auth: this.auth } }
+  private catDeps(): categoriesCrud.CategoriesCrudDeps { return { categories: this.categories, items: this.items, stations: this.stations, userRepo: this.userRepo, auth: this.auth } }
+  private itemDeps(): itemsCrud.ItemsCrudDeps { return { items: this.items, categories: this.categories, stations: this.stations, userRepo: this.userRepo, auth: this.auth } }
+  private tableDeps(): tablesCrud.TablesCrudDeps { return { tables: this.tables, userRepo: this.userRepo, auth: this.auth } }
   private ordersDeps(): orders.OrdersDeps {
     if (!this.orders || !this.lines || !this.config) throw new ValidationError('Comandas no configuradas')
-    return { orders: this.orders, lines: this.lines, tables: this.tables, config: this.config, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets }
+    return { orders: this.orders, lines: this.lines, tables: this.tables, config: this.config, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets, audit: this.auditPort, logger: this.logger }
   }
   private orderLinesDeps(): orderLines.OrderLinesDeps {
     if (!this.orders || !this.lines || !this.config || !this.hotels) throw new ValidationError('Comandas no configuradas')
-    return { orders: this.orders, lines: this.lines, items: this.items, categories: this.categories, stations: this.stations, config: this.config, hotels: this.hotels, userRepo: this.userRepo, auth: this.auth, modifierGroups: this.modifierGroups, modifiers: this.modifiers, combos: this.combos, comboItems: this.comboItems }
+    return { orders: this.orders, lines: this.lines, items: this.items, categories: this.categories, stations: this.stations, config: this.config, hotels: this.hotels, userRepo: this.userRepo, auth: this.auth, modifierGroups: this.modifierGroups, modifiers: this.modifiers, combos: this.combos, comboItems: this.comboItems, audit: this.auditPort, logger: this.logger, sockets: this.sockets }
+  }
+  private voidReasonsDeps(): voidReasons.VoidReasonsDeps {
+    if (!this.config) throw new ValidationError('Comandas no configuradas')
+    return { config: this.config }
   }
   private modifierDeps(): modifiersCrud.ModifiersCrudDeps {
     if (!this.modifierGroups || !this.modifiers) throw new ValidationError('Modificadores no configurados')
@@ -98,12 +86,10 @@ export class RestaurantService {
     if (!this.combos || !this.comboItems) throw new ValidationError('Combos no configurados')
     return { combos: this.combos, comboItems: this.comboItems, items: this.items, userRepo: this.userRepo, auth: this.auth }
   }
-  private foodCostDeps(): foodCost.FoodCostDeps {
-    return { items: this.items, combos: this.combos, comboItems: this.comboItems, recipePorts: this.recipePorts }
-  }
+  private foodCostDeps(): foodCost.FoodCostDeps { return { items: this.items, combos: this.combos, comboItems: this.comboItems, recipePorts: this.recipePorts } }
   private settlementDeps(): settlement.SettlementDeps {
     if (!this.orders || !this.lines || !this.hotels) throw new ValidationError('Comandas no configuradas')
-    return { orders: this.orders, lines: this.lines, tables: this.tables, hotels: this.hotels, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets, ports: this.settlementPorts }
+    return { orders: this.orders, lines: this.lines, tables: this.tables, hotels: this.hotels, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets, ports: this.settlementPorts, audit: this.auditPort, logger: this.logger }
   }
   private kdsDeps(): kds.KdsDeps {
     if (!this.orders || !this.lines) throw new ValidationError('Comandas no configuradas')
@@ -156,10 +142,14 @@ export class RestaurantService {
   listOrders(query: { status?: string; tableId?: string } | undefined, user: CurrentUser) { return orders.listOrders(this.ordersDeps(), query, user) }
   getOrder(id: string, user: CurrentUser) { return orders.getOrder(this.ordersDeps(), id, user) }
   sendOrder(id: string, user: CurrentUser) { return orders.sendOrder(this.ordersDeps(), id, user) }
-  cancelOrder(id: string, user: CurrentUser) { return orders.cancelOrder(this.ordersDeps(), id, user) }
+  cancelOrder(id: string, reason: string | undefined, user: CurrentUser) { return orders.cancelOrder(this.ordersDeps(), id, reason, user) }
   addLine(orderId: string, dto: orderLines.AddLineInput, user: CurrentUser) { return orderLines.addLine(this.orderLinesDeps(), orderId, dto, user) }
   updateLine(orderId: string, lineId: string, dto: orderLines.UpdateLineInput, user: CurrentUser) { return orderLines.updateLine(this.orderLinesDeps(), orderId, lineId, dto, user) }
   removeLine(orderId: string, lineId: string, user: CurrentUser) { return orderLines.removeLine(this.orderLinesDeps(), orderId, lineId, user) }
+  // #207: anular con motivo una línea ya enviada (no se borra: queda tachada, sale del KDS y de los totales).
+  voidLine(orderId: string, lineId: string, reason: string | undefined, user: CurrentUser) { return orderLines.voidLine(this.orderLinesDeps(), orderId, lineId, reason, user) }
+  getVoidReasons(user: CurrentUser) { return voidReasons.getVoidReasons(this.voidReasonsDeps(), user) }
+  setVoidReasons(reasons: unknown, user: CurrentUser) { return voidReasons.setVoidReasons(this.voidReasonsDeps(), reasons, user) }
 
   // ─── Cuenta + cobro (RES-5) — delegan a usecases/settlement ───
   billOrder(id: string, dto: { tip?: number }, user: CurrentUser) { return settlement.billOrder(this.settlementDeps(), id, dto, user) }

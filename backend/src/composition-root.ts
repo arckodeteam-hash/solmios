@@ -477,6 +477,7 @@ import { reembolsosAuditlogConnector } from './connectors/reembolsos-auditlog'
 import { habitacionesAuditlogConnector } from './connectors/habitaciones-auditlog'
 import { huespedesAuditlogConnector } from './connectors/huespedes-auditlog'
 import { reservasAuditlogConnector } from './connectors/reservas-auditlog'
+import { restauranteAuditlogConnector } from './connectors/restaurante-auditlog'
 import { gastosAuditlogConnector } from './connectors/gastos-auditlog'
 import { paquetesAuditlogConnector } from './connectors/paquetes-auditlog'
 import { paquetesBookingengineConnector } from './connectors/paquetes-bookingengine'
@@ -693,6 +694,8 @@ system.addConnector('reembolsos-auditlog', reembolsosAuditlogConnector)
 system.addConnector('habitaciones-auditlog', habitacionesAuditlogConnector)
 system.addConnector('huespedes-auditlog', huespedesAuditlogConnector)
 system.addConnector('reservas-auditlog', reservasAuditlogConnector)
+// #207: anular una línea, cancelar una comanda o reembolsarla deja rastro (quién, cuánto, por qué).
+system.addConnector('restaurante-auditlog', restauranteAuditlogConnector)
 system.addConnector('gastos-auditlog', gastosAuditlogConnector)
 system.addConnector('paquetes-auditlog', paquetesAuditlogConnector)
 // FIX 2026-07-31 — "Ofertas" (paquetes, type='servicio') no alimentaba el step de Extras

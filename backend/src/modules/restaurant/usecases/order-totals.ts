@@ -6,6 +6,15 @@ import type { OrderDTO, OrderItemDTO, MenuItemDTO, CategoryDTO, StationDTO } fro
 
 export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
 
+/**
+ * #207 — Una línea "viva" es la que cuenta para totales, cocina, stock y estado de la comanda.
+ * `voided` (anulada con motivo) y `cancelled` (legacy, anterior a #207) quedan fuera. Único lugar
+ * donde se decide: cualquier filtro nuevo sobre líneas usa esto, no compara el status a mano.
+ */
+export function isLineActive(line: Pick<OrderItemDTO, 'status'>): boolean {
+  return line.status !== 'cancelled' && line.status !== 'voided'
+}
+
 /** "HH:mm" → minutos desde medianoche. */
 function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number)
@@ -57,14 +66,14 @@ export async function resolveStation(
 
 /**
  * Recalcula subtotal (neto), tax (por tasa congelada de cada línea) y total (+ tip) de una comanda a
- * partir de sus líneas NO canceladas, y persiste el resultado. Devuelve el pedido actualizado.
+ * partir de sus líneas vivas (ni canceladas ni anuladas), y persiste el resultado. Devuelve el pedido actualizado.
  */
 export async function recomputeTotals(
   deps: { orders: RepositoryAdapter<OrderDTO>; lines: RepositoryAdapter<OrderItemDTO> },
   order: OrderDTO,
 ): Promise<OrderDTO> {
   const all = (await deps.lines.findMany({ orderId: order.id })) as OrderItemDTO[]
-  const active = all.filter((l) => l.status !== 'cancelled')
+  const active = all.filter(isLineActive)
   let subtotal = 0, tax = 0
   for (const l of active) {
     const net = Number(l.lineTotal || 0)
