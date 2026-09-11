@@ -590,7 +590,7 @@ const heroTrustBar = [
 ]
 
 // ── Trust strip (mismo patrón que la landing principal) — integraciones reales, no clientes inventados. ──
-const socialBrands = ['Booking.com', 'Airbnb', 'Expedia', 'Stripe', 'TTLock', 'Channex']
+const socialBrands = ['Booking.com', 'Airbnb', 'Expedia', 'Stripe', 'TTLock']
 const carouselBrands = [...socialBrands, ...socialBrands]
 
 // ── Dolores ──
