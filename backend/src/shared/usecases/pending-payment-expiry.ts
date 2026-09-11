@@ -149,8 +149,9 @@ export async function runPendingPaymentExpiry(
         seenGroups.add(String(r.groupId))
         const siblings = ((await deps.reservations.findMany({ groupId: r.groupId })) as Row[]).filter((s) => s.status !== 'cancelled')
         const checks = await Promise.all(siblings.map((s) => isEligible(deps, s, ttl, nowMs)))
-        // Todas las hermanas cuentan como salteadas (las que vengan después hacen `continue` arriba).
-        if (checks.some((ok) => !ok)) { result.skipped += siblings.length; continue }
+        // Todas las hermanas cuentan como salteadas (las que vengan después hacen `continue`
+        // arriba). Las de createdAt inválido ya se contaron al entrar al loop: no se repiten.
+        if (checks.some((ok) => !ok)) { result.skipped += siblings.filter((s) => Number.isFinite(ms(s.createdAt))).length; continue }
         batch = siblings
       } else {
         if (!(await isEligible(deps, r, ttl, nowMs))) { result.skipped++; continue }

@@ -150,6 +150,15 @@ describe('runPendingPaymentExpiry', () => {
     expect(out).toMatchObject({ scanned: 3, expired: 0, skipped: 3 })
   })
 
+  it('grupo con una hermana de createdAt inválido → rechazado y cada reserva se cuenta una sola vez', async () => {
+    const w = world({
+      reservations: [webPending({ id: 'r1', groupId: 'grp', createdAt: 'nope' }), webPending({ id: 'r2', groupId: 'grp' })],
+    })
+    const out = await runPendingPaymentExpiry(w.deps, NOW)
+    expect(out).toMatchObject({ scanned: 1, expired: 0, skipped: 2 })
+    expect(w.cancelCalls).toHaveLength(0)
+  })
+
   it('grupo: si el cancel de una hermana tira, se corta el grupo con el error bien atribuido y la próxima corrida lo completa', async () => {
     const w = world({
       reservations: [webPending({ id: 'r1', groupId: 'grp' }), webPending({ id: 'r2', groupId: 'grp' }), webPending({ id: 'r3', groupId: 'grp' })],
