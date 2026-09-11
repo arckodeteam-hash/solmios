@@ -60,7 +60,9 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       // La pasarela se resuelve POR HOTEL: el huésped que reserva en el widget del Hotel A le
       // paga a la cuenta del Hotel A, no a la del .env del servidor.
       const gatewayRepo = new OrmRepository<any>(orm, 'PaymentGateways')
-      const registry = new PaymentGatewayRegistry(gatewayRepo as any, log)
+      // Sesiones de CardNet: el adapter persiste la session-key ahí; sin este repo el registry devuelve null.
+      const sessionsRepo = new OrmRepository<any>(orm, 'PaymentGatewaySessions')
+      const registry = new PaymentGatewayRegistry(gatewayRepo as any, log, sessionsRepo as any)
       // Barrera anti-doble-cobro para el webhook público.
       const eventStore = new PaymentEventStore(new OrmRepository<any>(orm, 'PaymentEvents') as any, log)
 
