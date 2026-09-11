@@ -109,7 +109,7 @@ De cada tarea de frontend: `bun run typecheck` (vue-tsc -b) · `bun run build` �
 
 ## 7. Backend — notificación al hotel (REQ-SOP-06)
 
-- [ ] 7.1 `connectors/tickets-notificaciones.ts`: engancha `onTicketsMessageAdded` (solo
+- [x] 7.1 `connectors/tickets-notificaciones.ts`: engancha `onTicketsMessageAdded` (solo
       `authorKind: 'support'`) y `onTicketsUpdated` (cambio de estado por admin) → notificación para
       el hotel con nombre del agente + asunto + link `/panel/support?ticket=<id>`. Registrar en
       `composition-root.ts`. Fallo tragado y logueado.
@@ -118,6 +118,12 @@ De cada tarea de frontend: `bun run typecheck` (vue-tsc -b) · `bun run build` �
 - [ ] 7.2 SHOULD: email al solicitante por `email-queue` con el mismo texto. Si no entra en esta
       entrega, dejar aquí la deuda con fecha.
       **Aceptación**: fila en `email_queue` con destinatario = `requester.email`, o deuda anotada.
+      **Deuda (2026-09-10, #135)**: no entró. El módulo `email-queue` sólo expone `list`/`requeue`;
+      el `enqueue` real es `EmailService.enqueue` (`services/email-service.ts`), que se construye en
+      `bootstrapEmail()` DESPUÉS de `system.start()` — referenciarlo desde un connector da
+      ReferenceError por TDZ (ver nota en `composition-root.ts` junto a `bookingengine-payments`).
+      Camino previsto: `tickets.setEmailDeps(...)` inyectado desde `infrastructure/email-bootstrap.ts`
+      (mismo patrón que `crm`/`wallet-pass`), reutilizando los textos de `shared/usecases/notify-ticket.ts`.
 
 ## 8. Verificación
 
