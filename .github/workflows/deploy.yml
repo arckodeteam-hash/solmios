@@ -55,6 +55,10 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          # ServerAlive*: el deploy del server tarda varios minutos; sin keepalive la sesión
+          # se cortaba por inactividad ("Broken pipe", exit 255) y GH arrancaba el run siguiente
+          # ENCIMA del deploy huérfano (dos vite build sobre dist/ → 404 en prod, 2026-09-11).
           ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o ConnectTimeout=15 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
             "echo deploy-trigger"
