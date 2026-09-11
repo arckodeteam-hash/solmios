@@ -27,6 +27,8 @@ export interface StationDTO {
   name: string
   active?: number
   sortOrder?: number
+  /** #211 — umbral de demora del KDS en minutos (ámbar a N, rojo a 2N). Null = default 10. */
+  alertMinutes?: number | null
   createdAt: string
   updatedAt: string
 }

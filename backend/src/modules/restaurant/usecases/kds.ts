@@ -3,7 +3,7 @@
 // líneas. hotelId SIEMPRE del JWT. Ver specs/kds.spec.md.
 import type { RepositoryAdapter, Auth } from 'arckode-framework'
 import { NotFoundError, ValidationError } from 'arckode-framework'
-import type { OrderDTO, OrderItemDTO, LineStatus, CurrentUser } from '../types'
+import type { OrderDTO, OrderItemDTO, TableDTO, LineStatus, CurrentUser } from '../types'
 import type { RestaurantSockets } from '../sockets'
 import { isLineActive } from './order-totals'
 
@@ -13,6 +13,11 @@ export interface KdsDeps {
   userRepo: RepositoryAdapter<any>
   auth: Auth
   sockets: RestaurantSockets
+  // #211 — el ticket dice "Terraza · Mesa 3" / "Hab. 204": mesas del módulo y número de habitación
+  // (tabla `rooms`, leída como Hotels/Users: shared por el ORM, sin importar el módulo). Opcionales:
+  // sin ellos el ticket cae al tipo de comanda, como antes.
+  tables?: RepositoryAdapter<TableDTO>
+  rooms?: RepositoryAdapter<any>
 }
 
 // Estados "en cocina" (visibles en el KDS). served/cancelled/voided salen de la cola.
@@ -37,7 +42,28 @@ function hotelFor(user: CurrentUser): string {
   return h
 }
 
-export interface KdsTicket { order: Pick<OrderDTO, 'id' | 'number' | 'type' | 'tableId' | 'openedAt' | 'status'>; lines: OrderItemDTO[] }
+export interface KdsTicket {
+  order: Pick<OrderDTO, 'id' | 'number' | 'type' | 'tableId' | 'openedAt' | 'status'> & {
+    // #211 — resueltos por el server para que la pantalla de cocina no tenga que pedir mesas ni habitaciones.
+    tableName?: string
+    tableZone?: string
+    roomNumber?: string
+  }
+  lines: OrderItemDTO[]
+}
+
+/** Nombre de mesa/zona y número de habitación de una comanda, según su tipo. Vacío si no aplica o no se encuentra. */
+async function resolvePlace(deps: KdsDeps, order: OrderDTO, tables: Map<string, TableDTO>): Promise<Pick<KdsTicket['order'], 'tableName' | 'tableZone' | 'roomNumber'>> {
+  const out: Pick<KdsTicket['order'], 'tableName' | 'tableZone' | 'roomNumber'> = {}
+  const table = order.tableId ? tables.get(order.tableId) : undefined
+  if (table) { out.tableName = table.name; out.tableZone = table.zone || undefined }
+  if (order.type === 'room_service' && order.roomId && deps.rooms) {
+    // findOne acotado al hotel del JWT (no findById): la habitación es de otro módulo, acá solo se lee el número.
+    const room = await deps.rooms.findOne({ id: order.roomId, hotelId: order.hotelId })
+    if (room?.number) out.roomNumber = String(room.number)
+  }
+  return out
+}
 
 /**
  * Cola del KDS: líneas activas (new/preparing/ready) del hotel, opcionalmente filtradas por estación,
@@ -61,6 +87,9 @@ export async function kdsQueue(deps: KdsDeps, station: string | undefined, user:
     byOrder.set(l.orderId, arr)
   }
   const tickets: KdsTicket[] = []
+  // Una sola lectura de mesas por cola (no una por ticket).
+  const tables = new Map<string, TableDTO>()
+  if (deps.tables && byOrder.size) for (const t of (await deps.tables.findMany({ hotelId })) as TableDTO[]) tables.set(t.id, t)
   for (const [orderId, orderLines] of byOrder) {
     const order = await deps.orders.findById(orderId)
     if (!order || order.hotelId !== hotelId) continue   // aislamiento multi-tenant
@@ -69,7 +98,7 @@ export async function kdsQueue(deps: KdsDeps, station: string | undefined, user:
     // las líneas de una comanda cancelada quedarían colgadas en la pantalla para siempre.
     if (!KITCHEN_ORDER_STATES.includes(order.status)) continue
     tickets.push({
-      order: { id: order.id, number: order.number, type: order.type, tableId: order.tableId, openedAt: order.openedAt, status: order.status },
+      order: { id: order.id, number: order.number, type: order.type, tableId: order.tableId, openedAt: order.openedAt, status: order.status, ...(await resolvePlace(deps, order, tables)) },
       lines: orderLines,
     })
   }

@@ -8,6 +8,11 @@ import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderIte
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { createModuleGuard, createModuleChecker } from '../../infrastructure/auth/require-module'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
+import { sseTicketAuth } from '../../infrastructure/auth/sse-ticket-auth'
+import { loadPermissions } from '../../infrastructure/auth/load-permissions'
+import { requirePermission } from '../../infrastructure/auth/require-permission'
+import { HotelAuth } from '../../infrastructure/auth/hotel-auth'
+import { TICKET_SCOPE, TICKET_TTL_SECONDS } from './usecases/events'
 
 export { RestaurantService }
 export type {
@@ -24,6 +29,7 @@ export type { SettlementPorts, ChargeToFolioInput, RecordPaymentInput, ChargeCar
 export type { ComboDTO, ComboItemDTO } from './types'
 export type { ReservationPort, ReservationSummary } from './usecases/reservation-port'
 export type { ModuleStatePort } from './usecases/public-menu'
+export type { RestaurantEvent, RestaurantEventType } from './usecases/events'
 
 export function RestaurantModule() {
   return createModule({
@@ -36,7 +42,9 @@ export function RestaurantModule() {
       version: '1.0.0',
       description: 'POS de restaurante',
       actions: ['listStations', 'getStation', 'createStation', 'updateStation', 'deleteStation'],
-      events: ['onOrderSent', 'onLineStatusChanged', 'onOrderCharged', 'onOrderPaid', 'onOrderRefunded'],
+      events: ['onOrderSent', 'onLineStatusChanged', 'onOrderCharged', 'onOrderPaid', 'onOrderRefunded',
+        // #211 (append-only): cierre de comanda y cambio de estado de mesa, para el canal en vivo.
+        'onOrderClosed', 'onTableChanged'],
       tables: [
         'restaurant_stations', 'menu_categories', 'menu_items',
         'restaurant_tables', 'restaurant_orders', 'restaurant_order_items',
@@ -64,6 +72,8 @@ export function RestaurantModule() {
       // F2: catálogo de combos/paquetes.
       const combosRepo = new OrmRepository<ComboDTO>(orm, 'MenuCombos')
       const comboItemsRepo = new OrmRepository<ComboItemDTO>(orm, 'MenuComboItems')
+      // #211: número de habitación para el ticket del KDS (tabla rooms, lectura — mismo criterio que Hotels/Users).
+      const roomsRepo = new OrmRepository<any>(orm, 'Rooms')
       const log = logger.child('restaurant')
       const service = new RestaurantService(
         stations, categories, items, tables, userRepo, log, auth,
@@ -74,6 +84,7 @@ export function RestaurantModule() {
         orm,
         // #208: transactor para la cascada atómica de deleteItem (patrón landing/index.ts).
         { transaction: <T>(fn: (tx: any) => Promise<T>) => orm.transaction(fn) },
+        roomsRepo,
       )
       const controller = new RestaurantController(service, log)
 
@@ -156,6 +167,22 @@ export function RestaurantModule() {
       router.get('/api/restaurant/kds', guard('restaurant', 'view'), (req) => controller.kdsQueue(req))
       router.put('/api/restaurant/kds/lines/:id', guard('restaurant', 'edit'), (req) => controller.setLineStatus(req))
 
+      // Canal en vivo (#211): SSE por hotel para KDS y Salón. `EventSource` no manda headers, así que
+      // el stream se abre con un ticket de 60 s (`/events/ticket`, pedido con el JWT normal) que viaja
+      // por query. El ticket NO es un access token (type 'ticket' + scope + jti de un solo uso):
+      // `sseTicketAuth` reemplaza a `auth.authenticate()` en esta ruta — un JWT de sesión acá da 401 y
+      // el ticket como Bearer en cualquier otra ruta también. El resto del guard es el mismo de la
+      // cola (`restaurant:view` + módulo habilitado). Ver usecases/events.ts y sse-ticket-auth.ts.
+      if (!(auth instanceof HotelAuth)) throw new Error('restaurant: el canal en vivo requiere HotelAuth (tickets de un solo uso)')
+      const ticketGuard = [
+        sseTicketAuth(auth, { scope: TICKET_SCOPE, ttlMs: TICKET_TTL_SECONDS * 1000 }),
+        loadPermissions(roleRepo),
+        requirePermission('restaurant', 'view'),
+        moduleGuard('restaurant'),
+      ]
+      router.get('/api/restaurant/events/ticket', guard('restaurant', 'view'), (req) => controller.eventsTicket(req))
+      router.get('/api/restaurant/events', ticketGuard, (req) => controller.events(req))
+
       // Modificadores/variantes (F1). Mismo criterio que categorías/ítems: lectura operativa
       // ('restaurant', el mesero necesita ver las opciones para armar la comanda), mutación es
       // config de la carta ('restaurant-catalog').
@@ -201,5 +228,9 @@ export function RestaurantModule() {
       log.info('Módulo restaurant listo')
       return service
     },
+
+    // #211: al apagar, cerrar los streams SSE — si no, `http.stop()` espera el drain (30 s) con cada
+    // tablet de cocina colgada. El navegador reconecta solo cuando el server vuelve.
+    async onStop(service: RestaurantService) { service.closeEventStreams() },
   })
 }

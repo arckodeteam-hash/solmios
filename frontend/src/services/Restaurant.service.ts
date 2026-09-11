@@ -42,9 +42,14 @@ export interface Station {
   name: string
   active?: number
   sortOrder?: number
+  /** #211 — minutos desde el envío a cocina para pintar el ticket ámbar (rojo al doble). Null = DEFAULT_ALERT_MINUTES. */
+  alertMinutes?: number | null
   createdAt?: string
   updatedAt?: string
 }
+
+/** #211 — umbral de demora por defecto del KDS (espejo de backend stations-crud.ts). */
+export const DEFAULT_ALERT_MINUTES = 10
 
 // F4 — mapa de traducciones por idioma (espejo de backend/src/modules/restaurant/types.ts).
 // NUNCA incluye la clave 'es' (el español vive en name/description, D7). Categoría solo traduce
@@ -247,12 +252,30 @@ export interface Combo {
 
 /** Ticket del KDS: comanda + sus líneas activas (new/preparing/ready) de la estación. */
 export interface KdsTicket {
-  order: Pick<Order, 'id' | 'number' | 'type' | 'tableId' | 'openedAt' | 'status'>
+  order: Pick<Order, 'id' | 'number' | 'type' | 'tableId' | 'openedAt' | 'status'> & {
+    // #211 — resueltos por el server: "Terraza · Mesa 3" / "Hab. 204".
+    tableName?: string
+    tableZone?: string
+    roomNumber?: string
+  }
   lines: OrderLine[]
 }
 
+// #211 — canal en vivo (SSE). Espejo de backend/src/modules/restaurant/usecases/events.ts.
+export type RestaurantEventType = 'hello' | 'ping' | 'order.sent' | 'line.status' | 'order.closed' | 'table.changed'
+export interface RestaurantEvent {
+  type: RestaurantEventType
+  at: string
+  orderId?: string
+  tableId?: string
+  lineId?: string
+  status?: string
+  /** order.sent / line.status: estaciones involucradas ('' = sin estación). */
+  stationIds?: string[]
+}
+
 // ─── Payloads ───
-export interface StationPayload { name: string; active?: number; sortOrder?: number }
+export interface StationPayload { name: string; active?: number; sortOrder?: number; alertMinutes?: number }
 export interface CategoryPayload {
   name: string; stationId?: string; sortOrder?: number; active?: number
   translations?: Record<string, CategoryTranslation> | null
@@ -436,6 +459,10 @@ export const RestaurantService = {
   },
   setLineStatus: (lineId: string, status: LineStatus): Promise<OrderLine> => http.put(`/restaurant/kds/lines/${lineId}`, { status }),
 
+  // ─── Canal en vivo (#211) ───
+  /** Ticket de 60 s para abrir `GET /restaurant/events` con EventSource (que no manda headers). Lo usa useRestaurantEvents. */
+  eventsTicket: (): Promise<{ ticket: string; expiresIn: number }> => http.get('/restaurant/events/ticket'),
+
   // ─── Modificadores/variantes (F1) ───
   async listModifierGroups(menuItemId: string): Promise<ModifierGroup[]> {
     const res = await http.get<{ data: ModifierGroup[]; total: number }>(`/restaurant/menu-items/${menuItemId}/modifier-groups`)
@@ -494,7 +521,7 @@ export const LINE_STATUS_BADGE: Record<string, string> = {
   ready: 'bg-gold text-white',
   served: 'bg-teal/15 text-teal',
   cancelled: 'bg-coral/15 text-coral',
-  voided: 'bg-coral/15 text-coral line-through',
+  voided: 'bg-coral/15 text-coral',
 }
 export const TABLE_STATUS_LABELS: Record<string, string> = {
   free: 'Libre', occupied: 'Ocupada', reserved: 'Reservada',

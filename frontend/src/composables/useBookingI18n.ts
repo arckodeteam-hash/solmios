@@ -165,6 +165,9 @@ const messages = {
     'rooms.cartRemove': 'Quitar',
     'rooms.cartSummary': '{rooms} {rooms, plural, one {habitación} other {habitaciones}} · {guests} {guests, plural, one {huésped} other {huéspedes}} · {nights} {nights, plural, one {noche} other {noches}}',
     'rooms.cartContinue': 'Continuar',
+    // #220 — desglose estimado (subtotal / impuestos / total) en el carrito, ver EstimatedTotals.vue.
+    'rooms.cartSubtotal': 'Subtotal',
+    'rooms.cartEstimatedTotal': 'Total estimado',
     // Régimen — catálogo configurable por hotel (tasks.md 2.2/2.4, ver RoomsStep.vue).
     'rooms.board.label': 'Régimen',
     'rooms.board.roomOnly': 'Sólo alojamiento',
@@ -386,6 +389,8 @@ const messages = {
     'rooms.cartRemove': 'Remove',
     'rooms.cartSummary': '{rooms} {rooms, plural, one {room} other {rooms}} · {guests} {guests, plural, one {guest} other {guests}} · {nights} {nights, plural, one {night} other {nights}}',
     'rooms.cartContinue': 'Continue',
+    'rooms.cartSubtotal': 'Subtotal',
+    'rooms.cartEstimatedTotal': 'Estimated total',
     'rooms.board.label': 'Board',
     'rooms.board.roomOnly': 'Room only',
     'rooms.board.breakfast': 'Breakfast included',
@@ -599,6 +604,8 @@ const messages = {
     'rooms.cartRemove': 'Remover',
     'rooms.cartSummary': '{rooms} {rooms, plural, one {quarto} other {quartos}} · {guests} {guests, plural, one {hóspede} other {hóspedes}} · {nights} {nights, plural, one {noite} other {noites}}',
     'rooms.cartContinue': 'Continuar',
+    'rooms.cartSubtotal': 'Subtotal',
+    'rooms.cartEstimatedTotal': 'Total estimado',
     'rooms.board.label': 'Regime',
     'rooms.board.roomOnly': 'Só hospedagem',
     'rooms.board.breakfast': 'Café da manhã incluído',

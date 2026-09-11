@@ -28,6 +28,7 @@ tabla desde cero, primero buscá el componente. Cuatro cubren el 90% de las vist
 | Sección con título + tabla/contenido | `SectionCard` | `@/components/ui/SectionCard.vue` |
 | Modal (todos, sin excepción) | `AppModal` | `@/components/ui/AppModal.vue` |
 | Lista sin datos / búsqueda sin resultados | `EmptyState` | `@/components/ui/EmptyState.vue` |
+| Vista con 3+ secciones del mismo nivel | `PillTabs` | `@/components/ui/PillTabs.vue` |
 
 Otros: `SearchSelect` (combo con búsqueda), `ConfirmModal` (confirmación destructiva),
 `SkeletonLoader`, `Breadcrumbs`, `ChannelIcon`.
@@ -109,7 +110,30 @@ Declarar la ficha como **datos** (array de secciones/campos en un `computed`) y 
 - Sin filas → `EmptyState` con **dos** mensajes distintos: sin datos (CTA crear) vs.
   filtro sin resultados (CTA limpiar filtros).
 
-### 6. Estado y carga
+### 6. Pestañas — `PillTabs`, nunca secciones apiladas ni un tablist a mano
+
+**Toda vista con 3+ secciones independientes del mismo nivel usa `PillTabs`** (#203): una sección
+visible por vez, la fila de pestañas arriba con contador real. Apilar `SectionCard`s hace que lo que
+uno busca esté siempre abajo (Carta tenía 5 cabeceras navy seguidas).
+
+```vue
+<PillTabs v-model="tab" :tabs="[{ value: 'items', label: 'Ítems', count: items.length }, …]" query-param="tab" aria-label="Secciones de la carta" />
+<SectionCard v-if="tab === 'items'" …>
+```
+
+- `query-param="tab"` → `?tab=` en la URL: enlace directo abre esa pestaña, F5/back la conservan.
+  Omitirlo cuando la pestaña es estado efímero (Caja).
+- Trae `role=tablist/tab`, `aria-selected`, teclado ← → Home End y scroll horizontal en 375 px. No
+  reimplementar el markup de Caja: es exactamente este componente.
+- Pestaña gateada por permiso → filtrarla del array (`if (editPerm) list.push(...)`), no `v-if` en el
+  contenido solo.
+
+**Deuda registrada — vistas con pestañas a mano que deben migrar a `PillTabs`** (una tarea por vista):
+Salón (zonas, ver issue de Salón) · `settings/index.vue` · `reports/` · `rrhh/attendance` · `crm/` ·
+`empleados/` · `pagina-publica/` · `super-admin/settings.vue` · `super-admin/api-keys.vue`.
+Ya migradas: `restaurante/carta.vue`, `CashRegisterView.vue`.
+
+### 7. Estado y carga
 
 Skeletons (`animate-pulse rounded bg-surface`) en vez de "Cargando…".
 Badge de estado: fondo `color/10` + texto `color` (`bg-teal/10 text-teal`).
@@ -154,6 +178,7 @@ cd frontend && bun run dev                                       # login local: 
 - [ ] No hay `—` sueltos repetidos ni secciones de puros vacíos.
 - [ ] Montos a la derecha con `tabular-nums`.
 - [ ] `EmptyState` cubre sin-datos y sin-resultados por separado.
+- [ ] 3+ secciones del mismo nivel → `PillTabs`, no cards apiladas ni `role="tablist"` a mano.
 - [ ] Scroll horizontal en mobile, no desborde de página.
 - [ ] **Mirado en el navegador**, no solo typecheck.
 

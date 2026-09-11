@@ -10,7 +10,7 @@ import { mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('@/services/Booking.service', () => ({
-  BookingService: { getRates: vi.fn(), getCalendar: vi.fn(), getUpsells: vi.fn() },
+  BookingService: { getRates: vi.fn(), getCalendar: vi.fn(), getUpsells: vi.fn().mockResolvedValue([]) },
 }))
 
 import RoomsStep from './RoomsStep.vue'
@@ -87,6 +87,50 @@ describe('RoomsStep — leyenda de impuestos', () => {
 
     const w = mount(RoomsStep)
     expect(w.text()).not.toMatch(/\+\s*impuestos/i)
+    w.unmount()
+  })
+})
+
+// Issue #220 — el cart "Tu selección" mostraba SOLO el subtotal pre-impuestos: el huésped elegía
+// 300 y recién en el paso de pago veía 354, sin saber de dónde salía la diferencia. Ahora el cart
+// incluye <EstimatedTotals>: subtotal · una línea por impuesto · total estimado.
+describe('RoomsStep — desglose de impuestos en "Tu selección" (#220)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('al agregar una habitación, el cart muestra subtotal, la línea ITBIS (18%) y el total estimado', async () => {
+    const w = render('es')
+    const store = useBookingStore()
+    const { formatPrice } = useBookingI18nStore()
+
+    // Sin líneas no hay cart (y por lo tanto tampoco desglose).
+    expect(w.find('[data-testid=cart-subtotal]').exists()).toBe(false)
+
+    // fromPrice (300) es el precio de la ESTADÍA (3 noches) → 1 unidad = 300 de subtotal.
+    await store.addToCart(store.ratesResponse!.roomTypes[0]!)
+    await w.vm.$nextTick()
+
+    expect(store.roomsSubtotal).toBe(300)
+    expect(store.estimatedTotal).toBe(354) // 300 × 1.18
+
+    expect(w.find('[data-testid=cart-subtotal]').text()).toBe(formatPrice(300, 'USD'))
+
+    const taxLines = w.findAll('[data-testid=tax-line]')
+    expect(taxLines).toHaveLength(1)
+    expect(taxLines[0]!.text()).toContain('ITBIS (18%)')
+    expect(taxLines[0]!.text()).toContain(formatPrice(54, 'USD'))
+
+    expect(w.find('[data-testid=estimated-total]').text()).toBe(formatPrice(354, 'USD'))
+    // El resumen habitaciones · huéspedes · noches sigue ahí.
+    expect(w.find('[data-testid=cart-summary]').exists()).toBe(true)
+
+    // Una segunda unidad recalcula todo: 600 → ITBIS 108 → 708.
+    await store.addToCart(store.ratesResponse!.roomTypes[0]!)
+    await w.vm.$nextTick()
+    expect(w.find('[data-testid=cart-subtotal]').text()).toBe(formatPrice(600, 'USD'))
+    expect(w.find('[data-testid=tax-line]').text()).toContain(formatPrice(108, 'USD'))
+    expect(w.find('[data-testid=estimated-total]').text()).toBe(formatPrice(708, 'USD'))
     w.unmount()
   })
 })

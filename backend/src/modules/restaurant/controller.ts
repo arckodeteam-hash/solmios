@@ -252,6 +252,17 @@ export class RestaurantController {
     return { status: 200, body: item }
   }
 
+  // ─── Canal en vivo (#211) ───
+  /** SSE: la respuesta es un stream (kernel/http/server.ts la escribe como text/event-stream), no un JSON. */
+  async events(req: HttpRequest) {
+    this.logger.info('GET /restaurant/events')
+    return this.service.eventStream(req.user as any)
+  }
+  async eventsTicket(req: HttpRequest) {
+    this.logger.info('GET /restaurant/events/ticket')
+    return { status: 200, body: this.service.eventsTicket(req.user as any) }
+  }
+
   // ─── Modificadores/variantes (F1) ───
   async indexModifierGroups(req: HttpRequest) {
     this.logger.info('GET /restaurant/menu-items/:menuItemId/modifier-groups', { menuItemId: req.params.menuItemId })

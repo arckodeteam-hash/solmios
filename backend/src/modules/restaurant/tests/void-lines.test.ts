@@ -47,9 +47,11 @@ function backed<T extends object>(store: any[]): RepositoryAdapter<T> {
 // Comanda o1 en mesa t1, ya enviada a cocina, con dos líneas: Pizza (2×10) y Agua (1×5), IVA 18%.
 function setup(orderStatus: OrderDTO['status'] = 'preparing') {
   const ordersStore: any[] = [{ id: 'o1', hotelId: 'h1', number: 'CMD-1', tableId: 't1', status: orderStatus, tip: 0, subtotal: 25, tax: 4.5, total: 29.5 }]
+  // #210: con la comanda ya enviada, las líneas llevan `sentAt` (lo estampa POST /send).
+  const sentAt = orderStatus === 'open' ? undefined : '2026-09-11T12:00:00.000Z'
   const linesStore: any[] = [
-    { id: 'l1', hotelId: 'h1', orderId: 'o1', menuItemId: 'm1', name: 'Pizza', unitPrice: 10, quantity: 2, taxRate: 18, lineTotal: 20, status: 'preparing', stationId: 'st1' },
-    { id: 'l2', hotelId: 'h1', orderId: 'o1', menuItemId: 'm2', name: 'Agua', unitPrice: 5, quantity: 1, taxRate: 18, lineTotal: 5, status: 'new', stationId: 'st1' },
+    { id: 'l1', hotelId: 'h1', orderId: 'o1', menuItemId: 'm1', name: 'Pizza', unitPrice: 10, quantity: 2, taxRate: 18, lineTotal: 20, status: 'preparing', stationId: 'st1', sentAt },
+    { id: 'l2', hotelId: 'h1', orderId: 'o1', menuItemId: 'm2', name: 'Agua', unitPrice: 5, quantity: 1, taxRate: 18, lineTotal: 5, status: 'new', stationId: 'st1', sentAt },
   ]
   const tablesStore: any[] = [{ id: 't1', hotelId: 'h1', name: 'M1', status: 'occupied' }]
   const audit: AuditEntry[] = []
@@ -148,6 +150,16 @@ describe('#207 removeLine — borrar solo antes de enviar', () => {
     const { svc, linesStore } = setup('sent')
     await expect(svc.removeLine('o1', 'l2', user)).rejects.toThrow('ya fue enviada a cocina: anulala con motivo')
     expect(linesStore.length).toBe(2)
+  })
+
+  it('#210: una línea agregada después del envío y sin confirmar (new sin sentAt) se quita con restaurant:delete', async () => {
+    const { svc, linesStore } = setup('preparing')
+    linesStore.push({ id: 'l3', hotelId: 'h1', orderId: 'o1', menuItemId: 'm3', name: 'Café', unitPrice: 3, quantity: 1, taxRate: 18, lineTotal: 3, status: 'new' })
+    const waiter: CurrentUser = { ...user, permissions: ['restaurant:create'] } as CurrentUser
+    await expect(svc.removeLine('o1', 'l3', waiter)).rejects.toThrow('restaurant:delete')
+    const admin: CurrentUser = { ...user, permissions: ['restaurant:create', 'restaurant:delete'] } as CurrentUser
+    await svc.removeLine('o1', 'l3', admin)
+    expect(linesStore.find((l) => l.id === 'l3')).toBeUndefined()
   })
 
   it('DELETE en una comanda open sigue borrando (error de toma)', async () => {

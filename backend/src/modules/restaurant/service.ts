@@ -2,7 +2,7 @@
 // Depende de RepositoryAdapter, NO del ORM directo. NO importa de otros módulos (va por conectores). Ver openspec/changes/restaurante-pos.
 import type { RepositoryAdapter, Logger, Auth } from 'arckode-framework'
 import { ValidationError } from 'arckode-framework'
-import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderItemDTO, CurrentUser, ModifierGroupDTO, ModifierDTO, ComboDTO, ComboItemDTO } from './types'
+import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderItemDTO, CurrentUser, ModifierGroupDTO, ModifierDTO, ComboDTO, ComboItemDTO, LineStatus } from './types'
 import type { RestaurantSockets } from './sockets'
 import * as categoriesCrud from './usecases/categories-crud'
 import * as itemsCrud from './usecases/items-crud'
@@ -17,9 +17,9 @@ import * as combosCrud from './usecases/combos-crud'
 import * as foodCost from './usecases/food-cost'
 import * as publicMenuUsecase from './usecases/public-menu'
 import * as voidReasons from './usecases/void-reasons'
+import * as events from './usecases/events'
 import { composeSockets } from './usecases/compose-sockets'
 import type { AuditPort } from '../../shared/usecases/audit'
-import type { LineStatus } from './types'
 import type { ReservationPort } from './usecases/reservation-port'
 
 export class RestaurantService {
@@ -35,6 +35,8 @@ export class RestaurantService {
   // cerrado) y gate del módulo para la carta pública (index.ts → createModuleChecker; null = 404 genérico).
   private reservationPort: ReservationPort | null = null
   private moduleStatePort: publicMenuUsecase.ModuleStatePort | null = null
+  // #211: canal en vivo (SSE) por hotel. Lo alimenta connectors/restaurante-events.ts vía publishEvent.
+  private readonly eventHub = new events.RestaurantEventHub()
 
   constructor(
     private readonly stations: RepositoryAdapter<StationDTO>,
@@ -56,6 +58,7 @@ export class RestaurantService {
     private readonly combos?: RepositoryAdapter<ComboDTO>, private readonly comboItems?: RepositoryAdapter<ComboItemDTO>,
     private readonly counterCas?: orders.OrdersDeps['counterCas'], // #206: UPDATE condicional (orm.updateMany) para el numerador de comandas — el orm entra SOLO como esta interface mínima (ver usecases/order-number.ts; misma excepción que promo-codes/promo-atomic.ts)
     private readonly transactor?: itemsCrud.ItemsTransactor, // #208: cascada atómica al borrar un ítem (grupos + opciones + ítem). Misma excepción acotada que counterCas: solo `transaction`.
+    private readonly rooms?: RepositoryAdapter<any>, // #211: número de habitación en el ticket del KDS ("Hab. 204")
   ) {}
 
   // Acumula handlers, nunca pisa el anterior (composición de sockets, usecases/compose-sockets.ts).
@@ -73,7 +76,7 @@ export class RestaurantService {
   private stationDeps(): stationsCrud.StationsCrudDeps { return { stations: this.stations, userRepo: this.userRepo, auth: this.auth } }
   private catDeps(): categoriesCrud.CategoriesCrudDeps { return { categories: this.categories, items: this.items, stations: this.stations, userRepo: this.userRepo, auth: this.auth } }
   private itemDeps(): itemsCrud.ItemsCrudDeps { return { items: this.items, categories: this.categories, stations: this.stations, userRepo: this.userRepo, auth: this.auth, comboItems: this.comboItems, combos: this.combos, modifierGroups: this.modifierGroups, modifiers: this.modifiers, transactor: this.transactor, recipes: this.recipePorts, logger: this.logger } }
-  private tableDeps(): tablesCrud.TablesCrudDeps { return { tables: this.tables, userRepo: this.userRepo, auth: this.auth, orders: this.orders } }
+  private tableDeps(): tablesCrud.TablesCrudDeps { return { tables: this.tables, userRepo: this.userRepo, auth: this.auth, orders: this.orders, sockets: this.sockets } }
   private ordersDeps(): orders.OrdersDeps {
     if (!this.orders || !this.lines || !this.config) throw new ValidationError('Comandas no configuradas')
     return { orders: this.orders, lines: this.lines, tables: this.tables, config: this.config, counterCas: this.counterCas, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets, audit: this.auditPort, logger: this.logger, reservations: this.reservationPort }
@@ -82,18 +85,9 @@ export class RestaurantService {
     if (!this.orders || !this.lines || !this.config || !this.hotels) throw new ValidationError('Comandas no configuradas')
     return { orders: this.orders, lines: this.lines, items: this.items, categories: this.categories, stations: this.stations, config: this.config, hotels: this.hotels, userRepo: this.userRepo, auth: this.auth, modifierGroups: this.modifierGroups, modifiers: this.modifiers, combos: this.combos, comboItems: this.comboItems, audit: this.auditPort, logger: this.logger, sockets: this.sockets }
   }
-  private voidReasonsDeps(): voidReasons.VoidReasonsDeps {
-    if (!this.config) throw new ValidationError('Comandas no configuradas')
-    return { config: this.config }
-  }
-  private modifierDeps(): modifiersCrud.ModifiersCrudDeps {
-    if (!this.modifierGroups || !this.modifiers) throw new ValidationError('Modificadores no configurados')
-    return { modifierGroups: this.modifierGroups, modifiers: this.modifiers, items: this.items, userRepo: this.userRepo, auth: this.auth }
-  }
-  private comboDeps(): combosCrud.CombosCrudDeps {
-    if (!this.combos || !this.comboItems) throw new ValidationError('Combos no configurados')
-    return { combos: this.combos, comboItems: this.comboItems, items: this.items, userRepo: this.userRepo, auth: this.auth }
-  }
+  private voidReasonsDeps(): voidReasons.VoidReasonsDeps { if (!this.config) throw new ValidationError('Comandas no configuradas'); return { config: this.config } }
+  private modifierDeps(): modifiersCrud.ModifiersCrudDeps { if (!this.modifierGroups || !this.modifiers) throw new ValidationError('Modificadores no configurados'); return { modifierGroups: this.modifierGroups, modifiers: this.modifiers, items: this.items, userRepo: this.userRepo, auth: this.auth } }
+  private comboDeps(): combosCrud.CombosCrudDeps { if (!this.combos || !this.comboItems) throw new ValidationError('Combos no configurados'); return { combos: this.combos, comboItems: this.comboItems, items: this.items, userRepo: this.userRepo, auth: this.auth } }
   private foodCostDeps(): foodCost.FoodCostDeps { return { items: this.items, combos: this.combos, comboItems: this.comboItems, recipePorts: this.recipePorts } }
   private settlementDeps(): settlement.SettlementDeps {
     if (!this.orders || !this.lines || !this.hotels) throw new ValidationError('Comandas no configuradas')
@@ -101,7 +95,7 @@ export class RestaurantService {
   }
   private kdsDeps(): kds.KdsDeps {
     if (!this.orders || !this.lines) throw new ValidationError('Comandas no configuradas')
-    return { orders: this.orders, lines: this.lines, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets }
+    return { orders: this.orders, lines: this.lines, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets, tables: this.tables, rooms: this.rooms }
   }
 
   // ─── Estaciones (RES-0) — pantallas KDS configurables por hotel — delegan a usecases/stations-crud ───
@@ -170,6 +164,12 @@ export class RestaurantService {
   // ─── KDS / cocina (RES-4) — delegan a usecases/kds ───
   kdsQueue(station: string | undefined, user: CurrentUser) { return kds.kdsQueue(this.kdsDeps(), station, user) }
   setLineStatus(lineId: string, status: LineStatus, user: CurrentUser) { return kds.setLineStatus(this.kdsDeps(), lineId, status, user) }
+
+  // ─── Canal en vivo (#211) — usecases/events. publishEvent lo llama el conector; eventStream/eventsTicket, el controller ───
+  publishEvent(hotelId: string, event: Omit<events.RestaurantEvent, 'at'>) { this.eventHub.publish(hotelId, event) }
+  eventStream(user: CurrentUser) { return events.eventStream(this.eventHub, user) }
+  eventsTicket(user: CurrentUser) { return events.eventsTicket(this.auth, user) }
+  closeEventStreams() { this.eventHub.closeAll() }
 
   // ─── Modificadores/variantes (F1) — delegan a usecases/modifiers-crud ───
   listModifierGroups(menuItemId: string, user: CurrentUser) { return modifiersCrud.listGroups(this.modifierDeps(), menuItemId, user) }

@@ -4,13 +4,17 @@
 // Incluye alta/edición/baja de mesas y comandas sin mesa (room service / para llevar).
 // #210 — la mesa libre pregunta los comensales antes de abrir: un solo toque sobre el número (no un
 // formulario), porque acá se está parado frente al cliente. Lo usa el ticket promedio por comensal.
-import { ref, computed, onMounted } from 'vue'
+// #211 — el salón escucha el canal en vivo (useRestaurantEvents): cuando cocina marca un plato "Lista"
+// la mesa muestra un punto verde en ≤2 s, y las mesas se ocupan/liberan solas al abrir o cerrar una
+// comanda desde otra tablet. Sin stream, polling cada 15 s.
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   RestaurantService,
-  type RestaurantTable, type Order,
+  type RestaurantTable, type Order, type KdsTicket,
   TABLE_STATUS_LABELS, ORDER_TYPE_LABELS,
 } from '@/services/Restaurant.service'
+import { useRestaurantEvents } from '@/composables/useRestaurantEvents'
 import FormModal, { type FormField } from '@/components/features/FormModal.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
@@ -34,6 +38,9 @@ const saving = ref(false)
 const opening = ref(false)
 const tables = ref<RestaurantTable[]>([])
 const openOrders = ref<Order[]>([])
+// #211 — cola de cocina: de acá sale "hay algo listo para llevar" por mesa (línea en `ready`).
+const kitchen = ref<KdsTicket[]>([])
+const REFRESH_MS = 15000
 
 const createPerm = computed(() => can('restaurant', 'create'))
 const editPerm = computed(() => can('restaurant', 'edit'))
@@ -49,6 +56,18 @@ const orderByTable = computed(() => {
   return map
 })
 const looseOrders = computed(() => openOrders.value.filter((o) => !o.tableId && LIVE.includes(o.status)))
+
+/** Mesas con al menos un plato listo en cocina y todavía no servido → punto verde. */
+const readyTables = computed(() => {
+  const set = new Set<string>()
+  for (const t of kitchen.value) if (t.order.tableId && t.lines.some((l) => l.status === 'ready')) set.add(t.order.tableId)
+  return set
+})
+const readyLooseOrders = computed(() => {
+  const set = new Set<string>()
+  for (const t of kitchen.value) if (!t.order.tableId && t.lines.some((l) => l.status === 'ready')) set.add(t.order.id)
+  return set
+})
 
 const occupiedCount = computed(() => orderByTable.value.size)
 const freeCount = computed(() => tables.value.length - occupiedCount.value)
@@ -72,22 +91,37 @@ function tableClasses(t: RestaurantTable): string {
   return 'bg-teal/10 border-teal text-navy'                 // libre
 }
 
-async function load() {
-  loading.value = true
+async function load(showSpinner = true) {
+  if (showSpinner) loading.value = true
   try {
-    const [tb, ord] = await Promise.all([
+    const [tb, ord, kds] = await Promise.all([
       RestaurantService.listTables(),
       RestaurantService.listOrders(),
+      RestaurantService.kdsQueue(),
     ])
     tables.value = tb.sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }))
     openOrders.value = ord
+    kitchen.value = kds
   } catch (e: unknown) {
-    toast.error(e instanceof Error ? e.message : 'No se pudo cargar el salón')
+    if (showSpinner) toast.error(e instanceof Error ? e.message : 'No se pudo cargar el salón')
   } finally {
-    loading.value = false
+    if (showSpinner) loading.value = false
   }
 }
-onMounted(load)
+
+// #211 — canal en vivo: cualquier evento del restaurante (comanda enviada/cerrada, plato listo, mesa
+// tocada) refresca el mapa sin spinner. Varios eventos seguidos → un solo refresco.
+let refreshTimer: ReturnType<typeof setTimeout> | null = null
+function refreshSoon() {
+  if (refreshTimer) return
+  refreshTimer = setTimeout(() => { refreshTimer = null; void load(false) }, 150)
+}
+const live = useRestaurantEvents({ onEvent: refreshSoon, onPoll: () => load(false), pollMs: REFRESH_MS })
+const liveLabel = computed(() => ({ idle: 'Sin conexión', connecting: 'Conectando…', live: 'En vivo', reconnecting: 'Reconectando…' }[live.state.value]))
+const liveDot = computed(() => ({ idle: 'bg-text-muted', connecting: 'bg-text-muted animate-pulse', live: 'bg-success', reconnecting: 'bg-warning animate-pulse' }[live.state.value]))
+
+onMounted(async () => { await load(); live.start() })
+onUnmounted(() => { live.stop(); if (refreshTimer) clearTimeout(refreshTimer) })
 
 // #210 — comensales al abrir la comanda en salón. Atajos de un toque (el caso real: 2 o 4 personas)
 // más un campo para el resto; el backend valida entero 1..200 y por defecto pone 1.
@@ -186,6 +220,10 @@ async function save(fn: () => Promise<unknown>) {
         <p class="text-sm text-text-muted mt-0.5">Tocá una mesa para abrir o retomar su comanda.</p>
       </div>
       <div class="flex items-center gap-2">
+        <span data-testid="salon-live" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-surface text-[11px] font-bold text-navy" :title="live.state.value === 'live' ? 'Conectado al canal en vivo' : 'Sin canal en vivo: se actualiza cada 15 s'">
+          <span :class="['w-2 h-2 rounded-full', liveDot]" />
+          {{ liveLabel }}
+        </span>
         <button v-if="createPerm" @click="openLoose('room_service')" :disabled="opening" class="px-3 py-1.5 rounded-lg bg-navy text-white text-xs font-bold hover:bg-navy-light disabled:opacity-50">Room service</button>
         <button v-if="createPerm" @click="openLoose('takeaway')" :disabled="opening" class="px-3 py-1.5 rounded-lg bg-navy text-white text-xs font-bold hover:bg-navy-light disabled:opacity-50">Para llevar</button>
         <button v-if="createPerm" @click="newTable" class="px-3 py-1.5 rounded-lg border-2 border-navy/30 text-navy text-xs font-bold hover:bg-surface">+ Mesa</button>
@@ -214,7 +252,8 @@ async function save(fn: () => Promise<unknown>) {
       <SectionCard v-if="looseOrders.length" title="Comandas sin mesa">
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
           <button v-for="o in looseOrders" :key="o.id" @click="router.push(`/panel/restaurante/comanda/${o.id}`)"
-            class="p-3 rounded-xl border-2 border-gold bg-gold/10 text-left hover:bg-gold/20">
+            class="relative p-3 rounded-xl border-2 border-gold bg-gold/10 text-left hover:bg-gold/20">
+            <span v-if="readyLooseOrders.has(o.id)" class="absolute top-2 right-2 w-3 h-3 rounded-full bg-success ring-2 ring-white" title="Hay platos listos en cocina" data-testid="ready-dot" />
             <div class="font-black text-navy text-sm">{{ o.number || 'Comanda' }}</div>
             <div class="text-[11px] text-text-muted">{{ ORDER_TYPE_LABELS[o.type] }}</div>
           </button>
@@ -226,7 +265,9 @@ async function save(fn: () => Promise<unknown>) {
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5">
           <div v-for="t in z.list" :key="t.id" class="relative group">
             <button @click="onTable(t)" :disabled="opening"
-              :class="['w-full p-3 rounded-xl border-2 text-left transition-colors disabled:opacity-60', tableClasses(t)]">
+              :class="['relative w-full p-3 rounded-xl border-2 text-left transition-colors disabled:opacity-60', tableClasses(t)]">
+              <!-- #211: punto verde = cocina marcó "Lista" algún plato de esta mesa y todavía no se sirvió. -->
+              <span v-if="readyTables.has(t.id)" class="absolute bottom-2 right-2 w-3 h-3 rounded-full bg-success ring-2 ring-white animate-pulse" title="Platos listos en cocina" data-testid="ready-dot" />
               <div class="font-black text-sm">{{ t.name }}</div>
               <div class="text-[11px] opacity-70">
                 <template v-if="orderByTable.get(t.id)">Ocupada · {{ orderByTable.get(t.id)?.number }}</template>

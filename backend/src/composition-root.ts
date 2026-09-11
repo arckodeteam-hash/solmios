@@ -479,6 +479,7 @@ import { huespedesAuditlogConnector } from './connectors/huespedes-auditlog'
 import { reservasAuditlogConnector } from './connectors/reservas-auditlog'
 import { restauranteAuditlogConnector } from './connectors/restaurante-auditlog'
 import { restauranteReservasConnector } from './connectors/restaurante-reservas'
+import { restauranteEventsConnector } from './connectors/restaurante-events'
 import { gastosAuditlogConnector } from './connectors/gastos-auditlog'
 import { paquetesAuditlogConnector } from './connectors/paquetes-auditlog'
 import { paquetesBookingengineConnector } from './connectors/paquetes-bookingengine'
@@ -699,6 +700,8 @@ system.addConnector('reservas-auditlog', reservasAuditlogConnector)
 system.addConnector('restaurante-auditlog', restauranteAuditlogConnector)
 // #208: la reserva de un room service / cargo a habitación debe ser del hotel (404 si no).
 system.addConnector('restaurante-reservas', restauranteReservasConnector)
+// #211: los hooks del POS alimentan el canal en vivo (SSE) que consumen el KDS y el Salón.
+system.addConnector('restaurante-events', restauranteEventsConnector)
 system.addConnector('gastos-auditlog', gastosAuditlogConnector)
 system.addConnector('paquetes-auditlog', paquetesAuditlogConnector)
 // FIX 2026-07-31 — "Ofertas" (paquetes, type='servicio') no alimentaba el step de Extras
