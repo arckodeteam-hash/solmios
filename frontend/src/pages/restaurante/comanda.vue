@@ -2,12 +2,12 @@
 // pages/restaurante/comanda.vue — Toma de comanda (RES-7). Carta a la izquierda (tocar ítem = agregar
 // línea), ticket a la derecha con líneas + totales en vivo (recalculados por el backend). Enviar a cocina
 // (sendOrder), cobrar (→ cobrar/:id) o cancelar. Las líneas solo se editan si la comanda no cerró.
-// #207: quitar (✕) borra SOLO mientras la comanda está `open`; una vez enviada a cocina abre el modal de
-// motivo y ANULA (la línea queda tachada con el motivo, sale del total). Cancelar la comanda también
-// pide motivo. Cerrar el modal no cambia nada.
 // #210 — después de "Enviar a cocina" el mozo ya no queda a ciegas: badge de estado POR LÍNEA con el
 // color del KDS, refresco cada 15 s mientras la comanda está en cocina, nota por línea ("sin cebolla")
 // y re-envío de las líneas agregadas después. El bloqueo al agregar es por ítem, no de toda la carta.
+// #207: quitar (✕) borra SOLO mientras la línea no llegó a cocina (comanda `open`, o agregada después
+// y sin confirmar); una vez enviada abre el modal de motivo y ANULA (queda tachada con el motivo, sale
+// del total). Cancelar la comanda también pide motivo. Cerrar el modal no cambia nada.
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -50,10 +50,10 @@ const editPerm = computed(() => can('restaurant', 'edit'))
 const createPerm = computed(() => can('restaurant', 'create'))
 const deletePerm = computed(() => can('restaurant', 'delete'))
 // #205: quitar una línea ANTES de enviar a cocina es parte de tomar el pedido: el mismo permiso que
-// agregarla (`create`, el mozo lo tiene; cocina no). Después de enviada ya no se quita: se ANULA con
-// motivo (#207, `restaurant:delete`, hotel_admin) — el backend devuelve 409 al DELETE de una línea
-// enviada. Espeja la regla del backend (ruta DELETE `restaurant:create` + ruta void `restaurant:delete`).
-const canRemoveLine = computed(() => (order.value?.status === 'open' ? createPerm.value : deletePerm.value))
+// agregarla (`create`, el mozo lo tiene; cocina no). Después de enviada, quitar = anular (`delete`,
+// hotel_admin) además del `create` de la ruta — hasta que exista la anulación con motivo (#207).
+// Espeja la regla del backend (ruta `restaurant:create` + `order-lines.removeLine`).
+const canRemoveLine = computed(() => (order.value?.status === 'open' ? createPerm.value : createPerm.value && deletePerm.value))
 // Cobrar es `restaurant:pay` (#205): el botón lleva a /cobrar/:id, que el router gatea con ese permiso.
 const payPerm = computed(() => can('restaurant', 'pay'))
 
@@ -282,9 +282,8 @@ function componentsOf(headerId: string): OrderLine[] {
 function comboAggregateStatus(headerId: string): LineStatus | '' {
   const comps = componentsOf(headerId)
   if (!comps.length) return ''
+  if (comps.every((c) => !isLineActive(c))) return 'voided'
   if (comps.every((c) => c.status === 'served')) return 'served'
-  // #207: un combo cuyos componentes se anularon (voidLine anula header + componentes) se muestra anulado.
-  if (comps.every((c) => !isLineActive(c))) return comps.every((c) => c.status === 'cancelled') ? 'cancelled' : 'voided'
   if (comps.some((c) => c.status === 'ready')) return 'ready'
   if (comps.some((c) => c.status === 'preparing')) return 'preparing'
   return 'new'
@@ -297,7 +296,6 @@ const lineBadges = computed(() => {
   const map = new Map<string, { label: string; cls: string }>()
   if (!order.value || order.value.status === 'open') return map
   for (const l of topLines.value) {
-    if (!isLineActive(l)) continue   // #207: la anulada muestra su motivo, no un badge de cocina
     if (l.status === 'new' && !l.sentAt) {
       map.set(l.id, { label: 'Sin enviar', cls: 'bg-gold/15 text-gold' })
       continue
@@ -328,13 +326,17 @@ async function setQty(line: OrderLine, qty: number) {
 
 async function remove(line: OrderLine) {
   if (!editable.value || busyLine.value || !isLineActive(line)) return
-  // Sin permiso, bajar a 0 quedaba en silencio — igual que 'cancel()': el aviso lo dice, no un 403 mudo.
+  // Sin permiso, bajar a 0 quedaba en silencio — igual que 'cancel()'. Con la comanda ya enviada
+  // el mozo no puede anular: el aviso lo dice, no un 403 mudo.
   if (!canRemoveLine.value) {
-    toast.warning(order.value?.status === 'open' ? 'Sin permiso para quitar ítems' : 'La comanda ya fue enviada a cocina: anular un plato requiere permiso de anulación')
+    toast.warning(order.value?.status === 'open' ? 'Sin permiso para quitar ítems' : 'La comanda ya fue enviada a cocina: solo un administrador puede anular líneas')
     return
   }
-  // #207: ya enviada a cocina → no se borra, se anula con motivo (el backend devuelve 409 al DELETE).
-  if (order.value?.status !== 'open') { voidTarget.value = { kind: 'line', line }; return }
+  // #207: ya confirmada a cocina → no se borra, se anula con motivo (el backend devuelve 409 si se
+  // intenta). Una línea agregada después del envío y sin confirmar (#210, `new` sin `sentAt`) sigue
+  // siendo un error de toma: se quita.
+  const unsent = line.status === 'new' && !line.sentAt
+  if (order.value?.status !== 'open' && !unsent) { voidTarget.value = { kind: 'line', line }; return }
   busyLine.value = line.id
   try {
     await RestaurantService.removeLine(orderId.value, line.id)
@@ -506,7 +508,7 @@ function cancel() {
                     <button @click="setQty(l, l.quantity + 1)" :disabled="busyLine === l.id" class="w-7 h-7 rounded-lg border-2 border-border font-black text-navy hover:bg-surface disabled:opacity-40">+</button>
                   </template>
                   <span v-else class="font-black text-navy tabular-nums">×{{ l.quantity }}</span>
-                  <button v-if="canRemoveLine" @click="remove(l)" :disabled="busyLine === l.id" :title="order.status === 'open' ? 'Quitar' : 'Anular con motivo'"
+                  <button v-if="canRemoveLine" @click="remove(l)" :disabled="busyLine === l.id" :title="order.status === 'open' || (l.status === 'new' && !l.sentAt) ? 'Quitar' : 'Anular con motivo'"
                     class="ml-1 w-7 h-7 rounded-lg text-coral font-black hover:bg-coral/10 disabled:opacity-40">✕</button>
                 </div>
                 <div v-else-if="isLineActive(l)" class="font-black text-navy tabular-nums shrink-0">×{{ l.quantity }}</div>

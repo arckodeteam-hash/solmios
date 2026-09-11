@@ -6,10 +6,10 @@ import { NotFoundError, ValidationError, ConflictError } from 'arckode-framework
 import type { OrderDTO, OrderItemDTO, TableDTO, OrderType, CurrentUser } from '../types'
 import type { RestaurantSockets } from '../sockets'
 import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
-import { nextOrderNumber, type CounterCas } from './order-number'
-import { isLineActive } from './order-totals'
 import { round2 } from '../../../shared/utils/money'
+import { nextOrderNumber, type CounterCas } from './order-number'
 import { isUniqueViolation } from '../../../shared/utils/db-errors'
+import { isLineActive } from './order-totals'
 
 export interface OrdersDeps {
   orders: RepositoryAdapter<OrderDTO>

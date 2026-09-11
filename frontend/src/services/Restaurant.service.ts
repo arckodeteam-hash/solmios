@@ -494,7 +494,7 @@ export const LINE_STATUS_BADGE: Record<string, string> = {
   ready: 'bg-gold text-white',
   served: 'bg-teal/15 text-teal',
   cancelled: 'bg-coral/15 text-coral',
-  voided: 'bg-coral/15 text-coral line-through',
+  voided: 'bg-coral/15 text-coral',
 }
 export const TABLE_STATUS_LABELS: Record<string, string> = {
   free: 'Libre', occupied: 'Ocupada', reserved: 'Reservada',
