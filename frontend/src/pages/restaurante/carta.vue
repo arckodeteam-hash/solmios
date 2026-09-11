@@ -332,7 +332,7 @@ async function toggleAvailability(i: MenuItem) {
 }
 function delItem(i: MenuItem) {
   askConfirm({
-    title: 'Eliminar ítem', message: `¿Eliminar "${i.name}"?`,
+    title: 'Eliminar ítem', message: `¿Eliminar "${i.name}"? Se borran también sus modificadores. No se puede si forma parte de un combo.`,
     confirmLabel: 'Eliminar', danger: true,
     run: async () => { await RestaurantService.deleteItem(i.id); await load() },
   })

@@ -206,6 +206,20 @@ describe('InventarioService — recetas + consumo por venta (INT-1)', () => {
     expect(recipes.length).toBe(0)          // 0 elimina
   })
 
+  it('#208 deleteRecipesOfMenuItem: borra TODAS las filas del ítem en ese hotel y solo esas', async () => {
+    const recipes: any[] = [
+      { id: 'r1', hotelId: 'h1', menuItemId: 'm1', inventoryItemId: 'inv1', quantity: 0.05 },
+      { id: 'r2', hotelId: 'h1', menuItemId: 'm1', inventoryItemId: 'inv2', quantity: 0.2 },
+      { id: 'r3', hotelId: 'h1', menuItemId: 'm2', inventoryItemId: 'inv1', quantity: 1 },
+      { id: 'r4', hotelId: 'h2', menuItemId: 'm1', inventoryItemId: 'inv9', quantity: 1 },
+    ]
+    const s = svc([], [], passAuth, 'h1', recipes)
+    expect(await s.deleteRecipesOfMenuItem({ hotelId: 'h1', menuItemId: 'm1' })).toBe(2)
+    expect(recipes.map((r) => r.id)).toEqual(['r3', 'r4'])
+    expect(await s.deleteRecipesOfMenuItem({ hotelId: 'h1', menuItemId: 'm1' })).toBe(0)   // idempotente
+    await expect(s.deleteRecipesOfMenuItem({ hotelId: '', menuItemId: 'm1' })).rejects.toThrow('requeridos')
+  })
+
   it('venta descuenta stock según la receta (idempotente por línea)', async () => {
     // 1 trago "Cuba Libre" (m1) consume 0.05 botella de Ron (inv1) + 0.2 de Coca (inv2).
     const items = [

@@ -34,9 +34,14 @@ function backed<T extends object>(seed: any[] = []): RepositoryAdapter<T> {
 }
 
 function baseDeps(overrides: Partial<{
-  hotelsSeed: any[]; configSeed: any[]; plansSeed: any[]
+  hotelsSeed: any[]
+  /** #208: gate del módulo por puerto (index.ts → createModuleChecker). Default: habilitado. */
+  restaurantEnabled: boolean
+  /** `null` = conector no cableado. */
+  moduleState: PublicMenuDeps['moduleState']
   categoriesSeed: any[]; itemsSeed: any[]; combosSeed: any[]; comboItemsSeed: any[]
 }> = {}): PublicMenuDeps {
+  const enabled = overrides.restaurantEnabled ?? true
   return {
     categories: backed<CategoryDTO>(overrides.categoriesSeed ?? []),
     items: backed<MenuItemDTO>(overrides.itemsSeed ?? []),
@@ -45,10 +50,9 @@ function baseDeps(overrides: Partial<{
     comboItems: backed<ComboItemDTO>(overrides.comboItemsSeed ?? []),
     userRepo: makeRepo<any>(),
     hotels: backed<any>(overrides.hotelsSeed ?? [{ id: 'h1', name: 'Hotel Test', plan: 'basico' }]),
-    config: backed<any>(overrides.configSeed ?? []),
-    plans: backed<any>(overrides.plansSeed ?? []),
-    // Sin suscripción (hoteles legacy): el gate cae al espejo `hotel.plan`, como siempre.
-    subscriptions: backed<any>([]),
+    moduleState: overrides.moduleState !== undefined
+      ? overrides.moduleState
+      : { isEnabled: async (_hotelId: string, key: string) => (key === 'restaurant' ? enabled : true) },
   }
 }
 
@@ -107,16 +111,33 @@ describe('F7 — 404 genérico: hotel inexistente Y módulo deshabilitado dan la
   it('hotel existe pero restaurant=false para su hotel/plan → MISMO 404 genérico (anti-enumeración)', async () => {
     const deps = baseDeps({
       hotelsSeed: [{ id: 'h2', name: 'Hotel Sin Restaurante', plan: 'basico' }],
-      configSeed: [{ id: 'c1', hotelId: 'platform', key: 'modules', value: { restaurant: false } }],
+      restaurantEnabled: false,
     })
     await expect(publicMenu(deps, 'h2', undefined)).rejects.toThrow('Carta no encontrada')
+  })
+
+  it('#208: el gate se pregunta por el puerto con (hotelId del path, "restaurant") — nunca se importa admin', async () => {
+    const asked: Array<[string, string]> = []
+    const deps = baseDeps({
+      hotelsSeed: [{ id: 'h9', name: 'Hotel Puerto', plan: 'basico' }],
+      moduleState: { isEnabled: async (hotelId, key) => { asked.push([hotelId, key]); return true } },
+    })
+    await publicMenu(deps, 'h9', undefined)
+    expect(asked).toEqual([['h9', 'restaurant']])
+  })
+
+  it('#208: sin puerto cableado (index.ts no lo seteó) → 404 genérico y error en el log, nunca se sirve la carta', async () => {
+    const errors: string[] = []
+    const deps = { ...baseDeps({ moduleState: null }), logger: { warn: () => {}, error: (m: string) => { errors.push(m) } } }
+    await expect(publicMenu(deps, 'h1', undefined)).rejects.toThrow('Carta no encontrada')
+    expect(errors.some((m) => m.includes('createModuleChecker'))).toBe(true)
   })
 
   it('ambos casos son literalmente el mismo NotFoundError (mismo mensaje, mismo httpStatus)', async () => {
     const notFoundDeps = baseDeps({ hotelsSeed: [] })
     const disabledDeps = baseDeps({
       hotelsSeed: [{ id: 'h2', name: 'Hotel Sin Restaurante', plan: 'basico' }],
-      configSeed: [{ id: 'c1', hotelId: 'platform', key: 'modules', value: { restaurant: false } }],
+      restaurantEnabled: false,
     })
     let err1: unknown; let err2: unknown
     try { await publicMenu(notFoundDeps, 'no-existe', undefined) } catch (e) { err1 = e }

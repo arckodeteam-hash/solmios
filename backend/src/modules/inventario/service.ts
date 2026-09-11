@@ -94,6 +94,9 @@ export class InventarioService {
   /** Descuenta stock por la venta de una línea de comanda (lo llama el conector restaurant→inventario). */
   consumeForSale(input: { hotelId: string; menuItemId: string; soldQty: number; lineId: string }, user: CurrentUser) { return recipesUc.consumeForSale(this.recipeDeps(), input, user) }
 
+  /** #208: el restaurante borró el ítem → su receta se va con él (puerto del conector restaurante-inventario). */
+  deleteRecipesOfMenuItem(input: { hotelId: string; menuItemId: string }) { return recipesUc.deleteRecipesOfMenuItem(this.recipeDeps(), input) }
+
   /** F1: descuenta el insumo extra declarado por cada modificador elegido en el snapshot de la línea. */
   consumeForSaleWithModifiers(input: { hotelId: string; line: any }, user: CurrentUser) { return recipesUc.consumeForSaleWithModifiers(this.recipeDeps(), input, user) }
 

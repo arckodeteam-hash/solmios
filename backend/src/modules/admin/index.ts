@@ -10,7 +10,7 @@ import type { PlanDTO, AmenityCatalogDTO } from './types'
 import { AdminService } from './service'
 import { AdminController } from './controller'
 import { DashboardQueries } from './usecases/dashboard-queries'
-import { MODULE_CATALOG, getModuleState, setModuleState, getModuleStateForHotel, moduleCatalogTree } from './usecases/modules'
+import { MODULE_CATALOG, getModuleState, setModuleState, moduleStateForHotelId, moduleCatalogTree } from './usecases/modules'
 import { SpecialConditionsUseCase } from './usecases/special-conditions'
 import { SubscriptionCategoriesUseCase } from './usecases/subscription-categories'
 import { ModuleOverridesUseCase } from './usecases/module-overrides'
@@ -95,16 +95,11 @@ export function AdminModule() {
       router.get('/api/admin/modules/catalog', sa, () => ({ status: 200, body: moduleCatalogTree() }))
       router.put('/api/admin/modules', sa, async (req: any) => ({ status: 200, body: { state: await setModuleState(configRepo, (req.body?.state ?? req.body) || {}) } }))
       router.get('/api/modules', [auth.authenticate()], async (req: any) => {
-        const hotelId = req.user?.hotelId
-        let planSlug: string | undefined
-        if (hotelId && hotelId !== 'platform') {
-          const hotel = ((await hotelsRepo.findMany({ id: hotelId })) as any[])?.[0]
-          planSlug = hotel?.plan
-        }
-        // El estado sale de global ∩ la SUSCRIPCIÓN ACTIVA del hotel ∩ overrides.
-        // planSlug (hotels.plan) solo aplica si no hay suscripción activa (legacy).
+        // El estado sale de global ∩ la SUSCRIPCIÓN ACTIVA del hotel ∩ overrides (hotels.plan solo
+        // como legacy sin suscripción). La MISMA cuenta que el gate de la API (require-module.ts).
         // `log` (E2): el WARN del resolver tiene que llegar a los logs, no morir en `undefined`.
-        return { status: 200, body: { state: await getModuleStateForHotel(configRepo, plansRepo, subscriptionsRepo, hotelId, moduleOverridesRepo, planSlug, log) } }
+        const repos = { configRepo, plansRepo, subscriptionsRepo, hotelsRepo, overridesRepo: moduleOverridesRepo, logger: log }
+        return { status: 200, body: { state: await moduleStateForHotelId(repos, req.user?.hotelId) } }
       })
 
       // Credenciales de la APP de Meta (plataforma). El secreto firma los webhooks de TODOS los

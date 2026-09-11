@@ -13,6 +13,8 @@ import type { MenuItemDTO, ComboDTO, ComboItemDTO, CurrentUser } from '../types'
 export interface RecipePorts {
   menuItemsWithRecipe?: (user: CurrentUser) => Promise<string[]>
   getRecipeCost?: (menuItemId: string, user: CurrentUser) => Promise<{ cost: number; hasRecipe: boolean }>
+  /** #208: al borrar un ítem (items-crud.deleteItem) su receta en inventario se va con él. Devuelve filas borradas. */
+  deleteRecipesOfMenuItem?: (hotelId: string, menuItemId: string) => Promise<number>
 }
 
 export interface FoodCostDeps {

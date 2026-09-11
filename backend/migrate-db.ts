@@ -14,6 +14,8 @@ import type { DbAdapter } from 'arckode-framework'
 import { backfillPaymentsReservationId } from './scripts/backfill-payments-reservation'
 import { backfillAriOutboxPendingKey } from './scripts/backfill-ari-outbox-pending-key'
 import { backfillRestaurantPayPermission } from './scripts/backfill-restaurant-pay-permission'
+import { dedupeRestaurantOrderNumbers } from './scripts/dedupe-restaurant-order-numbers'
+import { isMissingTableError } from './src/shared/utils/db-errors'
 import { LEGAL_PAGES_SEED } from './scripts/legal-pages-content'
 import { MARKETING_PAGES_SEED } from './scripts/marketing-pages-content'
 
@@ -91,6 +93,31 @@ async function countRows(sql: string, params: unknown[] = []): Promise<number> {
   return rows[0]?.c ?? 0
 }
 
+/**
+ * #208: dedup + UNIQUE (hotelId, number) de restaurant_orders. Ver el comentario en el caller.
+ * Solo "tabla inexistente" (falta RUN_MIGRATE) es un aviso. Cualquier otro fallo se RELANZA: llega al
+ * `.catch` de main() → `process.exitCode = 1` → `bun run migrate` sale en rojo y el deploy
+ * (deploy-solmios.sh) se entera. Un `console.error` + seguir era el mismo hueco silencioso que se
+ * quiso cerrar, solo más visible en el log que nadie mira.
+ */
+async function ensureRestaurantOrderNumberIndex(): Promise<void> {
+  try {
+    const { groups, renumbered } = await dedupeRestaurantOrderNumbers(db)
+    if (renumbered.length > 0) {
+      console.warn(`⚠ restaurant_orders: ${groups} número(s) de comanda duplicado(s) — ${renumbered.length} comanda(s) renumerada(s) (la más vieja conserva el número):`)
+      for (const r of renumbered) console.warn(`   hotel ${r.hotelId}: ${r.from} → ${r.to} (id ${r.id})`)
+    }
+    await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurant_orders_hotel_number ON restaurant_orders(hotelId, number)`)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (isMissingTableError(e)) {
+      console.warn(`⚠ idx_restaurant_orders_hotel_number: tabla restaurant_orders aún no migrada (correr RUN_MIGRATE=1) — ${msg.slice(0, 120)}`)
+      return
+    }
+    throw new Error(`idx_restaurant_orders_hotel_number: NO se pudo crear el UNIQUE (hotelId, number) de restaurant_orders. Sin él dos comandas pueden salir con el mismo número. Motivo: ${msg}`, { cause: e })
+  }
+}
+
 // ─── Tablas (DDL en inglés, idempotente) ────────────────────────
 async function createTablesBlock1(): Promise<void> {
   await exec(`CREATE TABLE IF NOT EXISTS packages (
@@ -155,13 +182,11 @@ async function createTablesBlock1(): Promise<void> {
   // contador de `configuration`; este UNIQUE es la garantía dura — si igual chocan, el `create` del
   // perdedor falla y `openOrder` reintenta con el número siguiente. Por hotel (dos hoteles emiten su
   // CMD-2026-0001 sin chocar); `number` nulo no cuenta (NULL no colisiona en SQLite ni en PG).
-  // Si una base vieja ya tiene duplicados, el índice no se puede crear: se avisa en vez de tirar
-  // abajo todo el seed — hay que deduplicar a mano y volver a correr.
-  try {
-    await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurant_orders_hotel_number ON restaurant_orders(hotelId, number)`)
-  } catch (e) {
-    console.log("idx_restaurant_orders_hotel_number: NO se pudo crear (¿tabla sin migrar o números duplicados?) —", e instanceof Error ? e.message.slice(0, 120) : String(e))
-  }
+  // #208: los duplicados que dejó el numerador viejo se renumeran ANTES (la comanda más vieja
+  // conserva el número, las demás pasan a `-D1`, `-D2`...; scripts/dedupe-restaurant-order-numbers.ts)
+  // y el fallo del índice TIRA la migración (exit 1): antes se tragaba con un console.log y en prod
+  // podía no existir sin que nadie lo viera. Solo "tabla inexistente" (falta RUN_MIGRATE) es un aviso.
+  await ensureRestaurantOrderNumberIndex()
 
   // Inventario (INV-2, QA-A3): garantía DURA de idempotencia del ledger de stock. El dedup en JS es
   // check-then-create (no atómico): dos conectores concurrentes con el mismo sourceId (recepción de

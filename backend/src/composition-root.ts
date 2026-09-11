@@ -478,6 +478,7 @@ import { habitacionesAuditlogConnector } from './connectors/habitaciones-auditlo
 import { huespedesAuditlogConnector } from './connectors/huespedes-auditlog'
 import { reservasAuditlogConnector } from './connectors/reservas-auditlog'
 import { restauranteAuditlogConnector } from './connectors/restaurante-auditlog'
+import { restauranteReservasConnector } from './connectors/restaurante-reservas'
 import { restauranteEventsConnector } from './connectors/restaurante-events'
 import { gastosAuditlogConnector } from './connectors/gastos-auditlog'
 import { paquetesAuditlogConnector } from './connectors/paquetes-auditlog'
@@ -697,6 +698,8 @@ system.addConnector('huespedes-auditlog', huespedesAuditlogConnector)
 system.addConnector('reservas-auditlog', reservasAuditlogConnector)
 // #207: anular una línea, cancelar una comanda o reembolsarla deja rastro (quién, cuánto, por qué).
 system.addConnector('restaurante-auditlog', restauranteAuditlogConnector)
+// #208: la reserva de un room service / cargo a habitación debe ser del hotel (404 si no).
+system.addConnector('restaurante-reservas', restauranteReservasConnector)
 // #211: los hooks del POS alimentan el canal en vivo (SSE) que consumen el KDS y el Salón.
 system.addConnector('restaurante-events', restauranteEventsConnector)
 system.addConnector('gastos-auditlog', gastosAuditlogConnector)

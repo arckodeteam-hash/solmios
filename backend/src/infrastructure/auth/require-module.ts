@@ -1,7 +1,7 @@
 import type { MiddlewareHandler, ORM } from 'arckode-framework'
 import type { Logger } from 'arckode-framework'
 import { ForbiddenError, Logger as AppLogger, OrmRepository } from 'arckode-framework'
-import { getModuleStateForHotel } from '../../modules/admin/usecases/modules'
+import { isModuleEnabledForHotel, type ModuleEntitlementRepos } from '../../modules/admin/usecases/modules'
 
 /**
  * E2: el WARN del fail-open (suscripción viva → plan borrado, o activa sin planId) nunca se
@@ -29,26 +29,12 @@ const gateLogger = new AppLogger('module-gate')
  * asume habilitado, para no cortar la operación de un hotel por un plan mal cargado.
  */
 export function createModuleChecker(orm: ORM, logger: Pick<Logger, 'warn' | 'error'> = gateLogger) {
-  const configRepo = new OrmRepository<any>(orm, 'Configuration')
-  const plansRepo = new OrmRepository<any>(orm, 'Plans')
-  const hotelsRepo = new OrmRepository<any>(orm, 'Hotels')
-  const subscriptionsRepo = new OrmRepository<any>(orm, 'Subscriptions')
-  const overridesRepo = new OrmRepository<any>(orm, 'HotelModuleOverrides')
-
-  return async (hotelId: string, moduleKey: string): Promise<boolean> => {
-    if (!hotelId || hotelId === 'platform') return true
-    const hotel = ((await hotelsRepo.findMany({ id: hotelId })) as any[])?.[0]
-    const state = await getModuleStateForHotel(configRepo, plansRepo, subscriptionsRepo, hotelId, overridesRepo, hotel?.plan, logger)
-    return state[moduleKey] !== false
-  }
+  const repos = entitlementRepos(orm, logger)
+  return (hotelId: string, moduleKey: string): Promise<boolean> => isModuleEnabledForHotel(repos, hotelId, moduleKey)
 }
 
 export function createModuleGuard(orm: ORM, logger: Pick<Logger, 'warn' | 'error'> = gateLogger) {
-  const configRepo = new OrmRepository<any>(orm, 'Configuration')
-  const plansRepo = new OrmRepository<any>(orm, 'Plans')
-  const hotelsRepo = new OrmRepository<any>(orm, 'Hotels')
-  const subscriptionsRepo = new OrmRepository<any>(orm, 'Subscriptions')
-  const overridesRepo = new OrmRepository<any>(orm, 'HotelModuleOverrides')
+  const repos = entitlementRepos(orm, logger)
 
   return (moduleKey: string): MiddlewareHandler => async (req, next) => {
     const user = req.user as any
@@ -57,14 +43,24 @@ export function createModuleGuard(orm: ORM, logger: Pick<Logger, 'warn' | 'error
     const hotelId = user.hotelId
     if (!hotelId || hotelId === 'platform') return next()
 
-    // El plan sale de la SUSCRIPCIÓN ACTIVA (fuente de verdad); `hotel.plan` es solo el
-    // espejo legacy para hoteles sin suscripción (resolveHotelPlan).
-    const hotel = ((await hotelsRepo.findMany({ id: hotelId })) as any[])?.[0]
-    const state = await getModuleStateForHotel(configRepo, plansRepo, subscriptionsRepo, hotelId, overridesRepo, hotel?.plan, logger)
+    // El plan sale de la SUSCRIPCIÓN ACTIVA (fuente de verdad); `hotel.plan` es solo el espejo
+    // legacy para hoteles sin suscripción (resolveHotelPlan). La cuenta vive en admin/usecases/modules.ts.
     // Solo bloquea si está explícitamente apagado. Fail-open ante datos faltantes (no romper la operación).
-    if (state[moduleKey] === false) {
+    if (!(await isModuleEnabledForHotel(repos, hotelId, moduleKey))) {
       throw new ForbiddenError(`Módulo no disponible en tu plan: ${moduleKey}`)
     }
     return next()
+  }
+}
+
+/** Los cinco repos del entitlement, una sola vez por módulo (cada `create*` los instancia al montar). */
+function entitlementRepos(orm: ORM, logger: Pick<Logger, 'warn' | 'error'>): ModuleEntitlementRepos {
+  return {
+    configRepo: new OrmRepository<any>(orm, 'Configuration'),
+    plansRepo: new OrmRepository<any>(orm, 'Plans'),
+    hotelsRepo: new OrmRepository<any>(orm, 'Hotels'),
+    subscriptionsRepo: new OrmRepository<any>(orm, 'Subscriptions'),
+    overridesRepo: new OrmRepository<any>(orm, 'HotelModuleOverrides'),
+    logger,
   }
 }

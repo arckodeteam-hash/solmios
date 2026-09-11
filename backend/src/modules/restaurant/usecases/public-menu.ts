@@ -15,7 +15,16 @@ import type { CategoryDTO, MenuItemDTO, StationDTO, ComboDTO, ComboItemDTO, Curr
 import * as categoriesCrud from './categories-crud'
 import * as itemsCrud from './items-crud'
 import * as combosCrud from './combos-crud'
-import { getModuleStateForHotel } from '../../admin/usecases/modules'
+
+/**
+ * #208: ¿el hotel tiene el módulo `restaurant` habilitado (global ∩ suscripción activa ∩ overrides)?
+ * Antes este usecase importaba `admin/usecases/modules` directo — violaba la regla del módulo ("No
+ * importar de otros módulos", index.ts) sin que `arckode analyze` lo viera. Lo cablea index.ts con
+ * `createModuleChecker` (infrastructure/auth/require-module.ts): la misma cuenta que el gate de la API.
+ */
+export interface ModuleStatePort {
+  isEnabled(hotelId: string, moduleKey: string): Promise<boolean>
+}
 
 export interface PublicMenuDeps {
   categories: RepositoryAdapter<CategoryDTO>
@@ -25,11 +34,8 @@ export interface PublicMenuDeps {
   comboItems: RepositoryAdapter<ComboItemDTO>
   userRepo: RepositoryAdapter<any>
   hotels: RepositoryAdapter<any>
-  config: RepositoryAdapter<any>
-  plans: RepositoryAdapter<any>
-  /** Suscripción SaaS del hotel — FUENTE DE VERDAD del plan para el gate (resolve-plan.ts). */
-  subscriptions: RepositoryAdapter<any>
-  /** E2: el WARN del fail-open del resolver se emite — lo cablea el service del módulo. */
+  /** Gate del módulo. `null` = conector no cableado → 404 genérico y error en el log (fail-closed). */
+  moduleState: ModuleStatePort | null
   logger?: Pick<Logger, 'warn' | 'error'>
 }
 
@@ -110,9 +116,14 @@ export async function publicMenu(deps: PublicMenuDeps, hotelId: string, lang: st
   if (!hotel) throw new NotFoundError(NOT_FOUND_MSG)
 
   // F7 + fix plan-truth: el módulo `restaurant` se decide por la SUSCRIPCIÓN ACTIVA del hotel,
-  // no por el espejo `hotels.plan` (que quedaba en el default 'professional' tras el trial).
-  const state = await getModuleStateForHotel(deps.config, deps.plans, deps.subscriptions, hotelId, undefined, hotel.plan, deps.logger)
-  if (state.restaurant === false) throw new NotFoundError(NOT_FOUND_MSG)
+  // no por el espejo `hotels.plan` (que quedaba en el default 'professional' tras el trial). Vía
+  // puerto (#208): sin conector cableado no se sirve la carta — un 404 igual al de "módulo apagado",
+  // con el motivo real en el log del server.
+  if (!deps.moduleState) {
+    deps.logger?.error('public-menu: ModuleStatePort no cableado (restaurant/index.ts → createModuleChecker) — la carta pública responde 404')
+    throw new NotFoundError(NOT_FOUND_MSG)
+  }
+  if (!(await deps.moduleState.isEnabled(hotelId, 'restaurant'))) throw new NotFoundError(NOT_FOUND_MSG)
 
   const fakeUser: CurrentUser = { id: '', hotelId }
   const catDeps: categoriesCrud.CategoriesCrudDeps = { categories: deps.categories, items: deps.items, stations: deps.stations, userRepo: deps.userRepo, auth: NOOP_AUTH }

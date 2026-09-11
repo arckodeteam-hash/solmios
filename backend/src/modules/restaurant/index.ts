@@ -6,7 +6,7 @@ import { RestaurantService } from './service'
 import { RestaurantController } from './controller'
 import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderItemDTO, ModifierGroupDTO, ModifierDTO, ComboDTO, ComboItemDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
-import { createModuleGuard } from '../../infrastructure/auth/require-module'
+import { createModuleGuard, createModuleChecker } from '../../infrastructure/auth/require-module'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
 import { sseTicketAuth } from '../../infrastructure/auth/sse-ticket-auth'
 import { loadPermissions } from '../../infrastructure/auth/load-permissions'
@@ -27,6 +27,8 @@ export { DEFAULT_VOID_REASONS, VOID_REASONS_KEY } from './usecases/void-reasons'
 export { registerRestaurantModels } from './model'
 export type { SettlementPorts, ChargeToFolioInput, RecordPaymentInput, ChargeCardPaymentInput } from './usecases/settlement'
 export type { ComboDTO, ComboItemDTO } from './types'
+export type { ReservationPort, ReservationSummary } from './usecases/reservation-port'
+export type { ModuleStatePort } from './usecases/public-menu'
 export type { RestaurantEvent, RestaurantEventType } from './usecases/events'
 
 export function RestaurantModule() {
@@ -70,21 +72,18 @@ export function RestaurantModule() {
       // F2: catálogo de combos/paquetes.
       const combosRepo = new OrmRepository<ComboDTO>(orm, 'MenuCombos')
       const comboItemsRepo = new OrmRepository<ComboItemDTO>(orm, 'MenuComboItems')
-      // F7: carta pública sin sesión — el gate del módulo restaurant necesita el plan del hotel.
-      const plansRepo = new OrmRepository<any>(orm, 'Plans')
-      // Suscripción SaaS: fuente de verdad del plan (resolve-plan.ts), el espejo hotels.plan
-      // solo aplica para hoteles legacy sin fila de suscripción.
-      const subscriptionsRepo = new OrmRepository<any>(orm, 'Subscriptions')
       // #211: número de habitación para el ticket del KDS (tabla rooms, lectura — mismo criterio que Hotels/Users).
       const roomsRepo = new OrmRepository<any>(orm, 'Rooms')
       const log = logger.child('restaurant')
       const service = new RestaurantService(
         stations, categories, items, tables, userRepo, log, auth,
         ordersRepo, linesRepo, configRepo, hotelsRepo, modifierGroupsRepo, modifiersRepo,
-        combosRepo, comboItemsRepo, plansRepo, subscriptionsRepo,
+        combosRepo, comboItemsRepo,
         // #206: numerador de comandas con UPDATE condicional (orm.updateMany). El orm entra al
         // service SOLO como `CounterCas`; el resto sigue por OrmRepository. Ver usecases/order-number.ts.
         orm,
+        // #208: transactor para la cascada atómica de deleteItem (patrón landing/index.ts).
+        { transaction: <T>(fn: (tx: any) => Promise<T>) => orm.transaction(fn) },
         roomsRepo,
       )
       const controller = new RestaurantController(service, log)
@@ -93,6 +92,10 @@ export function RestaurantModule() {
       const permGuard = createPermissionGuard(auth, roleRepo)
       const moduleGuard = createModuleGuard(orm)
       const guard = (m: string, a: string) => [...permGuard(m, a), moduleGuard('restaurant')]
+      // F7/#208: la carta pública (sin sesión, sin `moduleGuard`) pregunta el MISMO entitlement por
+      // puerto — `createModuleChecker` es la versión "pregunta" del guard (canales/index.ts hace
+      // igual para el alta automática). Antes public-menu.ts importaba admin/usecases/modules directo.
+      service.setModuleStatePort({ isEnabled: createModuleChecker(orm, log) })
 
       // Estaciones (pantallas KDS configurables) — RES-0. Lectura: 'restaurant' (el POS necesita
       // listarlas para rutear la carta). Mutación: 'restaurant-catalog' (QA-ALTO: separado de

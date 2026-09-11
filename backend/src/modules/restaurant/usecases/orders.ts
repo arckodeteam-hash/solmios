@@ -6,10 +6,11 @@ import { NotFoundError, ValidationError, ConflictError } from 'arckode-framework
 import type { OrderDTO, OrderItemDTO, TableDTO, OrderType, CurrentUser } from '../types'
 import type { RestaurantSockets } from '../sockets'
 import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
-import { round2 } from '../../../shared/utils/money'
 import { nextOrderNumber, type CounterCas } from './order-number'
+import { isLineActive, isTerminalOrder } from './order-totals'
+import { round2 } from '../../../shared/utils/money'
 import { isUniqueViolation } from '../../../shared/utils/db-errors'
-import { isLineActive } from './order-totals'
+import { assertReservationOfHotel, type ReservationPort } from './reservation-port'
 
 export interface OrdersDeps {
   orders: RepositoryAdapter<OrderDTO>
@@ -24,6 +25,9 @@ export interface OrdersDeps {
   // #207: auditoría de cancelaciones (puerto inyectado por connectors/restaurante-auditlog.ts). Opcional.
   audit?: AuditPort | null
   logger?: Logger
+  // #208: la reserva de un room service debe ser del hotel (connectors/restaurante-reservas.ts).
+  // Sin cablear, abrir un room service falla cerrado — ver usecases/reservation-port.ts.
+  reservations?: ReservationPort | null
 }
 
 const silentLogger = { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} } as unknown as Logger
@@ -56,10 +60,7 @@ async function createWithReservedNumber(
 }
 
 // Una comanda "ocupa" la mesa mientras no esté liquidada ni cancelada.
-// `refunded` también es terminal: una orden reembolsada fue cobrada con tarjeta (la mesa ya se liberó
-// al pagar) y no se puede reabrir; sin este flag, openOrder la ignoraría al buscar comandas activas
-// en la mesa — correcto, pero deja la constant sin cobertura defensiva por si llegara otro estado derivado.
-const TERMINAL: OrderDTO['status'][] = ['charged', 'paid', 'cancelled', 'refunded']
+// Qué comanda ya no ocupa la mesa: `isTerminalOrder` (order-totals.ts), compartido con deleteTable (#208).
 const ORDER_TYPES: OrderType[] = ['dine_in', 'room_service', 'takeaway']
 
 // #210 — estados en los que una comanda YA enviada sigue aceptando un re-envío parcial (las líneas
@@ -115,11 +116,14 @@ export async function openOrder(deps: OrdersDeps, dto: OpenOrderInput, user: Cur
     if (!table || table.hotelId !== hotelId) throw new ValidationError('La mesa no existe o es de otro hotel')
     // Una mesa, una comanda abierta: rechazar si ya hay una no-liquidada en esa mesa.
     const onTable = (await deps.orders.findMany({ hotelId, tableId: dto.tableId })) as OrderDTO[]
-    if (onTable.some((o) => !TERMINAL.includes(o.status))) {
+    if (onTable.some((o) => !isTerminalOrder(o))) {
       throw new ConflictError('La mesa ya tiene una comanda abierta')
     }
   } else if (dto.type === 'room_service') {
     if (!dto.reservationId) throw new ValidationError('Un room service requiere la reserva del huésped (reservationId)')
+    // #208: 404 si la reserva no existe o es de otro hotel — nunca se abre una comanda (ni después un
+    // folio) con guestId/roomId heredados de una reserva ajena.
+    await assertReservationOfHotel(deps.reservations, dto.reservationId, hotelId, user)
   }
   // takeaway: sin mesa ni reserva.
 

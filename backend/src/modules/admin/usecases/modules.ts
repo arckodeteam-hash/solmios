@@ -298,6 +298,39 @@ export async function getModuleStateForHotel(
   return applyPlanState(configRepo, resolved.modules, overridesRepo, hotelId, logger)
 }
 
+/** Repos que necesita el entitlement por hotel. Los mismos cinco que instancia `createModuleGuard`. */
+export interface ModuleEntitlementRepos {
+  configRepo: RepositoryAdapter<any>
+  plansRepo: RepositoryAdapter<any>
+  subscriptionsRepo: RepositoryAdapter<any>
+  hotelsRepo: RepositoryAdapter<any>
+  overridesRepo?: RepositoryAdapter<any>
+  logger?: GateLogger
+}
+
+/**
+ * Estado efectivo de módulos de un HOTEL a partir de su id: carga el espejo legacy `hotels.plan` y
+ * delega en `getModuleStateForHotel`. Es la ÚNICA cuenta de "global ∩ suscripción activa ∩ overrides"
+ * — antes el gate de la API, el checker de crons/connectors y `GET /api/modules` repetían cada uno
+ * el `hotelsRepo.findMany({ id }) → getModuleStateForHotel(...)` (#208). Para `''`/`platform` no
+ * hay hotel que cargar: solo aplica el toggle global.
+ */
+export async function moduleStateForHotelId(repos: ModuleEntitlementRepos, hotelId: string | undefined): Promise<ModuleState> {
+  const isHotel = !!hotelId && hotelId !== 'platform'
+  const hotel = isHotel ? ((await repos.hotelsRepo.findMany({ id: hotelId })) as any[])?.[0] : undefined
+  return getModuleStateForHotel(repos.configRepo, repos.plansRepo, repos.subscriptionsRepo, hotelId, repos.overridesRepo, hotel?.plan, repos.logger)
+}
+
+/**
+ * ¿El hotel tiene `moduleKey` habilitado? Misma semántica que el gate: solo un `false` explícito
+ * apaga; datos faltantes = habilitado (no cortar la operación por un plan mal cargado). La
+ * plataforma (`''`/`platform`) nunca se gatea.
+ */
+export async function isModuleEnabledForHotel(repos: ModuleEntitlementRepos, hotelId: string | undefined, moduleKey: string): Promise<boolean> {
+  if (!hotelId || hotelId === 'platform') return true
+  return (await moduleStateForHotelId(repos, hotelId))[moduleKey] !== false
+}
+
 /**
  * CS-1: un módulo padre IMPLICA sus sub-módulos (`padre` → todos los `padre.*`). El guard de
  * la API exige la SUB-clave (`moduleGuard('reservations.list')` protege /api/reservas*), así
