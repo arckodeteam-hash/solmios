@@ -7,7 +7,8 @@ import { NotFoundError, ValidationError, ConflictError } from 'arckode-framework
 import type { OrderDTO, OrderItemDTO, TableDTO, CurrentUser } from '../types'
 import type { RestaurantSockets } from '../sockets'
 import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
-import { recomputeTotals, round2 } from './order-totals'
+import { recomputeTotals } from './order-totals'
+import { round2 } from '../../../shared/utils/money'
 
 // Puertos que provee el conector (folios/payments). El módulo NO importa esos módulos.
 // `orderId` viaja SIEMPRE: el conector lo usa para construir `reference: 'pos:' + orderId`, la

@@ -3,7 +3,7 @@
 // grupo required sin selección rechaza, y snapshot inmutable tras editar/borrar el modificador.
 import { describe, it, expect } from 'bun:test'
 import type { RepositoryAdapter, Auth } from 'arckode-framework'
-import { addLine, type OrderLinesDeps } from '../usecases/order-lines'
+import { addLine, updateLine, type OrderLinesDeps } from '../usecases/order-lines'
 import type { OrderDTO, OrderItemDTO, MenuItemDTO, CategoryDTO, StationDTO, ModifierGroupDTO, ModifierDTO, CurrentUser } from '../types'
 
 const strictAuth: Auth = {
@@ -136,5 +136,50 @@ describe('addLine — modificadores (F1)', () => {
     expect((line.modifiers as any)[0].name).toBe('Grande')
     expect((line.modifiers as any)[0].priceDelta).toBe(50)
     expect(line.lineTotal).toBe(300)
+  })
+})
+
+// #206 (REST-04) — bug de dinero: al cambiar la cantidad, `updateLine` recalculaba
+// `unitPrice * quantity` SIN el recargo de los modificadores snapshoteados en la línea.
+describe('updateLine — conserva el recargo de los modificadores (#206)', () => {
+  it('cantidad 1→2 con Grande(+50): lineTotal pasa de 300 a 600 y el total de la comanda coincide', async () => {
+    const { deps, ordersStore } = setup()
+    const line = await addLine(deps, 'o1', { menuItemId: 'm1', quantity: 1, modifiers: [{ modifierId: 'oGrande' }] }, user)
+    expect(line.lineTotal).toBe(300)
+    expect(ordersStore[0].total).toBe(300)
+
+    const updated = await updateLine(deps, 'o1', line.id, { quantity: 2 }, user)
+    expect(updated.quantity).toBe(2)
+    expect(updated.unitPrice).toBe(250)        // el snapshot neto no cambia
+    expect(updated.lineTotal).toBe(600)        // (250 + 50) × 2, NO 250 × 2
+    expect(ordersStore[0].subtotal).toBe(600)
+    expect(ordersStore[0].total).toBe(600)     // taxRate 0 en este setup
+  })
+
+  it('varios modificadores (Grande +50, +tocino +80, Sin papas -30): 1→3 = (250+100)×3', async () => {
+    const { deps, ordersStore } = setup()
+    const line = await addLine(deps, 'o1', { menuItemId: 'm1', quantity: 1, modifiers: [{ modifierId: 'oGrande' }, { modifierId: 'oTocino' }, { modifierId: 'oSinPapas' }] }, user)
+    expect(line.lineTotal).toBe(350)
+    const updated = await updateLine(deps, 'o1', line.id, { quantity: 3 }, user)
+    expect(updated.lineTotal).toBe(1050)
+    expect(ordersStore[0].total).toBe(1050)
+  })
+
+  it('cambiar solo notes no altera lineTotal ni el total de la comanda', async () => {
+    const { deps, ordersStore } = setup()
+    const line = await addLine(deps, 'o1', { menuItemId: 'm1', quantity: 2, modifiers: [{ modifierId: 'oGrande' }] }, user)
+    expect(line.lineTotal).toBe(600)
+    const updated = await updateLine(deps, 'o1', line.id, { notes: 'sin sal' }, user)
+    expect(updated.notes).toBe('sin sal')
+    expect(updated.quantity).toBe(2)
+    expect(updated.lineTotal).toBe(600)
+    expect(ordersStore[0].total).toBe(600)
+  })
+
+  it('línea sin modificadores: 1→2 sigue siendo unitPrice × quantity', async () => {
+    const { deps } = setup()
+    const line = await addLine(deps, 'o1', { menuItemId: 'm1', quantity: 1 }, user)
+    const updated = await updateLine(deps, 'o1', line.id, { quantity: 2 }, user)
+    expect(updated.lineTotal).toBe(500)
   })
 })

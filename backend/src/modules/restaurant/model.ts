@@ -110,6 +110,10 @@ export const RestaurantOrderModel: ModelDefinition = {
     paymentId: { type: 'string' },
     openedAt: { type: 'string' },
     closedAt: { type: 'string' },
+    // #210 — comensales de la mesa (cubiertos). Solo se carga en comandas `dine_in` (default 1 al
+    // abrirla); en room_service/takeaway queda null. Lo consume el reporte del día (ticket promedio
+    // por comensal). null en las filas anteriores a la columna = comanda sin dato, NO "cero comensales".
+    covers: { type: 'number' },
   },
   timestamps: true,
 }
@@ -146,6 +150,14 @@ export const RestaurantOrderItemModel: ModelDefinition = {
     comboId: { type: 'string', indexed: true },
     // F2 — solo en filas kind='combo_component': FK lógica (self) a la fila combo_header hermana.
     parentLineId: { type: 'string', indexed: true },
+    // #210 — momento en que la línea se confirmó a cocina (POST /orders/:id/send). null = el mozo la
+    // agregó pero todavía no tocó "Enviar": es lo ÚNICO que distingue una línea recién cargada de una
+    // ya despachada, porque ambas siguen en `status:'new'` hasta que cocina la toma. NO filtra el KDS
+    // (la cola sigue mostrando toda línea activa de una comanda en fase de cocina: si el mozo se
+    // olvidara de confirmar, el plato igual se prepara). Las filas previas a la columna quedan en null
+    // → la comanda abierta al momento del deploy muestra el botón de re-envío una vez; tocarlo la
+    // estampa y no vuelve a aparecer.
+    sentAt: { type: 'string' },
     // #207 — anulación con motivo de una línea ya enviada a cocina. Solo en filas status='voided'.
     // Declarados acá porque el ORM descarta en silencio los campos que no están en `fields`.
     voidReason: { type: 'text' },

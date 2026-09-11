@@ -2,6 +2,7 @@
 // Interfaces del dominio inline (convención de módulos nuevos). El http client desenvuelve el envelope
 // del framework y inyecta el token/hotelId por JWT; acá NUNCA se toca el token. Backend: /api/restaurant/*.
 import { http } from './http'
+import type { PosPaymentMethod } from './Caja.service'
 
 // ─── Tipos del dominio (espejo de backend/src/modules/restaurant/types.ts) ───
 export type OrderType = 'dine_in' | 'room_service' | 'takeaway'
@@ -135,6 +136,9 @@ export interface OrderLine {
   comboId?: string
   // F2 — solo en filas kind='combo_component': FK lógica (self) a la fila combo_header hermana.
   parentLineId?: string
+  // #210 — ISO del envío a cocina. Ausente = el mozo la agregó y todavía no tocó "Enviar": `status`
+  // sigue en 'new' tanto antes como después del envío, así que este campo es el único discriminador.
+  sentAt?: string
   // #207 — solo en filas status='voided': motivo, quién (users.id) y cuándo se anuló.
   voidReason?: string
   voidedBy?: string
@@ -201,6 +205,8 @@ export interface Order {
   paymentId?: string
   openedAt?: string
   closedAt?: string
+  // #210 — comensales (cubiertos). Solo en comandas `dine_in`; ausente en room service / para llevar.
+  covers?: number
   createdAt?: string
   updatedAt?: string
 }
@@ -266,6 +272,8 @@ export interface MenuItemPayload {
 export interface TablePayload { name: string; zone?: string; capacity?: number; status?: TableStatus }
 export interface OpenOrderPayload {
   type: OrderType; tableId?: string; reservationId?: string; guestId?: string; roomId?: string; waiterId?: string
+  // #210 — comensales. El backend lo persiste SOLO en `dine_in` (default 1) y valida entero 1..200.
+  covers?: number
 }
 // F2: menuItemId ya NO es obligatorio a nivel payload — un combo llega con comboId en su lugar
 // (mutuamente excluyente, la regla XOR la enforza el usecase `addLine` en el backend).
@@ -413,7 +421,8 @@ export const RestaurantService = {
   chargeToRoom: (id: string, data: { reservationId?: string }): Promise<Order> => http.post(`/restaurant/orders/${id}/charge-to-room`, data),
   // fix-refund-pos-card: method==='card' exige successUrl/cancelUrl (retorno del Checkout de Stripe)
   // y la respuesta trae `checkoutUrl` cuando el pago quedó `processing` — cobrar.vue redirige ahí.
-  payOrder: (id: string, data: { method: string; successUrl?: string; cancelUrl?: string }): Promise<Order & { checkoutUrl?: string }> =>
+  // #205: `method` es el enum del backend (PaySchema: cash|card|transfer), no un string libre.
+  payOrder: (id: string, data: { method: PosPaymentMethod; successUrl?: string; cancelUrl?: string }): Promise<Order & { checkoutUrl?: string }> =>
     http.post(`/restaurant/orders/${id}/pay`, data),
   // Reembolso: solo órdenes status='paid' con settlement='payment' (cobro con tarjeta).
   // Backend devuelve 409 ConflictError si la orden no cumple la condición.
@@ -475,6 +484,17 @@ export const ORDER_STATUS_LABELS: Record<string, string> = {
 }
 export const LINE_STATUS_LABELS: Record<string, string> = {
   new: 'Nueva', preparing: 'Preparando', ready: 'Lista', served: 'Servida', cancelled: 'Cancelada', voided: 'Anulada',
+}
+// #210 — color del badge de estado de línea. MISMA paleta que el KDS (`cocina.vue` pinta el borde del
+// ticket con navy/30 → navy → gold): el mozo y la cocina leen el mismo código de color, así que vive
+// acá y no duplicado en cada página.
+export const LINE_STATUS_BADGE: Record<string, string> = {
+  new: 'bg-navy/10 text-navy',
+  preparing: 'bg-navy text-white',
+  ready: 'bg-gold text-white',
+  served: 'bg-teal/15 text-teal',
+  cancelled: 'bg-coral/15 text-coral',
+  voided: 'bg-coral/15 text-coral line-through',
 }
 export const TABLE_STATUS_LABELS: Record<string, string> = {
   free: 'Libre', occupied: 'Ocupada', reserved: 'Reservada',

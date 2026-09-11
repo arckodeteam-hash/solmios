@@ -2,6 +2,8 @@
 // pages/restaurante/salon.vue — Mapa de mesas del salón (RES-7). Click en mesa libre abre una comanda
 // dine_in y navega a la toma de comanda; click en mesa con comanda abierta navega a esa comanda.
 // Incluye alta/edición/baja de mesas y comandas sin mesa (room service / para llevar).
+// #210 — la mesa libre pregunta los comensales antes de abrir: un solo toque sobre el número (no un
+// formulario), porque acá se está parado frente al cliente. Lo usa el ticket promedio por comensal.
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -10,6 +12,7 @@ import {
   TABLE_STATUS_LABELS, ORDER_TYPE_LABELS,
 } from '@/services/Restaurant.service'
 import FormModal, { type FormField } from '@/components/features/FormModal.vue'
+import AppModal from '@/components/ui/AppModal.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
@@ -86,13 +89,33 @@ async function load() {
 }
 onMounted(load)
 
-async function onTable(t: RestaurantTable) {
+// #210 — comensales al abrir la comanda en salón. Atajos de un toque (el caso real: 2 o 4 personas)
+// más un campo para el resto; el backend valida entero 1..200 y por defecto pone 1.
+const COVERS_SHORTCUTS = [1, 2, 3, 4, 5, 6, 8, 10]
+const COVERS_MAX = 200
+const coversTable = ref<RestaurantTable | null>(null)
+const coversOther = ref<number | null>(null)
+
+function onTable(t: RestaurantTable) {
   const existing = orderByTable.value.get(t.id)
   if (existing) { router.push(`/panel/restaurante/comanda/${existing.id}`); return }
   if (!createPerm.value) { toast.warning('Sin permiso para abrir comandas'); return }
+  // La capacidad configurada de la mesa es la sugerencia obvia para "otro número".
+  coversOther.value = t.capacity && t.capacity > 0 ? t.capacity : null
+  coversTable.value = t
+}
+
+async function openWithCovers(covers: number) {
+  const t = coversTable.value
+  if (!t || opening.value) return
+  if (!Number.isInteger(covers) || covers < 1 || covers > COVERS_MAX) {
+    toast.warning(`Los comensales deben ser un entero entre 1 y ${COVERS_MAX}`)
+    return
+  }
   opening.value = true
   try {
-    const order = await RestaurantService.openOrder({ type: 'dine_in', tableId: t.id })
+    const order = await RestaurantService.openOrder({ type: 'dine_in', tableId: t.id, covers })
+    coversTable.value = null
     router.push(`/panel/restaurante/comanda/${order.id}`)
   } catch (e: unknown) {
     toast.error(e instanceof Error ? e.message : 'No se pudo abrir la comanda')
@@ -218,6 +241,24 @@ async function save(fn: () => Promise<unknown>) {
         </div>
       </SectionCard>
     </template>
+
+    <!-- #210 — comensales: tocar el número abre la comanda directo, sin paso de confirmación. -->
+    <AppModal v-if="coversTable" title="¿Cuántos comensales?" :subtitle="coversTable.name" @close="coversTable = null">
+      <div class="grid grid-cols-4 gap-2">
+        <button v-for="n in COVERS_SHORTCUTS" :key="n" @click="openWithCovers(n)" :disabled="opening"
+          class="py-3 rounded-xl border-2 border-border font-black text-navy text-lg hover:border-navy hover:bg-surface disabled:opacity-50">{{ n }}</button>
+      </div>
+      <div class="flex items-end gap-2 mt-4">
+        <div class="flex-1">
+          <label for="mesa-comensales" class="block text-xs font-black text-navy uppercase mb-1.5">Otro número</label>
+          <input id="mesa-comensales" v-model.number="coversOther" type="number" min="1" :max="COVERS_MAX" step="1"
+            class="w-full px-3 py-2 rounded-lg border-2 border-border text-sm text-navy focus:border-navy outline-none"
+            @keyup.enter="openWithCovers(Number(coversOther))" />
+        </div>
+        <button @click="openWithCovers(Number(coversOther))" :disabled="opening || !coversOther"
+          class="px-4 py-2 rounded-lg bg-navy text-white font-bold text-sm disabled:opacity-50">Abrir comanda</button>
+      </div>
+    </AppModal>
 
     <FormModal v-if="modal" :title="modal.title" :fields="modal.fields" :submit-label="modal.submitLabel" :loading="saving"
       @close="modal = null" @submit="modal.onSubmit" />
