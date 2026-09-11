@@ -83,17 +83,29 @@ export function hhmm(iso: string | undefined): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
 }
 
-/** Tiempo transcurrido desde `iso` hasta `now`: "hace 3 min", "hace 1 h 20 min", "recién". */
+const MINUTES_PER_HOUR = 60
+const HOURS_PER_DAY = 24
+
+/**
+ * Tiempo transcurrido desde `iso` hasta `now`: "recién", "hace 3 min", "hace 1 h 20 min", "hace 2 d 3 h".
+ * Pasado el día ya no importan los minutos: una comanda que quedó abierta hace semanas (visto en prod)
+ * se lee "hace 37 d", no "hace 906 h 16 min".
+ */
 export function elapsedLabel(iso: string | undefined, now: number): string {
   if (!iso) return ''
   const t = new Date(iso).getTime()
   if (Number.isNaN(t)) return ''
   const mins = Math.max(0, Math.floor((now - t) / 60_000))
   if (mins < 1) return 'recién'
-  if (mins < 60) return `hace ${mins} min`
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  return m ? `hace ${h} h ${m} min` : `hace ${h} h`
+  if (mins < MINUTES_PER_HOUR) return `hace ${mins} min`
+  const hours = Math.floor(mins / MINUTES_PER_HOUR)
+  if (hours < HOURS_PER_DAY) {
+    const m = mins % MINUTES_PER_HOUR
+    return m ? `hace ${hours} h ${m} min` : `hace ${hours} h`
+  }
+  const days = Math.floor(hours / HOURS_PER_DAY)
+  const h = hours % HOURS_PER_DAY
+  return h ? `hace ${days} d ${h} h` : `hace ${days} d`
 }
 
 /** "actualizado hace Ns" del indicador de refresco. */
