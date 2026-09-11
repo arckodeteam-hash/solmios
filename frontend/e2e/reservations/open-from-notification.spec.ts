@@ -76,5 +76,32 @@ test.describe('#246 — abrir reserva desde la campanita', () => {
     // Evidencia visual. El modal entra con un fade de 200ms: sin la pausa la captura sale a medias.
     await page.waitForTimeout(500)
     await page.screenshot({ path: 'test-results/open-from-notification.png', fullPage: false })
+
+    // ── Flujo real: el usuario YA está en /panel/reservas y toca el aviso en la campanita ──
+    // Vue Router reutiliza la instancia de la página (mismo route record, cambia solo la query):
+    // `onMounted` no vuelve a correr, así que el modal tiene que abrirse por el watch de la query.
+    await page.getByRole('button', { name: 'Cerrar', exact: true }).first().click()
+    await expect(page.getByTestId('reservation-schedule')).toBeHidden({ timeout: 10_000 })
+
+    const userId = await page.evaluate(() => JSON.parse(localStorage.getItem('user') || '{}').id)
+    const title = `Nueva reserva web — ${guestName}`
+    const notif = await apiPost<any>(page, '/api/notificaciones', {
+      hotelId, userId, type: 'reservation', title,
+      message: 'aviso e2e', read: 0,
+      metadata: { link: `/panel/reservations?open=${reservationId}`, reservationId },
+    })
+    expect(notif.status, 'la notificación debe crearse').toBeLessThan(300)
+
+    // La campana carga sus avisos al montar: recargamos el listado (navegación dura) y desde ahí
+    // todo lo que sigue es navegación de SPA.
+    await page.goto('/panel/reservas')
+    await expect(page.getByRole('heading', { name: 'Listado de reservas' })).toBeVisible()
+    await page.getByRole('button', { name: 'Notificaciones' }).first().click()
+    await page.getByRole('button', { name: title }).first().click()
+
+    await expect(page).toHaveURL(/\/panel\/reservas/)
+    await expect(page.getByTestId('reservation-schedule')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(guestName, { exact: false }).first()).toBeVisible()
+    await expect(page).not.toHaveURL(/open=/)
   })
 })
