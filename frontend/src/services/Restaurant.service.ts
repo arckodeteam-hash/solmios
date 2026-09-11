@@ -11,7 +11,8 @@ export type OrderType = 'dine_in' | 'room_service' | 'takeaway'
 export type OrderStatus =
   | 'open' | 'sent' | 'preparing' | 'ready' | 'served' | 'billed' | 'charged' | 'paid' | 'refunded' | 'cancelled'
   | 'processing_payment'
-export type LineStatus = 'new' | 'preparing' | 'ready' | 'served' | 'cancelled'
+// 'voided' (#207): anulada CON motivo después de enviada a cocina — queda en la comanda tachada, no cuenta.
+export type LineStatus = 'new' | 'preparing' | 'ready' | 'served' | 'cancelled' | 'voided'
 export type TableStatus = 'free' | 'occupied' | 'reserved'
 export type Settlement = 'folio' | 'payment'
 
@@ -138,9 +139,18 @@ export interface OrderLine {
   // #210 — ISO del envío a cocina. Ausente = el mozo la agregó y todavía no tocó "Enviar": `status`
   // sigue en 'new' tanto antes como después del envío, así que este campo es el único discriminador.
   sentAt?: string
+  // #207 — solo en filas status='voided': motivo, quién (users.id) y cuándo se anuló.
+  voidReason?: string
+  voidedBy?: string
+  voidedAt?: string
   createdAt?: string
   updatedAt?: string
 }
+
+/** #207: motivos predefinidos de anulación del hotel (configuration('restaurant_void_reasons')). */
+export interface VoidReasons { reasons: string[]; isDefault: boolean }
+/** #207: una línea viva es la que cuenta en totales/cocina; `voided`/`cancelled` quedan tachadas. */
+export const isLineActive = (l: Pick<OrderLine, 'status'>): boolean => l.status !== 'voided' && l.status !== 'cancelled'
 
 // F1 — Grupo de modificadores de un ítem (ej. "Tamaño": chico/grande).
 export type ModifierSelectionType = 'single' | 'multiple'
@@ -395,10 +405,16 @@ export const RestaurantService = {
   getOrder: (id: string): Promise<OrderWithLines> => http.get(`/restaurant/orders/${id}`),
   openOrder: (data: OpenOrderPayload): Promise<Order> => http.post('/restaurant/orders', data),
   sendOrder: (id: string): Promise<Order> => http.post(`/restaurant/orders/${id}/send`),
-  cancelOrder: (id: string): Promise<Order> => http.post(`/restaurant/orders/${id}/cancel`),
+  // #207: el motivo es obligatorio (400 sin él). Las líneas ya enviadas quedan `voided` con ese motivo.
+  cancelOrder: (id: string, reason: string): Promise<Order> => http.post(`/restaurant/orders/${id}/cancel`, { reason }),
   addLine: (orderId: string, data: AddLinePayload): Promise<OrderLine> => http.post(`/restaurant/orders/${orderId}/items`, data),
   updateLine: (orderId: string, lineId: string, data: UpdateLinePayload): Promise<OrderLine> => http.put(`/restaurant/orders/${orderId}/items/${lineId}`, data),
+  // Solo mientras la comanda está `open` (error de toma). Enviada a cocina → 409: usar voidLine.
   removeLine: (orderId: string, lineId: string): Promise<void> => http.delete(`/restaurant/orders/${orderId}/items/${lineId}`),
+  // #207: anular con motivo una línea ya enviada. Queda tachada en la comanda, sale del KDS y del total.
+  voidLine: (orderId: string, lineId: string, reason: string): Promise<OrderLine> => http.post(`/restaurant/orders/${orderId}/items/${lineId}/void`, { reason }),
+  voidReasons: (): Promise<VoidReasons> => http.get('/restaurant/void-reasons'),
+  setVoidReasons: (reasons: string[]): Promise<VoidReasons> => http.put('/restaurant/void-reasons', { reasons }),
 
   // ─── Cuenta + cobro ───
   billOrder: (id: string, data: { tip?: number }): Promise<Order> => http.post(`/restaurant/orders/${id}/bill`, data),
@@ -467,7 +483,7 @@ export const ORDER_STATUS_LABELS: Record<string, string> = {
   processing_payment: 'Esperando confirmación de pago',
 }
 export const LINE_STATUS_LABELS: Record<string, string> = {
-  new: 'Nueva', preparing: 'Preparando', ready: 'Lista', served: 'Servida', cancelled: 'Cancelada',
+  new: 'Nueva', preparing: 'Preparando', ready: 'Lista', served: 'Servida', cancelled: 'Cancelada', voided: 'Anulada',
 }
 // #210 — color del badge de estado de línea. MISMA paleta que el KDS (`cocina.vue` pinta el borde del
 // ticket con navy/30 → navy → gold): el mozo y la cocina leen el mismo código de color, así que vive
@@ -478,6 +494,7 @@ export const LINE_STATUS_BADGE: Record<string, string> = {
   ready: 'bg-gold text-white',
   served: 'bg-teal/15 text-teal',
   cancelled: 'bg-coral/15 text-coral',
+  voided: 'bg-coral/15 text-coral line-through',
 }
 export const TABLE_STATUS_LABELS: Record<string, string> = {
   free: 'Libre', occupied: 'Ocupada', reserved: 'Reservada',

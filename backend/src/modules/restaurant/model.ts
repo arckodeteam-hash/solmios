@@ -136,7 +136,7 @@ export const RestaurantOrderItemModel: ModelDefinition = {
     // Estación resuelta y congelada (item.stationId ?? category.stationId ?? 1ª activa).
     stationId: { type: 'string', indexed: true },
     stationName: { type: 'string' },   // snapshot: sobrevive si la estación se borra
-    // new | preparing | ready | served | cancelled (ciclo KDS por línea)
+    // new | preparing | ready | served | cancelled | voided (ciclo KDS por línea; voided = #207)
     status: { type: 'string', default: 'new' },
     lineTotal: { type: 'number', default: 0 },
     // F1 (carta-experiencia-avanzada): snapshot de modificadores elegidos, EN LA MISMA fila (no
@@ -158,6 +158,11 @@ export const RestaurantOrderItemModel: ModelDefinition = {
     // → la comanda abierta al momento del deploy muestra el botón de re-envío una vez; tocarlo la
     // estampa y no vuelve a aparecer.
     sentAt: { type: 'string' },
+    // #207 — anulación con motivo de una línea ya enviada a cocina. Solo en filas status='voided'.
+    // Declarados acá porque el ORM descarta en silencio los campos que no están en `fields`.
+    voidReason: { type: 'text' },
+    voidedBy: { type: 'string' },   // users.id de quien anuló
+    voidedAt: { type: 'string' },
   },
   timestamps: true,
 }

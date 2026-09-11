@@ -17,6 +17,8 @@ export type {
 } from './types'
 export type { RestaurantSockets } from './sockets'
 export { RestaurantValidator, CreateStationSchema, UpdateStationSchema } from './validators/schema'
+export { VoidLineSchema, CancelOrderSchema, VoidReasonsSchema } from './validators/schema'
+export { DEFAULT_VOID_REASONS, VOID_REASONS_KEY } from './usecases/void-reasons'
 export { registerRestaurantModels } from './model'
 export type { SettlementPorts, ChargeToFolioInput, RecordPaymentInput, ChargeCardPaymentInput } from './usecases/settlement'
 export type { ComboDTO, ComboItemDTO } from './types'
@@ -129,6 +131,13 @@ export function RestaurantModule() {
       // posterior) el usecase exige además `restaurant:delete` sobre `req.user.permissions` (403):
       // el guard estático no puede mirar el estado de la comanda.
       router.delete('/api/restaurant/orders/:id/items/:lineId', guard('restaurant', 'create'), (req) => controller.removeLine(req))
+      // #207: anular con motivo una línea ya enviada a cocina. Mismo permiso que quitar (restaurant:delete):
+      // es la misma decisión ("este plato no se cobra"), solo que con rastro.
+      router.post('/api/restaurant/orders/:id/items/:lineId/void', guard('restaurant', 'delete'), (req) => controller.voidLine(req))
+      // Motivos predefinidos de anulación: lectura operativa (el modal del KDS los muestra), edición es
+      // config de la carta.
+      router.get('/api/restaurant/void-reasons', guard('restaurant', 'view'), (req) => controller.voidReasons(req))
+      router.put('/api/restaurant/void-reasons', guard('restaurant-catalog', 'edit'), (req) => controller.setVoidReasons(req))
 
       // Cuenta + cobro (RES-5). #205: `restaurant:pay`, NO `edit` — cocina tiene `edit` para el KDS y
       // con ese permiso cobraba por URL. Mover plata (cobrar, cargar a habitación, propina) es un

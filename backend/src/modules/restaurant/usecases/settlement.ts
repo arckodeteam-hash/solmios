@@ -2,10 +2,11 @@
 // Dos vías MUTUAMENTE EXCLUYENTES: cargo a la habitación (folio) XOR cobro directo (payment). Una
 // venta se cuenta UNA sola vez. El POS no mueve plata: delega en folios/payments vía puertos que
 // inyecta un conector (setSettlementDeps). Ver specs/billing-payment.md + design.md.
-import type { RepositoryAdapter, Auth } from 'arckode-framework'
+import type { RepositoryAdapter, Auth, Logger } from 'arckode-framework'
 import { NotFoundError, ValidationError, ConflictError } from 'arckode-framework'
 import type { OrderDTO, OrderItemDTO, TableDTO, CurrentUser } from '../types'
 import type { RestaurantSockets } from '../sockets'
+import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
 import { recomputeTotals } from './order-totals'
 import { round2 } from '../../../shared/utils/money'
 
@@ -45,7 +46,12 @@ export interface SettlementDeps {
   auth: Auth
   sockets: RestaurantSockets
   ports: SettlementPorts
+  // #207: auditoría del reembolso (puerto inyectado por connectors/restaurante-auditlog.ts). Opcional.
+  audit?: AuditPort | null
+  logger?: Logger
 }
+
+const silentLogger = { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} } as unknown as Logger
 
 // Una comanda ya liquidada — o CANCELADA — no se liquida.
 function assertSettleable(order: OrderDTO): void {
@@ -228,6 +234,14 @@ export async function refundOrder(deps: SettlementDeps, id: string, user: Curren
     closedAt: new Date().toISOString(),
   } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
   await deps.sockets.onOrderRefunded?.(updated)
+  await auditSafely(deps.audit ?? null, deps.logger ?? silentLogger, {
+    hotelId: order.hotelId,
+    userId: user.id,
+    action: 'restaurant.order.refunded',
+    entity: 'restaurant_order',
+    entityId: id,
+    detail: JSON.stringify({ orderId: id, orderNumber: order.number, paymentId: order.paymentId, amount: round2(Number(order.total || 0)) }),
+  })
   return updated
 }
 

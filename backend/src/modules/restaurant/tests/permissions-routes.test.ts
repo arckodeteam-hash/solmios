@@ -11,7 +11,7 @@
 //   - `waiter` no podía quitar una línea mal cargada (DELETE exigía `restaurant:delete`, que solo tiene
 //     hotel_admin). Ahora con la comanda `open` alcanza `restaurant:create` (el mismo permiso que
 //     agregarla; cocina NO lo tiene, con `edit` en la ruta borraba líneas por API); después de enviada
-//     exige además `restaurant:delete` (hasta que exista anulación con motivo, #207).
+//     el DELETE devuelve 409: la línea se ANULA con motivo (`POST .../void`, `restaurant:delete`, #207).
 //   - Los permisos efectivos salen de la FILA de `roles` (loadPermissions), no del mapa estático: el
 //     bloque final monta la fila que prod tenía antes del deploy (sin `pay`) y prueba que sin backfill
 //     cobrar da 403 y con la fila backfilleada da 200.
@@ -153,18 +153,30 @@ describe('DELETE /api/restaurant/orders/:id/items/:lineId — quitar antes de en
     expect(rows.RestaurantOrderItems.find((l) => l.id === 'l-open')).toBeUndefined()
   })
 
-  it('waiter NO quita una línea de una comanda sent → 403 y la línea sigue', async () => {
+  it('waiter NO quita una línea de una comanda sent → 409 (se anula con motivo, #207) y la línea sigue', async () => {
     const { router, auth, rows } = mount()
     const res = await router.resolve('DELETE', '/api/restaurant/orders/o-sent/items/l-sent', { headers: headers(auth, 'waiter') })
-    expect(res.status).toBe(403)
+    expect(res.status).toBe(409)
     expect(rows.RestaurantOrderItems.find((l) => l.id === 'l-sent')).toBeDefined()
   })
 
-  it('hotel_admin (restaurant:delete) sí quita de una comanda sent → 204', async () => {
+  it('hotel_admin tampoco BORRA de una comanda sent → 409: el camino es POST .../void con motivo (#207)', async () => {
     const { router, auth, rows } = mount()
     const res = await router.resolve('DELETE', '/api/restaurant/orders/o-sent/items/l-sent', { headers: headers(auth, 'hotel_admin') })
-    expect(res.status).toBe(204)
-    expect(rows.RestaurantOrderItems.find((l) => l.id === 'l-sent')).toBeUndefined()
+    expect(res.status).toBe(409)
+    expect(rows.RestaurantOrderItems.find((l) => l.id === 'l-sent')).toBeDefined()
+  })
+
+  it('waiter (sin restaurant:delete) NO anula con motivo → 403; hotel_admin sí → 200 y la línea queda voided', async () => {
+    const { router, auth, rows } = mount()
+    const denied = await router.resolve('POST', '/api/restaurant/orders/o-sent/items/l-sent/void', { headers: headers(auth, 'waiter'), body: { reason: 'Sin stock' } })
+    expect(denied.status).toBe(403)
+    expect(rows.RestaurantOrderItems.find((l) => l.id === 'l-sent')?.status).toBe('new')
+    const ok = await router.resolve('POST', '/api/restaurant/orders/o-sent/items/l-sent/void', { headers: headers(auth, 'hotel_admin'), body: { reason: 'Sin stock' } })
+    expect(ok.status).toBe(200)
+    const line = rows.RestaurantOrderItems.find((l) => l.id === 'l-sent')
+    expect(line?.status).toBe('voided')
+    expect(line?.voidReason).toBe('Sin stock')
   })
 
   it('kitchen (restaurant:edit, sin create) NO quita una línea ni de una comanda open → 403', async () => {

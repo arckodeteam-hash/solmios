@@ -11,6 +11,7 @@ import {
   OpenOrderSchema, AddLineSchema, UpdateLineSchema,
   BillSchema, ChargeToRoomSchema, PaySchema,
   KdsLineStatusSchema,
+  VoidLineSchema, CancelOrderSchema, VoidReasonsSchema,
   CreateModifierGroupSchema, UpdateModifierGroupSchema,
   CreateModifierSchema, UpdateModifierSchema,
   CreateComboSchema, UpdateComboSchema,
@@ -170,7 +171,9 @@ export class RestaurantController {
   }
   async cancelOrder(req: HttpRequest) {
     this.logger.info('POST /restaurant/orders/:id/cancel', { id: req.params.id })
-    const item = await this.service.cancelOrder(req.params.id, req.user as any)
+    // #207: el motivo es obligatorio (400 sin él). Las líneas ya enviadas quedan `voided` con ese motivo.
+    const data = validateSchema(CancelOrderSchema, req.body) as { reason: string }
+    const item = await this.service.cancelOrder(req.params.id, data.reason, req.user as any)
     return { status: 200, body: item }
   }
   async addLine(req: HttpRequest) {
@@ -189,6 +192,22 @@ export class RestaurantController {
     this.logger.info('DELETE /restaurant/orders/:id/items/:lineId', { id: req.params.id, lineId: req.params.lineId })
     await this.service.removeLine(req.params.id, req.params.lineId, req.user as any)
     return { status: 204, body: null }
+  }
+  // #207: anular con motivo una línea ya enviada a cocina (la línea queda tachada, no se borra).
+  async voidLine(req: HttpRequest) {
+    this.logger.info('POST /restaurant/orders/:id/items/:lineId/void', { id: req.params.id, lineId: req.params.lineId })
+    const data = validateSchema(VoidLineSchema, req.body) as { reason: string }
+    const item = await this.service.voidLine(req.params.id, req.params.lineId, data.reason, req.user as any)
+    return { status: 200, body: item }
+  }
+  async voidReasons(req: HttpRequest) {
+    this.logger.info('GET /restaurant/void-reasons')
+    return { status: 200, body: await this.service.getVoidReasons(req.user as any) }
+  }
+  async setVoidReasons(req: HttpRequest) {
+    this.logger.info('PUT /restaurant/void-reasons')
+    const data = validateSchema(VoidReasonsSchema, req.body) as { reasons: unknown }
+    return { status: 200, body: await this.service.setVoidReasons(data.reasons, req.user as any) }
   }
 
   // ─── Cuenta + cobro (RES-5) ───

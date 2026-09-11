@@ -5,6 +5,7 @@ import type { RepositoryAdapter, Auth } from 'arckode-framework'
 import { NotFoundError, ValidationError } from 'arckode-framework'
 import type { OrderDTO, OrderItemDTO, LineStatus, CurrentUser } from '../types'
 import type { RestaurantSockets } from '../sockets'
+import { isLineActive } from './order-totals'
 
 export interface KdsDeps {
   orders: RepositoryAdapter<OrderDTO>
@@ -14,15 +15,18 @@ export interface KdsDeps {
   sockets: RestaurantSockets
 }
 
-// Estados "en cocina" (visibles en el KDS). served/cancelled salen de la cola.
+// Estados "en cocina" (visibles en el KDS). served/cancelled/voided salen de la cola.
 const ACTIVE: LineStatus[] = ['new', 'preparing', 'ready']
 // Transiciones válidas por línea. Saltos fuera de esto se rechazan.
+// #207: cocina NO cancela de un toque. `cancelled`/`voided` no son transiciones del KDS: la única
+// forma de sacar un plato ya enviado es `voidLine` (order-lines.ts), que exige motivo y audita.
 const TRANSITIONS: Record<LineStatus, LineStatus[]> = {
-  new: ['preparing', 'cancelled'],
-  preparing: ['ready', 'cancelled'],
+  new: ['preparing'],
+  preparing: ['ready'],
   ready: ['served'],
   served: [],
   cancelled: [],
+  voided: [],
 }
 // La orden solo se re-deriva mientras está en fase de cocina (no toca open/billed/charged/paid/cancelled).
 const KITCHEN_ORDER_STATES: OrderDTO['status'][] = ['sent', 'preparing', 'ready', 'served']
@@ -74,16 +78,19 @@ export async function kdsQueue(deps: KdsDeps, station: string | undefined, user:
 }
 
 /**
- * Deriva el estado agregado de la orden a partir de sus líneas no canceladas y lo persiste si cambió.
+ * Deriva el estado agregado de la orden a partir de sus líneas vivas y lo persiste si cambió.
  * F2: excluye también las filas `kind='combo_header'` (mismo criterio que `kdsQueue`) — el header nunca
  * es tocado por cocina (queda fuera de la cola), así que si no se excluye acá queda `status:'new'` para
  * siempre y `active.every(...)` nunca se cumple: la orden queda encallada en `'preparing'` aunque los
  * componentes reales ya estén `served` (cambio real señalado por design.md R1, no cosmético).
  */
-async function recomputeOrderStatus(deps: KdsDeps, order: OrderDTO): Promise<void> {
+export async function recomputeOrderStatus(
+  deps: { orders: RepositoryAdapter<OrderDTO>; lines: RepositoryAdapter<OrderItemDTO> },
+  order: OrderDTO,
+): Promise<void> {
   if (!KITCHEN_ORDER_STATES.includes(order.status)) return
   const all = (await deps.lines.findMany({ orderId: order.id })) as OrderItemDTO[]
-  const active = all.filter((l) => l.status !== 'cancelled' && l.kind !== 'combo_header')
+  const active = all.filter((l) => isLineActive(l) && l.kind !== 'combo_header')
   if (!active.length) return
   let next: OrderDTO['status']
   if (active.every((l) => l.status === 'served')) next = 'served'

@@ -350,10 +350,10 @@ describe('RestaurantService — comandas (RES-3)', () => {
     const tablesStore: any[] = [{ id: 't1', hotelId: 'h1', name: 'M1', status: 'occupied' }]
     const tables = backed<TableDTO>(tablesStore)
     const orders = backed<OrderDTO>([], [{ id: 'o1', hotelId: 'h1', tableId: 't1', status: 'served', tip: 0 }])
-    await svc3({ orders, tables, config: taxConfig() }, strictAuth).cancelOrder('o1', user)
+    await svc3({ orders, tables, config: taxConfig() }, strictAuth).cancelOrder('o1', 'Cliente se fue', user)
     expect(tablesStore[0].status).toBe('free')
     const paid = backed<OrderDTO>([], [{ id: 'o2', hotelId: 'h1', status: 'paid', tip: 0 }])
-    await expect(svc3({ orders: paid, config: taxConfig() }, strictAuth).cancelOrder('o2', user)).rejects.toThrow('liquidada')
+    await expect(svc3({ orders: paid, config: taxConfig() }, strictAuth).cancelOrder('o2', 'Cliente se fue', user)).rejects.toThrow('liquidada')
   })
 
   it('IDOR: getOrder de otro hotel es inaccesible', async () => {
@@ -388,7 +388,7 @@ describe('RestaurantService — comandas (RES-3)', () => {
   it('IDOR en mutaciones: addLine y cancelOrder de otro hotel rechazados', async () => {
     const foreign = () => backed<OrderDTO>([], [{ id: 'o1', hotelId: 'OTRO', status: 'open', tip: 0 }])
     await expect(svc3({ orders: foreign(), config: taxConfig(), hotels: makeRepo<any>() }, strictAuth).addLine('o1', { menuItemId: 'm1' }, user)).rejects.toThrow('IDOR')
-    await expect(svc3({ orders: foreign(), config: taxConfig() }, strictAuth).cancelOrder('o1', user)).rejects.toThrow('IDOR')
+    await expect(svc3({ orders: foreign(), config: taxConfig() }, strictAuth).cancelOrder('o1', 'motivo', user)).rejects.toThrow('IDOR')
   })
 })
 
@@ -589,7 +589,7 @@ describe('RestaurantService — payOrder(card) vía Stripe Checkout (fix-refund-
 
   it('una comanda processing_payment NO se puede cancelar (la Checkout Session sigue abierta)', async () => {
     const { build } = setup({ status: 'processing_payment', paymentId: 'p1' })
-    await expect(build().cancelOrder('o1', user)).rejects.toThrow('cobro con tarjeta en curso')
+    await expect(build().cancelOrder('o1', 'motivo', user)).rejects.toThrow('cobro con tarjeta en curso')
   })
 
   it('una comanda processing_payment NO admite agregar/editar líneas', async () => {

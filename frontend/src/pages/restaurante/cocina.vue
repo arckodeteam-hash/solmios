@@ -1,7 +1,9 @@
 <script setup lang="ts">
 // pages/restaurante/cocina.vue — Pantalla de cocina (KDS, RES-7). Cola de líneas activas por estación,
-// FIFO, con auto-refresh. Cada línea avanza new→preparing→ready→served (o se cancela). Pensada para
-// tablet: botones grandes. Polling porque el endpoint es GET puro (resiliente sin socket).
+// FIFO, con auto-refresh. Cada línea avanza new→preparing→ready→served. Pensada para tablet: botones
+// grandes. Polling porque el endpoint es GET puro (resiliente sin socket).
+// #207: "Cancelar" NO es una transición de un toque — abre un modal de motivo (VoidReasonModal) y
+// recién al confirmar anula la línea (voidLine, con auditoría). Cerrar el modal no cambia nada.
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import {
   RestaurantService,
@@ -9,12 +11,16 @@ import {
   ORDER_TYPE_LABELS,
 } from '@/services/Restaurant.service'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import VoidReasonModal from '@/components/features/restaurante/VoidReasonModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
 
 const toast = useToast()
 const { can } = usePermissions()
 const editPerm = computed(() => can('restaurant', 'edit'))
+// Anular exige restaurant:delete (misma decisión que quitar un plato, con rastro). Sin el permiso el
+// botón no se muestra: el backend devolvería 403 igual.
+const deletePerm = computed(() => can('restaurant', 'delete'))
 
 const REFRESH_MS = 15000
 const loading = ref(true)
@@ -24,11 +30,41 @@ const tickets = ref<KdsTicket[]>([])
 const station = ref<string>('')       // '' = todas · '__none__' = sin estación · id = estación puntual
 let timer: ReturnType<typeof setInterval> | null = null
 
-// Siguiente transición por estado de línea (KDS solo avanza; served/cancelled ya salen de la cola).
+// Siguiente transición por estado de línea (KDS solo avanza; served/voided ya salen de la cola).
 const NEXT: Partial<Record<LineStatus, { to: LineStatus; label: string; cls: string }[]>> = {
-  new: [{ to: 'preparing', label: 'Preparar', cls: 'bg-navy text-white' }, { to: 'cancelled', label: 'Cancelar', cls: 'border-2 border-coral/40 text-coral' }],
-  preparing: [{ to: 'ready', label: 'Lista', cls: 'bg-gold text-white' }, { to: 'cancelled', label: 'Cancelar', cls: 'border-2 border-coral/40 text-coral' }],
+  new: [{ to: 'preparing', label: 'Preparar', cls: 'bg-navy text-white' }],
+  preparing: [{ to: 'ready', label: 'Lista', cls: 'bg-gold text-white' }],
   ready: [{ to: 'served', label: 'Servida', cls: 'bg-teal text-white' }],
+}
+// Estados desde los que cocina puede anular (una vez lista, la decisión es del salón/comanda).
+const VOIDABLE: LineStatus[] = ['new', 'preparing']
+
+// #207: modal de motivo. `voidTarget` = línea + comanda a anular; null = cerrado.
+const voidTarget = ref<{ line: OrderLine; orderId: string } | null>(null)
+const voidBusy = ref(false)
+const voidReasons = ref<string[]>([])
+
+function openVoid(line: OrderLine, orderId: string) {
+  if (!deletePerm.value || busyLine.value) return
+  voidTarget.value = { line, orderId }
+}
+function closeVoid() {
+  if (voidBusy.value) return
+  voidTarget.value = null
+}
+async function confirmVoid(reason: string) {
+  if (!voidTarget.value || voidBusy.value) return
+  voidBusy.value = true
+  try {
+    await RestaurantService.voidLine(voidTarget.value.orderId, voidTarget.value.line.id, reason)
+    voidTarget.value = null
+    toast.success('Plato anulado')
+    await refresh(false)
+  } catch (e: unknown) {
+    toast.error(e instanceof Error ? e.message : 'No se pudo anular')
+  } finally {
+    voidBusy.value = false
+  }
 }
 
 const lineTint: Record<string, string> = {
@@ -80,6 +116,9 @@ onMounted(async () => {
   try {
     stations.value = (await RestaurantService.listStations()).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
   } catch { /* la cola funciona igual sin el catálogo de estaciones */ }
+  try {
+    voidReasons.value = (await RestaurantService.voidReasons()).reasons
+  } catch { /* sin lista del hotel, el modal muestra solo "Otro" (texto libre) */ }
   await refresh(true)
   timer = setInterval(() => refresh(false), REFRESH_MS)
 })
@@ -123,13 +162,23 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
               <span class="font-bold text-navy text-sm">{{ l.quantity }}× {{ l.name }} <span v-if="modifiersLabel(l)" class="font-normal text-text-muted">{{ modifiersLabel(l) }}</span></span>
             </div>
             <div v-if="l.notes" class="text-[11px] text-gold font-bold mt-0.5">⚑ {{ l.notes }}</div>
-            <div v-if="editPerm && NEXT[l.status]" class="flex flex-wrap gap-1.5 mt-2">
-              <button v-for="a in NEXT[l.status]" :key="a.to" @click="advance(l, a.to)" :disabled="busyLine === l.id"
-                :class="['px-2.5 py-1 rounded-lg text-xs font-bold disabled:opacity-50', a.cls]">{{ a.label }}</button>
+            <div v-if="(editPerm && NEXT[l.status]) || (deletePerm && VOIDABLE.includes(l.status))" class="flex flex-wrap gap-1.5 mt-2">
+              <template v-if="editPerm">
+                <button v-for="a in NEXT[l.status]" :key="a.to" @click="advance(l, a.to)" :disabled="busyLine === l.id"
+                  :class="['px-2.5 py-1 rounded-lg text-xs font-bold disabled:opacity-50', a.cls]">{{ a.label }}</button>
+              </template>
+              <!-- #207: abre el modal de motivo; no anula hasta confirmar. -->
+              <button v-if="deletePerm && VOIDABLE.includes(l.status)" @click="openVoid(l, t.order.id)" :disabled="busyLine === l.id"
+                class="px-2.5 py-1 rounded-lg text-xs font-bold border-2 border-coral/40 text-coral disabled:opacity-50">Cancelar</button>
             </div>
           </div>
         </div>
       </div>
     </div>
+
+    <VoidReasonModal v-if="voidTarget" title="Cancelar plato"
+      :subtitle="`${voidTarget.line.quantity}× ${voidTarget.line.name}`"
+      :reasons="voidReasons.length ? voidReasons : ['Otro']" confirm-label="Anular plato" :loading="voidBusy"
+      @confirm="confirmVoid" @close="closeVoid" />
   </div>
 </template>
