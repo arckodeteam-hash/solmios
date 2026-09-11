@@ -78,6 +78,12 @@
       </div>
     </div>
 
+    <!-- #220: el desglose (subtotal · extras · impuestos · total estimado) acompaña al huésped
+         hasta el pago; misma moneda que los precios de los extras de arriba. -->
+    <div class="rounded-xl bg-slate-50 px-4 py-3">
+      <EstimatedTotals :format="formatChargePrice" />
+    </div>
+
     <!-- Continuar al siguiente step (F2 fix BLOCKER): los upsells son opcionales — el huésped
          puede avanzar sin seleccionar ninguno. `store.next()` desde 'upselling' pasa a
          'checkingout' (GuestCheckoutStep). Disabled solo mientras cargan los upsells. -->
@@ -96,10 +102,16 @@
 import { useBookingStore } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import Stepper from './Stepper.vue'
+import EstimatedTotals from './EstimatedTotals.vue'
 import type { UpsellKind } from '@/types/booking'
 
 const store = useBookingStore()
 const { t, formatPrice } = useBookingI18nStore()
+
+/** #220: formateador para <EstimatedTotals>, en la moneda de cobro como el resto del step. */
+function formatChargePrice(amount: unknown): string {
+  return formatPrice(Number(amount), store.chargeCurrency)
+}
 
 function isSelected(id: string): boolean {
   return store.selectedUpsells.some((u) => u.id === id)
