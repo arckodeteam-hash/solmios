@@ -239,6 +239,12 @@ export class RestaurantController {
     return { status: 200, body: item }
   }
 
+  // ─── Alojados (#209): buscador para room service / cargo a habitación ───
+  async searchInHouse(req: HttpRequest) {
+    const { q, id } = (req.query ?? {}) as Record<string, unknown>
+    return { status: 200, body: await this.service.searchInHouse({ q, id }, req.user as any) }
+  }
+
   // ─── KDS / cocina (RES-4) ───
   async kdsQueue(req: HttpRequest) {
     this.logger.info('GET /restaurant/kds')

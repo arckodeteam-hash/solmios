@@ -10,12 +10,14 @@ import { ref } from 'vue'
 import {
   zoneTabs, groupByZone, zoneSlug, tableState, elapsedLabel, updatedAgoLabel, initials, resolveWaiter, isLiveOrder,
 } from './salon-helpers'
-import type { Order, RestaurantTable } from '@/services/Restaurant.service'
+import type { Order, RestaurantTable, InHouseReservation } from '@/services/Restaurant.service'
 
 // ── Datos que cada test ajusta antes de montar ──────────────────────────────
 let tablesData: RestaurantTable[] = []
 let ordersData: Order[] = []
 let teamData: { id: string; name: string }[] = []
+let inHouseData: InHouseReservation[] = []
+const openOrderCalls: unknown[] = []
 let listTablesCalls = 0
 let listOrdersCalls = 0
 const routerPush = vi.fn()
@@ -52,6 +54,9 @@ vi.mock('@/services/Restaurant.service', async (importOriginal) => {
       listTables: vi.fn(async () => { listTablesCalls++; return tablesData }),
       listOrders: vi.fn(async () => { listOrdersCalls++; return ordersData }),
       kdsQueue: vi.fn(async () => []),
+      // #209 — buscador de alojados del modal de Room service y apertura de la comanda.
+      searchInHouse: vi.fn(async () => ({ data: inHouseData, total: inHouseData.length })),
+      openOrder: vi.fn(async (payload: unknown) => { openOrderCalls.push(payload); return { id: 'o-new' } }),
     },
   }
 })
@@ -232,6 +237,34 @@ describe('salon.vue — montada', () => {
     liveHooks.onEvent!({ type: 'order.sent' })
     await vi.advanceTimersByTimeAsync(200)
     expect(listOrdersCalls).toBe(3)
+    w.unmount()
+  })
+
+  // #209 — Room service pide la reserva del alojado; la comanda sin mesa dice "Hab. 204 · Pérez".
+  it('Room service: "Abrir" deshabilitado sin reserva; con una elegida abre la comanda con reservationId/roomId/guestId', async () => {
+    inHouseData = [{ id: 'r-204', hotelId: 'h1', roomId: 'room-204', roomNumber: '204', guestId: 'g1', guestName: 'Juan Pérez', checkIn: '2026-09-10', checkOut: '2026-09-12', nights: 2, status: 'checked_in' }]
+    openOrderCalls.length = 0
+    const w = await mountSalon()
+    await w.find('[data-testid="room-service"]').trigger('click')
+    await flushPromises()
+    const openBtn = document.body.querySelector<HTMLButtonElement>('[data-testid="room-service-open"]')
+    expect(openBtn, 'el modal de Room service no se abrió').not.toBeNull()
+    expect(openBtn!.disabled).toBe(true)
+    expect(openOrderCalls).toHaveLength(0)
+    document.body.querySelector<HTMLButtonElement>('button[data-reservation="r-204"]')!.click()
+    await flushPromises()
+    expect(openBtn!.disabled).toBe(false)
+    openBtn!.click()
+    await flushPromises()
+    expect(openOrderCalls).toEqual([{ type: 'room_service', reservationId: 'r-204', roomId: 'room-204', guestId: 'g1' }])
+    expect(routerPush).toHaveBeenCalledWith('/panel/restaurante/comanda/o-new')
+    w.unmount()
+  })
+
+  it('la tarjeta de una comanda sin mesa de room service muestra "Hab. 204 · Pérez"', async () => {
+    ordersData = [order('o5', undefined, { type: 'room_service', roomNumber: '204', guestName: 'Juan Pérez' })]
+    const w = await mountSalon()
+    expect(w.find('[data-testid="room-label"]').text()).toBe('Hab. 204 · Juan Pérez')
     w.unmount()
   })
 

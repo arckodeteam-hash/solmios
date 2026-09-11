@@ -2,11 +2,13 @@
 // pages/restaurante/cobrar.vue — Liquidación de la comanda (RES-7). Dos vías EXCLUYENTES: cargo a la
 // habitación (folio, sin propina) o cobro directo (payment, con propina). La propina se persiste con
 // billOrder antes del cobro directo; el backend recalcula y cobra el total bruto. Ver settlement.ts.
-import { ref, computed, onMounted } from 'vue'
+// #209 — el cargo a habitación se elige con `ReservationPicker` (habitación/apellido), nunca tipeando un
+// id. Si la comanda ya nació con reserva (room service), viene preseleccionada y se confirma en un toque.
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  RestaurantService,
-  type OrderWithLines,
+  RestaurantService, roomServiceLabel, inHouseStatusLabel,
+  type OrderWithLines, type InHouseReservation,
   ORDER_STATUS_LABELS, ORDER_TYPE_LABELS,
 } from '@/services/Restaurant.service'
 import { SettingsService } from '@/services/Settings.service'
@@ -16,6 +18,7 @@ import { CurrencyCode } from '@/types/currency'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import ReservationPicker from '@/components/features/restaurante/ReservationPicker.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
 
@@ -41,7 +44,8 @@ const order = ref<OrderWithLines | null>(null)
 const currency = ref<string>(CurrencyCode.USD)
 const tip = ref(0)
 const method = ref<PosPaymentMethod>('cash')
-const reservationId = ref('')
+// #209 — reserva elegida en el buscador. `null` con `order.reservationId` = se usa la de la comanda.
+const selectedReservation = ref<InHouseReservation | null>(null)
 
 const PAYMENT_METHODS = POS_PAYMENT_METHODS
 const TIP_PRESETS = [0, 0.1, 0.15, 0.2]
@@ -89,7 +93,18 @@ const previewTotal = computed(() => {
   if (!o) return 0
   return Math.round((Number(o.subtotal || 0) + Number(o.tax || 0) + Number(tip.value || 0)) * 100) / 100
 })
-const canChargeRoom = computed(() => !!order.value && (!!reservationId.value.trim() || !!order.value.reservationId))
+const canChargeRoom = computed(() => !!order.value && (!!selectedReservation.value || !!order.value.reservationId))
+// Reserva de la comanda que no se pudo preseleccionar (no se pudo pedir, o ya no es del hotel): se sigue
+// pudiendo cargar (el backend valida), pero se dice cuál es en vez de no mostrar nada.
+const orderReservationLabel = computed(() => (order.value ? roomServiceLabel(order.value) : ''))
+// #209 — la reserva de la comanda, pedida por id. Si no se pudo cargar, se avisa (no se traga el error):
+// el cajero tiene que saber que la preselección falló y no que "la comanda no tiene reserva".
+const reservationLookupFailed = ref(false)
+// La reserva de la comanda ya no está alojada (checkout hecho, cancelada): el cargo igual es válido para el
+// backend, pero el cajero lo ve antes de confirmar.
+const selectedStatusLabel = computed(() => (selectedReservation.value ? inHouseStatusLabel(selectedReservation.value) : ''))
+// #209 — la propina nunca es negativa: "-5" queda en 0 y el botón muestra el total sin propina.
+watch(tip, (v) => { if (!Number.isFinite(Number(v)) || Number(v) < 0) tip.value = 0 })
 
 function applyTipPreset(pct: number) {
   const base = Number(order.value?.subtotal || 0)
@@ -105,8 +120,18 @@ async function load() {
     ])
     order.value = ord
     tip.value = Number(ord.tip || 0)
-    reservationId.value = ord.reservationId || ''
-    currency.value = (settings as any)?.hotel?.currency || 'USD'
+    currency.value = settings?.hotel?.currency || CurrencyCode.USD
+    // #209 — comanda con reserva (room service): preseleccionar la ficha del alojado para confirmar en un
+    // toque. Se pide ESA reserva por id (no la lista de alojados) y un fallo se dice, no se esconde.
+    reservationLookupFailed.value = false
+    if (ord.reservationId && !SETTLED.includes(ord.status) && ord.status !== 'cancelled') {
+      try {
+        selectedReservation.value = await RestaurantService.getInHouseById(ord.reservationId)
+      } catch (e: unknown) {
+        reservationLookupFailed.value = true
+        toast.warning('No se pudo cargar la reserva de la comanda', e instanceof Error ? e.message : 'Elegí el huésped en el buscador o reintentá.')
+      }
+    }
   } catch (e: unknown) {
     toast.error(e instanceof Error ? e.message : 'No se pudo cargar la comanda')
   } finally {
@@ -186,7 +211,7 @@ async function chargeRoom() {
       toast.warning('El total de la comanda cambió. Revisá el monto y volvé a cargar.')
       return
     }
-    const rid = reservationId.value.trim() || order.value.reservationId
+    const rid = selectedReservation.value?.id || order.value.reservationId
     await RestaurantService.chargeToRoom(orderId.value, { reservationId: rid || undefined })
     toast.success('Cargado a la habitación')
     router.push('/panel/restaurante/salon')
@@ -259,6 +284,10 @@ async function confirmRefund() {
               {{ order.status === 'paid' ? 'Cobrada directamente.' : 'Cargada a la habitación.' }}
             </p>
             <p class="text-2xl font-black text-navy mt-2 tabular-nums">{{ money(order.total) }}</p>
+            <!-- #209 — un cargo al folio no se reembolsa desde acá: se explica en vez de no mostrar el botón sin más. -->
+            <p v-if="order.settlement === 'folio'" data-testid="folio-note" class="text-xs text-text-muted mt-2">
+              Cobrado a la habitación: se devuelve desde el folio{{ orderReservationLabel ? ` (${orderReservationLabel})` : '' }}, en Facturación.
+            </p>
             <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
               <router-link to="/panel/restaurante/salon" class="px-4 py-2 rounded-lg bg-navy text-white text-sm font-bold">Volver al salón</router-link>
               <button v-if="refundable" @click="refundOpen = true"
@@ -299,7 +328,7 @@ async function confirmRefund() {
             </button>
             <div class="flex items-center gap-1.5">
               <span class="text-xs text-text-muted">Monto</span>
-              <input id="restaurante-cobrar-propina" name="tip" aria-label="Monto de la propina" v-model.number="tip" type="number" min="0" step="0.01"
+              <input id="restaurante-cobrar-propina" name="tip" aria-label="Monto de la propina" v-model.number="tip" type="number" min="0" step="0.01" inputmode="decimal"
                 class="w-24 px-2 py-1.5 rounded-lg border-2 border-border text-sm text-navy focus:border-navy focus:outline-none tabular-nums" />
             </div>
           </div>
@@ -321,15 +350,23 @@ async function confirmRefund() {
 
         <!-- Cargo a habitación -->
         <SectionCard title="Cargar a habitación" subtitle="Suma el consumo neto al folio de una reserva. Sin propina; el impuesto lo aplica el folio.">
-          <label for="restaurante-cobrar-id-de-reserva" class="block text-xs font-bold text-text-muted mb-1">ID de reserva</label>
-          <input id="restaurante-cobrar-id-de-reserva" name="reservationId" v-model="reservationId" type="text" placeholder="Reserva asociada (si la comanda ya la tiene, se usa esa)"
-            class="w-full px-3 py-2 rounded-lg border-2 border-border text-sm text-navy focus:border-navy focus:outline-none mb-3" />
-          <button @click="chargeRoom" :disabled="!canPay || busy || unknownState || !canChargeRoom"
+          <!-- #209 — buscador por habitación/apellido; con la reserva de la comanda ya elegida se confirma en un toque. -->
+          <ReservationPicker v-model="selectedReservation" :disabled="busy || unknownState" class="mb-3" />
+          <p v-if="reservationLookupFailed" role="alert" data-testid="reservation-lookup-failed" class="text-[11px] font-bold text-coral mb-3">
+            No se pudo cargar la reserva de la comanda{{ orderReservationLabel ? ` (${orderReservationLabel})` : '' }}. Elegí el huésped arriba o recargá la página.
+          </p>
+          <p v-else-if="!selectedReservation && order.reservationId" data-testid="order-reservation-note" class="text-[11px] text-text-muted mb-3">
+            Se cargará a la reserva de la comanda{{ orderReservationLabel ? ` (${orderReservationLabel})` : '' }}; elegí otro alojado arriba para cambiarla.
+          </p>
+          <p v-else-if="selectedStatusLabel" data-testid="reservation-status-note" class="text-[11px] text-gold font-bold mb-3">
+            {{ selectedStatusLabel === 'Sin check-in' ? 'El huésped todavía no hizo check-in: el cargo va al folio de su reserva igual.' : `La reserva ya no está alojada (${selectedStatusLabel.toLowerCase()}). Revisá antes de cargar.` }}
+          </p>
+          <button @click="chargeRoom" :disabled="!canPay || busy || unknownState || !canChargeRoom" data-testid="charge-room"
             class="w-full py-3 rounded-xl bg-navy text-white font-black hover:bg-navy-light disabled:opacity-50">
             Cargar {{ money(order.subtotal) }} neto al folio
           </button>
           <p class="text-[11px] text-text-muted mt-2">El folio le aplica el impuesto al facturar (no se dobla el ITBIS).</p>
-          <p v-if="!canChargeRoom" class="text-[11px] text-text-muted mt-2">La comanda no tiene reserva asociada. Ingresá un ID de reserva o cobrá directo.</p>
+          <p v-if="!canChargeRoom" class="text-[11px] text-text-muted mt-2">Elegí al huésped alojado arriba o cobrá directo.</p>
         </SectionCard>
       </template>
     </template>

@@ -212,11 +212,52 @@ export interface Order {
   closedAt?: string
   // #210 — comensales (cubiertos). Solo en comandas `dine_in`; ausente en room service / para llevar.
   covers?: number
+  // #209 — solo lectura, los calcula el server para room service ("Hab. 204 · Pérez"). No se mandan al abrir.
+  roomNumber?: string
+  guestName?: string
   createdAt?: string
   updatedAt?: string
 }
 
 export type OrderWithLines = Order & { lines: OrderLine[] }
+
+// #209 — fila del buscador "quién está alojado" (GET /restaurant/in-house). Espejo de
+// `restaurant/usecases/reservation-port.ts#InHouseReservation`. Sin saldo a propósito: el mozo no lo ve.
+export interface InHouseReservation {
+  id: string
+  hotelId: string
+  roomId: string
+  roomNumber: string
+  guestId: string | null
+  guestName: string
+  checkIn: string
+  checkOut: string
+  nights: number
+  /** `checked_in` = alojado; `confirmed` = llega hoy / vigente sin check-in (se marca "Sin check-in"); otro solo por lookup de id. */
+  status: string
+}
+
+export interface InHouseSearchResult {
+  data: InHouseReservation[]
+  /** Coincidencias reales; `data.length < total` = el server recortó la lista y hay que afinar el término. */
+  total: number
+}
+
+/** Etiqueta corta del estado de una reserva en el buscador; vacío para un alojado (lo normal). */
+export function inHouseStatusLabel(r: Pick<InHouseReservation, 'status'>): string {
+  if (r.status === 'confirmed') return 'Sin check-in'
+  if (r.status === 'checked_out') return 'Con checkout'
+  if (r.status === 'cancelled' || r.status === 'no_show') return 'Cancelada'
+  return ''
+}
+
+/** "Hab. 204 · Pérez" — etiqueta corta de una comanda de room service; vacío si el server no la resolvió. */
+export function roomServiceLabel(o: Pick<Order, 'roomNumber' | 'guestName'>): string {
+  const parts: string[] = []
+  if (o.roomNumber) parts.push(`Hab. ${o.roomNumber}`)
+  if (o.guestName) parts.push(o.guestName)
+  return parts.join(' · ')
+}
 
 // F2 — Componente de un combo (ej. 2× Hamburguesa dentro de "Combo Familiar").
 export interface ComboItem {
@@ -426,6 +467,19 @@ export const RestaurantService = {
     return res.data ?? []
   },
   getOrder: (id: string): Promise<OrderWithLines> => http.get(`/restaurant/orders/${id}`),
+  // #209 — alojados (y confirmadas que llegan hoy) del hotel por número de habitación (prefijo) o apellido.
+  // Va por /restaurant y no por /reservas porque el mozo no tiene `reservations:view`. `q` vacío = todos.
+  async searchInHouse(q: string): Promise<InHouseSearchResult> {
+    const term = q.trim()
+    const res = await http.get<InHouseSearchResult>(`/restaurant/in-house${term ? `?q=${encodeURIComponent(term)}` : ''}`)
+    return { data: res?.data ?? [], total: Number(res?.total ?? res?.data?.length ?? 0) }
+  },
+  // #209 — una reserva puntual del hotel (cualquier estado) por el mismo endpoint: Cobrar preselecciona la de
+  // la comanda sin traerse a todos los alojados. `null` si no existe o no es del hotel.
+  async getInHouseById(id: string): Promise<InHouseReservation | null> {
+    const res = await http.get<InHouseSearchResult>(`/restaurant/in-house?id=${encodeURIComponent(id)}`)
+    return res?.data?.[0] ?? null
+  },
   openOrder: (data: OpenOrderPayload): Promise<Order> => http.post('/restaurant/orders', data),
   sendOrder: (id: string): Promise<Order> => http.post(`/restaurant/orders/${id}/send`),
   // #207: el motivo es obligatorio (400 sin él). Las líneas ya enviadas quedan `voided` con ese motivo.
