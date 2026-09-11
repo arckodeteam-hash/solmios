@@ -4,22 +4,36 @@
 // Incluye alta/edición/baja de mesas y comandas sin mesa (room service / para llevar).
 // #210 — la mesa libre pregunta los comensales antes de abrir: un solo toque sobre el número (no un
 // formulario), porque acá se está parado frente al cliente. Lo usa el ticket promedio por comensal.
-import { ref, computed, onMounted } from 'vue'
+// #204 — zonas en pestañas (PillTabs, `?tab=`), refresco automático cada 15 s sin vaciar la lista
+// (pausado con un modal abierto), cada mesa ocupada muestra hora / tiempo / total / mozo, acciones de
+// mesa en un menú "⋯" siempre visible (tablet táctil: no hay hover) y `occupied` sin comanda en ámbar.
+// La lógica pura vive en salon-helpers.ts.
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   RestaurantService,
   type RestaurantTable, type Order,
   TABLE_STATUS_LABELS, ORDER_TYPE_LABELS,
 } from '@/services/Restaurant.service'
+import { TeamService } from '@/services/Team.service'
+import { SettingsService } from '@/services/Settings.service'
+import { currencySymbol } from '@/composables/useCurrency'
+import { CurrencyCode } from '@/types/currency'
 import FormModal, { type FormField } from '@/components/features/FormModal.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import PillTabs from '@/components/ui/PillTabs.vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { usePermissions } from '@/composables/usePermissions'
+import { openModalCount } from '@/composables/useModalStack'
+import {
+  ALL_TAB, LOOSE_TAB, isLiveOrder, groupByZone, zoneTabs, tableState, TABLE_STATE_CLASSES, TABLE_STATE_LABELS,
+  hhmm, elapsedLabel, updatedAgoLabel, resolveWaiter,
+} from './salon-helpers'
 
 const router = useRouter()
 const toast = useToast()
@@ -34,46 +48,61 @@ const saving = ref(false)
 const opening = ref(false)
 const tables = ref<RestaurantTable[]>([])
 const openOrders = ref<Order[]>([])
+// #204 — mozo por `users.id` (TeamService.list → /usuarios) y moneda del hotel para el total de la mesa.
+const usersById = ref<Map<string, string>>(new Map())
+const currency = ref<string>(CurrencyCode.USD)
+const money = (n: number): string => `${currencySymbol(currency.value)}${Number(n || 0).toFixed(2)}`
 
 const createPerm = computed(() => can('restaurant', 'create'))
 const editPerm = computed(() => can('restaurant', 'edit'))
 const deletePerm = computed(() => can('restaurant', 'delete'))
 
-// Estados "vivos" de una comanda (aún operable). El resto (paid/charged/cancelled) ya cerró.
-// fix-refund-pos-card: 'processing_payment' también es viva — la mesa sigue tomada mientras la
-// Checkout Session de Stripe está abierta (recién se libera al confirmar o al expirar).
-const LIVE = ['open', 'sent', 'preparing', 'ready', 'served', 'billed', 'processing_payment']
 const orderByTable = computed(() => {
   const map = new Map<string, Order>()
-  for (const o of openOrders.value) if (o.tableId && LIVE.includes(o.status)) map.set(o.tableId, o)
+  for (const o of openOrders.value) if (o.tableId && isLiveOrder(o)) map.set(o.tableId, o)
   return map
 })
-const looseOrders = computed(() => openOrders.value.filter((o) => !o.tableId && LIVE.includes(o.status)))
+const looseOrders = computed(() => openOrders.value.filter((o) => !o.tableId && isLiveOrder(o)))
 
 const occupiedCount = computed(() => orderByTable.value.size)
-const freeCount = computed(() => tables.value.length - occupiedCount.value)
-const openOrdersCount = computed(() => openOrders.value.filter((o) => LIVE.includes(o.status)).length)
+const freeCount = computed(() => tables.value.filter((t) => tableState(t, orderByTable.value.get(t.id)) === 'free').length)
+const openOrdersCount = computed(() => openOrders.value.filter(isLiveOrder).length)
 
-const zones = computed(() => {
-  const map = new Map<string, RestaurantTable[]>()
-  for (const t of tables.value) {
-    const z = t.zone?.trim() || 'General'
-    const arr = map.get(z) ?? []
-    arr.push(t)
-    map.set(z, arr)
+// #204 — zonas como pestañas. `all` agrupa por zona con subtítulo; una zona muestra solo sus mesas;
+// `loose` las comandas sin mesa. La activa vive en `?tab=` (PillTabs query-param).
+const zones = computed(() => groupByZone(tables.value))
+const tab = ref<string>(ALL_TAB)
+const tabs = computed(() => zoneTabs(tables.value, looseOrders.value.length))
+const visibleZones = computed(() => (tab.value === ALL_TAB ? zones.value : zones.value.filter((z) => z.slug === tab.value)))
+// Si la zona activa desaparece (se renombró/borró su última mesa), volver a "Todas" y no a una pantalla vacía.
+watch(tabs, (list) => { if (!list.some((t) => t.value === tab.value)) tab.value = ALL_TAB })
+
+const stateOf = (t: RestaurantTable) => tableState(t, orderByTable.value.get(t.id))
+const tableClasses = (t: RestaurantTable): string => TABLE_STATE_CLASSES[stateOf(t)]
+const waiterOf = (o: Order) => resolveWaiter(usersById.value, o.waiterId)
+
+// #204 — refresco automático. `now` late cada segundo para "hace N min" / "actualizado hace N s".
+const REFRESH_MS = 15_000
+const TICK_MS = 1_000
+const now = ref(Date.now())
+const lastUpdated = ref<number | null>(null)
+const refreshing = ref(false)
+const updatedAgo = computed(() => updatedAgoLabel(lastUpdated.value, now.value))
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+let tickTimer: ReturnType<typeof setInterval> | null = null
+
+/**
+ * Carga mesas + comandas + (la primera vez) equipo y moneda. `background=true` NO toca `loading`
+ * ni vacía las listas: las reemplaza recién cuando llegaron las dos respuestas, así la grilla no
+ * parpadea ni se resetea el scroll durante el refresco.
+ */
+async function load(background = false) {
+  if (background) {
+    if (refreshing.value) return
+    refreshing.value = true
+  } else {
+    loading.value = true
   }
-  return [...map.entries()].map(([zone, list]) => ({ zone, list }))
-})
-
-function tableClasses(t: RestaurantTable): string {
-  const o = orderByTable.value.get(t.id)
-  if (o) return 'bg-gold/10 border-gold text-navy'          // ocupada por comanda viva
-  if (t.status === 'reserved') return 'bg-navy/5 border-navy/40 text-navy'
-  return 'bg-teal/10 border-teal text-navy'                 // libre
-}
-
-async function load() {
-  loading.value = true
   try {
     const [tb, ord] = await Promise.all([
       RestaurantService.listTables(),
@@ -81,13 +110,52 @@ async function load() {
     ])
     tables.value = tb.sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }))
     openOrders.value = ord
+    lastUpdated.value = Date.now()
+    now.value = lastUpdated.value
   } catch (e: unknown) {
-    toast.error(e instanceof Error ? e.message : 'No se pudo cargar el salón')
+    // En segundo plano un fallo puntual (red, 502 de un deploy) no interrumpe al mozo: queda lo último bueno.
+    if (!background) toast.error(e instanceof Error ? e.message : 'No se pudo cargar el salón')
   } finally {
-    loading.value = false
+    if (background) refreshing.value = false
+    else loading.value = false
   }
 }
-onMounted(load)
+
+async function loadContext() {
+  const [team, settings] = await Promise.all([
+    TeamService.list().catch(() => null),
+    SettingsService.get().catch(() => null),
+  ])
+  usersById.value = new Map((team?.data ?? []).map((u) => [u.id, u.name]))
+  currency.value = (settings as any)?.hotel?.currency || CurrencyCode.USD
+}
+
+/** Pausado con un modal abierto (comensales, mesa, confirmación) o con la pestaña del navegador oculta. */
+function autoRefresh() {
+  if (openModalCount.value > 0 || menuFor.value) return
+  if (typeof document !== 'undefined' && document.hidden) return
+  void load(true)
+}
+
+onMounted(async () => {
+  await Promise.all([load(), loadContext()])
+  refreshTimer = setInterval(autoRefresh, REFRESH_MS)
+  tickTimer = setInterval(() => { now.value = Date.now() }, TICK_MS)
+})
+onUnmounted(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
+  if (tickTimer) clearInterval(tickTimer)
+})
+
+// #204 — acciones de mesa sin hover: un "⋯" por mesa abre Editar / Eliminar / Marcar reservada|libre.
+const menuFor = ref<string | null>(null)
+function toggleMenu(t: RestaurantTable) { menuFor.value = menuFor.value === t.id ? null : t.id }
+function closeMenu() { menuFor.value = null }
+async function toggleReserved(t: RestaurantTable) {
+  closeMenu()
+  const status: RestaurantTable['status'] = t.status === 'reserved' ? 'free' : 'reserved'
+  await save(() => RestaurantService.updateTable(t.id, { status }))
+}
 
 // #210 — comensales al abrir la comanda en salón. Atajos de un toque (el caso real: 2 o 4 personas)
 // más un campo para el resto; el backend valida entero 1..200 y por defecto pone 1.
@@ -153,6 +221,7 @@ function newTable() {
   }
 }
 function editTable(t: RestaurantTable) {
+  closeMenu()
   modal.value = {
     title: 'Editar mesa', submitLabel: 'Guardar',
     fields: [
@@ -165,14 +234,15 @@ function editTable(t: RestaurantTable) {
   }
 }
 function delTable(t: RestaurantTable) {
+  closeMenu()
   askConfirm({
     title: 'Eliminar mesa', message: `¿Eliminar la mesa "${t.name}"?`, confirmLabel: 'Eliminar', danger: true,
-    run: async () => { await RestaurantService.deleteTable(t.id); await load() },
+    run: async () => { await RestaurantService.deleteTable(t.id); await load(true) },
   })
 }
 async function save(fn: () => Promise<unknown>) {
   saving.value = true
-  try { await fn(); toast.success('Guardado'); modal.value = null; await load() }
+  try { await fn(); toast.success('Guardado'); modal.value = null; await load(true) }
   catch (e: unknown) { toast.error(e instanceof Error ? e.message : 'No se pudo guardar') }
   finally { saving.value = false }
 }
@@ -192,7 +262,16 @@ async function save(fn: () => Promise<unknown>) {
       </div>
     </header>
 
-    <div v-if="loading" class="py-20 text-center text-text-muted">Cargando…</div>
+    <!-- Skeleton de carga (solo la primera vez; el refresco no lo muestra). -->
+    <div v-if="loading" class="space-y-4" data-testid="salon-skeleton">
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div v-for="i in 4" :key="i" class="h-24 animate-pulse rounded-2xl bg-surface"></div>
+      </div>
+      <div class="h-10 w-72 max-w-full animate-pulse rounded-full bg-surface"></div>
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5">
+        <div v-for="i in 10" :key="i" class="h-20 animate-pulse rounded-xl bg-surface"></div>
+      </div>
+    </div>
 
     <template v-else>
       <EmptyState v-if="!tables.length" title="Sin mesas" message="Agregá mesas para armar el mapa del salón.">
@@ -210,36 +289,65 @@ async function save(fn: () => Promise<unknown>) {
           :unit="`${looseOrders.length} sin mesa`" />
       </div>
 
-      <!-- Comandas sin mesa (room service / para llevar) -->
-      <SectionCard v-if="looseOrders.length" title="Comandas sin mesa">
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+      <!-- #204 — zonas en pestañas + indicador discreto del refresco automático -->
+      <div v-if="tables.length" class="flex flex-wrap items-center justify-between gap-2">
+        <PillTabs v-model="tab" :tabs="tabs" query-param="tab" aria-label="Zonas del salón" />
+        <span class="text-[11px] text-text-muted tabular-nums" aria-live="polite" data-testid="salon-updated">{{ refreshing ? 'actualizando…' : updatedAgo }}</span>
+      </div>
+
+      <!-- Comandas sin mesa (room service / para llevar): en "Todas" y en su propia pestaña -->
+      <SectionCard v-if="tab === LOOSE_TAB || (tab === ALL_TAB && looseOrders.length)" title="Comandas sin mesa" :subtitle="`${looseOrders.length} abierta(s)`">
+        <EmptyState v-if="!looseOrders.length" title="Sin comandas sin mesa" message="Room service y para llevar aparecen acá al abrirse." />
+        <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
           <button v-for="o in looseOrders" :key="o.id" @click="router.push(`/panel/restaurante/comanda/${o.id}`)"
             class="p-3 rounded-xl border-2 border-gold bg-gold/10 text-left hover:bg-gold/20">
             <div class="font-black text-navy text-sm">{{ o.number || 'Comanda' }}</div>
-            <div class="text-[11px] text-text-muted">{{ ORDER_TYPE_LABELS[o.type] }}</div>
+            <div class="text-[11px] text-text-muted">{{ ORDER_TYPE_LABELS[o.type] }} · {{ hhmm(o.openedAt) }}</div>
+            <div class="text-[11px] text-navy font-bold tabular-nums mt-0.5">{{ money(o.total) }}<span v-if="waiterOf(o)" class="font-normal text-text-muted"> · {{ waiterOf(o)!.initials }}</span></div>
           </button>
         </div>
       </SectionCard>
 
-      <!-- Mesas por zona -->
-      <SectionCard v-for="z in zones" :key="z.zone" :title="z.zone">
+      <!-- Mesas por zona (todas, o solo la de la pestaña activa) -->
+      <SectionCard v-for="z in visibleZones" :key="z.zone" :title="z.zone" :subtitle="`${z.list.length} mesa(s)`">
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5">
-          <div v-for="t in z.list" :key="t.id" class="relative group">
-            <button @click="onTable(t)" :disabled="opening"
-              :class="['w-full p-3 rounded-xl border-2 text-left transition-colors disabled:opacity-60', tableClasses(t)]">
+          <div v-for="t in z.list" :key="t.id" class="relative">
+            <button @click="onTable(t)" :disabled="opening" :data-table="t.name"
+              :class="['w-full min-h-[76px] p-3 pr-9 rounded-xl border-2 text-left transition-colors disabled:opacity-60', tableClasses(t)]">
               <div class="font-black text-sm">{{ t.name }}</div>
-              <div class="text-[11px] opacity-70">
-                <template v-if="orderByTable.get(t.id)">Ocupada · {{ orderByTable.get(t.id)?.number }}</template>
-                <template v-else>{{ TABLE_STATUS_LABELS[t.status] }}<span v-if="t.capacity"> · {{ t.capacity }}p</span></template>
-              </div>
+              <template v-if="orderByTable.get(t.id)">
+                <div class="text-[11px] opacity-70">Ocupada · {{ orderByTable.get(t.id)?.number }}</div>
+                <!-- #204 — hora de apertura, tiempo transcurrido, total y mozo (iniciales; nombre en el title). -->
+                <div class="text-[11px] tabular-nums mt-0.5 flex flex-wrap items-center gap-x-1.5">
+                  <span>{{ hhmm(orderByTable.get(t.id)!.openedAt) }}</span>
+                  <span class="opacity-70">· {{ elapsedLabel(orderByTable.get(t.id)!.openedAt, now) }}</span>
+                  <span class="font-bold">· {{ money(orderByTable.get(t.id)!.total) }}</span>
+                  <span v-if="waiterOf(orderByTable.get(t.id)!)" :title="waiterOf(orderByTable.get(t.id)!)!.name"
+                    class="inline-flex items-center justify-center min-w-[22px] h-[18px] px-1 rounded-full bg-navy text-white text-[10px] font-black">
+                    {{ waiterOf(orderByTable.get(t.id)!)!.initials }}
+                  </span>
+                </div>
+              </template>
+              <div v-else class="text-[11px] opacity-70">{{ TABLE_STATE_LABELS[stateOf(t)] }}<span v-if="t.capacity"> · {{ t.capacity }}p</span></div>
             </button>
-            <div class="absolute top-1 right-1 hidden group-hover:flex gap-1">
-              <button v-if="editPerm" @click.stop="editTable(t)" title="Editar" class="w-6 h-6 rounded bg-white/80 text-navy text-xs font-bold shadow">✎</button>
-              <button v-if="deletePerm" @click.stop="delTable(t)" title="Eliminar" class="w-6 h-6 rounded bg-white/80 text-coral text-xs font-bold shadow">✕</button>
-            </div>
+            <!-- #204 — acciones sin hover: "⋯" siempre visible en la tablet. -->
+            <template v-if="editPerm || deletePerm">
+              <button @click.stop="toggleMenu(t)" :aria-label="`Opciones de ${t.name}`" :aria-expanded="menuFor === t.id" aria-haspopup="menu"
+                class="absolute top-1.5 right-1.5 w-7 h-7 grid place-items-center rounded-lg bg-white/80 text-navy text-sm font-black shadow hover:bg-white">⋯</button>
+              <div v-if="menuFor === t.id" role="menu" :aria-label="`Acciones de ${t.name}`"
+                class="absolute top-9 right-1.5 z-20 min-w-[160px] rounded-xl border-2 border-navy bg-white shadow-xl py-1">
+                <button v-if="editPerm" role="menuitem" @click.stop="editTable(t)" class="w-full text-left px-3 py-2 text-sm font-bold text-navy hover:bg-surface">Editar</button>
+                <button v-if="editPerm && !orderByTable.get(t.id)" role="menuitem" @click.stop="toggleReserved(t)" class="w-full text-left px-3 py-2 text-sm font-bold text-navy hover:bg-surface">
+                  {{ t.status === 'reserved' ? 'Marcar libre' : 'Marcar reservada' }}
+                </button>
+                <button v-if="deletePerm" role="menuitem" @click.stop="delTable(t)" class="w-full text-left px-3 py-2 text-sm font-bold text-coral hover:bg-coral/10">Eliminar mesa</button>
+              </div>
+            </template>
           </div>
         </div>
       </SectionCard>
+      <!-- Cierra el menú "⋯" tocando fuera (capa transparente debajo del menú, encima del resto). -->
+      <div v-if="menuFor" class="fixed inset-0 z-10" @click="closeMenu" aria-hidden="true"></div>
     </template>
 
     <!-- #210 — comensales: tocar el número abre la comanda directo, sin paso de confirmación. -->
