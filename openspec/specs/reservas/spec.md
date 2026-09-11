@@ -166,6 +166,17 @@ nunca silencioso) y notificar por sockets/webhook de canales.
 - THEN status=`cancelled`, habitación disponible, código TTLock revocado, y el preview
   que vio el recepcionista coincide con lo persistido
 
+#### Scenario: Vencimiento de una reserva web sin pago (sin cargo ni política)
+
+- GIVEN reserva `pending` creada desde el motor público, sin pago y más vieja que el TTL
+  del hotel (`booking_config.pendingPaymentTtlHours`)
+- WHEN el sistema la cancela con `cancelBySystem(..., { penaltyMode: 'no-charge',
+  reason: 'payment_timeout' })` (#248, REQ-RWP-05)
+- THEN status=`cancelled`, `cancellationReason='payment_timeout'`, `cancellationFee=0`,
+  `refundAmount=0`, `policyApplied.policyId='payment_timeout'`, NO se consulta la política
+  del hotel, y `onReservationCancelled` se emite igual (con `refundAmount: 0`) para que los
+  conectores liberen lo que la reserva tomó
+
 ### Requirement: No-show automático sin overbooking
 
 El cron de night audit (cada 3h, todos los hoteles,
