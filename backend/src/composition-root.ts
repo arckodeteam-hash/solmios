@@ -276,6 +276,8 @@ import { defaultStayApiPricesFetcher } from './connectors/stayapi-ota-prices'
 import type { ExternalReviewsFetchers } from './shared/usecases/external-reviews-cron'
 // F3 3.14 (solmi-direct-booking) — Cron de recuperación de reservas abandonadas.
 import { createAbandonRecoveryCron, ABANDON_RECOVERY_TICK_MS } from './shared/usecases/abandon-recovery-cron'
+import { runPendingPaymentExpiry, type PendingPaymentExpiryDeps } from './shared/usecases/pending-payment-expiry'
+import { createPendingPaymentExpiryCron, PENDING_PAYMENT_EXPIRY_TICK_MS, PENDING_PAYMENT_EXPIRY_FIRST_TICK_MS, isPendingPaymentExpiryDisabled } from './shared/usecases/pending-payment-expiry-cron'
 import { FcmClient } from './services/fcm-client'
 
 // F3 3.5 — Fetchers de las 3 APIs externas. Compartido por módulo (sync endpoint) + cron.
@@ -1133,6 +1135,61 @@ if (abandonRecoveryService && typeof abandonRecoveryService.runSweep === 'functi
   logger.info('Abandon-recovery cron listo', { tickMs: ABANDON_RECOVERY_TICK_MS })
 } else {
   logger.warn('Abandon-recovery: módulo no disponible — cron desactivado')
+}
+
+// #248 REQ-RWP-05 — Cron de vencimiento de reservas web sin pago. Cada 30 min busca reservas
+// `pending` hechas desde el motor público que superaron el TTL del hotel (booking_config.
+// pendingPaymentTtlHours; 0 = nunca) sin pago/intento/link vivo y las cancela vía
+// `reservas.cancelBySystem` en modo `no-charge`: eso emite `onReservationCancelled` por socket
+// y los connectors existentes liberan la disponibilidad (no se toca inventario a mano).
+// Flag global BOOKING_PENDING_TTL_DISABLED=1 = kill-switch para incidentes (se evalúa por tick).
+// Primer tick a 60 s (no 10 s): deja arrancar todos los módulos antes de cancelar nada.
+const reservasForExpiry = system.resolveModule<{ cancelBySystem(id: string, input: { hotelId: string; reason?: string; penaltyMode?: 'hotel-policy' | 'channel-managed' | 'no-charge' }): Promise<{ ok: boolean; idempotent?: boolean; message?: string }> }>('reservas')
+const auditlogForExpiry = system.resolveModule<{ create(dto: Record<string, unknown>): Promise<unknown> }>('auditlog')
+if (isPendingPaymentExpiryDisabled()) {
+  logger.info('Pending-payment-expiry cron desactivado (BOOKING_PENDING_TTL_DISABLED=1)')
+} else if (reservasForExpiry && typeof reservasForExpiry.cancelBySystem === 'function') {
+  const expiryDeps: PendingPaymentExpiryDeps = {
+    reservations: new OrmRepository<any>(orm, 'Reservations'),
+    bookingConfig: new OrmRepository<any>(orm, 'BookingConfig'),
+    // ⚠ El modelo de pagos se registra en SINGULAR ('Payment'), igual que treasury/reports.
+    payments: new OrmRepository<any>(orm, 'Payment'),
+    paymentRequests: new OrmRepository<any>(orm, 'PaymentRequests'),
+    guests: new OrmRepository<any>(orm, 'Guests'),
+    hotels: new OrmRepository<any>(orm, 'Hotels'),
+    cancel: (id, hotelId) => reservasForExpiry.cancelBySystem(id, { hotelId, reason: 'payment_timeout', penaltyMode: 'no-charge' }),
+    audit: auditlogForExpiry
+      ? {
+          record: async (e) => {
+            await auditlogForExpiry.create({
+              hotelId: e.hotelId, userId: e.userId, action: e.action,
+              entity: e.entity ?? 'reservation', entityId: e.entityId, detail: e.detail,
+            })
+          },
+        }
+      : null,
+    // Adapter: el usecase habla `enqueue(to, subject, html, opts)`; EmailService.enqueue toma un
+    // objeto y exige `hotelId` (multi-tenancy) — se lee de `opts.hotelId`. Si el usecase no lo
+    // pasa, EmailService tira y el usecase lo absorbe como warn (la reserva ya venció igual).
+    email: {
+      enqueue: async (to, subject, html, opts) => {
+        await emailService.enqueue({ to, subject, html, hotelId: String(opts?.hotelId ?? ''), relatedType: 'reservation', relatedId: opts?.reservationId ? String(opts.reservationId) : undefined })
+        return { sent: true }
+      },
+    },
+    publicBaseUrl: process.env.PUBLIC_BASE_URL ?? process.env.PUBLIC_URL ?? '',
+    logger: logger.child('pending-payment-expiry'),
+  }
+  const pendingPaymentExpiryCron = createPendingPaymentExpiryCron((now) => runPendingPaymentExpiry(expiryDeps, now), logger)
+  setTimeout(() => {
+    pendingPaymentExpiryCron().catch((e) => logger.warn('pending-payment-expiry initial run failed', { error: (e as Error).message }))
+  }, PENDING_PAYMENT_EXPIRY_FIRST_TICK_MS)
+  setInterval(() => {
+    pendingPaymentExpiryCron().catch((e) => logger.warn('pending-payment-expiry cron failed', { error: (e as Error).message }))
+  }, PENDING_PAYMENT_EXPIRY_TICK_MS)
+  logger.info('Pending-payment-expiry cron listo', { tickMs: PENDING_PAYMENT_EXPIRY_TICK_MS })
+} else {
+  logger.warn('Pending-payment-expiry: módulo reservas no disponible — cron desactivado')
 }
 
 // ─── Shutdown ──────────────────────────────────────────────────────────────

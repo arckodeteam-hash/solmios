@@ -1199,6 +1199,8 @@ async function createTablesBlock3(): Promise<void> {
   await addColumnIfMissing("reservations", "abandonEmailSent", "INTEGER DEFAULT 0")
   // F0 0.13 — AccessToken público anti-IDOR (reserva creada por flujo público).
   await addColumnIfMissing("reservations", "accessToken", "TEXT")
+  // #248 REQ-RWP-05 — TTL de pago de reservas web por hotel (horas; NULL → 24 en el usecase; 0 = nunca vence).
+  await addColumnIfMissing('booking_config', 'pendingPaymentTtlHours', 'INTEGER')
 
   // CREATE: reservation_addons (F3 match-misterplan — otros servicios y descuentos por reserva).
   await exec(`CREATE TABLE IF NOT EXISTS reservation_addons (

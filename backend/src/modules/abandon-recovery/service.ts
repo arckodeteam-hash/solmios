@@ -27,7 +27,7 @@
 
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import type { AbandonSweepResult, AbandonEmailSender, AbandonSweepConfig } from './types'
-import { DEFAULT_ABANDON_MIN_AGE_MS, DEFAULT_ABANDON_MAX_AGE_MS } from './types'
+import { DEFAULT_ABANDON_MIN_AGE_MS, DEFAULT_ABANDON_MAX_AGE_MS, DEFAULT_PENDING_PAYMENT_TTL_HOURS } from './types'
 import { buildRecoveryLink, renderAbandonEmailHtml, emailSubject } from './usecases/template'
 
 export interface AbandonRecoveryDeps {
@@ -40,7 +40,11 @@ export interface AbandonRecoveryDeps {
   /** EmailService (o un test double). null al arranque — se inyecta post-init vía setEmail()
    *  desde email-bootstrap (mismo patrón que wallet-pass.setEmailDeps). */
   email: AbandonEmailSender | null
+  /** Repo de BookingConfig (subset) para leer `pendingPaymentTtlHours` del hotel (#248).
+   *  Opcional: sin él se asume el TTL por defecto (24h). */
+  bookingConfig?: { findMany(q: Record<string, unknown>): Promise<any[]> } | null
 }
+const MS_PER_HOUR = 3600000
 
 export class AbandonRecoveryService {
   constructor(
@@ -78,6 +82,7 @@ export class AbandonRecoveryService {
     // El ORM no soporta operadores < > directamente en findMany; lo resolvemos trayendo
     // las pendientes con flag=false y filtrando por createdAt en JS (mismo patrón que
     // reports/usecases/no-show-cron.ts: trae el subconjunto indexado, filtra fino acá).
+    const ttlCache = new Map<string, number>()
     const candidates = await this.deps.reservations.findMany({
       status: 'pending',
       abandonEmailSent: false,
@@ -92,6 +97,15 @@ export class AbandonRecoveryService {
         continue
       }
       result.scanned++
+
+      // #248: si la reserva ya pasó el TTL de pago del hotel, el cron de vencimiento la
+      // cancela → el link "completá tu reserva" sería un link muerto. Skip sin marcar flag.
+      const ttlHours = await this.ttlFor(r.hotelId, ttlCache)
+      if (ttlHours > 0 && createdMs < nowMs - ttlHours * MS_PER_HOUR) {
+        result.skipped++
+        this.logger.info('abandon-recovery: reserva ya pasó el TTL de pago (#248) — skip', { id: r.id, ttlHours })
+        continue
+      }
 
       // Sin accessToken = reserva creada desde el panel, no tiene cómo recuperar el state
       // público (no hay link de retorno al widget). Skip sin marcar flag (no es "abandono público").
@@ -151,6 +165,22 @@ export class AbandonRecoveryService {
 
     this.logger.info('abandon-recovery: sweep completado', { ...result })
     return result
+  }
+
+  /** TTL de pago (horas) del hotel vía booking_config (#248): null/undefined → 24, 0 = nunca
+   *  vence. Cacheado por hotelId dentro del sweep; sin dep `bookingConfig` → default. */
+  private async ttlFor(hotelId: string | undefined, cache: Map<string, number>): Promise<number> {
+    const key = hotelId ?? ''
+    if (cache.has(key)) return cache.get(key)!
+    let ttl = DEFAULT_PENDING_PAYMENT_TTL_HOURS
+    try {
+      const v = hotelId && this.deps.bookingConfig ? (await this.deps.bookingConfig.findMany({ hotelId }))?.[0]?.pendingPaymentTtlHours : undefined
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) ttl = v
+    } catch (e: unknown) {
+      this.logger.warn('abandon-recovery: lookup de booking_config falló — usando TTL default', { hotelId, error: (e as Error)?.message })
+    }
+    cache.set(key, ttl)
+    return ttl
   }
 
   /** Llama a `enqueue` si existe, si no cae a `send`. Defensivo: distintos EmailService

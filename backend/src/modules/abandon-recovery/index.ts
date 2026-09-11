@@ -64,6 +64,7 @@ export function AbandonRecoveryModule(opts: AbandonRecoveryModuleOpts = {}) {
         'Idempotente: marca abandonEmailSent=true solo si el email se encoló con éxito',
         'NO marca flag para reservas sin accessToken (creadas desde panel, no son abandono público)',
         'Ventana 1h–4h: antes molesta al cliente que está decidiendo; después es pérdida',
+        'No manda el correo si la reserva ya pasó el TTL de pago del hotel (booking_config.pendingPaymentTtlHours, #248)',
       ],
     },
 
@@ -82,6 +83,8 @@ export function AbandonRecoveryModule(opts: AbandonRecoveryModuleOpts = {}) {
         guests: guestsRepo,
         hotels: hotelsRepo,
         email: opts.email ?? null as AbandonEmailSender | null,
+        // #248: tabla compartida (registrada por bookingengine/model.ts) — sólo lectura del TTL.
+        bookingConfig: new OrmRepository<any>(orm, 'BookingConfig'),
       }
       const sweepConfig: AbandonSweepConfig = {
         minAgeMs: opts.sweepConfig?.minAgeMs ?? DEFAULT_ABANDON_MIN_AGE_MS,
