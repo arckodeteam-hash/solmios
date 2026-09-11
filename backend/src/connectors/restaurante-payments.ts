@@ -98,7 +98,9 @@ export function restaurantePaymentsConnector(ctx: ConnectorContext): void {
       // crea `completed` y payOrder() ya marca la orden `paid` por su cuenta — llamar settlePaidOrder
       // acá chocaría con su guard de estado (la orden no está `processing_payment`) y rompería el
       // cobro directo, dejando el payment colgando sin marcar la comanda (bug e2e 2026-08-01).
-      if (payment?.method !== 'card') return
+      // #213: una devolución (`type:'refund'`) hereda `metadata.source/orderId` del cobro para que el
+      // cierre del día la reste; nace `completed` y también pasa por acá. No es un cobro a confirmar.
+      if (payment?.method !== 'card' || payment?.type !== 'charge') return
       await restaurant.settlePaidOrder(orderId, payment.id, sys)
     },
     onPaymentExpired: async (payment: any) => {

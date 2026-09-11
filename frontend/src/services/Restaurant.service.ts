@@ -237,6 +237,8 @@ export interface Order {
   discountBy?: string | null
   discountAt?: string | null
   discountTotal?: number
+  // #213 — motivo de cancelación (solo en `cancelled`; null en filas anteriores a la columna).
+  cancelReason?: string | null
   // #209 — solo lectura, los calcula el server para room service ("Hab. 204 · Pérez"). No se mandan al abrir.
   roomNumber?: string
   guestName?: string
@@ -245,6 +247,62 @@ export interface Order {
 }
 
 export type OrderWithLines = Order & { lines: OrderLine[] }
+
+// ─── Cierre del día (#213) — espejo exacto de backend/src/modules/restaurant/usecases/reports.ts ───
+export type SalesMethod = 'cash' | 'card' | 'transfer' | 'folio' | 'other'
+export const SALES_METHODS: SalesMethod[] = ['cash', 'card', 'transfer', 'folio', 'other']
+export const SALES_METHOD_LABELS: Record<SalesMethod, string> = {
+  cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', folio: 'Cargo a habitación', other: 'Otro',
+}
+export interface MethodTotals { amount: number; orders: number }
+export interface ItemTotals { menuItemId: string | null; name: string; quantity: number; amount: number }
+export interface StationTotals { stationId: string | null; stationName: string; quantity: number; amount: number }
+export interface HourTotals { hour: number; orders: number; amount: number }
+export interface DayTotals { date: string; orders: number; amount: number; tips: number }
+export interface VoidRow {
+  kind: 'order' | 'line' | 'refund'
+  orderId: string
+  orderNumber: string | null
+  name: string
+  quantity: number
+  amount: number
+  reason: string | null
+  at: string | null
+  by: string | null
+}
+export interface RestaurantDailyReport {
+  from: string
+  to: string
+  timezone: string
+  currency: string
+  /** Sin ventas, anulaciones ni reembolsos en el rango: la vista muestra estado vacío, no ceros. */
+  empty: boolean
+  sales: {
+    /** Ventas netas sin propina (cobros + cargos a folio − devoluciones), desde `payments`. Siempre = subtotal + tax. */
+    total: number
+    subtotal: number
+    tax: number
+    /** Propinas cobradas menos las devueltas. */
+    tips: number
+    /** total + tips. */
+    collected: number
+    orders: number
+    averageTicket: number
+    covers: number
+    averagePerCover: number
+  }
+  byMethod: Record<SalesMethod, MethodTotals>
+  byType: Record<OrderType, MethodTotals>
+  voided: { orders: number; lines: number; amount: number; rows: VoidRow[] }
+  /** Devoluciones del período (por fecha de la devolución). `amount` es la plata que salió, propina incluida. */
+  refunded: { orders: number; amount: number }
+  topItemsByQuantity: ItemTotals[]
+  topItemsByAmount: ItemTotals[]
+  byStation: StationTotals[]
+  byHour: HourTotals[]
+  byDay: DayTotals[]
+}
+export interface DailyReportParams { date?: string; from?: string; to?: string }
 
 // #209 — fila del buscador "quién está alojado" (GET /restaurant/in-house). Espejo de
 // `restaurant/usecases/reservation-port.ts#InHouseReservation`. Sin saldo a propósito: el mozo no lo ve.
@@ -568,6 +626,16 @@ export const RestaurantService = {
   async foodCostReport(): Promise<FoodCostReportRow[]> {
     const res = await http.get<{ data: FoodCostReportRow[]; total: number }>('/restaurant/food-cost/report')
     return res.data ?? []
+  },
+
+  // ─── Cierre del día (#213) — gate `reports:view` (hotel_admin y receptionist) ───
+  dailyReport(params: DailyReportParams = {}): Promise<RestaurantDailyReport> {
+    const qs = new URLSearchParams()
+    if (params.date) qs.set('date', params.date)
+    if (params.from) qs.set('from', params.from)
+    if (params.to) qs.set('to', params.to)
+    const q = qs.toString()
+    return http.get(`/restaurant/reports/daily${q ? `?${q}` : ''}`)
   },
 
   // ─── Carta pública (F7) — SIN sesión. `http` no fuerza Authorization si no hay token guardado, y

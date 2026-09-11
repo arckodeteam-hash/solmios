@@ -11,10 +11,12 @@
 //   cobrar          → `restaurant:pay`    (/bill, /pay, /charge-to-room)
 //   caja            → `restaurant:create` (cash/index.ts gatea /api/caja/restaurant/* con ese permiso)
 //   carta           → `restaurant-catalog:view` (config de la carta, solo hotel_admin)
+//   reportes        → `reports:view`   (#213: cierre del día; el consolidado de plata del negocio, mismo
+//                                       permiso que el resto de los reportes del hotel — mozo y cocina no)
 // Con los roles por defecto (shared/permissions.ts): waiter ve salón/comanda/cobrar/caja, kitchen solo
 // cocina, receptionist todo menos carta, hotel_admin todo.
 
-export type RestaurantPermission = `${'restaurant' | 'restaurant-catalog'}:${string}`
+export type RestaurantPermission = `${'restaurant' | 'restaurant-catalog' | 'reports'}:${string}`
 
 export interface RestaurantRoute {
   /** Path relativo al padre `/panel` (como lo declara el router). */
@@ -32,6 +34,7 @@ export const RESTAURANT_ROUTES: readonly RestaurantRoute[] = [
   { path: 'restaurante/cobrar/:id', name: 'restaurant-pay', permission: 'restaurant:pay' },
   { path: 'restaurante/caja', name: 'restaurant-cash', permission: 'restaurant:create', menu: { label: 'Caja' } },
   { path: 'restaurante/carta', name: 'restaurant-menu', permission: 'restaurant-catalog:view', menu: { label: 'Carta' } },
+  { path: 'restaurante/reportes', name: 'restaurant-reports', permission: 'reports:view', menu: { label: 'Reportes' } },
 ]
 
 export function restaurantRoutePath(route: Pick<RestaurantRoute, 'path'>): string {

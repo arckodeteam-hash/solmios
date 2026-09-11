@@ -11,7 +11,7 @@
 // `payment-requests` autoriza una Checkout Session de Stripe.
 
 import type { RepositoryAdapter } from 'arckode-framework'
-import type { FolioDTO } from '../types'
+import type { FolioDTO, FolioChargeDTO } from '../types'
 
 /** Folios de una reserva. */
 export async function foliosOfReservation(
@@ -30,4 +30,18 @@ export async function reservationIdOfFolio(
   const [folio] = await repo.findMany({ id: folioId, hotelId } as any)
   const rid = (folio as any)?.reservationId
   return rid ? String(rid) : null
+}
+
+/**
+ * #213 — el cargo del POS en el folio, por su idempotency key (`'pos:' + orderId`). Es lo que de
+ * verdad se le cargó a la habitación (neto + el impuesto que aplicó el folio): el cierre del día del
+ * restaurante lo lee de acá y no de la comanda. `null` si no existe o no es de este hotel. Consulta
+ * por igualdad (hotelId, reference) sobre el índice parcial `folio_charges_pos_ref`.
+ */
+export async function chargeByReference(
+  repo: Pick<RepositoryAdapter<FolioChargeDTO>, 'findMany'>, hotelId: string, reference: string,
+): Promise<FolioChargeDTO | null> {
+  if (!hotelId || !reference) return null
+  const [charge] = await repo.findMany({ hotelId, reference } as any)
+  return charge ?? null
 }

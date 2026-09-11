@@ -385,6 +385,14 @@ export class RestaurantController {
     const result = await this.service.comboFoodCost(req.params.id, req.user as any)
     return { status: 200, body: result }
   }
+  // #213 — cierre del día: ?date= o ?from=&to= (YYYY-MM-DD, zona del hotel). Sin nada → hoy.
+  async dailyReport(req: HttpRequest) {
+    const q = (req.query as any) ?? {}
+    this.logger.info('GET /restaurant/reports/daily', { date: q.date, from: q.from, to: q.to })
+    const query = { date: q.date as string | undefined, from: q.from as string | undefined, to: q.to as string | undefined }
+    return { status: 200, body: await this.service.dailyReport(query, req.user as any) }
+  }
+
   async foodCostReport(req: HttpRequest) {
     this.logger.info('GET /restaurant/food-cost/report')
     const result = await this.service.foodCostReport(req.user as any)

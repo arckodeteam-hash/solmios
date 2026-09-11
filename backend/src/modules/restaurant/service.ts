@@ -19,10 +19,11 @@ import * as voidReasons from './usecases/void-reasons'
 import * as discounts from './usecases/discounts'
 import * as events from './usecases/events'
 import * as inHouse from './usecases/in-house'
+import * as reports from './usecases/reports'
 import { composeSockets } from './usecases/compose-sockets'
 import {
   type RestaurantWiring, stationDeps, catDeps, itemDeps, tableDeps, ordersDeps, orderLinesDeps, voidReasonsDeps, discountsDeps,
-  modifierDeps, comboDeps, foodCostDeps, settlementDeps, kdsDeps, inHouseDeps, publicMenuDeps,
+  modifierDeps, comboDeps, foodCostDeps, settlementDeps, kdsDeps, inHouseDeps, publicMenuDeps, reportsDeps,
 } from './usecases/deps'
 import type { AuditPort } from '../../shared/usecases/audit'
 import type { ReservationPort } from './usecases/reservation-port'
@@ -40,6 +41,9 @@ export class RestaurantService {
   // cerrado) y gate del módulo para la carta pública (index.ts → createModuleChecker; null = 404 genérico).
   private reservationPort: ReservationPort | null = null
   private moduleStatePort: publicMenuUsecase.ModuleStatePort | null = null
+  // #213: la plata del cierre del día sale de `payments` (connectors/restaurante-reports-payments.ts) y del cargo
+  // al folio (connectors/restaurante-reports-folios.ts), nunca de la comanda. Sin puertos, ventas en cero.
+  private reportPorts: reports.ReportPorts = {}
   // #211: canal en vivo (SSE) por hotel. Lo alimenta connectors/restaurante-events.ts vía publishEvent.
   private readonly eventHub = new events.RestaurantEventHub()
 
@@ -78,6 +82,8 @@ export class RestaurantService {
   setSettlementDeps(p: Partial<settlement.SettlementPorts>): void { this.settlementPorts = { ...this.settlementPorts, ...p } }
   /** Puerto de recetas (inventario) inyectado por conector. Acumula (no pisa). Best-effort + graceful. */
   setRecipePorts(p: Partial<foodCost.RecipePorts>): void { this.recipePorts = { ...this.recipePorts, ...p } }
+  /** #213: puertos del cierre del día (payments/folios) inyectados por conector. Acumula (no pisa). */
+  setReportPorts(p: Partial<reports.ReportPorts>): void { this.reportPorts = { ...this.reportPorts, ...p } }
 
   /** Lo que cada usecase recibe se arma en usecases/deps.ts (extraído del service en #209, ver ese archivo). */
   private w(): RestaurantWiring {
@@ -86,7 +92,7 @@ export class RestaurantService {
       orders: this.orders, lines: this.lines, config: this.config, hotels: this.hotels, modifierGroups: this.modifierGroups, modifiers: this.modifiers,
       combos: this.combos, comboItems: this.comboItems, counterCas: this.counterCas, transactor: this.transactor, rooms: this.rooms, guests: this.guests,
       sockets: this.sockets, settlementPorts: this.settlementPorts, recipePorts: this.recipePorts, auditPort: this.auditPort,
-      reservationPort: this.reservationPort, moduleStatePort: this.moduleStatePort,
+      reservationPort: this.reservationPort, moduleStatePort: this.moduleStatePort, reportPorts: this.reportPorts,
     }
   }
 
@@ -196,4 +202,6 @@ export class RestaurantService {
 
   // ─── Alojados (#209): buscador por habitación/apellido para room service y cargo a habitación — usecases/in-house ───
   searchInHouse(query: { q?: unknown; id?: unknown }, user: CurrentUser) { return inHouse.searchInHouse(inHouseDeps(this.w()), query, user) }
+  // ─── Cierre del día (#213): la plata sale de payments/folio por conectores — usecases/reports ───
+  dailyReport(query: reports.DailyReportQuery | undefined, user: CurrentUser) { return reports.dailyReport(reportsDeps(this.w()), query, user) }
 }

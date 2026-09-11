@@ -3,6 +3,8 @@
 import type { RepositoryAdapter, Logger, Auth } from 'arckode-framework'
 import { ValidationError } from 'arckode-framework'
 import type { PaymentDTO, CreatePaymentDTO, PaymentsQuery, PaymentsPaginated } from '../types'
+import { hotelTimezone } from '../../../shared/utils/hotel-schedule'
+import { businessDateOf } from '../../../shared/utils/business-date'
 
 /**
  * Detecta la violación de UNIQUE/PK en SQLite y Postgres (el mensaje difiere por motor). Mismo
@@ -39,7 +41,15 @@ export class PaymentCrudUseCase {
      *  saldo cobrable de una reserva ajena. Hoy no llega por HTTP (el schema no la declara), es
      *  defensa en profundidad para los callers internos (charge-reschedule-diff). */
     private readonly reservationRepo?: RepositoryAdapter<any>,
+    /** #213: zona horaria del hotel para `businessDate`. Sin repo → zona por defecto (hotel-schedule). */
+    private readonly hotelRepo?: RepositoryAdapter<any>,
   ) {}
+
+  /** Día contable de `now` en la zona del hotel del pago (findOne por id: no viene de afuera). */
+  private async businessDateFor(hotelId: string, now: Date = new Date()): Promise<string> {
+    const hotel = this.hotelRepo ? await this.hotelRepo.findOne({ id: hotelId }).catch(() => null) : null
+    return businessDateOf(now, hotelTimezone(hotel)) as string
+  }
 
   /**
    * Verifica que un recurso referenciado pertenezca al hotel del pago. FAIL-CLOSED: si el repo no
@@ -75,6 +85,7 @@ export class PaymentCrudUseCase {
     // El efectivo se cobra en el acto; la tarjeta espera confirmación de Stripe. Un `status`
     // explícito gana: un cobro manual ya recibido (transferencia, POS) entra `completed`.
     const status = dto.status ?? (dto.method === 'cash' ? 'completed' : 'pending')
+    const now = new Date()
 
     const payload = {
       hotelId: dto.hotelId,
@@ -95,7 +106,9 @@ export class PaymentCrudUseCase {
       // Quién registró el cobro. El payload es una allow-list explícita: un campo que no esté
       // acá se descarta en silencio, aunque el modelo y el DTO lo declaren (así se perdía).
       createdBy: dto.createdBy ?? '',
-      processedAt: status === 'completed' ? new Date().toISOString() : undefined,
+      processedAt: status === 'completed' ? now.toISOString() : undefined,
+      // #213: día contable en la zona del hotel (se vuelve a fijar en updateStatus('completed')).
+      businessDate: await this.businessDateFor(dto.hotelId, now),
     }
 
     return await this.createIdempotent(payload)
@@ -145,6 +158,15 @@ export class PaymentCrudUseCase {
     return payment
   }
 
+  /**
+   * #213 — todos los pagos del hotel de un día contable (`businessDate`), sin paginar: es la lectura
+   * del cierre del día del restaurante (filtra `metadata.source` en su lado). Una consulta por día.
+   */
+  async ofBusinessDate(hotelId: string, businessDate: string): Promise<PaymentDTO[]> {
+    if (!hotelId || !businessDate) return []
+    return this.paymentRepo.findMany({ hotelId, businessDate } as any)
+  }
+
   async list(query: PaymentsQuery): Promise<PaymentsPaginated> {
     const page = query.page ?? 1
     const limit = query.limit ?? 20
@@ -176,7 +198,15 @@ export class PaymentCrudUseCase {
   async updateStatus(id: string, status: string, stripePaymentId?: string): Promise<PaymentDTO> {
     const update: Record<string, any> = { status }
     if (stripePaymentId) update.stripePaymentId = stripePaymentId
-    if (status === 'completed') update.processedAt = new Date().toISOString()
+    if (status === 'completed') {
+      const now = new Date()
+      update.processedAt = now.toISOString()
+      // #213: la plata entra HOY (el Checkout pudo abrirse ayer) → el día contable es el de la confirmación.
+      // findOne por id (sin ownership): es una transición interna del propio pago, no un acceso de un request.
+      // Sin hotelRepo no hace falta leer el pago: la zona es la por defecto.
+      const current = this.hotelRepo ? await this.paymentRepo.findOne({ id } as any) : null
+      update.businessDate = await this.businessDateFor(current?.hotelId ?? '', now)
+    }
 
     const updated = await this.paymentRepo.update(id, update as any)
     if (!updated) throw new ValidationError('Payment not found')

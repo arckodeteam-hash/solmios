@@ -18,12 +18,12 @@ export { normalizeFolioPaymentMethod } from './usecases/payment-port'
 export function FoliosModule() {
   return createModule({
     name: 'folios',
-    version: '1.1.0', // STR-D: foliosOfReservation/reservationIdOfFolio entran al contract (GH-0.2)
+    version: '1.2.0', // STR-D: foliosOfReservation/reservationIdOfFolio entran al contract (GH-0.2) · 1.2.0 #213: chargeByReference
     description: 'Folios acumulativos por reserva (cargos + pagos → factura)',
     contract: {
-      name: 'folios', version: '1.1.0',
+      name: 'folios', version: '1.2.0',
       description: 'Acumulador de cargos/pagos por reserva; al cerrarse genera factura',
-      actions: ['list', 'getById', 'open', 'postCharge', 'applyPayment', 'close', 'summary', 'foliosOfReservation', 'reservationIdOfFolio', 'postPrepaidCredit'],
+      actions: ['list', 'getById', 'open', 'postCharge', 'applyPayment', 'close', 'summary', 'foliosOfReservation', 'reservationIdOfFolio', 'postPrepaidCredit', 'chargeByReference'],
       events: ['onFolioOpened', 'onFolioCharged', 'onFolioPaid', 'onFolioClosed'],
       tables: ['folios', 'folio_charges'],
       dependencies: [],

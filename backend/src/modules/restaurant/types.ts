@@ -126,6 +126,12 @@ export interface OrderDTO {
   discountAt?: string | null
   /** Σ descuentos de línea + descuento de comanda. */
   discountTotal?: number
+  // #213 — motivo de cancelación (solo en status='cancelled'; null en filas anteriores a la columna).
+  cancelReason?: string | null
+  // #213 — día contable ('YYYY-MM-DD', zona del hotel) del cierre; ver model.ts. null en filas viejas sin backfill.
+  businessDate?: string | null
+  // #213 — cuándo se reembolsó (status='refunded'); closedAt conserva el cobro.
+  refundedAt?: string | null
   // #209 — SOLO LECTURA, no son columnas: los calcula usecases/order-labels.ts para room service
   // ("Hab. 204 · Pérez"). Nunca se mandan a `orders.update` (el ORM los descartaría en silencio).
   roomNumber?: string
