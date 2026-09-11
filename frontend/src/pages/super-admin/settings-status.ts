@@ -26,9 +26,14 @@ export interface FilaIntegracion {
 const DESCONOCIDO_PROTECCION = 'estado desconocido — no se pudo leer `/api/admin/settings/status`'
 const DESCONOCIDO_INTEGRACION = 'estado desconocido'
 
-/** Texto de aceptación del issue: se muestra tal cual cuando el captcha está apagado. */
+/**
+ * Texto cuando el captcha está apagado.
+ *
+ * Ya no manda a editar variables de entorno: desde #12 se prende en la tarjeta de arriba, y decir
+ * "cargá TURNSTILE_SECRET" mandaba al super-admin al servidor para algo que puede hacer acá.
+ */
 export const CAPTCHA_DESACTIVADO =
-  'desactivado — `TURNSTILE_SECRET` en `backend/.env` + `VITE_TURNSTILE_SITE_KEY` en el build'
+  'desactivado — se activa en la tarjeta «Captcha del registro», acá arriba'
 
 /**
  * Tres filas de solo lectura: captcha, verificación de email y rate-limit. Ninguna se
@@ -49,8 +54,13 @@ export function filasProteccionAlta(s: SettingsStatus | null): FilaProteccion[] 
       clave: 'captcha',
       nombre: 'Captcha',
       activo: captcha,
+      // El origen importa: con el secreto en el servidor la tarjeta de arriba no puede tocarlo, y
+      // decir "activo" a secas dejaba al admin buscando el interruptor que no existe. Nombrar
+      // siempre a Turnstile era directamente falso desde que se puede elegir proveedor (#12).
       detalle: captcha
-        ? 'activo — Cloudflare Turnstile (`TURNSTILE_SECRET` en el servidor)'
+        ? (s.turnstile?.source === 'env'
+          ? 'activo — configurado en el servidor (`TURNSTILE_SECRET`), no se cambia desde el panel'
+          : 'activo — configurado desde el panel, en la tarjeta de acá arriba')
         : CAPTCHA_DESACTIVADO,
     },
     {

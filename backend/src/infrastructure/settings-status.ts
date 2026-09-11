@@ -8,7 +8,7 @@
 // Resend, SMTP, Maps, Channex): si el criterio divergiera, la pantalla diría "configurado" y
 // el servicio fallaría, o al revés.
 
-import { isCaptchaEnabled } from './captcha'
+import { estadoCaptcha } from './captcha'
 import { estadoMetaApp } from './meta-app-config'
 import { estadoResend } from './resend-config'
 import { normalizeSmtpConfig } from '../services/email-service'
@@ -82,12 +82,13 @@ async function estadoChannex(configRepo: any): Promise<EstadoServicio> {
 
 /** Estado para la pantalla. Se llama en cada carga: no cachea, para no mentir tras un cambio. */
 export async function estadoServicios(configRepo: any): Promise<EstadoServicios> {
-  const [meta, resend, smtp, googleMaps, channex] = await Promise.all([
+  const [meta, resend, smtp, googleMaps, channex, captcha] = await Promise.all([
     estadoMetaApp(configRepo),
     estadoResend(configRepo),
     estadoSmtp(configRepo),
     estadoGoogleMaps(configRepo),
     estadoChannex(configRepo),
+    estadoCaptcha(configRepo),
   ])
 
   return {
@@ -97,7 +98,8 @@ export async function estadoServicios(configRepo: any): Promise<EstadoServicios>
     // `configuration.stripe_config` es legacy POR HOTEL y nunca se consulta acá: mirarla sería un falso positivo.
     stripe: process.env.STRIPE_SECRET_KEY ? ENV : NO,
     stripeWebhook: process.env.STRIPE_WEBHOOK_SECRET_PLATFORM ? ENV : NO,
-    turnstile: isCaptchaEnabled() ? ENV : NO,
+    // El captcha ya no es sólo Turnstile ni sólo por entorno: se configura desde el panel (#12).
+    turnstile: captcha.origen === 'entorno' ? ENV : captcha.origen === 'panel' ? PANEL : NO,
     publicUrl: process.env.PUBLIC_URL ? ENV : NO,
     metaApp: meta.origen === 'entorno' ? ENV : meta.origen === 'panel' ? PANEL : NO,
     resend: resend.configured ? PANEL : NO,

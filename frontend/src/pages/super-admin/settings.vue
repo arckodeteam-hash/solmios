@@ -167,6 +167,10 @@
          que había acá se sacó en CFG-2 (#99): sus inputs nunca se persistieron (cero lectores
          en el backend), así que pintar switches que no cambiaban nada sólo confundía. -->
     <div v-if="activeTab === 'security'" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- #12 — el captcha del alta se prende y se apaga acá. Vivía en dos variables de entorno,
+           y como la site key era de BUILD, activarlo obligaba a recompilar el frontend: por eso
+           estuvo implementado y apagado desde el primer día. -->
+      <CaptchaConfigCard class="lg:col-span-2" />
       <SectionCard title="Protección del alta">
         <p class="text-[11px] text-text-muted mb-3">Solo lectura: son variables del servidor, no se cambian desde acá.</p>
         <div class="space-y-3">
@@ -408,6 +412,7 @@ import {
 } from '@/services/PlatformEmails.service'
 import { useToast } from '@/composables/useToast'
 import ChannexPlatformConfig from '@/components/features/ChannexPlatformConfig.vue'
+import CaptchaConfigCard from '@/components/features/CaptchaConfigCard.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 
 const toast = useToast()

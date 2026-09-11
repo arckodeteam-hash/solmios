@@ -198,7 +198,7 @@
           <!-- Captcha. Solo aparece si hay site key configurada: sin ella el
                backend tampoco lo exige, y un hueco vacío confundiría. -->
           <div v-if="captchaSiteKey">
-            <div ref="captchaEl" class="cf-turnstile"></div>
+            <div ref="captchaEl"></div>
             <p v-if="captchaError" class="text-[11px] text-danger mt-1">{{ captchaError }}</p>
           </div>
 
@@ -247,6 +247,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth.store'
 import { SignupService, DEFAULT_TRIAL_DAYS, trialEligiblePlans, type PublicPlan } from '@/services/Signup.service'
 import { ReferralsService } from '@/services/Referrals.service'
+import { CaptchaService, type PublicCaptchaConfig } from '@/services/Captcha.service'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES } from '@/data/locales'
@@ -297,11 +298,19 @@ const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 const ICON_DOT = '<svg viewBox="0 0 24 24" fill="currentColor" class="w-full h-full"><circle cx="12" cy="12" r="4"/></svg>'
 
 /**
- * Site key del captcha (Cloudflare Turnstile). Es pública por diseño. Si no
- * está definida en el build, el captcha no se muestra y el backend tampoco lo
- * exige: el registro sigue funcionando, protegido solo por rate-limit.
+ * Config del captcha, pedida al servidor al abrir la página (#12).
+ *
+ * Antes era `import.meta.env.VITE_TURNSTILE_SITE_KEY`, una variable de BUILD: prender el captcha
+ * obligaba a recompilar el frontend, y por eso estuvo apagado desde que se implementó. Ahora el
+ * super-admin lo activa desde Configuración y vale para el siguiente registro.
+ *
+ * Si esta consulta falla, `publicConfig()` devuelve "apagado" y el alta sigue funcionando: quien
+ * decide si exige el token es el backend, esto sólo dibuja.
  */
-const captchaSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY ?? ''
+const captchaCfg = ref<PublicCaptchaConfig>({
+  enabled: false, provider: 'turnstile', siteKey: '', scriptUrl: '', globalName: 'turnstile',
+})
+const captchaSiteKey = computed(() => (captchaCfg.value.enabled ? captchaCfg.value.siteKey : ''))
 
 const subtitleStep1 = computed(() =>
   requireCard.value
@@ -383,20 +392,28 @@ const captchaToken = ref('')
 const captchaError = ref('')
 let captchaWidgetId: string | undefined
 
-/** API que inyecta el script de Turnstile en `window`. */
-interface TurnstileApi {
+/**
+ * API que el script del proveedor deja en `window`.
+ *
+ * Turnstile, reCAPTCHA v2 y hCaptcha exponen la MISMA forma (`render`/`reset`/`remove` con
+ * `sitekey` + `callback`), que es lo que permite sostener los tres con un solo bloque de código.
+ * El nombre del objeto global lo dice el backend, así que agregar un cuarto proveedor no toca acá.
+ */
+interface CaptchaApi {
   render: (el: HTMLElement, opts: Record<string, unknown>) => string
   reset: (id?: string) => void
   remove: (id?: string) => void
 }
-function turnstile(): TurnstileApi | undefined {
-  return (window as unknown as { turnstile?: TurnstileApi }).turnstile
+function captchaApi(): CaptchaApi | undefined {
+  const name = captchaCfg.value.globalName
+  return (window as unknown as Record<string, CaptchaApi | undefined>)[name]
 }
 
 /** Carga el script una sola vez, aunque se entre y salga del paso 2. */
 function loadCaptchaScript(): Promise<void> {
-  const SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
-  if (turnstile()) return Promise.resolve()
+  const SRC = captchaCfg.value.scriptUrl
+  if (!SRC) return Promise.reject(new Error('sin script de captcha'))
+  if (captchaApi()) return Promise.resolve()
   const existing = document.querySelector(`script[src="${SRC}"]`)
   if (existing) return new Promise((res) => existing.addEventListener('load', () => res()))
   return new Promise((res, rej) => {
@@ -411,14 +428,18 @@ function loadCaptchaScript(): Promise<void> {
 }
 
 async function mountCaptcha() {
-  if (!captchaSiteKey || captchaWidgetId !== undefined) return
+  if (!captchaSiteKey.value || captchaWidgetId !== undefined) return
   try {
     await loadCaptchaScript()
     await nextTick()
-    const api = turnstile()
+    // reCAPTCHA deja el objeto antes de terminar de inicializarse: `render` existe recién dentro
+    // de su `ready()`. Los otros dos no tienen `ready`, así que se resuelve al toque.
+    const api = captchaApi()
     if (!api || !captchaEl.value) return
+    const ready = (api as unknown as { ready?: (cb: () => void) => void }).ready
+    if (typeof ready === 'function') await new Promise<void>((res) => ready.call(api, res))
     captchaWidgetId = api.render(captchaEl.value, {
-      sitekey: captchaSiteKey,
+      sitekey: captchaSiteKey.value,
       callback: (token: string) => { captchaToken.value = token; captchaError.value = '' },
       'expired-callback': () => { captchaToken.value = '' },
       'error-callback': () => {
@@ -431,11 +452,17 @@ async function mountCaptcha() {
   }
 }
 
-// El widget vive en el paso 2, que no está montado hasta que se llega.
+// El widget vive en el paso 2, que no está montado hasta que se llega. La config puede llegar
+// después de que el visitante ya avanzó, así que se mira también cuando responde el servidor.
 watch(step, (s) => { if (s === 2) void mountCaptcha() })
+watch(captchaSiteKey, (k) => { if (k && step.value === 2) void mountCaptcha() })
+
+onMounted(async () => {
+  captchaCfg.value = await CaptchaService.publicConfig()
+})
 
 onUnmounted(() => {
-  if (captchaWidgetId !== undefined) turnstile()?.remove(captchaWidgetId)
+  if (captchaWidgetId !== undefined) captchaApi()?.remove(captchaWidgetId)
 })
 
 onMounted(async () => {
@@ -539,10 +566,10 @@ async function submit() {
   } catch (e: any) {
     // El email repetido se decide en el paso 1: se vuelve ahí para corregirlo.
     error.value = e?.message || 'No se pudo crear la cuenta. Intentá de nuevo.'
-    // El token de Turnstile es de un solo uso: sin resetear, todo reintento
-    // vuelve a fallar por captcha aunque se corrija lo que estaba mal.
+    // El token del captcha es de un solo uso (en los tres proveedores): sin resetear, todo
+    // reintento vuelve a fallar por captcha aunque se corrija lo que estaba mal.
     captchaToken.value = ''
-    if (captchaWidgetId !== undefined) turnstile()?.reset(captchaWidgetId)
+    if (captchaWidgetId !== undefined) captchaApi()?.reset(captchaWidgetId)
     if (/email/i.test(error.value)) step.value = 1
   } finally {
     saving.value = false
