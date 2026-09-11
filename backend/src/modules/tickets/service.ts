@@ -73,7 +73,12 @@ export class TicketsService {
     const offset = (page - 1) * limit
 
     // REQ-SOP-05: clave versionada (filtros + paginación incluidos) — ver usecases/cache.ts.
-    const cacheKey = await ticketsListCacheKey(this.cache, hotelId, { filters, page, limit })
+    // #197: el bucket de versión es el del HOTEL QUE SE LISTA, no el del usuario. Un super_admin
+    // con `hotelId` en el token (el seed de prod lo tiene) veía /admin/support desde el bucket de
+    // su propio hotel, y una respuesta en un ticket de OTRO hotel bumpea ese hotel + `all`, nunca
+    // el suyo: el listado quedaba viejo hasta los 300 s del TTL (F5 no alcanzaba).
+    const cacheHotel = currentUser.role === 'super_admin' ? (query.hotelId || undefined) : hotelId
+    const cacheKey = await ticketsListCacheKey(this.cache, cacheHotel, { filters, page, limit })
     const cached = await this.cache.get(cacheKey)
     if (cached) return cached as TicketsPaginated
 

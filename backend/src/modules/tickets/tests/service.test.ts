@@ -106,6 +106,27 @@ describe('TicketsService', () => {
       expect(after.data).toHaveLength(1)
     })
 
+    it('#197: super_admin CON hotelId en el token ve al instante la respuesta en un ticket de OTRO hotel', async () => {
+      // El seed de prod le da hotelId al super admin. Antes la clave del listado usaba ESE hotel
+      // como bucket de versión; la mutación en h2 bumpeaba h2 + all, y /admin/support seguía
+      // sirviendo la página vieja hasta el TTL.
+      const adminConHotel = { id: 'admin1', role: 'super_admin', hotelId: 'hAdmin' }
+      const store: TicketsDTO[] = [{ id: 't2', hotelId: 'h2', userId: 'u2', subject: 'De h2', status: 'open' } as TicketsDTO]
+      const repo = makeRepo({
+        findById: async (id) => store.find((t) => t.id === id) ?? null,
+        update: async (id, patch) => { const t = store.find((x) => x.id === id)!; Object.assign(t, patch); return t },
+        paginate: async () => ({ data: [...store], total: store.length, limit: 20, offset: 0, pages: 1 }),
+      })
+      const cache = new MemoryCache()
+      const svc = new TicketsService(repo, log, cache, makeUserRepo(), fakeAuth, makeHotelRepo())
+
+      expect((await svc.list({}, adminConHotel)).data[0]!.status).toBe('open')
+      await svc.update('t2', { status: 'in_progress' }, adminConHotel)
+      expect((await svc.list({}, adminConHotel)).data[0]!.status).toBe('in_progress')
+      // Y filtrando por hotel usa el bucket de ESE hotel, que también se bumpeó.
+      expect((await svc.list({ hotelId: 'h2' }, adminConHotel)).data[0]!.status).toBe('in_progress')
+    })
+
     it('dos consultas con filtros distintos no comparten entrada', async () => {
       const repo = makeRepo({
         paginate: async (filters: any) => ({
