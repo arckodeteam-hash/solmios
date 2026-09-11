@@ -29,7 +29,7 @@ export function PaymentGatewaysModule() {
       description: 'Configuración de pasarelas de pago por hotel',
       actions: ['list', 'upsert', 'setEnabled', 'remove', 'testConnection'],
       events: [],
-      tables: ['payment_gateways', 'payment_events'],
+      tables: ['payment_gateways', 'payment_events', 'payment_gateway_sessions'],
       dependencies: [],
       rules: ['Las credenciales se guardan cifradas', 'La API nunca devuelve un secreto'],
     },
@@ -48,7 +48,9 @@ export function PaymentGatewaysModule() {
       }
 
       const repo = new OrmRepository<PaymentGatewayRow>(orm, 'PaymentGateways')
-      const registry = new PaymentGatewayRegistry(repo as any, log)
+      // Sesiones de los proveedores 'pull' (CardNet): la session-key se guarda cifrada acá.
+      const sessionsRepo = new OrmRepository<any>(orm, 'PaymentGatewaySessions')
+      const registry = new PaymentGatewayRegistry(repo as any, log, sessionsRepo as any)
       const service = new PaymentGatewaysService(repo, log, registry, auth)
       const controller = new PaymentGatewaysController(service, log)
 

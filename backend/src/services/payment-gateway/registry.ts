@@ -14,9 +14,9 @@ import type { Logger } from 'arckode-framework'
 import { IMPLEMENTED_PROVIDERS, type GatewayMode, type PaymentGateway, type PaymentProvider } from './types'
 import { StripeGateway, type StripeCredentials } from './stripe-gateway'
 import { AzulGateway, toAzulCredentials } from './azul-gateway'
-import { CardnetGateway, toCardnetCredentials } from './cardnet-gateway'
+import { CardnetGateway, toCardnetCredentials, type CardnetSessionRow, type CardnetSessionStore } from './cardnet-gateway'
 import { PayPalGateway, toPayPalCredentials } from './paypal-gateway'
-import { decryptCredentials } from './crypto'
+import { decryptCredentials, encryptCredentials } from './crypto'
 
 export interface GatewayRow {
   id: string
@@ -32,14 +32,55 @@ type GatewayRepo = {
   findMany(filter: Record<string, unknown>): Promise<GatewayRow[]>
 }
 
+/** Repo de `payment_gateway_sessions` (OrmRepository trae findOne(filters) y create(data)). */
+export type SessionsRepo = {
+  findOne(filter: Record<string, unknown>): Promise<any | null>
+  create(data: any): Promise<any>
+}
+
+/**
+ * Store de sesiones de los proveedores 'pull' (hoy CardNet), sobre `payment_gateway_sessions`.
+ * La session-key es el único secreto de CardNet y se devuelve UNA sola vez: se persiste cifrada
+ * con el mismo AES-256-GCM que las credenciales, para que una fuga de la tabla no permita
+ * consultar (ni fabricar) el estado de los cobros.
+ */
+export class PaymentGatewaySessionStore implements CardnetSessionStore {
+  constructor(private readonly repo: SessionsRepo) {}
+
+  async save(row: CardnetSessionRow): Promise<void> {
+    await this.repo.create({ ...row, secret: encryptCredentials({ sk: row.secret }) })
+  }
+
+  async load(session: string): Promise<CardnetSessionRow | null> {
+    const row = await this.repo.findOne({ id: session })
+    if (!row) return null
+    return {
+      id: String(row.id),
+      hotelId: String(row.hotelId),
+      provider: 'cardnet',
+      reference: String(row.reference || ''),
+      secret: String(decryptCredentials(String(row.secret)).sk || ''),
+      amountMinor: Number(row.amountMinor || 0),
+      currency: String(row.currency || ''),
+      mode: row.mode === 'live' ? 'live' : 'test',
+    }
+  }
+}
+
 export class PaymentGatewayRegistry {
   /** Cachea por hotel+provider+mode. Se invalida al guardar config (ver invalidate()). */
   private readonly cache = new Map<string, PaymentGateway>()
 
+  /** Store de sesiones para los adapters 'pull'. Sólo lo necesita CardNet; se arma una vez. */
+  private readonly sessions: CardnetSessionStore | null
+
   constructor(
     private readonly repo: GatewayRepo,
     private readonly logger: Logger,
-  ) {}
+    sessionsRepo?: SessionsRepo,
+  ) {
+    this.sessions = sessionsRepo ? new PaymentGatewaySessionStore(sessionsRepo) : null
+  }
 
   private key(hotelId: string, provider: PaymentProvider, mode: GatewayMode): string {
     return `${hotelId}:${provider}:${mode}`
@@ -92,7 +133,13 @@ export class PaymentGatewayRegistry {
       case 'azul':
         return new AzulGateway(toAzulCredentials(creds), row.mode)
       case 'cardnet':
-        return new CardnetGateway(toCardnetCredentials(creds), row.mode)
+        // Sin dónde guardar la session-key, confirm() nunca podría consultar la sesión: el
+        // huésped pagaría y nosotros no nos enteraríamos. Mejor no cobrar que cobrar a ciegas.
+        if (!this.sessions) {
+          this.logger.error('CardNet: el registry se construyó sin repo de sesiones; no se puede cobrar')
+          return null
+        }
+        return new CardnetGateway(toCardnetCredentials(creds), row.mode, this.sessions)
       case 'paypal':
         return new PayPalGateway(toPayPalCredentials(creds), row.mode)
       default:
