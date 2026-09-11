@@ -53,7 +53,7 @@ Campos:
 |-------|-----------------|
 | `TransactionType` | `0200` (venta) |
 | `CurrencyCode` | `214` = DOP · `840` = USD |
-| `AcquiringInstitutionCode` | `349` (fijo, CardNet) |
+| `AcquiringInstitutionCode` | por defecto `349` (el de la guía oficial); si el ejecutivo de cuenta entrega otro, va en la credencial guardada `acquiringInstitutionCode` (hoy sin campo en la UI) |
 | `MerchantNumber` | afiliado (lo da el ejecutivo de cuenta) |
 | `MerchantTerminal` | terminal del afiliado |
 | `ReturnUrl` | a dónde CardNet hace POST al terminar (ver paso 3) |
