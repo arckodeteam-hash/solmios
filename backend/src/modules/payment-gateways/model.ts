@@ -49,7 +49,7 @@ export const PaymentEventsModel: ModelDefinition = {
  * sola vez, al crear la sesión; el navegador vuelve trayendo sólo la SESSION, y la consulta de
  * estado no trae ni el monto ni nuestra referencia. Sin esta tabla no hay cómo saber qué
  * consultar ni con qué llave: el adapter la escribe en createCharge() y la lee en confirm().
- * `secret` (la session-key) va cifrado con el mismo AES-256-GCM que `payment_gateways.credentials`.
+ * `sessionKey` (la session-key) va cifrado con el mismo AES-256-GCM que `payment_gateways.credentials`.
  */
 export const PaymentGatewaySessionsModel: ModelDefinition = {
   table: 'payment_gateway_sessions',
@@ -58,7 +58,7 @@ export const PaymentGatewaySessionsModel: ModelDefinition = {
     hotelId: { type: 'string', required: true, indexed: true },
     provider: { type: 'string', required: true }, // cardnet (único 'pull' hoy)
     reference: { type: 'string', required: true }, // nuestra referencia (reserva/folio)
-    secret: { type: 'string', required: true }, // session-key, cifrada AES-256-GCM (ver registry.ts)
+    sessionKey: { type: 'string', required: true }, // la session-key de CardNet, cifrada AES-256-GCM (ver registry.ts)
     amountMinor: { type: 'number', default: 0 },
     currency: { type: 'string' },
     mode: { type: 'string' }, // test | live
