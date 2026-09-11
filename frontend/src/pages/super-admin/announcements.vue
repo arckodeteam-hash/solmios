@@ -100,12 +100,9 @@
         </div>
       </SectionCard>
 
+      <!-- #111: se guardan desde el modal ("Guardar como plantilla"). El botón que había acá leía
+           el draft, que `sendAnnouncement` resetea al publicar: después de enviar nunca funcionaba. -->
       <SectionCard title="Plantillas Guardadas">
-        <template #actions>
-          <button type="button" class="text-[10px] font-bold text-white/80 hover:text-white cursor-pointer" @click="guardarComoPlantilla">
-            Guardar la última como plantilla
-          </button>
-        </template>
         <div class="space-y-2">
           <div v-for="(tpl, i) in templates" :key="tpl.name" class="p-2 bg-surface rounded-lg flex items-center gap-2">
             <button type="button" class="flex items-center gap-2 flex-1 min-w-0 text-left cursor-pointer" @click="usarPlantilla(tpl)">
@@ -118,7 +115,7 @@
             <button type="button" class="text-[10px] font-bold text-coral hover:underline cursor-pointer shrink-0" @click="borrarPlantilla(i)">Quitar</button>
           </div>
           <p v-if="templates.length === 0" class="text-center text-xs text-text-muted py-4">
-            Sin plantillas. Escribí un anuncio y guardalo acá para reutilizarlo.
+            Sin plantillas. Escribí un anuncio y guardalo como plantilla desde el modal.
           </p>
         </div>
       </SectionCard>
@@ -202,6 +199,10 @@
         </div>
       </div>
       <template #footer>
+        <button type="button" :disabled="guardandoPlantilla" @click="guardarComoPlantilla"
+          class="px-4 py-2.5 bg-surface text-navy text-sm font-bold rounded-xl cursor-pointer disabled:opacity-50">
+          {{ guardandoPlantilla ? 'Guardando…' : 'Guardar como plantilla' }}
+        </button>
         <button @click="showCreateModal = false" class="px-4 py-2.5 bg-surface text-navy text-sm font-bold rounded-xl cursor-pointer">Cancelar</button>
         <button :disabled="enviando" @click="sendAnnouncement" class="px-4 py-2.5 bg-navy text-white text-sm font-bold rounded-xl cursor-pointer disabled:opacity-50">
           {{ enviando ? 'Publicando…' : (draft.cuando === 'programar' ? 'Programar' : 'Enviar Ahora') }}
@@ -253,8 +254,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useToast } from '@/composables/useToast'
-import { PlatformService, ConfigService } from '@/services/Platform.service'
-import type { AnnouncementsReach } from '@/services/Platform.service'
+import { PlatformService } from '@/services/Platform.service'
+import type { AnnouncementsReach, AnnouncementTemplate } from '@/services/Platform.service'
 import { SuperAdminService } from '@/services/SuperAdmin.service'
 import { AnnouncementsService } from '@/services/Announcements.service'
 import type { AnnouncementAudience } from '@/services/Announcements.service'
@@ -290,13 +291,11 @@ const TYPE_CLASS: Record<string, string> = {
   urgent: 'bg-coral/10 text-coral', promo: 'bg-navy/10 text-navy', info: 'bg-cyan/10 text-cyan',
 }
 
-interface Plantilla { name: string; icon: string; description: string; type: string; message: string }
-
 const announcements = ref<any[]>([])
 const scheduled = ref<any[]>([])
 const reach = ref<AnnouncementsReach | null>(null)
 const hoteles = ref<{ id: string; name: string }[]>([])
-const templates = ref<Plantilla[]>([])
+const templates = ref<AnnouncementTemplate[]>([])
 
 function nuevoDraft() {
   return { title: '', type: 'feature', audience: 'all' as AnnouncementAudience, hotelId: '', message: '', cuando: 'ahora', startsAt: '', endsAt: '' }
@@ -383,8 +382,7 @@ async function cargarHoteles(): Promise<void> {
 
 async function cargarPlantillas(): Promise<void> {
   try {
-    const guardadas = await ConfigService.get('announcement_templates', 'platform')
-    const lista = typeof guardadas === 'string' ? JSON.parse(guardadas) : guardadas
+    const { templates: lista } = await PlatformService.getAnnouncementTemplates()
     templates.value = Array.isArray(lista) ? lista : []
   } catch { templates.value = [] }
 }
@@ -393,6 +391,7 @@ onMounted(() => { cargarAnuncios(); cargarHoteles(); cargarPlantillas() })
 
 function abrirNuevo(): void {
   draft.value = nuevoDraft()
+  plantillaAbierta.value = null
   showCreateModal.value = true
 }
 
@@ -432,30 +431,63 @@ async function sendAnnouncement(): Promise<void> {
   }
 }
 
-// ---- Plantillas: viven en configuration('announcement_templates', 'platform') ----
+// ---- Plantillas (#111): GET/PUT /admin/announcement-templates, super_admin. El PUT manda la
+// lista entera y el backend devuelve la normalizada (nombres trim, icon por defecto).
+
+/**
+ * `name` ORIGINAL de la plantilla con la que se abrió el modal, o null si es un anuncio nuevo.
+ * Al guardar, se reemplaza ESE ítem (misma posición) aunque el título haya cambiado: antes se
+ * filtraba por nombre y editar el título duplicaba la plantilla en vez de editarla.
+ */
+const plantillaAbierta = ref<string | null>(null)
 
 async function persistirPlantillas(): Promise<void> {
-  await ConfigService.set('announcement_templates', JSON.stringify(templates.value), 'platform')
+  const r = await PlatformService.setAnnouncementTemplates(templates.value)
+  templates.value = r.templates
 }
 
-function usarPlantilla(tpl: Plantilla): void {
+function usarPlantilla(tpl: AnnouncementTemplate): void {
   draft.value = { ...nuevoDraft(), title: tpl.name, type: tpl.type, message: tpl.message }
+  plantillaAbierta.value = tpl.name
   showCreateModal.value = true
 }
 
+const mismoNombre = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+
+/** Guarda lo que hay en el formulario. NO cierra el modal ni publica: es un atajo, no un envío. */
+const guardandoPlantilla = ref(false)
 async function guardarComoPlantilla(): Promise<void> {
   const d = draft.value
-  if (!d.title.trim()) { toast.error('Escribí un anuncio primero: se guarda lo que haya en el formulario'); return }
-  templates.value = [
-    ...templates.value.filter((t) => t.name !== d.title.trim()),
-    { name: d.title.trim(), icon: '📌', description: (d.message || '').slice(0, 60), type: d.type, message: d.message },
-  ]
+  const name = d.title.trim()
+  if (!name) { toast.error('Escribí un título: la plantilla se guarda con ese nombre'); return }
+  const nueva: AnnouncementTemplate = { name, icon: '📌', description: (d.message || '').slice(0, 60), type: d.type, message: d.message }
+
+  const previas = [...templates.value]
+  const abierta = plantillaAbierta.value
+  const idx = abierta !== null
+    ? templates.value.findIndex((t) => mismoNombre(t.name, abierta))
+    : templates.value.findIndex((t) => mismoNombre(t.name, name))
+  const lista = [...templates.value]
+  if (idx >= 0) lista[idx] = nueva
+  else lista.push(nueva)
+  // Con la plantilla abierta renombrada al nombre de OTRA, el backend rechaza el duplicado (400):
+  // se descarta acá para no mandar una lista que no puede guardarse.
+  if (lista.filter((t) => mismoNombre(t.name, name)).length > 1) {
+    toast.error(`Ya hay una plantilla llamada «${name}»`)
+    return
+  }
+  templates.value = lista
+
+  guardandoPlantilla.value = true
   try {
     await persistirPlantillas()
+    plantillaAbierta.value = name
     toast.success('Plantilla guardada')
   } catch (e: any) {
-    await cargarPlantillas()
+    templates.value = previas
     toast.error(e?.message || 'No se pudo guardar la plantilla')
+  } finally {
+    guardandoPlantilla.value = false
   }
 }
 
