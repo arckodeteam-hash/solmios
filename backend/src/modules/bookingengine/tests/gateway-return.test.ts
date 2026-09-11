@@ -10,7 +10,7 @@
 //      cascada de grupo) y NO asienta nada si el hash es inválido, si el proveedor no es el del
 //      hotel, o si la reserva es de otro hotel.
 //   3. El controller redirige (302) a `next` con `payment=…`, y `next` no puede ser un open redirect.
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { StripeUseCase, wrapReturnUrls } from '../usecases/stripe'
@@ -59,6 +59,12 @@ function eventsStore() {
 const pending = (over: any = {}) => ({ id: 'res-1', hotelId: 'hotel-A', roomId: 'room-1', checkIn: '2026-10-10', checkOut: '2026-10-12', totalAmount: 200, deposit: 0, currency: 'USD', status: 'pending', accessToken: 'tok-1', ...over })
 
 describe('createCheckoutSession — URLs de retorno (#196)', () => {
+  // `process.env` es compartido entre archivos de test del mismo proceso y otro test puede dejar
+  // PUBLIC_BASE_URL seteada: se fija acá para que la base sea la del caller y no la del vecino.
+  let prevBase: string | undefined
+  beforeEach(() => { prevBase = process.env.PUBLIC_BASE_URL; process.env.PUBLIC_BASE_URL = 'https://hotel.test' })
+  afterEach(() => { if (prevBase === undefined) delete process.env.PUBLIC_BASE_URL; else process.env.PUBLIC_BASE_URL = prevBase })
+
   it('para un proveedor sin webhook, el retorno pasa por /api/pay/return con `next` = página final', async () => {
     const { repo } = reservationsRepo([pending()])
     const gw = makeAzulGw(async () => PAID)
