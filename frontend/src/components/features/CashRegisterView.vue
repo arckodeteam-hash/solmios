@@ -24,6 +24,7 @@ import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import PillTabs from '@/components/ui/PillTabs.vue'
 import { BALANCE_EPSILON, buildArqueo, denominationsFor, expectedCashInDrawer, round2, sumDenominations } from '@/utils/cash-arqueo'
 
 interface CashServiceLike {
@@ -113,6 +114,7 @@ const opening = ref(false)
 
 // Tab histórico de turnos
 const SHIFTS_PAGE_SIZE = 20
+const CASH_TABS = [{ value: 'movimientos', label: 'Movimientos' }, { value: 'turnos', label: 'Turnos' }]
 const tab = ref<'movimientos' | 'turnos'>('movimientos')
 const shifts = ref<ShiftHistoryRow[]>([])
 const shiftsTotal = ref(0)
@@ -388,8 +390,8 @@ async function loadShifts(p = 1) {
   }
 }
 
-function switchTab(t: 'movimientos' | 'turnos') {
-  tab.value = t
+function switchTab(t: string) {
+  tab.value = t as 'movimientos' | 'turnos'
   if (t === 'turnos' && !shifts.value.length && !shiftsLoading.value) loadShifts(1)
 }
 
@@ -626,18 +628,7 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
     </div>
 
     <!-- Tabs: operación del día / histórico de turnos -->
-    <div class="flex gap-1.5 w-fit rounded-full bg-surface p-1 border border-border" role="tablist" aria-label="Secciones de caja">
-      <button role="tab" :aria-selected="tab === 'movimientos'" @click="switchTab('movimientos')"
-        class="rounded-full px-4 py-2 text-xs font-extrabold transition-colors cursor-pointer"
-        :class="tab === 'movimientos' ? 'bg-navy text-white' : 'text-text-secondary hover:text-navy'">
-        Movimientos
-      </button>
-      <button role="tab" :aria-selected="tab === 'turnos'" @click="switchTab('turnos')"
-        class="rounded-full px-4 py-2 text-xs font-extrabold transition-colors cursor-pointer"
-        :class="tab === 'turnos' ? 'bg-navy text-white' : 'text-text-secondary hover:text-navy'">
-        Turnos
-      </button>
-    </div>
+    <PillTabs :tabs="CASH_TABS" :model-value="tab" aria-label="Secciones de caja" @update:model-value="switchTab" />
 
     <!-- Movimientos -->
     <SectionCard v-if="tab === 'movimientos'" title="Movimientos" :subtitle="`${movCount} registro(s)`" body-class="p-0">

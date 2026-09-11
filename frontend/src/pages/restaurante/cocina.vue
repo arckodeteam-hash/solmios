@@ -144,7 +144,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
     <!-- Esta pantalla es genérica: cada estación (Cocina, Bar, etc.) es una pestaña de arriba.
          Si falta "Bar" es porque nadie la creó todavía, no porque el sistema no la soporte. -->
     <p v-if="editPerm" class="text-xs text-text-muted -mt-2">
-      ¿No ves la estación que buscás (ej. Bar)? Creála en <router-link to="/panel/restaurante/carta" class="font-bold text-navy hover:underline">Carta → Estaciones</router-link>.
+      ¿No ves la estación que buscás (ej. Bar)? Creála en <router-link to="/panel/restaurante/carta?tab=estaciones" class="font-bold text-navy hover:underline">Carta → Estaciones</router-link>.
     </p>
 
     <div v-if="loading" class="py-20 text-center text-text-muted">Cargando…</div>

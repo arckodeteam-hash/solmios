@@ -30,7 +30,7 @@ tabla desde cero, primero buscá el componente. Cuatro cubren el 90% de las vist
 | Lista sin datos / búsqueda sin resultados | `EmptyState` | `@/components/ui/EmptyState.vue` |
 
 Otros: `SearchSelect` (combo con búsqueda), `ConfirmModal` (confirmación destructiva),
-`SkeletonLoader`, `Breadcrumbs`, `ChannelIcon`.
+`SkeletonLoader`, `Breadcrumbs`, `ChannelIcon`, `PillTabs` (3+ secciones del mismo nivel — ver §7).
 
 ## Critical Patterns
 
@@ -114,6 +114,35 @@ Declarar la ficha como **datos** (array de secciones/campos en un `computed`) y 
 Skeletons (`animate-pulse rounded bg-surface`) en vez de "Cargando…".
 Badge de estado: fondo `color/10` + texto `color` (`bg-teal/10 text-teal`).
 
+### 7. Pestañas — 3+ secciones independientes del mismo nivel usan `PillTabs`
+
+**Regla**: si una vista apila 3 o más secciones (`SectionCard`) que no dependen unas de otras —
+cada una con su propio título, su propio estado vacío, su propia carga— van en pestañas, no
+apiladas. Apiladas, la sección que se busca siempre termina abajo (con 2 secciones no hace
+falta: apiladas siguen siendo cortas). El componente es `PillTabs` (`components/ui/PillTabs.vue`,
+patrón de `CashRegisterView.vue`) — nunca reimplementar `role="tablist"` a mano.
+
+```vue
+<PillTabs :tabs="tabs" v-model="tab" aria-label="Secciones de X" sync-query />
+<SectionCard v-if="tab === 'items'" title="Ítems" :subtitle="`${items.length} ítem(s)`">…</SectionCard>
+<SectionCard v-if="tab === 'combos'" title="Combos">…</SectionCard>
+```
+
+- `tabs: {value, label, count?}[]` — el contador va en `count` (`Ítems (42)`), no a mano en el label.
+- `v-model` es la pestaña activa; el padre decide qué sección pintar con `v-if`, no `PillTabs`.
+- `sync-query` (opcional): la pestaña activa vive en `?tab=`, sobrevive a F5 y es enlazable
+  (`?tab=combos` abre esa pestaña directo). Sin esta prop, la pestaña es solo de sesión.
+- Teclado (← → Home End) y `aria-selected` vienen incluidos — no hay que tocarlos.
+- La pestaña por defecto es la que más se usa, no la primera alfabética ni la primera en el
+  modelo de datos (ver `pages/restaurante/carta.vue`: Ítems antes que Estaciones).
+
+**Vistas migradas**: `CashRegisterView.vue` (Movimientos/Turnos), `pages/restaurante/carta.vue`
+(Ítems/Categorías/Estaciones/Combos/Food cost).
+
+**Vistas pendientes de migrar** (reimplementan el patrón a mano hoy — tarea aparte cada una):
+Salón (zonas — ver issue de Salón), Settings, Reports, Attendance, CRM, Empleados, Página
+pública, `super-admin/settings.vue`.
+
 ## Paleta y tokens
 
 | Token | Uso |
@@ -155,6 +184,7 @@ cd frontend && bun run dev                                       # login local: 
 - [ ] Montos a la derecha con `tabular-nums`.
 - [ ] `EmptyState` cubre sin-datos y sin-resultados por separado.
 - [ ] Scroll horizontal en mobile, no desborde de página.
+- [ ] 3+ secciones independientes del mismo nivel van en `PillTabs`, no apiladas.
 - [ ] **Mirado en el navegador**, no solo typecheck.
 
 ## Resources
@@ -162,4 +192,4 @@ cd frontend && bun run dev                                       # login local: 
 - Componentes: `frontend/src/components/ui/`, `frontend/src/components/features/dashboard/`
 - Tokens y `tbl-head`: `frontend/src/styles/main.css`
 - Referencias ya migradas: `pages/guests/index.vue` (completa), `pages/housekeeping/index.vue`,
-  `pages/super-admin/*.vue`
+  `pages/super-admin/*.vue`, `pages/restaurante/carta.vue` (`PillTabs`, ver §7)
