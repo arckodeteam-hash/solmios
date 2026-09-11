@@ -1,7 +1,7 @@
 // payment-gateways/tests/service.test.ts
 // Usa repos mock — sin dependencia de SQLite ni Postgres.
 
-import { describe, it, expect, beforeAll } from 'bun:test'
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
 import { PaymentGatewaysService } from '../service'
 import { PaymentGatewayRegistry } from '../../../services/payment-gateway/registry'
@@ -31,11 +31,37 @@ function memRepo(seed: PaymentGatewayRow[] = []) {
   } as any
 }
 
+/** Doble de `payment_gateway_sessions`: sin él el registry se niega a armar CardNet (no podría confirmar). */
+function memSessionsRepo() {
+  const rows: any[] = []
+  return {
+    findOne: async (f: any) => rows.find(r => Object.entries(f).every(([k, v]) => r[k] === v)) || null,
+    create: async (d: any) => { rows.push({ ...d }); return d },
+  }
+}
+
 function makeService(seed: PaymentGatewayRow[] = []) {
   const repo = memRepo(seed)
-  const registry = new PaymentGatewayRegistry(repo, log)
+  const registry = new PaymentGatewayRegistry(repo, log, memSessionsRepo())
   return { svc: new PaymentGatewaysService(repo, log, registry), repo, registry }
 }
+
+// testConnection de CardNet hace un POST /sessions REAL al host del modo: se mockea `fetch` para
+// no tocar la red (misma técnica que paypal-registry.test.ts) y para poder mirar a dónde pegó.
+const originalFetch = globalThis.fetch
+type FetchCall = { url: string; method?: string }
+let fetchCalls: FetchCall[] = []
+
+function mockFetch(respond: () => Response) {
+  fetchCalls = []
+  globalThis.fetch = (async (input: any, init: any = {}) => {
+    fetchCalls.push({ url: String(input), method: init.method })
+    return respond()
+  }) as unknown as typeof fetch
+}
+
+beforeEach(() => { fetchCalls = [] })
+afterEach(() => { globalThis.fetch = originalFetch })
 
 describe('crypto de credenciales', () => {
   it('cifra y descifra ida y vuelta', () => {
@@ -116,6 +142,21 @@ describe('PaymentGatewaysService', () => {
     await expect(
       svc.upsert('h1', { provider: 'cardnet', mode: 'test', secretKey: 'llave-de-cardnet' }),
     ).rejects.toThrow(/Comercio y Terminal/)
+    await expect(
+      svc.upsert('h1', { provider: 'cardnet', mode: 'test', merchantId: 'COMERCIO1' }), // sin terminal
+    ).rejects.toThrow(/Comercio y Terminal/)
+  })
+
+  it('CardNet no exige llave secreta: con comercio y terminal guarda', async () => {
+    const { svc, repo } = makeService()
+    await svc.upsert('h1', { provider: 'cardnet', mode: 'test', merchantId: 'COMERCIO1', terminalId: 'TERM1' })
+    expect(repo.rows).toHaveLength(1)
+    const creds = decryptCredentials(repo.rows[0].credentials)
+    expect(creds.merchantId).toBe('COMERCIO1')
+    expect(creds.terminalId).toBe('TERM1')
+    expect(creds.secretKey).toBe('') // Payment Page no tiene llave: no se inventa ninguna
+    const [dto] = await svc.list('h1')
+    expect(dto.implemented).toBe(true)
   })
 
   it('un PEM de Azul mandado en base64 se guarda decodificado (no corrompido por el validador)', async () => {
@@ -131,10 +172,7 @@ describe('PaymentGatewaysService', () => {
 
   it('CardNet queda implementado y NO permite paymentLinks', async () => {
     const { svc } = makeService()
-    await svc.upsert('h1', {
-      provider: 'cardnet', mode: 'test', secretKey: 'llave-de-cardnet',
-      merchantId: 'COMERCIO1', terminalId: 'TERM1',
-    })
+    await svc.upsert('h1', { provider: 'cardnet', mode: 'test', merchantId: 'COMERCIO1', terminalId: 'TERM1' })
     const [dto] = await svc.list('h1')
     expect(dto.implemented).toBe(true)
     expect(dto.capabilities.confirmation).toBe('pull')
@@ -161,15 +199,30 @@ describe('testConnection — despacha por provider (bug: antes SIEMPRE armaba un
     expect(r.message).toMatch(/Azul/)
   })
 
-  it('CardNet: credenciales con formato válido → ok', async () => {
+  it('CardNet: hace un POST /sessions real al sandbox del modo y ok si devuelve SESSION+session-key', async () => {
+    mockFetch(() => new Response(
+      JSON.stringify({ SESSION: 'sess-abc', 'session-key': 'k'.repeat(64) }), { status: 200 },
+    ))
     const { svc, repo } = makeService()
-    await svc.upsert('h1', {
-      provider: 'cardnet', mode: 'test', secretKey: 'llave', merchantId: 'COMERCIO1', terminalId: 'TERM1',
-    })
+    await svc.upsert('h1', { provider: 'cardnet', mode: 'test', merchantId: 'COMERCIO1', terminalId: 'TERM1' })
     const gwId = repo.rows[0].id
     const r = await svc.testConnection('h1', gwId)
     expect(r.ok).toBe(true)
-    expect(r.message).toMatch(/CardNet/)
+    expect(r.message).toContain('labservicios.cardnet.com.do')
+    expect(fetchCalls).toHaveLength(1)
+    expect(fetchCalls[0].url).toBe('https://labservicios.cardnet.com.do/sessions')
+    expect(fetchCalls[0].method).toBe('POST')
+  })
+
+  it('CardNet: si el host no responde una sesión válida → ok:false con el mensaje de CardNet', async () => {
+    mockFetch(() => new Response(JSON.stringify({ message: 'internal error' }), { status: 500 }))
+    const { svc, repo } = makeService()
+    await svc.upsert('h1', { provider: 'cardnet', mode: 'test', merchantId: 'COMERCIO1', terminalId: 'TERM1' })
+    const gwId = repo.rows[0].id
+    const r = await svc.testConnection('h1', gwId)
+    expect(r.ok).toBe(false)
+    expect(r.message).toContain('CardNet')
+    expect(fetchCalls[0].url).toBe('https://labservicios.cardnet.com.do/sessions')
   })
 })
 
@@ -223,7 +276,7 @@ describe('PaymentGatewayRegistry — aislamiento entre hoteles', () => {
       provider: 'azul', mode: 'test', secretKey: 'authkey', merchantId: 'MERCH1', enabled: true,
     })
     await svc.upsert('h1', {
-      provider: 'cardnet', mode: 'test', secretKey: 'llave', merchantId: 'COMERCIO1', terminalId: 'TERM1', enabled: true,
+      provider: 'cardnet', mode: 'test', merchantId: 'COMERCIO1', terminalId: 'TERM1', enabled: true,
     })
 
     const azul = await registry.resolve('h1', 'azul') as any
