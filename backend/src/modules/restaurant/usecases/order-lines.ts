@@ -2,7 +2,8 @@
 // Cada línea SNAPSHOTEA name/unitPrice/taxRate/estación al crearse (la comanda no muta si cambia la
 // carta después). Los totales se recalculan en el server tras cada cambio. hotelId SIEMPRE del JWT.
 import type { RepositoryAdapter, Auth } from 'arckode-framework'
-import { NotFoundError, ValidationError, ConflictError } from 'arckode-framework'
+import { NotFoundError, ValidationError, ConflictError, ForbiddenError } from 'arckode-framework'
+import { hasPermission } from '../../../shared/permissions'
 import type { OrderDTO, OrderItemDTO, MenuItemDTO, CategoryDTO, StationDTO, CurrentUser, ModifierGroupDTO, ModifierDTO, OrderItemModifierSnapshot, ComboDTO, ComboItemDTO } from '../types'
 import { resolveStation, recomputeTotals, computeLineTotal, isWithinAvailabilityWindow } from './order-totals'
 import { getCombo } from './combos-crud'
@@ -298,6 +299,13 @@ export async function updateLine(deps: OrderLinesDeps, orderId: string, lineId: 
 
 export async function removeLine(deps: OrderLinesDeps, orderId: string, lineId: string, user: CurrentUser): Promise<void> {
   const order = await loadOrderForEdit(deps, orderId, user)
+  // #205: la ruta se gatea con `restaurant:create` (quitar una línea mal cargada es parte de tomar
+  // el pedido, mismo permiso que agregarla; cocina no lo tiene). Una vez enviada a cocina, quitar =
+  // anular con motivo (#207) y exige además `restaurant:delete`. super_admin trae `*:*`; un rol sin
+  // permisos cargados falla cerrado.
+  if (order.status !== 'open' && !hasPermission(user.permissions ?? [], 'restaurant', 'delete')) {
+    throw new ForbiddenError('Sin permiso: restaurant:delete — la comanda ya fue enviada a cocina')
+  }
   const line = (await deps.lines.findOne({ id: lineId })) as OrderItemDTO | null
   if (!line || line.orderId !== orderId || line.hotelId !== order.hotelId) throw new NotFoundError('Línea no encontrada')
   if (line.kind === 'combo_component') {

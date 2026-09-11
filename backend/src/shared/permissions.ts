@@ -69,6 +69,10 @@ export const ACTIONS = {
   export: 'Exportar',
   checkin: 'Check-in',
   checkout: 'Check-out',
+  /** Cobrar (efectivo/tarjeta/transferencia), cargar a la habitación y fijar propina en el POS.
+   *  Separado de `edit` (#205): cocina necesita `restaurant:edit` para mover líneas en el KDS y con
+   *  ese mismo permiso podía cobrar por URL. Mover plata no es operar la comanda. */
+  pay: 'Cobrar',
 } as const
 
 /**
@@ -102,7 +106,8 @@ export const MODULE_ACTIONS: Record<string, (keyof typeof ACTIONS)[]> = {
   ai: ['view', 'edit'],
   accounting: ['view', 'create', 'edit', 'delete'],
   treasury: ['view', 'create', 'edit', 'delete'],
-  restaurant: ['view', 'create', 'edit', 'delete'],
+  // `pay` es exclusivo del POS: cobrar/cargar a habitación (#205). Ver ACTIONS.pay.
+  restaurant: ['view', 'create', 'edit', 'delete', 'pay'],
   inventory: ['view', 'create', 'edit', 'delete'],
   purchasing: ['view', 'create', 'edit', 'delete'],
   // Landing pública: solo view/edit (toggle, reorder, editar config). Sin create/delete
@@ -161,7 +166,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     'accounting:view', 'accounting:create', 'accounting:edit', 'accounting:delete',
     'treasury:view', 'treasury:create', 'treasury:edit', 'treasury:delete',
     // POS de restaurante: el dueño configura todo (estaciones, carta, mesas) y opera.
-    'restaurant:view', 'restaurant:create', 'restaurant:edit', 'restaurant:delete',
+    'restaurant:view', 'restaurant:create', 'restaurant:edit', 'restaurant:delete', 'restaurant:pay',
     'restaurant-catalog:view', 'restaurant-catalog:create', 'restaurant-catalog:edit', 'restaurant-catalog:delete',
     // Inventario y compras: el dueño gestiona insumos, stock, requisiciones y órdenes de compra.
     'inventory:view', 'inventory:create', 'inventory:edit', 'inventory:delete',
@@ -201,9 +206,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     'attendance:view', 'attendance:create',
     'ttlock:view',
     'ai:view', 'ai:edit',
-    // Toma comandas, las envía a cocina y las cobra desde el mostrador (create+edit); la config
-    // (estaciones/carta = `restaurant-catalog`) y el borrado/cancelación (delete) son del hotel_admin.
-    'restaurant:view', 'restaurant:create', 'restaurant:edit',
+    // Toma comandas, las envía a cocina (create+edit) y las cobra desde el mostrador (pay, #205);
+    // la config (estaciones/carta = `restaurant-catalog`) y la cancelación (delete) son del hotel_admin.
+    'restaurant:view', 'restaurant:create', 'restaurant:edit', 'restaurant:pay',
     // Landing pública (F1): recepción puede previsualizarla (view) pero no editar la config.
     'landing:view',
   ],
@@ -236,20 +241,23 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     'attendance:view', 'attendance:create',
   ],
 
-  // Mesero — solo el POS del restaurante desde el Salón: abre comandas, agrega/edita líneas,
-  // las envía a cocina, cobra en el mostrador. Sin acceso a reservas/huéspedes/facturación del
-  // hotel (eso es receptionist). Config de la carta/estaciones (`restaurant-catalog`) y cancelar
-  // comandas (`restaurant:delete`) son del hotel_admin — NO se le da `restaurant-catalog` a
-  // propósito (QA-ALTO): sin este split, `restaurant:edit` alcanzaba para cambiar precios/menú.
+  // Mesero — solo el POS del restaurante desde el Salón: abre comandas, agrega/edita líneas
+  // (y las quita mientras la comanda sigue `open`, #205), las envía a cocina, cobra en el
+  // mostrador (`restaurant:pay`). Sin acceso a reservas/huéspedes/facturación del hotel (eso es
+  // receptionist). Config de la carta/estaciones (`restaurant-catalog`) y cancelar comandas o
+  // quitar líneas ya enviadas (`restaurant:delete`) son del hotel_admin — NO se le da
+  // `restaurant-catalog` a propósito (QA-ALTO): sin este split, `restaurant:edit` alcanzaba para
+  // cambiar precios/menú.
   waiter: [
-    'restaurant:view', 'restaurant:create', 'restaurant:edit',
+    'restaurant:view', 'restaurant:create', 'restaurant:edit', 'restaurant:pay',
     // Ficha desde el panel, igual que el resto del personal operativo.
     'attendance:view', 'attendance:create',
   ],
 
   // Cocina — solo el KDS: ve la cola de pedidos por estación y marca el estado de cada línea
-  // (nueva → preparando → lista). No abre comandas, no cobra, no edita la carta
-  // (`restaurant-catalog` no se le da — mismo criterio que waiter).
+  // (nueva → preparando → lista). No abre comandas, no cobra (`restaurant:pay` NO está a
+  // propósito, #205: antes /pay se gateaba con `edit` y cocina cobraba por URL), no edita la
+  // carta (`restaurant-catalog` no se le da — mismo criterio que waiter).
   kitchen: [
     'restaurant:view', 'restaurant:edit',
     'attendance:view', 'attendance:create',
@@ -295,7 +303,7 @@ export function hasModuleAccess(userPermissions: Permission[], module: string): 
  * viejas guarda otro formato (`billing.read`, con punto). `hasPermission` solo entiende dos puntos,
  * así que devolver esos permisos tal cual dejaría al usuario SIN ACCESO A NADA — y en silencio.
  */
-const isValidPermission = (p: unknown): p is Permission => typeof p === 'string' && p.includes(':')
+export const isValidPermission = (p: unknown): p is Permission => typeof p === 'string' && p.includes(':')
 
 export function getRolePermissions(roleName: string, customPermissions?: Permission[]): Permission[] {
   const custom = Array.isArray(customPermissions) ? customPermissions.filter(isValidPermission) : []

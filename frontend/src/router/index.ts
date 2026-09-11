@@ -3,8 +3,19 @@ import { useAuthStore } from '@/stores/auth.store'
 import { useModulesStore } from '@/stores/modules.store'
 import { permissionModuleForPath } from '@/config/module-map'
 import { hasPermission, isSystemRole } from '@/config/permissions'
+import { RESTAURANT_ROUTES, splitPermission, posLandingFor } from '@/config/restaurant-routes'
 import { useToast } from '@/composables/useToast'
 import { installMangledPathRecovery, cleanSegment } from './recover-path'
+
+/** Vistas del POS por nombre de ruta. Los imports son literales para que Vite las parta en chunks. */
+const RESTAURANT_PAGES: Record<string, () => Promise<unknown>> = {
+  'restaurant-menu': () => import('@/pages/restaurante/carta.vue'),
+  'restaurant-floor': () => import('@/pages/restaurante/salon.vue'),
+  'restaurant-order': () => import('@/pages/restaurante/comanda.vue'),
+  'restaurant-kds': () => import('@/pages/restaurante/cocina.vue'),
+  'restaurant-pay': () => import('@/pages/restaurante/cobrar.vue'),
+  'restaurant-cash': () => import('@/pages/restaurante/caja.vue'),
+}
 
 const router = createRouter({
   history: createWebHistory(),
@@ -302,8 +313,13 @@ const router = createRouter({
             // Mandarlo al KDS porque el cliente es cocinero le esconde el panel que vino a mirar.
             if (auth.impersonating) return '/panel/dashboard'
             const role = auth.userRole
-            if (role === 'waiter') return '/panel/restaurante/salon'
-            if (role === 'kitchen') return '/panel/restaurante/cocina'
+            // #205: el destino sale del PERMISO del rol (config/restaurant-routes.ts), no del nombre.
+            // Mandar a Salón "porque es waiter" con un rol personalizado sin `restaurant:create`
+            // hacía /panel → salon → guard → /panel → … sin fin. Sin ninguna vista del POS, al
+            // dashboard (CORE, siempre accesible).
+            if (role === 'waiter' || role === 'kitchen') {
+              return posLandingFor(auth.user?.permissions, hasPermission) ?? '/panel/dashboard'
+            }
             return '/panel/dashboard'
           },
         },
@@ -409,15 +425,18 @@ const router = createRouter({
         { path: 'tesoreria/proveedores', name: 'treasury-suppliers', component: () => import('@/pages/tesoreria/proveedores.vue'), meta: { requiresHotelAdmin: true } },
         { path: 'tesoreria/caja-chica', name: 'treasury-petty-cash', component: () => import('@/pages/tesoreria/caja-chica.vue'), meta: { requiresHotelAdmin: true } },
         // Restaurante / POS (RES-7) — operacional (meseros/recepción); gateado por module-map (restaurant).
-        // QA-ALTO: defensa en profundidad — el backend ya rechaza mutaciones de carta sin
-        // restaurant-catalog:*, pero sin esta meta un mesero/cocina podía navegar acá por URL
-        // directa y ver los botones de editar habilitados (aunque el submit fallara 403).
-        { path: 'restaurante/carta', name: 'restaurant-menu', component: () => import('@/pages/restaurante/carta.vue'), meta: { requiresHotelAdmin: true } },
-        { path: 'restaurante/salon', name: 'restaurant-floor', component: () => import('@/pages/restaurante/salon.vue') },
-        { path: 'restaurante/comanda/:id', name: 'restaurant-order', component: () => import('@/pages/restaurante/comanda.vue') },
-        { path: 'restaurante/cocina', name: 'restaurant-kds', component: () => import('@/pages/restaurante/cocina.vue') },
-        { path: 'restaurante/cobrar/:id', name: 'restaurant-pay', component: () => import('@/pages/restaurante/cobrar.vue') },
-        { path: 'restaurante/caja', name: 'restaurant-cash', component: () => import('@/pages/restaurante/caja.vue') },
+        // #205: el permiso de cada vista sale de config/restaurant-routes.ts (misma tabla que usa el
+        // sidebar) y viaja en `meta.permission`; el guard de abajo lo aplica a TODOS los roles, no
+        // solo a los custom. Antes solo Carta tenía meta y `kitchen` entraba por URL a Salón/Caja/
+        // Cobrar (el menú se los ocultaba, la URL no). Carta conserva `requiresHotelAdmin` (QA-ALTO:
+        // el backend ya rechaza mutaciones de carta sin restaurant-catalog:*, pero sin esta meta un
+        // mesero/cocina veía los botones de editar habilitados aunque el submit fallara 403).
+        ...RESTAURANT_ROUTES.map((r) => ({
+          path: r.path,
+          name: r.name,
+          component: RESTAURANT_PAGES[r.name],
+          meta: { permission: r.permission, ...(r.name === 'restaurant-menu' ? { requiresHotelAdmin: true } : {}) },
+        })),
         // Inventario + Compras (INV/COM) — gateado por module-map (inventory / purchasing).
         { path: 'inventario', name: 'inventory', component: () => import('@/pages/inventario/index.vue'), meta: { requiresHotelAdmin: true } },
         { path: 'compras/requisiciones', name: 'purchasing-requisitions', component: () => import('@/pages/compras/requisiciones.vue'), meta: { requiresHotelAdmin: true } },
@@ -911,6 +930,22 @@ router.beforeEach(async (to) => {
   if (to.path.startsWith('/panel/') && auth.isAuthenticated && !auth.canActAsHotelAdmin) {
     const mod = permissionModuleForPath(to.path)
     if (mod && !hasPermission(auth.user?.permissions, mod, 'view')) return '/panel'
+  }
+
+  // ── Permiso explícito por ruta (#205): `meta.permission` (`module:action`) declarado en el record.
+  // Hoy lo usan las vistas del POS (config/restaurant-routes.ts): `restaurant:view` lo tienen todos
+  // los roles del restaurante, así que el bloqueo genérico de arriba no distingue a cocina de un
+  // mozo. Aplica a roles de sistema Y custom (los permisos vienen del backend en el login). Quien
+  // no lo tiene va a `/panel`, que redirige a la primera vista del POS que SÍ puede abrir
+  // (`posLandingFor`) o al dashboard — nunca de vuelta a una ruta que este guard rechaza, así no
+  // hay bucle. Con aviso, no en silencio. Impersonando no aplica: los permisos efectivos son ['*:*'].
+  const required = to.meta.permission as string | undefined
+  if (required && to.path.startsWith('/panel/') && auth.isAuthenticated && !auth.canActAsHotelAdmin) {
+    const [mod, action] = splitPermission(required)
+    if (!hasPermission(auth.user?.permissions, mod, action)) {
+      useToast().warning('Sin acceso', 'Tu rol no tiene permiso para esa pantalla.')
+      return '/panel'
+    }
   }
 
   // ── Bloqueo por módulo/submódulo: no basta con ocultar del menú, la URL directa también se bloquea ──

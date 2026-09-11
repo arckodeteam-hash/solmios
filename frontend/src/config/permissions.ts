@@ -20,3 +20,17 @@ export function hasPermission(perms: string[] | undefined | null, module: string
   if (!perms || perms.length === 0) return false
   return perms.includes('*:*') || perms.includes(`${module}:*`) || perms.includes(`${module}:${action}`)
 }
+
+/**
+ * Orden estable de las columnas de la matriz de roles (`pages/roles/index.vue`). Solo ORDENA: toda
+ * acción que el catálogo (`GET /api/roles/catalog`) traiga y no esté en la lista se agrega al final.
+ * Antes era una lista blanca y `pay` (#205, cobrar en el POS) no se dibujaba nunca: el hotel no
+ * tenía forma de dar ni quitar el cobro a un rol desde el panel.
+ */
+export const ACTION_COLUMN_ORDER = ['view', 'create', 'edit', 'delete', 'export', 'checkin', 'checkout', 'pay'] as const
+
+export function orderActionColumns(present: Iterable<string>): string[] {
+  const keys = [...new Set(present)]
+  const known = ACTION_COLUMN_ORDER.filter((k) => keys.includes(k))
+  return [...known, ...keys.filter((k) => !(ACTION_COLUMN_ORDER as readonly string[]).includes(k))]
+}

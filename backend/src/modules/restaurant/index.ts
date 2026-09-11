@@ -123,12 +123,19 @@ export function RestaurantModule() {
       router.post('/api/restaurant/orders/:id/cancel', guard('restaurant', 'delete'), (req) => controller.cancelOrder(req))
       router.post('/api/restaurant/orders/:id/items', guard('restaurant', 'create'), (req) => controller.addLine(req))
       router.put('/api/restaurant/orders/:id/items/:lineId', guard('restaurant', 'edit'), (req) => controller.updateLine(req))
-      router.delete('/api/restaurant/orders/:id/items/:lineId', guard('restaurant', 'delete'), (req) => controller.removeLine(req))
+      // #205: quitar una línea ANTES de enviar a cocina es parte de tomar el pedido → el MISMO
+      // permiso que agregarla, `restaurant:create` (el mozo lo tiene; cocina NO: con `edit` en la
+      // ruta, cocina borraba líneas de una comanda open por API). Después de enviada (`sent` o
+      // posterior) el usecase exige además `restaurant:delete` sobre `req.user.permissions` (403):
+      // el guard estático no puede mirar el estado de la comanda.
+      router.delete('/api/restaurant/orders/:id/items/:lineId', guard('restaurant', 'create'), (req) => controller.removeLine(req))
 
-      // Cuenta + cobro (RES-5)
-      router.post('/api/restaurant/orders/:id/bill', guard('restaurant', 'edit'), (req) => controller.billOrder(req))
-      router.post('/api/restaurant/orders/:id/charge-to-room', guard('restaurant', 'edit'), (req) => controller.chargeToRoom(req))
-      router.post('/api/restaurant/orders/:id/pay', guard('restaurant', 'edit'), (req) => controller.payOrder(req))
+      // Cuenta + cobro (RES-5). #205: `restaurant:pay`, NO `edit` — cocina tiene `edit` para el KDS y
+      // con ese permiso cobraba por URL. Mover plata (cobrar, cargar a habitación, propina) es un
+      // permiso propio: hotel_admin, receptionist y waiter lo tienen; kitchen no.
+      router.post('/api/restaurant/orders/:id/bill', guard('restaurant', 'pay'), (req) => controller.billOrder(req))
+      router.post('/api/restaurant/orders/:id/charge-to-room', guard('restaurant', 'pay'), (req) => controller.chargeToRoom(req))
+      router.post('/api/restaurant/orders/:id/pay', guard('restaurant', 'pay'), (req) => controller.payOrder(req))
       // Refund: permiso billing:create (alinea con POST /api/payments/:id/refund). El POS no expone
       // un permiso propio de reembolso; billing:create es el gate financiero del dinero.
       router.post('/api/restaurant/orders/:id/refund', guard('billing', 'create'), (req) => controller.refundOrder(req))

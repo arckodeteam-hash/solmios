@@ -314,7 +314,11 @@ export class SignupUseCase {
         hotelId,
         name,
         permissions,
-        isSystem: 1,
+        // El campo del modelo `Roles` es `system`, no `isSystem`: con el nombre equivocado el ORM lo
+        // descartaba en silencio (anti-patrón ORM, CLAUDE.md) y TODOS los roles de sistema de prod
+        // quedaron con `system = 0` — editables/borrables como si fueran del hotel y fuera del
+        // alcance de `sync-system-roles.ts`. Las filas ya creadas siguen en 0 (no se retocan acá).
+        system: 1,
       }).catch(() => { /* un rol repetido no puede tumbar el alta entera */ })
     }
   }

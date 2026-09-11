@@ -54,6 +54,14 @@ async function createWithReservedNumber(
 const TERMINAL: OrderDTO['status'][] = ['charged', 'paid', 'cancelled', 'refunded']
 const ORDER_TYPES: OrderType[] = ['dine_in', 'room_service', 'takeaway']
 
+// #210 — estados en los que una comanda YA enviada sigue aceptando un re-envío parcial (las líneas
+// que el mozo agregó después). Fuera de estos (billed/charged/paid/cancelled/processing_payment/
+// refunded) la cuenta ya está cerrada o en manos del cobro: no se manda nada más a cocina.
+const RESENDABLE: OrderDTO['status'][] = ['sent', 'preparing', 'ready', 'served']
+
+/** Tope defensivo de comensales: una mesa de más de 200 cubiertos es un tipeo, no un servicio. */
+const MAX_COVERS = 200
+
 export interface OpenOrderInput {
   type: OrderType
   tableId?: string
@@ -61,6 +69,25 @@ export interface OpenOrderInput {
   guestId?: string
   roomId?: string
   waiterId?: string
+  /** #210 — comensales. Solo se persiste en `dine_in` (default 1); en el resto se ignora. */
+  covers?: number
+}
+
+/**
+ * #210 — Líneas que el mozo cargó y todavía NO confirmó a cocina. `status:'new'` por sí solo no
+ * alcanza: una línea enviada sigue en `new` hasta que cocina la toma. El discriminador es `sentAt`.
+ */
+export function unsentLines(lines: OrderItemDTO[]): OrderItemDTO[] {
+  return lines.filter((l) => l.status === 'new' && !l.sentAt)
+}
+
+function assertCovers(covers: number | undefined | null): number | undefined {
+  if (covers === undefined || covers === null) return undefined
+  const n = Number(covers)
+  if (!Number.isInteger(n) || n < 1 || n > MAX_COVERS) {
+    throw new ValidationError(`Los comensales deben ser un entero entre 1 y ${MAX_COVERS}`)
+  }
+  return n
 }
 
 function hotelFor(user: CurrentUser): string {
@@ -98,6 +125,10 @@ export async function openOrder(deps: OrdersDeps, dto: OpenOrderInput, user: Cur
     guestId: dto.guestId,
     roomId: dto.roomId,
     waiterId: dto.waiterId || user.id,   // users.id del mesero (por defecto, quien la abre)
+    // #210 — comensales: mismo criterio que tableId arriba (solo tiene sentido en salón; en
+    // room_service/takeaway se descarta en silencio). Default 1 para que el ticket promedio por
+    // comensal del reporte del día nunca divida por null.
+    covers: dto.type === 'dine_in' ? (assertCovers(dto.covers) ?? 1) : undefined,
     status: 'open',
     subtotal: 0, tax: 0, tip: 0, total: 0,
     openedAt: now,
@@ -127,18 +158,54 @@ export async function getOrder(deps: OrdersDeps, id: string, user: CurrentUser):
   return { ...order, lines }
 }
 
-/** Envía la comanda a cocina (open → sent). Emite el evento para el KDS. */
+/**
+ * Envía la comanda a cocina. Dos caminos, la MISMA ruta (`POST /orders/:id/send`):
+ *
+ *  - `open → sent`: primer envío. Exige al menos una línea viva y emite `onOrderSent` con todas.
+ *  - comanda ya enviada (`sent|preparing|ready|served`): re-envío PARCIAL de las líneas que el mozo
+ *    agregó después (#210). Idempotente — sin líneas sin confirmar devuelve la comanda tal cual (200),
+ *    no un 409: el mozo puede tocar el botón dos veces sin romper nada.
+ *
+ * En ambos casos se estampa `sentAt` en las líneas despachadas: es lo que hace desaparecer el botón
+ * "Enviar N nuevas" del ticket. El KDS NO mira `sentAt` (ver model.ts) — una línea nueva ya entra en
+ * la cola apenas se agrega; el envío es la confirmación para el mozo, no la puerta de la cocina.
+ */
 export async function sendOrder(deps: OrdersDeps, id: string, user: CurrentUser): Promise<OrderDTO> {
   const order = await deps.orders.findById(id)
   if (!order) throw new NotFoundError('Comanda no encontrada')
   const me = await deps.userRepo.findById(user.id)
   deps.auth.assertOwnership(order.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
-  if (order.status !== 'open') throw new ConflictError(`La comanda ya fue enviada (estado ${order.status})`)
+  if (order.status !== 'open' && !RESENDABLE.includes(order.status)) {
+    throw new ConflictError(`La comanda está ${order.status}; no se puede enviar a cocina`)
+  }
   const lines = (await deps.lines.findMany({ orderId: id })) as OrderItemDTO[]
-  if (!lines.some((l) => l.status !== 'cancelled')) throw new ValidationError('La comanda no tiene líneas para enviar')
-  const updated = (await deps.orders.update(id, { status: 'sent' } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
-  await deps.sockets.onOrderSent?.(updated, lines)
-  return updated
+  const pending = unsentLines(lines)
+
+  if (order.status === 'open') {
+    if (!lines.some((l) => l.status !== 'cancelled')) throw new ValidationError('La comanda no tiene líneas para enviar')
+    await stampSent(deps, pending)
+    const updated = (await deps.orders.update(id, { status: 'sent' } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
+    await deps.sockets.onOrderSent?.(updated, lines)
+    return updated
+  }
+
+  if (!pending.length) return order
+  const dispatched = await stampSent(deps, pending)
+  // El header de un combo no es un plato a preparar (lo excluye `kdsQueue`): se estampa, pero no viaja
+  // en el evento de cocina — la cocina recibe sus componentes, que sí son filas reales.
+  await deps.sockets.onOrderSent?.(order, dispatched.filter((l) => l.kind !== 'combo_header'))
+  return order
+}
+
+/** Marca las líneas como confirmadas a cocina y devuelve el snapshot ya estampado. */
+async function stampSent(deps: OrdersDeps, lines: OrderItemDTO[]): Promise<OrderItemDTO[]> {
+  const sentAt = new Date().toISOString()
+  const out: OrderItemDTO[] = []
+  for (const l of lines) {
+    await deps.lines.update(l.id, { sentAt } as Partial<Omit<OrderItemDTO, 'id'>>)
+    out.push({ ...l, sentAt })
+  }
+  return out
 }
 
 /** Cancela la comanda (si no está liquidada) y libera la mesa. Requiere restaurant:delete (ruta). */
