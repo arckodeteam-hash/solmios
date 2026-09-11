@@ -30,7 +30,8 @@ import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { ValidationError } from 'arckode-framework'
 import type { PaymentGatewayRegistry } from '../../../services/payment-gateway/registry'
 import type { PaymentEventStore } from '../../../services/payment-gateway/payment-events'
-import type { PaymentOutcome } from '../../../services/payment-gateway/types'
+import type { PaymentAttemptStore } from '../../../services/payment-gateway/payment-attempts'
+import type { PaymentGateway, PaymentOutcome } from '../../../services/payment-gateway/types'
 import { hasHostedForm } from '../../../services/payment-gateway/types'
 import { pendingBalance } from '../../../shared/utils/reservation-balance'
 import { round2 } from '../../../shared/utils/money'
@@ -206,6 +207,12 @@ export class StripeUseCase {
      * construyen con este arg) siguen funcionando.
      */
     private readonly hotelsRepo?: RepositoryAdapter<HotelRow>,
+    /**
+     * REQ-RWP-01 (#244) — Bitácora de TODO outcome de la pasarela (`payment_attempts`): checkout
+     * creado, pago, rechazo, expiración. Best-effort (el store nunca lanza). Opcional para no
+     * romper los tests/callers que construyen el usecase sin él.
+     */
+    private readonly attempts?: PaymentAttemptStore,
   ) {}
 
   async isConfigured(hotelId: string): Promise<boolean> {
@@ -287,6 +294,16 @@ export class StripeUseCase {
       metadata: { reservationId, hotelId: reservation.hotelId },
     })
 
+    // REQ-RWP-01 — el checkout abierto queda en la bitácora: si el huésped nunca vuelve, el
+    // hotel ve que hubo un intento y no sólo una reserva `pending` sin explicación.
+    if (result.status === 'redirect' || result.status === 'succeeded') {
+      await this.attempts?.recordCheckout({
+        hotelId: reservation.hotelId, reservationId, source: 'booking_engine',
+        provider: gw.provider, mode: gw.mode, providerRef: result.providerRef,
+        amountMinor: Math.round(amount * 100), currency,
+      })
+    }
+
     if (result.status === 'redirect') {
       return { id: result.providerRef, url: result.redirectUrl, payment_status: 'unpaid' }
     }
@@ -319,7 +336,7 @@ export class StripeUseCase {
       headers: { 'stripe-signature': signature },
     })
     if (!outcome) return null // firma inválida
-    return this.settle(hotelId, gw.provider, outcome)
+    return this.settle(hotelId, gw, outcome)
   }
 
   /**
@@ -347,11 +364,15 @@ export class StripeUseCase {
     // parseReturnParams); TrxToken/providerRef quedan para los demás modos pull.
     const outcome = await gw.confirm({ hotelId, query, providerRef: query.SESSION || query.TrxToken || query.providerRef })
     if (!outcome) return null
-    return this.settle(hotelId, gw.provider, outcome)
+    return this.settle(hotelId, gw, outcome)
   }
 
   /** Asienta un `PaymentOutcome` ya autenticado. Compartido por webhook (push) y retorno (return/pull). */
-  private async settle(hotelId: string, provider: string, outcome: PaymentOutcome): Promise<SettleResult | null> {
+  private async settle(hotelId: string, gw: PaymentGateway, outcome: PaymentOutcome): Promise<SettleResult | null> {
+    const { provider, mode } = gw
+    // REQ-RWP-01 — bitácora ANTES de decidir si se asienta dinero: una fila por outcome
+    // autenticado (paid/failed/expired/refunded/pending). El asiento en payment_events queda intacto.
+    await this.attempts?.recordOutcome(hotelId, 'booking_engine', provider, mode, outcome.reference || null, outcome)
 
     if (outcome.status === 'paid' && outcome.reference) {
       const reservationId = outcome.reference
