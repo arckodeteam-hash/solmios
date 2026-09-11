@@ -15,6 +15,7 @@ import { backfillPaymentsReservationId } from './scripts/backfill-payments-reser
 import { backfillAriOutboxPendingKey } from './scripts/backfill-ari-outbox-pending-key'
 import { backfillRestaurantPayPermission } from './scripts/backfill-restaurant-pay-permission'
 import { backfillRestaurantDiscountPermission } from './scripts/backfill-restaurant-discount-permission'
+import { backfillReservationSourceWeb } from './scripts/backfill-reservation-source-web'
 import { dedupeRestaurantOrderNumbers } from './scripts/dedupe-restaurant-order-numbers'
 import { backfillBusinessDate } from './scripts/backfill-business-date'
 import { isMissingTableError, failMigrationStep } from './src/shared/utils/db-errors'
@@ -1471,6 +1472,17 @@ async function main(): Promise<void> {
     console.log(`roles.restaurant:discount: ${discounted} fila(s) actualizada(s)`)
   } catch (e: unknown) {
     failMigrationStep(e, { what: 'roles.restaurant:discount', missingTable: 'roles', consequence: 'Sin este backfill, nadie puede aplicar descuentos ni cortesías en el POS de un hotel existente.' })
+  }
+
+  // #247 (REQ-RWP-04) — `source='web'` a las reservas del motor público anteriores al cambio: desde
+  // #247 el motor escribe `source:'web'` (channel sigue 'direct'), pero las filas viejas quedaron en
+  // 'direct' y el listado las mostraba como "Directa". El discriminador es `accessToken`: sólo el flujo
+  // público lo setea (el panel lo deja NULL). Idempotente: la segunda corrida matchea 0 filas.
+  try {
+    const n = await backfillReservationSourceWeb(db)
+    console.log(`reservations.source web: ${n} fila(s) actualizada(s)`)
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'reservations.source=web', missingTable: 'reservations', consequence: 'Sin este backfill las reservas web viejas siguen mostrándose como "Directa" en el listado.' })
   }
 
   // M5 fix (audit solmi-direct-booking) — Poblar `hotels.slug` para los hoteles sin slug.
