@@ -94,8 +94,10 @@ describe('Contacto público (issue #79): phone/email viven en Página pública �
     expect(patch).toHaveProperty('email', 'contacto@hotel.test')
   })
 
-  it('phone y email vacíos NO bloquean el guardado — van TAL CUAL ("") para poder limpiarlos', async () => {
+  it('vacíos NO bloquean el guardado: email va "" (se limpia), phone se OMITE (backend min 7 → 400) y vuelve al guardado', async () => {
     patchHotelMock.mockClear()
+    // El backend conserva el phone porque no viajó: la respuesta trae el valor guardado.
+    patchHotelMock.mockResolvedValueOnce({ phone: '+1 809 555 1234', email: '' })
     const wrapper = await mountGeneral()
 
     await phoneInput(wrapper).setValue('')
@@ -104,9 +106,13 @@ describe('Contacto público (issue #79): phone/email viven en Página pública �
 
     expect(patchHotelMock).toHaveBeenCalledTimes(1)
     const patch = patchHotelMock.mock.calls[0]![0]
-    expect(patch).toHaveProperty('phone', '')
+    // UpdateHotelesSchema.phone = { min: 7 }: "" → 400 y null se descarta, así que no se manda.
+    // (`patchHotel` real descarta las claves `undefined` antes de serializar.)
+    expect(patch.phone).toBeUndefined()
     expect(patch).toHaveProperty('email', '')
     expect(wrapper.find('[data-field="email"].border-danger').exists()).toBe(false)
+    // El formulario vuelve a mostrar el teléfono que quedó persistido, no el vacío.
+    expect((phoneInput(wrapper).element as HTMLInputElement).value).toBe('+1 809 555 1234')
   })
 
   it('un email con formato inválido bloquea el guardado (validación aislada de esta pantalla)', async () => {

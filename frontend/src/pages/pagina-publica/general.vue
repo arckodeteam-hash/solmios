@@ -673,9 +673,13 @@ async function save() {
       accommodationType: accommodationType.value,
       starRating: starRating.value,
       website: website.value.trim(),
-      // Contacto público (issue #79): phone/email — vacío TAL CUAL, por el mismo motivo que
-      // starRating (patchHotel descarta `undefined`, así no se podría limpiar un valor guardado).
-      phone: phone.value.trim(),
+      // Contacto público (issue #79). email vacío va TAL CUAL ("") para poder limpiarlo (mismo
+      // motivo que starRating: `patchHotel` descarta `undefined`). phone NO: el backend lo valida
+      // con `min: 7` (UpdateHotelesSchema) y "" devuelve 400 sin persistir NADA del patch — y
+      // `null` lo descarta el validador, así que por esta API no se puede limpiar. Vacío se omite
+      // y el valor guardado se conserva (se recarga abajo desde la respuesta para que el
+      // formulario no muestre un vacío que no se persistió).
+      phone: phone.value.trim() || undefined,
       email: email.value.trim(),
     }
     if (trimmedSlug) patch.slug = trimmedSlug
@@ -688,6 +692,8 @@ async function save() {
       HotelService.saveAmenitiesHotel([...selectedHotelAmenities.value, ...foreignAmenityKeys]),
     ])
     if (trimmedSlug) originalSlug.value = trimmedSlug
+    // phone vacío no viaja (ver patch): el formulario vuelve a lo que quedó guardado.
+    if (typeof updated?.phone === 'string') phone.value = updated.phone
     // Refresca descriptionTranslations desde el backend (por si descartó keys vacías).
     if (updated?.descriptionTranslations && typeof updated.descriptionTranslations === 'object') {
       const dt = updated.descriptionTranslations as Record<string, { title?: string; description?: string }>
