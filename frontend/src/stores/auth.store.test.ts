@@ -108,7 +108,7 @@ describe('auth.store', () => {
 
     // El JWT tiene que ser el NUEVO: antes se pisaba sólo user.value y el backend seguía
     // respondiendo con los datos del super admin.
-    expect(AuthService.impersonate).toHaveBeenCalledWith('u-target')
+    expect(AuthService.impersonate).toHaveBeenCalledWith('u-target', undefined)
     expect(store.token).toBe('imp-tok')
     expect(localStorage.getItem('token')).toBe('imp-tok')
     expect(store.impersonating).toBe(true)
@@ -187,7 +187,7 @@ describe('auth.store', () => {
     await Promise.all([first, second])
 
     expect(AuthService.impersonate).toHaveBeenCalledTimes(1)
-    expect(AuthService.impersonate).toHaveBeenCalledWith('u-target')
+    expect(AuthService.impersonate).toHaveBeenCalledWith('u-target', undefined)
     expect(localStorage.getItem('imp.adminToken')).toBe('admin-tok')
     expect(localStorage.getItem('imp.adminRefreshToken')).toBe('admin-ref')
     expect(JSON.parse(localStorage.getItem('imp.adminUser')!).role).toBe('super_admin')
@@ -208,7 +208,7 @@ describe('auth.store', () => {
     expect(first).toBe(true)
     expect(second).toBe(false)
     expect(AuthService.impersonate).toHaveBeenCalledTimes(1)
-    expect(AuthService.impersonate).toHaveBeenCalledWith('u-target')
+    expect(AuthService.impersonate).toHaveBeenCalledWith('u-target', undefined)
   })
 
   it('loginAs devuelve false si el usuario no es super admin (tampoco ahí hay que navegar)', async () => {
