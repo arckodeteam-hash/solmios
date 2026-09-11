@@ -35,9 +35,15 @@ export interface PublicPlan {
  * `trialEligible=0`; el registro no debe ni listarlo — el que no es elegible va a ventas
  * (landing) y no a la prueba. Sólo el `false` explícito niega: `undefined` (backend viejo) sigue
  * siendo elegible, igual que el NULL de una fila vieja en el servidor.
+ *
+ * También descarta los planes "a cotización" (`price <= 0`, ej. Ultra): son la salida de escape
+ * para el que no encaja en la grilla estándar (mismo criterio que `listPublicPlans` en el backend
+ * y `PlanCatalog.service.ts::toDisplayPlan` — `quote = price <= 0`), se contratan hablando con
+ * ventas, no con una prueba de 15 días de autoservicio. Sin este filtro, el select del registro
+ * ofrecía "Ultra — $0/mes (después de la prueba)": un precio que no es real.
  */
-export function trialEligiblePlans<T extends Pick<PublicPlan, 'trialEligible'>>(plans: T[]): T[] {
-  return plans.filter((p) => p.trialEligible !== false)
+export function trialEligiblePlans<T extends Pick<PublicPlan, 'trialEligible' | 'price'>>(plans: T[]): T[] {
+  return plans.filter((p) => p.trialEligible !== false && p.price > 0)
 }
 
 export interface SignupPayload {
