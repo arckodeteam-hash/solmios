@@ -114,6 +114,8 @@ export interface OrderDTO {
   closedAt?: string
   // #210 — comensales (cubiertos). Solo en comandas `dine_in` (default 1); undefined en el resto.
   covers?: number
+  // #213 — motivo de cancelación (solo en status='cancelled'; null en filas anteriores a la columna).
+  cancelReason?: string | null
   createdAt: string
   updatedAt: string
 }

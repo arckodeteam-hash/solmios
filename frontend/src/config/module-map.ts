@@ -167,6 +167,8 @@ export const ROUTE_TO_PERMISSION: Record<string, string> = {
   '/panel/tesoreria': 'treasury',
   // Match por prefijo más largo: /panel/restaurante/carta gana sobre /panel/restaurante.
   '/panel/restaurante/carta': 'restaurant-catalog',
+  // #213: el cierre del día es un reporte (reports:view), no una pantalla operativa del POS.
+  '/panel/restaurante/reportes': 'reports',
   '/panel/restaurante': 'restaurant',
   '/panel/inventario': 'inventory',
   '/panel/compras': 'purchasing',

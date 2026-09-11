@@ -118,6 +118,11 @@ export const RestaurantOrderModel: ModelDefinition = {
     // abrirla); en room_service/takeaway queda null. Lo consume el reporte del día (ticket promedio
     // por comensal). null en las filas anteriores a la columna = comanda sin dato, NO "cero comensales".
     covers: { type: 'number' },
+    // #213 — motivo con el que se canceló la comanda (lo exige cancelOrder desde #207). Antes vivía
+    // solo en el audit log y en las líneas `voided`; una comanda cancelada `open` (nunca fue a cocina,
+    // sus líneas no se anulan) no tenía dónde guardarlo y el cierre del día la mostraba sin motivo.
+    // null en filas anteriores a la columna: el reporte cae al motivo de la primera línea anulada.
+    cancelReason: { type: 'text' },
   },
   timestamps: true,
 }

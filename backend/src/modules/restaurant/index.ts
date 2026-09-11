@@ -30,6 +30,8 @@ export type { ComboDTO, ComboItemDTO } from './types'
 export type { ReservationPort, ReservationSummary } from './usecases/reservation-port'
 export type { ModuleStatePort } from './usecases/public-menu'
 export type { RestaurantEvent, RestaurantEventType } from './usecases/events'
+// #213 (append-only): cierre del día.
+export type { ReportPorts, RestaurantDailyReport, DailyReportQuery, SalesMethod, VoidRow } from './usecases/reports'
 
 export function RestaurantModule() {
   return createModule({
@@ -210,6 +212,11 @@ export function RestaurantModule() {
       router.get('/api/restaurant/menu-items/:id/food-cost', guard('restaurant-catalog', 'view'), (req) => controller.itemFoodCost(req))
       router.get('/api/restaurant/combos/:id/food-cost', guard('restaurant-catalog', 'view'), (req) => controller.comboFoodCost(req))
       router.get('/api/restaurant/food-cost/report', guard('restaurant-catalog', 'view'), (req) => controller.foodCostReport(req))
+
+      // Cierre del día (#213): ventas por método, propinas, anuladas, top ítems. Permiso `reports:view`
+      // (el del resto de los reportes del hotel: hotel_admin y receptionist lo tienen, mozo/cocina no —
+      // es el consolidado de plata del negocio, no una pantalla operativa) + módulo restaurant activo.
+      router.get('/api/restaurant/reports/daily', guard('reports', 'view'), (req) => controller.dailyReport(req))
 
       // Carta pública de solo lectura (F7) — huésped escaneando un QR de mesa, SIN sesión. Ruta SIN
       // auth.authenticate() ni guard(...) (mismo criterio que /api/public/hotel/:slug de bookingengine).

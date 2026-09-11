@@ -257,7 +257,8 @@ export async function cancelOrder(deps: OrdersDeps, id: string, reason: string |
     for (const l of lines) await deps.lines.update(l.id, voidPatch)
     voidedLines = lines.length
   }
-  const updated = (await deps.orders.update(id, { status: 'cancelled', closedAt: now } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
+  // #213: el motivo queda en la comanda (no solo en el audit log) para el cierre del día.
+  const updated = (await deps.orders.update(id, { status: 'cancelled', closedAt: now, cancelReason: reasonText } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
   if (order.tableId) {
     const table = await deps.tables.update(order.tableId, { status: 'free' } as Partial<Omit<TableDTO, 'id'>>)
     if (table) await deps.sockets.onTableChanged?.(table)

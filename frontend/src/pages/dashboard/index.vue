@@ -59,6 +59,11 @@
       />
     </div>
 
+    <!-- 2.1. Restaurante hoy (#213): solo con el módulo activo y permiso reports:view -->
+    <div v-if="showRestaurantToday" class="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-[1.3fr_1fr_1fr_1.25fr]">
+      <RestaurantTodayCard />
+    </div>
+
     <!-- 2.5. Pendientes de hoy — llegadas y salidas concretas (feedback #619) -->
     <SectionCard title="Pendientes de hoy" subtitle="Llegadas y salidas programadas para hoy">
       <template #actions>
@@ -275,6 +280,7 @@ import { ReportsService, type FacturacionReport } from '@/services/Reports.servi
 import CommandCenterHeader from '@/components/features/dashboard/CommandCenterHeader.vue'
 import ProfileProgressBar from '@/components/features/dashboard/ProfileProgressBar.vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
+import RestaurantTodayCard from '@/components/features/dashboard/RestaurantTodayCard.vue'
 import ReservationCalendar from '@/components/features/ReservationCalendar.vue'
 import LiveActivityFeed, { type FeedItem } from '@/components/features/dashboard/LiveActivityFeed.vue'
 import ChannelDistributionBars, { type ChannelSlice } from '@/components/features/dashboard/ChannelDistributionBars.vue'
@@ -292,6 +298,7 @@ import { CurrencyCode } from '@/types/currency'
 import { channelBrandOrDefault, normalizeChannelKey } from '@/composables/useChannelBrand'
 import { roomStatusMeta, frontDeskActionFor, FRONT_DESK_PERMISSION, FRONT_DESK_LABEL } from '@/data/room-status'
 import { usePermissions } from '@/composables/usePermissions'
+import { useModulesStore } from '@/stores/modules.store'
 import type { CheckinListData, CheckinListItem } from '@/types'
 
 const router = useRouter()
@@ -301,6 +308,10 @@ const roomStore = useRoomStore()
 const reservationStore = useReservationStore()
 const auth = useAuthStore()
 const { can } = usePermissions()
+// #213: "Restaurante hoy" solo si el hotel tiene el módulo (entitlement del plan, GET /api/modules) y
+// el usuario puede ver reportes — es el consolidado de plata, no una pantalla operativa.
+const modulesStore = useModulesStore()
+const showRestaurantToday = computed(() => modulesStore.routeEnabled('/panel/restaurante') && can('reports', 'view'))
 
 /** Refresco del feed/KPIs en vivo */
 const REFRESH_INTERVAL_MS = 60_000
