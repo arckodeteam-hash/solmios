@@ -211,7 +211,11 @@
       <section v-else-if="pollingState === 'pending'" class="text-center py-6">
         <div class="text-5xl mb-3">⏳</div>
         <h2 class="text-xl font-black text-navy">{{ t('confirm.pending') }}</h2>
-        <p class="text-sm text-text-muted mt-2">{{ t('confirm.pendingBody') }}</p>
+        <!-- #196: el huésped volvió de Azul/CardNet y el backend NO pudo verificar el pago (hash
+             inválido o error al consultar). No es "en proceso": es "no sabemos si te cobraron".
+             Se le dice, y se le pide que guarde el comprobante — polling eterno acá sería mentir. -->
+        <p v-if="returnedUnverified" class="text-sm font-bold text-gold mt-2" data-testid="confirm-unverified">{{ t('confirm.unverifiedBody') }}</p>
+        <p v-else class="text-sm text-text-muted mt-2">{{ t('confirm.pendingBody') }}</p>
         <button
           type="button"
           class="mt-5 rounded-xl border-2 border-cyan px-6 py-3 text-sm font-bold text-cyan hover:bg-cyan hover:text-white"
@@ -341,6 +345,11 @@ const canCancel = computed(() => {
 /** Tarea 3.4 (corrección 2026-08-25) — el pago se completó (por eso llegamos a SUCCESS) pero
  *  el hotel todavía no aprobó la reserva ("confirmación instantánea" apagada). */
 const isPendingApproval = computed(() => reservation.value?.reservation?.approvalStatus === 'pending')
+/** #196: `payment=` lo agrega el backend al redirigir desde el retorno de Azul/CardNet. */
+const returnedUnverified = computed(() => {
+  const p = typeof route.query.payment === 'string' ? route.query.payment : ''
+  return p === 'unverified' || p === 'error'
+})
 
 async function confirmCancellation(): Promise<void> {
   const ids = resolveIds()

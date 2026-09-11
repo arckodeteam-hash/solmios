@@ -35,7 +35,7 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       name: 'bookingengine',
       version: '1.0.0',
       description: 'Booking engine: widget config, public availability, reservations, analytics',
-      actions: ['getConfig', 'updateConfig', 'checkAvailability', 'trackEvent', 'getAnalytics', 'getPublicBookingBySlug', 'createPublicBookingDirect', 'handleStripeWebhook', 'setPaymentRequestWebhookPort'],
+      actions: ['getConfig', 'updateConfig', 'checkAvailability', 'trackEvent', 'getAnalytics', 'getPublicBookingBySlug', 'createPublicBookingDirect', 'handleStripeWebhook', 'handleGatewayReturn', 'setPaymentRequestWebhookPort'],
       events: ['onBookingCreated', 'onBookingCancelled', 'onConversionEvent'],
       tables: ['booking_config', 'conversion_events'],
       dependencies: ['canales', 'hoteles', 'habitaciones'],
@@ -302,6 +302,14 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         return { status: 410, body: { error: 'Deprecated. Use POST /api/public/reservations/:id/checkout' } }
       })
       router.post('/api/public/webhook/stripe/:hotelId', (req: any) => controller.handleStripeWebhook(req))
+      // #196 (PG-4.3) — Retorno del navegador desde Azul/CardNet (proveedores sin webhook). Rate
+      // limit como una query pública: es una persona volviendo de pagar, no un servidor. La
+      // autenticidad la da el hash/consulta al proveedor, no el límite.
+      router.get('/api/pay/return/:provider/:hotelId', async (req: any) => {
+        const { allowed, retryAfter } = await rateLimit(`pay-return:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
+        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
+        return controller.handleGatewayReturn(req)
+      })
       router.post('/api/public/events', async (req: any) => {
         const { allowed, retryAfter } = await rateLimit(`public-events:${getClientIp(req)}`, { maxAttempts: 120, windowMs: 60_000 })
         if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }

@@ -30,6 +30,7 @@ import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { ValidationError } from 'arckode-framework'
 import type { PaymentGatewayRegistry } from '../../../services/payment-gateway/registry'
 import type { PaymentEventStore } from '../../../services/payment-gateway/payment-events'
+import type { PaymentOutcome } from '../../../services/payment-gateway/types'
 import { pendingBalance } from '../../../shared/utils/reservation-balance'
 import { round2 } from '../../../shared/utils/money'
 
@@ -74,6 +75,35 @@ interface ReservationRow {
 interface HotelRow {
   id: string
   slug?: string
+}
+
+/** Resultado de asentar un pago (webhook o retorno). `type` es lo que el service y el socket leen. */
+export interface SettleResult {
+  type: string
+  reservationId?: string
+  providerRef?: string
+  amountMinor?: number | null
+  currency?: string | null
+  totalAmount?: number
+  checkIn?: string | null
+}
+
+/**
+ * #196 — URLs de retorno para un proveedor sin webhook: el proveedor manda al navegador a
+ * `GET /api/pay/return/:provider/:hotelId?next=<url final>` y el backend, tras confirmar, lo
+ * redirige a `next`. Sin base absoluta (dev sin PUBLIC_BASE_URL ni URL absoluta del caller) las
+ * URLs quedan como estaban: un redirect relativo no le sirve a Azul, pero tampoco se rompe nada.
+ */
+export function wrapReturnUrls(
+  provider: string,
+  hotelId: string,
+  urls: { successUrl: string; cancelUrl: string },
+  baseUrl: string,
+): { successUrl: string; cancelUrl: string } {
+  if (!baseUrl) return urls
+  const wrap = (next: string) =>
+    `${baseUrl}/api/pay/return/${encodeURIComponent(provider)}/${encodeURIComponent(hotelId)}?next=${encodeURIComponent(next)}`
+  return { successUrl: wrap(urls.successUrl), cancelUrl: wrap(urls.cancelUrl) }
 }
 
 export class StripeUseCase {
@@ -143,9 +173,18 @@ export class StripeUseCase {
     if (!accessToken) {
       throw new ValidationError('La reserva no tiene accessToken (creada desde panel, no por flujo público)')
     }
-    const { successUrl, cancelUrl } = await this.buildCheckoutUrls(
+    const built = await this.buildCheckoutUrls(
       reservationId, accessToken, reservation.hotelId, successUrlTemplate, cancelUrlTemplate,
     )
+    // #196 (PG-4.3): Azul y CardNet NO tienen webhook — el navegador vuelve con el resultado
+    // (`return`) o hay que ir a preguntar (`pull`). Si el proveedor redirige directo a la página
+    // de confirmación del frontend, nadie llama a `confirm()` y la reserva queda `pending` con el
+    // dinero ya cobrado. Por eso el retorno pasa PRIMERO por el backend
+    // (`GET /api/pay/return/:provider/:hotelId?next=<página final>`), que verifica el hash /
+    // consulta el estado, asienta el cobro y recién ahí manda al huésped a `next`.
+    const { successUrl, cancelUrl } = gw.capabilities.confirmation === 'push'
+      ? built
+      : wrapReturnUrls(gw.provider, reservation.hotelId, built, resolveCheckoutBaseUrl(process.env.PUBLIC_BASE_URL, built.successUrl, built.cancelUrl))
 
     const currency = reservation.currency || 'USD'
     const description = `Reserva ${reservationId} | Check-in: ${reservation.checkIn} | Check-out: ${reservation.checkOut}`
@@ -187,7 +226,7 @@ export class StripeUseCase {
     hotelId: string,
     payload: Buffer | string,
     signature: string,
-  ): Promise<{ type: string; reservationId?: string; providerRef?: string; amountMinor?: number | null; currency?: string | null; totalAmount?: number; checkIn?: string | null } | null> {
+  ): Promise<SettleResult | null> {
     const gw = await this.registry.resolve(hotelId)
     if (!gw) throw new ValidationError('El hotel no tiene una pasarela de pago configurada')
 
@@ -197,13 +236,44 @@ export class StripeUseCase {
       headers: { 'stripe-signature': signature },
     })
     if (!outcome) return null // firma inválida
+    return this.settle(hotelId, gw.provider, outcome)
+  }
+
+  /**
+   * #196 (PG-4.3) — Retorno del navegador desde una pasarela SIN webhook (Azul Payment Page:
+   * hash sobre campos fijos; CardNet: token para ir a consultar). Es la contracara de
+   * `handleWebhook`: la autenticidad la decide `gw.confirm()` (hash inválido → null, y acá NO se
+   * asienta nada: cualquiera puede escribir a mano una URL de retorno), y el asiento es el MISMO
+   * que el del webhook — la misma barrera de idempotencia, la misma cascada de grupo.
+   *
+   * Devuelve null si el retorno no es auténtico o el proveedor de la ruta no es el del hotel.
+   */
+  async handleReturn(
+    hotelId: string,
+    provider: string,
+    query: Record<string, string>,
+  ): Promise<SettleResult | null> {
+    const gw = await this.registry.resolve(hotelId)
+    if (!gw) throw new ValidationError('El hotel no tiene una pasarela de pago configurada')
+    if (gw.provider !== provider) {
+      this.logger.warn(`Retorno de pago por '${provider}' para el hotel ${hotelId}, cuya pasarela es '${gw.provider}'`)
+      return null
+    }
+    if (gw.capabilities.confirmation === 'push') return null // un proveedor con webhook no confirma por redirect
+    const outcome = await gw.confirm({ hotelId, query, providerRef: query.TrxToken || query.providerRef })
+    if (!outcome) return null
+    return this.settle(hotelId, gw.provider, outcome)
+  }
+
+  /** Asienta un `PaymentOutcome` ya autenticado. Compartido por webhook (push) y retorno (return/pull). */
+  private async settle(hotelId: string, provider: string, outcome: PaymentOutcome): Promise<SettleResult | null> {
 
     if (outcome.status === 'paid' && outcome.reference) {
       const reservationId = outcome.reference
       const reservation = await this.reservationsRepo.findOne({ id: reservationId })
       // Ownership: el webhook del Hotel A no puede confirmar una reserva del Hotel B.
       if (!reservation || reservation.hotelId !== hotelId) {
-        this.logger.error(`Webhook del hotel ${hotelId} quiso confirmar la reserva ${reservationId}, que no es suya`)
+        this.logger.error(`Pago por '${provider}' del hotel ${hotelId} quiso confirmar la reserva ${reservationId}, que no es suya`)
         return null
       }
       if (!this.events) throw new Error('bookingengine: PaymentEventStore requerido para procesar webhooks')
@@ -212,7 +282,7 @@ export class StripeUseCase {
       // huéspedes reales pagando por internet). Reemplaza la verificación por paymentStatus, que
       // no frenaba dos webhooks a la vez.
       const result = await this.events.settleOnce(
-        hotelId, 'stripe', outcome.eventId,
+        hotelId, provider, outcome.eventId,
         { providerRef: outcome.providerRef, reference: reservationId, status: 'paid',
           amountMinor: outcome.amountMinor, currency: outcome.currency },
         async () => {
