@@ -18,6 +18,7 @@ import { refundPayment } from '../../payments/usecases/refund'
 import { payOrder, settlePaidOrder, refundOrder, type SettlementDeps } from '../usecases/settlement'
 import { dailyReport, todayIn, type ReportsDeps } from '../usecases/reports'
 import type { OrderDTO, OrderItemDTO, TableDTO, CurrentUser } from '../types'
+const REASON = { reason: 'cliente insatisfecho' }
 
 const TZ = 'America/Santo_Domingo'
 const user: CurrentUser = { id: 'u1', hotelId: 'h1', role: 'hotel_admin' }
@@ -94,7 +95,7 @@ describe('cierre del día con ORM real: la plata sale de payments y un refund he
     try {
       const today = todayIn(TZ)
       // 1. Efectivo: payOrder real → payment completed con businessDate de hoy; comanda `paid` con businessDate.
-      await s.newOrder('o-cash', { covers: 2 })
+      await s.newOrder('o-cash', { covers: 2, subtotal: 100, tax: 0, total: 100 })   // los totales de la fila son los que cobra payOrder (#214 COR-A)
       await s.addLine('l1', 'o-cash', 'Pizza', 50, 2)
       const cash = await payOrder(s.settlement, 'o-cash', { method: 'cash' }, user)
       expect(cash.status).toBe('paid')
@@ -162,7 +163,7 @@ describe('cierre del día con ORM real: la plata sale de payments y un refund he
       await s.newOrder('o-card', { status: 'paid', settlement: 'payment', subtotal: 200, tax: 0, tip: 20, total: 220, paymentId: cardPayment.id, closedAt: yesterday.toISOString(), businessDate: yDate })
       await s.payments.update(cardPayment.id, { businessDate: yDate, processedAt: yesterday.toISOString() } as any)
 
-      const refunded = await refundOrder(s.settlement, 'o-card', user)
+      const refunded = await refundOrder(s.settlement, 'o-card', REASON, user)
       expect(refunded.status).toBe('refunded')
       expect(refunded.closedAt).toBe(yesterday.toISOString())
       expect(refunded.businessDate).toBe(yDate)

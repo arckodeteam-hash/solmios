@@ -18,6 +18,10 @@ interface PaymentsModule {
   createPayment: (dto: Record<string, unknown>) => Promise<{ id: string }>
   // Total refund when `amount` is omitted. Returns the new `type:'refund'` payment row.
   refundPayment: (paymentId: string, amount?: number, user?: { id?: string; role?: string }) => Promise<{ id: string }>
+  // #214 (COR-5): devolución por método (tarjeta → Stripe; cash/transfer → asiento `refund` sin pasarela). La decisión vive en payments.
+  refundPaymentByMethod?: (paymentId: string, user?: { id?: string; role?: string }) => Promise<{ id: string }>
+  // #214 (COR-2): ¿ya existe un payment con esta idempotency key? Para conciliar un puerto que falló DESPUÉS de cobrar.
+  findByReference?: (hotelId: string, reference: string) => Promise<{ id: string; method: string; status: string } | null>
   // fix-refund-pos-card
   chargeCard: (dto: Record<string, unknown>, actor?: { id?: string; role?: string }) => Promise<{ payment: { id: string }; checkoutUrl: string }>
   setSockets: (s: Record<string, (data: any) => Promise<void>>) => void
@@ -28,6 +32,9 @@ interface RestaurantModule {
   // fix-refund-pos-card: llamados desde el socket inverso de payments (webhook de Stripe).
   settlePaidOrder: (orderId: string, paymentId: string, user: CurrentUser) => Promise<void>
   unsettleOrder: (orderId: string, user: CurrentUser) => Promise<void>
+  // #214: lo mismo para UNA PARTE de un cobro dividido (metadata.orderPaymentId).
+  settleOrderPayment: (partId: string, paymentId: string, user: CurrentUser) => Promise<unknown>
+  expireOrderPayment: (partId: string, user: CurrentUser) => Promise<unknown>
 }
 
 export function restaurantePaymentsConnector(ctx: ConnectorContext): void {
@@ -49,10 +56,11 @@ export function restaurantePaymentsConnector(ctx: ConnectorContext): void {
         // reference atómico contra un UNIQUE index parcial (hotelId,reference) WHERE reference LIKE
         // 'pos:%'. Un doble-click o un reintento tras crash con la MISMA orden pide el MISMO
         // reference → devuelve el payment ya creado en vez de duplicar el cobro.
-        reference: 'pos:' + input.orderId,
+        // #214: una PARTE de un cobro dividido trae la suya (`pos:<orderId>:<n>`) — mismo índice.
+        reference: input.reference ?? 'pos:' + input.orderId,
         // Tag de origen: payments-caja lo lee para asentar el efectivo en el cajón del
         // restaurante, NO en el de recepción (antes se mezclaban en un único turno del hotel).
-        metadata: { source: 'restaurant', orderId: input.orderId },
+        metadata: { source: 'restaurant', orderId: input.orderId, ...(input.metadata ?? {}) },
       })
       return { paymentId: payment.id }
     },
@@ -65,8 +73,8 @@ export function restaurantePaymentsConnector(ctx: ConnectorContext): void {
         amount: input.amount,
         currency: input.currency,
         description: input.description,
-        reference: 'pos:' + input.orderId,
-        metadata: { source: 'restaurant', orderId: input.orderId },
+        reference: input.reference ?? 'pos:' + input.orderId,
+        metadata: { source: 'restaurant', orderId: input.orderId, ...(input.metadata ?? {}) },
         successUrl: input.successUrl,
         cancelUrl: input.cancelUrl,
         expiresInMinutes: POS_CARD_CHECKOUT_EXPIRY_MINUTES,
@@ -78,8 +86,18 @@ export function restaurantePaymentsConnector(ctx: ConnectorContext): void {
     // the restaurant socket, not an HTTP request, mirroring restaurante-inventario's `sys`.
     // Inline param types: the local module cast uses `any` for setSettlementDeps, which disables
     // contextual inference for the callback params. Annotate to match SettlementPorts.refundPayment.
+    // #214 (COR-5): por método — tarjeta → Stripe; efectivo/transferencia → asiento `refund` sin pasarela
+    // (`payments.refundPaymentByMethod`). Sin ese método cableado (payments viejo), el camino de siempre: solo tarjeta.
     refundPayment: async ({ paymentId }: { paymentId: string }, _user: CurrentUser) => {
-      await payments().refundPayment(paymentId, undefined, { id: 'system', role: 'super_admin' })
+      const sysUser = { id: 'system', role: 'super_admin' }
+      const p = payments()
+      await (p.refundPaymentByMethod ? p.refundPaymentByMethod(paymentId, sysUser) : p.refundPayment(paymentId, undefined, sysUser))
+    },
+    // #214 (COR-2): antes de dar por "sin efecto" un fallo del puerto, el POS pregunta si el cobro con esa
+    // referencia igual quedó asentado (y concilia en vez de borrar la parte).
+    findPaymentByReference: async ({ hotelId, reference }: { hotelId: string; reference: string }) => {
+      const row = await payments().findByReference?.(hotelId, reference)
+      return row ? { paymentId: row.id, status: row.status, method: row.method } : null
     },
   })
 
@@ -101,12 +119,16 @@ export function restaurantePaymentsConnector(ctx: ConnectorContext): void {
       // #213: una devolución (`type:'refund'`) hereda `metadata.source/orderId` del cobro para que el
       // cierre del día la reste; nace `completed` y también pasa por acá. No es un cobro a confirmar.
       if (payment?.method !== 'card' || payment?.type !== 'charge') return
-      await restaurant.settlePaidOrder(orderId, payment.id, sys)
+      // #214: el cobro es UNA PARTE de una cuenta dividida → confirma esa parte (y cierra la comanda si
+      // era la última), no la comanda entera.
+      const partId = payment?.metadata?.orderPaymentId
+      await (partId ? restaurant.settleOrderPayment(String(partId), payment.id, sys) : restaurant.settlePaidOrder(orderId, payment.id, sys))
     },
     onPaymentExpired: async (payment: any) => {
       const orderId = payment?.metadata?.orderId
       if (payment?.metadata?.source !== 'restaurant' || !orderId) return
-      await restaurant.unsettleOrder(orderId, sys)
+      const partId = payment?.metadata?.orderPaymentId
+      await (partId ? restaurant.expireOrderPayment(String(partId), sys) : restaurant.unsettleOrder(orderId, sys))
     },
   })
 }

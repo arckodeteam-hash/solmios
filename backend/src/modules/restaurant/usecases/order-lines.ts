@@ -10,9 +10,11 @@ import type { OrderDTO, OrderItemDTO, MenuItemDTO, CategoryDTO, StationDTO, Curr
 import type { RestaurantSockets } from '../sockets'
 import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
 import { round2 } from '../../../shared/utils/money'
-import { resolveStation, recomputeTotals, computeLineTotal, isWithinAvailabilityWindow, isLineActive } from './order-totals'
+import { resolveStation, recomputeTotals, computeLineTotal, isWithinAvailabilityWindow, isLineActive, hasPartialPayments } from './order-totals'
 import { recomputeOrderStatus } from './kds'
 import { getCombo } from './combos-crud'
+import { lockLines, unlockLines, type OrderCasDeps } from './order-cas'
+import type { CounterCas } from './order-number'
 
 export interface OrderLinesDeps {
   orders: RepositoryAdapter<OrderDTO>
@@ -36,6 +38,9 @@ export interface OrderLinesDeps {
   audit?: AuditPort | null
   logger?: Logger
   sockets?: RestaurantSockets
+  // #214 (COR-A): UPDATE condicional sobre la comanda (el orm real, ver index.ts). Toda mutación de líneas
+  // toma el lock de líneas con él (usecases/order-cas.ts). Sin él (tests viejos) degrada a read-check-write.
+  cas?: CounterCas
 }
 
 // Una vez liquidada o cancelada, la comanda no acepta cambios de líneas. fix-refund-pos-card:
@@ -130,14 +135,40 @@ async function hotelTaxRate(config: RepositoryAdapter<any>, hotels: RepositoryAd
   } catch { return 0 }
 }
 
-/** Comanda editable: existe, es del hotel del usuario y no está bloqueada (LINES_LOCKED → 409). #215 lo reusa para descuentos. */
-export async function loadOrderForEdit(deps: Pick<OrderLinesDeps, 'orders' | 'userRepo' | 'auth'>, orderId: string, user: CurrentUser): Promise<OrderDTO> {
-  const order = await deps.orders.findById(orderId)
-  if (!order) throw new NotFoundError('Comanda no encontrada')
+/** Deps mínimas para tomar la comanda para editar (líneas o descuentos, #215): repos + el `cas` del orm. */
+export type LinesLockDeps = Pick<OrderLinesDeps, 'orders' | 'userRepo' | 'auth' | 'cas' | 'logger'>
+
+/**
+ * Corre `fn` con la comanda TOMADA para editar líneas (#214 COR-A). Los guards (ownership, estado, pagos
+ * parciales) se evalúan sobre la fila fresca en cada vuelta del UPDATE condicional que toma el lock
+ * (`order-cas.lockLines`): con el lock tomado, ninguna parte ni cobro entero reserva saldo y cancelar da
+ * 409, así que lo que `fn` escribe (líneas + `recomputeTotals`) no compite con dinero en movimiento. El
+ * lock se suelta SIEMPRE (también si `fn` falla); si el proceso muere, vence solo (lease).
+ * Antes el guard de pagos parciales era read-check-write y `voidLine(A)` + una parte por la línea A
+ * concurrentes entraban las dos: comanda `sent` con due 40 y amountPaid 60, sin salida por API.
+ *
+ * Es también el ÚNICO lugar desde el que se escribe `subtotal`/`tax`/`total` a partir de las líneas
+ * (`recomputeTotals`): el dinero (partes, cobro entero, propina) LEE esos totales y los condiciona en su
+ * CAS, nunca los recalcula. Un `recomputeTotals` fuera del lock pisaba con el valor viejo el total que una
+ * anulación acababa de escribir y el CAS "matcheaba" contra ese valor: comanda `paid` con 100 sobre líneas
+ * por 40. #215: los descuentos (línea/comanda) también mueven el total → pasan por acá (discounts.ts).
+ */
+export async function withLinesLock<T>(deps: LinesLockDeps, orderId: string, user: CurrentUser, fn: (order: OrderDTO) => Promise<T>): Promise<T> {
   const me = await deps.userRepo.findById(user.id)
-  deps.auth.assertOwnership(order.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
-  if (LINES_LOCKED.includes(order.status)) throw new ConflictError(`La comanda está ${order.status}; no admite cambios`)
-  return order
+  const casDeps: OrderCasDeps = { orders: deps.orders, cas: deps.cas, logger: deps.logger }
+  const { fresh, token } = await lockLines(casDeps, orderId, (order) => {
+    deps.auth.assertOwnership(order.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
+    if (LINES_LOCKED.includes(order.status)) throw new ConflictError(`La comanda está ${order.status}; no admite cambios`)
+    // #214: con una parte de la cuenta ya cobrada (o un Checkout de tarjeta abierto por una parte), cambiar
+    // líneas movería un total sobre el que ya entró — o está entrando — plata (una parte pagada por un
+    // plato que después se quita). Se termina de cobrar y listo. Cubre agregar/editar/quitar/anular.
+    if (hasPartialPayments(order)) throw new ConflictError('La comanda tiene pagos parciales; no admite cambios en las líneas')
+  })
+  try {
+    return await fn(fresh)
+  } finally {
+    await unlockLines(casDeps, orderId, token)
+  }
 }
 
 function assertQuantity(q: number | undefined): number {
@@ -226,8 +257,11 @@ async function addComboLine(
 }
 
 export async function addLine(deps: OrderLinesDeps, orderId: string, dto: AddLineInput, user: CurrentUser): Promise<OrderItemDTO> {
-  const order = await loadOrderForEdit(deps, orderId, user)
+  return withLinesLock(deps, orderId, user, (order) => addLineLocked(deps, order, dto, user))
+}
 
+async function addLineLocked(deps: OrderLinesDeps, order: OrderDTO, dto: AddLineInput, user: CurrentUser): Promise<OrderItemDTO> {
+  const orderId = order.id
   if (!!dto.menuItemId === !!dto.comboId) {
     throw new ValidationError('Debe especificar exactamente uno de menuItemId o comboId')
   }
@@ -288,8 +322,12 @@ async function recalcComboComponents(deps: OrderLinesDeps, header: OrderItemDTO,
 }
 
 export async function updateLine(deps: OrderLinesDeps, orderId: string, lineId: string, dto: UpdateLineInput, user: CurrentUser): Promise<OrderItemDTO> {
-  const order = await loadOrderForEdit(deps, orderId, user)
-  // findOne (no findById): la línea se valida por orderId+hotelId; el ownership ya lo hizo loadOrderForEdit.
+  return withLinesLock(deps, orderId, user, (order) => updateLineLocked(deps, order, lineId, dto))
+}
+
+async function updateLineLocked(deps: OrderLinesDeps, order: OrderDTO, lineId: string, dto: UpdateLineInput): Promise<OrderItemDTO> {
+  const orderId = order.id
+  // findOne (no findById): la línea se valida por orderId+hotelId; el ownership ya lo hizo withLinesLock.
   const line = (await deps.lines.findOne({ id: lineId })) as OrderItemDTO | null
   if (!line || line.orderId !== orderId || line.hotelId !== order.hotelId) throw new NotFoundError('Línea no encontrada')
   if (line.kind === 'combo_component') {
@@ -313,7 +351,11 @@ export async function updateLine(deps: OrderLinesDeps, orderId: string, lineId: 
 }
 
 export async function removeLine(deps: OrderLinesDeps, orderId: string, lineId: string, user: CurrentUser): Promise<void> {
-  const order = await loadOrderForEdit(deps, orderId, user)
+  return withLinesLock(deps, orderId, user, (order) => removeLineLocked(deps, order, lineId, user))
+}
+
+async function removeLineLocked(deps: OrderLinesDeps, order: OrderDTO, lineId: string, user: CurrentUser): Promise<void> {
+  const orderId = order.id
   // #205: la ruta se gatea con `restaurant:create` (quitar una línea mal cargada es parte de tomar
   // el pedido, mismo permiso que agregarla; cocina no lo tiene). #207: una vez que la comanda salió a
   // cocina (cualquier estado ≠ open) el plato ya se vio en el KDS: NO se borra, se anula con motivo
@@ -354,7 +396,11 @@ export async function removeLine(deps: OrderLinesDeps, orderId: string, lineId: 
 export async function voidLine(deps: OrderLinesDeps, orderId: string, lineId: string, reason: string | undefined, user: CurrentUser): Promise<OrderItemDTO> {
   const reasonText = String(reason ?? '').trim()
   if (!reasonText) throw new ValidationError('Indicá el motivo de la anulación')
-  const order = await loadOrderForEdit(deps, orderId, user)
+  return withLinesLock(deps, orderId, user, (order) => voidLineLocked(deps, order, lineId, reasonText, user))
+}
+
+async function voidLineLocked(deps: OrderLinesDeps, order: OrderDTO, lineId: string, reasonText: string, user: CurrentUser): Promise<OrderItemDTO> {
+  const orderId = order.id
   if (order.status === 'open') {
     throw new ConflictError('La línea todavía no fue enviada a cocina: quitala de la comanda')
   }

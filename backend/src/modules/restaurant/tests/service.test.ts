@@ -6,6 +6,7 @@ import type { RepositoryAdapter, Auth } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { RestaurantService } from '../service'
 import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, CurrentUser } from '../types'
+const REASON = { reason: 'cliente insatisfecho' }
 
 const log = silentLogger()
 const passAuth: Auth = { assertOwnership: () => {}, authenticate: (() => []) as any } as unknown as Auth
@@ -394,9 +395,10 @@ describe('RestaurantService — comandas (RES-3)', () => {
 
 // ─── RES-5: cuenta + cobro ───────────────────────────────────────────────────
 describe('RestaurantService — cuenta + cobro (RES-5)', () => {
-  // Comanda servida: 2× $10 net @ 18% → subtotal 20, tax 3.6, total 23.6.
+  // Comanda servida: 2× $10 net @ 18% → subtotal 20, tax 3.6, total 23.6. Los totales de la FILA son los que
+  // el cobro lee (#214 COR-A: el dinero no recalcula; los escribe la edición de líneas bajo su lock).
   function setup(orderOverrides: any = {}) {
-    const ordersStore: any[] = [{ id: 'o1', hotelId: 'h1', number: 'CMD-2026-0001', status: 'served', tableId: 't1', tip: 0, subtotal: 0, tax: 0, total: 0, ...orderOverrides }]
+    const ordersStore: any[] = [{ id: 'o1', hotelId: 'h1', number: 'CMD-2026-0001', status: 'served', tableId: 't1', tip: 0, subtotal: 20, tax: 3.6, total: 23.6, ...orderOverrides }]
     const linesStore: any[] = [{ id: 'l1', hotelId: 'h1', orderId: 'o1', unitPrice: 10, quantity: 2, taxRate: 18, lineTotal: 20, status: 'served' }]
     const tablesStore: any[] = [{ id: 't1', hotelId: 'h1', name: 'M1', status: 'occupied' }]
     const build = (ports?: any) => {
@@ -507,7 +509,7 @@ describe('RestaurantService — cuenta + cobro (RES-5)', () => {
 // ─── fix-refund-pos-card: payOrder(card) → processing_payment + settlePaidOrder/unsettleOrder ──────
 describe('RestaurantService — payOrder(card) vía Stripe Checkout (fix-refund-pos-card)', () => {
   function setup(orderOverrides: any = {}) {
-    const ordersStore: any[] = [{ id: 'o1', hotelId: 'h1', number: 'CMD-2026-0001', status: 'served', tableId: 't1', tip: 0, subtotal: 0, tax: 0, total: 0, ...orderOverrides }]
+    const ordersStore: any[] = [{ id: 'o1', hotelId: 'h1', number: 'CMD-2026-0001', status: 'served', tableId: 't1', tip: 0, subtotal: 20, tax: 3.6, total: 23.6, ...orderOverrides }]
     const linesStore: any[] = [{ id: 'l1', hotelId: 'h1', orderId: 'o1', unitPrice: 10, quantity: 2, taxRate: 18, lineTotal: 20, status: 'served' }]
     const tablesStore: any[] = [{ id: 't1', hotelId: 'h1', name: 'M1', status: 'occupied' }]
     const build = (ports?: any) => {
@@ -634,7 +636,7 @@ describe('RestaurantService — refundOrder (RES-5 refund)', () => {
     const ports = { refundPayment: async () => {} }
     for (const status of ['open', 'cancelled', 'charged'] as const) {
       const { build } = setupPaid({ status, settlement: status === 'charged' ? 'folio' : undefined })
-      await expect(build(ports).refundOrder('o1', user)).rejects.toThrow('Solo se puede reembolsar')
+      await expect(build(ports).refundOrder('o1', REASON, user)).rejects.toThrow('Solo se puede reembolsar')
     }
   })
 
@@ -644,7 +646,7 @@ describe('RestaurantService — refundOrder (RES-5 refund)', () => {
     let evt = false
     const s = build({ refundPayment: async (i: any) => { calls.push(i) } })
     s.setSockets({ onOrderRefunded: async () => { evt = true } })
-    const o = await s.refundOrder('o1', user)
+    const o = await s.refundOrder('o1', REASON, user)
     expect(o.status).toBe('refunded')
     expect(ordersStore[0].status).toBe('refunded')
     expect(calls).toHaveLength(1)
@@ -658,10 +660,10 @@ describe('RestaurantService — refundOrder (RES-5 refund)', () => {
     let evtCount = 0
     const s = build({ refundPayment: async (i: any) => { portCalls.push(i) } })
     s.setSockets({ onOrderRefunded: async () => { evtCount++ } })
-    const first = await s.refundOrder('o1', user)
+    const first = await s.refundOrder('o1', REASON, user)
     expect(first.status).toBe('refunded')
     // Segunda llamada: la orden ya está refunded → debe ser no-op (devuelve sin tocar port/socket).
-    const second = await s.refundOrder('o1', user)
+    const second = await s.refundOrder('o1', REASON, user)
     expect(second.status).toBe('refunded')
     expect(portCalls).toHaveLength(1)   // idempotente: NO se vuelve a llamar
     expect(evtCount).toBe(1)            // idem socket
@@ -669,19 +671,19 @@ describe('RestaurantService — refundOrder (RES-5 refund)', () => {
 
   it('6.2b: paid PERO settlement=folio (cargo a hab) → rechazado (v1 solo payment)', async () => {
     const { build } = setupPaid({ settlement: 'folio' })
-    await expect(build({ refundPayment: async () => {} }).refundOrder('o1', user)).rejects.toThrow('Solo se puede reembolsar')
+    await expect(build({ refundPayment: async () => {} }).refundOrder('o1', REASON, user)).rejects.toThrow('Solo se puede reembolsar')
   })
 
   it('6.2c: sin conector refundPayment wireado → ValidationError', async () => {
     const { build } = setupPaid()
-    await expect(build().refundOrder('o1', user)).rejects.toThrow('no disponible')
+    await expect(build().refundOrder('o1', REASON, user)).rejects.toThrow('no disponible')
   })
 
   it('IDOR: refund de comanda de otro hotel es inaccesible', async () => {
     const orders = backed<OrderDTO>([], [{ id: 'o1', hotelId: 'OTRO', status: 'paid', settlement: 'payment', paymentId: 'p1', tip: 0 }])
     const s = svc3({ orders, lines: backed<any>([]), config: taxConfig(), hotels: makeRepo<any>() }, strictAuth)
     s.setSettlementDeps({ refundPayment: async () => {} })
-    await expect(s.refundOrder('o1', user)).rejects.toThrow('IDOR')
+    await expect(s.refundOrder('o1', REASON, user)).rejects.toThrow('IDOR')
   })
 })
 

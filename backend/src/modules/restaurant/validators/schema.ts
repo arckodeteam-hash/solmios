@@ -209,6 +209,20 @@ export const PaySchema: Record<string, ValidationRule> = {
   cancelUrl: { type: 'string' as const },
 }
 
+// ─── Dividir cuenta / pagos parciales (#214) ───
+// `room` además de los métodos del POS: una parte puede ir al folio de una reserva (`reservationId`).
+// `amount` no es required: con `lineIds` el usecase lo calcula de las líneas (y si viene, tiene que coincidir).
+export const ORDER_PAYMENT_METHODS = [...POS_PAYMENT_METHODS, 'room'] as const
+export const AddOrderPaymentSchema: Record<string, ValidationRule> = {
+  method: { type: 'string' as const, required: true, enum: [...ORDER_PAYMENT_METHODS] },
+  amount: { type: 'number' as const },
+  tip: { type: 'number' as const },
+  reservationId: { type: 'string' as const },
+  lineIds: { type: 'array' as const },
+  successUrl: { type: 'string' as const },
+  cancelUrl: { type: 'string' as const },
+}
+
 // ─── KDS (RES-4) ───
 // #207: 'cancelled' ya no es un estado que cocina pueda fijar — sacar un plato enviado es
 // POST /orders/:id/items/:lineId/void con motivo (VoidLineSchema).
@@ -224,6 +238,11 @@ export const VoidLineSchema: Record<string, ValidationRule> = {
   reason: { type: 'text' as const, required: true, min: 1, max: 500 },
 }
 export const CancelOrderSchema: Record<string, ValidationRule> = {
+  reason: { type: 'text' as const, required: true, min: 1, max: 500 },
+}
+// POST /orders/:id/refund y /orders/:id/payments/:partId/refund (#214): la devolución de un cobro directo
+// (efectivo/transferencia incluidos) exige motivo — sin él, una devolución en mano es un faltante de caja sin dueño.
+export const RefundOrderSchema: Record<string, ValidationRule> = {
   reason: { type: 'text' as const, required: true, min: 1, max: 500 },
 }
 // Motivos predefinidos del hotel (configuration('restaurant_void_reasons')). Array de strings.

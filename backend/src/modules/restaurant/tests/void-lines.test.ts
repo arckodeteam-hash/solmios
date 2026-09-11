@@ -9,6 +9,7 @@ import { RestaurantService } from '../service'
 import type { OrderDTO, OrderItemDTO, TableDTO, CurrentUser, StationDTO, CategoryDTO, MenuItemDTO } from '../types'
 import type { AuditEntry } from '../../../shared/usecases/audit'
 import { DEFAULT_VOID_REASONS, normalizeReasons } from '../usecases/void-reasons'
+const REASON = { reason: 'cliente insatisfecho' }
 
 const strictAuth: Auth = {
   assertOwnership: (resourceHotel: string, userHotel: string, role?: string, sa?: string) => {
@@ -238,12 +239,29 @@ describe('#207 refundOrder — audita restaurant.order.refunded', () => {
     Object.assign(ordersStore[0], { settlement: 'payment', paymentId: 'pay1' })
     const refunded: string[] = []
     svc.setSettlementDeps({ refundPayment: async ({ paymentId }: any) => { refunded.push(paymentId) } } as any)
-    const o = await svc.refundOrder('o1', user)
+    const o = await svc.refundOrder('o1', REASON, user)
     expect(o.status).toBe('refunded')
     expect(refunded).toEqual(['pay1'])
     expect(audit.length).toBe(1)
     expect(audit[0].action).toBe('restaurant.order.refunded')
-    expect(JSON.parse(audit[0].detail!)).toMatchObject({ orderId: 'o1', paymentId: 'pay1', amount: 29.5 })
+    expect(JSON.parse(audit[0].detail!)).toMatchObject({ orderId: 'o1', paymentId: 'pay1', amount: 29.5, reason: REASON.reason })
+  })
+
+  // #214 (COR-5): efectivo/transferencia ahora se devuelven de verdad (asiento `refund` en payments + egreso en
+  // caja). Antes daban 400 desde Stripe. Por eso el motivo es obligatorio: sin él ni se toca el puerto.
+  it('sin motivo → 400 y el puerto de reembolso NO se llama; con motivo, un cobro en EFECTIVO se devuelve y el motivo queda en el audit', async () => {
+    const { svc, ordersStore, audit } = setup('paid')
+    Object.assign(ordersStore[0], { settlement: 'payment', paymentId: 'pay-cash' })
+    const refunded: string[] = []
+    svc.setSettlementDeps({ refundPayment: async ({ paymentId }: any) => { refunded.push(paymentId) } } as any)
+    await expect(svc.refundOrder('o1', { reason: '' }, user)).rejects.toThrow('motivo')
+    await expect(svc.refundOrder('o1', {} as any, user)).rejects.toThrow('motivo')
+    expect(refunded).toEqual([])
+    expect(ordersStore[0].status).toBe('paid')
+    const o = await svc.refundOrder('o1', { reason: 'el plato salió frío' }, user)
+    expect(o.status).toBe('refunded')
+    expect(refunded).toEqual(['pay-cash'])
+    expect(JSON.parse(audit[0].detail!)).toMatchObject({ paymentId: 'pay-cash', reason: 'el plato salió frío' })
   })
 })
 

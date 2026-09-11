@@ -7,12 +7,18 @@
 // #215 — "Descuento" por línea y de la comanda (permiso `restaurant:discount`): abre DiscountModal (tipo,
 // valor, motivo obligatorio); el server recalcula y aplica el tope del rol. El ticket muestra
 // "Descuento (motivo) −X" y las cortesías (100 %) como tales. Sobre una comanda liquidada no se ofrece.
+// #214 — dividir cuenta: pestaña "Dividir cuenta" (`SplitBillPanel`) con el saldo restante, las partes
+// ya cobradas (persistidas: recargar a mitad del proceso las muestra), partes iguales, por líneas y
+// "Agregar pago" con cualquier método. El flujo de un solo pago queda como atajo "Cobrar todo" y
+// desaparece en cuanto hay una parte cobrada o en curso. Cada parte con tarjeta se devuelve por
+// separado (`partially_refunded`). Acá quedan: cargar partes/saldo, esperar el webhook de una parte
+// con tarjeta al volver de Stripe, y la vista de una comanda ya liquidada con sus partes.
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   RestaurantService, roomServiceLabel, inHouseStatusLabel, isLineActive, isCourtesy,
-  type OrderWithLines, type InHouseReservation, type OrderLine, type DiscountPolicy, type DiscountPayload,
-  ORDER_STATUS_LABELS, ORDER_TYPE_LABELS,
+  type OrderWithLines, type InHouseReservation, type OrderLine, type DiscountPolicy, type DiscountPayload, type OrderPayment, type OrderBalance,
+  ORDER_STATUS_LABELS, ORDER_TYPE_LABELS, ORDER_PAYMENT_METHOD_LABELS, ORDER_PAYMENT_STATUS_LABELS, isDeadOrderPayment,
 } from '@/services/Restaurant.service'
 import { SettingsService } from '@/services/Settings.service'
 import { POS_PAYMENT_METHODS, type PosPaymentMethod } from '@/services/Caja.service'
@@ -21,8 +27,10 @@ import { CurrencyCode } from '@/types/currency'
 import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import PillTabs, { type PillTab } from '@/components/ui/PillTabs.vue'
 import ReservationPicker from '@/components/features/restaurante/ReservationPicker.vue'
 import DiscountModal from '@/components/features/restaurante/DiscountModal.vue'
+import SplitBillPanel from '@/components/features/restaurante/SplitBillPanel.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
 
@@ -40,6 +48,12 @@ const canDiscount = computed(() => can('restaurant', 'discount'))
 
 const refundOpen = ref(false)
 const refundBusy = ref(false)
+// #214: el motivo del reembolso es obligatorio (el backend lo exige, como anular o descontar): efectivo y
+// transferencia se devuelven de verdad y una devolución en mano sin motivo es un faltante de caja sin dueño.
+const refundReason = ref('')
+const partRefundReason = ref('')
+const canConfirmRefund = computed(() => refundReason.value.trim().length > 0 && !refundBusy.value)
+const canConfirmPartRefund = computed(() => partRefundReason.value.trim().length > 0 && !refundBusy.value)
 
 const loading = ref(true)
 const busy = ref(false)
@@ -60,6 +74,8 @@ const SETTLED = ['charged', 'paid']
 const settled = computed(() => !!order.value && SETTLED.includes(order.value.status))
 const cancelled = computed(() => order.value?.status === 'cancelled')
 const refunded = computed(() => order.value?.status === 'refunded')
+// #214: se devolvió una parte; el resto sigue cobrado. Se muestra como liquidada, con cada parte y su estado.
+const partiallyRefunded = computed(() => order.value?.status === 'partially_refunded')
 // fix-refund-pos-card: cobro con tarjeta esperando el webhook de Stripe (Checkout Session abierta).
 const processingPayment = computed(() => order.value?.status === 'processing_payment')
 
@@ -89,9 +105,95 @@ async function pollUntilPaid() {
 }
 // Botón visible solo si la orden está pagada con tarjeta y el user tiene permiso.
 const refundable = computed(() =>
-  canRefund.value && order.value?.status === 'paid' && order.value?.settlement === 'payment'
+  canRefund.value && order.value?.status === 'paid' && order.value?.settlement === 'payment' && !hasParts.value
 )
 const money = (n: number): string => `${currencySymbol(currency.value)}${Number(n || 0).toFixed(2)}`
+
+// ─── Dividir cuenta / pagos parciales (#214) ───
+const parts = ref<OrderPayment[]>([])
+const balance = ref<OrderBalance>({ due: 0, paid: 0, pending: 0, outstanding: 0, tips: 0 })
+// Una parte cobrada (o un Checkout de tarjeta abierto) = la cuenta ya se está saldando por partes: el
+// atajo "Cobrar todo" cobraría de nuevo lo que ya entró (el backend lo rechaza con 409 igual).
+const hasParts = computed(() => parts.value.some((p) => !isDeadOrderPayment(p)))
+const partsShown = computed(() => parts.value.filter((p) => !isDeadOrderPayment(p)))
+const tab = ref<'todo' | 'dividir'>('todo')
+const cobrarTabs = computed<PillTab[]>(() => {
+  const list: PillTab[] = []
+  if (!hasParts.value) list.push({ value: 'todo', label: 'Cobrar todo' })
+  list.push({ value: 'dividir', label: 'Dividir cuenta', count: partsShown.value.length || undefined })
+  return list
+})
+watch(hasParts, (v) => { if (v) tab.value = 'dividir' })
+// #214 (COR-5): efectivo y transferencia también se devuelven (asiento `refund` en payments); la habitación, desde el folio.
+const partIsRefundable = (p: OrderPayment): boolean => canRefund.value && p.status === 'completed' && p.method !== 'room' && !!p.paymentId
+
+// Si las partes no se pueden leer (403 sin `restaurant:pay`, red), la página de la comanda sigue
+// funcionando con el cobro entero: se avisa y no se rompe el resto de la carga.
+const partsUnavailable = ref(false)
+async function loadParts() {
+  try {
+    const res = await RestaurantService.listOrderPayments(orderId.value)
+    parts.value = res.data ?? []
+    balance.value = res.balance
+    partsUnavailable.value = false
+  } catch (e: unknown) {
+    partsUnavailable.value = true
+    toast.warning('No se pudieron cargar los pagos parciales', e instanceof Error ? e.message : 'El cobro entero sigue disponible.')
+  }
+}
+async function onPartsChanged() {
+  // Reflejar el estado real; si NO podemos, bloqueamos reintentos (el pago pudo haberse registrado).
+  try { await load() } catch { unknownState.value = true }
+}
+function onSettledByParts() {
+  router.push('/panel/restaurante/salon')
+}
+
+// Vuelta del Checkout de una parte con tarjeta: esperar a que el webhook la confirme (o la venza).
+async function pollPendingParts() {
+  if (polling.value) return
+  polling.value = true
+  const deadline = Date.now() + POLL_TIMEOUT_MS
+  try {
+    while (Date.now() < deadline) {
+      try {
+        const res = await RestaurantService.listOrderPayments(orderId.value)
+        parts.value = res.data ?? []
+        balance.value = res.balance
+        if (!parts.value.some((p) => p.status === 'pending')) {
+          const fresh = await RestaurantService.getOrder(orderId.value)
+          order.value = fresh
+          if (fresh.status === 'paid' || fresh.status === 'charged') { toast.success('Cobro confirmado'); router.push('/panel/restaurante/salon') }
+          return
+        }
+      } catch { /* red intermitente: seguir intentando hasta el timeout */ }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
+    }
+    toast.error('No pudimos confirmar el cobro con tarjeta', 'Revisá el Dashboard de Stripe o reintentá la parte.')
+  } finally {
+    polling.value = false
+  }
+}
+
+const partRefundTarget = ref<OrderPayment | null>(null)
+watch(partRefundTarget, () => { partRefundReason.value = '' })
+async function confirmPartRefund() {
+  const p = partRefundTarget.value
+  if (!p || !canConfirmPartRefund.value) return
+  refundBusy.value = true
+  try {
+    const result = await RestaurantService.refundOrderPayment(orderId.value, p.id, partRefundReason.value.trim())
+    // COR-C: con la comanda abierta la parte queda `reversed` y el saldo vuelve a estar pendiente.
+    if (result.status === 'reversed') toast.success('Parte devuelta', 'Se devolvió ese cobro; el saldo de la comanda volvió a quedar pendiente.')
+    else toast.success('Parte reembolsada', 'Se devolvió ese cobro al cliente; el resto sigue cobrado.')
+    await load()
+  } catch (e: unknown) {
+    toast.error('No se pudo reembolsar', e instanceof Error ? e.message : 'Intentá de nuevo.')
+  } finally {
+    refundBusy.value = false
+    partRefundTarget.value = null
+  }
+}
 
 // Subtotal/impuesto vienen del backend; la propina es editable y NO se grava. Total = subtotal + tax + tip.
 const previewTotal = computed(() => {
@@ -189,6 +291,9 @@ async function load() {
     discountPolicy.value = policy
     tip.value = Number(ord.tip || 0)
     currency.value = settings?.hotel?.currency || CurrencyCode.USD
+    // #214: las partes cobradas viven en el server (no en memoria): recargar a mitad del proceso las trae.
+    if (ord.status !== 'cancelled') await loadParts()
+    if (hasParts.value) tab.value = 'dividir'
     // #209 — comanda con reserva (room service): preseleccionar la ficha del alojado para confirmar en un
     // toque. Se pide ESA reserva por id (no la lista de alojados) y un fallo se dice, no se esconde.
     reservationLookupFailed.value = false
@@ -212,6 +317,9 @@ onMounted(async () => {
   const paidParam = route.query.paid
   if (paidParam === 'cancelled') {
     toast.warning('Cobro cancelado', 'No se completó el pago con tarjeta. Podés reintentar.')
+  } else if (route.query.part || parts.value.some((p) => p.status === 'pending')) {
+    // #214: volvió del Checkout de UNA parte (o recargó con una parte pendiente) → esperar al webhook de esa parte.
+    pollPendingParts()
   } else if (paidParam === 'pending' || processingPayment.value) {
     // paidParam==='pending': volvió de successUrl. Sin query pero processing_payment: recargó la
     // página mientras esperaba — en ambos casos hay que retomar el poll.
@@ -291,11 +399,12 @@ async function chargeRoom() {
   }
 }
 
+watch(refundOpen, (open) => { if (open) refundReason.value = '' })
 async function confirmRefund() {
-  if (!refundable.value || refundBusy.value || !order.value) return
+  if (!refundable.value || !canConfirmRefund.value || !order.value) return
   refundBusy.value = true
   try {
-    await RestaurantService.refundOrder(orderId.value)
+    await RestaurantService.refundOrder(orderId.value, refundReason.value.trim())
     toast.success('Orden reembolsada', 'Se devolvió el dinero al cliente y se repuso el inventario.')
     await load()
   } catch (e: unknown) {
@@ -345,20 +454,34 @@ async function confirmRefund() {
         </SectionCard>
       </div>
 
-      <div v-else-if="settled">
-        <SectionCard title="Comanda liquidada">
+      <div v-else-if="settled || partiallyRefunded">
+        <SectionCard :title="partiallyRefunded ? 'Comanda reembolsada en parte' : 'Comanda liquidada'">
           <div class="py-6 text-center">
             <p class="text-navy font-bold">
-              {{ order.status === 'paid' ? 'Cobrada directamente.' : 'Cargada a la habitación.' }}
+              {{ partiallyRefunded ? 'Se devolvió una parte del cobro; el resto sigue cobrado.' : hasParts ? 'Cobrada por partes.' : order.status === 'paid' ? 'Cobrada directamente.' : 'Cargada a la habitación.' }}
             </p>
             <p class="text-2xl font-black text-navy mt-2 tabular-nums">{{ money(order.total) }}</p>
+            <!-- #214: cada parte con su método y estado; la de tarjeta se devuelve por separado. -->
+            <ul v-if="partsShown.length" data-testid="settled-parts" class="mt-4 mx-auto max-w-md divide-y divide-border text-left text-sm">
+              <li v-for="p in partsShown" :key="p.id" class="py-2 flex items-center justify-between gap-3">
+                <span class="text-navy">
+                  <span class="font-bold">Parte {{ p.seq }}</span> · {{ ORDER_PAYMENT_METHOD_LABELS[p.method] }}
+                  <span :class="['ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold', p.status === 'refunded' ? 'bg-coral/10 text-coral' : 'bg-teal/10 text-teal']">{{ ORDER_PAYMENT_STATUS_LABELS[p.status] }}</span>
+                </span>
+                <span class="flex items-center gap-2">
+                  <span class="tabular-nums font-bold text-navy">{{ money(p.amount + (p.tip || 0)) }}</span>
+                  <button v-if="partIsRefundable(p)" @click="partRefundTarget = p" :data-testid="`refund-part-${p.seq}`"
+                    class="px-2 py-1 rounded-lg bg-coral text-white text-xs font-bold hover:bg-coral/80">Reembolsar</button>
+                </span>
+              </li>
+            </ul>
             <!-- #209 — un cargo al folio no se reembolsa desde acá: se explica en vez de no mostrar el botón sin más. -->
             <p v-if="order.settlement === 'folio'" data-testid="folio-note" class="text-xs text-text-muted mt-2">
               Cobrado a la habitación: se devuelve desde el folio{{ orderReservationLabel ? ` (${orderReservationLabel})` : '' }}, en Facturación.
             </p>
             <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
               <router-link to="/panel/restaurante/salon" class="px-4 py-2 rounded-lg bg-navy text-white text-sm font-bold">Volver al salón</router-link>
-              <button v-if="refundable" @click="refundOpen = true"
+              <button v-if="refundable" @click="refundOpen = true" data-testid="refund-order"
                 class="px-4 py-2 rounded-lg bg-coral text-white text-sm font-bold hover:bg-coral/80 disabled:opacity-50">
                 Reembolsar
               </button>
@@ -406,6 +529,10 @@ async function confirmRefund() {
           </div>
         </SectionCard>
 
+        <!-- #214: un solo pago (atajo) o dividir la cuenta. Con una parte ya cobrada solo queda dividir. -->
+        <PillTabs v-model="tab" :tabs="cobrarTabs" aria-label="Forma de cobro" class="mb-4" />
+
+        <template v-if="tab === 'todo'">
         <!-- Propina (solo cobro directo) -->
         <SectionCard title="Propina" subtitle="Aplica al cobro directo. El cargo a habitación no la incluye." class="mb-4">
           <div class="flex flex-wrap items-center gap-2">
@@ -455,6 +582,17 @@ async function confirmRefund() {
           <p class="text-[11px] text-text-muted mt-2">El folio le aplica el impuesto al facturar (no se dobla el ITBIS).</p>
           <p v-if="!canChargeRoom" class="text-[11px] text-text-muted mt-2">Elegí al huésped alojado arriba o cobrá directo.</p>
         </SectionCard>
+        </template>
+
+        <!-- #214: dividir cuenta / pagos parciales -->
+        <template v-else>
+          <p v-if="partsUnavailable" role="alert" data-testid="parts-unavailable" class="mb-4 p-3 rounded-xl border-2 border-gold/40 bg-gold/5 text-sm text-gold font-bold">
+            No se pudieron cargar los pagos parciales. Recargá la página o cobrá todo desde la otra pestaña.
+          </p>
+          <SplitBillPanel v-else :order="order" :parts="parts" :balance="balance" :currency="currency" :can-pay="canPay"
+            :disabled="busy || unknownState" :polling="polling" :preset-reservation="selectedReservation" :order-reservation-label="orderReservationLabel"
+            :can-refund="canRefund" @paid="onSettledByParts" @changed="onPartsChanged" @refund="partRefundTarget = $event" />
+        </template>
       </template>
     </template>
 
@@ -465,17 +603,49 @@ async function confirmRefund() {
       :currency="currencySymbol(currency)" :policy="discountPolicy" :current="discountCurrent" :loading="discountBusy"
       @confirm="confirmDiscount" @remove="removeDiscount" @close="closeDiscount" />
 
+    <!-- #214: reembolso de UNA parte -->
+    <AppModal :open="!!partRefundTarget" title="Reembolsar una parte" size="sm" @close="partRefundTarget = null">
+      <div class="space-y-3 text-sm text-navy">
+        <p v-if="settled || partiallyRefunded">Se <strong>devolverá solo este cobro</strong> al cliente. Las demás partes siguen cobradas y el inventario no se repone.</p>
+        <p v-else>Se <strong>devolverá solo este cobro</strong> al cliente y ese monto <strong>vuelve a quedar pendiente</strong> en la comanda (sus líneas se pueden cobrar de nuevo).</p>
+        <p class="text-coral font-bold">Esta acción no se puede deshacer.</p>
+        <p class="text-text-muted">Parte {{ partRefundTarget?.seq }} · {{ ORDER_PAYMENT_METHOD_LABELS[partRefundTarget?.method ?? ''] }}: <span class="font-black text-navy tabular-nums">{{ money((partRefundTarget?.amount ?? 0) + (partRefundTarget?.tip ?? 0)) }}</span></p>
+        <div>
+          <label for="part-refund-reason" class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1">Motivo <span class="text-coral">*</span></label>
+          <textarea id="part-refund-reason" v-model="partRefundReason" rows="2" maxlength="500" :disabled="refundBusy" data-testid="part-refund-reason"
+            class="w-full rounded-xl border-2 border-border px-3 py-2 text-sm text-navy focus:border-navy focus:outline-none disabled:opacity-50"
+            placeholder="Por qué se devuelve este cobro"></textarea>
+          <p class="mt-1 text-xs text-text-muted">Queda registrado con tu usuario, la hora y el motivo.</p>
+        </div>
+      </div>
+      <template #footer>
+        <button @click="partRefundTarget = null" :disabled="refundBusy"
+          class="px-4 py-2 rounded-lg border-2 border-border text-navy text-sm font-bold hover:bg-surface disabled:opacity-50">Cancelar</button>
+        <button @click="confirmPartRefund" :disabled="!canConfirmPartRefund" data-testid="confirm-part-refund"
+          class="px-4 py-2 rounded-lg bg-coral text-white text-sm font-bold hover:bg-coral/80 disabled:opacity-50">
+          {{ refundBusy ? 'Procesando…' : 'Reembolsar' }}
+        </button>
+      </template>
+    </AppModal>
+
     <!-- Confirmación de reembolso -->
     <AppModal :open="refundOpen" title="Reembolsar orden" size="sm" @close="refundOpen = false">
       <div class="space-y-3 text-sm text-navy">
         <p>Se <strong>devolverá el dinero al cliente</strong> y se <strong>repondrá el inventario vendido</strong>.</p>
         <p class="text-coral font-bold">Esta acción no se puede deshacer.</p>
         <p class="text-text-muted">Total: <span class="font-black text-navy tabular-nums">{{ money(order?.total ?? 0) }}</span></p>
+        <div>
+          <label for="refund-reason" class="block text-[10px] font-bold uppercase tracking-wide text-text-muted mb-1">Motivo <span class="text-coral">*</span></label>
+          <textarea id="refund-reason" v-model="refundReason" rows="2" maxlength="500" :disabled="refundBusy" data-testid="refund-reason"
+            class="w-full rounded-xl border-2 border-border px-3 py-2 text-sm text-navy focus:border-navy focus:outline-none disabled:opacity-50"
+            placeholder="Por qué se devuelve el cobro"></textarea>
+          <p class="mt-1 text-xs text-text-muted">Queda registrado con tu usuario, la hora y el motivo.</p>
+        </div>
       </div>
       <template #footer>
         <button @click="refundOpen = false" :disabled="refundBusy"
           class="px-4 py-2 rounded-lg border-2 border-border text-navy text-sm font-bold hover:bg-surface disabled:opacity-50">Cancelar</button>
-        <button @click="confirmRefund" :disabled="refundBusy"
+        <button @click="confirmRefund" :disabled="!canConfirmRefund" data-testid="confirm-refund"
           class="px-4 py-2 rounded-lg bg-coral text-white text-sm font-bold hover:bg-coral/80 disabled:opacity-50">
           {{ refundBusy ? 'Procesando…' : 'Reembolsar' }}
         </button>

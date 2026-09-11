@@ -40,8 +40,22 @@ export function isLineActive(line: Pick<OrderItemDTO, 'status'>): boolean {
  * (order-lines.ts), que dice cuándo las LÍNEAS dejan de editarse — `processing_payment` bloquea
  * líneas pero la comanda sigue viva en la mesa.
  */
-export const TERMINAL_ORDER_STATUSES: OrderDTO['status'][] = ['charged', 'paid', 'cancelled', 'refunded']
+export const TERMINAL_ORDER_STATUSES: OrderDTO['status'][] = ['charged', 'paid', 'cancelled', 'refunded', 'partially_refunded']
 export const isTerminalOrder = (order: Pick<OrderDTO, 'status'>): boolean => TERMINAL_ORDER_STATUSES.includes(order.status)
+
+/**
+ * #214 — "Checkout de tarjeta abierto para UNA PARTE" no es un estado de la comanda (el cobro entero usa
+ * `processing_payment`; el de una parte vive en la fila hija `restaurant_order_payments.status='pending'`).
+ * Para que el resto del circuito lo respete sin leer esa tabla, la comanda lleva `amountReserved`: la
+ * suma de las partes `pending` vivas, que `split-payments.ts` mueve con UPDATE condicional (CAS). > 0 =
+ * hay una parte en curso (Stripe puede confirmarla en cualquier momento): NO se cobra entero, NO se
+ * cancela, NO se tocan líneas. Único lugar donde se decide.
+ */
+export const hasOpenPart = (order: Pick<OrderDTO, 'amountReserved'>): boolean => Number(order.amountReserved || 0) > 0
+/** #214 — ya entró plata por partes (`amountPaid` = suma de partes cobradas, sin propina). */
+export const hasPaidParts = (order: Pick<OrderDTO, 'amountPaid'>): boolean => Number(order.amountPaid || 0) > 0
+/** #214 — la cuenta se está saldando por partes (cobrada o en curso): solo se termina por partes. */
+export const hasPartialPayments = (order: Pick<OrderDTO, 'amountPaid' | 'amountReserved'>): boolean => hasPaidParts(order) || hasOpenPart(order)
 
 /** "HH:mm" → minutos desde medianoche. */
 function toMinutes(hhmm: string): number {

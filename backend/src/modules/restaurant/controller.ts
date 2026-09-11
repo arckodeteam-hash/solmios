@@ -3,15 +3,17 @@
 import type { HttpRequest, Logger } from 'arckode-framework'
 import { validateSchema } from '../../shared/validators/validate-body'
 import type { RestaurantService } from './service'
+import type { CurrentUser } from './types'
+import type { AddOrderPaymentInput } from './usecases/split-payments'
 import {
   CreateStationSchema, UpdateStationSchema,
   CreateCategorySchema, UpdateCategorySchema,
   CreateItemSchema, UpdateItemSchema, AvailabilitySchema,
   CreateTableSchema, UpdateTableSchema,
   OpenOrderSchema, AddLineSchema, UpdateLineSchema,
-  BillSchema, ChargeToRoomSchema, PaySchema,
+  BillSchema, ChargeToRoomSchema, PaySchema, AddOrderPaymentSchema,
   KdsLineStatusSchema,
-  VoidLineSchema, CancelOrderSchema, VoidReasonsSchema,
+  VoidLineSchema, CancelOrderSchema, RefundOrderSchema, VoidReasonsSchema,
   DiscountSchema, DiscountPolicySchema,
   CreateModifierGroupSchema, UpdateModifierGroupSchema,
   CreateModifierSchema, UpdateModifierSchema,
@@ -267,11 +269,36 @@ export class RestaurantController {
     const item = await this.service.payOrder(req.params.id, data as any, req.user as any)
     return { status: 200, body: item }
   }
-  // Refund: clon de cancelOrder (sin validateSchema: NO hay body). El usecase valida estado + paymentId.
+  // Refund: clon de cancelOrder — motivo obligatorio (RefundOrderSchema). El usecase valida estado + paymentId.
   async refundOrder(req: HttpRequest) {
     this.logger.info('POST /restaurant/orders/:id/refund', { id: req.params.id })
-    const item = await this.service.refundOrder(req.params.id, req.user as any)
+    const data = validateSchema(RefundOrderSchema, req.body ?? {})
+    const item = await this.service.refundOrder(req.params.id, data as { reason?: string }, req.user as any)
     return { status: 200, body: item }
+  }
+
+  // ─── Dividir cuenta / pagos parciales (#214) ───
+  async indexOrderPayments(req: HttpRequest) {
+    return { status: 200, body: await this.service.listOrderPayments(req.params.id, req.user as CurrentUser) }
+  }
+  async splitPreview(req: HttpRequest) {
+    const parts = Number((req.query as Record<string, unknown> | undefined)?.parts ?? 2)
+    return { status: 200, body: await this.service.splitPreview(req.params.id, parts, req.user as CurrentUser) }
+  }
+  async addOrderPayment(req: HttpRequest) {
+    this.logger.info('POST /restaurant/orders/:id/payments', { id: req.params.id })
+    // validateSchema devuelve Record<string, unknown>: el enum de `method` ya lo aplicó el schema.
+    const data = validateSchema(AddOrderPaymentSchema, req.body) as unknown as AddOrderPaymentInput
+    // Como payOrder(card): si viene `checkoutUrl`, el frontend redirige al Checkout de Stripe.
+    const result = await this.service.addOrderPayment(req.params.id, data, req.user as CurrentUser)
+    return { status: 201, body: result }
+  }
+  // Motivo obligatorio (RefundOrderSchema). El usecase valida estado de la parte y de la comanda.
+  async refundOrderPayment(req: HttpRequest) {
+    this.logger.info('POST /restaurant/orders/:id/payments/:partId/refund', { id: req.params.id, partId: req.params.partId })
+    const data = validateSchema(RefundOrderSchema, req.body ?? {})
+    const part = await this.service.refundOrderPayment(req.params.id, req.params.partId, data as { reason?: string }, req.user as CurrentUser)
+    return { status: 200, body: part }
   }
 
   // ─── Alojados (#209): buscador para room service / cargo a habitación ───
