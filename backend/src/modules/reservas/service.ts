@@ -84,7 +84,7 @@ export class ReservasService {
   setSockets(s: Partial<ReservasSockets>): void { accumulateSockets(this.sockets as any, s as any) }
   /** Invalidación a mano para altas que bypassan el CRUD (ver reservas-bookingengine.ts). */
   async invalidateListCache(hotelId: string): Promise<void> { await invalidateReservasCaches(this.cache, hotelId) }
-  async list(query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> { return listReservations(this.repo, this.userRepo, this.cache, this.logger, query, currentUser) }
+  async list(query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> { return listReservations(this.repo, this.userRepo, this.cache, this.logger, query, currentUser, { addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource() }) } // REQ-RWP-04: paymentState/paidAmount por fila — ver usecases/crud.ts
   /** #209: alojados (y confirmadas vigentes) del hotel por habitación/apellido, o una por `id` — lo consume el POS vía conector. */
   async searchInHouse(query: { q?: string; id?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<InHouseSearchResult> { return searchInHouseUsecase({ repo: this.repo, roomRepo: this.roomRepo, guestRepo: this.guestRepo, userRepo: this.userRepo, hotelRepo: this.hotelRepo }, query, currentUser) }
   async getById(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> {
