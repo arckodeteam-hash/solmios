@@ -3,11 +3,12 @@ import type { HttpRequest, Logger, Auth, RepositoryAdapter } from 'arckode-frame
 import { validateSchema, OrmRepository } from 'arckode-framework'
 import type { FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasService } from './service'
-import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, StayQuoteSchema, ManualMessageLogSchema , SendWhatsappSchema } from './validators/schema'
+import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, StayQuoteSchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema } from './validators/schema'
 import { listCompanions, createCompanion, updateCompanion, deleteCompanion } from './usecases/companions'
 import { listAddons, createAddon, deleteAddon } from './usecases/addons'
 import { logManualMessage } from './usecases/message-log'
 import { sendWhatsappForReservation } from './usecases/send-whatsapp'
+import type { MarkPaidDTO } from './usecases/mark-paid'
 import { hashGuaranteePin, verifyGuaranteePin } from '../../services/guarantee-pin'
 import { sendCheckinEmail } from './usecases/checkin-email'
 import { dispatchLifecycleEmail } from './usecases/lifecycle-email'
@@ -440,6 +441,21 @@ export class ReservasController {
       if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
       if (e.name === 'ValidationError') return { status: 400, body: { error: e.message } }
       if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
+      return { status: 500, body: { error: e.message } }
+    }
+  }
+
+  // ── MARK PAID (REQ-RWP-06, #249): cobro manual (efectivo/transferencia/POS) con evidencia ──
+  async markPaid(req: HttpRequest) {
+    try {
+      const dto = validateSchema(MarkPaidSchema, req.body || {}) as unknown as MarkPaidDTO
+      const item = await this.service.markPaid(req.params.id, dto, req.user as any)
+      return { status: 201, body: item }
+    } catch (e: any) {
+      if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
+      if (e.name === 'ValidationError') return { status: 400, body: { error: e.message } }
+      if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
+      if (e.name === 'ConflictError') return { status: 409, body: { error: e.message } }
       return { status: 500, body: { error: e.message } }
     }
   }

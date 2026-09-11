@@ -134,6 +134,9 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       //    revisión ("confirmación instantánea" apagada) → el hotel la aprueba ──
       router.post('/api/reservas/:id/approve', guard('reservations', 'edit'), (req) => controller.approve(req))
 
+      // ── Mark paid (REQ-RWP-06, #249): ÚNICO endpoint de reservas con permiso `billing` — registra dinero, mismo permiso que POST /api/payments ──
+      router.post('/api/reservas/:id/mark-paid', guard('billing', 'create'), (req) => controller.markPaid(req))
+
       // ── Companions ──
       router.get('/api/reservations/:id/companions', guard('reservations', 'view'), (req) => controller.listCompanions(req))
       router.post('/api/reservations/:id/companions', guard('reservations', 'edit'), (req) => controller.createCompanion(req))
