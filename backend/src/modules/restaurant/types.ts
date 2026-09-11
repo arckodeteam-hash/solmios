@@ -92,6 +92,9 @@ export interface TableDTO {
   updatedAt: string
 }
 
+// #215 — 'percent' (0 < v ≤ 100; 100 = cortesía) | 'amount' (monto fijo, recortado a la base).
+export type DiscountType = 'percent' | 'amount'
+
 export interface OrderDTO {
   id: string
   hotelId: string
@@ -114,6 +117,15 @@ export interface OrderDTO {
   closedAt?: string
   // #210 — comensales (cubiertos). Solo en comandas `dine_in` (default 1); undefined en el resto.
   covers?: number
+  // #215 — descuento de la comanda (sobre la suma de líneas ya descontadas). Ver model.ts.
+  discountType?: DiscountType | null
+  discountValue?: number | null
+  discountAmount?: number
+  discountReason?: string | null
+  discountBy?: string | null
+  discountAt?: string | null
+  /** Σ descuentos de línea + descuento de comanda. */
+  discountTotal?: number
   // #213 — motivo de cancelación (solo en status='cancelled'; null en filas anteriores a la columna).
   cancelReason?: string | null
   // #213 — día contable ('YYYY-MM-DD', zona del hotel) del cierre; ver model.ts. null en filas viejas sin backfill.
@@ -171,6 +183,13 @@ export interface OrderItemDTO {
   voidReason?: string
   voidedBy?: string
   voidedAt?: string
+  // #215 — descuento de la línea. `lineTotal` queda bruto; `discountAmount` es lo que se resta.
+  discountType?: DiscountType | null
+  discountValue?: number | null
+  discountAmount?: number
+  discountReason?: string | null
+  discountBy?: string | null
+  discountAt?: string | null
   createdAt: string
   updatedAt: string
 }

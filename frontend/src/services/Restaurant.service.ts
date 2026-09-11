@@ -148,9 +148,25 @@ export interface OrderLine {
   voidReason?: string
   voidedBy?: string
   voidedAt?: string
+  // #215 — descuento de la línea. `lineTotal` queda BRUTO; `discountAmount` es lo que se resta (lo
+  // recalcula el server al cambiar la cantidad). percent 100 = cortesía: la línea sigue en la venta.
+  discountType?: DiscountType | null
+  discountValue?: number | null
+  discountAmount?: number
+  discountReason?: string | null
+  discountBy?: string | null
+  discountAt?: string | null
   createdAt?: string
   updatedAt?: string
 }
+
+// #215 — 'percent' (0 < v ≤ 100; 100 = cortesía) | 'amount' (monto fijo, el server lo recorta a la base).
+export type DiscountType = 'percent' | 'amount'
+export interface DiscountPayload { type: DiscountType; value: number; reason: string }
+/** #215: lo que el modal necesita — el tope (%) que aplica a ESTE usuario y los motivos predefinidos del hotel. */
+export interface DiscountPolicy { maxDiscountPercent: number; reasons: string[]; isDefault: boolean }
+/** #215: una línea con cortesía (100 %) sigue en la venta; se distingue para el ticket y el cierre del día. */
+export const isCourtesy = (l: Pick<OrderLine, 'discountType' | 'discountValue'>): boolean => l.discountType === 'percent' && Number(l.discountValue) === 100
 
 /** #207: motivos predefinidos de anulación del hotel (configuration('restaurant_void_reasons')). */
 export interface VoidReasons { reasons: string[]; isDefault: boolean }
@@ -212,6 +228,15 @@ export interface Order {
   closedAt?: string
   // #210 — comensales (cubiertos). Solo en comandas `dine_in`; ausente en room service / para llevar.
   covers?: number
+  // #215 — descuento de la COMANDA (sobre la suma de líneas ya descontadas). `subtotal`/`tax`/`total` ya
+  // vienen descontados del server; `discountTotal` = Σ descuentos de línea + descuento de comanda.
+  discountType?: DiscountType | null
+  discountValue?: number | null
+  discountAmount?: number
+  discountReason?: string | null
+  discountBy?: string | null
+  discountAt?: string | null
+  discountTotal?: number
   // #213 — motivo de cancelación (solo en `cancelled`; null en filas anteriores a la columna).
   cancelReason?: string | null
   // #209 — solo lectura, los calcula el server para room service ("Hab. 204 · Pérez"). No se mandan al abrir.
@@ -245,6 +270,29 @@ export interface VoidRow {
   at: string | null
   by: string | null
 }
+/** #215 — un descuento (de línea o de toda la comanda) en una comanda vendida del rango. Espejo de reports.ts. */
+export interface DiscountRow {
+  kind: 'line' | 'order'
+  orderId: string
+  orderNumber: string | null
+  /** Nombre de la línea, o "Comanda completa" si el descuento es de la comanda. */
+  name: string
+  quantity: number
+  /** Bruto sobre el que se aplicó (neto sin impuesto). */
+  base: number
+  /** Lo que se dejó de cobrar (neto sin impuesto). */
+  amount: number
+  /** amount / base en %. 100 = cortesía. */
+  percent: number
+  /** El descuento se llevó toda la base (invitación de la casa). */
+  courtesy: boolean
+  reason: string | null
+  at: string | null
+  /** users.id de quien lo aplicó. */
+  by: string | null
+  /** Nombre resuelto por el server contra `users`; null si no se pudo. */
+  byName: string | null
+}
 export interface RestaurantDailyReport {
   from: string
   to: string
@@ -271,6 +319,8 @@ export interface RestaurantDailyReport {
   voided: { orders: number; lines: number; amount: number; rows: VoidRow[] }
   /** Devoluciones del período (por fecha de la devolución). `amount` es la plata que salió, propina incluida. */
   refunded: { orders: number; amount: number }
+  /** #215 — descuentos y cortesías de las comandas vendidas: total descontado, cantidad, en cuántas comandas, cortesías (100 %) y el detalle. */
+  discounts: { orders: number; count: number; amount: number; courtesies: { count: number; amount: number }; rows: DiscountRow[] }
   topItemsByQuantity: ItemTotals[]
   topItemsByAmount: ItemTotals[]
   byStation: StationTotals[]
@@ -539,6 +589,17 @@ export const RestaurantService = {
   voidLine: (orderId: string, lineId: string, reason: string): Promise<OrderLine> => http.post(`/restaurant/orders/${orderId}/items/${lineId}/void`, { reason }),
   voidReasons: (): Promise<VoidReasons> => http.get('/restaurant/void-reasons'),
   setVoidReasons: (reasons: string[]): Promise<VoidReasons> => http.put('/restaurant/void-reasons', { reasons }),
+
+  // ─── Descuentos y cortesías (#215) — permiso `restaurant:discount`. El server valida motivo (400),
+  // tope por rol (403 "supera el máximo permitido (N %)") y comanda liquidada (409); devuelve la comanda
+  // (o la línea) ya recalculada: subtotal/impuesto/total NO se calculan acá. ───
+  applyOrderDiscount: (orderId: string, data: DiscountPayload): Promise<Order> => http.post(`/restaurant/orders/${orderId}/discount`, data),
+  removeOrderDiscount: (orderId: string): Promise<Order> => http.delete(`/restaurant/orders/${orderId}/discount`),
+  applyLineDiscount: (orderId: string, lineId: string, data: DiscountPayload): Promise<OrderLine> => http.post(`/restaurant/orders/${orderId}/items/${lineId}/discount`, data),
+  removeLineDiscount: (orderId: string, lineId: string): Promise<OrderLine> => http.delete(`/restaurant/orders/${orderId}/items/${lineId}/discount`),
+  discountPolicy: (): Promise<DiscountPolicy> => http.get('/restaurant/discount-policy'),
+  // Config de la carta (`restaurant-catalog:edit`): tope 0..100 y/o motivos.
+  setDiscountPolicy: (data: { maxDiscountPercent?: number; reasons?: string[] }): Promise<DiscountPolicy> => http.put('/restaurant/discount-policy', data),
 
   // ─── Cuenta + cobro ───
   billOrder: (id: string, data: { tip?: number }): Promise<Order> => http.post(`/restaurant/orders/${id}/bill`, data),

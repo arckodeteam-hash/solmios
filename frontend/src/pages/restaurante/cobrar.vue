@@ -4,11 +4,14 @@
 // billOrder antes del cobro directo; el backend recalcula y cobra el total bruto. Ver settlement.ts.
 // #209 — el cargo a habitación se elige con `ReservationPicker` (habitación/apellido), nunca tipeando un
 // id. Si la comanda ya nació con reserva (room service), viene preseleccionada y se confirma en un toque.
+// #215 — "Descuento" por línea y de la comanda (permiso `restaurant:discount`): abre DiscountModal (tipo,
+// valor, motivo obligatorio); el server recalcula y aplica el tope del rol. El ticket muestra
+// "Descuento (motivo) −X" y las cortesías (100 %) como tales. Sobre una comanda liquidada no se ofrece.
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  RestaurantService, roomServiceLabel, inHouseStatusLabel,
-  type OrderWithLines, type InHouseReservation,
+  RestaurantService, roomServiceLabel, inHouseStatusLabel, isLineActive, isCourtesy,
+  type OrderWithLines, type InHouseReservation, type OrderLine, type DiscountPolicy, type DiscountPayload,
   ORDER_STATUS_LABELS, ORDER_TYPE_LABELS,
 } from '@/services/Restaurant.service'
 import { SettingsService } from '@/services/Settings.service'
@@ -19,6 +22,7 @@ import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import ReservationPicker from '@/components/features/restaurante/ReservationPicker.vue'
+import DiscountModal from '@/components/features/restaurante/DiscountModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
 
@@ -31,6 +35,8 @@ const orderId = computed(() => String(route.params.id))
 const canPay = computed(() => can('restaurant', 'pay'))
 // Reembolso: solo órdenes pagadas con tarjeta (settlement='payment') y con permiso billing:create.
 const canRefund = computed(() => can('billing', 'create'))
+// #215: descontar es un permiso propio (hotel_admin y recepción por defecto; el mozo no).
+const canDiscount = computed(() => can('restaurant', 'discount'))
 
 const refundOpen = ref(false)
 const refundBusy = ref(false)
@@ -106,6 +112,65 @@ const selectedStatusLabel = computed(() => (selectedReservation.value ? inHouseS
 // #209 — la propina nunca es negativa: "-5" queda en 0 y el botón muestra el total sin propina.
 watch(tip, (v) => { if (!Number.isFinite(Number(v)) || Number(v) < 0) tip.value = 0 })
 
+// ─── #215: descuentos y cortesías ───
+const discountPolicy = ref<DiscountPolicy | null>(null)
+const discountTarget = ref<{ kind: 'order' } | { kind: 'line'; line: OrderLine } | null>(null)
+const discountBusy = ref(false)
+// Líneas que cuentan: las anuladas no se descuentan ni suman. Los componentes de combo se descuentan por el header.
+const billableLines = computed<OrderLine[]>(() => (order.value?.lines ?? []).filter((l) => isLineActive(l) && l.kind !== 'combo_component'))
+// Base del descuento de comanda = suma de líneas ya descontadas (lo mismo que usa el server).
+const orderDiscountBase = computed(() => Math.round(billableLines.value.reduce((s, l) => s + Number(l.lineTotal || 0) - Number(l.discountAmount || 0), 0) * 100) / 100)
+const discountTitle = computed(() => (discountTarget.value?.kind === 'line' ? 'Descuento en la línea' : 'Descuento de la comanda'))
+const discountSubtitle = computed(() => (discountTarget.value?.kind === 'line' ? `${discountTarget.value.line.quantity}× ${discountTarget.value.line.name}` : 'Sobre el total de la cuenta, después de los descuentos por línea.'))
+const discountBase = computed(() => (discountTarget.value?.kind === 'line' ? Number(discountTarget.value.line.lineTotal || 0) : orderDiscountBase.value))
+const discountCurrent = computed(() => {
+  const t = discountTarget.value
+  const src = t?.kind === 'line' ? t.line : order.value
+  return src?.discountType ? { type: src.discountType, value: Number(src.discountValue || 0), reason: src.discountReason } : null
+})
+/** Etiqueta del descuento de una línea para el ticket: "Cortesía · motivo" o "Descuento 10 % · motivo". */
+function lineDiscountLabel(l: OrderLine): string {
+  if (!l.discountType || !Number(l.discountAmount)) return ''
+  const head = isCourtesy(l) ? 'Cortesía' : l.discountType === 'percent' ? `Descuento ${Number(l.discountValue)} %` : 'Descuento'
+  return l.discountReason ? `${head} · ${l.discountReason}` : head
+}
+function openDiscount(target: { kind: 'order' } | { kind: 'line'; line: OrderLine }) {
+  if (!canDiscount.value || busy.value || unknownState.value) return
+  if (target.kind === 'order' && orderDiscountBase.value <= 0) { toast.warning('La comanda no tiene monto para descontar'); return }
+  discountTarget.value = target
+}
+function closeDiscount() { if (!discountBusy.value) discountTarget.value = null }
+async function reloadKeepingTip() {
+  // No pasa por load(): eso pisaría la propina que el cajero está tipeando.
+  order.value = await RestaurantService.getOrder(orderId.value)
+}
+async function confirmDiscount(payload: DiscountPayload) {
+  const t = discountTarget.value
+  if (!t || discountBusy.value) return
+  discountBusy.value = true
+  try {
+    if (t.kind === 'line') await RestaurantService.applyLineDiscount(orderId.value, t.line.id, payload)
+    else await RestaurantService.applyOrderDiscount(orderId.value, payload)
+    discountTarget.value = null
+    await reloadKeepingTip()
+    toast.success(payload.type === 'percent' && payload.value === 100 ? 'Cortesía aplicada' : 'Descuento aplicado')
+  } catch (e: unknown) { toast.error(e instanceof Error ? e.message : 'No se pudo aplicar el descuento') }
+  finally { discountBusy.value = false }
+}
+async function removeDiscount() {
+  const t = discountTarget.value
+  if (!t || discountBusy.value) return
+  discountBusy.value = true
+  try {
+    if (t.kind === 'line') await RestaurantService.removeLineDiscount(orderId.value, t.line.id)
+    else await RestaurantService.removeOrderDiscount(orderId.value)
+    discountTarget.value = null
+    await reloadKeepingTip()
+    toast.success('Descuento quitado')
+  } catch (e: unknown) { toast.error(e instanceof Error ? e.message : 'No se pudo quitar el descuento') }
+  finally { discountBusy.value = false }
+}
+
 function applyTipPreset(pct: number) {
   const base = Number(order.value?.subtotal || 0)
   tip.value = Math.round(base * pct * 100) / 100
@@ -114,11 +179,14 @@ function applyTipPreset(pct: number) {
 async function load() {
   loading.value = true
   try {
-    const [ord, settings] = await Promise.all([
+    const [ord, settings, policy] = await Promise.all([
       RestaurantService.getOrder(orderId.value),
       SettingsService.get().catch(() => null),
+      // #215: tope y motivos, solo si puede descontar. Sin política el modal igual abre (el server decide).
+      canDiscount.value ? RestaurantService.discountPolicy().catch(() => null) : Promise.resolve(null),
     ])
     order.value = ord
+    discountPolicy.value = policy
     tip.value = Number(ord.tip || 0)
     currency.value = settings?.hotel?.currency || CurrencyCode.USD
     // #209 — comanda con reserva (room service): preseleccionar la ficha del alojado para confirmar en un
@@ -305,13 +373,32 @@ async function confirmRefund() {
         </div>
         <!-- Desglose -->
         <SectionCard title="Cuenta" class="mb-4">
+          <template v-if="canDiscount" #actions>
+            <button type="button" data-testid="order-discount" @click="openDiscount({ kind: 'order' })" :disabled="busy || unknownState"
+              class="px-3 py-1.5 rounded-full border border-white/30 bg-white/10 text-xs font-bold text-white hover:bg-white/20 disabled:opacity-50">
+              {{ order.discountType ? 'Editar descuento' : 'Descuento' }}
+            </button>
+          </template>
           <div class="divide-y divide-border mb-3">
-            <div v-for="l in order.lines" :key="l.id" class="py-2 flex justify-between text-sm">
-              <span class="text-navy">{{ l.quantity }}× {{ l.name }}</span>
-              <span class="tabular-nums text-text-muted">{{ money(l.lineTotal) }}</span>
+            <!-- #215: las anuladas no van en la cuenta (no suman); cada línea muestra su descuento/cortesía debajo. -->
+            <div v-for="l in billableLines" :key="l.id" class="py-2 flex items-start justify-between gap-3 text-sm">
+              <div class="min-w-0">
+                <span class="text-navy">{{ l.quantity }}× {{ l.name }}</span>
+                <div v-if="lineDiscountLabel(l)" :data-testid="`line-discount-${l.id}`" class="text-[11px] font-bold text-coral">
+                  {{ lineDiscountLabel(l) }} <span class="tabular-nums">−{{ money(l.discountAmount ?? 0) }}</span>
+                </div>
+                <button v-if="canDiscount" type="button" :data-testid="`line-discount-btn-${l.id}`" @click="openDiscount({ kind: 'line', line: l })" :disabled="busy || unknownState"
+                  class="text-[11px] font-bold text-navy hover:underline disabled:opacity-50">{{ l.discountType ? 'Editar descuento' : 'Descuento' }}</button>
+              </div>
+              <span class="tabular-nums text-text-muted shrink-0" :class="l.discountAmount ? 'line-through' : ''">{{ money(l.lineTotal) }}</span>
             </div>
           </div>
           <div class="space-y-1.5 text-sm">
+            <!-- #215: el descuento de comanda va con su motivo; subtotal/impuesto ya vienen descontados del server. -->
+            <div v-if="order.discountType && order.discountAmount" data-testid="order-discount-row" class="flex justify-between text-coral font-bold">
+              <span>Descuento{{ order.discountType === 'percent' ? ` ${Number(order.discountValue)} %` : '' }}<template v-if="order.discountReason"> ({{ order.discountReason }})</template></span>
+              <span class="tabular-nums">−{{ money(order.discountAmount) }}</span>
+            </div>
             <div class="flex justify-between text-text-muted"><span>Subtotal</span><span class="tabular-nums">{{ money(order.subtotal) }}</span></div>
             <div class="flex justify-between text-text-muted"><span>Impuesto</span><span class="tabular-nums">{{ money(order.tax) }}</span></div>
             <div class="flex justify-between text-text-muted"><span>Propina</span><span class="tabular-nums">{{ money(tip) }}</span></div>
@@ -372,6 +459,11 @@ async function confirmRefund() {
     </template>
 
     <EmptyState v-else title="Comanda no encontrada" message="La comanda no existe o no tenés acceso." />
+
+    <!-- #215: descuento o cortesía (línea o comanda). Cerrar sin confirmar no cambia nada. -->
+    <DiscountModal v-if="discountTarget" :title="discountTitle" :subtitle="discountSubtitle" :base="discountBase"
+      :currency="currencySymbol(currency)" :policy="discountPolicy" :current="discountCurrent" :loading="discountBusy"
+      @confirm="confirmDiscount" @remove="removeDiscount" @close="closeDiscount" />
 
     <!-- Confirmación de reembolso -->
     <AppModal :open="refundOpen" title="Reembolsar orden" size="sm" @close="refundOpen = false">

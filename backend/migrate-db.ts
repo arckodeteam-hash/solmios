@@ -14,6 +14,7 @@ import type { DbAdapter } from 'arckode-framework'
 import { backfillPaymentsReservationId } from './scripts/backfill-payments-reservation'
 import { backfillAriOutboxPendingKey } from './scripts/backfill-ari-outbox-pending-key'
 import { backfillRestaurantPayPermission } from './scripts/backfill-restaurant-pay-permission'
+import { backfillRestaurantDiscountPermission } from './scripts/backfill-restaurant-discount-permission'
 import { dedupeRestaurantOrderNumbers } from './scripts/dedupe-restaurant-order-numbers'
 import { backfillBusinessDate } from './scripts/backfill-business-date'
 import { isMissingTableError } from './src/shared/utils/db-errors'
@@ -1435,6 +1436,18 @@ async function main(): Promise<void> {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     console.log("roles.restaurant:pay: no se pudo aplicar (¿falta RUN_MIGRATE?) —", msg.slice(0, 120))
+  }
+
+  // #215 (REST-13) — `restaurant:discount` a las filas de `roles` de SISTEMA (hotel_admin, receptionist)
+  // que hoy cobran en el POS. Mismo motivo que `pay`: sin esto el deploy deja a todo hotel existente sin
+  // el botón "Descuento" hasta que alguien edite el rol. Roles custom, waiter y kitchen NO se tocan
+  // (descontar es decidir cobrar menos: lo habilita el hotel en Roles). Idempotente.
+  try {
+    const discounted = await backfillRestaurantDiscountPermission(db)
+    console.log(`roles.restaurant:discount: ${discounted} fila(s) actualizada(s)`)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.log("roles.restaurant:discount: no se pudo aplicar (¿falta RUN_MIGRATE?) —", msg.slice(0, 120))
   }
 
   // M5 fix (audit solmi-direct-booking) — Poblar `hotels.slug` para los hoteles sin slug.

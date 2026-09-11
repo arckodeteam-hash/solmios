@@ -24,6 +24,10 @@ export type { RestaurantSockets } from './sockets'
 export { RestaurantValidator, CreateStationSchema, UpdateStationSchema } from './validators/schema'
 export { VoidLineSchema, CancelOrderSchema, VoidReasonsSchema } from './validators/schema'
 export { DEFAULT_VOID_REASONS, VOID_REASONS_KEY } from './usecases/void-reasons'
+// #215 (append-only): descuentos y cortesías.
+export { DiscountSchema, DiscountPolicySchema, DISCOUNT_TYPES } from './validators/schema'
+export { DEFAULT_DISCOUNT_REASONS, DISCOUNT_REASONS_KEY, DEFAULT_MAX_DISCOUNT_PERCENT, RESTAURANT_CONFIG_KEY } from './usecases/discounts'
+export type { DiscountType } from './types'
 export { registerRestaurantModels } from './model'
 export type { SettlementPorts, ChargeToFolioInput, RecordPaymentInput, ChargeCardPaymentInput } from './usecases/settlement'
 export type { ComboDTO, ComboItemDTO } from './types'
@@ -33,6 +37,8 @@ export type { ModuleStatePort } from './usecases/public-menu'
 export type { RestaurantEvent, RestaurantEventType } from './usecases/events'
 // #213 (append-only): cierre del día.
 export type { ReportPorts, ReportPayment, ReportFolioCharge, RestaurantDailyReport, DailyReportQuery, SalesMethod, VoidRow } from './usecases/reports'
+// #215 (append-only): descuentos y cortesías en el cierre del día.
+export type { DiscountRow } from './usecases/reports'
 
 export function RestaurantModule() {
   return createModule({
@@ -158,6 +164,17 @@ export function RestaurantModule() {
       // config de la carta.
       router.get('/api/restaurant/void-reasons', guard('restaurant', 'view'), (req) => controller.voidReasons(req))
       router.put('/api/restaurant/void-reasons', guard('restaurant-catalog', 'edit'), (req) => controller.setVoidReasons(req))
+
+      // #215: descuentos y cortesías con motivo. Permiso PROPIO `restaurant:discount` (hotel_admin y
+      // receptionist por defecto; el mozo no): cobrar lo que marca el ticket (`pay`) no es decidir cobrar
+      // menos. El tope por rol y el 409 sobre comandas liquidadas los aplica el usecase. La política
+      // (tope + motivos) se lee con el mismo permiso que descontar y se edita como config de la carta.
+      router.post('/api/restaurant/orders/:id/discount', guard('restaurant', 'discount'), (req) => controller.applyOrderDiscount(req))
+      router.delete('/api/restaurant/orders/:id/discount', guard('restaurant', 'discount'), (req) => controller.removeOrderDiscount(req))
+      router.post('/api/restaurant/orders/:id/items/:lineId/discount', guard('restaurant', 'discount'), (req) => controller.applyLineDiscount(req))
+      router.delete('/api/restaurant/orders/:id/items/:lineId/discount', guard('restaurant', 'discount'), (req) => controller.removeLineDiscount(req))
+      router.get('/api/restaurant/discount-policy', guard('restaurant', 'discount'), (req) => controller.discountPolicy(req))
+      router.put('/api/restaurant/discount-policy', guard('restaurant-catalog', 'edit'), (req) => controller.setDiscountPolicy(req))
 
       // #209: buscador "quién está alojado" (habitación/apellido) para abrir un room service o cargar a la
       // habitación. Va por este módulo y no por /api/reservas porque el mozo NO tiene `reservations:view`.
