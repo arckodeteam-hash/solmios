@@ -761,7 +761,9 @@ export const useBookingStore = defineStore('booking-widget', () => {
    *
    * REQ-01 (#233): `childAmenityIds` (ids del catálogo `childAmenities`) se resuelven a un
    * SNAPSHOT `{id, name, price}` en la línea. Ids desconocidos se ignoran, y SOLO se guardan si la
-   * composición tiene al menos un menor (`childrenAges.length > 0`) — mismo gateo que el backend.
+   * composición tiene al menos un menor (`childrenAges.length > 0`) Y el hotel acepta niños
+   * (`childPolicy.acceptChildren`) — mismo gateo que el backend (`public-booking.ts`), para que
+   * ningún caller pueda mostrar un total con amenidades que después no se cobran.
    */
   async function addToCart(
     room: RoomTypeRate,
@@ -812,8 +814,9 @@ export const useBookingStore = defineStore('booking-widget', () => {
     // "2 adultos, 2 niños" terminaría grabando la reserva para 1 sola persona.
     const effectiveOccupancy = occ ?? physicalGuests.value
     // REQ-01 (#233) — snapshot del catálogo para esta línea: solo ids conocidos, sin duplicados,
-    // en el orden del catálogo (sortOrder), y únicamente si la habitación lleva menores.
-    const lineChildAmenities: CartLineChildAmenity[] = isComposition && occupancy.childrenAges.length > 0
+    // en el orden del catálogo (sortOrder), y únicamente si la habitación lleva menores y el
+    // hotel acepta niños (espejo exacto del gate del backend).
+    const lineChildAmenities: CartLineChildAmenity[] = isComposition && occupancy.childrenAges.length > 0 && childPolicy.value.acceptChildren
       ? resolveChildAmenities(occupancy.childAmenityIds)
       : []
     const key = isComposition
