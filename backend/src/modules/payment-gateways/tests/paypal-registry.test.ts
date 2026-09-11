@@ -156,7 +156,7 @@ describe('PaymentGatewayRegistry — CardNet necesita el store de sesiones', () 
 describe('PaymentGatewaySessionStore — la session-key se persiste cifrada', () => {
   const fila = {
     id: 'sess-abc123', hotelId: 'h1', provider: 'cardnet' as const, reference: 'RES-77',
-    secret: 'session-key-en-claro-XYZ', amountMinor: 150000, currency: 'dop', mode: 'test' as const,
+    sessionKey: 'session-key-en-claro-XYZ', amountMinor: 150000, currency: 'dop', mode: 'test' as const,
   }
 
   it('save cifra: la fila creada en el repo NO contiene la session-key en claro', async () => {
@@ -165,8 +165,8 @@ describe('PaymentGatewaySessionStore — la session-key se persiste cifrada', ()
     expect(repo.rows).toHaveLength(1)
     const guardada = repo.rows[0]
     expect(guardada.id).toBe('sess-abc123')
-    expect(guardada.secret).not.toBe(fila.secret)
-    expect(JSON.stringify(guardada)).not.toContain(fila.secret)
+    expect(guardada.sessionKey).not.toBe(fila.sessionKey)
+    expect(JSON.stringify(guardada)).not.toContain(fila.sessionKey)
   })
 
   it('load devuelve la fila con la session-key descifrada y el monto como número', async () => {
@@ -182,6 +182,14 @@ describe('PaymentGatewaySessionStore — la session-key se persiste cifrada', ()
   it('load de una SESSION desconocida devuelve null', async () => {
     const store = new PaymentGatewaySessionStore(sessionsRepoInMemory())
     expect(await store.load('sess-inexistente')).toBeNull()
+  })
+
+  it('load() de una fila con otro provider devuelve null (no es una sesión de CardNet)', async () => {
+    const repo = sessionsRepoInMemory()
+    const store = new PaymentGatewaySessionStore(repo)
+    await store.save(fila)
+    repo.rows[0].provider = 'azul'
+    expect(await store.load('sess-abc123')).toBeNull()
   })
 })
 
