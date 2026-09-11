@@ -124,7 +124,9 @@ async function migrate() {
       ['plan-starter', 'Starter', 'starter', 49, 'USD', 'Para hoteles pequeños', JSON.stringify(['30 habitaciones', '2 usuarios']), JSON.stringify({rooms:30,users:2,whatsappConversations:1000}), JSON.stringify([]), 1, 1],
       ['plan-professional', 'Professional', 'professional', 99, 'USD', 'Para hoteles en crecimiento', JSON.stringify(['100 habitaciones', '6 usuarios']), JSON.stringify({rooms:100,users:6,whatsappConversations:5000}), JSON.stringify([]), 1, 2],
       ['plan-enterprise', 'Enterprise', 'enterprise', 199, 'USD', 'Para hoteles grandes', JSON.stringify(['Habitaciones ilimitadas', 'Usuarios ilimitados']), JSON.stringify({rooms:9999,users:9999,whatsappConversations:20000}), JSON.stringify([]), 1, 3],
-      ['plan-ultra', 'Ultra', 'ultra', 0, 'USD', 'Plan custom — todos los módulos', JSON.stringify(['Habitaciones ilimitadas', 'Usuarios ilimitados']), JSON.stringify({rooms:9999,users:9999,whatsappConversations:null}), JSON.stringify([]), 1, 4],
+      // Tarea 4 (#74): Ultra deja de comercializarse. Se siembra INACTIVO (no se borra) para que
+      // las cuentas históricas asociadas al plan sigan resolviendo su catálogo de módulos.
+      ['plan-ultra', 'Ultra', 'ultra', 0, 'USD', 'Plan custom — todos los módulos', JSON.stringify(['Habitaciones ilimitadas', 'Usuarios ilimitados']), JSON.stringify({rooms:9999,users:9999,whatsappConversations:null}), JSON.stringify([]), 0, 4],
     ]
 
     for (const [id, name, slug, price, currency, desc, features, limits, modules, active, sort] of plans) {
