@@ -334,14 +334,15 @@ onUnmounted(() => {
               <span class="font-bold text-navy text-sm">{{ l.quantity }}× {{ l.name }} <span v-if="modifiersLabel(l)" class="font-normal text-text-muted">{{ modifiersLabel(l) }}</span></span>
             </div>
             <div v-if="l.notes" class="text-[11px] text-gold font-bold mt-0.5">⚑ {{ l.notes }}</div>
-            <div v-if="(editPerm && NEXT[l.status]) || (deletePerm && VOIDABLE.includes(l.status))" class="flex flex-wrap gap-1.5 mt-2">
+            <!-- #282 (M2): el KDS se usa con el dedo en una tablet — botones de ≥44 px de alto (min-h-11), no 28. -->
+            <div v-if="(editPerm && NEXT[l.status]) || (deletePerm && VOIDABLE.includes(l.status))" class="flex flex-wrap gap-2 mt-2">
               <template v-if="editPerm">
-                <button v-for="a in NEXT[l.status]" :key="a.to" @click="advance(l, a.to)" :disabled="busyLine === l.id"
-                  :class="['px-2.5 py-1 rounded-lg text-xs font-bold disabled:opacity-50', a.cls]">{{ a.label }}</button>
+                <button v-for="a in NEXT[l.status]" :key="a.to" @click="advance(l, a.to)" :disabled="busyLine === l.id" data-testid="kds-advance"
+                  :class="['min-h-11 px-4 py-2 rounded-lg text-sm font-bold disabled:opacity-50', a.cls]">{{ a.label }}</button>
               </template>
               <!-- #207: abre el modal de motivo; no anula hasta confirmar. -->
-              <button v-if="deletePerm && VOIDABLE.includes(l.status)" @click="openVoid(l, t.order.id)" :disabled="busyLine === l.id"
-                class="px-2.5 py-1 rounded-lg text-xs font-bold border-2 border-coral/40 text-coral disabled:opacity-50">Cancelar</button>
+              <button v-if="deletePerm && VOIDABLE.includes(l.status)" @click="openVoid(l, t.order.id)" :disabled="busyLine === l.id" data-testid="kds-void"
+                class="min-h-11 px-4 py-2 rounded-lg text-sm font-bold border-2 border-coral/40 text-coral disabled:opacity-50">Cancelar</button>
             </div>
           </div>
         </div>

@@ -325,3 +325,12 @@ describe('carta — #216: impresión automática por estación (autoPrint)', () 
     expect(svc).toMatch(/export interface StationPayload \{[^}]*autoPrint\?: boolean/)
   })
 })
+
+// #282 (L): un ítem sin impuesto propio llega con `taxRate: null` (usa el del hotel) y el badge decía "null%".
+describe('carta — #282: el badge de impuesto propio solo aparece con un número', () => {
+  it('el badge exige taxRate !== undefined Y !== null', () => {
+    const badge = CARTA.match(/<span[^>]*data-testid="item-tax-badge"[^>]*>/)?.[0]
+    expect(badge, 'no se encontró el badge de impuesto del ítem').toBeDefined()
+    expect(badge).toMatch(/v-if="i\.taxRate !== undefined && i\.taxRate !== null"/)
+  })
+})

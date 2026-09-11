@@ -1043,7 +1043,8 @@ async function saveTranslations() {
               </div>
             </div>
             <div class="flex items-center gap-3 shrink-0">
-              <span v-if="i.taxRate !== undefined" class="text-[10px] px-1.5 py-0.5 rounded bg-navy/5 text-navy font-bold" :title="`Impuesto propio: ${i.taxRate}%`">{{ i.taxRate }}%</span>
+              <!-- #282 (L): `taxRate: null` (sin impuesto propio, usa el del hotel) mostraba "null%". Solo con un número. -->
+              <span v-if="i.taxRate !== undefined && i.taxRate !== null" class="text-[10px] px-1.5 py-0.5 rounded bg-navy/5 text-navy font-bold" :title="`Impuesto propio: ${i.taxRate}%`" data-testid="item-tax-badge">{{ i.taxRate }}%</span>
               <span class="font-black text-navy tabular-nums">{{ money(i.price) }}</span>
               <!-- F3: badge de margen — solo editPerm, y NO si hasRecipe===false (ya existe el badge "Sin receta"). -->
               <span v-if="editPerm && i.hasRecipe !== false && foodCostFor(i.id)?.marginPercent != null"
