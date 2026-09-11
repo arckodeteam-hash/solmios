@@ -11,6 +11,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
+// REQ-SOP-04: index.vue lee ?ticket= al montar (para abrir el ticket al entrar desde
+// "Entrar como {solicitante}") — sin este mock, useRoute() no tiene router inyectado y
+// `route.query` revienta con un unhandled rejection en cada test de este archivo.
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }) }))
+
 let ticketsData: Record<string, unknown>[] = []
 
 vi.mock('@/services/Operations.service', () => ({

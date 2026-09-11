@@ -122,23 +122,27 @@
                 <div class="text-[10px] font-bold text-text-muted uppercase mb-2">Descripción</div>
                 <div class="text-sm text-text-secondary whitespace-pre-wrap">{{ selectedTicket.description }}</div>
               </div>
-              <div v-if="selectedTicket.assignedTo" class="py-4 border-b border-border">
-                <div class="text-[10px] font-bold text-text-muted uppercase mb-2">Asignado a</div>
-                <div class="text-sm font-bold">{{ selectedTicket.assignedTo }}</div>
+              <!-- REQ-SOP-03: nunca un id crudo — "Atendido por {nombre}" o, sin agente, un estado explícito. -->
+              <div class="py-4 border-b border-border">
+                <div class="text-[10px] font-bold text-text-muted uppercase mb-2">Atención</div>
+                <div class="text-sm font-bold" :class="selectedTicket.assignee?.name ? 'text-navy' : 'text-text-muted'">
+                  {{ selectedTicket.assignee?.name ? `Atendido por ${selectedTicket.assignee.name}` : 'Sin atender todavía' }}
+                </div>
               </div>
               <div v-if="selectedTicket.replies && selectedTicket.replies.length" class="pt-4">
                 <div class="text-[10px] font-bold text-text-muted uppercase mb-3">Conversación ({{ selectedTicket.replies.length }})</div>
                 <div class="space-y-3">
-                  <div v-for="(reply, i) in selectedTicket.replies" :key="i" class="flex gap-3" :class="reply.author === 'Soporte Arckode' ? 'flex-row-reverse' : ''">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0" :class="reply.author === 'Soporte Arckode' ? 'bg-red/20 text-red' : 'bg-cyan/20 text-cyan'">
-                      {{ reply.author === 'Soporte Arckode' ? 'SA' : reply.author[0] }}
+                  <div v-for="(reply, i) in selectedTicket.replies" :key="reply.id || i" class="flex gap-3" :class="reply.authorKind === 'support' ? 'flex-row-reverse' : ''">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0" :class="reply.authorKind === 'support' ? 'bg-red/20 text-red' : 'bg-cyan/20 text-cyan'">
+                      {{ (reply.authorName || 'H')[0] }}
                     </div>
                     <div class="max-w-[70%]">
-                      <div class="flex items-center gap-2 mb-1" :class="reply.author === 'Soporte Arckode' ? 'justify-end' : ''">
-                        <span class="text-[10px] font-bold text-navy">{{ reply.author }}</span>
-                        <span class="text-[9px] text-text-muted">{{ reply.date }}</span>
+                      <div class="flex items-center gap-2 mb-1" :class="reply.authorKind === 'support' ? 'justify-end' : ''">
+                        <span class="text-[10px] font-bold text-navy">{{ reply.authorName || 'Hotel' }}</span>
+                        <span v-if="reply.authorKind === 'support'" class="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-navy/10 text-navy">Soporte</span>
+                        <span class="text-[9px] text-text-muted">{{ formatMessageDate(reply.createdAt) }}</span>
                       </div>
-                      <div class="p-3 rounded-2xl text-sm" :class="reply.author === 'Soporte Arckode' ? 'bg-navy text-white' : 'bg-surface text-text-secondary'">{{ reply.message }}</div>
+                      <div class="p-3 rounded-2xl text-sm" :class="reply.authorKind === 'support' ? 'bg-navy text-white' : 'bg-surface text-text-secondary'">{{ reply.message }}</div>
                     </div>
                   </div>
                 </div>
@@ -342,7 +346,9 @@ async function loadData() {
         rawStatus: t.status,
         category: t.category,
         createdAt: t.createdAt ? String(t.createdAt).replace('T', ' ').slice(0, 16) : '',
-        assignedTo: t.assignedTo ?? '',
+        // REQ-SOP-03: assignee ya viene resuelto por el server (usecases/enrich.ts) — nunca se
+        // muestra el id crudo de assignedTo.
+        assignee: t.assignee ?? null,
         replies: msgs,
       }
     })
@@ -368,6 +374,11 @@ const filteredTickets = computed(() => {
   }
   return result
 })
+
+function formatMessageDate(iso?: string): string {
+  if (!iso) return ''
+  return String(iso).replace('T', ' ').slice(0, 16)
+}
 
 const priorityClass = (p: string) => ({ 'Baja': 'bg-surface text-text-muted', 'Normal': 'bg-blue/10 text-blue', 'Alta': 'bg-orange/10 text-orange', 'Urgente': 'bg-red/10 text-red' }[p] || '')
 const statusClass = (s: string) => ({ 'Abierto': 'bg-orange/10 text-orange', 'En Progreso': 'bg-cyan/10 text-cyan', 'Resuelto': 'bg-teal/10 text-teal', 'Cerrado': 'bg-surface text-text-muted' }[s] || '')
