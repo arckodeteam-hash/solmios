@@ -182,6 +182,26 @@ export const UpsertMealPlanSchema: Record<string, BodyRule> = {
   price: { type: 'number' as const },
 }
 
+// ─── Amenidades para niños/bebés (REQ-01, #233) ────────────────────────────
+// Mismo patrón que upsells: tipos primitivos acá, `name` vacío tras trim y `price` finito los
+// re-valida el usecase (child-amenities-crud.ts). Sin `description` ni `kind` a propósito.
+
+/** POST /api/child-amenities — alta de amenidad. */
+export const CreateChildAmenitySchema: Record<string, BodyRule> = {
+  name: { type: 'string' as const, required: true, max: 100 },
+  price: { type: 'number' as const, required: true, min: 0 },
+  active: { type: 'boolean' as const },
+  sortOrder: { type: 'number' as const, min: 0 },
+}
+
+/** PUT /api/child-amenities/:id — edición (partial). */
+export const UpdateChildAmenitySchema: Record<string, BodyRule> = {
+  name: { type: 'string' as const, max: 100 },
+  price: { type: 'number' as const, min: 0 },
+  active: { type: 'boolean' as const },
+  sortOrder: { type: 'number' as const, min: 0 },
+}
+
 // ─── Calendario público de tarifas ─────────────────────────────────────────
 // `GET /api/public/hotels/:slug/calendar?from&to&guests&currency`.
 //
