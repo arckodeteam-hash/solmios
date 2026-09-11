@@ -69,6 +69,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { NotificationsService, notifMeta } from '@/services/Notifications.service'
 import type { AppNotification } from '@/services/Notifications.service'
+import { resolveNotificationRoute } from '@/utils/notification-route'
 import { useAuthStore } from '@/stores/auth.store'
 
 const router = useRouter()
@@ -121,13 +122,8 @@ async function handleClick(n: AppNotification) {
       n.read = true
     } catch { /* silent */ }
   }
-  // Routing según tipo
-  const meta = (n.metadata || {}) as { reservationId?: string; guestId?: string; roomId?: string }
-  if (meta.reservationId) router.push('/panel/reservas')
-  else if (n.type === 'payment') router.push('/panel/finanzas/facturacion')
-  else if (n.type === 'housekeeping') router.push('/panel/operaciones/limpieza')
-  else if (n.type === 'maintenance') router.push('/panel/operaciones/mantenimiento')
-  else if (n.type === 'review') router.push('/panel/resenas')
+  const to = resolveNotificationRoute(n)
+  if (to) router.push(to)
   open.value = false
 }
 

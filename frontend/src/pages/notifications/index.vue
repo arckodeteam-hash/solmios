@@ -98,6 +98,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { NotificationsService, notifMeta } from '@/services/Notifications.service'
 import type { AppNotification } from '@/services/Notifications.service'
+import { resolveNotificationRoute } from '@/utils/notification-route'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
@@ -217,12 +218,8 @@ function remove(n: AppNotification) {
 
 function handleRow(n: AppNotification) {
   if (!n.read) markAsRead(n)
-  const meta = (n.metadata || {}) as any
-  if (meta.reservationId) router.push('/panel/reservas')
-  else if (n.type === 'payment') router.push('/panel/finanzas/facturacion')
-  else if (n.type === 'housekeeping') router.push('/panel/operaciones/limpieza')
-  else if (n.type === 'maintenance') router.push('/panel/operaciones/mantenimiento')
-  else if (n.type === 'review') router.push('/panel/resenas')
+  const to = resolveNotificationRoute(n)
+  if (to) router.push(to)
 }
 
 function formatRelative(date?: string): string {
