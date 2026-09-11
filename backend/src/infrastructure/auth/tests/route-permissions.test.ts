@@ -81,6 +81,8 @@ const suites: ModuleSuite[] = [
       // receptionist NO tiene reservations:delete por diseño (permissions.ts) — regresión real.
       { label: 'DELETE borrar', method: 'DELETE', path: '/api/reservas/r1', permission: 'reservations:delete', deniedRole: 'receptionist', allowedRole: 'hotel_admin' },
       { label: 'POST checkin', method: 'POST', path: '/api/reservas/r1/checkin', permission: 'reservations:checkin', deniedRole: 'housekeeper', allowedRole: 'receptionist', body: {} },
+      // #249: registra dinero → exige billing:create (mismo permiso que POST /api/payments), no reservations:edit.
+      { label: 'POST mark-paid', method: 'POST', path: '/api/reservas/r1/mark-paid', permission: 'billing:create', deniedRole: 'housekeeper', allowedRole: 'receptionist', body: {} },
     ],
   },
   {

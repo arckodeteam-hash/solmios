@@ -532,6 +532,7 @@ import { cajaChicaGastosConnector } from './connectors/caja-chica-gastos'
 import { payrollGastosConnector } from './connectors/payroll-gastos'
 import { reembolsosGastosConnector } from './connectors/reembolsos-gastos'
 import { reservasRescheduleChargeConnector } from './connectors/reservas-reschedule-charge'
+import { reservasPaymentsConnector } from './connectors/reservas-payments'
 import { reservasPromocodesConnector } from './connectors/reservas-promocodes'
 import { attendanceDashboardConnector } from './connectors/attendance-dashboard'
 import { attendancePayrollConnector } from './connectors/attendance-payroll'
@@ -661,6 +662,9 @@ system.addConnector('payroll-gastos', payrollGastosConnector)
 system.addConnector('reembolsos-gastos', reembolsosGastosConnector)
 // Mover/extender una reserva desde el planning cobra la diferencia: folio, efectivo (→caja) o tarjeta (Stripe).
 system.addConnector('reservas-reschedule-charge', reservasRescheduleChargeConnector)
+// REQ-RWP-06 (#249) — "Registrar pago" manual desde la ficha: el cobro se asienta en `payments`
+// (única fuente de verdad del dinero) y de ahí caen solos el pendiente y la caja.
+system.addConnector('reservas-payments', reservasPaymentsConnector)
 // FIX 2026-07-31 — el código promocional del wizard de reserva manual (staff) se guardaba
 // como texto sin validar/aplicar descuento. Ver connectors/reservas-promocodes.ts.
 system.addConnector('reservas-promocodes', reservasPromocodesConnector)

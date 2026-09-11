@@ -283,6 +283,58 @@ upsells + amenidades) → base imponible → impuestos → total cobrado, y
 - GIVEN una línea que excede maxAdults/maxChildren/capacity
 - THEN el motor rechaza con el motivo específico de la regla violada, no un error genérico
 
+### Requirement: Registrar pago manual con evidencia (REQ-RWP-06)
+
+`POST /api/reservas/:id/mark-paid` (permiso `billing:create` — el único endpoint del módulo
+con permiso de facturación, porque registra dinero; ownership post-findById con bypass
+`super_admin`) recibe `{method: cash|transfer|card|other, amount > 0, reference?, note?}`
+y MUST: rechazar con 400 `reference` vacía para `transfer`/`card` (evidencia para
+conciliar con el banco; `cash`/`other` no la exigen), rechazar con 400
+`amount > pendingBalance + BALANCE_EPSILON` con el saldo en el mensaje (misma regla que
+facturas: el excedente no se absorbe en silencio), rechazar con 409 reservas `cancelled`
+/ `no_show`; asentar PRIMERO la fila en `payments` (`type:'charge'`, `status:'completed'`,
+`reservationId`, `reference`, `createdBy` = usuario del token — nunca del body —,
+`description: 'Cobro manual · {method} · {note}'`) vía el puerto `manualPayment`
+(`usecases/mark-paid.ts`, connector `connectors/reservas-payments.ts`) y recién DESPUÉS
+actualizar la reserva: `pendingAmount` recalculado con `pendingBalance` sobre lo ya
+cobrado + este cobro (nunca una resta a mano) y `status` `pending → confirmed` (otros
+estados no cambian); audit `reservation.marked_paid`. Si el asiento en `payments` falla,
+la reserva queda intacta. MUST NOT escribir `reservations.deposit` (no es el libro del
+dinero; `payments` es la única fuente de verdad). Efectos derivados sin código propio:
+`onPaymentCompleted` → caja (`payments-caja`) para efectivo; `onPaymentCreated` → resync
+de `pendingAmount` (`payments-reservas`). Respuesta 201 con la reserva + `paymentId`,
+`paidAmount`, `pendingAmount`, `paymentState`. En la ficha (`ReservationModal.vue`,
+tarjeta "Importe y Pago") el botón "Registrar pago" (visible con `billing:create` y
+`pending > 0`) abre `MarkPaidModal.vue` con el monto prellenado con el saldo; al guardar se
+refrescan el detalle (badge y "Historial de cobros" con "Registró: {nombre}") y el listado.
+
+#### Scenario: Cobro manual salda la reserva
+
+- GIVEN reserva `pending` con saldo 354 y sin cobros previos
+- WHEN `POST /:id/mark-paid` con `{method:'transfer', amount:354, reference:'TRF-1'}`
+- THEN 201, existe una fila en `payments` `charge`/`completed` con `createdBy` del token,
+  `paymentState:'paid'`, `pendingAmount:0`, status `confirmed`, audit
+  `reservation.marked_paid`
+- AND `reservations.deposit` no cambia
+
+#### Scenario: Sobrepago rechazado
+
+- GIVEN reserva con saldo 354
+- WHEN `POST /:id/mark-paid` con `amount:400`
+- THEN 400 con "$354" en el mensaje y NO se crea ningún payment ni se toca la reserva
+
+#### Scenario: Transferencia sin referencia rechazada
+
+- WHEN `POST /:id/mark-paid` con `{method:'transfer', amount:354}` sin `reference`
+- THEN 400 y ningún payment
+- AND `{method:'cash', amount:354}` sin referencia sí se acepta
+
+#### Scenario: Sin permiso de facturación
+
+- GIVEN un rol sin `billing:create` (p.ej. housekeeper)
+- WHEN `POST /:id/mark-paid`
+- THEN 403 sin efectos
+
 ### Requirement: Transversales de toda operación de reservas
 
 Toda query del módulo MUST filtrar por `hotelId` (multi-tenant) y toda ruta MUST exigir
