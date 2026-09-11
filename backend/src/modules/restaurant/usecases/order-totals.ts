@@ -32,6 +32,17 @@ export function isLineActive(line: Pick<OrderItemDTO, 'status'>): boolean {
   return line.status !== 'cancelled' && line.status !== 'voided'
 }
 
+/**
+ * Estados en los que una COMANDA ya no ocupa la mesa: liquidada (`charged`/`paid`), cancelada, o
+ * reembolsada (`refunded`: fue cobrada con tarjeta, la mesa se liberó al pagar, y no se reabre).
+ * Único lugar donde se decide (#208): lo usan `openOrder` ("una mesa, una comanda abierta") y
+ * `deleteTable` ("una mesa con comanda viva no se borra"). Distinto de `LINES_LOCKED`
+ * (order-lines.ts), que dice cuándo las LÍNEAS dejan de editarse — `processing_payment` bloquea
+ * líneas pero la comanda sigue viva en la mesa.
+ */
+export const TERMINAL_ORDER_STATUSES: OrderDTO['status'][] = ['charged', 'paid', 'cancelled', 'refunded']
+export const isTerminalOrder = (order: Pick<OrderDTO, 'status'>): boolean => TERMINAL_ORDER_STATUSES.includes(order.status)
+
 /** "HH:mm" → minutos desde medianoche. */
 function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number)

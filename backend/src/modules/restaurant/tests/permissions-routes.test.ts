@@ -38,8 +38,14 @@ function mount(roleRows: Row[] = []) {
       { id: 'user-receptionist', hotelId: 'h1', role: 'receptionist', active: 1 },
     ],
     Hotels: [{ id: 'h1', name: 'Hotel Sol', currency: 'DOP' }],
+    // #208: reserva del hotel (room service / cargo a habitación la validan por puerto).
+    Reservations: [{ id: 'r1', hotelId: 'h1', guestId: 'g1', roomId: 'room-1' }],
     Plans: [], Subscriptions: [], Configuration: [], HotelModuleOverrides: [],
-    RestaurantTables: [{ id: 't1', hotelId: 'h1', status: 'occupied' }],
+    RestaurantTables: [{ id: 't1', hotelId: 'h1', status: 'occupied' }, { id: 't-free', hotelId: 'h1', status: 'free' }],
+    // #208: ítem componente de un combo (no se borra) y otro suelto (se borra).
+    MenuItems: [{ id: 'mi-combo', hotelId: 'h1', categoryId: 'c1', name: 'Papas', price: 50 }, { id: 'mi-solo', hotelId: 'h1', categoryId: 'c1', name: 'Agua', price: 20 }],
+    MenuCombos: [{ id: 'cb1', hotelId: 'h1', name: 'Combo Familiar', price: 300 }],
+    MenuComboItems: [{ id: 'cbi1', hotelId: 'h1', comboId: 'cb1', menuItemId: 'mi-combo', quantity: 1 }],
     RestaurantOrders: [
       { id: 'o-open', hotelId: 'h1', status: 'open', tableId: 't1', tip: 0, subtotal: 100, tax: 0, total: 100, number: 1 },
       { id: 'o-sent', hotelId: 'h1', status: 'sent', tableId: 't1', tip: 0, subtotal: 100, tax: 0, total: 100, number: 2 },
@@ -86,10 +92,40 @@ function mount(roleRows: Row[] = []) {
     recordPayment: async (input: Row) => { recorded.push(input); return { paymentId: `pay-${recorded.length}` } },
     chargeToFolio: async (input: Row) => { charged.push(input); return { folioId: 'folio-1' } },
   })
+  service.setReservationPort({
+    findById: async (id: string) => rows.Reservations.find((r) => r.id === id) ?? null,
+  })
   return { router, auth, rows, recorded, charged }
 }
 
 const headers = (auth: ReturnType<typeof makeAuth>, role: string) => bearer(auth, role, 'h1')
+
+describe('#208 — DELETE /menu-items/:id y /tables/:id por la ruta real: 409 de integridad', () => {
+  it('ítem en un combo → 409 con el nombre del combo; el ítem sigue', async () => {
+    const { router, auth, rows } = mount()
+    const res = await router.resolve('DELETE', '/api/restaurant/menu-items/mi-combo', { headers: headers(auth, 'hotel_admin') })
+    expect(res.status).toBe(409)
+    expect(JSON.stringify(res.body)).toContain('Combo Familiar')
+    expect(rows.MenuItems.find((m) => m.id === 'mi-combo')).toBeDefined()
+  })
+
+  it('ítem suelto → 200/204 y desaparece', async () => {
+    const { router, auth, rows } = mount()
+    const res = await router.resolve('DELETE', '/api/restaurant/menu-items/mi-solo', { headers: headers(auth, 'hotel_admin') })
+    expect([200, 204]).toContain(res.status)
+    expect(rows.MenuItems.find((m) => m.id === 'mi-solo')).toBeUndefined()
+  })
+
+  it('mesa con comanda abierta → 409; mesa libre → se borra', async () => {
+    const { router, auth, rows } = mount()
+    const busy = await router.resolve('DELETE', '/api/restaurant/tables/t1', { headers: headers(auth, 'hotel_admin') })
+    expect(busy.status).toBe(409)
+    expect(rows.RestaurantTables.find((t) => t.id === 't1')).toBeDefined()
+    const free = await router.resolve('DELETE', '/api/restaurant/tables/t-free', { headers: headers(auth, 'hotel_admin') })
+    expect([200, 204]).toContain(free.status)
+    expect(rows.RestaurantTables.find((t) => t.id === 't-free')).toBeUndefined()
+  })
+})
 
 describe('POST /api/restaurant/orders/:id/pay — solo restaurant:pay cobra', () => {
   it('kitchen (restaurant:view/edit, sin pay) → 403 y NO llega a payments', async () => {

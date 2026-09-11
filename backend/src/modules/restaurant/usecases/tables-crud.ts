@@ -1,14 +1,21 @@
 // restaurant/usecases/tables-crud.ts — CRUD de mesas del salón (RES-2).
 // Reglas: ownership (IDOR); status ∈ free|occupied|reserved. La consistencia mesa↔comanda abierta
 // (una mesa = una comanda abierta) se aplica al abrir comandas en RES-3, no acá.
+// #208: una mesa con comanda viva no se borra (409) — la comanda quedaría apuntando a una mesa que
+// no existe y el salón dejaría de mostrarla.
 import type { RepositoryAdapter, Auth } from 'arckode-framework'
-import { NotFoundError, ValidationError } from 'arckode-framework'
-import type { TableDTO, TableStatus, CurrentUser } from '../types'
+import { NotFoundError, ValidationError, ConflictError } from 'arckode-framework'
+import type { TableDTO, TableStatus, CurrentUser, OrderDTO } from '../types'
+import { isTerminalOrder } from './order-totals'
 
 export interface TablesCrudDeps {
   tables: RepositoryAdapter<TableDTO>
   userRepo: RepositoryAdapter<any>
   auth: Auth
+  /** #208: comandas del hotel, para negar el borrado de una mesa con comanda viva. Opcional solo por
+   *  retrocompat de tests viejos que no ejercitan el borrado; index.ts SIEMPRE lo pasa. Sin él,
+   *  `deleteTable` falla CERRADO (misma decisión que `deleteItem` sin `comboItems`). */
+  orders?: RepositoryAdapter<OrderDTO>
 }
 
 const TABLE_STATUSES: TableStatus[] = ['free', 'occupied', 'reserved']
@@ -79,6 +86,15 @@ export async function deleteTable(deps: TablesCrudDeps, id: string, user: Curren
   if (!existing) throw new NotFoundError('Mesa no encontrada')
   const me = await deps.userRepo.findById(user.id)
   deps.auth.assertOwnership(existing.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
+  // #208: comanda no terminal sobre la mesa (open/sent/.../billed/processing_payment) → 409. Una
+  // `paid`/`charged`/`cancelled`/`refunded` ya no la ocupa y no bloquea. Sin repo de comandas no se
+  // puede saber → no se borra (fail-closed), nunca "se salta el chequeo".
+  if (!deps.orders) throw new ValidationError('Comandas no configuradas: no se puede comprobar si la mesa tiene una comanda abierta')
+  const onTable = (await deps.orders.findMany({ hotelId: existing.hotelId, tableId: id })) as OrderDTO[]
+  const live = onTable.find((o) => !isTerminalOrder(o))
+  if (live) {
+    throw new ConflictError(`La mesa tiene la comanda ${live.number ?? live.id} abierta (${live.status}); cerrala o cancelala antes de borrarla`)
+  }
   const deleted = await deps.tables.delete(id)
   if (!deleted) throw new NotFoundError('Mesa no encontrada')
 }

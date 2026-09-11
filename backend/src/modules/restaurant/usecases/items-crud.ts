@@ -1,12 +1,27 @@
 // restaurant/usecases/items-crud.ts — CRUD de la carta: ítems (RES-1).
 // Reglas: ownership (IDOR); categoryId REQUERIDO y del MISMO hotel; stationId (override) del mismo hotel o null;
 // price ≥ 0 (rechaza negativos/NaN); taxRate opcional (si null, se resuelve al facturar desde config, NO acá).
-import type { RepositoryAdapter, Auth } from 'arckode-framework'
-import { NotFoundError, ValidationError } from 'arckode-framework'
-import type { MenuItemDTO, CategoryDTO, StationDTO, ItemTranslation, CurrentUser, AllergenTag } from '../types'
+import type { RepositoryAdapter, Auth, Logger } from 'arckode-framework'
+import { NotFoundError, ValidationError, ConflictError } from 'arckode-framework'
+import type { RecipePorts } from './food-cost'
+import type { MenuItemDTO, CategoryDTO, StationDTO, ItemTranslation, CurrentUser, AllergenTag, ComboDTO, ComboItemDTO, ModifierGroupDTO, ModifierDTO } from '../types'
 import { ALLERGEN_TAGS } from '../types'
 import { assertNoBaseLangKey, resolveForLang } from '../../../shared/i18n'
 import { isWithinAvailabilityWindow } from './order-totals'
+
+/**
+ * #208: abstracción mínima del ORM para la cascada atómica de `deleteItem` (mismo patrón que
+ * `LandingTransactor` en landing/usecases/blocks-crud.ts). La define el módulo para que el service
+ * no dependa del ORM concreto; index.ts la construye desde el `orm` real. El callback recibe un ORM
+ * atado a la transacción: `tx.deleteMany(model, filters)` / `tx.delete(model, id)`.
+ */
+export interface ItemsTransactor {
+  transaction<T>(fn: (tx: ItemsTx) => Promise<T>): Promise<T>
+}
+export interface ItemsTx {
+  deleteMany(model: string, filters: Record<string, unknown>): Promise<number>
+  delete(model: string, id: string): Promise<boolean>
+}
 
 export interface ItemsCrudDeps {
   items: RepositoryAdapter<MenuItemDTO>
@@ -14,6 +29,16 @@ export interface ItemsCrudDeps {
   stations: RepositoryAdapter<StationDTO>
   userRepo: RepositoryAdapter<any>
   auth: Auth
+  // #208: integridad al borrar. Opcionales SOLO por retrocompat de tests viejos que no borran;
+  // index.ts los pasa siempre. Sin `comboItems` no se puede comprobar el combo → se niega el borrado.
+  comboItems?: RepositoryAdapter<ComboItemDTO>
+  combos?: RepositoryAdapter<ComboDTO>
+  modifierGroups?: RepositoryAdapter<ModifierGroupDTO>
+  modifiers?: RepositoryAdapter<ModifierDTO>
+  transactor?: ItemsTransactor
+  /** #208: receta del ítem en inventario (puerto del conector restaurante-inventario). Sin puerto = no hay recetas que limpiar. */
+  recipes?: RecipePorts
+  logger?: Pick<Logger, 'warn' | 'error'>
 }
 
 // F4 — campos traducibles de un ítem: nombre + descripción.
@@ -192,12 +217,72 @@ export async function setAvailability(deps: ItemsCrudDeps, id: string, available
   return item
 }
 
+/**
+ * #208: borrar un ítem.
+ *  - 409 si algún combo lo usa como componente (con el nombre del combo): al venderlo,
+ *    order-lines.ts lanzaría por componente inexistente y el combo quedaría roto en silencio.
+ *    Un `menu_combo_items` cuyo combo YA no existe (huérfano) no bloquea: no hay combo del cual
+ *    "quitarlo", así que se limpia con el ítem.
+ *  - Cascada de sus grupos de modificadores + opciones EN UNA TRANSACCIÓN: antes quedaban huérfanos
+ *    (menu_item_modifier_groups.menuItemId apuntando a nada). Si el transactor no está cableado
+ *    (tests viejos) se borra secuencial — en producción index.ts lo pasa siempre.
+ *  - Después, la receta del ítem en inventario (`menu_item_recipes`, otro módulo → por puerto). Va
+ *    fuera de la transacción porque es otra base de dominio; si falla, el ítem ya no existe y se
+ *    avisa en el log — una receta huérfana no rompe nada (consumeForSale nunca la va a leer).
+ *  Las líneas de comandas históricas guardan snapshot de name/price → la comanda sobrevive al borrado.
+ */
 export async function deleteItem(deps: ItemsCrudDeps, id: string, user: CurrentUser): Promise<void> {
   const existing = await deps.items.findById(id)
   if (!existing) throw new NotFoundError('Ítem no encontrado')
   const me = await deps.userRepo.findById(user.id)
   deps.auth.assertOwnership(existing.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
-  // Las líneas de comandas históricas guardan snapshot de name/price → la comanda sobrevive al borrado.
-  const deleted = await deps.items.delete(id)
+
+  if (!deps.comboItems || !deps.combos) throw new ValidationError('Combos no configurados: no se puede comprobar si el ítem está en un combo')
+  const usedIn = (await deps.comboItems.findMany({ menuItemId: id })) as ComboItemDTO[]
+  const names: string[] = []
+  const orphans: ComboItemDTO[] = []
+  for (const ci of usedIn) {
+    const combo = await deps.combos.findOne({ id: ci.comboId })
+    if (!combo) { orphans.push(ci); continue }
+    if (!names.includes(combo.name)) names.push(combo.name)
+  }
+  if (names.length > 0) {
+    throw new ConflictError(`El ítem "${existing.name}" forma parte del combo ${names.map((n) => `"${n}"`).join(', ')}; quitalo del combo antes de borrarlo`)
+  }
+
+  const groups = deps.modifierGroups ? ((await deps.modifierGroups.findMany({ menuItemId: id })) as ModifierGroupDTO[]) : []
+  const cascade = async (tx: ItemsTx): Promise<boolean> => {
+    for (const g of groups) await tx.deleteMany('MenuItemModifiers', { groupId: g.id })
+    if (groups.length) await tx.deleteMany('MenuItemModifierGroups', { menuItemId: id })
+    for (const ci of orphans) await tx.delete('MenuComboItems', ci.id)
+    return tx.delete('MenuItems', id)
+  }
+  const deleted = deps.transactor
+    ? await deps.transactor.transaction(cascade)
+    : await cascade(sequentialTx(deps))
   if (!deleted) throw new NotFoundError('Ítem no encontrado')
+
+  if (deps.recipes?.deleteRecipesOfMenuItem) {
+    try {
+      await deps.recipes.deleteRecipesOfMenuItem(existing.hotelId, id)
+    } catch (e) {
+      deps.logger?.warn('deleteItem: el ítem se borró pero su receta en inventario no', { menuItemId: id, hotelId: existing.hotelId, error: e instanceof Error ? e.message : String(e) })
+    }
+  }
+}
+
+/** Sin transactor (tests): la misma secuencia sobre los repos, sin atomicidad. */
+function sequentialTx(deps: ItemsCrudDeps): ItemsTx {
+  const repoOf = (model: string): RepositoryAdapter<any> | undefined =>
+    model === 'MenuItemModifiers' ? deps.modifiers : model === 'MenuItemModifierGroups' ? deps.modifierGroups : undefined
+  return {
+    deleteMany: async (model, filters) => {
+      const repo = repoOf(model)
+      if (!repo) return 0
+      const rows = (await repo.findMany(filters)) as Array<{ id: string }>
+      for (const r of rows) await repo.delete(r.id)
+      return rows.length
+    },
+    delete: (model, rowId) => (model === 'MenuComboItems' ? deps.comboItems!.delete(rowId) : deps.items.delete(rowId)),
+  }
 }

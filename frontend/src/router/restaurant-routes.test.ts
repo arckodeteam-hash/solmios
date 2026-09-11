@@ -24,6 +24,15 @@ vi.mock('@/services/Auth.service', () => ({
   clearHotelsCache: vi.fn(),
 }))
 vi.mock('@/services/Platform.service', () => ({ ModulesService: { enabled: vi.fn() } }))
+// Los `router.push` de abajo resuelven la ruta final y Vue Router recién ahí carga sus componentes
+// lazy: sin esto, cada navegación compila con vite:vue el AdminLayout + el dashboard real (que
+// arrastra ReservationModal y compañía) + el KDS. Eso tardaba >5 s en la corrida completa (timeout
+// bajo carga, pasaba aislado). Acá se prueba el GUARD, no las vistas: un stub vacío alcanza.
+// (factories inline: vi.mock se hoistea por encima de cualquier const del archivo.)
+vi.mock('@/layouts/AdminLayout.vue', () => ({ default: { name: 'StubPage', render: () => null } }))
+vi.mock('@/pages/dashboard/index.vue', () => ({ default: { name: 'StubPage', render: () => null } }))
+vi.mock('@/pages/restaurante/cocina.vue', () => ({ default: { name: 'StubPage', render: () => null } }))
+vi.mock('@/pages/restaurante/salon.vue', () => ({ default: { name: 'StubPage', render: () => null } }))
 
 import router from './index'
 import { useAuthStore } from '@/stores/auth.store'

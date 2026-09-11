@@ -20,6 +20,7 @@ import * as voidReasons from './usecases/void-reasons'
 import { composeSockets } from './usecases/compose-sockets'
 import type { AuditPort } from '../../shared/usecases/audit'
 import type { LineStatus } from './types'
+import type { ReservationPort } from './usecases/reservation-port'
 
 export class RestaurantService {
   private sockets: RestaurantSockets = {}
@@ -30,6 +31,10 @@ export class RestaurantService {
   private recipePorts: foodCost.RecipePorts = {}
   // #207: auditoría (connectors/restaurante-auditlog.ts). null = sin auditlog montado: anular sigue funcionando, sin rastro.
   private auditPort: AuditPort | null = null
+  // #208: puertos — reservas por conector (restaurante-reservas.ts; null = room service/cargo a habitación fallan
+  // cerrado) y gate del módulo para la carta pública (index.ts → createModuleChecker; null = 404 genérico).
+  private reservationPort: ReservationPort | null = null
+  private moduleStatePort: publicMenuUsecase.ModuleStatePort | null = null
 
   constructor(
     private readonly stations: RepositoryAdapter<StationDTO>,
@@ -49,14 +54,17 @@ export class RestaurantService {
     private readonly modifiers?: RepositoryAdapter<ModifierDTO>,
     // F2: catálogo de combos. Opcionales al final (retrocompat con callers/tests existentes).
     private readonly combos?: RepositoryAdapter<ComboDTO>, private readonly comboItems?: RepositoryAdapter<ComboItemDTO>,
-    private readonly plans?: RepositoryAdapter<any>, private readonly subscriptions?: RepositoryAdapter<any>, // F7: gate del módulo restaurant — plan desde la suscripción activa (resolve-plan.ts)
     private readonly counterCas?: orders.OrdersDeps['counterCas'], // #206: UPDATE condicional (orm.updateMany) para el numerador de comandas — el orm entra SOLO como esta interface mínima (ver usecases/order-number.ts; misma excepción que promo-codes/promo-atomic.ts)
+    private readonly transactor?: itemsCrud.ItemsTransactor, // #208: cascada atómica al borrar un ítem (grupos + opciones + ítem). Misma excepción acotada que counterCas: solo `transaction`.
   ) {}
 
   // Acumula handlers, nunca pisa el anterior (composición de sockets, usecases/compose-sockets.ts).
   setSockets(s: Partial<RestaurantSockets>): void { composeSockets(this.sockets, s) }
   /** #207: puerto de auditoría inyectado por conector (mismo patrón que reservas.setAuditDeps). */
   setAuditDeps(port: AuditPort): void { this.auditPort = port }
+  /** #208: puertos inyectados por conector (ver los campos de arriba). */
+  setReservationPort(port: ReservationPort): void { this.reservationPort = port }
+  setModuleStatePort(port: publicMenuUsecase.ModuleStatePort): void { this.moduleStatePort = port }
   /** Puertos de liquidación (folios/payments) inyectados por conector. Acumula (no pisa). */
   setSettlementDeps(p: Partial<settlement.SettlementPorts>): void { this.settlementPorts = { ...this.settlementPorts, ...p } }
   /** Puerto de recetas (inventario) inyectado por conector. Acumula (no pisa). Best-effort + graceful. */
@@ -64,11 +72,11 @@ export class RestaurantService {
 
   private stationDeps(): stationsCrud.StationsCrudDeps { return { stations: this.stations, userRepo: this.userRepo, auth: this.auth } }
   private catDeps(): categoriesCrud.CategoriesCrudDeps { return { categories: this.categories, items: this.items, stations: this.stations, userRepo: this.userRepo, auth: this.auth } }
-  private itemDeps(): itemsCrud.ItemsCrudDeps { return { items: this.items, categories: this.categories, stations: this.stations, userRepo: this.userRepo, auth: this.auth } }
-  private tableDeps(): tablesCrud.TablesCrudDeps { return { tables: this.tables, userRepo: this.userRepo, auth: this.auth } }
+  private itemDeps(): itemsCrud.ItemsCrudDeps { return { items: this.items, categories: this.categories, stations: this.stations, userRepo: this.userRepo, auth: this.auth, comboItems: this.comboItems, combos: this.combos, modifierGroups: this.modifierGroups, modifiers: this.modifiers, transactor: this.transactor, recipes: this.recipePorts, logger: this.logger } }
+  private tableDeps(): tablesCrud.TablesCrudDeps { return { tables: this.tables, userRepo: this.userRepo, auth: this.auth, orders: this.orders } }
   private ordersDeps(): orders.OrdersDeps {
     if (!this.orders || !this.lines || !this.config) throw new ValidationError('Comandas no configuradas')
-    return { orders: this.orders, lines: this.lines, tables: this.tables, config: this.config, counterCas: this.counterCas, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets, audit: this.auditPort, logger: this.logger }
+    return { orders: this.orders, lines: this.lines, tables: this.tables, config: this.config, counterCas: this.counterCas, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets, audit: this.auditPort, logger: this.logger, reservations: this.reservationPort }
   }
   private orderLinesDeps(): orderLines.OrderLinesDeps {
     if (!this.orders || !this.lines || !this.config || !this.hotels) throw new ValidationError('Comandas no configuradas')
@@ -89,7 +97,7 @@ export class RestaurantService {
   private foodCostDeps(): foodCost.FoodCostDeps { return { items: this.items, combos: this.combos, comboItems: this.comboItems, recipePorts: this.recipePorts } }
   private settlementDeps(): settlement.SettlementDeps {
     if (!this.orders || !this.lines || !this.hotels) throw new ValidationError('Comandas no configuradas')
-    return { orders: this.orders, lines: this.lines, tables: this.tables, hotels: this.hotels, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets, ports: this.settlementPorts, audit: this.auditPort, logger: this.logger }
+    return { orders: this.orders, lines: this.lines, tables: this.tables, hotels: this.hotels, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets, ports: this.settlementPorts, audit: this.auditPort, logger: this.logger, reservations: this.reservationPort }
   }
   private kdsDeps(): kds.KdsDeps {
     if (!this.orders || !this.lines) throw new ValidationError('Comandas no configuradas')
@@ -185,5 +193,5 @@ export class RestaurantService {
   foodCostReport(user: CurrentUser) { return foodCost.foodCostReport(this.foodCostDeps(), user) }
 
   // ─── Carta pública sin sesión (F7): hotelId del PATH, sin req.user ni createModuleGuard ───
-  publicMenu(hotelId: string, lang: string | undefined) { return publicMenuUsecase.publicMenu({ categories: this.categories, items: this.items, stations: this.stations, combos: this.combos!, comboItems: this.comboItems!, userRepo: this.userRepo, hotels: this.hotels!, config: this.config!, plans: this.plans!, subscriptions: this.subscriptions!, logger: this.logger }, hotelId, lang) }
+  publicMenu(hotelId: string, lang: string | undefined) { return publicMenuUsecase.publicMenu({ categories: this.categories, items: this.items, stations: this.stations, combos: this.combos!, comboItems: this.comboItems!, userRepo: this.userRepo, hotels: this.hotels!, moduleState: this.moduleStatePort, logger: this.logger }, hotelId, lang) }
 }

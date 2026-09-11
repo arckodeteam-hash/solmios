@@ -9,6 +9,7 @@ import type { RestaurantSockets } from '../sockets'
 import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
 import { recomputeTotals } from './order-totals'
 import { round2 } from '../../../shared/utils/money'
+import { assertReservationOfHotel, type ReservationPort } from './reservation-port'
 
 // Puertos que provee el conector (folios/payments). El módulo NO importa esos módulos.
 // `orderId` viaja SIEMPRE: el conector lo usa para construir `reference: 'pos:' + orderId`, la
@@ -49,6 +50,8 @@ export interface SettlementDeps {
   // #207: auditoría del reembolso (puerto inyectado por connectors/restaurante-auditlog.ts). Opcional.
   audit?: AuditPort | null
   logger?: Logger
+  // #208: la reserva a la que se carga la cuenta debe ser del hotel (connectors/restaurante-reservas.ts).
+  reservations?: ReservationPort | null
 }
 
 const silentLogger = { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} } as unknown as Logger
@@ -103,6 +106,9 @@ export async function chargeToRoom(deps: SettlementDeps, id: string, dto: { rese
   const reservationId = dto.reservationId || order.reservationId
   if (!reservationId) throw new ValidationError('La comanda no tiene reserva asociada; solo cabe el cobro directo')
   if (!deps.ports.chargeToFolio) throw new ValidationError('Cargo a habitación no disponible (folios no conectado)')
+  // #208: ANTES de tocar el folio — la reserva (venga del body o de la comanda) tiene que existir y
+  // ser del hotel de la comanda. 404 y ningún folio abierto si no.
+  await assertReservationOfHotel(deps.reservations, reservationId, order.hotelId, user)
 
   const fresh = await recomputeTotals(deps, order)
   // M2 (QA): el folio no transfiere la propina; en vez de perderla en silencio, se rechaza. La propina

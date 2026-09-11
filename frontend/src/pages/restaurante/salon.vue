@@ -166,7 +166,7 @@ function editTable(t: RestaurantTable) {
 }
 function delTable(t: RestaurantTable) {
   askConfirm({
-    title: 'Eliminar mesa', message: `¿Eliminar la mesa "${t.name}"?`, confirmLabel: 'Eliminar', danger: true,
+    title: 'Eliminar mesa', message: `¿Eliminar la mesa "${t.name}"? No se puede si tiene una comanda abierta.`, confirmLabel: 'Eliminar', danger: true,
     run: async () => { await RestaurantService.deleteTable(t.id); await load() },
   })
 }

@@ -63,6 +63,8 @@ function deps(w: Wiring = {}): OrdersDeps {
     userRepo: { ...makeRepo<any>(), findById: async () => ({ id: 'u1', hotelId: 'h1' }) },
     auth: strictAuth,
     sockets: w.sockets ?? {},
+    // #208: la reserva 'r1' es del hotel h1 (room_service la valida contra el hotel).
+    reservations: { findById: async (id) => (id === 'r1' ? { id: 'r1', hotelId: 'h1' } : null) },
   }
 }
 

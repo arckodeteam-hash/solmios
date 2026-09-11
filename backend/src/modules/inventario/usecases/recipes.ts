@@ -125,3 +125,16 @@ export async function consumeForSaleWithModifiers(deps: RecipeDeps, input: { hot
     } catch { /* best-effort: un descuento de stock no debe romper el cobro de la comanda */ }
   }
 }
+
+/**
+ * #208: borra la receta completa de un ítem de menú que el restaurante acaba de eliminar. Lo llama el
+ * conector restaurante-inventario (puerto `deleteRecipesOfMenuItem`) con el super_admin sintético y el
+ * hotel del ítem (resuelto en BD por el restaurante). Sin esto, `menu_item_recipes` acumulaba filas
+ * muertas apuntando a un `menuItemId` que ya no existe. Devuelve cuántas filas se borraron.
+ */
+export async function deleteRecipesOfMenuItem(deps: Pick<RecipeDeps, 'recipes'>, input: { hotelId: string; menuItemId: string }): Promise<number> {
+  if (!input.hotelId || !input.menuItemId) throw new ValidationError('hotelId y menuItemId requeridos')
+  const rows = (await deps.recipes.findMany({ hotelId: input.hotelId, menuItemId: input.menuItemId })) as MenuItemRecipeDTO[]
+  for (const r of rows) await deps.recipes.delete(r.id)
+  return rows.length
+}

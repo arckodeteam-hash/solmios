@@ -11,7 +11,7 @@ import type { ConnectorContext } from 'arckode-framework'
 import { restauranteInventarioConnector } from '../restaurante-inventario'
 
 function makeCtx(order: any, restaurantOverrides: Record<string, any> = {}) {
-  const captured: any = { sockets: {}, recipePorts: null }
+  const captured: any = { sockets: {}, recipePorts: null, recipesDeleted: [] }
   const restaurantStub = {
     setSockets: (s: any) => Object.assign(captured.sockets, s),
     setRecipePorts: (p: any) => { captured.recipePorts = p },
@@ -25,6 +25,7 @@ function makeCtx(order: any, restaurantOverrides: Record<string, any> = {}) {
     consumeForSaleWithModifiers: async (input: any) => { modifierConsumed.push(input) },
     revertPosSale: async () => {},
     menuItemsWithRecipe: async () => [],
+    deleteRecipesOfMenuItem: async (input: any) => { captured.recipesDeleted.push(input); return 1 },
   }
   const ctx = {
     resolveModule: (name: string) => {
@@ -113,5 +114,14 @@ describe('restauranteInventarioConnector — combos (F2, CERO cambios de código
     // a mitad del loop corta los consumos restantes SIN lanzar — comportamiento ya existente, sin
     // ninguna rama nueva para combos.
     await expect(captured.sockets.onOrderPaid({ id: 'o1', hotelId: 'h1' })).resolves.toBeUndefined()
+  })
+})
+
+describe('restauranteInventarioConnector — #208 receta del ítem borrado', () => {
+  it('el puerto deleteRecipesOfMenuItem delega en inventario con el hotelId que le pasa el restaurante (no un token)', async () => {
+    const { ctx, captured } = makeCtx(ORDER_WITH_COMBO)
+    restauranteInventarioConnector(ctx)
+    expect(await captured.recipePorts.deleteRecipesOfMenuItem('h1', 'item-x')).toBe(1)
+    expect(captured.recipesDeleted).toEqual([{ hotelId: 'h1', menuItemId: 'item-x' }])
   })
 })
