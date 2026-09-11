@@ -13,9 +13,13 @@
 //     texto libre; queda en la fila (`discountReason`) y en el audit log.
 //   - Permiso `restaurant:discount` en la ruta (hotel_admin y receptionist por defecto; el mozo no).
 //   - Tope: configuration('restaurant').maxDiscountPercent (default 20) para todo rol que no sea
-//     hotel_admin/super_admin (sin tope). Un monto fijo se convierte a % de la base para compararlo.
-//     Superarlo → 403 "supera el máximo permitido (N %)". El tope es POR OPERACIÓN: una línea al 20 %
-//     y la comanda al 20 % suman más; si el hotel quiere un tope global, ese es otro cambio.
+//     hotel_admin/super_admin (sin tope). Se mide sobre el DESCUENTO EFECTIVO TOTAL de la comanda
+//     (`computeEffectiveDiscount`: Σ descuentos de línea + descuento de comanda, en % del bruto) tal
+//     como quedaría DESPUÉS de la operación — no sobre cada operación suelta: una línea al 20 % más
+//     la comanda al 20 % dejan de cobrar el 36 % y un tope del 25 % frena la segunda aunque por sí sola
+//     esté por debajo. Un monto fijo entra en la misma cuenta. Superarlo → 403 "supera el máximo
+//     permitido (N %)" con el % total que quedaría. La cortesía (100 %) solo entra con un tope que la
+//     habilite: hotel_admin/super_admin, o un hotel con maxDiscountPercent = 100.
 //   - Una comanda `paid/charged/cancelled/processing_payment` no admite descuentos (LINES_LOCKED → 409,
 //     misma regla que editar líneas). Una línea anulada tampoco.
 //   - La línea con cortesía se MANTIENE en la venta (no es `voided`): el cierre del día (#213) la lista
@@ -28,7 +32,7 @@ import type { OrderDTO, OrderItemDTO, CurrentUser, DiscountType } from '../types
 import type { RestaurantSockets } from '../sockets'
 import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
 import { round2 } from '../../../shared/utils/money'
-import { recomputeTotals, computeOrderTotals, computeDiscountAmount, isLineActive } from './order-totals'
+import { recomputeTotals, computeOrderTotals, computeDiscountAmount, computeEffectiveDiscount, isLineActive } from './order-totals'
 import { loadOrderForEdit } from './order-lines'
 import { getReasonList, setReasonList, type ReasonListSpec, type VoidReasonsDeps } from './void-reasons'
 
@@ -89,13 +93,25 @@ async function readMaxDiscountPercent(deps: Pick<DiscountsDeps, 'config'>, hotel
   return DEFAULT_MAX_DISCOUNT_PERCENT
 }
 
-/** 403 si el descuento pedido, expresado como % de la base, supera el tope del usuario. */
-function assertWithinCap(base: number, input: ParsedDiscount, cap: number): number {
+/**
+ * 403 si, con la operación aplicada, el descuento efectivo TOTAL de la comanda (líneas + comanda, en %
+ * del bruto) supera el tope del usuario. `lines`/`order` ya vienen como quedarían tras la operación;
+ * `base` y el `amount` devuelto son los de la operación (para el audit log y el mensaje).
+ */
+function assertWithinCap(
+  lines: OrderItemDTO[],
+  order: Pick<OrderDTO, 'tip' | 'discountType' | 'discountValue'>,
+  base: number,
+  input: ParsedDiscount,
+  cap: number,
+): number {
   const amount = computeDiscountAmount(base, input.type, input.value)
-  const pct = base > 0 ? (amount / base) * 100 : 0
-  if (pct > cap + 1e-9) {
-    const asked = input.type === 'percent' ? `${input.value} %` : `${round2(pct)} %`
-    throw new ForbiddenError(`El descuento (${asked}) supera el máximo permitido (${cap} %)`)
+  const eff = computeEffectiveDiscount(lines, order)
+  if (eff.percent > cap + 1e-9) {
+    const askedPct = base > 0 ? round2((amount / base) * 100) : 0
+    const asked = input.type === 'percent' ? `${input.value} %` : `${round2(amount)} = ${askedPct} %`
+    const sumado = round2(eff.discountTotal - amount) > 0 ? ' sumado a los descuentos ya aplicados' : ''
+    throw new ForbiddenError(`El descuento (${asked})${sumado} deja la comanda con ${eff.percent} % de descuento total y supera el máximo permitido (${cap} %)`)
   }
   return amount
 }
@@ -125,7 +141,7 @@ export async function applyOrderDiscount(deps: DiscountsDeps, orderId: string, d
   const base = computeOrderTotals(active, { tip: 0, discountType: null, discountValue: null }).subtotal
   if (base <= 0) throw new ValidationError('La comanda no tiene monto para descontar')
   const cap = await maxDiscountPercentFor(deps, order.hotelId, user)
-  const amount = assertWithinCap(base, input, cap)
+  const amount = assertWithinCap(active, { tip: 0, discountType: input.type, discountValue: input.value }, base, input, cap)
   const previous = order.discountType ? { type: order.discountType, value: order.discountValue, amount: order.discountAmount, reason: order.discountReason } : null
 
   const patch = { discountType: input.type, discountValue: input.value, discountReason: input.reason, discountBy: user.id, discountAt: new Date().toISOString() }
@@ -169,7 +185,10 @@ export async function applyLineDiscount(deps: DiscountsDeps, orderId: string, li
   const base = round2(Number(line.lineTotal || 0))
   if (base <= 0) throw new ValidationError('La línea no tiene monto para descontar')
   const cap = await maxDiscountPercentFor(deps, order.hotelId, user)
-  const amount = assertWithinCap(base, input, cap)
+  // Simula la comanda como quedaría: esta línea con el descuento pedido, el resto y el descuento de comanda como están.
+  const active = ((await deps.lines.findMany({ orderId: order.id })) as OrderItemDTO[]).filter(isLineActive)
+    .map((l) => (l.id === line.id ? { ...l, discountType: input.type, discountValue: input.value } : l))
+  const amount = assertWithinCap(active, order, base, input, cap)
   const previous = line.discountType ? { type: line.discountType, value: line.discountValue, amount: line.discountAmount, reason: line.discountReason } : null
 
   const patch = { discountType: input.type, discountValue: input.value, discountAmount: amount, discountReason: input.reason, discountBy: user.id, discountAt: new Date().toISOString() }

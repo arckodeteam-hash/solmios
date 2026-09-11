@@ -324,6 +324,47 @@ describe('#215 — descuento de LÍNEA y cortesía sobre el ORM real', () => {
     } finally { await h.close() }
   })
 
+  it('el tope se mide sobre el descuento efectivo TOTAL: línea 20 % + comanda 20 % (= 36 % del bruto) con tope 25 → 403; con tope 50 → pasa y cierra al centavo', async () => {
+    const h = await harness()
+    try {
+      await h.config.create({ hotelId: 'h1', key: 'restaurant', value: { maxDiscountPercent: 25 } } as any)
+      await h.svc.applyLineDiscount(h.orderId, h.lineId, { type: 'percent', value: 20, reason: 'Promoción' }, recep)   // 20 de 100
+      expect(await fresh(h)).toMatchObject({ subtotal: 80, discountTotal: 20 })
+      // Cada operación por separado está bajo el tope (20 ≤ 25), pero 20 + 20 % de 80 = 36 % del bruto.
+      let err: unknown
+      try { await h.svc.applyOrderDiscount(h.orderId, { type: 'percent', value: 20, reason: 'Huésped del hotel' }, recep) } catch (e) { err = e }
+      expect(err).toBeInstanceOf(ForbiddenError)
+      expect((err as ForbiddenError).httpStatus).toBe(403)
+      expect((err as Error).message).toContain('supera el máximo permitido (25 %)')
+      expect((err as Error).message).toContain('36 %')
+      expect(await fresh(h)).toMatchObject({ subtotal: 80, tax: 14.4, total: 94.4, discountType: null, discountTotal: 20 })
+      expect(h.audit).toHaveLength(1)   // solo el de la línea
+      // En el otro orden también: comanda 20 % primero y después la línea → misma suma, mismo 403.
+      await h.svc.removeLineDiscount(h.orderId, h.lineId, admin)
+      await h.svc.applyOrderDiscount(h.orderId, { type: 'percent', value: 20, reason: 'Huésped del hotel' }, recep)
+      await expect(h.svc.applyLineDiscount(h.orderId, h.lineId, { type: 'percent', value: 20, reason: 'Promoción' }, recep)).rejects.toThrow('supera el máximo permitido (25 %)')
+      expect(await h.lines.findById(h.lineId)).toMatchObject({ discountType: null, discountAmount: 0 })
+      // Un monto en la línea también se suma: 6 sobre 100 (6 %) + 20 % de 94 = 24.8 % ≤ 25 pasa; 7 → 25.6 % no.
+      await expect(h.svc.applyLineDiscount(h.orderId, h.lineId, { type: 'amount', value: 7, reason: 'Promoción' }, recep)).rejects.toThrow('(25 %)')
+      await h.svc.applyLineDiscount(h.orderId, h.lineId, { type: 'amount', value: 6, reason: 'Promoción' }, recep)
+      expect(await fresh(h)).toMatchObject({ subtotal: 75.2, discountTotal: 24.8 })
+
+      // Con tope 50 la misma combinación entra y los totales cierran al centavo.
+      await h.svc.removeLineDiscount(h.orderId, h.lineId, admin)
+      await h.svc.removeOrderDiscount(h.orderId, admin)
+      await h.svc.setDiscountPolicy({ maxDiscountPercent: 50 }, admin)
+      await h.svc.applyLineDiscount(h.orderId, h.lineId, { type: 'percent', value: 20, reason: 'Promoción' }, recep)          // 100 → 80
+      await h.svc.applyOrderDiscount(h.orderId, { type: 'percent', value: 20, reason: 'Huésped del hotel' }, recep)          // 80 → 64
+      expect(await fresh(h)).toMatchObject({ subtotal: 64, tax: 11.52, total: 75.52, discountAmount: 16, discountTotal: 36 })
+      // 36 % ≤ 50, pero subir la comanda a 40 % (20 + 32 = 52 %) vuelve a rebotar y la comanda queda como estaba.
+      await expect(h.svc.applyOrderDiscount(h.orderId, { type: 'percent', value: 40, reason: 'Huésped del hotel' }, recep)).rejects.toThrow('supera el máximo permitido (50 %)')
+      expect(await fresh(h)).toMatchObject({ subtotal: 64, total: 75.52, discountValue: 20 })
+      // hotel_admin sigue sin tope: cortesía total encima de lo que ya había.
+      await h.svc.applyOrderDiscount(h.orderId, { type: 'percent', value: 100, reason: 'Cortesía de la casa' }, admin)
+      expect(await fresh(h)).toMatchObject({ subtotal: 0, tax: 0, total: 0, discountTotal: 100 })
+    } finally { await h.close() }
+  })
+
   it('línea + comanda: el descuento de comanda se aplica sobre lo ya descontado y el impuesto sobre el neto final', async () => {
     const h = await harness()
     try {

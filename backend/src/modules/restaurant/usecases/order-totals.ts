@@ -162,6 +162,34 @@ export function computeOrderTotals(
   return { subtotal, tax, total, discountAmount, discountTotal, lineDiscounts }
 }
 
+export interface EffectiveDiscount {
+  /** Σ lineTotal de las líneas vivas (antes de cualquier descuento). */
+  gross: number
+  /** Σ descuentos de línea + descuento de comanda, ya recortados. */
+  discountTotal: number
+  /** discountTotal como % del bruto (0 si no hay bruto). */
+  percent: number
+}
+
+/**
+ * #215 — Descuento EFECTIVO TOTAL de la comanda: lo que de verdad deja de cobrarse (líneas + comanda)
+ * expresado como % del bruto. Es contra ESTO que se mide el tope del hotel, no contra cada operación
+ * suelta: una línea al 20 % más la comanda al 20 % dejan de cobrar el 36 % del bruto, y un tope del
+ * 25 % tiene que frenar la segunda operación aunque por sí sola esté por debajo. Puro: la operación
+ * que se quiere validar se simula pasando las líneas/comanda como quedarían.
+ */
+export function computeEffectiveDiscount(
+  lines: Pick<OrderItemDTO, 'id' | 'lineTotal' | 'taxRate' | 'discountType' | 'discountValue'>[],
+  order: Pick<OrderDTO, 'tip' | 'discountType' | 'discountValue'>,
+): EffectiveDiscount {
+  let gross = 0
+  for (const l of lines) gross += Number(l.lineTotal || 0)
+  gross = round2(gross)
+  const { discountTotal } = computeOrderTotals(lines, order)
+  const percent = gross > 0 ? round2((discountTotal / gross) * 100) : 0
+  return { gross, discountTotal, percent }
+}
+
 /**
  * Recalcula subtotal (neto), tax (por tasa congelada de cada línea, sobre el neto descontado) y total
  * (+ tip) de una comanda a partir de sus líneas vivas (ni canceladas ni anuladas), y persiste el

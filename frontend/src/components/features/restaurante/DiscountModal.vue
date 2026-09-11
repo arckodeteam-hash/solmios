@@ -3,7 +3,8 @@
 // o para la comanda entera. Tipo (porcentaje/monto), valor con atajos, motivo obligatorio (botones grandes
 // del hotel + "Otro" con texto libre, mismo molde que VoidReasonModal) y una vista previa de cuánto queda.
 // La vista previa es orientativa: el server recalcula subtotal/impuesto/total y aplica el tope del rol
-// (403) — acá solo se deshabilita lo que ya se sabe que va a rebotar (valor sobre el tope, sin motivo).
+// sobre el descuento efectivo TOTAL de la comanda (líneas + comanda, 403 con el % que quedaría) — acá
+// solo se deshabilita lo que ya se sabe que va a rebotar (este valor solo ya supera el tope, sin motivo).
 import { ref, computed, watch } from 'vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import type { DiscountType, DiscountPayload, DiscountPolicy } from '@/services/Restaurant.service'
@@ -132,7 +133,7 @@ function confirm() {
       </div>
     </div>
     <p v-if="valueError && Number(value) > 0" role="alert" data-testid="discount-value-error" class="text-[11px] font-bold text-coral mb-2">{{ valueError }}</p>
-    <p v-else-if="cap < 100" class="text-[11px] text-text-muted mb-2">Tu tope es {{ cap }} % por descuento.</p>
+    <p v-else-if="cap < 100" class="text-[11px] text-text-muted mb-2">Tu tope es {{ cap }} % sobre el total de la comanda (se suman los descuentos de líneas y de comanda).</p>
 
     <!-- Vista previa -->
     <div class="rounded-xl bg-surface px-3 py-2 mb-3 text-sm flex items-center justify-between" data-testid="discount-preview">
