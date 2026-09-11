@@ -1,4 +1,4 @@
-export type NotificationType = 'system' | 'reservation' | 'payment' | 'housekeeping' | 'maintenance' | 'announcement'
+export type NotificationType = 'system' | 'reservation' | 'payment' | 'housekeeping' | 'maintenance' | 'announcement' | 'support'
 export type NotificationChannel = 'in_app' | 'email' | 'sms' | 'whatsapp'
 
 export interface NotificationMetadata {
