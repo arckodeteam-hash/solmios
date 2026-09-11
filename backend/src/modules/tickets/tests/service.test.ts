@@ -267,6 +267,32 @@ describe('TicketsService', () => {
       expect(result.assignedTo).toBe('agent-existing')
     })
 
+    // REQ-SOP-06: el connector de notificaciones necesita el estado anterior y el nombre real
+    // del actor (el JWT no lo trae) — lo resuelve el servidor vía userRepo.
+    it('onTicketsUpdated recibe previous.status y actor.name', async () => {
+      const ticket = { id: 't1', hotelId: 'h1', subject: 'Issue', status: 'open' } as TicketsDTO
+      const repo = makeRepo({
+        findById: async () => ticket,
+        update: async (id, data) => ({ id, hotelId: 'h1', subject: 'Issue', ...data } as TicketsDTO),
+      })
+      const userRepo = {
+        findById: async () => ({ id: 'admin1', name: 'Agente Soporte', hotelId: 'platform', role: 'super_admin' }),
+        findMany: async () => [],
+      } as unknown as RepositoryAdapter<any>
+      const svc = new TicketsService(repo, log, silentCache, userRepo, fakeAuth, makeHotelRepo())
+      let socketItem: any = null
+      let socketChange: any = null
+      svc.setSockets({ onTicketsUpdated: async (t, c) => { socketItem = t; socketChange = c } })
+
+      const result = await svc.update('t1', { status: 'in_progress' }, adminUser)
+
+      expect(socketItem).toEqual(result)
+      expect(socketItem.status).toBe('in_progress')
+      expect(socketChange.previous.status).toBe('open')
+      expect(socketChange.actor.id).toBe('admin1')
+      expect(socketChange.actor.name).toBe('Agente Soporte')
+    })
+
     // REQ-SOP-01/03: el hotel no puede resolver por su cuenta el nombre de un agente que no
     // pertenece a su hotel (no aparece en su propio /api/usuarios) — lo resuelve el servidor.
     it('hotel_admin ve assignee.name de un agente que no pertenece a su hotel', async () => {

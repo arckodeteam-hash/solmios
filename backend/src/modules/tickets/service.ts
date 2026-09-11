@@ -117,7 +117,12 @@ export class TicketsService {
     }
     const item = await this.repo.update(id, patch as any)
     if (!item) throw new NotFoundError('Ticket no encontrado')
-    await this.sockets.onTicketsUpdated?.(item)
+    // REQ-SOP-06: el connector necesita saber desde qué estado y quién (nombre real, el JWT no lo trae).
+    const actorUser = await this.userRepo.findById(currentUser.id)
+    await this.sockets.onTicketsUpdated?.(item, {
+      previous: existing,
+      actor: { id: currentUser.id, name: actorUser?.name ?? '', role: currentUser.role, hotelId: currentUser.hotelId, userType: currentUser.userType },
+    })
     await invalidateTicketsCaches(this.cache, existing.hotelId)
     return item
   }
