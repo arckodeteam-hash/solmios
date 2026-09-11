@@ -13,6 +13,7 @@ import { PostgresAdapter } from 'arckode-framework/adapters/postgres'
 import type { DbAdapter } from 'arckode-framework'
 import { backfillPaymentsReservationId } from './scripts/backfill-payments-reservation'
 import { backfillAriOutboxPendingKey } from './scripts/backfill-ari-outbox-pending-key'
+import { backfillRestaurantPayPermission } from './scripts/backfill-restaurant-pay-permission'
 import { LEGAL_PAGES_SEED } from './scripts/legal-pages-content'
 import { MARKETING_PAGES_SEED } from './scripts/marketing-pages-content'
 
@@ -148,6 +149,19 @@ async function createTablesBlock1(): Promise<void> {
   try {
     await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_hotel_number ON invoices(hotelId, invoiceNumber)`)
   } catch { /* la tabla se crea con RUN_MIGRATE; el índice se aplica en la próxima corrida */ }
+
+  // Comandas del restaurante (#206): el correlativo `CMD-{año}-NNNN` no puede repetirse dentro del
+  // hotel. `restaurant/usecases/order-number.ts` arbitra con un UPDATE condicional (CAS) sobre el
+  // contador de `configuration`; este UNIQUE es la garantía dura — si igual chocan, el `create` del
+  // perdedor falla y `openOrder` reintenta con el número siguiente. Por hotel (dos hoteles emiten su
+  // CMD-2026-0001 sin chocar); `number` nulo no cuenta (NULL no colisiona en SQLite ni en PG).
+  // Si una base vieja ya tiene duplicados, el índice no se puede crear: se avisa en vez de tirar
+  // abajo todo el seed — hay que deduplicar a mano y volver a correr.
+  try {
+    await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurant_orders_hotel_number ON restaurant_orders(hotelId, number)`)
+  } catch (e) {
+    console.log("idx_restaurant_orders_hotel_number: NO se pudo crear (¿tabla sin migrar o números duplicados?) —", e instanceof Error ? e.message.slice(0, 120) : String(e))
+  }
 
   // Inventario (INV-2, QA-A3): garantía DURA de idempotencia del ledger de stock. El dedup en JS es
   // check-then-create (no atómico): dos conectores concurrentes con el mismo sourceId (recepción de
@@ -1350,6 +1364,19 @@ async function main(): Promise<void> {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     console.log("demo talento/finanzas: parcial —", msg.slice(0, 90))
+  }
+
+  // #205 (REST-03) — `restaurant:pay` a las filas de `roles` que ya cobraban con `restaurant:edit`.
+  // Va ACÁ y no en un script aparte: los permisos efectivos salen de la fila de `roles` (pisa el
+  // mapa estático), y sin esto el deploy dejaba sin cobro al POS de todo hotel existente hasta que
+  // alguien se acordara de correr algo a mano. Idempotente; no toca filas vacías/corruptas ni a
+  // `kitchen`. La tabla la crea el ORM (RUN_MIGRATE): si no existe todavía, se avisa y sigue.
+  try {
+    const paid = await backfillRestaurantPayPermission(db)
+    console.log(`roles.restaurant:pay: ${paid} fila(s) actualizada(s)`)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.log("roles.restaurant:pay: no se pudo aplicar (¿falta RUN_MIGRATE?) —", msg.slice(0, 120))
   }
 
   // M5 fix (audit solmi-direct-booking) — Poblar `hotels.slug` para los hoteles sin slug.

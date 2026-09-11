@@ -4,11 +4,13 @@
 // #207: quitar (DELETE) solo vale mientras la comanda está `open` (error de toma). Una línea ya
 // enviada a cocina se ANULA con motivo (`voidLine`): queda en la comanda tachada y se audita.
 import type { RepositoryAdapter, Auth, Logger } from 'arckode-framework'
-import { NotFoundError, ValidationError, ConflictError } from 'arckode-framework'
+import { NotFoundError, ValidationError, ConflictError, ForbiddenError } from 'arckode-framework'
+import { hasPermission } from '../../../shared/permissions'
 import type { OrderDTO, OrderItemDTO, MenuItemDTO, CategoryDTO, StationDTO, CurrentUser, ModifierGroupDTO, ModifierDTO, OrderItemModifierSnapshot, ComboDTO, ComboItemDTO } from '../types'
 import type { RestaurantSockets } from '../sockets'
 import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
-import { resolveStation, recomputeTotals, round2, isWithinAvailabilityWindow, isLineActive } from './order-totals'
+import { round2 } from '../../../shared/utils/money'
+import { resolveStation, recomputeTotals, computeLineTotal, isWithinAvailabilityWindow, isLineActive } from './order-totals'
 import { recomputeOrderStatus } from './kds'
 import { getCombo } from './combos-crud'
 
@@ -192,7 +194,7 @@ async function addComboLine(
     stationId: undefined,           // el header no rutea a ningún KDS
     stationName: undefined,
     status: 'new',
-    lineTotal: round2(unitPrice * quantity),
+    lineTotal: computeLineTotal(unitPrice, null, quantity),
     modifiers: null,                // F1: los combos NUNCA aceptan modificadores
   } as Omit<OrderItemDTO, 'id'>
   const header = (await deps.lines.create(headerData)) as OrderItemDTO
@@ -260,7 +262,7 @@ export async function addLine(deps: OrderLinesDeps, orderId: string, dto: AddLin
     stationId: station.stationId,
     stationName: station.stationName,
     status: 'new',
-    lineTotal: round2((unitPrice + priceDelta) * quantity),
+    lineTotal: computeLineTotal(unitPrice, snapshot, quantity),
     modifiers: snapshot.length ? snapshot : null,
   } as Omit<OrderItemDTO, 'id'>)
   await recomputeTotals(deps, order)
@@ -297,7 +299,9 @@ export async function updateLine(deps: OrderLinesDeps, orderId: string, lineId: 
   if (dto.quantity !== undefined) {
     const quantity = assertQuantity(dto.quantity)
     patch.quantity = quantity
-    patch.lineTotal = round2(Number(line.unitPrice || 0) * quantity)
+    // #206: mismo cálculo que addLine — el recargo de los modificadores snapshoteados en la línea
+    // se conserva al cambiar la cantidad. (Combos: modifiers=null, sigue siendo unitPrice × qty.)
+    patch.lineTotal = computeLineTotal(Number(line.unitPrice || 0), line.modifiers, quantity)
   }
   const updated = (await deps.lines.update(lineId, patch as Partial<Omit<OrderItemDTO, 'id'>>)) as OrderItemDTO
   if (line.kind === 'combo_header' && dto.quantity !== undefined) {
@@ -309,13 +313,23 @@ export async function updateLine(deps: OrderLinesDeps, orderId: string, lineId: 
 
 export async function removeLine(deps: OrderLinesDeps, orderId: string, lineId: string, user: CurrentUser): Promise<void> {
   const order = await loadOrderForEdit(deps, orderId, user)
-  // #207: borrar es solo para un error de toma, antes de enviar. Una vez que la comanda salió a
-  // cocina (cualquier estado ≠ open) el plato ya se vio en el KDS: se anula con motivo, no se borra.
-  if (order.status !== 'open') {
-    throw new ConflictError('La línea ya fue enviada a cocina: anulala con motivo')
-  }
+  // #205: la ruta se gatea con `restaurant:create` (quitar una línea mal cargada es parte de tomar
+  // el pedido, mismo permiso que agregarla; cocina no lo tiene). #207: una vez que la comanda salió a
+  // cocina (cualquier estado ≠ open) el plato ya se vio en el KDS: NO se borra, se anula con motivo
+  // (`voidLine`, ruta con `restaurant:delete`). 409 para que el cliente sepa qué hacer.
   const line = (await deps.lines.findOne({ id: lineId })) as OrderItemDTO | null
   if (!line || line.orderId !== orderId || line.hotelId !== order.hotelId) throw new NotFoundError('Línea no encontrada')
+  // #210: una línea agregada después del envío y todavía sin confirmar (`new` sin `sentAt`) no llegó
+  // a cocina como pedido del mozo — sigue siendo un error de toma y se puede quitar, pero con la
+  // comanda ya en cocina lo hace quien tiene `restaurant:delete` (#205; super_admin trae `*:*`, un
+  // rol sin permisos cargados falla cerrado).
+  const unsent = line.status === 'new' && !line.sentAt
+  if (order.status !== 'open') {
+    if (!unsent) throw new ConflictError('La línea ya fue enviada a cocina: anulala con motivo')
+    if (!hasPermission(user.permissions ?? [], 'restaurant', 'delete')) {
+      throw new ForbiddenError('Sin permiso: restaurant:delete — la comanda ya fue enviada a cocina')
+    }
+  }
   if (line.kind === 'combo_component') {
     throw new ValidationError('Esta línea pertenece a un combo; editá el combo completo')
   }

@@ -100,6 +100,9 @@ export const OpenOrderSchema: Record<string, ValidationRule> = {
   guestId: { type: 'string' as const },
   roomId: { type: 'string' as const },
   waiterId: { type: 'string' as const },
+  // #210 — comensales. El rango (entero 1..200) lo valida el usecase `openOrder`: el schema no
+  // distingue entero de decimal, y el default por tipo de comanda es regla de negocio.
+  covers: { type: 'number' as const },
 }
 export const AddLineSchema: Record<string, ValidationRule> = {
   // F2: menuItemId ya NO es required a nivel schema — un combo llega con comboId en su lugar.
@@ -192,8 +195,11 @@ export const BillSchema: Record<string, ValidationRule> = {
 export const ChargeToRoomSchema: Record<string, ValidationRule> = {
   reservationId: { type: 'string' as const },
 }
+// #205: los métodos que el POS cobra. Espejo de `PAYMENT_METHODS` en frontend/src/services/Caja.service.ts.
+// Sin el enum, "xyz" llegaba a `payments.createPayment` como un cobro `completed`.
+export const POS_PAYMENT_METHODS = ['cash', 'card', 'transfer'] as const
 export const PaySchema: Record<string, ValidationRule> = {
-  method: { type: 'string' as const, required: true },
+  method: { type: 'string' as const, required: true, enum: [...POS_PAYMENT_METHODS] },
   // fix-refund-pos-card: obligatorios SOLO para method==='card' (Stripe Checkout Session). El schema
   // no valida condicional-por-campo; el usecase (`settlement.payOrder`) rechaza con ValidationError si
   // faltan y el método es 'card'. cash/transfer los ignoran.

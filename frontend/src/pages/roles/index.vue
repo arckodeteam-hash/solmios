@@ -199,6 +199,7 @@ import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import { useAuthStore } from '@/stores/auth.store'
 import { useModulesStore } from '@/stores/modules.store'
 import { permissionModuleEnabled } from '@/config/module-map'
+import { orderActionColumns } from '@/config/permissions'
 
 const ICON_TRASH = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M6 7.5h12M9.75 7.5v-1.5a1.5 1.5 0 0 1 1.5-1.5h1.5a1.5 1.5 0 0 1 1.5 1.5v1.5m-8.25 0 .75 11.25a1.5 1.5 0 0 0 1.5 1.5h6a1.5 1.5 0 0 0 1.5-1.5L17.25 7.5"/></svg>'
 const ICON_SLIDERS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h10m4 0h2M4 12h4m4 0h8M4 18h10m4 0h2"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="16" cy="18" r="2"/></svg>'
@@ -223,14 +224,14 @@ const visibleModules = computed(() =>
   catalog.value.modules.filter((m) => permissionModuleEnabled(m.key, modules.state)))
 
 // Columnas de la matriz = superconjunto de las acciones de los módulos visibles, en orden estable.
-// checkin/checkout aparecen como columnas, pero solo Reservas les pone casilla (hasAction) — no
-// ensuciamos con billing:checkin. Así un rol custom puede tener check-in/out y "Marcar todo" los respeta.
-const ACTION_ORDER = ['view', 'create', 'edit', 'delete', 'export', 'checkin', 'checkout']
-const allActions = computed<string[]>(() => {
-  const present = new Set<string>()
-  for (const m of visibleModules.value) for (const a of m.actions) present.add(a.key)
-  return ACTION_ORDER.filter((k) => present.has(k))
-})
+// checkin/checkout/pay aparecen como columnas, pero solo el módulo que las admite les pone casilla
+// (hasAction) — no ensuciamos con billing:checkin. Así un rol custom puede tener check-in/out o
+// cobrar en el POS (`restaurant:pay`, #205) y "Marcar todo" los respeta.
+// `orderActionColumns` (config/permissions.ts) solo ORDENA: cualquier acción que el catálogo traiga y
+// no conozca se agrega al final igual. Antes era una lista blanca y `pay` no se dibujaba nunca: el
+// hotel no tenía forma de dar ni quitar el cobro a un rol desde el panel.
+const allActions = computed<string[]>(() =>
+  orderActionColumns(visibleModules.value.flatMap((m) => m.actions.map((a) => a.key))))
 const ACTION_LABELS: Record<string, string> = {}
 function actionLabel(key: string): string { return ACTION_LABELS[key] ?? key }
 function hasAction(m: { actions: { key: string }[] }, key: string): boolean {

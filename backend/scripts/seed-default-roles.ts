@@ -1,3 +1,10 @@
+// scripts/seed-default-roles.ts — Roles de sistema para hoteles que todavía no tienen ninguno.
+// Los permisos salen de DEFAULT_ROLE_PERMISSIONS (incluye `restaurant:pay` desde #205: hotel_admin,
+// receptionist y waiter cobran; kitchen no). Este script SALTA los hoteles que ya tienen roles.
+// Para llevar un permiso nuevo a filas existentes NO alcanza con `sync-system-roles.ts`: sólo toca
+// filas `system = 1` con huella, y las que creó el alta hasta #205 tienen `system = 0` (signup
+// escribía `isSystem`, campo que el modelo no declara). El camino que sí corre en cada deploy es un
+// backfill dentro de `migrate-db.ts` (ej. `scripts/backfill-restaurant-pay-permission.ts`).
 import { Pool } from 'pg'
 import { DEFAULT_ROLE_PERMISSIONS } from '../src/shared/permissions'
 

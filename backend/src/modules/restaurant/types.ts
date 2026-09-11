@@ -110,6 +110,8 @@ export interface OrderDTO {
   paymentId?: string
   openedAt?: string
   closedAt?: string
+  // #210 — comensales (cubiertos). Solo en comandas `dine_in` (default 1); undefined en el resto.
+  covers?: number
   createdAt: string
   updatedAt: string
 }
@@ -150,6 +152,9 @@ export interface OrderItemDTO {
   comboId?: string
   // F2 — solo en filas kind='combo_component': FK lógica (self) a la fila combo_header hermana.
   parentLineId?: string
+  // #210 — ISO del envío a cocina. undefined = agregada después de enviar y todavía sin confirmar
+  // (sigue en `status:'new'`, que por sí solo no distingue "recién cargada" de "ya despachada").
+  sentAt?: string
   // #207 — solo en filas status='voided': motivo, quién (users.id) y cuándo se anuló.
   voidReason?: string
   voidedBy?: string
@@ -232,4 +237,7 @@ export interface CurrentUser {
   id: string
   hotelId?: string | null
   role?: string
+  /** Permisos efectivos del rol (`module:action`), cargados por loadPermissions. Los usa
+   *  `removeLine` (#205) para exigir `restaurant:delete` solo cuando la comanda ya fue enviada. */
+  permissions?: string[]
 }
