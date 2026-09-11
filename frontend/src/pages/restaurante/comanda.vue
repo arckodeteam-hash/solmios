@@ -493,7 +493,7 @@ function cancel() {
                          un plato a preparar) y sus componentes los rechaza `updateLine` ("editá el
                          combo completo"). Mostrar el control ahí sería prometer una nota que la
                          cocina jamás ve. -->
-                    <button v-if="editable && editPerm && l.kind !== 'combo_header'" @click="openNotes(l)" class="text-[11px] font-bold text-navy hover:underline mt-0.5">
+                    <button v-if="editable && editPerm && l.kind !== 'combo_header' && isLineActive(l)" @click="openNotes(l)" class="text-[11px] font-bold text-navy hover:underline mt-0.5">
                       📝 {{ l.notes ? 'Editar nota' : 'Agregar nota' }}
                     </button>
                     <button v-if="l.kind === 'combo_header'" @click="toggleExpand(l.id)" class="text-[11px] font-bold text-teal hover:underline mt-0.5">

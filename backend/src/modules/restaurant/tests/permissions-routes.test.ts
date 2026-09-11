@@ -167,6 +167,18 @@ describe('DELETE /api/restaurant/orders/:id/items/:lineId — quitar antes de en
     expect(rows.RestaurantOrderItems.find((l) => l.id === 'l-sent')).toBeUndefined()
   })
 
+  it('#207: waiter (sin restaurant:delete) NO anula con motivo → 403; hotel_admin sí → 200 y la línea queda voided', async () => {
+    const { router, auth, rows } = mount()
+    const denied = await router.resolve('POST', '/api/restaurant/orders/o-sent/items/l-sent/void', { headers: headers(auth, 'waiter'), body: { reason: 'Sin stock' } })
+    expect(denied.status).toBe(403)
+    expect(rows.RestaurantOrderItems.find((l) => l.id === 'l-sent')?.status).toBe('new')
+    const ok = await router.resolve('POST', '/api/restaurant/orders/o-sent/items/l-sent/void', { headers: headers(auth, 'hotel_admin'), body: { reason: 'Sin stock' } })
+    expect(ok.status).toBe(200)
+    const line = rows.RestaurantOrderItems.find((l) => l.id === 'l-sent')
+    expect(line?.status).toBe('voided')
+    expect(line?.voidReason).toBe('Sin stock')
+  })
+
   it('kitchen (restaurant:edit, sin create) NO quita una línea ni de una comanda open → 403', async () => {
     const { router, auth, rows } = mount()
     const res = await router.resolve('DELETE', '/api/restaurant/orders/o-open/items/l-open', { headers: headers(auth, 'kitchen') })
