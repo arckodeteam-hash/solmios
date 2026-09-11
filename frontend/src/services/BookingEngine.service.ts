@@ -11,6 +11,8 @@ export interface BookingConfig {
   language: string
   minNights: number
   maxNights: number
+  /** Horas que tiene el huésped para pagar una reserva web antes de que venza sola (0 = nunca vence). */
+  pendingPaymentTtlHours: number
   cancellationPolicy: string
   showComparison: boolean
   googleAdsEnabled: boolean
