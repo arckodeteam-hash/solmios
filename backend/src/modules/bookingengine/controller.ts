@@ -384,6 +384,9 @@ export class BookingengineController {
       // que upsells — el validador nativo descarta en silencio type:'array'. El usecase valida
       // longitud/rango contra la política de niños del hotel.
       ...(Array.isArray(rawBody.childrenAges) ? { childrenAges: rawBody.childrenAges } : {}),
+      // REQ-01 (#233) — amenidades para niños/bebés elegidas para ESTA habitación (array de
+      // {id}); mismo motivo que upsells. El usecase las valida contra las activas del hotel.
+      ...(Array.isArray(rawBody.childAmenities) ? { childAmenities: rawBody.childAmenities } : {}),
     } as { successUrl?: string; cancelUrl?: string; [k: string]: unknown }
 
     // successUrl/cancelUrl: el widget (F2) las va a mandar en el body. Si no llegan, derivamos
@@ -398,7 +401,7 @@ export class BookingengineController {
     // usecase funciona como F0 0.16 (persiste promoCode/upsells sin validarlos). El wiring
     // completo (index.ts) SIEMPRE cablea estos tres repos.
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo }
       : undefined
     const result = await createPublicBookingDirect(
       this.orm, body,
@@ -445,7 +448,7 @@ export class BookingengineController {
     const cancelUrl = body.cancelUrl || (baseUrl ? `${baseUrl}/booking/cancel` : '')
     const stripeUrls = successUrl && cancelUrl ? { successUrl, cancelUrl } : undefined
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo }
       : undefined
     const result = await createPublicBookingGroup(
       this.orm, body,
