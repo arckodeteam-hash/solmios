@@ -95,6 +95,16 @@ export interface PaymentOutcome {
   currency: string
   reference: string
   raw?: unknown
+  /** Código del rechazo tal como lo da el proveedor (Stripe: `code`/`decline_code`; Azul: IsoCode; CardNet: ResponseCode). */
+  failureCode?: string
+  /** Texto del rechazo, apto para mostrarle al hotel por qué no entró el cobro. */
+  failureMessage?: string
+  /** SOLO marca + últimos 4 dígitos. Nunca PAN completo, vencimiento ni CVV. */
+  card?: { brand?: string; last4?: string }
+  /** URL del recibo hospedado por el proveedor, si lo da. */
+  receiptUrl?: string
+  /** Momento del outcome según el proveedor (ISO 8601); si no lo manda, el momento en que se leyó. */
+  occurredAt?: string
 }
 
 export interface RefundResult {
