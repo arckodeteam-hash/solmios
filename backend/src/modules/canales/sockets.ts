@@ -8,4 +8,9 @@ export interface CanalesSockets {
   onCanalesCreated?: (data: CanalesDTO) => Promise<void>
   onCanalesUpdated?: (data: CanalesDTO) => Promise<void>
   onCanalesDeleted?: (id: string) => Promise<void>
+  /**
+   * #246 — Reserva OTA recién ingresada (solo ALTA: una revisión que modifica o cancela no pasa
+   * por acá). Lo escucha `connectors/canales-notificaciones` para avisarle al hotel.
+   */
+  onOtaBookingIngested?: (data: { hotelId: string; reservationId: string; ota: string }) => Promise<void>
 }

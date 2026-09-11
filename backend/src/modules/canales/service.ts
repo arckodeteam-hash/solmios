@@ -73,6 +73,9 @@ export class CanalesService {
     // El orm se obtiene de queries (escape hatch) para no inyectar ORM directo en el service.
     this.bookingSync = new BookingSyncUseCase({ channex: this.channex, queries: this.queries,
       orm: this.queries.getOrm(), logger: this.logger, syncLogRepo: this.syncLogRepo })
+    // #246 — el alta de una reserva OTA sale por el socket acumulado del service (se lee en cada
+    // disparo: los connectors cablean después de construir el service).
+    this.bookingSync.setIngestedPort(async (d) => { await this.sockets.onOtaBookingIngested?.(d) })
   }
 
   // Puertos de aviso de las solicitudes de conexión de OTA (REQ-CAN-07): el correo lo cablea
