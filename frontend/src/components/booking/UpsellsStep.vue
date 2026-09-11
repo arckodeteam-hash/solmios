@@ -81,7 +81,7 @@
     <!-- #220: el desglose (subtotal · extras · impuestos · total estimado) acompaña al huésped
          hasta el pago; misma moneda que los precios de los extras de arriba. -->
     <div class="rounded-xl bg-slate-50 px-4 py-3">
-      <EstimatedTotals :format="formatChargePrice" />
+      <EstimatedTotals :format="formatEstimatedPrice" />
     </div>
 
     <!-- Continuar al siguiente step (F2 fix BLOCKER): los upsells son opcionales — el huésped
@@ -108,9 +108,12 @@ import type { UpsellKind } from '@/types/booking'
 const store = useBookingStore()
 const { t, formatPrice } = useBookingI18nStore()
 
-/** #220: formateador para <EstimatedTotals>, en la moneda de cobro como el resto del step. */
-function formatChargePrice(amount: unknown): string {
-  return formatPrice(Number(amount), store.chargeCurrency)
+/** #220: formateador para <EstimatedTotals>. Los importes del store (roomsSubtotal, impuestos,
+ *  total estimado) viajan en la moneda de visualización elegida por el huésped, así que se
+ *  formatean como en RoomsStep/GuestCheckoutStep/PayStep (display si hay, si no la de cobro):
+ *  el mismo número no puede cambiar de símbolo entre un paso y el siguiente. */
+function formatEstimatedPrice(amount: unknown): string {
+  return formatPrice(Number(amount), store.displayCurrency || store.chargeCurrency)
 }
 
 function isSelected(id: string): boolean {
