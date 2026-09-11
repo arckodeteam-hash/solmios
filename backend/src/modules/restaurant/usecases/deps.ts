@@ -62,7 +62,7 @@ export const itemDeps = (s: RestaurantState): itemsCrud.ItemsCrudDeps => ({ item
 export const tableDeps = (s: RestaurantState): tablesCrud.TablesCrudDeps => ({ tables: s.tables, userRepo: s.userRepo, auth: s.auth, orders: s.orders, sockets: s.sockets })
 export function ordersDeps(s: RestaurantState): orders.OrdersDeps {
   if (!s.orders || !s.lines || !s.config) throw new ValidationError(NOT_CONFIGURED)
-  return { orders: s.orders, lines: s.lines, tables: s.tables, config: s.config, counterCas: s.counterCas, userRepo: s.userRepo, auth: s.auth, sockets: s.sockets, audit: s.auditPort, logger: s.logger, reservations: s.reservationPort }
+  return { orders: s.orders, lines: s.lines, tables: s.tables, config: s.config, counterCas: s.counterCas, userRepo: s.userRepo, auth: s.auth, sockets: s.sockets, audit: s.auditPort, logger: s.logger, reservations: s.reservationPort, hotels: s.hotels }
 }
 export function orderLinesDeps(s: RestaurantState): orderLines.OrderLinesDeps {
   if (!s.orders || !s.lines || !s.config || !s.hotels) throw new ValidationError(NOT_CONFIGURED)

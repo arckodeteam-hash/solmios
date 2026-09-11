@@ -38,8 +38,8 @@ export class RestaurantService implements deps.RestaurantState {
   // cerrado) y gate del módulo para la carta pública (index.ts → createModuleChecker; null = 404 genérico).
   reservationPort: ReservationPort | null = null
   moduleStatePort: publicMenuUsecase.ModuleStatePort | null = null
-  // #213: método real de cada cobro (payments) para el cierre del día. Lo inyecta connectors/restaurante-reports-payments.ts;
-  // sin puerto el reporte sigue saliendo, con los cobros directos bajo `other`.
+  // #213: la plata del cierre del día sale de `payments` (connectors/restaurante-reports-payments.ts) y del cargo
+  // al folio (connectors/restaurante-reports-folios.ts), nunca de la comanda. Sin puertos, ventas en cero.
   reportPorts: reports.ReportPorts = {}
   // #211: canal en vivo (SSE) por hotel. Lo alimenta connectors/restaurante-events.ts vía publishEvent.
   private readonly eventHub = new events.RestaurantEventHub()

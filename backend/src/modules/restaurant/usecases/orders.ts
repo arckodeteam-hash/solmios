@@ -11,6 +11,7 @@ import { isLineActive, isTerminalOrder } from './order-totals'
 import { round2 } from '../../../shared/utils/money'
 import { isUniqueViolation } from '../../../shared/utils/db-errors'
 import { assertReservationOfHotel, type ReservationPort } from './reservation-port'
+import { closingStamp } from './business-date'
 
 export interface OrdersDeps {
   orders: RepositoryAdapter<OrderDTO>
@@ -28,6 +29,8 @@ export interface OrdersDeps {
   // #208: la reserva de un room service debe ser del hotel (connectors/restaurante-reservas.ts).
   // Sin cablear, abrir un room service falla cerrado — ver usecases/reservation-port.ts.
   reservations?: ReservationPort | null
+  // #213: zona horaria del hotel para el día contable de la cancelación (business-date.ts). Sin repo → default.
+  hotels?: RepositoryAdapter<any>
 }
 
 const silentLogger = { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} } as unknown as Logger
@@ -258,7 +261,9 @@ export async function cancelOrder(deps: OrdersDeps, id: string, reason: string |
     voidedLines = lines.length
   }
   // #213: el motivo queda en la comanda (no solo en el audit log) para el cierre del día.
-  const updated = (await deps.orders.update(id, { status: 'cancelled', closedAt: now, cancelReason: reasonText } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
+  const updated = (await deps.orders.update(id, {
+    status: 'cancelled', cancelReason: reasonText, ...(await closingStamp(deps.hotels, order.hotelId, new Date(now))),
+  } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
   if (order.tableId) {
     const table = await deps.tables.update(order.tableId, { status: 'free' } as Partial<Omit<TableDTO, 'id'>>)
     if (table) await deps.sockets.onTableChanged?.(table)

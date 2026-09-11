@@ -1,11 +1,12 @@
 // restaurant/tests/reports-route.test.ts — #213: GET /api/restaurant/reports/daily por la ruta REAL.
 // Permiso `reports:view` (hotel_admin y receptionist sí; waiter y kitchen no), fechas inválidas → 400,
-// y el conector de payments (restaurante-payments) alimenta el método real de cada cobro.
+// y los conectores reales (restaurante-reports-payments / -folios) traen la plata de payments y del folio.
 import { describe, it, expect } from 'bun:test'
 import { Router } from 'arckode-framework'
 import { fakeLogger, makeAuth, bearer } from '../../../infrastructure/auth/tests/route-permission-helpers'
 import { RestaurantModule } from '../index'
 import { restauranteReportsPaymentsConnector } from '../../../connectors/restaurante-reports-payments'
+import { restauranteReportsFoliosConnector } from '../../../connectors/restaurante-reports-folios'
 
 type Row = Record<string, any>
 
@@ -21,11 +22,11 @@ function mount() {
     Hotels: [{ id: 'h1', name: 'Hotel Sol', currency: 'DOP', timezone: 'America/Santo_Domingo' }],
     Plans: [], Subscriptions: [], Configuration: [], HotelModuleOverrides: [],
     RestaurantOrders: [
-      { id: 'o-cash', hotelId: 'h1', number: 'CMD-1', type: 'dine_in', status: 'paid', settlement: 'payment', paymentId: 'p-cash', tip: 0, subtotal: 100, tax: 0, total: 100, closedAt: '2026-09-11T16:00:00.000Z' },
-      { id: 'o-card', hotelId: 'h1', number: 'CMD-2', type: 'dine_in', status: 'paid', settlement: 'payment', paymentId: 'p-card', tip: 20, subtotal: 200, tax: 0, total: 220, closedAt: '2026-09-11T17:00:00.000Z' },
-      { id: 'o-folio', hotelId: 'h1', number: 'CMD-3', type: 'room_service', status: 'charged', settlement: 'folio', folioId: 'f1', tip: 0, subtotal: 150, tax: 0, total: 150, closedAt: '2026-09-11T18:00:00.000Z' },
+      { id: 'o-cash', hotelId: 'h1', number: 'CMD-1', type: 'dine_in', status: 'paid', settlement: 'payment', paymentId: 'p-cash', tip: 0, subtotal: 100, tax: 0, total: 100, closedAt: '2026-09-11T16:00:00.000Z', businessDate: '2026-09-11' },
+      { id: 'o-card', hotelId: 'h1', number: 'CMD-2', type: 'dine_in', status: 'paid', settlement: 'payment', paymentId: 'p-card', tip: 20, subtotal: 200, tax: 0, total: 220, closedAt: '2026-09-11T17:00:00.000Z', businessDate: '2026-09-11' },
+      { id: 'o-folio', hotelId: 'h1', number: 'CMD-3', type: 'room_service', status: 'charged', settlement: 'folio', folioId: 'f1', tip: 0, subtotal: 150, tax: 0, total: 150, closedAt: '2026-09-11T18:00:00.000Z', businessDate: '2026-09-11' },
       // Otro hotel, mismo día: nunca debe aparecer.
-      { id: 'o-h2', hotelId: 'h2', number: 'CMD-9', type: 'dine_in', status: 'paid', settlement: 'payment', paymentId: 'p-h2', tip: 0, subtotal: 999, tax: 0, total: 999, closedAt: '2026-09-11T18:00:00.000Z' },
+      { id: 'o-h2', hotelId: 'h2', number: 'CMD-9', type: 'dine_in', status: 'paid', settlement: 'payment', paymentId: 'p-h2', tip: 0, subtotal: 999, tax: 0, total: 999, closedAt: '2026-09-11T18:00:00.000Z', businessDate: '2026-09-11' },
     ],
     RestaurantOrderItems: [
       { id: 'l1', hotelId: 'h1', orderId: 'o-cash', kind: 'item', status: 'served', name: 'Pizza', unitPrice: 100, quantity: 1, lineTotal: 100, taxRate: 0 },
@@ -51,17 +52,24 @@ function mount() {
   const auth = makeAuth()
   const service = (RestaurantModule() as any).create({ logger: fakeLogger(), orm, router, auth })
 
-  // Conector REAL restaurante-reports-payments con un módulo payments doble: getPayment devuelve el método.
-  const payments: Record<string, Row> = {
-    'p-cash': { id: 'p-cash', hotelId: 'h1', method: 'cash' },
-    'p-card': { id: 'p-card', hotelId: 'h1', method: 'card' },
-    'p-h2': { id: 'p-h2', hotelId: 'h2', method: 'cash' },
-  }
+  // Conectores REALES con módulos dobles: payments devuelve los pagos del hotel por día contable
+  // (bruto, con `metadata.source/orderId` como los asienta restaurante-payments.ts); folios, el cargo del POS.
+  const payments: Row[] = [
+    { id: 'p-cash', hotelId: 'h1', type: 'charge', method: 'cash', status: 'completed', amount: 100, metadata: { source: 'restaurant', orderId: 'o-cash' }, businessDate: '2026-09-11' },
+    { id: 'p-card', hotelId: 'h1', type: 'charge', method: 'card', status: 'completed', amount: 220, metadata: { source: 'restaurant', orderId: 'o-card' }, businessDate: '2026-09-11' },
+    { id: 'p-h2', hotelId: 'h2', type: 'charge', method: 'cash', status: 'completed', amount: 999, metadata: { source: 'restaurant', orderId: 'o-h2' }, businessDate: '2026-09-11' },
+  ]
   const asked: string[] = []
   const paymentsModule = {
-    getPayment: async (id: string) => { asked.push(id); const p = payments[id]; if (!p) throw new Error('Payment not found'); return p },
+    paymentsOfBusinessDate: async (hotelId: string, businessDate: string) => { asked.push(`${hotelId}:${businessDate}`); return payments.filter((p) => p.hotelId === hotelId && p.businessDate === businessDate) },
   }
-  restauranteReportsPaymentsConnector({ resolveModule: (name: string) => (name === 'restaurant' ? service : paymentsModule) } as any)
+  const foliosModule = {
+    chargeByReference: async (hotelId: string, reference: string) => (hotelId === 'h1' && reference === 'pos:o-folio' ? { amount: 150, taxes: 0, total: 150 } : null),
+  }
+  const modules: Record<string, unknown> = { restaurant: service, payments: paymentsModule, folios: foliosModule }
+  const ctx = { resolveModule: (name: string) => modules[name] } as any
+  restauranteReportsPaymentsConnector(ctx)
+  restauranteReportsFoliosConnector(ctx)
   return { router, auth, asked }
 }
 
@@ -91,8 +99,8 @@ describe('GET /api/restaurant/reports/daily — permiso reports:view', () => {
       expect(body.byMethod.transfer.amount).toBe(0)
       expect(body.byMethod.folio.amount).toBe(150)
       expect(body.currency).toBe('DOP')
-      // Solo se preguntó por los cobros directos del hotel; la comanda de h2 no entró ni al puerto.
-      expect(asked.sort()).toEqual(['p-card', 'p-cash'])
+      // Una consulta de pagos por día, siempre con el hotel del token: h2 no entra ni al puerto.
+      expect(asked).toEqual(['h1:2026-09-11'])
     }
   })
 

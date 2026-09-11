@@ -1,6 +1,6 @@
 {
   "_arckode": "1.0.0",
-  "_generated": "2026-09-11T17:26:40.825Z",
+  "_generated": "2026-09-11T17:51:58.128Z",
   "_instructions": "Lee este archivo ANTES de escribir código. Contiene el estado completo del sistema: módulos, conectores, violaciones. Si está desactualizado, corré: bun run analyze --json",
   "system": {
     "healthy": true,
@@ -1021,6 +1021,7 @@
     "messages-pushtokens.ts",
     "ai-facturas.ts",
     "compras-treasury.ts",
+    "restaurante-reports-folios.ts",
     "apikeys-auditlog.ts",
     "reservas-huespedes.ts",
     "ai-recepcionista-whatsapp.ts",

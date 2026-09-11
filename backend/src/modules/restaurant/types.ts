@@ -116,6 +116,10 @@ export interface OrderDTO {
   covers?: number
   // #213 — motivo de cancelación (solo en status='cancelled'; null en filas anteriores a la columna).
   cancelReason?: string | null
+  // #213 — día contable ('YYYY-MM-DD', zona del hotel) del cierre; ver model.ts. null en filas viejas sin backfill.
+  businessDate?: string | null
+  // #213 — cuándo se reembolsó (status='refunded'); closedAt conserva el cobro.
+  refundedAt?: string | null
   createdAt: string
   updatedAt: string
 }

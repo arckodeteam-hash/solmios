@@ -36,6 +36,12 @@ export const PaymentModel: ModelDefinition = {
     // otro módulo con otros ids (regla CLAUDE.md). Anti-patrón ORM D5: declarado acá.
     createdBy: { type: 'string', default: '' },
     processedAt: { type: 'string' },
+    // #213 (auditoría restaurante) — día contable 'YYYY-MM-DD' en la zona del hotel: el día en que el
+    // cobro se creó, y se vuelve a fijar al COMPLETARSE (un Checkout de tarjeta puede confirmar al día
+    // siguiente; lo que cuenta es cuándo entró la plata). El ORM solo consulta por igualdad: un cierre
+    // "del día" pide `{ hotelId, businessDate }` en vez de traer todos los payments del hotel. Filas
+    // anteriores a la columna: backfill en migrate-db.ts (processedAt ?? createdAt, zona del hotel).
+    businessDate: { type: 'string', indexed: true },
   },
 }
 

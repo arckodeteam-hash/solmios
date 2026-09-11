@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { buildDailyReportCsv, dailyReportCsvFilename, csvCell } from './reportes-csv'
+import { todayIn, shiftDays } from './reportes-date'
 import { RESTAURANT_ROUTES } from '@/config/restaurant-routes'
 import { permissionModuleForPath } from '@/config/module-map'
 import type { RestaurantDailyReport } from '@/services/Restaurant.service'
@@ -30,10 +31,14 @@ vi.mock('@/services/Restaurant.service', async (importOriginal) => {
   return { ...mod, RestaurantService: { ...mod.RestaurantService, dailyReport: (p?: Record<string, string>) => dailyReport(p) } }
 })
 
+const TZ = 'America/Santo_Domingo'
+/** Hoy en la zona del hotel: lo que el backend devuelve en `from` cuando se lo llama sin fecha. */
+const HOTEL_TODAY = todayIn(TZ)
+
 const zero = { amount: 0, orders: 0 }
 function emptyReport(date = '2026-09-10'): RestaurantDailyReport {
   return {
-    from: date, to: date, timezone: 'America/Santo_Domingo', currency: 'DOP', empty: true,
+    from: date, to: date, timezone: TZ, currency: 'DOP', empty: true,
     sales: { total: 0, subtotal: 0, tax: 0, tips: 0, collected: 0, orders: 0, averageTicket: 0, covers: 0, averagePerCover: 0 },
     byMethod: { cash: { ...zero }, card: { ...zero }, transfer: { ...zero }, folio: { ...zero }, other: { ...zero } },
     byType: { dine_in: { ...zero }, room_service: { ...zero }, takeaway: { ...zero } },
@@ -121,12 +126,28 @@ const text = () => document.body.textContent ?? ''
 beforeEach(() => { dailyReport.mockReset(); toastSuccess.mockReset() })
 afterEach(() => { wrapper?.unmount(); wrapper = null; document.body.innerHTML = '' })
 
+describe('reportes-date — "hoy" es el del hotel, no el del navegador', () => {
+  it('todayIn: 02:00Z del 12 es el 11 en Santo Domingo y el 12 en Madrid; zona inválida cae al navegador sin romper', () => {
+    const at = new Date('2026-09-12T02:00:00.000Z')
+    expect(todayIn('America/Santo_Domingo', at)).toBe('2026-09-11')
+    expect(todayIn('Europe/Madrid', at)).toBe('2026-09-12')
+    expect(todayIn('No/Existe', at)).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+  it('shiftDays: aritmética de calendario sobre la fecha del hotel; fecha vacía se devuelve tal cual', () => {
+    expect(shiftDays('2026-03-01', -1)).toBe('2026-02-28')
+    expect(shiftDays('2026-12-31', 1)).toBe('2027-01-01')
+    expect(shiftDays('', -1)).toBe('')
+  })
+})
+
 describe('reportes.vue — criterio de aceptación', () => {
-  it('pide el cierre de HOY al montar y pinta ventas, propinas, por método, comandas y ticket promedio', async () => {
-    dailyReport.mockResolvedValue(acceptanceReport())
+  it('al montar pide el cierre SIN fecha (el backend resuelve hoy en la zona del hotel) y pinta ventas, propinas, por método, comandas y ticket promedio', async () => {
+    dailyReport.mockResolvedValue({ ...acceptanceReport(), from: HOTEL_TODAY, to: HOTEL_TODAY })
     const w = await mountPage()
     expect(dailyReport).toHaveBeenCalledTimes(1)
-    expect(dailyReport.mock.calls[0][0]).toEqual({ date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) })
+    expect(dailyReport.mock.calls[0][0]).toEqual({})
+    // El selector de fecha queda en el "hoy" que devolvió el backend (zona del hotel), no en el del navegador.
+    expect((w.find('#report-date').element as HTMLInputElement).value).toBe(HOTEL_TODAY)
     // Tres pestañas de PillTabs.
     expect(w.findAll('[role="tab"]').map((t) => t.text().replace(/\s*\(\d+\)$/, ''))).toEqual(['Día', 'Rango', 'Ítems'])
     // Por método: 100 / 200 / (transferencia sin ventas no se pinta) / 150, con moneda del hotel.
@@ -157,16 +178,16 @@ describe('reportes.vue — criterio de aceptación', () => {
   })
 
   it('día sin ventas → estado vacío (sin tablas de ceros) y CSV deshabilitado', async () => {
-    dailyReport.mockResolvedValue(emptyReport())
+    dailyReport.mockResolvedValue(emptyReport(HOTEL_TODAY))
     const w = await mountPage()
     expect(w.findAll('tr[data-method]')).toHaveLength(0)
-    expect(text()).toContain('Todavía no hay ventas hoy')   // la fecha por defecto es hoy
+    expect(text()).toContain('Todavía no hay ventas hoy')   // "hoy" = el día que devolvió el backend en la zona del hotel
     expect(text()).not.toContain('Ventas por método')
     expect((w.find('[data-testid="export-csv"]').element as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('cambiar la fecha recalcula con la nueva fecha', async () => {
-    dailyReport.mockResolvedValue(acceptanceReport())
+    dailyReport.mockResolvedValue({ ...acceptanceReport(), from: HOTEL_TODAY, to: HOTEL_TODAY })
     const w = await mountPage()
     dailyReport.mockResolvedValue(emptyReport('2026-09-10'))
     const input = w.find('#report-date')

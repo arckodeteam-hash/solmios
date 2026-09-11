@@ -29,6 +29,8 @@ export interface PaymentDTO {
   stripeSessionId: string
   metadata: Record<string, any>
   processedAt?: string
+  /** Día contable ('YYYY-MM-DD', zona del hotel) — ver model.ts. Puede ser null en filas viejas sin backfill. */
+  businessDate?: string | null
   createdAt: string
   updatedAt: string
 }

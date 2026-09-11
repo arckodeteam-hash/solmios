@@ -456,6 +456,7 @@ import { cashAccountingConnector } from './connectors/cash-accounting'
 import { restauranteFoliosConnector } from './connectors/restaurante-folios'
 import { restaurantePaymentsConnector } from './connectors/restaurante-payments'
 import { restauranteReportsPaymentsConnector } from './connectors/restaurante-reports-payments'
+import { restauranteReportsFoliosConnector } from './connectors/restaurante-reports-folios'
 import { restauranteAccountingConnector } from './connectors/restaurante-accounting'
 import { restauranteInventarioConnector } from './connectors/restaurante-inventario'
 import { comprasInventarioConnector } from './connectors/compras-inventario'
@@ -642,7 +643,8 @@ system.addConnector('cash-accounting', cashAccountingConnector)
 // POS de restaurante: cargo a habitación (folios) y cobro directo (payments). RES-5.
 system.addConnector('restaurante-folios', restauranteFoliosConnector)
 system.addConnector('restaurante-payments', restaurantePaymentsConnector)
-system.addConnector('restaurante-reports-payments', restauranteReportsPaymentsConnector)   // #213: método real de cada cobro para el cierre del día
+system.addConnector('restaurante-reports-payments', restauranteReportsPaymentsConnector)   // #213: la plata del cierre del día sale de `payments` (cobros y devoluciones por día contable)
+system.addConnector('restaurante-reports-folios', restauranteReportsFoliosConnector)       // #213: cargo a habitación = el cargo del POS en el folio, no la comanda
 // Venta directa del POS → asiento "Ventas Restaurante" (RES-6). El cargo a folio lo asienta folios-accounting.
 system.addConnector('restaurante-accounting', restauranteAccountingConnector)
 // Compras (COM-3/4): recepción suma stock (inventario), la OC valida proveedor (treasury), y al facturar

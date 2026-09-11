@@ -15,6 +15,7 @@ import { backfillPaymentsReservationId } from './scripts/backfill-payments-reser
 import { backfillAriOutboxPendingKey } from './scripts/backfill-ari-outbox-pending-key'
 import { backfillRestaurantPayPermission } from './scripts/backfill-restaurant-pay-permission'
 import { dedupeRestaurantOrderNumbers } from './scripts/dedupe-restaurant-order-numbers'
+import { backfillBusinessDate } from './scripts/backfill-business-date'
 import { isMissingTableError } from './src/shared/utils/db-errors'
 import { LEGAL_PAGES_SEED } from './scripts/legal-pages-content'
 import { MARKETING_PAGES_SEED } from './scripts/marketing-pages-content'
@@ -115,6 +116,34 @@ async function ensureRestaurantOrderNumberIndex(): Promise<void> {
       return
     }
     throw new Error(`idx_restaurant_orders_hotel_number: NO se pudo crear el UNIQUE (hotelId, number) de restaurant_orders. Sin él dos comandas pueden salir con el mismo número. Motivo: ${msg}`, { cause: e })
+  }
+}
+
+/**
+ * #213 (auditoría): día contable `businessDate` ('YYYY-MM-DD', zona del hotel) en `restaurant_orders` y
+ * `payments`. El cierre del día consulta por IGUALDAD (hotelId, businessDate) — el ORM no arma rangos —
+ * así que (1) la columna tiene que existir aunque RUN_MIGRATE no haya corrido todavía (ADD COLUMN
+ * portable), (2) las filas anteriores se rellenan (scripts/backfill-business-date.ts: sin eso quedan
+ * en NULL e invisibles para todo cierre), y (3) va un índice compuesto (hotelId, businessDate): el ORM
+ * sólo crea índices de una columna. Mismo patrón ruidoso que idx_restaurant_orders_hotel_number: sólo
+ * "tabla inexistente" es un aviso; cualquier otro fallo RELANZA y `bun run migrate` sale en rojo.
+ */
+async function ensureBusinessDateColumnsAndIndexes(): Promise<void> {
+  try {
+    await addColumnIfMissing('restaurant_orders', 'businessDate', 'TEXT')
+    await addColumnIfMissing('restaurant_orders', 'refundedAt', 'TEXT')
+    await addColumnIfMissing('payments', 'businessDate', 'TEXT')
+    const { orders, payments } = await backfillBusinessDate(db)
+    if (orders || payments) console.log(`businessDate: ${orders} comanda(s) y ${payments} pago(s) rellenados desde closedAt/processedAt (zona del hotel)`)
+    await exec(`CREATE INDEX IF NOT EXISTS idx_restaurant_orders_hotel_business_date ON restaurant_orders(hotelId, businessDate)`)
+    await exec(`CREATE INDEX IF NOT EXISTS idx_payments_hotel_business_date ON payments(hotelId, businessDate)`)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (isMissingTableError(e)) {
+      console.warn(`⚠ businessDate: tabla restaurant_orders/payments aún no migrada (correr RUN_MIGRATE=1) — ${msg.slice(0, 120)}`)
+      return
+    }
+    throw new Error(`businessDate: NO se pudo rellenar/indexar (hotelId, businessDate) en restaurant_orders/payments. Sin esto el cierre del día del restaurante no ve las comandas ni los pagos viejos. Motivo: ${msg}`, { cause: e })
   }
 }
 
@@ -1390,6 +1419,10 @@ async function main(): Promise<void> {
     const msg = e instanceof Error ? e.message : String(e)
     console.log("demo talento/finanzas: parcial —", msg.slice(0, 90))
   }
+
+  // #213 (auditoría): día contable de comandas y pagos — columna, backfill de filas viejas e índice
+  // (hotelId, businessDate). DESPUÉS del seed demo, así los pagos sembrados también reciben su día.
+  await ensureBusinessDateColumnsAndIndexes()
 
   // #205 (REST-03) — `restaurant:pay` a las filas de `roles` que ya cobraban con `restaurant:edit`.
   // Va ACÁ y no en un script aparte: los permisos efectivos salen de la fila de `roles` (pisa el

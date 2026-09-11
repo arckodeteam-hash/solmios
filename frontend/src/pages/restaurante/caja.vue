@@ -6,12 +6,14 @@
 // `restaurant` (hotel_admin/receptionist/waiter).
 // #213: el cierre de turno solo ve efectivo; el consolidado de todo lo vendido (tarjeta, transferencia,
 // cargo a habitación, propinas, anulaciones) es el "Cierre del día" — enlace para quien tiene reports:view.
+import { computed } from 'vue'
 import { RestaurantCajaService } from '@/services/Caja.service'
 import CashRegisterView from '@/components/features/CashRegisterView.vue'
 import { usePermissions } from '@/composables/usePermissions'
 
 const { can } = usePermissions()
-const canSeeReports = can('reports', 'view')
+// computed (no un boolean suelto): los permisos llegan con el usuario y pueden cambiar después de montar.
+const canSeeReports = computed(() => can('reports', 'view'))
 </script>
 
 <template>

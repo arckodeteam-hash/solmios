@@ -18,27 +18,24 @@ import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import { buildDailyReportCsv, dailyReportCsvFilename, downloadCsv } from './reportes-csv'
+import { todayIn, shiftDays } from './reportes-date'
 
 type Tab = 'dia' | 'rango' | 'items'
 const toast = useToast()
 
-const today = (): string => {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-const shiftDays = (date: string, n: number): string => {
-  const [y, m, d] = date.split('-').map(Number)
-  const dt = new Date(y, m - 1, d + n)
-  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
-}
-
 const tab = ref<Tab>('dia')
-const date = ref(today())
-const from = ref(shiftDays(today(), -6))
-const to = ref(today())
 const loading = ref(false)
 const error = ref('')
 const report = ref<RestaurantDailyReport | null>(null)
+// "Hoy" es el del HOTEL, no el del navegador: un gerente que mira desde otra zona (o un navegador con
+// la hora mal) vería el cierre de otro día. La zona del hotel la trae el propio reporte (`timezone`),
+// así que la primera carga va SIN fecha (el backend resuelve hoy en la zona del hotel y la devuelve en
+// `from`) y a partir de ahí "hoy" se calcula en esa zona.
+const hotelTimezone = ref<string | undefined>(undefined)
+const today = (): string => todayIn(hotelTimezone.value)
+const date = ref('')
+const from = ref('')
+const to = ref('')
 
 const tabs = computed<PillTab[]>(() => [
   { value: 'dia', label: 'Día' },
@@ -46,8 +43,11 @@ const tabs = computed<PillTab[]>(() => [
   { value: 'items', label: 'Ítems', count: report.value?.topItemsByAmount.length || undefined },
 ])
 
-/** Día usa una fecha; Rango e Ítems usan from/to. Cambiar de pestaña recarga con los parámetros que correspondan. */
-const params = computed(() => (tab.value === 'dia' ? { date: date.value } : { from: from.value, to: to.value }))
+/** Día usa una fecha; Rango e Ítems usan from/to. Sin fecha todavía (primera carga) → el backend resuelve hoy en la zona del hotel. */
+const params = computed(() => {
+  if (tab.value === 'dia') return date.value ? { date: date.value } : {}
+  return from.value && to.value ? { from: from.value, to: to.value } : {}
+})
 const isRange = computed(() => tab.value !== 'dia')
 
 const money = (n: number): string => `${currencySymbol(report.value?.currency || 'USD')}${Number(n || 0).toFixed(2)}`
@@ -61,7 +61,12 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    report.value = await RestaurantService.dailyReport(params.value)
+    const r = await RestaurantService.dailyReport(params.value)
+    report.value = r
+    hotelTimezone.value = r.timezone || hotelTimezone.value
+    // Primera carga: el backend eligió "hoy" en la zona del hotel; a partir de acá los selectores parten de ese día.
+    if (!date.value) date.value = r.from
+    if (!to.value) { to.value = r.to; from.value = shiftDays(r.to, -6) }
   } catch (e: unknown) {
     report.value = null
     error.value = e instanceof Error ? e.message : 'No se pudo cargar el cierre'

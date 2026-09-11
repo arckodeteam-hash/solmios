@@ -250,10 +250,11 @@ export interface RestaurantDailyReport {
   /** Sin ventas, anulaciones ni reembolsos en el rango: la vista muestra estado vacío, no ceros. */
   empty: boolean
   sales: {
-    /** Ventas sin propina (subtotal + impuesto). */
+    /** Ventas netas sin propina (cobros + cargos a folio − devoluciones), desde `payments`. Siempre = subtotal + tax. */
     total: number
     subtotal: number
     tax: number
+    /** Propinas cobradas menos las devueltas. */
     tips: number
     /** total + tips. */
     collected: number
@@ -265,6 +266,7 @@ export interface RestaurantDailyReport {
   byMethod: Record<SalesMethod, MethodTotals>
   byType: Record<OrderType, MethodTotals>
   voided: { orders: number; lines: number; amount: number; rows: VoidRow[] }
+  /** Devoluciones del período (por fecha de la devolución). `amount` es la plata que salió, propina incluida. */
   refunded: { orders: number; amount: number }
   topItemsByQuantity: ItemTotals[]
   topItemsByAmount: ItemTotals[]

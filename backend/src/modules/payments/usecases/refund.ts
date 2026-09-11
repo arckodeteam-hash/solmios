@@ -75,6 +75,12 @@ export async function refundPayment(
     invoiceId: payment.invoiceId,
     reservationId: payment.reservationId,
     guestId: payment.guestId,
+    // #213: la devolución también hereda el ORIGEN del cobro (`metadata.source`/`orderId` del POS) y
+    // apunta al cobro devuelto (`refundOf`). Sin esto, un reembolso hecho desde /api/payments/:id/refund
+    // —que no toca la comanda— era invisible para el cierre del día del restaurante y las ventas por
+    // tarjeta quedaban infladas. Los listeners de onPaymentCompleted que reaccionan por `source` deben
+    // mirar además `type` (restaurante-payments.ts lo hace).
+    metadata: { ...(payment.metadata ?? {}), refundOf: paymentId },
     // Quién ordenó la devolución. En el historial de la reserva importa más que en el cobro:
     // un reembolso siempre lo decide una persona.
     createdBy: user?.id ?? '',

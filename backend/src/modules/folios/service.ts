@@ -1,6 +1,6 @@
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
-import { foliosOfReservation, reservationIdOfFolio } from './usecases/reservation-money'
+import { foliosOfReservation, reservationIdOfFolio, chargeByReference } from './usecases/reservation-money'
 import { NotFoundError, ValidationError } from 'arckode-framework'
 import type { FolioDTO, FolioChargeDTO, OpenFolioDTO, PostChargeDTO, ApplyPaymentDTO, FolioQuery, FolioListResult, CurrentUser } from './types'
 import type { FoliosSockets } from './sockets'
@@ -41,14 +41,10 @@ export class FoliosService {
   setSockets(s: Partial<FoliosSockets>): void { accumulateSockets(this.sockets as any, s as any) }
 
   /** Conecta la creación de facturas. Lo inyecta el connector `folios-facturas`. */
-  setInvoicingDeps(port: FolioInvoicingPort): void {
-    this.invoicingPort = port
-  }
+  setInvoicingDeps(port: FolioInvoicingPort): void { this.invoicingPort = port }
 
   /** Conecta el asiento del dinero en `payments`. Lo inyecta el connector `folios-payments`. */
-  setPaymentDeps(port: FolioPaymentPort): void {
-    this.paymentPort = port
-  }
+  setPaymentDeps(port: FolioPaymentPort): void { this.paymentPort = port }
 
   private async hotelOf(user: CurrentUser): Promise<string> {
     const u = await this.deps.user.findById(user.id)
@@ -58,6 +54,8 @@ export class FoliosService {
   // Puerto de lectura para `connectors/reservas-money` — la lógica vive en el usecase.
   foliosOfReservation(hotelId: string, reservationId: string): Promise<FolioDTO[]> { return foliosOfReservation(this.folioRepo, hotelId, reservationId) }
   reservationIdOfFolio(hotelId: string, folioId: string): Promise<string | null> { return reservationIdOfFolio(this.folioRepo, hotelId, folioId) }
+  // #213 — puerto de lectura para `connectors/restaurante-reports-folios`: el cargo del POS por su referencia.
+  chargeByReference(hotelId: string, reference: string): Promise<FolioChargeDTO | null> { return chargeByReference(this.chargeRepo, hotelId, reference) }
 
   async list(query?: FolioQuery, user?: CurrentUser): Promise<FolioListResult> {
     this.logger.info('Listando folios', { query })
