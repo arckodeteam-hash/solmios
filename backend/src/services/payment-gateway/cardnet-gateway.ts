@@ -34,8 +34,16 @@ export interface CardnetCredentials {
   merchantName?: string
   /** MCC del comercio (MerchantType). Opcional. */
   merchantType?: string
+  /**
+   * Código de adquirente que asigna CardNet; la guía oficial y su comercio de pruebas usan 349 —
+   * se puede pisar desde las credenciales guardadas si el ejecutivo de cuenta entrega otro.
+   */
+  acquiringInstitutionCode?: string
   currency?: string
 }
+
+/** AcquiringInstitutionCode por defecto (guía oficial y comercio de pruebas de CardNet). */
+export const CARDNET_DEFAULT_ACQUIRER = '349'
 
 /**
  * Traduce el JSON genérico de `payment_gateways.credentials` (merchantId/terminalId, mismo shape
@@ -48,6 +56,7 @@ export function toCardnetCredentials(stored: Record<string, unknown>): CardnetCr
     merchantTerminal: String(stored.terminalId || ''),
     merchantName: stored.merchantName ? String(stored.merchantName) : undefined,
     merchantType: stored.merchantType ? String(stored.merchantType) : undefined,
+    acquiringInstitutionCode: stored.acquiringInstitutionCode ? String(stored.acquiringInstitutionCode) : undefined,
     currency: stored.currency ? String(stored.currency) : undefined,
   }
 }
@@ -79,7 +88,7 @@ export interface CardnetSessionRow {
   /** Nuestra referencia (reserva/folio): CardNet no la devuelve en el retorno. */
   reference: string
   /** session-key: sin ella no se puede consultar el estado de la sesión. */
-  secret: string
+  sessionKey: string
   amountMinor: number
   currency: string
   mode: GatewayMode
@@ -126,7 +135,7 @@ export class CardnetGateway implements PaymentGateway {
     return {
       TransactionType: '0200',
       CurrencyCode: currencyCode,
-      AcquiringInstitutionCode: '349',
+      AcquiringInstitutionCode: this.creds.acquiringInstitutionCode || CARDNET_DEFAULT_ACQUIRER,
       MerchantNumber: this.creds.merchantNumber,
       MerchantTerminal: this.creds.merchantTerminal,
       ...(this.creds.merchantName ? { MerchantName: this.creds.merchantName } : {}),
@@ -141,7 +150,7 @@ export class CardnetGateway implements PaymentGateway {
     }
   }
 
-  private async postSession(payload: Record<string, string>): Promise<{ session: string; secret: string }> {
+  private async postSession(payload: Record<string, string>): Promise<{ session: string; sessionKey: string }> {
     const r = await this.fetchImpl(`${this.host}/sessions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
@@ -150,7 +159,7 @@ export class CardnetGateway implements PaymentGateway {
     const body = await r.json().catch(() => ({})) as CardnetSessionResponse
     if (!r.ok) throw new Error(body?.message || `HTTP ${r.status}`)
     if (!body.SESSION || !body['session-key']) throw new Error('respuesta sin SESSION/session-key')
-    return { session: body.SESSION, secret: body['session-key'] }
+    return { session: body.SESSION, sessionKey: body['session-key'] }
   }
 
   async createCharge(req: ChargeRequest): Promise<ChargeResult> {
@@ -164,10 +173,10 @@ export class CardnetGateway implements PaymentGateway {
       const payload = this.sessionPayload(
         formatCardnetAmount(req.amountMinor), req.reference.slice(0, 20), currencyCode, req.successUrl, req.cancelUrl,
       )
-      const { session, secret } = await this.postSession(payload)
+      const { session, sessionKey } = await this.postSession(payload)
       await this.sessions.save({
         id: session, hotelId: req.hotelId, provider: 'cardnet', reference: req.reference,
-        secret, amountMinor: req.amountMinor, currency: currency.toLowerCase(), mode: this.mode,
+        sessionKey, amountMinor: req.amountMinor, currency: currency.toLowerCase(), mode: this.mode,
       })
       // /authorize exige POST: redirigimos a una página propia que auto-envía el form (bookingengine).
       const origin = new URL(req.successUrl).origin
@@ -193,7 +202,7 @@ export class CardnetGateway implements PaymentGateway {
     const row = await this.sessions.load(session)
     if (!row || row.hotelId !== ctx.hotelId) return null
 
-    const res = await this.queryStatus(session, row.secret)
+    const res = await this.queryStatus(session, row.sessionKey)
     if (!res?.ResponseCode) return null
 
     return {
@@ -208,9 +217,9 @@ export class CardnetGateway implements PaymentGateway {
   }
 
   /** 404 rspdata_not_found = el tarjetahabiente todavía no terminó: no es fallo, es "sin confirmación". */
-  private async queryStatus(session: string, secret: string): Promise<CardnetStatusResponse | null> {
+  private async queryStatus(session: string, sessionKey: string): Promise<CardnetStatusResponse | null> {
     try {
-      const r = await this.fetchImpl(`${this.host}/sessions/${encodeURIComponent(session)}?sk=${encodeURIComponent(secret)}`)
+      const r = await this.fetchImpl(`${this.host}/sessions/${encodeURIComponent(session)}?sk=${encodeURIComponent(sessionKey)}`)
       if (!r.ok) return null
       return await r.json() as CardnetStatusResponse
     } catch {
