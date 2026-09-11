@@ -24,7 +24,7 @@ import type { OrderWithLines, InHouseReservation, OrderPaymentsList, OrderPaymen
 import { POS_PAYMENT_METHODS } from '@/services/Caja.service'
 
 let orderData: OrderWithLines
-let paymentsData: OrderPaymentsList = { data: [], total: 0, balance: { due: 118, paid: 0, pending: 0, outstanding: 118, tips: 0 } }
+let paymentsData: OrderPaymentsList = { parts: [], balance: { due: 118, paid: 0, pending: 0, outstanding: 118, tips: 0 } }
 const addPartCalls: unknown[] = []
 const refundPartCalls: unknown[] = []
 const refundCalls: unknown[] = []
@@ -78,15 +78,15 @@ vi.mock('@/services/Restaurant.service', async (importOriginal) => {
         const req = data as { method: string; amount: number }
         // Tarjeta: la parte queda pending y el server devuelve el Checkout de Stripe.
         if (req.method === 'card') {
-          const pending = { id: 'p-card', hotelId: 'h1', orderId: id, seq: paymentsData.data.length + 1, method: 'card', amount: req.amount, tip: 0, status: 'pending' } as OrderPayment
+          const pending = { id: 'p-card', hotelId: 'h1', orderId: id, seq: paymentsData.parts.length + 1, method: 'card', amount: req.amount, tip: 0, status: 'pending' } as OrderPayment
           return { part: pending, order: orderData, balance: { ...paymentsData.balance, pending: req.amount }, checkoutUrl: 'https://checkout.stripe.test/cs_part' }
         }
-        const part = { id: 'p-new', hotelId: 'h1', orderId: id, seq: paymentsData.data.length + 1, method: req.method, amount: req.amount, tip: 0, status: 'completed' } as OrderPayment
+        const part = { id: 'p-new', hotelId: 'h1', orderId: id, seq: paymentsData.parts.length + 1, method: req.method, amount: req.amount, tip: 0, status: 'completed' } as OrderPayment
         const paid = paymentsData.balance.paid + part.amount
         const outstanding = Math.round((paymentsData.balance.due - paid) * 100) / 100
         const balance = { ...paymentsData.balance, paid, outstanding }
         // El server persiste la parte: la recarga siguiente (getOrder/listOrderPayments) ya la ve.
-        paymentsData = { data: [...paymentsData.data, part], total: paymentsData.total + 1, balance }
+        paymentsData = { parts: [...paymentsData.parts, part], balance }
         if (outstanding <= 0) orderData = { ...orderData, status: 'paid', settlement: 'split', amountPaid: paid }
         return { part, order: { ...orderData, amountPaid: paid }, balance }
       }),
@@ -115,7 +115,7 @@ describe('cobrar.vue — #209', () => {
   beforeEach(() => {
     chargeCalls.length = 0; byIdCalls.length = 0; addPartCalls.length = 0; refundPartCalls.length = 0; discountCalls.length = 0; routerPush.mockClear(); toastWarning.mockClear()
     inHouseData = [perez]; byId = async (id) => inHouseData.find((r) => r.id === id) ?? null; orderData = baseOrder()
-    paymentsData = { data: [], total: 0, balance: { due: 118, paid: 0, pending: 0, outstanding: 118, tips: 0 } }
+    paymentsData = { parts: [], balance: { due: 118, paid: 0, pending: 0, outstanding: 118, tips: 0 } }
   })
   afterEach(() => { document.body.innerHTML = '' })
 
@@ -305,8 +305,7 @@ describe('cobrar.vue — #215 descuentos', () => {
 // ─── #214 — dividir cuenta ────────────────────────────────────────────────────
 const part = (extra: Partial<OrderPayment>): OrderPayment => ({ id: 'p1', hotelId: 'h1', orderId: 'o1', seq: 1, method: 'cash', amount: 40, tip: 0, status: 'completed', ...extra })
 const twoParts = (): OrderPaymentsList => ({
-  data: [part({ id: 'p1', seq: 1, method: 'cash', amount: 40, paymentId: 'pay-1' }), part({ id: 'p2', seq: 2, method: 'card', amount: 60, tip: 5, paymentId: 'pay-2' })],
-  total: 2,
+  parts: [part({ id: 'p1', seq: 1, method: 'cash', amount: 40, paymentId: 'pay-1' }), part({ id: 'p2', seq: 2, method: 'card', amount: 60, tip: 5, paymentId: 'pay-2' })],
   balance: { due: 118, paid: 100, pending: 0, outstanding: 18, tips: 5 },
 })
 const tabButtons = (w: Awaited<ReturnType<typeof mountCobrar>>) => w.findAll('[role="tab"]').map((b) => b.text())
@@ -321,7 +320,7 @@ describe('cobrar.vue — #214 dividir cuenta', () => {
   beforeEach(() => {
     chargeCalls.length = 0; addPartCalls.length = 0; refundPartCalls.length = 0; routerPush.mockClear(); toastWarning.mockClear()
     inHouseData = [perez]; byId = async (id) => inHouseData.find((r) => r.id === id) ?? null; orderData = baseOrder()
-    paymentsData = { data: [], total: 0, balance: { due: 118, paid: 0, pending: 0, outstanding: 118, tips: 0 } }
+    paymentsData = { parts: [], balance: { due: 118, paid: 0, pending: 0, outstanding: 118, tips: 0 } }
   })
   afterEach(() => { document.body.innerHTML = '' })
 
@@ -402,7 +401,7 @@ describe('cobrar.vue — #214 dividir cuenta', () => {
       { id: 'l1', orderId: 'o1', name: 'Pizza', quantity: 1, unitPrice: 50, lineTotal: 50, taxRate: 18, status: 'new' },
       { id: 'l2', orderId: 'o1', name: 'Pasta', quantity: 1, unitPrice: 50, lineTotal: 50, taxRate: 18, status: 'new' },
     ] as OrderWithLines['lines'] })
-    paymentsData = { data: [part({ id: 'p1', seq: 1, amount: 59, lineIds: ['l1'] })], total: 1, balance: { due: 118, paid: 59, pending: 0, outstanding: 59, tips: 0 } }
+    paymentsData = { parts: [part({ id: 'p1', seq: 1, amount: 59, lineIds: ['l1'] })], balance: { due: 118, paid: 59, pending: 0, outstanding: 59, tips: 0 } }
     const w = await mountCobrar()
     expect((w.find('input[name="line-l1"]').element as HTMLInputElement).disabled).toBe(true)
     expect(w.text()).toContain('Ya cobrada')
@@ -474,7 +473,7 @@ describe('cobrar.vue — #214 dividir cuenta', () => {
     expect(refundPartCalls).toEqual([{ id: 'o1', partId: 'p1', reason: 'se equivocó de mesa' }])
     w.unmount()
     const tp = twoParts()
-    tp.data[0] = { ...tp.data[0], status: 'reversed' }
+    tp.parts[0] = { ...tp.parts[0], status: 'reversed' }
     tp.balance = { due: 118, paid: 60, pending: 0, outstanding: 58, tips: 5 }
     paymentsData = tp
     const w2 = await mountCobrar()
@@ -486,7 +485,7 @@ describe('cobrar.vue — #214 dividir cuenta', () => {
   it('reembolsada en parte: se explica y la parte devuelta figura como reembolsada; la de efectivo sigue cobrada', async () => {
     orderData = baseOrder({ status: 'partially_refunded', settlement: 'payment', amountPaid: 118 })
     const tp = twoParts()
-    tp.data[1] = { ...tp.data[1], status: 'refunded' }
+    tp.parts[1] = { ...tp.parts[1], status: 'refunded' }
     paymentsData = tp
     const w = await mountCobrar()
     expect(w.text()).toContain('Se devolvió una parte del cobro; el resto sigue cobrado.')
@@ -511,7 +510,7 @@ describe('cobrar.vue — #214 parte con tarjeta / a habitación / partes no disp
   beforeEach(() => {
     chargeCalls.length = 0; addPartCalls.length = 0; refundPartCalls.length = 0; routerPush.mockClear(); toastWarning.mockClear()
     inHouseData = [perez]; byId = async (id) => inHouseData.find((r) => r.id === id) ?? null; orderData = baseOrder()
-    paymentsData = { data: [], total: 0, balance: { due: 118, paid: 0, pending: 0, outstanding: 118, tips: 0 } }
+    paymentsData = { parts: [], balance: { due: 118, paid: 0, pending: 0, outstanding: 118, tips: 0 } }
     routeState.query = {}
   })
   afterEach(() => { document.body.innerHTML = ''; vi.useRealTimers() })
@@ -541,7 +540,7 @@ describe('cobrar.vue — #214 parte con tarjeta / a habitación / partes no disp
   it('vuelta del Checkout (`?part=pending`): muestra la parte esperando a Stripe, hace poll y al quedar paid se queda en la pantalla liquidada', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] })
     routeState.query = { paid: 'pending', part: 'pending' }
-    paymentsData = { data: [part({ id: 'p1', seq: 1, method: 'card', amount: 118, status: 'pending' })], total: 1, balance: { due: 118, paid: 0, pending: 118, outstanding: 118, tips: 0 } }
+    paymentsData = { parts: [part({ id: 'p1', seq: 1, method: 'card', amount: 118, status: 'pending' })], balance: { due: 118, paid: 0, pending: 118, outstanding: 118, tips: 0 } }
     const w = await mountCobrar()
     // Mientras espera: la parte figura "Sin confirmar", el saldo sigue completo y no se puede agregar otra por ese saldo.
     expect(w.find('[data-testid="pending-note"]').text()).toContain('RD$118.00 esperando la confirmación de Stripe')
@@ -549,7 +548,7 @@ describe('cobrar.vue — #214 parte con tarjeta / a habitación / partes no disp
     expect((w.find('[data-testid="add-part"]').element as HTMLButtonElement).disabled).toBe(true)
     expect(routerPush).not.toHaveBeenCalled()
     // El webhook confirmó: la siguiente vuelta del poll ve la parte cobrada y la comanda paid.
-    paymentsData = { data: [part({ id: 'p1', seq: 1, method: 'card', amount: 118, status: 'completed', paymentId: 'pay-1' })], total: 1, balance: { due: 118, paid: 118, pending: 0, outstanding: 0, tips: 0 } }
+    paymentsData = { parts: [part({ id: 'p1', seq: 1, method: 'card', amount: 118, status: 'completed', paymentId: 'pay-1' })], balance: { due: 118, paid: 118, pending: 0, outstanding: 0, tips: 0 } }
     orderData = baseOrder({ status: 'paid', settlement: 'payment', amountPaid: 118 })
     await vi.advanceTimersByTimeAsync(1500)
     await flushPromises()
@@ -594,6 +593,20 @@ describe('cobrar.vue — #214 parte con tarjeta / a habitación / partes no disp
     expect(w.text()).toContain('Cobrar RD$118.00')
     expect(w.find('[data-testid="charge-room"]').exists()).toBe(true)
     expect(toastWarning).toHaveBeenCalledWith('No se pudieron cargar los pagos parciales', 'Sin permiso restaurant:pay')
+    await w.findAll('[role="tab"]')[1].trigger('click')
+    expect(w.find('[data-testid="parts-unavailable"]').exists()).toBe(true)
+    expect(w.find('[data-testid="add-part"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  // #279: lo que devolvía prod (el envelope tomó `{data,total,balance}` como lista y tiró `balance`): el
+  // service entregaba `{ data: [], total: 0 }` y la pestaña reventaba en blanco con `balance.due` de undefined.
+  it('#279: la respuesta llega SIN balance (forma vieja de prod): aviso visible en la pestaña Dividir, no pantalla en blanco', async () => {
+    const { RestaurantService } = await import('@/services/Restaurant.service')
+    vi.mocked(RestaurantService.listOrderPayments).mockResolvedValueOnce({ data: [], total: 0 } as unknown as OrderPaymentsList)
+    const w = await mountCobrar()
+    expect(w.text()).toContain('Cobrar RD$118.00')
+    expect(toastWarning).toHaveBeenCalledWith('No se pudieron cargar los pagos parciales', 'La respuesta del servidor no trae el saldo de la comanda')
     await w.findAll('[role="tab"]')[1].trigger('click')
     expect(w.find('[data-testid="parts-unavailable"]').exists()).toBe(true)
     expect(w.find('[data-testid="add-part"]').exists()).toBe(false)

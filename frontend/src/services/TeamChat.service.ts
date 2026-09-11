@@ -16,9 +16,10 @@ export interface MessageDTO {
   updatedAt: string
 }
 
-/** Página de mensajes del monitor. Los más recientes primero. */
+/** Página de mensajes del monitor. Los más recientes primero. Espejo de `messages/usecases/all-conversations.ts`.
+ *  #279: `messages`, no `data` — con `data` el envelope del backend la tomaba como lista paginada y tiraba `hasMore`. */
 export interface PagedMessages {
-  data: MessageDTO[]
+  messages: MessageDTO[]
   total: number
   hasMore: boolean
 }
@@ -32,14 +33,11 @@ export const TeamChatService = {
   async listAll(offset = 0, limit = 200): Promise<PagedMessages> {
     const res = await http.get<PagedMessages>(`/messages/all?offset=${offset}&limit=${limit}`)
     const body = (res ?? {}) as Partial<PagedMessages>
-    const data = Array.isArray(body.data) ? body.data : []
+    const messages = Array.isArray(body.messages) ? body.messages : []
     const total = typeof body.total === 'number' ? body.total : 0
-    // #637: el auto-wrap de paginación del framework (kernel/http/server.ts) reconstruye
-    // `{data, total}` desde `meta.pagination` pero descarta cualquier otro campo del body
-    // original — `hasMore` nunca sobrevive el viaje de ida y vuelta, para NINGÚN limit (no
-    // es un problema solo de limits chicos como se pensó al abrir el issue). Hoy es invisible
-    // porque ningún hotel real supera los 200 mensajes por página, así que `offset+data.length`
-    // ya cubre el total en la primera carga. Se calcula acá en vez de confiar en el campo.
-    return { data, total, hasMore: offset + data.length < total }
+    // #637/#279: el backend ya manda `hasMore` (desde #279 el cuerpo viaja entero en `data`); si un
+    // backend viejo no lo trae, se deduce de `offset + messages.length < total`.
+    const hasMore = typeof body.hasMore === 'boolean' ? body.hasMore : offset + messages.length < total
+    return { messages, total, hasMore }
   },
 }

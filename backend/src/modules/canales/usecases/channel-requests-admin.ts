@@ -51,8 +51,11 @@ export interface AdminChannelRequestRow extends ChannelRequestRow {
   mappedRoomTypes: number
 }
 
+// #279: `requests`, no `data`. Con `{ data: [], total, counts }` el envelope del framework (buildEnvelope,
+// kernel/http/server.ts) lo toma como lista paginada y DESCARTA `counts` (y `filters`/`transitions`
+// que agrega la ruta): la bandeja quedaba sin contadores ni transiciones cuando la respuesta era chica.
 export interface AdminChannelRequestList {
-  data: AdminChannelRequestRow[]
+  requests: AdminChannelRequestRow[]
   total: number
   counts: Record<ChannelRequestFilter, number>
 }
@@ -160,7 +163,7 @@ export async function listChannelRequestsForAdmin(
     : 'all'
   const visible = data.filter((r) => matchesFilter(r, filter)).sort(byUrgency)
 
-  return { data: visible, total: visible.length, counts }
+  return { requests: visible, total: visible.length, counts }
 }
 
 function byUrgency(a: AdminChannelRequestRow, b: AdminChannelRequestRow): number {
@@ -177,8 +180,8 @@ export async function getChannelRequestForAdmin(
   id: string,
   now: Date = new Date(),
 ): Promise<(AdminChannelRequestRow & { activities: ChannelRequestActivityRow[] }) | null> {
-  const { data } = await listChannelRequestsForAdmin(deps, { filter: 'all', now })
-  const row = data.find((r) => r.id === id)
+  const { requests } = await listChannelRequestsForAdmin(deps, { filter: 'all', now })
+  const row = requests.find((r) => r.id === id)
   if (!row) return null
   const activities = (await deps.listActivities(id))
     .slice()

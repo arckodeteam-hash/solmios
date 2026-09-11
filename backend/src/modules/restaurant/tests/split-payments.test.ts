@@ -246,7 +246,7 @@ describe('#214 — addOrderPayment: efectivo 40 + tarjeta 60 sobre 100', () => {
       expect(h.money.payments[0].amount).toBe(40)
       expect(h.money.payments[0].method).toBe('cash')
       const listed = await listOrderPayments(h.deps, order.id, user)
-      expect(listed.data.map((p) => [p.seq, p.method, p.amount, p.status])).toEqual([[1, 'cash', 40, 'completed'], [2, 'card', 60, 'completed']])
+      expect(listed.parts.map((p) => [p.seq, p.method, p.amount, p.status])).toEqual([[1, 'cash', 40, 'completed'], [2, 'card', 60, 'completed']])
       expect(listed.balance.outstanding).toBe(0)
       // Reintento del webhook: idempotente, no repite el socket.
       await settleOrderPayment(h.deps, r2.part.id, 'card-1', sys)
@@ -479,7 +479,7 @@ describe('#214 — refund parcial', () => {
       expect(after.status).toBe('partially_refunded')
       expect(h.events).toEqual(['paid'])   // el inventario NO se repone por una devolución parcial
       const listed = await listOrderPayments(h.deps, order.id, user)
-      expect(listed.data.find((p) => p.id === cash.part.id)?.status).toBe('completed')
+      expect(listed.parts.find((p) => p.id === cash.part.id)?.status).toBe('completed')
       // Idempotente: segunda devolución de la misma parte no vuelve a llamar al gateway.
       await refundOrderPayment(h.deps, order.id, card.part.id, REASON, user)
       expect(h.money.refunds).toHaveLength(1)

@@ -102,9 +102,10 @@ describe('MessagesService', () => {
     const rows = [msg({})]
     const svc = new MessagesService(repoWith(rows), log)
 
-    expect(await svc.getAllConversations(me)).toEqual({ data: [], total: 0, hasMore: false })
+    expect(await svc.getAllConversations(me)).toEqual({ messages: [], total: 0, hasMore: false })
     const page = await svc.getAllConversations(boss)
-    expect(page.data).toHaveLength(1)
+    expect(page.messages).toHaveLength(1)
+    expect('data' in page).toBe(false) // #279: con `data` el envelope descartaría `hasMore`
     expect(page.total).toBe(1)
     expect(page.hasMore).toBe(false)
   })
@@ -118,12 +119,12 @@ describe('MessagesService', () => {
     const svc = new MessagesService(repoWith(rows), log)
 
     const first = await svc.getAllConversations(boss, { limit: 2, offset: 0 })
-    expect(first.data.map((m) => m.id)).toEqual(['b', 'c']) // los 2 más recientes
+    expect(first.messages.map((m) => m.id)).toEqual(['b', 'c']) // los 2 más recientes
     expect(first.total).toBe(3)
     expect(first.hasMore).toBe(true)
 
     const second = await svc.getAllConversations(boss, { limit: 2, offset: 2 })
-    expect(second.data.map((m) => m.id)).toEqual(['a']) // el más viejo
+    expect(second.messages.map((m) => m.id)).toEqual(['a']) // el más viejo
     expect(second.hasMore).toBe(false)
   })
 })

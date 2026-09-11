@@ -14,8 +14,11 @@ const MAX_PAGE = 500
 
 const isManager = (role: string) => role === 'hotel_admin' || role === 'super_admin'
 
+// #279: `messages`, no `data`. Con `{ data: [], total, hasMore }` el envelope del framework (buildEnvelope,
+// kernel/http/server.ts) lo toma como lista paginada y DESCARTA `hasMore` (solo sobrevive `total` en
+// meta.pagination). Con otra clave el cuerpo se envuelve entero y el cliente lee las tres.
 export interface PagedMessages {
-  data: MessageDTO[]
+  messages: MessageDTO[]
   total: number
   hasMore: boolean
 }
@@ -25,7 +28,7 @@ export async function listAllPaged(
   currentUser: MessageUser,
   opts: { limit?: number; offset?: number } = {},
 ): Promise<PagedMessages> {
-  if (!isManager(currentUser.role)) return { data: [], total: 0, hasMore: false }
+  if (!isManager(currentUser.role)) return { messages: [], total: 0, hasMore: false }
   const limit = Math.min(Math.max(opts.limit ?? DEFAULT_PAGE, 1), MAX_PAGE)
   const offset = Math.max(opts.offset ?? 0, 0)
   const result = await repo.paginate(
@@ -33,7 +36,7 @@ export async function listAllPaged(
     { offset, limit, orderBy: { field: 'createdAt', dir: 'DESC' } },
   )
   return {
-    data: result.data,
+    messages: result.data,
     total: result.total,
     hasMore: offset + result.data.length < result.total,
   }
