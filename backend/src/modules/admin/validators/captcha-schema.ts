@@ -14,4 +14,7 @@ export const CaptchaConfigSchema: Record<string, ValidationRule> = {
   provider: { type: 'string' as const, enum: [...CAPTCHA_PROVIDERS] },
   siteKey: { type: 'string' as const, max: 200 },
   secret: { type: 'string' as const, min: 8, max: 200 },
+  // Alcance por pantalla. `login` arranca apagado: la app móvil entra por el mismo endpoint sin token.
+  register: { type: 'boolean' as const },
+  login: { type: 'boolean' as const },
 }

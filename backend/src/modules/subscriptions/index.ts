@@ -4,7 +4,7 @@ import { SubscriptionsService } from './service'
 import { SubscriptionsController } from './controller'
 import { TRIAL_DAYS } from './usecases/signup'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
-import { verifyCaptcha, resolveCaptchaConfig, publicCaptchaConfig, CAPTCHA_PROVIDER_META } from '../../infrastructure/captcha'
+import { verifyCaptcha, resolveCaptchaConfig, publicCaptchaConfig, captchaRequiredFor, CAPTCHA_PROVIDER_META } from '../../infrastructure/captcha'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 
 export { SubscriptionsService }
@@ -128,7 +128,7 @@ export function SubscriptionsModule() {
         // La config se lee EN CADA ALTA y no al arrancar: el super-admin puede prender el captcha
         // desde Configuración y tiene que valer para el siguiente registro, sin reiniciar nada.
         const captchaCfg = await resolveCaptchaConfig(configurationRepo)
-        if (captchaCfg.enabled) {
+        if (captchaRequiredFor(captchaCfg, 'register')) {
           const captcha = await verifyCaptcha(captchaCfg, String(req.body?.captchaToken ?? ''), ip)
           if (!captcha.ok) {
             log.warn(`Signup rechazado por captcha desde ${ip}: ${captcha.reason}`)

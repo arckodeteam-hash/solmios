@@ -21,7 +21,11 @@ export interface PublicCaptchaConfig {
   scriptUrl: string
   /** Objeto que ese script deja en `window` y que expone `.render()`. */
   globalName: string
+  /** Qué pantallas lo piden. Cada una mira la suya antes de dibujar el widget. */
+  scopes: CaptchaScopes
 }
+
+export interface CaptchaScopes { register: boolean; login: boolean }
 
 export interface CaptchaProviderOption {
   value: CaptchaProvider
@@ -41,6 +45,7 @@ export interface CaptchaEstado {
   /** `false` cuando el secreto viene del servidor (.env) o falta la clave de cifrado. */
   puedeGuardar: boolean
   proveedores: CaptchaProviderOption[]
+  scopes: CaptchaScopes
 }
 
 export interface GuardarCaptchaInput {
@@ -49,10 +54,14 @@ export interface GuardarCaptchaInput {
   siteKey?: string
   /** Vacío = conserva el guardado. La pantalla nunca muestra el secreto. */
   secret?: string
+  /** Por pantalla. `login` arranca apagado: la app móvil entra por el mismo endpoint sin token. */
+  register?: boolean
+  login?: boolean
 }
 
 const APAGADO: PublicCaptchaConfig = {
   enabled: false, provider: 'turnstile', siteKey: '', scriptUrl: '', globalName: 'turnstile',
+  scopes: { register: true, login: false },
 }
 
 export const CaptchaService = {

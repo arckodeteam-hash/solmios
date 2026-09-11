@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import {
   resolveCaptchaConfig, verifyCaptcha, estadoCaptcha, guardarCaptcha, publicCaptchaConfig,
-  isCaptchaProvider, CAPTCHA_PROVIDERS, CAPTCHA_PROVIDER_META,
+  isCaptchaProvider, captchaRequiredFor, CAPTCHA_PROVIDERS, CAPTCHA_PROVIDER_META,
 } from '../../../infrastructure/captcha'
 
 const antesEnv = { ...process.env }
@@ -167,7 +167,7 @@ describe('captcha — proveedores', () => {
 })
 
 describe('captcha — verificación del token', () => {
-  const cfg = { enabled: true, provider: 'turnstile' as const, siteKey: 'sk', secret: 's', origin: 'panel' as const }
+  const cfg = { enabled: true, provider: 'turnstile' as const, siteKey: 'sk', secret: 's', origin: 'panel' as const, scopes: { register: true, login: false } }
   const conFetch = async (impl: any, fn: () => Promise<any>) => {
     const orig = globalThis.fetch
     globalThis.fetch = impl
@@ -202,5 +202,49 @@ describe('captcha — verificación del token', () => {
       await conFetch(spy, () => verifyCaptcha({ ...cfg, provider }, 'tok'))
     }
     expect(urls).toEqual(CAPTCHA_PROVIDERS.map((p) => CAPTCHA_PROVIDER_META[p].verifyUrl))
+  })
+})
+
+describe('captcha — alcance por pantalla (login y registro)', () => {
+  it('por defecto pide captcha en el registro y NO en el login (la app móvil entra por el mismo endpoint sin token)', async () => {
+    const repo = fakeConfigRepo()
+    await guardarCaptcha(repo, { enabled: true, provider: 'turnstile', siteKey: 'sk', secret: 'secreto-largo-1234' })
+    const cfg = await resolveCaptchaConfig(repo)
+    expect(cfg.scopes).toEqual({ register: true, login: false })
+    expect(captchaRequiredFor(cfg, 'register')).toBe(true)
+    expect(captchaRequiredFor(cfg, 'login')).toBe(false)
+  })
+
+  it('el super-admin prende el login y apaga el registro; lo que no manda se conserva', async () => {
+    const repo = fakeConfigRepo()
+    await guardarCaptcha(repo, { enabled: true, provider: 'turnstile', siteKey: 'sk', secret: 'secreto-largo-1234' })
+    await guardarCaptcha(repo, { login: true })
+    expect((await resolveCaptchaConfig(repo)).scopes).toEqual({ register: true, login: true })
+    await guardarCaptcha(repo, { register: false })
+    const cfg = await resolveCaptchaConfig(repo)
+    expect(cfg.scopes).toEqual({ register: false, login: true })
+    expect(captchaRequiredFor(cfg, 'register')).toBe(false)
+    expect(captchaRequiredFor(cfg, 'login')).toBe(true)
+    // El estado del panel y la config pública lo cuentan igual.
+    expect((await estadoCaptcha(repo)).scopes).toEqual({ register: false, login: true })
+    expect((await publicCaptchaConfig(repo)).scopes).toEqual({ register: false, login: true })
+  })
+
+  it('con el interruptor general apagado ninguna pantalla lo exige, aunque su switch esté prendido', async () => {
+    const repo = fakeConfigRepo()
+    await guardarCaptcha(repo, { enabled: true, provider: 'turnstile', siteKey: 'sk', secret: 'secreto-largo-1234', login: true })
+    await guardarCaptcha(repo, { enabled: false })
+    const cfg = await resolveCaptchaConfig(repo)
+    expect(cfg.scopes.login).toBe(true)
+    expect(captchaRequiredFor(cfg, 'login')).toBe(false)
+    expect(captchaRequiredFor(cfg, 'register')).toBe(false)
+  })
+
+  it('con las claves en el entorno, el alcance igual se decide en el panel', async () => {
+    const repo = fakeConfigRepo([{ id: 'c1', hotelId: 'platform', key: 'captcha', value: JSON.stringify({ enabled: false, scopes: { register: true, login: true } }) }])
+    process.env.TURNSTILE_SECRET = 'del-entorno-1234'
+    const cfg = await resolveCaptchaConfig(repo)
+    expect(cfg.origin).toBe('entorno')
+    expect(cfg.scopes).toEqual({ register: true, login: true })
   })
 })

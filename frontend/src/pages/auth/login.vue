@@ -101,6 +101,13 @@
             </div>
             <div v-else-if="error" class="bg-coral/10 text-coral text-xs font-bold p-3 rounded-xl">{{ error }}</div>
 
+            <!-- Captcha del login: solo si el super-admin lo prendió para esta pantalla
+                 (Admin → Configuración → Seguridad). Sin site key no hay hueco vacío. -->
+            <div v-if="captcha.required.value" data-testid="login-captcha">
+              <div ref="captchaEl"></div>
+              <p v-if="captcha.error.value" class="text-[11px] text-danger mt-1">{{ captcha.error.value }}</p>
+            </div>
+
             <button type="submit" :disabled="loading" data-testid="login-submit" class="w-full h-11 bg-navy text-white font-extrabold text-sm rounded-xl hover:bg-navy-light transition-colors disabled:opacity-50 cursor-pointer">
               {{ loading ? 'Entrando...' : 'Entrar' }}
             </button>
@@ -140,6 +147,7 @@ import { SignupService } from '@/services/Signup.service'
 import { AuthService } from '@/services/Auth.service'
 import { usePageMeta } from '@/composables/usePageMeta'
 import { AUTH_PAGE_META } from './auth-meta'
+import { useCaptchaWidget } from '@/composables/useCaptchaWidget'
 
 usePageMeta(AUTH_PAGE_META.login)
 
@@ -176,6 +184,11 @@ onUnmounted(() => { if (slideTimer) clearInterval(slideTimer) })
 
 const router = useRouter()
 const auth = useAuthStore()
+
+// Captcha del login (#12): lo dibuja solo si el super-admin lo prendió para esta pantalla.
+const captchaEl = ref<HTMLElement | null>(null)
+const captcha = useCaptchaWidget('login', captchaEl)
+onMounted(() => { void captcha.init() })
 
 // #644 — precargar credenciales reales (aunque sean demo) en el `value` del input las deja
 // visibles en el DOM/HTML sin ninguna interacción (view-source, devtools, o directamente click
@@ -261,7 +274,7 @@ async function handleLogin() {
   needsPayment.value = false
   resumeError.value = ''
   try {
-    await auth.login(email.value, password.value)
+    await auth.login(email.value, password.value, captcha.token.value || undefined)
     const role = auth.userRole
     if (role === 'super_admin') {
       router.push('/admin')
@@ -270,6 +283,8 @@ async function handleLogin() {
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Error al iniciar sesión'
+    // El token del captcha es de un solo uso: sin resetear, todo reintento vuelve a fallar.
+    captcha.reset()
     // El motivo estructurado manda; el regex sobre el texto queda solo como respaldo para los
     // cortes viejos, que no viajan con `reason`.
     needsPayment.value = (e as any)?.reason === 'payment_method_required'

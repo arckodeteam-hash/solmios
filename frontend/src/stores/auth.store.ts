@@ -67,10 +67,10 @@ export const useAuthStore = defineStore('auth', () => {
   const canActAsHotelAdmin = computed(() => isSuperAdmin.value || isHotelAdmin.value || impersonating.value)
   const currentHotel = computed(() => user.value?.hotelName ?? '')
 
-  async function login(email: string, password: string) {
+  async function login(email: string, password: string, captchaToken?: string) {
     loading.value = true
     try {
-      const { token: tkn, refreshToken: rt, user: usr } = await AuthService.login(email, password)
+      const { token: tkn, refreshToken: rt, user: usr } = await AuthService.login(email, password, captchaToken)
       token.value = tkn
       refreshToken.value = rt
       user.value = usr

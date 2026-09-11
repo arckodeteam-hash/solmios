@@ -71,16 +71,40 @@ export function isCaptchaProvider(v: unknown): v is CaptchaProvider {
   return typeof v === 'string' && (CAPTCHA_PROVIDERS as readonly string[]).includes(v)
 }
 
+/**
+ * Dónde se exige el captcha. `enabled` es el interruptor general (claves cargadas + prendido);
+ * cada pantalla tiene el suyo. `register` arranca prendido (es la barrera contra altas basura);
+ * `login` arranca APAGADO a propósito: la app móvil (repo aparte) entra por el mismo
+ * `POST /api/auth/login` y hoy no manda token — prenderlo la deja afuera hasta que lo soporte.
+ */
+export type CaptchaScope = 'register' | 'login'
+export interface CaptchaScopes { register: boolean; login: boolean }
+export const DEFAULT_CAPTCHA_SCOPES: CaptchaScopes = { register: true, login: false }
+
+export function readScopes(raw: unknown): CaptchaScopes {
+  const src = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  return {
+    register: typeof src.register === 'boolean' ? src.register : DEFAULT_CAPTCHA_SCOPES.register,
+    login: typeof src.login === 'boolean' ? src.login : DEFAULT_CAPTCHA_SCOPES.login,
+  }
+}
+
 export interface CaptchaConfig {
-  /** `false` ⇒ el alta NO pide token. Ver `estadoCaptcha` para saber por qué está apagado. */
+  /** `false` ⇒ ninguna pantalla pide token. Ver `estadoCaptcha` para saber por qué está apagado. */
   enabled: boolean
   provider: CaptchaProvider
   siteKey: string
   secret: string
   origin: 'entorno' | 'panel' | null
+  scopes: CaptchaScopes
 }
 
-const APAGADO: CaptchaConfig = { enabled: false, provider: 'turnstile', siteKey: '', secret: '', origin: null }
+/** ¿Esta pantalla tiene que exigir token? Interruptor general Y el de la pantalla. */
+export function captchaRequiredFor(cfg: Pick<CaptchaConfig, 'enabled' | 'scopes'>, scope: CaptchaScope): boolean {
+  return cfg.enabled && cfg.scopes[scope] === true
+}
+
+const APAGADO: CaptchaConfig = { enabled: false, provider: 'turnstile', siteKey: '', secret: '', origin: null, scopes: { ...DEFAULT_CAPTCHA_SCOPES } }
 
 async function leerConfig(configRepo: any): Promise<Record<string, unknown> | null> {
   try {
@@ -114,11 +138,13 @@ export async function resolveCaptchaConfig(configRepo: any): Promise<CaptchaConf
       siteKey: process.env.TURNSTILE_SITE_KEY || process.env.VITE_TURNSTILE_SITE_KEY || '',
       secret: delEntorno,
       origin: 'entorno',
+      // Con las claves en el entorno el alcance igual se decide en el panel (no es un secreto).
+      scopes: readScopes((await leerConfig(configRepo))?.scopes),
     }
   }
 
   const guardado = await leerConfig(configRepo)
-  if (!guardado) return { ...APAGADO }
+  if (!guardado) return { ...APAGADO, scopes: { ...DEFAULT_CAPTCHA_SCOPES } }
 
   const provider = isCaptchaProvider(guardado.provider) ? guardado.provider : 'turnstile'
   const secret = typeof guardado.secret === 'string' ? guardado.secret : ''
@@ -127,7 +153,7 @@ export async function resolveCaptchaConfig(configRepo: any): Promise<CaptchaConf
   // recargarlas. Sin secreto o sin site key no hay nada que exigir, esté como esté el interruptor.
   const enabled = guardado.enabled === true && !!secret && !!siteKey
 
-  return { enabled, provider, siteKey, secret, origin: enabled ? 'panel' : null }
+  return { enabled, provider, siteKey, secret, origin: enabled ? 'panel' : null, scopes: readScopes(guardado.scopes) }
 }
 
 export interface CaptchaResult {
@@ -185,6 +211,8 @@ export interface PublicCaptchaConfig {
   siteKey: string
   scriptUrl: string
   globalName: string
+  /** Qué pantallas lo piden. El login y el registro consultan la suya antes de dibujar el widget. */
+  scopes: CaptchaScopes
 }
 
 export async function publicCaptchaConfig(configRepo: any): Promise<PublicCaptchaConfig> {
@@ -199,6 +227,7 @@ export async function publicCaptchaConfig(configRepo: any): Promise<PublicCaptch
     siteKey: usable ? cfg.siteKey : '',
     scriptUrl: meta.scriptUrl,
     globalName: meta.globalName,
+    scopes: cfg.scopes,
   }
 }
 
@@ -216,6 +245,7 @@ export interface EstadoCaptcha {
   puedeGuardar: boolean
   /** Catálogo para el desplegable: no se duplica la lista en el frontend. */
   proveedores: Array<{ value: CaptchaProvider; label: string; docsUrl: string; hint: string }>
+  scopes: CaptchaScopes
 }
 
 const CATALOGO = CAPTCHA_PROVIDERS.map((value) => ({
@@ -228,7 +258,8 @@ const CATALOGO = CAPTCHA_PROVIDERS.map((value) => ({
 /** Estado para la pantalla. No cachea: tras un cambio no puede mentir. */
 export async function estadoCaptcha(configRepo: any): Promise<EstadoCaptcha> {
   const delEntorno = process.env.TURNSTILE_SECRET
-  const guardado = delEntorno ? null : await leerConfig(configRepo)
+  const enPanel = await leerConfig(configRepo)
+  const guardado = delEntorno ? null : enPanel
   const secreto = delEntorno || (typeof guardado?.secret === 'string' ? guardado.secret : '')
   const provider = delEntorno ? 'turnstile' : (isCaptchaProvider(guardado?.provider) ? guardado.provider : 'turnstile')
 
@@ -244,6 +275,7 @@ export async function estadoCaptcha(configRepo: any): Promise<EstadoCaptcha> {
     // Con el secreto en el entorno la pantalla es de sólo lectura: no puede pisar lo del servidor.
     puedeGuardar: !delEntorno && isEncryptionConfigured(),
     proveedores: CATALOGO,
+    scopes: readScopes(enPanel?.scopes),
   }
 }
 
@@ -253,6 +285,9 @@ export interface GuardarCaptchaInput {
   siteKey?: string
   /** Vacío = se conserva el ya guardado (la pantalla nunca muestra el secreto). */
   secret?: string
+  /** Por pantalla. Lo que no venga conserva lo guardado (o el default). */
+  register?: boolean
+  login?: boolean
 }
 
 /**
@@ -276,6 +311,11 @@ export async function guardarCaptcha(configRepo: any, datos: GuardarCaptchaInput
   // captcha sin tener que ir a buscar la clave de nuevo.
   const secret = (datos.secret ?? '').trim() || String(previo.secret ?? '')
   const enabled = datos.enabled ?? previo.enabled === true
+  const previos = readScopes(previo.scopes)
+  const scopes: CaptchaScopes = {
+    register: datos.register ?? previos.register,
+    login: datos.login ?? previos.login,
+  }
 
   // Prender sin claves dejaría el registro pidiendo un captcha que no se puede dibujar: se avisa
   // acá en vez de romper el alta pública.
@@ -287,6 +327,7 @@ export async function guardarCaptcha(configRepo: any, datos: GuardarCaptchaInput
     enabled,
     provider,
     siteKey,
+    scopes,
     ...(secret ? { enc: encryptCredentials({ secret }) } : {}),
   })
 

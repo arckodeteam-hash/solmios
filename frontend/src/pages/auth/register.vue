@@ -309,8 +309,10 @@ const ICON_DOT = '<svg viewBox="0 0 24 24" fill="currentColor" class="w-full h-f
  */
 const captchaCfg = ref<PublicCaptchaConfig>({
   enabled: false, provider: 'turnstile', siteKey: '', scriptUrl: '', globalName: 'turnstile',
+  scopes: { register: true, login: false },
 })
-const captchaSiteKey = computed(() => (captchaCfg.value.enabled ? captchaCfg.value.siteKey : ''))
+// Solo si el super-admin lo prendió PARA EL REGISTRO (el switch general y el de esta pantalla).
+const captchaSiteKey = computed(() => (captchaCfg.value.enabled && captchaCfg.value.scopes?.register !== false ? captchaCfg.value.siteKey : ''))
 
 const subtitleStep1 = computed(() =>
   requireCard.value

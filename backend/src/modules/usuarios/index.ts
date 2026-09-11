@@ -12,6 +12,7 @@ import { requireUserType } from '../../infrastructure/auth/require-user-type'
 import { denyImpersonation } from '../../infrastructure/auth/deny-impersonation'
 import { impersonateUser } from './usecases/impersonate'
 import { passwordPolicyHandler } from '../../shared/usecases/password-policy'
+import { resolveCaptchaConfig, verifyCaptcha, captchaRequiredFor } from '../../infrastructure/captcha'
 import { auditSafely } from '../../shared/usecases/audit'
 
 export { UsuariosService }
@@ -57,6 +58,17 @@ export function UsuariosModule(opts: { storage?: StorageService } = {}) {
         const { allowed, retryAfter } = await rateLimit(key)
         if (!allowed) {
           return { status: 429, body: { error: `Demasiados intentos. Intentá en ${retryAfter} segundos` } }
+        }
+        // Captcha del login (si el super-admin lo prendió para esta pantalla). Se verifica ANTES de
+        // mirar las credenciales, igual que en el alta: es la barrera contra el bot, no contra la
+        // contraseña. La config se lee en cada login para que el interruptor valga sin reiniciar.
+        const captchaCfg = await resolveCaptchaConfig(configRepo)
+        if (captchaRequiredFor(captchaCfg, 'login')) {
+          const captcha = await verifyCaptcha(captchaCfg, String((req.body as any)?.captchaToken ?? ''), ip)
+          if (!captcha.ok) {
+            log.warn(`Login rechazado por captcha desde ${ip}: ${captcha.reason}`)
+            return { status: 400, body: { error: 'No pudimos verificar que no seas un robot. Recargá la página y probá de nuevo.' } }
+          }
         }
         // Un login fallido lanza, así que no llega a resetear el contador.
         // Antes se reseteaba con cualquier resultado y el límite nunca se alcanzaba.
