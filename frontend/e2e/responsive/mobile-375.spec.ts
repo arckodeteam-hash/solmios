@@ -23,8 +23,8 @@ const ROUTER_FILE = join('src', 'router', 'index.ts')
 
 // Credenciales del seed de dev (migrate-db.ts). /admin requiere super_admin; /panel usa la sesión
 // hotel_admin que ya persiste global-setup (ADMIN_STORAGE_STATE).
-const SUPER_ADMIN_EMAIL = process.env.E2E_SUPER_ADMIN_EMAIL || 'admin@solmios.com'
-const SUPER_ADMIN_PASSWORD = process.env.E2E_SUPER_ADMIN_PASSWORD || 'demo123'
+const SA_EMAIL = process.env.E2E_SUPER_ADMIN_EMAIL || 'admin@solmios.com'
+const SA_PASS = process.env.E2E_SUPER_ADMIN_PASSWORD || 'demo123'
 const BACKEND = process.env.E2E_BACKEND_URL || 'http://localhost:3001'
 
 // ── Extracción de rutas ────────────────────────────────────────────────────────────────────────
@@ -93,11 +93,9 @@ async function auditRoute(page: Page, route: string) {
     bodyScrollWidth: document.body.scrollWidth,
     finalPath: location.pathname,
   }))
-  // Si el guard rebotó (sesión sin permiso, módulo fuera del plan) se audita otra página: queda
-  // anotado en el reporte para que no pase por cobertura real.
-  if (finalPath !== route) {
-    test.info().annotations.push({ type: 'redirected', description: `${route} -> ${finalPath}` })
-  }
+  // Si el guard rebotó (rol sin acceso, módulo fuera del plan) se estaría auditando OTRA
+  // página: eso es un fallo, no cobertura. Con el seed de dev ninguna ruta sin params redirige.
+  expect(finalPath, `${route} redirigió a ${finalPath}: la ruta no se auditó`).toBe(route)
   expect(
     Math.max(scrollWidth, bodyScrollWidth),
     `${route} (renderizada en ${finalPath}) desborda a ${VIEWPORT_WIDTH}px: scrollWidth=${scrollWidth} body=${bodyScrollWidth}`,
@@ -139,7 +137,7 @@ test.describe('mobile-375: /admin (super_admin)', () => {
 
   test.beforeAll(async ({ request }) => {
     const res = await request.post(`${BACKEND}/api/auth/login`, {
-      data: { email: SUPER_ADMIN_EMAIL, password: SUPER_ADMIN_PASSWORD },
+      data: { email: SA_EMAIL, password: SA_PASS },
     })
     if (!res.ok()) {
       throw new Error(
@@ -148,7 +146,8 @@ test.describe('mobile-375: /admin (super_admin)', () => {
     }
     const body = await res.json()
     const data = body.data ?? body
-    session = { token: data.token, refreshToken: data.refreshToken, user: data.user }
+    const { token, refreshToken, user } = data
+    session = { token, refreshToken, user }
   })
 
   test.beforeEach(async ({ page }) => {
