@@ -87,7 +87,8 @@ Password de todas: `demo123`. El login acepta **email o teléfono** en el mismo 
 | `bun run build` | `vue-tsc -b` + build (verifica tipos **con** project references) |
 | `bun run typecheck` | `vue-tsc -b --noEmit` — sin `-b` no revisa nada |
 | `bun run test` | Vitest |
-| `bun run test:e2e` | Playwright |
+| `bun run test:e2e` | Playwright (suite funcional, desktop) |
+| `bun run test:e2e:mobile` | Auditoría responsive a 375px: recorre todas las rutas, screenshot por ruta en `e2e/.artifacts/mobile-375/`, falla si alguna desborda. Necesita backend con seed demo |
 
 ## Verificación (antes de declarar "listo")
 
