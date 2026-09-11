@@ -322,6 +322,19 @@
   .wizard-btn-secondary:hover {
     border-color: var(--color-navy);
   }
+
+  /* Área táctil mínima (44px) en móvil para los botones principales */
+  @media (max-width: 639px) {
+    .btn-primary,
+    .btn-accent,
+    .btn-ghost,
+    .wizard-btn-primary {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+  }
 }
 
 @layer utilities {
