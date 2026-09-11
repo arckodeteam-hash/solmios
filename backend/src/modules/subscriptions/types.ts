@@ -92,7 +92,11 @@ export interface UpgradePreviewDTO {
 export interface UpgradeResultDTO {
   /** El plan nuevo ya rige en Stripe (el ítem cambió de precio). NO implica que se haya cobrado: ver `paid`. */
   applied: boolean
-  /** `true` SOLO si la factura del prorrateo quedó `paid`. En `false` el cobro falló o quedó pendiente. */
+  /**
+   * `true` SOLO si la factura del prorrateo quedó `paid`. En `false` el cobro quedó pendiente
+   * (ACH/SEPA en `processing`, o factura ilegible) y **el plan local NO cambió** (#92): lo aplica
+   * el webhook `invoice.paid` cuando Stripe confirma el cobro.
+   */
   paid: boolean
   planId: string
   planName: string

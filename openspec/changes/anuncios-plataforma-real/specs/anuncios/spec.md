@@ -46,7 +46,9 @@ El anuncio MUST guardar a quién va dirigido en una columna `audience` con valor
 
 - `all` — todos los usuarios de todos los hoteles.
 - `hotel` — todos los usuarios del `hotelId` indicado. Con `audience = 'hotel'`, `hotelId` MUST ser
-  obligatorio; el servidor MUST rechazar con 400 si falta.
+  obligatorio; el servidor MUST rechazar con 400 si falta. Vale también en el `PUT`: un anuncio de
+  plataforma (sin `hotelId`) no puede pasar a `'hotel'` por update, porque el update no acepta
+  `hotelId` — 400 con mensaje que nombra el campo (#106).
 - `admins` — solo usuarios con rol `hotel_admin` (o `super_admin`), en todos los hoteles o en el
   hotel indicado.
 

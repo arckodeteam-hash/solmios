@@ -137,6 +137,30 @@
         </div>
       </SectionCard>
 
+      <!-- Contacto público: teléfono principal + email — mudados desde Configuración → Hotel
+           (issue #79): son públicos según la allow-list de getPublicHotelInfo (phone/email).
+           phone2 NO se muda porque no es público (queda como contacto interno en Configuración). -->
+      <SectionCard title="Contacto público"
+        subtitle="Teléfono y email que ve el huésped en tu página pública y en el motor de reservas">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Teléfono principal</label>
+            <!-- data-field va en el PhoneInput (cae en su div raíz): el auto-focus de save() baja
+                 al <input> de adentro; `focusout` (a diferencia de blur) burbujea desde ese input.
+                 `invalid` pinta el borde como en StepBienvenida. -->
+            <PhoneInput v-model="phone" :country="hotelCountry" :maxlength="20" :invalid="!!errorOf('phone')"
+              data-field="phone" @focusout="touchField('phone')" />
+            <p v-if="errorOf('phone')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('phone') }}</p>
+          </div>
+          <div>
+            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Email</label>
+            <input v-model="email" type="email" class="w-full rounded-xl border px-4 py-2.5 text-sm focus:border-navy focus:outline-none"
+              :class="fieldClass('email')" data-field="email" @blur="touchField('email')">
+            <p v-if="errorOf('email')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('email') }}</p>
+          </div>
+        </div>
+      </SectionCard>
+
       <!-- Traducciones públicas (title + description) — ES/EN/PT -->
       <SectionCard title="Título y descripción por idioma"
         subtitle="Copy que ven los huéspedes en la landing pública y en el widget de reserva">
@@ -229,11 +253,12 @@
 import { ref, computed, reactive, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import SectionCard from '@/components/ui/SectionCard.vue'
+import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { SettingsService, type HotelFull } from '@/services/Settings.service'
 import { PublicHotelService } from '@/services/PublicHotel.service'
 import { HotelService } from '@/services/Hotel.service'
 import { useToast } from '@/composables/useToast'
-import { warnOnUnsavedChanges } from '@/composables/useFieldValidation'
+import { validateField, warnOnUnsavedChanges, HOTEL_RULES } from '@/composables/useFieldValidation'
 import { amenityIcon, HOTEL_AMENITY_CATALOG, ICON_CHECK, ICON_X_CIRCLE } from '@/components/landing/landing-icons'
 
 const ICON_UPLOAD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>'
@@ -282,6 +307,41 @@ const accommodationType = ref('')
 const starRating = ref('')
 const website = ref('')
 const logo = ref('')
+
+// ─── Contacto público (issue #79) ───────────────────────────────────────────────────────────
+// phone/email son públicos (allow-list de getPublicHotelInfo) — se mudaron acá desde
+// Configuración → Hotel. phone2 NO: no es público, queda como contacto interno allá.
+const phone = ref('')
+const email = ref('')
+// País del hotel: solo para el prefijo/formato de PhoneInput — se edita en Configuración → Hotel.
+const hotelCountry = ref('')
+
+// Validación — misma fuente que Configuración (HOTEL_RULES), pero AISLADA: esta pantalla tiene
+// su propio `touchedFields`/`fieldErrors`, no comparte estado con ninguna otra (mismo patrón que
+// ubicacion.vue, bug 3.1 de la auditoría 01). Sin `required`: nada exclusivo de Página pública
+// es obligatorio (CA 101) y HOTEL_RULES tampoco lo exige para phone/email.
+const CONTACT_FIELDS = ['phone', 'email'] as const
+type ContactField = typeof CONTACT_FIELDS[number]
+const contactRefs: Record<ContactField, typeof phone> = { phone, email }
+const fieldErrors = ref<Record<string, string>>({})
+const touchedFields = ref<Set<string>>(new Set())
+
+function touchField(field: string) {
+  touchedFields.value.add(field)
+  const rule = HOTEL_RULES[field]
+  const source = contactRefs[field as ContactField]
+  if (!rule || !source) return
+  const msg = validateField(source.value, rule)
+  if (msg) fieldErrors.value = { ...fieldErrors.value, [field]: msg }
+  else { const { [field]: _drop, ...rest } = fieldErrors.value; fieldErrors.value = rest }
+}
+function errorOf(field: string): string {
+  return touchedFields.value.has(field) ? (fieldErrors.value[field] ?? '') : ''
+}
+function fieldClass(field: string): string {
+  return errorOf(field) ? 'border-danger' : 'border-border'
+}
+const hasErrors = computed(() => Object.keys(fieldErrors.value).length > 0)
 
 // Logo — arrastrar/soltar o elegir archivo, con preview. Sube DE UNA (endpoint dedicado, data
 // URL base64) en vez de esperar al botón "Guardar" general: mismo patrón que tenía Configuración
@@ -485,6 +545,10 @@ onMounted(async () => {
     website.value = (h.website as string) || ''
     logo.value = (h.logo as string) || ''
 
+    phone.value = (h.phone as string) || ''
+    email.value = (h.email as string) || ''
+    hotelCountry.value = (h.country as string) || ''
+
     reviewFlags.publishReviewScore = h.publishReviewScore === 1 || h.publishReviewScore === true
     reviewFlags.publishReviewComments = h.publishReviewComments === 1 || h.publishReviewComments === true
 
@@ -531,6 +595,7 @@ function snapshot(): string {
     publicDesc: publicDesc.value, reviewFlags,
     accommodationType: accommodationType.value, starRating: starRating.value,
     website: website.value, logo: logo.value,
+    phone: phone.value, email: email.value,
   })
 }
 function markClean() { savedSnapshot.value = snapshot() }
@@ -561,6 +626,22 @@ async function save() {
   const trimmedSlug = slugDraft.value.trim()
   if (trimmedSlug && !SLUG_REGEX.test(trimmedSlug)) {
     toast.error('El slug solo puede tener minúsculas, números y guiones')
+    return
+  }
+
+  // Contacto público (issue #79): valida SOLO los campos de esta pantalla, aislado de Configuración.
+  for (const f of CONTACT_FIELDS) touchField(f)
+  if (hasErrors.value) {
+    const first = CONTACT_FIELDS.find((f) => fieldErrors.value[f])
+    if (first) {
+      await nextTick()
+      // PhoneInput lleva el data-field en su div raíz: se enfoca el <input> que tiene adentro.
+      const el = document.querySelector<HTMLElement>(`[data-field="${first}"]`)
+      ;(el?.tagName === 'INPUT' ? el : el?.querySelector<HTMLElement>('input'))?.focus()
+    }
+    toast.error(Object.keys(fieldErrors.value).length === 1
+      ? Object.values(fieldErrors.value)[0]!
+      : `Hay ${Object.keys(fieldErrors.value).length} campos con errores. Revisá los marcados en rojo.`)
     return
   }
 
@@ -599,6 +680,14 @@ async function save() {
       accommodationType: accommodationType.value,
       starRating: starRating.value,
       website: website.value.trim(),
+      // Contacto público (issue #79). email vacío va TAL CUAL ("") para poder limpiarlo (mismo
+      // motivo que starRating: `patchHotel` descarta `undefined`). phone NO: el backend lo valida
+      // con `min: 7` (UpdateHotelesSchema) y "" devuelve 400 sin persistir NADA del patch — y
+      // `null` lo descarta el validador, así que por esta API no se puede limpiar. Vacío se omite
+      // y el valor guardado se conserva (se recarga abajo desde la respuesta para que el
+      // formulario no muestre un vacío que no se persistió).
+      phone: phone.value.trim() || undefined,
+      email: email.value.trim(),
     }
     if (trimmedSlug) patch.slug = trimmedSlug
 
@@ -610,6 +699,8 @@ async function save() {
       HotelService.saveAmenitiesHotel([...selectedHotelAmenities.value, ...foreignAmenityKeys]),
     ])
     if (trimmedSlug) originalSlug.value = trimmedSlug
+    // phone vacío no viaja (ver patch): el formulario vuelve a lo que quedó guardado.
+    if (typeof updated?.phone === 'string') phone.value = updated.phone
     // Refresca descriptionTranslations desde el backend (por si descartó keys vacías).
     if (updated?.descriptionTranslations && typeof updated.descriptionTranslations === 'object') {
       const dt = updated.descriptionTranslations as Record<string, { title?: string; description?: string }>

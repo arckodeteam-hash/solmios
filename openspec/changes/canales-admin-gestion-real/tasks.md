@@ -111,6 +111,6 @@
       con datos sembrados de los 6 estados (navegador real, sin desborde horizontal de página y con
       el botón "Abrir" visible a 1280 — la tabla escondía la acción principal porque Tailwind corta
       por viewport y el menú lateral se come 288px).
-- [ ] 7.3 Deploy: `RUN_MIGRATE=1` en prod (columnas + tabla nueva) + `bun run scripts/seed-platform-email-templates.ts`
+- [x] 7.3 Deploy: `RUN_MIGRATE=1` en prod (columnas + tabla nueva) + `bun run scripts/seed-platform-email-templates.ts`
       (inserta las 3 plantillas nuevas, insert-only); verificar en prod que el plan de Channex
       (memoria: vencía 2026-09-09) figura en la tarjeta con su alerta. **PENDIENTE — no se desplegó.**

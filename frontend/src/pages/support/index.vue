@@ -122,23 +122,27 @@
                 <div class="text-[10px] font-bold text-text-muted uppercase mb-2">Descripción</div>
                 <div class="text-sm text-text-secondary whitespace-pre-wrap">{{ selectedTicket.description }}</div>
               </div>
-              <div v-if="selectedTicket.assignedTo" class="py-4 border-b border-border">
-                <div class="text-[10px] font-bold text-text-muted uppercase mb-2">Asignado a</div>
-                <div class="text-sm font-bold">{{ selectedTicket.assignedTo }}</div>
+              <!-- REQ-SOP-03: nunca un id crudo — "Atendido por {nombre}" o, sin agente, un estado explícito. -->
+              <div class="py-4 border-b border-border">
+                <div class="text-[10px] font-bold text-text-muted uppercase mb-2">Atención</div>
+                <div class="text-sm font-bold" :class="selectedTicket.assignee?.name ? 'text-navy' : 'text-text-muted'">
+                  {{ selectedTicket.assignee?.name ? `Atendido por ${selectedTicket.assignee.name}` : 'Sin atender todavía' }}
+                </div>
               </div>
               <div v-if="selectedTicket.replies && selectedTicket.replies.length" class="pt-4">
                 <div class="text-[10px] font-bold text-text-muted uppercase mb-3">Conversación ({{ selectedTicket.replies.length }})</div>
                 <div class="space-y-3">
-                  <div v-for="(reply, i) in selectedTicket.replies" :key="i" class="flex gap-3" :class="reply.author === 'Soporte Arckode' ? 'flex-row-reverse' : ''">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0" :class="reply.author === 'Soporte Arckode' ? 'bg-red/20 text-red' : 'bg-cyan/20 text-cyan'">
-                      {{ reply.author === 'Soporte Arckode' ? 'SA' : reply.author[0] }}
+                  <div v-for="(reply, i) in selectedTicket.replies" :key="reply.id || i" class="flex gap-3" :class="reply.authorKind === 'support' ? 'flex-row-reverse' : ''">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0" :class="reply.authorKind === 'support' ? 'bg-red/20 text-red' : 'bg-cyan/20 text-cyan'">
+                      {{ (reply.authorName || 'H')[0] }}
                     </div>
                     <div class="max-w-[70%]">
-                      <div class="flex items-center gap-2 mb-1" :class="reply.author === 'Soporte Arckode' ? 'justify-end' : ''">
-                        <span class="text-[10px] font-bold text-navy">{{ reply.author }}</span>
-                        <span class="text-[9px] text-text-muted">{{ reply.date }}</span>
+                      <div class="flex items-center gap-2 mb-1" :class="reply.authorKind === 'support' ? 'justify-end' : ''">
+                        <span class="text-[10px] font-bold text-navy">{{ reply.authorName || 'Hotel' }}</span>
+                        <span v-if="reply.authorKind === 'support'" class="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-navy/10 text-navy">Soporte</span>
+                        <span class="text-[9px] text-text-muted">{{ formatMessageDate(reply.createdAt) }}</span>
                       </div>
-                      <div class="p-3 rounded-2xl text-sm" :class="reply.author === 'Soporte Arckode' ? 'bg-navy text-white' : 'bg-surface text-text-secondary'">{{ reply.message }}</div>
+                      <div class="p-3 rounded-2xl text-sm" :class="reply.authorKind === 'support' ? 'bg-navy text-white' : 'bg-surface text-text-secondary'">{{ reply.message }}</div>
                     </div>
                   </div>
                 </div>
@@ -242,6 +246,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { OperationsService } from '@/services/Operations.service'
 import { useAuthStore } from '@/stores/auth.store'
 import { useToast } from '@/composables/useToast'
@@ -311,7 +316,19 @@ const tickets = ref<any[]>([])
 const PRI_EN: Record<string, string> = { low: 'Baja', medium: 'Normal', high: 'Alta', urgent: 'Urgente' }
 const EST_EN: Record<string, string> = { open: 'Abierto', in_progress: 'En Progreso', resolved: 'Resuelto', closed: 'Cerrado' }
 
-onMounted(loadData)
+const route = useRoute()
+
+// REQ-SOP-04: llegar desde "Entrar como {solicitante}" del ticket (super-admin/support.vue)
+// abre directo ese ticket. Un id que no está en la lista (ticket de otro hotel, borrado, o un
+// query param inventado a mano) no debe romper nada — simplemente no abre ningún modal.
+onMounted(async () => {
+  await loadData()
+  const ticketId = route.query.ticket
+  if (typeof ticketId === 'string') {
+    const found = tickets.value.find((t) => t.id === ticketId)
+    if (found) openTicket(found)
+  }
+})
 
 async function loadData() {
   loading.value = true
@@ -329,7 +346,9 @@ async function loadData() {
         rawStatus: t.status,
         category: t.category,
         createdAt: t.createdAt ? String(t.createdAt).replace('T', ' ').slice(0, 16) : '',
-        assignedTo: t.assignedTo ?? '',
+        // REQ-SOP-03: assignee ya viene resuelto por el server (usecases/enrich.ts) — nunca se
+        // muestra el id crudo de assignedTo.
+        assignee: t.assignee ?? null,
         replies: msgs,
       }
     })
@@ -356,6 +375,11 @@ const filteredTickets = computed(() => {
   return result
 })
 
+function formatMessageDate(iso?: string): string {
+  if (!iso) return ''
+  return String(iso).replace('T', ' ').slice(0, 16)
+}
+
 const priorityClass = (p: string) => ({ 'Baja': 'bg-surface text-text-muted', 'Normal': 'bg-blue/10 text-blue', 'Alta': 'bg-orange/10 text-orange', 'Urgente': 'bg-red/10 text-red' }[p] || '')
 const statusClass = (s: string) => ({ 'Abierto': 'bg-orange/10 text-orange', 'En Progreso': 'bg-cyan/10 text-cyan', 'Resuelto': 'bg-teal/10 text-teal', 'Cerrado': 'bg-surface text-text-muted' }[s] || '')
 const categoryClass = (c: string) => ({ 'Técnico': 'bg-red/10 text-red', 'Integraciones': 'bg-cyan/10 text-cyan', 'Facturación': 'bg-navy/10 text-navy', 'Configuración': 'bg-purple/10 text-purple', 'Capacitación': 'bg-teal/10 text-teal', 'Sugerencia': 'bg-gold/10 text-gold' }[c] || '')
@@ -367,11 +391,12 @@ const sendReply = async () => {
   if (!replyMessage.value.trim()) return
   const idx = tickets.value.findIndex(t => t.id === selectedTicket.value.id)
   if (idx !== -1) {
-    const newReply = { author: 'Hotel Admin', date: new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }), message: replyMessage.value }
-    const updatedReplies = [...tickets.value[idx].replies, newReply]
     try {
-      await OperationsService.tickets.update(selectedTicket.value.id, { messages: updatedReplies })
-      tickets.value[idx].replies = updatedReplies
+      // REQ-SOP-02: el PUT ya no acepta `messages` (el autor lo arma el server) — un mensaje
+      // se agrega SOLO por este endpoint. Antes esto escribía `messages` por PUT, que el
+      // backend descarta en silencio: la respuesta nunca se guardaba.
+      const updated = await OperationsService.tickets.addMessage(selectedTicket.value.id, replyMessage.value)
+      tickets.value[idx].replies = updated.messages ?? []
       toast.success('Respuesta enviada')
     } catch { toast.error('Error al enviar respuesta') }
     replyMessage.value = ''

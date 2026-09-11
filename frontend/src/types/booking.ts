@@ -445,7 +445,19 @@ export interface TotalBreakdown {
   subtotal: number
   promoDiscount: number
   upsellsTotal: number
+  /** Σ de `taxBreakdown` (misma cuenta que el backend: cada línea redondeada aparte). */
   taxes: number
+  /** Tarea 24 (#88): cada impuesto con nombre, % e importe. */
+  taxBreakdown: RoomTypeTaxItem[]
+  total: number
+}
+
+/** Un extra elegido, ya resuelto contra el catálogo, para mostrarlo línea por línea (#88). */
+export interface UpsellLine {
+  id: string
+  name: string
+  quantity: number
+  unitPrice: number
   total: number
 }
 
@@ -481,6 +493,9 @@ export interface PublicReservation {
   needsCrib?: boolean
   cribCount?: number
   totalAmount?: number
+  /** Tarea 24 (#88): el desglose que el huésped aceptó en el paso de pago. `null` en reservas
+   *  viejas o creadas desde el panel — entonces se muestra solo el total. */
+  totalBreakdown?: TotalBreakdown | null
   /** Moneda del cobro. Sin esto la confirmación mostraba el importe pelado ("613.6"). */
   currency?: string
   /** Lo REALMENTE cobrado, derivado de `payments` por el backend. */

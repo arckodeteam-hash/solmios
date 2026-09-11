@@ -101,28 +101,33 @@
       </p>
     </div>
 
-    <!-- Desglose de totales -->
-    <div class="rounded-2xl bg-slate-50 p-4 space-y-2 text-sm">
+    <!-- Desglose de totales — Tarea 24 (#88): el huésped ve cada extra, cada impuesto (nombre,
+         %, importe) y el total ANTES de la pasarela. Las líneas de impuesto vienen del backend
+         (`totalBreakdown`, ya creada la reserva) o de la estimación del store, que usa la misma
+         cuenta; en ningún caso hay un número que aparezca recién al pagar. -->
+    <div class="rounded-2xl bg-slate-50 p-4 space-y-2 text-sm" data-testid="price-breakdown">
       <div class="flex justify-between">
-        <span class="text-text-muted">{{ t('pay.roomLine', { count: store.nights }) }}</span>
+        <span class="text-text-muted">{{ t('pay.roomLine', { count: store.nights }) }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-semibold text-navy">{{ formatPrice(store.roomsSubtotal, displayOrCharge) }}</span>
       </div>
-      <div v-if="store.upsellsTotal > 0" class="flex justify-between">
-        <span class="text-text-muted">{{ t('pay.extras') }}</span>
-        <span class="font-semibold text-navy">{{ formatPrice(store.upsellsTotal, displayOrCharge) }}</span>
+      <div v-for="line in store.upsellLines" :key="line.id" class="flex justify-between" data-testid="upsell-line">
+        <span class="text-text-muted">{{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
+        <span class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
       </div>
       <div v-if="store.promoDiscount > 0" class="flex justify-between text-green-700">
         <span>{{ t('pay.discount') }}</span>
         <span class="font-semibold">−{{ formatPrice(store.promoDiscount, displayOrCharge) }}</span>
       </div>
-      <div v-if="store.estimatedTaxes > 0" class="flex justify-between">
-        <span class="text-text-muted">{{ t('pay.taxes') }}</span>
-        <span class="font-semibold text-navy">{{ formatPrice(store.estimatedTaxes, displayOrCharge) }}</span>
+      <div v-for="tax in taxLines" :key="tax.name" class="flex justify-between" data-testid="tax-line">
+        <span class="text-text-muted">{{ tax.name }} ({{ tax.rate }}%)</span>
+        <span class="font-semibold text-navy">{{ formatPrice(tax.amount, displayOrCharge) }}</span>
       </div>
+      <p v-if="taxLines.length === 0" class="text-[11px] text-text-muted">{{ t('pay.noTaxes') }}</p>
       <div class="border-t border-slate-200 pt-2 flex justify-between items-baseline">
         <span class="font-black text-navy">{{ t('pay.total') }}</span>
-        <span class="text-xl font-black text-navy">{{ formatPrice(currentTotal, displayOrCharge) }}</span>
+        <span class="text-xl font-black text-navy" data-testid="final-total">{{ formatPrice(currentTotal, displayOrCharge) }}</span>
       </div>
+      <p class="text-[11px] text-text-muted">{{ t('pay.totalHint') }}</p>
     </div>
 
     <!--
@@ -220,6 +225,9 @@ const termsAccepted = ref(false)
 // Si el backend ya devolvió `totalBreakdown` (post-create), confiamos en ese total. Pre-create
 // usamos la estimación (que coincide porque aplica la misma promo y taxRate).
 const currentTotal = computed(() => store.totalBreakdown?.total ?? store.estimatedTotal)
+// Impuesto por impuesto: el definitivo del backend si ya existe la reserva; si no, la estimación
+// (misma fórmula, ver useBooking.estimatedTaxBreakdown).
+const taxLines = computed(() => store.totalBreakdown?.taxBreakdown ?? store.estimatedTaxBreakdown)
 
 const displayOrCharge = computed(() => store.displayCurrency || store.chargeCurrency)
 

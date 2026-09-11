@@ -1,257 +1,361 @@
 <template>
   <div>
-    <!-- Vista Principal: Lista de Tickets -->
-    <div v-if="!selectedTicket">
-      <!-- Métricas -->
-      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 mb-6">
-        <div v-for="stat in supportMetrics" :key="stat.label" class="bg-white rounded-xl p-4 border border-border text-center">
-          <div class="text-lg font-black" :class="stat.color">{{ stat.value }}</div>
-          <div class="text-[10px] text-text-muted font-bold uppercase">{{ stat.label }}</div>
-        </div>
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
+      <div>
+        <h2 class="text-xl font-black text-navy">Soporte</h2>
+        <p class="text-sm text-text-muted mt-0.5">Tickets de soporte de todos los hoteles de la plataforma</p>
       </div>
+    </div>
 
-      <!-- Toolbar -->
-      <div class="flex items-center justify-between flex-wrap gap-3 mb-6">
-        <div class="flex gap-2 flex-wrap">
-          <button v-for="filter in statusFilters" :key="filter.value" @click="activeFilter = filter.value" class="px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer" :class="activeFilter === filter.value ? 'bg-navy text-white' : 'bg-white text-text-secondary border border-border hover:border-navy/30'">{{ filter.label }}</button>
-        </div>
-        <div class="relative w-full sm:w-64">
-          <input v-model="searchQuery" type="text" placeholder="Buscar ticket..." class="w-full h-9 pl-9 pr-4 rounded-lg border border-border text-sm bg-white focus:outline-none focus:border-cyan">
-          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-        </div>
+    <!-- Estado de error: falló la carga inicial -->
+    <div v-if="loadError && !loading" class="mb-6">
+      <EmptyState :icon="ICON_ALERT" title="No se pudieron cargar los tickets" message="Revisá tu conexión e intentá de nuevo.">
+        <template #action>
+          <button type="button" @click="loadTickets" class="px-5 py-2.5 rounded-full bg-navy text-white text-sm font-bold hover:shadow-lg transition-all cursor-pointer">Reintentar</button>
+        </template>
+      </EmptyState>
+    </div>
+
+    <template v-else>
+      <!-- KPIs -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+        <KpiHeroCard label="Abiertos" :value="kpis.open" icon="bookings" accent="amber" unit="Esperando respuesta" />
+        <KpiHeroCard label="En Progreso" :value="kpis.inProgress" icon="building" accent="blue" unit="Un agente está atendiendo" />
+        <KpiHeroCard label="Resueltos" :value="kpis.resolved" icon="checkin" accent="teal" unit="Pendientes de cerrar" />
+        <KpiHeroCard label="Urgentes" :value="kpis.urgent" icon="checkout" accent="rose" unit="Prioridad urgente" />
       </div>
 
       <!-- Tabla -->
       <SkeletonLoader v-if="loading" variant="table" :rows="6" />
-      <SectionCard v-else title="Tickets de soporte" :subtitle="`${filteredTickets.length} ticket(s)`" body-class="p-0">
-        <div class="overflow-x-auto">
-        <table class="w-full tbl-head">
-          <thead><tr class="border-b border-border">
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">ID</th>
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Hotel</th>
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Asunto</th>
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Categoría</th>
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Prioridad</th>
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Estado</th>
-            <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Respuestas</th>
-            <th class="text-right p-4 text-[10px] font-bold text-text-muted uppercase">Acciones</th>
-          </tr></thead>
-          <tbody>
-            <tr v-for="ticket in filteredTickets" :key="ticket.id" class="border-b border-border last:border-0 hover:bg-surface/50 transition-colors cursor-pointer" @click="selectTicket(ticket)">
-              <td class="p-4 text-sm font-mono text-text-muted">#{{ ticket.id }}</td>
-              <td class="p-4 text-sm font-bold text-navy">{{ ticket.hotel }}</td>
-              <td class="p-4 text-sm">{{ ticket.subject }}</td>
-              <td class="p-4"><span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="categoryClass(ticket.category)">{{ ticket.category }}</span></td>
-              <td class="p-4"><span class="text-[10px] font-bold px-2 py-1 rounded-full" :class="priorityClass(ticket.priority)">{{ ticket.priority }}</span></td>
-              <td class="p-4"><span class="text-[10px] font-bold px-2 py-1 rounded-full" :class="statusClass(ticket.status)">{{ ticket.status }}</span></td>
-              <td class="p-4 text-sm">{{ ticket.replies.length }}</td>
-              <td class="p-4 text-right">
-                <button @click.stop="selectTicket(ticket)" class="px-3 py-1 bg-navy/10 text-navy rounded-lg text-[10px] font-bold hover:bg-navy/20 transition-colors cursor-pointer">Abrir</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <SectionCard v-else title="Tickets de soporte" :subtitle="`${filteredTickets.length} de ${tickets.length} ticket(s)`" body-class="p-0">
+        <template #actions>
+          <div class="relative w-full sm:w-64">
+            <input v-model="searchQuery" type="text" placeholder="Buscar por asunto, hotel, nombre o email..."
+              class="w-full h-9 pl-9 pr-4 rounded-lg border border-white/15 bg-white/10 text-white placeholder:text-white/45 text-sm focus:outline-none focus:border-cyan">
+            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/45" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          </div>
+          <select v-model="statusFilter" class="h-9 px-3 rounded-lg border border-white/15 bg-white/10 text-white text-[11px] font-bold cursor-pointer focus:outline-none focus:border-cyan">
+            <option value="all" class="text-navy">Todos los estados</option>
+            <option v-for="s in STATUS_ORDER" :key="s" :value="s" class="text-navy">{{ STATUS_LABEL[s] }}</option>
+          </select>
+          <select v-model="hotelFilter" class="h-9 px-3 rounded-lg border border-white/15 bg-white/10 text-white text-[11px] font-bold cursor-pointer focus:outline-none focus:border-cyan">
+            <option value="all" class="text-navy">Todos los hoteles</option>
+            <option v-for="h in hotelOptions" :key="h.id" :value="h.id" class="text-navy">{{ h.name }}</option>
+          </select>
+        </template>
+
+        <EmptyState v-if="!tickets.length" :icon="ICON_TICKET" title="Sin tickets de soporte" message="Todavía ningún hotel registró un ticket." />
+        <EmptyState v-else-if="!filteredTickets.length" :icon="ICON_TICKET" title="Ningún ticket con esos filtros" message="Probá con otro estado, otro hotel o limpiá la búsqueda.">
+          <template #action>
+            <button type="button" @click="clearFilters" class="px-5 py-2.5 rounded-full border border-border text-sm font-bold text-navy hover:bg-surface transition-colors cursor-pointer">Limpiar filtros</button>
+          </template>
+        </EmptyState>
+        <div v-else class="overflow-x-auto">
+          <table class="w-full min-w-[960px] tbl-head">
+            <thead>
+              <tr class="border-b border-border">
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Hotel</th>
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Solicitante</th>
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Asunto</th>
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Prioridad</th>
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Estado</th>
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Atiende</th>
+                <th class="text-left p-4 text-[10px] font-bold text-text-muted uppercase">Fecha</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="ticket in filteredTickets" :key="ticket.id" @click="openTicket(ticket)"
+                class="border-b border-border last:border-0 hover:bg-surface/50 transition-colors cursor-pointer">
+                <td class="p-4 text-sm font-bold text-navy">{{ ticket.hotel?.name || '—' }}</td>
+                <td class="p-4">
+                  <div class="text-sm font-bold text-navy">{{ ticket.requester?.name || '—' }}</div>
+                  <div v-if="ticket.requester?.email" class="text-[11px] text-text-muted">{{ ticket.requester.email }}</div>
+                  <div v-if="ticket.requester?.role" class="text-[10px] text-text-muted uppercase font-bold">{{ ticket.requester.role }}</div>
+                </td>
+                <td class="p-4 text-sm text-text-secondary max-w-[280px] truncate">{{ ticket.subject }}</td>
+                <td class="p-4"><span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="priorityClass(ticket.priority)">{{ priorityLabel(ticket.priority) }}</span></td>
+                <td class="p-4"><span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="statusClass(ticket.status)">{{ statusLabel(ticket.status) }}</span></td>
+                <td class="p-4 text-xs text-text-muted">{{ ticket.assignee?.name || 'Sin asignar' }}</td>
+                <td class="p-4 text-[11px] text-text-muted">{{ formatDate(ticket.createdAt) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </SectionCard>
-    </div>
+    </template>
 
-    <!-- Vista Ticket: Chat -->
-    <div v-else class="flex flex-col h-[calc(100vh-8rem)]">
-      <!-- Header del Ticket (mismo look navy que SectionCard: no encaja el componente por el layout de 3 piezas header/mensajes/input, se replica el estilo a mano) -->
-      <div class="bg-navy rounded-t-2xl px-4 sm:px-5 py-4 flex items-center justify-between flex-wrap gap-3">
-        <div class="flex items-center gap-4">
-          <button @click="selectedTicket = null" class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/20 transition-colors cursor-pointer">←</button>
-          <div class="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center text-white text-sm font-bold">{{ selectedTicket.hotel[0] }}</div>
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-mono text-white/60">#{{ selectedTicket.id }}</span>
-              <span class="text-sm font-black text-white">{{ selectedTicket.subject }}</span>
-            </div>
-            <div class="text-[10px] text-white/60">{{ selectedTicket.hotel }} — {{ selectedTicket.category }}</div>
+    <!-- Detalle: conversación + estado -->
+    <AppModal v-if="selectedTicket" size="xl" body-class="p-0" @close="closeDetail">
+      <template #header>
+        <div class="min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-sm font-mono text-white/60">#{{ selectedTicket.id.slice(0, 8) }}</span>
+            <h3 class="text-base sm:text-lg font-black text-white truncate">{{ selectedTicket.subject }}</h3>
           </div>
+          <p class="text-[11px] text-white/60 mt-0.5">{{ selectedTicket.hotel?.name || 'Hotel desconocido' }} · {{ selectedTicket.requester?.name || 'Solicitante desconocido' }}</p>
         </div>
-        <div class="flex items-center gap-3">
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="priorityClass(selectedTicket.priority)">{{ selectedTicket.priority }}</span>
-          <select v-model="selectedTicket.status" class="h-8 px-3 rounded-lg border border-white/15 bg-white/10 text-[10px] font-bold text-white focus:outline-none focus:border-cyan cursor-pointer">
-            <option class="text-navy" value="Abierto">Abierto</option>
-            <option class="text-navy" value="En Progreso">En Progreso</option>
-            <option class="text-navy" value="Esperando Cliente">Esperando Cliente</option>
-            <option class="text-navy" value="Resuelto">Resuelto</option>
-            <option class="text-navy" value="Cerrado">Cerrado</option>
-          </select>
-        </div>
-      </div>
+        <!-- REQ-SOP-04: reproducir lo que ve el solicitante, desde el mismo ticket. -->
+        <button v-if="selectedTicket.requester" type="button" @click="enterAsRequester"
+          :disabled="!canImpersonateRequester || enteringTicket"
+          :title="canImpersonateRequester ? undefined : impersonateDisabledReason"
+          class="shrink-0 px-3 py-1.5 bg-blue text-white rounded-lg text-[11px] font-bold hover:bg-blue/90 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+          {{ enteringTicket ? 'Entrando…' : `Entrar como ${selectedTicket.requester.name}` }}
+        </button>
+      </template>
 
-      <!-- Mensajes -->
-      <div class="flex-1 overflow-y-auto p-6 space-y-4 bg-surface/30 border-x border-border" ref="chatContainer">
-        <!-- Descripción inicial -->
-        <div class="flex gap-3">
-          <div class="w-8 h-8 rounded-full bg-cyan/20 flex items-center justify-center text-[10px] font-bold text-cyan flex-shrink-0">{{ selectedTicket.hotel[0] }}</div>
-          <div class="max-w-[70%]">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="text-[10px] font-bold text-navy">{{ selectedTicket.hotel }}</span>
-              <span class="text-[9px] text-text-muted">{{ selectedTicket.createdAt }}</span>
-            </div>
-            <div class="p-4 rounded-2xl rounded-tl-sm bg-white border border-border shadow-sm text-sm text-text-secondary leading-relaxed">{{ selectedTicket.description }}</div>
-            <div v-if="selectedTicket.attachments && selectedTicket.attachments.length" class="mt-2 flex flex-wrap gap-2">
-              <div v-for="file in selectedTicket.attachments" :key="file" class="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-border text-[10px] font-bold cursor-pointer hover:bg-surface transition-colors">📎 {{ file }}</div>
-            </div>
-          </div>
+      <div class="flex flex-col h-[70vh]">
+        <!-- Ficha del solicitante -->
+        <div class="shrink-0 border-b border-border px-5 py-3 bg-surface/40 flex flex-wrap items-center gap-x-6 gap-y-1">
+          <div v-if="selectedTicket.requester?.email" class="text-xs text-text-secondary"><span class="font-bold text-navy">Email:</span> {{ selectedTicket.requester.email }}</div>
+          <div v-if="selectedTicket.requester?.role" class="text-xs text-text-secondary"><span class="font-bold text-navy">Rol:</span> {{ selectedTicket.requester.role }}</div>
+          <div class="text-xs text-text-secondary"><span class="font-bold text-navy">Categoría:</span> {{ selectedTicket.category || 'general' }}</div>
         </div>
 
-        <!-- Respuestas -->
-        <div v-for="(reply, i) in selectedTicket.replies" :key="i" class="flex gap-3" :class="reply.author === 'Soporte Arckode' ? 'flex-row-reverse' : ''">
-          <div class="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0" :class="reply.author === 'Soporte Arckode' ? 'bg-navy text-white' : 'bg-cyan/20 text-cyan'">
-            {{ reply.author === 'Soporte Arckode' ? 'SA' : reply.author[0] }}
-          </div>
-          <div class="max-w-[70%]">
-            <div class="flex items-center gap-2 mb-1" :class="reply.author === 'Soporte Arckode' ? 'justify-end' : ''">
-              <span class="text-[10px] font-bold text-navy">{{ reply.author }}</span>
-              <span class="text-[9px] text-text-muted">{{ reply.date }}</span>
+        <!-- Conversación -->
+        <div ref="chatContainer" class="flex-1 overflow-y-auto p-5 space-y-4 bg-surface/20">
+          <!-- Solicitud original -->
+          <div class="flex gap-3">
+            <div class="w-8 h-8 rounded-full bg-cyan/20 flex items-center justify-center text-[10px] font-bold text-cyan flex-shrink-0">{{ (selectedTicket.requester?.name || 'H')[0] }}</div>
+            <div class="max-w-[70%]">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-[10px] font-bold text-navy">{{ selectedTicket.requester?.name || 'Hotel' }}</span>
+                <span class="text-[9px] text-text-muted">{{ formatDate(selectedTicket.createdAt) }}</span>
+              </div>
+              <div class="p-4 rounded-2xl rounded-tl-sm bg-white border border-border shadow-sm text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">{{ selectedTicket.description || selectedTicket.subject }}</div>
             </div>
-            <div class="p-4 rounded-2xl text-sm leading-relaxed" :class="reply.author === 'Soporte Arckode' ? 'bg-navy text-white rounded-tr-sm' : 'bg-white border border-border rounded-tl-sm'">{{ reply.message }}</div>
-            <div v-if="reply.image" class="mt-2">
-              <img :src="reply.image" class="max-w-xs rounded-xl border border-border cursor-pointer hover:shadow-lg transition-shadow" @click="openImageModal(reply.image)">
+          </div>
+
+          <!-- Respuestas -->
+          <div v-for="msg in selectedTicket.messages ?? []" :key="msg.id || msg.createdAt" class="flex gap-3" :class="msg.authorKind === 'support' ? 'flex-row-reverse' : ''">
+            <div class="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0" :class="msg.authorKind === 'support' ? 'bg-navy text-white' : 'bg-cyan/20 text-cyan'">
+              {{ msg.authorKind === 'support' ? 'S' : (msg.authorName || 'H')[0] }}
+            </div>
+            <div class="max-w-[70%]">
+              <div class="flex items-center gap-2 mb-1" :class="msg.authorKind === 'support' ? 'justify-end' : ''">
+                <span class="text-[10px] font-bold text-navy">{{ msg.authorName || 'Hotel' }}</span>
+                <span v-if="msg.authorKind === 'support'" class="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-navy/10 text-navy">Soporte</span>
+                <span class="text-[9px] text-text-muted">{{ formatDate(msg.createdAt) }}</span>
+              </div>
+              <div class="p-4 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap" :class="msg.authorKind === 'support' ? 'bg-navy text-white rounded-tr-sm' : 'bg-white border border-border rounded-tl-sm'">{{ msg.message }}</div>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Input -->
-      <div v-if="selectedTicket.status !== 'Cerrado'" class="bg-white rounded-b-2xl border border-border px-4 py-3">
-        <!-- Preview de imagen -->
-        <div v-if="imagePreview" class="mb-3 relative inline-block">
-          <img :src="imagePreview" class="h-20 rounded-lg border border-border">
-          <button @click="removeImage" class="absolute -top-2 -right-2 w-5 h-5 bg-red text-white rounded-full text-[10px] flex items-center justify-center cursor-pointer">✕</button>
+        <!-- Input -->
+        <div v-if="selectedTicket.status !== 'closed'" class="shrink-0 bg-white border-t border-border px-4 py-3">
+          <div class="flex items-center gap-2">
+            <input v-model="replyMessage" @keyup.enter="sendReply" type="text" placeholder="Escribir respuesta..." :disabled="sending"
+              class="flex-1 h-10 px-4 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy disabled:opacity-60">
+            <button type="button" @click="sendReply" :disabled="!replyMessage.trim() || sending"
+              class="px-5 h-10 bg-navy text-white rounded-xl text-sm font-bold hover:shadow-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+              {{ sending ? 'Enviando…' : 'Enviar' }}
+            </button>
+          </div>
         </div>
-        <div class="flex items-center gap-2">
-          <label class="w-9 h-9 rounded-xl bg-surface flex items-center justify-center text-text-muted hover:text-navy hover:bg-surface-dark transition-colors cursor-pointer">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-            <input type="file" class="hidden" accept="image/*" @change="handleImageUpload">
-          </label>
-          <input v-model="newMessage" @keyup.enter="sendMessage" type="text" placeholder="Escribir respuesta..." class="flex-1 h-10 px-4 bg-surface border border-border rounded-xl text-sm focus:outline-none focus:border-navy">
-          <button @click="sendMessage" :disabled="!newMessage.trim() && !imagePreview" class="px-5 h-10 bg-navy text-white rounded-xl text-sm font-bold hover:shadow-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">Enviar</button>
+        <div v-else class="shrink-0 bg-white border-t border-border px-6 py-4 text-center">
+          <span class="text-[10px] font-bold text-text-muted">Este ticket está cerrado — reabrilo para responder</span>
         </div>
       </div>
-      <div v-else class="bg-white rounded-b-2xl border border-border px-6 py-4 text-center">
-        <span class="text-[10px] font-bold text-text-muted">Este ticket está cerrado</span>
-      </div>
-    </div>
 
-    <!-- Modal: Ver Imagen -->
-    <div v-if="showImageModal" class="fixed inset-0 bg-navy/80 flex items-center justify-center z-50">
-      <div class="relative max-w-4xl max-h-[90vh]">
-        <button @click="showImageModal = false" class="absolute -top-3 -right-3 w-8 h-8 bg-white rounded-full flex items-center justify-center text-text-muted hover:text-navy shadow-lg cursor-pointer">✕</button>
-        <img :src="imageModalSrc" class="max-h-[85vh] rounded-xl">
-      </div>
-    </div>
+      <template #footer>
+        <span class="text-[10px] font-bold text-text-muted uppercase mr-auto">Estado</span>
+        <select :value="selectedTicket.status" @change="changeStatus(($event.target as HTMLSelectElement).value as TicketStatus)" :disabled="changingStatus"
+          class="h-9 px-3 rounded-lg border border-border text-xs font-bold cursor-pointer focus:outline-none focus:border-navy disabled:opacity-60">
+          <option v-for="s in STATUS_ORDER" :key="s" :value="s">{{ STATUS_LABEL[s] }}</option>
+        </select>
+        <button type="button" @click="closeDetail" class="px-5 py-2.5 bg-surface text-text-secondary rounded-xl text-sm font-bold hover:bg-surface-dark transition-colors cursor-pointer">Cerrar</button>
+      </template>
+    </AppModal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
+import { useAuthStore } from '@/stores/auth.store'
 import { OperationsService } from '@/services/Operations.service'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
 import SectionCard from '@/components/ui/SectionCard.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
+import AppModal from '@/components/ui/AppModal.vue'
+import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
+import type { SupportTicket, TicketStatus, TicketPriority } from '@/types'
+
+const SVG_OPEN = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+const ICON_TICKET = `${SVG_OPEN}<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>`
+const ICON_ALERT = `${SVG_OPEN}<path d="M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.29 2.25h17.78A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`
 
 const toast = useToast()
+const auth = useAuthStore()
+const router = useRouter()
+
 const loading = ref(true)
-const activeFilter = ref('all')
-const searchQuery = ref('')
-const selectedTicket = ref<any>(null)
-const newMessage = ref('')
-const imagePreview = ref<string | null>(null)
-const showImageModal = ref(false)
-const imageModalSrc = ref('')
-const chatContainer = ref<HTMLElement>()
+const loadError = ref(false)
+const tickets = ref<SupportTicket[]>([])
 
-const statusFilters = [
-  { label: 'Todos', value: 'all' },
-  { label: 'Abiertos', value: 'Abierto' },
-  { label: 'En Progreso', value: 'En Progreso' },
-  { label: 'Resueltos', value: 'Resuelto' },
-  { label: 'Cerrados', value: 'Cerrado' }
-]
-
-const PRI_EN: Record<string, string> = { alta: 'Alta', urgente: 'Urgente', media: 'Normal', baja: 'Baja' }
-const EST_EN: Record<string, string> = { abierto: 'Abierto', en_progreso: 'En Progreso', cerrado: 'Resuelto' }
-
-const tickets = ref<any[]>([])
-
-const supportMetrics = computed(() => {
-  const t = tickets.value
-  const en = (s: string) => t.filter((x: any) => x.status === s).length
-  return [
-    { label: 'Total Tickets', value: t.length, color: 'text-navy' },
-    { label: 'Abiertos', value: en('Abierto'), color: 'text-orange' },
-    { label: 'En Progreso', value: en('En Progreso'), color: 'text-cyan' },
-    { label: 'Resueltos', value: en('Resuelto'), color: 'text-teal' },
-    { label: 'Urgentes', value: t.filter((x: any) => x.priority === 'Urgente').length, color: 'text-red' },
-  ]
-})
-
-onMounted(async () => {
+// El super_admin ve TODOS los hoteles: se acumulan las páginas (como audit.vue) para que las
+// KPIs y los filtros trabajen sobre el conjunto completo, no solo la primera página de 20/100.
+const MAX_PAGES = 20
+async function loadTickets(): Promise<void> {
   loading.value = true
+  loadError.value = false
   try {
-    const { data } = await OperationsService.tickets.list()
-    tickets.value = data.map((t: any) => ({
-      id: t.id, hotel: '', subject: t.subject, description: t.description ?? '',
-      priority: PRI_EN[t.priority] ?? 'Normal', status: EST_EN[t.status] ?? 'Abierto',
-      assignedTo: t.assignedTo ?? '', category: t.category,
-      createdAt: t.createdAt ? String(t.createdAt).replace('T', ' ').slice(0, 16) : '',
-      attachments: [], replies: (() => { try { return JSON.parse(t.mensajes || '[]') } catch { return [] } })(),
-    }))
-  } catch { toast.error('No se pudieron cargar los tickets de soporte') } finally { loading.value = false }
+    const acc: SupportTicket[] = []
+    let total = Infinity
+    for (let page = 1; page <= MAX_PAGES && acc.length < total; page++) {
+      const resp = await OperationsService.tickets.list(undefined, { page, limit: 100 })
+      total = resp.total
+      acc.push(...resp.data)
+    }
+    tickets.value = acc
+  } catch {
+    loadError.value = true
+    toast.error('No se pudieron cargar los tickets')
+  } finally {
+    loading.value = false
+  }
+}
+onMounted(loadTickets)
+
+const STATUS_ORDER: TicketStatus[] = ['open', 'in_progress', 'resolved', 'closed']
+const STATUS_LABEL: Record<TicketStatus, string> = { open: 'Abierto', in_progress: 'En Progreso', resolved: 'Resuelto', closed: 'Cerrado' }
+const STATUS_CLASS: Record<TicketStatus, string> = { open: 'bg-orange/10 text-orange', in_progress: 'bg-cyan/10 text-cyan', resolved: 'bg-teal/10 text-teal', closed: 'bg-surface text-text-muted' }
+const PRIORITY_LABEL: Record<TicketPriority, string> = { low: 'Baja', medium: 'Media', high: 'Alta', urgent: 'Urgente' }
+const PRIORITY_CLASS: Record<TicketPriority, string> = { low: 'bg-surface text-text-muted', medium: 'bg-blue/10 text-blue', high: 'bg-orange/10 text-orange', urgent: 'bg-red/10 text-red' }
+
+const statusLabel = (s?: TicketStatus): string => (s ? (STATUS_LABEL[s] ?? s) : '—')
+const statusClass = (s?: TicketStatus): string => (s ? (STATUS_CLASS[s] ?? '') : '')
+const priorityLabel = (p?: TicketPriority): string => (p ? (PRIORITY_LABEL[p] ?? p) : '—')
+const priorityClass = (p?: TicketPriority): string => (p ? (PRIORITY_CLASS[p] ?? '') : '')
+
+function formatDate(iso?: string): string {
+  if (!iso) return ''
+  return String(iso).replace('T', ' ').slice(0, 16)
+}
+
+const searchQuery = ref('')
+const statusFilter = ref<'all' | TicketStatus>('all')
+const hotelFilter = ref<'all' | string>('all')
+
+const hotelOptions = computed(() => {
+  const map = new Map<string, string>()
+  for (const t of tickets.value) if (t.hotel?.id) map.set(t.hotel.id, t.hotel.name || t.hotel.id)
+  return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
 })
+
+function clearFilters(): void {
+  statusFilter.value = 'all'
+  hotelFilter.value = 'all'
+  searchQuery.value = ''
+}
 
 const filteredTickets = computed(() => {
-  let result = tickets.value
-  if (activeFilter.value !== 'all') result = result.filter(t => t.status === activeFilter.value)
-  if (searchQuery.value) {
-    const q = searchQuery.value.toLowerCase()
-    result = result.filter(t => t.subject.toLowerCase().includes(q) || t.hotel.toLowerCase().includes(q) || String(t.id).includes(q))
-  }
-  return result
+  const q = searchQuery.value.trim().toLowerCase()
+  return tickets.value.filter((t) => {
+    if (statusFilter.value !== 'all' && t.status !== statusFilter.value) return false
+    if (hotelFilter.value !== 'all' && t.hotelId !== hotelFilter.value) return false
+    if (q) {
+      const haystack = [t.subject, t.hotel?.name, t.requester?.name, t.requester?.email]
+        .map((v) => String(v ?? '').toLowerCase())
+      if (!haystack.some((v) => v.includes(q))) return false
+    }
+    return true
+  })
 })
 
-const selectTicket = (ticket: any) => {
-  selectedTicket.value = ticket
-  nextTick(() => {
-    if (chatContainer.value) chatContainer.value.scrollTop = chatContainer.value.scrollHeight
-  })
+const kpis = computed(() => {
+  const t = tickets.value
+  const count = (s: TicketStatus) => t.filter((x) => x.status === s).length
+  return {
+    open: count('open'),
+    inProgress: count('in_progress'),
+    resolved: count('resolved'),
+    urgent: t.filter((x) => x.priority === 'urgent').length,
+  }
+})
+
+// ── Detalle ──
+const selectedTicket = ref<SupportTicket | null>(null)
+function openTicket(t: SupportTicket): void { selectedTicket.value = t }
+function closeDetail(): void { selectedTicket.value = null }
+
+function applyUpdated(updated: SupportTicket): void {
+  selectedTicket.value = updated
+  const idx = tickets.value.findIndex((t) => t.id === updated.id)
+  if (idx !== -1) tickets.value[idx] = updated
 }
 
-const handleImageUpload = (e: Event) => {
-  const input = e.target as HTMLInputElement
-  if (input.files && input.files[0]) {
-    const file = input.files[0]
-    const reader = new FileReader()
-    reader.onload = (ev) => { imagePreview.value = ev.target?.result as string }
-    reader.readAsDataURL(file)
+const replyMessage = ref('')
+const sending = ref(false)
+async function sendReply(): Promise<void> {
+  if (!selectedTicket.value || !replyMessage.value.trim() || sending.value) return
+  sending.value = true
+  try {
+    // REQ-SOP-02: único camino para agregar un mensaje — el autor (nombre + "Soporte") lo
+    // resuelve el server, nunca el body. Se refresca desde la respuesta, no de forma optimista.
+    const updated = await OperationsService.tickets.addMessage(selectedTicket.value.id, replyMessage.value)
+    applyUpdated(updated)
+    replyMessage.value = ''
+    toast.success('Respuesta enviada')
+  } catch {
+    toast.error('No se pudo enviar la respuesta')
+  } finally {
+    sending.value = false
   }
 }
 
-const removeImage = () => { imagePreview.value = null }
-
-const openImageModal = (src: string) => { imageModalSrc.value = src; showImageModal.value = true }
-
-const sendMessage = () => {
-  if ((!newMessage.value.trim() && !imagePreview.value) || !selectedTicket.value) return
-  selectedTicket.value.replies.push({
-    author: 'Soporte Arckode',
-    date: new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }),
-    message: newMessage.value || 'Imagen adjunta',
-    image: imagePreview.value || undefined
-  })
-  newMessage.value = ''
-  imagePreview.value = null
-  nextTick(() => {
-    if (chatContainer.value) chatContainer.value.scrollTop = chatContainer.value.scrollHeight
-  })
+const changingStatus = ref(false)
+async function changeStatus(status: TicketStatus): Promise<void> {
+  if (!selectedTicket.value || selectedTicket.value.status === status || changingStatus.value) return
+  changingStatus.value = true
+  try {
+    const updated = await OperationsService.tickets.update(selectedTicket.value.id, { status })
+    applyUpdated(updated)
+    toast.success('Estado actualizado')
+  } catch {
+    toast.error('No se pudo cambiar el estado')
+  } finally {
+    changingStatus.value = false
+  }
 }
 
-const priorityClass = (p: string) => ({ 'Baja': 'bg-surface text-text-muted', 'Normal': 'bg-blue/10 text-blue', 'Alta': 'bg-orange/10 text-orange', 'Urgente': 'bg-red/10 text-red' }[p] || '')
-const statusClass = (s: string) => ({ 'Abierto': 'bg-orange/10 text-orange', 'En Progreso': 'bg-cyan/10 text-cyan', 'Esperando Cliente': 'bg-purple/10 text-purple', 'Resuelto': 'bg-teal/10 text-teal', 'Cerrado': 'bg-surface text-text-muted' }[s] || '')
-const categoryClass = (c: string) => ({ 'Técnico': 'bg-red/10 text-red', 'Integraciones': 'bg-cyan/10 text-cyan', 'Facturación': 'bg-navy/10 text-navy', 'Configuración': 'bg-purple/10 text-purple', 'Capacitación': 'bg-teal/10 text-teal', 'Sugerencia': 'bg-gold/10 text-gold' }[c] || '')
+// REQ-SOP-04: "Entrar como {solicitante}" — reproducir el panel tal como lo ve quien reportó el
+// ticket. No se puede impersonar a un usuario inactivo ni a otro super admin (el token de
+// impersonación nunca lleva ese rol, ver usuarios/usecases/impersonate.ts).
+const canImpersonateRequester = computed(() => {
+  const r = selectedTicket.value?.requester
+  return !!r && r.active !== false && r.role !== 'super_admin'
+})
+const impersonateDisabledReason = computed(() => {
+  const r = selectedTicket.value?.requester
+  if (!r) return ''
+  if (r.active === false) return 'Usuario inactivo'
+  if (r.role === 'super_admin') return 'No se puede impersonar a otro super admin'
+  return ''
+})
+
+const enteringTicket = ref(false)
+async function enterAsRequester(): Promise<void> {
+  const ticket = selectedTicket.value
+  if (!ticket?.requester || !canImpersonateRequester.value || enteringTicket.value) return
+  enteringTicket.value = true
+  try {
+    // ticketId viaja al servidor para la auditoría (auth.impersonate) — deja rastro de POR QUÉ
+    // soporte entró a esta cuenta. Solo se navega si el store DE VERDAD impersonó: un `false`
+    // (impersonación ya en curso) dejaría al admin creyendo que entró sin haberlo hecho.
+    const entro = await auth.loginAs(ticket.requester.id, { ticketId: ticket.id })
+    if (entro) {
+      router.push(`/panel/support?ticket=${ticket.id}`)
+    } else {
+      toast.info('Ya se está entrando a otra cuenta')
+    }
+  } catch (e: any) {
+    // El request rechazado (403/404) deja al admin en /admin/support — no se navega ni se cierra el modal.
+    toast.error(e?.message || 'No se pudo entrar a la cuenta de este solicitante')
+  } finally {
+    enteringTicket.value = false
+  }
+}
 </script>

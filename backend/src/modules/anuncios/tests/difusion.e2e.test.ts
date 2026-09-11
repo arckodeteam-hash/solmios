@@ -66,6 +66,24 @@ describe('difusión con el ORM real', () => {
     })
   })
 
+  it('#105: con global · hotel-1 · hotel-2, el usuario de hotel-1 recibe exactamente 2 y nunca el de hotel-2', async () => {
+    await withService(async (svc, repo) => {
+      await svc.create({ title: 'Global', audience: 'all' }, superAdmin)
+      await svc.create({ title: 'Solo h1', audience: 'hotel', hotelId: 'h1' }, superAdmin)
+      await svc.create({ title: 'Solo h2', audience: 'hotel', hotelId: 'h2' }, superAdmin)
+      // Fila legacy con hotelId = '' (cadena vacía): cuenta como global igual que NULL.
+      await repo.create({ id: 'legacy', title: 'Legacy vacío', message: '', type: 'info', priority: 'low', hotelId: '', audience: 'all', active: 1, date: new Date().toISOString() } as any)
+
+      const titulos = (p: { data: Array<{ title: string }> }) => p.data.map((a) => a.title).sort()
+
+      expect(titulos(await svc.list({}, duenoH1))).toEqual(['Global', 'Legacy vacío', 'Solo h1'])
+      expect(titulos(await svc.list({}, duenoH2))).toEqual(['Global', 'Legacy vacío', 'Solo h2'])
+      // super_admin sin ?hotelId ve todo; con ?hotelId=h2 ve lo que vería h2.
+      expect(titulos(await svc.list({}, superAdmin))).toEqual(['Global', 'Legacy vacío', 'Solo h1', 'Solo h2'])
+      expect(titulos(await svc.list({ hotelId: 'h2' }, superAdmin))).toEqual(['Global', 'Legacy vacío', 'Solo h2'])
+    })
+  })
+
   it('la fila global queda con hotelId NULL en la base, y aun así se entrega', async () => {
     await withService(async (svc, repo) => {
       await svc.create({ title: 'Global', audience: 'all' }, superAdmin)

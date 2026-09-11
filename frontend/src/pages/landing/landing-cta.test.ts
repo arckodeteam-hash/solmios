@@ -50,11 +50,11 @@ describe('landing — el embudo termina en el alta, no en el login', () => {
     ]))
   })
 
-  it('el plan a cotización sigue yendo a ventas, no al alta', () => {
+  it('Ultra no se ofrece desde la landing (#74): ni tarjeta ni link al alta con ese plan', () => {
     const w = mount(Landing, MOUNT_OPTS)
-    // Va al formulario de ventas (Panel › Leads de Ventas), no al alta y no a un `mailto:`
-    // que dejaría el lead fuera del sistema.
-    expect(w.findAll('button').some(b => /contactar ventas/i.test(b.text()))).toBe(true)
+    // Tarea 4 (#74): Ultra dejó de comercializarse. Sin API (fallback) no aparece; el caso en que
+    // la API devuelve un plan a cotización y va a ventas vive en landing-plans.test.ts.
+    expect(w.html()).not.toMatch(/\bUltra\b/)
     expect(hrefsOf(w).some(h => h.includes('plan=ultra'))).toBe(false)
   })
 })

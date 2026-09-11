@@ -1,5 +1,5 @@
 import type { RepositoryAdapter, Logger, CacheAdapter, Auth } from 'arckode-framework'
-import { NotFoundError, AuthError, ForbiddenError } from 'arckode-framework'
+import { NotFoundError, AuthError, ForbiddenError, ValidationError } from 'arckode-framework'
 import type { AnunciosDTO, CreateAnunciosDTO, UpdateAnunciosDTO, AnunciosQuery, AnunciosPaginated, AnunciosScope } from './types'
 import type { AnunciosSockets } from './sockets'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
@@ -122,6 +122,8 @@ export class AnunciosService {
     if (dto.audience && dto.audience !== 'hotel' && currentUser.role !== 'super_admin') {
       throw new ForbiddenError('Solo la plataforma puede publicar anuncios para varios hoteles')
     }
+    // update no acepta hotelId, así que un anuncio de plataforma no puede volverse 'hotel' sin destino.
+    if (dto.audience === 'hotel' && !existing.hotelId) throw new ValidationError('Un anuncio con audiencia "hotel" necesita hotelId')
     assertWindow({ startsAt: dto.startsAt ?? existing.startsAt, endsAt: dto.endsAt ?? existing.endsAt })
 
     // El hotel ANTERIOR se guarda antes de escribir: después del update, `existing` puede ser la

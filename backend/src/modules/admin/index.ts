@@ -1,9 +1,11 @@
 import { createModule, OrmRepository } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import { estadoMetaApp, guardarMetaApp } from '../../infrastructure/meta-app-config'
+import { estadoCaptcha, guardarCaptcha } from '../../infrastructure/captcha'
 import { estadoResend, guardarResend, borrarResend } from '../../infrastructure/resend-config'
 import { estadoServicios } from '../../infrastructure/settings-status'
 import { MetaAppConfigSchema } from './validators/meta-app-schema'
+import { CaptchaConfigSchema } from './validators/captcha-schema'
 import type { PlanDTO, AmenityCatalogDTO } from './types'
 import { AdminService } from './service'
 import { AdminController } from './controller'
@@ -29,12 +31,15 @@ export function AdminModule() {
     // 1.4.0 (BIL-3, #155): + recordatorio de cobro (plantilla por estado, dedup 24 h) y registro de
     // pago manual (reactiva la suscripción vía connector). Las dos dejan audit log.
     // 1.4.1: + POST /api/admin/subscriptions/:hotelId/extend-trial (REQ-PIPE-05, #146).
-    version: '1.4.1',
+    // 1.5.0 (CFG-6, #103): + GET/PUT /api/admin/subscriptions/trial-days — la key `trial_days`
+    // de configuration(platform) fija la duración del trial para los hoteles nuevos.
+    // 1.6.0 (ANN-7, #111): + GET/PUT /api/admin/announcement-templates — key announcement_templates de configuration(platform)
+    version: '1.6.0',
     description: 'Super admin platform management',
     contract: {
-      name: 'admin', version: '1.4.1',
+      name: 'admin', version: '1.6.0',
       description: 'Platform-level management: hotels, users, plans, analytics',
-      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv', 'remindBillingInvoice', 'registerManualPayment', 'extendTrial'],
+      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'getTrialDays', 'updateTrialDays', 'getAnnouncementTemplates', 'updateAnnouncementTemplates', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv', 'remindBillingInvoice', 'registerManualPayment', 'extendTrial'],
       events: [],
       tables: [],
       dependencies: [],
@@ -75,7 +80,9 @@ export function AdminModule() {
         readMrr: async () => (await queries.listSubscriptions()).mrrTotal,
       })
       const service = new AdminService(plansRepo, amenitiesRepo, log, auth, queries, hotelsRepo, specialConditions, categories, configRepo, moduleOverrides, subscriptionsRepo, platformBilling)
-      const controller = new AdminController(service, log)
+      // `configRepo` (3º): los handlers de /subscriptions/trial-days (#103) operan directo con
+      // usecases/trial-days sobre `configuration`, sin agrandar AdminService.
+      const controller = new AdminController(service, log, configRepo)
 
       const sa = [auth.authenticate('super_admin'), requireUserType('admin')]
       const ar = [auth.authenticate('hotel_admin', 'receptionist', 'super_admin'), requireUserType('merchant')]
@@ -118,6 +125,15 @@ export function AdminModule() {
       // + `source` (env | configuration). Nunca devuelve valores ni pistas: para eso están las pantallas.
       router.get('/api/admin/settings/status', sa, async () => ({ status: 200, body: await estadoServicios(configRepo) }))
 
+      // #12 — Captcha del alta pública. Se configura acá y no por variables de entorno porque la
+      // site key era una variable de BUILD: prenderlo obligaba a recompilar el frontend. El GET
+      // nunca devuelve el secreto, sólo una pista para reconocer cuál está puesto.
+      router.get('/api/admin/captcha', sa, async () => ({ status: 200, body: await estadoCaptcha(configRepo) }))
+      router.put('/api/admin/captcha', sa, async (req: any) => {
+        const body = validateSchema(CaptchaConfigSchema, req.body || {}) as any
+        return { status: 200, body: await guardarCaptcha(configRepo, body) }
+      })
+
       router.get('/api/admin/hoteles', sa, () => controller.listHotels())
       // ── SMTP-UI (2026-08-19): test REAL de la config de correo de la plataforma ──
       // El botón de settings.vue era un toast falso — ocultó meses de desconexión entre
@@ -146,6 +162,10 @@ export function AdminModule() {
       router.get('/api/admin/subscriptions', sa, () => controller.listSubscriptions())
       router.get('/api/admin/audit', sa, (req: any) => controller.listAuditLogs(req))
       router.get('/api/admin/announcements', sa, () => controller.listAnnouncements())
+      // #111 (ANN-7): plantillas de anuncios del super admin — key `announcement_templates` de
+      // configuration(platform), mismo patrón que trial-days.
+      router.get('/api/admin/announcement-templates', sa, () => controller.getAnnouncementTemplates())
+      router.put('/api/admin/announcement-templates', sa, (req: any) => controller.updateAnnouncementTemplates(req))
       router.get('/api/admin/announcements/reach', sa, () => controller.getAnnouncementsReach())
       router.get('/api/admin/monitoring', sa, () => controller.getMonitoring())
       router.get('/api/admin/plans', sa, () => controller.listPlans())
@@ -164,6 +184,11 @@ export function AdminModule() {
       router.put('/api/admin/subscriptions/categories/:key', sa, (req: any) => controller.updateSubscriptionCategory(req))
       router.get('/api/admin/subscriptions/settings', sa, () => controller.getSubscriptionSettings())
       router.put('/api/admin/subscriptions/settings', sa, (req: any) => controller.updateSubscriptionSettings(req))
+      // #103 (CFG-6): duración global del trial — key `trial_days` de configuration(platform).
+      // Va ANTES de /:hotelId por orden de registro (mismo motivo que billing/export.csv):
+      // `trial-days` entraría como un hotelId que no existe.
+      router.get('/api/admin/subscriptions/trial-days', sa, () => controller.getTrialDays())
+      router.put('/api/admin/subscriptions/trial-days', sa, (req: any) => controller.updateTrialDays(req))
       router.get('/api/admin/subscriptions/:hotelId', sa, (req: any) => controller.subscriptionDetail(req))
       router.post('/api/admin/subscriptions/:hotelId/special-conditions', sa, (req: any) => controller.applySpecialConditions(req))
       router.post('/api/admin/subscriptions/:hotelId/suspend', sa, (req: any) => controller.suspendSubscription(req))
@@ -187,7 +212,7 @@ export function AdminModule() {
       router.post('/api/admin/billing/invoices/:id/remind', sa, (req: any) => controller.remindBillingInvoice(req))
       router.post('/api/admin/billing/manual-payment', sa, (req: any) => controller.registerManualPayment(req))
 
-      log.info('Módulo admin listo (48 endpoints)')
+      log.info('Módulo admin listo (50 endpoints)')
       return service
     },
   })

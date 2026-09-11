@@ -87,7 +87,10 @@ export const PLAN_PRESENTATION: Record<string, PlanPresentation> = {
  * precio ASC el $0 salía primero, pero comparar precio recién tiene sentido entre los planes que
  * sí muestran un número; "a cotización" es la salida de escape, no la puerta de entrada.
  */
-const FALLBACK_ORDER = ['host', 'essential', 'starter', 'professional', 'enterprise', 'ultra']
+// Tarea 4 (#74): `ultra` no se comercializa más — no va en el fallback (lo que se muestra cuando la
+// API no contesta). `PLAN_PRESENTATION.ultra` se conserva para que un entorno donde siga activo en
+// la tabla `plans` no se rompa al renderizarlo, pero desde acá nunca se ofrece.
+const FALLBACK_ORDER = ['host', 'essential', 'starter', 'professional', 'enterprise']
 
 /** Lo que la API pudo no haber contestado se muestra así — nunca un número inventado. */
 export const PRICE_UNKNOWN_LABEL = 'Consultar'

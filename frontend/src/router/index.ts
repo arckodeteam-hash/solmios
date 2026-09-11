@@ -870,7 +870,11 @@ router.beforeEach(async (to) => {
 
   if (to.meta.requiresSuperAdmin) {
     if (!auth.isAuthenticated) return '/login'
-    if (!auth.isSuperAdmin && !auth.impersonating) return '/panel'
+    // REQ-SOP-04: `!isSuperAdmin && !impersonating` dejaba pasar una sesión impersonando —
+    // el token de impersonación NUNCA lleva role:'super_admin' (es el rol real del cliente), así
+    // que `isSuperAdmin` ya es false y el `&&` con `!impersonating` (también false) nunca disparaba
+    // el redirect. `canAccessSuperAdmin` es la fuente única (super_admin de verdad, sin impersonar).
+    if (!auth.canAccessSuperAdmin) return '/panel'
   }
 
   if (to.meta.requiresHotelAuth) {

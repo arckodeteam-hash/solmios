@@ -946,6 +946,58 @@ export interface RegisterPushTokenPayload {
   platform?: string
 }
 
+// === SUPPORT TICKETS (backend/src/modules/tickets, admin-soporte-real #120) ===
+// Espejo de TicketsDTO — requester/hotel/assignee/messages los resuelve el SERVIDOR
+// (usecases/enrich.ts + normalize-message.ts, #129/#130): el frontend nunca los arma a mano.
+export type TicketCategory = 'technical' | 'billing' | 'reservation' | 'housekeeping' | 'maintenance' | 'general'
+export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent'
+export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed'
+
+/** Solicitante o agente de un ticket. `email`/`role`/`active` solo los trae el solicitante. */
+export interface TicketParty {
+  id: string
+  name: string
+  email?: string
+  role?: string
+  active?: boolean
+}
+
+export interface TicketMessage {
+  id: string
+  authorId: string
+  /** Snapshot del nombre al momento de escribir — no se reescribe si el usuario cambia de nombre. */
+  authorName: string
+  authorKind: 'support' | 'hotel'
+  message: string
+  createdAt: string
+}
+
+export interface SupportTicket {
+  id: string
+  hotelId: string
+  userId: string
+  subject: string
+  category?: TicketCategory
+  priority?: TicketPriority
+  status?: TicketStatus
+  description?: string
+  assignedTo?: string
+  messages?: TicketMessage[]
+  createdAt: string
+  updatedAt: string
+  requester?: TicketParty
+  hotel?: { id: string; name: string }
+  assignee?: TicketParty | null
+}
+
+export interface SupportTicketsListResponse {
+  data: SupportTicket[]
+  total: number
+  page?: number
+  limit?: number
+  pages?: number
+}
+
 // F0 0.19/0.20 (solmi-direct-booking) — Tipos del dominio público y booking.
 // viven en archivos propios (namespace separado: sin hotelId, sin datos del hotelero) y se
 // re-exportan acá para mantener el `import from '@/types'` único del resto del frontend.

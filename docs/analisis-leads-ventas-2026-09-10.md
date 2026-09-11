@@ -67,21 +67,31 @@ primer tick del cron mandó `trial_rescue_1` ×3, `trial_offer` ×1, `activation
 "pagando" son los 2 hoteles que ya pagaban antes de todo esto (uno es "Test Property"): la tasa real de
 partida sigue siendo el 5–10% del análisis, no 13.3%.
 
-## Resultado a 4 semanas — pendiente (≈ 2026-10-08, issue #181)
+## Resultado a 4 semanas — cerrado el día 0 por decisión (issue #181, 2026-09-10)
 
-Repetir la misma consulta y completar:
+La medición a 4 semanas **no se hizo**: el issue se cerró el mismo día 0 por decisión del dueño del
+proyecto. Lo que sigue es la segunda lectura del día 0 (`generatedAt 2026-09-10T23:38:05Z`, una hora
+después de la línea base), con las 6 filas medidas de verdad — API para el embudo y los prospectos,
+consulta directa a `email_queue` en prod para los correos.
 
-| | Día 0 (2026-09-10) | +4 semanas | Δ |
+| | Día 0 (2026-09-10 22:13Z) | 2026-09-10 23:38Z | Δ |
 |---|---|---|---|
-| Registrados (8 sem) | 15 | | |
-| Activados / tasa | 9 / 60% | | |
-| Pagando / tasa | 2 / 13.3% | | |
-| Perdidos por motivo | 2 `no_response` | | |
-| Correos de secuencia enviados (`email_queue` `platform_email:activation_*`/`trial_*`) | 5 | | |
-| Trials vencidos contactados por una persona (`contactedAt`) | 0 | | |
+| Registrados (8 sem) | 15 | 15 | 0 |
+| Activados / tasa | 9 / 60% | 9 / 60% | 0 |
+| Pagando / tasa | 2 / 13.3% | 2 / 13.3% | 0 |
+| Perdidos por motivo | 2 `no_response` | 2 `no_response` | 0 |
+| Correos de secuencia enviados (`activation_*` + `trial_offer` + `trial_rescue_*`) | 5 | 8 (`activation_no_rooms` 2 · `trial_offer` 1 · `trial_rescue_1` 3 · `trial_rescue_2` 2) | +3 (un tick más del cron) |
+| Trials vencidos contactados por una persona (`contactedAt`) | 0 | 0 (de 16 prospectos) | 0 |
 
-Pregunta a responder: ¿la secuencia automática (#149/#150) movió `payingRate` por encima del 5–10% de
-partida, o lo que falta sigue siendo la llamada humana en < 1 h?
+Aparte de la secuencia, `email_queue` tiene los correos del ciclo de suscripción de siempre:
+`trial_ending` 9 enviados, `trial_expired` 9 enviados + 1 fallido.
+
+**Respuesta a la pregunta del análisis**: con 0 días de secuencia en producción no hay forma de saber
+si movió `payingRate`. El 13.3% siguen siendo los 2 hoteles que ya pagaban; la tasa real de partida
+sigue en 5–10%. Si en algún momento se quiere la comparación, la consulta es la misma
+(`GET /api/admin/sales-pipeline/funnel?weeks=8` + `contactedAt` de `/api/admin/sales-pipeline` +
+`SELECT relatedtype, status, count(*) FROM email_queue WHERE relatedtype LIKE 'platform_email:%'
+GROUP BY 1,2`) y esta tabla es el punto de comparación.
 
 ## Fuentes
 - https://www.shno.co/marketing-statistics/free-trial-conversion-statistics

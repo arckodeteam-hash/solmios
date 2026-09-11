@@ -157,6 +157,10 @@ export async function getPublicReservation(
         needsCrib: reservation.needsCrib ?? false,
         cribCount: reservation.cribCount ?? 0,
         totalAmount: reservation.totalAmount,
+        // Tarea 24 (#88): el desglose que vio en el paso de pago (subtotal, extras, promo, cada
+        // impuesto con nombre/%/importe, total). Es SUYO — lo aceptó él. `null` en reservas
+        // anteriores a esta feature o creadas desde el panel.
+        totalBreakdown: reservation.priceBreakdown ?? null,
         currency: reservation.currency,
         // `reservations` NO tiene columna `paymentStatus`: leerla devolvía SIEMPRE 'unpaid',
         // incluso con la reserva cobrada al 100%, y por eso la pantalla de confirmación no le

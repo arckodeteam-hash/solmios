@@ -175,7 +175,7 @@ describe('BookingModal', () => {
 
     vi.mocked(BookingService.createBooking).mockResolvedValue({
       reservationId: 'r1', accessToken: 't1', checkoutUrl: null,
-      totalBreakdown: { subtotal: 300, promoDiscount: 0, upsellsTotal: 0, taxes: 54, total: 354 },
+      totalBreakdown: { subtotal: 300, promoDiscount: 0, upsellsTotal: 0, taxes: 54, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 54 }], total: 354 },
       paymentError: 'stripe no configurado',
     })
     await store.addToCart(ratesResponse().roomTypes[0]!)
@@ -194,7 +194,7 @@ describe('BookingModal', () => {
     const store = useBookingStore()
     vi.mocked(BookingService.createBooking).mockResolvedValue({
       reservationId: 'r1', accessToken: 't1', checkoutUrl: null,
-      totalBreakdown: { subtotal: 300, promoDiscount: 0, upsellsTotal: 0, taxes: 54, total: 354 },
+      totalBreakdown: { subtotal: 300, promoDiscount: 0, upsellsTotal: 0, taxes: 54, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 54 }], total: 354 },
     })
     await store.addToCart(ratesResponse().roomTypes[0]!)
     store.setGuest({ name: 'Ana Pérez', email: 'ana@example.com', phone: '8095550000' })

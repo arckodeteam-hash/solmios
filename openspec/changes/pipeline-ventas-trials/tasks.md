@@ -127,7 +127,7 @@
 ### 10. Cierre de B
 
 - [x] 10.1 Gates (mismos que 6.1) + deploy.
-- [ ] 10.2 (→ issue #181, ≈ 2026-10-08) Tras 4 semanas en prod: comparar `paying/registered` contra el 5–10% de partida
+- [x] 10.2 (→ issue #181) Cerrado el día 0 (2026-09-10) por decisión del dueño: la comparación a 4 semanas no se hizo; segunda lectura del día 0 registrada en `docs/analisis-leads-ventas-2026-09-10.md`
       (dato 2026-09-10: 1–2 de 19). Registrar en `docs/analisis-leads-ventas-2026-09-10.md`.
       Línea base del embudo (8 semanas, `GET /funnel?weeks=8`, 2026-09-10): registrados 15 ·
       activados 9 (60%) · pagando 2 (13.3%) · perdidos 2 (`no_response`). Revisar ≈ 2026-10-08.
