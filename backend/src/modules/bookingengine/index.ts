@@ -12,6 +12,7 @@ import { requireUserType } from '../../infrastructure/auth/require-user-type'
 import { createModuleGuard } from '../../infrastructure/auth/require-module'
 import { PaymentGatewayRegistry } from '../../services/payment-gateway/registry'
 import { PaymentEventStore } from '../../services/payment-gateway/payment-events'
+import { PaymentAttemptStore } from '../../services/payment-gateway/payment-attempts'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
 
 export { registerBookingengineModels, UpsellModel, MealPlanModel, ChildAmenityModel, BookingConfigModel, ConversionEventsModel, PublicBookingModel } from './model'
@@ -65,6 +66,9 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       const registry = new PaymentGatewayRegistry(gatewayRepo as any, log, sessionsRepo as any)
       // Barrera anti-doble-cobro para el webhook público.
       const eventStore = new PaymentEventStore(new OrmRepository<any>(orm, 'PaymentEvents') as any, log)
+      // REQ-RWP-01 (#244) — bitácora de TODO outcome (checkout, pago, rechazo, expiración). El modelo
+      // 'PaymentAttempts' lo registra `payment-gateways`; acceso por nombre ORM, sin import cross-module.
+      const attemptStore = new PaymentAttemptStore(new OrmRepository<any>(orm, 'PaymentAttempts') as any, log)
 
       // F2 2.3 — Upsells: deps para el controller (no el service, que se mantiene < 200 líneas).
       // El controller invoca los usecases directo; userRepo + auth se necesitan para ownership
@@ -118,6 +122,7 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         // `AvailabilityUseCase` lea `room_type_capacity` (mismo repo que `configurationRepo` de
         // abajo, ya existente).
         configurationRepo,
+        attemptStore,
       )
       const controller = new BookingengineController(
         service, log, orm, auth, opts?.pushAvailability, hotelsRepo,

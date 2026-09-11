@@ -66,8 +66,44 @@ export const PaymentGatewaySessionsModel: ModelDefinition = {
   timestamps: true,
 }
 
+/**
+ * Bitácora de TODO outcome de la pasarela: checkout creado, pagado, rechazado, expirado,
+ * reembolsado, pendiente. Los rechazos y las expiraciones también se registran: sin esta tabla
+ * el hotel nunca ve por qué una reserva web quedó sin cobrar (REQ-RWP-01).
+ *
+ * NO reemplaza a `payment_events`: esa tabla es la barrera de idempotencia del cobro (un evento
+ * del proveedor se asienta una sola vez); esta es historial y se escribe best-effort.
+ *
+ * NUNCA guarda el payload crudo del proveedor ni datos del tarjetahabiente más allá de la marca
+ * de la tarjeta y sus últimos 4 dígitos.
+ */
+export const PaymentAttemptsModel: ModelDefinition = {
+  table: 'payment_attempts',
+  fields: {
+    id: { type: 'string', required: true },
+    hotelId: { type: 'string', required: true, indexed: true },
+    reservationId: { type: 'string', indexed: true },
+    source: { type: 'string', required: true }, // booking_engine | payment_request | pos
+    provider: { type: 'string', required: true }, // stripe | azul | cardnet | ...
+    mode: { type: 'string' }, // test | live
+    providerRef: { type: 'string', indexed: true }, // id del cobro/sesión en el proveedor
+    eventId: { type: 'string' }, // id del evento en el proveedor (si lo hay)
+    kind: { type: 'string', required: true }, // checkout_created | paid | failed | expired | refunded | pending
+    amountMinor: { type: 'number', default: 0 },
+    currency: { type: 'string' },
+    failureCode: { type: 'string' }, // código del proveedor (card_declined, insufficient_funds, ...)
+    failureMessage: { type: 'string' },
+    cardBrand: { type: 'string' },
+    cardLast4: { type: 'string' },
+    receiptUrl: { type: 'string' },
+    occurredAt: { type: 'string' }, // cuándo pasó en el proveedor (no cuándo lo guardamos)
+  },
+  timestamps: true,
+}
+
 export function registerPaymentGatewaysModels(orm: ORM): void {
   orm.define('PaymentGateways', PaymentGatewaysModel)
   orm.define('PaymentEvents', PaymentEventsModel)
   orm.define('PaymentGatewaySessions', PaymentGatewaySessionsModel)
+  orm.define('PaymentAttempts', PaymentAttemptsModel)
 }

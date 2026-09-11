@@ -251,6 +251,10 @@ export class AzulGateway implements PaymentGateway {
     const status = this.mapStatus(fields.IsoCode)
     if (!status) return null
 
+    // REQ-RWP-01: detalle del rechazo para payment_attempts. IsoCode es el código que decide
+    // (mapStatus); ErrorDescription/ResponseMessage el texto. Azul no manda datos de tarjeta en
+    // el retorno, así que no hay `card`. `occurredAt` es el momento de la lectura: DateTime viene
+    // en un formato propio de Azul y sin zona horaria, no vale la pena adivinarlo.
     return {
       eventId: fields.AzulOrderId || `${fields.OrderNumber}:${fields.RRN || fields.AuthorizationCode || ''}`,
       providerRef: fields.AzulOrderId || fields.OrderNumber,
@@ -259,6 +263,9 @@ export class AzulGateway implements PaymentGateway {
       currency: (this.creds.currency || 'usd').toLowerCase(),
       reference: fields.OrderNumber,
       raw: fields,
+      failureCode: status === 'failed' ? (fields.IsoCode || '').trim() : undefined,
+      failureMessage: status === 'failed' ? (fields.ErrorDescription || fields.ResponseMessage || undefined) : undefined,
+      occurredAt: new Date().toISOString(),
     }
   }
 

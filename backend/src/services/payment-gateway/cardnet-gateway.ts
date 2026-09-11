@@ -109,6 +109,13 @@ export interface CardnetStatusResponse {
   RetrivalReferenceNumber?: string; CreditCardNumber?: string; TxToken?: string; SESSION?: string
 }
 
+/** Últimos 4 dígitos de un PAN enmascarado; undefined si no son dígitos. NUNCA devuelve más que eso. */
+function maskedLast4(masked: string | undefined): string | undefined {
+  if (typeof masked !== 'string') return undefined
+  const tail = masked.trim().slice(-4)
+  return /^\d{4}$/.test(tail) ? tail : undefined
+}
+
 export class CardnetGateway implements PaymentGateway {
   readonly provider: PaymentProvider = 'cardnet'
   readonly capabilities: GatewayCapabilities = {
@@ -205,14 +212,26 @@ export class CardnetGateway implements PaymentGateway {
     const res = await this.queryStatus(session, row.sessionKey)
     if (!res?.ResponseCode) return null
 
+    const status: PaymentOutcome['status'] = res.ResponseCode === '00' ? 'paid' : 'failed'
+    const detail: any = res
+    // REQ-RWP-01: detalle del outcome para payment_attempts. CardNet devuelve el número enmascarado
+    // ('411111******1111'): se guardan SOLO los últimos 4 dígitos, nunca el string entero.
+    const last4 = maskedLast4(res.CreditCardNumber)
     return {
       eventId: session,
       providerRef: session,
-      status: res.ResponseCode === '00' ? 'paid' : 'failed',
+      status,
       amountMinor: row.amountMinor,
       currency: row.currency,
       reference: row.reference,
       raw: res,
+      failureCode: status === 'failed' ? res.ResponseCode : undefined,
+      failureMessage: status === 'failed'
+        ? (typeof detail.ErrorDescription === 'string' ? detail.ErrorDescription
+          : typeof detail.ResponseMessage === 'string' ? detail.ResponseMessage : undefined)
+        : undefined,
+      card: last4 ? { last4 } : undefined,
+      occurredAt: new Date().toISOString(),
     }
   }
 

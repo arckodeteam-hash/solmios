@@ -4,6 +4,7 @@
 // usaban apiVersions distintas de Stripe. Una sola implementación, una sola apiVersion.
 
 import Stripe from 'stripe'
+import type { Logger } from 'arckode-framework'
 import type {
   ChargeRequest, ChargeResult, ConfirmContext, GatewayCapabilities, GatewayMode,
   PaymentOutcome, PaymentProvider, RefundResult, RefundableGateway,
@@ -27,6 +28,15 @@ export interface StripeCredentials {
   currency?: string
 }
 
+/** Extrae SOLO marca + últimos 4 de un objeto `card` de Stripe. Cualquier otro campo se descarta. */
+function pickCard(card: any): PaymentOutcome['card'] | undefined {
+  if (!card || typeof card !== 'object') return undefined
+  const brand = typeof card.brand === 'string' ? card.brand : undefined
+  const last4 = typeof card.last4 === 'string' ? card.last4 : undefined
+  if (!brand && !last4) return undefined
+  return { brand, last4 }
+}
+
 export class StripeGateway implements RefundableGateway {
   readonly provider: PaymentProvider = 'stripe'
   readonly capabilities: GatewayCapabilities = {
@@ -41,6 +51,8 @@ export class StripeGateway implements RefundableGateway {
   constructor(
     private readonly creds: StripeCredentials,
     readonly mode: GatewayMode,
+    /** Opcional: sólo se usa para avisar cuando la lectura best-effort del charge falla. */
+    private readonly logger?: Pick<Logger, 'warn'>,
   ) {
     if (!creds.secretKey) throw new Error('Stripe: falta secretKey')
     this.stripe = new Stripe(creds.secretKey, {
@@ -132,7 +144,7 @@ export class StripeGateway implements RefundableGateway {
     const status = this.mapStatus(event.type, obj)
     if (!status) return null // evento que no nos interesa
 
-    return {
+    const outcome: PaymentOutcome = {
       eventId: event.id,
       providerRef: obj.id,
       status,
@@ -140,6 +152,60 @@ export class StripeGateway implements RefundableGateway {
       currency: String(obj.currency ?? this.creds.currency ?? 'usd'),
       reference: String(obj.client_reference_id ?? obj.metadata?.reference ?? ''),
       raw: event,
+    }
+    if (typeof event.created === 'number') {
+      outcome.occurredAt = new Date(event.created * 1000).toISOString()
+    }
+
+    // REQ-RWP-01: detalle del outcome para payment_attempts. Sólo marca + last4, nunca el PAN.
+    switch (event.type) {
+      case 'payment_intent.payment_failed': {
+        const err = obj.last_payment_error
+        if (err) {
+          outcome.failureCode = err.code ?? err.decline_code ?? undefined
+          outcome.failureMessage = err.message ?? undefined
+          const card = pickCard(err.payment_method?.card)
+          if (card) outcome.card = card
+        }
+        break
+      }
+      case 'checkout.session.completed': {
+        if (status === 'paid' && typeof obj.payment_intent === 'string') {
+          Object.assign(outcome, await this.enrichFromCharge(obj.payment_intent))
+        }
+        break
+      }
+      case 'charge.refunded':
+      case 'refund.created': {
+        if (typeof obj.receipt_url === 'string') outcome.receiptUrl = obj.receipt_url
+        break
+      }
+    }
+
+    return outcome
+  }
+
+  /**
+   * Lectura BEST-EFFORT del charge detrás de una Checkout Session pagada: marca/last4 y recibo.
+   * La sesión no trae esos datos; hay que ir a buscarlos. Si la llamada falla, el outcome sale
+   * igual (status 'paid' intacto) sin `card`/`receiptUrl`: un dato decorativo no puede tumbar
+   * ni retrasar el asiento de un cobro que ya entró.
+   */
+  private async enrichFromCharge(
+    paymentIntentId: string,
+  ): Promise<Pick<PaymentOutcome, 'card' | 'receiptUrl'>> {
+    try {
+      const pi: any = await this.stripe.paymentIntents.retrieve(paymentIntentId, { expand: ['latest_charge'] })
+      const charge = pi?.latest_charge
+      if (!charge || typeof charge !== 'object') return {}
+      const out: Pick<PaymentOutcome, 'card' | 'receiptUrl'> = {}
+      const card = pickCard(charge.payment_method_details?.card)
+      if (card) out.card = card
+      if (typeof charge.receipt_url === 'string') out.receiptUrl = charge.receipt_url
+      return out
+    } catch (e: any) {
+      this.logger?.warn(`Stripe: no se pudo leer el charge de ${paymentIntentId} (${e?.message || e}); outcome sin tarjeta/recibo`)
+      return {}
     }
   }
 

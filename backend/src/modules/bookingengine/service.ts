@@ -23,6 +23,7 @@ import {
 } from './usecases/upsells-sync'
 import type { PaymentGatewayRegistry } from '../../services/payment-gateway/registry'
 import type { PaymentEventStore } from '../../services/payment-gateway/payment-events'
+import type { PaymentAttemptStore } from '../../services/payment-gateway/payment-attempts'
 
 export class BookingengineService {
   private sockets: BookingengineSockets = {}
@@ -63,6 +64,8 @@ export class BookingengineService {
     roomRatesRepo?: RepositoryAdapter<any>,
     /** Req. 2 (2026-09-03) — `Configuration` KV GENERAL para `room_type_capacity` (NO `configRepo`, que es `BookingConfig`). */
     configurationRepo?: RepositoryAdapter<any>,
+    /** REQ-RWP-01 (#244) — bitácora `payment_attempts`: todo outcome de la pasarela, rechazos incluidos. */
+    attempts?: PaymentAttemptStore,
   ) {
     if (!registry) throw new Error('bookingengine: PaymentGatewayRegistry es requerido (pasarela por hotel)')
     if (!reservationsRepo) throw new Error('bookingengine: reservationsRepo es requerido (F0 0.15 — Stripe opera sobre Reservations)')
@@ -77,7 +80,7 @@ export class BookingengineService {
     // colgado de una reserva inexistente. Spec booking-unification D2/D3.
     // Hardening go-live — Pasamos hotelsRepo para que StripeUseCase construya el successUrl
     // real con slug + reservationId + accessToken (antes pasaba placeholders literales a Stripe).
-    this.stripe = new StripeUseCase(reservationsRepo, logger, registry, events, hotelsRepo ?? undefined)
+    this.stripe = new StripeUseCase(reservationsRepo, logger, registry, events, hotelsRepo ?? undefined, attempts)
   }
   async notifyBookingCreated(d: PublicBookingDTO) { await this.sockets.onBookingCreated?.(d) } // wrapper público, ver controller.ts
   setSockets(s: Partial<BookingengineSockets>): void {

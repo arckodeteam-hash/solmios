@@ -29,7 +29,7 @@ export function PaymentGatewaysModule() {
       description: 'Configuración de pasarelas de pago por hotel',
       actions: ['list', 'upsert', 'setEnabled', 'remove', 'testConnection'],
       events: [],
-      tables: ['payment_gateways', 'payment_events', 'payment_gateway_sessions'],
+      tables: ['payment_gateways', 'payment_events', 'payment_gateway_sessions', 'payment_attempts'],
       dependencies: [],
       rules: ['Las credenciales se guardan cifradas', 'La API nunca devuelve un secreto'],
     },
