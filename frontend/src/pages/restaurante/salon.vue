@@ -11,11 +11,13 @@
 // se pausa con un modal abierto, cada mesa ocupada muestra hora / tiempo / total / mozo, acciones de
 // mesa en un menú "⋯" siempre visible (tablet táctil: no hay hover) y `occupied` sin comanda en ámbar.
 // La lógica pura vive en salon-helpers.ts.
+// #209 — "Room service" ya no abre una comanda huérfana: pide elegir al huésped alojado (ReservationPicker,
+// por habitación o apellido) y la comanda nace con reservationId/roomId/guestId; la tarjeta dice "Hab. 204 · Pérez".
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  RestaurantService,
-  type RestaurantTable, type Order, type KdsTicket,
+  RestaurantService, roomServiceLabel,
+  type RestaurantTable, type Order, type KdsTicket, type InHouseReservation,
   TABLE_STATUS_LABELS, ORDER_TYPE_LABELS,
 } from '@/services/Restaurant.service'
 import { TeamService } from '@/services/Team.service'
@@ -30,6 +32,7 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import PillTabs from '@/components/ui/PillTabs.vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
+import ReservationPicker from '@/components/features/restaurante/ReservationPicker.vue'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { usePermissions } from '@/composables/usePermissions'
@@ -145,7 +148,7 @@ async function loadContext() {
     SettingsService.get().catch(() => null),
   ])
   usersById.value = new Map((team?.data ?? []).map((u) => [u.id, u.name]))
-  currency.value = (settings as any)?.hotel?.currency || CurrencyCode.USD
+  currency.value = settings?.hotel?.currency || CurrencyCode.USD
 }
 
 // #204 — con un modal abierto (comensales, mesa, confirmación) o el menú "⋯" desplegado no se refresca:
@@ -223,11 +226,25 @@ async function openWithCovers(covers: number) {
   }
 }
 
-async function openLoose(type: 'room_service' | 'takeaway') {
+// #209 — room service exige la reserva del alojado; para llevar sigue abriéndose directo.
+const roomServiceOpen = ref(false)
+const roomServiceReservation = ref<InHouseReservation | null>(null)
+function askRoomService() {
+  if (!createPerm.value) { toast.warning('Sin permiso para abrir comandas'); return }
+  roomServiceReservation.value = null
+  roomServiceOpen.value = true
+}
+async function openRoomService() {
+  const r = roomServiceReservation.value
+  if (!r || opening.value) return
+  await openLoose('room_service', { reservationId: r.id, roomId: r.roomId, guestId: r.guestId ?? undefined })
+}
+async function openLoose(type: 'room_service' | 'takeaway', extra: { reservationId?: string; roomId?: string; guestId?: string } = {}) {
   if (!createPerm.value) { toast.warning('Sin permiso para abrir comandas'); return }
   opening.value = true
   try {
-    const order = await RestaurantService.openOrder({ type })
+    const order = await RestaurantService.openOrder({ type, ...extra })
+    roomServiceOpen.value = false
     router.push(`/panel/restaurante/comanda/${order.id}`)
   } catch (e: unknown) {
     toast.error(e instanceof Error ? e.message : 'No se pudo abrir la comanda')
@@ -291,7 +308,7 @@ async function save(fn: () => Promise<unknown>) {
           <span :class="['w-2 h-2 rounded-full', liveDot]" />
           {{ liveLabel }}
         </span>
-        <button v-if="createPerm" @click="openLoose('room_service')" :disabled="opening" class="px-3 py-1.5 rounded-lg bg-navy text-white text-xs font-bold hover:bg-navy-light disabled:opacity-50">Room service</button>
+        <button v-if="createPerm" @click="askRoomService" :disabled="opening" data-testid="room-service" class="px-3 py-1.5 rounded-lg bg-navy text-white text-xs font-bold hover:bg-navy-light disabled:opacity-50">Room service</button>
         <button v-if="createPerm" @click="openLoose('takeaway')" :disabled="opening" class="px-3 py-1.5 rounded-lg bg-navy text-white text-xs font-bold hover:bg-navy-light disabled:opacity-50">Para llevar</button>
         <button v-if="createPerm" @click="newTable" class="px-3 py-1.5 rounded-lg border-2 border-navy/30 text-navy text-xs font-bold hover:bg-surface">+ Mesa</button>
       </div>
@@ -338,6 +355,8 @@ async function save(fn: () => Promise<unknown>) {
             class="relative p-3 rounded-xl border-2 border-gold bg-gold/10 text-left hover:bg-gold/20">
             <span v-if="readyLooseOrders.has(o.id)" class="absolute top-2 right-2 w-3 h-3 rounded-full bg-success ring-2 ring-white" title="Hay platos listos en cocina" data-testid="ready-dot" />
             <div class="font-black text-navy text-sm">{{ o.number || 'Comanda' }}</div>
+            <!-- #209 — room service: "Hab. 204 · Pérez" (lo resuelve el server desde la reserva de la comanda). -->
+            <div v-if="roomServiceLabel(o)" class="text-[11px] font-bold text-navy truncate" data-testid="room-label">{{ roomServiceLabel(o) }}</div>
             <div class="text-[11px] text-text-muted">{{ ORDER_TYPE_LABELS[o.type] }} · {{ hhmm(o.openedAt) }}</div>
             <div class="text-[11px] text-navy font-bold tabular-nums mt-0.5">{{ money(o.total) }}<span v-if="waiterOf(o)" class="font-normal text-text-muted"> · {{ waiterOf(o)!.initials }}</span></div>
           </button>
@@ -404,6 +423,16 @@ async function save(fn: () => Promise<unknown>) {
         <button @click="openWithCovers(Number(coversOther))" :disabled="opening || !coversOther"
           class="px-4 py-2 rounded-lg bg-navy text-white font-bold text-sm disabled:opacity-50">Abrir comanda</button>
       </div>
+    </AppModal>
+
+    <!-- #209 — room service: elegir al huésped alojado (habitación o apellido). Sin reserva, "Abrir" no se habilita. -->
+    <AppModal v-if="roomServiceOpen" title="Room service" subtitle="¿Para qué habitación?" @close="roomServiceOpen = false">
+      <ReservationPicker v-model="roomServiceReservation" :disabled="opening" autofocus />
+      <template #footer>
+        <button @click="roomServiceOpen = false" :disabled="opening" class="px-4 py-2 rounded-lg border-2 border-border text-navy text-sm font-bold hover:bg-surface disabled:opacity-50">Cancelar</button>
+        <button @click="openRoomService" :disabled="opening || !roomServiceReservation" data-testid="room-service-open"
+          class="px-4 py-2 rounded-lg bg-navy text-white font-bold text-sm disabled:opacity-50">{{ opening ? 'Abriendo…' : 'Abrir' }}</button>
+      </template>
     </AppModal>
 
     <FormModal v-if="modal" :title="modal.title" :fields="modal.fields" :submit-label="modal.submitLabel" :loading="saving"

@@ -11,6 +11,7 @@ import { isLineActive, isTerminalOrder } from './order-totals'
 import { round2 } from '../../../shared/utils/money'
 import { isUniqueViolation } from '../../../shared/utils/db-errors'
 import { assertReservationOfHotel, type ReservationPort } from './reservation-port'
+import { withRoomLabels, type OrderLabelDeps } from './order-labels'
 
 export interface OrdersDeps {
   orders: RepositoryAdapter<OrderDTO>
@@ -28,6 +29,12 @@ export interface OrdersDeps {
   // #208: la reserva de un room service debe ser del hotel (connectors/restaurante-reservas.ts).
   // Sin cablear, abrir un room service falla cerrado — ver usecases/reservation-port.ts.
   reservations?: ReservationPort | null
+  // #209: "Hab. 204 · Pérez" en la respuesta de getOrder/listOrders (usecases/order-labels.ts). Opcionales.
+  labels?: OrderLabelDeps
+  // #209: `guests`/`rooms` del hotel para validar un guestId/roomId que llega en el body SIN reserva
+  // (dine_in/takeaway). Sin ellos cableados el dato del body se descarta: nunca se persiste sin validar.
+  guests?: RepositoryAdapter<any>
+  rooms?: RepositoryAdapter<any>
 }
 
 const silentLogger = { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} } as unknown as Logger
@@ -105,9 +112,24 @@ function hotelFor(user: CurrentUser): string {
   return h
 }
 
+/**
+ * #209: un `guestId`/`roomId` del body solo se persiste si es del hotel. Con la reserva validada nunca se
+ * usa (manda la reserva); sin reserva se comprueba contra `guests`/`rooms` y un id ajeno es 400 — antes
+ * cualquier UUID (incluso de otro hotel) quedaba en la comanda y viajaba al folio al cargarla.
+ */
+async function assertOfHotel(repo: RepositoryAdapter<any> | undefined, id: string | undefined, hotelId: string, what: string): Promise<string | undefined> {
+  if (!id) return undefined
+  if (!repo) return undefined   // sin repo para validar, el dato del body no entra
+  const row = await repo.findOne({ id, hotelId })
+  if (!row) throw new ValidationError(`${what} no existe o es de otro hotel`)
+  return id
+}
+
 export async function openOrder(deps: OrdersDeps, dto: OpenOrderInput, user: CurrentUser): Promise<OrderDTO> {
   const hotelId = hotelFor(user)
   if (!ORDER_TYPES.includes(dto.type)) throw new ValidationError(`Tipo de comanda inválido: ${dto.type}`)
+  let guestId: string | undefined
+  let roomId: string | undefined
 
   if (dto.type === 'dine_in') {
     if (!dto.tableId) throw new ValidationError('Una comanda en salón requiere una mesa (tableId)')
@@ -123,9 +145,20 @@ export async function openOrder(deps: OrdersDeps, dto: OpenOrderInput, user: Cur
     if (!dto.reservationId) throw new ValidationError('Un room service requiere la reserva del huésped (reservationId)')
     // #208: 404 si la reserva no existe o es de otro hotel — nunca se abre una comanda (ni después un
     // folio) con guestId/roomId heredados de una reserva ajena.
-    await assertReservationOfHotel(deps.reservations, dto.reservationId, hotelId, user)
+    // #209: la habitación y el huésped salen de la RESERVA validada, no del body: la comanda nace con
+    // `roomId`/`guestId` reales aunque el cliente no los mande (el ticket dice "Hab. 204 · Pérez").
+    // El body NUNCA pisa ni completa lo que dice la reserva: una reserva sin huésped es una comanda sin
+    // huésped, no una puerta para colar un guestId ajeno.
+    const reservation = await assertReservationOfHotel(deps.reservations, dto.reservationId, hotelId, user)
+    guestId = reservation.guestId ?? undefined
+    roomId = reservation.roomId ?? undefined
   }
-  // takeaway: sin mesa ni reserva.
+  if (dto.type !== 'room_service') {
+    // takeaway: sin mesa ni reserva. dine_in/takeaway pueden nombrar a un huésped del hotel (cuenta de un
+    // alojado que come en el salón), pero solo si existe en este hotel.
+    guestId = await assertOfHotel(deps.guests, dto.guestId, hotelId, 'El huésped')
+    roomId = await assertOfHotel(deps.rooms, dto.roomId, hotelId, 'La habitación')
+  }
 
   const now = new Date().toISOString()
   const order = await createWithReservedNumber(deps, hotelId, (number) => ({
@@ -134,8 +167,8 @@ export async function openOrder(deps: OrdersDeps, dto: OpenOrderInput, user: Cur
     type: dto.type,
     tableId: dto.type === 'dine_in' ? dto.tableId : undefined,
     reservationId: dto.type === 'room_service' ? dto.reservationId : undefined,
-    guestId: dto.guestId,
-    roomId: dto.roomId,
+    guestId,
+    roomId,
     waiterId: dto.waiterId || user.id,   // users.id del mesero (por defecto, quien la abre)
     // #210 — comensales: mismo criterio que tableId arriba (solo tiene sentido en salón; en
     // room_service/takeaway se descarta en silencio). Default 1 para que el ticket promedio por
@@ -159,6 +192,9 @@ export async function listOrders(deps: OrdersDeps, query: { status?: string; tab
   if (query?.tableId) filters.tableId = query.tableId
   const data = (await deps.orders.findMany(filters)) as OrderDTO[]
   data.sort((a, b) => String(b.openedAt || '').localeCompare(String(a.openedAt || '')))
+  // #209: etiqueta de habitación/huésped solo en las comandas vivas (las que el salón pinta); el
+  // historial cerrado no paga N lecturas por refresco.
+  if (deps.labels) await withRoomLabels(deps.labels, data.filter((o) => !isTerminalOrder(o)))
   return { data, total: data.length }
 }
 
@@ -168,6 +204,7 @@ export async function getOrder(deps: OrdersDeps, id: string, user: CurrentUser):
   const me = await deps.userRepo.findById(user.id)
   deps.auth.assertOwnership(order.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
   const lines = (await deps.lines.findMany({ orderId: id })) as OrderItemDTO[]
+  if (deps.labels) await withRoomLabels(deps.labels, [order])
   return { ...order, lines }
 }
 

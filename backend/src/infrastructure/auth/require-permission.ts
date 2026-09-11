@@ -33,3 +33,31 @@ export function requirePermission(module: string, action: string): MiddlewareHan
     return next()
   }
 }
+
+/**
+ * "Cualquiera de": pasa si el usuario tiene AL MENOS UNO de los `module:action` listados. Para rutas
+ * que sirven a dos roles con permisos distintos (ej. el buscador de alojados del POS: lo usa el mozo
+ * al abrir un room service — `restaurant:create` — y el cajero al cargar la cuenta — `restaurant:pay`).
+ * Bajar la ruta a `view` sería abrirla a cocina; pedir uno solo deja afuera al otro rol. Mismo
+ * contrato que `requirePermission` (super_admin pasa, permisos ya cargados por loadPermissions).
+ *
+ * @example
+ * router.get('/api/restaurant/in-house', [auth.authenticate(), loadPermissions(roleRepo), requireAnyPermission(['restaurant', 'pay'], ['restaurant', 'create'])], handler)
+ */
+export function requireAnyPermission(...required: Array<[module: string, action: string]>): MiddlewareHandler {
+  if (required.length === 0) throw new Error('requireAnyPermission: hace falta al menos un permiso')
+  return async (req, next) => {
+    const user = req.user as any
+    if (!user) {
+      throw new ForbiddenError('Authentication required')
+    }
+    if (user.role === 'super_admin') {
+      return next()
+    }
+    const permissions: Permission[] = user.permissions || []
+    if (!required.some(([module, action]) => hasPermission(permissions, module, action))) {
+      throw new ForbiddenError(`Sin permiso: ${required.map(([m, a]) => `${m}:${a}`).join(' o ')}`)
+    }
+    return next()
+  }
+}

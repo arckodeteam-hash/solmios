@@ -402,8 +402,8 @@ describe('RestaurantService — cuenta + cobro (RES-5)', () => {
     const build = (ports?: any) => {
       const s = svc3({ orders: backed<OrderDTO>(ordersStore), lines: backed<any>(linesStore), tables: backed<TableDTO>(tablesStore), config: taxConfig(), hotels: makeRepo<any>() }, strictAuth)
       if (ports) s.setSettlementDeps(ports)
-      // #208: la reserva 'r1' pertenece a h1 (chargeToRoom la valida contra el hotel de la comanda).
-      s.setReservationPort({ findById: async (id) => (id === 'r1' ? { id: 'r1', hotelId: 'h1' } : null) })
+      // #208: la reserva 'r1' pertenece a h1 (chargeToRoom la valida contra el hotel de la comanda). #209: y está alojada.
+      s.setReservationPort({ findById: async (id) => (id === 'r1' ? { id: 'r1', hotelId: 'h1', status: 'checked_in' } : null) })
       return s
     }
     return { ordersStore, tablesStore, build }
@@ -513,8 +513,8 @@ describe('RestaurantService — payOrder(card) vía Stripe Checkout (fix-refund-
     const build = (ports?: any) => {
       const s = svc3({ orders: backed<OrderDTO>(ordersStore), lines: backed<any>(linesStore), tables: backed<TableDTO>(tablesStore), config: taxConfig(), hotels: makeRepo<any>() }, strictAuth)
       if (ports) s.setSettlementDeps(ports)
-      // #208: la reserva 'r1' pertenece a h1 (chargeToRoom la valida contra el hotel de la comanda).
-      s.setReservationPort({ findById: async (id) => (id === 'r1' ? { id: 'r1', hotelId: 'h1' } : null) })
+      // #208: la reserva 'r1' pertenece a h1 (chargeToRoom la valida contra el hotel de la comanda). #209: y está alojada.
+      s.setReservationPort({ findById: async (id) => (id === 'r1' ? { id: 'r1', hotelId: 'h1', status: 'checked_in' } : null) })
       return s
     }
     return { ordersStore, tablesStore, build }

@@ -10,7 +10,7 @@ import { createModuleGuard, createModuleChecker } from '../../infrastructure/aut
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
 import { sseTicketAuth } from '../../infrastructure/auth/sse-ticket-auth'
 import { loadPermissions } from '../../infrastructure/auth/load-permissions'
-import { requirePermission } from '../../infrastructure/auth/require-permission'
+import { requirePermission, requireAnyPermission } from '../../infrastructure/auth/require-permission'
 import { HotelAuth } from '../../infrastructure/auth/hotel-auth'
 import { TICKET_SCOPE, TICKET_TTL_SECONDS } from './usecases/events'
 
@@ -28,6 +28,7 @@ export { registerRestaurantModels } from './model'
 export type { SettlementPorts, ChargeToFolioInput, RecordPaymentInput, ChargeCardPaymentInput } from './usecases/settlement'
 export type { ComboDTO, ComboItemDTO } from './types'
 export type { ReservationPort, ReservationSummary } from './usecases/reservation-port'
+export type { InHouseReservation, InHouseSearchResult } from './usecases/reservation-port'
 export type { ModuleStatePort } from './usecases/public-menu'
 export type { RestaurantEvent, RestaurantEventType } from './usecases/events'
 
@@ -74,6 +75,8 @@ export function RestaurantModule() {
       const comboItemsRepo = new OrmRepository<ComboItemDTO>(orm, 'MenuComboItems')
       // #211: número de habitación para el ticket del KDS (tabla rooms, lectura — mismo criterio que Hotels/Users).
       const roomsRepo = new OrmRepository<any>(orm, 'Rooms')
+      // #209: nombre del huésped para "Hab. 204 · Pérez" en la comanda de room service (tabla guests, lectura acotada al hotel).
+      const guestsRepo = new OrmRepository<any>(orm, 'Guests')
       const log = logger.child('restaurant')
       const service = new RestaurantService(
         stations, categories, items, tables, userRepo, log, auth,
@@ -85,6 +88,7 @@ export function RestaurantModule() {
         // #208: transactor para la cascada atómica de deleteItem (patrón landing/index.ts).
         { transaction: <T>(fn: (tx: any) => Promise<T>) => orm.transaction(fn) },
         roomsRepo,
+        guestsRepo,
       )
       const controller = new RestaurantController(service, log)
 
@@ -152,6 +156,16 @@ export function RestaurantModule() {
       // config de la carta.
       router.get('/api/restaurant/void-reasons', guard('restaurant', 'view'), (req) => controller.voidReasons(req))
       router.put('/api/restaurant/void-reasons', guard('restaurant-catalog', 'edit'), (req) => controller.setVoidReasons(req))
+
+      // #209: buscador "quién está alojado" (habitación/apellido) para abrir un room service o cargar a la
+      // habitación. Va por este módulo y no por /api/reservas porque el mozo NO tiene `reservations:view`.
+      // Lo usan DOS pantallas con permisos distintos: el mozo al abrir el pedido (`restaurant:create`) y
+      // Cobrar al cargar la cuenta (`restaurant:pay`, un cajero puede tener solo ese). Cualquiera de los
+      // dos alcanza; `restaurant:view` NO (cocina lo tiene y no elige reservas). El guard es el mismo que
+      // `guard()` con `requireAnyPermission` en lugar de `requirePermission`.
+      // La búsqueda real la hace `reservas` por puerto (connectors/restaurante-reservas.ts).
+      const inHouseGuard = [auth.authenticate(), loadPermissions(roleRepo), requireAnyPermission(['restaurant', 'pay'], ['restaurant', 'create']), moduleGuard('restaurant')]
+      router.get('/api/restaurant/in-house', inHouseGuard, (req) => controller.searchInHouse(req))
 
       // Cuenta + cobro (RES-5). #205: `restaurant:pay`, NO `edit` — cocina tiene `edit` para el KDS y
       // con ese permiso cobraba por URL. Mover plata (cobrar, cargar a habitación, propina) es un
