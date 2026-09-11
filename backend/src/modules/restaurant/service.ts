@@ -43,9 +43,9 @@ export class RestaurantService {
     private readonly modifierGroups?: RepositoryAdapter<ModifierGroupDTO>,
     private readonly modifiers?: RepositoryAdapter<ModifierDTO>,
     // F2: catálogo de combos. Opcionales al final (retrocompat con callers/tests existentes).
-    private readonly combos?: RepositoryAdapter<ComboDTO>,
-    private readonly comboItems?: RepositoryAdapter<ComboItemDTO>,
+    private readonly combos?: RepositoryAdapter<ComboDTO>, private readonly comboItems?: RepositoryAdapter<ComboItemDTO>,
     private readonly plans?: RepositoryAdapter<any>, private readonly subscriptions?: RepositoryAdapter<any>, // F7: gate del módulo restaurant — plan desde la suscripción activa (resolve-plan.ts)
+    private readonly counterCas?: orders.OrdersDeps['counterCas'], // #206: UPDATE condicional (orm.updateMany) para el numerador de comandas — el orm entra SOLO como esta interface mínima (ver usecases/order-number.ts; misma excepción que promo-codes/promo-atomic.ts)
   ) {}
 
   // Acumula handlers, nunca pisa el anterior (composición de sockets).
@@ -84,7 +84,7 @@ export class RestaurantService {
   }
   private ordersDeps(): orders.OrdersDeps {
     if (!this.orders || !this.lines || !this.config) throw new ValidationError('Comandas no configuradas')
-    return { orders: this.orders, lines: this.lines, tables: this.tables, config: this.config, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets }
+    return { orders: this.orders, lines: this.lines, tables: this.tables, config: this.config, counterCas: this.counterCas, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets }
   }
   private orderLinesDeps(): orderLines.OrderLinesDeps {
     if (!this.orders || !this.lines || !this.config || !this.hotels) throw new ValidationError('Comandas no configuradas')

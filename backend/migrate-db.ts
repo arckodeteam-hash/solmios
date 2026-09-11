@@ -149,6 +149,19 @@ async function createTablesBlock1(): Promise<void> {
     await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_hotel_number ON invoices(hotelId, invoiceNumber)`)
   } catch { /* la tabla se crea con RUN_MIGRATE; el índice se aplica en la próxima corrida */ }
 
+  // Comandas del restaurante (#206): el correlativo `CMD-{año}-NNNN` no puede repetirse dentro del
+  // hotel. `restaurant/usecases/order-number.ts` arbitra con un UPDATE condicional (CAS) sobre el
+  // contador de `configuration`; este UNIQUE es la garantía dura — si igual chocan, el `create` del
+  // perdedor falla y `openOrder` reintenta con el número siguiente. Por hotel (dos hoteles emiten su
+  // CMD-2026-0001 sin chocar); `number` nulo no cuenta (NULL no colisiona en SQLite ni en PG).
+  // Si una base vieja ya tiene duplicados, el índice no se puede crear: se avisa en vez de tirar
+  // abajo todo el seed — hay que deduplicar a mano y volver a correr.
+  try {
+    await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurant_orders_hotel_number ON restaurant_orders(hotelId, number)`)
+  } catch (e) {
+    console.log("idx_restaurant_orders_hotel_number: NO se pudo crear (¿tabla sin migrar o números duplicados?) —", e instanceof Error ? e.message.slice(0, 120) : String(e))
+  }
+
   // Inventario (INV-2, QA-A3): garantía DURA de idempotencia del ledger de stock. El dedup en JS es
   // check-then-create (no atómico): dos conectores concurrentes con el mismo sourceId (recepción de
   // compra / venta POS reintentando) aplicarían el movimiento dos veces → stock doble. El UNIQUE

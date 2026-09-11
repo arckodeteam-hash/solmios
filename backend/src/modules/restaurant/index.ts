@@ -70,6 +70,9 @@ export function RestaurantModule() {
         stations, categories, items, tables, userRepo, log, auth,
         ordersRepo, linesRepo, configRepo, hotelsRepo, modifierGroupsRepo, modifiersRepo,
         combosRepo, comboItemsRepo, plansRepo, subscriptionsRepo,
+        // #206: numerador de comandas con UPDATE condicional (orm.updateMany). El orm entra al
+        // service SOLO como `CounterCas`; el resto sigue por OrmRepository. Ver usecases/order-number.ts.
+        orm,
       )
       const controller = new RestaurantController(service, log)
 
