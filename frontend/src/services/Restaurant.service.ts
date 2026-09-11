@@ -240,7 +240,7 @@ export interface Combo {
   imageUrl?: string
   available?: number
   sortOrder?: number
-  // Derivado: sus componentes, adjuntados por listCombos/getCombo (mismo patrón que ModifierGroup.modifiers).
+  // Derivado: sus componentes, adjuntados por listCombos (mismo patrón que ModifierGroup.modifiers).
   items?: ComboItem[]
   // F4 — undefined cuando se pidió con `?lang=` resuelto (el backend no duplica el payload).
   translations?: Record<string, ItemTranslation> | null
@@ -318,17 +318,6 @@ export interface ComboPayload {
 // F3 — Food cost: costo de receta + margen de un ítem/combo (espejo de restaurant/usecases/food-cost.ts).
 // `cost`/`margin`/`marginPercent` null = inventario no montado en este hotel (available:false) o ítem sin
 // receta (hasRecipe:false) — en AMBOS casos el margen NO se muestra (no "0%" ni "100%" falso).
-export interface FoodCost {
-  menuItemId?: string
-  comboId?: string
-  price: number
-  cost: number | null
-  hasRecipe?: boolean
-  complete?: boolean
-  available: boolean
-  margin: number | null
-  marginPercent: number | null
-}
 export interface FoodCostReportRow {
   id: string
   kind: 'item' | 'combo'
@@ -481,14 +470,11 @@ export const RestaurantService = {
     const res = await http.get<{ data: Combo[]; total: number }>(`/restaurant/combos${qs}`)
     return res.data ?? []
   },
-  getCombo: (id: string): Promise<Combo> => http.get(`/restaurant/combos/${id}`),
   createCombo: (data: ComboPayload): Promise<Combo> => http.post('/restaurant/combos', data),
   updateCombo: (id: string, data: Partial<ComboPayload>): Promise<Combo> => http.put(`/restaurant/combos/${id}`, data),
   deleteCombo: (id: string): Promise<void> => http.delete(`/restaurant/combos/${id}`),
 
   // ─── Food cost (F3) — gate 'restaurant-catalog:view', solo hotel_admin lo ve ───
-  itemFoodCost: (id: string): Promise<FoodCost> => http.get(`/restaurant/menu-items/${id}/food-cost`),
-  comboFoodCost: (id: string): Promise<FoodCost> => http.get(`/restaurant/combos/${id}/food-cost`),
   async foodCostReport(): Promise<FoodCostReportRow[]> {
     const res = await http.get<{ data: FoodCostReportRow[]; total: number }>('/restaurant/food-cost/report')
     return res.data ?? []

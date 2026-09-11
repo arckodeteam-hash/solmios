@@ -4,7 +4,7 @@
 import { ref, computed, onMounted } from 'vue'
 import {
   RestaurantService,
-  type Station, type MenuCategory, type MenuItem, type ModifierGroup, type Combo, type ComboPayload,
+  type Station, type MenuCategory, type MenuItem, type ModifierGroup, type Modifier, type Combo, type ComboPayload,
   type FoodCostReportRow, type ItemTranslation, type AllergenTag,
   ALLERGEN_OPTIONS, ALLERGEN_LABELS, DEFAULT_ALERT_MINUTES,
 } from '@/services/Restaurant.service'
@@ -18,6 +18,8 @@ import SectionCard from '@/components/ui/SectionCard.vue'
 import PillTabs, { type PillTab } from '@/components/ui/PillTabs.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import AppPopover from '@/components/ui/AppPopover.vue'
+import type { Rect } from '@/utils/popover-position'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
@@ -132,9 +134,9 @@ async function load() {
     combos.value = combosRes.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
     inventory.value = inv
     foodCostRows.value = foodCostRes
-    currency.value = (settings as any)?.hotel?.currency || 'USD'
-    defaultTaxName.value = (settings as any)?.hotel?.taxName || 'impuesto'
-    defaultTaxRate.value = Number((settings as any)?.hotel?.taxRate) || 0
+    currency.value = settings?.hotel?.currency || 'USD'
+    defaultTaxName.value = settings?.hotel?.taxName || 'impuesto'
+    defaultTaxRate.value = Number(settings?.hotel?.taxRate) || 0
   } catch (e: unknown) {
     toast.error(e instanceof Error ? e.message : 'No se pudo cargar la carta')
   } finally {
@@ -324,11 +326,18 @@ function editItem(i: MenuItem) {
     },
   }
 }
+// #217: guard sincrónico contra doble-click — se setea ANTES del primer await, así un segundo click
+// en el mismo tick (sin esperar el repintado del :disabled) igual encuentra la función ya ocupada.
+// Mismo patrón que `busyLine` en comanda.vue.
+const togglingItemId = ref<string | null>(null)
 async function toggleAvailability(i: MenuItem) {
+  if (togglingItemId.value) return
+  togglingItemId.value = i.id
   try {
     await RestaurantService.setItemAvailability(i.id, i.available ? 0 : 1)
     await load()
   } catch (e: unknown) { toast.error(e instanceof Error ? e.message : 'No se pudo cambiar') }
+  finally { togglingItemId.value = null }
 }
 function delItem(i: MenuItem) {
   askConfirm({
@@ -337,6 +346,20 @@ function delItem(i: MenuItem) {
     run: async () => { await RestaurantService.deleteItem(i.id); await load() },
   })
 }
+
+// ─── Menú "⋯" de acciones secundarias por fila (#217) — en 375px 7 botones de texto desbordan la
+// fila; solo Editar y Disponible quedan visibles, el resto vive acá. Un solo AppPopover compartido,
+// anclado al botón "⋯" que se clickeó (mismo patrón que el menú del planning en ReservationCalendar).
+const rowActionsMenu = ref<{ kind: 'item' | 'combo'; id: string; anchor: Rect } | null>(null)
+const rowActionsItem = computed<MenuItem | null>(() =>
+  rowActionsMenu.value?.kind === 'item' ? items.value.find((i) => i.id === rowActionsMenu.value!.id) ?? null : null)
+const rowActionsCombo = computed<Combo | null>(() =>
+  rowActionsMenu.value?.kind === 'combo' ? combos.value.find((c) => c.id === rowActionsMenu.value!.id) ?? null : null)
+function openRowActions(e: MouseEvent, kind: 'item' | 'combo', id: string) {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  rowActionsMenu.value = { kind, id, anchor: { left: r.left, top: r.top, width: r.width, height: r.height } }
+}
+function closeRowActions() { rowActionsMenu.value = null }
 
 // ─── Reordenar por drag-and-drop (F8) ───
 // Mismo patrón HTML5 nativo YA usado en pages/maintenance/index.vue (draggable + @dragstart/
@@ -505,6 +528,52 @@ async function onItemDrop() {
   }
 }
 
+// Combos: mismo reorden por arrastre que estaciones/categorías/ítems (F8) — el handle "⋮⋮" es el
+// único elemento draggable de la fila, así "Editar"/"⋯" nunca disparan un drag.
+const draggedCombo = ref<Combo | null>(null)
+let combosSnapshot: Combo[] = []
+function onComboDragStart(e: DragEvent, c: Combo) {
+  combosSnapshot = combos.value.map((x) => ({ ...x }))
+  draggedCombo.value = c
+  e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('text/plain', c.id)
+}
+function onComboDragOver(target: Combo) {
+  const dragged = draggedCombo.value
+  if (!dragged || dragged.id === target.id) return
+  const list = combos.value
+  const from = list.findIndex((c) => c.id === dragged.id)
+  const to = list.findIndex((c) => c.id === target.id)
+  if (from === -1 || to === -1 || from === to) return
+  list.splice(to, 0, list.splice(from, 1)[0])
+}
+function onComboDragEnd() {
+  if (draggedCombo.value) {
+    combos.value = combosSnapshot
+    draggedCombo.value = null
+  }
+}
+async function onComboDrop() {
+  const dragged = draggedCombo.value
+  draggedCombo.value = null
+  if (!dragged) return
+  const beforeIndex = new Map(combosSnapshot.map((c, idx) => [c.id, idx]))
+  const beforeSortOrder = new Map(combosSnapshot.map((c) => [c.id, c.sortOrder ?? 0]))
+  const changed = combos.value
+    .map((c, idx) => ({ c, idx }))
+    .filter(({ c, idx }) => beforeIndex.get(c.id) !== idx)
+    .map(({ c, idx }) => ({ entity: c, newSortOrder: idx, oldSortOrder: beforeSortOrder.get(c.id) ?? idx }))
+  if (!changed.length) return
+  const ok = await persistOrder(changed, (id, sortOrder) => RestaurantService.updateCombo(id, { sortOrder }))
+  if (ok) {
+    for (const c of changed) c.entity.sortOrder = c.newSortOrder
+    toast.success('Orden actualizado')
+  } else {
+    combos.value = combosSnapshot
+    toast.error('No se pudo guardar el nuevo orden')
+  }
+}
+
 // ─── Combos/paquetes (F2) — modal custom (no FormModal: necesita selector multi-ítem + qty
 // por componente, que el schema plano de FormModal no puede expresar) ───
 interface ComboDraft {
@@ -515,7 +584,6 @@ interface ComboDraft {
   taxRate: number | string
   imageUrl: string
   available: string
-  sortOrder: number | string
   // menuItemId → cantidad. Solo los ítems marcados entran a `items` del payload.
   selected: Record<string, number>
 }
@@ -524,17 +592,31 @@ const savingCombo = ref(false)
 
 const itemName = (id: string): string => items.value.find((i) => i.id === id)?.name || '—'
 const comboItemCount = (c: Combo): number => (c.items ?? []).length
+// F8: igual que ítems/categorías — el orden se calcula al crear (al final de la lista); al editar
+// NO se reenvía (merge parcial), el orden lo gestiona solo el drag-and-drop.
+function nextComboSortOrder(): number {
+  return combos.value.length ? Math.max(...combos.value.map((c) => c.sortOrder ?? 0)) + 1 : 0
+}
+// #217: el modal no acepta multipart — igual que FormModal.onFile, la imagen viaja como dataURL en JSON.
+function onComboFile(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!comboModal.value) return
+  if (!file) { comboModal.value.imageUrl = ''; return }
+  const reader = new FileReader()
+  reader.onload = () => { if (comboModal.value) comboModal.value.imageUrl = String(reader.result) }
+  reader.readAsDataURL(file)
+}
 
 function newCombo() {
   if (!items.value.length) { toast.warning('Cargá ítems a la carta primero'); return }
-  comboModal.value = { name: '', description: '', price: '', taxRate: '', imageUrl: '', available: '1', sortOrder: '0', selected: {} }
+  comboModal.value = { name: '', description: '', price: '', taxRate: '', imageUrl: '', available: '1', selected: {} }
 }
 function editCombo(c: Combo) {
   const selected: Record<string, number> = {}
   for (const it of c.items ?? []) selected[it.menuItemId] = it.quantity
   comboModal.value = {
     id: c.id, name: c.name, description: c.description ?? '', price: c.price, taxRate: c.taxRate ?? '',
-    imageUrl: c.imageUrl ?? '', available: String(c.available ?? 1), sortOrder: c.sortOrder ?? 0, selected,
+    imageUrl: c.imageUrl ?? '', available: String(c.available ?? 1), selected,
   }
 }
 function toggleComboItem(menuItemId: string) {
@@ -562,9 +644,9 @@ async function saveCombo() {
     taxRate: m.taxRate !== '' && m.taxRate !== undefined ? Number(m.taxRate) : undefined,
     imageUrl: m.imageUrl.trim() || undefined,
     available: Number(m.available),
-    sortOrder: Number(m.sortOrder) || 0,
     items: compEntries.map(([menuItemId, quantity], idx) => ({ menuItemId, quantity, sortOrder: idx })),
   }
+  if (!m.id) payload.sortOrder = nextComboSortOrder()
   savingCombo.value = true
   try {
     if (m.id) await RestaurantService.updateCombo(m.id, payload)
@@ -636,14 +718,16 @@ async function addRecipeLine() {
     toast.error(e instanceof Error ? e.message : 'No se pudo guardar')
   }
 }
-async function removeRecipeLine(r: MenuItemRecipe) {
+function removeRecipeLine(r: MenuItemRecipe) {
   if (!recipeItem.value) return
-  try {
-    await InventarioService.setRecipe({ menuItemId: r.menuItemId, inventoryItemId: r.inventoryItemId, quantity: 0 })
-    recipeLines.value = await InventarioService.listRecipes(recipeItem.value.id)
-  } catch (e: unknown) {
-    toast.error(e instanceof Error ? e.message : 'No se pudo quitar')
-  }
+  askConfirm({
+    title: 'Quitar insumo', message: `¿Quitar "${invName(r.inventoryItemId)}" de la receta?`,
+    confirmLabel: 'Quitar', danger: true,
+    run: async () => {
+      await InventarioService.setRecipe({ menuItemId: r.menuItemId, inventoryItemId: r.inventoryItemId, quantity: 0 })
+      if (recipeItem.value) recipeLines.value = await InventarioService.listRecipes(recipeItem.value.id)
+    },
+  })
 }
 // Insumos activos y aún no usados en esta receta (evita duplicar líneas y ofrecer insumos discontinuados).
 const availableInventory = computed(() => {
@@ -657,14 +741,24 @@ const ICON_PLUS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
 const modifierItem = ref<MenuItem | null>(null)
 const modifierGroups = ref<ModifierGroup[]>([])
 const loadingModifiers = ref(false)
-const newGroup = ref<{ name: string; selectionType: 'single' | 'multiple'; required: boolean }>({ name: '', selectionType: 'single', required: false })
+function blankGroupDraft() { return { name: '', selectionType: 'single' as const, required: false, minSelect: '' as number | string, maxSelect: '' as number | string } }
+const newGroup = ref<{ name: string; selectionType: 'single' | 'multiple'; required: boolean; minSelect: number | string; maxSelect: number | string }>(blankGroupDraft())
+// #217: mismo modal de alta sirve para editar — `editingGroupId` no-nulo cambia el submit de create a
+// update (mismo id antes y después, AC #2) y el botón/título pasan a modo edición.
+const editingGroupId = ref<string | null>(null)
 const newModifierByGroup = ref<Record<string, { name: string; priceDelta: number | string; inventoryItemId: string }>>({})
+// #217: igual que el grupo — no-nulo cuando el form por-grupo está editando esa opción en vez de crear una.
+const editingModifierId = ref<string | null>(null)
+const editingModifierGroupId = ref<string | null>(null)
 
 function blankModifierDraft() { return { name: '', priceDelta: 0, inventoryItemId: '' } }
 
 async function openModifiers(i: MenuItem) {
   modifierItem.value = i
-  newGroup.value = { name: '', selectionType: 'single', required: false }
+  newGroup.value = blankGroupDraft()
+  editingGroupId.value = null
+  editingModifierId.value = null
+  editingModifierGroupId.value = null
   newModifierByGroup.value = {}
   loadingModifiers.value = true
   modifierGroups.value = []
@@ -682,47 +776,77 @@ async function reloadModifierGroups() {
   modifierGroups.value = await RestaurantService.listModifierGroups(modifierItem.value.id)
   for (const g of modifierGroups.value) if (!newModifierByGroup.value[g.id]) newModifierByGroup.value[g.id] = blankModifierDraft()
 }
-async function addGroup() {
+function editGroup(g: ModifierGroup) {
+  editingGroupId.value = g.id
+  newGroup.value = { name: g.name, selectionType: g.selectionType, required: !!g.required, minSelect: g.minSelect ?? '', maxSelect: g.maxSelect ?? '' }
+}
+function cancelGroupEdit() {
+  editingGroupId.value = null
+  newGroup.value = blankGroupDraft()
+}
+async function saveGroup() {
   if (!modifierItem.value) return
   if (!newGroup.value.name.trim()) { toast.warning('Ponele un nombre al grupo'); return }
+  const payload = {
+    name: newGroup.value.name.trim(), selectionType: newGroup.value.selectionType, required: newGroup.value.required ? 1 : 0,
+    minSelect: newGroup.value.minSelect !== '' ? Number(newGroup.value.minSelect) : undefined,
+    maxSelect: newGroup.value.maxSelect !== '' ? Number(newGroup.value.maxSelect) : undefined,
+  }
   try {
-    await RestaurantService.createModifierGroup(modifierItem.value.id, {
-      name: newGroup.value.name.trim(), selectionType: newGroup.value.selectionType, required: newGroup.value.required ? 1 : 0,
-    })
-    newGroup.value = { name: '', selectionType: 'single', required: false }
+    if (editingGroupId.value) await RestaurantService.updateModifierGroup(editingGroupId.value, payload)
+    else await RestaurantService.createModifierGroup(modifierItem.value.id, payload)
+    cancelGroupEdit()
     await reloadModifierGroups()
   } catch (e: unknown) {
-    toast.error(e instanceof Error ? e.message : 'No se pudo crear el grupo')
+    toast.error(e instanceof Error ? e.message : 'No se pudo guardar el grupo')
   }
 }
-async function removeGroup(g: ModifierGroup) {
-  try {
-    await RestaurantService.deleteModifierGroup(g.id)
-    await reloadModifierGroups()
-  } catch (e: unknown) {
-    toast.error(e instanceof Error ? e.message : 'No se pudo eliminar el grupo')
-  }
+function removeGroup(g: ModifierGroup) {
+  askConfirm({
+    title: 'Eliminar grupo', message: `¿Eliminar el grupo "${g.name}"? Se eliminan también sus opciones.`,
+    confirmLabel: 'Eliminar', danger: true,
+    run: async () => {
+      if (editingGroupId.value === g.id) cancelGroupEdit()
+      await RestaurantService.deleteModifierGroup(g.id)
+      await reloadModifierGroups()
+    },
+  })
 }
-async function addModifier(g: ModifierGroup) {
+function editModifier(m: Modifier) {
+  editingModifierId.value = m.id
+  editingModifierGroupId.value = m.groupId
+  newModifierByGroup.value[m.groupId] = { name: m.name, priceDelta: m.priceDelta, inventoryItemId: m.inventoryItemId ?? '' }
+}
+function cancelModifierEdit(groupId: string) {
+  editingModifierId.value = null
+  editingModifierGroupId.value = null
+  newModifierByGroup.value[groupId] = blankModifierDraft()
+}
+async function saveModifier(g: ModifierGroup) {
   const draft = newModifierByGroup.value[g.id]
   if (!draft?.name?.trim()) { toast.warning('Ponele un nombre a la opción'); return }
   const priceDelta = Number(draft.priceDelta)
   if (!Number.isFinite(priceDelta)) { toast.warning('Ajuste de precio inválido'); return }
   try {
-    await RestaurantService.createModifier(g.id, { name: draft.name.trim(), priceDelta, inventoryItemId: draft.inventoryItemId || undefined })
-    newModifierByGroup.value[g.id] = blankModifierDraft()
+    const payload = { name: draft.name.trim(), priceDelta, inventoryItemId: draft.inventoryItemId || undefined }
+    if (editingModifierId.value) await RestaurantService.updateModifier(editingModifierId.value, payload)
+    else await RestaurantService.createModifier(g.id, payload)
+    cancelModifierEdit(g.id)
     await reloadModifierGroups()
   } catch (e: unknown) {
-    toast.error(e instanceof Error ? e.message : 'No se pudo agregar la opción')
+    toast.error(e instanceof Error ? e.message : 'No se pudo guardar la opción')
   }
 }
-async function removeModifier(m: { id: string }) {
-  try {
-    await RestaurantService.deleteModifier(m.id)
-    await reloadModifierGroups()
-  } catch (e: unknown) {
-    toast.error(e instanceof Error ? e.message : 'No se pudo quitar la opción')
-  }
+function removeModifier(m: Modifier) {
+  askConfirm({
+    title: 'Quitar opción', message: `¿Quitar "${m.name}"?`,
+    confirmLabel: 'Quitar', danger: true,
+    run: async () => {
+      if (editingModifierId.value === m.id) cancelModifierEdit(m.groupId)
+      await RestaurantService.deleteModifier(m.id)
+      await reloadModifierGroups()
+    },
+  })
 }
 
 // ─── Traducciones (F4) — categorías (solo name), ítems y combos (name + description). El español
@@ -893,7 +1017,7 @@ async function saveTranslations() {
             <div class="min-w-0 flex items-center gap-3">
               <span v-if="editPerm && activeCategoryId !== 'all'" draggable="true" @dragstart="onItemDragStart($event, i)" @dragend="onItemDragEnd"
                 class="shrink-0 cursor-grab active:cursor-grabbing text-text-muted select-none" title="Arrastrar para reordenar">⋮⋮</span>
-              <img v-if="i.imageUrl" :src="i.imageUrl" class="w-10 h-10 rounded-lg object-cover shrink-0 border border-border" />
+              <img v-if="i.imageUrl" :src="i.imageUrl" :alt="i.name" class="w-10 h-10 rounded-lg object-cover shrink-0 border border-border" />
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
                   <!-- F6: destacado/plato del día — informativo, sin regla de negocio. -->
@@ -920,12 +1044,12 @@ async function saveTranslations() {
                 class="text-[10px] px-1.5 py-0.5 rounded font-bold" :class="marginClass(foodCostFor(i.id)!.marginPercent!)">
                 {{ foodCostFor(i.id)!.marginPercent }}% margen
               </span>
-              <button v-if="editPerm && inventory.length" @click="openRecipe(i)" class="text-xs font-bold text-teal hover:underline">Receta</button>
-              <button v-if="editPerm" @click="openModifiers(i)" class="text-xs font-bold text-teal hover:underline">Modificadores</button>
-              <button v-if="editPerm" @click="openTranslations('item', i)" class="text-xs font-bold text-teal hover:underline">Traducciones</button>
-              <button v-if="editPerm" @click="toggleAvailability(i)" class="text-xs font-bold text-gold hover:underline">{{ i.available ? 'Agotar' : 'Reactivar' }}</button>
+              <!-- #217: solo Editar y Disponible quedan visibles — el resto (Receta/Modificadores/
+                   Traducciones/Eliminar) vive en "⋯" para no desbordar en 375px. -->
+              <button v-if="editPerm" :disabled="togglingItemId === i.id" @click="toggleAvailability(i)" class="text-xs font-bold text-gold hover:underline disabled:opacity-50">{{ i.available ? 'Agotar' : 'Reactivar' }}</button>
               <button v-if="editPerm" @click="editItem(i)" class="text-xs font-bold text-navy hover:underline">Editar</button>
-              <button v-if="deletePerm" @click="delItem(i)" class="text-xs font-bold text-coral hover:underline">Eliminar</button>
+              <button v-if="editPerm || deletePerm" @click="openRowActions($event, 'item', i.id)" aria-label="Más acciones" title="Más acciones"
+                class="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-text-muted hover:bg-navy/10 hover:text-navy font-black">⋯</button>
             </div>
           </div>
         </div>
@@ -940,9 +1064,15 @@ async function saveTranslations() {
         </template>
         <EmptyState v-if="!combos.length" title="Sin combos" message="Armá un paquete con varios ítems de la carta a un precio propio." />
         <div v-else class="divide-y divide-border">
-          <div v-for="c in combos" :key="c.id" class="flex items-center justify-between py-2.5 gap-3">
+          <!-- F8/#217: mismo reorden por arrastre que estaciones/categorías/ítems. -->
+          <div v-for="c in combos" :key="c.id" class="flex items-center justify-between py-2.5 gap-3 transition-opacity"
+            :class="draggedCombo?.id === c.id ? 'opacity-50' : ''"
+            @dragover.prevent="onComboDragOver(c)"
+            @drop.prevent="onComboDrop">
             <div class="min-w-0 flex items-center gap-3">
-              <img v-if="c.imageUrl" :src="c.imageUrl" class="w-10 h-10 rounded-lg object-cover shrink-0 border border-border" />
+              <span v-if="editPerm" draggable="true" @dragstart="onComboDragStart($event, c)" @dragend="onComboDragEnd"
+                class="shrink-0 cursor-grab active:cursor-grabbing text-text-muted select-none" title="Arrastrar para reordenar">⋮⋮</span>
+              <img v-if="c.imageUrl" :src="c.imageUrl" :alt="c.name" class="w-10 h-10 rounded-lg object-cover shrink-0 border border-border" />
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
                   <span class="font-bold text-navy truncate">{{ c.name }}</span>
@@ -964,9 +1094,9 @@ async function saveTranslations() {
                 {{ foodCostFor(c.id)!.marginPercent }}% margen
               </span>
               <span v-if="editPerm && foodCostFor(c.id)?.complete === false" class="text-warning text-sm" title="Costo incompleto: al menos un componente sin receta">⚠</span>
-              <button v-if="editPerm" @click="openTranslations('combo', c)" class="text-xs font-bold text-teal hover:underline">Traducciones</button>
               <button v-if="editPerm" @click="editCombo(c)" class="text-xs font-bold text-navy hover:underline">Editar</button>
-              <button v-if="deletePerm" @click="delCombo(c)" class="text-xs font-bold text-coral hover:underline">Eliminar</button>
+              <button v-if="editPerm || deletePerm" @click="openRowActions($event, 'combo', c.id)" aria-label="Más acciones" title="Más acciones"
+                class="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-text-muted hover:bg-navy/10 hover:text-navy font-black">⋯</button>
             </div>
           </div>
         </div>
@@ -1063,7 +1193,10 @@ async function saveTranslations() {
                 <span class="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-navy/5 text-navy font-bold">{{ g.selectionType === 'single' ? 'Única' : 'Múltiple' }}</span>
                 <span v-if="g.required" class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-gold/10 text-gold font-bold">Obligatorio</span>
               </div>
-              <button @click="removeGroup(g)" class="text-xs font-bold text-coral hover:underline">Eliminar grupo</button>
+              <div class="flex items-center gap-3 shrink-0">
+                <button @click="editGroup(g)" class="text-xs font-bold text-navy hover:underline">Editar</button>
+                <button @click="removeGroup(g)" class="text-xs font-bold text-coral hover:underline">Eliminar grupo</button>
+              </div>
             </div>
 
             <div class="mt-2 divide-y divide-border">
@@ -1071,6 +1204,7 @@ async function saveTranslations() {
                 <span class="text-sm text-navy">{{ m.name }}</span>
                 <div class="flex items-center gap-2">
                   <span class="text-xs font-bold tabular-nums" :class="m.priceDelta < 0 ? 'text-coral' : 'text-navy'">{{ m.priceDelta >= 0 ? '+' : '' }}{{ money(m.priceDelta) }}</span>
+                  <button @click="editModifier(m)" class="text-xs font-bold text-navy hover:underline">Editar</button>
                   <button @click="removeModifier(m)" class="text-xs font-bold text-coral hover:underline">Quitar</button>
                 </div>
               </div>
@@ -1095,27 +1229,40 @@ async function saveTranslations() {
                   <option v-for="inv in inventory" :key="inv.id" :value="inv.id">{{ inv.name }}</option>
                 </select>
               </div>
-              <button @click="addModifier(g)" class="shrink-0 px-4 py-2 rounded-lg bg-navy text-white text-sm font-bold">Agregar</button>
+              <button v-if="editingModifierGroupId === g.id" @click="cancelModifierEdit(g.id)" class="shrink-0 px-3 py-2 text-sm font-bold text-text-secondary">Cancelar</button>
+              <button @click="saveModifier(g)" class="shrink-0 px-4 py-2 rounded-lg bg-navy text-white text-sm font-bold">{{ editingModifierGroupId === g.id ? 'Guardar' : 'Agregar' }}</button>
             </div>
           </div>
         </div>
 
-        <div class="flex items-end gap-2 border-t-2 border-navy/10 pt-3">
-          <div class="flex-1 min-w-0">
-            <label for="restaurante-carta-nuevo-grupo" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nuevo grupo</label>
-            <input id="restaurante-carta-nuevo-grupo" name="name" v-model="newGroup.name" type="text" placeholder="ej. Tamaño" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+        <div class="border-t-2 border-navy/10 pt-3 space-y-2">
+          <p class="text-[10px] font-bold text-text-muted uppercase">{{ editingGroupId ? 'Editar grupo' : 'Nuevo grupo' }}</p>
+          <div class="flex flex-wrap items-end gap-2">
+            <div class="flex-1 min-w-[140px]">
+              <label for="restaurante-carta-nuevo-grupo" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Nombre</label>
+              <input id="restaurante-carta-nuevo-grupo" name="name" v-model="newGroup.name" type="text" placeholder="ej. Tamaño" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+            </div>
+            <div class="w-32 shrink-0">
+              <label for="restaurante-carta-seleccion" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Selección</label>
+              <select id="restaurante-carta-seleccion" name="selectionType" v-model="newGroup.selectionType" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
+                <option value="single">Única</option>
+                <option value="multiple">Múltiple</option>
+              </select>
+            </div>
+            <div class="w-20 shrink-0">
+              <label for="restaurante-carta-min-select" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Mín.</label>
+              <input id="restaurante-carta-min-select" name="minSelect" v-model="newGroup.minSelect" type="number" min="0" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+            </div>
+            <div class="w-20 shrink-0">
+              <label for="restaurante-carta-max-select" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Máx.</label>
+              <input id="restaurante-carta-max-select" name="maxSelect" v-model="newGroup.maxSelect" type="number" min="0" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy" />
+            </div>
+            <label class="shrink-0 flex items-center gap-1.5 text-xs font-bold text-navy pb-2">
+              <input id="restaurante-carta-obligatorio" name="required" v-model="newGroup.required" type="checkbox" /> Obligatorio
+            </label>
+            <button v-if="editingGroupId" @click="cancelGroupEdit" class="shrink-0 px-3 py-2 text-sm font-bold text-text-secondary">Cancelar</button>
+            <button @click="saveGroup" class="shrink-0 px-4 py-2 rounded-lg bg-navy text-white text-sm font-bold">{{ editingGroupId ? 'Guardar cambios' : 'Crear grupo' }}</button>
           </div>
-          <div class="w-32 shrink-0">
-            <label for="restaurante-carta-seleccion" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Selección</label>
-            <select id="restaurante-carta-seleccion" name="selectionType" v-model="newGroup.selectionType" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy">
-              <option value="single">Única</option>
-              <option value="multiple">Múltiple</option>
-            </select>
-          </div>
-          <label class="shrink-0 flex items-center gap-1.5 text-xs font-bold text-navy pb-2">
-            <input id="restaurante-carta-obligatorio" name="required" v-model="newGroup.required" type="checkbox" /> Obligatorio
-          </label>
-          <button @click="addGroup" class="shrink-0 px-4 py-2 rounded-lg bg-navy text-white text-sm font-bold">Crear grupo</button>
         </div>
       </div>
     </AppModal>
@@ -1146,6 +1293,14 @@ async function saveTranslations() {
           <div class="sm:col-span-2">
             <label for="restaurante-carta-descripcion" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Descripción</label>
             <textarea id="restaurante-carta-descripcion" name="description" v-model="comboModal.description" rows="2" class="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:border-navy"></textarea>
+          </div>
+          <div class="sm:col-span-2">
+            <label for="restaurante-carta-combo-imagen" class="text-[10px] font-bold text-text-muted uppercase mb-1 block">Foto del combo</label>
+            <div class="flex items-center gap-3">
+              <img v-if="comboModal.imageUrl" :src="comboModal.imageUrl" alt="Vista previa" class="w-14 h-14 rounded-lg object-cover shrink-0 border border-border" />
+              <input id="restaurante-carta-combo-imagen" name="imageUrl" type="file" accept="image/*" @change="onComboFile"
+                class="w-full text-sm text-text-secondary file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-navy file:text-white file:text-xs file:font-bold file:cursor-pointer cursor-pointer" />
+            </div>
           </div>
         </div>
 
@@ -1206,7 +1361,7 @@ async function saveTranslations() {
           </div>
         </div>
 
-        <p class="text-[10px] text-text-muted text-right">{{ completedLangsCount }} / {{ supportedLangs.length }} idiomas completados</p>
+        <p class="text-[10px] text-text-muted text-right">{{ completedLangsCount }} / {{ editableLangs.length }} idiomas completados</p>
       </div>
       <template #footer>
         <button @click="translationsModal = null" class="px-4 py-2 rounded-lg border-2 border-border text-navy font-bold text-sm">Cancelar</button>
@@ -1215,6 +1370,22 @@ async function saveTranslations() {
         </button>
       </template>
     </AppModal>
+
+    <!-- #217: acciones secundarias de la fila de ítem/combo (Receta, Modificadores, Traducciones,
+         Eliminar) — Editar y Disponible quedan siempre visibles, el resto vive acá. -->
+    <AppPopover :open="!!rowActionsMenu" :anchor="rowActionsMenu?.anchor ?? null" :width="200"
+      aria-label="Acciones de la fila" @close="closeRowActions">
+      <div v-if="rowActionsItem" class="p-1.5">
+        <button v-if="editPerm && inventory.length" @click="openRecipe(rowActionsItem); closeRowActions()" class="w-full text-left px-3 py-2 rounded-lg text-xs font-bold text-teal hover:bg-navy/5">Receta</button>
+        <button v-if="editPerm" @click="openModifiers(rowActionsItem); closeRowActions()" class="w-full text-left px-3 py-2 rounded-lg text-xs font-bold text-teal hover:bg-navy/5">Modificadores</button>
+        <button v-if="editPerm" @click="openTranslations('item', rowActionsItem); closeRowActions()" class="w-full text-left px-3 py-2 rounded-lg text-xs font-bold text-teal hover:bg-navy/5">Traducciones</button>
+        <button v-if="deletePerm" @click="delItem(rowActionsItem); closeRowActions()" class="w-full text-left px-3 py-2 rounded-lg text-xs font-bold text-coral hover:bg-coral/5">Eliminar</button>
+      </div>
+      <div v-else-if="rowActionsCombo" class="p-1.5">
+        <button v-if="editPerm" @click="openTranslations('combo', rowActionsCombo); closeRowActions()" class="w-full text-left px-3 py-2 rounded-lg text-xs font-bold text-teal hover:bg-navy/5">Traducciones</button>
+        <button v-if="deletePerm" @click="delCombo(rowActionsCombo); closeRowActions()" class="w-full text-left px-3 py-2 rounded-lg text-xs font-bold text-coral hover:bg-coral/5">Eliminar</button>
+      </div>
+    </AppPopover>
 
     <FormModal v-if="modal" :title="modal.title" :fields="modal.fields" :submit-label="modal.submitLabel" :loading="saving"
       @close="modal = null" @submit="modal.onSubmit" />
