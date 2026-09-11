@@ -29,3 +29,27 @@ export function isMissingTableError(e: unknown): boolean {
   const msg = (e instanceof Error ? e.message : String(e)).toLowerCase()
   return msg.includes('no such table') || (msg.includes('relation') && msg.includes('does not exist'))
 }
+
+/**
+ * #239 — Cierre estándar de un bloque de `migrate-db.ts`. El archivo ya usaba este criterio en
+ * `ensureRestaurantOrderNumberIndex` y `ensureBusinessDateColumnsAndIndexes`; vive acá para que todos
+ * los bloques lo compartan en vez de repetirlo — o, como pasaba en nueve de ellos, no aplicarlo.
+ *
+ * Dos causas que NO son lo mismo y venían confundidas bajo un `console.log`:
+ *  - la tabla todavía no existe → `RUN_MIGRATE=1` no corrió; el paso se aplica en la próxima vuelta.
+ *    Es un aviso y la migración sigue.
+ *  - cualquier OTRO fallo (permisos, datos corruptos, disco) → RELANZA, para que `bun run migrate`
+ *    termine con exit ≠ 0 y el deploy corte. Sin esto la migración salía en 0 con la garantía
+ *    ausente: así es como un UNIQUE de dinero puede faltar en producción sin que nadie se entere.
+ *
+ * `consequence` no es decorativo: es lo que lee el operador para decidir si el deploy sigue. Dice qué
+ * se rompe, no "falló X".
+ */
+export function failMigrationStep(e: unknown, step: { what: string; missingTable: string; consequence: string }): void {
+  const msg = e instanceof Error ? e.message : String(e)
+  if (isMissingTableError(e)) {
+    console.warn(`⚠ ${step.what}: tabla ${step.missingTable} aún no migrada (correr RUN_MIGRATE=1) — ${msg.slice(0, 120)}`)
+    return
+  }
+  throw new Error(`${step.what}: ${step.consequence} Motivo: ${msg}`, { cause: e })
+}
