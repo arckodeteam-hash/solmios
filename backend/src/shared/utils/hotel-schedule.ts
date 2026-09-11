@@ -61,6 +61,32 @@ export function effectiveCheckOutTime(reservation: ReservationLike, hotel: Hotel
   return normalizeTime(reservation?.checkOutTime) ?? hotelCheckOutTime(hotel)
 }
 
+/**
+ * "Hoy" ('YYYY-MM-DD') EN LA ZONA DEL HOTEL para el instante dado. `new Date().toISOString().slice(0,10)`
+ * es la fecha UTC: en America/Santo_Domingo (UTC-4) a las 20:00 ya es "mañana" en UTC, y cualquier
+ * regla de "llega hoy" / "vigente hoy" se corre un día durante cuatro horas por noche. Reusar esto,
+ * no `toISOString()`, cada vez que una regla de negocio diga "hoy".
+ */
+export function hotelToday(hotel: HotelLike, now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: hotelTimezone(hotel), year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now)
+  const at = (type: string) => parts.find(p => p.type === type)?.value ?? ''
+  return `${at('year')}-${at('month')}-${at('day')}`
+}
+
+/**
+ * ¿La estadía cubre el día `day`? Llegada ≤ día ≤ salida, comparando fechas 'YYYY-MM-DD' (la noche de
+ * salida cuenta: el huésped todavía está en la habitación esa mañana). Sin llegada → false; sin salida
+ * → abierta. Regla compartida entre "quién está alojado" (reservas) y "a qué reserva se puede cargar
+ * una cuenta" (restaurant): los módulos no se importan entre sí, la regla vive acá.
+ */
+export function stayCoversDate(stay: { checkIn?: unknown; checkOut?: unknown }, day: string): boolean {
+  const checkIn = String(stay.checkIn ?? '').slice(0, 10)
+  const checkOut = String(stay.checkOut ?? '').slice(0, 10)
+  return !!checkIn && checkIn <= day && (!checkOut || checkOut >= day)
+}
+
 /** Desfase de `timeZone` respecto de UTC, en ms, para el instante dado (contempla DST). */
 function tzOffsetMs(instant: Date, timeZone: string): number {
   const parts = new Intl.DateTimeFormat('en-US', {

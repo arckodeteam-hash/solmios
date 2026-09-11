@@ -11,7 +11,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  RestaurantService, isLineActive,
+  RestaurantService, isLineActive, roomServiceLabel,
   type OrderWithLines, type MenuCategory, type MenuItem, type OrderLine, type ModifierGroup, type Combo,
   type AllergenTag, type LineStatus,
   ORDER_STATUS_LABELS, ORDER_TYPE_LABELS, LINE_STATUS_LABELS, LINE_STATUS_BADGE, ALLERGEN_LABELS,
@@ -413,6 +413,8 @@ function cancel() {
           <h1 class="text-xl sm:text-2xl font-black text-navy mt-1">{{ order.number || 'Comanda' }}</h1>
           <p class="text-sm text-text-muted">
             {{ ORDER_TYPE_LABELS[order.type] }} ·
+            <!-- #209 — room service: "Hab. 204 · Pérez" (el server lo resuelve desde la reserva de la comanda). -->
+            <template v-if="roomServiceLabel(order)"><span class="font-bold text-navy" data-testid="room-label">{{ roomServiceLabel(order) }}</span> · </template>
             <span class="font-bold">{{ ORDER_STATUS_LABELS[order.status] }}</span>
             <!-- #210 — comensales: se elige al abrir la comanda en salón (salon.vue). -->
             <template v-if="order.covers"> · {{ order.covers }} comensal(es)</template>

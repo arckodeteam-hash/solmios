@@ -120,6 +120,10 @@ export interface OrderDTO {
   businessDate?: string | null
   // #213 — cuándo se reembolsó (status='refunded'); closedAt conserva el cobro.
   refundedAt?: string | null
+  // #209 — SOLO LECTURA, no son columnas: los calcula usecases/order-labels.ts para room service
+  // ("Hab. 204 · Pérez"). Nunca se mandan a `orders.update` (el ORM los descartaría en silencio).
+  roomNumber?: string
+  guestName?: string
   createdAt: string
   updatedAt: string
 }

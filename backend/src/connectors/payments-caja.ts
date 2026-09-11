@@ -26,7 +26,10 @@ export function paymentsCajaConnector(ctx: ConnectorContext): void {
           amount: payment.amount,
           method: 'cash',
           folioId: payment.folioId, // V23: PaymentDTO no tiene reservationId
+          // #212: el movimiento hereda la referencia (`pos:<orderId>` en el POS → enlace a la comanda
+          // desde la caja) y la descripción del cobro como concepto ("Comanda CMD-2026-0007 · Mesa 3").
           reference: payment.reference,
+          concept: payment.description,
           register,
         })
       } catch {

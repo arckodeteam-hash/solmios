@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import {
   normalizeTime, hotelCheckInTime, hotelCheckOutTime, hotelTimezone,
   effectiveCheckInTime, effectiveCheckOutTime, zonedTimeToUtc, reservationAccessWindow,
+  hotelToday, stayCoversDate,
   DEFAULT_CHECK_IN_TIME, DEFAULT_CHECK_OUT_TIME,
 } from '../hotel-schedule'
 
@@ -39,6 +40,41 @@ describe('horario del hotel', () => {
   it('timezone del hotel con fallback', () => {
     expect(hotelTimezone({ timezone: 'Europe/Madrid' })).toBe('Europe/Madrid')
     expect(hotelTimezone({ timezone: '  ' })).toBe('America/Santo_Domingo')
+  })
+})
+
+describe('hotelToday — "hoy" en la zona del hotel, no en UTC (#209)', () => {
+  // 20:00 del 11/09 en Santo Domingo (UTC-4) = 00:00 UTC del 12/09: en UTC ya es "mañana".
+  const night = new Date('2026-09-12T00:00:00.000Z')
+  it('a las 20:00 locales sigue siendo el 11 para el hotel (UTC diría 12)', () => {
+    expect(night.toISOString().slice(0, 10)).toBe('2026-09-12')
+    expect(hotelToday({ timezone: 'America/Santo_Domingo' }, night)).toBe('2026-09-11')
+  })
+  it('sin timezone cae al default del modelo (Santo Domingo), no a UTC', () => {
+    expect(hotelToday(null, night)).toBe('2026-09-11')
+    expect(hotelToday({ timezone: '' }, night)).toBe('2026-09-11')
+  })
+  it('respeta la zona configurada: en Madrid (UTC+2) el mismo instante ya es el 12', () => {
+    expect(hotelToday({ timezone: 'Europe/Madrid' }, night)).toBe('2026-09-12')
+  })
+  it('formato YYYY-MM-DD con ceros a la izquierda', () => {
+    expect(hotelToday({ timezone: 'America/Santo_Domingo' }, new Date('2026-01-05T15:00:00Z'))).toBe('2026-01-05')
+  })
+})
+
+describe('stayCoversDate — llegada ≤ día ≤ salida', () => {
+  const stay = { checkIn: '2026-09-10', checkOut: '2026-09-12' }
+  it('dentro, en los bordes y fuera', () => {
+    expect(stayCoversDate(stay, '2026-09-11')).toBe(true)
+    expect(stayCoversDate(stay, '2026-09-10')).toBe(true)
+    expect(stayCoversDate(stay, '2026-09-12')).toBe(true)
+    expect(stayCoversDate(stay, '2026-09-09')).toBe(false)
+    expect(stayCoversDate(stay, '2026-09-13')).toBe(false)
+  })
+  it('tolera ISO con hora; sin llegada es false; sin salida es abierta', () => {
+    expect(stayCoversDate({ checkIn: '2026-09-11T00:00:00.000Z', checkOut: '2026-09-11' }, '2026-09-11')).toBe(true)
+    expect(stayCoversDate({ checkOut: '2026-09-12' }, '2026-09-11')).toBe(false)
+    expect(stayCoversDate({ checkIn: '2026-09-01' }, '2026-12-31')).toBe(true)
   })
 })
 

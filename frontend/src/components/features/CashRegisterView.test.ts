@@ -31,6 +31,8 @@ vi.mock('@/services/Team.service', () => ({
     })),
   },
 }))
+// #212: la moneda del hotel manda en TODA la vista (cero `$` literales). El fixture es DOP: los
+// montos salen como "RD$1,300.00" — si un test ve "$1,300" a secas, alguien volvió a hardcodear.
 vi.mock('@/services/Hotel.service', () => ({
   HotelService: {
     settings: vi.fn(async () => ({ hotel: { currency: 'DOP' }, baseRates: [] })),
@@ -40,6 +42,7 @@ vi.mock('@/services/Hotel.service', () => ({
 import CashRegisterView from './CashRegisterView.vue'
 import { useToast } from '@/composables/useToast'
 import { TeamService } from '@/services/Team.service'
+import { HotelService } from '@/services/Hotel.service'
 
 const toast = useToast()
 
@@ -62,6 +65,7 @@ function makeService(over: Record<string, unknown> = {}) {
     currentShift: vi.fn(async () => ({ id: 's1', status: 'open', openingAmount: 500, openedAt: '2026-08-22T08:00:00' })),
     movements: vi.fn(async () => ({ data: [], pages: 1 })),
     createMovement: vi.fn(),
+    updateMovement: vi.fn(async (id: string, d: any) => ({ id, ...d })),
     removeMovement: vi.fn(),
     openShift: vi.fn(),
     closeShift: vi.fn(async (id: string) => ({ id, status: 'closed' })),
@@ -87,8 +91,11 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
+// El enlace a la comanda (#212) es un <router-link>: sin router en el test se stubbea a un <a>.
+const RouterLinkStub = { props: ['to'], template: '<a :href="to"><slot /></a>' }
+
 async function render(service = makeService(), nowFn: () => Date = NOW) {
-  wrapper = mount(CashRegisterView, { props: { service: service as any, nowFn } })
+  wrapper = mount(CashRegisterView, { props: { service: service as any, nowFn }, global: { stubs: { RouterLink: RouterLinkStub } } })
   await flushPromises()
   await flushPromises()
   return { w: wrapper, service }
@@ -153,7 +160,7 @@ describe('arqueo — diferencia en vivo y motivo obligatorio (M6)', () => {
     setInput(bodyInput('close-count-card'), '300')
     await flushPromises()
 
-    expect(bodyText()).toContain('-$10')
+    expect(bodyText()).toContain('-RD$10.00')
   })
 
   it('con diferencia, el motivo es OBLIGATORIO: sin él el cierre queda deshabilitado', async () => {
@@ -268,7 +275,7 @@ describe('histórico de turnos (H1) — la diferencia deja de ser invisible', ()
     expect(text).toContain('Histórico de turnos')
     expect(text).toContain('Ana Pérez')  // abrió (u1)
     expect(text).toContain('Luis Gómez') // cerró (u2)
-    expect(text).toContain('-$70')       // diferencia persistida, antes invisible en la app
+    expect(text).toContain('-RD$70.00')  // diferencia persistida, antes invisible en la app
     expect(text).toContain('Faltante de cambio') // el motivo del cierre queda a la vista
     expect(text).toContain('Cerrado')
     expect(text).not.toContain('u1')     // nunca IDs crudos
@@ -304,13 +311,13 @@ describe('claridad — el número protagonista muestra la cuenta que lo arma', (
     expect(w.find('[data-testid="hero-expected"]').text()).toContain('$1,300')
     const math = norm(w.find('[data-testid="hero-math"]').text())
     // La cuenta QUE DA el número, no solo el número (el "no se entiende nada" del dueño).
-    expect(math).toBe('$500 fondo + $1,000 ingresos en efectivo - $200 egresos en efectivo = $1,300')
+    expect(math).toBe('RD$500.00 fondo + RD$1,000.00 ingresos en efectivo - RD$200.00 egresos en efectivo = RD$1,300.00')
   })
 
   it('la tarjeta del turno se muestra APARTE, con su aclaración de que no está en el cajón', async () => {
     const { w } = await render()
     const nonCash = norm(w.find('[data-testid="hero-noncash"]').text())
-    expect(nonCash).toContain('Cobros con tarjeta del turno: $300')
+    expect(nonCash).toContain('Cobros con tarjeta del turno: RD$300.00')
     expect(nonCash).toContain('se cuentan aparte')
     expect(norm(w.find('[data-testid="hero-math"]').text())).not.toContain('$300') // la tarjeta JAMÁS entra a la cuenta del cajón
   })
@@ -351,7 +358,7 @@ describe('una sola fuente — el hero ES el resultado de la cuenta visible', () 
     const { w } = await render(makeService({ reconcile: vi.fn(async () => LEGACY) }))
     const hero = w.find('[data-testid="hero-expected"]').text().trim()
     const math = norm(w.find('[data-testid="hero-math"]').text())
-    expect(math).toBe('$500 fondo + $1,000 ingresos en efectivo - $200 egresos en efectivo = $1,300')
+    expect(math).toBe('RD$500.00 fondo + RD$1,000.00 ingresos en efectivo - RD$200.00 egresos en efectivo = RD$1,300.00')
     expect(math.split('=')[1].trim()).toBe(hero) // hero === resultado de la cuenta, al centavo
   })
 
@@ -363,8 +370,8 @@ describe('una sola fuente — el hero ES el resultado de la cuenta visible', () 
       movements: vi.fn(async () => ({ data: [], pages: 1 })),
     }))
     const math = norm(w.find('[data-testid="hero-math"]').text())
-    expect(math).toContain('+ $1,000 ingresos en efectivo')
-    expect(math).toContain('- $200 egresos en efectivo')
+    expect(math).toContain('+ RD$1,000.00 ingresos en efectivo')
+    expect(math).toContain('- RD$200.00 egresos en efectivo')
   })
 })
 
@@ -438,5 +445,127 @@ describe('claridad — sin turno abierto: guía de 3 pasos, un solo botón prima
     await w.findAll('button').find(b => b.text().includes('Abrir turno'))!.trigger('click')
     await flushPromises()
     expect(service.openShift).toHaveBeenCalledWith(500)
+  })
+})
+
+// ─── #212: caja del restaurante — moneda del hotel, concepto obligatorio, enlace a la comanda, editar ───
+
+const MOVS = [
+  // Cobro en efectivo del POS: automático, con la referencia de la comanda y el concepto que arma el server.
+  { id: 'a1', type: 'income', amount: 236, method: 'cash', source: 'payment_connector', reference: 'pos:o-77', concept: 'Comanda CMD-2026-0007 · Mesa 3', shiftId: 's1', createdAt: '2026-08-22T10:00:00' },
+  // Manual del turno abierto (editable).
+  { id: 'm1', type: 'expense', amount: 500, method: 'cash', source: 'manual', concept: 'Hielo', shiftId: 's1', createdAt: '2026-08-22T10:30:00' },
+  // Manual de un turno YA CERRADO (no editable).
+  { id: 'm0', type: 'income', amount: 20, method: 'cash', source: 'manual', concept: 'Propina', shiftId: 's0', createdAt: '2026-08-20T10:30:00' },
+]
+
+const withMovements = (over: Record<string, unknown> = {}) => makeService({ movements: vi.fn(async () => ({ data: MOVS, pages: 1 })), ...over })
+
+describe('#212 — moneda del hotel en toda la vista', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('hotel en EUR: ningún "$" en la caja y los montos llevan "€"', async () => {
+    vi.mocked(HotelService.settings).mockResolvedValueOnce({ hotel: { currency: 'EUR' }, baseRates: [] } as any)
+    const { w } = await render(withMovements())
+    await openCloseModal(w)
+    const all = w.text() + bodyText()
+    expect(all).not.toContain('$')
+    expect(w.find('[data-testid="hero-expected"]').text()).toBe('€1,300.00')
+    expect(w.find('[data-testid="mov-a1"]').text()).toContain('+€236.00')
+    expect(w.find('[data-testid="mov-m1"]').text()).toContain('-€500.00')
+    // El arqueo (modal) también: esperado del cajón y diferencia
+    expect(bodyText()).toContain('€1,300.00')
+  })
+
+  it('el confirm de eliminar muestra el monto en la moneda del hotel, no "$"', async () => {
+    const { w } = await render(withMovements())
+    const row = w.find('[data-testid="mov-m1"]')
+    await row.find('button[aria-label="Eliminar movimiento"]').trigger('click')
+    await flushPromises()
+    expect(bodyText()).toContain('(RD$500.00)')
+    expect(bodyText()).not.toContain('($500)')
+  })
+})
+
+describe('#212 — concepto obligatorio en movimientos manuales', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  async function openIncome(w: ReturnType<typeof mount>) {
+    await w.findAll('button').find(b => b.text().trim() === 'Ingreso')!.trigger('click')
+    await flushPromises()
+  }
+  const saveBtn = () => document.querySelector('[data-testid="mov-save"]') as HTMLButtonElement
+  const conceptMsg = () => document.querySelector('[data-testid="mov-concept-error"]')?.textContent?.trim()
+
+  it('sin concepto: botón deshabilitado y mensaje "Indicá el concepto"', async () => {
+    const { w, service } = await render()
+    await openIncome(w)
+    setInput(bodyInput('mov-amount'), '100')
+    await flushPromises()
+    expect(saveBtn().disabled).toBe(true)
+    expect(conceptMsg()).toBe('Indicá el concepto')
+    await saveBtn().click()
+    expect(service.createMovement).not.toHaveBeenCalled()
+  })
+
+  it('concepto de 2 caracteres sigue bloqueado; con 3 se habilita y se manda recortado', async () => {
+    const { w, service } = await render()
+    await openIncome(w)
+    setInput(bodyInput('mov-amount'), '100')
+    setInput(bodyInput('mov-concept'), 'ab')
+    await flushPromises()
+    expect(saveBtn().disabled).toBe(true)
+    expect(conceptMsg()).toContain('al menos 3')
+
+    setInput(bodyInput('mov-concept'), '  Propina  ')
+    await flushPromises()
+    expect(saveBtn().disabled).toBe(false)
+    saveBtn().click()
+    await flushPromises()
+    expect(service.createMovement).toHaveBeenCalledWith(expect.objectContaining({ type: 'income', amount: 100, concept: 'Propina' }))
+  })
+})
+
+describe('#212 — enlace movimiento ↔ comanda y edición de manuales', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('un cobro del POS muestra comanda y mesa, y enlaza a /panel/restaurante/comanda/<id>', async () => {
+    const { w } = await render(withMovements())
+    const row = w.find('[data-testid="mov-a1"]')
+    const link = row.find('[data-testid="mov-order-link"]')
+    expect(link.exists()).toBe(true)
+    expect(link.text()).toBe('Comanda CMD-2026-0007 · Mesa 3')
+    expect(link.attributes('href')).toBe('/panel/restaurante/comanda/o-77')
+    // Un manual no enlaza a nada
+    expect(w.find('[data-testid="mov-m1"]').find('[data-testid="mov-order-link"]').exists()).toBe(false)
+  })
+
+  it('"Editar" solo en el manual del turno abierto: ni en el automático ni en el de un turno cerrado', async () => {
+    const { w } = await render(withMovements())
+    expect(w.find('[data-testid="mov-m1"]').find('[data-testid="mov-edit"]').exists()).toBe(true)
+    expect(w.find('[data-testid="mov-a1"]').find('[data-testid="mov-edit"]').exists()).toBe(false)
+    expect(w.find('[data-testid="mov-m0"]').find('[data-testid="mov-edit"]').exists()).toBe(false)
+  })
+
+  it('sin turno abierto no hay "Editar" en ningún movimiento', async () => {
+    const { w } = await render(withMovements({ currentShift: vi.fn(async () => null), reconcile: vi.fn() }))
+    expect(w.findAll('[data-testid="mov-edit"]')).toHaveLength(0)
+  })
+
+  it('editar manda solo concepto y monto por updateMovement y recarga', async () => {
+    const { w, service } = await render(withMovements())
+    await w.find('[data-testid="mov-m1"]').find('[data-testid="mov-edit"]').trigger('click')
+    await flushPromises()
+    expect(bodyText()).toContain('Editar movimiento')
+    expect(bodyInput('mov-concept').value).toBe('Hielo')
+    expect(bodyInput('mov-amount').value).toBe('500')
+    setInput(bodyInput('mov-concept'), 'Hielo y carbón')
+    setInput(bodyInput('mov-amount'), '650')
+    await flushPromises()
+    ;(document.querySelector('[data-testid="mov-save"]') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(service.updateMovement).toHaveBeenCalledWith('m1', { concept: 'Hielo y carbón', amount: 650 })
+    expect(service.createMovement).not.toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith('Movimiento actualizado')
   })
 })

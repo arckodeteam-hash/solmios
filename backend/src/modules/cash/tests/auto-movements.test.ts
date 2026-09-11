@@ -110,4 +110,26 @@ describe('registerPaymentIncome', () => {
     expect(await registerPaymentIncome(deps, { hotelId: 'h1', paymentId: 'p1', amount: 100 })).not.toBeNull()
     expect(created).toHaveLength(1)
   })
+
+  // #212: desde la caja del restaurante tiene que verse QUÉ comanda y mesa fue, y poder abrirla.
+  it('hereda la referencia y el concepto del cobro (comanda + mesa), en el register del POS', async () => {
+    const { deps, created } = makeDeps()
+
+    await registerPaymentIncome(deps, {
+      hotelId: 'h1', paymentId: 'p1', amount: 100, register: 'restaurant',
+      reference: 'pos:o1', concept: 'Comanda CMD-2026-0007 · Mesa 3',
+    })
+
+    expect(created[0].reference).toBe('pos:o1')
+    expect(created[0].concept).toBe('Comanda CMD-2026-0007 · Mesa 3')
+    expect(created[0].register).toBe('restaurant')
+  })
+
+  it('sin descripción del cobro, el concepto cae a "Pago automático" (nunca vacío)', async () => {
+    const { deps, created } = makeDeps()
+
+    await registerPaymentIncome(deps, { hotelId: 'h1', paymentId: 'p1', amount: 100, concept: '   ' })
+
+    expect(created[0].concept).toBe('Pago automático')
+  })
 })

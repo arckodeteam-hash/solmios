@@ -31,6 +31,9 @@ export interface PaymentIncomeInput {
   folioId?: string
   method?: string
   reference?: string
+  /** Concepto legible del cobro (la `description` del payment: "Comanda CMD-2026-0007 · Mesa 3").
+   *  #212: sin esto el movimiento decía "Pago automático" y desde la caja no se sabía qué mesa fue. */
+  concept?: string
   /** De qué punto de venta vino el cobro (default reception). Lo decide el conector según el origen del payment, nunca el cliente. */
   register?: CashRegister
 }
@@ -51,7 +54,7 @@ export async function registerPaymentIncome(
   const item = await deps.repo.create({
     hotelId: input.hotelId, shiftId: shiftId || null, register,
     type: 'income', amount: input.amount, method: (input.method as any) || 'cash',
-    concept: 'Pago automático', category: 'payment', source: 'payment_connector',
+    concept: input.concept?.trim() || 'Pago automático', category: 'payment', source: 'payment_connector',
     reservationId: input.reservationId, folioId: input.folioId,
     paymentId: input.paymentId, reference: input.reference,
   } as Omit<CashMovementDTO, 'id'>)

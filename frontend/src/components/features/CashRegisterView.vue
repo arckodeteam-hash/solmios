@@ -14,10 +14,18 @@
 //   · Turno abierto >24h avisa (ámbar) y >7 días grita (rojo) — en prod hubo turnos de 45 días.
 //   · Sin turno: guía de 3 pasos en vez de un formulario desnudo.
 //   · Cada número con su micro-texto; la tarjeta/transferencia se cuenta aparte, a la vista.
+//
+// #212 (caja del restaurante, aplica a las dos cajas porque es el mismo componente):
+//   · Cero `$` literales: todo monto pasa por `money()` con la moneda del hotel (formatCurrency).
+//   · Concepto obligatorio (mín. 3) en un movimiento manual, con el error inline y el botón apagado.
+//   · Un cobro del POS (`reference: pos:<orderId>`) enlaza a su comanda; el concepto ya dice mesa.
+//   · "Editar" solo en manuales del turno ABIERTO (el backend rechaza el resto con 409).
+//   · Tablas sin `min-w`: en <lg las columnas secundarias bajan como línea de la fila.
 import { ref, computed, onMounted } from 'vue'
 import type { CashMovement, CashShift, CashStats, Reconcile, ShiftHistory, ShiftHistoryRow } from '@/services/Caja.service'
 import { HotelService } from '@/services/Hotel.service'
 import { TeamService } from '@/services/Team.service'
+import { formatCurrency } from '@/composables/useCurrency'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
@@ -30,6 +38,7 @@ import { BALANCE_EPSILON, buildArqueo, denominationsFor, expectedCashInDrawer, r
 interface CashServiceLike {
   movements: (params?: Record<string, string | number>) => Promise<{ data: CashMovement[]; pages?: number }>
   createMovement: (data: Partial<CashMovement>) => Promise<CashMovement>
+  updateMovement: (id: string, data: Partial<CashMovement>) => Promise<CashMovement>
   removeMovement: (id: string) => Promise<{ success: boolean }>
   currentShift: () => Promise<CashShift | null>
   openShift: (openingAmount: number) => Promise<CashShift>
@@ -67,6 +76,7 @@ const ICON_DOTS = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" st
 const ICON_ALERT = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 3.5v.01M10.3 3.9 2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>'
 const ICON_TRASH = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M10 11v6M14 11v6M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/></svg>'
 const ICON_DOWNLOAD = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>'
+const ICON_PENCIL = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v4.75A2 2 0 0 1 17.5 21h-11a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2h4.75"/></svg>'
 
 const movMethods = [
   { value: 'cash', label: 'Efectivo', icon: ICON_CASH },
@@ -92,10 +102,24 @@ const page = ref(1)
 const pages = ref(1)
 const loading = ref(false)
 
-// Modal registrar movimiento
+// Modal registrar/editar movimiento. `editing` = el movimiento manual que se está corrigiendo
+// (concepto/monto); null = alta.
 const showMov = ref(false)
 const submitting = ref(false)
+const editing = ref<CashMovement | null>(null)
 const movForm = ref({ type: 'income' as 'income' | 'expense', amount: 0, method: 'cash' as 'cash' | 'card' | 'transfer' | 'link' | 'other', concept: '', guestName: '', roomNumber: '' })
+
+// #212: concepto obligatorio (mín. 3 caracteres) — el backend lo exige igual (schema), acá se
+// explica antes de mandar: botón apagado + mensaje inline, no un toast después.
+const CONCEPT_MIN = 3
+const conceptError = computed(() => {
+  const c = movForm.value.concept.trim()
+  if (!c) return 'Indicá el concepto'
+  if (c.length < CONCEPT_MIN) return `El concepto necesita al menos ${CONCEPT_MIN} caracteres`
+  return ''
+})
+const amountError = computed(() => (!movForm.value.amount || movForm.value.amount <= 0 ? 'El importe debe ser mayor a 0' : ''))
+const movValid = computed(() => !conceptError.value && !amountError.value)
 
 // Modal cerrar turno (arqueo). Los campos de conteo arrancan VACÍOS: el cajero cuenta y carga
 // lo que hay — si vinieran prellenados con el esperado, cerrar sin contar cuadraría siempre.
@@ -104,7 +128,11 @@ const reconcile = ref<Reconcile | null>(null)
 const closing = ref(false)
 const countedByMethod = ref<Record<string, number | null>>({})
 const closeReason = ref('')
+// Moneda del hotel (settings). Se carga junto con la caja: TODO monto de la vista sale de `money()`.
+// Sin settings (red caída) cae a USD — nunca a un símbolo inventado ni a un string vacío.
 const hotelCurrency = ref('')
+const currency = computed(() => hotelCurrency.value || 'USD')
+const money = (n: number | null | undefined) => formatCurrency(Number(n || 0), currency.value)
 const useDenominations = ref(false)
 const denomCounts = ref<Record<string, number | null>>({})
 
@@ -132,11 +160,16 @@ onMounted(load)
 async function load() {
   loading.value = true
   try {
-    const [s, sh, m] = await Promise.all([props.service.stats(), props.service.currentShift(), props.service.movements({ page: page.value, limit: 20 })])
+    const [s, sh, m, settings] = await Promise.all([
+      props.service.stats(), props.service.currentShift(), props.service.movements({ page: page.value, limit: 20 }),
+      // Moneda del hotel (#212): best-effort, una sola vez por sesión de la vista.
+      hotelCurrency.value ? null : HotelService.settings().catch(() => null),
+    ])
     stats.value = s
     currentShift.value = sh
     movements.value = m.data || []
     pages.value = m.pages ?? 1
+    if (settings?.hotel?.currency) hotelCurrency.value = settings.hotel.currency
     // Hero del turno: si hay turno abierto, su desglose (best-effort — sin él el hero muestra
     // solo el fondo y la vista sigue siendo operable).
     currentReconcile.value = sh?.id ? await props.service.reconcile(sh.id).catch(() => null) : null
@@ -159,23 +192,55 @@ async function loadMovements(p: number) {
 }
 
 function openMovModal(type: 'income' | 'expense') {
+  editing.value = null
   movForm.value = { type, amount: 0, method: 'cash', concept: '', guestName: '', roomNumber: '' }
   showMov.value = true
 }
 
-async function saveMov() {
-  if (!movForm.value.amount || movForm.value.amount <= 0) {
-    toast.error('El importe debe ser mayor a 0')
-    return
+/** #212: corregir concepto/monto de un movimiento manual del turno abierto. */
+function openEditModal(m: CashMovement) {
+  if (!canEdit(m)) return
+  editing.value = m
+  movForm.value = {
+    type: m.type === 'expense' ? 'expense' : 'income', amount: Number(m.amount || 0),
+    method: m.method || 'cash', concept: m.concept || '', guestName: m.guestName || '', roomNumber: m.roomNumber || '',
   }
+  showMov.value = true
+}
+
+/** Manual (no generado por un cobro ni un gasto) y del turno que sigue ABIERTO: lo mismo que
+ *  exige el backend — el botón no aparece donde el PUT daría 409. */
+function canEdit(m: CashMovement): boolean {
+  if (!m.id || !isManual(m)) return false
+  if (!currentShift.value || currentShift.value.status !== 'open') return false
+  return m.shiftId === currentShift.value.id
+}
+
+const isManual = (m: CashMovement) => !m.source || m.source === 'manual'
+
+/** Comanda del POS detrás de un cobro automático: `reference: pos:<orderId>` (restaurante-payments). */
+function orderIdOf(m: CashMovement): string | null {
+  const ref = m.reference || ''
+  return ref.startsWith('pos:') && ref.length > 4 ? ref.slice(4) : null
+}
+
+async function saveMov() {
+  if (!movValid.value) return
   submitting.value = true
   try {
-    await props.service.createMovement({ ...movForm.value })
-    toast.success(movForm.value.type === 'income' ? 'Ingreso registrado' : 'Egreso registrado')
+    const concept = movForm.value.concept.trim()
+    if (editing.value?.id) {
+      await props.service.updateMovement(editing.value.id, { concept, amount: movForm.value.amount })
+      toast.success('Movimiento actualizado')
+    } else {
+      await props.service.createMovement({ ...movForm.value, concept })
+      toast.success(movForm.value.type === 'income' ? 'Ingreso registrado' : 'Egreso registrado')
+    }
     showMov.value = false
+    editing.value = null
     await load()
   } catch (e: unknown) {
-    toast.error('No se pudo registrar el movimiento', e instanceof Error ? e.message : undefined)
+    toast.error(editing.value ? 'No se pudo actualizar el movimiento' : 'No se pudo registrar el movimiento', e instanceof Error ? e.message : undefined)
   } finally {
     submitting.value = false
   }
@@ -185,7 +250,7 @@ function removeMov(m: CashMovement) {
   if (!m.id) return
   askConfirm({
     title: 'Eliminar movimiento',
-    message: `¿Eliminar movimiento "${m.concept || 'sin concepto'}" ($${m.amount})? No se puede deshacer.`,
+    message: `¿Eliminar movimiento "${m.concept || 'sin concepto'}" (${money(m.amount)})? No se puede deshacer.`,
     confirmLabel: 'Eliminar', danger: true,
     run: async () => {
       await props.service.removeMovement(m.id!)
@@ -277,18 +342,16 @@ async function doCloseShift() {
   }
 }
 
-/** Diferencia legible: "Cuadra" dentro del centavo de tolerancia, si no ±$X (color aparte). */
+/** Diferencia legible: "Cuadra" dentro del centavo de tolerancia, si no ±X en la moneda del hotel. */
 function fmtDiffCell(d: number | null): string {
   if (d === null) return '—'
   if (Math.abs(d) <= BALANCE_EPSILON) return 'Cuadra'
-  return d >= 0 ? `+$${d.toLocaleString()}` : `-$${Math.abs(d).toLocaleString()}`
+  return d >= 0 ? `+${money(d)}` : `-${money(Math.abs(d))}`
 }
 
 const movCount = computed(() => stats.value?.count ?? 0)
 
 // ─── Claridad: el turno abierto se explica solo (número protagonista + cuenta visible) ───
-
-const fmtMoney = (n: number) => n.toLocaleString()
 
 /** La cuenta que arma el protagonista: fondo + ingresos efectivo − egresos efectivo = esperado.
  *
@@ -454,7 +517,7 @@ function exportShiftsCsv() {
   toast.success(`CSV exportado (${rows.length} turno(s))`)
 }
 
-const fmtDenom = (d: number) => `$${d.toLocaleString()}`
+const fmtDenom = (d: number) => money(d)
 </script>
 
 <template>
@@ -525,7 +588,7 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
               </div>
               <p class="text-xs text-text-muted mt-0.5">
                 Abierto {{ (currentShift.openedAt || '').slice(0, 16).replace('T', ' ') }} ·
-                Fondo <span class="font-bold tabular-nums">${{ fmtMoney(heroMath?.opening ?? currentShift.openingAmount) }}</span>
+                Fondo <span class="font-bold tabular-nums">{{ money(heroMath?.opening ?? currentShift.openingAmount) }}</span>
               </p>
             </div>
           </div>
@@ -542,17 +605,17 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
           </div>
           <div class="mt-1 flex flex-wrap items-baseline gap-x-3">
             <span class="font-black tabular-nums leading-none tracking-tight text-navy text-[clamp(38px,4.5vw,56px)]" data-testid="hero-expected">
-              ${{ fmtMoney(heroMath?.expected ?? currentShift.openingAmount) }}
+              {{ money(heroMath?.expected ?? currentShift.openingAmount) }}
             </span>
             <span class="text-xs text-text-muted">lo que debería haber en el cajón, según los movimientos del turno</span>
           </div>
           <!-- La cuenta VISIBLE: si no concilia con lo que el cajero cuenta, acá se ve por qué.
                Los separadores viven DENTRO de cada span (una línea por término): el condense de
                whitespace de Vue borra los nodos de texto newline-only entre elementos y la ecuación
-               quedaría pegada ("fondo+ $1,000"). -->
-          <p v-if="heroMath" class="mt-3 text-xs sm:text-sm text-text-secondary tabular-nums" data-testid="hero-math"><span class="font-bold text-navy">${{ fmtMoney(heroMath.opening) }} fondo</span> <span class="font-bold text-teal">+ ${{ fmtMoney(heroMath.cashIncome) }} ingresos en efectivo</span> <span class="font-bold text-coral">- ${{ fmtMoney(heroMath.cashExpense) }} egresos en efectivo</span> <span class="font-extrabold text-navy">= ${{ fmtMoney(heroMath.expected) }}</span></p>
+               quedaría pegada ("fondo+ 1,000"). -->
+          <p v-if="heroMath" class="mt-3 text-xs sm:text-sm text-text-secondary tabular-nums" data-testid="hero-math"><span class="font-bold text-navy">{{ money(heroMath.opening) }} fondo</span> <span class="font-bold text-teal">+ {{ money(heroMath.cashIncome) }} ingresos en efectivo</span> <span class="font-bold text-coral">- {{ money(heroMath.cashExpense) }} egresos en efectivo</span> <span class="font-extrabold text-navy">= {{ money(heroMath.expected) }}</span></p>
           <!-- Lo que NO está en el cajón se muestra aparte: es la brecha que antes "no cerraba" -->
-          <p class="mt-2 text-xs text-text-secondary tabular-nums border-t border-border pt-2.5" data-testid="hero-noncash"><span class="inline-flex items-center gap-1.5"><span class="w-3.5 h-3.5 text-cyan" v-html="ICON_CARD"></span> Cobros con {{ nonCashLabel.toLowerCase() }} del turno: <span class="font-bold text-navy">${{ fmtMoney(nonCashTotal) }}</span></span> <span class="text-text-muted">— se cuentan aparte (cupones o cierre de terminal), no están en el cajón.</span></p>
+          <p class="mt-2 text-xs text-text-secondary tabular-nums border-t border-border pt-2.5" data-testid="hero-noncash"><span class="inline-flex items-center gap-1.5"><span class="w-3.5 h-3.5 text-cyan" v-html="ICON_CARD"></span> Cobros con {{ nonCashLabel.toLowerCase() }} del turno: <span class="font-bold text-navy">{{ money(nonCashTotal) }}</span></span> <span class="text-text-muted">— se cuentan aparte (cupones o cierre de terminal), no están en el cajón.</span></p>
         </div>
       </div>
 
@@ -560,22 +623,22 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
       <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <div class="rounded-[16px] border border-border bg-white shadow-(--shadow-card) px-4 py-3.5">
           <div class="text-[10px] font-extrabold uppercase tracking-wide text-text-muted">Fondo inicial</div>
-          <div class="mt-0.5 text-xl font-black text-navy tabular-nums" data-testid="turn-opening">${{ fmtMoney(heroMath?.opening ?? currentShift.openingAmount) }}</div>
+          <div class="mt-0.5 text-xl font-black text-navy tabular-nums" data-testid="turn-opening">{{ money(heroMath?.opening ?? currentShift.openingAmount) }}</div>
           <div class="mt-0.5 text-[11px] text-text-muted">efectivo con el que arrancó el turno</div>
         </div>
         <div class="rounded-[16px] border border-border bg-white shadow-(--shadow-card) px-4 py-3.5">
           <div class="text-[10px] font-extrabold uppercase tracking-wide text-text-muted">Ingresos en efectivo</div>
-          <div class="mt-0.5 text-xl font-black text-teal tabular-nums" data-testid="turn-cash-income">+${{ fmtMoney(heroMath?.cashIncome ?? 0) }}</div>
+          <div class="mt-0.5 text-xl font-black text-teal tabular-nums" data-testid="turn-cash-income">+{{ money(heroMath?.cashIncome ?? 0) }}</div>
           <div class="mt-0.5 text-[11px] text-text-muted">cobros del turno que entraron al cajón</div>
         </div>
         <div class="rounded-[16px] border border-border bg-white shadow-(--shadow-card) px-4 py-3.5">
           <div class="text-[10px] font-extrabold uppercase tracking-wide text-text-muted">Egresos en efectivo</div>
-          <div class="mt-0.5 text-xl font-black text-coral tabular-nums" data-testid="turn-cash-expense">-${{ fmtMoney(heroMath?.cashExpense ?? 0) }}</div>
+          <div class="mt-0.5 text-xl font-black text-coral tabular-nums" data-testid="turn-cash-expense">-{{ money(heroMath?.cashExpense ?? 0) }}</div>
           <div class="mt-0.5 text-[11px] text-text-muted">pagos y gastos salidos del cajón</div>
         </div>
         <div class="rounded-[16px] border border-border bg-white shadow-(--shadow-card) px-4 py-3.5">
           <div class="text-[10px] font-extrabold uppercase tracking-wide text-text-muted">{{ nonCashLabel }} del turno</div>
-          <div class="mt-0.5 text-xl font-black text-cyan tabular-nums" data-testid="turn-noncash">${{ fmtMoney(nonCashTotal) }}</div>
+          <div class="mt-0.5 text-xl font-black text-cyan tabular-nums" data-testid="turn-noncash">{{ money(nonCashTotal) }}</div>
           <div class="mt-0.5 text-[11px] text-text-muted">cobros sin efectivo: se cuentan aparte, con cupones</div>
         </div>
       </div>
@@ -653,13 +716,15 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
         </template>
       </EmptyState>
 
+      <!-- #212: sin `min-w` (en tablet la página no scrollea). Fecha, método y origen viven en
+           columnas propias en ≥lg y bajan como línea de apoyo bajo el concepto en <lg. -->
       <div v-else class="overflow-x-auto">
-        <table class="w-full min-w-[860px] tbl-head">
+        <table class="w-full tbl-head">
           <thead>
             <tr>
-              <th class="text-left px-4 py-3 text-[10px]">Fecha</th>
+              <th class="text-left px-4 py-3 text-[10px] hidden lg:table-cell">Fecha</th>
               <th class="text-left px-4 py-3 text-[10px]">Concepto</th>
-              <th class="text-left px-4 py-3 text-[10px]">Tipo</th>
+              <th class="text-left px-4 py-3 text-[10px] hidden sm:table-cell">Tipo</th>
               <th class="text-left px-4 py-3 text-[10px] hidden lg:table-cell">Método</th>
               <th class="text-left px-4 py-3 text-[10px] hidden xl:table-cell">Origen</th>
               <th class="text-right px-4 py-3 text-[10px]">Monto</th>
@@ -667,21 +732,28 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
             </tr>
           </thead>
           <tbody>
-            <tr v-for="m in movements" :key="m.id" class="border-b border-border last:border-0 hover:bg-surface/60 transition-colors">
-              <td class="px-4 py-3 text-xs text-text-muted tabular-nums whitespace-nowrap">{{ (m.createdAt || '').slice(0, 16).replace('T', ' ') }}</td>
-              <td class="px-4 py-3">
-                <!-- Un movimiento puede venir sin concepto (cobro automático): lo decimos,
-                     no dejamos la celda muda. -->
-                <div class="max-w-[240px] truncate text-sm font-bold" :class="m.concept ? 'text-navy' : 'text-text-muted'">
+            <tr v-for="m in movements" :key="m.id" class="border-b border-border last:border-0 hover:bg-surface/60 transition-colors" :data-testid="`mov-${m.id}`">
+              <td class="px-4 py-3 text-xs text-text-muted tabular-nums whitespace-nowrap hidden lg:table-cell">{{ (m.createdAt || '').slice(0, 16).replace('T', ' ') }}</td>
+              <td class="px-4 py-3 min-w-0">
+                <!-- Cobro del POS: el concepto ya dice "Comanda CMD-… · Mesa 3" y enlaza a la comanda.
+                     Un movimiento sin concepto (automático viejo) lo decimos, no dejamos la celda muda. -->
+                <router-link v-if="orderIdOf(m)" :to="`/panel/restaurante/comanda/${orderIdOf(m)}`"
+                  class="block max-w-[260px] truncate text-sm font-bold text-navy underline decoration-navy/30 underline-offset-2 hover:decoration-navy"
+                  :title="`Abrir ${m.concept || 'la comanda'}`" data-testid="mov-order-link">
+                  {{ m.concept || 'Ver comanda' }}
+                </router-link>
+                <div v-else class="max-w-[260px] truncate text-sm font-bold" :class="m.concept ? 'text-navy' : 'text-text-muted'">
                   {{ m.concept || 'Sin concepto' }}
                 </div>
-                <div v-if="m.guestName" class="max-w-[240px] truncate text-[11px] text-text-muted">{{ m.guestName }}</div>
-                <!-- En pantallas chicas el método sube como línea de apoyo -->
-                <div v-if="METHOD_LABEL[m.method || ''] || m.method" class="text-[11px] text-text-muted lg:hidden">
-                  {{ METHOD_LABEL[m.method || ''] || m.method }}
+                <div v-if="m.guestName" class="max-w-[260px] truncate text-[11px] text-text-muted">{{ m.guestName }}</div>
+                <!-- <lg: fecha · método · origen suben como línea de apoyo; <sm también el tipo -->
+                <div class="text-[11px] text-text-muted lg:hidden tabular-nums">
+                  <span class="sm:hidden" :class="m.type === 'income' ? 'text-teal' : 'text-coral'">{{ m.type === 'income' ? 'Ingreso' : 'Egreso' }} · </span>{{ (m.createdAt || '').slice(0, 16).replace('T', ' ') }}<span v-if="METHOD_LABEL[m.method || ''] || m.method"> · {{ METHOD_LABEL[m.method || ''] || m.method }}</span> · {{ sourceLabel(m.source) }}
                 </div>
+                <!-- lg…xl: la columna Origen todavía no existe; solo lo no-manual merece la línea -->
+                <div v-if="sourceLabel(m.source) !== 'Manual'" class="text-[11px] text-text-muted hidden lg:block xl:hidden">{{ sourceLabel(m.source) }}</div>
               </td>
-              <td class="px-4 py-3">
+              <td class="px-4 py-3 hidden sm:table-cell">
                 <span class="rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase" :class="m.type === 'income' ? 'bg-teal/10 text-teal' : 'bg-coral/10 text-coral'">
                   {{ m.type === 'income' ? 'Ingreso' : 'Egreso' }}
                 </span>
@@ -695,12 +767,18 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
                 </span>
               </td>
               <td class="px-4 py-3 text-right text-sm font-black tabular-nums whitespace-nowrap" :class="m.type === 'income' ? 'text-teal' : 'text-coral'">
-                {{ m.type === 'income' ? '+' : '-' }}${{ (m.amount || 0).toLocaleString() }}
+                {{ m.type === 'income' ? '+' : '-' }}{{ money(m.amount) }}
               </td>
               <td class="px-4 py-3 text-right">
                 <div class="flex items-center justify-end gap-1.5">
+                  <!-- Editar (#212): solo manuales del turno abierto. Los automáticos y los de un
+                       turno cerrado no tienen botón — el backend los rechaza igual (409). -->
+                  <button v-if="canEdit(m)" @click="openEditModal(m)" title="Editar movimiento" aria-label="Editar movimiento"
+                    class="grid h-8 w-8 place-items-center rounded-lg text-navy hover:bg-navy/10 transition-colors cursor-pointer" data-testid="mov-edit">
+                    <span class="h-4 w-4" v-html="ICON_PENCIL"></span>
+                  </button>
                   <!-- Los movimientos generados por la pasarela no se borran a mano. -->
-                  <button v-if="m.source !== 'payment_connector'" @click="removeMov(m)" title="Eliminar movimiento"
+                  <button v-if="m.source !== 'payment_connector'" @click="removeMov(m)" title="Eliminar movimiento" aria-label="Eliminar movimiento"
                     class="grid h-8 w-8 place-items-center rounded-lg text-coral hover:bg-coral/10 transition-colors cursor-pointer">
                     <span class="h-4 w-4" v-html="ICON_TRASH"></span>
                   </button>
@@ -758,45 +836,56 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
         message="Abrí un turno, mové la caja y cerralo con arqueo: acá queda la auditoría de cada cierre.">
       </EmptyState>
 
+      <!-- #212: sin `min-w`. En <lg quedan Apertura (con el cierre debajo), Diferencia y Estado;
+           fondo, neto por método, esperado y contado bajan como línea de apoyo bajo la apertura. -->
       <div v-else class="overflow-x-auto">
-        <table class="w-full min-w-[900px] tbl-head">
+        <table class="w-full tbl-head">
           <thead>
             <tr>
               <th class="text-left px-4 py-3 text-[10px]">Apertura</th>
-              <th class="text-left px-4 py-3 text-[10px]">Cierre</th>
-              <th class="text-right px-4 py-3 text-[10px]">Fondo</th>
-              <th v-for="mk in historyMethods" :key="mk" class="text-right px-4 py-3 text-[10px]">{{ METHOD_LABEL[mk] || mk }} (neto)</th>
-              <th class="text-right px-4 py-3 text-[10px]">Esperado</th>
-              <th class="text-right px-4 py-3 text-[10px]">Contado</th>
+              <th class="text-left px-4 py-3 text-[10px] hidden lg:table-cell">Cierre</th>
+              <th class="text-right px-4 py-3 text-[10px] hidden lg:table-cell">Fondo</th>
+              <th v-for="mk in historyMethods" :key="mk" class="text-right px-4 py-3 text-[10px] hidden lg:table-cell">{{ METHOD_LABEL[mk] || mk }} (neto)</th>
+              <th class="text-right px-4 py-3 text-[10px] hidden lg:table-cell">Esperado</th>
+              <th class="text-right px-4 py-3 text-[10px] hidden lg:table-cell">Contado</th>
               <th class="text-right px-4 py-3 text-[10px]">Diferencia</th>
-              <th class="text-left px-4 py-3 text-[10px] hidden lg:table-cell">Motivo</th>
+              <th class="text-left px-4 py-3 text-[10px] hidden xl:table-cell">Motivo</th>
               <th class="text-left px-4 py-3 text-[10px]">Estado</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="s in shifts" :key="s.id" class="border-b border-border last:border-0 hover:bg-surface/60 transition-colors">
-              <td class="px-4 py-3 whitespace-nowrap">
+              <td class="px-4 py-3 min-w-0">
                 <div class="text-sm font-bold text-navy tabular-nums">{{ fmtDate(s.openedAt) }}</div>
                 <div class="text-[11px] text-text-muted">{{ fmtTime(s.openedAt) }} · {{ userName(s.openedBy) }}</div>
+                <!-- <lg: cierre, fondo, esperado, contado y motivo como líneas de apoyo -->
+                <div class="lg:hidden text-[11px] text-text-muted tabular-nums mt-0.5 space-y-0.5">
+                  <div v-if="s.closedAt">Cierre {{ fmtDate(s.closedAt) }} {{ fmtTime(s.closedAt) }} · {{ userName(s.closedBy) }}</div>
+                  <div>
+                    Fondo {{ money(s.openingAmount || 0) }}<template v-if="s.expectedAmount !== undefined && s.expectedAmount !== null"> · Esperado {{ money(s.expectedAmount) }}</template><template v-if="s.countedAmount !== undefined && s.countedAmount !== null"> · Contado {{ money(s.countedAmount) }}</template>
+                  </div>
+                  <div v-if="s.notes" class="truncate max-w-[260px]" :title="s.notes">{{ s.notes }}</div>
+                </div>
+                <div v-if="s.notes" class="hidden lg:block xl:hidden truncate max-w-[200px] text-[11px] text-text-muted" :title="s.notes">{{ s.notes }}</div>
               </td>
-              <td class="px-4 py-3 whitespace-nowrap">
+              <td class="px-4 py-3 whitespace-nowrap hidden lg:table-cell">
                 <template v-if="s.closedAt">
                   <div class="text-sm font-bold text-navy tabular-nums">{{ fmtDate(s.closedAt) }}</div>
                   <div class="text-[11px] text-text-muted">{{ fmtTime(s.closedAt) }} · {{ userName(s.closedBy) }}</div>
                 </template>
                 <span v-else class="text-sm text-text-muted">—</span>
               </td>
-              <td class="px-4 py-3 text-right text-sm text-text-secondary tabular-nums">${{ (s.openingAmount || 0).toLocaleString() }}</td>
-              <td v-for="mk in historyMethods" :key="mk" class="px-4 py-3 text-right text-sm text-text-secondary tabular-nums">
-                {{ (s.byMethodNet || {})[mk] !== undefined ? `$${(s.byMethodNet[mk] || 0).toLocaleString()}` : '—' }}
+              <td class="px-4 py-3 text-right text-sm text-text-secondary tabular-nums hidden lg:table-cell">{{ money(s.openingAmount || 0) }}</td>
+              <td v-for="mk in historyMethods" :key="mk" class="px-4 py-3 text-right text-sm text-text-secondary tabular-nums hidden lg:table-cell">
+                {{ (s.byMethodNet || {})[mk] !== undefined ? money(s.byMethodNet[mk] || 0) : '—' }}
               </td>
-              <td class="px-4 py-3 text-right text-sm font-bold text-navy tabular-nums">{{ s.expectedAmount !== undefined && s.expectedAmount !== null ? `$${s.expectedAmount.toLocaleString()}` : '—' }}</td>
-              <td class="px-4 py-3 text-right text-sm text-text-secondary tabular-nums">{{ s.countedAmount !== undefined && s.countedAmount !== null ? `$${s.countedAmount.toLocaleString()}` : '—' }}</td>
+              <td class="px-4 py-3 text-right text-sm font-bold text-navy tabular-nums hidden lg:table-cell">{{ s.expectedAmount !== undefined && s.expectedAmount !== null ? money(s.expectedAmount) : '—' }}</td>
+              <td class="px-4 py-3 text-right text-sm text-text-secondary tabular-nums hidden lg:table-cell">{{ s.countedAmount !== undefined && s.countedAmount !== null ? money(s.countedAmount) : '—' }}</td>
               <td class="px-4 py-3 text-right text-sm font-black tabular-nums whitespace-nowrap"
                 :class="s.difference === undefined || s.difference === null ? 'text-text-muted' : Math.abs(s.difference) <= BALANCE_EPSILON ? 'text-teal' : s.difference > 0 ? 'text-teal' : 'text-coral'">
                 {{ fmtDiffCell(s.difference ?? null) }}
               </td>
-              <td class="px-4 py-3 hidden lg:table-cell">
+              <td class="px-4 py-3 hidden xl:table-cell">
                 <div class="max-w-[200px] truncate text-xs text-text-muted" :title="s.notes">{{ s.notes || '—' }}</div>
               </td>
               <td class="px-4 py-3">
@@ -821,15 +910,16 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
 
     <!-- Modal registrar movimiento -->
     <AppModal v-if="showMov" size="md"
-      :title="movForm.type === 'income' ? 'Registrar ingreso' : 'Registrar egreso'"
-      :subtitle="movForm.type === 'income' ? 'Entra plata a la caja' : 'Sale plata de la caja'"
-      @close="showMov = false">
+      :title="editing ? 'Editar movimiento' : movForm.type === 'income' ? 'Registrar ingreso' : 'Registrar egreso'"
+      :subtitle="editing ? 'Corregí el concepto o el importe (turno abierto)' : movForm.type === 'income' ? 'Entra plata a la caja' : 'Sale plata de la caja'"
+      @close="showMov = false; editing = null">
       <div class="space-y-4">
         <div>
-          <label for="mov-amount" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Importe</label>
+          <label for="mov-amount" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Importe ({{ currency }})</label>
           <input id="mov-amount" v-model.number="movForm.amount" type="number" min="0" step="0.01" placeholder="0.00" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm font-bold text-navy text-right tabular-nums focus:outline-none focus:border-navy" />
         </div>
-        <div>
+        <!-- Al editar solo cambian concepto e importe: el método y el tipo son del asiento original. -->
+        <div v-if="!editing">
           <span class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Método</span>
           <div class="flex flex-wrap gap-2">
             <button
@@ -846,10 +936,17 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
           </div>
         </div>
         <div>
-          <label for="mov-concept" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Concepto</label>
-          <input id="mov-concept" v-model="movForm.concept" placeholder="Ej: Compra de insumos" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
+          <label for="mov-concept" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Concepto <span class="text-coral">*</span></label>
+          <input id="mov-concept" v-model="movForm.concept" placeholder="Ej: Compra de insumos" required
+            :aria-invalid="conceptError ? 'true' : 'false'" aria-describedby="mov-concept-error"
+            class="w-full px-4 py-2.5 rounded-xl border text-sm focus:outline-none"
+            :class="conceptError ? 'border-coral/60 focus:border-coral' : 'border-border focus:border-navy'" />
+          <!-- #212: el error se ve ANTES de tocar Guardar (el botón queda apagado mientras exista) -->
+          <p id="mov-concept-error" class="mt-1.5 text-[11px] font-bold" :class="conceptError ? 'text-coral' : 'text-text-muted'" data-testid="mov-concept-error">
+            {{ conceptError || 'Para qué entró o salió la plata: queda en el arqueo y en el histórico.' }}
+          </p>
         </div>
-        <div class="grid grid-cols-3 gap-3">
+        <div v-if="!editing" class="grid grid-cols-3 gap-3">
           <div class="col-span-2">
             <label for="mov-guest" class="text-[11px] font-bold text-text-muted uppercase tracking-wide mb-2 block">Huésped (opcional)</label>
             <input id="mov-guest" v-model="movForm.guestName" placeholder="Nombre" class="w-full px-4 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-navy" />
@@ -862,9 +959,11 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
       </div>
 
       <template #footer>
-        <button @click="showMov = false" class="text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">Cancelar</button>
-        <button @click="saveMov" :disabled="submitting" class="rounded-full text-white text-sm font-extrabold px-5 py-2.5 transition-colors cursor-pointer disabled:opacity-50" :class="movForm.type === 'income' ? 'bg-teal hover:bg-teal-light' : 'bg-coral hover:opacity-90'">
-          {{ submitting ? 'Guardando...' : 'Guardar' }}
+        <button @click="showMov = false; editing = null" class="text-sm font-bold text-text-secondary hover:text-navy transition-colors cursor-pointer">Cancelar</button>
+        <button @click="saveMov" :disabled="submitting || !movValid" data-testid="mov-save"
+          class="rounded-full text-white text-sm font-extrabold px-5 py-2.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          :class="movForm.type === 'income' ? 'bg-teal hover:bg-teal-light' : 'bg-coral hover:opacity-90'">
+          {{ submitting ? 'Guardando...' : editing ? 'Guardar cambios' : 'Guardar' }}
         </button>
       </template>
     </AppModal>
@@ -877,10 +976,10 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
       @close="showClose = false">
       <!-- Resumen del turno -->
       <div class="space-y-2.5 pb-5 border-b border-border text-sm">
-        <div class="flex justify-between"><span class="text-text-muted">Fondo inicial</span><span class="font-bold text-navy tabular-nums">${{ reconcile.opening.toLocaleString() }}</span></div>
-        <div class="flex justify-between"><span class="text-text-muted">Ingresos (todos los métodos)</span><span class="font-bold text-teal tabular-nums">+${{ reconcile.income.toLocaleString() }}</span></div>
-        <div class="flex justify-between"><span class="text-text-muted">Egresos (todos los métodos)</span><span class="font-bold text-coral tabular-nums">-${{ reconcile.expense.toLocaleString() }}</span></div>
-        <div class="flex justify-between pt-2.5 border-t border-border"><span class="font-extrabold text-navy">Esperado en cajón (efectivo)</span><span class="font-extrabold text-navy text-base tabular-nums">${{ (arqueo.methods.find(m => m.method === 'cash')?.expected ?? 0).toLocaleString() }}</span></div>
+        <div class="flex justify-between"><span class="text-text-muted">Fondo inicial</span><span class="font-bold text-navy tabular-nums">{{ money(reconcile.opening) }}</span></div>
+        <div class="flex justify-between"><span class="text-text-muted">Ingresos (todos los métodos)</span><span class="font-bold text-teal tabular-nums">+{{ money(reconcile.income) }}</span></div>
+        <div class="flex justify-between"><span class="text-text-muted">Egresos (todos los métodos)</span><span class="font-bold text-coral tabular-nums">-{{ money(reconcile.expense) }}</span></div>
+        <div class="flex justify-between pt-2.5 border-t border-border"><span class="font-extrabold text-navy">Esperado en cajón (efectivo)</span><span class="font-extrabold text-navy text-base tabular-nums">{{ money(arqueo.methods.find(m => m.method === 'cash')?.expected ?? 0) }}</span></div>
         <p class="text-[11px] text-text-muted leading-relaxed">
           Solo el efectivo está en el cajón: los cobros con tarjeta/transferencia se cuentan aparte (cupones o cierre de terminal) y no suman al esperado en efectivo.
         </p>
@@ -904,12 +1003,12 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
                 <td class="px-4 py-2.5 text-sm font-bold text-navy whitespace-nowrap">
                   {{ METHOD_LABEL[m.method] || m.method }}<span v-if="m.method === 'cash'" class="text-text-muted font-normal"> (cajón)</span>
                 </td>
-                <td class="px-4 py-2.5 text-right text-sm text-text-secondary tabular-nums">${{ m.expected.toLocaleString() }}</td>
+                <td class="px-4 py-2.5 text-right text-sm text-text-secondary tabular-nums">{{ money(m.expected) }}</td>
                 <td class="px-4 py-2.5 text-right">
                   <!-- Efectivo con denominaciones activas: el contado es la suma del desglose. -->
                   <span v-if="m.method === 'cash' && useDenominations && denomSet.length"
                     class="text-sm font-black text-navy tabular-nums" :data-testid="'counted-' + m.method">
-                    ${{ (m.counted ?? 0).toLocaleString() }}
+                    {{ money(m.counted ?? 0) }}
                   </span>
                   <input v-else :id="'close-count-' + m.method" v-model.number="countedByMethod[m.method]"
                     type="number" min="0" step="0.01" placeholder="Contá y cargá"
@@ -924,8 +1023,8 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
             <tfoot>
               <tr class="border-t-2 border-navy bg-surface/60">
                 <td class="px-4 py-2.5 text-sm font-black text-navy">Total</td>
-                <td class="px-4 py-2.5 text-right text-sm font-black text-navy tabular-nums">${{ arqueo.totalExpected.toLocaleString() }}</td>
-                <td class="px-4 py-2.5 text-right text-sm font-black text-navy tabular-nums">{{ arqueo.totalCounted === null ? '—' : `$${arqueo.totalCounted.toLocaleString()}` }}</td>
+                <td class="px-4 py-2.5 text-right text-sm font-black text-navy tabular-nums">{{ money(arqueo.totalExpected) }}</td>
+                <td class="px-4 py-2.5 text-right text-sm font-black text-navy tabular-nums">{{ arqueo.totalCounted === null ? '—' : money(arqueo.totalCounted) }}</td>
                 <td class="px-4 py-2.5 text-right text-base font-black tabular-nums whitespace-nowrap"
                   :class="arqueo.totalDifference === null ? 'text-text-muted' : Math.abs(arqueo.totalDifference) <= BALANCE_EPSILON ? 'text-teal' : arqueo.totalDifference > 0 ? 'text-teal' : 'text-coral'">
                   {{ fmtDiffCell(arqueo.totalDifference) }}
@@ -953,7 +1052,7 @@ const fmtDenom = (d: number) => `$${d.toLocaleString()}`
           </div>
         </div>
         <p v-if="useDenominations" class="mt-3 text-sm font-bold text-navy tabular-nums" data-testid="denominations-total">
-          Efectivo contado: ${{ ((arqueo.methods.find(m => m.method === 'cash')?.counted) ?? 0).toLocaleString() }}
+          Efectivo contado: {{ money((arqueo.methods.find(m => m.method === 'cash')?.counted) ?? 0) }}
         </p>
       </div>
 

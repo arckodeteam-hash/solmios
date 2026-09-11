@@ -13,6 +13,8 @@ import { createModuleGuard } from '../../infrastructure/auth/require-module'
 export { ReservasService }
 export type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from './types'
 export type { ReservasSockets } from './sockets'
+// #209 (append-only): lo que devuelve `searchInHouse` — lo consume connectors/restaurante-reservas.ts.
+export type { InHouseReservation, InHouseSearchResult } from './usecases/in-house'
 export { ReservasValidator, CreateReservasSchema, UpdateReservasSchema, PreCheckinSchema, PreCheckinPhotoSchema, CancelReservationSchema } from './validators/schema'
 
 // La foto del documento viaja como base64 en el body JSON (mismo motivo que housekeeping: el

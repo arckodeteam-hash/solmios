@@ -5,6 +5,7 @@
 //      `findById` suelto. Sin puerto cableado se falla cerrado.
 import { describe, it, expect } from 'bun:test'
 import { ConflictError, NotFoundError } from 'arckode-framework'
+import type { AuditEntry } from '../../../shared/usecases/audit'
 import type { Auth, RepositoryAdapter } from 'arckode-framework'
 import { deleteTable, type TablesCrudDeps } from '../usecases/tables-crud'
 import { openOrder, type OrdersDeps } from '../usecases/orders'
@@ -89,8 +90,8 @@ describe('#208 — deleteTable: mesa con comanda', () => {
 /** Reservas de dos hoteles: r-mine es de h1, r-foreign de h2. */
 const reservationsPort: ReservationPort = {
   findById: async (id) => {
-    if (id === 'r-mine') return { id, hotelId: 'h1', guestId: 'g1', roomId: 'room-1' }
-    if (id === 'r-foreign') return { id, hotelId: 'h2', guestId: 'g2', roomId: 'room-2' }
+    if (id === 'r-mine') return { id, hotelId: 'h1', guestId: 'g1', roomId: 'room-1', status: 'checked_in' }
+    if (id === 'r-foreign') return { id, hotelId: 'h2', guestId: 'g2', roomId: 'room-2', status: 'checked_in' }
     return null
   },
 }
@@ -150,13 +151,15 @@ describe('#208 — chargeToRoom: la reserva es del hotel y se valida ANTES de to
     const lines: any[] = [{ id: 'l1', hotelId: 'h1', orderId: 'o1', unitPrice: 10, quantity: 2, taxRate: 18, lineTotal: 20, status: 'served' }]
     const tables: any[] = [{ id: 't1', hotelId: 'h1', name: 'M1', status: 'occupied' }]
     const charged: any[] = []
+    const audit: AuditEntry[] = []
     const deps: SettlementDeps = {
       orders: backed<OrderDTO>(orders), lines: backed<any>(lines), tables: backed<TableDTO>(tables),
-      hotels: backed<any>([{ id: 'h1', currency: 'DOP' }]), userRepo, auth: strictAuth, sockets: {},
+      hotels: backed<any>([{ id: 'h1', currency: 'DOP', timezone: 'America/Santo_Domingo' }]), userRepo, auth: strictAuth, sockets: {},
       ports: { chargeToFolio: async (i: any) => { charged.push(i); return { folioId: 'f1' } } },
       reservations: port,
+      audit: { record: async (e) => { audit.push(e) } },
     }
-    return { deps, orders, tables, charged }
+    return { deps, orders, tables, charged, audit }
   }
 
   it('reservationId del body de OTRO hotel → 404, ningún cargo al folio, la comanda sigue served y la mesa ocupada', async () => {
@@ -190,6 +193,92 @@ describe('#208 — chargeToRoom: la reserva es del hotel y se valida ANTES de to
     const { deps, charged } = settlementDeps('r-mine', null)
     await expect(chargeToRoom(deps, 'o1', {}, user)).rejects.toThrow('no disponible')
     expect(charged).toHaveLength(0)
+  })
+
+  it('#209: comanda de room service de A recargada a la reserva B → el folio (y la comanda) llevan huésped/habitación de B, no de A', async () => {
+    const port: ReservationPort = {
+      findById: async (id) => (id === 'r-b' ? { id: 'r-b', hotelId: 'h1', guestId: 'g-b', roomId: 'room-b', status: 'checked_in' } : reservationsPort.findById(id, user)),
+    }
+    const { deps, orders, charged } = settlementDeps('r-mine', port)
+    // La comanda nació con la reserva A: huésped y habitación de A.
+    Object.assign(orders[0], { type: 'room_service', tableId: undefined, guestId: 'g-a', roomId: 'room-a' })
+    const o = await chargeToRoom(deps, 'o1', { reservationId: 'r-b' }, user)
+    expect(charged).toHaveLength(1)
+    expect(charged[0]).toMatchObject({ reservationId: 'r-b', guestId: 'g-b', roomId: 'room-b' })
+    expect(o.reservationId).toBe('r-b')
+    expect(orders[0]).toMatchObject({ reservationId: 'r-b', guestId: 'g-b', roomId: 'room-b', status: 'charged' })
+  })
+
+  it('#209: la reserva validada sin huésped → el folio recibe guestId vacío, no el que la comanda traía', async () => {
+    const port: ReservationPort = { findById: async () => ({ id: 'r-b', hotelId: 'h1', guestId: null, roomId: 'room-b', status: 'checked_in' }) }
+    const { deps, orders, charged } = settlementDeps('r-b', port)
+    Object.assign(orders[0], { guestId: 'g-a', roomId: 'room-a' })
+    await chargeToRoom(deps, 'o1', {}, user)
+    expect(charged[0].guestId).toBeUndefined()
+    expect(charged[0].roomId).toBe('room-b')
+    expect(orders[0].guestId).toBeUndefined()
+  })
+
+  // #209: solo se carga a una reserva ALOJADA. Cada estado no alojado → 409 y el folio no se toca.
+  const today = new Date().toISOString().slice(0, 10)   // el hotel del fixture está en UTC-4; la vigencia de abajo usa ±2 días, así que la hora no importa
+  const shift = (days: number) => new Date(Date.parse(`${today}T12:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10)
+  const portWith = (r: Partial<{ status: string; checkIn: string; checkOut: string }>): ReservationPort => ({
+    findById: async () => ({ id: 'r-x', hotelId: 'h1', guestId: 'g-x', roomId: 'room-x', ...r }),
+  })
+
+  it.each(['checked_out', 'cancelled', 'no_show', 'pending'])('#209: reserva %s → 409 ConflictError, ningún cargo al folio, comanda intacta y mesa ocupada', async (status) => {
+    const { deps, orders, tables, charged } = settlementDeps('r-x', portWith({ status, checkIn: shift(-1), checkOut: shift(1) }))
+    let err: unknown
+    try { await chargeToRoom(deps, 'o1', {}, user) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect((err as ConflictError).httpStatus).toBe(409)
+    expect(charged).toHaveLength(0)
+    expect(orders[0].status).toBe('served')
+    expect(orders[0].folioId).toBeUndefined()
+    expect(tables[0].status).toBe('occupied')
+  })
+
+  it('#209: confirmed VIGENTE (llegada ≤ hoy ≤ salida) carga; confirmed futura o ya vencida → 409', async () => {
+    const ok = settlementDeps('r-x', portWith({ status: 'confirmed', checkIn: shift(-1), checkOut: shift(2) }))
+    await chargeToRoom(ok.deps, 'o1', {}, user)
+    expect(ok.charged).toHaveLength(1)
+
+    const future = settlementDeps('r-x', portWith({ status: 'confirmed', checkIn: shift(2), checkOut: shift(4) }))
+    await expect(chargeToRoom(future.deps, 'o1', {}, user)).rejects.toBeInstanceOf(ConflictError)
+    expect(future.charged).toHaveLength(0)
+
+    const stale = settlementDeps('r-x', portWith({ status: 'confirmed', checkIn: shift(-5), checkOut: shift(-2) }))
+    await expect(chargeToRoom(stale.deps, 'o1', {}, user)).rejects.toBeInstanceOf(ConflictError)
+    expect(stale.charged).toHaveLength(0)
+  })
+
+  it('#209: puerto viejo sin `status` → falla CERRADO (409), no carga', async () => {
+    const { deps, charged } = settlementDeps('r-x', portWith({}))
+    await expect(chargeToRoom(deps, 'o1', {}, user)).rejects.toBeInstanceOf(ConflictError)
+    expect(charged).toHaveLength(0)
+  })
+
+  it('#209: recargar a OTRA reserva deja auditlog restaurant.order.reservation_changed (de → a); misma reserva no audita', async () => {
+    const port: ReservationPort = {
+      findById: async (id) => (id === 'r-b' ? { id: 'r-b', hotelId: 'h1', guestId: 'g-b', roomId: 'room-b', status: 'checked_in' } : reservationsPort.findById(id, user)),
+    }
+    const moved = settlementDeps('r-mine', port)
+    Object.assign(moved.orders[0], { type: 'room_service', tableId: undefined, guestId: 'g-a', roomId: 'room-a' })
+    await chargeToRoom(moved.deps, 'o1', { reservationId: 'r-b' }, user)
+    expect(moved.audit).toHaveLength(1)
+    expect(moved.audit[0]).toMatchObject({ hotelId: 'h1', userId: 'u1', action: 'restaurant.order.reservation_changed', entity: 'restaurant_order', entityId: 'o1' })
+    expect(JSON.parse(moved.audit[0].detail!)).toMatchObject({
+      orderId: 'o1', orderNumber: 'CMD-2026-0001', amount: 20, folioId: 'f1',
+      fromReservationId: 'r-mine', toReservationId: 'r-b', fromRoomId: 'room-a', toRoomId: 'room-b', fromGuestId: 'g-a', toGuestId: 'g-b',
+    })
+
+    const same = settlementDeps('r-mine', port)
+    await chargeToRoom(same.deps, 'o1', { reservationId: 'r-mine' }, user)
+    expect(same.audit).toHaveLength(0)
+
+    const fresh = settlementDeps(undefined, port)   // comanda de salón sin reserva previa: no hay "de"
+    await chargeToRoom(fresh.deps, 'o1', { reservationId: 'r-b' }, user)
+    expect(fresh.audit).toHaveLength(0)
   })
 
   it('el puerto recibe el hotel de la COMANDA (BD), no el del token: un token viejo sin hotelId también carga', async () => {

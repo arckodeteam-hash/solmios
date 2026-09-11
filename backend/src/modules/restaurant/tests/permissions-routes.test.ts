@@ -16,10 +16,17 @@
 //     bloque final monta la fila que prod tenía antes del deploy (sin `pay`) y prueba que sin backfill
 //     cobrar da 403 y con la fila backfilleada da 200.
 //   - `PaySchema.method` aceptaba cualquier string: "xyz" llegaba a payments como `completed`.
+//   - #209: `GET /api/restaurant/in-house` (buscador de alojados) pasa con `restaurant:pay` O
+//     `restaurant:create` (`requireAnyPermission`): el mozo (create, sin `reservations:view`) busca al abrir
+//     un room service, un cajero con SOLO `pay` busca desde Cobrar, cocina (view/edit) no, sin token 401.
+//     El camino completo controller → puerto → conector REAL (`restauranteReservasConnector`) →
+//     `reservas.searchInHouse` se prueba con el conector de verdad cableado sobre un módulo `reservas` doble.
 import { describe, it, expect } from 'bun:test'
 import { Router } from 'arckode-framework'
+import type { ConnectorContext } from 'arckode-framework'
 import { fakeLogger, makeAuth, bearer } from '../../../infrastructure/auth/tests/route-permission-helpers'
 import { RestaurantModule } from '../index'
+import { restauranteReservasConnector } from '../../../connectors/restaurante-reservas'
 
 type Row = Record<string, any>
 
@@ -36,10 +43,12 @@ function mount(roleRows: Row[] = []) {
       { id: 'user-kitchen', hotelId: 'h1', role: 'kitchen', active: 1 },
       { id: 'user-hotel_admin', hotelId: 'h1', role: 'hotel_admin', active: 1 },
       { id: 'user-receptionist', hotelId: 'h1', role: 'receptionist', active: 1 },
+      // #209: rol personalizado "cajero" — SOLO cobra (restaurant:pay), no toma pedidos ni ve el KDS.
+      { id: 'user-cajero', hotelId: 'h1', role: 'cajero', active: 1 },
     ],
     Hotels: [{ id: 'h1', name: 'Hotel Sol', currency: 'DOP' }],
     // #208: reserva del hotel (room service / cargo a habitación la validan por puerto).
-    Reservations: [{ id: 'r1', hotelId: 'h1', guestId: 'g1', roomId: 'room-1' }],
+    Reservations: [{ id: 'r1', hotelId: 'h1', guestId: 'g1', roomId: 'room-1', status: 'checked_in' }],
     Plans: [], Subscriptions: [], Configuration: [], HotelModuleOverrides: [],
     RestaurantTables: [{ id: 't1', hotelId: 'h1', status: 'occupied' }, { id: 't-free', hotelId: 'h1', status: 'free' }],
     // #208: ítem componente de un combo (no se borra) y otro suelto (se borra).
@@ -95,7 +104,26 @@ function mount(roleRows: Row[] = []) {
   service.setReservationPort({
     findById: async (id: string) => rows.Reservations.find((r) => r.id === id) ?? null,
   })
-  return { router, auth, rows, recorded, charged }
+  return { router, auth, rows, recorded, charged, service }
+}
+
+/** #209: cablea el conector REAL restaurant↔reservas sobre un `reservas` doble que registra qué recibió. */
+function mountWithReservasConnector(roleRows: Row[] = []) {
+  const m = mount(roleRows)
+  const searchCalls: any[] = []
+  const reservasRow = { id: 'r1', hotelId: 'h1', roomId: 'room-1', roomNumber: '101', guestId: 'g1', guestName: 'Juan Pérez', checkIn: '2026-09-10', checkOut: '2026-09-12', nights: 2, status: 'checked_in' }
+  const ctx = {
+    resolveModule: (name: string) => {
+      if (name === 'restaurant') return m.service
+      if (name === 'reservas') return {
+        getById: async (id: string) => { const r = m.rows.Reservations.find((x) => x.id === id); if (!r) throw new Error('nope'); return r },
+        searchInHouse: async (query: any, user: any) => { searchCalls.push({ query, user }); return { data: [reservasRow], total: 1 } },
+      }
+      throw new Error(`módulo desconocido: ${name}`)
+    },
+  } as unknown as ConnectorContext
+  restauranteReservasConnector(ctx)
+  return { ...m, searchCalls, reservasRow }
 }
 
 const headers = (auth: ReturnType<typeof makeAuth>, role: string) => bearer(auth, role, 'h1')
@@ -178,6 +206,55 @@ describe('POST /api/restaurant/orders/:id/charge-to-room y /bill — mismo permi
     expect(rows.RestaurantOrders.find((o) => o.id === 'o-room')?.status).toBe('charged')
     expect(charged).toHaveLength(1)
     expect(charged[0].reservationId).toBe('r1')
+  })
+})
+
+describe('#209 — GET /api/restaurant/in-house: el mozo busca alojados, cocina no, sin token 401', () => {
+  it('waiter (restaurant:create, sin reservations:view) → 200 con {data,total} vía conector real → reservas.searchInHouse', async () => {
+    const { router, auth, searchCalls, reservasRow } = mountWithReservasConnector()
+    const res = await router.resolve('GET', '/api/restaurant/in-house', { headers: headers(auth, 'waiter'), query: { q: 'perez', id: 'r1' } })
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ data: [reservasRow], total: 1 })
+    // El hotel viaja resuelto (token) como hotelId del usuario; q e id llegan tal cual al módulo reservas.
+    expect(searchCalls).toEqual([{ query: { q: 'perez', id: 'r1' }, user: { id: 'user-waiter', role: 'waiter', hotelId: 'h1' } }])
+    expect('balance' in (res.body as any).data[0]).toBe(false)
+  })
+
+  it('cajero con SOLO restaurant:pay (fila de rol custom, sin create ni view) → 200: Cobrar también busca', async () => {
+    const cajero = { id: 'role-cajero', hotelId: 'h1', name: 'cajero', system: 0, permissions: ['restaurant:pay'] }
+    const { router, auth, searchCalls } = mountWithReservasConnector([cajero])
+    const res = await router.resolve('GET', '/api/restaurant/in-house', { headers: headers(auth, 'cajero'), query: { q: '204' } })
+    expect(res.status).toBe(200)
+    expect(searchCalls).toEqual([{ query: { q: '204', id: undefined }, user: { id: 'user-cajero', role: 'cajero', hotelId: 'h1' } }])
+  })
+
+  it('kitchen (restaurant:view/edit, sin create ni pay) → 403 y el puerto no se toca', async () => {
+    const { router, auth, searchCalls } = mountWithReservasConnector()
+    const res = await router.resolve('GET', '/api/restaurant/in-house', { headers: headers(auth, 'kitchen'), query: { q: '1' } })
+    expect(res.status).toBe(403)
+    expect(JSON.stringify(res.body)).toContain('restaurant:pay o restaurant:create')
+    expect(searchCalls).toHaveLength(0)
+  })
+
+  it('un rol con SOLO restaurant:view (fila custom) → 403: ver la carta no es elegir reservas', async () => {
+    const viewer = { id: 'role-viewer', hotelId: 'h1', name: 'cajero', system: 0, permissions: ['restaurant:view'] }
+    const { router, auth, searchCalls } = mountWithReservasConnector([viewer])
+    const res = await router.resolve('GET', '/api/restaurant/in-house', { headers: headers(auth, 'cajero'), query: { q: '1' } })
+    expect(res.status).toBe(403)
+    expect(searchCalls).toHaveLength(0)
+  })
+
+  it('sin token → 401', async () => {
+    const { router, searchCalls } = mountWithReservasConnector()
+    const res = await router.resolve('GET', '/api/restaurant/in-house', { headers: {}, query: { q: '1' } })
+    expect(res.status).toBe(401)
+    expect(searchCalls).toHaveLength(0)
+  })
+
+  it('sin conector cableado (puerto solo con findById) → 400, nunca lista vacía', async () => {
+    const { router, auth } = mount()
+    const res = await router.resolve('GET', '/api/restaurant/in-house', { headers: headers(auth, 'waiter') })
+    expect(res.status).toBe(400)
   })
 })
 

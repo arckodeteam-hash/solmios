@@ -12,6 +12,7 @@ import { NullEmailSender, type EmailSender } from '../../services/email-sender'
 import { dispatchCreateEmail } from './usecases/reservation-notifications'
 import { setGuaranteePin as setGuaranteePinUsecase, getGuaranteeHasPin as getGuaranteeHasPinUsecase, unlockGuaranteeCard as unlockGuaranteeCardUsecase } from './usecases/guarantee'
 import { listReservations, getReservationById, createReservation, updateReservationWithBalance, deleteReservation, type PromoCodePort } from './usecases/crud'
+import { searchInHouse as searchInHouseUsecase, type InHouseSearchResult } from './usecases/in-house'
 import { paidSourceFrom, type PaidSource } from '../../shared/usecases/reservation-paid'
 import { paymentsOfReservation as paymentsOfReservationUsecase, hasInvoiceForReservation as hasInvoiceForReservationUsecase } from './usecases/reservation-money-links'
 import { cancelReservation as cancelReservationUsecase } from './usecases/cancel'
@@ -83,6 +84,8 @@ export class ReservasService {
   /** Invalidación a mano para altas que bypassan el CRUD (ver reservas-bookingengine.ts). */
   async invalidateListCache(hotelId: string): Promise<void> { await invalidateReservasCaches(this.cache, hotelId) }
   async list(query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> { return listReservations(this.repo, this.userRepo, this.cache, this.logger, query, currentUser) }
+  /** #209: alojados (y confirmadas vigentes) del hotel por habitación/apellido, o una por `id` — lo consume el POS vía conector. */
+  async searchInHouse(query: { q?: string; id?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<InHouseSearchResult> { return searchInHouseUsecase({ repo: this.repo, roomRepo: this.roomRepo, guestRepo: this.guestRepo, userRepo: this.userRepo, hotelRepo: this.hotelRepo }, query, currentUser) }
   async getById(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> {
     this.logger.info('Obteniendo reserva', { id, userId: currentUser.id })
     return getReservationById(this.repo, id, currentUser)

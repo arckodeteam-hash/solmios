@@ -9,7 +9,8 @@ import type { RestaurantSockets } from '../sockets'
 import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
 import { recomputeTotals } from './order-totals'
 import { round2 } from '../../../shared/utils/money'
-import { assertReservationOfHotel, type ReservationPort } from './reservation-port'
+import { assertReservationOfHotel, assertReservationChargeable, type ReservationPort } from './reservation-port'
+import { hotelToday } from '../../../shared/utils/hotel-schedule'
 import { closingStamp } from './business-date'
 
 // Puertos que provee el conector (folios/payments). El módulo NO importa esos módulos.
@@ -82,6 +83,24 @@ export async function loadOrder(deps: SettlementDeps, id: string, user: CurrentU
   return order
 }
 
+/**
+ * #212 — etiqueta con la que el cobro viaja a `payments` y, por el conector payments→caja, al
+ * concepto del movimiento de la caja del restaurante: "Comanda CMD-2026-0007 · Mesa 3". Antes el
+ * movimiento decía "Pago automático" y desde la caja no había forma de saber qué mesa fue. La mesa
+ * se lee acá (y no en caja) porque el módulo caja no conoce mesas ni comandas — el enlace lo arma
+ * el frontend con `reference: pos:<orderId>`.
+ */
+async function orderLabel(deps: SettlementDeps, order: OrderDTO): Promise<string> {
+  const head = `Comanda ${order.number ?? order.id}`
+  if (order.type === 'room_service') return `${head} · Room service`
+  if (order.type === 'takeaway') return `${head} · Para llevar`
+  if (!order.tableId) return head
+  const table = await deps.tables.findById(order.tableId)
+  if (!table?.name) return head
+  // El nombre de la mesa es texto libre ("3", "M1", "Mesa 3"): no duplicar el "Mesa" si ya lo trae.
+  return /^mesa\b/i.test(table.name) ? `${head} · ${table.name}` : `${head} · Mesa ${table.name}`
+}
+
 async function freeTable(deps: SettlementDeps, order: OrderDTO): Promise<void> {
   if (!order.tableId) return
   const table = await deps.tables.update(order.tableId, { status: 'free' } as Partial<Omit<TableDTO, 'id'>>)
@@ -111,7 +130,19 @@ export async function chargeToRoom(deps: SettlementDeps, id: string, dto: { rese
   if (!deps.ports.chargeToFolio) throw new ValidationError('Cargo a habitación no disponible (folios no conectado)')
   // #208: ANTES de tocar el folio — la reserva (venga del body o de la comanda) tiene que existir y
   // ser del hotel de la comanda. 404 y ningún folio abierto si no.
-  await assertReservationOfHotel(deps.reservations, reservationId, order.hotelId, user)
+  const reservation = await assertReservationOfHotel(deps.reservations, reservationId, order.hotelId, user)
+  // #209: y tiene que estar ALOJADA (checked_in, o confirmed vigente hoy en la zona del hotel). Cargar a
+  // una checked_out/cancelled/no_show/pending abriría o reabriría un folio que ya no representa a nadie
+  // en la casa. 409 antes de tocar el folio. `findOne` (no findById): el hotel ya está validado por loadOrder.
+  const hotel = await deps.hotels.findOne({ id: order.hotelId })
+  assertReservationChargeable(reservation, hotelToday(hotel))
+  // #209: el huésped y la habitación que viajan al folio son los de la RESERVA validada, nunca los que
+  // la comanda traía. Una comanda de room service nace con los de su reserva original; si el cajero la
+  // recarga a OTRA reserva sin folio abierto, `folios.open` heredaría guest/room de la primera y la
+  // factura de B saldría a nombre de A. La comanda también se actualiza para que "Hab. 204 · Pérez"
+  // diga a dónde fue el cargo de verdad.
+  const guestId = reservation.guestId ?? undefined
+  const roomId = reservation.roomId ?? undefined
 
   const fresh = await recomputeTotals(deps, order)
   // M2 (QA): el folio no transfiere la propina; en vez de perderla en silencio, se rechaza. La propina
@@ -119,6 +150,8 @@ export async function chargeToRoom(deps: SettlementDeps, id: string, dto: { rese
   if (Number(fresh.tip || 0) > 0) throw new ValidationError('La comanda tiene propina: el cargo a habitación no la transfiere. Cobrá directo o quitá la propina.')
   const amount = round2(Number(fresh.subtotal || 0))   // neto; el folio le aplica el impuesto
   if (amount <= 0) throw new ValidationError('La comanda no tiene consumos para cargar')
+  // Lo que la comanda traía ANTES del cargo, para el rastro de "se cargó a otra reserva" (más abajo).
+  const previous = { reservationId: order.reservationId ?? null, roomId: order.roomId ?? null, guestId: order.guestId ?? null }
 
   // M1 (QA, RESUELTO — idempotencia-settlement-pos): el cargo al folio sigue ocurriendo ANTES del
   // update de la comanda ("el dinero primero"), pero ya no puede duplicarse: `orderId` viaja hasta
@@ -127,16 +160,34 @@ export async function chargeToRoom(deps: SettlementDeps, id: string, dto: { rese
   // exitoso, el reintento vuelve a pedir el MISMO postCharge y folios devuelve el cargo ya existente
   // en vez de duplicarlo.
   const res = await deps.ports.chargeToFolio({
-    hotelId: order.hotelId, reservationId, guestId: order.guestId, roomId: order.roomId,
+    hotelId: order.hotelId, reservationId, guestId, roomId,
     description: `Restaurante · comanda ${order.number ?? id}`, amount, quantity: 1, orderId: id,
   }, user)
 
   const updated = (await deps.orders.update(id, {
     status: 'charged', settlement: 'folio', folioId: res.folioId,
-    reservationId, ...(await closingStamp(deps.hotels, order.hotelId)),
+    reservationId, guestId, roomId, ...(await closingStamp(deps.hotels, order.hotelId)),
   } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
   await freeTable(deps, order)
   await deps.sockets.onOrderCharged?.(updated)
+  // #209 (+#207): recargar la comanda a OTRA reserva que la que traía deja rastro — la factura de un
+  // huésped cambió de dueño y alguien tiene que poder ver quién, cuándo y de qué reserva a cuál.
+  if (previous.reservationId && previous.reservationId !== reservationId) {
+    await auditSafely(deps.audit ?? null, deps.logger ?? silentLogger, {
+      hotelId: order.hotelId,
+      userId: user.id,
+      action: 'restaurant.order.reservation_changed',
+      entity: 'restaurant_order',
+      entityId: id,
+      detail: JSON.stringify({
+        orderId: id, orderNumber: order.number, amount,
+        fromReservationId: previous.reservationId, toReservationId: reservationId,
+        fromRoomId: previous.roomId, toRoomId: roomId ?? null,
+        fromGuestId: previous.guestId, toGuestId: guestId ?? null,
+        folioId: res.folioId,
+      }),
+    })
+  }
   return updated
 }
 
@@ -170,7 +221,7 @@ export async function payOrder(
   // validado por loadOrder; solo releo ESE hotel para su moneda. Si el hotel no la define, payments defaultea.
   const hotel = await deps.hotels.findOne({ id: order.hotelId })
   const currency = (hotel as any)?.currency || undefined
-  const description = `Restaurante · comanda ${order.number ?? id}`
+  const description = await orderLabel(deps, order)
 
   if (dto.method === 'card') {
     if (!deps.ports.chargeCardPayment) throw new ValidationError('Cobro con tarjeta no disponible (payments no conectado)')
