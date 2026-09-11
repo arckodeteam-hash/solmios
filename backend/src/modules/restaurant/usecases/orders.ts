@@ -143,7 +143,8 @@ export async function openOrder(deps: OrdersDeps, dto: OpenOrderInput, user: Cur
   } as Omit<OrderDTO, 'id'>))
 
   if (order.type === 'dine_in' && order.tableId) {
-    await deps.tables.update(order.tableId, { status: 'occupied' } as Partial<Omit<TableDTO, 'id'>>)
+    const table = await deps.tables.update(order.tableId, { status: 'occupied' } as Partial<Omit<TableDTO, 'id'>>)
+    if (table) await deps.sockets.onTableChanged?.(table)   // #211 — el Salón pinta la mesa ocupada en vivo
   }
   return order
 }
@@ -253,7 +254,12 @@ export async function cancelOrder(deps: OrdersDeps, id: string, reason: string |
     voidedLines = lines.length
   }
   const updated = (await deps.orders.update(id, { status: 'cancelled', closedAt: now } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
-  if (order.tableId) await deps.tables.update(order.tableId, { status: 'free' } as Partial<Omit<TableDTO, 'id'>>)
+  if (order.tableId) {
+    const table = await deps.tables.update(order.tableId, { status: 'free' } as Partial<Omit<TableDTO, 'id'>>)
+    if (table) await deps.sockets.onTableChanged?.(table)
+  }
+  // #211 — el KDS saca el ticket y el Salón libera la mesa sin esperar al polling.
+  await deps.sockets.onOrderClosed?.(updated)
   await auditSafely(deps.audit ?? null, deps.logger ?? silentLogger, {
     hotelId: order.hotelId,
     userId: user.id,

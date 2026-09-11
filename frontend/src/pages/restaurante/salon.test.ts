@@ -2,7 +2,8 @@
 // mesa ocupada con hora/tiempo/total/mozo, y acciones de mesa accesibles sin hover.
 //
 // Dos capas: los helpers puros (salon-helpers.ts) y la página montada con los servicios mockeados
-// (mismo patrón que empty-state-cta-permissions.test.ts).
+// (mismo patrón que empty-state-cta-permissions.test.ts). El canal en vivo (#211, useRestaurantEvents)
+// se reemplaza por un doble que expone `onPoll`/`onEvent`: el refresco se dispara a mano.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
@@ -18,6 +19,9 @@ let teamData: { id: string; name: string }[] = []
 let listTablesCalls = 0
 let listOrdersCalls = 0
 const routerPush = vi.fn()
+// Doble del canal en vivo: captura los callbacks para disparar el refresco desde el test.
+const liveHooks: { onPoll?: () => unknown; onEvent?: (e: unknown) => unknown } = {}
+const liveState = ref<'idle' | 'connecting' | 'live' | 'reconnecting'>('idle')
 
 vi.mock('@/composables/usePermissions', () => ({
   usePermissions: () => ({ can: () => true, canRoute: () => true, permissions: { value: [] } }),
@@ -32,6 +36,13 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: routerPush, replace: vi.fn() }),
   useRoute: () => ({ query: {} }),
 }))
+vi.mock('@/composables/useRestaurantEvents', () => ({
+  useRestaurantEvents: (opts: { onPoll?: () => unknown; onEvent?: (e: unknown) => unknown }) => {
+    liveHooks.onPoll = opts.onPoll
+    liveHooks.onEvent = opts.onEvent
+    return { state: liveState, start: vi.fn(), stop: vi.fn() }
+  },
+}))
 vi.mock('@/services/Restaurant.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/services/Restaurant.service')>()
   return {
@@ -40,6 +51,7 @@ vi.mock('@/services/Restaurant.service', async (importOriginal) => {
       ...mod.RestaurantService,
       listTables: vi.fn(async () => { listTablesCalls++; return tablesData }),
       listOrders: vi.fn(async () => { listOrdersCalls++; return ordersData }),
+      kdsQueue: vi.fn(async () => []),
     },
   }
 })
@@ -177,9 +189,10 @@ describe('salon.vue — montada', () => {
     w.unmount()
   })
 
-  it('refresco cada 15 s sin vaciar la lista: la mesa cambia a ocupada y el KPI sube', async () => {
+  it('refresco (polling del canal en vivo) sin vaciar la lista: la mesa cambia a ocupada y el KPI sube', async () => {
     const w = await mountSalon()
     expect(listOrdersCalls).toBe(1)
+    expect(liveHooks.onPoll, 'el salón no registró onPoll en useRestaurantEvents').toBeTypeOf('function')
     expect(w.text()).toContain('Libre')
     // Otra tablet abre una comanda en Mesa 2.
     ordersData = [...ordersData, order('o3', 't2', { openedAt: new Date().toISOString(), total: 300 })]
@@ -187,7 +200,8 @@ describe('salon.vue — montada', () => {
     const pending = new Promise<Order[]>((r) => { resolveOrders = r })
     const { RestaurantService } = await import('@/services/Restaurant.service')
     ;(RestaurantService.listOrders as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => { listOrdersCalls++; return pending })
-    await vi.advanceTimersByTimeAsync(15_000)
+    liveHooks.onPoll!()
+    await flushPromises()
     expect(listOrdersCalls).toBe(2)
     // Mientras la respuesta está en vuelo, la grilla sigue completa (no se vacía ni hay skeleton).
     expect(tableButtons(w)).toHaveLength(4)
@@ -201,15 +215,23 @@ describe('salon.vue — montada', () => {
     w.unmount()
   })
 
-  it('no refresca mientras hay un modal abierto', async () => {
+  it('no refresca mientras hay un modal abierto (ni por polling ni por evento en vivo)', async () => {
     const { openModalCount } = await import('@/composables/useModalStack')
     const w = await mountSalon()
     openModalCount.value = 1
-    await vi.advanceTimersByTimeAsync(15_000)
+    liveHooks.onPoll!()
+    await flushPromises()
+    liveHooks.onEvent!({ type: 'order.sent' })
+    await vi.advanceTimersByTimeAsync(200)
     expect(listOrdersCalls).toBe(1)
     openModalCount.value = 0
-    await vi.advanceTimersByTimeAsync(15_000)
+    liveHooks.onPoll!()
+    await flushPromises()
     expect(listOrdersCalls).toBe(2)
+    // Un evento del canal también refresca (con debounce de 150 ms).
+    liveHooks.onEvent!({ type: 'order.sent' })
+    await vi.advanceTimersByTimeAsync(200)
+    expect(listOrdersCalls).toBe(3)
     w.unmount()
   })
 

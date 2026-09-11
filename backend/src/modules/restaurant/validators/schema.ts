@@ -7,12 +7,14 @@ export const CreateStationSchema: Record<string, ValidationRule> = {
   name: { type: 'string' as const, required: true },
   active: { type: 'number' as const },
   sortOrder: { type: 'number' as const },
+  alertMinutes: { type: 'number' as const },   // #211 — rango 1..180 validado en stations-crud.ts
 }
 
 export const UpdateStationSchema: Record<string, ValidationRule> = {
   name: { type: 'string' as const },
   active: { type: 'number' as const },
   sortOrder: { type: 'number' as const },
+  alertMinutes: { type: 'number' as const },
 }
 
 // ─── Carta: categorías (RES-1) ───

@@ -6,7 +6,7 @@ import {
   RestaurantService,
   type Station, type MenuCategory, type MenuItem, type ModifierGroup, type Combo, type ComboPayload,
   type FoodCostReportRow, type ItemTranslation, type AllergenTag,
-  ALLERGEN_OPTIONS, ALLERGEN_LABELS,
+  ALLERGEN_OPTIONS, ALLERGEN_LABELS, DEFAULT_ALERT_MINUTES,
 } from '@/services/Restaurant.service'
 import { SettingsService } from '@/services/Settings.service'
 import { InventarioService, type InventoryItem, type MenuItemRecipe } from '@/services/Inventario.service'
@@ -163,9 +163,11 @@ function newStation() {
     fields: [
       { key: 'name', label: 'Nombre (ej: Cocina, Bar)', required: true, minLength: 2, maxLength: 60 },
       { key: 'active', label: 'Activa', type: 'select', default: '1', options: [{ value: '1', label: 'Sí' }, { value: '0', label: 'No' }] },
+      // #211 — umbral de demora del KDS: ámbar a N min desde el envío, rojo a 2N.
+      { key: 'alertMinutes', label: 'Alerta de demora (minutos)', type: 'number', min: 1, max: 180, default: DEFAULT_ALERT_MINUTES, hint: 'El ticket se pone ámbar a los N min y rojo a los 2N' },
     ],
     onSubmit: async (v) => {
-      await save(() => RestaurantService.createStation({ name: String(v.name).trim(), sortOrder: nextStationSortOrder(), active: Number(v.active) }))
+      await save(() => RestaurantService.createStation({ name: String(v.name).trim(), sortOrder: nextStationSortOrder(), active: Number(v.active), alertMinutes: Number(v.alertMinutes) || DEFAULT_ALERT_MINUTES }))
     },
   }
 }
@@ -175,11 +177,12 @@ function editStation(s: Station) {
     fields: [
       { key: 'name', label: 'Nombre', required: true, minLength: 2, maxLength: 60, default: s.name },
       { key: 'active', label: 'Activa', type: 'select', default: String(s.active ?? 1), options: [{ value: '1', label: 'Sí' }, { value: '0', label: 'No' }] },
+      { key: 'alertMinutes', label: 'Alerta de demora (minutos)', type: 'number', min: 1, max: 180, default: s.alertMinutes ?? DEFAULT_ALERT_MINUTES, hint: 'El ticket se pone ámbar a los N min y rojo a los 2N' },
     ],
     onSubmit: async (v) => {
       // sortOrder NO viaja acá: el PUT de estaciones es un merge parcial (stations-crud.ts:50) y el
       // orden se gestiona solo por drag-and-drop — reenviarlo pisaría el resultado de un reorder previo.
-      await save(() => RestaurantService.updateStation(s.id, { name: String(v.name).trim(), active: Number(v.active) }))
+      await save(() => RestaurantService.updateStation(s.id, { name: String(v.name).trim(), active: Number(v.active), alertMinutes: Number(v.alertMinutes) || DEFAULT_ALERT_MINUTES }))
     },
   }
 }
@@ -821,6 +824,7 @@ async function saveTranslations() {
                 class="shrink-0 cursor-grab active:cursor-grabbing text-text-muted select-none" title="Arrastrar para reordenar">⋮⋮</span>
               <span class="font-bold text-navy">{{ s.name }}</span>
               <span v-if="!s.active" class="text-[10px] px-1.5 py-0.5 rounded bg-surface text-text-muted font-bold">Inactiva</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-surface text-text-muted font-bold" :title="`El KDS pinta el ticket ámbar a los ${s.alertMinutes ?? DEFAULT_ALERT_MINUTES} min y rojo a los ${2 * (s.alertMinutes ?? DEFAULT_ALERT_MINUTES)}`">⏱ {{ s.alertMinutes ?? DEFAULT_ALERT_MINUTES }} min</span>
             </div>
             <div class="flex items-center gap-2 shrink-0">
               <button v-if="editPerm" @click="editStation(s)" class="text-xs font-bold text-navy hover:underline">Editar</button>

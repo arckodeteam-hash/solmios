@@ -79,7 +79,9 @@ export async function loadOrder(deps: SettlementDeps, id: string, user: CurrentU
 }
 
 async function freeTable(deps: SettlementDeps, order: OrderDTO): Promise<void> {
-  if (order.tableId) await deps.tables.update(order.tableId, { status: 'free' } as Partial<Omit<TableDTO, 'id'>>)
+  if (!order.tableId) return
+  const table = await deps.tables.update(order.tableId, { status: 'free' } as Partial<Omit<TableDTO, 'id'>>)
+  if (table) await deps.sockets.onTableChanged?.(table)   // #211 — el Salón libera la mesa en vivo
 }
 
 /** Calcula la cuenta: recomputa subtotal/tax y fija la propina. Deja la comanda en `billed`. */

@@ -17,6 +17,7 @@ import * as combosCrud from './usecases/combos-crud'
 import * as foodCost from './usecases/food-cost'
 import * as publicMenuUsecase from './usecases/public-menu'
 import * as voidReasons from './usecases/void-reasons'
+import * as events from './usecases/events'
 import { composeSockets } from './usecases/compose-sockets'
 import type { AuditPort } from '../../shared/usecases/audit'
 import type { LineStatus } from './types'
@@ -30,6 +31,8 @@ export class RestaurantService {
   private recipePorts: foodCost.RecipePorts = {}
   // #207: auditoría (connectors/restaurante-auditlog.ts). null = sin auditlog montado: anular sigue funcionando, sin rastro.
   private auditPort: AuditPort | null = null
+  // #211: canal en vivo (SSE) por hotel. Lo alimenta connectors/restaurante-events.ts vía publishEvent.
+  private readonly eventHub = new events.RestaurantEventHub()
 
   constructor(
     private readonly stations: RepositoryAdapter<StationDTO>,
@@ -51,6 +54,7 @@ export class RestaurantService {
     private readonly combos?: RepositoryAdapter<ComboDTO>, private readonly comboItems?: RepositoryAdapter<ComboItemDTO>,
     private readonly plans?: RepositoryAdapter<any>, private readonly subscriptions?: RepositoryAdapter<any>, // F7: gate del módulo restaurant — plan desde la suscripción activa (resolve-plan.ts)
     private readonly counterCas?: orders.OrdersDeps['counterCas'], // #206: UPDATE condicional (orm.updateMany) para el numerador de comandas — el orm entra SOLO como esta interface mínima (ver usecases/order-number.ts; misma excepción que promo-codes/promo-atomic.ts)
+    private readonly rooms?: RepositoryAdapter<any>, // #211: número de habitación en el ticket del KDS ("Hab. 204")
   ) {}
 
   // Acumula handlers, nunca pisa el anterior (composición de sockets, usecases/compose-sockets.ts).
@@ -65,7 +69,7 @@ export class RestaurantService {
   private stationDeps(): stationsCrud.StationsCrudDeps { return { stations: this.stations, userRepo: this.userRepo, auth: this.auth } }
   private catDeps(): categoriesCrud.CategoriesCrudDeps { return { categories: this.categories, items: this.items, stations: this.stations, userRepo: this.userRepo, auth: this.auth } }
   private itemDeps(): itemsCrud.ItemsCrudDeps { return { items: this.items, categories: this.categories, stations: this.stations, userRepo: this.userRepo, auth: this.auth } }
-  private tableDeps(): tablesCrud.TablesCrudDeps { return { tables: this.tables, userRepo: this.userRepo, auth: this.auth } }
+  private tableDeps(): tablesCrud.TablesCrudDeps { return { tables: this.tables, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets } }
   private ordersDeps(): orders.OrdersDeps {
     if (!this.orders || !this.lines || !this.config) throw new ValidationError('Comandas no configuradas')
     return { orders: this.orders, lines: this.lines, tables: this.tables, config: this.config, counterCas: this.counterCas, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets, audit: this.auditPort, logger: this.logger }
@@ -93,7 +97,7 @@ export class RestaurantService {
   }
   private kdsDeps(): kds.KdsDeps {
     if (!this.orders || !this.lines) throw new ValidationError('Comandas no configuradas')
-    return { orders: this.orders, lines: this.lines, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets }
+    return { orders: this.orders, lines: this.lines, userRepo: this.userRepo, auth: this.auth, sockets: this.sockets, tables: this.tables, rooms: this.rooms }
   }
 
   // ─── Estaciones (RES-0) — pantallas KDS configurables por hotel — delegan a usecases/stations-crud ───
@@ -162,6 +166,12 @@ export class RestaurantService {
   // ─── KDS / cocina (RES-4) — delegan a usecases/kds ───
   kdsQueue(station: string | undefined, user: CurrentUser) { return kds.kdsQueue(this.kdsDeps(), station, user) }
   setLineStatus(lineId: string, status: LineStatus, user: CurrentUser) { return kds.setLineStatus(this.kdsDeps(), lineId, status, user) }
+
+  // ─── Canal en vivo (#211) — usecases/events. publishEvent lo llama el conector; eventStream/eventsTicket, el controller ───
+  publishEvent(hotelId: string, event: Omit<events.RestaurantEvent, 'at'>) { this.eventHub.publish(hotelId, event) }
+  eventStream(user: CurrentUser) { return events.eventStream(this.eventHub, user) }
+  eventsTicket(user: CurrentUser) { return events.eventsTicket(this.auth, user) }
+  closeEventStreams() { this.eventHub.closeAll() }
 
   // ─── Modificadores/variantes (F1) — delegan a usecases/modifiers-crud ───
   listModifierGroups(menuItemId: string, user: CurrentUser) { return modifiersCrud.listGroups(this.modifierDeps(), menuItemId, user) }
