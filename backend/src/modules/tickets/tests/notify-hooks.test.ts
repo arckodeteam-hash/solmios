@@ -80,6 +80,9 @@ describe('onTicketsStatusChanged (solo admin de plataforma)', () => {
     const result = await svc.update('t1', { status: 'resolved' }, platformAdmin)
 
     expect(result.status).toBe('resolved')
+    // La respuesta del PUT vuelve enriquecida, igual que getById/addMessage
+    expect(result.requester?.name).toBe('Rosa Hotelera')
+    expect(result.hotel?.name).toBe('Hotel Sol')
     expect(changes).toHaveLength(1)
     expect(changes[0].from).toBe('open')
     expect(changes[0].to).toBe('resolved')

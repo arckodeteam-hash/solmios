@@ -133,7 +133,7 @@ export class TicketsService {
       id: currentUser.id, name: actorUser?.name ?? '', userType: currentUser.userType,
     })
     await invalidateTicketsCaches(this.cache, existing.hotelId)
-    return item
+    return enriched
   }
 
   /** REQ-SOP-02/03: agrega un mensaje con el autor resuelto por el server (nunca el del body). */
