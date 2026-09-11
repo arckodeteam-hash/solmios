@@ -186,7 +186,7 @@
             </div>
           </div>
           <div v-if="plans.length">
-            <label for="auth-register-plan-a-probar" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Plan a probar</label>
+            <label for="auth-register-plan-a-probar" class="block text-[11px] font-bold text-text-muted uppercase tracking-wide mb-1.5">Elige tu plan</label>
             <select id="auth-register-plan-a-probar" name="planId" v-model="form.planId"
               class="w-full px-4 py-2.5 bg-white border border-border rounded-xl text-sm focus:outline-none focus:border-navy cursor-pointer">
               <option v-for="p in plans" :key="p.id" :value="p.id">
