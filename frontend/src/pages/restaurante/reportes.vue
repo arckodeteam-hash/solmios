@@ -3,7 +3,8 @@
 //
 // Hasta acá el único "reporte" del POS era el cierre de turno de caja, que solo ve efectivo. Esta
 // vista consolida TODO lo vendido (efectivo, tarjeta, transferencia, cargo a habitación), propinas,
-// anulaciones con motivo, top de ítems, estaciones y franjas horarias, sobre GET /restaurant/reports/daily.
+// anulaciones con motivo, descuentos y cortesías con motivo y usuario (#215), top de ítems, estaciones y
+// franjas horarias, sobre GET /restaurant/reports/daily.
 // Tres pestañas del mismo nivel (PillTabs, regla de #203): Día (cierre de una fecha), Rango (varios días,
 // con la serie diaria) e Ítems (top y estaciones). El CSV se arma con el mismo objeto que pinta la vista.
 import { ref, computed, onMounted, watch } from 'vue'
@@ -109,14 +110,21 @@ const dayMax = computed(() => Math.max(0, ...(report.value?.byDay.map((d) => d.a
 const stationMax = computed(() => Math.max(0, ...(report.value?.byStation.map((s) => s.amount) ?? [])))
 const bar = (n: number, max: number): string => `${n > 0 && max > 0 ? Math.max(2, Math.round((n / max) * 100)) : 0}%`
 
-/** "Anulado X · Reembolsado Y" solo con lo que sea distinto de cero (los vacíos no se pintan). */
+/** "Anulado X · Reembolsado Y · Descontado Z" solo con lo que sea distinto de cero (los vacíos no se pintan). */
 const lossesLabel = computed(() => {
   const r = report.value
   if (!r) return undefined
   const parts: string[] = []
   if (r.voided.amount) parts.push(`Anulado ${money(r.voided.amount)}`)
   if (r.refunded.amount) parts.push(`Reembolsado ${money(r.refunded.amount)}`)
+  if (r.discounts.amount) parts.push(`Descontado ${money(r.discounts.amount)}`)
   return parts.length ? parts.join(' · ') : undefined
+})
+/** Subtítulo de "Descuentos y cortesías": cuántos, en cuántas comandas y cuántas cortesías. */
+const discountsSubtitle = computed(() => {
+  const d = report.value?.discounts
+  if (!d) return ''
+  return `${d.count} descuento(s) en ${d.orders} comanda(s) · ${d.courtesies.count} cortesía(s) por ${money(d.courtesies.amount)}`
 })
 
 const VOID_KIND_LABELS: Record<VoidRow['kind'], { label: string; cls: string }> = {
@@ -270,6 +278,38 @@ const ICON_DOWNLOAD = '<svg viewBox="0 0 24 24" class="h-full w-full" fill="none
             </table>
           </div>
         </SectionCard>
+
+        <SectionCard title="Descuentos y cortesías" :subtitle="discountsSubtitle" body-class="p-0">
+          <EmptyState v-if="!report.discounts.rows.length" icon="🏷️" title="Sin descuentos" message="Ninguna comanda ni línea con descuento o cortesía en el período." />
+          <div v-else class="overflow-x-auto">
+            <table class="w-full min-w-[820px] tbl-head">
+              <thead><tr>
+                <th class="px-4 py-3 text-left text-[10px]">Tipo</th>
+                <th class="px-4 py-3 text-left text-[10px]">Comanda</th>
+                <th class="px-4 py-3 text-left text-[10px]">Detalle</th>
+                <th class="px-4 py-3 text-left text-[10px]">Motivo</th>
+                <th class="px-4 py-3 text-left text-[10px]">Usuario</th>
+                <th class="px-4 py-3 text-right text-[10px]">Base</th>
+                <th class="px-4 py-3 text-right text-[10px]">Descontado</th>
+                <th class="px-4 py-3 text-right text-[10px]">Hora</th>
+              </tr></thead>
+              <tbody>
+                <tr v-for="d in report.discounts.rows" :key="`${d.kind}-${d.orderId}-${d.name}-${d.at}`" class="border-t border-border" data-discount-row :data-courtesy="d.courtesy ? '1' : '0'">
+                  <td class="px-4 py-3">
+                    <span class="rounded-full px-2 py-0.5 text-[10px] font-extrabold" :class="d.courtesy ? 'bg-teal/15 text-teal' : 'bg-navy/10 text-navy'">{{ d.courtesy ? 'Cortesía' : (d.kind === 'order' ? 'Comanda' : 'Línea') }}{{ d.courtesy ? '' : ` −${d.percent}%` }}</span>
+                  </td>
+                  <td class="px-4 py-3 text-xs font-bold text-navy">{{ d.orderNumber || d.orderId.slice(0, 8) }}</td>
+                  <td class="max-w-[240px] truncate px-4 py-3 text-xs text-text-secondary" :title="d.name">{{ d.kind === 'line' && d.quantity ? `${d.quantity}× ` : '' }}{{ d.name }}</td>
+                  <td class="px-4 py-3 text-xs" :class="d.reason ? 'text-text-secondary' : 'text-text-muted'">{{ d.reason || 'Sin motivo registrado' }}</td>
+                  <td class="px-4 py-3 text-xs" :class="d.byName ? 'text-text-secondary' : 'text-text-muted'">{{ d.byName || (d.by ? d.by.slice(0, 8) : 'Sin usuario') }}</td>
+                  <td class="px-4 py-3 text-right text-xs tabular-nums text-text-muted">{{ money(d.base) }}</td>
+                  <td class="px-4 py-3 text-right text-sm font-black tabular-nums" :class="d.courtesy ? 'text-teal' : 'text-navy'">−{{ money(d.amount) }}</td>
+                  <td class="px-4 py-3 text-right text-xs tabular-nums text-text-muted">{{ fmtTime(d.at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
       </template>
 
       <!-- ─── RANGO ─── -->
@@ -334,7 +374,10 @@ const ICON_DOWNLOAD = '<svg viewBox="0 0 24 24" class="h-full w-full" fill="none
             <p v-if="report.refunded.orders" class="mt-3 text-xs text-text-secondary">
               {{ report.refunded.orders }} reembolso(s) por <span class="font-bold tabular-nums">{{ money(report.refunded.amount) }}</span>.
             </p>
-            <p class="mt-3 text-[11px] text-text-muted">El detalle con motivo de cada anulación está en la pestaña <button type="button" class="font-bold text-navy underline cursor-pointer" @click="tab = 'dia'">Día</button>.</p>
+            <p v-if="report.discounts.count" class="mt-1 text-xs text-text-secondary" data-discounts-range>
+              {{ report.discounts.count }} descuento(s) por <span class="font-bold tabular-nums">{{ money(report.discounts.amount) }}</span>, de los cuales {{ report.discounts.courtesies.count }} cortesía(s) por <span class="font-bold tabular-nums">{{ money(report.discounts.courtesies.amount) }}</span>.
+            </p>
+            <p class="mt-3 text-[11px] text-text-muted">El detalle con motivo de cada anulación y descuento está en la pestaña <button type="button" class="font-bold text-navy underline cursor-pointer" @click="tab = 'dia'">Día</button>.</p>
           </SectionCard>
         </div>
       </template>

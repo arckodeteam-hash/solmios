@@ -136,6 +136,16 @@ export async function listItems(deps: ItemsCrudDeps, categoryId: string | undefi
   data.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
   const now = new Date()
   const resolved = data.map((i) => withAvailableNow(resolveForLang(i, lang, ITEM_TRANSLATABLE_FIELDS), now))
+  // Nivel 2 stock fantasma: enriquece cada plato con `hasRecipe` si el puerto de inventario está
+  // inyectado, para que la UI pinte "Sin receta" y el admin sepa qué recetar. Best-effort + graceful:
+  // sin inventario, hasRecipe queda undefined y el badge no se renderiza (la carta no depende del catálogo).
+  // Vivía inline en service.ts; se movió acá en #215 (el service volvió a pasar las 200 líneas del analyzer).
+  if (deps.recipes?.menuItemsWithRecipe) {
+    try {
+      const withRecipe = new Set(await deps.recipes.menuItemsWithRecipe(user))
+      resolved.forEach((i) => { i.hasRecipe = withRecipe.has(i.id) })
+    } catch { /* best-effort: la carta nunca depende del catálogo de inventario */ }
+  }
   return { data: resolved, total: resolved.length }
 }
 

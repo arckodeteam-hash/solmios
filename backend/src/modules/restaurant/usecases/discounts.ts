@@ -22,8 +22,10 @@
 //     habilite: hotel_admin/super_admin, o un hotel con maxDiscountPercent = 100.
 //   - Una comanda `paid/charged/cancelled/processing_payment` no admite descuentos (LINES_LOCKED → 409,
 //     misma regla que editar líneas). Una línea anulada tampoco.
-//   - La línea con cortesía se MANTIENE en la venta (no es `voided`): el cierre del día (#213) la lista
-//     en "Cortesías" con motivo y usuario a partir de `discountValue = 100`.
+//   - La línea con cortesía se MANTIENE en la venta (no es `voided`): el cierre del día (reports.ts, #213)
+//     la lista en "Descuentos y cortesías" con motivo y usuario a partir de `discountAmount` — una
+//     cortesía es el descuento que se lleva TODA la base (100 % o un monto igual al bruto), no solo
+//     `discountValue = 100`.
 //   - Todo queda en `auditlog` vía connectors/restaurante-auditlog.ts: `restaurant.discount.applied` /
 //     `restaurant.discount.removed` con alcance, monto, motivo y usuario.
 import type { RepositoryAdapter, Auth, Logger } from 'arckode-framework'

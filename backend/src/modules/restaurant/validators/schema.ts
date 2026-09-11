@@ -242,7 +242,7 @@ export const DiscountSchema: Record<string, ValidationRule> = {
 }
 // Política del hotel: tope (0..100, lo acota el usecase) y/o motivos predefinidos.
 export const DiscountPolicySchema: Record<string, ValidationRule> = {
-  maxDiscountPercent: { type: 'number' as const },
+  maxDiscountPercent: { type: 'number' as const, min: 0, max: 100 },
   reasons: { type: 'array' as const, min: 1 },
 }
 

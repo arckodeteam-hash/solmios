@@ -38,6 +38,7 @@ interface Fixture {
   payments: PaymentRow[]
   folioCharges: Record<string, ReportFolioCharge & { hotelId: string }>
   hotels?: any[]
+  users?: any[]
   withPaymentsPort?: boolean
   withFolioPort?: boolean
 }
@@ -47,6 +48,7 @@ function makeDeps(f: Fixture): ReportsDeps & { calls: { days: string[]; refs: st
   const hotels = f.hotels ?? [{ id: 'h1', currency: 'DOP', timezone: TZ }, { id: 'h2', currency: 'USD', timezone: TZ }]
   return {
     orders: backed<OrderDTO>(f.orders), lines: backed<OrderItemDTO>(f.lines), hotels: backed<any>(hotels),
+    ...(f.users ? { users: backed<any>(f.users) } : {}),
     ports: {
       ...(f.withPaymentsPort === false ? {} : {
         paymentsOfDay: async (hotelId, day) => { calls.days.push(`${hotelId}:${day}`); return f.payments.filter((p) => p.hotelId === hotelId && p.businessDate === day) },
@@ -220,6 +222,68 @@ describe('dailyReport — anulaciones con motivo', () => {
     const r = await dailyReport(makeDeps(f), { date: '2026-09-11' }, userH1, NOW)
     expect(r.topItemsByQuantity.find((i) => i.name === 'Hamburguesa')).toBeUndefined()
     expect(r.topItemsByQuantity.find((i) => i.name === 'Combo Familiar')).toMatchObject({ menuItemId: null, quantity: 1 })
+  })
+})
+
+describe('dailyReport — descuentos y cortesías (#215)', () => {
+  /**
+   * Día con: una línea al 10 % (Pizza 100 → −10, por la recepcionista), una cortesía de línea al 100 %
+   * (Vino 50 → −50, por el dueño), una cortesía por MONTO igual al bruto (Postre 30 → −30) y un
+   * descuento de COMANDA del 20 % sobre la comanda o-cash (base 100 → −20). Los cobros asentados ya
+   * vienen descontados (la plata sigue saliendo de payments).
+   */
+  function discountsFixture(): Fixture {
+    const f = acceptanceFixture()
+    // o-cash: Pizza 2×50 = 100 con descuento de comanda 20 % → subtotal 80, cobro 80.
+    Object.assign(f.orders[0], { subtotal: 80, total: 80, discountType: 'percent', discountValue: 20, discountAmount: 20, discountTotal: 20, discountReason: 'Huésped del hotel', discountBy: 'u-owner', discountAt: '2026-09-11T16:10:00.000Z' })
+    f.payments[0].amount = 80
+    // o-card: Pizza 3×50 = 150 con 10 % de línea (−15), Vino 50 cortesía 100 % (−50), Postre 30 cortesía por monto (−30) → subtotal 85 + propina 20.
+    Object.assign(f.lines[1], { discountType: 'percent', discountValue: 10, discountAmount: 15, discountReason: 'Plato con demora o error', discountBy: 'u-recep', discountAt: '2026-09-11T17:00:00.000Z' })
+    Object.assign(f.lines[2], { discountType: 'percent', discountValue: 100, discountAmount: 50, discountReason: 'Cortesía de la casa', discountBy: 'u-owner', discountAt: '2026-09-11T17:05:00.000Z' })
+    f.lines.push(line('l5', 'o-card', 'Postre', 30, 1, { discountType: 'amount', discountValue: 30, discountAmount: 30, discountReason: 'Cumpleaños', discountBy: 'u-recep', discountAt: '2026-09-11T17:20:00.000Z' }))
+    Object.assign(f.orders[1], { subtotal: 85, total: 105, discountTotal: 95 })
+    f.payments[1].amount = 105
+    // Línea anulada CON descuento: no cuenta (ya salió de la venta) — no es un descuento, es una anulación.
+    f.lines.push(line('l6', 'o-card', 'Agua', 10, 1, { status: 'voided', voidReason: 'Se cayó', discountType: 'percent', discountValue: 100, discountAmount: 10 }))
+    f.users = [{ id: 'u-owner', hotelId: 'h1', name: 'Doña Marta' }, { id: 'u-recep', hotelId: 'h1', name: 'Rosa Pérez' }]
+    return f
+  }
+
+  it('total descontado, cantidad, comandas con descuento y cortesías (100 % o monto = bruto) con motivo, usuario resuelto y comanda', async () => {
+    const r = await dailyReport(makeDeps(discountsFixture()), { date: '2026-09-11' }, userH1, NOW)
+    expect(r.discounts.amount).toBe(115)            // 20 + 15 + 50 + 30
+    expect(r.discounts.count).toBe(4)
+    expect(r.discounts.orders).toBe(2)
+    expect(r.discounts.courtesies).toEqual({ count: 2, amount: 80 })
+    // Más reciente primero.
+    expect(r.discounts.rows.map((d) => d.name)).toEqual(['Postre', 'Vino', 'Pizza', 'Comanda completa'])
+    const vino = r.discounts.rows.find((d) => d.name === 'Vino')!
+    expect(vino).toMatchObject({ kind: 'line', orderId: 'o-card', orderNumber: 'CMD-o-card', quantity: 1, base: 50, amount: 50, percent: 100, courtesy: true, reason: 'Cortesía de la casa', by: 'u-owner', byName: 'Doña Marta', at: '2026-09-11T17:05:00.000Z' })
+    const postre = r.discounts.rows.find((d) => d.name === 'Postre')!
+    expect(postre).toMatchObject({ courtesy: true, percent: 100, amount: 30, byName: 'Rosa Pérez', reason: 'Cumpleaños' })
+    const pizza = r.discounts.rows.find((d) => d.name === 'Pizza')!
+    expect(pizza).toMatchObject({ kind: 'line', quantity: 3, base: 150, amount: 15, percent: 10, courtesy: false, byName: 'Rosa Pérez' })
+    const whole = r.discounts.rows.find((d) => d.kind === 'order')!
+    expect(whole).toMatchObject({ orderId: 'o-cash', name: 'Comanda completa', base: 100, amount: 20, percent: 20, courtesy: false, reason: 'Huésped del hotel', byName: 'Doña Marta' })
+    // La línea anulada con descuento va a Anuladas, no a Descuentos.
+    expect(r.discounts.rows.some((d) => d.name === 'Agua')).toBe(false)
+    expect(r.voided.lines).toBe(1)
+    // La plata sigue saliendo de payments (ya descontada): 80 + 85 + 150.
+    expect(r.sales.total).toBe(315)
+    expect(r.sales.tips).toBe(20)
+  })
+
+  it('sin repo de users (o usuario borrado) el descuento se lista igual con byName null; sin descuentos, sección en cero', async () => {
+    const f = discountsFixture()
+    f.users = [{ id: 'u-owner', hotelId: 'h1', name: 'Doña Marta' }]   // u-recep ya no existe
+    const r = await dailyReport(makeDeps(f), { date: '2026-09-11' }, userH1, NOW)
+    expect(r.discounts.rows.find((d) => d.name === 'Pizza')!.byName).toBeNull()
+    expect(r.discounts.rows.find((d) => d.name === 'Vino')!.byName).toBe('Doña Marta')
+    const f2 = discountsFixture(); delete f2.users
+    const r2 = await dailyReport(makeDeps(f2), { date: '2026-09-11' }, userH1, NOW)
+    expect(r2.discounts.rows.every((d) => d.byName === null)).toBe(true)
+    const r3 = await dailyReport(makeDeps(acceptanceFixture()), { date: '2026-09-11' }, userH1, NOW)
+    expect(r3.discounts).toEqual({ orders: 0, count: 0, amount: 0, courtesies: { count: 0, amount: 0 }, rows: [] })
   })
 })
 

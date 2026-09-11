@@ -37,6 +37,8 @@ export type { ModuleStatePort } from './usecases/public-menu'
 export type { RestaurantEvent, RestaurantEventType } from './usecases/events'
 // #213 (append-only): cierre del día.
 export type { ReportPorts, ReportPayment, ReportFolioCharge, RestaurantDailyReport, DailyReportQuery, SalesMethod, VoidRow } from './usecases/reports'
+// #215 (append-only): descuentos y cortesías en el cierre del día.
+export type { DiscountRow } from './usecases/reports'
 
 export function RestaurantModule() {
   return createModule({

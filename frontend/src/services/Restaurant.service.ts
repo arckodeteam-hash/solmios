@@ -270,6 +270,29 @@ export interface VoidRow {
   at: string | null
   by: string | null
 }
+/** #215 — un descuento (de línea o de toda la comanda) en una comanda vendida del rango. Espejo de reports.ts. */
+export interface DiscountRow {
+  kind: 'line' | 'order'
+  orderId: string
+  orderNumber: string | null
+  /** Nombre de la línea, o "Comanda completa" si el descuento es de la comanda. */
+  name: string
+  quantity: number
+  /** Bruto sobre el que se aplicó (neto sin impuesto). */
+  base: number
+  /** Lo que se dejó de cobrar (neto sin impuesto). */
+  amount: number
+  /** amount / base en %. 100 = cortesía. */
+  percent: number
+  /** El descuento se llevó toda la base (invitación de la casa). */
+  courtesy: boolean
+  reason: string | null
+  at: string | null
+  /** users.id de quien lo aplicó. */
+  by: string | null
+  /** Nombre resuelto por el server contra `users`; null si no se pudo. */
+  byName: string | null
+}
 export interface RestaurantDailyReport {
   from: string
   to: string
@@ -296,6 +319,8 @@ export interface RestaurantDailyReport {
   voided: { orders: number; lines: number; amount: number; rows: VoidRow[] }
   /** Devoluciones del período (por fecha de la devolución). `amount` es la plata que salió, propina incluida. */
   refunded: { orders: number; amount: number }
+  /** #215 — descuentos y cortesías de las comandas vendidas: total descontado, cantidad, en cuántas comandas, cortesías (100 %) y el detalle. */
+  discounts: { orders: number; count: number; amount: number; courtesies: { count: number; amount: number }; rows: DiscountRow[] }
   topItemsByQuantity: ItemTotals[]
   topItemsByAmount: ItemTotals[]
   byStation: StationTotals[]

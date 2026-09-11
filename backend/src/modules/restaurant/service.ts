@@ -111,19 +111,7 @@ export class RestaurantService {
   deleteCategory(id: string, user: CurrentUser) { return categoriesCrud.deleteCategory(catDeps(this.w()), id, user) }
 
   // ─── Carta: ítems (RES-1) — delegan a usecases/items-crud ───
-  async listItems(categoryId: string | undefined, user: CurrentUser, lang?: string) {
-    const res = await itemsCrud.listItems(itemDeps(this.w()), categoryId, user, lang)
-    // Nivel 2 stock fantasma: enriquece cada plato con `hasRecipe` si el port de inventario está
-    // inyectado, para que la UI pinte "Sin receta" y el admin sepa qué recetar. Best-effort + graceful:
-    // sin inventario, hasRecipe queda undefined y el badge no se renderiza (la carta no depende del catálogo).
-    if (this.recipePorts?.menuItemsWithRecipe) {
-      try {
-        const withRecipe = new Set(await this.recipePorts.menuItemsWithRecipe(user))
-        res.data.forEach((i) => { i.hasRecipe = withRecipe.has(i.id) })
-      } catch { /* best-effort: la carta nunca depende del catálogo de inventario */ }
-    }
-    return res
-  }
+  listItems(categoryId: string | undefined, user: CurrentUser, lang?: string) { return itemsCrud.listItems(itemDeps(this.w()), categoryId, user, lang) }
   getItem(id: string, user: CurrentUser, lang?: string) { return itemsCrud.getItem(itemDeps(this.w()), id, user, lang) }
   createItem(dto: itemsCrud.CreateItemInput, user: CurrentUser) { return itemsCrud.createItem(itemDeps(this.w()), dto, user) }
   updateItem(id: string, dto: itemsCrud.UpdateItemInput, user: CurrentUser) { return itemsCrud.updateItem(itemDeps(this.w()), id, dto, user) }

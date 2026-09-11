@@ -98,7 +98,7 @@ export function kdsDeps(w: RestaurantWiring): kds.KdsDeps {
 /** #213: cierre del día. */
 export function reportsDeps(w: RestaurantWiring): reports.ReportsDeps {
   if (!w.orders || !w.lines || !w.hotels) throw new ValidationError(NO_ORDERS)
-  return { orders: w.orders, lines: w.lines, hotels: w.hotels, ports: w.reportPorts }
+  return { orders: w.orders, lines: w.lines, hotels: w.hotels, users: w.userRepo, ports: w.reportPorts }
 }
 /** #209: buscador de alojados. Sin puerto de reservas el usecase falla cerrado. */
 export function inHouseDeps(w: RestaurantWiring): inHouse.InHouseDeps { return { reservations: w.reservationPort, userRepo: w.userRepo } }
