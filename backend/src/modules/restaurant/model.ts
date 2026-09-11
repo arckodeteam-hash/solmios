@@ -118,6 +118,20 @@ export const RestaurantOrderModel: ModelDefinition = {
     // abrirla); en room_service/takeaway queda null. Lo consume el reporte del día (ticket promedio
     // por comensal). null en las filas anteriores a la columna = comanda sin dato, NO "cero comensales".
     covers: { type: 'number' },
+    // #213 — motivo con el que se canceló la comanda (lo exige cancelOrder desde #207). Antes vivía
+    // solo en el audit log y en las líneas `voided`; una comanda cancelada `open` (nunca fue a cocina,
+    // sus líneas no se anulan) no tenía dónde guardarlo y el cierre del día la mostraba sin motivo.
+    // null en filas anteriores a la columna: el reporte cae al motivo de la primera línea anulada.
+    cancelReason: { type: 'text' },
+    // #213 (auditoría) — día contable 'YYYY-MM-DD' en la zona del hotel, fijado al cerrar la comanda
+    // (cobro, cargo a habitación o cancelación). El ORM solo consulta por igualdad: el cierre del día
+    // pide `{ hotelId, businessDate }` en vez de traer todo el histórico y cortar en memoria. NO cambia
+    // al reembolsar: la venta queda en su día y el reembolso se ve en el suyo (payments.businessDate).
+    // Filas anteriores a la columna: backfill en migrate-db.ts desde closedAt (zona del hotel).
+    businessDate: { type: 'string', indexed: true },
+    // #213 (auditoría) — cuándo se reembolsó. Antes refundOrder pisaba closedAt y la venta se mudaba
+    // de día en el cierre; ahora closedAt es el cobro y refundedAt la devolución.
+    refundedAt: { type: 'string' },
   },
   timestamps: true,
 }

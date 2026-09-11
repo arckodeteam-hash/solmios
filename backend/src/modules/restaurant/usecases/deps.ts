@@ -20,6 +20,7 @@ import type * as combosCrud from './combos-crud'
 import type * as foodCost from './food-cost'
 import type * as voidReasons from './void-reasons'
 import type * as inHouse from './in-house'
+import type * as reports from './reports'
 import type * as publicMenuUsecase from './public-menu'
 import type { ReservationPort } from './reservation-port'
 
@@ -50,6 +51,8 @@ export interface RestaurantWiring {
   auditPort: AuditPort | null
   reservationPort: ReservationPort | null
   moduleStatePort: publicMenuUsecase.ModuleStatePort | null
+  /** #213: la plata del cierre del día (payments + cargo al folio), por conectores. Sin puertos, ventas en cero. */
+  reportPorts: reports.ReportPorts
 }
 
 const NO_ORDERS = 'Comandas no configuradas'
@@ -62,7 +65,7 @@ export function itemDeps(w: RestaurantWiring): itemsCrud.ItemsCrudDeps {
 export function tableDeps(w: RestaurantWiring): tablesCrud.TablesCrudDeps { return { tables: w.tables, userRepo: w.userRepo, auth: w.auth, orders: w.orders, sockets: w.sockets } }
 export function ordersDeps(w: RestaurantWiring): orders.OrdersDeps {
   if (!w.orders || !w.lines || !w.config) throw new ValidationError(NO_ORDERS)
-  return { orders: w.orders, lines: w.lines, tables: w.tables, config: w.config, counterCas: w.counterCas, userRepo: w.userRepo, auth: w.auth, sockets: w.sockets, audit: w.auditPort, logger: w.logger, reservations: w.reservationPort, labels: { rooms: w.rooms, guests: w.guests }, guests: w.guests, rooms: w.rooms }
+  return { orders: w.orders, lines: w.lines, tables: w.tables, config: w.config, counterCas: w.counterCas, userRepo: w.userRepo, auth: w.auth, sockets: w.sockets, audit: w.auditPort, logger: w.logger, reservations: w.reservationPort, labels: { rooms: w.rooms, guests: w.guests }, guests: w.guests, rooms: w.rooms, hotels: w.hotels }
 }
 export function orderLinesDeps(w: RestaurantWiring): orderLines.OrderLinesDeps {
   if (!w.orders || !w.lines || !w.config || !w.hotels) throw new ValidationError(NO_ORDERS)
@@ -85,6 +88,11 @@ export function settlementDeps(w: RestaurantWiring): settlement.SettlementDeps {
 export function kdsDeps(w: RestaurantWiring): kds.KdsDeps {
   if (!w.orders || !w.lines) throw new ValidationError(NO_ORDERS)
   return { orders: w.orders, lines: w.lines, userRepo: w.userRepo, auth: w.auth, sockets: w.sockets, tables: w.tables, rooms: w.rooms }
+}
+/** #213: cierre del día. */
+export function reportsDeps(w: RestaurantWiring): reports.ReportsDeps {
+  if (!w.orders || !w.lines || !w.hotels) throw new ValidationError(NO_ORDERS)
+  return { orders: w.orders, lines: w.lines, hotels: w.hotels, ports: w.reportPorts }
 }
 /** #209: buscador de alojados. Sin puerto de reservas el usecase falla cerrado. */
 export function inHouseDeps(w: RestaurantWiring): inHouse.InHouseDeps { return { reservations: w.reservationPort, userRepo: w.userRepo } }

@@ -15,6 +15,7 @@ const RESTAURANT_PAGES: Record<string, () => Promise<unknown>> = {
   'restaurant-kds': () => import('@/pages/restaurante/cocina.vue'),
   'restaurant-pay': () => import('@/pages/restaurante/cobrar.vue'),
   'restaurant-cash': () => import('@/pages/restaurante/caja.vue'),
+  'restaurant-reports': () => import('@/pages/restaurante/reportes.vue'),
 }
 
 const router = createRouter({

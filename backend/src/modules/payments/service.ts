@@ -47,10 +47,12 @@ export class PaymentsService {
     private readonly events?: PaymentEventStore,
     /** Verifican folioId/invoiceId/guestId/reservationId del body contra el hotel — ver payment-crud (SEC3-5). */
     folioRepo?: RepositoryAdapter<any>, invoiceRepo?: RepositoryAdapter<any>, guestRepo?: RepositoryAdapter<any>, reservationRepo?: RepositoryAdapter<any>,
+    /** #213: zona horaria del hotel para `payments.businessDate` (ver model.ts). */
+    hotelRepo?: RepositoryAdapter<any>,
   ) {
     if (!registry) throw new Error('payments: PaymentGatewayRegistry es requerido (pasarela por hotel)')
     this.stripe = new StripeUseCase(registry, logger)
-    this.crud = new PaymentCrudUseCase(paymentRepo, logger, auth, userRepo, folioRepo, invoiceRepo, guestRepo, reservationRepo)
+    this.crud = new PaymentCrudUseCase(paymentRepo, logger, auth, userRepo, folioRepo, invoiceRepo, guestRepo, reservationRepo, hotelRepo)
     this.liveChargePort = liveChargesPort(paymentRepo, this.crud)
     this.deposits = new DepositsUseCase(depositRepo, logger, auth, userRepo)
     this.reconciliation = new ReconciliationUseCase(paymentRepo)
@@ -121,6 +123,9 @@ export class PaymentsService {
   async listPayments(query: PaymentsQuery): Promise<PaymentsPaginated> {
     return this.crud.list(query)
   }
+
+  /** #213 — puerto de lectura para `connectors/restaurante-reports-payments`: los pagos del hotel de un día contable. */
+  paymentsOfBusinessDate(hotelId: string, businessDate: string): Promise<PaymentDTO[]> { return this.crud.ofBusinessDate(hotelId, businessDate) }
 
   /** Asiento de un cobro Stripe, si ya existe. */
   async findByStripeSession(hotelId: string, stripeSessionId: string): Promise<PaymentDTO | null> {

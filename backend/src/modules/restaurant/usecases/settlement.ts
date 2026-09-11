@@ -11,6 +11,7 @@ import { recomputeTotals } from './order-totals'
 import { round2 } from '../../../shared/utils/money'
 import { assertReservationOfHotel, assertReservationChargeable, type ReservationPort } from './reservation-port'
 import { hotelToday } from '../../../shared/utils/hotel-schedule'
+import { closingStamp } from './business-date'
 
 // Puertos que provee el conector (folios/payments). El módulo NO importa esos módulos.
 // `orderId` viaja SIEMPRE: el conector lo usa para construir `reference: 'pos:' + orderId`, la
@@ -165,7 +166,7 @@ export async function chargeToRoom(deps: SettlementDeps, id: string, dto: { rese
 
   const updated = (await deps.orders.update(id, {
     status: 'charged', settlement: 'folio', folioId: res.folioId,
-    reservationId, guestId, roomId, closedAt: new Date().toISOString(),
+    reservationId, guestId, roomId, ...(await closingStamp(deps.hotels, order.hotelId)),
   } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
   await freeTable(deps, order)
   await deps.sockets.onOrderCharged?.(updated)
@@ -255,7 +256,7 @@ export async function payOrder(
 
   const updated = (await deps.orders.update(id, {
     status: 'paid', settlement: 'payment', paymentId: res.paymentId,
-    closedAt: new Date().toISOString(),
+    ...(await closingStamp(deps.hotels, order.hotelId)),
   } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
   await freeTable(deps, order)
   await deps.sockets.onOrderPaid?.(updated)
@@ -288,9 +289,11 @@ export async function refundOrder(deps: SettlementDeps, id: string, user: Curren
   // refund de gateway es idempotente por paymentId (stripe); un fix robusto = idempotency key propia.
   await deps.ports.refundPayment({ paymentId: order.paymentId }, user)
 
+  // #213 (auditoría): NO se pisa closedAt/businessDate — la venta sigue en el cierre del día en que se
+  // cobró; el reembolso lo muestra el día en que se devolvió, leído de `payments` (type:'refund').
   const updated = (await deps.orders.update(id, {
     status: 'refunded',
-    closedAt: new Date().toISOString(),
+    refundedAt: new Date().toISOString(),
   } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
   await deps.sockets.onOrderRefunded?.(updated)
   await auditSafely(deps.audit ?? null, deps.logger ?? silentLogger, {
@@ -320,7 +323,7 @@ export async function settlePaidOrder(deps: SettlementDeps, id: string, paymentI
 
   const updated = (await deps.orders.update(id, {
     status: 'paid', settlement: 'payment', paymentId,
-    closedAt: new Date().toISOString(),
+    ...(await closingStamp(deps.hotels, order.hotelId)),
   } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
   await freeTable(deps, order)
   await deps.sockets.onOrderPaid?.(updated)

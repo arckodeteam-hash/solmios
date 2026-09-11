@@ -24,14 +24,16 @@ export function PaymentsModule() {
     // 1.2.0 — RTC-7.4: `settledNetOfReservation` (dinero neto asentado a nombre de una reserva).
     //         Lo consume `payment-requests` para decidir si una reserva se puede borrar; antes lo
     //         resolvía leyendo `payments` con el shim `paidRepos` y un `as any`.
-    version: '1.2.0',
+    // 1.3.0 — #213: `paymentsOfBusinessDate` (los pagos del hotel de un día contable) para el cierre
+    //         del día del restaurante — `payments` es la fuente única del dinero, la comanda no.
+    version: '1.3.0',
     description: 'Payments: card charging, deposits, reconciliation',
 
     contract: {
       name: 'payments',
-      version: '1.2.0',
+      version: '1.3.0',
       description: 'Payments: card charging, deposits, reconciliation',
-      actions: ['createPayment', 'chargeCard', 'refund', 'listPayments', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo', 'settledNetOfReservation'],
+      actions: ['createPayment', 'chargeCard', 'refund', 'listPayments', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo', 'settledNetOfReservation', 'paymentsOfBusinessDate'],
       events: ['onPaymentCreated', 'onPaymentCompleted', 'onPaymentExpired', 'onPaymentFailed', 'onRefundProcessed', 'onDepositCreated', 'onDepositReleased'],
       tables: ['payments', 'deposits'],
       dependencies: ['folios', 'facturas'],
@@ -63,7 +65,9 @@ export function PaymentsModule() {
       const guestRefRepo = new OrmRepository<any>(orm, 'Guests')
       // SEC3-5: la reserva referenciada por `payments.reservationId` se verifica igual que folio/factura/huésped.
       const reservationRefRepo = new OrmRepository<any>(orm, 'Reservations')
-      const service = new PaymentsService(paymentRepo, depositRepo, log, cache, auth, userRepo, registry, events, folioRefRepo, invoiceRefRepo, guestRefRepo, reservationRefRepo)
+      // #213: la zona horaria del hotel fija `payments.businessDate` (día contable del cobro).
+      const hotelRefRepo = new OrmRepository<any>(orm, 'Hotels')
+      const service = new PaymentsService(paymentRepo, depositRepo, log, cache, auth, userRepo, registry, events, folioRefRepo, invoiceRefRepo, guestRefRepo, reservationRefRepo, hotelRefRepo)
       const controller = new PaymentsController(service, log)
 
       // Admin routes (protegidas con auth)

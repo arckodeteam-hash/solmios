@@ -75,11 +75,20 @@ describe('restaurantePaymentsConnector — socket inverso onPaymentCompleted/onP
     const { ctx, paymentsSockets, settlePaidOrderCalls } = makeCtx()
     restaurantePaymentsConnector(ctx)
 
-    await paymentsSockets.onPaymentCompleted({ id: 'pay1', method: 'card', metadata: { source: 'restaurant', orderId: 'o1' } })
+    await paymentsSockets.onPaymentCompleted({ id: 'pay1', type: 'charge', method: 'card', metadata: { source: 'restaurant', orderId: 'o1' } })
 
     expect(settlePaidOrderCalls).toHaveLength(1)
     expect(settlePaidOrderCalls[0].orderId).toBe('o1')
     expect(settlePaidOrderCalls[0].paymentId).toBe('pay1')
+  })
+
+  it('#213: una devolución (type=refund) hereda source=restaurant y nace completed, pero NO es un cobro a confirmar', async () => {
+    const { ctx, paymentsSockets, settlePaidOrderCalls } = makeCtx()
+    restaurantePaymentsConnector(ctx)
+
+    await paymentsSockets.onPaymentCompleted({ id: 'rf1', type: 'refund', method: 'card', metadata: { source: 'restaurant', orderId: 'o1', refundOf: 'pay1' } })
+
+    expect(settlePaidOrderCalls).toHaveLength(0)
   })
 
   it('onPaymentCompleted con method=cash/transfer NO llama settlePaidOrder (cobro directo: payOrder ya marca paid)', async () => {

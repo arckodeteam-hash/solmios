@@ -538,16 +538,20 @@ const fmtDenom = (d: number) => money(d)
         <p class="text-xs text-text-muted mt-0.5">{{ subtitle }}</p>
       </div>
       <!-- Jerarquía de botones: con turno abierto los movimientos son acciones secundarias del
-           header; sin turno el único primario es "Abrir turno" (vive en la guía de abajo). -->
-      <div v-if="currentShift" class="flex gap-2">
-        <button @click="openMovModal('income')" class="flex items-center gap-1.5 bg-teal text-white font-extrabold text-sm px-4 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">
-          <span class="w-4 h-4 shrink-0" v-html="ICON_PLUS"></span>
-          Ingreso
-        </button>
-        <button @click="openMovModal('expense')" class="flex items-center gap-1.5 bg-coral text-white font-extrabold text-sm px-4 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">
-          <span class="w-4 h-4 shrink-0" v-html="ICON_MINUS"></span>
-          Egreso
-        </button>
+           header; sin turno el único primario es "Abrir turno" (vive en la guía de abajo).
+           `header-actions`: enlaces propios de cada caja (#213: la del restaurante enlaza al cierre del día). -->
+      <div class="flex flex-wrap items-center gap-2">
+        <slot name="header-actions" />
+        <template v-if="currentShift">
+          <button @click="openMovModal('income')" class="flex items-center gap-1.5 bg-teal text-white font-extrabold text-sm px-4 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">
+            <span class="w-4 h-4 shrink-0" v-html="ICON_PLUS"></span>
+            Ingreso
+          </button>
+          <button @click="openMovModal('expense')" class="flex items-center gap-1.5 bg-coral text-white font-extrabold text-sm px-4 py-2.5 rounded-full hover:shadow-lg transition-all cursor-pointer">
+            <span class="w-4 h-4 shrink-0" v-html="ICON_MINUS"></span>
+            Egreso
+          </button>
+        </template>
       </div>
     </div>
 
