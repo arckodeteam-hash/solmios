@@ -450,11 +450,20 @@ describe('RestaurantService — cuenta + cobro (RES-5)', () => {
     expect(paid.amount).toBe(23.6)           // BRUTO (subtotal + tax + tip)
     // idempotencia-settlement-pos: orderId viaja al conector para armar 'pos:' + orderId.
     expect(paid.orderId).toBe('o1')
+    // #212: la descripción nombra comanda y mesa — es lo que la caja muestra como concepto.
+    expect(paid.description).toBe('Comanda CMD-2026-0001 · Mesa M1')
     expect(o.status).toBe('paid')
     expect(o.settlement).toBe('payment')
     expect(o.paymentId).toBe('p1')
     expect(tablesStore[0].status).toBe('free')
     expect(evt).toBe(true)
+  })
+
+  it('payOrder de un room service / para llevar describe el tipo en vez de una mesa (#212)', async () => {
+    const { build } = setup({ type: 'room_service', tableId: undefined })
+    let paid: any = null
+    await build({ recordPayment: async (i: any) => { paid = i; return { paymentId: 'p1' } } }).payOrder('o1', { method: 'cash' }, user)
+    expect(paid.description).toBe('Comanda CMD-2026-0001 · Room service')
   })
 
   it('exclusividad folio XOR payment: cargar y luego cobrar → ConflictError (una venta, una vez)', async () => {

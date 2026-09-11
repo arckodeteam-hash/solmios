@@ -48,6 +48,18 @@ describe('paymentsCajaConnector', () => {
     expect(registered[0].register).toBe('reception')
   })
 
+  // #212: el movimiento de caja tiene que poder enlazar la comanda (reference `pos:<orderId>`) y
+  // decir qué mesa fue (description del payment como concepto).
+  it('el movimiento hereda reference y description del payment (enlace y concepto)', async () => {
+    const { sockets, registered } = mount()
+    await sockets.onPaymentCompleted(payment({
+      metadata: { source: 'restaurant', orderId: 'o1' }, reference: 'pos:o1',
+      description: 'Comanda CMD-2026-0007 · Mesa 3',
+    }))
+    expect(registered[0].reference).toBe('pos:o1')
+    expect(registered[0].concept).toBe('Comanda CMD-2026-0007 · Mesa 3')
+  })
+
   it('pagos con tarjeta/transferencia no tocan caja (ya están bancarizados)', async () => {
     const { sockets, registered } = mount()
     await sockets.onPaymentCompleted(payment({ method: 'card' }))
