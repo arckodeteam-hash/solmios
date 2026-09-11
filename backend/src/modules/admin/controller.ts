@@ -9,6 +9,7 @@ import {
 // #103: la key global `trial_days` es de UN campo — el schema vive junto a su usecase, no en
 // validators/schema.ts (los de allá son bodies multirubro). Mismo repo de `configuration`.
 import { getTrialDays, setTrialDays, UpdateTrialDaysSchema } from './usecases/trial-days'
+import { getAnnouncementTemplates, setAnnouncementTemplates } from './usecases/announcement-templates'
 
 /**
  * Mapeo de error → HTTP. Nació para el catálogo de amenities y lo comparte la facturación de
@@ -290,6 +291,21 @@ export class AdminController {
     try {
       const data = validateSchema(UpdateTrialDaysSchema, req.body || {}) as { days: number }
       return { status: 200, body: await setTrialDays(this.configRepo!, data.days) }
+    } catch (e: any) {
+      return { status: httpStatusOfError(e), body: { error: e.message } }
+    }
+  }
+
+  // ── Plantillas de anuncios (#111, ANN-7) — key `announcement_templates` de configuration ──
+
+  async getAnnouncementTemplates() {
+    return { status: 200, body: await getAnnouncementTemplates(this.configRepo!) }
+  }
+
+  /** `{templates: [...]}` → 400 (ValidationError) si no es array o algún ítem está malformado. */
+  async updateAnnouncementTemplates(req: HttpRequest) {
+    try {
+      return { status: 200, body: await setAnnouncementTemplates(this.configRepo!, (req.body as any)?.templates) }
     } catch (e: any) {
       return { status: httpStatusOfError(e), body: { error: e.message } }
     }
