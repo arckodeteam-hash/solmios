@@ -21,6 +21,7 @@ import type * as foodCost from './food-cost'
 import type * as voidReasons from './void-reasons'
 import type * as inHouse from './in-house'
 import type * as reports from './reports'
+import type * as print from './print'
 import type * as publicMenuUsecase from './public-menu'
 import type { ReservationPort } from './reservation-port'
 
@@ -93,6 +94,11 @@ export function kdsDeps(w: RestaurantWiring): kds.KdsDeps {
 export function reportsDeps(w: RestaurantWiring): reports.ReportsDeps {
   if (!w.orders || !w.lines || !w.hotels) throw new ValidationError(NO_ORDERS)
   return { orders: w.orders, lines: w.lines, hotels: w.hotels, ports: w.reportPorts }
+}
+/** #216: impresión 80 mm (precuenta/ticket/cocina). El pago del ticket sale por `reportPorts.paymentById`. */
+export function printDeps(w: RestaurantWiring): print.PrintDeps {
+  if (!w.orders || !w.lines || !w.config || !w.hotels) throw new ValidationError(NO_ORDERS)
+  return { orders: w.orders, lines: w.lines, tables: w.tables, config: w.config, hotels: w.hotels, userRepo: w.userRepo, auth: w.auth, rooms: w.rooms, guests: w.guests, ports: w.reportPorts }
 }
 /** #209: buscador de alojados. Sin puerto de reservas el usecase falla cerrado. */
 export function inHouseDeps(w: RestaurantWiring): inHouse.InHouseDeps { return { reservations: w.reservationPort, userRepo: w.userRepo } }

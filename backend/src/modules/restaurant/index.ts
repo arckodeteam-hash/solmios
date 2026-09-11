@@ -140,6 +140,12 @@ export function RestaurantModule() {
       // Comandas (RES-3)
       router.get('/api/restaurant/orders', guard('restaurant', 'view'), (req) => controller.indexOrders(req))
       router.get('/api/restaurant/orders/:id', guard('restaurant', 'view'), (req) => controller.showOrder(req))
+      // #216: impresión 80 mm (`?doc=precuenta|ticket|kitchen`). El guard estático no puede mirar `?doc=`, así que
+      // la ruta deja pasar a quien tenga `restaurant:view` (mozo, cocina) O `restaurant:pay` (un cajero que solo
+      // cobra imprime la precuenta y el ticket desde Cobrar) y el usecase exige el permiso por documento sobre
+      // `req.user.permissions` (mismo esquema que removeLine, #205): precuenta/cocina → view, ticket → pay (403).
+      const printGuard = [auth.authenticate(), loadPermissions(roleRepo), requireAnyPermission(['restaurant', 'view'], ['restaurant', 'pay']), moduleGuard('restaurant')]
+      router.get('/api/restaurant/orders/:id/print', printGuard, (req) => controller.printOrder(req))
       router.post('/api/restaurant/orders', guard('restaurant', 'create'), (req) => controller.openOrder(req))
       router.post('/api/restaurant/orders/:id/send', guard('restaurant', 'edit'), (req) => controller.sendOrder(req))
       router.post('/api/restaurant/orders/:id/cancel', guard('restaurant', 'delete'), (req) => controller.cancelOrder(req))

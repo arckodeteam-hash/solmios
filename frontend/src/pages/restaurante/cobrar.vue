@@ -5,7 +5,7 @@
 // #209 — el cargo a habitación se elige con `ReservationPicker` (habitación/apellido), nunca tipeando un
 // id. Si la comanda ya nació con reserva (room service), viene preseleccionada y se confirma en un toque.
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import {
   RestaurantService, roomServiceLabel, inHouseStatusLabel,
   type OrderWithLines, type InHouseReservation,
@@ -21,9 +21,9 @@ import AppModal from '@/components/ui/AppModal.vue'
 import ReservationPicker from '@/components/features/restaurante/ReservationPicker.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
+import { openPrintTab } from './imprimir'
 
 const route = useRoute()
-const router = useRouter()
 const toast = useToast()
 const { can } = usePermissions()
 const orderId = computed(() => String(route.params.id))
@@ -191,8 +191,10 @@ async function payDirect() {
       window.location.href = result.checkoutUrl
       return // navegando afuera del SPA — no hay nada más que hacer acá
     }
+    // #216 — se queda en la pantalla liquidada (con "Imprimir ticket" y "Volver al salón") en vez de
+    // saltar al salón: el cliente que paga en efectivo se lleva el ticket ahora, no después.
     toast.success('Comanda cobrada')
-    router.push('/panel/restaurante/salon')
+    await load()
   } catch (e: unknown) {
     toast.error(e instanceof Error ? e.message : 'No se pudo cobrar')
     // Reflejar el estado real; si NO podemos, bloqueamos reintentos (el pago pudo haberse registrado).
@@ -214,13 +216,24 @@ async function chargeRoom() {
     const rid = selectedReservation.value?.id || order.value.reservationId
     await RestaurantService.chargeToRoom(orderId.value, { reservationId: rid || undefined })
     toast.success('Cargado a la habitación')
-    router.push('/panel/restaurante/salon')
+    await load()   // #216 — misma pantalla liquidada que el cobro directo (ticket imprimible)
   } catch (e: unknown) {
     toast.error(e instanceof Error ? e.message : 'No se pudo cargar a la habitación')
     try { await load() } catch { unknownState.value = true }
   } finally {
     busy.value = false
   }
+}
+
+// ─── #216: imprimir (80 mm) — precuenta antes de cobrar, ticket después (paid/charged) ───
+const printing = ref<'precuenta' | 'ticket' | null>(null)
+async function print(doc: 'precuenta' | 'ticket') {
+  if (printing.value) return
+  printing.value = doc
+  try {
+    const r = await openPrintTab(orderId.value, doc)
+    if (!r.ok) toast.error(r.error)
+  } finally { printing.value = null }
 }
 
 async function confirmRefund() {
@@ -290,6 +303,11 @@ async function confirmRefund() {
             </p>
             <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
               <router-link to="/panel/restaurante/salon" class="px-4 py-2 rounded-lg bg-navy text-white text-sm font-bold">Volver al salón</router-link>
+              <!-- #216 — comprobante de pago / cargo a la habitación, 80 mm, en pestaña nueva. -->
+              <button v-if="canPay" type="button" @click="print('ticket')" :disabled="printing !== null" data-testid="print-ticket"
+                class="px-4 py-2 rounded-lg border-2 border-navy/30 text-navy text-sm font-bold hover:bg-surface disabled:opacity-50">
+                🖨 {{ printing === 'ticket' ? 'Generando…' : 'Imprimir ticket' }}
+              </button>
               <button v-if="refundable" @click="refundOpen = true"
                 class="px-4 py-2 rounded-lg bg-coral text-white text-sm font-bold hover:bg-coral/80 disabled:opacity-50">
                 Reembolsar
@@ -317,6 +335,11 @@ async function confirmRefund() {
             <div class="flex justify-between text-text-muted"><span>Propina</span><span class="tabular-nums">{{ money(tip) }}</span></div>
             <div class="flex justify-between text-navy font-black text-lg pt-1 border-t-2 border-navy/10"><span>Total</span><span class="tabular-nums">{{ money(previewTotal) }}</span></div>
           </div>
+          <!-- #216 — precuenta para la mesa (lo consumido, sin cobrar), 80 mm, en pestaña nueva. -->
+          <button type="button" @click="print('precuenta')" :disabled="printing !== null" data-testid="print-precuenta"
+            class="mt-3 w-full py-2 rounded-xl border-2 border-navy/30 text-navy text-sm font-bold hover:bg-surface disabled:opacity-50">
+            🖨 {{ printing === 'precuenta' ? 'Generando…' : 'Imprimir precuenta' }}
+          </button>
         </SectionCard>
 
         <!-- Propina (solo cobro directo) -->

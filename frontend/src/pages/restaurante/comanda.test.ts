@@ -157,3 +157,21 @@ describe('#210 — comensales', () => {
     expect(salon, 'el campo de comensales necesita id para el label').toMatch(/id="mesa-comensales"/)
   })
 })
+
+describe('#216 — imprimir precuenta y comanda de cocina desde la comanda', () => {
+  it('los dos botones existen, abren la pestaña con openPrintTab y la comanda de cocina solo se ofrece con líneas ya enviadas', () => {
+    const src = comanda()
+    const tpl = templateOf(src)
+    expect(tpl).toMatch(/data-testid="print-precuenta"[^>]*/)
+    expect(tpl).toMatch(/data-testid="print-kitchen"/)
+    expect(tpl).toMatch(/@click="print\('precuenta'\)"/)
+    expect(tpl).toMatch(/@click="print\('kitchen'\)"/)
+    expect(src).toMatch(/import \{ openPrintTab \} from '\.\/imprimir'/)
+    expect(src).toMatch(/openPrintTab\(orderId\.value, doc\)/)
+    // La cocina imprime lo confirmado (`sentAt`): sin envío no hay comanda de cocina que imprimir.
+    expect(src).toMatch(/canPrintKitchen = computed\(\(\) => [^\n]*order\.value\.status !== 'open'[^\n]*\.some\(\(l\) => !!l\.sentAt\)/)
+    // Nada de fetch() ni de <a href> a la API: se pasa por el servicio.
+    expect(src).not.toMatch(/fetch\(/)
+    expect(tpl).not.toMatch(/href="\/api/)
+  })
+})

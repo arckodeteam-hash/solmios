@@ -9,6 +9,7 @@ import type { ReportPorts, ReportPayment } from '../modules/restaurant'
 
 interface PaymentsModule {
   paymentsOfBusinessDate: (hotelId: string, businessDate: string) => Promise<ReportPayment[]>
+  paymentOfHotel: (hotelId: string, paymentId: string) => Promise<ReportPayment | null>
 }
 interface RestaurantModule { setReportPorts: (p: Partial<ReportPorts>) => void }
 
@@ -17,5 +18,7 @@ export function restauranteReportsPaymentsConnector(ctx: ConnectorContext): void
   const payments = () => ctx.resolveModule<PaymentsModule>('payments')
   restaurant.setReportPorts({
     paymentsOfDay: (hotelId: string, businessDate: string) => payments().paymentsOfBusinessDate(hotelId, businessDate),
+    // #216: el ticket impreso lee el pago de la comanda (método/monto) del mismo lugar, acotado al hotel.
+    paymentById: (hotelId: string, paymentId: string) => payments().paymentOfHotel(hotelId, paymentId),
   })
 }

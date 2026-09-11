@@ -358,6 +358,16 @@ export class RestaurantController {
     return { status: 200, body: await this.service.dailyReport(query, req.user as any) }
   }
 
+  // #216 — papel de 80 mm: ?doc=precuenta|ticket|kitchen[&station=<id>|__none__]. Devuelve el HTML
+  // autocontenido (mismo esquema que facturas `GET /:id/print` y el recibo de nómina): el frontend lo
+  // abre en una pestaña y el navegador imprime.
+  async printOrder(req: HttpRequest) {
+    const q = (req.query as any) ?? {}
+    this.logger.info('GET /restaurant/orders/:id/print', { id: req.params.id, doc: q.doc, station: q.station })
+    const html = await this.service.printOrder(req.params.id, { doc: q.doc, station: q.station }, req.user as any)
+    return { status: 200, body: html, headers: { 'content-type': 'text/html; charset=utf-8' } }
+  }
+
   async foodCostReport(req: HttpRequest) {
     this.logger.info('GET /restaurant/food-cost/report')
     const result = await this.service.foodCostReport(req.user as any)

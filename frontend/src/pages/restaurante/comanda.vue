@@ -25,6 +25,7 @@ import AppModal from '@/components/ui/AppModal.vue'
 import VoidReasonModal from '@/components/features/restaurante/VoidReasonModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
+import { openPrintTab } from './imprimir'
 
 const route = useRoute()
 const router = useRouter()
@@ -395,6 +396,22 @@ function goPay() {
   router.push(`/panel/restaurante/cobrar/${orderId.value}`)
 }
 
+// ─── #216: imprimir (80 mm) ───────────────────────────────────────────────────────────────────────
+// Precuenta: lo consumido hasta ahora, para llevar a la mesa (cualquier comanda con líneas, no cancelada).
+// Comanda de cocina: lo ya confirmado a cocina (`sentAt`), para una cocina sin pantalla — solo tiene sentido
+// después del primer envío. Ambas se abren en una pestaña nueva y el navegador imprime (ver imprimir.ts).
+const printing = ref<'precuenta' | 'kitchen' | null>(null)
+const canPrintBill = computed(() => !!order.value && order.value.status !== 'cancelled' && activeLines.value.length > 0)
+const canPrintKitchen = computed(() => !!order.value && order.value.status !== 'open' && order.value.status !== 'cancelled' && activeLines.value.some((l) => !!l.sentAt))
+async function print(doc: 'precuenta' | 'kitchen') {
+  if (printing.value) return
+  printing.value = doc
+  try {
+    const r = await openPrintTab(orderId.value, doc)
+    if (!r.ok) toast.error(r.error)
+  } finally { printing.value = null }
+}
+
 // #207: cancelar pide motivo (obligatorio en el backend). El modal de motivo reemplaza al ConfirmModal.
 function cancel() {
   if (!deletePerm.value) { toast.warning('Sin permiso para cancelar'); return }
@@ -548,6 +565,17 @@ function cancel() {
               class="flex-1 min-w-[140px] py-2.5 rounded-xl bg-teal text-white font-bold hover:bg-teal/80 disabled:opacity-50">Cobrar</button>
             <button v-if="editable && deletePerm" @click="cancel" :disabled="sending"
               class="px-4 py-2.5 rounded-xl border-2 border-coral/40 text-coral font-bold hover:bg-coral/10 disabled:opacity-50">Cancelar</button>
+          </div>
+          <!-- #216 — impresión 80 mm en pestaña nueva. -->
+          <div v-if="canPrintBill || canPrintKitchen" class="mt-2 flex flex-wrap gap-2">
+            <button v-if="canPrintBill" type="button" @click="print('precuenta')" :disabled="printing !== null" data-testid="print-precuenta"
+              class="flex-1 min-w-[140px] py-2 rounded-xl border-2 border-navy/30 text-navy text-sm font-bold hover:bg-surface disabled:opacity-50">
+              🖨 {{ printing === 'precuenta' ? 'Generando…' : 'Imprimir precuenta' }}
+            </button>
+            <button v-if="canPrintKitchen" type="button" @click="print('kitchen')" :disabled="printing !== null" data-testid="print-kitchen"
+              class="flex-1 min-w-[140px] py-2 rounded-xl border-2 border-navy/30 text-navy text-sm font-bold hover:bg-surface disabled:opacity-50">
+              🖨 {{ printing === 'kitchen' ? 'Generando…' : 'Imprimir comanda de cocina' }}
+            </button>
           </div>
         </SectionCard>
       </div>

@@ -31,6 +31,9 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: routerPush, replace: vi.fn() }),
   useRoute: () => ({ params: { id: 'o1' }, query: {} }),
 }))
+// #216 — la pestaña de impresión se abre en imprimir.ts; acá solo importa que se pida el doc correcto.
+const printCalls: unknown[] = []
+vi.mock('./imprimir', () => ({ openPrintTab: vi.fn(async (...args: unknown[]) => { printCalls.push(args); return { ok: true } }) }))
 vi.mock('@/services/Settings.service', () => ({
   SettingsService: { get: vi.fn(async () => ({ hotel: { currency: 'DOP' } })) },
 }))
@@ -44,6 +47,8 @@ vi.mock('@/services/Restaurant.service', async (importOriginal) => {
       searchInHouse: vi.fn(async () => ({ data: inHouseData, total: inHouseData.length })),
       getInHouseById: vi.fn(async (id: string) => { byIdCalls.push(id); return byId(id) }),
       chargeToRoom: vi.fn(async (id: string, data: unknown) => { chargeCalls.push({ id, data }); return { ...orderData, status: 'charged' } }),
+      billOrder: vi.fn(async () => ({ ...orderData, status: 'billed' })),
+      payOrder: vi.fn(async () => { orderData = { ...orderData, status: 'paid', settlement: 'payment', paymentId: 'pay-1' }; return orderData }),
     },
   }
 })
@@ -143,6 +148,41 @@ describe('cobrar.vue — #209', () => {
   it('los métodos de pago son los de Caja.service', async () => {
     const w = await mountCobrar()
     for (const m of POS_PAYMENT_METHODS) expect(w.text()).toContain(m.label)
+    w.unmount()
+  })
+})
+
+describe('cobrar.vue — #216 imprimir precuenta y ticket', () => {
+  beforeEach(() => { printCalls.length = 0; routerPush.mockClear(); orderData = baseOrder() })
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('antes de cobrar: "Imprimir precuenta" abre la precuenta de ESTA comanda; no hay ticket todavía', async () => {
+    const w = await mountCobrar()
+    expect(w.find('[data-testid="print-ticket"]').exists()).toBe(false)
+    await w.find('[data-testid="print-precuenta"]').trigger('click')
+    await flushPromises()
+    expect(printCalls).toEqual([['o1', 'precuenta']])
+    w.unmount()
+  })
+
+  it('cobrar en efectivo se queda en la pantalla liquidada (no salta al salón) y "Imprimir ticket" pide el ticket', async () => {
+    const w = await mountCobrar()
+    const payBtn = w.findAll('button').find((b) => b.text().startsWith('Cobrar '))!
+    await payBtn.trigger('click')
+    await flushPromises()
+    expect(routerPush).not.toHaveBeenCalled()
+    expect(w.text()).toContain('Cobrada directamente')
+    await w.find('[data-testid="print-ticket"]').trigger('click')
+    await flushPromises()
+    expect(printCalls).toEqual([['o1', 'ticket']])
+    w.unmount()
+  })
+
+  it('cargada a la habitación: también hay "Imprimir ticket"', async () => {
+    orderData = baseOrder({ status: 'charged', settlement: 'folio', folioId: 'f1' })
+    const w = await mountCobrar()
+    expect(w.find('[data-testid="print-ticket"]').exists()).toBe(true)
+    expect(w.find('[data-testid="print-precuenta"]').exists()).toBe(false)
     w.unmount()
   })
 })

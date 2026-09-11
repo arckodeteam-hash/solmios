@@ -15,6 +15,8 @@ export type OrderStatus =
 export type LineStatus = 'new' | 'preparing' | 'ready' | 'served' | 'cancelled' | 'voided'
 export type TableStatus = 'free' | 'occupied' | 'reserved'
 export type Settlement = 'folio' | 'payment'
+// #216 — papeles de 80 mm: precuenta (comanda), ticket (comprobante del cobro) y comanda de cocina (por estación).
+export type PrintDoc = 'precuenta' | 'ticket' | 'kitchen'
 
 // F5 — catálogo FIJO de tags de alérgenos/info dietética (espejo de backend/src/modules/restaurant/types.ts,
 // D8). En inglés (DB/código); acá se traduce cada key a su etiqueta en español + ícono para la UI.
@@ -551,6 +553,16 @@ export const RestaurantService = {
   // Reembolso: solo órdenes status='paid' con settlement='payment' (cobro con tarjeta).
   // Backend devuelve 409 ConflictError si la orden no cumple la condición.
   refundOrder: (id: string): Promise<Order> => http.post(`/restaurant/orders/${id}/refund`),
+
+  // ─── Impresión 80 mm (#216) ───
+  // El endpoint devuelve el HTML autocontenido (envuelto en {data} por el framework; http.get extrae el
+  // string), igual que el recibo de nómina. `pages/restaurante/imprimir.ts` lo abre en una pestaña y el
+  // navegador imprime. `station` solo aplica a `kitchen` (id de estación o '__none__', como el KDS).
+  printHtml(orderId: string, doc: PrintDoc, station?: string): Promise<string> {
+    const qs = new URLSearchParams({ doc })
+    if (station) qs.set('station', station)
+    return http.get<string>(`/restaurant/orders/${orderId}/print?${qs.toString()}`)
+  },
 
   // ─── KDS / cocina ───
   async kdsQueue(station?: string): Promise<KdsTicket[]> {

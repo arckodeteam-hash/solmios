@@ -126,6 +126,8 @@ export class PaymentsService {
 
   /** #213 — puerto de lectura para `connectors/restaurante-reports-payments`: los pagos del hotel de un día contable. */
   paymentsOfBusinessDate(hotelId: string, businessDate: string): Promise<PaymentDTO[]> { return this.crud.ofBusinessDate(hotelId, businessDate) }
+  /** #216 — puerto de lectura para el ticket impreso del POS: un pago por id, solo si es del hotel. */
+  paymentOfHotel(hotelId: string, paymentId: string): Promise<PaymentDTO | null> { return this.crud.ofHotel(hotelId, paymentId) }
 
   /** Asiento de un cobro Stripe, si ya existe. */
   async findByStripeSession(hotelId: string, stripeSessionId: string): Promise<PaymentDTO | null> {

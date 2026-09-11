@@ -60,6 +60,12 @@ export interface ReportPorts {
    * restaurante-reports-folios. Null si no existe. Sin puerto, el cargo a habitación vale cero.
    */
   folioCharge?: (hotelId: string, reference: string) => Promise<ReportFolioCharge | null>
+  /**
+   * #216 — UN pago del hotel por id, para el ticket impreso (método, monto, referencia). Mismo conector
+   * que `paymentsOfDay`; acotado al hotel de la comanda (null si no es de ese hotel). Sin puerto, el
+   * ticket muestra el total pagado sin desglose de método.
+   */
+  paymentById?: (hotelId: string, paymentId: string) => Promise<ReportPayment | null>
 }
 
 export interface ReportsDeps {
