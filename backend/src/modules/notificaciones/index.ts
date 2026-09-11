@@ -6,6 +6,7 @@ import type { NotificacionesDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 
 export { NotificacionesService }
+export type { HotelEmailDeps } from './service'
 export type { NotificacionesDTO, CreateNotificacionesDTO, UpdateNotificacionesDTO, NotificacionesQuery, NotificacionesPaginated } from './types'
 export type { NotificacionesSockets } from './sockets'
 export { NotificacionesValidator, CreateNotificacionesSchema, UpdateNotificacionesSchema } from './validators/schema'

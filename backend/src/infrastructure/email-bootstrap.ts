@@ -5,6 +5,8 @@ import { NotificationRenderer, type AutoMessageTemplateRow } from '../services/n
 import type { EmailSender } from '../services/email-sender'
 import type { Logger } from 'arckode-framework'
 import { sendBookingPaidEmail } from '../shared/usecases/booking-paid-email'
+import { resolvePlatformIdentity, type PlatformIdentity } from '../shared/utils/platform-identity'
+import type { ReservationEmailSender } from '../shared/usecases/notify-reservation-received'
 
 export interface EmailBootstrapResult {
   emailService: EmailService
@@ -177,6 +179,20 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
           logger,
         }, reservationId)
       },
+    })
+  }
+
+  // #246 — Aviso de reserva/pago al buzón del hotel (`hotels.email`). Va acá y no en el connector
+  // `bookingengine-notificaciones` por lo mismo que el bloque de arriba: el EmailService nace
+  // DESPUÉS de `system.start()`. El connector lee `notificaciones.hotelEmailDeps()` en cada aviso;
+  // hasta esta inyección, el aviso sale sólo por campanita y push.
+  const notificacionesForEmail = resolveModule<{
+    setHotelEmailDeps(d: { emailSender: ReservationEmailSender; platformIdentity: () => Promise<PlatformIdentity> }): void
+  }>('notificaciones')
+  if (notificacionesForEmail && typeof notificacionesForEmail.setHotelEmailDeps === 'function') {
+    notificacionesForEmail.setHotelEmailDeps({
+      emailSender: emailService,
+      platformIdentity: () => resolvePlatformIdentity(new OrmRepository<any>(orm, 'Configuration')),
     })
   }
 

@@ -539,6 +539,7 @@ import { reservasPromocodesConnector } from './connectors/reservas-promocodes'
 import { attendanceDashboardConnector } from './connectors/attendance-dashboard'
 import { attendancePayrollConnector } from './connectors/attendance-payroll'
 import { bookingenginePaymentsConnector } from './connectors/bookingengine-payments'
+import { bookingengineNotificacionesConnector } from './connectors/bookingengine-notificaciones'
 import { bookingengineDepositsConnector } from './connectors/bookingengine-deposits'
 import { bookingenginePromocodesConnector } from './connectors/bookingengine-promocodes'
 import { bookingengineTtlockConnector } from './connectors/bookingengine-ttlock'
@@ -760,6 +761,9 @@ system.addConnector('payment-requests-payments', paymentRequestsPaymentsConnecto
 system.addConnector('payment-requests-ttlock', paymentRequestsTtlockConnector(logger))
 // El widget público cobra con Stripe: ese dinero vivía solo en la tabla `bookings`.
 system.addConnector('bookingengine-payments', bookingenginePaymentsConnector)
+// #246: aviso al hotel (campanita + push) por reserva web y pago confirmado; el correo se inyecta
+// post-init en `notificaciones` (ver email-bootstrap), por la misma TDZ que explica el bloque de abajo.
+system.addConnector('bookingengine-notificaciones', bookingengineNotificacionesConnector(logger))
 // El correo de confirmación de PAGO del motor NO va acá: necesita el EmailService, que se
 // construye recién en `bootstrapEmail()` DESPUÉS de `system.start()`. Referenciarlo desde un
 // connector daba ReferenceError por TDZ al arrancar. Se suscribe en `email-bootstrap.ts`,

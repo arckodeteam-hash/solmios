@@ -250,7 +250,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useCountUp } from '@/composables/useCountUp'
 import { ReservationService } from '@/services/Reservation.service'
 import ReservationModal from '@/components/features/ReservationModal.vue'
@@ -544,8 +544,24 @@ onMounted(async () => {
     const r = (list.value as any[]).find((x) => x.id === editQ)
     if (r) openEdit(r)
     router.replace({ query: {} })
+    return
   }
+  openFromQuery()
 })
+
+// ?open=id viene de la campanita (#246: aviso de reserva web/OTA o pago confirmado). Abre la
+// vista "Ver": el modal carga por id, así que no importa si la fila no está en el listado filtrado.
+// Se lee al montar Y cuando cambia la query: si el usuario ya está en /panel/reservas y toca el
+// aviso, Vue Router reutiliza la instancia y `onMounted` no vuelve a correr.
+function openFromQuery() {
+  const openQ = route.query.open
+  if (!openQ || typeof openQ !== 'string') return
+  const r = (list.value as any[]).find((x) => x.id === openQ)
+  if (r) lastRow.value = r
+  detailId.value = openQ
+  router.replace({ query: {} })
+}
+watch(() => route.query.open, (v) => { if (v) openFromQuery() })
 </script>
 
 <style scoped>
