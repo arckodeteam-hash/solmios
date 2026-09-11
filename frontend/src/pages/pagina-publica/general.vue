@@ -145,7 +145,12 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Teléfono principal</label>
-            <PhoneInput v-model="phone" :country="hotelCountry" />
+            <!-- data-field va en el PhoneInput (cae en su div raíz): el auto-focus de save() baja
+                 al <input> de adentro; `focusout` (a diferencia de blur) burbujea desde ese input.
+                 `invalid` pinta el borde como en StepBienvenida. -->
+            <PhoneInput v-model="phone" :country="hotelCountry" :maxlength="20" :invalid="!!errorOf('phone')"
+              data-field="phone" @focusout="touchField('phone')" />
+            <p v-if="errorOf('phone')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('phone') }}</p>
           </div>
           <div>
             <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Email</label>
@@ -630,7 +635,9 @@ async function save() {
     const first = CONTACT_FIELDS.find((f) => fieldErrors.value[f])
     if (first) {
       await nextTick()
-      document.querySelector<HTMLElement>(`[data-field="${first}"]`)?.focus()
+      // PhoneInput lleva el data-field en su div raíz: se enfoca el <input> que tiene adentro.
+      const el = document.querySelector<HTMLElement>(`[data-field="${first}"]`)
+      ;(el?.tagName === 'INPUT' ? el : el?.querySelector<HTMLElement>('input'))?.focus()
     }
     toast.error(Object.keys(fieldErrors.value).length === 1
       ? Object.values(fieldErrors.value)[0]!

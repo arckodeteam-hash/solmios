@@ -115,6 +115,21 @@ describe('Contacto público (issue #79): phone/email viven en Página pública �
     expect((phoneInput(wrapper).element as HTMLInputElement).value).toBe('+1 809 555 1234')
   })
 
+  it('un phone corto (min 7) bloquea el guardado, marca el campo en rojo y muestra el error', async () => {
+    patchHotelMock.mockClear()
+    const wrapper = await mountGeneral()
+
+    await phoneInput(wrapper).setValue('12345')
+    await clickGuardar(wrapper)
+
+    expect(patchHotelMock).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Teléfono principal: mínimo 7 caracteres')
+    // `invalid` del PhoneInput: el <input type="tel"> queda con borde rojo, como el email.
+    expect(phoneInput(wrapper).classes()).toContain('border-danger')
+    // data-field="phone" existe (auto-focus de save() lo busca).
+    expect(wrapper.find('[data-field="phone"]').exists()).toBe(true)
+  })
+
   it('un email con formato inválido bloquea el guardado (validación aislada de esta pantalla)', async () => {
     patchHotelMock.mockClear()
     const wrapper = await mountGeneral()
