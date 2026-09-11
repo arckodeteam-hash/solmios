@@ -1,7 +1,7 @@
 import type { ValidationRule } from 'arckode-framework'
 
 const STATUS_ENUM = ['pending', 'confirmed', 'checked_in', 'checked_out', 'cancelled', 'no_show']
-const CHANNEL_ENUM = ['direct', 'booking', 'airbnb', 'expedia', 'agoda', 'trip', 'phone', 'email', 'walk_in']
+const CHANNEL_ENUM = ['direct', 'web', 'booking', 'airbnb', 'expedia', 'agoda', 'trip', 'phone', 'email', 'walk_in']
 const PRECHECKIN_ENUM = ['pending', 'sent', 'completed', 'expired']
 
 export const CreateReservasSchema: Record<string, ValidationRule> = {

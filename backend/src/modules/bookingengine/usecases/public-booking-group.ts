@@ -480,9 +480,12 @@ export async function createPublicBookingGroup(
 
       for (const line of resolvedLines) {
         for (const roomId of line.roomIds) {
+          // REQ-RWP-04 — `source: 'web'` distingue la reserva del widget web de la carga en
+          // recepción (`/api/panel/reservas` deja el default 'direct'); `channel` sigue 'direct'
+          // porque los reportes de directas cuentan por `channel` (reservas/usecases/booking-engine.ts).
           const reservation = await tx.create('Reservations', {
             id: crypto.randomUUID(), hotelId, roomId, guestId: guest.id, groupId: group.id,
-            checkIn, checkOut, status: 'pending', source: 'direct',
+            checkIn, checkOut, status: 'pending', source: 'web', channel: 'direct',
             adults: line.adults, children: line.children, childrenAges: line.childrenAges,
             // Requerimiento 12 (edad de referencia, 2026-09-03) — mismo ancla que public-booking.ts:
             // el check-in VIGENTE al declarar las edades, para poder proyectarlas al reagendar.
