@@ -544,6 +544,16 @@ onMounted(async () => {
     const r = (list.value as any[]).find((x) => x.id === editQ)
     if (r) openEdit(r)
     router.replace({ query: {} })
+    return
+  }
+  // ?open=id viene de la campanita (#246: aviso de reserva web/OTA o pago confirmado). Abre la
+  // vista "Ver": el modal carga por id, así que no importa si la fila no está en el listado filtrado.
+  const openQ = route.query.open
+  if (openQ && typeof openQ === 'string') {
+    const r = (list.value as any[]).find((x) => x.id === openQ)
+    if (r) lastRow.value = r
+    detailId.value = openQ
+    router.replace({ query: {} })
   }
 })
 </script>
