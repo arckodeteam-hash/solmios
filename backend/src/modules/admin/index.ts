@@ -31,12 +31,13 @@ export function AdminModule() {
     // 1.4.1: + POST /api/admin/subscriptions/:hotelId/extend-trial (REQ-PIPE-05, #146).
     // 1.5.0 (CFG-6, #103): + GET/PUT /api/admin/subscriptions/trial-days — la key `trial_days`
     // de configuration(platform) fija la duración del trial para los hoteles nuevos.
-    version: '1.5.0',
+    // 1.6.0 (ANN-7, #111): + GET/PUT /api/admin/announcement-templates — key announcement_templates de configuration(platform)
+    version: '1.6.0',
     description: 'Super admin platform management',
     contract: {
-      name: 'admin', version: '1.5.0',
+      name: 'admin', version: '1.6.0',
       description: 'Platform-level management: hotels, users, plans, analytics',
-      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'getTrialDays', 'updateTrialDays', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv', 'remindBillingInvoice', 'registerManualPayment', 'extendTrial'],
+      actions: ['listHotels', 'updateHotel', 'listUsers', 'getAnalytics', 'listSubscriptions', 'listAuditLogs', 'listAnnouncements', 'getMonitoring', 'listPlans', 'createPlan', 'updatePlan', 'deletePlan', 'listAmenitiesCatalog', 'createAmenityCatalog', 'updateAmenityCatalog', 'deleteAmenityCatalog', 'getPublicUsers', 'getModules', 'getModulesCatalog', 'setModules', 'getEnabledModules', 'searchSubscriptionByEmail', 'subscriptionDetail', 'applySpecialConditions', 'suspendSubscription', 'reactivateSubscription', 'listSubscriptionCategories', 'updateSubscriptionCategory', 'getSubscriptionSettings', 'updateSubscriptionSettings', 'getTrialDays', 'updateTrialDays', 'getAnnouncementTemplates', 'updateAnnouncementTemplates', 'listModuleOverrides', 'upsertModuleOverride', 'deleteModuleOverride', 'listBillingInvoices', 'getBillingInvoice', 'getBillingStats', 'exportBillingCsv', 'remindBillingInvoice', 'registerManualPayment', 'extendTrial'],
       events: [],
       tables: [],
       dependencies: [],
@@ -150,6 +151,10 @@ export function AdminModule() {
       router.get('/api/admin/subscriptions', sa, () => controller.listSubscriptions())
       router.get('/api/admin/audit', sa, (req: any) => controller.listAuditLogs(req))
       router.get('/api/admin/announcements', sa, () => controller.listAnnouncements())
+      // #111 (ANN-7): plantillas de anuncios del super admin — key `announcement_templates` de
+      // configuration(platform), mismo patrón que trial-days.
+      router.get('/api/admin/announcement-templates', sa, () => controller.getAnnouncementTemplates())
+      router.put('/api/admin/announcement-templates', sa, (req: any) => controller.updateAnnouncementTemplates(req))
       router.get('/api/admin/announcements/reach', sa, () => controller.getAnnouncementsReach())
       router.get('/api/admin/monitoring', sa, () => controller.getMonitoring())
       router.get('/api/admin/plans', sa, () => controller.listPlans())
