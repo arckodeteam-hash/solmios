@@ -115,10 +115,11 @@ export class TicketsService {
     if (patch.status === 'in_progress' && currentUser.userType === 'admin' && !existing.assignedTo && !patch.assignedTo) {
       patch.assignedTo = currentUser.id
     }
+    // REQ-SOP-06: el connector necesita saber desde qué estado y quién (nombre real, el JWT no lo
+    // trae). Se resuelve ANTES de escribir, como en addMessage: si falla, no queda nada a medias.
+    const actorUser = await this.userRepo.findById(currentUser.id)
     const item = await this.repo.update(id, patch as any)
     if (!item) throw new NotFoundError('Ticket no encontrado')
-    // REQ-SOP-06: el connector necesita saber desde qué estado y quién (nombre real, el JWT no lo trae).
-    const actorUser = await this.userRepo.findById(currentUser.id)
     await this.sockets.onTicketsUpdated?.(item, {
       previous: existing,
       actor: { id: currentUser.id, name: actorUser?.name ?? '', role: currentUser.role, hotelId: currentUser.hotelId, userType: currentUser.userType },
