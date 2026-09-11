@@ -14,6 +14,10 @@ export const RestaurantStationModel: ModelDefinition = {
     name: { type: 'string', required: true },
     active: { type: 'number', default: 1 },
     sortOrder: { type: 'number', default: 0 },
+    // #211 — minutos desde el envío a cocina a partir de los cuales el ticket del KDS se pinta ámbar
+    // (y rojo al doble). Configurable por estación (la parrilla tarda más que el bar). Null en filas
+    // anteriores a la columna (ADD COLUMN no rellena): la UI cae al default 10.
+    alertMinutes: { type: 'number', default: 10 },
   },
   timestamps: true,
 }

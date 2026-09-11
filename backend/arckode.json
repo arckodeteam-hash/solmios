@@ -1,6 +1,6 @@
 {
   "_arckode": "1.0.0",
-  "_generated": "2026-09-11T15:30:50.249Z",
+  "_generated": "2026-09-11T15:59:22.347Z",
   "_instructions": "Lee este archivo ANTES de escribir código. Contiene el estado completo del sistema: módulos, conectores, violaciones. Si está desactualizado, corré: bun run analyze --json",
   "system": {
     "healthy": true,
@@ -1024,6 +1024,7 @@
     "apikeys-auditlog.ts",
     "reservas-huespedes.ts",
     "ai-recepcionista-whatsapp.ts",
+    "restaurante-events.ts",
     "payment-requests-bookingengine-webhook.ts",
     "publicapi-reservas.ts",
     "activos-auditlog.ts",

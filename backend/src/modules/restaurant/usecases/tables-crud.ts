@@ -4,11 +4,14 @@
 import type { RepositoryAdapter, Auth } from 'arckode-framework'
 import { NotFoundError, ValidationError } from 'arckode-framework'
 import type { TableDTO, TableStatus, CurrentUser } from '../types'
+import type { RestaurantSockets } from '../sockets'
 
 export interface TablesCrudDeps {
   tables: RepositoryAdapter<TableDTO>
   userRepo: RepositoryAdapter<any>
   auth: Auth
+  /** #211 — `onTableChanged` avisa al Salón en vivo. Opcional: sin sockets el CRUD funciona igual. */
+  sockets?: RestaurantSockets
 }
 
 const TABLE_STATUSES: TableStatus[] = ['free', 'occupied', 'reserved']
@@ -53,13 +56,15 @@ export async function createTable(deps: TablesCrudDeps, dto: CreateTableInput, u
   if (!dto.name?.trim()) throw new ValidationError('El nombre de la mesa es obligatorio')
   assertStatus(dto.status)
   assertCapacity(dto.capacity)
-  return deps.tables.create({
+  const created = await deps.tables.create({
     hotelId,
     name: dto.name.trim(),
     zone: dto.zone,
     capacity: dto.capacity ?? 0,
     status: dto.status ?? 'free',
   } as Omit<TableDTO, 'id'>)
+  await deps.sockets?.onTableChanged?.(created)
+  return created
 }
 
 export async function updateTable(deps: TablesCrudDeps, id: string, dto: UpdateTableInput, user: CurrentUser): Promise<TableDTO> {
@@ -71,6 +76,7 @@ export async function updateTable(deps: TablesCrudDeps, id: string, dto: UpdateT
   assertCapacity(dto.capacity)
   const item = await deps.tables.update(id, dto as Partial<Omit<TableDTO, 'id'>>)
   if (!item) throw new NotFoundError('Mesa no encontrada')
+  await deps.sockets?.onTableChanged?.(item)
   return item
 }
 
@@ -81,4 +87,5 @@ export async function deleteTable(deps: TablesCrudDeps, id: string, user: Curren
   deps.auth.assertOwnership(existing.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
   const deleted = await deps.tables.delete(id)
   if (!deleted) throw new NotFoundError('Mesa no encontrada')
+  await deps.sockets?.onTableChanged?.(existing)
 }
