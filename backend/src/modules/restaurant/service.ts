@@ -1,7 +1,7 @@
 // restaurant/service.ts — Facade del módulo POS de restaurante. Orquesta; la lógica que crece vive en usecases/.
 // Depende de RepositoryAdapter, NO del ORM directo. NO importa de otros módulos (va por conectores). Ver openspec/changes/restaurante-pos.
 import type { RepositoryAdapter, Logger, Auth } from 'arckode-framework'
-import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderItemDTO, CurrentUser, ModifierGroupDTO, ModifierDTO, ComboDTO, ComboItemDTO, LineStatus } from './types'
+import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderItemDTO, CurrentUser, ModifierGroupDTO, ModifierDTO, ComboDTO, ComboItemDTO, LineStatus, OrderPaymentDTO } from './types'
 import type { RestaurantSockets } from './sockets'
 import * as categoriesCrud from './usecases/categories-crud'
 import * as itemsCrud from './usecases/items-crud'
@@ -9,6 +9,7 @@ import * as tablesCrud from './usecases/tables-crud'
 import * as orders from './usecases/orders'
 import * as orderLines from './usecases/order-lines'
 import * as settlement from './usecases/settlement'
+import * as splitPayments from './usecases/split-payments'
 import * as kds from './usecases/kds'
 import * as modifiersCrud from './usecases/modifiers-crud'
 import * as stationsCrud from './usecases/stations-crud'
@@ -16,14 +17,15 @@ import * as combosCrud from './usecases/combos-crud'
 import * as foodCost from './usecases/food-cost'
 import * as publicMenuUsecase from './usecases/public-menu'
 import * as voidReasons from './usecases/void-reasons'
+import * as discounts from './usecases/discounts'
 import * as events from './usecases/events'
 import * as inHouse from './usecases/in-house'
 import * as reports from './usecases/reports'
 import * as print from './usecases/print'
 import { composeSockets } from './usecases/compose-sockets'
 import {
-  type RestaurantWiring, stationDeps, catDeps, itemDeps, tableDeps, ordersDeps, orderLinesDeps, voidReasonsDeps,
-  modifierDeps, comboDeps, foodCostDeps, settlementDeps, kdsDeps, inHouseDeps, publicMenuDeps, reportsDeps, printDeps,
+  type RestaurantWiring, stationDeps, catDeps, itemDeps, tableDeps, ordersDeps, orderLinesDeps, voidReasonsDeps, discountsDeps,
+  modifierDeps, comboDeps, foodCostDeps, settlementDeps, kdsDeps, inHouseDeps, publicMenuDeps, reportsDeps, splitPaymentsDeps, printDeps,
 } from './usecases/deps'
 import type { AuditPort } from '../../shared/usecases/audit'
 import type { ReservationPort } from './usecases/reservation-port'
@@ -32,20 +34,15 @@ export class RestaurantService {
   private sockets: RestaurantSockets = {}
   // Puertos de liquidación (folios/payments) que inyecta un conector. RES-5.
   private settlementPorts: settlement.SettlementPorts = {}
-  // Puerto de recetas (inventario, conector restaurante-inventario.ts): hasRecipe (badge "Sin receta") +
-  // F3 getRecipeCost (margen). `undefined` = inventario no montado → food-cost.ts degrada, nunca 500.
+  // Puerto de recetas (conector restaurante-inventario.ts): hasRecipe + F3 getRecipeCost. `undefined` = inventario no montado → food-cost.ts degrada, nunca 500.
   private recipePorts: foodCost.RecipePorts = {}
-  // #207: auditoría (connectors/restaurante-auditlog.ts). null = sin auditlog montado: anular sigue funcionando, sin rastro.
-  private auditPort: AuditPort | null = null
-  // #208: puertos — reservas por conector (restaurante-reservas.ts; null = room service/cargo a habitación fallan
-  // cerrado) y gate del módulo para la carta pública (index.ts → createModuleChecker; null = 404 genérico).
+  private auditPort: AuditPort | null = null   // #207: connectors/restaurante-auditlog.ts. null = sin auditlog montado: anular sigue funcionando, sin rastro
+  // #208: reservas por conector (restaurante-reservas.ts; null = room service/cargo a habitación fallan cerrado) y gate del módulo para la carta pública (null = 404 genérico).
   private reservationPort: ReservationPort | null = null
   private moduleStatePort: publicMenuUsecase.ModuleStatePort | null = null
-  // #213: la plata del cierre del día sale de `payments` (connectors/restaurante-reports-payments.ts) y del cargo
-  // al folio (connectors/restaurante-reports-folios.ts), nunca de la comanda. Sin puertos, ventas en cero.
+  // #213: la plata del cierre del día sale de `payments`/folio por conectores (restaurante-reports-*.ts), nunca de la comanda. Sin puertos, ventas en cero.
   private reportPorts: reports.ReportPorts = {}
-  // #211: canal en vivo (SSE) por hotel. Lo alimenta connectors/restaurante-events.ts vía publishEvent.
-  private readonly eventHub = new events.RestaurantEventHub()
+  private readonly eventHub = new events.RestaurantEventHub()   // #211: canal en vivo (SSE) por hotel; lo alimenta connectors/restaurante-events.ts vía publishEvent
 
   constructor(
     private readonly stations: RepositoryAdapter<StationDTO>,
@@ -69,6 +66,7 @@ export class RestaurantService {
     private readonly transactor?: itemsCrud.ItemsTransactor, // #208: cascada atómica al borrar un ítem (grupos + opciones + ítem). Misma excepción acotada que counterCas: solo `transaction`.
     private readonly rooms?: RepositoryAdapter<any>, // #211: número de habitación en el ticket del KDS ("Hab. 204")
     private readonly guests?: RepositoryAdapter<any>, // #209: nombre del huésped en la comanda de room service ("Hab. 204 · Pérez"), misma lectura acotada que rooms
+    private readonly orderPayments?: RepositoryAdapter<OrderPaymentDTO>, // #214: partes del cobro (dividir cuenta / pagos parciales)
   ) {}
 
   // Acumula handlers, nunca pisa el anterior (composición de sockets, usecases/compose-sockets.ts).
@@ -91,7 +89,7 @@ export class RestaurantService {
       stations: this.stations, categories: this.categories, items: this.items, tables: this.tables, userRepo: this.userRepo, logger: this.logger, auth: this.auth,
       orders: this.orders, lines: this.lines, config: this.config, hotels: this.hotels, modifierGroups: this.modifierGroups, modifiers: this.modifiers,
       combos: this.combos, comboItems: this.comboItems, counterCas: this.counterCas, transactor: this.transactor, rooms: this.rooms, guests: this.guests,
-      sockets: this.sockets, settlementPorts: this.settlementPorts, recipePorts: this.recipePorts, auditPort: this.auditPort,
+      orderPayments: this.orderPayments, sockets: this.sockets, settlementPorts: this.settlementPorts, recipePorts: this.recipePorts, auditPort: this.auditPort,
       reservationPort: this.reservationPort, moduleStatePort: this.moduleStatePort, reportPorts: this.reportPorts,
     }
   }
@@ -111,19 +109,7 @@ export class RestaurantService {
   deleteCategory(id: string, user: CurrentUser) { return categoriesCrud.deleteCategory(catDeps(this.w()), id, user) }
 
   // ─── Carta: ítems (RES-1) — delegan a usecases/items-crud ───
-  async listItems(categoryId: string | undefined, user: CurrentUser, lang?: string) {
-    const res = await itemsCrud.listItems(itemDeps(this.w()), categoryId, user, lang)
-    // Nivel 2 stock fantasma: enriquece cada plato con `hasRecipe` si el port de inventario está
-    // inyectado, para que la UI pinte "Sin receta" y el admin sepa qué recetar. Best-effort + graceful:
-    // sin inventario, hasRecipe queda undefined y el badge no se renderiza (la carta no depende del catálogo).
-    if (this.recipePorts?.menuItemsWithRecipe) {
-      try {
-        const withRecipe = new Set(await this.recipePorts.menuItemsWithRecipe(user))
-        res.data.forEach((i) => { i.hasRecipe = withRecipe.has(i.id) })
-      } catch { /* best-effort: la carta nunca depende del catálogo de inventario */ }
-    }
-    return res
-  }
+  listItems(categoryId: string | undefined, user: CurrentUser, lang?: string) { return itemsCrud.listItems(itemDeps(this.w()), categoryId, user, lang) }
   getItem(id: string, user: CurrentUser, lang?: string) { return itemsCrud.getItem(itemDeps(this.w()), id, user, lang) }
   createItem(dto: itemsCrud.CreateItemInput, user: CurrentUser) { return itemsCrud.createItem(itemDeps(this.w()), dto, user) }
   updateItem(id: string, dto: itemsCrud.UpdateItemInput, user: CurrentUser) { return itemsCrud.updateItem(itemDeps(this.w()), id, dto, user) }
@@ -150,14 +136,27 @@ export class RestaurantService {
   voidLine(orderId: string, lineId: string, reason: string | undefined, user: CurrentUser) { return orderLines.voidLine(orderLinesDeps(this.w()), orderId, lineId, reason, user) }
   getVoidReasons(user: CurrentUser) { return voidReasons.getVoidReasons(voidReasonsDeps(this.w()), user) }
   setVoidReasons(reasons: unknown, user: CurrentUser) { return voidReasons.setVoidReasons(voidReasonsDeps(this.w()), reasons, user) }
+  // #215: descuentos y cortesías — usecases/discounts (ruta `restaurant:discount`; tope y motivos por hotel).
+  applyOrderDiscount(orderId: string, dto: discounts.DiscountInput, user: CurrentUser) { return discounts.applyOrderDiscount(discountsDeps(this.w()), orderId, dto, user) }
+  removeOrderDiscount(orderId: string, user: CurrentUser) { return discounts.removeOrderDiscount(discountsDeps(this.w()), orderId, user) }
+  applyLineDiscount(orderId: string, lineId: string, dto: discounts.DiscountInput, user: CurrentUser) { return discounts.applyLineDiscount(discountsDeps(this.w()), orderId, lineId, dto, user) }
+  removeLineDiscount(orderId: string, lineId: string, user: CurrentUser) { return discounts.removeLineDiscount(discountsDeps(this.w()), orderId, lineId, user) }
+  getDiscountPolicy(user: CurrentUser) { return discounts.getDiscountPolicy(discountsDeps(this.w()), user) }
+  setDiscountPolicy(input: discounts.DiscountPolicyInput, user: CurrentUser) { return discounts.setDiscountPolicy(discountsDeps(this.w()), input, user) }
 
   // ─── Cuenta + cobro (RES-5) — delegan a usecases/settlement ───
   billOrder(id: string, dto: { tip?: number }, user: CurrentUser) { return settlement.billOrder(settlementDeps(this.w()), id, dto, user) }
   chargeToRoom(id: string, dto: { reservationId?: string }, user: CurrentUser) { return settlement.chargeToRoom(settlementDeps(this.w()), id, dto, user) }
   payOrder(id: string, dto: { method: string; successUrl?: string; cancelUrl?: string }, user: CurrentUser) { return settlement.payOrder(settlementDeps(this.w()), id, dto, user) }
-  refundOrder(id: string, user: CurrentUser) { return settlement.refundOrder(settlementDeps(this.w()), id, user) }
+  refundOrder(id: string, dto: { reason?: string }, user: CurrentUser) { return settlement.refundOrder(settlementDeps(this.w()), id, dto, user) }
   settlePaidOrder(id: string, paymentId: string, user: CurrentUser) { return settlement.settlePaidOrder(settlementDeps(this.w()), id, paymentId, user) } // fix-refund-pos-card: llamado por el conector (webhook onPaymentCompleted)
   unsettleOrder(id: string, user: CurrentUser) { return settlement.unsettleOrder(settlementDeps(this.w()), id, user) } // fix-refund-pos-card: llamado por el conector (webhook onPaymentExpired)
+  listOrderPayments(orderId: string, user: CurrentUser) { return splitPayments.listOrderPayments(splitPaymentsDeps(this.w()), orderId, user) } // #214 dividir cuenta (usecases/split-payments); settle/expire los llama el conector (webhook de Stripe por parte)
+  splitPreview(orderId: string, parts: number, user: CurrentUser) { return splitPayments.splitPreview(splitPaymentsDeps(this.w()), orderId, parts, user) }
+  addOrderPayment(orderId: string, dto: splitPayments.AddOrderPaymentInput, user: CurrentUser) { return splitPayments.addOrderPayment(splitPaymentsDeps(this.w()), orderId, dto, user) }
+  refundOrderPayment(orderId: string, partId: string, dto: { reason?: string }, user: CurrentUser) { return splitPayments.refundOrderPayment(splitPaymentsDeps(this.w()), orderId, partId, dto, user) }
+  settleOrderPayment(partId: string, paymentId: string, user: CurrentUser) { return splitPayments.settleOrderPayment(splitPaymentsDeps(this.w()), partId, paymentId, user) }
+  expireOrderPayment(partId: string, user: CurrentUser) { return splitPayments.expireOrderPayment(splitPaymentsDeps(this.w()), partId, user) }
 
   // ─── KDS / cocina (RES-4) — delegan a usecases/kds ───
   kdsQueue(station: string | undefined, user: CurrentUser) { return kds.kdsQueue(kdsDeps(this.w()), station, user) }

@@ -25,13 +25,16 @@ export function reservasRescheduleChargeConnector(ctx: ConnectorContext): void {
       // Devolución por caja: un `payment` de tipo `refund`, que los reportes y el arqueo restan.
       // `reservationId` va como COLUMNA (no sólo metadata) por la misma razón que en el cobro:
       // si no, la devolución es invisible para el techo de payment-requests.
-      createCashRefund: (dto) => payments.createPayment({
-        hotelId: dto.hotelId, type: 'refund', method: 'cash', amount: dto.amount,
+      // Va por `recordDirectRefund` (no por `createPayment` a secas) porque es ESE camino el que emite
+      // `onRefundProcessed`: sin el evento, el conector payments→caja no asienta el egreso y el arqueo del
+      // turno sigue contando una plata que ya se le devolvió al huésped (#214 COR-D dejó de tratar un
+      // refund como un cobro `completed`, así que `onPaymentCompleted` ya no lo cubre — y nunca debió).
+      createCashRefund: (dto) => payments.recordDirectRefund({
+        hotelId: dto.hotelId, method: 'cash', amount: dto.amount,
         currency: dto.currency, description: dto.description,
         guestId: dto.guestId || undefined, reservationId: dto.reservationId,
-        status: 'completed',
         metadata: { reservationId: dto.reservationId, source: 'reschedule-credit' },
-      }),
+      }, user),
       hasInvoice: (hotelId, reservationId) => reservas.hasInvoiceForReservation(hotelId, reservationId),
     }, params),
   })

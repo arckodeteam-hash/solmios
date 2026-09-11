@@ -18,6 +18,10 @@
         <span class="text-text-muted">{{ t('pay.extras') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-bold text-navy tabular-nums">{{ format(breakdown.upsellsTotal) }}</span>
       </div>
+      <div v-if="(breakdown.childAmenitiesTotal ?? 0) > 0" class="flex justify-between" data-testid="child-amenity-line">
+        <span class="text-text-muted">{{ t('pay.childAmenities') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
+        <span class="font-bold text-navy tabular-nums">{{ format(breakdown.childAmenitiesTotal) }}</span>
+      </div>
       <div v-if="breakdown.promoDiscount > 0" class="flex justify-between text-green-700">
         <span>{{ t('pay.discount') }}</span>
         <span class="font-bold tabular-nums">−{{ format(breakdown.promoDiscount) }}</span>
@@ -48,6 +52,9 @@ const props = defineProps<{
 
 const { t } = useBookingI18nStore()
 
-/** Alojamiento = subtotal sin extras (el backend guarda `subtotal` con los extras adentro). */
-const lodging = computed(() => Math.round(((props.breakdown?.subtotal ?? 0) - (props.breakdown?.upsellsTotal ?? 0)) * 100) / 100)
+/** Alojamiento = subtotal sin extras ni amenidades infantiles (el backend guarda `subtotal` con
+ *  los dos adentro; `childAmenitiesTotal` es opcional — reservas previas a REQ-01 #233 no lo traen). */
+const lodging = computed(() => Math.round((
+  (props.breakdown?.subtotal ?? 0) - (props.breakdown?.upsellsTotal ?? 0) - (props.breakdown?.childAmenitiesTotal ?? 0)
+) * 100) / 100)
 </script>

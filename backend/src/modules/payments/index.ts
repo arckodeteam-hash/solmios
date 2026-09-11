@@ -33,7 +33,7 @@ export function PaymentsModule() {
       name: 'payments',
       version: '1.3.0',
       description: 'Payments: card charging, deposits, reconciliation',
-      actions: ['createPayment', 'chargeCard', 'refund', 'listPayments', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo', 'settledNetOfReservation', 'paymentsOfBusinessDate'],
+      actions: ['createPayment', 'chargeCard', 'refund', 'refundDirectPayment', 'recordDirectRefund', 'refundPaymentByMethod', 'findByReference', 'listPayments', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo', 'settledNetOfReservation', 'paymentsOfBusinessDate'],
       events: ['onPaymentCreated', 'onPaymentCompleted', 'onPaymentExpired', 'onPaymentFailed', 'onRefundProcessed', 'onDepositCreated', 'onDepositReleased'],
       tables: ['payments', 'deposits'],
       dependencies: ['folios', 'facturas'],
@@ -52,7 +52,9 @@ export function PaymentsModule() {
       // La pasarela se resuelve POR HOTEL (tabla payment_gateways), ya no desde process.env.
       // El registry vive en services/ (compartido), no en otro módulo: no rompe el aislamiento.
       const gatewayRepo = new OrmRepository<any>(orm, 'PaymentGateways')
-      const registry = new PaymentGatewayRegistry(gatewayRepo as any, log)
+      // Sesiones de CardNet (tabla del módulo payment-gateways): sin ellas el adapter no cobra.
+      const sessionsRepo = new OrmRepository<any>(orm, 'PaymentGatewaySessions')
+      const registry = new PaymentGatewayRegistry(gatewayRepo as any, log, sessionsRepo as any)
 
       // Barrera anti-doble-cobro: los webhooks se procesan una sola vez aunque lleguen repetidos.
       const eventRepo = new OrmRepository<any>(orm, 'PaymentEvents')

@@ -53,6 +53,14 @@ export const ReservasModel: ModelDefinition = {
     // amenidades adicionales, solo esta pregunta binaria.
     needsCrib: { type: 'boolean', default: false },
     cribCount: { type: 'number', default: 0 },
+    // REQ-01 (#233) — Amenidades para niños/bebés elegidas para ESTA habitación (por fila, igual
+    // que la cuna: cada unidad de un grupo lleva las suyas). Snapshot con precio congelado
+    // [{id, name, price, quantity, total}] — si el hotel cambia el catálogo después, la reserva
+    // sigue mostrando lo que se cotizó. `childAmenitiesTotal` es la Σ de `total` del snapshot y
+    // ya está incluido en `totalAmount`/`priceBreakdown.subtotal`. Gateado server-side: solo con
+    // al menos un menor en la composición y `childPolicy.acceptChildren` (ver public-booking.ts).
+    childAmenities: { type: 'json' },
+    childAmenitiesTotal: { type: 'number', default: 0 },
     notes: { type: 'text' },
     // Campos OTA + pagos (Fase 1)
     source: { type: 'string', default: 'direct' },

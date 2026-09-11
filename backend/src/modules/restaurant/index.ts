@@ -4,7 +4,7 @@ import { createModule, OrmRepository } from 'arckode-framework'
 import { registerRestaurantModels } from './model'
 import { RestaurantService } from './service'
 import { RestaurantController } from './controller'
-import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderItemDTO, ModifierGroupDTO, ModifierDTO, ComboDTO, ComboItemDTO } from './types'
+import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderItemDTO, ModifierGroupDTO, ModifierDTO, ComboDTO, ComboItemDTO, OrderPaymentDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { createModuleGuard, createModuleChecker } from '../../infrastructure/auth/require-module'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
@@ -24,6 +24,10 @@ export type { RestaurantSockets } from './sockets'
 export { RestaurantValidator, CreateStationSchema, UpdateStationSchema } from './validators/schema'
 export { VoidLineSchema, CancelOrderSchema, VoidReasonsSchema } from './validators/schema'
 export { DEFAULT_VOID_REASONS, VOID_REASONS_KEY } from './usecases/void-reasons'
+// #215 (append-only): descuentos y cortesías.
+export { DiscountSchema, DiscountPolicySchema, DISCOUNT_TYPES } from './validators/schema'
+export { DEFAULT_DISCOUNT_REASONS, DISCOUNT_REASONS_KEY, DEFAULT_MAX_DISCOUNT_PERCENT, RESTAURANT_CONFIG_KEY } from './usecases/discounts'
+export type { DiscountType } from './types'
 export { registerRestaurantModels } from './model'
 export type { SettlementPorts, ChargeToFolioInput, RecordPaymentInput, ChargeCardPaymentInput } from './usecases/settlement'
 export type { ComboDTO, ComboItemDTO } from './types'
@@ -33,6 +37,12 @@ export type { ModuleStatePort } from './usecases/public-menu'
 export type { RestaurantEvent, RestaurantEventType } from './usecases/events'
 // #213 (append-only): cierre del día.
 export type { ReportPorts, ReportPayment, ReportFolioCharge, RestaurantDailyReport, DailyReportQuery, SalesMethod, VoidRow } from './usecases/reports'
+// #215 (append-only): descuentos y cortesías en el cierre del día.
+export type { DiscountRow } from './usecases/reports'
+// #214 (append-only): dividir cuenta / pagos parciales.
+export type { OrderPaymentDTO, OrderPaymentMethod, OrderPaymentStatus, OrderBalance } from './types'
+export type { AddOrderPaymentInput, AddOrderPaymentResult, OrderPaymentsList, SplitPreview } from './usecases/split-payments'
+export { AddOrderPaymentSchema, RefundOrderSchema, ORDER_PAYMENT_METHODS } from './validators/schema'
 
 export function RestaurantModule() {
   return createModule({
@@ -51,6 +61,7 @@ export function RestaurantModule() {
       tables: [
         'restaurant_stations', 'menu_categories', 'menu_items',
         'restaurant_tables', 'restaurant_orders', 'restaurant_order_items',
+        'restaurant_order_payments',   // #214 (append-only)
       ],
       dependencies: [],
       rules: ['No importar de otros módulos', 'hotelId del JWT (multi-tenant)', 'Estaciones configurables (no hardcode)'],
@@ -79,6 +90,8 @@ export function RestaurantModule() {
       const roomsRepo = new OrmRepository<any>(orm, 'Rooms')
       // #209: nombre del huésped para "Hab. 204 · Pérez" en la comanda de room service (tabla guests, lectura acotada al hotel).
       const guestsRepo = new OrmRepository<any>(orm, 'Guests')
+      // #214: partes del cobro (dividir cuenta / pagos parciales).
+      const orderPaymentsRepo = new OrmRepository<OrderPaymentDTO>(orm, 'RestaurantOrderPayments')
       const log = logger.child('restaurant')
       const service = new RestaurantService(
         stations, categories, items, tables, userRepo, log, auth,
@@ -91,6 +104,7 @@ export function RestaurantModule() {
         { transaction: <T>(fn: (tx: any) => Promise<T>) => orm.transaction(fn) },
         roomsRepo,
         guestsRepo,
+        orderPaymentsRepo,
       )
       const controller = new RestaurantController(service, log)
 
@@ -165,6 +179,17 @@ export function RestaurantModule() {
       router.get('/api/restaurant/void-reasons', guard('restaurant', 'view'), (req) => controller.voidReasons(req))
       router.put('/api/restaurant/void-reasons', guard('restaurant-catalog', 'edit'), (req) => controller.setVoidReasons(req))
 
+      // #215: descuentos y cortesías con motivo. Permiso PROPIO `restaurant:discount` (hotel_admin y
+      // receptionist por defecto; el mozo no): cobrar lo que marca el ticket (`pay`) no es decidir cobrar
+      // menos. El tope por rol y el 409 sobre comandas liquidadas los aplica el usecase. La política
+      // (tope + motivos) se lee con el mismo permiso que descontar y se edita como config de la carta.
+      router.post('/api/restaurant/orders/:id/discount', guard('restaurant', 'discount'), (req) => controller.applyOrderDiscount(req))
+      router.delete('/api/restaurant/orders/:id/discount', guard('restaurant', 'discount'), (req) => controller.removeOrderDiscount(req))
+      router.post('/api/restaurant/orders/:id/items/:lineId/discount', guard('restaurant', 'discount'), (req) => controller.applyLineDiscount(req))
+      router.delete('/api/restaurant/orders/:id/items/:lineId/discount', guard('restaurant', 'discount'), (req) => controller.removeLineDiscount(req))
+      router.get('/api/restaurant/discount-policy', guard('restaurant', 'discount'), (req) => controller.discountPolicy(req))
+      router.put('/api/restaurant/discount-policy', guard('restaurant-catalog', 'edit'), (req) => controller.setDiscountPolicy(req))
+
       // #209: buscador "quién está alojado" (habitación/apellido) para abrir un room service o cargar a la
       // habitación. Va por este módulo y no por /api/reservas porque el mozo NO tiene `reservations:view`.
       // Lo usan DOS pantallas con permisos distintos: el mozo al abrir el pedido (`restaurant:create`) y
@@ -184,6 +209,12 @@ export function RestaurantModule() {
       // Refund: permiso billing:create (alinea con POST /api/payments/:id/refund). El POS no expone
       // un permiso propio de reembolso; billing:create es el gate financiero del dinero.
       router.post('/api/restaurant/orders/:id/refund', guard('billing', 'create'), (req) => controller.refundOrder(req))
+      // #214: dividir cuenta / pagos parciales. Ver y agregar partes es cobrar (`restaurant:pay`, cocina
+      // no); devolver UNA parte es el mismo gate financiero que el refund entero (`billing:create`).
+      router.get('/api/restaurant/orders/:id/payments', guard('restaurant', 'pay'), (req) => controller.indexOrderPayments(req))
+      router.get('/api/restaurant/orders/:id/split', guard('restaurant', 'pay'), (req) => controller.splitPreview(req))
+      router.post('/api/restaurant/orders/:id/payments', guard('restaurant', 'pay'), (req) => controller.addOrderPayment(req))
+      router.post('/api/restaurant/orders/:id/payments/:partId/refund', guard('billing', 'create'), (req) => controller.refundOrderPayment(req))
 
       // KDS / cocina (RES-4)
       router.get('/api/restaurant/kds', guard('restaurant', 'view'), (req) => controller.kdsQueue(req))

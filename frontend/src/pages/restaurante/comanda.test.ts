@@ -13,7 +13,7 @@
  * lógica del contador sí se ejecuta de verdad (abajo), replicada desde el mismo predicado.
  */
 import { describe, it, expect } from 'vitest'
-import { LINE_STATUS_BADGE, LINE_STATUS_LABELS, type OrderLine } from '@/services/Restaurant.service'
+import { LINE_STATUS_BADGE, LINE_STATUS_LABELS, hasPartialPayments, type OrderLine } from '@/services/Restaurant.service'
 
 const RAW_PAGES = import.meta.glob('./*.vue', {
   query: '?raw',
@@ -173,5 +173,59 @@ describe('#216 — imprimir precuenta y comanda de cocina desde la comanda', () 
     // Nada de fetch() ni de <a href> a la API: se pasa por el servicio.
     expect(src).not.toMatch(/fetch\(/)
     expect(tpl).not.toMatch(/href="\/api/)
+  })
+})
+
+// ─── #215 (REST-13): descuentos y cortesías en la comanda ───
+describe('#215 — descuento por línea y de la comanda', () => {
+  it('hay botón de descuento por línea y de la comanda, gateados por `restaurant:discount` (no por edit ni pay)', () => {
+    const src = comanda()
+    const tpl = templateOf(src)
+    expect(src).toMatch(/const discountPerm = computed\(\(\) => can\('restaurant', 'discount'\)\)/)
+    const lineBtn = (tpl.match(/<button[^>]*openDiscount\(\{ kind: 'line', line: l \}\)[^>]*>/g) ?? [])[0]
+    expect(lineBtn, 'no hay botón de descuento por línea').toBeDefined()
+    expect(lineBtn).toMatch(/discountPerm/)
+    expect(lineBtn, 'una línea anulada no se descuenta').toMatch(/isLineActive\(l\)/)
+    const orderBtn = (tpl.match(/<button[^>]*openDiscount\(\{ kind: 'order' \}\)[^>]*>/g) ?? [])[0]
+    expect(orderBtn, 'no hay botón de descuento de la comanda').toBeDefined()
+    expect(orderBtn).toMatch(/discountPerm/)
+  })
+
+  it('el ticket muestra "Descuento (motivo) −X" de la comanda y el descuento/cortesía de cada línea; el modal es DiscountModal', () => {
+    const src = comanda()
+    const tpl = templateOf(src)
+    expect(tpl).toMatch(/data-testid="order-discount-row"/)
+    expect(tpl).toMatch(/order\.discountReason/)
+    expect(tpl).toMatch(/lineDiscountLabel\(l\)/)
+    expect(src).toMatch(/import DiscountModal from '@\/components\/features\/restaurante\/DiscountModal\.vue'/)
+    expect(tpl).toMatch(/<DiscountModal v-if="discountTarget"/)
+  })
+
+  it('confirmar llama al server (applyLineDiscount / applyOrderDiscount) y recarga: los totales NUNCA se calculan en el cliente', () => {
+    const src = comanda()
+    expect(src).toMatch(/RestaurantService\.applyLineDiscount\(orderId\.value, t\.line\.id, payload\)/)
+    expect(src).toMatch(/RestaurantService\.applyOrderDiscount\(orderId\.value, payload\)/)
+    expect(src).toMatch(/RestaurantService\.removeLineDiscount\(orderId\.value, t\.line\.id\)/)
+    expect(src).toMatch(/RestaurantService\.removeOrderDiscount\(orderId\.value\)/)
+    expect(src, 'subtotal/impuesto/total tienen que salir del server').not.toMatch(/order\.value\.subtotal\s*=/)
+  })
+})
+
+describe('#214 — con pagos parciales (cobrados o un Checkout abierto por una parte) la comanda no se edita, pero sí se cobra', () => {
+  it('predicado compartido: amountPaid > 0 o amountReserved > 0 = hay plata adentro', () => {
+    expect(hasPartialPayments({})).toBe(false)
+    expect(hasPartialPayments({ amountPaid: 0, amountReserved: 0 })).toBe(false)
+    expect(hasPartialPayments({ amountPaid: 40 })).toBe(true)
+    expect(hasPartialPayments({ amountReserved: 60 })).toBe(true)   // Checkout de tarjeta abierto por UNA parte
+  })
+
+  it('`editable` (líneas, Cancelar) descuenta hasPartialPayments; "Cobrar" usa `canPay`, que NO lo descuenta', () => {
+    const src = comanda()
+    expect(src).toMatch(/const editable = computed\(\(\) => !!order\.value && !LOCKED\.includes\(order\.value\.status\) && !hasPartialPayments\(order\.value\)\)/)
+    expect(src).toMatch(/const canPay = computed\(\(\) => !!order\.value && !LOCKED\.includes\(order\.value\.status\) && payPerm\.value\)/)
+    const tpl = templateOf(src)
+    expect(tpl, 'el botón Cobrar tiene que seguir visible con pagos parciales').toMatch(/<button v-if="canPay" @click="goPay"/)
+    expect(tpl, 'Cancelar sí se bloquea con pagos parciales').toMatch(/<button v-if="editable && deletePerm" @click="cancel"/)
+    expect(tpl, 'la carta explica por qué no se pueden agregar ítems').toMatch(/La cuenta ya tiene pagos parciales/)
   })
 })

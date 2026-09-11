@@ -34,6 +34,10 @@ export interface PublicHotelInfo {
   postalCode: string | null
   phone: string | null
   email: string | null
+  /** WhatsApp público (`hotels.whatsapp`, #241) crudo, o `null`. Opcional: un backend anterior no lo manda. */
+  whatsapp?: string | null
+  /** `https://wa.me/<E.164>` que arma el servidor; `null` = sin número usable → sin botón. */
+  whatsappUrl?: string | null
   website: string | null
   checkIn: string
   checkOut: string

@@ -13,8 +13,8 @@ import * as shiftsUc from './usecases/shifts'
 import type { ShiftDeps } from './usecases/shifts'
 import * as movementsUc from './usecases/movements'
 import type { MovementDeps } from './usecases/movements'
-import { registerPaymentIncome, registerExpenseOutflow, removeExpenseOutflow } from './usecases/auto-movements'
-import type { AutoMovementDeps, PaymentIncomeInput, ExpenseOutflowInput } from './usecases/auto-movements'
+import { registerPaymentIncome, registerExpenseOutflow, removeExpenseOutflow, registerRefundOutflow } from './usecases/auto-movements'
+import type { AutoMovementDeps, PaymentIncomeInput, ExpenseOutflowInput, RefundOutflowInput } from './usecases/auto-movements'
 import {
   auditSafely, movementDeleteEntry, shiftOpenEntry, shiftCloseEntry, shiftReconcileEntry,
   type AuditEntry, type AuditPort,
@@ -100,6 +100,13 @@ export class CashService {
   /** Conector payments→caja: ingreso por pago cash. Dedup por paymentId. */
   async registerPaymentIncome(input: PaymentIncomeInput): Promise<CashMovementDTO | null> {
     const item = await registerPaymentIncome(this.autoDeps(), input)
+    if (item) this.listVersion++
+    return item
+  }
+
+  /** Conector payments→caja (#214 COR-B): egreso por una devolución en efectivo. Dedup por el paymentId del refund. */
+  async registerRefundOutflow(input: RefundOutflowInput): Promise<CashMovementDTO | null> {
+    const item = await registerRefundOutflow(this.autoDeps(), input)
     if (item) this.listVersion++
     return item
   }

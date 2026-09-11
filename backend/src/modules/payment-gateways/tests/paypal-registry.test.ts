@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeAll, afterEach } from 'bun:test'
 import { silentLogger } from 'arckode-framework/testing'
-import { PaymentGatewayRegistry } from '../../../services/payment-gateway/registry'
+import { PaymentGatewayRegistry, PaymentGatewaySessionStore } from '../../../services/payment-gateway/registry'
 import { encryptCredentials } from '../../../services/payment-gateway/crypto'
 import { IMPLEMENTED_PROVIDERS, type PaymentProvider } from '../../../services/payment-gateway/types'
 import { StripeGateway } from '../../../services/payment-gateway/stripe-gateway'
@@ -55,9 +55,19 @@ function row(provider: PaymentProvider, overrides: Partial<PaymentGatewayRow> = 
   }
 }
 
-function registryWith(rows: PaymentGatewayRow[]) {
+function registryWith(rows: PaymentGatewayRow[], sessionsRepo?: ReturnType<typeof sessionsRepoInMemory>) {
   const repo = { findMany: async (f: any = {}) => rows.filter(r => Object.entries(f).every(([k, v]) => (r as any)[k] === v)) }
-  return new PaymentGatewayRegistry(repo as any, log)
+  return new PaymentGatewayRegistry(repo as any, log, sessionsRepo)
+}
+
+/** Doble de `payment_gateway_sessions`: guarda lo que le dan tal cual (para mirar qué se persistió). */
+function sessionsRepoInMemory() {
+  const rows: any[] = []
+  return {
+    rows,
+    findOne: async (f: Record<string, unknown>) => rows.find(r => Object.entries(f).every(([k, v]) => r[k] === v)) ?? null,
+    create: async (data: any) => { rows.push({ ...data }); return data },
+  }
 }
 
 const originalFetch = globalThis.fetch
@@ -98,7 +108,7 @@ describe('PaymentGatewayRegistry — resolve por proveedor', () => {
   })
 
   it('no hay regresión: cada proveedor sigue devolviendo SU adapter', async () => {
-    const registry = registryWith([row('stripe'), row('paypal'), row('azul'), row('cardnet')])
+    const registry = registryWith([row('stripe'), row('paypal'), row('azul'), row('cardnet')], sessionsRepoInMemory())
     expect(await registry.resolve('h1', 'stripe')).toBeInstanceOf(StripeGateway)
     expect(await registry.resolve('h1', 'azul')).toBeInstanceOf(AzulGateway)
     expect(await registry.resolve('h1', 'cardnet')).toBeInstanceOf(CardnetGateway)
@@ -116,6 +126,70 @@ describe('PaymentGatewayRegistry — resolve por proveedor', () => {
   it('PayPal marcada como default se resuelve sin pedir proveedor', async () => {
     const registry = registryWith([row('stripe'), row('paypal', { isDefault: true })])
     expect(await registry.resolve('h1')).toBeInstanceOf(PayPalGateway)
+  })
+})
+
+describe('PaymentGatewayRegistry — CardNet necesita el store de sesiones', () => {
+  const CARDNET_REAL = { merchantId: '349011300', terminalId: '00567856', currency: 'dop' }
+
+  it('cardnet: sin repo de sesiones el registry devuelve null y loguea error', async () => {
+    const errores: string[] = []
+    const logger = { ...log, error: (m: string) => { errores.push(m) } }
+    const rows = [row('cardnet', {}, CARDNET_REAL)]
+    const repo = { findMany: async () => rows }
+    const registry = new PaymentGatewayRegistry(repo as any, logger as any) // 2 args: sigue compilando
+    expect(await registry.resolve('h1', 'cardnet')).toBeNull()
+    expect(errores).toHaveLength(1)
+    expect(errores[0]).toContain('sin repo de sesiones')
+  })
+
+  it("cardnet: con repo de sesiones construye el adapter con provider 'cardnet'", async () => {
+    const registry = registryWith([row('cardnet', {}, CARDNET_REAL)], sessionsRepoInMemory())
+    const gw = await registry.resolve('h1', 'cardnet')
+    expect(gw).toBeInstanceOf(CardnetGateway)
+    expect(gw!.provider).toBe('cardnet')
+    expect(gw!.mode).toBe('test')
+    expect(gw!.capabilities.confirmation).toBe('pull')
+  })
+})
+
+describe('PaymentGatewaySessionStore — la session-key se persiste cifrada', () => {
+  const fila = {
+    id: 'sess-abc123', hotelId: 'h1', provider: 'cardnet' as const, reference: 'RES-77',
+    sessionKey: 'session-key-en-claro-XYZ', amountMinor: 150000, currency: 'dop', mode: 'test' as const,
+  }
+
+  it('save cifra: la fila creada en el repo NO contiene la session-key en claro', async () => {
+    const repo = sessionsRepoInMemory()
+    await new PaymentGatewaySessionStore(repo).save(fila)
+    expect(repo.rows).toHaveLength(1)
+    const guardada = repo.rows[0]
+    expect(guardada.id).toBe('sess-abc123')
+    expect(guardada.sessionKey).not.toBe(fila.sessionKey)
+    expect(JSON.stringify(guardada)).not.toContain(fila.sessionKey)
+  })
+
+  it('load devuelve la fila con la session-key descifrada y el monto como número', async () => {
+    const repo = sessionsRepoInMemory()
+    const store = new PaymentGatewaySessionStore(repo)
+    await store.save(fila)
+    repo.rows[0].amountMinor = '150000' // como puede volver de la base según el driver
+    const leida = await store.load('sess-abc123')
+    expect(leida).toEqual(fila)
+    expect(typeof leida!.amountMinor).toBe('number')
+  })
+
+  it('load de una SESSION desconocida devuelve null', async () => {
+    const store = new PaymentGatewaySessionStore(sessionsRepoInMemory())
+    expect(await store.load('sess-inexistente')).toBeNull()
+  })
+
+  it('load() de una fila con otro provider devuelve null (no es una sesión de CardNet)', async () => {
+    const repo = sessionsRepoInMemory()
+    const store = new PaymentGatewaySessionStore(repo)
+    await store.save(fila)
+    repo.rows[0].provider = 'azul'
+    expect(await store.load('sess-abc123')).toBeNull()
   })
 })
 

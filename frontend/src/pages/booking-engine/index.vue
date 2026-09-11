@@ -412,6 +412,16 @@
                   <div class="text-[10px] text-text-muted">Si está prendido, el motor público pregunta "¿Necesita cuna?" (Sí/No) cuando la reserva tiene un bebé</div>
                 </div>
               </label>
+
+              <!-- REQ-01 (#233) — Amenidades para niños y bebés: catálogo abierto (nombre + precio)
+                   que el motor público ofrece por habitación con niños/bebés. La cuna sigue siendo
+                   el toggle Sí/No de arriba, no una amenidad más. -->
+              <div v-if="childPolicy.acceptChildren" class="mt-4">
+                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Amenidades para niños y bebés</label>
+                <div class="rounded-xl border border-border p-4">
+                  <ChildAmenitiesEditor />
+                </div>
+              </div>
             </div>
 
 
@@ -511,6 +521,7 @@ import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
 import MealPlansEditor from '@/components/booking/MealPlansEditor.vue'
+import ChildAmenitiesEditor from '@/components/booking/ChildAmenitiesEditor.vue'
 import { ICON_CHECK, ICON_CHECK_CIRCLE, ICON_CHART, ICON_WARNING, ICON_WIDGET } from '@/components/landing/landing-icons'
 
 const auth = useAuthStore()

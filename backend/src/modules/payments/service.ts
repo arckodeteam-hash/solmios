@@ -14,13 +14,14 @@ import type { PaymentEventStore } from '../../services/payment-gateway/payment-e
 import { PaymentCrudUseCase } from './usecases/payment-crud'
 import { DepositsUseCase } from './usecases/deposits'
 import { ReconciliationUseCase } from './usecases/reconciliation'
-import { refundPayment } from './usecases/refund'
+import * as refunds from './usecases/refund-flows'
+import type { DirectRefundInput } from './usecases/refund-direct'
 import { chargeCard, type ChargeCeilingPort } from './usecases/charge-card'
 import { liveChargesPort, type LiveChargesPort } from './usecases/live-charges'
 import { settleStripeWebhook } from './usecases/settle-webhook'
 import { cancelHeldDeposits } from './usecases/cancel-deposits'
 import {
-  auditSafely, chargeEntry, refundEntry, depositRefundEntry, depositReleaseEntry,
+  auditSafely, chargeEntry, depositRefundEntry, depositReleaseEntry,
   type AuditEntry, type AuditPort, type Actor,
 } from './usecases/audit'
 
@@ -75,7 +76,9 @@ export class PaymentsService {
   async createPayment(dto: CreatePaymentDTO): Promise<PaymentDTO> {
     const payment = await this.crud.create(dto)
     await this.sockets.onPaymentCreated?.(payment)
-    if (payment.status === 'completed') await this.sockets.onPaymentCompleted?.(payment)
+    // `onPaymentCompleted` = entró un COBRO. Un `type:'refund'` nace `completed` pero es plata que SALE: su
+    // evento es `onRefundProcessed` (usecases/refund-flows.ts). #214 (COR-D): antes salía hacia caja/webhooks como cobro.
+    if (payment.status === 'completed' && payment.type !== 'refund') await this.sockets.onPaymentCompleted?.(payment)
     return payment
   }
 
@@ -85,18 +88,20 @@ export class PaymentsService {
     return result
   }
 
-  async refundPayment(paymentId: string, amount?: number, user?: { id?: string; role?: string }): Promise<PaymentDTO> {
-    const refunded = await refundPayment(
-      { crud: this.crud, stripe: this.stripe, createPayment: (dto) => this.createPayment(dto) },
-      paymentId, amount, user,
-    )
-    await this.audit(refundEntry(refunded, amount, user))
-    // La devolución Stripe ya se ejecutó (plata real que salió) → notificar a quien escuche
-    // (contabilidad la asienta DR Clientes / CR Caja). El `payment type:'refund'` queda 'pending',
-    // así que `onPaymentCompleted` no lo cubre: por eso se emite su propio evento acá.
-    await this.sockets.onRefundProcessed?.(refunded)
-    return refunded
+  // Toda devolución (Stripe, efectivo/transferencia, monto suelto, por método) sale por usecases/refund-flows.ts:
+  // asiento + audit `payment.refund` + `onRefundProcessed` (el evento que escuchan caja, contabilidad y webhooks).
+  private refundDeps(): refunds.RefundFlowDeps {
+    return { crud: this.crud, stripe: this.stripe, createPayment: (d) => this.createPayment(d), audit: (e) => this.audit(e), onRefundProcessed: async (p) => { await this.sockets.onRefundProcessed?.(p) } }
   }
+  refundPayment(paymentId: string, amount?: number, user?: Actor): Promise<PaymentDTO> { return refunds.refundStripe(this.refundDeps(), paymentId, amount, user) }
+  /** #214 (COR-5): devolución de un cobro efectivo/transferencia — asiento `refund` sin pasarela. */
+  refundDirectPayment(paymentId: string, user?: Actor): Promise<PaymentDTO> { return refunds.refundDirect(this.refundDeps(), paymentId, user) }
+  /** Devolución por caja de un monto SIN cobro de origen (excedente de una reserva reprogramada). */
+  recordDirectRefund(input: DirectRefundInput, user?: Actor): Promise<PaymentDTO> { return refunds.recordDirect(this.refundDeps(), input, user) }
+  /** Devolución total por método (tarjeta → Stripe; cash/transfer → asiento directo). Lo usa el POS. */
+  refundPaymentByMethod(paymentId: string, user?: Actor): Promise<PaymentDTO> { return refunds.refundByMethod(this.refundDeps(), paymentId, user) }
+  /** Un payment por su idempotency key (`pos:*`) — el POS concilia un cobro cuyo puerto falló después de asentarlo. */
+  findByReference(hotelId: string, reference: string): Promise<PaymentDTO | null> { return this.crud.findByReference(hotelId, reference) }
 
   /** Asienta un cobro confirmado por webhook, una sola vez (idempotencia en el usecase). */
   async handleStripeWebhook(

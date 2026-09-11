@@ -3,7 +3,8 @@
  *
  * 1. CSV puro (reportes-csv.ts): las mismas cifras que el objeto del reporte, línea por línea.
  * 2. Página montada (@vue/test-utils + happy-dom) con el service mockeado: KPIs y tabla por método con el
- *    criterio de aceptación (450 / 20 / 100-200-0-150 / 3 / 150), anulaciones con motivo, estado vacío
+ *    criterio de aceptación (450 / 20 / 100-200-0-150 / 3 / 150), anulaciones con motivo, descuentos y
+ *    cortesías con motivo y usuario (#215), estado vacío
  *    (no ceros sueltos) con el botón de CSV deshabilitado, cambiar la fecha recalcula, y las tres pestañas
  *    salen de PillTabs.
  * 3. Registro de la ruta: `restaurante/reportes` con permiso `reports:view` en RESTAURANT_ROUTES.
@@ -43,6 +44,7 @@ function emptyReport(date = '2026-09-10'): RestaurantDailyReport {
     byMethod: { cash: { ...zero }, card: { ...zero }, transfer: { ...zero }, folio: { ...zero }, other: { ...zero } },
     byType: { dine_in: { ...zero }, room_service: { ...zero }, takeaway: { ...zero } },
     voided: { orders: 0, lines: 0, amount: 0, rows: [] }, refunded: { orders: 0, amount: 0 },
+    discounts: { orders: 0, count: 0, amount: 0, courtesies: { count: 0, amount: 0 }, rows: [] },
     topItemsByQuantity: [], topItemsByAmount: [], byStation: [], byHour: [],
     byDay: [{ date, orders: 0, amount: 0, tips: 0 }],
   }
@@ -59,6 +61,14 @@ function acceptanceReport(): RestaurantDailyReport {
       rows: [
         { kind: 'order', orderId: 'o-cancel', orderNumber: 'CMD-7', name: '1× Hamburguesa', quantity: 1, amount: 47.2, reason: 'Cliente se fue', at: '2026-09-11T18:00:00.000Z', by: 'u1' },
         { kind: 'line', orderId: 'o-cash', orderNumber: 'CMD-1', name: 'Postre', quantity: 1, amount: 30, reason: 'Error de carga', at: '2026-09-11T16:10:00.000Z', by: 'u1' },
+      ],
+    },
+    // #215: una cortesía de línea (Vino, 100 %) y un descuento de comanda (20 %), con motivo y usuario resuelto.
+    discounts: {
+      orders: 2, count: 2, amount: 70, courtesies: { count: 1, amount: 50 },
+      rows: [
+        { kind: 'line', orderId: 'o-card', orderNumber: 'CMD-2', name: 'Vino', quantity: 1, base: 50, amount: 50, percent: 100, courtesy: true, reason: 'Cortesía de la casa', at: '2026-09-11T17:05:00.000Z', by: 'u-owner', byName: 'Doña Marta' },
+        { kind: 'order', orderId: 'o-cash', orderNumber: 'CMD-1', name: 'Comanda completa', quantity: 0, base: 100, amount: 20, percent: 20, courtesy: false, reason: 'Huésped del hotel', at: '2026-09-11T16:10:00.000Z', by: 'u-gone', byName: null },
       ],
     },
     topItemsByQuantity: [{ menuItemId: 'mi-pizza', name: 'Pizza', quantity: 5, amount: 250 }],
@@ -93,6 +103,11 @@ describe('reportes-csv — las mismas cifras que el reporte', () => {
     expect(lines).toContain('Anulado (comandas + líneas),77.20')
     expect(lines).toContain('Comanda cancelada,CMD-7,1× Hamburguesa,1,47.20,Cliente se fue,2026-09-11T18:00:00.000Z')
     expect(lines).toContain('Línea anulada,CMD-1,Postre,1,30,Error de carga,2026-09-11T16:10:00.000Z')
+    // #215: descuentos y cortesías con motivo y usuario (nombre resuelto; si no, el id).
+    expect(lines).toContain('Descontado (descuentos + cortesías),70')
+    expect(lines).toContain('Cortesías,50')
+    expect(lines).toContain('Cortesía,CMD-2,Vino,1,50,50,100,Cortesía de la casa,Doña Marta,2026-09-11T17:05:00.000Z')
+    expect(lines).toContain('Descuento de comanda,CMD-1,Comanda completa,0,100,20,20,Huésped del hotel,u-gone,2026-09-11T16:10:00.000Z')
     expect(lines).toContain('Pizza,5,250')
     expect(lines).toContain('12:00,1,100')
     // Un solo día: no hay sección "Día" (solo aparece en rangos).
@@ -175,6 +190,28 @@ describe('reportes.vue — criterio de aceptación', () => {
     expect(rows[1].text()).toContain('Postre')
     expect(rows[1].text()).toContain('Error de carga')
     expect(rows[1].text()).toContain('RD$30.00')
+  })
+
+  it('descuentos y cortesías: cada uno con motivo, usuario resuelto (o el id si ya no existe) y comanda; la cortesía va marcada', async () => {
+    dailyReport.mockResolvedValue(acceptanceReport())
+    const w = await mountPage()
+    expect(w.text()).toContain('2 descuento(s) en 2 comanda(s) · 1 cortesía(s) por RD$50.00')
+    expect(w.text()).toContain('Descontado RD$70.00')
+    const rows = w.findAll('tr[data-discount-row]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].attributes('data-courtesy')).toBe('1')
+    expect(rows[0].text()).toContain('Cortesía')
+    expect(rows[0].text()).toContain('CMD-2')
+    expect(rows[0].text()).toContain('Vino')
+    expect(rows[0].text()).toContain('Cortesía de la casa')
+    expect(rows[0].text()).toContain('Doña Marta')
+    expect(rows[0].text()).toContain('−RD$50.00')
+    expect(rows[1].attributes('data-courtesy')).toBe('0')
+    expect(rows[1].text()).toContain('Comanda −20%')
+    expect(rows[1].text()).toContain('Comanda completa')
+    expect(rows[1].text()).toContain('Huésped del hotel')
+    expect(rows[1].text()).toContain('u-gone')
+    expect(rows[1].text()).toContain('−RD$20.00')
   })
 
   it('día sin ventas → estado vacío (sin tablas de ceros) y CSV deshabilitado', async () => {

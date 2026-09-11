@@ -3,15 +3,18 @@
 import type { HttpRequest, Logger } from 'arckode-framework'
 import { validateSchema } from '../../shared/validators/validate-body'
 import type { RestaurantService } from './service'
+import type { CurrentUser } from './types'
+import type { AddOrderPaymentInput } from './usecases/split-payments'
 import {
   CreateStationSchema, UpdateStationSchema,
   CreateCategorySchema, UpdateCategorySchema,
   CreateItemSchema, UpdateItemSchema, AvailabilitySchema,
   CreateTableSchema, UpdateTableSchema,
   OpenOrderSchema, AddLineSchema, UpdateLineSchema,
-  BillSchema, ChargeToRoomSchema, PaySchema,
+  BillSchema, ChargeToRoomSchema, PaySchema, AddOrderPaymentSchema,
   KdsLineStatusSchema,
-  VoidLineSchema, CancelOrderSchema, VoidReasonsSchema,
+  VoidLineSchema, CancelOrderSchema, RefundOrderSchema, VoidReasonsSchema,
+  DiscountSchema, DiscountPolicySchema,
   CreateModifierGroupSchema, UpdateModifierGroupSchema,
   CreateModifierSchema, UpdateModifierSchema,
   CreateComboSchema, UpdateComboSchema,
@@ -210,6 +213,40 @@ export class RestaurantController {
     return { status: 200, body: await this.service.setVoidReasons(data.reasons, req.user as any) }
   }
 
+  // ─── Descuentos y cortesías (#215) ───
+  async applyOrderDiscount(req: HttpRequest) {
+    this.logger.info('POST /restaurant/orders/:id/discount', { id: req.params.id })
+    const data = validateSchema(DiscountSchema, req.body)
+    const item = await this.service.applyOrderDiscount(req.params.id, data as any, req.user as any)
+    return { status: 200, body: item }
+  }
+  // Sin body (no hay nada que validar): quita el descuento de la comanda.
+  async removeOrderDiscount(req: HttpRequest) {
+    this.logger.info('DELETE /restaurant/orders/:id/discount', { id: req.params.id })
+    const item = await this.service.removeOrderDiscount(req.params.id, req.user as any)
+    return { status: 200, body: item }
+  }
+  async applyLineDiscount(req: HttpRequest) {
+    this.logger.info('POST /restaurant/orders/:id/items/:lineId/discount', { id: req.params.id, lineId: req.params.lineId })
+    const data = validateSchema(DiscountSchema, req.body)
+    const item = await this.service.applyLineDiscount(req.params.id, req.params.lineId, data as any, req.user as any)
+    return { status: 200, body: item }
+  }
+  async removeLineDiscount(req: HttpRequest) {
+    this.logger.info('DELETE /restaurant/orders/:id/items/:lineId/discount', { id: req.params.id, lineId: req.params.lineId })
+    const item = await this.service.removeLineDiscount(req.params.id, req.params.lineId, req.user as any)
+    return { status: 200, body: item }
+  }
+  async discountPolicy(req: HttpRequest) {
+    this.logger.info('GET /restaurant/discount-policy')
+    return { status: 200, body: await this.service.getDiscountPolicy(req.user as any) }
+  }
+  async setDiscountPolicy(req: HttpRequest) {
+    this.logger.info('PUT /restaurant/discount-policy')
+    const data = validateSchema(DiscountPolicySchema, req.body)
+    return { status: 200, body: await this.service.setDiscountPolicy(data as any, req.user as any) }
+  }
+
   // ─── Cuenta + cobro (RES-5) ───
   async billOrder(req: HttpRequest) {
     this.logger.info('POST /restaurant/orders/:id/bill', { id: req.params.id })
@@ -232,11 +269,36 @@ export class RestaurantController {
     const item = await this.service.payOrder(req.params.id, data as any, req.user as any)
     return { status: 200, body: item }
   }
-  // Refund: clon de cancelOrder (sin validateSchema: NO hay body). El usecase valida estado + paymentId.
+  // Refund: clon de cancelOrder — motivo obligatorio (RefundOrderSchema). El usecase valida estado + paymentId.
   async refundOrder(req: HttpRequest) {
     this.logger.info('POST /restaurant/orders/:id/refund', { id: req.params.id })
-    const item = await this.service.refundOrder(req.params.id, req.user as any)
+    const data = validateSchema(RefundOrderSchema, req.body ?? {})
+    const item = await this.service.refundOrder(req.params.id, data as { reason?: string }, req.user as any)
     return { status: 200, body: item }
+  }
+
+  // ─── Dividir cuenta / pagos parciales (#214) ───
+  async indexOrderPayments(req: HttpRequest) {
+    return { status: 200, body: await this.service.listOrderPayments(req.params.id, req.user as CurrentUser) }
+  }
+  async splitPreview(req: HttpRequest) {
+    const parts = Number((req.query as Record<string, unknown> | undefined)?.parts ?? 2)
+    return { status: 200, body: await this.service.splitPreview(req.params.id, parts, req.user as CurrentUser) }
+  }
+  async addOrderPayment(req: HttpRequest) {
+    this.logger.info('POST /restaurant/orders/:id/payments', { id: req.params.id })
+    // validateSchema devuelve Record<string, unknown>: el enum de `method` ya lo aplicó el schema.
+    const data = validateSchema(AddOrderPaymentSchema, req.body) as unknown as AddOrderPaymentInput
+    // Como payOrder(card): si viene `checkoutUrl`, el frontend redirige al Checkout de Stripe.
+    const result = await this.service.addOrderPayment(req.params.id, data, req.user as CurrentUser)
+    return { status: 201, body: result }
+  }
+  // Motivo obligatorio (RefundOrderSchema). El usecase valida estado de la parte y de la comanda.
+  async refundOrderPayment(req: HttpRequest) {
+    this.logger.info('POST /restaurant/orders/:id/payments/:partId/refund', { id: req.params.id, partId: req.params.partId })
+    const data = validateSchema(RefundOrderSchema, req.body ?? {})
+    const part = await this.service.refundOrderPayment(req.params.id, req.params.partId, data as { reason?: string }, req.user as CurrentUser)
+    return { status: 200, body: part }
   }
 
   // ─── Alojados (#209): buscador para room service / cargo a habitación ───

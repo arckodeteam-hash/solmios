@@ -141,8 +141,8 @@
            (issue #79): son públicos según la allow-list de getPublicHotelInfo (phone/email).
            phone2 NO se muda porque no es público (queda como contacto interno en Configuración). -->
       <SectionCard title="Contacto público"
-        subtitle="Teléfono y email que ve el huésped en tu página pública y en el motor de reservas">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        subtitle="Teléfono, WhatsApp y email que ve el huésped en tu página pública y en la confirmación de su reserva">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
             <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Teléfono principal</label>
             <!-- data-field va en el PhoneInput (cae en su div raíz): el auto-focus de save() baja
@@ -151,6 +151,14 @@
             <PhoneInput v-model="phone" :country="hotelCountry" :maxlength="20" :invalid="!!errorOf('phone')"
               data-field="phone" @focusout="touchField('phone')" />
             <p v-if="errorOf('phone')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('phone') }}</p>
+          </div>
+          <div>
+            <!-- #241: WhatsApp público, distinto del teléfono (puede ser fijo) y de la línea de la IA.
+                 Vacío = la confirmación de reserva no muestra el botón. -->
+            <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">WhatsApp</label>
+            <PhoneInput v-model="whatsapp" :country="hotelCountry" :maxlength="25" :invalid="!!errorOf('whatsapp')"
+              data-field="whatsapp" @focusout="touchField('whatsapp')" />
+            <p v-if="errorOf('whatsapp')" class="mt-1 text-[10px] font-bold text-danger">{{ errorOf('whatsapp') }}</p>
           </div>
           <div>
             <label class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Email</label>
@@ -312,6 +320,7 @@ const logo = ref('')
 // phone/email son públicos (allow-list de getPublicHotelInfo) — se mudaron acá desde
 // Configuración → Hotel. phone2 NO: no es público, queda como contacto interno allá.
 const phone = ref('')
+const whatsapp = ref('')
 const email = ref('')
 // País del hotel: solo para el prefijo/formato de PhoneInput — se edita en Configuración → Hotel.
 const hotelCountry = ref('')
@@ -320,9 +329,9 @@ const hotelCountry = ref('')
 // su propio `touchedFields`/`fieldErrors`, no comparte estado con ninguna otra (mismo patrón que
 // ubicacion.vue, bug 3.1 de la auditoría 01). Sin `required`: nada exclusivo de Página pública
 // es obligatorio (CA 101) y HOTEL_RULES tampoco lo exige para phone/email.
-const CONTACT_FIELDS = ['phone', 'email'] as const
+const CONTACT_FIELDS = ['phone', 'whatsapp', 'email'] as const
 type ContactField = typeof CONTACT_FIELDS[number]
-const contactRefs: Record<ContactField, typeof phone> = { phone, email }
+const contactRefs: Record<ContactField, typeof phone> = { phone, whatsapp, email }
 const fieldErrors = ref<Record<string, string>>({})
 const touchedFields = ref<Set<string>>(new Set())
 
@@ -546,6 +555,7 @@ onMounted(async () => {
     logo.value = (h.logo as string) || ''
 
     phone.value = (h.phone as string) || ''
+    whatsapp.value = (h.whatsapp as string) || ''
     email.value = (h.email as string) || ''
     hotelCountry.value = (h.country as string) || ''
 
@@ -595,7 +605,7 @@ function snapshot(): string {
     publicDesc: publicDesc.value, reviewFlags,
     accommodationType: accommodationType.value, starRating: starRating.value,
     website: website.value, logo: logo.value,
-    phone: phone.value, email: email.value,
+    phone: phone.value, whatsapp: whatsapp.value, email: email.value,
   })
 }
 function markClean() { savedSnapshot.value = snapshot() }
@@ -687,6 +697,8 @@ async function save() {
       // y el valor guardado se conserva (se recarga abajo desde la respuesta para que el
       // formulario no muestre un vacío que no se persistió).
       phone: phone.value.trim() || undefined,
+      // whatsapp SÍ viaja vacío: su regla no tiene `min`, así que "" lo limpia (#241).
+      whatsapp: whatsapp.value.trim(),
       email: email.value.trim(),
     }
     if (trimmedSlug) patch.slug = trimmedSlug

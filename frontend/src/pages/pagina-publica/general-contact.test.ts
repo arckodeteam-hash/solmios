@@ -18,7 +18,7 @@ vi.mock('@/composables/useToast', () => ({
 const patchHotelMock = vi.fn(async (_patch: Record<string, unknown>) => ({}))
 const hotelFixture: Record<string, unknown> = {
   id: 'h1', slug: 'hotel-test', country: 'República Dominicana',
-  phone: '+18095551234', email: 'reservas@hotel.test',
+  phone: '+18095551234', whatsapp: '+18295550101', email: 'reservas@hotel.test',
   accommodationType: 'hotel', starRating: 4, website: 'https://hotel.test', logo: '',
   publishReviewScore: 0, publishReviewComments: 0,
   descriptionJson: JSON.stringify({ title: 'Hotel Test', description: 'Desc' }),
@@ -57,6 +57,7 @@ async function mountGeneral(): Promise<VueWrapper> {
 
 function phoneInput(wrapper: VueWrapper) { return wrapper.find('input[type="tel"]') }
 function emailInput(wrapper: VueWrapper) { return wrapper.find('[data-field="email"]') }
+function whatsappInput(wrapper: VueWrapper) { return wrapper.find('[data-field="whatsapp"] input[type="tel"]') }
 
 async function clickGuardar(wrapper: VueWrapper) {
   const guardar = wrapper.findAll('button').find((b) => b.text().trim().startsWith('Guardar'))
@@ -139,5 +140,20 @@ describe('Contacto público (issue #79): phone/email viven en Página pública �
 
     expect(patchHotelMock).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('formato de email inválido')
+  })
+
+  // #241 — WhatsApp público: tercer campo de la misma tarjeta. Es el número que la confirmación
+  // de reserva convierte en botón `wa.me`; vacío viaja "" para poder limpiarlo (sin `min`).
+  it('WhatsApp se precarga del hotel y viaja en el patch (vacío → "" para limpiarlo)', async () => {
+    patchHotelMock.mockClear()
+    const wrapper = await mountGeneral()
+    const wa = whatsappInput(wrapper)
+    expect(wa.exists(), 'WhatsApp (PhoneInput) debe renderizar en Contacto público').toBe(true)
+    expect((wa.element as HTMLInputElement).value).toBe('+18295550101')
+
+    await wa.setValue('')
+    await clickGuardar(wrapper)
+    expect(patchHotelMock).toHaveBeenCalledTimes(1)
+    expect(patchHotelMock.mock.calls[0]![0]).toHaveProperty('whatsapp', '')
   })
 })

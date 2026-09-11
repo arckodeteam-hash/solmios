@@ -130,3 +130,17 @@ export interface RefundableGateway extends PaymentGateway {
 export function isRefundable(g: PaymentGateway): g is RefundableGateway {
   return g.capabilities.refund && typeof (g as RefundableGateway).refund === 'function'
 }
+
+/**
+ * Página hospedada que exige POST (CardNet Payment Page: `POST /authorize` con SESSION; GET
+ * devuelve 405). Un `ChargeResult` 'redirect' sólo lleva una URL, así que el adapter redirige a
+ * una página PROPIA (`/api/pay/go/:provider/:hotelId`) que renderiza este form y lo auto-envía.
+ * Capacidad OPCIONAL: Stripe/PayPal/Azul redirigen por GET y no la necesitan.
+ */
+export interface HostedFormGateway extends PaymentGateway {
+  hostedForm(providerRef: string): { action: string; fields: Record<string, string> }
+}
+
+export function hasHostedForm(g: PaymentGateway): g is HostedFormGateway {
+  return typeof (g as HostedFormGateway).hostedForm === 'function'
+}

@@ -4,14 +4,18 @@ export type OrderType = 'dine_in' | 'room_service' | 'takeaway'
 // 'processing_payment' (fix-refund-pos-card): cobro con tarjeta esperando la confirmación async del
 // webhook de Stripe (Checkout Session abierta). Transitorio entre 'billed' y 'paid' — nunca lo fija
 // el cliente, solo payOrder(card)/settlePaidOrder/unsettleOrder.
+// 'partially_refunded' (#214): se devolvió UNA parte de un cobro dividido; el resto sigue cobrado.
+// Terminal (la mesa ya se liberó al saldar). Cuando se devuelven todas las partes pasa a 'refunded'.
 export type OrderStatus =
   | 'open' | 'sent' | 'preparing' | 'ready' | 'served' | 'billed' | 'charged' | 'paid' | 'cancelled' | 'refunded'
-  | 'processing_payment'
+  | 'processing_payment' | 'partially_refunded'
 // 'voided' (#207): anulada CON motivo después de enviada a cocina. Se conserva en la comanda (tachada)
 // pero no cuenta en totales ni en el KDS. 'cancelled' queda como estado legacy (filas anteriores a #207).
 export type LineStatus = 'new' | 'preparing' | 'ready' | 'served' | 'cancelled' | 'voided'
 export type TableStatus = 'free' | 'occupied' | 'reserved'
-export type Settlement = 'folio' | 'payment'
+// 'split' (#214): saldada por partes con métodos mezclados (habitación + directo). Con partes de un
+// solo tipo se conserva 'folio'/'payment', así lo que lee `settlement` (refund, Cobrar) no cambia.
+export type Settlement = 'folio' | 'payment' | 'split'
 
 // F5 — catálogo FIJO de tags de alérgenos/info dietética (D8, specs/menu-allergens/spec.md). En inglés
 // (DB/código en inglés); la UI traduce cada key a su etiqueta en español. NO tabla nueva, mismo patrón
@@ -92,6 +96,9 @@ export interface TableDTO {
   updatedAt: string
 }
 
+// #215 — 'percent' (0 < v ≤ 100; 100 = cortesía) | 'amount' (monto fijo, recortado a la base).
+export type DiscountType = 'percent' | 'amount'
+
 export interface OrderDTO {
   id: string
   hotelId: string
@@ -114,18 +121,71 @@ export interface OrderDTO {
   closedAt?: string
   // #210 — comensales (cubiertos). Solo en comandas `dine_in` (default 1); undefined en el resto.
   covers?: number
+  // #215 — descuento de la comanda (sobre la suma de líneas ya descontadas). Ver model.ts.
+  discountType?: DiscountType | null
+  discountValue?: number | null
+  discountAmount?: number
+  discountReason?: string | null
+  discountBy?: string | null
+  discountAt?: string | null
+  /** Σ descuentos de línea + descuento de comanda. */
+  discountTotal?: number
   // #213 — motivo de cancelación (solo en status='cancelled'; null en filas anteriores a la columna).
   cancelReason?: string | null
   // #213 — día contable ('YYYY-MM-DD', zona del hotel) del cierre; ver model.ts. null en filas viejas sin backfill.
   businessDate?: string | null
   // #213 — cuándo se reembolsó (status='refunded'); closedAt conserva el cobro.
   refundedAt?: string | null
+  // #214 — acumulado de pagos parciales completados (sin propina). 0/undefined = sin partes cobradas.
+  amountPaid?: number
+  // #214 — suma de las partes `pending` vivas (Checkout de tarjeta abierto). > 0 = hay una parte en curso.
+  amountReserved?: number
+  // #214 (COR-A) — lock de líneas (ISO del lease; ''/vencido = libre). Ver usecases/order-cas.ts.
+  linesLockedUntil?: string
   // #209 — SOLO LECTURA, no son columnas: los calcula usecases/order-labels.ts para room service
   // ("Hab. 204 · Pérez"). Nunca se mandan a `orders.update` (el ORM los descartaría en silencio).
   roomNumber?: string
   guestName?: string
   createdAt: string
   updatedAt: string
+}
+
+// #214 — Parte del cobro de una comanda (dividir cuenta). Espejo de restaurant_order_payments.
+export type OrderPaymentMethod = 'cash' | 'card' | 'transfer' | 'room'
+// pending (Checkout abierto / a medias) · completed · expired (Checkout vencido) · failed (el puerto no cobró;
+// su `seq` queda quemado) · refunding (devolución pedida al puerto, en curso) · refunded (devuelta con la
+// comanda ya liquidada: sigue pesando en el saldo) · reversed (devuelta con la comanda ABIERTA, COR-C: la
+// plata volvió, el saldo se reabrió y sus líneas quedaron libres; su `seq` queda quemado)
+export type OrderPaymentStatus = 'pending' | 'completed' | 'expired' | 'failed' | 'refunding' | 'refunded' | 'reversed'
+export interface OrderPaymentDTO {
+  id: string
+  hotelId: string
+  orderId: string
+  seq: number
+  method: OrderPaymentMethod
+  amount: number
+  tip: number
+  status: OrderPaymentStatus
+  paymentId?: string
+  folioId?: string
+  reservationId?: string
+  lineIds?: string[] | null
+  createdBy?: string
+  completedAt?: string
+  refundedAt?: string
+  refundReason?: string
+  failedAt?: string
+  failReason?: string
+  createdAt: string
+  updatedAt: string
+}
+/** #214 — saldo de la comanda tal como lo ve Cobrar. `due` = neto + impuesto (la propina va por parte); `pending` = partes en curso (reservan saldo). */
+export interface OrderBalance {
+  due: number
+  paid: number
+  pending: number
+  outstanding: number
+  tips: number
 }
 
 // F1 — snapshot de una opción elegida, congelado en la línea (sobrevive a editar/borrar el modificador).
@@ -171,6 +231,13 @@ export interface OrderItemDTO {
   voidReason?: string
   voidedBy?: string
   voidedAt?: string
+  // #215 — descuento de la línea. `lineTotal` queda bruto; `discountAmount` es lo que se resta.
+  discountType?: DiscountType | null
+  discountValue?: number | null
+  discountAmount?: number
+  discountReason?: string | null
+  discountBy?: string | null
+  discountAt?: string | null
   createdAt: string
   updatedAt: string
 }

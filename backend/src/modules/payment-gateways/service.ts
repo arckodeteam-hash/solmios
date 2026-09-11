@@ -20,8 +20,8 @@ const CAPABILITIES: Record<PaymentProvider, PaymentGatewayDTO['capabilities']> =
   // Azul Payment Page NO soporta reembolsos (requiere afiliación a Webservices) y no tiene
   // webhook: confirma por redirect con hash HMAC-SHA512.
   azul: { refund: false, void: false, paymentLinks: false, confirmation: 'return' },
-  // CardNet-Ztrans confirma por consulta, no por push.
-  cardnet: { refund: true, void: true, paymentLinks: false, confirmation: 'pull' },
+  // CardNet Payment Page no tiene reembolso ni anulación por API (eso es otra afiliación, la REST 'sin pantalla') y no tiene webhook: confirma consultando la sesión.
+  cardnet: { refund: false, void: false, paymentLinks: false, confirmation: 'pull' },
 }
 
 export class PaymentGatewaysService {

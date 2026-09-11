@@ -73,6 +73,11 @@ export const ACTIONS = {
    *  Separado de `edit` (#205): cocina necesita `restaurant:edit` para mover líneas en el KDS y con
    *  ese mismo permiso podía cobrar por URL. Mover plata no es operar la comanda. */
   pay: 'Cobrar',
+  /** Aplicar un descuento o una cortesía (100 %) a una línea o a la comanda, con motivo (#215).
+   *  Separado de `pay`: cobrar lo que marca el ticket no es lo mismo que decidir cobrar menos. Por
+   *  defecto lo tienen hotel_admin y receptionist; el mozo no, salvo que el hotel lo habilite en Roles.
+   *  El tope por rol vive en `configuration('restaurant').maxDiscountPercent` (restaurant/usecases/discounts.ts). */
+  discount: 'Descontar',
 } as const
 
 /**
@@ -106,8 +111,9 @@ export const MODULE_ACTIONS: Record<string, (keyof typeof ACTIONS)[]> = {
   ai: ['view', 'edit'],
   accounting: ['view', 'create', 'edit', 'delete'],
   treasury: ['view', 'create', 'edit', 'delete'],
-  // `pay` es exclusivo del POS: cobrar/cargar a habitación (#205). Ver ACTIONS.pay.
-  restaurant: ['view', 'create', 'edit', 'delete', 'pay'],
+  // `pay` es exclusivo del POS: cobrar/cargar a habitación (#205). `discount`: descuentos y cortesías
+  // con motivo (#215). Ver ACTIONS.pay / ACTIONS.discount.
+  restaurant: ['view', 'create', 'edit', 'delete', 'pay', 'discount'],
   inventory: ['view', 'create', 'edit', 'delete'],
   purchasing: ['view', 'create', 'edit', 'delete'],
   // Landing pública: solo view/edit (toggle, reorder, editar config). Sin create/delete
@@ -165,8 +171,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     // Contabilidad y tesorería: son del dueño del hotel (finanzas), no de recepción.
     'accounting:view', 'accounting:create', 'accounting:edit', 'accounting:delete',
     'treasury:view', 'treasury:create', 'treasury:edit', 'treasury:delete',
-    // POS de restaurante: el dueño configura todo (estaciones, carta, mesas) y opera.
-    'restaurant:view', 'restaurant:create', 'restaurant:edit', 'restaurant:delete', 'restaurant:pay',
+    // POS de restaurante: el dueño configura todo (estaciones, carta, mesas) y opera. `discount` (#215)
+    // sin tope: el tope de `configuration('restaurant').maxDiscountPercent` no aplica a hotel_admin.
+    'restaurant:view', 'restaurant:create', 'restaurant:edit', 'restaurant:delete', 'restaurant:pay', 'restaurant:discount',
     'restaurant-catalog:view', 'restaurant-catalog:create', 'restaurant-catalog:edit', 'restaurant-catalog:delete',
     // Inventario y compras: el dueño gestiona insumos, stock, requisiciones y órdenes de compra.
     'inventory:view', 'inventory:create', 'inventory:edit', 'inventory:delete',
@@ -208,7 +215,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     'ai:view', 'ai:edit',
     // Toma comandas, las envía a cocina (create+edit) y las cobra desde el mostrador (pay, #205);
     // la config (estaciones/carta = `restaurant-catalog`) y la cancelación (delete) son del hotel_admin.
-    'restaurant:view', 'restaurant:create', 'restaurant:edit', 'restaurant:pay',
+    // `discount` (#215): descuentos con motivo, acotados al tope del hotel (default 20 %).
+    'restaurant:view', 'restaurant:create', 'restaurant:edit', 'restaurant:pay', 'restaurant:discount',
     // Landing pública (F1): recepción puede previsualizarla (view) pero no editar la config.
     'landing:view',
   ],
@@ -247,7 +255,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
   // receptionist). Config de la carta/estaciones (`restaurant-catalog`) y cancelar comandas o
   // quitar líneas ya enviadas (`restaurant:delete`) son del hotel_admin — NO se le da
   // `restaurant-catalog` a propósito (QA-ALTO): sin este split, `restaurant:edit` alcanzaba para
-  // cambiar precios/menú.
+  // cambiar precios/menú. Tampoco `restaurant:discount` (#215): una "cortesía" sin control es
+  // indistinguible de un faltante de caja; el hotel lo habilita en Roles si quiere.
   waiter: [
     'restaurant:view', 'restaurant:create', 'restaurant:edit', 'restaurant:pay',
     // Ficha desde el panel, igual que el resto del personal operativo.

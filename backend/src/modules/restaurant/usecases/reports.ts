@@ -17,6 +17,12 @@
 //   descuentan en la proporción de la comanda. Así `total = subtotal + tax` siempre cierra.
 // - Las comandas aportan lo que no es plata: cantidad, tipo, comensales, franja horaria, anuladas con
 //   motivo, líneas anuladas, top de ítems y estaciones.
+// - Descuentos y cortesías (#215) → `restaurant_order_items.discount*` (línea) + `restaurant_orders.discount*`
+//   (comanda) de las comandas VENDIDAS del día: lo que se dejó de cobrar, cuántos hubo y cada uno con
+//   motivo, usuario (nombre resuelto contra `users`, regla del CLAUDE.md) y comanda. Una cortesía es un
+//   descuento que se lleva TODA su base (100 % o un monto igual al bruto). Salen de las mismas consultas
+//   que el resto (comandas por día + líneas por comanda), no de una tercera; los nombres se piden una
+//   vez por usuario distinto.
 //
 // Consultas acotadas: el ORM sólo arma igualdades (`buildWhere`), así que el día vive como VALOR en
 // `businessDate` ('YYYY-MM-DD' en la zona del hotel) tanto en `restaurant_orders` como en `payments`.
@@ -72,6 +78,8 @@ export interface ReportsDeps {
   orders: RepositoryAdapter<OrderDTO>
   lines: RepositoryAdapter<OrderItemDTO>
   hotels: RepositoryAdapter<any>
+  /** #215: `users` para resolver el nombre de quien aplicó cada descuento (`discountBy` = users.id). Opcional por retrocompat con tests de #213. */
+  users?: RepositoryAdapter<any>
   ports: ReportPorts
 }
 
@@ -96,6 +104,30 @@ export interface VoidRow {
   reason: string | null
   at: string | null
   by: string | null
+}
+
+/** #215 — un descuento aplicado (de línea o de toda la comanda) en una comanda vendida del rango. */
+export interface DiscountRow {
+  kind: 'line' | 'order'
+  orderId: string
+  orderNumber: string | null
+  /** Nombre de la línea, o "Comanda completa" si el descuento es de la comanda. */
+  name: string
+  quantity: number
+  /** Bruto sobre el que se aplicó (neto sin impuesto). */
+  base: number
+  /** Lo que efectivamente se dejó de cobrar (neto sin impuesto). */
+  amount: number
+  /** amount / base, en %. 100 = cortesía. */
+  percent: number
+  /** true si el descuento se llevó toda la base (invitación de la casa). */
+  courtesy: boolean
+  reason: string | null
+  at: string | null
+  /** users.id de quien lo aplicó. */
+  by: string | null
+  /** Nombre resuelto contra `users`; null si no se pudo resolver. */
+  byName: string | null
 }
 
 export interface RestaurantDailyReport {
@@ -125,6 +157,12 @@ export interface RestaurantDailyReport {
   voided: { orders: number; lines: number; amount: number; rows: VoidRow[] }
   /** Devoluciones del período (por fecha de la devolución). `amount` es la plata que salió, propina incluida. */
   refunded: { orders: number; amount: number }
+  /**
+   * #215 — descuentos y cortesías de las comandas vendidas del rango. `amount` es el total descontado
+   * (neto), `count` cuántos descuentos se aplicaron (líneas + comandas), `orders` en cuántas comandas,
+   * `courtesies` el subconjunto al 100 %. `rows` trae todos con motivo y usuario; la UI destaca las cortesías.
+   */
+  discounts: { orders: number; count: number; amount: number; courtesies: { count: number; amount: number }; rows: DiscountRow[] }
   topItemsByQuantity: ItemTotals[]
   topItemsByAmount: ItemTotals[]
   byStation: StationTotals[]
@@ -182,7 +220,7 @@ export function resolveRange(query: DailyReportQuery | undefined, timeZone: stri
   return { from, to }
 }
 
-/** Monto bruto de una línea (neto + su impuesto congelado). */
+/** Monto bruto de una línea (neto + su impuesto congelado), ANTES de descuentos: lo que se pidió a valor de carta. */
 function lineGross(l: OrderItemDTO): number {
   const net = Number(l.lineTotal || 0)
   return net + (net * Number(l.taxRate || 0)) / 100
@@ -197,6 +235,20 @@ async function inChunks<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<
   for (let i = 0; i < items.length; i += CONCURRENCY) {
     out.push(...(await Promise.all(items.slice(i, i + CONCURRENCY).map(fn))))
   }
+  return out
+}
+
+/** Un descuento "se llevó toda la base" cuando lo descontado no deja nada que cobrar (100 % o un monto ≥ bruto). */
+const COURTESY_EPSILON = 0.005
+const isCourtesy = (base: number, amount: number): boolean => base > 0 && amount >= base - COURTESY_EPSILON
+
+/** Nombres de usuario por id, una lectura por id distinto (`findOne`, no `findById`: no es un id que venga de afuera). */
+async function userNames(deps: ReportsDeps, ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  const distinct = [...new Set(ids.filter(Boolean))]
+  if (!deps.users || !distinct.length) return out
+  const rows = await inChunks(distinct, (id) => deps.users!.findOne({ id }) as Promise<any>)
+  distinct.forEach((id, idx) => { const name = String(rows[idx]?.name ?? '').trim(); if (name) out.set(id, name) })
   return out
 }
 
@@ -396,6 +448,38 @@ export async function dailyReport(deps: ReportsDeps, query: DailyReportQuery | u
   }
   voidRows.sort((a, b) => String(b.at ?? '').localeCompare(String(a.at ?? '')))
 
+  // ─── Descuentos y cortesías (#215): líneas activas con descuento + descuento de comanda, en comandas vendidas ───
+  const discountRows: DiscountRow[] = []
+  const discountedOrders = new Set<string>()
+  for (const o of sold) {
+    for (const l of (lines.get(o.id) ?? []).filter(isLineActive).filter(isSellable)) {
+      const amount = Number(l.discountAmount || 0)
+      if (!l.discountType || amount <= 0) continue
+      const base = Number(l.lineTotal || 0)
+      discountedOrders.add(o.id)
+      discountRows.push({
+        kind: 'line', orderId: o.id, orderNumber: o.number ?? null, name: l.name, quantity: Number(l.quantity || 0),
+        base: round2(base), amount: round2(amount), percent: base > 0 ? round2((amount / base) * 100) : 0,
+        courtesy: isCourtesy(base, amount), reason: l.discountReason ?? null, at: l.discountAt ?? null, by: l.discountBy ?? null, byName: null,
+      })
+    }
+    const orderAmount = Number(o.discountAmount || 0)
+    if (o.discountType && orderAmount > 0) {
+      // La base del descuento de comanda es la suma de líneas ya descontadas = subtotal + lo que se restó.
+      const base = Number(o.subtotal || 0) + orderAmount
+      discountedOrders.add(o.id)
+      discountRows.push({
+        kind: 'order', orderId: o.id, orderNumber: o.number ?? null, name: 'Comanda completa', quantity: 0,
+        base: round2(base), amount: round2(orderAmount), percent: base > 0 ? round2((orderAmount / base) * 100) : 0,
+        courtesy: isCourtesy(base, orderAmount), reason: o.discountReason ?? null, at: o.discountAt ?? null, by: o.discountBy ?? null, byName: null,
+      })
+    }
+  }
+  const names = await userNames(deps, discountRows.map((r) => r.by || ''))
+  for (const r of discountRows) r.byName = r.by ? names.get(r.by) ?? null : null
+  discountRows.sort((a, b) => String(b.at ?? '').localeCompare(String(a.at ?? '')))
+  const courtesyRows = discountRows.filter((r) => r.courtesy)
+
   const total = round2(subtotal + tax)
   const ordersCount = sold.length
   const roundMethods = <K extends string>(rec: Record<K, MethodTotals>): Record<K, MethodTotals> => {
@@ -419,6 +503,12 @@ export async function dailyReport(deps: ReportsDeps, query: DailyReportQuery | u
     byType: roundMethods(byType),
     voided: { orders: cancelled.length, lines: voidedLinesCount, amount: round2(voidedAmount), rows: voidRows },
     refunded: { orders: refundsCount, amount: round2(refundedAmount) },
+    discounts: {
+      orders: discountedOrders.size, count: discountRows.length,
+      amount: round2(discountRows.reduce((s, r) => s + r.amount, 0)),
+      courtesies: { count: courtesyRows.length, amount: round2(courtesyRows.reduce((s, r) => s + r.amount, 0)) },
+      rows: discountRows,
+    },
     topItemsByQuantity: roundItems([...allItems].sort((a, b) => b.quantity - a.quantity || b.amount - a.amount).slice(0, TOP_ITEMS)),
     topItemsByAmount: roundItems([...allItems].sort((a, b) => b.amount - a.amount || b.quantity - a.quantity).slice(0, TOP_ITEMS)),
     byStation: [...stations.values()].map((s) => ({ ...s, amount: round2(s.amount) })).sort((a, b) => b.amount - a.amount),

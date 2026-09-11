@@ -147,7 +147,7 @@ describe('#208 — openOrder room_service: la reserva es del hotel', () => {
 
 describe('#208 — chargeToRoom: la reserva es del hotel y se valida ANTES de tocar el folio', () => {
   function settlementDeps(orderReservationId: string | undefined, port: ReservationPort | null | undefined) {
-    const orders: any[] = [{ id: 'o1', hotelId: 'h1', number: 'CMD-2026-0001', status: 'served', tableId: 't1', tip: 0, subtotal: 0, tax: 0, total: 0, reservationId: orderReservationId }]
+    const orders: any[] = [{ id: 'o1', hotelId: 'h1', number: 'CMD-2026-0001', status: 'served', tableId: 't1', tip: 0, subtotal: 20, tax: 3.6, total: 23.6, reservationId: orderReservationId }]
     const lines: any[] = [{ id: 'l1', hotelId: 'h1', orderId: 'o1', unitPrice: 10, quantity: 2, taxRate: 18, lineTotal: 20, status: 'served' }]
     const tables: any[] = [{ id: 't1', hotelId: 'h1', name: 'M1', status: 'occupied' }]
     const charged: any[] = []

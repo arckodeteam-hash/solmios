@@ -131,6 +131,36 @@ export const MealPlanModel: ModelDefinition = {
   },
 }
 
+// REQ-01 (#233) — Amenidades para niños/bebés configurables por el hotel (nombre libre +
+// precio): silla de comer, bañera, calienta-biberones, cama supletoria infantil, etc. Catálogo
+// ABIERTO por hotel, mismo criterio que `Upsells` (sub-dominio de bookingengine, comparte
+// hotelId, no amerita módulo aparte). A diferencia de la cuna (`childPolicy.cribAvailable`,
+// Sí/No sin precio, que sigue igual), acá cada amenidad tiene nombre y precio propios y el
+// huésped las elige por habitación en el motor público.
+//
+// Separado de `Upsells` a propósito: los upsells son extras generales de la reserva (kind
+// per_room/per_person/per_stay); estas amenidades son un checklist por habitación pensado para
+// familias, sin `kind` — precio fijo por unidad, 0 permitido (= gratuita, se muestra igual).
+//
+// Anti-patrón ORM (mem 1805): TODO campo persistido está declarado acá. `price` en la MONEDA
+// DEL HOTEL, >=0 validado en el usecase (child-amenities-crud.ts).
+export const ChildAmenityModel: ModelDefinition = {
+  table: 'child_amenities',
+  timestamps: true,
+  fields: {
+    id: { type: 'string', required: true },
+    hotelId: { type: 'string', required: true, indexed: true },
+    // 'Silla de comer', 'Bañera para bebé', 'Calienta-biberones', etc.
+    name: { type: 'string', required: true },
+    // Precio en la moneda del hotel. 0 = gratuita.
+    price: { type: 'number', required: true },
+    // Toggle visible desde el panel sin borrar. Default true (activa).
+    active: { type: 'boolean', default: true },
+    // Orden dentro del hotel para el checklist del widget. Default 0.
+    sortOrder: { type: 'number', default: 0 },
+  },
+}
+
 export function registerBookingengineModels(orm: ORM): void {
   orm.define('BookingConfig', BookingConfigModel)
   orm.define('ConversionEvents', ConversionEventsModel)
@@ -140,4 +170,6 @@ export function registerBookingengineModels(orm: ORM): void {
   // aparte. Dueño: este modelo (NO definir en shared/models.ts — regla anti-modelo-dual).
   orm.define('Upsells', UpsellModel)
   orm.define('MealPlans', MealPlanModel)
+  // REQ-01 (#233) — Amenidades para niños/bebés. Mismo criterio que Upsells: sub-dominio.
+  orm.define('ChildAmenities', ChildAmenityModel)
 }

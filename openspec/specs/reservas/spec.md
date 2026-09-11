@@ -248,13 +248,35 @@ y capacidad al crear — nunca confía en lo que manda el cliente — y en una r
 grupal cada room-line es su propia fila `reservations` con su propia distribución
 (`public-booking-group.ts`). `childrenRatePercentApplied` congela el % infantil
 efectivamente cotizado (auditoría: cambiar el % después no toca reservas existentes).
-NO existe checklist de amenidades infantiles: la cuna es la única solicitud de bebé.
+La cuna sigue siendo Sí/No sin precio. Aparte de ella, REQ-01 (#233) agrega las
+**amenidades para niños/bebés configurables por el hotel** (tabla `child_amenities`:
+nombre libre, `price` >= 0 con 0 permitido, `active`; CRUD `/api/child-amenities` con
+permiso `upsells:*`, catálogo público `GET /api/public/hotels/:slug/child-amenities`
+solo activas). El cliente las elige POR HABITACIÓN (`childAmenities: [{id}]` en el
+body single y en cada `rooms[i]` del grupo); el backend las acepta SOLO si esa línea
+declara al menos un menor y `childPolicy.acceptChildren`, ignora ids inexistentes,
+inactivos, de otro hotel o duplicados, y persiste en cada fila `reservations` el
+snapshot `childAmenities` `[{id,name,price,quantity,total}]` + `childAmenitiesTotal`
+con el precio vigente al reservar. Su importe entra en `subtotal` (alojamiento +
+upsells + amenidades) → base imponible → impuestos → total cobrado, y
+`priceBreakdown.childAmenitiesTotal` lo desglosa (`public-booking.ts`,
+`public-booking-group.ts`).
 
 #### Scenario: Grupo de dos habitaciones con bebé en una
 
 - GIVEN hotel con cribAvailable y una reserva grupal de 2 líneas, una con bebé + cuna
 - THEN cada línea persiste sus propios adults/children/childrenAges y SOLO la del bebé
   lleva needsCrib=true validado por el backend
+
+#### Scenario: Amenidad infantil elegida en una sola habitación del grupo
+
+- GIVEN hotel con la amenidad activa "Kit de bebé" a 10 y una reserva grupal de 2 líneas,
+  la segunda con un niño, quantity 2 y `childAmenities: [{id}]`
+- THEN `priceBreakdown.childAmenitiesTotal` = 20, el subtotal y el total lo incluyen, cada
+  reserva física de la segunda línea persiste el snapshot con quantity 1 y total 10, y la
+  primera línea no lleva amenidades
+- AND una amenidad inactiva, de otro hotel o pedida en una línea sin menores se ignora
+  sin error y no se cobra
 
 #### Scenario: Regla de capacidad explica qué se incumple
 

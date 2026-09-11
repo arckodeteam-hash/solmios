@@ -14,3 +14,6 @@ data/
 
 # Node/Bun
 node_modules/
+# …y también si alguien deja un SYMLINK con ese nombre: `node_modules/` sólo matchea
+# directorios, y un symlink se coló en el commit 114efca9 y rompió el deploy (#239).
+node_modules

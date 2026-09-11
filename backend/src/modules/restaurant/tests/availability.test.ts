@@ -326,6 +326,23 @@ describe('F6 — availableNow en el DTO de listado/detalle', () => {
     expect(data[0].availableNow).toBe(false)
   })
 
+  it('listItems: `hasRecipe` por el puerto de inventario (movido del service a items-crud en #215); sin puerto o con error, queda undefined', async () => {
+    mockClock(9, 0)
+    const itemsStore = [
+      { id: 'A', hotelId: 'h1', categoryId: 'cat1', name: 'Pancakes', price: 100, available: 1 },
+      { id: 'B', hotelId: 'h1', categoryId: 'cat1', name: 'Agua', price: 30, available: 1 },
+    ]
+    const withPort = { ...itemDeps({ itemsStore }), recipes: { menuItemsWithRecipe: async () => ['A'] } }
+    const { data } = await itemsCrud.listItems(withPort, undefined, user)
+    expect(data.map((i) => [i.id, i.hasRecipe])).toEqual([['A', true], ['B', false]])
+    const noPort = await itemsCrud.listItems(itemDeps({ itemsStore }), undefined, user)
+    expect(noPort.data.every((i) => i.hasRecipe === undefined)).toBe(true)
+    const broken = { ...itemDeps({ itemsStore }), recipes: { menuItemsWithRecipe: async () => { throw new Error('inventario caído') } } }
+    const degraded = await itemsCrud.listItems(broken, undefined, user)
+    expect(degraded.data).toHaveLength(2)
+    expect(degraded.data.every((i) => i.hasRecipe === undefined)).toBe(true)
+  })
+
   it('getItem: refleja availableNow igual que listItems', async () => {
     mockClock(9, 0)
     const d = itemDeps()

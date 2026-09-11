@@ -55,10 +55,12 @@ function mount(roleRows: Row[] = []) {
     MenuItems: [{ id: 'mi-combo', hotelId: 'h1', categoryId: 'c1', name: 'Papas', price: 50 }, { id: 'mi-solo', hotelId: 'h1', categoryId: 'c1', name: 'Agua', price: 20 }],
     MenuCombos: [{ id: 'cb1', hotelId: 'h1', name: 'Combo Familiar', price: 300 }],
     MenuComboItems: [{ id: 'cbi1', hotelId: 'h1', comboId: 'cb1', menuItemId: 'mi-combo', quantity: 1 }],
+    // #214: `amountPaid`/`amountReserved` en 0 y `linesLockedUntil` en '' como las deja openOrder (y el backfill
+    // de migrate-db.ts): el cobro entero, las partes y la edición de líneas hacen UPDATE condicional sobre ellas.
     RestaurantOrders: [
-      { id: 'o-open', hotelId: 'h1', status: 'open', tableId: 't1', tip: 0, subtotal: 100, tax: 0, total: 100, number: 1 },
-      { id: 'o-sent', hotelId: 'h1', status: 'sent', tableId: 't1', tip: 0, subtotal: 100, tax: 0, total: 100, number: 2 },
-      { id: 'o-room', hotelId: 'h1', status: 'sent', reservationId: 'r1', tip: 0, subtotal: 100, tax: 0, total: 100, number: 3 },
+      { id: 'o-open', hotelId: 'h1', status: 'open', tableId: 't1', tip: 0, subtotal: 100, tax: 0, total: 100, number: 1, amountPaid: 0, amountReserved: 0, linesLockedUntil: '' },
+      { id: 'o-sent', hotelId: 'h1', status: 'sent', tableId: 't1', tip: 0, subtotal: 100, tax: 0, total: 100, number: 2, amountPaid: 0, amountReserved: 0, linesLockedUntil: '' },
+      { id: 'o-room', hotelId: 'h1', status: 'sent', reservationId: 'r1', tip: 0, subtotal: 100, tax: 0, total: 100, number: 3, amountPaid: 0, amountReserved: 0, linesLockedUntil: '' },
     ],
     RestaurantOrderItems: [
       { id: 'l-open', hotelId: 'h1', orderId: 'o-open', kind: 'item', status: 'new', unitPrice: 100, quantity: 1, lineTotal: 100, taxRate: 0 },
@@ -88,6 +90,8 @@ function mount(roleRows: Row[] = []) {
     count: async (t: string, f?: Row) => table(t).filter((r) => matches(r, f)).length,
     paginate: async () => ({ data: [], total: 0, page: 1, limit: 20 }),
     transaction: async (fn: any) => fn(orm),
+    // #214: UPDATE condicional (mismo contrato que ORM.updateMany) — reserva del saldo de una parte.
+    updateMany: async (t: string, f: Row, d: Row) => { const hit = table(t).filter((r) => matches(r, f)); hit.forEach((r) => Object.assign(r, d)); return hit.length },
   }
 
   const router = new Router()
@@ -186,6 +190,50 @@ describe('POST /api/restaurant/orders/:id/pay — solo restaurant:pay cobra', ()
     expect(res.status).toBe(400)
     expect(recorded).toHaveLength(0)
     expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')?.status).toBe('sent')
+  })
+})
+
+// #214: dividir cuenta — mismo gate que cobrar (`restaurant:pay`); devolver una parte, `billing:create`.
+describe('#214 — /orders/:id/payments y /split: restaurant:pay; /payments/:partId/refund: billing:create', () => {
+  it('kitchen → 403 en GET/POST payments y en split; NADA llega a payments', async () => {
+    const { router, auth, recorded } = mount()
+    const list = await router.resolve('GET', '/api/restaurant/orders/o-sent/payments', { headers: headers(auth, 'kitchen') })
+    expect(list.status).toBe(403)
+    const split = await router.resolve('GET', '/api/restaurant/orders/o-sent/split', { headers: headers(auth, 'kitchen'), query: { parts: '2' } })
+    expect(split.status).toBe(403)
+    const add = await router.resolve('POST', '/api/restaurant/orders/o-sent/payments', { headers: headers(auth, 'kitchen'), body: { method: 'cash', amount: 40 } })
+    expect(add.status).toBe(403)
+    expect(recorded).toHaveLength(0)
+  })
+
+  it('waiter: 40 en efectivo → 201, saldo 60, comanda sigue `sent`; el payment sale con `pos:<id>:1`; la lista lo muestra', async () => {
+    const { router, auth, rows, recorded } = mount()
+    const res = await router.resolve('POST', '/api/restaurant/orders/o-sent/payments', { headers: headers(auth, 'waiter'), body: { method: 'cash', amount: 40 } })
+    expect(res.status).toBe(201)
+    expect((res.body as any).balance).toEqual({ due: 100, paid: 40, pending: 0, outstanding: 60, tips: 0 })
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')?.status).toBe('sent')
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0].reference).toBe('pos:o-sent:1')
+    const list = await router.resolve('GET', '/api/restaurant/orders/o-sent/payments', { headers: headers(auth, 'waiter') })
+    expect(list.status).toBe(200)
+    expect((list.body as any).total).toBe(1)
+    // Sobrepago por HTTP: 70 sobre 60 → 400 y sin segundo payment.
+    const over = await router.resolve('POST', '/api/restaurant/orders/o-sent/payments', { headers: headers(auth, 'waiter'), body: { method: 'cash', amount: 70 } })
+    expect(over.status).toBe(400)
+    expect(recorded).toHaveLength(1)
+    // El cobro entero ya no aplica (409): el saldo se termina por partes.
+    const whole = await router.resolve('POST', '/api/restaurant/orders/o-sent/pay', { headers: headers(auth, 'waiter'), body: { method: 'cash' } })
+    expect(whole.status).toBe(409)
+    expect(recorded).toHaveLength(1)
+  })
+
+  it('method "xyz" → 400 de validación; waiter (sin billing:create) no devuelve una parte → 403', async () => {
+    const { router, auth, recorded } = mount()
+    const bad = await router.resolve('POST', '/api/restaurant/orders/o-sent/payments', { headers: headers(auth, 'waiter'), body: { method: 'xyz', amount: 10 } })
+    expect(bad.status).toBe(400)
+    expect(recorded).toHaveLength(0)
+    const refund = await router.resolve('POST', '/api/restaurant/orders/o-sent/payments/p1/refund', { headers: headers(auth, 'waiter') })
+    expect(refund.status).toBe(403)
   })
 })
 
@@ -345,5 +393,93 @@ describe('mapa de permisos — restaurant:pay por rol', () => {
     // La matriz de roles del panel (GET /api/roles/catalog) ofrece la casilla: sin esto un rol
     // custom no podría cobrar nunca.
     expect(MODULE_ACTIONS.restaurant).toContain('pay')
+  })
+})
+
+describe('#215 — POST /api/restaurant/orders/:id/discount y /items/:lineId/discount: permiso propio, tope, motivo, 409', () => {
+  const body = (value: number, reason = 'Promoción', type = 'percent') => ({ type, value, reason })
+
+  it('waiter (sin restaurant:discount) → 403 y la comanda no cambia; kitchen también', async () => {
+    const { router, auth, rows } = mount()
+    for (const role of ['waiter', 'kitchen']) {
+      const res = await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, role), body: body(10) })
+      expect(res.status).toBe(403)
+      const line = await router.resolve('POST', '/api/restaurant/orders/o-sent/items/l-sent/discount', { headers: headers(auth, role), body: body(10) })
+      expect(line.status).toBe(403)
+    }
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')).toMatchObject({ subtotal: 100, total: 100 })
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')?.discountType).toBeUndefined()
+  })
+
+  it('receptionist con 25 % y tope por defecto 20 → 403 "supera el máximo permitido (20 %)"; con 10 % → 200 y subtotal 90', async () => {
+    const { router, auth, rows } = mount()
+    const denied = await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'receptionist'), body: body(25) })
+    expect(denied.status).toBe(403)
+    expect(JSON.stringify(denied.body)).toContain('supera el máximo permitido (20 %)')
+    const ok = await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'receptionist'), body: body(10, 'Huésped del hotel') })
+    expect(ok.status).toBe(200)
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')).toMatchObject({ subtotal: 90, discountAmount: 10, discountReason: 'Huésped del hotel', discountBy: 'user-receptionist' })
+  })
+
+  it('hotel_admin: cortesía (100 %) de la línea → 200, la línea sigue new con discountAmount = lineTotal', async () => {
+    const { router, auth, rows } = mount()
+    const res = await router.resolve('POST', '/api/restaurant/orders/o-sent/items/l-sent/discount', { headers: headers(auth, 'hotel_admin'), body: body(100, 'Cortesía de la casa') })
+    expect(res.status).toBe(200)
+    const line = rows.RestaurantOrderItems.find((l) => l.id === 'l-sent')
+    expect(line).toMatchObject({ status: 'new', lineTotal: 100, discountAmount: 100, discountValue: 100, discountReason: 'Cortesía de la casa' })
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')).toMatchObject({ subtotal: 0, total: 0, discountTotal: 100 })
+  })
+
+  it('sin motivo → 400 de validación (el schema lo exige) y sin cambios; tipo "xyz" también 400', async () => {
+    const { router, auth, rows } = mount()
+    const noReason = await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'hotel_admin'), body: { type: 'percent', value: 10 } })
+    expect(noReason.status).toBe(400)
+    const badType = await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'hotel_admin'), body: body(10, 'x', 'xyz') })
+    expect(badType.status).toBe(400)
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')).toMatchObject({ subtotal: 100 })
+  })
+
+  it('comanda paid → 409 (bloqueada) aunque sea hotel_admin', async () => {
+    const { router, auth, rows } = mount()
+    rows.RestaurantOrders.find((o) => o.id === 'o-sent')!.status = 'paid'
+    const res = await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'hotel_admin'), body: body(10) })
+    expect(res.status).toBe(409)
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')).toMatchObject({ subtotal: 100 })
+  })
+
+  it('DELETE .../discount quita el descuento (200) y el waiter no puede (403); GET /discount-policy: waiter 403, receptionist tope 20, hotel_admin 100', async () => {
+    const { router, auth, rows } = mount()
+    await router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'hotel_admin'), body: body(10) })
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')?.subtotal).toBe(90)
+    const denied = await router.resolve('DELETE', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'waiter') })
+    expect(denied.status).toBe(403)
+    const removed = await router.resolve('DELETE', '/api/restaurant/orders/o-sent/discount', { headers: headers(auth, 'hotel_admin') })
+    expect(removed.status).toBe(200)
+    expect(rows.RestaurantOrders.find((o) => o.id === 'o-sent')).toMatchObject({ subtotal: 100, discountType: null })
+
+    expect((await router.resolve('GET', '/api/restaurant/discount-policy', { headers: headers(auth, 'waiter') })).status).toBe(403)
+    const recep = await router.resolve('GET', '/api/restaurant/discount-policy', { headers: headers(auth, 'receptionist') })
+    expect(recep.status).toBe(200)
+    expect(recep.body).toMatchObject({ maxDiscountPercent: 20, isDefault: true })
+    const admin = await router.resolve('GET', '/api/restaurant/discount-policy', { headers: headers(auth, 'hotel_admin') })
+    expect((admin.body as any).maxDiscountPercent).toBe(100)
+    // PUT es config de la carta: receptionist (sin restaurant-catalog:edit) 403; hotel_admin 200 y el tope cambia para recepción.
+    expect((await router.resolve('PUT', '/api/restaurant/discount-policy', { headers: headers(auth, 'receptionist'), body: { maxDiscountPercent: 50 } })).status).toBe(403)
+    expect((await router.resolve('PUT', '/api/restaurant/discount-policy', { headers: headers(auth, 'hotel_admin'), body: { maxDiscountPercent: 50 } })).status).toBe(200)
+    expect(((await router.resolve('GET', '/api/restaurant/discount-policy', { headers: headers(auth, 'receptionist') })).body as any).maxDiscountPercent).toBe(50)
+  })
+
+  it('fila de roles real de prod (receptionist sin discount): 403; pasada por discountPermissionsFor (migrate-db.ts) → 200', async () => {
+    const { discountPermissionsFor } = await import('../../../../scripts/backfill-restaurant-discount-permission')
+    const legacy = {
+      id: 'role-recep', hotelId: 'h1', name: 'receptionist', system: 1,
+      permissions: ['reservations:view', 'restaurant:view', 'restaurant:create', 'restaurant:edit', 'restaurant:pay'],
+    }
+    const before = mount([legacy])
+    expect((await before.router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(before.auth, 'receptionist'), body: body(10) })).status).toBe(403)
+    const next = discountPermissionsFor(legacy.name, JSON.stringify(legacy.permissions))
+    expect(next).toEqual([...legacy.permissions, 'restaurant:discount'])
+    const after = mount([{ ...legacy, permissions: next }])
+    expect((await after.router.resolve('POST', '/api/restaurant/orders/o-sent/discount', { headers: headers(after.auth, 'receptionist'), body: body(10) })).status).toBe(200)
   })
 })

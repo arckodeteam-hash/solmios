@@ -4,7 +4,7 @@
 // analyzer) y comprimirlo escondía qué recibe cada usecase. Cero lógica: solo arma objetos.
 import type { RepositoryAdapter, Logger, Auth } from 'arckode-framework'
 import { ValidationError } from 'arckode-framework'
-import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderItemDTO, ModifierGroupDTO, ModifierDTO, ComboDTO, ComboItemDTO } from '../types'
+import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderItemDTO, ModifierGroupDTO, ModifierDTO, ComboDTO, ComboItemDTO, OrderPaymentDTO } from '../types'
 import type { RestaurantSockets } from '../sockets'
 import type { AuditPort } from '../../../shared/usecases/audit'
 import type * as categoriesCrud from './categories-crud'
@@ -13,12 +13,14 @@ import type * as tablesCrud from './tables-crud'
 import type * as orders from './orders'
 import type * as orderLines from './order-lines'
 import type * as settlement from './settlement'
+import type * as splitPayments from './split-payments'
 import type * as kds from './kds'
 import type * as modifiersCrud from './modifiers-crud'
 import type * as stationsCrud from './stations-crud'
 import type * as combosCrud from './combos-crud'
 import type * as foodCost from './food-cost'
 import type * as voidReasons from './void-reasons'
+import type * as discounts from './discounts'
 import type * as inHouse from './in-house'
 import type * as reports from './reports'
 import type * as print from './print'
@@ -46,6 +48,7 @@ export interface RestaurantWiring {
   transactor?: itemsCrud.ItemsTransactor
   rooms?: RepositoryAdapter<any>
   guests?: RepositoryAdapter<any>
+  orderPayments?: RepositoryAdapter<OrderPaymentDTO>   // #214: partes del cobro (dividir cuenta)
   sockets: RestaurantSockets
   settlementPorts: settlement.SettlementPorts
   recipePorts: foodCost.RecipePorts
@@ -70,9 +73,15 @@ export function ordersDeps(w: RestaurantWiring): orders.OrdersDeps {
 }
 export function orderLinesDeps(w: RestaurantWiring): orderLines.OrderLinesDeps {
   if (!w.orders || !w.lines || !w.config || !w.hotels) throw new ValidationError(NO_ORDERS)
-  return { orders: w.orders, lines: w.lines, items: w.items, categories: w.categories, stations: w.stations, config: w.config, hotels: w.hotels, userRepo: w.userRepo, auth: w.auth, modifierGroups: w.modifierGroups, modifiers: w.modifiers, combos: w.combos, comboItems: w.comboItems, audit: w.auditPort, logger: w.logger, sockets: w.sockets }
+  // #214 (COR-A): toda mutación de líneas toma el lock de líneas con el mismo UPDATE condicional (`cas`) que reserva saldo.
+  return { orders: w.orders, lines: w.lines, items: w.items, categories: w.categories, stations: w.stations, config: w.config, hotels: w.hotels, userRepo: w.userRepo, auth: w.auth, modifierGroups: w.modifierGroups, modifiers: w.modifiers, combos: w.combos, comboItems: w.comboItems, audit: w.auditPort, logger: w.logger, sockets: w.sockets, cas: w.counterCas }
 }
 export function voidReasonsDeps(w: RestaurantWiring): voidReasons.VoidReasonsDeps { if (!w.config) throw new ValidationError(NO_ORDERS); return { config: w.config } }
+/** #215: descuentos/cortesías. Mismos repos que las líneas + config (tope y motivos) + audit. */
+export function discountsDeps(w: RestaurantWiring): discounts.DiscountsDeps {
+  if (!w.orders || !w.lines || !w.config) throw new ValidationError(NO_ORDERS)
+  return { orders: w.orders, lines: w.lines, config: w.config, userRepo: w.userRepo, auth: w.auth, audit: w.auditPort, logger: w.logger, sockets: w.sockets, cas: w.counterCas }
+}
 export function modifierDeps(w: RestaurantWiring): modifiersCrud.ModifiersCrudDeps {
   if (!w.modifierGroups || !w.modifiers) throw new ValidationError('Modificadores no configurados')
   return { modifierGroups: w.modifierGroups, modifiers: w.modifiers, items: w.items, userRepo: w.userRepo, auth: w.auth }
@@ -84,7 +93,15 @@ export function comboDeps(w: RestaurantWiring): combosCrud.CombosCrudDeps {
 export function foodCostDeps(w: RestaurantWiring): foodCost.FoodCostDeps { return { items: w.items, combos: w.combos, comboItems: w.comboItems, recipePorts: w.recipePorts } }
 export function settlementDeps(w: RestaurantWiring): settlement.SettlementDeps {
   if (!w.orders || !w.lines || !w.hotels) throw new ValidationError(NO_ORDERS)
-  return { orders: w.orders, lines: w.lines, tables: w.tables, hotels: w.hotels, userRepo: w.userRepo, auth: w.auth, sockets: w.sockets, ports: w.settlementPorts, audit: w.auditPort, logger: w.logger, reservations: w.reservationPort }
+  // #214: el cobro ENTERO reserva el saldo con el mismo UPDATE condicional que una parte (`cas`).
+  return { orders: w.orders, lines: w.lines, tables: w.tables, hotels: w.hotels, userRepo: w.userRepo, auth: w.auth, sockets: w.sockets, ports: w.settlementPorts, audit: w.auditPort, logger: w.logger, reservations: w.reservationPort, cas: w.counterCas }
+}
+/** #214: dividir cuenta — mismos deps que settlement + el repo de partes + el UPDATE condicional (mismo
+ *  `counterCas` del numerador, #206) que reserva el saldo entre dos partes concurrentes. Sin cualquiera
+ *  de los dos, falla cerrado: sin CAS dos cajeros podrían cobrar dos veces el mismo saldo. */
+export function splitPaymentsDeps(w: RestaurantWiring): splitPayments.SplitPaymentsDeps {
+  if (!w.orderPayments || !w.counterCas) throw new ValidationError('Pagos parciales no configurados')
+  return { ...settlementDeps(w), orderPayments: w.orderPayments, cas: w.counterCas }
 }
 export function kdsDeps(w: RestaurantWiring): kds.KdsDeps {
   if (!w.orders || !w.lines) throw new ValidationError(NO_ORDERS)
@@ -93,7 +110,7 @@ export function kdsDeps(w: RestaurantWiring): kds.KdsDeps {
 /** #213: cierre del día. */
 export function reportsDeps(w: RestaurantWiring): reports.ReportsDeps {
   if (!w.orders || !w.lines || !w.hotels) throw new ValidationError(NO_ORDERS)
-  return { orders: w.orders, lines: w.lines, hotels: w.hotels, ports: w.reportPorts }
+  return { orders: w.orders, lines: w.lines, hotels: w.hotels, users: w.userRepo, ports: w.reportPorts }
 }
 /** #216: impresión 80 mm (precuenta/ticket/cocina). El pago del ticket sale por `reportPorts.paymentById`. */
 export function printDeps(w: RestaurantWiring): print.PrintDeps {

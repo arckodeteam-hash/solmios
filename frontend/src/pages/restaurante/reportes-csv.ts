@@ -34,6 +34,8 @@ export function buildDailyReportCsv(r: RestaurantDailyReport): string {
   lines.push(row('Venta por comensal', r.sales.averagePerCover))
   lines.push(row('Anulado (comandas + líneas)', r.voided.amount))
   lines.push(row('Reembolsado', r.refunded.amount))
+  lines.push(row('Descontado (descuentos + cortesías)', r.discounts.amount))
+  lines.push(row('Cortesías', r.discounts.courtesies.amount))
   lines.push('')
   lines.push(row('Método', 'Comandas', 'Importe'))
   for (const m of SALES_METHODS) lines.push(row(SALES_METHOD_LABELS[m], r.byMethod[m].orders, r.byMethod[m].amount))
@@ -60,6 +62,9 @@ export function buildDailyReportCsv(r: RestaurantDailyReport): string {
   lines.push('')
   lines.push(row('Anulaciones y reembolsos', 'Comanda', 'Detalle', 'Cantidad', 'Importe', 'Motivo', 'Fecha'))
   for (const v of r.voided.rows) lines.push(row(VOID_KIND_LABELS[v.kind], v.orderNumber, v.name, v.quantity, v.amount, v.reason, v.at))
+  lines.push('')
+  lines.push(row('Descuentos y cortesías', 'Comanda', 'Detalle', 'Cantidad', 'Base', 'Descontado', '%', 'Motivo', 'Usuario', 'Fecha'))
+  for (const d of r.discounts.rows) lines.push(row(d.courtesy ? 'Cortesía' : (d.kind === 'order' ? 'Descuento de comanda' : 'Descuento de línea'), d.orderNumber, d.name, d.quantity, d.base, d.amount, d.percent, d.reason, d.byName ?? d.by, d.at))
   return lines.join('\r\n') + '\r\n'
 }
 

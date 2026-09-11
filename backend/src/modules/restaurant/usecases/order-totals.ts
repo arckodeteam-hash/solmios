@@ -2,7 +2,7 @@
 // Puramente sobre repos del dominio. El impuesto sale de la tasa CONGELADA por línea (snapshot),
 // nunca hardcodeado. Ver design.md §Resolución de estación + specs/billing-payment.
 import type { RepositoryAdapter } from 'arckode-framework'
-import type { OrderDTO, OrderItemDTO, MenuItemDTO, CategoryDTO, StationDTO, OrderItemModifierSnapshot } from '../types'
+import type { OrderDTO, OrderItemDTO, MenuItemDTO, CategoryDTO, StationDTO, OrderItemModifierSnapshot, DiscountType } from '../types'
 import { round2 } from '../../../shared/utils/money'
 
 /**
@@ -40,8 +40,22 @@ export function isLineActive(line: Pick<OrderItemDTO, 'status'>): boolean {
  * (order-lines.ts), que dice cuándo las LÍNEAS dejan de editarse — `processing_payment` bloquea
  * líneas pero la comanda sigue viva en la mesa.
  */
-export const TERMINAL_ORDER_STATUSES: OrderDTO['status'][] = ['charged', 'paid', 'cancelled', 'refunded']
+export const TERMINAL_ORDER_STATUSES: OrderDTO['status'][] = ['charged', 'paid', 'cancelled', 'refunded', 'partially_refunded']
 export const isTerminalOrder = (order: Pick<OrderDTO, 'status'>): boolean => TERMINAL_ORDER_STATUSES.includes(order.status)
+
+/**
+ * #214 — "Checkout de tarjeta abierto para UNA PARTE" no es un estado de la comanda (el cobro entero usa
+ * `processing_payment`; el de una parte vive en la fila hija `restaurant_order_payments.status='pending'`).
+ * Para que el resto del circuito lo respete sin leer esa tabla, la comanda lleva `amountReserved`: la
+ * suma de las partes `pending` vivas, que `split-payments.ts` mueve con UPDATE condicional (CAS). > 0 =
+ * hay una parte en curso (Stripe puede confirmarla en cualquier momento): NO se cobra entero, NO se
+ * cancela, NO se tocan líneas. Único lugar donde se decide.
+ */
+export const hasOpenPart = (order: Pick<OrderDTO, 'amountReserved'>): boolean => Number(order.amountReserved || 0) > 0
+/** #214 — ya entró plata por partes (`amountPaid` = suma de partes cobradas, sin propina). */
+export const hasPaidParts = (order: Pick<OrderDTO, 'amountPaid'>): boolean => Number(order.amountPaid || 0) > 0
+/** #214 — la cuenta se está saldando por partes (cobrada o en curso): solo se termina por partes. */
+export const hasPartialPayments = (order: Pick<OrderDTO, 'amountPaid' | 'amountReserved'>): boolean => hasPaidParts(order) || hasOpenPart(order)
 
 /** "HH:mm" → minutos desde medianoche. */
 function toMinutes(hhmm: string): number {
@@ -93,8 +107,109 @@ export async function resolveStation(
 }
 
 /**
- * Recalcula subtotal (neto), tax (por tasa congelada de cada línea) y total (+ tip) de una comanda a
- * partir de sus líneas vivas (ni canceladas ni anuladas), y persiste el resultado. Devuelve el pedido actualizado.
+ * #215 — Monto que resta un descuento sobre una base. `percent` → base × v / 100; `amount` → v, recortado
+ * a la base (nunca deja un neto negativo). Sin tipo/valor → 0. ÚNICO cálculo: lo usan la línea, la
+ * comanda y el chequeo del tope (que convierte un monto a % con esta misma base).
+ */
+export function computeDiscountAmount(
+  base: number,
+  type: DiscountType | null | undefined,
+  value: number | null | undefined,
+): number {
+  const b = Number(base || 0)
+  const v = Number(value || 0)
+  if (!type || !(v > 0) || !(b > 0)) return 0
+  if (type === 'percent') return round2(Math.min(b, (b * v) / 100))
+  return round2(Math.min(b, v))
+}
+
+export interface OrderTotals {
+  subtotal: number
+  tax: number
+  total: number
+  /** Descuento de comanda efectivamente aplicado. */
+  discountAmount: number
+  /** Σ descuentos de línea + descuento de comanda. */
+  discountTotal: number
+  /** Descuento efectivo por línea (id → monto), ya recortado al total de cada línea. */
+  lineDiscounts: Map<string, number>
+}
+
+/**
+ * #215 — Totales de una comanda a partir de sus líneas VIVAS, con descuentos:
+ *   neto_i    = lineTotal_i − descuento de línea_i
+ *   base      = Σ neto_i
+ *   descuento = descuento de comanda sobre `base` (percent o amount recortado)
+ *   subtotal  = base − descuento
+ *   tax       = Σ neto_i × (1 − descuento/base) × tasa_i / 100   ← impuesto sobre el neto descontado,
+ *               prorrateado por línea porque cada una congela su propia tasa
+ *   total     = subtotal + tax + tip
+ * Puro: sin repos. `recomputeTotals` lo persiste.
+ */
+export function computeOrderTotals(
+  lines: Pick<OrderItemDTO, 'id' | 'lineTotal' | 'taxRate' | 'discountType' | 'discountValue'>[],
+  order: Pick<OrderDTO, 'tip' | 'discountType' | 'discountValue'>,
+): OrderTotals {
+  const lineDiscounts = new Map<string, number>()
+  let base = 0
+  const nets: Array<{ net: number; rate: number }> = []
+  for (const l of lines) {
+    const gross = Number(l.lineTotal || 0)
+    const disc = computeDiscountAmount(gross, l.discountType, l.discountValue)
+    lineDiscounts.set(l.id, disc)
+    const net = round2(gross - disc)
+    nets.push({ net, rate: Number(l.taxRate || 0) })
+    base += net
+  }
+  base = round2(base)
+  const discountAmount = computeDiscountAmount(base, order.discountType, order.discountValue)
+  const factor = base > 0 ? (base - discountAmount) / base : 1
+  let tax = 0
+  for (const { net, rate } of nets) tax += (net * factor * rate) / 100
+  const subtotal = round2(base - discountAmount)
+  tax = round2(tax)
+  const tip = round2(Number(order.tip || 0))
+  const total = round2(subtotal + tax + tip)
+  let lineDiscountSum = 0
+  for (const d of lineDiscounts.values()) lineDiscountSum += d
+  const discountTotal = round2(lineDiscountSum + discountAmount)
+  return { subtotal, tax, total, discountAmount, discountTotal, lineDiscounts }
+}
+
+export interface EffectiveDiscount {
+  /** Σ lineTotal de las líneas vivas (antes de cualquier descuento). */
+  gross: number
+  /** Σ descuentos de línea + descuento de comanda, ya recortados. */
+  discountTotal: number
+  /** discountTotal como % del bruto (0 si no hay bruto). */
+  percent: number
+}
+
+/**
+ * #215 — Descuento EFECTIVO TOTAL de la comanda: lo que de verdad deja de cobrarse (líneas + comanda)
+ * expresado como % del bruto. Es contra ESTO que se mide el tope del hotel, no contra cada operación
+ * suelta: una línea al 20 % más la comanda al 20 % dejan de cobrar el 36 % del bruto, y un tope del
+ * 25 % tiene que frenar la segunda operación aunque por sí sola esté por debajo. Puro: la operación
+ * que se quiere validar se simula pasando las líneas/comanda como quedarían.
+ */
+export function computeEffectiveDiscount(
+  lines: Pick<OrderItemDTO, 'id' | 'lineTotal' | 'taxRate' | 'discountType' | 'discountValue'>[],
+  order: Pick<OrderDTO, 'tip' | 'discountType' | 'discountValue'>,
+): EffectiveDiscount {
+  let gross = 0
+  for (const l of lines) gross += Number(l.lineTotal || 0)
+  gross = round2(gross)
+  const { discountTotal } = computeOrderTotals(lines, order)
+  const percent = gross > 0 ? round2((discountTotal / gross) * 100) : 0
+  return { gross, discountTotal, percent }
+}
+
+/**
+ * Recalcula subtotal (neto), tax (por tasa congelada de cada línea, sobre el neto descontado) y total
+ * (+ tip) de una comanda a partir de sus líneas vivas (ni canceladas ni anuladas), y persiste el
+ * resultado. #215: también persiste `discountAmount` de cada línea cuyo descuento efectivo cambió (un
+ * monto fijo se recorta si la cantidad bajó) y `discountAmount`/`discountTotal` de la comanda.
+ * Devuelve el pedido actualizado.
  */
 export async function recomputeTotals(
   deps: { orders: RepositoryAdapter<OrderDTO>; lines: RepositoryAdapter<OrderItemDTO> },
@@ -102,16 +217,14 @@ export async function recomputeTotals(
 ): Promise<OrderDTO> {
   const all = (await deps.lines.findMany({ orderId: order.id })) as OrderItemDTO[]
   const active = all.filter(isLineActive)
-  let subtotal = 0, tax = 0
+  const t = computeOrderTotals(active, order)
   for (const l of active) {
-    const net = Number(l.lineTotal || 0)
-    subtotal += net
-    tax += (net * Number(l.taxRate || 0)) / 100
+    const disc = t.lineDiscounts.get(l.id) ?? 0
+    if (round2(Number(l.discountAmount || 0)) !== disc) {
+      await deps.lines.update(l.id, { discountAmount: disc } as Partial<Omit<OrderItemDTO, 'id'>>)
+    }
   }
-  subtotal = round2(subtotal)
-  tax = round2(tax)
-  const tip = round2(Number(order.tip || 0))
-  const total = round2(subtotal + tax + tip)
-  const updated = await deps.orders.update(order.id, { subtotal, tax, total } as Partial<Omit<OrderDTO, 'id'>>)
-  return (updated as OrderDTO) ?? { ...order, subtotal, tax, total }
+  const patch = { subtotal: t.subtotal, tax: t.tax, total: t.total, discountAmount: t.discountAmount, discountTotal: t.discountTotal }
+  const updated = await deps.orders.update(order.id, patch as Partial<Omit<OrderDTO, 'id'>>)
+  return (updated as OrderDTO) ?? { ...order, ...patch }
 }

@@ -218,10 +218,11 @@ function canEdit(m: CashMovement): boolean {
 
 const isManual = (m: CashMovement) => !m.source || m.source === 'manual'
 
-/** Comanda del POS detrás de un cobro automático: `reference: pos:<orderId>` (restaurante-payments). */
+/** Comanda del POS detrás de un cobro automático: `reference: pos:<orderId>` (restaurante-payments) o,
+ *  para UNA parte de una cuenta dividida (#214), `pos:<orderId>:<n>` — el `:<n>` NO es parte del id. */
+const POS_REFERENCE = /^pos:([^:]+)(?::\d+)?$/
 function orderIdOf(m: CashMovement): string | null {
-  const ref = m.reference || ''
-  return ref.startsWith('pos:') && ref.length > 4 ? ref.slice(4) : null
+  return POS_REFERENCE.exec(m.reference || '')?.[1] ?? null
 }
 
 async function saveMov() {

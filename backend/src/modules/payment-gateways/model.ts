@@ -44,7 +44,30 @@ export const PaymentEventsModel: ModelDefinition = {
   timestamps: true,
 }
 
+/**
+ * Sesiones de cobro de los proveedores 'pull' (sin webhook). CardNet devuelve la session-key UNA
+ * sola vez, al crear la sesión; el navegador vuelve trayendo sólo la SESSION, y la consulta de
+ * estado no trae ni el monto ni nuestra referencia. Sin esta tabla no hay cómo saber qué
+ * consultar ni con qué llave: el adapter la escribe en createCharge() y la lee en confirm().
+ * `sessionKey` (la session-key) va cifrado con el mismo AES-256-GCM que `payment_gateways.credentials`.
+ */
+export const PaymentGatewaySessionsModel: ModelDefinition = {
+  table: 'payment_gateway_sessions',
+  fields: {
+    id: { type: 'string', required: true }, // SESSION del proveedor (`sess-...` en CardNet)
+    hotelId: { type: 'string', required: true, indexed: true },
+    provider: { type: 'string', required: true }, // cardnet (único 'pull' hoy)
+    reference: { type: 'string', required: true }, // nuestra referencia (reserva/folio)
+    sessionKey: { type: 'string', required: true }, // la session-key de CardNet, cifrada AES-256-GCM (ver registry.ts)
+    amountMinor: { type: 'number', default: 0 },
+    currency: { type: 'string' },
+    mode: { type: 'string' }, // test | live
+  },
+  timestamps: true,
+}
+
 export function registerPaymentGatewaysModels(orm: ORM): void {
   orm.define('PaymentGateways', PaymentGatewaysModel)
   orm.define('PaymentEvents', PaymentEventsModel)
+  orm.define('PaymentGatewaySessions', PaymentGatewaySessionsModel)
 }

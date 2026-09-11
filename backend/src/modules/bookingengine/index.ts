@@ -6,7 +6,7 @@ import { createModule, OrmRepository } from 'arckode-framework'
 import { registerBookingengineModels } from './model'
 import { BookingengineService } from './service'
 import { BookingengineController } from './controller'
-import type { BookingConfigDTO, PublicBookingDTO, ConversionEventDTO, UpsellDTO, MealPlanDTO } from './types'
+import type { BookingConfigDTO, PublicBookingDTO, ConversionEventDTO, UpsellDTO, MealPlanDTO, ChildAmenityDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { requireUserType } from '../../infrastructure/auth/require-user-type'
 import { createModuleGuard } from '../../infrastructure/auth/require-module'
@@ -14,11 +14,11 @@ import { PaymentGatewayRegistry } from '../../services/payment-gateway/registry'
 import { PaymentEventStore } from '../../services/payment-gateway/payment-events'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
 
-export { registerBookingengineModels, UpsellModel, MealPlanModel, BookingConfigModel, ConversionEventsModel, PublicBookingModel } from './model'
+export { registerBookingengineModels, UpsellModel, MealPlanModel, ChildAmenityModel, BookingConfigModel, ConversionEventsModel, PublicBookingModel } from './model'
 export { BookingengineService } from './service'
-export type { BookingConfigDTO, UpdateBookingConfigDTO, AvailabilityQuery, AvailabilityResult, PublicBookingDTO, CreatePublicBookingDTO, ConversionEventDTO, CreateConversionEventDTO, BookingAnalytics, UpsellDTO, CreateUpsellDTO, UpdateUpsellDTO, UpsellKind, MealPlanDTO, MealPlanCode, MealPlanPriceMode, UpsertMealPlanDTO, PublicMealPlan } from './types'
+export type { BookingConfigDTO, UpdateBookingConfigDTO, AvailabilityQuery, AvailabilityResult, PublicBookingDTO, CreatePublicBookingDTO, ConversionEventDTO, CreateConversionEventDTO, BookingAnalytics, UpsellDTO, CreateUpsellDTO, UpdateUpsellDTO, UpsellKind, MealPlanDTO, MealPlanCode, MealPlanPriceMode, UpsertMealPlanDTO, PublicMealPlan, ChildAmenityDTO, CreateChildAmenityDTO, UpdateChildAmenityDTO, PublicChildAmenity } from './types'
 export type { BookingengineSockets } from './sockets'
-export { BookingengineValidator, UpdateBookingConfigSchema, CheckAvailabilitySchema, CreatePublicBookingSchema, TrackEventSchema, CreateUpsellSchema, UpdateUpsellSchema, UpsertMealPlanSchema } from './validators/schema'
+export { BookingengineValidator, UpdateBookingConfigSchema, CheckAvailabilitySchema, CreatePublicBookingSchema, TrackEventSchema, CreateUpsellSchema, UpdateUpsellSchema, UpsertMealPlanSchema, CreateChildAmenitySchema, UpdateChildAmenitySchema } from './validators/schema'
 // Calendario público de tarifas (`GET /api/public/hotels/:slug/calendar`).
 export { validatePublicCalendarQuery, MAX_CALENDAR_DAYS } from './validators/schema'
 export type { CalendarDay, PublicCalendarBody, PublicCalendarQuery } from './usecases/public-calendar'
@@ -60,7 +60,9 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       // La pasarela se resuelve POR HOTEL: el huésped que reserva en el widget del Hotel A le
       // paga a la cuenta del Hotel A, no a la del .env del servidor.
       const gatewayRepo = new OrmRepository<any>(orm, 'PaymentGateways')
-      const registry = new PaymentGatewayRegistry(gatewayRepo as any, log)
+      // Sesiones de CardNet: el adapter persiste la session-key ahí; sin este repo el registry devuelve null.
+      const sessionsRepo = new OrmRepository<any>(orm, 'PaymentGatewaySessions')
+      const registry = new PaymentGatewayRegistry(gatewayRepo as any, log, sessionsRepo as any)
       // Barrera anti-doble-cobro para el webhook público.
       const eventStore = new PaymentEventStore(new OrmRepository<any>(orm, 'PaymentEvents') as any, log)
 
@@ -72,6 +74,8 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       // tasks.md 2.2/2.4 (solmi-direct-booking-qa-fixes) — Regímenes de alimentación, mismo
       // criterio que upsellRepo arriba (sub-dominio, deps del controller, no del service).
       const mealPlanRepo = new OrmRepository<MealPlanDTO>(orm, 'MealPlans')
+      // REQ-01 (#233) — Amenidades para niños/bebés, mismo criterio que upsellRepo/mealPlanRepo.
+      const childAmenityRepo = new OrmRepository<ChildAmenityDTO>(orm, 'ChildAmenities')
       // F2 2.4 / 2.5 — Deps nuevos: configuration (taxes + currency_rates) y promo_codes
       // (valida + incrementa uses en el flujo unificado). Sin estos, los endpoints públicos
       // /rates y /booking procesan todo vacío (degradación graceful, no rompe el flujo).
@@ -134,6 +138,10 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         rateOverridesRepo,
         seasonsCatalogRepo,
         hotelAmenitiesRepo,
+        // PG-7.5 — registry para la página hospedada de CardNet (/api/pay/go). Al final.
+        registry,
+        // REQ-01 (#233) — Amenidades para niños/bebés, al final por el mismo motivo.
+        childAmenityRepo,
       )
 
       // Admin routes (protegidas con auth)
@@ -177,6 +185,16 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         ]
         router.get('/api/meal-plans', mealPlanGuard('view'), (req: any) => controller.listMealPlans(req))
         router.put('/api/meal-plans/:code', mealPlanGuard('edit'), (req: any) => controller.upsertMealPlan(req))
+
+        // REQ-01 (#233) — Amenidades para niños/bebés admin. Decisión: se REUSA el permiso
+        // `upsells:*` (extras del motor) en vez de crear uno nuevo — son extras del motor del
+        // mismo tipo que los upsells, los gestiona la misma persona desde la misma pantalla, y
+        // un permiso aparte obligaría a migrar roles existentes sin ganancia real. userType
+        // merchant, mismo motivo que upsellGuard.
+        router.get('/api/child-amenities', upsellGuard('view'), (req: any) => controller.listChildAmenities(req))
+        router.post('/api/child-amenities', upsellGuard('create'), (req: any) => controller.createChildAmenity(req))
+        router.put('/api/child-amenities/:id', upsellGuard('edit'), (req: any) => controller.updateChildAmenity(req))
+        router.delete('/api/child-amenities/:id', upsellGuard('delete'), (req: any) => controller.destroyChildAmenity(req))
       }
 
       // Público (sin auth) — TODOS con rate-limit por IP (F0 0.5). Límites y claves por
@@ -232,6 +250,13 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         const { allowed, retryAfter } = await rateLimit(`public-meal-plans:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
         if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
         return controller.getPublicMealPlans(req)
+      })
+      // REQ-01 (#233) — Amenidades para niños/bebés activas del hotel, checklist por habitación
+      // en el motor público. Rate-limit 60/60s (read-only), mismo techo que /upsells. Sin auth.
+      router.get('/api/public/hotels/:slug/child-amenities', async (req: any) => {
+        const { allowed, retryAfter } = await rateLimit(`public-child-amenities:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
+        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
+        return controller.publicChildAmenities(req)
       })
       // F3 3.15 — Comparativo de tarifas directo vs OTA (StayAPI). Devuelve el badge "ahorrás
       // $X reservando directo" SOLO si directo es más barato. Si no, `{showComparison:false}`
@@ -305,10 +330,22 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       // #196 (PG-4.3) — Retorno del navegador desde Azul/CardNet (proveedores sin webhook). Rate
       // limit como una query pública: es una persona volviendo de pagar, no un servidor. La
       // autenticidad la da el hash/consulta al proveedor, no el límite.
-      router.get('/api/pay/return/:provider/:hotelId', async (req: any) => {
+      // PG-7.5 — Azul vuelve por GET; CardNet hace POST form-urlencoded a la ReturnUrl con la
+      // SESSION en el body. Misma ruta, mismo límite, mismo handler (parseReturnParams mezcla ambos).
+      const gatewayReturn = async (req: any) => {
         const { allowed, retryAfter } = await rateLimit(`pay-return:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
         if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
         return controller.handleGatewayReturn(req)
+      }
+      router.get('/api/pay/return/:provider/:hotelId', gatewayReturn)
+      router.post('/api/pay/return/:provider/:hotelId', gatewayReturn)
+      // PG-7.5 — La página hospedada de CardNet exige POST a /authorize con la SESSION (GET da
+      // 405) y un ChargeResult 'redirect' sólo lleva una URL: el adapter manda el navegador acá y
+      // esta página renderiza el form y lo auto-envía.
+      router.get('/api/pay/go/:provider/:hotelId', async (req: any) => {
+        const { allowed, retryAfter } = await rateLimit(`pay-go:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
+        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
+        return controller.handleGatewayHostedForm(req)
       })
       router.post('/api/public/events', async (req: any) => {
         const { allowed, retryAfter } = await rateLimit(`public-events:${getClientIp(req)}`, { maxAttempts: 120, windowMs: 60_000 })

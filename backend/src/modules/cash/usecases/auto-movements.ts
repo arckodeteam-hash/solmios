@@ -4,6 +4,7 @@
 // bancarizado: entra a `payments` y a la conciliación, pero no al arqueo del turno.
 //
 //   payments-caja → registerPaymentIncome  (dedup por paymentId)
+//                 → registerRefundOutflow  (dedup por paymentId del refund; #214 COR-B)
 //   gastos-caja   → registerExpenseOutflow (dedup por expenseId) / removeExpenseOutflow
 //
 // El arqueo calcula `expected = opening + income - expense`, así que un egreso se asienta con
@@ -122,4 +123,49 @@ export async function removeExpenseOutflow(deps: AutoMovementDeps, expenseId: st
   await deps.onDeleted?.(existing.id)
   deps.logger.info('removeExpenseOutflow: egreso revertido', { expenseId, movementId: existing.id })
   return true
+}
+
+export interface RefundOutflowInput {
+  hotelId: string
+  /** `payments.id` del asiento `type:'refund'` (dedup). */
+  paymentId: string
+  /** `payments.id` del cobro devuelto: de su ingreso en caja se hereda register, referencia y concepto. */
+  refundOfPaymentId?: string
+  amount: number
+  reference?: string
+  concept?: string
+  register?: CashRegister
+}
+
+/**
+ * #214 (COR-B) — Egreso por una devolución en EFECTIVO (el cajero devolvió la plata en mano). Idempotente
+ * por el `paymentId` del refund. Sale de la MISMA caja en la que entró el cobro (su ingreso, por
+ * `refundOfPaymentId`), en el turno abierto de esa caja: si el turno del cobro ya cerró, el efectivo
+ * igual sale del cajón de hoy y es el arqueo de hoy el que tiene que verlo. El concepto y la referencia
+ * son los del cobro original ("Devolución · Comanda CMD-… · parte 2", `pos:<orderId>:<n>`) para que la
+ * caja enlace a la comanda igual que el ingreso.
+ */
+export async function registerRefundOutflow(deps: AutoMovementDeps, input: RefundOutflowInput): Promise<CashMovementDTO | null> {
+  if (!(input.amount > 0)) return null
+  const existing = await deps.repo.findMany({ hotelId: input.hotelId, paymentId: input.paymentId } as any)
+  if (existing.length > 0) {
+    deps.logger.info('registerRefundOutflow: ya registrado (dedup)', { paymentId: input.paymentId })
+    return null
+  }
+  const income = input.refundOfPaymentId
+    ? (await deps.repo.findMany({ hotelId: input.hotelId, paymentId: input.refundOfPaymentId } as any)).find((m) => m.type === 'income') ?? null
+    : null
+  const register: CashRegister = income?.register || input.register || 'reception'
+  const concept = `Devolución · ${(income?.concept || input.concept || 'cobro').trim()}`
+  const shiftId = await deps.resolveShift(input.hotelId, register)
+  const item = await deps.repo.create({
+    hotelId: input.hotelId, shiftId: shiftId || null, register,
+    type: 'expense', amount: input.amount, method: 'cash',
+    concept, category: 'refund', source: 'payment_connector',
+    reservationId: income?.reservationId, folioId: income?.folioId,
+    paymentId: input.paymentId, reference: income?.reference || input.reference,
+  } as Omit<CashMovementDTO, 'id'>)
+  await deps.onCreated?.(item)
+  deps.logger.info('registerRefundOutflow: egreso creado', { paymentId: input.paymentId, amount: input.amount, register })
+  return item
 }

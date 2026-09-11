@@ -7,7 +7,8 @@ import type { OrderDTO, OrderItemDTO, TableDTO, OrderType, CurrentUser } from '.
 import type { RestaurantSockets } from '../sockets'
 import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
 import { nextOrderNumber, type CounterCas } from './order-number'
-import { isLineActive, isTerminalOrder } from './order-totals'
+import { isLineActive, isTerminalOrder, hasOpenPart, hasPaidParts } from './order-totals'
+import { freshForCas, casOrder, assertLinesUnlocked, CAS_ATTEMPTS } from './order-cas'
 import { round2 } from '../../../shared/utils/money'
 import { isUniqueViolation } from '../../../shared/utils/db-errors'
 import { assertReservationOfHotel, type ReservationPort } from './reservation-port'
@@ -179,6 +180,9 @@ export async function openOrder(deps: OrdersDeps, dto: OpenOrderInput, user: Cur
     covers: dto.type === 'dine_in' ? (assertCovers(dto.covers) ?? 1) : undefined,
     status: 'open',
     subtotal: 0, tax: 0, tip: 0, total: 0,
+    // #214: el UPDATE condicional del dinero filtra por igualdad sobre estas dos columnas y `= NULL` no
+    // matchea nunca (`ADD COLUMN` no pone DEFAULT): nacen en 0, no se dejan al azar.
+    amountPaid: 0, amountReserved: 0, linesLockedUntil: '',
     openedAt: now,
   } as Omit<OrderDTO, 'id'>))
 
@@ -271,23 +275,33 @@ async function stampSent(deps: OrdersDeps, lines: OrderItemDTO[]): Promise<Order
 export async function cancelOrder(deps: OrdersDeps, id: string, reason: string | undefined, user: CurrentUser): Promise<OrderDTO> {
   const reasonText = String(reason ?? '').trim()
   if (!reasonText) throw new ValidationError('Indicá el motivo de la cancelación')
-  const order = await deps.orders.findById(id)
-  if (!order) throw new NotFoundError('Comanda no encontrada')
+  const first = await deps.orders.findById(id)
+  if (!first) throw new NotFoundError('Comanda no encontrada')
   const me = await deps.userRepo.findById(user.id)
-  deps.auth.assertOwnership(order.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
-  if (order.status === 'charged' || order.status === 'paid') {
-    throw new ConflictError('No se puede cancelar una comanda ya liquidada')
-  }
-  // fix-refund-pos-card: cancelar acá NO cancela la Checkout Session de Stripe que sigue abierta. Si
-  // el huésped paga después, el webhook (`settlePaidOrder`) encontraría la orden `cancelled` en vez de
-  // `processing_payment` y fallaría al confirmar. Hay que esperar a que expire (unsettleOrder la
-  // vuelve a `billed`, recién ahí es cancelable) o a que confirme.
-  if (order.status === 'processing_payment') {
-    throw new ConflictError('La comanda tiene un cobro con tarjeta en curso — esperá a que se confirme o expire antes de cancelarla')
-  }
-  if (order.status === 'cancelled') return order
+  deps.auth.assertOwnership(first.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
+  if (first.status === 'cancelled') return first
   const now = new Date().toISOString()
-  // Snapshot ANTES de escribir: un adapter puede devolver la misma referencia que después muta.
+  // #213: el motivo y el sello de cierre (closedAt + businessDate) van en el MISMO UPDATE condicional que
+  // gana la transición: el cierre del día consulta por `businessDate` y una cancelada sin sello no aparece.
+  const stamp = await closingStamp(deps.hotels, first.hotelId, new Date(now))
+  // #214: cancelar es una TRANSICIÓN CONDICIONAL: `status` → `cancelled` solo si la comanda sigue en el
+  // estado leído y con `amountPaid = 0` y `amountReserved = 0` (mismo UPDATE que usan las partes para
+  // reservar saldo, usecases/order-cas.ts). Una parte que reservó en el medio deja el UPDATE en 0 filas
+  // → se relee y los guards dicen por qué (parte en curso / cobrada). Antes era read-check-write y una
+  // parte en efectivo concurrente dejaba la comanda `cancelled` con `amountPaid = 100` y sin devolución.
+  // Las líneas se anulan DESPUÉS de ganar la transición: si se anularan antes y el CAS perdiera, la
+  // comanda quedaría viva con las líneas tachadas.
+  let order: OrderDTO = first
+  let won = false
+  for (let attempt = 0; attempt < CAS_ATTEMPTS && !won; attempt++) {
+    const fresh = await freshForCas({ orders: deps.orders, cas: deps.counterCas, logger: deps.logger }, id)
+    if (fresh.status === 'cancelled') return fresh
+    assertCancellable(fresh)
+    order = fresh
+    won = await casOrder({ orders: deps.orders, cas: deps.counterCas }, fresh, { status: 'cancelled', cancelReason: reasonText, ...stamp }, true)
+  }
+  if (!won) throw new ConflictError('No se pudo cancelar la comanda (hay un cobro en curso); recargá y revisá los pagos')
+  // Snapshot de ANTES de la transición (la fila sobre la que ganó el CAS).
   const previousStatus = order.status
   const amount = round2(Number(order.total || 0))
   let voidedLines = 0
@@ -297,10 +311,7 @@ export async function cancelOrder(deps: OrdersDeps, id: string, reason: string |
     for (const l of lines) await deps.lines.update(l.id, voidPatch)
     voidedLines = lines.length
   }
-  // #213: el motivo queda en la comanda (no solo en el audit log) para el cierre del día.
-  const updated = (await deps.orders.update(id, {
-    status: 'cancelled', cancelReason: reasonText, ...(await closingStamp(deps.hotels, order.hotelId, new Date(now))),
-  } as Partial<Omit<OrderDTO, 'id'>>)) as OrderDTO
+  const updated: OrderDTO = { ...order, status: 'cancelled', cancelReason: reasonText, ...stamp }
   if (order.tableId) {
     const table = await deps.tables.update(order.tableId, { status: 'free' } as Partial<Omit<TableDTO, 'id'>>)
     if (table) await deps.sockets.onTableChanged?.(table)
@@ -319,4 +330,27 @@ export async function cancelOrder(deps: OrdersDeps, id: string, reason: string |
     }),
   })
   return updated
+}
+
+/** Por qué una comanda NO se puede cancelar, sobre la fila recién leída (corre en cada vuelta del CAS). */
+function assertCancellable(order: OrderDTO): void {
+  if (order.status === 'charged' || order.status === 'paid') {
+    throw new ConflictError('No se puede cancelar una comanda ya liquidada')
+  }
+  // fix-refund-pos-card: cancelar acá NO cancela la Checkout Session de Stripe que sigue abierta. Si
+  // el huésped paga después, el webhook (`settlePaidOrder`) encontraría la orden `cancelled` en vez de
+  // `processing_payment` y fallaría al confirmar. Hay que esperar a que expire (unsettleOrder la
+  // vuelve a `billed`, recién ahí es cancelable) o a que confirme.
+  if (order.status === 'processing_payment') {
+    throw new ConflictError('La comanda tiene un cobro con tarjeta en curso — esperá a que se confirme o expire antes de cancelarla')
+  }
+  // #214: una parte con Checkout de tarjeta abierto es `processing_payment` en la fila hija: si se
+  // cancela acá y Stripe confirma después, el webhook marcaría cobrada una venta anulada. Y con el
+  // cobro entero en curso (reserva del saldo completo) es lo mismo.
+  if (hasOpenPart(order)) throw new ConflictError('La comanda tiene un cobro en curso (una parte esperando confirmación) — esperá a que se confirme o expire antes de cancelarla')
+  // #214: hay plata cobrada por partes adentro — cancelar la dejaría cobrada sin venta. Se salda o se
+  // devuelven las partes.
+  if (hasPaidParts(order)) throw new ConflictError('La comanda tiene pagos parciales cobrados; no se puede cancelar')
+  // COR-A: con una edición de líneas en curso, cancelar dejaría la edición escribiendo sobre una cancelada.
+  assertLinesUnlocked(order)
 }
