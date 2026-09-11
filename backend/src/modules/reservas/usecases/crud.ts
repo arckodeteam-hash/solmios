@@ -7,6 +7,7 @@ import { reservasListCacheKey, invalidateReservasCaches } from './cache'
 import { eachDayExclusive } from '../../../shared/utils/daily-availability'
 import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from '../../../shared/utils/rate-resolution'
 import { round2 } from '../../../shared/utils/money'
+import { paymentState } from '../../../shared/utils/reservation-balance'
 import { guestsOfReservation } from './reprice'
 import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
 import type { PaidSource } from '../../../shared/usecases/reservation-paid'
@@ -42,7 +43,17 @@ const MAX_LIMIT = 100
  */
 const DISCOUNT_EPSILON = 0.011
 
-export async function listReservations(repo: any, userRepo: any, cache: any, logger: any, query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> {
+/**
+ * REQ-RWP-04 — fuentes de dinero que el listado necesita para etiquetar cada fila con su estado de
+ * pago. Mismo par `addonsOf`/`paidOf` que ya inyectan el detalle, el reagendado y `markPaid`
+ * (service.ts): NO es una fórmula nueva, es la misma que ya se muestra en el modal.
+ */
+export interface ListMoneyDeps {
+  addonsOf: AddonSource
+  paidOf: PaidSource
+}
+
+export async function listReservations(repo: any, userRepo: any, cache: any, logger: any, query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }, money: ListMoneyDeps): Promise<ReservasPaginated> {
   const filters: Record<string, unknown> = {}
   if (query.status) filters.status = query.status
   if (query.channel) filters.channel = query.channel
@@ -77,7 +88,19 @@ export async function listReservations(repo: any, userRepo: any, cache: any, log
   const result = query.search
     ? await repo.paginate({ ...filters, externalLocator: { $like: `%${query.search}%` } }, { offset, limit, orderBy })
     : await repo.paginate(filters, { offset, limit, orderBy })
-  const response: ReservasPaginated = { data: result.data, total: result.total, page, limit, pages: Math.ceil(result.total / limit) }
+  // REQ-RWP-04: `paymentState`/`paidAmount` por fila. Lo pagado sale de `paidOf` (= `paidSource()`
+  // del módulo: `payments` completed + anticipo, ver shared/usecases/reservation-paid.ts) y NO de
+  // `reservation.deposit` a secas, que ignora los cobros posteriores (Stripe, mark-paid): es la
+  // MISMA fórmula que el detalle y `markPaid`, así el badge del listado nunca contradice al modal.
+  // El total cobrable incluye los extras (`addonsOf`), por eso se leen también. Se calcula SOLO
+  // para las filas de la página (≤ MAX_LIMIT) y en paralelo — nunca se trae `payments` del hotel
+  // entero — y ANTES de cachear, así la caché ya lleva el estado y la invalidación existente
+  // (`invalidateReservasCaches` tras cada cobro/extra) lo mantiene fresco.
+  const data = await Promise.all(result.data.map(async (r: any) => {
+    const [addons, paidAmount] = await Promise.all([money.addonsOf(r.id, String(r.hotelId ?? '')), money.paidOf(r.id, r)])
+    return { ...r, paidAmount: round2(paidAmount), paymentState: paymentState(r, addons, paidAmount) }
+  }))
+  const response: ReservasPaginated = { data, total: result.total, page, limit, pages: Math.ceil(result.total / limit) }
   await cache.set(cacheKey, response, CACHE_TTL)
   return response
 }

@@ -346,6 +346,55 @@ refrescan el detalle (badge y "Historial de cobros" con "Registró: {nombre}") y
 - WHEN `POST /:id/mark-paid`
 - THEN 403 sin efectos
 
+### Requirement: Estado de pago por fila en el listado y origen web (REQ-RWP-04)
+
+`GET /api/reservas` MUST devolver en cada fila de la página `paidAmount` (number) y
+`paymentState` (`pending` | `partial` | `paid`), calculados con la MISMA fuente de "lo
+pagado" que el detalle y `mark-paid` (`paidSource()` del módulo →
+`shared/usecases/reservation-paid.ts`: `payments` por folio, factura y vínculo directo,
+nunca `reservations.deposit` a secas) y con `paymentState()` de
+`shared/utils/reservation-balance.ts` sobre el total cobrable (alojamiento + otros cobros +
+extras). El cálculo se acota a las filas de la página (≤ `limit`, máximo 100) y corre en
+paralelo por fila (`usecases/crud.ts`); MUST NOT cargar `payments` del hotel entero en
+memoria. El resultado se cachea junto con la página y lo invalida la misma notificación
+de cambio que ya dispara cada cobro/extra.
+
+Origen: las reservas creadas por el motor público (`bookingengine/usecases/public-booking.ts`
+y `public-booking-group.ts`) nacen con `source:'web'`; las cargadas desde el panel
+(`/api/panel/reservas`) conservan el default `source:'direct'`. `channel` sigue siendo
+`'direct'` en ambas: los reportes de "directas" (`usecases/booking-engine.ts`) cuentan por
+`channel`, y el cambio de `source` MUST NOT sacar a la reserva web de ese conteo.
+`CHANNEL_ENUM` acepta `web`. Backfill idempotente en cada deploy
+(`scripts/backfill-reservation-source-web.ts`, llamado desde `migrate-db.ts`):
+`source='direct' AND accessToken no nulo → 'web'` (sólo el flujo público setea
+`accessToken`); una segunda corrida no toca filas.
+
+Panel (`pages/reservations/index.vue`): columna **Pago** con badge Pendiente (coral) ·
+Parcial (dorado) · Pagada (teal) desde `paymentState` (helper compartido
+`utils/payment-state.ts`, el mismo que usa la ficha); KPI **Cobradas** (reservas
+`paymentState:'paid'` no canceladas) junto a "Confirmadas"; canal `web` → "Web" con icono
+de globo y opción "Web" en el filtro de canal; por debajo de 768px el badge de pago va
+debajo del estado y no se oculta.
+
+#### Scenario: Dos confirmadas, una cobrada y otra no
+
+- GIVEN dos reservas `confirmed` de 300, una con un `payment` `completed` por 300 y otra sin cobros
+- WHEN `GET /api/reservas`
+- THEN la primera trae `paymentState:'paid'`, `paidAmount:300` y la segunda `pending`, `0`
+- AND `paidOf` se consultó exactamente una vez por fila de la página
+
+#### Scenario: Reserva web vs. reserva de recepción
+
+- WHEN el motor público crea una reserva
+- THEN `source:'web'` y `channel:'direct'`, y el reporte de directas la sigue contando
+- AND una reserva cargada por el panel queda con `source:'direct'`
+
+#### Scenario: Backfill idempotente
+
+- GIVEN filas `direct`+`accessToken`, `direct` sin token y `booking`
+- WHEN corre el backfill dos veces
+- THEN sólo la primera pasa a `web` en la primera corrida y la segunda corrida cambia 0 filas
+
 ### Requirement: Transversales de toda operación de reservas
 
 Toda query del módulo MUST filtrar por `hotelId` (multi-tenant) y toda ruta MUST exigir

@@ -1,5 +1,5 @@
 export type ReservationStatus = 'pending' | 'confirmed' | 'checked_in' | 'checked_out' | 'cancelled' | 'no_show'
-export type ReservationChannel = 'direct' | 'booking' | 'airbnb' | 'expedia' | 'agoda' | 'trip' | 'phone' | 'email' | 'walk_in'
+export type ReservationChannel = 'direct' | 'booking' | 'airbnb' | 'expedia' | 'agoda' | 'trip' | 'phone' | 'email' | 'walk_in' | 'web'
 export type PreCheckinStatus = 'pending' | 'sent' | 'completed' | 'expired'
 
 export interface ReservasDTO {
@@ -65,6 +65,10 @@ export interface ReservasDTO {
   // Tarea 3.4 (corrección 2026-08-25) — 'pending' | 'approved' | undefined (undefined = no
   // aplica, el hotel tiene "confirmación instantánea" prendida). Ver reservas/model.ts.
   approvalStatus?: 'pending' | 'approved'
+  // REQ-RWP-04 (#247) — etiqueta de cobro calculada (payments + extras, ver crud.ts). Sólo la
+  // devuelven el listado y mark-paid; NO es columna de la tabla.
+  paymentState?: 'pending' | 'partial' | 'paid'
+  paidAmount?: number
   createdAt: string
   updatedAt: string
 }

@@ -35,6 +35,7 @@ export const STATUS_MAP: Record<string, ReservationStatus> = {
 
 const SOURCE_MAP: Record<string, ReservationSource> = {
   direct: 'direct', directa: 'direct',
+  web: 'web',
   phone: 'phone',
   whatsapp: 'whatsapp',
   booking: 'booking', 'booking.com': 'booking',
@@ -59,10 +60,16 @@ export function mapReservation(r: RawReservation): Reservation {
     childrenAges: r.childrenAges,
     groupId: r.groupId ?? undefined,
     status,
-    source: SOURCE_MAP[r.channel?.toLowerCase()] ?? 'other',
+    // REQ-RWP-04 — `source` del backend distingue la reserva del widget web ('web') de la cargada
+    // por recepción ('direct'); `channel` sigue siendo 'direct' en ambas, por eso no alcanza solo.
+    source: r.source === 'web' ? 'web' : (SOURCE_MAP[r.channel?.toLowerCase()] ?? 'other'),
     totalAmount: r.totalAmount,
     depositAmount: r.deposit ?? 0,
-    paymentStatus: (r.deposit ?? 0) >= r.totalAmount ? 'paid' : (r.deposit ?? 0) > 0 ? 'partial' : 'pending',
+    // El listado ya trae el estado real de cobro desde `payments` (backend, `paymentState`). La
+    // fórmula deposit-vs-total queda SOLO como fallback para respuestas que no lo traen.
+    paymentStatus: r.paymentState ?? ((r.deposit ?? 0) >= r.totalAmount ? 'paid' : (r.deposit ?? 0) > 0 ? 'partial' : 'pending'),
+    paymentState: r.paymentState,
+    paidAmount: r.paidAmount,
     roomNumber: r.roomNumber,
     roomType: r.roomType,
     guestName: r.guestName,

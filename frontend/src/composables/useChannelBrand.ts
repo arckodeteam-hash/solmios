@@ -19,8 +19,13 @@ const PALM = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke=
 const PLANE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="currentColor"><path d="m21.5 15-6-2-1-6.5c-.1-.6-.6-1-1.2-1s-1.1.4-1.2 1L11 13l-6 2v2l6-1 1 5-2 1v1.5l3-1 3 1V21l-2-1 1-5 6 1v-2Z"/></svg>'
 const BUILDING = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1m4 0h1m-6 4h1m4 0h1m-6 4h1m4 0h1"/></svg>'
 
+const GLOBE = '<svg viewBox="0 0 24 24" class="w-full h-full" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582M12 3v18m-9-9h18"/></svg>'
+
 export const CHANNEL_BRANDS: Record<string, ChannelBrand> = {
   direct: { label: 'Directa', icon: DIRECT, color: '#117A65' },
+  // REQ-RWP-04 (#247) — `source:'web'` = reserva hecha por el huésped en el widget público. Sin
+  // esta entrada `normalizeChannelKey` la mandaba a `other` y el dashboard dejaba de verla como propia.
+  web: { label: 'Web', icon: GLOBE, color: '#2563EB' },
   phone: { label: 'Teléfono', icon: PHONE, color: '#64748B' },
   whatsapp: { label: 'WhatsApp', icon: WHATSAPP, color: '#25D366' },
   booking: { label: 'Booking.com', icon: BOOKING, color: '#003580' },
