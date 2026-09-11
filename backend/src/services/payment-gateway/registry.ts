@@ -130,7 +130,7 @@ export class PaymentGatewayRegistry {
 
     switch (row.provider) {
       case 'stripe':
-        return new StripeGateway(creds as unknown as StripeCredentials, row.mode)
+        return new StripeGateway(creds as unknown as StripeCredentials, row.mode, this.logger)
       case 'azul':
         return new AzulGateway(toAzulCredentials(creds), row.mode)
       case 'cardnet':
@@ -169,7 +169,7 @@ export class PaymentGatewayRegistry {
       publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
       webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
       currency: process.env.STRIPE_CURRENCY || 'usd',
-    }, mode)
+    }, mode, this.logger)
   }
 
   /** ¿Este hotel puede cobrar online? */
