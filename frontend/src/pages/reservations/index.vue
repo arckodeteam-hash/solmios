@@ -371,7 +371,7 @@ const filtered = computed(() => {
   if (filterStatus.value) l = l.filter((r: any) => r.status === filterStatus.value)
   if (filterChannel.value) l = l.filter((r: any) => r.source === filterChannel.value)
   if (filterApproval.value) l = l.filter((r: any) => r.approvalStatus === filterApproval.value)
-  if (filterPayment.value) l = l.filter((r: any) => r.paymentState === filterPayment.value)
+  if (filterPayment.value) l = l.filter((r: any) => r.paymentState === filterPayment.value && r.status !== 'cancelled') // mismo criterio que paidCount: el KPI y su filtro muestran las mismas filas
   return l
 })
 
