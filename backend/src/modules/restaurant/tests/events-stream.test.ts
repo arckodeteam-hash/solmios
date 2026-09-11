@@ -321,3 +321,23 @@ describe('Estaciones — alertMinutes (#211)', () => {
     expect(rows.RestaurantStations.find((s) => s.id === (a.body as any).id)?.alertMinutes).toBe(7)
   })
 })
+
+describe('Estaciones — autoPrint (#216)', () => {
+  it('crear sin el flag → false; con autoPrint:true → se guarda y el listado lo devuelve; PUT lo apaga; un valor no booleano → 400', async () => {
+    const { router, auth, rows } = mount()
+    const h = bearer(auth, 'hotel_admin', 'h1')
+    const a = await router.resolve('POST', '/api/restaurant/stations', { headers: h, body: { name: 'Cocina' } })
+    expect(a.status).toBe(201)
+    expect((a.body as any).autoPrint).toBe(false)
+    const b = await router.resolve('POST', '/api/restaurant/stations', { headers: h, body: { name: 'Parrilla', autoPrint: true } })
+    expect(b.status).toBe(201)
+    expect((b.body as any).autoPrint).toBe(true)
+    const list = await router.resolve('GET', '/api/restaurant/stations', { headers: h })
+    expect((list.body as any).data.find((s: any) => s.id === (b.body as any).id).autoPrint).toBe(true)
+    const off = await router.resolve('PUT', `/api/restaurant/stations/${(b.body as any).id}`, { headers: h, body: { autoPrint: false } })
+    expect(off.status).toBe(200)
+    expect(rows.RestaurantStations.find((s) => s.id === (b.body as any).id)?.autoPrint).toBe(false)
+    const bad = await router.resolve('POST', '/api/restaurant/stations', { headers: h, body: { name: 'Bar', autoPrint: 'sí' } })
+    expect(bad.status).toBe(400)
+  })
+})

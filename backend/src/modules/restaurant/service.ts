@@ -21,10 +21,11 @@ import * as discounts from './usecases/discounts'
 import * as events from './usecases/events'
 import * as inHouse from './usecases/in-house'
 import * as reports from './usecases/reports'
+import * as print from './usecases/print'
 import { composeSockets } from './usecases/compose-sockets'
 import {
   type RestaurantWiring, stationDeps, catDeps, itemDeps, tableDeps, ordersDeps, orderLinesDeps, voidReasonsDeps, discountsDeps,
-  modifierDeps, comboDeps, foodCostDeps, settlementDeps, kdsDeps, inHouseDeps, publicMenuDeps, reportsDeps, splitPaymentsDeps,
+  modifierDeps, comboDeps, foodCostDeps, settlementDeps, kdsDeps, inHouseDeps, publicMenuDeps, reportsDeps, splitPaymentsDeps, printDeps,
 } from './usecases/deps'
 import type { AuditPort } from '../../shared/usecases/audit'
 import type { ReservationPort } from './usecases/reservation-port'
@@ -187,12 +188,11 @@ export class RestaurantService {
   itemFoodCost(menuItemId: string, user: CurrentUser) { return foodCost.itemFoodCost(foodCostDeps(this.w()), menuItemId, user) }
   comboFoodCost(comboId: string, user: CurrentUser) { return foodCost.comboFoodCost(foodCostDeps(this.w()), comboId, user) }
   foodCostReport(user: CurrentUser) { return foodCost.foodCostReport(foodCostDeps(this.w()), user) }
-
   // ─── Carta pública sin sesión (F7): hotelId del PATH, sin req.user ni createModuleGuard ───
   publicMenu(hotelId: string, lang: string | undefined) { return publicMenuUsecase.publicMenu(publicMenuDeps(this.w()), hotelId, lang) }
-
   // ─── Alojados (#209): buscador por habitación/apellido para room service y cargo a habitación — usecases/in-house ───
   searchInHouse(query: { q?: unknown; id?: unknown }, user: CurrentUser) { return inHouse.searchInHouse(inHouseDeps(this.w()), query, user) }
   // ─── Cierre del día (#213): la plata sale de payments/folio por conectores — usecases/reports ───
   dailyReport(query: reports.DailyReportQuery | undefined, user: CurrentUser) { return reports.dailyReport(reportsDeps(this.w()), query, user) }
+  printOrder(id: string, query: print.PrintQuery | undefined, user: CurrentUser) { return print.printOrder(printDeps(this.w()), id, query, user) } // #216: HTML 80 mm — usecases/print
 }

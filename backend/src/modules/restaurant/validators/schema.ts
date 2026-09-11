@@ -8,6 +8,7 @@ export const CreateStationSchema: Record<string, ValidationRule> = {
   active: { type: 'number' as const },
   sortOrder: { type: 'number' as const },
   alertMinutes: { type: 'number' as const },   // #211 — rango 1..180 validado en stations-crud.ts
+  autoPrint: { type: 'boolean' as const },     // #216 — impresión automática de la comanda de cocina al enviar
 }
 
 export const UpdateStationSchema: Record<string, ValidationRule> = {
@@ -15,6 +16,7 @@ export const UpdateStationSchema: Record<string, ValidationRule> = {
   active: { type: 'number' as const },
   sortOrder: { type: 'number' as const },
   alertMinutes: { type: 'number' as const },
+  autoPrint: { type: 'boolean' as const },
 }
 
 // ─── Carta: categorías (RES-1) ───

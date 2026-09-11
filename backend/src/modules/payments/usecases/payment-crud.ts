@@ -174,6 +174,12 @@ export class PaymentCrudUseCase {
     return this.paymentRepo.findMany({ hotelId, businessDate } as any)
   }
 
+  /** #216 — un pago por id acotado al hotel (el id viene de `restaurant_orders.paymentId`, no del cliente). */
+  async ofHotel(hotelId: string, paymentId: string): Promise<PaymentDTO | null> {
+    if (!hotelId || !paymentId) return null
+    return this.paymentRepo.findOne({ id: paymentId, hotelId } as any)
+  }
+
   async list(query: PaymentsQuery): Promise<PaymentsPaginated> {
     const page = query.page ?? 1
     const limit = query.limit ?? 20

@@ -125,3 +125,17 @@ describe('cocina.vue — el KDS suena también sin stream (#211, polling de resp
     expect(script).toMatch(/if \(e\.type === 'order\.sent' && concernsThisStation\(e\.stationIds\)\) beep\(\)/)
   })
 })
+
+describe('cocina.vue — #216 imprimir la comanda de cocina por ticket', () => {
+  it('cada ticket tiene un botón de imprimir que pide la comanda de cocina de ESA orden con la estación que se mira', () => {
+    const script = COCINA.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)![1]!
+    const tpl = COCINA.match(/<template>([\s\S]*)<\/template>/)![1]!
+    const btn = (tpl.match(/<button[^>]*data-testid="print-kitchen"[^>]*>/g) ?? [])[0]
+    expect(btn, 'falta el botón de imprimir en el ticket').toBeDefined()
+    expect(btn).toMatch(/@click="printTicket\(t\)"/)
+    expect(btn, 'un botón de solo ícono necesita nombre accesible').toMatch(/:aria-label=/)
+    expect(script).toMatch(/import \{ openPrintTab \} from '\.\/imprimir'/)
+    // Reimpresión desde el KDS: todo lo enviado (`batch: 'all'`), como el ticket en pantalla.
+    expect(script).toMatch(/openPrintTab\(t\.order\.id, 'kitchen', \{ station: station\.value \|\| undefined, batch: 'all' \}\)/)
+  })
+})

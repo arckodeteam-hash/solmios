@@ -17,6 +17,9 @@ export type LineStatus = 'new' | 'preparing' | 'ready' | 'served' | 'cancelled' 
 export type TableStatus = 'free' | 'occupied' | 'reserved'
 // 'split' (#214): saldada por partes con métodos mezclados (habitación + directo).
 export type Settlement = 'folio' | 'payment' | 'split'
+// #216 — papeles de 80 mm: precuenta (comanda), ticket (comprobante del cobro) y comanda de cocina (por estación).
+export type PrintDoc = 'precuenta' | 'ticket' | 'kitchen'
+export type PrintBatch = 'last' | 'all'
 
 // F5 — catálogo FIJO de tags de alérgenos/info dietética (espejo de backend/src/modules/restaurant/types.ts,
 // D8). En inglés (DB/código); acá se traduce cada key a su etiqueta en español + ícono para la UI.
@@ -46,6 +49,8 @@ export interface Station {
   sortOrder?: number
   /** #211 — minutos desde el envío a cocina para pintar el ticket ámbar (rojo al doble). Null = DEFAULT_ALERT_MINUTES. */
   alertMinutes?: number | null
+  /** #216 — al enviar a cocina, Comanda abre sola la comanda de cocina (80 mm) de esta estación para imprimir. */
+  autoPrint?: boolean
   createdAt?: string
   updatedAt?: string
 }
@@ -473,7 +478,7 @@ export interface RestaurantEvent {
 }
 
 // ─── Payloads ───
-export interface StationPayload { name: string; active?: number; sortOrder?: number; alertMinutes?: number }
+export interface StationPayload { name: string; active?: number; sortOrder?: number; alertMinutes?: number; autoPrint?: boolean }
 export interface CategoryPayload {
   name: string; stationId?: string; sortOrder?: number; active?: number
   translations?: Record<string, CategoryTranslation> | null
@@ -675,6 +680,18 @@ export const RestaurantService = {
   // Devuelve UNA parte directa (efectivo/transferencia/tarjeta, permiso billing:create). Comanda liquidada →
   // queda `partially_refunded`; comanda abierta (COR-C, parte cobrada por error) → la parte queda `reversed` y el saldo se reabre.
   refundOrderPayment: (id: string, partId: string, reason: string): Promise<OrderPayment> => http.post(`/restaurant/orders/${id}/payments/${partId}/refund`, { reason }),
+
+  // ─── Impresión 80 mm (#216) ───
+  // El endpoint devuelve el HTML autocontenido (envuelto en {data} por el framework; http.get extrae el
+  // string), igual que el recibo de nómina. `pages/restaurante/imprimir.ts` lo abre en una pestaña y el
+  // navegador imprime. `station` y `batch` solo aplican a `kitchen`: estación (id o '__none__', como el
+  // KDS) y `last` (default: lo de ESTE envío) | `all` (todo lo enviado, reimpresión desde el KDS).
+  printHtml(orderId: string, doc: PrintDoc, station?: string, batch?: PrintBatch): Promise<string> {
+    const qs = new URLSearchParams({ doc })
+    if (station) qs.set('station', station)
+    if (batch) qs.set('batch', batch)
+    return http.get<string>(`/restaurant/orders/${orderId}/print?${qs.toString()}`)
+  },
 
   // ─── KDS / cocina ───
   async kdsQueue(station?: string): Promise<KdsTicket[]> {

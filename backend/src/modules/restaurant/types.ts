@@ -33,6 +33,8 @@ export interface StationDTO {
   sortOrder?: number
   /** #211 — umbral de demora del KDS en minutos (ámbar a N, rojo a 2N). Null = default 10. */
   alertMinutes?: number | null
+  /** #216 — imprimir sola la comanda de cocina de esta estación al enviar (lo ejecuta el POS del mozo). */
+  autoPrint?: boolean
   createdAt: string
   updatedAt: string
 }

@@ -21,6 +21,7 @@ import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
 import { useNow } from '@/composables/useNow'
 import { useRestaurantEvents } from '@/composables/useRestaurantEvents'
+import { openPrintTab } from './imprimir'
 
 const toast = useToast()
 const { can } = usePermissions()
@@ -228,6 +229,20 @@ async function advance(line: OrderLine, to: LineStatus) {
   }
 }
 
+// #216 — comanda de cocina en papel (80 mm) POR TICKET, con la estación que se está mirando ('' = todas,
+// agrupada por estación; '__none__' = sin estación). Es una REIMPRESIÓN: va con `batch: 'all'` (todo lo
+// enviado, como el ticket en pantalla); el papel por envío lo imprime Comanda al enviar (autoPrint).
+// Pestaña nueva + window.print() (ver imprimir.ts).
+const printingOrder = ref<string | null>(null)
+async function printTicket(t: KdsTicket) {
+  if (printingOrder.value) return
+  printingOrder.value = t.order.id
+  try {
+    const r = await openPrintTab(t.order.id, 'kitchen', { station: station.value || undefined, batch: 'all' })
+    if (!r.ok) toast.error(r.error)
+  } finally { printingOrder.value = null }
+}
+
 function hhmm(iso?: string): string {
   if (!iso) return ''
   const d = new Date(iso)
@@ -304,8 +319,14 @@ onUnmounted(() => {
             <div class="font-black text-sm truncate">{{ placeLabel(t) }}</div>
             <div class="text-[11px] opacity-80 truncate">{{ t.order.number || 'Comanda' }} · {{ ORDER_TYPE_LABELS[t.order.type] }} · {{ hhmm(t.order.openedAt) }}</div>
           </div>
-          <!-- #211: cronómetro desde el envío a cocina; ámbar a N min, rojo a 2N (N por estación). -->
-          <span class="shrink-0 font-mono font-black text-base tabular-nums" :title="`Umbral: ${alertMinutesFor(t)} min`">{{ elapsedLabel(t) }}</span>
+          <div class="shrink-0 flex items-center gap-1.5">
+            <!-- #211: cronómetro desde el envío a cocina; ámbar a N min, rojo a 2N (N por estación). -->
+            <span class="font-mono font-black text-base tabular-nums" :title="`Umbral: ${alertMinutesFor(t)} min`">{{ elapsedLabel(t) }}</span>
+            <!-- #216: comanda en papel para esta estación. -->
+            <button type="button" @click="printTicket(t)" :disabled="printingOrder === t.order.id" data-testid="print-kitchen"
+              :aria-label="`Imprimir comanda ${t.order.number || ''}`" title="Imprimir comanda de cocina"
+              class="h-7 w-7 grid place-items-center rounded-lg bg-white/15 hover:bg-white/30 text-sm disabled:opacity-50">🖨</button>
+          </div>
         </div>
         <div class="p-2.5 space-y-2 flex-1">
           <div v-for="l in t.lines" :key="l.id" :class="['rounded-xl border-2 p-2.5', lineTint[l.status] || 'border-border']">

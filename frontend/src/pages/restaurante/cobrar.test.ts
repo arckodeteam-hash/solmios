@@ -11,7 +11,7 @@
 // #214 (REST-12): dividir cuenta.
 //   - Sin partes: pestañas "Cobrar todo" y "Dividir cuenta"; con una parte cobrada, "Cobrar todo" desaparece.
 //   - Las partes vienen del server (recargar a mitad las muestra): dos pagos listados, saldo restante.
-//   - "Agregar pago" manda {method, amount, tip} y, al saldar, vuelve al salón; sobrepago deshabilita el botón.
+//   - "Agregar pago" manda {method, amount, tip} y, al saldar, se queda en la pantalla liquidada (#216); sobrepago deshabilita el botón.
 //   - Partes iguales: muestra los montos del server (33.33/33.33/33.34); por líneas: manda lineIds, no monto suelto.
 //   - Cobrada por partes: cada parte listada, "Reembolsar" en cada parte directa (efectivo/transfer/tarjeta), y llama al refund de ESA parte.
 //   - Parte con TARJETA: manda successUrl/cancelUrl y navega al Checkout; al volver (`?part=pending`) espera
@@ -48,6 +48,9 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: routerPush, replace: vi.fn() }),
   useRoute: () => ({ params: { id: 'o1' }, get query() { return routeState.query } }),
 }))
+// #216 — la pestaña de impresión se abre en imprimir.ts; acá solo importa que se pida el doc correcto.
+const printCalls: unknown[] = []
+vi.mock('./imprimir', () => ({ openPrintTab: vi.fn(async (...args: unknown[]) => { printCalls.push(args); return { ok: true } }) }))
 vi.mock('@/services/Settings.service', () => ({
   SettingsService: { get: vi.fn(async () => ({ hotel: { currency: 'DOP' } })) },
 }))
@@ -61,6 +64,8 @@ vi.mock('@/services/Restaurant.service', async (importOriginal) => {
       searchInHouse: vi.fn(async () => ({ data: inHouseData, total: inHouseData.length })),
       getInHouseById: vi.fn(async (id: string) => { byIdCalls.push(id); return byId(id) }),
       chargeToRoom: vi.fn(async (id: string, data: unknown) => { chargeCalls.push({ id, data }); return { ...orderData, status: 'charged' } }),
+      billOrder: vi.fn(async () => ({ ...orderData, status: 'billed' })),
+      payOrder: vi.fn(async () => { orderData = { ...orderData, status: 'paid', settlement: 'payment', paymentId: 'pay-1' }; return orderData }),
       // #215
       discountPolicy: vi.fn(async () => ({ maxDiscountPercent: 100, reasons: ['Cortesía de la casa', 'Huésped del hotel', 'Otro'], isDefault: true })),
       applyOrderDiscount: vi.fn(async (id: string, data: unknown) => { discountCalls.push({ scope: 'order', id, data }); return orderData }),
@@ -79,7 +84,11 @@ vi.mock('@/services/Restaurant.service', async (importOriginal) => {
         const part = { id: 'p-new', hotelId: 'h1', orderId: id, seq: paymentsData.data.length + 1, method: req.method, amount: req.amount, tip: 0, status: 'completed' } as OrderPayment
         const paid = paymentsData.balance.paid + part.amount
         const outstanding = Math.round((paymentsData.balance.due - paid) * 100) / 100
-        return { part, order: { ...orderData, status: outstanding <= 0 ? 'paid' : orderData.status, amountPaid: paid }, balance: { ...paymentsData.balance, paid, outstanding } }
+        const balance = { ...paymentsData.balance, paid, outstanding }
+        // El server persiste la parte: la recarga siguiente (getOrder/listOrderPayments) ya la ve.
+        paymentsData = { data: [...paymentsData.data, part], total: paymentsData.total + 1, balance }
+        if (outstanding <= 0) orderData = { ...orderData, status: 'paid', settlement: 'split', amountPaid: paid }
+        return { part, order: { ...orderData, amountPaid: paid }, balance }
       }),
       refundOrderPayment: vi.fn(async (id: string, partId: string, reason: string) => { refundPartCalls.push({ id, partId, reason }); return { id: partId, status: 'refunded' } as OrderPayment }),
       refundOrder: vi.fn(async (id: string, reason: string) => { refundCalls.push({ id, reason }); return { ...orderData, status: 'refunded' } }),
@@ -186,6 +195,41 @@ describe('cobrar.vue — #209', () => {
   it('los métodos de pago son los de Caja.service', async () => {
     const w = await mountCobrar()
     for (const m of POS_PAYMENT_METHODS) expect(w.text()).toContain(m.label)
+    w.unmount()
+  })
+})
+
+describe('cobrar.vue — #216 imprimir precuenta y ticket', () => {
+  beforeEach(() => { printCalls.length = 0; routerPush.mockClear(); orderData = baseOrder() })
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('antes de cobrar: "Imprimir precuenta" abre la precuenta de ESTA comanda; no hay ticket todavía', async () => {
+    const w = await mountCobrar()
+    expect(w.find('[data-testid="print-ticket"]').exists()).toBe(false)
+    await w.find('[data-testid="print-precuenta"]').trigger('click')
+    await flushPromises()
+    expect(printCalls).toEqual([['o1', 'precuenta']])
+    w.unmount()
+  })
+
+  it('cobrar en efectivo se queda en la pantalla liquidada (no salta al salón) y "Imprimir ticket" pide el ticket', async () => {
+    const w = await mountCobrar()
+    const payBtn = w.findAll('button').find((b) => b.text().startsWith('Cobrar RD$'))!   // no la pestaña "Cobrar todo" (#214)
+    await payBtn.trigger('click')
+    await flushPromises()
+    expect(routerPush).not.toHaveBeenCalled()
+    expect(w.text()).toContain('Cobrada directamente')
+    await w.find('[data-testid="print-ticket"]').trigger('click')
+    await flushPromises()
+    expect(printCalls).toEqual([['o1', 'ticket']])
+    w.unmount()
+  })
+
+  it('cargada a la habitación: también hay "Imprimir ticket"', async () => {
+    orderData = baseOrder({ status: 'charged', settlement: 'folio', folioId: 'f1' })
+    const w = await mountCobrar()
+    expect(w.find('[data-testid="print-ticket"]').exists()).toBe(true)
+    expect(w.find('[data-testid="print-precuenta"]').exists()).toBe(false)
     w.unmount()
   })
 })
@@ -308,7 +352,7 @@ describe('cobrar.vue — #214 dividir cuenta', () => {
     w.unmount()
   })
 
-  it('"Agregar pago" cobra el saldo por defecto: manda {method, amount, tip}; al saldar vuelve al salón', async () => {
+  it('"Agregar pago" cobra el saldo por defecto: manda {method, amount, tip}; al saldar se queda en la pantalla liquidada (#216: ticket con las partes)', async () => {
     paymentsData = twoParts()
     const w = await mountCobrar()
     await w.find('[data-testid="add-part"]').trigger('click')
@@ -318,7 +362,9 @@ describe('cobrar.vue — #214 dividir cuenta', () => {
     await typeInto('#restaurante-cobrar-parte-propina', '2')
     await click('[data-testid="confirm-part"]')
     expect(addPartCalls).toEqual([{ id: 'o1', data: { method: 'transfer', amount: 18, tip: 2 } }])
-    expect(routerPush).toHaveBeenCalledWith('/panel/restaurante/salon')
+    expect(routerPush).not.toHaveBeenCalled()
+    expect(w.text()).toContain('Cobrada por partes')
+    expect(w.find('[data-testid="print-ticket"]').exists()).toBe(true)
     w.unmount()
   })
 
@@ -492,7 +538,7 @@ describe('cobrar.vue — #214 parte con tarjeta / a habitación / partes no disp
     } finally { loc.restore() }
   })
 
-  it('vuelta del Checkout (`?part=pending`): muestra la parte esperando a Stripe, hace poll y va al salón cuando la comanda queda paid', async () => {
+  it('vuelta del Checkout (`?part=pending`): muestra la parte esperando a Stripe, hace poll y al quedar paid se queda en la pantalla liquidada', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] })
     routeState.query = { paid: 'pending', part: 'pending' }
     paymentsData = { data: [part({ id: 'p1', seq: 1, method: 'card', amount: 118, status: 'pending' })], total: 1, balance: { due: 118, paid: 0, pending: 118, outstanding: 118, tips: 0 } }
@@ -507,7 +553,9 @@ describe('cobrar.vue — #214 parte con tarjeta / a habitación / partes no disp
     orderData = baseOrder({ status: 'paid', settlement: 'payment', amountPaid: 118 })
     await vi.advanceTimersByTimeAsync(1500)
     await flushPromises()
-    expect(routerPush).toHaveBeenCalledWith('/panel/restaurante/salon')
+    expect(routerPush).not.toHaveBeenCalled()
+    expect(w.text()).toContain('Comanda liquidada')
+    expect(w.find('[data-testid="print-ticket"]').exists()).toBe(true)
     w.unmount()
   })
 

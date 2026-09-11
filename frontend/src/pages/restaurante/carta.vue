@@ -159,6 +159,8 @@ function stationOptions(includeNone = true) {
 function nextStationSortOrder(): number {
   return stations.value.length ? Math.max(...stations.value.map((s) => s.sortOrder ?? 0)) + 1 : 0
 }
+// #216 — el FormModal solo maneja strings/números: el booleano viaja como '1'/'0' y se convierte al guardar.
+const AUTO_PRINT_OPTIONS = [{ value: '0', label: 'No' }, { value: '1', label: 'Sí' }]
 function newStation() {
   modal.value = {
     title: 'Nueva estación', submitLabel: 'Crear',
@@ -167,9 +169,11 @@ function newStation() {
       { key: 'active', label: 'Activa', type: 'select', default: '1', options: [{ value: '1', label: 'Sí' }, { value: '0', label: 'No' }] },
       // #211 — umbral de demora del KDS: ámbar a N min desde el envío, rojo a 2N.
       { key: 'alertMinutes', label: 'Alerta de demora (minutos)', type: 'number', min: 1, max: 180, default: DEFAULT_ALERT_MINUTES, hint: 'El ticket se pone ámbar a los N min y rojo a los 2N' },
+      // #216 — impresión automática: al enviar a cocina, Comanda abre sola el papel de 80 mm de esta estación.
+      { key: 'autoPrint', label: 'Imprimir comanda al enviar', type: 'select', default: '0', options: AUTO_PRINT_OPTIONS, hint: 'Abre la comanda de cocina (80 mm) de esta estación en cada envío' },
     ],
     onSubmit: async (v) => {
-      await save(() => RestaurantService.createStation({ name: String(v.name).trim(), sortOrder: nextStationSortOrder(), active: Number(v.active), alertMinutes: Number(v.alertMinutes) || DEFAULT_ALERT_MINUTES }))
+      await save(() => RestaurantService.createStation({ name: String(v.name).trim(), sortOrder: nextStationSortOrder(), active: Number(v.active), alertMinutes: Number(v.alertMinutes) || DEFAULT_ALERT_MINUTES, autoPrint: v.autoPrint === '1' }))
     },
   }
 }
@@ -180,11 +184,12 @@ function editStation(s: Station) {
       { key: 'name', label: 'Nombre', required: true, minLength: 2, maxLength: 60, default: s.name },
       { key: 'active', label: 'Activa', type: 'select', default: String(s.active ?? 1), options: [{ value: '1', label: 'Sí' }, { value: '0', label: 'No' }] },
       { key: 'alertMinutes', label: 'Alerta de demora (minutos)', type: 'number', min: 1, max: 180, default: s.alertMinutes ?? DEFAULT_ALERT_MINUTES, hint: 'El ticket se pone ámbar a los N min y rojo a los 2N' },
+      { key: 'autoPrint', label: 'Imprimir comanda al enviar', type: 'select', default: s.autoPrint ? '1' : '0', options: AUTO_PRINT_OPTIONS, hint: 'Abre la comanda de cocina (80 mm) de esta estación en cada envío' },
     ],
     onSubmit: async (v) => {
       // sortOrder NO viaja acá: el PUT de estaciones es un merge parcial (stations-crud.ts:50) y el
       // orden se gestiona solo por drag-and-drop — reenviarlo pisaría el resultado de un reorder previo.
-      await save(() => RestaurantService.updateStation(s.id, { name: String(v.name).trim(), active: Number(v.active), alertMinutes: Number(v.alertMinutes) || DEFAULT_ALERT_MINUTES }))
+      await save(() => RestaurantService.updateStation(s.id, { name: String(v.name).trim(), active: Number(v.active), alertMinutes: Number(v.alertMinutes) || DEFAULT_ALERT_MINUTES, autoPrint: v.autoPrint === '1' }))
     },
   }
 }
@@ -949,6 +954,7 @@ async function saveTranslations() {
               <span class="font-bold text-navy">{{ s.name }}</span>
               <span v-if="!s.active" class="text-[10px] px-1.5 py-0.5 rounded bg-surface text-text-muted font-bold">Inactiva</span>
               <span class="text-[10px] px-1.5 py-0.5 rounded bg-surface text-text-muted font-bold" :title="`El KDS pinta el ticket ámbar a los ${s.alertMinutes ?? DEFAULT_ALERT_MINUTES} min y rojo a los ${2 * (s.alertMinutes ?? DEFAULT_ALERT_MINUTES)}`">⏱ {{ s.alertMinutes ?? DEFAULT_ALERT_MINUTES }} min</span>
+              <span v-if="s.autoPrint" data-testid="station-autoprint" class="text-[10px] px-1.5 py-0.5 rounded bg-navy/10 text-navy font-bold" title="Al enviar a cocina se abre sola la comanda de esta estación para imprimir">🖨 auto</span>
             </div>
             <div class="flex items-center gap-2 shrink-0">
               <button v-if="editPerm" @click="editStation(s)" class="text-xs font-bold text-navy hover:underline">Editar</button>
