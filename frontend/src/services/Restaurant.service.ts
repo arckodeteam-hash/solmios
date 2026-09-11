@@ -289,7 +289,9 @@ export interface OrderPayment {
 }
 /** Saldo de la comanda: `due` = neto + impuesto; `pending` lo reservan las partes en curso (Checkout de tarjeta abierto); la propina va aparte. */
 export interface OrderBalance { due: number; paid: number; pending: number; outstanding: number; tips: number }
-export interface OrderPaymentsList { data: OrderPayment[]; total: number; balance: OrderBalance }
+// #279: `parts`, no `data`/`total`: con esa forma el envelope del backend la trataba como lista paginada y
+// tiraba `balance` (la pestaña "Dividir cuenta" quedaba en blanco). Espejo de `split-payments.ts#OrderPaymentsList`.
+export interface OrderPaymentsList { parts: OrderPayment[]; balance: OrderBalance }
 export interface AddOrderPaymentPayload {
   method: OrderPaymentMethod
   amount?: number

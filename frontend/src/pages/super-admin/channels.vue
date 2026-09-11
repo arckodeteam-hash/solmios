@@ -384,7 +384,7 @@ async function cargar() {
   error.value = ''
   try {
     const res = await ChannelRequestsAdminService.list(filtro.value)
-    requests.value = res.data ?? []
+    requests.value = res.requests ?? []
     counts.value = res.counts ?? {}
     transiciones.value = res.transitions ?? {}
   } catch (e) {

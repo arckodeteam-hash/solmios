@@ -78,8 +78,10 @@ export interface ChannelRequestActivity {
   createdAt?: string
 }
 
+// #279: `requests`, no `data` — con `data` el envelope del backend la tomaba como lista paginada y tiraba
+// `counts`/`transitions`/`filters`. Espejo de `canales/usecases/channel-requests-admin.ts#AdminChannelRequestList`.
 export interface ChannelRequestList {
-  data: AdminChannelRequest[]
+  requests: AdminChannelRequest[]
   total: number
   counts: Record<ChannelRequestFilter, number>
   /** Qué transiciones permite el backend desde cada estado: la UI no las duplica, las lee. */

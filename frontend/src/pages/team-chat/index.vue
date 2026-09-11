@@ -365,8 +365,8 @@ async function load() {
   loading.value = true
   try {
     const [page] = await Promise.all([TeamChatService.listAll(0, PAGE_SIZE), loadNames()])
-    messages.value = page.data
-    loadedCount.value = page.data.length
+    messages.value = page.messages
+    loadedCount.value = page.messages.length
     hasMore.value = page.hasMore
     capped.value = false
     lastSync.value = new Date()
@@ -391,7 +391,7 @@ async function pollNew() {
   try {
     const page = await TeamChatService.listAll(0, PAGE_SIZE)
     const seen = new Set(messages.value.map(m => m.id))
-    const fresh = page.data.filter(m => !seen.has(m.id))
+    const fresh = page.messages.filter(m => !seen.has(m.id))
     if (fresh.length === 0) {
       lastSync.value = new Date()
       return
@@ -420,7 +420,7 @@ async function loadMore() {
   try {
     const page = await TeamChatService.listAll(loadedCount.value, PAGE_SIZE)
     const seen = new Set(messages.value.map((m) => m.id))
-    const fresh = page.data.filter((m) => !seen.has(m.id))
+    const fresh = page.messages.filter((m) => !seen.has(m.id))
     const combined = [...messages.value, ...fresh]
     // Tope de memoria (#635): recorta los más viejos (van al final del array) si se pasa del
     // límite. Deja de ofrecer "cargar más" una vez alcanzado — evitar crecer indefinidamente
@@ -433,7 +433,7 @@ async function loadMore() {
       messages.value = combined
       hasMore.value = page.hasMore
     }
-    loadedCount.value += page.data.length
+    loadedCount.value += page.messages.length
   } catch {
     /* se reintenta al próximo scroll: hasMore queda como estaba */
   } finally {

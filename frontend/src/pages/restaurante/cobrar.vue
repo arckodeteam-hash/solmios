@@ -17,7 +17,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   RestaurantService, roomServiceLabel, inHouseStatusLabel, isLineActive, isCourtesy,
-  type OrderWithLines, type InHouseReservation, type OrderLine, type DiscountPolicy, type DiscountPayload, type OrderPayment, type OrderBalance,
+  type OrderWithLines, type InHouseReservation, type OrderLine, type DiscountPolicy, type DiscountPayload, type OrderPayment, type OrderBalance, type OrderPaymentsList,
   ORDER_STATUS_LABELS, ORDER_TYPE_LABELS, ORDER_PAYMENT_METHOD_LABELS, ORDER_PAYMENT_STATUS_LABELS, isDeadOrderPayment,
 } from '@/services/Restaurant.service'
 import { SettingsService } from '@/services/Settings.service'
@@ -130,11 +130,18 @@ const partIsRefundable = (p: OrderPayment): boolean => canRefund.value && p.stat
 // Si las partes no se pueden leer (403 sin `restaurant:pay`, red), la página de la comanda sigue
 // funcionando con el cobro entero: se avisa y no se rompe el resto de la carga.
 const partsUnavailable = ref(false)
+// #279: en prod el envelope llegó SIN `balance` y el panel reventaba en blanco (`balance.due` de undefined).
+// Una respuesta sin saldo se trata como "no se pudieron cargar": aviso visible, nunca pantalla vacía.
+function balanceOf(res: Partial<OrderPaymentsList>): OrderBalance {
+  const b = res?.balance
+  if (!b || typeof b.due !== 'number' || typeof b.outstanding !== 'number') throw new Error('La respuesta del servidor no trae el saldo de la comanda')
+  return b
+}
 async function loadParts() {
   try {
     const res = await RestaurantService.listOrderPayments(orderId.value)
-    parts.value = res.data ?? []
-    balance.value = res.balance
+    parts.value = res.parts ?? []
+    balance.value = balanceOf(res)
     partsUnavailable.value = false
   } catch (e: unknown) {
     partsUnavailable.value = true
@@ -159,8 +166,8 @@ async function pollPendingParts() {
     while (Date.now() < deadline) {
       try {
         const res = await RestaurantService.listOrderPayments(orderId.value)
-        parts.value = res.data ?? []
-        balance.value = res.balance
+        parts.value = res.parts ?? []
+        balance.value = balanceOf(res)
         if (!parts.value.some((p) => p.status === 'pending')) {
           const fresh = await RestaurantService.getOrder(orderId.value)
           order.value = fresh

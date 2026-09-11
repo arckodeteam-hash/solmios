@@ -216,7 +216,8 @@ describe('#214 — /orders/:id/payments y /split: restaurant:pay; /payments/:par
     expect(recorded[0].reference).toBe('pos:o-sent:1')
     const list = await router.resolve('GET', '/api/restaurant/orders/o-sent/payments', { headers: headers(auth, 'waiter') })
     expect(list.status).toBe(200)
-    expect((list.body as any).total).toBe(1)
+    expect((list.body as any).parts).toHaveLength(1)   // #279: `parts` + `balance`, sin `data`/`total` (el envelope los tomaría como lista)
+    expect((list.body as any).balance.outstanding).toBe(60)
     // Sobrepago por HTTP: 70 sobre 60 → 400 y sin segundo payment.
     const over = await router.resolve('POST', '/api/restaurant/orders/o-sent/payments', { headers: headers(auth, 'waiter'), body: { method: 'cash', amount: 70 } })
     expect(over.status).toBe(400)

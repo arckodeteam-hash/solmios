@@ -45,7 +45,7 @@ function deps(rows: ChannelRequestRow[], opciones: {
 
 describe('listChannelRequestsForAdmin — datos para el alta manual (REQ-CAN-05)', () => {
   it('trae el teléfono y el correo del hotel que pidió', async () => {
-    const { data } = await listChannelRequestsForAdmin(
+    const { requests: data } = await listChannelRequestsForAdmin(
       deps([pedido({})], { hotels: [{ id: 'h1', name: 'Hotel Frente Sol', phone: '809-555-0000', email: 'hola@frentesol.com' }] }),
       { now: AHORA },
     )
@@ -53,7 +53,7 @@ describe('listChannelRequestsForAdmin — datos para el alta manual (REQ-CAN-05)
   })
 
   it('trae la property de Channex del hotel y el enlace al dashboard', async () => {
-    const { data } = await listChannelRequestsForAdmin(
+    const { requests: data } = await listChannelRequestsForAdmin(
       deps([pedido({})], { configs: [{ hotelId: 'h1', channexPropertyId: 'prop-123' }], environment: 'production' }),
       { now: AHORA },
     )
@@ -62,13 +62,13 @@ describe('listChannelRequestsForAdmin — datos para el alta manual (REQ-CAN-05)
   })
 
   it('un hotel sin property queda explícito y el enlace va a la raíz del dashboard', async () => {
-    const { data } = await listChannelRequestsForAdmin(deps([pedido({})]), { now: AHORA })
+    const { requests: data } = await listChannelRequestsForAdmin(deps([pedido({})]), { now: AHORA })
     expect(data[0]!.channexPropertyId).toBe('')
     expect(data[0]!.channexUrl).toBe('https://staging.channex.io')
   })
 
   it('cuenta los tipos de habitación ya publicados: sin ellos no hay nada que mapear', async () => {
-    const { data } = await listChannelRequestsForAdmin(
+    const { requests: data } = await listChannelRequestsForAdmin(
       deps([pedido({})], { mappings: [{ hotelId: 'h1' }, { hotelId: 'h1' }, { hotelId: 'h2' }] }),
       { now: AHORA },
     )
@@ -76,7 +76,7 @@ describe('listChannelRequestsForAdmin — datos para el alta manual (REQ-CAN-05)
   })
 
   it('resuelve el nombre del responsable contra users (no contra empleados)', async () => {
-    const { data } = await listChannelRequestsForAdmin(
+    const { requests: data } = await listChannelRequestsForAdmin(
       deps([pedido({ assignedTo: 'u-1', status: 'in_progress' })], { users: [{ id: 'u-1', name: 'Ana Soporte' }] }),
       { now: AHORA },
     )
@@ -95,7 +95,7 @@ describe('listChannelRequestsForAdmin — filtros y urgencia (REQ-CAN-03, REQ-CA
   ]
 
   it('una cita de ayer viene con overdue:true y encabeza la lista', async () => {
-    const { data } = await listChannelRequestsForAdmin(deps(universo), { filter: 'all', now: AHORA })
+    const { requests: data } = await listChannelRequestsForAdmin(deps(universo), { filter: 'all', now: AHORA })
     expect(data[0]!.id).toBe('vencida')
     expect(data[0]!.overdue).toBe(true)
     expect(data.find((r) => r.id === 'manana')!.overdue).toBe(false)
@@ -103,7 +103,7 @@ describe('listChannelRequestsForAdmin — filtros y urgencia (REQ-CAN-03, REQ-CA
 
   it('cada filtro corta lo suyo', async () => {
     const corte = async (filter: string) =>
-      (await listChannelRequestsForAdmin(deps(universo), { filter, now: AHORA })).data.map((r) => r.id)
+      (await listChannelRequestsForAdmin(deps(universo), { filter, now: AHORA })).requests.map((r) => r.id)
     expect(await corte('pending')).toEqual(['sin-atender'])
     expect(await corte('overdue')).toEqual(['vencida'])
     expect(await corte('today')).toEqual(['hoy'])
@@ -112,12 +112,12 @@ describe('listChannelRequestsForAdmin — filtros y urgencia (REQ-CAN-03, REQ-CA
   })
 
   it('el corte por defecto junta lo sin atender con lo vencido, y lo vencido va primero', async () => {
-    const { data } = await listChannelRequestsForAdmin(deps(universo), { filter: 'attention', now: AHORA })
+    const { requests: data } = await listChannelRequestsForAdmin(deps(universo), { filter: 'attention', now: AHORA })
     expect(data.map((r) => r.id)).toEqual(['vencida', 'sin-atender'])
   })
 
   it('los contadores se calculan sobre TODO, no sobre el filtro aplicado', async () => {
-    const { counts, data } = await listChannelRequestsForAdmin(deps(universo), { filter: 'pending', now: AHORA })
+    const { counts, requests: data } = await listChannelRequestsForAdmin(deps(universo), { filter: 'pending', now: AHORA })
     expect(data).toHaveLength(1)
     expect(counts.pending).toBe(1)
     expect(counts.overdue).toBe(1)
@@ -126,8 +126,15 @@ describe('listChannelRequestsForAdmin — filtros y urgencia (REQ-CAN-03, REQ-CA
     expect(counts.attention).toBe(2)
   })
 
+  it('#279: la lista NO lleva `data` en el primer nivel (el envelope del framework descartaría `counts`)', async () => {
+    const list = await listChannelRequestsForAdmin(deps(universo), { filter: 'all', now: AHORA })
+    expect('data' in list).toBe(false)
+    expect(list.requests).toHaveLength(6)
+    expect(list.counts.all).toBe(6)
+  })
+
   it('un filtro inventado no vacía la bandeja: cae en "todas"', async () => {
-    const { data } = await listChannelRequestsForAdmin(deps(universo), { filter: 'lo-que-sea', now: AHORA })
+    const { requests: data } = await listChannelRequestsForAdmin(deps(universo), { filter: 'lo-que-sea', now: AHORA })
     expect(data).toHaveLength(6)
   })
 

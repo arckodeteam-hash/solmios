@@ -71,7 +71,10 @@ export interface AddOrderPaymentInput {
 }
 
 export interface AddOrderPaymentResult { part: OrderPaymentDTO; order: OrderDTO; balance: OrderBalance; checkoutUrl?: string }
-export interface OrderPaymentsList { data: OrderPaymentDTO[]; total: number; balance: OrderBalance }
+// #279: SIN `data`/`total` en el primer nivel. `buildEnvelope` (arckode-framework kernel/http/server.ts) toma
+// `{ data: [], total }` como lista paginada, manda `total` a `meta.pagination` y DESCARTA cualquier otra clave:
+// `balance` no llegaba al frontend y "Dividir cuenta" quedaba en blanco. Con `parts` el envelope lo envuelve entero.
+export interface OrderPaymentsList { parts: OrderPaymentDTO[]; balance: OrderBalance }
 export interface SplitPreview { due: number; outstanding: number; parts: number[] }
 
 export const MAX_SPLIT_PARTS = 50
@@ -180,7 +183,7 @@ async function partsOf(deps: SplitPaymentsDeps, orderId: string): Promise<OrderP
 export async function listOrderPayments(deps: SplitPaymentsDeps, orderId: string, user: CurrentUser): Promise<OrderPaymentsList> {
   const order = await loadOrder(deps, orderId, user)
   const parts = await partsOf(deps, orderId)
-  return { data: parts, total: parts.length, balance: balanceOf(order, parts) }
+  return { parts, balance: balanceOf(order, parts) }
 }
 
 /** `GET /orders/:id/split?parts=N` — cómo quedaría el saldo dividido en N partes iguales. No escribe nada. */
