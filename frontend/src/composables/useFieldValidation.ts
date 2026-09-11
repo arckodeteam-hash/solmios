@@ -111,6 +111,7 @@ export const HOTEL_RULES: Record<string, FieldRule> = {
   address: { label: 'Dirección', max: 200 },
   phone: { label: 'Teléfono principal', min: 7, max: 20 },
   phone2: { label: 'Teléfono 2', max: 20 },
+  whatsapp: { label: 'WhatsApp', max: 25 },
   email: { label: 'Email', max: 200, type: 'email' },
   website: { label: 'Sitio web', max: 200, type: 'url' },
   logo: { label: 'Logo', max: 500, type: 'image-src' },   // el backend lo guarda como string libre; el uploader devuelve '/uploads/hotel-logos/...'

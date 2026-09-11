@@ -39,6 +39,11 @@ export const HotelesModel: ModelDefinition = {
     website: { type: 'string' },
     bookingEngineUrl: { type: 'string' },
     phone2: { type: 'string' },
+    // WhatsApp PÚBLICO del hotel (#241): el número al que el huésped le escribe desde la
+    // confirmación de reserva. Distinto de `phone` (puede ser fijo) y de la línea conectada a
+    // Meta (`ai-recepcionista`, es de la IA y el hotel no siempre quiere publicarla). Se edita en
+    // Página pública → General junto a phone/email; vacío = no se muestra el botón.
+    whatsapp: { type: 'string' },
     warningPhone: { type: 'string' },
     secondaryCurrency: { type: 'string' },
     youtubeUrl: { type: 'string' },

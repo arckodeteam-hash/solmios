@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'bun:test'
 import { NotFoundError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
-import { getPublicHotelInfo } from '../usecases/public-hotel-info'
+import { getPublicHotelInfo, buildHotelWhatsappUrl } from '../usecases/public-hotel-info'
 import { rateLimit } from '../../../shared/middlewares/rate-limit'
 
 // ─── Helpers (mismo patrón que restaurant/tests/public-menu.test.ts) ───
@@ -443,5 +443,32 @@ describe('F0 0.5 — rate-limit en endpoints públicos (60/60s para getHotelPubl
     }
     const blocked = await rateLimit(key, { maxAttempts: 120, windowMs: 60_000 })
     expect(blocked.allowed).toBe(false)
+  })
+})
+
+// #241 — Confirmación de reserva: contacto del hotel. El WhatsApp público (`hotels.whatsapp`)
+// llega al DTO crudo y como `wa.me` en E.164; sin número (o con uno que no se puede normalizar)
+// ambos son null y el frontend no dibuja el botón.
+describe('#241 — WhatsApp público del hotel en el DTO', () => {
+  it('con número cargado devuelve `whatsapp` crudo y `whatsappUrl` en E.164 sin el +', async () => {
+    const hotels = backed<any>([hotelSeed({ whatsapp: '+1 (829) 555-0101', country: 'DO' })])
+    const dto = await getPublicHotelInfo({ hotels }, 'hotel-paraiso', undefined)
+    expect(dto.whatsapp).toBe('+1 (829) 555-0101')
+    expect(dto.whatsappUrl).toBe('https://wa.me/18295550101')
+  })
+
+  it('sin prefijo usa el país del hotel (ISO) y cae a DO si está vacío o guardado como nombre', async () => {
+    expect(buildHotelWhatsappUrl('809 555 0101', 'DO')).toBe('https://wa.me/18095550101')
+    expect(buildHotelWhatsappUrl('809 555 0101', 'República Dominicana')).toBe('https://wa.me/18095550101')
+    expect(buildHotelWhatsappUrl('600 123 456', 'ES')).toBe('https://wa.me/34600123456')
+  })
+
+  it('sin número → null en los dos campos (no se inventa un botón)', async () => {
+    const hotels = backed<any>([hotelSeed({ whatsapp: '   ' })])
+    const dto = await getPublicHotelInfo({ hotels }, 'hotel-paraiso', undefined)
+    expect(dto.whatsapp).toBeNull()
+    expect(dto.whatsappUrl).toBeNull()
+    expect(buildHotelWhatsappUrl('123', 'DO')).toBeNull()
+    expect(buildHotelWhatsappUrl(undefined, 'DO')).toBeNull()
   })
 })

@@ -10,6 +10,8 @@ export interface HotelFull {
   address?: string
   phone?: string
   phone2?: string
+  /** WhatsApp público (#241) — Página pública → General. */
+  whatsapp?: string
   warningPhone?: string
   email?: string
   timezone?: string
@@ -96,7 +98,7 @@ const HOTEL_ALLOWED_FIELDS = [
   'name','country','address','phone','email','timezone','currency','checkIn','checkOut','plan',
   'freeCancellation','depositRequired','depositPercent','weekendSurcharge',
   'ownerName','ownerTaxId','deviceEmail','accommodationType','registrationNumber','website',
-  'bookingEngineUrl','phone2','warningPhone','secondaryCurrency','youtubeUrl','starRating',
+  'bookingEngineUrl','phone2','whatsapp','warningPhone','secondaryCurrency','youtubeUrl','starRating',
   'onlineBookingStatus','motorVersion','latitude','longitude','province','municipality',
   'locality','postalCode','cancellationType','cleaningType','depositType','depositFixed','advanceType','advanceAmount',
   'releaseHours','defaultPaymentMethod','requestReviews','publishReviewScore','publishReviewComments',
