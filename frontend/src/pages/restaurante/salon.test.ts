@@ -111,6 +111,8 @@ describe('salon-helpers — estado visual y tiempos', () => {
     expect(elapsedLabel('2026-09-11T11:37:00Z', now)).toBe('hace 23 min')
     expect(elapsedLabel('2026-09-11T10:40:00Z', now)).toBe('hace 1 h 20 min')
     expect(elapsedLabel('2026-09-11T10:00:00Z', now)).toBe('hace 2 h')
+    expect(elapsedLabel('2026-09-09T09:00:00Z', now)).toBe('hace 2 d 3 h')
+    expect(elapsedLabel('2026-08-05T12:00:00Z', now)).toBe('hace 37 d')
     expect(elapsedLabel(undefined, now)).toBe('')
     expect(elapsedLabel('no-es-fecha', now)).toBe('')
   })
