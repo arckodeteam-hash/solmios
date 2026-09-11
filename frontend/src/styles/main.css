@@ -325,14 +325,17 @@
 
   /* Área táctil mínima (44px) en móvil para los botones principales */
   @media (max-width: 639px) {
-    /* button.bg-navy / a.bg-navy: CTAs primarios escritos con utilidades sueltas
-       (bg-navy … py-2.5 rounded-*) que no usan .btn-primary */
+    /* CTAs primarios escritos con utilidades sueltas (`bg-navy … py-2.5 rounded-*`, ej.
+       "Nueva Reserva") que no usan .btn-primary. Se acota por `py-2.5`/`py-3` para no tocar
+       los toggles/tabs compactos que llevan bg-navy condicional (py-0.5 … py-2). */
     .btn-primary,
     .btn-accent,
     .btn-ghost,
     .wizard-btn-primary,
-    button.bg-navy,
-    a.bg-navy {
+    button.bg-navy.py-2\.5,
+    a.bg-navy.py-2\.5,
+    button.bg-navy.py-3,
+    a.bg-navy.py-3 {
       min-height: 44px;
       display: inline-flex;
       align-items: center;
