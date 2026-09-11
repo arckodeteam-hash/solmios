@@ -45,3 +45,8 @@ const MS_PER_HOUR = 60 * MS_PER_MINUTE
  *  (más allá ya no es "abandono recuperable", es pérdida de interés). Tunable vía config. */
 export const DEFAULT_ABANDON_MIN_AGE_MS = MS_PER_HOUR          // 1h
 export const DEFAULT_ABANDON_MAX_AGE_MS = 4 * MS_PER_HOUR      // 4h
+
+/** TTL de pago por defecto (horas) cuando el hotel no tiene fila en booking_config o la
+ *  columna `pendingPaymentTtlHours` es null (filas previas a #248). Mismo valor que
+ *  `bookingengine/usecases/config.ts` — se duplica a propósito: no se importa entre módulos. */
+export const DEFAULT_PENDING_PAYMENT_TTL_HOURS = 24
