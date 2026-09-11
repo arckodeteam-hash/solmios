@@ -8,7 +8,11 @@ import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderIte
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { createModuleGuard } from '../../infrastructure/auth/require-module'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
-import { bearerFromQuery } from '../../infrastructure/auth/bearer-from-query'
+import { sseTicketAuth } from '../../infrastructure/auth/sse-ticket-auth'
+import { loadPermissions } from '../../infrastructure/auth/load-permissions'
+import { requirePermission } from '../../infrastructure/auth/require-permission'
+import { HotelAuth } from '../../infrastructure/auth/hotel-auth'
+import { TICKET_SCOPE, TICKET_TTL_SECONDS } from './usecases/events'
 
 export { RestaurantService }
 export type {
@@ -36,7 +40,9 @@ export function RestaurantModule() {
       version: '1.0.0',
       description: 'POS de restaurante',
       actions: ['listStations', 'getStation', 'createStation', 'updateStation', 'deleteStation'],
-      events: ['onOrderSent', 'onLineStatusChanged', 'onOrderCharged', 'onOrderPaid', 'onOrderRefunded', 'onOrderClosed', 'onTableChanged'],
+      events: ['onOrderSent', 'onLineStatusChanged', 'onOrderCharged', 'onOrderPaid', 'onOrderRefunded',
+        // #211 (append-only): cierre de comanda y cambio de estado de mesa, para el canal en vivo.
+        'onOrderClosed', 'onTableChanged'],
       tables: [
         'restaurant_stations', 'menu_categories', 'menu_items',
         'restaurant_tables', 'restaurant_orders', 'restaurant_order_items',
@@ -159,11 +165,20 @@ export function RestaurantModule() {
       router.put('/api/restaurant/kds/lines/:id', guard('restaurant', 'edit'), (req) => controller.setLineStatus(req))
 
       // Canal en vivo (#211): SSE por hotel para KDS y Salón. `EventSource` no manda headers, así que
-      // el stream se abre con un ticket de 60 s (`/events/ticket`, pedido con el JWT normal) que
-      // `bearerFromQuery` acomoda donde `auth.authenticate()` lo espera; el resto del guard es el
-      // mismo de la cola (`restaurant:view` + módulo habilitado). Ver usecases/events.ts.
+      // el stream se abre con un ticket de 60 s (`/events/ticket`, pedido con el JWT normal) que viaja
+      // por query. El ticket NO es un access token (type 'ticket' + scope + jti de un solo uso):
+      // `sseTicketAuth` reemplaza a `auth.authenticate()` en esta ruta — un JWT de sesión acá da 401 y
+      // el ticket como Bearer en cualquier otra ruta también. El resto del guard es el mismo de la
+      // cola (`restaurant:view` + módulo habilitado). Ver usecases/events.ts y sse-ticket-auth.ts.
+      if (!(auth instanceof HotelAuth)) throw new Error('restaurant: el canal en vivo requiere HotelAuth (tickets de un solo uso)')
+      const ticketGuard = [
+        sseTicketAuth(auth, { scope: TICKET_SCOPE, ttlMs: TICKET_TTL_SECONDS * 1000 }),
+        loadPermissions(roleRepo),
+        requirePermission('restaurant', 'view'),
+        moduleGuard('restaurant'),
+      ]
       router.get('/api/restaurant/events/ticket', guard('restaurant', 'view'), (req) => controller.eventsTicket(req))
-      router.get('/api/restaurant/events', [bearerFromQuery('ticket'), ...guard('restaurant', 'view')], (req) => controller.events(req))
+      router.get('/api/restaurant/events', ticketGuard, (req) => controller.events(req))
 
       // Modificadores/variantes (F1). Mismo criterio que categorías/ítems: lectura operativa
       // ('restaurant', el mesero necesita ver las opciones para armar la comanda), mutación es

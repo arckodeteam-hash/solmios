@@ -110,3 +110,18 @@ describe('cocina.vue — Cancelar pasa por el modal de motivo', () => {
     expect(cancelBtn).toMatch(/v-if="deletePerm && /)
   })
 })
+
+describe('cocina.vue — el KDS suena también sin stream (#211, polling de respaldo)', () => {
+  it('refresh() detecta comandas nuevas por diff de ids y hace beep cuando el canal no está en vivo', () => {
+    const script = COCINA.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)![1]!
+    const refreshFn = script.match(/async function refresh\([\s\S]*?\n}\n/)?.[0]
+    expect(refreshFn, 'no se encontró refresh()').toBeDefined()
+    expect(refreshFn).toMatch(/knownOrderIds/)
+    expect(refreshFn).toMatch(/!knownOrderIds!\.has\(t\.order\.id\)/)
+    expect(refreshFn).toMatch(/if \(arrived && live\.state\.value !== 'live'\) beep\(\)/)
+    // La primera carga y el cambio de estación (spinner) no suenan.
+    expect(refreshFn).toMatch(/knownOrderIds && !showSpinner/)
+    // En vivo sigue sonando por el evento order.sent de la estación que se mira.
+    expect(script).toMatch(/if \(e\.type === 'order\.sent' && concernsThisStation\(e\.stationIds\)\) beep\(\)/)
+  })
+})

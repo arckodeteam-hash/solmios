@@ -2,7 +2,9 @@
 //
 // A nivel de RUTA REAL (router.resolve sobre el módulo montado, mismo esquema que permissions-routes):
 //   - GET /api/restaurant/events sin token → 401 (y con un ticket inválido, también).
-//   - el ticket de 60 s (`/events/ticket`) abre el stream sin header, y el JWT de sesión por header también.
+//   - el ticket de 60 s (`/events/ticket`) abre el stream sin header; el JWT de sesión NO lo abre (401).
+//   - el ticket no es un access token: como Bearer en /tables → 401; usado dos veces → 401 la segunda.
+//   - tope de streams por hotel (20) y por usuario (3): al superarlo se cierra el más viejo.
 //   - AISLAMIENTO: un stream abierto con token del hotel A NO recibe lo que se publica para el hotel B.
 //   - el hub: heartbeat, vida máxima y closeAll terminan el generador y sueltan al suscriptor.
 //   - el ticket del KDS resuelve "Terraza · Mesa 3" / "Hab. 204" y la estación guarda `alertMinutes`.
@@ -10,7 +12,7 @@ import { describe, it, expect } from 'bun:test'
 import { Router } from 'arckode-framework'
 import { fakeLogger, makeAuth, bearer, tokenFor } from '../../../infrastructure/auth/tests/route-permission-helpers'
 import { RestaurantModule } from '../index'
-import { RestaurantEventHub } from '../usecases/events'
+import { RestaurantEventHub, MAX_STREAMS_PER_HOTEL, MAX_STREAMS_PER_USER, TICKET_SCOPE } from '../usecases/events'
 
 type Row = Record<string, any>
 
@@ -88,8 +90,9 @@ describe('GET /api/restaurant/events — autenticación', () => {
     expect(t.status).toBe(200)
     const { ticket, expiresIn } = t.body as { ticket: string; expiresIn: number }
     expect(expiresIn).toBe(60)
-    // El ticket conserva hotel y rol del JWT original.
-    expect(auth.verifyToken(ticket)).toMatchObject({ id: 'user-kitchen', role: 'kitchen', hotelId: 'h1' })
+    // El ticket conserva hotel y rol del JWT original, con su scope y un jti.
+    expect(auth.verifyTicket(ticket, TICKET_SCOPE)).toMatchObject({ id: 'user-kitchen', role: 'kitchen', hotelId: 'h1' })
+    expect(auth.verifyTicket(ticket, TICKET_SCOPE).jti).toBeTruthy()
 
     const res = await router.resolve('GET', '/api/restaurant/events', { headers: {}, query: { ticket } })
     expect(res.status).toBe(200)
@@ -99,19 +102,130 @@ describe('GET /api/restaurant/events — autenticación', () => {
     expect(hello.type).toBe('hello')
   })
 
-  it('el JWT de sesión por header también abre el stream (el header gana sobre la query)', async () => {
+  it('el access token normal (JWT de sesión) NO abre el stream: ni por header ni por query → 401', async () => {
     const { router, auth } = mount()
-    const res = await router.resolve('GET', '/api/restaurant/events', { headers: bearer(auth, 'kitchen', 'h1'), query: { ticket: 'basura' } })
+    const byHeader = await router.resolve('GET', '/api/restaurant/events', { headers: bearer(auth, 'kitchen', 'h1') })
+    expect(byHeader.status).toBe(401)
+    expect(byHeader.stream).toBeUndefined()
+    const byQuery = await router.resolve('GET', '/api/restaurant/events', { headers: {}, query: { ticket: tokenFor(auth, 'kitchen', 'h1') } })
+    expect(byQuery.status).toBe(401)
+  })
+
+  it('el ticket como Bearer en cualquier otra ruta → 401 (no es un access token)', async () => {
+    const { router, auth } = mount()
+    const t = await router.resolve('GET', '/api/restaurant/events/ticket', { headers: bearer(auth, 'kitchen', 'h1') })
+    const { ticket } = t.body as { ticket: string }
+    const tables = await router.resolve('GET', '/api/restaurant/tables', { headers: { authorization: `Bearer ${ticket}` } })
+    expect(tables.status).toBe(401)
+    const kds = await router.resolve('GET', '/api/restaurant/kds', { headers: { authorization: `Bearer ${ticket}` } })
+    expect(kds.status).toBe(401)
+    // Ni siquiera para pedir otro ticket.
+    const again = await router.resolve('GET', '/api/restaurant/events/ticket', { headers: { authorization: `Bearer ${ticket}` } })
+    expect(again.status).toBe(401)
+    expect(() => auth.verifyToken(ticket)).toThrow()
+  })
+
+  it('el ticket es de un solo uso: la segunda vez → 401', async () => {
+    const { router, auth } = mount()
+    const t = await router.resolve('GET', '/api/restaurant/events/ticket', { headers: bearer(auth, 'kitchen', 'h1') })
+    const { ticket } = t.body as { ticket: string }
+    const first = await router.resolve('GET', '/api/restaurant/events', { headers: {}, query: { ticket } })
+    expect(first.status).toBe(200)
+    await first.stream!.return(undefined)
+    const second = await router.resolve('GET', '/api/restaurant/events', { headers: {}, query: { ticket } })
+    expect(second.status).toBe(401)
+    expect(second.stream).toBeUndefined()
+    // Un ticket nuevo del mismo usuario sí abre (el jti es por ticket, no por usuario).
+    const t2 = await router.resolve('GET', '/api/restaurant/events/ticket', { headers: bearer(auth, 'kitchen', 'h1') })
+    const third = await router.resolve('GET', '/api/restaurant/events', { headers: {}, query: { ticket: (t2.body as any).ticket } })
+    expect(third.status).toBe(200)
+    await third.stream!.return(undefined)
+  })
+
+  it('un ticket con otro scope → 401', async () => {
+    const { router, auth } = mount()
+    const { ticket } = auth.createTicket({ id: 'user-kitchen', role: 'kitchen', hotelId: 'h1' }, 'otro:scope', '60s')
+    const res = await router.resolve('GET', '/api/restaurant/events', { headers: {}, query: { ticket } })
+    expect(res.status).toBe(401)
+  })
+})
+
+describe('GET /api/restaurant/events — tope de streams simultáneos', () => {
+  /** Abre un stream con ticket nuevo del usuario y lee el hello (queda suscripto). */
+  async function open(router: Router, auth: ReturnType<typeof makeAuth>, role: string, hotel: string) {
+    const t = await router.resolve('GET', '/api/restaurant/events/ticket', { headers: bearer(auth, role, hotel) })
+    const res = await router.resolve('GET', '/api/restaurant/events', { headers: {}, query: { ticket: (t.body as any).ticket } })
     expect(res.status).toBe(200)
-    await res.stream!.return(undefined)
+    const stream = res.stream!
+    await stream.next()   // hello
+    return stream
+  }
+
+  it(`por usuario: el ${MAX_STREAMS_PER_USER + 1}º stream cierra el más viejo del mismo usuario y no toca a otro usuario`, async () => {
+    const { router, auth, service } = mount()
+    const hub: RestaurantEventHub = (service as any).eventHub
+    const other = await open(router, auth, 'hotel_admin', 'h1')
+    const streams: AsyncGenerator<string>[] = []
+    for (let i = 0; i < MAX_STREAMS_PER_USER; i++) streams.push(await open(router, auth, 'kitchen', 'h1'))
+    expect(hub.sizeForUser('h1', 'user-kitchen')).toBe(MAX_STREAMS_PER_USER)
+    const oldestDone = streams[0]!.next()   // se resuelve done cuando lo cierran
+    const extra = await open(router, auth, 'kitchen', 'h1')
+    expect(hub.sizeForUser('h1', 'user-kitchen')).toBe(MAX_STREAMS_PER_USER)
+    expect((await oldestDone).done).toBe(true)
+    // El más nuevo y el segundo siguen vivos; el otro usuario ni se enteró.
+    expect(hub.sizeForUser('h1', 'user-hotel_admin')).toBe(1)
+    hub.publish('h1', { type: 'order.sent', orderId: 'x' })
+    expect(JSON.parse((await extra.next()).value).orderId).toBe('x')
+    expect(JSON.parse((await streams[1]!.next()).value).orderId).toBe('x')
+    expect(JSON.parse((await other.next()).value).orderId).toBe('x')
+    for (const s of [other, extra, ...streams.slice(1)]) await s.return(undefined)
+    expect(hub.size('h1')).toBe(0)
+  })
+
+  it(`por hotel: el ${MAX_STREAMS_PER_HOTEL + 1}º stream cierra el más viejo del hotel`, async () => {
+    const hub = new RestaurantEventHub({ heartbeatMs: 60_000, maxLifetimeMs: 60_000 })
+    const streams: AsyncGenerator<string>[] = []
+    for (let i = 0; i < MAX_STREAMS_PER_HOTEL; i++) {
+      const s = hub.subscribe('h1', `u${i}`)
+      await s.next()
+      streams.push(s)
+    }
+    expect(hub.size('h1')).toBe(MAX_STREAMS_PER_HOTEL)
+    const oldestDone = streams[0]!.next()
+    const extra = hub.subscribe('h1', 'u-extra')
+    await extra.next()
+    expect(hub.size('h1')).toBe(MAX_STREAMS_PER_HOTEL)
+    expect((await oldestDone).done).toBe(true)
+    // Otro hotel no cuenta para el tope.
+    const h2 = hub.subscribe('h2', 'u0')
+    await h2.next()
+    expect(hub.size('h1')).toBe(MAX_STREAMS_PER_HOTEL)
+    expect(hub.size('h2')).toBe(1)
+    hub.closeAll()
+    for (const s of [extra, h2, ...streams.slice(1)]) await s.return(undefined)
+    expect(hub.size('h1')).toBe(0)
+  })
+
+  it('tope configurable: con maxPerUser 1, la segunda conexión del mismo usuario reemplaza a la primera', async () => {
+    const hub = new RestaurantEventHub({ heartbeatMs: 60_000, maxLifetimeMs: 60_000, maxPerUser: 1, maxPerHotel: 10 })
+    const a = hub.subscribe('h1', 'u1')
+    await a.next()
+    const aDone = a.next()
+    const b = hub.subscribe('h1', 'u1')
+    await b.next()
+    expect((await aDone).done).toBe(true)
+    expect(hub.sizeForUser('h1', 'u1')).toBe(1)
+    await b.return(undefined)
   })
 })
 
 describe('GET /api/restaurant/events — aislamiento por hotel', () => {
   it('un stream del hotel h1 recibe lo publicado para h1 y NUNCA lo de h2', async () => {
     const { router, auth, service } = mount()
-    const h1 = await router.resolve('GET', '/api/restaurant/events', { headers: bearer(auth, 'kitchen', 'h1') })
-    const h2 = await router.resolve('GET', '/api/restaurant/events', { headers: { authorization: `Bearer ${tokenFor(auth, 'waiter', 'h2')}` } })
+    const ticketFor = async (role: string, hotel: string) =>
+      ((await router.resolve('GET', '/api/restaurant/events/ticket', { headers: bearer(auth, role, hotel) })).body as { ticket: string }).ticket
+    const h1 = await router.resolve('GET', '/api/restaurant/events', { headers: {}, query: { ticket: await ticketFor('kitchen', 'h1') } })
+    const h2 = await router.resolve('GET', '/api/restaurant/events', { headers: {}, query: { ticket: await ticketFor('waiter', 'h2') } })
     expect(h1.status).toBe(200)
     expect(h2.status).toBe(200)
 

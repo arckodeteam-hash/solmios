@@ -173,11 +173,21 @@ function concernsThisStation(stationIds: string[] | undefined): boolean {
 }
 
 // ─── Datos + canal en vivo (#211) ───
+// Ids de comandas que ya estaban en la cola: un id nuevo en un refresco = ticket que acaba de entrar.
+// Es lo que hace sonar el KDS cuando NO hay stream (polling de respaldo): el `order.sent` en vivo ya
+// suena solo, y refresca la cola antes del siguiente polling, así que el mismo ticket no suena dos veces.
+let knownOrderIds: Set<string> | null = null
 async function refresh(showSpinner = false) {
   if (showSpinner) loading.value = true
   refreshing.value = true
   try {
-    tickets.value = await RestaurantService.kdsQueue(station.value || undefined)
+    const next = await RestaurantService.kdsQueue(station.value || undefined)
+    const ids = new Set(next.map((t) => t.order.id))
+    // Primera carga o cambio de estación (spinner): la cola entera es "nueva" y no debe sonar.
+    const arrived = knownOrderIds && !showSpinner ? next.some((t) => !knownOrderIds!.has(t.order.id)) : false
+    knownOrderIds = ids
+    tickets.value = next
+    if (arrived && live.state.value !== 'live') beep()
   } catch (e: unknown) {
     if (showSpinner) toast.error(e instanceof Error ? e.message : 'No se pudo cargar la cocina')
   } finally {
