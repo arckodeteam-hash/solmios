@@ -107,10 +107,10 @@ export function kdsDeps(w: RestaurantWiring): kds.KdsDeps {
   if (!w.orders || !w.lines) throw new ValidationError(NO_ORDERS)
   return { orders: w.orders, lines: w.lines, userRepo: w.userRepo, auth: w.auth, sockets: w.sockets, tables: w.tables, rooms: w.rooms }
 }
-/** #213: cierre del día. */
+/** #213: cierre del día. #282: con las partes de una cuenta dividida (propina por parte, cargo a habitación por parte). */
 export function reportsDeps(w: RestaurantWiring): reports.ReportsDeps {
   if (!w.orders || !w.lines || !w.hotels) throw new ValidationError(NO_ORDERS)
-  return { orders: w.orders, lines: w.lines, hotels: w.hotels, users: w.userRepo, ports: w.reportPorts }
+  return { orders: w.orders, lines: w.lines, hotels: w.hotels, users: w.userRepo, orderPayments: w.orderPayments, ports: w.reportPorts }
 }
 /** #216: impresión 80 mm (precuenta/ticket/cocina). El pago del ticket sale por `reportPorts.paymentById`. */
 export function printDeps(w: RestaurantWiring): print.PrintDeps {

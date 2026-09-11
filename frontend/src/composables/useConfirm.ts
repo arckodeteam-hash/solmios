@@ -28,6 +28,9 @@ export function useConfirm(opts: { onDone?: () => void; onError?: (e: unknown) =
       confirmModal.value = null
       opts.onDone?.()
     } catch (e) {
+      // #282 (L): la acción falló (p. ej. 409 "forma parte de un combo"): el modal se cierra y el mensaje
+      // queda en el toast. Antes quedaba abierto ofreciendo "Eliminar" de nuevo, con el mismo resultado.
+      confirmModal.value = null
       opts.onError?.(e)
     } finally {
       confirmBusy.value = false

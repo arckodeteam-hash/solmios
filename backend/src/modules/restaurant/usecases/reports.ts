@@ -15,6 +15,13 @@
 //   aparte. Criterio: `neto = payment.amount − comanda.tip`, `propina = comanda.tip`. En una devolución,
 //   primero se devuelve la venta y sólo lo que excede el neto sale de la propina; subtotal/impuesto se
 //   descuentan en la proporción de la comanda. Así `total = subtotal + tax` siempre cierra.
+// - Cuenta dividida (#214, corregido en #282): una comanda puede tener N payments (uno por parte,
+//   `metadata.orderPaymentId`). Los cobros se AGRUPAN POR COMANDA antes de descomponer: la comanda aporta
+//   subtotal/impuesto/propina UNA vez (sobre la suma de sus partes) y las partes sólo reparten el neto por
+//   método (la propina de cada parte sale de `restaurant_order_payments`; sin esa tabla, a prorrata del
+//   monto). Antes cada parte se trataba como un pago completo: impuesto 0, la segunda parte iba a
+//   "huérfanos" y no entraba en byType/byHour. Una parte `room` es un cargo al folio por
+//   `'pos:'+orderId+':'+seq`, y una devolución de parte resta de SU método.
 // - Las comandas aportan lo que no es plata: cantidad, tipo, comensales, franja horaria, anuladas con
 //   motivo, líneas anuladas, top de ítems y estaciones.
 // - Descuentos y cortesías (#215) → `restaurant_order_items.discount*` (línea) + `restaurant_orders.discount*`
@@ -30,7 +37,7 @@
 // piden POR COMANDA del rango. Nada trae el histórico del hotel.
 import type { RepositoryAdapter } from 'arckode-framework'
 import { ValidationError } from 'arckode-framework'
-import type { OrderDTO, OrderItemDTO, CurrentUser, OrderType } from '../types'
+import type { OrderDTO, OrderItemDTO, OrderPaymentDTO, CurrentUser, OrderType } from '../types'
 import { round2 } from '../../../shared/utils/money'
 import { hotelTimezone } from '../../../shared/utils/hotel-schedule'
 import { localDateHour } from '../../../shared/utils/business-date'
@@ -80,6 +87,12 @@ export interface ReportsDeps {
   hotels: RepositoryAdapter<any>
   /** #215: `users` para resolver el nombre de quien aplicó cada descuento (`discountBy` = users.id). Opcional por retrocompat con tests de #213. */
   users?: RepositoryAdapter<any>
+  /**
+   * #282: partes de una cuenta dividida (`restaurant_order_payments`, #214). Con ellas la propina de cada
+   * parte es exacta y el cargo a habitación de una parte `room` se lee por `'pos:'+orderId+':'+seq`.
+   * Opcional: sin la tabla, la propina se reparte a prorrata del monto y sólo se busca `'pos:'+orderId`.
+   */
+  orderPayments?: RepositoryAdapter<OrderPaymentDTO>
   ports: ReportPorts
 }
 
@@ -174,8 +187,12 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 /** Tope del rango: un año. Más que eso no es un cierre, es un export contable. */
 export const MAX_RANGE_DAYS = 366
 export const TOP_ITEMS = 10
-/** Comandas vendidas: cobradas, cargadas a folio o cobradas y después devueltas (la venta queda en su día). */
-const SOLD_STATUSES: OrderDTO['status'][] = ['paid', 'charged', 'refunded']
+/**
+ * Comandas vendidas: cobradas, cargadas a folio o cobradas y después devueltas, entera o UNA parte de una
+ * cuenta dividida (#282: `partially_refunded` faltaba y la comanda desaparecía del cierre con sus cobros
+ * como huérfanos). La venta queda en su día; la devolución resta en el suyo.
+ */
+const SOLD_STATUSES: OrderDTO['status'][] = ['paid', 'charged', 'refunded', 'partially_refunded']
 /** Concurrencia al pedir líneas/cargos por comanda y días: acotada para no abrir miles de consultas a la vez en PG. */
 const CONCURRENCY = 25
 const RESTAURANT_SOURCE = 'restaurant'
@@ -269,33 +286,70 @@ const isRestaurantPayment = (p: ReportPayment): boolean => p?.metadata?.source =
 const isCharge = (p: ReportPayment): boolean => p.type === 'charge' && (p.status === 'completed' || p.status === 'refunded')
 const isRefund = (p: ReportPayment): boolean => p.type === 'refund' && p.status === 'completed'
 
-/** Una venta descompuesta en plata: neto (= subtotal + tax), propina y método. */
-interface Sale { net: number; subtotal: number; tax: number; tip: number; method: SalesMethod }
+/** Una venta descompuesta en plata: neto (= subtotal + tax), propina y el neto que aportó cada método. */
+interface Sale { net: number; subtotal: number; tax: number; tip: number; byMethod: Array<{ method: SalesMethod; net: number }> }
 
-/** Cobro directo: el payment trae el bruto; la propina se descompone con la de la comanda (ver cabecera). */
-function saleFromPayment(p: ReportPayment, order: OrderDTO | undefined): Sale {
-  const amount = Number(p.amount || 0)
-  const tip = Math.min(amount, Math.max(0, Number(order?.tip || 0)))
-  const net = amount - tip
-  const subtotal = Math.min(net, Math.max(0, Number(order?.subtotal || 0)))
-  return { net, subtotal, tax: order ? net - subtotal : 0, tip, method: methodOf(p.method) }
+/** Una parte de una cuenta dividida que movió plata (completed, o devuelta con la comanda ya liquidada). */
+const isPaidPart = (p: OrderPaymentDTO): boolean => p.status === 'completed' || p.status === 'refunding' || p.status === 'refunded'
+
+/** Subtotal e impuesto de un neto, en la proporción de la comanda (sin comanda, todo es subtotal). */
+function splitNet(net: number, order: OrderDTO | undefined): { subtotal: number; tax: number } {
+  const base = Number(order?.subtotal || 0) + Number(order?.tax || 0)
+  const tax = base > 0 ? (net * Number(order?.tax || 0)) / base : 0
+  return { subtotal: net - tax, tax }
+}
+
+/**
+ * Cobros directos de UNA comanda (uno, o uno por parte si la cuenta se dividió): la comanda aporta la
+ * propina y la proporción subtotal/impuesto una sola vez sobre la SUMA; cada payment reparte su neto
+ * bajo su método. La propina de cada parte es la de `restaurant_order_payments` si está (`parts`);
+ * si no, la de la comanda a prorrata del monto de cada payment.
+ */
+function saleFromCharges(payments: ReportPayment[], order: OrderDTO | undefined, parts: Map<string, OrderPaymentDTO>): Sale {
+  const gross = payments.reduce((s, p) => s + Number(p.amount || 0), 0)
+  const tip = Math.min(gross, Math.max(0, Number(order?.tip || 0)))
+  const net = gross - tip
+  const byMethod = new Map<SalesMethod, number>()
+  let assigned = 0
+  const tipOf = (p: ReportPayment): number => {
+    const part = parts.get(String(p.metadata?.orderPaymentId ?? ''))
+    if (part) return Math.min(Number(p.amount || 0), Math.max(0, Number(part.tip || 0)))
+    return gross > 0 ? (tip * Number(p.amount || 0)) / gross : 0
+  }
+  payments.forEach((p, idx) => {
+    // El último payment absorbe el redondeo: la suma de los netos por método es exactamente `net`.
+    const partNet = idx === payments.length - 1 ? net - assigned : Number(p.amount || 0) - tipOf(p)
+    assigned += partNet
+    const m = methodOf(p.method)
+    byMethod.set(m, (byMethod.get(m) ?? 0) + partNet)
+  })
+  return { net, ...splitNet(net, order), tip, byMethod: [...byMethod].map(([method, n]) => ({ method, net: n })) }
 }
 
 /** Cargo a habitación: lo que asentó el folio (neto + su impuesto). */
 function saleFromFolioCharge(c: ReportFolioCharge): Sale {
   const subtotal = Number(c.amount || 0), tax = Number(c.taxes || 0)
-  return { net: Number(c.total ?? subtotal + tax), subtotal, tax, tip: 0, method: 'folio' }
+  const net = Number(c.total ?? subtotal + tax)
+  return { net, subtotal, tax, tip: 0, byMethod: [{ method: 'folio', net }] }
 }
 
-/** Devolución: primero sale de la venta, lo que excede el neto sale de la propina; subtotal/impuesto en la proporción de la comanda. */
-function refundBreakdown(p: ReportPayment, order: OrderDTO | undefined): Sale {
+/** Dos ventas de la misma comanda (cobro directo + cargo a habitación de una cuenta dividida). */
+function mergeSales(a: Sale | undefined, b: Sale): Sale {
+  if (!a) return b
+  return { net: a.net + b.net, subtotal: a.subtotal + b.subtotal, tax: a.tax + b.tax, tip: a.tip + b.tip, byMethod: [...a.byMethod, ...b.byMethod] }
+}
+
+/**
+ * Devolución: primero sale de la venta, lo que excede el neto sale de la propina; subtotal/impuesto en la
+ * proporción de la comanda. Si es la devolución de UNA PARTE (#282), la propina es la de esa parte.
+ */
+function refundBreakdown(p: ReportPayment, order: OrderDTO | undefined, part: OrderPaymentDTO | undefined): Sale {
   const amount = Number(p.amount || 0)
   const orderNet = Math.max(0, Number(order?.total || 0) - Number(order?.tip || 0))
-  const tip = order ? Math.max(0, amount - orderNet) : 0
+  const tip = part ? Math.min(amount, Math.max(0, Number(part.tip || 0))) : order ? Math.max(0, amount - orderNet) : 0
   const net = amount - tip
-  const base = Number(order?.subtotal || 0) + Number(order?.tax || 0)
-  const tax = base > 0 ? (net * Number(order?.tax || 0)) / base : 0
-  return { net, subtotal: net - tax, tax, tip, method: methodOf(p.method) }
+  const method = methodOf(p.method)
+  return { net, ...splitNet(net, order), tip, byMethod: [{ method, net }] }
 }
 
 /** La comanda de un pago (por `metadata.orderId`): del rango si está, si no una lectura acotada por id + hotel. */
@@ -339,21 +393,56 @@ export async function dailyReport(deps: ReportsDeps, query: DailyReportQuery | u
   const lines = await linesOf(deps, [...sold, ...cancelled])
 
   // ─── Plata: cobros directos (payments) y cargos a habitación (folio), por comanda ───
-  const salesByOrder = new Map<string, Sale>()
-  const orphanSales: Array<{ sale: Sale; businessDate: string }> = []   // cobros del restaurante sin comanda en el rango
+  // #282: las partes de una cuenta dividida (`restaurant_order_payments`) se leen UNA vez por comanda que
+  // las tenga, y sólo si la tabla está cableada. Sirven para la propina exacta de cada parte y para el
+  // cargo a habitación de una parte `room` (`pos:<orderId>:<seq>`).
+  const partsCache = new Map<string, Map<string, OrderPaymentDTO>>()
+  const partsOf = async (orderId: string): Promise<Map<string, OrderPaymentDTO>> => {
+    if (!deps.orderPayments) return new Map()
+    const cached = partsCache.get(orderId)
+    if (cached) return cached
+    const rows = ((await deps.orderPayments.findMany({ orderId, hotelId })) as OrderPaymentDTO[]).filter((p) => p.hotelId === hotelId)
+    const map = new Map(rows.map((p) => [p.id, p]))
+    partsCache.set(orderId, map)
+    return map
+  }
+  const hasParts = (payments: ReportPayment[]): boolean => payments.some((p) => !!p.metadata?.orderPaymentId)
+
+  // Cobros agrupados por comanda (una comanda dividida tiene un payment por parte): la comanda aporta sus
+  // totales UNA vez y las partes reparten por método. Un cobro sin `orderId` va solo.
+  const chargeGroups = new Map<string, { payments: ReportPayment[]; businessDate: string }>()
   for (const d of perDay) {
     for (const p of d.payments.filter(isCharge)) {
-      const order = await orderOfPayment(deps, hotelId, p, known)
-      const sale = saleFromPayment(p, order)
-      if (order && dayOfOrder.has(order.id) && !salesByOrder.has(order.id)) salesByOrder.set(order.id, sale)
-      else orphanSales.push({ sale, businessDate: d.businessDate })
+      const key = String(p.metadata?.orderId ?? '') || `payment:${p.id}`
+      const g = chargeGroups.get(key) ?? { payments: [], businessDate: d.businessDate }
+      g.payments.push(p); chargeGroups.set(key, g)
     }
   }
-  const folioOrders = sold.filter((o) => o.settlement === 'folio' || o.status === 'charged')
-  const folioCharges = deps.ports.folioCharge
-    ? await inChunks(folioOrders, (o) => deps.ports.folioCharge!(hotelId, posReference(o.id)))
+  const salesByOrder = new Map<string, Sale>()
+  const orphanSales: Array<{ sale: Sale; businessDate: string }> = []   // cobros del restaurante sin comanda en el rango
+  for (const g of chargeGroups.values()) {
+    const order = await orderOfPayment(deps, hotelId, g.payments[0], known)
+    const parts = order && hasParts(g.payments) ? await partsOf(order.id) : new Map<string, OrderPaymentDTO>()
+    const sale = saleFromCharges(g.payments, order, parts)
+    if (order && dayOfOrder.has(order.id)) salesByOrder.set(order.id, sale)
+    else orphanSales.push({ sale, businessDate: g.businessDate })
+  }
+  // Cargo a habitación: la comanda entera (`pos:<orderId>`) o cada parte `room` de una cuenta dividida.
+  const folioOrders = sold.filter((o) => o.settlement === 'folio' || o.settlement === 'split' || o.status === 'charged')
+  const folioSales = deps.ports.folioCharge
+    ? await inChunks(folioOrders, async (o): Promise<Sale | null> => {
+      const whole = o.settlement === 'split' ? null : await deps.ports.folioCharge!(hotelId, posReference(o.id))
+      if (whole) return saleFromFolioCharge(whole)
+      const roomParts = [...(await partsOf(o.id)).values()].filter((p) => p.method === 'room' && isPaidPart(p)).sort((a, b) => Number(a.seq) - Number(b.seq))
+      let sale: Sale | undefined
+      for (const part of roomParts) {
+        const c = await deps.ports.folioCharge!(hotelId, `${posReference(o.id)}:${part.seq}`)
+        if (c) sale = mergeSales(sale, saleFromFolioCharge(c))
+      }
+      return sale ?? null
+    })
     : folioOrders.map(() => null)
-  folioOrders.forEach((o, idx) => { const c = folioCharges[idx]; if (c) salesByOrder.set(o.id, saleFromFolioCharge(c)) })
+  folioOrders.forEach((o, idx) => { const s = folioSales[idx]; if (s) salesByOrder.set(o.id, mergeSales(salesByOrder.get(o.id), s)) })
 
   // ─── Ventas ───
   const byMethod = emptyMethods()
@@ -365,7 +454,8 @@ export async function dailyReport(deps: ReportsDeps, query: DailyReportQuery | u
   let subtotal = 0, tax = 0, tips = 0, covers = 0
   const addMoney = (s: Sale, businessDate: string) => {
     subtotal += s.subtotal; tax += s.tax; tips += s.tip
-    byMethod[s.method].amount += s.net; byMethod[s.method].orders += 1
+    // Una comanda dividida cuenta en cada método que la pagó: `orders` por método puede sumar más que `sales.orders`.
+    for (const part of s.byMethod) { byMethod[part.method].amount += part.net; byMethod[part.method].orders += 1 }
     const day = byDayMap.get(businessDate)
     if (day) { day.amount += s.net; day.tips += s.tip }
   }
@@ -433,10 +523,12 @@ export async function dailyReport(deps: ReportsDeps, query: DailyReportQuery | u
   for (const d of perDay) {
     for (const p of d.payments.filter(isRefund)) {
       const order = await orderOfPayment(deps, hotelId, p, known)
-      const r = refundBreakdown(p, order)
+      const partId = String(p.metadata?.orderPaymentId ?? '')
+      const part = order && partId ? (await partsOf(order.id)).get(partId) : undefined
+      const r = refundBreakdown(p, order, part)
       refundsCount += 1; refundedAmount += Number(p.amount || 0)
       subtotal -= r.subtotal; tax -= r.tax; tips -= r.tip
-      byMethod[r.method].amount -= r.net
+      for (const m of r.byMethod) byMethod[m.method].amount -= m.net
       const day = byDayMap.get(d.businessDate)
       if (day) { day.amount -= r.net; day.tips -= r.tip }
       voidRows.push({

@@ -13,13 +13,14 @@
 // `fillPrintTab` (async); `openPrintTab` es el atajo de los botones.
 import { RestaurantService, type PrintDoc, type PrintBatch } from '@/services/Restaurant.service'
 
-const DOC_LABELS: Record<PrintDoc, string> = { precuenta: 'precuenta', ticket: 'ticket', kitchen: 'comanda de cocina' }
+// #282 (L): con artículo, para que el placeholder concuerde ("Preparando el ticket…", no "la ticket").
+const DOC_LABELS: Record<PrintDoc, string> = { precuenta: 'la precuenta', ticket: 'el ticket', kitchen: 'la comanda de cocina' }
 
 export type PrintTabResult = { ok: true } | { ok: false; error: string }
 
 /** Placeholder mientras llega el HTML: sin esto la pestaña queda en blanco y parece que no pasó nada. */
 function placeholder(doc: PrintDoc): string {
-  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Imprimiendo…</title></head><body style="font-family:sans-serif;padding:24px;color:#333">Preparando la ${DOC_LABELS[doc]}…</body></html>`
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Imprimiendo…</title></head><body style="font-family:sans-serif;padding:24px;color:#333">Preparando ${DOC_LABELS[doc]}…</body></html>`
 }
 
 export interface PrintTab { doc: PrintDoc; win: Window }
@@ -46,7 +47,7 @@ export async function fillPrintTab(tab: PrintTab, orderId: string, opts: PrintOp
     return { ok: true }
   } catch (e: unknown) {
     tab.win.close()
-    return { ok: false, error: e instanceof Error ? e.message : `No se pudo generar la ${DOC_LABELS[tab.doc]}` }
+    return { ok: false, error: e instanceof Error ? e.message : `No se pudo generar ${DOC_LABELS[tab.doc]}` }
   }
 }
 

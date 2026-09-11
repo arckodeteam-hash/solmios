@@ -12,6 +12,7 @@ import { describe, it, expect } from 'bun:test'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { dailyReport, resolveRange, localDateHour, MAX_RANGE_DAYS, type ReportsDeps, type ReportPayment, type ReportFolioCharge } from '../usecases/reports'
 import type { OrderDTO, OrderItemDTO, CurrentUser } from '../types'
+import { round2 } from '../../../shared/utils/money'
 
 const TZ = 'America/Santo_Domingo'   // UTC-4, sin DST
 const userH1: CurrentUser = { id: 'u1', hotelId: 'h1', role: 'hotel_admin' }
@@ -36,6 +37,8 @@ interface Fixture {
   orders: any[]
   lines: any[]
   payments: PaymentRow[]
+  /** #282: partes de una cuenta dividida (`restaurant_order_payments`). Sin la clave, el reporte no tiene la tabla. */
+  orderPayments?: any[]
   folioCharges: Record<string, ReportFolioCharge & { hotelId: string }>
   hotels?: any[]
   users?: any[]
@@ -49,6 +52,7 @@ function makeDeps(f: Fixture): ReportsDeps & { calls: { days: string[]; refs: st
   return {
     orders: backed<OrderDTO>(f.orders), lines: backed<OrderItemDTO>(f.lines), hotels: backed<any>(hotels),
     ...(f.users ? { users: backed<any>(f.users) } : {}),
+    ...(f.orderPayments ? { orderPayments: backed<any>(f.orderPayments) } : {}),
     ports: {
       ...(f.withPaymentsPort === false ? {} : {
         paymentsOfDay: async (hotelId, day) => { calls.days.push(`${hotelId}:${day}`); return f.payments.filter((p) => p.hotelId === hotelId && p.businessDate === day) },
@@ -432,5 +436,93 @@ describe('resolveRange / localDateHour', () => {
     expect(resolveRange(undefined, TZ, new Date('2026-09-12T02:00:00.000Z'))).toEqual({ from: '2026-09-11', to: '2026-09-11' })
     expect(localDateHour('2026-09-12T02:00:00.000Z', TZ)).toEqual({ date: '2026-09-11', hour: 22 })
     expect(localDateHour('no-date', TZ)).toBeNull()
+  })
+})
+
+// #282 (H1): una cuenta dividida (#214) tiene UN payment por parte (`metadata.orderPaymentId`). Antes cada parte
+// se trataba como el pago completo de la comanda: impuesto 0, la segunda parte iba a "huérfanos" y no entraba
+// en byType/byHour. El recorrido con `addOrderPayment` real está en reports-split-orm.test.ts.
+describe('dailyReport — cuenta dividida (#282)', () => {
+  /** Comanda de 46.02 (39 + 18 %) en dos partes: efectivo 23.01 + transferencia 23.01. */
+  function splitFixture(): Fixture {
+    return {
+      orders: [order('o-split', { subtotal: 39, tax: 7.02, tip: 0, total: 46.02, settlement: 'payment', covers: 2, hh: 13 })],
+      lines: [line('l1', 'o-split', 'Pizza', 39, 1, { taxRate: 18 })],
+      payments: [
+        charge('p1', 'o-split', 'cash', 23.01, { metadata: { source: 'restaurant', orderId: 'o-split', orderPaymentId: 'part-1' } }),
+        charge('p2', 'o-split', 'transfer', 23.01, { metadata: { source: 'restaurant', orderId: 'o-split', orderPaymentId: 'part-2' } }),
+      ],
+      orderPayments: [
+        { id: 'part-1', hotelId: 'h1', orderId: 'o-split', seq: 1, method: 'cash', amount: 23.01, tip: 0, status: 'completed', paymentId: 'p1' },
+        { id: 'part-2', hotelId: 'h1', orderId: 'o-split', seq: 2, method: 'transfer', amount: 23.01, tip: 0, status: 'completed', paymentId: 'p2' },
+      ],
+      folioCharges: {},
+    }
+  }
+
+  it('la comanda aporta subtotal/impuesto UNA vez; las partes reparten por método; nada queda huérfano', async () => {
+    const r = await dailyReport(makeDeps(splitFixture()), { date: '2026-09-11' }, userH1, NOW)
+    expect(r.sales).toMatchObject({ total: 46.02, subtotal: 39, tax: 7.02, tips: 0, collected: 46.02, orders: 1, averageTicket: 46.02 })
+    expect(r.byMethod.cash).toEqual({ amount: 23.01, orders: 1 })
+    expect(r.byMethod.transfer).toEqual({ amount: 23.01, orders: 1 })
+    expect(r.byMethod.other).toEqual({ amount: 0, orders: 0 })
+    expect(r.byType.dine_in).toEqual({ amount: 46.02, orders: 1 })
+    expect(r.byHour).toEqual([{ hour: 13, orders: 1, amount: 46.02 }])
+    expect(r.byDay).toEqual([{ date: '2026-09-11', orders: 1, amount: 46.02, tips: 0 }])
+  })
+
+  it('sin la tabla de partes, la propina de la comanda se reparte a prorrata del monto (los totales no cambian)', async () => {
+    const f = splitFixture()
+    delete f.orderPayments
+    f.orders[0].tip = 4; f.orders[0].total = 50.02
+    f.payments[0].amount = 27.01   // 23.01 + 4 de propina, toda en la parte de efectivo
+    const r = await dailyReport(makeDeps(f), { date: '2026-09-11' }, userH1, NOW)
+    expect(r.sales).toMatchObject({ total: 46.02, subtotal: 39, tax: 7.02, tips: 4, collected: 50.02, orders: 1 })
+    // Prorrata: la propina se reparte 27.01/50.02 y 23.01/50.02; los netos por método suman 46.02.
+    expect(round2(r.byMethod.cash.amount + r.byMethod.transfer.amount)).toBe(46.02)
+    expect(r.byMethod.cash.amount).toBeGreaterThan(r.byMethod.transfer.amount)
+  })
+
+  it('con la tabla de partes, la propina es la de CADA parte: efectivo 23.01 + 4 → cash 23.01, transfer 23.01, tips 4', async () => {
+    const f = splitFixture()
+    f.orders[0].tip = 4; f.orders[0].total = 50.02
+    f.payments[0].amount = 27.01
+    f.orderPayments![0].tip = 4
+    const r = await dailyReport(makeDeps(f), { date: '2026-09-11' }, userH1, NOW)
+    expect(r.sales).toMatchObject({ total: 46.02, subtotal: 39, tax: 7.02, tips: 4, collected: 50.02 })
+    expect(r.byMethod.cash).toEqual({ amount: 23.01, orders: 1 })
+    expect(r.byMethod.transfer).toEqual({ amount: 23.01, orders: 1 })
+  })
+
+  it('parte a habitación (`settlement: split`): el cargo se lee por `pos:<orderId>:<seq>` y suma bajo folio', async () => {
+    const f = splitFixture()
+    f.orders[0].settlement = 'split'
+    f.payments.pop()
+    f.orderPayments![1] = { id: 'part-2', hotelId: 'h1', orderId: 'o-split', seq: 2, method: 'room', amount: 23.01, tip: 0, status: 'completed', folioId: 'f1', reservationId: 'r1' }
+    f.folioCharges['pos:o-split:2'] = { hotelId: 'h1', amount: 19.5, taxes: 3.51, total: 23.01 }
+    const deps = makeDeps(f)
+    const r = await dailyReport(deps, { date: '2026-09-11' }, userH1, NOW)
+    expect(r.byMethod.cash).toEqual({ amount: 23.01, orders: 1 })
+    expect(r.byMethod.folio).toEqual({ amount: 23.01, orders: 1 })
+    expect(r.sales).toMatchObject({ total: 46.02, subtotal: 39, tax: 7.02, orders: 1 })
+    expect(r.byType.dine_in).toEqual({ amount: 46.02, orders: 1 })
+    expect(deps.calls.refs).toEqual(['pos:o-split:2'])   // nunca `pos:o-split` para una cuenta dividida
+  })
+
+  it('devolver una parte resta de SU método y de la propina de esa parte; la comanda `partially_refunded` sigue vendida', async () => {
+    const f = splitFixture()
+    f.orders[0].status = 'partially_refunded'; f.orders[0].tip = 4; f.orders[0].total = 50.02
+    f.payments[0].amount = 27.01; f.payments[0].status = 'refunded'
+    f.orderPayments![0].tip = 4; f.orderPayments![0].status = 'refunded'
+    f.payments.push(refund('rf1', f.payments[0], 27.01, { method: 'cash' }))
+    const r = await dailyReport(makeDeps(f), { date: '2026-09-11' }, userH1, NOW)
+    expect(r.sales.orders).toBe(1)
+    expect(r.byMethod.cash).toEqual({ amount: 0, orders: 1 })
+    expect(r.byMethod.transfer).toEqual({ amount: 23.01, orders: 1 })
+    expect(r.sales.tips).toBe(0)
+    expect(r.sales.total).toBe(23.01)
+    expect(round2(r.sales.subtotal + r.sales.tax)).toBe(23.01)
+    expect(r.refunded).toEqual({ orders: 1, amount: 27.01 })
+    expect(r.byType.dine_in).toEqual({ amount: 46.02, orders: 1 })   // la venta de la comanda; la devolución va en refunded
   })
 })

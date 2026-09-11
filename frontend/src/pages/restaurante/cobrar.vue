@@ -481,7 +481,10 @@ async function confirmRefund() {
             <p class="text-navy font-bold">
               {{ partiallyRefunded ? 'Se devolvió una parte del cobro; el resto sigue cobrado.' : hasParts ? 'Cobrada por partes.' : order.status === 'paid' ? 'Cobrada directamente.' : 'Cargada a la habitación.' }}
             </p>
-            <p class="text-2xl font-black text-navy mt-2 tabular-nums">{{ money(order.total) }}</p>
+            <!-- #282 (L): un cargo a habitación entero lleva al folio el NETO (el folio aplica su impuesto): se
+                 muestra eso, no el total con el impuesto del ticket, que no es lo que quedó cargado. -->
+            <p class="text-2xl font-black text-navy mt-2 tabular-nums" data-testid="settled-amount">{{ money(order.settlement === 'folio' && !hasParts ? order.subtotal : order.total) }}</p>
+            <p v-if="order.settlement === 'folio' && !hasParts" class="text-xs text-text-muted mt-1" data-testid="settled-net-note">Neto cargado a la habitación; el impuesto lo aplica el folio.</p>
             <!-- #214: cada parte con su método y estado; la de tarjeta se devuelve por separado. -->
             <ul v-if="partsShown.length" data-testid="settled-parts" class="mt-4 mx-auto max-w-md divide-y divide-border text-left text-sm">
               <li v-for="p in partsShown" :key="p.id" class="py-2 flex items-center justify-between gap-3">
