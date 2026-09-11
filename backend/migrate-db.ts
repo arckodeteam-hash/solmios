@@ -17,7 +17,7 @@ import { backfillRestaurantPayPermission } from './scripts/backfill-restaurant-p
 import { backfillRestaurantDiscountPermission } from './scripts/backfill-restaurant-discount-permission'
 import { dedupeRestaurantOrderNumbers } from './scripts/dedupe-restaurant-order-numbers'
 import { backfillBusinessDate } from './scripts/backfill-business-date'
-import { isMissingTableError } from './src/shared/utils/db-errors'
+import { isMissingTableError, failMigrationStep } from './src/shared/utils/db-errors'
 import { LEGAL_PAGES_SEED } from './scripts/legal-pages-content'
 import { MARKETING_PAGES_SEED } from './scripts/marketing-pages-content'
 
@@ -300,7 +300,7 @@ async function createTablesBlock1(): Promise<void> {
     if (marcadas > 0) console.log(`  ari_outbox: ${marcadas} fila(s) pendiente(s) con pendingKey`)
     await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ari_outbox_pending_key ON ari_outbox (pendingKey)`)
   } catch (e: unknown) {
-    console.log("idx_ari_outbox_pending_key: tabla ari_outbox aún no migrada (correr RUN_MIGRATE) —", e instanceof Error ? e.message.slice(0, 90) : String(e))
+    failMigrationStep(e, { what: 'idx_ari_outbox_pending_key', missingTable: 'ari_outbox', consequence: 'Sin el UNIQUE sobre pendingKey, el reintento de ARI puede encolar el mismo push dos veces.' })
   }
 
   // Expedientes de digitalización (módulo digitalizacion). La tabla la crea ormMigrate (modelo
@@ -942,7 +942,7 @@ async function createPosIdempotencyIndexes(): Promise<void> {
       await exec(`CREATE UNIQUE INDEX IF NOT EXISTS payments_pos_ref ON payments(hotelId, reference) WHERE reference LIKE 'pos:%'`)
     }
   } catch (e: unknown) {
-    console.log("payments_pos_ref: no se pudo verificar/crear —", e instanceof Error ? e.message.slice(0, 90) : String(e))
+    failMigrationStep(e, { what: 'payments_pos_ref', missingTable: 'payments', consequence: 'Sin el UNIQUE (hotelId, reference) de las referencias pos:*, un cobro del POS puede asentarse dos veces en payments.' })
   }
 
   try {
@@ -955,7 +955,7 @@ async function createPosIdempotencyIndexes(): Promise<void> {
       await exec(`CREATE UNIQUE INDEX IF NOT EXISTS folio_charges_pos_ref ON folio_charges(hotelId, reference) WHERE source='pos'`)
     }
   } catch (e: unknown) {
-    console.log("folio_charges_pos_ref: tabla folio_charges aún no migrada (correr RUN_MIGRATE) —", e instanceof Error ? e.message.slice(0, 90) : String(e))
+    failMigrationStep(e, { what: 'folio_charges_pos_ref', missingTable: 'folio_charges', consequence: 'Sin este UNIQUE, un cargo del POS a la habitación puede duplicarse en el folio del huésped.' })
   }
 }
 
@@ -983,7 +983,7 @@ async function createPromoCodesUniqueIndex(): Promise<void> {
       await exec(`CREATE UNIQUE INDEX IF NOT EXISTS promo_codes_hotel_code ON promo_codes(hotelId, code)`)
     }
   } catch (e: unknown) {
-    console.log("promo_codes_hotel_code: tabla promo_codes aún no migrada (correr RUN_MIGRATE) —", e instanceof Error ? e.message.slice(0, 90) : String(e))
+    failMigrationStep(e, { what: 'promo_codes_hotel_code', missingTable: 'promo_codes', consequence: 'Sin este UNIQUE, el mismo código promocional puede existir dos veces en un hotel.' })
   }
 }
 
@@ -1019,7 +1019,7 @@ async function createExternalReviewsIndexes(): Promise<void> {
     // Index secundario para queries por hotel + source ordenadas por fecha (spec.md:138).
     await exec(`CREATE INDEX IF NOT EXISTS external_reviews_hotel_source_submitted ON external_reviews(hotelId, source, submittedAt)`)
   } catch (e: unknown) {
-    console.log("external_reviews indexes: tabla external_reviews aún no migrada (correr RUN_MIGRATE) —", e instanceof Error ? e.message.slice(0, 90) : String(e))
+    failMigrationStep(e, { what: 'external_reviews indexes', missingTable: 'external_reviews', consequence: 'Sin estos índices, la misma reseña externa puede entrar duplicada y el listado por hotel pierde su índice.' })
   }
 }
 
@@ -1045,7 +1045,7 @@ async function createWalletPassUniqueIndex(): Promise<void> {
       await exec(`CREATE UNIQUE INDEX IF NOT EXISTS wallet_passes_reservation ON wallet_passes(reservationId)`)
     }
   } catch (e: unknown) {
-    console.log("wallet_passes_reservation: tabla wallet_passes aún no migrada (correr RUN_MIGRATE) —", e instanceof Error ? e.message.slice(0, 90) : String(e))
+    failMigrationStep(e, { what: 'wallet_passes_reservation', missingTable: 'wallet_passes', consequence: 'Sin este UNIQUE, una reserva puede terminar con dos pases de wallet distintos.' })
   }
 }
 
@@ -1075,7 +1075,7 @@ async function createPlatformInvoicesUniqueIndex(): Promise<void> {
       await exec(`CREATE UNIQUE INDEX IF NOT EXISTS platform_invoices_stripe_id ON platform_invoices(stripeInvoiceId)`)
     }
   } catch (e: unknown) {
-    console.log("platform_invoices_stripe_id: tabla platform_invoices aún no migrada (correr RUN_MIGRATE) —", e instanceof Error ? e.message.slice(0, 90) : String(e))
+    failMigrationStep(e, { what: 'platform_invoices_stripe_id', missingTable: 'platform_invoices', consequence: 'Sin el UNIQUE por stripeInvoiceId, el webhook de Stripe y el backfill pueden insertar la misma factura de plataforma dos veces.' })
   }
 }
 
@@ -1418,7 +1418,7 @@ async function main(): Promise<void> {
     await seedDemoTalentoFinanzas()
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
-    console.log("demo talento/finanzas: parcial —", msg.slice(0, 90))
+    console.warn(`⚠ demo talento/finanzas: seed de DEMO incompleto (no bloquea la migración) — ${msg.slice(0, 120)}`)
   }
 
   // #213 (auditoría): día contable de comandas y pagos — columna, backfill de filas viejas e índice
@@ -1434,8 +1434,7 @@ async function main(): Promise<void> {
     const paid = await backfillRestaurantPayPermission(db)
     console.log(`roles.restaurant:pay: ${paid} fila(s) actualizada(s)`)
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e)
-    console.log("roles.restaurant:pay: no se pudo aplicar (¿falta RUN_MIGRATE?) —", msg.slice(0, 120))
+    failMigrationStep(e, { what: 'roles.restaurant:pay', missingTable: 'roles', consequence: 'Sin este backfill, el mozo y la recepción de todo hotel existente reciben 403 al cobrar en el POS.' })
   }
 
   // #215 (REST-13) — `restaurant:discount` a las filas de `roles` de SISTEMA (hotel_admin, receptionist)
@@ -1446,8 +1445,7 @@ async function main(): Promise<void> {
     const discounted = await backfillRestaurantDiscountPermission(db)
     console.log(`roles.restaurant:discount: ${discounted} fila(s) actualizada(s)`)
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e)
-    console.log("roles.restaurant:discount: no se pudo aplicar (¿falta RUN_MIGRATE?) —", msg.slice(0, 120))
+    failMigrationStep(e, { what: 'roles.restaurant:discount', missingTable: 'roles', consequence: 'Sin este backfill, nadie puede aplicar descuentos ni cortesías en el POS de un hotel existente.' })
   }
 
   // M5 fix (audit solmi-direct-booking) — Poblar `hotels.slug` para los hoteles sin slug.
@@ -1460,7 +1458,7 @@ async function main(): Promise<void> {
     await seedHotelSlugs()
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
-    console.log("seed-hotel-slugs: parcial —", msg.slice(0, 120))
+    console.warn(`⚠ seed-hotel-slugs: relleno de slugs incompleto (no bloquea la migración; los hoteles sin slug no tienen página pública) — ${msg.slice(0, 120)}`)
   }
 
   console.log("\n✅ Migración completa")
