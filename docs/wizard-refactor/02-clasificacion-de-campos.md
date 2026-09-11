@@ -40,8 +40,8 @@ una suposición — ver auditoría, sección 5.
 
 | Campo | Reciclado | Público | Prioridad | Paso wizard | Destino final |
 |---|---|---|---|---|---|
-| `phone` (teléfono principal) | ✅ (registro) | ✅ | **Requerido** — decisión explícita del usuario (doc 08, D1) | 1 — Bienvenida (confirmar) | Configuración → Hotel |
-| `email` | ✅ (es el email de login del dueño, pero `hotels.email` es un campo separado — ver nota) | ✅ | Requerido | 1 — Bienvenida | Configuración → Hotel |
+| `phone` (teléfono principal) | ✅ (registro) | ✅ | **Requerido** — decisión explícita del usuario (doc 08, D1) | 1 — Bienvenida (confirmar) | **Página pública** (issue #79) — antes en Configuración → Hotel, se mueve |
+| `email` | ✅ (es el email de login del dueño, pero `hotels.email` es un campo separado — ver nota) | ✅ | Requerido | 1 — Bienvenida | **Página pública** (issue #79) — antes en Configuración → Hotel, se mueve |
 | `phone2` (teléfono secundario) | ❌ | ❌ | Opcional | 3 — Contacto | Configuración → Hotel |
 | `website` | ❌ | ✅ | Opcional | 3 — Contacto | **Página pública** (nuevo) |
 | `ownerName` (nombre del propietario) | ✅ (es el `ownerName` del registro, guardado hoy solo en `users.name`) | ❌ | Requerido | 1 — Bienvenida (confirmar) | Configuración → Hotel |
@@ -49,7 +49,7 @@ una suposición — ver auditoría, sección 5.
 
 **Nota — email de `hotels`**: el registro solo persiste el email en `users.email`
 (login). `hotels.email` (el que ve el huésped en la landing/facturas) queda vacío
-hasta que alguien lo carga en Configuración. Recomendación: en el paso 1 del
+hasta que alguien lo carga en Página pública → General (issue #79; antes Configuración). Recomendación: en el paso 1 del
 wizard, pre-cargar `hotels.email` con el email del dueño como sugerencia editable
 (no forzar que sean el mismo, un hotel puede querer `reservas@hotel.com` en vez del
 email personal del dueño) — así igual queda "reciclado" en el sentido de que no
