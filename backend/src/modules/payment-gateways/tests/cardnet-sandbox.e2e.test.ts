@@ -37,7 +37,7 @@ describe.skipIf(!process.env.CARDNET_SANDBOX)('CardNet sandbox real', () => {
 
     const row = rows.get(session)
     expect(row?.id).toBe(session)
-    expect(row?.secret).toMatch(/^[0-9a-f]{64}$/)
+    expect(row?.sessionKey).toMatch(/^[0-9a-f]{64}$/)
     expect(row?.amountMinor).toBe(10000)
   }, TIMEOUT)
 
