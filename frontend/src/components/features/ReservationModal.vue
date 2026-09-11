@@ -20,6 +20,7 @@ import { HotelService, type HotelData } from '@/services/Hotel.service'
 import { RoomService } from '@/services/Room.service'
 import { TTLockService, type LockDevice } from '@/services/TTLock.service'
 import { effectiveCheckInTime, effectiveCheckOutTime, hasCustomSchedule, hotelCheckInTime, hotelCheckOutTime } from '@/utils/hotel-schedule'
+import { paymentStateBadge } from '@/utils/payment-state'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
@@ -557,21 +558,7 @@ function paymentStatusLabel(status?: string | null): { label: string; cls: strin
   return m[status || ''] || { label: status || '—', cls: 'bg-gray-100 text-gray-500' }
 }
 
-// Requerimiento 14 (Administración | Pago realizado, 2026-09-04) — badge de estado de la reserva
-// (pendiente/parcial/pagada), sourced de `d.paymentState` (backend, `shared/utils/reservation-
-// balance.ts`). NO se deriva acá de `deposit`/`totalAmount`: esa fórmula vieja (la que usaba este
-// mismo archivo antes, y la que sigue usando `Reservation.service.ts` para el listado/calendario)
-// podía decir "Pendiente" en rojo sobre una reserva ya cobrada por folio/factura en efectivo —
-// ese cobro mueve `payments`, nunca `deposit` — contradiciendo al renglón "Pendiente de cobro" de
-// la MISMA tarjeta, que sí sale de `payments`. Con el estado del backend, ambos SIEMPRE cierran.
-function paymentStateBadge(state?: string | null): { label: string; cls: string } {
-  const m: Record<string, { label: string; cls: string }> = {
-    pending: { label: 'Pendiente', cls: 'bg-coral/10 text-coral' },
-    partial: { label: 'Parcial', cls: 'bg-gold/10 text-gold' },
-    paid: { label: 'Pagada', cls: 'bg-teal/10 text-teal' },
-  }
-  return m[state || ''] || { label: '—', cls: 'bg-gray-100 text-gray-500' }
-}
+// Requerimiento 14 — badge pendiente/parcial/pagada: sale de `d.paymentState` (backend) vía `@/utils/payment-state`.
 // Requerimiento 14 — si algún intento de esta reserva quedó `failed`, se avisa cerca del total:
 // el dinero cobrado (arriba) ya lo excluye correctamente, pero un intento fallido silencioso deja
 // al staff sin saber que el huésped puede necesitar reintentar el cobro. Reusa `paymentHistory`

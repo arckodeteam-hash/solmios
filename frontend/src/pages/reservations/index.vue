@@ -68,6 +68,7 @@
         <select id="reservations-filter-channel" name="filterChannel" aria-label="Filtrar reservas por canal" v-model="filterChannel" class="px-3 py-2 rounded-full border border-border text-xs font-semibold text-text-secondary bg-white cursor-pointer focus:outline-none focus:border-blue focus:ring-2 focus:ring-blue/10 transition-all">
           <option value="">Todos los canales</option>
           <option value="direct">Directa</option>
+          <option value="web">Web</option>
           <option value="booking">Booking</option>
           <option value="expedia">Expedia</option>
           <option value="airbnb">Airbnb</option>
@@ -87,6 +88,7 @@
             <th class="text-left px-4 py-3 text-[10px] font-bold text-text-muted uppercase tracking-wider">Check-out</th>
             <th class="text-left px-4 py-3 text-[10px] font-bold text-text-muted uppercase tracking-wider">N</th>
             <th class="text-left px-4 py-3 text-[10px] font-bold text-text-muted uppercase tracking-wider">Estado</th>
+            <th class="text-left px-4 py-3 text-[10px] font-bold text-text-muted uppercase tracking-wider hidden md:table-cell">Pago</th>
             <th class="text-left px-4 py-3 text-[10px] font-bold text-text-muted uppercase tracking-wider">Canal</th>
             <th class="text-right px-4 py-3 text-[10px] font-bold text-text-muted uppercase tracking-wider">Total</th>
             <th class="px-4 py-3"></th>
@@ -139,7 +141,13 @@
                   class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-gold/15 text-gold">
                   <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-gold"></span>Por aprobar
                 </span>
+                <!-- REQ-RWP-04 — en <768px la columna "Pago" se oculta y el badge va acá, debajo del estado. -->
+                <span data-testid="reservation-payment-badge" class="md:hidden inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="paymentStateBadge(r.paymentState).cls">{{ paymentStateBadge(r.paymentState).label }}</span>
               </div>
+            </td>
+            <!-- REQ-RWP-04 — estado real de cobro (`paymentState` del backend, desde `payments`). -->
+            <td class="px-4 py-5 hidden md:table-cell">
+              <span data-testid="reservation-payment-badge" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="paymentStateBadge(r.paymentState).cls">{{ paymentStateBadge(r.paymentState).label }}</span>
             </td>
             <td class="px-4 py-5">
               <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="srcClass(r.source)">
@@ -252,6 +260,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useCountUp } from '@/composables/useCountUp'
+import { paymentStateBadge } from '@/utils/payment-state'
 import { ReservationService } from '@/services/Reservation.service'
 import ReservationModal from '@/components/features/ReservationModal.vue'
 import ReservationWizardModal from '@/components/features/ReservationWizardModal.vue'
@@ -278,6 +287,8 @@ const filterStatus = ref('')
 const filterChannel = ref('')
 // Tarea 3.4 (corrección 2026-08-25) — '' | 'pending'. Eje independiente de filterStatus.
 const filterApproval = ref('')
+// REQ-RWP-04 — '' | 'paid'. Eje independiente de filterStatus (KPI "Cobradas").
+const filterPayment = ref('')
 const list = ref<any[]>([])
 const rooms = ref<any[]>([])
 // Detalle (F3): clic en fila abre ReservationModal (vista lectura), no el form directo.
@@ -330,11 +341,15 @@ const totalBilledAnim = useCountUp(totalBilledAmount)
 const pendingAnim = useCountUp(pendingCount)
 const confirmedAnim = useCountUp(confirmedCount)
 const approvalPendingAnim = useCountUp(approvalPendingCount)
+// REQ-RWP-04 — reservas con el cobro completo según `paymentState` (backend), sin las anuladas.
+const paidCount = computed(() => list.value.filter((r: any) => r.paymentState === 'paid' && r.status !== 'cancelled').length)
+const paidAnim = useCountUp(paidCount)
 
 function setStatusFilter(status: string) { filterStatus.value = status }
 // Tarea 3.4 (corrección 2026-08-25) — toggle: un segundo click sobre la misma vista la
 // apaga (mismo criterio que un filtro de chip, no un radio permanente).
 function toggleApprovalFilter() { filterApproval.value = filterApproval.value === 'pending' ? '' : 'pending' }
+function togglePaidFilter() { filterPayment.value = filterPayment.value === 'paid' ? '' : 'paid' }
 
 const statsCards = computed(() => [
   { label: 'Check-ins Hoy', value: checkinsAnim.value, icon: 'checkin' as const, accent: 'blue' as const, trend: checkinsTrend.value, caption: undefined as string | undefined, link: undefined as (() => void) | undefined },
@@ -343,6 +358,8 @@ const statsCards = computed(() => [
   { label: 'Total Facturado', value: totalBilledAnim.value, prefix: '$', icon: 'money' as const, accent: 'purple' as const, trend: null as number | null, caption: 'Acumulado' as string | undefined, link: undefined as (() => void) | undefined },
   { label: 'Pendientes', value: pendingAnim.value, icon: 'bookings' as const, accent: 'amber' as const, trend: null as number | null, caption: undefined as string | undefined, link: (() => setStatusFilter('pending')) as (() => void) | undefined },
   { label: 'Confirmadas', value: confirmedAnim.value, icon: 'bookings' as const, accent: 'teal' as const, trend: null as number | null, caption: undefined as string | undefined, link: (() => setStatusFilter('confirmed')) as (() => void) | undefined },
+  // REQ-RWP-04 — reservas con pago completo (estado real desde `payments`). Toggle sobre filterPayment.
+  { label: 'Cobradas', value: paidAnim.value, icon: 'money' as const, accent: 'teal' as const, trend: null as number | null, caption: 'Pago completo' as string | undefined, link: togglePaidFilter as (() => void) | undefined },
   // Tarea 3.4 — vista dedicada para reservas pagadas que el hotel todavía no revisó
   // ("confirmación instantánea" apagada). Eje independiente del filtro de Estado de arriba.
   { label: 'Por aprobar', value: approvalPendingAnim.value, icon: 'bookings' as const, accent: 'amber' as const, trend: null as number | null, caption: 'Confirmación manual' as string | undefined, link: toggleApprovalFilter as (() => void) | undefined },
@@ -354,6 +371,7 @@ const filtered = computed(() => {
   if (filterStatus.value) l = l.filter((r: any) => r.status === filterStatus.value)
   if (filterChannel.value) l = l.filter((r: any) => r.source === filterChannel.value)
   if (filterApproval.value) l = l.filter((r: any) => r.approvalStatus === filterApproval.value)
+  if (filterPayment.value) l = l.filter((r: any) => r.paymentState === filterPayment.value)
   return l
 })
 
@@ -365,8 +383,8 @@ function fmtWeekdayAbbr(d: string) { return d ? new Date(d + 'T12:00:00').toLoca
 function stLabel(s: string) { const m: any = { pending: 'Pendiente', confirmed: 'Confirmada', checked_in: 'Check-in', checked_out: 'Check-out', cancelled: 'Cancelada' }; return m[s] || s }
 function stClass(s: string) { const m: any = { pending: 'bg-gold/10 text-gold', confirmed: 'bg-teal/10 text-teal', checked_in: 'bg-cyan/10 text-cyan', checked_out: 'bg-gray-100 text-gray-500', cancelled: 'bg-coral/10 text-coral' }; return m[s] || '' }
 function stDotClass(s: string) { const m: any = { pending: 'bg-gold', confirmed: 'bg-teal', checked_in: 'bg-cyan', checked_out: 'bg-gray-400', cancelled: 'bg-coral' }; return m[s] || 'bg-gray-400' }
-function srcLabel(s: string) { const m: any = { direct: 'Directa', booking: 'Booking', expedia: 'Expedia', airbnb: 'Airbnb', google: 'Google', whatsapp: 'WhatsApp', phone: 'Teléfono' }; return m[s] || s }
-function srcClass(s: string) { const m: any = { direct: 'bg-teal/10 text-teal', booking: 'bg-cyan/10 text-cyan', expedia: 'bg-gold/10 text-gold', airbnb: 'bg-coral/10 text-coral', google: 'bg-blue-100 text-blue-700', whatsapp: 'bg-emerald-100 text-emerald-700' }; return m[s] || 'bg-gray-100 text-gray-500' }
+function srcLabel(s: string) { const m: any = { direct: 'Directa', web: 'Web', booking: 'Booking', expedia: 'Expedia', airbnb: 'Airbnb', google: 'Google', whatsapp: 'WhatsApp', phone: 'Teléfono' }; return m[s] || s }
+function srcClass(s: string) { const m: any = { direct: 'bg-teal/10 text-teal', web: 'bg-blue-100 text-blue-700', booking: 'bg-cyan/10 text-cyan', expedia: 'bg-gold/10 text-gold', airbnb: 'bg-coral/10 text-coral', google: 'bg-blue-100 text-blue-700', whatsapp: 'bg-emerald-100 text-emerald-700' }; return m[s] || 'bg-gray-100 text-gray-500' }
 
 // Iconos de canal — logos reales de marca (mismo SVG que la sección #integrations del
 // landing, frontend/src/pages/landing/index.vue) para las OTAs; ícono genérico de línea
@@ -374,6 +392,8 @@ function srcClass(s: string) { const m: any = { direct: 'bg-teal/10 text-teal', 
 // verificado en el repo (Google — no se inventa un logo de marca no auditado).
 const SRC_ICON_SVG: Record<string, string> = {
   direct: '<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244"/></svg>',
+  // REQ-RWP-04 — reserva hecha por el huésped en el widget público (globo, heroicons globe-alt).
+  web: '<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582M12 3v18m-9-9h18"/></svg>',
   booking: '<svg class="w-full h-full" viewBox="0 0 24 24" fill="#003A9A"><path d="M24 0H0v24h24ZM8.575 6.563h2.658c2.108 0 3.473 1.15 3.473 2.898 0 1.15-.575 1.82-.91 2.108l-.287.263.335.192c.815.479 1.318 1.389 1.318 2.395 0 1.988-1.51 3.257-3.857 3.257H7.449V7.713c0-.623.503-1.126 1.126-1.15zm1.7 1.868c-.479.024-.694.264-.694.79v1.893h1.676c.958 0 1.294-.743 1.294-1.365 0-.815-.503-1.318-1.318-1.318zm-.096 4.36c-.407.071-.598.31-.598.79v2.251h1.868c.934 0 1.509-.55 1.509-1.533 0-.934-.599-1.509-1.51-1.509zm7.737 2.394c.743 0 1.341.599 1.341 1.342a1.34 1.34 0 0 1-1.341 1.341 1.355 1.355 0 0 1-1.341-1.341c0-.743.598-1.342 1.34-1.342z"/></svg>',
   expedia: '<svg class="w-full h-full" viewBox="0 0 24 24" fill="#191E3B"><path d="M19.067 0H4.933A4.94 4.94 0 0 0 0 4.933v14.134A4.932 4.932 0 0 0 4.933 24h14.134A4.932 4.932 0 0 0 24 19.067V4.933C24.01 2.213 21.797 0 19.067 0ZM7.336 19.341c0 .19-.148.337-.337.337h-2.33a.333.333 0 0 1-.337-.337v-2.33c0-.189.148-.336.337-.336H7c.19 0 .337.147.337.337zm12.121-1.486-2.308 2.298c-.169.168-.422.053-.422-.2V9.57l-6.44 6.44a.533.533 0 0 1-.421.17H8.169a.32.32 0 0 1-.338-.338v-1.697c0-.2.053-.316.169-.422l6.44-6.44H4.058c-.253 0-.369-.253-.2-.421l2.297-2.309c.137-.137.285-.232.517-.232H18.15c.854 0 1.539.686 1.539 1.54v11.478c-.01.231-.095.368-.232.516z"/></svg>',
   airbnb: '<svg class="w-full h-full" viewBox="0 0 24 24" fill="#FF5A5F"><path d="M12.001 18.275c-1.353-1.697-2.148-3.184-2.413-4.457-.263-1.027-.16-1.848.291-2.465.477-.71 1.188-1.056 2.121-1.056s1.643.345 2.12 1.063c.446.61.558 1.432.286 2.465-.291 1.298-1.085 2.785-2.412 4.458zm9.601 1.14c-.185 1.246-1.034 2.28-2.2 2.783-2.253.98-4.483-.583-6.392-2.704 3.157-3.951 3.74-7.028 2.385-9.018-.795-1.14-1.933-1.695-3.394-1.695-2.944 0-4.563 2.49-3.927 5.382.37 1.565 1.352 3.343 2.917 5.332-.98 1.085-1.91 1.856-2.732 2.333-.636.344-1.245.558-1.828.609-2.679.399-4.778-2.2-3.825-4.88.132-.345.395-.98.845-1.961l.025-.053c1.464-3.178 3.242-6.79 5.285-10.795l.053-.132.58-1.116c.45-.822.635-1.19 1.351-1.643.346-.21.77-.315 1.246-.315.954 0 1.698.558 2.016 1.007.158.239.345.557.582.953l.558 1.089.08.159c2.041 4.004 3.821 7.608 5.279 10.794l.026.025.533 1.22.318.764c.243.613.294 1.222.213 1.858zm1.22-2.39c-.186-.583-.505-1.271-.9-2.094v-.03c-1.889-4.006-3.642-7.608-5.307-10.844l-.111-.163C15.317 1.461 14.468 0 12.001 0c-2.44 0-3.476 1.695-4.535 3.898l-.081.16c-1.669 3.236-3.421 6.843-5.303 10.847v.053l-.559 1.22c-.21.504-.317.768-.345.847C-.172 20.74 2.611 24 5.98 24c.027 0 .132 0 .265-.027h.372c1.75-.213 3.554-1.325 5.384-3.317 1.829 1.989 3.635 3.104 5.382 3.317h.372c.133.027.239.027.265.027 3.37.003 6.152-3.261 4.802-6.975z"/></svg>',
@@ -431,6 +451,8 @@ async function load() {
         // Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status`: la reserva ya
         // está pagada/ocupando la habitación, pero el hotel todavía no la revisó.
         approvalStatus: r.approvalStatus || null,
+        // REQ-RWP-04 — estado real de cobro; `mapReservation` ya lo trae del backend (`payments`).
+        paymentState: r.paymentState ?? r.paymentStatus,
       }
     })
   } catch (e: any) { console.error('[reservations/load]', e); toast.error('No se pudieron cargar las reservas') }
@@ -521,10 +543,10 @@ async function approveReservation(r: any) {
 
 // Export CSV de las reservas filtradas (BOM UTF-8 → Excel respeta tildes).
 function exportCSV() {
-  const head = ['Huésped', 'Email', 'Hab', 'CheckIn', 'CheckOut', 'Noches', 'Estado', 'Canal', 'Total']
+  const head = ['Huésped', 'Email', 'Hab', 'CheckIn', 'CheckOut', 'Noches', 'Estado', 'Pago', 'Canal', 'Total']
   const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
   const lines = [head.join(','), ...filtered.value.map((r: any) =>
-    [r.guestName, r.email, r.roomNumber, r.checkIn, r.checkOut, r.nights, r.status, r.source, r.total].map(esc).join(','),
+    [r.guestName, r.email, r.roomNumber, r.checkIn, r.checkOut, r.nights, r.status, paymentStateBadge(r.paymentState).label, r.source, r.total].map(esc).join(','),
   )]
   const csv = '﻿' + lines.join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
