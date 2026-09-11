@@ -96,9 +96,48 @@ export class HotelAuth extends Auth {
     }
   }
 
+  /**
+   * Ticket de conexión de un solo uso (#211): un JWT de vida corta con `type:'ticket'`, un `scope`
+   * y un `jti` único, para clientes que no pueden mandar headers (EventSource) y tienen que pasar
+   * la credencial por la URL. NO es un access token: `verifyToken()` lo rechaza (`type` distinto),
+   * así que aunque quede en un access.log no abre ninguna otra ruta. Lo consume UNA sola vez la
+   * ruta que lo pidió, vía `verifyTicket(token, scope)` + registro de `jti` usados (sse-ticket-auth.ts).
+   */
+  createTicket(payload: HotelTokenPayload, scope: string, expiresIn: string): { ticket: string; jti: string } {
+    const jti = crypto.randomUUID()
+    const ticket = this.jwtAdapter.sign(
+      { id: payload.id, role: payload.role, hotelId: payload.hotelId, userType: payload.userType || 'merchant', impersonatedBy: payload.impersonatedBy, type: 'ticket', scope, jti },
+      this.accessSecret,
+      expiresIn,
+    )
+    this.authLogger.debug('Ticket creado', { userId: payload.id, hotelId: payload.hotelId, scope, expiresIn })
+    return { ticket, jti }
+  }
+
+  /** Verifica un ticket de `createTicket()` para el `scope` dado. Un access/refresh token acá → AuthError. */
+  verifyTicket(token: string, scope: string): HotelTokenPayload & { jti: string } {
+    try {
+      const payload = this.jwtAdapter.verify(token, this.accessSecret)
+      if (payload.type !== 'ticket' || payload.scope !== scope) throw new AuthError('Invalid token type')
+      if (typeof payload.jti !== 'string' || !payload.jti) throw new AuthError('Invalid token type')
+      return {
+        id: payload.id as string,
+        role: payload.role as string,
+        hotelId: payload.hotelId as string | undefined,
+        userType: (payload.userType as string) || 'merchant',
+        impersonatedBy: payload.impersonatedBy as string | undefined,
+        jti: payload.jti,
+      }
+    } catch (e) {
+      if (e instanceof AuthError) throw e
+      throw new AuthError('Invalid or expired token')
+    }
+  }
+
   verifyToken(token: string): HotelTokenPayload {
     try {
       const payload = this.jwtAdapter.verify(token, this.accessSecret)
+      // Solo `access`: un ticket (`type:'ticket'`, createTicket) o un refresh NUNCA autentican una ruta normal.
       if (payload.type !== 'access') throw new AuthError('Invalid token type')
       return {
         id: payload.id as string,
