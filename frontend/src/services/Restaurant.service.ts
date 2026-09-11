@@ -8,13 +8,15 @@ import type { PosPaymentMethod } from './Caja.service'
 export type OrderType = 'dine_in' | 'room_service' | 'takeaway'
 // 'processing_payment' (fix-refund-pos-card): cobro con tarjeta esperando la confirmación async del
 // webhook de Stripe (Checkout Session abierta). Ver cobrar.vue: poll a GET /orders/:id hasta 'paid'.
+// 'partially_refunded' (#214): se devolvió UNA parte de un cobro dividido; el resto sigue cobrado.
 export type OrderStatus =
   | 'open' | 'sent' | 'preparing' | 'ready' | 'served' | 'billed' | 'charged' | 'paid' | 'refunded' | 'cancelled'
-  | 'processing_payment'
+  | 'processing_payment' | 'partially_refunded'
 // 'voided' (#207): anulada CON motivo después de enviada a cocina — queda en la comanda tachada, no cuenta.
 export type LineStatus = 'new' | 'preparing' | 'ready' | 'served' | 'cancelled' | 'voided'
 export type TableStatus = 'free' | 'occupied' | 'reserved'
-export type Settlement = 'folio' | 'payment'
+// 'split' (#214): saldada por partes con métodos mezclados (habitación + directo).
+export type Settlement = 'folio' | 'payment' | 'split'
 
 // F5 — catálogo FIJO de tags de alérgenos/info dietética (espejo de backend/src/modules/restaurant/types.ts,
 // D8). En inglés (DB/código); acá se traduce cada key a su etiqueta en español + ícono para la UI.
@@ -239,6 +241,11 @@ export interface Order {
   discountTotal?: number
   // #213 — motivo de cancelación (solo en `cancelled`; null en filas anteriores a la columna).
   cancelReason?: string | null
+  // #214 — acumulado de pagos parciales cobrados (sin propina). > 0 = la cuenta se está saldando por partes.
+  amountPaid?: number
+  // #214 — suma de las partes en curso (Checkout de tarjeta abierto por UNA parte). > 0 = es el
+  // `processing_payment` de una parte: no se edita, no se cancela, no se cobra entera.
+  amountReserved?: number
   // #209 — solo lectura, los calcula el server para room service ("Hab. 204 · Pérez"). No se mandan al abrir.
   roomNumber?: string
   guestName?: string
@@ -247,6 +254,48 @@ export interface Order {
 }
 
 export type OrderWithLines = Order & { lines: OrderLine[] }
+/** #214 — la cuenta ya tiene plata adentro (partes cobradas o un Checkout abierto por una parte): espejo de
+ *  `order-totals.hasPartialPayments` del backend. Bloquea líneas, cancelar y "cobrar todo"; NO bloquea Cobrar. */
+export const hasPartialPayments = (o: Pick<Order, 'amountPaid' | 'amountReserved'>): boolean => Number(o.amountPaid || 0) > 0 || Number(o.amountReserved || 0) > 0
+
+// #214 — dividir cuenta / pagos parciales. Espejo de `restaurant/types.ts#OrderPaymentDTO` + `OrderBalance`.
+export type OrderPaymentMethod = PosPaymentMethod | 'room'
+// failed = el puerto de dinero no cobró (su nº queda quemado); refunding = devolución en curso; reversed = devuelta con
+// la comanda ABIERTA (COR-C: el saldo se reabrió y sus líneas quedaron libres). Espejo de restaurant/types.ts.
+export type OrderPaymentStatus = 'pending' | 'completed' | 'expired' | 'failed' | 'refunding' | 'refunded' | 'reversed'
+export interface OrderPayment {
+  id: string
+  hotelId: string
+  orderId: string
+  seq: number
+  method: OrderPaymentMethod
+  amount: number
+  tip: number
+  status: OrderPaymentStatus
+  paymentId?: string
+  folioId?: string
+  reservationId?: string
+  lineIds?: string[] | null
+  completedAt?: string
+  refundedAt?: string
+  /** #214: motivo con el que se devolvió (obligatorio al devolver). */
+  refundReason?: string
+  createdAt?: string
+}
+/** Saldo de la comanda: `due` = neto + impuesto; `pending` lo reservan las partes en curso (Checkout de tarjeta abierto); la propina va aparte. */
+export interface OrderBalance { due: number; paid: number; pending: number; outstanding: number; tips: number }
+export interface OrderPaymentsList { data: OrderPayment[]; total: number; balance: OrderBalance }
+export interface AddOrderPaymentPayload {
+  method: OrderPaymentMethod
+  amount?: number
+  tip?: number
+  reservationId?: string
+  lineIds?: string[]
+  successUrl?: string
+  cancelUrl?: string
+}
+export interface AddOrderPaymentResult { part: OrderPayment; order: Order; balance: OrderBalance; checkoutUrl?: string }
+export interface SplitPreview { due: number; outstanding: number; parts: number[] }
 
 // ─── Cierre del día (#213) — espejo exacto de backend/src/modules/restaurant/usecases/reports.ts ───
 export type SalesMethod = 'cash' | 'card' | 'transfer' | 'folio' | 'other'
@@ -611,7 +660,21 @@ export const RestaurantService = {
     http.post(`/restaurant/orders/${id}/pay`, data),
   // Reembolso: solo órdenes status='paid' con settlement='payment' (cobro con tarjeta).
   // Backend devuelve 409 ConflictError si la orden no cumple la condición.
-  refundOrder: (id: string): Promise<Order> => http.post(`/restaurant/orders/${id}/refund`),
+  // #214: motivo obligatorio (efectivo/transferencia se devuelven de verdad; sin motivo el backend da 400).
+  refundOrder: (id: string, reason: string): Promise<Order> => http.post(`/restaurant/orders/${id}/refund`, { reason }),
+
+  // ─── Dividir cuenta / pagos parciales (#214) ───
+  // Partes cobradas (persistidas: recargar Cobrar a mitad del proceso las muestra) + saldo restante.
+  listOrderPayments: (id: string): Promise<OrderPaymentsList> => http.get(`/restaurant/orders/${id}/payments`),
+  // N montos que suman EXACTO el saldo; el centavo sobrante va a la última parte. No escribe nada.
+  splitPreview: (id: string, parts: number): Promise<SplitPreview> => http.get(`/restaurant/orders/${id}/split?parts=${parts}`),
+  // Una parte: `amount` contra el saldo (o `lineIds`, y el server calcula), `tip` encima. `card` exige
+  // successUrl/cancelUrl y devuelve `checkoutUrl` (la parte queda `pending` hasta el webhook). `room`
+  // exige `reservationId`. Sobrepago → 400.
+  addOrderPayment: (id: string, data: AddOrderPaymentPayload): Promise<AddOrderPaymentResult> => http.post(`/restaurant/orders/${id}/payments`, data),
+  // Devuelve UNA parte directa (efectivo/transferencia/tarjeta, permiso billing:create). Comanda liquidada →
+  // queda `partially_refunded`; comanda abierta (COR-C, parte cobrada por error) → la parte queda `reversed` y el saldo se reabre.
+  refundOrderPayment: (id: string, partId: string, reason: string): Promise<OrderPayment> => http.post(`/restaurant/orders/${id}/payments/${partId}/refund`, { reason }),
 
   // ─── KDS / cocina ───
   async kdsQueue(station?: string): Promise<KdsTicket[]> {
@@ -676,8 +739,17 @@ export const ORDER_TYPE_LABELS: Record<string, string> = {
 export const ORDER_STATUS_LABELS: Record<string, string> = {
   open: 'Abierta', sent: 'Enviada', preparing: 'En preparación', ready: 'Lista', served: 'Servida',
   billed: 'Con cuenta', charged: 'Cargada a habitación', paid: 'Pagada', refunded: 'Reembolsada', cancelled: 'Cancelada',
-  processing_payment: 'Esperando confirmación de pago',
+  processing_payment: 'Esperando confirmación de pago', partially_refunded: 'Reembolsada en parte',
 }
+// #214 — método de cada parte del cobro (los de Caja + habitación) y estado de la parte.
+export const ORDER_PAYMENT_METHOD_LABELS: Record<string, string> = {
+  cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', room: 'Habitación',
+}
+export const ORDER_PAYMENT_STATUS_LABELS: Record<string, string> = {
+  pending: 'Sin confirmar', completed: 'Cobrada', expired: 'Vencida', failed: 'Fallida', refunding: 'Devolviendo…', refunded: 'Reembolsada', reversed: 'Devuelta',
+}
+/** #214: partes que no pesan en el saldo (Checkout vencido / puerto que falló / devuelta con la comanda abierta): no se listan ni ocupan líneas. */
+export const isDeadOrderPayment = (p: Pick<OrderPayment, 'status'>): boolean => p.status === 'expired' || p.status === 'failed' || p.status === 'reversed'
 export const LINE_STATUS_LABELS: Record<string, string> = {
   new: 'Nueva', preparing: 'Preparando', ready: 'Lista', served: 'Servida', cancelled: 'Cancelada', voided: 'Anulada',
 }

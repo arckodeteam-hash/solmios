@@ -21,7 +21,9 @@
 //     permitido (N %)" con el % total que quedaría. La cortesía (100 %) solo entra con un tope que la
 //     habilite: hotel_admin/super_admin, o un hotel con maxDiscountPercent = 100.
 //   - Una comanda `paid/charged/cancelled/processing_payment` no admite descuentos (LINES_LOCKED → 409,
-//     misma regla que editar líneas). Una línea anulada tampoco.
+//     misma regla que editar líneas), ni una con pagos parciales (#214). Una línea anulada tampoco. Cada
+//     operación corre DENTRO del lock de líneas (`withLinesLock`, COR-A): mientras se recalcula el total
+//     ninguna parte ni cobro entero reserva saldo — y al revés.
 //   - La línea con cortesía se MANTIENE en la venta (no es `voided`): el cierre del día (reports.ts, #213)
 //     la lista en "Descuentos y cortesías" con motivo y usuario a partir de `discountAmount` — una
 //     cortesía es el descuento que se lleva TODA la base (100 % o un monto igual al bruto), no solo
@@ -35,7 +37,8 @@ import type { RestaurantSockets } from '../sockets'
 import { auditSafely, type AuditPort } from '../../../shared/usecases/audit'
 import { round2 } from '../../../shared/utils/money'
 import { recomputeTotals, computeOrderTotals, computeDiscountAmount, computeEffectiveDiscount, isLineActive } from './order-totals'
-import { loadOrderForEdit } from './order-lines'
+import { withLinesLock } from './order-lines'
+import type { CounterCas } from './order-number'
 import { getReasonList, setReasonList, type ReasonListSpec, type VoidReasonsDeps } from './void-reasons'
 
 export interface DiscountsDeps {
@@ -47,6 +50,8 @@ export interface DiscountsDeps {
   audit?: AuditPort | null
   logger?: Logger
   sockets?: RestaurantSockets
+  // #214 (COR-A): un descuento mueve el total como una línea → toma el mismo lock de líneas (order-lines.withLinesLock).
+  cas?: CounterCas
 }
 
 export interface DiscountInput { type?: string; value?: number; reason?: string }
@@ -138,7 +143,10 @@ async function audit(deps: DiscountsDeps, action: string, entity: string, entity
  */
 export async function applyOrderDiscount(deps: DiscountsDeps, orderId: string, dto: DiscountInput, user: CurrentUser): Promise<OrderDTO> {
   const input = parseDiscountInput(dto)
-  const order = await loadOrderForEdit(deps, orderId, user)
+  return withLinesLock(deps, orderId, user, (order) => applyOrderDiscountLocked(deps, order, input, user))
+}
+async function applyOrderDiscountLocked(deps: DiscountsDeps, order: OrderDTO, input: ParsedDiscount, user: CurrentUser): Promise<OrderDTO> {
+  const orderId = order.id
   const active = ((await deps.lines.findMany({ orderId })) as OrderItemDTO[]).filter(isLineActive)
   const base = computeOrderTotals(active, { tip: 0, discountType: null, discountValue: null }).subtotal
   if (base <= 0) throw new ValidationError('La comanda no tiene monto para descontar')
@@ -158,7 +166,9 @@ export async function applyOrderDiscount(deps: DiscountsDeps, orderId: string, d
 
 /** Quita el descuento de la comanda (409 si no tenía). Audita `restaurant.discount.removed`. */
 export async function removeOrderDiscount(deps: DiscountsDeps, orderId: string, user: CurrentUser): Promise<OrderDTO> {
-  const order = await loadOrderForEdit(deps, orderId, user)
+  return withLinesLock(deps, orderId, user, (order) => removeOrderDiscountLocked(deps, order, user))
+}
+async function removeOrderDiscountLocked(deps: DiscountsDeps, order: OrderDTO, user: CurrentUser): Promise<OrderDTO> {
   if (!order.discountType) throw new ConflictError('La comanda no tiene descuento')
   const removed = { type: order.discountType, value: order.discountValue, amount: order.discountAmount, reason: order.discountReason }
   await deps.orders.update(order.id, NO_DISCOUNT as unknown as Partial<Omit<OrderDTO, 'id'>>)
@@ -182,7 +192,9 @@ async function loadLineForDiscount(deps: DiscountsDeps, order: OrderDTO, lineId:
 /** Aplica (o reemplaza) el descuento de UNA línea sobre su `lineTotal` bruto. Cortesía = percent 100. */
 export async function applyLineDiscount(deps: DiscountsDeps, orderId: string, lineId: string, dto: DiscountInput, user: CurrentUser): Promise<OrderItemDTO> {
   const input = parseDiscountInput(dto)
-  const order = await loadOrderForEdit(deps, orderId, user)
+  return withLinesLock(deps, orderId, user, (order) => applyLineDiscountLocked(deps, order, lineId, input, user))
+}
+async function applyLineDiscountLocked(deps: DiscountsDeps, order: OrderDTO, lineId: string, input: ParsedDiscount, user: CurrentUser): Promise<OrderItemDTO> {
   const line = await loadLineForDiscount(deps, order, lineId)
   const base = round2(Number(line.lineTotal || 0))
   if (base <= 0) throw new ValidationError('La línea no tiene monto para descontar')
@@ -206,7 +218,9 @@ export async function applyLineDiscount(deps: DiscountsDeps, orderId: string, li
 
 /** Quita el descuento de una línea (409 si no tenía). */
 export async function removeLineDiscount(deps: DiscountsDeps, orderId: string, lineId: string, user: CurrentUser): Promise<OrderItemDTO> {
-  const order = await loadOrderForEdit(deps, orderId, user)
+  return withLinesLock(deps, orderId, user, (order) => removeLineDiscountLocked(deps, order, lineId, user))
+}
+async function removeLineDiscountLocked(deps: DiscountsDeps, order: OrderDTO, lineId: string, user: CurrentUser): Promise<OrderItemDTO> {
   const line = await loadLineForDiscount(deps, order, lineId)
   if (!line.discountType) throw new ConflictError('La línea no tiene descuento')
   const removed = { type: line.discountType, value: line.discountValue, amount: line.discountAmount, reason: line.discountReason }

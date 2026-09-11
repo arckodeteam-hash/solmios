@@ -145,6 +145,79 @@ export const RestaurantOrderModel: ModelDefinition = {
     // #213 (auditoría) — cuándo se reembolsó. Antes refundOrder pisaba closedAt y la venta se mudaba
     // de día en el cierre; ahora closedAt es el cobro y refundedAt la devolución.
     refundedAt: { type: 'string' },
+    // #214 — suma de los pagos parciales YA cobrados (restaurant_order_payments completadas, SIN
+    // propina). 0/null = ningún pago parcial. > 0 bloquea líneas, cancelación y el "cobrar todo":
+    // la cuenta ya tiene plata adentro y solo se salda por partes. La fuente de verdad del dinero
+    // sigue siendo `payments`; esto es el acumulado que la comanda necesita para su saldo.
+    amountPaid: { type: 'number', default: 0 },
+    // #214 — suma de las partes `pending` VIVAS (Checkout de tarjeta abierto, o una parte que quedó a
+    // medias). Se mueve SOLO con UPDATE condicional (`split-payments.ts`: reservar / soltar / completar):
+    // es el árbitro contra dos partes concurrentes sobre el mismo saldo y el "hay una parte en curso"
+    // que cancelar, cobrar entero y editar líneas consultan (`order-totals.hasOpenPart`).
+    amountReserved: { type: 'number', default: 0 },
+    // #214 (COR-A) — lock de líneas: ISO hasta el que una edición de líneas (agregar/editar/quitar/anular)
+    // tiene tomada la comanda. '' = libre; un valor vencido también cuenta como libre (lease: si el proceso
+    // muere a mitad de la edición, la comanda se destraba sola). Mientras está tomado no se reserva saldo
+    // (parte / cobro entero) ni se cancela; y todo CAS de dinero condiciona sobre él (usecases/order-cas.ts).
+    // TEXT y no `number`: REAL es float4 en Postgres y un epoch ms no cabe con precisión de segundos.
+    linesLockedUntil: { type: 'string', default: '' },
+  },
+  timestamps: true,
+}
+
+/**
+ * #214 — UNIQUE (orderId, seq) de `restaurant_order_payments`. El ORM no crea índices compuestos: lo
+ * crea `migrate-db.ts` y lo recrea el test de split-payments (mismo literal, para que lo que se prueba
+ * sea lo que corre). `seq` es el `<n>` de la referencia idempotente `pos:<orderId>:<n>`.
+ */
+export const RESTAURANT_ORDER_PAYMENTS_SEQ_INDEX_SQL =
+  'CREATE UNIQUE INDEX IF NOT EXISTS restaurant_order_payments_order_seq ON restaurant_order_payments(orderId, seq)'
+/**
+ * #214 — `ormMigrate` agrega `amountPaid`/`amountReserved`/`linesLockedUntil` con `ADD COLUMN` y deja las filas viejas en NULL.
+ * El UPDATE condicional filtra por igualdad (`amountReserved = ?`) y NULL no matchea nunca: sin este
+ * backfill, la primera parte de una comanda anterior a la columna no podría reservar saldo.
+ */
+export const RESTAURANT_ORDERS_BACKFILL_AMOUNTS_SQL = [
+  'UPDATE restaurant_orders SET amountPaid = 0 WHERE amountPaid IS NULL',
+  'UPDATE restaurant_orders SET amountReserved = 0 WHERE amountReserved IS NULL',
+  "UPDATE restaurant_orders SET linesLockedUntil = '' WHERE linesLockedUntil IS NULL",
+]
+
+/**
+ * #214 — Una PARTE del cobro de una comanda (dividir cuenta / pagos parciales). Una comanda tiene N
+ * filas; cada una apunta al `payment` (cash/card/transfer) o al folio (room) que la respalda —
+ * `payments`/`folio_charges` siguen siendo la única fuente de verdad del dinero. `seq` es el `<n>`
+ * de la referencia idempotente `pos:<orderId>:<n>`; UNIQUE (orderId, seq) lo crea `migrate-db.ts`
+ * (el ORM no hace unique compuesto) y es el árbitro contra dos partes concurrentes con el mismo n.
+ */
+export const RestaurantOrderPaymentModel: ModelDefinition = {
+  table: 'restaurant_order_payments',
+  fields: {
+    id: { type: 'string', required: true },
+    hotelId: { type: 'string', required: true, indexed: true },
+    orderId: { type: 'string', required: true, indexed: true },
+    seq: { type: 'number', required: true },
+    // cash | card | transfer | room
+    method: { type: 'string', required: true },
+    // Lo que se aplica al SALDO de la comanda (bruto: neto + impuesto). Sin propina.
+    amount: { type: 'number', required: true },
+    // Propina de esta parte: se cobra encima de `amount` (payment = amount + tip). Nunca en `room`.
+    tip: { type: 'number', default: 0 },
+    // pending (Checkout de tarjeta abierto / a medias) | completed | expired | failed | refunding | refunded.
+    // `failed`/`expired` conservan su `seq`: la referencia `pos:<orderId>:<n>` ya pudo quedar reclamada en
+    // payments y la siguiente parte toma n+1 (nunca hereda un payment ajeno).
+    status: { type: 'string', default: 'pending' },
+    paymentId: { type: 'string', indexed: true },   // payments.id (cash/card/transfer)
+    folioId: { type: 'string' },                    // folio al que fue la parte `room`
+    reservationId: { type: 'string' },
+    // Dividir por líneas: ids de restaurant_order_items que esta parte paga. null = por monto/partes iguales.
+    lineIds: { type: 'json' },
+    createdBy: { type: 'string' },
+    completedAt: { type: 'string' },
+    refundedAt: { type: 'string' },
+    refundReason: { type: 'text' },   // motivo de la devolución (obligatorio al devolver: efectivo/transferencia salen del cajón)
+    failedAt: { type: 'string' },
+    failReason: { type: 'string' },   // por qué falló el puerto de dinero (mensaje, recortado)
   },
   timestamps: true,
 }
@@ -290,4 +363,5 @@ export function registerRestaurantModels(orm: ORM): void {
   orm.define('MenuItemModifiers', MenuItemModifierModel)
   orm.define('MenuCombos', MenuComboModel)
   orm.define('MenuComboItems', MenuComboItemModel)
+  orm.define('RestaurantOrderPayments', RestaurantOrderPaymentModel)   // #214
 }

@@ -4,7 +4,7 @@ import { createModule, OrmRepository } from 'arckode-framework'
 import { registerRestaurantModels } from './model'
 import { RestaurantService } from './service'
 import { RestaurantController } from './controller'
-import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderItemDTO, ModifierGroupDTO, ModifierDTO, ComboDTO, ComboItemDTO } from './types'
+import type { StationDTO, CategoryDTO, MenuItemDTO, TableDTO, OrderDTO, OrderItemDTO, ModifierGroupDTO, ModifierDTO, ComboDTO, ComboItemDTO, OrderPaymentDTO } from './types'
 import { createPermissionGuard } from '../../infrastructure/auth/create-permission-guard'
 import { createModuleGuard, createModuleChecker } from '../../infrastructure/auth/require-module'
 import { rateLimit, getClientIp } from '../../shared/middlewares/rate-limit'
@@ -39,6 +39,10 @@ export type { RestaurantEvent, RestaurantEventType } from './usecases/events'
 export type { ReportPorts, ReportPayment, ReportFolioCharge, RestaurantDailyReport, DailyReportQuery, SalesMethod, VoidRow } from './usecases/reports'
 // #215 (append-only): descuentos y cortesías en el cierre del día.
 export type { DiscountRow } from './usecases/reports'
+// #214 (append-only): dividir cuenta / pagos parciales.
+export type { OrderPaymentDTO, OrderPaymentMethod, OrderPaymentStatus, OrderBalance } from './types'
+export type { AddOrderPaymentInput, AddOrderPaymentResult, OrderPaymentsList, SplitPreview } from './usecases/split-payments'
+export { AddOrderPaymentSchema, RefundOrderSchema, ORDER_PAYMENT_METHODS } from './validators/schema'
 
 export function RestaurantModule() {
   return createModule({
@@ -57,6 +61,7 @@ export function RestaurantModule() {
       tables: [
         'restaurant_stations', 'menu_categories', 'menu_items',
         'restaurant_tables', 'restaurant_orders', 'restaurant_order_items',
+        'restaurant_order_payments',   // #214 (append-only)
       ],
       dependencies: [],
       rules: ['No importar de otros módulos', 'hotelId del JWT (multi-tenant)', 'Estaciones configurables (no hardcode)'],
@@ -85,6 +90,8 @@ export function RestaurantModule() {
       const roomsRepo = new OrmRepository<any>(orm, 'Rooms')
       // #209: nombre del huésped para "Hab. 204 · Pérez" en la comanda de room service (tabla guests, lectura acotada al hotel).
       const guestsRepo = new OrmRepository<any>(orm, 'Guests')
+      // #214: partes del cobro (dividir cuenta / pagos parciales).
+      const orderPaymentsRepo = new OrmRepository<OrderPaymentDTO>(orm, 'RestaurantOrderPayments')
       const log = logger.child('restaurant')
       const service = new RestaurantService(
         stations, categories, items, tables, userRepo, log, auth,
@@ -97,6 +104,7 @@ export function RestaurantModule() {
         { transaction: <T>(fn: (tx: any) => Promise<T>) => orm.transaction(fn) },
         roomsRepo,
         guestsRepo,
+        orderPaymentsRepo,
       )
       const controller = new RestaurantController(service, log)
 
@@ -195,6 +203,12 @@ export function RestaurantModule() {
       // Refund: permiso billing:create (alinea con POST /api/payments/:id/refund). El POS no expone
       // un permiso propio de reembolso; billing:create es el gate financiero del dinero.
       router.post('/api/restaurant/orders/:id/refund', guard('billing', 'create'), (req) => controller.refundOrder(req))
+      // #214: dividir cuenta / pagos parciales. Ver y agregar partes es cobrar (`restaurant:pay`, cocina
+      // no); devolver UNA parte es el mismo gate financiero que el refund entero (`billing:create`).
+      router.get('/api/restaurant/orders/:id/payments', guard('restaurant', 'pay'), (req) => controller.indexOrderPayments(req))
+      router.get('/api/restaurant/orders/:id/split', guard('restaurant', 'pay'), (req) => controller.splitPreview(req))
+      router.post('/api/restaurant/orders/:id/payments', guard('restaurant', 'pay'), (req) => controller.addOrderPayment(req))
+      router.post('/api/restaurant/orders/:id/payments/:partId/refund', guard('billing', 'create'), (req) => controller.refundOrderPayment(req))
 
       // KDS / cocina (RES-4)
       router.get('/api/restaurant/kds', guard('restaurant', 'view'), (req) => controller.kdsQueue(req))

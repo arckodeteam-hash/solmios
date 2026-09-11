@@ -18,6 +18,7 @@ import { backfillRestaurantDiscountPermission } from './scripts/backfill-restaur
 import { dedupeRestaurantOrderNumbers } from './scripts/dedupe-restaurant-order-numbers'
 import { backfillBusinessDate } from './scripts/backfill-business-date'
 import { isMissingTableError, failMigrationStep } from './src/shared/utils/db-errors'
+import { RESTAURANT_ORDER_PAYMENTS_SEQ_INDEX_SQL, RESTAURANT_ORDERS_BACKFILL_AMOUNTS_SQL } from './src/modules/restaurant/model'
 import { LEGAL_PAGES_SEED } from './scripts/legal-pages-content'
 import { MARKETING_PAGES_SEED } from './scripts/marketing-pages-content'
 
@@ -943,6 +944,28 @@ async function createPosIdempotencyIndexes(): Promise<void> {
     }
   } catch (e: unknown) {
     failMigrationStep(e, { what: 'payments_pos_ref', missingTable: 'payments', consequence: 'Sin el UNIQUE (hotelId, reference) de las referencias pos:*, un cobro del POS puede asentarse dos veces en payments.' })
+  }
+
+  // #214 (dividir cuenta): UNIQUE (orderId, seq) en restaurant_order_payments — el `seq` es el `<n>`
+  // de la referencia `pos:<orderId>:<n>`; `split-payments.claimPart` crea la fila primero y deja que
+  // este índice decida la carrera entre dos cajeros (el perdedor reintenta con el siguiente n). Sin
+  // el índice, dos partes podrían pedir la MISMA referencia y payments devolvería el mismo cobro para
+  // las dos. El literal vive en restaurant/model.ts (el test de split-payments lo recrea tal cual). La
+  // tabla la crea el ORM (RUN_MIGRATE); si aún no existe, se reintenta en la próxima corrida.
+  try {
+    await exec(RESTAURANT_ORDER_PAYMENTS_SEQ_INDEX_SQL)
+  } catch (e: unknown) {
+    failMigrationStep(e, { what: 'restaurant_order_payments_order_seq', missingTable: 'restaurant_order_payments', consequence: 'Sin el UNIQUE (orderId, seq), dos partes de una cuenta dividida pueden pedir la MISMA referencia pos:<orderId>:<n> y payments devolver el mismo cobro para las dos.' })
+  }
+  // #214: `amountPaid`/`amountReserved` llegan por ADD COLUMN en NULL; el UPDATE condicional que reserva
+  // el saldo filtra por igualdad y `= NULL` no matchea nunca → las comandas anteriores a la columna no
+  // podrían cobrarse por partes. Backfill a 0 (solo donde está NULL: idempotente).
+  for (const sql of RESTAURANT_ORDERS_BACKFILL_AMOUNTS_SQL) {
+    try {
+      await exec(sql)
+    } catch (e: unknown) {
+      failMigrationStep(e, { what: 'restaurant_orders.amountPaid/amountReserved backfill', missingTable: 'restaurant_orders', consequence: 'Con amountPaid/amountReserved en NULL el UPDATE condicional del saldo no matchea nunca y las comandas anteriores a la columna no se pueden cobrar por partes.' })
+    }
   }
 
   try {

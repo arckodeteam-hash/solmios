@@ -14,7 +14,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  RestaurantService, isLineActive, roomServiceLabel, isCourtesy,
+  RestaurantService, isLineActive, roomServiceLabel, isCourtesy, hasPartialPayments,
   type OrderWithLines, type MenuCategory, type MenuItem, type OrderLine, type ModifierGroup, type Combo,
   type AllergenTag, type LineStatus, type DiscountPolicy, type DiscountPayload,
   ORDER_STATUS_LABELS, ORDER_TYPE_LABELS, LINE_STATUS_LABELS, LINE_STATUS_BADGE, ALLERGEN_LABELS,
@@ -67,7 +67,11 @@ const discountPerm = computed(() => can('restaurant', 'discount'))
 // 'processing_payment' también bloquea (Cobrar/Cancelar) — el cobro con tarjeta ya abrió una Checkout
 // Session; el cajero espera la confirmación en cobrar.vue, no vuelve a tocar la comanda desde acá.
 const LOCKED = ['billed', 'charged', 'paid', 'cancelled', 'processing_payment']
-const editable = computed(() => !!order.value && !LOCKED.includes(order.value.status))
+// #214: con una parte ya cobrada — o un Checkout de tarjeta abierto por una parte (`amountReserved > 0`) — las
+// líneas y "Cancelar" se bloquean igual que en `processing_payment` (el backend da 409); "Cobrar" sigue
+// disponible porque el saldo se termina de cobrar por partes desde /cobrar.
+const editable = computed(() => !!order.value && !LOCKED.includes(order.value.status) && !hasPartialPayments(order.value))
+const canPay = computed(() => !!order.value && !LOCKED.includes(order.value.status) && payPerm.value)
 // Líneas que cuentan (no anuladas): son las que habilitan Enviar/Cobrar.
 const activeLines = computed<OrderLine[]>(() => (order.value?.lines ?? []).filter(isLineActive))
 
@@ -489,7 +493,7 @@ function cancel() {
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <!-- Carta -->
         <SectionCard title="Carta">
-          <div v-if="!editable" class="text-sm text-text-muted py-6 text-center">La comanda está cerrada; no se pueden agregar ítems.</div>
+          <div v-if="!editable" class="text-sm text-text-muted py-6 text-center">{{ order && hasPartialPayments(order) ? 'La cuenta ya tiene pagos parciales; no se pueden cambiar los ítems. Terminá de cobrarla desde Cobrar.' : 'La comanda está cerrada; no se pueden agregar ítems.' }}</div>
           <template v-else>
             <div v-if="categories.length" class="flex flex-wrap gap-1.5 mb-3">
               <button @click="activeCategoryId = 'all'" :class="['px-2.5 py-1 rounded-full text-xs font-bold', activeCategoryId === 'all' ? 'bg-navy text-white' : 'bg-surface text-text-muted']">Todas</button>
@@ -623,7 +627,7 @@ function cancel() {
             </button>
             <button v-if="editable && discountPerm" data-testid="order-discount" @click="openDiscount({ kind: 'order' })" :disabled="sending || !activeLines.length"
               class="px-4 py-2.5 rounded-xl border-2 border-navy/30 text-navy font-bold hover:bg-surface disabled:opacity-50">{{ order.discountType ? 'Editar descuento' : 'Descuento' }}</button>
-            <button v-if="editable && payPerm" @click="goPay" :disabled="sending || !activeLines.length"
+            <button v-if="canPay" @click="goPay" :disabled="sending || !activeLines.length"
               class="flex-1 min-w-[140px] py-2.5 rounded-xl bg-teal text-white font-bold hover:bg-teal/80 disabled:opacity-50">Cobrar</button>
             <button v-if="editable && deletePerm" @click="cancel" :disabled="sending"
               class="px-4 py-2.5 rounded-xl border-2 border-coral/40 text-coral font-bold hover:bg-coral/10 disabled:opacity-50">Cancelar</button>

@@ -141,6 +141,13 @@ export class PaymentCrudUseCase {
     }
   }
 
+  /** Un payment por su idempotency key (`reference`) dentro del hotel — la que el POS reclama como `pos:*`. */
+  async findByReference(hotelId: string, reference: string): Promise<PaymentDTO | null> {
+    if (!hotelId || !reference) return null
+    const rows = await this.paymentRepo.findMany({ hotelId, reference } as any)
+    return rows[0] ?? null
+  }
+
   /**
    * Busca el asiento de un cobro de Stripe. Stripe reintenta el webhook ante cualquier error, así
    * que el cobro debe poder reconocerse ya registrado sin depender del estado del PaymentRequest.

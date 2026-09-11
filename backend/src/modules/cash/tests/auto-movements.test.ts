@@ -7,9 +7,11 @@ import { describe, it, expect } from 'bun:test'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import {
-  registerPaymentIncome, registerExpenseOutflow, removeExpenseOutflow,
+  registerPaymentIncome, registerExpenseOutflow, removeExpenseOutflow, registerRefundOutflow,
   type AutoMovementDeps,
 } from '../usecases/auto-movements'
+import { reconcileShift } from '../usecases/reconcile'
+import type { CashShiftDTO } from '../types'
 import type { CashMovementDTO } from '../types'
 
 function makeDeps(rows: Partial<CashMovementDTO>[] = []) {
@@ -131,5 +133,53 @@ describe('registerPaymentIncome', () => {
     await registerPaymentIncome(deps, { hotelId: 'h1', paymentId: 'p1', amount: 100, concept: '   ' })
 
     expect(created[0].concept).toBe('Pago automático')
+  })
+})
+
+// #214 (COR-B): la devolución en efectivo de una parte (o de cualquier cobro) sale del cajón. Sin el
+// egreso, `reconcileShift` seguía contando el ingreso original y el cierre pedía justificar un faltante.
+describe('registerRefundOutflow', () => {
+  const income = { id: 'mov-in', hotelId: 'h1', paymentId: 'p1', type: 'income', amount: 60, method: 'cash', register: 'restaurant', shiftId: 'shift0', reference: 'pos:o1:2', concept: 'Comanda CMD-2026-0007 · Mesa 3 · parte 2' } as Partial<CashMovementDTO>
+  const refund = { hotelId: 'h1', paymentId: 'r1', refundOfPaymentId: 'p1', amount: 60, reference: 'pos:o1:2:refund', register: 'reception' as const }
+
+  it('asienta un egreso cash en la caja del ingreso, con "Devolución" + el concepto del cobro y la referencia del cobro original', async () => {
+    const { deps, created } = makeDeps([income])
+    const mov = await registerRefundOutflow(deps, refund)
+    expect(mov).not.toBeNull()
+    expect(created[0]).toMatchObject({
+      type: 'expense', method: 'cash', amount: 60, source: 'payment_connector', category: 'refund',
+      paymentId: 'r1', reference: 'pos:o1:2', register: 'restaurant', shiftId: 'shift1',
+      concept: 'Devolución · Comanda CMD-2026-0007 · Mesa 3 · parte 2',
+    })
+  })
+
+  it('sin el ingreso original (caja caída al cobrar), usa el register y la referencia que manda el conector', async () => {
+    const { deps, created } = makeDeps()
+    await registerRefundOutflow(deps, { ...refund, concept: 'Refund for payment p1' })
+    expect(created[0]).toMatchObject({ type: 'expense', register: 'reception', reference: 'pos:o1:2:refund', concept: 'Devolución · Refund for payment p1' })
+  })
+
+  it('dedup por el payment de la devolución: el mismo refund dos veces no saca plata dos veces', async () => {
+    const { deps, created } = makeDeps([income, { id: 'mov-out', hotelId: 'h1', paymentId: 'r1' }])
+    expect(await registerRefundOutflow(deps, refund)).toBeNull()
+    expect(created).toHaveLength(0)
+  })
+
+  it('monto ≤ 0 → no asienta nada', async () => {
+    const { deps, created } = makeDeps([income])
+    expect(await registerRefundOutflow(deps, { ...refund, amount: 0 })).toBeNull()
+    expect(created).toHaveLength(0)
+  })
+
+  it('el arqueo con ingreso 100 + devolución 60 espera opening + 40 (no + 100)', () => {
+    const shift = { id: 's1', hotelId: 'h1', openingAmount: 500, countedAmount: 540, status: 'open' } as CashShiftDTO
+    const movs = [
+      { id: 'a', hotelId: 'h1', shiftId: 's1', type: 'income', amount: 100, method: 'cash', paymentId: 'p1' },
+      { id: 'b', hotelId: 'h1', shiftId: 's1', type: 'expense', amount: 60, method: 'cash', paymentId: 'r1', category: 'refund' },
+    ] as CashMovementDTO[]
+    const rec = reconcileShift(shift, movs)
+    expect(rec.expected).toBe(540)
+    expect(rec.difference).toBe(0)
+    expect(rec.cashExpense).toBe(60)
   })
 })

@@ -33,7 +33,7 @@ export function PaymentsModule() {
       name: 'payments',
       version: '1.3.0',
       description: 'Payments: card charging, deposits, reconciliation',
-      actions: ['createPayment', 'chargeCard', 'refund', 'listPayments', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo', 'settledNetOfReservation', 'paymentsOfBusinessDate'],
+      actions: ['createPayment', 'chargeCard', 'refund', 'refundDirectPayment', 'recordDirectRefund', 'refundPaymentByMethod', 'findByReference', 'listPayments', 'createDeposit', 'refundDeposit', 'releaseDeposit', 'reconcile', 'paymentsLinkedTo', 'settledNetOfReservation', 'paymentsOfBusinessDate'],
       events: ['onPaymentCreated', 'onPaymentCompleted', 'onPaymentExpired', 'onPaymentFailed', 'onRefundProcessed', 'onDepositCreated', 'onDepositReleased'],
       tables: ['payments', 'deposits'],
       dependencies: ['folios', 'facturas'],

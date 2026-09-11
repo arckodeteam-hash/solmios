@@ -453,6 +453,8 @@ describe('claridad — sin turno abierto: guía de 3 pasos, un solo botón prima
 const MOVS = [
   // Cobro en efectivo del POS: automático, con la referencia de la comanda y el concepto que arma el server.
   { id: 'a1', type: 'income', amount: 236, method: 'cash', source: 'payment_connector', reference: 'pos:o-77', concept: 'Comanda CMD-2026-0007 · Mesa 3', shiftId: 's1', createdAt: '2026-08-22T10:00:00' },
+  // #214: UNA PARTE de una cuenta dividida — la referencia lleva el número de parte (`pos:<orderId>:<n>`).
+  { id: 'a2', type: 'income', amount: 40, method: 'cash', source: 'payment_connector', reference: 'pos:o-78:2', concept: 'Comanda CMD-2026-0008 · Mesa 5 · parte 2', shiftId: 's1', createdAt: '2026-08-22T10:05:00' },
   // Manual del turno abierto (editable).
   { id: 'm1', type: 'expense', amount: 500, method: 'cash', source: 'manual', concept: 'Hielo', shiftId: 's1', createdAt: '2026-08-22T10:30:00' },
   // Manual de un turno YA CERRADO (no editable).
@@ -538,6 +540,13 @@ describe('#212 — enlace movimiento ↔ comanda y edición de manuales', () => 
     expect(link.attributes('href')).toBe('/panel/restaurante/comanda/o-77')
     // Un manual no enlaza a nada
     expect(w.find('[data-testid="mov-m1"]').find('[data-testid="mov-order-link"]').exists()).toBe(false)
+  })
+
+  it('#214: el cobro de UNA PARTE (`pos:<orderId>:<n>`) enlaza a la comanda, sin el `:<n>` pegado al id', async () => {
+    const { w } = await render(withMovements())
+    const link = w.find('[data-testid="mov-a2"]').find('[data-testid="mov-order-link"]')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toBe('/panel/restaurante/comanda/o-78')
   })
 
   it('"Editar" solo en el manual del turno abierto: ni en el automático ni en el de un turno cerrado', async () => {

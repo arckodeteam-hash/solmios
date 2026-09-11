@@ -31,8 +31,8 @@ export function restauranteFoliosConnector(ctx: ConnectorContext): void {
         // Idempotency key (idempotencia-settlement-pos): `folio-entries.postCharge` reclama esta
         // reference atómico contra un UNIQUE index parcial (hotelId,reference) WHERE source='pos'.
         // Un reintento con la MISMA orden pide el MISMO reference → devuelve el cargo ya creado en
-        // vez de duplicarlo en el folio del huésped.
-        reference: 'pos:' + input.orderId,
+        // vez de duplicarlo en el folio del huésped. #214: una PARTE trae la suya (`pos:<orderId>:<n>`).
+        reference: input.reference ?? 'pos:' + input.orderId,
       }, user)
       return { folioId: folio.id }
     },

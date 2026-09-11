@@ -19,6 +19,9 @@ export type {
 } from './types'
 export type { CashSockets } from './sockets'
 export { CashValidator, CreateMovementSchema, UpdateMovementSchema, OpenShiftSchema, CloseShiftSchema } from './validators/schema'
+// #214 COR-B (append-only): lo que la caja hace con los eventos de payments (lo cablea connectors/payments-caja.ts).
+export { cashIncomeFromPayment, cashOutflowFromRefund } from './usecases/from-payments'
+export type { CashFromPaymentsPort, PaymentLike } from './usecases/from-payments'
 
 export function CashModule() {
   return createModule({
@@ -30,7 +33,7 @@ export function CashModule() {
       name: 'caja',
       version: '1.0.0',
       description: 'Caja: movimientos y turnos con arqueo',
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'listShifts', 'getCurrentShift', 'openShift', 'closeShift', 'reconcile', 'stats', 'registerPaymentIncome'],
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'listShifts', 'getCurrentShift', 'openShift', 'closeShift', 'reconcile', 'stats', 'registerPaymentIncome', 'registerRefundOutflow'],   // registerRefundOutflow: #214 COR-B (append-only)
       events: ['onCashMovementCreated', 'onCashMovementUpdated', 'onCashMovementDeleted', 'onShiftOpened', 'onShiftClosed'],
       tables: ['cash_movements', 'cash_shifts'],
       dependencies: [],

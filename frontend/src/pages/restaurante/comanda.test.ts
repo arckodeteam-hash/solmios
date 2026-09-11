@@ -13,7 +13,7 @@
  * lógica del contador sí se ejecuta de verdad (abajo), replicada desde el mismo predicado.
  */
 import { describe, it, expect } from 'vitest'
-import { LINE_STATUS_BADGE, LINE_STATUS_LABELS, type OrderLine } from '@/services/Restaurant.service'
+import { LINE_STATUS_BADGE, LINE_STATUS_LABELS, hasPartialPayments, type OrderLine } from '@/services/Restaurant.service'
 
 const RAW_PAGES = import.meta.glob('./*.vue', {
   query: '?raw',
@@ -190,5 +190,24 @@ describe('#215 — descuento por línea y de la comanda', () => {
     expect(src).toMatch(/RestaurantService\.removeLineDiscount\(orderId\.value, t\.line\.id\)/)
     expect(src).toMatch(/RestaurantService\.removeOrderDiscount\(orderId\.value\)/)
     expect(src, 'subtotal/impuesto/total tienen que salir del server').not.toMatch(/order\.value\.subtotal\s*=/)
+  })
+})
+
+describe('#214 — con pagos parciales (cobrados o un Checkout abierto por una parte) la comanda no se edita, pero sí se cobra', () => {
+  it('predicado compartido: amountPaid > 0 o amountReserved > 0 = hay plata adentro', () => {
+    expect(hasPartialPayments({})).toBe(false)
+    expect(hasPartialPayments({ amountPaid: 0, amountReserved: 0 })).toBe(false)
+    expect(hasPartialPayments({ amountPaid: 40 })).toBe(true)
+    expect(hasPartialPayments({ amountReserved: 60 })).toBe(true)   // Checkout de tarjeta abierto por UNA parte
+  })
+
+  it('`editable` (líneas, Cancelar) descuenta hasPartialPayments; "Cobrar" usa `canPay`, que NO lo descuenta', () => {
+    const src = comanda()
+    expect(src).toMatch(/const editable = computed\(\(\) => !!order\.value && !LOCKED\.includes\(order\.value\.status\) && !hasPartialPayments\(order\.value\)\)/)
+    expect(src).toMatch(/const canPay = computed\(\(\) => !!order\.value && !LOCKED\.includes\(order\.value\.status\) && payPerm\.value\)/)
+    const tpl = templateOf(src)
+    expect(tpl, 'el botón Cobrar tiene que seguir visible con pagos parciales').toMatch(/<button v-if="canPay" @click="goPay"/)
+    expect(tpl, 'Cancelar sí se bloquea con pagos parciales').toMatch(/<button v-if="editable && deletePerm" @click="cancel"/)
+    expect(tpl, 'la carta explica por qué no se pueden agregar ítems').toMatch(/La cuenta ya tiene pagos parciales/)
   })
 })
