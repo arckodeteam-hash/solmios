@@ -241,6 +241,13 @@ export interface PublicHotelInfoDTO {
   postalCode: string | null
   phone: string | null
   email: string | null
+  /** WhatsApp público del hotel (`hotels.whatsapp`, #241) tal como lo cargó, o `null`. */
+  whatsapp: string | null
+  /** `https://wa.me/<E.164>` armado por el servidor con `toE164(whatsapp, country)` — la
+   *  misma regla que el WhatsApp de la plataforma (`site-pages/usecases/platform-contact.ts`).
+   *  `null` si no hay número o no se puede llevar a E.164: el frontend NO muestra el botón
+   *  (un `wa.me/8095550000` sin prefijo abre un chat con nadie). */
+  whatsappUrl: string | null
   website: string | null
   checkIn: string
   checkOut: string

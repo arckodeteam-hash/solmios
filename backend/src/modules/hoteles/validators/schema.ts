@@ -42,6 +42,8 @@ export const CreateHotelesSchema: Record<string, ValidationRule> = {
   logo: { type: 'string' as const, max: 500 },
   bookingEngineUrl: { type: 'string' as const, max: 200 },
   phone2: { type: 'string' as const, max: 20 },
+  // #241: WhatsApp público. Sin `min` para que "" pueda limpiarlo (phone no puede, ver general.vue).
+  whatsapp: { type: 'string' as const, max: 25 },
   warningPhone: { type: 'string' as const, max: 20 },
   secondaryCurrency: { type: 'string' as const, min: 3, max: 3 },
   youtubeUrl: { type: 'string' as const, max: 200 },
@@ -105,6 +107,8 @@ export const UpdateHotelesSchema: Record<string, ValidationRule> = {
   logo: { type: 'string' as const, max: 500 },
   bookingEngineUrl: { type: 'string' as const, max: 200 },
   phone2: { type: 'string' as const, max: 20 },
+  // #241: WhatsApp público. Sin `min` para que "" pueda limpiarlo (phone no puede, ver general.vue).
+  whatsapp: { type: 'string' as const, max: 25 },
   warningPhone: { type: 'string' as const, max: 20 },
   secondaryCurrency: { type: 'string' as const, min: 3, max: 3 },
   youtubeUrl: { type: 'string' as const, max: 200 },

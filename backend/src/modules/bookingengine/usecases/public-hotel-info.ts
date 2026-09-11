@@ -13,6 +13,7 @@ import { NotFoundError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
 import type { PublicHotelInfoDTO } from '../types'
 import { resolveChildPolicy } from '../../../shared/usecases/child-composition'
+import { toE164 } from '../../../shared/utils/phone-e164'
 
 export interface PublicHotelInfoDeps {
   hotels: RepositoryAdapter<any>
@@ -73,6 +74,8 @@ export async function getPublicHotelInfo(
     postalCode: hotel.postalCode ?? null,
     phone: hotel.phone ?? null,
     email: hotel.email ?? null,
+    whatsapp: nonEmptyOrNull(hotel.whatsapp),
+    whatsappUrl: buildHotelWhatsappUrl(hotel.whatsapp, hotel.country),
     website: hotel.website ?? null,
     checkIn: hotel.checkIn ?? '15:00',
     checkOut: hotel.checkOut ?? '12:00',
@@ -158,6 +161,23 @@ async function resolveAmenities(
   } catch {
     return (legacyAmenities as string[] | null) ?? null
   }
+}
+
+/**
+ * País que se asume cuando el WhatsApp viene sin prefijo y `hotels.country` no lo resuelve
+ * (vacío, o guardado como nombre en vez de ISO — `toE164` solo entiende alfa-2). Mismo default
+ * que `sales-leads/usecases/pipeline.ts:whatsappUrlFor`: la plataforma opera desde RD. Un
+ * número con `+` explícito (lo que guarda `PhoneInput`) se respeta tal cual.
+ */
+const DEFAULT_WHATSAPP_COUNTRY = 'DO'
+
+/** Función pura (#241): número cargado → `https://wa.me/<E.164>` o `null`. Exportada para test. */
+export function buildHotelWhatsappUrl(whatsapp: unknown, country: unknown): string | null {
+  const raw = nonEmptyOrNull(whatsapp)
+  if (!raw) return null
+  const iso = typeof country === 'string' && /^[A-Za-z]{2}$/.test(country.trim()) ? country.trim() : DEFAULT_WHATSAPP_COUNTRY
+  const e164 = toE164(raw, iso)
+  return e164 ? `https://wa.me/${e164}` : null
 }
 
 function nonEmptyOrNull(v: unknown): string | null {
