@@ -27,6 +27,12 @@ interface ComposerState {
   // (el pedido de corrección es explícito: "no preguntar si desea una, dos o más cunas") — no
   // existe una cantidad en el estado, `addComposedRoom` la deriva SIEMPRE en 1/0 al enviar.
   needsCrib: boolean
+  // REQ-01 (#233, amenidades para niños y bebés) — ids del catálogo público del hotel
+  // (`store.childAmenities`) tildados para ESTA tarjeta, mismo criterio POR HABITACIÓN que la
+  // cuna. Opcional y ausente en el estado fresco (se crea recién al primer toggle): el estado
+  // inicial sigue siendo exactamente `{adults, ages, needsCrib}`, que es lo que la UI y los
+  // tests existentes comparan. Leer siempre vía `childAmenityIds(rt)` / `isChildAmenitySelected`.
+  childAmenityIds?: string[]
 }
 
 function freshComposerState(): ComposerState {
@@ -81,6 +87,15 @@ export function useGuestComposer() {
   function syncCribToBabies(rt: RoomTypeRate): void {
     const c = composer(rt)
     if (babiesCount(rt) === 0) c.needsCrib = false
+    syncChildAmenitiesToChildren(rt)
+  }
+
+  /** REQ-01 (#233) — hermana de `syncCribToBabies`: si la composición quedó SIN menores, las
+   *  amenidades tildadas ya no corresponden a nadie y se limpian solas (el backend las rechaza
+   *  igual sin `childrenAges`; acá se evita que el huésped vea un "+ $X" fantasma). */
+  function syncChildAmenitiesToChildren(rt: RoomTypeRate): void {
+    const c = composer(rt)
+    if (c.ages.length === 0 && c.childAmenityIds && c.childAmenityIds.length > 0) c.childAmenityIds = []
   }
 
   /** Tarea 21 (Identificar bebés, 2026-09-08) — clasificación EN VIVO de un niño puntual, con la
@@ -111,6 +126,42 @@ export function useGuestComposer() {
   /** Sí/No — sin cantidad. "No" limpia el estado por si se reactiva sin querer. */
   function setNeedsCrib(rt: RoomTypeRate, value: boolean): void {
     composer(rt).needsCrib = value
+  }
+
+  // ─── REQ-01 (#233) — amenidades para niños y bebés, POR TARJETA ─────────────────────────────
+
+  /** Ids tildados en esta tarjeta (siempre un array, aunque el estado todavía no lo tenga). */
+  function childAmenityIds(rt: RoomTypeRate): string[] {
+    return composer(rt).childAmenityIds ?? []
+  }
+
+  /** ¿Corresponde mostrar el checklist de amenidades infantiles en ESTA tarjeta ahora mismo?
+   *  Sí solo si el hotel acepta niños, la composición tiene al menos un menor (cualquier edad —
+   *  no hace falta que sea bebé: una silla alta es para un niño de 3) Y el hotel publicó al
+   *  menos una amenidad activa. Centralizado acá para que RoomsStep.vue y BookingModal.vue no
+   *  diverjan (mismo criterio que `shouldOfferCrib`). */
+  function shouldOfferChildAmenities(rt: RoomTypeRate): boolean {
+    return store.childPolicy.acceptChildren && composer(rt).ages.length > 0 && store.childAmenities.length > 0
+  }
+
+  function isChildAmenitySelected(rt: RoomTypeRate, id: string): boolean {
+    return childAmenityIds(rt).includes(id)
+  }
+
+  /** Tilda/destilda una amenidad del catálogo para esta tarjeta. Ids que no están en el catálogo
+   *  se ignoran (nunca se guarda algo que el hotel no ofrece). */
+  function toggleChildAmenity(rt: RoomTypeRate, id: string): void {
+    if (!store.childAmenities.some((a) => a.id === id)) return
+    const c = composer(rt)
+    const current = c.childAmenityIds ?? []
+    c.childAmenityIds = current.includes(id) ? current.filter((x) => x !== id) : [...current, id]
+  }
+
+  /** Σ precio de las amenidades tildadas en esta tarjeta (para el "+ $X" de la tarjeta). Precios
+   *  del catálogo en vivo — el snapshot fijo se toma recién al agregar (`store.addToCart`). */
+  function composedChildAmenitiesTotal(rt: RoomTypeRate): number {
+    const wanted = new Set(childAmenityIds(rt))
+    return round2(store.childAmenities.reduce((s, a) => s + (wanted.has(a.id) ? Number(a.price) || 0 : 0), 0))
   }
 
   /** Fila de la matriz para la ocupación chargeable actual. `null` = sin matriz (fallback al
@@ -202,9 +253,13 @@ export function useGuestComposer() {
     // importar qué haya quedado tildado. Sí/No únicamente: `cribCount` es siempre 1 o 0, nunca
     // una cantidad elegida por el huésped.
     const needsCrib = shouldOfferCrib(rt) && c.needsCrib
+    // REQ-01 (#233) — mismo gateo: sin menores en la composición, sin catálogo o con el hotel
+    // sin aceptar niños, no viaja ninguna amenidad aunque haya quedado algo tildado.
+    const childAmenityIdsToSend = shouldOfferChildAmenities(rt) ? [...childAmenityIds(rt)] : []
     await store.addToCart(rt, {
       adults: c.adults, childrenAges: [...c.ages],
       needsCrib, cribCount: needsCrib ? 1 : 0,
+      ...(childAmenityIdsToSend.length > 0 ? { childAmenityIds: childAmenityIdsToSend } : {}),
     })
     // Reset: la próxima habitación (misma tarjeta u otra) arranca de nuevo en 1 adulto/0 niños.
     composerState[rt.id] = freshComposerState()
@@ -215,5 +270,8 @@ export function useGuestComposer() {
     composition, matchedRow, composedPrice, composedPricePerNight,
     canAddComposition, addComposedRoom, maxChildAgeOptions, capacityBlockReason,
     childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib,
+    // REQ-01 (#233)
+    childAmenityIds, shouldOfferChildAmenities, isChildAmenitySelected, toggleChildAmenity,
+    composedChildAmenitiesTotal,
   }
 }

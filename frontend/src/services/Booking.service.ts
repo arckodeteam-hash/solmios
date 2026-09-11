@@ -5,6 +5,7 @@
 //   - GET  /api/public/hotels/:slug/rates          → tarifa derivada + availableCount (D11)
 //   - GET  /api/public/hotels/:slug/upsells         → upsells activos
 //   - GET  /api/public/hotels/:slug/meal-plans      → regímenes activos (tasks.md 2.2/2.4)
+//   - GET  /api/public/hotels/:slug/child-amenities → amenidades niños/bebés activas (REQ-01 #233)
 //   - POST /api/public/hotels/:slug/promo/validate  → {valid, discount, reason?}
 //   - POST /api/public/booking                      → crea reserva pending + redirige a Stripe
 //   - GET  /api/public/reservations/:id             → polling post-redirect (valida token HMAC)
@@ -29,6 +30,7 @@ import type {
   CancelReservationResponse,
   PublicCalendarQuery,
   PublicCalendarResponse,
+  PublicChildAmenity,
   PublicMealPlan,
   PublicRatesQuery,
   PublicRatesResponse,
@@ -113,6 +115,9 @@ export const BookingService = {
       body.needsCrib = true
       body.cribCount = dto.cribCount ?? 0
     }
+    // REQ-01 (#233) — amenidades para niños/bebés de la habitación: solo si hay alguna elegida
+    // (mismo criterio que `upsells`/`needsCrib`: nunca mandar la clave vacía).
+    if (dto.childAmenities && dto.childAmenities.length > 0) body.childAmenities = dto.childAmenities
     if (dto.successUrl) body.successUrl = dto.successUrl
     if (dto.cancelUrl) body.cancelUrl = dto.cancelUrl
     if (dto.idempotencyKey) body.idempotencyKey = dto.idempotencyKey
@@ -145,7 +150,12 @@ export const BookingService = {
       hotelId: hotel.id,
       checkIn: dto.checkIn,
       checkOut: dto.checkOut,
-      rooms: dto.rooms,
+      // REQ-01 (#233) — `childAmenities` viaja DENTRO de cada línea (por habitación, igual que
+      // `needsCrib`), y solo si esa línea eligió alguna: la clave vacía no se manda.
+      rooms: dto.rooms.map((line) => {
+        const { childAmenities, ...rest } = line
+        return childAmenities && childAmenities.length > 0 ? { ...rest, childAmenities } : rest
+      }),
       guestName: dto.guest.name,
       guestEmail: dto.guest.email,
       guestPhone: dto.guest.phone,
@@ -258,6 +268,13 @@ export const BookingService = {
    *  alojamiento" NO viene, es la base implícita que arma el widget. */
   getMealPlans(slug: string): Promise<PublicMealPlan[]> {
     return http.get<PublicMealPlan[]>(`/public/hotels/${encodeURIComponent(slug)}/meal-plans`)
+  },
+
+  /** REQ-01 (#233) — Amenidades para niños/bebés ACTIVAS del hotel, ordenadas por `sortOrder`.
+   *  Público, sin auth. El catálogo (nombres y precios) lo define el hotel en Motor de Reservas
+   *  — el widget nunca tiene una lista propia. Lista vacía = el hotel no ofrece ninguna. */
+  getChildAmenities(slug: string): Promise<PublicChildAmenity[]> {
+    return http.get<PublicChildAmenity[]>(`/public/hotels/${encodeURIComponent(slug)}/child-amenities`)
   },
 
   /**
