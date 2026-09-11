@@ -375,6 +375,8 @@
             Carrito — resumen visible de lo agregado (Tarea 10, solmi-direct-booking-qa-fixes):
             combina distintos tipos/ocupaciones en una misma reserva. Muestra habitaciones totales,
             huéspedes totales y noches antes de avanzar al paso de extras.
+            Issue #220: debajo del resumen va <EstimatedTotals> con subtotal · impuestos (ITBIS) ·
+            total estimado, para que el huésped no descubra la diferencia recién en el pago.
           -->
           <div v-if="store.cart.length > 0" class="rounded-2xl border-2 border-cyan/30 bg-cyan/5 p-4 space-y-3">
             <h4 class="text-sm font-black text-navy">Tu selección</h4>
@@ -395,10 +397,10 @@
                 </div>
               </li>
             </ul>
-            <div class="flex items-center justify-between border-t border-cyan/20 pt-2 text-xs font-bold text-text-muted">
+            <div class="border-t border-cyan/20 pt-2 text-xs font-bold text-text-muted">
               <span>{{ store.cartTotalRooms }} {{ store.cartTotalRooms === 1 ? 'habitación' : 'habitaciones' }} · {{ store.cartTotalGuests }} {{ store.cartTotalGuests === 1 ? 'huésped' : 'huéspedes' }} · {{ store.nights || 1 }} {{ (store.nights || 1) === 1 ? 'noche' : 'noches' }}</span>
-              <span class="text-sm text-navy">{{ money(store.roomsSubtotal) }}</span>
             </div>
+            <EstimatedTotals :format="moneyEstimated" :labels="ESTIMATED_LABELS" />
           </div>
         </section>
 
@@ -461,6 +463,11 @@
               </div>
             </li>
           </ul>
+
+          <!-- #220: el desglose (subtotal · impuestos · total estimado) acompaña hasta el pago. -->
+          <div class="space-y-2 rounded-2xl bg-surface p-4 text-sm">
+            <EstimatedTotals :format="moneyEstimated" :labels="ESTIMATED_LABELS" />
+          </div>
         </section>
 
         <!-- ─── Paso 4: datos del huésped ──────────────────────────────────── -->
@@ -556,6 +563,11 @@
               Los datos los trata {{ hotel.name }} y la plataforma que opera sus reservas.
             </p>
           </form>
+
+          <!-- #220: el desglose (subtotal · impuestos · total estimado) acompaña hasta el pago. -->
+          <div class="space-y-2 rounded-2xl bg-surface p-4 text-sm">
+            <EstimatedTotals :format="moneyEstimated" :labels="ESTIMATED_LABELS" />
+          </div>
         </section>
 
         <!-- ─── Paso 5: pago ───────────────────────────────────────────────── -->
@@ -777,6 +789,7 @@ import AppModal from '@/components/ui/AppModal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import RateCalendar from './RateCalendar.vue'
 import Stepper from '@/components/booking/Stepper.vue'
+import EstimatedTotals from '@/components/booking/EstimatedTotals.vue'
 
 import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useGuestComposer } from '@/composables/useGuestComposer'
@@ -891,6 +904,20 @@ function money(value: number): string {
  *  cobro real es $25.00 (mismo bug de D10 ya resuelto en el widget embebible). */
 function moneyCharge(value: number): string {
   return formatMoney(value, store.chargeCurrency || currency.value, 'es', true)
+}
+
+/** #220: <EstimatedTotals> exige `(amount: unknown) => string`; misma moneda que `money()`. */
+function moneyEstimated(amount: unknown): string {
+  return money(Number(amount))
+}
+/** #220: strings en español para <EstimatedTotals> (el modal de la landing no usa i18n).
+ *  Son las mismas que ya muestra el desglose del paso de pago. */
+const ESTIMATED_LABELS = {
+  subtotal: 'Subtotal',
+  total: 'Total estimado',
+  beforeTaxes: 'sin impuestos',
+  noTaxes: 'Este hotel no aplica impuestos sobre la reserva.',
+  discount: 'Descuento',
 }
 
 const staySummary = computed(() => {
