@@ -246,7 +246,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
 
     vi.mocked(BookingService.createBooking).mockResolvedValue({
       reservationId: 'r1', accessToken: 't1', checkoutUrl: null,
-      totalBreakdown: { subtotal: 480, promoDiscount: 0, upsellsTotal: 0, taxes: 86.4, total: 566.4 },
+      totalBreakdown: { subtotal: 480, promoDiscount: 0, upsellsTotal: 0, taxes: 86.4, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 86.4 }], total: 566.4 },
     })
     await store.pay()
 
@@ -273,7 +273,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
 
     vi.mocked(BookingService.createBooking).mockResolvedValue({
       reservationId: 'r1', accessToken: 't1', checkoutUrl: null,
-      totalBreakdown: { subtotal: 300, promoDiscount: 0, upsellsTotal: 0, taxes: 54, total: 354 },
+      totalBreakdown: { subtotal: 300, promoDiscount: 0, upsellsTotal: 0, taxes: 54, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 54 }], total: 354 },
     })
     store.setGuest({ name: 'Ana Pérez', email: 'ana@example.com', phone: '8095550000' })
     await store.pay()

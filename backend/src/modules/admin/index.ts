@@ -1,9 +1,11 @@
 import { createModule, OrmRepository } from 'arckode-framework'
 import { validateSchema } from 'arckode-framework'
 import { estadoMetaApp, guardarMetaApp } from '../../infrastructure/meta-app-config'
+import { estadoCaptcha, guardarCaptcha } from '../../infrastructure/captcha'
 import { estadoResend, guardarResend, borrarResend } from '../../infrastructure/resend-config'
 import { estadoServicios } from '../../infrastructure/settings-status'
 import { MetaAppConfigSchema } from './validators/meta-app-schema'
+import { CaptchaConfigSchema } from './validators/captcha-schema'
 import type { PlanDTO, AmenityCatalogDTO } from './types'
 import { AdminService } from './service'
 import { AdminController } from './controller'
@@ -122,6 +124,15 @@ export function AdminModule() {
       // Estado por servicio (Stripe, captcha, Meta, Resend, SMTP, Maps, Channex...): solo `configured`
       // + `source` (env | configuration). Nunca devuelve valores ni pistas: para eso están las pantallas.
       router.get('/api/admin/settings/status', sa, async () => ({ status: 200, body: await estadoServicios(configRepo) }))
+
+      // #12 — Captcha del alta pública. Se configura acá y no por variables de entorno porque la
+      // site key era una variable de BUILD: prenderlo obligaba a recompilar el frontend. El GET
+      // nunca devuelve el secreto, sólo una pista para reconocer cuál está puesto.
+      router.get('/api/admin/captcha', sa, async () => ({ status: 200, body: await estadoCaptcha(configRepo) }))
+      router.put('/api/admin/captcha', sa, async (req: any) => {
+        const body = validateSchema(CaptchaConfigSchema, req.body || {}) as any
+        return { status: 200, body: await guardarCaptcha(configRepo, body) }
+      })
 
       router.get('/api/admin/hoteles', sa, () => controller.listHotels())
       // ── SMTP-UI (2026-08-19): test REAL de la config de correo de la plataforma ──

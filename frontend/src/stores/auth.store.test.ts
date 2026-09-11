@@ -108,8 +108,6 @@ describe('auth.store', () => {
 
     // El JWT tiene que ser el NUEVO: antes se pisaba sólo user.value y el backend seguía
     // respondiendo con los datos del super admin.
-    // Sin ticket, `opts` viaja como undefined (loginAs(id) → impersonate(id, opts)): se afirma ese
-    // segundo argumento para que el test siga cubriendo que NO se manda un ticketId de más.
     expect(AuthService.impersonate).toHaveBeenCalledWith('u-target', undefined)
     expect(store.token).toBe('imp-tok')
     expect(localStorage.getItem('token')).toBe('imp-tok')
@@ -189,8 +187,6 @@ describe('auth.store', () => {
     await Promise.all([first, second])
 
     expect(AuthService.impersonate).toHaveBeenCalledTimes(1)
-    // Sin ticket, `opts` viaja como undefined (loginAs(id) → impersonate(id, opts)): se afirma ese
-    // segundo argumento para que el test siga cubriendo que NO se manda un ticketId de más.
     expect(AuthService.impersonate).toHaveBeenCalledWith('u-target', undefined)
     expect(localStorage.getItem('imp.adminToken')).toBe('admin-tok')
     expect(localStorage.getItem('imp.adminRefreshToken')).toBe('admin-ref')
@@ -212,8 +208,6 @@ describe('auth.store', () => {
     expect(first).toBe(true)
     expect(second).toBe(false)
     expect(AuthService.impersonate).toHaveBeenCalledTimes(1)
-    // Sin ticket, `opts` viaja como undefined (loginAs(id) → impersonate(id, opts)): se afirma ese
-    // segundo argumento para que el test siga cubriendo que NO se manda un ticketId de más.
     expect(AuthService.impersonate).toHaveBeenCalledWith('u-target', undefined)
   })
 

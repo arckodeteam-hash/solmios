@@ -62,6 +62,7 @@
 // valen exactamente lo mismo — el widget y la landing en producción no ven ningún cambio.
 import { NotFoundError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
+import { readHotelTaxes, type HotelTax } from './hotel-taxes'
 import type { AvailabilityQuery, AvailabilityResult, OccupancyRate } from '../types'
 import { resolvePolicy } from '../../../shared/usecases/cancellation-math'
 import type { Tier } from '../../cancellation/types'
@@ -130,7 +131,7 @@ export interface PublicRatesQuery {
   currency?: string
 }
 
-interface TaxRow { name: string; rate: number }
+type TaxRow = HotelTax
 
 /**
  * No usamos `NotFoundError` para el 404 del hotel: el endpoint es público y la respuesta
@@ -205,7 +206,7 @@ export async function getPublicRates(
 
   // Tasas del hotel. Mismo fallback que folios/usecases/folio-math.ts:taxRateFor — si la
   // configuration('taxes') no está poblada, caemos a hotels.taxRate / hotels.taxName.
-  const taxes = await readTaxes(deps.config, hotel.id, hotel)
+  const taxes = await readHotelTaxes(deps.config, hotel.id, hotel)
 
   // Conversión de moneda. Si no hay rates o faltan monedas, degradamos a currency base.
   const targetCurrency = (query.currency && typeof query.currency === 'string')
@@ -360,33 +361,6 @@ async function readSeasonPricing(
 }
 
 /**
- * Lee `configuration(key='taxes')` del hotel. Mismo shape que folio-math/facturas/billing:
- * array de `{ activo|active, tasa|rate, nombre|name }`. Si no hay config o está vacía, cae a
- * `hotels.taxRate` + `hotels.taxName` (lo que Configuración → Impuestos SÍ guarda).
- */
-async function readTaxes(
-  config: RepositoryAdapter<any>,
-  hotelId: string,
-  hotel: any,
-): Promise<TaxRow[]> {
-  try {
-    const rows = await config.findMany({ hotelId, key: 'taxes' })
-    const arr: any[] = rows?.[0]?.value ?? []
-    const configured: TaxRow[] = arr
-      .filter((t) => t && (t.activo ?? t.active) !== false)
-      .map((t) => ({
-        name: String(t.nombre ?? t.name ?? 'Tax'),
-        rate: Number(t.tasa ?? t.rate ?? 0),
-      }))
-      .filter((t) => t.rate > 0)
-    if (configured.length > 0) return configured
-  } catch { /* cae al fallback */ }
-  const rate = Number(hotel?.taxRate) || 0
-  if (rate > 0) return [{ name: String(hotel?.taxName ?? 'Tax'), rate }]
-  return []
-}
-
-/**
  * Lee `configuration(key='currency_rates', hotelId='platform')` escrito por el cron nightly.
  * Shape: `{ base: 'USD', rates: { USD: 1, EUR: 0.92, DOP: 58, ... } }`. Si no está poblado
  * (cron sin correr, sin OPENEXCHANGERATES_APP_ID), devuelve null → el caller degrada a la
@@ -457,7 +431,7 @@ export async function resolvePhotoByType(
 }
 
 // Exportamos los helpers para tests (sin exponerlos vía el index del módulo — solo acá).
-export const __test__ = { readTaxes, readCurrencyRates, round2, resolvePhotoByType, buildCancellationSummary }
+export const __test__ = { readTaxes: readHotelTaxes, readCurrencyRates, round2, resolvePhotoByType, buildCancellationSummary }
 
 // ─── F5 #627 — Cancellation Summary ──────────────────────────────────────────
 

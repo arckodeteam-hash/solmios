@@ -15,18 +15,30 @@ function status(over: Partial<SettingsStatus> = {}): SettingsStatus {
 }
 
 describe('filasProteccionAlta', () => {
-  it('sin turnstile la fila captcha dice exactamente el texto de aceptación', () => {
+  // #12 — el captcha se prende desde el panel. El texto viejo mandaba a editar `TURNSTILE_SECRET`
+  // en el servidor: era el consejo correcto cuando no había otra forma, y pasó a ser el equivocado.
+  it('apagado, la fila manda a la tarjeta del panel y NO al .env del servidor', () => {
     const captcha = filasProteccionAlta(status())[0]
     expect(captcha.clave).toBe('captcha')
     expect(captcha.activo).toBe(false)
-    expect(captcha.detalle).toBe('desactivado — `TURNSTILE_SECRET` en `backend/.env` + `VITE_TURNSTILE_SITE_KEY` en el build')
-    expect(CAPTCHA_DESACTIVADO).toBe(captcha.detalle)
+    expect(captcha.detalle).toBe(CAPTCHA_DESACTIVADO)
+    expect(captcha.detalle).toContain('Captcha del registro')
+    expect(captcha.detalle).not.toContain('TURNSTILE_SECRET')
   })
 
-  it('con turnstile la fila captcha está activa y nombra Turnstile', () => {
+  it('activo por el PANEL: dice que se cambia ahí, y no nombra a Turnstile', () => {
+    // Nombrar siempre a Turnstile era falso desde que se puede elegir Google o hCaptcha.
+    const captcha = filasProteccionAlta(status({ turnstile: PANEL }))[0]
+    expect(captcha.activo).toBe(true)
+    expect(captcha.detalle).toContain('desde el panel')
+    expect(captcha.detalle).not.toContain('Turnstile')
+  })
+
+  it('activo por el SERVIDOR: avisa que el panel no lo puede tocar', () => {
     const captcha = filasProteccionAlta(status({ turnstile: ENV }))[0]
     expect(captcha.activo).toBe(true)
-    expect(captcha.detalle).toContain('Cloudflare Turnstile')
+    expect(captcha.detalle).toContain('TURNSTILE_SECRET')
+    expect(captcha.detalle).toContain('no se cambia desde el panel')
   })
 
   it('publicUrl presente → verificación de email activa; ausente → apagada con la variable', () => {

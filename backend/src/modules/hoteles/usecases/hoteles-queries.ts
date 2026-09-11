@@ -109,8 +109,12 @@ export class HotelesQueries {
     assertChildPolicyRate(clave, valor)
     // Multi-tenant: el hotelId sale del token. Solo super_admin puede targetear otro
     // hotel (o 'platform') vía body.hotelId — un merchant queda forzado a su propio hotel.
+    // #80: sin body.hotelId, un super_admin CON hotel escribe la fila de su hotel (mismo
+    // criterio que resolveHotelId/getConfig). Antes caía a 'platform': el valor "desaparecía"
+    // al recargar (getConfig lee primero la fila del hotel) y pisaba el default de todos.
     const isSuper = user?.role === 'super_admin'
-    const hotelId = isSuper ? (body.hotelId || 'platform') : user?.hotelId
+    const tokenHotelId = user?.hotelId && user.hotelId !== 'platform' ? user.hotelId : undefined
+    const hotelId = isSuper ? (body.hotelId || tokenHotelId || 'platform') : user?.hotelId
     if (!hotelId) throw new Error('hotelId no resuelto para el usuario')
     const existing = (await this.orm.findMany('Configuration', { hotelId, key: clave }))[0] as any
     const val = typeof valor === 'object' ? JSON.stringify(valor) : String(valor)

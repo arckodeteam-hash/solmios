@@ -675,27 +675,31 @@
             </p>
           </div>
 
-          <div class="space-y-2 rounded-2xl bg-surface p-4 text-sm">
+          <!-- Tarea 24 (#88): mismo desglose que PayStep — cada extra y cada impuesto (nombre, %,
+               importe) a la vista antes de la pasarela; el total es el que cobra Stripe. -->
+          <div class="space-y-2 rounded-2xl bg-surface p-4 text-sm" data-testid="price-breakdown">
             <div class="flex justify-between">
-              <span class="text-text-muted">Alojamiento ({{ store.nights }} {{ store.nights === 1 ? 'noche' : 'noches' }})</span>
+              <span class="text-text-muted">Alojamiento ({{ store.nights }} {{ store.nights === 1 ? 'noche' : 'noches' }}) <span class="text-[11px]">· sin impuestos</span></span>
               <span class="font-bold tabular-nums text-navy">{{ money(store.roomsSubtotal) }}</span>
             </div>
-            <div v-if="store.upsellsTotal > 0" class="flex justify-between">
-              <span class="text-text-muted">Extras</span>
-              <span class="font-bold tabular-nums text-navy">{{ money(store.upsellsTotal) }}</span>
+            <div v-for="line in store.upsellLines" :key="line.id" class="flex justify-between" data-testid="upsell-line">
+              <span class="text-text-muted">{{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· sin impuestos</span></span>
+              <span class="font-bold tabular-nums text-navy">{{ money(line.total) }}</span>
             </div>
             <div v-if="store.promoDiscount > 0" class="flex justify-between text-teal">
               <span>Descuento</span>
               <span class="font-bold tabular-nums">−{{ money(store.promoDiscount) }}</span>
             </div>
-            <div v-if="store.estimatedTaxes > 0" class="flex justify-between">
-              <span class="text-text-muted">Impuestos</span>
-              <span class="font-bold tabular-nums text-navy">{{ money(store.estimatedTaxes) }}</span>
+            <div v-for="tax in taxLines" :key="tax.name" class="flex justify-between" data-testid="tax-line">
+              <span class="text-text-muted">{{ tax.name }} ({{ tax.rate }}%)</span>
+              <span class="font-bold tabular-nums text-navy">{{ money(tax.amount) }}</span>
             </div>
+            <p v-if="taxLines.length === 0" class="text-[11px] text-text-muted">Este hotel no aplica impuestos sobre la reserva.</p>
             <div class="flex items-baseline justify-between border-t border-border pt-2">
               <span class="font-black text-navy">Total</span>
-              <span class="text-xl font-black tabular-nums text-navy">{{ money(currentTotal) }}</span>
+              <span class="text-xl font-black tabular-nums text-navy" data-testid="final-total">{{ money(currentTotal) }}</span>
             </div>
+            <p class="text-[11px] text-text-muted">Es exactamente el importe que se cobra en la pasarela.</p>
           </div>
 
           <!-- La cancelación NO se repite acá: vive arriba, en el bloque de condiciones. -->
@@ -1137,6 +1141,8 @@ const PROMO_REASON: Record<PromoValidationReason, string> = {
 }
 
 const currentTotal = computed(() => store.totalBreakdown?.total ?? store.estimatedTotal)
+// Impuesto por impuesto: el definitivo del backend si ya existe la reserva; si no, la estimación (misma cuenta).
+const taxLines = computed(() => store.totalBreakdown?.taxBreakdown ?? store.estimatedTaxBreakdown)
 
 /**
  * Qué se puede afirmar hoy sobre la devolución del dinero.
