@@ -60,7 +60,9 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       // La pasarela se resuelve POR HOTEL: el huésped que reserva en el widget del Hotel A le
       // paga a la cuenta del Hotel A, no a la del .env del servidor.
       const gatewayRepo = new OrmRepository<any>(orm, 'PaymentGateways')
-      const registry = new PaymentGatewayRegistry(gatewayRepo as any, log)
+      // Sesiones de CardNet: el adapter persiste la session-key ahí; sin este repo el registry devuelve null.
+      const sessionsRepo = new OrmRepository<any>(orm, 'PaymentGatewaySessions')
+      const registry = new PaymentGatewayRegistry(gatewayRepo as any, log, sessionsRepo as any)
       // Barrera anti-doble-cobro para el webhook público.
       const eventStore = new PaymentEventStore(new OrmRepository<any>(orm, 'PaymentEvents') as any, log)
 
@@ -134,6 +136,8 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
         rateOverridesRepo,
         seasonsCatalogRepo,
         hotelAmenitiesRepo,
+        // PG-7.5 — registry para la página hospedada de CardNet (/api/pay/go). Al final.
+        registry,
       )
 
       // Admin routes (protegidas con auth)
@@ -305,10 +309,22 @@ export function BookingengineModule(opts?: { pushAvailability?: (hotelId: string
       // #196 (PG-4.3) — Retorno del navegador desde Azul/CardNet (proveedores sin webhook). Rate
       // limit como una query pública: es una persona volviendo de pagar, no un servidor. La
       // autenticidad la da el hash/consulta al proveedor, no el límite.
-      router.get('/api/pay/return/:provider/:hotelId', async (req: any) => {
+      // PG-7.5 — Azul vuelve por GET; CardNet hace POST form-urlencoded a la ReturnUrl con la
+      // SESSION en el body. Misma ruta, mismo límite, mismo handler (parseReturnParams mezcla ambos).
+      const gatewayReturn = async (req: any) => {
         const { allowed, retryAfter } = await rateLimit(`pay-return:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
         if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
         return controller.handleGatewayReturn(req)
+      }
+      router.get('/api/pay/return/:provider/:hotelId', gatewayReturn)
+      router.post('/api/pay/return/:provider/:hotelId', gatewayReturn)
+      // PG-7.5 — La página hospedada de CardNet exige POST a /authorize con la SESSION (GET da
+      // 405) y un ChargeResult 'redirect' sólo lleva una URL: el adapter manda el navegador acá y
+      // esta página renderiza el form y lo auto-envía.
+      router.get('/api/pay/go/:provider/:hotelId', async (req: any) => {
+        const { allowed, retryAfter } = await rateLimit(`pay-go:${getClientIp(req)}`, { maxAttempts: 60, windowMs: 60_000 })
+        if (!allowed) return { status: 429, body: { error: 'Too many requests', retryAfter } }
+        return controller.handleGatewayHostedForm(req)
       })
       router.post('/api/public/events', async (req: any) => {
         const { allowed, retryAfter } = await rateLimit(`public-events:${getClientIp(req)}`, { maxAttempts: 120, windowMs: 60_000 })

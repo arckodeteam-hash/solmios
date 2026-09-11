@@ -71,7 +71,14 @@
           <div v-if="PENDING_VERIFICATION.includes(p.provider)" class="mb-4 flex gap-3 rounded-2xl border border-warning/30 bg-warning/5 px-4 py-3">
             <span class="mt-0.5 h-4 w-4 shrink-0 text-warning" v-html="ICON_ALERT"></span>
             <p class="text-[11px] font-bold text-warning">
-              Modo prueba — pendiente verificación con procesador real. Todavía no probamos esta pasarela contra el sandbox real de {{ p.name }} (sin credenciales de comercio).
+              Pendiente de verificación con el procesador real. {{ p.name }} no publica un sandbox abierto: el protocolo se implementó según su documentación y falta probarlo con credenciales de comercio.
+            </p>
+          </div>
+          <!-- CardNet sí se probó contra su sandbox público: el aviso es informativo, no una advertencia -->
+          <div v-if="p.provider === 'cardnet'" class="mb-4 flex gap-3 rounded-2xl border border-cyan/30 bg-cyan/5 px-4 py-3">
+            <span class="mt-0.5 h-4 w-4 shrink-0 text-cyan" v-html="ICON_LOCK"></span>
+            <p class="text-[11px] leading-relaxed text-text-secondary">
+              Protocolo verificado contra el sandbox de CardNet (labservicios.cardnet.com.do). Los datos de producción (comercio, terminal y tarjetas de prueba) los da tu ejecutivo de cuenta; "Probar conexión" verifica el host y el formato, no el afiliado.
             </p>
           </div>
 
@@ -96,17 +103,18 @@
               <input
                 :id="`pagos-${p.provider}-merchant-id`" name="merchantId" autocomplete="off"
                 v-model="form.merchantId" type="text"
-                :placeholder="current?.hasMerchantId ? '•••••••• (guardado)' : 'Asignado por el procesador'"
+                :placeholder="current?.hasMerchantId ? '•••••••• (guardado)' : merchantIdPlaceholder(p.provider)"
                 class="w-full rounded-xl border border-border bg-white px-4 py-2.5 font-mono text-sm focus:border-navy focus:outline-none"
               />
               <p v-if="current?.hasMerchantId" class="mt-1.5 text-[11px] text-text-muted">Guardado. Dejalo vacío para conservarlo.</p>
             </div>
             <div v-if="p.provider === 'cardnet'">
               <label :for="`pagos-${p.provider}-terminal-id`" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Terminal (CardNet)</label>
-              <input :id="`pagos-${p.provider}-terminal-id`" name="terminalId" autocomplete="off" v-model="form.terminalId" type="text" placeholder="Terminal asignada por CardNet"
+              <input :id="`pagos-${p.provider}-terminal-id`" name="terminalId" autocomplete="off" v-model="form.terminalId" type="text" placeholder="Terminal (MerchantTerminal)"
                 class="w-full rounded-xl border border-border bg-white px-4 py-2.5 font-mono text-sm focus:border-navy focus:outline-none" />
             </div>
-            <div>
+            <!-- CardNet Payment Page no tiene llave: el afiliado se identifica por Comercio + Terminal -->
+            <div v-if="p.provider !== 'cardnet'">
               <label :for="`pagos-${p.provider}-secret-key`" class="mb-2 block text-[11px] font-bold uppercase tracking-wide text-text-muted">{{ secretLabel(p.provider) }}</label>
               <input
                 :id="`pagos-${p.provider}-secret-key`" name="secretKey" autocomplete="new-password"
@@ -244,8 +252,12 @@ const form = reactive({
   certKeyPem: '',
 })
 
-/** Pendientes de verificación real: sin credenciales de comercio, Azul/CardNet no se probaron end-to-end. */
-const PENDING_VERIFICATION: PaymentProvider[] = ['azul', 'cardnet']
+/**
+ * Pendientes de verificación real: Azul no publica sandbox abierto y sin credenciales de comercio
+ * no se probó end-to-end. CardNet ya no está acá: su protocolo se verificó contra
+ * labservicios.cardnet.com.do (ver backend/src/services/payment-gateway/cardnet-gateway.ts).
+ */
+const PENDING_VERIFICATION: PaymentProvider[] = ['azul']
 
 function needsMerchantId(provider: PaymentProvider): boolean {
   return provider === 'azul' || provider === 'cardnet'
@@ -253,14 +265,16 @@ function needsMerchantId(provider: PaymentProvider): boolean {
 function merchantIdLabel(provider: PaymentProvider): string {
   return provider === 'azul' ? 'Merchant ID (Azul)' : 'Comercio (CardNet)'
 }
+function merchantIdPlaceholder(provider: PaymentProvider): string {
+  return provider === 'cardnet' ? 'Número de comercio (MerchantNumber)' : 'Asignado por el procesador'
+}
+/** CardNet no pasa por acá: Payment Page no tiene llave (el campo se oculta para ese proveedor). */
 function secretLabel(provider: PaymentProvider): string {
   if (provider === 'azul') return 'AuthKey (llave de firma de Azul)'
-  if (provider === 'cardnet') return 'Llave (firma de CardNet)'
   return 'Llave secreta'
 }
 function secretPlaceholder(provider: PaymentProvider): string {
   if (provider === 'azul') return 'AuthKey que te dio Azul…'
-  if (provider === 'cardnet') return 'Llave que te dio CardNet…'
   return 'sk_test_… o sk_live_…'
 }
 
@@ -293,10 +307,11 @@ const CATALOG = [
     provider: 'cardnet' as PaymentProvider,
     name: 'CardNet',
     icon: '🏦',
-    description: 'Pasarela dominicana. Requiere confirmar el tipo de contrato con tu ejecutivo.',
+    description: 'Pasarela dominicana (Payment Page). Se configura con el número de comercio y la terminal que te da CardNet.',
     implemented: true,
     confirmation: 'pull' as ConfirmationMode,
-    capabilities: { refund: true, void: true, paymentLinks: false, confirmation: 'pull' as ConfirmationMode },
+    // Payment Page no expone reembolso ni anulación; confirma por consulta de la sesión (sin webhook).
+    capabilities: { refund: false, void: false, paymentLinks: false, confirmation: 'pull' as ConfirmationMode },
   },
   {
     provider: 'paypal' as PaymentProvider,
@@ -408,7 +423,13 @@ function toBase64(s: string): string {
 
 async function save(provider: PaymentProvider) {
   const existing = gatewayOf(provider)
-  if (!existing && !form.secretKey) {
+  if (provider === 'cardnet') {
+    // CardNet no tiene llave: lo que identifica al afiliado es Comercio + Terminal.
+    if (!existing && (!form.merchantId || !form.terminalId)) {
+      toast.error('Cargá el Comercio y la Terminal de CardNet')
+      return
+    }
+  } else if (!existing && !form.secretKey) {
     toast.error('Cargá la llave secreta para conectar la pasarela')
     return
   }

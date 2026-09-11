@@ -8,15 +8,16 @@ import { ValidationError } from 'arckode-framework'
 import type { UpsertPaymentGatewayDTO } from '../types'
 
 export interface GatewayCredentials {
-  // Stripe: sk_.../pk_.... Azul: AuthKey. CardNet: Llave. Un mismo campo genérico "llave
-  // secreta" le sirve a los tres — la UI lo etiqueta distinto por proveedor.
+  // Stripe: sk_.../pk_.... Azul: AuthKey. PayPal: client secret. Un mismo campo genérico "llave
+  // secreta" les sirve — la UI lo etiqueta distinto por proveedor. CardNet no lo usa: Payment
+  // Page no tiene llave ni firma; el afiliado se identifica por MerchantNumber+MerchantTerminal.
   secretKey: string
   publishableKey: string
   webhookSecret: string
   currency: string
-  /** Azul: MerchantId · CardNet: Comercio. */
+  /** Azul: MerchantId · CardNet: Comercio (MerchantNumber). */
   merchantId: string
-  /** CardNet: Terminal. Azul no lo usa (queda vacío). */
+  /** CardNet: Terminal (MerchantTerminal). Azul no lo usa (queda vacío). */
   terminalId: string
   /** mTLS de Azul, PEM ya decodificado (ver decodeB64). */
   certPem: string
@@ -71,15 +72,22 @@ export function buildCredentials(body: UpsertPaymentGatewayDTO, prev: Record<str
     certKeyPem: keep('certKeyPem', decodeB64(body.certKeyPem)),
   }
 
+  if (body.provider === 'cardnet') {
+    // CardNet Payment Page no tiene llave: el afiliado se identifica por MerchantNumber
+    // (Comercio) + MerchantTerminal (Terminal), y el único secreto es la session-key que el
+    // propio CardNet devuelve al crear cada sesión (ver services/payment-gateway/cardnet-gateway.ts).
+    if (!creds.merchantId || !creds.terminalId) {
+      throw new ValidationError('CardNet requiere Comercio y Terminal')
+    }
+    return creds
+  }
+
   if (!creds.secretKey) {
     throw new ValidationError('Falta la llave secreta de la pasarela')
   }
   if (body.provider === 'stripe') assertStripeKeyMatchesMode(creds.secretKey, body.mode)
   if (body.provider === 'azul' && !creds.merchantId) {
     throw new ValidationError('Azul requiere el Merchant ID')
-  }
-  if (body.provider === 'cardnet' && (!creds.merchantId || !creds.terminalId)) {
-    throw new ValidationError('CardNet requiere Comercio y Terminal')
   }
 
   return creds

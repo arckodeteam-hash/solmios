@@ -52,7 +52,9 @@ export function PaymentsModule() {
       // La pasarela se resuelve POR HOTEL (tabla payment_gateways), ya no desde process.env.
       // El registry vive en services/ (compartido), no en otro módulo: no rompe el aislamiento.
       const gatewayRepo = new OrmRepository<any>(orm, 'PaymentGateways')
-      const registry = new PaymentGatewayRegistry(gatewayRepo as any, log)
+      // Sesiones de CardNet (tabla del módulo payment-gateways): sin ellas el adapter no cobra.
+      const sessionsRepo = new OrmRepository<any>(orm, 'PaymentGatewaySessions')
+      const registry = new PaymentGatewayRegistry(gatewayRepo as any, log, sessionsRepo as any)
 
       // Barrera anti-doble-cobro: los webhooks se procesan una sola vez aunque lleguen repetidos.
       const eventRepo = new OrmRepository<any>(orm, 'PaymentEvents')

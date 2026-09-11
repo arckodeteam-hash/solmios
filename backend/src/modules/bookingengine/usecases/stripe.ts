@@ -31,6 +31,7 @@ import { ValidationError } from 'arckode-framework'
 import type { PaymentGatewayRegistry } from '../../../services/payment-gateway/registry'
 import type { PaymentEventStore } from '../../../services/payment-gateway/payment-events'
 import type { PaymentOutcome } from '../../../services/payment-gateway/types'
+import { hasHostedForm } from '../../../services/payment-gateway/types'
 import { pendingBalance } from '../../../shared/utils/reservation-balance'
 import { round2 } from '../../../shared/utils/money'
 
@@ -104,6 +105,88 @@ export function wrapReturnUrls(
   const wrap = (next: string) =>
     `${baseUrl}/api/pay/return/${encodeURIComponent(provider)}/${encodeURIComponent(hotelId)}?next=${encodeURIComponent(next)}`
   return { successUrl: wrap(urls.successUrl), cancelUrl: wrap(urls.cancelUrl) }
+}
+
+/**
+ * PG-7.5 — Parámetros del retorno del proveedor. Azul vuelve por GET (todo en la query); CardNet
+ * vuelve por POST form-urlencoded (`SESSION=...&Description=Transaction+Received`) y el framework
+ * NO parsea ese content-type: `req.body` llega como string crudo. Se mezclan query + body en un
+ * solo mapa para que `handleReturn` no sepa por dónde entró. En colisión gana el body (es lo que
+ * mandó el proveedor), salvo `next`: ese campo lo armó este backend en la query (`wrapReturnUrls`),
+ * no el proveedor, y el body NUNCA lo pisa.
+ */
+export function parseReturnParams(query: Record<string, string> | undefined, body: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (typeof body === 'string') {
+    for (const [k, v] of new URLSearchParams(body)) out[k] = v
+  } else if (body && typeof body === 'object' && !Buffer.isBuffer(body) && !Array.isArray(body)) {
+    for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
+      if (v != null && typeof v !== 'object') out[k] = String(v)
+    }
+  }
+  delete out.next
+  for (const [k, v] of Object.entries(query || {})) {
+    if (k === 'next' || out[k] === undefined) out[k] = String(v)
+  }
+  return out
+}
+
+/** Una SESSION va a parar a un atributo HTML del form auto-submit: nada que no sea un token entra. */
+const HOSTED_SESSION_RE = /^[A-Za-z0-9._-]{1,128}$/
+
+/**
+ * PG-7.5 — Form de la página hospedada (`GET /api/pay/go/:provider/:hotelId?session=`). Null si el
+ * hotel no tiene pasarela, si la ruta nombra a otro proveedor, si la pasarela redirige por GET y no
+ * necesita form, o si la sesión no tiene pinta de token.
+ */
+export async function hostedFormFor(
+  registry: PaymentGatewayRegistry,
+  hotelId: string,
+  provider: string,
+  session: string,
+): Promise<{ action: string; fields: Record<string, string> } | null> {
+  if (!HOSTED_SESSION_RE.test(session)) return null
+  const gw = await registry.resolve(hotelId)
+  if (!gw || gw.provider !== provider || !hasHostedForm(gw)) return null
+  return gw.hostedForm(session)
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+/**
+ * HTML mínimo que auto-envía el form hacia la página hospedada (CardNet exige POST a /authorize;
+ * un `ChargeResult` sólo lleva una URL). Sin CDN ni estilos externos: es una pantalla de un
+ * instante y no tiene que depender de nada. `<noscript>` deja un botón para navegadores sin JS.
+ */
+export function renderHostedForm(form: { action: string; fields: Record<string, string> }): string {
+  const inputs = Object.entries(form.fields)
+    .map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(String(value))}">`)
+    .join('\n      ')
+  return `<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex">
+    <title>Redirigiendo a la pasarela de pago…</title>
+  </head>
+  <body>
+    <p>Te estamos llevando a la página segura de pago…</p>
+    <form method="post" action="${escapeHtml(form.action)}">
+      ${inputs}
+      <noscript><button type="submit">Continuar</button></noscript>
+    </form>
+    <script>document.forms[0].submit()</script>
+  </body>
+</html>
+`
 }
 
 export class StripeUseCase {
@@ -260,7 +343,9 @@ export class StripeUseCase {
       return null
     }
     if (gw.capabilities.confirmation === 'push') return null // un proveedor con webhook no confirma por redirect
-    const outcome = await gw.confirm({ hotelId, query, providerRef: query.TrxToken || query.providerRef })
+    // CardNet identifica la transacción por SESSION (vuelve por POST form-urlencoded, ver
+    // parseReturnParams); TrxToken/providerRef quedan para los demás modos pull.
+    const outcome = await gw.confirm({ hotelId, query, providerRef: query.SESSION || query.TrxToken || query.providerRef })
     if (!outcome) return null
     return this.settle(hotelId, gw.provider, outcome)
   }

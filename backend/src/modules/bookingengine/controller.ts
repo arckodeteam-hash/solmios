@@ -54,6 +54,9 @@ import { getPublicOtaPrices } from './usecases/public-ota-prices'
 // al usecase → `ConfigUseCase.get()` intentaba crear una fila `booking_config` sin hotelId →
 // 500 en cada carga de /panel/booking-engine. Mismo resolver que ya usan reservas/folios/etc.
 import { hotelOf } from '../../shared/utils/hotel-of'
+// PG-7.5 — retorno por POST (CardNet) y página hospedada que auto-envía el form.
+import { parseReturnParams, hostedFormFor, renderHostedForm } from './usecases/stripe'
+import type { PaymentGatewayRegistry } from '../../services/payment-gateway/registry'
 
 export class BookingengineController {
   constructor(
@@ -114,6 +117,9 @@ export class BookingengineController {
     /** `HotelAmenities` (F1 1.7b, D3) — fuente real de amenities para /api/public/hotel/:slug.
      *  Al final, mismo motivo que el resto de los deps nuevos. */
     private readonly hotelAmenitiesRepo?: RepositoryAdapter<any>,
+    /** PG-7.5 — Registry de pasarelas para `GET /api/pay/go/:provider/:hotelId` (form hospedado
+     *  de CardNet). Al final, mismo motivo que el resto de los deps nuevos. */
+    private readonly gatewayRegistry?: PaymentGatewayRegistry,
   ) {}
 
   /** Deps para los usecases de upsells. Tirar si no están cableadas (claramente un bug de wiring). */
@@ -226,11 +232,14 @@ export class BookingengineController {
    * `next` viene de la URL que ESTE backend armó en `createCheckoutSession`, pero viaja por el
    * proveedor y por el navegador: se valida contra el origen público para no ser un open
    * redirect (un `next=https://impostor` mandaría al huésped recién cobrado a otro sitio).
+   *
+   * PG-7.5 — También atiende el POST de CardNet (form-urlencoded con SESSION en el body): los
+   * campos del proveedor se toman de query + body (`parseReturnParams`), `next` sólo de la query.
    */
   async handleGatewayReturn(req: HttpRequest) {
     const provider = String(req.params?.provider || '')
     const hotelId = String(req.params?.hotelId || '')
-    const query = (req.query || {}) as Record<string, string>
+    const query = parseReturnParams(req.query as Record<string, string> | undefined, (req as any).body)
     const next = safeReturnTarget(query.next, process.env.PUBLIC_BASE_URL)
     if (!provider || !hotelId) return redirectTo(next, 'invalid')
 
@@ -243,6 +252,36 @@ export class BookingengineController {
     } catch (e: any) {
       this.logger.error(`Retorno de pago por '${provider}' (hotel ${hotelId}): ${e?.message}`)
       return redirectTo(next, 'error')
+    }
+  }
+
+  /**
+   * PG-7.5 — `GET /api/pay/go/:provider/:hotelId?session=<SESSION>`. La página hospedada de
+   * CardNet exige POST (GET a /authorize da 405) y un `ChargeResult` sólo lleva una URL: el
+   * adapter redirige acá y esta página renderiza el form con la SESSION y lo auto-envía. Es HTML
+   * para el navegador del huésped, no JSON. `no-store`: la SESSION es de un solo uso.
+   */
+  async handleGatewayHostedForm(req: HttpRequest) {
+    const provider = String(req.params?.provider || '')
+    const hotelId = String(req.params?.hotelId || '')
+    const session = String(req.query?.session || '')
+    const invalid = { status: 404, body: { error: 'Sesión de pago inválida' } }
+    if (!this.gatewayRegistry) {
+      this.logger.error('bookingengine: PaymentGatewayRegistry no inyectado — /api/pay/go no puede renderizar el form')
+      return invalid
+    }
+    if (!provider || !hotelId || !session) return invalid
+    try {
+      const form = await hostedFormFor(this.gatewayRegistry, hotelId, provider, session)
+      if (!form) return invalid
+      return {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
+        body: renderHostedForm(form),
+      }
+    } catch (e: any) {
+      this.logger.error(`Form hospedado de '${provider}' (hotel ${hotelId}): ${e?.message}`)
+      return invalid
     }
   }
 
