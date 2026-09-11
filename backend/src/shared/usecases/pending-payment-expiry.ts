@@ -105,7 +105,8 @@ async function notifyGuest(deps: PendingPaymentExpiryDeps, r: Row): Promise<void
     const link = `${base}/book/${hotel?.slug ?? ''}`
     const html = renderExpiredEmailHtml(link, String(hotel?.name ?? ''))
     const sendFn = deps.email.enqueue ?? deps.email.send
-    if (sendFn) await sendFn.call(deps.email, String(guest.email), EXPIRED_EMAIL_SUBJECT, html)
+    // `hotelId` en opts: el EmailService real exige tenant para encolar (composition-root lo adapta).
+    if (sendFn) await sendFn.call(deps.email, String(guest.email), EXPIRED_EMAIL_SUBJECT, html, { hotelId: String(r.hotelId), reservationId: String(r.id) })
   } catch (e) {
     deps.logger.warn('pending-payment-expiry: no se pudo enviar el correo de vencimiento', { id: r.id, error: String(e) })
   }

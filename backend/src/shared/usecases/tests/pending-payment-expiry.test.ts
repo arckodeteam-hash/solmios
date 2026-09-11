@@ -49,7 +49,7 @@ function world(over: Partial<Pick<World, 'reservations' | 'bookingConfig' | 'pay
       return { ok: true, idempotent: false }
     },
     audit: { record: async (e) => { w.audits.push(e) } },
-    email: { enqueue: async (to, subject, html) => { w.emails.push({ to, subject, html }); return { sent: true } } },
+    email: { enqueue: async (to, subject, html, opts) => { w.emails.push({ to, subject, html, opts }); return { sent: true } } },
     publicBaseUrl: 'https://solmios.test',
     logger: noopLogger,
   }
@@ -75,6 +75,7 @@ describe('runPendingPaymentExpiry', () => {
     expect(w.emails[0].to).toBe('guest@example.com')
     expect(w.emails[0].subject).toContain('venció')
     expect(w.emails[0].html).toContain('https://solmios.test/book/hotel-a')
+    expect(w.emails[0].opts).toEqual({ hotelId: 'hotel-a', reservationId: 'r1' })
   })
 
   it('un pago failed hace 10 min (intento reciente en la pasarela) → NO vence', async () => {
