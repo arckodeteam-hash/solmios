@@ -7,9 +7,14 @@
 //
 // Lo que NO va acá: nada hardcodeado del hotel (nombre, dirección, RNC, moneda e impuestos llegan en
 // `PrintOrderData`), ni precios en la comanda de cocina, ni líneas anuladas (ya vienen filtradas).
+//
+// Descuentos (#215): cada línea imprime su bruto y, debajo, "Descuento/Cortesía (motivo) −X"; el de la
+// comanda va como fila antes del Subtotal. Σ(bruto − desc. línea) − desc. comanda = Subtotal (el
+// persistido), y el impuesto se prorratea sobre ese NETO con la misma fórmula que order-totals.ts.
+// Pagos (#214): el ticket lista TODAS las partes cobradas (método, monto, propina, referencia, cambio).
 import { getCurrencyMeta } from '../../../shared/currency'
 import { round2 } from '../../../shared/utils/money'
-import type { OrderType } from '../types'
+import type { OrderType, DiscountType } from '../types'
 
 export type PrintDoc = 'precuenta' | 'ticket' | 'kitchen'
 export const PRINT_DOCS: readonly PrintDoc[] = ['precuenta', 'ticket', 'kitchen'] as const
@@ -38,15 +43,23 @@ export interface PrintLine {
   stationId?: string
   stationName?: string
   sentAt?: string
+  /** #215 — descuento de la línea ya aplicado (`lineTotal` sigue bruto). */
+  discountType?: DiscountType | null
+  discountValue?: number | null
+  discountAmount?: number
+  discountReason?: string | null
 }
 
 export interface PrintPayment {
   /** 'cash' | 'card' | 'transfer' | 'link' | 'other' | 'folio' (cargo a la habitación). */
   method: string
+  /** Lo cobrado por esta parte SIN propina (como `restaurant_order_payments.amount`). */
   amount: number
+  /** Propina de esta parte (#214: cada parte lleva la suya). */
+  tip?: number
   reference?: string
   at?: string
-  /** Solo si el cobro registró lo entregado en efectivo (no lo hace el POS hoy; queda para #214). */
+  /** Solo si el cobro registró lo entregado en efectivo (`payments.metadata.tendered`): imprime Recibido/Cambio. */
   tendered?: number
 }
 
@@ -63,6 +76,12 @@ export interface PrintOrderData {
     tax: number
     tip: number
     total: number
+    /** #215 — descuento de la comanda (sobre Σ líneas netas) y su motivo; `discountTotal` = líneas + comanda. */
+    discountType?: DiscountType | null
+    discountValue?: number | null
+    discountAmount?: number
+    discountReason?: string | null
+    discountTotal?: number
   }
   /** "Terraza · Mesa 3" / "Hab. 204 · Pérez" / "Para llevar". */
   place: string
@@ -73,7 +92,8 @@ export interface PrintOrderData {
   taxes: PrintTax[]
   /** Porcentajes de propina sugerida (los mismos botones de Cobrar). */
   tipSuggestions: number[]
-  payment?: PrintPayment
+  /** Ticket: las partes cobradas, en orden (#214). Una sola para el cobro entero; vacío = sin detalle. */
+  payments: PrintPayment[]
   /** Estación elegida para la comanda de cocina; sin ella se agrupa por estación. */
   station?: { id: string; name: string }
   printedAt: string
@@ -82,8 +102,19 @@ export interface PrintOrderData {
 const esc = (s: unknown): string => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
 
 const METHOD_LABELS: Record<string, string> = {
-  cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', link: 'Link de pago', other: 'Otro', folio: 'Cargo a la habitación',
+  cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', link: 'Link de pago', other: 'Otro', folio: 'Cargo a la habitación', room: 'Cargo a la habitación',
 }
+
+/** "Cortesía" (100 %), "Descuento 10 %" o "Descuento" (monto fijo), con el motivo entre paréntesis. Mismo criterio que Cobrar (isCourtesy). */
+export function discountLabel(d: { discountType?: DiscountType | null; discountValue?: number | null; discountReason?: string | null }): string {
+  const courtesy = d.discountType === 'percent' && Number(d.discountValue) === 100
+  const base = courtesy ? 'Cortesía' : d.discountType === 'percent' ? `Descuento ${fmtRate(Number(d.discountValue || 0))}` : 'Descuento'
+  const reason = String(d.discountReason ?? '').trim()
+  return reason ? `${base} (${reason})` : base
+}
+
+/** Neto de una línea tras su propio descuento (#215): lo que suma al Subtotal antes del descuento de comanda. */
+export const lineNet = (l: Pick<PrintLine, 'lineTotal' | 'discountAmount'>): number => round2(Number(l.lineTotal || 0) - Number(l.discountAmount || 0))
 const TYPE_LABELS: Record<OrderType, string> = { dine_in: 'Salón', room_service: 'Room service', takeaway: 'Para llevar' }
 
 export function moneyOf(currency: string) {
@@ -106,15 +137,18 @@ function when(iso: string | null | undefined, timeZone: string, withDate = true)
 /**
  * Desglose del impuesto por tasa. Las líneas congelan su `taxRate` (%); si la suma de los impuestos
  * configurados coincide con esa tasa, se muestra cada uno por su nombre (ITBIS 18 % + local 10 %);
- * si no, una sola fila "Impuesto N %". La cifra final (`order.tax`) es la persistida — el desglose
- * es informativo y se redondea por fila.
+ * si no, una sola fila "Impuesto N %". La base es el NETO con descuento (#215): línea menos su
+ * descuento, prorrateando el descuento de comanda por línea — la misma fórmula que
+ * order-totals.computeOrderTotals, así el desglose cuadra con `order.tax`. Se redondea por fila.
  */
-export function taxBreakdown(lines: PrintLine[], taxes: PrintTax[]): { label: string; amount: number }[] {
+export function taxBreakdown(lines: PrintLine[], taxes: PrintTax[], orderDiscount = 0): { label: string; amount: number }[] {
+  const base = round2(lines.reduce((s, l) => s + lineNet(l), 0))
+  const factor = base > 0 ? (base - Number(orderDiscount || 0)) / base : 1
   const byRate = new Map<number, number>()
   for (const l of lines) {
     const rate = Number(l.taxRate || 0)
     if (rate <= 0) continue
-    byRate.set(rate, (byRate.get(rate) ?? 0) + Number(l.lineTotal || 0))
+    byRate.set(rate, (byRate.get(rate) ?? 0) + lineNet(l) * factor)
   }
   const configured = taxes.filter((t) => Number(t.rate) > 0)
   const configuredSum = round2(configured.reduce((s, t) => s + Number(t.rate), 0))
@@ -143,6 +177,7 @@ body { width: 80mm; padding: 4mm 4mm 10mm; color: #000; font: 12px/1.35 "DejaVu 
 .row .n { flex: 1; min-width: 0; overflow-wrap: anywhere }
 .row .a { white-space: nowrap; font-variant-numeric: tabular-nums }
 .mods, .note, .comp { padding-left: 14px; font-size: 11px }
+.disc { padding-left: 14px; font-size: 11px; font-style: italic }
 .note { font-style: italic } .note::before { content: "\\2691 " }
 .kitchen .line { font-size: 16px; font-weight: 700; margin: 5px 0 1px }
 .kitchen .mods, .kitchen .note, .kitchen .comp { font-size: 13px }
@@ -203,10 +238,12 @@ function priced(d: PrintOrderData): string {
   const comps = d.lines.filter((l) => l.kind === 'combo_component')
   return top.map((l) => {
     const mods = l.modifiers.filter((m) => m.name)
+    const disc = Number(l.discountAmount || 0)
     return `<div class="row"><span class="n">${l.quantity}× ${esc(l.name)}</span><span class="a">${money(l.lineTotal)}</span></div>
 ${l.quantity > 1 ? `<div class="mods small">${money(l.unitPrice)} c/u</div>` : ''}
 ${mods.length ? `<div class="mods">${mods.map((m) => esc(m.name) + (m.priceDelta ? ` (${m.priceDelta > 0 ? '+' : ''}${money(m.priceDelta)})` : '')).join(', ')}</div>` : ''}
 ${l.kind === 'combo_header' ? comps.map((c) => `<div class="comp">· ${c.quantity}× ${esc(c.name)}</div>`).join('\n') : ''}
+${disc > 0 ? `<div class="row disc"><span class="n">${esc(discountLabel(l))}</span><span class="a">−${money(disc)}</span></div>` : ''}
 ${l.notes ? `<div class="note">${esc(l.notes)}</div>` : ''}`
   }).join('\n')
 }
@@ -218,10 +255,14 @@ ${l.notes ? `<div class="note">${esc(l.notes)}</div>` : ''}`
  */
 function totals(d: PrintOrderData, opts: { tip: boolean }): string {
   const money = moneyOf(d.hotel.currency)
-  const taxRows = taxBreakdown(d.lines, d.taxes)
+  const orderDisc = Number(d.order.discountAmount || 0)
+  const taxRows = taxBreakdown(d.lines, d.taxes, orderDisc)
   const total = opts.tip ? d.order.total : round2(Number(d.order.subtotal || 0) + Number(d.order.tax || 0))
+  const discTotal = Number(d.order.discountTotal || 0)
   return `<div class="hr"></div>
+${orderDisc > 0 ? `<div class="row disc"><span class="n">${esc(discountLabel(d.order))}</span><span class="a">−${money(orderDisc)}</span></div>` : ''}
 <div class="row"><span class="n">Subtotal</span><span class="a">${money(d.order.subtotal)}</span></div>
+${discTotal > 0 ? `<div class="row small"><span class="n">Descuentos y cortesías aplicados</span><span class="a">−${money(discTotal)}</span></div>` : ''}
 ${taxRows.length > 1 ? taxRows.map((r) => `<div class="row small"><span class="n">${esc(r.label)}</span><span class="a">${money(r.amount)}</span></div>`).join('\n') : ''}
 <div class="row"><span class="n">${esc(taxRows.length === 1 ? taxRows[0].label : 'Impuesto')}</span><span class="a">${money(d.order.tax)}</span></div>
 ${opts.tip && d.order.tip > 0 ? `<div class="row"><span class="n">Propina</span><span class="a">${money(d.order.tip)}</span></div>` : ''}
@@ -250,15 +291,27 @@ ${tips.length ? `<div class="hr"></div><div class="b small">Propina sugerida (no
 /** Ticket: comprobante del cobro (o del cargo a la habitación). */
 export function renderTicket(d: PrintOrderData): string {
   const money = moneyOf(d.hotel.currency)
-  const p = d.payment
-  const change = p?.tendered !== undefined ? round2(Number(p.tendered) - Number(p.amount)) : undefined
-  const paid = p
-    ? `<div class="hr"></div>
-<div class="row b"><span class="n">${esc(METHOD_LABELS[p.method] ?? p.method)}</span><span class="a">${money(p.amount)}</span></div>
+  const parts = d.payments
+  const many = parts.length > 1
+  // Una parte: método + monto (con propina incluida en la cifra si la hubo, como la ve el cliente).
+  // Varias (#214): "Pago 1/2 · Efectivo" con su monto, propina, referencia y cambio, y el total pagado.
+  const partHtml = (p: PrintPayment, i: number) => {
+    const tip = Number(p.tip || 0)
+    const charged = round2(Number(p.amount) + tip)
+    const change = p.tendered !== undefined ? round2(Number(p.tendered) - charged) : undefined
+    const label = `${many ? `Pago ${i + 1}/${parts.length} · ` : ''}${METHOD_LABELS[p.method] ?? p.method}`
+    return `<div class="row b"><span class="n">${esc(label)}</span><span class="a">${money(charged)}</span></div>
+${many && tip > 0 ? `<div class="row small"><span class="n">incl. propina</span><span class="a">${money(tip)}</span></div>` : ''}
 ${p.tendered !== undefined ? `<div class="row"><span class="n">Recibido</span><span class="a">${money(p.tendered)}</span></div>` : ''}
 ${change !== undefined && change > 0 ? `<div class="row"><span class="n">Cambio</span><span class="a">${money(change)}</span></div>` : ''}
 ${p.reference ? `<div class="row small"><span class="n">Ref.</span><span class="a">${esc(p.reference)}</span></div>` : ''}
 ${p.at ? `<div class="row small"><span class="n">Pagado</span><span class="a">${esc(when(p.at, d.hotel.timezone))}</span></div>` : ''}`
+  }
+  const paidSum = round2(parts.reduce((s, p) => s + Number(p.amount) + Number(p.tip || 0), 0))
+  const paid = parts.length
+    ? `<div class="hr"></div>
+${parts.map(partHtml).join('\n')}
+${many ? `<div class="row b"><span class="n">Total pagado</span><span class="a">${money(paidSum)}</span></div>` : ''}`
     : `<div class="hr"></div><div class="row b"><span class="n">Pagado</span><span class="a">${money(d.order.total)}</span></div>`
   const body = `${header(d, 'TICKET')}
 ${meta(d)}

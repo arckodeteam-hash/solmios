@@ -230,13 +230,15 @@ async function advance(line: OrderLine, to: LineStatus) {
 }
 
 // #216 — comanda de cocina en papel (80 mm) POR TICKET, con la estación que se está mirando ('' = todas,
-// agrupada por estación; '__none__' = sin estación). Pestaña nueva + window.print() (ver imprimir.ts).
+// agrupada por estación; '__none__' = sin estación). Es una REIMPRESIÓN: va con `batch: 'all'` (todo lo
+// enviado, como el ticket en pantalla); el papel por envío lo imprime Comanda al enviar (autoPrint).
+// Pestaña nueva + window.print() (ver imprimir.ts).
 const printingOrder = ref<string | null>(null)
 async function printTicket(t: KdsTicket) {
   if (printingOrder.value) return
   printingOrder.value = t.order.id
   try {
-    const r = await openPrintTab(t.order.id, 'kitchen', { station: station.value || undefined })
+    const r = await openPrintTab(t.order.id, 'kitchen', { station: station.value || undefined, batch: 'all' })
     if (!r.ok) toast.error(r.error)
   } finally { printingOrder.value = null }
 }

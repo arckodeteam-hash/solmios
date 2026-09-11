@@ -425,8 +425,8 @@ export class RestaurantController {
   // abre en una pestaña y el navegador imprime.
   async printOrder(req: HttpRequest) {
     const q = (req.query as any) ?? {}
-    this.logger.info('GET /restaurant/orders/:id/print', { id: req.params.id, doc: q.doc, station: q.station })
-    const html = await this.service.printOrder(req.params.id, { doc: q.doc, station: q.station }, req.user as any)
+    this.logger.info('GET /restaurant/orders/:id/print', { id: req.params.id, doc: q.doc, station: q.station, batch: q.batch })
+    const html = await this.service.printOrder(req.params.id, { doc: q.doc, station: q.station, batch: q.batch }, req.user as any)
     return { status: 200, body: html, headers: { 'content-type': 'text/html; charset=utf-8' } }
   }
 

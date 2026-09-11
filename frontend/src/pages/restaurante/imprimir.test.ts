@@ -27,7 +27,7 @@ describe('openPrintTab', () => {
     const pending = openPrintTab('o1', 'kitchen', { station: 's-bar' })
     expect(open).toHaveBeenCalledWith('', '_blank')                 // ya abierta, con la promesa sin resolver
     expect(tab.document.write.mock.calls[0][0]).toContain('Preparando la comanda de cocina')
-    expect(printHtml).toHaveBeenCalledWith('o1', 'kitchen', 's-bar')
+    expect(printHtml).toHaveBeenCalledWith('o1', 'kitchen', 's-bar', undefined)
 
     resolveHtml(HTML)
     expect(await pending).toEqual({ ok: true })
@@ -54,6 +54,29 @@ describe('openPrintTab', () => {
     const r = await openPrintTab('o1', 'precuenta')
     expect(r.ok).toBe(false)
     expect(tab.close).toHaveBeenCalledTimes(1)
+    open.mockRestore()
+  })
+
+  // #216 autoPrint: la pestaña se prepara dentro del gesto (antes de `sendOrder`) y se rellena después.
+  it('preparePrintTab/fillPrintTab: la pestaña se abre sola con el placeholder y se rellena más tarde con estación y batch', async () => {
+    const tab = fakeTab()
+    printHtml.mockResolvedValue(HTML)
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
+    const { preparePrintTab, fillPrintTab } = await import('./imprimir')
+    const prepared = preparePrintTab('kitchen')
+    expect(prepared?.doc).toBe('kitchen')
+    expect(tab.document.write.mock.calls[0][0]).toContain('Preparando la comanda de cocina')
+    expect(printHtml).not.toHaveBeenCalled()
+    expect(await fillPrintTab(prepared!, 'o1', { station: 's-cocina', batch: 'last' })).toEqual({ ok: true })
+    expect(printHtml).toHaveBeenCalledWith('o1', 'kitchen', 's-cocina', 'last')
+    expect(tab.document.write).toHaveBeenLastCalledWith(HTML)
+    open.mockRestore()
+  })
+
+  it('preparePrintTab: ventana bloqueada → null (el que llama decide avisar sin frenar el envío)', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const { preparePrintTab } = await import('./imprimir')
+    expect(preparePrintTab('kitchen')).toBeNull()
     open.mockRestore()
   })
 

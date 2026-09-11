@@ -310,3 +310,18 @@ describe('carta — #217: sin métodos del servicio sin uso', () => {
     expect(svc).toMatch(/updateModifier:/)
   })
 })
+
+// #216: `restaurant_stations.autoPrint` se edita en Carta → Estaciones (alta y edición) y se ve en la lista.
+describe('carta — #216: impresión automática por estación (autoPrint)', () => {
+  it('el modal de estación (nueva y editar) tiene el campo "Imprimir comanda al enviar" y manda el booleano al servicio', () => {
+    const src = carta()
+    const fields = src.match(/key: 'autoPrint', label: 'Imprimir comanda al enviar', type: 'select'/g) ?? []
+    expect(fields, 'falta el campo en alta o en edición').toHaveLength(2)
+    expect(src).toMatch(/default: s\.autoPrint \? '1' : '0'/)                    // edición: valor actual
+    expect(src).toMatch(/RestaurantService\.createStation\(\{[^}]*autoPrint: v\.autoPrint === '1'/)
+    expect(src).toMatch(/RestaurantService\.updateStation\(s\.id, \{[^}]*autoPrint: v\.autoPrint === '1'/)
+    expect(src).toMatch(/v-if="s\.autoPrint" data-testid="station-autoprint"/)   // badge en la lista
+    const svc = RAW_SERVICES['../../services/Restaurant.service.ts']
+    expect(svc).toMatch(/export interface StationPayload \{[^}]*autoPrint\?: boolean/)
+  })
+})

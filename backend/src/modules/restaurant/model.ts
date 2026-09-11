@@ -18,6 +18,9 @@ export const RestaurantStationModel: ModelDefinition = {
     // (y rojo al doble). Configurable por estación (la parrilla tarda más que el bar). Null en filas
     // anteriores a la columna (ADD COLUMN no rellena): la UI cae al default 10.
     alertMinutes: { type: 'number', default: 10 },
+    // #216 — al enviar a cocina, el POS abre solo la comanda de cocina (80 mm) de esta estación para
+    // imprimirla. Lo decide el frontend (comanda.vue) leyendo este flag; el server solo lo guarda.
+    autoPrint: { type: 'boolean', default: 0 },
   },
   timestamps: true,
 }

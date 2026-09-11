@@ -16,7 +16,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   RestaurantService, isLineActive, roomServiceLabel, isCourtesy, hasPartialPayments,
   type OrderWithLines, type MenuCategory, type MenuItem, type OrderLine, type ModifierGroup, type Combo,
-  type AllergenTag, type LineStatus, type DiscountPolicy, type DiscountPayload,
+  type AllergenTag, type LineStatus, type DiscountPolicy, type DiscountPayload, type Station,
   ORDER_STATUS_LABELS, ORDER_TYPE_LABELS, LINE_STATUS_LABELS, LINE_STATUS_BADGE, ALLERGEN_LABELS,
 } from '@/services/Restaurant.service'
 import { SettingsService } from '@/services/Settings.service'
@@ -29,7 +29,7 @@ import VoidReasonModal from '@/components/features/restaurante/VoidReasonModal.v
 import DiscountModal from '@/components/features/restaurante/DiscountModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
-import { openPrintTab } from './imprimir'
+import { openPrintTab, preparePrintTab, fillPrintTab, POPUP_BLOCKED, type PrintTab } from './imprimir'
 
 const route = useRoute()
 const router = useRouter()
@@ -190,7 +190,7 @@ async function reloadOrder() {
 async function load() {
   loading.value = true
   try {
-    const [cat, it, combosRes, settings, reasons, policy] = await Promise.all([
+    const [cat, it, combosRes, settings, reasons, policy, stationsRes] = await Promise.all([
       RestaurantService.listCategories(),
       RestaurantService.listItems(),
       RestaurantService.listCombos(),
@@ -198,7 +198,10 @@ async function load() {
       RestaurantService.voidReasons().catch(() => null),   // sin lista, el modal ofrece solo "Otro"
       // #215: tope y motivos de descuento, solo si puede descontar. Sin política el modal igual abre (el server decide).
       discountPerm.value ? RestaurantService.discountPolicy().catch(() => null) : Promise.resolve(null),
+      // #216: estaciones con impresión automática (autoPrint). Sin lista (403/red) no se imprime solo; el envío sigue.
+      RestaurantService.listStations().catch(() => [] as Station[]),
     ])
+    autoPrintStations.value = new Set(stationsRes.filter((s) => s.autoPrint).map((s) => s.id))
     voidReasons.value = reasons?.reasons ?? []
     discountPolicy.value = policy
     categories.value = cat.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
@@ -446,17 +449,37 @@ async function saveNotes() {
 const unsentCount = computed(() => topLines.value.filter((l) => l.status === 'new' && !l.sentAt).length)
 const canResend = computed(() => !!order.value && editable.value && editPerm.value && inKitchen.value && unsentCount.value > 0)
 
+// #216 — estaciones con `autoPrint`: al enviar, se abre sola la comanda de cocina (80 mm) de cada estación
+// que recibe líneas en ESTE envío. Las pestañas se abren ANTES del `await sendOrder` (gesto del usuario,
+// ver imprimir.ts) y se rellenan después con `batch: 'last'` (las líneas recién selladas). Si el navegador
+// bloquea la ventana, se avisa y el envío NO se frena: el KDS sigue recibiendo la comanda.
+const autoPrintStations = ref<Set<string>>(new Set())
+/** Estaciones (id, o '__none__' sin estación) que reciben líneas sin enviar todavía y tienen autoPrint. */
+function stationsToAutoPrint(): string[] {
+  const pending = activeLines.value.filter((l) => l.kind !== 'combo_header' && !l.sentAt)
+  const ids = new Set(pending.map((l) => l.stationId || '__none__'))
+  return [...ids].filter((id) => id !== '__none__' && autoPrintStations.value.has(id))
+}
 async function send() {
   if (sending.value) return
   sending.value = true
   const resend = order.value?.status !== 'open'
   const n = unsentCount.value
+  const tabs: { station: string; tab: PrintTab | null }[] = stationsToAutoPrint().map((station) => ({ station, tab: preparePrintTab('kitchen') }))
   try {
     await RestaurantService.sendOrder(orderId.value)
     await reloadOrder()
     toast.success(resend ? `${n} línea(s) enviada(s) a cocina` : 'Enviada a cocina')
-  } catch (e: unknown) { toast.error(e instanceof Error ? e.message : 'No se pudo enviar') }
-  finally { sending.value = false }
+    if (tabs.some((t) => !t.tab)) toast.warning('No se pudo abrir la comanda para imprimir', POPUP_BLOCKED)
+    for (const { station, tab } of tabs) {
+      if (!tab) continue
+      const r = await fillPrintTab(tab, orderId.value, { station, batch: 'last' })
+      if (!r.ok) toast.error('No se pudo imprimir la comanda de cocina', r.error)
+    }
+  } catch (e: unknown) {
+    for (const { tab } of tabs) tab?.win.close()   // no se envió: nada que imprimir
+    toast.error(e instanceof Error ? e.message : 'No se pudo enviar')
+  } finally { sending.value = false }
 }
 
 function goPay() {

@@ -115,7 +115,7 @@ export function reportsDeps(w: RestaurantWiring): reports.ReportsDeps {
 /** #216: impresión 80 mm (precuenta/ticket/cocina). El pago del ticket sale por `reportPorts.paymentById`. */
 export function printDeps(w: RestaurantWiring): print.PrintDeps {
   if (!w.orders || !w.lines || !w.config || !w.hotels) throw new ValidationError(NO_ORDERS)
-  return { orders: w.orders, lines: w.lines, tables: w.tables, config: w.config, hotels: w.hotels, userRepo: w.userRepo, auth: w.auth, rooms: w.rooms, guests: w.guests, ports: w.reportPorts }
+  return { orders: w.orders, lines: w.lines, tables: w.tables, config: w.config, hotels: w.hotels, userRepo: w.userRepo, auth: w.auth, rooms: w.rooms, guests: w.guests, orderPayments: w.orderPayments, ports: w.reportPorts }
 }
 /** #209: buscador de alojados. Sin puerto de reservas el usecase falla cerrado. */
 export function inHouseDeps(w: RestaurantWiring): inHouse.InHouseDeps { return { reservations: w.reservationPort, userRepo: w.userRepo } }

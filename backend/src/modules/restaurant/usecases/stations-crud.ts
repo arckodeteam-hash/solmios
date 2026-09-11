@@ -11,8 +11,8 @@ export interface StationsCrudDeps {
   auth: Auth
 }
 
-export interface CreateStationInput { name: string; active?: number; sortOrder?: number; alertMinutes?: number }
-export interface UpdateStationInput { name?: string; active?: number; sortOrder?: number; alertMinutes?: number }
+export interface CreateStationInput { name: string; active?: number; sortOrder?: number; alertMinutes?: number; autoPrint?: boolean }
+export interface UpdateStationInput { name?: string; active?: number; sortOrder?: number; alertMinutes?: number; autoPrint?: boolean }
 
 /** #211 — umbral de demora del KDS por estación (ámbar a N min, rojo a 2N). */
 export const DEFAULT_ALERT_MINUTES = 10
@@ -52,6 +52,7 @@ export async function createStation(deps: StationsCrudDeps, dto: CreateStationIn
   return deps.stations.create({
     hotelId, name: dto.name.trim(), active: dto.active ?? 1, sortOrder: dto.sortOrder ?? 0,
     alertMinutes: dto.alertMinutes ?? DEFAULT_ALERT_MINUTES,
+    autoPrint: dto.autoPrint === true,   // #216
   } as Omit<StationDTO, 'id'>)
 }
 

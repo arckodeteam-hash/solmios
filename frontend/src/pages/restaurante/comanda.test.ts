@@ -166,13 +166,34 @@ describe('#216 — imprimir precuenta y comanda de cocina desde la comanda', () 
     expect(tpl).toMatch(/data-testid="print-kitchen"/)
     expect(tpl).toMatch(/@click="print\('precuenta'\)"/)
     expect(tpl).toMatch(/@click="print\('kitchen'\)"/)
-    expect(src).toMatch(/import \{ openPrintTab \} from '\.\/imprimir'/)
+    expect(src).toMatch(/import \{ openPrintTab, preparePrintTab, fillPrintTab, POPUP_BLOCKED, type PrintTab \} from '\.\/imprimir'/)
     expect(src).toMatch(/openPrintTab\(orderId\.value, doc\)/)
     // La cocina imprime lo confirmado (`sentAt`): sin envío no hay comanda de cocina que imprimir.
     expect(src).toMatch(/canPrintKitchen = computed\(\(\) => [^\n]*order\.value\.status !== 'open'[^\n]*\.some\(\(l\) => !!l\.sentAt\)/)
     // Nada de fetch() ni de <a href> a la API: se pasa por el servicio.
     expect(src).not.toMatch(/fetch\(/)
     expect(tpl).not.toMatch(/href="\/api/)
+  })
+})
+
+// ─── #216: impresión automática de la comanda de cocina al enviar (restaurant_stations.autoPrint) ───
+describe('#216 — autoPrint: al enviar se abre sola la comanda de cocina de cada estación con el flag', () => {
+  it('las estaciones con autoPrint se cargan con la comanda; las pestañas se preparan ANTES del await sendOrder y se rellenan con batch last', () => {
+    const src = comanda()
+    expect(src).toMatch(/RestaurantService\.listStations\(\)\.catch\(\(\) => \[\] as Station\[\]\)/)
+    expect(src).toMatch(/autoPrintStations\.value = new Set\(stationsRes\.filter\(\(s\) => s\.autoPrint\)\.map\(\(s\) => s\.id\)\)/)
+    // Solo estaciones que reciben líneas todavía no enviadas (este envío) y que tienen el flag.
+    expect(src).toMatch(/const pending = activeLines\.value\.filter\(\(l\) => l\.kind !== 'combo_header' && !l\.sentAt\)/)
+    expect(src).toMatch(/\.filter\(\(id\) => id !== '__none__' && autoPrintStations\.value\.has\(id\)\)/)
+    const sendFn = src.slice(src.indexOf('async function send()'), src.indexOf('function goPay()'))
+    const prepareAt = sendFn.indexOf("preparePrintTab('kitchen')")
+    const sendAt = sendFn.indexOf('await RestaurantService.sendOrder(orderId.value)')
+    expect(prepareAt, 'preparePrintTab tiene que estar en send()').toBeGreaterThan(-1)
+    expect(prepareAt, 'la pestaña se abre antes del await (bloqueador de emergentes)').toBeLessThan(sendAt)
+    expect(sendFn).toMatch(/fillPrintTab\(tab, orderId\.value, \{ station, batch: 'last' \}\)/)
+    // Bloqueada → aviso, el envío sigue; envío fallido → se cierran las pestañas preparadas.
+    expect(sendFn).toMatch(/toast\.warning\('No se pudo abrir la comanda para imprimir', POPUP_BLOCKED\)/)
+    expect(sendFn).toMatch(/for \(const \{ tab \} of tabs\) tab\?\.win\.close\(\)/)
   })
 })
 

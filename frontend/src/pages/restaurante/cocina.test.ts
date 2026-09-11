@@ -135,6 +135,7 @@ describe('cocina.vue — #216 imprimir la comanda de cocina por ticket', () => {
     expect(btn).toMatch(/@click="printTicket\(t\)"/)
     expect(btn, 'un botón de solo ícono necesita nombre accesible').toMatch(/:aria-label=/)
     expect(script).toMatch(/import \{ openPrintTab \} from '\.\/imprimir'/)
-    expect(script).toMatch(/openPrintTab\(t\.order\.id, 'kitchen', \{ station: station\.value \|\| undefined \}\)/)
+    // Reimpresión desde el KDS: todo lo enviado (`batch: 'all'`), como el ticket en pantalla.
+    expect(script).toMatch(/openPrintTab\(t\.order\.id, 'kitchen', \{ station: station\.value \|\| undefined, batch: 'all' \}\)/)
   })
 })
