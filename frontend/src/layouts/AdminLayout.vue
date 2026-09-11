@@ -134,7 +134,7 @@
     <div class="flex-1 min-w-0 lg:ml-64 flex flex-col" :style="{ marginTop: 'var(--imp-h, 0px)' }">
       <!-- Verificación de email pendiente (#421): banner persistente para merchants sin email verificado -->
       <div v-if="showVerifyEmailBanner"
-        class="bg-warning/12 border-b border-warning/30 px-4 md:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2">
+        class="bg-warning/12 border-b border-warning/30 pl-16 pr-4 lg:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-2.5 min-w-0">
           <span class="w-4 h-4 shrink-0 text-warning">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="w-full h-full"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/></svg>
@@ -153,7 +153,7 @@
         <AppHeader />
       </div>
       <!-- Toggle del menú en móvil (todas las páginas) -->
-      <button @click="mobileMenuOpen = true" :style="{ top: 'calc(var(--imp-h, 0px) + 0.75rem)' }" class="lg:hidden fixed left-3 z-30 w-9 h-9 flex items-center justify-center rounded-lg border border-border bg-white text-navy shadow-(--shadow-card) hover:bg-surface cursor-pointer">
+      <button @click="mobileMenuOpen = true" :style="{ top: 'calc(var(--imp-h, 0px) + 0.75rem)' }" class="lg:hidden fixed left-3 z-30 w-11 h-11 flex items-center justify-center rounded-lg border border-border bg-white text-navy shadow-(--shadow-card) hover:bg-surface cursor-pointer">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
         </svg>

@@ -4,16 +4,16 @@
        propia de borde grueso: solo nombre/porcentaje/barra + un botón que abre el Centro de
        configuración. El desglose de pasos vive ahí, no acá (doc 04/05, decisión D2). -->
   <Transition name="progress-collapse">
-    <div v-if="show" class="rounded-2xl bg-navy px-5 py-3 flex items-center gap-4 mb-4">
+    <div v-if="show" class="rounded-2xl bg-navy px-5 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 mb-4">
       <span class="w-2 h-2 rounded-full bg-cyan shrink-0"></span>
-      <span class="text-xs font-bold text-white shrink-0">
+      <span class="text-xs font-bold text-white min-w-0">
         {{ pctRequired === 0 ? 'Empiece por acá' : `Configuración: ${pctRequired}% completa` }}
       </span>
       <div class="flex-1 h-1.5 rounded-full bg-white/15 overflow-hidden min-w-[80px]">
         <div class="h-full bg-cyan transition-all duration-500" :style="{ width: pctRequired + '%' }"></div>
       </div>
       <router-link to="/panel/configuracion-inicial"
-        class="shrink-0 bg-cyan text-navy font-extrabold text-[11px] px-4 py-1.5 rounded-full hover:shadow-lg transition-all">
+        class="basis-full sm:basis-auto shrink-0 inline-flex items-center justify-center text-center min-h-11 sm:min-h-0 bg-cyan text-navy font-extrabold text-[11px] px-4 py-1.5 rounded-full hover:shadow-lg transition-all">
         Completar →
       </router-link>
     </div>

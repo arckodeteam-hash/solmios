@@ -10,9 +10,10 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
-    "test:e2e:headed": "E2E_SLOWMO=400 playwright test --headed --workers=1",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e": "playwright test --project=chromium",
+    "test:e2e:mobile": "playwright test --project=mobile-375",
+    "test:e2e:headed": "E2E_SLOWMO=400 playwright test --project=chromium --headed --workers=1",
+    "test:e2e:ui": "playwright test --project=chromium --ui"
   },
   "dependencies": {
     "@fullcalendar/core": "^6.1.21",

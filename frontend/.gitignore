@@ -30,3 +30,6 @@ playwright/.cache/
 
 # E2E auth state (tokens de sesión de dev, generados por global-setup)
 e2e/.auth/
+
+# E2E screenshots por ruta (auditoría responsive mobile-375)
+e2e/.artifacts/
