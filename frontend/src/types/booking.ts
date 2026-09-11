@@ -34,6 +34,13 @@ export interface CreateBookingUpsell {
   quantity: number
 }
 
+/** REQ-01 (#233) — una amenidad infantil elegida, tal como viaja al backend: SOLO el id. El
+ *  precio lo resuelve el backend contra su catálogo (el snapshot con precio que guarda el
+ *  carrito es para mostrar, nunca para cobrar). */
+export interface CreateBookingChildAmenity {
+  id: string
+}
+
 /** DTO friendly que recibe `BookingService.createBooking`. El service resuelve slug→hotelId,
  *  mapea `guest` → `guestName/guestEmail/guestPhone`, y postea al backend con el shape del
  *  `ExtendedPublicBookingSchema`.
@@ -66,6 +73,12 @@ export interface CreateBookingDTO {
    *  true — no existe cantidad configurable. */
   needsCrib?: boolean
   cribCount?: number
+  /** REQ-01 (#233, amenidades para niños y bebés) — ids del catálogo del hotel
+   *  (`GET /public/hotels/:slug/child-amenities`) elegidos para ESTA habitación. Mismo criterio
+   *  que `needsCrib`: por habitación, y el backend solo las acepta si la composición tiene al
+   *  menos un menor (`childrenAges` no vacío) y `childPolicy.acceptChildren`; re-valida ids y
+   *  precios contra su catálogo, nunca confía en el cliente. */
+  childAmenities?: CreateBookingChildAmenity[]
   /** URLs de vuelta desde Stripe. Si se omiten, el backend deriva de PUBLIC_BASE_URL/Referer.
    *  Pattern: `/h/:slug?booking=:id&token=:token` (spec booking-unification R2). */
   successUrl?: string
@@ -120,6 +133,9 @@ export interface CreateBookingRoomLine {
    *  propio bebé. Sí/No únicamente — `cribCount` es siempre 1 cuando `needsCrib` es true. */
   needsCrib?: boolean
   cribCount?: number
+  /** REQ-01 (#233) — amenidades para niños/bebés de ESTA habitación (POR LÍNEA, igual que
+   *  `needsCrib`; a diferencia de `upsells`, global al carrito). Ver `CreateBookingDTO`. */
+  childAmenities?: CreateBookingChildAmenity[]
 }
 
 export interface CreateBookingGroupDTO {
@@ -416,6 +432,20 @@ export interface PublicMealPlan {
   price: number
 }
 
+/**
+ * REQ-01 (#233) — Amenidad para niños/bebés ACTIVA del hotel
+ * (`GET /api/public/hotels/:slug/child-amenities`). Público, sin auth. Solo llegan las activas,
+ * ya ordenadas por `sortOrder` ASC (desempate por nombre). `price` está en `hotels.currency`
+ * (cobro en la moneda base, igual que `Upsell.price`); `0` = sin cargo. El catálogo lo mantiene
+ * el hotel desde Motor de Reservas — NUNCA hay lista ni precios en código.
+ */
+export interface PublicChildAmenity {
+  id: string
+  name: string
+  price: number
+  sortOrder: number
+}
+
 export type PromoValidationReason =
   | 'not_found'
   | 'inactive'
@@ -445,6 +475,11 @@ export interface TotalBreakdown {
   subtotal: number
   promoDiscount: number
   upsellsTotal: number
+  /** REQ-01 (#233) — Σ de las amenidades infantiles de todas las habitaciones de la reserva
+   *  (`subtotal` = alojamiento + `upsellsTotal` + `childAmenitiesTotal`). Opcional: las reservas
+   *  creadas ANTES de esta feature persistieron un `totalBreakdown` sin el campo — tratar
+   *  `undefined` como 0. */
+  childAmenitiesTotal?: number
   /** Σ de `taxBreakdown` (misma cuenta que el backend: cada línea redondeada aparte). */
   taxes: number
   /** Tarea 24 (#88): cada impuesto con nombre, % e importe. */

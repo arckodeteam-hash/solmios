@@ -114,6 +114,11 @@
         <span class="text-text-muted">{{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
       </div>
+      <!-- REQ-01 (#233) — amenidades infantiles, una fila por habitación × amenidad. -->
+      <div v-for="line in store.childAmenityLines" :key="`${line.lineKey}-${line.id}`" class="flex justify-between" data-testid="child-amenity-line">
+        <span class="text-text-muted">{{ t('pay.childAmenities') }} · {{ line.roomName }} · {{ line.name }}<span v-if="line.quantity > 1"> × {{ line.quantity }}</span> <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
+        <span class="font-semibold text-navy">{{ formatPrice(line.total, displayOrCharge) }}</span>
+      </div>
       <div v-if="store.promoDiscount > 0" class="flex justify-between text-green-700">
         <span>{{ t('pay.discount') }}</span>
         <span class="font-semibold">−{{ formatPrice(store.promoDiscount, displayOrCharge) }}</span>
@@ -355,6 +360,9 @@ function cartLineGuestsLabel(line: CartLine): string {
         children: line.childrenAges.length,
         ages: line.childrenAges.join(', '),
       })
-  return line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
+  const withCrib = line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
+  // REQ-01 (#233) — amenidades infantiles elegidas para ESTA habitación, por nombre (snapshot).
+  const amenities = (line.childAmenities ?? []).map((a) => a.name)
+  return amenities.length > 0 ? `${withCrib} · ${amenities.join(', ')}` : withCrib
 }
 </script>

@@ -376,3 +376,44 @@ export interface PublicMealPlan {
   priceMode: MealPlanPriceMode
   price: number
 }
+
+// ─── Amenidades para niños/bebés (REQ-01, #233 — sub-dominio de bookingengine) ──────────
+// Catálogo ABIERTO por hotel (nombre libre + precio), a diferencia de la cuna
+// (`childPolicy.cribAvailable`, Sí/No sin precio). Ver el comentario de `ChildAmenityModel`.
+
+/** DTO de lectura. Espeja los campos persistidos en `child_amenities` (model.ts). */
+export interface ChildAmenityDTO {
+  id: string
+  hotelId: string
+  name: string
+  /** Precio en la moneda del hotel. 0 = gratuita. */
+  price: number
+  active: boolean
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** Body del POST /api/child-amenities. */
+export interface CreateChildAmenityDTO {
+  name: string
+  price: number
+  active?: boolean
+  sortOrder?: number
+}
+
+/** Body del PUT /api/child-amenities/:id. Todos opcionales (partial). */
+export interface UpdateChildAmenityDTO {
+  name?: string
+  price?: number
+  active?: boolean
+  sortOrder?: number
+}
+
+/** Fila pública (lo que el widget necesita) — sin hotelId/timestamps. */
+export interface PublicChildAmenity {
+  id: string
+  name: string
+  price: number
+  sortOrder: number
+}

@@ -12,8 +12,13 @@
 //   - `upsells`: se validan ids contra `Upsells` (deben pertenecer al hotel + estar activos).
 //     El total se calcula como Σ price × quantity (kind es solo un hint de UI para el
 //     frontend; la matemática es price × qty para los tres kinds).
-//   - `totalBreakdown`: { subtotal, promoDiscount, upsellsTotal, taxes, total } se devuelve
-//     en la respuesta para que el widget muestre el detalle y Stripe cobre el `total`.
+//   - `totalBreakdown`: { subtotal, promoDiscount, upsellsTotal, childAmenitiesTotal, taxes,
+//     total } se devuelve en la respuesta para que el widget muestre el detalle y Stripe cobre
+//     el `total`.
+//   - `childAmenities` (REQ-01 #233): ids del catálogo `child_amenities` elegidos para ESTA
+//     habitación. Se gatean por composición (al menos un menor declarado + acceptChildren), se
+//     validan contra el catálogo activo del hotel, se suman al subtotal y se persisten como
+//     snapshot con precio en `Reservations.childAmenities` + `childAmenitiesTotal`.
 //
 // Robustez F0 (pagos en prod, spec booking-unification §"PRECAUCIÓN CRÍTICA"):
 //   Si `gw.createCharge` falla (hotel sin Stripe configurado, gateway caído, error de red,
@@ -60,6 +65,69 @@ export interface UpsellItem {
 }
 
 /**
+ * REQ-01 (#233) — Línea del snapshot de amenidades infantiles que se persiste en
+ * `Reservations.childAmenities`. Precio CONGELADO al momento de reservar (si el hotel cambia el
+ * catálogo después, la reserva sigue mostrando lo que se cotizó). `quantity` es cuántas unidades
+ * físicas llevan esta amenidad (1 por reserva individual; en un grupo, la línea la lleva ×
+ * `line.quantity` pero cada fila física persiste su propio snapshot con quantity 1).
+ */
+export interface ChildAmenityLine {
+  id: string
+  name: string
+  price: number
+  quantity: number
+  total: number
+}
+
+/**
+ * REQ-01 (#233) — Normaliza los ids de amenidades infantiles que manda el widget POR HABITACIÓN
+ * (`[{id}]`, o strings sueltos por tolerancia). Devuelve ids únicos, sin vacíos.
+ */
+export function normalizeChildAmenityIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const item of raw) {
+    const id = typeof item === 'string' ? item : (item && typeof item.id === 'string' ? item.id : '')
+    const trimmed = id.trim()
+    if (trimmed && !out.includes(trimmed)) out.push(trimmed)
+  }
+  return out
+}
+
+/**
+ * REQ-01 (#233) — Resuelve los ids pedidos contra el catálogo `child_amenities` del hotel. Mismo
+ * criterio que los upsells: un id inexistente, inactivo o de otro hotel se IGNORA (no fail-fast —
+ * el huésped no tiene la culpa de un id stale en el frontend; mejor crear la reserva sin ese
+ * extra), pero se deja constancia con `logger.warn` para diagnosticar. Precio 0 es válido (una
+ * amenidad gratuita también se registra en el snapshot, con total 0).
+ *
+ * @param quantity cuántas unidades físicas llevan cada amenidad (1 en el flujo de 1 habitación).
+ */
+export function resolveChildAmenityLines(
+  catalog: any[],
+  ids: string[],
+  hotelId: string,
+  quantity: number,
+  logger?: PublicBookingLogger,
+): { lines: ChildAmenityLine[]; total: number } {
+  const byId = new Map<string, any>((catalog ?? []).map((a: any) => [a.id, a]))
+  const lines: ChildAmenityLine[] = []
+  let total = 0
+  for (const id of ids) {
+    const found = byId.get(id)
+    if (!found || !found.active || found.hotelId !== hotelId) {
+      logger?.warn('Amenidad infantil ignorada: id desconocido, inactivo o de otro hotel', { hotelId, childAmenityId: id })
+      continue
+    }
+    const price = round2(Math.max(0, Number(found.price) || 0))
+    const lineTotal = round2(price * quantity)
+    lines.push({ id: found.id, name: String(found.name ?? ''), price, quantity, total: lineTotal })
+    total += lineTotal
+  }
+  return { lines, total: round2(total) }
+}
+
+/**
  * F2 2.5 — Deps opcionales para procesar `promoCode` y `upsells`. Si no se pasan, el usecase
  * funciona como antes (F0 0.16: persiste los campos sin validarlos). El controller los cablea
  * desde index.ts; los tests legacy que llaman con 2 args siguen funcionando (sin promo procesing).
@@ -69,6 +137,10 @@ export interface PublicBookingExtraDeps {
   promoCodes?: RepositoryAdapter<any>
   /** Repo de `upsells` para validar ids + computar upsellsTotal. */
   upsells?: RepositoryAdapter<any>
+  /** REQ-01 (#233) — Repo de `child_amenities` para validar los ids por habitación + computar
+   *  `childAmenitiesTotal`. Opcional (compat callers/tests viejos): sin él, los ids se ignoran
+   *  con warn y no se suma nada (mismo criterio que `upsells` sin repo). */
+  childAmenities?: RepositoryAdapter<any>
   /** Repo de `Configuration` para leer la tasa de impuesto del hotel (configuration('taxes')). */
   config?: RepositoryAdapter<any>
   /** FIX 2026-07-31 — Repo de `BookingConfig` (booking_config). Defensa en profundidad: si
@@ -82,12 +154,15 @@ export interface PublicBookingExtraDeps {
  * Todos los importes en `hotels.currency` (multi-moneda es display only — el cobro es en base).
  */
 export interface TotalBreakdown {
-  /** room.basePrice × nights + upsellsTotal (antes de promo e impuestos). */
+  /** room.basePrice × nights + upsellsTotal + childAmenitiesTotal (antes de promo e impuestos). */
   subtotal: number
   /** Descuento del promo (0 si no hay promo). Siempre >= 0. */
   promoDiscount: number
   /** Σ upsell.price × quantity (extras genéricos). */
   upsellsTotal: number
+  /** REQ-01 (#233) — Σ amenidad.price × unidades (amenidades para niños/bebés, por habitación).
+   *  0 si no se pidió ninguna o si la reserva no tiene menores. Ya incluido en `subtotal`. */
+  childAmenitiesTotal: number
   /** Σ impuestos (ITBIS + otros) sobre (subtotal - promoDiscount). Es la suma de `taxBreakdown`. */
   taxes: number
   /** Tarea 24 (#88): cada impuesto con nombre, % e importe. `taxes` es su suma exacta. */
@@ -217,6 +292,9 @@ export async function createPublicBookingDirect(
     // F2 2.5 — promoCode + upsells ahora se PROCESAN (F0 0.16 solo los persistía).
     promoCode,
     upsells,
+    // REQ-01 (#233) — amenidades para niños/bebés elegidas para ESTA habitación: `[{id}]`. Se
+    // validan contra el catálogo del hotel y se gatean por composición (ver más abajo).
+    childAmenities: rawChildAmenities,
     // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09) — Sí/No únicamente; solo tiene efecto
     // si la composición tiene al menos un bebé (Tarea 21) Y el hotel habilitó la cuna; ver el
     // gateo más abajo, después de calcular `childComposition`.
@@ -328,6 +406,20 @@ export async function createPublicBookingDirect(
   const babiesCount = childComposition.babies
   const needsCrib = babiesCount > 0 && childPolicy?.cribAvailable === true && rawNeedsCrib === true
   const cribCount = needsCrib ? 1 : 0
+
+  // ─── REQ-01 (#233) — Amenidades para niños/bebés: gateo por menores Y por política ────────
+  // Mismo criterio de defensa en profundidad que la cuna: el widget solo muestra el checklist
+  // si la habitación tiene menores, pero el servidor NUNCA confía en el body. Sin al menos un
+  // menor en la composición (niño con plaza, niño libre o bebé — declarados con edades, que es
+  // lo único que resuelve `childPolicy`) Y `childPolicy.acceptChildren`, los ids se descartan.
+  // La validación contra el catálogo y la suma van más abajo, junto a los upsells.
+  const childAmenityIds = normalizeChildAmenityIds(rawChildAmenities)
+  const minorsCount = childComposition.payingChildren + childComposition.freeChildren
+  const childAmenitiesAllowed = childPolicy?.acceptChildren === true && minorsCount > 0
+  const requestedChildAmenityIds = childAmenitiesAllowed ? childAmenityIds : []
+  if (childAmenityIds.length > 0 && !childAmenitiesAllowed) {
+    logger?.warn('createPublicBookingDirect: childAmenities ignoradas — la reserva no tiene menores declarados o el hotel no acepta niños', { hotelId })
+  }
 
   // Requerimiento 2 (2026-09-03) — capacidad/maxAdults/maxChildren por TIPO de habitación,
   // configurable en Configuración (`room_type_capacity`). Se resuelve SIEMPRE (no solo cuando hay
@@ -491,6 +583,22 @@ export async function createPublicBookingDirect(
     }
   }
 
+  // ─── REQ-01 (#233) — Amenidades infantiles: validar ids contra el catálogo y sumar ──────
+  // Mismo criterio que los upsells de arriba: ids inexistentes/inactivos/de otro hotel se
+  // ignoran (con warn); sin repo cableado no se puede validar ni sumar, así que se descartan.
+  // quantity 1: esta reserva es UNA habitación. El snapshot congela el precio cotizado.
+  let childAmenityLines: ChildAmenityLine[] = []
+  let childAmenitiesTotal = 0
+  if (requestedChildAmenityIds.length > 0 && extraDeps?.childAmenities) {
+    const catalog = (await extraDeps.childAmenities.findMany({ hotelId })) as any[]
+    const resolved = resolveChildAmenityLines(catalog ?? [], requestedChildAmenityIds, hotelId, 1, logger)
+    childAmenityLines = resolved.lines
+    childAmenitiesTotal = resolved.total
+  } else if (requestedChildAmenityIds.length > 0 && !extraDeps?.childAmenities) {
+    logger?.warn('createPublicBookingDirect: childAmenities en el body sin extraDeps.childAmenities cableado — se ignoran (no se puede validar ni cotizar)', { hotelId })
+  }
+  const childAmenitiesSummary = childAmenityLines.map((l) => `${l.name}=${l.total.toFixed(2)}`)
+
   // ─── F2 2.5 — Promo: validar upfront (read-only) ───────────────────────────────────
   // Si extraDeps.promoCodes no está, no procesamos (F0 0.16 behavior: persistimos el string
   // sin validarlo). Si está, validamos; si inválido, 400 con reason; si válido, descuento.
@@ -498,7 +606,7 @@ export async function createPublicBookingDirect(
   let promoRecord: any = null
   let promoReason: string | undefined
   if (promoCode && extraDeps?.promoCodes) {
-    const subtotal = roomSubtotal + upsellsTotal
+    const subtotal = roomSubtotal + upsellsTotal + childAmenitiesTotal
     const result = await validatePromoCode(
       { promoCodes: extraDeps.promoCodes }, hotelId, String(promoCode), subtotal,
     )
@@ -521,13 +629,13 @@ export async function createPublicBookingDirect(
   }
 
   // ─── F2 2.5 — Cálculo del total con impuestos ──────────────────────────────────────
-  // Orden: subtotal (room + upsells) - promoDiscount = base imponible; taxes sobre base;
+  // Orden: subtotal (room + upsells + amenidades niños) - promoDiscount = base imponible; taxes sobre base;
   // total = base + taxes. Mismo fallback que folios/facturas: configuration('taxes') y si
   // está vacío, hotels.taxRate.
   // Tarea 24 (#88): impuesto por impuesto (nombre, %, importe), con el MISMO lector y la MISMA
   // cuenta que `/rates` y que el widget: cada línea redondeada aparte, `taxes` = suma de líneas.
   // Así lo que el huésped ve fila por fila antes de pagar es exactamente lo que cobra Stripe.
-  const subtotalBeforeDiscount = roomSubtotal + upsellsTotal
+  const subtotalBeforeDiscount = roomSubtotal + upsellsTotal + childAmenitiesTotal
   const taxableBase = round2(Math.max(0, subtotalBeforeDiscount - promoDiscount))
   const hotelTaxes = extraDeps?.config
     ? await readHotelTaxes(extraDeps.config, hotelId, () => orm.findById('Hotels', hotelId))
@@ -539,6 +647,7 @@ export async function createPublicBookingDirect(
     subtotal: round2(subtotalBeforeDiscount),
     promoDiscount: round2(promoDiscount),
     upsellsTotal: round2(upsellsTotal),
+    childAmenitiesTotal: round2(childAmenitiesTotal),
     taxes,
     taxBreakdown,
     total: totalAmount,
@@ -558,6 +667,9 @@ export async function createPublicBookingDirect(
   }
   if (promoCode) notesParts.push(`Promo: ${promoCode}${promoReason ? ` (${promoReason})` : ''}`)
   if (upsellSummary.length > 0) notesParts.push(`Upsells: ${upsellSummary.join(', ')}`)
+  // REQ-01 (#233) — el detalle estructurado vive en `childAmenities` (snapshot json); acá queda
+  // el vistazo rápido para el recepcionista, igual que los upsells.
+  if (childAmenitiesSummary.length > 0) notesParts.push(`Amenidades niños: ${childAmenitiesSummary.join(', ')}`)
   // Tarea 22 — el detalle estructurado vive en needsCrib/cribCount (columnas propias, ver
   // reservas/model.ts), pero también queda acá para que el recepcionista lo vea de un vistazo en
   // las notas, igual que el resto de los extras de esta reserva. Sí/No únicamente (2026-09-09) —
@@ -628,6 +740,10 @@ export async function createPublicBookingDirect(
         // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — ya gateados/validados
         // arriba contra `childComposition.babies` y `childPolicy.cribAvailable`; acá solo persisten.
         needsCrib, cribCount,
+        // REQ-01 (#233) — snapshot con precio congelado de las amenidades infantiles de ESTA
+        // habitación (ya validadas/gateadas arriba) + su total, que ya está dentro de `totalAmount`.
+        childAmenities: childAmenityLines,
+        childAmenitiesTotal: round2(childAmenitiesTotal),
         totalAmount, deposit: 0,
         // Tarea 24 (#88): el desglose que el huésped vio y aceptó se guarda con la reserva, para
         // que la confirmación (y cualquier pantalla posterior) muestre lo mismo que el paso de
