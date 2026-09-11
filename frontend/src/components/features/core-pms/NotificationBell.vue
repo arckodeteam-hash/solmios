@@ -122,8 +122,9 @@ async function handleClick(n: AppNotification) {
     } catch { /* silent */ }
   }
   // Routing según tipo
-  const meta = (n.metadata || {}) as { reservationId?: string; guestId?: string; roomId?: string }
-  if (meta.reservationId) router.push('/panel/reservas')
+  const meta = (n.metadata || {}) as { reservationId?: string; guestId?: string; roomId?: string; link?: string }
+  if (n.type === 'support') router.push(typeof meta.link === 'string' && meta.link ? meta.link : '/panel/support')
+  else if (meta.reservationId) router.push('/panel/reservas')
   else if (n.type === 'payment') router.push('/panel/finanzas/facturacion')
   else if (n.type === 'housekeeping') router.push('/panel/operaciones/limpieza')
   else if (n.type === 'maintenance') router.push('/panel/operaciones/mantenimiento')
