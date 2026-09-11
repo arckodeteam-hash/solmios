@@ -214,6 +214,40 @@
               </div>
             </div>
 
+            <!-- REQ-01 (#233, amenidades para niños y bebés) — checklist POR HABITACIÓN, solo si
+                 ESTA tarjeta tiene al menos un menor Y el hotel publicó amenidades activas
+                 (`store.childAmenities`, catálogo del backend: nunca hay nombres ni precios en
+                 código). El precio se ve ANTES de tildar, y lo elegido suma al total de la línea. -->
+            <div v-if="shouldOfferChildAmenities(rt)" class="space-y-2 rounded-lg bg-slate-50 p-2.5" data-testid="child-amenities">
+              <span class="block text-sm font-bold text-navy">{{ t('rooms.guests.childAmenities') }}</span>
+              <label
+                v-for="a in store.childAmenities"
+                :key="a.id"
+                :for="`child-amenity-${rt.id}-${a.id}`"
+                class="flex cursor-pointer items-center justify-between gap-3 text-sm text-navy"
+                data-testid="child-amenity-option"
+              >
+                <span class="flex items-center gap-2">
+                  <input
+                    :id="`child-amenity-${rt.id}-${a.id}`"
+                    :name="`child-amenity-${rt.id}-${a.id}`"
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-slate-300 text-cyan"
+                    :value="a.id"
+                    :checked="isChildAmenitySelected(rt, a.id)"
+                    @change="toggleChildAmenity(rt, a.id)"
+                  />
+                  <span>{{ a.name }}</span>
+                </span>
+                <span class="text-xs font-bold tabular-nums text-text-muted" data-testid="child-amenity-price">
+                  {{ Number(a.price) > 0 ? formatPrice(Number(a.price), store.displayCurrency) : t('rooms.guests.childAmenityFree') }}
+                </span>
+              </label>
+              <p v-if="composedChildAmenitiesTotal(rt) > 0" class="text-xs font-bold tabular-nums text-navy" data-testid="child-amenities-total">
+                + {{ formatPrice(composedChildAmenitiesTotal(rt), store.displayCurrency) }}
+              </p>
+            </div>
+
             <div class="flex items-center justify-between gap-3 border-t border-slate-200 pt-3">
               <span :data-occupancy="composition(rt).chargeableOccupancy">
                 <template v-if="capacityBlockReason(rt)">
@@ -447,6 +481,8 @@ const {
   composition, matchedRow, composedPrice, composedPricePerNight,
   canAddComposition, addComposedRoom, maxChildAgeOptions, capacityBlockReason,
   childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib,
+  // REQ-01 (#233) — amenidades para niños/bebés por habitación.
+  shouldOfferChildAmenities, isChildAmenitySelected, toggleChildAmenity, composedChildAmenitiesTotal,
 } = useGuestComposer()
 
 /** Requerimiento 6 (2026-09-03) — texto del motivo cuando `capacityBlockReason` bloquea por
@@ -474,6 +510,10 @@ function cartLineGuestsLabel(line: CartLine): string {
         children: line.childrenAges.length,
         ages: line.childrenAges.join(', '),
       })
-  return line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
+  const withCrib = line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
+  // REQ-01 (#233) — las amenidades infantiles elegidas para ESTA habitación, por nombre (snapshot
+  // de la línea), para que el huésped confirme qué quedó pedido en cada una.
+  const amenities = (line.childAmenities ?? []).map((a) => a.name)
+  return amenities.length > 0 ? `${withCrib} · ${amenities.join(', ')}` : withCrib
 }
 </script>
