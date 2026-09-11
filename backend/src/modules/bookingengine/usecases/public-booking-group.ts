@@ -35,6 +35,7 @@
 // LA MISMA transacción: si una sola habitación se vende concurrentemente, se aborta el grupo
 // ENTERO (todo o nada) — no puede quedar una reserva de grupo a medias.
 import type { RepositoryAdapter } from 'arckode-framework'
+import { readHotelTaxes, taxLinesOn, sumTaxLines } from './hotel-taxes'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
 import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-validate'
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
@@ -352,16 +353,21 @@ export async function createPublicBookingGroup(
     if (!promoRecord) { promoDiscount = 0; promoReason = 'not_found' }
   }
 
+  // Tarea 24 (#88): mismo lector y misma cuenta que public-booking.ts (impuesto por impuesto).
   const subtotalBeforeDiscount = roomSubtotal + upsellsTotal
-  const taxableBase = Math.max(0, subtotalBeforeDiscount - promoDiscount)
-  const taxRatePercent = extraDeps?.config ? await readTaxRate(extraDeps.config, hotelId, orm) : 0
-  const taxes = round2((taxableBase * taxRatePercent) / 100)
+  const taxableBase = round2(Math.max(0, subtotalBeforeDiscount - promoDiscount))
+  const hotelTaxes = extraDeps?.config
+    ? await readHotelTaxes(extraDeps.config, hotelId, () => orm.findById('Hotels', hotelId))
+    : []
+  const taxBreakdown = taxLinesOn(taxableBase, hotelTaxes)
+  const taxes = sumTaxLines(taxBreakdown)
   const totalAmount = round2(taxableBase + taxes)
   const totalBreakdown: TotalBreakdown = {
     subtotal: round2(subtotalBeforeDiscount),
     promoDiscount: round2(promoDiscount),
     upsellsTotal: round2(upsellsTotal),
     taxes,
+    taxBreakdown,
     total: totalAmount,
   }
 
@@ -446,6 +452,10 @@ export async function createPublicBookingGroup(
             // eje independiente de `status`, todas las reservas del grupo quedan pendientes
             // de aprobación por igual si el hotel apagó "Confirmación instantánea".
             approvalStatus: bookingConfig?.instantConfirmation === false ? 'pending' : undefined,
+            // Tarea 24 (#88): el desglose del grupo (lo que el huésped vio y paga) va en la
+            // LÍDER, la primera creada, que es la que Stripe cobra. Las demás no tienen desglose
+            // propio: su `totalAmount` es contable, no lo que se le mostró a nadie.
+            priceBreakdown: reservations.length === 0 ? totalBreakdown : undefined,
           })
           reservations.push(reservation)
         }
@@ -518,23 +528,3 @@ export async function createPublicBookingGroup(
   }
 }
 
-/** Copia de `readTaxRate` (public-booking.ts) — mismo fallback estándar del proyecto. Duplicado
- *  a propósito (función privada de 12 líneas) en vez de exportar/importar cross-file por una
- *  función tan chica: mantiene los 2 usecases independientes uno del otro. */
-async function readTaxRate(config: RepositoryAdapter<any>, hotelId: string, orm: any): Promise<number> {
-  try {
-    let c = await config.findOne({ hotelId, key: 'taxes' })
-    if (!c) c = await config.findOne({ hotelId, key: 'impuestos' })
-    const arr: any[] = c?.value ?? []
-    const configured = arr
-      .filter((t) => t && (t.activo ?? t.active))
-      .reduce((s, t) => s + Number(t.tasa ?? t.rate ?? 0), 0)
-    if (configured > 0) return configured
-  } catch { /* cae al fallback */ }
-  try {
-    const hotel = await orm.findById('Hotels', hotelId)
-    return Number((hotel as any)?.taxRate) || 0
-  } catch {
-    return 0
-  }
-}

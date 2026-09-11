@@ -52,10 +52,9 @@
           <span class="text-text-muted">{{ t('confirm.guest') }}</span>
           <span class="font-bold text-navy">{{ reservation.guest.name }}</span>
         </div>
-        <div v-if="reservation.reservation.totalAmount" class="flex justify-between border-t border-slate-200 pt-1 mt-1">
-          <span class="text-text-muted">{{ t('confirm.total') }}</span>
-          <span class="font-bold text-navy">{{ reservation.reservation.totalAmount }}</span>
-        </div>
+        <!-- Tarea 24 (#88): el mismo desglose que vio en el paso de pago, no un total pelado. -->
+        <PriceBreakdownLines v-if="reservation.reservation.totalAmount" class="mt-1"
+          :breakdown="reservation.reservation.totalBreakdown" :total="reservation.reservation.totalAmount" :format="fmtMoney" />
       </div>
 
       <p class="text-[11px] text-text-muted mt-4">
@@ -96,6 +95,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBookingStore, readStoredReservation, clearStoredReservation } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
+import PriceBreakdownLines from './PriceBreakdownLines.vue'
 import type { PublicReservationResponse } from '@/types/booking'
 
 const store = useBookingStore()
@@ -106,6 +106,14 @@ type PollingState = 'loading' | 'success' | 'pending' | 'error'
 const pollingState = ref<PollingState>('loading')
 const reservation = ref<PublicReservationResponse | null>(null)
 const errorMessage = ref(t('confirm.errorDefault'))
+
+/** Importe con la moneda de la reserva — mismo formato que booking-confirmation.vue. */
+function fmtMoney(amount: unknown): string {
+  const n = Number(amount)
+  if (!Number.isFinite(n)) return '—'
+  const currency = String(reservation.value?.reservation?.currency || store.chargeCurrency || '').toUpperCase()
+  return currency ? `${n.toFixed(2)} ${currency}` : n.toFixed(2)
+}
 
 const MAX_ATTEMPTS = 10
 const POLL_INTERVAL_MS = 3000

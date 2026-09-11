@@ -153,7 +153,7 @@ describe('BookingModal — condiciones y aceptación previas al pago', () => {
     vi.mocked(BookingService.getUpsells).mockReset().mockResolvedValue([])
     vi.mocked(BookingService.createBooking).mockReset().mockResolvedValue({
       reservationId: 'r1', accessToken: 't1', checkoutUrl: null,
-      totalBreakdown: { subtotal: 300, promoDiscount: 0, upsellsTotal: 0, taxes: 54, total: 354 },
+      totalBreakdown: { subtotal: 300, promoDiscount: 0, upsellsTotal: 0, taxes: 54, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 54 }], total: 354 },
     })
   })
   afterEach(() => {

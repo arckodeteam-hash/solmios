@@ -51,6 +51,7 @@ import type {
   RoomTypeTaxItem,
   SelectedUpsell,
   TotalBreakdown,
+  UpsellLine,
   Upsell,
 } from '@/types/booking'
 // Refactor cross-cutting: monedas del enum global (types/currency.ts — source of truth único).
@@ -402,12 +403,15 @@ export const useBookingStore = defineStore('booking-widget', () => {
     cart.value.reduce((s, l) => s + l.unitPrice * l.quantity, 0),
   ))
 
-  /** Impuestos "de etiqueta" del carrito (suma de cada línea × su cantidad), ANTES de escalar
-   *  proporcionalmente por promo — ver `estimatedTaxes`, mismo criterio que tenía la versión de
-   *  1 sola habitación, ahora agregado línea por línea. */
-  const roomsTaxesRaw = computed(() => round2(
-    cart.value.reduce((s, l) => s + l.unitTaxBreakdown.reduce((ts, t) => ts + t.amount, 0) * l.quantity, 0),
-  ))
+  /** Tasas del hotel (nombre + %), tal como las publica `/rates`. Si la respuesta no las trae
+   *  (widget embebido contra un backend viejo), se deducen de las líneas del carrito. */
+  const taxRates = computed<RoomTypeTaxItem[]>(() => {
+    const fromRates = ratesResponse.value?.taxes
+    if (Array.isArray(fromRates) && fromRates.length > 0) return fromRates.map((t) => ({ name: t.name, rate: t.rate, amount: 0 }))
+    const seen = new Map<string, RoomTypeTaxItem>()
+    for (const l of cart.value) for (const t of l.unitTaxBreakdown) if (!seen.has(t.name)) seen.set(t.name, { name: t.name, rate: t.rate, amount: 0 })
+    return [...seen.values()]
+  })
 
   /** Subtotal room(s)+upsells ANTES de promo e impuestos. Promo se aplica sobre este monto. */
   const subtotal = computed(() => round2(roomsSubtotal.value + upsellsTotal.value))
@@ -424,6 +428,20 @@ export const useBookingStore = defineStore('booking-widget', () => {
     return round2(total)
   })
 
+  /** Extras elegidos, uno por línea (nombre × cantidad = importe) — #88 pide verlos por separado. */
+  const upsellLines = computed<UpsellLine[]>(() => {
+    const byId = new Map(upsells.value.map((u) => [u.id, u]))
+    const lines: UpsellLine[] = []
+    for (const sel of selectedUpsells.value) {
+      const found = byId.get(sel.id)
+      if (!found) continue
+      const quantity = Math.max(1, Math.floor(sel.quantity))
+      const unitPrice = Number(found.price)
+      lines.push({ id: found.id, name: found.name, quantity, unitPrice, total: round2(unitPrice * quantity) })
+    }
+    return lines
+  })
+
   const promoDiscount = computed(() =>
     promoResult.value?.valid ? Number(promoResult.value.discount) || 0 : 0,
   )
@@ -431,14 +449,17 @@ export const useBookingStore = defineStore('booking-widget', () => {
   /** Base imponible (subtotal - promo). Sobre esto caen los impuestos. */
   const taxableBase = computed(() => round2(Math.max(0, subtotal.value - promoDiscount.value)))
 
-  /** Impuestos estimados pre-create: escala el impuesto "de etiqueta" de las habitaciones del
-   *  carrito a la base imponible real (tras promo). El total DEFINITIVO lo calcula el backend y
-   *  lo devuelve en `totalBreakdown` tras crear. Si hay promo, el backend recalcula impuestos
-   *  sobre la base ya descontada — coincide. */
-  const estimatedTaxes = computed(() => {
-    if (cart.value.length === 0) return 0
-    return round2(taxOnBase(roomsTaxesRaw.value, roomsSubtotal.value, taxableBase.value))
+  /** Tarea 24 (#88): impuesto por impuesto sobre la base imponible, con la MISMA cuenta que el
+   *  backend (`hotel-taxes.ts:taxLinesOn`: cada línea `round2(base × rate / 100)`, y el total es la
+   *  suma de las líneas). Por eso lo que el huésped ve antes de crear la reserva es, centavo por
+   *  centavo, lo que `totalBreakdown` devuelve después y lo que Stripe cobra. */
+  const estimatedTaxBreakdown = computed<RoomTypeTaxItem[]>(() => {
+    if (cart.value.length === 0) return []
+    const base = taxableBase.value
+    return taxRates.value.map((t) => ({ name: t.name, rate: t.rate, amount: round2((base * t.rate) / 100) }))
   })
+
+  const estimatedTaxes = computed(() => round2(estimatedTaxBreakdown.value.reduce((s, t) => s + t.amount, 0)))
 
   /** Total estimado pre-create. El step Pay muestra esto; el botón confía en `totalBreakdown.total`. */
   const estimatedTotal = computed(() =>
@@ -688,8 +709,9 @@ export const useBookingStore = defineStore('booking-widget', () => {
     // sin esto, `roomsSubtotal`/el resumen/el pago seguían leyendo la fila plana de
     // `chargeableOccupancy` (la tarifa SIN descontar), aunque el composer ya mostraba el precio
     // correcto — el huésped vería un número al elegir y otro distinto al pagar. El impuesto se
-    // reescala PROPORCIONALMENTE (mismo mecanismo que `taxOnBase` usa para promo): la fila
-    // original trae el impuesto calculado sobre el precio plano, no sobre el descontado.
+    // reescala PROPORCIONALMENTE: la fila original trae el impuesto calculado sobre el precio
+    // plano, no sobre el descontado. (Solo para la etiqueta de la tarjeta: el desglose que se
+    // paga sale de `estimatedTaxBreakdown`, sobre la base imponible real.)
     if (isComposition && childPolicy.value.childrenDiscountEnabled && composition!.payingChildren > 0) {
       const adultsRow = room.occupancies?.find((o) => o.occupancy === composition!.effectiveAdults)
       if (adultsRow) {
@@ -1073,8 +1095,11 @@ export const useBookingStore = defineStore('booking-widget', () => {
     upsellsTotal,
     promoDiscount,
     taxableBase,
+    taxRates,
+    estimatedTaxBreakdown,
     estimatedTaxes,
     estimatedTotal,
+    upsellLines,
     totalBreakdown,
     searchValid,
     roomsValid,
@@ -1134,11 +1159,6 @@ function round2(n: number): number {
 /** Reparte el impuesto del roomType (calculado sobre fromPrice) al taxableBase real
  *  (tras promo). Mantiene la proporción: si la base bajó por un descuento, el impuesto
  *  baja en la misma proporción. */
-function taxOnBase(taxAmountOnFromPrice: number, fromPrice: number, base: number): number {
-  if (fromPrice <= 0) return 0
-  return round2((taxAmountOnFromPrice * base) / fromPrice)
-}
-
 /** Extrae mensaje legible de un error del http client (ApiError) o de un Error genérico. */
 function errMessage(e: unknown, fallback: string): string {
   if (e instanceof ApiError) return e.message

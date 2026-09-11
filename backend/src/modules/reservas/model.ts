@@ -13,6 +13,11 @@ export const ReservasModel: ModelDefinition = {
     status: { type: 'string', default: 'pending' },
     channel: { type: 'string', default: 'direct' },
     totalAmount: { type: 'number', required: true },
+    // Tarea 24 (#88) — desglose que el huésped vio y aceptó en el motor público
+    // ({subtotal, promoDiscount, upsellsTotal, taxes, taxBreakdown[{name,rate,amount}], total}).
+    // Nulo en reservas del panel/OTA. La confirmación pública lo muestra tal cual: es lo que
+    // se le prometió antes de la pasarela, no una reconstrucción.
+    priceBreakdown: { type: 'json' },
     deposit: { type: 'number', default: 0 },
     currency: { type: 'string', default: 'USD' },
     adults: { type: 'number', default: 2 },

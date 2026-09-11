@@ -170,7 +170,7 @@ describe('useBooking — pay() ante un 409 de revalidación (Tarea 15 / tasks.md
 
     vi.mocked(BookingService.createBooking).mockResolvedValueOnce({
       reservationId: 'r1', accessToken: 't1', checkoutUrl: null,
-      totalBreakdown: { subtotal: 200, promoDiscount: 0, upsellsTotal: 0, taxes: 0, total: 200 },
+      totalBreakdown: { subtotal: 200, promoDiscount: 0, upsellsTotal: 0, taxes: 0, taxBreakdown: [], total: 200 },
     })
     await store.pay()
 

@@ -44,6 +44,7 @@
 import { safeParse } from '../../../shared/utils/safe-parse'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
 import type { RepositoryAdapter } from 'arckode-framework'
+import { readHotelTaxes, taxLinesOn, sumTaxLines, type TaxLine } from './hotel-taxes'
 import { validate as validatePromoCode } from '../../promo-codes/usecases/promo-validate'
 import { blockedRoomIds, closedRoomTypes, isRoomTypeClosed, stayNights } from './stay-restrictions'
 import { baseRatesOnly, buildSeasonByDate, sumStayPriceForComposition } from './rate-resolution'
@@ -87,8 +88,10 @@ export interface TotalBreakdown {
   promoDiscount: number
   /** Σ upsell.price × quantity (extras genéricos). */
   upsellsTotal: number
-  /** Σ impuestos (ITBIS + otros) sobre (subtotal - promoDiscount). */
+  /** Σ impuestos (ITBIS + otros) sobre (subtotal - promoDiscount). Es la suma de `taxBreakdown`. */
   taxes: number
+  /** Tarea 24 (#88): cada impuesto con nombre, % e importe. `taxes` es su suma exacta. */
+  taxBreakdown: TaxLine[]
   /** (subtotal - promoDiscount) + taxes. Es lo que Stripe cobra. */
   total: number
 }
@@ -521,16 +524,23 @@ export async function createPublicBookingDirect(
   // Orden: subtotal (room + upsells) - promoDiscount = base imponible; taxes sobre base;
   // total = base + taxes. Mismo fallback que folios/facturas: configuration('taxes') y si
   // está vacío, hotels.taxRate.
+  // Tarea 24 (#88): impuesto por impuesto (nombre, %, importe), con el MISMO lector y la MISMA
+  // cuenta que `/rates` y que el widget: cada línea redondeada aparte, `taxes` = suma de líneas.
+  // Así lo que el huésped ve fila por fila antes de pagar es exactamente lo que cobra Stripe.
   const subtotalBeforeDiscount = roomSubtotal + upsellsTotal
-  const taxableBase = Math.max(0, subtotalBeforeDiscount - promoDiscount)
-  const taxRatePercent = extraDeps?.config ? await readTaxRate(extraDeps.config, hotelId, orm) : 0
-  const taxes = round2((taxableBase * taxRatePercent) / 100)
+  const taxableBase = round2(Math.max(0, subtotalBeforeDiscount - promoDiscount))
+  const hotelTaxes = extraDeps?.config
+    ? await readHotelTaxes(extraDeps.config, hotelId, () => orm.findById('Hotels', hotelId))
+    : []
+  const taxBreakdown = taxLinesOn(taxableBase, hotelTaxes)
+  const taxes = sumTaxLines(taxBreakdown)
   const totalAmount = round2(taxableBase + taxes)
   const totalBreakdown: TotalBreakdown = {
     subtotal: round2(subtotalBeforeDiscount),
     promoDiscount: round2(promoDiscount),
     upsellsTotal: round2(upsellsTotal),
     taxes,
+    taxBreakdown,
     total: totalAmount,
   }
 
@@ -619,6 +629,10 @@ export async function createPublicBookingDirect(
         // arriba contra `childComposition.babies` y `childPolicy.cribAvailable`; acá solo persisten.
         needsCrib, cribCount,
         totalAmount, deposit: 0,
+        // Tarea 24 (#88): el desglose que el huésped vio y aceptó se guarda con la reserva, para
+        // que la confirmación (y cualquier pantalla posterior) muestre lo mismo que el paso de
+        // pago — no un total pelado que nadie puede reconstruir.
+        priceBreakdown: totalBreakdown,
         notes: notesParts.join(' | '),
         accessToken: crypto.randomUUID(),
         // F2 2.5 — persistimos el promoCode validado (upper-case). Upsells van en `notes`
@@ -738,32 +752,6 @@ export async function createPublicBookingDirect(
 }
 
 // ─── helpers ───────────────────────────────────────────────────────────────
-
-/**
- * Tasa de impuesto (%) del hotel. Copia del fallback estándar del proyecto (folios/facturas/
- * reservas/checkin): lee `configuration(key='taxes')` y si está vacío cae a `hotels.taxRate`.
- *
- * `orm` se pasa solo para el fallback a hotels.taxRate (via orm.findById, ya que el usecase
- * no recibe hotelsRepo por separado — mantener la firma compacta). Si extraDeps.config no está
- * cableado, devuelve 0 (compat con callers que no cablean config).
- */
-async function readTaxRate(config: RepositoryAdapter<any>, hotelId: string, orm: any): Promise<number> {
-  try {
-    let c = await config.findOne({ hotelId, key: 'taxes' })
-    if (!c) c = await config.findOne({ hotelId, key: 'impuestos' })
-    const arr: any[] = c?.value ?? []
-    const configured = arr
-      .filter((t) => t && (t.activo ?? t.active))
-      .reduce((s, t) => s + Number(t.tasa ?? t.rate ?? 0), 0)
-    if (configured > 0) return configured
-  } catch { /* cae al fallback */ }
-  try {
-    const hotel = await orm.findById('Hotels', hotelId)
-    return Number((hotel as any)?.taxRate) || 0
-  } catch {
-    return 0
-  }
-}
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100

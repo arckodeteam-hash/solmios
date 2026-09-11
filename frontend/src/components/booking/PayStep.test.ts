@@ -244,7 +244,7 @@ describe('PayStep — aceptación de condiciones antes de pagar', () => {
   it('con la casilla tildada, el botón se habilita y el click SÍ dispara el cobro', async () => {
     vi.mocked(BookingService.createBooking).mockResolvedValue({
       reservationId: 'r1', accessToken: 't1', checkoutUrl: null,
-      totalBreakdown: { subtotal: 200, promoDiscount: 0, upsellsTotal: 0, taxes: 0, total: 200 },
+      totalBreakdown: { subtotal: 200, promoDiscount: 0, upsellsTotal: 0, taxes: 0, taxBreakdown: [], total: 200 },
     })
     const w = renderReadyToPay()
 
@@ -256,5 +256,81 @@ describe('PayStep — aceptación de condiciones antes de pagar', () => {
     await buttons[buttons.length - 1]!.trigger('click')
     expect(BookingService.createBooking).toHaveBeenCalledTimes(1)
     w.unmount()
+  })
+})
+
+// ─── Tarea 24 (#88): transparentar impuestos y total final ───────────────────────────────
+describe('PayStep — desglose impuesto por impuesto y extras por separado (#88)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(BookingService.createBooking).mockReset()
+  })
+
+  function renderWith(taxes: Array<{ name: string; rate: number }>): { w: VueWrapper; store: ReturnType<typeof useBookingStore> } {
+    const store = useBookingStore()
+    store.init('hotel-demo')
+    store.ratesResponse = baseRates({ taxes } as any)
+    store.cart = [{
+      key: 'double|2', roomType: 'double', roomName: 'double', occupancy: 2, quantity: 1,
+      unitPrice: 200, unitTaxBreakdown: [], maxAvailable: 5, photoUrl: null,
+    }]
+    store.upsells = [
+      { id: 'u-brk', name: 'Desayuno', description: null, price: 15, kind: 'per_person', sortOrder: 1 },
+      { id: 'u-spa', name: 'Spa', description: null, price: 40, kind: 'per_stay', sortOrder: 2 },
+    ] as any
+    store.selectedUpsells = [{ id: 'u-brk', quantity: 2 }, { id: 'u-spa', quantity: 1 }]
+    useBookingI18nStore().setLocale('es')
+    return { w: mount(PayStep), store }
+  }
+
+  it('muestra cada impuesto con nombre, % e importe, y el total es subtotal + extras + Σ impuestos', () => {
+    const { w } = renderWith([{ name: 'ITBIS', rate: 18 }, { name: 'Propina legal', rate: 10 }])
+    const lines = w.findAll('[data-testid="tax-line"]').map((l) => l.text().replace(/\s+/g, ' '))
+    // Base: 200 (habitación) + 30 (2 desayunos) + 40 (spa) = 270 → ITBIS 48.60 · Propina 27.00
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toContain('ITBIS (18%)')
+    expect(lines[0]).toContain('48,60')
+    expect(lines[1]).toContain('Propina legal (10%)')
+    expect(lines[1]).toContain('27,00')
+    expect(w.find('[data-testid="final-total"]').text()).toContain('345,60')
+    // Ya no hay una línea agregada "Impuestos": el huésped ve cada uno.
+    expect(w.find('[data-testid="price-breakdown"]').text()).not.toMatch(/Impuestos\s+\$?\d/)
+  })
+
+  it('los extras van uno por línea (nombre × cantidad = importe), no una suma opaca', () => {
+    const { w } = renderWith([{ name: 'ITBIS', rate: 18 }])
+    const lines = w.findAll('[data-testid="upsell-line"]').map((l) => l.text().replace(/\s+/g, ' '))
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toContain('Desayuno × 2')
+    expect(lines[0]).toContain('30,00')
+    expect(lines[1]).toContain('Spa')
+    expect(lines[1]).not.toContain('×')
+    expect(lines[1]).toContain('40,00')
+  })
+
+  it('el subtotal se anuncia "sin impuestos" y el total aclara que es lo que cobra la pasarela', () => {
+    const { w } = renderWith([{ name: 'ITBIS', rate: 18 }])
+    const text = w.find('[data-testid="price-breakdown"]').text()
+    expect(text).toContain('sin impuestos')
+    expect(text).toContain('Es exactamente el importe que se cobra en la pasarela.')
+  })
+
+  it('sin impuestos configurados lo dice explícitamente en vez de esconder la línea', () => {
+    const { w } = renderWith([])
+    expect(w.findAll('[data-testid="tax-line"]')).toHaveLength(0)
+    expect(w.text()).toContain('Este hotel no aplica impuestos sobre la reserva.')
+    expect(w.find('[data-testid="final-total"]').text()).toContain('270,00')
+  })
+
+  it('tras crear la reserva manda el desglose DEFINITIVO del backend, no la estimación', async () => {
+    const { w, store } = renderWith([{ name: 'ITBIS', rate: 18 }])
+    store.reservation = {
+      reservation: { id: 'r1', checkIn: '2026-08-18', checkOut: '2026-08-20', status: 'pending', totalAmount: 318.6 },
+      guest: null, checkoutUrl: null,
+      totalBreakdown: { subtotal: 270, promoDiscount: 0, upsellsTotal: 70, taxes: 48.6, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 48.6 }], total: 318.6 },
+    } as any
+    await w.vm.$nextTick()
+    expect(w.find('[data-testid="final-total"]').text()).toContain('318,60')
+    expect(w.findAll('[data-testid="tax-line"]')[0]!.text()).toContain('48,60')
   })
 })

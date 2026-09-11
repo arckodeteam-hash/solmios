@@ -157,7 +157,33 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     const b = res.body.totalBreakdown
     // 100 × 2 noches = 200 subtotal, 0 descuento, 0 upsells, 18% tax sobre 200 = 36, total 236.
-    expect(b).toEqual({ subtotal: 200, promoDiscount: 0, upsellsTotal: 0, taxes: 36, total: 236 })
+    expect(b).toEqual({ subtotal: 200, promoDiscount: 0, upsellsTotal: 0, taxes: 36, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 36 }], total: 236 })
+  })
+
+  it('#88: dos impuestos → una línea por impuesto (nombre, %, importe), taxes = suma exacta, y la reserva guarda el desglose', async () => {
+    // 200 de base: ITBIS 18% = 36, propina legal 10% = 20 → taxes 56, total 256. Cada línea se
+    // redondea aparte y `taxes` es la suma de las líneas: lo que se muestra fila por fila cierra
+    // con lo que cobra Stripe (`totalAmount`).
+    const state = { taxesConfig: [{ value: [
+      { activo: true, tasa: 18, nombre: 'ITBIS' },
+      { activo: true, tasa: 10, nombre: 'Propina legal' },
+      { activo: false, tasa: 99, nombre: 'Apagado' },
+    ] }] }
+    const { orm, created } = makeOrm(state as any)
+    const res = await createPublicBookingDirect(orm, baseBody, undefined, undefined, undefined, undefined, undefined, makeDeps(state as any))
+    expect(res.status).toBe(201)
+    const b = res.body.totalBreakdown
+    expect(b.taxBreakdown).toEqual([
+      { name: 'ITBIS', rate: 18, amount: 36 },
+      { name: 'Propina legal', rate: 10, amount: 20 },
+    ])
+    expect(b.taxes).toBe(56)
+    expect(b.total).toBe(256)
+    expect(b.taxes).toBe(b.taxBreakdown.reduce((s: number, l: any) => s + l.amount, 0))
+    // Lo que cobra la pasarela es el total mostrado, y la reserva guarda ese mismo desglose.
+    const reservation = created.find((c: any) => c.model === 'Reservations')?.row
+    expect(reservation.totalAmount).toBe(b.total)
+    expect(reservation.priceBreakdown).toEqual(b)
   })
 
   it('promo válido percent → descuento aplicado, uses incrementado, total correcto', async () => {
@@ -174,7 +200,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // subtotal 200, discount 10% = 20, taxable 180, tax 18% × 180 = 32.4, total 212.4.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 200, promoDiscount: 20, upsellsTotal: 0, taxes: 32.4, total: 212.4,
+      subtotal: 200, promoDiscount: 20, upsellsTotal: 0, taxes: 32.4, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 32.4 }], total: 212.4,
     })
     // B2 fix — uses fue incrementado atómicamente vía updateMany (optimistic lock).
     const promoUpdate = updateManyCalls.find((u) => u.model === 'PromoCodes')
@@ -202,7 +228,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // subtotal 200, discount 50, taxable 150, tax 0%, total 150.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 200, promoDiscount: 50, upsellsTotal: 0, taxes: 0, total: 150,
+      subtotal: 200, promoDiscount: 50, upsellsTotal: 0, taxes: 0, taxBreakdown: [], total: 150,
     })
     expect(updateManyCalls.find((u) => u.model === 'PromoCodes')?.changes.uses).toBe(1)
   })
@@ -274,7 +300,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // room: 100×2=200, upsells: 15×2 + 30×1 = 60, subtotal 260, tax 10% × 260 = 26, total 286.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 260, promoDiscount: 0, upsellsTotal: 60, taxes: 26, total: 286,
+      subtotal: 260, promoDiscount: 0, upsellsTotal: 60, taxes: 26, taxBreakdown: [{ name: 'IVA', rate: 10, amount: 26 }], total: 286,
     })
   })
 
@@ -298,7 +324,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // subtotal 200 + 15 = 215, no tax, total 215.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 215, promoDiscount: 0, upsellsTotal: 15, taxes: 0, total: 215,
+      subtotal: 215, promoDiscount: 0, upsellsTotal: 15, taxes: 0, taxBreakdown: [], total: 215,
     })
   })
 
@@ -384,7 +410,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(reservation.row.promoCode).toBe('ANYTHING')
     // No se aplica descuento (no se procesó) → total = subtotal + tax sobre subtotal.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 200, promoDiscount: 0, upsellsTotal: 0, taxes: 0, total: 200,
+      subtotal: 200, promoDiscount: 0, upsellsTotal: 0, taxes: 0, taxBreakdown: [], total: 200,
     })
   })
 })
