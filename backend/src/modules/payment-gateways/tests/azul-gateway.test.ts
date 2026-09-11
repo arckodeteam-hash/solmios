@@ -150,13 +150,13 @@ describe('AzulGateway — confirm() (hash válido / inválido en el retorno)', (
     expect(outcome).toBeNull()
   })
 
-  it('un retorno firmado con UTF-8 también se acepta (fallback documentado)', () => {
+  it('un retorno firmado sobre UTF-8 se RECHAZA: el manual exige Unicode (UTF-16LE) para el retorno', () => {
     const f = returnFields()
     const utf8Hash = createHmac('sha512', creds.authKey)
       .update(Buffer.from(returnConcat(f, creds.authKey), 'utf8'))
       .digest('hex')
     expect(utf8Hash).not.toBe(f.AuthHash) // UTF-8 y UTF-16LE producen hashes distintos
-    expect(verifyReturnHash({ ...f, AuthHash: utf8Hash }, creds.authKey)).toBe(true)
+    expect(verifyReturnHash({ ...f, AuthHash: utf8Hash }, creds.authKey)).toBe(false)
   })
 
   it('hash INVÁLIDO (manipulado) → null, NUNCA se confía en el retorno', async () => {

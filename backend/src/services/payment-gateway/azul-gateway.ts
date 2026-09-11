@@ -71,8 +71,8 @@ const AZUL_PAYMENT_PAGE_URL: Record<GatewayMode, string> = {
  * `Encoding.Unicode` en el ejemplo C# / `mb_convert_encoding(..., 'UTF-16LE')` en el PHP del
  * manual). Hex en minúscula, como el `{0:x2}` del ejemplo oficial.
  */
-function azulHash(concat: string, authKey: string, encoding: 'utf16le' | 'utf8' = 'utf16le'): string {
-  return createHmac('sha512', authKey).update(Buffer.from(concat, encoding)).digest('hex')
+function azulHash(concat: string, authKey: string): string {
+  return createHmac('sha512', authKey).update(Buffer.from(concat, 'utf16le')).digest('hex')
 }
 
 /**
@@ -151,9 +151,9 @@ export interface AzulReturnFields {
  * contra un retorno falsificado: Payment Page no tiene webhook de respaldo, así que si esto no
  * autentica, no hay otra fuente de verdad.
  *
- * El manual dice que el retorno se genera desde una cadena Unicode (UTF-16LE); se acepta también
- * UTF-8 como fallback. Ambas variantes son HMAC con la AuthKey secreta, así que aceptar las dos
- * no debilita la verificación. Comparación en tiempo constante.
+ * El manual dice que el hash de retorno se genera desde una cadena Unicode (UTF-16LE) — a
+ * diferencia del de ida, acá NO menciona UTF-8, así que solo se acepta esa codificación.
+ * Comparación en tiempo constante.
  */
 export function verifyReturnHash(fields: AzulReturnFields, authKey: string): boolean {
   if (!fields.AuthHash) return false
@@ -165,10 +165,8 @@ export function verifyReturnHash(fields: AzulReturnFields, authKey: string): boo
     authKey,
   ].join('')
   const received = Buffer.from(fields.AuthHash.toLowerCase(), 'utf8')
-  return (['utf16le', 'utf8'] as const).some(encoding => {
-    const expected = Buffer.from(azulHash(concat, authKey, encoding), 'utf8')
-    return expected.length === received.length && timingSafeEqual(expected, received)
-  })
+  const expected = Buffer.from(azulHash(concat, authKey), 'utf8')
+  return expected.length === received.length && timingSafeEqual(expected, received)
 }
 
 export class AzulGateway implements PaymentGateway {
