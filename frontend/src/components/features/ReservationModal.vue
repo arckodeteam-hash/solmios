@@ -23,6 +23,7 @@ import { effectiveCheckInTime, effectiveCheckOutTime, hasCustomSchedule, hotelCh
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
+import MarkPaidModal from '@/components/features/MarkPaidModal.vue'
 import RoomLockModal from '@/components/features/RoomLockModal.vue'
 import { useToast } from '@/composables/useToast'
 import { usePermissions } from '@/composables/usePermissions'
@@ -45,6 +46,7 @@ const detail = ref<ReservationDetail | null>(null)
 const loading = ref(true)
 const saving = ref(false)
 const showCancel = ref(false)
+const showMarkPaid = ref(false)
 const autoSend = ref(true)
 const conditions = ref({ gdpr: false, marketing: false, terms: false })
 const otherCharges = ref(0)
@@ -621,6 +623,18 @@ async function onCancelled() {
   emit('changed')
 }
 
+/**
+ * Cobro manual guardado (REQ-RWP-06). Se recarga el detalle en silencio para que el badge
+ * `payment-state-badge`, "Pendiente de cobro" y el "Historial de cobros" (con `Registró:`)
+ * salgan del backend recalculado; `changed` refresca el listado del padre. No se toca
+ * `deposit` desde acá: el anticipo es un dato de la reserva y el cobro vive en `payments`.
+ */
+async function onMarkPaid() {
+  showMarkPaid.value = false
+  await load({ silent: true })
+  emit('changed')
+}
+
 // ── Horario de acceso de la reserva (2026-08-29, pedido de cliente) ──
 // El hotel define un horario general (Configuración → Hotel), pero con un huésped puntual se
 // acuerda otra cosa: entra a las 10 en vez de a las 15, o se va a las 18. Eso se pacta EN LA
@@ -1123,6 +1137,13 @@ function irAFacturacion() {
                 <p v-if="paymentLinkOutdated" class="text-[11px] leading-tight text-coral">
                   El link vigente es por {{ money(openPaymentAmount) }} y el saldo es {{ money(pending) }}: al generarlo de nuevo se actualiza a {{ money(pending) }}.
                 </p>
+                <!-- REQ-RWP-06 (#249): cobro manual YA recibido fuera de Stripe (efectivo /
+                     transferencia / tarjeta en mostrador). Entra a `payments` con quién lo registró;
+                     antes se "confirmaba" cambiando el status y la plata no quedaba en ningún lado. -->
+                <button v-if="can('billing','create')" data-testid="mark-paid-button" @click="showMarkPaid = true" :disabled="saving || pending <= 0" class="w-full mt-2 flex items-center justify-center gap-1.5 py-2 bg-teal text-white rounded-lg text-xs font-black cursor-pointer hover:opacity-90 disabled:opacity-50">
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                  Registrar pago
+                </button>
                 <button v-if="can('billing','create')" @click="requirePayment" :disabled="saving || pending <= 0" class="w-full mt-2 flex items-center justify-center gap-1.5 py-2 bg-cyan text-navy rounded-lg text-xs font-black cursor-pointer hover:opacity-90 disabled:opacity-50">
                   <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 6.75h19.5A1.5 1.5 0 0123.25 8.25v9a1.5 1.5 0 01-1.5 1.5H2.25a1.5 1.5 0 01-1.5-1.5v-9a1.5 1.5 0 011.5-1.5zM6 15h3"/></svg>
                   Crear link de pago Stripe
@@ -1703,6 +1724,12 @@ function irAFacturacion() {
        retenido), así que hay que ver el cálculo y dar un motivo antes de confirmar. -->
   <CancelReservationModal :open="showCancel" :reservation="cancellable"
     @close="showCancel = false" @cancelled="onCancelled" />
+
+  <!-- Registrar pago manual (REQ-RWP-06, #249): apilado igual que Anular. Al guardar se recarga
+       el detalle (badge de pago + "Historial de cobros" con quién lo registró) y se avisa al
+       listado. `pending` sale del backend: el modal lo usa de tope y valor inicial. -->
+  <MarkPaidModal :open="showMarkPaid" :reservation-id="d?.id ?? ''" :pending="pending" :currency="d?.currency || undefined"
+    @close="showMarkPaid = false" @paid="onMarkPaid" />
 
   <!-- Gestor completo de la cerradura de la habitación de esta reserva (se teletransporta a
        body, no afecta el layout del detalle). Se monta on-demand y refresca el detalle al

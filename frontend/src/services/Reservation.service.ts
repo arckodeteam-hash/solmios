@@ -14,6 +14,17 @@ export type {
   CancelPreview, CancelReservationInput, CancelPolicySource, StayQuote,
 } from '@/types'
 
+/** Medio por el que entró un cobro manual (REQ-RWP-06). */
+export type MarkPaidMethod = 'cash' | 'transfer' | 'card' | 'other'
+
+/** Body de `POST /reservas/:id/mark-paid`. `reference` es obligatoria para transfer/card. */
+export interface MarkPaidInput {
+  method: MarkPaidMethod
+  amount: number
+  reference?: string
+  note?: string
+}
+
 export const STATUS_MAP: Record<string, ReservationStatus> = {
   pendiente: 'pending', pending: 'pending',
   confirmada: 'confirmed', confirmed: 'confirmed',
@@ -230,6 +241,20 @@ export const ReservationService = {
    */
   async approve(id: string): Promise<Reservation> {
     const data = await http.post<RawReservation>(`/reservas/${id}/approve`, {})
+    return mapReservation(data)
+  },
+
+  /**
+   * REQ-RWP-06 (#249) — registra un cobro MANUAL recibido fuera de Stripe (efectivo, transferencia,
+   * tarjeta en el mostrador, otro). Antes la recepción "confirmaba" la reserva cambiando el status
+   * a mano y la plata no quedaba en ningún lado: ni en el historial de cobros ni en la caja.
+   * El backend inserta el pago en `payments` (con quién lo registró), recalcula `pendingAmount` /
+   * `paymentState` y, si saldó todo, confirma la reserva. NUNCA toca `deposit`: el anticipo es
+   * un dato de la reserva, no un cobro. Reference es obligatoria para transfer/card y el monto
+   * no puede superar el saldo pendiente (400 con mensaje legible en ambos casos).
+   */
+  async markPaid(id: string, body: MarkPaidInput): Promise<Reservation> {
+    const data = await http.post<RawReservation>(`/reservas/${id}/mark-paid`, body)
     return mapReservation(data)
   },
 
