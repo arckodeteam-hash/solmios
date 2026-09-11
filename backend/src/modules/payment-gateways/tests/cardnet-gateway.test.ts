@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from 'bun:test'
 import {
-  CardnetGateway, CARDNET_HOST, cardnetCurrencyCode, formatCardnetAmount, toCardnetCredentials,
+  CardnetGateway, CARDNET_DEFAULT_ACQUIRER, CARDNET_HOST, cardnetCurrencyCode, formatCardnetAmount, toCardnetCredentials,
   type CardnetSessionRow, type CardnetSessionStore,
 } from '../../../services/payment-gateway/cardnet-gateway'
 import { hasHostedForm } from '../../../services/payment-gateway/types'
@@ -69,10 +69,14 @@ describe('CardnetGateway — capacidades y credenciales', () => {
   it('toCardnetCredentials mapea merchantId/terminalId y los opcionales', () => {
     expect(toCardnetCredentials({ merchantId: '349011300', terminalId: '00567856' })).toEqual({
       merchantNumber: '349011300', merchantTerminal: '00567856',
-      merchantName: undefined, merchantType: undefined, currency: undefined,
+      merchantName: undefined, merchantType: undefined, acquiringInstitutionCode: undefined, currency: undefined,
     })
     expect(toCardnetCredentials({ merchantId: 'M', terminalId: 'T', merchantName: 'HOTEL SOL', merchantType: '7011', currency: 'usd' }))
-      .toEqual({ merchantNumber: 'M', merchantTerminal: 'T', merchantName: 'HOTEL SOL', merchantType: '7011', currency: 'usd' })
+      .toEqual({ merchantNumber: 'M', merchantTerminal: 'T', merchantName: 'HOTEL SOL', merchantType: '7011', acquiringInstitutionCode: undefined, currency: 'usd' })
+  })
+
+  it('toCardnetCredentials mapea acquiringInstitutionCode cuando el ejecutivo entregó otro', () => {
+    expect(toCardnetCredentials({ merchantId: 'M', terminalId: 'T', acquiringInstitutionCode: '123' }).acquiringInstitutionCode).toBe('123')
   })
 
   it('helpers puros: monto de 12 dígitos y código ISO numérico de moneda', () => {
@@ -123,6 +127,17 @@ describe('CardnetGateway — createCharge (POST /sessions + fila persistida)', (
     const g = new CardnetGateway({ ...creds, merchantName: 'HOTEL SOL', merchantType: '7011' }, 'test', memStore(), f.fn)
     await g.createCharge(chargeReq)
     expect(JSON.parse(String(f.calls[0].init?.body))).toMatchObject({ MerchantName: 'HOTEL SOL', MerchantType: '7011' })
+  })
+
+  it('AcquiringInstitutionCode: 349 por defecto (guía oficial) y pisable desde las credenciales', async () => {
+    expect(CARDNET_DEFAULT_ACQUIRER).toBe('349')
+    const porDefecto = fakeFetch(sessionOk)
+    await new CardnetGateway(creds, 'test', memStore(), porDefecto.fn).createCharge(chargeReq)
+    expect(JSON.parse(String(porDefecto.calls[0].init?.body)).AcquiringInstitutionCode).toBe('349')
+
+    const propio = fakeFetch(sessionOk)
+    await new CardnetGateway({ ...creds, acquiringInstitutionCode: '123' }, 'test', memStore(), propio.fn).createCharge(chargeReq)
+    expect(JSON.parse(String(propio.calls[0].init?.body)).AcquiringInstitutionCode).toBe('123')
   })
 
   it('en modo live usa ecommerce.cardnet.com.do', async () => {
