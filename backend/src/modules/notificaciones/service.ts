@@ -3,15 +3,33 @@ import { NotFoundError, AuthError } from 'arckode-framework'
 import type { NotificacionesDTO, CreateNotificacionesDTO, UpdateNotificacionesDTO, NotificacionesQuery, NotificacionesPaginated } from './types'
 import type { NotificacionesSockets } from './sockets'
 import { auditSafely, type AuditPort } from '../../shared/usecases/audit'
+import type { ReservationEmailSender } from '../../shared/usecases/notify-reservation-received'
+import type { PlatformIdentity } from '../../shared/utils/platform-identity'
 
 const CACHE_TTL = 300
+
+/** Correo al buzón del hotel + nombre de la plataforma para el asunto (avisos de reserva, #246). */
+export interface HotelEmailDeps {
+  emailSender: ReservationEmailSender
+  platformIdentity: () => Promise<PlatformIdentity>
+}
 
 export class NotificacionesService {
   private sockets: NotificacionesSockets = {}
   private auditPort: AuditPort | null = null
+  private hotelEmail: HotelEmailDeps | null = null
 
   /** Conecta el audit log. Lo inyecta el connector `notificaciones-auditlog`. */
   setAuditDeps(port: AuditPort): void { this.auditPort = port }
+
+  /**
+   * Correo al hotel (avisos de reserva). Lo inyecta `email-bootstrap` post-init, porque el
+   * EmailService se construye DESPUÉS de `system.start()` y un connector no puede resolverlo al
+   * cablear (TDZ). Hasta que llegue, el aviso sale sólo por la campanita (y push si hay).
+   */
+  setHotelEmailDeps(d: HotelEmailDeps): void { this.hotelEmail = d }
+  /** Lo que el connector `bookingengine-notificaciones` lee en cada aviso; `null` = sin correo todavía. */
+  hotelEmailDeps(): HotelEmailDeps | null { return this.hotelEmail }
 
   constructor(
     private readonly repo: RepositoryAdapter<NotificacionesDTO>,

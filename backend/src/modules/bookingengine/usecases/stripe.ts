@@ -87,6 +87,8 @@ export interface SettleResult {
   currency?: string | null
   totalAmount?: number
   checkIn?: string | null
+  /** Pasarela que cobró (`stripe`, `azul`, `cardnet`): el aviso al hotel lo nombra (#246). */
+  provider?: string
 }
 
 /**
@@ -432,6 +434,7 @@ export class StripeUseCase {
         currency: outcome.currency ?? null,
         totalAmount: Number(reservation.totalAmount) || 0,
         checkIn: reservation.checkIn ?? null,
+        provider,
       }
     }
 
