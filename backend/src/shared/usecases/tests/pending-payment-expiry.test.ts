@@ -140,6 +140,38 @@ describe('runPendingPaymentExpiry', () => {
     expect(w.reservations.map((r) => r.status)).toEqual(['cancelled', 'cancelled'])
   })
 
+  it('grupo rechazado: todas las hermanas cuentan como skipped (resumen consistente)', async () => {
+    const w = world({
+      reservations: [webPending({ id: 'r1', groupId: 'grp' }), webPending({ id: 'r2', groupId: 'grp' }), webPending({ id: 'r3', groupId: 'grp' })],
+      // El pago está en la PRIMERA hermana: el grupo se evalúa igual una sola vez.
+      payments: [{ id: 'p1', reservationId: 'r1', status: 'completed', createdAt: hoursAgo(29) }],
+    })
+    const out = await runPendingPaymentExpiry(w.deps, NOW)
+    expect(out).toMatchObject({ scanned: 3, expired: 0, skipped: 3 })
+  })
+
+  it('grupo: si el cancel de una hermana tira, se corta el grupo con el error bien atribuido y la próxima corrida lo completa', async () => {
+    const w = world({
+      reservations: [webPending({ id: 'r1', groupId: 'grp' }), webPending({ id: 'r2', groupId: 'grp' }), webPending({ id: 'r3', groupId: 'grp' })],
+    })
+    const realCancel = w.deps.cancel
+    let fail = true
+    w.deps.cancel = async (id, hotelId) => {
+      if (fail && id === 'r2') throw new Error('stripe down')
+      return realCancel(id, hotelId)
+    }
+    const first = await runPendingPaymentExpiry(w.deps, NOW)
+    expect(first.expired).toBe(1)
+    expect(first.errors).toEqual([{ reservationId: 'r2', reason: 'stripe down' }])
+    expect(w.reservations.map((r) => r.status)).toEqual(['cancelled', 'pending', 'pending'])
+
+    fail = false
+    const second = await runPendingPaymentExpiry(w.deps, NOW)
+    expect(second.expired).toBe(2)
+    expect(second.errors).toHaveLength(0)
+    expect(w.reservations.map((r) => r.status)).toEqual(['cancelled', 'cancelled', 'cancelled'])
+  })
+
   it('segunda corrida sobre el mismo estado → expired 0 y cancel no llamado', async () => {
     const w = world({ reservations: [webPending()] })
     await runPendingPaymentExpiry(w.deps, NOW)

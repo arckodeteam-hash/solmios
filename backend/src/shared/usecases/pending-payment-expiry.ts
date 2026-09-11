@@ -138,24 +138,44 @@ export async function runPendingPaymentExpiry(
     result.scanned++
     const id = String(r.id)
     try {
+      // Un grupo se evalúa una sola vez (la primera hermana decide por todas y las contabiliza).
+      if (r.groupId && seenGroups.has(String(r.groupId))) continue
       const ttl = await ttlFor(deps, ttlCache, String(r.hotelId))
-      if (ttl === 0 || !(await isEligible(deps, r, ttl, nowMs))) { result.skipped++; continue }
+      if (ttl === 0) { result.skipped++; continue }
 
       // Grupo entero o nada: una hermana viva sin vencer (o con pago/intento/link) frena a todas.
-      let batch: Row[] = [r]
+      let batch: Row[]
       if (r.groupId) {
-        if (seenGroups.has(String(r.groupId))) continue
         seenGroups.add(String(r.groupId))
         const siblings = ((await deps.reservations.findMany({ groupId: r.groupId })) as Row[]).filter((s) => s.status !== 'cancelled')
         const checks = await Promise.all(siblings.map((s) => isEligible(deps, s, ttl, nowMs)))
-        if (checks.some((ok) => !ok)) { result.skipped++; continue }
+        // Todas las hermanas cuentan como salteadas (las que vengan después hacen `continue` arriba).
+        if (checks.some((ok) => !ok)) { result.skipped += siblings.length; continue }
         batch = siblings
+      } else {
+        if (!(await isEligible(deps, r, ttl, nowMs))) { result.skipped++; continue }
+        batch = [r]
       }
 
+      // Sin transacciones entre reservas: si una hermana falla (Stripe caído en
+      // releaseChargeSessions), se corta el grupo acá y el próximo tick lo completa — las ya
+      // cancelled no bloquean la evaluación del grupo, así que converge a "grupo entero".
       for (const item of batch) {
         const itemId = String(item.id)
-        const out = await deps.cancel(itemId, String(item.hotelId))
-        if (!out.ok) { result.errors.push({ reservationId: itemId, reason: out.message ?? 'cancel failed' }); continue }
+        let out: Awaited<ReturnType<PendingPaymentExpiryDeps['cancel']>>
+        try {
+          out = await deps.cancel(itemId, String(item.hotelId))
+        } catch (e) {
+          out = { ok: false, message: (e as Error)?.message ?? String(e) }
+        }
+        if (!out.ok) {
+          result.errors.push({ reservationId: itemId, reason: out.message ?? 'cancel failed' })
+          if (batch.length > 1) {
+            deps.logger.warn('pending-payment-expiry: grupo vencido a medias, se completa en la próxima corrida', { groupId: r.groupId, failed: itemId })
+            break
+          }
+          continue
+        }
         if (out.idempotent) continue
         result.expired++
         await auditSafely(deps.audit, deps.logger, {
