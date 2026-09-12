@@ -286,6 +286,46 @@ describe('REQ-HAC-05 — createPublicBookingGroup crea N filas del TIPO sin unid
     expect(tables.Groups).toHaveLength(0)
   })
 
+  // Revisión #260 — asignación greedy "smallest-fit" por POST: las unidades que entran para una
+  // composición se descuentan de un pool en memoria del tipo, así dos líneas del mismo POST no
+  // cuentan la misma unidad "grande" dos veces (overbooking de capacidad).
+  const familiarChicaYGrande = () => [room('f-chica', 'familiar', 80, { capacity: 2 }), room('f-grande', 'familiar', 150, { capacity: 4 })]
+
+  it('(h4) dos líneas "para 4" ×1 del mismo tipo con una sola unidad de 4 → 409 (la segunda no ve la unidad que reclamó la primera)', async () => {
+    const { orm, tables } = makeDb({ rooms: familiarChicaYGrande() })
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 4, quantity: 1 }, { roomType: 'familiar', adults: 4, quantity: 1 }],
+    })
+    expect(res.status).toBe(409)
+    expect(res.body.available).toBe(0)
+    expect(res.body.error).toContain('con capacidad para 4 huésped(es)')
+    expect(tables.Reservations).toHaveLength(0)
+    expect(tables.Groups).toHaveLength(0)
+  })
+
+  it('(h5) línea "para 2" + línea "para 4" del mismo tipo → 201, 2 filas sin unidad (la de 2 consume la chica y deja la de 4)', async () => {
+    const { orm, tables } = makeDb({ rooms: familiarChicaYGrande() })
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 2, quantity: 1 }, { roomType: 'familiar', adults: 4, quantity: 1 }],
+    })
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(2)
+    expect(tables.Reservations.every((r: any) => r.roomId === null && r.roomType === 'familiar')).toBe(true)
+  })
+
+  it('(h6) orden inverso: línea "para 4" + línea "para 2" del mismo tipo → 201, 2 filas sin unidad', async () => {
+    const { orm, tables } = makeDb({ rooms: familiarChicaYGrande() })
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 4, quantity: 1 }, { roomType: 'familiar', adults: 2, quantity: 1 }],
+    })
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(2)
+    expect(tables.Reservations.every((r: any) => r.roomId === null && r.roomType === 'familiar')).toBe(true)
+  })
+
   it('tipo inexistente en el hotel → 404, nada creado', async () => {
     const { orm, tables } = makeDb({ rooms: threeDeluxe() })
     const res = await createPublicBookingGroup(orm, { ...BASE_BODY, rooms: [{ roomType: 'suite', adults: 2, quantity: 1 }] })

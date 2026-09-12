@@ -280,6 +280,11 @@ export async function createPublicBookingGroup(
   // + Deluxe para 4 ×1"): la disponibilidad por tipo se lee de la DB una vez por línea y no ve
   // lo que las líneas previas todavía no escribieron.
   const claimedByType = new Map<string, number>()
+  // Revisión #260 — pool en memoria de unidades vendibles del tipo (copia de `sellableRooms`) del
+  // que cada línea "reclama" `quantity` unidades por capacidad (smallest-fit, ver más abajo).
+  // NO se persiste nada por unidad: sólo evita que dos líneas del mismo POST cuenten la misma
+  // unidad "grande" dos veces. El techo de unidades reclamables sigue siendo `typeFree`.
+  const capacityPoolByType = new Map<string, any[]>()
   interface ResolvedLine {
     roomType: string; adults: number; children: number; childrenAges: number[]
     /** REQ-HAC-05 — filas a crear para esta línea (`quantity`), todas del tipo y sin unidad. */
@@ -426,9 +431,19 @@ export async function createPublicBookingGroup(
     // se puede cumplir con ninguna asignación). Requerimiento 2: la política `room_type_capacity`
     // (si el hotel la configuró) reemplaza los campos de la habitación física — aplica igual a
     // todas las unidades del tipo, así que con política es todo o nada.
-    const fittingUnits = typeAvail.sellableRooms
-      .filter((r: any) => fitsRoomCapacity(effectiveRoomCapacity(roomTypeCapacityMap, { type: r.type, capacity: Number(r.capacity ?? totalGuestsForLine), maxAdults: r.maxAdults, maxChildren: r.maxChildren }), composition))
-      .length
+    // Revisión #260 — asignación greedy "smallest-fit" POR POST, sin persistir la unidad: las
+    // unidades que entran para ESTA composición se toman del pool del tipo (lo que las líneas
+    // anteriores del mismo POST todavía no reclamaron), ordenadas por capacidad ascendente, y se
+    // sacan `quantity` del pool. Así "Familiar para 2 ×1 + Familiar para 4 ×1" con una unidad
+    // de 2 y una de 4 entra en cualquier orden (la de 2 consume primero la chica), y dos líneas
+    // "para 4" con una sola unidad de 4 rebotan con 409 aunque el tipo tenga 2 unidades libres.
+    // `perUnitPrice`/fallback siguen saliendo del perfil del TIPO, no de la unidad reclamada.
+    const capacityPool = capacityPoolByType.get(typeKey) ?? [...typeAvail.sellableRooms]
+    const effectiveCapacityOf = (r: any) => effectiveRoomCapacity(roomTypeCapacityMap, { type: r.type, capacity: Number(r.capacity ?? totalGuestsForLine), maxAdults: r.maxAdults, maxChildren: r.maxChildren })
+    const fittingRooms = capacityPool
+      .filter((r: any) => fitsRoomCapacity(effectiveCapacityOf(r), composition))
+      .sort((a: any, b: any) => effectiveCapacityOf(a).capacity - effectiveCapacityOf(b).capacity)
+    const fittingUnits = fittingRooms.length
     if (fittingUnits < line.quantity) {
       const availableForLine = Math.min(typeFree, fittingUnits)
       return {
@@ -441,6 +456,8 @@ export async function createPublicBookingGroup(
       }
     }
     claimedByType.set(typeKey, (claimedByType.get(typeKey) ?? 0) + line.quantity)
+    const claimedRoomIds = new Set(fittingRooms.slice(0, line.quantity).map((r: any) => r.id))
+    capacityPoolByType.set(typeKey, capacityPool.filter((r: any) => !claimedRoomIds.has(r.id)))
     // Perfil del tipo (mismo agregado que public-booking.ts): el precio de fallback es el MÍNIMO
     // `basePrice` entre las unidades vendibles — lo que `/rates` publica como "desde".
     const typeProfile = roomTypeProfile(line.roomType, typeAvail.sellableRooms, totalGuestsForLine)
