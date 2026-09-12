@@ -8,12 +8,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useBookingStore } from './useBooking'
 import type { Upsell } from '@/types/booking'
+import { DEFAULT_CHILD_POLICY } from '@/utils/child-composition'
 
 vi.mock('@/services/Booking.service', () => ({
   BookingService: { getRates: vi.fn(), getCalendar: vi.fn(), getUpsells: vi.fn(), createBooking: vi.fn(), validatePromo: vi.fn() },
 }))
 
-const POLICY = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 0, cribAvailable: false }
+const POLICY = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 0 }
 
 function upsell(patch: Partial<Upsell>): Upsell {
   return { id: 'u', name: 'Extra', description: null, price: 10, kind: 'per_stay', sortOrder: 0, ...patch }

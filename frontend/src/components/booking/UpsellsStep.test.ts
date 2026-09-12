@@ -23,6 +23,7 @@ import UpsellsStep from './UpsellsStep.vue'
 import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { Upsell } from '@/types/booking'
+import { DEFAULT_CHILD_POLICY } from '@/utils/child-composition'
 
 function cartLine(over: Partial<CartLine> = {}): CartLine {
   return {
@@ -69,7 +70,7 @@ describe('UpsellsStep — cantidad por defecto de "por persona"', () => {
 
   it('niño LIBRE (no consume plaza): NO cuenta en cartTotalGuests, pero SÍ desayuna — se suma aparte', async () => {
     const store = useBookingStore()
-    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }  // 2 años → libre
+    store.childPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 }  // 2 años → libre
     store.upsells = [upsell()]
     // occupancy=2 (el niño libre no sube la ocupación chargeable) + 1 niño en childrenAges.
     store.cart = [cartLine({ occupancy: 2, adults: 2, childrenAges: [2] })]
@@ -84,7 +85,7 @@ describe('UpsellsStep — cantidad por defecto de "por persona"', () => {
 
   it('niño con plaza NO se duplica: ya está en cartTotalGuests, cartTotalFreeChildren no lo vuelve a sumar', async () => {
     const store = useBookingStore()
-    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
+    store.childPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } 
     store.upsells = [upsell()]
     // occupancy=3 = 2 adultos + 1 niño de 8 (>maxFreeAge=3 → con plaza, YA incluido en occupancy).
     store.cart = [cartLine({ occupancy: 3, adults: 2, childrenAges: [8] })]
@@ -99,7 +100,7 @@ describe('UpsellsStep — cantidad por defecto de "por persona"', () => {
 
   it('varias habitaciones: suma la ocupación de TODO el carrito, no de una sola línea', async () => {
     const store = useBookingStore()
-    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
+    store.childPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } 
     store.upsells = [upsell()]
     store.cart = [
       cartLine({ key: 'a', occupancy: 2, adults: 2, childrenAges: [] }),
@@ -135,7 +136,7 @@ describe('UpsellsStep — cantidad por defecto de "por persona"', () => {
   it('per_person: el tope es la cantidad de huéspedes sin bebés y el Stepper no deja pasar de ahí', async () => {
     const store = useBookingStore()
     // maxBabyAge=1 → el de 1 año es bebé (no desayuna); el de 8 tiene plaza (ya en occupancy=3).
-    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+    store.childPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50 }
     store.upsells = [upsell()]
     store.cart = [cartLine({ occupancy: 3, adults: 2, childrenAges: [8, 1] })]
     const w = mount(UpsellsStep)

@@ -36,7 +36,7 @@ vi.mock('@/services/PublicHotel.service', () => ({
 import BookingModal from './BookingModal.vue'
 import { BookingService } from '@/services/Booking.service'
 import { useBookingStore } from '@/composables/useBooking'
-import type { ChildPolicy } from '@/utils/child-composition'
+import { DEFAULT_CHILD_POLICY, type ChildPolicy } from '@/utils/child-composition'
 import type {
   OpenBookingOptions,
   PublicHotelInfo,
@@ -258,7 +258,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
   })
 
   it('con niños: agrega las edades exactas al payload, niño libre no sube el precio', async () => {
-    const policy: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
+    const policy: ChildPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } 
     await open(FROM_HERO, policy)
     const store = useBookingStore()
 
@@ -286,14 +286,14 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
   })
 
   it('acceptChildren:false → no ofrece agregar niños en el composer', async () => {
-    await open(FROM_HERO, { acceptChildren: false, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } )
+    await open(FROM_HERO, { ...DEFAULT_CHILD_POLICY, acceptChildren: false, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } )
     expect(document.body.textContent).not.toContain('Niños')
     expect(plusButtons()).toHaveLength(1) // solo el "+" de Adultos
   })
 
   // ── Requerimiento 4 (Edad de los niños, 2026-09-03) ──────────────────────────────────────
   it('el desplegable de edad respeta maxChildAge del hotel: NO ofrece 0-17 fijo', async () => {
-    await open(FROM_HERO, { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } )
+    await open(FROM_HERO, { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } )
     await bumpChildren(1)
 
     const select = document.body.querySelector<HTMLSelectElement>('select')!
@@ -303,7 +303,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
   })
 
   it('maxChildAge=0 (caso borde): el desplegable ofrece una sola opción, "0"', async () => {
-    await open(FROM_HERO, { acceptChildren: true, maxChildAge: 0, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } )
+    await open(FROM_HERO, { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 0, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } )
     await bumpChildren(1)
 
     const select = document.body.querySelector<HTMLSelectElement>('select')!
@@ -312,7 +312,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
   })
 
   it('dos habitaciones con niños de EDADES DISTINTAS: cada línea del carrito conserva las suyas', async () => {
-    const policy: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
+    const policy: ChildPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } 
     await open(FROM_HERO, policy)
     const store = useBookingStore()
 
@@ -357,7 +357,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
   })
 
   it('excede maxChildren en una ocupación que la matriz SÍ marca disponible: motivo, no precio', async () => {
-    await open(FROM_HERO, { acceptChildren: true, maxChildAge: 12, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } )
+    await open(FROM_HERO, { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } )
     const store = useBookingStore()
     store.ratesResponse!.roomTypes[0]!.maxChildren = 0
     await bumpChildren(1)
@@ -373,7 +373,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
   // menor se considera bebé". Mismo badge que RoomsStep.vue: las dos entradas públicas no deben
   // divergir. Sale de `classifyAge` (edad ≤ maxBabyAge → 'baby'), por niño y en vivo.
   it('edad ≤ maxBabyAge → badge "Bebé — no consume plaza"; edad > maxBabyAge → sin badge', async () => {
-    await open(FROM_HERO, { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false })
+    await open(FROM_HERO, { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50 })
     await bumpChildren(1) // 1 niño, edad default 0 → bebé (≤1)
 
     const badge = document.body.querySelector<HTMLElement>('[data-testid="baby-badge"]')
@@ -388,7 +388,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
   })
 
   it('bebé + niño con plaza: UN solo badge y la ocupación no cuenta al bebé (1 adulto + niño de 8 → "para 2")', async () => {
-    await open(FROM_HERO, { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false })
+    await open(FROM_HERO, { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50 })
     await bumpChildren(2)
     const selects = document.body.querySelectorAll<HTMLSelectElement>('select')
     selects[0]!.value = '1' // ≤ maxBabyAge=1 → bebé
@@ -403,7 +403,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
   })
 
   it('maxBabyAge=0 (default de la política): edad 0 es bebé, edad 1 ya no', async () => {
-    await open(FROM_HERO, { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false })
+    await open(FROM_HERO, { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 })
     await bumpChildren(1) // edad default 0
     expect(document.body.querySelector('[data-testid="baby-badge"]')).not.toBeNull()
 
@@ -417,7 +417,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
   // Misma paridad que RoomsStep.occupancies.test.ts: la landing tiene su propia presentación
   // (castellano fijo), así que un fix en el widget no se propaga solo a esta superficie.
   describe('REQ-02 (#234) — clasificación por niño en el resumen y botón Editar', () => {
-    const POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+    const POLICY: ChildPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50 }
 
     /** 1 adulto + niños de 1 (bebé) y 8 (con plaza) en el composer de la única tarjeta. */
     async function composeBabyAndPaying(): Promise<void> {
@@ -559,7 +559,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
   // ── Requerimiento 10 (Varias habitaciones, 2026-09-03) — misma paridad que RoomsStep ────────
   describe('varias habitaciones — composición independiente por línea', () => {
     it('ejemplo del pedido: Habitación 1 (2 adultos + niño de 2) y Habitación 2 (1 adulto + niños de 6 y 10) mantienen edades separadas', async () => {
-      const policy: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
+      const policy: ChildPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } 
       await open(FROM_HERO, policy)
       const store = useBookingStore()
       // Habitación 2 cotiza "para 3" — se habilita para poder agregarla en este fixture.
@@ -595,7 +595,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
     })
 
     it('mismos adultos, EDADES distintas: no se agrupan en una sola línea con quantity', async () => {
-      const policy: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false } 
+      const policy: ChildPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: false, childrenRatePercent: 50 } 
       await open(FROM_HERO, policy)
       const store = useBookingStore()
 
