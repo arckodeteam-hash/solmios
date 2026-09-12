@@ -12,6 +12,8 @@
 //   4. Agregar propaga adultos+edades hasta el payload de la reserva (createBooking).
 //   5. Sin `occupancies` (backend viejo / respuesta cacheada) el composer sigue funcionando con
 //      el precio único del tipo.
+//   6. #292 — "¿Necesita cuna?" sólo con bebé Y `custom:cuna` publicada por el tipo (con su
+//      precio); la cuna no entra al checklist genérico; "Sí" suma al total de la tarjeta.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -22,6 +24,7 @@ vi.mock('@/services/Booking.service', () => ({
     getCalendar: vi.fn(),
     getUpsells: vi.fn(),
     getMealPlans: vi.fn(),
+    getRoomAmenities: vi.fn(),
     validatePromo: vi.fn(),
     createBooking: vi.fn(),
   },
@@ -160,6 +163,7 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
     })
     vi.mocked(BookingService.getUpsells).mockReset().mockResolvedValue([])
     vi.mocked(BookingService.getMealPlans).mockReset().mockResolvedValue([])
+    vi.mocked(BookingService.getRoomAmenities).mockReset().mockResolvedValue({})
     vi.mocked(BookingService.createBooking).mockReset()
   })
   afterEach(() => {
@@ -411,6 +415,102 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
     document.body.querySelector<HTMLSelectElement>('select')!.dispatchEvent(new Event('change'))
     await flushPromises()
     expect(document.body.querySelector('[data-testid="baby-badge"]')).toBeNull()
+  })
+
+  // ── #292 — cuna por habitación: espejo de RoomsStep.occupancies.test.ts en ESTA superficie
+  // (BookingModal.vue tiene su propio template y `cribQuestionLabel`): "¿Necesita cuna?" sólo con
+  // un bebé en la tarjeta Y el tipo publicando `custom:cuna` (`store.roomAmenitiesFor`), con el
+  // precio en la pregunta; la cuna NO aparece en el checklist genérico; "Sí" suma al "+ $X".
+  describe('#292 — "¿Necesita cuna?" gateada por custom:cuna del tipo, con precio', () => {
+    const BABY_POLICY: ChildPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50 }
+    const CUNA = { key: 'custom:cuna', name: 'Cuna', price: 15 }
+    const CAMA_EXTRA = { key: 'custom:cama-extra', name: 'Cama extra', price: 20 }
+    const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+
+    it('tipo con custom:cuna ($15) + bebé → la pregunta aparece con el precio ("¿Necesita cuna? (+ 15,00 US$)")', async () => {
+      await open(FROM_HERO, BABY_POLICY)
+      useBookingStore().roomAmenities = { familiar: [CAMA_EXTRA, CUNA] }
+      await flushPromises()
+      // Sin bebé todavía: nada.
+      expect(q('[data-testid="crib-question"]')).toBeNull()
+
+      await bumpChildren(1) // edad default 0 → bebé (≤ maxBabyAge=1)
+      expect(q('[data-testid="baby-badge"]')).not.toBeNull()
+      expect(q('[data-testid="baby-extras"]')).not.toBeNull()
+      // Mismo `money()` que el resto de la tarjeta (locale es → "15,00 US$").
+      expect(q('[data-testid="crib-question"]')!.textContent!.replace(/\s+/g, ' ').trim()).toBe('¿Necesita cuna? (+ 15,00 US$)')
+    })
+
+    it('tipo SIN custom:cuna + bebé → sin pregunta (aunque tenga otras amenidades)', async () => {
+      await open(FROM_HERO, BABY_POLICY)
+      useBookingStore().roomAmenities = { familiar: [CAMA_EXTRA] }
+      await flushPromises()
+      await bumpChildren(1)
+      expect(q('[data-testid="baby-badge"]')).not.toBeNull()
+      expect(q('[data-testid="crib-question"]')).toBeNull()
+      expect(q('[data-testid="baby-extras"]')).toBeNull()
+      // El checklist genérico sí está (cama extra).
+      expect(document.body.querySelectorAll('[data-testid="room-amenity-option"]')).toHaveLength(1)
+    })
+
+    it('tipo con custom:cuna pero SIN bebé (niño de 8) → sin pregunta', async () => {
+      await open(FROM_HERO, BABY_POLICY)
+      useBookingStore().roomAmenities = { familiar: [CUNA] }
+      await flushPromises()
+      await bumpChildren(1)
+      document.body.querySelector<HTMLSelectElement>('select')!.value = '8' // > maxFreeAge → con plaza, no bebé
+      document.body.querySelector<HTMLSelectElement>('select')!.dispatchEvent(new Event('change'))
+      await flushPromises()
+      expect(q('[data-testid="baby-badge"]')).toBeNull()
+      expect(q('[data-testid="crib-question"]')).toBeNull()
+      // Sólo la cuna en el catálogo → tampoco hay checklist genérico.
+      expect(q('[data-testid="room-amenities"]')).toBeNull()
+    })
+
+    it('la cuna NO aparece en el checklist genérico (room-amenity-option); sólo el resto del catálogo', async () => {
+      await open(FROM_HERO, BABY_POLICY)
+      useBookingStore().roomAmenities = { familiar: [CAMA_EXTRA, CUNA] }
+      await flushPromises()
+      await bumpChildren(1)
+      const options = Array.from(document.body.querySelectorAll<HTMLElement>('[data-testid="room-amenity-option"]')).map((o) => o.textContent ?? '')
+      expect(options).toHaveLength(1)
+      expect(options[0]).toContain('Cama extra')
+      expect(options[0]).not.toContain('Cuna')
+    })
+
+    it('click en "Sí" → el total de amenidades de la tarjeta suma 15 y la línea del carrito lleva needsCrib + custom:cuna', async () => {
+      await open(FROM_HERO, BABY_POLICY)
+      const store = useBookingStore()
+      store.roomAmenities = { familiar: [CAMA_EXTRA, CUNA] }
+      await flushPromises()
+      await bumpChildren(1)
+      expect(q('[data-testid="room-amenities-total"]')).toBeNull()
+
+      q('[data-testid="crib-yes"]')!.click()
+      await flushPromises()
+      expect(q('[data-testid="room-amenities-total"]')!.textContent).toContain('15,00')
+
+      await clickAddRoom()
+      expect(store.cart).toHaveLength(1)
+      expect(store.cart[0]!.needsCrib).toBe(true)
+      expect(store.cart[0]!.roomAmenities).toEqual([CUNA])
+
+      // "No" (en una tarjeta nueva) vuelve a dejar el total sin la cuna.
+      await bumpChildren(1)
+      q('[data-testid="crib-yes"]')!.click()
+      await flushPromises()
+      q('[data-testid="crib-no"]')!.click()
+      await flushPromises()
+      expect(q('[data-testid="room-amenities-total"]')).toBeNull()
+    })
+
+    it('cuna sin cargo: la pregunta va sin precio', async () => {
+      await open(FROM_HERO, BABY_POLICY)
+      useBookingStore().roomAmenities = { familiar: [{ ...CUNA, price: 0 }] }
+      await flushPromises()
+      await bumpChildren(1)
+      expect(q('[data-testid="crib-question"]')!.textContent!.trim()).toBe('¿Necesita cuna?')
+    })
   })
 
   // ── REQ-02 (#234) — resumen con clasificación por niño + "Editar" en el carrito ──────────

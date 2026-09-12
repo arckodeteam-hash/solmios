@@ -1,8 +1,8 @@
 // bookingengine/tests/public-booking-crib.test.ts — #292: la CUNA es la amenidad personalizada
 // `custom:cuna` (`CRIB_AMENITY_KEY`) de cada habitación, no una config global del hotel ni un
-// catálogo `child_amenities`. El backend re-valida `needsCrib` = bebé > 0 ∧ pedida ∧ el tipo
-// (alguna unidad libre) ofrece `custom:cuna`; si `needsCrib` fuerza la key en `roomAmenities`
-// (precio real de la unidad asignada), si no la quita aunque el body la mande.
+// catálogo `child_amenities`. El backend re-valida `needsCrib` = bebé > 0 ∧ pedida ∧ la unidad
+// FINALMENTE asignada ofrece `custom:cuna` (la línea quedó en `roomAmenities`); la key del body
+// se quita aunque venga. Invariante: `needsCrib === (roomAmenities tiene custom:cuna)` SIEMPRE.
 //
 // Cubre:
 //  (a) tipo SIN `custom:cuna`, bebé + needsCrib:true → needsCrib false, cribCount 0, sin línea.
@@ -16,10 +16,16 @@
 //      needsCrib:true → sólo la línea del tipo con cuna queda con needsCrib true y su precio.
 //  (f) body con `childAmenities:[{id:'x'}]` se ignora: `childAmenities` [] y
 //      `childAmenitiesTotal` 0.
+//  (g) revisión: room A (80) ofrece `custom:jacuzzi`, room B (100) ofrece `custom:cuna`, body
+//      pide jacuzzi + cuna con bebé → la cuna tiene PRIORIDAD: se asigna B con cuna cobrada
+//      (needsCrib true, jacuzzi ignorada con warn). Con `roomId` explícito A → needsCrib false
+//      SIN línea de cuna (antes persistía needsCrib=true + "Cuna: solicitada" sin línea).
+//  (h) lo mismo en grupo: quantity 1 → B con cuna; quantity 2 → B needsCrib true, A false, cada
+//      fila espejo exacto de su propio snapshot.
 import { describe, it, expect } from 'bun:test'
 import { createPublicBookingDirect } from '../usecases/public-booking'
 import { createPublicBookingGroup } from '../usecases/public-booking-group'
-import { CRIB_AMENITY_KEY, roomsOfferCrib } from '../usecases/public-room-amenities'
+import { CRIB_AMENITY_KEY, hasCribLine, preferRoomsOffering, roomsOfferCrib } from '../usecases/public-room-amenities'
 
 const HOTEL_ID = 'h1'
 
@@ -102,6 +108,28 @@ function twoTypesDb() {
       am('r-suite', 'wifi'),
     ],
   })
+}
+
+/** Caso del revisor: dos 'double' — A (80) sólo con jacuzzi, B (100) sólo con cuna. Ninguna
+ *  ofrece la combinación completa jacuzzi+cuna. */
+function jacuzziVsCribDb() {
+  return makeDb({
+    rooms: [
+      { id: 'r-jacuzzi', hotelId: HOTEL_ID, type: 'double', capacity: 4, basePrice: 80, status: 'available' },
+      { id: 'r-crib', hotelId: HOTEL_ID, type: 'double', capacity: 4, basePrice: 100, status: 'available' },
+    ],
+    roomAmenities: [
+      am('r-jacuzzi', 'custom:jacuzzi', { name: 'Jacuzzi', price: 40 }),
+      am('r-crib', CRIB_AMENITY_KEY, { name: 'Cuna', price: 15 }),
+    ],
+  })
+}
+const JACUZZI = { key: 'custom:jacuzzi', name: 'Jacuzzi', price: 40, quantity: 1, total: 40 }
+/** Invariante #292 sobre una fila persistida: `needsCrib`/`cribCount` son espejo EXACTO del snapshot. */
+function expectCribMirrorsSnapshot(saved: any) {
+  const hasLine = (saved.roomAmenities as any[]).some((a) => a.key === CRIB_AMENITY_KEY)
+  expect(saved.needsCrib).toBe(hasLine)
+  expect(saved.cribCount).toBe(hasLine ? 1 : 0)
 }
 
 const direct = (orm: any, body: any, logger?: any) =>
@@ -223,6 +251,63 @@ describe('createPublicBookingDirect — cuna por habitación (custom:cuna, #292)
     expect(res.body.totalBreakdown.subtotal).toBe(220)
   })
 
+  it('(g) revisor: A ofrece jacuzzi, B ofrece cuna, body pide ambas con bebé → la CUNA manda: se asigna B con cuna cobrada, jacuzzi ignorada', async () => {
+    const { orm, tables } = jacuzziVsCribDb()
+    const { logger, warns } = makeLogger()
+    const res = await direct(orm, { roomType: 'double', adults: 2, childrenAges: [1], needsCrib: true, roomAmenities: [{ key: 'custom:jacuzzi' }] }, logger)
+    expect(res.status).toBe(201)
+    const saved = tables.Reservations[0]
+    expect(saved.roomId).toBe('r-crib')
+    expect(saved.needsCrib).toBe(true)
+    expect(saved.cribCount).toBe(1)
+    expect(saved.roomAmenities).toEqual([CUNA])
+    expect(saved.roomAmenitiesTotal).toBe(15)
+    // 2 × 100 + 15 (sin jacuzzi: B no la ofrece).
+    expect(res.body.totalBreakdown.subtotal).toBe(215)
+    expect(saved.notes).toContain('Cuna: solicitada')
+    expectCribMirrorsSnapshot(saved)
+    // La jacuzzi se ignoró con el warn genérico; NO hay warn de "cuna pedida" (se dio).
+    expect(warns.some((w) => w.includes('Amenidad de habitación ignorada'))).toBe(true)
+    expect(warns.some((w) => w.includes('cuna pedida'))).toBe(false)
+  })
+
+  it('(g2) revisor: roomId explícito de A (sin cuna) + bebé + needsCrib:true + jacuzzi → needsCrib FALSE, cribCount 0, sin "Cuna: solicitada"; la jacuzzi sí se cobra', async () => {
+    const { orm, tables } = jacuzziVsCribDb()
+    const { logger, warns } = makeLogger()
+    const res = await direct(orm, { roomId: 'r-jacuzzi', adults: 2, childrenAges: [1], needsCrib: true, roomAmenities: [{ key: 'custom:jacuzzi' }] }, logger)
+    expect(res.status).toBe(201)
+    const saved = tables.Reservations[0]
+    expect(saved.roomId).toBe('r-jacuzzi')
+    expect(saved.needsCrib).toBe(false)
+    expect(saved.cribCount).toBe(0)
+    expect(saved.roomAmenities).toEqual([JACUZZI])
+    expect(saved.roomAmenitiesTotal).toBe(40)
+    expect(res.body.totalBreakdown.subtotal).toBe(200)
+    expect(saved.notes).toContain('Amenidades habitación: Jacuzzi=40.00')
+    expect(saved.notes).not.toContain('Cuna')
+    expectCribMirrorsSnapshot(saved)
+    expect(warns.some((w) => w.includes('cuna pedida pero la unidad asignada no la ofrece'))).toBe(true)
+  })
+
+  it('(g3) revisor: si NINGUNA unidad libre del tipo tiene cuna, se asigna sin cuna y needsCrib queda false (sin línea, sin nota); el resto de keys se cobra', async () => {
+    const { orm, tables } = makeDb({
+      rooms: [{ id: 'r-jacuzzi', hotelId: HOTEL_ID, type: 'double', capacity: 4, basePrice: 80, status: 'available' }],
+      roomAmenities: [am('r-jacuzzi', 'custom:jacuzzi', { name: 'Jacuzzi', price: 40 })],
+    })
+    const { logger, warns } = makeLogger()
+    const res = await direct(orm, { roomType: 'double', adults: 2, childrenAges: [1], needsCrib: true, roomAmenities: [{ key: 'custom:jacuzzi' }] }, logger)
+    expect(res.status).toBe(201)
+    const saved = tables.Reservations[0]
+    expect(saved.roomId).toBe('r-jacuzzi')
+    expect(saved.needsCrib).toBe(false)
+    expect(saved.cribCount).toBe(0)
+    expect(saved.roomAmenities).toEqual([JACUZZI])
+    expect(res.body.totalBreakdown.subtotal).toBe(200)
+    expect(saved.notes).not.toContain('Cuna')
+    expectCribMirrorsSnapshot(saved)
+    expect(warns.some((w) => w.includes('cuna pedida'))).toBe(true)
+  })
+
   it('(f) childAmenities en el body se IGNORA: snapshot [] y childAmenitiesTotal 0 (sin repo, sin cargo)', async () => {
     const { orm, tables } = twoTypesDb()
     const res = await direct(orm, { roomType: 'double', adults: 2, childrenAges: [1], childAmenities: [{ id: 'x' }] })
@@ -278,6 +363,52 @@ describe('createPublicBookingGroup — cuna por línea (custom:cuna, #292)', () 
     }
   })
 
+  it('(h) revisor: A jacuzzi / B cuna, línea con jacuzzi + cuna + bebé (quantity 1) → se asigna B con cuna cobrada', async () => {
+    const { orm, tables } = jacuzziVsCribDb()
+    const { logger, warns } = makeLogger()
+    const res = await group(orm, {
+      rooms: [{ roomType: 'double', adults: 2, quantity: 1, childrenAges: [1], needsCrib: true, roomAmenities: [{ key: 'custom:jacuzzi' }] }],
+    }, logger)
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(1)
+    const saved = tables.Reservations[0]
+    expect(saved.roomId).toBe('r-crib')
+    expect(saved.needsCrib).toBe(true)
+    expect(saved.cribCount).toBe(1)
+    expect(saved.roomAmenities).toEqual([CUNA])
+    expect(saved.roomAmenitiesTotal).toBe(15)
+    expect(res.body.totalBreakdown.subtotal).toBe(215)
+    expect(saved.notes).toContain('Cuna: double')
+    expectCribMirrorsSnapshot(saved)
+    expect(warns.some((w) => w.includes('cuna pedida'))).toBe(false)
+  })
+
+  it('(h2) revisor: misma línea con quantity 2 → B needsCrib true (cuna), A needsCrib false (jacuzzi); cada fila espejo de SU snapshot', async () => {
+    const { orm, tables } = jacuzziVsCribDb()
+    const { logger, warns } = makeLogger()
+    const res = await group(orm, {
+      rooms: [{ roomType: 'double', adults: 2, quantity: 2, childrenAges: [1], needsCrib: true, roomAmenities: [{ key: 'custom:jacuzzi' }] }],
+    }, logger)
+    expect(res.status).toBe(201)
+    expect(tables.Reservations).toHaveLength(2)
+    const byRoom = Object.fromEntries(tables.Reservations.map((r: any) => [r.roomId, r]))
+    expect(byRoom['r-crib'].needsCrib).toBe(true)
+    expect(byRoom['r-crib'].cribCount).toBe(1)
+    expect(byRoom['r-crib'].roomAmenities).toEqual([CUNA])
+    expect(byRoom['r-jacuzzi'].needsCrib).toBe(false)
+    expect(byRoom['r-jacuzzi'].cribCount).toBe(0)
+    expect(byRoom['r-jacuzzi'].roomAmenities).toEqual([JACUZZI])
+    for (const r of tables.Reservations) expectCribMirrorsSnapshot(r)
+    // Amenidades: 15 (cuna en B) + 40 (jacuzzi en A). El precio de la línea sale de la primera
+    // unidad elegida (B, 100) × 2 unidades × 2 noches = 400 (criterio del flujo de grupo, previo).
+    expect(res.body.totalBreakdown.roomAmenitiesTotal).toBe(55)
+    expect(res.body.totalBreakdown.subtotal).toBe(455)
+    // Las notas son del GRUPO (compartidas por todas las filas): el vistazo dice qué tipo la recibió.
+    expect(tables.Reservations[0].notes).toContain('Cuna: double')
+    expect(tables.Reservations[0].notes).toContain('Amenidades habitación: double: Cuna=15.00, Jacuzzi=40.00')
+    expect(warns.some((w) => w.includes('cuna pedida pero la unidad asignada no la ofrece'))).toBe(true)
+  })
+
   it('(e2) línea con cuna pero needsCrib:false y la key en roomAmenities → sin cuna; childAmenities por línea se ignora', async () => {
     const { orm, tables } = twoTypesDb()
     const res = await group(orm, {
@@ -289,6 +420,31 @@ describe('createPublicBookingGroup — cuna por línea (custom:cuna, #292)', () 
     expect(tables.Reservations[0].childAmenities).toEqual([])
     expect(res.body.totalBreakdown.subtotal).toBe(200)
     expect(res.body.totalBreakdown.childAmenitiesTotal).toBe(0)
+  })
+})
+
+describe('preferRoomsOffering con prioridad de cuna / hasCribLine — helpers puros', () => {
+  it('con priorityKey: (1) ofrecen todo, (2) al menos la cuna, (3) el resto; estable dentro de cada escalón', () => {
+    const byRoom = new Map<string, any[]>([
+      ['jac', [am('jac', 'custom:jacuzzi', { name: 'Jacuzzi' })]],
+      ['crib', [am('crib', CRIB_AMENITY_KEY, { name: 'Cuna' })]],
+      ['none', []],
+      ['both', [am('both', 'custom:jacuzzi', { name: 'Jacuzzi' }), am('both', CRIB_AMENITY_KEY, { name: 'Cuna' })]],
+      ['crib2', [am('crib2', CRIB_AMENITY_KEY, { name: 'Cuna' })]],
+    ])
+    const candidates = ['jac', 'crib', 'none', 'both', 'crib2'].map((id) => ({ id }))
+    const keys = ['custom:jacuzzi', CRIB_AMENITY_KEY]
+    expect(preferRoomsOffering(candidates, byRoom, keys, CRIB_AMENITY_KEY).map((r) => r.id)).toEqual(['both', 'crib', 'crib2', 'jac', 'none'])
+    // Sin priorityKey: comportamiento de siempre (todo / resto).
+    expect(preferRoomsOffering(candidates, byRoom, keys).map((r) => r.id)).toEqual(['both', 'jac', 'crib', 'none', 'crib2'])
+    // priorityKey que NO está entre las keys pedidas: se ignora.
+    expect(preferRoomsOffering(candidates, byRoom, ['custom:jacuzzi'], CRIB_AMENITY_KEY).map((r) => r.id)).toEqual(['jac', 'both', 'crib', 'none', 'crib2'])
+  })
+
+  it('hasCribLine: true sólo si el snapshot trae custom:cuna', () => {
+    expect(hasCribLine([])).toBe(false)
+    expect(hasCribLine([JACUZZI])).toBe(false)
+    expect(hasCribLine([JACUZZI, CUNA])).toBe(true)
   })
 })
 

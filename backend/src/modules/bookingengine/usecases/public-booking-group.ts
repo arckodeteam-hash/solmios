@@ -45,7 +45,7 @@ import { MAX_STAY_NIGHTS } from '../validators/schema'
 import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 import type { PublicBookingExtraDeps, PublicBookingLogger, PublicBookingStripeDeps, TotalBreakdown, UpsellItem } from './public-booking'
 import { normalizeIdempotencyKey, resolvePaymentDeadlineAt, isUniqueViolation } from './public-booking'
-import { CRIB_AMENITY_KEY, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, roomsOfferCrib, type RoomAmenityLine } from './public-room-amenities'
+import { CRIB_AMENITY_KEY, hasCribLine, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput } from '../../../shared/usecases/booking-engine-addons'
 import { resolveUpsellLines, type UpsellPricedLine } from './upsell-pricing'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
@@ -74,9 +74,11 @@ export interface RoomLineInput {
   /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No; #292 por habitación) — a
    *  diferencia de `upsells` (global al carrito, ver public-booking.ts), esto SÍ es por línea:
    *  cada habitación del grupo pide su propia cuna para SU bebé, no la del grupo entero. Gateado
-   *  server-side contra los bebés de ESTA línea Y que el tipo de ESTA línea ofrezca `custom:cuna`
-   *  (`CRIB_AMENITY_KEY`), igual que el flujo de 1 habitación. "Sí" fuerza esa key en
-   *  `roomAmenities` de la línea (precio real por unidad); "No" la quita aunque venga en el body.
+   *  server-side contra los bebés de ESTA línea Y que cada unidad FINALMENTE asignada ofrezca
+   *  `custom:cuna` (`CRIB_AMENITY_KEY`), igual que el flujo de 1 habitación. "Sí" fuerza esa key
+   *  en `roomAmenities` de la línea (se prefieren unidades con cuna, precio real por unidad) y
+   *  `needsCrib` se persiste POR FILA como espejo exacto de su línea de cuna; "No" la quita
+   *  aunque venga en el body.
    *  (#292: `childAmenities` por línea ya no se lee — el catálogo global se dio de baja.) */
   needsCrib?: boolean
   /** REQ-01 (#290) — amenidades PERSONALIZADAS de la habitación (`[{key: 'custom:<slug>'}]`),
@@ -252,8 +254,9 @@ export async function createPublicBookingGroup(
     upsellPersonsPerUnit: number
     // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — por LÍNEA, no por grupo
     // (a diferencia de los upsells genéricos de abajo): cada habitación pide lo suyo para su
-    // propio bebé.
-    needsCrib: boolean; cribCount: number
+    // propio bebé. #292 — `needsCrib` acá es "al menos una unidad de la línea quedó con cuna"
+    // (para las notas); lo que se PERSISTE por fila sale de `roomAmenitiesByRoom` de ESA unidad.
+    needsCrib: boolean
     // Tarea "Cobro % niños" — % REALMENTE usado para cotizar ESTA línea (o `null`), por LÍNEA
     // igual que crib: cada habitación puede tener una cantidad de adultos distinta, así que el
     // "valor de un adulto" (y por ende si el % terminó aplicando) es por línea.
@@ -349,31 +352,25 @@ export async function createPublicBookingGroup(
 
     // ─── Cuna (Tarea 22, simplificada 2026-09-09; #292 por habitación) — POR LÍNEA ───────────
     // Mismo criterio de defensa en profundidad que public-booking.ts: sin al menos un bebé en
-    // ESTA línea, se fuerza "no pedida" sin importar el body. La segunda mitad del gate — ¿el
-    // tipo de ESTA línea (alguna unidad libre) ofrece `custom:cuna`? — se cierra acá abajo con el
-    // catálogo `RoomAmenities` de las candidatas. Sí/No únicamente — `cribCount` es 1/0 espejo
-    // de `needsCrib`, nunca una cantidad elegible.
+    // ESTA línea, se fuerza "no pedida" sin importar el body. La segunda mitad del gate — ¿la
+    // unidad FINALMENTE asignada ofrece `custom:cuna`? — se cierra DESPUÉS de
+    // `resolveRoomAmenityLines`, por unidad. Sí/No únicamente — `cribCount` es 1/0 espejo de
+    // `needsCrib`, nunca una cantidad elegible.
     const lineBabies = composition.babies
     const lineCribRequested = lineBabies > 0 && line.needsCrib === true
 
     // REQ-01 (#290) — entre las libres, PRIMERO las que ofrecen todas las amenidades pedidas por
     // ESTA línea (orden estable, mismo criterio que public-booking.ts). Sin keys (ni cuna
-    // pedida) no se lee nada. #292 — si la línea pide cuna y el tipo la ofrece, `custom:cuna`
-    // entra a las keys de la línea (se prefieren unidades con cuna y cada una cobra SU precio);
-    // si no, la línea queda sin cuna (la key ya se filtró en `normalizeRoomLines`).
+    // pedida) no se lee nada. #292 — si la línea pide cuna, `custom:cuna` entra a las keys de la
+    // línea (la key del body ya se filtró en `normalizeRoomLines`) y tiene PRIORIDAD al elegir
+    // unidades: primero las que ofrecen todo, después las que al menos tienen la cuna.
     const lineRoomAmenityKeys = (line.roomAmenities ?? []).map((a) => a.key)
+    if (lineCribRequested) lineRoomAmenityKeys.push(CRIB_AMENITY_KEY)
     let lineAmenitiesByRoom = new Map<string, any[]>()
-    let lineNeedsCrib = false
-    if (lineRoomAmenityKeys.length > 0 || lineCribRequested) {
+    if (lineRoomAmenityKeys.length > 0) {
       lineAmenitiesByRoom = await loadRoomAmenitiesFor(orm, freeOfType.map((r: any) => r.id))
-      lineNeedsCrib = lineCribRequested && roomsOfferCrib(lineAmenitiesByRoom, freeOfType.map((r: any) => r.id))
-      if (lineNeedsCrib) lineRoomAmenityKeys.push(CRIB_AMENITY_KEY)
-      else if (lineCribRequested) {
-        logger?.warn('createPublicBookingGroup: cuna pedida pero ninguna unidad libre del tipo ofrece custom:cuna — la línea se crea sin cuna', { hotelId, roomType: line.roomType })
-      }
-      if (lineRoomAmenityKeys.length > 0) freeOfType = preferRoomsOffering(freeOfType, lineAmenitiesByRoom, lineRoomAmenityKeys)
+      freeOfType = preferRoomsOffering(freeOfType, lineAmenitiesByRoom, lineRoomAmenityKeys, lineCribRequested ? CRIB_AMENITY_KEY : undefined)
     }
-    const lineCribCount = lineNeedsCrib ? 1 : 0
     const chosen = freeOfType.slice(0, line.quantity)
     for (const r of chosen) claimedIds.add(r.id)
 
@@ -389,6 +386,16 @@ export async function createPublicBookingGroup(
         lineRoomAmenitiesTotal += resolved.total
       }
     }
+    // #292 — `needsCrib` definitivo POR UNIDAD: la línea de cuna quedó (o no) en el snapshot de
+    // cada unidad asignada (`hasCribLine`), igual que en public-booking.ts. Si se pidió y alguna
+    // unidad de la línea no la ofrece, esa fila se crea sin cuna con un warn claro.
+    const cribRoomIds = lineCribRequested ? chosen.filter((r: any) => hasCribLine(roomAmenitiesByRoom.get(r.id) ?? [])).map((r: any) => r.id) : []
+    if (lineCribRequested && cribRoomIds.length < chosen.length) {
+      logger?.warn('createPublicBookingGroup: cuna pedida pero la unidad asignada no la ofrece — se crea sin cuna', {
+        hotelId, roomType: line.roomType, roomIds: chosen.filter((r: any) => !cribRoomIds.includes(r.id)).map((r: any) => r.id),
+      })
+    }
+    const lineNeedsCrib = cribRoomIds.length > 0
 
     const fallbackNightly = Number(chosen[0].basePrice) || 0
     // Tarea "Cobro % niños" (2026-09-09) — POR LÍNEA, mismo criterio que public-booking.ts: aplica
@@ -422,7 +429,7 @@ export async function createPublicBookingGroup(
       // MR-10 (#275) — personas de la línea que consumen upsells (adultos + niños con plaza +
       // niños libres, SIN bebés), por unidad; se multiplica por `roomIds.length` más abajo.
       upsellPersonsPerUnit: composition.effectiveAdults + composition.payingChildren + (composition.freeChildren - composition.babies),
-      needsCrib: lineNeedsCrib, cribCount: lineCribCount,
+      needsCrib: lineNeedsCrib,
       childrenRatePercentApplied: lineChildrenRatePercentApplied,
       roomAmenitiesByRoom, roomAmenitiesTotal: round2(lineRoomAmenitiesTotal),
     })
@@ -549,7 +556,7 @@ export async function createPublicBookingGroup(
   if (roomAmenitiesSummary.length > 0) notesParts.push(`Amenidades habitación: ${roomAmenitiesSummary.join('; ')}`)
   // Tarea 22 — mismo criterio que el resto: el detalle estructurado vive en las columnas propias
   // de CADA fila (needsCrib/cribCount), esto es solo para el vistazo rápido. Sí/No únicamente
-  // (2026-09-09) — se lista qué tipos la pidieron, sin cantidad.
+  // (2026-09-09) — se lista qué tipos la RECIBIERON (alguna unidad con línea de cuna), sin cantidad.
   const cribLines = resolvedLines.filter((l) => l.needsCrib).map((l) => l.roomType)
   if (cribLines.length > 0) notesParts.push(`Cuna: ${cribLines.join(', ')}`)
   notesParts.push(`Total grupo: ${totalAmount.toFixed(2)} (subtotal ${subtotalBeforeDiscount.toFixed(2)}` +
@@ -572,6 +579,10 @@ export async function createPublicBookingGroup(
       // patrón que `createPublicBookingDirect`, aplicado a N habitaciones en la misma tx.
       for (const line of resolvedLines) {
         for (const roomId of line.roomIds) {
+          // REQ-01 (#290) — snapshot de ESTA unidad (ya resuelto contra sus filas `RoomAmenities`).
+          const unitRoomAmenities = line.roomAmenitiesByRoom.get(roomId) ?? []
+          // #292 — `needsCrib` POR FILA, espejo exacto de la línea de cuna de ESTA unidad.
+          const unitNeedsCrib = hasCribLine(unitRoomAmenities)
           if (typeof tx.updateMany === 'function') {
             await tx.updateMany('Rooms', { id: roomId }, { updatedAt: new Date().toISOString() }).catch(() => 0)
           }
@@ -596,6 +607,10 @@ export async function createPublicBookingGroup(
 
       for (const line of resolvedLines) {
         for (const roomId of line.roomIds) {
+          // REQ-01 (#290) — snapshot de ESTA unidad (ya resuelto contra sus filas `RoomAmenities`).
+          const unitRoomAmenities = line.roomAmenitiesByRoom.get(roomId) ?? []
+          // #292 — `needsCrib` POR FILA, espejo exacto de la línea de cuna de ESTA unidad.
+          const unitNeedsCrib = hasCribLine(unitRoomAmenities)
           // REQ-RWP-04 — `source: 'web'` distingue la reserva del widget web de la carga en
           // recepción (`/api/panel/reservas` deja el default 'direct'); `channel` sigue 'direct'
           // porque los reportes de directas cuentan por `channel` (reservas/usecases/booking-engine.ts).
@@ -610,17 +625,15 @@ export async function createPublicBookingGroup(
             // criterio que public-booking.ts).
             childrenRatePercentApplied: line.childrenRatePercentApplied,
             // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No; #292 por habitación)
-            // — ya gateados por línea más arriba (bebé + el tipo ofrece `custom:cuna`); cada
-            // unidad física de la línea recibe la MISMA solicitud, igual criterio que
-            // `childrenAges` un poco más arriba. Espejo de la línea de cuna en `roomAmenities`.
-            needsCrib: line.needsCrib, cribCount: line.cribCount,
+            // — gateado por línea (bebé + pedida) y cerrado POR UNIDAD: `needsCrib` es true si
+            // y sólo si `roomAmenities` de ESTA fila trae `custom:cuna`; `cribCount` su espejo 1/0.
+            needsCrib: unitNeedsCrib, cribCount: unitNeedsCrib ? 1 : 0,
             // #292 — el catálogo global de amenidades infantiles se dio de baja: las columnas
             // quedan (reservas históricas + lectores) pero una reserva nueva las escribe vacías.
             childAmenities: [],
             childAmenitiesTotal: 0,
-            // REQ-01 (#290) — snapshot de ESTA unidad (ya resuelto contra sus filas `RoomAmenities`).
-            roomAmenities: line.roomAmenitiesByRoom.get(roomId) ?? [],
-            roomAmenitiesTotal: round2((line.roomAmenitiesByRoom.get(roomId) ?? []).reduce((s, a) => s + a.total, 0)),
+            roomAmenities: unitRoomAmenities,
+            roomAmenitiesTotal: round2(unitRoomAmenities.reduce((s, a) => s + a.total, 0)),
             // Cada fila lleva SU propio importe (para que folios/reportes sumen bien) — el
             // COBRO real es uno solo, sobre la líder, por `totalAmount` (ver más abajo).
             totalAmount: line.perUnitPrice, deposit: 0,

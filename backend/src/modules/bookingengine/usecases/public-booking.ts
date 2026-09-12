@@ -22,10 +22,11 @@
 //     se prefiere la unidad del tipo que las ofrece y se cobra el precio real de la asignada
 //     (nunca el del body). Ver `public-room-amenities.ts`.
 //   - `needsCrib` (#292): la cuna ES la amenidad personalizada `custom:cuna` de la habitación
-//     (`CRIB_AMENITY_KEY`). Sí/No; sólo cuenta si la composición tiene un bebé Y el tipo (alguna
-//     unidad libre) la publica. "Sí" fuerza esa key en `roomAmenities` (se prefiere una unidad
-//     con cuna y se cobra SU precio); "No" la quita aunque el body la mande. `needsCrib`/
-//     `cribCount` (1/0) se persisten como espejo de esa línea.
+//     (`CRIB_AMENITY_KEY`). Sí/No; sólo cuenta si la composición tiene un bebé Y la unidad
+//     FINALMENTE asignada la publica. "Sí" fuerza esa key en `roomAmenities` (se prefiere una
+//     unidad con cuna — antes que otras keys — y se cobra SU precio); "No" la quita aunque el
+//     body la mande. `needsCrib`/`cribCount` (1/0) se persisten como espejo EXACTO de esa línea:
+//     `needsCrib === (roomAmenities tiene custom:cuna)`, decidido después de resolverla.
 //   - `childAmenities` en el body se IGNORA (#292: el catálogo global `child_amenities` se dio de
 //     baja). `Reservations.childAmenities`/`childAmenitiesTotal` y `priceBreakdown.
 //     childAmenitiesTotal` se siguen escribiendo como `[]`/`0` para que los lectores de reservas
@@ -69,7 +70,7 @@ import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-eng
 import { DEFAULT_PENDING_TTL_MINUTES } from './config'
 import { resolveChildPolicy, resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError } from '../../../shared/usecases/child-composition'
 import { resolveRoomTypeCapacityMap, effectiveRoomCapacity } from '../../../shared/usecases/room-type-capacity'
-import { CRIB_AMENITY_KEY, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, roomsOfferCrib, type RoomAmenityLine } from './public-room-amenities'
+import { CRIB_AMENITY_KEY, hasCribLine, normalizeRoomAmenityKeys, loadRoomAmenitiesFor, preferRoomsOffering, resolveRoomAmenityLines, type RoomAmenityLine } from './public-room-amenities'
 import { buildBookingEngineAddons, totalTaxRateOf, type BookingEngineUpsellInput } from '../../../shared/usecases/booking-engine-addons'
 import { resolveUpsellLines, type UpsellPricedLine } from './upsell-pricing'
 
@@ -400,9 +401,9 @@ export async function createPublicBookingDirect(
   // El composer del frontend ya oculta "¿Necesita cuna?" sin un bebé en la composición o si el
   // tipo no publica `custom:cuna`, pero el servidor NUNCA confía en lo que mande el cliente
   // (mismo criterio que cualquier otro campo de esta reserva): sin al menos un bebé clasificado
-  // (Tarea 21) se fuerza a "no pedida" sin importar el body. La segunda mitad del gate — ¿el
-  // tipo (alguna unidad libre) ofrece `custom:cuna`? — se resuelve más abajo, cuando ya se
-  // conocen las unidades candidatas y su catálogo `RoomAmenities` (`needsCrib` definitivo).
+  // (Tarea 21) se fuerza a "no pedida" sin importar el body. La segunda mitad del gate — ¿la
+  // unidad FINALMENTE asignada ofrece `custom:cuna`? — se resuelve más abajo, DESPUÉS de
+  // `resolveRoomAmenityLines` contra esa unidad (`needsCrib` definitivo = quedó la línea).
   // Simplificación (2026-09-09): "¿Necesita cuna?" es SOLO Sí/No — no existe cantidad de cunas
   // configurable ("no preguntar si desea una, dos o más cunas"). `cribCount` queda como 1/0
   // espejo de `needsCrib`, no como un valor independiente que el cliente pueda variar.
@@ -428,22 +429,15 @@ export async function createPublicBookingDirect(
 
   // REQ-01 (#290) — keys `custom:*` pedidas. Sin keys (ni cuna pedida), NADA de lo que sigue lee
   // `RoomAmenities` (cero cambio de comportamiento para un caller que no las manda).
-  // #292 — `custom:cuna` tiene UNA sola fuente de verdad: `needsCrib`. Se saca de las keys del
-  // body acá y se vuelve a poner sólo si el gate de cuna (bebé + pedida + el tipo la ofrece) da
-  // true — así la línea de cuna existe si y sólo si `needsCrib`, nunca por una key suelta.
+  // #292 — `custom:cuna` NO entra por el body: se saca de las keys y se vuelve a poner sólo si
+  // la pidió el gate de bebé (`cribRequested`). Que quede o no en el snapshot lo decide
+  // `resolveRoomAmenityLines` contra la unidad asignada, y `needsCrib` se lee de AHÍ (más abajo):
+  // la línea de cuna existe si y sólo si `needsCrib`, nunca por una key suelta ni por un "sí"
+  // que la unidad asignada no puede cumplir.
   const roomAmenityKeys = normalizeRoomAmenityKeys(rawRoomAmenities).filter((k) => k !== CRIB_AMENITY_KEY)
-  const needsRoomAmenityCatalog = roomAmenityKeys.length > 0 || cribRequested
+  if (cribRequested) roomAmenityKeys.push(CRIB_AMENITY_KEY)
+  const needsRoomAmenityCatalog = roomAmenityKeys.length > 0
   let amenitiesByRoom = new Map<string, any[]>()
-  let needsCrib = false
-  /** Cierra el gate de cuna contra las unidades candidatas (`roomsOfferCrib`) y deja
-   *  `roomAmenityKeys` consistente con el resultado. Se llama UNA vez, con el catálogo cargado. */
-  const settleCrib = (candidateRoomIds: string[]) => {
-    needsCrib = cribRequested && roomsOfferCrib(amenitiesByRoom, candidateRoomIds)
-    if (needsCrib) roomAmenityKeys.push(CRIB_AMENITY_KEY)
-    else if (cribRequested) {
-      logger?.warn('createPublicBookingDirect: cuna pedida pero ninguna unidad libre del tipo ofrece custom:cuna — se crea sin cuna', { hotelId, roomType, roomId })
-    }
-  }
 
   // ─── Resolución de la habitación (FIX 2026-07-30, ver cabecera del archivo) ────────
   // 1) `roomId` real (compat callers viejos): si resuelve a una fila de `Rooms`, se usa tal
@@ -485,27 +479,24 @@ export async function createPublicBookingDirect(
     // REQ-01 (#290) — entre las libres, PRIMERO las que ofrecen todas las amenidades pedidas
     // (orden estable: dentro de cada grupo sigue mandando el precio). El catálogo público mostró
     // la unión del tipo; acá se intenta honrarla con una unidad que realmente la tenga.
-    // #292 — el gate de cuna se cierra ACÁ, con el catálogo de las unidades libres del tipo: si
-    // alguna ofrece `custom:cuna`, la key entra a `roomAmenityKeys` y la preferencia elige una
-    // unidad que la tenga (y `resolveRoomAmenityLines` cobra SU precio más abajo).
+    // #292 — con cuna pedida, la cuna tiene prioridad: si ninguna unidad ofrece la combinación
+    // completa, se prefiere la que al menos tenga `custom:cuna` (una cuna para un bebé pesa más
+    // que un jacuzzi). `resolveRoomAmenityLines` cobra SU precio más abajo.
     if (needsRoomAmenityCatalog) {
       amenitiesByRoom = await loadRoomAmenitiesFor(orm, freeOfType.map((r: any) => r.id))
-      settleCrib(freeOfType.map((r: any) => r.id))
-      if (roomAmenityKeys.length > 0) freeOfType = preferRoomsOffering(freeOfType, amenitiesByRoom, roomAmenityKeys)
+      freeOfType = preferRoomsOffering(freeOfType, amenitiesByRoom, roomAmenityKeys, cribRequested ? CRIB_AMENITY_KEY : undefined)
     }
     room = freeOfType[0]
   } else if (needsRoomAmenityCatalog) {
-    // Path de `roomId` explícito: el "tipo" es esa única unidad — ofrece cuna o no.
+    // Path de `roomId` explícito: no hay elección — esa unidad ofrece la cuna o no.
     amenitiesByRoom = await loadRoomAmenitiesFor(orm, [room.id])
-    settleCrib([room.id])
   }
   const resolvedRoomId: string = room.id
-  const cribCount = needsCrib ? 1 : 0
 
   // ─── REQ-01 (#290) — Amenidades de la habitación: validar contra las filas de ESA unidad ──
   // Cubre los dos paths (`roomType` resuelto arriba y `roomId` explícito): key no ofrecida o
   // inactiva en la asignada → se ignora con warn; el precio SIEMPRE sale de `RoomAmenities`.
-  // Con `needsCrib`, `custom:cuna` ya está en las keys: su línea sale de acá como cualquier otra.
+  // Con `cribRequested`, `custom:cuna` ya está en las keys: su línea sale de acá como cualquier otra.
   let roomAmenityLines: RoomAmenityLine[] = []
   let roomAmenitiesTotal = 0
   if (roomAmenityKeys.length > 0) {
@@ -514,6 +505,17 @@ export async function createPublicBookingDirect(
     roomAmenitiesTotal = resolved.total
   }
   const roomAmenitiesSummary = roomAmenityLines.map((l) => `${l.name}=${l.total.toFixed(2)}`)
+
+  // #292 — `needsCrib` definitivo: refleja la unidad FINALMENTE asignada, no el tipo. Es true si
+  // y sólo si la línea `custom:cuna` quedó resuelta en su snapshot (`hasCribLine`); así
+  // `needsCrib === (roomAmenities tiene custom:cuna)` siempre, y `cribCount` es su espejo 1/0.
+  // Si se pidió y la unidad asignada no la ofrece (ninguna libre del tipo la tenía, o un `roomId`
+  // explícito sin cuna), se crea sin cuna con un warn claro.
+  const needsCrib = cribRequested && hasCribLine(roomAmenityLines)
+  const cribCount = needsCrib ? 1 : 0
+  if (cribRequested && !needsCrib) {
+    logger?.warn('createPublicBookingDirect: cuna pedida pero la unidad asignada no la ofrece — se crea sin cuna', { hotelId, roomType, roomId: resolvedRoomId })
+  }
 
   // Red de seguridad final: cubre el path de `roomId` explícito (arriba nunca filtró por
   // capacidad porque no pasa por la resolución de `roomType`) y actúa como defensa en
