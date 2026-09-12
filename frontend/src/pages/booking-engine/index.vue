@@ -429,27 +429,12 @@
                 </div>
               </div>
 
-              <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — reemplaza el viejo
-                   checklist de "amenidades para bebé" por un único toggle: ¿el hotel ofrece
-                   cuna? Sin esto habilitado, "¿Necesita cuna?" ni se pregunta en el motor
-                   público, aunque la reserva tenga un bebé. -->
-              <label v-if="childPolicy.acceptChildren" class="flex items-center gap-3 p-3 bg-surface rounded-xl cursor-pointer w-fit mt-4">
-                <input id="booking-engine-ofrece-cuna" name="cribAvailable" type="checkbox" v-model="childPolicy.cribAvailable" class="w-4 h-4 text-cyan rounded" />
-                <div>
-                  <div class="text-sm font-bold text-navy">Ofrece cuna para bebés</div>
-                  <div class="text-[10px] text-text-muted">Si está prendido, el motor público pregunta "¿Necesita cuna?" (Sí/No) cuando la reserva tiene un bebé</div>
-                </div>
-              </label>
-
-              <!-- REQ-01 (#233) — Amenidades para niños y bebés: catálogo abierto (nombre + precio)
-                   que el motor público ofrece por habitación con niños/bebés. La cuna sigue siendo
-                   el toggle Sí/No de arriba, no una amenidad más. -->
-              <div v-if="childPolicy.acceptChildren" class="mt-4">
-                <label class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Amenidades para niños y bebés</label>
-                <div class="rounded-xl border border-border p-4">
-                  <ChildAmenitiesEditor />
-                </div>
-              </div>
+              <!-- #292 — la cuna y las amenidades para niños/bebés ya no se configuran a nivel
+                   hotel: son amenidades de cada habitación (custom:cuna, con precio). -->
+              <p v-if="childPolicy.acceptChildren" class="mt-4 text-[10px] text-text-muted">
+                La cuna y demás amenidades con precio para niños y bebés se configuran en cada habitación
+                (<router-link to="/panel/config/habitaciones" class="font-bold text-cyan hover:underline">Habitaciones → editar</router-link>).
+              </p>
             </div>
 
 
@@ -549,7 +534,6 @@ import SectionCard from '@/components/ui/SectionCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import CancellationPolicyEditor from '@/components/booking/CancellationPolicyEditor.vue'
 import MealPlansEditor from '@/components/booking/MealPlansEditor.vue'
-import ChildAmenitiesEditor from '@/components/booking/ChildAmenitiesEditor.vue'
 import { ICON_CHECK, ICON_CHECK_CIRCLE, ICON_CHART, ICON_WARNING, ICON_WIDGET } from '@/components/landing/landing-icons'
 
 const auth = useAuthStore()
@@ -630,10 +614,10 @@ const form = reactive<BookingConfig>(defaultConfig())
 // Tarea 21 (Identificar bebés, 2026-09-08) — `maxBabyAge` es subconjunto de "sin plaza".
 // Tarea "Cobro % niños" (2026-09-09) — `childrenDiscountEnabled`+`childrenRatePercent` (1-100,
 // NUNCA hardcodeado a 50): cada niño con plaza paga ese % del "valor de un adulto".
-// Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 — `cribAvailable`: ¿el hotel ofrece cuna?
+// #292 — la cuna ya no es config global: es la amenidad `custom:cuna` de cada habitación.
 const childPolicy = reactive({
   acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
-  childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+  childrenDiscountEnabled: false, childrenRatePercent: 50,
 })
 const childPolicyAgeError = computed(() =>
   childPolicy.maxFreeAge > childPolicy.maxChildAge
