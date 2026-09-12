@@ -1330,7 +1330,8 @@ function facturar() {
                     <span class="text-[10px] text-text-muted">{{ fmtDate(inv.issuedAt) }}</span>
                     <span class="text-xs font-black tabular-nums" :class="inv.type === 'credit_note' ? 'text-purple' : 'text-navy'">{{ invoiceAmount(inv) }}</span>
                   </div>
-                  <div class="flex items-center justify-between gap-2 mt-0.5">
+                  <!-- NC: el backend la crea con amountPaid=0 → balance=amount, pero no es deuda por cobrar; no se muestra saldo. -->
+                  <div v-if="inv.type !== 'credit_note'" class="flex items-center justify-between gap-2 mt-0.5">
                     <span class="text-[10px] text-text-muted">Saldo</span>
                     <span class="text-[11px] font-bold tabular-nums" :class="inv.balance > 0 ? 'text-coral' : 'text-teal'">{{ money(inv.balance, inv.currency) }}</span>
                   </div>

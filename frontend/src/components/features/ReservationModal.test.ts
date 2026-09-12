@@ -678,14 +678,25 @@ describe('ReservationModal', () => {
       expect(vi.mocked(BillingService.print)).toHaveBeenCalledWith('inv1')
     })
 
-    it('una nota de crédito se ve como tal y con el monto en negativo', async () => {
+    it('una nota de crédito se ve como tal, con el monto en negativo y sin "Saldo"', async () => {
+      // Datos reales del backend: toda NC nace `paid` con amountPaid=0, y la proyección calcula
+      // balance = amount - amountPaid → balance positivo. No es deuda: la fila no muestra "Saldo".
       await open(detailFixture({
-        invoices: [invoiceFixture({ id: 'nc1', number: 'NC-0001', type: 'credit_note', amount: 50, amountPaid: 0, balance: 0 })],
+        invoices: [
+          invoiceFixture({ id: 'nc1', number: 'NC-0001', type: 'credit_note', status: 'paid', amount: 50, amountPaid: 0, balance: 50 }),
+          invoiceFixture({ id: 'inv1', number: 'F-0001', status: 'issued', amount: 200, amountPaid: 150, balance: 50 }),
+        ],
       }), BILLING_VIEW)
 
-      const row = rows()[0]
-      expect(row.textContent).toContain('Nota de crédito')
-      expect(row.textContent).toMatch(/-US\$\s?50,00/)
+      const [nc, invoice] = rows()
+      expect(nc.textContent).toContain('Nota de crédito')
+      expect(nc.textContent).toMatch(/-US\$\s?50,00/)
+      expect(nc.textContent).not.toContain('Saldo')
+      expect(nc.querySelector('.text-coral')).toBeNull()
+
+      // Una factura normal sigue mostrando su saldo pendiente.
+      expect(invoice.textContent).toContain('Saldo')
+      expect(invoice.querySelector('.text-coral')?.textContent).toMatch(/US\$\s?50,00/)
     })
 
     it('sin factura: lo dice y ofrece "Facturar" sólo con billing:create', async () => {
