@@ -407,3 +407,150 @@ describe('useGuestComposer — composedPrice con el descuento infantil porcentua
     expect(store.cart[0]!.unitPrice).toBe(160)
   })
 })
+
+// ─── REQ-02 (#234) — Editar una habitación agregada recupera los mismos datos ───────────────────
+describe('useGuestComposer — editCartLine devuelve UNA unidad de la línea al composer de su tarjeta', () => {
+  // maxFreeAge=3, maxBabyAge=1, cuna habilitada, hotel acepta niños.
+  const EDIT_POLICY = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: true }
+  const ROOM_TYPES = [
+    { id: 'double', name: 'double', fromPrice: 100, availableCount: 5, capacity: 6, maxAdults: null, maxChildren: null, surfaceArea: 0, taxBreakdown: [], photoUrl: null },
+    { id: 'suite', name: 'suite', fromPrice: 300, availableCount: 5, capacity: 6, maxAdults: null, maxChildren: null, surfaceArea: 0, taxBreakdown: [], photoUrl: null },
+  ]
+  function setupStore() {
+    const store = useBookingStore()
+    store.childPolicy = { ...EDIT_POLICY }
+    store.ratesResponse = {
+      currency: 'USD', chargeCurrency: 'USD', nights: 2, checkIn: '2026-09-10', checkOut: '2026-09-12',
+      taxes: [], cancellationPolicy: null, cancellationSummary: null, roomTypes: ROOM_TYPES,
+    }
+    store.childAmenities = [
+      { id: 'crib-kit', name: 'Kit bebé', price: 10, sortOrder: 1 },
+      { id: 'high-chair', name: 'Silla alta', price: 5, sortOrder: 2 },
+    ]
+    return store
+  }
+
+  it('recupera adults/ages/needsCrib/childAmenityIds en composer(rt) y quita la línea (quantity 1)', async () => {
+    const store = setupStore()
+    const { setAdults, setChildrenCount, setChildAge, setNeedsCrib, toggleChildAmenity, addComposedRoom, composer, editCartLine } = useGuestComposer()
+    const room = rt('double')
+    setAdults(room, 2)
+    setChildrenCount(room, 2)
+    setChildAge(room, 0, 0) // bebé
+    setChildAge(room, 1, 7) // con plaza
+    setNeedsCrib(room, true)
+    toggleChildAmenity(room, 'high-chair')
+    await addComposedRoom(room)
+    expect(store.cart).toHaveLength(1)
+    // Tras agregar la tarjeta quedó limpia — el dato solo vive en la línea del carrito.
+    expect(composer(room)).toEqual({ adults: 1, ages: [], needsCrib: false })
+
+    expect(editCartLine(store.cart[0]!)).toBe(true)
+
+    expect(composer(room)).toEqual({ adults: 2, ages: [0, 7], needsCrib: true, childAmenityIds: ['high-chair'] })
+    expect(store.cart).toHaveLength(0) // era la última unidad: la línea se fue entera
+  })
+
+  it('recupera roomAmenityKeys (#290: cama extra/cuna de la habitación) — se perdían al editar', async () => {
+    const store = setupStore()
+    store.roomAmenities = { double: [{ key: 'custom:cuna', name: 'Cuna', price: 15 }] }
+    const { setAdults, toggleRoomAmenity, addComposedRoom, composer, editCartLine } = useGuestComposer()
+    const room = rt('double')
+    setAdults(room, 2)
+    toggleRoomAmenity(room, 'custom:cuna')
+    await addComposedRoom(room)
+    expect(store.cart[0]!.roomAmenities).toEqual([{ key: 'custom:cuna', name: 'Cuna', price: 15 }])
+    expect(composer(room)).toEqual({ adults: 1, ages: [], needsCrib: false })
+
+    expect(editCartLine(store.cart[0]!)).toBe(true)
+
+    expect(composer(room)).toEqual({ adults: 2, ages: [], needsCrib: false, roomAmenityKeys: ['custom:cuna'] })
+    expect(store.cart).toHaveLength(0)
+  })
+
+  it('con quantity 2 descuenta UNA unidad (queda 1 en el carrito) y precarga el composer', async () => {
+    const store = setupStore()
+    const { setAdults, setChildrenCount, setChildAge, addComposedRoom, composer, editCartLine } = useGuestComposer()
+    const room = rt('double')
+    // Dos habitaciones con la MISMA composición → una línea ×2.
+    setAdults(room, 2)
+    setChildrenCount(room, 1)
+    setChildAge(room, 0, 5)
+    await addComposedRoom(room)
+    setAdults(room, 2)
+    setChildrenCount(room, 1)
+    setChildAge(room, 0, 5)
+    await addComposedRoom(room)
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.quantity).toBe(2)
+    const key = store.cart[0]!.key
+
+    expect(editCartLine(store.cart[0]!)).toBe(true)
+
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]!.key).toBe(key)
+    expect(store.cart[0]!.quantity).toBe(1)
+    expect(store.cart[0]!.childrenAges).toEqual([5]) // la línea que queda no cambió
+    expect(composer(room)).toEqual({ adults: 2, ages: [5], needsCrib: false })
+    // El composer NO comparte el array de edades con la línea que sigue en el carrito.
+    composer(room).ages[0] = 9
+    expect(store.cart[0]!.childrenAges).toEqual([5])
+  })
+
+  it('con dos líneas de tipos distintos, editar una NO cambia la otra ni el composer de la otra tarjeta', async () => {
+    const store = setupStore()
+    const { setAdults, setChildrenCount, setChildAge, setNeedsCrib, addComposedRoom, composer, editCartLine } = useGuestComposer()
+    const double = rt('double')
+    const suite = rt('suite')
+    // double: 2 adultos + niño de 8.
+    setAdults(double, 2)
+    setChildrenCount(double, 1)
+    setChildAge(double, 0, 8)
+    await addComposedRoom(double)
+    // suite: 1 adulto + bebé con cuna.
+    setChildrenCount(suite, 1)
+    setChildAge(suite, 0, 1)
+    setNeedsCrib(suite, true)
+    await addComposedRoom(suite)
+    expect(store.cart).toHaveLength(2)
+    const suiteLine = store.cart.find((l) => l.roomType === 'suite')!
+    const suiteBefore = JSON.parse(JSON.stringify(suiteLine))
+    // La tarjeta de la suite tiene algo a medio componer que NO debe pisarse.
+    setAdults(suite, 3)
+
+    expect(editCartLine(store.cart.find((l) => l.roomType === 'double')!)).toBe(true)
+
+    expect(composer(double)).toEqual({ adults: 2, ages: [8], needsCrib: false })
+    expect(store.cart).toHaveLength(1)
+    expect(store.cart[0]).toEqual(suiteBefore) // la línea de la suite quedó intacta
+    expect(composer(suite)).toEqual({ adults: 3, ages: [], needsCrib: false }) // la otra tarjeta tampoco se tocó
+  })
+
+  it('roomType desconocido (ya no está en ratesResponse) devuelve false y el carrito queda igual', async () => {
+    const store = setupStore()
+    const { setAdults, addComposedRoom, composer, editCartLine } = useGuestComposer()
+    const room = rt('double')
+    setAdults(room, 2)
+    await addComposedRoom(room)
+    expect(store.cart).toHaveLength(1)
+    const before = JSON.parse(JSON.stringify(store.cart))
+
+    expect(editCartLine({ ...store.cart[0]!, roomType: 'ghost' })).toBe(false)
+
+    expect(store.cart).toEqual(before)
+    expect(composer(room)).toEqual({ adults: 1, ages: [], needsCrib: false })
+    expect(composer(rt('ghost'))).toEqual({ adults: 1, ages: [], needsCrib: false })
+  })
+
+  it('línea legacy de ocupación plana (sin adults/childrenAges) devuelve false y no toca nada', () => {
+    const store = setupStore()
+    const { composer, editCartLine } = useGuestComposer()
+    store.cart = [{
+      key: 'double:2', roomType: 'double', roomName: 'double', occupancy: 2, quantity: 1,
+      unitPrice: 100, unitTaxBreakdown: [], maxAvailable: 5, photoUrl: null,
+    }]
+    expect(editCartLine(store.cart[0]!)).toBe(false)
+    expect(store.cart).toHaveLength(1)
+    expect(composer(rt('double'))).toEqual({ adults: 1, ages: [], needsCrib: false })
+  })
+})

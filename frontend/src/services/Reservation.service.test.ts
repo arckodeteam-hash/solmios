@@ -151,3 +151,27 @@ describe('Reservation.service — endpoints', () => {
     expect(r.cancellationFee).toBeUndefined()
   })
 })
+
+describe('Reservation.service — issueInvoice', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  const body = { invoiceId: 'inv1', invoiceNumber: 'F-0001', source: 'reservation' as const, linkedPayments: 1, amountPaid: 200 }
+
+  it('sin notes pega POST a /reservas/:id/invoice con body vacío y devuelve el resultado sin transformar', async () => {
+    vi.mocked(http.post).mockResolvedValue(body as any)
+
+    const result = await ReservationService.issueInvoice('r1')
+
+    expect(http.post).toHaveBeenCalledWith('/reservas/r1/invoice', {})
+    expect(result).toEqual(body)
+  })
+
+  it('con notes las manda en el body', async () => {
+    vi.mocked(http.post).mockResolvedValue(body as any)
+
+    const result = await ReservationService.issueInvoice('r1', 'x')
+
+    expect(http.post).toHaveBeenCalledWith('/reservas/r1/invoice', { notes: 'x' })
+    expect(result).toEqual(body)
+  })
+})

@@ -230,6 +230,7 @@ import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { MealPlanCode, PromoValidationReason } from '@/types/booking'
 import type { BookingMessageKey } from '@/composables/useBookingI18n'
+import { classifyAge } from '@/utils/child-composition'
 
 const store = useBookingStore()
 const { t, formatPrice } = useBookingI18nStore()
@@ -377,7 +378,8 @@ function cartLineGuestsLabel(line: CartLine): string {
     : t('rooms.guests.summary', {
         adults: line.adults,
         children: line.childrenAges.length,
-        ages: line.childrenAges.join(', '),
+        // REQ-02 (#234) — edad + clasificación por menor (bebé / niño sin plaza / niño con plaza).
+        ages: line.childrenAges.map((age) => childAgeLabel(age)).join(', '),
       })
   const withCrib = line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
   // REQ-01 (#233) — amenidades infantiles elegidas para ESTA habitación, por nombre (snapshot).
@@ -386,5 +388,17 @@ function cartLineGuestsLabel(line: CartLine): string {
   // REQ-01 (#290) — ídem con las amenidades de la habitación (snapshot de la línea).
   const roomAmenities = (line.roomAmenities ?? []).map((a) => a.name)
   return roomAmenities.length > 0 ? `${withChildAmenities} · ${roomAmenities.join(', ')}` : withChildAmenities
+}
+
+/** REQ-02 (#234) — "8 años · niño, consume plaza". Mismo formato EXACTO que `RoomsStep.vue`
+ *  (`childAgeLabel`); 'adult' cae en "consume plaza" como fallback defensivo. */
+function childAgeLabel(age: number): string {
+  const kind = classifyAge(age, store.childPolicy)
+  const classification = kind === 'baby'
+    ? t('rooms.guests.childBaby')
+    : kind === 'free'
+      ? t('rooms.guests.childFree')
+      : t('rooms.guests.childPaying')
+  return `${t('rooms.guests.childAgeYears', { age })} · ${classification}`
 }
 </script>

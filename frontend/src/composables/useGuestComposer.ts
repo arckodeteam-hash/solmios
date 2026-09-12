@@ -8,7 +8,7 @@
 // se olvida en la otra). `useBookingStore()` es un store Pinia singleton, así que ambos
 // componentes comparten `childPolicy`/`nights`/`cart` sin necesidad de pasarlos por parámetro.
 import { computed, reactive } from 'vue'
-import { useBookingStore, MEAL_PLAN_CODES, computeMealPlanTotal } from './useBooking'
+import { useBookingStore, MEAL_PLAN_CODES, computeMealPlanTotal, type CartLine } from './useBooking'
 import { resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError, classifyAge, type ChildAgeClassification } from '@/utils/child-composition'
 import type { MealPlanCode, MealPlanPriceMode, RoomOccupancyRate, RoomTypeRate } from '@/types/booking'
 
@@ -387,6 +387,38 @@ export function useGuestComposer() {
     composerState[rt.id] = freshComposerState()
   }
 
+  /**
+   * REQ-02 (#234) — "al regresar a editar la habitación, recuperar los mismos datos": el botón
+   * Editar de una línea del carrito devuelve UNA unidad de esa línea al composer de SU tarjeta,
+   * precargado con exactamente los adultos, edades, cuna y amenidades que se guardaron al agregar
+   * (`ages` y `childAmenityIds` se copian — la línea que sigue en el carrito, si tenía `quantity`
+   * > 1, no comparte arrays con el composer). Solo se toca `composerState[rt.id]` de esa tarjeta
+   * y esa línea (vía `store.removeCartLineUnit`, que descuenta una unidad o quita la línea si era
+   * la última): las OTRAS líneas y las OTRAS tarjetas quedan como estaban — nunca se mezclan los
+   * datos de una habitación con los de otra.
+   *
+   * Devuelve `false` sin tocar nada si el tipo ya no está en `ratesResponse` (cotización vieja) o
+   * si la línea es del flujo legacy de ocupación plana (sin `adults`/`childrenAges`): no hay
+   * composición que recuperar. `childAmenityIds` y `roomAmenityKeys` (#290: cama extra, cuna…) se
+   * omiten cuando están vacíos para que el estado siga siendo exactamente `{adults, ages, needsCrib}`
+   * (mismo criterio que `freshComposerState`).
+   */
+  function editCartLine(line: CartLine): boolean {
+    const rt = (store.ratesResponse?.roomTypes ?? []).find((r) => r.id === line.roomType)
+    if (!rt || line.adults === undefined || line.childrenAges === undefined) return false
+    const ids = (line.childAmenities ?? []).map((a) => a.id)
+    const keys = (line.roomAmenities ?? []).map((a) => a.key)
+    composerState[rt.id] = {
+      adults: line.adults,
+      ages: [...line.childrenAges],
+      needsCrib: !!line.needsCrib,
+      ...(ids.length > 0 ? { childAmenityIds: ids } : {}),
+      ...(keys.length > 0 ? { roomAmenityKeys: keys } : {}),
+    }
+    store.removeCartLineUnit(line.key)
+    return true
+  }
+
   return {
     composer, setAdults, setChildrenCount, setChildAge,
     composition, matchedRow, composedPrice, composedPricePerNight,
@@ -395,6 +427,8 @@ export function useGuestComposer() {
     // REQ-01 (#233)
     childAmenityIds, shouldOfferChildAmenities, isChildAmenitySelected, toggleChildAmenity,
     composedChildAmenitiesTotal,
+    // REQ-02 (#234)
+    editCartLine,
     // REQ-01 (#290)
     roomAmenityKeys, shouldOfferRoomAmenities, isRoomAmenitySelected, toggleRoomAmenity,
     composedRoomAmenitiesTotal,

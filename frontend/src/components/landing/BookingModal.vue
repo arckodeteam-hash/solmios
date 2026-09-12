@@ -475,6 +475,16 @@
                 </div>
                 <div class="flex shrink-0 items-center gap-2">
                   <span class="font-black tabular-nums text-navy">{{ money(line.unitPrice * line.quantity) }}</span>
+                  <!-- REQ-02 (#234) — devuelve UNA unidad de esta línea al composer de su tarjeta con
+                       los mismos datos (adultos/edades/cuna/amenidades) para corregirla sin rearmarla.
+                       Mismo comportamiento que RoomsStep.vue (widget /book/:slug). -->
+                  <button
+                    type="button"
+                    class="cursor-pointer text-xs font-bold text-cyan-700 hover:underline"
+                    data-testid="cart-edit"
+                    aria-label="Editar"
+                    @click="editCartLine(line)"
+                  >Editar</button>
                   <button
                     type="button"
                     class="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-text-muted hover:bg-danger/10 hover:text-danger"
@@ -898,6 +908,7 @@ import { useBookingStore, type CartLine } from '@/composables/useBooking'
 import { useGuestComposer, type MealPlanOption } from '@/composables/useGuestComposer'
 import { PublicHotelService } from '@/services/PublicHotel.service'
 import { formatMoney, formatShortDate, nightsBetween } from '@/utils/rate-calendar'
+import { classifyAge } from '@/utils/child-composition'
 import type {
   MealPlanCode,
   OccupancyUnavailableReason,
@@ -935,6 +946,8 @@ const {
   childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib,
   // REQ-01 (#233) — amenidades para niños/bebés por habitación.
   shouldOfferChildAmenities, isChildAmenitySelected, toggleChildAmenity, composedChildAmenitiesTotal,
+  // REQ-02 (#234) — "Editar" una línea del carrito: la devuelve al composer de su tarjeta.
+  editCartLine,
   // REQ-01 (#290) — amenidades de la habitación (cuna, cama extra…) por habitación.
   shouldOfferRoomAmenities, isRoomAmenitySelected, toggleRoomAmenity, composedRoomAmenitiesTotal,
   // MR-03 (#268) — régimen por habitación (radio por tarjeta).
@@ -1196,7 +1209,10 @@ function cartLineGuestsLabel(line: CartLine): string {
   if (line.adults === undefined || line.childrenAges === undefined) return `para ${line.occupancy}`
   const base = line.childrenAges.length === 0
     ? plural(line.adults, 'adulto', 'adultos')
-    : `${plural(line.adults, 'adulto', 'adultos')} · ${plural(line.childrenAges.length, 'niño', 'niños')} (${line.childrenAges.join(', ')} años)`
+    // REQ-02 (#234) — cada menor con su edad Y su clasificación (bebé / niño sin plaza / niño con
+    // plaza) según la política del hotel, para que el huésped confirme cómo quedó contado cada uno
+    // en ESTA habitación. Ej: "1 adulto · 2 niños (1 año · bebé, 8 años · niño, consume plaza)".
+    : `${plural(line.adults, 'adulto', 'adultos')} · ${plural(line.childrenAges.length, 'niño', 'niños')} (${line.childrenAges.map(childAgeLabel).join(', ')})`
   // Tarea 22 (Cuna, corrección 2026-09-09) — antes esta línea no mostraba la cuna en NINGÚN
   // resumen ya agregado (el dato se guardaba bien, pero no se veía).
   const withCrib = line.needsCrib ? `${base} · Cuna` : base
@@ -1210,6 +1226,18 @@ function cartLineGuestsLabel(line: CartLine): string {
   return line.mealPlan && line.mealPlan.code !== 'room_only'
     ? `${withRoomAmenities} · ${BOARD_PLAN_LABELS[line.mealPlan.code]}`
     : withRoomAmenities
+}
+
+/** REQ-02 (#234) — "8 años · niño, consume plaza". Mismo formato que RoomsStep/PayStep (widget).
+ *  'adult' (edad > maxChildAge, no debería llegar al carrito) cae en "consume plaza" como fallback. */
+function childAgeLabel(age: number): string {
+  const kind = classifyAge(age, store.childPolicy)
+  const classification = kind === 'baby'
+    ? 'bebé'
+    : kind === 'free'
+      ? 'niño, no consume plaza'
+      : 'niño, consume plaza'
+  return `${plural(age, 'año', 'años')} · ${classification}`
 }
 
 /** Ícono de persona(s) de la fila (single/dos siluetas), sin emoji — mismo trazo que
