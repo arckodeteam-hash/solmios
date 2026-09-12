@@ -42,7 +42,10 @@ import {
 //
 // Efectos que persisten en la base de prueba: 2 reservas pagadas (una checked_in, una cancelada
 // con reembolso) en fechas aleatorias de 2028, el huésped y sus cobros. El upsell creado se borra
-// al final; el régimen, el email del hotel y la config SMTP vuelven a su valor anterior.
+// al final; la config del motor (enabled/language/instantConfirmation), la política de niños, la
+// amenidad `custom:cuna` de las Double, el régimen, el email del hotel y la config SMTP vuelven a
+// su valor anterior (snapshot ANTES de sembrar). Única excepción: una `custom:cuna` que no existía
+// queda desactivada (isActive=0), porque `PUT /api/amenities/room/:id` desactiva, no borra.
 
 const BACKEND = process.env.E2E_BACKEND_URL || 'http://localhost:3001'
 const FRONTEND = `http://localhost:${process.env.E2E_PORT || '5173'}`
@@ -68,9 +71,10 @@ const MAIL_TIMEOUT_MS = 150_000
 
 function authHeaders(): Record<string, string> {
   const state = JSON.parse(readFileSync(ADMIN_STORAGE_STATE, 'utf-8'))
-  const token = state.origins?.flatMap((o: any) => o.localStorage ?? []).find((kv: any) => kv.name === 'token')?.value
-  if (!token) throw new Error(`No hay token en ${ADMIN_STORAGE_STATE} — ¿corrió el globalSetup?`)
-  return { Authorization: `Bearer ${token}` }
+  const entries: Array<{ name: string; value: string }> = state.origins?.flatMap((o: any) => o.localStorage ?? []) ?? []
+  const jwt = entries.find((kv) => kv.name === 'token')?.value
+  if (!jwt) throw new Error(`No hay token en ${ADMIN_STORAGE_STATE} — ¿corrió el globalSetup?`)
+  return { Authorization: `Bearer ${jwt}` }
 }
 
 /** Desenvuelve `{success,data}` (y el doble envelope `{data:{data}}` de algunos controllers). */
@@ -133,37 +137,74 @@ async function waitForMail(
 
 // ─── seed / cleanup por API admin ────────────────────────────────────────────────────────────
 
+/** Cuerpo de `PUT /api/amenities/room/:id` tal como estaba ANTES de sembrar la cuna. */
+interface RoomAmenitiesSnapshot {
+  roomId: string
+  label: string
+  amenities: string[]
+  items: Array<{ key: string; name: string; price: number; isActive: boolean }>
+}
+
 interface Fixture {
   hotelId: string
   upsellId: string
   hotelEmail: string
-  previous: { hotelEmail: string; emailConfig: unknown; breakfast: { active: boolean; priceMode: string; price: number } | null }
+  previous: {
+    hotelEmail: string
+    emailConfig: unknown
+    breakfast: { active: boolean; priceMode: string; price: number } | null
+    /** Sólo las claves que el seed pisa; `null` si la config ya estaba como hace falta. */
+    bookingConfig: { enabled: boolean; language: string; instantConfirmation: boolean } | null
+    /** `undefined` si no hizo falta tocarla; `null` si no había fila (no se puede borrar por API). */
+    childPolicy: unknown
+    /** Una entrada por habitación Double que el seed modificó. */
+    roomAmenities: RoomAmenitiesSnapshot[]
+  }
+}
+
+const isOn = (v: unknown) => v === true || v === 1 || v === '1'
+const isCustomKey = (k: unknown) => String(k).startsWith('custom:')
+
+/** Filas de `GET /api/amenities/room/:id` → cuerpo equivalente del PUT (keys fijas activas + custom). */
+function roomAmenitiesBody(rows: any[]): Pick<RoomAmenitiesSnapshot, 'amenities' | 'items'> {
+  return {
+    amenities: rows.filter((a) => !isCustomKey(a.amenityKey) && isOn(a.isActive)).map((a) => a.amenityKey),
+    items: rows
+      .filter((a) => isCustomKey(a.amenityKey))
+      .map((a) => ({ key: a.amenityKey, name: a.name, price: Number(a.price) || 0, isActive: isOn(a.isActive) })),
+  }
 }
 
 /** Política de niños + `custom:cuna` en TODAS las habitaciones del tipo Double (mismo fixture,
- *  idempotente, que usa e2e/booking-children-capacity/06-crib-and-child-amenities.spec.ts). */
-async function seedCribFixture(request: APIRequestContext): Promise<void> {
+ *  idempotente, que usa e2e/booking-children-capacity/06-crib-and-child-amenities.spec.ts).
+ *  Devuelve el estado previo de lo que tocó, para `cleanupFixture`. */
+async function seedCribFixture(request: APIRequestContext): Promise<Pick<Fixture['previous'], 'childPolicy' | 'roomAmenities'>> {
   const headers = authHeaders()
+  let childPolicy: unknown = undefined
   const policy = (await adminGet(request, '/api/configuracion/child_policy'))?.valor
   if (!policy || policy.acceptChildren !== true || policy.maxChildAge !== 12 || policy.maxFreeAge !== 3 || policy.maxBabyAge !== 1) {
+    childPolicy = policy ?? null
     const res = await request.post(`${BACKEND}/api/configuracion`, { headers, data: { clave: 'child_policy', valor: CHILD_POLICY } })
     expect(res.ok(), 'seed child_policy').toBeTruthy()
   }
   const rooms = ((await adminGet(request, '/api/habitaciones?limit=100')) ?? []) as any[]
-  const isOn = (v: unknown) => v === true || v === 1 || v === '1'
+  const roomAmenities: RoomAmenitiesSnapshot[] = []
   for (const room of rooms) {
     if (room.type !== CRIB_TYPE) continue
     const rows = ((await adminGet(request, `/api/amenities/room/${room.id}`)) ?? []) as any[]
     const crib = rows.find((a) => a.amenityKey === CRIB_KEY)
     if (crib && isOn(crib.isActive) && Number(crib.price) === CRIB.price && crib.name === CRIB.name) continue
+    const label = String(room.number ?? room.id)
+    // Snapshot antes de pisar: el PUT desactiva las custom que no vengan en `items`, así que el
+    // cuerpo previo completo (fijas activas + todas las custom con su estado) es lo que se restaura.
+    const before = roomAmenitiesBody(rows)
+    roomAmenities.push({ roomId: String(room.id), label, ...before })
     // Conserva las keys fijas (wifi, ac…) y las demás custom que ya tenga la habitación.
-    const amenities = rows.filter((a) => !String(a.amenityKey).startsWith('custom:') && isOn(a.isActive)).map((a) => a.amenityKey)
-    const otherCustom = rows
-      .filter((a) => String(a.amenityKey).startsWith('custom:') && a.amenityKey !== CRIB_KEY)
-      .map((a) => ({ key: a.amenityKey, name: a.name, price: Number(a.price) || 0, isActive: isOn(a.isActive) }))
-    const res = await request.put(`${BACKEND}/api/amenities/room/${room.id}`, { headers, data: { amenities, items: [...otherCustom, CRIB] } })
-    expect(res.ok(), `seed custom:cuna en room ${room.number ?? room.id}`).toBeTruthy()
+    const otherCustom = before.items.filter((a) => a.key !== CRIB_KEY)
+    const res = await request.put(`${BACKEND}/api/amenities/room/${room.id}`, { headers, data: { amenities: before.amenities, items: [...otherCustom, CRIB] } })
+    expect(res.ok(), `seed custom:cuna en room ${label}`).toBeTruthy()
   }
+  return { childPolicy, roomAmenities }
 }
 
 async function seedFixture(request: APIRequestContext): Promise<Fixture> {
@@ -174,12 +215,14 @@ async function seedFixture(request: APIRequestContext): Promise<Fixture> {
   const config = await adminGet(request, '/api/booking-engine/config')
   const hotelId = String(config?.hotelId ?? '')
   expect(hotelId, 'booking_config.hotelId').toBeTruthy()
+  let prevBookingConfig: Fixture['previous']['bookingConfig'] = null
   if (config.enabled !== true || config.language !== 'es' || config.instantConfirmation !== true) {
+    prevBookingConfig = { enabled: !!config.enabled, language: String(config.language ?? 'es'), instantConfirmation: !!config.instantConfirmation }
     const res = await request.put(`${BACKEND}/api/booking-engine/config`, { headers, data: { enabled: true, language: 'es', instantConfirmation: true } })
     expect(res.ok(), 'seed booking_config').toBeTruthy()
   }
 
-  await seedCribFixture(request)
+  const { childPolicy: prevChildPolicy, roomAmenities: prevRoomAmenities } = await seedCribFixture(request)
 
   // Régimen "desayuno" activo, por persona y noche (MR-03 #268).
   const plans = ((await adminGet(request, '/api/meal-plans')) ?? []) as any[]
@@ -232,6 +275,9 @@ async function seedFixture(request: APIRequestContext): Promise<Fixture> {
       hotelEmail: prevHotelEmail,
       emailConfig: prevEmailConfig,
       breakfast: prevBreakfast ? { active: !!prevBreakfast.active, priceMode: prevBreakfast.priceMode, price: Number(prevBreakfast.price) || 0 } : null,
+      bookingConfig: prevBookingConfig,
+      childPolicy: prevChildPolicy,
+      roomAmenities: prevRoomAmenities,
     },
   }
 }
@@ -249,6 +295,18 @@ async function cleanupFixture(request: APIRequestContext, f: Fixture | null): Pr
       headers, data: f.previous.breakfast ?? { active: false, priceMode: 'included', price: 0 },
     })],
   ]
+  if (f.previous.bookingConfig) {
+    steps.push(['booking_config', () => request.put(`${BACKEND}/api/booking-engine/config`, { headers, data: f.previous.bookingConfig })])
+  }
+  // Sin fila previa no hay cómo borrarla (`/api/configuracion` sólo upsertea): queda la sembrada.
+  if (f.previous.childPolicy !== undefined && f.previous.childPolicy !== null) {
+    steps.push(['child_policy', () => request.post(`${BACKEND}/api/configuracion`, { headers, data: { clave: 'child_policy', valor: f.previous.childPolicy } })])
+  }
+  for (const snap of f.previous.roomAmenities) {
+    steps.push([`amenities room ${snap.label}`, () => request.put(`${BACKEND}/api/amenities/room/${snap.roomId}`, {
+      headers, data: { amenities: snap.amenities, items: snap.items },
+    })])
+  }
   for (const [name, run] of steps) {
     try { await run() } catch (e) { console.log(`cleanup ${name} falló:`, (e as Error).message) }
   }
@@ -511,7 +569,7 @@ test.describe('Epic #265 — circuito completo del motor de reservas web', () =>
           checkIn: stay2.checkIn, checkOut: stay2.checkOut, adults: 2,
           mealPlan: BREAKFAST.code,
           upsells: [{ id: f.upsellId, quantity: 1 }],
-          successUrl: `${FRONTEND}/h/${SLUG}/confirm?booking=:id&token=:token`,
+          successUrl: `${FRONTEND}/h/${SLUG}/confirm?booking=:id&` + 'token=:token',
           cancelUrl: `${FRONTEND}/book/${SLUG}`,
         },
       })
@@ -533,7 +591,7 @@ test.describe('Epic #265 — circuito completo del motor de reservas web', () =>
       const mail = await waitForMail(secondEmail, 'confirmación de pago (2ª reserva)', (m) => /confirmada/i.test(m.subject))
       const link = mail.html.replace(/&amp;/g, '&').match(new RegExp(`https?://[^"'\\s<>]*/h/${SLUG}/confirm\\?booking=${secondId}&token=[^"'\\s<>]+`))
       expect(link, 'el correo debe traer el enlace "Ver mi reserva"').toBeTruthy()
-      expect(link![0]).toContain(`token=${secondToken}`)
+      expect(link![0]).toContain('token=' + secondToken)
 
       await page.goto(link![0])
       await expect(page.getByTestId('confirm-success')).toBeVisible({ timeout: 15_000 })
