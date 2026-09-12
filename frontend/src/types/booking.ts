@@ -411,7 +411,15 @@ export interface OpenBookingOptions {
   skipToRooms?: boolean
 }
 
-export type UpsellKind = 'per_room' | 'per_person' | 'per_stay'
+/**
+ * Cómo se cobra un upsell (MR-10, #275). Espejo de `backend/bookingengine/types.ts`:
+ *  - `per_room`   → price × qty (qty ≤ habitaciones del carrito)
+ *  - `per_person` → price × qty (qty ≤ personas sin bebés)
+ *  - `per_stay`   → price × 1
+ *  - `per_night`  → price × noches (qty forzada a 1)
+ *  - `per_person_per_night` → price × personas × noches (qty forzada a 1)
+ */
+export type UpsellKind = 'per_room' | 'per_person' | 'per_stay' | 'per_night' | 'per_person_per_night'
 
 /**
  * Upsell activo del hotel (`GET /api/public/hotels/:slug/upsells`). Público, sin auth.
@@ -523,6 +531,28 @@ export interface TotalBreakdown {
   taxes: number
   /** Tarea 24 (#88): cada impuesto con nombre, % e importe. */
   taxBreakdown: RoomTypeTaxItem[]
+  /** MR-10 (#275) — cada extra cotizado por el backend (`resolveUpsellLines`), con el
+   *  multiplicador por `kind` explícito. Opcional: reservas anteriores no lo tienen. */
+  upsells?: UpsellBreakdownLine[]
+  total: number
+}
+
+/**
+ * Línea de upsell cotizada por el backend (`priceBreakdown.upsells[]`, MR-10 #275). Espejo de
+ * `UpsellPricedLine` de `backend/bookingengine/usecases/upsell-pricing.ts`. Invariante:
+ * `unitPrice × quantity × nights × (persons ?? 1) === total` (redondeado).
+ */
+export interface UpsellBreakdownLine {
+  id: string
+  name: string
+  kind: UpsellKind
+  unitPrice: number
+  /** Cantidad efectiva: la pedida en per_room/per_person, 1 en per_stay/per_night/ppn. */
+  quantity: number
+  /** Noches por las que se multiplica: las de la estadía en per_night/ppn, 1 en el resto. */
+  nights: number
+  /** Personas por las que se multiplica — sólo en `per_person_per_night`. */
+  persons?: number
   total: number
 }
 
@@ -530,8 +560,14 @@ export interface TotalBreakdown {
 export interface UpsellLine {
   id: string
   name: string
+  /** MR-10 (#275) — para que PayStep/ConfirmStep puedan mostrar "× 2 personas × 3 noches". */
+  kind?: UpsellKind
   quantity: number
   unitPrice: number
+  /** Noches por las que se multiplica (per_night/ppn); 1 en el resto. */
+  nights?: number
+  /** Personas por las que se multiplica — sólo en `per_person_per_night`. */
+  persons?: number
   total: number
 }
 
