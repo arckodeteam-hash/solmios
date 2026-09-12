@@ -253,6 +253,8 @@ interface Announcement {
   html: string
   metadata: Record<string, unknown>
   relatedType: string
+  /** Tipo de la campanita; por defecto `reservation`. */
+  type?: string
 }
 
 /** Reparte el aviso: campanita por usuario, correo al hotel, push por usuario. Nunca tira. */
@@ -270,7 +272,7 @@ async function deliver(deps: ReservationNotifyDeps, ref: ReservationRef, a: Anno
       await deps.notificaciones.create({
         hotelId: ref.hotelId,
         userId: user.id,
-        type: RESERVATION_NOTIFICATION_TYPE,
+        type: a.type ?? RESERVATION_NOTIFICATION_TYPE,
         title: a.title,
         message: a.message,
         read: 0,
@@ -420,6 +422,116 @@ export async function notifyReservationPaid(
     })
   } catch (e) {
     deps.logger?.warn('No se pudo avisar el pago confirmado', {
+      reservationId: reservation.id, hotelId: reservation.hotelId, error: (e as Error).message,
+    })
+    return { notified: 0, emailed: false }
+  }
+}
+
+/**
+ * #272 — Aviso `system` (sin reserva que recargar, sin correo ni push) a cada usuario del hotel que
+ * puede ver reservas. Lo usa el reembolso web cuando la pasarela no devolvió: el hotel tiene que
+ * enterarse para reintentar desde la reserva. Nunca tira.
+ */
+export async function notifySystemToViewers(
+  deps: Pick<ReservationNotifyDeps, 'notificaciones' | 'users' | 'roles' | 'logger'>,
+  hotelId: string,
+  n: { title: string; message: string; metadata?: Record<string, unknown> },
+): Promise<{ notified: number }> {
+  const actor = systemActor(hotelId)
+  let notified = 0
+  try {
+    const viewers = await findReservationViewers(deps, hotelId)
+    for (const user of viewers) {
+      try {
+        await deps.notificaciones.create({
+          hotelId,
+          userId: user.id,
+          type: 'system',
+          title: n.title,
+          message: n.message,
+          read: 0,
+          date: new Date().toISOString(),
+          metadata: n.metadata ?? {},
+        }, actor)
+        notified++
+      } catch (e) {
+        deps.logger?.warn('No se pudo crear la notificación de sistema', {
+          hotelId, userId: user.id, title: n.title, error: (e as Error).message,
+        })
+      }
+    }
+  } catch (e) {
+    deps.logger?.warn('No se pudo repartir la notificación de sistema', {
+      hotelId, title: n.title, error: (e as Error).message,
+    })
+  }
+  return { notified }
+}
+
+export interface CancellationInfo {
+  refundAmount: number
+  cancellationFee: number
+  /** `reservations.refundStatus` tras intentar el reembolso (none | pending | done | failed). */
+  refundStatus?: string
+  /** Habitaciones que cubre la cancelación (grupo). Si no viene se cuenta el grupo. */
+  roomsCount?: number
+}
+
+function refundStateLabel(info: CancellationInfo): string {
+  if (!(Number(info.refundAmount) > 0)) return 'sin reembolso'
+  if (info.refundStatus === 'done') return 'reembolsado'
+  if (info.refundStatus === 'failed' || info.refundStatus === 'pending') return 'reembolso pendiente'
+  return 'sin reembolso'
+}
+
+/**
+ * #272 — El huésped canceló desde la web: campanita + push a quien puede ver reservas.
+ *
+ * El correo al hotel NO sale de acá: lo encola `email-bootstrap` con la plantilla editable
+ * `reservation_cancelled_staff`. Por eso se reparte con `emailSender: null`. Nunca tira.
+ */
+export async function notifyReservationCancelled(
+  deps: ReservationNotifyDeps,
+  reservation: ReservationRef,
+  info: CancellationInfo,
+): Promise<NotifyResult> {
+  try {
+    const s = await loadSummary(deps, reservation)
+    if (!s) return { notified: 0, emailed: false }
+
+    const currency = String(s.row.currency || 'USD')
+    const refund = Number(info.refundAmount) > 0 ? money(info.refundAmount, currency) : `0.00 ${currency}`
+    const fee = money(info.cancellationFee, currency)
+    const state = refundStateLabel(info)
+    const count = info.roomsCount && info.roomsCount > 0 ? info.roomsCount : s.count
+    const room = count > 1 ? `hab. ×${count}` : s.room
+    const title = `Cancelación web · ${s.guest}`
+    const message = [s.guest, room, `${s.checkIn} → ${s.checkOut}`, `reembolso ${refund} (${state})`]
+      .filter(Boolean).join(', ')
+    const html = [
+      `<p>Huésped: ${esc(s.guest)}</p>`,
+      room ? `<p>Habitación: ${esc(room.replace(/^hab\. /, ''))}</p>` : '',
+      `<p>Estadía: ${esc(s.checkIn)} → ${esc(s.checkOut)}</p>`,
+      `<p>Reembolso: ${esc(refund)} (${esc(state)})</p>`,
+      fee !== '—' ? `<p>Penalidad: ${esc(fee)}</p>` : '',
+    ].filter(Boolean).join('\n')
+
+    // Sólo campanita + push: el correo al hotel va por la plantilla `reservation_cancelled_staff`.
+    return await deliver({ ...deps, emailSender: null }, reservation, {
+      title,
+      message,
+      html,
+      metadata: {
+        link: reservationPanelLink(reservation.id),
+        reservationId: reservation.id,
+        refundAmount: Number(info.refundAmount) || 0,
+        refundStatus: info.refundStatus ?? (Number(info.refundAmount) > 0 ? 'pending' : 'none'),
+      },
+      relatedType: 'reservation:cancelled',
+    })
+  } catch (e) {
+    deps.logger?.warn('No se pudo avisar la cancelación web', {
       reservationId: reservation.id, hotelId: reservation.hotelId, error: (e as Error).message,
     })
     return { notified: 0, emailed: false }
