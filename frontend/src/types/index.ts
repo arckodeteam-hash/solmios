@@ -406,7 +406,8 @@ export interface StayQuoteNight {
 }
 
 export interface StayQuote {
-  roomId: string
+  /** REQ-HAC-05 (#260): `null` cuando se cotizó por TIPO (sin unidad elegida). */
+  roomId: string | null
   roomType: string
   /** Precio por noche sin temporadas — lo que cotizaba el wizard antes de esto. */
   basePrice: number
@@ -420,6 +421,29 @@ export interface StayQuote {
   fromRates: boolean
   /** Noches cuya tarifa está cerrada en la grilla (aviso, no bloqueo). */
   closedNights: number
+}
+
+// === TYPE AVAILABILITY (REQ-HAC-05, #260: el wizard vende un TIPO, la unidad se asigna después) ===
+// Espejo de `GET /api/reservas/type-availability` (backend/src/modules/reservas/controller.ts):
+// una fila por tipo del hotel con las unidades libres en el rango pedido.
+export interface TypeAvailabilityNight {
+  date: string
+  booked: number
+  available: number
+}
+
+export interface TypeAvailability {
+  /** `rooms.type` tal cual (single/double/suite…). */
+  roomType: string
+  /** Unidades vendibles del tipo. */
+  rooms: number
+  /** Máximo de unidades ocupadas en una noche del rango. */
+  booked: number
+  /** Mínimo de libres entre todas las noches: lo que se puede vender para TODA la estadía. */
+  available: number
+  perNight: TypeAvailabilityNight[]
+  minBasePrice: number
+  capacity: number
 }
 
 // === CANCELACIÓN (planning / listado: cancelar una reserva aplicando la política) ===
