@@ -19,6 +19,15 @@ export interface AutoMessageTemplateRow {
 
 const PLACEHOLDER_RE = /\{(\w+)\}/g
 
+/**
+ * #270: las variables con sufijo `_lines` (extras_lines, tax_lines, rooms_lines, …) son fragmentos
+ * HTML que arma el usecase escapando cada valor con `escapeHtml`; renderTemplate NO las re-escapa.
+ * Único lugar donde vive la convención.
+ */
+export function isRawHtmlKey(key: string): boolean {
+  return key.endsWith('_lines')
+}
+
 /** Escapa HTML en valores interpolados (defensa XSS si el HTML se re-muestra en una vista web). */
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -30,6 +39,9 @@ export function escapeHtml(s: string): string {
  * - Si NO está → deja el placeholder literal (no rompe).
  * - `escape=true` (default): escapa HTML en strings (para bodies HTML).
  * - `escape=false`: texto plano (para subjects de email, que NO son HTML — fix H2).
+ * - Excepción (#270): las keys `*_lines` (ver `isRawHtmlKey`: extras_lines/tax_lines/rooms_lines)
+ *   se insertan tal cual aunque `escape=true`, porque son HTML ya armado por el usecase con cada
+ *   valor escapado; re-escaparlas rompería la lista (`&lt;ul&gt;` visible en el correo).
  */
 export function renderTemplate(
   template: string,
@@ -41,7 +53,7 @@ export function renderTemplate(
     const v = variables[key]
     if (v === null || v === undefined) return ''
     const str = String(v)
-    return typeof v === 'string' && escape ? escapeHtml(str) : str
+    return typeof v === 'string' && escape && !isRawHtmlKey(key) ? escapeHtml(str) : str
   })
 }
 

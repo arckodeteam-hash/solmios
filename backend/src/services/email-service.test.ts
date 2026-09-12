@@ -180,4 +180,68 @@ describe('EmailService', () => {
       expect(sendMailMock).not.toHaveBeenCalled()
     })
   })
+
+  describe('adjuntos (#270)', () => {
+    const PDF_BASE64 = Buffer.from('%PDF-1.4 recibo').toString('base64')
+    const attachment = { filename: 'recibo-ABC123.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64 }
+    /** enqueue dispara processQueue fire-and-forget: esperamos a que la fila salga de pending/processing. */
+    const settle = async (queue: ReturnType<typeof makeQueueRepo>, id: string): Promise<EmailQueueDTO> => {
+      for (let i = 0; i < 50; i++) {
+        const row = queue._store.get(id)!
+        if (row.status === 'sent' || row.status === 'failed') return row
+        await new Promise((r) => setTimeout(r, 5))
+      }
+      throw new Error(`fila ${id} no se procesó`)
+    }
+
+    it('enqueueNotification persiste attachments en la fila y SMTP los recibe como Buffer + contentType', async () => {
+      const queue = makeQueueRepo({ forceDue: true })
+      const svc = new EmailService(makeConfigRepo({ email_config: SMTP_CFG }), queue, log)
+
+      const id = await svc.enqueueNotification({
+        to: 'a@b.com', hotelId: 'h1', event: 'reservation_confirmed', language: 'es',
+        variables: { guest_name: 'Ana', hotel_name: 'H' },
+        relatedType: 'reservation', relatedId: 'r1',
+        attachments: [attachment],
+      })
+      expect(id).toBe('q-1')
+      const row = queue._store.get('q-1')!
+      expect(row.attachments).toEqual([attachment])
+
+      await settle(queue, 'q-1')
+      expect(row.status).toBe('sent')
+      expect(sendMailMock).toHaveBeenCalledTimes(1)
+      const mail = (sendMailMock.mock.calls[0] as unknown[])[0] as { attachments: { filename: string; content: Buffer; contentType: string }[] }
+      expect(mail.attachments).toHaveLength(1)
+      expect(mail.attachments[0].filename).toBe('recibo-ABC123.pdf')
+      expect(mail.attachments[0].contentType).toBe('application/pdf')
+      expect(Buffer.isBuffer(mail.attachments[0].content)).toBe(true)
+      expect(mail.attachments[0].content.equals(Buffer.from(PDF_BASE64, 'base64'))).toBe(true)
+    })
+
+    it('sin attachments no manda la clave; attachments como JSON string (repo crudo) también se decodifica', async () => {
+      const queue = makeQueueRepo({ forceDue: true })
+      const svc = new EmailService(makeConfigRepo({ email_config: SMTP_CFG }), queue, log)
+      await svc.enqueue({ to: 'a@b.com', subject: 's', html: '<p/>', hotelId: 'h1' })
+      expect(queue._store.get('q-1')!.attachments).toBeUndefined()
+      await settle(queue, 'q-1')
+      await queue.create({ hotelId: 'h1', recipient: 'b@b.com', subject: 's', html: '<p/>', status: 'pending', maxAttempts: 3, attachments: JSON.stringify([attachment]) } as any)
+
+      await svc.processQueue()
+
+      const calls = sendMailMock.mock.calls as unknown as [{ attachments?: { content: Buffer }[] }][]
+      expect(calls).toHaveLength(2)
+      expect(calls[0][0].attachments).toBeUndefined()
+      expect(calls[1][0].attachments?.[0].content.equals(Buffer.from(PDF_BASE64, 'base64'))).toBe(true)
+    })
+
+    it('Resend recibe attachments [{filename, content: base64}]', async () => {
+      const queue = makeQueueRepo({ forceDue: true })
+      const svc = new EmailService(makeConfigRepo({ resend_api_key: 'rk_test_123' }), queue, log)
+      await svc.enqueue({ to: 'a@b.com', subject: 's', html: '<p/>', hotelId: 'h1', attachments: [attachment] })
+      expect((await settle(queue, 'q-1')).provider).toBe('resend')
+      const sent = (resendSendMock.mock.calls[0] as unknown[])[0] as { attachments: { filename: string; content: string }[] }
+      expect(sent.attachments).toEqual([{ filename: 'recibo-ABC123.pdf', content: PDF_BASE64 }])
+    })
+  })
 })

@@ -13,12 +13,12 @@
 import nodemailer from 'nodemailer'
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
 import { NotificationRenderer, renderTemplate, escapeHtml } from './notification-renderer'
-import type { EmailSender, NotificationInput } from './email-sender'
+import type { EmailSender, NotificationInput, EmailAttachment } from './email-sender'
 import { resolvePlatformIdentity } from '../shared/utils/platform-identity'
 
 // Re-exports backward-compat: renderTemplate y NotificationInput migraron a módulos propios (SRP).
 export { renderTemplate } from './notification-renderer'
-export type { NotificationInput } from './email-sender'
+export type { NotificationInput, EmailAttachment } from './email-sender'
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -39,6 +39,8 @@ export interface EmailQueueDTO {
   provider?: 'smtp' | 'resend' | null
   relatedType?: string | null
   relatedId?: string | null
+  /** #270: columna json. El ORM deserializa al leer; puede llegar string en repos crudos (ver parseAttachments). */
+  attachments?: EmailAttachment[] | null
   createdAt?: string
   updatedAt?: string
 }
@@ -53,6 +55,8 @@ export interface EnqueueInput {
   /** Origen del email para trazabilidad (ej: 'reservation'). */
   relatedType?: string
   relatedId?: string
+  /** Adjuntos (#270: recibo PDF). Se persisten en la fila de la cola. */
+  attachments?: EmailAttachment[]
 }
 
 interface SmtpConfig {
@@ -128,6 +132,21 @@ export class EmailNotConfiguredError extends Error {
 
 // Render de plantillas (renderTemplate / escapeHtml / resolveTemplate) → notification-renderer.ts.
 
+/**
+ * #270: `attachments` es columna json — el ORM la deserializa al leer, pero un repo crudo puede
+ * devolver el texto. Tolera objeto o string; cualquier cosa inválida → sin adjuntos (no rompe el envío).
+ */
+function parseAttachments(raw: unknown): EmailAttachment[] | undefined {
+  let value = raw
+  if (typeof raw === 'string') {
+    try { value = JSON.parse(raw) } catch { return undefined }
+  }
+  if (!Array.isArray(value)) return undefined
+  const list = value.filter((a): a is EmailAttachment =>
+    !!a && typeof a === 'object' && typeof (a as EmailAttachment).filename === 'string' && typeof (a as EmailAttachment).contentBase64 === 'string')
+  return list.length ? list : undefined
+}
+
 // ─── EmailService ───────────────────────────────────────────────────────────
 
 export class EmailService implements EmailSender {
@@ -173,6 +192,7 @@ export class EmailService implements EmailSender {
       provider: null,
       relatedType: input.relatedType ?? null,
       relatedId: input.relatedId ?? null,
+      attachments: input.attachments?.length ? input.attachments : undefined,
     } as Omit<EmailQueueDTO, 'id'>)
 
     // Envío inmediato sin bloquear: el worker del interval también lo tomará.
@@ -191,7 +211,7 @@ export class EmailService implements EmailSender {
     })
     return this.enqueue({
       to: input.to, subject, html, hotelId: input.hotelId,
-      relatedType: input.relatedType, relatedId: input.relatedId,
+      relatedType: input.relatedType, relatedId: input.relatedId, attachments: input.attachments,
     })
   }
 
@@ -249,7 +269,10 @@ export class EmailService implements EmailSender {
     await this.queueRepo.update(row.id, { status: 'processing' } as Partial<EmailQueueDTO>)
 
     try {
-      const provider = await this.sendNow({ to: row.recipient, subject: row.subject, html: row.html, hotelId: row.hotelId })
+      const provider = await this.sendNow({
+        to: row.recipient, subject: row.subject, html: row.html, hotelId: row.hotelId,
+        attachments: parseAttachments(row.attachments),
+      })
       await this.queueRepo.update(row.id, { status: 'sent', provider, lastError: null, nextRetryAt: null } as Partial<EmailQueueDTO>)
     } catch (e) {
       await this.handleFailure(row, e as Error)
@@ -257,11 +280,15 @@ export class EmailService implements EmailSender {
   }
 
   /** Envía el email: SMTP desde Configuration, fallback Resend, o error si ninguno. */
-  private async sendNow(input: { to: string; subject: string; html: string; hotelId: string }): Promise<'smtp' | 'resend'> {
+  private async sendNow(input: { to: string; subject: string; html: string; hotelId: string; attachments?: EmailAttachment[] }): Promise<'smtp' | 'resend'> {
+    const attachments = input.attachments?.length ? input.attachments : undefined
     const smtp = await this.resolveSmtpConfig(input.hotelId)
     if (smtp) {
       const transporter = this.getTransporter(smtp)
-      await transporter.sendMail({ from: smtp.from, to: input.to, subject: input.subject, html: input.html })
+      await transporter.sendMail({
+        from: smtp.from, to: input.to, subject: input.subject, html: input.html,
+        ...(attachments && { attachments: attachments.map((a) => ({ filename: a.filename, content: Buffer.from(a.contentBase64, 'base64'), contentType: a.contentType })) }),
+      })
       return 'smtp'
     }
 
@@ -272,7 +299,10 @@ export class EmailService implements EmailSender {
       const fromAddress = await this.resolveFromAddress(input.hotelId)
       const { Resend } = await import('resend')
       const resend = new Resend(resendKey)
-      const { error } = await resend.emails.send({ from: fromAddress, to: input.to, subject: input.subject, html: input.html })
+      const { error } = await resend.emails.send({
+        from: fromAddress, to: input.to, subject: input.subject, html: input.html,
+        ...(attachments && { attachments: attachments.map((a) => ({ filename: a.filename, content: a.contentBase64 })) }),
+      })
       if (error) throw new Error(`Resend: ${error.message}`)
       return 'resend'
     }

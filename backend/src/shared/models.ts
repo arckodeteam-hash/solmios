@@ -193,6 +193,8 @@ export function registerSharedModels(orm: ORM): void {
       provider: { type: 'string' },
       relatedType: { type: 'string' },
       relatedId: { type: 'string' },
+      // #270: adjuntos [{filename, contentType, contentBase64}] (el recibo PDF del correo de confirmación). Nullable.
+      attachments: { type: 'json' },
     },
   })
 

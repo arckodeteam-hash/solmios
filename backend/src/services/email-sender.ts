@@ -10,6 +10,13 @@
 
 import type { NotificationEvent, NotificationLanguage } from './notification-defaults'
 
+/** Adjunto de email (#270: el recibo PDF viaja en la cola como base64, serializable a JSON). */
+export interface EmailAttachment {
+  filename: string
+  contentType: string
+  contentBase64: string
+}
+
 /** Input para resolver + renderizar + encolar una notificación por (event, language). */
 export interface NotificationInput {
   to: string
@@ -20,6 +27,8 @@ export interface NotificationInput {
   /** Origen para trazabilidad (ej: 'reservation', 'checkin'). */
   relatedType?: string
   relatedId?: string
+  /** Adjuntos opcionales (#270: recibo PDF). */
+  attachments?: EmailAttachment[]
 }
 
 /**
