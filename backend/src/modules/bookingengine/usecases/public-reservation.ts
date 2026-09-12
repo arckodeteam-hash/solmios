@@ -37,6 +37,7 @@ import crypto from 'node:crypto'
 import { paymentAmountsOf } from '../../../shared/utils/payment-status'
 import { paidForReservation } from '../../../shared/usecases/reservation-paid'
 import { chargeableTotal } from '../../../shared/utils/reservation-balance'
+import { DEFAULT_APPROVAL_DEADLINE_HOURS } from './config'
 
 const NOT_FOUND = { status: 404, body: { error: 'Reservation not found' } } as const
 
@@ -125,6 +126,19 @@ export async function getPublicReservation(
   }
   const amounts = paymentAmountsOf(chargeableTotal(reservation, addons as any[]), paid)
 
+  // #271 MR-06 — plazo de aprobación del hotel (`booking_config.approvalDeadlineHours`). Best-effort:
+  // sin fila, columna vieja en null o consulta fallida → default 24. Siempre un número, nunca null:
+  // la pantalla de confirmación lo interpola en "El hotel revisará su reserva en las próximas N h".
+  let approvalDeadlineHours = DEFAULT_APPROVAL_DEADLINE_HOURS
+  try {
+    const configRows = (await orm.findMany('BookingConfig', { hotelId: reservation.hotelId })) as any[]
+    const raw = Number(configRows?.[0]?.approvalDeadlineHours)
+    if (Number.isFinite(raw) && raw > 0) approvalDeadlineHours = raw
+  } catch {
+    // Se queda con el default: el plazo es informativo, no puede tumbar la confirmación pública.
+  }
+  const rejected = reservation.approvalStatus === 'rejected'
+
   // B-6/H-4 (auditoría 2026-08-19): allow-list ESTRICTA, campo por campo — NUNCA la fila
   // cruda (patrón public-hotel-info.ts). La fila de Reservations arrastra ownerNotes,
   // otaNotes, cardHolder/cardLast4 (el model dice "se revelan solo tras PIN"),
@@ -183,6 +197,18 @@ export async function getPublicReservation(
         // `cancellationReason` es texto libre (el panel guarda lo que tipea el empleado): al
         // público sale SOLO el código de sistema 'payment_timeout'; cualquier otro motivo → null.
         cancellationReason: reservation.cancellationReason === 'payment_timeout' ? 'payment_timeout' : null,
+        // #271 (MR-06) — cuántas horas se da el hotel para revisar SU reserva pendiente: es la
+        // promesa que la pantalla de confirmación le hace al huésped ("el hotel revisará su reserva
+        // en las próximas N h"), no un dato interno. Siempre número (default 24).
+        approvalDeadlineHours,
+        // #271 (MR-06) — por qué el hotel RECHAZÓ su reserva. Al rechazar, el panel guarda en
+        // `cancellationReason` el texto que el empleado escribió PARA el huésped (RejectReservationModal),
+        // así que en esta rama sí es suyo. Fuera de `approvalStatus === 'rejected'` → null: la
+        // regla de arriba (solo el código 'payment_timeout') sigue intacta para el resto.
+        rejectionReason: rejected ? (reservation.cancellationReason ?? null) : null,
+        // #271 (MR-06) — cuánto le devolvió el hotel al rechazar (reembolso 100% de lo cobrado).
+        // Es SU dinero: mismo criterio que `amountPaid`/`pendingAmount`. Solo en rechazo; si no → null.
+        refundAmount: rejected ? Number(reservation.refundAmount ?? 0) : null,
       },
       guest: guest ? { id: guest.id, name: guest.name, email: guest.email, phone: guest.phone ?? '' } : null,
       paymentStatus: amounts.status,

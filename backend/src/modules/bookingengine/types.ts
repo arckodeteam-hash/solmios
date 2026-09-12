@@ -21,6 +21,8 @@ export interface BookingConfigDTO {
   allowedCountries: string[]
   /** #266 — Minutos para completar el pago de una reserva web (15–1440, default 60). */
   pendingTtlMinutes: number
+  /** #271 MR-06 — Horas para aprobar/rechazar una reserva web pendiente (1–168, default 24). */
+  approvalDeadlineHours: number
   createdAt: string
   updatedAt: string
 }
@@ -41,6 +43,7 @@ export interface UpdateBookingConfigDTO {
   stripeAccountId?: string
   allowedCountries?: string[]
   pendingTtlMinutes?: number
+  approvalDeadlineHours?: number
 }
 
 // ─── Availability ──────────────────────────────────────

@@ -29,6 +29,10 @@ export const BookingConfigModel: ModelDefinition = {
     // Reemplaza `pendingPaymentTtlHours` de #248: la columna vieja queda huérfana en DB
     // (RUN_MIGRATE no borra columnas) y ya no se lee.
     pendingTtlMinutes: { type: 'number', default: 60 },
+    // #271 MR-06 — Horas que el hotel se da para aprobar/rechazar una reserva web con
+    // "confirmación instantánea" apagada (1–168, default 24). La pantalla pública se lo
+    // muestra al huésped y el cron de recordatorio lo usa como plazo.
+    approvalDeadlineHours: { type: 'number', default: 24 },
   },
 }
 
