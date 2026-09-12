@@ -120,6 +120,10 @@ export const BookingService = {
     // (mismo criterio que `upsells`/`needsCrib`: nunca mandar la clave vacía). Viaja solo la
     // `key`; el precio lo resuelve el backend.
     if (dto.roomAmenities && dto.roomAmenities.length > 0) body.roomAmenities = dto.roomAmenities
+    // #265/#268 MR-03 — mismo defecto que la cuna: `mealPlan` estaba en `CreateBookingDTO` y
+    // el carrito lo mostraba, pero nunca viajaba en el POST → el backend guardaba `room_only`
+    // con `mealPlanTotal=0`. Solo se manda si viene (igual que `upsells`/`needsCrib`).
+    if (dto.mealPlan) body.mealPlan = dto.mealPlan
     if (dto.successUrl) body.successUrl = dto.successUrl
     if (dto.cancelUrl) body.cancelUrl = dto.cancelUrl
     if (dto.idempotencyKey) body.idempotencyKey = dto.idempotencyKey
