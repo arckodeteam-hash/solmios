@@ -285,7 +285,7 @@ export async function getPublicBookingBySlug(orm: any, slug: string, query: any)
  *                       El controller las arma desde el referer/host del request en F0 wiring.
  * @param extraDeps      (F2 2.5) Repos para promo/upsells/régimen/config. Ver `PublicBookingExtraDeps`.
  * @param pushAvailabilityByType REQ-HAC-05 — push de disponibilidad a las OTAs POR TIPO
- *                       (`canales.pushAvailabilityByRoomType`). Es el que se invoca al crear.
+ *                       (`canales.pushAvailability(hotelId, roomType)`). Es el que se invoca al crear.
  */
 export async function createPublicBookingDirect(
   orm: any,
