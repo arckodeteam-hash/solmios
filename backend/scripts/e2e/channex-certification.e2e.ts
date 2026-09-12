@@ -237,6 +237,10 @@ async function newTrailSince(known: Set<string>, expected = 1, timeoutMs = 20_00
   return rows
 }
 
+/** Ventana del rate limit por property (60 s) + margen: lo máximo que un push de disponibilidad
+ *  puede quedar retenido por el transporte antes de salir (ver comentario en T10). */
+const AVAILABILITY_WAIT_MS = 75_000
+
 const taskIdsOf = (rows: TrailRow[]) => rows.flatMap((r) => r.taskIds ?? [])
 const callsOf = (rows: TrailRow[]) => rows.length
 
@@ -486,11 +490,11 @@ try {
   // T9: una noche. Twin baja 1 unidad; Double se agota (las 2 unidades reservadas → 0).
   const r9a = await api('POST', '/api/reservas', { hotelId, roomId: twinIds[0], guestId, checkIn: '2026-11-21', checkOut: '2026-11-22', totalAmount: 100, status: 'confirmed', channel: 'direct' })
   ok(r9a.status < 300, `reserva Twin 21/11 → ${r9a.status}`)
-  const r9rows1 = await newTrailSince(known, 1)
+  const r9rows1 = await newTrailSince(known, 1, AVAILABILITY_WAIT_MS)
   const r9b = await api('POST', '/api/reservas', { hotelId, roomId: dblIds[0], guestId, checkIn: '2026-11-25', checkOut: '2026-11-26', totalAmount: 100, status: 'confirmed', channel: 'direct' })
   const r9c = await api('POST', '/api/reservas', { hotelId, roomId: dblIds[1], guestId, checkIn: '2026-11-25', checkOut: '2026-11-26', totalAmount: 100, status: 'confirmed', channel: 'direct' })
   ok(r9b.status < 300 && r9c.status < 300, `reservas Double 25/11 (las 2 unidades) → ${r9b.status}/${r9c.status}`)
-  const r9rows2 = await newTrailSince(known, 2, 30_000)
+  const r9rows2 = await newTrailSince(known, 2, AVAILABILITY_WAIT_MS)
   const avail9 = await readAvailability('2026-11-21', '2026-11-26')
   const t9ok = ok(
     Number(avail9?.[twinRt]?.['2026-11-21']) === beforeTwin - 1 && Number(avail9?.[dblRt]?.['2026-11-25']) === 0,
@@ -501,10 +505,16 @@ try {
     '3 reservas de 1 noche = 1 llamada cada una; Double agotado = 0')
 
   // T10: rangos. Twin 10→16, Double 17→24.
+  // Los pushes de disponibilidad pueden tardar hasta un minuto en salir y NO es un fallo: el
+  // transporte (#294) deja pasar 9 POST /availability por minuto y property, y esta corrida ya
+  // gastó 5 en la limpieza de la corrida anterior, 1 en el full sync y 3 en T9. El 10.º espera a
+  // que expire el más viejo de la ventana (Channex corta en 10). Verificado el 2026-09-12 en prod:
+  // r10a salió 25 s después, exactamente cuando venció el push más viejo. Con 20 s de espera el
+  // check daba (0/2) con las dos llamadas correctas y el readback bien.
   const r10a = await api('POST', '/api/reservas', { hotelId, roomId: twinIds[1], guestId, checkIn: '2026-11-10', checkOut: '2026-11-16', totalAmount: 600, status: 'confirmed', channel: 'direct' })
-  const r10rows1 = await newTrailSince(known, 1)
+  const r10rows1 = await newTrailSince(known, 1, AVAILABILITY_WAIT_MS)
   const r10b = await api('POST', '/api/reservas', { hotelId, roomId: dblIds[0], guestId, checkIn: '2026-11-17', checkOut: '2026-11-24', totalAmount: 700, status: 'confirmed', channel: 'direct' })
-  const r10rows2 = await newTrailSince(known, 1)
+  const r10rows2 = await newTrailSince(known, 1, AVAILABILITY_WAIT_MS)
   ok(r10a.status < 300 && r10b.status < 300, `reservas de rango → ${r10a.status}/${r10b.status}`)
   const avail10 = await readAvailability('2026-11-10', '2026-11-24')
   const t10ok = ok(
