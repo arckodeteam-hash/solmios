@@ -530,6 +530,9 @@ Specs: `specs/reputation-aggregator/spec.md`, `specs/wallet-pass/spec.md`,
       patrón que `reservas-opiniones.ts`) → dispara `generatePass(reservationId)`.
       Best-effort: try/catch no rompe el webhook de confirmación si el pass falla.
       **Acceptance**: reservar e2e → `wallet_passes` tiene una fila con ambos URLs.
+      - [x] 3.8.1 (#262, REQ-HAC-07) También escucha `reservas.onRoomAssigned` → `generatePass(id, false)`:
+            la fila parcial (`lockCode: ''`, creada por `usecases/partial-pass.ts` desde el cron de
+            pre-llegada para reservas sin habitación) se completa in-place al asignar la unidad.
 
 - [x] 3.9 Email "Tu pase de reserva + código de acceso" via `email-bootstrap.ts`:
       template HTML con ambos links (Apple+Google) + el `lockCode` visible.

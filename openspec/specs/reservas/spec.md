@@ -892,6 +892,43 @@ best-effort: TTLock caído no rompe ni la asignación ni el webhook de Stripe.
 - **WHEN** llega `onPaymentRequestPaid`
 - **THEN** 0 códigos; al asignarle habitación → 1 código activo
 
+### Requirement: Consumidores toleran reserva sin habitación y auto-asignación la víspera (REQ-HAC-07, #262)
+
+**Auto-asignación por el sistema (`usecases/auto-assign-room.ts`, `service.autoAssignRoom(id, hotelId)`).**
+Sin ruta HTTP: lo consume el cron de pase pre-llegada (`shared/usecases/prearrival-pass-cron.ts`).
+`autoAssignSuggestedRoom` MUST leer la reserva y devolver `{ assigned: false, reason }` sin escribir
+nada si no existe (`not_found`), ya tiene `roomId` (`already_assigned`) o está en `CLOSED_STATUSES`
+(`closed`); si no, toma la `suggested` (o la primera) de `listAssignableRooms` del tipo vendido
+(nunca `allTypes`: un upgrade no es una decisión automática) y delega en `assignRoom` con el usuario
+`{ id: 'system', role: 'system', hotelId }` → `roomAssignedBy: 'system'`, audit
+`reservation.room_assigned` con `userId: 'system'`, `onRoomAssigned` (TTLock genera el código,
+`reservas-wallet` genera/completa el pase). Sin libres → `{ assigned: false, reason: 'no_rooms' }`.
+`assertOwnership` sigue corriendo: el sistema sólo asigna unidades del hotel de la reserva.
+
+**Cuándo se intenta (`booking_config.autoAssignBeforeArrivalHours`, entero 0–168, default 0 =
+apagado; Página pública → Motor de reservas).** El cron, para cada reserva `confirmed` sin `roomId`
+con llegada a ≤ 24 h, intenta la auto-asignación sólo si el valor es > 0 y las horas hasta la llegada
+son ≤ ese valor; si asigna y el pase quedó con código → manda el pase completo; si no hay libres
+(`warn`) o el valor es 0 → manda el pase parcial (tipo, fechas y horario, "Por asignar", sin código;
+ver spec de wallet-pass).
+
+**Los demás consumidores toleran `roomId` nulo (tests uno por uno):** auto-mensajes reemplazan
+`{room_number}` por `por asignar` (`marketing/usecases/trigger-auto-messages.ts`); housekeeping no
+crea `arrival_setup` para una llegada sin unidad y la borra si se desasigna; el dashboard enriquece
+con `roomNumber: ''`; el no-show cron no toca `Rooms`; el night audit saltea la fila sin cortar el
+loop; los reports calculan la ocupación por RESERVA vigente esa noche y por tipo (`roomType`, con la
+unidad como fallback), así una sin asignar cuenta como ocupada.
+
+#### Scenario: la víspera sin habitación con auto-asignación encendida
+- **GIVEN** `autoAssignBeforeArrivalHours: 24`, una reserva `confirmed` sin `roomId` que llega en 20 h y una unidad libre de su tipo
+- **WHEN** corre el cron de pase pre-llegada
+- **THEN** la reserva queda con esa unidad, `roomAssignedBy: 'system'`, audit `reservation.room_assigned`, código TTLock generado y el huésped recibe el pase completo (número + código)
+
+#### Scenario: sin libres o apagado → pase parcial
+- **GIVEN** la misma reserva y `autoAssignBeforeArrivalHours: 0`, o `24` pero ninguna unidad libre
+- **WHEN** corre el cron
+- **THEN** no se escribe `roomId` (con `24` se loguea `warn`), el huésped recibe el pase parcial una sola vez, y al asignarle habitación después recibe el completo
+
 ### Requirement: Disponibilidad por tipo que cuenta reservas sin asignar (REQ-HAC-02, #257)
 
 **Fuente única (`shared/usecases/type-availability.ts`).** `availableOfType(port, hotelId, roomType,

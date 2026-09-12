@@ -92,6 +92,30 @@ regenerarse con el nuevo `lockCode`. El pass anterior se marca obsoleto (no se s
   pass con nuevo `lockCode`, persiste nueva fila en `wallet_passes` (la vieja se marca
   `obsoleteAt`)
 
+### Requirement: Pase parcial para reservas sin habitación y completado al asignar (#262, REQ-HAC-07)
+
+Con HAC-01 la reserva nace sin `roomId`, así que al pagar no hay cerradura ni `lockCode` y
+`generatePass` no persiste nada. El cron de pre-llegada MUST poder mandar igual un pase PARCIAL
+(`usecases/partial-pass.ts` → `service.sendPartialPassEmailNow`): tipo vendido, fechas y horario,
+habitación "Por asignar", SIN bloque de código y con asunto "Tu pase de reserva — {hotel}".
+La fila `wallet_passes` se crea con `lockCode: ''` ANTES de encolar el correo (el UNIQUE por
+`reservationId` es lo que impide un doble envío entre corridas solapadas) y se marca `emailSentAt`
+al enviarse; si el envío falla la fila se borra para reintentar. Una fila con `lockCode` o con
+`emailSentAt` no se reenvía.
+
+`generatePass` MUST tratar una fila parcial como pendiente, no como idempotente: al resolverse un
+`lockCode` (connector `reservas-wallet` escucha `reservas.onRoomAssigned` y llama
+`generatePass(id, false)`) la completa in-place (`lockCode`, `appleUrl`, `googleUrl`,
+`generatedAt`, `emailSentAt: null`) para que el cron mande el pase completo. Sin `lockCode`
+(TTLock apagado) la parcial queda intacta.
+
+#### Scenario: pase parcial y completado
+- GIVEN reserva `confirmed` sin `roomId` con llegada a 20 h
+- WHEN corre el cron de pre-llegada
+- THEN el huésped recibe UN correo "Tu pase de reserva" con "Por asignar" y sin código; `wallet_passes` tiene una fila `lockCode: ''` con `emailSentAt`
+- WHEN recepción (o el sistema) le asigna habitación
+- THEN la misma fila queda con `lockCode` y `emailSentAt: null`, y el siguiente tick manda el pase completo
+
 ### Requirement: Email al huésped con ambos links
 
 Tras generar el pass, el sistema MUST encolar email "Tu pase de reserva + código de
