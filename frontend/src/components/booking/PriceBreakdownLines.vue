@@ -14,7 +14,15 @@
         <span class="text-text-muted">{{ t('confirm.lodging') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-bold text-navy tabular-nums">{{ format(lodging) }}</span>
       </div>
-      <div v-if="breakdown.upsellsTotal > 0" class="flex justify-between" data-testid="upsell-line">
+      <!-- MR-10 (#275): con `upsells[]` (reservas nuevas) una fila por extra con su multiplicador
+           ("Desayuno × 2 pers. × 3 noches"); sin él (reservas viejas) la fila agregada de siempre. -->
+      <template v-if="breakdown.upsells?.length">
+        <div v-for="line in breakdown.upsells" :key="line.id" class="flex justify-between" data-testid="upsell-line">
+          <span class="text-text-muted">{{ upsellLineLabel(line) }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
+          <span class="font-bold text-navy tabular-nums">{{ format(line.total) }}</span>
+        </div>
+      </template>
+      <div v-else-if="breakdown.upsellsTotal > 0" class="flex justify-between" data-testid="upsell-line">
         <span class="text-text-muted">{{ t('pay.extras') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-bold text-navy tabular-nums">{{ format(breakdown.upsellsTotal) }}</span>
       </div>
@@ -45,7 +53,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { TotalBreakdown } from '@/types/booking'
+import type { TotalBreakdown, UpsellBreakdownLine } from '@/types/booking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 
 const props = defineProps<{
@@ -64,4 +72,15 @@ const lodging = computed(() => Math.round((
   (props.breakdown?.subtotal ?? 0) - (props.breakdown?.upsellsTotal ?? 0) - (props.breakdown?.childAmenitiesTotal ?? 0)
   - (props.breakdown?.roomAmenitiesTotal ?? 0)
 ) * 100) / 100)
+
+/** "Desayuno × 2 pers. × 3 noches" (ppn) · "Parking × 3 noches" (per_night) · "Late checkout × 2"
+ *  (per_room/per_person con cantidad > 1) · "Late checkout" (qty 1). Mismo criterio que el
+ *  resumen de pago: el huésped ve por qué se multiplica, no sólo el total. */
+function upsellLineLabel(line: UpsellBreakdownLine): string {
+  const parts = [line.name]
+  if (line.quantity > 1) parts.push(`× ${line.quantity}`)
+  if (line.persons !== undefined) parts.push(`× ${line.persons} pers.`)
+  if ((line.nights ?? 1) > 1) parts.push(`× ${t('confirm.nights', { count: line.nights })}`)
+  return parts.join(' ')
+}
 </script>

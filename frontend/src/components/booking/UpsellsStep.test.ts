@@ -21,6 +21,7 @@ vi.mock('@/services/Booking.service', () => ({
 
 import UpsellsStep from './UpsellsStep.vue'
 import { useBookingStore, type CartLine } from '@/composables/useBooking'
+import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import type { Upsell } from '@/types/booking'
 
 function cartLine(over: Partial<CartLine> = {}): CartLine {
@@ -37,6 +38,7 @@ function upsell(over: Partial<Upsell> = {}): Upsell {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  useBookingI18nStore().setLocale('es')
 })
 
 describe('UpsellsStep — cantidad por defecto de "por persona"', () => {
@@ -120,10 +122,106 @@ describe('UpsellsStep — cantidad por defecto de "por persona"', () => {
     await w.find('input[type="checkbox"]').setValue(true)
     expect(store.selectedUpsells[0]!.quantity).toBe(2)
 
-    const buttons = w.findAll('button').filter((b) => b.text() === '+')
-    await buttons[0]!.trigger('click')
+    // MR-10 (#275): el default ya es el tope (2 personas), así que sólo se puede BAJAR.
+    const minus = w.findAll('button').filter((b) => b.text() === '−')
+    await minus[0]!.trigger('click')
 
-    expect(store.selectedUpsells[0]!.quantity).toBe(3)
+    expect(store.selectedUpsells[0]!.quantity).toBe(1)
+    w.unmount()
+  })
+
+  // MR-10 (#275) — tope por kind: per_person ≤ personas del carrito SIN bebés (espejo de
+  // `upsellMaxQuantity` del backend, que responde 400 upsell_quantity_out_of_range por encima).
+  it('per_person: el tope es la cantidad de huéspedes sin bebés y el Stepper no deja pasar de ahí', async () => {
+    const store = useBookingStore()
+    // maxBabyAge=1 → el de 1 año es bebé (no desayuna); el de 8 tiene plaza (ya en occupancy=3).
+    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+    store.upsells = [upsell()]
+    store.cart = [cartLine({ occupancy: 3, adults: 2, childrenAges: [8, 1] })]
+    const w = mount(UpsellsStep)
+
+    await w.find('input[type="checkbox"]').setValue(true)
+
+    // 2 adultos + niño con plaza = 3; el bebé no cuenta → default 3 = tope 3.
+    expect(store.upsellMaxQty('per_person')).toBe(3)
+    expect(store.selectedUpsells).toEqual([{ id: 'breakfast', quantity: 3 }])
+    const plus = w.findAll('button').filter((b) => b.text() === '+')[0]!
+    expect(plus.attributes('disabled')).toBeDefined()
+    await plus.trigger('click')
+    expect(store.selectedUpsells).toEqual([{ id: 'breakfast', quantity: 3 }])
+    // Nada de "20" hardcodeado: el Stepper recibe el tope del store.
+    expect(w.findComponent({ name: 'Stepper' }).props('max')).toBe(3)
+    w.unmount()
+  })
+
+  it('kindLabel: los kinds nuevos por noche tienen etiqueta propia', () => {
+    const store = useBookingStore()
+    store.upsells = [
+      upsell({ id: 'parking-night', name: 'Parking', kind: 'per_night', price: 15 }),
+      upsell({ id: 'breakfast', name: 'Desayuno', kind: 'per_person_per_night', price: 10 }),
+    ]
+    store.cart = [cartLine({ occupancy: 2, adults: 2, childrenAges: [] })]
+    const w = mount(UpsellsStep)
+    const text = w.text()
+    expect(text).toContain('Por noche')
+    expect(text).toContain('Por persona y noche')
+    w.unmount()
+  })
+})
+
+describe('UpsellsStep — kinds por noche (MR-10 #275)', () => {
+  function withNights(store: ReturnType<typeof useBookingStore>, nights: number) {
+    // `store.nights` sale de la respuesta de /rates; sólo importa `nights` para estas pruebas.
+    store.ratesResponse = { nights, roomTypes: [] } as never
+  }
+
+  it('per_person_per_night: sin stepper, muestra price × personas × noches como precio de la estadía', async () => {
+    const store = useBookingStore()
+    store.upsells = [upsell({ id: 'breakfast', kind: 'per_person_per_night', price: 10 })]
+    store.cart = [cartLine({ occupancy: 2, adults: 2, childrenAges: [] })]
+    withNights(store, 3)
+    const w = mount(UpsellsStep)
+
+    // 10 × 2 personas × 3 noches = 60 en la tarjeta, ANTES de tildar; el unitario queda chico.
+    expect(w.find('[data-testid="upsell-stay-price"]').text()).toContain('60')
+    expect(w.find('[data-testid="upsell-unit-price"]').text()).toContain('10')
+    expect(w.find('[data-testid="upsell-unit-price"]').text()).toContain('Por persona y noche')
+
+    await w.find('input[type="checkbox"]').setValue(true)
+
+    expect(store.selectedUpsells).toEqual([{ id: 'breakfast', quantity: 1 }])
+    expect(w.findAll('button').filter((b) => b.text() === '+')).toHaveLength(0)
+    expect(store.upsellsTotal).toBe(60)
+    w.unmount()
+  })
+
+  it('per_night: sin stepper, muestra price × noches', async () => {
+    const store = useBookingStore()
+    store.upsells = [upsell({ id: 'parking', kind: 'per_night', price: 15 })]
+    store.cart = [cartLine({ occupancy: 4, adults: 4, childrenAges: [] })]
+    withNights(store, 3)
+    const w = mount(UpsellsStep)
+
+    // 15 × 3 noches = 45 (las 4 personas NO multiplican).
+    expect(w.find('[data-testid="upsell-stay-price"]').text()).toContain('45')
+    expect(w.find('[data-testid="upsell-unit-price"]').text()).toContain('Por noche')
+
+    await w.find('input[type="checkbox"]').setValue(true)
+
+    expect(store.selectedUpsells).toEqual([{ id: 'parking', quantity: 1 }])
+    expect(w.findAll('button').filter((b) => b.text() === '+')).toHaveLength(0)
+    expect(store.upsellsTotal).toBe(45)
+    w.unmount()
+  })
+
+  it('per_person / per_stay: la tarjeta muestra el precio unitario, sin línea de unitario aparte', () => {
+    const store = useBookingStore()
+    store.upsells = [upsell({ id: 'late', kind: 'per_stay', price: 25 })]
+    store.cart = [cartLine({ occupancy: 2, adults: 2, childrenAges: [] })]
+    withNights(store, 3)
+    const w = mount(UpsellsStep)
+    expect(w.find('[data-testid="upsell-stay-price"]').text()).toContain('25')
+    expect(w.find('[data-testid="upsell-unit-price"]').exists()).toBe(false)
     w.unmount()
   })
 })
