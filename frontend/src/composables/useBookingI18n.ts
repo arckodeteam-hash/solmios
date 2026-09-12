@@ -150,7 +150,12 @@ const messages = {
     'rooms.guests.childAmenityFree': 'Sin cargo',
     'rooms.guests.addRoom': 'Agregar esta habitación',
     'rooms.guests.adultsCount': '{count} {count, plural, one {adulto} other {adultos}}',
-    'rooms.guests.summary': '{adults} {adults, plural, one {adulto} other {adultos}} · {children} {children, plural, one {niño} other {niños}} ({ages} años)',
+    'rooms.guests.summary': '{adults} {adults, plural, one {adulto} other {adultos}} · {children} {children, plural, one {niño} other {niños}} ({ages})',
+    // REQ-02 (#234) — clasificación por menor en el resumen de la habitación agregada.
+    'rooms.guests.childAgeYears': '{age} {age, plural, one {año} other {años}}',
+    'rooms.guests.childBaby': 'bebé',
+    'rooms.guests.childFree': 'niño, no consume plaza',
+    'rooms.guests.childPaying': 'niño, consume plaza',
     // Requerimiento 6 (2026-09-03) — maxAdults/maxChildren del TIPO no vienen codificados en la
     // matriz de ocupaciones (occupancy-matrix.ts solo conoce el número, no la composición): sin
     // esto, excederlos apagaba "Agregar" con un precio arriba y sin decir por qué.
@@ -166,6 +171,7 @@ const messages = {
     'rooms.quantity': 'Cantidad',
     'rooms.cartTitle': 'Tu selección',
     'rooms.cartRemove': 'Quitar',
+    'rooms.cartEdit': 'Editar',
     'rooms.cartSummary': '{rooms} {rooms, plural, one {habitación} other {habitaciones}} · {guests} {guests, plural, one {huésped} other {huéspedes}} · {nights} {nights, plural, one {noche} other {noches}}',
     'rooms.cartContinue': 'Continuar',
     // #220 — desglose estimado (subtotal / impuestos / total) en el carrito, ver EstimatedTotals.vue.
@@ -414,7 +420,12 @@ const messages = {
     'rooms.guests.childAmenityFree': 'Free of charge',
     'rooms.guests.addRoom': 'Add this room',
     'rooms.guests.adultsCount': '{count} {count, plural, one {adult} other {adults}}',
-    'rooms.guests.summary': '{adults} {adults, plural, one {adult} other {adults}} · {children} {children, plural, one {child} other {children}} (age {ages})',
+    'rooms.guests.summary': '{adults} {adults, plural, one {adult} other {adults}} · {children} {children, plural, one {child} other {children}} ({ages})',
+    // REQ-02 (#234)
+    'rooms.guests.childAgeYears': 'age {age}',
+    'rooms.guests.childBaby': 'baby',
+    'rooms.guests.childFree': 'child, no capacity',
+    'rooms.guests.childPaying': 'child, uses capacity',
     'rooms.guests.maxAdultsExceeded': 'Exceeds this room’s maximum adults',
     'rooms.guests.maxChildrenExceeded': 'Exceeds this room’s maximum children',
     'rooms.unavailable.no_rate': 'No rate for this occupancy',
@@ -426,6 +437,7 @@ const messages = {
     'rooms.quantity': 'Quantity',
     'rooms.cartTitle': 'Your selection',
     'rooms.cartRemove': 'Remove',
+    'rooms.cartEdit': 'Edit',
     'rooms.cartSummary': '{rooms} {rooms, plural, one {room} other {rooms}} · {guests} {guests, plural, one {guest} other {guests}} · {nights} {nights, plural, one {night} other {nights}}',
     'rooms.cartContinue': 'Continue',
     'rooms.cartSubtotal': 'Subtotal',
@@ -664,7 +676,12 @@ const messages = {
     'rooms.guests.childAmenityFree': 'Sem custo',
     'rooms.guests.addRoom': 'Adicionar este quarto',
     'rooms.guests.adultsCount': '{count} {count, plural, one {adulto} other {adultos}}',
-    'rooms.guests.summary': '{adults} {adults, plural, one {adulto} other {adultos}} · {children} {children, plural, one {criança} other {crianças}} ({ages} anos)',
+    'rooms.guests.summary': '{adults} {adults, plural, one {adulto} other {adultos}} · {children} {children, plural, one {criança} other {crianças}} ({ages})',
+    // REQ-02 (#234)
+    'rooms.guests.childAgeYears': '{age} {age, plural, one {ano} other {anos}}',
+    'rooms.guests.childBaby': 'bebê',
+    'rooms.guests.childFree': 'criança, não ocupa vaga',
+    'rooms.guests.childPaying': 'criança, ocupa vaga',
     'rooms.guests.maxAdultsExceeded': 'Excede o máximo de adultos deste quarto',
     'rooms.guests.maxChildrenExceeded': 'Excede o máximo de crianças deste quarto',
     'rooms.unavailable.no_rate': 'Sem tarifa para esta ocupação',
@@ -676,6 +693,7 @@ const messages = {
     'rooms.quantity': 'Quantidade',
     'rooms.cartTitle': 'Sua seleção',
     'rooms.cartRemove': 'Remover',
+    'rooms.cartEdit': 'Editar',
     'rooms.cartSummary': '{rooms} {rooms, plural, one {quarto} other {quartos}} · {guests} {guests, plural, one {hóspede} other {hóspedes}} · {nights} {nights, plural, one {noite} other {noites}}',
     'rooms.cartContinue': 'Continuar',
     'rooms.cartSubtotal': 'Subtotal',
