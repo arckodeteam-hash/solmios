@@ -63,6 +63,10 @@
       `ota`).
       **Aceptación**: `bun test src/modules/canales src/connectors/tests/canales-notificaciones.test.ts`
       — revisión nueva → 1 llamada; modificación/cancelación → 0; aviso que falla → ingesta igual.
+- [x] 3.6 (#257, REQ-HAC-02) La ingesta elige la unidad libre del tipo con `availableOfType`;
+      sin unidad libre igual crea la reserva con nota `⚠ OVERBOOKING`.
+      **Aceptación**: `bun test src/modules/canales/tests/ari-ingestion.test.ts` — r1 ocupada → r2;
+      ambas ocupadas → r1 + OVERBOOKING en notes.
 
 ## 4. Pantalla admin (REQ-CAN-08)
 
