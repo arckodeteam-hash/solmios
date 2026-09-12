@@ -126,6 +126,20 @@ export interface CreatePricingRepos {
   roomRateRepo?: any
 }
 
+/**
+ * Perfil de CAPACIDAD/precio del tipo (`roomTypeProfileOf`) sobre sus unidades VENDIBLES en el
+ * hotel — el "cuarto" contra el que se valida una reserva SIN unidad, tanto al crear como al
+ * editar (revisión #260: el PUT de adults/children sobre una reserva por tipo validaba contra
+ * `findOne({id:null})` → null → no-op). `null` si el tipo no existe en el hotel o el repo no
+ * sabe listar (callers/mocks viejos sin `findMany`): quien llama decide si eso es 409 o no-op.
+ */
+async function sellableTypeProfile(roomRepo: any, hotelId: string, roomType: string): Promise<RoomTypeProfile | null> {
+  if (!roomRepo || typeof roomRepo.findMany !== 'function') return null
+  const units = ((await roomRepo.findMany({ hotelId, type: roomType })) ?? []) as any[]
+  if (units.length === 0) return null
+  return roomTypeProfileOf(roomType, units.filter((r) => isRoomSellable(r?.status)))
+}
+
 export async function createReservation(repo: any, blockRepo: any | undefined, logger: any, cache: any, sockets: any, notifyDeps: any, dto: CreateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, dateRestrictionRepo?: any, promoCodes?: PromoCodePort, pricing?: CreatePricingRepos, configRepo?: RepositoryAdapter<any>): Promise<ReservasDTO> {
   if (currentUser.role !== 'super_admin' && dto.hotelId !== currentUser.hotelId) throw new AuthError('No autorizado para crear en otro hotel')
   // El estado inicial no puede ser checked_in/checked_out/etc: esos se logran vía /checkin y
@@ -152,9 +166,8 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
     room = await roomRepo.findOne({ id: dto.roomId })
     if (!room || room.hotelId !== dto.hotelId) throw new ConflictError('La habitación no pertenece a este hotel')
   } else if (roomRepo && typeof roomRepo.findMany === 'function') {
-    const units = ((await roomRepo.findMany({ hotelId: dto.hotelId, type: dto.roomType })) ?? []) as any[]
-    if (units.length === 0) throw new ConflictError('Tipo de habitación inexistente', { reason: 'unknown_room_type', roomType: dto.roomType })
-    typeProfile = roomTypeProfileOf(String(dto.roomType), units.filter((r) => isRoomSellable(r?.status)))
+    typeProfile = await sellableTypeProfile(roomRepo, dto.hotelId, String(dto.roomType))
+    if (!typeProfile) throw new ConflictError('Tipo de habitación inexistente', { reason: 'unknown_room_type', roomType: dto.roomType })
   }
   // REQ-HAC-01 (#258): la fila queda con `roomType` = `rooms.type` (o el que declare el dto) para
   // que reasignar la unidad después (assign-room.ts) valide contra el tipo vendido y no contra la
@@ -350,7 +363,13 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
   const touchesOccupancy = dto.roomId !== undefined || dto.adults !== undefined || dto.children !== undefined || dto.childrenAges !== undefined
   if (touchesOccupancy && roomRepo) {
     const effectiveRoomId = dto.roomId ?? existing.roomId
-    const room = await roomRepo.findOne({ id: effectiveRoomId })
+    // Revisión #260: reserva vendida por TIPO (sin unidad) → la "habitación" es el perfil del tipo
+    // efectivo, mismo criterio que createReservation (`sellableTypeProfile`). Antes `findOne({id:
+    // null})` daba null y la ocupación subía sin 409 por encima de cualquier unidad del tipo.
+    const effectiveRoomType = dto.roomType ?? existing.roomType
+    const room = effectiveRoomId
+      ? await roomRepo.findOne({ id: effectiveRoomId })
+      : effectiveRoomType ? await sellableTypeProfile(roomRepo, existing.hotelId, String(effectiveRoomType)) : null
     await assertReservationFitsCapacity(configRepo, room, {
       hotelId: existing.hotelId,
       adults: Number(dto.adults ?? existing.adults) || 2,

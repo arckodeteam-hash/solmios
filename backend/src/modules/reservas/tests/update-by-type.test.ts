@@ -1,0 +1,93 @@
+// reservas/tests/update-by-type.test.ts — revisión #260: PUT sobre una reserva vendida por TIPO.
+//
+// `updateReservation` revalidaba capacidad contra `roomRepo.findOne({id: effectiveRoomId})`; con
+// `roomId: null` (alta por tipo) eso era null y `assertReservationFitsCapacity` un no-op: un PUT
+// de sólo `adults` subía la ocupación por encima de cualquier unidad del tipo sin 409. Ahora la
+// "habitación" efectiva es el perfil del tipo (mismo helper que `createReservation`).
+
+import { describe, it, expect } from 'bun:test'
+import { ConflictError } from 'arckode-framework'
+import { updateReservation } from '../usecases/crud'
+
+const noopLogger = { info() {}, warn() {}, error() {}, debug() {} } as any
+const noopCache = { get: async () => null, set: async () => {}, delete: async () => {}, flush: async () => {} } as any
+const noopSockets = {} as any
+const HOTEL = 'h1'
+const user = { id: 'u1', role: 'hotel_admin', hotelId: HOTEL }
+
+/** Reserva vendida por tipo (sin unidad). `updates` registra lo que se persistió. */
+function resRepo(existing: any) {
+  const updates: any[] = []
+  return {
+    updates,
+    findById: async (id: string) => (existing.id === id ? existing : null),
+    findMany: async () => [],
+    create: async (data: any) => ({ id: 'r-new', ...data }),
+    update: async (id: string, data: any) => { updates.push(data); return { ...existing, ...data, id } },
+  } as any
+}
+
+/** Unidades del hotel; `findMany({hotelId,type})` filtra como el ORM. */
+function roomRepo(rooms: any[]) {
+  return {
+    findOne: async (f: { id: string }) => rooms.find((r) => r.id === f.id) ?? null,
+    findById: async (id: string) => rooms.find((r) => r.id === id) ?? null,
+    findMany: async (q: any = {}) => rooms.filter((r) =>
+      (q.hotelId == null || r.hotelId === q.hotelId) && (q.type == null || r.type === q.type)),
+  } as any
+}
+
+const configRepo = { findOne: async () => null } as any
+
+/** Tipo "double" cuya capacidad MÁXIMA entre unidades vendibles es 2. */
+const doubles = [
+  { id: 'd-1', hotelId: HOTEL, type: 'double', status: 'available', capacity: 2, basePrice: 120, number: '101' },
+  { id: 'd-2', hotelId: HOTEL, type: 'double', status: 'available', capacity: 2, basePrice: 100, number: '102' },
+]
+
+const byType = () => ({
+  id: 'r1', hotelId: HOTEL, roomId: null, roomType: 'double', status: 'confirmed', guestId: 'g1',
+  checkIn: '2026-07-20', checkOut: '2026-07-22', adults: 2, children: 0, totalAmount: 200,
+})
+
+const put = (repo: any, rooms: any, dto: any) =>
+  updateReservation(repo, noopLogger, noopCache, noopSockets, 'r1', dto, user, rooms, undefined, undefined, undefined, undefined, configRepo)
+
+describe('updateReservation — reserva por TIPO (roomId null): la capacidad se valida contra el perfil del tipo', () => {
+  it('PUT adults:5 sobre tipo de capacidad 2 → 409 (capacidad) y la fila queda igual', async () => {
+    const repo = resRepo(byType())
+    let err: any = null
+    try { await put(repo, roomRepo(doubles), { adults: 5 } as any) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(err.httpStatus).toBe(409)
+    expect(err.message).toMatch(/admite hasta 2/)
+    expect(repo.updates).toHaveLength(0)
+  })
+
+  it('PUT adults:2 → 200: se persiste', async () => {
+    const repo = resRepo(byType())
+    const item = await put(repo, roomRepo(doubles), { adults: 2 } as any)
+    expect(item.adults).toBe(2)
+    expect(item.roomId).toBeNull()
+    expect(repo.updates).toHaveLength(1)
+  })
+
+  it('children también mueve ocupación: adults:2 + children:1 en tipo de 2 → 409', async () => {
+    const repo = resRepo(byType())
+    let err: any = null
+    try { await put(repo, roomRepo(doubles), { children: 1, childrenAges: [5] } as any) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(repo.updates).toHaveLength(0)
+  })
+
+  it('entra si entra en ALGUNA unidad vendible del tipo; una en mantenimiento no aporta capacidad', async () => {
+    const withTriple = [...doubles, { id: 'd-3', hotelId: HOTEL, type: 'double', status: 'available', capacity: 3, basePrice: 90 }]
+    const ok = await put(resRepo(byType()), roomRepo(withTriple), { adults: 3 } as any)
+    expect(ok.adults).toBe(3)
+    const maint = withTriple.map((r) => (r.id === 'd-3' ? { ...r, status: 'maintenance' } : r))
+    let err: any = null
+    try { await put(resRepo(byType()), roomRepo(maint), { adults: 3 } as any) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(err.message).toMatch(/admite hasta 2/)
+  })
+})
