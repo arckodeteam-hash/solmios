@@ -5,6 +5,7 @@ import { NotificationRenderer, type AutoMessageTemplateRow } from '../services/n
 import type { EmailSender } from '../services/email-sender'
 import type { Logger } from 'arckode-framework'
 import { sendBookingPaidEmail } from '../shared/usecases/booking-paid-email'
+import { sendBookingCancelledEmails } from '../shared/usecases/booking-cancelled-email'
 import { resolvePlatformIdentity, type PlatformIdentity } from '../shared/utils/platform-identity'
 import type { ReservationEmailSender } from '../shared/usecases/notify-reservation-received'
 
@@ -178,6 +179,19 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
           guestRepo: new OrmRepository<any>(orm, 'Guests'),
           logger,
         }, reservationId)
+      },
+      // #272 — Cancelación desde la web: correo al huésped (su idioma) y al buzón del hotel (es).
+      // Mismo motivo que arriba (EmailService nace después de `system.start()`). Cuando llega acá
+      // `bookingengine-refunds` ya persistió refundStatus/refundAmount: el usecase relee la reserva.
+      onBookingCancelled: async (e: { reservationId?: string; hotelId: string; reservationIds?: string[] }) => {
+        if (!e?.reservationId) return
+        await sendBookingCancelledEmails({
+          emailSender: emailService,
+          reservationsRepo: new OrmRepository<any>(orm, 'Reservations'),
+          hotelRepo: new OrmRepository<any>(orm, 'Hotels'),
+          guestRepo: new OrmRepository<any>(orm, 'Guests'),
+          logger,
+        }, { reservationId: e.reservationId, hotelId: e.hotelId, reservationIds: e.reservationIds })
       },
     })
   }

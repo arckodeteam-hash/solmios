@@ -5,7 +5,7 @@ import { getCodeDefault, NOTIFICATION_DEFAULTS } from './notification-defaults'
 
 describe('notification-defaults (spec 11.1.6)', () => {
   it('cada evento tiene default en es con subject y body no vacíos', () => {
-    for (const event of ['reservation_confirmed', 'reservation_presale', 'checkin_welcome', 'no_show', 'checkout', 'invoice', 'reminder'] as const) {
+    for (const event of ['reservation_confirmed', 'reservation_presale', 'reservation_cancelled_guest', 'reservation_cancelled_staff', 'checkin_welcome', 'no_show', 'checkout', 'invoice', 'reminder'] as const) {
       const d = getCodeDefault(event, 'es')
       expect(d.subject.length).toBeGreaterThan(0)
       expect(d.body.length).toBeGreaterThan(0)
@@ -34,10 +34,24 @@ describe('notification-defaults (spec 11.1.6)', () => {
   })
 
   it('NOTIFICATION_DEFAULTS registra todos los eventos × 3 idiomas', () => {
-    expect(Object.keys(NOTIFICATION_DEFAULTS).sort()).toEqual(['checkin_welcome', 'checkout', 'invoice', 'no_show', 'payment_link', 'reminder', 'reservation_confirmed', 'reservation_presale', 'review_request'])
+    expect(Object.keys(NOTIFICATION_DEFAULTS).sort()).toEqual(['checkin_welcome', 'checkout', 'invoice', 'no_show', 'payment_link', 'reminder', 'reservation_cancelled_guest', 'reservation_cancelled_staff', 'reservation_confirmed', 'reservation_presale', 'review_request'])
     for (const event of Object.keys(NOTIFICATION_DEFAULTS)) {
       const langs = Object.keys((NOTIFICATION_DEFAULTS as any)[event])
       expect(langs.sort()).toEqual(['en', 'es', 'pt'])
+    }
+  })
+
+  // #272 — las plantillas de cancelación piden la frase del reembolso y (staff) el link al panel.
+  it('reservation_cancelled_guest/staff: 3 idiomas con {refund_line}; staff con {reservation_link}', () => {
+    for (const lang of ['es', 'en', 'pt'] as const) {
+      const guest = getCodeDefault('reservation_cancelled_guest', lang)
+      expect(guest.body).toContain('{refund_line}')
+      expect(guest.body).toContain('{rooms_count}')
+      expect(guest.body).not.toContain('{reservation_link}')
+      const staff = getCodeDefault('reservation_cancelled_staff', lang)
+      expect(staff.body).toContain('{refund_line}')
+      expect(staff.body).toContain('{reservation_link}')
+      expect(staff.subject).toContain('{guest_name}')
     }
   })
 })
