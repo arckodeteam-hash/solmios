@@ -61,6 +61,38 @@ describe('Disponibilidad del motor de reservas', () => {
     expect(totalOf(r)).toBe(3) // r1 se liberó ese mismo día
   })
 
+  // HAC-02 (#257/#258): una `confirmed` sin unidad (vende sólo `roomType`) consume una del tipo.
+  // Antes `occupiedIn` la saltaba (`if (!r.roomId) continue`) y soltar la unidad de una reserva
+  // la sacaba del inventario: el motor ofrecía las 2 doubles con una ya vendida.
+  it('una reserva confirmada SIN habitación de tipo double baja la disponibilidad de double en 1', async () => {
+    const r = await setup([
+      { roomId: null, roomType: 'double', status: 'confirmed', checkIn: '2026-08-09', checkOut: '2026-08-11' },
+    ]).check({ hotelId: 'h1', checkIn: '2026-08-10', checkOut: '2026-08-12', adults: 2 } as any)
+    const double = r.roomTypes.find(t => t.roomType === 'double')!
+    expect(double.available).toBe(1)
+    expect(double.availableByOccupancy).toEqual([1, 1])
+    // La suite no se toca.
+    expect(r.roomTypes.find(t => t.roomType === 'suite')!.available).toBe(1)
+  })
+
+  it('reserva sin habitación de otras fechas, cancelada o sin roomType NO descuenta', async () => {
+    const r = await setup([
+      { roomId: null, roomType: 'double', status: 'confirmed', checkIn: '2026-09-01', checkOut: '2026-09-05' },
+      { roomId: null, roomType: 'double', status: 'cancelled', checkIn: '2026-08-09', checkOut: '2026-08-11' },
+      { roomId: null, roomType: null, status: 'confirmed', checkIn: '2026-08-09', checkOut: '2026-08-11' },
+    ]).check({ hotelId: 'h1', checkIn: '2026-08-10', checkOut: '2026-08-12', adults: 2 } as any)
+    expect(r.roomTypes.find(t => t.roomType === 'double')!.available).toBe(2)
+  })
+
+  it('dos sin habitación del mismo tipo agotan las 2 doubles: el tipo deja de ofrecerse', async () => {
+    const r = await setup([
+      { roomId: null, roomType: 'double', status: 'confirmed', checkIn: '2026-08-10', checkOut: '2026-08-12' },
+      { roomId: null, roomType: 'Double', status: 'pending', checkIn: '2026-08-10', checkOut: '2026-08-12' },
+    ]).check({ hotelId: 'h1', checkIn: '2026-08-10', checkOut: '2026-08-12', adults: 2 } as any)
+    expect(r.roomTypes.find(t => t.roomType === 'double')).toBeUndefined()
+    expect(totalOf(r)).toBe(1)
+  })
+
   it('una reserva de otras fechas no afecta', async () => {
     const r = await setup([
       { roomId: 'r1', status: 'confirmed', checkIn: '2026-09-01', checkOut: '2026-09-05' },
