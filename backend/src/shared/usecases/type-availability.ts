@@ -137,12 +137,18 @@ export function countAvailableOfType(
   const sellableRooms = typeRooms.filter((r) => isRoomSellable(r.status))
   const exclude = opts.excludeReservationId
 
-  const relRes = (reservations ?? []).filter((r) =>
-    r && !(exclude && r.id === exclude)
-    && r.checkIn && r.checkOut
-    && reservationOccupiesType(r, roomType, typeRoomIds, isBlockingStatus))
-  const relBlocks = (blocks ?? []).filter((b) =>
-    b && typeRoomIds.has(String(b.roomId)) && b.startDate && b.endDate)
+  // Fechas recortadas a `YYYY-MM-DD`: hay filas con hora (`2026-10-10T00:00:00.000Z`) y la
+  // cuenta por noche compara strings — sin recortar, la noche del propio check-in quedaba libre.
+  const day = (v: unknown): string => String(v ?? '').slice(0, 10)
+  const relRes = (reservations ?? [])
+    .filter((r) =>
+      r && !(exclude && r.id === exclude)
+      && r.checkIn && r.checkOut
+      && reservationOccupiesType(r, roomType, typeRoomIds, isBlockingStatus))
+    .map((r) => ({ ...r, checkIn: day(r.checkIn), checkOut: day(r.checkOut) }))
+  const relBlocks = (blocks ?? [])
+    .filter((b) => b && typeRoomIds.has(String(b.roomId)) && b.startDate && b.endDate)
+    .map((b) => ({ ...b, startDate: day(b.startDate), endDate: day(b.endDate) }))
 
   const days = eachDayExclusive(checkIn, checkOut)
   const nightly = computeDailyAvailability(days, sellableRooms.length, relRes, relBlocks)

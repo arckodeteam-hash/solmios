@@ -231,3 +231,22 @@ describe('availableOfType (port)', () => {
     expect(out.available).toBe(0)
   })
 })
+
+// Hallazgo de revisión (#257): hay filas con hora en checkIn/checkOut; la cuenta por noche compara
+// strings y sin recortar a YYYY-MM-DD la noche del propio check-in quedaba libre (oversell).
+describe('countAvailableOfType — fechas con hora', () => {
+  it('una reserva con checkIn/checkOut ISO con hora ocupa TODAS sus noches, incluida la del check-in', () => {
+    const out = countAvailableOfType('Doble', [{ id: 'a', type: 'Doble', status: 'available' }], [
+      { id: 'x', roomId: null, roomType: 'Doble', status: 'confirmed', checkIn: `${CHECK_IN}T00:00:00.000Z`, checkOut: `${CHECK_OUT}T00:00:00.000Z` },
+    ], [], CHECK_IN, CHECK_OUT)
+    expect(out.perNight.every((n) => n.available === 0)).toBe(true)
+    expect(out.available).toBe(0)
+  })
+
+  it('un bloqueo con hora también descuenta la primera noche', () => {
+    const out = countAvailableOfType('Doble', [{ id: 'a', type: 'Doble', status: 'available' }], [], [
+      { roomId: 'a', startDate: `${CHECK_IN}T10:00:00.000Z`, endDate: `${CHECK_IN}T10:00:00.000Z` },
+    ], CHECK_IN, CHECK_OUT)
+    expect(out.perNight[0]!.available).toBe(0)
+  })
+})
