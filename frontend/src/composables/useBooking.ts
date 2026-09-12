@@ -281,6 +281,35 @@ export interface CartLine {
   photoUrl: string | null
 }
 
+/** #343 — estado del composer de UNA tarjeta de tipo de habitación (adultos, edades, cuna,
+ *  amenidades de habitación, régimen). Definido acá y no en `useGuestComposer.ts` porque el
+ *  estado vive en el store (ver `composerState` abajo); `useGuestComposer.ts` lo re-exporta para
+ *  no romper imports existentes y evitar un import circular. El estado fresco es EXACTAMENTE
+ *  `{adults, ages, needsCrib}` — los opcionales aparecen recién al primer toggle. */
+export interface ComposerState {
+  adults: number
+  ages: number[]
+  // Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09; #292; #341 — por TARJETA, igual que
+  // adults/ages. Desde #341 la cuna es UNA AMENIDAD MÁS del checklist genérico (ya no existe la
+  // pregunta "¿Necesita cuna?" ni el gate por bebé): `needsCrib` es un ESPEJO derivado de
+  // `roomAmenityKeys` — true exactamente cuando hay una key cuna (`isCribAmenityKey`) tildada.
+  // `toggleRoomAmenity` lo recalcula en cada cambio; nadie lo escribe a mano. Sí/No únicamente:
+  // no existe una cantidad en el estado, `addComposedRoom` deriva `cribCount` SIEMPRE en 1/0.
+  needsCrib: boolean
+  // REQ-01 (#290, amenidades de la habitación) — keys del catálogo por tipo
+  // (`store.roomAmenitiesFor(rt.id)`) tildadas para ESTA tarjeta, cuna incluida (#341). Opcional y
+  // ausente en el estado fresco (se crea recién al primer toggle): el estado inicial sigue siendo
+  // exactamente `{adults, ages, needsCrib}`, que es lo que la UI y los tests existentes comparan.
+  // Sin relación con la composición: ni una cama extra ni la cuna se limpian al cambiar edades o
+  // cantidad de niños. Leer vía `roomAmenityKeys(rt)`.
+  roomAmenityKeys?: string[]
+  // MR-03 (#268, régimen) — código elegido en el radio de ESTA tarjeta. Mismo criterio opcional/
+  // ausente que los anteriores (el estado fresco sigue siendo `{adults, ages, needsCrib}`);
+  // ausente = 'room_only'. Se conserva al cambiar adultos/niños — solo cambia el importe. Leer vía
+  // `mealPlanCode(rt)`.
+  mealPlan?: MealPlanCode | 'room_only'
+}
+
 export const useBookingStore = defineStore('booking-widget', () => {
   // ─── Hotel + búsqueda (step 0) ────────────────────────────────────────────────
   const slug = ref('')
@@ -394,6 +423,17 @@ export const useBookingStore = defineStore('booking-widget', () => {
     const list = roomAmenities.value[roomTypeId]
     return Array.isArray(list) ? list : []
   }
+
+  // ─── Composer de huéspedes POR TARJETA (#343) ─────────────────────────────────
+  // Lo que el huésped tiene compuesto en cada tarjeta de tipo (adultos, edades, cuna, amenidades
+  // de habitación, régimen), keyed por `rt.id`. Vive ACÁ y no en `useGuestComposer()` porque el
+  // widget desmonta `RoomsStep` al cambiar de paso (`<component :is>`) y `BookingModal` se
+  // cierra/reabre: con un `reactive({})` por instancia del composable cada remount volvía a
+  // 1 adulto / 0 niños / sin Cama mientras el carrito conservaba los importes (bug #343). Mismo
+  // principio que el resto del store: el componente es una vista, la fuente de verdad está acá.
+  // Sólo cambia cuando el huésped toca la tarjeta, al Editar una línea (`editCartLine`) o en
+  // `reset()` — nunca por re-render, recálculo ni por agregar al carrito.
+  const composerState = ref<Record<string, ComposerState>>({})
 
   // ─── Guest (step 3) ───────────────────────────────────────────────────────────
   const guest = ref<BookingGuest>({ name: '', email: '', phone: '', estimatedArrival: '', specialRequests: '' })
@@ -834,6 +874,11 @@ export const useBookingStore = defineStore('booking-widget', () => {
       // Fechas nuevas invalidan el carrito anterior: precios/disponibilidad de la búsqueda vieja
       // ya no aplican (mismo criterio que antes con selectedRoom/selectedOccupancy).
       cart.value = []
+      // #343 — y con él lo compuesto en las tarjetas: el composer vive acá (no en el componente),
+      // así que una búsqueda nueva tiene que arrancar cada tarjeta en limpio, igual que el
+      // carrito — si no, un `rt.id` reutilizado mostraría adultos/edades/amenidades de la
+      // búsqueda anterior con el carrito ya vacío.
+      composerState.value = {}
       status.value = 'selecting'
     } catch (e) {
       ratesError.value = errMessage(e, 'No pudimos cargar la disponibilidad. Probá de nuevo.')
@@ -1369,6 +1414,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     mealPlans.value = []
     mealPlansLoading.value = false
     roomAmenities.value = {}
+    composerState.value = {}
     guest.value = { name: '', email: '', phone: '', estimatedArrival: '', specialRequests: '' }
     promoCode.value = ''
     promoResult.value = null
@@ -1402,6 +1448,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     mealPlans,
     mealPlansLoading,
     roomAmenities,
+    composerState,
     guest,
     promoCode,
     promoResult,

@@ -240,8 +240,8 @@ describe('useGuestComposer — cuna como amenidad normal (#341): tarjetas indepe
     expect(store.roomAmenityLines).toEqual([
       { lineKey: store.cart[0]!.key, roomName: 'double', key: CRIB_AMENITY_KEY, name: 'Cuna', price: 100, quantity: 1, total: 100 },
     ])
-    // La tarjeta quedó limpia para la próxima habitación.
-    expect(c.composer(room)).toEqual({ adults: 1, ages: [], needsCrib: false })
+    // #343 — la tarjeta conserva exactamente lo agregado (1 adulto sin niños + cuna), no se reinicia.
+    expect(c.composer(room)).toEqual({ adults: 1, ages: [], needsCrib: true, roomAmenityKeys: [CRIB_AMENITY_KEY] })
   })
 
   it('addComposedRoom con Cama + Cuna: las dos viajan en el snapshot (300) y needsCrib true', async () => {

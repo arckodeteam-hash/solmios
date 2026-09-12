@@ -180,11 +180,10 @@ describe('RoomsStep — #341 el checklist de amenidades renderiza TODO el catál
     expect(line).toContain('Cama extra')
     expect(line.match(/Cuna/g)).toHaveLength(1)
 
-    // Tarjeta nueva (el composer se resetea al agregar): cama + cuna → destildar la cuna deja 200.
-    expect(w.find('[data-testid="room-amenities-total"]').exists()).toBe(false)
-    await w.get(`input[value="${CAMA.key}"]`).setValue(true)
-    await w.get(`input[value="${CUNA.key}"]`).setValue(true)
+    // #343 — la tarjeta conserva lo agregado (cama + cuna tildadas, "+ $300"): destildar la cuna deja 200.
     expect(w.get('[data-testid="room-amenities-total"]').text().replace(/\s+/g, ' ')).toContain('300,00')
+    expect((w.get(`input[value="${CAMA.key}"]`).element as HTMLInputElement).checked).toBe(true)
+    expect((w.get(`input[value="${CUNA.key}"]`).element as HTMLInputElement).checked).toBe(true)
     await w.get(`input[value="${CUNA.key}"]`).setValue(false)
     expect(w.get('[data-testid="room-amenities-total"]').text().replace(/\s+/g, ' ')).toContain('200,00')
     expect(w.get('[data-testid="room-amenities-total"]').text()).not.toContain('300,00')

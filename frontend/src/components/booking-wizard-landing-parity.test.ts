@@ -66,6 +66,7 @@ async function buildCartViaRoomsStep(): Promise<BuiltCart> {
   await flushPromises()
 
   const plusButtons = () => w.findAll('button').filter((b) => b.text() === '+')
+  const minusButtons = () => w.findAll('button').filter((b) => b.text() === '−')
   const addRoomButton = () => w.findAll('button').find((b) => b.text().includes('Agregar esta habitación'))!
 
   // Habitación 1: 2 adultos + niño de 2 (libre).
@@ -75,9 +76,10 @@ async function buildCartViaRoomsStep(): Promise<BuiltCart> {
   await addRoomButton().trigger('click')
   await flushPromises()
 
-  // Habitación 2: 1 adulto (default tras el reset) + niños de 6 y 10 (con plaza).
-  await plusButtons()[1]!.trigger('click')
-  await plusButtons()[1]!.trigger('click')
+  // Habitación 2: 1 adulto + niños de 6 y 10 (con plaza). #343 — la tarjeta conserva la
+  // habitación 1 (2 adultos + 1 niño): se baja un adulto y se suma un niño explícitamente.
+  await minusButtons()[0]!.trigger('click') // adultos 2→1
+  await plusButtons()[1]!.trigger('click') // +1 niño → 2
   const selects = w.findAll('select')
   await selects[0]!.setValue('6')
   await selects[1]!.setValue('10')
@@ -102,6 +104,7 @@ async function buildCartViaBookingModal(): Promise<BuiltCart> {
 
   const store = useBookingStore()
   const plusButtons = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).filter((b) => b.textContent?.trim() === '+')
+  const minusButtons = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).filter((b) => b.textContent?.trim() === '−')
   const addRoomButton = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.includes('Agregar esta habitación'))!
   const setSelect = (el: HTMLSelectElement, value: string) => { el.value = value; el.dispatchEvent(new Event('change')) }
 
@@ -112,8 +115,9 @@ async function buildCartViaBookingModal(): Promise<BuiltCart> {
   await flushPromises()
   addRoomButton().click(); await flushPromises()
 
-  // Habitación 2: 1 adulto + niños de 6 y 10 (con plaza).
-  plusButtons()[1]!.click(); await flushPromises()
+  // Habitación 2: 1 adulto + niños de 6 y 10 (con plaza) — MISMA secuencia que RoomsStep (#343:
+  // la tarjeta conserva la habitación 1, se baja un adulto y se suma un niño).
+  minusButtons()[0]!.click(); await flushPromises()
   plusButtons()[1]!.click(); await flushPromises()
   const selects = document.body.querySelectorAll<HTMLSelectElement>('select')
   setSelect(selects[0]!, '6')

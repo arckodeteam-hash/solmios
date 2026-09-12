@@ -114,8 +114,8 @@ describe('useGuestComposer — régimen por tarjeta (MR-03 #268)', () => {
     expect(store.mealPlanLines).toEqual([
       { lineKey: store.cart[0]!.key, roomName: 'double', code: 'breakfast', priceMode: 'per_person_per_night', persons: 2, nights: 3, quantity: 1, unitPrice: 10, total: 60 },
     ])
-    // El composer se resetea tras agregar: la próxima habitación arranca en solo alojamiento.
-    expect(mealPlanCode(rt)).toBe('room_only')
+    // #343 — el composer NO se reinicia tras agregar: la tarjeta sigue mostrando el régimen agregado.
+    expect(mealPlanCode(rt)).toBe('breakfast')
   })
 
   it('un niño con plaza paga régimen; un niño libre no (mismo criterio que el backend)', () => {
@@ -200,7 +200,10 @@ describe('useGuestComposer — régimen por tarjeta (MR-03 #268)', () => {
     const rt = roomType()
     setMealPlan(rt, 'breakfast')
     await addComposedRoom(rt)
-    expect(mealPlanCode(rt)).toBe('room_only') // el composer se resetea al agregar
+    expect(mealPlanCode(rt)).toBe('breakfast') // #343: el composer conserva lo agregado
+    // El huésped cambia la tarjeta antes de editar, para probar que Editar RESTAURA lo guardado.
+    setMealPlan(rt, 'room_only')
+    expect(mealPlanCode(rt)).toBe('room_only')
     expect(editCartLine(store.cart[0]!)).toBe(true)
     expect(mealPlanCode(rt)).toBe('breakfast')
     await addComposedRoom(rt)
@@ -255,6 +258,9 @@ describe('useBooking — payload con régimen (MR-03 #268)', () => {
     setAdults(rt, 2)
     setMealPlan(rt, 'breakfast')
     await addComposedRoom(rt)
+    // #343 — la tarjeta conserva lo agregado: la segunda habitación se compone explícitamente.
+    setAdults(rt, 1)
+    setMealPlan(rt, 'room_only')
     await addComposedRoom(rt) // 1 adulto, solo alojamiento
     expect(store.cart).toHaveLength(2)
     store.setGuest({ name: 'Ana Pérez', email: 'ana@example.com', phone: '8095550000' })
@@ -333,8 +339,9 @@ describe('RoomsStep — radio de régimen por tarjeta (MR-03 #268)', () => {
     await flushPromises()
     expect(store.cart).toHaveLength(1)
     expect(store.cart[0]!.mealPlan).toMatchObject({ code: 'breakfast', total: 30 })
-    // Tras agregar, el radio vuelve a solo alojamiento.
-    expect((w.get('input[value="room_only"]').element as HTMLInputElement).checked).toBe(true)
+    // #343 — tras agregar, el radio sigue en desayuno: la tarjeta muestra exactamente lo agregado.
+    expect((w.get('input[value="breakfast"]').element as HTMLInputElement).checked).toBe(true)
+    expect(w.get('[data-testid="meal-plan-total"]').text()).toContain('30')
     w.unmount()
   })
 
