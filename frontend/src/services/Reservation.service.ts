@@ -3,7 +3,7 @@ import type {
   Reservation, ReservationStatus, ReservationSource, ReservationDetail, GuaranteeCardData, AuditLogEntry,
   ReservationApiRecord as RawReservation, AssignableRoom, ChildAmenitySnapshot,
   RescheduleInput, RescheduleCommitInput, RescheduleQuote, RescheduleResult,
-  CancelPreview, CancelReservationInput, StayQuote, ReservationDetailMessageLog,
+  CancelPreview, CancelReservationInput, StayQuote, TypeAvailability, ReservationDetailMessageLog,
 } from '@/types'
 
 // Los tipos del reagendado viven en `@/types` (dominio), no acá. Se re-exportan para no romper
@@ -292,9 +292,24 @@ export const ReservationService = {
    * nueva reserva — antes cotizaba `basePrice × noches` en el frontend e ignoraba la grilla
    * de temporadas. POST (no GET): la ruta `/reservas/:id` está registrada antes en el router
    * del backend y capturaría `quote` como id.
+   *
+   * REQ-HAC-05 (#260): se cotiza por `roomId` (unidad elegida) O por `roomType` (el wizard vende un
+   * tipo y la unidad se asigna después). Con `roomId` el backend deriva el tipo; sin ninguno → 409.
    */
-  async stayQuote(input: { roomId: string; checkIn: string; checkOut: string; guests: number }): Promise<StayQuote> {
+  async stayQuote(input: { roomId?: string; roomType?: string; checkIn: string; checkOut: string; guests: number }): Promise<StayQuote> {
     return http.post<StayQuote>('/reservas/quote', input)
+  },
+
+  /**
+   * REQ-HAC-05 (#260) — disponibilidad por TIPO para el rango (una fila por tipo del hotel, con el
+   * mínimo de libres para toda la estadía y el detalle noche a noche). El hotel sale del token.
+   * `excludeReservationId`: en edición, la propia reserva no cuenta como ocupación.
+   */
+  async typeAvailability(params: { checkIn: string; checkOut: string; excludeReservationId?: string }): Promise<TypeAvailability[]> {
+    const q = new URLSearchParams({ checkIn: params.checkIn, checkOut: params.checkOut })
+    if (params.excludeReservationId) q.set('excludeReservationId', params.excludeReservationId)
+    const data = await http.get<TypeAvailability[] | { data?: TypeAvailability[] }>(`/reservas/type-availability?${q.toString()}`)
+    return Array.isArray(data) ? data : (data?.data ?? [])
   },
 
   /**

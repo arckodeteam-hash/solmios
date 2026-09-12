@@ -247,12 +247,38 @@
                   </div>
               </div>
 
+              <!-- REQ-HAC-05 (#260): el panel vende un TIPO. La unidad es opcional ("Asignar después"):
+                   se asigna más tarde desde el listado (assign-room). Con unidad elegida el backend sigue
+                   validando el solape de esa habitación (room_overlap). -->
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                    <label class="block text-[11px] font-bold text-navy uppercase tracking-wide mb-1">Habitación <span class="text-coral">*</span></label>
-                    <SearchSelect v-model="form.roomId" :options="roomOptions" placeholder="Seleccionar..." data-testid="wiz-room-select" />
-                    <p v-if="roomError" class="text-[10px] text-coral font-semibold mt-1">{{ roomError }}</p>
+                    <label class="block text-[11px] font-bold text-navy uppercase tracking-wide mb-1">Tipo de habitación <span class="text-coral">*</span></label>
+                    <SearchSelect v-model="form.roomType" :options="typeOptions" placeholder="Seleccionar tipo..." data-testid="wiz-room-type-select" />
+                    <p v-if="typeAvailLoading" class="text-[10px] text-text-muted mt-1">Consultando disponibilidad…</p>
+                    <p v-else-if="roomTypeError" class="text-[10px] text-coral font-semibold mt-1">{{ roomTypeError }}</p>
+                    <!-- Disponibilidad por noche del tipo elegido (mín. de libres entre todas las noches = lo vendible). -->
+                    <div v-if="selTypeAvail" data-testid="wiz-type-availability" class="mt-2 rounded-xl border border-border bg-surface/60 px-3 py-2">
+                      <div class="flex items-center justify-between text-[10px] font-bold uppercase tracking-wide">
+                        <span class="text-text-muted">Disponibilidad por noche · {{ typeLabel(selTypeAvail.roomType) }}</span>
+                        <span :class="selTypeAvail.available > 0 ? 'text-teal' : 'text-coral'">{{ selTypeAvail.available }} de {{ selTypeAvail.rooms }} libres</span>
+                      </div>
+                      <ul class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
+                        <li v-for="n in selTypeAvail.perNight" :key="n.date" class="inline-flex items-center gap-1" :data-testid="'wiz-type-night-' + n.date">
+                          <span class="text-text-secondary">{{ fmtNight(n.date) }}</span>
+                          <span class="font-bold" :class="n.available > 0 ? 'text-navy' : 'text-coral'">→ {{ n.available }} {{ n.available === 1 ? 'libre' : 'libres' }}</span>
+                        </li>
+                      </ul>
+                    </div>
                   </div>
+                <div>
+                    <label class="block text-[11px] font-bold text-navy uppercase tracking-wide mb-1">Habitación <span class="text-text-muted font-normal normal-case">(opcional)</span></label>
+                    <SearchSelect v-model="form.roomId" :options="roomOptions" placeholder="Asignar después" data-testid="wiz-room-select" />
+                    <p v-if="roomError" class="text-[10px] text-coral font-semibold mt-1">{{ roomError }}</p>
+                    <p v-else-if="!form.roomId" class="text-[10px] text-text-muted mt-1">Sin unidad: la habitación se asigna después desde el listado de reservas.</p>
+                  </div>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
                 <div>
                     <label for="wiz-regime" class="block text-[11px] font-bold text-navy uppercase tracking-wide mb-1">Régimen</label>
                     <select id="wiz-regime" name="regime" v-model="form.regime" class="w-full px-3.5 py-2.5 rounded-xl border border-border text-sm bg-surface/60 cursor-pointer focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple/20 focus:border-purple transition">
@@ -263,9 +289,6 @@
                       <option value="all_inclusive">Todo incluido</option>
                     </select>
                   </div>
-              </div>
-
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                     <label for="wiz-adults" class="block text-[11px] font-bold text-navy uppercase tracking-wide mb-1">Adultos</label>
                     <input id="wiz-adults" name="adults" v-model.number="form.adults" type="number" min="1" max="10" class="w-full px-3.5 py-2.5 rounded-xl border border-border text-sm bg-surface/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-cyan/20 focus:border-cyan transition" />
@@ -289,8 +312,8 @@
                 </div>
 
               <!-- Resumen precio -->
-              <div v-if="selRoom && form.checkIn && form.checkOut" class="bg-surface rounded-2xl p-4 space-y-2">
-                <div class="text-[11px] font-bold text-text-muted uppercase mb-2">Habitación {{ selRoom.number }} — {{ selRoom.type }}</div>
+              <div v-if="hasStayTarget && form.checkIn && form.checkOut" class="bg-surface rounded-2xl p-4 space-y-2">
+                <div class="text-[11px] font-bold text-text-muted uppercase mb-2" data-testid="wiz-stay-summary-title">{{ stayTargetLabel }}</div>
                 <!-- Desglose por temporada (quote del backend). Sin quote → basePrice × noches como antes. -->
                 <template v-if="stayQuote && seasonRows.length">
                   <div v-for="row in seasonRows" :key="row.key" class="flex justify-between text-sm">
@@ -301,7 +324,7 @@
                     <span class="font-bold text-navy">${{ row.subtotal }}</span>
                   </div>
                 </template>
-                <div v-else class="flex justify-between text-sm"><span class="text-text-secondary">{{ nights }} noches × ${{ selRoom.basePrice }}</span><span class="font-bold text-navy">${{ subtotal }}</span></div>
+                <div v-else class="flex justify-between text-sm"><span class="text-text-secondary">{{ nights }} noches × ${{ fallbackBasePrice }}</span><span class="font-bold text-navy">${{ subtotal }}</span></div>
                 <div v-if="quoteLoading" class="text-[11px] text-text-muted">Cotizando tarifas…</div>
                 <div v-else-if="stayQuote && !stayQuote.fromRates" data-testid="no-rates-warning" class="text-[11px] font-bold text-gold">Sin tarifas cargadas para estas fechas: se usa el precio base de la habitación.</div>
                 <div v-else-if="stayQuote && stayQuote.closedNights > 0" data-testid="closed-nights-warning" class="text-[11px] font-bold text-gold">{{ stayQuote.closedNights }} {{ stayQuote.closedNights === 1 ? 'noche con tarifa cerrada' : 'noches con tarifa cerrada' }} en la grilla — revisá antes de confirmar.</div>
@@ -384,7 +407,8 @@
                       </select>
                     </div>
                 </div>
-                <div v-if="selRoom && form.checkIn && form.checkOut" class="bg-surface rounded-2xl border border-border p-4 space-y-1.5 text-sm">
+                <div v-if="hasStayTarget && form.checkIn && form.checkOut" class="bg-surface rounded-2xl border border-border p-4 space-y-1.5 text-sm">
+                  <div class="text-[11px] font-bold text-text-muted uppercase" data-testid="wiz-pay-summary-title">{{ stayTargetLabel }}</div>
                   <!-- Precio manual (pactado): reemplaza el alojamiento cotizado; impuestos y promo
                        se siguen calculando encima. Sin checkbox → precio de temporada del backend. -->
                   <label class="flex items-center gap-2 text-[11px] font-bold text-navy uppercase tracking-wide cursor-pointer select-none" data-testid="manual-price-toggle">
@@ -403,7 +427,7 @@
                       <span class="font-bold text-navy">${{ row.subtotal }}</span>
                     </div>
                   </template>
-                  <div v-else class="flex justify-between"><span class="text-text-secondary">{{ nights }} noches × ${{ manualPrice ? (subtotal / Math.max(nights, 1)).toFixed(0) : selRoom.basePrice }}</span><span class="font-bold text-navy">${{ subtotal }}</span></div>
+                  <div v-else class="flex justify-between"><span class="text-text-secondary">{{ nights }} noches × ${{ manualPrice ? (subtotal / Math.max(nights, 1)).toFixed(0) : fallbackBasePrice }}</span><span class="font-bold text-navy">${{ subtotal }}</span></div>
                   <div v-if="stayQuote && !stayQuote.fromRates && !quoteLoading" data-testid="no-rates-warning" class="text-[11px] font-bold text-gold">Sin tarifas cargadas para estas fechas: se usa el precio base de la habitación.</div>
                   <div class="flex justify-between"><span class="text-text-secondary">Impuestos ({{ taxRatePct }}%)</span><span class="font-bold text-navy">${{ taxes }}</span></div>
                   <div v-if="promoApplied" class="flex justify-between"><span class="text-text-secondary">Descuento ({{ form.promoCode.trim().toUpperCase() }})</span><span class="font-bold text-teal">-${{ promoDiscount }}</span></div>
@@ -414,7 +438,7 @@
                   <div class="flex justify-between"><span class="text-text-secondary">Anticipo ({{ form.depositPercentage }}%)</span><span class="font-bold text-teal">${{ form.deposit }}</span></div>
                   <div class="flex justify-between"><span class="text-text-secondary">Pendiente de pago</span><span class="font-black" :class="pend > 0 ? 'text-coral' : 'text-teal'">${{ pend }}</span></div>
                 </div>
-                <div v-else class="text-xs text-text-muted text-center py-3">Seleccioná habitación y fechas para ver el desglose</div>
+                <div v-else class="text-xs text-text-muted text-center py-3">Seleccioná tipo de habitación y fechas para ver el desglose</div>
               </div>
 
               <!-- Cerradura (solo edición) -->
@@ -485,11 +509,11 @@ import { PromoCodeService } from '@/services/PromoCode.service'
 import SearchSelect from '@/components/ui/SearchSelect.vue'
 import PhoneInput from '@/components/ui/PhoneInput.vue'
 import { COUNTRIES, NATIONALITIES, LANGUAGES, DOC_TYPES, nationalityToCountryName, countryNameToNationality } from '@/data/locales'
-import type { Guest, StayQuote } from '@/types'
+import type { Guest, StayQuote, TypeAvailability } from '@/types'
 
 const props = defineProps<{
   editId?: string | null
-  prefill?: { roomId?: string; checkIn?: string; checkOut?: string; guestId?: string; source?: string; adults?: number; children?: number } | null
+  prefill?: { roomId?: string; roomType?: string; checkIn?: string; checkOut?: string; guestId?: string; source?: string; adults?: number; children?: number } | null
   rooms: any[]
 }>()
 const emit = defineEmits<{
@@ -535,6 +559,10 @@ const existingGuarantee = ref(false)
 // "ajena"). Sin este bypass el wizard de edición no dejaba avanzar al paso 5 aunque el usuario no
 // tocara las fechas, porque la propia reserva aparecía como bloqueante.
 const originalRoomId = ref('')
+// REQ-HAC-05 (#260): tipo vendido con el que se abrió la reserva en edición. Si el operador cambia
+// el tipo Y elige una unidad del nuevo tipo, el PUT viaja con `allowTypeChange` (el backend exige
+// el flag explícito para un cambio de tipo: 409 type_mismatch sin él).
+const originalRoomType = ref('')
 
 // ── Form completo ──
 const form = ref({
@@ -548,7 +576,8 @@ const form = ref({
   // Contacto emergencia
   emergencyName: '', emergencyPhone: '', emergencyRelation: '', emergencyEmail: '',
   // Alojamiento
-  checkIn: '', checkOut: '', roomId: '', adults: 2, children: 0,
+  // REQ-HAC-05 (#260): se vende un TIPO (`roomType`, obligatorio); la unidad (`roomId`) es opcional.
+  checkIn: '', checkOut: '', roomType: '', roomId: '', adults: 2, children: 0,
   regime: 'room_only', promoCode: '',
   // Canal / OTA
   source: 'direct', commission: 0, commissionAmount: 0, extLocator: '', otaNotes: '',
@@ -631,15 +660,129 @@ watch([() => form.value.checkIn, () => form.value.checkOut], () => {
   roomsAvailDebounceId = setTimeout(refreshRoomsAvailability, 300)
 }, { immediate: true })
 
+// ── REQ-HAC-05 (#260): disponibilidad por TIPO ──────────────────────────────────────────
+// El panel vende un tipo (`rooms.type`); la unidad concreta se asigna después (assign-room). El
+// selector de tipo se alimenta de `GET /api/reservas/type-availability` para las fechas elegidas:
+// cada tipo con su mínimo de libres para toda la estadía (`available`) y el detalle noche a noche
+// (`perNight`). `null` mientras no haya fechas válidas: en ese caso los tipos salen de `props.rooms`
+// sin cifra de disponibilidad. En edición se excluye la propia reserva del conteo.
+const typeAvailability = ref<TypeAvailability[] | null>(null)
+const typeAvailLoading = ref(false)
+let typeAvailReqSeq = 0
+async function refreshTypeAvailability() {
+  const { checkIn, checkOut } = form.value
+  if (!hid.value || !checkIn || !checkOut || checkOut <= checkIn) {
+    typeAvailability.value = null
+    return
+  }
+  const seq = ++typeAvailReqSeq
+  typeAvailLoading.value = true
+  try {
+    const items = await ReservationService.typeAvailability({ checkIn, checkOut, excludeReservationId: props.editId || undefined })
+    if (seq === typeAvailReqSeq) typeAvailability.value = items
+  } catch {
+    // Sin disponibilidad por tipo se ofrecen los tipos del hotel igual: el backend es la fuente de
+    // verdad y rechaza (409) un tipo agotado al crear.
+    if (seq === typeAvailReqSeq) typeAvailability.value = null
+  } finally {
+    if (seq === typeAvailReqSeq) typeAvailLoading.value = false
+  }
+}
+let typeAvailDebounceId: ReturnType<typeof setTimeout> | null = null
+watch([() => form.value.checkIn, () => form.value.checkOut], () => {
+  if (typeAvailDebounceId) clearTimeout(typeAvailDebounceId)
+  typeAvailDebounceId = setTimeout(refreshTypeAvailability, 300)
+}, { immediate: true })
+
+// Etiqueta del tipo — mismo mapa que pages/reservations/index.vue y pages/rooms/index.vue (un tipo
+// no catalogado se capitaliza).
+const ROOM_TYPE_LABEL: Record<string, string> = {
+  single: 'Individual', double: 'Doble', twin: 'Twin', triple: 'Triple', quad: 'Cuádruple',
+  suite: 'Suite', deluxe: 'Deluxe', presidential: 'Presidencial', family: 'Familiar', villa: 'Villa', dorm: 'Dormitorio',
+}
+function typeLabel(t?: string | null): string {
+  const k = String(t || '').trim()
+  if (!k) return 'Sin tipo'
+  return ROOM_TYPE_LABEL[k.toLowerCase()] || k.charAt(0).toUpperCase() + k.slice(1)
+}
+function sameType(a?: string | null, b?: string | null): boolean {
+  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase()
+}
+function fmtNight(d: string): string {
+  return d ? new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'short', day: '2-digit', month: 'short' }).replace(/\./g, '') : ''
+}
+
+/** Fila de disponibilidad del tipo elegido (null sin fechas válidas o sin respuesta). */
+const selTypeAvail = computed(() => typeAvailability.value?.find((t) => sameType(t.roomType, form.value.roomType)) ?? null)
+/** Tipos del hotel sin fechas: los distintos `type` de `props.rooms` (orden alfabético). */
+const hotelRoomTypes = computed(() => {
+  const set = new Set<string>()
+  for (const r of props.rooms as any[]) if (r?.type) set.add(String(r.type))
+  return Array.from(set).sort()
+})
+// Opciones del selector de tipo: 'Doble — 3 libres'. Un tipo sin libres para TODA la estadía queda
+// deshabilitado (no oculto), salvo que sea el tipo original de la reserva en edición (la propia
+// reserva ya está excluida del conteo, pero no bloqueamos igual por si el conteo llegó viejo).
+const typeOptions = computed(() => {
+  const avail = typeAvailability.value
+  if (!avail) return hotelRoomTypes.value.map((t) => ({ value: t, label: typeLabel(t) }))
+  return avail.map((t) => {
+    const soldOut = t.available <= 0 && !(isEdit.value && sameType(t.roomType, originalRoomType.value))
+    return {
+      value: t.roomType,
+      label: soldOut ? `${typeLabel(t.roomType)} — sin disponibilidad` : `${typeLabel(t.roomType)} — ${t.available} ${t.available === 1 ? 'libre' : 'libres'} ($${t.minBasePrice}/n)`,
+      disabled: soldOut,
+    }
+  })
+})
+
 const selRoom = computed(() => roomsForSelect.value.find((r: any) => r.id === form.value.roomId))
 // Opciones del selector de habitación (buscador dinámico): value=id, label='número — tipo ($precio/n)'.
-// Cuartos ocupados esas fechas quedan deshabilitados (no ocultos) con el motivo en el label —
-// SearchSelect.vue soporta `disabled` por opción (#648).
-const roomOptions = computed(() => roomsForSelect.value.map((r: any) => ({
-  value: String(r.id),
-  label: r.available === false ? `${r.number} — ${r.type} (${r.unavailableReason || 'Ocupada esas fechas'})` : `${r.number} — ${r.type} ($${r.basePrice}/n)`,
-  disabled: r.available === false,
-})))
+// REQ-HAC-05: la unidad es OPCIONAL — primera opción "Asignar después" (valor vacío). Con tipo elegido
+// se listan sólo las unidades de ese tipo; sin tipo, todas (elegir una unidad fija el tipo). Cuartos
+// ocupados esas fechas quedan deshabilitados (no ocultos) con el motivo en el label — SearchSelect.vue
+// soporta `disabled` por opción (#648). En edición con unidad ya asignada NO se ofrece "Asignar
+// después": soltar la unidad es DELETE /assign-room (el PUT lo rechaza con use_unassign_endpoint).
+const roomOptions = computed(() => {
+  const units = roomsForSelect.value
+    .filter((r: any) => !form.value.roomType || sameType(r.type, form.value.roomType))
+    .map((r: any) => {
+      // La unidad ORIGINAL de la reserva en edición la ocupa la propia reserva: ni ocupada ni deshabilitada.
+      const busy = r.available === false && !(isEdit.value && String(r.id) === originalRoomId.value)
+      return {
+        value: String(r.id),
+        label: busy ? `${r.number} — ${typeLabel(r.type)} (${r.unavailableReason || 'Ocupada esas fechas'})` : `${r.number} — ${typeLabel(r.type)} ($${r.basePrice}/n)`,
+        disabled: busy,
+      }
+    })
+  if (isEdit.value && originalRoomId.value) return units
+  return [{ value: '', label: 'Asignar después' }, ...units]
+})
+// Elegir una unidad fija el tipo (el tipo vendido ES el de la unidad); cambiar el tipo suelta una
+// unidad que no sea de ese tipo.
+watch(() => form.value.roomId, (id) => {
+  if (!id) return
+  const room = roomsForSelect.value.find((r: any) => String(r.id) === String(id))
+  if (room?.type && !sameType(room.type, form.value.roomType)) form.value.roomType = String(room.type)
+})
+watch(() => form.value.roomType, (t) => {
+  if (!form.value.roomId) return
+  const room = roomsForSelect.value.find((r: any) => String(r.id) === String(form.value.roomId))
+  if (room && !sameType(room.type, t)) form.value.roomId = ''
+})
+/** Hay algo que cotizar: una unidad o, al menos, un tipo. */
+const hasStayTarget = computed(() => !!selRoom.value || !!form.value.roomType)
+const stayTargetLabel = computed(() => {
+  if (selRoom.value) return `Habitación ${selRoom.value.number} — ${typeLabel(selRoom.value.type)}`
+  return `${typeLabel(form.value.roomType)} — Habitación: asignar después`
+})
+/** Precio por noche sin quote: el de la unidad o el mínimo del tipo. */
+const fallbackBasePrice = computed(() => {
+  if (selRoom.value) return Number(selRoom.value.basePrice) || 0
+  if (selTypeAvail.value) return Number(selTypeAvail.value.minBasePrice) || 0
+  const ofType = (props.rooms as any[]).filter((r) => sameType(r?.type, form.value.roomType)).map((r) => Number(r.basePrice) || 0)
+  return ofType.length ? Math.min(...ofType) : 0
+})
 const nights = computed(() => {
   if (!form.value.checkIn || !form.value.checkOut) return 0
   return Math.max(1, Math.round((new Date(form.value.checkOut).getTime() - new Date(form.value.checkIn).getTime()) / MS_PER_DAY))
@@ -661,11 +804,14 @@ const manualPrice = ref(false)
 const manualSubtotal = ref<number | null>(null)
 
 async function refreshQuote() {
-  const { roomId, checkIn, checkOut, adults } = form.value
-  if (!roomId || !checkIn || !checkOut || checkOut <= checkIn) { stayQuote.value = null; return }
+  const { roomId, roomType, checkIn, checkOut, adults } = form.value
+  if ((!roomId && !roomType) || !checkIn || !checkOut || checkOut <= checkIn) { stayQuote.value = null; return }
   quoteLoading.value = true
   try {
-    stayQuote.value = await ReservationService.stayQuote({ roomId: String(roomId), checkIn, checkOut, guests: Number(adults) || 2 })
+    // REQ-HAC-05: con unidad se cotiza esa habitación; sin unidad, el tipo (mismo total que
+    // cualquier unidad del tipo — lo garantiza el backend, quote-by-type.test.ts).
+    const target = roomId ? { roomId: String(roomId) } : { roomType: String(roomType) }
+    stayQuote.value = await ReservationService.stayQuote({ ...target, checkIn, checkOut, guests: Number(adults) || 2 })
   } catch {
     // Sin quote, se cotiza basePrice × noches como antes — no se rompe el alta.
     stayQuote.value = null
@@ -674,7 +820,7 @@ async function refreshQuote() {
   }
 }
 let quoteDebounceId: ReturnType<typeof setTimeout> | null = null
-watch([() => form.value.checkIn, () => form.value.checkOut, () => form.value.roomId, () => form.value.adults], () => {
+watch([() => form.value.checkIn, () => form.value.checkOut, () => form.value.roomId, () => form.value.roomType, () => form.value.adults], () => {
   if (quoteDebounceId) clearTimeout(quoteDebounceId)
   quoteDebounceId = setTimeout(refreshQuote, 300)
 }, { immediate: true })
@@ -682,7 +828,7 @@ watch([() => form.value.checkIn, () => form.value.checkOut, () => form.value.roo
 const subtotal = computed(() => {
   if (manualPrice.value && manualSubtotal.value !== null) return Number(manualSubtotal.value) || 0
   if (stayQuote.value) return stayQuote.value.subtotal
-  return selRoom.value ? selRoom.value.basePrice * nights.value : 0
+  return hasStayTarget.value ? fallbackBasePrice.value * nights.value : 0
 })
 const taxes = computed(() => Math.round(subtotal.value * (taxRatePct.value / 100)))
 
@@ -801,9 +947,22 @@ const selectedRoomUnavailable = computed(() => {
   const sel = roomsForSelect.value.find((r: any) => r.id === form.value.roomId)
   return sel?.available === false
 })
+// REQ-HAC-05: el tipo es obligatorio; la unidad no (salvo en edición con unidad ya asignada, donde
+// soltarla es otro endpoint). Un tipo sin libres para toda la estadía se avisa ANTES del 409.
+const selectedTypeSoldOut = computed(() => {
+  if (!form.value.roomType || !selTypeAvail.value) return false
+  if (isEdit.value && sameType(form.value.roomType, originalRoomType.value)) return false
+  return selTypeAvail.value.available <= 0
+})
+const roomTypeError = computed(() => {
+  if (!step4Attempted.value) return ''
+  if (!form.value.roomType) return 'Seleccioná un tipo de habitación'
+  if (selectedTypeSoldOut.value && !form.value.roomId) return 'Ese tipo no tiene disponibilidad esas fechas: elegí otro'
+  return ''
+})
 const roomError = computed(() => {
   if (!step4Attempted.value) return ''
-  if (!form.value.roomId) return 'Seleccioná una habitación'
+  if (!form.value.roomId) return (isEdit.value && originalRoomId.value) ? 'Seleccioná una habitación (para soltar la unidad usá "Quitar habitación" en el listado)' : ''
   if (selectedRoomUnavailable.value) return 'Esa habitación no está disponible esas fechas: elegí otra'
   return ''
 })
@@ -828,7 +987,8 @@ function isStep1Valid() {
   return !!form.value.name.trim() && (!!form.value.email.trim() || !!form.value.phone.trim()) && !emailFormatError.value
 }
 function isStep4Valid() {
-  return !!form.value.roomId && !!form.value.checkIn && !!form.value.checkOut && form.value.checkOut > form.value.checkIn && !selectedRoomUnavailable.value
+  const unitOk = form.value.roomId ? !selectedRoomUnavailable.value : (!selectedTypeSoldOut.value && !(isEdit.value && originalRoomId.value))
+  return !!form.value.roomType && unitOk && !!form.value.checkIn && !!form.value.checkOut && form.value.checkOut > form.value.checkIn
     && (isEdit.value || form.value.checkIn >= todayISO)
 }
 
@@ -906,7 +1066,7 @@ function resetForm() {
     documentType: 'dni', document: '', documentIssueDate: '',
     communicateClient: 'none', guestNotes: '',
     emergencyName: '', emergencyPhone: '', emergencyRelation: '', emergencyEmail: '',
-    checkIn: '', checkOut: '', roomId: '', adults: 2, children: 0,
+    checkIn: '', checkOut: '', roomType: '', roomId: '', adults: 2, children: 0,
     regime: 'room_only', promoCode: '',
     source: 'direct', commission: 0, commissionAmount: 0, extLocator: '', otaNotes: '',
     cardHolder: '', cardBrand: 'visa', cardNumber: '', cardCvv: '', cardExpMonth: '', cardExpYear: '', cardExpiry: '',
@@ -915,6 +1075,8 @@ function resetForm() {
   }
   existingGuarantee.value = false
   originalRoomId.value = ''
+  originalRoomType.value = ''
+  typeAvailability.value = null
   selectedGuestId.value = null
   guestSearch.value = ''
   guestResults.value = []
@@ -1010,7 +1172,7 @@ async function save() {
   }
   if (!isStep4Valid()) {
     wizardStep.value = 4
-    err.value = 'Completá los campos obligatorios de Alojamiento: ' + [roomError.value, checkInError.value, checkOutError.value].filter(Boolean).join(', ') + '.'
+    err.value = 'Completá los campos obligatorios de Alojamiento: ' + [roomTypeError.value, roomError.value, checkInError.value, checkOutError.value].filter(Boolean).join(', ') + '.'
     return
   }
   saving.value = true
@@ -1057,8 +1219,14 @@ async function save() {
     } catch { /* fallback: guest opcional */ }
 
     // 2. Crear/actualizar reserva
+    // REQ-HAC-05 (#260): se vende el TIPO. Sin unidad el body NO lleva `roomId` (la reserva nace con
+    // roomId null y se asigna después); con unidad viajan `roomId` + `roomType`. En edición, cambiar
+    // el tipo y elegir una unidad del tipo nuevo exige `allowTypeChange` explícito (409 sin él).
+    const typeChanged = isEdit.value && !!originalRoomType.value && !sameType(form.value.roomType, originalRoomType.value)
     const reservationPayload: any = {
-      roomId: form.value.roomId,
+      ...(form.value.roomId ? { roomId: form.value.roomId } : {}),
+      roomType: form.value.roomType,
+      ...(typeChanged && form.value.roomId ? { allowTypeChange: true } : {}),
       guestId,
       checkIn: form.value.checkIn,
       checkOut: form.value.checkOut,
@@ -1171,9 +1339,13 @@ async function loadForEdit(id: string) {
     f.checkIn = ext.checkIn
     f.checkOut = ext.checkOut
     f.roomId = ext.roomId || ''
+    // REQ-HAC-05: tipo vendido (filas viejas sin `roomType` → lo fija el watcher de roomId desde la
+    // unidad, o queda vacío si tampoco hay unidad).
+    f.roomType = ext.roomType || (props.rooms as any[]).find((r) => String(r.id) === String(ext.roomId || ''))?.type || ''
     // Trackear la habitación original para el bypass de selectedRoomUnavailable (ver comentario
     // de la ref originalRoomId arriba).
     originalRoomId.value = ext.roomId || ''
+    originalRoomType.value = f.roomType
     f.adults = ext.adults || 2
     f.children = ext.children || 0
     f.status = ext.status
@@ -1242,6 +1414,7 @@ watch(() => props.editId, async (id) => {
   if (id) {
     await loadForEdit(id)
   } else if (props.prefill) {
+    if (props.prefill.roomType) form.value.roomType = props.prefill.roomType
     if (props.prefill.roomId) form.value.roomId = props.prefill.roomId
     if (props.prefill.checkIn) form.value.checkIn = props.prefill.checkIn
     if (props.prefill.checkOut) form.value.checkOut = props.prefill.checkOut
