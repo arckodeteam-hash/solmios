@@ -18,6 +18,8 @@ interface InventarioModule {
   menuItemsWithRecipe: (user: any) => Promise<string[]>
   // F3 (carta-experiencia-avanzada): costo de receta de un ítem, para el puerto getRecipeCost.
   recipeCost: (menuItemId: string, user: any) => Promise<{ cost: number; hasRecipe: boolean }>
+  // KDS: ingredientes con nombre de varios ítems, para que el tablero de cocina muestre la receta de cada plato.
+  recipeIngredientsFor: (menuItemIds: string[], user: any) => Promise<Record<string, Array<{ name: string; quantity: number; unit: string }>>>
   // #208: el restaurante borró un ítem → inventario borra su receta (menu_item_recipes.menuItemId es lógico).
   deleteRecipesOfMenuItem: (input: { hotelId: string; menuItemId: string }) => Promise<number>
 }
@@ -59,6 +61,7 @@ export function restauranteInventarioConnector(ctx: ConnectorContext): void {
   restaurant.setRecipePorts?.({
     menuItemsWithRecipe: (user: any) => inventario().menuItemsWithRecipe(user),
     getRecipeCost: (menuItemId: string, user: any) => inventario().recipeCost(menuItemId, user),
+    getRecipeIngredients: (menuItemIds: string[], user: any) => inventario().recipeIngredientsFor(menuItemIds, user),
     // El hotelId ya viene resuelto en BD por el restaurante (el del ítem borrado), no del token.
     deleteRecipesOfMenuItem: (hotelId: string, menuItemId: string) => inventario().deleteRecipesOfMenuItem({ hotelId, menuItemId }),
   })

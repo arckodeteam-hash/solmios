@@ -70,6 +70,16 @@ const router = createRouter({
       meta: { layout: 'none' },
     },
     {
+      // Pantalla de la cocina (KDS en modo kiosco): el MISMO tablero de /panel/restaurante/cocina
+      // pero sin sidebar ni cabecera del panel — para la pantalla/tablet que vive en la cocina.
+      // Pide sesión del hotel y `restaurant:edit`, igual que la vista del panel (el guard de
+      // `meta.permission` aplica también acá, ver abajo).
+      path: '/kds',
+      name: 'restaurant-kds-kiosk',
+      component: () => import('@/pages/restaurante/cocina.vue'),
+      meta: { layout: 'none', requiresHotelAuth: true, permission: 'restaurant:edit', kiosk: true },
+    },
+    {
       path: '/login',
       name: 'login',
       component: () => import('@/pages/auth/login.vue'),
@@ -940,8 +950,9 @@ router.beforeEach(async (to) => {
   // no lo tiene va a `/panel`, que redirige a la primera vista del POS que SÍ puede abrir
   // (`posLandingFor`) o al dashboard — nunca de vuelta a una ruta que este guard rechaza, así no
   // hay bucle. Con aviso, no en silencio. Impersonando no aplica: los permisos efectivos son ['*:*'].
+  // `/kds` (pantalla de cocina, fuera de /panel) declara el mismo `meta.permission` y pasa por acá.
   const required = to.meta.permission as string | undefined
-  if (required && to.path.startsWith('/panel/') && auth.isAuthenticated && !auth.canActAsHotelAdmin) {
+  if (required && (to.path.startsWith('/panel/') || to.path === '/kds') && auth.isAuthenticated && !auth.canActAsHotelAdmin) {
     const [mod, action] = splitPermission(required)
     if (!hasPermission(auth.user?.permissions, mod, action)) {
       useToast().warning('Sin acceso', 'Tu rol no tiene permiso para esa pantalla.')

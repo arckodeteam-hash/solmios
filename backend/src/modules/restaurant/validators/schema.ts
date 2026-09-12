@@ -232,6 +232,12 @@ const LINE_STATUSES = ['new', 'preparing', 'ready', 'served']
 export const KdsLineStatusSchema: Record<string, ValidationRule> = {
   status: { type: 'string' as const, required: true, enum: LINE_STATUSES },
 }
+// KDS — ajuste de receta por cocina. Solo la forma (dos arrays); el recorte, dedup y tope viven en
+// kds.ts:normalizeIngredientChanges. Ninguno es obligatorio: `{}` = volver a la receta tal cual.
+export const KdsLineIngredientsSchema: Record<string, ValidationRule> = {
+  removed: { type: 'array' as const },
+  added: { type: 'array' as const },
+}
 
 // ─── Anulaciones con motivo (#207) ───
 // `text` (no `string`) para que un motivo "Otro" tipeado a mano no quede truncado por un límite de

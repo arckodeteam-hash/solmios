@@ -1,18 +1,23 @@
 <script setup lang="ts">
-// pages/restaurante/cocina.vue — Pantalla de cocina (KDS, RES-7). Cola de líneas activas por estación,
-// FIFO. Cada línea avanza new→preparing→ready→served. Pensada para tablet: botones grandes.
-// #211: se actualiza por el canal en vivo (SSE, useRestaurantEvents) — una comanda enviada desde otra
-// tablet aparece en ≤2 s; si el stream cae, el composable hace polling cada 15 s y avisa
-// "Reconectando…". Cada ticket dice dónde va ("Terraza · Mesa 3" / "Hab. 204" / "Para llevar"), lleva
-// cronómetro desde el envío a cocina (`sentAt`, #210) y se pinta ámbar a los N min y rojo a los 2N,
-// con N configurable por estación (Carta → Estaciones, default 10). Suena al entrar un ticket de la
-// estación que se está mirando (toggle recordado en localStorage).
-// #207: "Cancelar" NO es una transición de un toque — abre un modal de motivo (VoidReasonModal) y
-// recién al confirmar anula la línea (voidLine, con auditoría). Cerrar el modal no cambia nada.
+// pages/restaurante/cocina.vue — Tablero de cocina (KDS, RES-7). TRES COLUMNAS tipo kanban —
+// Pendiente (new) → Preparando (preparing) → Listo (ready) — y una TARJETA POR PLATO (línea), no por
+// comanda: cocina arrastra la tarjeta a la columna siguiente o toca el botón (tablet). Una tarjeta
+// lleva a dónde va ("Terraza · Mesa 3" / "Hab. 204"), la comanda, el cronómetro y la RECETA del
+// plato (ingredientes de Carta → ítem → Receta, resueltos por el server en la cola): cocina puede
+// QUITAR un ingrediente (queda tachado, "SIN") o AGREGAR uno ("CON"). Eso se guarda en la línea
+// (`ingredientChanges`), lo ve la comanda del mozo y sale en la comanda impresa. No toca el precio:
+// un extra que se cobra es un modificador y lo carga el mozo.
+// #211: se actualiza por el canal en vivo (SSE, useRestaurantEvents); si el stream cae, polling cada
+// 15 s. Cronómetro desde el envío a cocina (`sentAt`, #210), ámbar a N min y rojo a 2N (N por estación).
+// Suena al entrar un ticket de la estación que se mira (toggle en localStorage).
+// #207: "Anular" abre un modal de motivo (VoidReasonModal); cerrar no cambia nada.
+// Modo KIOSCO (`/kds`, meta.kiosk): misma pantalla sin sidebar ni cabecera del panel, fondo oscuro y
+// letra grande, para la pantalla/tablet que vive en la cocina.
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   RestaurantService,
-  type Station, type KdsTicket, type OrderLine, type LineStatus, type RestaurantEvent,
+  type Station, type KdsTicket, type OrderLine, type LineStatus, type RestaurantEvent, type IngredientChanges,
   ORDER_TYPE_LABELS, DEFAULT_ALERT_MINUTES,
 } from '@/services/Restaurant.service'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -24,6 +29,8 @@ import { useRestaurantEvents } from '@/composables/useRestaurantEvents'
 import { openPrintTab } from './imprimir'
 
 const toast = useToast()
+const route = useRoute()
+const kiosk = computed(() => route.meta.kiosk === true)
 const { can } = usePermissions()
 const editPerm = computed(() => can('restaurant', 'edit'))
 // Anular exige restaurant:delete (misma decisión que quitar un plato, con rastro). Sin el permiso el
@@ -38,14 +45,127 @@ const stations = ref<Station[]>([])
 const tickets = ref<KdsTicket[]>([])
 const station = ref<string>('')       // '' = todas · '__none__' = sin estación · id = estación puntual
 
-// Siguiente transición por estado de línea (KDS solo avanza; served/voided ya salen de la cola).
-const NEXT: Partial<Record<LineStatus, { to: LineStatus; label: string; cls: string }[]>> = {
-  new: [{ to: 'preparing', label: 'Preparar', cls: 'bg-navy text-white' }],
-  preparing: [{ to: 'ready', label: 'Lista', cls: 'bg-gold text-white' }],
-  ready: [{ to: 'served', label: 'Servida', cls: 'bg-teal text-white' }],
+// ─── Columnas del tablero ───
+type BoardStatus = 'new' | 'preparing' | 'ready'
+interface Column { status: BoardStatus; label: string; hint: string; accent: string }
+const COLUMNS: Column[] = [
+  { status: 'new', label: 'Pendiente', hint: 'Llegó de la comanda, nadie lo tomó', accent: 'border-navy/30' },
+  { status: 'preparing', label: 'Preparando', hint: 'En el fuego', accent: 'border-navy' },
+  { status: 'ready', label: 'Listo', hint: 'Para que lo retire el mozo', accent: 'border-gold' },
+]
+// Siguiente transición por estado (el KDS solo avanza; served/voided salen del tablero).
+const NEXT: Record<BoardStatus, { to: LineStatus; label: string; cls: string }> = {
+  new: { to: 'preparing', label: 'Preparar →', cls: 'bg-navy text-white' },
+  preparing: { to: 'ready', label: 'Listo →', cls: 'bg-gold text-white' },
+  ready: { to: 'served', label: 'Servido ✓', cls: 'bg-teal text-white' },
 }
-// Estados desde los que cocina puede anular (una vez lista, la decisión es del salón/comanda).
+// Estados desde los que cocina puede anular (una vez listo, la decisión es del salón/comanda).
 const VOIDABLE: LineStatus[] = ['new', 'preparing']
+
+/** Tarjeta del tablero: el plato + su comanda (para el lugar, el número y el cronómetro). */
+interface Card { line: OrderLine; ticket: KdsTicket }
+const cards = computed<Card[]>(() => tickets.value.flatMap((t) => t.lines.map((line) => ({ line, ticket: t }))))
+function cardsOf(status: BoardStatus): Card[] {
+  // FIFO por comanda (la cola ya viene ordenada por apertura) y, dentro de la comanda, por orden de carga.
+  return cards.value.filter((c) => c.line.status === status)
+}
+
+// ─── Arrastrar y soltar (kanban) ───
+// HTML5 drag & drop: funciona con mouse y en la mayoría de las tablets modernas; el botón "→" sigue
+// estando para el dedo. Solo se acepta soltar en la columna SIGUIENTE (misma regla que el backend:
+// new→preparing→ready). Soltar en otra columna no hace nada y avisa.
+const dragging = ref<string | null>(null)
+const dragOver = ref<BoardStatus | null>(null)
+function onDragStart(e: DragEvent, c: Card) {
+  if (!editPerm.value) { e.preventDefault(); return }
+  dragging.value = c.line.id
+  e.dataTransfer?.setData('text/plain', c.line.id)
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+function onDragEnd() { dragging.value = null; dragOver.value = null }
+function onDragOver(e: DragEvent, status: BoardStatus) {
+  if (!dragging.value) return
+  e.preventDefault()
+  dragOver.value = status
+}
+async function onDrop(e: DragEvent, status: BoardStatus) {
+  e.preventDefault()
+  const id = dragging.value || e.dataTransfer?.getData('text/plain')
+  dragging.value = null
+  dragOver.value = null
+  const card = id ? cards.value.find((c) => c.line.id === id) : undefined
+  if (!card) return
+  const from = card.line.status as BoardStatus
+  if (from === status) return
+  if (NEXT[from]?.to !== status) {
+    toast.warning('Un paso a la vez', `${LABEL_OF[from]} → ${LABEL_OF[status]} no se puede: mové la tarjeta a la columna siguiente.`)
+    return
+  }
+  await advance(card.line, status)
+}
+const LABEL_OF: Record<string, string> = Object.fromEntries(COLUMNS.map((c) => [c.status, c.label]))
+
+// ─── Receta: ver, quitar y agregar ingredientes ───
+// Tarjetas con la receta desplegada. Por defecto se muestra cerrada con el conteo ("Receta · 5") y
+// los cambios ya hechos siempre visibles (SIN/CON), que es lo que la cocina necesita de un vistazo.
+const expanded = ref<Set<string>>(new Set())
+function toggleRecipe(lineId: string) {
+  const next = new Set(expanded.value)
+  if (next.has(lineId)) next.delete(lineId); else next.add(lineId)
+  expanded.value = next
+}
+const ingredientDraft = ref<Record<string, string>>({})
+const savingIngredients = ref<string | null>(null)
+
+function changesOf(l: OrderLine): IngredientChanges {
+  return { removed: [...(l.ingredientChanges?.removed ?? [])], added: [...(l.ingredientChanges?.added ?? [])] }
+}
+const sameName = (a: string, b: string) => a.trim().toLocaleLowerCase('es') === b.trim().toLocaleLowerCase('es')
+function isRemoved(l: OrderLine, name: string): boolean { return (l.ingredientChanges?.removed ?? []).some((n) => sameName(n, name)) }
+
+async function saveIngredients(l: OrderLine, changes: IngredientChanges) {
+  if (!editPerm.value || savingIngredients.value) return
+  savingIngredients.value = l.id
+  try {
+    const updated = await RestaurantService.setLineIngredients(l.id, changes)
+    // Pintar sin esperar el refresco del canal en vivo.
+    l.ingredientChanges = updated.ingredientChanges ?? null
+  } catch (e: unknown) {
+    toast.error(e instanceof Error ? e.message : 'No se pudo guardar el cambio de receta')
+  } finally {
+    savingIngredients.value = null
+  }
+}
+/** Ingrediente de la receta: tocarlo lo QUITA ("SIN"); tocarlo de nuevo lo restituye. */
+function toggleRemoved(l: OrderLine, name: string) {
+  const c = changesOf(l)
+  c.removed = isRemoved(l, name) ? c.removed.filter((n) => !sameName(n, name)) : [...c.removed, name]
+  void saveIngredients(l, c)
+}
+/** Quita un ingrediente AGREGADO por cocina. */
+function dropAdded(l: OrderLine, name: string) {
+  const c = changesOf(l)
+  c.added = c.added.filter((n) => !sameName(n, name))
+  void saveIngredients(l, c)
+}
+/** Lo que se tipeó en la tarjeta: "Agregar" lo suma como CON; "Quitar" lo suma como SIN (sirve para platos sin receta cargada). */
+function submitDraft(l: OrderLine, as: 'added' | 'removed') {
+  const name = (ingredientDraft.value[l.id] ?? '').trim()
+  if (!name) return
+  const c = changesOf(l)
+  if (as === 'added' && !c.added.some((n) => sameName(n, name))) c.added.push(name)
+  if (as === 'removed' && !c.removed.some((n) => sameName(n, name))) c.removed.push(name)
+  ingredientDraft.value[l.id] = ''
+  void saveIngredients(l, c)
+}
+function hasChanges(l: OrderLine): boolean {
+  return !!(l.ingredientChanges?.removed?.length || l.ingredientChanges?.added?.length)
+}
+function qty(n: number, unit: string): string {
+  const v = Number(n) || 0
+  const num = Number.isInteger(v) ? String(v) : v.toFixed(v < 1 ? 3 : 2).replace(/\.?0+$/, '')
+  return `${num} ${unit === 'unit' ? 'u' : unit}`
+}
 
 // #207: modal de motivo. `voidTarget` = línea + comanda a anular; null = cerrado.
 const voidTarget = ref<{ line: OrderLine; orderId: string } | null>(null)
@@ -75,10 +195,6 @@ async function confirmVoid(reason: string) {
   }
 }
 
-const lineTint: Record<string, string> = {
-  new: 'border-navy/30', preparing: 'border-navy', ready: 'border-gold',
-}
-
 // ─── Dónde va el ticket (#211) ───
 function placeLabel(t: KdsTicket): string {
   const o = t.order
@@ -104,6 +220,7 @@ function elapsedMs(t: KdsTicket): number { return Math.max(0, now.value - ticket
 function elapsedLabel(t: KdsTicket): string {
   const s = Math.floor(elapsedMs(t) / 1000)
   const m = Math.floor(s / 60)
+  if (m >= 600) return `${Math.floor(m / 60)} h`   // una comanda de prueba olvidada no necesita "982:28"
   return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
 /** Umbral del ticket: el más exigente entre las estaciones de sus líneas (en "Todas" conviven varias). */
@@ -229,10 +346,9 @@ async function advance(line: OrderLine, to: LineStatus) {
   }
 }
 
-// #216 — comanda de cocina en papel (80 mm) POR TICKET, con la estación que se está mirando ('' = todas,
+// #216 — comanda de cocina en papel (80 mm) POR COMANDA, con la estación que se está mirando ('' = todas,
 // agrupada por estación; '__none__' = sin estación). Es una REIMPRESIÓN: va con `batch: 'all'` (todo lo
-// enviado, como el ticket en pantalla); el papel por envío lo imprime Comanda al enviar (autoPrint).
-// Pestaña nueva + window.print() (ver imprimir.ts).
+// enviado); el papel por envío lo imprime Comanda al enviar (autoPrint). Pestaña nueva + window.print().
 const printingOrder = ref<string | null>(null)
 async function printTicket(t: KdsTicket) {
   if (printingOrder.value) return
@@ -255,6 +371,8 @@ function modifiersLabel(l: OrderLine): string {
   return names.length ? `(${names.join(', ')})` : ''
 }
 
+const clock = computed(() => new Date(now.value).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }))
+
 onMounted(async () => {
   try {
     stations.value = (await RestaurantService.listStations()).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
@@ -273,80 +391,146 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div :class="['space-y-4', kiosk ? 'kds-kiosk min-h-screen p-4 sm:p-6 bg-[#0b1220] text-white' : '']" data-testid="kds-board">
     <header class="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h1 class="text-xl sm:text-2xl font-black text-navy">Cocina y Bar — KDS</h1>
-        <p class="text-sm text-text-muted mt-0.5">Comandas activas, orden de llegada. Se actualiza sola.</p>
+      <div class="flex items-center gap-3">
+        <div>
+          <h1 :class="['font-black', kiosk ? 'text-2xl sm:text-3xl text-white' : 'text-xl sm:text-2xl text-navy']">Cocina y Bar — KDS</h1>
+          <p :class="['text-sm mt-0.5', kiosk ? 'text-white/60' : 'text-text-muted']">Arrastrá cada plato a la columna siguiente o tocá el botón. Se actualiza solo.</p>
+        </div>
+        <span v-if="kiosk" class="font-mono font-black text-3xl tabular-nums text-white/90 ml-2" aria-label="Hora">{{ clock }}</span>
       </div>
       <div class="flex items-center gap-2">
         <!-- #211: estado del canal en vivo. Reconectando = el KDS sigue con polling cada 15 s. -->
-        <span data-testid="kds-live" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-surface text-[11px] font-bold text-navy" :title="live.state.value === 'live' ? 'Conectado al canal en vivo' : 'Sin canal en vivo: se actualiza cada 15 s'">
+        <span data-testid="kds-live" :class="['inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] font-bold', kiosk ? 'bg-white/10 text-white' : 'bg-surface text-navy']" :title="live.state.value === 'live' ? 'Conectado al canal en vivo' : 'Sin canal en vivo: se actualiza cada 15 s'">
           <span :class="['w-2 h-2 rounded-full', liveDot]" />
           {{ liveLabel }}
         </span>
         <button @click="toggleSound" :aria-pressed="soundOn" :title="soundOn ? 'Silenciar el aviso de comanda nueva' : 'Activar el aviso de comanda nueva'"
-          :class="['px-2.5 py-1.5 rounded-lg border-2 text-xs font-bold', soundOn ? 'border-navy/30 text-navy hover:bg-surface' : 'border-border text-text-muted hover:bg-surface']">
+          :class="['min-h-11 px-3 py-1.5 rounded-lg border-2 text-xs font-bold', kiosk ? 'border-white/30 text-white hover:bg-white/10' : soundOn ? 'border-navy/30 text-navy hover:bg-surface' : 'border-border text-text-muted hover:bg-surface']">
           {{ soundOn ? '🔔 Sonido' : '🔕 Silencio' }}
         </button>
-        <button @click="refresh(true)" :disabled="refreshing" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border-2 border-navy/30 text-navy text-xs font-bold hover:bg-surface disabled:opacity-60">
-          <span v-if="refreshing" class="w-3 h-3 rounded-full border-2 border-navy/30 border-t-navy animate-spin" aria-hidden="true" />
+        <button @click="refresh(true)" :disabled="refreshing" :class="['min-h-11 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border-2 text-xs font-bold disabled:opacity-60', kiosk ? 'border-white/30 text-white hover:bg-white/10' : 'border-navy/30 text-navy hover:bg-surface']">
+          <span v-if="refreshing" class="w-3 h-3 rounded-full border-2 border-current/30 border-t-current animate-spin" aria-hidden="true" />
           {{ refreshing ? 'Actualizando…' : 'Actualizar' }}
         </button>
+        <!-- Pantalla de la cocina: sin sidebar ni cabecera del panel. Desde el kiosco se vuelve al panel. -->
+        <router-link v-if="!kiosk" to="/kds" data-testid="kds-kiosk-link" class="min-h-11 inline-flex items-center px-3 py-1.5 rounded-lg bg-navy text-white text-xs font-bold hover:opacity-90" title="Abrir el tablero a pantalla completa, para la pantalla de la cocina">⛶ Pantalla de cocina</router-link>
+        <router-link v-else to="/panel/restaurante/cocina" class="min-h-11 inline-flex items-center px-3 py-1.5 rounded-lg border-2 border-white/30 text-white text-xs font-bold hover:bg-white/10">← Volver al panel</router-link>
       </div>
     </header>
 
     <!-- Selector de estación -->
     <div class="flex flex-wrap gap-1.5">
-      <button @click="selectStation('')" :class="['px-3 py-1.5 rounded-full text-xs font-bold', station === '' ? 'bg-navy text-white' : 'bg-surface text-text-muted']">Todas</button>
-      <button v-for="s in stations" :key="s.id" @click="selectStation(s.id)" :class="['px-3 py-1.5 rounded-full text-xs font-bold', station === s.id ? 'bg-navy text-white' : 'bg-surface text-text-muted']">{{ s.name }}</button>
-      <button @click="selectStation('__none__')" :class="['px-3 py-1.5 rounded-full text-xs font-bold', station === '__none__' ? 'bg-navy text-white' : 'bg-surface text-text-muted']">Sin estación</button>
+      <button @click="selectStation('')" :class="['min-h-11 px-4 py-1.5 rounded-full text-sm font-bold', station === '' ? (kiosk ? 'bg-white text-[#0b1220]' : 'bg-navy text-white') : (kiosk ? 'bg-white/10 text-white/70' : 'bg-surface text-text-muted')]">Todas</button>
+      <button v-for="s in stations" :key="s.id" @click="selectStation(s.id)" :class="['min-h-11 px-4 py-1.5 rounded-full text-sm font-bold', station === s.id ? (kiosk ? 'bg-white text-[#0b1220]' : 'bg-navy text-white') : (kiosk ? 'bg-white/10 text-white/70' : 'bg-surface text-text-muted')]">{{ s.name }}</button>
+      <button @click="selectStation('__none__')" :class="['min-h-11 px-4 py-1.5 rounded-full text-sm font-bold', station === '__none__' ? (kiosk ? 'bg-white text-[#0b1220]' : 'bg-navy text-white') : (kiosk ? 'bg-white/10 text-white/70' : 'bg-surface text-text-muted')]">Sin estación</button>
     </div>
-    <!-- Esta pantalla es genérica: cada estación (Cocina, Bar, etc.) es una pestaña de arriba.
-         Si falta "Bar" es porque nadie la creó todavía, no porque el sistema no la soporte. -->
-    <p v-if="editPerm" class="text-xs text-text-muted -mt-2">
+    <!-- Esta pantalla es genérica: cada estación (Cocina, Bar, etc.) es una pestaña de arriba. -->
+    <p v-if="editPerm && !kiosk" class="text-xs text-text-muted -mt-2">
       ¿No ves la estación que buscás (ej. Bar)? Creála en <router-link :to="{ path: '/panel/restaurante/carta', query: { tab: 'stations' } }" class="font-bold text-navy hover:underline">Carta → Estaciones</router-link>.
-      El umbral de demora (ámbar/rojo) también se configura ahí, por estación.
+      El umbral de demora (ámbar/rojo) también se configura ahí, por estación. La receta de cada plato se carga en Carta → ítem → Receta.
     </p>
 
-    <div v-if="loading" class="py-20 text-center text-text-muted">Cargando…</div>
-    <EmptyState v-else-if="!tickets.length" title="Nada en cola" message="Cuando entren comandas a esta estación, aparecen acá." />
+    <div v-if="loading" :class="['py-20 text-center', kiosk ? 'text-white/60' : 'text-text-muted']">Cargando…</div>
+    <EmptyState v-else-if="!cards.length" title="Nada en cola" message="Cuando entren comandas a esta estación, aparecen acá." />
 
-    <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-      <div v-for="t in tickets" :key="t.order.id" :class="['rounded-2xl border-2 bg-white overflow-hidden flex flex-col', DELAY_BORDER[delayLevel(t)]]" :data-delay="delayLevel(t)">
-        <div :class="['px-3 py-2 flex items-center justify-between gap-2', DELAY_HEADER[delayLevel(t)]]">
-          <div class="min-w-0">
-            <div class="font-black text-sm truncate">{{ placeLabel(t) }}</div>
-            <div class="text-[11px] opacity-80 truncate">{{ t.order.number || 'Comanda' }} · {{ ORDER_TYPE_LABELS[t.order.type] }} · {{ hhmm(t.order.openedAt) }}</div>
+    <!-- Tablero: 3 columnas, una tarjeta por plato. -->
+    <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-3 items-start" data-testid="kds-columns">
+      <section v-for="col in COLUMNS" :key="col.status"
+        :class="['rounded-2xl border-2 p-2 min-h-[40vh] flex flex-col gap-2 transition-colors', kiosk ? 'bg-white/5 border-white/10' : 'bg-surface/60 ' + col.accent, dragOver === col.status ? (kiosk ? 'ring-2 ring-white/60' : 'ring-2 ring-gold') : '']"
+        :data-column="col.status" :aria-label="col.label"
+        @dragover="onDragOver($event, col.status)" @dragleave="dragOver === col.status && (dragOver = null)" @drop="onDrop($event, col.status)">
+        <header class="flex items-center justify-between px-1.5 pt-1">
+          <div>
+            <h2 :class="['font-black text-sm uppercase tracking-wide', kiosk ? 'text-white' : 'text-navy']">{{ col.label }}</h2>
+            <p :class="['text-[11px]', kiosk ? 'text-white/50' : 'text-text-muted']">{{ col.hint }}</p>
           </div>
-          <div class="shrink-0 flex items-center gap-1.5">
-            <!-- #211: cronómetro desde el envío a cocina; ámbar a N min, rojo a 2N (N por estación). -->
-            <span class="font-mono font-black text-base tabular-nums" :title="`Umbral: ${alertMinutesFor(t)} min`">{{ elapsedLabel(t) }}</span>
-            <!-- #216: comanda en papel para esta estación. -->
-            <button type="button" @click="printTicket(t)" :disabled="printingOrder === t.order.id" data-testid="print-kitchen"
-              :aria-label="`Imprimir comanda ${t.order.number || ''}`" title="Imprimir comanda de cocina"
-              class="h-7 w-7 grid place-items-center rounded-lg bg-white/15 hover:bg-white/30 text-sm disabled:opacity-50">🖨</button>
-          </div>
-        </div>
-        <div class="p-2.5 space-y-2 flex-1">
-          <div v-for="l in t.lines" :key="l.id" :class="['rounded-xl border-2 p-2.5', lineTint[l.status] || 'border-border']">
-            <div class="flex items-center justify-between gap-2">
-              <span class="font-bold text-navy text-sm">{{ l.quantity }}× {{ l.name }} <span v-if="modifiersLabel(l)" class="font-normal text-text-muted">{{ modifiersLabel(l) }}</span></span>
+          <span :class="['min-w-7 h-7 grid place-items-center rounded-full text-xs font-black px-2', kiosk ? 'bg-white/15 text-white' : 'bg-navy/10 text-navy']" data-testid="kds-column-count">{{ cardsOf(col.status).length }}</span>
+        </header>
+
+        <p v-if="!cardsOf(col.status).length" :class="['text-xs text-center py-6', kiosk ? 'text-white/40' : 'text-text-muted']">—</p>
+
+        <article v-for="c in cardsOf(col.status)" :key="c.line.id"
+          :draggable="editPerm" @dragstart="onDragStart($event, c)" @dragend="onDragEnd"
+          :class="['rounded-2xl border-2 bg-white text-navy overflow-hidden flex flex-col select-none', DELAY_BORDER[delayLevel(c.ticket)], dragging === c.line.id ? 'opacity-50' : '', editPerm ? 'cursor-grab active:cursor-grabbing' : '']"
+          :data-delay="delayLevel(c.ticket)" :data-line="c.line.id" data-testid="kds-card">
+          <!-- Cabecera: dónde va, comanda, cronómetro, imprimir. -->
+          <div :class="['px-3 py-2 flex items-center justify-between gap-2', DELAY_HEADER[delayLevel(c.ticket)]]">
+            <div class="min-w-0">
+              <div class="font-black text-sm truncate">{{ placeLabel(c.ticket) }}</div>
+              <div class="text-[11px] opacity-80 truncate">{{ c.ticket.order.number || 'Comanda' }} · {{ ORDER_TYPE_LABELS[c.ticket.order.type] }} · {{ hhmm(c.ticket.order.openedAt) }}</div>
             </div>
-            <div v-if="l.notes" class="text-[11px] text-gold font-bold mt-0.5">⚑ {{ l.notes }}</div>
-            <!-- #282 (M2): el KDS se usa con el dedo en una tablet — botones de ≥44 px de alto (min-h-11), no 28. -->
-            <div v-if="(editPerm && NEXT[l.status]) || (deletePerm && VOIDABLE.includes(l.status))" class="flex flex-wrap gap-2 mt-2">
-              <template v-if="editPerm">
-                <button v-for="a in NEXT[l.status]" :key="a.to" @click="advance(l, a.to)" :disabled="busyLine === l.id" data-testid="kds-advance"
-                  :class="['min-h-11 px-4 py-2 rounded-lg text-sm font-bold disabled:opacity-50', a.cls]">{{ a.label }}</button>
-              </template>
+            <div class="shrink-0 flex items-center gap-1.5">
+              <!-- #211: cronómetro desde el envío a cocina; ámbar a N min, rojo a 2N (N por estación). -->
+              <span class="font-mono font-black text-base tabular-nums" :title="`Umbral: ${alertMinutesFor(c.ticket)} min`">{{ elapsedLabel(c.ticket) }}</span>
+              <!-- #216: comanda en papel para esta estación. -->
+              <button type="button" @click="printTicket(c.ticket)" :disabled="printingOrder === c.ticket.order.id" data-testid="print-kitchen"
+                :aria-label="`Imprimir comanda ${c.ticket.order.number || ''}`" title="Imprimir comanda de cocina"
+                class="h-7 w-7 grid place-items-center rounded-lg bg-white/15 hover:bg-white/30 text-sm disabled:opacity-50">🖨</button>
+            </div>
+          </div>
+
+          <div class="p-3 space-y-2 flex-1">
+            <!-- El plato -->
+            <div :class="['font-black leading-tight', kiosk ? 'text-xl' : 'text-lg']">
+              {{ c.line.quantity }}× {{ c.line.name }}
+              <span v-if="modifiersLabel(c.line)" class="font-semibold text-sm text-text-muted">{{ modifiersLabel(c.line) }}</span>
+            </div>
+            <div v-if="c.line.notes" class="text-xs text-gold font-bold">⚑ {{ c.line.notes }}</div>
+
+            <!-- Cambios de receta hechos por cocina: siempre visibles. -->
+            <div v-if="hasChanges(c.line)" class="flex flex-wrap gap-1" data-testid="kds-changes">
+              <span v-for="n in c.line.ingredientChanges?.removed ?? []" :key="'sin-' + n" class="px-2 py-0.5 rounded-md bg-danger/10 text-danger text-xs font-black">SIN {{ n }}</span>
+              <span v-for="n in c.line.ingredientChanges?.added ?? []" :key="'con-' + n" class="px-2 py-0.5 rounded-md bg-success/10 text-success text-xs font-black">CON {{ n }}</span>
+            </div>
+
+            <!-- Receta desplegable -->
+            <button type="button" @click="toggleRecipe(c.line.id)" :aria-expanded="expanded.has(c.line.id)" data-testid="kds-recipe-toggle"
+              class="w-full min-h-10 flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-surface text-xs font-bold text-navy hover:bg-navy/10">
+              <span>🥣 Receta<template v-if="c.line.ingredients?.length"> · {{ c.line.ingredients.length }} ingredientes</template><template v-else> · sin cargar</template></span>
+              <span aria-hidden="true">{{ expanded.has(c.line.id) ? '▴' : '▾' }}</span>
+            </button>
+            <div v-if="expanded.has(c.line.id)" class="rounded-xl border border-border p-2 space-y-2" data-testid="kds-recipe">
+              <p v-if="!c.line.ingredients?.length" class="text-[11px] text-text-muted">Este plato no tiene receta cargada (Carta → ítem → Receta). Igual podés anotar qué va sin o con.</p>
+              <ul v-else class="space-y-1">
+                <li v-for="ing in c.line.ingredients" :key="ing.name" class="flex items-center justify-between gap-2">
+                  <span :class="['text-sm', isRemoved(c.line, ing.name) ? 'line-through text-danger/70' : 'text-navy']">
+                    {{ ing.name }} <span class="text-[11px] text-text-muted">· {{ qty(ing.quantity * (c.line.quantity || 1), ing.unit) }}</span>
+                  </span>
+                  <button v-if="editPerm" type="button" @click="toggleRemoved(c.line, ing.name)" :disabled="savingIngredients === c.line.id" data-testid="kds-ingredient-toggle"
+                    :class="['min-h-9 px-2.5 rounded-lg text-xs font-bold disabled:opacity-50', isRemoved(c.line, ing.name) ? 'bg-navy/10 text-navy' : 'border-2 border-danger/40 text-danger']">
+                    {{ isRemoved(c.line, ing.name) ? '↺ Poner' : '− Quitar' }}
+                  </button>
+                </li>
+              </ul>
+              <ul v-if="c.line.ingredientChanges?.added?.length" class="space-y-1">
+                <li v-for="n in c.line.ingredientChanges?.added ?? []" :key="'a-' + n" class="flex items-center justify-between gap-2">
+                  <span class="text-sm text-success font-bold">+ {{ n }}</span>
+                  <button v-if="editPerm" type="button" @click="dropAdded(c.line, n)" :disabled="savingIngredients === c.line.id" class="min-h-9 px-2.5 rounded-lg text-xs font-bold bg-navy/10 text-navy disabled:opacity-50">Sacar</button>
+                </li>
+              </ul>
+              <form v-if="editPerm" class="flex gap-1.5" @submit.prevent="submitDraft(c.line, 'added')">
+                <input v-model="ingredientDraft[c.line.id]" type="text" maxlength="60" placeholder="Ingrediente…" data-testid="kds-ingredient-input"
+                  class="flex-1 min-w-0 min-h-10 px-2.5 rounded-lg border-2 border-border text-sm text-navy focus:border-navy outline-none" @mousedown.stop @dragstart.stop />
+                <button type="submit" :disabled="savingIngredients === c.line.id || !(ingredientDraft[c.line.id] ?? '').trim()" data-testid="kds-ingredient-add"
+                  class="min-h-10 px-3 rounded-lg bg-success text-white text-xs font-bold disabled:opacity-50">+ Agregar</button>
+                <button type="button" @click="submitDraft(c.line, 'removed')" :disabled="savingIngredients === c.line.id || !(ingredientDraft[c.line.id] ?? '').trim()" data-testid="kds-ingredient-remove"
+                  class="min-h-10 px-3 rounded-lg border-2 border-danger/40 text-danger text-xs font-bold disabled:opacity-50">− Quitar</button>
+              </form>
+            </div>
+
+            <!-- #282 (M2): el KDS se usa con el dedo en una tablet — botones de ≥44 px de alto. -->
+            <div v-if="editPerm || (deletePerm && VOIDABLE.includes(c.line.status))" class="flex flex-wrap gap-2 pt-1">
+              <button v-if="editPerm" @click="advance(c.line, NEXT[col.status].to)" :disabled="busyLine === c.line.id" data-testid="kds-advance"
+                :class="['flex-1 min-h-11 px-4 py-2 rounded-lg text-sm font-black disabled:opacity-50', NEXT[col.status].cls]">{{ NEXT[col.status].label }}</button>
               <!-- #207: abre el modal de motivo; no anula hasta confirmar. -->
-              <button v-if="deletePerm && VOIDABLE.includes(l.status)" @click="openVoid(l, t.order.id)" :disabled="busyLine === l.id" data-testid="kds-void"
-                class="min-h-11 px-4 py-2 rounded-lg text-sm font-bold border-2 border-coral/40 text-coral disabled:opacity-50">Cancelar</button>
+              <button v-if="deletePerm && VOIDABLE.includes(c.line.status)" @click="openVoid(c.line, c.ticket.order.id)" :disabled="busyLine === c.line.id" data-testid="kds-void"
+                class="min-h-11 px-4 py-2 rounded-lg text-sm font-bold border-2 border-coral/40 text-coral disabled:opacity-50">Anular</button>
             </div>
           </div>
-        </div>
-      </div>
+        </article>
+      </section>
     </div>
 
     <VoidReasonModal v-if="voidTarget" title="Cancelar plato"
@@ -355,3 +539,8 @@ onUnmounted(() => {
       @confirm="confirmVoid" @close="closeVoid" />
   </div>
 </template>
+
+<style scoped>
+/* En kiosco la página ocupa toda la ventana: el layout 'none' no pone fondo. */
+.kds-kiosk { margin: 0; }
+</style>

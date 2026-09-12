@@ -118,6 +118,21 @@ describe('guard — kitchen por URL directa rebota al KDS con aviso', () => {
     expect(router.currentRoute.value.path).toBe('/panel/restaurante/cocina')
   })
 
+  // Pantalla de la cocina (kiosco, fuera de /panel): mismo componente y mismo permiso que el KDS del panel.
+  it('kitchen entra a /kds (pantalla de cocina); un rol con solo restaurant:view rebota', async () => {
+    login('kitchen', KITCHEN)
+    await router.push('/kds')
+    expect(router.currentRoute.value.path).toBe('/kds')
+    expect(router.currentRoute.value.meta.layout).toBe('none')
+    expect(router.currentRoute.value.meta.kiosk).toBe(true)
+
+    login('custom', ['restaurant:view'])
+    await router.push('/login')   // salir de /kds: una navegación al mismo destino no corre los guards
+    await router.push('/kds')
+    expect(router.currentRoute.value.path).not.toBe('/kds')
+    expect(toastWarning).toHaveBeenCalled()
+  })
+
   it('waiter entra a Salón, Caja, Cobrar y KDS; no a Carta', async () => {
     login('waiter', WAITER)
     for (const path of ['/panel/restaurante/salon', '/panel/restaurante/caja', '/panel/restaurante/cobrar/o1', '/panel/restaurante/cocina']) {

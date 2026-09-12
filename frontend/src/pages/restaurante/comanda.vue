@@ -602,6 +602,11 @@ function cancel() {
                   </template>
                   <!-- #210 — nota de la línea ("sin cebolla"): viaja al KDS y se ve debajo del plato. -->
                   <div v-if="l.notes" class="text-[11px] text-gold font-bold">⚑ {{ l.notes }}</div>
+                  <!-- KDS con receta: lo que COCINA quitó/agregó del plato. Solo lectura acá (se edita en el tablero de cocina). -->
+                  <div v-if="l.ingredientChanges?.removed?.length || l.ingredientChanges?.added?.length" class="text-[11px] font-bold text-navy/80 flex flex-wrap gap-x-2" data-testid="line-ingredient-changes">
+                    <span v-for="n in l.ingredientChanges?.removed ?? []" :key="'sin-' + n" class="text-danger">SIN {{ n }}</span>
+                    <span v-for="n in l.ingredientChanges?.added ?? []" :key="'con-' + n" class="text-success">CON {{ n }}</span>
+                  </div>
                   <div class="flex flex-wrap items-center gap-3">
                     <!-- El header de un combo NO acepta nota: el KDS lo excluye de la cola (nunca es
                          un plato a preparar) y sus componentes los rechaza `updateLine` ("editá el

@@ -96,6 +96,7 @@ function toPrintLine(l: OrderItemDTO): PrintLine {
     name: l.name, quantity: Number(l.quantity || 0), unitPrice: Number(l.unitPrice || 0), lineTotal: Number(l.lineTotal || 0),
     taxRate: Number(l.taxRate || 0), notes: l.notes || undefined,
     modifiers: (l.modifiers ?? []).map((m) => ({ name: m.name, priceDelta: Number(m.priceDelta || 0) })),
+    ingredientChanges: l.ingredientChanges ?? null,
     kind: l.kind ?? 'item', stationId: l.stationId || undefined, stationName: l.stationName || undefined, sentAt: l.sentAt || undefined,
     discountType: l.discountType ?? null, discountValue: l.discountValue ?? null, discountAmount: Number(l.discountAmount || 0), discountReason: l.discountReason ?? null,
   }

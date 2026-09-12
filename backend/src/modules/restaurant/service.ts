@@ -161,6 +161,7 @@ export class RestaurantService {
   // ─── KDS / cocina (RES-4) — delegan a usecases/kds ───
   kdsQueue(station: string | undefined, user: CurrentUser) { return kds.kdsQueue(kdsDeps(this.w()), station, user) }
   setLineStatus(lineId: string, status: LineStatus, user: CurrentUser) { return kds.setLineStatus(kdsDeps(this.w()), lineId, status, user) }
+  setLineIngredients(lineId: string, input: unknown, user: CurrentUser) { return kds.setLineIngredients(kdsDeps(this.w()), lineId, input, user) }
 
   // ─── Canal en vivo (#211) — usecases/events. publishEvent lo llama el conector; eventStream/eventsTicket, el controller ───
   publishEvent(hotelId: string, event: Omit<events.RestaurantEvent, 'at'>) { this.eventHub.publish(hotelId, event) }

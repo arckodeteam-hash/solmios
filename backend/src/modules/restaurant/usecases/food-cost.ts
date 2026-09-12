@@ -5,7 +5,7 @@
 // inventario, porque `menu_combos`/`menu_combo_items` son de este módulo). Ver specs/menu-food-cost/spec.md.
 import type { RepositoryAdapter } from 'arckode-framework'
 import { NotFoundError, ValidationError } from 'arckode-framework'
-import type { MenuItemDTO, ComboDTO, ComboItemDTO, CurrentUser } from '../types'
+import type { MenuItemDTO, ComboDTO, ComboItemDTO, CurrentUser, RecipeIngredient } from '../types'
 
 // Puerto de recetas (inventario) inyectado por el conector restaurante-inventario.ts y consumido por
 // service.ts (setRecipePorts). F3 extiende el mismo puerto (D4/design.md): `getRecipeCost` opcional,
@@ -13,6 +13,8 @@ import type { MenuItemDTO, ComboDTO, ComboItemDTO, CurrentUser } from '../types'
 export interface RecipePorts {
   menuItemsWithRecipe?: (user: CurrentUser) => Promise<string[]>
   getRecipeCost?: (menuItemId: string, user: CurrentUser) => Promise<{ cost: number; hasRecipe: boolean }>
+  // KDS: ingredientes con nombre por ítem ({ [menuItemId]: [{ name, quantity, unit }] }), para el tablero de cocina.
+  getRecipeIngredients?: (menuItemIds: string[], user: CurrentUser) => Promise<Record<string, RecipeIngredient[]>>
   /** #208: al borrar un ítem (items-crud.deleteItem) su receta en inventario se va con él. Devuelve filas borradas. */
   deleteRecipesOfMenuItem?: (hotelId: string, menuItemId: string) => Promise<number>
 }

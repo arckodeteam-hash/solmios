@@ -96,9 +96,9 @@ describe('cocina.vue — Cancelar pasa por el modal de motivo', () => {
 
   it('el botón Cancelar abre el modal (openVoid) y solo confirmVoid llama a voidLine con el motivo', () => {
     const tpl = COCINA.match(/<template>([\s\S]*)<\/template>/)![1]
-    const cancelBtn = (tpl.match(/<button[^>]*>Cancelar<\/button>/g) ?? [])[0]
-    expect(cancelBtn, 'no se encontró el botón Cancelar del KDS').toBeDefined()
-    expect(cancelBtn).toMatch(/@click="openVoid\(l, t\.order\.id\)"/)
+    const cancelBtn = (tpl.match(/<button[^>]*data-testid="kds-void"[^>]*>[\s\S]*?<\/button>/g) ?? [])[0]
+    expect(cancelBtn, 'no se encontró el botón Anular del KDS').toBeDefined()
+    expect(cancelBtn).toMatch(/@click="openVoid\(c\.line, c\.ticket\.order\.id\)"/)
     expect(tpl).toMatch(/<VoidReasonModal[\s\S]*@confirm="confirmVoid"[\s\S]*@close="closeVoid"/)
     expect(COCINA).toMatch(/RestaurantService\.voidLine\(voidTarget\.value\.orderId, voidTarget\.value\.line\.id, reason\)/)
   })
@@ -106,7 +106,7 @@ describe('cocina.vue — Cancelar pasa por el modal de motivo', () => {
   it('el botón Cancelar exige restaurant:delete (el backend devolvería 403 sin él)', () => {
     expect(COCINA).toMatch(/const deletePerm = computed\(\(\) => can\('restaurant', 'delete'\)\)/)
     const tpl = COCINA.match(/<template>([\s\S]*)<\/template>/)![1]
-    const cancelBtn = (tpl.match(/<button[^>]*>Cancelar<\/button>/g) ?? [])[0]
+    const cancelBtn = (tpl.match(/<button[^>]*data-testid="kds-void"[^>]*>[\s\S]*?<\/button>/g) ?? [])[0]
     expect(cancelBtn).toMatch(/v-if="deletePerm && /)
   })
 })
@@ -116,8 +116,9 @@ describe('cocina.vue — botones de la línea aptos para el dedo (#282)', () => 
   it('Preparar/Listo y Cancelar tienen min-h-11 (44 px) y ya no py-1/text-xs', () => {
     const tpl = COCINA.match(/<template>([\s\S]*)<\/template>/)![1]
     const advanceBtn = (tpl.match(/<button[^>]*data-testid="kds-advance"[^>]*>[\s\S]*?<\/button>/g) ?? [])[0]
-    const cancelBtn = (tpl.match(/<button[^>]*>Cancelar<\/button>/g) ?? [])[0]
+    const cancelBtn = (tpl.match(/<button[^>]*data-testid="kds-void"[^>]*>[\s\S]*?<\/button>/g) ?? [])[0]
     expect(advanceBtn, 'no se encontró el botón de avance del KDS').toBeDefined()
+    expect(cancelBtn, 'no se encontró el botón Anular del KDS').toBeDefined()
     for (const btn of [advanceBtn, cancelBtn]) {
       expect(btn).toMatch(/min-h-11/)
       expect(btn).not.toMatch(/\bpy-1\b/)
@@ -147,10 +148,55 @@ describe('cocina.vue — #216 imprimir la comanda de cocina por ticket', () => {
     const tpl = COCINA.match(/<template>([\s\S]*)<\/template>/)![1]!
     const btn = (tpl.match(/<button[^>]*data-testid="print-kitchen"[^>]*>/g) ?? [])[0]
     expect(btn, 'falta el botón de imprimir en el ticket').toBeDefined()
-    expect(btn).toMatch(/@click="printTicket\(t\)"/)
+    expect(btn).toMatch(/@click="printTicket\(c\.ticket\)"/)
     expect(btn, 'un botón de solo ícono necesita nombre accesible').toMatch(/:aria-label=/)
     expect(script).toMatch(/import \{ openPrintTab \} from '\.\/imprimir'/)
     // Reimpresión desde el KDS: todo lo enviado (`batch: 'all'`), como el ticket en pantalla.
     expect(script).toMatch(/openPrintTab\(t\.order\.id, 'kitchen', \{ station: station\.value \|\| undefined, batch: 'all' \}\)/)
+  })
+})
+
+// Tablero tipo kanban con receta: una tarjeta por PLATO en tres columnas (Pendiente → Preparando →
+// Listo), se arrastra a la columna siguiente, y cada tarjeta despliega la receta del plato con
+// quitar/agregar ingredientes (persistido en la línea, sin tocar precio).
+describe('cocina.vue — tablero kanban con receta', () => {
+  const script = () => COCINA.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)![1]!
+  const tpl = () => COCINA.match(/<template>([\s\S]*)<\/template>/)![1]!
+
+  it('tres columnas fijas new → preparing → ready y una tarjeta por línea (no por comanda)', () => {
+    expect(script()).toMatch(/\{ status: 'new', label: 'Pendiente'/)
+    expect(script()).toMatch(/\{ status: 'preparing', label: 'Preparando'/)
+    expect(script()).toMatch(/\{ status: 'ready', label: 'Listo'/)
+    expect(script()).toMatch(/tickets\.value\.flatMap\(\(t\) => t\.lines\.map\(\(line\) => \(\{ line, ticket: t \}\)\)\)/)
+    expect(tpl()).toMatch(/<section v-for="col in COLUMNS"[\s\S]*@drop="onDrop\(\$event, col\.status\)"/)
+    expect(tpl()).toMatch(/<article v-for="c in cardsOf\(col\.status\)"[\s\S]*:draggable="editPerm"/)
+  })
+
+  it('soltar solo avanza UN paso (misma regla que el backend) y va por setLineStatus; otra columna avisa y no llama', () => {
+    const drop = script().match(/async function onDrop\([\s\S]*?\n}\n/)?.[0]
+    expect(drop, 'no se encontró onDrop()').toBeDefined()
+    expect(drop).toMatch(/if \(NEXT\[from\]\?\.to !== status\) \{[\s\S]*toast\.warning\([\s\S]*return/)
+    expect(drop).toMatch(/await advance\(card\.line, status\)/)
+    expect(script()).toMatch(/RestaurantService\.setLineStatus\(line\.id, to\)/)
+  })
+
+  it('la receta se despliega por tarjeta; quitar/agregar persiste con setLineIngredients (estado final, sin precio)', () => {
+    expect(tpl()).toMatch(/data-testid="kds-recipe-toggle"[\s\S]*@click="toggleRecipe\(c\.line\.id\)"|@click="toggleRecipe\(c\.line\.id\)"[\s\S]*data-testid="kds-recipe-toggle"/)
+    expect(tpl()).toMatch(/v-for="ing in c\.line\.ingredients"/)
+    expect(tpl()).toMatch(/data-testid="kds-ingredient-toggle"[\s\S]*\{\{ isRemoved\(c\.line, ing\.name\) \? '↺ Poner' : '− Quitar' \}\}/)
+    expect(tpl()).toMatch(/data-testid="kds-ingredient-add"/)
+    expect(tpl()).toMatch(/data-testid="kds-ingredient-remove"/)
+    expect(script()).toMatch(/RestaurantService\.setLineIngredients\(l\.id, changes\)/)
+    // Lo que cocina ya cambió se ve siempre, aunque la receta esté plegada.
+    expect(tpl()).toMatch(/data-testid="kds-changes"[\s\S]*SIN \{\{ n \}\}[\s\S]*CON \{\{ n \}\}/)
+    // Sin permiso de edición no se ofrece ni quitar ni agregar (el backend daría 403).
+    expect(tpl()).toMatch(/<button v-if="editPerm" type="button" @click="toggleRemoved/)
+    expect(tpl()).toMatch(/<form v-if="editPerm"/)
+  })
+
+  it('modo kiosco: la ruta /kds monta el mismo componente sin layout y con el mismo permiso', () => {
+    expect(script()).toMatch(/const kiosk = computed\(\(\) => route\.meta\.kiosk === true\)/)
+    expect(tpl()).toMatch(/<router-link v-if="!kiosk" to="\/kds"/)
+    expect(tpl()).toMatch(/<router-link v-else to="\/panel\/restaurante\/cocina"/)
   })
 })
