@@ -76,6 +76,26 @@ describe('reservasHousekeepingConnector', () => {
     expect(tasks[0].type).toBe('full_cleaning')
   })
 
+  // #258 — reasignación EN ESTADÍA: la unidad anterior queda sucia con el huésped en casa. Antes
+  // `moveStay` la dejaba en `cleaning` por ORM directo, sin tarea de housekeeping ni bump del
+  // caché de `habitaciones`: nadie la limpiaba y el panel la seguía mostrando `occupied`.
+  it('#258: onRoomVacatedMidStay hace lo mismo que el checkout sobre la habitación anterior', async () => {
+    const updates: any[] = []
+    const tasks: any[] = []
+    const { ctx, captured } = makeCtx({
+      habitaciones: { update: async (id: string, dto: any, user: any) => { updates.push({ id, dto, user }); return {} } },
+      housekeeping: { create: async (d: any, u: any) => { tasks.push({ d, u }); return d } },
+    })
+    reservasHousekeepingConnector(ctx)
+    expect(typeof captured.sockets.onRoomVacatedMidStay).toBe('function')
+    await captured.sockets.onRoomVacatedMidStay({ reservationId: 'res1', roomId: 'r-old', hotelId: 'h1' })
+
+    expect(updates).toEqual([{ id: 'r-old', dto: { status: 'cleaning' }, user: { id: 'system-connector', role: 'super_admin', hotelId: 'h1' } }])
+    expect(tasks).toHaveLength(1)
+    expect(tasks[0].d).toMatchObject({ roomId: 'r-old', hotelId: 'h1', type: 'full_cleaning', priority: 'high', status: 'pending' })
+    expect(tasks[0].u.hotelId).toBe('h1')
+  })
+
   // #274: la tarea `arrival_setup` sigue a la reserva (alta/edición/cancelación).
   it('#274: al crear o editar la reserva llama syncArrivalSetup con la reserva tal cual', async () => {
     const synced: any[] = []

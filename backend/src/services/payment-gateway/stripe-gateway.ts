@@ -229,11 +229,13 @@ export class StripeGateway implements RefundableGateway {
     }
   }
 
-  async refund(providerRef: string, amountMinor?: number): Promise<RefundResult> {
+  async refund(providerRef: string, amountMinor?: number, idempotencyKey?: string): Promise<RefundResult> {
+    // #272: misma clave → Stripe devuelve el refund original (24 h) en vez de crear un segundo.
+    const options = idempotencyKey ? { idempotencyKey } : undefined
     const r = await this.stripe.refunds.create({
       payment_intent: await this.paymentIntentOf(providerRef),
       ...(amountMinor ? { amount: amountMinor } : {}),
-    })
+    }, options as any)
     return { refundId: r.id, status: r.status || 'unknown' }
   }
 

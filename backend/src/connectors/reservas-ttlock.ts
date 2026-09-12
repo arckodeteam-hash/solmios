@@ -3,8 +3,10 @@
 //     el PIN se genera AL ASIGNAR (no al pagar) si la reserva ya está confirmada/pagada. Primera
 //     asignación → `generateCodeIfAbsent` (idempotente: si el pago ya lo generó, no duplica).
 //     Reasignación (cambio de habitación) → `generateCode`: crea el PIN en la cerradura nueva y
-//     `keepSingleCode` revoca el de la anterior (una reserva = UN código vigente). Desasignar
-//     (roomId null) → expira: sin habitación no hay cerradura que abrir.
+//     `keepSingleCode` revoca el de la anterior (una reserva = UN código vigente). Si la cerradura
+//     nueva RECHAZA el PIN, el anterior se expira igual (`shared/usecases/lock-code-on-room-move.ts`):
+//     seguía abriendo la habitación que se liberó. Desasignar (roomId null) → expira: sin
+//     habitación no hay cerradura que abrir.
 //   - onReservationCheckedOut / onReservationCancelled → expira los códigos vigentes.
 //
 // C-1 (auditoría 2026-08-19): solo escuchaba onReservationCheckedOut — una reserva pagada
@@ -17,6 +19,7 @@
 // (el staff puede generar/revocar a mano). El connector solo wirea: la idempotencia, el reemplazo
 // (keepSingleCode) y el hardware viven en el módulo ttlock.
 import type { ConnectorContext, Logger } from 'arckode-framework'
+import { replaceLockCodeOnRoomMove } from '../shared/usecases/lock-code-on-room-move'
 
 interface TtlockModule {
   expireCodesByReservation: (id: string) => Promise<void>
@@ -36,8 +39,11 @@ export interface RoomAssignedEvent {
   previousRoomId: string | null
 }
 
-type InfoLogger = Pick<Logger, 'info'>
-const fallbackLog: InfoLogger = { info: (msg: string) => console.info(`[reservas-ttlock] ${msg}`) } as InfoLogger
+type InfoLogger = Pick<Logger, 'info' | 'error'>
+const fallbackLog: InfoLogger = {
+  info: (msg: string) => console.info(`[reservas-ttlock] ${msg}`),
+  error: (msg: string) => console.error(`[reservas-ttlock] ${msg}`),
+} as InfoLogger
 
 const systemUser = (hotelId: string) => ({ id: 'system-connector', role: 'super_admin', hotelId })
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -76,7 +82,8 @@ async function generateOnAssign(ctx: ConnectorContext, log: InfoLogger, data: Ro
   // keepSingleCode revoca los anteriores (hardware incluido) — queda uno solo, el correcto.
   // Primera asignación (o la misma habitación): generateCodeIfAbsent, idempotente.
   const moved = Boolean(data.previousRoomId) && data.previousRoomId !== data.roomId
-  await (moved ? ttlock.generateCode(data.hotelId, data.reservationId) : ttlock.generateCodeIfAbsent(data.hotelId, data.reservationId))
+  // Reasignación con la cerradura nueva fallando: el PIN viejo se expira igual (ver usecase).
+  await (moved ? replaceLockCodeOnRoomMove(ttlock, log, data) : ttlock.generateCodeIfAbsent(data.hotelId, data.reservationId))
 }
 
 function handleRoomAssigned(ctx: ConnectorContext, log: InfoLogger, data: RoomAssignedEvent): Promise<void> {

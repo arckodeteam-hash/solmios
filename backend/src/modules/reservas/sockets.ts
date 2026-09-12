@@ -20,4 +20,8 @@ export interface ReservasSockets {
   // REQ-HAC-03 (#258) — Cambió la habitación de la reserva (asignar, reasignar o soltar: `roomId`
   // null). TTLock genera/reemplaza el código acá; `previousRoomId` es para revocar el anterior.
   onRoomAssigned?: (data: { reservationId: string; hotelId: string; roomId: string | null; previousRoomId: string | null }) => Promise<void>
+  // REQ-HAC-03 (#258) — Reasignación EN ESTADÍA (`checked_in`): la habitación anterior quedó vacía
+  // con el huésped adentro del hotel. Housekeeping la trata como un check-out de esa unidad (estado
+  // `cleaning` + tarea `full_cleaning`). Sólo se emite cuando hay unidad anterior distinta.
+  onRoomVacatedMidStay?: (data: { reservationId: string; hotelId: string; roomId: string }) => Promise<void>
 }

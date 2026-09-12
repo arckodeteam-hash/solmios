@@ -1,0 +1,84 @@
+// payments/tests/refund-web-checkout.test.ts — #272: devolución de un cobro del widget público.
+//
+// El cobro web se asienta con `method:'link'`, `stripePaymentId=''` y el id de la Checkout Session en
+// `stripeSessionId` (shared/usecases/post-booking-payment.ts). El camino `link`/`cs_` y la resolución
+// cs_ → payment_intent del gateway se prueban en refund.test.ts (#271). Acá va lo que #272 suma:
+// el `reason` (descripción + `metadata.reason`), la devolución parcial y el cobro sin referencia.
+import { describe, it, expect } from 'bun:test'
+import { refundPayment } from '../usecases/refund'
+import type { CreatePaymentDTO, PaymentDTO } from '../types'
+
+const SYSTEM = { id: 'system', role: 'system' }
+
+function harness(payment: Partial<PaymentDTO>) {
+  const row: any = {
+    id: 'p1', hotelId: 'h1', type: 'charge', status: 'completed', method: 'link', amount: 200, currency: 'USD',
+    stripePaymentId: '', stripeSessionId: 'cs_x', reservationId: 'r1', metadata: { source: 'web' }, ...payment,
+  }
+  const created: CreatePaymentDTO[] = []
+  const statuses: string[] = []
+  const refundCalls: Array<{ hotelId: string; paymentId: string; amount?: number; idempotencyKey?: string }> = []
+  const deps = {
+    crud: {
+      getById: async () => row,
+      updateStatus: async (_id: string, status: string) => { statuses.push(status); row.status = status; return row },
+    },
+    stripe: {
+      isConfigured: async () => true,
+      refund: async (p: { hotelId: string; paymentId: string; amount?: number; idempotencyKey?: string }) => { refundCalls.push(p); return { id: 're_1', status: 'succeeded' } },
+    },
+    createPayment: async (dto: CreatePaymentDTO) => { created.push(dto); return { id: `r-${created.length}`, ...dto } as PaymentDTO },
+  }
+  return { deps: deps as any, row, created, statuses, refundCalls }
+}
+
+describe('payments — refund de un cobro del widget (method link + stripeSessionId)', () => {
+  it('parcial: llama a stripe.refund con el cs_ y el monto, asienta refund link con metadata.reason y deja el cobro completed', async () => {
+    const h = harness({})
+    const refund = await refundPayment(h.deps, 'p1', 100, SYSTEM, 'guest_cancellation')
+
+    expect(h.refundCalls).toEqual([{ hotelId: 'h1', paymentId: 'cs_x', amount: 100 }])
+    expect(h.created).toHaveLength(1)
+    expect(h.created[0]).toMatchObject({ type: 'refund', method: 'link', status: 'completed', amount: 100, currency: 'USD', reference: 're_1', reservationId: 'r1', createdBy: 'system' })
+    expect(h.created[0].metadata).toEqual({ source: 'web', refundOf: 'p1', reason: 'guest_cancellation' })
+    expect(h.created[0].description).toBe('Refund for payment p1 (guest_cancellation)')
+    expect(refund.id).toBe('r-1')
+    expect(h.statuses).toEqual([])
+    expect(h.row.status).toBe('completed')
+  })
+
+  it('total: el cobro original pasa a refunded', async () => {
+    const h = harness({})
+    await refundPayment(h.deps, 'p1', 200, SYSTEM, 'guest_cancellation')
+    expect(h.statuses).toEqual(['refunded'])
+    expect(h.created[0]).toMatchObject({ type: 'refund', amount: 200 })
+  })
+
+  it('sin reason: descripción y metadata sin el motivo (comportamiento previo intacto)', async () => {
+    const h = harness({})
+    await refundPayment(h.deps, 'p1', undefined, SYSTEM)
+    expect(h.created[0].description).toBe('Refund for payment p1')
+    expect(h.created[0].metadata).toEqual({ source: 'web', refundOf: 'p1' })
+    expect(h.statuses).toEqual(['refunded'])
+  })
+
+  // #272: la clave de idempotencia del llamador llega a la pasarela ANTES del asiento; sin ella no se inventa una.
+  it('con idempotencyKey → stripe.refund la recibe tal cual; sin ella no manda el campo', async () => {
+    const h = harness({})
+    await refundPayment(h.deps, 'p1', 100, SYSTEM, 'guest_cancellation', 'web-refund:p1:10000')
+    await refundPayment(h.deps, 'p1', 100, SYSTEM, 'guest_cancellation')
+
+    expect(h.refundCalls).toEqual([
+      { hotelId: 'h1', paymentId: 'cs_x', amount: 100, idempotencyKey: 'web-refund:p1:10000' },
+      { hotelId: 'h1', paymentId: 'cs_x', amount: 100 },
+    ])
+  })
+
+  it('link SIN stripeSessionId ni stripePaymentId → ConflictError y no llama a Stripe', async () => {
+    const h = harness({ stripeSessionId: '', stripePaymentId: '' })
+    await expect(refundPayment(h.deps, 'p1', undefined, SYSTEM, 'guest_cancellation'))
+      .rejects.toThrow(/no tiene un cargo de Stripe asociado/)
+    expect(h.refundCalls).toHaveLength(0)
+    expect(h.created).toHaveLength(0)
+  })
+})

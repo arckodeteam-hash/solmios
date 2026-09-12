@@ -153,6 +153,27 @@ describe('getPublicCalendar — disponibilidad', () => {
     expect(res.body.days[0].available).toBe(1)
   })
 
+  // HAC-02 (#257/#258): una `confirmed` sin unidad (vende sólo `roomType`) resta una del tipo
+  // en sus noches. Antes `groupReservationsByRoom` la saltaba y el calendario mostraba libre lo vendido.
+  it('(14) reserva confirmada SIN habitación de tipo standard baja la disponibilidad de standard en 1', async () => {
+    const deps = makeDeps({
+      rooms: [
+        { id: 'r1', type: 'standard', capacity: 2, basePrice: 80, status: 'available' },
+        { id: 'r2', type: 'standard', capacity: 2, basePrice: 80, status: 'available' },
+        { id: 'r3', type: 'suite', capacity: 2, basePrice: 200, status: 'available' },
+      ],
+      reservations: [
+        { id: 'res1', roomId: null, roomType: 'Standard', status: 'confirmed', checkIn: '2026-09-02', checkOut: '2026-09-03' },
+        // Sin unidad y cancelada / sin roomType: no descuentan.
+        { id: 'res2', roomId: null, roomType: 'standard', status: 'cancelled', checkIn: '2026-09-01', checkOut: '2026-09-04' },
+        { id: 'res3', roomId: null, roomType: null, status: 'confirmed', checkIn: '2026-09-01', checkOut: '2026-09-04' },
+      ],
+    })
+    const res = await getPublicCalendar(deps, 'caribe-paradise', { from: '2026-09-01', to: '2026-09-03' })
+    // 3 unidades (2 standard + 1 suite); el 02 hay una standard vendida sin unidad → 2.
+    expect(res.body.days.map((d: any) => d.available)).toEqual([3, 2, 3])
+  })
+
   it('pending y guaranteed SÍ ocupan (whitelist completa)', async () => {
     for (const status of ['confirmed', 'checked_in', 'pending', 'guaranteed']) {
       const deps = makeDeps({

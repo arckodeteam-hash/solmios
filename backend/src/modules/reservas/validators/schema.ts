@@ -88,6 +88,11 @@ export const StayQuoteSchema: Record<string, ValidationRule> = {
 export const UpdateReservasSchema: Record<string, ValidationRule> = {
   roomId: { type: 'string' as const },
   roomType: { type: 'string' as const, max: 50 },
+  // REQ-HAC-03 (#258): el PUT con `roomId` de otro tipo delega en `validateRoomAssignment`, que
+  // exige `allowTypeChange` explícito (409 `type_mismatch`). `validateSchema` es lista blanca: sin
+  // declararlo acá el flag se descartaba en silencio y cambiar de tipo por PUT daba SIEMPRE 409.
+  // No se persiste (el ORM sólo escribe campos del modelo); es una decisión, no un dato.
+  allowTypeChange: { type: 'boolean' as const },
   checkIn: { type: 'string' as const, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   checkOut: { type: 'string' as const, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   totalAmount: { type: 'number' as const, min: 0 },
@@ -250,6 +255,12 @@ export const MarkPaidSchema: Record<string, ValidationRule> = {
 export const IssueInvoiceSchema: Record<string, ValidationRule> = {
   notes: { type: 'string' as const, max: 500 },
 }
+
+// ── Reintentar reembolso web (#272): POST /api/reservas/:id/retry-refund ──
+// No hay campos: el monto sale de `reservations.refundAmount`, nunca del cliente. El schema vacío
+// existe para que la ruta pase por `validateSchema` como todo POST (regla del módulo); no cambia
+// el comportamiento (un body con claves de más no falla — igual que el resto de los schemas).
+export const RetryRefundSchema: Record<string, ValidationRule> = {}
 
 // ── Pre-Checkin (público) ──
 // Nombres de campo alineados con lo que MANDA el form público (pre-checkin/index.vue: `name`,

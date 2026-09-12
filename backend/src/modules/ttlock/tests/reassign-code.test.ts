@@ -136,7 +136,12 @@ describe('TTLock — reasignar habitación reemplaza el código (#258 / 3.3)', (
     })
   })
 
-  it('si la cerradura nueva rechaza el PIN, el código anterior sigue activo (nunca se queda sin código)', async () => {
+  // Contrato del SERVICE: `generateCode` revoca el anterior sólo después de crear el nuevo (para
+  // "Regenerar" en la misma habitación es lo correcto: nunca se queda sin código). Al REASIGNAR
+  // ese contrato no alcanza — el PIN viejo abre una habitación que ya no es del huésped — y por
+  // eso `connectors/reservas-ttlock.ts` expira los códigos de la reserva cuando generateCode
+  // falla (test en connectors/tests/reservas-ttlock-assign.test.ts). Acá se fija el contrato base.
+  it('si la cerradura nueva rechaza el PIN, generateCode NO toca el anterior: revocarlo es decisión del caller (reservas-ttlock lo expira al reasignar)', async () => {
     const { orm, codes } = makeWorld()
     const { fetchFn, calls } = fakeSciener((url) =>
       url.includes('/v3/keyboardPwd/add') ? new Response(JSON.stringify({ errcode: -3, errmsg: 'lock unreachable' })) : undefined,

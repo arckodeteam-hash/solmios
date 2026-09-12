@@ -52,6 +52,15 @@ describe('create_reservation (Recepción IA) — capacidad (auditoría de integr
     expect(result.status).toBe('confirmed')
   })
 
+  // REQ-HAC-01 (#258): la fila lleva el tipo vendido, como el panel y el motor público.
+  it('persiste roomType = rooms.type de la unidad (HAC-01)', async () => {
+    const r = repos()
+    const rows: any[] = []
+    r.reservationRepo.create = async (data: any) => { rows.push(data); return { ...data } }
+    await executeTool('create_reservation', { roomId: 'room-1', checkIn: '2026-07-20', checkOut: '2026-07-22', adults: 2, guestName: 'Ana' }, HOTEL, r)
+    expect(rows[0].roomType).toBe('double')
+  })
+
   it('respeta maxAdults del tipo aunque la capacidad total alcance', async () => {
     const rooms = { 'room-1': { id: 'room-1', hotelId: HOTEL, type: 'double', capacity: 4, maxAdults: 1, basePrice: 100 } }
     const call = executeTool(

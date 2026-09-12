@@ -20,6 +20,7 @@ import { resolveGuestLanguage } from '../../services/guest-language'
 import { cancellationPolicyText } from './cancellation-text'
 import { hotelCancellationTypeOf } from './cancellation-math'
 import { effectiveCheckInTime, effectiveCheckOutTime } from '../utils/hotel-schedule'
+import { reservationGroupRows } from './reservation-group-rows'
 
 export interface BookingPaidEmailDeps {
   emailSender: EmailSender
@@ -40,34 +41,6 @@ function money(amount: unknown, currency: string): string {
   const n = Number(amount ?? 0)
   if (!Number.isFinite(n) || n <= 0) return '—'
   return `${n.toFixed(2)} ${currency}`
-}
-
-/**
- * Filas sobre las que se calcula la plata del correo: la reserva sola, o ella más sus
- * hermanas no canceladas si pertenece a un grupo. Best-effort: si la consulta falla, se
- * usa sólo la reserva. La líder siempre está (Map por id).
- */
-async function groupRows(
-  reservationsRepo: RepositoryAdapter<any>,
-  reservation: any,
-  logger: Logger,
-): Promise<any[]> {
-  if (!reservation.groupId) return [reservation]
-  const byId = new Map<string, any>([[String(reservation.id), reservation]])
-  try {
-    const siblings = await reservationsRepo.findMany({
-      hotelId: reservation.hotelId, groupId: reservation.groupId,
-    })
-    for (const s of siblings ?? []) {
-      if (!s || s.status === 'cancelled') continue
-      byId.set(String(s.id), s)
-    }
-  } catch (e) {
-    logger.warn('booking-paid-email: no se pudieron cargar las hermanas del grupo', {
-      reservationId: reservation.id, groupId: reservation.groupId, error: (e as Error).message,
-    })
-  }
-  return [...byId.values()]
 }
 
 /**
@@ -99,7 +72,7 @@ export async function sendBookingPaidEmail(
     // #276 MR-11: en una reserva de GRUPO el cobro queda repartido entre las hermanas
     // (`settle()` prorratea el `deposit`), así que el total/pagado de la líder sola no es lo
     // que el huésped pagó. El mail habla del pedido entero: sumamos las hermanas vivas.
-    const rows = await groupRows(reservationsRepo, reservation, logger)
+    const rows = await reservationGroupRows(reservationsRepo, reservation, logger, 'booking-paid-email')
     const total = rows.reduce((acc, r) => acc + Number(r.totalAmount ?? 0), 0)
     const paid = rows.reduce((acc, r) => acc + Number(r.deposit ?? 0), 0)
     const pending = Math.max(0, Number((total - paid).toFixed(2)))

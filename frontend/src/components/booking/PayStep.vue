@@ -187,9 +187,27 @@
       <span class="text-sm font-bold text-navy">{{ t('pay.acceptTerms') }}</span>
     </label>
 
-    <p v-if="store.error" class="text-sm font-semibold text-red-600">{{ store.error }}</p>
+    <p v-if="store.error" data-testid="pay-error" class="text-sm font-semibold text-red-600">{{ store.error }}</p>
+
+    <!-- #267 — reserva creada SIN pasarela (sin checkoutUrl): no es un error. El backend ya
+         le mandó al huésped el correo "recibimos tu pedido"; se muestra el localizador y se
+         oculta el botón de pagar (reintentar no tiene sentido). Mismo estilo que el aviso
+         `pendingApprovalNotice` de ConfirmStep. -->
+    <div
+      v-if="store.receivedUnpaidLocator"
+      data-testid="received-unpaid"
+      class="rounded-2xl border-2 border-gold/40 bg-gold/5 p-4 text-left"
+    >
+      <p class="text-sm font-bold text-navy">{{ t('pay.receivedUnpaidTitle') }}</p>
+      <p class="mt-1 text-sm text-text-muted">{{ t('pay.receivedUnpaidBody') }}</p>
+      <p class="mt-2 text-sm text-navy">
+        {{ t('pay.receivedUnpaidLocator') }}:
+        <span class="font-mono font-bold">{{ store.receivedUnpaidLocator }}</span>
+      </p>
+    </div>
 
     <button
+      v-if="!store.receivedUnpaidLocator"
       type="button"
       :disabled="store.isSubmitting || !termsAccepted"
       class="w-full rounded-xl bg-cyan px-6 py-4 text-base font-black text-white shadow-card transition hover:bg-cyan-light disabled:cursor-not-allowed disabled:opacity-60"

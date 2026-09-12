@@ -124,6 +124,9 @@ export class BookingengineController {
     /** PG-7.5 — Registry de pasarelas para `GET /api/pay/go/:provider/:hotelId` (form hospedado
      *  de CardNet). Al final, mismo motivo que el resto de los deps nuevos. */
     private readonly gatewayRegistry?: PaymentGatewayRegistry,
+    /** #272 — `Groups`: la cancelación pública de un grupo marca `groups.status='cancelled'`.
+     *  Al final, mismo motivo que el resto de los deps nuevos. Opcional, best-effort. */
+    private readonly groupsRepo?: RepositoryAdapter<any>,
   ) {}
 
   /** Deps para los usecases de upsells. Tirar si no están cableadas (claramente un bug de wiring). */
@@ -327,6 +330,11 @@ export class BookingengineController {
         // políticas custom reembolsaba el 100% pese a anunciar 100% de penalidad.
         hotelsRepo: this.hotelsRepo,
         logger: this.logger,
+        // #272 — cascada al grupo + inventario por habitación (Channex).
+        groupsRepo: this.groupsRepo,
+        pushAvailability: this.pushAvailability,
+        // #272 — la cascada del grupo se escribe en UNA transacción (todo o nada de verdad).
+        orm: this.orm,
         // El evento onBookingCancelled está declarado en sockets.ts pero el service no lo
         // expone (gate <200 líneas). Accedemos al socket del service en runtime (ya está
         // seteado por composition-root cuando este handler se ejecuta). Resilient: el
@@ -405,12 +413,17 @@ export class BookingengineController {
     // disparaba para el flujo público (ver comentario en service.ts#notifyBookingCreated) — el
     // listado de Administración podía tardar hasta 5 min (CACHE_TTL) en mostrar el alta.
     // Best-effort: un fallo acá no puede tumbar una reserva que YA se creó con éxito.
+    // #267: el payload lleva huésped y si hubo pasarela (`hasCheckout`) para que los connectors
+    // no relean la reserva; `paid: false` siempre — el cobro, si lo hay, avisa por `onBookingPaid`.
     if (result.status === 201 && result.body?.reservation) {
       const r = result.body.reservation
       this.service.notifyBookingCreated({
         id: r.id, hotelId: String(body.hotelId), roomId: r.roomId,
         checkIn: r.checkIn, checkOut: r.checkOut, adults: r.adults, children: r.children,
         totalAmount: r.totalAmount, status: r.status,
+        guestName: result.body.guest?.name ?? '', guestEmail: result.body.guest?.email ?? '',
+        guestPhone: result.body.guest?.phone ?? '',
+        paid: false, hasCheckout: result.body.checkoutUrl != null,
       } as any).catch((err: unknown) => {
         this.logger.warn('notifyBookingCreated (alta pública) falló', { err: err instanceof Error ? err.message : err })
       })
@@ -451,10 +464,14 @@ export class BookingengineController {
     )
     // Mismo bug/fix que createPublicBookingDirect arriba — multi-habitación también escribe
     // directo a Reservations, sin pasar por el CRUD de `reservas`.
+    // #267: el payload lleva huésped y si hubo pasarela para que los connectors no relean la reserva.
     if (result.status === 201 && Array.isArray(result.body?.reservations) && result.body.reservations[0]) {
       const r = result.body.reservations[0]
       this.service.notifyBookingCreated({
         id: r.id, hotelId: String(body.hotelId), roomId: r.roomId, status: r.status,
+        guestName: result.body.guest?.name ?? '', guestEmail: result.body.guest?.email ?? '',
+        guestPhone: result.body.guest?.phone ?? '',
+        paid: false, hasCheckout: result.body.checkoutUrl != null,
       } as any).catch((err: unknown) => {
         this.logger.warn('notifyBookingCreated (alta pública grupal) falló', { err: err instanceof Error ? err.message : err })
       })

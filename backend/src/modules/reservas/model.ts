@@ -151,6 +151,14 @@ export const ReservasModel: ModelDefinition = {
     cancellationFee: { type: 'number', default: 0 },
     refundAmount: { type: 'number', default: 0 },
     policyApplied: { type: 'json' },
+    // #272 — Estado del reembolso REAL en la pasarela tras una cancelación web (lo escribe
+    // shared/usecases/web-booking-refund.ts). none = no correspondía (refundAmount 0) · pending =
+    // en curso · done = Stripe devolvió (refundedAt ISO + refundPaymentId = fila `payments` type
+    // 'refund') · failed = no salió, el hotel puede reintentar desde la reserva. En un grupo las N
+    // filas llevan el mismo estado. Case-sensitive (anti-patrón ORM). RUN_MIGRATE ADD COLUMN.
+    refundStatus: { type: 'string', default: 'none' },
+    refundedAt: { type: 'string' },
+    refundPaymentId: { type: 'string' },
     // Pre-checkin público (prototipo 8 pasos): firma digital + timestamp de aceptación del
     // contrato. signatureUrl es la URL del storage (carpeta 'signatures') donde queda la imagen
     // del canvas firmado; contractAcceptedAt es el ISO timestamp de cuándo el huésped aceptó.

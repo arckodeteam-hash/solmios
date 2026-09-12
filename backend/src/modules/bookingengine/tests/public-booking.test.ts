@@ -65,6 +65,15 @@ describe('createPublicBookingDirect — accessToken público (F0 0.13)', () => {
     expect(reservationCreate.row.channel).toBe('direct')
   })
 
+  // REQ-HAC-01 (#258): lo vendido es el TIPO — la fila lo lleva desde el alta (antes sólo el
+  // panel lo escribía y las reservas web quedaban con `roomType` NULL).
+  it('persiste roomType = rooms.type de la unidad resuelta (HAC-01)', async () => {
+    const { orm, created } = makeOrm({ room: { id: 'r1', hotelId: 'h1', type: 'double', basePrice: 100, status: 'available' } })
+    const res = await createPublicBookingDirect(orm, baseBody)
+    expect(res.status).toBe(201)
+    expect(created.find((c) => c.model === 'Reservations')!.row.roomType).toBe('double')
+  })
+
   it('accessToken distinto entre dos reservas (no reutiliza)', async () => {
     const { orm, created } = makeOrm()
     await createPublicBookingDirect(orm, baseBody)

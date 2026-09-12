@@ -68,6 +68,10 @@ export interface ReservasDTO {
   cancellationFee?: number
   refundAmount?: number
   policyApplied?: any
+  // #272 — Reembolso real en Stripe de una cancelación web (ver reservas/model.ts).
+  refundStatus?: 'none' | 'pending' | 'done' | 'failed'
+  refundedAt?: string
+  refundPaymentId?: string
   // Tarea 3.4 (corrección 2026-08-25) — 'pending' | 'approved' | undefined (undefined = no
   // aplica, el hotel tiene "confirmación instantánea" prendida). Ver reservas/model.ts.
   // 'rejected' (#271 MR-06): el hotel la rechazó — la reserva queda además `status: 'cancelled'`.

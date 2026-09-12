@@ -399,6 +399,8 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
         id: crypto.randomUUID(),
         hotelId,
         roomId,
+        // REQ-HAC-01 (#258): tipo vendido en la fila, como el panel y el motor público.
+        roomType: room?.type ? String(room.type) : undefined,
         guestId,
         checkIn,
         checkOut,

@@ -338,6 +338,10 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
   // 409 con `reason` apunta al endpoint correcto en vez de dejar la reserva a medio mover.
   const changesRoom = dto.roomId !== undefined && dto.roomId !== existing.roomId
   const previousRoomId: string | null = existing.roomId ?? null
+  // `allowTypeChange` es una decisión del request (lo declara UpdateReservasSchema para que el
+  // validador no lo descarte), no un dato de la fila: se saca del dto antes de persistir/emitir.
+  const allowTypeChange = Boolean((dto as any).allowTypeChange)
+  delete (dto as any).allowTypeChange
   let roomAssignment: { patch: Partial<ReservasDTO>; typeChanged: boolean } | null = null
   if (changesRoom) {
     if (!dto.roomId) throw new ConflictError('Para soltar la habitación usá DELETE /reservas/:id/assign-room', { reason: 'use_unassign_endpoint' })
@@ -354,7 +358,7 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
     roomAssignment = await validateRoomAssignment(
       { repo, roomRepo, blockRepo: hooks?.roomAssignment?.blockRepo },
       existing, dto.roomId,
-      { allowTypeChange: Boolean((dto as any).allowTypeChange), checkIn: dto.checkIn, checkOut: dto.checkOut, userId: currentUser.id },
+      { allowTypeChange, checkIn: dto.checkIn, checkOut: dto.checkOut, userId: currentUser.id },
     )
     Object.assign(dto, roomAssignment.patch)
   }
