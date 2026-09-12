@@ -142,6 +142,7 @@ describe('Requerimiento 1 — Política de niños', () => {
     expect(configSet).toHaveBeenCalledWith('child_policy', {
       acceptChildren: true, maxChildAge: 17, maxFreeAge: 0, maxBabyAge: 0,
       childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false,
+      maxFreeChildrenPerRoom: null,
     })
     expect(toastSuccess).toHaveBeenCalled()
   })
@@ -237,3 +238,99 @@ describe('Tarea "Cobro % niños" — porcentaje de tarifa para niños', () => {
   })
 })
 
+
+// ─── REQ-03 (#235) — máximo de niños que no consumen plaza por habitación ──────────────────────
+describe('REQ-03 (#235) — máximo de niños sin plaza por habitación', () => {
+  function childCardOf(w: Awaited<ReturnType<typeof mountSettings>>) {
+    return w.findAll('h3').find(h => h.text() === 'Política de niños')!.element.closest('div.rounded-\\[20px\\]')!
+  }
+  const BASE_POLICY = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1 }
+
+  it('por default el campo está vacío (sin límite): NO se precarga ningún número', async () => {
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    const input = w.find('#settings-max-free-children')
+    expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).value).toBe('')
+    expect((input.element as HTMLInputElement).placeholder).toBe('Sin límite')
+    expect(w.text()).toContain('Se aplica a cada habitación de la reserva, sin importar su tipo')
+  })
+
+  it('carga maxFreeChildrenPerRoom=2 desde ConfigService.get y lo muestra en el input', async () => {
+    configGetImpl = async (key) => (key === 'child_policy' ? { ...BASE_POLICY, maxFreeChildrenPerRoom: 2 } : null)
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    expect((w.find('#settings-max-free-children').element as HTMLInputElement).value).toBe('2')
+  })
+
+  it('carga null (sin límite) como input vacío', async () => {
+    configGetImpl = async (key) => (key === 'child_policy' ? { ...BASE_POLICY, maxFreeChildrenPerRoom: null } : null)
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    expect((w.find('#settings-max-free-children').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('al guardar, ConfigService.set(child_policy) incluye maxFreeChildrenPerRoom: 2', async () => {
+    configGetImpl = async (key) => (key === 'child_policy' ? { ...BASE_POLICY, maxFreeChildrenPerRoom: 2 } : null)
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    const saveBtn = childCardOf(w).querySelector('button') as HTMLButtonElement
+    expect(saveBtn.disabled).toBe(false)
+    saveBtn.click()
+    await flushPromises()
+    expect(configSet).toHaveBeenCalledWith('child_policy', expect.objectContaining({ maxFreeChildrenPerRoom: 2 }))
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
+  it('tipear un valor en el input y guardar lo manda como número', async () => {
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    await w.find('#settings-max-free-children').setValue('3')
+    const saveBtn = childCardOf(w).querySelector('button') as HTMLButtonElement
+    saveBtn.click()
+    await flushPromises()
+    expect(configSet).toHaveBeenCalledWith('child_policy', expect.objectContaining({ maxFreeChildrenPerRoom: 3 }))
+  })
+
+  it('0 es un valor válido (ningún niño sin plaza por habitación) y se guarda como 0, no como null', async () => {
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    await w.find('#settings-max-free-children').setValue('0')
+    const saveBtn = childCardOf(w).querySelector('button') as HTMLButtonElement
+    saveBtn.click()
+    await flushPromises()
+    expect(configSet).toHaveBeenCalledWith('child_policy', expect.objectContaining({ maxFreeChildrenPerRoom: 0 }))
+  })
+
+  it('input vacío guarda maxFreeChildrenPerRoom: null (sin límite)', async () => {
+    configGetImpl = async (key) => (key === 'child_policy' ? { ...BASE_POLICY, maxFreeChildrenPerRoom: 2 } : null)
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    await w.find('#settings-max-free-children').setValue('')
+    const saveBtn = childCardOf(w).querySelector('button') as HTMLButtonElement
+    saveBtn.click()
+    await flushPromises()
+    expect(configSet).toHaveBeenCalledWith('child_policy', expect.objectContaining({ maxFreeChildrenPerRoom: null }))
+  })
+
+  it('un valor negativo bloquea el guardado con su propio error', async () => {
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    await w.find('#settings-max-free-children').setValue('-1')
+    expect(w.text()).toContain('debe ser un entero mayor o igual a 0')
+    const saveBtn = childCardOf(w).querySelector('button') as HTMLButtonElement
+    expect(saveBtn.disabled).toBe(true)
+    saveBtn.click()
+    await flushPromises()
+    expect(configSet).not.toHaveBeenCalledWith('child_policy', expect.anything())
+  })
+
+  it('un valor decimal bloquea el guardado (el backend rechaza 1.5)', async () => {
+    const w = await mountSettings()
+    await setTab(w, 'Niños')?.trigger('click')
+    await w.find('#settings-max-free-children').setValue('1.5')
+    expect(w.text()).toContain('debe ser un entero mayor o igual a 0')
+    expect((childCardOf(w).querySelector('button') as HTMLButtonElement).disabled).toBe(true)
+    expect(configSet).not.toHaveBeenCalledWith('child_policy', expect.anything())
+  })
+})
