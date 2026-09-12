@@ -9,6 +9,10 @@
 // Origen: extraído de `canales/usecases/availability.ts` (que ahora re-exporta desde acá para
 // no romper a sus callers ni a sus tests).
 //
+// Para una ESTADÍA concreta (¿entra una reserva de n habitaciones del tipo X?) no usar esto a
+// mano: `shared/usecases/type-availability.ts` (`availableOfType`, REQ-HAC-02) compone estos
+// primitivos con el criterio de estados del motor y cuenta reservas asignadas o sin asignar.
+//
 // ⚠️ Criterio de estados de reserva: NO se hardcodea. Cada caller decide qué reserva ocupa
 // una habitación, porque los dos consumidores usan criterios distintos y ambos son correctos
 // en su contexto:
