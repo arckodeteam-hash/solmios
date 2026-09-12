@@ -186,6 +186,11 @@ function statusLabel(status: string): string {
   return STATUS_LABEL[String(status || '').toLowerCase()] ?? String(status || '—')
 }
 
+// Van ANTES del watch inmediato: si el host monta el modal ya con `open=true` (v-if sobre el
+// huésped elegido, pages/checkin), `load()` corre en el setup y un `let` posterior es TDZ.
+let loadSeq = 0
+let assignSeq = 0
+
 // Reset + carga al abrir (o al cambiar de reserva sin cerrar); recarga al tocar el toggle.
 watch(() => [props.open, props.reservationId] as const, ([isOpen]) => {
   if (!isOpen) return
@@ -199,8 +204,6 @@ watch(() => [props.open, props.reservationId] as const, ([isOpen]) => {
 
 watch(allTypes, () => { if (props.open) void load() })
 
-let loadSeq = 0
-let assignSeq = 0
 async function load() {
   if (!props.reservationId) return
   const seq = ++loadSeq

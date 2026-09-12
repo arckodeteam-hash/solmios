@@ -647,14 +647,13 @@ function openAssignCheckin(r: any) {
   checkinRow.value = r
   assignDlg.value = { show: true, id: r.id, roomType: r.roomType || null, roomId: null, mode: 'checkin' }
 }
-/** El modal ya asignó + hizo el check-in (y mostró "Check-in confirmado"): acá se refresca y se avisa del email. */
-async function onAssignedCheckin(payload: { roomId: string; roomNumber: string; folioId: string; guestId: string }) {
+/** El modal ya asignó + hizo el check-in y mostró "Check-in confirmado · Hab N": acá sólo se
+ * refresca el listado y se avisa del email de bienvenida (spec 11.1.1), como en doCheckin. */
+async function onAssignedCheckin() {
   assignDlg.value.show = false
   const r = checkinRow.value
   checkinRow.value = null
   await load()
-  const folioTag = payload.folioId ? ` · Folio ${String(payload.folioId).slice(0, 8)}` : ''
-  toast.success(`Hab. ${payload.roomNumber} asignada${folioTag}`)
   if (r?.email) toast.info(`Email de bienvenida enviado a ${r.email}`)
   else toast.info('Sin email registrado')
 }
