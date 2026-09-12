@@ -101,6 +101,19 @@ describe('useBooking — extras por kind (MR-10 #275)', () => {
     expect(store.upsellMaxQty('per_person')).toBe(3)
   })
 
+  it('un id repetido se consolida (Σ) y recién ahí se acota: 2 + 2 per_person con 2 huéspedes → UNA línea de 2, total 40, y el POST manda una sola entrada', () => {
+    const store = seed(3)
+    store.upsells = [upsell({ id: 'transfer', name: 'Transfer', price: 20, kind: 'per_person' })]
+    store.selectedUpsells = [{ id: 'transfer', quantity: 2 }, { id: 'transfer', quantity: 2 }]
+    expect(store.upsellLines).toHaveLength(1)
+    expect(store.upsellLines[0]).toMatchObject({ id: 'transfer', quantity: 2, total: 40 })
+    expect(store.upsellsTotal).toBe(40)
+    // El setter también consolida, así que el estado nunca guarda duplicados.
+    store.setSelectedUpsells([{ id: 'transfer', quantity: 1 }, { id: 'transfer', quantity: 1 }])
+    expect(store.selectedUpsells).toEqual([{ id: 'transfer', quantity: 2 }])
+    expect(store.upsellLines[0]!.quantity).toBe(2)
+  })
+
   it('upsellMaxQty(per_room) = habitaciones del carrito; per_stay/per_night/ppn = 1', () => {
     const store = seed(2)
     store.cart = [

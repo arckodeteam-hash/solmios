@@ -567,11 +567,19 @@ export const useBookingStore = defineStore('booking-widget', () => {
    *  por separado en el resumen/pago. */
   const upsellLines = computed<UpsellLine[]>(() => {
     const byId = new Map(upsells.value.map((u) => [u.id, u]))
-    const lines: UpsellLine[] = []
+    // Mismo id repetido → una sola línea con Σ cantidades ANTES de acotar al tope (espejo exacto
+    // de `upsell-pricing.ts`): `setSelectedUpsells` ya consolida, pero el computed no depende de
+    // que todos los callers pasen por ahí — y `pay()` manda ESTAS líneas al POST.
+    const requested = new Map<string, number>()
     for (const sel of selectedUpsells.value) {
-      const found = byId.get(sel.id)
-      if (!found) continue
-      const quantity = effectiveUpsellQty(found.kind, sel.quantity)
+      if (!sel || typeof sel.id !== 'string') continue
+      requested.set(sel.id, (requested.get(sel.id) ?? 0) + Math.max(0, Math.floor(Number(sel.quantity) || 0)))
+    }
+    const lines: UpsellLine[] = []
+    for (const [id, qty] of requested) {
+      const found = byId.get(id)
+      if (!found || qty <= 0) continue
+      const quantity = effectiveUpsellQty(found.kind, qty)
       const unitPrice = Number(found.price)
       const f = upsellStayFactors(found.kind)
       const line: UpsellLine = {
@@ -1053,7 +1061,17 @@ export const useBookingStore = defineStore('booking-widget', () => {
 
   /** Step 2: actualiza la selección de upsells. */
   function setSelectedUpsells(items: SelectedUpsell[]): void {
-    selectedUpsells.value = items.filter((i) => i.quantity > 0)
+    // MR-10 (#275) — un mismo id se CONSOLIDA (Σ cantidades) igual que hace el backend
+    // (`upsell-pricing.ts`) antes de acotar al tope: si el store guardara dos entradas del mismo
+    // extra, `upsellLines` las acotaría por separado (2 + 2 con tope 2 → mostraría 80) y el POST
+    // las mandaría duplicadas → 400 `upsell_quantity_out_of_range` sobre un precio que el
+    // huésped ya vio. Se conserva el orden de la primera aparición.
+    const merged = new Map<string, number>()
+    for (const i of items) {
+      if (!i || typeof i.id !== 'string' || !(i.quantity > 0)) continue
+      merged.set(i.id, (merged.get(i.id) ?? 0) + Math.floor(i.quantity))
+    }
+    selectedUpsells.value = [...merged].map(([id, quantity]) => ({ id, quantity }))
   }
 
   /** Step 3: actualiza datos del huésped. */
