@@ -979,7 +979,10 @@ export interface CheckinGuest {
   guestEmail: string
   initials: string
   roomNumber: string
+  /** `''` si la reserva todavía no tiene unidad asignada (REQ-HAC-04: se elige al hacer check-in). */
   roomId: string
+  /** Tipo vendido (`Reservations.roomType`); lo que se muestra cuando no hay habitación. */
+  roomType: string | null
   checkIn: string
   checkOut: string
   nights: number

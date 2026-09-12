@@ -15,7 +15,7 @@ export type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, 
 export type { ReservasSockets } from './sockets'
 // #209 (append-only): lo que devuelve `searchInHouse` — lo consume connectors/restaurante-reservas.ts.
 export type { InHouseReservation, InHouseSearchResult } from './usecases/in-house'
-export { ReservasValidator, CreateReservasSchema, UpdateReservasSchema, PreCheckinSchema, PreCheckinPhotoSchema, CancelReservationSchema } from './validators/schema'
+export { ReservasValidator, CreateReservasSchema, UpdateReservasSchema, PreCheckinSchema, PreCheckinPhotoSchema, CancelReservationSchema, CheckinSchema } from './validators/schema'
 
 // La foto del documento viaja como base64 en el body JSON (mismo motivo que housekeeping: el
 // router no propaga req.files). 10 MB cubre fotos reales de celular hasta ~7 MB binarios.

@@ -196,6 +196,14 @@ export const AssignRoomSchema: Record<string, ValidationRule> = {
   allowTypeChange: { type: 'boolean' as const },
 }
 
+// ── Check-in (REQ-HAC-04, #259): POST /api/reservas/:id/checkin ──
+// Body opcional: con `roomId` el controller asigna la unidad (assignRoom, mismos 409) y recién
+// después hace el check-in; sin body la reserva tiene que traer habitación (409 room_not_assigned).
+export const CheckinSchema: Record<string, ValidationRule> = {
+  roomId: { type: 'string' as const },
+  allowTypeChange: { type: 'boolean' as const },
+}
+
 // ── Reject (#271 MR-06): rechazo de una reserva pendiente de aprobación ──
 // El motivo es obligatorio y con largo mínimo: el huésped lo lee en el email de rechazo.
 // `min` en el validador nativo cuenta caracteres del string ya trimeado.

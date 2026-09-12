@@ -3,14 +3,14 @@ import type { HttpRequest, Logger, Auth, RepositoryAdapter } from 'arckode-frame
 import { validateSchema, OrmRepository, ConflictError } from 'arckode-framework'
 import type { FileUpload } from 'arckode-framework/modules/storage'
 import type { ReservasService } from './service'
-import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, RejectReservationSchema, StayQuoteSchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema, IssueInvoiceSchema, AssignRoomSchema, RetryRefundSchema } from './validators/schema'
+import { CreateReservasSchema, UpdateReservasSchema, CompanionSchema, AddonSchema, PreCheckinSchema, PreCheckinPhotoSchema, SettleSchema, RescheduleSchema, RescheduleChargeSchema, RescheduleCreditSchema, CancelReservationSchema, RejectReservationSchema, StayQuoteSchema, ManualMessageLogSchema , SendWhatsappSchema, MarkPaidSchema, IssueInvoiceSchema, AssignRoomSchema, CheckinSchema, RetryRefundSchema } from './validators/schema'
 import { listCompanions, createCompanion, updateCompanion, deleteCompanion } from './usecases/companions'
 import { listAddons, createAddon, deleteAddon } from './usecases/addons'
 import { logManualMessage } from './usecases/message-log'
 import { sendWhatsappForReservation } from './usecases/send-whatsapp'
 import type { MarkPaidDTO } from './usecases/mark-paid'
 import { assignRoom, unassignRoom, listAssignableRooms } from './usecases/assign-room'
-import type { AssignRoomDTO } from './types'
+import type { AssignRoomDTO, CheckinDTO } from './types'
 import { hashGuaranteePin, verifyGuaranteePin } from '../../services/guarantee-pin'
 import { sendCheckinEmail } from './usecases/checkin-email'
 import { dispatchLifecycleEmail } from './usecases/lifecycle-email'
@@ -230,20 +230,27 @@ export class ReservasController {
   }
 
   // ── CHECK-IN ──────────────────────────────────────────────────────────
+  // REQ-HAC-04 (#259): el body `{ roomId?, allowTypeChange? }` asigna la unidad EN EL MISMO PASO.
+  // Sin habitación en la fila y sin `roomId` en el body → 409 `room_not_assigned` sin escribir nada.
+  // Con `roomId`, `assignRoom` corre ANTES de `executeCheckin`: si falla (room_overlap,
+  // type_mismatch, room_not_sellable, 400 de otro hotel) NO hay check-in. Si la reserva YA tiene
+  // habitación el body se ignora — cambiar de unidad es POST /assign-room.
   async checkin(req: HttpRequest) {
     try {
-      const { reservation, hotelId } = await this.service.checkin(req.params.id, req.user as any)
-      const result = await this.service.executeCheckin(reservation, req.user as any, { orm: this.orm, logger: this.logger })
+      const dto = validateSchema(CheckinSchema, req.body || {}) as unknown as CheckinDTO
+      const user = req.user as any
+      let { reservation } = await this.service.checkin(req.params.id, user, { roomId: dto.roomId })
+      if (!reservation.roomId && dto.roomId) {
+        reservation = await assignRoom(this.service.roomAssignmentDeps(), req.params.id, { roomId: dto.roomId, allowTypeChange: dto.allowTypeChange }, user)
+      }
+      const result = await this.service.executeCheckin(reservation, user, { orm: this.orm, logger: this.logger })
       this.pushChannex(reservation.hotelId, reservation.roomId)
       sendCheckinEmail({ ...this.service.getNotifyDeps(), messageLogRepo: this.messageLogRepo, lockCodeRepo: this.orm ? new OrmRepository(this.orm, 'LockCodes') : undefined }, { reservationId: reservation.id, hotelId: reservation.hotelId, guestId: result.guestId, roomId: reservation.roomId, checkIn: reservation.checkIn, checkOut: reservation.checkOut, checkInTime: (reservation as any).checkInTime, checkOutTime: (reservation as any).checkOutTime }).catch((e: any) => this.logger.warn('check-in email', { error: e.message }))
       return { status: 200, body: result }
     } catch (e: any) {
-      if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
-      if (e.name === 'AuthError') return { status: 403, body: { error: e.message } }
-      if (e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
-      // `details.reason` (p. ej. `no_room_assigned`, #258) viaja como en assign-room: el panel decide qué ofrecer.
-      if (e.name === 'ConflictError') return { status: 409, body: { error: e.message, details: e.details ?? null } }
-      return { status: 500, body: { error: e.message } }
+      // `details.reason` (`room_not_assigned`, `room_overlap`, `type_mismatch`…) viaja como en
+      // assign-room: el panel decide qué ofrecer. ValidationError (400) también se mapea ahí.
+      return this.mapAssignRoomError(e)
     }
   }
 
