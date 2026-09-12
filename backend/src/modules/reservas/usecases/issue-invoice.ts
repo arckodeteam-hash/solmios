@@ -65,15 +65,19 @@ function requireInvoicingPort(port: ReservationInvoicingPort | undefined): Reser
 
 /**
  * Folio ABIERTO de la reserva, o `null`. Mismo criterio que `shared/usecases/open-folio-balance.ts`
- * (`list({ status: 'open' })` + match por `reservationId`). Si el lector no está cableado se cae a
- * `reservation.folioId` sólo para descartar un folio ya cerrado; sin lector y sin `folioId` no hay
- * cuenta que cerrar → camino directo. A diferencia de la guarda de deuda, acá un error de lectura
- * SÍ se propaga: facturar "directo" con un folio abierto que no pudimos ver dejaría cargos afuera.
+ * (`list({ status: 'open' })` + match por `reservationId`), y si no aparece ahí, `reservation.folioId`
+ * por `getById` para descartar un folio ya cerrado. Sin lector cableado y sin `folioId` no hay
+ * cuenta que cerrar → camino directo; sin lector PERO con `folioId` se rompe fuerte: no sabemos si
+ * está abierto, y facturar "directo" con un folio abierto que no pudimos ver dejaría cargos afuera
+ * (revisión #253). Por lo mismo, a diferencia de la guarda de deuda, un error de lectura SÍ se propaga.
  */
 async function findOpenFolio(
   folios: FolioReaderPort | undefined, reservation: { id: string; folioId?: string | null }, user: CurrentUser,
 ): Promise<{ id: string } | null> {
-  if (!folios) return null
+  if (!folios) {
+    if (!reservation.folioId) return null
+    throw new ValidationError('Facturación desde la reserva no disponible: la reserva tiene folio y el lector de folios (conector reservas-folios-settlement) no está registrado')
+  }
   const res = await folios.list({ status: 'open' }, user)
   const rows: any[] = Array.isArray(res) ? res : (res?.data ?? [])
   const match = rows.find((f) => f?.reservationId === reservation.id)

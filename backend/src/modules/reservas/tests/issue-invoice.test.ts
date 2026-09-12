@@ -112,6 +112,13 @@ describe('issueInvoiceForReservation — sin folio', () => {
     expect(h.listed).toHaveLength(0)
   })
 
+  it('sin folioReader cableado PERO con folioId → ValidationError fail-closed (no factura directo con cargos afuera)', async () => {
+    const h = harness({ ...baseItem, folioId: 'f1' }, { folioReader: false })
+    await expect(issueInvoiceForReservation(h.deps, 'r1', {}, user)).rejects.toBeInstanceOf(ValidationError)
+    expect(h.calls.direct).toHaveLength(0)
+    expect(h.calls.folio).toHaveLength(0)
+  })
+
   it('notes vacías/espacios → undefined hacia el puerto', async () => {
     const h = harness(baseItem, { folios: [] })
     await issueInvoiceForReservation(h.deps, 'r1', { notes: '   ' }, user)
