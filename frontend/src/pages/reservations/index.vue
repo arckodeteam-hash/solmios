@@ -290,7 +290,8 @@
     <!-- REQ-HAC-06 (#261) — asignar/cambiar la habitación desde el menú ⋯ de la fila. El toast
          de éxito y el 409 traducido los maneja el modal; acá sólo se recarga el listado. -->
     <RoomAssignModal :open="assignDlg.show" :reservation-id="assignDlg.id" :room-type="assignDlg.roomType"
-      :current-room-id="assignDlg.roomId" @close="assignDlg.show = false" @assigned="onAssigned" />
+      :current-room-id="assignDlg.roomId" :mode="assignDlg.mode" @close="assignDlg.show = false" @assigned="onAssigned"
+      @checked-in="onAssignedCheckin" />
 
     <!-- #271 MR-06 — rechazo de una reserva pendiente de aprobación: motivo libre (≥10, lo lee el
          huésped por email) y el monto a reembolsar a la vista antes de confirmar. -->
@@ -367,7 +368,8 @@ const cancelDlg = ref<{ show: boolean; res: CancellableReservation | null }>({ s
 // Menú contextual (⋮) de la fila abierta en la tabla de reservas
 const openMenuId = ref('')
 // REQ-HAC-06 (#261) — RoomAssignModal para la fila elegida en el menú ⋯.
-const assignDlg = ref<{ show: boolean; id: string; roomType: string | null; roomId: string | null }>({ show: false, id: '', roomType: null, roomId: null })
+// `mode: 'checkin'` (REQ-HAC-04, #259): check-in de una reserva sin unidad → se elige y se entra en un paso.
+const assignDlg = ref<{ show: boolean; id: string; roomType: string | null; roomId: string | null; mode: 'assign' | 'checkin' }>({ show: false, id: '', roomType: null, roomId: null, mode: 'assign' })
 
 const MS_PER_DAY = 86_400_000
 
@@ -608,7 +610,12 @@ function onEditDetail() {
 }
 
 function confirmAction(type: string, r: any) {
-  if (type === 'checkin') { cfg.value = { show: true, icon: '🛎️', title: '¿Check-in?', msg: `${r.guestName} — Hab. ${r.roomNumber} — ${r.checkIn}`, btn: 'bg-teal', fn: () => doCheckin(r) } }
+  if (type === 'checkin') {
+    // REQ-HAC-04 (#259) — sin habitación el backend responde 409 room_not_assigned: en vez del
+    // confirm genérico se abre el RoomAssignModal en modo check-in (elegir + entrar en un paso).
+    if (!r.roomId) { openAssignCheckin(r); return }
+    cfg.value = { show: true, icon: '🛎️', title: '¿Check-in?', msg: `${r.guestName} — Hab. ${r.roomNumber} — ${r.checkIn}`, btn: 'bg-teal', fn: () => doCheckin(r) }
+  }
   else { cfg.value = { show: true, icon: '🗑️', title: '¿Eliminar reserva?', msg: `${r.guestName} — Hab. ${r.roomNumber} — esta acción no se puede deshacer`, btn: 'bg-coral', fn: () => doDelete(r) } }
 }
 
@@ -629,11 +636,27 @@ function canAssignRoom(r: any): boolean {
   return can('reservations', 'edit') && (r.status === 'pending' || r.status === 'confirmed' || r.status === 'checked_in')
 }
 function openAssign(r: any) {
-  assignDlg.value = { show: true, id: r.id, roomType: r.roomType || null, roomId: r.roomId || null }
+  assignDlg.value = { show: true, id: r.id, roomType: r.roomType || null, roomId: r.roomId || null, mode: 'assign' }
 }
 async function onAssigned() {
   assignDlg.value.show = false
   await load()
+}
+const checkinRow = ref<any>(null)
+function openAssignCheckin(r: any) {
+  checkinRow.value = r
+  assignDlg.value = { show: true, id: r.id, roomType: r.roomType || null, roomId: null, mode: 'checkin' }
+}
+/** El modal ya asignó + hizo el check-in (y mostró "Check-in confirmado"): acá se refresca y se avisa del email. */
+async function onAssignedCheckin(payload: { roomId: string; roomNumber: string; folioId: string; guestId: string }) {
+  assignDlg.value.show = false
+  const r = checkinRow.value
+  checkinRow.value = null
+  await load()
+  const folioTag = payload.folioId ? ` · Folio ${String(payload.folioId).slice(0, 8)}` : ''
+  toast.success(`Hab. ${payload.roomNumber} asignada${folioTag}`)
+  if (r?.email) toast.info(`Email de bienvenida enviado a ${r.email}`)
+  else toast.info('Sin email registrado')
 }
 
 async function doCheckin(r: any) {

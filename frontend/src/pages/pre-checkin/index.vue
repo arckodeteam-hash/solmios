@@ -45,7 +45,8 @@
           <div class="bg-surface rounded-xl p-4 text-sm space-y-2">
             <div class="flex justify-between"><span class="text-text-secondary">Check-in</span><span class="font-bold text-navy">{{ reservation.checkIn }}</span></div>
             <div class="flex justify-between"><span class="text-text-secondary">Check-out</span><span class="font-bold text-navy">{{ reservation.checkOut }}</span></div>
-            <div class="flex justify-between"><span class="text-text-secondary">Habitación</span><span class="font-bold text-navy">{{ reservation.roomNumber }}</span></div>
+            <!-- REQ-HAC-04 (#259) — la unidad se elige al check-in: antes sólo se sabe el tipo vendido. -->
+            <div class="flex justify-between"><span class="text-text-secondary">Habitación</span><span class="font-bold text-navy" data-testid="pre-checkin-room">{{ reservation.roomNumber || (reservation.roomType ? `${reservation.roomType} (habitación por asignar)` : '—') }}</span></div>
           </div>
           <p class="text-xs text-text-muted mt-4">Completá tu registro antes de llegar: te va a tomar solo unos minutos.</p>
           <button type="button" class="w-full mt-6 py-3 bg-teal text-white rounded-xl text-sm font-bold cursor-pointer hover:bg-teal/80" @click="step = 2">
@@ -307,6 +308,7 @@ const error = ref('')
 const reservation = reactive({
   hotelName: '',
   roomNumber: '',
+  roomType: '',
   checkIn: '',
   checkOut: '',
   reservationId: '',
@@ -319,6 +321,7 @@ onMounted(async () => {
     if (!data || data.error) { loadError.value = data?.error || 'Reserva no encontrada'; return }
     reservation.hotelName = data.hotelName || ''
     reservation.roomNumber = data.roomNumber || ''
+    reservation.roomType = data.roomType || ''
     reservation.checkIn = String(data.checkIn || '').slice(0, 10)
     reservation.checkOut = String(data.checkOut || '').slice(0, 10)
     reservation.reservationId = data.reservationId || data.id || ''
