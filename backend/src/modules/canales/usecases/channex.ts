@@ -1151,7 +1151,7 @@ export class ChannexUseCase {
 
   // ─── Webhooks ─────────────────────────────────────────────────────────
   /** Callbacks ya registrados en Channex. Se usa para no dar de alta el mismo dos veces. */
-  async listWebhooks(key: string): Promise<Array<{ id: string; callbackUrl: string; eventMask: string; propertyId: string | null }>> {
+  async listWebhooks(key: string): Promise<Array<{ id: string; callbackUrl: string; eventMask: string; propertyId: string | null; sendData: boolean }>> {
     const res = await this.channexReq(key, 'GET', '/webhooks')
     const raw = res.data?.data
     if (!Array.isArray(raw)) return []
@@ -1162,12 +1162,18 @@ export class ChannexUseCase {
         callbackUrl: a.callback_url,
         eventMask: a.event_mask,
         propertyId: a.property_id ?? null,
+        // Sin esto el receptor no recibe `payload.revision_id` (#342). Un webhook viejo con
+        // `false` se corrige en `registerChannexWebhook`.
+        sendData: a.send_data === true,
       }
     })
   }
 
   /**
-   * Alta del callback. `send_data: false` → Channex avisa el id y nosotros hacemos el GET.
+   * Alta del callback. **`send_data: true` es obligatorio** (#342): con `false` Channex omite el
+   * objeto `payload` ENTERO y manda solo `{event, property_id, user_id, timestamp}` — sin
+   * `revision_id` el receptor no tiene qué ingestar. Se había leído al revés ("false = solo ids")
+   * y en prod cada `booking_new` real terminaba en 400 y la reserva esperaba al cron.
    *
    * Un callback SIN `propertyId` es de CUENTA (vale para todas las properties), y Channex lo
    * expresa con `is_global: true` — no con `property_id: null`. Mandar el null pelado devuelve
@@ -1185,12 +1191,24 @@ export class ChannexUseCase {
         callback_url: input.callbackUrl,
         event_mask: input.eventMask,
         is_active: true,
-        send_data: false,
+        send_data: true,
       },
     })
     if (!res.ok) return { id: null, error: describirErrorChannex(res.data) }
     const created = res.data?.data
     return { id: created?.id || created?.attributes?.id || null }
+  }
+
+  /**
+   * Corrige un callback ya registrado (#342): el único caso hoy es un webhook dado de alta con
+   * `send_data: false` por la versión anterior de `createWebhook`. Se manda solo el campo que
+   * cambia; Channex conserva el resto.
+   */
+  async updateWebhook(key: string, id: string, patch: { sendData?: boolean }): Promise<{ ok: boolean; error?: string }> {
+    const webhook: Record<string, unknown> = {}
+    if (patch.sendData !== undefined) webhook.send_data = patch.sendData
+    const res = await this.channexReq(key, 'PUT', `/webhooks/${id}`, { webhook })
+    return res.ok ? { ok: true } : { ok: false, error: describirErrorChannex(res.data) }
   }
 
   /**

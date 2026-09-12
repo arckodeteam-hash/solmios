@@ -12,13 +12,13 @@ const uc = () => new ChannexUseCase(log as any, async () => ({ apiKey: 'k', envi
 type Call = { method: string; url: string; body?: any }
 
 /** Mock del fetch global que registra {method, url, body} y responde lo que se le pase. */
-function installFetch(calls: Call[], responder: (url: string, method: string) => any) {
+function installFetch(calls: Call[], responder: (url: string, method: string) => any, status = 200) {
   const orig = globalThis.fetch
   globalThis.fetch = (async (url: string, opts: any) => {
     const method = opts?.method || 'GET'
     calls.push({ method, url: String(url), body: opts?.body ? JSON.parse(opts.body) : undefined })
     return new Response(JSON.stringify(responder(String(url), method)), {
-      status: 200, headers: { 'content-type': 'application/json' },
+      status, headers: { 'content-type': 'application/json' },
     })
   }) as any
   return () => { globalThis.fetch = orig }
@@ -77,15 +77,15 @@ describe('listWebhooks', () => {
     const calls: Call[] = []
     restore = installFetch(calls, () => ({
       data: [
-        { id: 'wh-1', attributes: { callback_url: 'https://app/hook', event_mask: 'booking_new', property_id: 'prop-1' } },
-        { id: 'wh-2', attributes: { callback_url: 'https://app/hook2', event_mask: 'booking_new;booking_cancellation' } },
+        { id: 'wh-1', attributes: { callback_url: 'https://app/hook', event_mask: 'booking_new', property_id: 'prop-1', send_data: true } },
+        { id: 'wh-2', attributes: { callback_url: 'https://app/hook2', event_mask: 'booking_new;booking_cancellation', send_data: false } },
       ],
     }))
 
     const out = await uc().listWebhooks('k')
     expect(out).toEqual([
-      { id: 'wh-1', callbackUrl: 'https://app/hook', eventMask: 'booking_new', propertyId: 'prop-1' },
-      { id: 'wh-2', callbackUrl: 'https://app/hook2', eventMask: 'booking_new;booking_cancellation', propertyId: null },
+      { id: 'wh-1', callbackUrl: 'https://app/hook', eventMask: 'booking_new', propertyId: 'prop-1', sendData: true },
+      { id: 'wh-2', callbackUrl: 'https://app/hook2', eventMask: 'booking_new;booking_cancellation', propertyId: null, sendData: false },
     ])
     expect(calls[0]!.method).toBe('GET')
     expect(calls[0]!.url.endsWith('/webhooks')).toBe(true)
@@ -95,6 +95,29 @@ describe('listWebhooks', () => {
     const calls: Call[] = []
     restore = installFetch(calls, () => ({}))
     expect(await uc().listWebhooks('k')).toEqual([])
+  })
+})
+
+describe('updateWebhook (#342)', () => {
+  it('manda PUT /webhooks/:id con solo send_data', async () => {
+    const calls: Call[] = []
+    restore = installFetch(calls, () => ({ data: { id: 'wh-1' } }))
+
+    const out = await uc().updateWebhook('k', 'wh-1', { sendData: true })
+
+    expect(out).toEqual({ ok: true })
+    expect(calls[0]!.method).toBe('PUT')
+    expect(calls[0]!.url.endsWith('/webhooks/wh-1')).toBe(true)
+    expect(calls[0]!.body).toEqual({ webhook: { send_data: true } })
+  })
+
+  it('devuelve el motivo si Channex rechaza', async () => {
+    const calls: Call[] = []
+    restore = installFetch(calls, () => ({ errors: { code: 'not_found', title: 'Resource Not Found' } }), 404)
+
+    const out = await uc().updateWebhook('k', 'wh-x', { sendData: true })
+    expect(out.ok).toBe(false)
+    expect(String(out.error)).toContain('Not Found')
   })
 })
 
@@ -121,7 +144,7 @@ describe('createWebhook', () => {
         callback_url: 'https://app/api/channels/channex/webhook',
         event_mask: 'booking_new;booking_modification;booking_cancellation',
         is_active: true,
-        send_data: false,
+        send_data: true,
       },
     })
   })
@@ -143,7 +166,7 @@ describe('createWebhook', () => {
         callback_url: 'https://app/api/channels/channex/webhook',
         event_mask: 'booking_new',
         is_active: true,
-        send_data: false,
+        send_data: true,
       },
     })
   })

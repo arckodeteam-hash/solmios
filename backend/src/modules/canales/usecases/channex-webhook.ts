@@ -1,8 +1,11 @@
 // canales/usecases/channex-webhook.ts — El receptor del webhook de reservas de Channex.
 //
-// Channex avisa "hay una revisión nueva" (con `send_data: false` manda SOLO los ids); la ingesta
-// real la hace el MISMO camino del cron (`BookingSyncUseCase.runOne` → GET → apply → ack), así la
-// reserva que entra por webhook es idéntica a la del cron y hereda su dedupe por externalLocator.
+// Channex avisa "hay una revisión nueva" con `payload.revision_id` (el callback se registra con
+// `send_data: true`; con `false` Channex OMITE `payload` entero — #342); la ingesta real la hace el
+// MISMO camino del cron (`BookingSyncUseCase.runOne` → GET → apply → ack), así la reserva que entra
+// por webhook es idéntica a la del cron y hereda su dedupe por externalLocator. Si el callback llega
+// sin `payload` (un webhook viejo con `send_data: false`), se dispara el sync del feed completo en
+// vez de responder 400: la reserva entra igual, sin esperar al cron.
 // Acá vive únicamente lo que el cron no necesita: verificar quién llama, descartar los eventos que
 // causamos nosotros mismos y dar de alta el callback una sola vez.
 //
@@ -75,8 +78,17 @@ export interface ChannexWebhookDeps {
   store: ChannexWebhookConfigStore
   /** Dispara la ingesta de UNA revisión: en producción es `bookingSync.runOne`. */
   ingestRevision: (revisionId: string) => Promise<{ success: boolean; errors: string[] }>
+  /**
+   * Plan B cuando el callback viene SIN `payload.revision_id` (#342): el sync del feed entero, el
+   * mismo `bookingSync.run` del cron. Opcional para no romper a quien arma los deps en tests;
+   * sin él, el caso sigue siendo 400.
+   */
+  syncFeed?: () => Promise<{ success: boolean; errors: string[] }>
   logger: ChannexWebhookLogger
 }
+
+/** Los eventos que pueden traer una reserva: `booking` y sus tres variantes. */
+const esEventoDeReserva = (event: unknown): boolean => /^booking(_new|_modification|_cancellation)?$/.test(String(event ?? ''))
 
 /**
  * Recibe el callback de Channex. El body real es:
@@ -129,6 +141,20 @@ export async function handleChannexWebhook(
   // 3. El id de la revisión es lo único que necesitamos del payload: el resto lo trae el GET.
   const revisionId = String(body?.payload?.revision_id ?? '').trim()
   if (!revisionId) {
+    // Sin `payload` es un webhook registrado con `send_data: false` (#342). Antes esto era un 400
+    // y la reserva de la OTA se quedaba esperando al cron; ahora se barre el feed entero, que es
+    // exactamente lo que hace el cron, pero ya. Siempre 200: un 4xx/5xx no le enseña nada a Channex.
+    if (deps.syncFeed && esEventoDeReserva(body?.event)) {
+      logger.warn('channex-webhook: callback sin revision_id, se sincroniza el feed completo (webhook con send_data:false, #342)', { event: body?.event ?? null, propertyId: body?.property_id ?? null })
+      try {
+        const res = await deps.syncFeed()
+        if (!res?.success) logger.error('channex-webhook: el sync del feed falló, queda para el cron', { errors: res?.errors || [] })
+        return { status: 200, body: { success: true, ingested: false, fallback: 'feed', synced: Boolean(res?.success) } }
+      } catch (e: any) {
+        logger.error('channex-webhook: excepción sincronizando el feed, queda para el cron', { error: e?.message || String(e) })
+        return { status: 200, body: { success: true, ingested: false, fallback: 'feed', synced: false } }
+      }
+    }
     logger.warn('channex-webhook: callback sin revision_id', { event: body?.event ?? null })
     return { status: 400, body: { success: false, error: 'revision_id ausente' } }
   }
@@ -156,8 +182,10 @@ export async function handleChannexWebhook(
 // ─── Registro idempotente del callback ───────────────────────────────────────────────────────
 
 export interface ChannexWebhookRegistrar {
-  listWebhooks: (key: string) => Promise<Array<{ id: string; callbackUrl: string; eventMask: string; propertyId: string | null }>>
+  listWebhooks: (key: string) => Promise<Array<{ id: string; callbackUrl: string; eventMask: string; propertyId: string | null; sendData?: boolean }>>
   createWebhook: (key: string, input: { callbackUrl: string; eventMask: string; propertyId?: string | null }) => Promise<{ id: string | null; error?: string }>
+  /** Corrige `send_data` de un callback existente (#342). Opcional: sin él, el viejo queda como está y se avisa. */
+  updateWebhook?: (key: string, id: string, patch: { sendData?: boolean }) => Promise<{ ok: boolean; error?: string }>
 }
 
 /** `<base sin barra final>/api/channels/channex/webhook?api_key=<secreto>`. */
@@ -195,6 +223,15 @@ export async function registerChannexWebhook(
   const existentes = await deps.channex.listWebhooks('')
   const yaEsta = existentes.find((w) => endpointDe(w.callbackUrl) === objetivo)
   if (yaEsta) {
+    // Autocorrección (#342): un callback dado de alta por la versión anterior tiene `send_data:
+    // false` y Channex le manda el aviso sin ids. Se arregla acá, en el mismo "Registrar/verificar"
+    // del admin, para no obligar a borrarlo y crearlo de nuevo.
+    if (yaEsta.sendData === false && deps.channex.updateWebhook) {
+      const fix = await deps.channex.updateWebhook('', yaEsta.id, { sendData: true })
+      if (fix.ok) deps.logger.info('channex-webhook: callback existente corregido a send_data:true', { id: yaEsta.id })
+      else deps.logger.error('channex-webhook: no se pudo corregir send_data del callback existente', { id: yaEsta.id, error: fix.error })
+      return { created: false, id: yaEsta.id, callbackUrl, error: fix.ok ? undefined : fix.error }
+    }
     deps.logger.info('channex-webhook: callback ya registrado', { id: yaEsta.id, callbackUrl: objetivo })
     return { created: false, id: yaEsta.id, callbackUrl }
   }
