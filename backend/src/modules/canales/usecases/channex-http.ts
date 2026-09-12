@@ -7,6 +7,14 @@
 //
 // El limiter vive a nivel MÓDULO (singleton): aunque haya varias instancias de
 // ChannexUseCase, el budget de requests es uno solo contra la API de Channex.
+//
+// Hay DOS techos, y los dos salen de docs.channex.io/api-v.1-documentation/rate-limits.md:
+//   - global: 20 ARI/min sumando availability + restrictions (acá 18, con margen);
+//   - por property: 10/min de POST /availability Y 10/min de POST /restrictions (acá 9, con
+//     margen). Este segundo techo faltaba (#294): con el global solo, un hotel que disparaba
+//     12 pushes de restrictions en un minuto pasaba el filtro nuestro y cobraba 429 de Channex.
+// Ante un 429 en un ARI update, la doc pide "pausar la property 1 minuto": se hace además del
+// backoff del request, para que los pushes SIGUIENTES de esa property tampoco salgan en ráfaga.
 
 export interface ChannexHttpOptions {
   /** Máximo de requests por ventana. Default 18 (margen bajo los 20/min de Channex). */
@@ -43,6 +51,34 @@ const isAriUpdate = (url: string, method?: string): boolean =>
 /** Techo por default: margen bajo los ~20/min que exige Channex. */
 export const DEFAULT_MAX_PER_MINUTE = 18
 
+/** Techo por property y endpoint: margen bajo los 10/min que documenta Channex para cada POST. */
+export const MAX_PER_PROPERTY_PER_MINUTE = 9
+
+/** Lo que la doc pide tras un 429: "pause updates for the property for 1 minute and try again". */
+export const PROPERTY_PAUSE_ON_429_MS = 60_000
+
+type AriEndpoint = 'availability' | 'restrictions'
+
+const ariEndpointOf = (url: string): AriEndpoint | null => {
+  const m = /\/(availability|restrictions)$/.exec(String(url).split('?')[0] ?? '')
+  return m ? (m[1] as AriEndpoint) : null
+}
+
+/**
+ * `property_id` de cada value del body de un ARI update, sin repetidos. El body llega ya
+ * serializado (`JSON.stringify`) desde `channexReq`; si no se puede leer, el request cae al
+ * techo global solo — mejor un 429 aislado que un push que no sale nunca.
+ */
+const propertyIdsOf = (body: BodyInit | null | undefined): string[] => {
+  if (typeof body !== 'string') return []
+  try {
+    const parsed = JSON.parse(body) as { values?: Array<{ property_id?: unknown }> }
+    const ids = new Set<string>()
+    for (const v of parsed.values ?? []) if (typeof v?.property_id === 'string' && v.property_id) ids.add(v.property_id)
+    return [...ids]
+  } catch { return [] }
+}
+
 /**
  * Saneo del techo: entero >= 1. Un 0 CONGELA la cola para siempre —`acquireSlot` no encontraría
  * lugar nunca y el push se quedaría esperando— y un NaN rompe todas las comparaciones de la
@@ -63,17 +99,55 @@ export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOpt
   const timeoutMs = opts.timeoutMs ?? 15_000
   const now = opts.now ?? Date.now
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
-  const sentAt: number[] = [] // timestamps dentro de la ventana deslizante
+  const sentAt: number[] = [] // timestamps dentro de la ventana deslizante (budget global)
+  // Budget por property × endpoint: `<property_id>:<availability|restrictions>` → timestamps.
+  const sentAtByProperty = new Map<string, number[]>()
+  // Pausa por 429: misma clave → hasta cuándo no sale nada de esa property por ese endpoint.
+  const pausedUntil = new Map<string, number>()
 
-  /** Bloquea hasta que haya lugar en la ventana. Cada intento (incluidos retries) consume slot. */
-  async function acquireSlot(): Promise<void> {
+  const propertyKey = (propertyId: string, endpoint: AriEndpoint): string => `${propertyId}:${endpoint}`
+
+  const prune = (arr: number[], t: number): void => { while (arr.length && t - arr[0]! >= windowMs) arr.shift() }
+
+  /**
+   * Bloquea hasta que haya lugar en la ventana global Y en la de cada property del body. Cada
+   * intento (incluidos retries) consume slot en todas. Se toman juntas: reservar el slot global
+   * y después quedarse esperando el de la property gastaría budget global sin mandar nada.
+   */
+  async function acquireSlot(propertyIds: string[], endpoint: AriEndpoint | null): Promise<void> {
+    const keys = endpoint ? propertyIds.map((id) => propertyKey(id, endpoint)) : []
     for (;;) {
       const t = now()
-      while (sentAt.length && t - sentAt[0]! >= windowMs) sentAt.shift()
-      if (sentAt.length < maxPerMinute) { sentAt.push(t); return }
-      // Ventana llena: esperar lo que le falta al request más viejo para expirar.
-      await sleep(windowMs - (t - sentAt[0]!) + 5)
+      let waitMs = 0
+      prune(sentAt, t)
+      if (sentAt.length >= maxPerMinute) waitMs = Math.max(waitMs, windowMs - (t - sentAt[0]!))
+      for (const k of keys) {
+        const until = pausedUntil.get(k) ?? 0
+        if (until > t) waitMs = Math.max(waitMs, until - t)
+        else if (until) pausedUntil.delete(k)
+        const arr = sentAtByProperty.get(k) ?? []
+        prune(arr, t)
+        if (arr.length >= MAX_PER_PROPERTY_PER_MINUTE) waitMs = Math.max(waitMs, windowMs - (t - arr[0]!))
+      }
+      if (waitMs === 0) {
+        sentAt.push(t)
+        for (const k of keys) {
+          const arr = sentAtByProperty.get(k) ?? []
+          arr.push(t)
+          sentAtByProperty.set(k, arr)
+        }
+        return
+      }
+      // Alguna ventana llena (o property en pausa): esperar lo que le falta a la más lenta.
+      await sleep(waitMs + 5)
     }
+  }
+
+  /** 429 en un ARI update: la doc de Channex pide pausar esa property un minuto. */
+  function pauseProperties(propertyIds: string[], endpoint: AriEndpoint | null): void {
+    if (!endpoint) return
+    const until = now() + PROPERTY_PAUSE_ON_429_MS
+    for (const id of propertyIds) pausedUntil.set(propertyKey(id, endpoint), until)
   }
 
   /**
@@ -101,8 +175,11 @@ export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOpt
     // globalThis.fetch en tests y siempre usa el global vigente en producción.
     const doFetch = fetchImpl ?? ((u: Parameters<typeof fetch>[0], i: Parameters<typeof fetch>[1]) => globalThis.fetch(u, i))
     let last: ChannexHttpResponse<T> = { ok: false, status: 0, data: null as T }
+    const ari = isAriUpdate(url, init.method)
+    const endpoint = ari ? ariEndpointOf(url) : null
+    const propertyIds = ari ? propertyIdsOf(init.body) : []
     for (let attempt = 0; attempt <= retries; attempt++) {
-      if (isAriUpdate(url, init.method)) await acquireSlot()
+      if (ari) await acquireSlot(propertyIds, endpoint)
       try {
         const res = await doFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
         const text = await res.text()
@@ -110,6 +187,7 @@ export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOpt
         try { data = text ? (JSON.parse(text) as T) : (null as T) } catch { data = text as unknown as T }
         last = { ok: res.ok, status: res.status, data }
         if (res.ok) return last
+        if (res.status === 429 && ari) pauseProperties(propertyIds, endpoint)
         if (RETRYABLE_STATUS(res.status) && attempt < retries) {
           await sleep(backoffMs(attempt, res.headers.get('retry-after')))
           continue
@@ -125,7 +203,11 @@ export function createChannexHttp(fetchImpl?: typeof fetch, opts: ChannexHttpOpt
     return last
   }
 
-  return { request, setMaxPerMinute, resetWindow: () => { sentAt.length = 0 } }
+  return {
+    request,
+    setMaxPerMinute,
+    resetWindow: () => { sentAt.length = 0; sentAtByProperty.clear(); pausedUntil.clear() },
+  }
 }
 
 /** Instancia compartida por todo el módulo: un solo budget de rate limit contra Channex. */
