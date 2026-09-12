@@ -143,11 +143,9 @@ const messages = {
     // Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 a Sí/No.
     'common.yes': 'Sí',
     'common.no': 'No',
-    'rooms.guests.needsCrib': '¿Necesita cuna?',
-    // #292 — la cuna es la amenidad `custom:cuna` del tipo, con precio: "¿Necesita cuna? (+ $15)".
-    'rooms.guests.needsCribPriced': '¿Necesita cuna? (+ {price})',
     'rooms.guests.cribRequested': 'Cuna',
-    // REQ-01 (#290) — amenidades de la habitación (cama extra…; la cuna va aparte, ver arriba).
+    // REQ-01 (#290) — amenidades de la habitación (cama extra, cuna…). #341 — la cuna es una
+    // amenidad más del checklist: ya no hay pregunta "¿Necesita cuna?" aparte.
     'rooms.guests.roomAmenities': 'Amenidades de la habitación',
     'rooms.guests.roomAmenityFree': 'Gratis',
     'rooms.guests.addRoom': 'Agregar esta habitación',
@@ -446,8 +444,6 @@ const messages = {
     'rooms.guests.babyBadge': 'Baby — no charge, no capacity',
     'common.yes': 'Yes',
     'common.no': 'No',
-    'rooms.guests.needsCrib': 'Need a crib?',
-    'rooms.guests.needsCribPriced': 'Need a crib? (+ {price})',
     'rooms.guests.cribRequested': 'Crib',
     // REQ-01 (#290)
     'rooms.guests.roomAmenities': 'Room amenities',
@@ -734,8 +730,6 @@ const messages = {
     'rooms.guests.babyBadge': 'Bebê — não ocupa vaga',
     'common.yes': 'Sim',
     'common.no': 'Não',
-    'rooms.guests.needsCrib': 'Precisa de berço?',
-    'rooms.guests.needsCribPriced': 'Precisa de berço? (+ {price})',
     'rooms.guests.cribRequested': 'Berço',
     // REQ-01 (#290)
     'rooms.guests.roomAmenities': 'Comodidades do quarto',

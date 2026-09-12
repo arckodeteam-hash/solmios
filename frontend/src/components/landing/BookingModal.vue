@@ -313,36 +313,14 @@
                     </label>
                   </div>
 
-                  <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 a Sí/No; #292 cuna por
-                       habitación — mismo bloque que RoomsStep.vue (/book/:slug): solo aparece con
-                       un bebé en ESTA tarjeta Y el tipo publica la amenidad `custom:cuna`
-                       (`store.roomAmenitiesFor`, precio "desde" del tipo, mostrado en la pregunta si
-                       es > 0). "Sí" agrega la key a la tarjeta y suma al "+ $X". Sin cantidad. -->
-                  <div v-if="shouldOfferCrib(rt)" class="space-y-2.5 rounded-lg bg-cyan-50/60 p-2.5" data-testid="baby-extras">
-                    <div class="flex items-center justify-between gap-3">
-                      <span class="text-sm font-bold text-navy" data-testid="crib-question">{{ cribQuestionLabel(rt) }}</span>
-                      <div class="flex overflow-hidden rounded-full border border-border text-xs font-bold">
-                        <button type="button" data-testid="crib-yes"
-                          class="px-3 py-1.5 transition"
-                          :class="composer(rt).needsCrib ? 'bg-cyan text-white' : 'bg-white text-navy hover:bg-slate-50'"
-                          @click="setNeedsCrib(rt, true)"
-                        >Sí</button>
-                        <button type="button" data-testid="crib-no"
-                          class="px-3 py-1.5 transition"
-                          :class="!composer(rt).needsCrib ? 'bg-cyan text-white' : 'bg-white text-navy hover:bg-slate-50'"
-                          @click="setNeedsCrib(rt, false)"
-                        >No</button>
-                      </div>
-                    </div>
-                  </div>
-
                   <!-- REQ-01 (#290, amenidades de la habitación) — mismo checklist POR HABITACIÓN
-                       que RoomsStep.vue (/book/:slug): las amenidades personalizadas (cama extra…)
-                       que el hotel configuró para ESTE tipo (`offeredRoomAmenities`:
-                       `store.roomAmenitiesFor(rt.id)` SIN `custom:cuna`, que se ofrece sólo vía
-                       "¿Necesita cuna?" arriba; precio "desde" del tipo). NO depende de la
-                       composición ni de la política de niños: se ofrece a cualquier huésped. Lo
-                       elegido suma al total de la línea (cuna incluida en el "+ $X"). -->
+                       que RoomsStep.vue (/book/:slug): las amenidades personalizadas (cama extra,
+                       cuna…) que el hotel configuró para ESTE tipo (`offeredRoomAmenities`:
+                       `store.roomAmenitiesFor(rt.id)` COMPLETO, precio "desde" del tipo). #341 —
+                       la cuna es una amenidad más de esta lista: ya no hay pregunta "¿Necesita
+                       cuna?" aparte ni gate por bebé; tildarla deja `needsCrib` en la línea como
+                       espejo. NO depende de la composición ni de la política de niños: se ofrece a
+                       cualquier huésped. Lo elegido suma al total de la línea ("+ $X"). -->
                   <div v-if="shouldOfferRoomAmenities(rt)" class="space-y-2 rounded-lg bg-slate-50 p-2.5" data-testid="room-amenities">
                     <span class="block text-sm font-bold text-navy">Amenidades de la habitación</span>
                     <label
@@ -918,7 +896,7 @@ const {
   composer, setAdults, setChildrenCount, setChildAge,
   composition, matchedRow, composedPrice, composedPricePerNight,
   canAddComposition, addComposedRoom, maxChildAgeOptions, capacityBlockReason,
-  childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib, cribPrice,
+  childAgeClassification,
   // REQ-02 (#234) — "Editar" una línea del carrito: la devuelve al composer de su tarjeta.
   editCartLine,
   // REQ-01 (#290) — amenidades de la habitación (cama extra…) por habitación.
@@ -926,14 +904,6 @@ const {
   // MR-03 (#268) — régimen por habitación (radio por tarjeta).
   mealPlanCode, setMealPlan, mealPlanOptions, composedMealPlanTotal,
 } = useGuestComposer()
-
-/** #292 — "¿Necesita cuna?" con el precio "desde" de `custom:cuna` del tipo cuando lo tiene
- *  ("¿Necesita cuna? (+ $15.00)"), mismo `money()` que el resto de la tarjeta. Sin cargo → la
- *  pregunta pelada. Mismo criterio que `cribQuestionLabel` en RoomsStep.vue. */
-function cribQuestionLabel(rt: RoomTypeRate): string {
-  const price = cribPrice(rt)
-  return price > 0 ? `¿Necesita cuna? (+ ${money(price)})` : '¿Necesita cuna?'
-}
 
 /** Requerimiento 6 (2026-09-03) — mismo criterio que RoomsStep.vue: texto del motivo cuando
  *  `capacityBlockReason` bloquea por maxAdults/maxChildren del tipo (la matriz no lo sabe). */
@@ -1194,12 +1164,13 @@ function cartLineGuestsLabel(line: CartLine): string {
     // plaza) según la política del hotel, para que el huésped confirme cómo quedó contado cada uno
     // en ESTA habitación. Ej: "1 adulto · 2 niños (1 año · bebé, 8 años · niño, consume plaza)".
     : `${plural(line.adults, 'adulto', 'adultos')} · ${plural(line.childrenAges.length, 'niño', 'niños')} (${line.childrenAges.map(childAgeLabel).join(', ')})`
-  // Tarea 22 (Cuna, corrección 2026-09-09) — antes esta línea no mostraba la cuna en NINGÚN
-  // resumen ya agregado (el dato se guardaba bien, pero no se veía).
-  const withCrib = line.needsCrib ? `${base} · Cuna` : base
   // REQ-01 (#290) — amenidades de la habitación elegidas para ESTA habitación, por nombre
-  // (snapshot de la línea). La cuna (#292, `isCribAmenityKey`) ya se nombró arriba: no se repite.
-  const roomAmenities = (line.roomAmenities ?? []).filter((a) => !isCribAmenityKey(a.key, a.name)).map((a) => a.name)
+  // (snapshot de la línea). #341 — la cuna se lista acá como cualquier otra amenidad (una sola
+  // representación, mismo criterio que RoomsStep.vue); "· Cuna" sólo se agrega aparte si la línea
+  // trae `needsCrib` SIN la key cuna en su snapshot (líneas legacy).
+  const roomAmenities = (line.roomAmenities ?? []).map((a) => a.name)
+  const cribListed = (line.roomAmenities ?? []).some((a) => isCribAmenityKey(a.key, a.name))
+  const withCrib = line.needsCrib && !cribListed ? `${base} · Cuna` : base
   const withRoomAmenities = roomAmenities.length > 0 ? `${withCrib} · ${roomAmenities.join(', ')}` : withCrib
   // MR-03 (#268) — el régimen elegido para ESTA habitación (snapshot de la línea).
   return line.mealPlan && line.mealPlan.code !== 'room_only'

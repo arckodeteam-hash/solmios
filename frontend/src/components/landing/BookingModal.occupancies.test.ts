@@ -417,76 +417,41 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
     expect(document.body.querySelector('[data-testid="baby-badge"]')).toBeNull()
   })
 
-  // ── #292 — cuna por habitación: espejo de RoomsStep.occupancies.test.ts en ESTA superficie
-  // (BookingModal.vue tiene su propio template y `cribQuestionLabel`): "¿Necesita cuna?" sólo con
-  // un bebé en la tarjeta Y el tipo publicando `custom:cuna` (`store.roomAmenitiesFor`), con el
-  // precio en la pregunta; la cuna NO aparece en el checklist genérico; "Sí" suma al "+ $X".
-  describe('#292 — "¿Necesita cuna?" gateada por custom:cuna del tipo, con precio', () => {
-    const BABY_POLICY: ChildPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50 }
+  // ── #341 — la cuna es una amenidad más del checklist: espejo de RoomsStep.occupancies.test.ts
+  // en ESTA superficie (BookingModal.vue tiene su propio template). Ya no existe la pregunta
+  // "¿Necesita cuna?" (`baby-extras`) ni el gate por bebé: Cama extra y Cuna se listan juntas
+  // como checkboxes, tildar la cuna suma su precio al "+ $X" y la línea lleva `needsCrib` espejo.
+  describe('#341 — la cuna es una amenidad más del checklist', () => {
     const CUNA = { key: 'custom:cuna', name: 'Cuna', price: 15 }
     const CAMA_EXTRA = { key: 'custom:cama-extra', name: 'Cama extra', price: 20 }
     const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+    const optionTexts = () => Array.from(document.body.querySelectorAll<HTMLElement>('[data-testid="room-amenity-option"]')).map((o) => (o.textContent ?? '').replace(/\s+/g, ' ').trim())
 
-    it('tipo con custom:cuna ($15) + bebé → la pregunta aparece con el precio ("¿Necesita cuna? (+ 15,00 US$)")', async () => {
-      await open(FROM_HERO, BABY_POLICY)
+    it('sin bebé: Cama extra y Cuna aparecen como checkboxes con precio; NO existe la pregunta aparte', async () => {
+      await open(FROM_HERO)
       useBookingStore().roomAmenities = { familiar: [CAMA_EXTRA, CUNA] }
       await flushPromises()
-      // Sin bebé todavía: nada.
-      expect(q('[data-testid="crib-question"]')).toBeNull()
 
-      await bumpChildren(1) // edad default 0 → bebé (≤ maxBabyAge=1)
-      expect(q('[data-testid="baby-badge"]')).not.toBeNull()
-      expect(q('[data-testid="baby-extras"]')).not.toBeNull()
-      // Mismo `money()` que el resto de la tarjeta (locale es → "15,00 US$").
-      expect(q('[data-testid="crib-question"]')!.textContent!.replace(/\s+/g, ' ').trim()).toBe('¿Necesita cuna? (+ 15,00 US$)')
-    })
-
-    it('tipo SIN custom:cuna + bebé → sin pregunta (aunque tenga otras amenidades)', async () => {
-      await open(FROM_HERO, BABY_POLICY)
-      useBookingStore().roomAmenities = { familiar: [CAMA_EXTRA] }
-      await flushPromises()
-      await bumpChildren(1)
-      expect(q('[data-testid="baby-badge"]')).not.toBeNull()
-      expect(q('[data-testid="crib-question"]')).toBeNull()
       expect(q('[data-testid="baby-extras"]')).toBeNull()
-      // El checklist genérico sí está (cama extra).
-      expect(document.body.querySelectorAll('[data-testid="room-amenity-option"]')).toHaveLength(1)
-    })
-
-    it('tipo con custom:cuna pero SIN bebé (niño de 8) → sin pregunta', async () => {
-      await open(FROM_HERO, BABY_POLICY)
-      useBookingStore().roomAmenities = { familiar: [CUNA] }
-      await flushPromises()
-      await bumpChildren(1)
-      document.body.querySelector<HTMLSelectElement>('select')!.value = '8' // > maxFreeAge → con plaza, no bebé
-      document.body.querySelector<HTMLSelectElement>('select')!.dispatchEvent(new Event('change'))
-      await flushPromises()
-      expect(q('[data-testid="baby-badge"]')).toBeNull()
       expect(q('[data-testid="crib-question"]')).toBeNull()
-      // Sólo la cuna en el catálogo → tampoco hay checklist genérico.
-      expect(q('[data-testid="room-amenities"]')).toBeNull()
-    })
-
-    it('la cuna NO aparece en el checklist genérico (room-amenity-option); sólo el resto del catálogo', async () => {
-      await open(FROM_HERO, BABY_POLICY)
-      useBookingStore().roomAmenities = { familiar: [CAMA_EXTRA, CUNA] }
-      await flushPromises()
-      await bumpChildren(1)
-      const options = Array.from(document.body.querySelectorAll<HTMLElement>('[data-testid="room-amenity-option"]')).map((o) => o.textContent ?? '')
-      expect(options).toHaveLength(1)
+      const options = optionTexts()
+      expect(options).toHaveLength(2)
       expect(options[0]).toContain('Cama extra')
-      expect(options[0]).not.toContain('Cuna')
+      expect(options[0]).toContain('20,00')
+      expect(options[1]).toContain('Cuna')
+      expect(options[1]).toContain('15,00')
+      expect(document.body.querySelectorAll('input[type="checkbox"]')).toHaveLength(2)
     })
 
-    it('click en "Sí" → el total de amenidades de la tarjeta suma 15 y la línea del carrito lleva needsCrib + custom:cuna', async () => {
-      await open(FROM_HERO, BABY_POLICY)
+    it('tildar la cuna suma 15 al "+ $X" y la línea del carrito lleva needsCrib + custom:cuna; destildar la quita', async () => {
+      await open(FROM_HERO)
       const store = useBookingStore()
       store.roomAmenities = { familiar: [CAMA_EXTRA, CUNA] }
       await flushPromises()
-      await bumpChildren(1)
       expect(q('[data-testid="room-amenities-total"]')).toBeNull()
 
-      q('[data-testid="crib-yes"]')!.click()
+      const cribBox = document.body.querySelector<HTMLInputElement>(`input[value="${CUNA.key}"]`)!
+      cribBox.click()
       await flushPromises()
       expect(q('[data-testid="room-amenities-total"]')!.textContent).toContain('15,00')
 
@@ -494,22 +459,29 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
       expect(store.cart).toHaveLength(1)
       expect(store.cart[0]!.needsCrib).toBe(true)
       expect(store.cart[0]!.roomAmenities).toEqual([CUNA])
+      // El resumen de la línea nombra la cuna UNA sola vez (como amenidad, no duplicada aparte).
+      expect(q('[data-testid="cart-line"]')!.textContent!.match(/Cuna/g)).toHaveLength(1)
 
-      // "No" (en una tarjeta nueva) vuelve a dejar el total sin la cuna.
-      await bumpChildren(1)
-      q('[data-testid="crib-yes"]')!.click()
+      // Tarjeta nueva: tildar y destildar vuelve a dejar el total sin la cuna.
+      const again = document.body.querySelector<HTMLInputElement>(`input[value="${CUNA.key}"]`)!
+      again.click()
       await flushPromises()
-      q('[data-testid="crib-no"]')!.click()
+      expect(q('[data-testid="room-amenities-total"]')!.textContent).toContain('15,00')
+      again.click()
       await flushPromises()
       expect(q('[data-testid="room-amenities-total"]')).toBeNull()
     })
 
-    it('cuna sin cargo: la pregunta va sin precio', async () => {
-      await open(FROM_HERO, BABY_POLICY)
+    it('cuna sin cargo: se lista igual, como "Gratis"', async () => {
+      await open(FROM_HERO)
       useBookingStore().roomAmenities = { familiar: [{ ...CUNA, price: 0 }] }
       await flushPromises()
-      await bumpChildren(1)
-      expect(q('[data-testid="crib-question"]')!.textContent!.trim()).toBe('¿Necesita cuna?')
+      expect(q('[data-testid="baby-extras"]')).toBeNull()
+      expect(q('[data-testid="room-amenities"]')).not.toBeNull()
+      const options = optionTexts()
+      expect(options).toHaveLength(1)
+      expect(options[0]).toContain('Cuna')
+      expect(q('[data-testid="room-amenity-price"]')!.textContent!.trim()).toBe('Gratis')
     })
   })
 

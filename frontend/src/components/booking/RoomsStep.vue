@@ -211,37 +211,13 @@
               </label>
             </div>
 
-            <!-- Tarea 22 (Cuna, 2026-09-08), simplificada 2026-09-09 a Sí/No; #292 cuna por
-                 habitación — solo aparece si HAY un bebé en la composición de ESTA tarjeta (asociado
-                 a la habitación, no al carrito) Y el tipo publica la amenidad `custom:cuna`
-                 (`store.roomAmenitiesFor`, precio "desde" del tipo). Con precio > 0 la pregunta lo
-                 muestra ("¿Necesita cuna? (+ $15)"); "Sí" agrega la key a la tarjeta y suma al
-                 "+ $X" de amenidades. Sin cantidad: el pedido es explícito en que NO se pregunta
-                 cuántas cunas, solo Sí/No. -->
-            <div v-if="shouldOfferCrib(rt)" class="space-y-2.5 rounded-lg bg-cyan-50/60 p-2.5" data-testid="baby-extras">
-              <div class="flex items-center justify-between gap-3">
-                <span class="text-sm font-bold text-navy" data-testid="crib-question">{{ cribQuestionLabel(rt) }}</span>
-                <div class="flex overflow-hidden rounded-full border border-slate-200 text-xs font-bold">
-                  <button type="button" data-testid="crib-yes"
-                    class="px-3 py-1.5 transition"
-                    :class="composer(rt).needsCrib ? 'bg-cyan text-white' : 'bg-white text-navy hover:bg-slate-50'"
-                    @click="setNeedsCrib(rt, true)"
-                  >{{ t('common.yes') }}</button>
-                  <button type="button" data-testid="crib-no"
-                    class="px-3 py-1.5 transition"
-                    :class="!composer(rt).needsCrib ? 'bg-cyan text-white' : 'bg-white text-navy hover:bg-slate-50'"
-                    @click="setNeedsCrib(rt, false)"
-                  >{{ t('common.no') }}</button>
-                </div>
-              </div>
-            </div>
-
             <!-- REQ-01 (#290, amenidades de la habitación) — checklist POR HABITACIÓN de las
-                 amenidades personalizadas (cama extra…) que el hotel configuró para ESTE tipo
-                 (`offeredRoomAmenities`: `store.roomAmenitiesFor(rt.id)` SIN `custom:cuna`, que se
-                 ofrece sólo vía "¿Necesita cuna?" arriba; precio "desde" del tipo). NO depende de la
-                 composición: se ofrece a cualquier huésped apenas el tipo tenga catálogo. Lo elegido
-                 suma al total de la línea (cuna incluida en el "+ $X"). -->
+                 amenidades personalizadas (cama extra, cuna…) que el hotel configuró para ESTE
+                 tipo (`offeredRoomAmenities`: `store.roomAmenitiesFor(rt.id)` COMPLETO, precio
+                 "desde" del tipo). #341 — la cuna es una amenidad más de esta lista: ya no hay
+                 pregunta "¿Necesita cuna?" aparte ni gate por bebé; tildarla deja `needsCrib` en
+                 la línea como espejo. NO depende de la composición: se ofrece a cualquier huésped
+                 apenas el tipo tenga catálogo. Lo elegido suma al total de la línea ("+ $X"). -->
             <div v-if="shouldOfferRoomAmenities(rt)" class="space-y-2 rounded-lg bg-slate-50 p-2.5" data-testid="room-amenities">
               <span class="block text-sm font-bold text-navy">{{ t('rooms.guests.roomAmenities') }}</span>
               <label
@@ -506,7 +482,7 @@ const {
   composer, setAdults, setChildrenCount, setChildAge,
   composition, matchedRow, composedPrice, composedPricePerNight,
   canAddComposition, addComposedRoom, maxChildAgeOptions, capacityBlockReason,
-  childAgeClassification, babiesCount, shouldOfferCrib, setNeedsCrib, cribPrice,
+  childAgeClassification,
   // REQ-02 (#234) — "Editar" una línea del carrito: la devuelve al composer de su tarjeta.
   editCartLine,
   // REQ-01 (#290) — amenidades de la habitación (cama extra…) por habitación.
@@ -514,16 +490,6 @@ const {
   // MR-03 (#268) — régimen por habitación (radio por tarjeta).
   mealPlanCode, setMealPlan, mealPlanOptions, composedMealPlanTotal,
 } = useGuestComposer()
-
-/** #292 — "¿Necesita cuna?" con el precio "desde" de `custom:cuna` del tipo cuando lo tiene
- *  ("¿Necesita cuna? (+ $15)"), mismo formateo de moneda que el resto de la tarjeta. Sin cargo →
- *  la pregunta pelada. */
-function cribQuestionLabel(rt: RoomTypeRate): string {
-  const price = cribPrice(rt)
-  return price > 0
-    ? t('rooms.guests.needsCribPriced', { price: formatPrice(price, store.displayCurrency) })
-    : t('rooms.guests.needsCrib')
-}
 
 /** Requerimiento 6 (2026-09-03) — texto del motivo cuando `capacityBlockReason` bloquea por
  *  maxAdults/maxChildren del tipo (la matriz no lo sabe, ver useGuestComposer.ts). `'capacity'`
@@ -556,11 +522,13 @@ function cartLineGuestsLabel(line: CartLine): string {
         // llegar al carrito) cae en "consume plaza" como fallback defensivo.
         ages: line.childrenAges.map((age) => childAgeLabel(age)).join(', '),
       })
-  const withCrib = line.needsCrib ? `${base} · ${t('rooms.guests.cribRequested')}` : base
   // REQ-01 (#290) — las amenidades de la habitación elegidas para ESTA habitación, por nombre
-  // (snapshot de la línea), para que el huésped confirme qué quedó pedido en cada una. La cuna
-  // (#292, `custom:cuna`) ya se nombró arriba con `needsCrib`: no se repite.
-  const roomAmenities = (line.roomAmenities ?? []).filter((a) => !isCribAmenityKey(a.key, a.name)).map((a) => a.name)
+  // (snapshot de la línea), para que el huésped confirme qué quedó pedido en cada una. #341 — la
+  // cuna se lista acá como cualquier otra amenidad (una sola representación); "· Cuna" sólo se
+  // agrega aparte si la línea trae `needsCrib` SIN la key cuna en su snapshot (líneas legacy).
+  const roomAmenities = (line.roomAmenities ?? []).map((a) => a.name)
+  const cribListed = (line.roomAmenities ?? []).some((a) => isCribAmenityKey(a.key, a.name))
+  const withCrib = line.needsCrib && !cribListed ? `${base} · ${t('rooms.guests.cribRequested')}` : base
   const withRoomAmenities = roomAmenities.length > 0 ? `${withCrib} · ${roomAmenities.join(', ')}` : withCrib
   // MR-03 (#268) — el régimen elegido para ESTA habitación (snapshot de la línea).
   return line.mealPlan && line.mealPlan.code !== 'room_only'

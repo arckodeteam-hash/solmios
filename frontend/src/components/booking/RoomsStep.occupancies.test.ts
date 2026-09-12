@@ -525,48 +525,61 @@ describe('RoomsStep — composer de huéspedes (adultos+niños+edades)', () => {
     })
   })
 
-  // ─── #292 — cuna por habitación: "¿Necesita cuna?" sólo si el tipo publica `custom:cuna`, con
-  // su precio en la pregunta; la cuna NO aparece en el checklist genérico de amenidades.
-  describe('#292 — "¿Necesita cuna?" gateada por custom:cuna del tipo, con precio', () => {
-    const BABY_POLICY: ChildPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50 }
+  // ─── #341 — la cuna es una amenidad más del checklist "Amenidades de la habitación": ya no
+  // existe la pregunta "¿Necesita cuna?" (`baby-extras`) ni el gate por bebé. Tildarla suma su
+  // precio al "+ $X" y la línea del carrito la lleva en `roomAmenities` con `needsCrib` en espejo.
+  describe('#341 — la cuna es una amenidad más del checklist', () => {
+    const CAMA = { key: 'custom:cama-extra', name: 'Cama extra', price: 20 }
+    const CUNA = { key: 'custom:cuna', name: 'Cuna', price: 15 }
 
-    it('con bebé pero el tipo SIN custom:cuna no se pregunta; con custom:cuna ($15) la pregunta muestra el precio', async () => {
-      const w = render(true, 'es', BABY_POLICY)
+    it('sin bebé: Cama extra y Cuna aparecen como checkboxes, con precio, y NO existe la pregunta aparte', async () => {
+      const w = render()
       const store = useBookingStore()
-      store.roomAmenities = { familiar: [{ key: 'custom:cama-extra', name: 'Cama extra', price: 20 }] }
-      await bumpChildren(w, 1) // edad default 0 → bebé
-      expect(w.find('[data-testid="baby-badge"]').exists()).toBe(true)
+      store.roomAmenities = { familiar: [CAMA, CUNA] }
+      await flushPromises()
+
       expect(w.find('[data-testid="baby-extras"]').exists()).toBe(false)
-
-      store.roomAmenities = { familiar: [{ key: 'custom:cama-extra', name: 'Cama extra', price: 20 }, { key: 'custom:cuna', name: 'Cuna', price: 15 }] }
-      await flushPromises()
-      expect(w.find('[data-testid="baby-extras"]').exists()).toBe(true)
-      // Mismo formateo de moneda que el resto de la tarjeta (`formatPrice`, locale es → "15,00 US$").
-      expect(w.get('[data-testid="crib-question"]').text().replace(/\s+/g, ' ')).toBe('¿Necesita cuna? (+ 15,00 US$)')
-      // El checklist genérico lista la cama extra pero NO la cuna.
-      const options = w.findAll('[data-testid="room-amenity-option"]').map((o) => o.text())
-      expect(options).toHaveLength(1)
-      expect(options[0]).toContain('Cama extra')
-      expect(options[0]).not.toContain('Cuna')
-
-      // "Sí" suma la cuna al "+ $X" de la tarjeta y la línea del carrito la lleva como amenidad.
-      await w.get('[data-testid="crib-yes"]').trigger('click')
-      expect(w.get('[data-testid="room-amenities-total"]').text()).toContain('15,00')
-      await addRoomButton(w).trigger('click')
-      await flushPromises()
-      expect(store.cart).toHaveLength(1)
-      expect(store.cart[0]!.needsCrib).toBe(true)
-      expect(store.cart[0]!.roomAmenities).toEqual([{ key: 'custom:cuna', name: 'Cuna', price: 15 }])
+      expect(w.find('[data-testid="crib-question"]').exists()).toBe(false)
+      const options = w.findAll('[data-testid="room-amenity-option"]')
+      expect(options).toHaveLength(2)
+      expect(options[0]!.text()).toContain('Cama extra')
+      expect(options[0]!.text()).toContain('20,00')
+      expect(options[1]!.text()).toContain('Cuna')
+      expect(options[1]!.text()).toContain('15,00')
+      expect(w.findAll('input[type="checkbox"]')).toHaveLength(2)
       w.unmount()
     })
 
-    it('cuna sin cargo: la pregunta va sin precio', async () => {
-      const w = render(true, 'es', BABY_POLICY)
-      useBookingStore().roomAmenities = { familiar: [{ key: 'custom:cuna', name: 'Cuna', price: 0 }] }
-      await bumpChildren(w, 1)
-      expect(w.get('[data-testid="crib-question"]').text().trim()).toBe('¿Necesita cuna?')
-      // Sólo la cuna en el catálogo → no hay checklist genérico.
-      expect(w.find('[data-testid="room-amenities"]').exists()).toBe(false)
+    it('tildar la cuna suma su precio al "+ $X" y la línea del carrito lleva needsCrib:true + custom:cuna', async () => {
+      const w = render()
+      const store = useBookingStore()
+      store.roomAmenities = { familiar: [CAMA, CUNA] }
+      await flushPromises()
+
+      expect(w.find('[data-testid="room-amenities-total"]').exists()).toBe(false)
+      await w.get(`input[value="${CUNA.key}"]`).setValue(true)
+      expect(w.get('[data-testid="room-amenities-total"]').text()).toContain('15,00')
+
+      await clickAddRoom(w)
+      expect(store.cart).toHaveLength(1)
+      expect(store.cart[0]!.needsCrib).toBe(true)
+      expect(store.cart[0]!.roomAmenities).toEqual([CUNA])
+      // El resumen de la línea nombra la cuna UNA sola vez (como amenidad, no duplicada aparte).
+      const line = w.get('[data-testid="cart-line"]').text()
+      expect(line.match(/Cuna/g)).toHaveLength(1)
+      w.unmount()
+    })
+
+    it('cuna sin cargo: se lista igual, como "Gratis"', async () => {
+      const w = render()
+      useBookingStore().roomAmenities = { familiar: [{ ...CUNA, price: 0 }] }
+      await flushPromises()
+      expect(w.find('[data-testid="baby-extras"]').exists()).toBe(false)
+      expect(w.find('[data-testid="room-amenities"]').exists()).toBe(true)
+      const options = w.findAll('[data-testid="room-amenity-option"]')
+      expect(options).toHaveLength(1)
+      expect(options[0]!.text()).toContain('Cuna')
+      expect(options[0]!.get('[data-testid="room-amenity-price"]').text()).toBe('Gratis')
       w.unmount()
     })
   })
