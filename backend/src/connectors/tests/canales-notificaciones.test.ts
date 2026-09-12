@@ -21,8 +21,10 @@ const USERS = [
   { id: 'u-cama', hotelId: 'h1', name: 'Camarera', email: 'cama@palma.com', role: 'housekeeper', active: 1 },
 ]
 
-function makeCtx(opts: { notifCreateThrows?: boolean } = {}) {
+function makeCtx(opts: { notifCreateThrows?: boolean; withEmail?: boolean } = {}) {
   const notifications: any[] = []
+  /** Lo encolado por `enqueueNotification` cuando `withEmail` (correo al buzón del hotel). */
+  const emails: any[] = []
   const sockets: Record<string, any> = {}
   const captured: { ports?: any; sockets: Record<string, any> } = { sockets }
   // Stub de canales: acumula como el service real (shared/utils/accumulate-sockets.ts).
@@ -36,7 +38,15 @@ function makeCtx(opts: { notifCreateThrows?: boolean } = {}) {
       notifications.push(dto)
       return { id: `n-${notifications.length}`, ...dto }
     },
-    hotelEmailDeps: () => null,
+    hotelEmailDeps: () => opts.withEmail
+      ? {
+          emailSender: {
+            enqueue: async () => 'q-raw',
+            enqueueNotification: async (i: any) => { emails.push(i); return 'q1' },
+          },
+          platformIdentity: async () => ({ platformName: 'Plataforma Prueba', supportEmail: '', supportPhone: '' }),
+        }
+      : null,
   }
   const modules: Record<string, any> = {
     canales,
@@ -47,7 +57,7 @@ function makeCtx(opts: { notifCreateThrows?: boolean } = {}) {
     },
     usuarios: { list: async (hotelId?: string) => USERS.filter((u) => u.hotelId === hotelId) },
     roles: { list: async () => ({ data: [] }) },
-    hoteles: { getById: async () => ({ id: 'h1', name: 'Hotel Palma', email: '' }) },
+    hoteles: { getById: async () => ({ id: 'h1', name: 'Hotel Palma', email: opts.withEmail ? 'info@palma.com' : '' }) },
     huespedes: { getById: async () => ({ id: 'g1', name: 'Ana Pérez' }) },
     habitaciones: { getById: async () => ({ id: 'rm1', number: '101' }) },
   }
@@ -57,7 +67,7 @@ function makeCtx(opts: { notifCreateThrows?: boolean } = {}) {
       throw new Error(`módulo desconocido: ${name}`)
     },
   } as unknown as ConnectorContext
-  return { ctx, captured, notifications }
+  return { ctx, captured, notifications, emails }
 }
 
 const INGESTED = { hotelId: 'h1', reservationId: 'r1', ota: 'Booking.com' }
@@ -95,6 +105,22 @@ describe('canalesNotificacionesConnector — wiring (#246)', () => {
       expect(n.metadata.link).toBe('/panel/reservations?open=r1')
       expect(n.metadata.origin).toBe('ota')
     }
+  })
+
+  // El correo al hotel de una reserva OTA sale por SU plantilla: la de motor web decía "Entró una
+  // reserva desde el motor web" y "Pendiente de pago" sobre una reserva que la OTA ya cobró.
+  it('onOtaBookingIngested → correo al buzón del hotel por reservation_new_ota_staff con el canal', async () => {
+    const { ctx, captured, emails } = makeCtx({ withEmail: true })
+    canalesNotificacionesConnector(ctx)
+
+    await captured.sockets.onOtaBookingIngested(INGESTED)
+
+    expect(emails).toHaveLength(1)
+    expect(emails[0].to).toBe('info@palma.com')
+    expect(emails[0].event).toBe('reservation_new_ota_staff')
+    expect(emails[0].variables.channel_name).toBe('Booking.com')
+    expect(emails[0].variables.payment_status).toBe('')
+    expect(emails[0].relatedType).toBe('reservation:ota')
   })
 
   it('notificaciones.create lanza → el socket resuelve igual (no frena la ingesta ni el ack)', async () => {

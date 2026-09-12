@@ -282,6 +282,25 @@ describe('notifyApprovalOverdue', () => {
     expect(h.pushed[0]).toMatchObject({ userId: 'u-admin', data: { reservationId: 'r1' } })
   })
 
+  it('con un emailSender que expone enqueueNotification (#267) el recordatorio sale igual por enqueue: sin plantilla, sin "Estado del pago", y no tira', async () => {
+    // Tras #267 `deliver()` usa la plantilla `reservation_new_staff` cuando el aviso trae
+    // `summary`/`paymentStatus`; este aviso no los trae y tiene que seguir saliendo como antes.
+    const h = notifyHarness()
+    const templated: any[] = []
+    h.deps.emailSender.enqueueNotification = async (i: any) => { templated.push(i); return 'q2' }
+
+    const out = await notifyApprovalOverdue(h.deps, { id: 'r1', hotelId: 'h1' }, { deadlineHours: 24, pendingSince: hoursAgo(25.7) }, NOW)
+
+    expect(out).toEqual({ notified: 1, emailed: true })
+    expect(templated).toHaveLength(0)
+    expect(h.sent).toHaveLength(1)
+    expect(h.sent[0]).toMatchObject({ to: 'info@palma.com', hotelId: 'h1', relatedType: 'reservation:approval_overdue', relatedId: 'r1' })
+    expect(h.sent[0].subject).toBe('[Plataforma] Reserva por aprobar hace 25 h — Ana Pérez')
+    expect(h.sent[0].html).toContain('Plazo del hotel: 24 h')
+    expect(h.sent[0].html).toContain('Huésped: Ana Pérez')
+    expect(h.sent[0].html).not.toContain('Estado del pago')
+  })
+
   it('reserva inexistente → nada, sin lanzar', async () => {
     const h = notifyHarness({ reservas: [] })
     const out = await notifyApprovalOverdue(h.deps, { id: 'nope', hotelId: 'h1' }, { deadlineHours: 24, pendingSince: hoursAgo(30) }, NOW)

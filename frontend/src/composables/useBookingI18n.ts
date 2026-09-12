@@ -260,6 +260,10 @@ const messages = {
     'pay.cancelNonRefundableHeadline': 'Tarifa NO reembolsable.',
     'pay.cancelStrictHeadline': 'Política estricta: cancelación sin cargo solo hasta {deadline} antes del check-in.',
     'pay.cancelStrictDetail': 'Pasado ese plazo la reserva no es reembolsable.',
+    // #267 — reserva creada sin pasarela (sin checkoutUrl)
+    'pay.receivedUnpaidTitle': 'Recibimos tu pedido de reserva',
+    'pay.receivedUnpaidBody': 'Te enviamos un correo; el hotel te contactará para coordinar el pago.',
+    'pay.receivedUnpaidLocator': 'Tu localizador',
     'pay.processing': 'Procesando…',
     'pay.cta': 'Reservar y pagar · {amount}',
     'pay.chargeNote': 'Te cobraremos en {charge}. Mostramos precios en {display}.',
@@ -541,6 +545,10 @@ const messages = {
     'pay.cancelNonRefundableHeadline': 'Non-refundable rate.',
     'pay.cancelStrictHeadline': 'Strict policy: free cancellation only until {deadline} before check-in.',
     'pay.cancelStrictDetail': 'After that deadline the booking is non-refundable.',
+    // #267 — reserva creada sin pasarela (sin checkoutUrl)
+    'pay.receivedUnpaidTitle': 'We received your booking request',
+    'pay.receivedUnpaidBody': 'We sent you an email; the hotel will contact you to arrange the payment.',
+    'pay.receivedUnpaidLocator': 'Your booking reference',
     'pay.processing': 'Processing…',
     'pay.cta': 'Book and pay · {amount}',
     'pay.chargeNote': 'You will be charged in {charge}. Prices shown in {display}.',
@@ -819,6 +827,10 @@ const messages = {
     'pay.cancelNonRefundableHeadline': 'Tarifa NÃO reembolsável.',
     'pay.cancelStrictHeadline': 'Política rígida: cancelamento gratuito só até {deadline} antes do check-in.',
     'pay.cancelStrictDetail': 'Depois desse prazo a reserva não é reembolsável.',
+    // #267 — reserva creada sin pasarela (sin checkoutUrl)
+    'pay.receivedUnpaidTitle': 'Recebemos o seu pedido de reserva',
+    'pay.receivedUnpaidBody': 'Enviamos um e-mail; o hotel entrará em contato para combinar o pagamento.',
+    'pay.receivedUnpaidLocator': 'Seu localizador',
     'pay.processing': 'Processando…',
     'pay.cta': 'Reservar e pagar · {amount}',
     'pay.chargeNote': 'Cobraremos em {charge}. Mostramos preços em {display}.',

@@ -17,14 +17,23 @@ import {
 import type { BookingCancelledEvent } from '../modules/bookingengine/sockets'
 import { reservationNotifyDepsFactory } from './reservation-notify-deps'
 
-/** Lo que trae el socket del motor: `id` ES el reservationId (ver bookingengine/service.ts). */
+/**
+ * Lo que trae el socket del motor: `id` ES el reservationId (ver bookingengine/service.ts).
+ * `paid`/`hasCheckout` los manda el controller del motor (#267): la fila no cuenta si el hotel
+ * tenía pasarela, y eso cambia el texto del estado de pago que le llega al hotel.
+ */
 interface BookingEvent {
   id: string
   hotelId: string
+  guestName?: string
+  guestEmail?: string
+  guestPhone?: string
   totalAmount?: number
   currency?: string
   provider?: string
   paymentRef?: string
+  paid?: boolean
+  hasCheckout?: boolean
 }
 
 export function bookingengineNotificacionesConnector(logger: Logger): (ctx: ConnectorContext) => void {
@@ -49,8 +58,9 @@ export function bookingengineNotificacionesConnector(logger: Logger): (ctx: Conn
     }
 
     bookingengine.setSockets({
+      // `hasCheckout` va tal cual (undefined incluido): sin el dato el usecase avisa "Pendiente de pago".
       onBookingCreated: (b: BookingEvent) => swallow('created', b, (d) =>
-        notifyReservationReceived(d, { id: b.id, hotelId: b.hotelId }, 'web')),
+        notifyReservationReceived(d, { id: b.id, hotelId: b.hotelId }, 'web', { paid: !!b.paid, hasCheckout: b.hasCheckout })),
       onBookingPaid: (b: BookingEvent) => swallow('paid', b, (d) =>
         notifyReservationPaid(d, { id: b.id, hotelId: b.hotelId }, {
           totalAmount: Number(b.totalAmount) || 0,

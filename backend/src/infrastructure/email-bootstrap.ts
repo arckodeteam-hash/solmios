@@ -5,6 +5,7 @@ import { NotificationRenderer, type AutoMessageTemplateRow } from '../services/n
 import type { EmailSender } from '../services/email-sender'
 import type { Logger } from 'arckode-framework'
 import { sendBookingPaidEmail } from '../shared/usecases/booking-paid-email'
+import { sendBookingReceivedUnpaidEmail, shouldSendReceivedUnpaidEmail } from '../shared/usecases/booking-received-unpaid-email'
 import { sendBookingCancelledEmails } from '../shared/usecases/booking-cancelled-email'
 import { resolvePlatformIdentity, type PlatformIdentity } from '../shared/utils/platform-identity'
 import type { ReservationEmailSender } from '../shared/usecases/notify-reservation-received'
@@ -179,6 +180,21 @@ export function bootstrapEmail(orm: any, logger: Logger, resolveModule: <T>(name
           guestRepo: new OrmRepository<any>(orm, 'Guests'),
           logger,
         }, reservationId)
+      },
+      // #267: sin pasarela el único correo al huésped salía en `onBookingPaid`, que nunca llega.
+      // Cuando el controller afirma que NO hubo checkout (`hasCheckout === false`) va el acuse
+      // "recibimos tu pedido" con localizador y contacto del hotel. Sin el dato (flujo viejo) no
+      // manda nada: ante la duda, silencio antes que un "sin pago" a quien está pagando en Stripe.
+      onBookingCreated: async (data: { id?: string; hasCheckout?: boolean; paid?: boolean }) => {
+        if (!data?.id || !shouldSendReceivedUnpaidEmail(data)) return
+        await sendBookingReceivedUnpaidEmail({
+          emailSender: emailService,
+          reservationsRepo: new OrmRepository<any>(orm, 'Reservations'),
+          hotelRepo: new OrmRepository<any>(orm, 'Hotels'),
+          guestRepo: new OrmRepository<any>(orm, 'Guests'),
+          logger,
+          platformIdentity: () => resolvePlatformIdentity(new OrmRepository<any>(orm, 'Configuration')),
+        }, data.id)
       },
       // #272 — Cancelación desde la web: correo al huésped (su idioma) y al buzón del hotel (es).
       // Mismo motivo que arriba (EmailService nace después de `system.start()`). Cuando llega acá

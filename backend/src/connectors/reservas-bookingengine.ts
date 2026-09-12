@@ -3,7 +3,7 @@
 // directo a `Reservations` (bookingengine/usecases/public-booking.ts), sin pasar por el CRUD de
 // `reservas` — así que nunca bumpeaba la versión de su caché de listado. Administración podía
 // tardar hasta CACHE_TTL (300s) en mostrar un alta pública recién hecha. Mismo patrón que
-// reservas-canales.ts/booking-channex.ts: SOLO delega, sin lógica propia.
+// reservas-canales.ts: SOLO delega, sin lógica propia.
 
 import type { ConnectorContext } from 'arckode-framework'
 
