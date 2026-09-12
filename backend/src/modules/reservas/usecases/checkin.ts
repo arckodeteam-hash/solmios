@@ -60,16 +60,16 @@ class AlreadyCheckedInError extends Error {
 
 /**
  * Lectura dentro de la transacción si el handle la soporta; si no, por el ORM (los harnesses
- * viejos y algún driver no exponen `findMany` en `tx`). Nunca rompe el check-in: sin filas → [].
+ * viejos y algún driver no exponen `findMany` en `tx`). Una lectura que devuelve null/undefined
+ * cuenta como "sin filas" → []. Un ERROR de la lectura se propaga: aborta la transacción y el
+ * check-in falla con el "Error interno" de abajo. Antes se tragaba y devolvía [] — el check-in
+ * commiteaba con el folio SIN los extras y el tope del prepago sólo en la noche, o sea, el mismo
+ * bug de #269 pero silencioso. Sin extras posteados no hay check-in.
  */
 async function findManyIn(tx: any, orm: any, model: string, filter: Record<string, unknown>): Promise<any[]> {
-  try {
-    const reader = typeof tx?.findMany === 'function' ? tx : orm
-    const rows = await reader.findMany(model, filter)
-    return Array.isArray(rows) ? rows : []
-  } catch {
-    return []
-  }
+  const reader = typeof tx?.findMany === 'function' ? tx : orm
+  const rows = await reader.findMany(model, filter)
+  return Array.isArray(rows) ? rows : []
 }
 
 export async function executeCheckin(r: any, user: any, deps: {

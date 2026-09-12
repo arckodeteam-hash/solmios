@@ -14,7 +14,7 @@ const TRANSFER = { id: 'ad-1', reservationId: 'res-1', hotelId: 'h1', kind: 'ups
 const AMENIDAD = { id: 'ad-2', reservationId: 'res-1', hotelId: 'h1', kind: 'room_amenity', description: 'Botella de vino', quantity: 1, amount: 10, unitPrice: 10, taxRate: 18, source: 'booking_engine', status: 'pending' }
 const MANUAL = { id: 'ad-3', reservationId: 'res-1', hotelId: 'h1', kind: 'service', description: 'Lavandería', quantity: 1, amount: 25, source: 'manual', status: 'pending' }
 
-function harness(opts: { payments?: any[]; addons?: any[]; reservations?: any[] } = {}) {
+function harness(opts: { payments?: any[]; addons?: any[]; reservations?: any[]; txFindMany?: (model: string, filter: any, pick: (m: string) => any[], match: (row: any, f: any) => boolean) => Promise<any[]> } = {}) {
   const rooms = [{ id: 'room-1', hotelId: 'h1', number: '101', basePrice: 100, status: 'available' }]
   const reservations = opts.reservations ?? [{
     id: 'res-1', hotelId: 'h1', roomId: 'room-1', guestId: 'g1',
@@ -31,23 +31,39 @@ function harness(opts: { payments?: any[]; addons?: any[]; reservations?: any[] 
     : m === 'ReservationAddons' ? addons : m === 'Configuration' ? configuration : []
   const match = (row: any, f: any) => Object.entries(f ?? {}).every(([k, v]) => row[k] === v)
 
+  // Rollback en memoria: si `fn` lanza, cada tabla vuelve al estado previo (filas nuevas fuera,
+  // filas existentes con sus campos originales). Así el harness garantiza lo mismo que la tx real:
+  // una lectura que falla adentro no deja folio ni reserva `checked_in` a medias.
+  const tables = [rooms, reservations, addons, folios, charges]
+  const snapshot = () => tables.map((t) => ({ len: t.length, rows: t.map((r: any) => ({ ...r })) }))
+  const restore = (snap: ReturnType<typeof snapshot>) => tables.forEach((t, i) => {
+    t.length = snap[i].len
+    t.forEach((row: any, j: number) => { for (const k of Object.keys(row)) delete row[k]; Object.assign(row, snap[i].rows[j]) })
+  })
+
   const orm: any = {
     async findMany(model: string, filter: any = {}) { return pick(model).filter((r: any) => match(r, filter)) },
     async findOne(model: string, filter: any = {}) { return (await orm.findMany(model, filter))[0] ?? null },
     async transaction(fn: (tx: any) => Promise<void>) {
-      await fn({
-        async create(model: string, data: any) { const row = { ...data }; pick(model).push(row); return row },
-        async update(model: string, id: string, patch: any) {
-          const row = pick(model).find((r: any) => r.id === id); if (row) Object.assign(row, patch); return row ?? null
-        },
-        async updateMany(model: string, filter: any, patch: any) {
-          const hit = pick(model).filter((r: any) => match(r, filter))
-          hit.forEach((r: any) => Object.assign(r, patch))
-          return hit.length
-        },
-        async findOne(model: string, filter: any = {}) { return pick(model).filter((r: any) => match(r, filter))[0] ?? null },
-        async findMany(model: string, filter: any = {}) { return pick(model).filter((r: any) => match(r, filter)) },
-      })
+      const snap = snapshot()
+      try {
+        await fn({
+          async create(model: string, data: any) { const row = { ...data }; pick(model).push(row); return row },
+          async update(model: string, id: string, patch: any) {
+            const row = pick(model).find((r: any) => r.id === id); if (row) Object.assign(row, patch); return row ?? null
+          },
+          async updateMany(model: string, filter: any, patch: any) {
+            const hit = pick(model).filter((r: any) => match(r, filter))
+            hit.forEach((r: any) => Object.assign(r, patch))
+            return hit.length
+          },
+          async findOne(model: string, filter: any = {}) { return pick(model).filter((r: any) => match(r, filter))[0] ?? null },
+          async findMany(model: string, filter: any = {}) { return opts.txFindMany ? opts.txFindMany(model, filter, pick, match) : pick(model).filter((r: any) => match(r, filter)) },
+        })
+      } catch (e) {
+        restore(snap)
+        throw e
+      }
     },
   }
   const audit: any[] = []
@@ -176,6 +192,40 @@ describe('check-in: los extras pagados online entran al folio (#269)', () => {
     h.orm.transaction = (fn: any) => inner(async (tx: any) => { const { findMany, ...rest } = tx; await fn(rest) })
     await run(h)
     expect(h.charges.filter(isAddonCharge)).toHaveLength(2)
+  })
+
+  it('si la lectura de ReservationAddons falla, el check-in ABORTA: sin extras posteados no hay check-in', async () => {
+    // Antes `findManyIn` tragaba el error y devolvía []: la tx commiteaba un folio SIN extras y con
+    // el prepago capado a la noche — el bug original de #269, pero silencioso.
+    const h = harness({
+      payments: [PAGO], addons: [TRANSFER, AMENIDAD],
+      txFindMany: async (model, filter, pick, match) => {
+        if (model === 'ReservationAddons') throw new Error('lectura caída')
+        return pick(model).filter((r: any) => match(r, filter))
+      },
+    })
+    let err: any
+    try { await run(h) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(Error)
+    expect(err.message).toContain('Error interno')
+    expect(err.message).toContain('lectura caída')
+    // La tx hizo rollback: nada quedó escrito y la reserva sigue `confirmed`.
+    expect(h.folios).toHaveLength(0)
+    expect(h.charges).toHaveLength(0)
+    expect(h.reservations[0].status).toBe('confirmed')
+    expect(h.reservations[0].folioId).toBeUndefined()
+    expect(h.audit).toHaveLength(0)
+  })
+
+  it('si la lectura devuelve null (driver raro) cuenta como sin filas y el check-in sigue', async () => {
+    const h = harness({
+      payments: [PAGO],
+      txFindMany: async (model, filter, pick, match) => model === 'ReservationAddons' ? (null as any) : pick(model).filter((r: any) => match(r, filter)),
+    })
+    await run(h)
+    expect(h.folios).toHaveLength(1)
+    expect(h.charges.filter(isAddonCharge)).toHaveLength(0)
+    expect(h.reservations[0].status).toBe('checked_in')
   })
 })
 
