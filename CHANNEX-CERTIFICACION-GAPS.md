@@ -387,7 +387,8 @@ ni la reemplaza: si se borra, el PMS publica igual (eso es lo que Channex exige)
 | Min Stay **Through** vs **Arrival** | **Los dos, por separado.** Verificado con readback el 2026-09-02 con valores distintos (arrival 10 · through 7, T7) | `push-overrides.ts:93`, `channex.ts:517` |
 | Multi room type | Sí — el sync agrupa `rooms` por `type` y empuja todos en una llamada | `syncProperty` |
 | **Multi rate plan por room type** | **Sí** — BAR (+0%) y Bed & Breakfast (+20%) por tipo, configurables en `configuration(key='rate_plans')`. El canal del examen corre con 4 rate plans mapeados | `shared/utils/rate-plans.ts:30` |
-| Rate limits | Transport único con limiter de ventana deslizante 18/min, backoff en 429 (respeta `Retry-After`) y 5xx, timeout 15s por intento | `canales/usecases/channex-http.ts` |
+| Rate limits | Transport único con limiter de ventana deslizante **18/min global + 9/min por property y endpoint** (`availability`/`restrictions`, bajo los 10/min que documenta Channex), backoff en 429 (respeta `Retry-After`) y 5xx, **pausa de 60 s de la property ante 429**, timeout 15s por intento | `canales/usecases/channex-http.ts` (#294, 2026-09-12) |
+| Webhooks de bookings | **Sí** — receptor `POST /api/channels/channex/webhook` registrado en la cuenta (`booking_new;booking_modification;booking_cancellation`, verificado 2026-09-12); el feed `booking_revisions` cada 15 min + botón de ingesta manual quedan de respaldo | `canales/usecases/channex-webhook.ts:19`, `shared/usecases/booking-sync-cron.ts` |
 | Update logic | Por evento (sockets del framework), deltas. Full sync **sólo manual**; ningún timer pushea ARI | `connectors/*-canales.ts` |
 | Recepción de reservas | Feed `booking_revisions` + **ack siempre después de procesar**, dedupe por `externalLocator` | `booking-sync.ts:143-146` |
 | **Cancelaciones OTA** | Sí, se aplican sobre la reserva local con la política del PMS y liberan el depósito retenido. Un fallo definitivo (el huésped ya hizo check-in) se registra y se ackea en vez de reintentarse para siempre | `booking-ingestion.ts:117-137`, tests en `tests/booking-cancellation.test.ts` |
@@ -398,7 +399,6 @@ ni la reemplaza: si se borra, el PMS publica igual (eso es lo que Channex exige)
 |---|---|---|
 | **Reservas modificadas por la OTA** | Se reciben, se registran y se ackean, pero **no se auto-aplican** sobre la reserva local | Decisión de diseño: pisar un calendario en vivo necesita una UX de reconciliación que todavía no existe (`booking-ingestion.ts:5-6`) |
 | **Tarjetas de crédito** | El PMS **no procesa ni almacena** datos de tarjeta | Los cobros van por Stripe Links/Checkout — el PCI scope es de Stripe. Sin PAN/CVV de nuestro lado |
-| **Webhooks de bookings** | No hay webhook HTTP: es feed polling cada 15 min con ack + dedupe, más un botón de ingesta manual | `shared/usecases/booking-sync-cron.ts`. En la screenshare se usa el botón manual para no esperar el tick |
 | **Full sync automático** | Sólo manual (botón "Sincronizar"). No hay drift correction diario | Permitido hasta 1/24h off-peak si se automatiza; hoy no está |
 
 ### Salvedad de UI que conviene declarar

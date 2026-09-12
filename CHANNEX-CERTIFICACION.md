@@ -2,7 +2,8 @@
 
 > Guion oficial: https://docs.channex.io/api-v.1-documentation/pms-certification-tests
 > Formulario: https://forms.gle/xA8F3eSYBPBd8apYA
-> Última corrida: **2026-09-02**, contra **producción** (`solmios.com` → `staging.channex.io`).
+> Última corrida: **2026-09-12** (26 OK · 0 fallidos), contra **producción** (`solmios.com` → `staging.channex.io`).
+> Guion operativo con links y estado verificado: `CHANNEX-CERTIFICACION-CHECKLIST.md`.
 > Detalle por test y task ids: `CHANNEX-CERTIFICACION-EVIDENCIA.md`. Historial del gap y las
 > decisiones de diseño: `CHANNEX-CERTIFICACION-GAPS.md`.
 
@@ -57,7 +58,7 @@ las llamadas en el rastro de `sync_log` (solo las salientes).
 | T8 medio año (dic 2026 → may 2027) | 1 | ✅ |
 | T9 · T10 disponibilidad por reserva | 1 por reserva | ✅ |
 | T11 recepción de reservas (feed + ack) | — | ✅ |
-| T12 rate limits (18/min + backoff 429/5xx) | — | ✅ (`usecases/channex-http.ts`) |
+| T12 rate limits (18/min global + 9/min por property y endpoint, backoff 429/5xx, pausa 60 s ante 429 — #294) | — | ✅ (`usecases/channex-http.ts`) |
 | T13 update logic (por evento, sin full sync por timer) | — | ✅ |
 | T14 cuestionario | — | redactado en `CHANNEX-CERTIFICACION-GAPS.md` §8 |
 
@@ -117,5 +118,5 @@ Channex lo permite si se anota. Sigue vigente lo de `-GAPS.md` §8:
   UX de reconciliación que todavía no existe).
 - **Tarjetas de crédito**: el PMS no procesa datos de tarjeta — los cobros van por Stripe
   (Links/Checkout), sin PAN/CVV en nuestro lado.
-- **Webhooks de bookings**: se usa el feed `booking_revisions` cada 15 min + ack, más el botón
-  manual de ingesta. No hay webhook HTTP.
+- ~~**Webhooks de bookings**~~: ya **no** se declara no soportado — el webhook está registrado en la
+  cuenta desde `/admin/channels` (verificado 2026-09-12); el feed cada 15 min + botón manual quedan de respaldo.
