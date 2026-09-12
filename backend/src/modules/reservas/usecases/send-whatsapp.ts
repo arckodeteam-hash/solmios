@@ -67,7 +67,7 @@ const SIN_DATO = ''
  */
 export function resolverVariables(
   orden: string[],
-  ctx: { guest?: any; hotel?: any; reservation?: any; room?: any },
+  ctx: { guest?: any; hotel?: any; reservation?: any; room?: any; lockCodes?: string },
 ): string[] {
   const moneda = ctx.hotel?.currency || 'USD'
   /** El dinero va con su moneda: "360" a secas no le dice nada al huésped. */
@@ -92,6 +92,9 @@ export function resolverVariables(
     precheckin_link: ctx.reservation?.preCheckinHash && process.env.PUBLIC_BASE_URL
       ? `${String(process.env.PUBLIC_BASE_URL).replace(/\/$/, '')}/pre-checkin/${ctx.reservation.preCheckinHash}`
       : SIN_DATO,
+    // Código de la cerradura. Lo pasa quien ya lo leyó de `lock_codes` (room-info-cron, #297):
+    // este usecase no consulta la tabla para no acoplar reservas con ttlock.
+    lock_codes: ctx.lockCodes || SIN_DATO,
   }
   // Meta rechaza un parámetro vacío, así que un dato que la reserva no tiene va como guión.
   return orden.map((nombre) => valores[nombre] || '—')
@@ -202,7 +205,7 @@ export async function sendWhatsappForReservation(
 }
 
 /** Mismo criterio que `metaTemplateName` de marketing: Meta solo acepta minúsculas y guión bajo. */
-function slugDeNombre(nombre: string): string {
+export function slugDeNombre(nombre: string): string {
   return String(nombre || '')
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'plantilla'

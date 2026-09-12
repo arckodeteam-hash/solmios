@@ -17,9 +17,10 @@ const HOTEL_ID = 'h1'
 
 /** ORM en memoria REAL (mismo patrón que el e2e pricing↔bookingengine de esta sesión): las
  *  aserciones leen directo de `tables`, no de un mock por-tabla estático. */
-function makeDb(seed: { rooms?: any[]; reservations?: any[]; promoCodes?: any[]; assignments?: any[]; rates?: any[] } = {}) {
+function makeDb(seed: { rooms?: any[]; roomAmenities?: any[]; reservations?: any[]; promoCodes?: any[]; assignments?: any[]; rates?: any[] } = {}) {
   const tables: Record<string, any[]> = {
     Rooms: seed.rooms ?? [],
+    RoomAmenities: seed.roomAmenities ?? [],
     Reservations: seed.reservations ?? [],
     RoomBlocks: [],
     RoomRates: seed.rates ?? [],
@@ -842,14 +843,17 @@ describe('createPublicBookingGroup — Requerimiento 5: ocupación efectiva por 
   })
 })
 
-// ─── Tarea 22 (Cuna y amenidades infantiles, 2026-09-08) ───────────────────────────────────────
+// ─── Tarea 22 (Cuna, 2026-09-08) — #292: la cuna es la amenidad `custom:cuna` de la habitación ──
+// La cobertura del gate por tipo de cada línea (precio por unidad, tipos mixtos) vive en
+// `public-booking-crib.test.ts`; acá queda el contrato Sí/No + bebé POR LÍNEA.
 describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a Sí/No), POR LÍNEA', () => {
   // maxBabyAge=1: edades 0-1 son bebé, 2-3 libre (no bebé), 4-12 con plaza.
-  const BABY_POLICY_CRIB_ON = { hotelId: HOTEL_ID, key: 'child_policy', value: { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, cribAvailable: true } }
-  const BABY_POLICY_CRIB_OFF = { ...BABY_POLICY_CRIB_ON, value: { ...BABY_POLICY_CRIB_ON.value, cribAvailable: false } }
-  function configRepo(row: unknown = BABY_POLICY_CRIB_ON) {
+  const BABY_POLICY = { hotelId: HOTEL_ID, key: 'child_policy', value: { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1 } }
+  function configRepo(row: unknown = BABY_POLICY) {
     return { findOne: async (f: any) => (f.key === 'child_policy' ? row : null) } as any
   }
+  /** Fila `RoomAmenities` custom:cuna activa (gratis) para la room dada. */
+  const cribOn = (roomId: string) => ({ id: `${roomId}-cuna`, roomId, amenityKey: 'custom:cuna', name: 'Cuna', price: 0, isActive: true })
 
   it('solo la línea con bebé recibe cuna — la otra línea del mismo grupo queda en 0 aunque el body se lo pida', async () => {
     const { orm, tables } = makeDb({
@@ -857,6 +861,7 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
         { id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' },
         { id: 'r-b', hotelId: HOTEL_ID, type: 'standard', capacity: 6, basePrice: 100, status: 'available' },
       ],
+      roomAmenities: [cribOn('r-a'), cribOn('r-b')],
     })
     const res = await createPublicBookingGroup(orm, {
       ...BASE_BODY,
@@ -876,14 +881,14 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
     expect(byRoom['r-b'].cribCount).toBe(0)
   })
 
-  it('hotel con cuna DESHABILITADA: ninguna línea recibe cuna, aunque tenga bebé y lo pida', async () => {
+  it('tipo SIN custom:cuna: la línea no recibe cuna, aunque tenga bebé y lo pida', async () => {
     const { orm, tables } = makeDb({
       rooms: [{ id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' }],
     })
     const res = await createPublicBookingGroup(orm, {
       ...BASE_BODY,
       rooms: [{ roomType: 'familiar', adults: 2, quantity: 1, childrenAges: [1], needsCrib: true }],
-    }, undefined, undefined, undefined, undefined, undefined, { config: configRepo(BABY_POLICY_CRIB_OFF) })
+    }, undefined, undefined, undefined, undefined, undefined, { config: configRepo() })
 
     expect(res.status).toBe(201)
     expect(tables.Reservations[0].needsCrib).toBe(false)
@@ -893,6 +898,7 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
   it('Sí/No únicamente: un cribCount enviado en el body NUNCA se usa — siempre queda en 1, sin importar la cantidad de bebés de la línea', async () => {
     const { orm, tables } = makeDb({
       rooms: [{ id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' }],
+      roomAmenities: [cribOn('r-a')],
     })
     const res = await createPublicBookingGroup(orm, {
       ...BASE_BODY,
@@ -909,6 +915,7 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
         { id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' },
         { id: 'r-b', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' },
       ],
+      roomAmenities: [cribOn('r-a'), cribOn('r-b')],
     })
     const res = await createPublicBookingGroup(orm, {
       ...BASE_BODY,
@@ -921,5 +928,146 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
       expect(r.needsCrib).toBe(true)
       expect(r.cribCount).toBe(1)
     }
+  })
+})
+
+// ─── MR-10 (#275) — upsells cotizados por `kind` con tope del CARRITO + niños plano (Opción A) ──
+// Espejo de los casos de `public-booking-promo-upsells.test.ts` para el grupo: el contexto de
+// `resolveUpsellLines` es el carrito entero (habitaciones = Σ unidades, personas = Σ por línea sin
+// bebés), el 400 tipado es el mismo, y una línea con `children` plano cotiza igual que la misma
+// línea con `childrenAges: [maxChildAge]`.
+describe('createPublicBookingGroup — MR-10 (#275): upsells por kind con tope del carrito', () => {
+  const UPSELLS = [
+    { id: 'u-parking', hotelId: HOTEL_ID, name: 'Parking', price: 10, kind: 'per_room', active: true },
+    { id: 'u-breakfast', hotelId: HOTEL_ID, name: 'Desayuno', price: 10, kind: 'per_person_per_night', active: true },
+  ]
+  const upsellsRepo = { findMany: async (f: any = {}) => UPSELLS.filter((u) => Object.entries(f).every(([k, v]) => (u as any)[k] === v)) } as any
+  function threeRoomsDb() {
+    return makeDb({
+      rooms: [
+        { id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 4, basePrice: 100, status: 'available' },
+        { id: 'r-b', hotelId: HOTEL_ID, type: 'familiar', capacity: 4, basePrice: 100, status: 'available' },
+        { id: 'r-c', hotelId: HOTEL_ID, type: 'familiar', capacity: 4, basePrice: 100, status: 'available' },
+      ],
+    })
+  }
+
+  it('per_room qty 3 con 3 habitaciones (1 línea × 3) → 201, priceBreakdown.upsells[0].total 30 en la líder', async () => {
+    const { orm, tables } = threeRoomsDb()
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 2, quantity: 3 }],
+      upsells: [{ id: 'u-parking', quantity: 3 }],
+    }, undefined, undefined, undefined, undefined, undefined, { upsells: upsellsRepo } as any)
+
+    expect(res.status).toBe(201)
+    // Habitaciones 100 × 3 × 2 noches = 600 + parking 10 × 3 = 30.
+    expect(res.body.totalBreakdown.upsellsTotal).toBe(30)
+    expect(res.body.totalBreakdown.total).toBe(630)
+    expect(res.body.totalBreakdown.upsells).toHaveLength(1)
+    expect(res.body.totalBreakdown.upsells[0]).toMatchObject({ id: 'u-parking', kind: 'per_room', unitPrice: 10, quantity: 3, nights: 1, total: 30 })
+    // Persistido en la LÍDER (la que Stripe cobra); las hermanas no llevan desglose.
+    expect(tables.Reservations[0].priceBreakdown.upsells[0].total).toBe(30)
+    expect(tables.Reservations[1].priceBreakdown).toBeUndefined()
+    expect(tables.Reservations[0].notes).toContain('Upsells: Parking×3=30.00')
+  })
+
+  it('per_room qty 4 con 3 habitaciones (3 líneas × 1) → 400 upsell_quantity_out_of_range con max 3, sin crear nada', async () => {
+    const { orm, tables } = threeRoomsDb()
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [
+        { roomType: 'familiar', adults: 2, quantity: 1 },
+        { roomType: 'familiar', adults: 2, quantity: 1 },
+        { roomType: 'familiar', adults: 1, quantity: 1 },
+      ],
+      upsells: [{ id: 'u-parking', quantity: 4 }],
+    }, undefined, undefined, undefined, undefined, undefined, { upsells: upsellsRepo } as any)
+
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBe('upsell_quantity_out_of_range')
+    expect(res.body).toMatchObject({ upsellId: 'u-parking', kind: 'per_room', quantity: 4, max: 3 })
+    expect(tables.Reservations).toHaveLength(0)
+    expect(tables.Groups).toHaveLength(0)
+  })
+
+  it('per_person_per_night 10 con 2 líneas de 2 adultos y 2 noches → total 80 (4 personas × 2 noches)', async () => {
+    const { orm, tables } = threeRoomsDb()
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY, // 2 noches
+      rooms: [
+        { roomType: 'familiar', adults: 2, quantity: 1 },
+        { roomType: 'familiar', adults: 2, quantity: 1 },
+      ],
+      upsells: [{ id: 'u-breakfast', quantity: 1 }],
+    }, undefined, undefined, undefined, undefined, undefined, { upsells: upsellsRepo } as any)
+
+    expect(res.status).toBe(201)
+    expect(res.body.totalBreakdown.upsellsTotal).toBe(80)
+    expect(res.body.totalBreakdown.upsells[0]).toMatchObject({ id: 'u-breakfast', kind: 'per_person_per_night', unitPrice: 10, quantity: 1, nights: 2, persons: 4, total: 80 })
+    // Habitaciones 100 × 2 × 2 noches = 400 + desayuno 80.
+    expect(res.body.totalBreakdown.total).toBe(480)
+    expect(tables.Reservations[0].notes).toContain('Upsells: Desayuno×4p×2n=80.00')
+  })
+})
+
+describe('createPublicBookingGroup — MR-10 (#275): children plano por línea cotiza como niños con plaza a maxChildAge (Opción A)', () => {
+  const POLICY = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: true, childrenRatePercent: 50 }
+  function childPolicyRepo(value: unknown) {
+    return { findOne: async (f: any) => (f.key === 'child_policy' ? { hotelId: HOTEL_ID, key: 'child_policy', value } : null) } as any
+  }
+  // BASE_BODY son 2 noches — $50/noche a ocupación=1, $90/noche a ocupación=2.
+  function dbWithRates() {
+    return makeDb({
+      rooms: [{ id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 999, status: 'available' }],
+      assignments: [
+        { hotelId: HOTEL_ID, date: '2026-09-10', season: 'alta' },
+        { hotelId: HOTEL_ID, date: '2026-09-11', season: 'alta' },
+      ],
+      rates: [
+        { hotelId: HOTEL_ID, roomType: 'familiar', occupancy: 1, season: 'alta', channel: '', price: 50 },
+        { hotelId: HOTEL_ID, roomType: 'familiar', occupancy: 2, season: 'alta', channel: '', price: 90 },
+      ],
+    })
+  }
+
+  it('línea con children:1 sin edades da el MISMO totalAmount que la misma línea con childrenAges:[12]', async () => {
+    const plain = dbWithRates()
+    const resPlain = await createPublicBookingGroup(plain.orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 1, quantity: 1, children: 1 }],
+    }, undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(POLICY) })
+    const withAges = dbWithRates()
+    const resAges = await createPublicBookingGroup(withAges.orm, {
+      ...BASE_BODY,
+      rooms: [{ roomType: 'familiar', adults: 1, quantity: 1, childrenAges: [12] }],
+    }, undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo(POLICY) })
+
+    expect(resPlain.status).toBe(201)
+    expect(resAges.status).toBe(201)
+    // 1 adulto ($50/noche) + 1 niño con plaza al 50 % del valor de un adulto ($25/noche) = $75/noche
+    // → $150 la estadía. Antes de MR-10 la línea plana cotizaba por el adulto solo ($100).
+    expect(withAges.tables.Reservations[0].totalAmount).toBe(150)
+    expect(plain.tables.Reservations[0].totalAmount).toBe(withAges.tables.Reservations[0].totalAmount)
+    expect(plain.tables.Groups[0].totalAmount).toBe(withAges.tables.Groups[0].totalAmount)
+    // La composición y las edades sintetizadas se persisten igual que si el caller las hubiera mandado.
+    expect(plain.tables.Reservations[0].childrenAges).toEqual([12])
+    expect(plain.tables.Reservations[0].childrenAgesAsOf).toBe(BASE_BODY.checkIn)
+    expect(plain.tables.Reservations[0].children).toBe(1)
+    expect(plain.tables.Reservations[0].childrenRatePercentApplied).toBe(50)
+  })
+
+  it('hotel que no acepta niños: una línea con children plano también recibe el 400 (antes pasaba en silencio)', async () => {
+    const { orm, tables } = dbWithRates()
+    const res = await createPublicBookingGroup(orm, {
+      ...BASE_BODY,
+      rooms: [
+        { roomType: 'familiar', adults: 2, quantity: 1 },
+        { roomType: 'familiar', adults: 2, quantity: 1, children: 1 },
+      ],
+    }, undefined, undefined, undefined, undefined, undefined, { config: childPolicyRepo({ ...POLICY, acceptChildren: false }) })
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBe('Este hotel no acepta niños en la reserva')
+    expect(tables.Reservations).toHaveLength(0)
   })
 })

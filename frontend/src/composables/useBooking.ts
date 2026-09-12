@@ -44,7 +44,6 @@ import type {
   CancellationSummary,
   PromoValidationResult,
   PromoValidationReason,
-  PublicChildAmenity,
   PublicMealPlan,
   PublicRatesResponse,
   PublicRoomAmenity,
@@ -55,6 +54,7 @@ import type {
   TotalBreakdown,
   UpsellLine,
   Upsell,
+  UpsellKind,
 } from '@/types/booking'
 // Refactor cross-cutting: monedas del enum global (types/currency.ts — source of truth único).
 import { CURRENCY_CODES, type CurrencyCode } from '@/types/currency'
@@ -176,26 +176,6 @@ export async function cancelReservation(
 /** Una línea = un tipo de habitación + una ocupación ("para N") + cuántas unidades de ESA
  *  combinación. `key` es la identidad estable de la línea. Exportada (a diferencia del resto del
  *  store interno) porque RoomsStep.vue la necesita para tipar `cartLineGuestsLabel(line)`. */
-/** REQ-01 (#233) — snapshot de una amenidad infantil dentro de una `CartLine`. */
-export interface CartLineChildAmenity {
-  id: string
-  name: string
-  price: number
-}
-
-/** REQ-01 (#233) — una amenidad infantil elegida, resuelta por línea del carrito, para mostrarla
- *  en el resumen/pago (espejo de `UpsellLine`, más `roomName`/`lineKey` porque acá la selección es
- *  POR HABITACIÓN). `total` = `unitPrice × quantity` (quantity = unidades de la línea). */
-export interface ChildAmenityLine {
-  lineKey: string
-  roomName: string
-  id: string
-  name: string
-  unitPrice: number
-  quantity: number
-  total: number
-}
-
 /** REQ-01 (#290) — snapshot de una amenidad DE LA HABITACIÓN (cuna, cama extra…) dentro de una
  *  `CartLine`. `key` = `custom:<slug>` del catálogo público por tipo. */
 export interface CartLineRoomAmenity {
@@ -205,7 +185,8 @@ export interface CartLineRoomAmenity {
 }
 
 /** REQ-01 (#290) — una amenidad de habitación elegida, resuelta por línea del carrito, para
- *  mostrarla en el resumen/pago (espejo de `ChildAmenityLine`). `total` = `price × quantity`. */
+ *  mostrarla en el resumen/pago (espejo de `UpsellLine`, más `roomName`/`lineKey` porque acá la
+ *  selección es POR HABITACIÓN). `total` = `price × quantity` (quantity = unidades de la línea). */
 export interface RoomAmenityLine {
   lineKey: string
   roomName: string
@@ -236,21 +217,17 @@ export interface CartLine {
   /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — asociada a ESTA
    *  línea/habitación, igual criterio que `childrenAges` (a diferencia de `selectedUpsells`, que
    *  es global al carrito). `undefined`/`false` en líneas sin bebé o del flujo legacy.
-   *  `cribCount` es siempre 1 cuando `needsCrib` es true — no existe cantidad configurable. */
+   *  `cribCount` es siempre 1 cuando `needsCrib` es true — no existe cantidad configurable.
+   *  #292 — la cuna se cobra como la amenidad de habitación `custom:cuna` (`CRIB_AMENITY_KEY`):
+   *  cuando `needsCrib` es true la línea también trae esa key en `roomAmenities` (el composer la
+   *  agrega en `setNeedsCrib`); el backend re-valida y la fuerza/quita según corresponda. */
   needsCrib?: boolean
   cribCount?: number
-  /** REQ-01 (#233, amenidades para niños y bebés) — elegidas para ESTA línea/habitación, MISMO
-   *  criterio que `needsCrib`: POR LÍNEA (a diferencia de `selectedUpsells`, global al carrito).
-   *  Es un SNAPSHOT del catálogo público (`store.childAmenities`) tomado al agregar: nombre y
-   *  precio quedan fijos en la línea para el resumen/pago aunque el catálogo cambie después. Al
-   *  backend viaja solo el id (`CreateBookingChildAmenity`) — él re-resuelve precio y valida que
-   *  la habitación tenga menores. `undefined` en líneas sin menores, sin amenidades elegidas o del
-   *  flujo legacy. Importe de la línea = Σ price × `quantity`. */
-  childAmenities?: CartLineChildAmenity[]
   /** REQ-01 (#290, amenidades de la habitación) — elegidas para ESTA línea, POR LÍNEA igual que
-   *  `childAmenities`, pero SIN gateo por niños (una cama extra o una cuna se pide para cualquier
-   *  composición). SNAPSHOT del catálogo por tipo (`roomAmenitiesFor(roomType)`) tomado al
-   *  agregar: nombre y precio quedan fijos para el resumen. Al backend viaja solo la `key`
+   *  `needsCrib` (a diferencia de `selectedUpsells`, global al carrito), SIN gateo por niños (una
+   *  cama extra se pide para cualquier composición). SNAPSHOT del catálogo por tipo
+   *  (`roomAmenitiesFor(roomType)`) tomado al agregar: nombre y precio quedan fijos para el
+   *  resumen aunque el catálogo cambie después. Al backend viaja solo la `key`
    *  (`CreateBookingRoomAmenity`) — él cobra el precio real de la habitación que asigna.
    *  `undefined` en líneas sin amenidades elegidas. Importe de la línea = Σ price × `quantity`. */
   roomAmenities?: CartLineRoomAmenity[]
@@ -327,17 +304,16 @@ export const useBookingStore = defineStore('booking-widget', () => {
    *  silencio. */
   function cartLineKeyForComposition(
     roomType: string, adults: number, childrenAges: number[], needsCrib = false,
-    childAmenityIds: string[] = [], roomAmenityKeys: string[] = [],
+    roomAmenityKeys: string[] = [],
   ): string {
     const sortedAges = [...childrenAges].sort((a, b) => a - b).join('.')
-    // REQ-01 (#233) — las amenidades infantiles entran en la key por el MISMO motivo que la cuna:
-    // misma composición con distintas amenidades = habitaciones DISTINTAS (ids ordenados para que
-    // el orden en que se tildaron no genere dos líneas para la misma elección).
-    const sortedAmenities = [...new Set(childAmenityIds)].sort().join(',')
-    // REQ-01 (#290) — las amenidades de la habitación, ídem. El segmento `|ra...` se agrega SOLO
-    // cuando hay alguna, para que las keys de líneas sin amenidades de habitación no cambien.
+    // REQ-01 (#290) — las amenidades de la habitación entran en la key por el MISMO motivo que la
+    // cuna: misma composición con distintas amenidades = habitaciones DISTINTAS (keys ordenadas
+    // para que el orden en que se tildaron no genere dos líneas para la misma elección). El
+    // segmento `|ra...` se agrega SOLO cuando hay alguna, para que las keys de líneas sin
+    // amenidades de habitación no cambien.
     const sortedRoomAmenities = [...new Set(roomAmenityKeys)].sort().join(',')
-    const base = `${roomType}|a${adults}|c${sortedAges}|crib${needsCrib ? 1 : 0}|am${sortedAmenities}`
+    const base = `${roomType}|a${adults}|c${sortedAges}|crib${needsCrib ? 1 : 0}`
     return sortedRoomAmenities ? `${base}|ra${sortedRoomAmenities}` : base
   }
 
@@ -359,19 +335,14 @@ export const useBookingStore = defineStore('booking-widget', () => {
   const mealPlans = ref<PublicMealPlan[]>([])
   const mealPlansLoading = ref(false)
 
-  // ─── Amenidades para niños/bebés (REQ-01 #233, step 1) ──────────────────────
-  // Catálogo público ACTIVO del hotel (`GET /public/hotels/:slug/child-amenities`), precargado en
-  // `search()` junto a mealPlans/upsells por el mismo motivo: el composer de cada tarjeta lo
-  // necesita ANTES de "Agregar esta habitación". Nombres y precios vienen SIEMPRE del backend —
-  // nunca hay lista ni precios en código. La selección NO vive acá sino en cada `CartLine`
-  // (por habitación, ver `CartLine.childAmenities`). Fallo silencioso → `[]` (no se ofrecen).
-  const childAmenities = ref<PublicChildAmenity[]>([])
-
   // ─── Amenidades de la habitación (REQ-01 #290, step 1) ───────────────────────
   // Catálogo público POR TIPO (`GET /public/hotels/:slug/room-amenities` → `byRoomType`): las
   // amenidades personalizadas (cuna, cama extra…) que el hotel configuró en cada habitación, con
-  // el precio mínimo del tipo. Mismo criterio que `childAmenities`: precargado en `search()`, la
-  // selección vive en cada `CartLine` (`CartLine.roomAmenities`), fallo silencioso → `{}`.
+  // el precio mínimo del tipo. Precargado en `search()` junto a mealPlans/upsells por el mismo
+  // motivo: el composer de cada tarjeta lo necesita ANTES de "Agregar esta habitación". Nombres y
+  // precios vienen SIEMPRE del backend — nunca hay lista ni precios en código. La selección NO
+  // vive acá sino en cada `CartLine` (`CartLine.roomAmenities`), fallo silencioso → `{}`.
+  // #292 — la cuna (`custom:cuna`, `CRIB_AMENITY_KEY`) es una amenidad más de este catálogo.
   const roomAmenities = ref<Record<string, PublicRoomAmenity[]>>({})
 
   /** Catálogo de amenidades de habitación de UN tipo (`rt.id`). `[]` si el tipo no ofrece. */
@@ -500,60 +471,101 @@ export const useBookingStore = defineStore('booking-widget', () => {
     return [...seen.values()]
   })
 
-  /** Subtotal room(s)+upsells+amenidades infantiles+amenidades de habitación ANTES de promo e
-   *  impuestos — misma cuenta que `totalBreakdown.subtotal` del backend. Promo se aplica sobre
-   *  este monto. */
-  const subtotal = computed(() => round2(
-    roomsSubtotal.value + upsellsTotal.value + childAmenitiesTotal.value + roomAmenitiesTotal.value,
-  ))
+  /** Subtotal room(s)+upsells+amenidades de habitación ANTES de promo e impuestos — misma cuenta
+   *  que `totalBreakdown.subtotal` del backend. Promo se aplica sobre este monto. */
+  const subtotal = computed(() => round2(roomsSubtotal.value + upsellsTotal.value + roomAmenitiesTotal.value))
 
-  /** Suma de upsells seleccionados (precio × qty). En `hotels.currency` (chargeCurrency). */
-  const upsellsTotal = computed(() => {
-    const byId = new Map(upsells.value.map((u) => [u.id, u]))
-    let total = 0
-    for (const sel of selectedUpsells.value) {
-      const found = byId.get(sel.id)
-      if (!found) continue
-      total += Number(found.price) * Math.max(1, Math.floor(sel.quantity))
+  /** Bebés del carrito (subconjunto de `cartTotalFreeChildren`, misma cuenta). No consumen
+   *  desayuno ni transfer: se restan de las personas que multiplican un extra por persona. */
+  const cartTotalBabies = computed(() => cart.value.reduce((s, l) => {
+    if (!l.childrenAges || l.childrenAges.length === 0) return s
+    const composition = resolveChildComposition(l.adults ?? 0, l.childrenAges, childPolicy.value)
+    return s + composition.babies * l.quantity
+  }, 0))
+
+  /** MR-10 (#275) — personas que consumen un extra "por persona": adultos + niños con plaza +
+   *  niños libres, SIN bebés. Misma cuenta que `ctx.persons` de `resolveUpsellLines` en el
+   *  backend: si acá diera otro número el stepper dejaría pedir lo que el POST rechaza con 400. */
+  const upsellPersons = computed(() => Math.max(0, cartTotalGuests.value + cartTotalFreeChildren.value - cartTotalBabies.value))
+
+  /** Noches que multiplican un extra por noche: las de `/rates`; 1 si todavía no hay tarifas. */
+  const upsellNights = computed(() => Math.max(1, nights.value))
+
+  /**
+   * MR-10 (#275) — tope de cantidad por `kind`, espejo de `upsellMaxQuantity` del backend
+   * (`bookingengine/usecases/upsell-pricing.ts`): per_room ≤ habitaciones del carrito,
+   * per_person ≤ personas sin bebés, per_stay/per_night/ppn = 1. Nunca baja de 1 para que el
+   * stepper no quede clavado en 0 con el carrito vacío.
+   */
+  function upsellMaxQty(kind: UpsellKind): number {
+    switch (kind) {
+      case 'per_room': return Math.max(1, cartTotalRooms.value)
+      case 'per_person': return Math.max(1, upsellPersons.value)
+      default: return 1
     }
-    return round2(total)
-  })
+  }
 
-  /** Extras elegidos, uno por línea (nombre × cantidad = importe) — #88 pide verlos por separado. */
+  /** Cantidad efectiva de un extra: la pedida acotada al tope del kind (1 en los de cantidad fija). */
+  function effectiveUpsellQty(kind: UpsellKind, requested: number): number {
+    const qty = Math.max(1, Math.floor(Number(requested) || 1))
+    return Math.min(qty, upsellMaxQty(kind))
+  }
+
+  /** Multiplicadores de estadía de un kind: noches y personas (sólo ppn). */
+  function upsellStayFactors(kind: UpsellKind): { nights: number; persons?: number } {
+    if (kind === 'per_night') return { nights: upsellNights.value }
+    if (kind === 'per_person_per_night') return { nights: upsellNights.value, persons: upsellPersons.value }
+    return { nights: 1 }
+  }
+
+  /**
+   * MR-10 (#275) — precio de UNA unidad del extra para ESTA estadía: per_night → price × noches,
+   * ppn → price × personas × noches, resto → price. Es lo que UpsellsStep muestra en la tarjeta
+   * (el huésped ve lo que va a pagar, no el precio de catálogo "por noche").
+   */
+  function upsellStayPrice(upsell: Pick<Upsell, 'price' | 'kind'>): number {
+    const f = upsellStayFactors(upsell.kind)
+    return round2(Number(upsell.price) * f.nights * (f.persons ?? 1))
+  }
+
+  /** Extras elegidos, uno por línea con la matemática por `kind` (MR-10 #275, misma cuenta que
+   *  `resolveUpsellLines` del backend: `unitPrice × quantity × nights × (persons ?? 1)`). La
+   *  cantidad pedida se acota al tope del kind (1 en per_stay/per_night/ppn) — #88 pide verlos
+   *  por separado en el resumen/pago. */
   const upsellLines = computed<UpsellLine[]>(() => {
     const byId = new Map(upsells.value.map((u) => [u.id, u]))
-    const lines: UpsellLine[] = []
+    // Mismo id repetido → una sola línea con Σ cantidades ANTES de acotar al tope (espejo exacto
+    // de `upsell-pricing.ts`): `setSelectedUpsells` ya consolida, pero el computed no depende de
+    // que todos los callers pasen por ahí — y `pay()` manda ESTAS líneas al POST.
+    const requested = new Map<string, number>()
     for (const sel of selectedUpsells.value) {
-      const found = byId.get(sel.id)
-      if (!found) continue
-      const quantity = Math.max(1, Math.floor(sel.quantity))
+      if (!sel || typeof sel.id !== 'string') continue
+      requested.set(sel.id, (requested.get(sel.id) ?? 0) + Math.max(0, Math.floor(Number(sel.quantity) || 0)))
+    }
+    const lines: UpsellLine[] = []
+    for (const [id, qty] of requested) {
+      const found = byId.get(id)
+      if (!found || qty <= 0) continue
+      const quantity = effectiveUpsellQty(found.kind, qty)
       const unitPrice = Number(found.price)
-      lines.push({ id: found.id, name: found.name, quantity, unitPrice, total: round2(unitPrice * quantity) })
-    }
-    return lines
-  })
-
-  /** REQ-01 (#233) — Σ de amenidades infantiles de TODAS las líneas: (Σ price de la línea) ×
-   *  quantity. Precios del snapshot de cada línea (en `chargeCurrency`, igual que upsells). */
-  const childAmenitiesTotal = computed(() => round2(
-    cart.value.reduce((s, l) => s + (l.childAmenities ?? []).reduce((a, am) => a + Number(am.price), 0) * l.quantity, 0),
-  ))
-
-  /** REQ-01 (#233) — amenidades infantiles elegidas, una fila por (habitación × amenidad), para
-   *  verlas por separado en el resumen/pago (espejo de `upsellLines`, pero POR LÍNEA). */
-  const childAmenityLines = computed<ChildAmenityLine[]>(() => {
-    const lines: ChildAmenityLine[] = []
-    for (const l of cart.value) {
-      for (const am of l.childAmenities ?? []) {
-        const unitPrice = Number(am.price)
-        lines.push({
-          lineKey: l.key, roomName: l.roomName, id: am.id, name: am.name,
-          unitPrice, quantity: l.quantity, total: round2(unitPrice * l.quantity),
-        })
+      const f = upsellStayFactors(found.kind)
+      const line: UpsellLine = {
+        id: found.id,
+        name: found.name,
+        kind: found.kind,
+        quantity,
+        unitPrice,
+        nights: f.nights,
+        total: round2(unitPrice * quantity * f.nights * (f.persons ?? 1)),
       }
+      if (f.persons !== undefined) line.persons = f.persons
+      lines.push(line)
     }
     return lines
   })
+
+  /** Suma de upsells seleccionados (Σ `upsellLines[].total`). En `hotels.currency` (chargeCurrency). */
+  const upsellsTotal = computed(() => round2(upsellLines.value.reduce((s, l) => s + l.total, 0)))
 
   /** REQ-01 (#290) — Σ de amenidades de habitación de TODAS las líneas: (Σ price de la línea) ×
    *  quantity. Precios del snapshot de cada línea (en `chargeCurrency`, igual que upsells). */
@@ -562,7 +574,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
   ))
 
   /** REQ-01 (#290) — amenidades de habitación elegidas, una fila por (línea × amenidad), para
-   *  verlas por separado en el resumen/pago (espejo de `childAmenityLines`). */
+   *  verlas por separado en el resumen/pago (espejo de `upsellLines`, pero POR LÍNEA). */
   const roomAmenityLines = computed<RoomAmenityLine[]>(() => {
     const lines: RoomAmenityLine[] = []
     for (const l of cart.value) {
@@ -713,19 +725,9 @@ export const useBookingStore = defineStore('booking-widget', () => {
       }
     }
     const upsellsPromise = needsUpsells ? fetchUpsellsSafe() : Promise.resolve(upsells.value)
-    // REQ-01 (#233) — catálogo de amenidades infantiles, mismo criterio que mealPlans/upsells:
-    // en paralelo, fallo silencioso a `[]` (sin catálogo simplemente no se ofrecen).
-    const needsChildAmenities = childAmenities.value.length === 0
-    const fetchChildAmenitiesSafe = async (): Promise<PublicChildAmenity[]> => {
-      try {
-        return await BookingService.getChildAmenities(slug.value)
-      } catch {
-        return []
-      }
-    }
-    const childAmenitiesPromise = needsChildAmenities ? fetchChildAmenitiesSafe() : Promise.resolve(childAmenities.value)
-    // REQ-01 (#290) — catálogo de amenidades de habitación por tipo, mismo criterio: en paralelo,
-    // fallo silencioso a `{}` (sin catálogo simplemente no se ofrecen).
+    // REQ-01 (#290) — catálogo de amenidades de habitación por tipo, mismo criterio que
+    // mealPlans/upsells: en paralelo, fallo silencioso a `{}` (sin catálogo simplemente no se
+    // ofrecen).
     const needsRoomAmenities = Object.keys(roomAmenities.value).length === 0
     const fetchRoomAmenitiesSafe = async (): Promise<Record<string, PublicRoomAmenity[]>> => {
       try {
@@ -736,7 +738,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
     }
     const roomAmenitiesPromise = needsRoomAmenities ? fetchRoomAmenitiesSafe() : Promise.resolve(roomAmenities.value)
     try {
-      const [res, mp, ups, cam, ram] = await Promise.all([
+      const [res, mp, ups, ram] = await Promise.all([
         BookingService.getRates(slug.value, {
           checkIn: checkIn.value,
           checkOut: checkOut.value,
@@ -747,13 +749,11 @@ export const useBookingStore = defineStore('booking-widget', () => {
         }),
         mealPlansPromise,
         upsellsPromise,
-        childAmenitiesPromise,
         roomAmenitiesPromise,
       ])
       ratesResponse.value = res
       if (needsMealPlans) mealPlans.value = mp
       if (needsUpsells) upsells.value = ups
-      if (needsChildAmenities) childAmenities.value = Array.isArray(cam) ? cam : []
       if (needsRoomAmenities) roomAmenities.value = ram && typeof ram === 'object' && !Array.isArray(ram) ? ram : {}
       // Llenamos el switcher de monedas: la del cobro (base del hotel) + la última display
       // elegada + un puñado de monedas comunes para turistas. Dedupe + orden estable.
@@ -842,15 +842,11 @@ export const useBookingStore = defineStore('booking-widget', () => {
    * `occupancy` numérico plano es compat defensiva — ninguna de las dos entradas públicas lo llama
    * hoy (confirmado en la auditoría de paridad del Requerimiento 15, 2026-09-04).
    *
-   * REQ-01 (#233): `childAmenityIds` (ids del catálogo `childAmenities`) se resuelven a un
-   * SNAPSHOT `{id, name, price}` en la línea. Ids desconocidos se ignoran, y SOLO se guardan si la
-   * composición tiene al menos un menor (`childrenAges.length > 0`) Y el hotel acepta niños
-   * (`childPolicy.acceptChildren`) — mismo gateo que el backend (`public-booking.ts`), para que
-   * ningún caller pueda mostrar un total con amenidades que después no se cobran.
-   *
    * REQ-01 (#290): `roomAmenityKeys` (keys del catálogo por tipo, `roomAmenitiesFor(room.id)`) se
    * resuelven a un SNAPSHOT `{key, name, price}` en la línea. Keys desconocidas se ignoran. SIN
-   * gateo por niños: una cuna o cama extra se pide para cualquier composición.
+   * gateo por niños: una cama extra se pide para cualquier composición. La cuna (#292,
+   * `custom:cuna`) llega por acá también — el composer la agrega a `roomAmenityKeys` sólo con
+   * bebé y con el tipo ofreciéndola; el backend la re-valida contra la composición real.
    */
   async function addToCart(
     room: RoomTypeRate,
@@ -858,8 +854,6 @@ export const useBookingStore = defineStore('booking-widget', () => {
       adults: number; childrenAges: number[]
       // Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No).
       needsCrib?: boolean; cribCount?: number
-      // REQ-01 (#233) — amenidades para niños/bebés de ESTA habitación.
-      childAmenityIds?: string[]
       // REQ-01 (#290) — amenidades DE la habitación (cuna, cama extra…) de ESTA línea.
       roomAmenityKeys?: string[]
     },
@@ -902,19 +896,13 @@ export const useBookingStore = defineStore('booking-widget', () => {
     // buscada (`physicalGuests` = adultos + niños), no un default fijo — si no, una búsqueda
     // "2 adultos, 2 niños" terminaría grabando la reserva para 1 sola persona.
     const effectiveOccupancy = occ ?? physicalGuests.value
-    // REQ-01 (#233) — snapshot del catálogo para esta línea: solo ids conocidos, sin duplicados,
-    // en el orden del catálogo (sortOrder), y únicamente si la habitación lleva menores y el
-    // hotel acepta niños (espejo exacto del gate del backend).
-    const lineChildAmenities: CartLineChildAmenity[] = isComposition && occupancy.childrenAges.length > 0 && childPolicy.value.acceptChildren
-      ? resolveChildAmenities(occupancy.childAmenityIds)
-      : []
     // REQ-01 (#290) — snapshot del catálogo POR TIPO para esta línea: solo keys conocidas, sin
     // duplicados, en el orden del catálogo. No depende de la composición.
     const lineRoomAmenities: CartLineRoomAmenity[] = isComposition ? resolveRoomAmenities(room.id, occupancy.roomAmenityKeys) : []
     const key = isComposition
       ? cartLineKeyForComposition(
         room.id, occupancy.adults, occupancy.childrenAges, occupancy.needsCrib,
-        lineChildAmenities.map((a) => a.id), lineRoomAmenities.map((a) => a.key),
+        lineRoomAmenities.map((a) => a.key),
       )
       : cartLineKey(room.id, effectiveOccupancy)
     const cap = Math.max(1, room.availableCount)
@@ -930,9 +918,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
         // edades, así que tampoco puede tener bebé. Sí/No únicamente: cribCount siempre 1 cuando
         // needsCrib es true.
         ...(isComposition && occupancy.needsCrib ? { needsCrib: true, cribCount: 1 } : {}),
-        // REQ-01 (#233) — solo cuando quedó al menos una amenidad resuelta (nunca `[]`).
-        ...(lineChildAmenities.length > 0 ? { childAmenities: lineChildAmenities } : {}),
-        // REQ-01 (#290) — ídem.
+        // REQ-01 (#290) — solo cuando quedó al menos una amenidad resuelta (nunca `[]`).
         ...(lineRoomAmenities.length > 0 ? { roomAmenities: lineRoomAmenities } : {}),
       })
     }
@@ -947,17 +933,6 @@ export const useBookingStore = defineStore('booking-widget', () => {
         upsellsLoading.value = false
       }
     }
-  }
-
-  /** REQ-01 (#233) — resuelve ids elegidos contra el catálogo público cargado. Devuelve el
-   *  snapshot `{id, name, price}` en el orden del catálogo; ids desconocidos (catálogo cambiado
-   *  entre medio, deep-link viejo) se descartan en silencio — el backend igual los rechazaría. */
-  function resolveChildAmenities(ids: string[] | undefined): CartLineChildAmenity[] {
-    if (!Array.isArray(ids) || ids.length === 0) return []
-    const wanted = new Set(ids)
-    return childAmenities.value
-      .filter((a) => wanted.has(a.id))
-      .map((a) => ({ id: a.id, name: a.name, price: Number(a.price) || 0 }))
   }
 
   /** REQ-01 (#290) — resuelve keys elegidas contra el catálogo por tipo cargado. Devuelve el
@@ -994,7 +969,17 @@ export const useBookingStore = defineStore('booking-widget', () => {
 
   /** Step 2: actualiza la selección de upsells. */
   function setSelectedUpsells(items: SelectedUpsell[]): void {
-    selectedUpsells.value = items.filter((i) => i.quantity > 0)
+    // MR-10 (#275) — un mismo id se CONSOLIDA (Σ cantidades) igual que hace el backend
+    // (`upsell-pricing.ts`) antes de acotar al tope: si el store guardara dos entradas del mismo
+    // extra, `upsellLines` las acotaría por separado (2 + 2 con tope 2 → mostraría 80) y el POST
+    // las mandaría duplicadas → 400 `upsell_quantity_out_of_range` sobre un precio que el
+    // huésped ya vio. Se conserva el orden de la primera aparición.
+    const merged = new Map<string, number>()
+    for (const i of items) {
+      if (!i || typeof i.id !== 'string' || !(i.quantity > 0)) continue
+      merged.set(i.id, (merged.get(i.id) ?? 0) + Math.floor(i.quantity))
+    }
+    selectedUpsells.value = [...merged].map(([id, quantity]) => ({ id, quantity }))
   }
 
   /** Step 3: actualiza datos del huésped. */
@@ -1141,7 +1126,12 @@ export const useBookingStore = defineStore('booking-widget', () => {
       const promoPayload = promoResult.value?.valid && promoCode.value
         ? { promoCode: promoResult.value.code ?? promoCode.value.trim().toUpperCase() }
         : {}
-      const upsellsPayload = selectedUpsells.value.length > 0 ? { upsells: selectedUpsells.value } : {}
+      // MR-10 (#275) — viaja la cantidad EFECTIVA (acotada al tope por kind, 1 en los de cantidad
+      // fija): lo que el huésped vio en el resumen es lo que se pide, y el backend no devuelve
+      // 400 `upsell_quantity_out_of_range` por un qty que el stepper ya no permite.
+      const upsellsPayload = upsellLines.value.length > 0
+        ? { upsells: upsellLines.value.map((l) => ({ id: l.id, quantity: l.quantity })) }
+        : {}
 
       // Tarea 10 (QA 2026-08-20/21) — 1 sola línea × 1 unidad usa el endpoint de SIEMPRE
       // (`POST /api/public/booking`, sin crear una fila de Grupo innecesaria para el caso común).
@@ -1172,10 +1162,6 @@ export const useBookingStore = defineStore('booking-widget', () => {
           // contra la composición real (nunca confía en esto), pero de este lado ya viene limpio:
           // el composer solo lo setea cuando la línea tiene un bebé (ver useGuestComposer.ts).
           ...(line.needsCrib ? { needsCrib: true, cribCount: 1 } : {}),
-          // REQ-01 (#233) — solo ids: el backend re-resuelve precio contra su catálogo.
-          ...(line.childAmenities && line.childAmenities.length > 0
-            ? { childAmenities: line.childAmenities.map((a) => ({ id: a.id })) }
-            : {}),
           // REQ-01 (#290) — solo keys: el backend cobra el precio real de la habitación asignada.
           ...(line.roomAmenities && line.roomAmenities.length > 0
             ? { roomAmenities: line.roomAmenities.map((a) => ({ key: a.key })) }
@@ -1203,11 +1189,7 @@ export const useBookingStore = defineStore('booking-widget', () => {
             ...(l.childrenAges && l.childrenAges.length > 0 ? { childrenAges: l.childrenAges } : {}),
             // Tarea 22 — POR LÍNEA, no global al carrito (a diferencia de `upsellsPayload`).
             ...(l.needsCrib ? { needsCrib: true, cribCount: 1 } : {}),
-            // REQ-01 (#233) — POR LÍNEA, igual que la cuna.
-            ...(l.childAmenities && l.childAmenities.length > 0
-              ? { childAmenities: l.childAmenities.map((a) => ({ id: a.id })) }
-              : {}),
-            // REQ-01 (#290) — POR LÍNEA, igual que las infantiles.
+            // REQ-01 (#290) — POR LÍNEA, igual que la cuna.
             ...(l.roomAmenities && l.roomAmenities.length > 0
               ? { roomAmenities: l.roomAmenities.map((a) => ({ key: a.key })) }
               : {}),
@@ -1275,7 +1257,6 @@ export const useBookingStore = defineStore('booking-widget', () => {
     selectedUpsells.value = []
     mealPlans.value = []
     mealPlansLoading.value = false
-    childAmenities.value = []
     roomAmenities.value = {}
     guest.value = { name: '', email: '', phone: '', estimatedArrival: '', specialRequests: '' }
     promoCode.value = ''
@@ -1308,7 +1289,6 @@ export const useBookingStore = defineStore('booking-widget', () => {
     selectedUpsells,
     mealPlans,
     mealPlansLoading,
-    childAmenities,
     roomAmenities,
     guest,
     promoCode,
@@ -1334,6 +1314,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
     cartTotalGuests,
     cartTotalChildren,
     cartTotalFreeChildren,
+    cartTotalBabies,
+    upsellPersons,
     roomsSubtotal,
     subtotal,
     upsellsTotal,
@@ -1344,8 +1326,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
     estimatedTaxes,
     estimatedTotal,
     upsellLines,
-    childAmenitiesTotal,
-    childAmenityLines,
+    upsellMaxQty,
+    upsellStayPrice,
     roomAmenitiesTotal,
     roomAmenityLines,
     totalBreakdown,

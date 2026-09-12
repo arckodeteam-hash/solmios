@@ -6,19 +6,27 @@
 // `amenities/usecases/room-amenity-items.ts`). Las keys fijas del catálogo siguen siendo
 // features gratuitas y NO pasan por acá.
 //
-// Replica el patrón de `childAmenities` (#233), con una diferencia central: el catálogo NO es del
-// hotel sino de CADA habitación física, y el huésped elige un TIPO (no una unidad). Por eso:
+// El catálogo NO es del hotel sino de CADA habitación física, y el huésped elige un TIPO (no una
+// unidad). Por eso:
 //   - `GET /api/public/hotels/:slug/room-amenities` expone, por `roomType`, la UNIÓN (por key)
 //     de las custom activas de sus rooms vendibles, con el precio MÍNIMO entre ellas.
 //   - Al crear la reserva, el backend PREFIERE las rooms del tipo que ofrecen TODAS las keys
-//     pedidas (`preferRoomsOffering`) y cobra el precio REAL de la habitación asignada
-//     (`resolveRoomAmenityLines` contra las filas de ESA room). Una key que la room asignada no
-//     ofrece se ignora con `logger.warn` (mismo criterio que childAmenities: el huésped no tiene
-//     la culpa de un catálogo stale; mejor crear la reserva sin ese extra).
+//     pedidas (`preferRoomsOffering`; con cuna pedida, después las que al menos tienen la cuna) y
+//     cobra el precio REAL de la habitación asignada (`resolveRoomAmenityLines` contra las filas
+//     de ESA room). Una key que la room asignada no ofrece se ignora con `logger.warn` (el
+//     huésped no tiene la culpa de un catálogo stale; mejor crear la reserva sin ese extra).
 //   - NUNCA se toma el precio del body.
+//
+// #292 — La CUNA es una de estas amenidades: `CRIB_AMENITY_KEY` (`custom:cuna`, la que el admin
+// de habitaciones ya sugiere). No existe más el toggle global del hotel ni el catálogo
+// `child_amenities`: "¿Necesita cuna?" se ofrece sólo si el tipo publica esa key, y decir "sí"
+// equivale a pedir esa key en `roomAmenities` — el precio real lo cobra `resolveRoomAmenityLines`
+// contra la unidad asignada, como cualquier otra custom. `needsCrib`/`cribCount` se deciden
+// DESPUÉS de esa resolución (`hasCribLine`): reflejan la unidad finalmente asignada, no el tipo.
 import type { RepositoryAdapter } from 'arckode-framework'
 import { isCustomAmenityKey } from '../../amenities/usecases/room-amenity-items'
 import { isRoomSellable } from '../../../shared/usecases/room-status'
+import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 import type { PublicBookingLogger } from './public-booking'
 
 /**
@@ -40,6 +48,10 @@ export interface PublicRoomAmenity {
   name: string
   price: number
 }
+
+/** #292 — key de la amenidad personalizada "cuna" (`RoomAmenities.amenityKey`). Es la que decide
+ *  si un tipo ofrece cuna y la línea que se cobra cuando el huésped la pide (`needsCrib`). */
+export const CRIB_AMENITY_KEY = 'custom:cuna'
 
 const isOn = (v: unknown): boolean => v === true || v === 1 || v === '1'
 
@@ -110,12 +122,39 @@ export function roomOffersAll(roomRows: any[], keys: string[]): boolean {
  * Reordena candidatas (que ya vienen ordenadas por basePrice) de forma ESTABLE: primero las que
  * ofrecen TODAS las keys pedidas, después el resto; dentro de cada grupo se conserva el orden.
  * Con keys vacío devuelve `candidates` tal cual (cero cambio para quien no pide amenidades).
+ *
+ * #292 — `priorityKey` (la cuna): si viene y está entre `keys`, se abre un escalón intermedio —
+ * (1) ofrecen todo, (2) ofrecen al menos `priorityKey`, (3) el resto. Una cuna para un bebé pesa
+ * más que un jacuzzi: si ninguna unidad tiene la combinación completa, se prefiere la que tenga
+ * la cuna antes que una que sólo tenga el resto. Sin `priorityKey` el orden es el de siempre.
  */
-export function preferRoomsOffering(candidates: any[], amenitiesByRoom: Map<string, any[]>, keys: string[]): any[] {
+export function preferRoomsOffering(candidates: any[], amenitiesByRoom: Map<string, any[]>, keys: string[], priorityKey?: string): any[] {
   if (keys.length === 0) return candidates
-  const offering = candidates.filter((r) => roomOffersAll(amenitiesByRoom.get(r.id) ?? [], keys))
-  const rest = candidates.filter((r) => !roomOffersAll(amenitiesByRoom.get(r.id) ?? [], keys))
-  return [...offering, ...rest]
+  const usePriority = !!priorityKey && keys.includes(priorityKey)
+  const rank = (r: any): number => {
+    const rows = amenitiesByRoom.get(r.id) ?? []
+    if (roomOffersAll(rows, keys)) return 0
+    if (usePriority && roomOffersAll(rows, [priorityKey!])) return 1
+    return 2
+  }
+  return candidates
+    .map((r, index) => ({ r, index, rank: rank(r) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((x) => x.r)
+}
+
+/** #292 — ¿alguna de las rooms dadas ofrece la cuna, es decir tiene una fila `RoomAmenities` ACTIVA
+ *  con `CRIB_AMENITY_KEY`? Helper de consulta (catálogo público / diagnóstico). OJO: NO es el gate
+ *  de `needsCrib` al reservar — ahí lo que manda es la línea `custom:cuna` que
+ *  `resolveRoomAmenityLines` haya resuelto contra la unidad FINALMENTE asignada (`hasCribLine`). */
+export function roomsOfferCrib(amenitiesByRoom: Map<string, any[]>, roomIds: string[]): boolean {
+  return roomIds.some((id) => roomOffersAll(amenitiesByRoom.get(id) ?? [], [CRIB_AMENITY_KEY]))
+}
+
+/** #292 — ¿el snapshot resuelto de una unidad trae la línea de cuna? Es la ÚNICA fuente de verdad
+ *  de `needsCrib`/`cribCount` al persistir: `needsCrib === (roomAmenities tiene custom:cuna)`. */
+export function hasCribLine(lines: RoomAmenityLine[]): boolean {
+  return lines.some((l) => l.key === CRIB_AMENITY_KEY)
 }
 
 /** Agrupa filas `RoomAmenities` por `roomId` (una lectura, N habitaciones). */
@@ -145,6 +184,8 @@ export async function loadRoomAmenitiesFor(orm: { findMany(model: string, filter
 export interface PublicRoomAmenitiesDeps {
   hotels: RepositoryAdapter<any>
   orm: { findMany(model: string, filter: any): Promise<any[]> }
+  /** #276 (MR-11) — toggle Activo/Inactivo del hotel (`booking_config.enabled`). Opcional (compat). */
+  bookingConfig?: RepositoryAdapter<any>
 }
 
 /**
@@ -162,10 +203,11 @@ export async function getPublicRoomAmenities(
 ): Promise<{ status: number; body: any }> {
   if (!slug) return { status: 404, body: { error: 'Hotel not found' } }
 
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // `hotels.onlineBookingStatus` (plataforma) + `booking_config.enabled` (hotel), mismo 404.
   const hotel = await deps.hotels.findOne({ slug })
-  if (!hotel || hotel.onlineBookingStatus !== 'active') {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
+  const bookingConfig = hotel && deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
+  if (!isEngineOpen(hotel, bookingConfig)) return engineClosed()
 
   const rooms = (((await deps.orm.findMany('Rooms', { hotelId: hotel.id })) as any[]) ?? [])
     .filter((r: any) => isRoomSellable(r.status) && r.onlineBookingEnabled !== false)

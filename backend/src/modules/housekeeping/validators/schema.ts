@@ -1,7 +1,7 @@
 import type { BodyRule as ValidationRule } from '../../../shared/validators/validate-body'
 import { MAX_TEXT_LENGTH, MIN_TEXT_LENGTH } from '../../../shared/validators/limits'
 
-const TYPE_ENUM = ['full_cleaning', 'quick_cleaning', 'deep_cleaning', 'inspection', 'maintenance']
+const TYPE_ENUM = ['full_cleaning', 'quick_cleaning', 'deep_cleaning', 'inspection', 'maintenance', 'arrival_setup']
 const PRIORITY_ENUM = ['low', 'medium', 'high', 'urgent']
 const STATUS_ENUM = ['pending', 'in_progress', 'completed', 'inspected']
 

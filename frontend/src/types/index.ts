@@ -1,3 +1,5 @@
+import type { UpsellBreakdownLine } from './booking'
+
 // === HOTEL ===
 export interface Hotel {
   id: string
@@ -164,6 +166,23 @@ export interface Reservation {
    *  apagó "confirmación instantánea" y todavía no revisó esta reserva pagada.
    *  'rejected' (#271 MR-06): el hotel la rechazó y reembolsó; queda además `status: 'cancelled'`. */
   approvalStatus?: 'pending' | 'approved' | 'rejected' | null
+  /** #274 — cuna y amenidades infantiles pedidas al reservar online (ver `ChildAmenitySnapshot`).
+   *  El listado y el dashboard los usan para el badge de cuna con tooltip. */
+  needsCrib?: boolean
+  cribCount?: number
+  childAmenities?: ChildAmenitySnapshot[] | null
+}
+
+/** #274 — Una línea del snapshot `Reservations.childAmenities` que congelaba el motor público al
+ *  reservar (REQ-01 #233): nombre y precio del catálogo `child_amenities` en ese momento. #292 dio
+ *  de baja ese catálogo; el snapshot se conserva sólo para leer reservas históricas. Según el
+ *  driver puede llegar como string JSON: `mapReservation()` lo normaliza a array. */
+export interface ChildAmenitySnapshot {
+  id?: string
+  name: string
+  price?: number
+  quantity: number
+  total?: number
 }
 
 // Registro CRUDO de `/api/reservas` (el JSON tal cual lo devuelve el módulo `reservas`), ANTES
@@ -217,6 +236,10 @@ export interface ReservationApiRecord {
   createdAt?: string
   /** Tarea 3.4 (corrección 2026-08-25) — ver `Reservation.approvalStatus`. */
   approvalStatus?: 'pending' | 'approved' | 'rejected' | null
+  /** #274 — ver `Reservation.needsCrib` / `ChildAmenitySnapshot`. Crudo: puede ser string JSON. */
+  needsCrib?: boolean | null
+  cribCount?: number | null
+  childAmenities?: ChildAmenitySnapshot[] | string | null
 }
 
 /** #272 (MR-07) — `reservations.refundStatus`: 'none' = nada que devolver (o reserva anterior a la
@@ -542,6 +565,9 @@ export interface ReservationPriceBreakdown {
   mealPlanTotal?: number
   taxes?: number
   taxBreakdown?: { name: string; rate: number; amount: number }[]
+  /** MR-10 (#275) — extras cotizados línea por línea con su multiplicador por `kind`.
+   *  Sólo en reservas creadas después de la feature. */
+  upsells?: UpsellBreakdownLine[]
   total?: number
 }
 
@@ -701,6 +727,8 @@ export interface ReservationDetail {
    *  a mano en el panel (que no tienen este composer). */
   needsCrib?: boolean
   cribCount?: number
+  /** #274 — snapshot de amenidades infantiles elegidas al reservar (ver `ChildAmenitySnapshot`). */
+  childAmenities?: ChildAmenitySnapshot[] | null
   /** Presente si esta reserva es una habitación de una reserva de varias (mismo `groupId` en sus
    *  hermanas). El modal lo usa para pedir las demás y mostrar la composición de cada una. */
   groupId?: string | null
@@ -836,6 +864,11 @@ export interface CheckinListItem {
    *  total cobrable (alta/baja de extras y `otherCharges`) — ver
    *  `shared/usecases/sync-reservation-pending.ts`. */
   pendingAmount?: number
+  /** #274 — llegan por el mismo spread `...r`: cuna y amenidades infantiles pedidas al reservar
+   *  online. El dashboard muestra el badge de cuna con tooltip (`childSetupSummary`). */
+  needsCrib?: boolean
+  cribCount?: number
+  childAmenities?: ChildAmenitySnapshot[] | string | null
 }
 
 export interface CheckinListData {

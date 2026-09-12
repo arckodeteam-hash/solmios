@@ -35,6 +35,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useInvoiceActions } from '@/composables/useInvoiceActions'
 import { nationalityToFlag, languageToFlag } from '@/composables/useCountryFlag'
 import type { ReservationDetail, ReservationDetailAddon, ReservationPriceBreakdown, ReservationInvoiceView, CurrencyConfig, GuaranteeCardData, AuditLogEntry, CancellableReservation, Reservation, PaymentAttemptView } from '@/types'
+import type { UpsellBreakdownLine } from '@/types/booking'
 
 const props = defineProps<{ reservationId: string }>()
 const emit = defineEmits<{
@@ -458,13 +459,28 @@ const paidExtrasBreakdownTotal = computed(() => {
 })
 /** Sección "Extras pagados": sólo si hay filas del motor o el desglose trae extras > 0. */
 const showPaidExtras = computed(() => paidExtras.value.length > 0 || paidExtrasBreakdownTotal.value > 0)
+/** Etiqueta de una línea de `priceBreakdown.upsells[]` con el factor explícito (MR-10 #275):
+ *  "Desayuno × 2 pers. × 3 noches" (ppn) · "Parking × 3 noches" (per_night) · "Late checkout × 2". */
+function upsellLineLabel(u: UpsellBreakdownLine): string {
+  const parts = [u.name || 'Extra']
+  const qty = pbNum(u.quantity)
+  const nights = pbNum(u.nights)
+  if (qty > 1) parts.push(`× ${qty}`)
+  if (u.persons != null) parts.push(`× ${pbNum(u.persons)} pers.`)
+  if (nights > 1) parts.push(`× ${nights} noches`)
+  return parts.join(' ')
+}
 /** Filas del desglose de `priceBreakdown` en el orden del documento (las de importe 0 se omiten, salvo subtotal/total). */
 const priceBreakdownRows = computed(() => {
   const pb = priceBreakdown.value
   if (!pb) return []
   const rows: { label: string; amount: number; negative?: boolean; strong?: boolean }[] = []
   rows.push({ label: 'Subtotal', amount: pbNum(pb.subtotal) })
-  if (pbNum(pb.upsellsTotal) > 0) rows.push({ label: 'Extras (upsells)', amount: pbNum(pb.upsellsTotal) })
+  // MR-10 (#275): con `upsells[]` (reservas nuevas) una fila por extra con su multiplicador
+  // ("Desayuno × 2 pers. × 3 noches"); sin él (reservas viejas) la fila agregada de siempre.
+  if (pb.upsells?.length) {
+    for (const u of pb.upsells) rows.push({ label: upsellLineLabel(u), amount: pbNum(u.total) })
+  } else if (pbNum(pb.upsellsTotal) > 0) rows.push({ label: 'Extras (upsells)', amount: pbNum(pb.upsellsTotal) })
   if (pbNum(pb.childAmenitiesTotal) > 0) rows.push({ label: 'Amenidades infantiles', amount: pbNum(pb.childAmenitiesTotal) })
   if (pbNum(pb.roomAmenitiesTotal) > 0) rows.push({ label: 'Amenidades de habitación', amount: pbNum(pb.roomAmenitiesTotal) })
   if (pbNum(pb.mealPlanTotal) > 0) rows.push({ label: 'Régimen', amount: pbNum(pb.mealPlanTotal) })

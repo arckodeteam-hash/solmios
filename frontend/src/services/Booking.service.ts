@@ -30,7 +30,6 @@ import type {
   CancelReservationResponse,
   PublicCalendarQuery,
   PublicCalendarResponse,
-  PublicChildAmenity,
   PublicMealPlan,
   PublicRoomAmenitiesResponse,
   PublicRoomAmenity,
@@ -117,11 +116,9 @@ export const BookingService = {
       body.needsCrib = true
       body.cribCount = dto.cribCount ?? 0
     }
-    // REQ-01 (#233) — amenidades para niños/bebés de la habitación: solo si hay alguna elegida
-    // (mismo criterio que `upsells`/`needsCrib`: nunca mandar la clave vacía).
-    if (dto.childAmenities && dto.childAmenities.length > 0) body.childAmenities = dto.childAmenities
-    // REQ-01 (#290) — amenidades de la habitación (cuna, cama extra…): mismo criterio, solo si hay
-    // alguna elegida. Viaja solo la `key`; el precio lo resuelve el backend.
+    // REQ-01 (#290) — amenidades de la habitación (cuna, cama extra…): solo si hay alguna elegida
+    // (mismo criterio que `upsells`/`needsCrib`: nunca mandar la clave vacía). Viaja solo la
+    // `key`; el precio lo resuelve el backend.
     if (dto.roomAmenities && dto.roomAmenities.length > 0) body.roomAmenities = dto.roomAmenities
     if (dto.successUrl) body.successUrl = dto.successUrl
     if (dto.cancelUrl) body.cancelUrl = dto.cancelUrl
@@ -155,14 +152,13 @@ export const BookingService = {
       hotelId: hotel.id,
       checkIn: dto.checkIn,
       checkOut: dto.checkOut,
-      // REQ-01 (#233) — `childAmenities` viaja DENTRO de cada línea (por habitación, igual que
-      // `needsCrib`), y solo si esa línea eligió alguna: la clave vacía no se manda.
-      // REQ-01 (#290) — `roomAmenities` (amenidades de la habitación) sigue exactamente la misma regla.
+      // REQ-01 (#290) — `roomAmenities` (amenidades de la habitación) viaja DENTRO de cada línea
+      // (por habitación, igual que `needsCrib`), y solo si esa línea eligió alguna: la clave vacía
+      // no se manda.
       rooms: dto.rooms.map((line) => {
-        const { childAmenities, roomAmenities, ...rest } = line
+        const { roomAmenities, ...rest } = line
         return {
           ...rest,
-          ...(childAmenities && childAmenities.length > 0 ? { childAmenities } : {}),
           ...(roomAmenities && roomAmenities.length > 0 ? { roomAmenities } : {}),
         }
       }),
@@ -278,13 +274,6 @@ export const BookingService = {
    *  alojamiento" NO viene, es la base implícita que arma el widget. */
   getMealPlans(slug: string): Promise<PublicMealPlan[]> {
     return http.get<PublicMealPlan[]>(`/public/hotels/${encodeURIComponent(slug)}/meal-plans`)
-  },
-
-  /** REQ-01 (#233) — Amenidades para niños/bebés ACTIVAS del hotel, ordenadas por `sortOrder`.
-   *  Público, sin auth. El catálogo (nombres y precios) lo define el hotel en Motor de Reservas
-   *  — el widget nunca tiene una lista propia. Lista vacía = el hotel no ofrece ninguna. */
-  getChildAmenities(slug: string): Promise<PublicChildAmenity[]> {
-    return http.get<PublicChildAmenity[]>(`/public/hotels/${encodeURIComponent(slug)}/child-amenities`)
   },
 
   /** REQ-01 (#290) — Amenidades PERSONALIZADAS de habitación (cuna, cama extra…) vendibles, por

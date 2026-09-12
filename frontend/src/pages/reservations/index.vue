@@ -110,7 +110,14 @@
               </div>
             </td>
             <td class="px-4 py-5">
-              <span class="text-sm font-bold text-navy">{{ r.roomNumber }}</span>
+              <div class="flex items-center gap-1.5">
+                <span class="text-sm font-bold text-navy">{{ r.roomNumber }}</span>
+                <!-- #274 — cuna / amenidades infantiles pedidas al reservar; el tooltip lista qué preparar. -->
+                <span v-if="childSetupSummary(r)" :title="childSetupSummary(r)" :aria-label="childSetupSummary(r)" data-testid="crib-badge"
+                  class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-warning/10 text-warning text-[10px] font-bold">
+                  <Icon name="crib" :size="12" />{{ r.needsCrib ? 'Cuna' : 'Bebé' }}
+                </span>
+              </div>
             </td>
             <td class="px-4 py-5">
               <div class="flex items-baseline gap-1">
@@ -280,7 +287,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useCountUp } from '@/composables/useCountUp'
 import { paymentStateBadge } from '@/utils/payment-state'
-import { ReservationService } from '@/services/Reservation.service'
+import { ReservationService, childSetupSummary } from '@/services/Reservation.service'
+import Icon from '@/components/ui/Icon.vue'
 import ReservationModal from '@/components/features/ReservationModal.vue'
 import ReservationWizardModal from '@/components/features/ReservationWizardModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
@@ -309,6 +317,8 @@ const filterChannel = ref('')
 const filterApproval = ref('')
 // REQ-RWP-04 — '' | 'paid'. Eje independiente de filterStatus (KPI "Cobradas").
 const filterPayment = ref('')
+// #274 — "Llegan hoy": toggle del KPI "Check-ins Hoy". Mismo criterio que `checkinsTodayCount`.
+const filterArrivalsToday = ref(false)
 const list = ref<any[]>([])
 const rooms = ref<any[]>([])
 // Detalle (F3): clic en fila abre ReservationModal (vista lectura), no el form directo.
@@ -386,9 +396,11 @@ function setStatusFilter(status: string) { filterStatus.value = status }
 // apaga (mismo criterio que un filtro de chip, no un radio permanente).
 function toggleApprovalFilter() { filterApproval.value = filterApproval.value === 'pending' ? '' : 'pending' }
 function togglePaidFilter() { filterPayment.value = filterPayment.value === 'paid' ? '' : 'paid' }
+function toggleArrivalsFilter() { filterArrivalsToday.value = !filterArrivalsToday.value }
 
 const statsCards = computed(() => [
-  { label: 'Check-ins Hoy', value: checkinsAnim.value, icon: 'checkin' as const, accent: 'blue' as const, trend: checkinsTrend.value, caption: undefined as string | undefined, link: undefined as (() => void) | undefined },
+  // #274 — click = filtro "Llegan hoy" (toggle), para ver de un vistazo cuáles piden cuna.
+  { label: 'Check-ins Hoy', value: checkinsAnim.value, icon: 'checkin' as const, accent: 'blue' as const, trend: checkinsTrend.value, caption: (filterArrivalsToday.value ? 'Filtro: Llegan hoy' : undefined) as string | undefined, link: toggleArrivalsFilter as (() => void) | undefined },
   { label: 'Check-outs Hoy', value: checkoutsAnim.value, icon: 'checkout' as const, accent: 'rose' as const, trend: checkoutsTrend.value, caption: undefined as string | undefined, link: undefined as (() => void) | undefined },
   { label: 'Ingresos Hoy', value: revenueAnim.value, prefix: '$', icon: 'money' as const, accent: 'green' as const, trend: revenueTrend.value, caption: undefined as string | undefined, link: undefined as (() => void) | undefined },
   { label: 'Total Facturado', value: totalBilledAnim.value, prefix: '$', icon: 'money' as const, accent: 'purple' as const, trend: null as number | null, caption: 'Acumulado' as string | undefined, link: undefined as (() => void) | undefined },
@@ -409,6 +421,7 @@ const filtered = computed(() => {
   if (filterChannel.value) l = l.filter((r: any) => r.source === filterChannel.value)
   if (filterApproval.value) l = l.filter((r: any) => r.approvalStatus === filterApproval.value)
   if (filterPayment.value) l = l.filter((r: any) => r.paymentState === filterPayment.value && r.status !== 'cancelled') // mismo criterio que paidCount: el KPI y su filtro muestran las mismas filas
+  if (filterArrivalsToday.value) l = l.filter((r: any) => r.checkIn === today && (r.status === 'confirmed' || r.status === 'checked_in')) // #274 — mismo criterio que checkinsTodayCount
   return l
 })
 
@@ -493,6 +506,8 @@ async function load() {
         paidAmount: r.paidAmount ?? 0, groupId: r.groupId, createdAt: r.createdAt,
         // REQ-RWP-04 — estado real de cobro; `mapReservation` ya lo trae del backend (`payments`).
         paymentState: r.paymentState ?? r.paymentStatus,
+        // #274 — badge de cuna con tooltip (`childSetupSummary`).
+        needsCrib: r.needsCrib ?? false, cribCount: r.cribCount ?? 0, childAmenities: r.childAmenities ?? null,
       }
     })
   } catch (e: any) { console.error('[reservations/load]', e); toast.error('No se pudieron cargar las reservas') }

@@ -14,15 +14,19 @@
         <span class="text-text-muted">{{ t('confirm.lodging') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-bold text-navy tabular-nums">{{ format(lodging) }}</span>
       </div>
-      <div v-if="breakdown.upsellsTotal > 0" class="flex justify-between" data-testid="upsell-line">
+      <!-- MR-10 (#275): con `upsells[]` (reservas nuevas) una fila por extra con su multiplicador
+           ("Desayuno × 2 pers. × 3 noches"); sin él (reservas viejas) la fila agregada de siempre. -->
+      <template v-if="breakdown.upsells?.length">
+        <div v-for="line in breakdown.upsells" :key="line.id" class="flex justify-between" data-testid="upsell-line">
+          <span class="text-text-muted">{{ upsellLineLabel(line) }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
+          <span class="font-bold text-navy tabular-nums">{{ format(line.total) }}</span>
+        </div>
+      </template>
+      <div v-else-if="breakdown.upsellsTotal > 0" class="flex justify-between" data-testid="upsell-line">
         <span class="text-text-muted">{{ t('pay.extras') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-bold text-navy tabular-nums">{{ format(breakdown.upsellsTotal) }}</span>
       </div>
-      <div v-if="(breakdown.childAmenitiesTotal ?? 0) > 0" class="flex justify-between" data-testid="child-amenity-line">
-        <span class="text-text-muted">{{ t('pay.childAmenities') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
-        <span class="font-bold text-navy tabular-nums">{{ format(breakdown.childAmenitiesTotal) }}</span>
-      </div>
-      <!-- REQ-01 (#290) — amenidades de la habitación (cuna, cama extra…); opcional como el anterior. -->
+      <!-- REQ-01 (#290) — amenidades de la habitación (cuna #292, cama extra…); opcional. -->
       <div v-if="(breakdown.roomAmenitiesTotal ?? 0) > 0" class="flex justify-between" data-testid="room-amenity-line">
         <span class="text-text-muted">{{ t('pay.roomAmenities') }} <span class="text-[11px]">· {{ t('pay.beforeTaxes') }}</span></span>
         <span class="font-bold text-navy tabular-nums">{{ format(breakdown.roomAmenitiesTotal) }}</span>
@@ -45,7 +49,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { TotalBreakdown } from '@/types/booking'
+import type { TotalBreakdown, UpsellBreakdownLine } from '@/types/booking'
 import { useBookingI18nStore } from '@/composables/useBookingI18n'
 
 const props = defineProps<{
@@ -57,11 +61,24 @@ const props = defineProps<{
 
 const { t } = useBookingI18nStore()
 
-/** Alojamiento = subtotal sin extras, amenidades infantiles ni amenidades de la habitación (el
- *  backend guarda `subtotal` con los tres adentro; `childAmenitiesTotal` y `roomAmenitiesTotal` son
- *  opcionales — reservas previas a REQ-01 #233 / #290 no los traen). */
+/** Alojamiento = subtotal sin extras ni amenidades de la habitación (el backend guarda `subtotal`
+ *  con ambos adentro; `roomAmenitiesTotal` es opcional — reservas previas a #290 no lo traen).
+ *  `childAmenitiesTotal` es el snapshot histórico del catálogo global de amenidades infantiles
+ *  (dado de baja en #292, siempre 0 en reservas nuevas): se resta para que el alojamiento de una
+ *  reserva vieja siga siendo correcto, sin fila propia en el motor público. */
 const lodging = computed(() => Math.round((
   (props.breakdown?.subtotal ?? 0) - (props.breakdown?.upsellsTotal ?? 0) - (props.breakdown?.childAmenitiesTotal ?? 0)
   - (props.breakdown?.roomAmenitiesTotal ?? 0)
 ) * 100) / 100)
+
+/** "Desayuno × 2 pers. × 3 noches" (ppn) · "Parking × 3 noches" (per_night) · "Late checkout × 2"
+ *  (per_room/per_person con cantidad > 1) · "Late checkout" (qty 1). Mismo criterio que el
+ *  resumen de pago: el huésped ve por qué se multiplica, no sólo el total. */
+function upsellLineLabel(line: UpsellBreakdownLine): string {
+  const parts = [line.name]
+  if (line.quantity > 1) parts.push(`× ${line.quantity}`)
+  if (line.persons !== undefined) parts.push(`× ${line.persons} pers.`)
+  if ((line.nights ?? 1) > 1) parts.push(`× ${t('confirm.nights', { count: line.nights })}`)
+  return parts.join(' ')
+}
 </script>

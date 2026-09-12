@@ -1,7 +1,7 @@
 import { http } from './http'
 import type {
   Reservation, ReservationStatus, ReservationSource, ReservationDetail, GuaranteeCardData, AuditLogEntry,
-  ReservationApiRecord as RawReservation,
+  ReservationApiRecord as RawReservation, ChildAmenitySnapshot,
   RescheduleInput, RescheduleCommitInput, RescheduleQuote, RescheduleResult,
   CancelPreview, CancelReservationInput, StayQuote, ReservationDetailMessageLog,
 } from '@/types'
@@ -44,6 +44,40 @@ const SOURCE_MAP: Record<string, ReservationSource> = {
   airbnb: 'airbnb',
   google: 'google',
   other: 'other',
+}
+
+/** #274 — `Reservations.childAmenities` es un snapshot json; según el driver llega como array o
+ *  como string JSON (mismo caso que `priceBreakdown`). Cualquier otra cosa → `null`.
+ *  #292 — el catálogo global de amenidades infantiles se dio de baja (la cuna es la amenidad de
+ *  habitación `custom:cuna`); las reservas nuevas lo persisten en `[]`. Este lector se conserva
+ *  SOLO para reservas históricas que lo tengan cargado. */
+export function parseChildAmenities(value: unknown): ChildAmenitySnapshot[] | null {
+  let list: unknown = value
+  if (typeof value === 'string') {
+    if (!value.trim()) return null
+    try { list = JSON.parse(value) } catch { return null }
+  }
+  if (!Array.isArray(list)) return null
+  return list
+    .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object' && typeof (a as any).name === 'string' && String((a as any).name).trim() !== '')
+    .map((a) => ({
+      id: typeof a.id === 'string' ? a.id : undefined,
+      name: String(a.name).trim(),
+      price: typeof a.price === 'number' ? a.price : undefined,
+      quantity: Math.max(1, Number(a.quantity) || 1),
+      total: typeof a.total === 'number' ? a.total : undefined,
+    }))
+}
+
+/** #274 — Texto del tooltip del badge de cuna (dashboard y listado de reservas): `Cuna ×N` si la
+ *  reserva pidió cuna y cada amenidad infantil como `nombre ×cantidad`, unidos con ' · '.
+ *  Misma lectura que `housekeeping/usecases/arrival-setup.ts` (`buildSetupItems`). '' = nada que
+ *  preparar (el badge no se muestra). */
+export function childSetupSummary(r: { needsCrib?: boolean | null; cribCount?: number | null; childAmenities?: unknown }): string {
+  const parts: string[] = []
+  if (r.needsCrib) parts.push(`Cuna ×${Math.max(1, Number(r.cribCount) || 1)}`)
+  for (const a of parseChildAmenities(r.childAmenities) ?? []) parts.push(`${a.name} ×${a.quantity}`)
+  return parts.join(' · ')
 }
 
 export function mapReservation(r: RawReservation): Reservation {
@@ -90,6 +124,10 @@ export function mapReservation(r: RawReservation): Reservation {
     // #271 MR-06 — misma convención que checkIn/checkOut (ISO tal cual, tipado como Date): el
     // listado lo usa para "Más antigua: hace N h" en el KPI "Por aprobar".
     createdAt: r.createdAt as unknown as Date,
+    // #274 — cuna y amenidades infantiles: badge con tooltip en dashboard y listado (`childSetupSummary`).
+    needsCrib: r.needsCrib ?? false,
+    cribCount: r.cribCount ?? 0,
+    childAmenities: parseChildAmenities(r.childAmenities),
   } as Reservation
 }
 

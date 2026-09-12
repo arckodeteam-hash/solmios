@@ -27,6 +27,7 @@ import { useBookingStore } from '@/composables/useBooking'
 import { BookingService } from '@/services/Booking.service'
 import { useBookingI18nStore, type BookingLocale } from '@/composables/useBookingI18n'
 import type { CancellationSummary, PublicRatesResponse } from '@/types/booking'
+import { DEFAULT_CHILD_POLICY } from '@/utils/child-composition'
 
 function baseRates(overrides: Partial<PublicRatesResponse> = {}): PublicRatesResponse {
   return {
@@ -348,7 +349,7 @@ describe('PayStep — clasificación por menor en el resumen (REQ-02 #234)', () 
     const store = useBookingStore()
     store.init('hotel-demo')
     store.ratesResponse = baseRates()
-    store.childPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 5, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: true }
+    store.childPolicy = { ...DEFAULT_CHILD_POLICY, acceptChildren: true, maxChildAge: 12, maxFreeAge: 5, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50 }
     store.cart = [{
       key: `double|2|2|${childrenAges.join(',')}`, roomType: 'double', roomName: 'double', occupancy: 2, quantity: 1,
       unitPrice: 200, unitTaxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 36 }], maxAvailable: 5, photoUrl: null,

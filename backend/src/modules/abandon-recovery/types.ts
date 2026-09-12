@@ -19,11 +19,12 @@ export interface AbandonSweepResult {
 /** Interface del EmailService que el módulo necesita (subset de EmailService real). */
 export interface AbandonEmailSender {
   /**
-   * Encola un email para envío async por el worker. Mismo método que usan reservas/payroll/
-   * opiniones. Devuelve `sent` (bool) — si el encolado falla, el cron NO marca el flag y
-   * reintenta en el próximo tick.
+   * Encola un email para envío async por el worker. Subset estructural de
+   * `EmailService.enqueue` (services/email-service.ts): recibe un objeto con `hotelId`
+   * obligatorio (multi-tenancy) y devuelve el id de la fila encolada. Si el encolado
+   * lanza, el cron NO marca el flag y reintenta en el próximo tick.
    */
-  enqueue?(to: string, subject: string, html: string, opts?: Record<string, unknown>): Promise<{ sent: boolean }>
+  enqueue?(input: { to: string; subject: string; html: string; hotelId: string; relatedType?: string; relatedId?: string }): Promise<string>
   send?(to: string, subject: string, html: string, opts?: Record<string, unknown>): Promise<{ sent: boolean }>
 }
 
