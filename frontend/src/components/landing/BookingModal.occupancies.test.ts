@@ -413,6 +413,95 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
     expect(document.body.querySelector('[data-testid="baby-badge"]')).toBeNull()
   })
 
+  // ── REQ-02 (#234) — resumen con clasificación por niño + "Editar" en el carrito ──────────
+  // Misma paridad que RoomsStep.occupancies.test.ts: la landing tiene su propia presentación
+  // (castellano fijo), así que un fix en el widget no se propaga solo a esta superficie.
+  describe('REQ-02 (#234) — clasificación por niño en el resumen y botón Editar', () => {
+    const POLICY: ChildPolicy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, childrenDiscountEnabled: false, childrenRatePercent: 50, cribAvailable: false }
+
+    /** 1 adulto + niños de 1 (bebé) y 8 (con plaza) en el composer de la única tarjeta. */
+    async function composeBabyAndPaying(): Promise<void> {
+      await bumpChildren(2)
+      const selects = document.body.querySelectorAll<HTMLSelectElement>('select')
+      selects[0]!.value = '1'
+      selects[0]!.dispatchEvent(new Event('change'))
+      selects[1]!.value = '8'
+      selects[1]!.dispatchEvent(new Event('change'))
+      await flushPromises()
+    }
+
+    it('la línea del carrito muestra cada edad con su clasificación (bebé / consume plaza)', async () => {
+      await open(FROM_HERO, POLICY)
+      await composeBabyAndPaying()
+      await clickAddRoom()
+
+      const line = document.body.querySelector<HTMLElement>('[data-testid="cart-line"]')!
+      expect(line).not.toBeNull()
+      expect(line.textContent).toContain('1 adulto · 2 niños')
+      expect(line.textContent).toContain('1 año · bebé')
+      expect(line.textContent).toContain('8 años · niño, consume plaza')
+      expect(line.textContent).not.toContain('no consume plaza')
+      // El sufijo global "años)" de antes ya no va: cada edad lleva el suyo.
+      expect(line.textContent).not.toContain('años)')
+    })
+
+    it('un niño libre (no bebé) se muestra como "no consume plaza"', async () => {
+      await open(FROM_HERO, POLICY)
+      await bumpChildren(1)
+      document.body.querySelector<HTMLSelectElement>('select')!.value = '3' // > maxBabyAge=1, ≤ maxFreeAge=3 → libre
+      document.body.querySelector<HTMLSelectElement>('select')!.dispatchEvent(new Event('change'))
+      await flushPromises()
+      await clickAddRoom()
+
+      expect(document.body.querySelector('[data-testid="cart-line"]')!.textContent).toContain('3 años · niño, no consume plaza')
+    })
+
+    it('Editar saca la línea del carrito y precarga el composer de ESA tarjeta con los mismos adultos y edades', async () => {
+      await open(FROM_HERO, POLICY)
+      const store = useBookingStore()
+      await composeBabyAndPaying() // 1 adulto + [1, 8]
+      await clickAddRoom()
+      expect(store.cart).toHaveLength(1)
+      // El composer se reseteó tras agregar (1 adulto / 0 niños → sin desplegables de edad).
+      expect(document.body.querySelectorAll('select')).toHaveLength(0)
+
+      const edit = document.body.querySelector<HTMLButtonElement>('[data-testid="cart-edit"]')!
+      expect(edit).not.toBeNull()
+      expect(edit.getAttribute('aria-label')).toBe('Editar')
+      edit.click()
+      await flushPromises()
+
+      expect(store.cart).toHaveLength(0)
+      expect(document.body.querySelector('[data-testid="cart-line"]')).toBeNull()
+      expect(document.body.querySelector('[aria-label="Familiar · Adultos: 1"]')).not.toBeNull()
+      expect(document.body.querySelector('[aria-label="Familiar · Niños: 2"]')).not.toBeNull()
+      const selects = document.body.querySelectorAll<HTMLSelectElement>('select')
+      expect(selects).toHaveLength(2)
+      expect(selects[0]!.value).toBe('1')
+      expect(selects[1]!.value).toBe('8')
+      // El badge de bebé vuelve para el niño de 1 — misma clasificación que mostraba el carrito.
+      expect(document.body.querySelectorAll('[data-testid="baby-badge"]')).toHaveLength(1)
+    })
+
+    it('Editar con quantity 2 devuelve UNA sola unidad al composer y deja la otra en el carrito', async () => {
+      await open(FROM_HERO, POLICY)
+      const store = useBookingStore()
+      await bumpAdults(1) // 2 adultos, sin niños → "para 2"
+      await clickAddRoom()
+      await bumpAdults(1)
+      await clickAddRoom()
+      expect(store.cart).toHaveLength(1)
+      expect(store.cart[0]!.quantity).toBe(2)
+
+      document.body.querySelector<HTMLButtonElement>('[data-testid="cart-edit"]')!.click()
+      await flushPromises()
+
+      expect(store.cart).toHaveLength(1)
+      expect(store.cart[0]!.quantity).toBe(1)
+      expect(document.body.querySelector('[aria-label="Familiar · Adultos: 2"]')).not.toBeNull()
+    })
+  })
+
   // ── Requerimiento 9 (Cantidad de habitaciones, 2026-09-03) — misma paridad que RoomsStep ──
   describe('huéspedes ≠ habitaciones', () => {
     it('subir adultos y niños NO agrega nada al carrito por sí solo', async () => {
