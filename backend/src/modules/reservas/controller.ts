@@ -601,4 +601,17 @@ export class ReservasController {
       return { status: 500, body: { error: e.message } }
     }
   }
+
+  /** #336: enlace del check-in digital por email (mismo contrato que sendLockCodeEmail). */
+  async sendCheckinLinkEmail(req: HttpRequest) {
+    try {
+      const result = await this.service.sendCheckinLinkEmail(req.params.id, req.user as any, { orm: this.orm })
+      return { status: 200, body: { success: true, sentTo: result.sentTo, checkinUrl: result.checkinUrl } }
+    } catch (e: any) {
+      if (e.name === 'NotFoundError') return { status: 404, body: { error: e.message } }
+      if (e.name === 'ValidationError') return { status: 400, body: { error: e.message } }
+      if (e.name === 'AuthError' || e.name === 'ForbiddenError') return { status: 403, body: { error: e.message } }
+      return { status: 500, body: { error: e.message } }
+    }
+  }
 }
