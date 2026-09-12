@@ -3,6 +3,7 @@
 > Actualizado **2026-09-12** contra la doc oficial de Channex (leída ese día), el código en `main` (PR #296 mergeado y en prod) y el **estado real de producción** consultado por API ese día (§7).
 > Este archivo es el **guion de trabajo**: qué comprobar, dónde tocarlo en el PMS, dónde mirarlo en Channex y con qué evidencia.
 > **Cada punto que pide Channex, resuelto y con el texto para el formulario: `CHANNEX-CERTIFICACION-RESPUESTAS.md`.**
+> **Guion de la screenshare — qué pantalla abro, qué hago y qué muestro para probar cada test: `CHANNEX-CERTIFICACION-SCREENSHARE.md`.**
 > Los otros tres documentos siguen valiendo para lo suyo: `CHANNEX-CERTIFICACION.md` (estado y contexto), `CHANNEX-CERTIFICACION-EVIDENCIA.md` (task ids de la última corrida), `CHANNEX-CERTIFICACION-GAPS.md` **§8** (respuestas del cuestionario — el resto de ese archivo es histórico y contradice al código).
 
 ---
@@ -78,7 +79,7 @@ GET /availability?filter[property_id]=bddf7d23-83c5-437d-a2ff-c4e85ccaf412&filte
 GET /booking_revisions/feed?limit=50
 ```
 
-Dónde se ven las llamadas salientes: https://solmios.com/panel/channel-manager → **Historial de sincronización** (`GET /api/channels/sync-log`) y https://solmios.com/admin/channex-queue (estado de cada push, reintentos, 429).
+Dónde se ve TODO lo que salió y entró (#347): **https://solmios.com/admin/channex-queue?tab=registro** — cada push con sus task ids, cada espera por límite de peticiones (segundos y motivo), cada 429/5xx con reintento, reintentos agotados ("el push NO salió"), 4xx rechazados y qué hizo el webhook con cada reserva; filtros por hotel/estado/evento. La pestaña **Cola** muestra las ráfagas pendientes/fallidas. Por hotel: https://solmios.com/panel/channel-manager → **Historial de sincronización**.
 
 | # | Test | En el PMS (link + acción) | Valores exactos del guion | Calls | Readback / evidencia | Última corrida |
 |---|---|---|---|:-:|---|:-:|

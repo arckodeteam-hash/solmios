@@ -81,8 +81,13 @@ export function normalizeIngredientChanges(input: unknown): IngredientChanges {
     return out
   }
   const src = (input ?? {}) as Record<string, unknown>
-  return { removed: pick(src.removed), added: pick(src.added) }
+  const removed = pick(src.removed)
+  const lower = new Set(removed.map((n) => n.toLocaleLowerCase('es')))
+  // Un ingrediente quitado no puede ir doble: gana "sin" (es lo que el cliente pidió no comer).
+  const doubled = pick(src.doubled).filter((n) => !lower.has(n.toLocaleLowerCase('es')))
+  return { removed, added: pick(src.added), doubled }
 }
+export const hasIngredientChanges = (c: IngredientChanges): boolean => c.removed.length > 0 || c.added.length > 0 || c.doubled.length > 0
 
 /** Nombre de mesa/zona y número de habitación de una comanda, según su tipo. Vacío si no aplica o no se encuentra. */
 async function resolvePlace(deps: KdsDeps, order: OrderDTO, tables: Map<string, TableDTO>): Promise<Pick<KdsTicket['order'], 'tableName' | 'tableZone' | 'roomNumber'>> {
@@ -153,9 +158,13 @@ async function attachIngredients(deps: KdsDeps, tickets: KdsTicket[], user: Curr
   }
 }
 
+// Comandas en las que se puede tocar la receta de una línea: `open` (el mozo la arma, todavía no fue a
+// cocina) más la fase de cocina. Cerradas (billed/charged/paid/cancelled) no.
+const INGREDIENT_EDITABLE_ORDER_STATES: OrderDTO['status'][] = ['open', ...KITCHEN_ORDER_STATES]
+
 /**
- * KDS — cocina quita o agrega ingredientes a un plato que tiene en el tablero. Solo sobre líneas
- * activas (new/preparing/ready) de una comanda en fase de cocina: un plato ya servido o anulado no se
+ * Cocina (KDS) o el mozo (comanda) quitan, agregan o doblan ingredientes de un plato. Solo sobre líneas
+ * activas (new/preparing/ready) de una comanda abierta o en cocina: un plato ya servido o anulado no se
  * toca. Reemplaza la anotación completa (la pantalla manda el estado final, no deltas). No cambia
  * precio ni estado; avisa por el canal en vivo para que el KDS de al lado y la comanda del mozo lo vean.
  */
@@ -167,9 +176,9 @@ export async function setLineIngredients(deps: KdsDeps, lineId: string, input: u
   if (!order) throw new NotFoundError('Comanda no encontrada')
   const me = await deps.userRepo.findById(user.id)
   deps.auth.assertOwnership(order.hotelId, (me as any)?.hotelId ?? '', user.role, 'super_admin')
-  if (!ACTIVE.includes(line.status) || line.kind === 'combo_header') throw new ValidationError('Ese plato ya no está en cocina')
-  if (!KITCHEN_ORDER_STATES.includes(order.status)) throw new ValidationError('La comanda ya no está en cocina')
-  const value: IngredientChanges | null = changes.removed.length || changes.added.length ? changes : null
+  if (!ACTIVE.includes(line.status) || line.kind === 'combo_header') throw new ValidationError('Ese plato ya no se puede modificar')
+  if (!INGREDIENT_EDITABLE_ORDER_STATES.includes(order.status)) throw new ValidationError('La comanda ya está cerrada')
+  const value: IngredientChanges | null = hasIngredientChanges(changes) ? changes : null
   const updated = (await deps.lines.update(lineId, { ingredientChanges: value } as Partial<Omit<OrderItemDTO, 'id'>>)) as OrderItemDTO
   await deps.sockets.onLineStatusChanged?.(updated)
   return updated
@@ -216,4 +225,15 @@ export async function setLineStatus(deps: KdsDeps, lineId: string, status: LineS
   await recomputeOrderStatus(deps, order)
   await deps.sockets.onLineStatusChanged?.(updated)
   return updated
+}
+
+/** Receta (ingredientes con nombre) de UN ítem de la carta, para la comanda del mozo. Vacío si no hay receta o no hay inventario. */
+export async function menuItemIngredients(deps: Pick<KdsDeps, 'recipePorts'>, menuItemId: string, user: CurrentUser): Promise<{ data: RecipeIngredient[]; total: number }> {
+  hotelFor(user)
+  const port = deps.recipePorts?.getRecipeIngredients
+  if (!port || !menuItemId) return { data: [], total: 0 }
+  try {
+    const data = (await port([menuItemId], user))[menuItemId] ?? []
+    return { data, total: data.length }
+  } catch { return { data: [], total: 0 } }
 }

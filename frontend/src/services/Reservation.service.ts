@@ -259,9 +259,14 @@ export const ReservationService = {
     return http.get<{ data: AuditLogEntry[] }>(`/reservations/${id}/audit`)
   },
 
-  /** Check-in real: reserva → checked_in + habitación occupied + folio abierto + huésped. */
-  async checkin(id: string): Promise<{ folioId: string; guestId: string }> {
-    const data = await http.post<{ ok: boolean; folioId: string; guestId: string }>(`/reservas/${id}/checkin`, {})
+  /**
+   * Check-in real: reserva → checked_in + habitación occupied + folio abierto + huésped.
+   * REQ-HAC-04 (#259): si la reserva no tiene unidad asignada, `roomId` la asigna en el MISMO
+   * request (mismas reglas que `assignRoom`: `allowTypeChange` para una de otro tipo). Sin unidad
+   * ni `roomId` el backend responde 409 `details.reason = 'room_not_assigned'`.
+   */
+  async checkin(id: string, body?: { roomId?: string; allowTypeChange?: boolean }): Promise<{ folioId: string; guestId: string }> {
+    const data = await http.post<{ ok: boolean; folioId: string; guestId: string }>(`/reservas/${id}/checkin`, body ?? {})
     return { folioId: data.folioId, guestId: data.guestId }
   },
 
@@ -421,6 +426,12 @@ export const ReservationService = {
   async sendLockCodeEmail(id: string): Promise<{ sentTo: string }> {
     const data = await http.post<{ success: boolean; sentTo: string }>(`/reservas/${id}/send-lock-code-email`, {})
     return { sentTo: data.sentTo }
+  },
+
+  /** #336 — envía el enlace de check-in digital al email del huésped (tarjeta "Check-in digital" del modal). */
+  async sendCheckinLinkEmail(id: string): Promise<{ sentTo: string; checkinUrl: string }> {
+    const data = await http.post<{ success: boolean; sentTo: string; checkinUrl: string }>(`/reservas/${id}/send-checkin-link-email`, {})
+    return { sentTo: data.sentTo, checkinUrl: data.checkinUrl }
   },
 
   /**

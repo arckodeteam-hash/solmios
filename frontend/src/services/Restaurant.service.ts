@@ -127,7 +127,7 @@ export interface OrderLineModifierSnapshot {
 }
 
 // KDS — espejo de restaurant/types.ts (IngredientChanges, RecipeIngredient).
-export interface IngredientChanges { removed: string[]; added: string[] }
+export interface IngredientChanges { removed: string[]; added: string[]; doubled: string[] }
 export interface RecipeIngredient { name: string; quantity: number; unit: string }
 
 export interface OrderLine {
@@ -621,10 +621,13 @@ export const RestaurantService = {
   deleteTable: (id: string): Promise<void> => http.delete(`/restaurant/tables/${id}`),
 
   // ─── Comandas ───
-  async listOrders(query?: { status?: string; tableId?: string }): Promise<Order[]> {
+  async listOrders(query?: { status?: string; tableId?: string; waiterId?: string; businessDate?: string }): Promise<Order[]> {
     const qs = new URLSearchParams()
     if (query?.status) qs.set('status', query.status)
     if (query?.tableId) qs.set('tableId', query.tableId)
+    // 'me' = las comandas del usuario del token (pantalla "Mis mesas").
+    if (query?.waiterId) qs.set('waiterId', query.waiterId)
+    if (query?.businessDate) qs.set('businessDate', query.businessDate)
     const q = qs.toString()
     const res = await http.get<{ data: Order[]; total: number }>(`/restaurant/orders${q ? `?${q}` : ''}`)
     return res.data ?? []
@@ -715,6 +718,11 @@ export const RestaurantService = {
   // KDS con receta: cocina quita/agrega ingredientes. El body es el estado FINAL de la anotación (no deltas);
   // `{ removed: [], added: [] }` vuelve a la receta tal cual.
   setLineIngredients: (lineId: string, changes: IngredientChanges): Promise<OrderLine> => http.put(`/restaurant/kds/lines/${lineId}/ingredients`, changes),
+  // Receta de un ítem (para la comanda del mozo; el KDS la recibe ya resuelta en la cola).
+  async menuItemIngredients(menuItemId: string): Promise<RecipeIngredient[]> {
+    const res = await http.get<{ data: RecipeIngredient[]; total: number }>(`/restaurant/menu-items/${menuItemId}/ingredients`)
+    return res.data
+  },
 
   // ─── Canal en vivo (#211) ───
   /** Ticket de 60 s para abrir `GET /restaurant/events` con EventSource (que no manda headers). Lo usa useRestaurantEvents. */

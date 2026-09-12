@@ -15,7 +15,7 @@
 //     desglose nuevo ({rooms_lines}, {extras_lines}, {tax_lines}, {receipt_url}, …) tiene que
 //     agregar esas variables a mano desde su panel.
 
-export type NotificationEvent = 'reservation_confirmed' | 'reservation_presale' | 'reservation_cancelled_guest' | 'reservation_cancelled_staff' | 'checkin_welcome' | 'no_show' | 'checkout' | 'invoice' | 'reminder' | 'payment_link' | 'review_request' | 'reservation_new_staff' | 'reservation_new_ota_staff' | 'reservation_received_unpaid' | 'reservation_approved' | 'reservation_rejected'
+export type NotificationEvent = 'reservation_confirmed' | 'reservation_presale' | 'reservation_cancelled_guest' | 'reservation_cancelled_staff' | 'checkin_welcome' | 'no_show' | 'checkout' | 'invoice' | 'reminder' | 'checkin_link' | 'payment_link' | 'review_request' | 'reservation_new_staff' | 'reservation_new_ota_staff' | 'reservation_received_unpaid' | 'reservation_approved' | 'reservation_rejected'
 export type NotificationLanguage = 'es' | 'en' | 'pt'
 
 export interface NotificationDefault {
@@ -957,6 +957,85 @@ const REMINDER_PT = `<!DOCTYPE html>
   </div>
 </body></html>`
 
+// ─── checkin_link (enlace del check-in digital, #336) ───────────────────────
+// Envío MANUAL desde la tarjeta "Check-in digital" del detalle de la reserva
+// (POST /api/reservas/:id/send-checkin-link-email → reservas/usecases/checkin-link-email.ts).
+// Variables: hotel_name, guest_name, locator, checkin_date, checkout_date, checkin_url, hotel_phone.
+// Sin logo ni condicionales: el renderer no los tiene. El enlace va como botón Y como texto
+// visible (clientes de correo que no muestran botones).
+
+const CHECKIN_LINK_ES = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Tu check-in digital</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Hola <strong>{guest_name}</strong>,</p>
+    <p>Para que tu llegada sea más rápida, te invitamos a completar el check-in digital antes de llegar. Te toma solo unos minutos.</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Reserva</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{locator}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date}</td></tr>
+      </table>
+    </div>
+    <p style="text-align:center;margin:24px 0;"><a href="{checkin_url}" style="background:#1a2b4c;color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:bold;display:inline-block;">Completar mi check-in</a></p>
+    <p style="font-size:12px;color:#6b7280;">Si el botón no funciona, copiá y pegá este enlace:<br><a href="{checkin_url}" style="color:#1a2b4c;">{checkin_url}</a></p>
+    <p style="font-size:13px;color:#6b7280;">Si necesitás ayuda, llamá al <strong>{hotel_phone}</strong>.</p>
+    <p style="font-size:14px;">¡Te esperamos!</p>
+  </div>
+</body></html>`
+
+const CHECKIN_LINK_EN = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Your digital check-in</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Hi <strong>{guest_name}</strong>,</p>
+    <p>To speed up your arrival, we invite you to complete your digital check-in before you get here. It only takes a few minutes.</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Booking ref</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{locator}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date}</td></tr>
+      </table>
+    </div>
+    <p style="text-align:center;margin:24px 0;"><a href="{checkin_url}" style="background:#1a2b4c;color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:bold;display:inline-block;">Complete my check-in</a></p>
+    <p style="font-size:12px;color:#6b7280;">If the button doesn't work, copy and paste this link:<br><a href="{checkin_url}" style="color:#1a2b4c;">{checkin_url}</a></p>
+    <p style="font-size:13px;color:#6b7280;">If you need any help, call <strong>{hotel_phone}</strong>.</p>
+    <p style="font-size:14px;">We look forward to welcoming you!</p>
+  </div>
+</body></html>`
+
+const CHECKIN_LINK_PT = `<!DOCTYPE html>
+<html lang="pt"><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">O seu check-in digital</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Olá <strong>{guest_name}</strong>,</p>
+    <p>Para agilizar a sua chegada, convidamos você a completar o check-in digital antes de chegar. Leva só alguns minutos.</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Reserva</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{locator}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date}</td></tr>
+      </table>
+    </div>
+    <p style="text-align:center;margin:24px 0;"><a href="{checkin_url}" style="background:#1a2b4c;color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:bold;display:inline-block;">Completar o meu check-in</a></p>
+    <p style="font-size:12px;color:#6b7280;">Se o botão não funcionar, copie e cole este link:<br><a href="{checkin_url}" style="color:#1a2b4c;">{checkin_url}</a></p>
+    <p style="font-size:13px;color:#6b7280;">Se precisar de ajuda, ligue para <strong>{hotel_phone}</strong>.</p>
+    <p style="font-size:14px;">Esperamos por si!</p>
+  </div>
+</body></html>`
+
 // ─── Registro central ───────────────────────────────────────────────────────
 
 // ─── payment_link ───────────────────────────────────────────────────────────
@@ -1383,6 +1462,11 @@ export const NOTIFICATION_DEFAULTS: Record<NotificationEvent, Partial<Record<Not
     es: { subject: 'Recordatorio de tu llegada — {hotel_name}', body: REMINDER_ES },
     en: { subject: 'Your arrival reminder — {hotel_name}', body: REMINDER_EN },
     pt: { subject: 'Lembrete da sua chegada — {hotel_name}', body: REMINDER_PT },
+  },
+  checkin_link: {
+    es: { subject: 'Completá tu check-in digital — {hotel_name}', body: CHECKIN_LINK_ES },
+    en: { subject: 'Complete your digital check-in — {hotel_name}', body: CHECKIN_LINK_EN },
+    pt: { subject: 'Complete o seu check-in digital — {hotel_name}', body: CHECKIN_LINK_PT },
   },
   payment_link: {
     es: { subject: 'Pago pendiente — {hotel_name}', body: PAYMENT_LINK_ES },

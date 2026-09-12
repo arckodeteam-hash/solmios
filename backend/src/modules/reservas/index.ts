@@ -15,7 +15,7 @@ export type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, 
 export type { ReservasSockets } from './sockets'
 // #209 (append-only): lo que devuelve `searchInHouse` — lo consume connectors/restaurante-reservas.ts.
 export type { InHouseReservation, InHouseSearchResult } from './usecases/in-house'
-export { ReservasValidator, CreateReservasSchema, UpdateReservasSchema, PreCheckinSchema, PreCheckinPhotoSchema, CancelReservationSchema } from './validators/schema'
+export { ReservasValidator, CreateReservasSchema, UpdateReservasSchema, PreCheckinSchema, PreCheckinPhotoSchema, CancelReservationSchema, CheckinSchema } from './validators/schema'
 
 // La foto del documento viaja como base64 en el body JSON (mismo motivo que housekeeping: el
 // router no propaga req.files). 10 MB cubre fotos reales de celular hasta ~7 MB binarios.
@@ -47,7 +47,7 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // STR-F: `setGuaranteePin`/`getGuaranteeHasPin`/`unlockGuaranteeCard` tienen rutas HTTP
       // vivas en este archivo y métodos públicos en el service — estaban fuera de la lista que se
       // declaraba como la superficie completa.
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'sendWhatsapp', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard', 'issueInvoice', 'assignRoom', 'unassignRoom', 'listAssignableRooms', 'retryRefund', 'setRefundState', 'claimRefund'],
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'sendCheckinLinkEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'sendWhatsapp', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard', 'issueInvoice', 'assignRoom', 'unassignRoom', 'listAssignableRooms', 'retryRefund', 'setRefundState', 'claimRefund'],
       events: ['onReservasCreated', 'onReservasUpdated', 'onReservasDeleted', 'onReservationCancelled', 'onRoomAssigned', 'onRoomVacatedMidStay'],
       // `message_logs` es del módulo marketing: reservas ESCRIBE la traza de los envíos manuales
       // con el repo que le inyecta email-bootstrap (mismo camino que checkin-email/lifecycle-email).
@@ -173,6 +173,8 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
 
       // ── Enviar código de cerradura por email (botón del planning) ──
       router.post('/api/reservas/:id/send-lock-code-email', guard('reservations', 'edit'), (req) => controller.sendLockCodeEmail(req))
+      // ── Enviar enlace del check-in digital por email (tarjeta "Check-in digital" del modal, #336) ──
+      router.post('/api/reservas/:id/send-checkin-link-email', guard('reservations', 'edit'), (req) => controller.sendCheckinLinkEmail(req))
 
       // Traza de envíos MANUALES al huésped (plantillas de WhatsApp del modal). Mismo permiso y
       // MISMO prefijo que `send-lock-code-email`, su hermano exacto: una acción sobre la reserva va

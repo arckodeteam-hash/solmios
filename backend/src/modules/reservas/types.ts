@@ -193,6 +193,13 @@ export interface AssignRoomDTO {
   allowTypeChange?: boolean
 }
 
+// REQ-HAC-04 (#259) — body de POST /api/reservas/:id/checkin. Todo opcional: con `roomId` la unidad
+// se asigna (assignRoom) en el mismo paso; si la reserva ya tiene habitación el body se ignora.
+export interface CheckinDTO {
+  roomId?: string
+  allowTypeChange?: boolean
+}
+
 export interface ReservasQuery {
   hotelId?: string
   status?: ReservationStatus

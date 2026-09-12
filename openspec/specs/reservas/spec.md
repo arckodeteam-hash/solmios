@@ -283,6 +283,40 @@ session y MUST validar ownership implícita por hash→reserva.
 - THEN `preCheckinStatus='completed'`, foto guardada, aceptaciones con timestamp, y el
   recepcionista ve el check-in listo en el detalle
 
+### Requirement: Enlace de check-in digital por correo y WhatsApp desde el detalle (#336)
+
+La tarjeta "Check-in digital" del detalle (`ReservationModal.vue`, botones `checkin-link-wa` /
+`checkin-link-email`) MUST permitir mandarle al huésped el enlace del formulario.
+`POST /api/reservas/:id/send-checkin-link-email` (permiso `reservations:edit`,
+`usecases/checkin-link-email.ts`) MUST enviar al email del huésped el evento `checkin_link` de
+`notification-defaults` (es/en/pt) con `hotel_name`, `locator` (`externalLocator` o últimos 8 del
+id), la invitación y `checkin_url = PUBLIC_URL/checkin/:hash` con `checkinHashFromId(id)` — el MISMO
+hash que el `checkinCode` del detalle, nunca el de otra reserva. Ownership fail-closed → 404; sin
+email del huésped o sin `PUBLIC_URL` → 400. Cada intento MUST quedar en `message_logs`
+(`messageType:'email'`, `status` sent/failed, traza manual
+`{kind:'manual', reference:'Enlace de check-in digital', byUserId}`) y se puede reenviar.
+El botón "Enviar por WhatsApp" abre `wa.me/<teléfono del huésped>` con hotel, referencia,
+invitación y el enlace, y registra `queued` vía `POST /api/reservas/:id/message-log`. Ambos botones
+MUST quedar deshabilitados con aviso cuando falta teléfono/correo. Tests:
+`reservas/tests/checkin-link-email.test.ts` y `ReservationModal.test.ts` ('check-in digital #336').
+
+#### Scenario: Correo con el enlace de ESA reserva
+
+- GIVEN reserva R del hotel H con huésped con email y `PUBLIC_URL` configurada
+- WHEN staff de H con `reservations:edit` hace `POST /api/reservas/R/send-checkin-link-email`
+- THEN se encola `checkin_link` al email del huésped con `checkin_url` terminado en
+  `/checkin/<checkinHashFromId(R)>` (igual al `checkinCode` del detalle) y queda una fila `sent`
+  en `message_logs` con la traza manual; si el encolado falla, queda `failed` y se puede reintentar
+- WHEN lo pide staff de otro hotel
+- THEN 404 y no se envía nada
+
+#### Scenario: Huésped sin correo/teléfono
+
+- GIVEN reserva cuyo huésped no tiene email ni teléfono
+- WHEN se abre la tarjeta "Check-in digital" del detalle
+- THEN "Enviar por WhatsApp" y "Enviar por correo" quedan deshabilitados con el aviso
+  correspondiente, y el endpoint de correo responde 400 ("El huésped no tiene email cargado")
+
 ### Requirement: Acompañantes, addons y reprogramación como operaciones de dominio
 
 - Acompañantes (`companions.ts`): CRUD sobre `/api/reservations/:id/companions` con
@@ -972,6 +1006,47 @@ marcando `⚠ OVERBOOKING` en las notas (nunca dropea un booking OTA).
 - **GIVEN** 1 unidad y la propia reserva ocupándola
 - **WHEN** se cotiza el reagendo con `excludeReservationId`
 - **THEN** `available` es 1 y el reagendo es posible
+
+### Requirement: El check-in exige habitación y la asigna en el mismo paso (REQ-HAC-04, #259)
+
+**Sin unidad no hay check-in.** `POST /api/reservas/:id/checkin` acepta un body opcional
+`CheckinSchema { roomId?: string; allowTypeChange?: boolean }` (`CheckinDTO`). Si la reserva no tiene
+`roomId` y el body tampoco lo trae, el servidor MUST responder 409 con `details.reason =
+'room_not_assigned'` **sin escribir nada** (ni folio, ni cargo, ni estado). Los chequeos de estado
+(`checked_in` → «ya tiene check-in»; fuera de `confirmed|pending` → 409 por estado) MUST correr
+**antes** que el de habitación, para que un body con `roomId` nunca asigne una unidad a una reserva
+que igual no podía hacer check-in.
+
+**Asignar y entrar en un solo POST.** Con `body.roomId` y la reserva sin unidad, el controller MUST
+invocar `assignRoom` (usecases/assign-room.ts, con `allowTypeChange` del body) **antes** de
+`executeCheckin`, con los mismos 409 (`room_overlap`, `type_mismatch`, `room_not_sellable`,
+`invalid_status`) y el mismo 400 de habitación de otro hotel; si la asignación falla NO hay check-in
+y la reserva queda como estaba. Recién con la reserva ya asignada corre el check-in atómico (folio con
+esa `roomId`, cargo de la noche, habitación `occupied`), el push a Channex y el email de check-in
+con la unidad final. Si la reserva **ya** tiene `roomId`, el body se ignora: cambiar de habitación es
+`POST /assign-room`. `executeCheckin` sigue asertando `roomId` (defensa en profundidad): la
+invariante `status ∈ {checked_in, checked_out} ⇒ roomId` se mantiene.
+
+**Pre-check-in y panel.** `getPreCheckinData` MUST tolerar `roomId = null` (no consulta `Rooms` con
+`{ id: null }`) y devolver `roomType` (el vendido o, si la fila es anterior al backfill, el de la
+unidad) además de `roomNumber` (vacío sin unidad). En el panel, el botón **Check-in** de una reserva
+sin unidad abre «Asignar habitación» (RoomAssignModal en modo check-in: sugerida preseleccionada,
+ocupadas deshabilitadas) y confirma con un único `POST /checkin { roomId, allowTypeChange? }`.
+
+#### Scenario: Check-in sin habitación y sin body
+- **GIVEN** una reserva `confirmed` con `roomId = null` y `roomType = 'double'`
+- **WHEN** se hace `POST /api/reservas/:id/checkin` sin body
+- **THEN** responde 409 con `details.reason = 'room_not_assigned'`, la reserva sigue `confirmed` sin `roomId` y no existe ningún folio
+
+#### Scenario: Check-in con habitación ocupada en el body
+- **GIVEN** la misma reserva y la habitación 102 ocupada esas noches por otra reserva
+- **WHEN** se hace `POST /checkin { roomId: '102' }`
+- **THEN** responde 409 `room_overlap` con el localizador que choca, la reserva sigue `confirmed` sin `roomId` y sin folio
+
+#### Scenario: Check-in con habitación libre en el body
+- **GIVEN** la misma reserva y la habitación 101 libre y del tipo vendido
+- **WHEN** se hace `POST /checkin { roomId: '101' }`
+- **THEN** responde 200; la reserva queda `checked_in` con `roomId = '101'` y `roomAssignedAt`, el folio abierto lleva `roomId = '101'` y la habitación pasa a `occupied`. Con una unidad de otro tipo sin `allowTypeChange` es 409 `type_mismatch`; con `allowTypeChange: true` entra y `roomType` pasa al de la unidad
 
 ### Requirement: Extras pagados online entran al folio como cargos (MR-04, #269)
 
