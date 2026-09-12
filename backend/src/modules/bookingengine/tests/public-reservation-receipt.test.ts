@@ -229,6 +229,17 @@ describe('getPublicReceiptPdf — recibo de pago público (#270)', () => {
     const lines = buildReceiptLines(lead, [lead, sis1, sis2], rooms)
     expect(lines.filter((l) => l.kind === 'room').map((l) => l.amount)).toEqual([200, 200, 200])
     expect(lines.find((l) => l.kind === 'total')?.amount).toBe(708)
+
+    // Las hermanas comparten el accessToken: pedir el recibo con el id de una hermana devuelve
+    // el MISMO recibo del grupo (localizador de la líder, total 708), no uno con 3 habitaciones
+    // y el total de una sola.
+    const viaSibling = await getPublicReceiptPdf(orm, sis2.id, VALID_TOKEN, deps)
+    expect(viaSibling.status).toBe(200)
+    const html2 = viaSibling.body.toString()
+    expect(html2).toContain('TOTAL</span><span>708.00 USD')
+    expect(html2).toContain('ITBIS (18%)')
+    expect(html2).toContain(`Localizador ${lead.id.slice(0, 8)}`)
+    expect(html2.match(/Alojamiento · /g)?.length).toBe(3)
   })
 
   it('buildReceiptHtmlFor (sin token, para el correo) devuelve el HTML o null', async () => {

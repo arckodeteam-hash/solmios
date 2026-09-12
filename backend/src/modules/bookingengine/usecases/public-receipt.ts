@@ -80,19 +80,22 @@ async function findManySafe(orm: any, model: string, filter: Record<string, unkn
  */
 export async function buildReceiptDataFor(orm: any, reservationId: string, platformName?: string): Promise<ReceiptData | null> {
   const rows = await findManySafe(orm, 'Reservations', { id: reservationId })
-  const reservation = rows[0]
-  if (!reservation) return null
-
-  const hotel = (await findManySafe(orm, 'Hotels', { id: reservation.hotelId }))[0] ?? null
-  const guest = reservation.guestId ? (await findManySafe(orm, 'Guests', { id: reservation.guestId }))[0] ?? null : null
+  const requested = rows[0]
+  if (!requested) return null
 
   // Grupo: la líder es la única con `priceBreakdown`; las hermanas aportan su habitación y su
   // `totalAmount` de alojamiento. Se ordenan por creación para que la líder salga primera.
+  // El recibo es UNO por grupo (un solo cobro): si piden el de una hermana —todas comparten el
+  // `accessToken`— se emite el de la líder; si no, saldrían N habitaciones con el total de una.
   let siblings: any[] = []
-  if (reservation.groupId) {
-    siblings = (await findManySafe(orm, 'Reservations', { groupId: reservation.groupId, hotelId: reservation.hotelId }))
+  if (requested.groupId) {
+    siblings = (await findManySafe(orm, 'Reservations', { groupId: requested.groupId, hotelId: requested.hotelId }))
       .sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')))
   }
+  const reservation = siblings.find((r) => r.priceBreakdown) ?? siblings[0] ?? requested
+
+  const hotel = (await findManySafe(orm, 'Hotels', { id: reservation.hotelId }))[0] ?? null
+  const guest = reservation.guestId ? (await findManySafe(orm, 'Guests', { id: reservation.guestId }))[0] ?? null : null
   const roomIds = Array.from(new Set(
     (siblings.length ? siblings : [reservation]).map((r) => r.roomId).filter(Boolean).map(String),
   ))
