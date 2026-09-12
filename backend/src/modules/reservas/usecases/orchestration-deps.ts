@@ -13,6 +13,7 @@ import type { PromoCodePort } from './crud'
 import type { ReservationMoneyPort } from './money-port'
 import type { PaymentRequestsCeilingPort } from './ceiling-guard'
 import type { ManualPaymentPort } from './mark-paid'
+import type { ReservationInvoicingPort } from './issue-invoice'
 
 export interface ReservasOrchestrationDeps {
   pushAvailabilityToChannex?: (hotelId: string, roomId: string) => void
@@ -33,4 +34,6 @@ export interface ReservasOrchestrationDeps {
   paymentRequestsCeiling?: PaymentRequestsCeilingPort
   /** REQ-RWP-06 (#249) — connectors/reservas-payments.ts: asienta en `payments` un cobro manual. */
   manualPayment?: ManualPaymentPort
+  /** #253 (REQ-FDR-02) — connectors/reservas-facturas.ts: factura desde la reserva (folio abierto → folios; sin folio → facturas). */
+  invoicing?: ReservationInvoicingPort
 }

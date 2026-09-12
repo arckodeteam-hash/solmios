@@ -222,6 +222,13 @@ export const MarkPaidSchema: Record<string, ValidationRule> = {
   note: { type: 'string' as const, max: 500 },
 }
 
+// ── Emitir factura desde la reserva (#253, REQ-FDR-02): POST /api/reservas/:id/invoice ──
+// Sólo `notes` opcionales para la factura directa; con folio abierto el folio arma las suyas
+// (ver usecases/issue-invoice.ts). Qué camino se toma NO lo elige el cliente.
+export const IssueInvoiceSchema: Record<string, ValidationRule> = {
+  notes: { type: 'string' as const, max: 500 },
+}
+
 // ── Pre-Checkin (público) ──
 // Nombres de campo alineados con lo que MANDA el form público (pre-checkin/index.vue: `name`,
 // `document`, no `guestName`/`documentNumber` — con la clave vieja el check nunca se ejecutaba,

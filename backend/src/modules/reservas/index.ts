@@ -47,7 +47,7 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       // STR-F: `setGuaranteePin`/`getGuaranteeHasPin`/`unlockGuaranteeCard` tienen rutas HTTP
       // vivas en este archivo y métodos públicos en el service — estaban fuera de la lista que se
       // declaraba como la superficie completa.
-      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'sendWhatsapp', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard'],
+      actions: ['list', 'getById', 'create', 'update', 'delete', 'cancel', 'checkin', 'checkout', 'getExtendedDetail', 'getAuditTrail', 'getPreCheckinData', 'submitPreCheckin', 'uploadPreCheckinPhoto', 'getBookingEngineDashboard', 'sendLockCodeEmail', 'cancelPreview', 'cancelBySystem', 'logManualMessage', 'sendWhatsapp', 'syncPendingAfterPayment', 'settleFolioForCheckout', 'paidSource', 'quoteReschedule', 'reschedule', 'quoteStay', 'setGuaranteePin', 'getGuaranteeHasPin', 'unlockGuaranteeCard', 'issueInvoice'],
       events: ['onReservasCreated', 'onReservasUpdated', 'onReservasDeleted', 'onReservationCancelled'],
       // `message_logs` es del módulo marketing: reservas ESCRIBE la traza de los envíos manuales
       // con el repo que le inyecta email-bootstrap (mismo camino que checkin-email/lifecycle-email).
@@ -134,8 +134,10 @@ export function ReservasModule(opts: { storage?: StorageService } = {}) {
       //    revisión ("confirmación instantánea" apagada) → el hotel la aprueba ──
       router.post('/api/reservas/:id/approve', guard('reservations', 'edit'), (req) => controller.approve(req))
 
-      // ── Mark paid (REQ-RWP-06, #249): ÚNICO endpoint de reservas con permiso `billing` — registra dinero, mismo permiso que POST /api/payments ──
+      // ── Mark paid (REQ-RWP-06, #249): permiso `billing` (con /invoice, los dos únicos de reservas) — registra dinero, mismo permiso que POST /api/payments ──
       router.post('/api/reservas/:id/mark-paid', guard('billing', 'create'), (req) => controller.markPaid(req))
+      // #253 — emite factura desde la reserva (con folio abierto: cierra+factura; sin folio: factura directa vinculando pagos). Mismo permiso que POST /api/facturas.
+      router.post('/api/reservas/:id/invoice', guard('billing', 'create'), (req) => controller.issueInvoice(req))
 
       // ── Companions ──
       router.get('/api/reservations/:id/companions', guard('reservations', 'view'), (req) => controller.listCompanions(req))
