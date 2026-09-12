@@ -95,8 +95,15 @@
             <span class="font-bold text-danger">{{ fmtMoney(cancelResult.cancellationFee) }}</span>
           </div>
         </div>
-        <p v-else-if="cancelResult.cancellationFee > 0" class="text-sm text-text-secondary mt-3">
-          {{ t('confirm.noRefund') }}
+        <!-- #272 (MR-07) — el estado REAL del reembolso (Stripe ya corrió al cancelar): 'done' se
+             ve en la tarjeta en días; 'pending'/'failed' lo gestiona el hotel (reintento desde el
+             panel). Sin monto a devolver, se explica por la política, como antes. -->
+        <p
+          class="text-sm mt-3"
+          :class="refundStateKind === 'done' ? 'font-bold text-teal' : 'text-text-secondary'"
+          data-testid="confirm-refund-state"
+        >
+          {{ refundStateText }}
         </p>
 
         <p v-if="cancelResult.idempotent" class="text-xs text-text-secondary mt-3">
@@ -202,6 +209,17 @@
               </dd>
             </div>
           </dl>
+          <!-- #272 (MR-07) — reserva de varias habitaciones: una línea por habitación del grupo.
+               Con una sola, esta lista no existe y la tarjeta queda como siempre. -->
+          <div v-if="groupRooms.length > 1" class="mt-4 border-t border-slate-100 pt-3" data-testid="confirm-group-rooms">
+            <p class="text-xs text-text-secondary">{{ t('confirm.groupRooms') }}</p>
+            <ul class="mt-1.5 space-y-1 text-sm">
+              <li v-for="(room, i) in groupRooms" :key="room.id" class="flex justify-between gap-3" data-testid="confirm-group-room">
+                <span class="font-bold text-navy break-words">{{ room.roomType || t('confirm.roomFallback', { n: i + 1 }) }}</span>
+                <span class="shrink-0 text-text-secondary">{{ t('confirm.roomGuests', { adults: room.adults, children: room.children }) }}</span>
+              </li>
+            </ul>
+          </div>
         </div>
 
         <!-- 3. Pago: total, lo cobrado y el saldo, más el estado en palabras. -->
@@ -319,7 +337,7 @@
             data-testid="confirm-cancel-link"
             @click="showCancelModal = true"
           >
-            {{ t('confirm.cancelLink') }}
+            {{ groupRooms.length > 1 ? t('confirm.cancelLinkGroup', { n: groupRooms.length }) : t('confirm.cancelLink') }}
           </button>
         </div>
       </section>
@@ -414,7 +432,7 @@
       >
         <div class="space-y-3">
           <p v-if="cancelError" class="text-sm text-danger font-medium" role="alert">{{ cancelError }}</p>
-          <p v-else class="text-sm text-text-secondary">{{ t('confirm.cancelBody') }}</p>
+          <p v-else class="text-sm text-text-secondary">{{ groupRooms.length > 1 ? t('confirm.cancelBodyGroup', { n: groupRooms.length }) : t('confirm.cancelBody') }}</p>
         </div>
         <template #footer>
           <button
@@ -457,7 +475,7 @@ import {
 import {
   formatStayDate, nightsBetween, displayName, publicAddressLine, shortBookingCode, hotelTimeOrEmpty,
 } from '@/utils/booking-confirmation-format'
-import type { PublicReservationResponse, CancelReservationResponse } from '@/types/booking'
+import type { PublicReservationResponse, CancelReservationResponse, PublicGroupRoom } from '@/types/booking'
 import type { PublicHotelInfo } from '@/types/public-hotel'
 import { CurrencyCode } from '@/types/currency'
 
@@ -599,6 +617,28 @@ const canCancel = computed(() => {
   return rs === 'confirmed' || rs === 'pending'
 })
 
+// ── #272 (MR-07) — grupo de habitaciones y estado real del reembolso ────────
+/** Habitaciones del grupo al que pertenece la reserva. `[]` = reserva de una sola habitación
+ *  (o backend viejo sin `group`): la página se comporta exactamente como antes. */
+const groupRooms = computed<PublicGroupRoom[]>(() => reservation.value?.group?.rooms ?? [])
+
+type RefundStateKind = 'done' | 'pending' | 'none'
+/** 'done' = Stripe ya lo aceptó; 'pending' = en curso o falló (el hotel lo gestiona/reintenta —
+ *  al huésped no se le muestra el fallo interno); 'none' = no hay nada que devolver. */
+const refundStateKind = computed<RefundStateKind>(() => {
+  const r = cancelResult.value
+  if (!r || !(Number(r.refundAmount) > 0)) return 'none'
+  return r.refundStatus === 'done' ? 'done' : 'pending'
+})
+const refundStateText = computed(() => {
+  const r = cancelResult.value
+  if (!r) return ''
+  const amount = fmtMoney(r.refundAmount)
+  if (refundStateKind.value === 'done') return t('confirm.refundDone', { amount })
+  if (refundStateKind.value === 'pending') return t('confirm.refundPending', { amount })
+  return t('confirm.noRefund')
+})
+
 /** Tarea 3.4 (corrección 2026-08-25) — el pago se completó (por eso llegamos a SUCCESS) pero
  *  el hotel todavía no aprobó la reserva ("confirmación instantánea" apagada). */
 const isPendingApproval = computed(() => reservation.value?.reservation?.approvalStatus === 'pending')
@@ -716,6 +756,30 @@ async function tick(): Promise<void> {
       clearStoredReservation(slug.value)
       return
     }
+    // #272 (MR-07): el huésped (o el hotel) ya canceló y el backend trae el snapshot del
+    // reembolso. Se muestra la vista CANCELADA con el estado real (`cancelResult` va primero en
+    // el template), no el error de "pago rechazado" ni SUCCESS (una reserva pagada y luego
+    // cancelada sigue trayendo paymentStatus='paid'). Reservas canceladas antes de esta feature no
+    // traen `refundStatus` ni `cancelledAt` → siguen cayendo al error genérico de abajo. La
+    // vencida por falta de pago (#266) es otra cosa: se le ofrece reservar de nuevo (EXPIRED).
+    const expiredByTimeout = rs === 'cancelled' && res.reservation.cancellationReason === 'payment_timeout'
+    if (rs === 'cancelled' && !expiredByTimeout && (res.reservation.refundStatus || res.reservation.cancelledAt)) {
+      const r = res.reservation
+      cancelResult.value = {
+        reservationId: r.id,
+        status: 'cancelled',
+        refundAmount: Number(r.refundAmount ?? 0),
+        cancellationFee: Number(r.cancellationFee ?? 0),
+        policyApplied: null,
+        refundStatus: r.refundStatus,
+        refundedAt: r.refundedAt ?? null,
+        roomsCount: res.group?.rooms?.length,
+        idempotent: true,
+      }
+      pollingState.value = 'success'
+      clearStoredReservation(slug.value)
+      return
+    }
     if (ps === 'paid' || rs === 'confirmed' || rs === 'checked_in' || rs === 'checked_out') {
       pollingState.value = 'success'
       clearStoredReservation(slug.value) // limpieza: reserva confirmada
@@ -725,7 +789,7 @@ async function tick(): Promise<void> {
     // #266 (MR-01): el cron / checkout.session.expired cancelan la reserva pendiente sin pago con
     // cancellationReason='payment_timeout'. No es "pago rechazado": venció. Se le dice y se le
     // ofrece reservar de nuevo (la habitación ya volvió a estar disponible).
-    if (rs === 'cancelled' && res.reservation.cancellationReason === 'payment_timeout') {
+    if (expiredByTimeout) {
       pollingState.value = 'expired'
       clearStoredReservation(slug.value)
       return

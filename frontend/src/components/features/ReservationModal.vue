@@ -22,6 +22,7 @@ import { TTLockService, type LockDevice } from '@/services/TTLock.service'
 import { effectiveCheckInTime, effectiveCheckOutTime, hasCustomSchedule, hotelCheckInTime, hotelCheckOutTime } from '@/utils/hotel-schedule'
 import { paymentStateBadge } from '@/utils/payment-state'
 import { effectiveMealPlan, mealPlanLabel } from '@/utils/meal-plans'
+import { isRefundRetryable } from '@/utils/refund-state'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
@@ -49,6 +50,8 @@ const { can } = usePermissions()
 const MS_PER_DAY = 86_400_000
 
 const detail = ref<ReservationDetail | null>(null)
+/** #272 — instante de la última lectura del detalle; contra él se mide si un `pending` ya es viejo. */
+const refundCheckedAt = ref(Date.now())
 const loading = ref(true)
 const saving = ref(false)
 const showCancel = ref(false)
@@ -320,6 +323,7 @@ async function load(opts?: { silent?: boolean }) {
   try {
     const d = await ReservationService.getById(props.reservationId)
     detail.value = d
+    refundCheckedAt.value = Date.now() // #272 — el umbral del reintento se mide contra el detalle recién leído
     autoSend.value = d?.autoSendEnabled ?? true
     conditions.value = { gdpr: !!d?.gdprAccepted, marketing: !!d?.marketingAccepted, terms: !!d?.termsAccepted }
     // COR-7 — En un refresco SILENCIOSO el operador puede estar tipeando en "Otros cobros":
@@ -727,6 +731,41 @@ function waLink(phone?: string | null, body?: string | null): string | null {
 // POST /reservas/:id/cancel, que aplica la política del hotel (penalidad/reembolso), guarda el
 // motivo y libera el depósito retenido. Con `update({status:'cancelled'})` nada de eso pasaba —
 // y el backend ahora lo rechaza con 409, así que este camino tampoco existe ya del lado servidor.
+// #272 (MR-07) — el reembolso web se dispara al cancelar; si Stripe falló queda `failed` y el
+// hotel lo reintenta desde acá. 'done'/'none' no ofrecen el botón: no hay nada que reintentar.
+// Un `pending` FRESCO (< 10 min) está en curso y tampoco; uno VIEJO quedó huérfano y el backend
+// acepta reintentarlo (`utils/refund-state.ts`, espejo del umbral del servidor). `refundCheckedAt`
+// se fija al cargar el detalle: el computed no puede depender de `Date.now()` a secas.
+const canRetryRefund = computed(() => isRefundRetryable(d.value, refundCheckedAt.value) && can('reservations', 'edit'))
+const retryRefundTitle = computed(() => d.value?.refundStatus === 'pending'
+  ? 'El reembolso quedó en proceso hace más de 10 minutos sin resolverse: vuelve a intentarlo con el mismo monto'
+  : 'El reembolso en la pasarela falló: vuelve a intentarlo con el mismo monto')
+function refundStateBadge(status?: string | null): { label: string; cls: string } | null {
+  const m: Record<string, { label: string; cls: string }> = {
+    done: { label: 'Reembolsado', cls: 'bg-teal/10 text-teal' },
+    pending: { label: 'Reembolso en proceso', cls: 'bg-amber-100 text-amber-800' },
+    failed: { label: 'Reembolso fallido', cls: 'bg-coral/10 text-coral' },
+  }
+  return m[status || ''] ?? null
+}
+const refundBadge = computed(() => d.value?.status === 'cancelled' ? refundStateBadge(d.value?.refundStatus) : null)
+
+async function retryRefund() {
+  if (!d.value) return
+  saving.value = true
+  try {
+    const res = await ReservationService.retryRefund(d.value.id)
+    if (res.refundStatus === 'done') toast.success('Reembolso procesado')
+    else toast.warning('El reembolso sigue sin completarse', 'La pasarela no lo aceptó: revisá el pago en Stripe')
+    await load({ silent: true })
+    emit('changed')
+  } catch (e) {
+    toast.error((e as Error).message || 'No se pudo reintentar el reembolso')
+  } finally {
+    saving.value = false
+  }
+}
+
 async function setStatus(status: 'confirmed') {
   if (!d.value) return
   saving.value = true
@@ -1189,6 +1228,13 @@ function facturar() {
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           Anular
         </button>
+        <!-- #272 (MR-07) — el reembolso web quedó `failed` en Stripe (o `pending` huérfano hace más
+             de 10 min): se reintenta desde acá (POST /reservas/:id/retry-refund). Con 'done' o un
+             'pending' fresco el botón no existe. -->
+        <button v-if="canRetryRefund" data-testid="retry-refund" @click="retryRefund" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-amber-500 text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50" :title="retryRefundTitle">
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>
+          {{ saving ? 'Reintentando…' : 'Reintentar reembolso' }}
+        </button>
         <button @click="printAs('charges')" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-white/10 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-white/20" title="Imprime el detalle de cargos de la reserva. NO es una factura: no lleva numeración fiscal ni NCF.">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.83a42.5 42.5 0 0110.56 0M6.34 18l-.34 3.72a1.12 1.12 0 001.12 1.23h9.4a1.12 1.12 0 001.12-1.23L17.66 18M17.66 18h1.09c1.06 0 1.98-.72 2-1.78a72 72 0 000-3.45c-.02-1.06-.94-1.77-2-1.77H5.25c-1.06 0-1.98.71-2 1.77a72 72 0 000 3.45c.02 1.06.94 1.78 2 1.78h1.09M17.66 18H6.34M17.66 18v-4.5a2.25 2.25 0 00-2.25-2.25h-6.5a2.25 2.25 0 00-2.25 2.25V18"/></svg>
           Cargos
@@ -1396,6 +1442,15 @@ function facturar() {
                   <span v-else class="font-bold text-navy">{{ money(otherCharges) }}</span>
                 </div>
                 <div class="flex justify-between border-t border-border/50 pt-1.5"><span class="font-bold text-text-secondary">Pendiente de cobro</span><span class="font-black" :class="pending > 0 ? 'text-coral' : 'text-teal'">{{ money(pending) }}</span></div>
+                <!-- #272 (MR-07) — reserva cancelada desde la web: monto a devolver y estado REAL del
+                     reembolso en la pasarela (no se infiere: lo persiste el backend). -->
+                <div v-if="refundBadge" class="flex justify-between items-center gap-2" data-testid="refund-row">
+                  <span class="text-text-muted">Reembolso</span>
+                  <span class="flex items-center gap-2">
+                    <span v-if="Number(d.refundAmount) > 0" class="font-bold text-navy">{{ money(Number(d.refundAmount)) }}</span>
+                    <span data-testid="refund-state-badge" class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="refundBadge.cls">{{ refundBadge.label }}</span>
+                  </span>
+                </div>
                 <div v-if="credit > 0" data-testid="reservation-credit" class="flex justify-between"><span class="font-bold text-teal">A favor del huésped</span><span class="font-black text-teal">{{ money(credit) }}</span></div>
                 <div v-if="secondaryTotal !== null" class="flex justify-between"><span class="text-text-muted">Total ({{ secondaryCurrency }})</span><span class="font-bold text-purple">{{ moneySecondary(secondaryTotal) }}</span></div>
                 <!-- GH-0.1: el monto del link vivo NO se veía en ninguna pantalla, así que un link

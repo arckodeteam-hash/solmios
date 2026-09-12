@@ -648,18 +648,46 @@ export interface PublicReservation {
   /** #271 (MR-06) — SOLO cuando `approvalStatus === 'rejected'`: el motivo que el hotel
    *  escribió para el huésped. `null` en cualquier otro estado. */
   rejectionReason?: string | null
-  /** #271 (MR-06) — SOLO cuando `approvalStatus === 'rejected'`: lo reembolsado al medio de
-   *  pago original. `null` en cualquier otro estado. */
-  refundAmount?: number | null
   /** #266 (MR-01) — motivo de cancelación. 'payment_timeout' = venció sin completar el pago
    *  (cron / checkout.session.expired): la confirmación muestra "venció, volvé a reservar". */
   cancellationReason?: string | null
+  /** #272 (MR-07) — snapshot de la cancelación y estado REAL del reembolso en Stripe.
+   *  `refundStatus`: 'none' = sin reembolso que procesar (o reserva vieja), 'pending' = en curso,
+   *  'done' = la pasarela lo aceptó, 'failed' = falló y el hotel lo reintenta desde el panel.
+   *  Ausentes en reservas canceladas antes de esta feature. `refundAmount` es siempre número
+   *  (0 sin nada que devolver); en un rechazo del hotel (#271 MR-06) es el 100% de lo cobrado. */
+  cancellationFee?: number
+  refundAmount?: number
+  refundStatus?: PublicRefundStatus
+  refundedAt?: string | null
+  cancelledAt?: string | null
+}
+
+/** #272 — estado del reembolso tal como lo persiste `reservations.refundStatus`. */
+export type PublicRefundStatus = 'none' | 'pending' | 'done' | 'failed'
+
+/** #272 — una habitación de una reserva de varias (mismo token compartido). `id` es el
+ *  reservationId de esa habitación. */
+export interface PublicGroupRoom {
+  id: string
+  roomType: string
+  adults: number
+  children: number
+  status: string
+}
+
+/** #272 — el grupo al que pertenece la reserva consultada. `null` si es de una sola habitación. */
+export interface PublicReservationGroup {
+  id: string
+  rooms: PublicGroupRoom[]
 }
 
 export interface PublicReservationResponse {
   reservation: PublicReservation
   guest: PublicReservationGuest | null
   paymentStatus: string
+  /** #272 — presente (no null) solo cuando la reserva es parte de un grupo de N habitaciones. */
+  group?: PublicReservationGroup | null
 }
 
 /** F4 #627 — Respuesta de auto-cancelación pública del huésped. */
@@ -671,4 +699,10 @@ export interface CancelReservationResponse {
   policyApplied: { tiers: unknown[]; policyId: string; source: string; label?: string } | null
   /** true si la reserva ya estaba cancelada (idempotente — no se re-procesó). */
   idempotent?: boolean
+  /** #272 — cascada al grupo: todas las reservas canceladas (incluida ésta) y cuántas eran. */
+  reservationIds?: string[]
+  roomsCount?: number
+  /** #272 — estado real del reembolso al volver del POST (Stripe ya corrió, o falló). */
+  refundStatus?: PublicRefundStatus
+  refundedAt?: string | null
 }
