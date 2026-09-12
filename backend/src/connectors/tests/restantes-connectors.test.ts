@@ -1,11 +1,10 @@
 // connectors/tests/restantes-connectors.test.ts — TC-05: conectores restantes + roles-auditlog.
 //
-// booking-channex, bookingengine-payments, habitaciones-canales, messages-*, pushtokens-usuarios,
+// bookingengine-payments, habitaciones-canales, messages-*, pushtokens-usuarios,
 // payment-requests-payments y roles-auditlog (el connector de SC-05, que había quedado sin test).
 
 import { describe, it, expect } from 'bun:test'
 import type { ConnectorContext } from 'arckode-framework'
-import { bookingChannexConnector } from '../booking-channex'
 import { pricingCanalesConnector } from '../pricing-canales'
 import { bookingenginePaymentsConnector } from '../bookingengine-payments'
 import { habitacionesCanalesConnector } from '../habitaciones-canales'
@@ -62,32 +61,6 @@ describe('rolesAuditlogConnector (SC-05)', () => {
     expect(entries[0].action).toBe('role.delete')
     expect(entries[0].entityId).toBe('role-1')
     expect(entries[0].userId).toBe('u1') // queda quién lo hizo
-  })
-})
-
-describe('bookingChannexConnector', () => {
-  it('empuja disponibilidad SOLO si la reserva del motor queda confirmada', async () => {
-    const pushes: any[] = []
-    const { ctx, captured } = makeCtx(['bookingengine'], {
-      canales: { pushAvailabilityByRoom: async (h: string, r: string) => { pushes.push([h, r]); return { pushed: true } } },
-    })
-    bookingChannexConnector(ctx)
-
-    await captured.sockets.onBookingCreated({ hotelId: 'h1', roomType: 'suite', roomId: 'rm1', checkIn: '2026-08-01', status: 'confirmed' })
-    await captured.sockets.onBookingCreated({ hotelId: 'h1', roomType: 'suite', roomId: 'rm2', checkIn: '2026-08-02', status: 'pending' })
-
-    expect(pushes).toHaveLength(1) // la pendiente NO empuja
-    expect(pushes[0]).toEqual(['h1', 'rm1']) // por roomId: resuelve el room type real
-  })
-
-  it('si Channex falla, la reserva del motor NO se rompe', async () => {
-    const { ctx, captured } = makeCtx(['bookingengine'], {
-      canales: { pushAvailabilityByRoom: async () => { throw new Error('channex caído') } },
-    })
-    bookingChannexConnector(ctx)
-    await expect(
-      captured.sockets.onBookingCreated({ hotelId: 'h1', roomType: 'suite', checkIn: '2026-08-01', status: 'confirmed' }),
-    ).resolves.toBeUndefined()
   })
 })
 

@@ -427,7 +427,6 @@ import { habitacionesReservasConnector } from './connectors/habitaciones-reserva
 import { reservasCanalesConnector } from './connectors/reservas-canales'
 import { mantenimientoNotificacionesConnector } from './connectors/mantenimiento-notificaciones'
 import { mantenimientoHabitacionesConnector } from './connectors/mantenimiento-habitaciones'
-import { bookingChannexConnector } from './connectors/booking-channex'
 import { reservasBookingengineConnector } from './connectors/reservas-bookingengine'
 import { reservasHuespedesConnector } from './connectors/reservas-huespedes'
 import { reservasOpinionesConnector } from './connectors/reservas-opiniones'
@@ -595,7 +594,6 @@ system.addConnector('habitaciones-reservas', habitacionesReservasConnector)
 system.addConnector('reservas-canales', reservasCanalesConnector)
 system.addConnector('mantenimiento-notificaciones', mantenimientoNotificacionesConnector)
 system.addConnector('mantenimiento-habitaciones', mantenimientoHabitacionesConnector)
-system.addConnector('booking-channex', bookingChannexConnector)
 system.addConnector('reservas-bookingengine', reservasBookingengineConnector)
 system.addConnector('reservas-huespedes', reservasHuespedesConnector(logger))
 // Invitación a opinar post-checkout: reservas emite onReservationCheckedOut → opiniones crea
