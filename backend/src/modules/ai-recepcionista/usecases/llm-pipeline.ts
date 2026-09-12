@@ -5,6 +5,8 @@ import type { LlmConfig, LlmMessage } from './llm-provider'
 import { llmChat, buildSystemPrompt, RECEPTIONIST_TOOLS } from './llm-provider'
 import { hotelCheckInTime, hotelCheckOutTime } from '../../../shared/utils/hotel-schedule'
 import { assertReservationFitsCapacity } from '../../../shared/usecases/reservation-capacity'
+import { availableOfType, countAvailableOfType, roomTypeProfileOf } from '../../../shared/usecases/type-availability'
+import { isRoomSellable } from '../../../shared/usecases/room-status'
 
 /**
  * Puerto de cancelación hacia `reservas` (lo cablea `connectors/ai-recepcionista-reservas.ts`).
@@ -53,7 +55,13 @@ export interface ToolRepos {
   guestRepo?: any
   configRepo?: any
   logger?: { error?: (msg: string, meta?: Record<string, unknown>) => void }
-  onReservationCreated?: (hotelId: string, roomId: string) => Promise<void>
+  /** Repo de `RoomBlocks` — opcional; sin él la disponibilidad por tipo no descuenta bloqueos. */
+  blockRepo?: any
+  /**
+   * REQ-HAC-05 (#260): la reserva de la IA nace por TIPO sin unidad, así que el push a Channex
+   * va por `roomType` (composition-root cablea `pushAvailabilityByType`).
+   */
+  onReservationCreated?: (hotelId: string, roomType: string) => Promise<void>
 }
 
 export async function generateReply(
@@ -96,7 +104,7 @@ export async function generateReply(
         const paymentResult = await executeTool('generate_payment_link', {
           reservationId: lastRes.id,
           amount: lastRes.totalAmount || 0,
-          description: `Reserva ${lastRes.roomId} - ${lastRes.checkIn} al ${lastRes.checkOut}`,
+          description: `Reserva ${lastRes.roomType || lastRes.roomId || ''} - ${lastRes.checkIn} al ${lastRes.checkOut}`,
         }, variables.hotelId || '', toolRepos)
         const payLink = paymentResult as any
         if (payLink?.paymentUrl) {
@@ -277,41 +285,42 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
       const rooms = Array.isArray(allRooms) ? allRooms : (allRooms?.data || [])
       console.log(`[TOOL] rooms found: ${rooms.length}`)
 
-      // Get reservations that overlap with requested dates
+      // Get reservations of the hotel (the type count filters by date in memory)
       const allRes = await repos.reservationRepo.findMany({ hotelId })
       const reservations = Array.isArray(allRes) ? allRes : (allRes?.data || [])
       console.log(`[TOOL] reservations found: ${reservations.length}`)
+      const allBlocks = repos.blockRepo ? await repos.blockRepo.findMany({ hotelId }).catch(() => []) : []
+      const blocks = Array.isArray(allBlocks) ? allBlocks : (allBlocks?.data || [])
 
-      const bookedRoomIds = new Set(
-        reservations
-          .filter((r: any) => {
-            if (r.status === 'cancelled') return false
-            const rCheckIn = new Date(r.checkIn || r.checkinDate)
-            const rCheckOut = new Date(r.checkOut || r.checkoutDate)
-            const reqCheckIn = new Date(checkIn)
-            const reqCheckOut = new Date(checkOut)
-            return rCheckIn < reqCheckOut && rCheckOut > reqCheckIn
-          })
-          .map((r: any) => r.roomId)
-      )
-
-      const available = rooms.filter((r: any) => !bookedRoomIds.has(r.id))
-
-      // Group by type for clear presentation with amenities
+      // REQ-HAC-05 (#260): disponibilidad por TIPO (`rooms − booked` por noche, fuente única de
+      // HAC-02), no por solape de unidad: una reserva confirmada SIN unidad asignada también
+      // consume una del tipo. Antes el bot ofrecía las 2 dobles aunque hubiera 2 confirmadas sin
+      // asignar, y después `create_reservation` no podía cumplir.
+      const types: string[] = Array.from(new Set<string>(rooms.map((r: any) => String(r.type || 'standard'))))
       const byType: Record<string, { count: number; price: number; amenities: string; description: string; ids: string[] }> = {}
-      for (const r of available) {
-        const type = r.type || 'standard'
-        if (!byType[type]) byType[type] = { count: 0, price: r.basePrice || 0, amenities: r.amenities || '', description: r.description || '', ids: [] }
-        byType[type].count++
-        byType[type].ids.push(r.id)
+      let availableTotal = 0
+      const availableUnits: any[] = []
+      for (const type of types) {
+        const typed = rooms.map((r: any) => ({ ...r, type: String(r.type || 'standard') }))
+        const avail = countAvailableOfType(type, typed, reservations, blocks, checkIn, checkOut)
+        if (avail.available < 1) continue
+        const profile = roomTypeProfileOf(type, avail.sellableRooms)
+        const sample = avail.sellableRooms[0] || {}
+        byType[type] = {
+          count: avail.available, price: profile.minBasePrice,
+          amenities: sample.amenities || '', description: sample.description || '',
+          ids: avail.sellableRooms.map((r: any) => r.id),
+        }
+        availableTotal += avail.available
+        availableUnits.push(...avail.sellableRooms.slice(0, avail.available))
       }
 
       return {
-        available: available.length,
+        available: availableTotal,
         summary: Object.entries(byType).map(([type, info]) =>
           `${info.count} ${type} ($${info.price}/noche) — ${info.amenities || 'WiFi, baño privado'}`
         ).join('\n'),
-        rooms: available.slice(0, 10).map((r: any) => ({
+        rooms: availableUnits.slice(0, 10).map((r: any) => ({
           id: r.id,
           type: r.type || 'standard',
           name: r.name || r.number || '',
@@ -322,15 +331,24 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
           floor: r.floor,
           bathrooms: r.bathrooms,
         })),
-        message: available.length > 0
-          ? `Hay ${available.length} habitaciones disponibles.`
+        message: availableTotal > 0
+          ? `Hay ${availableTotal} habitaciones disponibles.`
           : 'No hay habitaciones disponibles para esas fechas.',
       }
     }
 
     case 'create_reservation': {
-      let roomId = args.roomId as string
-      const roomType = args.roomType as string
+      // REQ-HAC-05 (#260): la IA vende el TIPO, no una unidad. Antes elegía "la primera habitación
+      // libre del tipo" con un solape por unidad que no veía las reservas confirmadas sin asignar
+      // (HAC-01) — con 2 dobles y 2 confirmadas sin unidad seguía vendiendo una tercera. Ahora:
+      //  - `roomType` → disponibilidad por tipo (`availableOfType`, fuente única de HAC-02) y la
+      //    fila nace con `roomId: null`; recepción asigna la unidad al check-in (assign-room.ts).
+      //  - `roomId` (compat: el LLM lo saca de `search_availability`) → sólo deriva `roomType` de
+      //    esa unidad; la reserva IGUAL nace sin unidad.
+      // Capacidad y precio salen del perfil del tipo (`roomTypeProfileOf`: capacidad MÁXIMA y
+      // precio MÍNIMO entre las unidades vendibles), mismo criterio que el panel y el motor público.
+      const requestedRoomId = args.roomId as string | undefined
+      let roomType = (args.roomType as string | undefined) || ''
       const checkIn = args.checkIn as string
       const checkOut = args.checkOut as string
       const guestName = args.guestName as string || 'Guest'
@@ -342,41 +360,40 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
         return { error: 'Faltan checkIn y checkOut' }
       }
 
-      // If no roomId, find an available room of the requested type
-      if (!roomId && roomType) {
-        const allRooms = await repos.roomRepo.findMany({ hotelId, type: roomType })
-        const rooms = Array.isArray(allRooms) ? allRooms : (allRooms?.data || [])
-        const allRes = await repos.reservationRepo.findMany({ hotelId })
-        const reservations = Array.isArray(allRes) ? allRes : (allRes?.data || [])
-        const bookedRoomIds = new Set(
-          reservations.filter((r: any) => {
-            if (r.status === 'cancelled') return false
-            const rCI = new Date(r.checkIn)
-            const rCO = new Date(r.checkOut)
-            return rCI < new Date(checkOut) && rCO > new Date(checkIn)
-          }).map((r: any) => r.roomId)
-        )
-        const available = rooms.filter((r: any) => !bookedRoomIds.has(r.id))
-        if (available.length === 0) return { error: `No hay habitaciones ${roomType} disponibles para esas fechas` }
-        roomId = available[0].id
+      if (requestedRoomId) {
+        const room = await repos.roomRepo.findById(requestedRoomId)
+        if (!room || (room.hotelId && room.hotelId !== hotelId)) return { error: 'No encontré esa habitación' }
+        roomType = room.type ? String(room.type) : roomType
       }
 
-      if (!roomId) {
+      if (!roomType) {
         return { error: 'Necesitás roomId o roomType' }
       }
 
-      const room = await repos.roomRepo.findById(roomId)
+      // El tipo tiene que existir en el hotel; el perfil se arma con las unidades VENDIBLES.
+      const allUnits = await repos.roomRepo.findMany({ hotelId, type: roomType })
+      const units = (Array.isArray(allUnits) ? allUnits : (allUnits?.data || [])).filter((r: any) => r && String(r.type) === roomType)
+      if (units.length === 0) return { error: `No hay habitaciones del tipo ${roomType} en este hotel` }
+      const typeProfile = roomTypeProfileOf(roomType, units.filter((r: any) => isRoomSellable(r?.status)))
+
+      const avail = await availableOfType(
+        { rooms: repos.roomRepo, reservations: repos.reservationRepo, blocks: repos.blockRepo },
+        hotelId, roomType, checkIn, checkOut,
+      )
+      if (avail.available < 1) return { error: `No hay disponibilidad de ${roomType} para esas fechas` }
+
       const hotel = await repos.hotelRepo.findById(hotelId)
 
       // Auditoría de integridad (cierre, 2026-09-04) — el bot de Recepción IA escribía directo con
       // `reservationRepo.create`, sin ningún chequeo de capacidad. Mismo criterio que el panel y el
       // motor público, reutilizado sin copiar reglas: sin edad por niño acá (la tool no las pide),
       // el conservador de `resolveAdminCapacityComposition` decide — un niño sin edad conocida
-      // SIEMPRE consume plaza.
-      await assertReservationFitsCapacity(repos.configRepo, room, { hotelId, adults, children: 0, childrenAges: [] })
+      // SIEMPRE consume plaza. Sin unidad, la "habitación" es el perfil del tipo.
+      await assertReservationFitsCapacity(repos.configRepo, typeProfile, { hotelId, adults, children: 0, childrenAges: [] })
 
       const totalNights = Math.ceil((new Date(checkOut).getTime() - new Date(checkIn).getTime()) / 86400000)
-      const totalPrice = (room?.basePrice || room?.price || 0) * totalNights
+      const pricePerNight = typeProfile.minBasePrice
+      const totalPrice = pricePerNight * totalNights
 
       // Reservations no declara guestName/guestEmail/guestPhone (mem 1805) — usa guestId FK a Guests.
       // Busca huésped existente por email (más preciso) o nombre dentro del hotel; si no existe, lo crea.
@@ -398,9 +415,10 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
       const reservation = await repos.reservationRepo.create({
         id: crypto.randomUUID(),
         hotelId,
-        roomId,
+        // Sin unidad: `null` EXPLÍCITO (es lo que leen availableOfType/assign-room/planning).
+        roomId: null,
         // REQ-HAC-01 (#258): tipo vendido en la fila, como el panel y el motor público.
-        roomType: room?.type ? String(room.type) : undefined,
+        roomType,
         guestId,
         checkIn,
         checkOut,
@@ -410,24 +428,25 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
         createdAt: new Date().toISOString(),
       })
 
-      // Push availability to Channex (block room in channel manager)
+      // Push availability to Channex por TIPO (la reserva no tiene unidad).
       if (repos.onReservationCreated) {
-        await repos.onReservationCreated(hotelId, roomId).catch(() => {})
+        await repos.onReservationCreated(hotelId, roomType).catch(() => {})
       }
 
       return {
         reservationId: reservation.id,
         status: 'confirmed',
-        room: room?.name || room?.type || 'Habitación',
-        roomType: room?.type || 'standard',
+        roomId: null,
+        room: roomType,
+        roomType,
         checkIn,
         checkOut,
         nights: totalNights,
-        pricePerNight: room?.basePrice || room?.price || 0,
+        pricePerNight,
         totalPrice,
         guestName,
         hotelName: hotel?.name || 'Hotel',
-        message: `Reserva confirmada para ${guestName}. ${room?.type || 'Habitación'} del ${checkIn} al ${checkOut}. Total: $${totalPrice}.`,
+        message: `Reserva confirmada para ${guestName}. Habitación tipo ${roomType} del ${checkIn} al ${checkOut} (la unidad se asigna al check-in). Total: $${totalPrice}.`,
       }
     }
 
@@ -454,7 +473,9 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
         found: true,
         reservations: reservations.slice(0, 3).map((r: any) => ({
           id: r.id,
-          room: r.roomId,
+          // REQ-HAC-05: la unidad puede no estar asignada todavía; lo vendido es el tipo.
+          room: r.roomId ?? null,
+          roomType: r.roomType ?? null,
           checkIn: r.checkIn || r.checkinDate,
           checkOut: r.checkOut || r.checkoutDate,
           status: r.status,
@@ -594,9 +615,10 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
       const reservation = await findOwnedReservation(repos.reservationRepo, reservationId, hotelId)
       if (!reservation) return { error: 'Reserva no encontrada' }
 
-      const room = await repos.roomRepo.findById(reservation.roomId)
+      // REQ-HAC-05: la reserva puede no tener unidad; sin ella, la tarifa sale del total vendido.
+      const room = reservation.roomId ? await repos.roomRepo.findById(reservation.roomId) : null
       const nights = Math.ceil((new Date(reservation.checkOut).getTime() - new Date(reservation.checkIn).getTime()) / 86400000)
-      const roomRate = room?.basePrice || 0
+      const roomRate = room?.basePrice || (nights > 0 && Number(reservation.totalAmount) > 0 ? Number(reservation.totalAmount) / nights : 0)
       // BASE imponible. La tasa la pone el hotel (`configuration(key='taxes')`), no esta tool: antes
       // había un 0.16 clavado acá que ignoraba la configuración real.
       const roomTotal = roomRate * nights
@@ -623,7 +645,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
       return {
         invoiceNumber: issued.invoiceNumber,
         guestName: reservation.guestName || 'Guest',
-        roomType: room?.type || 'standard',
+        roomType: room?.type || reservation.roomType || 'standard',
         checkIn: reservation.checkIn,
         checkOut: reservation.checkOut,
         nights,

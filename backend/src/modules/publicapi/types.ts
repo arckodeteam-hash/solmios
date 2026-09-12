@@ -19,7 +19,10 @@ export interface PublicRoomsQuery {
 }
 
 export interface CreatePublicReservationDTO {
-  roomId: string
+  /** Unidad concreta (opcional, REQ-HAC-05): sólo fija el tipo y se valida su disponibilidad; sin ella hace falta `roomType`. */
+  roomId?: string
+  /** Tipo de habitación a reservar (el `type` que devuelve GET /rooms). Obligatorio si no viene `roomId`. */
+  roomType?: string
   checkIn: string
   checkOut: string
   adults?: number
@@ -35,7 +38,10 @@ export interface CreatePublicReservationDTO {
 export interface PublicReservationDTO {
   id: string
   hotelId: string
-  roomId: string
+  /** `null` hasta que recepción asigne la unidad (REQ-HAC-05). */
+  roomId: string | null
+  /** Tipo vendido. */
+  roomType: string | null
   checkIn: string
   checkOut: string
   status?: string

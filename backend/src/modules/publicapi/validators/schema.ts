@@ -3,7 +3,11 @@
 import type { ValidationRule } from 'arckode-framework'
 
 export const CreatePublicReservationSchema: Record<string, ValidationRule> = {
-  roomId: { type: 'string' as const, required: true },
+  // REQ-HAC-05 (#260): la API vende un TIPO de habitación. `roomId` pasó a ser opcional (la unidad
+  // se asigna en recepción, assign-room); sin `roomId` hace falta `roomType`. La regla cruzada
+  // "al menos uno" no la expresa el DSL: la aplica `createPublicReservation` (400 si faltan ambos).
+  roomId: { type: 'string' as const },
+  roomType: { type: 'string' as const, max: 50 },
   checkIn: { type: 'string' as const, required: true },
   checkOut: { type: 'string' as const, required: true },
   adults: { type: 'number' as const, min: 1 },

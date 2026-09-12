@@ -821,8 +821,8 @@ seed que refrescar) y el flujo del panel (`reservation-email.ts`) parte de
 **Modelo (HAC-01, lo mínimo que HAC-03 necesita; el resto de #256 —tipo obligatorio y `roomId`
 opcional en el alta— es HAC-05).** `reservations.roomType` (string, indexado) es el tipo vendido
 (= `rooms.type`); `roomId` es nullable ("dónde duerme"); `roomAssignedAt`/`roomAssignedBy` registran
-quién y cuándo asignó. El alta desde el panel sigue exigiendo `roomId` y rellena `roomType` con el
-`type` de esa habitación cuando no viene. Migración por script (`ormMigrate` NO relaja `NOT NULL`):
+quién y cuándo asignó. El alta desde el panel exigía `roomId` hasta HAC-05 (hoy opcional, ver
+REQ-HAC-05) y rellena `roomType` con el `type` de esa habitación cuando no viene. Migración por script (`ormMigrate` NO relaja `NOT NULL`):
 `scripts/relax-reservations-roomid.ts` (PG `ALTER COLUMN roomid DROP NOT NULL`; SQLite recrea la tabla
 sin la restricción, copiando por nombre e índices, en transacción) y
 `scripts/backfill-reservation-room-type.ts` (`roomType = rooms.type` de la asignada, SQL puro),
@@ -911,10 +911,10 @@ ingesta OTA (`booking-ingestion.ts`) MUST decidir la disponibilidad con `availab
 grupo responden 409 `No hay habitaciones de este tipo disponibles para esas fechas` / `Solo hay N ...`
 cuando `available < cantidad`, y el panel 409 `type_sold_out`. El solape **por habitación** queda
 SOLO en el camino de asignar (`assign-room.ts` → `assertNoRoomConflict`); `assertRoomAvailable` y el
-`hasOverlap` del widget dejan de existir. Mientras el alta del panel siga exigiendo `roomId`, la
-unidad se valida después del tipo con `assertNoRoomConflict` (409 `room_overlap`). La ingesta OTA
-elige la primera unidad vendible no ocupada del tipo y, si no hay ninguna, igual crea la reserva
-marcando `⚠ OVERBOOKING` en las notas (nunca dropea un booking OTA).
+`hasOverlap` del widget dejan de existir. Cuando el alta del panel trae `roomId` explícito (HAC-05 lo
+hizo opcional), la unidad se valida después del tipo con `assertNoRoomConflict` (409 `room_overlap`).
+La ingesta OTA ya no elige unidad ni anota sobreventa: crea por tipo con `roomId: null` (ver
+REQ-HAC-05) y nunca dropea un booking OTA.
 
 #### Scenario: Tres unidades, tres reservas sin asignar
 - **GIVEN** un tipo con 3 unidades vendibles y 3 reservas `confirmed` sin `roomId` con ese `roomType` que solapan la estadía
@@ -935,6 +935,65 @@ marcando `⚠ OVERBOOKING` en las notas (nunca dropea un booking OTA).
 - **GIVEN** 1 unidad y la propia reserva ocupándola
 - **WHEN** se cotiza el reagendo con `excludeReservationId`
 - **THEN** `available` es 1 y el reagendo es posible
+
+### Requirement: Toda alta nace por tipo, sin habitación (REQ-HAC-05, #260)
+
+**Lo que se vende es el tipo; la unidad se asigna después.** Todas las altas —widget individual
+(`bookingengine/usecases/public-booking.ts`), grupo web (`public-booking-group.ts`), ingesta OTA
+(`canales/usecases/booking-ingestion.ts`), panel (`reservas/usecases/crud.ts`), Recepción IA
+(`ai-recepcionista/usecases/llm-pipeline.ts`, tool `create_reservation`) y API pública v1
+(`POST /api/public/v1/reservations`)— MUST crear la fila con `roomType` (obligatorio) y `roomId: null`
+explícito; la habitación física la elige recepción con `assign-room.ts` (HAC-03). Un `roomId` que
+llegue al widget, a la IA o a la API pública sólo sirve para deducir el tipo (compat): la fila igual
+nace sin unidad. La única excepción es el panel con `roomId` explícito (crear ES asignar): valida el
+tipo Y la unidad (`assertNoRoomConflict`, 409 `room_overlap`) y persiste ambos. Sin `roomId` ni
+`roomType` el panel responde 409 `room_or_type_required` y la API pública 400.
+
+**Disponibilidad SOLO por tipo.** Cada canal decide con `availableOfType` (HAC-02); ninguno filtra
+solapes por unidad para vender. Widget y grupo toman el lock de fila sobre `Rooms {hotelId, type}` y
+REPITEN `availableOfType` dentro de la transacción (re-check con el lock tomado); el grupo lo hace
+para TODOS sus tipos en la misma tx (todo o nada) y dos líneas del mismo tipo suman. La IA responde
+`No hay disponibilidad de <tipo> para esas fechas` y `search_availability` cuenta por tipo; panel
+y API pública 409 `type_sold_out`; un tipo que el hotel no tiene → 409 `unknown_room_type`.
+
+**Capacidad, precio y amenidades por el perfil del tipo.** `roomTypeProfileOf(type, sellableRooms)`
+(`shared/usecases/type-availability.ts`): `capacity`/`maxAdults`/`maxChildren` = el MÁXIMO entre las
+unidades vendibles (la reserva entra si entra en alguna), `minBasePrice` = el MÍNIMO `basePrice` > 0
+(el "desde" que publica `/rates`). Es lo que reciben `assertReservationFitsCapacity` y el fallback
+de tarifa cuando no hay unidad; `quoteStay` cotiza por `roomType`. Amenidades (#290) y cuna (#292)
+se resuelven contra la UNIÓN de `RoomAmenities` de las unidades vendibles del tipo. El grupo reclama
+las unidades por capacidad entre las líneas del mismo tipo con smallest-fit: no vende más unidades
+"grandes" que las que físicamente existen para esa composición.
+
+**OTA.** `roomType` sale del mapeo Channex del hotel; sin mapeo se crea igual con el primer tipo del
+hotel y la nota `⚠ TIPO SIN MAPEAR (<room type de Channex>)` — nunca se descarta un booking.
+
+**Panel y salida.** `GET /api/reservas/type-availability?checkIn&checkOut[&excludeReservationId]`
+devuelve, por tipo del hotel, `{ roomType, rooms, booked, available, perNight, minBasePrice,
+capacity }` para el wizard. El push a Channex tras un alta sin unidad va por tipo
+(`pushAvailabilityByType` → `canales.pushAvailability(hotelId, roomType)`), también desde la IA.
+Toda respuesta de alta o lectura (panel, widget, IA, API pública) lleva `roomType`, con `roomId`
+nullable hasta la asignación; los mensajes de la IA nombran el tipo, nunca un número de habitación.
+
+#### Scenario: Widget N+1 del tipo
+- **GIVEN** un tipo con N unidades vendibles y N reservas bloqueantes del tipo (asignadas o no) que solapan la estadía
+- **WHEN** el widget pide una más de ese tipo
+- **THEN** 409 `No hay habitaciones de este tipo disponibles para esas fechas`; con N−1 reservas → 201 y la fila nace con `roomType` y `roomId: null`
+
+#### Scenario: Grupo de 3 del mismo tipo
+- **GIVEN** un tipo con 3 unidades vendibles y ninguna reserva
+- **WHEN** el grupo web pide `{roomType, quantity: 3}`
+- **THEN** 3 filas con el mismo `groupId`, `roomType` y `roomId: null`; con 4 → 409 y no queda ninguna fila (todo o nada)
+
+#### Scenario: Dos bookings OTA del mismo tipo y fechas
+- **GIVEN** un mapeo Channex → `double` y 2 bookings que solapan
+- **WHEN** la ingesta los procesa
+- **THEN** 2 filas `double` con `roomId: null` y sin nota de asignación; un booking con room type sin mapear se crea con el primer tipo del hotel y `⚠ TIPO SIN MAPEAR`
+
+#### Scenario: Panel, IA y API pública sin roomId
+- **GIVEN** un hotel con unidades `double` disponibles
+- **WHEN** `POST /api/reservas {roomType: 'double'}`, la tool `create_reservation {roomType: 'double'}` o `POST /api/public/v1/reservations {roomType: 'double'}`
+- **THEN** 201 (la IA: confirmación con el tipo) y la respuesta trae `roomType: 'double'` y `roomId: null`; sin `roomId` ni `roomType` → 409 `room_or_type_required` en el panel y 400 en la API pública; con el tipo agotado → 409 `type_sold_out` / error `No hay disponibilidad de double para esas fechas`
 
 ### Requirement: Extras pagados online entran al folio como cargos (MR-04, #269)
 
