@@ -4,7 +4,7 @@
 // vive en auto_messages; este archivo es el fallback. Versionado con git, testeable sin DB.
 // Las variables {key} se interpolan con renderTemplate() de email-service (6.1.2).
 
-export type NotificationEvent = 'reservation_confirmed' | 'reservation_presale' | 'checkin_welcome' | 'no_show' | 'checkout' | 'invoice' | 'reminder' | 'payment_link' | 'review_request'
+export type NotificationEvent = 'reservation_confirmed' | 'reservation_presale' | 'checkin_welcome' | 'no_show' | 'checkout' | 'invoice' | 'reminder' | 'payment_link' | 'review_request' | 'reservation_new_staff' | 'reservation_received_unpaid'
 export type NotificationLanguage = 'es' | 'en' | 'pt'
 
 export interface NotificationDefault {
@@ -634,6 +634,224 @@ const REVIEW_PT = `<div style="font-family:Arial,sans-serif;max-width:520px;marg
   <p style="font-size:12px;color:#6b7280;">Se o botão não funcionar, copie e cole este link:<br>{review_url}</p>
 </div>`
 
+// ─── reservation_new_staff ──────────────────────────────────────────────────
+// Aviso al STAFF del hotel por reserva web nueva / pago recibido (#267). Destinatario: el hotel, no el huésped.
+// Variables: title (ej. "Nueva reserva web — Ana"), hotel_name, guest_name, guest_email, guest_phone, checkin_date,
+// checkout_date, room (habitación o tipo), adults, children, children_ages, crib (Sí/No), regime, details,
+// total_amount, payment_status, panel_link, platform_name.
+// ⚠️ renderTemplate() escapa HTML en TODAS las variables string: `{details}` se pasa como TEXTO PLANO (sin <br>),
+// una línea por nota separada con "\n" (el <p> usa white-space:pre-line) o con " · ". Nunca HTML.
+// `{platform_name}` lo resuelve el envío desde platformIdentity (shared/utils/platform-identity.ts): NO hardcodear.
+
+const NEW_STAFF_ES = `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">{title}</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Entró una reserva desde el motor web. Estos son los datos:</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td colspan="2" style="padding:4px 0;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Huésped</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Nombre</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_name}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Email</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_email}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Teléfono</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_phone}</td></tr>
+        <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Estancia</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Habitación</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Adultos / Niños</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{adults} / {children}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Edades de los niños</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{children_ages}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Cuna</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{crib}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Régimen</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{regime}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Total</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Estado del pago</td><td style="padding:6px 0;text-align:right;"><strong style="font-size:16px;color:#1a2b4c;">{payment_status}</strong></td></tr>
+      </table>
+    </div>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Notas del huésped</p>
+      <p style="margin:0;font-size:13px;color:#4b5563;white-space:pre-line;">{details}</p>
+    </div>
+    <p style="text-align:center;margin:24px 0;"><a href="{panel_link}" style="background:#2563eb;color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:bold;display:inline-block;">Abrir la reserva en el panel</a></p>
+    <p style="font-size:12px;color:#6b7280;">Si el botón no funciona, copiá y pegá este enlace:<br>{panel_link}</p>
+    <p style="font-size:12px;color:#9ca3af;text-align:center;margin-top:24px;">Enviado por {platform_name}</p>
+  </div>
+</body>
+</html>`
+
+const NEW_STAFF_EN = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">{title}</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">A booking came in from the web booking engine. Here are the details:</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td colspan="2" style="padding:4px 0;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Guest</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Name</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_name}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Email</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_email}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Phone</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_phone}</td></tr>
+        <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Stay</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Room</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Adults / Children</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{adults} / {children}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Children ages</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{children_ages}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Crib</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{crib}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Meal plan</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{regime}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Total</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Payment status</td><td style="padding:6px 0;text-align:right;"><strong style="font-size:16px;color:#1a2b4c;">{payment_status}</strong></td></tr>
+      </table>
+    </div>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Guest notes</p>
+      <p style="margin:0;font-size:13px;color:#4b5563;white-space:pre-line;">{details}</p>
+    </div>
+    <p style="text-align:center;margin:24px 0;"><a href="{panel_link}" style="background:#2563eb;color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:bold;display:inline-block;">Open the booking in the panel</a></p>
+    <p style="font-size:12px;color:#6b7280;">If the button doesn't work, copy and paste this link:<br>{panel_link}</p>
+    <p style="font-size:12px;color:#9ca3af;text-align:center;margin-top:24px;">Sent by {platform_name}</p>
+  </div>
+</body>
+</html>`
+
+const NEW_STAFF_PT = `<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">{title}</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Entrou uma reserva pelo motor de reservas web. Estes são os dados:</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td colspan="2" style="padding:4px 0;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Hóspede</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Nome</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_name}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Email</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_email}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Telefone</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{guest_phone}</td></tr>
+        <tr><td colspan="2" style="padding:12px 0 4px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Estadia</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Quarto</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{room}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Adultos / Crianças</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{adults} / {children}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Idades das crianças</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{children_ages}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Berço</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{crib}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Regime</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{regime}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Total</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Estado do pagamento</td><td style="padding:6px 0;text-align:right;"><strong style="font-size:16px;color:#1a2b4c;">{payment_status}</strong></td></tr>
+      </table>
+    </div>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Notas do hóspede</p>
+      <p style="margin:0;font-size:13px;color:#4b5563;white-space:pre-line;">{details}</p>
+    </div>
+    <p style="text-align:center;margin:24px 0;"><a href="{panel_link}" style="background:#2563eb;color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:bold;display:inline-block;">Abrir a reserva no painel</a></p>
+    <p style="font-size:12px;color:#6b7280;">Se o botão não funcionar, copie e cole este link:<br>{panel_link}</p>
+    <p style="font-size:12px;color:#9ca3af;text-align:center;margin-top:24px;">Enviado por {platform_name}</p>
+  </div>
+</body>
+</html>`
+
+// ─── reservation_received_unpaid ────────────────────────────────────────────
+// Al HUÉSPED cuando el motor web no tiene pasarela de pago (#267): recibimos el pedido, el hotel lo contacta
+// para coordinar el pago. Variables: guest_name, hotel_name, hotel_phone, hotel_email, checkin_date, checkout_date,
+// checkin_time, checkout_time, total_amount, locator, platform_name (resuelto por platformIdentity, NO hardcodear).
+
+const RECEIVED_UNPAID_ES = `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Recibimos tu pedido de reserva</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Hola <strong>{guest_name}</strong>,</p>
+    <p>Recibimos tu pedido de reserva; el hotel te contactará para coordinar el pago. Estos son los datos:</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Total</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
+      </table>
+    </div>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;text-align:center;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Tu localizador</p>
+      <p style="margin:0;font-size:22px;font-weight:bold;color:#1a2b4c;letter-spacing:1px;">{locator}</p>
+    </div>
+    <p style="font-size:13px;color:#6b7280;">Guardá el localizador: te lo van a pedir para cualquier gestión sobre tu reserva.</p>
+    <p style="font-size:13px;color:#6b7280;">Si querés adelantarte, escribinos a <strong>{hotel_email}</strong> o llamá al <strong>{hotel_phone}</strong>.</p>
+    <p style="font-size:12px;color:#9ca3af;text-align:center;margin-top:24px;">Enviado por {platform_name}</p>
+  </div>
+</body>
+</html>`
+
+const RECEIVED_UNPAID_EN = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">We received your booking request</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Hi <strong>{guest_name}</strong>,</p>
+    <p>We received your booking request; the hotel will contact you to arrange the payment. Here are the details:</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Total</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
+      </table>
+    </div>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;text-align:center;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Your booking ref</p>
+      <p style="margin:0;font-size:22px;font-weight:bold;color:#1a2b4c;letter-spacing:1px;">{locator}</p>
+    </div>
+    <p style="font-size:13px;color:#6b7280;">Keep your booking ref: you'll be asked for it for anything related to your booking.</p>
+    <p style="font-size:13px;color:#6b7280;">If you'd like to get ahead, write to <strong>{hotel_email}</strong> or call <strong>{hotel_phone}</strong>.</p>
+    <p style="font-size:12px;color:#9ca3af;text-align:center;margin-top:24px;">Sent by {platform_name}</p>
+  </div>
+</body>
+</html>`
+
+const RECEIVED_UNPAID_PT = `<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
+    <h1 style="margin:0;font-size:24px;">🏨 {hotel_name}</h1>
+    <p style="margin:5px 0 0;opacity:0.8;">Recebemos o seu pedido de reserva</p>
+  </div>
+  <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
+    <p style="font-size:16px;">Olá <strong>{guest_name}</strong>,</p>
+    <p>Recebemos o seu pedido de reserva; o hotel entrará em contato para combinar o pagamento. Estes são os dados:</p>
+    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkin_date} · {checkin_time}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">{checkout_date} · {checkout_time}</td></tr>
+        <tr><td style="padding:6px 0;border-top:2px solid #e5e7eb;color:#1a2b4c;font-weight:bold;">Total</td><td style="padding:6px 0;border-top:2px solid #e5e7eb;font-weight:bold;text-align:right;font-size:18px;color:#1a2b4c;">{total_amount}</td></tr>
+      </table>
+    </div>
+    <div style="background:white;border-radius:8px;padding:14px;margin:16px 0;border:1px solid #e5e7eb;text-align:center;">
+      <p style="margin:0 0 6px;color:#1a2b4c;font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">O seu localizador</p>
+      <p style="margin:0;font-size:22px;font-weight:bold;color:#1a2b4c;letter-spacing:1px;">{locator}</p>
+    </div>
+    <p style="font-size:13px;color:#6b7280;">Guarde o localizador: vão pedi-lo para qualquer gestão da sua reserva.</p>
+    <p style="font-size:13px;color:#6b7280;">Se quiser adiantar-se, escreva para <strong>{hotel_email}</strong> ou ligue para <strong>{hotel_phone}</strong>.</p>
+    <p style="font-size:12px;color:#9ca3af;text-align:center;margin-top:24px;">Enviado por {platform_name}</p>
+  </div>
+</body>
+</html>`
+
 export const NOTIFICATION_DEFAULTS: Record<NotificationEvent, Partial<Record<NotificationLanguage, NotificationDefault>>> = {
   reservation_confirmed: {
     es: { subject: 'Confirmación de reserva — {hotel_name}', body: CONFIRMED_ES },
@@ -679,6 +897,16 @@ export const NOTIFICATION_DEFAULTS: Record<NotificationEvent, Partial<Record<Not
     es: { subject: '¿Cómo fue tu estadía en {hotel_name}?', body: REVIEW_ES },
     en: { subject: 'How was your stay at {hotel_name}?', body: REVIEW_EN },
     pt: { subject: 'Como foi a sua estadia em {hotel_name}?', body: REVIEW_PT },
+  },
+  reservation_new_staff: {
+    es: { subject: '[{platform_name}] {title}', body: NEW_STAFF_ES },
+    en: { subject: '[{platform_name}] {title}', body: NEW_STAFF_EN },
+    pt: { subject: '[{platform_name}] {title}', body: NEW_STAFF_PT },
+  },
+  reservation_received_unpaid: {
+    es: { subject: 'Recibimos tu pedido de reserva — {hotel_name}', body: RECEIVED_UNPAID_ES },
+    en: { subject: 'We received your booking request — {hotel_name}', body: RECEIVED_UNPAID_EN },
+    pt: { subject: 'Recebemos o seu pedido de reserva — {hotel_name}', body: RECEIVED_UNPAID_PT },
   },
 }
 

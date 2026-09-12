@@ -34,10 +34,34 @@ describe('notification-defaults (spec 11.1.6)', () => {
   })
 
   it('NOTIFICATION_DEFAULTS registra todos los eventos × 3 idiomas', () => {
-    expect(Object.keys(NOTIFICATION_DEFAULTS).sort()).toEqual(['checkin_welcome', 'checkout', 'invoice', 'no_show', 'payment_link', 'reminder', 'reservation_confirmed', 'reservation_presale', 'review_request'])
+    expect(Object.keys(NOTIFICATION_DEFAULTS).sort()).toEqual(['checkin_welcome', 'checkout', 'invoice', 'no_show', 'payment_link', 'reminder', 'reservation_confirmed', 'reservation_new_staff', 'reservation_presale', 'reservation_received_unpaid', 'review_request'])
     for (const event of Object.keys(NOTIFICATION_DEFAULTS)) {
       const langs = Object.keys((NOTIFICATION_DEFAULTS as any)[event])
       expect(langs.sort()).toEqual(['en', 'es', 'pt'])
     }
+  })
+
+  it('#267: reservation_new_staff y reservation_received_unpaid en es/en/pt con {platform_name} (nunca hardcodeado)', () => {
+    for (const lang of ['es', 'en', 'pt'] as const) {
+      const staff = getCodeDefault('reservation_new_staff', lang)
+      expect(staff.subject).toBe('[{platform_name}] {title}')
+      expect(staff.body).toContain('{platform_name}')
+      expect(staff.body).toContain('{payment_status}')
+      expect(staff.body).toContain('{panel_link}')
+      expect(staff.body).toContain('{details}')
+      expect(staff.body).not.toMatch(/solmios/i)
+
+      const unpaid = getCodeDefault('reservation_received_unpaid', lang)
+      expect(unpaid.subject.length).toBeGreaterThan(0)
+      expect(unpaid.subject).toContain('{hotel_name}')
+      expect(unpaid.body).toContain('{platform_name}')
+      expect(unpaid.body).toContain('{locator}')
+      expect(unpaid.body).toContain('{guest_name}')
+      expect(unpaid.body).not.toMatch(/solmios/i)
+    }
+    expect(getCodeDefault('reservation_new_staff', 'es').body).not.toBe(getCodeDefault('reservation_new_staff', 'pt').body)
+    expect(getCodeDefault('reservation_received_unpaid', 'es').body).toContain('el hotel te contactará para coordinar el pago')
+    expect(getCodeDefault('reservation_received_unpaid', 'en').body).toContain('the hotel will contact you')
+    expect(getCodeDefault('reservation_received_unpaid', 'pt').body).toContain('o hotel entrará em contato')
   })
 })
