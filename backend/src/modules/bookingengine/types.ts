@@ -384,14 +384,22 @@ export interface PublicMealPlan {
 
 /**
  * Ítem de `GET /api/public/hotels/:slug/rates` → `mealPlans[]` (MR-03, #268). Es `PublicMealPlan`
- * + el precio YA resuelto para la búsqueda (`guests × nights`), siempre en `hotels.currency`
- * (`chargeCurrency`), sin conversión de display. Lo construye
+ * + el precio YA resuelto para la búsqueda (`(guests + children) × nights`), siempre en
+ * `hotels.currency` (`chargeCurrency`), sin conversión de display. Lo construye
  * `usecases/public-meal-plan-lines.ts:buildPublicMealPlans`.
+ *
+ * `persons`/`nights` son el eco explícito de para qué ocupación/estadía se calculó. El widget
+ * recalcula por composición con la misma fórmula (`price × persons × nights`) y `POST /booking`
+ * la vuelve a aplicar server-side con `effectiveAdults + payingChildren`.
  */
 export interface PublicRateMealPlan extends PublicMealPlan {
-  /** `price × guests` (0 si `included`). */
+  /** Personas que pagan régimen para las que se calculó: `guests + children` (con plaza). */
+  persons: number
+  /** Noches de la estadía para las que se calculó. */
+  nights: number
+  /** `price × persons` (0 si `included`). */
   perNight: number
-  /** `price × guests × nights` (0 si `included`). */
+  /** `price × persons × nights` (0 si `included`). */
   totalForStay: number
 }
 

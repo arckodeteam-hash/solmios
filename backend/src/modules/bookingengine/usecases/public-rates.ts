@@ -132,6 +132,11 @@ export interface PublicRatesQuery {
   rooms?: number
   /** Huéspedes (adults). Default 2 (mismo default que availability.check). */
   guests?: number
+  /** MR-03 #268 — Niños CON plaza (según `child_policy`) que el widget ya resolvió. Default 0.
+   *  NO afecta disponibilidad/ocupación (siguen por `guests`): solo alimenta `persons` del
+   *  régimen (`persons = guests + children`), que es lo que `POST /booking` cobra con
+   *  `effectiveAdults + payingChildren`. */
+  children?: number
   /** Moneda en la que el cliente quiere ver los precios. Default = hotels.currency. */
   currency?: string
 }
@@ -185,6 +190,11 @@ export async function getPublicRates(
     (new Date(query.checkOut).getTime() - new Date(query.checkIn).getTime()) / MS_PER_DAY,
   ))
   const adults = typeof query.guests === 'number' && query.guests > 0 ? query.guests : 2
+  // MR-03 #268 — niños con plaza: solo para el régimen. Entero ≥ 0, default 0.
+  const payingChildren = typeof query.children === 'number' && Number.isFinite(query.children) && query.children > 0
+    ? Math.floor(query.children)
+    : 0
+  const mealPlanPersons = adults + payingChildren
 
   // FIX — minNights/maxNights configurados por el admin, antes decorativos. 400 claro (no
   // 404: el hotel SÍ existe y está activo, solo el rango de fechas no cumple la política).
@@ -326,11 +336,12 @@ export async function getPublicRates(
         ? await buildCancellationSummary(deps.policies, hotel.id, hotel.cancellationType)
         : null,
       // MR-03 #268 — Regímenes activos con `perNight`/`totalForStay` ya resueltos para
-      // `guests × nights`. SIN convertir a displayCurrency: igual que upsells (D10 en
-      // RoomsStep.vue), el régimen viaja siempre en `chargeCurrency` (hotels.currency), que es
-      // exactamente lo que `POST /booking` va a cobrar releyendo el catálogo.
+      // `(guests + children) × nights` — cada ítem ecoa `persons`/`nights` para que el widget
+      // sepa para qué ocupación se calculó. SIN convertir a displayCurrency: igual que upsells
+      // (D10 en RoomsStep.vue), el régimen viaja siempre en `chargeCurrency` (hotels.currency),
+      // que es exactamente lo que `POST /booking` va a cobrar releyendo el catálogo.
       mealPlans: deps.mealPlans
-        ? buildPublicMealPlans(await deps.mealPlans.findMany({ hotelId: hotel.id }), hotel.id, adults, nights)
+        ? buildPublicMealPlans(await deps.mealPlans.findMany({ hotelId: hotel.id }), hotel.id, mealPlanPersons, nights)
         : [],
     },
   }

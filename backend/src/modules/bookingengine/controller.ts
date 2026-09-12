@@ -485,7 +485,11 @@ export class BookingengineController {
     if (!this.hotelsRepo || !this.configRepo) {
       return { status: 500, body: { error: 'rates deps no cableados' } }
     }
-    const query = (req.query || {}) as { checkIn?: string; checkOut?: string; rooms?: string; guests?: string; currency?: string }
+    const query = (req.query || {}) as { checkIn?: string; checkOut?: string; rooms?: string; guests?: string; children?: string; currency?: string }
+    // MR-03 #268 — `children` = niños CON plaza para cotizar el régimen (entero ≥ 0, default 0).
+    // No toca disponibilidad/ocupación: eso sigue por `guests`.
+    const childrenRaw = query.children ? Number(query.children) : 0
+    const children = Number.isFinite(childrenRaw) && childrenRaw > 0 ? Math.floor(childrenRaw) : 0
     return getPublicRates(
       {
         hotels: this.hotelsRepo, availability: this.service, config: this.configRepo,
@@ -506,6 +510,7 @@ export class BookingengineController {
         checkOut: String(query.checkOut || ''),
         rooms: query.rooms ? Number(query.rooms) : undefined,
         guests: query.guests ? Number(query.guests) : undefined,
+        children,
         currency: query.currency,
       },
     )

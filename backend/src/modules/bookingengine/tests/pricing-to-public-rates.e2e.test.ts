@@ -30,6 +30,7 @@ import { silentLogger } from 'arckode-framework/testing'
 import { PricingService } from '../../pricing/service'
 import { PricingQueries } from '../../pricing/usecases/pricing-queries'
 import { getPublicRates } from '../usecases/public-rates'
+import { createPublicBookingDirect } from '../usecases/public-booking'
 import { AvailabilityUseCase } from '../usecases/availability'
 
 const log = silentLogger()
@@ -62,6 +63,13 @@ function makeDb() {
     delete: async (table: string, id: string) => {
       tables[table] = t(table).filter((r) => r.id !== id)
     },
+    updateMany: async (table: string, filter: any, patch: any) => {
+      const rows = t(table).filter((r) => matches(r, filter))
+      for (const r of rows) Object.assign(r, patch)
+      return rows.length
+    },
+    // `createPublicBookingDirect` escribe dentro de `orm.transaction` — misma tabla, sin aislamiento.
+    transaction: async (cb: (tx: any) => Promise<any>) => cb(orm),
   }
   return { orm, tables }
 }
@@ -152,7 +160,8 @@ describe('E2E — pricing genera/guarda → el motor público cobra exactamente 
 // ─── MR-03 #268 — régimen (meal plan) en GET /rates ─────────────────────────────────────────
 // Mismo ORM en memoria compartido: lo que el hotelero guarda en `MealPlans` (PUT /meal-plans)
 // es lo que el motor público cotiza en `mealPlans[]`, con el total ya resuelto para
-// `guests × nights`. El widget no recalcula nada: muestra `totalForStay` tal cual.
+// `(guests + children) × nights`, y lo que `POST /booking` termina cobrando para la MISMA
+// composición (`effectiveAdults + payingChildren`) sobre el MISMO catálogo.
 describe('E2E — meal plans del hotel → GET /rates devuelve mealPlans[] con totalForStay', () => {
   const HOTEL_ID = 'h-mp'
   const SLUG = 'meal-plans-test'
@@ -161,7 +170,12 @@ describe('E2E — meal plans del hotel → GET /rates devuelve mealPlans[] con t
     const { orm, tables } = makeDb()
     tables.Hotels = [{ id: HOTEL_ID, slug: SLUG, onlineBookingStatus: 'active', currency: 'USD', taxRate: 0 }]
     tables.Rooms = [
-      { id: 'r1', hotelId: HOTEL_ID, type: 'standard', capacity: 2, basePrice: 100, status: 'available' },
+      { id: 'r1', hotelId: HOTEL_ID, type: 'standard', capacity: 3, basePrice: 100, status: 'available' },
+    ]
+    // child_policy: maxBabyAge default 0 → edad 0 = bebé, 1..3 = libre (sin plaza), 4..12 = niño
+    // CON plaza (paga régimen). Misma política que `public-booking-meal-plans.test.ts`.
+    tables.Configuration = [
+      { id: 'cfg-cp', hotelId: HOTEL_ID, key: 'child_policy', value: { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3 } },
     ]
     tables.MealPlans = [
       { id: 'mp-b', hotelId: HOTEL_ID, code: 'breakfast', active: true, priceMode: 'per_person_per_night', price: 10 },
@@ -195,7 +209,7 @@ describe('E2E — meal plans del hotel → GET /rates devuelve mealPlans[] con t
     expect(res.body.mealPlans.map((m: any) => m.code)).toEqual(['breakfast', 'half_board'])
 
     const breakfast = res.body.mealPlans[0]
-    expect(breakfast).toMatchObject({ code: 'breakfast', priceMode: 'per_person_per_night', price: 10 })
+    expect(breakfast).toMatchObject({ code: 'breakfast', priceMode: 'per_person_per_night', price: 10, persons: 2, nights: 3 })
     expect(breakfast.perNight).toBe(20)        // 10 × 2 huéspedes
     expect(breakfast.totalForStay).toBe(60)    // 10 × 2 × 3 noches
 
@@ -212,5 +226,63 @@ describe('E2E — meal plans del hotel → GET /rates devuelve mealPlans[] con t
 
     expect(res.status).toBe(200)
     expect(res.body.mealPlans).toEqual([])
+  })
+
+  // ─── Coherencia GET /rates ↔ POST /booking (hallazgo de revisión #268) ──────────────────
+  // `/rates` cotiza el régimen para `guests + children` (niños con plaza) y ecoa `persons`;
+  // `POST /booking` cobra `effectiveAdults + payingChildren` releyendo el MISMO catálogo. Para la
+  // misma composición los dos lados tienen que dar el mismo número — si no, el widget muestra un
+  // total y el huésped paga otro.
+  const BOOKING_BODY = {
+    hotelId: HOTEL_ID,
+    guestName: 'Ana Pérez',
+    guestEmail: 'ana@example.com',
+    guestPhone: '+18095550000',
+    checkIn: query.checkIn,
+    checkOut: query.checkOut,
+    roomType: 'standard',
+    mealPlan: 'breakfast',
+  }
+  const NO_STRIPE = [undefined, undefined, undefined, undefined, undefined] as const
+
+  it('2 adultos + 1 niño CON plaza: /rates (guests=2&children=1) totalForStay 90 === POST mealPlanTotal 90', async () => {
+    const { orm, baseDeps } = seed()
+    const mealPlans = repoOf(orm, 'MealPlans')
+
+    const rates = await getPublicRates({ ...baseDeps, mealPlans }, SLUG, { ...query, guests: 2, children: 1 })
+    expect(rates.status).toBe(200)
+    const breakfast = rates.body.mealPlans[0]
+    expect(breakfast).toMatchObject({ code: 'breakfast', persons: 3, nights: 3, perNight: 30, totalForStay: 90 })
+
+    // Edad 8 → niño con plaza según la child_policy sembrada; paga régimen.
+    const booking = await createPublicBookingDirect(
+      orm,
+      { ...BOOKING_BODY, adults: 2, childrenAges: [8] },
+      ...NO_STRIPE,
+      { config: repoOf(orm, 'Configuration'), mealPlans },
+    )
+    expect(booking.status).toBe(201)
+    expect(booking.body.totalBreakdown.mealPlanTotal).toBe(90)
+    expect(booking.body.totalBreakdown.mealPlanTotal).toBe(breakfast.totalForStay)
+  })
+
+  it('2 adultos sin niños: /rates (guests=2) totalForStay 60 === POST mealPlanTotal 60', async () => {
+    const { orm, baseDeps } = seed()
+    const mealPlans = repoOf(orm, 'MealPlans')
+
+    const rates = await getPublicRates({ ...baseDeps, mealPlans }, SLUG, { ...query, guests: 2 })
+    expect(rates.status).toBe(200)
+    const breakfast = rates.body.mealPlans[0]
+    expect(breakfast).toMatchObject({ code: 'breakfast', persons: 2, nights: 3, totalForStay: 60 })
+
+    const booking = await createPublicBookingDirect(
+      orm,
+      { ...BOOKING_BODY, adults: 2 },
+      ...NO_STRIPE,
+      { config: repoOf(orm, 'Configuration'), mealPlans },
+    )
+    expect(booking.status).toBe(201)
+    expect(booking.body.totalBreakdown.mealPlanTotal).toBe(60)
+    expect(booking.body.totalBreakdown.mealPlanTotal).toBe(breakfast.totalForStay)
   })
 })

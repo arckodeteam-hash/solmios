@@ -90,6 +90,10 @@ export function resolveMealPlanLine(
  * Catálogo público para `GET /rates`: regímenes ACTIVOS del hotel, en `MEAL_PLAN_CODE_ORDER`,
  * con `perNight`/`totalForStay` ya resueltos para `persons × nights`. "Solo alojamiento" no va:
  * el widget lo antepone (igual que hace `/meal-plans`).
+ *
+ * Cada ítem ecoa `persons`/`nights` (para qué ocupación/estadía se calculó). El widget recalcula
+ * por composición con la MISMA fórmula (`price × persons × nights`) cuando el huésped cambia
+ * adultos/niños, y `POST /booking` la vuelve a aplicar server-side (`resolveMealPlanLine`).
  */
 export function buildPublicMealPlans(
   catalog: any[],
@@ -107,6 +111,8 @@ export function buildPublicMealPlans(
         code: m.code as MealPlanCode,
         priceMode,
         price,
+        persons: Math.max(0, persons),
+        nights: Math.max(0, nights),
         perNight: priceMode === 'per_person_per_night' ? round2(price * Math.max(0, persons)) : 0,
         totalForStay: mealPlanTotal(priceMode, price, persons, nights),
       }
