@@ -64,6 +64,8 @@ export const ROUTE_TO_KEY: Record<string, string> = {
   '/panel/tesoreria': 'treasury',
   // Restaurante / POS (entitlement de plan: clave top-level restaurant).
   '/panel/restaurante': 'restaurant',
+  // Pantalla de la cocina (KDS en kiosco, sin layout del panel): mismo módulo que el POS.
+  '/panel/kds': 'restaurant',
   // Inventario + Compras (entitlement de plan: claves top-level inventory / purchasing).
   '/panel/inventario': 'inventory',
   '/panel/compras': 'purchasing',
@@ -170,6 +172,7 @@ export const ROUTE_TO_PERMISSION: Record<string, string> = {
   // #213: el cierre del día es un reporte (reports:view), no una pantalla operativa del POS.
   '/panel/restaurante/reportes': 'reports',
   '/panel/restaurante': 'restaurant',
+  '/panel/kds': 'restaurant',
   '/panel/inventario': 'inventory',
   '/panel/compras': 'purchasing',
 }

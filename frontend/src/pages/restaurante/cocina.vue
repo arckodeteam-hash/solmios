@@ -11,7 +11,7 @@
 // 15 s. Cronómetro desde el envío a cocina (`sentAt`, #210), ámbar a N min y rojo a 2N (N por estación).
 // Suena al entrar un ticket de la estación que se mira (toggle en localStorage).
 // #207: "Anular" abre un modal de motivo (VoidReasonModal); cerrar no cambia nada.
-// Modo KIOSCO (`/kds`, meta.kiosk): misma pantalla sin sidebar ni cabecera del panel, fondo oscuro y
+// Modo KIOSCO (`/panel/kds`, meta.kiosk): misma pantalla sin sidebar ni cabecera del panel, fondo oscuro y
 // letra grande, para la pantalla/tablet que vive en la cocina.
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
@@ -415,7 +415,7 @@ onUnmounted(() => {
           {{ refreshing ? 'Actualizando…' : 'Actualizar' }}
         </button>
         <!-- Pantalla de la cocina: sin sidebar ni cabecera del panel. Desde el kiosco se vuelve al panel. -->
-        <router-link v-if="!kiosk" to="/kds" data-testid="kds-kiosk-link" class="min-h-11 inline-flex items-center px-3 py-1.5 rounded-lg bg-navy text-white text-xs font-bold hover:opacity-90" title="Abrir el tablero a pantalla completa, para la pantalla de la cocina">⛶ Pantalla de cocina</router-link>
+        <router-link v-if="!kiosk" to="/panel/kds" data-testid="kds-kiosk-link" class="min-h-11 inline-flex items-center px-3 py-1.5 rounded-lg bg-navy text-white text-xs font-bold hover:opacity-90" title="Abrir el tablero a pantalla completa, para la pantalla de la cocina">⛶ Pantalla de cocina</router-link>
         <router-link v-else to="/panel/restaurante/cocina" class="min-h-11 inline-flex items-center px-3 py-1.5 rounded-lg border-2 border-white/30 text-white text-xs font-bold hover:bg-white/10">← Volver al panel</router-link>
       </div>
     </header>

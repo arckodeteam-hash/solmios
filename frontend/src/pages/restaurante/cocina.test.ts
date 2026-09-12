@@ -194,9 +194,9 @@ describe('cocina.vue — tablero kanban con receta', () => {
     expect(tpl()).toMatch(/<form v-if="editPerm"/)
   })
 
-  it('modo kiosco: la ruta /kds monta el mismo componente sin layout y con el mismo permiso', () => {
+  it('modo kiosco: la ruta /panel/kds monta el mismo componente sin layout y con el mismo permiso', () => {
     expect(script()).toMatch(/const kiosk = computed\(\(\) => route\.meta\.kiosk === true\)/)
-    expect(tpl()).toMatch(/<router-link v-if="!kiosk" to="\/kds"/)
+    expect(tpl()).toMatch(/<router-link v-if="!kiosk" to="\/panel\/kds"/)
     expect(tpl()).toMatch(/<router-link v-else to="\/panel\/restaurante\/cocina"/)
   })
 })
