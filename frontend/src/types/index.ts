@@ -719,6 +719,9 @@ export interface ReservationDetail {
   refundStatus?: RefundStatus
   refundedAt?: string | null
   refundPaymentId?: string | null
+  /** ISO. #272 — un `refundStatus: 'pending'` escrito hace más de 10 min se puede reintentar
+   *  (`utils/refund-state.ts`, mismo umbral que el backend, que lo mide sobre este campo). */
+  updatedAt?: string
   /** Horario acordado con este huésped ('HH:MM'). Vacío = manda el horario del hotel.
    *  Define la ventana del código de la cerradura (ver `utils/hotel-schedule.ts`). */
   checkInTime?: string | null

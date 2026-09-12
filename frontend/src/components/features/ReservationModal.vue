@@ -21,6 +21,7 @@ import { RoomService } from '@/services/Room.service'
 import { TTLockService, type LockDevice } from '@/services/TTLock.service'
 import { effectiveCheckInTime, effectiveCheckOutTime, hasCustomSchedule, hotelCheckInTime, hotelCheckOutTime } from '@/utils/hotel-schedule'
 import { paymentStateBadge } from '@/utils/payment-state'
+import { isRefundRetryable } from '@/utils/refund-state'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
@@ -47,6 +48,8 @@ const { can } = usePermissions()
 const MS_PER_DAY = 86_400_000
 
 const detail = ref<ReservationDetail | null>(null)
+/** #272 — instante de la última lectura del detalle; contra él se mide si un `pending` ya es viejo. */
+const refundCheckedAt = ref(Date.now())
 const loading = ref(true)
 const saving = ref(false)
 const showCancel = ref(false)
@@ -318,6 +321,7 @@ async function load(opts?: { silent?: boolean }) {
   try {
     const d = await ReservationService.getById(props.reservationId)
     detail.value = d
+    refundCheckedAt.value = Date.now() // #272 — el umbral del reintento se mide contra el detalle recién leído
     autoSend.value = d?.autoSendEnabled ?? true
     conditions.value = { gdpr: !!d?.gdprAccepted, marketing: !!d?.marketingAccepted, terms: !!d?.termsAccepted }
     // COR-7 — En un refresco SILENCIOSO el operador puede estar tipeando en "Otros cobros":
@@ -687,11 +691,14 @@ function waLink(phone?: string | null, body?: string | null): string | null {
 // motivo y libera el depósito retenido. Con `update({status:'cancelled'})` nada de eso pasaba —
 // y el backend ahora lo rechaza con 409, así que este camino tampoco existe ya del lado servidor.
 // #272 (MR-07) — el reembolso web se dispara al cancelar; si Stripe falló queda `failed` y el
-// hotel lo reintenta desde acá. 'done'/'pending'/'none' no ofrecen el botón: no hay nada que
-// reintentar (o ya está en curso).
-const canRetryRefund = computed(() =>
-  d.value?.status === 'cancelled' && d.value?.refundStatus === 'failed' && can('reservations', 'edit'),
-)
+// hotel lo reintenta desde acá. 'done'/'none' no ofrecen el botón: no hay nada que reintentar.
+// Un `pending` FRESCO (< 10 min) está en curso y tampoco; uno VIEJO quedó huérfano y el backend
+// acepta reintentarlo (`utils/refund-state.ts`, espejo del umbral del servidor). `refundCheckedAt`
+// se fija al cargar el detalle: el computed no puede depender de `Date.now()` a secas.
+const canRetryRefund = computed(() => isRefundRetryable(d.value, refundCheckedAt.value) && can('reservations', 'edit'))
+const retryRefundTitle = computed(() => d.value?.refundStatus === 'pending'
+  ? 'El reembolso quedó en proceso hace más de 10 minutos sin resolverse: vuelve a intentarlo con el mismo monto'
+  : 'El reembolso en la pasarela falló: vuelve a intentarlo con el mismo monto')
 function refundStateBadge(status?: string | null): { label: string; cls: string } | null {
   const m: Record<string, { label: string; cls: string }> = {
     done: { label: 'Reembolsado', cls: 'bg-teal/10 text-teal' },
@@ -1180,9 +1187,10 @@ function facturar() {
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           Anular
         </button>
-        <!-- #272 (MR-07) — el reembolso web quedó `failed` en Stripe: se reintenta desde acá
-             (POST /reservas/:id/retry-refund). Con 'done' o 'pending' el botón no existe. -->
-        <button v-if="canRetryRefund" data-testid="retry-refund" @click="retryRefund" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-amber-500 text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50" title="El reembolso en la pasarela falló: vuelve a intentarlo con el mismo monto">
+        <!-- #272 (MR-07) — el reembolso web quedó `failed` en Stripe (o `pending` huérfano hace más
+             de 10 min): se reintenta desde acá (POST /reservas/:id/retry-refund). Con 'done' o un
+             'pending' fresco el botón no existe. -->
+        <button v-if="canRetryRefund" data-testid="retry-refund" @click="retryRefund" :disabled="saving" class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-amber-500 text-white rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 disabled:opacity-50" :title="retryRefundTitle">
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>
           {{ saving ? 'Reintentando…' : 'Reintentar reembolso' }}
         </button>

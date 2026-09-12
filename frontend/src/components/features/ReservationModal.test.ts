@@ -603,10 +603,28 @@ describe('ReservationModal', () => {
       expect(retryButton()).toBeNull()
     })
 
-    it('reembolso en proceso ("pending"): badge "Reembolso en proceso" y sin botón', async () => {
-      await open(cancelledFixture({ refundStatus: 'pending' }))
+    it('reembolso en proceso ("pending" FRESCO, < 10 min): badge "Reembolso en proceso" y sin botón', async () => {
+      await open(cancelledFixture({ refundStatus: 'pending', updatedAt: new Date(Date.now() - 60_000).toISOString() }))
       expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolso en proceso')
       expect(retryButton()).toBeNull()
+    })
+
+    // El backend acepta reintentar un `pending` VIEJO (`retry-refund.ts` → `isRefundInFlight`, 10 min):
+    // el proceso murió después de reclamar y nadie lo va a terminar. El botón tiene que aparecer.
+    it('"pending" VIEJO (updatedAt hace 15 min): ofrece "Reintentar reembolso" y al clic llama al servicio', async () => {
+      vi.mocked(ReservationService.retryRefund).mockResolvedValue({ reservationId: 'res-1', refundStatus: 'done', refundPaymentId: 'pay-9', refundedAt: '2026-09-12T10:00:00Z' })
+      await open(cancelledFixture({ refundStatus: 'pending', updatedAt: new Date(Date.now() - 15 * 60_000).toISOString() }))
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolso en proceso')
+      expect(retryButton()).not.toBeNull()
+      expect(retryButton()!.title).toContain('más de 10 minutos')
+      await retryButton()!.click()
+      await flushPromises()
+      expect(vi.mocked(ReservationService.retryRefund)).toHaveBeenCalledWith('res-1')
+    })
+
+    it('"pending" sin updatedAt válido: cuenta como viejo (igual que el backend) y ofrece el reintento', async () => {
+      await open(cancelledFixture({ refundStatus: 'pending', updatedAt: undefined }))
+      expect(retryButton()).not.toBeNull()
     })
 
     it('sin reembolso que procesar ("none") o reserva activa: ni badge ni botón', async () => {
