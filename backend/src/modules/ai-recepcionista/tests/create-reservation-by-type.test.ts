@@ -106,6 +106,18 @@ describe('create_reservation (Recepción IA) — por tipo sin unidad (REQ-HAC-05
     expect(created).toHaveLength(0)
   })
 
+  it('roomId de OTRO hotel (o sin hotelId) → error, no crea', async () => {
+    const { r, created } = repos({ rooms: [
+      { id: 'ajena', hotelId: 'hotel-b', type: 'double', capacity: 2, basePrice: 100 },
+      { id: 'huerfana', type: 'double', capacity: 2, basePrice: 100 },
+    ] })
+    for (const roomId of ['ajena', 'huerfana']) {
+      const result: any = await executeTool('create_reservation', { roomId, ...STAY }, HOTEL, r)
+      expect(result.error).toBeDefined()
+    }
+    expect(created).toHaveLength(0)
+  })
+
   it('tipo que el hotel no tiene → error, no crea', async () => {
     const { r, created } = repos()
     const result: any = await executeTool('create_reservation', { roomType: 'penthouse', ...STAY }, HOTEL, r)

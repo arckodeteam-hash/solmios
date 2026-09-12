@@ -944,10 +944,11 @@ REQ-HAC-05) y nunca dropea un booking OTA.
 (`ai-recepcionista/usecases/llm-pipeline.ts`, tool `create_reservation`) y API pública v1
 (`POST /api/public/v1/reservations`)— MUST crear la fila con `roomType` (obligatorio) y `roomId: null`
 explícito; la habitación física la elige recepción con `assign-room.ts` (HAC-03). Un `roomId` que
-llegue al widget, a la IA o a la API pública sólo sirve para deducir el tipo (compat): la fila igual
-nace sin unidad. La única excepción es el panel con `roomId` explícito (crear ES asignar): valida el
-tipo Y la unidad (`assertNoRoomConflict`, 409 `room_overlap`) y persiste ambos. Sin `roomId` ni
-`roomType` el panel responde 409 `room_or_type_required` y la API pública 400.
+llegue al widget o a la IA sólo sirve para deducir el tipo (compat): la fila igual nace sin unidad.
+Las excepciones son el panel y la API pública con `roomId` explícito (ambas pasan por
+`createReservation`: crear con unidad ES asignar): validan el tipo Y la unidad
+(`assertNoRoomConflict`, 409 `room_overlap`) y persisten ambos. Sin `roomId` ni `roomType` el panel
+responde 409 `room_or_type_required` y la API pública 400.
 
 **Disponibilidad SOLO por tipo.** Cada canal decide con `availableOfType` (HAC-02); ninguno filtra
 solapes por unidad para vender. Widget y grupo toman el lock de fila sobre `Rooms {hotelId, type}` y

@@ -362,7 +362,9 @@ export async function executeTool(name: string, args: Record<string, unknown>, h
 
       if (requestedRoomId) {
         const room = await repos.roomRepo.findById(requestedRoomId)
-        if (!room || (room.hotelId && room.hotelId !== hotelId)) return { error: 'No encontré esa habitación' }
+        // Tenant: la unidad tiene que ser de ESTE hotel (comparación estricta, como crud.ts — sin
+        // cortocircuito por `hotelId` vacío).
+        if (!room || room.hotelId !== hotelId) return { error: 'No encontré esa habitación' }
         roomType = room.type ? String(room.type) : roomType
       }
 
