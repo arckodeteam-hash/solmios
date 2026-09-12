@@ -230,11 +230,22 @@ export class StripeGateway implements RefundableGateway {
   }
 
   async refund(providerRef: string, amountMinor?: number): Promise<RefundResult> {
+    // #272: el asiento del cobro del widget (shared/usecases/post-booking-payment) guarda el id de la
+    // Checkout Session (`cs_…`), no el PaymentIntent. Stripe sólo reembolsa por PI, así que se resuelve
+    // desde la sesión. Un `pi_…` directo (cobros de folio/factura) sigue el camino de siempre.
+    const paymentIntent = providerRef.startsWith('cs_') ? await this.paymentIntentOfSession(providerRef) : providerRef
     const r = await this.stripe.refunds.create({
-      payment_intent: providerRef,
+      payment_intent: paymentIntent,
       ...(amountMinor ? { amount: amountMinor } : {}),
     })
     return { refundId: r.id, status: r.status || 'unknown' }
+  }
+
+  private async paymentIntentOfSession(sessionId: string): Promise<string> {
+    const s = await this.stripe.checkout.sessions.retrieve(sessionId)
+    const pi = typeof s.payment_intent === 'string' ? s.payment_intent : s.payment_intent?.id
+    if (!pi) throw new Error(`Stripe: la sesión de Checkout ${sessionId} no tiene payment_intent (¿se pagó?)`)
+    return pi
   }
 
   async voidCharge(providerRef: string): Promise<void> {

@@ -93,7 +93,7 @@ export class PaymentsService {
   private refundDeps(): refunds.RefundFlowDeps {
     return { crud: this.crud, stripe: this.stripe, createPayment: (d) => this.createPayment(d), audit: (e) => this.audit(e), onRefundProcessed: async (p) => { await this.sockets.onRefundProcessed?.(p) } }
   }
-  refundPayment(paymentId: string, amount?: number, user?: Actor): Promise<PaymentDTO> { return refunds.refundStripe(this.refundDeps(), paymentId, amount, user) }
+  refundPayment(paymentId: string, amount?: number, user?: Actor, reason?: string): Promise<PaymentDTO> { return refunds.refundStripe(this.refundDeps(), paymentId, amount, user, reason) }
   /** #214 (COR-5): devolución de un cobro efectivo/transferencia — asiento `refund` sin pasarela. */
   refundDirectPayment(paymentId: string, user?: Actor): Promise<PaymentDTO> { return refunds.refundDirect(this.refundDeps(), paymentId, user) }
   /** Devolución por caja de un monto SIN cobro de origen (excedente de una reserva reprogramada). */
