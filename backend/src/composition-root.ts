@@ -27,6 +27,7 @@ import { createTrialReminderCron } from './shared/usecases/trial-reminder-cron'
 import { createActivationSequenceCron } from './shared/usecases/activation-sequence-cron'
 import { createWhatsappUsageCron } from './shared/usecases/whatsapp-usage-cron'
 import { createPrearrivalPassCron } from './shared/usecases/prearrival-pass-cron'
+import { createArrivalSetupCron, ARRIVAL_SETUP_TICK_MS } from './shared/usecases/arrival-setup-cron'
 import { createSubscriptionSuspensionCron } from './shared/usecases/subscription-suspension-cron'
 import { createReferralCreditsCron } from './shared/usecases/referral-credits-cron'
 import { createCurrencyRatesCron, CURRENCY_RATES_TICK_MS } from './shared/usecases/currency-rates-cron'
@@ -1032,6 +1033,19 @@ setInterval(() => {
   prearrivalPassCron().catch((e) => logger.warn('prearrival-pass cron failed', { error: (e as Error).message }))
 }, PREARRIVAL_TICK_MS)
 logger.info('Prearrival-pass cron listo', { tickMs: PREARRIVAL_TICK_MS })
+
+// Tarea `arrival_setup` de housekeeping (#274): el connector reservas-housekeeping la mantiene
+// por socket, pero el motor público y la confirmación por Stripe escriben `Reservations` directo
+// sin pasar por el CRUD. El cron cubre ese hueco: toda llegada confirmed en ventana tiene su
+// tarea. syncArrivalSetup es idempotente, así que re-correrlo no duplica.
+const arrivalSetupCron = createArrivalSetupCron(orm, (name) => system.resolveModule(name), logger)
+setTimeout(() => {
+  arrivalSetupCron().catch((e) => logger.warn('arrival-setup initial run failed', { error: (e as Error).message }))
+}, 15_000)
+setInterval(() => {
+  arrivalSetupCron().catch((e) => logger.warn('arrival-setup cron failed', { error: (e as Error).message }))
+}, ARRIVAL_SETUP_TICK_MS)
+logger.info('Arrival-setup cron listo', { tickMs: ARRIVAL_SETUP_TICK_MS })
 
 // Recordatorio de las citas de conexión de canales (REQ-CAN-07). Tick HORARIO con gate de reloj:
 // el aviso sale una vez por día a las 8 del servidor, pero si el proceso reinició a las 8:05 el
