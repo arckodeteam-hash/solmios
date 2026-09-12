@@ -23,6 +23,8 @@
 //      alguna → 201 sin unidad; sin `capacity` en la fila no bloquea. Revisión #260 (f5-f9): el
 //      perfil se calcula sólo sobre las unidades físicamente LIBRES en las fechas — una unidad
 //      con reserva asignada que solapa o bloqueada no vende su capacidad; una sin asignar no pinea.
+//      (f10) pool libre vacío con `available ≥ 1` (unidades distintas tomadas en noches distintas)
+//      → 409 por tipo con `available: 0`, no un "admite hasta 0".
 //  (g) precio: fallback = MÍNIMO `basePrice` entre las unidades vendibles del tipo.
 //  (h) carrera: el re-chequeo por tipo dentro de la tx rebota con 409 si el tipo se agotó.
 import { describe, it, expect } from 'bun:test'
@@ -306,6 +308,24 @@ describe('createPublicBookingDirect — alta por TIPO sin unidad (REQ-HAC-05 #26
     const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'familiar', adults: 5, children: 0 })
     expect(res.status).toBe(409)
     expect(res.body.error).toContain('admite hasta 2')
+    expect(created.find((c) => c.model === 'Reservations')).toBeUndefined()
+  })
+
+  it('(f10) available ≥ 1 noche a noche pero NINGUNA unidad libre TODA la ventana → 409 available 0 con mensaje por tipo (no "hasta 0")', async () => {
+    // 2 dobles cap 2. r1 tomada SÓLO la noche 1 (reserva asignada 10→11), r2 bloqueada SÓLO la
+    // noche 2 (11). Cada noche queda 1 libre (`available` = 1) pero no hay unidad libre las dos
+    // noches: no existe asignación física posible. Antes: capacity=0 → "admite hasta 0 huésped(es)".
+    const { orm, created } = makeOrm({
+      rooms: [double('r1', { capacity: 2 }), double('r2', { capacity: 2 })],
+      reservations: [active({ roomId: 'r1', checkIn: '2026-08-10', checkOut: '2026-08-11' })],
+      blocks: [{ id: 'b1', hotelId: 'h1', roomId: 'r2', startDate: '2026-08-11', endDate: '2026-08-11' }],
+    })
+    const res = await createPublicBookingDirect(orm, { ...baseBody, roomType: 'double', adults: 1, children: 0 })
+    expect(res.status).toBe(409)
+    expect(res.body.available).toBe(0)
+    expect(res.body.roomType).toBe('double')
+    expect(res.body.error).toContain('Solo hay 0 habitación(es) de "double"')
+    expect(res.body.error).not.toContain('hasta 0')
     expect(created.find((c) => c.model === 'Reservations')).toBeUndefined()
   })
 

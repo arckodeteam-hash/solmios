@@ -140,6 +140,39 @@ describe('createReservation — alta por TIPO sin unidad (REQ-HAC-05)', () => {
     await rejects409(create(resRepo([]), roomRepo(maint), dtoByType({ adults: 3 })), undefined, /admite hasta 2/)
   })
 
+  it('capacidad sólo sobre unidades LIBRES en las fechas: chica libre + grande OCUPADA → 5 adultos → 409; grande libre → se crea', async () => {
+    const mixed = [
+      { id: 'd-1', hotelId: HOTEL, type: 'double', status: 'available', capacity: 2, basePrice: 120, number: '101' },
+      { id: 'd-6', hotelId: HOTEL, type: 'double', status: 'available', capacity: 6, basePrice: 100, number: '106' },
+    ]
+    // La de 6 tiene una reserva ASIGNADA que solapa: su capacidad no se vende (el tipo tiene lugar,
+    // available = 1, pero la única libre admite 2).
+    const busy = resRepo([confirmed('r-a', { roomId: 'd-6' })])
+    await rejects409(create(busy, roomRepo(mixed), dtoByType({ adults: 5 })), undefined, /admite hasta 2/)
+    expect(busy.created).toHaveLength(0)
+    // Bloqueada (RoomBlocks) en una noche de la estadía: ídem.
+    const blockRepo = { findMany: async () => [{ id: 'b1', hotelId: HOTEL, roomId: 'd-6', startDate: '2026-07-21', endDate: '2026-07-21' }] } as any
+    await rejects409(create(resRepo([]), roomRepo(mixed), dtoByType({ adults: 5 }), { blockRepo }), undefined, /admite hasta 2/)
+    // Ocupada por fechas que NO solapan → la grande está libre → se crea sin unidad.
+    const ok = await create(resRepo([confirmed('r-a', { roomId: 'd-6', checkIn: '2026-07-22', checkOut: '2026-07-24' })]), roomRepo(mixed), dtoByType({ adults: 5 }))
+    expect(ok.roomId).toBeNull()
+    expect(ok.adults).toBe(5)
+    // Una reserva SIN asignar del tipo no pinea unidad: la grande sigue libre → se crea.
+    const free = await create(resRepo([confirmed('r-a')]), roomRepo(mixed), dtoByType({ adults: 5 }))
+    expect(free.roomId).toBeNull()
+  })
+
+  it('available ≥ 1 noche a noche pero NINGUNA unidad libre toda la ventana → 409 type_sold_out available 0 (no "hasta 0")', async () => {
+    // d-1 tomada sólo la noche del 20, d-2 bloqueada sólo la del 21: cada noche queda 1 libre, pero
+    // ninguna unidad las dos noches → no hay asignación física posible.
+    const repo = resRepo([confirmed('r-a', { roomId: 'd-1', checkIn: '2026-07-20', checkOut: '2026-07-21' })])
+    const blockRepo = { findMany: async () => [{ id: 'b1', hotelId: HOTEL, roomId: 'd-2', startDate: '2026-07-21', endDate: '2026-07-21' }] } as any
+    const err = await rejects409(create(repo, roomRepo(twoDoubles), dtoByType({ adults: 1 }), { blockRepo }), 'type_sold_out', /Solo hay 0 habitación\(es\) de "double"/)
+    expect(err.details?.available).toBe(0)
+    expect(err.message).not.toContain('hasta 0')
+    expect(repo.created).toHaveLength(0)
+  })
+
   it('priceFrom:"rates" sin unidad: cadena por tipo con fallback = MÍNIMO basePrice de las unidades vendibles', async () => {
     const pricing = { seasonAssignmentRepo: { findMany: async () => [] }, roomRateRepo: { findMany: async () => [] } }
     // Sin temporadas: 2 noches × min(120, 100) = 200 (+ taxes 10).

@@ -15,13 +15,16 @@ const noopSockets = {} as any
 const HOTEL = 'h1'
 const user = { id: 'u1', role: 'hotel_admin', hotelId: HOTEL }
 
-/** Reserva vendida por tipo (sin unidad). `updates` registra lo que se persistió. */
-function resRepo(existing: any) {
+/** Reserva vendida por tipo (sin unidad). `updates` registra lo que se persistió. `others`: el
+ *  resto de reservas del hotel (para la disponibilidad por tipo); `findMany` filtra por roomType. */
+function resRepo(existing: any, others: any[] = []) {
   const updates: any[] = []
+  const rows = [existing, ...others]
   return {
     updates,
     findById: async (id: string) => (existing.id === id ? existing : null),
-    findMany: async () => [],
+    findMany: async (q: any = {}) => rows.filter((r) =>
+      (q.roomType == null || r.roomType === q.roomType) && (q.hotelId == null || r.hotelId === q.hotelId)),
     create: async (data: any) => ({ id: 'r-new', ...data }),
     update: async (id: string, data: any) => { updates.push(data); return { ...existing, ...data, id } },
   } as any
@@ -50,8 +53,8 @@ const byType = () => ({
   checkIn: '2026-07-20', checkOut: '2026-07-22', adults: 2, children: 0, totalAmount: 200,
 })
 
-const put = (repo: any, rooms: any, dto: any) =>
-  updateReservation(repo, noopLogger, noopCache, noopSockets, 'r1', dto, user, rooms, undefined, undefined, undefined, undefined, configRepo)
+const put = (repo: any, rooms: any, dto: any, hooks?: any) =>
+  updateReservation(repo, noopLogger, noopCache, noopSockets, 'r1', dto, user, rooms, undefined, undefined, undefined, hooks, configRepo)
 
 describe('updateReservation — reserva por TIPO (roomId null): la capacidad se valida contra el perfil del tipo', () => {
   it('PUT adults:5 sobre tipo de capacidad 2 → 409 (capacidad) y la fila queda igual', async () => {
@@ -89,5 +92,45 @@ describe('updateReservation — reserva por TIPO (roomId null): la capacidad se 
     try { await put(resRepo(byType()), roomRepo(maint), { adults: 3 } as any) } catch (e) { err = e }
     expect(err).toBeInstanceOf(ConflictError)
     expect(err.message).toMatch(/admite hasta 2/)
+  })
+
+  it('capacidad sólo sobre unidades LIBRES en las fechas: la grande ocupada por otra reserva asignada → adults:5 → 409; libre → 200', async () => {
+    const mixed = [...doubles, { id: 'd-6', hotelId: HOTEL, type: 'double', status: 'available', capacity: 6, basePrice: 90 }]
+    const other = { id: 'r2', hotelId: HOTEL, roomId: 'd-6', roomType: 'double', status: 'confirmed', checkIn: '2026-07-20', checkOut: '2026-07-22' }
+    let err: any = null
+    const busy = resRepo(byType(), [other])
+    try { await put(busy, roomRepo(mixed), { adults: 5 } as any) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(err.message).toMatch(/admite hasta 2/)
+    expect(busy.updates).toHaveLength(0)
+    // Bloqueada en una noche (RoomBlocks vía hooks.roomAssignment.blockRepo): ídem.
+    const blockRepo = { findMany: async () => [{ id: 'b1', hotelId: HOTEL, roomId: 'd-6', startDate: '2026-07-21', endDate: '2026-07-21' }] } as any
+    err = null
+    try { await put(resRepo(byType()), roomRepo(mixed), { adults: 5 } as any, { roomAssignment: { blockRepo } }) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    // La otra reserva no solapa → la grande está libre → se persiste.
+    const ok = await put(resRepo(byType(), [{ ...other, checkIn: '2026-07-22', checkOut: '2026-07-24' }]), roomRepo(mixed), { adults: 5 } as any)
+    expect(ok.adults).toBe(5)
+    expect(ok.roomId).toBeNull()
+  })
+
+  it('la propia reserva no se cuenta: con 1 sola unidad del tipo, PUT adults:2 → 200', async () => {
+    const one = [doubles[0]]
+    const ok = await put(resRepo(byType()), roomRepo(one), { adults: 2 } as any)
+    expect(ok.adults).toBe(2)
+  })
+
+  it('ninguna unidad del tipo libre toda la ventana (unidades distintas tomadas en noches distintas) → 409 type_sold_out available 0', async () => {
+    const other = { id: 'r2', hotelId: HOTEL, roomId: 'd-1', roomType: 'double', status: 'confirmed', checkIn: '2026-07-20', checkOut: '2026-07-21' }
+    const blockRepo = { findMany: async () => [{ id: 'b1', hotelId: HOTEL, roomId: 'd-2', startDate: '2026-07-21', endDate: '2026-07-21' }] } as any
+    const repo = resRepo(byType(), [other])
+    let err: any = null
+    try { await put(repo, roomRepo(doubles), { adults: 1 } as any, { roomAssignment: { blockRepo } }) } catch (e) { err = e }
+    expect(err).toBeInstanceOf(ConflictError)
+    expect(err.httpStatus).toBe(409)
+    expect(err.details?.reason).toBe('type_sold_out')
+    expect(err.details?.available).toBe(0)
+    expect(err.message).not.toContain('hasta 0')
+    expect(repo.updates).toHaveLength(0)
   })
 })

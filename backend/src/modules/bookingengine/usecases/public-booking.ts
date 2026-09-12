@@ -563,7 +563,25 @@ export async function createPublicBookingDirect(
   // 6 con reserva asignada → 5 adultos pasaban con 201 y nadie los podía alojar). Las reservas
   // SIN asignar no pinean unidad y no descuentan de acá: ya las contó `available`. La política
   // `room_type_capacity` del hotel, si existe, pisa los tres campos (`effectiveRoomCapacity`).
-  const capacityProfile = roomTypeProfile(roomType, unoccupiedSellableRooms(typeAvail), totalGuests)
+  //
+  // Revisión #260 (2ª pasada) — `available ≥ 1` cuenta noche a noche, así que puede haber
+  // inventario en cada noche y aun así NINGUNA unidad libre en TODA la ventana (r1 tomada sólo la
+  // noche 1, r2 bloqueada sólo la noche 2). El pool vacío no es un problema de capacidad —
+  // calcular el perfil daba capacity=0 y un "admite hasta 0 huésped(es)" sin sentido — sino de
+  // disponibilidad: no existe asignación física posible. Se rebota con el mismo formato que el
+  // rechazo por tipo (`available: 0`, `roomType`).
+  const freeUnits = unoccupiedSellableRooms(typeAvail)
+  if (freeUnits.length === 0) {
+    return {
+      status: 409,
+      body: {
+        error: `Solo hay 0 habitación(es) de "${roomType}" disponibles para esas fechas: ninguna unidad del tipo queda libre todas las noches`,
+        available: 0,
+        roomType,
+      },
+    }
+  }
+  const capacityProfile = roomTypeProfile(roomType, freeUnits, totalGuests)
   const roomCapacity = effectiveRoomCapacity(roomTypeCapacityMap, capacityProfile)
   if (!fitsRoomCapacity(roomCapacity, childComposition)) {
     return { status: 409, body: { error: `Esta habitación admite hasta ${roomCapacity.capacity} huésped(es); pediste ${totalGuests}` } }

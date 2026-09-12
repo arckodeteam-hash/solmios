@@ -13,8 +13,7 @@ import { guestsOfReservation } from './reprice'
 import { syncReservationPending, type AddonSource } from '../../../shared/usecases/sync-reservation-pending'
 import type { PaidSource } from '../../../shared/usecases/reservation-paid'
 import { assertReservationFitsCapacity } from '../../../shared/usecases/reservation-capacity'
-import { availableOfType, roomTypeProfileOf, type RoomTypeProfile } from '../../../shared/usecases/type-availability'
-import { isRoomSellable } from '../../../shared/usecases/room-status'
+import { availableOfType, roomTypeProfileOf, unoccupiedSellableRooms, type RoomTypeProfile } from '../../../shared/usecases/type-availability'
 import { findOrCreateGuest } from '../../../shared/usecases/find-or-create-guest'
 import type { ReservasDTO, CreateReservasDTO, UpdateReservasDTO, ReservasQuery, ReservasPaginated } from '../types'
 
@@ -127,17 +126,59 @@ export interface CreatePricingRepos {
 }
 
 /**
- * Perfil de CAPACIDAD/precio del tipo (`roomTypeProfileOf`) sobre sus unidades VENDIBLES en el
- * hotel — el "cuarto" contra el que se valida una reserva SIN unidad, tanto al crear como al
- * editar (revisión #260: el PUT de adults/children sobre una reserva por tipo validaba contra
- * `findOne({id:null})` → null → no-op). `null` si el tipo no existe en el hotel o el repo no
- * sabe listar (callers/mocks viejos sin `findMany`): quien llama decide si eso es 409 o no-op.
+ * Perfil de CAPACIDAD/precio del tipo (`roomTypeProfileOf`) — el "cuarto" contra el que se valida
+ * una reserva SIN unidad, tanto al crear como al editar (revisión #260: el PUT de adults/children
+ * sobre una reserva por tipo validaba contra `findOne({id:null})` → null → no-op).
+ *
+ * Revisión #260 (2ª pasada): el perfil sale de las unidades del tipo físicamente LIBRES en las
+ * fechas (`unoccupiedSellableRooms`: vendibles, sin reserva bloqueante ASIGNADA que solape ni
+ * bloqueo), no de TODAS las vendibles — mismo criterio que el widget (`public-booking.ts`) y el
+ * grupo. Calcularlo sobre todas vendía capacidad de una unidad ya tomada: doble de 2 libre + doble
+ * de 6 ocupada esas noches → 5 adultos pasaban y nadie los podía alojar. Las reservas SIN asignar
+ * no pinean unidad y no descuentan de acá (ya las cuenta `available`, más abajo). `minBasePrice`
+ * sigue saliendo de TODAS las vendibles del tipo — es el "desde" que publica `/rates` y cotiza
+ * `quoteStay({ roomType })`, igual que en el widget.
+ *
+ * Devuelve `{ kind: 'unknown_type' }` si el tipo no existe en el hotel, `{ kind: 'none_free' }`
+ * si existe pero ninguna unidad queda libre TODAS las noches (el caller responde 409 con el mismo
+ * formato que el rechazo por tipo), o `null` si el repo no sabe listar (callers/mocks viejos sin
+ * `findMany`): quien llama decide si eso es 409 o no-op.
  */
-async function sellableTypeProfile(roomRepo: any, hotelId: string, roomType: string): Promise<RoomTypeProfile | null> {
+type TypeProfileLookup =
+  | { kind: 'ok'; profile: RoomTypeProfile }
+  | { kind: 'unknown_type' }
+  | { kind: 'none_free' }
+
+async function sellableTypeProfile(
+  repos: { roomRepo: any; reservationRepo: any; blockRepo?: any },
+  hotelId: string,
+  roomType: string,
+  checkIn: string,
+  checkOut: string,
+  opts: { excludeReservationId?: string } = {},
+): Promise<TypeProfileLookup | null> {
+  const { roomRepo, reservationRepo, blockRepo } = repos
   if (!roomRepo || typeof roomRepo.findMany !== 'function') return null
   const units = ((await roomRepo.findMany({ hotelId, type: roomType })) ?? []) as any[]
-  if (units.length === 0) return null
-  return roomTypeProfileOf(roomType, units.filter((r) => isRoomSellable(r?.status)))
+  if (units.length === 0) return { kind: 'unknown_type' }
+  const avail = await availableOfType(
+    { rooms: roomRepo, reservations: reservationRepo, blocks: blockRepo },
+    hotelId, roomType, checkIn, checkOut, opts,
+  )
+  const free = unoccupiedSellableRooms(avail)
+  if (free.length === 0) return { kind: 'none_free' }
+  return {
+    kind: 'ok',
+    profile: { ...roomTypeProfileOf(roomType, free), minBasePrice: roomTypeProfileOf(roomType, avail.sellableRooms).minBasePrice },
+  }
+}
+
+/** 409 del alta/edición por tipo cuando ninguna unidad queda libre todas las noches — mismo formato que el rechazo por tipo. */
+function noUnitFreeError(roomType: string): ConflictError {
+  return new ConflictError(
+    `Solo hay 0 habitación(es) de "${roomType}" disponibles para esas fechas: ninguna unidad del tipo queda libre todas las noches`,
+    { reason: 'type_sold_out', roomType, available: 0 },
+  )
 }
 
 export async function createReservation(repo: any, blockRepo: any | undefined, logger: any, cache: any, sockets: any, notifyDeps: any, dto: CreateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, dateRestrictionRepo?: any, promoCodes?: PromoCodePort, pricing?: CreatePricingRepos, configRepo?: RepositoryAdapter<any>): Promise<ReservasDTO> {
@@ -157,17 +198,20 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
   // protegido que requiera assertOwnership del usuario sobre él.
   //
   // Sin `roomId`: el tipo tiene que existir en el hotel (`rooms {hotelId, type}` no vacío) y el
-  // perfil del tipo (capacidad MÁXIMA entre sus unidades vendibles, precio MÍNIMO — mismo criterio
-  // que el motor público) reemplaza a la unidad en la validación de capacidad y en el precio de
-  // fallback. Sin `roomRepo`/`findMany` (callers y mocks viejos) no se valida nada de esto.
+  // perfil del tipo (capacidad MÁXIMA entre sus unidades vendibles LIBRES en las fechas, precio
+  // MÍNIMO entre las vendibles — mismo criterio que el motor público) reemplaza a la unidad en la
+  // validación de capacidad y en el precio de fallback; si ninguna unidad queda libre todas las
+  // noches, 409 acá mismo. Sin `roomRepo`/`findMany` (callers y mocks viejos) no se valida nada.
   let room: any = null
   let typeProfile: RoomTypeProfile | null = null
   if (roomRepo && dto.roomId) {
     room = await roomRepo.findOne({ id: dto.roomId })
     if (!room || room.hotelId !== dto.hotelId) throw new ConflictError('La habitación no pertenece a este hotel')
   } else if (roomRepo && typeof roomRepo.findMany === 'function') {
-    typeProfile = await sellableTypeProfile(roomRepo, dto.hotelId, String(dto.roomType))
-    if (!typeProfile) throw new ConflictError('Tipo de habitación inexistente', { reason: 'unknown_room_type', roomType: dto.roomType })
+    const lookup = await sellableTypeProfile({ roomRepo, reservationRepo: repo, blockRepo }, dto.hotelId, String(dto.roomType), dto.checkIn, dto.checkOut)
+    if (!lookup || lookup.kind === 'unknown_type') throw new ConflictError('Tipo de habitación inexistente', { reason: 'unknown_room_type', roomType: dto.roomType })
+    if (lookup.kind === 'none_free') throw noUnitFreeError(String(dto.roomType))
+    typeProfile = lookup.profile
   }
   // REQ-HAC-01 (#258): la fila queda con `roomType` = `rooms.type` (o el que declare el dto) para
   // que reasignar la unidad después (assign-room.ts) valide contra el tipo vendido y no contra la
@@ -366,10 +410,23 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
     // Revisión #260: reserva vendida por TIPO (sin unidad) → la "habitación" es el perfil del tipo
     // efectivo, mismo criterio que createReservation (`sellableTypeProfile`). Antes `findOne({id:
     // null})` daba null y la ocupación subía sin 409 por encima de cualquier unidad del tipo.
+    // El perfil sale de las unidades del tipo LIBRES en las fechas efectivas (las nuevas si el
+    // patch las mueve, si no las actuales), sin contarse a sí misma; si ninguna queda libre todas
+    // las noches → 409 con el mismo formato que el rechazo por tipo del alta.
     const effectiveRoomType = dto.roomType ?? existing.roomType
-    const room = effectiveRoomId
-      ? await roomRepo.findOne({ id: effectiveRoomId })
-      : effectiveRoomType ? await sellableTypeProfile(roomRepo, existing.hotelId, String(effectiveRoomType)) : null
+    let room: any = null
+    if (effectiveRoomId) {
+      room = await roomRepo.findOne({ id: effectiveRoomId })
+    } else if (effectiveRoomType) {
+      const lookup = await sellableTypeProfile(
+        { roomRepo, reservationRepo: repo, blockRepo: hooks?.roomAssignment?.blockRepo },
+        existing.hotelId, String(effectiveRoomType),
+        String(dto.checkIn ?? existing.checkIn), String(dto.checkOut ?? existing.checkOut),
+        { excludeReservationId: id },
+      )
+      if (lookup?.kind === 'none_free') throw noUnitFreeError(String(effectiveRoomType))
+      room = lookup?.kind === 'ok' ? lookup.profile : null
+    }
     await assertReservationFitsCapacity(configRepo, room, {
       hotelId: existing.hotelId,
       adults: Number(dto.adults ?? existing.adults) || 2,
