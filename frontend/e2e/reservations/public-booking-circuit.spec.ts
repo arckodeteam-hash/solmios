@@ -138,35 +138,26 @@ async function waitForMail(
 // ─── seed / cleanup por API admin ────────────────────────────────────────────────────────────
 
 /** Cuerpo de `PUT /api/amenities/room/:id` tal como estaba ANTES de sembrar la cuna. */
-interface RoomAmenitiesSnapshot {
-  roomId: string
-  label: string
+interface RoomAmenitiesBody {
   amenities: string[]
   items: Array<{ key: string; name: string; price: number; isActive: boolean }>
 }
 
+/** Lo que el circuito necesita del hotel, más el registro de cómo deshacer cada siembra.
+ *  `undo` se llena paso a paso DURANTE `seedFixture`: si la siembra falla a mitad, `afterAll`
+ *  igual revierte lo que ya se había tocado (en orden inverso). */
 interface Fixture {
   hotelId: string
   upsellId: string
   hotelEmail: string
-  previous: {
-    hotelEmail: string
-    emailConfig: unknown
-    breakfast: { active: boolean; priceMode: string; price: number } | null
-    /** Sólo las claves que el seed pisa; `null` si la config ya estaba como hace falta. */
-    bookingConfig: { enabled: boolean; language: string; instantConfirmation: boolean } | null
-    /** `undefined` si no hizo falta tocarla; `null` si no había fila (no se puede borrar por API). */
-    childPolicy: unknown
-    /** Una entrada por habitación Double que el seed modificó. */
-    roomAmenities: RoomAmenitiesSnapshot[]
-  }
+  undo: Array<[name: string, run: (request: APIRequestContext) => Promise<unknown>]>
 }
 
 const isOn = (v: unknown) => v === true || v === 1 || v === '1'
 const isCustomKey = (k: unknown) => String(k).startsWith('custom:')
 
 /** Filas de `GET /api/amenities/room/:id` → cuerpo equivalente del PUT (keys fijas activas + custom). */
-function roomAmenitiesBody(rows: any[]): Pick<RoomAmenitiesSnapshot, 'amenities' | 'items'> {
+function roomAmenitiesBody(rows: any[]): RoomAmenitiesBody {
   return {
     amenities: rows.filter((a) => !isCustomKey(a.amenityKey) && isOn(a.isActive)).map((a) => a.amenityKey),
     items: rows
@@ -178,17 +169,16 @@ function roomAmenitiesBody(rows: any[]): Pick<RoomAmenitiesSnapshot, 'amenities'
 /** Política de niños + `custom:cuna` en TODAS las habitaciones del tipo Double (mismo fixture,
  *  idempotente, que usa e2e/booking-children-capacity/06-crib-and-child-amenities.spec.ts).
  *  Devuelve el estado previo de lo que tocó, para `cleanupFixture`. */
-async function seedCribFixture(request: APIRequestContext): Promise<Pick<Fixture['previous'], 'childPolicy' | 'roomAmenities'>> {
+async function seedCribFixture(request: APIRequestContext, fx: Fixture): Promise<void> {
   const headers = authHeaders()
-  let childPolicy: unknown = undefined
   const policy = (await adminGet(request, '/api/configuracion/child_policy'))?.valor
   if (!policy || policy.acceptChildren !== true || policy.maxChildAge !== 12 || policy.maxFreeAge !== 3 || policy.maxBabyAge !== 1) {
-    childPolicy = policy ?? null
+    // Sin fila previa no hay cómo borrarla (`/api/configuracion` sólo upsertea): queda la sembrada.
+    if (policy) fx.undo.push(['child_policy', (r) => r.post(`${BACKEND}/api/configuracion`, { headers, data: { clave: 'child_policy', valor: policy } })])
     const res = await request.post(`${BACKEND}/api/configuracion`, { headers, data: { clave: 'child_policy', valor: CHILD_POLICY } })
     expect(res.ok(), 'seed child_policy').toBeTruthy()
   }
   const rooms = ((await adminGet(request, '/api/habitaciones?limit=100')) ?? []) as any[]
-  const roomAmenities: RoomAmenitiesSnapshot[] = []
   for (const room of rooms) {
     if (room.type !== CRIB_TYPE) continue
     const rows = ((await adminGet(request, `/api/amenities/room/${room.id}`)) ?? []) as any[]
@@ -198,35 +188,40 @@ async function seedCribFixture(request: APIRequestContext): Promise<Pick<Fixture
     // Snapshot antes de pisar: el PUT desactiva las custom que no vengan en `items`, así que el
     // cuerpo previo completo (fijas activas + todas las custom con su estado) es lo que se restaura.
     const before = roomAmenitiesBody(rows)
-    roomAmenities.push({ roomId: String(room.id), label, ...before })
+    fx.undo.push([`amenities room ${label}`, (r) => r.put(`${BACKEND}/api/amenities/room/${room.id}`, { headers, data: before })])
     // Conserva las keys fijas (wifi, ac…) y las demás custom que ya tenga la habitación.
     const otherCustom = before.items.filter((a) => a.key !== CRIB_KEY)
     const res = await request.put(`${BACKEND}/api/amenities/room/${room.id}`, { headers, data: { amenities: before.amenities, items: [...otherCustom, CRIB] } })
     expect(res.ok(), `seed custom:cuna en room ${label}`).toBeTruthy()
   }
-  return { childPolicy, roomAmenities }
 }
 
-async function seedFixture(request: APIRequestContext): Promise<Fixture> {
+async function seedFixture(request: APIRequestContext, fx: Fixture): Promise<void> {
   const headers = authHeaders()
 
   // Motor habilitado, en español y con confirmación instantánea: el pago confirma directo, sin
   // aprobación manual del hotel (#271 queda fuera de este circuito).
   const config = await adminGet(request, '/api/booking-engine/config')
-  const hotelId = String(config?.hotelId ?? '')
-  expect(hotelId, 'booking_config.hotelId').toBeTruthy()
-  let prevBookingConfig: Fixture['previous']['bookingConfig'] = null
+  fx.hotelId = String(config?.hotelId ?? '')
+  expect(fx.hotelId, 'booking_config.hotelId').toBeTruthy()
   if (config.enabled !== true || config.language !== 'es' || config.instantConfirmation !== true) {
-    prevBookingConfig = { enabled: !!config.enabled, language: String(config.language ?? 'es'), instantConfirmation: !!config.instantConfirmation }
+    const prev = { enabled: !!config.enabled, language: String(config.language ?? 'es'), instantConfirmation: !!config.instantConfirmation }
+    fx.undo.push(['booking_config', (r) => r.put(`${BACKEND}/api/booking-engine/config`, { headers, data: prev })])
     const res = await request.put(`${BACKEND}/api/booking-engine/config`, { headers, data: { enabled: true, language: 'es', instantConfirmation: true } })
     expect(res.ok(), 'seed booking_config').toBeTruthy()
   }
 
-  const { childPolicy: prevChildPolicy, roomAmenities: prevRoomAmenities } = await seedCribFixture(request)
+  await seedCribFixture(request, fx)
 
   // Régimen "desayuno" activo, por persona y noche (MR-03 #268).
   const plans = ((await adminGet(request, '/api/meal-plans')) ?? []) as any[]
   const prevBreakfast = plans.find((p) => p.code === BREAKFAST.code)
+  fx.undo.push(['meal plan', (r) => r.put(`${BACKEND}/api/meal-plans/${BREAKFAST.code}`, {
+    headers,
+    data: prevBreakfast
+      ? { active: !!prevBreakfast.active, priceMode: prevBreakfast.priceMode, price: Number(prevBreakfast.price) || 0 }
+      : { active: false, priceMode: 'included', price: 0 },
+  })])
   const mealRes = await request.put(`${BACKEND}/api/meal-plans/${BREAKFAST.code}`, {
     headers, data: { active: true, priceMode: BREAKFAST.priceMode, price: BREAKFAST.price },
   })
@@ -236,14 +231,18 @@ async function seedFixture(request: APIRequestContext): Promise<Fixture> {
   const upsellRes = await request.post(`${BACKEND}/api/upsells`, {
     headers, data: { name: UPSELL.name, kind: UPSELL.kind, price: UPSELL.price, active: true, description: 'Ida y vuelta al aeropuerto' },
   })
+  // El undo se registra antes de asertar: si el alta respondió raro pero creó la fila, igual se borra.
+  fx.upsellId = String(unwrap(await upsellRes.json().catch(() => null))?.id ?? '')
+  if (fx.upsellId) fx.undo.push(['upsell', (r) => r.delete(`${BACKEND}/api/upsells/${fx.upsellId}`, { headers })])
   expect(upsellRes.status(), 'seed upsell').toBe(201)
-  const upsellId = String(unwrap(await upsellRes.json())?.id ?? '')
-  expect(upsellId).toBeTruthy()
+  expect(fx.upsellId).toBeTruthy()
 
   // SMTP del hotel (`configuration.email_config`, ver backend/src/services/email-service.ts):
   // sin esta fila el correo queda `pending` con "no provider configured" y no llega nunca. La
-  // clave sale SIEMPRE del entorno. Se guarda lo anterior para restaurarlo al final.
-  const prevEmailConfig = (await adminGet(request, '/api/configuracion/email_config'))?.valor ?? null
+  // clave sale SIEMPRE del entorno y no se queda en la base de prueba: al final vuelve lo
+  // anterior (o una config vacía).
+  const prevEmailConfig = (await adminGet(request, '/api/configuracion/email_config'))?.valor ?? {}
+  fx.undo.push(['email_config', (r) => r.post(`${BACKEND}/api/configuracion`, { headers, data: { clave: 'email_config', valor: prevEmailConfig } })])
   const smtpRes = await request.post(`${BACKEND}/api/configuracion`, {
     headers,
     data: {
@@ -265,51 +264,20 @@ async function seedFixture(request: APIRequestContext): Promise<Fixture> {
   // Buzón del hotel (`hotels.email`): a él van el aviso de reserva nueva y el de pago recibido.
   const settings = await adminGet(request, '/api/settings')
   const prevHotelEmail = String(settings?.hotel?.email ?? '')
-  const hotelEmail = uniqueRecipient('hotel')
-  const hotelRes = await request.put(`${BACKEND}/api/settings/hotel`, { headers, data: { email: hotelEmail } })
+  fx.undo.push(['hotels.email', (r) => r.put(`${BACKEND}/api/settings/hotel`, { headers, data: { email: prevHotelEmail } })])
+  fx.hotelEmail = uniqueRecipient('hotel')
+  const hotelRes = await request.put(`${BACKEND}/api/settings/hotel`, { headers, data: { email: fx.hotelEmail } })
   expect(hotelRes.ok(), 'seed hotels.email').toBeTruthy()
-
-  return {
-    hotelId, upsellId, hotelEmail,
-    previous: {
-      hotelEmail: prevHotelEmail,
-      emailConfig: prevEmailConfig,
-      breakfast: prevBreakfast ? { active: !!prevBreakfast.active, priceMode: prevBreakfast.priceMode, price: Number(prevBreakfast.price) || 0 } : null,
-      bookingConfig: prevBookingConfig,
-      childPolicy: prevChildPolicy,
-      roomAmenities: prevRoomAmenities,
-    },
-  }
 }
 
-/** Best-effort: cada paso independiente, un fallo no tapa a los demás. */
-async function cleanupFixture(request: APIRequestContext, f: Fixture | null): Promise<void> {
-  if (!f) return
-  const headers = authHeaders()
-  const steps: Array<[string, () => Promise<unknown>]> = [
-    ['upsell', () => request.delete(`${BACKEND}/api/upsells/${f.upsellId}`, { headers })],
-    ['hotels.email', () => request.put(`${BACKEND}/api/settings/hotel`, { headers, data: { email: f.previous.hotelEmail } })],
-    // La clave SMTP no se queda en la base de prueba: vuelve lo anterior (o una config vacía).
-    ['email_config', () => request.post(`${BACKEND}/api/configuracion`, { headers, data: { clave: 'email_config', valor: f.previous.emailConfig ?? {} } })],
-    ['meal plan', () => request.put(`${BACKEND}/api/meal-plans/${BREAKFAST.code}`, {
-      headers, data: f.previous.breakfast ?? { active: false, priceMode: 'included', price: 0 },
-    })],
-  ]
-  if (f.previous.bookingConfig) {
-    steps.push(['booking_config', () => request.put(`${BACKEND}/api/booking-engine/config`, { headers, data: f.previous.bookingConfig })])
+/** Deshace la siembra en orden inverso. Best-effort: cada paso independiente, un fallo no tapa a
+ *  los demás. Corre también cuando `seedFixture` murió a mitad: revierte lo que alcanzó a tocar. */
+async function cleanupFixture(request: APIRequestContext, fx: Fixture): Promise<void> {
+  // `request` es el de `afterAll`: el de `beforeAll` ya no sirve ahí (Playwright lo cierra).
+  for (const [name, run] of fx.undo.reverse()) {
+    try { await run(request) } catch (e) { console.log(`cleanup ${name} falló:`, (e as Error).message) }
   }
-  // Sin fila previa no hay cómo borrarla (`/api/configuracion` sólo upsertea): queda la sembrada.
-  if (f.previous.childPolicy !== undefined && f.previous.childPolicy !== null) {
-    steps.push(['child_policy', () => request.post(`${BACKEND}/api/configuracion`, { headers, data: { clave: 'child_policy', valor: f.previous.childPolicy } })])
-  }
-  for (const snap of f.previous.roomAmenities) {
-    steps.push([`amenities room ${snap.label}`, () => request.put(`${BACKEND}/api/amenities/room/${snap.roomId}`, {
-      headers, data: { amenities: snap.amenities, items: snap.items },
-    })])
-  }
-  for (const [name, run] of steps) {
-    try { await run() } catch (e) { console.log(`cleanup ${name} falló:`, (e as Error).message) }
-  }
+  fx.undo = []
 }
 
 // ─── pago por webhook firmado ────────────────────────────────────────────────────────────────
@@ -349,7 +317,7 @@ test.describe('Epic #265 — circuito completo del motor de reservas web', () =>
     'MAILBOX_PASS no está definida: sin buzón no se puede comprobar que el hotel y el huésped reciben sus correos',
   )
   let stub: StripeStub
-  let fixture: Fixture | null = null
+  const fixture: Fixture = { hotelId: '', upsellId: '', hotelEmail: '', undo: [] }
   let errors: string[] = []
 
   test.beforeAll(async ({ request }) => {
@@ -358,7 +326,7 @@ test.describe('Epic #265 — circuito completo del motor de reservas web', () =>
     // sigue tiene sentido.
     const alive = await request.get(`${stub.baseUrl}/v1/account`, { headers: { authorization: 'Bearer sk_test_stub' }, timeout: 5_000 })
     expect(alive.status(), 'el doble de Stripe no responde en :' + STRIPE_STUB_PORT).toBe(200)
-    fixture = await seedFixture(request)
+    await seedFixture(request, fixture)
   })
 
   // Siempre: restaurar la config del hotel, soltar el :4242 y cerrar el IMAP aunque el test falle.
@@ -379,7 +347,7 @@ test.describe('Epic #265 — circuito completo del motor de reservas web', () =>
   test('reservar con desayuno + extra + cuna → pagar → aviso al hotel → recibo → check-in con extras en folio → cancelar con reembolso', async ({ page, request }) => {
     // 3 correos reales (segundos cada uno) + 2 reservas + webhook + check-in + cancelación con reembolso.
     test.setTimeout(480_000)
-    const f = fixture!
+    const f = fixture
     const stay = randomFutureStay()
     const guestName = `E2E Circuito ${RUN}`
     const guestEmail = uniqueRecipient('circuito')

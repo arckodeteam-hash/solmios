@@ -452,10 +452,11 @@ del hotel), ADM-12 (programa Aliados).
 - **Precondición:** Motor habilitado con confirmación instantánea; régimen `breakfast` activo por persona y
   noche; un upsell activo; política de niños con `maxBabyAge` y `custom:cuna` en las habitaciones Double;
   `hotels.email` y la config SMTP del hotel (`configuration.email_config`) apuntando al buzón de pruebas.
-  El spec siembra todo por la API admin tomando snapshot previo y en `afterAll` lo restaura (best-effort):
-  borra el upsell y devuelve a su valor anterior la config del motor (`enabled`/`language`/
-  `instantConfirmation`), `child_policy`, las amenidades de cada Double que tocó, el régimen `breakfast`,
-  `hotels.email` y `email_config`. Límites de la API: una `custom:cuna` que no existía queda desactivada
+  El spec siembra todo por la API admin y registra, justo antes de cada mutación, cómo deshacerla; en
+  `afterAll` deshace en orden inverso (best-effort, un paso fallido no tapa a los demás) — también si la
+  siembra murió a mitad, porque revierte lo que alcanzó a tocar: borra el upsell y devuelve a su valor
+  anterior la config del motor (`enabled`/`language`/`instantConfirmation`), `child_policy`, las
+  amenidades de cada Double que tocó, el régimen `breakfast`, `hotels.email` y `email_config`. Límites de la API: una `custom:cuna` que no existía queda desactivada
   (el PUT de amenidades desactiva, no borra) y una `child_policy` que no existía queda sembrada (no hay
   DELETE en `/api/configuracion`). Las 2 reservas, el huésped y sus cobros persisten.
 - **Permiso requerido:** Ninguno para el huésped; `reservations:checkin` + `billing:view` para el check-in
