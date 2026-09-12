@@ -4,10 +4,9 @@
 //     asignación → `generateCodeIfAbsent` (idempotente: si el pago ya lo generó, no duplica).
 //     Reasignación (cambio de habitación) → `generateCode`: crea el PIN en la cerradura nueva y
 //     `keepSingleCode` revoca el de la anterior (una reserva = UN código vigente). Si la cerradura
-//     nueva RECHAZA el PIN, el anterior se expira igual: seguía abriendo la habitación que se
-//     liberó (y que se puede vender a otro huésped). La reserva queda sin código y se loguea
-//     como error — recepción genera uno a mano; es peor dejar la puerta vieja abierta. Desasignar
-//     (roomId null) → expira: sin habitación no hay cerradura que abrir.
+//     nueva RECHAZA el PIN, el anterior se expira igual (`shared/usecases/lock-code-on-room-move.ts`):
+//     seguía abriendo la habitación que se liberó. Desasignar (roomId null) → expira: sin
+//     habitación no hay cerradura que abrir.
 //   - onReservationCheckedOut / onReservationCancelled → expira los códigos vigentes.
 //
 // C-1 (auditoría 2026-08-19): solo escuchaba onReservationCheckedOut — una reserva pagada
@@ -20,6 +19,7 @@
 // (el staff puede generar/revocar a mano). El connector solo wirea: la idempotencia, el reemplazo
 // (keepSingleCode) y el hardware viven en el módulo ttlock.
 import type { ConnectorContext, Logger } from 'arckode-framework'
+import { replaceLockCodeOnRoomMove } from '../shared/usecases/lock-code-on-room-move'
 
 interface TtlockModule {
   expireCodesByReservation: (id: string) => Promise<void>
@@ -82,29 +82,8 @@ async function generateOnAssign(ctx: ConnectorContext, log: InfoLogger, data: Ro
   // keepSingleCode revoca los anteriores (hardware incluido) — queda uno solo, el correcto.
   // Primera asignación (o la misma habitación): generateCodeIfAbsent, idempotente.
   const moved = Boolean(data.previousRoomId) && data.previousRoomId !== data.roomId
-  if (!moved) { await ttlock.generateCodeIfAbsent(data.hotelId, data.reservationId); return }
-  await replaceCodeOnMove(ttlock, log, data)
-}
-
-/**
- * Cambio de habitación. `generateCode` sólo revoca el anterior DESPUÉS de crear el nuevo (contrato
- * del módulo ttlock: para "Regenerar" en la misma habitación es lo correcto). Acá la habitación
- * anterior ya NO es de este huésped: si la cerradura nueva falla, el PIN viejo se expira igual —
- * prioridad a la seguridad de la unidad que se libera — y la reserva queda SIN código (error
- * explícito en el log para que recepción lo genere a mano).
- */
-async function replaceCodeOnMove(ttlock: TtlockModule, log: InfoLogger, data: RoomAssignedEvent): Promise<void> {
-  try {
-    await ttlock.generateCode(data.hotelId, data.reservationId)
-    return
-  } catch (e) {
-    log.error(`TTLock: la cerradura de ${data.roomId} rechazó el PIN de la reserva ${data.reservationId}: ${errMsg(e)}. Se revoca el de ${data.previousRoomId}: la reserva queda SIN código, generar uno a mano`)
-  }
-  try {
-    await ttlock.expireCodesByReservation(data.reservationId)
-  } catch (e) {
-    log.error(`TTLock: tampoco se pudo revocar el código anterior de la reserva ${data.reservationId} (habitación ${data.previousRoomId}): ${errMsg(e)} — el PIN viejo SIGUE ABRIENDO esa puerta`)
-  }
+  // Reasignación con la cerradura nueva fallando: el PIN viejo se expira igual (ver usecase).
+  await (moved ? replaceLockCodeOnRoomMove(ttlock, log, data) : ttlock.generateCodeIfAbsent(data.hotelId, data.reservationId))
 }
 
 function handleRoomAssigned(ctx: ConnectorContext, log: InfoLogger, data: RoomAssignedEvent): Promise<void> {
