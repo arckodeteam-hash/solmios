@@ -273,6 +273,36 @@ upsells + amenidades) → base imponible → impuestos → total cobrado, y
 `priceBreakdown.childAmenitiesTotal` lo desglosa (`public-booking.ts`,
 `public-booking-group.ts`).
 
+REQ-01 (#290) agrega, con el mismo patrón, las **amenidades personalizadas de la
+habitación**: filas `RoomAmenities` con `amenityKey` `custom:<slug>`, `name`, `price` >= 0
+e `isActive`, configuradas desde el formulario de CADA habitación (las keys fijas del
+catálogo siguen siendo features gratuitas). Como el huésped elige un TIPO y no una unidad,
+`GET /api/public/hotels/:slug/room-amenities` expone por `roomType` la unión (por key) de
+las custom activas de sus habitaciones vendibles con el precio MÍNIMO
+(`public-room-amenities.ts`). El cliente las pide por habitación (`roomAmenities: [{key}]`
+en el body single y en cada `rooms[i]` del grupo); el backend prefiere, entre las unidades
+libres del tipo, las que ofrecen TODAS las keys pedidas, cobra el precio REAL de las filas
+`RoomAmenities` de la unidad asignada (NUNCA el del body), ignora con warn una key fija,
+inactiva o no ofrecida por esa unidad, y persiste en cada fila `reservations` el snapshot
+`roomAmenities` `[{key,name,price,quantity,total}]` + `roomAmenitiesTotal`. Su importe entra
+en `subtotal` y `priceBreakdown.roomAmenitiesTotal` lo desglosa; en un grupo cada unidad
+física resuelve contra sus propias filas (dos unidades del mismo tipo pueden cobrar la misma
+key a precio distinto) y lleva su propio snapshot. Sin `roomAmenities` en el body nada de
+esto se lee y el flujo queda idéntico al anterior.
+
+#### Scenario: Amenidad de habitación que solo ofrece una unidad del tipo
+
+- GIVEN tipo "double" con dos unidades libres, la más barata sin "Cuna" y la otra con
+  "Cuna" activa a 15 en sus `RoomAmenities`, y un POST single con `roomType: 'double'` y
+  `roomAmenities: [{key:'custom:cuna', price: 0.01}]`
+- THEN el backend asigna la unidad que ofrece la cuna, `priceBreakdown.roomAmenitiesTotal`
+  = 15 (el precio del server, no el del body), el subtotal y el total lo incluyen, y la
+  reserva persiste `roomAmenities` `[{key:'custom:cuna', name:'Cuna', price:15, quantity:1,
+  total:15}]` y `roomAmenitiesTotal` = 15
+- AND una key que ninguna unidad del tipo ofrece, una key fija o una inactiva se ignora sin
+  error y no se cobra; en un grupo, solo las filas de la línea que la pidió llevan snapshot,
+  cada una al precio de su propia habitación
+
 #### Scenario: Grupo de dos habitaciones con bebé en una
 
 - GIVEN hotel con cribAvailable y una reserva grupal de 2 líneas, una con bebé + cuna
