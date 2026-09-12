@@ -229,14 +229,17 @@ async function seedFixture(request: APIRequestContext, fx: Fixture): Promise<voi
   })
   expect(mealRes.ok(), 'seed meal plan breakfast').toBeTruthy()
 
-  // Un extra por estadía.
+  // Un extra por estadía. El undo va ANTES del alta y busca por el nombre (único por corrida): si
+  // el alta creó la fila pero la respuesta no se pudo leer, igual se borra.
+  fx.undo.push(['upsell', async (r) => {
+    const rows = (unwrap(await (await r.get(`${BACKEND}/api/upsells`, { headers })).json()) ?? []) as any[]
+    for (const u of rows.filter((u) => u.name === UPSELL.name)) await r.delete(`${BACKEND}/api/upsells/${u.id}`, { headers })
+  }])
   const upsellRes = await request.post(`${BACKEND}/api/upsells`, {
     headers, data: { name: UPSELL.name, kind: UPSELL.kind, price: UPSELL.price, active: true, description: 'Ida y vuelta al aeropuerto' },
   })
-  // El undo se registra antes de asertar: si el alta respondió raro pero creó la fila, igual se borra.
-  fx.upsellId = String(unwrap(await upsellRes.json().catch(() => null))?.id ?? '')
-  if (fx.upsellId) fx.undo.push(['upsell', (r) => r.delete(`${BACKEND}/api/upsells/${fx.upsellId}`, { headers })])
   expect(upsellRes.status(), 'seed upsell').toBe(201)
+  fx.upsellId = String(unwrap(await upsellRes.json())?.id ?? '')
   expect(fx.upsellId).toBeTruthy()
 
   // SMTP del hotel (`configuration.email_config`, ver backend/src/services/email-service.ts):
