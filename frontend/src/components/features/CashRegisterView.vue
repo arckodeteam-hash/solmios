@@ -34,6 +34,7 @@ import PillTabs, { type PillTab } from '@/components/ui/PillTabs.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import { BALANCE_EPSILON, buildArqueo, denominationsFor, expectedCashInDrawer, round2, sumDenominations } from '@/utils/cash-arqueo'
+import { hotelDateTime, hotelDateTimeText } from '@/utils/hotel-datetime'
 
 interface CashServiceLike {
   movements: (params?: Record<string, string | number>) => Promise<{ data: CashMovement[]; pages?: number }>
@@ -132,6 +133,8 @@ const closeReason = ref('')
 // Sin settings (red caída) cae a USD — nunca a un símbolo inventado ni a un string vacío.
 const hotelCurrency = ref('')
 const currency = computed(() => hotelCurrency.value || 'USD')
+// #282 (M1): las horas de la caja se muestran en la zona del hotel (como el ticket), no en UTC.
+const hotelTimezone = ref('')
 const money = (n: number | null | undefined) => formatCurrency(Number(n || 0), currency.value)
 const useDenominations = ref(false)
 const denomCounts = ref<Record<string, number | null>>({})
@@ -163,13 +166,14 @@ async function load() {
     const [s, sh, m, settings] = await Promise.all([
       props.service.stats(), props.service.currentShift(), props.service.movements({ page: page.value, limit: 20 }),
       // Moneda del hotel (#212): best-effort, una sola vez por sesión de la vista.
-      hotelCurrency.value ? null : HotelService.settings().catch(() => null),
+      hotelCurrency.value && hotelTimezone.value ? null : HotelService.settings().catch(() => null),
     ])
     stats.value = s
     currentShift.value = sh
     movements.value = m.data || []
     pages.value = m.pages ?? 1
     if (settings?.hotel?.currency) hotelCurrency.value = settings.hotel.currency
+    if (settings?.hotel?.timezone) hotelTimezone.value = settings.hotel.timezone
     // Hero del turno: si hay turno abierto, su desglose (best-effort — sin él el hero muestra
     // solo el fondo y la vista sigue siendo operable).
     currentReconcile.value = sh?.id ? await props.service.reconcile(sh.id).catch(() => null) : null
@@ -478,8 +482,10 @@ const historyMethods = computed(() => {
   return [...keys].sort((a, b) => (a === 'cash' ? -1 : b === 'cash' ? 1 : a.localeCompare(b)))
 })
 
-const fmtDate = (iso?: string) => (iso || '').slice(0, 10)
-const fmtTime = (iso?: string) => (iso || '').slice(11, 16)
+// Fecha/hora en la zona del hotel (#282): un ISO en UTC se convierte; un valor sin zona sale tal cual.
+const fmtDate = (iso?: string) => hotelDateTime(iso, hotelTimezone.value).date
+const fmtTime = (iso?: string) => hotelDateTime(iso, hotelTimezone.value).time
+const fmtDateTime = (iso?: string) => hotelDateTimeText(iso, hotelTimezone.value)
 
 // Export del histórico visible (respeta los filtros activos). CSV con BOM para que Excel
 // respete los acentos — mismo patrón que el export de habitaciones.
@@ -588,7 +594,7 @@ const fmtDenom = (d: number) => money(d)
                 <span class="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-teal/10 text-teal">{{ shiftAgeText }}</span>
               </div>
               <p class="text-xs text-text-muted mt-0.5">
-                Abierto {{ (currentShift.openedAt || '').slice(0, 16).replace('T', ' ') }} ·
+                Abierto {{ fmtDateTime(currentShift.openedAt) }} ·
                 Fondo <span class="font-bold tabular-nums">{{ money(heroMath?.opening ?? currentShift.openingAmount) }}</span>
               </p>
             </div>
@@ -734,7 +740,7 @@ const fmtDenom = (d: number) => money(d)
           </thead>
           <tbody>
             <tr v-for="m in movements" :key="m.id" class="border-b border-border last:border-0 hover:bg-surface/60 transition-colors" :data-testid="`mov-${m.id}`">
-              <td class="px-4 py-3 text-xs text-text-muted tabular-nums whitespace-nowrap hidden lg:table-cell">{{ (m.createdAt || '').slice(0, 16).replace('T', ' ') }}</td>
+              <td class="px-4 py-3 text-xs text-text-muted tabular-nums whitespace-nowrap hidden lg:table-cell">{{ fmtDateTime(m.createdAt) }}</td>
               <td class="px-4 py-3 min-w-0">
                 <!-- Cobro del POS: el concepto ya dice "Comanda CMD-… · Mesa 3" y enlaza a la comanda.
                      Un movimiento sin concepto (automático viejo) lo decimos, no dejamos la celda muda. -->
@@ -749,7 +755,7 @@ const fmtDenom = (d: number) => money(d)
                 <div v-if="m.guestName" class="max-w-[260px] truncate text-[11px] text-text-muted">{{ m.guestName }}</div>
                 <!-- <lg: fecha · método · origen suben como línea de apoyo; <sm también el tipo -->
                 <div class="text-[11px] text-text-muted lg:hidden tabular-nums">
-                  <span class="sm:hidden" :class="m.type === 'income' ? 'text-teal' : 'text-coral'">{{ m.type === 'income' ? 'Ingreso' : 'Egreso' }} · </span>{{ (m.createdAt || '').slice(0, 16).replace('T', ' ') }}<span v-if="METHOD_LABEL[m.method || ''] || m.method"> · {{ METHOD_LABEL[m.method || ''] || m.method }}</span> · {{ sourceLabel(m.source) }}
+                  <span class="sm:hidden" :class="m.type === 'income' ? 'text-teal' : 'text-coral'">{{ m.type === 'income' ? 'Ingreso' : 'Egreso' }} · </span>{{ fmtDateTime(m.createdAt) }}<span v-if="METHOD_LABEL[m.method || ''] || m.method"> · {{ METHOD_LABEL[m.method || ''] || m.method }}</span> · {{ sourceLabel(m.source) }}
                 </div>
                 <!-- lg…xl: la columna Origen todavía no existe; solo lo no-manual merece la línea -->
                 <div v-if="sourceLabel(m.source) !== 'Manual'" class="text-[11px] text-text-muted hidden lg:block xl:hidden">{{ sourceLabel(m.source) }}</div>

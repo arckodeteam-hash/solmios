@@ -48,8 +48,12 @@ import {
  *   es plata suya trabada. Por eso: fee 0, refund = depósito completo.
  *   ⚠ Decisión de NEGOCIO, no técnica: si un hotel quiere aplicar su propia penalidad también
  *   a las cancelaciones OTA, alcanza con que el caller pase `hotel-policy`.
+ *
+ * - `no-charge` (#248, REQ-RWP-05): reserva web que NUNCA se pagó y venció por el TTL del hotel.
+ *   No hay plata en juego (nada cobrado, nada retenido), así que no aplica política alguna:
+ *   fee 0, refund 0, snapshot `policyId: 'payment_timeout'`. Tampoco consulta policyRepo/hotelRepo.
  */
-export type PenaltyMode = 'hotel-policy' | 'channel-managed'
+export type PenaltyMode = 'hotel-policy' | 'channel-managed' | 'no-charge'
 
 export interface CancelCoreDeps {
   repo: RepositoryAdapter<any>
@@ -100,6 +104,20 @@ function channelManagedPenalty(depositAmount: number): PenaltyResult {
       source: 'default',
       label: 'Penalidad gestionada por el canal (OTA)',
     },
+  }
+}
+
+/** Snapshot sintético para `no-charge` (#248): vencida sin pago, sin política ni plata en juego. */
+function paymentTimeoutPenalty(): PenaltyResult {
+  const label = 'Vencida por falta de pago'
+  const matchedTier = { deadlineHours: 0, penaltyPercent: 0, refundable: true, label } as PenaltyResult['matchedTier']
+  return {
+    refundable: true,
+    penaltyPercent: 0,
+    refundAmount: 0,
+    cancellationFee: 0,
+    matchedTier,
+    policyApplied: { tiers: [matchedTier], policyId: 'payment_timeout', source: 'default', label },
   }
 }
 
@@ -156,6 +174,8 @@ export async function applyCancellation(
   let penalty: PenaltyResult
   if (opts.penaltyMode === 'channel-managed') {
     penalty = channelManagedPenalty(depositAmount)
+  } else if (opts.penaltyMode === 'no-charge') {
+    penalty = paymentTimeoutPenalty()
   } else {
     // resolvePolicy trae TODAS las políticas del hotel y aplica channel > base > preset > default.
     // computePenalty (F1) devuelve el snapshot a persistir. USAR TAL CUAL.

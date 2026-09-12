@@ -12,6 +12,7 @@ import type { RescheduleChargePort, RescheduleCreditPort } from './reschedule'
 import type { PromoCodePort } from './crud'
 import type { ReservationMoneyPort } from './money-port'
 import type { PaymentRequestsCeilingPort } from './ceiling-guard'
+import type { ManualPaymentPort } from './mark-paid'
 
 export interface ReservasOrchestrationDeps {
   pushAvailabilityToChannex?: (hotelId: string, roomId: string) => void
@@ -32,4 +33,6 @@ export interface ReservasOrchestrationDeps {
   moneyPort?: ReservationMoneyPort // connectors/reservas-money.ts (tablas de otros módulos)
   /** SEC3-2/SEC3-3/RTC-8.7 (connectors/reservas-payment-requests.ts): clamp/liberación de links vivos. */
   paymentRequestsCeiling?: PaymentRequestsCeilingPort
+  /** REQ-RWP-06 (#249) — connectors/reservas-payments.ts: asienta en `payments` un cobro manual. */
+  manualPayment?: ManualPaymentPort
 }

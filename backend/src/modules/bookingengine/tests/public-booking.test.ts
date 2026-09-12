@@ -59,6 +59,10 @@ describe('createPublicBookingDirect — accessToken público (F0 0.13)', () => {
     expect(UUID_RE.test(reservationCreate.row.accessToken)).toBe(true)
     // La reserva devuelta también lo expone.
     expect(UUID_RE.test(res.body.reservation.accessToken)).toBe(true)
+    // REQ-RWP-04 — origen web separado de la carga en recepción: `source='web'`, pero `channel`
+    // sigue 'direct' para que el reporte de directas (booking-engine.ts) la siga contando.
+    expect(reservationCreate.row.source).toBe('web')
+    expect(reservationCreate.row.channel).toBe('direct')
   })
 
   it('accessToken distinto entre dos reservas (no reutiliza)', async () => {

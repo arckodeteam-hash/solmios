@@ -77,7 +77,15 @@ async function previewEqual() {
 const selectedLineIds = ref<string[]>([])
 const takenLineIds = computed(() => new Set(props.parts.filter((p) => !isDeadOrderPayment(p)).flatMap((p) => p.lineIds ?? [])))
 const assignableLines = computed(() => props.order.lines.filter((l) => l.status !== 'voided' && l.status !== 'cancelled' && l.kind !== 'combo_component'))
-const lineGross = (l: { lineTotal: number; taxRate?: number }): number => Number(l.lineTotal || 0) * (1 + Number(l.taxRate || 0) / 100)
+// #282 (H2): bruto de una línea = lo que paga quien se la lleva, MISMA regla que `amountForLines` del server
+// (#215): su neto ya descontado (`lineTotal − descuento de línea`), prorrateado por el descuento de comanda,
+// más su impuesto. Antes se mostraba `lineTotal` a valor de carta y la suma de líneas superaba la cuenta.
+const orderDiscountFactor = computed(() => {
+  const base = round2(assignableLines.value.reduce((s, l) => s + Math.max(0, Number(l.lineTotal || 0) - Number(l.discountAmount || 0)), 0))
+  return base > 0 ? (base - Number(props.order.discountAmount || 0)) / base : 1
+})
+const lineGross = (l: { lineTotal: number; taxRate?: number; discountAmount?: number }): number =>
+  Math.max(0, Number(l.lineTotal || 0) - Number(l.discountAmount || 0)) * orderDiscountFactor.value * (1 + Number(l.taxRate || 0) / 100)
 // Vista previa de la selección: si con ella quedan cubiertas todas las líneas, vale el saldo exacto (misma regla del server).
 const selectionAmount = computed(() => {
   const chosen = assignableLines.value.filter((l) => selectedLineIds.value.includes(l.id))
@@ -231,7 +239,7 @@ async function confirmPart() {
                 <span>{{ l.quantity }}× {{ l.name }}</span>
                 <span v-if="takenLineIds.has(l.id)" class="px-1.5 py-0.5 rounded bg-teal/10 text-teal text-[10px] font-bold">Ya cobrada</span>
               </span>
-              <span class="tabular-nums text-text-muted">{{ money(lineGross(l)) }}</span>
+              <span class="tabular-nums text-text-muted" :data-testid="`line-gross-${l.id}`">{{ money(round2(lineGross(l))) }}</span>
             </label>
           </li>
         </ul>

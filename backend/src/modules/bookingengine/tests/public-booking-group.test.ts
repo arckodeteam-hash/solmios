@@ -99,6 +99,8 @@ describe('createPublicBookingGroup — tipos distintos combinados', () => {
     // Mismo token para las 2 — el huésped consulta TODO su grupo con un solo link.
     const tokens = new Set(tables.Reservations.map((r: any) => r.accessToken))
     expect(tokens.size).toBe(1)
+    // REQ-RWP-04 — cada unidad del grupo nace con `source='web'` y `channel='direct'`.
+    expect(tables.Reservations.every((r: any) => r.source === 'web' && r.channel === 'direct')).toBe(true)
     expect(res.body.reservations).toHaveLength(2)
     expect(res.body.totalBreakdown.total).toBe(460)
   })

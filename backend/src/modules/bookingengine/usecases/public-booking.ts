@@ -724,9 +724,12 @@ export async function createPublicBookingDirect(
       // F0 0.13 — AccessToken público (UUID). Solo el flujo público lo setea; las reservas
       // creadas desde `/api/panel/reservas` NO lo reciben → `accessToken=null` → 404 en el
       // endpoint público (anti-enumeración IDOR, spec booking-unification D4).
+      // REQ-RWP-04 — `source: 'web'` distingue la reserva del widget web de la carga en recepción
+      // (`/api/panel/reservas` deja el default 'direct'); `channel` sigue 'direct' porque los
+      // reportes de directas cuentan por `channel` (reservas/usecases/booking-engine.ts).
       reservation = await tx.create('Reservations', {
         id: crypto.randomUUID(), hotelId, roomId: resolvedRoomId, guestId: guest.id,
-        checkIn, checkOut, status: 'pending', source: 'direct',
+        checkIn, checkOut, status: 'pending', source: 'web', channel: 'direct',
         adults: childComposition.effectiveAdults,
         children: hasChildrenAges ? childComposition.payingChildren + childComposition.freeChildren : (kids || 0),
         childrenAges: hasChildrenAges ? childrenAgesInput : [],

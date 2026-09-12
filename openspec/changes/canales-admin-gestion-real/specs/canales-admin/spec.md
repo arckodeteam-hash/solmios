@@ -116,6 +116,23 @@ plataforma escrito a mano.
 **Then** el hotel recibe un correo por la primera y otro por la reprogramación, y el recordatorio del
 cron sale una sola vez.
 
+### Reserva OTA ingresada (#246, REQ-RWP-03)
+
+- La ingesta de una revisión de Channex que CREA una reserva (`booking-ingestion.ts`, después de
+  `orm.create('Reservations')`) emite el socket `onOtaBookingIngested({ hotelId, reservationId, ota })`
+  (declarado en `sockets.ts` y en `events` del contrato del módulo, append-only). Dedupe,
+  modificación y cancelación NO lo emiten.
+- El connector `canales-notificaciones` lo escucha y llama a
+  `shared/usecases/notify-reservation-received` con origen `ota`: campanita a los usuarios activos
+  del hotel con `reservations:view` (permisos de la fila `roles`), correo a `hotels.email` con
+  `{platform_name}`, push si `pushtokens` está. Best-effort: un fallo del aviso no deshace la
+  reserva ni impide el ack de la revisión.
+
+**Given** una revisión nueva de Channex para un hotel con recepción y camarera
+**When** la ingesta crea la reserva
+**Then** el socket se emite una vez y la recepción ve "Nueva reserva de {OTA} — …" en la campanita;
+la camarera no. Una revisión de modificación de esa misma reserva no emite nada.
+
 ## REQ-CAN-08 — Bandeja y detalle
 
 La bandeja MUST tener filtros: **Sin atender** (`pending`), **Citas de hoy**, **Vencidas**,

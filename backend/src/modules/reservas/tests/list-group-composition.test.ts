@@ -36,6 +36,8 @@ function room(over: Record<string, any>) {
 }
 
 const hotelAdmin = { id: 'u1', role: 'hotel_admin', hotelId: HOTEL }
+// REQ-RWP-04: el listado ahora exige las fuentes de dinero; acá no se prueban (ver list-payment-state.test.ts).
+const noMoney = { addonsOf: async () => [], paidOf: async () => 0 }
 
 describe('listReservations — filtro groupId (Requerimiento 13, varias habitaciones)', () => {
   it('trae SOLO las reservas del mismo groupId, cada una con su propia composición', async () => {
@@ -46,7 +48,7 @@ describe('listReservations — filtro groupId (Requerimiento 13, varias habitaci
       room({ id: 'r-d', roomId: 'room-d', adults: 2, children: 0 }), // reserva individual, no debe aparecer
     ]
     const repo = makeRepo(rows)
-    const result = await listReservations(repo, {} as any, noopCache, noopLogger, { groupId: 'g1' } as any, hotelAdmin)
+    const result = await listReservations(repo, {} as any, noopCache, noopLogger, { groupId: 'g1' } as any, hotelAdmin, noMoney)
     expect(result.data.map((r: any) => r.id).sort()).toEqual(['r-a', 'r-b'])
     const byId = Object.fromEntries(result.data.map((r: any) => [r.id, r]))
     expect(byId['r-a'].childrenAges).toEqual([2])
@@ -61,7 +63,7 @@ describe('listReservations — filtro groupId (Requerimiento 13, varias habitaci
       room({ id: 'r-b', hotelId: OTRO_HOTEL, groupId: 'g1' }),
     ]
     const repo = makeRepo(rows)
-    const result = await listReservations(repo, {} as any, noopCache, noopLogger, { groupId: 'g1' } as any, hotelAdmin)
+    const result = await listReservations(repo, {} as any, noopCache, noopLogger, { groupId: 'g1' } as any, hotelAdmin, noMoney)
     expect(result.data.map((r: any) => r.id)).toEqual(['r-a'])
   })
 

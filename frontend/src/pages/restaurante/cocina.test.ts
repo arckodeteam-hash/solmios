@@ -111,6 +111,21 @@ describe('cocina.vue — Cancelar pasa por el modal de motivo', () => {
   })
 })
 
+// #282 (M2): en la tablet los botones Preparar/Listo/Cancelar medían 72×28 px — por debajo de los 44 px táctiles.
+describe('cocina.vue — botones de la línea aptos para el dedo (#282)', () => {
+  it('Preparar/Listo y Cancelar tienen min-h-11 (44 px) y ya no py-1/text-xs', () => {
+    const tpl = COCINA.match(/<template>([\s\S]*)<\/template>/)![1]
+    const advanceBtn = (tpl.match(/<button[^>]*data-testid="kds-advance"[^>]*>[\s\S]*?<\/button>/g) ?? [])[0]
+    const cancelBtn = (tpl.match(/<button[^>]*>Cancelar<\/button>/g) ?? [])[0]
+    expect(advanceBtn, 'no se encontró el botón de avance del KDS').toBeDefined()
+    for (const btn of [advanceBtn, cancelBtn]) {
+      expect(btn).toMatch(/min-h-11/)
+      expect(btn).not.toMatch(/\bpy-1\b/)
+      expect(btn).not.toMatch(/text-xs/)
+    }
+  })
+})
+
 describe('cocina.vue — el KDS suena también sin stream (#211, polling de respaldo)', () => {
   it('refresh() detecta comandas nuevas por diff de ids y hace beep cuando el canal no está en vivo', () => {
     const script = COCINA.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)![1]!

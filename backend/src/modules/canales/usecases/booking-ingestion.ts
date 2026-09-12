@@ -35,6 +35,12 @@ export interface BookingIngestDeps {
   cancelReservation: ReservationCancelPort
   /** Para dejar rastro de las cancelaciones OTA que no se pueden aplicar (ver más abajo). */
   logger?: { error: (msg: string, meta?: Record<string, unknown>) => void }
+  /**
+   * #246 — Aviso de ALTA (socket `onOtaBookingIngested` del service). Solo se dispara cuando se
+   * crea una reserva nueva: dedupe, modificación y cancelación no avisan. Best-effort: si el aviso
+   * falla, la ingesta ya está hecha y la revisión se ackea igual.
+   */
+  onIngested?: (data: { hotelId: string; reservationId: string; ota: string }) => Promise<void>
 }
 
 /** Resultado de aplicar una revisión: distingue reserva creada vs dedupe (ya existía). */
@@ -165,5 +171,13 @@ export async function applyBookingRevision(deps: BookingIngestDeps, dto: any): P
   payload.id = crypto.randomUUID()
   payload.roomId = roomId
   await orm.create('Reservations', payload)
+  // La reserva ya está guardada: un aviso que falla no la deshace ni frena el ack de la revisión.
+  try {
+    await deps.onIngested?.({ hotelId, reservationId: payload.id, ota: dto.channel || 'OTA' })
+  } catch (e) {
+    deps.logger?.error('No se pudo avisar la reserva OTA ingresada', {
+      hotelId, reservationId: payload.id, externalLocator: dto.externalLocator, channel: dto.channel, error: (e as Error).message,
+    })
+  }
   return { created: true }
 }

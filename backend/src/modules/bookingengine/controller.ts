@@ -167,7 +167,8 @@ export class BookingengineController {
   async updateConfig(req: HttpRequest) {
     this.logger.info('PUT /booking-engine/config')
     const hotelId = await hotelOf(req, this.orm)
-    const data = validateSchema(UpdateBookingConfigSchema, req.body) as UpdateBookingConfigDTO
+    // #248 — el shared, porque `pendingPaymentTtlHours` es `integer` (tipo que el framework no conoce).
+    const data = validateBodySchema(UpdateBookingConfigSchema, req.body) as UpdateBookingConfigDTO
     const config = await this.service.updateConfig(hotelId as string, data)
     return { status: 200, body: config }
   }

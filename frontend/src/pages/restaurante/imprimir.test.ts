@@ -36,6 +36,18 @@ describe('openPrintTab', () => {
     open.mockRestore()
   })
 
+  // #282 (L): el placeholder decía "Preparando la ticket…".
+  it('el placeholder del ticket concuerda: "Preparando el ticket…"', async () => {
+    const tab = fakeTab()
+    printHtml.mockResolvedValue(HTML)
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
+    const { openPrintTab } = await import('./imprimir')
+    await openPrintTab('o1', 'ticket')
+    expect(tab.document.write.mock.calls[0][0]).toContain('Preparando el ticket…')
+    expect(tab.document.write.mock.calls[0][0]).not.toContain('la ticket')
+    open.mockRestore()
+  })
+
   it('el servidor falla → cierra la pestaña y devuelve el mensaje', async () => {
     const tab = fakeTab()
     printHtml.mockRejectedValue(new Error('El ticket se imprime después de cobrar'))

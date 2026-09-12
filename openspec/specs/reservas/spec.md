@@ -166,6 +166,17 @@ nunca silencioso) y notificar por sockets/webhook de canales.
 - THEN status=`cancelled`, habitación disponible, código TTLock revocado, y el preview
   que vio el recepcionista coincide con lo persistido
 
+#### Scenario: Vencimiento de una reserva web sin pago (sin cargo ni política)
+
+- GIVEN reserva `pending` creada desde el motor público, sin pago y más vieja que el TTL
+  del hotel (`booking_config.pendingPaymentTtlHours`)
+- WHEN el sistema la cancela con `cancelBySystem(..., { penaltyMode: 'no-charge',
+  reason: 'payment_timeout' })` (#248, REQ-RWP-05)
+- THEN status=`cancelled`, `cancellationReason='payment_timeout'`, `cancellationFee=0`,
+  `refundAmount=0`, `policyApplied.policyId='payment_timeout'`, NO se consulta la política
+  del hotel, y `onReservationCancelled` se emite igual (con `refundAmount: 0`) para que los
+  conectores liberen lo que la reserva tomó
+
 ### Requirement: No-show automático sin overbooking
 
 El cron de night audit (cada 3h, todos los hoteles,
@@ -305,6 +316,107 @@ La lectura es best-effort: es bitácora, no dinero — un fallo del puerto NUNCA
 - WHEN se pide el detalle
 - THEN `paymentAttempts[0]` es el `paid` y `[1]` el `failed` con su motivo, y el de Stripe test
   trae `dashboardUrl` `https://dashboard.stripe.com/test/payments/<providerRef>`
+
+### Requirement: Registrar pago manual con evidencia (REQ-RWP-06)
+
+`POST /api/reservas/:id/mark-paid` (permiso `billing:create` — el único endpoint del módulo
+con permiso de facturación, porque registra dinero; ownership post-findById con bypass
+`super_admin`) recibe `{method: cash|transfer|card|other, amount > 0, reference?, note?}`
+y MUST: rechazar con 400 `reference` vacía para `transfer`/`card` (evidencia para
+conciliar con el banco; `cash`/`other` no la exigen), rechazar con 400
+`amount > pendingBalance + BALANCE_EPSILON` con el saldo en el mensaje (misma regla que
+facturas: el excedente no se absorbe en silencio), rechazar con 409 reservas `cancelled`
+/ `no_show`; asentar PRIMERO la fila en `payments` (`type:'charge'`, `status:'completed'`,
+`reservationId`, `reference`, `createdBy` = usuario del token — nunca del body —,
+`description: 'Cobro manual · {method} · {note}'`) vía el puerto `manualPayment`
+(`usecases/mark-paid.ts`, connector `connectors/reservas-payments.ts`) y recién DESPUÉS
+actualizar la reserva: `pendingAmount` recalculado con `pendingBalance` sobre lo ya
+cobrado + este cobro (nunca una resta a mano) y `status` `pending → confirmed` (otros
+estados no cambian); audit `reservation.marked_paid`. Si el asiento en `payments` falla,
+la reserva queda intacta. MUST NOT escribir `reservations.deposit` (no es el libro del
+dinero; `payments` es la única fuente de verdad). Efectos derivados sin código propio:
+`onPaymentCompleted` → caja (`payments-caja`) para efectivo; `onPaymentCreated` → resync
+de `pendingAmount` (`payments-reservas`). Respuesta 201 con la reserva + `paymentId`,
+`paidAmount`, `pendingAmount`, `paymentState`. En la ficha (`ReservationModal.vue`,
+tarjeta "Importe y Pago") el botón "Registrar pago" (visible con `billing:create` y
+`pending > 0`) abre `MarkPaidModal.vue` con el monto prellenado con el saldo; al guardar se
+refrescan el detalle (badge y "Historial de cobros" con "Registró: {nombre}") y el listado.
+
+#### Scenario: Cobro manual salda la reserva
+
+- GIVEN reserva `pending` con saldo 354 y sin cobros previos
+- WHEN `POST /:id/mark-paid` con `{method:'transfer', amount:354, reference:'TRF-1'}`
+- THEN 201, existe una fila en `payments` `charge`/`completed` con `createdBy` del token,
+  `paymentState:'paid'`, `pendingAmount:0`, status `confirmed`, audit
+  `reservation.marked_paid`
+- AND `reservations.deposit` no cambia
+
+#### Scenario: Sobrepago rechazado
+
+- GIVEN reserva con saldo 354
+- WHEN `POST /:id/mark-paid` con `amount:400`
+- THEN 400 con "$354" en el mensaje y NO se crea ningún payment ni se toca la reserva
+
+#### Scenario: Transferencia sin referencia rechazada
+
+- WHEN `POST /:id/mark-paid` con `{method:'transfer', amount:354}` sin `reference`
+- THEN 400 y ningún payment
+- AND `{method:'cash', amount:354}` sin referencia sí se acepta
+
+#### Scenario: Sin permiso de facturación
+
+- GIVEN un rol sin `billing:create` (p.ej. housekeeper)
+- WHEN `POST /:id/mark-paid`
+- THEN 403 sin efectos
+
+### Requirement: Estado de pago por fila en el listado y origen web (REQ-RWP-04)
+
+`GET /api/reservas` MUST devolver en cada fila de la página `paidAmount` (number) y
+`paymentState` (`pending` | `partial` | `paid`), calculados con la MISMA fuente de "lo
+pagado" que el detalle y `mark-paid` (`paidSource()` del módulo →
+`shared/usecases/reservation-paid.ts`: `payments` por folio, factura y vínculo directo,
+nunca `reservations.deposit` a secas) y con `paymentState()` de
+`shared/utils/reservation-balance.ts` sobre el total cobrable (alojamiento + otros cobros +
+extras). El cálculo se acota a las filas de la página (≤ `limit`, máximo 100) y corre en
+paralelo por fila (`usecases/crud.ts`); MUST NOT cargar `payments` del hotel entero en
+memoria. El resultado se cachea junto con la página y lo invalida la misma notificación
+de cambio que ya dispara cada cobro/extra.
+
+Origen: las reservas creadas por el motor público (`bookingengine/usecases/public-booking.ts`
+y `public-booking-group.ts`) nacen con `source:'web'`; las cargadas desde el panel
+(`/api/panel/reservas`) conservan el default `source:'direct'`. `channel` sigue siendo
+`'direct'` en ambas: los reportes de "directas" (`usecases/booking-engine.ts`) cuentan por
+`channel`, y el cambio de `source` MUST NOT sacar a la reserva web de ese conteo.
+`CHANNEL_ENUM` acepta `web`. Backfill idempotente en cada deploy
+(`scripts/backfill-reservation-source-web.ts`, llamado desde `migrate-db.ts`):
+`source='direct' AND accessToken no nulo → 'web'` (sólo el flujo público setea
+`accessToken`); una segunda corrida no toca filas.
+
+Panel (`pages/reservations/index.vue`): columna **Pago** con badge Pendiente (coral) ·
+Parcial (dorado) · Pagada (teal) desde `paymentState` (helper compartido
+`utils/payment-state.ts`, el mismo que usa la ficha); KPI **Cobradas** (reservas
+`paymentState:'paid'` no canceladas) junto a "Confirmadas"; canal `web` → "Web" con icono
+de globo y opción "Web" en el filtro de canal; por debajo de 768px el badge de pago va
+debajo del estado y no se oculta.
+
+#### Scenario: Dos confirmadas, una cobrada y otra no
+
+- GIVEN dos reservas `confirmed` de 300, una con un `payment` `completed` por 300 y otra sin cobros
+- WHEN `GET /api/reservas`
+- THEN la primera trae `paymentState:'paid'`, `paidAmount:300` y la segunda `pending`, `0`
+- AND `paidOf` se consultó exactamente una vez por fila de la página
+
+#### Scenario: Reserva web vs. reserva de recepción
+
+- WHEN el motor público crea una reserva
+- THEN `source:'web'` y `channel:'direct'`, y el reporte de directas la sigue contando
+- AND una reserva cargada por el panel queda con `source:'direct'`
+
+#### Scenario: Backfill idempotente
+
+- GIVEN filas `direct`+`accessToken`, `direct` sin token y `booking`
+- WHEN corre el backfill dos veces
+- THEN sólo la primera pasa a `web` en la primera corrida y la segunda corrida cambia 0 filas
 
 ### Requirement: Transversales de toda operación de reservas
 

@@ -22,6 +22,8 @@ const realAuth = new Auth({ sign: () => '', verify: () => ({}) } as any, 'test-s
 
 const HOTEL = 'h1'
 const USER = { id: 'u1', role: 'hotel_admin', hotelId: HOTEL }
+// REQ-RWP-04: el listado ahora exige las fuentes de dinero; acá sólo importa `pendingAmount` (ver list-payment-state.test.ts).
+const noMoney = { addonsOf: async () => [], paidOf: async () => 0 }
 
 /** CacheAdapter en memoria: TTL ignorado (los tests no esperan 300s), semántica de claves REAL. */
 function memoryCache() {
@@ -112,12 +114,12 @@ describe('addons → caché del listado', () => {
   it('agregar un extra hace que GET /api/reservas deje de servir el saldo viejo', async () => {
     const h = harness()
     const cache = memoryCache()
-    const before = await listReservations(h.listRepo, h.userRepo, cache, noopLogger, listQuery, USER)
+    const before = await listReservations(h.listRepo, h.userRepo, cache, noopLogger, listQuery, USER, noMoney)
     expect(before.data[0].pendingAmount).toBe(440)
 
     await createAddon(depsOf(h, notifierOn(cache)), { reservationId: 'r1', dto: { description: 'Cena', amount: 30, quantity: 2, kind: 'service' } as any, user: USER })
 
-    const after = await listReservations(h.listRepo, h.userRepo, cache, noopLogger, listQuery, USER)
+    const after = await listReservations(h.listRepo, h.userRepo, cache, noopLogger, listQuery, USER, noMoney)
     expect(after.data[0].pendingAmount).toBe(500)
   })
 
@@ -125,11 +127,11 @@ describe('addons → caché del listado', () => {
     const h = harness([{ id: 'a1', reservationId: 'r1', hotelId: HOTEL, amount: 30, quantity: 2, kind: 'service' }])
     h.reservation.pendingAmount = 500
     const cache = memoryCache()
-    expect((await listReservations(h.listRepo, h.userRepo, cache, noopLogger, listQuery, USER)).data[0].pendingAmount).toBe(500)
+    expect((await listReservations(h.listRepo, h.userRepo, cache, noopLogger, listQuery, USER, noMoney)).data[0].pendingAmount).toBe(500)
 
     await deleteAddon(depsOf(h, notifierOn(cache)), { id: 'a1', user: USER })
 
-    expect((await listReservations(h.listRepo, h.userRepo, cache, noopLogger, listQuery, USER)).data[0].pendingAmount).toBe(440)
+    expect((await listReservations(h.listRepo, h.userRepo, cache, noopLogger, listQuery, USER, noMoney)).data[0].pendingAmount).toBe(440)
   })
 
   it('emite onReservasUpdated con el saldo NUEVO (el planning escucha ese socket)', async () => {

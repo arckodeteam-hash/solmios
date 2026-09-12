@@ -578,3 +578,31 @@ describe('#212 — enlace movimiento ↔ comanda y edición de manuales', () => 
     expect(toast.success).toHaveBeenCalledWith('Movimiento actualizado')
   })
 })
+
+// #282 (M1): la hora del movimiento salía en UTC (`createdAt.slice(0, 16)`): 21:39 con el hotel en
+// America/Santo_Domingo (17:39, como imprime el ticket). Ahora la zona del hotel manda.
+describe('#282 — hora de la caja en la zona del hotel', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('un cobro asentado a las 21:39Z se muestra 17:39 con el hotel en America/Santo_Domingo (fecha incluida)', async () => {
+    vi.mocked(HotelService.settings).mockResolvedValueOnce({ hotel: { currency: 'DOP', timezone: 'America/Santo_Domingo' }, baseRates: [] } as any)
+    const service = makeService({
+      movements: vi.fn(async () => ({ data: [
+        { id: 'z1', type: 'income', amount: 46.02, method: 'cash', source: 'payment_connector', reference: 'pos:o-9', concept: 'Comanda CMD-9 · Mesa 1', shiftId: 's1', createdAt: '2026-09-11T21:39:00.000Z' },
+        { id: 'z2', type: 'income', amount: 10, method: 'cash', source: 'manual', concept: 'Propina', shiftId: 's1', createdAt: '2026-09-12T03:10:00.000Z' },
+      ], pages: 1 })),
+      currentShift: vi.fn(async () => ({ id: 's1', status: 'open', openingAmount: 500, openedAt: '2026-09-11T12:00:00.000Z' })),
+    })
+    const { w } = await render(service)
+    expect(w.find('[data-testid="mov-z1"]').text()).toContain('2026-09-11 17:39')
+    expect(w.find('[data-testid="mov-z1"]').text()).not.toContain('21:39')
+    expect(w.find('[data-testid="mov-z2"]').text()).toContain('2026-09-11 23:10')   // sigue siendo el 11 para el hotel
+    expect(w.text()).toContain('Abierto 2026-09-11 08:00')
+  })
+
+  it('un valor sin zona (filas viejas) se muestra tal cual, sin inventar una conversión', async () => {
+    vi.mocked(HotelService.settings).mockResolvedValueOnce({ hotel: { currency: 'DOP', timezone: 'America/Santo_Domingo' }, baseRates: [] } as any)
+    const { w } = await render(withMovements())
+    expect(w.find('[data-testid="mov-a1"]').text()).toContain('2026-08-22 10:00')
+  })
+})

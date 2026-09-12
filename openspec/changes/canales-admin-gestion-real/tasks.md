@@ -58,6 +58,11 @@
 - [x] 3.4 Cron diario de citas (hoy + vencidas) al admin, dedup por
       `(requestId, appointmentAt, 'reminder_sent')`. Registrar en `composition-root.ts`.
       **Aceptación**: test que corre el cron dos veces → un solo envío.
+- [x] 3.5 (#246) Socket `onOtaBookingIngested` emitido solo en el alta de una reserva OTA; el
+      connector `canales-notificaciones` avisa al hotel vía `notify-reservation-received` (origen
+      `ota`).
+      **Aceptación**: `bun test src/modules/canales src/connectors/tests/canales-notificaciones.test.ts`
+      — revisión nueva → 1 llamada; modificación/cancelación → 0; aviso que falla → ingesta igual.
 
 ## 4. Pantalla admin (REQ-CAN-08)
 

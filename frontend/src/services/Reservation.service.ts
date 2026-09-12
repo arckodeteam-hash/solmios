@@ -14,6 +14,17 @@ export type {
   CancelPreview, CancelReservationInput, CancelPolicySource, StayQuote,
 } from '@/types'
 
+/** Medio por el que entró un cobro manual (REQ-RWP-06). */
+export type MarkPaidMethod = 'cash' | 'transfer' | 'card' | 'other'
+
+/** Body de `POST /reservas/:id/mark-paid`. `reference` es obligatoria para transfer/card. */
+export interface MarkPaidInput {
+  method: MarkPaidMethod
+  amount: number
+  reference?: string
+  note?: string
+}
+
 export const STATUS_MAP: Record<string, ReservationStatus> = {
   pendiente: 'pending', pending: 'pending',
   confirmada: 'confirmed', confirmed: 'confirmed',
@@ -24,6 +35,7 @@ export const STATUS_MAP: Record<string, ReservationStatus> = {
 
 const SOURCE_MAP: Record<string, ReservationSource> = {
   direct: 'direct', directa: 'direct',
+  web: 'web',
   phone: 'phone',
   whatsapp: 'whatsapp',
   booking: 'booking', 'booking.com': 'booking',
@@ -48,10 +60,16 @@ export function mapReservation(r: RawReservation): Reservation {
     childrenAges: r.childrenAges,
     groupId: r.groupId ?? undefined,
     status,
-    source: SOURCE_MAP[r.channel?.toLowerCase()] ?? 'other',
+    // REQ-RWP-04 — `source` del backend distingue la reserva del widget web ('web') de la cargada
+    // por recepción ('direct'); `channel` sigue siendo 'direct' en ambas, por eso no alcanza solo.
+    source: r.source === 'web' ? 'web' : (SOURCE_MAP[r.channel?.toLowerCase()] ?? 'other'),
     totalAmount: r.totalAmount,
     depositAmount: r.deposit ?? 0,
-    paymentStatus: (r.deposit ?? 0) >= r.totalAmount ? 'paid' : (r.deposit ?? 0) > 0 ? 'partial' : 'pending',
+    // El listado ya trae el estado real de cobro desde `payments` (backend, `paymentState`). La
+    // fórmula deposit-vs-total queda SOLO como fallback para respuestas que no lo traen.
+    paymentStatus: r.paymentState ?? ((r.deposit ?? 0) >= r.totalAmount ? 'paid' : (r.deposit ?? 0) > 0 ? 'partial' : 'pending'),
+    paymentState: r.paymentState,
+    paidAmount: r.paidAmount,
     roomNumber: r.roomNumber,
     roomType: r.roomType,
     guestName: r.guestName,
@@ -230,6 +248,20 @@ export const ReservationService = {
    */
   async approve(id: string): Promise<Reservation> {
     const data = await http.post<RawReservation>(`/reservas/${id}/approve`, {})
+    return mapReservation(data)
+  },
+
+  /**
+   * REQ-RWP-06 (#249) — registra un cobro MANUAL recibido fuera de Stripe (efectivo, transferencia,
+   * tarjeta en el mostrador, otro). Antes la recepción "confirmaba" la reserva cambiando el status
+   * a mano y la plata no quedaba en ningún lado: ni en el historial de cobros ni en la caja.
+   * El backend inserta el pago en `payments` (con quién lo registró), recalcula `pendingAmount` /
+   * `paymentState` y, si saldó todo, confirma la reserva. NUNCA toca `deposit`: el anticipo es
+   * un dato de la reserva, no un cobro. Reference es obligatoria para transfer/card y el monto
+   * no puede superar el saldo pendiente (400 con mensaje legible en ambos casos).
+   */
+  async markPaid(id: string, body: MarkPaidInput): Promise<Reservation> {
+    const data = await http.post<RawReservation>(`/reservas/${id}/mark-paid`, body)
     return mapReservation(data)
   },
 

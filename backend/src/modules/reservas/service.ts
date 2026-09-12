@@ -17,6 +17,7 @@ import { paidSourceFrom, type PaidSource } from '../../shared/usecases/reservati
 import { paymentsOfReservation as paymentsOfReservationUsecase, hasInvoiceForReservation as hasInvoiceForReservationUsecase } from './usecases/reservation-money-links'
 import { cancelReservation as cancelReservationUsecase } from './usecases/cancel'
 import { approveReservation as approveReservationUsecase } from './usecases/approve'
+import { markReservationPaid, type MarkPaidDTO } from './usecases/mark-paid'
 import { cancelReservationBySystem, type SystemCancelInput, type SystemCancelOutcome } from './usecases/cancel-system'
 import { previewCancellation, type CancelPreview } from './usecases/cancel-preview'
 import { getPreCheckinData as getPreCheckinDataUsecase, submitPreCheckin as submitPreCheckinUsecase, uploadPreCheckinPhoto as uploadPreCheckinPhotoUsecase } from './usecases/pre-checkin'
@@ -83,7 +84,7 @@ export class ReservasService {
   setSockets(s: Partial<ReservasSockets>): void { accumulateSockets(this.sockets as any, s as any) }
   /** Invalidación a mano para altas que bypassan el CRUD (ver reservas-bookingengine.ts). */
   async invalidateListCache(hotelId: string): Promise<void> { await invalidateReservasCaches(this.cache, hotelId) }
-  async list(query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> { return listReservations(this.repo, this.userRepo, this.cache, this.logger, query, currentUser) }
+  async list(query: ReservasQuery, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasPaginated> { return listReservations(this.repo, this.userRepo, this.cache, this.logger, query, currentUser, { addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource() }) } // REQ-RWP-04: paymentState/paidAmount por fila — ver usecases/crud.ts
   /** #209: alojados (y confirmadas vigentes) del hotel por habitación/apellido, o una por `id` — lo consume el POS vía conector. */
   async searchInHouse(query: { q?: string; id?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<InHouseSearchResult> { return searchInHouseUsecase({ repo: this.repo, roomRepo: this.roomRepo, guestRepo: this.guestRepo, userRepo: this.userRepo, hotelRepo: this.hotelRepo }, query, currentUser) }
   async getById(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> {
@@ -186,6 +187,7 @@ export class ReservasService {
   // ── CANCEL (F2 plan #627) — `cancel` aplica la política del hotel; `cancelPreview` hace el MISMO cálculo sin persistir ni emitir ──
   async cancel(id: string, dto: { reason?: string }, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> { return cancelReservationUsecase({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets, releaseChargeSessions: (rid: string, hid: string) => ceilingGuardOf(this.orchestrationDeps.paymentRequestsCeiling, 'releaseForCancel')(hid, rid) }, id, dto, currentUser, this.auth) }
   async approve(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<ReservasDTO> { return approveReservationUsecase({ repo: this.repo, cache: this.cache }, id, currentUser, this.auth) }
+  async markPaid(id: string, dto: MarkPaidDTO, currentUser: { id: string; role: string; hotelId?: string }): Promise<any> { return markReservationPaid({ repo: this.repo, addonsOf: (rid: string, hid: string) => this.queries.getReservationAddons(rid, hid), paidOf: this.paidSource(), port: this.orchestrationDeps.manualPayment, auditPort: this.auditPort, logger: this.logger, notifyChanged: this.reservationChanged() }, id, dto, currentUser, this.auth) } // REQ-RWP-06 (#249): cobro manual fuera de Stripe — asienta en `payments` vía connector reservas-payments; ver usecases/mark-paid.ts
   async cancelPreview(id: string, currentUser: { id: string; role: string; hotelId?: string }): Promise<CancelPreview> { return previewCancellation({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, guestRepo: this.guestRepo }, id, currentUser, this.auth) }
   /** Cancelación de SISTEMA (OTA/IA): sin usuario logueado, scoping por `hotelId`. Ver usecases/cancel-system.ts. Lo consumen los connectors canales-reservas / ai-recepcionista-reservas / ai-gerente-reservas. */
   async cancelBySystem(id: string, input: SystemCancelInput): Promise<SystemCancelOutcome> { return cancelReservationBySystem({ repo: this.repo, policyRepo: this.policyRepo!, hotelRepo: this.hotelRepo, logger: this.logger, cache: this.cache, sockets: this.sockets, releaseChargeSessions: (rid: string, hid: string) => ceilingGuardOf(this.orchestrationDeps.paymentRequestsCeiling, 'releaseForCancel')(hid, rid) }, id, input) }

@@ -19,6 +19,8 @@ export interface BookingConfigDTO {
   instantConfirmation: boolean
   stripeAccountId: string
   allowedCountries: string[]
+  /** #248 REQ-RWP-05 — Horas para pagar una reserva web (0 = nunca vence). */
+  pendingPaymentTtlHours: number
   createdAt: string
   updatedAt: string
 }
@@ -38,6 +40,7 @@ export interface UpdateBookingConfigDTO {
   instantConfirmation?: boolean
   stripeAccountId?: string
   allowedCountries?: string[]
+  pendingPaymentTtlHours?: number
 }
 
 // ─── Availability ──────────────────────────────────────

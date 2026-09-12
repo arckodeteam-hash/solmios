@@ -12,6 +12,9 @@ const ROUTE_BY_TYPE: Record<string, string> = {
   housekeeping: '/panel/operaciones/limpieza',
   maintenance: '/panel/operaciones/mantenimiento',
   review: '/panel/resenas',
+  // Aviso de reserva web/OTA o pago confirmado (#246): el backend manda metadata.link
+  // ('/panel/reservations?open=<id>'); si un aviso viejo no lo trae, cae al listado.
+  reservation: '/panel/reservas',
 }
 
 function isInternalLink(link: unknown): link is string {

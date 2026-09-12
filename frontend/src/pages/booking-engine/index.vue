@@ -271,6 +271,19 @@
                     class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan"
                   />
                 </div>
+                <!-- #248 (REQ-RWP-05) — TTL de pago de reservas web: pasado este plazo sin pago
+                     el cron del backend cancela la reserva y libera la habitación. 0 = nunca vence. -->
+                <div>
+                  <label for="booking-engine-horas-para-pagar" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Horas para pagar una reserva web</label>
+                  <input id="booking-engine-horas-para-pagar" name="pendingPaymentTtlHours"
+                    v-model.number="form.pendingPaymentTtlHours"
+                    type="number"
+                    min="0"
+                    step="1"
+                    class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan"
+                  />
+                  <p class="mt-1 text-[10px] text-text-muted">Pasadas estas horas sin pago, la reserva se cancela sola y la habitación vuelve a estar disponible. 0 = nunca vence.</p>
+                </div>
               </div>
               <!-- F3 (#627): editor estructurado de políticas de cancelación (base + overrides).
                    Reemplaza al textarea libre: el merchant arma niveles de penalidad por hora/%.
@@ -556,6 +569,7 @@ function defaultConfig(): BookingConfig {
     language: 'es',
     minNights: 1,
     maxNights: 30,
+    pendingPaymentTtlHours: 24,
     cancellationPolicy: '',
     showComparison: false,
     googleAdsEnabled: false,
@@ -670,6 +684,9 @@ async function saveConfig() {
     toast.error(childPolicyRateError.value)
     return
   }
+  // #248: el backend exige entero ≥ 0 (400 si no). Normalizar antes de mandar para que un
+  // input vacío / decimal / negativo no rompa el guardado.
+  form.pendingPaymentTtlHours = Math.max(0, Math.floor(Number(form.pendingPaymentTtlHours) || 0))
   saving.value = true
   try {
     const [updated] = await Promise.all([

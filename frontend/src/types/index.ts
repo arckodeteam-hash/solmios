@@ -100,7 +100,12 @@ export interface CreditCardInfo {
 
 // === RESERVATION ===
 export type ReservationStatus = 'pending' | 'confirmed' | 'checked_in' | 'checked_out' | 'cancelled'
-export type ReservationSource = 'direct' | 'phone' | 'whatsapp' | 'booking' | 'expedia' | 'agoda' | 'airbnb' | 'google' | 'other'
+/** REQ-RWP-04 — 'web' = reserva hecha por el huésped en el widget público (`source:'web'` del
+ *  backend); 'direct' = cargada por recepción. En `channel` ambas siguen siendo 'direct'. */
+export type ReservationSource = 'direct' | 'web' | 'phone' | 'whatsapp' | 'booking' | 'expedia' | 'agoda' | 'airbnb' | 'google' | 'other'
+/** Estado real de cobro de una reserva, calculado por el backend desde `payments`
+ *  (`shared/utils/reservation-balance.ts`). Mismo union que `@/utils/payment-state`. */
+export type PaymentState = 'pending' | 'partial' | 'paid'
 
 export interface Reservation {
   id: string
@@ -132,6 +137,10 @@ export interface Reservation {
   depositStatus?: 'unpaid' | 'partial' | 'paid'
   paymentMethod?: string
   paymentStatus: 'pending' | 'partial' | 'paid' | 'refunded'
+  /** REQ-RWP-04 — estado y monto cobrado reales (desde `payments`, backend). Ausentes en respuestas
+   *  que no los traen; entonces `paymentStatus` cae a la fórmula deposit-vs-total. */
+  paymentState?: PaymentState
+  paidAmount?: number
   promoCode?: string
   regime?: string
   createdAt: Date
@@ -165,8 +174,13 @@ export interface ReservationApiRecord {
   checkInTime?: string | null
   checkOutTime?: string | null
   channel: string
+  /** REQ-RWP-04 — 'web' (widget público) o 'direct' (recepción); `channel` es 'direct' en ambas. */
+  source?: string
   totalAmount: number
   status: string
+  /** REQ-RWP-04 — los devuelve `GET /api/reservas` por fila, calculados desde `payments`. */
+  paymentState?: 'pending' | 'partial' | 'paid'
+  paidAmount?: number
   adults?: number
   children?: number
   childrenAges?: number[]

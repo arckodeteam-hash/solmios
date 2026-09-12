@@ -1,7 +1,7 @@
 import type { ValidationRule } from 'arckode-framework'
 
 const STATUS_ENUM = ['pending', 'confirmed', 'checked_in', 'checked_out', 'cancelled', 'no_show']
-const CHANNEL_ENUM = ['direct', 'booking', 'airbnb', 'expedia', 'agoda', 'trip', 'phone', 'email', 'walk_in']
+const CHANNEL_ENUM = ['direct', 'web', 'booking', 'airbnb', 'expedia', 'agoda', 'trip', 'phone', 'email', 'walk_in']
 const PRECHECKIN_ENUM = ['pending', 'sent', 'completed', 'expired']
 
 export const CreateReservasSchema: Record<string, ValidationRule> = {
@@ -208,6 +208,18 @@ export const SettleSchema: Record<string, ValidationRule> = {
   method: { type: 'string' as const, required: true, max: 50 },
   amount: { type: 'number' as const, required: true, min: 0 },
   reference: { type: 'string' as const, max: 200 },
+}
+
+// ── Registrar pago manual (REQ-RWP-06, #249): POST /api/reservas/:id/mark-paid ──
+// Plata que el hotel YA recibió fuera de Stripe (efectivo en mostrador, transferencia, POS). El
+// DSL no expresa reglas cruzadas: "referencia obligatoria para transfer/card" y el tope contra el
+// saldo pendiente viven en `usecases/mark-paid.ts`. `amount` con `min: 0.01` — un cobro de $0 no
+// registra nada y sólo ensuciaría `payments` (la única fuente de verdad del dinero).
+export const MarkPaidSchema: Record<string, ValidationRule> = {
+  method: { type: 'string' as const, required: true, enum: ['cash', 'transfer', 'card', 'other'] },
+  amount: { type: 'number' as const, required: true, min: 0.01 },
+  reference: { type: 'string' as const, max: 200 },
+  note: { type: 'string' as const, max: 500 },
 }
 
 // ── Pre-Checkin (público) ──

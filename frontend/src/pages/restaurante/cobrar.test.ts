@@ -189,6 +189,9 @@ describe('cobrar.vue — #209', () => {
     const w = await mountCobrar()
     expect(w.find('[data-testid="folio-note"]').text()).toContain('Cobrado a la habitación: se devuelve desde el folio')
     expect(w.text()).not.toContain('Reembolsar')
+    // #282 (L): al folio va el NETO (100), no el total con impuesto del ticket (118).
+    expect(w.find('[data-testid="settled-amount"]').text()).toBe('RD$100.00')
+    expect(w.find('[data-testid="settled-net-note"]').text()).toContain('Neto cargado a la habitación')
     w.unmount()
   })
 
@@ -414,6 +417,46 @@ describe('cobrar.vue — #214 dividir cuenta', () => {
     expect(q<HTMLInputElement>('#restaurante-cobrar-parte-monto').disabled).toBe(true)
     await click('[data-testid="confirm-part"]')
     expect(addPartCalls).toEqual([{ id: 'o1', data: { method: 'cash', amount: 59, tip: 0, lineIds: ['l2'] } }])
+    w.unmount()
+  })
+
+  // #282 (H2): "Por líneas" mostraba la línea a valor de carta (ignoraba `discountAmount`): 11.80 en vez de 10.62,
+  // y la suma de líneas superaba la cuenta. Misma regla que `amountForLines` del server: neto descontado,
+  // prorrateado por el descuento de comanda, más impuesto.
+  it('por líneas con descuentos: cada línea muestra su bruto DESCONTADO y la suma de líneas es la cuenta', async () => {
+    orderData = baseOrder({
+      subtotal: 39, tax: 7.02, total: 46.02, discountTotal: 1,
+      lines: [
+        { id: 'l1', orderId: 'o1', name: 'Pizza', quantity: 1, unitPrice: 10, lineTotal: 10, taxRate: 18, status: 'new', discountType: 'percent', discountValue: 10, discountAmount: 1 },
+        { id: 'l2', orderId: 'o1', name: 'Pasta', quantity: 1, unitPrice: 30, lineTotal: 30, taxRate: 18, status: 'new' },
+      ] as OrderWithLines['lines'],
+    })
+    paymentsData = { parts: [], balance: { due: 46.02, paid: 0, pending: 0, outstanding: 46.02, tips: 0 } }
+    const w = await mountCobrar()
+    await w.findAll('[role="tab"]')[1].trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="line-gross-l1"]').text()).toBe('RD$10.62')   // (10 − 1) × 1.18, no 11.80
+    expect(w.find('[data-testid="line-gross-l2"]').text()).toBe('RD$35.40')
+    await w.find('input[name="line-l1"]').trigger('change')
+    await flushPromises()
+    expect(w.find('[data-testid="pay-selection"]').text()).toContain('RD$10.62')
+    w.unmount()
+  })
+
+  it('por líneas con descuento de COMANDA: el bruto de cada línea se prorratea (10 % sobre 40 → 9.00 + 27.00 netos)', async () => {
+    orderData = baseOrder({
+      subtotal: 36, tax: 6.48, total: 42.48, discountType: 'percent', discountValue: 10, discountAmount: 4, discountTotal: 4,
+      lines: [
+        { id: 'l1', orderId: 'o1', name: 'Pizza', quantity: 1, unitPrice: 10, lineTotal: 10, taxRate: 18, status: 'new' },
+        { id: 'l2', orderId: 'o1', name: 'Pasta', quantity: 1, unitPrice: 30, lineTotal: 30, taxRate: 18, status: 'new' },
+      ] as OrderWithLines['lines'],
+    })
+    paymentsData = { parts: [], balance: { due: 42.48, paid: 0, pending: 0, outstanding: 42.48, tips: 0 } }
+    const w = await mountCobrar()
+    await w.findAll('[role="tab"]')[1].trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="line-gross-l1"]').text()).toBe('RD$10.62')   // 9 × 1.18
+    expect(w.find('[data-testid="line-gross-l2"]').text()).toBe('RD$31.86')   // 27 × 1.18
     w.unmount()
   })
 
