@@ -19,6 +19,7 @@ import type { WalletPassDTO, WalletPassQuery, WalletPassPaginated, CurrentUser }
 import type { WalletPassSockets } from './sockets'
 import { generatePass as generatePassUsecase, type TtlockPort, type GeneratePassDeps } from './usecases/generate-pass'
 import { sendPassEmailNow as sendPassEmailNowUsecase } from './usecases/send-pass-now'
+import { sendPartialPassNow as sendPartialPassNowUsecase } from './usecases/partial-pass'
 
 export interface WalletPassServiceDeps {
   auth: Auth
@@ -90,6 +91,15 @@ export class WalletPassService {
    */
   async sendPassEmailNow(reservationId: string): Promise<boolean> {
     return sendPassEmailNowUsecase(this.passDeps(), reservationId)
+  }
+
+  /**
+   * Pase PARCIAL (#262): reserva sin habitación → correo con tipo, fechas y "Por asignar",
+   * sin código. Persiste fila con `lockCode: ''` que `generatePass` completa al asignar.
+   * Best-effort: false si ya se mandó (parcial o completo) o si no se pudo.
+   */
+  async sendPartialPassEmailNow(reservationId: string): Promise<boolean> {
+    return sendPartialPassNowUsecase(this.passDeps(), reservationId)
   }
 
   /** Deps compartidas por los usecases del módulo. */

@@ -7,6 +7,10 @@
 //   - Sección fallback con lockCode en mono font grande + ícono de llave.
 //   - Detalles de la reserva (hotel, fechas, habitación).
 //
+// Pase PARCIAL (#262, REQ-HAC-07): si `lockCode` viene vacío la reserva todavía no tiene
+// habitación (HAC-01: se asigna en recepción). Se omite el bloque del código y la fila
+// "Habitación" dice "Por asignar · <tipo>"; el completo llega cuando el hotel asigna la unidad.
+//
 // Best-effort: si el huésped no tiene email (walk-in), no se encola — log 'skipped'.
 // Si el EmailService no está inyectado (tests), devolvemos `{ status: 'skipped' }`.
 //
@@ -38,6 +42,10 @@ export interface PassEmailInput {
   checkInTime?: string
   checkOutTime?: string
   roomNumber?: string
+  /** Tipo vendido (`reservations.roomType`): con habitación acompaña al número; sin ella es lo
+   *  único que se le puede prometer al huésped ("Por asignar · doble"). */
+  roomType?: string
+  /** Código TTLock. Vacío = pase parcial (reserva sin habitación): sin bloque de código. */
   lockCode: string
   appleUrl?: string | null
   googleUrl?: string | null
@@ -69,8 +77,25 @@ export function renderWalletPassEmail(input: PassEmailInput): string {
   // Vacío si el caller no las pasó: se degrada a solo fecha en vez de romper el correo.
   const checkInTime = input.checkInTime ? ` · ${esc(input.checkInTime)}` : ''
   const checkOutTime = input.checkOutTime ? ` · ${esc(input.checkOutTime)}` : ''
-  const roomNumber = input.roomNumber ? esc(input.roomNumber) : '—'
+  const roomType = input.roomType ? esc(input.roomType) : ''
+  // Sin habitación asignada (HAC-01) se promete el tipo, nunca un número.
+  const roomLabel = input.roomNumber
+    ? (roomType ? `${esc(input.roomNumber)} · ${roomType}` : esc(input.roomNumber))
+    : (roomType ? `Por asignar · ${roomType}` : 'Por asignar')
   const lockCode = esc(input.lockCode)
+  const isPartial = !input.lockCode
+
+  const headerSubtitle = isPartial ? 'Tu pase de reserva' : 'Tu pase de reserva + código de acceso'
+  const lockCodeBlock = isPartial
+    ? ''
+    : `<div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
+      <p style="margin:0 0 8px;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-weight:bold;">🔑 Tu código de acceso</p>
+      <p style="margin:0;font-family:'Courier New',monospace;font-size:28px;letter-spacing:4px;color:#1a2b4c;font-weight:bold;text-align:center;background:#f3f4f6;padding:12px;border-radius:6px;">${lockCode}</p>
+      <p style="margin:8px 0 0;font-size:13px;color:#6b7280;text-align:center;">Si el pase digital no funciona, usá este código en el teclado de la puerta.</p>
+    </div>`
+  const windowParagraph = isPartial
+    ? '<p style="font-size:13px;color:#6b7280;margin:0 0 16px;">Tu habitación y el código de acceso te llegan por este medio en cuanto el hotel te asigne la unidad.</p>'
+    : `<p style="font-size:13px;color:#6b7280;margin:0 0 16px;">El código abre la puerta desde el <strong>${checkIn}${checkInTime || ''}</strong> y deja de funcionar el <strong>${checkOut}${checkOutTime || ''}</strong>. Si necesitás entrar antes o salir más tarde, avisale al hotel y te ajustamos el horario.</p>`
 
   const appleBlock = input.appleUrl
     ? `<a href="${esc(input.appleUrl)}" style="display:inline-block;background:#000;color:#fff;text-decoration:none;padding:14px 22px;border-radius:8px;font-weight:bold;margin:4px 8px 4px 0;font-size:14px;">${APPLE_BUTTON_LABEL}</a>`
@@ -91,26 +116,22 @@ export function renderWalletPassEmail(input: PassEmailInput): string {
 <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
   <div style="background:#1a2b4c;color:white;padding:20px;border-radius:12px 12px 0 0;text-align:center;">
     <h1 style="margin:0;font-size:24px;">🏨 ${hotelName}</h1>
-    <p style="margin:5px 0 0;opacity:0.8;">Tu pase de reserva + código de acceso</p>
+    <p style="margin:5px 0 0;opacity:0.8;">${headerSubtitle}</p>
   </div>
   <div style="background:#f8f9fa;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 12px 12px;">
     <p style="font-size:16px;">Hola <strong>${guestName}</strong>,</p>
     <p>Tu reserva está confirmada. Guardá tu pase digital para entrar sin pasar por recepción:</p>
     ${buttons}
     ${buttonsHint}
-    <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
-      <p style="margin:0 0 8px;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-weight:bold;">🔑 Tu código de acceso</p>
-      <p style="margin:0;font-family:'Courier New',monospace;font-size:28px;letter-spacing:4px;color:#1a2b4c;font-weight:bold;text-align:center;background:#f3f4f6;padding:12px;border-radius:6px;">${lockCode}</p>
-      <p style="margin:8px 0 0;font-size:13px;color:#6b7280;text-align:center;">Si el pase digital no funciona, usá este código en el teclado de la puerta.</p>
-    </div>
+    ${lockCodeBlock}
     <div style="background:white;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #e5e7eb;">
       <table style="width:100%;font-size:14px;">
-        <tr><td style="padding:6px 0;color:#6b7280;">Habitación</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${roomNumber}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;">Habitación</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${roomLabel}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-in</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${checkIn}${checkInTime}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;">Check-out</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${checkOut}${checkOutTime}</td></tr>
       </table>
     </div>
-    <p style="font-size:13px;color:#6b7280;margin:0 0 16px;">El código abre la puerta desde el <strong>${checkIn}${checkInTime || ''}</strong> y deja de funcionar el <strong>${checkOut}${checkOutTime || ''}</strong>. Si necesitás entrar antes o salir más tarde, avisale al hotel y te ajustamos el horario.</p>
+    ${windowParagraph}
     <p style="font-size:13px;color:#6b7280;">Localizador: <strong>${esc(input.reservationId)}</strong></p>
     <p style="font-size:13px;color:#6b7280;">¡Te esperamos!</p>
   </div>
