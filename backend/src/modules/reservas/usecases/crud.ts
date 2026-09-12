@@ -2,6 +2,8 @@ import { NotFoundError, AuthError, ConflictError } from 'arckode-framework'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { assertRoomAvailable } from './availability'
 import { assertUpdateValidations } from './validate-update'
+import { validateRoomAssignment, type RoomAssignmentDeps } from './assign-room'
+import { auditSafely } from '../../../shared/usecases/audit'
 import { safeEmit } from './safe-emit'
 import { reservasListCacheKey, invalidateReservasCaches } from './cache'
 import { eachDayExclusive } from '../../../shared/utils/daily-availability'
@@ -138,6 +140,12 @@ export async function createReservation(repo: any, blockRepo: any | undefined, l
     room = await roomRepo.findOne({ id: dto.roomId })
     if (!room || room.hotelId !== dto.hotelId) throw new ConflictError('La habitación no pertenece a este hotel')
   }
+  // REQ-HAC-01 (#258): lo que se vende es el TIPO. El alta del panel sigue exigiendo `roomId`, pero
+  // la fila queda con `roomType` = `rooms.type` (o el que declare el dto) para que reasignar la
+  // unidad después (assign-room.ts) valide contra el tipo vendido y no contra la unidad elegida.
+  // Sin `roomRepo` (callers viejos) se persiste sólo si el dto lo trae.
+  const roomType = dto.roomType || (room?.type ? String(room.type) : undefined)
+  if (roomType) dto.roomType = roomType
   // Auditoría de integridad (cierre, 2026-09-04) — decisión de producto: el staff NO puede exceder
   // silenciosamente la capacidad de la habitación. Mismo criterio (`fitsRoomCapacity` +
   // `room_type_capacity`) que el motor público y el reagendado — cero reglas nuevas. Reservas
@@ -277,6 +285,14 @@ export interface UpdateReservationHooks {
    * recortar y es no-op.
    */
   afterCeilingDrop?: (item: ReservasDTO) => Promise<void>
+  /**
+   * REQ-HAC-03 (#258): deps extra para el cambio de habitación por PUT. `updateReservation` sólo
+   * recibe repo/roomRepo/sockets/logger/cache (firma posicional, callers viejos): sin `blockRepo`
+   * el PUT NO chequea RoomBlocks y sin `auditPort` no deja auditoría `reservation.room_assigned`
+   * (el evento `onRoomAssigned` SÍ se emite siempre). Hoy el service no lo cablea; un wiring
+   * futuro lo pasa por acá sin tocar firmas.
+   */
+  roomAssignment?: Partial<Pick<RoomAssignmentDeps, 'blockRepo' | 'auditPort'>>
 }
 
 export async function updateReservation(repo: any, logger: any, cache: any, sockets: any, id: string, dto: UpdateReservasDTO, currentUser: { id: string; role: string; hotelId?: string }, roomRepo?: any, guestRepo?: any, groupRepo?: any, promoCodes?: PromoCodePort, hooks?: UpdateReservationHooks, configRepo?: RepositoryAdapter<any>): Promise<ReservasDTO> {
@@ -300,6 +316,29 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
       children: Number(dto.children ?? existing.children) || 0,
       childrenAges: dto.childrenAges ?? existing.childrenAges,
     })
+  }
+  // ─── REQ-HAC-03 (#258): cambio de habitación por PUT — UN solo camino ────────────────────
+  // El solape, el bloqueo, el tipo vendido y el sello `roomAssignedAt/By` los decide
+  // `validateRoomAssignment` (assign-room.ts), el mismo que usa POST /assign-room; acá sólo se
+  // mergea el patch en lo que se persiste. Lo que NO hace el PUT: desasignar (DELETE /assign-room)
+  // ni mover una estadía en curso (POST /assign-room mueve folio y estados de habitaciones) — un
+  // 409 con `reason` apunta al endpoint correcto en vez de dejar la reserva a medio mover.
+  const changesRoom = dto.roomId !== undefined && dto.roomId !== existing.roomId
+  const previousRoomId: string | null = existing.roomId ?? null
+  let roomAssignment: { patch: Partial<ReservasDTO>; typeChanged: boolean } | null = null
+  if (changesRoom) {
+    if (!dto.roomId) throw new ConflictError('Para soltar la habitación usá DELETE /reservas/:id/assign-room', { reason: 'use_unassign_endpoint' })
+    if (existing.status === 'checked_in') {
+      throw new ConflictError('La reserva está en estadía: reasignala con POST /reservas/:id/assign-room', { reason: 'use_assign_endpoint' })
+    }
+    // Fail-closed, mismo criterio que validate-update.ts: sin repo de habitaciones no se valida → se rechaza.
+    if (!roomRepo) throw new ConflictError('No se puede verificar la habitación')
+    roomAssignment = await validateRoomAssignment(
+      { repo, roomRepo, blockRepo: hooks?.roomAssignment?.blockRepo },
+      existing, dto.roomId,
+      { allowTypeChange: Boolean((dto as any).allowTypeChange), checkIn: dto.checkIn, checkOut: dto.checkOut, userId: currentUser.id },
+    )
+    Object.assign(dto, roomAssignment.patch)
   }
   // Auditoría de integridad (cierre, 2026-09-04) — `childrenAgesAsOf` es el check-in "de
   // referencia" con el que se proyecta cada edad al reagendar (Requerimiento 12). Si el panel
@@ -373,6 +412,17 @@ export async function updateReservation(repo: any, logger: any, cache: any, sock
   // no tiene cobros `pending` (`clamp-to-ceiling.ts:clampUnlocked`), así que correrlo siempre
   // cuesta una lectura y cierra la CLASE de bug en vez de una instancia.
   await hooks?.afterCeilingDrop?.(result)
+  if (roomAssignment) {
+    // Misma auditoría y mismo evento que POST /assign-room (TTLock genera/reemplaza el código en
+    // `onRoomAssigned`). La auditoría sólo si el caller cableó `auditPort` (ver UpdateReservationHooks).
+    const auditPort = hooks?.roomAssignment?.auditPort ?? null
+    const base = { hotelId: existing.hotelId, userId: currentUser.id, entity: 'reservation', entityId: id }
+    await auditSafely(auditPort, logger, { ...base, action: 'reservation.room_assigned', detail: JSON.stringify({ from: previousRoomId, to: dto.roomId }) })
+    if (roomAssignment.typeChanged) {
+      await auditSafely(auditPort, logger, { ...base, action: 'reservation.room_type_changed', detail: JSON.stringify({ from: existing.roomType ?? null, to: roomAssignment.patch.roomType }) })
+    }
+    await safeEmit(logger, 'onRoomAssigned', sockets.onRoomAssigned, { reservationId: id, hotelId: existing.hotelId, roomId: dto.roomId, previousRoomId })
+  }
   await safeEmit(logger, 'onReservasUpdated', sockets.onReservasUpdated, result)
   await invalidateReservasCaches(cache, existing.hotelId)
   return result
@@ -401,11 +451,15 @@ export async function updateReservationWithBalance(
    *  `pending` es no-op. */
   ceilingGuard?: (item: ReservasDTO) => Promise<void>,
   configRepo?: RepositoryAdapter<any>,
+  /** REQ-HAC-03 (#258): RoomBlocks + auditoría para el cambio de habitación por PUT (ver
+   *  `UpdateReservationHooks.roomAssignment`). Lo cablea el service desde `roomAssignmentDeps()`. */
+  roomAssignment?: Partial<Pick<RoomAssignmentDeps, 'blockRepo' | 'auditPort'>>,
 ): Promise<ReservasDTO> {
   return updateReservation(repo, logger, cache, sockets, id, dto, currentUser, roomRepo, guestRepo, groupRepo, promoCodes, {
     // Dentro de la ventana: el socket sale con el saldo nuevo y la caché se invalida DESPUÉS.
     afterPersist: async (item) => ({ pendingAmount: await syncReservationPending(repo, addonsOf, id, paidOf, item) }),
     afterCeilingDrop: ceilingGuard,
+    roomAssignment,
   }, configRepo)
 }
 
