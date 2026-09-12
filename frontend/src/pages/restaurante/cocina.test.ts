@@ -180,18 +180,11 @@ describe('cocina.vue — tablero kanban con receta', () => {
     expect(script()).toMatch(/RestaurantService\.setLineStatus\(line\.id, to\)/)
   })
 
-  it('la receta se despliega por tarjeta; quitar/agregar persiste con setLineIngredients (estado final, sin precio)', () => {
-    expect(tpl()).toMatch(/data-testid="kds-recipe-toggle"[\s\S]*@click="toggleRecipe\(c\.line\.id\)"|@click="toggleRecipe\(c\.line\.id\)"[\s\S]*data-testid="kds-recipe-toggle"/)
-    expect(tpl()).toMatch(/v-for="ing in c\.line\.ingredients"/)
-    expect(tpl()).toMatch(/data-testid="kds-ingredient-toggle"[\s\S]*\{\{ isRemoved\(c\.line, ing\.name\) \? '↺ Poner' : '− Quitar' \}\}/)
-    expect(tpl()).toMatch(/data-testid="kds-ingredient-add"/)
-    expect(tpl()).toMatch(/data-testid="kds-ingredient-remove"/)
-    expect(script()).toMatch(/RestaurantService\.setLineIngredients\(l\.id, changes\)/)
-    // Lo que cocina ya cambió se ve siempre, aunque la receta esté plegada.
-    expect(tpl()).toMatch(/data-testid="kds-changes"[\s\S]*SIN \{\{ n \}\}[\s\S]*CON \{\{ n \}\}/)
-    // Sin permiso de edición no se ofrece ni quitar ni agregar (el backend daría 403).
-    expect(tpl()).toMatch(/<button v-if="editPerm" type="button" @click="toggleRemoved/)
-    expect(tpl()).toMatch(/<form v-if="editPerm"/)
+  it('la receta de cada tarjeta es LineIngredientsEditor (el mismo editor que usa el mozo en la comanda)', () => {
+    expect(script()).toMatch(/import LineIngredientsEditor from '@\/components\/features\/restaurante\/LineIngredientsEditor\.vue'/)
+    expect(tpl()).toMatch(/<LineIngredientsEditor :line="c\.line" :ingredients="c\.line\.ingredients \?\? \[\]" :editable="editPerm"/)
+    // El editor devuelve la línea guardada y la tarjeta la pinta sin esperar el refresco.
+    expect(script()).toMatch(/function onLineUpdated\(c: Card, updated: OrderLine\)/)
   })
 
   it('modo kiosco: la ruta /panel/kds monta el mismo componente sin layout y con el mismo permiso', () => {

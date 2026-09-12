@@ -11,6 +11,7 @@ import { installMangledPathRecovery, cleanSegment } from './recover-path'
 const RESTAURANT_PAGES: Record<string, () => Promise<unknown>> = {
   'restaurant-menu': () => import('@/pages/restaurante/carta.vue'),
   'restaurant-floor': () => import('@/pages/restaurante/salon.vue'),
+  'restaurant-my-tables': () => import('@/pages/restaurante/mis-mesas.vue'),
   'restaurant-order': () => import('@/pages/restaurante/comanda.vue'),
   'restaurant-kds': () => import('@/pages/restaurante/cocina.vue'),
   'restaurant-pay': () => import('@/pages/restaurante/cobrar.vue'),

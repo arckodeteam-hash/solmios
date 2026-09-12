@@ -90,6 +90,8 @@ const props = withDefaults(defineProps<{
    *  el dashboard de plataforma compara meses, y rotular eso "vs ayer" es dar un dato falso. */
   trendLabel?: string
   subStats?: { label: string; value: string | number; tone?: string }[]
+  /** Decimales de la cifra (default 0). Un monto de dinero va con 2: "$40" por "$40.12" es un dato falso en una pantalla de cobros. */
+  decimals?: number
 }>(), {
   showBar: true,
   trendLabel: 'vs ayer',
@@ -141,7 +143,7 @@ const THEMES = {
 const theme = computed(() => THEMES[props.accent])
 
 const animated = useCountUp(toRef(props, 'value'))
-const formatted = computed(() => Math.round(animated.value).toLocaleString('en-US'))
+const formatted = computed(() => animated.value.toLocaleString('en-US', { minimumFractionDigits: props.decimals ?? 0, maximumFractionDigits: props.decimals ?? 0 }))
 
 const clampedProgress = computed(() => Math.min(100, Math.max(0, props.progress ?? 0)))
 // circunferencia normalizada del anillo (r=15.5 sobre viewBox 36 → ~97.4 unidades por 100%)

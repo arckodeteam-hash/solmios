@@ -29,6 +29,8 @@ export interface RestaurantRoute {
 
 export const RESTAURANT_ROUTES: readonly RestaurantRoute[] = [
   { path: 'restaurante/salon', name: 'restaurant-floor', permission: 'restaurant:create', menu: { label: 'Salón' } },
+  // Pantalla personal del mozo: sus mesas, personas que atiende y cobros del día (mismo permiso que el Salón).
+  { path: 'restaurante/mis-mesas', name: 'restaurant-my-tables', permission: 'restaurant:create', menu: { label: 'Mis mesas' } },
   { path: 'restaurante/comanda/:id', name: 'restaurant-order', permission: 'restaurant:create' },
   { path: 'restaurante/cocina', name: 'restaurant-kds', permission: 'restaurant:edit', menu: { label: 'Cocina y Bar (KDS)' } },
   { path: 'restaurante/cobrar/:id', name: 'restaurant-pay', permission: 'restaurant:pay' },
