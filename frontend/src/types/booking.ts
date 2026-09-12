@@ -92,6 +92,11 @@ export interface CreateBookingDTO {
    *  (aplica a cualquier línea); el backend prefiere una habitación del tipo que las ofrezca y
    *  cobra el precio real de la asignada — una key que esa habitación no ofrece se ignora. */
   roomAmenities?: CreateBookingRoomAmenity[]
+  /** MR-03 (#268) — régimen elegido para ESTA habitación (`'breakfast' | 'half_board' |
+   *  'all_inclusive'`; omitido = solo alojamiento). El backend re-resuelve el precio contra su
+   *  catálogo activo (`meal_plans`) y cobra `price × (adultos + niños con plaza) × noches`; un
+   *  código que el hotel no tiene activo responde 400 `meal_plan_unavailable`. */
+  mealPlan?: string
   /** URLs de vuelta desde Stripe. Si se omiten, el backend deriva de PUBLIC_BASE_URL/Referer.
    *  Pattern: `/h/:slug?booking=:id&token=:token` (spec booking-unification R2). */
   successUrl?: string
@@ -152,6 +157,9 @@ export interface CreateBookingRoomLine {
   /** REQ-01 (#290) — amenidades de la habitación de ESTA línea (POR LÍNEA, igual que
    *  `childAmenities`; sin gateo por niños). Ver `CreateBookingDTO.roomAmenities`. */
   roomAmenities?: CreateBookingRoomAmenity[]
+  /** MR-03 (#268) — régimen de ESTA línea (POR LÍNEA, igual que `childAmenities`: cada
+   *  habitación del grupo puede llevar el suyo). Ver `CreateBookingDTO.mealPlan`. */
+  mealPlan?: string
 }
 
 export interface CreateBookingGroupDTO {
@@ -279,6 +287,11 @@ export interface PublicRatesResponse {
   /** F5 #627 — Política estructurada para mostrar al huésped (tiers + ventana gratuita).
    *  null si no hay repo cableado o falla → el widget cae al texto libre `cancellationPolicy`. */
   cancellationSummary: CancellationSummary | null
+  /** MR-03 (#268) — regímenes ACTIVOS del hotel con el precio ya resuelto para esta búsqueda
+   *  (`perNight`/`totalForStay`), siempre en `chargeCurrency`. Opcional por el mismo motivo que
+   *  `occupancies`: backend viejo o respuesta cacheada → `undefined`, y el widget sigue usando
+   *  `store.mealPlans` (`GET /meal-plans`) + el cálculo local por composición. */
+  mealPlans?: PublicRateMealPlan[]
 }
 
 /**
@@ -439,13 +452,37 @@ export type MealPlanPriceMode = 'included' | 'per_person_per_night'
 /**
  * Régimen de alimentación activo del hotel (`GET /api/public/hotels/:slug/meal-plans`).
  * Público, sin auth. "Solo alojamiento" NO viene acá — es la base implícita que arma el
- * widget (ver RoomsStep.vue). `priceMode:'per_person_per_night'` es informativo esta fase
- * (no seleccionable/cobrable todavía — tasks.md 2.2/2.4).
+ * widget (ver RoomsStep.vue / useGuestComposer.ts). MR-03 (#268): los regímenes son
+ * SELECCIONABLES por habitación y `priceMode:'per_person_per_night'` se cobra
+ * `price × (adultos + niños con plaza) × noches` (el backend recalcula; `included` → 0).
+ * `price` está SIEMPRE en `hotels.currency` (chargeCurrency), nunca convertido.
  */
 export interface PublicMealPlan {
   code: MealPlanCode
   priceMode: MealPlanPriceMode
   price: number
+}
+
+/** MR-03 (#268) — ítem de `PublicRatesResponse.mealPlans`: `PublicMealPlan` + el precio ya
+ *  resuelto para la búsqueda (`guests × nights`). Espejo de `PublicRateMealPlan` del backend. */
+export interface PublicRateMealPlan extends PublicMealPlan {
+  /** `price × guests` (0 si `included`). */
+  perNight: number
+  /** `price × guests × nights` (0 si `included`). */
+  totalForStay: number
+}
+
+/** MR-03 (#268) — SNAPSHOT del régimen elegido en una línea del carrito (`CartLine.mealPlan`),
+ *  tomado del catálogo `store.mealPlans` al agregar: si el hotel cambia el precio después, la
+ *  línea sigue mostrando lo que el huésped vio. `persons` = adultos + niños con plaza de ESA
+ *  línea; `total` = `unitPrice × persons × nights` por unidad (0 si `included`). Solo se guarda
+ *  para códigos ≠ `room_only` (el flujo base no lleva snapshot). */
+export interface CartLineMealPlan {
+  code: MealPlanCode | 'room_only'
+  priceMode: MealPlanPriceMode | null
+  unitPrice: number
+  persons: number
+  total: number
 }
 
 /**
@@ -519,6 +556,10 @@ export interface TotalBreakdown {
    *  habitaciones de la reserva; entra en `subtotal` igual que `childAmenitiesTotal`. Opcional por
    *  el mismo motivo: reservas anteriores a la feature no lo tienen — tratar `undefined` como 0. */
   roomAmenitiesTotal?: number
+  /** MR-03 (#268) — régimen: `unitPrice × (adultos + niños con plaza) × noches` (Σ de las líneas
+   *  en un grupo); entra en `subtotal` igual que los anteriores. Opcional por el mismo motivo:
+   *  reservas anteriores a la feature no lo tienen — tratar `undefined` como 0. */
+  mealPlanTotal?: number
   /** Σ de `taxBreakdown` (misma cuenta que el backend: cada línea redondeada aparte). */
   taxes: number
   /** Tarea 24 (#88): cada impuesto con nombre, % e importe. */
@@ -566,6 +607,12 @@ export interface PublicReservation {
    *  para que la pantalla de confirmación pueda mostrárselo (no un dato interno del hotel). */
   needsCrib?: boolean
   cribCount?: number
+  /** MR-03 (#268) — régimen que EL HUÉSPED eligió y pagó (snapshot congelado en la reserva).
+   *  `null`/`undefined`/`'room_only'` = solo alojamiento; `mealPlanTotal` 0 con `included`. */
+  mealPlan?: MealPlanCode | 'room_only' | null
+  mealPlanPriceMode?: MealPlanPriceMode | null
+  mealPlanUnitPrice?: number
+  mealPlanTotal?: number
   totalAmount?: number
   /** Tarea 24 (#88): el desglose que el huésped aceptó en el paso de pago. `null` en reservas
    *  viejas o creadas desde el panel — entonces se muestra solo el total. */

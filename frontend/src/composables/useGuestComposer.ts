@@ -8,9 +8,21 @@
 // se olvida en la otra). `useBookingStore()` es un store Pinia singleton, así que ambos
 // componentes comparten `childPolicy`/`nights`/`cart` sin necesidad de pasarlos por parámetro.
 import { computed, reactive } from 'vue'
-import { useBookingStore } from './useBooking'
+import { useBookingStore, MEAL_PLAN_CODES, computeMealPlanTotal } from './useBooking'
 import { resolveChildComposition, fitsRoomCapacity, freeChildrenLimitError, classifyAge, type ChildAgeClassification } from '@/utils/child-composition'
-import type { RoomOccupancyRate, RoomTypeRate } from '@/types/booking'
+import type { MealPlanCode, MealPlanPriceMode, RoomOccupancyRate, RoomTypeRate } from '@/types/booking'
+
+/** MR-03 (#268) — una opción del radio de régimen de una tarjeta. "Solo alojamiento" siempre va
+ *  primero y siempre está disponible; los 3 códigos fijos van SIEMPRE (regla del dueño: nunca
+ *  ocultar), con `available:false` cuando el hotel no los tiene activos. `total` = importe para
+ *  la composición actual de la tarjeta (0 si `included` o no disponible). */
+export interface MealPlanOption {
+  code: MealPlanCode | 'room_only'
+  priceMode: MealPlanPriceMode | null
+  unitPrice: number
+  total: number
+  available: boolean
+}
 
 /** Mismo criterio que el `round2` local de `useBooking.ts` (no exportado desde ahí) — evita un
  *  import cruzado solo por esto. Espejo de `shared/utils/money.ts` del backend. */
@@ -38,6 +50,11 @@ interface ComposerState {
   // que `childAmenityIds`, pero SIN relación con la composición: no se limpian al cambiar edades
   // (una cuna o cama extra se pide para cualquier ocupación). Leer vía `roomAmenityKeys(rt)`.
   roomAmenityKeys?: string[]
+  // MR-03 (#268, régimen) — código elegido en el radio de ESTA tarjeta. Mismo criterio opcional/
+  // ausente que los anteriores (el estado fresco sigue siendo `{adults, ages, needsCrib}`);
+  // ausente = 'room_only'. Se conserva al cambiar adultos/niños — solo cambia el importe. Leer vía
+  // `mealPlanCode(rt)`.
+  mealPlan?: MealPlanCode | 'room_only'
 }
 
 function freshComposerState(): ComposerState {
@@ -204,6 +221,58 @@ export function useGuestComposer() {
     return round2(store.roomAmenitiesFor(rt.id).reduce((s, a) => s + (wanted.has(a.key) ? Number(a.price) || 0 : 0), 0))
   }
 
+  // ─── MR-03 (#268) — régimen de alimentación, POR TARJETA ────────────────────────────────────
+
+  /** Código elegido en esta tarjeta ('room_only' si todavía no eligió nada). */
+  function mealPlanCode(rt: RoomTypeRate): MealPlanCode | 'room_only' {
+    return composer(rt).mealPlan ?? 'room_only'
+  }
+
+  /** Elige un régimen para esta tarjeta. Un código que el hotel no tiene activo se ignora (la UI
+   *  ya lo deshabilita; esto cubre un click programático o un estado viejo). */
+  function setMealPlan(rt: RoomTypeRate, code: string): void {
+    const option = mealPlanOptions(rt).find((o) => o.code === code)
+    if (!option || !option.available) return
+    composer(rt).mealPlan = option.code
+  }
+
+  /** Personas que pagan régimen en la composición actual = ocupación chargeable (adultos + niños
+   *  con plaza) — los niños libres no pagan, mismo criterio que el backend. */
+  function mealPlanPersons(rt: RoomTypeRate): number {
+    const c = composition(rt)
+    return c.effectiveAdults + c.payingChildren
+  }
+
+  /** Las opciones del radio de régimen para esta tarjeta, con el importe YA resuelto para la
+   *  composición actual (`price × personas × noches`, misma fórmula que el backend). El catálogo
+   *  (`store.mealPlans`) trae SOLO los activos del hotel: un código que no está se devuelve igual
+   *  con `available:false` para pintarlo deshabilitado — nunca se oculta. */
+  function mealPlanOptions(rt: RoomTypeRate): MealPlanOption[] {
+    const persons = mealPlanPersons(rt)
+    // Mismas noches que usa `store.addToCart` al tomar el snapshot (`store.nights`, de /rates):
+    // la tarjeta y el carrito tienen que decir el mismo número.
+    const nights = store.nights
+    const roomOnly: MealPlanOption = { code: 'room_only', priceMode: null, unitPrice: 0, total: 0, available: true }
+    return [roomOnly, ...MEAL_PLAN_CODES.map((code): MealPlanOption => {
+      const found = store.mealPlans.find((m) => m.code === code)
+      if (!found) return { code, priceMode: null, unitPrice: 0, total: 0, available: false }
+      const unitPrice = Number(found.price) || 0
+      return {
+        code, priceMode: found.priceMode, unitPrice, available: true,
+        total: computeMealPlanTotal(found.priceMode, unitPrice, persons, nights),
+      }
+    })]
+  }
+
+  /** Importe del régimen elegido para la composición actual (para el "+ $X" de la tarjeta). 0 con
+   *  solo alojamiento, `included` o un código que dejó de estar disponible. */
+  function composedMealPlanTotal(rt: RoomTypeRate): number {
+    const code = mealPlanCode(rt)
+    if (code === 'room_only') return 0
+    const option = mealPlanOptions(rt).find((o) => o.code === code)
+    return option && option.available ? option.total : 0
+  }
+
   /** Fila de la matriz para la ocupación chargeable actual. `null` = sin matriz (fallback al
    *  `fromPrice` único). Si HAY matriz pero la ocupación pedida excede sus filas, se sintetiza una
    *  fila "no disponible" — nunca se inventa un precio para una ocupación que el hotel no publicó. */
@@ -303,11 +372,16 @@ export function useGuestComposer() {
     // REQ-01 (#290) — sin gateo por composición: viaja lo tildado (el store descarta keys que el
     // tipo ya no ofrezca).
     const roomAmenityKeysToSend = shouldOfferRoomAmenities(rt) ? [...roomAmenityKeys(rt)] : []
+    // MR-03 (#268) — si el código elegido ya no está activo (catálogo cambiado entre medio), viaja
+    // 'room_only': nunca se agrega una línea con un régimen que el backend rechazaría.
+    const chosenMealPlan = mealPlanCode(rt)
+    const mealPlanToSend = mealPlanOptions(rt).find((o) => o.code === chosenMealPlan)?.available ? chosenMealPlan : 'room_only'
     await store.addToCart(rt, {
       adults: c.adults, childrenAges: [...c.ages],
       needsCrib, cribCount: needsCrib ? 1 : 0,
       ...(childAmenityIdsToSend.length > 0 ? { childAmenityIds: childAmenityIdsToSend } : {}),
       ...(roomAmenityKeysToSend.length > 0 ? { roomAmenityKeys: roomAmenityKeysToSend } : {}),
+      ...(mealPlanToSend !== 'room_only' ? { mealPlan: mealPlanToSend } : {}),
     })
     // Reset: la próxima habitación (misma tarjeta u otra) arranca de nuevo en 1 adulto/0 niños.
     composerState[rt.id] = freshComposerState()
@@ -324,5 +398,7 @@ export function useGuestComposer() {
     // REQ-01 (#290)
     roomAmenityKeys, shouldOfferRoomAmenities, isRoomAmenitySelected, toggleRoomAmenity,
     composedRoomAmenitiesTotal,
+    // MR-03 (#268) — régimen por habitación.
+    mealPlanCode, setMealPlan, mealPlanOptions, composedMealPlanTotal,
   }
 }

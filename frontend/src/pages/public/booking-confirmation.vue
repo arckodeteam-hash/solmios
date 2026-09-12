@@ -181,10 +181,21 @@
               <p class="mt-0.5 text-sm font-bold text-navy leading-snug" data-testid="confirm-checkout">{{ checkOutLabel }}</p>
             </div>
           </div>
-          <dl v-if="guestDisplayName" class="mt-4 border-t border-slate-100 pt-3 text-sm">
-            <div class="flex justify-between gap-3">
+          <dl v-if="guestDisplayName || mealPlanLabel" class="mt-4 space-y-1.5 border-t border-slate-100 pt-3 text-sm">
+            <div v-if="guestDisplayName" class="flex justify-between gap-3">
               <dt class="text-text-secondary">{{ t('confirm.guest') }}</dt>
               <dd class="font-bold text-navy text-right break-words" data-testid="confirm-guest">{{ guestDisplayName }}</dd>
+            </div>
+            <!-- MR-03 (#268) — el régimen que EL HUÉSPED eligió y pagó (snapshot de la reserva).
+                 Solo si ≠ solo alojamiento: con importe si se cobró, chip "incluido" si venía en
+                 la tarifa. Reservas anteriores a la feature no traen el campo → nada. -->
+            <div v-if="mealPlanLabel" class="flex justify-between gap-3" data-testid="confirm-meal-plan">
+              <dt class="text-text-secondary">{{ t('pay.mealPlan') }}</dt>
+              <dd class="flex items-center gap-2 font-bold text-navy text-right">
+                <span>{{ mealPlanLabel }}</span>
+                <span v-if="mealPlanTotal > 0" class="tabular-nums">{{ fmtMoney(mealPlanTotal) }}</span>
+                <span v-else class="rounded-full bg-cyan/10 px-2 py-0.5 text-xs font-bold text-teal">{{ t('pay.mealPlanIncluded') }}</span>
+              </dd>
             </div>
           </dl>
         </div>
@@ -384,7 +395,7 @@ import { useRoute } from 'vue-router'
 import { BookingService } from '@/services/Booking.service'
 import { PublicHotelService } from '@/services/PublicHotel.service'
 import { readStoredReservation, clearStoredReservation, cancelReservation } from '@/composables/useBooking'
-import { useBookingI18nStore } from '@/composables/useBookingI18n'
+import { useBookingI18nStore, type BookingMessageKey } from '@/composables/useBookingI18n'
 import { useTracking, initTracking } from '@/composables/useTracking'
 import AppModal from '@/components/ui/AppModal.vue'
 import {
@@ -394,7 +405,7 @@ import {
 import {
   formatStayDate, nightsBetween, displayName, publicAddressLine, shortBookingCode, hotelTimeOrEmpty,
 } from '@/utils/booking-confirmation-format'
-import type { PublicReservationResponse, CancelReservationResponse } from '@/types/booking'
+import type { PublicReservationResponse, CancelReservationResponse, MealPlanCode } from '@/types/booking'
 import type { PublicHotelInfo } from '@/types/public-hotel'
 import { CurrencyCode } from '@/types/currency'
 
@@ -424,6 +435,22 @@ const checkOutLabel = computed(() => formatStayDate(reservation.value?.reservati
 const nights = computed(() => nightsBetween(reservation.value?.reservation?.checkIn, reservation.value?.reservation?.checkOut))
 /** Solo presentación: el nombre guardado no se toca (ver `displayName`). */
 const guestDisplayName = computed(() => displayName(reservation.value?.guest?.name))
+
+// ── MR-03 (#268) — régimen elegido (snapshot en la reserva) ─────────────────
+/** Código → key i18n (mismo mapa que RoomsStep.vue / PriceBreakdownLines.vue). */
+const MEAL_PLAN_LABEL_KEY: Record<MealPlanCode, BookingMessageKey> = {
+  breakfast: 'rooms.board.breakfast',
+  half_board: 'rooms.board.halfBoard',
+  all_inclusive: 'rooms.board.allInclusive',
+}
+/** Etiqueta del régimen, o '' con solo alojamiento / reserva anterior a la feature. */
+const mealPlanLabel = computed(() => {
+  const code = reservation.value?.reservation?.mealPlan
+  if (!code || code === 'room_only') return ''
+  const key = MEAL_PLAN_LABEL_KEY[code as MealPlanCode]
+  return key ? t(key) : ''
+})
+const mealPlanTotal = computed(() => Number(reservation.value?.reservation?.mealPlanTotal ?? 0))
 const hotelCheckInTime = computed(() => hotelTimeOrEmpty(hotel.value?.checkIn))
 const hotelCheckOutTime = computed(() => hotelTimeOrEmpty(hotel.value?.checkOut))
 
