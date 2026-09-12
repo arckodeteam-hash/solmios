@@ -290,6 +290,19 @@ física resuelve contra sus propias filas (dos unidades del mismo tipo pueden co
 key a precio distinto) y lleva su propio snapshot. Sin `roomAmenities` en el body nada de
 esto se lee y el flujo queda idéntico al anterior.
 
+REQ-03 (#235) agrega a `child_policy` el **máximo de niños que no consumen plaza por
+habitación** (`maxFreeChildrenPerRoom`): lo define cada hotel en Configuración junto a las demás
+políticas infantiles, es general del hotel (NO por tipo de habitación) y se aplica a CADA
+habitación/línea de la reserva. `null`/ausente = sin límite — el sistema NUNCA asume un número
+por default; al guardar (`hoteles-queries.ts`) se exige entero ≥ 0 y al leer
+(`resolveChildPolicy`) cualquier basura cae a `null`. Los `freeChildren` (bebés incluidos) siguen
+sin consumir `capacity`/`maxChildren`, pero cuentan para este tope: `freeChildrenLimitError`
+(`child-composition.ts`) devuelve el motivo específico y lo aplican el motor público (single y
+por línea del grupo, 409 antes de resolver unidad), `assertReservationFitsCapacity` (panel/API/IA
+con `childrenAges`; sin edades no aplica) y el reagendado sobre las edades proyectadas al nuevo
+check-in. El composer público (`useGuestComposer`) bloquea "Agregar" con el mismo motivo y lo
+re-evalúa en vivo al cambiar la edad de un menor.
+
 #### Scenario: Amenidad de habitación que solo ofrece una unidad del tipo
 
 - GIVEN tipo "double" con dos unidades libres, la más barata sin "Cuna" y la otra con
@@ -318,6 +331,17 @@ esto se lee y el flujo queda idéntico al anterior.
   primera línea no lleva amenidades
 - AND una amenidad inactiva, de otro hotel o pedida en una línea sin menores se ignora
   sin error y no se cobra
+
+#### Scenario: Máximo de niños sin plaza por habitación (REQ-03)
+
+- GIVEN hotel con `child_policy.maxFreeChildrenPerRoom = 1`, `maxFreeAge = 5`, y una línea con
+  2 adultos y `childrenAges: [1, 2]` en una habitación de `capacity` 2
+- THEN la capacidad física NO se excede (los dos niños son libres) pero el motor rechaza con 409
+  "admite hasta 1 niño(s) que no consumen plaza; la reserva tiene 2"; con `[1]` se crea, y sin
+  `maxFreeChildrenPerRoom` configurado `[1, 2]` también se crea
+- AND en un grupo solo la línea que excede rechaza (el mensaje la nombra); el panel con
+  `childrenAges` y el reagendado aplican el mismo tope; un caller sin `childrenAges` no se ve
+  afectado
 
 #### Scenario: Regla de capacidad explica qué se incumple
 
