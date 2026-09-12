@@ -57,6 +57,48 @@ describe('useInvoiceActions', () => {
     expect(toastError).toHaveBeenCalledWith('Error al generar impresión')
   })
 
+  it('printInvoice: html sin <!DOCTYPE html> no se escribe en el iframe ni se imprime', async () => {
+    vi.useFakeTimers()
+    print.mockResolvedValue('<html><body>x</body></html>')
+    const frame = mountFrame()
+    const printSpy = vi.fn()
+    ;(frame.contentWindow as any).print = printSpy
+    const doc = frame.contentDocument!
+    const open = vi.spyOn(doc, 'open'), write = vi.spyOn(doc, 'write'), close = vi.spyOn(doc, 'close')
+
+    const a = useInvoiceActions()
+    a.printFrame.value = frame
+    await a.printInvoice(inv)
+
+    expect(print).toHaveBeenCalledWith('inv-1')
+    expect(open).not.toHaveBeenCalled()
+    expect(write).not.toHaveBeenCalled()
+    expect(close).not.toHaveBeenCalled()
+    expect(doc.body.innerHTML).toBe('')
+    vi.advanceTimersByTime(300)
+    expect(printSpy).not.toHaveBeenCalled()
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
+  it('printInvoice: sin printFrame asignado no explota ni imprime', async () => {
+    vi.useFakeTimers()
+    print.mockResolvedValue(HTML)
+    const frame = mountFrame()
+    const printSpy = vi.fn()
+    ;(frame.contentWindow as any).print = printSpy
+    const write = vi.spyOn(frame.contentDocument!, 'write')
+
+    const a = useInvoiceActions()
+    expect(a.printFrame.value).toBeNull()
+    await expect(a.printInvoice(inv)).resolves.toBeUndefined()
+
+    expect(print).toHaveBeenCalledWith('inv-1')
+    expect(write).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(300)
+    expect(printSpy).not.toHaveBeenCalled()
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
   it('confirmEmail: email inválido setea emailError y NO llama al backend', async () => {
     const a = useInvoiceActions()
     a.openEmailModal(inv)
@@ -108,6 +150,27 @@ describe('useInvoiceActions', () => {
     expect(a.emailError.value).toBe('No se pudo enviar la factura. Intentá de nuevo.')
     expect(a.showEmailModal.value).toBe(true)
     expect(a.sendingEmail.value).toBe(false)
+  })
+
+  it('confirmEmail: dos llamadas seguidas con el envío en curso disparan un solo request', async () => {
+    let resolve!: (v: { sent: boolean; messageId: string; configured: boolean }) => void
+    emailInvoice.mockReturnValue(new Promise((r) => { resolve = r }))
+    const a = useInvoiceActions()
+    a.openEmailModal(inv)
+    a.emailTo.value = 'cliente@hotel.com'
+
+    const first = a.confirmEmail()
+    const second = a.confirmEmail()
+    expect(a.sendingEmail.value).toBe(true)
+    expect(emailInvoice).toHaveBeenCalledTimes(1)
+
+    resolve({ sent: true, messageId: 'm1', configured: true })
+    await Promise.all([first, second])
+
+    expect(emailInvoice).toHaveBeenCalledTimes(1)
+    expect(toastSuccess).toHaveBeenCalledTimes(1)
+    expect(a.sendingEmail.value).toBe(false)
+    expect(a.showEmailModal.value).toBe(false)
   })
 
   it('downloadPdf: crea la blob url, dispara el click con <número>.pdf y la revoca', async () => {
