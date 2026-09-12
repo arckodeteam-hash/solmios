@@ -133,7 +133,7 @@ describe('recibo completo (#270)', () => {
       // Impuestos sobre el alojamiento neto (300 − 10 = 290): 18% = 52.2 y 10% = 29.
       // total = 290 + 20 + 15 + 81.2 = 406.2
       taxes: 81.2,
-      taxBreakdown: [{ name: 'ITBIS', rate: 0.18, amount: 52.2 }, { name: 'Propina legal', rate: 0.10, amount: 29 }],
+      taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 52.2 }, { name: 'Propina legal', rate: 10, amount: 29 }],
       total: 406.2,
     },
   }
@@ -164,8 +164,9 @@ describe('recibo completo (#270)', () => {
     expect(v.meal_plan).toBe('Sólo alojamiento')
     expect(v.estimated_arrival).toBe('18:00')
     expect(v.special_requests).toBe('Piso alto')
-    expect(v.manage_url).toContain(`/h/palma/confirm?booking=${RESERVA.id}&token=tok-abc`)
-    expect(v.receipt_url).toBe(`https://app.test/api/public/reservations/${RESERVA.id}/receipt.pdf?token=tok-abc`)
+    const q = new URLSearchParams({ booking: RESERVA.id, token: 'tok-abc' }).toString()
+    expect(v.manage_url).toContain(`/h/palma/confirm?${q}`)
+    expect(v.receipt_url).toBe(`https://app.test/api/public/reservations/${RESERVA.id}/receipt.pdf?${new URLSearchParams({ token: 'tok-abc' })}`)
     expect(v.hotel_logo_url).toBe('https://app.test/uploads/logo.png')
     expect(v.logo_url).toBe(v.hotel_logo_url)
     expect(v.platform_name).toBe('SolmiOS')

@@ -97,10 +97,9 @@ function pricedLine(line: PricedLine, currency: string): string {
   return `${escapeHtml(String(line.name ?? ''))} × ${qty} = ${moneyOf(total, currency)}`
 }
 
-/** "ITBIS · 18% · 52.20 USD". El rate llega como fracción (0.18) o como porcentaje (18): ambos valen. */
+/** "ITBIS · 18% · 52.20 USD". `rate` es SIEMPRE porcentaje (hotel-taxes.ts: amount = base × rate / 100). */
 function taxLine(tax: { name?: unknown; rate?: unknown; amount?: unknown }, currency: string): string {
-  const raw = Number(tax.rate ?? 0) || 0
-  const pct = raw < 1 ? raw * 100 : raw
+  const pct = Number(tax.rate ?? 0) || 0
   const pctText = Number.isInteger(pct) ? String(pct) : pct.toFixed(2).replace(/\.?0+$/, '')
   return `${escapeHtml(String(tax.name ?? ''))} · ${pctText}% · ${moneyOf(tax.amount, currency)}`
 }
@@ -208,7 +207,7 @@ export async function sendBookingPaidEmail(
     const cancellationType = await hotelCancellationTypeOf(hotelRepo, reservation.hotelId)
     const locator = String(reservation.id ?? '').slice(0, 8)
     const publicUrl = String(deps.publicUrl ?? '').replace(/\/+$/, '')
-    const accessToken = String(reservation.accessToken ?? '')
+    const token: string = String(reservation.accessToken ?? '')
     const platformName = deps.configRepo
       ? (await resolvePlatformIdentity(deps.configRepo)).platformName
       : DEFAULT_PLATFORM_IDENTITY.platformName
@@ -219,7 +218,9 @@ export async function sendBookingPaidEmail(
       : []
     const roomsLines = siblings.length ? await roomsLinesOf(siblings, deps.roomsRepo, currency, language) : ''
 
-    const query = `booking=${encodeURIComponent(reservation.id)}&token=${encodeURIComponent(accessToken)}`
+    // Los links públicos llevan el accessToken como query `token` (mismo contrato que el widget).
+    const publicQuery = (params: Record<string, string>) => new URLSearchParams(params).toString()
+    const query = publicQuery({ booking: String(reservation.id), token })
     const canLink = Boolean(publicUrl && hotel?.slug)
     const logoUrl = logoUrlOf(hotel?.logo, publicUrl)
     const [yes, no] = YES_NO[language]
@@ -275,7 +276,7 @@ export async function sendBookingPaidEmail(
         locator,
         manage_url: canLink ? `${publicUrl}/h/${encodeURIComponent(hotel.slug)}/confirm?${query}` : '',
         receipt_url: publicUrl
-          ? `${publicUrl}/api/public/reservations/${encodeURIComponent(reservation.id)}/receipt.pdf?token=${encodeURIComponent(accessToken)}`
+          ? `${publicUrl}/api/public/reservations/${encodeURIComponent(reservation.id)}/receipt.pdf?${publicQuery({ token })}`
           : '',
         // La habitación y el código NO viajan acá a propósito: van 24 h antes de la llegada.
         room_number: '',

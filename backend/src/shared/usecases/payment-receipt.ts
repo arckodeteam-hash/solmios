@@ -237,10 +237,9 @@ function isHttpUrl(v: unknown): boolean {
   return typeof v === 'string' && /^https?:\/\/\S+$/i.test(v.trim())
 }
 
-/** El rate llega como fracción (0.18, hotel-taxes.ts) o como porcentaje (18): ambos → "18%". */
+/** `rate` es SIEMPRE porcentaje (hotel-taxes.ts: amount = base × rate / 100): 18 → "18%", 0.5 → "0.5%". */
 function ratePct(rate: unknown): string {
-  const raw = num(rate)
-  const r = raw > 0 && raw < 1 ? raw * 100 : raw
+  const r = num(rate)
   return Number.isInteger(r) ? `${r}%` : `${r.toFixed(2).replace(/\.?0+$/, '')}%`
 }
 

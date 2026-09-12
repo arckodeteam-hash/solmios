@@ -157,6 +157,7 @@ describe('getPublicReceiptPdf — recibo de pago público (#270)', () => {
     expect(html).toContain('Subtotal</span><span>330.00 USD')
     // Impuestos uno por uno con nombre y %.
     expect(html).toContain('ITBIS (18%)')
+
     expect(html).toContain('53.46 USD')
     expect(html).toContain('Propina legal (10%)')
     expect(html).toContain('29.70 USD')
@@ -262,12 +263,14 @@ describe('buildReceiptLines / renderReceiptHtml (puros)', () => {
       locator: '<x>', issuedAt: '2026-09-12T00:00:00.000Z', currency: 'USD',
       hotel: { name: '<script>', taxId: '"rnc"' }, guest: { name: '<b>g</b>' },
       stay: { checkIn: '2026-10-10', checkOut: '2026-10-11', nights: 1, adults: 1, children: 0, needsCrib: false, rooms: 1 },
-      lines: [{ kind: 'room', description: '<i>hab</i>', amount: 10 }, { kind: 'tax', description: '<t>', rate: 18, amount: 1.8 }, { kind: 'total', description: 'Total', amount: 11.8 }],
+      lines: [{ kind: 'room', description: '<i>hab</i>', amount: 10 }, { kind: 'tax', description: '<t>', rate: 18, amount: 1.8 }, { kind: 'tax', description: 'Tasa municipal', rate: 0.5, amount: 0.05 }, { kind: 'total', description: 'Total', amount: 11.85 }],
       payment: { method: '<m>', reference: '<r>' },
     })
     for (const raw of ['<x>', '<script>', '"rnc"', '<b>g</b>', '<i>hab</i>', '<t>', '<m>', '<r>']) expect(html).not.toContain(raw)
     expect(html).toContain('&lt;script&gt;')
     expect(html).toContain('&lt;t&gt; (18%)')
-    expect(html).toContain('TOTAL</span><span>11.80 USD')
+    // rate es porcentaje siempre: 0.5 → "0.5%", nunca "50%".
+    expect(html).toContain('Tasa municipal (0.5%)')
+    expect(html).toContain('TOTAL</span><span>11.85 USD')
   })
 })
