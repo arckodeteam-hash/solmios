@@ -19,8 +19,10 @@ export interface BookingConfigDTO {
   instantConfirmation: boolean
   stripeAccountId: string
   allowedCountries: string[]
-  /** #248 REQ-RWP-05 — Horas para pagar una reserva web (0 = nunca vence). */
-  pendingPaymentTtlHours: number
+  /** #266 — Minutos para completar el pago de una reserva web (15–1440, default 60). */
+  pendingTtlMinutes: number
+  /** #271 MR-06 — Horas para aprobar/rechazar una reserva web pendiente (1–168, default 24). */
+  approvalDeadlineHours: number
   createdAt: string
   updatedAt: string
 }
@@ -40,7 +42,8 @@ export interface UpdateBookingConfigDTO {
   instantConfirmation?: boolean
   stripeAccountId?: string
   allowedCountries?: string[]
-  pendingPaymentTtlHours?: number
+  pendingTtlMinutes?: number
+  approvalDeadlineHours?: number
 }
 
 // ─── Availability ──────────────────────────────────────
@@ -304,8 +307,14 @@ export interface PublicHotelInfoDTO {
 }
 
 // ─── Upsells (F2 2.3 — sub-dominio de bookingengine) ────────────
-/** Forma de cobro del upsell: cómo se multiplica al sumarlo al total de la reserva. */
-export type UpsellKind = 'per_room' | 'per_person' | 'per_stay'
+/** Forma de cobro del upsell: cómo se multiplica al sumarlo al total de la reserva.
+ *  - `per_room`   → precio × cantidad (tope: habitaciones de la reserva).
+ *  - `per_person` → precio × cantidad (tope: personas sin bebés).
+ *  - `per_stay`   → precio × 1 (cantidad fija 1).
+ *  - `per_night`  → precio × noches (MR-10 #275; cantidad fija 1, el "×" lo pone la estadía).
+ *  - `per_person_per_night` → precio × personas × noches (MR-10 #275; cantidad fija 1).
+ *  La matemática vive en UN solo lugar: `usecases/upsell-pricing.ts#resolveUpsellLines`. */
+export type UpsellKind = 'per_room' | 'per_person' | 'per_stay' | 'per_night' | 'per_person_per_night'
 
 /** DTO de lectura. Espeja los campos persistidos en `upsells` (model.ts). */
 export interface UpsellDTO {

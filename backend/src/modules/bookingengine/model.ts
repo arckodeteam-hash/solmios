@@ -25,8 +25,14 @@ export const BookingConfigModel: ModelDefinition = {
     instantConfirmation: { type: 'boolean', default: true },
     stripeAccountId: { type: 'string', default: '' },
     allowedCountries: { type: 'json', default: [] },
-    // #248 REQ-RWP-05 — Horas para pagar una reserva web (0 = nunca vence).
-    pendingPaymentTtlHours: { type: 'number', default: 24 },
+    // #266 — Minutos para completar el pago de una reserva web (15–1440, default 60).
+    // Reemplaza `pendingPaymentTtlHours` de #248: la columna vieja queda huérfana en DB
+    // (RUN_MIGRATE no borra columnas) y ya no se lee.
+    pendingTtlMinutes: { type: 'number', default: 60 },
+    // #271 MR-06 — Horas que el hotel se da para aprobar/rechazar una reserva web con
+    // "confirmación instantánea" apagada (1–168, default 24). La pantalla pública se lo
+    // muestra al huésped y el cron de recordatorio lo usa como plazo.
+    approvalDeadlineHours: { type: 'number', default: 24 },
   },
 }
 
@@ -97,7 +103,9 @@ export const UpsellModel: ModelDefinition = {
     description: { type: 'text' },
     // Precio en la moneda del hotel. >=0 validado en el usecase.
     price: { type: 'number', required: true },
-    // 'per_room' | 'per_person' | 'per_stay' — cómo se calcula al multiplicar por qty/huésped.
+    // 'per_room' | 'per_person' | 'per_stay' | 'per_night' | 'per_person_per_night' — cómo se
+    // multiplica (qty/huésped/noche). Los dos últimos son de MR-10 (#275); enum cerrado en
+    // `types.ts#UpsellKind`, matemática en `usecases/upsell-pricing.ts`.
     kind: { type: 'string', required: true },
     // Toggle visible desde el panel sin borrar. Default 1 (activo).
     active: { type: 'boolean', default: true },

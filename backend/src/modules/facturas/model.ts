@@ -24,6 +24,7 @@ export const FacturasModel: ModelDefinition = {
     fileUrl: { type: 'string' },
     fiscalSent: { type: 'boolean', default: false },
     fiscalMessage: { type: 'string' },
+    issuedBy: { type: 'string' }, // usuario que emitió la factura (nullable; CA 24 de #298)
   },
   timestamps: true,
 }

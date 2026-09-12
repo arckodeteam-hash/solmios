@@ -75,6 +75,41 @@ describe('reservasHousekeepingConnector', () => {
     expect(tasks[0].status).toBe('pending')
     expect(tasks[0].type).toBe('full_cleaning')
   })
+
+  // #274: la tarea `arrival_setup` sigue a la reserva (alta/edición/cancelación).
+  it('#274: al crear o editar la reserva llama syncArrivalSetup con la reserva tal cual', async () => {
+    const synced: any[] = []
+    const { ctx, captured } = makeCtx({
+      housekeeping: { create: async () => ({}), syncArrivalSetup: async (r: any) => { synced.push(r); return { action: 'created' } } },
+    })
+    reservasHousekeepingConnector(ctx)
+    const created = { id: 'res1', hotelId: 'h1', roomId: 'r1', status: 'confirmed', checkIn: '2026-09-13', needsCrib: true }
+    const updated = { ...created, roomId: 'r2' }
+    await captured.sockets.onReservasCreated(created)
+    await captured.sockets.onReservasUpdated(updated)
+    expect(synced).toEqual([created, updated])
+  })
+
+  it('#274: al cancelar llama syncArrivalSetup con {id, hotelId, status: cancelled}', async () => {
+    const synced: any[] = []
+    const { ctx, captured } = makeCtx({
+      housekeeping: { create: async () => ({}), syncArrivalSetup: async (r: any) => { synced.push(r); return { action: 'deleted' } } },
+    })
+    reservasHousekeepingConnector(ctx)
+    await captured.sockets.onReservationCancelled({ reservationId: 'res1', hotelId: 'h1', refundAmount: 0, cancellationFee: 0, policyApplied: null })
+    expect(synced).toEqual([{ id: 'res1', hotelId: 'h1', status: 'cancelled' }])
+  })
+
+  it('#274: si syncArrivalSetup falla, la reserva NO se rompe', async () => {
+    const { ctx, captured } = makeCtx({
+      housekeeping: { create: async () => ({}), syncArrivalSetup: async () => { throw new Error('housekeeping caído') } },
+    })
+    reservasHousekeepingConnector(ctx)
+    const reserva = { id: 'res1', hotelId: 'h1', roomId: 'r1', status: 'confirmed' }
+    await expect(captured.sockets.onReservasCreated(reserva)).resolves.toBeUndefined()
+    await expect(captured.sockets.onReservasUpdated(reserva)).resolves.toBeUndefined()
+    await expect(captured.sockets.onReservationCancelled({ reservationId: 'res1', hotelId: 'h1' })).resolves.toBeUndefined()
+  })
 })
 
 describe('reservasTtlockConnector', () => {

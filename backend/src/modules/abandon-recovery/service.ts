@@ -26,9 +26,12 @@
 // en un cron). El repositorio de Reservations ya aísla por hotel cuando se lo pasa el caller.
 
 import type { RepositoryAdapter, Logger } from 'arckode-framework'
-import type { AbandonSweepResult, AbandonEmailSender, AbandonSweepConfig } from './types'
-import { DEFAULT_ABANDON_MIN_AGE_MS, DEFAULT_ABANDON_MAX_AGE_MS, DEFAULT_PENDING_PAYMENT_TTL_HOURS } from './types'
+import type { AbandonSweepResult, AbandonEmailSender, AbandonSweepConfig, GatewayConfiguredCheck } from './types'
+import { DEFAULT_ABANDON_MIN_AGE_MS, DEFAULT_ABANDON_MAX_AGE_MS } from './types'
 import { buildRecoveryLink, renderAbandonEmailHtml, emailSubject } from './usecases/template'
+import { isExpired, ttlFor, checkGateway, isInAbandonWindow } from './usecases/eligibility'
+import { sendAbandonEmail } from './usecases/send-email'
+import type { BookingConfigLookup } from './usecases/eligibility'
 
 export interface AbandonRecoveryDeps {
   /** Repo de Reservations (campo abandonEmailSent fue agregado por la migración). */
@@ -40,11 +43,14 @@ export interface AbandonRecoveryDeps {
   /** EmailService (o un test double). null al arranque — se inyecta post-init vía setEmail()
    *  desde email-bootstrap (mismo patrón que wallet-pass.setEmailDeps). */
   email: AbandonEmailSender | null
-  /** Repo de BookingConfig (subset) para leer `pendingPaymentTtlHours` del hotel (#248).
-   *  Opcional: sin él se asume el TTL por defecto (24h). */
-  bookingConfig?: { findMany(q: Record<string, unknown>): Promise<any[]> } | null
+  /** Repo de BookingConfig (subset) para leer `pendingTtlMinutes` del hotel (#266).
+   *  Opcional: sin él se asume el TTL por defecto (60 min). */
+  bookingConfig?: BookingConfigLookup | null
+  /** #266: ¿el hotel tiene pasarela de pago configurada? Opcional (null/undefined = no se
+   *  chequea). Se inyecta post-init vía setGatewayCheck() desde composition-root. Si devuelve
+   *  false el correo no se encola: el link llevaría a un checkout que no existe. */
+  isGatewayConfigured?: GatewayConfiguredCheck | null
 }
-const MS_PER_HOUR = 3600000
 
 export class AbandonRecoveryService {
   constructor(
@@ -69,6 +75,16 @@ export class AbandonRecoveryService {
   }
 
   /**
+   * Inyección post-init del check de pasarela (#266). Mismo patrón que `setEmail`: el
+   * módulo de pagos se resuelve en composition-root después de registrar este módulo, así
+   * que no puede pasarse al factory. Si no se llama, el sweep no filtra por pasarela.
+   */
+  setGatewayCheck(fn: GatewayConfiguredCheck): void {
+    (this.deps as { isGatewayConfigured?: GatewayConfiguredCheck | null }).isGatewayConfigured = fn
+    this.logger.info('abandon-recovery: check de pasarela cableado')
+  }
+
+  /**
    * Recorre las reservas abandonadas y encola el email de recuperación. Idempotente por
    * el flag `abandonEmailSent` (se marca solo si el encolado tuvo éxito).
    */
@@ -86,24 +102,29 @@ export class AbandonRecoveryService {
     const candidates = await this.deps.reservations.findMany({
       status: 'pending',
       abandonEmailSent: false,
-    }) as Array<{ id: string; guestId?: string; hotelId?: string; accessToken?: string | null; createdAt?: string }>
+    }) as Array<{ id: string; status?: string; guestId?: string; hotelId?: string; accessToken?: string | null; createdAt?: string; paymentDeadlineAt?: string | null }>
 
     for (const r of candidates) {
-      // Filtro por ventana temporal en JS (el ORM no soporta createdAt >= X AND createdAt <= Y).
+      // Filtro por ventana temporal en JS (más vieja de 4h, o más nueva de 1h → no cuenta).
       if (!r.createdAt) { result.skipped++; continue }
-      const createdMs = new Date(r.createdAt).getTime()
-      if (!Number.isFinite(createdMs) || createdMs < nowMs - this.config.maxAgeMs || createdMs > nowMs - this.config.minAgeMs) {
-        // Fuera de ventana (más vieja de 4h, o más nueva de 1h, o sin fecha válida).
-        continue
-      }
+      if (!isInAbandonWindow(r.createdAt, nowMs, this.config)) continue
       result.scanned++
 
-      // #248: si la reserva ya pasó el TTL de pago del hotel, el cron de vencimiento la
+      // #266: si la reserva ya venció (o dejó de estar pending), el cron de vencimiento la
       // cancela → el link "completá tu reserva" sería un link muerto. Skip sin marcar flag.
-      const ttlHours = await this.ttlFor(r.hotelId, ttlCache)
-      if (ttlHours > 0 && createdMs < nowMs - ttlHours * MS_PER_HOUR) {
+      const ttlMinutes = await ttlFor(r.hotelId, this.deps.bookingConfig, ttlCache, this.logger)
+      if (isExpired(r, nowMs)) {
         result.skipped++
-        this.logger.info('abandon-recovery: reserva ya pasó el TTL de pago (#248) — skip', { id: r.id, ttlHours })
+        this.logger.info('abandon-recovery: reserva ya venció el plazo de pago (#266) — skip', { id: r.id, ttlMinutes, paymentDeadlineAt: r.paymentDeadlineAt ?? null })
+        continue
+      }
+
+      // #266: sin pasarela de pago no hay checkout al que volver → el correo no tiene sentido.
+      const gw = await checkGateway(r.hotelId, this.deps.isGatewayConfigured)
+      if (gw.outcome !== 'ok') {
+        if (gw.outcome === 'error') result.errors.push({ reservationId: r.id, reason: gw.reason })
+        else this.logger.info('abandon-recovery: hotel sin pasarela — skip', { id: r.id, hotelId: r.hotelId })
+        result.skipped++
         continue
       }
 
@@ -147,10 +168,16 @@ export class AbandonRecoveryService {
       }
 
       const link = buildRecoveryLink(this.config.publicBaseUrl, hotelSlug, r.id, r.accessToken)
-      const html = renderAbandonEmailHtml({ link, reservationId: r.id })
+      const html = renderAbandonEmailHtml({ link, reservationId: r.id, pendingTtlMinutes: ttlMinutes })
+
+      // EmailService.enqueue exige hotelId (multi-tenancy): sin él no hay cómo encolar.
+      if (!r.hotelId) {
+        result.errors.push({ reservationId: r.id, reason: 'reserva sin hotelId' })
+        continue
+      }
 
       try {
-        const r2 = await this.sendEmail(guestEmail, emailSubject(), html)
+        const r2 = await sendAbandonEmail(this.deps.email, { to: guestEmail, subject: emailSubject(), html, hotelId: r.hotelId, relatedId: r.id })
         if (r2?.sent) {
           await this.deps.reservations.update(r.id, { abandonEmailSent: true })
           result.emailed++
@@ -165,35 +192,5 @@ export class AbandonRecoveryService {
 
     this.logger.info('abandon-recovery: sweep completado', { ...result })
     return result
-  }
-
-  /** TTL de pago (horas) del hotel vía booking_config (#248): null/undefined → 24, 0 = nunca
-   *  vence. Cacheado por hotelId dentro del sweep; sin dep `bookingConfig` → default. */
-  private async ttlFor(hotelId: string | undefined, cache: Map<string, number>): Promise<number> {
-    const key = hotelId ?? ''
-    if (cache.has(key)) return cache.get(key)!
-    let ttl = DEFAULT_PENDING_PAYMENT_TTL_HOURS
-    try {
-      const v = hotelId && this.deps.bookingConfig ? (await this.deps.bookingConfig.findMany({ hotelId }))?.[0]?.pendingPaymentTtlHours : undefined
-      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) ttl = v
-    } catch (e: unknown) {
-      this.logger.warn('abandon-recovery: lookup de booking_config falló — usando TTL default', { hotelId, error: (e as Error)?.message })
-    }
-    cache.set(key, ttl)
-    return ttl
-  }
-
-  /** Llama a `enqueue` si existe, si no cae a `send`. Defensivo: distintos EmailService
-   *  exponen distintos nombres de método (reservas usa send, platform-emails usa enqueue). */
-  private async sendEmail(to: string, subject: string, html: string): Promise<{ sent: boolean } | null> {
-    const email = this.deps.email
-    if (!email) return null
-    if (typeof email.enqueue === 'function') {
-      return await email.enqueue(to, subject, html)
-    }
-    if (typeof email.send === 'function') {
-      return await email.send(to, subject, html)
-    }
-    return null
   }
 }

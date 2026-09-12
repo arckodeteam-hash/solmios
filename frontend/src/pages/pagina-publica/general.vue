@@ -222,8 +222,8 @@
         </div>
         <p class="mt-3 text-[10px] text-text-muted">
           {{ selectedHotelAmenities.length }} seleccionado{{ selectedHotelAmenities.length === 1 ? '' : 's' }}.
-          Las amenities a nivel habitación (TV, WiFi en cuarto, etc.) se configuran en
-          <strong>Configuración → Amenities de habitación</strong>.
+          Las amenidades de cada habitación (cuna, cama extra, TV, WiFi en cuarto, precios y disponibilidad)
+          se configuran en <strong>Habitaciones → Crear/Editar habitación</strong>.
         </p>
       </SectionCard>
 
@@ -300,10 +300,12 @@ const publicDesc = ref<PublicTranslations>({
 })
 
 const selectedHotelAmenities = ref<string[]>([])
-// Claves de `hotel_amenities` que NO pertenecen al catálogo de 20 keys de esta pantalla (las
-// pone Configuración → Amenities, catálogo de 35 keys con categorías). No las edita esta UI,
-// pero hay que reenviarlas en cada save (F1 1.7b) — `saveAmenitiesHotel` REEMPLAZA el set
-// completo, así que omitirlas las desactivaría silenciosamente cada vez que se guarda esta página.
+// Claves HISTÓRICAS de `hotel_amenities` que NO pertenecen al catálogo de 20 keys de esta pantalla:
+// las dejó el viejo tab de amenities de Configuración Base (catálogo de 35 keys de nivel
+// habitación, más custom), retirado en #291 — hoy las amenidades por habitación viven en
+// Habitaciones (#290). Se conservan a propósito para no perder datos: esta UI no las edita, pero
+// hay que reenviarlas en cada save (F1 1.7b) — `saveAmenitiesHotel` REEMPLAZA el set completo,
+// así que omitirlas las desactivaría silenciosamente cada vez que se guarda esta página.
 let foreignAmenityKeys: string[] = []
 
 const reviewFlags = reactive({ publishReviewScore: false, publishReviewComments: false })
@@ -704,8 +706,8 @@ async function save() {
     if (trimmedSlug) patch.slug = trimmedSlug
 
     // F1 1.7b — `hotel_amenities` (tabla real), no la columna JSON `hotels.amenities`. Reenvía
-    // `foreignAmenityKeys` (las de Configuración → Amenities) para no pisarlas: `saveAmenitiesHotel`
-    // reemplaza el set completo.
+    // `foreignAmenityKeys` (las históricas del catálogo viejo de nivel habitación, ver arriba) para
+    // no pisarlas: `saveAmenitiesHotel` reemplaza el set completo.
     const [updated] = await Promise.all([
       SettingsService.patchHotel(patch),
       HotelService.saveAmenitiesHotel([...selectedHotelAmenities.value, ...foreignAmenityKeys]),

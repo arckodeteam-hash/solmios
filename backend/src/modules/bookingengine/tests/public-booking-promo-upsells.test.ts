@@ -18,6 +18,12 @@
 //  (7) Upsell inactivo/inexistente → se ignora (no rompe).
 //  (8) Promo inválido (expired, etc.) → 400 + reason, no crea reserva.
 //  (9) Atomicidad: si tx.update del promo falla (lanza), la reserva NO se persiste.
+//
+// MR-10 (#275) — bloque `describe` aparte al final:
+//  - `children` plano sin edades cotiza IGUAL que `childrenAges:[maxChildAge, ...]` (Opción A).
+//  - upsells por `kind`: per_person_per_night / per_night multiplican por noches (qty ignorado),
+//    per_person con qty > huéspedes → 400 `upsell_quantity_out_of_range`.
+//  - `priceBreakdown.upsells[]` por línea, y los addons #269 cuadran con el total cobrado.
 import { describe, it, expect } from 'bun:test'
 import { createPublicBookingDirect } from '../usecases/public-booking'
 
@@ -43,6 +49,8 @@ function makeOrm(state: {
   promo?: any | null
   upsells?: any[]
   taxesConfig?: any[]
+  /** MR-10 (#275) — fila `configuration(key:'child_policy')` del hotel (value ya parseado). */
+  childPolicy?: any
   transactionThrowOnPromo?: boolean
   /** Simula race concurrente: el `updateMany` del promo devuelve 0 (otra tx ganó la fila). */
   racePromoUpdate?: boolean
@@ -143,6 +151,7 @@ function makeDeps(state: ReturnType<typeof makeOrm>['state']) {
       },
       findOne: async (filters: any) => {
         if (filters?.key === 'taxes') return (state.taxesConfig ?? [])[0] ?? null
+        if (filters?.key === 'child_policy') return state.childPolicy ? { value: state.childPolicy } : null
         return null
       },
     } as any,
@@ -157,7 +166,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     const b = res.body.totalBreakdown
     // 100 × 2 noches = 200 subtotal, 0 descuento, 0 upsells, 18% tax sobre 200 = 36, total 236.
-    expect(b).toEqual({ subtotal: 200, promoDiscount: 0, upsellsTotal: 0, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 36, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 36 }], total: 236 })
+    expect(b).toEqual({ subtotal: 200, promoDiscount: 0, upsellsTotal: 0, upsells: [], childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 36, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 36 }], total: 236 })
   })
 
   it('#88: dos impuestos → una línea por impuesto (nombre, %, importe), taxes = suma exacta, y la reserva guarda el desglose', async () => {
@@ -200,7 +209,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // subtotal 200, discount 10% = 20, taxable 180, tax 18% × 180 = 32.4, total 212.4.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 200, promoDiscount: 20, upsellsTotal: 0, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 32.4, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 32.4 }], total: 212.4,
+      subtotal: 200, promoDiscount: 20, upsellsTotal: 0, upsells: [], childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 32.4, taxBreakdown: [{ name: 'ITBIS', rate: 18, amount: 32.4 }], total: 212.4,
     })
     // B2 fix — uses fue incrementado atómicamente vía updateMany (optimistic lock).
     const promoUpdate = updateManyCalls.find((u) => u.model === 'PromoCodes')
@@ -228,7 +237,7 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // subtotal 200, discount 50, taxable 150, tax 0%, total 150.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 200, promoDiscount: 50, upsellsTotal: 0, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 0, taxBreakdown: [], total: 150,
+      subtotal: 200, promoDiscount: 50, upsellsTotal: 0, upsells: [], childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 0, taxBreakdown: [], total: 150,
     })
     expect(updateManyCalls.find((u) => u.model === 'PromoCodes')?.changes.uses).toBe(1)
   })
@@ -300,7 +309,13 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // room: 100×2=200, upsells: 15×2 + 30×1 = 60, subtotal 260, tax 10% × 260 = 26, total 286.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 260, promoDiscount: 0, upsellsTotal: 60, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 26, taxBreakdown: [{ name: 'IVA', rate: 10, amount: 26 }], total: 286,
+      subtotal: 260, promoDiscount: 0, upsellsTotal: 60,
+      // MR-10 (#275) — cada línea con su kind/unitario/cantidad/noches/total.
+      upsells: [
+        { id: 'u1', name: 'Desayuno', kind: 'per_person', unitPrice: 15, quantity: 2, nights: 1, total: 30 },
+        { id: 'u2', name: 'Transfer', kind: 'per_stay', unitPrice: 30, quantity: 1, nights: 1, total: 30 },
+      ],
+      childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 26, taxBreakdown: [{ name: 'IVA', rate: 10, amount: 26 }], total: 286,
     })
   })
 
@@ -324,7 +339,9 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(res.status).toBe(201)
     // subtotal 200 + 15 = 215, no tax, total 215.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 215, promoDiscount: 0, upsellsTotal: 15, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 0, taxBreakdown: [], total: 215,
+      subtotal: 215, promoDiscount: 0, upsellsTotal: 15,
+      upsells: [{ id: 'u1', name: 'Desayuno', kind: 'per_person', unitPrice: 15, quantity: 1, nights: 1, total: 15 }],
+      childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 0, taxBreakdown: [], total: 215,
     })
   })
 
@@ -410,7 +427,132 @@ describe('createPublicBookingDirect — F2 2.5 promo + upsells + atomic uses', (
     expect(reservation.row.promoCode).toBe('ANYTHING')
     // No se aplica descuento (no se procesó) → total = subtotal + tax sobre subtotal.
     expect(res.body.totalBreakdown).toEqual({
-      subtotal: 200, promoDiscount: 0, upsellsTotal: 0, childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 0, taxBreakdown: [], total: 200,
+      subtotal: 200, promoDiscount: 0, upsellsTotal: 0, upsells: [], childAmenitiesTotal: 0, roomAmenitiesTotal: 0, mealPlanTotal: 0, taxes: 0, taxBreakdown: [], total: 200,
     })
+  })
+})
+
+describe('createPublicBookingDirect — MR-10 (#275) niños sin edades (Opción A) + upsells por kind', () => {
+  // Política con descuento por niño con plaza: maxChildAge 12, nada libre/bebé, 50 %.
+  const policy = { acceptChildren: true, maxChildAge: 12, maxFreeAge: 0, maxBabyAge: 0, childrenDiscountEnabled: true, childrenRatePercent: 50 }
+  const noTax = [{ value: [{ activo: true, tasa: 0, nombre: 'NONE' }] }]
+  // 3 noches a 100 = 300 de habitación (basePrice plano, sin temporadas).
+  const threeNights = { ...baseBody, checkIn: '2026-08-10', checkOut: '2026-08-13' }
+
+  async function book(state: any, body: any) {
+    const { orm, created } = makeOrm(state)
+    const res = await createPublicBookingDirect(orm, body, undefined, undefined, undefined, undefined, undefined, makeDeps(state))
+    const reservation = created.find((c: any) => c.model === 'Reservations')?.row
+    const addons = created.filter((c: any) => c.model === 'ReservationAddons').map((c: any) => c.row)
+    return { res, reservation, addons }
+  }
+
+  it('children:2 sin edades cotiza IGUAL que childrenAges:[12,12] (niños con plaza a maxChildAge, con el % del hotel)', async () => {
+    const plain = await book({ taxesConfig: noTax, childPolicy: policy }, { ...baseBody, adults: 2, children: 2 })
+    const withAges = await book({ taxesConfig: noTax, childPolicy: policy }, { ...baseBody, adults: 2, children: 2, childrenAges: [12, 12] })
+    expect(plain.res.status).toBe(201)
+    expect(withAges.res.status).toBe(201)
+    // 2 noches × 100 = 200 para los adultos; cada niño con plaza paga 50 % de "un adulto"
+    // (200 / 2 = 100 → 50 c/u) → 200 + 2 × 50 = 300. MISMO total por las dos puertas.
+    expect(plain.reservation.totalAmount).toBe(300)
+    expect(withAges.reservation.totalAmount).toBe(plain.reservation.totalAmount)
+    expect(plain.reservation.childrenRatePercentApplied).toBe(50)
+    expect(withAges.reservation.childrenRatePercentApplied).toBe(50)
+    expect(plain.reservation.children).toBe(2)
+    // Opción A persiste las edades sintetizadas: son la base del precio cobrado (un reagendado
+    // vuelve a cotizar con ellas, no por adultos).
+    expect(plain.reservation.childrenAges).toEqual([12, 12])
+    expect(plain.reservation.childrenAgesAsOf).toBe('2026-08-10')
+    // Y es MÁS caro que sin niños: antes de MR-10 el caller plano pagaba 200 (adultos solamente).
+    const noKids = await book({ taxesConfig: noTax, childPolicy: policy }, { ...baseBody, adults: 2, children: 0 })
+    expect(noKids.reservation.totalAmount).toBe(200)
+    expect(noKids.reservation.childrenRatePercentApplied).toBeNull()
+  })
+
+  it('children plano en un hotel que NO acepta niños → 400 (antes pasaba en silencio como adultos)', async () => {
+    const { res, reservation } = await book(
+      { taxesConfig: noTax, childPolicy: { ...policy, acceptChildren: false } },
+      { ...baseBody, adults: 2, children: 1 },
+    )
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBe('Este hotel no acepta niños en la reserva')
+    expect(reservation).toBeUndefined()
+  })
+
+  it('children plano cuenta para capacidad: 2 adultos + 2 niños no entran en capacity 3 → 409', async () => {
+    const { res } = await book(
+      { taxesConfig: noTax, childPolicy: policy, room: { id: 'r1', hotelId: 'h1', basePrice: 100, status: 'available', capacity: 3 } },
+      { ...baseBody, adults: 2, children: 2 },
+    )
+    expect(res.status).toBe(409)
+  })
+
+  it('per_person_per_night 10 × 2 adultos × 3 noches = 60; qty:4 del body se ignora; addon #269 cuadra', async () => {
+    const state = {
+      taxesConfig: noTax,
+      upsells: [{ id: 'ppn', hotelId: 'h1', name: 'Desayuno', price: 10, kind: 'per_person_per_night', active: true }],
+    }
+    const { res, reservation, addons } = await book(state, { ...threeNights, upsells: [{ id: 'ppn', quantity: 4 }] })
+    expect(res.status).toBe(201)
+    const b = res.body.totalBreakdown
+    expect(b.upsells).toHaveLength(1)
+    expect(b.upsells[0]).toEqual({ id: 'ppn', name: 'Desayuno', kind: 'per_person_per_night', unitPrice: 10, quantity: 1, nights: 3, persons: 2, total: 60 })
+    expect(b.upsellsTotal).toBe(60)
+    expect(b.subtotal).toBe(360)
+    expect(b.total).toBe(360)
+    // Se persiste con la reserva (es lo que muestra la confirmación pública).
+    expect(reservation.priceBreakdown.upsells).toEqual(b.upsells)
+    expect(reservation.notes).toContain('Upsells: Desayuno×2p×3n=60.00')
+    // #269 — el folio asienta quantity × unitPrice: quantity lleva el multiplicador (2 × 3 = 6).
+    const addon = addons.find((a: any) => a.description === 'Desayuno')
+    expect(addon).toBeDefined()
+    expect(Number(addon.quantity)).toBe(6)
+    expect(Number(addon.unitPrice)).toBe(10)
+    expect(Number(addon.amount) * Number(addon.quantity)).toBe(60)
+  })
+
+  it('per_night 15 × 3 noches = 45 (qty ignorado)', async () => {
+    const state = {
+      taxesConfig: noTax,
+      upsells: [{ id: 'pn', hotelId: 'h1', name: 'Parking', price: 15, kind: 'per_night', active: true }],
+    }
+    const { res } = await book(state, { ...threeNights, upsells: [{ id: 'pn', quantity: 7 }] })
+    expect(res.status).toBe(201)
+    expect(res.body.totalBreakdown.upsells[0]).toEqual({ id: 'pn', name: 'Parking', kind: 'per_night', unitPrice: 15, quantity: 1, nights: 3, total: 45 })
+    expect(res.body.totalBreakdown.upsellsTotal).toBe(45)
+    expect(res.body.totalBreakdown.total).toBe(345)
+  })
+
+  it('per_person qty:5 con 2 huéspedes → 400 upsell_quantity_out_of_range (no crea nada); qty:2 → OK', async () => {
+    const state = {
+      taxesConfig: noTax,
+      upsells: [{ id: 'pp', hotelId: 'h1', name: 'Transfer', price: 20, kind: 'per_person', active: true }],
+    }
+    const bad = await book(state, { ...baseBody, upsells: [{ id: 'pp', quantity: 5 }] })
+    expect(bad.res.status).toBe(400)
+    expect(bad.res.body.error).toBe('upsell_quantity_out_of_range')
+    expect(bad.res.body).toMatchObject({ upsellId: 'pp', name: 'Transfer', kind: 'per_person', quantity: 5, max: 2 })
+    expect(typeof bad.res.body.message).toBe('string')
+    expect(bad.reservation).toBeUndefined()
+
+    const ok = await book(state, { ...baseBody, upsells: [{ id: 'pp', quantity: 2 }] })
+    expect(ok.res.status).toBe(201)
+    expect(ok.res.body.totalBreakdown.upsells[0]).toMatchObject({ kind: 'per_person', quantity: 2, total: 40 })
+    expect(ok.res.body.totalBreakdown.upsellsTotal).toBe(40)
+  })
+
+  it('per_person: los niños (con plaza o libres) cuentan como personas, los bebés no', async () => {
+    // 2 adultos + 1 niño con plaza (10) + 1 bebé (1, maxBabyAge 2 ≤ maxFreeAge 2) → 3 personas.
+    const state = {
+      taxesConfig: noTax,
+      childPolicy: { ...policy, maxFreeAge: 2, maxBabyAge: 2, childrenDiscountEnabled: false },
+      upsells: [{ id: 'pp', hotelId: 'h1', name: 'Transfer', price: 20, kind: 'per_person', active: true }],
+    }
+    const body = { ...baseBody, adults: 2, children: 2, childrenAges: [10, 1] }
+    const bad = await book(state, { ...body, upsells: [{ id: 'pp', quantity: 4 }] })
+    expect(bad.res.status).toBe(400)
+    expect(bad.res.body.max).toBe(3)
+    const ok = await book(state, { ...body, upsells: [{ id: 'pp', quantity: 3 }] })
+    expect(ok.res.status).toBe(201)
   })
 })

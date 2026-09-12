@@ -3,8 +3,9 @@
 // Lista upsells activos del hotel (sub-dominio de bookingengine, F2 2.3). Público, sin auth,
 // rate-limited. El widget lo consume en el step de upsells (desayuno, transfer, late checkout).
 //
-// Filtrado opcional por `?kind=` ('per_room' | 'per_person' | 'per_stay'). Sin el param, devuelve
-// todos los activos. Orden: `sortOrder` ASC, desempate por `createdAt` ASC (mismo criterio que
+// Filtrado opcional por `?kind=` ('per_room' | 'per_person' | 'per_stay' | 'per_night' |
+// 'per_person_per_night' — los dos últimos desde MR-10 #275). Sin el param, devuelve todos los
+// activos. Orden: `sortOrder` ASC, desempate por `createdAt` ASC (mismo criterio que
 // `upsells-crud.list` del admin, así widget y panel ven el mismo orden).
 //
 // Anti-enumeración: mismo 404 para "no existe" y "no activo" (igual que public-hotel-info y
@@ -15,15 +16,18 @@
 // válidos; mandar otro es un bug del frontend, no un 400 para el usuario final.
 import type { RepositoryAdapter } from 'arckode-framework'
 import type { UpsellDTO } from '../types'
+import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 
 export interface PublicUpsellsDeps {
   hotels: RepositoryAdapter<any>
   upsells: RepositoryAdapter<UpsellDTO>
+  /** #276 (MR-11) — toggle Activo/Inactivo del hotel (`booking_config.enabled`). Opcional (compat). */
+  bookingConfig?: RepositoryAdapter<any>
 }
 
 /**
  * @param slug   Slug del hotel (URL param).
- * @param kind   Filtro opcional por kind ('per_room' | 'per_person' | 'per_stay').
+ * @param kind   Filtro opcional por kind (cualquier valor de `UpsellKind`, ver types.ts).
  */
 export async function getPublicUpsells(
   deps: PublicUpsellsDeps,
@@ -32,10 +36,11 @@ export async function getPublicUpsells(
 ): Promise<{ status: number; body: any }> {
   if (!slug) return { status: 404, body: { error: 'Hotel not found' } }
 
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // `hotels.onlineBookingStatus` (plataforma) + `booking_config.enabled` (hotel), mismo 404.
   const hotel = await deps.hotels.findOne({ slug })
-  if (!hotel || hotel.onlineBookingStatus !== 'active') {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
+  const bookingConfig = hotel && deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
+  if (!isEngineOpen(hotel, bookingConfig)) return engineClosed()
 
   const all = await deps.upsells.findMany({ hotelId: hotel.id })
   // `active` ORM-booleano (true/false). Defensivo: si llega 0/1 por una row legacy, Boolean()

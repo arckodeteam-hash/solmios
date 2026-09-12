@@ -58,6 +58,7 @@ import type {
   TotalBreakdown,
   UpsellLine,
   Upsell,
+  UpsellKind,
 } from '@/types/booking'
 // Refactor cross-cutting: monedas del enum global (types/currency.ts — source of truth único).
 import { CURRENCY_CODES, type CurrencyCode } from '@/types/currency'
@@ -551,31 +552,97 @@ export const useBookingStore = defineStore('booking-widget', () => {
     roomsSubtotal.value + upsellsTotal.value + childAmenitiesTotal.value + roomAmenitiesTotal.value + mealPlansTotal.value,
   ))
 
-  /** Suma de upsells seleccionados (precio × qty). En `hotels.currency` (chargeCurrency). */
-  const upsellsTotal = computed(() => {
-    const byId = new Map(upsells.value.map((u) => [u.id, u]))
-    let total = 0
-    for (const sel of selectedUpsells.value) {
-      const found = byId.get(sel.id)
-      if (!found) continue
-      total += Number(found.price) * Math.max(1, Math.floor(sel.quantity))
-    }
-    return round2(total)
-  })
+  /** Bebés del carrito (subconjunto de `cartTotalFreeChildren`, misma cuenta). No consumen
+   *  desayuno ni transfer: se restan de las personas que multiplican un extra por persona. */
+  const cartTotalBabies = computed(() => cart.value.reduce((s, l) => {
+    if (!l.childrenAges || l.childrenAges.length === 0) return s
+    const composition = resolveChildComposition(l.adults ?? 0, l.childrenAges, childPolicy.value)
+    return s + composition.babies * l.quantity
+  }, 0))
 
-  /** Extras elegidos, uno por línea (nombre × cantidad = importe) — #88 pide verlos por separado. */
+  /** MR-10 (#275) — personas que consumen un extra "por persona": adultos + niños con plaza +
+   *  niños libres, SIN bebés. Misma cuenta que `ctx.persons` de `resolveUpsellLines` en el
+   *  backend: si acá diera otro número el stepper dejaría pedir lo que el POST rechaza con 400. */
+  const upsellPersons = computed(() => Math.max(0, cartTotalGuests.value + cartTotalFreeChildren.value - cartTotalBabies.value))
+
+  /** Noches que multiplican un extra por noche: las de `/rates`; 1 si todavía no hay tarifas. */
+  const upsellNights = computed(() => Math.max(1, nights.value))
+
+  /**
+   * MR-10 (#275) — tope de cantidad por `kind`, espejo de `upsellMaxQuantity` del backend
+   * (`bookingengine/usecases/upsell-pricing.ts`): per_room ≤ habitaciones del carrito,
+   * per_person ≤ personas sin bebés, per_stay/per_night/ppn = 1. Nunca baja de 1 para que el
+   * stepper no quede clavado en 0 con el carrito vacío.
+   */
+  function upsellMaxQty(kind: UpsellKind): number {
+    switch (kind) {
+      case 'per_room': return Math.max(1, cartTotalRooms.value)
+      case 'per_person': return Math.max(1, upsellPersons.value)
+      default: return 1
+    }
+  }
+
+  /** Cantidad efectiva de un extra: la pedida acotada al tope del kind (1 en los de cantidad fija). */
+  function effectiveUpsellQty(kind: UpsellKind, requested: number): number {
+    const qty = Math.max(1, Math.floor(Number(requested) || 1))
+    return Math.min(qty, upsellMaxQty(kind))
+  }
+
+  /** Multiplicadores de estadía de un kind: noches y personas (sólo ppn). */
+  function upsellStayFactors(kind: UpsellKind): { nights: number; persons?: number } {
+    if (kind === 'per_night') return { nights: upsellNights.value }
+    if (kind === 'per_person_per_night') return { nights: upsellNights.value, persons: upsellPersons.value }
+    return { nights: 1 }
+  }
+
+  /**
+   * MR-10 (#275) — precio de UNA unidad del extra para ESTA estadía: per_night → price × noches,
+   * ppn → price × personas × noches, resto → price. Es lo que UpsellsStep muestra en la tarjeta
+   * (el huésped ve lo que va a pagar, no el precio de catálogo "por noche").
+   */
+  function upsellStayPrice(upsell: Pick<Upsell, 'price' | 'kind'>): number {
+    const f = upsellStayFactors(upsell.kind)
+    return round2(Number(upsell.price) * f.nights * (f.persons ?? 1))
+  }
+
+  /** Extras elegidos, uno por línea con la matemática por `kind` (MR-10 #275, misma cuenta que
+   *  `resolveUpsellLines` del backend: `unitPrice × quantity × nights × (persons ?? 1)`). La
+   *  cantidad pedida se acota al tope del kind (1 en per_stay/per_night/ppn) — #88 pide verlos
+   *  por separado en el resumen/pago. */
   const upsellLines = computed<UpsellLine[]>(() => {
     const byId = new Map(upsells.value.map((u) => [u.id, u]))
-    const lines: UpsellLine[] = []
+    // Mismo id repetido → una sola línea con Σ cantidades ANTES de acotar al tope (espejo exacto
+    // de `upsell-pricing.ts`): `setSelectedUpsells` ya consolida, pero el computed no depende de
+    // que todos los callers pasen por ahí — y `pay()` manda ESTAS líneas al POST.
+    const requested = new Map<string, number>()
     for (const sel of selectedUpsells.value) {
-      const found = byId.get(sel.id)
-      if (!found) continue
-      const quantity = Math.max(1, Math.floor(sel.quantity))
+      if (!sel || typeof sel.id !== 'string') continue
+      requested.set(sel.id, (requested.get(sel.id) ?? 0) + Math.max(0, Math.floor(Number(sel.quantity) || 0)))
+    }
+    const lines: UpsellLine[] = []
+    for (const [id, qty] of requested) {
+      const found = byId.get(id)
+      if (!found || qty <= 0) continue
+      const quantity = effectiveUpsellQty(found.kind, qty)
       const unitPrice = Number(found.price)
-      lines.push({ id: found.id, name: found.name, quantity, unitPrice, total: round2(unitPrice * quantity) })
+      const f = upsellStayFactors(found.kind)
+      const line: UpsellLine = {
+        id: found.id,
+        name: found.name,
+        kind: found.kind,
+        quantity,
+        unitPrice,
+        nights: f.nights,
+        total: round2(unitPrice * quantity * f.nights * (f.persons ?? 1)),
+      }
+      if (f.persons !== undefined) line.persons = f.persons
+      lines.push(line)
     }
     return lines
   })
+
+  /** Suma de upsells seleccionados (Σ `upsellLines[].total`). En `hotels.currency` (chargeCurrency). */
+  const upsellsTotal = computed(() => round2(upsellLines.value.reduce((s, l) => s + l.total, 0)))
 
   /** REQ-01 (#233) — Σ de amenidades infantiles de TODAS las líneas: (Σ price de la línea) ×
    *  quantity. Precios del snapshot de cada línea (en `chargeCurrency`, igual que upsells). */
@@ -1091,7 +1158,17 @@ export const useBookingStore = defineStore('booking-widget', () => {
 
   /** Step 2: actualiza la selección de upsells. */
   function setSelectedUpsells(items: SelectedUpsell[]): void {
-    selectedUpsells.value = items.filter((i) => i.quantity > 0)
+    // MR-10 (#275) — un mismo id se CONSOLIDA (Σ cantidades) igual que hace el backend
+    // (`upsell-pricing.ts`) antes de acotar al tope: si el store guardara dos entradas del mismo
+    // extra, `upsellLines` las acotaría por separado (2 + 2 con tope 2 → mostraría 80) y el POST
+    // las mandaría duplicadas → 400 `upsell_quantity_out_of_range` sobre un precio que el
+    // huésped ya vio. Se conserva el orden de la primera aparición.
+    const merged = new Map<string, number>()
+    for (const i of items) {
+      if (!i || typeof i.id !== 'string' || !(i.quantity > 0)) continue
+      merged.set(i.id, (merged.get(i.id) ?? 0) + Math.floor(i.quantity))
+    }
+    selectedUpsells.value = [...merged].map(([id, quantity]) => ({ id, quantity }))
   }
 
   /** Step 3: actualiza datos del huésped. */
@@ -1238,7 +1315,12 @@ export const useBookingStore = defineStore('booking-widget', () => {
       const promoPayload = promoResult.value?.valid && promoCode.value
         ? { promoCode: promoResult.value.code ?? promoCode.value.trim().toUpperCase() }
         : {}
-      const upsellsPayload = selectedUpsells.value.length > 0 ? { upsells: selectedUpsells.value } : {}
+      // MR-10 (#275) — viaja la cantidad EFECTIVA (acotada al tope por kind, 1 en los de cantidad
+      // fija): lo que el huésped vio en el resumen es lo que se pide, y el backend no devuelve
+      // 400 `upsell_quantity_out_of_range` por un qty que el stepper ya no permite.
+      const upsellsPayload = upsellLines.value.length > 0
+        ? { upsells: upsellLines.value.map((l) => ({ id: l.id, quantity: l.quantity })) }
+        : {}
 
       // Tarea 10 (QA 2026-08-20/21) — 1 sola línea × 1 unidad usa el endpoint de SIEMPRE
       // (`POST /api/public/booking`, sin crear una fila de Grupo innecesaria para el caso común).
@@ -1435,6 +1517,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
     cartTotalGuests,
     cartTotalChildren,
     cartTotalFreeChildren,
+    cartTotalBabies,
+    upsellPersons,
     roomsSubtotal,
     subtotal,
     upsellsTotal,
@@ -1445,6 +1529,8 @@ export const useBookingStore = defineStore('booking-widget', () => {
     estimatedTaxes,
     estimatedTotal,
     upsellLines,
+    upsellMaxQty,
+    upsellStayPrice,
     childAmenitiesTotal,
     childAmenityLines,
     roomAmenitiesTotal,

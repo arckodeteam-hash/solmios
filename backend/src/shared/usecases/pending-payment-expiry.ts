@@ -1,19 +1,28 @@
-// shared/usecases/pending-payment-expiry.ts — Vencimiento de reservas web sin pago (#248, REQ-RWP-05).
+// shared/usecases/pending-payment-expiry.ts — Vencimiento de reservas web sin pago (#248 REQ-RWP-05, #266 MR-01).
 //
 // Una reserva hecha desde el motor público queda `pending` bloqueando la habitación hasta que
 // el huésped paga. Si nunca paga, nadie la soltaba: el cuarto quedaba invendible para siempre.
-// Este usecase (puro, puertos inyectados, lo corre un cron) vence las que superaron el TTL del
-// hotel (`booking_config.pendingPaymentTtlHours`; 0 = nunca) cancelándolas vía
-// `reservas.cancelBySystem` en modo `no-charge` — que emite `onReservationCancelled` y con eso
-// los connectors existentes liberan disponibilidad.
+// Este usecase (puro, puertos inyectados) vence las que pasaron su fecha límite de pago
+// (`reservations.paymentDeadlineAt`, que public-booking fija en createdAt + booking_config.
+// pendingTtlMinutes) cancelándolas vía `reservas.cancelBySystem` en modo `no-charge` — que emite
+// `onReservationCancelled` y con eso los connectors existentes liberan disponibilidad.
 //
-// Decisiones (no hay datos "ideales" en el esquema, se usan los que existen):
-//   (i)  No existe `source:'web'` estable: una reserva web es la que tiene `accessToken` no nulo
-//        (public-booking.ts lo genera al crearla) o `source === 'web'`. Las del panel no vencen.
-//   (ii) No existe tabla `payment_attempts`: "intento de pasarela reciente" = cualquier fila de
-//        `payments` de la reserva (cualquier status, incluso failed) tocada en los últimos 60 min.
-//        Un huésped que está intentando pagar no debe perder la reserva a mitad del checkout.
-//   (iii) Grupo entero o nada: si una hermana del `groupId` tiene pago/intento/link, ninguna vence.
+// Dos entradas al mismo cierre (#266):
+//   - `runPendingPaymentExpiry`: barrido del cron (cada 5 min) sobre todas las `pending` web.
+//   - `expirePendingReservation`: UNA reserva, para el webhook `checkout.session.expired` de
+//     Stripe (bookingengine/usecases/stripe.ts). Misma evaluación, misma cascada, mismo audit.
+//
+// Criterio de elegibilidad (una reserva vence si TODO se cumple):
+//   (i)   `status === 'pending'`.
+//   (ii)  Es web: `accessToken` no nulo (public-booking.ts lo genera) o `source === 'web'`.
+//         Las del panel no vencen.
+//   (iii) `paymentDeadlineAt` presente, parseable y anterior a `now`. Una fila SIN deadline
+//         (reservas anteriores a #266) no vence nunca: no se calcula desde createdAt.
+//   (iv)  `deposit` en 0: si ya hay algo cobrado, es de recepción y no del cron.
+//   (v)   Sin fila `payments` con status `completed`, ni pago vivo/intento reciente en la pasarela
+//         (cualquier `payments` tocada en los últimos 60 min, incluso failed), ni link de pago
+//         pendiente. Un huésped a mitad del checkout no pierde la reserva.
+//   (vi)  Grupo entero o nada: si una hermana del `groupId` no es elegible, ninguna vence.
 
 import type { Logger } from 'arckode-framework'
 import { auditSafely, type AuditPort } from './audit'
@@ -24,8 +33,6 @@ interface FindById { findById(id: string): Promise<any | null> }
 
 export interface PendingPaymentExpiryDeps {
   reservations: FindMany
-  /** BookingConfig (booking_config): `pendingPaymentTtlHours` por hotelId. */
-  bookingConfig: FindMany
   payments: FindMany
   paymentRequests: FindMany
   guests: FindById
@@ -40,6 +47,10 @@ export interface PendingPaymentExpiryDeps {
   } | null
   publicBaseUrl: string
   logger: Logger
+  /** #266: empuja disponibilidad a las OTAs (Channex) por habitación liberada. Fire-and-forget. */
+  pushAvailability?: (hotelId: string, roomId: string) => void
+  /** #266: tabla `groups` — cuando vence el grupo entero, el grupo queda `cancelled` (best-effort). */
+  groups?: { update(id: string, data: Record<string, unknown>): Promise<unknown> }
 }
 
 export interface PendingPaymentExpiryResult {
@@ -49,35 +60,66 @@ export interface PendingPaymentExpiryResult {
   errors: Array<{ reservationId: string; reason: string }>
 }
 
-/** Mismo default que bookingengine/usecases/config.ts (no se importa: shared no depende de módulos). */
-export const DEFAULT_PENDING_PAYMENT_TTL_HOURS = 24
+export type ExpireReason =
+  | 'not_found'
+  | 'not_pending'
+  | 'not_web'
+  | 'no_deadline'
+  | 'not_due'
+  | 'has_deposit'
+  | 'has_payment'
+  | 'payment_activity'
+  | 'group_not_due'
+  | 'cancel_failed'
+  | 'already_cancelled'
+
+/** Resultado de `expirePendingReservation`. `expired` = al menos una reserva se cerró en esta llamada. */
+export interface ExpirePendingOutcome {
+  expired: boolean
+  reason?: ExpireReason
+  /** Reservas cerradas en esta llamada (más de una si era un grupo). */
+  expiredCount: number
+  /** Reservas evaluadas y dejadas intactas (todas las hermanas si el grupo no venció). */
+  skippedCount: number
+  errors: Array<{ reservationId: string; reason: string }>
+}
+
 export const RECENT_PAYMENT_ATTEMPT_MS = 60 * 60 * 1000
 export const EXPIRED_EMAIL_SUBJECT = 'Su reserva venció por falta de pago'
 
-const MS_PER_HOUR = 3_600_000
 const LIVE_PAYMENT_STATUSES = new Set(['completed', 'pending', 'processing'])
 
 const isWeb = (r: Row): boolean => Boolean(r.accessToken) || r.source === 'web'
 const ms = (v: unknown): number => (v ? new Date(v as string).getTime() : NaN)
 
-/** true si la reserva tiene un pago vivo, un intento reciente en la pasarela o un link pendiente. */
-async function hasPaymentActivity(deps: PendingPaymentExpiryDeps, reservationId: string, nowMs: number): Promise<boolean> {
-  const payments = (await deps.payments.findMany({ reservationId })) as Row[]
-  for (const p of payments) {
-    if (LIVE_PAYMENT_STATUSES.has(String(p.status))) return true
-    const touched = Math.max(...[p.createdAt, p.updatedAt, p.processedAt].map(ms).filter(Number.isFinite), -Infinity)
-    if (touched >= nowMs - RECENT_PAYMENT_ATTEMPT_MS) return true
-  }
-  const links = (await deps.paymentRequests.findMany({ reservationId, status: 'pending' })) as Row[]
-  return links.length > 0
+/** Motivo por el que una reserva NO vence, mirando sólo la fila (sin consultar pagos). */
+function rowBlocker(r: Row, nowMs: number): ExpireReason | null {
+  if (r.status === 'cancelled') return 'already_cancelled'
+  if (r.status !== 'pending') return 'not_pending'
+  if (!isWeb(r)) return 'not_web'
+  const deadline = ms(r.paymentDeadlineAt)
+  if (!Number.isFinite(deadline)) return 'no_deadline'
+  if (deadline >= nowMs) return 'not_due'
+  if (Number(r.deposit || 0) !== 0) return 'has_deposit'
+  return null
 }
 
-/** Elegible = pending + web + más vieja que el TTL + sin actividad de pago. */
-async function isEligible(deps: PendingPaymentExpiryDeps, r: Row, ttlHours: number, nowMs: number): Promise<boolean> {
-  if (r.status !== 'pending' || !isWeb(r)) return false
-  const created = ms(r.createdAt)
-  if (!Number.isFinite(created) || created >= nowMs - ttlHours * MS_PER_HOUR) return false
-  return !(await hasPaymentActivity(deps, String(r.id), nowMs))
+/** Motivo por el que los pagos de la reserva frenan el vencimiento (pago completed, intento reciente, link pendiente). */
+async function paymentBlocker(deps: PendingPaymentExpiryDeps, reservationId: string, nowMs: number): Promise<ExpireReason | null> {
+  const payments = (await deps.payments.findMany({ reservationId })) as Row[]
+  for (const p of payments) {
+    if (String(p.status) === 'completed') return 'has_payment'
+    if (LIVE_PAYMENT_STATUSES.has(String(p.status))) return 'payment_activity'
+    const touched = Math.max(...[p.createdAt, p.updatedAt, p.processedAt].map(ms).filter(Number.isFinite), -Infinity)
+    if (touched >= nowMs - RECENT_PAYMENT_ATTEMPT_MS) return 'payment_activity'
+  }
+  const links = (await deps.paymentRequests.findMany({ reservationId, status: 'pending' })) as Row[]
+  return links.length > 0 ? 'payment_activity' : null
+}
+
+/** Elegible = pending + web + deadline vencida + deposit 0 + sin pago/intento/link. */
+async function blockerFor(deps: PendingPaymentExpiryDeps, r: Row, nowMs: number): Promise<ExpireReason | null> {
+  return rowBlocker(r, nowMs) ?? (await paymentBlocker(deps, String(r.id), nowMs))
 }
 
 export function renderExpiredEmailHtml(link: string, hotelName: string): string {
@@ -112,79 +154,120 @@ async function notifyGuest(deps: PendingPaymentExpiryDeps, r: Row): Promise<void
   }
 }
 
-/** TTL efectivo del hotel (cache por corrida). 0 = el hotel no vence reservas. */
-async function ttlFor(deps: PendingPaymentExpiryDeps, cache: Map<string, number>, hotelId: string): Promise<number> {
-  if (cache.has(hotelId)) return cache.get(hotelId)!
-  const cfg = ((await deps.bookingConfig.findMany({ hotelId })) as Row[])[0]
-  const raw = cfg?.pendingPaymentTtlHours
-  const ttl = raw === null || raw === undefined ? DEFAULT_PENDING_PAYMENT_TTL_HOURS : Number(raw)
-  cache.set(hotelId, ttl)
-  return ttl
+/** Best-effort: el grupo ya venció entero; si `groups` no está cableado o falla, sólo se loguea. */
+async function markGroupCancelled(deps: PendingPaymentExpiryDeps, groupId: string): Promise<void> {
+  if (!deps.groups) return
+  try {
+    await deps.groups.update(groupId, { status: 'cancelled' })
+  } catch (e) {
+    deps.logger.warn('pending-payment-expiry: no se pudo marcar el grupo como cancelled', { groupId, error: String(e) })
+  }
 }
 
+const fmtDeadline = (v: unknown): string => {
+  const t = ms(v)
+  return Number.isFinite(t) ? new Date(t).toISOString() : String(v)
+}
+
+/**
+ * Evalúa y cierra UNA reserva pendiente (con su grupo, si tiene): cancel `no-charge`, audit
+ * `reservation.expired_unpaid`, correo de vencimiento, `pushAvailability` por habitación y
+ * `groups.status='cancelled'` cuando vence el grupo entero. Idempotente: una reserva que ya no
+ * está `pending` devuelve `{ expired: false, reason }` sin tocar nada.
+ *
+ * Sin transacciones entre reservas: si una hermana falla (Stripe caído en releaseChargeSessions),
+ * se corta el grupo acá y la próxima llamada lo completa — las ya cancelled no bloquean la
+ * evaluación del grupo, así que converge a "grupo entero".
+ */
+export async function expirePendingReservation(
+  deps: PendingPaymentExpiryDeps,
+  reservationId: string,
+  hotelId: string,
+  now: Date = new Date(),
+): Promise<ExpirePendingOutcome> {
+  const nowMs = now.getTime()
+  const out: ExpirePendingOutcome = { expired: false, expiredCount: 0, skippedCount: 0, errors: [] }
+
+  const r = ((await deps.reservations.findMany({ id: reservationId, hotelId })) as Row[])[0]
+  if (!r) return { ...out, reason: 'not_found' }
+
+  // Grupo entero o nada: una hermana viva sin vencer (o con pago/intento/link) frena a todas.
+  let batch: Row[]
+  if (r.groupId) {
+    const siblings = ((await deps.reservations.findMany({ groupId: r.groupId, hotelId: String(r.hotelId) })) as Row[]).filter((s) => s.status !== 'cancelled')
+    if (siblings.length === 0) return { ...out, reason: 'already_cancelled' }
+    const blockers = await Promise.all(siblings.map((s) => blockerFor(deps, s, nowMs)))
+    const own = blockers[siblings.findIndex((s) => String(s.id) === String(r.id))] ?? null
+    const first = blockers.find((b) => b !== null) ?? null
+    if (first) return { ...out, skippedCount: siblings.length, reason: own ?? 'group_not_due' }
+    batch = siblings
+  } else {
+    const blocker = await blockerFor(deps, r, nowMs)
+    if (blocker) return { ...out, skippedCount: 1, reason: blocker }
+    batch = [r]
+  }
+
+  let allClosed = true
+  for (const item of batch) {
+    const itemId = String(item.id)
+    let res: Awaited<ReturnType<PendingPaymentExpiryDeps['cancel']>>
+    try {
+      res = await deps.cancel(itemId, String(item.hotelId))
+    } catch (e) {
+      res = { ok: false, message: (e as Error)?.message ?? String(e) }
+    }
+    if (!res.ok) {
+      allClosed = false
+      out.errors.push({ reservationId: itemId, reason: res.message ?? 'cancel failed' })
+      if (batch.length > 1) {
+        deps.logger.warn('pending-payment-expiry: grupo vencido a medias, se completa en la próxima corrida', { groupId: r.groupId, failed: itemId })
+        break
+      }
+      continue
+    }
+    if (res.idempotent) continue
+    out.expired = true
+    out.expiredCount++
+    await auditSafely(deps.audit, deps.logger, {
+      hotelId: String(item.hotelId), action: 'reservation.expired_unpaid', entity: 'reservation', entityId: itemId,
+      detail: `Vencida por falta de pago (plazo hasta ${fmtDeadline(item.paymentDeadlineAt)})`,
+    })
+    await notifyGuest(deps, item)
+    if (item.roomId && deps.pushAvailability) {
+      try { deps.pushAvailability(String(item.hotelId), String(item.roomId)) } catch (e) {
+        deps.logger.warn('pending-payment-expiry: pushAvailability falló', { id: itemId, error: String(e) })
+      }
+    }
+  }
+
+  if (r.groupId && allClosed) await markGroupCancelled(deps, String(r.groupId))
+  if (!out.expired && !out.reason) out.reason = out.errors.length > 0 ? 'cancel_failed' : 'already_cancelled'
+  return out
+}
+
+/** Barrido del cron: evalúa todas las `pending` web y reutiliza `expirePendingReservation` por reserva/grupo. */
 export async function runPendingPaymentExpiry(
   deps: PendingPaymentExpiryDeps,
   now: Date = new Date(),
 ): Promise<PendingPaymentExpiryResult> {
   const result: PendingPaymentExpiryResult = { scanned: 0, expired: 0, skipped: 0, errors: [] }
-  const nowMs = now.getTime()
-  const ttlCache = new Map<string, number>()
   const seenGroups = new Set<string>()
 
   const candidates = ((await deps.reservations.findMany({ status: 'pending' })) as Row[]).filter(isWeb)
 
   for (const r of candidates) {
-    if (!Number.isFinite(ms(r.createdAt))) { result.skipped++; continue }
     result.scanned++
     const id = String(r.id)
     try {
       // Un grupo se evalúa una sola vez (la primera hermana decide por todas y las contabiliza).
-      if (r.groupId && seenGroups.has(String(r.groupId))) continue
-      const ttl = await ttlFor(deps, ttlCache, String(r.hotelId))
-      if (ttl === 0) { result.skipped++; continue }
-
-      // Grupo entero o nada: una hermana viva sin vencer (o con pago/intento/link) frena a todas.
-      let batch: Row[]
       if (r.groupId) {
+        if (seenGroups.has(String(r.groupId))) continue
         seenGroups.add(String(r.groupId))
-        const siblings = ((await deps.reservations.findMany({ groupId: r.groupId })) as Row[]).filter((s) => s.status !== 'cancelled')
-        const checks = await Promise.all(siblings.map((s) => isEligible(deps, s, ttl, nowMs)))
-        // Todas las hermanas cuentan como salteadas (las que vengan después hacen `continue`
-        // arriba). Las de createdAt inválido ya se contaron al entrar al loop: no se repiten.
-        if (checks.some((ok) => !ok)) { result.skipped += siblings.filter((s) => Number.isFinite(ms(s.createdAt))).length; continue }
-        batch = siblings
-      } else {
-        if (!(await isEligible(deps, r, ttl, nowMs))) { result.skipped++; continue }
-        batch = [r]
       }
-
-      // Sin transacciones entre reservas: si una hermana falla (Stripe caído en
-      // releaseChargeSessions), se corta el grupo acá y el próximo tick lo completa — las ya
-      // cancelled no bloquean la evaluación del grupo, así que converge a "grupo entero".
-      for (const item of batch) {
-        const itemId = String(item.id)
-        let out: Awaited<ReturnType<PendingPaymentExpiryDeps['cancel']>>
-        try {
-          out = await deps.cancel(itemId, String(item.hotelId))
-        } catch (e) {
-          out = { ok: false, message: (e as Error)?.message ?? String(e) }
-        }
-        if (!out.ok) {
-          result.errors.push({ reservationId: itemId, reason: out.message ?? 'cancel failed' })
-          if (batch.length > 1) {
-            deps.logger.warn('pending-payment-expiry: grupo vencido a medias, se completa en la próxima corrida', { groupId: r.groupId, failed: itemId })
-            break
-          }
-          continue
-        }
-        if (out.idempotent) continue
-        result.expired++
-        await auditSafely(deps.audit, deps.logger, {
-          hotelId: String(item.hotelId), action: 'reservation.expired_unpaid', entity: 'reservation', entityId: itemId,
-          detail: `Vencida por falta de pago (TTL ${ttl} h)`,
-        })
-        await notifyGuest(deps, item)
-      }
+      const out = await expirePendingReservation(deps, id, String(r.hotelId), now)
+      result.expired += out.expiredCount
+      result.skipped += out.skippedCount
+      result.errors.push(...out.errors)
     } catch (e) {
       result.errors.push({ reservationId: id, reason: (e as Error)?.message ?? String(e) })
     }

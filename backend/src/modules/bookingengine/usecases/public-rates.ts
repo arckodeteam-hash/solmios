@@ -71,6 +71,7 @@ import { baseRatesOnly, buildSeasonByDate, sumStayPrice } from './rate-resolutio
 import { buildOccupancyMatrix } from './occupancy-matrix'
 import { buildPublicMealPlans } from './public-meal-plan-lines'
 import { MAX_STAY_NIGHTS } from '../validators/schema'
+import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24
 
@@ -170,20 +171,14 @@ export async function getPublicRates(
     return { status: 400, body: { error: 'checkOut debe ser posterior a checkIn' } }
   }
 
-  // Anti-enumeración: idéntico 404 para "no existe" y "no activo".
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // `hotels.onlineBookingStatus` (plataforma) + `booking_config.enabled` (toggle "Activo/Inactivo"
+  // de `/panel/booking-engine`; default `true`, sin fila = abierto). Anti-enumeración: idéntico
+  // 404 para "no existe", "pausado" y "apagado". `bookingConfig` se lee UNA vez y se reusa abajo
+  // (minNights/maxNights/cancellationPolicy).
   const hotel = await deps.hotels.findOne({ slug })
-  if (!hotel || hotel.onlineBookingStatus !== 'active') {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
-
-  // FIX — toggle "Activo/Inactivo" del admin (`/panel/booking-engine`) ahora sí apaga el
-  // motor. Mismo 404 anti-enumeración que `onlineBookingStatus` (no revelar por qué está
-  // apagado). `enabled` default es `true` (config.ts get()) — un hotel que nunca tocó esta
-  // pantalla no se ve afectado.
-  const bookingConfig = deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
-  if (bookingConfig && bookingConfig.enabled === false) {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
+  const bookingConfig = hotel && deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
+  if (!isEngineOpen(hotel, bookingConfig)) return engineClosed()
 
   const sourceCurrency = String(hotel.currency || 'USD').toUpperCase()
   const nights = Math.max(1, Math.round(

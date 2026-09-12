@@ -36,6 +36,7 @@ import { baseRatesOnly, buildSeasonByDate, pickRate, ratePrice, overrideRateFor 
 import { round2 } from '../../../shared/utils/money'
 import { isRateClosed } from './stay-restrictions'
 import { validatePublicCalendarQuery, MAX_CALENDAR_DAYS } from '../validators/schema'
+import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 
 /** Re-export por compatibilidad: nacieron acá y los tests del calendario los importan de acá.
  *  La implementación canónica vive en `rate-resolution.ts` (compartida con `/rates`). */
@@ -129,14 +130,11 @@ export async function getPublicCalendar(
   const { from, to, guests } = validated.value
 
   // Anti-enumeración: idéntico 404 para "no existe" y "no activo" (mismo criterio que /rates).
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // `hotels.onlineBookingStatus` (plataforma) + `booking_config.enabled` (hotel), mismo 404.
   const hotel = await deps.hotels.findOne({ slug })
-  if (!hotel || hotel.onlineBookingStatus !== 'active') {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
-  const bookingConfig = deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
-  if (bookingConfig && bookingConfig.enabled === false) {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
+  const bookingConfig = hotel && deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
+  if (!isEngineOpen(hotel, bookingConfig)) return engineClosed()
 
   const sourceCurrency = String(hotel.currency || 'USD').toUpperCase()
   const targetCurrency = validated.value.currency || sourceCurrency

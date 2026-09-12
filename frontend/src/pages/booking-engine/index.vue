@@ -271,18 +271,33 @@
                     class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan"
                   />
                 </div>
-                <!-- #248 (REQ-RWP-05) — TTL de pago de reservas web: pasado este plazo sin pago
-                     el cron del backend cancela la reserva y libera la habitación. 0 = nunca vence. -->
+                <!-- #248 / #266 — TTL de pago de reservas web (en minutos): pasado este plazo sin pago
+                     el cron del backend cancela la reserva y libera la habitación. Rango 15–1440. -->
                 <div>
-                  <label for="booking-engine-horas-para-pagar" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Horas para pagar una reserva web</label>
-                  <input id="booking-engine-horas-para-pagar" name="pendingPaymentTtlHours"
-                    v-model.number="form.pendingPaymentTtlHours"
+                  <label for="booking-engine-minutos-para-pagar" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Minutos para completar el pago</label>
+                  <input id="booking-engine-minutos-para-pagar" name="pendingTtlMinutes"
+                    v-model.number="form.pendingTtlMinutes"
                     type="number"
-                    min="0"
+                    min="15"
+                    max="1440"
                     step="1"
                     class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan"
                   />
-                  <p class="mt-1 text-[10px] text-text-muted">Pasadas estas horas sin pago, la reserva se cancela sola y la habitación vuelve a estar disponible. 0 = nunca vence.</p>
+                  <p class="mt-1 text-[10px] text-text-muted">Pasado este plazo la reserva web sin pago se cancela sola y la habitación vuelve a estar disponible. Entre 15 y 1440.</p>
+                </div>
+                <!-- #271 MR-06 — plazo de revisión con confirmación manual: pasado sin aprobar ni
+                     rechazar, el cron del backend le recuerda al hotel. Rango 1–168 horas. -->
+                <div>
+                  <label for="booking-engine-plazo-revision-horas" class="text-[10px] font-bold text-text-muted uppercase mb-2 block">Plazo para revisar reservas (horas)</label>
+                  <input id="booking-engine-plazo-revision-horas" name="approvalDeadlineHours"
+                    v-model.number="form.approvalDeadlineHours"
+                    type="number"
+                    min="1"
+                    max="168"
+                    step="1"
+                    class="w-full h-10 px-4 rounded-xl border border-border text-sm focus:outline-none focus:border-cyan"
+                  />
+                  <p class="mt-1 text-[10px] text-text-muted">Con confirmación manual, el hotel recibe un recordatorio cuando una reserva pagada supera este plazo sin aprobar ni rechazar. Entre 1 y 168.</p>
                 </div>
               </div>
               <!-- F3 (#627): editor estructurado de políticas de cancelación (base + overrides).
@@ -558,6 +573,30 @@ const showPolicyText = ref(false)
 // pre-seeder), el snippet muestra un placeholder y el CTA "Ver demo" se deshabilita.
 const hotelSlug = ref<string>('')
 
+/** #266: rango que acepta el backend para `pendingTtlMinutes` (booking_config). */
+const PENDING_TTL_MINUTES_MIN = 15
+const PENDING_TTL_MINUTES_MAX = 1440
+const PENDING_TTL_MINUTES_DEFAULT = 60
+
+/** Entero dentro de [15, 1440]; un valor vacío/NaN cae al default. */
+function clampPendingTtlMinutes(value: unknown): number {
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n)) return PENDING_TTL_MINUTES_DEFAULT
+  return Math.min(PENDING_TTL_MINUTES_MAX, Math.max(PENDING_TTL_MINUTES_MIN, n))
+}
+
+/** #271 MR-06: rango que acepta el backend para `approvalDeadlineHours` (booking_config). */
+const APPROVAL_DEADLINE_HOURS_MIN = 1
+const APPROVAL_DEADLINE_HOURS_MAX = 168
+const APPROVAL_DEADLINE_HOURS_DEFAULT = 24
+
+/** Entero dentro de [1, 168]; un valor vacío/NaN cae al default. */
+function clampApprovalDeadlineHours(value: unknown): number {
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n)) return APPROVAL_DEADLINE_HOURS_DEFAULT
+  return Math.min(APPROVAL_DEADLINE_HOURS_MAX, Math.max(APPROVAL_DEADLINE_HOURS_MIN, n))
+}
+
 function defaultConfig(): BookingConfig {
   return {
     id: '',
@@ -569,7 +608,8 @@ function defaultConfig(): BookingConfig {
     language: 'es',
     minNights: 1,
     maxNights: 30,
-    pendingPaymentTtlHours: 24,
+    pendingTtlMinutes: PENDING_TTL_MINUTES_DEFAULT,
+    approvalDeadlineHours: APPROVAL_DEADLINE_HOURS_DEFAULT,
     cancellationPolicy: '',
     showComparison: false,
     googleAdsEnabled: false,
@@ -684,9 +724,11 @@ async function saveConfig() {
     toast.error(childPolicyRateError.value)
     return
   }
-  // #248: el backend exige entero ≥ 0 (400 si no). Normalizar antes de mandar para que un
-  // input vacío / decimal / negativo no rompa el guardado.
-  form.pendingPaymentTtlHours = Math.max(0, Math.floor(Number(form.pendingPaymentTtlHours) || 0))
+  // #266: el backend exige entero entre 15 y 1440 minutos (400 si no). Normalizar antes de
+  // mandar para que un input vacío / decimal / fuera de rango no rompa el guardado.
+  form.pendingTtlMinutes = clampPendingTtlMinutes(form.pendingTtlMinutes)
+  // #271 MR-06: mismo criterio para el plazo de revisión (entero entre 1 y 168 horas).
+  form.approvalDeadlineHours = clampApprovalDeadlineHours(form.approvalDeadlineHours)
   saving.value = true
   try {
     const [updated] = await Promise.all([

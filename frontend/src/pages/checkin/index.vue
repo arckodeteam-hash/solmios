@@ -492,6 +492,12 @@
                 </div>
               </div>
               <div v-if="(checkoutFolio.balance || 0) <= 0" class="text-[10px] text-teal font-bold mt-2">✓ Cuenta saldada</div>
+              <!-- #269 red de seguridad: extras pagados online que aún no llegaron al folio como cargos
+                   (estadías con check-in anterior al deploy y night audit todavía sin correr). -->
+              <div v-if="paidExtrasMissing > 0" data-testid="checkout-extras-warning" class="mt-3 flex items-start gap-2 rounded-xl bg-gold/10 border border-gold/30 px-3 py-2">
+                <svg class="w-4 h-4 text-gold shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>
+                <span class="text-[11px] font-bold text-gold">Extras pagados online sin cargo en el folio: ${{ paidExtrasMissing.toFixed(2) }}</span>
+              </div>
             </div>
 
             <!-- #4 Alta de consumo sobre el folio, sin salir del check-in -->
@@ -582,7 +588,7 @@ import { useToast } from '@/composables/useToast'
 import { useOnline } from '@/composables/useOnline'
 const { isOnline } = useOnline()
 import { ApiError } from '@/services/http'
-import type { CheckinRoom, CheckinGuest } from '@/types'
+import type { CheckinRoom, CheckinGuest, ReservationPriceBreakdown } from '@/types'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -597,6 +603,8 @@ const checkinGuest = ref<CheckinGuest | null>(null)
 const checkoutGuest = ref<CheckinGuest | null>(null)
 const checkoutFolio = ref<Folio | null>(null)
 const folioLoading = ref(false)
+// #269 — `priceBreakdown` de la reserva en check-out (el planning no lo trae: se pide el detalle).
+const checkoutBreakdown = ref<ReservationPriceBreakdown | null>(null)
 const settleMethod = ref<string | null>(null)
 const selectedRoom = ref<CheckinRoom | null>(null)
 // #5 guarda de deuda: confirmación explícita para cerrar el check-out con saldo pendiente sin pago.
@@ -857,6 +865,33 @@ function mapGuest(r: Record<string, unknown>): CheckinGuest {
   }
 }
 
+/** #269 — `priceBreakdown` puede llegar como objeto, string JSON o null según el driver. */
+function parsePriceBreakdown(raw: unknown): ReservationPriceBreakdown | null {
+  if (!raw) return null
+  if (typeof raw === 'string') {
+    try { const parsed = JSON.parse(raw); return parsed && typeof parsed === 'object' ? parsed : null } catch { return null }
+  }
+  return typeof raw === 'object' ? (raw as ReservationPriceBreakdown) : null
+}
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v) || 0)
+
+/**
+ * #269 — Red de seguridad: extras pagados online (upsells, amenidades, régimen) que el folio todavía
+ * no tiene como cargos `category:'extra'`. Pasa en estadías que hicieron check-in ANTES del deploy y
+ * cuyo night audit aún no corrió. Compara importes base (sin impuesto), a 2 decimales.
+ */
+const paidExtrasMissing = computed(() => {
+  const pb = checkoutBreakdown.value
+  if (!pb || !checkoutFolio.value) return 0
+  const paid = num(pb.upsellsTotal) + num(pb.childAmenitiesTotal) + num(pb.roomAmenitiesTotal) + num(pb.mealPlanTotal)
+  if (paid <= 0) return 0
+  const posted = (checkoutFolio.value.charges || [])
+    .filter(c => c.kind === 'charge' && c.category === 'extra')
+    .reduce((acc, c) => acc + num(c.amount), 0)
+  const diff = Math.round((paid - posted) * 100) / 100
+  return diff > 0 ? diff : 0
+})
+
 const checkoutSettleLabel = computed(() => {
   if (!checkoutFolio.value || !checkoutFolio.value.balance || checkoutFolio.value.balance <= 0) return 'Confirmar Check-out'
   if (!settleMethod.value) return 'Seleccionar pago + Check-out'
@@ -1004,6 +1039,7 @@ function resetChargeForm() {
 async function openCheckoutModal(guest: CheckinGuest) {
   checkoutGuest.value = guest
   checkoutFolio.value = null
+  checkoutBreakdown.value = null
   settleMethod.value = null
   debtAck.value = false
   resetChargeForm()
@@ -1012,7 +1048,12 @@ async function openCheckoutModal(guest: CheckinGuest) {
   if (guest.id) {
     folioLoading.value = true
     try {
-      const folios = await FoliosService.list(hotelId.value, 'open')
+      // #269 — el detalle trae `priceBreakdown` (el planning no); si falla, sólo se pierde el aviso.
+      const [folios, detail] = await Promise.all([
+        FoliosService.list(hotelId.value, 'open'),
+        ReservationService.getById(guest.id).catch(() => null),
+      ])
+      checkoutBreakdown.value = parsePriceBreakdown(detail?.priceBreakdown)
       const match = folios.find(f => f.reservationId === guest.id)
       if (match) {
         const detail = await FoliosService.get(match.id)
@@ -1034,6 +1075,7 @@ function closeCheckoutModal() {
   showCheckoutModal.value = false
   checkoutGuest.value = null
   checkoutFolio.value = null
+  checkoutBreakdown.value = null
   settleMethod.value = null
   debtAck.value = false
   resetChargeForm()

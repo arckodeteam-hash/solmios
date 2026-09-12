@@ -1,3 +1,5 @@
+import type { UpsellBreakdownLine } from './booking'
+
 // === HOTEL ===
 export interface Hotel {
   id: string
@@ -131,6 +133,8 @@ export interface Reservation {
   channelReservationId?: string
   notes?: string
   ownerNotes?: string
+  /** #269 — desglose guardado por el motor público (ver `ReservationPriceBreakdown`). */
+  priceBreakdown?: ReservationPriceBreakdown | string | null
   totalAmount: number
   depositAmount: number
   depositPercentage?: number
@@ -161,8 +165,26 @@ export interface Reservation {
   emergencyContact?: EmergencyContact
   creditCard?: CreditCardInfo
   /** Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status`: 'pending' = el hotel
-   *  apagó "confirmación instantánea" y todavía no revisó esta reserva pagada. */
-  approvalStatus?: 'pending' | 'approved' | null
+   *  apagó "confirmación instantánea" y todavía no revisó esta reserva pagada.
+   *  'rejected' (#271 MR-06): el hotel la rechazó y reembolsó; queda además `status: 'cancelled'`. */
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
+  /** #274 — cuna y amenidades infantiles pedidas al reservar online (ver `ChildAmenitySnapshot`).
+   *  El listado y el dashboard los usan para el badge de cuna con tooltip. */
+  needsCrib?: boolean
+  cribCount?: number
+  childAmenities?: ChildAmenitySnapshot[] | null
+}
+
+/** #274 — Una línea del snapshot `Reservations.childAmenities` que congela el motor público al
+ *  reservar (`bookingengine/usecases/public-booking.ts`, REQ-01 #233): nombre y precio del
+ *  catálogo `child_amenities` en ese momento. Según el driver puede llegar como string JSON:
+ *  `mapReservation()` lo normaliza a array. */
+export interface ChildAmenitySnapshot {
+  id?: string
+  name: string
+  price?: number
+  quantity: number
+  total?: number
 }
 
 // Registro CRUDO de `/api/reservas` (el JSON tal cual lo devuelve el módulo `reservas`), ANTES
@@ -208,14 +230,20 @@ export interface ReservationApiRecord {
   refundAmount?: number
   cancellationReason?: string
   cancelledAt?: string
+  /** ISO. #271 MR-06 — el KPI "Por aprobar" muestra cuánto lleva esperando la pendiente más vieja. */
+  createdAt?: string
   /** Tarea 3.4 (corrección 2026-08-25) — ver `Reservation.approvalStatus`. */
-  approvalStatus?: 'pending' | 'approved' | null
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
   regime?: string
   /** MR-03 (#268) — snapshot del régimen reservado desde la web. */
   mealPlan?: string | null
   mealPlanPriceMode?: 'included' | 'per_person_per_night' | null
   mealPlanUnitPrice?: number
   mealPlanTotal?: number
+  /** #274 — ver `Reservation.needsCrib` / `ChildAmenitySnapshot`. Crudo: puede ser string JSON. */
+  needsCrib?: boolean | null
+  cribCount?: number | null
+  childAmenities?: ChildAmenitySnapshot[] | string | null
 }
 
 // === RESCHEDULE (planning: mover / extender una reserva) ===
@@ -508,9 +536,38 @@ export interface ReservationDetailMessageLog {
 export interface ReservationDetailAddon {
   id: string
   description: string
-  kind?: 'service' | 'discount'
+  /** 'service' | 'discount' (manuales del panel) o 'upsell' | 'child_amenity' | 'room_amenity'
+   *  (extras del motor de reservas, #269). String abierto: el backend puede sumar kinds. */
+  kind?: string
+  /** Importe UNITARIO: la línea vale `amount × quantity`. */
   amount?: number
   quantity?: number
+  /** #269 — 'booking_engine' = extra pagado online, YA incluido en `totalAmount` (no suma al
+   *  pendiente y no se edita desde el CRUD manual). 'manual'/ausente = cargado por recepción. */
+  source?: string | null
+  unitPrice?: number | null
+  /** % de impuesto aplicado al reservar (sólo filas del motor). */
+  taxRate?: number | null
+}
+
+/** #269 — Desglose de precio que guarda el motor de reservas público al crear la reserva
+ *  (`bookingengine/usecases/public-booking.ts` `TotalBreakdown`). `subtotal` INCLUYE los extras
+ *  (alojamiento + upsells + amenidades); `taxes` se calcula sobre `subtotal − promoDiscount`.
+ *  Según el driver puede llegar como string JSON: parsear con try/catch antes de usar. */
+export interface ReservationPriceBreakdown {
+  subtotal?: number
+  promoDiscount?: number
+  upsellsTotal?: number
+  childAmenitiesTotal?: number
+  roomAmenitiesTotal?: number
+  /** Régimen (#268) — puede no existir todavía. */
+  mealPlanTotal?: number
+  taxes?: number
+  taxBreakdown?: { name: string; rate: number; amount: number }[]
+  /** MR-10 (#275) — extras cotizados línea por línea con su multiplicador por `kind`.
+   *  Sólo en reservas creadas después de la feature. */
+  upsells?: UpsellBreakdownLine[]
+  total?: number
 }
 
 /** Una factura de la reserva tal como la muestra el detalle (REQ-FDR-01, #252). Vienen de la más
@@ -649,6 +706,8 @@ export interface ReservationDetail {
   otaNotes?: string | null
   ownerNotes?: string | null
   promoCode?: string | null
+  /** #269 — desglose guardado por el motor público. null/ausente en reservas cargadas a mano. */
+  priceBreakdown?: ReservationPriceBreakdown | string | null
   autoSendEnabled?: boolean
   communicateClient?: string
   emergencyContact?: { name: string; phone: string; relation: string; email?: string }
@@ -673,9 +732,14 @@ export interface ReservationDetail {
    *  a mano en el panel (que no tienen este composer). */
   needsCrib?: boolean
   cribCount?: number
+  /** #274 — snapshot de amenidades infantiles elegidas al reservar (ver `ChildAmenitySnapshot`). */
+  childAmenities?: ChildAmenitySnapshot[] | null
   /** Presente si esta reserva es una habitación de una reserva de varias (mismo `groupId` en sus
    *  hermanas). El modal lo usa para pedir las demás y mostrar la composición de cada una. */
   groupId?: string | null
+  /** #271 MR-06 — mismo eje que `Reservation.approvalStatus`: el detalle lo trae del registro
+   *  (`...safeReservation` en `reservas/usecases/detail.ts`). 'pending' habilita Aprobar/Rechazar. */
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
   createdAt?: string
   checkedInAt?: string | null
   checkedOutAt?: string | null
@@ -793,6 +857,11 @@ export interface CheckinListItem {
    *  total cobrable (alta/baja de extras y `otherCharges`) — ver
    *  `shared/usecases/sync-reservation-pending.ts`. */
   pendingAmount?: number
+  /** #274 — llegan por el mismo spread `...r`: cuna y amenidades infantiles pedidas al reservar
+   *  online. El dashboard muestra el badge de cuna con tooltip (`childSetupSummary`). */
+  needsCrib?: boolean
+  cribCount?: number
+  childAmenities?: ChildAmenitySnapshot[] | string | null
 }
 
 export interface CheckinListData {
