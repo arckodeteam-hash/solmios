@@ -40,7 +40,7 @@ import { settleFolioForCheckout as settleFolioForCheckoutUsecase, type SettleInp
 import { ceilingGuardOf, type PaymentRequestsCeilingPort } from './usecases/ceiling-guard'
 import { openFolioBalance, type OpenFolioBalance as OpenFolioBalanceResult } from '../../shared/usecases/open-folio-balance'
 import type { ReservasOrchestrationDeps } from './usecases/orchestration-deps'
-import type { RoomAssignmentDeps } from './usecases/assign-room'
+import type { RoomAssignmentDeps } from './usecases/assign-room'; import { autoAssignSuggestedRoom } from './usecases/auto-assign-room'
 import { retryRefund as retryRefundUsecase, refundStatePatch, type RetryRefundResult } from './usecases/retry-refund'
 
 export class ReservasService {
@@ -120,6 +120,7 @@ export class ReservasService {
   // ── CHECK-OUT ──────────────────────────────────────────────────────────
   async checkout(id: string, user: any): Promise<any> { return checkoutValidation(this.repo, id, user, this.auth) }
   /** #258 (REQ-HAC-03) — deps de usecases/assign-room.ts (assignRoom/unassignRoom/listAssignableRooms; ownership post-findById en el usecase). Lo consume el controller. */ roomAssignmentDeps(): RoomAssignmentDeps { return { repo: this.repo, roomRepo: this.roomRepo, blockRepo: this.blockRepo, queries: this.queries, sockets: this.sockets, auditPort: this.auditPort, logger: this.logger, cache: this.cache, auth: this.auth } }
+  /** #262 (REQ-HAC-07) — el cron de pre-llegada asigna la sugerida con usuario `system` (roomAssignedBy + audit); ver usecases/auto-assign-room.ts. */ autoAssignRoom(id: string, hotelId: string) { return autoAssignSuggestedRoom(this.roomAssignmentDeps(), id, hotelId) }
 
   async executeCheckout(r: any, user: any, deps: { orm: any; invalidateHousekeepingCache?: () => Promise<void>; pushAvailabilityToChannex?: any; dispatchLifecycleEmail?: any; logger?: any }): Promise<any> { return executeCheckoutUsecase(r, user, { orm: deps.orm, queries: this.queries, sockets: this.sockets, logger: deps.logger || this.logger }) } // R-1 (2026-08-19): flujo con guard de carrera extraído a usecases/checkout.ts (mismo lugar que executeCheckin; el service delega y queda bajo las 200 líneas).
 
