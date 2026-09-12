@@ -125,4 +125,60 @@ describe('payments — refund (devolución)', () => {
       .rejects.toThrow(/sin un cargo de Stripe asociado|fix-refund-pos-card/)
     expect(stripeCalled).toBe(false)
   })
+
+  // ── #271 MR-06: el cobro del motor web (`method:'link'`, referencia = Checkout Session) ──
+  it('un cobro LINK con stripeSessionId se reembolsa por Stripe con la sesión como referencia y crea la fila refund completa', async () => {
+    // post-booking-payment.ts asienta el cobro web con method 'link' y SOLO `stripeSessionId` (cs_...).
+    // Antes el guard `method !== 'card'` lo rechazaba y el rechazo de una reserva pendiente de
+    // aprobación no tenía por dónde devolver la plata.
+    let captured: CreatePaymentDTO | null = null
+    let stripeArgs: any = null
+    const statuses: string[] = []
+    const deps = {
+      crud: {
+        getById: async () => ({
+          id: 'p1', hotelId: 'h1', status: 'completed', method: 'link',
+          amount: 100, currency: 'USD', folioId: null, invoiceId: null, reservationId: 'r1', guestId: 'g1',
+          stripePaymentId: '', stripeSessionId: 'cs_test_123',
+        }),
+        updateStatus: async (_id: string, status: string) => { statuses.push(status); return {} as PaymentDTO },
+      } as any,
+      stripe: {
+        isConfigured: async () => true,
+        refund: async (args: any) => { stripeArgs = args; return { id: 're_1' } as any },
+      } as any,
+      createPayment: async (dto: CreatePaymentDTO) => { captured = dto; return { id: 'p2', ...dto } as PaymentDTO },
+    }
+
+    await refundPayment(deps as any, 'p1', 100, { id: 'u1', role: 'hotel_admin' })
+
+    expect(stripeArgs.paymentId).toBe('cs_test_123')
+    expect((captured as any).type).toBe('refund')
+    expect((captured as any).method).toBe('link')
+    expect((captured as any).amount).toBe(100)
+    expect((captured as any).reservationId).toBe('r1')
+    expect(statuses).toEqual(['refunded'])
+  })
+
+  it('un cobro CASH sigue rechazado (no pasa por Stripe)', async () => {
+    let stripeCalled = false
+    const deps = {
+      crud: {
+        getById: async () => ({
+          id: 'p1', hotelId: 'h1', status: 'completed', method: 'cash',
+          amount: 100, currency: 'USD', stripePaymentId: '', stripeSessionId: '',
+        }),
+        updateStatus: async () => ({}) as PaymentDTO,
+      } as any,
+      stripe: {
+        isConfigured: async () => true,
+        refund: async () => { stripeCalled = true; return { id: 're_1' } as any },
+      } as any,
+      createPayment: async () => { throw new Error('NO debió crear payment') },
+    }
+
+    await expect(refundPayment(deps as any, 'p1', undefined, { id: 'u1', role: 'hotel_admin' }))
+      .rejects.toThrow(/Only card or checkout-link/)
+    expect(stripeCalled).toBe(false)
+  })
 })

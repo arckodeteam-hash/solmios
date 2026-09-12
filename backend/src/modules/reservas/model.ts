@@ -153,7 +153,12 @@ export const ReservasModel: ModelDefinition = {
     // revisión humana antes de darla por buena, no un segundo estado de disponibilidad. Solo
     // lo setean los usecases públicos de bookingengine; una reserva cargada a mano desde el
     // panel no pasa por acá. Anti-patrón ORM: declarado acá o se descarta al persistir.
+    // #271 MR-06: 'rejected' = el hotel la rechazó (`POST /api/reservas/:id/reject`); en ese
+    // caso `status` también pasa a 'cancelled' y el cobro web se devolvió por Stripe.
     approvalStatus: { type: 'string' },
+    // #271 MR-06 — ISO del último recordatorio "reserva pendiente de aprobación" enviado al
+    // hotel; el cron lo usa para no repetir el aviso (dedup). NULL = nunca se recordó.
+    approvalReminderAt: { type: 'string' },
   },
   timestamps: true,
 }
