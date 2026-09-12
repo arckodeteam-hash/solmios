@@ -409,7 +409,7 @@ export class BookingengineController {
     // usecase funciona como F0 0.16 (persiste promoCode/upsells sin validarlos). El wiring
     // completo (index.ts) SIEMPRE cablea estos tres repos.
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo, hotels: this.hotelsRepo }
       : undefined
     const result = await createPublicBookingDirect(
       this.orm, body,
@@ -457,7 +457,7 @@ export class BookingengineController {
     const cancelUrl = body.cancelUrl || (baseUrl ? `${baseUrl}/booking/cancel` : '')
     const stripeUrls = successUrl && cancelUrl ? { successUrl, cancelUrl } : undefined
     const extraDeps = (this.configRepo && this.promoCodesRepo && this.upsellRepo)
-      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo }
+      ? { config: this.configRepo, promoCodes: this.promoCodesRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo, childAmenities: this.childAmenityRepo, hotels: this.hotelsRepo }
       : undefined
     const result = await createPublicBookingGroup(
       this.orm, body,
@@ -577,7 +577,7 @@ export class BookingengineController {
     }
     const kind = (req.query?.kind as string | undefined) || undefined
     return getPublicUpsells(
-      { hotels: this.hotelsRepo, upsells: this.upsellRepo },
+      { hotels: this.hotelsRepo, upsells: this.upsellRepo, bookingConfig: this.bookingConfigRepo },
       String(req.params?.slug || ''),
       kind,
     )
@@ -590,7 +590,7 @@ export class BookingengineController {
       return { status: 500, body: { error: 'meal-plans deps no cableados' } }
     }
     return getPublicMealPlans(
-      { hotels: this.hotelsRepo, mealPlans: this.mealPlanRepo },
+      { hotels: this.hotelsRepo, mealPlans: this.mealPlanRepo, bookingConfig: this.bookingConfigRepo },
       String(req.params?.slug || ''),
     )
   }
@@ -602,7 +602,7 @@ export class BookingengineController {
       return { status: 500, body: { error: 'child-amenities deps no cableados' } }
     }
     return getPublicChildAmenities(
-      { hotels: this.hotelsRepo, childAmenities: this.childAmenityRepo },
+      { hotels: this.hotelsRepo, childAmenities: this.childAmenityRepo, bookingConfig: this.bookingConfigRepo },
       String(req.params?.slug || ''),
     )
   }
@@ -614,7 +614,7 @@ export class BookingengineController {
       return { status: 500, body: { error: 'room-amenities deps no cableados' } }
     }
     return getPublicRoomAmenities(
-      { hotels: this.hotelsRepo, orm: this.orm },
+      { hotels: this.hotelsRepo, orm: this.orm, bookingConfig: this.bookingConfigRepo },
       String(req.params?.slug || ''),
     )
   }

@@ -14,6 +14,7 @@ import type { RepositoryAdapter } from 'arckode-framework'
 import type { PublicHotelInfoDTO } from '../types'
 import { resolveChildPolicy } from '../../../shared/usecases/child-composition'
 import { toE164 } from '../../../shared/utils/phone-e164'
+import { ENGINE_CLOSED_BODY, isEngineOpen } from '../../../shared/usecases/booking-engine-gate'
 
 export interface PublicHotelInfoDeps {
   hotels: RepositoryAdapter<any>
@@ -33,8 +34,8 @@ export interface PublicHotelInfoDeps {
   hotelAmenities?: RepositoryAdapter<any>
 }
 
-// Anti-enumeración: MISMO mensaje para "no existe" y "no activo" (no filtrar hoteles inactivos).
-const NOT_FOUND_MSG = 'Hotel not found'
+// Anti-enumeración: MISMO mensaje para "no existe", "pausado" y "apagado" (= `ENGINE_CLOSED_BODY.error`).
+const NOT_FOUND_MSG = ENGINE_CLOSED_BODY.error
 
 export async function getPublicHotelInfo(
   deps: PublicHotelInfoDeps,
@@ -44,9 +45,14 @@ export async function getPublicHotelInfo(
   if (!slug) throw new NotFoundError(NOT_FOUND_MSG)
 
   const hotel = await deps.hotels.findOne({ slug })
-  if (!hotel) throw new NotFoundError(NOT_FOUND_MSG)
-  // onlineBookingStatus !== 'active' MISMO 404 — un hotel pausado no se enumera desde la ruta pública.
-  if (hotel.onlineBookingStatus !== 'active') throw new NotFoundError(NOT_FOUND_MSG)
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // `hotels.onlineBookingStatus` (plataforma) + `booking_config.enabled` (hotel). MISMO 404 para
+  // "no existe", "pausado" y "apagado" — un hotel cerrado no se enumera desde la ruta pública.
+  // (`resolveStayLimits` vuelve a leer la fila más abajo con su propio try/catch; el fetch extra
+  // es aceptable frente a refactorizar ese helper.) Misma tolerancia que ese helper: si la
+  // lectura de `booking_config` falla, la info se sirve igual (= sin fila → abierto).
+  const bookingConfig = hotel && deps.bookingConfig ? await readBookingConfigOrNull(deps.bookingConfig, hotel.id) : null
+  if (!isEngineOpen(hotel, bookingConfig)) throw new NotFoundError(NOT_FOUND_MSG)
 
   const { title, description } = resolveI18n(hotel, lang)
   const googleMapsApiKey = await resolveGoogleMapsKey(deps.config, hotel.id)
@@ -110,6 +116,15 @@ export async function getPublicHotelInfo(
  * Devuelve `null` cuando no hay límite declarado (o no hay fila de config): no inventamos un
  * mínimo de 1, porque "sin límite" y "mínimo 1" se leen distinto del lado del cliente.
  */
+/** Lectura tolerante de `booking_config` para el gate (ver nota en `getPublicHotelInfo`). */
+async function readBookingConfigOrNull(bookingConfig: RepositoryAdapter<any>, hotelId: string): Promise<any> {
+  try {
+    return await bookingConfig.findOne({ hotelId })
+  } catch {
+    return null
+  }
+}
+
 async function resolveStayLimits(
   bookingConfig: RepositoryAdapter<any> | undefined,
   hotelId: string,

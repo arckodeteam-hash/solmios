@@ -249,6 +249,24 @@ Corolario al agregar una columna así: `ormMigrate` hace `ADD COLUMN` y **no rel
 viejas** (quedan en `NULL` → invisibles). Toda columna discriminadora nueva necesita su backfill
 (`scripts/backfill-announcement-audience.ts`).
 
+### Motor de reservas público — un solo interruptor (#276 MR-11)
+El motor público (`/api/public/hotels/:slug/...` y `POST /api/public/booking[/group]`) tiene DOS flags
+que lo abren o cierran, con dueños distintos:
+
+- **`hotels.onlineBookingStatus`** — flag de **PLATAFORMA**. Lo pone el super-admin al dar de alta,
+  pausar o dar de baja el hotel (`'active' | 'paused' | …`). Sólo `'active'` abre.
+- **`booking_config.enabled`** — flag del **HOTEL**. Es el toggle "Activo/Inactivo" que el propio
+  hotel maneja en `/panel/booking-engine`. Default `true`: sin fila en `booking_config` el motor
+  está abierto; sólo `enabled === false` lo cierra.
+
+**`isEngineOpen(hotel, bookingConfig)` en `shared/usecases/booking-engine-gate.ts` es la ÚNICA fuente
+de verdad**: `hotel?.onlineBookingStatus === 'active' && bookingConfig?.enabled !== false`. TODOS los
+endpoints públicos del motor (GET por slug y los dos POST, que cargan el hotel por `hotelId` vía
+`extraDeps.hotels`) pasan por él y responden el **MISMO 404 `{ error: 'Hotel not found' }`**
+(`engineClosed()` / `ENGINE_CLOSED_BODY`), sea que el hotel no exista, esté pausado por la plataforma o
+apagado por el hotel — anti-enumeración: desde afuera no se distingue el motivo. No agregar un
+endpoint público del motor con su propio `if (hotel.onlineBookingStatus ...)` ni con otro body de 404.
+
 ### Modelos duales — último `orm.define` gana (RESUELTO)
 `composition-root.ts` registra `shared` PRIMERO, módulos DESPUÉS. Si un módulo redefine un modelo compartido, el último gana (`models.set`) y **descarta campos del anterior**. **RESUELTO 2026-07-05**: `LockDevices`/`LockCodes` estaban en shared + ttlock; ttlock ganaba y descartaba `lock_codes.hotelId` (multi-tenancy). Consolidado en `modules/ttlock/model.ts` — **regla: si un módulo es dueño de un modelo, NO definirlo en shared**.
 

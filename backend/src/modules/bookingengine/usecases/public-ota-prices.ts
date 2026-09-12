@@ -36,6 +36,7 @@ import {
   type StayApiPricesFetcher,
 } from '../../../connectors/stayapi-ota-prices'
 import type { StayApiOta } from '../../external-reviews/types'
+import { isEngineOpen, engineClosed } from '../../../shared/usecases/booking-engine-gate'
 
 const MS_PER_SECOND = 1000
 const MS_PER_MINUTE = 60 * MS_PER_SECOND
@@ -167,20 +168,18 @@ export async function getPublicOtaPrices(
     return { status: 400, body: { error: 'checkOut debe ser posterior a checkIn' } }
   }
 
-  // Anti-enumeración: idéntico 404 para "no existe" y "no activo".
+  // #276 (MR-11) — un solo interruptor del motor público (`shared/usecases/booking-engine-gate.ts`):
+  // `hotels.onlineBookingStatus` (plataforma) + `booking_config.enabled` (hotel), mismo 404.
+  // `bookingConfig` se lee UNA vez: el gate y `showComparison` comparten el fetch.
   const hotel = await deps.hotels.findOne({ slug })
-  if (!hotel || hotel.onlineBookingStatus !== 'active') {
-    return { status: 404, body: { error: 'Hotel not found' } }
-  }
+  const bookingConfig = hotel && deps.bookingConfig ? await deps.bookingConfig.findOne({ hotelId: hotel.id }) : null
+  if (!isEngineOpen(hotel, bookingConfig)) return engineClosed()
   const hotelCurrency = String(hotel.currency || 'USD').toUpperCase()
 
   // FIX — respeta el toggle del admin. Corta ANTES de llamar a StayAPI (ahorra la request
   // externa si el hotel decidió no comparar).
-  if (deps.bookingConfig) {
-    const bookingConfig = await deps.bookingConfig.findOne({ hotelId: hotel.id })
-    if (bookingConfig && bookingConfig.showComparison === false) {
-      return { status: 200, body: { showComparison: false, savings: null, currency: hotelCurrency } }
-    }
+  if (bookingConfig && bookingConfig.showComparison === false) {
+    return { status: 200, body: { showComparison: false, savings: null, currency: hotelCurrency } }
   }
 
   const nights = Math.max(1, Math.round(
