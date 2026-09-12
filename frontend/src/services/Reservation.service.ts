@@ -78,12 +78,24 @@ export function mapReservation(r: RawReservation): Reservation {
     // realmente aplicó (el del preview es una cotización anterior).
     cancellationFee: r.cancellationFee,
     refundAmount: r.refundAmount,
+    // #272 (MR-07) — estado real del reembolso en la pasarela (ausente en respuestas viejas).
+    refundStatus: r.refundStatus ?? undefined,
+    refundedAt: r.refundedAt ?? undefined,
+    refundPaymentId: r.refundPaymentId ?? undefined,
     // Tarea 3.4 (corrección 2026-08-25) — bug real de QA: este allow-list no lo declaraba y
     // `pages/reservations/index.vue:load()` lee `r.approvalStatus` del objeto YA mapeado acá,
     // así que la KPI "Por aprobar", el badge de la fila y el botón "Aprobar" quedaban muertos
     // (siempre `null`) aunque el backend devolviera el campo correcto.
     approvalStatus: r.approvalStatus ?? null,
   } as Reservation
+}
+
+/** #272 — resultado de `POST /api/reservas/:id/retry-refund` (espejo de `reservas/usecases/retry-refund.ts`). */
+export interface RetryRefundResult {
+  reservationId: string
+  refundStatus: string
+  refundPaymentId?: string
+  refundedAt?: string
 }
 
 interface ReservationsResponse {
@@ -242,6 +254,15 @@ export const ReservationService = {
   async cancel(id: string, body: CancelReservationInput = {}): Promise<Reservation> {
     const data = await http.post<RawReservation>(`/reservas/${id}/cancel`, body)
     return mapReservation(data)
+  },
+
+  /**
+   * #272 (MR-07) — reintenta el reembolso en Stripe de una reserva cancelada desde la web cuyo
+   * refund quedó `failed` (o `pending` colgado). Idempotente: si ya está `done` el backend
+   * devuelve el estado sin volver a cobrar. Permiso `reservations:edit`.
+   */
+  async retryRefund(id: string): Promise<RetryRefundResult> {
+    return http.post<RetryRefundResult>(`/reservas/${id}/retry-refund`, {})
   },
 
   /**

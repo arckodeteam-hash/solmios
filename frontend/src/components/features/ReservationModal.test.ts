@@ -23,6 +23,8 @@ vi.mock('@/services/Reservation.service', () => ({
     list: vi.fn(),
     // REQ-FDR-02 (#254) — POST /reservas/:id/invoice desde el botón Facturar.
     issueInvoice: vi.fn(),
+    // #272 (MR-07) — POST /reservas/:id/retry-refund cuando el reembolso web quedó `failed`.
+    retryRefund: vi.fn(),
   },
 }))
 // REQ-FDR-03 (#254) — Imprimir / PDF / Email de la tarjeta "Facturas" (vía useInvoiceActions).
@@ -537,6 +539,92 @@ describe('ReservationModal', () => {
   })
 
   // ── 2. Permisos ────────────────────────────────────────────────────────────────────────────
+  // ── #272 (MR-07) — reembolso web: estado real y reintento ────────────────────────────────
+  // Al cancelar desde la web el backend reembolsa en Stripe y persiste `refundStatus`. Si la
+  // pasarela falló, el hotel lo reintenta desde el modal; con 'done' no hay nada que reintentar.
+  describe('reembolso web (#272)', () => {
+    const retryButton = () => document.body.querySelector<HTMLButtonElement>('[data-testid="retry-refund"]')
+    const cancelledFixture = (over: Partial<ReservationDetail> = {}) => detailFixture({
+      status: 'cancelled', cancelledAt: '2026-09-12T09:00:00Z', cancellationReason: 'guest_request',
+      refundAmount: 100, cancellationFee: 400, ...over,
+    })
+
+    it('reembolso fallido: muestra el badge y ofrece "Reintentar reembolso"', async () => {
+      await open(cancelledFixture({ refundStatus: 'failed' }))
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolso fallido')
+      expect(document.body.querySelector('[data-testid="refund-row"]')?.textContent).toContain('100')
+      expect(retryButton()).not.toBeNull()
+      expect(retryButton()!.textContent?.trim()).toBe('Reintentar reembolso')
+    })
+
+    it('al clic llama a ReservationService.retryRefund(id) y recarga el detalle', async () => {
+      vi.mocked(ReservationService.retryRefund).mockResolvedValue({ reservationId: 'res-1', refundStatus: 'done', refundPaymentId: 'pay-9', refundedAt: '2026-09-12T10:00:00Z' })
+      await open(cancelledFixture({ refundStatus: 'failed' }))
+      expect(vi.mocked(ReservationService.getById)).toHaveBeenCalledTimes(1)
+
+      vi.mocked(ReservationService.getById).mockResolvedValue(cancelledFixture({ refundStatus: 'done', refundedAt: '2026-09-12T10:00:00Z' }))
+      retryButton()!.click()
+      await flushPromises()
+      await flushPromises()
+
+      expect(vi.mocked(ReservationService.retryRefund)).toHaveBeenCalledWith('res-1')
+      expect(vi.mocked(ReservationService.getById)).toHaveBeenCalledTimes(2)
+      expect(toastSuccess).toHaveBeenCalledWith('Reembolso procesado')
+      expect(wrapper!.emitted('changed')).toBeTruthy()
+      // Tras recargar, ya está 'done': badge nuevo y sin botón.
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolsado')
+      expect(retryButton()).toBeNull()
+    })
+
+    it('si el reintento vuelve a fallar en la pasarela: avisa y recarga (el botón sigue)', async () => {
+      vi.mocked(ReservationService.retryRefund).mockResolvedValue({ reservationId: 'res-1', refundStatus: 'failed' })
+      await open(cancelledFixture({ refundStatus: 'failed' }))
+      retryButton()!.click()
+      await flushPromises()
+      await flushPromises()
+      expect(toastWarning).toHaveBeenCalled()
+      expect(vi.mocked(ReservationService.getById)).toHaveBeenCalledTimes(2)
+      expect(retryButton()).not.toBeNull()
+    })
+
+    it('si el POST falla: toast de error y no se rompe el modal', async () => {
+      vi.mocked(ReservationService.retryRefund).mockRejectedValue(new ApiError(502, 'Stripe no responde'))
+      await open(cancelledFixture({ refundStatus: 'failed' }))
+      retryButton()!.click()
+      await flushPromises()
+      expect(toastError).toHaveBeenCalledWith('Stripe no responde')
+      expect(retryButton()).not.toBeNull()
+      expect(retryButton()!.disabled).toBe(false)
+    })
+
+    it('reembolso hecho ("done"): badge "Reembolsado" y SIN botón de reintento', async () => {
+      await open(cancelledFixture({ refundStatus: 'done', refundedAt: '2026-09-12T10:00:00Z' }))
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolsado')
+      expect(retryButton()).toBeNull()
+    })
+
+    it('reembolso en proceso ("pending"): badge "Reembolso en proceso" y sin botón', async () => {
+      await open(cancelledFixture({ refundStatus: 'pending' }))
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolso en proceso')
+      expect(retryButton()).toBeNull()
+    })
+
+    it('sin reembolso que procesar ("none") o reserva activa: ni badge ni botón', async () => {
+      await open(cancelledFixture({ refundStatus: 'none', refundAmount: 0 }))
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')).toBeNull()
+      expect(retryButton()).toBeNull()
+      wrapper?.unmount(); document.body.innerHTML = ''
+      await open(detailFixture({ status: 'confirmed', refundStatus: 'failed' }))
+      expect(retryButton()).toBeNull()
+    })
+
+    it('solo lectura: no ofrece el reintento aunque el reembolso haya fallado', async () => {
+      await open(cancelledFixture({ refundStatus: 'failed' }), READ_ONLY)
+      expect(document.body.querySelector('[data-testid="refund-state-badge"]')?.textContent?.trim()).toBe('Reembolso fallido')
+      expect(retryButton()).toBeNull()
+    })
+  })
+
   describe('permisos', () => {
     it('con permisos completos ofrece las acciones de escritura', async () => {
       await open()
