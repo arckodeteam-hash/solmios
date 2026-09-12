@@ -14,6 +14,10 @@ export const CreateReservasSchema: Record<string, ValidationRule> = {
   checkOut: { type: 'string' as const, required: true, pattern: /^\d{4}-\d{2}-\d{2}$/ },
   totalAmount: { type: 'number' as const, required: true, min: 0 },
   guestId: { type: 'string' as const },
+  // MR-08 (#273): alternativa a `guestId` — el usecase resuelve/crea la ficha por email (ver types.ts).
+  guestEmail: { type: 'email' as const },
+  guestName: { type: 'string' as const, max: 200 },
+  guestPhone: { type: 'string' as const, max: 40 },
   channel: { type: 'string' as const, enum: CHANNEL_ENUM },
   status: { type: 'string' as const, enum: STATUS_ENUM },
   currency: { type: 'string' as const, min: 3, max: 3 },
@@ -185,6 +189,13 @@ export const CancelReservationSchema: Record<string, ValidationRule> = {
 export const AssignRoomSchema: Record<string, ValidationRule> = {
   roomId: { type: 'string' as const, required: true },
   allowTypeChange: { type: 'boolean' as const },
+}
+
+// ── Reject (#271 MR-06): rechazo de una reserva pendiente de aprobación ──
+// El motivo es obligatorio y con largo mínimo: el huésped lo lee en el email de rechazo.
+// `min` en el validador nativo cuenta caracteres del string ya trimeado.
+export const RejectReservationSchema: Record<string, ValidationRule> = {
+  reason: { type: 'string' as const, required: true, min: 10, max: 500 },
 }
 
 // ── Reschedule (planning): mover/extender reserva ──

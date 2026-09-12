@@ -110,7 +110,14 @@
               </div>
             </td>
             <td class="px-4 py-5">
-              <span class="text-sm font-bold text-navy">{{ r.roomNumber }}</span>
+              <div class="flex items-center gap-1.5">
+                <span class="text-sm font-bold text-navy">{{ r.roomNumber }}</span>
+                <!-- #274 — cuna / amenidades infantiles pedidas al reservar; el tooltip lista qué preparar. -->
+                <span v-if="childSetupSummary(r)" :title="childSetupSummary(r)" :aria-label="childSetupSummary(r)" data-testid="crib-badge"
+                  class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-warning/10 text-warning text-[10px] font-bold">
+                  <Icon name="crib" :size="12" />{{ r.needsCrib ? 'Cuna' : 'Bebé' }}
+                </span>
+              </div>
             </td>
             <td class="px-4 py-5">
               <div class="flex items-baseline gap-1">
@@ -140,6 +147,11 @@
                 <span v-if="r.approvalStatus === 'pending'" data-testid="reservation-approval-badge"
                   class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-gold/15 text-gold">
                   <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-gold"></span>Por aprobar
+                </span>
+                <!-- #271 MR-06 — el hotel la rechazó (reembolso 100% por Stripe + email al huésped). -->
+                <span v-else-if="r.approvalStatus === 'rejected'" data-testid="reservation-rejected-badge"
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-coral/10 text-coral">
+                  <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-coral"></span>Rechazada
                 </span>
                 <!-- REQ-RWP-04 — en <768px la columna "Pago" se oculta y el badge va acá, debajo del estado. -->
                 <span data-testid="reservation-payment-badge" class="md:hidden inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold" :class="paymentStateBadge(r.paymentState).cls">{{ paymentStateBadge(r.paymentState).label }}</span>
@@ -173,6 +185,14 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/>
                   </svg>
                   {{ approving===r.id ? 'Aprobando…' : 'Aprobar' }}
+                </button>
+                <!-- #271 MR-06 — contracara de Aprobar: abre el modal de motivo; el rechazo real
+                     (cancelar + reembolsar 100% por Stripe + email) lo hace POST /reservas/:id/reject. -->
+                <button v-if="r.approvalStatus==='pending'" data-testid="reservation-row-reject" :disabled="rejecting===r.id || approving===r.id" @click="openReject(r)" class="flex items-center gap-1 px-2.5 py-1.5 bg-coral/10 text-coral rounded-lg text-[10px] font-bold cursor-pointer hover:bg-coral/20 transition-colors disabled:opacity-50">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                  </svg>
+                  {{ rejecting===r.id ? 'Rechazando…' : 'Rechazar' }}
                 </button>
                 <button v-if="r.status==='confirmed'" @click="confirmAction('checkin',r)" class="flex items-center gap-1 px-2.5 py-1.5 bg-teal/10 text-teal rounded-lg text-[10px] font-bold cursor-pointer hover:bg-teal/20 transition-colors">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
@@ -246,6 +266,12 @@
     <CancelReservationModal :open="cancelDlg.show" :reservation="cancelDlg.res"
       @close="cancelDlg.show = false" @cancelled="load" />
 
+    <!-- #271 MR-06 — rechazo de una reserva pendiente de aprobación: motivo libre (≥10, lo lee el
+         huésped por email) y el monto a reembolsar a la vista antes de confirmar. -->
+    <RejectReservationModal v-if="rejectDlg" :guest-name="rejectDlg.guestName" :refund-amount="rejectDlg.refundAmount"
+      :is-group="rejectDlg.isGroup" :loading="rejecting === rejectDlg.id"
+      @confirm="rejectReservation" @close="rejectDlg = null" />
+
     <!-- ═══ Vista de DETALLE (F3 match-misterplan) ═══ -->
     <ReservationModal
       v-if="detailId"
@@ -261,10 +287,12 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useCountUp } from '@/composables/useCountUp'
 import { paymentStateBadge } from '@/utils/payment-state'
-import { ReservationService } from '@/services/Reservation.service'
+import { ReservationService, childSetupSummary } from '@/services/Reservation.service'
+import Icon from '@/components/ui/Icon.vue'
 import ReservationModal from '@/components/features/ReservationModal.vue'
 import ReservationWizardModal from '@/components/features/ReservationWizardModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
+import RejectReservationModal from '@/components/features/RejectReservationModal.vue'
 import KpiHeroCard from '@/components/features/dashboard/KpiHeroCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SkeletonLoader from '@/components/ui/SkeletonLoader.vue'
@@ -289,6 +317,8 @@ const filterChannel = ref('')
 const filterApproval = ref('')
 // REQ-RWP-04 — '' | 'paid'. Eje independiente de filterStatus (KPI "Cobradas").
 const filterPayment = ref('')
+// #274 — "Llegan hoy": toggle del KPI "Check-ins Hoy". Mismo criterio que `checkinsTodayCount`.
+const filterArrivalsToday = ref(false)
 const list = ref<any[]>([])
 const rooms = ref<any[]>([])
 // Detalle (F3): clic en fila abre ReservationModal (vista lectura), no el form directo.
@@ -319,6 +349,22 @@ const pendingCount = computed(() => list.value.filter((r: any) => r.status === '
 const confirmedCount = computed(() => list.value.filter((r: any) => r.status === 'confirmed').length)
 // Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status` (ver comentario en `load()`).
 const approvalPendingCount = computed(() => list.value.filter((r: any) => r.approvalStatus === 'pending').length)
+// #271 MR-06 — cuánto lleva esperando la pendiente más vieja (booking_config.approvalDeadlineHours
+// es el plazo de revisión; el cron del backend recuerda al hotel cuando se pasa). Horas enteras
+// desde `createdAt`; a partir de 48 h se muestra en días. Sin pendientes → caption de siempre.
+const MS_PER_HOUR = 3_600_000
+const HOURS_PER_DAY = 24
+const OLDEST_PENDING_DAYS_FROM_HOURS = 48
+const oldestPendingLabel = computed(() => {
+  const times = list.value
+    .filter((r: any) => r.approvalStatus === 'pending' && r.createdAt)
+    .map((r: any) => new Date(r.createdAt).getTime())
+    .filter((t: number) => Number.isFinite(t))
+  if (!times.length) return 'Confirmación manual'
+  const hours = Math.max(0, Math.floor((Date.now() - Math.min(...times)) / MS_PER_HOUR))
+  if (hours >= OLDEST_PENDING_DAYS_FROM_HOURS) return `Más antigua: hace ${Math.floor(hours / HOURS_PER_DAY)} d`
+  return `Más antigua: hace ${hours} h`
+})
 
 // "vs ayer": mismas métricas de check-in/out/ingresos pero con fecha de ayer — ya tenemos
 // todas las reservas cargadas en `list`, no hace falta pedir un histórico aparte.
@@ -350,9 +396,11 @@ function setStatusFilter(status: string) { filterStatus.value = status }
 // apaga (mismo criterio que un filtro de chip, no un radio permanente).
 function toggleApprovalFilter() { filterApproval.value = filterApproval.value === 'pending' ? '' : 'pending' }
 function togglePaidFilter() { filterPayment.value = filterPayment.value === 'paid' ? '' : 'paid' }
+function toggleArrivalsFilter() { filterArrivalsToday.value = !filterArrivalsToday.value }
 
 const statsCards = computed(() => [
-  { label: 'Check-ins Hoy', value: checkinsAnim.value, icon: 'checkin' as const, accent: 'blue' as const, trend: checkinsTrend.value, caption: undefined as string | undefined, link: undefined as (() => void) | undefined },
+  // #274 — click = filtro "Llegan hoy" (toggle), para ver de un vistazo cuáles piden cuna.
+  { label: 'Check-ins Hoy', value: checkinsAnim.value, icon: 'checkin' as const, accent: 'blue' as const, trend: checkinsTrend.value, caption: (filterArrivalsToday.value ? 'Filtro: Llegan hoy' : undefined) as string | undefined, link: toggleArrivalsFilter as (() => void) | undefined },
   { label: 'Check-outs Hoy', value: checkoutsAnim.value, icon: 'checkout' as const, accent: 'rose' as const, trend: checkoutsTrend.value, caption: undefined as string | undefined, link: undefined as (() => void) | undefined },
   { label: 'Ingresos Hoy', value: revenueAnim.value, prefix: '$', icon: 'money' as const, accent: 'green' as const, trend: revenueTrend.value, caption: undefined as string | undefined, link: undefined as (() => void) | undefined },
   { label: 'Total Facturado', value: totalBilledAnim.value, prefix: '$', icon: 'money' as const, accent: 'purple' as const, trend: null as number | null, caption: 'Acumulado' as string | undefined, link: undefined as (() => void) | undefined },
@@ -362,7 +410,8 @@ const statsCards = computed(() => [
   { label: 'Cobradas', value: paidAnim.value, icon: 'money' as const, accent: 'teal' as const, trend: null as number | null, caption: 'Pago completo' as string | undefined, link: togglePaidFilter as (() => void) | undefined },
   // Tarea 3.4 — vista dedicada para reservas pagadas que el hotel todavía no revisó
   // ("confirmación instantánea" apagada). Eje independiente del filtro de Estado de arriba.
-  { label: 'Por aprobar', value: approvalPendingAnim.value, icon: 'bookings' as const, accent: 'amber' as const, trend: null as number | null, caption: 'Confirmación manual' as string | undefined, link: toggleApprovalFilter as (() => void) | undefined },
+  // #271 MR-06 — el caption muestra cuánto lleva esperando la más vieja (hay un plazo de revisión).
+  { label: 'Por aprobar', value: approvalPendingAnim.value, icon: 'bookings' as const, accent: 'amber' as const, trend: null as number | null, caption: oldestPendingLabel.value as string | undefined, link: toggleApprovalFilter as (() => void) | undefined },
 ])
 
 const filtered = computed(() => {
@@ -372,6 +421,7 @@ const filtered = computed(() => {
   if (filterChannel.value) l = l.filter((r: any) => r.source === filterChannel.value)
   if (filterApproval.value) l = l.filter((r: any) => r.approvalStatus === filterApproval.value)
   if (filterPayment.value) l = l.filter((r: any) => r.paymentState === filterPayment.value && r.status !== 'cancelled') // mismo criterio que paidCount: el KPI y su filtro muestran las mismas filas
+  if (filterArrivalsToday.value) l = l.filter((r: any) => r.checkIn === today && (r.status === 'confirmed' || r.status === 'checked_in')) // #274 — mismo criterio que checkinsTodayCount
   return l
 })
 
@@ -451,8 +501,13 @@ async function load() {
         // Tarea 3.4 (corrección 2026-08-25) — eje independiente de `status`: la reserva ya
         // está pagada/ocupando la habitación, pero el hotel todavía no la revisó.
         approvalStatus: r.approvalStatus || null,
+        // #271 MR-06 — lo que necesita Rechazar: monto cobrado (a reembolsar), si es parte de un
+        // grupo (cae entero) y cuándo se creó (caption "Más antigua" del KPI "Por aprobar").
+        paidAmount: r.paidAmount ?? 0, groupId: r.groupId, createdAt: r.createdAt,
         // REQ-RWP-04 — estado real de cobro; `mapReservation` ya lo trae del backend (`payments`).
         paymentState: r.paymentState ?? r.paymentStatus,
+        // #274 — badge de cuna con tooltip (`childSetupSummary`).
+        needsCrib: r.needsCrib ?? false, cribCount: r.cribCount ?? 0, childAmenities: r.childAmenities ?? null,
       }
     })
   } catch (e: any) { console.error('[reservations/load]', e); toast.error('No se pudieron cargar las reservas') }
@@ -538,6 +593,31 @@ async function approveReservation(r: any) {
     toast.error(e.message || 'Error al aprobar la reserva')
   } finally {
     approving.value = ''
+  }
+}
+
+// #271 MR-06 — rechazar una reserva pendiente de aprobación. El modal pide el motivo (≥10, lo lee
+// el huésped) y muestra lo que se reembolsa; el POST cancela + devuelve el 100% por Stripe (el
+// grupo entero si tiene `groupId`). `rejecting` deshabilita ESA fila, igual que `approving`.
+const rejecting = ref('')
+const rejectDlg = ref<{ id: string; guestName: string; refundAmount: number; isGroup: boolean } | null>(null)
+function openReject(r: any) {
+  rejectDlg.value = { id: r.id, guestName: r.guestName, refundAmount: Number(r.paidAmount ?? r.paid ?? 0), isGroup: !!r.groupId }
+}
+async function rejectReservation(reason: string) {
+  const target = rejectDlg.value
+  if (!target) return
+  rejecting.value = target.id
+  try {
+    const res = await ReservationService.reject(target.id, reason)
+    rejectDlg.value = null
+    await load()
+    // Mismo formato `$total` que la columna Total de la tabla (el listado no trae `currency`).
+    toast.success(`Reserva de ${target.guestName} rechazada · reembolsados $${Number(res.refundedAmount ?? 0).toFixed(2)}`)
+  } catch (e: any) {
+    toast.error(e.message || 'Error al rechazar la reserva')
+  } finally {
+    rejecting.value = ''
   }
 }
 

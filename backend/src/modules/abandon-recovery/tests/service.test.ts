@@ -14,7 +14,14 @@ import { describe, it, expect } from 'bun:test'
 import type { RepositoryAdapter } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { AbandonRecoveryService } from '../service'
-import type { AbandonSweepConfig } from '../types'
+import type { AbandonSweepConfig, AbandonEmailSender } from '../types'
+import type { EmailService } from '../../../services/email-service'
+
+// Garantiza en typecheck que la interfaz local sigue siendo subset del EmailService real (#283):
+// si `EmailService.enqueue` cambia de firma, esta asignación deja de compilar y el double de
+// abajo no puede volver a divergir silenciosamente de producción.
+const _emailServiceIsAbandonSender: AbandonEmailSender = {} as EmailService
+void _emailServiceIsAbandonSender
 
 const log = silentLogger()
 
@@ -67,12 +74,16 @@ function makeHotelsRepo(map: Record<string, any>): RepositoryAdapter<any> {
   }
 }
 
-function makeEmailSender(captured: { to: string; subject: string; html: string }[], opts: { sent?: boolean; throwOnCall?: boolean } = {}) {
+type CapturedEnqueue = { to: string; subject: string; html: string; hotelId: string; relatedType?: string; relatedId?: string }
+
+/** Double con la firma real de `EmailService.enqueue` (objeto + devuelve id de fila).
+ *  `sent: false` se simula devolviendo '' (id vacío → sendAbandonEmail normaliza a sent=false). */
+function makeEmailSender(captured: CapturedEnqueue[], opts: { sent?: boolean; throwOnCall?: boolean } = {}): AbandonEmailSender {
   return {
-    enqueue: async (to: string, subject: string, html: string) => {
-      captured.push({ to, subject, html })
+    enqueue: async (input: CapturedEnqueue) => {
+      captured.push(input)
       if (opts.throwOnCall) throw new Error('enqueue exploded')
-      return { sent: opts.sent ?? true }
+      return opts.sent === false ? '' : 'email-row-1'
     },
   }
 }
@@ -104,6 +115,56 @@ describe('AbandonRecoveryService.runSweep', () => {
     expect(captured[0].html).toContain('Completar mi reserva')
     expect(captured[0].html).toContain('?reservation=r1&amp;token=tok-1')
     expect(updates).toEqual([{ id: 'r1', data: { abandonEmailSent: true } }])
+  })
+
+  it('encola con hotelId de la reserva (firma real de EmailService.enqueue) y marca el flag', async () => {
+    const updates: any[] = []
+    const rows = [{
+      id: 'r-h1', status: 'pending', abandonEmailSent: false,
+      guestId: 'g1', hotelId: 'h1', accessToken: 'tok-1',
+      createdAt: iso(2 * 60 * 60 * 1000),
+    }]
+    const captured: CapturedEnqueue[] = []
+    const svc = new AbandonRecoveryService({
+      reservations: { ...makeReservationsRepo(rows), update: async (id, data) => { updates.push({ id, data }); return {} } },
+      guests: makeGuestsRepo({ g1: { id: 'g1', email: 'guest@example.com' } }),
+      hotels: makeHotelsRepo({ h1: { id: 'h1', slug: 'hotel-a' } }),
+      email: makeEmailSender(captured),
+    }, log, CFG)
+
+    const result = await svc.runSweep(NOW)
+
+    expect(result.emailed).toBe(1)
+    expect(captured).toHaveLength(1)
+    expect(captured[0].hotelId).toBe('h1')
+    expect(captured[0].relatedType).toBe('reservation')
+    expect(captured[0].relatedId).toBe('r-h1')
+    expect(captured[0].to).toBe('guest@example.com')
+    expect(updates).toEqual([{ id: 'r-h1', data: { abandonEmailSent: true } }])
+  })
+
+  it('candidato sin hotelId → no encola, registra error y NO marca el flag', async () => {
+    const updates: any[] = []
+    const rows = [{
+      id: 'r-nohotel', status: 'pending', abandonEmailSent: false,
+      guestId: 'g1', hotelId: undefined, accessToken: 'tok-1',
+      createdAt: iso(2 * 60 * 60 * 1000),
+    }]
+    const captured: CapturedEnqueue[] = []
+    const svc = new AbandonRecoveryService({
+      reservations: { ...makeReservationsRepo(rows), update: async (id, data) => { updates.push({ id, data }); return {} } },
+      guests: makeGuestsRepo({ g1: { id: 'g1', email: 'guest@example.com' } }),
+      hotels: makeHotelsRepo({}),
+      email: makeEmailSender(captured),
+    }, log, CFG)
+
+    const result = await svc.runSweep(NOW)
+
+    expect(result.scanned).toBe(1)
+    expect(result.emailed).toBe(0)
+    expect(captured).toHaveLength(0)
+    expect(updates).toHaveLength(0)
+    expect(result.errors).toEqual([{ reservationId: 'r-nohotel', reason: 'reserva sin hotelId' }])
   })
 
   it('NO marca el flag si el email falla (próximo tick reintenta)', async () => {

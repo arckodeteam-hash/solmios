@@ -6,6 +6,7 @@
 import type { RepositoryAdapter } from 'arckode-framework'
 import type { FacturasDTO } from '../types'
 import { renderInvoiceHtml } from './invoice-template'
+import { hotelHeaderOf } from './hotel-header'
 
 export interface EmailInvoiceResult {
   sent: boolean
@@ -26,7 +27,7 @@ const TYPE_LABEL: Record<string, string> = {
   invoice: 'Factura', credit_note: 'Nota de crédito', receipt: 'Recibo', folio: 'Cargo', payment: 'Comprobante de pago',
 }
 
-/** Encola el envío de una factura por email. Resuelve el nombre del hotel para el asunto/template. */
+/** Encola el envío de una factura por email. Resuelve los datos del hotel (nombre, dirección, teléfono, email) para el asunto/template. */
 export async function sendInvoiceByEmail(args: {
   invoice: FacturasDTO
   to: string
@@ -35,16 +36,10 @@ export async function sendInvoiceByEmail(args: {
 }): Promise<EmailInvoiceResult> {
   const { invoice, to, hotelRepo, emailPort } = args
 
-  let hotelName = 'Hotel'
-  if (hotelRepo && invoice.hotelId) {
-    try {
-      const hotel = await hotelRepo.findById(invoice.hotelId)
-      if (hotel?.name) hotelName = hotel.name
-    } catch { /* nombre por defecto */ }
-  }
+  const header = await hotelHeaderOf(hotelRepo, invoice.hotelId)
 
-  const html = renderInvoiceHtml({ invoice, hotelName })
-  const subject = `${TYPE_LABEL[invoice.type] ?? 'Documento'} ${invoice.invoiceNumber} — ${hotelName}`
+  const html = renderInvoiceHtml({ invoice, ...header })
+  const subject = `${TYPE_LABEL[invoice.type] ?? 'Documento'} ${invoice.invoiceNumber} — ${header.hotelName}`
   const messageId = await emailPort.enqueue({ to, subject, html, hotelId: invoice.hotelId })
 
   return { sent: true, to, subject, messageId, configured: true }

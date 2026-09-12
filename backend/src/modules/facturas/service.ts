@@ -99,7 +99,7 @@ export class FacturasService {
     // Ownership en el ALTA (ver resolveInvoiceHotelId): el hotel sale del JWT, no de dto.hotelId.
     const hotelId = await resolveInvoiceHotelId(this.userRepo, user, dto.hotelId)
     const { item, invoiceNumber, amount, currency } = await createInvoice(
-      { repo: this.repo, configRepo: this.configRepo, itemRepo: this.itemRepo, logger: this.logger, hotelsRepo: this.hotelsForTaxRepo }, dto, hotelId,
+      { repo: this.repo, configRepo: this.configRepo, itemRepo: this.itemRepo, logger: this.logger, hotelsRepo: this.hotelsForTaxRepo }, { ...dto, issuedBy: user.id }, hotelId,
     )
     await auditSafely(this.auditPort, this.logger, {
       hotelId, userId: user.id, action: 'invoice.create', entityId: item.id,

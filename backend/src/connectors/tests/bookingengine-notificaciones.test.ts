@@ -1,7 +1,7 @@
 // connectors/tests/bookingengine-notificaciones.test.ts — Wiring del aviso al hotel (#246).
 //
-// El motor tiene CUATRO suscriptos a sus sockets (reservas, channex, payments y ahora
-// notificaciones). `setSockets` acumula, así que acá se registran todos sobre un stub que usa la
+// El motor tiene TRES suscriptos a sus sockets (reservas, payments y notificaciones; el push a
+// Channex lo hace el usecase, #276). `setSockets` acumula, así que acá se registran todos sobre un stub que usa la
 // MISMA `accumulateSockets` del proyecto y se verifica que un evento los corre a TODOS — un aviso
 // que falla no puede dejar sin correr al que asienta la plata.
 
@@ -10,7 +10,6 @@ import type { ConnectorContext } from 'arckode-framework'
 import { silentLogger } from 'arckode-framework/testing'
 import { accumulateSockets } from '../../shared/utils/accumulate-sockets'
 import { reservasBookingengineConnector } from '../reservas-bookingengine'
-import { bookingChannexConnector } from '../booking-channex'
 import { bookingenginePaymentsConnector } from '../bookingengine-payments'
 import { bookingengineNotificacionesConnector } from '../bookingengine-notificaciones'
 
@@ -27,14 +26,13 @@ const USERS = [
 
 interface Calls {
   invalidated: string[]
-  pushes: Array<[string, string]>
   payments: any[]
   notifications: any[]
   emails: any[]
 }
 
 function makeCtx(opts: { notifCreateThrows?: boolean; hotelEmail?: string; withEmail?: boolean } = {}) {
-  const calls: Calls = { invalidated: [], pushes: [], payments: [], notifications: [], emails: [] }
+  const calls: Calls = { invalidated: [], payments: [], notifications: [], emails: [] }
   const sockets: Record<string, any> = {}
   // Stub del motor: acumula como el service real (shared/utils/accumulate-sockets.ts).
   const bookingengine = { setSockets: (s: any) => accumulateSockets(sockets, s) }
@@ -61,7 +59,6 @@ function makeCtx(opts: { notifCreateThrows?: boolean; hotelEmail?: string; withE
       getById: async (id: string) => { if (id !== RESERVATION.id) throw new Error('Reserva no encontrada'); return { ...RESERVATION } },
       list: async () => ({ data: [{ ...RESERVATION }] }),
     },
-    canales: { pushAvailabilityByRoom: async (h: string, r: string) => { calls.pushes.push([h, r]); return { pushed: true } } },
     payments: {
       findByStripeSession: async () => null,
       createPayment: async (dto: any) => { calls.payments.push(dto); return { id: 'p-1', status: 'completed' } },
@@ -82,7 +79,6 @@ function makeCtx(opts: { notifCreateThrows?: boolean; hotelEmail?: string; withE
 
   const wireAll = () => {
     reservasBookingengineConnector(ctx)
-    bookingChannexConnector(ctx)
     bookingenginePaymentsConnector(ctx)
     bookingengineNotificacionesConnector(silentLogger())(ctx)
   }
@@ -93,14 +89,13 @@ const CREATED = { id: 'res-1', hotelId: 'h1', roomId: 'rm1', status: 'confirmed'
 const PAID = { id: 'res-1', hotelId: 'h1', totalAmount: 300, currency: 'USD', checkIn: '2026-10-01', paymentRef: 'cs_001', provider: 'stripe' }
 
 describe('bookingengineNotificacionesConnector — wiring con los otros connectors del motor', () => {
-  it('onBookingCreated corre TODOS los handlers: invalidación de reservas, push a Channex y campanita', async () => {
+  it('onBookingCreated corre TODOS los handlers: invalidación de reservas y campanita', async () => {
     const { sockets, calls, wireAll } = makeCtx()
     wireAll()
 
     await sockets.onBookingCreated(CREATED)
 
     expect(calls.invalidated).toEqual(['h1'])
-    expect(calls.pushes).toEqual([['h1', 'rm1']])
     // admin + recepción ven reservas; la camarera no.
     expect(calls.notifications).toHaveLength(2)
     expect(calls.notifications.map((n) => n.userId).sort()).toEqual(['u-admin', 'u-recep'])
@@ -139,7 +134,6 @@ describe('bookingengineNotificacionesConnector — wiring con los otros connecto
 
     expect(calls.notifications).toHaveLength(0)
     expect(calls.invalidated).toEqual(['h1'])
-    expect(calls.pushes).toEqual([['h1', 'rm1']])
   })
 
   it('un módulo núcleo ausente al avisar no tumba el evento (el aviso es best-effort)', async () => {

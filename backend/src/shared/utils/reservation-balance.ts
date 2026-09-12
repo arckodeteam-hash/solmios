@@ -8,18 +8,33 @@
 // (conceptos con extras, "Pendiente" sin extras).
 //
 // Regla: el total cobrable de una reserva es UNO solo —
-//   chargeableTotal = totalAmount + otherCharges + Σ(addons con signo)
+//   chargeableTotal = totalAmount + otherCharges + Σ(addons con signo, salvo source:'booking_engine')
 //   pending         = max(0, chargeableTotal - deposit)
 // Cualquier lugar que necesite el pendiente usa estas funciones. NO re-derivar a mano.
+//
+// #269: los extras pagados online (upsells, amenidades) se materializan como `reservation_addons`
+// con `source:'booking_engine'`, pero su importe YA está dentro de `reservations.totalAmount`
+// (y de `priceBreakdown.subtotal`). Sumarlos acá los cobraría dos veces: en el "Pendiente" del
+// detalle, en el techo de payment-requests y en el importe de la factura. Por eso `addonsTotal`
+// los ignora; sólo se posten al folio (check-in / night audit) como cargos informativos.
 
 import { round2 } from './money'
 import { paymentStatusOf } from './payment-status'
 
-/** Fila de `reservation_addons` (shared/models.ts). `kind:'discount'` resta. */
+/**
+ * Fila de `reservation_addons` (shared/models.ts). `kind:'discount'` resta.
+ * `source:'booking_engine'` (#269) = extra ya incluido en `totalAmount`; no entra al total cobrable.
+ */
 export interface ReservationAddonLike {
   amount?: number | null
   quantity?: number | null
   kind?: string | null
+  source?: string | null
+}
+
+/** #269 — extra materializado por el motor público: su importe ya vive en `totalAmount`. */
+export function isBookingEngineAddon(addon: ReservationAddonLike | null | undefined): boolean {
+  return addon?.source === 'booking_engine'
 }
 
 /** Campos monetarios de la fila `reservations` que participan del total cobrable. */
@@ -33,11 +48,15 @@ export interface ReservationAmountsLike {
 // que un `rg 'utils/money'` no encontrara a todos los consumidores. Quien lo necesite lo importa
 // de `shared/utils/money.ts`, que es su único origen.
 
-/** Suma con signo de los addons: `service` suma, `discount` resta. Cantidad por defecto 1. */
+/**
+ * Suma con signo de los addons: `service` suma, `discount` resta. Cantidad por defecto 1.
+ * Los addons `source:'booking_engine'` NO suman (#269): ya están dentro de `totalAmount`.
+ */
 export function addonsTotal(addons: readonly ReservationAddonLike[] | null | undefined): number {
   if (!addons?.length) return 0
   return round2(
     addons.reduce((sum, a) => {
+      if (isBookingEngineAddon(a)) return sum
       const sign = a?.kind === 'discount' ? -1 : 1
       const qty = Number(a?.quantity ?? 1) || 0
       return sum + sign * (Number(a?.amount) || 0) * qty

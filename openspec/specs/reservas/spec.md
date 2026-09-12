@@ -80,6 +80,57 @@ disponibilidad y esquema que la creación manual.
 - THEN se crea con `status:'pending'`, `channel:'direct'`, `currency:'USD'` (defaults)
 - AND se dispara el email de confirmación (`lifecycle-email.ts`)
 
+### Requirement: Un huésped = una ficha al crear la reserva (MR-08, #273)
+
+Toda creación de reserva que trae datos del huésped en lugar de un `guestId` MUST resolver
+la ficha con el helper compartido `shared/usecases/find-or-create-guest.ts`, nunca con un
+`create` directo en `Guests`: busca por `(hotelId, email lower/trim)`, después por
+`(hotelId, teléfono E.164)` (`shared/utils/phone-e164.ts`, comparando también los teléfonos
+guardados en cualquier formato) y sólo crea si no hay ninguna. Si la encuentra, reusa su id
+y completa `name`/`phone`/`email` SOLO cuando estaban vacíos — nunca pisa lo que el hotel
+cargó. El aislamiento es por `hotelId`: el mismo email en otro hotel es otra ficha.
+
+Lo usan los dos POST públicos del motor (`bookingengine/usecases/public-booking.ts`,
+`public-booking-group.ts`) DENTRO de su `orm.transaction`, y `POST /api/reservas`
+(`reservas/usecases/crud.ts` `createReservation`) cuando el panel manda `guestEmail`
+(opcionalmente `guestName`/`guestPhone`) sin `guestId`; esos tres campos NO se persisten en
+`reservations`. Con `guestId` presente `guestEmail` se ignora.
+
+Concurrencia: antes de buscar, el helper toma un lock de fila sobre `Hotels` del hotel
+(`tx.updateMany('Hotels', {id}, {updatedAt})`) dentro de la tx del motor, después del lock
+de `Rooms` (orden fijo Rooms → Hotels). En Postgres eso serializa las altas de huésped del
+hotel hasta el COMMIT y la segunda tx ve la ficha de la primera; en SQLite la tx entera ya
+está serializada. No hay índice único porque las bases existentes tienen duplicados
+históricos: `idx_guests_hotel_email` (`migrate-db.ts`) es no único y
+`scripts/merge-duplicate-guests.ts --dry|--apply [--hotel <id>]` los fusiona como paso
+post-deploy opcional (canónica = la más antigua; reapunta `guestId` en todas las tablas que
+lo tienen y `groups.leadGuestId`, suma `totalStays`/`totalSpent`/`loyaltyPoints`, borra las
+demás; idempotente).
+
+#### Scenario: Dos reservas públicas con el mismo email
+
+- GIVEN una reserva web creada con `guestEmail:'Ana@Mail.com '`
+- WHEN llega otra con `guestEmail:'ana@mail.com'` (mismo hotel)
+- THEN hay UNA fila en `guests` (email `ana@mail.com`) y dos en `reservations` con el mismo `guestId`
+
+#### Scenario: Mismo teléfono en formatos distintos, sin email coincidente
+
+- GIVEN una ficha con `phone:'809-555-0000'`
+- WHEN llega una reserva con otro email y `phone:'+1 809 555 0000'`
+- THEN se reusa esa ficha (match por E.164) y su `phone` no cambia
+
+#### Scenario: El panel crea con guestEmail sin guestId
+
+- GIVEN el panel manda `{roomId, checkIn, checkOut, totalAmount, guestEmail}` sin `guestId`
+- WHEN existe una ficha con ese email en el hotel
+- THEN la reserva nace con ese `guestId` y no se crea ninguna ficha; si no existe, se crea una
+
+#### Scenario: Dos POST concurrentes con el mismo email nuevo
+
+- GIVEN dos transacciones simultáneas con `guestEmail` que todavía no existe
+- WHEN ambas toman el lock de `Hotels` antes de buscar
+- THEN sólo la primera crea; la segunda relee y reusa → una sola ficha
+
 ### Requirement: Check-in atómico con folio y código de cerradura
 
 `POST /api/reservas/:id/checkin` (permiso `reservations:checkin`) MUST ejecutarse como
@@ -689,6 +740,217 @@ best-effort: TTLock caído no rompe ni la asignación ni el webhook de Stripe.
 - **GIVEN** una reserva web pagada sin `roomId`
 - **WHEN** llega `onPaymentRequestPaid`
 - **THEN** 0 códigos; al asignarle habitación → 1 código activo
+
+### Requirement: Extras pagados online entran al folio como cargos (MR-04, #269)
+
+Cada extra que el huésped paga por el motor público —upsell, amenidad infantil, amenidad de
+habitación; el régimen se suma cuando llegue MR-03— MUST materializarse como fila
+`reservation_addons` en la MISMA transacción que crea la reserva (`public-booking.ts`,
+`public-booking-group.ts`), con `source:'booking_engine'`, `kind`
+`upsell|child_amenity|room_amenity`, `description`, `quantity`, `amount` (unitario),
+`unitPrice` y `taxRate` (helper puro `shared/usecases/booking-engine-addons.ts`). En un grupo
+todos los addons cuelgan de la reserva líder (la que lleva `priceBreakdown` y cobra Stripe);
+las hermanas no reciben ninguno. Esas filas YA están dentro de `totalAmount`, así que
+`addonsTotal`/`chargeableTotal`/`pendingBalance` (`shared/utils/reservation-balance.ts`) y las
+líneas de `invoice-from-reservation.ts` MUST ignorarlas: sumarlas cobraría dos veces.
+
+Al check-in (`reservas/usecases/checkin.ts`) el folio MUST recibir un `folio_charges`
+`category:'extra'`, `source:'checkin'`, `reference:'addon:<id>'` por cada addon
+`booking_engine` (impuesto de `configuration('taxes')`, mismo que la noche) ANTES de acreditar
+el prepago, y el tope de `capPrepaidLines` MUST ser noche + extras. La idempotencia es por
+`reference` contra los cargos existentes del folio. El night audit
+(`folios/usecases/night-audit.ts`) MUST hacer el mismo posteo (`source:'night_audit'`) para
+las reservas `checked_in` cuyo folio aún no tenga esos cargos — cubre estadías vivas al
+momento del deploy — y lo informa como `extrasPosted`. `settle-folio-at-checkout` no cambia.
+
+El panel (`ReservationModal.vue`) MUST mostrar la sección "Extras pagados" (una línea por
+addon del motor + desglose completo de `priceBreakdown`) sin leer `notes`, y el CRUD manual
+de servicios adicionales MUST excluir los `source:'booking_engine'`. El modal de checkout
+(`pages/checkin/index.vue`) MUST avisar "Extras pagados online sin cargo en el folio: $X"
+cuando `upsellsTotal + childAmenitiesTotal + roomAmenitiesTotal (+ mealPlanTotal)` del
+`priceBreakdown` supera la Σ `amount` de los cargos `category:'extra'` del folio.
+`scripts/backfill-reservation-addons-from-breakdown.ts` (paso post-deploy, idempotente) crea
+las filas para las reservas del motor anteriores al cambio a partir de
+`priceBreakdown`/`childAmenities`/`notes`.
+
+#### Scenario: Reserva pública con extras
+
+- GIVEN habitación 100/noche, upsell Transfer 30, amenidad infantil Cuna 10, impuesto 18 %
+- WHEN `POST /api/public/booking` por 1 noche
+- THEN `reservation_addons` tiene 2 filas `source:'booking_engine'` con Σ 40 y
+  `reservations.totalAmount = 165.20`
+
+#### Scenario: Check-in con extras pagados
+
+- GIVEN esa reserva con un pago `completed` de 165.20
+- WHEN `POST /:id/checkin`
+- THEN el folio tiene 3 cargos (100+18, 30+5.40, 10+1.80) y crédito prepago 165.20 → saldo 0,
+  sin "a favor"; un segundo check-in responde 409 y los cargos `addon:<id>` siguen siendo 2
+
+#### Scenario: Grupo
+
+- GIVEN grupo de 2 habitaciones con upsell y amenidad
+- WHEN se crea y hace check-in
+- THEN los addons y sus cargos están sólo en la líder; la hermana sólo tiene su noche
+
+#### Scenario: Checkout
+
+- GIVEN folio con noche + 2 extras y prepago 165.20
+- WHEN checkout
+- THEN factura con 3 líneas, `amountPaid = total`, saldo 0 y `creditBalance` 0
+
+### Requirement: Rechazo manual de una reserva web pendiente de aprobación (#271 MR-06)
+
+Cuando el hotel tiene apagada la "confirmación instantánea", una reserva web nace pagada pero
+con `approvalStatus:'pending'`. El hotel MUST poder rechazarla, el huésped MUST enterarse del
+resultado (aprobada o rechazada) por email y el hotel MUST recibir un recordatorio si se pasa
+del plazo que él mismo configuró.
+
+**Rechazar.** `POST /api/reservas/:id/reject { reason }` (`reservas/usecases/reject.ts`) MUST
+exigir el permiso `reservations:edit` — el MISMO que aprobar; `/panel/roles` NO necesita un
+permiso nuevo. `reason` MUST tener ≥ 10 caracteres (400): es el texto que lee el huésped. Sólo
+una reserva con `approvalStatus:'pending'` y no cancelada se puede rechazar (409); una reserva
+de otro hotel responde 404 (nunca 403). El rechazo MUST dejar `approvalStatus:'rejected'`,
+`status:'cancelled'`, `cancellationReason` = motivo, reembolsar el 100 % de lo cobrado por
+Stripe vía `payments.refundPayment` (fila `payments` `type:'refund'`, el cobro original pasa
+a `refunded`), llamar `pushAvailability(hotelId, roomId)`, emitir `onReservationCancelled`
+(libera depósito, código de puerta y uso de promo) y encolar el email `reservation_rejected`
+con `{rejection_reason}` y `{refund_amount}`. Un grupo se rechaza entero desde cualquiera de
+sus reservas con UN solo reembolso (el cobro vive en la líder); si falla el refund, la
+reserva MUST NOT quedar cancelada.
+
+**Aprobar.** `POST /api/reservas/:id/approve` MUST encolar `reservation_approved` al huésped
+y marcar como leídas las notificaciones de la campanita del hotel asociadas a esa reserva
+(`closeReservationNotifications`). Ambas plantillas (`reservation_approved`,
+`reservation_rejected`) tienen defaults en `services/notification-defaults.ts` y el hotel las
+edita en Marketing → Plantillas.
+
+**Plazo y recordatorio.** `booking_config.approvalDeadlineHours` (entero 1–168, default 24,
+editable en `/panel/booking-engine`). El cron `shared/usecases/approval-reminder-cron.ts`
+MUST avisar al hotel (campanita + email interno) por cada reserva `approvalStatus:'pending'`
+no cancelada cuyo `createdAt + approvalDeadlineHours` ya pasó, UNA sola vez por reserva
+(marca `reservations.approvalReminderAt`; un grupo cuenta como una). El cron MUST NOT
+aprobar ni rechazar automáticamente: sólo recuerda. Kill-switch
+`BOOKING_APPROVAL_REMINDER_DISABLED=1` (loguea y no barre).
+
+**Huésped.** `GET /api/public/reservation` MUST exponer `approvalStatus`
+(`pending|approved|rejected|null`) y `approvalDeadlineHours`, y SOLO cuando
+`approvalStatus:'rejected'` también `rejectionReason` y `refundAmount` (en cualquier otro
+estado, `null`). La confirmación pública (`booking-confirmation.vue`) MUST mostrar, bajo el
+aviso de "pendiente de aprobación", "El hotel revisará su reserva en las próximas {hours} h"
+(`data-testid="confirm-approval-deadline"`); y si la reserva fue rechazada, en lugar del
+bloque de éxito, "El hotel no pudo confirmar su reserva" con el motivo del hotel y el importe
+devuelto (`data-testid="confirm-rejected"`, `confirm-rejected-reason`), sin botón "Cancelar
+reserva". Una reserva `cancelled` + `approvalStatus:'rejected'` MUST NOT caer en la rama
+"venció" ni en la de "pago rechazado".
+
+**Database changes:** `reservations.approvalReminderAt` (TEXT, nullable — dedup del
+recordatorio); `booking_config.approvalDeadlineHours` (INTEGER, nullable → 24). Ambas vía
+`addColumnIfMissing` en `migrate-db.ts`; `approvalStatus` admite el valor `'rejected'`.
+
+**API endpoints:** `POST /api/reservas/:id/reject { reason }` (`reservations:edit`) →
+200 con la reserva + `refundedAmount` y `rejectedCount`; 400/404/409 según arriba.
+`POST /api/reservas/:id/approve` sin cambios de contrato. `PUT /api/booking-engine/config`
+acepta `approvalDeadlineHours`. `GET /api/public/reservation` suma los campos de arriba.
+
+**UI requirements:** panel `/panel/reservations` con botón "Rechazar" junto a "Aprobar" para
+las pendientes de aprobación, modal `RejectReservationModal.vue` con motivo obligatorio
+(≥ 10) y aviso del reembolso; `/panel/booking-engine` con "Horas para aprobar" (1–168);
+confirmación pública con plazo y rama rechazada (es/en/pt en `useBookingI18n.ts`).
+
+#### Scenario: Rechazo con reembolso
+
+- GIVEN una reserva web `pending` de aprobación con un pago Stripe `completed` de 150.00
+- WHEN `POST /api/reservas/:id/reject { reason: 'Sin disponibilidad real esa noche' }` por un usuario con `reservations:edit`
+- THEN queda `approvalStatus:'rejected'`, `status:'cancelled'`, `cancellationReason` = motivo, hay una fila `payments` `type:'refund'` de 150.00, se llamó `pushAvailability` y se encoló `reservation_rejected` con motivo e importe
+
+#### Scenario: Motivo corto, estado incorrecto, otro hotel
+
+- WHEN el motivo tiene 5 caracteres → 400; la reserva ya está `approved` o `cancelled` → 409; es de otro hotel → 404
+
+#### Scenario: Grupo
+
+- GIVEN un grupo de 3 con el cobro en la líder
+- WHEN se rechaza cualquiera de las tres
+- THEN las tres quedan `cancelled`/`rejected` y hay UN solo refund
+
+#### Scenario: Aprobación avisa al huésped
+
+- WHEN `POST /api/reservas/:id/approve`
+- THEN se encola `reservation_approved` y las notificaciones del hotel de esa reserva quedan leídas
+
+#### Scenario: Recordatorio una sola vez
+
+- GIVEN `approvalDeadlineHours` 24 y una reserva pendiente creada hace 25 h
+- WHEN corre el cron dos veces
+- THEN el hotel recibe UN aviso, `approvalReminderAt` queda seteado y la reserva sigue `pending` (no se aprobó ni rechazó); con `BOOKING_APPROVAL_REMINDER_DISABLED=1` no se avisa
+
+#### Scenario: Confirmación pública
+
+- WHEN el huésped abre la confirmación de una reserva pendiente → ve "El hotel revisará su reserva en las próximas 24 h"
+- AND de una rechazada con `refundAmount` 150.00 → ve "El hotel no pudo confirmar su reserva", "Se reembolsó 150.00 USD al medio de pago original" y el motivo, sin enlace "Cancelar reserva"
+
+### Requirement: Envío automático de la habitación asignada al huésped (#297)
+
+El hotel MUST poder configurar con cuánta anticipación se le manda al huésped la información
+de su habitación **realmente asignada**, y el sistema MUST mandarla solo por el canal que el
+hotel eligió, sin hardcodear el plazo.
+
+**Configuración.** `configuration` key `room_info_config` por hotel (`GET/POST
+/api/configuracion`, editable en `/panel/settings` → "Datos de la habitación al huésped"):
+`{ enabled: boolean, hoursBefore: 1–168, channel: 'email'|'whatsapp'|'both',
+whatsappTemplateId: string }`. `parseRoomInfoConfig` (`shared/usecases/room-info-notice.ts`)
+aplica defaults `{enabled:false, hoursBefore:24, channel:'email'}` y clampa las horas: un
+valor fuera de rango NUNCA apaga ni desborda el aviso. Kill-switch operativo
+`ROOM_INFO_NOTICE_DISABLED=1` (loguea y no barre).
+
+**Cron.** `shared/usecases/room-info-cron.ts` (tick 10 min, registrado en
+`composition-root.ts`) MUST recorrer, por hotel habilitado, las reservas `confirmed` (lista
+blanca: `pending` no pagó, `checked_in` ya tiene la habitación) con llegada real —
+`reservationAccessWindow().startMs`, en la zona del hotel — a `<= hoursBefore` horas y no más
+de 24 h pasada. Sin `roomId` MUST NOT mandar nada (CA13). En cada tick relee habitación,
+código vigente de `lock_codes` (`status:'active'`) y huésped: el aviso lleva SIEMPRE los datos
+actuales (CA14).
+
+**Contenido.** Número de habitación, nombre/identificador si existe, código de acceso si hay
+uno activo, horario de acceso (`effectiveCheckInTime/OutTime`) y enlace al check-in digital
+(`PUBLIC_URL/checkin/<hash>`) si `preCheckinStatus != 'completed'`. Una sección sin dato no se
+muestra; nunca se manda un campo vacío o inventado. Email renderizado en runtime
+(`renderRoomInfoEmail`, encolado con `EmailService.enqueue`, `relatedType:'room_info'`);
+WhatsApp por la Cloud API de Meta con la plantilla **aprobada** que el hotel configuró
+(`reservas.whatsappPort`, variables por `resolverVariables`, que ahora resuelve `lock_codes`).
+
+**Dedup y reintento.** Cada intento MUST quedar en `message_logs` con `channel`
+(`email`|`whatsapp_api`), `status` (`sent`|`failed`), `recipient`, `sentAt`, `errorMessage`
+(motivo ya traducido) y `response = auto:room_info:<huella>`, donde la huella es
+`sha256(roomId|código)` recortada (no deja el PIN en texto plano). Misma huella + canal ya
+`sent` → MUST NOT reenviar (CA15); huella distinta (se reasignó la habitación o cambió el
+código) → se manda de nuevo con los datos nuevos. Un `failed` se reintenta en el tick
+siguiente hasta 3 veces por huella + canal (CA20); el tope se reinicia solo si cambia la
+huella. Sin plantilla aprobada, sin teléfono válido, sin WhatsApp conectado o sin email del
+huésped, el intento queda `failed` con su motivo, visible en Mensajería → Historial de envíos.
+
+#### Scenario: Anticipación configurable
+
+- GIVEN `room_info_config` `{enabled:true, hoursBefore:12, channel:'email'}` y una reserva `confirmed` con habitación 204 que llega mañana 15:00
+- WHEN corre el cron faltando 13 h → no manda; faltando 11 h → encola UN email con "204", el código activo de `lock_codes` y el horario de acceso, y deja `message_logs` `channel:'email'`, `status:'sent'`
+- AND con `hoursBefore:48` manda faltando 40 h
+
+#### Scenario: Sin habitación, sin duplicados, datos actualizados
+
+- GIVEN la misma config y una reserva sin `roomId` → el cron no manda ni registra nada
+- WHEN corre dos veces sobre una reserva ya avisada → un solo envío
+- AND se reasigna la reserva a otra habitación → el siguiente tick manda el aviso con la habitación nueva
+
+#### Scenario: Fallo registrado y reintento
+
+- GIVEN el encolado del email falla
+- THEN queda una fila `failed` con `errorMessage` y el tick siguiente reintenta; tras 3 `failed` con la misma huella no vuelve a intentar hasta que cambie la habitación o el código
+
+#### Scenario: WhatsApp según config
+
+- GIVEN `channel:'both'` y una plantilla `approved` con `{room_number}` y `{lock_codes}` → email + `sendTemplate` con el número y el código, fila `whatsapp_api` `sent` con `providerMessageId`
+- AND `channel:'whatsapp'` sin plantilla configurada → fila `whatsapp_api` `failed` con motivo, sin llamar a Meta
 
 ### Requirement: Transversales de toda operación de reservas
 

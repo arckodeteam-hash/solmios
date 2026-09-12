@@ -4,7 +4,7 @@ vi.mock('./http', () => ({
   http: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
 }))
 
-import { ReservationService, mapReservation, STATUS_MAP } from './Reservation.service'
+import { ReservationService, mapReservation, STATUS_MAP, childSetupSummary, parseChildAmenities } from './Reservation.service'
 import { http } from './http'
 
 const rawReservation = (over: Record<string, unknown> = {}) => ({
@@ -45,6 +45,51 @@ describe('Reservation.service — mapReservation', () => {
     expect(r.children).toBe(0)
     expect(r.guestId).toBe('')
     expect(r.roomId).toBe('')
+  })
+
+  // #274 — el badge de cuna del dashboard y del listado lee estos campos del objeto YA mapeado:
+  // si el allow-list no los declara, el icono nunca aparece aunque el backend los devuelva.
+  it('conserva needsCrib, cribCount y childAmenities cuando vienen', () => {
+    const amenities = [{ id: 'a1', name: 'Bañera bebé', price: 5, quantity: 2, total: 10 }]
+    const r = mapReservation(rawReservation({ needsCrib: true, cribCount: 1, childAmenities: amenities }))
+    expect(r.needsCrib).toBe(true)
+    expect(r.cribCount).toBe(1)
+    expect(r.childAmenities).toEqual(amenities)
+  })
+
+  it('needsCrib/cribCount/childAmenities ausentes → false / 0 / null', () => {
+    const r = mapReservation(rawReservation())
+    expect(r.needsCrib).toBe(false)
+    expect(r.cribCount).toBe(0)
+    expect(r.childAmenities).toBeNull()
+  })
+
+  it('childAmenities como string JSON (driver) se normaliza a array; basura → null', () => {
+    const r = mapReservation(rawReservation({ childAmenities: '[{"name":"Silla alta","quantity":1}]' }))
+    expect(r.childAmenities).toEqual([{ id: undefined, name: 'Silla alta', price: undefined, quantity: 1, total: undefined }])
+    expect(parseChildAmenities('no-json')).toBeNull()
+    expect(parseChildAmenities('')).toBeNull()
+    expect(parseChildAmenities({ name: 'x' })).toBeNull()
+    // Líneas sin nombre se descartan; cantidad inválida cae a 1.
+    expect(parseChildAmenities([{ name: '' }, { name: 'Cuna extra', quantity: 0 }])).toEqual([{ id: undefined, name: 'Cuna extra', price: undefined, quantity: 1, total: undefined }])
+  })
+})
+
+describe('Reservation.service — childSetupSummary (#274)', () => {
+  it('cuna + amenidades, unidas con " · "', () => {
+    expect(childSetupSummary({ needsCrib: true, cribCount: 2, childAmenities: [{ name: 'Bañera bebé', quantity: 1 }, { name: 'Silla alta', quantity: 3 }] }))
+      .toBe('Cuna ×2 · Bañera bebé ×1 · Silla alta ×3')
+  })
+
+  it('cuna sin cribCount cuenta 1; solo amenidades no menciona cuna', () => {
+    expect(childSetupSummary({ needsCrib: true })).toBe('Cuna ×1')
+    expect(childSetupSummary({ needsCrib: false, childAmenities: [{ name: 'Silla alta', quantity: 1 }] })).toBe('Silla alta ×1')
+  })
+
+  it('acepta el snapshot crudo como string JSON y sin nada devuelve ""', () => {
+    expect(childSetupSummary({ childAmenities: '[{"name":"Bañera bebé","quantity":2}]' })).toBe('Bañera bebé ×2')
+    expect(childSetupSummary({})).toBe('')
+    expect(childSetupSummary({ needsCrib: false, cribCount: 0, childAmenities: null })).toBe('')
   })
 })
 

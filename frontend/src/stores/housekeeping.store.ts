@@ -3,13 +3,19 @@
 // y expone acciones de administración (start/complete/photos/stats).
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { HousekeepingService, MAX_PAGE_SIZE, type HousekeepingTask, type StaffStats, type PhotoEvidence, type VideoEvidence, type ChecklistItem } from '@/services/Housekeeping.service'
+import { HousekeepingService, MAX_PAGE_SIZE, type HousekeepingTask, type StaffStats, type PhotoEvidence, type VideoEvidence, type ChecklistItem, type SetupItem } from '@/services/Housekeeping.service'
 import { RoomService } from '@/services/Room.service'
 import { TeamService, type TeamMember } from '@/services/Team.service'
 
 const TYPE_LABELS: Record<string, string> = {
   full_cleaning: 'Limpieza completa', quick_cleaning: 'Limpieza rápida', deep_cleaning: 'Limpieza profunda',
-  inspection: 'Inspección', maintenance: 'Mantenimiento',
+  inspection: 'Inspección', maintenance: 'Mantenimiento', arrival_setup: 'Preparación llegada',
+}
+// Régimen de la reserva tal como lo ve la camarera. No hay un mapa exportado en el
+// frontend (ReservationModal y el wizard tienen el suyo local), así que va acá.
+const REGIME_LABELS: Record<string, string> = {
+  room_only: 'Solo alojamiento', breakfast: 'Desayuno', half_board: 'Media pensión',
+  full_board: 'Pensión completa', all_inclusive: 'Todo incluido',
 }
 const PRI_LABELS: Record<string, string> = { high: 'Alta', medium: 'Normal', low: 'Baja', urgent: 'Urgente' }
 
@@ -42,6 +48,8 @@ export interface HousekeepingViewTask {
   supervisorNote: string
   /** Hora en que el supervisor estuvo en la habitación. */
   supOnSiteTime: string
+  /** Qué preparar antes de la llegada (#274): cuna, amenidades, régimen, pedido. */
+  setupItems: SetupItem[]
 }
 
 const MS_PER_MINUTE = 60 * 1000
@@ -80,6 +88,34 @@ function parseItems(cleaningItems: unknown): ChecklistItem[] {
     .filter((i) => Boolean(i.name))
 }
 
+const SETUP_TYPES = new Set<SetupItem['type']>(['crib', 'amenity', 'regime', 'request'])
+
+/**
+ * `setupItems` de una tarea `arrival_setup` (#274). Tolera array ya parseado o el
+ * JSON crudo; null/undefined/inválido → []. Descarta entradas sin `type` conocido.
+ */
+export function parseSetupItems(raw: unknown): SetupItem[] {
+  if (!raw) return []
+  const arr = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? (() => { try { return JSON.parse(raw) } catch { return [] } })()
+      : []
+  if (!Array.isArray(arr)) return []
+  return arr.filter((i: any): i is SetupItem => Boolean(i) && typeof i === 'object' && SETUP_TYPES.has(i.type))
+}
+
+/** Texto del chip que ve la camarera: "Cuna ×1", "Bañera ×1", "Desayuno", el pedido. */
+export function setupItemLabel(item: SetupItem): string {
+  switch (item.type) {
+    case 'crib': return `Cuna ×${item.qty}`
+    case 'amenity': return `${item.name} ×${item.qty}`
+    case 'regime': return REGIME_LABELS[item.name] || item.name
+    case 'request': return item.text
+    default: return ''
+  }
+}
+
 function mapTask(t: HousekeepingTask, roomMap: Map<string, any>, staffMap: Map<string, string>): HousekeepingViewTask {
   const room = roomMap.get(t.roomId)
   const durationMs = t.startTime && t.endTime
@@ -103,6 +139,7 @@ function mapTask(t: HousekeepingTask, roomMap: Map<string, any>, staffMap: Map<s
     time: durationMs !== undefined ? humanizeMs(durationMs) : '',
     notes: t.notes || '',
     items: parseItems(t.cleaningItems),
+    setupItems: parseSetupItems(t.setupItems),
     photos: t.photos ?? [],
     rating: typeof t.rating === 'number' ? t.rating : null,
     video: t.video ?? null,

@@ -24,6 +24,7 @@ import { paymentStateBadge } from '@/utils/payment-state'
 import ChannelIcon from '@/components/ui/ChannelIcon.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import CancelReservationModal from '@/components/features/CancelReservationModal.vue'
+import RejectReservationModal from '@/components/features/RejectReservationModal.vue'
 import MarkPaidModal from '@/components/features/MarkPaidModal.vue'
 import RoomLockModal from '@/components/features/RoomLockModal.vue'
 import ConfirmModal from '@/components/features/ConfirmModal.vue'
@@ -32,7 +33,8 @@ import { usePermissions } from '@/composables/usePermissions'
 import { useConfirm } from '@/composables/useConfirm'
 import { useInvoiceActions } from '@/composables/useInvoiceActions'
 import { nationalityToFlag, languageToFlag } from '@/composables/useCountryFlag'
-import type { ReservationDetail, ReservationDetailAddon, ReservationInvoiceView, CurrencyConfig, GuaranteeCardData, AuditLogEntry, CancellableReservation, Reservation, PaymentAttemptView } from '@/types'
+import type { ReservationDetail, ReservationDetailAddon, ReservationPriceBreakdown, ReservationInvoiceView, CurrencyConfig, GuaranteeCardData, AuditLogEntry, CancellableReservation, Reservation, PaymentAttemptView } from '@/types'
+import type { UpsellBreakdownLine } from '@/types/booking'
 
 const props = defineProps<{ reservationId: string }>()
 const emit = defineEmits<{
@@ -412,6 +414,80 @@ const pricePerNight = computed(() => {
 })
 const locator = computed(() => d.value?.externalLocator || `#${(d.value?.id || '').slice(-6)}`)
 const addonsTotal = computed(() => d.value?.addonsTotal ?? 0)
+
+// ── #269 Extras pagados online ──────────────────────────────────────────
+// El motor público materializa upsells/amenidades como `reservation_addons` con
+// `source:'booking_engine'`: YA están dentro de `totalAmount` (no suman al pendiente) y no se
+// editan desde el CRUD manual de "Otros servicios y descuentos". Los manuales del recepcionista
+// siguen con `source:'manual'` (o sin source en filas viejas).
+const BOOKING_ENGINE_SOURCE = 'booking_engine'
+const isBookingEngineAddon = (a: ReservationDetailAddon) => a.source === BOOKING_ENGINE_SOURCE
+/** Addons que sí edita recepción (servicios/descuentos): alimentan la lista, el CRUD y el documento. */
+const manualAddons = computed(() => addons.value.filter((a) => !isBookingEngineAddon(a)))
+/** Addons del motor (upsell / child_amenity / room_amenity), sólo lectura. */
+const paidExtras = computed(() => addons.value.filter(isBookingEngineAddon))
+const PAID_EXTRA_KIND_LABELS: Record<string, string> = {
+  upsell: 'Upsell',
+  child_amenity: 'Amenidad infantil',
+  room_amenity: 'Amenidad habitación',
+  meal_plan: 'Régimen',
+}
+function paidExtraKindLabel(kind?: string | null): string {
+  return (kind && PAID_EXTRA_KIND_LABELS[kind]) || 'Extra'
+}
+/** Importe de la línea (unitario × cantidad), sin impuesto — lo que muestra la sección. */
+function paidExtraLineAmount(a: ReservationDetailAddon): number {
+  return Math.round((a.amount ?? 0) * (a.quantity ?? 1) * 100) / 100
+}
+/** `priceBreakdown` parseado: según el driver la fila llega como objeto o como string JSON. */
+const priceBreakdown = computed<ReservationPriceBreakdown | null>(() => {
+  const raw = d.value?.priceBreakdown
+  if (!raw) return null
+  if (typeof raw === 'string') {
+    try { const parsed = JSON.parse(raw); return parsed && typeof parsed === 'object' ? parsed : null } catch { return null }
+  }
+  return typeof raw === 'object' ? raw : null
+})
+const pbNum = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v) || 0)
+const paidExtrasBreakdownTotal = computed(() => {
+  const pb = priceBreakdown.value
+  return pb ? pbNum(pb.upsellsTotal) + pbNum(pb.childAmenitiesTotal) + pbNum(pb.roomAmenitiesTotal) + pbNum(pb.mealPlanTotal) : 0
+})
+/** Sección "Extras pagados": sólo si hay filas del motor o el desglose trae extras > 0. */
+const showPaidExtras = computed(() => paidExtras.value.length > 0 || paidExtrasBreakdownTotal.value > 0)
+/** Etiqueta de una línea de `priceBreakdown.upsells[]` con el factor explícito (MR-10 #275):
+ *  "Desayuno × 2 pers. × 3 noches" (ppn) · "Parking × 3 noches" (per_night) · "Late checkout × 2". */
+function upsellLineLabel(u: UpsellBreakdownLine): string {
+  const parts = [u.name || 'Extra']
+  const qty = pbNum(u.quantity)
+  const nights = pbNum(u.nights)
+  if (qty > 1) parts.push(`× ${qty}`)
+  if (u.persons != null) parts.push(`× ${pbNum(u.persons)} pers.`)
+  if (nights > 1) parts.push(`× ${nights} noches`)
+  return parts.join(' ')
+}
+/** Filas del desglose de `priceBreakdown` en el orden del documento (las de importe 0 se omiten, salvo subtotal/total). */
+const priceBreakdownRows = computed(() => {
+  const pb = priceBreakdown.value
+  if (!pb) return []
+  const rows: { label: string; amount: number; negative?: boolean; strong?: boolean }[] = []
+  rows.push({ label: 'Subtotal', amount: pbNum(pb.subtotal) })
+  // MR-10 (#275): con `upsells[]` (reservas nuevas) una fila por extra con su multiplicador
+  // ("Desayuno × 2 pers. × 3 noches"); sin él (reservas viejas) la fila agregada de siempre.
+  if (pb.upsells?.length) {
+    for (const u of pb.upsells) rows.push({ label: upsellLineLabel(u), amount: pbNum(u.total) })
+  } else if (pbNum(pb.upsellsTotal) > 0) rows.push({ label: 'Extras (upsells)', amount: pbNum(pb.upsellsTotal) })
+  if (pbNum(pb.childAmenitiesTotal) > 0) rows.push({ label: 'Amenidades infantiles', amount: pbNum(pb.childAmenitiesTotal) })
+  if (pbNum(pb.roomAmenitiesTotal) > 0) rows.push({ label: 'Amenidades de habitación', amount: pbNum(pb.roomAmenitiesTotal) })
+  if (pbNum(pb.mealPlanTotal) > 0) rows.push({ label: 'Régimen', amount: pbNum(pb.mealPlanTotal) })
+  if (pbNum(pb.promoDiscount) > 0) rows.push({ label: 'Promoción', amount: -pbNum(pb.promoDiscount), negative: true })
+  for (const t of pb.taxBreakdown ?? []) {
+    rows.push({ label: `${t?.name || 'Impuesto'} (${pbNum(t?.rate)}%)`, amount: pbNum(t?.amount) })
+  }
+  if (!(pb.taxBreakdown?.length) && pbNum(pb.taxes) > 0) rows.push({ label: 'Impuestos', amount: pbNum(pb.taxes) })
+  rows.push({ label: 'Total', amount: pbNum(pb.total), strong: true })
+  return rows
+})
 const secondaryTotal = computed(() => {
   const rate = currency.value?.exchangeRate
   return rate && rate > 0 ? Math.round(grandTotal.value * rate * 100) / 100 : null
@@ -482,11 +558,26 @@ const printDocs = computed<PrintDoc[]>(() => [
   },
 ])
 // Conceptos: alojamiento + extras (addons, descuentos en negativo) + otros cargos.
+// #269 — Los extras del motor (`source:'booking_engine'`) YA viven dentro de `totalAmount`. Para
+// que el documento los muestre sin alterar el total: cada extra va como línea propia por su valor
+// con impuesto (unitario × cantidad × (1 + taxRate)) y "Alojamiento" es el RESTO
+// (`totalAmount − Σ extras`), así la suma de conceptos sigue dando exactamente `totalAmount`
+// sin depender del redondeo de `priceBreakdown` (que además es base sin impuesto y con la promo
+// aplicada sobre el conjunto). Si no hay extras del motor, el documento no cambia.
 const chargesItems = computed(() => {
   const items: { desc: string; amount: number }[] = []
   const roomLabel = d.value?.room ? `Alojamiento — Hab. ${d.value.room.number || ''} ${d.value.room.type || ''}`.trim() : 'Alojamiento'
-  items.push({ desc: `${roomLabel} · ${nights.value} noche${nights.value === 1 ? '' : 's'}`, amount: d.value?.totalAmount ?? 0 })
-  for (const a of addons.value) {
+  const engineLines = paidExtras.value.map((a) => {
+    const qty = a.quantity ?? 1
+    const gross = Math.round((a.amount ?? 0) * qty * (1 + (a.taxRate ?? 0) / 100) * 100) / 100
+    return { desc: `${a.description || paidExtraKindLabel(a.kind)}${qty > 1 ? ` (×${qty})` : ''} · pagado online`, amount: gross }
+  })
+  const engineTotal = engineLines.reduce((acc, l) => acc + l.amount, 0)
+  const total = d.value?.totalAmount ?? 0
+  const lodging = engineLines.length ? Math.round((total - engineTotal) * 100) / 100 : total
+  items.push({ desc: `${roomLabel} · ${nights.value} noche${nights.value === 1 ? '' : 's'}`, amount: lodging })
+  items.push(...engineLines)
+  for (const a of manualAddons.value) {
     const sign = a.kind === 'discount' ? -1 : 1
     const qty = a.quantity ?? 1
     items.push({ desc: (a.kind === 'discount' ? 'Descuento — ' : '') + (a.description || 'Extra') + (qty > 1 ? ` (×${qty})` : ''), amount: sign * (a.amount ?? 0) * qty })
@@ -644,6 +735,44 @@ async function onCancelled() {
   showCancel.value = false
   await load()
   emit('changed')
+}
+
+// ── #271 MR-06 — Aprobar / Rechazar desde el detalle (reserva pagada con "confirmación
+// instantánea" apagada). Mismos endpoints que los botones de la fila en pages/reservations:
+// aprobar solo mueve `approvalStatus`; rechazar cancela + reembolsa 100% por Stripe (el grupo
+// entero si tiene `groupId`) + email al huésped con el motivo. `changed` refresca al padre.
+const awaitingApproval = computed(() => d.value?.approvalStatus === 'pending')
+const approving = ref(false)
+const rejecting = ref(false)
+const showReject = ref(false)
+async function approveReservation() {
+  if (!d.value || approving.value) return
+  approving.value = true
+  try {
+    await ReservationService.approve(d.value.id)
+    toast.success(`Reserva de ${d.value.guest?.name || 'el huésped'} aprobada`)
+    await load({ silent: true })
+    emit('changed')
+  } catch (e) {
+    toast.error((e as Error).message || 'Error al aprobar la reserva')
+  } finally {
+    approving.value = false
+  }
+}
+async function rejectReservation(reason: string) {
+  if (!d.value || rejecting.value) return
+  rejecting.value = true
+  try {
+    const res = await ReservationService.reject(d.value.id, reason)
+    showReject.value = false
+    toast.success(`Reserva de ${d.value.guest?.name || 'el huésped'} rechazada · reembolsados ${money(Number(res.refundedAmount ?? 0), d.value.currency || undefined)}`)
+    await load({ silent: true })
+    emit('changed')
+  } catch (e) {
+    toast.error((e as Error).message || 'Error al rechazar la reserva')
+  } finally {
+    rejecting.value = false
+  }
 }
 
 /**
@@ -1053,6 +1182,29 @@ function facturar() {
     <!-- ═══ BODY: masonry de una sola vista (sin pasos, sin columnas fijas) — las tarjetas
          fluyen para no dejar huecos cuando una condicional no aplica (área de impresión) ═══ -->
     <div v-if="d" :class="'print-' + printMode">
+      <!-- #271 MR-06 — franja de revisión: la reserva está pagada y ocupa la habitación, pero el
+           hotel todavía no la aprobó ni rechazó (confirmación instantánea apagada). -->
+      <div v-if="awaitingApproval && can('reservations','edit')" data-testid="modal-approval-strip"
+        class="print:hidden flex items-center justify-between gap-3 flex-wrap bg-gold/10 border-b-2 border-gold/40 px-5 py-3">
+        <div class="flex items-center gap-2.5">
+          <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-gold/15 text-gold">
+            <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-gold"></span>Por aprobar
+          </span>
+          <span class="text-xs text-text-secondary">Reserva pagada pendiente de tu revisión: si la rechazás se reembolsa todo por Stripe.</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button data-testid="modal-approve" @click="approveReservation" :disabled="approving || rejecting"
+            class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-gold/15 text-gold rounded-lg text-xs font-bold cursor-pointer hover:bg-gold/25 disabled:opacity-50">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+            {{ approving ? 'Aprobando…' : 'Aprobar' }}
+          </button>
+          <button data-testid="modal-reject" @click="showReject = true" :disabled="approving || rejecting"
+            class="flex items-center gap-1.5 px-3 py-1.5 max-sm:min-h-11 bg-coral/10 text-coral rounded-lg text-xs font-bold cursor-pointer hover:bg-coral/20 disabled:opacity-50">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+            {{ rejecting ? 'Rechazando…' : 'Rechazar' }}
+          </button>
+        </div>
+      </div>
       <div class="rm-cards rm-print-area p-5 columns-1 lg:columns-2 lg:gap-5">
 
             <!-- Datos de la Reserva -->
@@ -1385,6 +1537,33 @@ function facturar() {
               </div>
             </div>
 
+            <!-- #269 Extras pagados online (motor de reservas): sólo lectura, ya incluidos en el total -->
+            <div v-if="showPaidExtras" data-testid="paid-extras" class="rm-card bg-white border border-border/70 border-l-[3px] border-l-teal/60 rounded-2xl p-4 shadow-card">
+              <div class="flex items-center gap-2 mb-3 pb-2 border-b border-border/50">
+                <span class="w-7 h-7 rounded-lg bg-teal/10 flex items-center justify-center text-teal"><svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg></span>
+                <h4 class="text-sm font-black text-navy">Extras pagados</h4>
+                <span class="ml-auto text-[10px] text-text-muted">Incluidos en el total de la reserva</span>
+              </div>
+              <div class="space-y-1.5 text-sm" :class="priceBreakdownRows.length ? 'mb-3' : ''">
+                <div v-for="a in paidExtras" :key="a.id" class="flex justify-between items-center gap-2" data-testid="paid-extra-line">
+                  <span class="flex items-center gap-1.5 min-w-0">
+                    <span class="truncate">{{ a.description || paidExtraKindLabel(a.kind) }}<span v-if="(a.quantity ?? 1) > 1" class="text-text-muted"> ×{{ a.quantity }}</span></span>
+                    <span class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-purple/10 text-purple">{{ paidExtraKindLabel(a.kind) }}</span>
+                    <span class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-teal/10 text-teal">Pagado online</span>
+                  </span>
+                  <span class="font-bold text-navy shrink-0">{{ money(paidExtraLineAmount(a)) }}</span>
+                </div>
+                <div v-if="!paidExtras.length" class="text-xs text-text-muted italic">El desglose trae extras pero la reserva aún no tiene las líneas materializadas (pendiente de backfill)</div>
+              </div>
+              <div v-if="priceBreakdownRows.length" class="pt-2 border-t border-border/50 space-y-1 text-xs" data-testid="price-breakdown">
+                <div class="text-[10px] font-bold text-text-muted uppercase tracking-wide mb-1">Desglose del motor</div>
+                <div v-for="(r, i) in priceBreakdownRows" :key="i" class="flex justify-between gap-2" :class="r.strong ? 'pt-1 border-t border-border/50 text-sm font-black text-navy' : ''">
+                  <span :class="r.strong ? '' : 'text-text-secondary'">{{ r.label }}</span>
+                  <span class="font-bold tabular-nums" :class="r.negative ? 'text-coral' : 'text-navy'">{{ money(r.amount) }}</span>
+                </div>
+              </div>
+            </div>
+
             <!-- Otros servicios y descuentos -->
             <div class="rm-card bg-white border border-border/70 border-l-[3px] border-l-purple/60 rounded-2xl p-4 shadow-card">
               <div class="flex items-center gap-2 mb-3 pb-2 border-b border-border/50">
@@ -1392,7 +1571,7 @@ function facturar() {
                 <h4 class="text-sm font-black text-navy">Otros servicios y descuentos</h4>
               </div>
               <div class="space-y-1.5 text-sm mb-3">
-                <div v-for="a in addons" :key="a.id" class="flex justify-between items-center gap-2">
+                <div v-for="a in manualAddons" :key="a.id" class="flex justify-between items-center gap-2">
                   <span class="truncate">
                     <span v-if="a.kind === 'discount'" class="text-coral font-bold">−</span>
                     <span v-else class="text-teal font-bold">+</span>
@@ -1405,7 +1584,7 @@ function facturar() {
                     </button>
                   </span>
                 </div>
-                <div v-if="!addons.length" class="text-xs text-text-muted italic">Sin servicios adicionales</div>
+                <div v-if="!manualAddons.length" class="text-xs text-text-muted italic">Sin servicios adicionales</div>
               </div>
               <div v-if="can('reservations','edit')" class="flex gap-2">
                 <input v-model="newAddon.description" type="text" placeholder="Descripción" class="flex-1 px-2 py-1.5 rounded-lg border border-border text-xs" @keyup.enter="addAddon" />
@@ -1889,6 +2068,12 @@ function facturar() {
        retenido), así que hay que ver el cálculo y dar un motivo antes de confirmar. -->
   <CancelReservationModal :open="showCancel" :reservation="cancellable"
     @close="showCancel = false" @cancelled="onCancelled" />
+
+  <!-- #271 MR-06 — Rechazar (reserva pendiente de aprobación): apilado igual que Anular. Motivo
+       libre (≥10, lo lee el huésped por email) y monto a reembolsar a la vista antes de confirmar. -->
+  <RejectReservationModal v-if="showReject && d" :guest-name="d.guest?.name ?? ''" :refund-amount="Number(d.paidAmount ?? 0)"
+    :currency="d.currency || undefined" :is-group="!!d.groupId" :loading="rejecting"
+    @confirm="rejectReservation" @close="showReject = false" />
 
   <!-- Registrar pago manual (REQ-RWP-06, #249): apilado igual que Anular. Al guardar se recarga
        el detalle (badge de pago + "Historial de cobros" con quién lo registró) y se avisa al

@@ -45,6 +45,8 @@ const ICONS: Record<string, Node[]> = {
   login: [['path', { d: 'M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4' }], ['path', { d: 'M10 17l5-5-5-5M15 12H3' }]],
   edit: [['path', { d: 'M12 20h9' }], ['path', { d: 'M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z' }]],
   plus: [['path', { d: 'M12 5v14M5 12h14' }]],
+  // #274 — cuna: colchón, barrotes, patas y respaldo. Badge "Cuna"/"Bebé" en dashboard y listado.
+  crib: [['rect', { x: 3, y: 10, width: 18, height: 7, rx: 2 }], ['path', { d: 'M7 10v7M11 10v7M15 10v7' }], ['path', { d: 'M5 17v3M19 17v3' }], ['path', { d: 'M3 10V6a2 2 0 012-2h4v6' }]],
 }
 
 export default defineComponent({

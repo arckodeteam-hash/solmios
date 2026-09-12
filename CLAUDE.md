@@ -57,6 +57,8 @@ bun run migrate-db.ts
 | `scripts/seed-marketing-pages.ts` | Mismo patrón que `seed-legal-pages.ts` pero para las páginas "producto"/"empresa" (`que-es-solmios`, `integraciones`, `sobre-nosotros`, `contacto`) — contenido en `scripts/marketing-pages-content.ts`. Correr tras editarlo o para empujar correcciones (auditoría Meta 2026-08-26: voseo, correo/teléfono de contacto ausentes) a un entorno donde ya existían. | ✅ (UPSERT) |
 | `scripts/backfill-announcement-audience.ts` (`bun run backfill:announcement-audience`) | Rellena `announcements.audience` en las filas anteriores a esa columna (`hotel` si tienen `hotelId`, `all` si no). **Obligatorio tras el deploy**: el listado busca los anuncios de plataforma por `audience`, así que una fila con `audience` nulo no la devuelve ninguna consulta y el anuncio deja de verse. Lista los anuncios sin hotel antes de tocarlos — al correrlo **empiezan a verse en todos los hoteles**. | ✅ (solo escribe donde está nulo/vacío) |
 | `scripts/backfill-platform-invoices.ts` (`bun run backfill:platform-invoices`) | Trae de Stripe las facturas de la PLATAFORMA anteriores a `platform_invoices` (REQ-BIL-03): recorre las suscripciones con `stripeCustomerId`, pagina `invoices.list` y hace UPSERT por `stripeInvoiceId` reusando el mismo camino que el webhook. NO pisa filas `method='manual'` ni trae borradores. `--dry` cuenta sin escribir, `--hotel <id>` limita a un hotel. **Correr en prod tras el deploy**: sin esto `/admin/billing` arranca vacío para hoteles que ya venían pagando. Además hay que habilitar `invoice.finalized` e `invoice.voided` en el endpoint de webhook de Stripe (dashboard) — sin eso la factura recién aparece cuando se paga. | ✅ (UPSERT por `stripeInvoiceId`) |
+| `scripts/backfill-reservation-addons-from-breakdown.ts` (`bun run scripts/backfill-reservation-addons-from-breakdown.ts [--dry]`) | Crea `reservation_addons` `source='booking_engine'` (#269, MR-04) para las reservas del motor (`accessToken` no nulo + `priceBreakdown` con extras) que todavía no tienen addons `booking_engine`: upsells desde el fragmento `Upsells: nombre×qty=total` de `notes`, `child_amenity`/`room_amenity` desde los snapshots `childAmenities`/`roomAmenities`, `taxRate` = Σ `taxBreakdown`; misma función que el motor (`shared/usecases/booking-engine-addons.ts`). Con eso el check-in / night audit postean los extras al folio y el checkout no deja un "saldo a favor" ficticio. `--dry` cuenta sin escribir. **Paso post-deploy de #269.** | ✅ (saltea reservas con addons `booking_engine`; segunda corrida 0; test en `reservas/tests/backfill-reservation-addons.test.ts`) |
+| `scripts/merge-duplicate-guests.ts --dry\|--apply [--hotel <id>]` | Paso post-deploy OPCIONAL (#273, MR-08): fusiona fichas de `guests` duplicadas por (hotelId, email normalizado) — canónico = la más antigua (`createdAt`, después `id`); reapunta guestId en reservations/folios/invoices/message_logs/reviews/loyalty_transactions/campaign_sends/payments/deposits/ai_conversations/restaurant_orders y groups.leadGuestId, suma totalStays/totalSpent/loyaltyPoints, completa name/phone del canónico sólo si estaban vacíos y borra las demás. `messages` y `feedback_pins` no tienen guestId (chat interno / QA), no se tocan. Correr primero `--dry` y leer el listado. Desde #273 el motor y el panel ya no crean duplicados (`shared/usecases/find-or-create-guest.ts`). | ✅ (segunda corrida: 0 grupos; test en `huespedes/tests/merge-duplicate-guests.test.ts`) |
 | ~~`scripts/patch-orm-postgres.sh`~~ | **ELIMINADO** — el remap camelCase↔lowercase se upstreameó al framework 1.6.2 (nativo en `kernel/db/orm-utils.ts`, "Remap lowercase → camelCase"). Sin postinstall. | — |
 
 ### Portabilidad Postgres
@@ -249,6 +251,24 @@ debe volver a haberlo: un filtro por igualdad ahí es exactamente el bug que est
 Corolario al agregar una columna así: `ormMigrate` hace `ADD COLUMN` y **no rellena las filas
 viejas** (quedan en `NULL` → invisibles). Toda columna discriminadora nueva necesita su backfill
 (`scripts/backfill-announcement-audience.ts`).
+
+### Motor de reservas público — un solo interruptor (#276 MR-11)
+El motor público (`/api/public/hotels/:slug/...` y `POST /api/public/booking[/group]`) tiene DOS flags
+que lo abren o cierran, con dueños distintos:
+
+- **`hotels.onlineBookingStatus`** — flag de **PLATAFORMA**. Lo pone el super-admin al dar de alta,
+  pausar o dar de baja el hotel (`'active' | 'paused' | …`). Sólo `'active'` abre.
+- **`booking_config.enabled`** — flag del **HOTEL**. Es el toggle "Activo/Inactivo" que el propio
+  hotel maneja en `/panel/booking-engine`. Default `true`: sin fila en `booking_config` el motor
+  está abierto; sólo `enabled === false` lo cierra.
+
+**`isEngineOpen(hotel, bookingConfig)` en `shared/usecases/booking-engine-gate.ts` es la ÚNICA fuente
+de verdad**: `hotel?.onlineBookingStatus === 'active' && bookingConfig?.enabled !== false`. TODOS los
+endpoints públicos del motor (GET por slug y los dos POST, que cargan el hotel por `hotelId` vía
+`extraDeps.hotels`) pasan por él y responden el **MISMO 404 `{ error: 'Hotel not found' }`**
+(`engineClosed()` / `ENGINE_CLOSED_BODY`), sea que el hotel no exista, esté pausado por la plataforma o
+apagado por el hotel — anti-enumeración: desde afuera no se distingue el motivo. No agregar un
+endpoint público del motor con su propio `if (hotel.onlineBookingStatus ...)` ni con otro body de 404.
 
 ### Modelos duales — último `orm.define` gana (RESUELTO)
 `composition-root.ts` registra `shared` PRIMERO, módulos DESPUÉS. Si un módulo redefine un modelo compartido, el último gana (`models.set`) y **descarta campos del anterior**. **RESUELTO 2026-07-05**: `LockDevices`/`LockCodes` estaban en shared + ttlock; ttlock ganaba y descartaba `lock_codes.hotelId` (multi-tenancy). Consolidado en `modules/ttlock/model.ts` — **regla: si un módulo es dueño de un modelo, NO definirlo en shared**.
