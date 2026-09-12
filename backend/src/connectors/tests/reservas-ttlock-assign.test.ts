@@ -156,6 +156,50 @@ describe('reservas-ttlock — código al asignar habitación (#258)', () => {
     await expect(captured.reservas.onRoomAssigned({ reservationId: 'res1', hotelId: 'h1', roomId: null, previousRoomId: 'r2' })).resolves.toBeUndefined()
   })
 
+  // Revisión PR #315: al reasignar, `generateCode` sólo revoca el anterior DESPUÉS de crear el
+  // nuevo (contrato de ttlock). Si la cerradura nueva rechaza el PIN, el viejo seguía abriendo la
+  // habitación ANTERIOR, que ya no es de este huésped. Ahora se expira igual, con error en el log.
+  it('reasignar con la cerradura nueva fallando: el código anterior se expira igual y se loguea error (reserva sin código)', async () => {
+    const errors: string[] = []
+    const expired: string[] = []
+    const ttlock = {
+      generateCodeIfAbsent: async () => ({ id: 'c-new' }),
+      generateCode: async () => { throw new Error('lock unreachable') },
+      expireCodesByReservation: async (r: string) => { expired.push(r) },
+    }
+    const { ctx, captured } = makeCtx({ ...CONFIRMED_NO_ROOM, roomId: 'r2' }, { ttlock })
+    reservasTtlockConnector(ctx, { info: () => {}, error: (m: string) => { errors.push(m) } } as any)
+    await expect(captured.reservas.onRoomAssigned({ reservationId: 'res1', hotelId: 'h1', roomId: 'r2', previousRoomId: 'r1' })).resolves.toBeUndefined()
+    expect(expired).toEqual(['res1'])
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('res1')
+    expect(errors[0]).toContain('SIN código')
+  })
+
+  it('reasignar OK: NO expira (keepSingleCode ya dejó uno solo) ni loguea error', async () => {
+    const errors: string[] = []
+    const { ttlock, calls } = makeTtlock()
+    const { ctx, captured } = makeCtx({ ...CONFIRMED_NO_ROOM, roomId: 'r2' }, { ttlock })
+    reservasTtlockConnector(ctx, { info: () => {}, error: (m: string) => { errors.push(m) } } as any)
+    await captured.reservas.onRoomAssigned({ reservationId: 'res1', hotelId: 'h1', roomId: 'r2', previousRoomId: 'r1' })
+    expect(calls.expire).toEqual([])
+    expect(errors).toEqual([])
+  })
+
+  it('reasignar con la nueva Y el revoke fallando: no rompe y deja DOS errores (el PIN viejo sigue abriendo)', async () => {
+    const errors: string[] = []
+    const ttlock = {
+      generateCodeIfAbsent: async () => ({}),
+      generateCode: async () => { throw new Error('lock unreachable') },
+      expireCodesByReservation: async () => { throw new Error('gateway offline') },
+    }
+    const { ctx, captured } = makeCtx({ ...CONFIRMED_NO_ROOM, roomId: 'r2' }, { ttlock })
+    reservasTtlockConnector(ctx, { info: () => {}, error: (m: string) => { errors.push(m) } } as any)
+    await expect(captured.reservas.onRoomAssigned({ reservationId: 'res1', hotelId: 'h1', roomId: 'r2', previousRoomId: 'r1' })).resolves.toBeUndefined()
+    expect(errors).toHaveLength(2)
+    expect(errors[1]).toContain('SIGUE ABRIENDO')
+  })
+
   it('si la reserva no existe, no genera ni rompe', async () => {
     const { ttlock, calls } = makeTtlock()
     const { ctx, captured } = makeCtx(null, { ttlock })
