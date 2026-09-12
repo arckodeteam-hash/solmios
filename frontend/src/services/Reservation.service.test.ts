@@ -49,7 +49,9 @@ describe('Reservation.service — mapReservation', () => {
 
   // #274 — el badge de cuna del dashboard y del listado lee estos campos del objeto YA mapeado:
   // si el allow-list no los declara, el icono nunca aparece aunque el backend los devuelva.
-  it('conserva needsCrib, cribCount y childAmenities cuando vienen', () => {
+  // #292 — el catálogo global de amenidades infantiles se dio de baja; `childAmenities` es el
+  // snapshot HISTÓRICO de reservas viejas (las nuevas lo traen `[]`) y se sigue leyendo tal cual.
+  it('conserva needsCrib, cribCount y childAmenities (snapshot histórico) cuando vienen', () => {
     const amenities = [{ id: 'a1', name: 'Bañera bebé', price: 5, quantity: 2, total: 10 }]
     const r = mapReservation(rawReservation({ needsCrib: true, cribCount: 1, childAmenities: amenities }))
     expect(r.needsCrib).toBe(true)

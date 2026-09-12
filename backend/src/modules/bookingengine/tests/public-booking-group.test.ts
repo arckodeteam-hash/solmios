@@ -19,9 +19,10 @@ const HOTEL_ID = 'h1'
 
 /** ORM en memoria REAL (mismo patrón que el e2e pricing↔bookingengine de esta sesión): las
  *  aserciones leen directo de `tables`, no de un mock por-tabla estático. */
-function makeDb(seed: { rooms?: any[]; reservations?: any[]; promoCodes?: any[]; assignments?: any[]; rates?: any[] } = {}) {
+function makeDb(seed: { rooms?: any[]; roomAmenities?: any[]; reservations?: any[]; promoCodes?: any[]; assignments?: any[]; rates?: any[] } = {}) {
   const tables: Record<string, any[]> = {
     Rooms: seed.rooms ?? [],
+    RoomAmenities: seed.roomAmenities ?? [],
     Reservations: seed.reservations ?? [],
     RoomBlocks: [],
     RoomRates: seed.rates ?? [],
@@ -888,14 +889,17 @@ describe('createPublicBookingGroup — Requerimiento 5: ocupación efectiva por 
   })
 })
 
-// ─── Tarea 22 (Cuna y amenidades infantiles, 2026-09-08) ───────────────────────────────────────
+// ─── Tarea 22 (Cuna, 2026-09-08) — #292: la cuna es la amenidad `custom:cuna` de la habitación ──
+// La cobertura del gate por tipo de cada línea (precio por unidad, tipos mixtos) vive en
+// `public-booking-crib.test.ts`; acá queda el contrato Sí/No + bebé POR LÍNEA.
 describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a Sí/No), POR LÍNEA', () => {
   // maxBabyAge=1: edades 0-1 son bebé, 2-3 libre (no bebé), 4-12 con plaza.
-  const BABY_POLICY_CRIB_ON = { hotelId: HOTEL_ID, key: 'child_policy', value: { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1, cribAvailable: true } }
-  const BABY_POLICY_CRIB_OFF = { ...BABY_POLICY_CRIB_ON, value: { ...BABY_POLICY_CRIB_ON.value, cribAvailable: false } }
-  function configRepo(row: unknown = BABY_POLICY_CRIB_ON) {
+  const BABY_POLICY = { hotelId: HOTEL_ID, key: 'child_policy', value: { acceptChildren: true, maxChildAge: 12, maxFreeAge: 3, maxBabyAge: 1 } }
+  function configRepo(row: unknown = BABY_POLICY) {
     return { findOne: async (f: any) => (f.key === 'child_policy' ? row : null) } as any
   }
+  /** Fila `RoomAmenities` custom:cuna activa (gratis) para la room dada. */
+  const cribOn = (roomId: string) => ({ id: `${roomId}-cuna`, roomId, amenityKey: 'custom:cuna', name: 'Cuna', price: 0, isActive: true })
 
   it('solo la línea con bebé recibe cuna — la otra línea del mismo grupo queda en 0 aunque el body se lo pida', async () => {
     const { orm, tables } = makeDb({
@@ -903,6 +907,7 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
         { id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' },
         { id: 'r-b', hotelId: HOTEL_ID, type: 'standard', capacity: 6, basePrice: 100, status: 'available' },
       ],
+      roomAmenities: [cribOn('r-a'), cribOn('r-b')],
     })
     const res = await createPublicBookingGroup(orm, {
       ...BASE_BODY,
@@ -922,14 +927,14 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
     expect(byRoom['r-b'].cribCount).toBe(0)
   })
 
-  it('hotel con cuna DESHABILITADA: ninguna línea recibe cuna, aunque tenga bebé y lo pida', async () => {
+  it('tipo SIN custom:cuna: la línea no recibe cuna, aunque tenga bebé y lo pida', async () => {
     const { orm, tables } = makeDb({
       rooms: [{ id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' }],
     })
     const res = await createPublicBookingGroup(orm, {
       ...BASE_BODY,
       rooms: [{ roomType: 'familiar', adults: 2, quantity: 1, childrenAges: [1], needsCrib: true }],
-    }, undefined, undefined, undefined, undefined, undefined, { config: configRepo(BABY_POLICY_CRIB_OFF) })
+    }, undefined, undefined, undefined, undefined, undefined, { config: configRepo() })
 
     expect(res.status).toBe(201)
     expect(tables.Reservations[0].needsCrib).toBe(false)
@@ -939,6 +944,7 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
   it('Sí/No únicamente: un cribCount enviado en el body NUNCA se usa — siempre queda en 1, sin importar la cantidad de bebés de la línea', async () => {
     const { orm, tables } = makeDb({
       rooms: [{ id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' }],
+      roomAmenities: [cribOn('r-a')],
     })
     const res = await createPublicBookingGroup(orm, {
       ...BASE_BODY,
@@ -955,6 +961,7 @@ describe('createPublicBookingGroup — Tarea 22: cuna (simplificada 2026-09-09 a
         { id: 'r-a', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' },
         { id: 'r-b', hotelId: HOTEL_ID, type: 'familiar', capacity: 6, basePrice: 100, status: 'available' },
       ],
+      roomAmenities: [cribOn('r-a'), cribOn('r-b')],
     })
     const res = await createPublicBookingGroup(orm, {
       ...BASE_BODY,

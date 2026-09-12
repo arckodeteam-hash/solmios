@@ -47,7 +47,10 @@ const SOURCE_MAP: Record<string, ReservationSource> = {
 }
 
 /** #274 — `Reservations.childAmenities` es un snapshot json; según el driver llega como array o
- *  como string JSON (mismo caso que `priceBreakdown`). Cualquier otra cosa → `null`. */
+ *  como string JSON (mismo caso que `priceBreakdown`). Cualquier otra cosa → `null`.
+ *  #292 — el catálogo global de amenidades infantiles se dio de baja (la cuna es la amenidad de
+ *  habitación `custom:cuna`); las reservas nuevas lo persisten en `[]`. Este lector se conserva
+ *  SOLO para reservas históricas que lo tengan cargado. */
 export function parseChildAmenities(value: unknown): ChildAmenitySnapshot[] | null {
   let list: unknown = value
   if (typeof value === 'string') {

@@ -34,13 +34,6 @@ export interface CreateBookingUpsell {
   quantity: number
 }
 
-/** REQ-01 (#233) — una amenidad infantil elegida, tal como viaja al backend: SOLO el id. El
- *  precio lo resuelve el backend contra su catálogo (el snapshot con precio que guarda el
- *  carrito es para mostrar, nunca para cobrar). */
-export interface CreateBookingChildAmenity {
-  id: string
-}
-
 /** REQ-01 (#290) — una amenidad DE LA HABITACIÓN (cuna, cama extra… configuradas por el hotel en
  *  cada habitación) elegida para una línea, tal como viaja al backend: SOLO la `key`
  *  (`custom:<slug>`). El precio lo resuelve el backend contra las filas `RoomAmenities` de la
@@ -48,6 +41,13 @@ export interface CreateBookingChildAmenity {
 export interface CreateBookingRoomAmenity {
   key: string
 }
+
+/** #292 — la cuna de una habitación ES su amenidad personalizada `custom:cuna` (RoomAmenities,
+ *  con precio por habitación). El motor público ofrece "¿Necesita cuna?" sólo si la tarjeta tiene
+ *  un bebé Y el tipo publica esta key en `/public/hotels/:slug/room-amenities`; "Sí" la agrega a
+ *  `roomAmenityKeys` y se cobra por el mecanismo de amenidades de habitación. Espejo de
+ *  `CRIB_AMENITY_KEY` en `backend/src/modules/bookingengine/usecases/public-room-amenities.ts`. */
+export const CRIB_AMENITY_KEY = 'custom:cuna'
 
 /** DTO friendly que recibe `BookingService.createBooking`. El service resuelve slug→hotelId,
  *  mapea `guest` → `guestName/guestEmail/guestPhone`, y postea al backend con el shape del
@@ -75,22 +75,17 @@ export interface CreateBookingDTO {
   guest: CreateBookingGuest
   promoCode?: string
   upsells?: CreateBookingUpsell[]
-  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No) — solo tiene efecto si la
-   *  composición de ESTA habitación tiene al menos un bebé Y el hotel habilitó la cuna; el
-   *  backend re-valida, nunca confía en esto. `cribCount` es siempre 1 cuando `needsCrib` es
-   *  true — no existe cantidad configurable. */
+  /** Tarea 22 (Cuna, 2026-09-08, simplificada 2026-09-09 a Sí/No; #292 cuna por habitación) —
+   *  solo tiene efecto si la composición de ESTA habitación tiene al menos un bebé Y el tipo
+   *  publica `custom:cuna` (`CRIB_AMENITY_KEY`); el backend re-valida, nunca confía en esto, y si
+   *  queda en true fuerza la línea `custom:cuna` en `roomAmenities` (precio real de la habitación).
+   *  `cribCount` es siempre 1 cuando `needsCrib` es true — no existe cantidad configurable. */
   needsCrib?: boolean
   cribCount?: number
-  /** REQ-01 (#233, amenidades para niños y bebés) — ids del catálogo del hotel
-   *  (`GET /public/hotels/:slug/child-amenities`) elegidos para ESTA habitación. Mismo criterio
-   *  que `needsCrib`: por habitación, y el backend solo las acepta si la composición tiene al
-   *  menos un menor (`childrenAges` no vacío) y `childPolicy.acceptChildren`; re-valida ids y
-   *  precios contra su catálogo, nunca confía en el cliente. */
-  childAmenities?: CreateBookingChildAmenity[]
   /** REQ-01 (#290) — keys del catálogo por tipo (`GET /public/hotels/:slug/room-amenities`)
-   *  elegidas para ESTA habitación. A diferencia de `childAmenities` NO depende de la composición
-   *  (aplica a cualquier línea); el backend prefiere una habitación del tipo que las ofrezca y
-   *  cobra el precio real de la asignada — una key que esa habitación no ofrece se ignora. */
+   *  elegidas para ESTA habitación. NO depende de la composición (aplica a cualquier línea); el
+   *  backend prefiere una habitación del tipo que las ofrezca y cobra el precio real de la
+   *  asignada — una key que esa habitación no ofrece se ignora. */
   roomAmenities?: CreateBookingRoomAmenity[]
   /** URLs de vuelta desde Stripe. Si se omiten, el backend deriva de PUBLIC_BASE_URL/Referer.
    *  Pattern: `/h/:slug?booking=:id&token=:token` (spec booking-unification R2). */
@@ -146,11 +141,8 @@ export interface CreateBookingRoomLine {
    *  propio bebé. Sí/No únicamente — `cribCount` es siempre 1 cuando `needsCrib` es true. */
   needsCrib?: boolean
   cribCount?: number
-  /** REQ-01 (#233) — amenidades para niños/bebés de ESTA habitación (POR LÍNEA, igual que
-   *  `needsCrib`; a diferencia de `upsells`, global al carrito). Ver `CreateBookingDTO`. */
-  childAmenities?: CreateBookingChildAmenity[]
   /** REQ-01 (#290) — amenidades de la habitación de ESTA línea (POR LÍNEA, igual que
-   *  `childAmenities`; sin gateo por niños). Ver `CreateBookingDTO.roomAmenities`. */
+   *  `needsCrib`; sin gateo por niños). Ver `CreateBookingDTO.roomAmenities`. */
   roomAmenities?: CreateBookingRoomAmenity[]
 }
 
@@ -457,20 +449,6 @@ export interface PublicMealPlan {
 }
 
 /**
- * REQ-01 (#233) — Amenidad para niños/bebés ACTIVA del hotel
- * (`GET /api/public/hotels/:slug/child-amenities`). Público, sin auth. Solo llegan las activas,
- * ya ordenadas por `sortOrder` ASC (desempate por nombre). `price` está en `hotels.currency`
- * (cobro en la moneda base, igual que `Upsell.price`); `0` = sin cargo. El catálogo lo mantiene
- * el hotel desde Motor de Reservas — NUNCA hay lista ni precios en código.
- */
-export interface PublicChildAmenity {
-  id: string
-  name: string
-  price: number
-  sortOrder: number
-}
-
-/**
  * REQ-01 (#290) — Amenidad PERSONALIZADA de habitación vendible en el motor público
  * (`GET /api/public/hotels/:slug/room-amenities`). `key` es `custom:<slug>` (las keys fijas del
  * catálogo — wifi, tv — son features gratuitas y no llegan acá). `price` en `hotels.currency`, es
@@ -518,14 +496,14 @@ export interface TotalBreakdown {
   subtotal: number
   promoDiscount: number
   upsellsTotal: number
-  /** REQ-01 (#233) — Σ de las amenidades infantiles de todas las habitaciones de la reserva
-   *  (`subtotal` = alojamiento + `upsellsTotal` + `childAmenitiesTotal`). Opcional: las reservas
-   *  creadas ANTES de esta feature persistieron un `totalBreakdown` sin el campo — tratar
-   *  `undefined` como 0. */
+  /** Snapshot HISTÓRICO (#233, catálogo global dado de baja en #292): Σ de las amenidades
+   *  infantiles de reservas creadas mientras existió ese catálogo (entra en `subtotal`). Las
+   *  reservas nuevas lo persisten en 0 y las anteriores a #233 no lo traen — tratar `undefined`
+   *  como 0. Se conserva sólo para leer reservas viejas. */
   childAmenitiesTotal?: number
   /** REQ-01 (#290) — Σ de las amenidades de habitación (cuna, cama extra…) de todas las
-   *  habitaciones de la reserva; entra en `subtotal` igual que `childAmenitiesTotal`. Opcional por
-   *  el mismo motivo: reservas anteriores a la feature no lo tienen — tratar `undefined` como 0. */
+   *  habitaciones de la reserva; entra en `subtotal`. Opcional: reservas anteriores a la feature
+   *  no lo tienen — tratar `undefined` como 0. */
   roomAmenitiesTotal?: number
   /** Σ de `taxBreakdown` (misma cuenta que el backend: cada línea redondeada aparte). */
   taxes: number

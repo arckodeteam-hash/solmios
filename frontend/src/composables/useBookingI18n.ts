@@ -144,11 +144,10 @@ const messages = {
     'common.yes': 'Sí',
     'common.no': 'No',
     'rooms.guests.needsCrib': '¿Necesita cuna?',
+    // #292 — la cuna es la amenidad `custom:cuna` del tipo, con precio: "¿Necesita cuna? (+ $15)".
+    'rooms.guests.needsCribPriced': '¿Necesita cuna? (+ {price})',
     'rooms.guests.cribRequested': 'Cuna',
-    // REQ-01 (#233) — amenidades para niños/bebés, checklist por habitación (catálogo del hotel).
-    'rooms.guests.childAmenities': 'Amenidades para niños y bebés',
-    'rooms.guests.childAmenityFree': 'Sin cargo',
-    // REQ-01 (#290) — amenidades de la habitación (cuna, cama extra…).
+    // REQ-01 (#290) — amenidades de la habitación (cama extra…; la cuna va aparte, ver arriba).
     'rooms.guests.roomAmenities': 'Amenidades de la habitación',
     'rooms.guests.roomAmenityFree': 'Gratis',
     'rooms.guests.addRoom': 'Agregar esta habitación',
@@ -227,7 +226,6 @@ const messages = {
     'pay.dates': 'Fechas',
     'pay.room': 'Habitación',
     'pay.extras': 'Extras',
-    'pay.childAmenities': 'Amenidades niños/bebés',
     'pay.roomAmenities': 'Amenidades',
     'pay.extrasCountOne': '1 extra',
     'pay.extrasCountMany': '{count} extras',
@@ -432,9 +430,8 @@ const messages = {
     'common.yes': 'Yes',
     'common.no': 'No',
     'rooms.guests.needsCrib': 'Need a crib?',
+    'rooms.guests.needsCribPriced': 'Need a crib? (+ {price})',
     'rooms.guests.cribRequested': 'Crib',
-    'rooms.guests.childAmenities': 'Amenities for children and babies',
-    'rooms.guests.childAmenityFree': 'Free of charge',
     // REQ-01 (#290)
     'rooms.guests.roomAmenities': 'Room amenities',
     'rooms.guests.roomAmenityFree': 'Free',
@@ -505,7 +502,6 @@ const messages = {
     'pay.dates': 'Dates',
     'pay.room': 'Room',
     'pay.extras': 'Extras',
-    'pay.childAmenities': 'Children/baby amenities',
     'pay.roomAmenities': 'Room amenities',
     'pay.extrasCountOne': '1 extra',
     'pay.extrasCountMany': '{count} extras',
@@ -705,9 +701,8 @@ const messages = {
     'common.yes': 'Sim',
     'common.no': 'Não',
     'rooms.guests.needsCrib': 'Precisa de berço?',
+    'rooms.guests.needsCribPriced': 'Precisa de berço? (+ {price})',
     'rooms.guests.cribRequested': 'Berço',
-    'rooms.guests.childAmenities': 'Comodidades para crianças e bebês',
-    'rooms.guests.childAmenityFree': 'Sem custo',
     // REQ-01 (#290)
     'rooms.guests.roomAmenities': 'Comodidades do quarto',
     'rooms.guests.roomAmenityFree': 'Grátis',
@@ -778,7 +773,6 @@ const messages = {
     'pay.dates': 'Datas',
     'pay.room': 'Quarto',
     'pay.extras': 'Extras',
-    'pay.childAmenities': 'Comodidades crianças/bebês',
     'pay.roomAmenities': 'Comodidades do quarto',
     'pay.extrasCountOne': '1 extra',
     'pay.extrasCountMany': '{count} extras',
