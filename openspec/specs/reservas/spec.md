@@ -560,6 +560,60 @@ tipo en `types/index.ts` (`ReservationInvoiceView`, `ReservationDetail.invoices?
 - WHEN se pide el detalle
 - THEN responde 200 con `invoices: []` y el resto del detalle intacto
 
+### Requirement: Reserva web sin pago vence sola e idempotencia del widget (MR-01, #266)
+
+Una reserva creada por el motor público nace `pending` con `paymentDeadlineAt` =
+`createdAt + booking_config.pendingTtlMinutes` (entero 15–1440, default 60, editable en
+`/panel/booking-engine` como "Minutos para completar el pago"; reemplaza el
+`pendingPaymentTtlHours` de #248, cuya columna queda huérfana). El cron
+`shared/usecases/pending-payment-expiry-cron.ts` (primer tick a 20 s, luego cada 5 min,
+kill-switch `BOOKING_PENDING_TTL_DISABLED=1`) MUST cancelar toda reserva `pending` web
+(`accessToken` no nulo o `source:'web'`) con `paymentDeadlineAt < now`, `deposit = 0` y sin
+`payments` `completed` ni actividad de pago reciente, vía `reservas.cancelBySystem` en modo
+`no-charge` con `cancellationReason:'payment_timeout'` (emite `onReservationCancelled`, que es
+lo que libera depósito, código de puerta y uso de promo), y además MUST llamar
+`pushAvailability(hotelId, roomId)`. Una fila con `paymentDeadlineAt` nulo (anterior a #266)
+o sin `accessToken` (panel) MUST NOT vencer. Un grupo vence entero o nada; al vencer entero,
+`groups.status = 'cancelled'`. El webhook `checkout.session.expired`
+(`bookingengine/usecases/stripe.ts#settle`) MUST cerrar la reserva con el MISMO usecase
+(`expirePendingReservation`) si sigue `pending` sin pago, y MUST ser no-op con log si ya está
+`confirmed`.
+
+`POST /api/public/booking` (single y grupo) MUST persistir `idempotencyKey` (string ≤ 128,
+sólo en la líder del grupo) con índice único `(hotelId, idempotencyKey)`
+(`idx_reservations_hotel_idempotency`, `migrate-db.ts`). Una segunda llamada con la misma
+key y hotel MUST devolver 200 con la misma `reservationId`/`accessToken` y un `checkoutUrl`
+recreado, sin crear otra fila; la misma key en otro hotel crea una reserva nueva; si la
+reserva ya venció responde 409 `reservation_expired`.
+
+El correo de abandono (`abandon-recovery`) MUST decir el plazo real del hotel
+(`{pending_ttl}` desde `pendingTtlMinutes`) y MUST NOT encolarse si la reserva ya venció o
+si el hotel no tiene pasarela configurada. `GET /api/public/reservation` expone
+`cancellationReason`; la confirmación pública (`booking-confirmation.vue`) muestra "Tu reserva
+venció porque no se completó el pago" con CTA "Volver a reservar" cuando
+`cancelled` + `payment_timeout`.
+
+#### Scenario: Vence sin pago
+
+- GIVEN una reserva web `pending` con `paymentDeadlineAt` un minuto en el pasado, `deposit` 0 y sin pagos
+- WHEN corre el barrido
+- THEN queda `cancelled` con `cancellationReason:'payment_timeout'` y se llamó `pushAvailability` con su `roomId`
+- AND una con `paymentDeadlineAt` futuro, una con un `payment` `completed`, una sin `accessToken` y una sin `paymentDeadlineAt` siguen `pending`
+
+#### Scenario: Grupo de tres con la líder vencida
+
+- WHEN vence la líder
+- THEN las tres hermanas quedan `cancelled` y `groups.status` es `cancelled`
+
+#### Scenario: Webhook expirado
+
+- WHEN llega `checkout.session.expired` de una `pending` → `cancelled`; de una `confirmed` → sigue `confirmed` con `deposit` intacto
+
+#### Scenario: Misma idempotencyKey
+
+- WHEN dos `POST /api/public/booking` con la misma key y hotel
+- THEN una sola fila en `Reservations`, misma `reservationId`, la segunda con 200; con otro hotel, dos filas
+
 ### Requirement: Transversales de toda operación de reservas
 
 Toda query del módulo MUST filtrar por `hotelId` (multi-tenant) y toda ruta MUST exigir
