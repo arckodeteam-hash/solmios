@@ -18,6 +18,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useGuestComposer } from './useGuestComposer'
 import { useBookingStore } from './useBooking'
 import { DEFAULT_CHILD_POLICY } from '@/utils/child-composition'
+import { BookingService } from '@/services/Booking.service'
 import { round2 } from '@/utils/cash-arqueo'
 import type { PublicRoomAmenity, PublicRatesResponse, RoomTypeRate } from '@/types/booking'
 
@@ -279,5 +280,28 @@ describe('useGuestComposer — #343 (D) store.reset() limpia composerState', () 
     const fresh = roomType('double', 150)
     expect(c.composer(fresh)).toEqual({ adults: 1, ages: [], needsCrib: false })
     expect(store.composerState['double']).toBe(c.composer(fresh))
+  })
+  it('una búsqueda nueva (otras fechas) vacía el carrito Y las tarjetas: no arrastra la composición anterior', async () => {
+    const store = seedStore()
+    const c = useGuestComposer()
+    const rt = rtFromStore(store, 'double')
+    composeIssue(c, rt)
+    await c.addComposedRoom(rt)
+    expect(store.cart).toHaveLength(1)
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 1, 10, 0, 0))
+    try {
+      vi.mocked(BookingService.getRates).mockResolvedValue({ ...store.ratesResponse!, checkIn: '2026-09-20', checkOut: '2026-09-22' })
+      store.checkIn = '2026-09-20'
+      store.checkOut = '2026-09-22'
+      await store.search()
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(store.ratesResponse?.checkIn).toBe('2026-09-20') // la búsqueda corrió de verdad
+    expect(store.cart).toEqual([])
+    expect(Object.keys(store.composerState).length).toBe(0)
+    expect(c.composer(rtFromStore(store, 'double'))).toEqual({ adults: 1, ages: [], needsCrib: false })
   })
 })

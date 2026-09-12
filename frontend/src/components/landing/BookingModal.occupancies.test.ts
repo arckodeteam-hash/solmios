@@ -39,6 +39,7 @@ vi.mock('@/services/PublicHotel.service', () => ({
 import BookingModal from './BookingModal.vue'
 import { BookingService } from '@/services/Booking.service'
 import { useBookingStore } from '@/composables/useBooking'
+import { useBookingI18nStore } from '@/composables/useBookingI18n'
 import { DEFAULT_CHILD_POLICY, type ChildPolicy } from '@/utils/child-composition'
 import type {
   OpenBookingOptions,
@@ -736,6 +737,27 @@ describe('BookingModal — composer de huéspedes (adultos+niños+edades)', () =
       expect(store.cart[1]!.quantity).toBe(1)
       expect(store.cart.map((l) => l.childrenAges).sort()).toEqual([[5], [9]])
     })
+  })
+
+  // #343 — la fila de régimen de <EstimatedTotals> en la landing es español fijo (labels
+  // `mealPlan`/`mealPlanIncluded`/`mealPlanNames` de ESTIMATED_LABELS), NUNCA el i18n del widget:
+  // con el navegador en inglés, sin esas claves se veía "Board · ... · included" al lado de
+  // "Subtotal"/"Total estimado".
+  it('#343: el resumen estimado muestra el régimen en español fijo aunque el i18n del widget esté en inglés', async () => {
+    useBookingI18nStore().setLocale('en')
+    await open()
+    const store = useBookingStore()
+    await bumpAdults(1)
+    await clickAddRoom()
+    expect(store.cart).toHaveLength(1)
+    store.cart[0]!.mealPlan = { code: 'half_board', priceMode: 'included', unitPrice: 0, persons: 2, total: 0 }
+    await flushPromises()
+    const line = document.body.querySelector('[data-testid="estimated-totals"] [data-testid="meal-plan-line"]')?.textContent ?? ''
+    expect(line).toContain('Régimen')
+    expect(line).toContain('Desayuno y cena')
+    expect(line).toContain('incluido')
+    expect(line).not.toContain('Board')
+    expect(line).not.toContain('included')
   })
 
   // MR-03 (#268) — el régimen es un radio POR TARJETA (mismo composer que RoomsStep.vue). Regla del

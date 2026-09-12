@@ -875,6 +875,11 @@ export const useBookingStore = defineStore('booking-widget', () => {
       // Fechas nuevas invalidan el carrito anterior: precios/disponibilidad de la búsqueda vieja
       // ya no aplican (mismo criterio que antes con selectedRoom/selectedOccupancy).
       cart.value = []
+      // #343 — y con él lo compuesto en las tarjetas: el composer vive acá (no en el componente),
+      // así que una búsqueda nueva tiene que arrancar cada tarjeta en limpio, igual que el
+      // carrito — si no, un `rt.id` reutilizado mostraría adultos/edades/amenidades de la
+      // búsqueda anterior con el carrito ya vacío.
+      composerState.value = {}
       status.value = 'selecting'
     } catch (e) {
       ratesError.value = errMessage(e, 'No pudimos cargar la disponibilidad. Probá de nuevo.')
